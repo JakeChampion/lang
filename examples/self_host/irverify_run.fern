@@ -24,6 +24,7 @@ import "./irverify";
 import "./irverifystack";
 import "./irfipverify";
 import "./irverifyprovided";
+import "./irverifyrc";
 import "./irverifygate";
 import "./util";
 
@@ -452,6 +453,181 @@ function refuse_probe(): i32 {
     return 0;
 }
 
+// ---- ownership half (irverifyrc.fern) ----------------------------------
+
+// raw_op builds an operand-less op by kind name, for the shapes ir.fern gives
+// no dedicated constructor.
+function raw_op(kind: string): ir.Op {
+    return ir.Op { decl: 0 - 1, kind_tag: ir.kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// selfhost_reuse builds the shape irlower ACTUALLY emits, read off a
+// `-dump-fn churn` of conformance/cases/general_reuse_struct:
+//
+//   load_local D; call __fern_rc_is_unique/1; tee_local u
+//   if   load_local D; store_local t
+//   else const_i32 0;  store_local t
+//   end
+//   load_local t; const_i32 n; call __fern_alloc_reuse/2
+//
+// The flag is TEED rather than stored and loaded back, and the decline arm
+// holds no release at all — this family releases the donor earlier, under a
+// separate condition. The first draft of this driver asserted a hand-built
+// shape with neither property, and every one of the corpus's 9 real sites was
+// skipped; the coverage counter is what surfaced that.
+function selfhost_reuse(gate: i32, token: i32): ir.Op[] {
+    return [
+        ir.op_load_local(gate),
+        ir.op_call_direct("__fern_rc_is_unique", 1),
+        ir.op_tee_local(3),
+        ir.op_if(0),
+        ir.op_load_local(token),
+        ir.op_store_local(4),
+        ir.op_else(),
+        ir.op_const_i32(0),
+        ir.op_store_local(4),
+        ir.op_end(),
+        ir.op_load_local(4),
+        ir.op_const_i32(3),
+        ir.op_call_direct("__fern_alloc_reuse", 2)
+    ];
+}
+
+// native_reuse builds emitReuseToken's shape, which the same pass must also
+// model: the flag stored and loaded back, a header-subtracting token take, an
+// rc_dec decline, the donor-slot zeroing, and a three-argument allocator.
+function native_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
+    return [
+        ir.op_load_local(gate),
+        ir.op_call_direct("__fern_rc_is_unique", 1),
+        ir.op_store_local(3),
+        ir.op_load_local(3),
+        ir.op_if(0),
+        ir.op_load_local(token),
+        ir.op_const_i32(8),
+        raw_op("sub"),
+        ir.op_store_local(4),
+        ir.op_else(),
+        ir.op_load_local(dec),
+        ir.op_call_direct("__fern_rc_dec", 1),
+        ir.op_drop(),
+        ir.op_const_i32(0),
+        ir.op_store_local(4),
+        ir.op_end(),
+        ir.op_const_i32(0),
+        ir.op_store_local(gate),
+        ir.op_load_local(4),
+        ir.op_const_i32(24),
+        ir.op_const_i32(24),
+        ir.op_call_direct("__alloc_reuse", 3)
+    ];
+}
+
+// rc_only_skip reports whether the pass counted the site and skipped it for
+// exactly the named reason, with nothing reported.
+function rc_only_skip(ops: ir.Op[], why: string): boolean {
+    var r: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", ops);
+    if (r.problems.len() != 0 || r.sites != 1 || r.checked != 0) { return false; }
+    if (r.skips.len() != 1) { return false; }
+    return r.skips[0] == why;
+}
+
+// rc_checks asserts the ownership half in both directions on both compilers'
+// emitted shapes. Returns 0 when every case holds.
+function rc_checks(): i32 {
+    // ---- a well-formed site verifies clean, on both shapes -------------
+    var sh: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", selfhost_reuse(1, 1));
+    if (sh.problems.len() != 0) { return 190; }
+    if (sh.sites != 1 || sh.checked != 1) { return 191; }
+
+    var na: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 1, 1));
+    if (na.problems.len() != 0) { return 192; }
+    if (na.sites != 1 || na.checked != 1) { return 193; }
+
+    // ---- the token taken from an untested donor ------------------------
+    // The 2026-08-29 first-match hazard: the pairing resolved a donor other
+    // than the one whose uniqueness was established, so the site writes over
+    // a box that may still have other owners.
+    var t1: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", selfhost_reuse(1, 2));
+    if (t1.checked != 1) { return 194; }
+    if (t1.problems.len() != 1) { return 195; }
+    if (!util.contains(t1.problems[0].msg, "never proved unique")) { return 196; }
+
+    var t2: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 2, 1));
+    if (t2.problems.len() != 1) { return 197; }
+    if (!util.contains(t2.problems[0].msg, "never proved unique")) { return 198; }
+
+    // ---- the decline arm releasing another local -----------------------
+    // The mirror failure: the gate and the token agree, but the shared arm
+    // releases something else, so the tested donor leaks when the site
+    // declines. Only the native shape carries a decline release at all.
+    var d1: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", native_reuse(1, 1, 2));
+    if (d1.checked != 1) { return 199; }
+    if (d1.problems.len() != 1) { return 200; }
+    if (!util.contains(d1.problems[0].msg, "leaks on the decline path")) { return 201; }
+
+    // ---- unrecognised shapes are skipped, never reported ---------------
+    // A verifier that reports a false problem gets switched off, so every
+    // shape the pass cannot model must cost coverage and nothing else. The
+    // reason is pinned per case, so a case cannot pass by being skipped for
+    // an unrelated cause further up the recogniser.
+    var no_gate: ir.Op[] = selfhost_reuse(1, 1).with(1, ir.op_drop());
+    if (!rc_only_skip(no_gate, "no uniqueness gate before the token select")) { return 202; }
+
+    var no_else: ir.Op[] = [
+        ir.op_load_local(1),
+        ir.op_call_direct("__fern_rc_is_unique", 1),
+        ir.op_tee_local(3),
+        ir.op_if(0),
+        ir.op_load_local(1),
+        ir.op_store_local(4),
+        ir.op_end(),
+        ir.op_load_local(4),
+        ir.op_const_i32(3),
+        ir.op_call_direct("__fern_alloc_reuse", 2)
+    ];
+    if (!rc_only_skip(no_else, "token select has no decline arm")) { return 203; }
+
+    var const_token: ir.Op[] = selfhost_reuse(1, 1).with(10, ir.op_const_i32(0));
+    if (!rc_only_skip(const_token, "token argument is not a local load")) { return 204; }
+
+    // A select conditioned on something that is neither a local load nor a
+    // tee is its own shape, reported apart from a missing gate so a new
+    // emitter cannot hide behind the other's count.
+    var cond_not_local: ir.Op[] = native_reuse(1, 1, 1).with(3, ir.op_const_i32(1));
+    if (!rc_only_skip(cond_not_local, "token select is not conditioned on a local")) { return 205; }
+
+    // ---- a decline arm with no release is normal, not a defect ---------
+    // The struct-reuse family releases the donor earlier under a separate
+    // condition. Treating an absent release as unmodellable would skip every
+    // real site the self-host emits.
+    if (sh.checked != 1) { return 206; }
+
+    // ---- a function with no reuse site is untouched --------------------
+    var plain: ir.Op[] = [ir.op_load_local(1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_drop()];
+    var pr: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", plain);
+    if (pr.problems.len() != 0 || pr.sites != 0) { return 207; }
+
+    // ---- the gate runs the ownership half ------------------------------
+    // Wiring, not algorithm: a donor mismatch must reach verify_problems, or
+    // the pass is correct and never consulted.
+    var gp: irverify.Problem[] = irverifygate.verify_problems("f", selfhost_reuse(1, 2), 0, 8, no_sigs());
+    var seen: boolean = false;
+    var gi: i32 = 0;
+    while (gi < gp.len()) {
+        if (util.contains(gp[gi].msg, "never proved unique")) { seen = true; }
+        gi = gi + 1;
+    }
+    if (!seen) { return 208; }
+
+    // ---- coverage renders the tally and the grouped reasons ------------
+    if (!util.contains(irverifyrc.rc_coverage_str(sh), "reuse sites modelled 1/1")) { return 209; }
+    var skipped: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", no_gate);
+    if (!util.contains(irverifyrc.rc_coverage_str(skipped), "skipped 1: no uniqueness gate")) { return 210; }
+
+    return 0;
+}
+
 function main(): i32 {
     var av: string[] = args();
     var ai: i32 = 0;
@@ -615,10 +791,14 @@ function main(): i32 {
     var gc: i32 = gate_checks();
     if (gc != 0) { return gc; }
 
+    var rc: i32 = rc_checks();
+    if (rc != 0) { return rc; }
+
     print("irverify: all structural checks agree");
     print("irverifystack: all stack checks agree");
     print("irfipverify: all allocation-budget checks agree");
     print("irverifyprovided: all callee-resolution checks agree");
+    print("irverifyrc: all reuse-donor checks agree");
     print("irverifygate: compile-path gate agrees");
     return 0;
 }

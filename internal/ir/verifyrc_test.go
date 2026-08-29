@@ -16,11 +16,42 @@ const (
 	hdrLen = int32(8)
 )
 
-// nativeReuse builds the op stream the native lowering emits for a reuse
-// site (emitReuseToken): an OpRcIsUnique gate, a header-subtracting token
-// take, an OpRcDec decline, the donor-slot zeroing, and a three-argument
-// __alloc_reuse. Each of the three donor roles is a separate parameter so
-// a test can make one of them disagree.
+// selfHostReuse builds the shape the self-host compiler's irlower actually
+// emits, read off a `-dump-fn` of conformance/cases/general_reuse_struct:
+//
+//	load_local D; call __fern_rc_is_unique/1; tee_local u
+//	if   load_local D; store_local t
+//	else const_i32 0;  store_local t
+//	end
+//	load_local t; const_i32 n; call __fern_alloc_reuse/2
+//
+// Three things differ from native and none of them changes the invariant:
+// the gate and release are CALLS rather than dedicated ops, the flag is TEED
+// rather than stored and loaded back, and the decline arm holds no release at
+// all — this family releases the donor earlier, under a separate condition.
+func selfHostReuse(gate, token int32) *Func {
+	return &Func{Name: "selfhost", Ops: []Op{
+		{Kind: OpLoadLocal, I32: gate},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpTeeLocal, I32: uniq},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		{Kind: OpLoadLocal, I32: token},
+		{Kind: OpStoreLocal, I32: tok},
+		{Kind: OpElse},
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpStoreLocal, I32: tok},
+		{Kind: OpEnd},
+		{Kind: OpLoadLocal, I32: tok},
+		{Kind: OpConstI32, I32: 3},
+		{Kind: OpCallDirect, Runtime: true, Str: "__fern_alloc_reuse", I32: 2},
+	}}
+}
+
+// nativeReuse builds emitReuseToken's shape: an OpRcIsUnique gate whose flag
+// is stored and loaded back (the same slot gates the old-field release
+// further down), a header-subtracting token take, an OpRcDec decline, the
+// donor-slot zeroing, and a three-argument __alloc_reuse. Each of the three
+// donor roles is a separate parameter so a test can make one disagree.
 func nativeReuse(gate, token, dec int32) *Func {
 	return &Func{Name: "native", Ops: []Op{
 		{Kind: OpLoadLocal, I32: gate},
@@ -48,41 +79,13 @@ func nativeReuse(gate, token, dec int32) *Func {
 	}}
 }
 
-// selfHostReuse builds the shape the self-host compiler's irlower emits:
-// the gate and the release are CALLS rather than dedicated ops, the token
-// is the donor pointer with no header arithmetic, the decline arm stores
-// the null token before releasing, there is no donor-slot zeroing, and
-// __fern_alloc_reuse takes two arguments. None of that changes the
-// invariant, so the same checker must model it.
-func selfHostReuse(gate, token, dec int32) *Func {
-	return &Func{Name: "selfhost", Ops: []Op{
-		{Kind: OpLoadLocal, I32: gate},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_rc_is_unique", I32: 1},
-		{Kind: OpStoreLocal, I32: uniq},
-		{Kind: OpLoadLocal, I32: uniq},
-		{Kind: OpIf, I32: BlockTypeVoid},
-		{Kind: OpLoadLocal, I32: token},
-		{Kind: OpStoreLocal, I32: tok},
-		{Kind: OpElse},
-		{Kind: OpConstI32, I32: 0},
-		{Kind: OpStoreLocal, I32: tok},
-		{Kind: OpLoadLocal, I32: dec},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_rc_dec", I32: 1},
-		{Kind: OpDrop},
-		{Kind: OpEnd},
-		{Kind: OpLoadLocal, I32: tok},
-		{Kind: OpConstI32, I32: 5},
-		{Kind: OpCallDirect, Runtime: true, Str: "__fern_alloc_reuse", I32: 2},
-	}}
-}
-
 func TestVerifyRcAcceptsBothCompilersReuseShapes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		f    *Func
 	}{
 		{"native", nativeReuse(donor, donor, donor)},
-		{"self-host", selfHostReuse(donor, donor, donor)},
+		{"self-host", selfHostReuse(donor, donor)},
 	} {
 		problems, cov := verifyRc(tc.f)
 		if len(problems) != 0 {
@@ -104,7 +107,7 @@ func TestVerifyRcCatchesTokenTakenFromAnUntestedDonor(t *testing.T) {
 		f    *Func
 	}{
 		{"native", nativeReuse(donor, other, donor)},
-		{"self-host", selfHostReuse(donor, other, donor)},
+		{"self-host", selfHostReuse(donor, other)},
 	} {
 		problems, cov := verifyRc(tc.f)
 		if cov.Checked != 1 {
@@ -135,6 +138,24 @@ func TestVerifyRcCatchesDeclineReleasingAnotherLocal(t *testing.T) {
 	}
 }
 
+func TestVerifyRcAcceptsADeclineArmWithNoRelease(t *testing.T) {
+	// The self-host's struct-reuse family releases the donor earlier under
+	// a separate condition, so its decline arm holds only the null token.
+	// An absent release is not a defect — there is no third name to
+	// disagree — and treating it as one would skip every real site the
+	// self-host emits, which is exactly what the corpus sweep caught.
+	f := selfHostReuse(donor, donor)
+	for _, op := range f.Ops {
+		if isRcDecOp(op) {
+			t.Fatalf("the self-host fixture must have no decline release; it has one")
+		}
+	}
+	problems, cov := verifyRc(f)
+	if len(problems) != 0 || cov.Checked != 1 {
+		t.Errorf("want the site checked and clean, got %d checked with %v", cov.Checked, problems)
+	}
+}
+
 func TestVerifyRcSkipsUnrecognisedShapesRatherThanReporting(t *testing.T) {
 	// A verifier that reports a false problem gets switched off, so every
 	// shape the pass cannot model must cost coverage and nothing else.
@@ -154,28 +175,41 @@ func TestVerifyRcSkipsUnrecognisedShapesRatherThanReporting(t *testing.T) {
 		},
 		"the select has no else arm": {
 			build: func() *Func {
-				f := selfHostReuse(donor, donor, donor)
-				f.Ops = append(f.Ops[:7:7], f.Ops[13:]...)
+				f := selfHostReuse(donor, donor)
+				f.Ops = append(f.Ops[:6:6], f.Ops[9:]...)
 				return f
 			},
 			reason: "token select has no decline arm",
 		},
 		"the token argument is a constant": {
 			build: func() *Func {
-				f := nativeReuse(donor, donor, donor)
-				f.Ops[18] = Op{Kind: OpConstI32, I32: 0}
+				f := selfHostReuse(donor, donor)
+				f.Ops[10] = Op{Kind: OpConstI32, I32: 0}
 				return f
 			},
 			reason: "token argument is not a local load",
 		},
 		"the reuse arm stores the token twice": {
 			build: func() *Func {
-				f := selfHostReuse(donor, donor, donor)
+				f := selfHostReuse(donor, donor)
 				extra := []Op{{Kind: OpLoadLocal, I32: other}, {Kind: OpStoreLocal, I32: tok}}
-				f.Ops = append(f.Ops[:7:7], append(extra, f.Ops[7:]...)...)
+				f.Ops = append(f.Ops[:6:6], append(extra, f.Ops[6:]...)...)
 				return f
 			},
 			reason: "reuse arm does not derive the token from one local",
+		},
+		"the decline arm releases twice": {
+			build: func() *Func {
+				f := nativeReuse(donor, donor, donor)
+				extra := []Op{
+					{Kind: OpLoadLocal, I32: other},
+					{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
+					{Kind: OpDrop},
+				}
+				f.Ops = append(f.Ops[:10:10], append(extra, f.Ops[10:]...)...)
+				return f
+			},
+			reason: "decline arm releases more than one local",
 		},
 	}
 	for name, tc := range cases {
