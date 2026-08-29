@@ -69,6 +69,20 @@ the experimental proving ground. Rationale:
   cross-block analysis that we'd be reimplementing SSA badly — at which
   point doing it properly wins.
 
+## Re-evaluation input (2026-08-29)
+
+**Tripwire 4 has fired**, and two claims in this document are stale. See
+`docs/SSA-CUTOVER-PLAN.md` for the evidence: the ad-hoc control-flow analysis
+inventory in `internal/ir` (and its self-host mirrors), the measurement that
+32% of the IR's reference-count operations act on unnamed operand-stack values,
+and the readiness of the three SSA backends.
+
+Stale here: arm64 SSA is no longer "a subset" — 281 of 286 corpus programs
+compared, 0 refused, 0 divergences, and the known-divergences file is empty.
+The four wrong answers and 56 SIGSEGVs recorded below were fixed.
+
+Tripwires 1-3 remain unfired and unmeasured.
+
 ## What happens on the re-evaluation date
 
 On 2026-09-01, revisit with fresh numbers:
