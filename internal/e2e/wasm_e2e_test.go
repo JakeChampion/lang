@@ -9491,9 +9491,8 @@ function main(): i32 {
 
 // TestCmdLangComponentWrapCliWithTcpServer drives a TCP server
 // (tcp_listen / tcp_accept / tcp_close) through `-component-wrap-cli`
-// — the wasi:sockets path, composed adapter-free via
-// ComposeTcpServerCliRun (seven instances, four resource.drops, six
-// memory-trampoline methods). A listen+close program runs to
+// — the wasi:sockets path, composed adapter-free (seven instances,
+// four resource.drops, six memory-trampoline methods). A listen+close program runs to
 // completion under wasmtime's host sockets (exit 0); a listen+accept
 // program validates and links (it would block waiting for a client,
 // so it's only validated, not run).

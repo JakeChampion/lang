@@ -642,7 +642,7 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 
 // TestWasmPreview2TcpServerStdoutAdapterFree composes an adapter-free
 // TCP echo server that also print()s — TCP + CLI-stream stdout mixing.
-// ComposeTcpServerCliRun surfaces wasi:cli/stdout.get-stdout and reuses
+// The composed request surfaces wasi:cli/stdout.get-stdout and reuses
 // tcp_send's output-stream.blocking-write-and-flush lowering for the log
 // write. Built with `-target wasm32-wasi` (no adapter); a Go client round-trips
 // a payload, and the print output is verified in wasmtime's stdout.
@@ -758,7 +758,7 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 
 // TestWasmPreview2UdpSendAdapterFree drives the send-only UDP path:
 // `udp_send(host, port, data)` composed adapter-free (`-target wasm32-wasi`,
-// no -wasi-adapter) through ComposeUdpClientCliRun. A Go net.ListenPacket
+// no -wasi-adapter) through the unified composer. A Go net.ListenPacket
 // UDP socket stands in for the agent; the guest creates a socket, binds
 // an ephemeral port, connects to the listener, sends one datagram, and
 // exits 0. The test then reads the datagram off the socket and checks
@@ -766,7 +766,7 @@ func TestWasmPreview2TcpServerStdoutAdapterFree(t *testing.T) {
 // runs end-to-end on wasmtime's host sockets.
 // TestWasmPreview2UdpSendStdoutAdapterFree is the udp_send path plus
 // print() — a telemetry client that logs. UDP's datagram path isn't
-// io/streams, so ComposeUdpClientCliRun pulls in a fresh wasi:io/streams
+// io/streams, so the composed request pulls in a fresh wasi:io/streams
 // (output side) + wasi:cli/stdout for the log write. The datagram is
 // received by a Go socket and the log line lands on the guest's stdout.
 // runWasmtimeUDPFlaky runs a one-shot UDP-datagram preview2 component under
@@ -912,6 +912,168 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 		if got := string(buf[:n]); got != "ping-from-fern" {
 			t.Fatalf("datagram (iteration %d) = %q; want %q", i, got, "ping-from-fern")
 		}
+	}
+}
+
+// TestWasmPreview2TcpUdpAdapterFree puts both socket families in one
+// program: a TCP listener and a UDP datagram send. The unified composer
+// surfaces wasi:sockets/tcp and wasi:sockets/udp over one
+// instance-network, sharing the io/poll + io/streams instances; before
+// unification the shape-specific composers could each emit only their
+// own family. Runs under `wasmtime run -S inherit-network`; a Go
+// packet listener must receive the datagram.
+func TestWasmPreview2TcpUdpAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer pc.Close()
+	udpPort := pc.LocalAddr().(*net.UDPAddr).Port
+
+	// A free TCP port for the listen(); nothing connects to it.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	tcpPort := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "both.fern")
+	src := `function main(): i32 {
+    var s: i32 = tcp_listen(` + itoa(tcpPort) + `);
+    if (s < 0) { return 1; }
+    if (udp_send("127.0.0.1", ` + itoa(udpPort) + `, "tcp-and-udp") <= 0) {
+        tcp_close(s);
+        return 2;
+    }
+    tcp_close(s);
+    return 0;
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "both.component.wasm")
+	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (tcp+udp, no adapter): %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
+		t.Fatalf("validate: %v\n%s", err, out)
+	}
+	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools component wit: %v\n%s", err, wit)
+	}
+	for _, w := range []string{"wasi:sockets/tcp", "wasi:sockets/udp", "wasi:sockets/instance-network"} {
+		if !bytes.Contains(wit, []byte(w)) {
+			t.Errorf("expected %q import, got:\n%s", w, wit)
+		}
+	}
+
+	runWasmtimeUDPFlaky(t, "tcp+udp", "run", "-S", "inherit-network", componentPath)
+	pc.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 2048)
+	n, _, err := pc.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("read datagram: %v", err)
+	}
+	if got := string(buf[:n]); got != "tcp-and-udp" {
+		t.Fatalf("datagram = %q; want %q", got, "tcp-and-udp")
+	}
+}
+
+// TestWasmPreview2UdpFileAdapterFree folds the filesystem read
+// open-chain into the UDP composer: a program that reads a payload off
+// disk and ships it as a datagram (the log-shipper shape). It mixes
+// wasi:sockets/udp + wasi:filesystem/{types,preopens} + wasi:io/streams,
+// which the shape-specific UDP composer could not express. Runs under
+// `wasmtime run --dir`; the datagram must carry the file's bytes.
+func TestWasmPreview2UdpFileAdapterFree(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer pc.Close()
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	const want = "shipped-from-disk"
+	if err := os.WriteFile(filepath.Join(root, "payload.txt"), []byte(want), 0o644); err != nil {
+		t.Fatalf("write payload: %v", err)
+	}
+	srcPath := filepath.Join(dir, "ship.fern")
+	src := `function main(): i32 {
+    match (read_file("payload.txt")) {
+        Ok(content) => {
+            if (udp_send("127.0.0.1", ` + itoa(port) + `, content) <= 0) { return 2; }
+        },
+        Err(e) => { return 3; }
+    }
+    return 0;
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "ship.component.wasm")
+	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (udp+files, no adapter): %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
+		t.Fatalf("validate: %v\n%s", err, out)
+	}
+	wit, err := exec.Command("wasm-tools", "component", "wit", componentPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools component wit: %v\n%s", err, wit)
+	}
+	for _, w := range []string{"wasi:sockets/udp", "wasi:filesystem/types", "wasi:filesystem/preopens"} {
+		if !bytes.Contains(wit, []byte(w)) {
+			t.Errorf("expected %q import, got:\n%s", w, wit)
+		}
+	}
+
+	runWasmtimeUDPFlaky(t, "udp+files", "run", "-S", "inherit-network", "--dir", root+"::/", componentPath)
+	pc.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 2048)
+	n, _, err := pc.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("read datagram: %v", err)
+	}
+	if got := string(buf[:n]); got != want {
+		t.Fatalf("datagram = %q; want %q", got, want)
 	}
 }
 
@@ -1110,7 +1272,7 @@ func TestWasmPreview2TcpFileWriteAdapterFree(t *testing.T) {
 
 // TestWasmPreview2TcpStdinAdapterFree exercises TCP + stdin: a server
 // that reads a line from stdin (e.g. config) then listens, composed
-// adapter-free. ComposeTcpServerCliRun surfaces wasi:cli/stdin's
+// adapter-free. The composed request surfaces wasi:cli/stdin's
 // get-stdin (the stdin input-stream reuses the connection's blocking-read
 // lowering). Run with stdin piped; the echoed line confirms the read.
 func TestWasmPreview2TcpStdinAdapterFree(t *testing.T) {
