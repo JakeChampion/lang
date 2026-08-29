@@ -239,3 +239,86 @@ func reachableBlocks(f *Func) map[*Block]map[*Block]bool {
 	}
 	return out
 }
+
+// ParamMode is the LOCAL evidence about one parameter's ownership: what
+// this function's own body does to it, with no knowledge of its callers
+// or callees.
+//
+// It is the leaf of the interprocedural fixpoint #7786 needs, not the
+// answer. Roc's equivalent (src/lir/arc_solve.zig) starts every
+// parameter borrowed and flips it to owned when an occurrence demands a
+// unit, then propagates through call sites to a fixpoint. This reports
+// the demand; the propagation is not here.
+type ParamMode struct {
+	Index int
+	Value Value
+
+	// Pointer is true when the parameter is a heap address, so reference
+	// counting can apply to it at all. A scalar parameter cannot be
+	// released and is reported for completeness rather than interest.
+	Pointer bool
+
+	// Released is true when the body releases the parameter — a demand
+	// for a unit, and the local evidence that it is CONSUMED rather than
+	// borrowed. Retained is the mirror.
+	//
+	// Both are reported rather than collapsed into one verdict, and the
+	// corpus says why. Of 3897 pointer parameters, 53 are declared
+	// borrowed and yet released — and 52 of those are ALSO retained.
+	// They are balanced pairs: the body retains a borrowed parameter for
+	// a local use and releases it when done, demanding no unit from the
+	// caller. Reading Released alone would call all 53 consumed, and be
+	// wrong about 52.
+	//
+	// So the rule a fixpoint should start from is not "released" but
+	// "released without a matching retain". Roc's phrasing is that a
+	// parameter flips to owned when an occurrence DEMANDS A UNIT, and a
+	// balanced pair demands nothing.
+	//
+	// The remaining one was __query_pair in std/url.fern, which threads
+	// a Map parameter (`m = m.insert(...)`) and so takes the
+	// reassignment's overwrite dec. Map is deliberately outside
+	// computeConsumedParams' promotion — "consumedDropWired keeps Map /
+	// slice / unwired shapes out (their deep drop is incomplete)" — so
+	// it gets no compensating entry retain, which is the shape
+	// rc_analysis.go's own comment calls an over-release. It is not one:
+	// 50 rounds of query_parse over a five-pair query returns 0 from
+	// __rc_underflow_count and leaves leakcheck at 950 allocs / 950
+	// frees / 0 live bytes. Recorded because the reasoning says bug and
+	// the measurement says no, and the measurement wins.
+	Released bool
+	Retained bool
+}
+
+// ParamModes reports the local ownership evidence for each of f's
+// parameters, in parameter order.
+//
+// "Acts on" follows the pass-through closure: `__fern_rc_inc` and
+// `__fern_rc_dec` hand back the pointer they were given, so a release of
+// an inc's result is a release of the parameter.
+func ParamModes(f *Func) []ParamMode {
+	out := make([]ParamMode, 0, len(f.Params))
+	uses := BuildUses(f)
+	for i, p := range f.Params {
+		m := ParamMode{Index: i, Value: p}
+		if i < len(f.ParamAddrs) {
+			m.Pointer = f.ParamAddrs[i]
+		}
+		for _, v := range aliasesOf(f, uses, p) {
+			for _, u := range uses.Of(v) {
+				o := u.Op
+				if o == nil || o.Kind != OpCall || len(o.Args) == 0 || o.Args[0].ID != v.ID {
+					continue
+				}
+				switch o.Str {
+				case "__fern_rc_dec":
+					m.Released = true
+				case "__fern_rc_inc":
+					m.Retained = true
+				}
+			}
+		}
+		out = append(out, m)
+	}
+	return out
+}

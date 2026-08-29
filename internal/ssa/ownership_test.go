@@ -69,3 +69,50 @@ func TestRCSitesFollowsTheBackEdgeNotTheText(t *testing.T) {
 			"after the release — this is the case a textual last-occurrence test gets wrong (#7544)")
 	}
 }
+
+// A parameter the body releases is locally evidenced as consumed; one it
+// only reads is not.
+func TestParamModesSeesAReleaseOfAParameter(t *testing.T) {
+	f := &Func{Name: "f"}
+	p0 := f.AddParam() // released
+	p1 := f.AddParam() // only read
+	f.ParamAddrs = []bool{true, true}
+	b := f.NewBlock()
+	f.Entry = b
+	dec := f.AddOpNoResult(b, OpCall, p0)
+	dec.Str = "__fern_rc_dec"
+	f.AddOp(b, OpLoad, p1)
+	b.Term = Terminator{Kind: TermRet}
+
+	modes := ParamModes(f)
+	if len(modes) != 2 {
+		t.Fatalf("want two params, got %d", len(modes))
+	}
+	if !modes[0].Released {
+		t.Error("a parameter the body releases must show the release")
+	}
+	if modes[1].Released {
+		t.Error("a parameter the body only reads must not show a release")
+	}
+}
+
+// The release can be of a pass-through alias rather than the parameter
+// value itself — retain, then release the retain's result. That is the
+// same object, and missing it would report the parameter as borrowed.
+func TestParamModesFollowsThePassThroughAlias(t *testing.T) {
+	f := &Func{Name: "f"}
+	p := f.AddParam()
+	f.ParamAddrs = []bool{true}
+	b := f.NewBlock()
+	f.Entry = b
+	inc := f.AddOp(b, OpCall, p)
+	b.Ops[len(b.Ops)-1].Str = "__fern_rc_inc"
+	dec := f.AddOpNoResult(b, OpCall, inc) // releases the INC's result
+	dec.Str = "__fern_rc_dec"
+	b.Term = Terminator{Kind: TermRet}
+
+	modes := ParamModes(f)
+	if !modes[0].Retained || !modes[0].Released {
+		t.Errorf("a release of the retain's result is a release of the parameter, got %+v", modes[0])
+	}
+}
