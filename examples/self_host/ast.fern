@@ -345,7 +345,10 @@ pub struct StmtBreak { tag: i32, line: i32, col: i32, label: string }
 
 pub struct StmtContinue { tag: i32, line: i32, col: i32, label: string }
 
-pub struct StmtUnknown { kind: string }
+// StmtUnknown is the parser's statement-level error sentinel. `line`/`col`
+// are the position of the token the parser was looking at when it gave up,
+// so the P001 raised for it points at the source instead of at line 0.
+pub struct StmtUnknown { kind: string, line: i32, col: i32 }
 
 // StmtDefer holds an action statement to run when the scope that executed it
 // finishes: the enclosing loop iteration for a defer in a loop body, else the
