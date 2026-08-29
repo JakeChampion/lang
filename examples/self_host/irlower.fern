@@ -625,8 +625,11 @@ pub struct LowerState {
     // it is not folded into aliased_names.
     borrowed_names: string[],
     // xblock_pending: cross-block reuse pairings available to a construction
-    // NESTED in the statement currently being lowered — encoded "recip|donor"
-    // (recipient local name | dead block-top donor local name). lower_block sets
+    // NESTED in the statement currently being lowered — encoded
+    // "recip-site|donor" (the recipient's binding SITE key | the dead block-top
+    // donor local name; the site because xblock_donor_for takes the first
+    // matching row and sibling if-arms deliberately restart from the same
+    // consumed set, so two arms can mint rows under one spelling). lower_block sets
     // these before lowering a nested if/while/block whose body contains a
     // cross-block reuse recipient, and clears them after; the recursive lower_block
     // of that body consumes a matching entry when it constructs the recipient.
@@ -28052,7 +28055,7 @@ function xblock_scan_body(body: ast.Stmt[], b_stmts: ast.Stmt[], k: i32, structs
                                 // "dname|dtype" — keep the pair 3-part, consume the bare name.
                                 var xbar: i32 = 0;
                                 while (xbar < donor.len() && donor[xbar] != b'|') { xbar = xbar + 1; }
-                                pairs = pairs.append(rv.name + "|" + donor);
+                                pairs = pairs.append(reclaim_site_key_of(rv.name, rv.line, rv.col) + "|" + donor);
                                 cons = cons.append(slice_unchecked(donor, 0, xbar));
                             }
                         }
@@ -28065,7 +28068,7 @@ function xblock_scan_body(body: ast.Stmt[], b_stmts: ast.Stmt[], k: i32, structs
                     ast.ExprTuple(tl) => {
                         var tdonor: string = cross_tuple_construction_donor(b_stmts, k, tl.elements.len(), rv.name, cons);
                         if (tdonor.len() > 0) {
-                            pairs = pairs.append(rv.name + "|" + tdonor + "|");
+                            pairs = pairs.append(reclaim_site_key_of(rv.name, rv.line, rv.col) + "|" + tdonor + "|");
                             cons = cons.append(tdonor);
                         }
                     },
@@ -28104,8 +28107,8 @@ function xblock_pairings_for(b_stmts: ast.Stmt[], structs: parser.StructDecl[], 
     return acc.pairs;
 }
 
-// xblock_donor_for returns the donor paired with recipient `recip` in `pending`,
-// or "" (the "recip|donor" entries split on '|', 124).
+// xblock_donor_for returns the donor paired with the recipient bound at site
+// `recip` in `pending`, or "" (the "recip-site|donor" entries split on '|', 124).
 function xblock_donor_for(pending: string[], recip: string): string {
     var i: i32 = 0;
     while (i < pending.len()) {
@@ -28151,7 +28154,8 @@ pub function rc_plan_disabled(): boolean {
     return false;
 }
 
-// xblock_without returns `pending` with any entry for recipient `recip` removed.
+// xblock_without returns `pending` with any entry for the recipient bound at
+// site `recip` removed.
 function xblock_without(pending: string[], recip: string): string[] {
     var out: string[] = [];
     var i: i32 = 0;
@@ -28326,11 +28330,17 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
             // enclosing block paired (xblock_pending) with a dead block-top donor —
             // reuse that donor's box in place (release_prior, reclaimable-gated
             // inside emit_cross_struct_reuse), then drop the consumed pairing.
+            // Keyed on the recipient's binding SITE, not its name (#7253):
+            // xblock_donor_for takes the FIRST row whose key matches, and
+            // xblock_pairings_for deliberately restarts the else arm from the same
+            // consumed set, so two sibling arms can mint rows under one spelling.
+            // A name key then hands one arm's donor to the other arm's recipient,
+            // and the emitters write through that donor's box in place.
             var xbname: string = "";
             var xb_kind: i32 = 0;   // 1 = struct construction, 2 = tuple construction
             match (stmts[i]) {
                 ast.StmtVar(rv) => {
-                    xbname = rv.name;
+                    xbname = reclaim_site_key_of(rv.name, rv.line, rv.col);
                     match (rv.init) {
                         ast.ExprStructLit(_) => { xb_kind = 1; },
                         ast.ExprTuple(_) => { xb_kind = 2; },
@@ -61971,9 +61981,9 @@ function reuse_pos_claimed(existing: string[], entry: string): boolean {
     return false;
 }
 
-// xblock_recip_pos: the construction-lit "line:col" of recipient `recip`
-// inside if-statement `iff`'s then / else arm (the cross-block pairing places
-// the recipient one block below the donor). "" if not found.
+// xblock_recip_pos: the construction-lit "line:col" of the recipient bound at
+// site `recip` inside if-statement `iff`'s then / else arm (the cross-block
+// pairing places the recipient one block below the donor). "" if not found.
 function xblock_recip_pos(iff: ast.StmtIf, recip: string): string {
     var p: string = xblock_recip_pos_in(iff.then_body, recip);
     if (p.len() > 0) { return p; }
@@ -61983,7 +61993,7 @@ function xblock_recip_pos_in(stmts: ast.Stmt[], recip: string): string {
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                if (v.name == recip) {
+                if (reclaim_site_key_of(v.name, v.line, v.col) == recip) {
                     match (v.init) {
                         ast.ExprStructLit(sl) => { return util.i32_to_string(sl.line) + ":" + util.i32_to_string(sl.col); },
                         ast.ExprTuple(tu) => { return util.i32_to_string(tu.line) + ":" + util.i32_to_string(tu.col); },
