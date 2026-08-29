@@ -371,14 +371,15 @@ function main(): i32 { return f(); }`,
 			},
 		},
 		{
-			// CHAIN refusal, string limb: b borrows a (cancelled on both
-			// sides), and c aliasing b is refused on both sides (a cancelled
-			// alias sources nothing). Native keeps c's retain; the self-host
-			// never granted it — a re-aliased alias loses its "STR:" credit
-			// (the credit collector's own chain refusal), and the retain is
-			// co-extensive with the credit. The divergence is the credit
-			// model's, not the cancellation's.
-			name: "dead-alias-string-chain-refused",
+			// CHAIN, string limb: b borrows a (cancelled on both sides) and c
+			// aliases b. This row carried a pinned divergence — native kept c's
+			// retain and the self-host granted none, because a re-aliased alias
+			// lost its "STR:" credit to the collector's chain refusal and the
+			// retain is co-extensive with the credit. #7386 credits the chain, so
+			// the self-host now emits the same `4:2=c` and the divergence is gone.
+			// Kept as a CONVERGED row: it is the pin that says the retain matches
+			// native, which is what a new alias limb is most likely to move.
+			name: "dead-alias-string-chain",
 			src: `function f(): i32 {
 	var a: string = "hi" + "!";
 	var b: string = a;
@@ -387,9 +388,6 @@ function main(): i32 { return f(); }`,
 	return n;
 }
 function main(): i32 { return f(); }`,
-			diverge: map[string]map[string]divergence{
-				"f": {"aliasBindIncs": {native: "4:2=c", selfhost: ""}},
-			},
 		},
 		{
 			// Conditional (if-arm) alias, string limb: native's walker visits

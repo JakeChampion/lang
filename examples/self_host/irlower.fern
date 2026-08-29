@@ -25811,6 +25811,12 @@ function body_unsafe_for_clo_alias(stmts: ast.Stmt[], name: string, borrowable: 
 // alias site. Granting one without the other is the double free — forgiving
 // alone leaves two slots sweeping one box at rc 1; copying alone leaves the
 // source uncredited and the box unreleased.
+//
+// This asks the three conditions of ONE bind. alias_chain_sites_of below asks
+// them of a whole CHAIN, which is a different question: `var t = p; var u = t;`
+// shares one box across three names, and asking them one at a time refuses all
+// of them, because the middle link's bare-ident use in the next bind reads as an
+// escape (#7386).
 // alias_ok_holds_name: any site key in `alias_ok` is for the variable `name`. Used
 // by the alias-REASSIGN forgiveness, which has only the target's name to key on.
 function alias_ok_holds_name(alias_ok: string[], name: string): boolean {
@@ -25904,33 +25910,69 @@ function str_cand_site_of(cands: string[], name: string): string {
 
 function alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => {
-                match (v.init) {
-                    ast.ExprIdent(aid) => {
-                        if (aid.name == src
-                            && util.index_of_str(body_assign_targets(body), v.name) < 0
-                            && !body_unsafe_for(body, v.name, borrowable, recv_borrow)) {
-                            a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
-                        }
-                    },
-                    _ => {}
-                }
-            },
-            ast.StmtIf(f) => {
-                a = alias_bind_sites_of(f.then_body, src, borrowable, recv_borrow, body, a);
-                a = alias_bind_sites_of(f.else_body, src, borrowable, recv_borrow, body, a);
-            },
-            ast.StmtWhile(w) => { a = alias_bind_sites_of(w.body, src, borrowable, recv_borrow, body, a); },
-            ast.StmtFor(fo) => { a = alias_bind_sites_of(fo.body, src, borrowable, recv_borrow, body, a); },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { a = alias_bind_sites_of(arm.body, src, borrowable, recv_borrow, body, a); }
-            },
-            _ => {}
+    var found: string[] = bare_alias_bind_sites_of(stmts, src, []);
+    var reasg: string[] = body_assign_targets(body);
+    var fi: i32 = 0;
+    while (fi < found.len()) {
+        var nm: string = reclaim_site_name(found[fi]);
+        if (util.index_of_str(reasg, nm) < 0
+            && !body_unsafe_for(body, nm, borrowable, recv_borrow)) {
+            a = push_str_unique(a, found[fi]);
         }
+        fi = fi + 1;
     }
     return a;
+}
+
+// alias_chain_sites_of is alias_bind_sites_of over the whole CHAIN — `src` -> `v`
+// -> `u` -> … — for the limbs where a chain is measured safe to credit (#7386).
+//
+// The closure has to be walked RAW, because a link cannot be vetted before the
+// links below it are known: `var u = t` is exactly the bare-ident use of `t` that
+// the escape scan reads as an escape, so vetting each site on its own refuses
+// every chain and, with it, the source. The set is then vetted at once with the
+// chain's own binds forgiven.
+//
+// ALL-OR-NOTHING on purpose: one box is shared by every link, so a link that
+// escapes leaves a reference nothing accounts for and taints every release in the
+// set. Crediting the ones that happen to check out would release the box under
+// that escapee. Only the LINKS are checked here; the source's own escape gate
+// belongs to the caller, which passes this result back in as its alias_ok.
+//
+// NOT wired to the tuple limbs. Both perform move-on-alias credit SURGERY on the
+// alias row — the "TUPRCS:" deep class migrates to the alias at a move — and a
+// two-link rc-tuple chain measures `__rc_underflow() != 0` under this credit
+// while its census balances at `200/200 live_bytes 0`. The interaction is not
+// established, so the tuple chain stays refused and is filed rather than guessed
+// at; `tuple_alias_chain_refused` pins it.
+function alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: ast.Stmt[], acc: string[]): string[] {
+    var sites: string[] = [];
+    var names: string[] = [src];
+    var ni: i32 = 0;
+    while (ni < names.len()) {
+        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], []);
+        var fi: i32 = 0;
+        while (fi < found.len()) {
+            if (util.index_of_str(sites, found[fi]) < 0) {
+                sites = sites.append(found[fi]);
+                names = names.append(reclaim_site_name(found[fi]));
+            }
+            fi = fi + 1;
+        }
+        ni = ni + 1;
+    }
+    if (sites.len() == 0) { return acc; }
+    var reasg: string[] = body_assign_targets(body);
+    var vi: i32 = 1;
+    while (vi < names.len()) {
+        if (util.index_of_str(reasg, names[vi]) >= 0) { return acc; }
+        if (body_unsafe_for_alias(body, names[vi], borrowable, recv_borrow, sites)) { return acc; }
+        vi = vi + 1;
+    }
+    var out: string[] = acc;
+    var si: i32 = 0;
+    while (si < sites.len()) { out = push_str_unique(out, sites[si]); si = si + 1; }
+    return out;
 }
 
 // strarr_alias_bind_sites_of is alias_bind_sites_of for the "SARR:" class,
@@ -26016,12 +26058,16 @@ function rcenum_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: 
     return a;
 }
 
-// opt_alias_bind_all_sites_of returns the binding-site key of EVERY plain
-// `var v = src` bare-ident bind in `body`, vetted or not. One walk answers both
-// questions the unmatched-Option gate asks — which aliases may share the credit,
-// and whether any alias was left out — so the two cannot come from different
-// traversals and disagree.
-function opt_alias_bind_all_sites_of(stmts: ast.Stmt[], src: string, acc: string[]): string[] {
+// bare_alias_bind_sites_of returns the binding-site key of EVERY plain
+// `var v = src` bare-ident bind in `body`, vetted or not — the raw shape both
+// alias questions are asked about.
+//
+// The unmatched-Option gate uses it so "which aliases may share the credit" and
+// "was any alias left out" come from one traversal and cannot disagree.
+// alias_bind_sites_of uses it to walk the CHAIN: a link is only discoverable
+// before it has been vetted, because vetting a link depends on the links below
+// it (#7386).
+function bare_alias_bind_sites_of(stmts: ast.Stmt[], src: string, acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -26034,13 +26080,13 @@ function opt_alias_bind_all_sites_of(stmts: ast.Stmt[], src: string, acc: string
                 }
             },
             ast.StmtIf(f) => {
-                a = opt_alias_bind_all_sites_of(f.then_body, src, a);
-                a = opt_alias_bind_all_sites_of(f.else_body, src, a);
+                a = bare_alias_bind_sites_of(f.then_body, src, a);
+                a = bare_alias_bind_sites_of(f.else_body, src, a);
             },
-            ast.StmtWhile(w) => { a = opt_alias_bind_all_sites_of(w.body, src, a); },
-            ast.StmtFor(fo) => { a = opt_alias_bind_all_sites_of(fo.body, src, a); },
+            ast.StmtWhile(w) => { a = bare_alias_bind_sites_of(w.body, src, a); },
+            ast.StmtFor(fo) => { a = bare_alias_bind_sites_of(fo.body, src, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = opt_alias_bind_all_sites_of(arm.body, src, a); }
+                for arm in m.arms { a = bare_alias_bind_sites_of(arm.body, src, a); }
             },
             _ => {}
         }
@@ -26065,7 +26111,7 @@ function opt_alias_bind_all_sites_of(stmts: ast.Stmt[], src: string, acc: string
 // The alias takes the class credit qualified by "NODEEP:", never the deep
 // release — see credit_opt_alias_sites.
 function opt_alias_bind_sites_of(body: ast.Stmt[], src: string): string[] {
-    var all: string[] = opt_alias_bind_all_sites_of(body, src, []);
+    var all: string[] = bare_alias_bind_sites_of(body, src, []);
     var out: string[] = [];
     var i: i32 = 0;
     while (i < all.len()) {
@@ -43407,7 +43453,7 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
 function opt_unmatched_esc_ok(stmts: ast.Stmt[], name: string, key: string, plan_on: boolean, plan_fe: string[], alias_ok: string[]): boolean {
     if (!plan_on) { return !body_unsafe_for_alias(stmts, name, [], [], alias_ok); }
     return util.index_of_str(plan_fe, key) >= 0 && !name_is_match_scrutinee(stmts, name)
-        && opt_alias_bind_all_sites_of(stmts, name, []).len() == alias_ok.len();
+        && bare_alias_bind_sites_of(stmts, name, []).len() == alias_ok.len();
 }
 
 // unmatched_optopt_ann_is / unmatched_optopt_init_is_fresh: the NESTED-OPTION
@@ -70038,7 +70084,7 @@ while (si < strs.len()) {
     // deep release here to withhold from it, which is what makes this simpler
     // than the struct and rc-tuple cases rather than merely different.
     var sal: string[] = [];
-    sal = alias_bind_sites_of(body, snm, borrowable, recv_borrow, body, sal);
+    sal = alias_chain_sites_of(body, snm, borrowable, recv_borrow, body, sal);
     // The alias REASSIGN (`t = s`) joins the alias BIND, on the same terms: the
     // assignment now RETAINS (keyed on the "STRALIASSRC:" row below), so `t`
     // holds a counted share rather than a borrow. Its site goes into `sal` so
@@ -70626,7 +70672,7 @@ while (i < fresh.len()) {
     // slots holding plain SCALARS. `__fern_i32_to_string` binds the negated
     // input, so on INT_MIN the slot held 0x80000000: non-zero, even, above
     // 0x10000, past every __fern_rc_inc guard, dereferencing 0x7FFFFFF8.
-    var sal: string[] = alias_bind_sites_of(body, fnm, borrowable, recv_borrow, body, []);
+    var sal: string[] = alias_chain_sites_of(body, fnm, borrowable, recv_borrow, body, []);
     // Step-2 routing, struct family: the ESCAPE conjunct is the plan's
     // per-site verdict (free_eligible_sites_of; the alias forgiveness is
     // the plan's own #7282 arithmetic, sound because the struct alias

@@ -225,31 +225,90 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// binding escapes as a bare ident, so it is not an eligible alias site
 			// and t keeps no credit either. It leaks rather than over-releasing, and
 			// is pinned so widening the alias set later has to face it deliberately.
-			name: "struct_alias_chain_refused",
+			name: "struct_alias_chain",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { return P { xs: [i, i + 1] }; }
 function round(i: i32): i32 { var t: P = mk(i); var v: P = t; var u: P = v; return u.xs[0] + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 23, allocs: 200, frees: 0,
+			want: 23, allocs: 200, frees: 200,
 		},
 		{
 			// The same chain, reading the SOURCE rather than the last link. It
-			// frees exactly HALF (200/100) where the row above frees nothing, so
-			// the refusal is not all-or-nothing: a live read of `t` keeps its own
-			// credit while the chain still costs the aliased buffer.
-			//
-			// Worth its own row because the row above cannot tell a partial fix
-			// from no fix. A chain widening has to move BOTH to 200/200; moving
-			// only this one, or moving either past 200 frees, is the over-release
-			// direction — which no byte count here would show, hence the 99 guard.
-			// #7386, whose as-pattern-binder half is already fixed (see
-			// struct_as_pattern_binder below); the explicit chain is what is left.
-			name: "struct_alias_chain_source_read_half",
+			// used to free exactly HALF (200/100) where the row above freed
+			// nothing, which is why it has its own row: the row above cannot tell
+			// a partial fix from no fix, and the prescription written here was
+			// that a chain widening has to move BOTH to 200/200 while moving
+			// either PAST 200 frees is the over-release direction. #7386 does
+			// exactly that, and the 99 guard is what says so rather than the byte
+			// count.
+			name: "struct_alias_chain_source_read",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { return P { xs: [i, i + 1] }; }
 function round(i: i32): i32 { var t: P = mk(i); var v: P = t; var u: P = v; return t.xs[0] + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 23, allocs: 200, frees: 100,
+			want: 23, allocs: 200, frees: 200,
+		},
+		{
+			// THREE links. The closure is transitive, so a chain does not have a
+			// length the rule stops at; two links passing while three leak would
+			// mean the walk terminates early rather than that the set is proven.
+			name: "struct_alias_chain_three_links",
+			src: `struct P { xs: i32[] }
+function mk(i: i32): P { return P { xs: [i, i + 1] }; }
+function round(i: i32): i32 { var t: P = mk(i); var v: P = t; var u: P = v; var z: P = u; return z.xs[0] + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 23, allocs: 200, frees: 200,
+		},
+		{
+			// The chain lives in an IF ARM while the source outlives it. Every
+			// link retains on the taken path and releases there, and the source
+			// sweeps unconditionally — the branch-dependence the duplication
+			// model exists for, one link deeper.
+			name: "string_alias_chain_conditional",
+			src: `function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 { var t: string = w("ab"); var n: i32 = 0; if (i % 2 == 0) { var v: string = t; var u: string = v; n = u.len(); } return n + t.len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 5, allocs: 200, frees: 200,
+		},
+		{
+			// REFUSED: the LAST link is returned, so the box outlives the frame.
+			// All-or-nothing is what this row is for — the escape is on `u`, and
+			// it has to cost `t` and `v` their credit too, because all three name
+			// the box the caller now holds.
+			name: "string_alias_chain_link_returned_refused",
+			src: `function w(a: string): string { return a + "!"; }
+function esc(i: i32): string { var t: string = w("ab"); var v: string = t; var u: string = v; return u; }
+function round(i: i32): i32 { return esc(i).len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 21, allocs: 200, frees: 0,
+		},
+		{
+			// REFUSED: a MIDDLE link is stored into a container that outlives it,
+			// so the escape is not at either end of the chain. Freeing the box at
+			// the ends would strand `held`'s element pointer.
+			name: "string_alias_chain_middle_link_held_refused",
+			src: `function w(a: string): string { return a + "!"; }
+function sink(xs: string[]): i32 { return xs.len(); }
+function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; var u: string = v; var held: string[] = [v]; return u.len() + sink(held) + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 38, allocs: 300, frees: 100,
+		},
+		{
+			// REFUSED DELIBERATELY, and this row is the reason the chain credit is
+			// wired per limb rather than into alias_bind_sites_of itself.
+			//
+			// The tuple limbs perform move-on-alias credit SURGERY: at a move the
+			// deep "TUPRCS:" class migrates from the source to the alias row. Under
+			// a chain credit this shape measures `__rc_underflow() != 0` — an
+			// FERN_RC_TRACE run shows one retain for two links, so three decs land
+			// on an rc of two — while its census reads a clean `200/200
+			// live_bytes 0`. The interaction is not established, so the tuple chain
+			// stays refused rather than guessed at (#7386 follow-up), and this row
+			// is what says the exclusion is intentional.
+			name: "tuple_alias_chain_refused",
+			src: `function round(i: i32): i32 { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; return u.0 + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 23, allocs: 200, frees: 0,
 		},
 		{
 			// AN ENUM with an rc payload, aliased. This row pins the #7368
@@ -314,8 +373,8 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// conservatively (this row measured 100/0 then). The plan's verdict
 			// (struct routing wave) forgives the chain for this SCALAR-ONLY
 			// struct and the cell is clean; the rc-FIELD chain is still refused
-			// (struct_alias_chain_refused above holds at 200/0), so the chain
-			// limitation persists exactly where a field buffer is at stake.
+			// The chain rule it desugars to is credited now (#7386), so this row
+			// and struct_alias_chain above stand or fall together.
 			name: "struct_as_pattern_binder",
 			src: `struct P { x: i32, y: i32 }
 function round(i: i32): i32 {
@@ -613,11 +672,11 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			// credit either. Conservative — it leaks rather than over-releasing — and
 			// pinned so that widening the alias set later has to face this case
 			// deliberately instead of discovering it as a double free.
-			name: "string_alias_chain_refused",
+			name: "string_alias_chain",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; var u: string = v; return u.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 200, frees: 0,
+			want: 21, allocs: 200, frees: 200,
 		},
 		{
 			// REFUSED: a REASSIGNED alias does not hold the box the credit describes
