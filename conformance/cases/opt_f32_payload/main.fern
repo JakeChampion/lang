@@ -1,0 +1,116 @@
+// An f32 payload in an Option / Result. The self-host refused the whole module:
+// f64 was admitted at both gates and f32 was not, so `match (mk())` bailed while
+// the identical f64 program lowered, and native compiled and ran both.
+//
+// Two independent gates had the same gap:
+//   the match-arm payload admission — `Option[f32]` / `Result[f32, E]` matched
+//   anywhere (a call, a local, a nested Option);
+//   is_leaksafe_payload — which additionally refused an `Option[f32]` STRUCT
+//   FIELD the moment such a struct was constructed.
+//
+// f32 rides the same 8-byte slot as f64 here (elem_ty_is_f64slot), so the bound
+// payload loads at 64 bits and marks f64. `f32` marks f32 ON TOP, which keys
+// "f32.<m>" dispatch — hence the to_string arms below: they read a value whose
+// f32 and f64 renderings DIFFER, so dropping that mark makes this case disagree
+// with native rather than passing quietly.
+//
+// `float` is deliberately NOT f32-tagged: it is the f64 alias, and tagging it
+// would round its arithmetic through a demote/promote pair (#5882). The
+// float_payload arm pins that it still renders at f64 precision.
+//
+// Sentinels are 251-253, above the `% 113` the success path returns.
+import "std/float";
+
+struct H { o: Option[f32], n: i32 }
+struct F { o: Option[float], n: i32 }
+
+function mk_res(i: i32): Result[f32, string] {
+    if (i > 0) { return Ok(0.5 as f32 * i as f32); }
+    return Err("nonpositive");
+}
+
+function mk_opt(i: i32): Option[f32] {
+    if (i > 0) { return Some(1.25 as f32 * i as f32); }
+    return None;
+}
+
+// The Ok arm of a Result[f32, E] scrutinised straight off the call.
+function res_ok(i: i32): i32 {
+    match (mk_res(i + 1)) { Ok(a) => { return a as i32; }, Err(m) => { return 253; } }
+    return 253;
+}
+
+// The Err arm of the same Result — the payload type that already lowered, kept
+// alongside so a narrowing that only kept Err is visible.
+function res_err(i: i32): i32 {
+    match (mk_res(0 - 1)) { Ok(a) => { return 253; }, Err(m) => { return m.len(); } }
+    return 253;
+}
+
+// A LOCAL of Option[f32] rather than a direct call scrutinee.
+function opt_local(i: i32): i32 {
+    var o: Option[f32] = mk_opt(i + 1);
+    match (o) { Some(a) => { return (a * 2 as f32) as i32; }, None => { return 253; } }
+    return 253;
+}
+
+// Option[Option[f32]] — recurses through the same payload admission.
+function opt_nested(i: i32): i32 {
+    var o: Option[Option[f32]] = Some(mk_opt(i + 1));
+    match (o) {
+        Some(inner) => { match (inner) { Some(a) => { return a as i32; }, None => { return 253; } } },
+        None => {}
+    }
+    return 253;
+}
+
+// An Option[f32] STRUCT FIELD — the is_leaksafe_payload half. Constructing one
+// was enough to refuse the module, so the None position is exercised too.
+function f32_field(i: i32): i32 {
+    var h: H = H { o: Some(2.5 as f32 * i as f32), n: i };
+    var e: H = H { o: None, n: i };
+    var got: i32 = 0;
+    match (h.o) { Some(a) => { got = a as i32; }, None => { return 253; } }
+    match (e.o) { Some(a) => { return 252; }, None => { got = got + 1; } }
+    return got;
+}
+
+// f32 PRECISION: 3.14159 * 2.5 * 2.5 renders 19.634937 at f32 width and
+// 19.6349375 at f64, so this arm disagrees with native if the bound payload
+// loses its f32 mark and dispatches "f64.to_string".
+//
+// Scrutinised straight off the call. The sibling spelling `var o: Option[f32] =
+// Some(<f32 expr>)` binds the same payload but renders it at f64 precision for a
+// reason outside this case: elem_type_tag has no f32 arm, so the slot's recorded
+// Option type collapses to Option[f64]. That is a separate pre-existing defect
+// (it hits bare tuple and array elements too, with no Option involved) — #7756.
+// opt_local below therefore checks that spelling by VALUE, not by rendering.
+function f32_precision(i: i32): i32 {
+    match (mk_prec(1)) { Some(a) => { return a.to_string().len(); }, None => {} }
+    return 253;
+}
+
+function mk_prec(i: i32): Option[f32] {
+    if (i > 0) { return Some(3.14159 as f32 * 2.5 as f32 * 2.5 as f32); }
+    return None;
+}
+
+// `float` is the f64 alias — this pins that it renders at f64 precision, i.e.
+// that the shared 8-byte slot did NOT pick up the f32 tag.
+function float_payload(i: i32): i32 {
+    var f: F = F { o: Some(3.14159 * 2.5 * 2.5), n: i };
+    match (f.o) { Some(b) => { return b.to_string().len(); }, None => {} }
+    return 253;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        acc = acc + res_ok(i) + res_err(i) + opt_local(i) + opt_nested(i)
+            + f32_field(i) + f32_precision(i) + float_payload(i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}
