@@ -12,9 +12,9 @@
 // stock driver so the CI warm cache covers it (see the `warm` matrix in
 // .github/workflows/test-e2e-selfhost.yml) and the copies cannot drift.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./wasm_ir";
 
 function main(): i32 {
@@ -30,8 +30,7 @@ function main(): i32 {
         if (av[ai] == "-decide") { decide = true; }
         ai = ai + 1;
     }
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
     var mwb: parser.Module = parser.module_with_builtins(mod);
     if (decide) {
         // emit_module_run_io's own decision (component=true, io=true), reused

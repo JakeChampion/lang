@@ -10,9 +10,9 @@
 //
 // Reads a module from stdin so the companion Go test supplies the corpus.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 
 function bound_at(bt: string[], i: i32): string {
     if (i < bt.len()) { return bt[i]; }
@@ -33,8 +33,7 @@ function pairs_of(fd: parser.FuncDecl): string {
 }
 
 function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var mod: parser.Module = rundriver.parse_stdin("impl_bounds_run");
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fd: parser.FuncDecl = mod.funcs[i];

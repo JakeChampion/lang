@@ -8,14 +8,13 @@
 // diagnostics that name a spelling to write, the message text (#7018).
 // Exits 1 when any diagnostic was emitted, 0 otherwise.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./checker";
 
 function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var mod: parser.Module = rundriver.parse_stdin("checker_codes_run");
     var mt: checker.ModuleTypes = checker.check_module(mod);
     var i: i32 = 0;
     while (i < mt.diags.len()) {

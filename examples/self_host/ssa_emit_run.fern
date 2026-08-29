@@ -6,9 +6,9 @@
 // asserting the process exit code matches the program's value — end-to-end
 // proof that AST → SSA → optimise → emit → execute preserves semantics.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./ssa";
 import "./ssa_x86";
 import "./ssa_arm64";
@@ -36,7 +36,7 @@ function main(): i32 {
     }
 
 
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
+    var mod: parser.Module = rundriver.parse_stdin("ssa_emit_run");
     mod = parser.fill_default_args_module(mod);
     // Several lowerings (build_func) emit calls to injected runtime helper
     // functions (__ssa_*) defined in pure Fern (ssa.ssa_helpers_src) — the map

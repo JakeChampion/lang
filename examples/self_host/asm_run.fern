@@ -22,17 +22,13 @@
 // Despite the "demo" framing above this is a WORKHORSE: the *_ir_test.go
 // suites build it to exercise the IR path end-to-end. It is not deletable.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./asm_ir";
 
 function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    // This driver resolves no imports; say so loudly rather than letting a
-    // broken program produce a verdict that reads like a compiler gap.
-    var _unresolved: boolean = parser.warn_unresolved_imports(mod, "asm_run");
+    var mod: parser.Module = rundriver.parse_stdin("asm_run");
     var emitted: string = asm_ir.emit_module_or_error(parser.module_with_builtins(mod));
     print(emitted);
     return 0;

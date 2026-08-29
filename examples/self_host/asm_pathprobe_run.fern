@@ -8,17 +8,13 @@
 // stands. This is a pure decision probe: it emits NO assembly, so the Go-side
 // gates can assert the verdict without assembling + running.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./ircore";
 
 function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    // This driver resolves no imports; say so loudly rather than letting a
-    // broken program produce a verdict that reads like a compiler gap.
-    var _unresolved: boolean = parser.warn_unresolved_imports(mod, "asm_pathprobe_run");
+    var mod: parser.Module = rundriver.parse_stdin("asm_pathprobe_run");
     // Mirror the production path exactly: emit_module (asm.fern) receives a
     // module_with_builtins-processed module (desugar + monomorphisation +
     // builtin-enum injection), then checks all_eligible on lift_lambdas of

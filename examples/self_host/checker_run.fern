@@ -5,15 +5,14 @@
 // and interp_run.fern (evaluation): the same front end feeding the
 // self-hosted type checker.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./checker";
 import "./util";
 
 function main(): i32 {
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var mod: parser.Module = rundriver.parse_stdin("checker_run");
     var mt: checker.ModuleTypes = checker.check_module(mod);
     if (mt.all_well_typed) { return 0; }
     // Surface the rejection to stderr before exiting non-zero — the
