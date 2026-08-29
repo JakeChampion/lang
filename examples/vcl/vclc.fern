@@ -1,0 +1,95 @@
+// examples/vcl/vclc.fern — compile a VCL policy to Fern source.
+//
+//   $ fern -interp vclc.fern -- testdata/policy.vcl > policy.fern
+//   $ fern -target x86-64-linux -o policy policy.fern
+//   $ ./policy GET /static/app.css -n 2
+//
+// The output is a complete Fern module: one function per VCL subroutine,
+// one per ACL, a dispatcher, and a `main`. It imports the same runtime the
+// interpreter uses and hands `machine.run_with` its own dispatcher, so the
+// state machine is shared rather than regenerated.
+//
+// `-p PREFIX` sets what the generated imports are relative to. The default
+// `./` is right when the output sits beside the runtime modules; a build
+// that puts it elsewhere passes the relative path back to this directory.
+//
+// The policy is CHECKED first and compilation is refused if it has
+// problems: generated code reads `t.req.url` as a struct field with no
+// scope test, which is only sound because the check already passed.
+import "std/string";
+import "std/i64";
+import "std/io";
+import "./ast";
+import "./diag";
+import "./parser";
+import "./check";
+import "./compile";
+
+function report_diags(path: string, diags: diag.Diag[]): void {
+  var i: i32 = 0;
+  while (i < diags.len()) {
+    eprint(diags[i].render(path));
+    i = i + 1;
+  }
+}
+
+function report_problems(path: string, ps: check.Problem[]): void {
+  var i: i32 = 0;
+  while (i < ps.len()) {
+    eprint(path + ":" + ps[i].line.to_string() + ":" + ps[i].col.to_string() + ": [" + ps[i].entry + "] " + ps[i].msg);
+    i = i + 1;
+  }
+}
+
+struct Opts { path: string, prefix: string, ok: boolean }
+
+function parse_opts(argv: string[]): Opts {
+  var o: Opts = Opts { path: "", prefix: "./", ok: false };
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    if (argv[i] == "-p" && i + 1 < argv.len()) {
+      o = Opts { ...o, prefix: argv[i + 1] };
+      i = i + 2;
+    } else {
+      o = Opts { ...o, path: argv[i], ok: true };
+      i = i + 1;
+    }
+  }
+  return o;
+}
+
+function main(): i32 {
+  var o: Opts = parse_opts(args());
+  if (!o.ok) {
+    eprint("usage: vclc [-p IMPORT_PREFIX] FILE.vcl");
+    return 2;
+  }
+  match (io.read_input(o.path)) {
+    Err(e) => {
+      eprint("vclc: " + o.path + ": cannot read");
+      return 2;
+    },
+    Ok(src) => {
+      var p: parser.ParseResult = parser.parse(src);
+      if (p.diags.len() > 0) {
+        report_diags(o.path, p.diags);
+        return 2;
+      }
+      var problems: check.Problem[] = check.check(p.decls);
+      if (problems.len() > 0) {
+        report_problems(o.path, problems);
+        return 1;
+      }
+      match (compile.compile(p.decls, o.prefix)) {
+        Err(m) => {
+          eprint("vclc: " + o.path + ": " + m);
+          return 1;
+        },
+        Ok(code) => {
+          print(code);
+          return 0;
+        }
+      }
+    }
+  }
+}

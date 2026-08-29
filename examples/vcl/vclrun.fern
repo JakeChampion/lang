@@ -4,107 +4,22 @@
 //   $ fern -interp vclrun.fern -- policy.vcl GET / 192.0.2.10 Cookie:a=1
 //   $ fern -interp vclrun.fern -- policy.vcl GET / -n 2      # miss, then hit
 //
-// It prints the subroutines that ran, the disposition, the response, and
-// the transaction log — the state machine's path is the explanation for
-// what a policy did, so it leads the output.
+// The policy is checked before it runs, as `varnishd` does at load time.
+// The command line and the report come from `report.fern`, which a
+// COMPILED policy uses too — so the two can be diffed directly, and are.
 //
-// Exit status is 0 when every request completed, 1 on a VCL runtime error
-// (an out-of-scope variable, an unknown name), and 2 when the file could
-// not be read or parsed.
+// Exit status is 0 when every request completed, 1 on a VCL problem (found
+// by the checker, or hit at run time), and 2 when the file could not be
+// read or parsed.
 import "std/string";
 import "std/i64";
-import "std/float";
 import "std/io";
 import "./ast";
 import "./diag";
 import "./parser";
 import "./check";
-import "./value";
-import "./runtime";
 import "./machine";
-
-struct Args { path: string, method: string, url: string, client_ip: string, names: string[], values: string[], repeat: i32, ok: boolean }
-
-// parse_args reads the command line: the file, method and URL, then an
-// optional client IP, `Name:Value` headers, and `-n COUNT`.
-function parse_args(argv: string[]): Args {
-  var n: string[] = [];
-  var v: string[] = [];
-  var bad: Args = Args { path: "", method: "", url: "", client_ip: "", names: n, values: v, repeat: 1, ok: false };
-  if (argv.len() < 4) {
-    return bad;
-  }
-  var a: Args = Args { path: argv[1], method: argv[2], url: argv[3], client_ip: "127.0.0.1", names: n, values: v, repeat: 1, ok: true };
-  var i: i32 = 4;
-  while (i < argv.len()) {
-    var arg: string = argv[i];
-    if (arg == "-n" && i + 1 < argv.len()) {
-      match (argv[i + 1].parse_int()) {
-        Some(c) => {
-          a = Args { ...a, repeat: c };
-        },
-        None => {
-          return bad;
-        }
-      }
-      i = i + 2;
-    } else if (arg.contains(":")) {
-      match (arg.split_once(":")) {
-        Some(pair) => {
-          a = Args { ...a, names: a.names.append(pair.0), values: a.values.append(pair.1) };
-        },
-        None => {}
-      }
-      i = i + 1;
-    } else {
-      a = Args { ...a, client_ip: arg };
-      i = i + 1;
-    }
-  }
-  return a;
-}
-
-function join(items: string[], sep: string): string {
-  var out: string = "";
-  var i: i32 = 0;
-  while (i < items.len()) {
-    if (i > 0) {
-      out = out + sep;
-    }
-    out = out + items[i];
-    i = i + 1;
-  }
-  return out;
-}
-
-function print_headers(h: runtime.Headers, indent: string): void {
-  var i: i32 = 0;
-  while (i < h.names.len()) {
-    print(indent + h.names[i] + ": " + h.values[i]);
-    i = i + 1;
-  }
-}
-
-function print_outcome(o: machine.Outcome, n: i32): void {
-  print("--- request " + n.to_string() + " ---");
-  print("  path:        " + join(o.steps, " -> "));
-  var hit: string = "miss";
-  if (o.hit) {
-    hit = "HIT";
-  }
-  print("  disposition: " + o.disposition + " (" + hit + ")");
-  print("  status:      " + o.txn.resp.status.to_string() + " " + o.txn.resp.reason);
-  print("  response headers:");
-  print_headers(o.txn.resp.headers, "    ");
-  if (o.txn.log.len() > 0) {
-    print("  log:");
-    var i: i32 = 0;
-    while (i < o.txn.log.len()) {
-      print("    " + o.txn.log[i]);
-      i = i + 1;
-    }
-  }
-}
+import "./report";
 
 function report_diags(path: string, diags: diag.Diag[]): void {
   var i: i32 = 0;
@@ -122,51 +37,33 @@ function report_problems(path: string, ps: check.Problem[]): void {
   }
 }
 
-// run_all drives `repeat` requests against one cache, so a second
-// identical request can hit what the first stored.
-function run_all(decls: ast.Decl[], a: Args): i32 {
-  var cache: runtime.Cache = runtime.cache_new();
-  var i: i32 = 0;
-  while (i < a.repeat) {
-    var o: machine.Outcome = machine.run_with_headers(decls, a.method, a.url, a.client_ip, a.names, a.values, cache);
-    if (!o.ok) {
-      eprint("vclrun: " + o.err);
-      eprint("        after " + join(o.steps, " -> "));
-      return 1;
-    }
-    print_outcome(o, i + 1);
-    cache = o.cache;
-    i = i + 1;
-  }
-  return 0;
-}
-
 function main(): i32 {
-  var a: Args = parse_args(args());
-  if (!a.ok) {
+  // args()[0] is the program name; argv[1] is the policy, and the request
+  // starts at argv[2].
+  var argv: string[] = args();
+  var a: report.Args = report.parse_args(argv, 2);
+  if (argv.len() < 4 || !a.ok) {
     eprint("usage: vclrun FILE.vcl METHOD URL [CLIENT_IP] [Name:Value ...] [-n COUNT]");
     return 2;
   }
-  match (io.read_input(a.path)) {
+  var path: string = argv[1];
+  match (io.read_input(path)) {
     Err(e) => {
-      eprint("vclrun: " + a.path + ": cannot read");
+      eprint("vclrun: " + path + ": cannot read");
       return 2;
     },
     Ok(src) => {
       var p: parser.ParseResult = parser.parse(src);
       if (p.diags.len() > 0) {
-        report_diags(a.path, p.diags);
+        report_diags(path, p.diags);
         return 2;
       }
-      // Check before running, as varnishd does at load time. Without this
-      // a scoping mistake surfaces only on the request that reaches it,
-      // so a policy could look fine until traffic shape changed.
       var problems: check.Problem[] = check.check(p.decls);
       if (problems.len() > 0) {
-        report_problems(a.path, problems);
+        report_problems(path, problems);
         return 1;
       }
-      return run_all(p.decls, a);
+      return report.run_all(machine.interpreting(p.decls), a);
     }
   }
 }

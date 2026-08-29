@@ -33,6 +33,41 @@ import "./eval";
 // explanation.
 pub struct Outcome { txn: runtime.Txn, cache: runtime.Cache, disposition: string, hit: boolean, steps: string[], ok: boolean, err: string }
 
+// What the state machine needs from a policy, and all it needs: a way to
+// run one subroutine by name, and the backends the policy declares.
+//
+// Parameterising it this way is what lets an INTERPRETED policy and a
+// COMPILED one share a single state machine. The tree-walk supplies a
+// closure over the parsed declarations; generated Fern code supplies its
+// own dispatcher over generated functions. The graph itself — which
+// subroutine runs next, what the built-ins decide, when an object is
+// stored — is policy-independent, so there is no reason to have two.
+pub struct Driver { run_sub: (string, runtime.Txn) => eval.ExecOut, backends: string[] }
+
+// backend_names lists the declared backends in source order; the first is
+// the default when nothing sets a hint.
+pub function backend_names(decls: ast.Decl[]): string[] {
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < decls.len()) {
+    match (decls[i]) {
+      DBackend(b) => {
+        out = out.append(b.name);
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// interpreting builds a Driver that walks the parsed tree.
+pub function interpreting(decls: ast.Decl[]): Driver {
+  var ctx: eval.Ctx = eval.Ctx { decls: decls };
+  var runner: (string, runtime.Txn) => eval.ExecOut = function(name: string, t: runtime.Txn): eval.ExecOut { return eval.run_sub(ctx, t, name); };
+  return Driver { run_sub: runner, backends: backend_names(decls) };
+}
+
 // The evolving machine state, threaded through the stages.
 struct Run { txn: runtime.Txn, cache: runtime.Cache, steps: string[], ok: boolean, err: string }
 
@@ -53,9 +88,9 @@ function max_restarts(): i32 {
 // requests.
 struct Staged { run: Run, act: eval.Action }
 
-function run_stage(ctx: eval.Ctx, r: Run, name: string): Staged {
+function run_stage(ctx: Driver, r: Run, name: string): Staged {
   var stepped: Run = Run { ...r, steps: r.steps.append(name) };
-  var out: eval.ExecOut = eval.run_sub(ctx, stepped.txn, name);
+  var out: eval.ExecOut = ctx.run_sub(name, stepped.txn);
   if (!out.ok) {
     return Staged { run: fail(Run { ...stepped, txn: out.txn }, name + ": " + out.err), act: eval.action("") };
   }
@@ -165,19 +200,12 @@ function fetch(r: Run, backend: string): Run {
 // backend_for picks the backend to fetch from: the hint a subroutine set,
 // or the first `backend` declared, which is Varnish's rule when nothing
 // else applies.
-function backend_for(ctx: eval.Ctx, t: runtime.Txn): string {
+function backend_for(ctx: Driver, t: runtime.Txn): string {
   if (t.backend_hint != "") {
     return t.backend_hint;
   }
-  var i: i32 = 0;
-  while (i < ctx.decls.len()) {
-    match (ctx.decls[i]) {
-      DBackend(b) => {
-        return b.name;
-      },
-      _ => {}
-    }
-    i = i + 1;
+  if (ctx.backends.len() > 0) {
+    return ctx.backends[0];
   }
   return "";
 }
@@ -232,7 +260,7 @@ function store_object(r: Run, key: string): Run {
 
 // synth_response builds the response a `return (synth(…))` names, then
 // runs `vcl_synth` so the program can decorate it.
-function synth(ctx: eval.Ctx, r: Run, a: eval.Action): Outcome {
+function synth(ctx: Driver, r: Run, a: eval.Action): Outcome {
   var status: i64 = a.status;
   if (status == 0) {
     status = 503;
@@ -256,7 +284,7 @@ function done(r: Run, disposition: string, hit: boolean): Outcome {
 
 // backend_side runs the fetch half: `vcl_backend_fetch`, the mock origin,
 // then `vcl_backend_response` and the caching decision.
-function backend_side(ctx: eval.Ctx, r0: Run, key: string, store: boolean): Outcome {
+function backend_side(ctx: Driver, r0: Run, key: string, store: boolean): Outcome {
   var r: Run = start_bereq(r0);
   var bf: Staged = run_stage(ctx, r, "vcl_backend_fetch");
   if (!bf.run.ok) {
@@ -289,7 +317,7 @@ function backend_side(ctx: eval.Ctx, r0: Run, key: string, store: boolean): Outc
 
 // client_deliver runs `vcl_deliver`, the last stage before the response
 // goes back to the client.
-function client_deliver(ctx: eval.Ctx, r: Run, hit: boolean): Outcome {
+function client_deliver(ctx: Driver, r: Run, hit: boolean): Outcome {
   var d: Staged = run_stage(ctx, r, "vcl_deliver");
   if (!d.run.ok) {
     return outcome_err(d.run);
@@ -302,7 +330,7 @@ function client_deliver(ctx: eval.Ctx, r: Run, hit: boolean): Outcome {
 }
 
 // lookup_side runs the cache lookup and the hit or miss subroutine.
-function lookup_side(ctx: eval.Ctx, r: Run, key: string): Outcome {
+function lookup_side(ctx: Driver, r: Run, key: string): Outcome {
   match (r.cache.lookup(key)) {
     Some(e) => {
       // Count the hit BEFORE seeding `obj`, so `obj.hits` reads 1 on the
@@ -342,7 +370,7 @@ function lookup_side(ctx: eval.Ctx, r: Run, key: string): Outcome {
 
 // purge evicts the object under the request's key and synthesises a 200,
 // which is what Varnish's built-in `vcl_purge` does.
-function purge(ctx: eval.Ctx, r: Run, key: string): Outcome {
+function purge(ctx: Driver, r: Run, key: string): Outcome {
   var evicted: Run = Run { ...r, cache: r.cache.evict(key), txn: r.txn.note("purge " + key) };
   var p: Staged = run_stage(ctx, evicted, "vcl_purge");
   if (!p.run.ok) {
@@ -355,7 +383,7 @@ function purge(ctx: eval.Ctx, r: Run, key: string): Outcome {
 // as well as its resolved name: `return (synth(405, "Not allowed"))`
 // carries its status and reason there, and rebuilding a bare synth here
 // would answer every rejection with a generic 503.
-function dispatch(ctx: eval.Ctx, r: Run, act: string, a: eval.Action): Outcome {
+function dispatch(ctx: Driver, r: Run, act: string, a: eval.Action): Outcome {
   if (act == "pipe") {
     var p: Staged = run_stage(ctx, start_bereq(r), "vcl_pipe");
     if (!p.run.ok) {
@@ -390,7 +418,7 @@ function dispatch(ctx: eval.Ctx, r: Run, act: string, a: eval.Action): Outcome {
 // one_pass runs a single trip through the machine, from `vcl_recv` to a
 // disposition. A `return (restart)` comes back as the "restart"
 // disposition for `run` to act on.
-function one_pass(ctx: eval.Ctx, r: Run): Outcome {
+function one_pass(ctx: Driver, r: Run): Outcome {
   var recv: Staged = run_stage(ctx, r, "vcl_recv");
   if (!recv.run.ok) {
     return outcome_err(recv.run);
@@ -407,8 +435,7 @@ function one_pass(ctx: eval.Ctx, r: Run): Outcome {
 // back to `vcl_recv` with the transaction's edits intact, bounded like
 // Varnish's; the accumulated hash is cleared on each pass so a restarted
 // request re-hashes under whatever the new `req` says.
-pub function run_with_headers(decls: ast.Decl[], method: string, url: string, client_ip: string, names: string[], values: string[], cache: runtime.Cache): Outcome {
-  var ctx: eval.Ctx = eval.Ctx { decls: decls };
+pub function run_with(ctx: Driver, method: string, url: string, client_ip: string, names: string[], values: string[], cache: runtime.Cache): Outcome {
   var empty: string[] = [];
   var t: runtime.Txn = runtime.txn_new(method, url, client_ip);
   var h: runtime.Headers = t.req.headers;
@@ -429,6 +456,14 @@ pub function run_with_headers(decls: ast.Decl[], method: string, url: string, cl
     tries = tries + 1;
   }
   return Outcome { txn: r.txn, cache: r.cache, disposition: "error", hit: false, steps: r.steps, ok: false, err: "too many restarts" };
+}
+
+// run is `run_with_headers` for a request that carries none.
+// run_with_headers interprets `decls` directly. It is `run_with` over an
+// interpreting Driver, kept because most callers have declarations rather
+// than a Driver in hand.
+pub function run_with_headers(decls: ast.Decl[], method: string, url: string, client_ip: string, names: string[], values: string[], cache: runtime.Cache): Outcome {
+  return run_with(interpreting(decls), method, url, client_ip, names, values, cache);
 }
 
 // run is `run_with_headers` for a request that carries none.

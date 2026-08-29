@@ -1,0 +1,255 @@
+// examples/vcl/vclcompile_test.fern — TAP suite for the VCL-to-Fern compiler.
+//
+//   fern -interp examples/vcl/vclcompile_test.fern
+//
+// These cases assert on the SHAPE of the generated source, which is the
+// only place the compilation strategy is observable: that a variable
+// became a struct field rather than a table lookup, that a unit literal
+// was folded, that an ACL's masks were computed at compile time, and that
+// `&&` still short-circuits because its right operand sits inside a
+// branch.
+//
+// Whether the generated code MEANS the same thing as the interpreter is a
+// different question, and a string assertion cannot answer it. That is the
+// differential gate in internal/e2e/vcl_example_test.go, which compiles a
+// policy, builds it, runs it, and diffs the output against `vclrun`.
+import "std/test";
+import "std/string";
+import "std/i64";
+import "./ast";
+import "./parser";
+import "./compile";
+
+function program(body: string): string {
+  return "vcl 4.1;\nbackend origin { .host = \"127.0.0.1\"; }\n" + body + "\n";
+}
+
+// gen compiles a program body, or returns "ERR:<message>".
+function gen(body: string): string {
+  var decls: ast.Decl[] = parser.parse(program(body)).decls;
+  match (compile.compile(decls, "./")) {
+    Ok(code) => {
+      return code;
+    },
+    Err(m) => {
+      return "ERR:" + m;
+    }
+  }
+}
+
+function gen_recv(stmts: string): string {
+  return gen("sub vcl_recv { " + stmts + " }");
+}
+
+// --------------------------------------------------- variables are fields
+// The headline claim: a variable read is a struct field access. If this
+// regressed to a table lookup the compiler would have bought nothing.
+function test_scalar_read_is_a_field_access(): test.TestOutcome {
+  return test.assert_contains(gen_recv("set req.http.X = req.url; return (hash);"), "VString(t.req.url)");
+}
+
+function test_header_read_is_a_map_get(): test.TestOutcome {
+  return test.assert_contains(gen_recv("set req.http.X = req.http.Host; return (hash);"), "t.req.headers.get(\"Host\")");
+}
+
+function test_header_write_rebuilds_the_message(): test.TestOutcome {
+  return test.assert_contains(gen_recv("set req.http.X = \"1\"; return (hash);"), "t.req.headers.set(\"X\", value.to_str(");
+}
+
+function test_scalar_write_rebuilds_the_message(): test.TestOutcome {
+  return test.assert_contains(gen_recv("set req.url = \"/z\"; return (hash);"), "runtime.Msg { ...t.req, url: value.to_str(");
+}
+
+function test_duration_write_targets_the_scalar(): test.TestOutcome {
+  return test.assert_contains(gen("sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }"), "runtime.Txn { ...t, beresp_ttl: vars.as_secs(");
+}
+
+function test_unset_compiles_to_a_header_removal(): test.TestOutcome {
+  return test.assert_contains(gen_recv("unset req.http.Cookie; return (hash);"), "t.req.headers.unset(\"Cookie\")");
+}
+
+// No runtime name lookup and no scope test survives compilation — the
+// checker already proved every access legal.
+function test_no_runtime_variable_lookup_remains(): test.TestOutcome {
+  var out: string = gen_recv("set req.http.X = req.url; unset req.http.Y; return (hash);");
+  if (out.contains("vars.read")) {
+    return test.fail("generated code still looks names up at run time");
+  }
+  if (out.contains("vars.assign")) {
+    return test.fail("generated code still dispatches writes by name");
+  }
+  return test.pass();
+}
+
+// ------------------------------------------------------ constants fold
+// A duration reaches the output already in seconds.
+function test_duration_literal_is_folded(): test.TestOutcome {
+  return test.assert_contains(gen("sub vcl_backend_response { set beresp.ttl = 1h; return (deliver); }"), "VDuration(3600");
+}
+
+// A byte size reaches it as a count, 1024-based.
+function test_byte_literal_is_folded(): test.TestOutcome {
+  return test.assert_contains(gen_recv("set req.http.X = \"\" + 256KB; return (hash);"), "VBytes(262144)");
+}
+
+// An ACL's masks are computed at compile time, so no mask arithmetic
+// remains in the generated match.
+function test_acl_masks_are_folded(): test.TestOutcome {
+  var out: string = gen("acl a { \"192.0.2.0\"/24; }\nsub vcl_recv { return (hash); }");
+  return test.assert_contains(out, "(ip & 4294967040) == 3221225984");
+}
+
+// The generated ACL keeps longest-prefix-wins, which is the rule that
+// makes an exclusion work at all.
+function test_acl_keeps_longest_prefix_wins(): test.TestOutcome {
+  var out: string = gen("acl a { \"192.0.2.0\"/24; ! \"192.0.2.23\"; }\nsub vcl_recv { return (hash); }");
+  if (!out.contains("24 > best")) {
+    return test.fail("missing the /24 specificity test");
+  }
+  if (!out.contains("32 > best")) {
+    return test.fail("missing the /32 specificity test");
+  }
+  return test.assert_contains(out, "neg = true;");
+}
+
+// ------------------------------------------------------- control flow
+// `&&` short-circuits because the right operand's statements are emitted
+// INSIDE the branch. Flattening both sides first would run a `std.log` on
+// the right even when the left already decided.
+function test_and_short_circuits_via_a_branch(): test.TestOutcome {
+  var out: string = gen_recv("if (req.url == \"/a\" && std.tolower(req.url) == \"/a\") { return (pass); } return (hash);");
+  var gate: i32 = out.index_of("if (value.to_bool(v");
+  var call: i32 = out.index_of("eval.call_builtin(t, \"std.tolower\"");
+  if (gate < 0 || call < 0) {
+    return test.fail("expected a gate and a call:\n" + out);
+  }
+  if (call < gate) {
+    return test.fail("the right operand is evaluated before the gate");
+  }
+  return test.pass();
+}
+
+function test_if_compiles_to_a_native_if(): test.TestOutcome {
+  return test.assert_contains(gen_recv("if (req.url == \"/a\") { return (pass); } return (hash);"), "if (value.to_bool(");
+}
+
+// An elseif chain nests, so a later arm's condition is only evaluated when
+// the earlier ones failed.
+function test_elseif_chain_nests(): test.TestOutcome {
+  var out: string = gen_recv("if (req.url == \"/a\") { return (pass); } elseif (req.url == \"/b\") { return (pipe); } return (hash);");
+  return test.assert_contains(out, "} else {");
+}
+
+// A failing operation returns the interpreter's own message rather than
+// yielding an empty value.
+function test_arithmetic_is_error_checked(): test.TestOutcome {
+  var out: string = gen("sub vcl_backend_response { set beresp.status = beresp.status + 1; return (deliver); }");
+  if (!out.contains("value.arith(\"+\"")) {
+    return test.fail("expected a checked arith call");
+  }
+  return test.assert_contains(out, "return eval.failed(t, m);");
+}
+
+// ---------------------------------------------------------- structure
+function test_each_sub_becomes_a_function(): test.TestOutcome {
+  var out: string = gen("sub helper { }\nsub vcl_recv { call helper; return (hash); }");
+  if (!out.contains("function sub_vcl_recv(t0: runtime.Txn): eval.ExecOut {")) {
+    return test.fail("missing vcl_recv function");
+  }
+  return test.assert_contains(out, "function sub_helper(t0: runtime.Txn): eval.ExecOut {");
+}
+
+function test_dispatcher_is_generated(): test.TestOutcome {
+  var out: string = gen_recv("return (hash);");
+  if (!out.contains("function run_sub(name: string, t: runtime.Txn): eval.ExecOut {")) {
+    return test.fail("missing dispatcher");
+  }
+  return test.assert_contains(out, "if (name == \"vcl_recv\") {");
+}
+
+// The state machine is imported, not generated: it is the same graph for
+// every policy, so there is one copy of it.
+function test_state_machine_is_shared_not_generated(): test.TestOutcome {
+  var out: string = gen_recv("return (hash);");
+  if (out.contains("function builtin_recv")) {
+    return test.fail("the state machine was regenerated into the policy");
+  }
+  return test.assert_contains(out, "machine.Driver { run_sub: run_sub");
+}
+
+function test_backends_are_passed_to_the_driver(): test.TestOutcome {
+  return test.assert_contains(gen_recv("return (hash);"), "[\"origin\"]");
+}
+
+// A `call` checks for the callee's bare return, which ends only the
+// callee — the same rule the interpreter applies.
+function test_call_handles_a_bare_return(): test.TestOutcome {
+  var out: string = gen("sub early { return; }\nsub vcl_recv { call early; return (hash); }");
+  if (!out.contains("sub_early(t)")) {
+    return test.fail("missing the call");
+  }
+  return test.assert_contains(out, ".name != \"none\"");
+}
+
+// The import prefix is configurable, so generated code can live away from
+// the runtime modules.
+function test_import_prefix_is_configurable(): test.TestOutcome {
+  var decls: ast.Decl[] = parser.parse(program("sub vcl_recv { return (hash); }")).decls;
+  match (compile.compile(decls, "../vcl/")) {
+    Err(m) => {
+      return test.fail(m);
+    },
+    Ok(code) => {
+      return test.assert_contains(code, "import \"../vcl/runtime\";");
+    }
+  }
+}
+
+// ------------------------------------------------------------- refusals
+function test_new_is_refused(): test.TestOutcome {
+  return test.assert_contains(gen("sub vcl_init { new d = directors.round_robin(); }"), "ERR:in sub vcl_init: 'new d' needs VMOD objects");
+}
+
+function test_inline_c_is_refused(): test.TestOutcome {
+  return test.assert_contains(gen_recv("C{ VRT_synth(ctx); }C return (hash);"), "ERR:in sub vcl_recv: inline C cannot be compiled");
+}
+
+function test_unknown_name_is_refused(): test.TestOutcome {
+  return test.assert_contains(gen_recv("set req.http.X = nosuch; return (hash);"), "ERR:in sub vcl_recv: unknown name 'nosuch'");
+}
+
+// A string literal reaches the output escaped, so a quote in a VCL long
+// string cannot terminate the generated Fern literal.
+function test_string_literals_are_escaped(): test.TestOutcome {
+  return test.assert_contains(gen_recv("set req.http.X = {\"has \" quote\"}; return (hash);"), "\\\" quote");
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("vcl-compile");
+  r = r.it("scalar read is a field access", test_scalar_read_is_a_field_access);
+  r = r.it("header read is a map get", test_header_read_is_a_map_get);
+  r = r.it("header write rebuilds the message", test_header_write_rebuilds_the_message);
+  r = r.it("scalar write rebuilds the message", test_scalar_write_rebuilds_the_message);
+  r = r.it("duration write targets the scalar", test_duration_write_targets_the_scalar);
+  r = r.it("unset compiles to a header removal", test_unset_compiles_to_a_header_removal);
+  r = r.it("no runtime variable lookup remains", test_no_runtime_variable_lookup_remains);
+  r = r.it("duration literal is folded", test_duration_literal_is_folded);
+  r = r.it("byte literal is folded", test_byte_literal_is_folded);
+  r = r.it("acl masks are folded", test_acl_masks_are_folded);
+  r = r.it("acl keeps longest prefix wins", test_acl_keeps_longest_prefix_wins);
+  r = r.it("and short circuits via a branch", test_and_short_circuits_via_a_branch);
+  r = r.it("if compiles to a native if", test_if_compiles_to_a_native_if);
+  r = r.it("elseif chain nests", test_elseif_chain_nests);
+  r = r.it("arithmetic is error checked", test_arithmetic_is_error_checked);
+  r = r.it("each sub becomes a function", test_each_sub_becomes_a_function);
+  r = r.it("dispatcher is generated", test_dispatcher_is_generated);
+  r = r.it("state machine is shared not generated", test_state_machine_is_shared_not_generated);
+  r = r.it("backends are passed to the driver", test_backends_are_passed_to_the_driver);
+  r = r.it("call handles a bare return", test_call_handles_a_bare_return);
+  r = r.it("import prefix is configurable", test_import_prefix_is_configurable);
+  r = r.it("new is refused", test_new_is_refused);
+  r = r.it("inline c is refused", test_inline_c_is_refused);
+  r = r.it("unknown name is refused", test_unknown_name_is_refused);
+  r = r.it("string literals are escaped", test_string_literals_are_escaped);
+  return r.finish();
+}

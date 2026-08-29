@@ -1,0 +1,913 @@
+// examples/vcl/compile.fern — compile VCL to Fern source.
+//
+// Fern does not emit C and will not, so the route to a native binary runs
+// through Fern itself: this module turns a checked VCL program into a Fern
+// module, and `fern` turns that into machine code. No new backend, no C.
+//
+// What compiling actually buys, over the tree-walk in `eval.fern`:
+//
+//   * A variable becomes a STRUCT FIELD READ. `req.url` compiles to
+//     `t.req.url`, not a lookup of "req.url" in a table followed by a
+//     scope check. The check has already happened — `check.fern` proved
+//     the name legal in that subroutine — so none of it survives to run
+//     time.
+//   * Control flow becomes Fern control flow. An `if` is an `if`, not a
+//     walk over an arm list.
+//   * Constants fold. `1h` is `VDuration(3600.0)` in the output, and an
+//     ACL's `/24` becomes a pre-computed mask in a generated function.
+//
+// Expressions are emitted in A-normal form: each subexpression lands in
+// its own local, and anything that can fail is followed by an explicit
+// check. That is more verbose than nesting calls, and it is what keeps
+// compiled and interpreted behaviour identical — `&&` short-circuits
+// through a real `if`, and an arithmetic type error returns the same
+// diagnostic the interpreter would, rather than being swallowed.
+//
+// The state machine is NOT generated: `machine.fern` takes a `Driver`, and
+// generated code supplies its own dispatcher. The graph is the same for
+// every policy, so there is one copy of it.
+import "std/string";
+import "std/i64";
+import "std/float";
+import "./ast";
+import "./value";
+import "./vars";
+import "./eval";
+
+// quote renders a string as a Fern literal.
+pub function quote(s: string): string {
+  var out: string = "\"";
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: u8 = s[i];
+    if (b == 34) {
+      out = out + "\\\"";
+    } else if (b == 92) {
+      out = out + "\\\\";
+    } else if (b == 10) {
+      out = out + "\\n";
+    } else if (b == 9) {
+      out = out + "\\t";
+    } else if (b == 13) {
+      out = out + "\\r";
+    } else {
+      out = out + slice_unchecked(s, i, i + 1);
+    }
+    i = i + 1;
+  }
+  return out + "\"";
+}
+
+// ------------------------------------------------- variable access codegen
+// object_of names the message a variable lives on.
+function object_of(name: string): string {
+  if (name.starts_with("req.")) {
+    return "req";
+  }
+  if (name.starts_with("bereq.")) {
+    return "bereq";
+  }
+  if (name.starts_with("beresp.")) {
+    return "beresp";
+  }
+  if (name.starts_with("resp.")) {
+    return "resp";
+  }
+  if (name.starts_with("obj.")) {
+    return "obj";
+  }
+  return "";
+}
+
+// header_key returns the header name a `*.http.X` variable addresses.
+function header_key(name: string): string {
+  var obj: string = object_of(name);
+  var prefix: string = obj + ".http.";
+  return slice_unchecked(name, prefix.len(), name.len()).to_owned();
+}
+
+function is_header(name: string): boolean {
+  return name.contains(".http.");
+}
+
+// read_code is the Fern expression that reads a variable from `t`. This is
+// the payoff: a struct field, not a table lookup.
+// fern-lint: allow cyclomatic-complexity
+pub function read_code(name: string): string {
+  if (is_header(name)) {
+    return "t." + object_of(name) + ".headers.get(" + quote(header_key(name)) + ")";
+  }
+  if (name == "req.method") {
+    return "VString(t.req.method)";
+  }
+  if (name == "req.url") {
+    return "VString(t.req.url)";
+  }
+  if (name == "req.proto") {
+    return "VString(t.req.proto)";
+  }
+  if (name == "req.backend_hint") {
+    return "VBackend(t.backend_hint)";
+  }
+  if (name == "bereq.method") {
+    return "VString(t.bereq.method)";
+  }
+  if (name == "bereq.url") {
+    return "VString(t.bereq.url)";
+  }
+  if (name == "bereq.proto") {
+    return "VString(t.bereq.proto)";
+  }
+  if (name == "beresp.status") {
+    return "VInt(t.beresp.status)";
+  }
+  if (name == "beresp.reason") {
+    return "VString(t.beresp.reason)";
+  }
+  if (name == "beresp.proto") {
+    return "VString(t.beresp.proto)";
+  }
+  if (name == "beresp.ttl") {
+    return "VDuration(t.beresp_ttl)";
+  }
+  if (name == "beresp.grace") {
+    return "VDuration(t.beresp_grace)";
+  }
+  if (name == "beresp.keep") {
+    return "VDuration(t.beresp_keep)";
+  }
+  if (name == "beresp.uncacheable") {
+    return "VBool(t.beresp_uncacheable)";
+  }
+  if (name == "resp.status") {
+    return "VInt(t.resp.status)";
+  }
+  if (name == "resp.reason") {
+    return "VString(t.resp.reason)";
+  }
+  if (name == "resp.proto") {
+    return "VString(t.resp.proto)";
+  }
+  if (name == "obj.status") {
+    return "VInt(t.obj.status)";
+  }
+  if (name == "obj.reason") {
+    return "VString(t.obj.reason)";
+  }
+  if (name == "obj.ttl") {
+    return "VDuration(t.obj_ttl)";
+  }
+  if (name == "obj.hits") {
+    return "VInt(t.obj_hits)";
+  }
+  if (name == "client.ip") {
+    return "VString(t.client_ip)";
+  }
+  return "VString(t.server_ip)";
+}
+
+// msg_update rebuilds one message field on `t`.
+function msg_update(obj: string, field: string, expr: string): string {
+  return "t = runtime.Txn { ...t, " + obj + ": runtime.Msg { ...t." + obj + ", " + field + ": " + expr + " } };";
+}
+
+// txn_update rebuilds a scalar directly on `t`.
+function txn_update(field: string, expr: string): string {
+  return "t = runtime.Txn { ...t, " + field + ": " + expr + " };";
+}
+
+// write_code is the Fern statement that assigns `v` to a variable.
+// fern-lint: allow cyclomatic-complexity
+pub function write_code(name: string, v: string): string {
+  if (is_header(name)) {
+    var obj: string = object_of(name);
+    return msg_update(obj, "headers", "t." + obj + ".headers.set(" + quote(header_key(name)) + ", value.to_str(" + v + "))");
+  }
+  if (name == "req.method") {
+    return msg_update("req", "method", "value.to_str(" + v + ")");
+  }
+  if (name == "req.url") {
+    return msg_update("req", "url", "value.to_str(" + v + ")");
+  }
+  if (name == "req.backend_hint") {
+    return txn_update("backend_hint", "value.to_str(" + v + ")");
+  }
+  if (name == "bereq.method") {
+    return msg_update("bereq", "method", "value.to_str(" + v + ")");
+  }
+  if (name == "bereq.url") {
+    return msg_update("bereq", "url", "value.to_str(" + v + ")");
+  }
+  if (name == "bereq.proto") {
+    return msg_update("bereq", "proto", "value.to_str(" + v + ")");
+  }
+  if (name == "beresp.status") {
+    return msg_update("beresp", "status", "vars.as_int(" + v + ")");
+  }
+  if (name == "beresp.reason") {
+    return msg_update("beresp", "reason", "value.to_str(" + v + ")");
+  }
+  if (name == "beresp.proto") {
+    return msg_update("beresp", "proto", "value.to_str(" + v + ")");
+  }
+  if (name == "beresp.ttl") {
+    return txn_update("beresp_ttl", "vars.as_secs(" + v + ")");
+  }
+  if (name == "beresp.grace") {
+    return txn_update("beresp_grace", "vars.as_secs(" + v + ")");
+  }
+  if (name == "beresp.keep") {
+    return txn_update("beresp_keep", "vars.as_secs(" + v + ")");
+  }
+  if (name == "beresp.uncacheable") {
+    return txn_update("beresp_uncacheable", "value.to_bool(" + v + ")");
+  }
+  if (name == "resp.status") {
+    return msg_update("resp", "status", "vars.as_int(" + v + ")");
+  }
+  if (name == "resp.reason") {
+    return msg_update("resp", "reason", "value.to_str(" + v + ")");
+  }
+  return msg_update("resp", "proto", "value.to_str(" + v + ")");
+}
+
+// unset_code is the Fern statement that removes a header.
+pub function unset_code(name: string): string {
+  var obj: string = object_of(name);
+  return msg_update(obj, "headers", "t." + obj + ".headers.unset(" + quote(header_key(name)) + ")");
+}
+
+// ------------------------------------------------------ expression codegen
+// One emitted expression: the statements computing it, the local holding
+// its value, and the next free temporary index.
+struct Emit { code: string, name: string, next: i32, ok: boolean, err: string }
+
+function emit_err(msg: string): Emit {
+  return Emit { code: "", name: "", next: 0, ok: false, err: msg };
+}
+
+function tmp(n: i32): string {
+  return "v" + n.to_string();
+}
+
+// bind emits `var vN: value.Value = <expr>;` and hands back the local.
+function bind(ind: string, n: i32, expr: string): Emit {
+  return Emit { code: ind + "var " + tmp(n) + ": value.Value = " + expr + ";\n", name: tmp(n), next: n + 1, ok: true, err: "" };
+}
+
+// A checked step: run `expr` (a Result), return the error, keep the value.
+// This is what makes a compiled arithmetic type error report exactly what
+// the interpreter reports instead of silently yielding an empty value.
+function bind_checked(ind: string, n: i32, expr: string): Emit {
+  var res: string = "r" + n.to_string();
+  var out: string = tmp(n);
+  var code: string = ind + "var " + res + ": Result[value.Value, string] = " + expr + ";\n" + ind + "var " + out + ": value.Value = VNone;\n" + ind + "match (" + res + ") {\n" + ind + "  Err(m) => {\n" + ind + "    return eval.failed(t, m);\n" + ind + "  },\n" + ind + "  Ok(ok" + n.to_string() + ") => {\n" + ind + "    " + out + " = ok" + n.to_string() + ";\n" + ind + "  }\n" + ind + "}\n";
+  return Emit { code: code, name: out, next: n + 1, ok: true, err: "" };
+}
+
+function num_literal(text: string): string {
+  if (text.contains(".")) {
+    match (text.parse_float()) {
+      Some(f) => {
+        return "VReal(" + f.to_string() + ")";
+      },
+      None => {
+        return "";
+      }
+    }
+  }
+  match (text.parse_int()) {
+    Some(v) => {
+      return "VInt(" + v.to_string() + ")";
+    },
+    None => {
+      return "";
+    }
+  }
+}
+
+function qty_number(text: string): f64 {
+  match (text.parse_float()) {
+    Some(f) => {
+      return f;
+    },
+    None => {
+      return 0.0;
+    }
+  }
+}
+
+// literal_code folds a literal at compile time. A duration is already
+// seconds in the output and a byte size is already a count, so no unit
+// arithmetic survives into the binary.
+// A total dispatch over the literal variants of Expr, one arm each.
+// fern-lint: allow cyclomatic-complexity
+function literal_code(e: ast.Expr): Result[string, string] {
+  match (e) {
+    EString(s) => {
+      return Ok("VString(" + quote(s.value) + ")");
+    },
+    EBool(b) => {
+      if (b.value) {
+        return Ok("VBool(true)");
+      }
+      return Ok("VBool(false)");
+    },
+    ENumber(n) => {
+      var code: string = num_literal(n.text);
+      if (code == "") {
+        return Err("malformed number '" + n.text + "'");
+      }
+      return Ok(code);
+    },
+    EDuration(q) => {
+      match (value.duration_seconds(qty_number(q.text), q.unit)) {
+        Ok(secs) => {
+          return Ok("VDuration(" + secs.to_string() + ")");
+        },
+        Err(m) => {
+          return Err(m);
+        }
+      }
+    },
+    EBytes(q) => {
+      match (value.byte_count(qty_number(q.text), q.unit)) {
+        Ok(count) => {
+          return Ok("VBytes(" + count.to_string() + ")");
+        },
+        Err(m) => {
+          return Err(m);
+        }
+      }
+    },
+    _ => {
+      return Err("not a literal");
+    }
+  }
+}
+
+// The program facts codegen needs: which names are ACLs and which are
+// backends, so a bare identifier compiles to the right thing.
+pub struct Env { acls: string[], backends: string[] }
+
+function has(items: string[], s: string): boolean {
+  var i: i32 = 0;
+  while (i < items.len()) {
+    if (items[i] == s) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// name_code compiles a bare identifier. A variable is a field read; a
+// backend or ACL is a constant.
+function name_code(env: Env, name: string): Result[string, string] {
+  if (vars.is_var(name)) {
+    return Ok(read_code(name));
+  }
+  if (has(env.backends, name)) {
+    return Ok("VBackend(" + quote(name) + ")");
+  }
+  if (has(env.acls, name)) {
+    return Ok("VAcl(" + quote(name) + ")");
+  }
+  if (name == "true") {
+    return Ok("VBool(true)");
+  }
+  if (name == "false") {
+    return Ok("VBool(false)");
+  }
+  return Err("unknown name '" + name + "'");
+}
+
+function is_ordering(op: string): boolean {
+  return op == "<" || op == "<=" || op == ">" || op == ">=";
+}
+
+// acl_operand returns the ACL a `~` right-hand side names, or "".
+function acl_operand(env: Env, e: ast.Expr): string {
+  match (e) {
+    EVar(v) => {
+      if (has(env.acls, v.name)) {
+        return v.name;
+      }
+      return "";
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
+// emit_seq emits a list of expressions, threading the temporary counter,
+// and returns the code plus the locals holding each value.
+struct Seq { code: string, names: string[], next: i32, ok: boolean, err: string }
+
+function emit_seq(env: Env, es: ast.Expr[], ind: string, n: i32): Seq {
+  var code: string = "";
+  var names: string[] = [];
+  var cur: i32 = n;
+  var i: i32 = 0;
+  while (i < es.len()) {
+    var e: Emit = emit_expr(env, es[i], ind, cur);
+    if (!e.ok) {
+      return Seq { code: "", names: names, next: cur, ok: false, err: e.err };
+    }
+    code = code + e.code;
+    names = names.append(e.name);
+    cur = e.next;
+    i = i + 1;
+  }
+  return Seq { code: code, names: names, next: cur, ok: true, err: "" };
+}
+
+// emit_call compiles a function call through `eval.call_builtin`, so the
+// compiled and interpreted programs share one implementation of every VCL
+// function rather than having two that can drift.
+function emit_call(env: Env, c: ast.CallExpr, ind: string, n: i32): Emit {
+  var args: Seq = emit_seq(env, c.args, ind, n);
+  if (!args.ok) {
+    return emit_err(args.err);
+  }
+  var cur: i32 = args.next;
+  var lst: string = "";
+  var i: i32 = 0;
+  while (i < args.names.len()) {
+    if (i > 0) {
+      lst = lst + ", ";
+    }
+    lst = lst + args.names[i];
+    i = i + 1;
+  }
+  var res: string = "c" + cur.to_string();
+  var out: string = tmp(cur);
+  var code: string = args.code + ind + "var a" + cur.to_string() + ": value.Value[] = [" + lst + "];\n" + ind + "var " + res + ": eval.EvalOut = eval.call_builtin(t, " + quote(c.callee) + ", a" + cur.to_string() + ");\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return eval.failed(" + res + ".txn, " + res + ".err);\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "var " + out + ": value.Value = " + res + ".val;\n";
+  return Emit { code: code, name: out, next: cur + 1, ok: true, err: "" };
+}
+
+// emit_logical compiles `&&` and `||` through a real `if`, which is what
+// preserves short-circuiting: the right operand's statements are emitted
+// INSIDE the branch, so a `std.log` there does not run when the left
+// operand already decided the answer.
+function emit_logical(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
+  var left: Emit = emit_expr(env, b.lhs, ind, n);
+  if (!left.ok) {
+    return left;
+  }
+  var out: string = tmp(left.next);
+  var inner: i32 = left.next + 1;
+  var gate: string = "if (value.to_bool(" + left.name + "))";
+  var seed: string = "VBool(true)";
+  if (b.op == "&&") {
+    seed = "VBool(false)";
+  } else {
+    gate = "if (!value.to_bool(" + left.name + "))";
+  }
+  var right: Emit = emit_expr(env, b.rhs, ind + "  ", inner);
+  if (!right.ok) {
+    return right;
+  }
+  var code: string = left.code + ind + "var " + out + ": value.Value = " + seed + ";\n" + ind + gate + " {\n" + right.code + ind + "  " + out + " = VBool(value.to_bool(" + right.name + "));\n" + ind + "}\n";
+  return Emit { code: code, name: out, next: right.next, ok: true, err: "" };
+}
+
+// emit_match compiles `~` / `!~`: a call into the generated ACL function
+// when the right side names an ACL, a regex match otherwise.
+function emit_match(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
+  var negate: string = "";
+  if (b.op == "!~") {
+    negate = "!";
+  }
+  var left: Emit = emit_expr(env, b.lhs, ind, n);
+  if (!left.ok) {
+    return left;
+  }
+  var acl: string = acl_operand(env, b.rhs);
+  if (acl != "") {
+    var hit: Emit = bind(ind, left.next, "VBool(" + negate + "acl_" + acl + "(value.to_str(" + left.name + ")))");
+    return Emit { code: left.code + hit.code, name: hit.name, next: hit.next, ok: true, err: "" };
+  }
+  var right: Emit = emit_expr(env, b.rhs, ind, left.next);
+  if (!right.ok) {
+    return right;
+  }
+  var m: Emit = bind(ind, right.next, "VBool(" + negate + "regex.regex_match(value.to_str(" + right.name + "), value.to_str(" + left.name + ")))");
+  return Emit { code: left.code + right.code + m.code, name: m.name, next: m.next, ok: true, err: "" };
+}
+
+// emit_binary compiles comparison, ordering, and arithmetic. Equality
+// cannot fail; ordering and arithmetic can, so both go through the checked
+// form and report the interpreter's own message.
+function emit_binary(env: Env, b: ast.BinExpr, ind: string, n: i32): Emit {
+  var cls: string = eval.op_class(b.op);
+  if (cls == "match") {
+    return emit_match(env, b, ind, n);
+  }
+  if (cls == "logical") {
+    return emit_logical(env, b, ind, n);
+  }
+  var left: Emit = emit_expr(env, b.lhs, ind, n);
+  if (!left.ok) {
+    return left;
+  }
+  var right: Emit = emit_expr(env, b.rhs, ind, left.next);
+  if (!right.ok) {
+    return right;
+  }
+  var pre: string = left.code + right.code;
+  if (cls == "compare" && !is_ordering(b.op)) {
+    var neg: string = "";
+    if (b.op == "!=") {
+      neg = "!";
+    }
+    var eq: Emit = bind(ind, right.next, "VBool(" + neg + "value.equal(" + left.name + ", " + right.name + "))");
+    return Emit { code: pre + eq.code, name: eq.name, next: eq.next, ok: true, err: "" };
+  }
+  if (is_ordering(b.op)) {
+    return emit_ordering(pre, b.op, left.name, right.name, ind, right.next);
+  }
+  var ar: Emit = bind_checked(ind, right.next, "value.arith(" + quote(b.op) + ", " + left.name + ", " + right.name + ")");
+  return Emit { code: pre + ar.code, name: ar.name, next: ar.next, ok: true, err: "" };
+}
+
+// emit_ordering turns a comparison result into a boolean.
+function emit_ordering(pre: string, op: string, l: string, r: string, ind: string, n: i32): Emit {
+  var res: string = "o" + n.to_string();
+  var out: string = tmp(n);
+  var test: string = res + "v " + op + " 0";
+  var code: string = ind + "var " + res + ": Result[i32, string] = value.compare(" + l + ", " + r + ");\n" + ind + "var " + out + ": value.Value = VNone;\n" + ind + "match (" + res + ") {\n" + ind + "  Err(m) => {\n" + ind + "    return eval.failed(t, m);\n" + ind + "  },\n" + ind + "  Ok(" + res + "v) => {\n" + ind + "    " + out + " = VBool(" + test + ");\n" + ind + "  }\n" + ind + "}\n";
+  return Emit { code: pre + code, name: out, next: n + 1, ok: true, err: "" };
+}
+
+// emit_expr compiles one expression into statements plus a local.
+// A total dispatch over Expr — see literal_code.
+// fern-lint: allow cyclomatic-complexity
+pub function emit_expr(env: Env, e: ast.Expr, ind: string, n: i32): Emit {
+  match (e) {
+    EVar(v) => {
+      match (name_code(env, v.name)) {
+        Ok(code) => {
+          return bind(ind, n, code);
+        },
+        Err(m) => {
+          return emit_err(m);
+        }
+      }
+    },
+    ECall(c) => {
+      return emit_call(env, c, ind, n);
+    },
+    EBinary(b) => {
+      return emit_binary(env, b, ind, n);
+    },
+    EUnary(u) => {
+      var inner: Emit = emit_expr(env, u.operand, ind, n);
+      if (!inner.ok) {
+        return inner;
+      }
+      if (u.op == "!") {
+        var not: Emit = bind(ind, inner.next, "VBool(!value.to_bool(" + inner.name + "))");
+        return Emit { code: inner.code + not.code, name: not.name, next: not.next, ok: true, err: "" };
+      }
+      var neg: Emit = bind_checked(ind, inner.next, "value.arith(\"-\", VInt(0), " + inner.name + ")");
+      return Emit { code: inner.code + neg.code, name: neg.name, next: neg.next, ok: true, err: "" };
+    },
+    EParen(inner) => {
+      return emit_expr(env, inner, ind, n);
+    },
+    _ => {
+      match (literal_code(e)) {
+        Ok(code) => {
+          return bind(ind, n, code);
+        },
+        Err(m) => {
+          return emit_err(m);
+        }
+      }
+    }
+  }
+}
+
+// ------------------------------------------------------- statement codegen
+struct Stmts { code: string, next: i32, ok: boolean, err: string }
+
+function stmts_err(msg: string): Stmts {
+  return Stmts { code: "", next: 0, ok: false, err: msg };
+}
+
+// emit_set compiles `set`, including the compound forms, which read the
+// current value and combine before storing.
+function emit_set(env: Env, s: ast.SetStmt, ind: string, n: i32): Stmts {
+  var v: Emit = emit_expr(env, s.value, ind, n);
+  if (!v.ok) {
+    return stmts_err(v.err);
+  }
+  var code: string = v.code;
+  var src: string = v.name;
+  var cur: i32 = v.next;
+  if (s.op != "=") {
+    var op: string = slice_unchecked(s.op, 0, s.op.len() - 1).to_owned();
+    var old: Emit = bind(ind, cur, read_code(s.target));
+    var combined: Emit = bind_checked(ind, old.next, "value.arith(" + quote(op) + ", " + old.name + ", " + src + ")");
+    code = code + old.code + combined.code;
+    src = combined.name;
+    cur = combined.next;
+  }
+  return Stmts { code: code + ind + write_code(s.target, src) + "\n", next: cur, ok: true, err: "" };
+}
+
+// emit_return compiles a `return (…)`, folding a `synth` status and reason
+// at compile time when both are literals — which they almost always are.
+function emit_return(env: Env, s: ast.ReturnStmt, ind: string, n: i32): Stmts {
+  if (s.action == "") {
+    return Stmts { code: ind + "return eval.returned(t, eval.action(\"none\"));\n", next: n, ok: true, err: "" };
+  }
+  if (!s.has_args || s.args.len() == 0) {
+    return Stmts { code: ind + "return eval.returned(t, eval.action(" + quote(s.action) + "));\n", next: n, ok: true, err: "" };
+  }
+  var args: Seq = emit_seq(env, s.args, ind, n);
+  if (!args.ok) {
+    return stmts_err(args.err);
+  }
+  var status: string = "0";
+  if (args.names.len() > 0) {
+    status = "vars.as_int(" + args.names[0] + ")";
+  }
+  var reason: string = "\"\"";
+  if (args.names.len() > 1) {
+    reason = "value.to_str(" + args.names[1] + ")";
+  }
+  var code: string = args.code + ind + "return eval.returned(t, eval.synth_action(" + quote(s.action) + ", " + status + ", " + reason + "));\n";
+  return Stmts { code: code, next: args.next, ok: true, err: "" };
+}
+
+// emit_call_stmt compiles `call`. A bare `return;` inside the callee ends
+// only the callee, so the caller checks for it — the same rule the
+// interpreter applies, expressed here as generated control flow.
+function emit_call_stmt(s: ast.CallStmt, ind: string, n: i32): Stmts {
+  var res: string = "s" + n.to_string();
+  var code: string = ind + "var " + res + ": eval.ExecOut = sub_" + s.name + "(t);\n" + ind + "if (!" + res + ".ok) {\n" + ind + "  return " + res + ";\n" + ind + "}\n" + ind + "t = " + res + ".txn;\n" + ind + "match (" + res + ".flow) {\n" + ind + "  FReturn(a" + n.to_string() + ") => {\n" + ind + "    if (a" + n.to_string() + ".name != \"none\") {\n" + ind + "      return " + res + ";\n" + ind + "    }\n" + ind + "  },\n" + ind + "  FNext => {}\n" + ind + "}\n";
+  return Stmts { code: code, next: n + 1, ok: true, err: "" };
+}
+
+// emit_if compiles an if/elseif/else chain into nested Fern `if`s. Each
+// arm's condition statements must be emitted INSIDE the previous else, or
+// a later arm's side effects would run before its turn.
+function emit_if(env: Env, s: ast.IfStmt, ind: string, n: i32): Stmts {
+  return emit_arm(env, s, 0, ind, n);
+}
+
+function emit_arm(env: Env, s: ast.IfStmt, idx: i32, ind: string, n: i32): Stmts {
+  if (idx >= s.arms.len()) {
+    if (s.has_else) {
+      return emit_block(env, s.else_blk, ind, n);
+    }
+    return Stmts { code: "", next: n, ok: true, err: "" };
+  }
+  var arm: ast.IfArm = s.arms[idx];
+  var cond: Emit = emit_expr(env, arm.cond, ind, n);
+  if (!cond.ok) {
+    return stmts_err(cond.err);
+  }
+  var body: Stmts = emit_block(env, arm.body, ind + "  ", cond.next);
+  if (!body.ok) {
+    return body;
+  }
+  var rest: Stmts = emit_arm(env, s, idx + 1, ind + "  ", body.next);
+  if (!rest.ok) {
+    return rest;
+  }
+  var code: string = cond.code + ind + "if (value.to_bool(" + cond.name + ")) {\n" + body.code + ind + "}";
+  if (rest.code == "") {
+    return Stmts { code: code + "\n", next: rest.next, ok: true, err: "" };
+  }
+  return Stmts { code: code + " else {\n" + rest.code + ind + "}\n", next: rest.next, ok: true, err: "" };
+}
+
+// fern-lint: allow cyclomatic-complexity
+function emit_stmt(env: Env, s: ast.Stmt, ind: string, n: i32): Stmts {
+  match (s) {
+    SSet(x) => {
+      return emit_set(env, x, ind, n);
+    },
+    SUnset(x) => {
+      return Stmts { code: ind + unset_code(x.target) + "\n", next: n, ok: true, err: "" };
+    },
+    SIf(x) => {
+      return emit_if(env, x, ind, n);
+    },
+    SReturn(x) => {
+      return emit_return(env, x, ind, n);
+    },
+    SCall(x) => {
+      return emit_call_stmt(x, ind, n);
+    },
+    SExpr(x) => {
+      var e: Emit = emit_expr(env, x.value, ind, n);
+      if (!e.ok) {
+        return stmts_err(e.err);
+      }
+      return Stmts { code: e.code, next: e.next, ok: true, err: "" };
+    },
+    SBlock(b) => {
+      return emit_block(env, b, ind, n);
+    },
+    SNew(x) => {
+      return stmts_err("'new " + x.name + "' needs VMOD objects, which are not implemented");
+    },
+    SInclude(x) => {
+      return stmts_err("'include' must be resolved before compiling");
+    },
+    SCSource(x) => {
+      return stmts_err("inline C cannot be compiled");
+    }
+  }
+}
+
+function emit_block(env: Env, b: ast.Block, ind: string, n: i32): Stmts {
+  var code: string = "";
+  var cur: i32 = n;
+  var i: i32 = 0;
+  while (i < b.stmts.len()) {
+    var s: Stmts = emit_stmt(env, b.stmts[i], ind, cur);
+    if (!s.ok) {
+      return s;
+    }
+    code = code + s.code;
+    cur = s.next;
+    i = i + 1;
+  }
+  return Stmts { code: code, next: cur, ok: true, err: "" };
+}
+
+// ------------------------------------------------------------ declarations
+// emit_acl compiles an ACL into a function whose masks are already folded.
+// Longest-prefix wins, so the walk keeps the widest match seen rather than
+// stopping at the first — the same rule `eval.acl_walk` applies.
+function emit_acl(a: ast.AclDecl): Result[string, string] {
+  var code: string = "// ACL `" + a.name + "`, compiled: masks folded, longest prefix wins.\n" + "function acl_" + a.name + "(addr: string): boolean {\n" + "  match (eval.parse_ipv4(addr)) {\n" + "    None => {\n      return false;\n    },\n" + "    Some(ip) => {\n" + "      var best: i32 = 0 - 1;\n" + "      var neg: boolean = false;\n";
+  var i: i32 = 0;
+  while (i < a.entries.len()) {
+    var e: ast.AclEntry = a.entries[i];
+    match (eval.parse_ipv4(e.host)) {
+      None => {
+        return Err("ACL entry '" + e.host + "' is not an IPv4 address or 'localhost'");
+      },
+      Some(base) => {
+        var bits: i32 = 32;
+        if (e.mask != "") {
+          match (e.mask.parse_int()) {
+            Some(b) => {
+              bits = b;
+            },
+            None => {
+              return Err("ACL mask '" + e.mask + "' is not a number");
+            }
+          }
+        }
+        if (bits < 0 || bits > 32) {
+          return Err("ACL mask /" + e.mask + " is out of range");
+        }
+        var m: i64 = eval.mask_of(bits);
+        var masked: i64 = base & m;
+        var negated: string = "false";
+        if (e.negated) {
+          negated = "true";
+        }
+        code = code + "      if ((ip & " + m.to_string() + ") == " + masked.to_string() + " && " + bits.to_string() + " > best) {\n" + "        best = " + bits.to_string() + ";\n" + "        neg = " + negated + ";\n" + "      }\n";
+      }
+    }
+    i = i + 1;
+  }
+  return Ok(code + "      if (best < 0) {\n        return false;\n      }\n" + "      return !neg;\n    }\n  }\n}\n");
+}
+
+// emit_sub compiles one VCL subroutine into a Fern function. `t` is the
+// transaction, rebound as statements update it, and falling off the end is
+// the "no action" result the state machine reads as fall-through.
+function emit_sub(env: Env, s: ast.SubDecl): Result[string, string] {
+  var body: Stmts = emit_block(env, s.body, "  ", 0);
+  if (!body.ok) {
+    return Err("in sub " + s.name + ": " + body.err);
+  }
+  return Ok("function sub_" + s.name + "(t0: runtime.Txn): eval.ExecOut {\n" + "  var t: runtime.Txn = t0;\n" + body.code + "  return eval.fell_through(t);\n}\n");
+}
+
+// env_of collects the ACL and backend names a program declares.
+pub function env_of(decls: ast.Decl[]): Env {
+  var acls: string[] = [];
+  var backends: string[] = [];
+  var i: i32 = 0;
+  while (i < decls.len()) {
+    match (decls[i]) {
+      DAcl(a) => {
+        acls = acls.append(a.name);
+      },
+      DBackend(b) => {
+        backends = backends.append(b.name);
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return Env { acls: acls, backends: backends };
+}
+
+function sub_names(decls: ast.Decl[]): string[] {
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < decls.len()) {
+    match (decls[i]) {
+      DSub(s) => {
+        out = out.append(s.name);
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// emit_dispatch generates the `run_sub` the state machine calls. A name the
+// policy does not define falls through, which is how the built-in default
+// gets its turn.
+function emit_dispatch(names: string[]): string {
+  var code: string = "// The dispatcher `machine.Driver` calls. A subroutine this policy does\n" + "// not define falls through, so the built-in default applies.\n" + "function run_sub(name: string, t: runtime.Txn): eval.ExecOut {\n";
+  var i: i32 = 0;
+  while (i < names.len()) {
+    code = code + "  if (name == " + quote(names[i]) + ") {\n" + "    return sub_" + names[i] + "(t);\n  }\n";
+    i = i + 1;
+  }
+  return code + "  return eval.fell_through(t);\n}\n";
+}
+
+function join(items: string[], sep: string): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < items.len()) {
+    if (i > 0) {
+      out = out + sep;
+    }
+    out = out + items[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+function backend_list(env: Env): string {
+  var quoted: string[] = [];
+  var i: i32 = 0;
+  while (i < env.backends.len()) {
+    quoted = quoted.append(quote(env.backends[i]));
+    i = i + 1;
+  }
+  if (quoted.len() == 0) {
+    return "var __b: string[] = [];";
+  }
+  return "var __b: string[] = [" + join(quoted, ", ") + "];";
+}
+
+// compile turns a checked program into a Fern module. `prefix` is what the
+// generated imports are relative to — "./" when the output sits beside the
+// runtime modules, a relative path otherwise.
+pub function compile(decls: ast.Decl[], prefix: string): Result[string, string] {
+  var env: Env = env_of(decls);
+  var out: string = "// Generated from VCL by examples/vcl/compile.fern. Do not edit.\n" + "//\n" + "// Variable reads are struct field accesses: the scoping check ran at\n" + "// compile time, so none of it survives here.\n" + "import \"std/string\";\nimport \"std/i64\";\nimport \"std/float\";\nimport \"std/regex\";\n" + "import " + quote(prefix + "value") + ";\n" + "import " + quote(prefix + "runtime") + ";\n" + "import " + quote(prefix + "vars") + ";\n" + "import " + quote(prefix + "eval") + ";\n" + "import " + quote(prefix + "machine") + ";\n" + "import " + quote(prefix + "report") + ";\n\n";
+  var i: i32 = 0;
+  while (i < decls.len()) {
+    match (decls[i]) {
+      DAcl(a) => {
+        match (emit_acl(a)) {
+          Ok(code) => {
+            out = out + code + "\n";
+          },
+          Err(m) => {
+            return Err(m);
+          }
+        }
+      },
+      DSub(s) => {
+        match (emit_sub(env, s)) {
+          Ok(code) => {
+            out = out + code + "\n";
+          },
+          Err(m) => {
+            return Err(m);
+          }
+        }
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  out = out + emit_dispatch(sub_names(decls)) + "\n";
+  return Ok(out + main_code(env));
+}
+
+// main_code is the generated driver: same command line as `vclrun`, with
+// the policy compiled in rather than parsed.
+function main_code(env: Env): string {
+  return "// The policy's own entry point: same command line as vclrun, with this\n" + "// policy compiled in rather than parsed at startup.\n" + "function main(): i32 {\n" + "  var argv: string[] = args();\n" + "  " + backend_list(env) + "\n" + "  var d: machine.Driver = machine.Driver { run_sub: run_sub, backends: __b };\n" + "  return report.drive(d, argv);\n" + "}\n";
+}
