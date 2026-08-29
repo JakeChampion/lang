@@ -1,0 +1,85 @@
+// An f32 ARRAY's element dispatched f64 methods, so it rendered at f64
+// precision: `a[0].to_string()` on an `f32[]` gave 19.634937286376953 where
+// native gives 19.634937 — while the SAME value in a scalar `f32` local
+// rendered correctly. Two spellings of one value disagreeing.
+//
+// `is_float_array_type_name` deliberately maps BOTH `f64[]` and `f32[]` onto
+// is_f64arr, because an f32 rides the same 8-byte slot and stride here. That
+// sharing is right for storage — the stored element IS f32-rounded, only the
+// rendering was wrong — but it left an element read unable to tell the two
+// apart. is_f32arr is the DISPATCH-ONLY overlay that restores the distinction,
+// the array sibling of is_bool / is_boolarr (#6305) and of the scalar
+// expr_is_char receiver arm (#7774).
+//
+// The 8-byte stride itself stays a deliberate divergence from native (#4366);
+// this changes no width, only method keying.
+//
+// Positions, so a narrowing on either side is visible:
+//   unann   — `var u = [<f32 expr>]`, no annotation to read the kind from.
+//   ann     — `var a: f32[] = …`, the annotated spelling.
+//   forbind — `for v in a`, which took its own element-kind path and had to be
+//             fixed separately from the index read.
+//   param   — an `f32[]` PARAMETER, whose slot is built by a different column.
+//   f64ctl  — an `f64[]` doing all of the above: it must keep f64 precision,
+//             so a fix that simply marked every float array f32 is caught.
+//
+// Sentinels are 251-253, above the `% 113` the success path returns.
+import "std/float";
+
+function sum_f32(a: f32[]): i32 {
+    var n: i32 = 0;
+    for v in a { n = n + (v as i32); }
+    return n;
+}
+
+// The bail shape: an index read on an unannotated f32 array literal.
+function unann_index(i: i32): i32 {
+    var u = [3.14159 as f32 * 2.5 as f32 * 2.5 as f32];
+    if (u[0].to_string().len() != 9) { return 253; }
+    return 1;
+}
+
+// The annotated spelling of the same read.
+function ann_index(i: i32): i32 {
+    var a: f32[] = [3.14159 as f32 * 2.5 as f32 * 2.5 as f32];
+    if (a[0].to_string().len() != 9) { return 253; }
+    return 1;
+}
+
+// The `for` binder — its own element-kind path, fixed separately.
+function for_binder(i: i32): i32 {
+    var a: f32[] = [3.14159 as f32 * 2.5 as f32 * 2.5 as f32];
+    var n: i32 = 0;
+    for v in a { if (v.to_string().len() != 9) { return 253; } n = n + 1; }
+    return n;
+}
+
+// An f32[] PARAMETER, whose slot is built by lower_func's own column.
+function param_arr(i: i32): i32 {
+    var a: f32[] = [2.5 as f32, 4.5 as f32];
+    return sum_f32(a);
+}
+
+// CONTROL: an f64[] must keep f64 precision through every one of those
+// spellings. 3.14159 * 2.5 * 2.5 renders 19.6349375 at f64 — ten characters,
+// one more than the f32 rendering — so a fix that marked every float array
+// f32 fails here rather than passing quietly.
+function f64_control(i: i32): i32 {
+    var d: f64[] = [3.14159 * 2.5 * 2.5];
+    if (d[0].to_string().len() != 10) { return 252; }
+    var n: i32 = 0;
+    for w in d { if (w.to_string().len() != 10) { return 252; } n = n + 1; }
+    return n;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        acc = acc + unann_index(i) + ann_index(i) + for_binder(i)
+            + param_arr(i) + f64_control(i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}

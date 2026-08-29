@@ -107,6 +107,18 @@ pub struct LocalInfo {
     // wasm backend needs steering; the register backends already use 8-byte
     // element slots.
     is_f64arr: boolean,
+    // is_f32arr: an f32[]. DISPATCH-ONLY, like is_bool / is_boolarr: an f32[]
+    // rides the SAME 8-byte slot and stride as an f64[] here (is_f64arr is set
+    // too, and is_float_array_type_name deliberately maps both spellings onto
+    // it), so no width, stride or rc decision reads this. What it buys is that
+    // `a[i]` types as an f32 rather than an f64, so a method on the element
+    // keys "f32.<m>": without it `a[0].to_string()` on an f32[] rendered at
+    // f64 precision (19.634937286376953 for a value native prints 19.634937),
+    // while the same value in a SCALAR f32 local rendered correctly — two
+    // spellings of one value disagreeing. The stored element is already
+    // f32-rounded; only the rendering was wrong. The 8-byte stride itself is
+    // a separate, deliberate divergence from native (#4366).
+    is_f32arr: boolean,
     // is_i64arr: an i64[]. Like is_f64arr an 8-byte stride, but a[i] reads an
     // i64 and types as i64 (flowing through lower_i64).
     is_i64arr: boolean,
@@ -223,7 +235,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, borrowed_arr: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, borrowed_arr: false };
 }
 
 pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
@@ -313,6 +325,10 @@ pub function li_set_is_f64(li: LocalInfo, v: boolean): LocalInfo {
 
 pub function li_set_is_f32(li: LocalInfo, v: boolean): LocalInfo {
     return LocalInfo { ...li, is_f32: v };
+}
+
+pub function li_set_is_f32arr(li: LocalInfo, v: boolean): LocalInfo {
+    return LocalInfo { ...li, is_f32arr: v };
 }
 
 pub function li_set_is_f64arr(li: LocalInfo, v: boolean): LocalInfo {
@@ -3502,6 +3518,15 @@ pub function (s: LowerState) is_f32_slot(i: i32): boolean {
 }
 // is_f64arr_slot / mark_f64arr query and set whether slot i holds an f64[]
 // array (8-byte element width on wasm). The element-width driver for a[i].
+// mark_f32arr / is_f32arr_slot: the f32[] dispatch overlay — see LocalInfo.
+pub function (s: LowerState) mark_f32arr(i: i32, v: boolean): LowerState {
+    return LowerState { ...s, locals: s.locals.with(i, li_set_is_f32arr(s.locals[i], v)) };
+}
+pub function (s: LowerState) is_f32arr_slot(i: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    return s.locals[i].is_f32arr;
+}
+
 pub function (s: LowerState) is_f64arr_slot(i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
     return s.locals[i].is_f64arr;
@@ -6041,6 +6066,21 @@ pub function elem_ty_is_i64slot(t: string): boolean {
     return t == "i64" || t == "u64";
 }
 
+// arr_index_is_f32 reports whether indexing `arr` yields an f32 ELEMENT — the
+// f32[] dispatch overlay (LocalInfo.is_f32arr) on a local or param slot. Its
+// f64 sibling covers the width; this only distinguishes the two spellings that
+// share it.
+pub function arr_index_is_f32(arr: ast.Expr, s: LowerState): boolean {
+    return expr_is_f32arr_src(arr, s);
+}
+
+// arr_lit_is_f32 is arr_lit_is_f64's dispatch twin: an array LITERAL whose
+// declared element spelling or first element is an f32.
+pub function arr_lit_is_f32(arr: ast.ExprArray, s: LowerState): boolean {
+    if (arr.elem_ty == "f32") { return true; }
+    return arr.elements.len() > 0 && expr_is_f32(arr.elements[0], s);
+}
+
 pub function arr_lit_is_f64(arr: ast.ExprArray, s: LowerState): boolean {
     if (elem_ty_is_f64slot(arr.elem_ty)) { return true; }
     return arr.elements.len() > 0 && expr_is_f64(arr.elements[0], s);
@@ -6059,6 +6099,19 @@ pub function arr_lit_is_i64(arr: ast.ExprArray, s: LowerState): boolean {
 // f64[]-returning calls and slices aren't tracked (those uses bail), so they
 // fall to the default — keeping a stray width-32 a[i] off an f64 buffer out of
 // the eligible set via the whole-module gate.
+// expr_is_f32arr_src reports whether `e` PRODUCES an f32[]: a literal whose
+// elements are f32, or an alias of a slot already carrying the overlay. The
+// unannotated `var a = [x as f32]` / `var b = a` spellings, which have no
+// `f32[]` type name to read it from.
+pub function expr_is_f32arr_src(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprArray(al) => { return arr_lit_is_f32(al, s); },
+        ast.ExprIdent(aid) => { return s.is_f32arr_slot(s.slot_of(aid.name)); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function expr_is_f64arr(e: ast.Expr, s: LowerState): boolean {
     match (e) {
         ast.ExprArray(arr) => {
@@ -8334,6 +8387,11 @@ function id_type_tag(id: ast.ExprIdent, s: LowerState): string {
 }
 
 function ix_type_tag(ix: ast.ExprIndex, s: LowerState): string {
+    // f32 BEFORE f64: an f32[] slot is is_f64arr too (both ride the 8-byte
+    // stride), so testing f64 first would collapse the element to "f64" and
+    // take its method dispatch off the f32 path — the array sibling of the
+    // ordering expr_scalar_type documents.
+    if (arr_index_is_f32(ix.array, s)) { return "f32"; }
     if (arr_index_is_f64(ix.array, s)) { return "f64"; }
     if (arr_index_is_i64(ix.array, s)) { return "i64"; }
     return ix.ty;
@@ -8509,6 +8567,11 @@ pub function expr_is_f32(e: ast.Expr, s: LowerState): boolean {
     if (cell_get_elem(e, s) == "f32") { return true; }
     match (e) {
         ast.ExprIdent(id) => { return s.is_f32_slot(s.slot_of(id.name)); },
+        // `a[i]` over an f32[]: the ELEMENT is an f32, so a method on it keys
+        // "f32.<m>". Dispatch-only — the read width stays is_f64arr's 8 bytes.
+        // Routed through ix_type_tag so the index arm resolves the element ONE
+        // way, exactly as expr_is_f64's does.
+        ast.ExprIndex(f32ix) => { return ix_type_tag(f32ix, s) == "f32"; },
         ast.ExprBinary(b) => {
             if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
                 return expr_is_f32(b.left, s) || expr_is_f32(b.right, s);
@@ -18425,6 +18488,8 @@ pub struct VarTypes {
     is_str: boolean,
     is_strarr: boolean,
     is_f64arr: boolean,
+    // f32[] dispatch overlay, riding is_f64arr's slot — see LocalInfo.is_f32arr.
+    is_f32arr: boolean,
     is_i64arr: boolean,
     is_bool: boolean,
     is_boolarr: boolean,
@@ -18846,6 +18911,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     }
     if (sfroot >= 0) { sb = LowerState { ...sb, reclaimable_names: sb.reclaimable_names.append("STR:" + reclaim_site_key_of(v.name, v.line, v.col)) }; }
     sb = sb.mark_f64arr(slot, vt.is_f64arr);
+    sb = sb.mark_f32arr(slot, vt.is_f32arr);
     sb = sb.mark_bool(slot, vt.is_bool);
     sb = sb.mark_boolarr(slot, vt.is_boolarr);
     sb = sb.mark_i64arr(slot, vt.is_i64arr);
@@ -19685,7 +19751,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         vfb = vfb.mark_reclaim_site(vfb.slot_of(v.name), reclaim_site_key_of(v.name, v.line, v.col));
         var vfslot: i32 = vfb.slot_of(v.name);
         vfb = vfb.mark_arr(vfslot, true);
-        if (is_float_array_type_name(vfft)) { vfb = vfb.mark_f64arr(vfslot, true); }
+        if (is_float_array_type_name(vfft)) { vfb = vfb.mark_f64arr(vfslot, true); if (vfft == "f32[]") { vfb = vfb.mark_f32arr(vfslot, true); } }
         else if (vfft == "i64[]") { vfb = vfb.mark_i64arr(vfslot, true); }
         // The dispatch-only boolean[] overlay (#6117). This branch RETURNS
         // before the VarTypes classification, so the element kind has to be
@@ -20804,6 +20870,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // f64[] tracking (element WIDTH for a[i]); the annotation is
     // authoritative too. The array itself is already is_arr (RC-tracked).
     var is_f64arr: boolean = expr_is_f64arr(v.init, se) || is_float_array_type_name(v.type_name);
+    // f32[] rides is_f64arr's slot and stride; this only keys `a[i]`'s method
+    // dispatch (LocalInfo.is_f32arr). From the annotation, or from a literal
+    // whose first element is statically f32 when there is none.
+    var is_f32arr: boolean = is_f64arr && (v.type_name == "f32[]" || expr_is_f32arr_src(v.init, se));
     // i64[] tracking (element WIDTH + i64 value typing for a[i]). The
     // literal form is handled by a dedicated branch above; here this
     // catches aliasing (`var b = a`) and the `i64[]` annotation.
@@ -21078,6 +21148,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
         is_str: is_str,
         is_strarr: is_strarr,
         is_f64arr: is_f64arr,
+        is_f32arr: is_f32arr,
         is_i64arr: is_i64arr,
         is_bool: is_bool,
         is_boolarr: is_boolarr,
@@ -22532,6 +22603,12 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     if (elem_is_str) { ff = ff.mark_str(xslot, true); }
     if (elem_is_bool) { ff = ff.mark_bool(xslot, true); }
     if (elem_is_f64) { ff = ff.mark_f64(xslot, true); }
+    // `for v in <f32[]>`: the element is an f32. Dispatch-only, exactly as the
+    // boolean case below — the read is the same 8-byte arr_get an f64 element
+    // takes — but without it `for v in a { v.to_string() }` rendered at f64
+    // precision while `a[i].to_string()` on the same array rendered at f32,
+    // two spellings of one read disagreeing (the shape #6305 fixed for bool).
+    if (s.is_f32arr_slot(aslot)) { ff = ff.mark_f32(xslot, true); }
     if (elem_is_i64) { ff = ff.mark_i64(xslot, true); }
     if (elem_is_u64) { ff = ff.mark_u64(xslot, true); }
     // `for f in <closure[]>`: each element is a closure box, so bind the
@@ -23061,7 +23138,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                             ms = ms.mark_arr(pbslot, true);
                             if (ptag == "u32[]") { ms = ms.mark_u32(pbslot, true); }
                         }
-                        else if (is_float_array_type_name(ptag)) { ms = ms.mark_arr(pbslot, true); ms = ms.mark_f64arr(pbslot, true); }
+                        else if (is_float_array_type_name(ptag)) { ms = ms.mark_arr(pbslot, true); ms = ms.mark_f64arr(pbslot, true); if (ptag == "f32[]") { ms = ms.mark_f32arr(pbslot, true); } }
                         else if (ptag == "i64[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_i64arr(pbslot, true); }
                         else if (ptag == "string[]") { ms = ms.mark_arr(pbslot, true); ms = ms.mark_strarr(pbslot, true); }
                         else if (is_struct_array_field_type(ms.structs, ptag) || is_enum_array_field_type(ms.structs, ptag)) {
@@ -51757,6 +51834,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var isf64: boolean[] = [];
     var isf32: boolean[] = [];
     var isf64arr: boolean[] = [];
+    // f32[] params take the dispatch overlay too — see LocalInfo.is_f32arr.
+    var isf32arr: boolean[] = [];
     var isi64arr: boolean[] = [];
     var isboolarr: boolean[] = [];
     var isbool: boolean[] = [];
@@ -51825,6 +51904,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // `float` excluded — the f64 alias, not f32 (#5882); isf64 covers it.
         isf32 = isf32.append(rbase == "f32");
         isf64arr = isf64arr.append(false);
+        isf32arr = isf32arr.append(false);
         isi64arr = isi64arr.append(false);
         isboolarr = isboolarr.append(fn.receiver_type == "boolean[]");
         isbool = isbool.append(fn.receiver_type == "boolean");
@@ -51938,6 +52018,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // program with a single `import` reproduced and the same program
         // without one did not (#6175).
         isf64arr = isf64arr.append(is_float_array_type_name(fn.params[i].type_name));
+        isf32arr = isf32arr.append(fn.params[i].type_name == "f32[]");
         isi64arr = isi64arr.append(fn.params[i].type_name == "i64[]");
         isboolarr = isboolarr.append(fn.params[i].type_name == "boolean[]");
         isbool = isbool.append(fn.params[i].type_name == "boolean");
@@ -52117,7 +52198,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, borrowed_arr: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, borrowed_arr: false });
         lzi = lzi + 1;
     }
     // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees
