@@ -5,8 +5,8 @@
 > SH-057 miscompile has its own issue [#2850](https://github.com/JakeChampion/lang/issues/2850).
 > This doc stays the detailed reference (file:line, repro, fix sketch).
 
-Audit of the self-hosted Fern compiler under `examples/self_host/` (172,450 lines
-of Fern across 91 files), compared where useful against the Go reference in
+Audit of the self-hosted Fern compiler under `examples/self_host/` (189,543 lines
+of Fern across 94 files), compared where useful against the Go reference in
 `internal/`. The goal is a worklist we can resolve **one item at a time**: every
 finding has a stable ID (`SH-NNN`), a severity, the affected `file:line`, and a
 concrete remediation. Check items off as they land.
@@ -804,15 +804,50 @@ appendix §6.)
   delegates to the shared helper (mirroring the qualified `pkg.Type {…}` and
   generic `Name[T] {…}` paths), removing ~55 duplicated lines and the drift risk
   between the two copies of the spread / field / trailing-comma loop.
-- [ ] **SH-041 — Parse errors still collapse into positionless sentinel nodes.**
-  Half fixed: `ExprUnknown` (`parser.fern:143`) carries `line`/`col`. But
-  **`StmtUnknown` (`parser.fern:293`) has no position at all** — it is still
-  `{ kind: string }` — and the position-carrying expression constructor is
-  barely used: **1 call site of `e_unknown_at` (`:2202`, defined `:628`) against
-  42 calls to the positionless `e_unknown` (`:627`)** and 25 calls to
-  `s_unknown` (`:1075`). _Fix:_ give `StmtUnknown` `line`/`col`, then convert the
-  `e_unknown` / `s_unknown` call sites to the positioned constructors and
-  accumulate real diagnostics.
+- [x] **SH-041 — Parse errors collapsed into positionless sentinel nodes.**
+  _Done:_ `StmtUnknown` carries `line`/`col`; `s_unknown` takes the parser and
+  reads the cursor, so a statement sentinel cannot be raised without a position
+  (the four `build_*_match` desugars, which hold the `match` keyword's own
+  position rather than a cursor, go through `s_unknown_at`). 19 parse-time
+  `e_unknown` sites in `parser.fern` moved to `e_unknown_at` (21 in total now),
+  and
+  `asmcore.parse_unknown_error` now puts the sentinel's position on the `Diag`
+  instead of hardcoding `0`. `fern.fern`'s printer gates its location line on
+  `d.line > 0`, so **every P001/P002 the self-host raised previously named no
+  source location at all** — the positions existed on `ExprUnknown` and were
+  discarded one call short of the diagnostic.
+
+  **Two things to keep in mind if you extend this.**
+
+  1. **A sentinel site that RECOVERS by advancing must capture the position
+     first.** `parse_primary`'s unknown-leading-punct arm deliberately steps
+     past the offending token so `parse_program` cannot spin; reading the
+     cursor after that names the token the parser *resumed* at, one token late.
+     It is the only such site — every other `p.advance()` before a sentinel
+     consumes a keyword and leaves the cursor ON the offender, which is the
+     position wanted. The distinction is invisible in a diff and only a
+     differential against native catches it.
+  2. **`e_unknown` has a second, legitimate role** and must not be converted
+     wholesale. Outside the parse functions it is an "absent expression"
+     placeholder — a `ParamDecl.default_value`, `MatchSugar.scrut`, the
+     not-found marker in `irlower`'s capture search — none of which is a parse
+     error. `parse_unknown_errors_module` runs on parser output, before those
+     passes, so they never reach a diagnostic; converting them would invent
+     positions for nodes that have none — and `collect_expr_unknown_errors`
+     guards the struct-literal `base` on `has_base` precisely because the
+     no-base placeholder is not an error. 23 such sites remain in `parser.fern`
+     and are correct as they are.
+
+  Pinned by `TestSelfHostParseErrorPositions`, a differential: the expectation
+  is native's own reported position for the same program, so a case cannot be
+  satisfied by writing down whatever the self-host currently prints. The three
+  shapes agree with native to the column.
+
+  _Still open under this row:_ the parser accumulates no diagnostic list — the
+  sentinels remain the only channel, so the message is a `kind` string rather
+  than native's "expected X, got Y". Positions are the half that gated
+  usability; the message half wants the parser to carry errors and is its own
+  change.
 - [ ] **SH-042 — `parser.fern:6033-6373`** `parse_type_name` is a **341-line**
   giant whose recovery exists "to avoid OOM spin". No `parse_type_atom` /
   `parse_type_suffixes` split exists. Split it and return structured types
@@ -824,9 +859,20 @@ appendix §6.)
   `\u` escape is a one-site change.
 
 ### Checker / asmcore
-- [ ] **SH-044 — `asmcore.fern:2704-3200`** `infer_expr_type` is a **497-line**
-  function with hundreds of hardcoded builtin-name string compares —
-  table-drive `builtin_return_type(name, args)` + per-receiver method resolvers.
+- [~] **SH-044 — the giant-function half is done; the table-drive half moved.**
+  _Done:_ `infer_expr_type` (`asmcore.fern:3224`) is **76 lines**, a flat match
+  that dispatches to `infer_expr_binary_type` / `infer_expr_unary_type` /
+  `infer_expr_call_type`, and the latter splits again into the per-receiver
+  resolvers this row asked for (`infer_call_named_type`,
+  `infer_call_method_type`). It also no longer returns a type NAME: the result
+  is a structured `Ty`, which is T2 progress the row predates.
+
+  _Still open, and relocated:_ the hardcoded builtin-name compares did not go
+  away, they moved down a level. `infer_call_named_type` (`:2922-3136`, 215
+  lines) holds **101** and `infer_call_method_type` (`:2780-2918`, 139 lines)
+  holds **47**. No `builtin_return_type(name, args)` table exists anywhere.
+  Anyone picking this row up should read it as "table-drive the two call
+  resolvers", not "split `infer_expr_type`" — that part is spent.
 - [x] **SH-045 — `check_module` rebuilt one function's scope 10-13 times.**
   _Done:_ the count was worse than this entry recorded — 9 rebuilds across the
   body diagnostic passes, a 10th inside `check_func_body` (which the same loop
@@ -923,18 +969,18 @@ appendix §6.)
   adding an ownership fact is one field on one struct rather than a new parallel
   array threaded through every lowering function. (`wasm_ir.fern` declares zero
   structs, so its state is instead spread across positional params — SH-054.)
-- [ ] **SH-054 — `wasm_ir.fern:8027`** `emit_ir_module_units_mode` takes **13
-  positional params carrying 8 parallel arrays** — `nss`, `unit_texts`,
-  `all_strs`, `str_counts`, `all_caggs`, `cagg_counts`, `all_fns`, `fn_counts` —
-  plus `mod`, `needs`, `fn_sigs`, `rc_bodies`, `mode`; the 12-param
-  `emit_ir_module_units` at `:8007` is its twin. The count-and-values pairs
-  (`all_strs`/`str_counts`, `all_caggs`/`cagg_counts`, `all_fns`/`fn_counts`) are
-  three hand-rolled ragged arrays. This is down from a 21-param predecessor, so
-  it is moving the right way; it is still unbundled. _Fix:_ a `ModuleUnits`
-  struct holding the per-unit slices, and fold the two entry points into one with
-  a defaulted `mode`.
-
-### Drivers / glue
+- [x] **SH-054 — the wasm emitter's positional-parameter pileup.** _Done:_
+  `emit_ir_module_units_mode` no longer exists. The surviving
+  `emit_ir_module_units` (`wasm_ir.fern:8107`) takes **6** params — `units`,
+  `mod`, `needs`, `fn_sigs`, `rc_bodies`, `mode` — against the 13 this row
+  recorded, and the eight parallel arrays are one `WasmUnit[]`
+  (`:7988`: `ns` / `text` / `strs` / `caggs` / `fns`). That is the `ModuleUnits`
+  struct the row's fix sketch proposed, and it retires the three hand-rolled
+  count-and-values ragged pairs (`all_strs`/`str_counts`,
+  `all_caggs`/`cagg_counts`, `all_fns`/`fn_counts`) with them. The two entry
+  points folded into one. Recorded here because it landed without the row being
+  ticked; the successor finding the 2026-08-14 reconciliation asked to re-file
+  is not needed — there is nothing left of it.
 - [x] **SH-055 — the import-resolution suite was duplicated across two
   drivers.** _Done:_ `last_slash` / `dir_of` / `module_name` / `is_local` /
   `join_path` / `should_load` / `resolve_path` lived twice, in `fern.fern` and
@@ -1029,13 +1075,19 @@ appendix §6.)
 ## 5. Suggested sequencing
 
 1. **Correctness first** — SH-001…SH-010 are all closed; keep that bar.
-2. **SH-054** — SH-058 is done (`emit_function_ir` 1254 → 84), and SH-027 is
-   done everywhere it pays: `wasm_ir.fern` and the SSA backends' `emit_program`.
-   What is left of SH-027 is `printer.fern` (a different shape) and the SSA
-   per-instruction chain (deliberately not worth it) — see the row.
+2. **SH-050** — `build_expr` is the last unsplit giant with no prerequisite
+   (524 lines, down from the 790 this doc long quoted). SH-054 and SH-058 are
+   done, and SH-027 is done everywhere it pays: `wasm_ir.fern` and the SSA
+   backends' `emit_program`. What is left of SH-027 is `printer.fern` (a
+   different shape) and the SSA per-instruction chain (deliberately not worth
+   it) — see the row.
 3. **T3 visitor** (SH-022) — `parser`'s 12 rewrite passes and `checker`'s 15
    scope-threading passes are what is left; `wasm_ir`'s cluster was never an AST
-   walk and is done. Then the giant function splits (SH-044/SH-050) it unlocks.
+   walk and is done.
+4. **SH-044's remaining half** — table-drive `infer_call_named_type` /
+   `infer_call_method_type` (148 hardcoded name compares between them). The
+   split half of that row is already done, so this needs no visitor and can go
+   earlier if someone wants a self-contained piece.
 5. **T2 structured types** (SH-021 endgame — parser stores `TypeRef`).
 6. **T5 backend interfaces** (SH-024/SH-025) — largest effort, do last with CI as
    backstop. Resolve the 7-key `has_need` drift before lifting anything.

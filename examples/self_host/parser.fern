@@ -439,7 +439,7 @@ function parse_struct_destructure(p: Par, struct_name: string, at: string, line:
     var (bindings, fields, fields_rest, fields_ok, fields_p) = parse_struct_pattern_fields(p);
     p = fields_p;
     if (!fields_ok) {
-        return (s_unknown("a struct destructuring pattern binds field names"), p);
+        return (s_unknown(p, "a struct destructuring pattern binds field names"), p);
     }
     if (p.peek_punct() == "=") { p = p.advance(); }
     var (init_expr, ip) = parse_expr(p);
@@ -842,7 +842,18 @@ function fold_lit_cond(pat: ast.Pattern, guard: ast.Expr, has_guard: boolean): (
 }
 
 function p_wildcard(): ast.Pattern { return ast.PatWildcard { tag: 0 }; }
-function s_unknown(kind: string): ast.Stmt { return ast.StmtUnknown { kind: kind }; }
+// s_unknown builds the statement-level parse-error sentinel at the position of
+// the token the parser stopped on. It takes the parser rather than offering a
+// positionless overload so a sentinel cannot be raised without a position.
+function s_unknown(p: Par, kind: string): ast.Stmt {
+    return s_unknown_at(kind, p.peek_line(), p.peek_col());
+}
+
+// s_unknown_at serves the desugars that hold a construct's position directly
+// (the `match` keyword) rather than a parser cursor.
+function s_unknown_at(kind: string, line: i32, col: i32): ast.Stmt {
+    return ast.StmtUnknown { kind: kind, line: line, col: col };
+}
 function s_defer(action: ast.Stmt): ast.Stmt { return ast.StmtDefer { action: action, on_error: 0, line: 0 }; }
 function s_errdefer(action: ast.Stmt): ast.Stmt { return ast.StmtDefer { action: action, on_error: 1, line: 0 }; }
 
@@ -1396,7 +1407,7 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
                 var (atpr_param, atpr_destr, atpr_p) = parse_pattern_param(p);
                 p = atpr_p;
                 if (atpr_destr.names.len() == 0) {
-                    return (e_unknown("lambda: bad destructuring param"), p);
+                    return (e_unknown_at("lambda: bad destructuring param", p.peek_line(), p.peek_col()), p);
                 }
                 params = params.append(atpr_param);
                 apd = apd.append(atpr_destr);
@@ -1604,7 +1615,7 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
         } else {
             // No overrides — expect the closing brace (pure copy).
             if (p.peek_punct() != "}") {
-                return (e_unknown("missing } in struct update"), p);
+                return (e_unknown_at("missing } in struct update", p.peek_line(), p.peek_col()), p);
             }
             p = p.advance();
             return (e_struct_update(type_name, fnames, fvals, base, sline, scol), p);
@@ -1614,11 +1625,11 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
         while (true) {
             var fn: string = p.peek_ident();
             if (fn.len() == 0) {
-                return (e_unknown("missing field name in struct lit"), p);
+                return (e_unknown_at("missing field name in struct lit", p.peek_line(), p.peek_col()), p);
             }
             p = p.advance();
             if (p.peek_punct() != ":") {
-                return (e_unknown("missing : in struct lit"), p);
+                return (e_unknown_at("missing : in struct lit", p.peek_line(), p.peek_col()), p);
             }
             p = p.advance();
             var (fv_expr, fv_p) = parse_expr(p);
@@ -1636,7 +1647,7 @@ function parse_struct_lit_body(p: Par, type_name: string, sline: i32, scol: i32)
         }
     }
     if (p.peek_punct() != "}") {
-        return (e_unknown("missing } in struct lit"), p);
+        return (e_unknown_at("missing } in struct lit", p.peek_line(), p.peek_col()), p);
     }
     p = p.advance();
     if (has_base) {
@@ -1739,7 +1750,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 }
             }
             if (p.peek_punct() != ")") {
-                return (e_unknown("missing ) in call"), p);
+                return (e_unknown_at("missing ) in call", p.peek_line(), p.peek_col()), p);
             }
             p = p.advance();
             if (pending_type_args.len() > 0) { base = with_written_type_args(base, pending_type_args); }
@@ -1768,7 +1779,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 var (shi_expr, shi_p) = parse_expr(p);
                 p = shi_p;
                 if (p.peek_punct() != "]") {
-                    return (e_unknown("missing ] in slice"), p);
+                    return (e_unknown_at("missing ] in slice", p.peek_line(), p.peek_col()), p);
                 }
                 p = p.advance();
                 base = e_slice(base, e_number("0", "", false), shi_expr);
@@ -1855,13 +1866,13 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 var (end_expr, end_p) = parse_expr(p);
                 p = end_p;
                 if (p.peek_punct() != "]") {
-                    return (e_unknown("missing ] in slice"), p);
+                    return (e_unknown_at("missing ] in slice", p.peek_line(), p.peek_col()), p);
                 }
                 p = p.advance();
                 base = e_slice(base, idx_expr, end_expr);
             } else {
                 if (p.peek_punct() != "]") {
-                    return (e_unknown("missing ] in index"), p);
+                    return (e_unknown_at("missing ] in index", p.peek_line(), p.peek_col()), p);
                 }
                 p = p.advance();
                 base = e_index(base, idx_expr);
@@ -1884,7 +1895,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
                 }
             }
             if (fname.len() == 0) {
-                return (e_unknown("missing field name after ."), p);
+                return (e_unknown_at("missing field name after .", p.peek_line(), p.peek_col()), p);
             }
             p = p.advance();
             // Qualified struct literal: `pkg.Type { f: v, … }`. Only
@@ -2059,7 +2070,7 @@ function parse_primary(p: Par): (ast.Expr, Par) {
                 var fnl_col: i32 = p.peek_col();
                 p = p.advance();  // consume `function`
                 if (p.peek_punct() != "(") {
-                    return (e_unknown("lambda: missing ("), p);
+                    return (e_unknown_at("lambda: missing (", p.peek_line(), p.peek_col()), p);
                 }
                 p = p.advance();
                 var params: ast.ParamDecl[] = [];
@@ -2070,7 +2081,7 @@ function parse_primary(p: Par): (ast.Expr, Par) {
                             var (ltpr_param, ltpr_destr, ltpr_p) = parse_pattern_param(p);
                             p = ltpr_p;
                             if (ltpr_destr.names.len() == 0) {
-                                return (e_unknown("lambda: bad destructuring param"), p);
+                                return (e_unknown_at("lambda: bad destructuring param", p.peek_line(), p.peek_col()), p);
                             }
                             params = params.append(ltpr_param);
                             lpd = lpd.append(ltpr_destr);
@@ -2164,7 +2175,7 @@ function parse_primary(p: Par): (ast.Expr, Par) {
                     return parse_postfix(look, e_ident_at(x.name, kwline, kwcol));
                 }
             }
-            return (e_unknown("keyword:" + x.name), p);
+            return (e_unknown_at("keyword:" + x.name, p.peek_line(), p.peek_col()), p);
         },
         lexer.TokIdent(x) => {
             var idline: i32 = p.peek_line();
@@ -2277,7 +2288,7 @@ function parse_primary(p: Par): (ast.Expr, Par) {
                     }
                 }
                 if (p.peek_punct() != "]") {
-                    return (e_unknown("missing ] in array literal"), p);
+                    return (e_unknown_at("missing ] in array literal", p.peek_line(), p.peek_col()), p);
                 }
                 p = p.advance();
                 return parse_postfix(p, e_array_at(elems, x.line, x.col));
@@ -2313,11 +2324,15 @@ function parse_primary(p: Par): (ast.Expr, Par) {
             // a stmt has stray trailing punct (e.g. tuple-lit
             // postfix that doesn't pair with the TokIdent's
             // chain loop).
+            // Capture before the recovery advance: the sentinel names the
+            // punct that failed, not the token the parser resumed at.
+            var badline: i32 = p.peek_line();
+            var badcol: i32 = p.peek_col();
             p = p.advance();
-            return (e_unknown("punct:" + x.text), p);
+            return (e_unknown_at("punct:" + x.text, badline, badcol), p);
         },
-        lexer.TokEof(_) => { return (e_unknown("eof"), p); },
-        lexer.TokError(x) => { return (e_unknown("lex error: " + x.msg), p); },
+        lexer.TokEof(_) => { return (e_unknown_at("eof", p.peek_line(), p.peek_col()), p); },
+        lexer.TokError(x) => { return (e_unknown_at("lex error: " + x.msg, p.peek_line(), p.peek_col()), p); },
         lexer.TokFString(f) => {
             p = p.advance();
             if (p.verbatim) {
@@ -2366,7 +2381,7 @@ function parse_primary(p: Par): (ast.Expr, Par) {
             return parse_postfix(p, built);
         }
     }
-    return (e_unknown("primary"), p);
+    return (e_unknown_at("primary", p.peek_line(), p.peek_col()), p);
 }
 
 // precedence: higher binds tighter. Returns -1 for non-binop
@@ -2690,7 +2705,7 @@ function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, m
         }
         i = i - 1;
     }
-    if (else_body.len() == 0) { return s_unknown("empty literal match"); }
+    if (else_body.len() == 0) { return s_unknown_at("empty literal match", mkline, mkcol); }
     // The chain replaces the match outright — there is no StmtMatch left — so
     // hang the arms as written off its outermost `if` for `-fmt` (#7072).
     return with_match_sugar(else_body[0], ast.MatchSugar { ...no_match_sugar(), scrut: scrut, lits: arms, line: mkline, col: mkcol });
@@ -2882,7 +2897,7 @@ function wrap_tuple_elems(path: ast.Stmt[], kinds: i32[], pats: ast.Pattern[], p
 
 // build_tuple_match assembles the desugared statement described above.
 function build_tuple_match(scrut: ast.Expr, arms: ast.TupArm[], mkline: i32, mkcol: i32): ast.Stmt {
-    if (arms.len() == 0) { return s_unknown("empty tuple match"); }
+    if (arms.len() == 0) { return s_unknown_at("empty tuple match", mkline, mkcol); }
     // Element count comes from the first tuple-pattern arm (the checker
     // guarantees all arms agree with the scrutinee's arity).
     var n_elems: i32 = 0;
@@ -2891,7 +2906,7 @@ function build_tuple_match(scrut: ast.Expr, arms: ast.TupArm[], mkline: i32, mkc
         if (!arms[ai].is_wild) { n_elems = arms[ai].elem_kinds.len(); break; }
         ai = ai + 1;
     }
-    if (n_elems < 2) { return s_unknown("tuple match with no tuple arm"); }
+    if (n_elems < 2) { return s_unknown_at("tuple match with no tuple arm", mkline, mkcol); }
     var base: string = "__tm" + util.i32_to_string(mkline) + "_" + util.i32_to_string(mkcol);
     var done: string = base + "_d";
     var whole: string = base + "_w";
@@ -3083,7 +3098,7 @@ function struct_field_variant_start(p: Par): boolean {
 }
 
 function build_struct_match(scrut: ast.Expr, arms: ast.StructArm[], mkline: i32, mkcol: i32): ast.Stmt {
-    if (arms.len() == 0) { return s_unknown("empty struct match"); }
+    if (arms.len() == 0) { return s_unknown_at("empty struct match", mkline, mkcol); }
     var base: string = "__sm" + util.i32_to_string(mkline) + "_" + util.i32_to_string(mkcol);
     var tmp: string = base + "_v";
     var done: string = base + "_d";
@@ -3396,7 +3411,7 @@ function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
     var ebody: ast.Stmt[] = [];
     var rt: string = "i32";
     if (p.peek_punct() != "{") {
-        ebody = ebody.append(s_unknown("missing { in branch body"));
+        ebody = ebody.append(s_unknown(p, "missing { in branch body"));
         return (ebody, rt, p);
     }
     p = p.advance();  // consume `{`
@@ -3440,7 +3455,7 @@ function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
     // the lowering reads (leading statements + a trailing value).
     if (!have_tail) {
         if (!branch_stmts_diverge(leading)) {
-            leading = leading.append(s_unknown("value branch has no trailing expression"));
+            leading = leading.append(s_unknown(p, "value branch has no trailing expression"));
             return (leading, rt, p);
         }
         var dead: ast.Expr = branch_dead_tail(leading);
@@ -3533,7 +3548,7 @@ function parse_match_expr(p: Par): IfChain {
                 var (etpr_elem_kinds, etpr_binds, etpr_lits, etpr_pats, etpr_p) = parse_tuple_arm_pattern(p);
                 p = etpr_p;
                 if (etpr_elem_kinds.len() == 0) {
-                    return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt, needs_default_return: false, value_local: "" };
+                    return IfChain { par: p, stmt: s_unknown(p, "bad tuple pattern"), rt: rt, needs_default_return: false, value_local: "" };
                 }
                 etpats = etpats.append(ast.TupArm { is_wild: false, elem_kinds: etpr_elem_kinds, binds: etpr_binds, lits: etpr_lits, elem_pats: etpr_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol, alt_cont: false });
                 // Tuple or-patterns: one TupArm per `|` alternative sharing
@@ -3544,7 +3559,7 @@ function parse_match_expr(p: Par): IfChain {
                     var (etor_kinds, etor_binds, etor_lits, etor_pats, etor_p) = parse_tuple_arm_pattern(p);
                     p = etor_p;
                     if (etor_kinds.len() == 0) {
-                        return IfChain { par: p, stmt: s_unknown("bad tuple pattern"), rt: rt, needs_default_return: false, value_local: "" };
+                        return IfChain { par: p, stmt: s_unknown(p, "bad tuple pattern"), rt: rt, needs_default_return: false, value_local: "" };
                     }
                     etpats = etpats.append(ast.TupArm { is_wild: false, elem_kinds: etor_kinds, binds: etor_binds, lits: etor_lits, elem_pats: etor_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: et_empty_body, line: etline, col: etcol, alt_cont: false });
                 }
@@ -3617,7 +3632,7 @@ function parse_match_expr(p: Par): IfChain {
         var (smarms, smrt, smok, smp) = parse_struct_match_arms(p, true);
         p = smp;
         if (!smok) {
-            return IfChain { par: p, stmt: s_unknown("a struct pattern binds field names"), rt: smrt, needs_default_return: false, value_local: "" };
+            return IfChain { par: p, stmt: s_unknown(p, "a struct pattern binds field names"), rt: smrt, needs_default_return: false, value_local: "" };
         }
         // Same value-local routing as the tuple desugar above: build_struct_match
         // splices arm bodies into the same done-flag if-chain shape.
@@ -3935,7 +3950,7 @@ function parse_pipe(p: Par): (ast.Expr, Par) {
 
 function parse_block(p: Par): (ast.Stmt[], Par) {
     if (p.peek_punct() != "{") {
-        var miss: ast.Stmt[] = [s_unknown("missing { in block")];
+        var miss: ast.Stmt[] = [s_unknown(p, "missing { in block")];
         return (miss, p);
     }
     p = p.advance();
@@ -3991,7 +4006,7 @@ function parse_block_body(p: Par): (ast.Stmt[], Par) {
                     body = body.append(s_return(e_call(c.callee, newargs)));
                 },
                 _ => {
-                    body = body.append(s_unknown("use source must be a function call"));
+                    body = body.append(s_unknown(p, "use source must be a function call"));
                 },
             }
             return (body, p);
@@ -4022,7 +4037,7 @@ function parse_block_or_stmt(p: Par): (ast.Stmt[], Par) {
     var (r_stmt, r_p) = parse_stmt(p);
     // Guarantee progress on a malformed body token rather than spinning.
     if (r_p.pos == p.pos) {
-        var none: ast.Stmt[] = [s_unknown("missing statement in braceless body")];
+        var none: ast.Stmt[] = [s_unknown(p, "missing statement in braceless body")];
         return (none, p.advance());
     }
     var one: ast.Stmt[] = [r_stmt];
@@ -4614,7 +4629,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
     p = p.advance();  // consume `match`
     var empty_arms: ast.MatchArm[] = [];
     if (p.peek_punct() != "(") {
-        return (s_match(e_unknown("match: missing ("), empty_arms), p);
+        return (s_match(e_unknown_at("match: missing (", p.peek_line(), p.peek_col()), empty_arms), p);
     }
     p = p.advance();
     var (sr_expr, sr_p) = parse_expr(p);
@@ -4651,7 +4666,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
                 var (tpr_elem_kinds, tpr_binds, tpr_lits, tpr_pats, tpr_p) = parse_tuple_arm_pattern(p);
                 p = tpr_p;
                 if (tpr_elem_kinds.len() == 0) {
-                    return (s_unknown("bad tuple pattern"), p);
+                    return (s_unknown(p, "bad tuple pattern"), p);
                 }
                 tpats = tpats.append(ast.TupArm { is_wild: false, elem_kinds: tpr_elem_kinds, binds: tpr_binds, lits: tpr_lits, elem_pats: tpr_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: t_empty_body, line: taline, col: tacol, alt_cont: false });
                 // Tuple or-patterns: `(1, 2) | (3, 4) => …`. Each `|`
@@ -4663,7 +4678,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
                     var (tor_kinds, tor_binds, tor_lits, tor_pats, tor_p) = parse_tuple_arm_pattern(p);
                     p = tor_p;
                     if (tor_kinds.len() == 0) {
-                        return (s_unknown("bad tuple pattern"), p);
+                        return (s_unknown(p, "bad tuple pattern"), p);
                     }
                     tpats = tpats.append(ast.TupArm { is_wild: false, elem_kinds: tor_kinds, binds: tor_binds, lits: tor_lits, elem_pats: tor_pats, at_binding: "", guard: e_bool(true), has_guard: false, body: t_empty_body, line: taline, col: tacol, alt_cont: false });
                 }
@@ -4709,7 +4724,7 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
     if (is_struct_pattern_arm(p) && ((p.peek_ident().len() > 0 && p.peek2_punct() == "{") || (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{"))) {
         var (smarms, smrt, smok, smp) = parse_struct_match_arms(p, false);
         p = smp;
-        if (!smok) { return (s_unknown("a struct pattern binds field names"), p); }
+        if (!smok) { return (s_unknown(p, "a struct pattern binds field names"), p); }
         return (build_struct_match(sr_expr, smarms, mkline, mkcol), p);
     }
     // A literal at the FIRST arm's pattern position marks a match on a
@@ -5021,7 +5036,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
         var (kvnames, kvcount, kvok, kvnames_p) = parse_destructure_names(kv_open);
         p = kvnames_p;
         if (!kvok || kvcount < 2) {
-            return (s_unknown("for pattern needs at least 2 binders"), p);
+            return (s_unknown(p, "for pattern needs at least 2 binders"), p);
         }
         if (p.peek_ident() == "in") { p = p.advance(); }
         // Suppress trailing struct-literal parsing — the `{` that
@@ -5063,7 +5078,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
             var (fpnames, fpcount, fpok, fpnames_p) = parse_destructure_names(p);
             p = fpnames_p;
             if (!fpok || fpcount < 2) {
-                return (s_unknown("for pattern needs at least 2 binders"), p);
+                return (s_unknown(p, "for pattern needs at least 2 binders"), p);
             }
             fpre = [s_var_at(fpnames, destr_marker(fp_at, false, ""), fp_init, fp_line, fp_col)];
         } else {
@@ -5072,7 +5087,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
             var (fpbinds, fpfields, fpfields_rest, fpfields_ok, fpfields_p) = parse_struct_pattern_fields(p);
             p = fpfields_p;
             if (!fpfields_ok || fpbinds.len() == 0) {
-                return (s_unknown("a struct destructuring pattern binds field names"), p);
+                return (s_unknown(p, "a struct destructuring pattern binds field names"), p);
             }
             fpre = [s_var_at(fpbinds, destr_marker(fp_at, fpfields_rest, "@sd:" + fp_struct + ":" + fpfields), fp_init, fp_line, fp_col)];
         }
@@ -5080,12 +5095,12 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     } else {
         fvar = p.peek_ident();
         if (fvar.len() == 0) {
-            return (s_unknown("missing for-var name"), p);
+            return (s_unknown(p, "missing for-var name"), p);
         }
         p = p.advance();
     }
     if (p.peek_ident() != "in") {
-        return (s_unknown("missing `in` in for"), p);
+        return (s_unknown(p, "missing `in` in for"), p);
     }
     p = p.advance();  // consume `in`
     // Suppress trailing struct-literal parsing on the iter so that
@@ -5346,7 +5361,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
                 var ils_field_pats: ast.Pattern[] = ils_sap.pats;
                 var ils_ok: boolean = ils_sap.ok;
                 p = ils_pp;
-                if (!ils_ok) { return (s_unknown("a struct pattern binds field names"), p); }
+                if (!ils_ok) { return (s_unknown(p, "a struct pattern binds field names"), p); }
                 if (p.peek_punct() == "=") { p = p.advance(); }
                 var ils_saved: boolean = p.no_struct;
                 var (ils_scrut, ils_sp) = parse_expr(p.with_no_struct(true));
@@ -5389,7 +5404,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
                 var ilt_pats: ast.TupArm[] = [];
                 var (ilt_kinds, ilt_binds, ilt_lits, ilt_elems, ilt_pp) = parse_tuple_arm_pattern(p);
                 p = ilt_pp;
-                if (ilt_kinds.len() == 0) { return (s_unknown("bad tuple pattern"), p); }
+                if (ilt_kinds.len() == 0) { return (s_unknown(p, "bad tuple pattern"), p); }
                 ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilt_kinds, binds: ilt_binds, lits: ilt_lits, elem_pats: ilt_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
                 // Or-alternatives (`if let (1, 2) | (3, 4) = t`) expand one
                 // arm each, sharing the then-block — the same per-alternative
@@ -5398,7 +5413,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
                     p = p.advance();
                     var (ilo_kinds, ilo_binds, ilo_lits, ilo_elems, ilo_p) = parse_tuple_arm_pattern(p);
                     p = ilo_p;
-                    if (ilo_kinds.len() == 0) { return (s_unknown("bad tuple pattern"), p); }
+                    if (ilo_kinds.len() == 0) { return (s_unknown(p, "bad tuple pattern"), p); }
                     ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilo_kinds, binds: ilo_binds, lits: ilo_lits, elem_pats: ilo_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
                 }
                 if (p.peek_punct() == "=") { p = p.advance(); }
@@ -5522,7 +5537,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             return (s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, 0, 0, "if_let"), p);
         }
         if (p.peek_punct() != "(") {
-            return (s_unknown("missing ( in if"), p);
+            return (s_unknown(p, "missing ( in if"), p);
         }
         p = p.advance();
         var (c_expr, c_p) = parse_expr(p);
@@ -5555,7 +5570,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     if (kw == "while") {
         p = p.advance();
         if (p.peek_punct() != "(") {
-            return (s_unknown("missing ( in while"), p);
+            return (s_unknown(p, "missing ( in while"), p);
         }
         p = p.advance();
         var (wc_expr, wc_p) = parse_expr(p);
@@ -5599,7 +5614,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             var (tdnames, tdcount, tdok, tdp) = parse_destructure_names(p);
             p = tdp;
             if (!tdok || tdcount < 2) {
-                return (s_unknown("a tuple destructuring pattern binds names, not literals"), p);
+                return (s_unknown(p, "a tuple destructuring pattern binds names, not literals"), p);
             }
             if (p.peek_punct() == "=") { p = p.advance(); }
             var (tdinit_expr, tdinit_p) = parse_expr(p);
@@ -5648,7 +5663,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         }
         var name: string = p.peek_ident();
         if (name.len() == 0) {
-            return (s_unknown("missing var name"), p);
+            return (s_unknown(p, "missing var name"), p);
         }
         // The cursor still ON the head, for the let-else pattern parse below —
         // parse_pattern wants to read the name itself.
@@ -5780,7 +5795,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             v_fn_ret = vtr_fn_ret;
         }
         if (p.peek_punct() != "=") {
-            return (s_unknown("missing = in var"), p);
+            return (s_unknown(p, "missing = in var"), p);
         }
         p = p.advance();
         // The source expr is followed by either `;` (plain binding) or
@@ -6010,7 +6025,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
                 fargs = fargs.append(frhs);
                 return (s_expr(e_call(e_ident("__set_field"), fargs)), p);
             },
-            _ => { return (s_unknown("lhs of assign must be ident, index, or field"), p); }
+            _ => { return (s_unknown(p, "lhs of assign must be ident, index, or field"), p); }
         }
     }
     if (p.peek_punct() == ";") { p = p.advance(); }

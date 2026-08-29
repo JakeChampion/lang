@@ -3845,13 +3845,13 @@ pub function assignable(want: Ty, got: Ty): boolean {
     return true;
 }
 
-function parse_unknown_error(where: string, kind: string): util.Diag {
+function parse_unknown_error(where: string, kind: string, line: i32, col: i32): util.Diag {
     // An out-of-range float literal is P002, the numeric-literal code native's
     // parser reports for it, not the generic parser-side-unknown P001 (#6842).
     if (util.is_f64_range_kind(kind)) {
-        return util.Diag { code: "P002", message: where + ": " + util.f64_range_message(kind), line: 0, col: 0 };
+        return util.Diag { code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col };
     }
-    return util.Diag { code: "P001", message: where + ": parser-side unknown: " + kind, line: 0, col: 0 };
+    return util.Diag { code: "P001", message: where + ": parser-side unknown: " + kind, line: line, col: col };
 }
 
 function collect_expr_unknown_errors(e: ast.Expr, where: string, errs: util.Diag[]): util.Diag[] {
@@ -3934,7 +3934,7 @@ function collect_expr_unknown_errors(e: ast.Expr, where: string, errs: util.Diag
             }
             return errs;
         },
-        ast.ExprUnknown(u) => { return errs.append(parse_unknown_error(where, u.kind)); }
+        ast.ExprUnknown(u) => { return errs.append(parse_unknown_error(where, u.kind, u.line, u.col)); }
     }
     return errs;
 }
@@ -4006,7 +4006,7 @@ function collect_stmt_unknown_errors(st: ast.Stmt, where: string, errs: util.Dia
         },
         ast.StmtBreak(_) => { return errs; },
         ast.StmtContinue(_) => { return errs; },
-        ast.StmtUnknown(u) => { return errs.append(parse_unknown_error(where, "stmt: " + u.kind)); },
+        ast.StmtUnknown(u) => { return errs.append(parse_unknown_error(where, "stmt: " + u.kind, u.line, u.col)); },
         ast.StmtDefer(d) => { return collect_stmt_unknown_errors(d.action, where, errs); }
     }
     return errs;
