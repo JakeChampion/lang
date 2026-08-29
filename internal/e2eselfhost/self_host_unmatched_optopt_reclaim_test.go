@@ -196,17 +196,18 @@ function round(i: i32): i32 {
 			want: 13, balance: true,
 		},
 		{
-			// STILL LEAKING, deliberately, and one of THREE matched rc-inner shapes
-			// that behave differently — the split is recorded on #7718:
+			// STILL LEAKING, deliberately. What leaks is the STRING's own two
+			// blocks — the two option boxes are freed — and the proof is that
+			// live_bytes scales with the string's LENGTH: 6400 here, 19200 for the
+			// same shape with a 64-char suffix, at identical 800/400 counts.
 			//
-			//	Some(Some("ab"))     literal inner    400/400/0   BALANCED
-			//	Some(Some(w("ab")))  producer inner   800/400     this row
-			//	Some(None)           no inner payload 400/0       rc_inner_matched_none
+			// The literal-inner row below does NOT establish that the string
+			// release works, though an earlier revision of this comment said so:
+			// a literal allocates nothing (400 allocs = 2/round, the two boxes
+			// alone), so it exercises the box release only. Nothing here yet
+			// covers the inner __fern_str_free actually firing.
 			//
-			// So the machinery works; what the producer form loses is the string's
-			// own two blocks, which is the shape of a freshness-proof gap rather
-			// than a missing release. Pinned so it cannot drift into an
-			// over-release while that is worked.
+			// Pinned so it cannot drift into an over-release while that is worked.
 			name: "rc_inner_matched_still_partial",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -217,10 +218,12 @@ function round(i: i32): i32 {
 			want: 19, wantFrees: 400,
 		},
 		{
-			// The LITERAL-inner control for the row above: same shape, inner string
-			// a literal rather than a producer result, and it BALANCES. This is what
-			// says the two-level release is present and working on the matched side,
-			// so the producer form's loss is about proving the inner fresh.
+			// The LITERAL-inner control for the row above. It balances — but note
+			// what it does and does not cover: a literal is not heap-allocated, so
+			// its 400 allocs are the two option BOXES alone and the inner
+			// __fern_str_free never has anything to free. It pins the box release
+			// on the matched side; it says nothing about the string release, which
+			// is what the producer row above loses.
 			name: "rc_inner_matched_literal",
 			src: `function round(i: i32): i32 {
     var o: Option[Option[string]] = Some(Some("ab"));
