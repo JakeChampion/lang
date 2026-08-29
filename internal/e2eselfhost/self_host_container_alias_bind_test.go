@@ -233,6 +233,25 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 23, allocs: 200, frees: 0,
 		},
 		{
+			// The same chain, reading the SOURCE rather than the last link. It
+			// frees exactly HALF (200/100) where the row above frees nothing, so
+			// the refusal is not all-or-nothing: a live read of `t` keeps its own
+			// credit while the chain still costs the aliased buffer.
+			//
+			// Worth its own row because the row above cannot tell a partial fix
+			// from no fix. A chain widening has to move BOTH to 200/200; moving
+			// only this one, or moving either past 200 frees, is the over-release
+			// direction — which no byte count here would show, hence the 99 guard.
+			// #7386, whose as-pattern-binder half is already fixed (see
+			// struct_as_pattern_binder below); the explicit chain is what is left.
+			name: "struct_alias_chain_source_read_half",
+			src: `struct P { xs: i32[] }
+function mk(i: i32): P { return P { xs: [i, i + 1] }; }
+function round(i: i32): i32 { var t: P = mk(i); var v: P = t; var u: P = v; return t.xs[0] + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 23, allocs: 200, frees: 100,
+		},
+		{
 			// AN ENUM with an rc payload, aliased. This row pins the #7368
 			// discrimination from the credit side: enum locals carry their enum
 			// NAME in the same struct_type field a type test would have read, but
