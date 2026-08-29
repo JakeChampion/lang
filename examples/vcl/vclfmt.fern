@@ -1,0 +1,49 @@
+// examples/vcl/vclfmt.fern — the driver: parse a .vcl file and print it
+// back, or report why it could not be parsed.
+//
+//   $ fern -interp vclfmt.fern -- testdata/sample.vcl
+//   $ fern -target x86-64-linux -o vclfmt vclfmt.fern && ./vclfmt f.vcl
+//
+// Exit status is 0 when the file parsed clean, 1 when it did not and 2
+// when it could not be read — so it works as a syntax check in a
+// pipeline, not only as a formatter.
+import "std/string";
+import "std/i32";
+import "std/io";
+import "./ast";
+import "./diag";
+import "./parser";
+import "./printer";
+
+function report(path: string, diags: diag.Diag[]): void {
+  var i: i32 = 0;
+  while (i < diags.len()) {
+    eprint(diags[i].render(path));
+    i = i + 1;
+  }
+}
+
+function main(): i32 {
+  // args()[0] is the program name, as in C.
+  var argv: string[] = args();
+  if (argv.len() < 2) {
+    eprint("usage: vclfmt FILE.vcl");
+    return 2;
+  }
+  var path: string = argv[1];
+  match (io.read_input(path)) {
+    Err(e) => {
+      eprint("vclfmt: " + path + ": cannot read");
+      return 2;
+    },
+    Ok(src) => {
+      var r: parser.ParseResult = parser.parse(src);
+      if (r.diags.len() > 0) {
+        report(path, r.diags);
+        return 1;
+      }
+      print(printer.print_program(r.decls));
+      return 0;
+    }
+  }
+}

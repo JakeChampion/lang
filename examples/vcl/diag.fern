@@ -1,0 +1,22 @@
+// examples/vcl/diag.fern — a source-located parse diagnostic.
+//
+// Its own module because both the lexer and the parser produce them and
+// a Fern module is a file: putting `Diag` in either one would make the
+// other import a whole front-end stage to name a three-field struct.
+import "std/i32";
+
+// `line` and `col` are 1-based, counted in bytes — VCL syntax is ASCII,
+// so a byte column is a display column for every construct that can
+// carry a diagnostic.
+pub struct Diag { msg: string, line: i32, col: i32 }
+
+// at builds a diagnostic at an explicit position.
+pub function at(msg: string, line: i32, col: i32): Diag {
+  return Diag { msg: msg, line: line, col: col };
+}
+
+// render formats a diagnostic the way a compiler driver reports it:
+// `path:line:col: message`.
+pub function (d: Diag) render(path: string): string {
+  return path + ":" + d.line.to_string() + ":" + d.col.to_string() + ": " + d.msg;
+}

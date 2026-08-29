@@ -1,0 +1,417 @@
+// examples/vcl/vcl_test.fern — TAP suite for the VCL front end.
+//
+//   fern -interp examples/vcl/vcl_test.fern
+//
+// Most cases go through `roundtrip`: parse a snippet, print it back, and
+// compare against the expected rendering. That covers the parser and the
+// printer at once and pins the tree's SHAPE rather than its field names —
+// the `elseif` spelling, a preserved `EParen`, an untouched long string
+// are all invisible to a test that only counts nodes.
+//
+// The cases that cannot be phrased that way test the lexer directly
+// (token boundaries around `-`, the unit suffixes) or count diagnostics
+// (error recovery).
+import "std/test";
+import "std/string";
+import "std/i32";
+import "./ast";
+import "./diag";
+import "./lexer";
+import "./parser";
+import "./printer";
+
+// roundtrip parses `src` and prints it back, or returns the first
+// diagnostic prefixed with "ERR:" so a failing case reports the parse
+// error rather than an empty string.
+function roundtrip(src: string): string {
+  var r: parser.ParseResult = parser.parse(src);
+  if (r.diags.len() > 0) {
+    return "ERR:" + r.diags[0].msg;
+  }
+  return printer.print_program(r.decls);
+}
+
+// diag_count is how many diagnostics a source produces — the measure of
+// error recovery, since a parser that gives up reports exactly one.
+function diag_count(src: string): i32 {
+  return parser.parse(src).diags.len();
+}
+
+// tok_texts is the token spellings of `src`, minus the trailing EOF.
+function tok_texts(src: string): string[] {
+  var toks: lexer.Tok[] = lexer.lex(src).toks;
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < toks.len() - 1) {
+    out = out.append(toks[i].text);
+    i = i + 1;
+  }
+  return out;
+}
+
+// ------------------------------------------------------------------ lexer
+// A header name keeps its dashes: `X-Forwarded-For` is one token, not a
+// subtraction of three.
+function test_dashed_header_is_one_token(): test.TestOutcome {
+  return test.assert_eq_array(tok_texts("req.http.X-Forwarded-For"), ["req.http.X-Forwarded-For"]);
+}
+
+// A `-` with spaces around it is still the operator, which is what makes
+// the dash rule safe.
+function test_spaced_minus_is_an_operator(): test.TestOutcome {
+  return test.assert_eq_array(tok_texts("a - b"), ["a", "-", "b"]);
+}
+
+// A property name is an identifier that begins with a dot.
+function test_property_name_is_one_token(): test.TestOutcome {
+  return test.assert_eq_array(tok_texts(".first_byte_timeout = 5s;"), [".first_byte_timeout", "=", "5", ";"]);
+}
+
+// The unit suffixes are matched longest-first, so `100ms` is
+// milliseconds and not `100m` followed by `s`.
+function test_ms_beats_m(): test.TestOutcome {
+  var toks: lexer.Tok[] = lexer.lex("100ms").toks;
+  return test.assert_eq(toks[0].text + "|" + toks[0].aux, "100|ms");
+}
+
+function test_byte_unit(): test.TestOutcome {
+  var toks: lexer.Tok[] = lexer.lex("256KB").toks;
+  return test.assert_eq(toks[0].text + "|" + toks[0].aux, "256|KB");
+}
+
+// A unit suffix only applies when a name character does not follow, so
+// `10secs` stays a number and an identifier.
+function test_unit_needs_a_boundary(): test.TestOutcome {
+  return test.assert_eq_array(tok_texts("10secs"), ["10", "secs"]);
+}
+
+function test_comment_forms(): test.TestOutcome {
+  return test.assert_eq_array(tok_texts("a # hash\nb // slash\n/* block\nspans */ c"), ["a", "b", "c"]);
+}
+
+// Positions survive a multi-line comment, which is the case that breaks
+// when line counting lives anywhere but the one cursor-advance helper.
+function test_position_after_block_comment(): test.TestOutcome {
+  var toks: lexer.Tok[] = lexer.lex("/* one\ntwo\n*/ here").toks;
+  return test.assert_eq(toks[0].line.to_string() + ":" + toks[0].col.to_string(), "3:4");
+}
+
+function test_unterminated_string_reports(): test.TestOutcome {
+  var r: lexer.LexResult = lexer.lex("sub s { set x = \"oops;\n}");
+  return test.assert_eq(r.diags.len(), 1);
+}
+
+// ------------------------------------------------------------- declarations
+function test_vcl_version(): test.TestOutcome {
+  return test.assert_eq(roundtrip("vcl 4.1;"), "vcl 4.1;\n");
+}
+
+function test_import_from(): test.TestOutcome {
+  return test.assert_eq(roundtrip("import kv from \"/l/libvmod_kv.so\";"), "import kv from \"/l/libvmod_kv.so\";\n");
+}
+
+function test_backend_none(): test.TestOutcome {
+  return test.assert_eq(roundtrip("backend broken none;"), "backend broken none;\n");
+}
+
+// An inline probe is a block-valued property, and nests.
+function test_backend_with_inline_probe(): test.TestOutcome {
+  return test.assert_eq(roundtrip("backend b { .host = \"1.2.3.4\"; .probe = { .url = \"/\"; } }"), "backend b {\n    .host = \"1.2.3.4\";\n    .probe = {\n        .url = \"/\";\n    }\n}\n");
+}
+
+// All four ACL entry shapes: plain, masked, negated, and the VCL 4.1
+// parenthesised form that defers resolution to load time.
+function test_acl_entry_forms(): test.TestOutcome {
+  return test.assert_eq(roundtrip("acl a { \"localhost\"; \"192.0.2.0\"/24; ! \"192.0.2.23\"; (\"www.example.com\"); }"), "acl a {\n    \"localhost\";\n    \"192.0.2.0\"/24;\n    ! \"192.0.2.23\";\n    ( \"www.example.com\" );\n}\n");
+}
+
+function test_empty_sub(): test.TestOutcome {
+  return test.assert_eq(roundtrip("sub vcl_recv { }"), "sub vcl_recv { }\n");
+}
+
+// A run of imports stays one paragraph; a different kind starts a new one.
+function test_top_level_layout(): test.TestOutcome {
+  return test.assert_eq(roundtrip("vcl 4.1; import std; import directors;"), "vcl 4.1;\n\nimport std;\nimport directors;\n");
+}
+
+// -------------------------------------------------------------- statements
+function test_set_compound_op(): test.TestOutcome {
+  return test.assert_contains(roundtrip("sub s { set req.http.X += \"more\"; }"), "set req.http.X += \"more\";");
+}
+
+function test_return_forms(): test.TestOutcome {
+  var out: string = roundtrip("sub s { return (hash); } sub t { return (synth(750, \"Moved\")); } sub u { return; }");
+  if (!out.contains("return (hash);")) {
+    return test.fail("bare action lost: " + out);
+  }
+  if (!out.contains("return (synth(750, \"Moved\"));")) {
+    return test.fail("synth args lost: " + out);
+  }
+  if (!out.contains("return;\n")) {
+    return test.fail("bare return lost: " + out);
+  }
+  return test.pass();
+}
+
+function test_new_and_method_call(): test.TestOutcome {
+  var out: string = roundtrip("sub vcl_init { new rr = directors.round_robin(); rr.add_backend(o); }");
+  if (!out.contains("new rr = directors.round_robin();")) {
+    return test.fail(out);
+  }
+  if (!out.contains("rr.add_backend(o);")) {
+    return test.fail(out);
+  }
+  return test.pass();
+}
+
+function test_unset_and_call(): test.TestOutcome {
+  var out: string = roundtrip("sub s { unset req.http.Cookie; call helper; }");
+  if (!out.contains("unset req.http.Cookie;")) {
+    return test.fail(out);
+  }
+  if (!out.contains("call helper;")) {
+    return test.fail(out);
+  }
+  return test.pass();
+}
+
+// Each of the three `elseif` spellings comes back as it was written —
+// the reason the chain is stored flat with its keyword.
+function test_elseif_spellings_preserved(): test.TestOutcome {
+  var src: string = "sub s { if (a) { call x; } elseif (b) { call y; } elsif (c) { call z; } else if (d) { call w; } else { call v; } }";
+  var out: string = roundtrip(src);
+  if (!out.contains("} elseif (b) {")) {
+    return test.fail("elseif lost: " + out);
+  }
+  if (!out.contains("} elsif (c) {")) {
+    return test.fail("elsif lost: " + out);
+  }
+  if (!out.contains("} else if (d) {")) {
+    return test.fail("else if lost: " + out);
+  }
+  if (!out.contains("} else {")) {
+    return test.fail("else lost: " + out);
+  }
+  return test.pass();
+}
+
+function test_inline_c_block(): test.TestOutcome {
+  return test.assert_contains(roundtrip("sub s { C{ VRT_synth(ctx, 1); }C }"), "C{ VRT_synth(ctx, 1); }C");
+}
+
+// ------------------------------------------------------------- expressions
+// shape renders an expression as a prefix S-expression. Associativity and
+// precedence are invisible to `print_expr` — it re-emits infix operators
+// in tree order, so `a || b && c` prints identically whichever way it
+// grouped — and this is what makes them testable.
+function shape(e: ast.Expr): string {
+  match (e) {
+    EBinary(b) => {
+      return "(" + b.op + " " + shape(b.lhs) + " " + shape(b.rhs) + ")";
+    },
+    EUnary(u) => {
+      return "(" + u.op + " " + shape(u.operand) + ")";
+    },
+    EParen(inner) => {
+      return "[" + shape(inner) + "]";
+    },
+    ECall(c) => {
+      return "(call " + c.callee + ")";
+    },
+    EVar(v) => {
+      return v.name;
+    },
+    _ => {
+      return printer.print_expr(e);
+    }
+  }
+}
+
+// cond_shape is the shape of the first `if` condition in the first
+// subroutine of `src` — the shortest path from source text to a
+// structural assertion.
+function cond_shape(src: string): string {
+  var r: parser.ParseResult = parser.parse("sub s { if (" + src + ") { call x; } }");
+  if (r.diags.len() > 0) {
+    return "ERR:" + r.diags[0].msg;
+  }
+  match (r.decls[0]) {
+    DSub(sub) => {
+      match (sub.body.stmts[0]) {
+        SIf(i) => {
+          return shape(i.arms[0].cond);
+        },
+        _ => {
+          return "ERR:not an if";
+        }
+      }
+    },
+    _ => {
+      return "ERR:not a sub";
+    }
+  }
+}
+
+// `&&` binds tighter than `||`.
+function test_and_binds_tighter_than_or(): test.TestOutcome {
+  return test.assert_eq(cond_shape("a || b && c"), "(|| a (&& b c))");
+}
+
+// Comparison binds tighter than `&&`, and `+` tighter than comparison —
+// so a header concatenation compares as a whole.
+function test_comparison_and_additive_precedence(): test.TestOutcome {
+  return test.assert_eq(cond_shape("a + b == c && d"), "(&& (== (+ a b) c) d)");
+}
+
+// Same-precedence operators fold left, so `a - b - c` is `(a - b) - c`
+// and not `a - (b - c)`, which would negate the last term.
+function test_binary_operators_are_left_associative(): test.TestOutcome {
+  return test.assert_eq(cond_shape("a - b - c"), "(- (- a b) c)");
+}
+
+// A written group overrides both, and stays in the tree.
+function test_parens_regroup_the_tree(): test.TestOutcome {
+  return test.assert_eq(cond_shape("(a || b) && c"), "(&& [(|| a b)] c)");
+}
+
+// `!` is a prefix on the operand, not on the comparison it precedes:
+// `!a ~ b` is VCL's ACL-mismatch idiom and groups as `(!a) ~ b`.
+function test_unary_binds_tightest(): test.TestOutcome {
+  return test.assert_eq(cond_shape("!a ~ b"), "(~ (! a) b)");
+}
+
+// Written parentheses survive, because the tree keeps them rather than
+// recomputing them from precedence.
+function test_written_parens_survive(): test.TestOutcome {
+  return test.assert_contains(roundtrip("sub s { if ((a || b) && c) { call x; } }"), "if ((a || b) && c)");
+}
+
+function test_regex_match_operators(): test.TestOutcome {
+  var out: string = roundtrip("sub s { if (req.url ~ \"^/a\" && req.url !~ \"^/b\") { call x; } }");
+  return test.assert_contains(out, "if (req.url ~ \"^/a\" && req.url !~ \"^/b\")");
+}
+
+function test_acl_match_and_negation(): test.TestOutcome {
+  return test.assert_contains(roundtrip("sub s { if (!client.ip ~ purgers) { call x; } }"), "if (!client.ip ~ purgers)");
+}
+
+// All three long-string forms keep their delimiters, which matters
+// because they are not interchangeable: only the long forms can hold a
+// `\"`, and VCL has no escapes to fall back on.
+function test_long_string_forms(): test.TestOutcome {
+  var out: string = roundtrip("sub s { set a = {\"has \" quote\"}; set b = \"\"\"triple\"\"\"; set c = \"plain\"; }");
+  if (!out.contains("{\"has \" quote\"}")) {
+    return test.fail("brace form lost: " + out);
+  }
+  if (!out.contains("\"\"\"triple\"\"\"")) {
+    return test.fail("triple form lost: " + out);
+  }
+  if (!out.contains("\"plain\"")) {
+    return test.fail("short form lost: " + out);
+  }
+  return test.pass();
+}
+
+function test_duration_and_bytes_survive(): test.TestOutcome {
+  var out: string = roundtrip("sub s { set beresp.ttl = 1h; set x = 256KB; set y = 100ms; }");
+  if (!out.contains("= 1h;")) {
+    return test.fail(out);
+  }
+  if (!out.contains("= 256KB;")) {
+    return test.fail(out);
+  }
+  if (!out.contains("= 100ms;")) {
+    return test.fail(out);
+  }
+  return test.pass();
+}
+
+// --------------------------------------------------------------- recovery
+// Three broken statements in one subroutine report three diagnostics.
+// A parser that stopped at the first would report one, and a formatter
+// built on it would hide the other two on every run.
+function test_recovers_within_a_block(): test.TestOutcome {
+  return test.assert_eq(diag_count("sub s { set = 1; unset ; call ; set ok = 1; }"), 3);
+}
+
+// A bad declaration resynchronises on the next top-level keyword, so the
+// subroutine after it still parses.
+function test_recovers_across_declarations(): test.TestOutcome {
+  var r: parser.ParseResult = parser.parse("backend { .host = \"x\"; } sub vcl_recv { call ok; }");
+  if (r.diags.len() == 0) {
+    return test.fail("expected a diagnostic for the unnamed backend");
+  }
+  return test.assert_eq(r.decls.len(), 1);
+}
+
+// An error inside an `if` body does not swallow the `if`, and does not
+// escape reporting either.
+function test_error_inside_if_body_is_reported(): test.TestOutcome {
+  return test.assert_eq(diag_count("sub s { if (a) { set = 1; } }"), 1);
+}
+
+function test_diagnostic_position(): test.TestOutcome {
+  var r: parser.ParseResult = parser.parse("sub s {\n  set = 1;\n}");
+  if (r.diags.len() != 1) {
+    return test.fail("expected one diagnostic");
+  }
+  return test.assert_eq(r.diags[0].render("f.vcl"), "f.vcl:2:7: expected a variable name after 'set', found '='");
+}
+
+function test_unclosed_brace_reports(): test.TestOutcome {
+  return test.assert_contains(roundtrip("sub s { call x;"), "ERR:unclosed '{'");
+}
+
+// --------------------------------------------------------------- fixpoint
+// The property that makes the printer trustworthy: printing a printed
+// tree changes nothing. Anything the printer renders in a form the parser
+// reads back differently shows up here.
+function test_print_is_a_fixed_point(): test.TestOutcome {
+  var src: string = "vcl 4.1;\nimport std;\nbackend b { .host = \"1.2.3.4\"; .probe = { .url = \"/\"; } }\nacl a { ! \"10.0.0.0\"/8; }\nsub vcl_recv {\n  if (req.url ~ \"^/x\" || (a && b)) { set req.http.H = \"v\"; return (pass); }\n  elseif (c) { unset req.http.H; }\n  else { std.log({\"long\"}); }\n}\n";
+  var once: string = roundtrip(src);
+  var twice: string = roundtrip(once);
+  return test.assert_eq(twice, once);
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("vcl");
+  r = r.it("dashed header is one token", test_dashed_header_is_one_token);
+  r = r.it("spaced minus is an operator", test_spaced_minus_is_an_operator);
+  r = r.it("property name is one token", test_property_name_is_one_token);
+  r = r.it("ms beats m", test_ms_beats_m);
+  r = r.it("byte unit", test_byte_unit);
+  r = r.it("unit needs a boundary", test_unit_needs_a_boundary);
+  r = r.it("comment forms", test_comment_forms);
+  r = r.it("position after block comment", test_position_after_block_comment);
+  r = r.it("unterminated string reports", test_unterminated_string_reports);
+  r = r.it("vcl version", test_vcl_version);
+  r = r.it("import from", test_import_from);
+  r = r.it("backend none", test_backend_none);
+  r = r.it("backend with inline probe", test_backend_with_inline_probe);
+  r = r.it("acl entry forms", test_acl_entry_forms);
+  r = r.it("empty sub", test_empty_sub);
+  r = r.it("top level layout", test_top_level_layout);
+  r = r.it("set compound op", test_set_compound_op);
+  r = r.it("return forms", test_return_forms);
+  r = r.it("new and method call", test_new_and_method_call);
+  r = r.it("unset and call", test_unset_and_call);
+  r = r.it("elseif spellings preserved", test_elseif_spellings_preserved);
+  r = r.it("inline c block", test_inline_c_block);
+  r = r.it("and binds tighter than or", test_and_binds_tighter_than_or);
+  r = r.it("comparison and additive precedence", test_comparison_and_additive_precedence);
+  r = r.it("binary operators are left associative", test_binary_operators_are_left_associative);
+  r = r.it("parens regroup the tree", test_parens_regroup_the_tree);
+  r = r.it("unary binds tightest", test_unary_binds_tightest);
+  r = r.it("written parens survive", test_written_parens_survive);
+  r = r.it("regex match operators", test_regex_match_operators);
+  r = r.it("acl match and negation", test_acl_match_and_negation);
+  r = r.it("long string forms", test_long_string_forms);
+  r = r.it("duration and bytes survive", test_duration_and_bytes_survive);
+  r = r.it("recovers within a block", test_recovers_within_a_block);
+  r = r.it("recovers across declarations", test_recovers_across_declarations);
+  r = r.it("error inside if body is reported", test_error_inside_if_body_is_reported);
+  r = r.it("diagnostic position", test_diagnostic_position);
+  r = r.it("unclosed brace reports", test_unclosed_brace_reports);
+  r = r.it("print is a fixed point", test_print_is_a_fixed_point);
+  return r.finish();
+}

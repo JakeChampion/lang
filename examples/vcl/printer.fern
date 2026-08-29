@@ -1,0 +1,299 @@
+// examples/vcl/printer.fern — turns the tree back into VCL source.
+//
+// This is the half that makes the parser testable without a checker or a
+// backend: `parse` -> `print` -> `parse` -> `print` must reach a fixed
+// point, and every construct that survives the round trip is one the tree
+// actually represents rather than merely accepts.
+//
+// Parentheses are printed from the `EParen` nodes the parser kept, not
+// recomputed from precedence. That is exactly right for a tree that came
+// from source and is a trap for one built by hand: a synthesised
+// `EBinary` chain prints without the parentheses its shape implies. A
+// tree-building API would have to insert `EParen` itself, or this module
+// would have to learn precedence.
+import "std/string";
+import "std/i32";
+import "./ast";
+
+function indent(n: i32): string {
+  return "    ".repeat(n);
+}
+
+// quote wraps a string literal in whichever of VCL's three delimiters it
+// was written with. There are no escapes to re-apply: VCL strings have
+// none, which is also why a short string containing a `"` can only be
+// written in one of the long forms.
+function quote(s: ast.StrLit): string {
+  if (s.form == "brace") {
+    return "{\"" + s.value + "\"}";
+  }
+  if (s.form == "triple") {
+    return "\"\"\"" + s.value + "\"\"\"";
+  }
+  return "\"" + s.value + "\"";
+}
+
+// join renders `args` comma-separated.
+function join_args(args: ast.Expr[]): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < args.len()) {
+    if (i > 0) {
+      out = out + ", ";
+    }
+    out = out + print_expr(args[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// One arm per Expr variant, each a single line. The rule counts a total
+// dispatch over a union the same way it counts nested branching, and
+// splitting the arms across two functions would only hide half the tree
+// from the reader.
+// fern-lint: allow cyclomatic-complexity
+pub function print_expr(e: ast.Expr): string {
+  match (e) {
+    EString(s) => {
+      return quote(s);
+    },
+    ENumber(n) => {
+      return n.text;
+    },
+    EDuration(q) => {
+      return q.text + q.unit;
+    },
+    EBytes(q) => {
+      return q.text + q.unit;
+    },
+    EBool(b) => {
+      if (b.value) {
+        return "true";
+      }
+      return "false";
+    },
+    EVar(v) => {
+      return v.name;
+    },
+    ECall(c) => {
+      return c.callee + "(" + join_args(c.args) + ")";
+    },
+    EBinary(b) => {
+      return print_expr(b.lhs) + " " + b.op + " " + print_expr(b.rhs);
+    },
+    EUnary(u) => {
+      return u.op + print_expr(u.operand);
+    },
+    EParen(inner) => {
+      return "(" + print_expr(inner) + ")";
+    }
+  }
+}
+
+// print_return renders the three return forms: bare, an action, and an
+// action that takes arguments.
+function print_return(r: ast.ReturnStmt): string {
+  if (r.action == "") {
+    return "return;";
+  }
+  if (r.has_args) {
+    return "return (" + r.action + "(" + join_args(r.args) + "));";
+  }
+  return "return (" + r.action + ");";
+}
+
+// print_if renders a whole flat chain, putting back the `elseif` /
+// `elsif` / `else if` spelling each arm was written with.
+function print_if(s: ast.IfStmt, depth: i32): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < s.arms.len()) {
+    var arm: ast.IfArm = s.arms[i];
+    if (i == 0) {
+      out = out + indent(depth) + "if (" + print_expr(arm.cond) + ") ";
+    } else {
+      out = out + " " + arm.kw + " (" + print_expr(arm.cond) + ") ";
+    }
+    out = out + print_block(arm.body, depth);
+    i = i + 1;
+  }
+  if (s.has_else) {
+    out = out + " else " + print_block(s.else_blk, depth);
+  }
+  return out;
+}
+
+// print_block renders `{ … }`, opening on the current line and closing at
+// `depth`. An empty block stays on one line.
+pub function print_block(b: ast.Block, depth: i32): string {
+  if (b.stmts.len() == 0) {
+    return "{ }";
+  }
+  var out: string = "{\n";
+  var i: i32 = 0;
+  while (i < b.stmts.len()) {
+    out = out + print_stmt(b.stmts[i], depth + 1) + "\n";
+    i = i + 1;
+  }
+  return out + indent(depth) + "}";
+}
+
+// A total dispatch over Stmt, one line per variant — see print_expr.
+// fern-lint: allow cyclomatic-complexity
+pub function print_stmt(s: ast.Stmt, depth: i32): string {
+  match (s) {
+    SSet(x) => {
+      return indent(depth) + "set " + x.target + " " + x.op + " " + print_expr(x.value) + ";";
+    },
+    SUnset(x) => {
+      return indent(depth) + "unset " + x.target + ";";
+    },
+    SIf(x) => {
+      return print_if(x, depth);
+    },
+    SReturn(x) => {
+      return indent(depth) + print_return(x);
+    },
+    SCall(x) => {
+      return indent(depth) + "call " + x.name + ";";
+    },
+    SNew(x) => {
+      return indent(depth) + "new " + x.name + " = " + print_expr(x.init) + ";";
+    },
+    SExpr(x) => {
+      return indent(depth) + print_expr(x.value) + ";";
+    },
+    SInclude(x) => {
+      return indent(depth) + "include \"" + x.path + "\";";
+    },
+    SCSource(x) => {
+      return indent(depth) + "C{" + x.code + "}C";
+    },
+    SBlock(b) => {
+      return indent(depth) + print_block(b, depth);
+    }
+  }
+}
+
+// print_props renders a backend or probe body, recursing for the nested
+// block an inline `.probe = { … }` uses.
+function print_props(p: ast.PropBlock, depth: i32): string {
+  var out: string = "{\n";
+  var i: i32 = 0;
+  while (i < p.props.len()) {
+    var prop: ast.Prop = p.props[i];
+    out = out + indent(depth + 1) + prop.name + " = ";
+    match (prop.value) {
+      PVExpr(e) => {
+        out = out + print_expr(e) + ";\n";
+      },
+      PVBlock(b) => {
+        out = out + print_props(b, depth + 1) + "\n";
+      }
+    }
+    i = i + 1;
+  }
+  return out + indent(depth) + "}";
+}
+
+function print_acl_entry(e: ast.AclEntry): string {
+  var out: string = "";
+  if (e.negated) {
+    out = out + "! ";
+  }
+  var body: string = "\"" + e.host + "\"";
+  if (e.mask != "") {
+    body = body + "/" + e.mask;
+  }
+  if (e.parens) {
+    body = "( " + body + " )";
+  }
+  return out + body + ";";
+}
+
+function print_acl(a: ast.AclDecl): string {
+  var out: string = "acl " + a.name + " {\n";
+  var i: i32 = 0;
+  while (i < a.entries.len()) {
+    out = out + indent(1) + print_acl_entry(a.entries[i]) + "\n";
+    i = i + 1;
+  }
+  return out + "}";
+}
+
+function print_backend(b: ast.BackendDecl): string {
+  if (b.none) {
+    return "backend " + b.name + " none;";
+  }
+  return "backend " + b.name + " " + print_props(b.props, 0);
+}
+
+pub function print_decl(d: ast.Decl): string {
+  match (d) {
+    DVcl(v) => {
+      return "vcl " + v.version + ";";
+    },
+    DImport(im) => {
+      if (im.has_from) {
+        return "import " + im.module + " from \"" + im.from + "\";";
+      }
+      return "import " + im.module + ";";
+    },
+    DInclude(inc) => {
+      return "include \"" + inc.path + "\";";
+    },
+    DBackend(b) => {
+      return print_backend(b);
+    },
+    DProbe(p) => {
+      return "probe " + p.name + " " + print_props(p.props, 0);
+    },
+    DAcl(a) => {
+      return print_acl(a);
+    },
+    DSub(s) => {
+      return "sub " + s.name + " " + print_block(s.body, 0);
+    },
+    DCSource(c) => {
+      return "C{" + c.code + "}C";
+    }
+  }
+}
+
+// decl_kind names a declaration's family, which is all the layout rule
+// below needs: consecutive one-liners of the same family stay together.
+function decl_kind(d: ast.Decl): string {
+  match (d) {
+    DVcl(v) => {
+      return "vcl";
+    },
+    DImport(im) => {
+      return "import";
+    },
+    DInclude(inc) => {
+      return "include";
+    },
+    _ => {
+      return "block";
+    }
+  }
+}
+
+// print_program renders a whole file: one blank line between top-level
+// declarations, except between adjacent one-liners of the same kind, so
+// a run of imports stays a paragraph.
+pub function print_program(decls: ast.Decl[]): string {
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < decls.len()) {
+    if (i > 0) {
+      var same: boolean = decl_kind(decls[i]) == decl_kind(decls[i - 1]);
+      if (!same || decl_kind(decls[i]) == "block") {
+        out = out + "\n";
+      }
+    }
+    out = out + print_decl(decls[i]) + "\n";
+    i = i + 1;
+  }
+  return out;
+}

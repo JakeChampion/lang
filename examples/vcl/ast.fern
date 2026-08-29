@@ -1,0 +1,127 @@
+// examples/vcl/ast.fern — the syntax tree for the Varnish Configuration
+// Language, VCL 4.0 / 4.1.
+//
+// Everything the parser produces lives in this one module because the
+// node types are mutually recursive (an `Expr` reaches an `Expr` through
+// `CallExpr.args`, a `Stmt` reaches a `Stmt` through `Block.stmts`) and a
+// Fern module is a file with no cycles permitted between files.
+//
+// The tree is CONCRETE where VCL offers a choice of spelling for the
+// same construct, so the printer can reproduce a source file rather than
+// normalise it: `EParen` survives, an `elseif` / `elsif` / `else if`
+// chain keeps the keyword each arm was written with, and a long string
+// records which of the three long forms it came from. That is what makes
+// `parse` -> `print` a round-trip worth testing.
+//
+// Positions are 1-based line/column on the node that starts the
+// construct. They exist for diagnostics, and a checker built on this
+// tree would need them on every node it can reject.
+// A short `"…"` string, or a long `{"…"}` / `"""…"""` one. VCL short
+// strings have NO escape sequences — a backslash is an ordinary byte —
+// so `value` is the literal text between the delimiters in every case.
+// `form` is "short", "brace", or "triple".
+pub struct StrLit { value: string, form: string, line: i32, col: i32 }
+
+// An integer or real literal, kept as its source spelling: VCL's INT is
+// 64-bit and its REAL is a double, and a front end that does not
+// evaluate has no reason to commit to either.
+pub struct NumLit { text: string, line: i32, col: i32 }
+
+// A quantity literal — a number with a unit suffix. Durations take
+// ms/s/m/h/d/w/y, byte sizes take B/KB/MB/GB/TB. `text` is the numeric
+// part, `unit` the suffix, so `1h` is text "1" unit "h".
+pub struct QtyLit { text: string, unit: string, line: i32, col: i32 }
+
+pub struct BoolLit { value: boolean, line: i32, col: i32 }
+
+// A variable or a bare name: `req.url`, `beresp.ttl`, `client.ip`, the
+// name of a backend in `set req.backend_hint = default`, or the name of
+// an ACL on the right of `~`. VCL's namespaces are not distinguishable
+// by syntax, so resolving what a name denotes is a checker's job.
+pub struct VarRef { name: string, line: i32, col: i32 }
+
+// A call: a VMOD function (`std.tolower(…)`), a method on an object
+// created by `new` (`rr.backend()`), or a bare `synthetic(…)`. `callee`
+// is the dotted name as written.
+pub struct CallExpr { callee: string, args: Expr[], line: i32, col: i32 }
+
+pub struct BinExpr { op: string, lhs: Expr, rhs: Expr, line: i32, col: i32 }
+
+pub struct UnExpr { op: string, operand: Expr, line: i32, col: i32 }
+
+pub enum Expr { EString(StrLit), ENumber(NumLit), EDuration(QtyLit), EBytes(QtyLit), EBool(BoolLit), EVar(VarRef), ECall(CallExpr), EBinary(BinExpr), EUnary(UnExpr), EParen(Expr) }
+
+pub struct Block { stmts: Stmt[], line: i32, col: i32 }
+
+// `set req.http.X = "v";` and its compound forms. `op` is the assignment
+// operator as written: "=", "+=", "-=", "*=", or "/=".
+pub struct SetStmt { target: string, op: string, value: Expr, line: i32, col: i32 }
+
+pub struct UnsetStmt { target: string, line: i32, col: i32 }
+
+// One arm of an if/elseif chain. `kw` is the keyword the arm was written
+// with — "if" for the first, and "elseif", "elsif", or "else if" for the
+// rest, all three of which VCL accepts and which the printer reproduces
+// rather than picking a favourite.
+pub struct IfArm { cond: Expr, body: Block, kw: string, line: i32, col: i32 }
+
+// The chain is FLAT: `arms` holds the `if` and every `elseif`, and
+// `else_blk` is the trailing bare `else` when `has_else` is set. Nesting
+// each arm inside the previous one's else branch would make `elseif` and
+// a hand-written `else { if … }` indistinguishable.
+pub struct IfStmt { arms: IfArm[], else_blk: Block, has_else: boolean, line: i32, col: i32 }
+
+// `return;`, `return (lookup);`, or `return (synth(750, "Moved"));`.
+// `action` is "" for a bare return, which is legal only in a custom
+// subroutine. `args` is empty unless `has_args` — `synth`, `synth` with
+// no reason, and `vcl(label)` are the forms that carry any.
+pub struct ReturnStmt { action: string, args: Expr[], has_args: boolean, line: i32, col: i32 }
+
+pub struct CallStmt { name: string, line: i32, col: i32 }
+
+// `new rr = directors.round_robin();` — legal only in `vcl_init`.
+pub struct NewStmt { name: string, init: Expr, line: i32, col: i32 }
+
+// A bare call evaluated for its effect: `std.log("hit");`.
+pub struct ExprStmt { value: Expr, line: i32, col: i32 }
+
+pub struct IncludeStmt { path: string, line: i32, col: i32 }
+
+// An inline-C block, `C{ … }C`. Varnish only honours these when
+// `vcc_allow_inline_c` is set, and the body is opaque to this front end:
+// `code` is the bytes between the delimiters, unparsed.
+pub struct CSourceStmt { code: string, line: i32, col: i32 }
+
+pub enum Stmt { SSet(SetStmt), SUnset(UnsetStmt), SIf(IfStmt), SReturn(ReturnStmt), SCall(CallStmt), SNew(NewStmt), SExpr(ExprStmt), SInclude(IncludeStmt), SCSource(CSourceStmt), SBlock(Block) }
+
+pub struct VclDecl { version: string, line: i32, col: i32 }
+
+// `import std;` or `import kvstore from "/path/to/libvmod_kvstore.so";`.
+pub struct ImportDecl { module: string, from: string, has_from: boolean, line: i32, col: i32 }
+
+// One `.name = value;` inside a backend or probe body. The value is
+// either an expression or a nested block, which is how an inline probe
+// (`.probe = { .url = "/"; }`) is written.
+pub struct Prop { name: string, value: PropValue, line: i32, col: i32 }
+
+pub struct PropBlock { props: Prop[], line: i32, col: i32 }
+
+pub enum PropValue { PVExpr(Expr), PVBlock(PropBlock) }
+
+// `backend default { … }`, or `backend default none;` (VCL 4.1), which
+// declares a backend that always fails.
+pub struct BackendDecl { name: string, props: PropBlock, none: boolean, line: i32, col: i32 }
+
+pub struct ProbeDecl { name: string, props: PropBlock, line: i32, col: i32 }
+
+// One ACL line: an optional leading `!` (exclude), a host as a quoted
+// string, an optional `/bits` mask, and the VCL 4.1 `( … )` form, which
+// asks for the name to be resolved at load rather than at compile time.
+// `mask` is "" when no `/bits` was written.
+pub struct AclEntry { negated: boolean, parens: boolean, host: string, mask: string, line: i32, col: i32 }
+
+pub struct AclDecl { name: string, entries: AclEntry[], line: i32, col: i32 }
+
+pub struct SubDecl { name: string, body: Block, line: i32, col: i32 }
+
+pub enum Decl { DVcl(VclDecl), DImport(ImportDecl), DInclude(IncludeStmt), DBackend(BackendDecl), DProbe(ProbeDecl), DAcl(AclDecl), DSub(SubDecl), DCSource(CSourceStmt) }
