@@ -14769,6 +14769,24 @@ function lower_expr_struct_lit(slit: ast.ExprStructLit, s: LowerState): LowerSta
                             fav_alias_inc = !selfrebind_field_alias(fav, slit_selfrebind);
                         }
                     },
+                    // A ROW of a nested array (`G { lines: placed[0] }` over
+                    // `placed: i32[][]`) — the index spelling of the aliasing
+                    // the ident and field-read arms above admit. The row is
+                    // BORROWED: the outer array still owns it, and its reclaim
+                    // (__fern_arrarr_free) rc-decs every element pointer, so
+                    // the field's buffer-only drop is a SECOND dec of one
+                    // buffer. The Perceus dup balances both, exactly as it
+                    // does for a bare local: rc 1 →inc 2 →field-drop 1
+                    // →arrarr_free 0, freed once.
+                    // expr_is_arr_src is true for an ExprIndex only when the
+                    // indexed expression names an is_arrarr_slot local, so
+                    // this admits the row read and nothing else.
+                    ast.ExprIndex(_) => {
+                        if (is_leaksafe_array_field(cfft) && expr_is_arr_src(fav, s)) {
+                            fav_ok = true;
+                            fav_alias_inc = true;
+                        }
+                    },
                     // The immutable-update idiom `State { xs: s.xs.with(i, v), … }`
                     // / `State { xs: s.xs.append(v), … }`. The `.with` / `.append`
                     // on a scalar-element array field read produces a FRESH,

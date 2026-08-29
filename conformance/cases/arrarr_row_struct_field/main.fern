@@ -1,0 +1,48 @@
+// A struct literal whose scalar-array field is set from an inline INDEX into a
+// nested array — `G { lines: placed[0] }` over `placed: i32[][]`. The self-host
+// refused the whole module ("did not lower: struct literal `G`"): the field
+// admission is a match over the value's shape with arms for a literal, an
+// ident, a field read and a call, and an ExprIndex fell off the end of it.
+//
+// The row is BORROWED, not fresh: the outer array still owns it, and
+// __fern_arrarr_free rc-decs every element pointer on the outer's reclaim, so
+// the field's buffer-only drop is a second dec of one buffer. The admission
+// therefore carries a Perceus dup, the same one the bare-ident arm emits — the
+// two decs then balance (rc 1 -> inc 2 -> field-drop 1 -> arrarr_free 0).
+//
+// Positions:
+//   two rows of one outer array, held by two live structs at once — the shape
+//     where a missing retain frees a buffer the other struct still reads;
+//   a row read AFTER both structs are built, so a premature free would be
+//     visible as a wrong length rather than only under a leak check;
+//   an unequal row length, so a fix that resolved to the wrong row still fails;
+//   the bound-to-a-local spelling that always lowered, unchanged as a control.
+struct G { text: string, lines: i32[] }
+
+function main(): i32 {
+    var placed: i32[][] = [[1, 2, 3], [4, 5], [6, 7, 8, 9]];
+
+    var g: G = G { text: "a", lines: placed[0] };
+    var h: G = G { text: "b", lines: placed[1] };
+
+    // The control: the same row via a bound local.
+    var row: i32[] = placed[2];
+    var k: G = G { text: "c", lines: row };
+
+    // Read the outer array again after every construction. If a field drop had
+    // released a row the outer still owns, this is a use-after-free.
+    var tail: i32 = placed[0][2] + placed[1][1] + placed[2][3];
+
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < g.lines.len()) { sum = sum + g.lines[i]; i = i + 1; }
+    i = 0;
+    while (i < h.lines.len()) { sum = sum + h.lines[i]; i = i + 1; }
+    i = 0;
+    while (i < k.lines.len()) { sum = sum + k.lines[i]; i = i + 1; }
+
+    // sum = (1+2+3) + (4+5) + (6+7+8+9) = 6 + 9 + 30 = 45
+    // tail = 3 + 5 + 9 = 17
+    // lens = 3 + 2 + 4 = 9
+    return sum + tail + g.lines.len() + h.lines.len() + k.lines.len();
+}
