@@ -75,14 +75,16 @@ func (p Problem) Error() string {
 
 // Verify checks every function in the program and returns every problem
 // found, in program order, along with how much of the program the stack
-// half could model. No problems means the IR is sound as far as these
-// two passes can tell — not that it is correct.
+// and ownership halves could model. No problems means the IR is sound as
+// far as these three passes can tell — not that it is correct.
 //
-// The Coverage is not optional decoration. The structural half applies
+// Neither coverage is optional decoration. The structural half applies
 // to every function, but the stack half skips whatever it cannot model
-// rather than guessing (see verifystack.go), so an empty problem list
-// means nothing without knowing how much was looked at.
-func Verify(p *Program) ([]Problem, Coverage) {
+// rather than guessing (see verifystack.go) and the ownership half skips
+// reuse sites whose shape it does not recognise (see verifyrc.go), so an
+// empty problem list means nothing without knowing how much was looked
+// at.
+func Verify(p *Program) ([]Problem, Coverage, RcCoverage) {
 	known := map[string]*Func{}
 	for _, f := range p.Funcs {
 		known[f.Name] = f
@@ -96,8 +98,15 @@ func Verify(p *Program) ([]Problem, Coverage) {
 
 	var out []Problem
 	cov := Coverage{Funcs: len(p.Funcs)}
+	var rcCov RcCoverage
 	for _, f := range p.Funcs {
 		out = append(out, verifyFunc(f, known, externNames)...)
+
+		// The ownership half models one site at a time, so it runs even
+		// for a function the stack half had to abandon.
+		rcProblems, fnRcCov := verifyRc(f)
+		out = append(out, rcProblems...)
+		rcCov.add(fnRcCov)
 
 		stackProblems, bail := verifyStack(f, known, externs, p.PtrW)
 		if bail != "" {
@@ -107,7 +116,7 @@ func Verify(p *Program) ([]Problem, Coverage) {
 		cov.Modelled++
 		out = append(out, stackProblems...)
 	}
-	return out, cov
+	return out, cov, rcCov
 }
 
 // ctrl is one open structured-control scope.
