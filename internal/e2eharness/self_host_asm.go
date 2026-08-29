@@ -11,11 +11,16 @@ import (
 func WriteSelfHostAsmProject(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	// rundriver.fern is in the base set because every stdin driver imports it
+	// for the shared parse_stdin preamble, and 211 tests stage a driver by
+	// hand-copying the one file instead of going through CopySelfHostDriver
+	// (which would expand the closure for them).
+	//
 	// asm_arm64.fern is in the base set because asm_load_run.fern imports it
 	// (since #4506 folded the arm64 loader mirror behind `-target`, so the one
 	// loader driver dispatches to either backend). Consumers that build
 	// asm_load_run through this helper need it in the temp dir for modload to
 	// resolve; consumers building asm.fern (x86) just ignore the extra source.
-	CopySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "treeshake.fern")
+	CopySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "asm_arm64_ir.fern", "treeshake.fern", "rundriver.fern")
 	return dir
 }
