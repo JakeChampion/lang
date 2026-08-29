@@ -20471,6 +20471,20 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // element struct type, keyed "<Type>.m"). The struct
                     // receiver gate keeps this to a genuine method call (#3040).
                     else if (se.is_arr_ret_fn(cfa.field) && expr_struct_type(cfa.obj, se) != "") { is_arr = true; }
+                    // The same for a PRIMITIVE receiver — `s.chars()`, `s.codes()`,
+                    // `(n as i64).digits()`. array_ret_fn_names registers EVERY
+                    // method under the qualified "<BaseType>.<method>" key (the
+                    // receiver's base_type_name, so "string.chars"), but the
+                    // struct clause above only fires when expr_struct_type is
+                    // non-empty, which a string / i64 / f64 receiver never is. So
+                    // the slot went un-array-marked while expr-level recovery kept
+                    // working: `a.len()` and `a[i]` lowered and `for x in a` bailed
+                    // on !is_arr_slot. That is the two-predicates-disagree shape
+                    // #3457 fixed for `args()` a few lines up, one receiver kind
+                    // over. Keyed qualified, so it cannot claim an unrelated
+                    // free function that happens to share the method's name.
+                    else if (expr_recv_prim_type(cfa.obj, se) != ""
+                        && se.is_arr_ret_fn(expr_recv_prim_type(cfa.obj, se) + "." + cfa.field)) { is_arr = true; }
                     // `var b = a.with(i, v)` / `var b = a.append(v)` — the
                     // value-producing builders return a FRESH owned array
                     // (lower_arr_with_value / _append_value clone the

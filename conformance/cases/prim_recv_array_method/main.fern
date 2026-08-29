@@ -1,0 +1,113 @@
+// An array-returning method on a PRIMITIVE receiver, bound WITHOUT an annotation
+// and then iterated. The self-host left the slot un-array-marked, so `for x in a`
+// refused the whole function while `a.len()` and `a[i]` on the same local lowered
+// fine — two predicates disagreeing about one value.
+//
+// That is exactly the shape #3457 fixed for the `args()` builtin, one receiver
+// kind over: array_ret_fn_names registers EVERY method under the qualified
+// "<BaseType>.<method>" key, but the binding site's clause only fired when
+// expr_struct_type was non-empty — true for a struct receiver, never for a
+// string / i64 / f64 one.
+//
+// It was found through `for c in s.chars()` (examples/tests/utf8_validity_
+// property_test.fern), which made it look like a missing `char` element kind.
+// It is not about char: a string-receiver method returning i32[] fails
+// identically, and a char[]-returning FREE function was always fine.
+//
+// Positions, so a future narrowing is visible:
+//   chars     — the stdlib string method that surfaced it, bound then iterated.
+//   inline    — the same without the intermediate binding.
+//   codes     — a USER string method returning i32[], proving it is not char.
+//   i64recv   — a non-string primitive receiver.
+//   struct    — a struct-receiver method: the clause that already worked.
+//   freefn    — a free function: the other spelling that already worked.
+//   len/index — `.len()` and `a[i]` on the unannotated local, which lowered even
+//               while the `for` refused; they must keep agreeing with it.
+//
+// Sentinels are 251-253, above the `% 113` the success path returns.
+import "std/string";
+
+struct Box { v: i32 }
+
+pub function (s: string) codes(): i32[] {
+    var o: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.len()) { o = o.append(s[i] as i32); i = i + 1; }
+    return o;
+}
+
+pub function (x: i64) parts(): i32[] { return [1, 2]; }
+
+pub function (b: Box) items(): i32[] { return [b.v, b.v]; }
+
+function mk_free(): i32[] { return [4, 5]; }
+
+// The bail shape: a stdlib string method, bound unannotated, then iterated.
+function chars_bound(i: i32): i32 {
+    var cs = "abc".chars();
+    var n: i32 = 0;
+    for c in cs { n = n + 1; }
+    return n;
+}
+
+// The same with no intermediate binding — lower_foreach_snapshot rewrites this
+// into the unannotated form above, which is why both refused together.
+function chars_inline(i: i32): i32 {
+    var n: i32 = 0;
+    for c in "de".chars() { n = n + 1; }
+    return n;
+}
+
+// A USER method on a string returning i32[] — not char, same refusal.
+function user_string_method(i: i32): i32 {
+    var ks = "xy".codes();
+    var n: i32 = 0;
+    for k in ks { n = n + k; }
+    return n;
+}
+
+// A non-string primitive receiver.
+function i64_receiver(i: i32): i32 {
+    var ps = (7 as i64).parts();
+    var n: i32 = 0;
+    for p in ps { n = n + p; }
+    return n;
+}
+
+// Controls: the two spellings that lowered before this change.
+function struct_receiver(i: i32): i32 {
+    var b: Box = Box { v: 2 };
+    var xs = b.items();
+    var n: i32 = 0;
+    for v in xs { n = n + v; }
+    return n;
+}
+
+function free_function(i: i32): i32 {
+    var xs = mk_free();
+    var n: i32 = 0;
+    for v in xs { n = n + v; }
+    return n;
+}
+
+// `.len()` and `a[i]` lowered on the unannotated local even while the `for`
+// refused. They must agree with it, not just individually work.
+function len_and_index(i: i32): i32 {
+    var cs = "abcd".chars();
+    if (cs.len() != 4) { return 253; }
+    var ks = "zz".codes();
+    if (ks[0] != 122) { return 252; }
+    return 2;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        acc = acc + chars_bound(i) + chars_inline(i) + user_string_method(i)
+            + i64_receiver(i) + struct_receiver(i) + free_function(i) + len_and_index(i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}
