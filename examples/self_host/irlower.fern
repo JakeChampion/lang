@@ -57032,6 +57032,10 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
         for fn in funcs {
             if (util.index_of_str(out, fn.name) < 0) {
                 var b: ast.Stmt[] = fn.body;
+                // Same filter as the lift's (#7253): a module-fn name this
+                // function shadows is a local here, so a lambda reading it IS
+                // capturing and this function DOES return a closure.
+                var vgfns: string[] = gfns_visible_in(fn, gfns);
                 // With a declared fn return type, check EVERY return in the
                 // body (branch / loop / match-arm returns included — see
                 // collect_returns); without one, only the last-statement
@@ -57044,7 +57048,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                     while (ri < rets.len()) {
                         match (rets[ri]) {
                             ast.ExprLambda(nlam) => {
-                                if (!lambda_has_no_captures(nlam, gfns)) { hit = true; }
+                                if (!lambda_has_no_captures(nlam, vgfns)) { hit = true; }
                             },
                             ast.ExprIdent(nrid) => {
                                 if (body_binds_closure_local(b, nrid.name, out)) { hit = true; }
@@ -57129,7 +57133,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                         ast.StmtReturn(r) => {
                             match (r.value) {
                                 ast.ExprLambda(lam) => {
-                                    if (!lambda_has_no_captures(lam, gfns)) { out = out.append(fn.name); changed = true; }
+                                    if (!lambda_has_no_captures(lam, vgfns)) { out = out.append(fn.name); changed = true; }
                                 },
                                 _ => { }
                             }
@@ -63403,6 +63407,38 @@ struct LiftStmts { stmts: ast.Stmt[], acc: LiftAcc }
 // lambda's params, a local it binds, a global function, or a literal keyword —
 // nothing from the enclosing scope. (A conservative check: a false "captures"
 // only costs a fallback to AST, never correctness.)
+// gfns_visible_in drops from the module-function list every name THIS function
+// also binds — the receiver, a parameter, or any binder in its body.
+//
+// lambda_has_no_captures forgives a free ident that names a module function, on
+// the reasoning that it is a call target rather than a capture. That holds only
+// while the name still MEANS the module function. Where the enclosing function
+// binds it too, the lambda is reading a local, and hoisting its body to a
+// top-level `__lam_N` re-resolves the name against the module.
+//
+// This is the exclusion #6191 removed from `lambda_captures`, whose doc records
+// why: "a name that is BOTH an enclosing local and a module function is
+// shadowed, so it must be captured, and the gfns exclusion said the opposite."
+// The sibling predicate kept it. Filtering the LIST once per function fixes
+// every consumer without threading fd through the lift, and costs one walk of
+// the body.
+function gfns_visible_in(fd: parser.FuncDecl, gfns: string[]): string[] {
+    var bound: string[] = [];
+    if (fd.receiver_name.len() > 0) { bound = bound.append(fd.receiver_name); }
+    var pi: i32 = 0;
+    while (pi < fd.params.len()) { bound = bound.append(fd.params[pi].name); pi = pi + 1; }
+    var b: i32 = 0;
+    while (b < fd.body.len()) { bound = astwalk.collect_bound_stmt(fd.body[b], bound); b = b + 1; }
+    if (bound.len() == 0) { return gfns; }
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < gfns.len()) {
+        if (util.index_of_str(bound, gfns[i]) < 0) { out = out.append(gfns[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 function lambda_has_no_captures(lam: ast.ExprLambda, gfns: string[]): boolean {
     var used: string[] = [];
     var si: i32 = 0;
@@ -68919,7 +68955,9 @@ pub function lift_lambdas_view(raw_mod: parser.Module, view: parser.FuncDecl[]):
             more = cl.changed;
         }
         // 2. No-capture lambdas passed as call arguments: hoist to function values.
-        var r: LiftStmts = lift_stmts(cbody, acc, gfns);
+        // The module-fn list is filtered to what is still VISIBLE here: a name
+        // this function also binds is a local, not a call target (#7253).
+        var r: LiftStmts = lift_stmts(cbody, acc, gfns_visible_in(fd, gfns));
         acc = r.acc;
         var nb: ast.Stmt[] = r.stmts;
         newfuncs = newfuncs.append(parser.FuncDecl { ...fd, body: nb });
