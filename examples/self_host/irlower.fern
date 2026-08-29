@@ -21805,6 +21805,11 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     if (slot_is_reclaimable_optarr(s, slot)) { return emit_optarr_reclaim_store(se, slot); }
     if (slot_is_reclaimable_optstr(s, slot)) { return emit_optstr_reclaim_store(se, slot); }
     if (slot_is_reclaimable_optopt_rc(s, slot)) { return emit_optopt_rc_deep_free(se, slot, nested_opt_inner_freefn(opttup_inner_type(s.locals[slot].opt_type) + "")); }
+    // The superseded box of a match-consumed, reassigned nested Option (#7716).
+    // A scalar inner owns no pointer, so one guarded flat dec is its whole
+    // release — emit_optarr_deep_free's shape, which the exit sweep does not
+    // reach here because the match drop zeroes the slot.
+    if (slot_is_reclaimable_optopt_rebind(s, slot)) { return emit_optarr_reclaim_store(se, slot); }
     if (slot_is_reclaimable_optarrarr(s, slot)) { return emit_optarrarr_reclaim_store(se, slot); }
     if (slot_is_reclaimable_optstruct(s, slot)) {
         return emit_optstruct_reclaim_store(se, slot, opt_payload_type(s.locals[slot].opt_type, "Some"));
@@ -35886,6 +35891,11 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // scalar-inner nested sibling's flat dec would strand the inner payload of.
     var uor: string[] = collect_unmatched_optopt_rc_names(body, plan_on, plan_fe, []);
     out = reclaimable_optopt_rc(uor, out);
+    // The superseded boxes of a MATCH-CONSUMED, reassigned nested Option (#7716)
+    // — assign-path only; see collect_optopt_rebind_names for why this cannot
+    // collide with the consuming-match family's own release.
+    var orb: string[] = collect_optopt_rebind_names(body, []);
+    out = reclaimable_optopt_rebind(orb, out);
     // The MATCH-CONSUMED quadrant of the same family (#7710). The array payload
     // kinds are reclaimed whether or not a match consumes them; the string one was
     // reclaimed only when NEVER matched, so `var o: Option[string] = Some(w("ab"));
@@ -40442,7 +40452,16 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: parser.Struc
                         cand = OptRcCand { variant: cvar, ptype: call_pt };
                     }
                 }
-                if (cand.variant != "" && util.index_of_str(reassigned, v.name) < 0) {
+                // A nested-Option candidate may be REASSIGNED when every rebind is
+                // itself fresh (#7716). This family releases the box the match
+                // CONSUMES; each superseded box is released at its own rebind by
+                // the "OPTOPTRB:" credit below. The two act on DISJOINT values —
+                // the old box at the assignment, the current one at the match —
+                // so neither can release what the other does.
+                var cand_reassign_ok: boolean = util.index_of_str(reassigned, v.name) < 0
+                    || (type_is_scalar_union(cand.ptype)
+                        && opt_rebinds_all_fresh(body, v.name, "optopt", "", [], sig_reg_empty(), []));
+                if (cand.variant != "" && cand_reassign_ok) {
                     // The consuming match may sit one block deeper than `body`
                     // (#6319), so the two kinds of check read different things:
                     // liveness and escape take the ENCLOSING top-level statement,
@@ -43238,6 +43257,58 @@ function unmatched_optopt_init_is_fresh(e: ast.Expr): boolean {
 // Disjoint from that collector by annotation: nested_opt_inner_freefn answers
 // non-empty exactly where unmatched_optopt_ann_is (type_is_scalar_union) answers
 // false, so no slot can be credited under both tags and no box is freed twice.
+// collect_optopt_rebind_names: a nested-Option local that IS consumed by a sole
+// top-level match AND is reassigned with every rebind fresh (#7716). Credited
+// "OPTOPTRB:", which only the assign path reads, so each superseded box is
+// released at its rebind while the consuming-match family releases the one the
+// match consumes.
+//
+// Deliberately NOT disjoint from that family by construction — the two are
+// computed separately and could in principle disagree — because they cannot
+// collide even so: this releases the OLD value at an assignment and that
+// releases the CURRENT value at the match. A disagreement costs a leak in one
+// direction or the other, never a double release.
+function collect_optopt_rebind_names(stmts: ast.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    var vi: i32 = 0;
+    while (vi < stmts.len()) {
+        match (stmts[vi]) {
+            ast.StmtVar(v) => {
+                if (unmatched_optopt_ann_is(v.type_name)
+                    && unmatched_optopt_init_is_fresh(v.init)
+                    && util.index_of_str(reassigned, v.name) >= 0
+                    && opt_rebinds_all_fresh(stmts, v.name, "optopt", "", [], sig_reg_empty(), [])) {
+                    var mi: i32 = sole_top_level_match_idx(stmts, v.name);
+                    if (mi > vi && !match_arms_use_name(stmts[mi], v.name)
+                        && !name_used_after(stmts, v.name, mi)
+                        && !name_escapes_outside_stmt(stmts, v.name, mi)) {
+                        a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    }
+                }
+            },
+            ast.StmtIf(f) => { a = collect_optopt_rebind_names(f.then_body, a); a = collect_optopt_rebind_names(f.else_body, a); },
+            ast.StmtWhile(w) => { a = collect_optopt_rebind_names(w.body, a); },
+            ast.StmtFor(fo) => { a = collect_optopt_rebind_names(fo.body, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = collect_optopt_rebind_names(arm.body, a); }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
+    return a;
+}
+
+function reclaimable_optopt_rebind(ns: string[], out: string[]): string[] {
+    var ri: i32 = 0;
+    while (ri < ns.len()) {
+        out = out.append("OPTOPTRB:" + ns[ri]);
+        ri = ri + 1;
+    }
+    return out;
+}
+
 function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
@@ -43957,6 +44028,18 @@ function slot_is_reclaimable_optarr_errstr(s: LowerState, i: i32): boolean {
 // flat dec its scalar-inner sibling rides (#7718). Disjoint from "OPTARR:" by
 // annotation: nested_opt_inner_freefn answers non-empty exactly where
 // type_is_scalar_union answers false.
+// slot_is_reclaimable_optopt_rebind: a MATCH-CONSUMED, reassigned nested-Option
+// local credited "OPTOPTRB:" (#7716). Read by the ASSIGN path only — never by
+// the exit sweep — because the consuming-match family already releases the box
+// the match consumes, and this credit exists solely to release each SUPERSEDED
+// box at its own rebind. The two therefore act on disjoint values.
+function slot_is_reclaimable_optopt_rebind(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.locals[i].opt_type.len() == 0) { return false; }
+    return slot_credit_at(s, i, "OPTOPTRB:");
+}
+
 function slot_is_reclaimable_optopt_rc(s: LowerState, i: i32): boolean {
     if (i < s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
