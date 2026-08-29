@@ -21804,6 +21804,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // literal (opt_rebinds_all_fresh), which is what the credits require.
     if (slot_is_reclaimable_optarr(s, slot)) { return emit_optarr_reclaim_store(se, slot); }
     if (slot_is_reclaimable_optstr(s, slot)) { return emit_optstr_reclaim_store(se, slot); }
+    if (slot_is_reclaimable_optopt_rc(s, slot)) { return emit_optopt_rc_deep_free(se, slot, nested_opt_inner_freefn(opttup_inner_type(s.locals[slot].opt_type) + "")); }
     if (slot_is_reclaimable_optarrarr(s, slot)) { return emit_optarrarr_reclaim_store(se, slot); }
     if (slot_is_reclaimable_optstruct(s, slot)) {
         return emit_optstruct_reclaim_store(se, slot, opt_payload_type(s.locals[slot].opt_type, "Some"));
@@ -27217,6 +27218,15 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             st = st.emit(ir.op_store_local(ostrj));
         }
         ostrj = ostrj + 1;
+    }
+    // `Option[Option[<rc payload>]]` (#7718) — the two-level guarded release.
+    // Disjoint from the OPTARR pass above by annotation, so no box is freed twice.
+    var onrj: i32 = st.n_params;
+    while (onrj < st.locals.len()) {
+        if (!slot_list_has(keeps, onrj) && slot_is_reclaimable_optopt_rc(st, onrj)) {
+            st = emit_optopt_rc_deep_free(st, onrj, nested_opt_inner_freefn(opttup_inner_type(st.locals[onrj].opt_type) + ""));
+        }
+        onrj = onrj + 1;
     }
     var oaj: i32 = st.n_params;
     while (oaj < st.locals.len()) {
@@ -35872,6 +35882,10 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // "f" flag rather than bare membership.
     var ufs: string[] = collect_unmatched_optstr_names(body, opt_fresh_ret, str_fresh_ret, plan_on, plan_fe, []);
     out = reclaimable_optstr(ufs, out);
+    // `Option[Option[<rc payload>]]` (#7718) — the two-level release, which the
+    // scalar-inner nested sibling's flat dec would strand the inner payload of.
+    var uor: string[] = collect_unmatched_optopt_rc_names(body, plan_on, plan_fe, []);
+    out = reclaimable_optopt_rc(uor, out);
     // The MATCH-CONSUMED quadrant of the same family (#7710). The array payload
     // kinds are reclaimed whether or not a match consumes them; the string one was
     // reclaimed only when NEVER matched, so `var o: Option[string] = Some(w("ab"));
@@ -43216,6 +43230,49 @@ function unmatched_optopt_init_is_fresh(e: ast.Expr): boolean {
     return false;
 }
 
+// collect_unmatched_optopt_rc_names: the rc-INNER nested-Option sibling of the
+// collector below (#7718). Same quadrant and the same gates; only the payload
+// kind and the release differ, so it carries its own "OPTOPTRC:" tag routing to
+// emit_optopt_rc_deep_free instead of the flat dec.
+//
+// Disjoint from that collector by annotation: nested_opt_inner_freefn answers
+// non-empty exactly where unmatched_optopt_ann_is (type_is_scalar_union) answers
+// false, so no slot can be credited under both tags and no box is freed twice.
+function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var reassigned: string[] = body_assign_targets(stmts);
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (nested_opt_inner_freefn(opttup_inner_type(v.type_name) + "") != ""
+                    && unmatched_optopt_init_is_fresh(v.init)
+                    && (util.index_of_str(reassigned, v.name) < 0
+                        || opt_rebinds_all_fresh(stmts, v.name, "optopt", "", [], sig_reg_empty(), []))
+                    && opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe)) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                }
+            },
+            ast.StmtIf(f) => { a = collect_unmatched_optopt_rc_names(f.then_body, plan_on, plan_fe, a); a = collect_unmatched_optopt_rc_names(f.else_body, plan_on, plan_fe, a); },
+            ast.StmtWhile(w) => { a = collect_unmatched_optopt_rc_names(w.body, plan_on, plan_fe, a); },
+            ast.StmtFor(fo) => { a = collect_unmatched_optopt_rc_names(fo.body, plan_on, plan_fe, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = collect_unmatched_optopt_rc_names(arm.body, plan_on, plan_fe, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+function reclaimable_optopt_rc(ns: string[], out: string[]): string[] {
+    var oi: i32 = 0;
+    while (oi < ns.len()) {
+        out = out.append("OPTOPTRC:" + ns[oi]);
+        oi = oi + 1;
+    }
+    return out;
+}
+
 function collect_unmatched_optarr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, plan_on: boolean, plan_fe: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var reassigned: string[] = body_assign_targets(stmts);
@@ -43359,6 +43416,66 @@ function emit_optarr_deep_free_err(se: LowerState, slot: i32, err_str: boolean):
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the option box
     st = st.emit(ir.op_drop());
     st = st.emit(ir.op_end());                       // end if-not-null
+    return st;
+}
+
+// emit_optopt_rc_deep_free: the EXIT-SWEEP release for an
+// `Option[Option[<rc payload>]]` local (#7718) — two levels, fully guarded.
+//
+// emit_nested_opt_payload_drop already emits this release for the
+// consuming-match path, and cannot be reused here: it delegates to
+// emit_opt_payload_drop_via, which carries "no null / tag guard" by design
+// because it runs where the box is known live and the inner variant is known.
+// An exit sweep has neither guarantee — an untaken branch leaves the slot null,
+// the outer box may be None, and a `Some(None)` would otherwise hand the inner
+// free fn whatever the payload word holds. Wrapping that helper in guards does
+// not work either: it frees the OUTER box itself, which must be freed on every
+// path, not only the Some one.
+//
+// Depth-first, and the slot is zeroed at the end so a later pass over it decs a
+// null rather than a freed box.
+function emit_optopt_rc_deep_free(se: LowerState, slot: i32, inner_freefn: string): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // outer != 0 (null guard)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_tag());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));         // outer tag == 0 (Some)
+    st = st.emit(ir.op_if(0));
+    var hn: string = "$noptsw" + util.i32_to_string(st.locals.len());
+    st = st.add_local(hn);
+    var h: i32 = st.slot_of(hn);
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_opt_payload());               // the INNER option box
+    st = st.emit(ir.op_store_local(h));
+    st = st.emit(ir.op_load_local(h));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));         // inner != 0
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(h));
+    st = st.emit(ir.op_opt_tag());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));         // inner tag == 0 (Some)
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(h));
+    st = st.emit(ir.op_opt_payload());               // the inner box's rc payload
+    st = st.emit(ir.op_call_direct(inner_freefn, 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-inner-Some
+    st = st.emit(ir.op_load_local(h));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));   // the inner box
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());                       // end if-inner-not-null
+    st = st.emit(ir.op_end());                       // end if-outer-Some
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));   // the outer box, every path
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
+    st = st.emit(ir.op_end());                       // end if-outer-not-null
     return st;
 }
 
@@ -43833,6 +43950,18 @@ function collect_fresh_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg, st
 // release it instead of stranding it (#6360).
 function slot_is_reclaimable_optarr_errstr(s: LowerState, i: i32): boolean {
     return slot_credit_at(s, i, "OPTARRERR:");
+}
+
+// slot_is_reclaimable_optopt_rc: an `Option[Option[<rc payload>]]` local
+// credited "OPTOPTRC:" — released by emit_optopt_rc_deep_free rather than the
+// flat dec its scalar-inner sibling rides (#7718). Disjoint from "OPTARR:" by
+// annotation: nested_opt_inner_freefn answers non-empty exactly where
+// type_is_scalar_union answers false.
+function slot_is_reclaimable_optopt_rc(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (s.locals[i].opt_type.len() == 0) { return false; }
+    return slot_credit_at(s, i, "OPTOPTRC:");
 }
 
 function slot_is_reclaimable_optstr(s: LowerState, i: i32): boolean {

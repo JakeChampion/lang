@@ -32,11 +32,13 @@ import (
 // credit was missing, exactly as the Result spelling already rides the same
 // emitter.
 //
-// THE SCALAR-INNER GATE IS LOAD-BEARING. A flat dec frees the inner box but
-// nothing the box owns, so an rc inner payload would be STRANDED. `Option
-// [Option[string]]` therefore stays uncredited and keeps leaking rather than
-// being half-released — pinned below, because admitting it here would look like
-// an improvement while quietly dropping the string.
+// THE SCALAR-INNER GATE IS LOAD-BEARING, and it decides which RELEASE a shape
+// gets rather than whether it gets one. A flat dec frees the inner box but
+// nothing the box owns, so an rc inner payload must not ride it — that one takes
+// the guarded two-level walk instead (#7718, the `rc_inner_*` rows). Crediting a
+// slot under both tags would free the same box twice, which is why the two
+// collectors are disjoint by annotation: nested_opt_inner_freefn answers
+// non-empty exactly where type_is_scalar_union answers false.
 //
 // #7716 then admits a REASSIGNED nested-Option local whose every rebind
 // allocates its own inner box, via opt_rebinds_all_fresh and an "optopt" kind —
@@ -148,17 +150,43 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			want: 63, wantFrees: 0,
 		},
 		{
-			// REFUSED, and the reason the scalar-inner gate exists: a flat dec
-			// would free the inner box and STRAND its string. Left leaking rather
-			// than half-released; it wants the deep release, which is its own
-			// change. A rise here is that gate breaking down.
-			name: "refuses_rc_inner_payload",
+			// THE rc-INNER SHAPE (#7718): what the scalar-inner gate used to refuse
+			// outright. Was 800/0 live 22400 — outer box, inner box and string data
+			// all leaked. Released now by emit_optopt_rc_deep_free, a GUARDED
+			// two-level walk: the existing emit_nested_opt_payload_drop carries "no
+			// null / tag guard" by design and runs only where the box is known live
+			// and the inner variant known, neither of which an exit sweep has.
+			name: "rc_inner_unmatched",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
     var o: Option[Option[string]] = Some(Some(w("ab")));
     return i % 7;
 }` + unmatchedOptoptMain,
-			want: 13, wantFrees: 0,
+			want: 13, balance: true,
+		},
+		{
+			// The inner-tag guard is what this row is for: the inner is statically
+			// None, so there is no string to release, and an unguarded walk would
+			// hand __fern_str_free whatever the payload word holds. Was 400/0.
+			name: "rc_inner_none_payload",
+			src: `function round(i: i32): i32 {
+    var o: Option[Option[string]] = Some(None);
+    return i % 7;
+}` + unmatchedOptoptMain,
+			want: 13, balance: true,
+		},
+		{
+			// STILL LEAKING, deliberately: the MATCHED rc-inner shape belongs to the
+			// consuming-match family, which reclaims part of it already (800/400).
+			// Pinned so it cannot drift into an over-release while that half waits.
+			name: "rc_inner_matched_still_partial",
+			src: `function w(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var o: Option[Option[string]] = Some(Some(w("ab")));
+    match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
+    return 0;
+}` + unmatchedOptoptMain,
+			want: 19, wantFrees: 400,
 		},
 		{
 			// REFUSED: the inner box is ALIASED from a local the function still
