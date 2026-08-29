@@ -788,13 +788,32 @@ findings. Ranked by leverage.
   case both ways and marks those `IR-FALLBACK` so they cannot count as
   coverage.
 
-  **`printer.fern` does not take the same rewrite.** Almost every one of its
-  accumulators ends `return out + ")"` / `return (out + pad + "}", g)` rather
-  than `return out`, so the partial string is read and the write-only
-  precondition fails. They are convertible — append the suffix as a final chunk
-  — but one at a time, by hand, and most are small per-node strings rather than
-  a whole-file accumulator. Only `escape_fstring_lit` and `indent_str` match the
-  mechanical shape.
+  **`printer.fern`'s per-node builders do not take the same rewrite, but its
+  whole-FILE accumulator did — and that is the one that mattered.** The
+  per-node observation above is right: most of printer's accumulators end
+  `return out + ")"`, so the partial string is read and the write-only
+  precondition fails; and converting a builder for a few dozen characters buys
+  nothing anyway. That framing missed `format_module`, the `-fmt` entry point,
+  which folds `out = out + decl` across **every declaration in the module** —
+  copying the whole document once per declaration.
+
+  _Done:_ `format_module` is chunk-join (`util.str_join_chunks`, the helper the
+  three SSA emitters already use). Chunk-join rather than the global `strbuf`
+  is required here, not a preference: `format_module` calls `print_import` /
+  `print_stmt` / `print_type_alias`, any of which could want a buffer of its
+  own, and a local array nests where a global buffer would corrupt.
+
+  Its two failures of the write-only precondition were both `out.len() > 0`,
+  asking "has anything been emitted yet" — a boolean, not a string read. A
+  `wrote` flag replaces them and the precondition holds.
+
+  Verified by the row's own method: **14 appended expressions before, 14 after,
+  identical sequence**, then the byte gates — `internal/printer` full corpus
+  (114s) and the self-host `Fmt|Print` parity suites (291s), both green.
+
+  Still not worth converting: `escape_fstring_lit` and `indent_str`, the two the
+  row nominates. They match the mechanical shape but bound their output by one
+  literal and one indent depth, so there is no fold to collapse.
 
   _Method that worked on `wasm_ir.fern`:_ convert only where the accumulator is
   provably **write-only** — every mention of `out` in the function is its

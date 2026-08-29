@@ -2445,16 +2445,21 @@ pub function print_module(mod: parser.Module): string {
 // onto an unrelated one — the same reason native's Format orders by position.
 pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], comments: lexer.Comment[], blanks: boolean[]): string {
     var f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks };
-    var out: string = "";
+    // Chunk-join rather than a left fold: format_module is the whole-FILE
+    // accumulator, so `out = out + decl` copies the document once per
+    // declaration. `wrote` replaces the `out.len() > 0` probes, which were
+    // the only reads of the partial string.
+    var chunks: string[] = [];
+    var wrote: boolean = false;
     // Imports cluster at the top with no blank between them.
     var ii: i32 = 0;
     while (ii < mod.imports.len()) {
         if (mod.imports[ii].line > 0) {
             var (ilead, fi2) = drain_leading(f, mod.imports[ii].line, 0);
-            out = out + ilead;
+            chunks = chunks.append(ilead); wrote = true;
             f = fi2;
         }
-        out = out + print_import(mod.imports[ii]);
+        chunks = chunks.append(print_import(mod.imports[ii])); wrote = true;
         ii = ii + 1;
     }
     // The declarations to emit, as (kind, index) pairs ordered by source line.
@@ -2539,40 +2544,40 @@ pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls
     var di: i32 = 0;
     while (di < kinds.len()) {
         var dline: i32 = lines[di];
-        if (out.len() > 0) {
-            if (f.blank_before(dline) || di > 0 || mod.imports.len() > 0) { out = out + "\n"; }
+        if (wrote) {
+            if (f.blank_before(dline) || di > 0 || mod.imports.len() > 0) { chunks = chunks.append("\n"); wrote = true; }
         }
         if (dline > 0) {
             var (lead, fl) = drain_leading(f, dline, 0);
-            out = out + lead;
+            chunks = chunks.append(lead); wrote = true;
             f = fl;
         }
         if (kinds[di] == 0) {
             var (stext, sf2) = print_struct_decl(mod.structs[idxs[di]], flines, f);
-            out = out + stext;
+            chunks = chunks.append(stext); wrote = true;
             f = sf2;
         }
         else if (kinds[di] == 1) {
             var (etext, ef) = print_enum_decl(mod.enums[idxs[di]], mod.structs, flines, f);
-            out = out + etext;
+            chunks = chunks.append(etext); wrote = true;
             f = ef;
         }
-        else if (kinds[di] == 2) { out = out + print_type_alias(mod.aliases[idxs[di]]); }
+        else if (kinds[di] == 2) { chunks = chunks.append(print_type_alias(mod.aliases[idxs[di]])); wrote = true; }
         else if (kinds[di] == 4) {
             var (ttext, tf) = print_trait_decl(traits[idxs[di]], f);
-            out = out + ttext;
+            chunks = chunks.append(ttext); wrote = true;
             f = tf;
         }
         else if (kinds[di] == 5) {
             var (itext, iff) = print_impl_decl(impls[idxs[di]], f);
-            out = out + itext;
+            chunks = chunks.append(itext); wrote = true;
             f = iff;
         }
         else {
-            if (mod.funcs[idxs[di]].is_const) { out = out + print_const_decl(mod.funcs[idxs[di]]); }
+            if (mod.funcs[idxs[di]].is_const) { chunks = chunks.append(print_const_decl(mod.funcs[idxs[di]])); wrote = true; }
             else {
                 var (ftext, ff) = print_func_decl(mod.funcs[idxs[di]], f);
-                out = out + ftext;
+                chunks = chunks.append(ftext); wrote = true;
                 f = ff;
             }
         }
@@ -2580,15 +2585,16 @@ pub function format_module(mod: parser.Module, traits: parser.TraitDecl[], impls
     }
     var j: i32 = 0;
     while (j < mod.top_stmts.len()) {
-        if (out.len() > 0) { out = out + "\n"; }
+        if (wrote) { chunks = chunks.append("\n"); wrote = true; }
         var (stext, sf) = print_stmt(mod.top_stmts[j], 0, f);
-        out = out + stext;
+        chunks = chunks.append(stext); wrote = true;
         f = sf;
         j = j + 1;
     }
     // Comments past the last declaration.
     var (tail, _) = drain_all(f, 0);
-    return out + tail;
+    chunks = chunks.append(tail);
+    return util.str_join_chunks(chunks);
 }
 
 // =================== VALIDATION ====================
