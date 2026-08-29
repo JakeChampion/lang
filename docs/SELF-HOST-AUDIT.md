@@ -635,6 +635,41 @@ findings. Ranked by leverage.
   _Fix:_ one traversal taking a per-node callback; removes well over 1,000 lines
   and the "added a field, forgot a walker" hazard.
 
+  **Scoping measurements, 2026-08-29 — and a correction to this row's framing.**
+
+  _The row (and #2849's body) say `parser.fern` / `checker.fern` "do not use"
+  astwalk. They do:_ **23 call sites in `parser.fern`** (`fold_stmt_nodes` x8,
+  `map_expr` x4, `fold_expr` x4, `map_stmts` x3, the descend predicates) and
+  **16 in `checker.fern`** (`fold_stmt_own_pruned` x4, `fold_stmt_nodes` x3,
+  `fold_expr_pruned` x3). Both are already adopters; what is left is a
+  remainder, not a start.
+
+  _Node-matching code by module_, counting functions that match 5 or more
+  distinct `ast.Expr*` / `ast.Stmt*` variants:
+
+  | module | functions | lines |
+  |---|---|---|
+  | `irlower.fern` | **390** | **27,192** |
+  | `checker.fern` | 41 | 3,986 |
+  | `parser.fern` | 46 | 3,054 |
+  | `asmcore.fern` | 9 | 644 |
+  | `interp.fern` | 2 | 420 |
+
+  **Read that table as an upper bound, not a worklist.** The count conflates two
+  shapes a fold treats differently: a traversal whose per-node work is UNIFORM
+  (collect, rewrite — foldable), and a DISPATCHER whose per-node work genuinely
+  differs. `checker.fern`'s `check_expr` matching 17 expression kinds to
+  type-check each one differently is the second kind and no fold replaces it.
+  Separating them needs reading each function, which is why the row's own
+  "12 rewrite passes / 15 scope-threading passes" may still be the right number
+  for the FOLDABLE subset even though the raw counts are 3-4x that.
+
+  What the table does establish is where the mass is: `irlower.fern` holds more
+  node-matching code than every other module combined, four times over, and
+  neither this row nor #2849's body mentions it. Whether any of it is foldable
+  is an open question — but a T3 plan that scopes to `parser` and `checker`
+  should say why it is skipping the module with 27k lines of the pattern.
+
 ### T4 — Struct-copy boilerplate (use the spread the parser already supports)
 - [x] **SH-023 — Replace full struct-literal rebuilds with `{ ...x, field: y }`.**
   _Done:_ 40 rebuild literals across `parser`, `irlower`, `flatten`, `checker`
