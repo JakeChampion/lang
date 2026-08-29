@@ -1,0 +1,184 @@
+// examples/vcl/store.fern — a cache that survives between requests.
+//
+// The proxy's accept loop reclaims a per-request arena, and `Cell` — the
+// language's mutable box, the only thing that outlives a request — holds a
+// scalar or a string and nothing else (E057: a composite could form a
+// cycle). So the cache lives between requests as a STRING, encoded here
+// and decoded at the top of each request.
+//
+// The encoding is length-prefixed rather than delimited, because a cached
+// body is arbitrary bytes: any separator you pick can appear inside one.
+// Every field is `<byte count>\n<bytes>`, so nothing needs escaping and
+// nothing can be confused for a delimiter.
+//
+// The cost is honest and worth stating: encode and decode are O(total
+// cached bytes) per request, so this is a demonstration store, not a
+// storage engine. A real one would keep objects in a memory-mapped file
+// and touch only the object being read — which is what Varnish does, and
+// what `Cell`'s scalar-or-string restriction is standing in the way of
+// here.
+import "std/string";
+import "std/i32";
+import "std/i64";
+import "std/float";
+import "./runtime";
+
+// A decoding cursor: the offset reached, and whether decoding is still on
+// the rails.
+struct Cur { at: i32, ok: boolean }
+
+function field(s: string): string {
+  return s.len().to_string() + "\n" + s;
+}
+
+// encode renders the whole cache as one string.
+pub function encode(c: runtime.Cache): string {
+  var out: string = c.entries.len().to_string() + "\n";
+  var i: i32 = 0;
+  while (i < c.entries.len()) {
+    var e: runtime.CacheEntry = c.entries[i];
+    out = out + field(e.key);
+    out = out + field(e.status.to_string());
+    out = out + field(e.reason);
+    out = out + e.headers.names.len().to_string() + "\n";
+    var j: i32 = 0;
+    while (j < e.headers.names.len()) {
+      out = out + field(e.headers.names[j]) + field(e.headers.values[j]);
+      j = j + 1;
+    }
+    out = out + field(e.body);
+    out = out + field(e.ttl.to_string());
+    out = out + field(e.hits.to_string());
+    i = i + 1;
+  }
+  return out;
+}
+
+// read_int reads a `<digits>\n` header at the cursor.
+struct IntRead { value: i32, cur: Cur }
+
+function read_int(s: string, cur: Cur): IntRead {
+  if (!cur.ok) {
+    return IntRead { value: 0, cur: cur };
+  }
+  var nl: i32 = 0 - 1;
+  var i: i32 = cur.at;
+  while (i < s.len()) {
+    if (s[i] == 10) {
+      nl = i;
+      i = s.len();
+    }
+    i = i + 1;
+  }
+  if (nl < 0) {
+    return IntRead { value: 0, cur: Cur { at: cur.at, ok: false } };
+  }
+  var digits: string = slice_unchecked(s, cur.at, nl).to_owned();
+  match (digits.parse_int()) {
+    Some(n) => {
+      return IntRead { value: n, cur: Cur { at: nl + 1, ok: true } };
+    },
+    None => {
+      return IntRead { value: 0, cur: Cur { at: cur.at, ok: false } };
+    }
+  }
+}
+
+// read_field reads a `<len>\n<bytes>` field at the cursor.
+struct StrRead { value: string, cur: Cur }
+
+function read_field(s: string, cur: Cur): StrRead {
+  var n: IntRead = read_int(s, cur);
+  if (!n.cur.ok) {
+    return StrRead { value: "", cur: n.cur };
+  }
+  var end: i32 = n.cur.at + n.value;
+  if (n.value < 0 || end > s.len()) {
+    return StrRead { value: "", cur: Cur { at: n.cur.at, ok: false } };
+  }
+  return StrRead { value: slice_unchecked(s, n.cur.at, end).to_owned(), cur: Cur { at: end, ok: true } };
+}
+
+function to_i64(s: string): i64 {
+  match (s.parse_int()) {
+    Some(n) => {
+      return n as i64;
+    },
+    None => {
+      return 0;
+    }
+  }
+}
+
+function to_f64(s: string): f64 {
+  match (s.parse_float()) {
+    Some(f) => {
+      return f;
+    },
+    None => {
+      return 0.0;
+    }
+  }
+}
+
+// An entry read, plus the cursor after it.
+struct EntryRead { entry: runtime.CacheEntry, cur: Cur }
+
+function read_entry(s: string, cur: Cur): EntryRead {
+  var blank: runtime.CacheEntry = runtime.CacheEntry { key: "", status: 0, reason: "", headers: runtime.headers_new(), body: "", ttl: 0.0, hits: 0 };
+  var key: StrRead = read_field(s, cur);
+  var status: StrRead = read_field(s, key.cur);
+  var reason: StrRead = read_field(s, status.cur);
+  var nh: IntRead = read_int(s, reason.cur);
+  if (!nh.cur.ok) {
+    return EntryRead { entry: blank, cur: nh.cur };
+  }
+  var h: runtime.Headers = runtime.headers_new();
+  var c: Cur = nh.cur;
+  var j: i32 = 0;
+  while (j < nh.value) {
+    var name: StrRead = read_field(s, c);
+    var value: StrRead = read_field(s, name.cur);
+    if (!value.cur.ok) {
+      return EntryRead { entry: blank, cur: value.cur };
+    }
+    h = h.set(name.value, value.value);
+    c = value.cur;
+    j = j + 1;
+  }
+  var body: StrRead = read_field(s, c);
+  var ttl: StrRead = read_field(s, body.cur);
+  var hits: StrRead = read_field(s, ttl.cur);
+  if (!hits.cur.ok) {
+    return EntryRead { entry: blank, cur: hits.cur };
+  }
+  var e: runtime.CacheEntry = runtime.CacheEntry { key: key.value, status: to_i64(status.value), reason: reason.value, headers: h, body: body.value, ttl: to_f64(ttl.value), hits: to_i64(hits.value) };
+  return EntryRead { entry: e, cur: hits.cur };
+}
+
+// decode rebuilds a cache from `encode`'s output. Malformed input yields an
+// EMPTY cache rather than an error: the only producer is `encode`, so a
+// decode failure means the state was corrupted, and a proxy that starts
+// cold is strictly better than one that serves garbage.
+pub function decode(s: string): runtime.Cache {
+  if (s.len() == 0) {
+    return runtime.cache_new();
+  }
+  var n: IntRead = read_int(s, Cur { at: 0, ok: true });
+  if (!n.cur.ok) {
+    return runtime.cache_new();
+  }
+  var out: runtime.CacheEntry[] = [];
+  var c: Cur = n.cur;
+  var i: i32 = 0;
+  while (i < n.value) {
+    var e: EntryRead = read_entry(s, c);
+    if (!e.cur.ok) {
+      return runtime.cache_new();
+    }
+    out = out.append(e.entry);
+    c = e.cur;
+    i = i + 1;
+  }
+  return runtime.Cache { entries: out };
+}

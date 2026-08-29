@@ -85,18 +85,23 @@ pub function (h: Headers) unset(name: string): Headers {
 // two because VCL's variable names already say which half is meaningful
 // (`req.method`, `beresp.status`), and a checker is what should reject
 // `req.status`, not the shape of the runtime.
-pub struct Msg { method: string, url: string, proto: string, status: i64, reason: string, headers: Headers }
+// `body` is the entity payload. It is a string rather than a byte array
+// because everything downstream — the cache file, the wire serialiser,
+// `resp.http.Content-Length` — treats it as opaque bytes, and Fern strings
+// already are. Binary payloads survive it; only a caller that wanted to
+// index codepoints would care.
+pub struct Msg { method: string, url: string, proto: string, status: i64, reason: string, headers: Headers, body: string }
 
 pub function msg_new(): Msg {
-  return Msg { method: "", url: "", proto: "HTTP/1.1", status: 0, reason: "", headers: headers_new() };
+  return Msg { method: "", url: "", proto: "HTTP/1.1", status: 0, reason: "", headers: headers_new(), body: "" };
 }
 
 pub function request(method: string, url: string): Msg {
-  return Msg { method: method, url: url, proto: "HTTP/1.1", status: 0, reason: "", headers: headers_new() };
+  return Msg { method: method, url: url, proto: "HTTP/1.1", status: 0, reason: "", headers: headers_new(), body: "" };
 }
 
 pub function response(status: i64, reason: string): Msg {
-  return Msg { method: "", url: "", proto: "HTTP/1.1", status: status, reason: reason, headers: headers_new() };
+  return Msg { method: "", url: "", proto: "HTTP/1.1", status: status, reason: reason, headers: headers_new(), body: "" };
 }
 
 // The whole transaction. The five messages are VCL's, and the scalars
@@ -151,7 +156,7 @@ pub function (t: Txn) note(line: string): Txn {
 // that hashes the URL alone and one that also hashes Host store under
 // different keys — which is the point of making hashing a VCL subroutine
 // rather than a fixed rule.
-pub struct CacheEntry { key: string, status: i64, reason: string, headers: Headers, ttl: f64, hits: i64 }
+pub struct CacheEntry { key: string, status: i64, reason: string, headers: Headers, body: string, ttl: f64, hits: i64 }
 
 pub struct Cache { entries: CacheEntry[] }
 

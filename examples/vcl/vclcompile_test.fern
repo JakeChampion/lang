@@ -177,8 +177,25 @@ function test_state_machine_is_shared_not_generated(): test.TestOutcome {
   return test.assert_contains(out, "machine.Driver { run_sub: run_sub");
 }
 
-function test_backends_are_passed_to_the_driver(): test.TestOutcome {
-  return test.assert_contains(gen_recv("return (hash);"), "[\"origin\"]");
+// The backend's host and port are read out of the VCL at COMPILE time and
+// emitted as literals, so a compiled policy carries no backend-block
+// parsing at all — and a real fetcher has somewhere to dial.
+function test_backends_are_resolved_at_compile_time(): test.TestOutcome {
+  return test.assert_contains(gen_recv("return (hash);"), "machine.Backend { name: \"origin\", host: \"127.0.0.1\", port: 80 }");
+}
+
+// A declared port overrides the default.
+function test_backend_port_is_carried_through(): test.TestOutcome {
+  var src: string = "vcl 4.1;\nbackend origin { .host = \"10.0.0.9\"; .port = \"8080\"; }\n" + "sub vcl_recv { return (hash); }\n";
+  var decls: ast.Decl[] = parser.parse(src).decls;
+  match (compile.compile(decls, "./")) {
+    Err(m) => {
+      return test.fail(m);
+    },
+    Ok(code) => {
+      return test.assert_contains(code, "host: \"10.0.0.9\", port: 8080");
+    }
+  }
 }
 
 // A `call` checks for the callee's bare return, which ends only the
@@ -244,7 +261,8 @@ function main(): i32 {
   r = r.it("each sub becomes a function", test_each_sub_becomes_a_function);
   r = r.it("dispatcher is generated", test_dispatcher_is_generated);
   r = r.it("state machine is shared not generated", test_state_machine_is_shared_not_generated);
-  r = r.it("backends are passed to the driver", test_backends_are_passed_to_the_driver);
+  r = r.it("backends are resolved at compile time", test_backends_are_resolved_at_compile_time);
+  r = r.it("backend port is carried through", test_backend_port_is_carried_through);
   r = r.it("call handles a bare return", test_call_handles_a_bare_return);
   r = r.it("import prefix is configurable", test_import_prefix_is_configurable);
   r = r.it("new is refused", test_new_is_refused);

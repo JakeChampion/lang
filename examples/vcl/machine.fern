@@ -42,17 +42,80 @@ pub struct Outcome { txn: runtime.Txn, cache: runtime.Cache, disposition: string
 // own dispatcher over generated functions. The graph itself — which
 // subroutine runs next, what the built-ins decide, when an object is
 // stored — is policy-independent, so there is no reason to have two.
-pub struct Driver { run_sub: (string, runtime.Txn) => eval.ExecOut, backends: string[] }
+// A declared backend, resolved from its VCL `backend` block. `host` and
+// `port` are what the real fetcher dials; the mock ignores them.
+pub struct Backend { name: string, host: string, port: i32 }
 
-// backend_names lists the declared backends in source order; the first is
-// the default when nothing sets a hint.
-pub function backend_names(decls: ast.Decl[]): string[] {
-  var out: string[] = [];
+// What a fetch produced. `ok` false means the origin could not be reached
+// at all, which is distinct from it answering 5xx — VCL sees the former as
+// a failed fetch and the latter as a response carrying a status.
+// `ttl` is what the origin said about caching, in seconds; NEGATIVE means
+// it expressed no opinion and the built-in default applies. A real fetcher
+// fills it from `Cache-Control: max-age`, which is how an origin actually
+// controls a cache; the mock leaves it negative.
+pub struct FetchOut { status: i64, reason: string, headers: runtime.Headers, body: string, ttl: f64, ok: boolean, err: string }
+
+// What the state machine needs from a policy and its environment: a way to
+// run one subroutine, the declared backends, and a way to fetch from one.
+//
+// Parameterising all three is what lets one state machine serve an
+// interpreted policy, a compiled one, a mock origin under test, and a real
+// TCP origin in the proxy. The graph — which subroutine runs next, what the
+// built-ins decide, when an object is stored — is the same in every case.
+pub struct Driver { run_sub: (string, runtime.Txn) => eval.ExecOut, backends: Backend[], fetch: (Backend, runtime.Txn) => FetchOut }
+
+// prop_string reads a scalar `.name = value;` from a backend block, or ""
+// when it is absent or not a plain literal.
+function prop_string(props: ast.PropBlock, name: string): string {
+  var i: i32 = 0;
+  while (i < props.props.len()) {
+    var pr: ast.Prop = props.props[i];
+    if (pr.name == name) {
+      match (pr.value) {
+        PVExpr(e) => {
+          match (e) {
+            EString(sl) => {
+              return sl.value;
+            },
+            ENumber(n) => {
+              return n.text;
+            },
+            _ => {
+              return "";
+            }
+          }
+        },
+        _ => {
+          return "";
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
+// backends_of resolves every declared backend, reading the `.host` and
+// `.port` a real fetch needs. VCL writes the port as a string
+// (`.port = "8080"`), so it is parsed here; it defaults to 80.
+pub function backends_of(decls: ast.Decl[]): Backend[] {
+  var out: Backend[] = [];
   var i: i32 = 0;
   while (i < decls.len()) {
     match (decls[i]) {
       DBackend(b) => {
-        out = out.append(b.name);
+        var host: string = prop_string(b.props, ".host");
+        if (host == "") {
+          host = "127.0.0.1";
+        }
+        var port: i32 = 80;
+        match (prop_string(b.props, ".port").parse_int()) {
+          Some(n) => {
+            port = n;
+          },
+          None => {}
+        }
+        out = out.append(Backend { name: b.name, host: host, port: port });
       },
       _ => {}
     }
@@ -65,7 +128,7 @@ pub function backend_names(decls: ast.Decl[]): string[] {
 pub function interpreting(decls: ast.Decl[]): Driver {
   var ctx: eval.Ctx = eval.Ctx { decls: decls };
   var runner: (string, runtime.Txn) => eval.ExecOut = function(name: string, t: runtime.Txn): eval.ExecOut { return eval.run_sub(ctx, t, name); };
-  return Driver { run_sub: runner, backends: backend_names(decls) };
+  return Driver { run_sub: runner, backends: backends_of(decls), fetch: mock_fetch };
 }
 
 // The evolving machine state, threaded through the stages.
@@ -176,8 +239,8 @@ function resolve(act: eval.Action, fallback: string): string {
 // The default TTL of 120s is the stand-in for a real origin's
 // Cache-Control, so a program that never sets `beresp.ttl` still has
 // something for the built-in caching decision to act on.
-function fetch(r: Run, backend: string): Run {
-  var url: string = r.txn.bereq.url;
+pub function mock_fetch(b: Backend, t: runtime.Txn): FetchOut {
+  var url: string = t.bereq.url;
   var status: i64 = 200;
   var reason: string = "OK";
   if (url.starts_with("/status/")) {
@@ -191,23 +254,47 @@ function fetch(r: Run, backend: string): Run {
   }
   var h: runtime.Headers = runtime.headers_new();
   h = h.set("Content-Type", "text/plain");
-  h = h.set("X-Backend", backend);
-  var resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: status, reason: reason, headers: h };
-  var t: runtime.Txn = runtime.Txn { ...r.txn, beresp: resp, beresp_ttl: 120.0, beresp_uncacheable: false };
-  return Run { ...r, txn: t.note("fetch " + backend + " -> " + status.to_string()) };
+  h = h.set("X-Backend", b.name);
+  var body: string = "mock origin " + b.name + " " + url + "\n";
+  return FetchOut { status: status, reason: reason, headers: h, body: body, ttl: 0.0 - 1.0, ok: true, err: "" };
+}
+
+// apply_fetch runs the Driver's fetcher and folds the result into `beresp`.
+// A default TTL of 120s stands in for an origin's Cache-Control so the
+// built-in caching decision has something to act on; a policy that sets
+// `beresp.ttl` overrides it, and the real fetcher reads Cache-Control
+// itself.
+function apply_fetch(ctx: Driver, r: Run, b: Backend): Run {
+  var out: FetchOut = ctx.fetch(b, r.txn);
+  if (!out.ok) {
+    return fail(r, "fetch from " + b.name + " failed: " + out.err);
+  }
+  var resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: out.status, reason: out.reason, headers: out.headers, body: out.body };
+  var ttl: f64 = 120.0;
+  if (out.ttl >= 0.0) {
+    ttl = out.ttl;
+  }
+  var t: runtime.Txn = runtime.Txn { ...r.txn, beresp: resp, beresp_ttl: ttl, beresp_uncacheable: false };
+  return Run { ...r, txn: t.note("fetch " + b.name + " -> " + out.status.to_string()) };
 }
 
 // backend_for picks the backend to fetch from: the hint a subroutine set,
 // or the first `backend` declared, which is Varnish's rule when nothing
 // else applies.
-function backend_for(ctx: Driver, t: runtime.Txn): string {
+function backend_for(ctx: Driver, t: runtime.Txn): Backend {
   if (t.backend_hint != "") {
-    return t.backend_hint;
+    var i: i32 = 0;
+    while (i < ctx.backends.len()) {
+      if (ctx.backends[i].name == t.backend_hint) {
+        return ctx.backends[i];
+      }
+      i = i + 1;
+    }
   }
   if (ctx.backends.len() > 0) {
     return ctx.backends[0];
   }
-  return "";
+  return Backend { name: "", host: "127.0.0.1", port: 80 };
 }
 
 // ------------------------------------------------------------- hashing
@@ -233,20 +320,20 @@ function hash_key(t: runtime.Txn): string {
 // start_bereq copies the client request into the backend request, which
 // is the point where `req` stops being visible and `bereq` starts.
 function start_bereq(r: Run): Run {
-  var b: runtime.Msg = runtime.Msg { method: r.txn.req.method, url: r.txn.req.url, proto: r.txn.req.proto, status: 0, reason: "", headers: r.txn.req.headers };
+  var b: runtime.Msg = runtime.Msg { method: r.txn.req.method, url: r.txn.req.url, proto: r.txn.req.proto, status: 0, reason: "", headers: r.txn.req.headers, body: r.txn.req.body };
   return Run { ...r, txn: runtime.Txn { ...r.txn, bereq: b } };
 }
 
 // deliver_from_beresp seeds `resp` from the fetched response, which is
 // what `vcl_deliver` then edits.
 function deliver_from_beresp(r: Run): Run {
-  var resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: r.txn.beresp.proto, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers };
+  var resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: r.txn.beresp.proto, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers, body: r.txn.beresp.body };
   return Run { ...r, txn: runtime.Txn { ...r.txn, resp: resp } };
 }
 
 // deliver_from_obj seeds `resp` from a cached object on a hit.
 function deliver_from_obj(r: Run, e: runtime.CacheEntry): Run {
-  var obj: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: e.status, reason: e.reason, headers: e.headers };
+  var obj: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: e.status, reason: e.reason, headers: e.headers, body: e.body };
   var resp: runtime.Msg = runtime.Msg { ...obj };
   var t: runtime.Txn = runtime.Txn { ...r.txn, obj: obj, resp: resp, obj_ttl: e.ttl, obj_hits: e.hits };
   return Run { ...r, txn: t };
@@ -254,7 +341,7 @@ function deliver_from_obj(r: Run, e: runtime.CacheEntry): Run {
 
 // store_object puts the fetched response in the cache under `key`.
 function store_object(r: Run, key: string): Run {
-  var e: runtime.CacheEntry = runtime.CacheEntry { key: key, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers, ttl: r.txn.beresp_ttl, hits: 0 };
+  var e: runtime.CacheEntry = runtime.CacheEntry { key: key, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers, body: r.txn.beresp.body, ttl: r.txn.beresp_ttl, hits: 0 };
   return Run { ...r, cache: r.cache.store(e), txn: r.txn.note("store " + key + " ttl=" + r.txn.beresp_ttl.to_string_prec(3)) };
 }
 
@@ -265,7 +352,7 @@ function synth(ctx: Driver, r: Run, a: eval.Action): Outcome {
   if (status == 0) {
     status = 503;
   }
-  var resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: status, reason: a.reason, headers: runtime.headers_new() };
+  var resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: status, reason: a.reason, headers: runtime.headers_new(), body: "" };
   var withresp: Run = Run { ...r, txn: runtime.Txn { ...r.txn, resp: resp } };
   var s: Staged = run_stage(ctx, withresp, "vcl_synth");
   if (!s.run.ok) {
@@ -294,7 +381,10 @@ function backend_side(ctx: Driver, r0: Run, key: string, store: boolean): Outcom
     return done(bf.run, "abandon", false);
   }
 
-  var fetched: Run = fetch(bf.run, backend_for(ctx, bf.run.txn));
+  var fetched: Run = apply_fetch(ctx, bf.run, backend_for(ctx, bf.run.txn));
+  if (!fetched.ok) {
+    return outcome_err(fetched);
+  }
   var br: Staged = run_stage(ctx, fetched, "vcl_backend_response");
   if (!br.run.ok) {
     return outcome_err(br.run);
@@ -307,12 +397,22 @@ function backend_side(ctx: Driver, r0: Run, key: string, store: boolean): Outcom
     return done(br.run, "retry", false);
   }
 
-  var cacheable: boolean = act == "deliver" && store && !br.run.txn.beresp_uncacheable && br.run.txn.beresp_ttl > 0.0;
+  var cacheable: boolean = should_store(act, store, br.run.txn);
   var stored: Run = br.run;
   if (cacheable) {
     stored = store_object(br.run, key);
   }
   return client_deliver(ctx, deliver_from_beresp(stored), false);
+}
+
+// should_store is the insertion decision: the fetch has to be delivering,
+// this path has to be one that inserts at all (a pass never does), and the
+// object has to be cacheable with a positive TTL.
+function should_store(act: string, inserts: boolean, t: runtime.Txn): boolean {
+  if (act != "deliver" || !inserts) {
+    return false;
+  }
+  return !t.beresp_uncacheable && t.beresp_ttl > 0.0;
 }
 
 // client_deliver runs `vcl_deliver`, the last stage before the response
@@ -435,7 +535,17 @@ function one_pass(ctx: Driver, r: Run): Outcome {
 // back to `vcl_recv` with the transaction's edits intact, bounded like
 // Varnish's; the accumulated hash is cleared on each pass so a restarted
 // request re-hashes under whatever the new `req` says.
+// run_request is `run_with` with a client request body, which a real proxy
+// has and the CLI drivers do not.
+pub function run_request(ctx: Driver, method: string, url: string, client_ip: string, names: string[], values: string[], body: string, cache: runtime.Cache): Outcome {
+  return run_inner(ctx, method, url, client_ip, names, values, body, cache);
+}
+
 pub function run_with(ctx: Driver, method: string, url: string, client_ip: string, names: string[], values: string[], cache: runtime.Cache): Outcome {
+  return run_inner(ctx, method, url, client_ip, names, values, "", cache);
+}
+
+function run_inner(ctx: Driver, method: string, url: string, client_ip: string, names: string[], values: string[], body: string, cache: runtime.Cache): Outcome {
   var empty: string[] = [];
   var t: runtime.Txn = runtime.txn_new(method, url, client_ip);
   var h: runtime.Headers = t.req.headers;
@@ -444,7 +554,7 @@ pub function run_with(ctx: Driver, method: string, url: string, client_ip: strin
     h = h.set(names[i], values[i]);
     i = i + 1;
   }
-  var seeded: runtime.Txn = runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: h } };
+  var seeded: runtime.Txn = runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: h, body: body } };
   var r: Run = Run { txn: seeded, cache: cache, steps: empty, ok: true, err: "" };
   var tries: i32 = 0;
   while (tries <= max_restarts()) {
