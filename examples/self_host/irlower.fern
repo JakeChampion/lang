@@ -1288,6 +1288,22 @@ pub function (s: LowerState) reclaim_site_key(i: i32): string {
     return s.locals[i].reclaim_site;
 }
 
+// slot_of_site is slot_of's site-keyed twin: the slot the binding SITE key names,
+// or -1. slot_of answers with the innermost binding of a SPELLING, so a shadow
+// redirects it; a site key belongs to exactly one binding, so this cannot be
+// redirected and it survives retire_locals' block-exit rename. Scans backward for
+// the same reason slot_of does — a loop body re-entering its own declaration
+// rebinds the name to a fresh slot, and the latest one is the live binding.
+pub function (s: LowerState) slot_of_site(key: string): i32 {
+    if (key.len() == 0) { return 0 - 1; }
+    var i: i32 = s.locals.len() - 1;
+    while (i >= 0) {
+        if (s.locals[i].reclaim_site == key) { return i; }
+        i = i - 1;
+    }
+    return 0 - 1;
+}
+
 // set_local_name rewrites slot i's NAME (used by retire_locals). Mirrors mark_arr
 // exactly — a single `.with` on local_names, every other field carried through.
 pub function (s: LowerState) set_local_name(i: i32, name: string): LowerState {
@@ -20877,7 +20893,7 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
     // capture extract (`var <cap> = __env[1+i]`, registered "ENVCAP:" by
     // lower_func) is excluded: the sweep already skips it as a BORROW, so a
     // retain here would have no matching dec and leak one count per call.
-    if (is_arr && !alias_inc && !reclaim_has(se.reclaimable_names, "ENVCAP:", v.name)) {
+    if (is_arr && !alias_inc && !reclaim_has(se.reclaimable_names, "ENVCAP:", reclaim_site_key_of(v.name, v.line, v.col))) {
         match (v.init) {
             ast.ExprFieldAccess(_) => { alias_inc = true; },
             ast.ExprIndex(_) => { alias_inc = true; },
@@ -21242,7 +21258,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // RHSs, so `e = f(e)` — the one shape where the old box is still needed here —
     // is excluded. Params are never candidates (the local is fn-declared), but the
     // slot check mirrors the enumfrees emission rather than relying on that.
-    if (slot >= s.n_params && reclaim_has(s.reclaimable_names, "SCENRB:", a.target)) {
+    if (slot >= s.n_params && reclaim_has(s.reclaimable_names, "SCENRB:", s.reclaim_site_key(slot))) {
         s = s.release(slot, "__fern_rc_dec", "scenrb-old-box");
     }
     s = refine_map_struct_val(a, slot, s);
@@ -21628,7 +21644,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // is excluded for the same reason as the bind: the sweep skips it as a
     // borrow, so a retain would leak.
     if (!reassign_inc && s.is_arr_slot(slot) && slot >= s.n_params
-            && !reclaim_has(s.reclaimable_names, "ENVCAP:", s.locals[slot].slot_name)) {
+            && !reclaim_has(s.reclaimable_names, "ENVCAP:", s.reclaim_site_key(slot))) {
         match (a.value) {
             ast.ExprFieldAccess(_) => { reassign_inc = true; },
             ast.ExprIndex(_) => { reassign_inc = true; },
@@ -21823,7 +21839,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // `LowerState { ops: s.ops.append(op), … }`) before freeing the box,
     // guarded so neither the new value nor the caller's snapshot is freed.
     if (slot_is_snapshot_param(s, slot)) {
-        var snsl: i32 = s.slot_of("$snap$" + s.locals[slot].slot_name);
+        var snsl: i32 = s.slot_of(snapshot_slot_name(slot));
         var snty: string = s.struct_type_of_slot(slot);
         if (s.struct_routes_field_reclaim(snty)) {
             return emit_field_reclaim_store(se, slot, snty, snsl);
@@ -27084,7 +27100,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     }
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
-        if (!slot_list_has(keeps, i) && !slot_list_has(st.moved_elided, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && !reclaim_has(st.reclaimable_names, "ENVCAP:", st.locals[i].slot_name)) {
+        if (!slot_list_has(keeps, i) && !slot_list_has(st.moved_elided, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && !reclaim_has(st.reclaimable_names, "ENVCAP:", st.reclaim_site_key(i))) {
             // dyn Trait[] ELEMENT reclaim (#4351 slice 3): a credited literal
             // dyn array releases each element box (per-index, kinds recorded
             // at the credit) BEFORE the buffer dec below. rc==1-gated on the
@@ -27094,7 +27110,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             // box (prim op_dyn_box cell or scalar-only struct box); 's'
             // first frees the sole-owned inner string box at cell@8 (its own
             // rc==1 gate), then decs the cell.
-            var dak: string = darr_kinds_of(st, st.locals[i].slot_name);
+            var dak: string = darr_kinds_of(st, st.reclaim_site_key(i));
             if (dak.len() > 0) {
                 st = st.emit(ir.op_load_local(i));
                 st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -34065,27 +34081,10 @@ function collect_dyn_struct_in_stmt(st: ast.Stmt, body: ast.Stmt[], structs: par
                     },
                     _ => {}
                 }
-                // An UNCLASSIFIED payload records `<name>|` with an empty tag
-                // rather than nothing: the escape gates still apply to it and
-                // the coercion decides the rest (the "DYNCAND:" arm in
-                // reclaimable_names_of), and it has to reach the shadow rule.
-                // shadow check: a same-named earlier entry blanks both.
-                var pi: i32 = 0;
-                while (pi < acc.len()) {
-                    var e: string = acc[pi];
-                    var b2: i32 = 0;
-                    while (b2 < e.len() && e[b2] != b'|') { b2 = b2 + 1; }
-                    if (b2 <= e.len() && slice_unchecked(e, 0, b2) == v.name) {
-                        var out: string[] = [];
-                        var oi: i32 = 0;
-                        while (oi < acc.len()) {
-                            if (oi == pi) { out = out.append("|"); } else { out = out.append(acc[oi]); }
-                            oi = oi + 1;
-                        }
-                        return out.append("|");
-                    }
-                    pi = pi + 1;
-                }
+                // An UNCLASSIFIED payload records `<site>|` with an empty tag
+                // rather than nothing: the escape gates still apply to it and the
+                // coercion decides the rest (the "DYNCAND:" arm in
+                // reclaimable_names_of).
                 return acc.append(reclaim_site_key_of(v.name, v.line, v.col) + "|" + cty);
             }
             return acc;
@@ -34121,8 +34120,14 @@ function collect_dyn_struct_in_stmt(st: ast.Stmt, body: ast.Stmt[], structs: par
 
 // collect_dyn_arr_names: every `var <n>: dyn <T>[] = [<literal>...]` binding
 // whose EVERY element is a prim/string literal or a leak-safe scalar-only
-// struct literal, as "<name>|<kinds>" entries (kinds[i] = 'p'/'s' for element
-// i). A name bound twice is blanked (shadow — the element lists may differ).
+// struct literal, as "<binding site>|<kinds>" entries (kinds[i] = 'p'/'s' for
+// element i). Keyed on the site rather than the name (#7253), like its scalar
+// "DYN:" twin: this collector recurses into nested blocks, so two same-named dyn
+// arrays in sibling blocks are two entries with different element lists, and the
+// sweep's first-match read handed one block's kinds to the other block's slot.
+// The site also survives retire_locals' block-exit rename, which the name does
+// not — a block-scoped dyn array was looked up as "!retired!xs", missed, and
+// leaked every element box.
 function collect_dyn_arr_names(stmts: ast.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts { a = collect_dyn_arr_in_stmt(stmt, structs, a); }
@@ -34166,24 +34171,7 @@ function collect_dyn_arr_in_stmt(st: ast.Stmt, structs: parser.StructDecl[], acc
                     _ => {}
                 }
                 if (!ok) { return acc; }
-                // shadow check: a same-named earlier entry blanks both.
-                var pi: i32 = 0;
-                while (pi < acc.len()) {
-                    var e: string = acc[pi];
-                    var b2: i32 = 0;
-                    while (b2 < e.len() && e[b2] != b'|') { b2 = b2 + 1; }
-                    if (b2 <= e.len() && slice_unchecked(e, 0, b2) == v.name) {
-                        var out: string[] = [];
-                        var oi: i32 = 0;
-                        while (oi < acc.len()) {
-                            if (oi == pi) { out = out.append("|"); } else { out = out.append(acc[oi]); }
-                            oi = oi + 1;
-                        }
-                        return out.append("|");
-                    }
-                    pi = pi + 1;
-                }
-                return acc.append(v.name + "|" + kinds);
+                return acc.append(reclaim_site_key_of(v.name, v.line, v.col) + "|" + kinds);
             }
             return acc;
         },
@@ -36123,7 +36111,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     return out;
 }
 
-// snapshot_param_names_of: the struct PARAMS / RECEIVER that are SNAPSHOT-
+// snapshot_param_slots_of: the struct PARAMS / RECEIVER that are SNAPSHOT-
 // reclaimable (#3456 slice 2) — the builder pattern
 // `function f(s: EmitState): EmitState { s = s.write(x); ...; return s; }`, where
 // `s` is a param/receiver REASSIGNED through a consume-rebind and moved back out
@@ -36134,19 +36122,26 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
 // caller's original). Eligibility: reassigned + only-safe-uses-plus-return. The
 // struct-slot check is applied at the emit site (struct_type_of_slot), so a
 // scalar param — flagged unsafe by its arithmetic — never reaches here.
-function snapshot_param_names_of(fn: parser.FuncDecl, borrowable: string[], consume_safe: string[]): string[] {
+function snapshot_param_slots_of(fn: parser.FuncDecl, borrowable: string[], consume_safe: string[]): string[] {
     var out: string[] = [];
     var reassigned: string[] = body_assign_targets(fn.body);
+    // Slot numbers, not names (#7253). lower_func lays the frame out receiver-
+    // first then parameters, in this order, so the slot is known here without a
+    // LowerState — and unlike the name it cannot be answered by a body local of
+    // the same spelling, which is what kept these rows behind a "SNAP:" prefix
+    // to hide them from the bare-name struct-credit lookup.
+    var base: i32 = 0;
     if (fn.receiver_name.len() > 0) {
+        base = 1;
         if (util.index_of_str(reassigned, fn.receiver_name) >= 0 && !body_consume_unsafe_for(fn.body, fn.receiver_name, borrowable, consume_safe, [])) {
-            out = out.append(fn.receiver_name);
+            out = out.append(util.i32_to_string(0));
         }
     }
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
         var pn: string = fn.params[pi].name;
         if (util.index_of_str(reassigned, pn) >= 0 && !body_consume_unsafe_for(fn.body, pn, borrowable, consume_safe, [])) {
-            out = out.append(pn);
+            out = out.append(util.i32_to_string(base + pi));
         }
         pi = pi + 1;
     }
@@ -37566,7 +37561,7 @@ function is_fresh_ret_binding(e: ast.Expr, recv_type: string, fresh_ret: string[
 }
 // snapshot_local_names_of: fresh-ret-bound struct LOCALS (with rc-array fields)
 // that are threaded (reassigned) and only-safe-uses-plus-return — the local
-// analogue of snapshot_param_names_of. No entry snapshot (a pure local has no
+// analogue of snapshot_param_slots_of. No entry snapshot (a pure local has no
 // caller original); each rebind reclaims via emit_field_reclaim_store (snap = 0)
 // and the moved-out final is kept by struct move-on-return.
 function snapshot_local_names_of(fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], consume_safe: string[], ret_fresh: string[]): string[] {
@@ -38247,7 +38242,12 @@ function name_used_after(body: ast.Stmt[], name: string, after: i32): boolean {
 // consuming match's. The pair is the local's live range, which is the window the
 // return-path drop has to be armed over: a `return` anywhere between the two
 // jumps the post-match drop just as an arm's own `return` does (#7742).
-struct EnumFrees { idxs: i32[], vidxs: i32[], names: string[] }
+// EnumFrees columns are parallel: idxs[k] is the consuming match's statement
+// index, vidxs[k] the construction's, names[k] the local's spelling and sites[k]
+// its binding-SITE key. The site is what a credit keys on — a name answers for
+// whichever binding of that spelling is innermost at the read, which is a
+// different binding whenever the body re-declares it (#7253).
+struct EnumFrees { idxs: i32[], vidxs: i32[], names: string[], sites: string[] }
 
 // consumed_scalar_enum_frees finds every function-local `var x = V(scalar...)` of
 // an all-scalar enum consumed by exactly one `match (x)` where x is single-owner
@@ -38352,6 +38352,7 @@ function consumed_scalar_enum_frees(body: ast.Stmt[], structs: parser.StructDecl
     var idxs: i32[] = [];
     var vidxs: i32[] = [];
     var names: string[] = [];
+    var sites: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
@@ -38404,6 +38405,7 @@ function consumed_scalar_enum_frees(body: ast.Stmt[], structs: parser.StructDecl
                             idxs = idxs.append(match_idx);
                             vidxs = vidxs.append(vi);
                             names = names.append(v.name);
+                            sites = sites.append(reclaim_site_key_of(v.name, v.line, v.col));
                         }
                     }
                 }
@@ -38412,7 +38414,7 @@ function consumed_scalar_enum_frees(body: ast.Stmt[], structs: parser.StructDecl
         }
         vi = vi + 1;
     }
-    return EnumFrees { idxs: idxs, vidxs: vidxs, names: names };
+    return EnumFrees { idxs: idxs, vidxs: vidxs, names: names, sites: sites };
 }
 
 // --- consumed RC-PAYLOAD enum free (deep-drop at the free site) -------------
@@ -39458,7 +39460,7 @@ function enum_only_wildcard_used_rec(stmts: ast.Stmt[], name: string, enum_name:
 }
 
 // enum_reassign_reclaim_names: enum locals safe for the per-reassign deep-drop, credited
-// "ENUMRE:<E>:<name>". Array-payload-only enum E, fresh array payloads, b IS reassigned
+// "ENUMRE:<E>:<binding site>". Array-payload-only enum E, fresh array payloads, b IS reassigned
 // (DISJOINT from the consume-by-match frees, which require NOT reassigned), and
 // enum_only_wildcard_used_rec proves the payload is never aliased.
 function enum_reassign_reclaim_names(body: ast.Stmt[], structs: parser.StructDecl[], acc: string[]): string[] {
@@ -39473,7 +39475,7 @@ function enum_reassign_reclaim_names(body: ast.Stmt[], structs: parser.StructDec
                         && variant_ctor_array_payloads_fresh(v.init, structs)
                         && util.index_of_str(reassigned, v.name) >= 0
                         && enum_only_wildcard_used_rec(body, v.name, e0, structs)) {
-                    out = out.append("ENUMRE:" + e0 + ":" + v.name);
+                    out = out.append("ENUMRE:" + e0 + ":" + reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
             _ => {}
@@ -39483,12 +39485,20 @@ function enum_reassign_reclaim_names(body: ast.Stmt[], structs: parser.StructDec
     return out;
 }
 
-// slot_enum_reassign_reclaim: the enum E credited "ENUMRE:<E>:<slot-name>" for a
-// non-param slot, or "". Drives emit_enum_reclaim_store on the StmtAssign.
+// slot_enum_reassign_reclaim: the enum E credited "ENUMRE:<E>:<binding site>" for
+// a non-param slot, or "". Drives emit_enum_reclaim_store on the StmtAssign.
+//
+// Keyed on the binding SITE, not the name. Two same-named enum locals of
+// DIFFERENT enums both mint a row, and this scan takes the first — after which
+// emit_enum_variant_drops walks the wrong enum's variant layout over the box.
+// The collector has no shadow-blanking rule to stop that, and the name would
+// also answer differently for a block-scoped local, whose slot retire_locals
+// renames before a replayed defer action reads it (#7253).
 function slot_enum_reassign_reclaim(s: LowerState, i: i32): string {
     if (i < s.n_params) { return ""; }
     if (i >= s.locals.len()) { return ""; }
-    var nm: string = s.locals[i].slot_name;
+    var nm: string = s.reclaim_site_key(i);
+    if (nm.len() == 0) { return ""; }
     var j: i32 = 0;
     while (j < s.reclaimable_names.len()) {
         var r: string = s.reclaimable_names[j];
@@ -46872,12 +46882,13 @@ function dyn_reclaim_concrete_of(s: LowerState, name: string): string {
     return tagged_value_of(s.reclaimable_names, "DYN:", name);
 }
 
-// darr_kinds_of (#4351 slice 3): the element-kind string registered for dyn
-// ARRAY local `name` under the "DARR:<name>|<kinds>" reclaim entry, or "".
-// kinds[i] = 'p' (plain cell/box dec) or 's' (string cell: inner box free
-// then dec) for element i of the credited literal.
-function darr_kinds_of(s: LowerState, name: string): string {
-    return tagged_value_of(s.reclaimable_names, "DARR:", name);
+// darr_kinds_of (#4351 slice 3): the element-kind string registered for the dyn
+// ARRAY local bound at site `site`, under the "DARR:<site>|<kinds>" reclaim
+// entry, or "". kinds[i] = 'p' (plain cell/box dec) or 's' (string cell: inner
+// box free then dec) for element i of the credited literal.
+function darr_kinds_of(s: LowerState, site: string): string {
+    if (site.len() == 0) { return ""; }
+    return tagged_value_of(s.reclaimable_names, "DARR:", site);
 }
 
 // slot_is_reclaimable_dyn: slot `i` is a fresh, non-escaping dyn-Trait local
@@ -46903,7 +46914,7 @@ function slot_is_reclaimable_dyn(s: LowerState, i: i32): boolean {
 
 // slot_is_snapshot_param: slot `i` is a struct PARAM / receiver lower_func
 // snapshotted at entry for the builder consume-rebind reclaim (#3456 slice 2,
-// piggybacked as "SNAP:<name>" on reclaimable_names). Only the param slot itself
+// piggybacked as "SNAP:<slot>" on reclaimable_names). Only the param slot itself
 // (i < n_params) and struct slots qualify; its reassign emits the snapshot-
 // guarded shallow free (emit_snapshot_store) — freeing the function's own
 // intermediate boxes, never the caller's original.
@@ -46911,7 +46922,7 @@ function slot_is_snapshot_param(s: LowerState, i: i32): boolean {
     if (i >= s.n_params) { return false; }
     if (i >= s.locals.len()) { return false; }
     if (s.struct_type_of_slot(i).len() == 0) { return false; }
-    return reclaim_has(s.reclaimable_names, "SNAP:", s.locals[i].slot_name);
+    return reclaim_has(s.reclaimable_names, "SNAP:", util.i32_to_string(i));
 }
 
 // --- struct in-place reuse (FBIP): functional-update self-overwrite ---------
@@ -51866,13 +51877,17 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // 2-call escaping shape). Register them under the "ENVCAP:" prefix so the
     // sweep's array loop skips them; the env box itself (owned by the CALLER)
     // keeps its normal release path.
+    //
+    // Keyed on the binding SITE, not the name (#7253). make_clo_func stamps the
+    // synthesized reads at 0:0, so a capture's key is `<cap>@0:0` and no source
+    // local can collide with it — where the bare name let a user local sharing a
+    // capture's spelling inherit the exclusion and lose its own dec.
     reclaim = reclaim_env_capture_params(fn, reclaim);
     // Snapshot-param reclaim (#3456 slice 2): struct params/receiver threaded
     // through a consume-rebind (`s = s.write(x); return s`). Piggybacked as
-    // "SNAP:<name>" so slot_is_reclaimable_struct (bare-name lookup) stays false
-    // for them — they are NOT swept/deep-dropped (their final value shares the
-    // caller's fields); each reassign instead emits emit_snapshot_store.
-    var snaps: string[] = snapshot_param_names_of(fn, sg.borrowable_params, sg.consume_safe_params);
+    // "SNAP:<slot>" — they are NOT swept/deep-dropped (their final value shares
+    // the caller's fields); each reassign instead emits emit_snapshot_store.
+    var snaps: string[] = snapshot_param_slots_of(fn, sg.borrowable_params, sg.consume_safe_params);
     var snj: i32 = 0;
     while (snj < snaps.len()) { reclaim = reclaim.append("SNAP:" + snaps[snj]); snj = snj + 1; }
     // Snapshot-LOCAL reclaim (#3457): fresh-ret-bound struct LOCALS threaded +
@@ -51918,15 +51933,21 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees
     // admits DESPITE being rebound (#6127). Each rebind orphans the previous box, so
     // lower_stmt_assign releases it before storing the new one; the final value is
-    // still freed at the consuming match by the enumfrees emission. Marking the name
-    // here is what carries the fn-level admission (escape gate + sole consuming match
-    // + every-assignment-is-a-fresh-ctor) down to the assignment site, which sees only
-    // one statement.
+    // still freed at the consuming match by the enumfrees emission. Marking the
+    // binding SITE here is what carries the fn-level admission (escape gate + sole
+    // consuming match + every-assignment-is-a-fresh-ctor) down to the assignment
+    // site, which sees only one statement.
+    //
+    // The site rather than the name (#7253): the admission is proved over the
+    // function's TOP LEVEL, so a block-scoped local of the same spelling was never
+    // examined — and `a.target` resolves to whichever binding is innermost at the
+    // assignment. A name key handed the inner slot the outer one's credit and
+    // released a box the block-level pass claims at its own consuming match.
     var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
     var scrb_i: i32 = 0;
     while (scrb_i < scenrb.names.len()) {
         if (util.index_of_str(body_assign_targets(fn.body), scenrb.names[scrb_i]) >= 0) {
-            reclaim = reclaim.append("SCENRB:" + scenrb.names[scrb_i]);
+            reclaim = reclaim.append("SCENRB:" + scenrb.sites[scrb_i]);
         }
         scrb_i = scrb_i + 1;
     }
@@ -52077,7 +52098,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     }
     // Snapshot-param entry capture (#3456 slice 2): store each snapshot struct
     // param/receiver's ENTRY value (the caller's original box) into a hidden
-    // "$snap$<name>" local. Emitted FIRST (before any body op). Each reassign then
+    // "$snap$<slot>" local. Emitted FIRST (before any body op). Each reassign then
     // frees the old box only when it differs from this snapshot, so the caller's
     // original is never freed. Only struct slots qualify.
     s = seed_snapshot_slots(snaps, s);
@@ -69690,7 +69711,7 @@ if (fn.params.len() > 0 && fn.params[0].name == "__env") {
                     ast.ExprIndex(evix) => {
                         match (evix.array) {
                             ast.ExprIdent(evid) => {
-                                if (evid.name == "__env") { reclaim = reclaim.append("ENVCAP:" + ev.name); }
+                                if (evid.name == "__env") { reclaim = reclaim.append("ENVCAP:" + reclaim_site_key_of(ev.name, ev.line, ev.col)); }
                             },
                             _ => {}
                         }
@@ -69822,19 +69843,33 @@ while (tci < fn.body.len()) {
     return tclean;
 }
 
+// seed_snapshot_slots is the SECOND consumer of snapshot_param_slots_of's rows,
+// in a different function from slot_is_snapshot_param — a key change has to move
+// both, and the emit-hash sweep is what says whether it did (#7292: a writer, or
+// a reader, need not be a caller of the thing being changed).
+//
+// The hidden local is named by the param's SLOT rather than its spelling, so
+// snapshot_slot_name is the one place either half spells it.
 function seed_snapshot_slots(snaps: string[], s: LowerState): LowerState {
 var sni: i32 = 0;
 while (sni < snaps.len()) {
-    var psl: i32 = s.slot_of(snaps[sni]);
-    if (psl >= 0 && s.struct_type_of_slot(psl).len() > 0) {
-        s = s.add_local("$snap$" + snaps[sni]);
+    var psl: i32 = util.digits_to_i32(snaps[sni]);
+    if (psl >= 0 && psl < s.locals.len() && s.struct_type_of_slot(psl).len() > 0) {
+        s = s.add_local(snapshot_slot_name(psl));
         s = s.emit(ir.op_load_local(psl));
-        s = s.emit(ir.op_store_local(s.slot_of("$snap$" + snaps[sni])));
+        s = s.emit(ir.op_store_local(s.slot_of(snapshot_slot_name(psl))));
     }
     sni = sni + 1;
 }
 
     return s;
+}
+
+// snapshot_slot_name names the hidden entry-snapshot local for param slot `i`.
+// Slot-keyed for the same reason the "SNAP:" rows are: a name would have to be
+// the param's spelling, which is a second key that can drift from the first.
+function snapshot_slot_name(i: i32): string {
+    return "$snap$" + util.i32_to_string(i);
 }
 
 function reclaimable_scalar_tuple(body: ast.Stmt[], borrowable: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], tretn: string[], tups: string[], out: string[]): string[] {
@@ -70550,8 +70585,12 @@ while (dai < darrs.len()) {
     var daentry: string = darrs[dai];
     var dabar: i32 = 0;
     while (dabar < daentry.len() && daentry[dabar] != b'|') { dabar = dabar + 1; }
-    var daname: str = slice_unchecked(daentry, 0, dabar);
-    if (daname.len() > 0
+    // The entry is "<site key>|<kinds>"; the key half is what the credit is keyed
+    // on and the bare name is what the gates ask about, which is the same split
+    // reclaimable_dyn_struct makes for "DYN:".
+    var dasite: str = slice_unchecked(daentry, 0, dabar);
+    var daname: string = reclaim_site_name(dasite + "");
+    if (dasite.len() > 0
         && util.index_of_str(reassigned, daname) < 0
         && !darr_unsafe_for(body, daname, borrowable)) { out = out.append("DARR:" + daentry); }
     dai = dai + 1;

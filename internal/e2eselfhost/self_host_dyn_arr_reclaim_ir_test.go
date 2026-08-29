@@ -65,6 +65,25 @@ function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { 
 function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-arr-mixed-reclaim-flat", 0)
 
+	// BLOCK-SCOPED, reclaimed (#7253): the identical literal declared inside an
+	// `if` body rather than at function scope. The credit is the same; what
+	// differed was the KEY. The sweep resolved "DARR:" by the slot's name, and
+	// retire_locals renames a block-scoped slot to "!retired!xs" at the block's
+	// exit — before the sweep runs — so the lookup missed and every element box
+	// leaked. Measured 98 against the function-scope sibling's 0, one `if` apart;
+	// under the binding-site key both are 0.
+	//
+	// The function-scope form is the control and stays in the case above: a
+	// regression that breaks the credit outright takes both to 98, where one that
+	// re-introduces the name key takes only this one.
+	run(t, `trait Show { function show(self: Self): i32; }
+impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+function go(k: i32): i32 { var t: i32 = 0; if (k >= 0) { var xs: dyn Show[] = [41, "hello"]; t = xs[0].show() + xs[1].show(); } return t; }
+function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+		"dyn-arr-block-scoped-reclaim-flat", 0)
+
 	// INDEXED-LOOP dispatch: `while (j < xs.len()) { acc + xs[j].show() }` —
 	// the len() receiver and transient dispatches are admitted; still flat.
 	// (Elements must be LITERALS — a param-derived element like `[k, 5]`
@@ -146,6 +165,12 @@ impl Show for string { function show(self: Self): i32 { return self.len(); } }
 impl Show for Dot { function show(self: Self): i32 { return self.r * 2; } }
 function go(k: i32): i32 { var xs: dyn Show[] = [41, "hello", Dot { r: k }]; return xs[0].show() + xs[1].show() + xs[2].show(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
+		{"dyn-arr-block-scoped-reclaim-flat-wasm", `trait Show { function show(self: Self): i32; }
+impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+function go(k: i32): i32 { var t: i32 = 0; if (k >= 0) { var xs: dyn Show[] = [41, "hello"]; t = xs[0].show() + xs[1].show(); } return t; }
+function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		{"dyn-arr-returned-dispatch-wasm", `trait Show { function show(self: Self): i32; }
 struct Dot { r: i32 }
