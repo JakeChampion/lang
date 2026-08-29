@@ -5605,7 +5605,17 @@ pub function expr_recv_prim_type(e: ast.Expr, s: LowerState): string {
     // string index stays a dispatch fact and does not start driving
     // expr_subword_kind's arithmetic width-wrap.
     match (e) {
-        ast.ExprIndex(bix) => { if (expr_is_str(bix.array, s)) { return "u8"; } },
+        ast.ExprIndex(bix) => {
+            if (expr_is_str(bix.array, s)) { return "u8"; }
+            // `a[i]` over an f32[] keys "f32.<m>". Resolved here for exactly the
+            // reason the string-index byte above is: it has to stay a DISPATCH
+            // fact. Teaching expr_is_f32 or ix_type_tag about f32[] elements
+            // instead reached real codegen — f32 arithmetic rounds through a
+            // demote/promote pair, and expr_is_f64 reads ix_type_tag for the
+            // RETURN width — which emitted an invalid wasm module ("expected
+            // f64, found i32") for `at(a: f32[], i: i32): f32 { return a[i]; }`.
+            if (expr_is_f32arr_src(bix.array, s)) { return "f32"; }
+        },
         _ => {}
     }
     // Arrays / tuples / maps aren't primitive receivers either; their builtin
@@ -6064,14 +6074,6 @@ pub function elem_ty_is_f64slot(t: string): boolean {
 
 pub function elem_ty_is_i64slot(t: string): boolean {
     return t == "i64" || t == "u64";
-}
-
-// arr_index_is_f32 reports whether indexing `arr` yields an f32 ELEMENT — the
-// f32[] dispatch overlay (LocalInfo.is_f32arr) on a local or param slot. Its
-// f64 sibling covers the width; this only distinguishes the two spellings that
-// share it.
-pub function arr_index_is_f32(arr: ast.Expr, s: LowerState): boolean {
-    return expr_is_f32arr_src(arr, s);
 }
 
 // arr_lit_is_f32 is arr_lit_is_f64's dispatch twin: an array LITERAL whose
@@ -8387,11 +8389,6 @@ function id_type_tag(id: ast.ExprIdent, s: LowerState): string {
 }
 
 function ix_type_tag(ix: ast.ExprIndex, s: LowerState): string {
-    // f32 BEFORE f64: an f32[] slot is is_f64arr too (both ride the 8-byte
-    // stride), so testing f64 first would collapse the element to "f64" and
-    // take its method dispatch off the f32 path — the array sibling of the
-    // ordering expr_scalar_type documents.
-    if (arr_index_is_f32(ix.array, s)) { return "f32"; }
     if (arr_index_is_f64(ix.array, s)) { return "f64"; }
     if (arr_index_is_i64(ix.array, s)) { return "i64"; }
     return ix.ty;
@@ -8567,11 +8564,6 @@ pub function expr_is_f32(e: ast.Expr, s: LowerState): boolean {
     if (cell_get_elem(e, s) == "f32") { return true; }
     match (e) {
         ast.ExprIdent(id) => { return s.is_f32_slot(s.slot_of(id.name)); },
-        // `a[i]` over an f32[]: the ELEMENT is an f32, so a method on it keys
-        // "f32.<m>". Dispatch-only — the read width stays is_f64arr's 8 bytes.
-        // Routed through ix_type_tag so the index arm resolves the element ONE
-        // way, exactly as expr_is_f64's does.
-        ast.ExprIndex(f32ix) => { return ix_type_tag(f32ix, s) == "f32"; },
         ast.ExprBinary(b) => {
             if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
                 return expr_is_f32(b.left, s) || expr_is_f32(b.right, s);
