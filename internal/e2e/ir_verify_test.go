@@ -162,15 +162,28 @@ func lowerAndVerify(
 // and nothing static says which.
 const minStackCoverage = 97.0
 
+// The share of reuse sites the ownership half must be able to model. A
+// site whose shape it does not recognise is skipped rather than
+// mis-reported (see internal/ir/verifyrc.go), so this floor is what
+// turns a new reuse emitter shape into a visible coverage regression
+// instead of silence.
+const minReuseCoverage = 100.0
+
 func TestIRVerifierAcceptsEveryLoweredCase(t *testing.T) {
-	var lowered, funcs, modelled int
+	var lowered, funcs, modelled, rcSites, rcChecked int
 	skipped := map[string]int{}
+	rcSkipped := map[string]int{}
 
 	corpusPrograms(t, func(name string, cfg verifyConfig, ip *ir.Program) {
 		lowered++
-		problems, cov := ir.Verify(ip)
+		problems, cov, rcCov := ir.Verify(ip)
 		funcs += cov.Funcs
 		modelled += cov.Modelled
+		rcSites += rcCov.Sites
+		rcChecked += rcCov.Checked
+		for reason, n := range rcCov.Skipped {
+			rcSkipped[reason] += n
+		}
 		for reason, n := range cov.Reasons() {
 			skipped[reason] += n
 		}
@@ -193,6 +206,22 @@ func TestIRVerifierAcceptsEveryLoweredCase(t *testing.T) {
 		t.Errorf("the stack pass modelled %.1f%% of %d functions, below the %.1f%% floor — "+
 			"something new is going unchecked. Most common reasons:%s",
 			got, funcs, minStackCoverage, formatCounts(skipped, reasons, 5))
+	}
+	if rcSites > 0 {
+		rcGot := 100 * float64(rcChecked) / float64(rcSites)
+		if rcGot < minReuseCoverage {
+			var reasons []string
+			for r := range rcSkipped {
+				reasons = append(reasons, r)
+			}
+			sort.Slice(reasons, func(a, b int) bool { return rcSkipped[reasons[a]] > rcSkipped[reasons[b]] })
+			t.Errorf("the ownership pass modelled %.1f%% of %d reuse sites, below the %.1f%% floor — "+
+				"a reuse emitter has grown a shape it does not recognise. Most common reasons:%s",
+				rcGot, rcSites, minReuseCoverage, formatCounts(rcSkipped, reasons, 5))
+		}
+		t.Logf("verified %d lowered programs, %d functions, %.1f%% stack-modelled; "+
+			"%d reuse sites, %.1f%% ownership-modelled", lowered, funcs, got, rcSites, rcGot)
+		return
 	}
 	t.Logf("verified %d lowered programs, %d functions, %.1f%% stack-modelled", lowered, funcs, got)
 }
@@ -231,7 +260,7 @@ func TestIRVerifierCatchesLoweringDamage(t *testing.T) {
 	missed := map[string]int{}
 
 	corpusPrograms(t, func(name string, cfg verifyConfig, ip *ir.Program) {
-		_, base := ir.Verify(ip)
+		_, base, _ := ir.Verify(ip)
 		perProgram := 0
 		for fi, f := range ip.Funcs {
 			// Each mutation re-verifies the whole program, so the work is
@@ -249,7 +278,7 @@ func TestIRVerifierCatchesLoweringDamage(t *testing.T) {
 				if !stackEffecting(f.Ops[oi].Kind) {
 					continue
 				}
-				problems, cov := ir.Verify(withOpDeleted(ip, fi, oi))
+				problems, cov, _ := ir.Verify(withOpDeleted(ip, fi, oi))
 				if _, nowSkipped := cov.Skipped[f.Name]; nowSkipped {
 					break // the damage made the function unmodellable
 				}

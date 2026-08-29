@@ -284,7 +284,7 @@ func TestFlattenStringReturnBlockTypeFollowsTheStringABI(t *testing.T) {
 // the functions it could model, failing the test if it modelled none.
 func mustVerifyStack(t *testing.T, p *Program) []Problem {
 	t.Helper()
-	probs, cov := Verify(p)
+	probs, cov, _ := Verify(p)
 	if cov.Modelled == 0 {
 		t.Fatalf("the stack checker modelled no function — the assertion below would be vacuous (skips: %v)", cov.Skipped)
 	}
