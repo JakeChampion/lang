@@ -8806,7 +8806,19 @@ function call_ret_type(funcs: MFns, name: string, args: ast.Expr[], env: MEnv): 
     }
     if (fi < 0) { return ""; }
     var fd: FuncDecl = funcs.decls[fi];
-    if (fd.type_params.len() == 0) { return fd.ret_type; }
+    // A generic whose type params were ALL erased — every one unbounded —
+    // still carries them in its RETURN type: `pick2[T](keep: (T) => boolean):
+    // T[]` reaches here with type_params empty and ret_type "T[]". Handing
+    // that back verbatim gives the caller an unresolved element type, and a
+    // downstream generic then monomorphises at the type PARAMETER itself
+    // (`unknown symbol T.cmp`). Route it through the same residual resolution
+    // the PARTIALLY-erased case below already uses; only a genuinely
+    // var-free return type takes the fast path.
+    if (fd.type_params.len() == 0) {
+        var evars: string[] = type_str_vars(fd.ret_type, []);
+        if (evars.len() == 0) { return fd.ret_type; }
+        return resolve_residual_ret(fd, args, env, funcs, fd.ret_type, evars);
+    }
     var key: string = infer_inst(fd, args, env, funcs);
     if (key.len() == 0) { return ""; }
     var cts: string[] = [key];
@@ -8819,19 +8831,28 @@ function call_ret_type(funcs: MFns, name: string, args: ast.Expr[], env: MEnv): 
     // the element type for dispatch. Bind any residual var from the full
     // param unification and substitute.
     var rvars: string[] = type_str_vars(rt, []);
-    if (rvars.len() > 0) {
-        var fb: MEnv = full_ret_binds(fd, args, env, funcs, rvars);
-        var rcts: string[] = [];
-        var vi: i32 = 0;
-        while (vi < rvars.len()) {
-            var bv: string = fb.elook(rvars[vi]);
-            if (bv.len() == 0) { bv = rvars[vi]; }
-            rcts = rcts.append(bv);
-            vi = vi + 1;
-        }
-        rt = subst_ty(rt, rvars, rcts);
-    }
+    if (rvars.len() > 0) { rt = resolve_residual_ret(fd, args, env, funcs, rt, rvars); }
     return rt;
+}
+
+// resolve_residual_ret substitutes the residual type VARS left in a call's
+// return type by unifying the whole parameter list against the arguments.
+// Shared by the two ways a var survives to the return: the PARTIALLY-erased
+// generic (`sort_key[T, K: Ord]`, where the bounded-only substitution leaves T)
+// and the FULLY-erased one (`pick2[T]`, where type_params is empty but the
+// return type still names T). An unbindable var is left as itself, exactly as
+// before.
+function resolve_residual_ret(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, rt0: string, rvars: string[]): string {
+    var fb: MEnv = full_ret_binds(fd, args, env, funcs, rvars);
+    var rcts: string[] = [];
+    var vi: i32 = 0;
+    while (vi < rvars.len()) {
+        var bv: string = fb.elook(rvars[vi]);
+        if (bv.len() == 0) { bv = rvars[vi]; }
+        rcts = rcts.append(bv);
+        vi = vi + 1;
+    }
+    return subst_ty(rt0, rvars, rcts);
 }
 
 // assoc_ret_of returns the return type of the associated function (or method)
