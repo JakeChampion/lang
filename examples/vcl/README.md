@@ -62,16 +62,21 @@ with, so `parse` → `print` is a fixed point.
 
 ## The evaluator
 
-Of the three plausible back ends, this is the one that could be built and
-**tested** in-repo:
+**Fern does not emit C, and will not.** That rules out the route Varnish's
+own VCC takes — emitting C against the VRT ABI for `varnishd` to compile
+and `dlopen` — as a matter of project direction, not convenience. It is
+also the route this repo could never test: there is no `varnishd` and no
+`libvarnishapi` here, so it would be untested C against an ABI nothing in
+the tree can see. Both reasons point the same way; the first is the one
+that settles it.
 
-1. **An evaluator over a mock origin** — what this is. Self-contained and
-   provable here.
-2. **C emitted against the VRT ABI**, for real `varnishd` to `dlopen` —
-   what Varnish's own VCC does. Rejected because nothing here can compile
-   or link it: it would be untested C against an ABI this repo cannot see.
-3. **Emitting Fern source** — needs the same runtime as (1) *plus* a
-   codegen layer, so strictly more work for less evidence.
+That leaves two, and this is the first:
+
+1. **An evaluator over a mock origin** — what this is. Self-contained, and
+   every rule it implements is provable in-repo.
+2. **Compiling VCL to Fern source**, handed to `fern` for a native binary.
+   The natural next step: it reuses this runtime wholesale and swaps the
+   tree-walk for generated code, with no new backend and no C anywhere.
 
 What it implements:
 
