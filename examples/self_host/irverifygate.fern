@@ -45,12 +45,15 @@
 // A function the stack pass cannot model is skipped rather than reported: that
 // pass is fail-soft by design (its header says why), and turning an unmodelled
 // op into a hard error here would make a widened op vocabulary look like a
-// lowering bug. Callee RESOLUTION — a name nothing declares and no backend
+// lowering bug. The ownership half (irverifyrc.fern) skips per SITE for the
+// same reason, and checks only that a reuse site names ONE donor — not that
+// the counts around it balance, which needs callee ownership signatures. Callee RESOLUTION — a name nothing declares and no backend
 // provides — is irverifyprovided.fern, which needs the whole import closure and
 // so runs from the modload driver rather than from a per-module emit.
 
 import "./ir";
 import "./irverify";
+import "./irverifyrc";
 import "./irverifystack";
 
 // verify_on reports whether the gate runs. It is ON unless FERN_IR_VERIFY=0
@@ -79,6 +82,14 @@ pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_loc
     while (i < sr.problems.len()) {
         out = out.append(sr.problems[i]);
         i = i + 1;
+    }
+    // The ownership half models one reuse site at a time, so it runs even for
+    // a function the stack pass had to abandon.
+    var rr: irverifyrc.RcResult = irverifyrc.verify_rc_fn(fn_name, ops);
+    var j: i32 = 0;
+    while (j < rr.problems.len()) {
+        out = out.append(rr.problems[j]);
+        j = j + 1;
     }
     return out;
 }

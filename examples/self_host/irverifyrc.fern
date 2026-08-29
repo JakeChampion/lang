@@ -1,0 +1,416 @@
+// examples/self_host/irverifyrc.fern — the self-host IR verifier's ownership
+// half, mirroring native's internal/ir/verifyrc.go (#7791, the follow-up to
+// #7783).
+//
+// irverify.fern checks structure and irverifystack.fern checks operand-stack
+// discipline. Neither knows what a reference count is, so the one place
+// Perceus writes into a box the program still holds a name for — the reuse
+// protocol — went through every compile unchecked.
+//
+// A reuse site lowers to a fixed shape, and three of its steps name a local:
+//
+//   reused = __fern_rc_is_unique(D)   // the GATE
+//   if reused { token = D }           // the TOKEN — D's box is given away
+//   else      { token = 0; dec D }    // the DECLINE release
+//   box = __fern_alloc_reuse(token, n)
+//
+// The site is safe only when all three name the SAME local. When the gate
+// tests D1 and the token takes D2, the new value is written over a box whose
+// uniqueness nothing established — D2 may have other owners — and D1 is
+// released by nobody.
+//
+// # Why this side matters more than native's
+//
+// The bug this exists for is on THIS side.
+// docs/rc-log/2026-08-29-xblock-recipient-site-key.md is emit_cross_struct_reuse
+// overwriting a donor's box after a first-match lookup resolved the wrong one;
+// it measured 0 on both sides over 200 rounds, because reaching the
+// destructive path needs a coincidence. Native funnels its three reuse
+// emitters through one emitReuseToken and is correct by construction; irlower
+// has several independent emitters (the struct, tuple, enum and cross-block
+// families), which is the shape that produces this class of bug. A check over
+// the emitted ops does not need the coincidence.
+//
+// # Fail-soft, per SITE
+//
+// Same stance as irverifystack.fern — a verifier that reports a false problem
+// gets switched off — but the skip unit is the site rather than the function,
+// so one unfamiliar shape does not blind the pass to the familiar sites around
+// it. A site whose shape this pass does not recognise is skipped and counted.
+//
+// The self-host spells the gate and the release as CALLS (`__fern_rc_is_unique`,
+// `__fern_rc_dec`) where native has dedicated opcodes, takes the donor pointer
+// as the token with no rc-header arithmetic, and calls `__fern_alloc_reuse`
+// with two arguments where native's `__alloc_reuse` takes three. None of that
+// is what makes a site safe, so none of it is what this checks.
+
+import "./ir";
+import "./irverify";
+import "./util";
+
+// RcResult is one function's verdict plus the per-site coverage that makes an
+// empty problem list mean something.
+pub struct RcResult {
+    problems: irverify.Problem[],
+    sites: i32,
+    checked: i32,
+    skips: string[],
+}
+
+pub function rc_result_new(): RcResult {
+    var no_p: irverify.Problem[] = [];
+    var no_s: string[] = [];
+    return RcResult { problems: no_p, sites: 0, checked: 0, skips: no_s };
+}
+
+// rc_coverage_str renders the tally with the skip reasons grouped by cause,
+// the same shape irverifystack.coverage_str uses.
+pub function rc_coverage_str(r: RcResult): string {
+    var out: string = "reuse sites modelled " + util.i32_to_string(r.checked)
+        + "/" + util.i32_to_string(r.sites);
+    var seen: string[] = [];
+    var count: i32[] = [];
+    var i: i32 = 0;
+    while (i < r.skips.len()) {
+        var at: i32 = util.index_of_str(seen, r.skips[i]);
+        if (at < 0) {
+            seen = seen.append(r.skips[i]);
+            count = count.append(1);
+        } else {
+            count = count.with(at, count[at] + 1);
+        }
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < seen.len()) {
+        out = out + "\n    skipped " + util.i32_to_string(count[j]) + ": " + seen[j];
+        j = j + 1;
+    }
+    return out;
+}
+
+// ---- op predicates -----------------------------------------------------
+
+// is_reuse_alloc reports whether a call names the reuse allocator. Both
+// spellings are accepted so the pass reads native-emitted streams too.
+function is_reuse_alloc(op: ir.Op): boolean {
+    if (op.kind_tag != ir.kind_id("call_direct")) { return false; }
+    return op.str == "__fern_alloc_reuse" || op.str == "__alloc_reuse";
+}
+
+function is_call_named(op: ir.Op, name: string): boolean {
+    return op.kind_tag == ir.kind_id("call_direct") && op.str == name;
+}
+
+function is_is_unique(op: ir.Op): boolean {
+    return is_call_named(op, "__fern_rc_is_unique");
+}
+
+function is_rc_dec(op: ir.Op): boolean {
+    return is_call_named(op, "__fern_rc_dec");
+}
+
+function is_kind(op: ir.Op, name: string): boolean {
+    return op.kind_tag == ir.kind_id(name);
+}
+
+// ---- bracket matching --------------------------------------------------
+
+// IfSpan locates the `if` that an `end` closes, and that scope's `else`.
+struct IfSpan { ok: boolean, if_at: i32, else_at: i32 }
+
+// match_if_backwards walks back from the `end` at end_at to the `if` it
+// closes, tracking nesting, and records the `else` at the scope's own depth.
+function match_if_backwards(ops: ir.Op[], end_at: i32): IfSpan {
+    var depth: i32 = 0;
+    var else_at: i32 = 0 - 1;
+    var i: i32 = end_at - 1;
+    while (i >= 0) {
+        var k: i32 = ops[i].kind_tag;
+        if (k == ir.kind_id("end")) {
+            depth = depth + 1;
+        } else if (k == ir.kind_id("block") || k == ir.kind_id("loop")) {
+            if (depth == 0) { return IfSpan { ok: false, if_at: 0, else_at: 0 - 1 }; }
+            depth = depth - 1;
+        } else if (k == ir.kind_id("if")) {
+            if (depth == 0) { return IfSpan { ok: true, if_at: i, else_at: else_at }; }
+            depth = depth - 1;
+        } else if (k == ir.kind_id("else")) {
+            if (depth == 0) { else_at = i; }
+        }
+        i = i - 1;
+    }
+    return IfSpan { ok: false, if_at: 0, else_at: 0 - 1 };
+}
+
+// SlotFind is a located local, or a miss.
+struct SlotFind { ok: boolean, slot: i32, at: i32 }
+
+// scope_delta is how one op moves the nesting depth, so an arm scan can stay
+// at its own level.
+function scope_delta(op: ir.Op): i32 {
+    if (is_kind(op, "block") || is_kind(op, "loop") || is_kind(op, "if")) { return 1; }
+    if (is_kind(op, "end")) { return 0 - 1; }
+    return 0;
+}
+
+// sole_token_source returns the local whose value the reuse arm stores into
+// token_slot. It misses unless the arm does that exactly once, at its own
+// nesting depth, from a single local load — native subtracts the rc header to
+// reach the box base (`load_local D; const_i32 hdr; sub`), the self-host
+// stores the pointer as it is.
+function sole_token_source(ops: ir.Op[], from: i32, to: i32, token_slot: i32): SlotFind {
+    var found: SlotFind = SlotFind { ok: false, slot: 0, at: 0 };
+    var depth: i32 = 0;
+    var i: i32 = from;
+    while (i < to) {
+        var d: i32 = scope_delta(ops[i]);
+        if (d != 0) {
+            depth = depth + d;
+            i = i + 1;
+            continue;
+        }
+        if (depth != 0 || !is_kind(ops[i], "store_local") || ops[i].i32_imm != token_slot) {
+            i = i + 1;
+            continue;
+        }
+        if (found.ok) { return SlotFind { ok: false, slot: 0, at: 0 }; }
+        var src: i32 = read_token_operand(ops, from, i);
+        if (src < 0) { return SlotFind { ok: false, slot: 0, at: 0 }; }
+        found = SlotFind { ok: true, slot: src, at: i };
+        i = i + 1;
+    }
+    return found;
+}
+
+// read_token_operand returns the local whose load feeds the store at `at`, or
+// -1 when the value did not come from one local.
+function read_token_operand(ops: ir.Op[], from: i32, at: i32): i32 {
+    if (at - 1 >= from && is_kind(ops[at - 1], "load_local")) {
+        return ops[at - 1].i32_imm;
+    }
+    if (at - 3 >= from && is_kind(ops[at - 1], "sub")
+        && is_kind(ops[at - 2], "const_i32") && is_kind(ops[at - 3], "load_local")) {
+        return ops[at - 3].i32_imm;
+    }
+    return 0 - 1;
+}
+
+// DeclineRead is the decline arm's release: `found` when the arm holds one,
+// `ok` false when it holds more than one (or one whose operand is not a plain
+// local load), which is unmodellable.
+//
+// An arm holding NONE is normal: the struct-reuse family releases the donor
+// earlier under a separate condition and leaves the decline arm holding only
+// the null token. There is then simply no third name to disagree.
+struct DeclineRead { ok: boolean, found: boolean, slot: i32, at: i32 }
+
+function sole_decline(ops: ir.Op[], from: i32, to: i32): DeclineRead {
+    var found: DeclineRead = DeclineRead { ok: true, found: false, slot: 0, at: 0 };
+    var depth: i32 = 0;
+    var i: i32 = from;
+    while (i < to) {
+        var d: i32 = scope_delta(ops[i]);
+        if (d != 0) {
+            depth = depth + d;
+            i = i + 1;
+            continue;
+        }
+        if (depth != 0 || !is_rc_dec(ops[i])) {
+            i = i + 1;
+            continue;
+        }
+        if (found.found || i - 1 < from || !is_kind(ops[i - 1], "load_local")) {
+            return DeclineRead { ok: false, found: false, slot: 0, at: 0 };
+        }
+        found = DeclineRead { ok: true, found: true, slot: ops[i - 1].i32_imm, at: i };
+        i = i + 1;
+    }
+    return found;
+}
+
+// ---- site recognition --------------------------------------------------
+
+// Site is one recognised reuse site: the three locals its protocol names, and
+// where each was read from. `why` carries the skip reason when ok is false.
+struct Site {
+    ok: boolean,
+    why: string,
+    have_dec: boolean,
+    gate: i32,
+    token: i32,
+    dec: i32,
+    gate_at: i32,
+    token_at: i32,
+    dec_at: i32,
+}
+
+function site_skip(why: string): Site {
+    return Site { ok: false, why: why, have_dec: false, gate: 0, token: 0, dec: 0, gate_at: 0, token_at: 0, dec_at: 0 };
+}
+
+// token_arg_slot walks back over the allocator's trailing size constants to
+// the load that pushed its first argument, so the arity does not matter.
+function token_arg_slot(ops: ir.Op[], call: i32): i32 {
+    var j: i32 = call - 1;
+    while (j >= 0 && is_kind(ops[j], "const_i32")) { j = j - 1; }
+    if (j < 0 || !is_kind(ops[j], "load_local")) { return 0 - 1; }
+    return j;
+}
+
+// select_end_at finds the `end` that closes the token select, stepping over
+// the donor-slot zeroing native emits between the select and the call and the
+// self-host does not.
+function select_end_at(ops: ir.Op[], token_at: i32): i32 {
+    var k: i32 = token_at - 1;
+    if (k >= 1 && is_kind(ops[k], "store_local")
+        && is_kind(ops[k - 1], "const_i32") && ops[k - 1].i32_imm == 0) {
+        k = k - 2;
+    }
+    if (k < 0 || !is_kind(ops[k], "end")) { return 0 - 1; }
+    return k;
+}
+
+// GateRead is the donor the uniqueness gate tested. `code` is 0 on success, 1
+// when no gate is there, and 2 when the select is conditioned on something
+// that is not a uniqueness flag at all — kept as a code rather than a message
+// so every skip reason in this file stays a literal at its site_skip call,
+// which is what TestSelfHostIRVerifyRcSkipReasonsMatchNative reads to compare
+// this pass's coverage vocabulary against native's.
+struct GateRead { code: i32, slot: i32 }
+
+// gate_slot reads the uniqueness gate sitting before the token select.
+//
+// Four spellings occur across the two compilers' emitters, differing only in
+// where the is_unique flag goes on its way to the branch and in how the donor
+// reaches is_unique. None of them changes what the gate means.
+//
+//   load_local D;              is_unique;                        if
+//   load_local D;              is_unique; tee_local u;            if
+//   load_local D;              is_unique; store_local u; load_local u; if
+//   load_local D; tee_local X; is_unique; tee_local u;            if
+//
+// In the last of those the donor is X, the slot the tee wrote, because that is
+// the slot the reuse arm loads for its token.
+function gate_slot(ops: ir.Op[], if_at: i32): GateRead {
+    var at: i32 = flag_source(ops, if_at);
+    if (at < 0) { return GateRead { code: 2, slot: 0 }; }
+    if (at < 1 || !is_is_unique(ops[at])) { return GateRead { code: 1, slot: 0 }; }
+    // The donor is whatever fed is_unique: a plain load, or a tee whose slot
+    // the reuse arm will load back.
+    if (!is_kind(ops[at - 1], "load_local") && !is_kind(ops[at - 1], "tee_local")) {
+        return GateRead { code: 1, slot: 0 };
+    }
+    return GateRead { code: 0, slot: ops[at - 1].i32_imm };
+}
+
+// flag_source steps back over however the is_unique flag reached the branch
+// and returns the index the flag was produced at, or -1 when the select is
+// conditioned on something that is not a uniqueness flag.
+function flag_source(ops: ir.Op[], if_at: i32): i32 {
+    var at: i32 = if_at - 1;
+    if (at < 0) { return 0 - 1; }
+    if (is_is_unique(ops[at])) { return at; }
+    if (is_kind(ops[at], "tee_local")) { return at - 1; }
+    if (at >= 1 && is_kind(ops[at], "load_local")
+        && is_kind(ops[at - 1], "store_local") && ops[at - 1].i32_imm == ops[at].i32_imm) {
+        return at - 2;
+    }
+    return 0 - 1;
+}
+
+// read_site recognises the reuse site whose allocator call is at `call`.
+function read_site(ops: ir.Op[], call: i32): Site {
+    var tok_at: i32 = token_arg_slot(ops, call);
+    if (tok_at < 0) { return site_skip("token argument is not a local load"); }
+    var token_slot: i32 = ops[tok_at].i32_imm;
+
+    var end_at: i32 = select_end_at(ops, tok_at);
+    if (end_at < 0) { return site_skip("no token select before the reuse call"); }
+
+    var span: IfSpan = match_if_backwards(ops, end_at);
+    if (!span.ok) { return site_skip("token select is not a well-formed if"); }
+    if (span.else_at < 0) { return site_skip("token select has no decline arm"); }
+
+    var gate: GateRead = gate_slot(ops, span.if_at);
+    if (gate.code == 1) { return site_skip("no uniqueness gate before the token select"); }
+    if (gate.code == 2) { return site_skip("token select is not conditioned on a local"); }
+
+    var tok: SlotFind = sole_token_source(ops, span.if_at + 1, span.else_at, token_slot);
+    if (!tok.ok) { return site_skip("reuse arm does not derive the token from one local"); }
+
+    var dec: DeclineRead = sole_decline(ops, span.else_at + 1, end_at);
+    if (!dec.ok) { return site_skip("decline arm releases more than one local"); }
+
+    return Site {
+        ok: true,
+        why: "",
+        have_dec: dec.found,
+        gate: gate.slot,
+        token: tok.slot,
+        dec: dec.slot,
+        gate_at: span.if_at - 3,
+        token_at: tok.at,
+        dec_at: dec.at,
+    };
+}
+
+// ---- the pass ----------------------------------------------------------
+
+// site_problems is what one recognised site is wrong about, if anything.
+function site_problems(fn_name: string, call: i32, s: Site): irverify.Problem[] {
+    var out: irverify.Problem[] = [];
+    if (s.gate != s.token) {
+        out = out.append(irverify.Problem {
+            fn_name: fn_name,
+            op: call,
+            kind: "call_direct",
+            msg: "reuse site takes local " + util.i32_to_string(s.token)
+                + "'s box as its allocation token, but tested local " + util.i32_to_string(s.gate)
+                + " for sole ownership (gate at op " + util.i32_to_string(s.gate_at)
+                + ", token at op " + util.i32_to_string(s.token_at)
+                + "): the box being written over was never proved unique",
+        });
+    }
+    if (s.have_dec && s.dec != s.gate) {
+        out = out.append(irverify.Problem {
+            fn_name: fn_name,
+            op: call,
+            kind: "call_direct",
+            msg: "reuse site's decline arm releases local " + util.i32_to_string(s.dec)
+                + ", but the uniqueness gate tested local " + util.i32_to_string(s.gate)
+                + " (gate at op " + util.i32_to_string(s.gate_at)
+                + ", release at op " + util.i32_to_string(s.dec_at)
+                + "): the tested donor leaks on the decline path",
+        });
+    }
+    return out;
+}
+
+// verify_rc_fn checks every reuse site in one lowered function. Unlike the
+// stack pass it never abandons a whole function: a site it cannot model costs
+// only that site's coverage.
+pub function verify_rc_fn(fn_name: string, ops: ir.Op[]): RcResult {
+    var r: RcResult = rc_result_new();
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (is_reuse_alloc(ops[i])) {
+            r = RcResult { ...r, sites: r.sites + 1 };
+            var s: Site = read_site(ops, i);
+            if (s.ok) {
+                var ps: irverify.Problem[] = site_problems(fn_name, i, s);
+                var j: i32 = 0;
+                var acc: irverify.Problem[] = r.problems;
+                while (j < ps.len()) {
+                    acc = acc.append(ps[j]);
+                    j = j + 1;
+                }
+                r = RcResult { ...r, checked: r.checked + 1, problems: acc };
+            } else {
+                r = RcResult { ...r, skips: r.skips.append(s.why) };
+            }
+        }
+        i = i + 1;
+    }
+    return r;
+}

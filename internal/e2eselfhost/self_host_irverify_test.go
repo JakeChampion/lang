@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -700,5 +702,182 @@ func TestSelfHostIRVerifyProvidedCorpusClean(t *testing.T) {
 	}
 	if calls < 2000 {
 		t.Errorf("pass resolved %d direct calls across the corpus, expected far more — a sweep that resolved nothing proves nothing", calls)
+	}
+}
+
+// TestSelfHostIRVerifyRc exercises the self-host IR ownership verifier
+// (examples/self_host/irverifyrc.fern, #7791) — the mirror of native's
+// internal/ir/verifyrc.go.
+//
+// It checks the one invariant the reuse protocol rests on: the local whose
+// uniqueness was tested, the local whose box becomes the allocation token,
+// and the local released on the decline arm are the same local. A mismatch
+// writes the new value over a box nothing proved unique.
+//
+// This side matters more than native's. The bug it exists for is here —
+// docs/rc-log/2026-08-29-xblock-recipient-site-key.md is emit_cross_struct_reuse
+// overwriting a donor's box after a first-match lookup resolved the wrong one,
+// and irlower has several independent reuse emitters where native funnels all
+// three through one emitReuseToken.
+//
+// The driver asserts both directions on BOTH compilers' emitted shapes, and
+// that every shape the pass cannot model is skipped for its own named reason
+// rather than reported.
+func TestSelfHostIRVerifyRc(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("irverify_run driver runs natively; skipping under an exec runner")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "irverify_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
+
+	cmd := exec.Command(bin)
+	out, _ := cmd.Output()
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("irverify_run did not exit normally")
+	}
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("irverify_run exit code = %d, want 0 — that code is the failing assertion's id in irverify_run.fern", code)
+	}
+	if want := "irverifyrc: all reuse-donor checks agree"; !strings.Contains(string(out), want) {
+		t.Errorf("irverify_run stdout = %q, want it to contain %q", out, want)
+	}
+}
+
+// skipReasonRe pulls the argument out of a skip-reason call on either side:
+// native records one with c.cov.skip("..."), the self-host with
+// site_skip("...").
+var skipReasonRe = regexp.MustCompile(`(?:cov\.skip|site_skip)\("([^"]+)"\)`)
+
+func skipReasons(t *testing.T, path string) map[string]bool {
+	t.Helper()
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	out := map[string]bool{}
+	for _, m := range skipReasonRe.FindAllStringSubmatch(string(src), -1) {
+		out[m[1]] = true
+	}
+	if len(out) == 0 {
+		t.Fatalf("%s: found no skip reasons — the extraction regexp has gone stale, "+
+			"which would make this test pass vacuously", path)
+	}
+	return out
+}
+
+// TestSelfHostIRVerifyRcSkipReasonsMatchNative pins the two ownership
+// verifiers' coverage vocabulary against each other.
+//
+// Both passes are fail-soft: a reuse shape they cannot model is skipped and
+// counted rather than reported, and the count is what the corpus gates hold a
+// floor under. That only means something if the two implementations recognise
+// the same set of shapes. A reason on one side and not the other is either a
+// recogniser that has drifted or a shape one of them silently stopped
+// modelling — both of which read as coverage on one side and nothing on the
+// other.
+//
+// Needs no toolchain: it is a property of the two sources.
+func TestSelfHostIRVerifyRcSkipReasonsMatchNative(t *testing.T) {
+	native := skipReasons(t, filepath.Join("..", "..", "internal", "ir", "verifyrc.go"))
+	selfHost := skipReasons(t, filepath.Join("..", "..", "examples", "self_host", "irverifyrc.fern"))
+
+	var onlyNative, onlySelfHost []string
+	for r := range native {
+		if !selfHost[r] {
+			onlyNative = append(onlyNative, r)
+		}
+	}
+	for r := range selfHost {
+		if !native[r] {
+			onlySelfHost = append(onlySelfHost, r)
+		}
+	}
+	sort.Strings(onlyNative)
+	sort.Strings(onlySelfHost)
+	if len(onlyNative) > 0 {
+		t.Errorf("verifyrc.go skips for %d reason(s) irverifyrc.fern does not: %s",
+			len(onlyNative), strings.Join(onlyNative, "; "))
+	}
+	if len(onlySelfHost) > 0 {
+		t.Errorf("irverifyrc.fern skips for %d reason(s) verifyrc.go does not: %s",
+			len(onlySelfHost), strings.Join(onlySelfHost, "; "))
+	}
+}
+
+// TestSelfHostIRVerifyRcCorpusClean runs the ownership verifier over every
+// conformance fixture's lowered IR and requires zero problems AND full
+// site coverage.
+//
+// This is the false-positive gate, and it is the one that decided whether the
+// pass was usable. The first draft passed every hand-built unit case and then
+// modelled 0 of the corpus's 9 real reuse sites, because irlower tees the
+// is_unique flag where the fixture stored and loaded it back, and its
+// struct-reuse family releases the donor before the gate rather than on the
+// decline arm. Four gate spellings and an optional decline release later, all
+// 9 are modelled — but nothing except this sweep would have said so, which is
+// exactly why coverage is asserted rather than just the problem count.
+//
+// The site total is small because reuse pairing is rare in the corpus. That
+// makes equality the right floor: with 9 sites, a single unmodelled one is an
+// 11% coverage drop and should fail loudly.
+func TestSelfHostIRVerifyRcCorpusClean(t *testing.T) {
+	if testing.Short() {
+		t.Skip("corpus sweep is slow; skipped under -short")
+	}
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("irlower_run driver runs natively; skipping under an exec runner")
+	}
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "irlower_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "irlower_run.fern", "irlower_run")
+
+	cases, err := filepath.Glob(filepath.Join(langSrcAbs(t, "conformance"), "cases", "*", "main.fern"))
+	if err != nil {
+		t.Fatalf("globbing conformance cases: %v", err)
+	}
+	if len(cases) < 400 {
+		t.Fatalf("found %d conformance cases, expected the full corpus — a silently shrunken sweep proves nothing", len(cases))
+	}
+
+	var dirty []string
+	checked, sites := 0, 0
+	for _, c := range cases {
+		src, err := os.ReadFile(c)
+		if err != nil {
+			t.Fatalf("reading %s: %v", c, err)
+		}
+		cmd := exec.Command(bin, "-verifyrc")
+		cmd.Stdin = strings.NewReader(string(src))
+		out, _ := cmd.Output()
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			t.Errorf("%s: driver did not exit normally", filepath.Base(filepath.Dir(c)))
+			continue
+		}
+		if cmd.ProcessState.ExitCode() != 0 {
+			dirty = append(dirty, filepath.Base(filepath.Dir(c))+": "+strings.TrimSpace(string(out)))
+		}
+		m, f := parseCoverage(string(out))
+		checked += m
+		sites += f
+	}
+	if len(dirty) > 0 {
+		max := 15
+		if len(dirty) < max {
+			max = len(dirty)
+		}
+		t.Errorf("IR ownership verifier reported problems on %d of %d conformance fixtures — "+
+			"the corpus is known-good code, so a report here is the verifier being wrong about valid IR:\n  %s",
+			len(dirty), len(cases), strings.Join(dirty[:max], "\n  "))
+	}
+	if sites < 9 {
+		t.Errorf("ownership pass saw %d reuse sites across the corpus, expected at least 9 — "+
+			"a sweep that stopped finding reuse sites proves nothing about the pass", sites)
+	}
+	if checked != sites {
+		t.Errorf("ownership pass modelled %d of %d reuse sites; every one is modelled today, "+
+			"so a skip is a reuse emitter that has grown a shape the recogniser does not carry", checked, sites)
 	}
 }

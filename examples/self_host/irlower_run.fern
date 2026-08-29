@@ -8,7 +8,7 @@
 // (`-dump-fn <name>` for any other function). A `main` outside the lowered
 // subset makes lowering bail -> exit 200.
 //
-// `-verify` / `-verifystack` / `-verifyfip` (#6639): run the IR verifiers over
+// `-verify` / `-verifystack` / `-verifyfip` / `-verifyrc`: run the IR verifiers over
 // every lowered function and report, exiting 1 when anything is found.
 // `-verifystack` also prints how much of the module it could model, and
 // `-verifyfip` a per-function `claim=… fresh=… paired=…` census, since an empty
@@ -41,6 +41,7 @@ import "./irlower";
 import "./irverify";
 import "./irverifystack";
 import "./irfipverify";
+import "./irverifyrc";
 import "./util";
 
 // verify_all runs the IR structure verifier (#6639 slice 1) over every
@@ -89,6 +90,40 @@ function verify_stack_all(fns: ir.LoweredFn[]): StackSweep {
         i = i + 1;
     }
     return StackSweep { problems: out, cov: cov };
+}
+
+// RcSweep is one module's reuse-donor verdict: the problems found, and the
+// per-site coverage. The coverage half travels with the problems for the same
+// reason the stack pass reports it — the ownership pass skips a reuse shape it
+// does not recognise, so a clean verdict over a module whose sites were all
+// skipped is not the same result as one over a module whose sites were all
+// checked, and only the counts tell them apart.
+struct RcSweep { problems: irverify.Problem[], cov: irverifyrc.RcResult }
+
+// verify_rc_all runs the ownership verifier (#7791) over every successfully
+// lowered function, folding the per-function results into one module verdict.
+function verify_rc_all(fns: ir.LoweredFn[]): RcSweep {
+    var out: irverify.Problem[] = [];
+    var cov: irverifyrc.RcResult = irverifyrc.rc_result_new();
+    var i: i32 = 0;
+    while (i < fns.len()) {
+        if (fns[i].ok) {
+            var r: irverifyrc.RcResult = irverifyrc.verify_rc_fn(fns[i].name, fns[i].ops);
+            var k: i32 = 0;
+            while (k < r.problems.len()) { out = out.append(r.problems[k]); k = k + 1; }
+            var sk: i32 = 0;
+            var skips: string[] = cov.skips;
+            while (sk < r.skips.len()) { skips = skips.append(r.skips[sk]); sk = sk + 1; }
+            cov = irverifyrc.RcResult {
+                ...cov,
+                sites: cov.sites + r.sites,
+                checked: cov.checked + r.checked,
+                skips: skips
+            };
+        }
+        i = i + 1;
+    }
+    return RcSweep { problems: out, cov: cov };
 }
 
 // FipSweep is one module's `fip` / `fbip` allocation-budget verdict: the
@@ -302,6 +337,7 @@ function main(): i32 {
     var want_verify: boolean = false;
     var want_vstack: boolean = false;
     var want_vfip: boolean = false;
+    var want_vrc: boolean = false;
     var want_slots: boolean = false;
     var want_clocensus: boolean = false;
     // `-dump-fn <name>` dumps that function's op stream instead of `main`'s.
@@ -320,6 +356,7 @@ function main(): i32 {
         if (av[ai] == "-verify") { want_verify = true; }
         if (av[ai] == "-verifystack") { want_vstack = true; }
         if (av[ai] == "-verifyfip") { want_vfip = true; }
+        if (av[ai] == "-verifyrc") { want_vrc = true; }
         if (av[ai] == "-slots") { want_slots = true; }
         if (av[ai] == "-clocensus") { want_clocensus = true; }
         ai = ai + 1;
@@ -465,6 +502,22 @@ function main(): i32 {
         write("irverifystack: " + util.i32_to_string(sw.problems.len()) + " problem(s) ("
             + irverifystack.coverage_str(sw.cov) + ")"
             + irverify.format_problems(sw.problems, 20) + "\n");
+        return 1;
+    }
+
+    if (want_vrc) {
+        // Same defaults-FILLED module as `-verify`, for the same reason: the
+        // production backends reach the IR through lift_lambdas, which runs
+        // fill_default_args_module first.
+        var rfns: ir.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, mod.structs);
+        var rw: RcSweep = verify_rc_all(rfns);
+        if (rw.problems.len() == 0) {
+            write("irverifyrc: clean (" + irverifyrc.rc_coverage_str(rw.cov) + ")\n");
+            return 0;
+        }
+        write("irverifyrc: " + util.i32_to_string(rw.problems.len()) + " problem(s) ("
+            + irverifyrc.rc_coverage_str(rw.cov) + ")"
+            + irverify.format_problems(rw.problems, 20) + "\n");
         return 1;
     }
 

@@ -180,23 +180,15 @@ func (c *rcChecker) site(call int) {
 		return
 	}
 
-	// The gate: `LoadLocal D; is_unique; StoreLocal u` then `LoadLocal u`
-	// as the if's condition.
-	if ifAt < 4 {
+	gate, gateCode := gateDonor(ops, ifAt)
+	if gateCode == gateMissing {
 		c.cov.skip("no uniqueness gate before the token select")
 		return
 	}
-	if ops[ifAt-1].Kind != OpLoadLocal {
+	if gateCode == gateNotAFlag {
 		c.cov.skip("token select is not conditioned on a local")
 		return
 	}
-	uniqSlot := ops[ifAt-1].I32
-	if ops[ifAt-2].Kind != OpStoreLocal || ops[ifAt-2].I32 != uniqSlot ||
-		!isIsUniqueOp(ops[ifAt-3]) || ops[ifAt-4].Kind != OpLoadLocal {
-		c.cov.skip("no uniqueness gate before the token select")
-		return
-	}
-	gate := ops[ifAt-4].I32
 
 	// The reuse arm: exactly one store to the token slot, fed by a load
 	// of the donor. Native subtracts the rc header to reach the box base
@@ -208,13 +200,15 @@ func (c *rcChecker) site(call int) {
 		return
 	}
 
-	// The decline arm releases the donor. Its shape varies more than the
-	// others — emitReuseToken retains the consuming-match bindings there
-	// first — so the release is found by its own shape rather than by
-	// position.
-	dec, decAt, ok := soleDecline(ops, elseAt+1, k)
+	// The decline arm usually releases the donor, but not always: the
+	// self-host's struct-reuse family releases it earlier under a separate
+	// condition and leaves the decline arm holding only the null token. An
+	// absent release is therefore not a defect — there is simply no third
+	// name to disagree. TWO releases are a different matter: nothing can say
+	// which one the protocol meant, so the site is skipped.
+	dec, decAt, haveDec, ok := soleDecline(ops, elseAt+1, k)
 	if !ok {
-		c.cov.skip("decline arm does not release exactly one local")
+		c.cov.skip("decline arm releases more than one local")
 		return
 	}
 
@@ -226,13 +220,65 @@ func (c *rcChecker) site(call int) {
 				"(gate at op %d, token at op %d): the box being written over was never proved unique",
 			token, gate, ifAt-3, ifAt+1)
 	}
-	if dec != gate {
+	if haveDec && dec != gate {
 		c.report(call, OpCallDirect,
 			"reuse site's decline arm releases local %d, but the uniqueness gate tested local %d "+
 				"(gate at op %d, release at op %d): the tested donor leaks on the decline path",
 			dec, gate, ifAt-3, decAt)
 	}
 }
+
+// gateDonor reads the uniqueness gate sitting before the token select and
+// returns the donor it tested, or the reason the gate was not recognised.
+//
+// Four spellings occur across the two compilers' emitters, differing only in
+// where the is_unique flag goes on its way to the branch and in how the donor
+// reaches is_unique. None of them changes what the gate means.
+//
+//	load_local D;              is_unique;                  If  — flag straight to the branch
+//	load_local D;              is_unique; tee_local u;      If  — flag also kept in a slot
+//	load_local D;              is_unique; store_local u; load_local u; If
+//	load_local D; tee_local X; is_unique; tee_local u;      If  — donor also kept in a slot
+//
+// In the last of those the donor is X, the slot the tee wrote, because that is
+// the slot the reuse arm loads for its token.
+//
+// The failure is returned as a code rather than a message so every skip reason
+// in this file stays a literal at its cov.skip call, which is what
+// TestSelfHostIRVerifyRcSkipReasonsMatchNative reads to compare this pass's
+// coverage vocabulary against the self-host's.
+func gateDonor(ops []Op, ifAt int) (slot int32, code int) {
+	// Step back over however the flag reached the branch.
+	at := ifAt - 1
+	switch {
+	case at >= 0 && isIsUniqueOp(ops[at]):
+		// flag consumed directly by the if
+	case at >= 0 && ops[at].Kind == OpTeeLocal:
+		at--
+	case at >= 1 && ops[at].Kind == OpLoadLocal &&
+		ops[at-1].Kind == OpStoreLocal && ops[at-1].I32 == ops[at].I32:
+		at -= 2
+	default:
+		return 0, gateNotAFlag
+	}
+	if at < 1 || !isIsUniqueOp(ops[at]) {
+		return 0, gateMissing
+	}
+	// The donor is whatever fed is_unique: a plain load, or a tee whose slot
+	// the reuse arm will load back.
+	src := ops[at-1]
+	if src.Kind != OpLoadLocal && src.Kind != OpTeeLocal {
+		return 0, gateMissing
+	}
+	return src.I32, gateOK
+}
+
+// gateDonor's verdicts.
+const (
+	gateOK = iota
+	gateMissing
+	gateNotAFlag
+)
 
 // matchIfBackwards finds the OpIf that the OpEnd at endAt closes, and
 // that scope's OpElse. elseAt is -1 when the if has no else arm.
@@ -298,13 +344,15 @@ func soleTokenSource(ops []Op, from, to int, tokenSlot int32) (int32, bool) {
 	return src, found
 }
 
-// soleDecline returns the local the decline arm releases, and the op
-// index of the release. It reports false unless the arm releases exactly
-// one local at its own nesting depth — emitReuseToken also RETAINS the
+// soleDecline returns the local the decline arm releases and where, whether
+// it found one at all, and whether the arm was modellable.
+//
+// The arm may hold none (the release happened earlier under a separate
+// condition) or exactly one. More than one, or one whose operand is not a
+// plain local load, is unmodellable — emitReuseToken also RETAINS the
 // consuming-match bindings there, so "the arm's only reference-count op"
 // would be the wrong rule; "the arm's only release" is the right one.
-func soleDecline(ops []Op, from, to int) (int32, int, bool) {
-	src, at, found := int32(0), 0, false
+func soleDecline(ops []Op, from, to int) (slot int32, at int, found, ok bool) {
 	for i, depth := from, 0; i < to; i++ {
 		switch ops[i].Kind {
 		case OpBlock, OpLoop, OpIf:
@@ -318,9 +366,9 @@ func soleDecline(ops []Op, from, to int) (int32, int, bool) {
 			continue
 		}
 		if found || i-1 < from || ops[i-1].Kind != OpLoadLocal {
-			return 0, 0, false
+			return 0, 0, false, false
 		}
-		src, at, found = ops[i-1].I32, i, true
+		slot, at, found = ops[i-1].I32, i, true
 	}
-	return src, at, found
+	return slot, at, found, true
 }
