@@ -3921,6 +3921,14 @@ function opt_payload_ok_dv(structs: parser.StructDecl[], p: string, depth: i32, 
     // nested Option payload (`Option[Option[P]]`) recurses through the same
     // predicate. (visiting-threaded for recursion safety.)
     if (is_leaksafe_tuple_field_dv(structs, p, depth, visiting)) { return true; }
+    // A leak-safe ARRAY payload (`Option[i32[]]` / `Option[string[]]` as a struct
+    // field): the Option box holds one array pointer, leak-only exactly like the
+    // struct and tuple payloads above. Same step the tuple clause took — the
+    // LOCAL position already admits it (`var o: Option[i32[]] = Some([..])`
+    // lowers and matches today), so this is the struct-field twin, and without
+    // it `struct H { o: Option[i32[]] }` refused the whole module the moment it
+    // was CONSTRUCTED — `H { o: None }` was enough (#7745).
+    if (is_leaksafe_array_field(p) || p == "string[]") { return true; }
     if (p.len() >= 8 && (slice_unchecked(p, 0, 7) == "Option[" || slice_unchecked(p, 0, 7) == "Result[") && is_leaksafe_opt_field_dv(structs, p, depth, visiting)) { return true; }
     // An `Option[<enum>]` payload is NOT admitted here, deliberately. The shape
     // looks exactly like the struct payload above — one enum-variant pointer in
