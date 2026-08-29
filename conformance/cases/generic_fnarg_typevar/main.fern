@@ -1,0 +1,72 @@
+// A generic whose type parameter is reachable ONLY through a fn-parameter's
+// ARGUMENT position. `core/iter`'s filter is the shape:
+//
+//     filter[T, I: Iterator[T]](it: I, keep: (T) => boolean): T[]
+//
+// T appears in no parameter type of its own — `it: I` binds I, and T is only
+// inside `keep`'s argument. The bounded-only substitution left T as a residual
+// in the `T[]` return, full_ret_binds found no binding for it, and the caller
+// kept `T[]` as the element type. A downstream generic then monomorphised at
+// the type PARAMETER: `call to unknown symbol T.cmp`, refusing the module.
+//
+// `map[T, U, I: Iterator[T]](it: I, f: (T) => U): U[]` never had the problem,
+// because U comes back through the RETURN-position clause that already existed.
+// That map/filter split is the diagnosis in one line, so both are pinned here.
+//
+// Positions:
+//   filter_chain — the bail shape: unannotated filter result into a generic.
+//   map_chain    — the sibling that always worked, so a regression on the
+//                  existing return-position recovery is visible too.
+//   annotated    — `var ys: i32[] = iter.filter(...)`, the workaround that
+//                  lowered before this change; it must keep working.
+//   strings      — a non-i32 element, so the fix is not i32-shaped.
+//
+// Sentinels are 251-253, above the `% 113` the success path returns.
+import "core/iter" as iter;
+import "core/cmp" as cmp;
+
+// The bail shape: filter's result, unannotated, feeding a generic consumer.
+function filter_chain(i: i32): i32 {
+    var xs: i32[] = [5, 2, 8, 1, 4];
+    var evens = iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; });
+    var asc = cmp.sort(evens);
+    if (asc.len() != 3) { return 253; }
+    return asc[0];
+}
+
+// The sibling that always worked — U comes from the lambda's declared return.
+function map_chain(i: i32): i32 {
+    var xs: i32[] = [3, 1, 2];
+    var dbl = iter.map(iter.of(xs), function(x: i32): i32 { return x * 2; });
+    var asc = cmp.sort(dbl);
+    if (asc.len() != 3) { return 253; }
+    return asc[0];
+}
+
+// The annotated workaround, which lowered before this change.
+function annotated(i: i32): i32 {
+    var xs: i32[] = [5, 2, 8];
+    var evens: i32[] = iter.filter(iter.of(xs), function(x: i32): boolean { return x % 2 == 0; });
+    var asc = cmp.sort(evens);
+    return asc[0];
+}
+
+// A non-i32 element, so the recovery is not i32-shaped.
+function strings(i: i32): i32 {
+    var ss: string[] = ["pear", "fig", "plum"];
+    var keep = iter.filter(iter.of(ss), function(s: string): boolean { return s.len() > 3; });
+    var asc = cmp.sort(keep);
+    if (asc.len() != 2) { return 252; }
+    return asc[0].len();
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        acc = acc + filter_chain(i) + map_chain(i) + annotated(i) + strings(i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}
