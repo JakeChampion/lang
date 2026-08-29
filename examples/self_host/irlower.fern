@@ -64697,6 +64697,21 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     // fname-not-used-as-a-value guard below still applies, so a lambda that
     // escapes (passed/returned/reassigned) declines and keeps the box path.
     if (util.index_of_str(assigns, fname) >= 0) { return ClosureLift { body: body, acc: acc, changed: false }; }
+    // The name must denote ONE binding in this body (#7253). subst_fcall_expr
+    // rewrites every `fname(…)` callee it walks past, and it recurses into
+    // nested if / while / for / match bodies with no notion of scope — so a
+    // nested `var fname = <another lambda>` has its OWN calls rewritten to THIS
+    // lambda's hoisted body. Witnessed: two sibling `g`s, the inner one called
+    // once, and all three call sites emitted `call __fn___lam_0` while
+    // `__fn___lam_1` was emitted and never reached; the answer moved by exactly
+    // the difference between the two lambdas. Renaming the inner binding, and
+    // nothing else, made it correct.
+    //
+    // Declining is the fix rather than a scope-aware walk: the substitution's
+    // precondition is that the name resolves the same way everywhere it looks,
+    // and when it does not, both bindings lower as ordinary closures with their
+    // own slots — which is correct, just not lifted.
+    if (local_decl_count(body, fname) != 1) { return ClosureLift { body: body, acc: acc, changed: false }; }
     var ctypes: string[] = [];
     var ci: i32 = 0;
     while (ci < caps.len()) {
