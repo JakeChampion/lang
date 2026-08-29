@@ -33,14 +33,19 @@ package ssa
 //
 // # It is not every way a value is released, and the gap is measured
 //
-// The corpus calls 259 distinct release-shaped helpers. Three of them
-// are here. The typed ones are not, and they are not a long tail:
+// Three helpers are here. The corpus releases through NINE fixed runtime
+// entry points, plus a family of generated per-type drops:
 //
-//	__fern_arr_dec    5084   (more than __fern_rc_dec)
-//	__fern_rc_dec     3517   <- counted
-//	__fern_str_dec    3459
-//	__fern_box_free   3266
-//	__drop_struct_*, __fern_map_drop, __fern_closure_drop, ... 255 more
+//	__fern_arr_dec       5084   (more than __fern_rc_dec)
+//	__fern_rc_dec        3517   <- counted
+//	__fern_str_dec       3459
+//	__fern_box_free      3266
+//	__fern_map_drop       389
+//	__fern_closure_drop   137
+//	__free                 82
+//	__map_dec_value        81
+//	__map_free_val_cell    47
+//	__drop_* / __fern_drop_* / __map_drop_*   234 distinct, 6812 calls
 //
 // So "not released" from this pass means "not released through one of
 // three generic helpers", and every count derived from it reads low.
@@ -51,12 +56,15 @@ package ssa
 // pointer parameters really are plain borrows — but the numbers are a
 // floor, not a total.
 //
-// Widening the set is not a matter of adding names: the typed helpers do
-// not all take the counted pointer as argument 0 (`__fern_box_free`
-// takes a receiver, the generated `__drop_*` are per type), so a
-// prefix rule applied without checking each signature would repeat the
-// pass-through-alias mistake in a new place. It needs the signatures,
-// which is #7786's table.
+// Nine names and one naming rule is a small table, so the reason not to
+// widen the set here is not size. It is that a helper's RC meaning is
+// its SIGNATURE, not its name: they do not all take the counted pointer
+// as argument 0 (`__fern_box_free` takes a receiver), and a substring
+// rule is worse still — matching "dec" or "free" over the corpus also
+// catches hex_decode, is_non_decreasing and a user function called
+// mk_free, which is how the count above was first misread as 259.
+// Widening needs each signature written down and checked, which is the
+// runtime half of #7786's table.
 var rcHelpers = map[string]bool{
 	"__fern_rc_inc":       true,
 	"__fern_rc_dec":       true,
