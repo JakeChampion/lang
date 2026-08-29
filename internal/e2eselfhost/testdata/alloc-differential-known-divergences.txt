@@ -25,3 +25,23 @@
 # from the MAP helper. Per-churn growth for that shape is now 0 KB native,
 # matching the self-host, so the entry had to go: a listed shape that comes
 # back within bound fails this gate by design.)
+
+# A TUPLE carrying an owned pointer, stored into a STRUCT FIELD and rebuilt each
+# round. Self-host hands out ~77 B/round that native gives back entirely.
+#
+# Isolated to the COMBINATION: measured at n=200, a tuple local alone is 0 KB on
+# both sides, a struct with a plain array field alone is 0 KB on both sides, and
+# only the tuple-inside-a-struct-field shape diverges. So neither the tuple
+# reclaim nor the struct-field reclaim is broken on its own — the composed path
+# releases something but not everything.
+#
+# The leak matrix cannot see it. tuple_mixed__structfield__local_store reads
+# clean/clean because its cell does not churn: the credit fires and the box comes
+# back, which is all a per-round verdict asks. Volume is the half only this gate
+# measures, which is why the shape was added here (#7259 tuple wave).
+#
+# Recorded rather than fixed because the composed path spans two mechanisms
+# landed by different sessions — the counted struct-field store and the "TCNT:"
+# tier — and guessing at the seam is how the last change in this area became a
+# redundant no-op. This entry fails the moment it is fixed, so it cannot rot.
+tuple-in-struct-field 0 15 composed tuple-in-struct reclaim releases the box but not all of it; ~77 B/round self-host against 0 native, invisible to the leak matrix
