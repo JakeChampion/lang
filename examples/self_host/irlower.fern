@@ -3872,7 +3872,10 @@ function arrarr_index_elem_kind(arr: ast.Expr, s: LowerState): string {
 // zero-extension that currently differs across backends (a u8 read
 // mis-extends on wasm), so an Option/Result-of-it field is excluded here.
 function is_leaksafe_payload(p: string): boolean {
-    return p == "i32" || p == "boolean" || p == "string" || p == "i64" || p == "f64"
+    // f32 / `float` ride the f64 slot (elem_ty_is_f64slot) and are inline
+    // scalars in the box with nothing to free, so they are leak-safe on the
+    // same reasoning f64 is.
+    return p == "i32" || p == "boolean" || p == "string" || p == "i64" || elem_ty_is_f64slot(p)
         || p == "u32" || p == "u64";
 }
 
@@ -22877,7 +22880,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // so it also matches `Map[K, V][]` — the array branch owns
                         // that spelling.
                         var ptag_is_map: boolean = is_map_type_name(ptag) && !is_array_type_name(ptag);
-                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && ptag != "f64" && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_arrarr && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void && !ptag_is_map) { return s.fail(); }
+                        if (ptag != "i32" && ptag != "boolean" && ptag != "string" && ptag != "i64" && !elem_ty_is_f64slot(ptag) && !ptag_is_struct && !ptag_is_enum && !ptag_is_opt && !ptag_is_tuple && !ptag_is_array && !ptag_is_arrarr && !ptag_is_dyn && !ptag_is_fn && !ptag_is_void && !ptag_is_map) { return s.fail(); }
                     }
                     var want: i32 = 0;
                     if (pv.type_name == "None" || pv.type_name == "Err") { want = 1; }
@@ -22905,7 +22908,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // bound name so later uses route correctly (i64/u64 ->
                         // lower_i64 / the i64 domain; f64 -> the float ops).
                         if (ptag == "i64" || ptag == "u64") { ms = ms.emit(ir.op_opt_payload_w(64, true)); }
-                        else if (ptag == "f64") { ms = ms.emit(ir.op_opt_payload_w(64, false)); }
+                        else if (elem_ty_is_f64slot(ptag)) { ms = ms.emit(ir.op_opt_payload_w(64, false)); }
                         else { ms = ms.emit(ir.op_opt_payload()); }
                         ms = ms.emit(ir.op_store_local(pbslot));
                         if (ptag == "string") { ms = ms.mark_str(pbslot, true); }
@@ -22915,13 +22918,21 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // like the u64 tuple destructure) so its compare / `>>`
                         // / div-rem are UNSIGNED in the i64 domain.
                         else if (ptag == "u64") { ms = ms.mark_u64(pbslot, true); }
-                        else if (ptag == "f64") { ms = ms.mark_f64(pbslot, true); }
+                        // f32 / `float` ride the same 8-byte slot as f64
+                        // (elem_ty_is_f64slot), so all three mark_f64. Only `f32`
+                        // additionally marks f32, keying "f32.<m>" dispatch:
+                        // `float` is the f64 alias, and tagging it f32 would round
+                        // its arithmetic through a demote/promote pair (#5882).
+                        else if (elem_ty_is_f64slot(ptag)) {
+                            ms = ms.mark_f64(pbslot, true);
+                            if (ptag == "f32") { ms = ms.mark_f32(pbslot, true); }
+                        }
                         // A u32 payload rode the default 32-bit op_opt_payload
                         // load above (a full i32 slot, no narrowing); mark the
                         // bound slot so its `>>` is logical and its arithmetic
                         // wraps at 2^32 (the sibling of the StmtVar mark_u32 at
-                        // the binding site). Sub-word payloads stay on AST (see
-                        // is_leaksafe_payload).
+                        // the binding site). Sub-word payloads are not
+                        // leak-safe payloads (see is_leaksafe_payload).
                         else if (ptag == "u32") { ms = ms.mark_u32(pbslot, true); }
                         // A fn-typed payload (`Some(f)` / `Ok(g)` where T is
                         // `() => i32` / `(i32) => i32`, slice #3445 match-fn):
