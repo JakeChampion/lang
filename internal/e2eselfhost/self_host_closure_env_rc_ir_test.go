@@ -8,16 +8,23 @@ import (
 	"testing"
 )
 
-// TestSelfHostClosureEnvRcIRX86_64 pins the #4354 closure-env capture-RC slice
-// on the IR path. A closure local bound once from a LITERAL lambda, never
-// reassigned, non-escaping (body_unsafe_for-clean) is approved for capture RC:
-// the env build retains each classifiable capture ('s' string / 'a' scalar
-// array — read back from the env box, __fern_rc_inc'd), and the exit sweep
-// releases them (rc==1-gated walk: __fern_str_free / __fern_rc_dec) before the
-// env box dec. The SAME kinds string drives both sides, so incs and drops land
-// together (the #4354 invariant). A captured FRESH string re-enters the STR:
-// sweep (the capture is now a counted reference), closing the leak; anything
-// unclassified or escaping keeps today's sound leak.
+// TestSelfHostClosureEnvRcIRX86_64 pins the memory behaviour of a capturing
+// closure bound to a local and only called: no over-release, no per-call
+// growth, right answers.
+//
+// The mechanism these cases actually exercise is the PARAM-LIFT, not an
+// env-box capture-RC arc. try_lift_binding runs as a whole-module AST pre-pass
+// before lowering; a capturing lambda bound to a var and never used as a value
+// is hoisted to `__lam_N(args, caps…)` with the captures passed directly, so
+// no env box is built and the captured local stays an ordinary local that the
+// "STR:" / array sweeps free. The #4354 capture-RC family that once claimed
+// these cases was measured inert — 0 approvals over the whole conformance
+// corpus, because the lift always got there first — and was deleted (#7253).
+//
+// What still makes them worth running: they are the coverage that the lift
+// leaves captures balanced. A regression that stops lifting one of these
+// shapes lands it on the env-box path, and that path leaks (98) or
+// over-releases (99) rather than failing quietly.
 func TestSelfHostClosureEnvRcIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -49,34 +56,33 @@ func TestSelfHostClosureEnvRcIRX86_64(t *testing.T) {
 		}
 	}
 
-	// STRING capture, reclaimed: nm (a fresh concat) is captured, the closure
-	// called, both die at exit. Pre-slice nm leaked every call (excluded from
-	// the STR: sweep by the lambda escape); now build-site inc (rc 2) + env
-	// release (→1) + string sweep (→0) free it exactly once. After a
-	// 3000-iteration warmup a second churn stays flat (< 256 B slack).
+	// STRING capture: nm (a fresh concat) is captured and the closure called.
+	// The lift turns `c()` into `__lam_0(nm)`, so nm is a plain fresh string
+	// local the "STR:" sweep frees once. After a 3000-iteration warmup a
+	// second churn stays flat (< 256 B slack).
 	run(t, `function go(pre: string): i32 { var nm: string = pre + "xyz"; var c = () => nm.len(); return c(); }
 function churn(m: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"closure-string-capture-flat", 0)
 
-	// SCALAR-ARRAY capture, balanced: xs is swept by its own slot AND released
-	// by the env — the build-site inc makes that two decs against rc 2, freed
-	// exactly once (underflow 0), flat across the second churn.
+	// SCALAR-ARRAY capture: xs is lifted to an argument of __lam_0 and freed by
+	// its own slot's array sweep — one owner, one dec (underflow 0), flat
+	// across the second churn.
 	run(t, `function go(k: i32): i32 { var xs: i32[] = [k, k + 1, k + 2]; var c = () => xs[0] + xs[2]; return c(); }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
 function main(): i32 { var w: i32 = churn(3000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(3000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"closure-array-capture-flat", 0)
 
-	// CAPTURE USED AFTER the closure: nm read directly after c() — the release
-	// only runs at exit (after all uses), and the ordering (env release before
-	// the string sweep) frees nm exactly once. Values + detector checked.
+	// CAPTURE USED AFTER the closure: nm is read directly after c(), so the
+	// lift's rewrite must leave the local live for that read and its free at
+	// exit. Values + detector checked.
 	run(t, `function go(pre: string): i32 { var nm: string = pre + "xy"; var c = () => nm.len(); var r: i32 = c(); return r + nm.len(); }
 function churn(m: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(pre) != 8) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
 		"closure-capture-used-after-balanced", 0)
 
-	// PARAM-STRING capture, balanced: pre belongs to the caller — the inc/release
-	// pair nets zero and the owner frees it, so nothing double-frees. Detector 0.
+	// PARAM-STRING capture: pre belongs to the caller, so the lift must pass it
+	// through without the callee claiming ownership. Detector 0.
 	run(t, `function go(pre: string): i32 { var c = () => pre.len(); return c(); }
 function churn(m: i32): i32 { var pre: string = "ab"; var bad: i32 = 0; var i: i32 = 0; while (i < m) { if (go(pre) != 2) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { var v: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } return v; }`,
