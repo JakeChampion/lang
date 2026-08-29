@@ -1076,23 +1076,25 @@ appendix §6.)
   and the mutation refer to the same array") and is rewritten to say what the
   code does. Naming it `_unsafe_owned` would have enshrined a hazard that does
   not exist.
-- [ ] **SH-059 — `env_set_at` is a redundant always-copying twin of `env_put`.**
-  Surfaced by SH-051. Given COW (above), `env_set_at` (`ssa.fern:979`) and
-  `env_put` compute the same value; `env_set_at` just always pays O(len).
-  Its 5 call sites are all `x = env_set_at(x, i, v)` in the phi-merge and
-  loop-header paths, where `x` starts aliased to `s.var_vals` — so `env_put`
-  there would copy ONCE on the first write and then run in place, against
-  O(len) per write today.
+- [x] **SH-059 — `env_set_at` is COW now, without relying on the invariant.**
+  Filed from SH-051's COW finding. The obvious fix — swap the 5 call sites to
+  `env_put` — was the wrong shape: the two differ on an out-of-range index
+  (`env_set_at` silently returns an unchanged copy, `.with` traps), so the swap
+  would have leaned on the parallel-array length invariant that SH-047 records
+  as unenforced.
 
-  _Not a blind swap._ The two differ on an out-of-range index: `env_set_at`
-  loops `k == i` and silently returns an unchanged copy, where `.with` is
-  bounds-checked. Every current index is a loop counter bounded by
-  `s.var_names.len()` against the parallel `s.var_vals`, so they are in range
-  **if the parallel-array length invariant holds** — which is precisely what
-  SH-047 records as unenforced. Wants its own change and its own test, in the
-  phi-merge path, rather than riding along with a comment fix.
+  Instead `env_set_at` keeps its own contract and gets the speed: an explicit
+  out-of-range guard, then `.with`. The guard states what the element-by-element
+  rebuild did implicitly — an out-of-range `i` never matched, so the loop
+  produced a same-contents copy — so behaviour is unchanged at every call site
+  and no invariant is required. The in-range case is now O(1) on an owned buffer
+  instead of O(len) unconditionally, which is the phi-merge and loop-header
+  paths where `merge_vals` / `header_vals` / `exit_vals` are written per
+  variable.
 
-### Emitters / WASM
+  Worth keeping as the general lesson: given COW, an "always rebuild" helper is
+  rarely protecting anything — it is usually just paying O(n) for a guard that
+  can be written down in one line.
 - [ ] **SH-052 — `asm_arm64_ir.fern:6738-6859`** `darwinize` is a **122-line**
   line-oriented post-hoc string rewrite of already-emitted asm (peephole-on-text)
   — drive the dialect from the `darwin` flag at emit time instead (it already
