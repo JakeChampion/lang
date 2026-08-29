@@ -38,6 +38,14 @@ import (
 // being half-released — pinned below, because admitting it here would look like
 // an improvement while quietly dropping the string.
 //
+// #7716 then admits a REASSIGNED nested-Option local whose every rebind
+// allocates its own inner box, via opt_rebinds_all_fresh and an "optopt" kind —
+// the same route #7712 took for strings. That fixes the UNMATCHED half only:
+// the matched half never reaches this collector, whose escape gate reads a
+// bare-ident match scrutinee as an escape, and belongs to the consuming-match
+// family instead. `reassigned_matched_still_leaks` pins that split, so the two
+// are not mistaken for one class later.
+//
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run under
 // test, and every row is sanitizer-clean under FERN_SANITIZE=1.
@@ -95,6 +103,49 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
     return 0;
 }` + unmatchedOptoptMain,
 			want: 4, balance: true,
+		},
+		{
+			// THE REBIND HALF (#7716): reassigned, every rebind allocating its own
+			// inner box. Was 600/0 live 24000.
+			name: "reassigned_unmatched",
+			src: `function round(i: i32): i32 {
+    var o: Option[Option[i32]] = Some(Some(i));
+    if (i % 2 == 0) { o = Some(Some(i + 1)); }
+    return i % 7;
+}` + unmatchedOptoptMain,
+			want: 13, balance: true,
+		},
+		{
+			// STILL LEAKING, deliberately, and it is why #7716 is two changes
+			// rather than one: the MATCHED half of the same rebind never reaches
+			// this collector at all, because its escape gate reads a bare-ident
+			// match scrutinee as an escape. That half belongs to the
+			// consuming-match family, which releases at the match rather than at
+			// the exit sweep. Pinned so it cannot start OVER-releasing while it
+			// waits — the direction a careless widening would take it.
+			name: "reassigned_matched_still_leaks",
+			src: `function round(i: i32): i32 {
+    var o: Option[Option[i32]] = Some(Some(i));
+    if (i % 2 == 0) { o = Some(Some(i + 1)); }
+    match (o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } }, None => { return 2; } }
+    return 0;
+}` + unmatchedOptoptMain,
+			want: 80, wantFrees: 0,
+		},
+		{
+			// REFUSED: a rebind ALIASING an inner box the function still reads.
+			// Releasing it at the next rebind would free a box under a live
+			// reference — the freshness requirement, load-bearing because the
+			// payload is stored uncounted.
+			name: "refuses_rebind_aliasing_inner",
+			src: `function round(i: i32): i32 {
+    var keep: Option[i32] = Some(i);
+    var o: Option[Option[i32]] = Some(Some(i));
+    if (i % 2 == 0) { o = Some(keep); }
+    match (keep) { Some(v) => { return v; }, None => { return 2; } }
+    return 0;
+}` + unmatchedOptoptMain,
+			want: 63, wantFrees: 0,
 		},
 		{
 			// REFUSED, and the reason the scalar-inner gate exists: a flat dec
