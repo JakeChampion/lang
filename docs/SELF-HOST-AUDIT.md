@@ -1060,6 +1060,18 @@ appendix §6.)
   the rewrite-after-the-fact shape, plus the sticky `pend_sys` state machine it
   needs to correlate a syscall-number line with the `svc` that consumes it — a
   correlation the emitter has for free.
+
+  _Scoped, 2026-08-29 — this is a backend change, not a cleanup._ `darwinize`
+  performs **13 distinct rewrites**, and only one group needs the `pend_sys`
+  correlation. The other twelve are per-line dialect translation: dropping
+  `.type` / `.size` / `.note.GNU-stack`, renaming three sections, the `_start`
+  symbol form, `adrp` / `:lo12:` to `@PAGE` / `@PAGEOFF`, and one stack-pop
+  idiom. Moving them to emit time means threading the `darwin` flag to every
+  emission point in `asm_arm64_ir.fern` (which already names `darwin` 98 times,
+  so the flag is half there) and re-proving 339 fixtures on the
+  `test-arm64-darwin` leg. Sequence it as its own PR with the fixture legs as
+  the gate. A partial conversion that leaves some rewrites in text and some at
+  emit time is worse than either end state.
 - [ ] **SH-053 — `irlower.fern:409 LowerState` is a 31-field god-struct, 20 of
   them arrays.** `ops`, `locals`, `loop_blk`, `closure_locals`,
   `closure_opt_rets`, `structs`, `reclaimable_names`, `aliased_names`,
