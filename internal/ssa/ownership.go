@@ -68,7 +68,36 @@ type RCSite struct {
 	// genuine unbalanced retain from this shape needs reachability
 	// THROUGH MEMORY — whether the retained pointer is reachable from a
 	// value that escapes — which this analysis does not have.
+	//
+	// The other direction reads the same way. Of the 622 releases the
+	// corpus reports as live afterwards, 540 are used by their block's
+	// terminator and the top functions are all generated drop glue —
+	// __drop_tuple_*, __drop_struct_*, __drop_enum_* — releasing a field
+	// and then walking on through the container to reach the next one.
+	// Also correct. Telling a premature release from a flat dec on a
+	// value with other owners needs to know the count, which is the
+	// callee ownership signature table (#7786).
+	//
+	// Both directions land in the same place: this pass classifies
+	// STRUCTURE. It says where a value is still wanted, which is the
+	// question the flat IR cannot ask without a bespoke walk. It does
+	// not say whether the reference counting around it is right, and it
+	// should not be read as if it did.
 	LiveAfter bool
+
+	// LaterUses are the uses that make LiveAfter true — every use of the
+	// operand OR of one of its pass-through aliases that this op can
+	// reach. Empty exactly when LiveAfter is false.
+	//
+	// It is here because the boolean alone invites a wrong follow-up
+	// question. A caller wanting to know WHAT the later use is reaches
+	// for uses.Of(Operand), gets nothing, and concludes the site has no
+	// later use — because the uses are of the rc helper's RESULT, which
+	// is the same object under another name. That mistake was made twice
+	// within an hour of this analysis being written, both times by its
+	// author. Handing back the sites the answer came from removes the
+	// opportunity.
+	LaterUses []UseSite
 
 	// SrcOp is the source op index this site maps back to, and Mapped
 	// says whether it has one. An unmapped site is one whose answer
@@ -93,12 +122,14 @@ func RCSites(f *Func) []RCSite {
 				continue
 			}
 			src, mapped := o.SourceOp()
+			later := usesAfter(uses, reach, b, oi, aliasesOf(f, uses, o.Args[0]), o)
 			out = append(out, RCSite{
 				Block:     b,
 				Op:        o,
 				Helper:    o.Str,
 				Operand:   o.Args[0],
-				LiveAfter: usedAfter(uses, reach, b, oi, aliasesOf(f, uses, o.Args[0]), o),
+				LaterUses: later,
+				LiveAfter: len(later) > 0,
 				SrcOp:     src,
 				Mapped:    mapped,
 			})
@@ -142,15 +173,17 @@ func aliasesOf(f *Func, uses *Uses, v Value) []Value {
 	return out
 }
 
-// usedAfter reports whether any use of vs (a value and its pass-through
-// aliases) other than `self` can be reached from position oi in block b.
+// usesAfter returns every use of vs (a value and its pass-through
+// aliases) other than `self` that can be reached from position oi in
+// block b.
 //
 // Two ways a use can be after this point: later in the same block, or
 // anywhere in a block reachable from this one — INCLUDING b itself,
 // which is what makes a loop work. A use textually earlier in a loop
 // body is reached again on the next iteration, and that is exactly the
 // case a textual scan gets wrong.
-func usedAfter(uses *Uses, reach map[*Block]map[*Block]bool, b *Block, oi int, vs []Value, self *Op) bool {
+func usesAfter(uses *Uses, reach map[*Block]map[*Block]bool, b *Block, oi int, vs []Value, self *Op) []UseSite {
+	var out []UseSite
 	for _, v := range vs {
 		for _, u := range uses.Of(v) {
 			if u.Op == self {
@@ -159,16 +192,16 @@ func usedAfter(uses *Uses, reach map[*Block]map[*Block]bool, b *Block, oi int, v
 			if u.Block == b && !reach[b][b] {
 				// Straight-line block: only a later position counts.
 				if indexOfOp(b, u.Op) > oi {
-					return true
+					out = append(out, u)
 				}
 				continue
 			}
 			if reach[b][u.Block] {
-				return true
+				out = append(out, u)
 			}
 		}
 	}
-	return false
+	return out
 }
 
 // indexOfOp returns the position of op in b, or -1 for a terminator
