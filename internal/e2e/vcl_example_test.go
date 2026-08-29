@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -376,9 +377,27 @@ func TestVCLCompiledMatchesInterpreted(t *testing.T) {
 	}
 }
 
+// hostFernTarget names the fern target that produces a binary this machine
+// can execute.
+func hostFernTarget(t *testing.T) string {
+	t.Helper()
+	switch {
+	case runtime.GOOS == "darwin" && runtime.GOARCH == "arm64":
+		return "arm64-darwin"
+	case runtime.GOOS == "linux" && runtime.GOARCH == "amd64":
+		return "x86-64-linux"
+	case runtime.GOOS == "linux" && runtime.GOARCH == "arm64":
+		return "arm64-linux"
+	default:
+		t.Skipf("no fern target for %s/%s", runtime.GOOS, runtime.GOARCH)
+		return ""
+	}
+}
+
 // TestVCLCompiledPolicyBuildsNatively pins that a compiled policy is a
 // real program: it builds to a native binary and that binary behaves like
-// the interpreter.
+// the interpreter. It builds for the HOST architecture so the binary can
+// actually be run, whichever runner this lands on.
 func TestVCLCompiledPolicyBuildsNatively(t *testing.T) {
 	if testing.Short() {
 		t.Skip("native build is slow; skipped under -short")
@@ -406,8 +425,12 @@ func TestVCLCompiledPolicyBuildsNatively(t *testing.T) {
 		t.Fatalf("write generated policy: %v", err)
 	}
 
+	// The binary is RUN, so it has to be built for the host: this gate runs
+	// on both x86-64 and aarch64 runners, and a cross-built binary fails
+	// with "exec format error" rather than telling us anything.
+	target := hostFernTarget(t)
 	exePath := filepath.Join(outDir, "policy")
-	build := exec.Command(bin, "-target", "x86-64-linux", "-o", exePath, genPath)
+	build := exec.Command(bin, "-target", target, "-o", exePath, genPath)
 	build.Dir = outDir
 	if o, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("native build of the compiled policy failed: %v\n%s", err, o)
