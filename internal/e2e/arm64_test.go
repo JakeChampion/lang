@@ -215,6 +215,38 @@ function main(): i32 {
 	}
 }
 
+// arm64 twin of TestX86_64GenericUnions (#7737). Same source, second
+// backend: the union's members lower to a generic enum whose payloads
+// are parameterised structs, and the monomorphizer's per-instantiation
+// clones are backend-independent — so a divergence here would be in the
+// payload layout, which is exactly what a second backend catches.
+func TestArm64GenericUnions(t *testing.T) {
+	src := `struct Leaf[T] { v: T }
+struct Pair[T] { a: T, b: T }
+struct Lit { v: i32 }
+
+type Tree[T] = Leaf[T] | Pair[T] | Lit;
+
+function leafOf(t: Tree[i32]): i32 {
+    match (t) {
+        Leaf(l) => { return l.v; },
+        Pair(p) => { return p.a + p.b; },
+        Lit(x) => { return x.v; },
+    }
+}
+
+function main(): i32 {
+    var a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
+    var b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
+    var c: Tree[i32] = Lit { v: 7 };
+    return leafOf(a) + leafOf(b) + leafOf(c);
+}`
+	_, code := compileAndRunArm64(t, src)
+	if code != 22 {
+		t.Errorf("got %d, want 22 (4 + 11 + 7)", code)
+	}
+}
+
 // Parser-in-lang v4: identifier references — adds `Var { name }`
 // as a primary expression alongside numeric literals. Closes the
 // last gap before parsing real arithmetic programs that mention

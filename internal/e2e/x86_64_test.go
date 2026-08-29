@@ -237,6 +237,45 @@ function main(): i32 {
 	}
 }
 
+// A union may take its own type parameters, and its members may be
+// generic structs instantiated with them (#7737). The desugar target —
+// a generic enum whose variant payload is a parameterised struct — is
+// the shape the composite-payload monomorphizer already handled; the
+// union form is sugar over it, so this pins the whole path end to end
+// rather than just the parse.
+//
+// Covered in one program: a parameterised member (Leaf[T]), a plain
+// member alongside it (Lit), explicit construction through the union
+// name, implicit struct-to-union wrap, and two instantiations of the
+// same union (i32 and a nested Pair[i32]) so the monomorphizer has to
+// emit more than one clone.
+func TestX86_64GenericUnions(t *testing.T) {
+	src := `struct Leaf[T] { v: T }
+struct Pair[T] { a: T, b: T }
+struct Lit { v: i32 }
+
+type Tree[T] = Leaf[T] | Pair[T] | Lit;
+
+function leafOf(t: Tree[i32]): i32 {
+    match (t) {
+        Leaf(l) => { return l.v; },
+        Pair(p) => { return p.a + p.b; },
+        Lit(x) => { return x.v; },
+    }
+}
+
+function main(): i32 {
+    var a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
+    var b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
+    var c: Tree[i32] = Lit { v: 7 };
+    return leafOf(a) + leafOf(b) + leafOf(c);
+}`
+	_, code := compileAndRunX86_64(t, src)
+	if code != 22 {
+		t.Errorf("got %d, want 22 (4 + 11 + 7)", code)
+	}
+}
+
 // Implicit struct → union wrap on x86-64. Third-backend cross-
 // check for the wrap-and-re-check pass. See arm64 + wasm
 // counterparts for the same source.

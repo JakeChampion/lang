@@ -6340,6 +6340,84 @@ func TestOneSidedNumericCastsAreRejectedBeforeIR(t *testing.T) {
 	}
 }
 
+// A union member's type arguments have to match the struct it names
+// (#7737). The desugar turns each member into an enum variant whose
+// payload is that struct type, so a mismatch would otherwise synthesise
+// a payload with the wrong arity and fail somewhere further downstream.
+func TestUnionMemberTypeArgArity(t *testing.T) {
+	for _, tc := range []struct{ name, src, want string }{
+		{
+			"generic member given no arguments",
+			`struct Leaf[T] { v: T }
+struct Lit { v: i32 }
+type Tree = Leaf | Lit;
+function main(): i32 { return 0; }`,
+			"takes 1 type argument(s), got 0",
+		},
+		{
+			"plain member given arguments",
+			`struct A { v: i32 }
+struct B { v: i32 }
+type U = A[i32] | B;
+function main(): i32 { return 0; }`,
+			"is not generic but was given 1 type argument(s)",
+		},
+		{
+			"wrong number of arguments",
+			`struct P[A, B] { a: A, b: B }
+struct Lit { v: i32 }
+type U = P[i32] | Lit;
+function main(): i32 { return 0; }`,
+			"takes 2 type argument(s), got 1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSource(t, tc.src)
+			if err == nil {
+				t.Fatalf("expected E016, got no error")
+			}
+			if !hasCode(err, "E016") {
+				t.Errorf("want E016, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("message %q does not mention %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// The suggested fix in the arity message has to be spelled at the
+// member's real arity — a one-parameter example under a two-parameter
+// struct is advice that does not compile.
+func TestUnionArityHintMatchesMemberArity(t *testing.T) {
+	err := checkSource(t, `struct P[A, B] { a: A, b: B }
+struct Lit { v: i32 }
+type U = P[i32] | Lit;
+function main(): i32 { return 0; }`)
+	if err == nil {
+		t.Fatal("expected E016")
+	}
+	if want := "`type U[A, B] = P[A, B] | …`"; !strings.Contains(err.Error(), want) {
+		t.Errorf("message %q does not carry the two-parameter hint %s", err.Error(), want)
+	}
+}
+
+// A union whose members are two instantiations of the SAME struct is a
+// duplicate: variants are named after the struct, so both would be
+// `Box`. Pinned because E016.md tells the reader this is the rule.
+func TestUnionRejectsTwoInstantiationsOfOneStruct(t *testing.T) {
+	err := checkSource(t, `struct Box[T] { v: T }
+struct Lit { v: i32 }
+type X = Box[i32] | Box[boolean] | Lit;
+function main(): i32 { return 0; }`)
+	if err == nil {
+		t.Fatal("expected E016")
+	}
+	if !hasCode(err, "E016") || !strings.Contains(err.Error(), "duplicate member") {
+		t.Errorf("want a duplicate-member E016, got: %v", err)
+	}
+}
+
 // TestByteDisplayGateAndDispatchAgree: the `print(x)` Display gate and the
 // `x.to_string()` dispatch it rewrites to must name the receiver the same
 // way. They didn't for `u8`: the gate ran a width switch that only knew 32
