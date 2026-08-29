@@ -1,0 +1,54 @@
+// An Option carrying an ARRAY, as a STRUCT FIELD. Before #7745 the self-host
+// refused the whole module the moment such a struct was CONSTRUCTED — `H { o:
+// None, n: 7 }` was enough, no Some, no payload, no use of the field — while
+// native compiled and ran it. Option[string] and Option[i32] fields lowered, and
+// an Option[i32[]] LOCAL lowered; only the array-payload struct field did not.
+//
+// Four positions, so a future narrowing of the admission is visible:
+//   none     — the field left empty. The shape that used to bail on its own.
+//   some     — a payload present and read back through the field.
+//   nested   — Option[Option[i32[]]], which recurses through the same predicate.
+//   strarr   — a string[] payload, the other array spelling.
+//
+// Sentinels are 251-253, above the `% 113` the success path returns.
+struct H { o: Option[i32[]], n: i32 }
+struct N { o: Option[Option[i32[]]], n: i32 }
+struct S { o: Option[string[]], n: i32 }
+
+function none_field(i: i32): i32 {
+    var h: H = H { o: None, n: i };
+    match (h.o) { Some(xs) => { return 253; }, None => {} }
+    return h.n;
+}
+
+function some_field(i: i32): i32 {
+    var h: H = H { o: Some([i, i + 1]), n: i };
+    match (h.o) { Some(xs) => { return h.n + xs[1]; }, None => {} }
+    return 253;
+}
+
+function nested_field(i: i32): i32 {
+    var v: N = N { o: Some(Some([i, i + 2])), n: i };
+    match (v.o) {
+        Some(inner) => { match (inner) { Some(xs) => { return v.n + xs[1]; }, None => { return 253; } } },
+        None => {}
+    }
+    return 253;
+}
+
+function strarr_field(i: i32): i32 {
+    var s: S = S { o: Some(["a" + "b", "c" + "d"]), n: i };
+    match (s.o) { Some(ss) => { return s.n + ss.len() + ss[0].len(); }, None => {} }
+    return 253;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        acc = acc + none_field(i) + some_field(i) + nested_field(i) + strarr_field(i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}

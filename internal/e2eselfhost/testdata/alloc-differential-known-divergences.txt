@@ -45,3 +45,21 @@
 # tier — and guessing at the seam is how the last change in this area became a
 # redundant no-op. This entry fails the moment it is fixed, so it cannot rot.
 tuple-in-struct-field 0 15 composed tuple-in-struct reclaim releases the box but not all of it; ~77 B/round self-host against 0 native, invisible to the leak matrix
+
+# An Option carrying an ARRAY, as a struct field, constructed in a loop. Same
+# family and same signature as tuple-in-struct-field above: ~80 B/round, 0 KB
+# native.
+#
+# Root cause is shared and already characterised (#7259): the store sits in a
+# LOOP BODY, so it is never classified a move — lower_func seeds moved_names and
+# move_sites from the top-level-only sets — the construction therefore takes the
+# retain, the source is never swept, and the reclaim's __fern_rc_is_unique gate
+# reads "shared" and declines the child walk. moved_locals_toplevel_of documents
+# why the loop half is deferred: the rebind site has to agree first.
+#
+# Worth stating what changed here: before #7745 this shape did not COMPILE — the
+# self-host refused the whole module the moment such a struct was constructed,
+# while native compiled and ran it. So this row is not a regression; it is a
+# shape that has newly become measurable. A compile failure is not the safer
+# side of that trade.
+option-array-struct-field 0 15 newly-compiling shape (#7745) in the loop-body move family; ~80 B/round self-host against 0 native, same root cause as tuple-in-struct-field

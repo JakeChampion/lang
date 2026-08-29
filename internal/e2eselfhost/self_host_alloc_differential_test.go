@@ -216,6 +216,26 @@ function churn(n: i32): i32 {
 		maxRatio: 8,
 	},
 	{
+		// An Option carrying an ARRAY, as a struct field. This shape did not
+		// COMPILE at all until #7745 — the self-host refused the module the
+		// moment such a struct was constructed — so its allocation behaviour
+		// has never been measured against native.
+		name: "option-array-struct-field",
+		decls: `struct H { o: Option[i32[]], n: i32 }
+function churn(n: i32): i32 {
+    var i: i32 = 0;
+    var s: i32 = 0;
+    while (i < n) {
+        var h: H = H { o: Some([i, i + 1]), n: i };
+        match (h.o) { Some(xs) => { s = (s + xs.len() + h.n) % 251; }, None => {} }
+        i = i + 1;
+    }
+    return s;
+}`,
+		n:        200,
+		maxRatio: 8,
+	},
+	{
 		// An rc-payload ENUM rebuilt and consumed each round — the family the
 		// Option shapes above are modelled on, and the one whose alias-aware
 		// reading (#6606) the Option side only just caught up with. Present so
