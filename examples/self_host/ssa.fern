@@ -529,513 +529,7 @@ function build_expr(e: ast.Expr, s: BState): BState {
         ast.ExprIdent(id) => { return build_expr_ident(id, s); },
         ast.ExprBinary(b) => { return build_expr_binary(b, s); },
         ast.ExprUnary(u) => { return build_expr_unary(u, s); },
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    // slice_unchecked(s, a, b) is the byte slice `s[a:b]` used
-                    // to be (#5634). The subset is untyped and a string is a
-                    // byte array here, so it lowers to the same
-                    // __ssa_arr_slice the ExprSlice arm emits — the two forms
-                    // cannot drift.
-                    if (cid.name == "slice_unchecked" && c.args.len() == 3) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var sua: i32 = s.cur_id();
-                        s = build_expr(c.args[1], s);
-                        if (!s.ok) { return s; }
-                        var sulo: i32 = s.cur_id();
-                        s = build_expr(c.args[2], s);
-                        if (!s.ok) { return s; }
-                        var suhi: i32 = s.cur_id();
-                        s = s.fresh();
-                        var suargs: i32[] = [sua, sulo, suhi];
-                        return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: suargs, imm: 0, str: "__ssa_arr_slice" });
-                    }
-                    // Indirect call: the callee is a function-VALUE local
-                    // (recorded "fnval"), holding a closure BOX — a tuple-style
-                    // (fn_addr, cap…). Load fn_addr from slot 0 and call through
-                    // it, passing the box itself as a trailing env arg. A
-                    // capturing lifted body reads its captures from that env; a
-                    // no-capture / named function ignores the extra register.
-                    if (is_boxed_fnty(s.get_var_type(cid.name))) {
-                        var iav: i32[] = [];
-                        var iai: i32 = 0;
-                        while (iai < c.args.len()) {
-                            s = build_expr(c.args[iai], s);
-                            if (!s.ok) { return s; }
-                            iav = iav.append(s.cur_id());
-                            iai = iai + 1;
-                        }
-                        var boxv: i32 = s.get_var(cid.name);
-                        s = s.kconst(0);
-                        var bzi: i32 = s.cur_id();
-                        s = s.fresh();
-                        var bla: i32[] = [boxv, bzi];
-                        s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: bla, imm: 64, str: "" });
-                        var fnaddr: i32 = s.cur_id();
-                        var icargs: i32[] = [fnaddr];
-                        var ica: i32 = 0;
-                        while (ica < iav.len()) { icargs = icargs.append(iav[ica]); ica = ica + 1; }
-                        icargs = icargs.append(boxv);
-                        s = s.fresh();
-                        return s.emit(SInst { kind_tag: 12, result: s.cur_id(), args: icargs, imm: 0, str: "" });
-                    }
-                    // print(s) — write the string's bytes to stdout. A
-                    // dedicated op (the backends emit a write-syscall helper);
-                    // not a generic call, so calls_all_known doesn't bail.
-                    // print → stdout (fd 1), eprint → stderr (fd 2); the fd
-                    // rides in the op's imm.
-                    if ((cid.name == "print" || cid.name == "eprint") && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var sv: i32 = s.cur_id();
-                        var fd: i32 = 1;
-                        if (cid.name == "eprint") { fd = 2; }
-                        s = s.fresh();
-                        var pa: i32[] = [sv];
-                        return s.emit(SInst { kind_tag: 19, result: s.cur_id(), args: pa, imm: fd, str: "" });
-                    }
-                    // write(s) — like print but WITHOUT the trailing newline:
-                    // the driver's raw-output primitive (Fern's print == println,
-                    // so the self-hosted emitter uses `write` to stay byte-
-                    // identical to the Go-built compiler). A dedicated op →
-                    // __fern_ssa_write (fd 1, no newline); not a generic call.
-                    if (cid.name == "write" && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var wv: i32 = s.cur_id();
-                        s = s.fresh();
-                        var wa: i32[] = [wv];
-                        return s.emit(SInst { kind_tag: 20, result: s.cur_id(), args: wa, imm: 0, str: "" });
-                    }
-                    // args() — the argv accessor: returns a string[] of every
-                    // command-line argument (argv[0] first). A dedicated op →
-                    // __fern_ssa_args, which materialises the SSA array
-                    // [len, strptr…] of SSA [len, byte-per-word] strings from the
-                    // argv pointer the SSA `_start` saves. wasm falls back.
-                    if (cid.name == "args" && c.args.len() == 0) {
-                        s = s.fresh();
-                        var aa: i32[] = [];
-                        return s.emit(SInst { kind_tag: 22, result: s.cur_id(), args: aa, imm: 0, str: "" });
-                    }
-                    // exit(code) — terminate the process with the given i32
-                    // exit code. A dedicated op (the native backends emit the
-                    // exit syscall directly), so calls_all_known doesn't bail
-                    // on it as an unknown call. wasm has no SSA lowering yet
-                    // (ssa_wasm.supported() excludes it → the IR path there).
-                    if (cid.name == "exit" && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var ev: i32 = s.cur_id();
-                        s = s.fresh();
-                        var ea: i32[] = [ev];
-                        return s.emit(SInst { kind_tag: 21, result: s.cur_id(), args: ea, imm: 0, str: "" });
-                    }
-                    // f64_bits(x) / f64_from_bits(x) — bit reinterprets between
-                    // an f64 and its 64-bit IEEE pattern. The value already
-                    // lives in an 8-byte slot, so this is a pure pass-through of
-                    // those bytes; modelled as a `unary` (not a `copy`, which
-                    // copy_propagate would collapse — losing the int/float
-                    // distinction that compute_isfloat tracks per value).
-                    if ((cid.name == "f64_bits" || cid.name == "f64_from_bits") && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var rbv: i32 = s.cur_id();
-                        s = s.fresh();
-                        var rba: i32[] = [rbv];
-                        return s.emit(SInst { kind_tag: 10, result: s.cur_id(), args: rba, imm: 0, str: cid.name });
-                    }
-                    // strbuf_reset() / strbuf_append(s) / strbuf_take() — the
-                    // global amortised-O(1) string-builder (a dedicated op
-                    // each; the backends emit the runtime + a global byte
-                    // buffer). Not generic calls, so calls_all_known doesn't
-                    // bail. wasm has no SSA lowering (ssa_wasm rejects them →
-                    // the IR path). strbuf_take materialises a fresh
-                    // [len, bytes…] string and resets the buffer.
-                    if (cid.name == "strbuf_reset" && c.args.len() == 0) {
-                        s = s.fresh();
-                        var sbra: i32[] = [];
-                        return s.emit(SInst { kind_tag: 23, result: s.cur_id(), args: sbra, imm: 0, str: "" });
-                    }
-                    if (cid.name == "strbuf_append" && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var sbav: i32 = s.cur_id();
-                        s = s.fresh();
-                        var sbaa: i32[] = [sbav];
-                        return s.emit(SInst { kind_tag: 24, result: s.cur_id(), args: sbaa, imm: 0, str: "" });
-                    }
-                    if (cid.name == "strbuf_take" && c.args.len() == 0) {
-                        s = s.fresh();
-                        var sbta: i32[] = [];
-                        return s.emit(SInst { kind_tag: 25, result: s.cur_id(), args: sbta, imm: 0, str: "" });
-                    }
-                    // read_file(path) / write_file(path, content) — the file-I/O
-                    // builtins. Dedicated SSA ops, each lowering to a syscall
-                    // runtime helper on x86-64 / arm64; wasm has no SSA lowering
-                    // (ssa_wasm.inst_supported rejects them → the IR path). Both results are heap-box pointers:
-                    // read_file → Result[string, IoError] (Ok/Err box),
-                    // write_file → Result[(), IoError] (Ok/Err box), matched via
-                    // the fixed-tag chain like Some/Ok/Err. As dedicated ops they
-                    // are not generic calls, so calls_all_known doesn't bail.
-                    if (cid.name == "read_file" && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var rfv: i32 = s.cur_id();
-                        s = s.fresh();
-                        var rfa: i32[] = [rfv];
-                        return s.emit(SInst { kind_tag: 26, result: s.cur_id(), args: rfa, imm: 0, str: "" });
-                    }
-                    if (cid.name == "write_file" && c.args.len() == 2) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var wfp: i32 = s.cur_id();
-                        s = build_expr(c.args[1], s);
-                        if (!s.ok) { return s; }
-                        var wfc: i32 = s.cur_id();
-                        s = s.fresh();
-                        var wfa: i32[] = [wfp, wfc];
-                        return s.emit(SInst { kind_tag: 27, result: s.cur_id(), args: wfa, imm: 0, str: "" });
-                    }
-                    // Option / Result construction: Some(x) / Ok(x) / Err(x) →
-                    // a 2-word box { tag@0, payload@1 } (Some/Ok tag 0, Err
-                    // tag 1), mirroring the register backends' box layout. None is an ExprIdent
-                    // (handled below). __opt_payload(box) reads word 1 — used
-                    // by the synthesized match-arm binding for Some/Ok/Err.
-                    if ((cid.name == "Some" || cid.name == "Ok" || cid.name == "Err") && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var opv: i32 = s.cur_id();
-                        s = s.fresh();
-                        var obox: i32 = s.cur_id();
-                        var ona: i32[] = [];
-                        s = s.emit(SInst { kind_tag: 14, result: obox, args: ona, imm: 2, str: "" });
-                        s = s.kconst(0);
-                        var oz: i32 = s.cur_id();
-                        var otag: i32 = 0;
-                        if (cid.name == "Err") { otag = 1; }
-                        s = s.kconst(otag);
-                        var otv: i32 = s.cur_id();
-                        s = s.fresh();
-                        var ota: i32[] = [obox, oz, otv];
-                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: ota, imm: 32, str: "" });
-                        s = s.kconst(1);
-                        var oo: i32 = s.cur_id();
-                        s = s.fresh();
-                        var opa: i32[] = [obox, oo, opv];
-                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: opa, imm: 64, str: "" });
-                        s = s.fresh();
-                        var ocp: i32[] = [obox];
-                        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ocp, imm: 0, str: "" });
-                    }
-                    // __opt_payload(box) — read an Option/Result box's payload
-                    // (word 1). Synthesized by synth_match_chain for the
-                    // Some/Ok/Err arm binding (so the binding lowers via the
-                    // normal binding path rather than a raw load).
-                    if (cid.name == "__opt_payload" && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var pbx: i32 = s.cur_id();
-                        s = s.kconst(1);
-                        var p1: i32 = s.cur_id();
-                        s = s.fresh();
-                        var pla: i32[] = [pbx, p1];
-                        return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: pla, imm: 64, str: "" });
-                    }
-                    // arr[idx] = val — the parser desugars an indexed
-                    // assignment to the builtin __set_index(arr, idx, val).
-                    // Lower it to a store_elem at idx+1 (offset 0 is the
-                    // length prefix), mirroring ExprIndex's load. Width 0
-                    // matches the i32-element read/construct path (pointer-
-                    // element arrays aren't indexed in the subset yet). The
-                    // expression's value is the stored element.
-                    if (cid.name == "__set_index" && c.args.len() == 3) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var iptr: i32 = s.cur_id();
-                        s = build_expr(c.args[1], s);
-                        if (!s.ok) { return s; }
-                        var iidx: i32 = s.cur_id();
-                        s = s.kconst(1);
-                        var ione: i32 = s.cur_id();
-                        s = s.fresh();
-                        var iba: i32[] = [iidx, ione];
-                        s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: iba, imm: 0, str: "+" });
-                        var iidx1: i32 = s.cur_id();
-                        s = build_expr(c.args[2], s);
-                        if (!s.ok) { return s; }
-                        var ival: i32 = s.cur_id();
-                        s = s.fresh();
-                        var isa: i32[] = [iptr, iidx1, ival];
-                        return s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: isa, imm: 0, str: "" });
-                    }
-                    // __new_array(n) — allocate a length-prefixed i32 array of
-                    // n zeroed elements at a RUNTIME size (the alloc op carries
-                    // its size in args[0], unlike literal arrays whose size is
-                    // the imm). The dynamic-allocation primitive the array
-                    // helpers (push / slice) build on. Layout matches ExprArray:
-                    // length n at physical offset 0, elements at 1..n.
-                    if (cid.name == "__new_array" && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var nav: i32 = s.cur_id();
-                        s = s.kconst(1);
-                        var naone: i32 = s.cur_id();
-                        s = s.fresh();
-                        var nasz: i32[] = [nav, naone];
-                        s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: nasz, imm: 0, str: "+" });
-                        var nasize: i32 = s.cur_id();
-                        s = s.fresh();
-                        var nahandle: i32 = s.cur_id();
-                        var naa: i32[] = [nasize];
-                        s = s.emit(SInst { kind_tag: 14, result: nahandle, args: naa, imm: 0, str: "" });
-                        s = s.kconst(0);
-                        var nazidx: i32 = s.cur_id();
-                        s = s.fresh();
-                        var nast: i32[] = [nahandle, nazidx, nav];
-                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: nast, imm: 0, str: "" });
-                        s = s.fresh();
-                        var naret: i32[] = [nahandle];
-                        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: naret, imm: 0, str: "" });
-                    }
-                    // __streq(a, b) — content comparison of two string pointers
-                    // (1 if equal, else 0), used by the string-keyed map helpers
-                    // to compare keys (the buffer stores them as i32 slots, so
-                    // a Fern `==` there would be pointer, not content, equality).
-                    if (cid.name == "__streq" && c.args.len() == 2) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var sqa: i32 = s.cur_id();
-                        s = build_expr(c.args[1], s);
-                        if (!s.ok) { return s; }
-                        var sqb: i32 = s.cur_id();
-                        s = s.fresh();
-                        var sqargs: i32[] = [sqa, sqb];
-                        return s.emit(SInst { kind_tag: 18, result: s.cur_id(), args: sqargs, imm: 0, str: "" });
-                    }
-                    // string_from_bytes_unchecked(bs) builds a string from an i32 byte
-                    // array. A string and a byte array share the same length-
-                    // prefixed layout, so this is a full-array copy: slice the
-                    // whole input (__ssa_arr_slice(bs, 0, bs.len())) into a fresh
-                    // array, which IS the resulting string. type_of_expr types
-                    // the result "string" so .len() / concat dispatch.
-                    if (cid.name == "string_from_bytes_unchecked" && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var sbarr: i32 = s.cur_id();
-                        s = s.kconst(0);
-                        var sbz: i32 = s.cur_id();
-                        s = s.fresh();
-                        var sbla: i32[] = [sbarr, sbz];
-                        s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: sbla, imm: 0, str: "" });
-                        var sblen: i32 = s.cur_id();
-                        s = s.kconst(0);
-                        var sblo: i32 = s.cur_id();
-                        s = s.fresh();
-                        var sbargs: i32[] = [sbarr, sblo, sblen];
-                        return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: sbargs, imm: 0, str: "__ssa_arr_slice" });
-                    }
-                    // Map constructors. The parser desugars a `Map { … }`
-                    // literal to map_new_i32(8)… (integer keys) or map_new(8)…
-                    // (string keys); each routes to its injected helper
-                    // (i32-keyed __ssa_map_new_i32 / string-keyed
-                    // __ssa_smap_new). Both buffers share the same layout; the
-                    // string-keyed methods only differ in comparing keys by
-                    // content (__streq).
-                    // cell_new(v) — a single-slot box (docs/CELL-TYPE-PLAN.md):
-                    // alloc one slot, store the value at offset 0, yield the
-                    // pointer (modelled on emit_fn_box).
-                    if (cid.name == "cell_new" && c.args.len() == 1) {
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var nval: i32 = s.cur_id();
-                        s = s.fresh();
-                        var nbox: i32 = s.cur_id();
-                        var nna: i32[] = [];
-                        s = s.emit(SInst { kind_tag: 14, result: nbox, args: nna, imm: 1, str: "" });
-                        s = s.kconst(0);
-                        var nz: i32 = s.cur_id();
-                        s = s.fresh();
-                        var nsa: i32[] = [nbox, nz, nval];
-                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: nsa, imm: 64, str: "" });
-                        s = s.fresh();
-                        var nca: i32[] = [nbox];
-                        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: nca, imm: 0, str: "" });
-                    }
-                    var callee_name: string = cid.name;
-                    if (callee_name == "map_new") { callee_name = "__ssa_smap_new"; }
-                    if (callee_name == "map_new_i32") { callee_name = "__ssa_map_new_i32"; }
-                    // A lambda-bound local: f(...) dispatches to the lifted
-                    // top-level function recorded as "fn:<name>|cap,cap" in the
-                    // var-type map (see the StmtVar lambda case). The part after
-                    // "|" is the capture list to pass as trailing args.
-                    var cap_csv: string = "";
-                    var cfnty: string = s.get_var_type(cid.name);
-                    if (cfnty.len() > 3 && slice_unchecked(cfnty, 0, 3) == "fn:") {
-                        var crest: str = slice_unchecked(cfnty, 3, cfnty.len());
-                        var cbar: i32 = index_of_byte(crest, b'|');
-                        if (cbar >= 0) { callee_name = slice_unchecked(crest, 0, cbar) + ""; cap_csv = slice_unchecked(crest, cbar + 1, crest.len()) + ""; }
-                        else { callee_name = crest + ""; }
-                    }
-                    var argvals: i32[] = [];
-                    var i: i32 = 0;
-                    while (i < c.args.len()) {
-                        s = build_expr(c.args[i], s);
-                        if (!s.ok) { return s; }
-                        argvals = argvals.append(s.cur_id());
-                        i = i + 1;
-                    }
-                    // Append captured values (marker order) as trailing args.
-                    var ccn: string = "";
-                    var cpi: i32 = 0;
-                    while (cpi <= cap_csv.len()) {
-                        if (cpi == cap_csv.len() || cap_csv[cpi] == b',') {
-                            if (ccn.len() > 0) { argvals = argvals.append(s.get_var(ccn)); }
-                            ccn = "";
-                        } else { ccn = ccn + slice_unchecked(cap_csv, cpi, cpi + 1); }
-                        cpi = cpi + 1;
-                    }
-                    s = s.fresh();
-                    return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: argvals, imm: 0, str: callee_name });
-                },
-                ast.ExprFieldAccess(fa) => {
-                    // User-defined receiver method `recv.m(args)` → a direct
-                    // call to the method's symbol (seeded "<recv-type>#<m>" →
-                    // "m:<sym>"), passing the receiver as the first argument.
-                    // Keyed by the receiver's type, so it only fires for a
-                    // declared method — map / array builtins (below) handle Map
-                    // / array receivers, which carry no such seed.
-                    var urt: string = type_of_expr(fa.obj, s);
-                    if (urt.len() > 0) {
-                        var um: string = s.get_var_type(urt + "#" + fa.field);
-                        if (um.len() > 2 && slice_unchecked(um, 0, 2) == "m:") {
-                            var urest: str = slice_unchecked(um, 2, um.len());
-                            var ucolon: i32 = index_of_byte(urest, b':');   // before ret type
-                            var usym: string = urest + "";
-                            if (ucolon >= 0) { usym = slice_unchecked(urest, 0, ucolon) + ""; }
-                            s = build_expr(fa.obj, s);
-                            if (!s.ok) { return s; }
-                            var uargs: i32[] = [s.cur_id()];
-                            var uai: i32 = 0;
-                            while (uai < c.args.len()) {
-                                s = build_expr(c.args[uai], s);
-                                if (!s.ok) { return s; }
-                                uargs = uargs.append(s.cur_id());
-                                uai = uai + 1;
-                            }
-                            s = s.fresh();
-                            return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: uargs, imm: 0, str: usym });
-                        }
-                    }
-                    // Cell[T] (docs/CELL-TYPE-PLAN.md): get() loads slot 0;
-                    // set(v) stores it in place (void). Single-slot box.
-                    if (urt == "cell" && fa.field == "get" && c.args.len() == 0) {
-                        s = build_expr(fa.obj, s);
-                        if (!s.ok) { return s; }
-                        var gptr: i32 = s.cur_id();
-                        s = s.kconst(0);
-                        var gz: i32 = s.cur_id();
-                        s = s.fresh();
-                        var gla: i32[] = [gptr, gz];
-                        return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: gla, imm: 64, str: "" });
-                    }
-                    if (urt == "cell" && fa.field == "set" && c.args.len() == 1) {
-                        s = build_expr(fa.obj, s);
-                        if (!s.ok) { return s; }
-                        var cptr: i32 = s.cur_id();
-                        s = s.kconst(0);
-                        var cz: i32 = s.cur_id();
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var cval: i32 = s.cur_id();
-                        s = s.fresh();
-                        var cstore: i32[] = [cptr, cz, cval];
-                        return s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: cstore, imm: 64, str: "" });
-                    }
-                    // Built-in `.with(i, v)` on arrays — value-returning
-                    // element set (`arr = arr.with(i, v)`, the replacement for
-                    // `arr[i] = v`). Lower to a store_elem at idx+1 (offset 0 is
-                    // the length prefix), then yield a copy of the receiver so
-                    // the surrounding reassignment threads the array.
-                    if (fa.field == "with" && c.args.len() == 2) {
-                        s = build_expr(fa.obj, s);
-                        if (!s.ok) { return s; }
-                        var wptr: i32 = s.cur_id();
-                        s = build_expr(c.args[0], s);
-                        if (!s.ok) { return s; }
-                        var widx: i32 = s.cur_id();
-                        s = s.kconst(1);
-                        var wone: i32 = s.cur_id();
-                        s = s.fresh();
-                        var wba: i32[] = [widx, wone];
-                        s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: wba, imm: 0, str: "+" });
-                        var widx1: i32 = s.cur_id();
-                        s = build_expr(c.args[1], s);
-                        if (!s.ok) { return s; }
-                        var wval: i32 = s.cur_id();
-                        s = s.fresh();
-                        var wsa: i32[] = [wptr, widx1, wval];
-                        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: wsa, imm: 0, str: "" });
-                        s = s.fresh();
-                        var wcp: i32[] = [wptr];
-                        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: wcp, imm: 0, str: "" });
-                    }
-                    // Map methods (i32-keyed maps): set / get_or / has, and
-                    // len on a Map receiver. The parser desugars a `Map { … }`
-                    // literal to map_new_i32(8).insert(k0,v0)… and user code calls
-                    // these by name; arrays have none of set/get_or/has, so
-                    // those are unambiguous. They lower to calls into the
-                    // injected association-array helpers (__ssa_map_*), with
-                    // the receiver passed as the first argument. The map handle
-                    // is an i32[] buffer; mutations land in place (fixed
-                    // capacity — see map_helpers_src).
-                    // i32-keyed maps are "Map", string-keyed are "SMap". The
-                    // key-comparing methods (set/get_or/has/delete) pick the
-                    // matching helper by the receiver's type; len/keys/values
-                    // copy slots only (no key compare), so they share the i32
-                    // helpers for both. An untyped receiver defaults to the i32
-                    // map (the prior, only-i32 behaviour).
-                    var mt: string = type_of_expr(fa.obj, s);
-                    var ismap: boolean = mt == "Map" || mt == "SMap";
-                    var pfx: string = "__ssa_map_";
-                    if (mt == "SMap") { pfx = "__ssa_smap_"; }
-                    var mname: string = "";
-                    if ((fa.field == "insert") && c.args.len() == 2) { mname = pfx + "set"; }
-                    else if (fa.field == "get_or" && c.args.len() == 2) { mname = pfx + "get_or"; }
-                    else if (fa.field == "has" && c.args.len() == 1) { mname = pfx + "has"; }
-                    else if ((fa.field == "without") && c.args.len() == 1) { mname = pfx + "delete"; }
-                    else if (fa.field == "len" && c.args.len() == 0 && ismap) { mname = "__ssa_map_len"; }
-                    else if (fa.field == "keys" && c.args.len() == 0 && ismap) { mname = "__ssa_map_keys"; }
-                    else if (fa.field == "values" && c.args.len() == 0 && ismap) { mname = "__ssa_map_values"; }
-                    else if (fa.field == "append" && c.args.len() == 1) { mname = "__ssa_arr_push"; }
-                    if (mname.len() > 0) {
-                        s = build_expr(fa.obj, s);
-                        if (!s.ok) { return s; }
-                        var margs: i32[] = [s.cur_id()];
-                        var mi: i32 = 0;
-                        while (mi < c.args.len()) {
-                            s = build_expr(c.args[mi], s);
-                            if (!s.ok) { return s; }
-                            margs = margs.append(s.cur_id());
-                            mi = mi + 1;
-                        }
-                        s = s.fresh();
-                        return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: margs, imm: 0, str: mname });
-                    }
-                    // arr.len() → the length stored at element 0.
-                    if (fa.field != "len" || c.args.len() != 0) { return s.fail(); }
-                    s = build_expr(fa.obj, s);
-                    if (!s.ok) { return s; }
-                    var ptr: i32 = s.cur_id();
-                    s = s.kconst(0);
-                    var zidx: i32 = s.cur_id();
-                    s = s.fresh();
-                    var la: i32[] = [ptr, zidx];
-                    return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: la, imm: 0, str: "" });
-                },
-                _ => { return s.fail(); }
-            }
-        },
+        ast.ExprCall(c) => { return build_expr_call(c, s); },
         ast.ExprStructLit(sl) => { return build_expr_struct_lit(sl, s); },
         ast.ExprFieldAccess(fa) => { return build_expr_field_access(fa, s); },
         ast.ExprString(strlit) => { return build_expr_string(strlit, s); },
@@ -3018,43 +2512,7 @@ function order_by_lo(n: i32, lo: i32[]): i32[] {
     return out;
 }
 
-pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
-    var big: i32 = 2000000000;
-    var lo: i32[] = [];
-    var hi: i32[] = [];
-    var i: i32 = 0;
-    while (i < f.nvals) { lo = lo.append(big); hi = hi.append(0 - 1); i = i + 1; }
-    var calls: i32[] = [];
-
-    // Number instructions and record each value's def/use positions.
-    var def_pos: i32[] = [];
-    i = 0;
-    while (i < f.nvals) { def_pos = def_pos.append(0 - 1); i = i + 1; }
-    var pos: i32 = 0;
-    var bi: i32 = 0;
-    while (bi < f.blocks.len()) {
-        var blk: SBlock = f.blocks[bi];
-        var k: i32 = 0;
-        while (k < blk.insts.len()) {
-            var ins: SInst = blk.insts[k];
-            lo = upd_lo(lo, ins.result, pos); hi = upd_hi(hi, ins.result, pos);
-            if (ins.result >= 0 && ins.result < def_pos.len()) { def_pos = env_put(def_pos, ins.result, pos); }
-            var a: i32 = 0;
-            while (a < ins.args.len()) {
-                lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
-                a = a + 1;
-            }
-            if (ins.kind_tag == 11 || ins.kind_tag == 12 || ins.kind_tag == 19 || ins.kind_tag == 20 || ins.kind_tag == 22 || ins.kind_tag == 21 || ins.kind_tag == 23 || ins.kind_tag == 24 || ins.kind_tag == 25 || ins.kind_tag == 26 || ins.kind_tag == 27 || ins.kind_tag == 17 || ins.kind_tag == 18) { calls = calls.append(pos); }
-            pos = pos + 1;
-            k = k + 1;
-        }
-        if (blk.term.kind_tag == 1) { lo = upd_lo(lo, blk.term.value, pos); hi = upd_hi(hi, blk.term.value, pos); }
-        else if (blk.term.kind_tag == 3) { lo = upd_lo(lo, blk.term.cond, pos); hi = upd_hi(hi, blk.term.cond, pos); }
-        pos = pos + 1;
-        bi = bi + 1;
-    }
-    var total_pos: i32 = pos;
-
+function extend_backedge_phi_intervals(f: SFunc, def_pos: i32[], total_pos: i32, hi: i32[]): i32[] {
     // Back-edge fix: a phi operand whose definition comes AFTER the phi (a
     // loop back-edge value) is live from its def through the back-edge, not
     // just to the phi's (earlier) position. Extend its interval to the end
@@ -3079,7 +2537,10 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         ppos = ppos + 1;
         bj = bj + 1;
     }
+    return hi;
+}
 
+function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i32[] {
     // Loop-invariant fix: a value defined BEFORE a loop header and used inside
     // the loop is live across the whole loop (re-read every iteration), so its
     // interval must reach the back-edge — otherwise the scan expires it at its
@@ -3130,6 +2591,48 @@ pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
         lstart = lterm_pos + 1;
         lbi = lbi + 1;
     }
+    return hi;
+}
+
+pub function regalloc_linear(f: SFunc, nregs: i32): i32[] {
+    var big: i32 = 2000000000;
+    var lo: i32[] = [];
+    var hi: i32[] = [];
+    var i: i32 = 0;
+    while (i < f.nvals) { lo = lo.append(big); hi = hi.append(0 - 1); i = i + 1; }
+    var calls: i32[] = [];
+
+    // Number instructions and record each value's def/use positions.
+    var def_pos: i32[] = [];
+    i = 0;
+    while (i < f.nvals) { def_pos = def_pos.append(0 - 1); i = i + 1; }
+    var pos: i32 = 0;
+    var bi: i32 = 0;
+    while (bi < f.blocks.len()) {
+        var blk: SBlock = f.blocks[bi];
+        var k: i32 = 0;
+        while (k < blk.insts.len()) {
+            var ins: SInst = blk.insts[k];
+            lo = upd_lo(lo, ins.result, pos); hi = upd_hi(hi, ins.result, pos);
+            if (ins.result >= 0 && ins.result < def_pos.len()) { def_pos = env_put(def_pos, ins.result, pos); }
+            var a: i32 = 0;
+            while (a < ins.args.len()) {
+                lo = upd_lo(lo, ins.args[a], pos); hi = upd_hi(hi, ins.args[a], pos);
+                a = a + 1;
+            }
+            if (ins.kind_tag == 11 || ins.kind_tag == 12 || ins.kind_tag == 19 || ins.kind_tag == 20 || ins.kind_tag == 22 || ins.kind_tag == 21 || ins.kind_tag == 23 || ins.kind_tag == 24 || ins.kind_tag == 25 || ins.kind_tag == 26 || ins.kind_tag == 27 || ins.kind_tag == 17 || ins.kind_tag == 18) { calls = calls.append(pos); }
+            pos = pos + 1;
+            k = k + 1;
+        }
+        if (blk.term.kind_tag == 1) { lo = upd_lo(lo, blk.term.value, pos); hi = upd_hi(hi, blk.term.value, pos); }
+        else if (blk.term.kind_tag == 3) { lo = upd_lo(lo, blk.term.cond, pos); hi = upd_hi(hi, blk.term.cond, pos); }
+        pos = pos + 1;
+        bi = bi + 1;
+    }
+    var total_pos: i32 = pos;
+
+    hi = extend_backedge_phi_intervals(f, def_pos, total_pos, hi);
+    hi = extend_loop_invariant_intervals(f, def_pos, hi);
 
     var reg_of: i32[] = [];
     i = 0;
@@ -3584,6 +3087,529 @@ pub function calls_func(funcs: SFunc[], name: string): boolean {
         fi = fi + 1;
     }
     return false;
+}
+
+// build_expr_call lowers a call. The two callee shapes are independent
+// lowerings that share only the argument evaluation order, so each gets
+// its own function; the naming mirrors asmcore's infer_call_named_type /
+// infer_call_method_type, which split the same distinction.
+function build_expr_call(c: ast.ExprCall, s: BState): BState {
+    match (c.callee) {
+        ast.ExprIdent(cid) => { return build_call_named(cid, c, s); },
+        ast.ExprFieldAccess(fa) => { return build_call_method(fa, c, s); },
+        _ => { return s.fail(); }
+    }
+}
+
+// build_call_named lowers `f(args)` — a builtin, a module function, or a
+// closure-typed local.
+function build_call_named(cid: ast.ExprIdent, c: ast.ExprCall, s: BState): BState {
+    // slice_unchecked(s, a, b) is the byte slice `s[a:b]` used
+    // to be (#5634). The subset is untyped and a string is a
+    // byte array here, so it lowers to the same
+    // __ssa_arr_slice the ExprSlice arm emits — the two forms
+    // cannot drift.
+    if (cid.name == "slice_unchecked" && c.args.len() == 3) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var sua: i32 = s.cur_id();
+        s = build_expr(c.args[1], s);
+        if (!s.ok) { return s; }
+        var sulo: i32 = s.cur_id();
+        s = build_expr(c.args[2], s);
+        if (!s.ok) { return s; }
+        var suhi: i32 = s.cur_id();
+        s = s.fresh();
+        var suargs: i32[] = [sua, sulo, suhi];
+        return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: suargs, imm: 0, str: "__ssa_arr_slice" });
+    }
+    // Indirect call: the callee is a function-VALUE local
+    // (recorded "fnval"), holding a closure BOX — a tuple-style
+    // (fn_addr, cap…). Load fn_addr from slot 0 and call through
+    // it, passing the box itself as a trailing env arg. A
+    // capturing lifted body reads its captures from that env; a
+    // no-capture / named function ignores the extra register.
+    if (is_boxed_fnty(s.get_var_type(cid.name))) {
+        var iav: i32[] = [];
+        var iai: i32 = 0;
+        while (iai < c.args.len()) {
+            s = build_expr(c.args[iai], s);
+            if (!s.ok) { return s; }
+            iav = iav.append(s.cur_id());
+            iai = iai + 1;
+        }
+        var boxv: i32 = s.get_var(cid.name);
+        s = s.kconst(0);
+        var bzi: i32 = s.cur_id();
+        s = s.fresh();
+        var bla: i32[] = [boxv, bzi];
+        s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: bla, imm: 64, str: "" });
+        var fnaddr: i32 = s.cur_id();
+        var icargs: i32[] = [fnaddr];
+        var ica: i32 = 0;
+        while (ica < iav.len()) { icargs = icargs.append(iav[ica]); ica = ica + 1; }
+        icargs = icargs.append(boxv);
+        s = s.fresh();
+        return s.emit(SInst { kind_tag: 12, result: s.cur_id(), args: icargs, imm: 0, str: "" });
+    }
+    // print(s) — write the string's bytes to stdout. A
+    // dedicated op (the backends emit a write-syscall helper);
+    // not a generic call, so calls_all_known doesn't bail.
+    // print → stdout (fd 1), eprint → stderr (fd 2); the fd
+    // rides in the op's imm.
+    if ((cid.name == "print" || cid.name == "eprint") && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var sv: i32 = s.cur_id();
+        var fd: i32 = 1;
+        if (cid.name == "eprint") { fd = 2; }
+        s = s.fresh();
+        var pa: i32[] = [sv];
+        return s.emit(SInst { kind_tag: 19, result: s.cur_id(), args: pa, imm: fd, str: "" });
+    }
+    // write(s) — like print but WITHOUT the trailing newline:
+    // the driver's raw-output primitive (Fern's print == println,
+    // so the self-hosted emitter uses `write` to stay byte-
+    // identical to the Go-built compiler). A dedicated op →
+    // __fern_ssa_write (fd 1, no newline); not a generic call.
+    if (cid.name == "write" && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var wv: i32 = s.cur_id();
+        s = s.fresh();
+        var wa: i32[] = [wv];
+        return s.emit(SInst { kind_tag: 20, result: s.cur_id(), args: wa, imm: 0, str: "" });
+    }
+    // args() — the argv accessor: returns a string[] of every
+    // command-line argument (argv[0] first). A dedicated op →
+    // __fern_ssa_args, which materialises the SSA array
+    // [len, strptr…] of SSA [len, byte-per-word] strings from the
+    // argv pointer the SSA `_start` saves. wasm falls back.
+    if (cid.name == "args" && c.args.len() == 0) {
+        s = s.fresh();
+        var aa: i32[] = [];
+        return s.emit(SInst { kind_tag: 22, result: s.cur_id(), args: aa, imm: 0, str: "" });
+    }
+    // exit(code) — terminate the process with the given i32
+    // exit code. A dedicated op (the native backends emit the
+    // exit syscall directly), so calls_all_known doesn't bail
+    // on it as an unknown call. wasm has no SSA lowering yet
+    // (ssa_wasm.supported() excludes it → the IR path there).
+    if (cid.name == "exit" && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var ev: i32 = s.cur_id();
+        s = s.fresh();
+        var ea: i32[] = [ev];
+        return s.emit(SInst { kind_tag: 21, result: s.cur_id(), args: ea, imm: 0, str: "" });
+    }
+    // f64_bits(x) / f64_from_bits(x) — bit reinterprets between
+    // an f64 and its 64-bit IEEE pattern. The value already
+    // lives in an 8-byte slot, so this is a pure pass-through of
+    // those bytes; modelled as a `unary` (not a `copy`, which
+    // copy_propagate would collapse — losing the int/float
+    // distinction that compute_isfloat tracks per value).
+    if ((cid.name == "f64_bits" || cid.name == "f64_from_bits") && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var rbv: i32 = s.cur_id();
+        s = s.fresh();
+        var rba: i32[] = [rbv];
+        return s.emit(SInst { kind_tag: 10, result: s.cur_id(), args: rba, imm: 0, str: cid.name });
+    }
+    // strbuf_reset() / strbuf_append(s) / strbuf_take() — the
+    // global amortised-O(1) string-builder (a dedicated op
+    // each; the backends emit the runtime + a global byte
+    // buffer). Not generic calls, so calls_all_known doesn't
+    // bail. wasm has no SSA lowering (ssa_wasm rejects them →
+    // the IR path). strbuf_take materialises a fresh
+    // [len, bytes…] string and resets the buffer.
+    if (cid.name == "strbuf_reset" && c.args.len() == 0) {
+        s = s.fresh();
+        var sbra: i32[] = [];
+        return s.emit(SInst { kind_tag: 23, result: s.cur_id(), args: sbra, imm: 0, str: "" });
+    }
+    if (cid.name == "strbuf_append" && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var sbav: i32 = s.cur_id();
+        s = s.fresh();
+        var sbaa: i32[] = [sbav];
+        return s.emit(SInst { kind_tag: 24, result: s.cur_id(), args: sbaa, imm: 0, str: "" });
+    }
+    if (cid.name == "strbuf_take" && c.args.len() == 0) {
+        s = s.fresh();
+        var sbta: i32[] = [];
+        return s.emit(SInst { kind_tag: 25, result: s.cur_id(), args: sbta, imm: 0, str: "" });
+    }
+    // read_file(path) / write_file(path, content) — the file-I/O
+    // builtins. Dedicated SSA ops, each lowering to a syscall
+    // runtime helper on x86-64 / arm64; wasm has no SSA lowering
+    // (ssa_wasm.inst_supported rejects them → the IR path). Both results are heap-box pointers:
+    // read_file → Result[string, IoError] (Ok/Err box),
+    // write_file → Result[(), IoError] (Ok/Err box), matched via
+    // the fixed-tag chain like Some/Ok/Err. As dedicated ops they
+    // are not generic calls, so calls_all_known doesn't bail.
+    if (cid.name == "read_file" && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var rfv: i32 = s.cur_id();
+        s = s.fresh();
+        var rfa: i32[] = [rfv];
+        return s.emit(SInst { kind_tag: 26, result: s.cur_id(), args: rfa, imm: 0, str: "" });
+    }
+    if (cid.name == "write_file" && c.args.len() == 2) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var wfp: i32 = s.cur_id();
+        s = build_expr(c.args[1], s);
+        if (!s.ok) { return s; }
+        var wfc: i32 = s.cur_id();
+        s = s.fresh();
+        var wfa: i32[] = [wfp, wfc];
+        return s.emit(SInst { kind_tag: 27, result: s.cur_id(), args: wfa, imm: 0, str: "" });
+    }
+    // Option / Result construction: Some(x) / Ok(x) / Err(x) →
+    // a 2-word box { tag@0, payload@1 } (Some/Ok tag 0, Err
+    // tag 1), mirroring the register backends' box layout. None is an ExprIdent
+    // (handled below). __opt_payload(box) reads word 1 — used
+    // by the synthesized match-arm binding for Some/Ok/Err.
+    if ((cid.name == "Some" || cid.name == "Ok" || cid.name == "Err") && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var opv: i32 = s.cur_id();
+        s = s.fresh();
+        var obox: i32 = s.cur_id();
+        var ona: i32[] = [];
+        s = s.emit(SInst { kind_tag: 14, result: obox, args: ona, imm: 2, str: "" });
+        s = s.kconst(0);
+        var oz: i32 = s.cur_id();
+        var otag: i32 = 0;
+        if (cid.name == "Err") { otag = 1; }
+        s = s.kconst(otag);
+        var otv: i32 = s.cur_id();
+        s = s.fresh();
+        var ota: i32[] = [obox, oz, otv];
+        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: ota, imm: 32, str: "" });
+        s = s.kconst(1);
+        var oo: i32 = s.cur_id();
+        s = s.fresh();
+        var opa: i32[] = [obox, oo, opv];
+        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: opa, imm: 64, str: "" });
+        s = s.fresh();
+        var ocp: i32[] = [obox];
+        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: ocp, imm: 0, str: "" });
+    }
+    // __opt_payload(box) — read an Option/Result box's payload
+    // (word 1). Synthesized by synth_match_chain for the
+    // Some/Ok/Err arm binding (so the binding lowers via the
+    // normal binding path rather than a raw load).
+    if (cid.name == "__opt_payload" && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var pbx: i32 = s.cur_id();
+        s = s.kconst(1);
+        var p1: i32 = s.cur_id();
+        s = s.fresh();
+        var pla: i32[] = [pbx, p1];
+        return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: pla, imm: 64, str: "" });
+    }
+    // arr[idx] = val — the parser desugars an indexed
+    // assignment to the builtin __set_index(arr, idx, val).
+    // Lower it to a store_elem at idx+1 (offset 0 is the
+    // length prefix), mirroring ExprIndex's load. Width 0
+    // matches the i32-element read/construct path (pointer-
+    // element arrays aren't indexed in the subset yet). The
+    // expression's value is the stored element.
+    if (cid.name == "__set_index" && c.args.len() == 3) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var iptr: i32 = s.cur_id();
+        s = build_expr(c.args[1], s);
+        if (!s.ok) { return s; }
+        var iidx: i32 = s.cur_id();
+        s = s.kconst(1);
+        var ione: i32 = s.cur_id();
+        s = s.fresh();
+        var iba: i32[] = [iidx, ione];
+        s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: iba, imm: 0, str: "+" });
+        var iidx1: i32 = s.cur_id();
+        s = build_expr(c.args[2], s);
+        if (!s.ok) { return s; }
+        var ival: i32 = s.cur_id();
+        s = s.fresh();
+        var isa: i32[] = [iptr, iidx1, ival];
+        return s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: isa, imm: 0, str: "" });
+    }
+    // __new_array(n) — allocate a length-prefixed i32 array of
+    // n zeroed elements at a RUNTIME size (the alloc op carries
+    // its size in args[0], unlike literal arrays whose size is
+    // the imm). The dynamic-allocation primitive the array
+    // helpers (push / slice) build on. Layout matches ExprArray:
+    // length n at physical offset 0, elements at 1..n.
+    if (cid.name == "__new_array" && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var nav: i32 = s.cur_id();
+        s = s.kconst(1);
+        var naone: i32 = s.cur_id();
+        s = s.fresh();
+        var nasz: i32[] = [nav, naone];
+        s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: nasz, imm: 0, str: "+" });
+        var nasize: i32 = s.cur_id();
+        s = s.fresh();
+        var nahandle: i32 = s.cur_id();
+        var naa: i32[] = [nasize];
+        s = s.emit(SInst { kind_tag: 14, result: nahandle, args: naa, imm: 0, str: "" });
+        s = s.kconst(0);
+        var nazidx: i32 = s.cur_id();
+        s = s.fresh();
+        var nast: i32[] = [nahandle, nazidx, nav];
+        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: nast, imm: 0, str: "" });
+        s = s.fresh();
+        var naret: i32[] = [nahandle];
+        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: naret, imm: 0, str: "" });
+    }
+    // __streq(a, b) — content comparison of two string pointers
+    // (1 if equal, else 0), used by the string-keyed map helpers
+    // to compare keys (the buffer stores them as i32 slots, so
+    // a Fern `==` there would be pointer, not content, equality).
+    if (cid.name == "__streq" && c.args.len() == 2) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var sqa: i32 = s.cur_id();
+        s = build_expr(c.args[1], s);
+        if (!s.ok) { return s; }
+        var sqb: i32 = s.cur_id();
+        s = s.fresh();
+        var sqargs: i32[] = [sqa, sqb];
+        return s.emit(SInst { kind_tag: 18, result: s.cur_id(), args: sqargs, imm: 0, str: "" });
+    }
+    // string_from_bytes_unchecked(bs) builds a string from an i32 byte
+    // array. A string and a byte array share the same length-
+    // prefixed layout, so this is a full-array copy: slice the
+    // whole input (__ssa_arr_slice(bs, 0, bs.len())) into a fresh
+    // array, which IS the resulting string. type_of_expr types
+    // the result "string" so .len() / concat dispatch.
+    if (cid.name == "string_from_bytes_unchecked" && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var sbarr: i32 = s.cur_id();
+        s = s.kconst(0);
+        var sbz: i32 = s.cur_id();
+        s = s.fresh();
+        var sbla: i32[] = [sbarr, sbz];
+        s = s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: sbla, imm: 0, str: "" });
+        var sblen: i32 = s.cur_id();
+        s = s.kconst(0);
+        var sblo: i32 = s.cur_id();
+        s = s.fresh();
+        var sbargs: i32[] = [sbarr, sblo, sblen];
+        return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: sbargs, imm: 0, str: "__ssa_arr_slice" });
+    }
+    // cell_new(v) — a single-slot box (docs/CELL-TYPE-PLAN.md):
+    // alloc one slot, store the value at offset 0, yield the
+    // pointer (modelled on emit_fn_box).
+    if (cid.name == "cell_new" && c.args.len() == 1) {
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var nval: i32 = s.cur_id();
+        s = s.fresh();
+        var nbox: i32 = s.cur_id();
+        var nna: i32[] = [];
+        s = s.emit(SInst { kind_tag: 14, result: nbox, args: nna, imm: 1, str: "" });
+        s = s.kconst(0);
+        var nz: i32 = s.cur_id();
+        s = s.fresh();
+        var nsa: i32[] = [nbox, nz, nval];
+        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: nsa, imm: 64, str: "" });
+        s = s.fresh();
+        var nca: i32[] = [nbox];
+        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: nca, imm: 0, str: "" });
+    }
+    return build_call_generic(cid, c, s);
+}
+
+// build_call_method lowers `recv.m(args)` — a declared receiver method, or a
+// map / array / string builtin keyed off the receiver type.
+// build_call_generic lowers the calls no builtin above claimed: a module
+// function, or a lambda-bound local dispatching to its lifted top-level body.
+function build_call_generic(cid: ast.ExprIdent, c: ast.ExprCall, s: BState): BState {
+    var callee_name: string = cid.name;
+    // The parser desugars a `Map { … }` literal to map_new_i32(8)… (integer
+    // keys) or map_new(8)… (string keys); each routes to its injected helper.
+    // Both buffers share the same layout; the string-keyed methods only differ
+    // in comparing keys by content (__streq).
+    if (callee_name == "map_new") { callee_name = "__ssa_smap_new"; }
+    if (callee_name == "map_new_i32") { callee_name = "__ssa_map_new_i32"; }
+    // A lambda-bound local: f(...) dispatches to the lifted
+    // top-level function recorded as "fn:<name>|cap,cap" in the
+    // var-type map (see the StmtVar lambda case). The part after
+    // "|" is the capture list to pass as trailing args.
+    var cap_csv: string = "";
+    var cfnty: string = s.get_var_type(cid.name);
+    if (cfnty.len() > 3 && slice_unchecked(cfnty, 0, 3) == "fn:") {
+        var crest: str = slice_unchecked(cfnty, 3, cfnty.len());
+        var cbar: i32 = index_of_byte(crest, b'|');
+        if (cbar >= 0) { callee_name = slice_unchecked(crest, 0, cbar) + ""; cap_csv = slice_unchecked(crest, cbar + 1, crest.len()) + ""; }
+        else { callee_name = crest + ""; }
+    }
+    var argvals: i32[] = [];
+    var i: i32 = 0;
+    while (i < c.args.len()) {
+        s = build_expr(c.args[i], s);
+        if (!s.ok) { return s; }
+        argvals = argvals.append(s.cur_id());
+        i = i + 1;
+    }
+    // Append captured values (marker order) as trailing args.
+    var ccn: string = "";
+    var cpi: i32 = 0;
+    while (cpi <= cap_csv.len()) {
+        if (cpi == cap_csv.len() || cap_csv[cpi] == b',') {
+            if (ccn.len() > 0) { argvals = argvals.append(s.get_var(ccn)); }
+            ccn = "";
+        } else { ccn = ccn + slice_unchecked(cap_csv, cpi, cpi + 1); }
+        cpi = cpi + 1;
+    }
+    s = s.fresh();
+    return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: argvals, imm: 0, str: callee_name });
+}
+
+function build_call_method(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: BState): BState {
+    // User-defined receiver method `recv.m(args)` → a direct
+    // call to the method's symbol (seeded "<recv-type>#<m>" →
+    // "m:<sym>"), passing the receiver as the first argument.
+    // Keyed by the receiver's type, so it only fires for a
+    // declared method — map / array builtins (below) handle Map
+    // / array receivers, which carry no such seed.
+    var urt: string = type_of_expr(fa.obj, s);
+    if (urt.len() > 0) {
+        var um: string = s.get_var_type(urt + "#" + fa.field);
+        if (um.len() > 2 && slice_unchecked(um, 0, 2) == "m:") {
+            var urest: str = slice_unchecked(um, 2, um.len());
+            var ucolon: i32 = index_of_byte(urest, b':');   // before ret type
+            var usym: string = urest + "";
+            if (ucolon >= 0) { usym = slice_unchecked(urest, 0, ucolon) + ""; }
+            s = build_expr(fa.obj, s);
+            if (!s.ok) { return s; }
+            var uargs: i32[] = [s.cur_id()];
+            var uai: i32 = 0;
+            while (uai < c.args.len()) {
+                s = build_expr(c.args[uai], s);
+                if (!s.ok) { return s; }
+                uargs = uargs.append(s.cur_id());
+                uai = uai + 1;
+            }
+            s = s.fresh();
+            return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: uargs, imm: 0, str: usym });
+        }
+    }
+    // Cell[T] (docs/CELL-TYPE-PLAN.md): get() loads slot 0;
+    // set(v) stores it in place (void). Single-slot box.
+    if (urt == "cell" && fa.field == "get" && c.args.len() == 0) {
+        s = build_expr(fa.obj, s);
+        if (!s.ok) { return s; }
+        var gptr: i32 = s.cur_id();
+        s = s.kconst(0);
+        var gz: i32 = s.cur_id();
+        s = s.fresh();
+        var gla: i32[] = [gptr, gz];
+        return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: gla, imm: 64, str: "" });
+    }
+    if (urt == "cell" && fa.field == "set" && c.args.len() == 1) {
+        s = build_expr(fa.obj, s);
+        if (!s.ok) { return s; }
+        var cptr: i32 = s.cur_id();
+        s = s.kconst(0);
+        var cz: i32 = s.cur_id();
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var cval: i32 = s.cur_id();
+        s = s.fresh();
+        var cstore: i32[] = [cptr, cz, cval];
+        return s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: cstore, imm: 64, str: "" });
+    }
+    // Built-in `.with(i, v)` on arrays — value-returning
+    // element set (`arr = arr.with(i, v)`, the replacement for
+    // `arr[i] = v`). Lower to a store_elem at idx+1 (offset 0 is
+    // the length prefix), then yield a copy of the receiver so
+    // the surrounding reassignment threads the array.
+    if (fa.field == "with" && c.args.len() == 2) {
+        s = build_expr(fa.obj, s);
+        if (!s.ok) { return s; }
+        var wptr: i32 = s.cur_id();
+        s = build_expr(c.args[0], s);
+        if (!s.ok) { return s; }
+        var widx: i32 = s.cur_id();
+        s = s.kconst(1);
+        var wone: i32 = s.cur_id();
+        s = s.fresh();
+        var wba: i32[] = [widx, wone];
+        s = s.emit(SInst { kind_tag: 9, result: s.cur_id(), args: wba, imm: 0, str: "+" });
+        var widx1: i32 = s.cur_id();
+        s = build_expr(c.args[1], s);
+        if (!s.ok) { return s; }
+        var wval: i32 = s.cur_id();
+        s = s.fresh();
+        var wsa: i32[] = [wptr, widx1, wval];
+        s = s.emit(SInst { kind_tag: 16, result: s.cur_id(), args: wsa, imm: 0, str: "" });
+        s = s.fresh();
+        var wcp: i32[] = [wptr];
+        return s.emit(SInst { kind_tag: 7, result: s.cur_id(), args: wcp, imm: 0, str: "" });
+    }
+    // Map methods (i32-keyed maps): set / get_or / has, and
+    // len on a Map receiver. The parser desugars a `Map { … }`
+    // literal to map_new_i32(8).insert(k0,v0)… and user code calls
+    // these by name; arrays have none of set/get_or/has, so
+    // those are unambiguous. They lower to calls into the
+    // injected association-array helpers (__ssa_map_*), with
+    // the receiver passed as the first argument. The map handle
+    // is an i32[] buffer; mutations land in place (fixed
+    // capacity — see map_helpers_src).
+    // i32-keyed maps are "Map", string-keyed are "SMap". The
+    // key-comparing methods (set/get_or/has/delete) pick the
+    // matching helper by the receiver's type; len/keys/values
+    // copy slots only (no key compare), so they share the i32
+    // helpers for both. An untyped receiver defaults to the i32
+    // map (the prior, only-i32 behaviour).
+    var mt: string = type_of_expr(fa.obj, s);
+    var ismap: boolean = mt == "Map" || mt == "SMap";
+    var pfx: string = "__ssa_map_";
+    if (mt == "SMap") { pfx = "__ssa_smap_"; }
+    var mname: string = "";
+    if ((fa.field == "insert") && c.args.len() == 2) { mname = pfx + "set"; }
+    else if (fa.field == "get_or" && c.args.len() == 2) { mname = pfx + "get_or"; }
+    else if (fa.field == "has" && c.args.len() == 1) { mname = pfx + "has"; }
+    else if ((fa.field == "without") && c.args.len() == 1) { mname = pfx + "delete"; }
+    else if (fa.field == "len" && c.args.len() == 0 && ismap) { mname = "__ssa_map_len"; }
+    else if (fa.field == "keys" && c.args.len() == 0 && ismap) { mname = "__ssa_map_keys"; }
+    else if (fa.field == "values" && c.args.len() == 0 && ismap) { mname = "__ssa_map_values"; }
+    else if (fa.field == "append" && c.args.len() == 1) { mname = "__ssa_arr_push"; }
+    if (mname.len() > 0) {
+        s = build_expr(fa.obj, s);
+        if (!s.ok) { return s; }
+        var margs: i32[] = [s.cur_id()];
+        var mi: i32 = 0;
+        while (mi < c.args.len()) {
+            s = build_expr(c.args[mi], s);
+            if (!s.ok) { return s; }
+            margs = margs.append(s.cur_id());
+            mi = mi + 1;
+        }
+        s = s.fresh();
+        return s.emit(SInst { kind_tag: 11, result: s.cur_id(), args: margs, imm: 0, str: mname });
+    }
+    // arr.len() → the length stored at element 0.
+    if (fa.field != "len" || c.args.len() != 0) { return s.fail(); }
+    s = build_expr(fa.obj, s);
+    if (!s.ok) { return s; }
+    var ptr: i32 = s.cur_id();
+    s = s.kconst(0);
+    var zidx: i32 = s.cur_id();
+    s = s.fresh();
+    var la: i32[] = [ptr, zidx];
+    return s.emit(SInst { kind_tag: 15, result: s.cur_id(), args: la, imm: 0, str: "" });
 }
 
 function build_expr_number(n: ast.ExprNumber, s: BState): BState {
