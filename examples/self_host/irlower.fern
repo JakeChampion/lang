@@ -53949,14 +53949,18 @@ pub function (s: LowerState) struct_routes_field_reclaim(sty: string): boolean {
 pub function struct_routes_field_reclaim_at(structs: parser.StructDecl[], sfok: string[], sty: string): boolean {
     if (struct_has_reclaim_array_field(structs, sty)) { return true; }
     // A direct TUPLE field whose shape is deep-droppable: routes so the
-    // IR-level emit_struct_tuple_field_drops reaches it. The admission is
-    // TYPE-level (tuple_field_deep_droppable — flat scalars, leak-safe arrays,
-    // nested droppable tuples), the same shape struct_has_reclaim_array_field
-    // uses for arrays, so no whole-program scan is involved and the
-    // construction retain reads this very predicate (slit_reclaim). The asm
-    // __struct_drop ladder has no tuple arm — every k_* test is false for a
-    // "(…)" type — so the IR side owns the child walk AND the box dec with no
-    // second releaser.
+    // IR-level emit_struct_tuple_field_drops reaches it. The construction
+    // retain reads this very predicate (slit_reclaim). The asm __struct_drop
+    // ladder has no tuple arm — every k_* test is false for a "(…)" type — so
+    // the IR side owns the child walk AND the box dec with no second releaser.
+    //
+    // Removing this clause looks free and is not. With it knocked out, BOTH
+    // leak matrices, the tuple / rc-tuple / construction-retain /
+    // container-sink / census suites and the stage-2 fixpoint all pass —
+    // because no corpus here contains a struct whose tuple field carries a
+    // STRUCT element, the shape only this clause admits (via
+    // struct_has_reclaim_array_field on the element type). It costs 12800 bytes
+    // per 100 rounds. TestSelfHostTupleStructElemFieldX86_64 is what moves.
     if (struct_has_deep_tuple_field(structs, sty)) { return true; }
     // string[]-fielded type admitted by the strarrfld scan (the "arr:"-tagged
     // half of strfld_reclaim_ok_types_of) — routes so the backend
