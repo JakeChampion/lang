@@ -2563,7 +2563,6 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
 // IR array layout: len at buffer[0], element i at buffer[(i+1)*8], rc at buffer-8.
 function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
     var san: string = asmcore.sanitize_label(sty);
-    var n: i32 = irlower.decl_field_count(s.struct_decls, sty);
     s = s.write(".weak __fn___struct_drop_" + san + "\n");
     s = s.write("__fn___struct_drop_" + san + ":\n");
     s = s.write("    ldr x10, [sp]\n");                 // box (read before the frame push)
@@ -2571,90 +2570,35 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
     s = s.write("    stp x29, x30, [sp, #-16]!\n");     // save LR/FP for the nested bls
     s = s.write("    cmp x10, #16, lsl #12\n");         // box null / low-addr -> skip fields
     s = s.write("    blo .Lasd_" + san + "_ret\n");
-    var k: i32 = 0;
-    while (k < n) {
-        var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
-        var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
-        // A registered PLAIN-fn-pointer array field (#5235): route to the
-        // buffer-only shallow dec (k_scalar arm) instead of the k_box element
-        // WALK — its elements are raw code addresses (a box walk SIGSEGVs). The
-        // arm64 transcription of the x86 emit_ir_struct_drop_one k_fnptr gate.
-        var k_fnptr: boolean = !k_scalar && irlower.is_enum_array_field_type(s.struct_decls, fdt)
-            && s.has_need("FNPTR:" + sty + "." + irlower.decl_field_name_at(s.struct_decls, sty, k));
-        var k_box: boolean = !k_scalar && !k_fnptr && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
-        // A DIRECT nested-struct field (`inner: Inner`): freed SHALLOW via the
-        // same __fern_arr_dec as a scalar-array buffer — one level, like a struct-
-        // array element box (arr_dec already frees struct boxes). rc-guarded inside
-        // arr_dec; the construction alias-inc (shared irlower) balances it. Mirrors
-        // the x86 emit_ir_struct_drop_one k_struct case (Perceus slice 3b).
-        var k_struct: boolean = !k_scalar && !k_box && irlower.decl_is_struct(s.struct_decls, fdt);
-        // A `string` field is rc-headered (#4294); reclaimed via the rc-aware
-        // __fern_str_free (free rc==1, dec rc>1, skip view/literal rc<0), balanced
-        // by the shared-irlower construction alias-inc. Mirrors the x86 k_str arm
-        // (#4297 A2). GATED on the whole-program read scan ("strfldok:<T>"),
-        // exactly like __field_reclaim_<T>'s string arm above: the construction
-        // retain only fires for STRFLDOK-admitted types, so a non-admitted
-        // type's string fields are uncounted aliases this free would dangle —
-        // the merged-bundle IR self-compile corruption (#3425, x86 twin note).
-        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string" && s.has_need("strfldok:" + sty);
-        // A DIRECT enum field (`e: MyEnum`, decl_is_enum): freed SHALLOW via the same
-        // __fern_arr_dec as the scalar-array / nested-struct box (arr_dec frees enum
-        // boxes too) — one level, the variant payload leaks (deferred deep-drop).
-        // Construction alias-incs a non-fresh enum field (shared irlower) so this dec
-        // is balanced. Mirrors the x86 emit_ir_struct_drop_one k_enum arm. #4297 A2.
-        var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irlower.decl_is_enum(s.struct_decls, fdt);
-        // A string[] field: deep-freed via __fern_str_arr_free, gated on the
-        // strarrfld admission ("strfldok:arr:<T>") — the arm64 transcription
-        // of the x86 k_str_arr arm (see its comment for the element-freshness
-        // soundness contract).
-        var k_str_arr: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
-        // An fn-typed (closure) field: shallow-freed via the same rc-guarded
-        // __fern_arr_dec as k_struct / k_enum — the arm64 transcription of the
-        // x86 k_clo arm (clofld-gated, captures leak).
-        var k_clo: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && fdt == "fn" && s.has_need("strfldok:clo:" + sty);
-        // A string[] field refused only on its READS still gives its BUFFER back
-        // through the shallow arr_dec, gated on the STORE half of the scan's
-        // verdict ("strfldok:arrbuf:<T>") — the x86 k_str_arr_shallow
-        // transcription; see that arm's comment for why the store half is
-        // load-bearing.
-        var k_str_arr_shallow: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && !k_clo && fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty);
-        var off: string = util.i32_to_string((k + 1) * 8);
-        var ks: string = util.i32_to_string(k);
-        if (k_box) {
-            // MULTI-LEVEL array-element deep-drop (#2649): a struct-ARRAY field `X[]`
-            // whose element struct X is deep-drop-ok releases each element's OWN rc
-            // fields via __struct_arr_elems_drop_X BEFORE the element/buffer arr_dec
-            // below frees the boxes. The helper calls __struct_drop_X, clobbering
-            // x10/x11/x12, so reload box from the frame-relative stack arg [sp, #16]
-            // (entry pushed one stp frame), mirroring the k_struct deep-drop arm.
-            // Enum-array elements take the __enum_arr_elems_drop_<E> walk when
-            // enum_arr_elems_walk_ok admits the element enum.
-            if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
-                var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-                if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
-                    var esan: string = asmcore.sanitize_label(elem_ty);
-                    s = s.need("struct_arr_elems_drop:" + elem_ty);
-                    s = s.write("    ldr x0, [x10, #" + off + "]\n");       // buffer
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.write("    bl __fn___struct_arr_elems_drop_" + esan + "\n");
-                    s = s.write("    add sp, sp, #16\n");
-                    s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
-                }
-            } else if (irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
-                // The ENUM-array sibling (see asm_ir's twin): shape-dispatch
-                // each element and dec its leak-safe-array payloads before the
-                // box decs below, gated on enum_arr_elems_walk_ok.
-                var eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
-                if (irlower.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
-                    var easan: string = asmcore.sanitize_label(eaty);
-                    s = s.need("enum_arr_elems_drop:" + eaty);
-                    s = s.write("    ldr x0, [x10, #" + off + "]\n");       // buffer
-                    s = s.write("    str x0, [sp, #-16]!\n");
-                    s = s.write("    bl __fn___enum_arr_elems_drop_" + easan + "\n");
-                    s = s.write("    add sp, sp, #16\n");
-                    s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
-                }
-            }
+    // Which arm each field takes is asmcore.struct_drop_field_ops' call (#7736);
+    // this loop is only the arm64 selection for each directive it hands back.
+    var ops: asmcore.RcOp[] = asmcore.struct_drop_field_ops(s, sty);
+    var oi: i32 = 0;
+    while (oi < ops.len()) {
+        var op: asmcore.RcOp = ops[oi];
+        var off: string = util.i32_to_string((op.idx + 1) * 8);
+        var ks: string = util.i32_to_string(op.idx);
+        if (op.kind == "elems_drop_struct") {
+            // MULTI-LEVEL array-element deep-drop (#2649): release each element's
+            // OWN rc fields before the element/buffer decs below free the boxes.
+            var esan: string = asmcore.sanitize_label(op.ty);
+            s = s.need("struct_arr_elems_drop:" + op.ty);
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // buffer
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___struct_arr_elems_drop_" + esan + "\n");
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
+        } else if (op.kind == "elems_drop_enum") {
+            // The ENUM-array sibling: shape-dispatch each element and dec its
+            // leak-safe-array payloads before the box decs below.
+            var easan: string = asmcore.sanitize_label(op.ty);
+            s = s.need("enum_arr_elems_drop:" + op.ty);
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // buffer
+            s = s.write("    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___enum_arr_elems_drop_" + easan + "\n");
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
+        } else if (op.kind == "box_walk_dec") {
             s = s.write("    ldr x11, [x10, #" + off + "]\n");      // buffer = box.field_k
             s = s.write("    cmp x11, #16, lsl #12\n");             // null/low -> skip walk
             s = s.write("    blo .Lasd_" + san + "_buf" + ks + "\n");
@@ -2679,23 +2623,9 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_arr_dec\n");            // shallow dec the buffer slab
             s = s.write("    add sp, sp, #16\n");
-        } else if (k_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
-            // DEEP nested-struct field drop (Perceus slice 3 deep-drop): when the
-            // inner box is UNIQUELY owned, first __struct_drop_<fdt> releases the
-            // inner's OWN rc-array buffers, THEN __fern_arr_dec frees the inner box —
-            // mirroring the k_box element walk and the x86 emit_ir_struct_drop_one
-            // deep-drop arm. fdt is deep-drop-ok (its nested-struct closure is ACYCLIC
-            // per nested_field_deep_drop_ok), so __struct_drop_<fdt> may itself recurse
-            // into fdt's own deep-drop-ok fields: the emitted call graph is a DAG (multi-
-            // level, bounded by the struct-type count, no cycle). Emit the inner's per-
-            // type body (transitive need: emit_arm64_reclaim_drop_bodies re-checks needed.len(),
-            // need() dedups). __fern_arr_dec / __fern_rc_is_unique preserve x10, but
-            // __struct_drop_<fdt> CLOBBERS it, so reload box from the frame-relative
-            // stack arg [sp, #16] after the call (entry pushed an stp x29,x30 frame,
-            // so the box stack arg sits one frame slot above sp once the per-call
-            // push is balanced off).
-            var fsan: string = asmcore.sanitize_label(fdt);
-            s = s.need("struct_drop:" + fdt);
+        } else if (op.kind == "deep_struct_drop") {
+            var fsan: string = asmcore.sanitize_label(op.ty);
+            s = s.need("struct_drop:" + op.ty);
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // inner = box.field_k
             s = s.write("    cmp x0, #16, lsl #12\n");              // null / low -> skip field-release
             s = s.write("    blo .Lasd_" + san + "_sdf" + ks + "\n");
@@ -2709,11 +2639,7 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    add sp, sp, #16\n");
             s = s.write("    ldr x10, [sp, #16]\n");                // reload box (struct_drop clobbered x10)
             s = s.write(".Lasd_" + san + "_sdf" + ks + ":\n");
-            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // inner box
-            s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.write("    bl __fn___fern_arr_dec\n");            // free the inner box (rc-guarded)
-            s = s.write("    add sp, sp, #16\n");
-        } else if (k_str) {
+        } else if (op.kind == "str_free") {
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k string box
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_str_free\n");           // rc-aware: free rc==1, dec rc>1, skip view/literal rc<0
@@ -2724,19 +2650,19 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             // another rc field left x10 stale and the next arm freed through
             // garbage (the .ret reload only covered the RETURN, not the loop).
             s = s.write("    ldr x10, [sp, #16]\n");
-        } else if (k_str_arr) {
+        } else if (op.kind == "str_arr_free") {
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k string[] buffer
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_str_arr_free\n");       // deep at rc==1 (elements + buffer); shared -> dec
             s = s.write("    add sp, sp, #16\n");
             s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbers x10/x11/x12)
-        } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr || k_str_arr_shallow) {
+        } else if (op.kind == "arr_dec") {
             s = s.write("    ldr x0, [x10, #" + off + "]\n");       // box.field_k buffer / nested box / enum box / closure box / fn-ptr array buffer (shallow, no element walk)
             s = s.write("    str x0, [sp, #-16]!\n");
             s = s.write("    bl __fn___fern_arr_dec\n");
             s = s.write("    add sp, sp, #16\n");
         }
-        k = k + 1;
+        oi = oi + 1;
     }
     s = s.write(".Lasd_" + san + "_ret:\n");
     // Return the BOX (the documented contract) by reloading the stack arg —
