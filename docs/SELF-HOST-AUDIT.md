@@ -875,33 +875,46 @@ findings. Ranked by leverage.
   and the site count is unchanged, and gate on emitted bytes.
 
 ### T8 — Hand-rolled options/containers that generics would replace
-- [~] **SH-028 — the `append_*` family is one generic; the rest wait on it.**
-  _Done:_ the concat helpers. The row said four (`append_funcs`,
-  `append_structs`, `append_aliases`, `append_enum_decls` in `flatten.fern`);
-  there were **six** — `modloader.fern` carried its own `append_structs` AND an
-  `append_enums`, found by grepping for the shape rather than trusting the row.
-  All six are now `util.append_all[T]`, byte-identical bodies modulo the element
-  type.
+- [!] **SH-028 — BLOCKED: the second generic adoption miscompiles the
+  self-host. Attempted 2026-08-29, reverted.**
 
-  **Two things this adoption established, both recorded in
-  `docs/SELFHOST-LANGUAGE-FRICTION.md` §1 where generic adoptions are tracked:**
+  The `append_*` concat family is the row's easiest slice and it does not work
+  yet. Six byte-identical helpers — `append_funcs` / `append_structs` /
+  `append_aliases` / `append_enum_decls` in `flatten.fern`, plus a second
+  `append_structs` and an `append_enums` in `modloader.fern` (the row says four;
+  it is six) — were replaced by one `util.append_all[T]`. It type-checks, and
+  `check-sources` and `build-selfhost` on both arches pass.
 
-  1. **An import does not instantiate.** `util.fern` is imported by nearly every
-     module, which looks like the riskiest home for the tree's first
-     non-astwalk generic. It is not — monomorphisation follows CALLS, so
-     `append_all` instantiates only in `flatten.fern` and `modloader.fern`, over
-     four element types.
-  2. **`TestSelfHostFeatureCensus` is what makes adoption deliberate.** It
-     failed with "generic functions: census counts 9, pinned at 8" and the
-     instruction to move both the number and the friction-doc row. Generic
-     functions are the only monomorphisation the fixpoint exercises, so that
-     pin — not review — is what stops the generic surface growing unnoticed.
-     **Expect to move it on every future family in this row.**
+  **The resulting compiler is broken.** With that one generic added:
 
-  _Still open:_ `OptInt` / `OptBool` / `OptString` (`constfold.fern`) and the 22
-  `*Result` structs, two of them both named `CheckResult`. The `*Result` half is
-  also what T6/SH-026's real remainder (the `lookup_*` family returning
-  `name: ""`) is blocked on, so sequence those two together.
+  - `stage2-fixpoint-arm64`: 3 of 4 cases die `gen1 (x86 host): signal:
+    segmentation fault`. The discriminator is exact — `lexer` (no stdlib)
+    PASSES, and all three `stdlib: true` cases segfault, i.e. it fails on the
+    module-loading path.
+  - Locally, 12 failures across `Modload|Flatten|Bundle|Import|Generic`:
+    every `checkSourceModload` case "died on a signal rather than answering",
+    plus `TestSelfHostGenericCtorIR/std_set_of` (driver emitted 0 bytes),
+    `TestSelfHostGenericNestedRet{X86_64,Wasm}/enumerate_f64` (segfault).
+
+  Reverting the generic and nothing else makes `TestSelfHostGenericCtorIR` pass
+  again, so the causal chain is established rather than inferred: **a second
+  generic function in this tree yields a self-host compiler that segfaults on
+  module loading and miscompiles generic USER programs.**
+
+  This is a compiler defect that the dedupe exposed, not a defect in the
+  dedupe. Chasing it is a monomorphisation investigation, not "convert family
+  by family", so it wants its own issue with the reproducer above.
+
+  **The census pin is what forced this into the open**, and its wording was
+  exactly right: generic functions are "the only generic code the self-host
+  compiles, so it is the only monomorphisation the fixpoint exercises". Adding
+  the ninth failed the pin, and the pin is why the change got the fixpoint
+  scrutiny that found the segfault instead of shipping as a tidy-up.
+
+  _Prerequisite for the rest of this row:_ `OptInt` / `OptBool` / `OptString`
+  and the 22 `*Result` structs all want generics too, so **the whole row is
+  blocked behind that monomorphisation bug** — and so is T6/SH-026's real
+  remainder (`lookup_*` returning `name: ""`), which depends on `Option[T]`.
 
 ---
 

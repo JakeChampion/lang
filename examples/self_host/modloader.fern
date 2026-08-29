@@ -328,6 +328,19 @@ function strip_fern_ext(s: string): string {
     return s;
 }
 
+// append_structs / append_enums concatenate two decl lists (builtin merge).
+function append_structs(into: parser.StructDecl[], more: parser.StructDecl[]): parser.StructDecl[] {
+    var out: parser.StructDecl[] = into;
+    var i: i32 = 0;
+    while (i < more.len()) { out = out.append(more[i]); i = i + 1; }
+    return out;
+}
+function append_enums(into: parser.EnumDecl[], more: parser.EnumDecl[]): parser.EnumDecl[] {
+    var out: parser.EnumDecl[] = into;
+    var i: i32 = 0;
+    while (i < more.len()) { out = out.append(more[i]); i = i + 1; }
+    return out;
+}
 
 // load_imports walks the entry module's import graph breadth-first,
 // reading each resolvable `.fern` file and parsing it into a
@@ -378,11 +391,11 @@ pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
             var bmod: parser.Module = parser.parse_module(lexer.tokenize(bsrc));
             return parser.Module {
                 funcs: merged.funcs,
-                structs: util.append_all(merged.structs, bmod.structs),
+                structs: append_structs(merged.structs, bmod.structs),
                 aliases: merged.aliases,
                 imports: merged.imports,
                 top_stmts: merged.top_stmts,
-                enums: util.append_all(merged.enums, bmod.enums),
+                enums: append_enums(merged.enums, bmod.enums),
                 resources: merged.resources,
                 exports: merged.exports,
                 impls: merged.impls,

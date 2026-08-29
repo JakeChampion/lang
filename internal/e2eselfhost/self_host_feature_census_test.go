@@ -351,8 +351,8 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	// The features. These sites are the ENTIRE fixpoint coverage of each row:
 	// delete them and the self-host stops exercising the feature, whatever the
 	// e2eselfhost fixtures do.
-	pinned(t, c, "generic functions", 9,
-		"Eight are astwalk's fold spine; the ninth is util.append_all, the second generic adoption (SH-028). Generic functions are the only generic code the self-host compiles, so they are the only monomorphisation the fixpoint exercises. Note an IMPORT does not instantiate: append_all monomorphises only where it is called, which is flatten.fern and modloader.fern over four element types.")
+	pinned(t, c, "generic functions", 8,
+		"Every one is astwalk's fold spine. It is the only generic code the self-host compiles, so it is the only monomorphisation the fixpoint exercises.")
 	pinned(t, c, "generic structs", 0,
 		"The self-host declares no generic struct, so nothing on the fixpoint path monomorphises a generic TYPE — only generic functions.")
 	pinned(t, c, "arrow lambdas", 6,
