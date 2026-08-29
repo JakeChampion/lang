@@ -4,6 +4,7 @@ import "./parser";
 import "./astwalk";
 import "./util";
 import "./ir";
+import "./irlower";
 
 // asmcore — the emitter-side layer the three IR backends (asm_ir,
 // asm_arm64_ir, wasm_ir) share: the Ty type system, EmitState + its
@@ -5125,4 +5126,96 @@ pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): b
         k = k + 1;
     }
     return true;
+}
+
+// ---- RC emission directives (#7736) -----------------------------------------
+//
+// The three IR backends each hand-wrote the field walk inside
+// `__struct_drop_<T>`: which arm a field takes, in what priority, and which
+// helper releases it. That decision is backend-INDEPENDENT — it reads only the
+// struct decls, the shared `irlower` predicates and the whole-program need set
+// — while only the instruction selection differs. Writing it three times is
+// what made every RC slice a three-way port and every divergence silent, which
+// is the drift `RC-PERCEUS-SELF-HOST-PORT.md` §1b names as the lever.
+//
+// So the decision moves here and the backends keep only the selection: each
+// walks `struct_drop_field_ops` and emits its own instructions per directive.
+//
+// A field yields one or two directives, in emission order:
+//
+//   elems_drop_struct <E>  pre-walk a struct-array field's elements' OWN rc
+//                          fields, before the boxes below are freed
+//   elems_drop_enum   <E>  the enum-array sibling
+//   box_walk_dec           unique-gate the buffer, dec each element box, dec
+//                          the buffer
+//   deep_struct_drop  <T>  unique-gate the inner box and release ITS rc fields
+//   str_free               rc-aware string-box release
+//   str_arr_free           deep string[] release (elements + buffer at rc==1)
+//   arr_dec                shallow rc-guarded box/buffer dec
+//
+// `idx` is the field index; a backend derives its own slot offset from it,
+// since the register backends and wasm lay a box out differently.
+//
+// Scope: the register backends only. wasm's classifier agrees on every arm but
+// the `string[]` buffer one, where it decs ungated and the register backends
+// require `strfldok:arrbuf:<T>` — an open question (§9), not a spelling
+// difference, so converting wasm is a separate change that has to settle it
+// rather than inherit an answer from this one.
+pub struct RcOp { kind: string, idx: i32, ty: string }
+
+// struct_drop_field_ops returns the ordered field-release directives for
+// `__struct_drop_<sty>`. Read-only in `s`: it consults the need set for the
+// admission gates, and leaves issuing the corresponding `need()` to the caller
+// that emits the directive.
+pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
+    var ops: RcOp[] = [];
+    var n: i32 = irlower.decl_field_count(s.struct_decls, sty);
+    var k: i32 = 0;
+    while (k < n) {
+        var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
+        var k_scalar: boolean = irlower.is_leaksafe_array_field(fdt);
+        // A registered plain-fn-pointer array field (#5235): elements are RAW
+        // code addresses, so it takes the buffer-only dec rather than the
+        // element walk that would release each as a box.
+        var k_fnptr: boolean = !k_scalar && irlower.is_enum_array_field_type(s.struct_decls, fdt)
+            && s.has_need("FNPTR:" + sty + "." + irlower.decl_field_name_at(s.struct_decls, sty, k));
+        var k_box: boolean = !k_scalar && !k_fnptr && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt));
+        var k_struct: boolean = !k_scalar && !k_box && irlower.decl_is_struct(s.struct_decls, fdt);
+        // The string / string[] / closure arms are gated on the whole-program
+        // read scan: the construction-side retain only fires for admitted
+        // types, so a non-admitted type's fields are uncounted aliases this
+        // release would dangle. A non-admitted type keeps the sound leak.
+        var k_str: boolean = !k_scalar && !k_box && !k_struct && fdt == "string" && s.has_need("strfldok:" + sty);
+        var k_enum: boolean = !k_scalar && !k_box && !k_struct && !k_str && irlower.decl_is_enum(s.struct_decls, fdt);
+        var k_str_arr: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
+        var k_clo: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && fdt == "fn" && s.has_need("strfldok:clo:" + sty);
+        // The buffer half of a string[] the element scan refused: a read hazard
+        // costs the element walk, not the buffer this box still owes back.
+        var k_str_arr_shallow: boolean = !k_scalar && !k_box && !k_struct && !k_str && !k_enum && !k_str_arr && !k_clo && fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty);
+        if (k_box) {
+            if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
+                var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
+                if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
+                    ops = ops.append(RcOp { kind: "elems_drop_struct", idx: k, ty: elem_ty + "" });
+                }
+            } else if (irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+                var eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
+                if (irlower.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
+                    ops = ops.append(RcOp { kind: "elems_drop_enum", idx: k, ty: eaty + "" });
+                }
+            }
+            ops = ops.append(RcOp { kind: "box_walk_dec", idx: k, ty: "" });
+        } else if (k_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
+            ops = ops.append(RcOp { kind: "deep_struct_drop", idx: k, ty: fdt });
+            ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "" });
+        } else if (k_str) {
+            ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "" });
+        } else if (k_str_arr) {
+            ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "" });
+        } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr || k_str_arr_shallow) {
+            ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "" });
+        }
+        k = k + 1;
+    }
+    return ops;
 }
