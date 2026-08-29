@@ -1,0 +1,431 @@
+// examples/vcl/machine.fern — the VCL request state machine.
+//
+// This is the part that makes VCL a language rather than a config format:
+// subroutines do not run top to bottom, they are STATES, and the value a
+// subroutine returns picks the next one. `vcl_recv` returning `hash`
+// takes the request to the cache; returning `pass` routes it to the
+// backend without ever looking. What each subroutine may see (`vars.fern`)
+// follows from where it sits in this graph.
+//
+// The built-in subroutines are modelled too, and that is not a detail:
+// in Varnish, a `vcl_recv` that falls off the end WITHOUT returning
+// continues into the built-in `vcl_recv`, which passes any request with
+// a Cookie or Authorization header. VCL authors are caught by this
+// constantly. Here `run_stage` runs the user's subroutine and applies the
+// built-in default only when the user's fell through, which reproduces
+// it.
+//
+// The backend is a mock (`fetch`): it never opens a socket. A URL of the
+// form `/status/NNN` comes back with that status, which is the hook the
+// tests use to drive the error paths.
+import "std/string";
+import "std/i64";
+import "std/float";
+import "./ast";
+import "./value";
+import "./runtime";
+import "./vars";
+import "./eval";
+
+// How the transaction ended, plus everything worth inspecting afterwards.
+// `steps` is the ordered list of subroutines that actually ran, which is
+// what makes a routing bug legible: the state machine's path IS the
+// explanation.
+pub struct Outcome { txn: runtime.Txn, cache: runtime.Cache, disposition: string, hit: boolean, steps: string[], ok: boolean, err: string }
+
+// The evolving machine state, threaded through the stages.
+struct Run { txn: runtime.Txn, cache: runtime.Cache, steps: string[], ok: boolean, err: string }
+
+function fail(r: Run, msg: string): Run {
+  return Run { ...r, ok: false, err: msg };
+}
+
+// max_restarts bounds `return (restart)`, matching Varnish's default.
+function max_restarts(): i32 {
+  return 4;
+}
+
+// run_stage runs one subroutine and reports the action it returned.
+//
+// A subroutine that falls through returns "" and the caller applies the
+// built-in default — which is exactly Varnish's rule, and the reason a
+// `vcl_recv` without an explicit `return` still passes cookie-bearing
+// requests.
+struct Staged { run: Run, act: eval.Action }
+
+function run_stage(ctx: eval.Ctx, r: Run, name: string): Staged {
+  var stepped: Run = Run { ...r, steps: r.steps.append(name) };
+  var out: eval.ExecOut = eval.run_sub(ctx, stepped.txn, name);
+  if (!out.ok) {
+    return Staged { run: fail(Run { ...stepped, txn: out.txn }, name + ": " + out.err), act: eval.action("") };
+  }
+  var next: Run = Run { ...stepped, txn: out.txn };
+  match (out.flow) {
+    FReturn(a) => {
+      return Staged { run: next, act: a };
+    },
+    FNext => {
+      return Staged { run: next, act: eval.action("") };
+    }
+  }
+}
+
+// ------------------------------------------------------- built-in rules
+// The methods Varnish is willing to handle. Anything else is piped
+// straight through to the backend.
+function known_methods(): string[] {
+  return ["GET", "HEAD", "PUT", "POST", "TRACE", "OPTIONS", "DELETE"];
+}
+
+function in_list(s: string, items: string[]): boolean {
+  var i: i32 = 0;
+  while (i < items.len()) {
+    if (items[i] == s) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// builtin_recv is Varnish's default `vcl_recv`: anything that is not a
+// plain GET or HEAD, or that carries credentials or a cookie, bypasses
+// the cache.
+function builtin_recv(t: runtime.Txn): string {
+  var m: string = t.req.method;
+  if (m == "PRI") {
+    return "synth";
+  }
+  if (!in_list(m, known_methods())) {
+    return "pipe";
+  }
+  if (m != "GET" && m != "HEAD") {
+    return "pass";
+  }
+  if (t.req.headers.has("Authorization") || t.req.headers.has("Cookie")) {
+    return "pass";
+  }
+  return "hash";
+}
+
+// builtin_backend_response is the default caching decision: a response
+// that arrives with no positive TTL is not stored.
+function builtin_backend_response(r: Run): string {
+  if (r.txn.beresp_ttl <= 0.0) {
+    return "deliver-uncacheable";
+  }
+  return "deliver";
+}
+
+// resolve applies the built-in default when the user's subroutine fell
+// through without returning.
+function resolve(act: eval.Action, fallback: string): string {
+  if (act.name == "") {
+    return fallback;
+  }
+  return act.name;
+}
+
+// ------------------------------------------------------------ the fetch
+// fetch is the mock origin. It fabricates a response rather than opening
+// a connection: status 200 unless the URL asks for another via
+// `/status/NNN`, and a small deterministic header set.
+//
+// The default TTL of 120s is the stand-in for a real origin's
+// Cache-Control, so a program that never sets `beresp.ttl` still has
+// something for the built-in caching decision to act on.
+function fetch(r: Run, backend: string): Run {
+  var url: string = r.txn.bereq.url;
+  var status: i64 = 200;
+  var reason: string = "OK";
+  if (url.starts_with("/status/")) {
+    match (slice_unchecked(url, 8, url.len()).to_owned().parse_int()) {
+      Some(n) => {
+        status = n as i64;
+        reason = "Synthetic";
+      },
+      None => {}
+    }
+  }
+  var h: runtime.Headers = runtime.headers_new();
+  h = h.set("Content-Type", "text/plain");
+  h = h.set("X-Backend", backend);
+  var resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: status, reason: reason, headers: h };
+  var t: runtime.Txn = runtime.Txn { ...r.txn, beresp: resp, beresp_ttl: 120.0, beresp_uncacheable: false };
+  return Run { ...r, txn: t.note("fetch " + backend + " -> " + status.to_string()) };
+}
+
+// backend_for picks the backend to fetch from: the hint a subroutine set,
+// or the first `backend` declared, which is Varnish's rule when nothing
+// else applies.
+function backend_for(ctx: eval.Ctx, t: runtime.Txn): string {
+  if (t.backend_hint != "") {
+    return t.backend_hint;
+  }
+  var i: i32 = 0;
+  while (i < ctx.decls.len()) {
+    match (ctx.decls[i]) {
+      DBackend(b) => {
+        return b.name;
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
+// ------------------------------------------------------------- hashing
+// hash_key is what `vcl_hash` produced, or the built-in URL + Host key
+// when the program did not hash anything itself.
+function hash_key(t: runtime.Txn): string {
+  if (t.hash_parts.len() == 0) {
+    return t.req.url + "|" + value.to_str(t.req.headers.get("Host"));
+  }
+  var out: string = "";
+  var i: i32 = 0;
+  while (i < t.hash_parts.len()) {
+    if (i > 0) {
+      out = out + "|";
+    }
+    out = out + t.hash_parts[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------- the stages
+// start_bereq copies the client request into the backend request, which
+// is the point where `req` stops being visible and `bereq` starts.
+function start_bereq(r: Run): Run {
+  var b: runtime.Msg = runtime.Msg { method: r.txn.req.method, url: r.txn.req.url, proto: r.txn.req.proto, status: 0, reason: "", headers: r.txn.req.headers };
+  return Run { ...r, txn: runtime.Txn { ...r.txn, bereq: b } };
+}
+
+// deliver_from_beresp seeds `resp` from the fetched response, which is
+// what `vcl_deliver` then edits.
+function deliver_from_beresp(r: Run): Run {
+  var resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: r.txn.beresp.proto, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers };
+  return Run { ...r, txn: runtime.Txn { ...r.txn, resp: resp } };
+}
+
+// deliver_from_obj seeds `resp` from a cached object on a hit.
+function deliver_from_obj(r: Run, e: runtime.CacheEntry): Run {
+  var obj: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: e.status, reason: e.reason, headers: e.headers };
+  var resp: runtime.Msg = runtime.Msg { ...obj };
+  var t: runtime.Txn = runtime.Txn { ...r.txn, obj: obj, resp: resp, obj_ttl: e.ttl, obj_hits: e.hits };
+  return Run { ...r, txn: t };
+}
+
+// store_object puts the fetched response in the cache under `key`.
+function store_object(r: Run, key: string): Run {
+  var e: runtime.CacheEntry = runtime.CacheEntry { key: key, status: r.txn.beresp.status, reason: r.txn.beresp.reason, headers: r.txn.beresp.headers, ttl: r.txn.beresp_ttl, hits: 0 };
+  return Run { ...r, cache: r.cache.store(e), txn: r.txn.note("store " + key + " ttl=" + r.txn.beresp_ttl.to_string_prec(3)) };
+}
+
+// synth_response builds the response a `return (synth(…))` names, then
+// runs `vcl_synth` so the program can decorate it.
+function synth(ctx: eval.Ctx, r: Run, a: eval.Action): Outcome {
+  var status: i64 = a.status;
+  if (status == 0) {
+    status = 503;
+  }
+  var resp: runtime.Msg = runtime.Msg { method: "", url: "", proto: "HTTP/1.1", status: status, reason: a.reason, headers: runtime.headers_new() };
+  var withresp: Run = Run { ...r, txn: runtime.Txn { ...r.txn, resp: resp } };
+  var s: Staged = run_stage(ctx, withresp, "vcl_synth");
+  if (!s.run.ok) {
+    return outcome_err(s.run);
+  }
+  return done(s.run, "synth", false);
+}
+
+function outcome_err(r: Run): Outcome {
+  return Outcome { txn: r.txn, cache: r.cache, disposition: "error", hit: false, steps: r.steps, ok: false, err: r.err };
+}
+
+function done(r: Run, disposition: string, hit: boolean): Outcome {
+  return Outcome { txn: r.txn, cache: r.cache, disposition: disposition, hit: hit, steps: r.steps, ok: true, err: "" };
+}
+
+// backend_side runs the fetch half: `vcl_backend_fetch`, the mock origin,
+// then `vcl_backend_response` and the caching decision.
+function backend_side(ctx: eval.Ctx, r0: Run, key: string, store: boolean): Outcome {
+  var r: Run = start_bereq(r0);
+  var bf: Staged = run_stage(ctx, r, "vcl_backend_fetch");
+  if (!bf.run.ok) {
+    return outcome_err(bf.run);
+  }
+  if (resolve(bf.act, "fetch") == "abandon") {
+    return done(bf.run, "abandon", false);
+  }
+
+  var fetched: Run = fetch(bf.run, backend_for(ctx, bf.run.txn));
+  var br: Staged = run_stage(ctx, fetched, "vcl_backend_response");
+  if (!br.run.ok) {
+    return outcome_err(br.run);
+  }
+  var act: string = resolve(br.act, builtin_backend_response(br.run));
+  if (act == "abandon") {
+    return done(br.run, "abandon", false);
+  }
+  if (act == "retry") {
+    return done(br.run, "retry", false);
+  }
+
+  var cacheable: boolean = act == "deliver" && store && !br.run.txn.beresp_uncacheable && br.run.txn.beresp_ttl > 0.0;
+  var stored: Run = br.run;
+  if (cacheable) {
+    stored = store_object(br.run, key);
+  }
+  return client_deliver(ctx, deliver_from_beresp(stored), false);
+}
+
+// client_deliver runs `vcl_deliver`, the last stage before the response
+// goes back to the client.
+function client_deliver(ctx: eval.Ctx, r: Run, hit: boolean): Outcome {
+  var d: Staged = run_stage(ctx, r, "vcl_deliver");
+  if (!d.run.ok) {
+    return outcome_err(d.run);
+  }
+  var act: string = resolve(d.act, "deliver");
+  if (act == "synth") {
+    return synth(ctx, d.run, d.act);
+  }
+  return done(d.run, "deliver", hit);
+}
+
+// lookup_side runs the cache lookup and the hit or miss subroutine.
+function lookup_side(ctx: eval.Ctx, r: Run, key: string): Outcome {
+  match (r.cache.lookup(key)) {
+    Some(e) => {
+      // Count the hit BEFORE seeding `obj`, so `obj.hits` reads 1 on the
+      // first hit as Varnish reports it, not the pre-hit 0.
+      var bumped: runtime.Cache = r.cache.touch(key);
+      var touched: Run = Run { ...r, cache: bumped };
+      var onhit: Run = deliver_from_obj(touched, runtime.CacheEntry { ...e, hits: e.hits + 1 });
+      var h: Staged = run_stage(ctx, onhit, "vcl_hit");
+      if (!h.run.ok) {
+        return outcome_err(h.run);
+      }
+      var act: string = resolve(h.act, "deliver");
+      if (act == "pass") {
+        return backend_side(ctx, h.run, key, false);
+      }
+      if (act == "synth") {
+        return synth(ctx, h.run, h.act);
+      }
+      return client_deliver(ctx, h.run, true);
+    },
+    None => {
+      var m: Staged = run_stage(ctx, r, "vcl_miss");
+      if (!m.run.ok) {
+        return outcome_err(m.run);
+      }
+      var mact: string = resolve(m.act, "fetch");
+      if (mact == "pass") {
+        return backend_side(ctx, m.run, key, false);
+      }
+      if (mact == "synth") {
+        return synth(ctx, m.run, m.act);
+      }
+      return backend_side(ctx, m.run, key, true);
+    }
+  }
+}
+
+// purge evicts the object under the request's key and synthesises a 200,
+// which is what Varnish's built-in `vcl_purge` does.
+function purge(ctx: eval.Ctx, r: Run, key: string): Outcome {
+  var evicted: Run = Run { ...r, cache: r.cache.evict(key), txn: r.txn.note("purge " + key) };
+  var p: Staged = run_stage(ctx, evicted, "vcl_purge");
+  if (!p.run.ok) {
+    return outcome_err(p.run);
+  }
+  return synth(ctx, p.run, eval.Action { name: "synth", status: 200, reason: "Purged" });
+}
+
+// dispatch routes the action `vcl_recv` settled on. It takes the ACTION
+// as well as its resolved name: `return (synth(405, "Not allowed"))`
+// carries its status and reason there, and rebuilding a bare synth here
+// would answer every rejection with a generic 503.
+function dispatch(ctx: eval.Ctx, r: Run, act: string, a: eval.Action): Outcome {
+  if (act == "pipe") {
+    var p: Staged = run_stage(ctx, start_bereq(r), "vcl_pipe");
+    if (!p.run.ok) {
+      return outcome_err(p.run);
+    }
+    return done(p.run, "pipe", false);
+  }
+  if (act == "synth") {
+    return synth(ctx, r, a);
+  }
+  var hashed: Staged = run_stage(ctx, r, "vcl_hash");
+  if (!hashed.run.ok) {
+    return outcome_err(hashed.run);
+  }
+  var key: string = hash_key(hashed.run.txn);
+  if (act == "purge") {
+    return purge(ctx, hashed.run, key);
+  }
+  if (act == "pass") {
+    var ps: Staged = run_stage(ctx, hashed.run, "vcl_pass");
+    if (!ps.run.ok) {
+      return outcome_err(ps.run);
+    }
+    if (resolve(ps.act, "fetch") == "synth") {
+      return synth(ctx, ps.run, ps.act);
+    }
+    return backend_side(ctx, ps.run, key, false);
+  }
+  return lookup_side(ctx, hashed.run, key);
+}
+
+// one_pass runs a single trip through the machine, from `vcl_recv` to a
+// disposition. A `return (restart)` comes back as the "restart"
+// disposition for `run` to act on.
+function one_pass(ctx: eval.Ctx, r: Run): Outcome {
+  var recv: Staged = run_stage(ctx, r, "vcl_recv");
+  if (!recv.run.ok) {
+    return outcome_err(recv.run);
+  }
+  var act: string = resolve(recv.act, builtin_recv(recv.run.txn));
+  if (act == "restart") {
+    return done(recv.run, "restart", false);
+  }
+  return dispatch(ctx, recv.run, act, recv.act);
+}
+
+// run_with_headers executes one client request against the program and
+// the cache, returning the response and the updated cache. Restarts loop
+// back to `vcl_recv` with the transaction's edits intact, bounded like
+// Varnish's; the accumulated hash is cleared on each pass so a restarted
+// request re-hashes under whatever the new `req` says.
+pub function run_with_headers(decls: ast.Decl[], method: string, url: string, client_ip: string, names: string[], values: string[], cache: runtime.Cache): Outcome {
+  var ctx: eval.Ctx = eval.Ctx { decls: decls };
+  var empty: string[] = [];
+  var t: runtime.Txn = runtime.txn_new(method, url, client_ip);
+  var h: runtime.Headers = t.req.headers;
+  var i: i32 = 0;
+  while (i < names.len() && i < values.len()) {
+    h = h.set(names[i], values[i]);
+    i = i + 1;
+  }
+  var seeded: runtime.Txn = runtime.Txn { ...t, req: runtime.Msg { ...t.req, headers: h } };
+  var r: Run = Run { txn: seeded, cache: cache, steps: empty, ok: true, err: "" };
+  var tries: i32 = 0;
+  while (tries <= max_restarts()) {
+    var o: Outcome = one_pass(ctx, r);
+    if (!o.ok || o.disposition != "restart") {
+      return o;
+    }
+    r = Run { txn: runtime.Txn { ...o.txn, hash_parts: empty }, cache: o.cache, steps: o.steps, ok: true, err: "" };
+    tries = tries + 1;
+  }
+  return Outcome { txn: r.txn, cache: r.cache, disposition: "error", hit: false, steps: r.steps, ok: false, err: "too many restarts" };
+}
+
+// run is `run_with_headers` for a request that carries none.
+pub function run(decls: ast.Decl[], method: string, url: string, client_ip: string, cache: runtime.Cache): Outcome {
+  var none: string[] = [];
+  return run_with_headers(decls, method, url, client_ip, none, none, cache);
+}
