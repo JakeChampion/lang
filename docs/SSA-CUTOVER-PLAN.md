@@ -203,11 +203,33 @@ The 103 functions that do not lift are a short list, and the tail is short too:
 80 `OpStoreLocal`, 16 `call`, 4 `OpIf`, 2 `add`, 1 `OpCallDyn`. That is a
 finishable list, not a research programme.
 
-### What is left to prove
+### What is left to build, and what it costs
 
 Only the return trip: the decisions have to map back onto op positions the
 existing emitters consume. The forward direction — can ownership even be
 *expressed* over this representation — is answered.
+
+Checked 2026-08-29, `ssa.Op` carries **no provenance**: no source-op index, no
+position, and `LiftFromIR` records none. That is the entire gap, and it is
+mechanical — the lift already holds the IR op index `i` at every case (its own
+error messages print it), so populating a `SrcOp` field is an assignment per
+case, not a design problem.
+
+**One constraint falls out of that, and it decides the shape:** run the
+ownership analysis on the **unoptimised** lift. `ssa.Optimize`'s passes —
+constfold, CSE, LICM — synthesise ops that have no IR origin, so provenance
+stops being total the moment they run. Ownership needs the CFG, def-use and
+dominance, and `BuildUses` / `BuildDomTree` produce those from the raw lift
+directly. Nothing in the analysis wants the optimiser.
+
+So the shape is: lift → analyse → map decisions back by `SrcOp` → emit into the
+existing op stream. The optimiser stays where it is, on the codegen path,
+unaffected either way.
+
+An insertion point needs slightly more than per-op provenance — "release x at
+the end of this block" names a program point rather than an existing op — but
+that expresses as *before/after the IR op this SSA op came from*, with block
+boundaries mapping to the structured scopes the flat IR already has.
 
 **Recommendation: do this before committing to the backend cutover.** It needs
 no change to `wasmssa`'s single-function limit and no module assembler for
