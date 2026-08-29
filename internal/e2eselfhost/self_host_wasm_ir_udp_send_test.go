@@ -142,6 +142,50 @@ func TestSelfHostWasmIRUdpSend(t *testing.T) {
 		}
 	})
 
+	// An address whose LAST octet is >= 128 sets bit 31 of the packed quad,
+	// so the packed value is a negative i32 — indistinguishable from the
+	// parser's -1 error sentinel under the signed check that reads it. Any
+	// 10.x.x.200 / 192.168.x.255 host is affected, so this is not an edge
+	// case; 127.0.0.0/8 is all loopback, which gives the test a real
+	// listener to bind (#7740).
+	t.Run("delivers_to_a_high_last_octet", func(t *testing.T) {
+		pc, err := net.ListenPacket("udp", "127.0.0.200:0")
+		if err != nil {
+			t.Skipf("cannot bind 127.0.0.200 on this host: %v", err)
+		}
+		defer pc.Close()
+		port := pc.LocalAddr().(*net.UDPAddr).Port
+
+		got := make(chan string, 1)
+		go func() {
+			buf := make([]byte, 4096)
+			_ = pc.SetReadDeadline(time.Now().Add(30 * time.Second))
+			n, _, err := pc.ReadFrom(buf)
+			if err != nil {
+				got <- ""
+				return
+			}
+			got <- string(buf[:n])
+		}()
+
+		out := run(t, "udp_high_octet", fmt.Sprintf(`function main(): i32 {
+    var n: i32 = udp_send("127.0.0.200", %d, "high-octet");
+    write("sent="); print_int(n); write("\n");
+    return 0;
+}`, port))
+		if out != "sent=10" {
+			t.Errorf("guest stdout = %q, want %q — the packed quad was read as the error sentinel", out, "sent=10")
+		}
+		select {
+		case payload := <-got:
+			if payload != "high-octet" {
+				t.Errorf("host received %q, want %q", payload, "high-octet")
+			}
+		case <-time.After(30 * time.Second):
+			t.Error("host UDP socket received nothing")
+		}
+	})
+
 	// A malformed IPv4 literal must be rejected by the parser BEFORE any socket
 	// call, returning -1. Falling through to the socket path would surface some
 	// unrelated errno instead.

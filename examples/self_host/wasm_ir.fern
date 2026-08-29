@@ -2584,8 +2584,14 @@ pub function wasi_udp_imports(): string {
     return o;
 }
 
-// $__fern_ipv4_parse(s) -> i32: parse a dotted-quad "a.b.c.d" string block into
-// the four octets packed a | b<<8 | c<<16 | d<<24, or -1 on a malformed host.
+// $__fern_ipv4_parse(s, dst) -> i32: parse a dotted-quad "a.b.c.d" string block,
+// store the four octets at `dst` packed a | b<<8 | c<<16 | d<<24, and return 0;
+// -1 on a malformed host, leaving `dst` untouched.
+//
+// The packed quad cannot share a channel with the status: any address whose
+// LAST octet is >= 128 sets bit 31, so it reads as a negative i32 — which is
+// exactly what a caller checking the result for failure sees. Returning both
+// through one i32 rejected every 10.x.x.200 / 192.168.x.255 host (#7740).
 //
 // Native does this inline in __fern_udp_send and has to normalise the string
 // first (its SSO form may not be contiguous); a self-host string block is
@@ -2595,7 +2601,7 @@ pub function wasi_udp_imports(): string {
 // to reuse, should udp_recv or a host-literal tcp_connect want it) on its own.
 pub function ipv4_parse_func(): string {
     var o: string = "";
-    o = o + "  (func $__fern_ipv4_parse (param $s i32) (result i32)\n";
+    o = o + "  (func $__fern_ipv4_parse (param $s i32) (param $dst i32) (result i32)\n";
     o = o + "    (local $len i32) (local $i i32) (local $b i32) (local $acc i32) (local $n i32) (local $out i32) (local $digits i32)\n";
     o = o + "    (local.set $len (i32.load (local.get $s)))\n";
     o = o + "    (block $done\n";
@@ -2620,7 +2626,8 @@ pub function ipv4_parse_func(): string {
     o = o + "        (br $more)))\n";
     o = o + "    (if (i32.or (i32.ne (local.get $n) (i32.const 3)) (i32.eqz (local.get $digits)))\n";
     o = o + "      (then (return (i32.const -1))))\n";
-    o = o + "    (i32.or (local.get $out) (i32.shl (local.get $acc) (i32.const 24))))\n";
+    o = o + "    (i32.store (local.get $dst) (i32.or (local.get $out) (i32.shl (local.get $acc) (i32.const 24))))\n";
+    o = o + "    (i32.const 0))\n";
     return o;
 }
 
@@ -2644,9 +2651,10 @@ pub function udp_send_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_udp_send (param $host i32) (param $port i32) (param $data i32) (result i32)\n";
     o = o + "    (local $ip i32) (local $sock i32) (local $ret i32) (local $in i32) (local $out i32) (local $p i32) (local $dg i32) (local $sent i32)\n";
-    o = o + "    (local.set $ip (call $__fern_ipv4_parse (local.get $host)))\n";
-    o = o + "    (if (i32.lt_s (local.get $ip) (i32.const 0)) (then (return (i32.const -1))))\n";
     o = o + "    (local.set $ret (call $__fern_alloc (i32.const 16)))\n";
+    o = o + "    (if (i32.lt_s (call $__fern_ipv4_parse (local.get $host) (local.get $ret)) (i32.const 0))\n";
+    o = o + "      (then (return (i32.const -1))))\n";
+    o = o + "    (local.set $ip (i32.load (local.get $ret)))\n";
     o = o + "    (call $__fern_wasi_create_udp_socket (i32.const 0) (local.get $ret))\n";
     o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
     o = o + "      (return (i32.sub (i32.const 0) (i32.load8_u offset=4 (local.get $ret))))))\n";
