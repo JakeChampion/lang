@@ -840,15 +840,33 @@ findings. Ranked by leverage.
   and the site count is unchanged, and gate on emitted bytes.
 
 ### T8 — Hand-rolled options/containers that generics would replace
-- [ ] **SH-028 — Replace the hand-rolled option/result families with generics.**
-  Generics work in this tree (`astwalk.fern:19` is `fold_expr[T]`), so this is no
-  longer blocked — it is unconverted code. Still present: `OptInt`
-  (`constfold.fern:93`), `OptBool` (`:121`), `OptString` (`:131`); the 22
-  `*Result` structs (SH-026); the four `append_*` concat helpers in
-  `flatten.fern` (`append_funcs:820`, `append_structs:825`, `append_aliases:830`,
-  `append_enum_decls:1088`), which one generic `append_all[T]` replaces; and the
-  placeholder `tag: i32` fields on the nullary variants. Convert family by
-  family, each with the test at the layer it touches.
+- [~] **SH-028 — the `append_*` family is one generic; the rest wait on it.**
+  _Done:_ the concat helpers. The row said four (`append_funcs`,
+  `append_structs`, `append_aliases`, `append_enum_decls` in `flatten.fern`);
+  there were **six** — `modloader.fern` carried its own `append_structs` AND an
+  `append_enums`, found by grepping for the shape rather than trusting the row.
+  All six are now `util.append_all[T]`, byte-identical bodies modulo the element
+  type.
+
+  **Two things this adoption established, both recorded in
+  `docs/SELFHOST-LANGUAGE-FRICTION.md` §1 where generic adoptions are tracked:**
+
+  1. **An import does not instantiate.** `util.fern` is imported by nearly every
+     module, which looks like the riskiest home for the tree's first
+     non-astwalk generic. It is not — monomorphisation follows CALLS, so
+     `append_all` instantiates only in `flatten.fern` and `modloader.fern`, over
+     four element types.
+  2. **`TestSelfHostFeatureCensus` is what makes adoption deliberate.** It
+     failed with "generic functions: census counts 9, pinned at 8" and the
+     instruction to move both the number and the friction-doc row. Generic
+     functions are the only monomorphisation the fixpoint exercises, so that
+     pin — not review — is what stops the generic surface growing unnoticed.
+     **Expect to move it on every future family in this row.**
+
+  _Still open:_ `OptInt` / `OptBool` / `OptString` (`constfold.fern`) and the 22
+  `*Result` structs, two of them both named `CheckResult`. The `*Result` half is
+  also what T6/SH-026's real remainder (the `lookup_*` family returning
+  `name: ""`) is blocked on, so sequence those two together.
 
 ---
 
