@@ -27960,16 +27960,22 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     var i: i32 = 0;
     while (i < stmts.len()) {
         var sbase: i32 = st.locals.len();
-        // Statement i is a block-level candidate's consuming match: set the
-        // pending return-drop entries (#4353 p1/p3) — a `return` inside an
-        // arm returns from the FUNCTION, so the return-path sweep must free
-        // the payload + box (the block's post-match drop below is dead code
-        // on those paths). Blockable kinds only; restored after the
-        // statement lowers.
+        // Statement i is inside a block-level candidate's LIVE RANGE — after its
+        // `var`, up to and including its consuming match — so set the pending
+        // return-drop entries (#4353 p1/p3, #7742). A `return` from any of those
+        // statements returns from the FUNCTION and jumps the post-match drop, so
+        // the return-path sweep must free the payload + box itself.
+        //
+        // The window is the live range and not the match statement alone, which
+        // is what #7742 measured: an `if (…) { return 5; }` between the `var` and
+        // the match left the local released by nothing at all. Excluding i ==
+        // vidxs is deliberate — the slot is not bound until that statement
+        // finishes, and nothing can strand a value that does not exist yet.
+        // Blockable kinds only; restored after the statement lowers.
         var optret_prev: string[] = st.optret_pending;
         var opj: i32 = 0;
         while (opj < rcopt.idxs.len()) {
-            if (rcopt.idxs[opj] == i && rcopt.blockable[opj]) {
+            if (rcopt.vidxs[opj] < i && i <= rcopt.idxs[opj] && rcopt.blockable[opj]) {
                 var opslot2: i32 = st.slot_of(rcopt.names[opj]);
                 if (opslot2 >= st.n_params) {
                     st = st.with_optret_pending(st.optret_pending.append(optret_opt_entry(opslot2, rcopt, opj)));
@@ -27980,7 +27986,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
         // Same, for the block-local scalar-enum / scalar-Option box (#6219).
         var sej: i32 = 0;
         while (sej < scenfrees.idxs.len()) {
-            if (scenfrees.idxs[sej] == i) {
+            if (scenfrees.vidxs[sej] < i && i <= scenfrees.idxs[sej]) {
                 var seslot2: i32 = st.slot_of(scenfrees.names[sej]);
                 if (seslot2 >= st.n_params) {
                     st = st.with_optret_pending(st.optret_pending.append(util.i32_to_string(seslot2) + "#b"));
@@ -27991,7 +27997,13 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
         // Same, for the block-local rc-PAYLOAD enum box.
         var rej: i32 = 0;
         while (rej < rcenfrees.idxs.len()) {
-            if (rcenfrees.idxs[rej] == i) {
+            // match_moved_rc_payloads reads the CURRENT statement, which is what
+            // makes the widened window right rather than merely wider: before the
+            // match no arm has bound anything, so it answers "nothing moved" and
+            // the entry carries the full deep drop; at the match it answers with
+            // the arm's own moved set. Passing the match's set on a pre-match
+            // return would withhold drops for fields that path never moved.
+            if (rcenfrees.vidxs[rej] < i && i <= rcenfrees.idxs[rej]) {
                 var reslot2: i32 = st.slot_of(rcenfrees.names[rej]);
                 if (reslot2 >= st.n_params) {
                     st = st.with_optret_pending(st.optret_pending.append(rcenum_pending_entry(reslot2, rcenfrees.enums[rej], match_moved_rc_payloads(stmts[i], st.structs))));
@@ -38244,7 +38256,11 @@ function name_used_after(body: ast.Stmt[], name: string, after: i32): boolean {
 // body-statement index of the consuming `match` (after which the box is freed) and
 // the local name x whose box is freed. Flat (not nested) for the same self-host
 // limitation as PreciseDrops / ReuseSites.
-struct EnumFrees { idxs: i32[], names: string[] }
+// `vidxs[i]` is the candidate's DECLARING statement index, `idxs[i]` its
+// consuming match's. The pair is the local's live range, which is the window the
+// return-path drop has to be armed over: a `return` anywhere between the two
+// jumps the post-match drop just as an arm's own `return` does (#7742).
+struct EnumFrees { idxs: i32[], vidxs: i32[], names: string[] }
 
 // consumed_scalar_enum_frees finds every function-local `var x = V(scalar...)` of
 // an all-scalar enum consumed by exactly one `match (x)` where x is single-owner
@@ -38347,6 +38363,7 @@ function expr_is_scalarish(e: ast.Expr): boolean {
 // because the redundant credit buys nothing precise-drop has not already done.
 function consumed_scalar_enum_frees(body: ast.Stmt[], structs: parser.StructDecl[], opt_fresh_reg: SigReg, nested_ok: boolean): EnumFrees {
     var idxs: i32[] = [];
+    var vidxs: i32[] = [];
     var names: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
@@ -38398,6 +38415,7 @@ function consumed_scalar_enum_frees(body: ast.Stmt[], structs: parser.StructDecl
                         var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
                         if (!arms_use && dead_after && !escapes) {
                             idxs = idxs.append(match_idx);
+                            vidxs = vidxs.append(vi);
                             names = names.append(v.name);
                         }
                     }
@@ -38407,7 +38425,7 @@ function consumed_scalar_enum_frees(body: ast.Stmt[], structs: parser.StructDecl
         }
         vi = vi + 1;
     }
-    return EnumFrees { idxs: idxs, names: names };
+    return EnumFrees { idxs: idxs, vidxs: vidxs, names: names };
 }
 
 // --- consumed RC-PAYLOAD enum free (deep-drop at the free site) -------------
@@ -38957,7 +38975,7 @@ function match_has_guarded_arm(st: ast.Stmt): boolean {
 // RcEnumFrees: parallel arrays for the rc-payload enum free — the consuming match
 // index, the freed local name x, and x's ENUM name (so the deep-drop can iterate
 // the enum's variants at the free site).
-struct RcEnumFrees { idxs: i32[], names: string[], enums: string[] }
+struct RcEnumFrees { idxs: i32[], vidxs: i32[], names: string[], enums: string[] }
 
 // consumed_rcpayload_enum_frees: the rc-payload analogue of
 // consumed_scalar_enum_frees. Finds every function-local `var x = V(payload...)`
@@ -38978,6 +38996,7 @@ struct RcEnumFrees { idxs: i32[], names: string[], enums: string[] }
 // match reclaiming nothing at all.
 function consumed_rcpayload_enum_frees(body: ast.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: SigReg, str_fresh: string[], msites: string[], borrowable: string[]): RcEnumFrees {
     var idxs: i32[] = [];
+    var vidxs: i32[] = [];
     var names: string[] = [];
     var enums: string[] = [];
     var reassigned: string[] = body_assign_targets(body);
@@ -39021,6 +39040,7 @@ function consumed_rcpayload_enum_frees(body: ast.Stmt[], structs: parser.StructD
                             && match_moved_rc_payloads(body[match_idx], structs).len() > 0;
                         if (!arms_use && dead_after && !escapes && !guarded_move) {
                             idxs = idxs.append(match_idx);
+                            vidxs = vidxs.append(vi);
                             names = names.append(v.name);
                             enums = enums.append(owner);
                         }
@@ -39031,7 +39051,7 @@ function consumed_rcpayload_enum_frees(body: ast.Stmt[], structs: parser.StructD
         }
         vi = vi + 1;
     }
-    return RcEnumFrees { idxs: idxs, names: names, enums: enums };
+    return RcEnumFrees { idxs: idxs, vidxs: vidxs, names: names, enums: enums };
 }
 
 // emit_enum_variant_drops deep-drops the rc payload of the box in `slot` (an
@@ -40506,7 +40526,7 @@ function opt_payload_deep_sty(ptype: string, structs: parser.StructDecl[]): stri
 // rather than a marker inside `pfrees` or `stys`, because both of those are read
 // as a single helper name / struct type and a prefixed value would reach
 // op_call_direct or __struct_drop_ as if it were one.
-struct OptRcFrees { idxs: i32[], names: string[], pfrees: string[], blockable: boolean[], stys: string[], tagged: boolean[], errstrs: boolean[], inners: string[] }
+struct OptRcFrees { idxs: i32[], vidxs: i32[], names: string[], pfrees: string[], blockable: boolean[], stys: string[], tagged: boolean[], errstrs: boolean[], inners: string[] }
 
 // consumed_rcpayload_option_frees: finds every function-local `var o = Some([..])`
 // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) or `Some(P{..})` /
@@ -40601,6 +40621,7 @@ function call_init_callee_err_fresh(e: ast.Expr, reg: SigReg): boolean {
 // is safe there and unsafe at function scope.
 function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: parser.StructDecl[], opt_fresh_reg: SigReg, nested_ok: boolean): OptRcFrees {
     var idxs: i32[] = [];
+    var vidxs: i32[] = [];
     var names: string[] = [];
     var pfrees: string[] = [];
     var blockable: boolean[] = [];
@@ -40692,6 +40713,7 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: parser.Struc
                         }
                         if (!arms_use && dead_after && !escapes && !binds_esc) {
                             idxs = idxs.append(match_idx);
+                            vidxs = vidxs.append(vi);
                             names = names.append(v.name);
                             pfrees = pfrees.append(opt_payload_freefn(cand.ptype));
                             var dsty: string = opt_payload_deep_sty(cand.ptype, structs);
@@ -40740,7 +40762,7 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: parser.Struc
         }
         vi = vi + 1;
     }
-    return OptRcFrees { idxs: idxs, names: names, pfrees: pfrees, blockable: blockable, stys: stys, tagged: tagged, errstrs: errstrs, inners: inners };
+    return OptRcFrees { idxs: idxs, vidxs: vidxs, names: names, pfrees: pfrees, blockable: blockable, stys: stys, tagged: tagged, errstrs: errstrs, inners: inners };
 }
 
 // emit_opt_payload_drop frees the rc payload of the option box in `slot`, then
@@ -52183,16 +52205,22 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // the statement and clobber a same-named outer local (the top-level
         // sibling of the lower_block fix; #3726).
         var stmt_sbase: i32 = s.locals.len();
-        // Statement j is a consumed-match candidate's match: set the pending
-        // return-drop entries (#4353 p1/p3, #6219) so a `return` inside an arm
-        // frees the payload + box via the return-path sweep — the post-match
-        // drop below is dead code on those paths. Blockable rows only, and the
-        // entry names the row's whole release (optret_opt_entry), not a tag
+        // Statement j is inside a consumed-match candidate's LIVE RANGE — after
+        // its `var`, up to and including its consuming match — so set the pending
+        // return-drop entries (#4353 p1/p3, #6219, #7742). A `return` from any of
+        // those statements frees the payload + box via the return-path sweep; the
+        // post-match drop below is dead code on every one of them.
+        //
+        // The window is the live range and not the match statement alone: an
+        // early `return` before the match left the local released by nothing,
+        // 80 B/round unbounded (#7742). i == vidxs is excluded because the slot
+        // is not bound until that statement finishes. Blockable rows only, and
+        // the entry names the row's whole release (optret_opt_entry), not a tag
         // derived from its free fn. Restored right after the statement lowers.
         var optret_prev: string[] = s.optret_pending;
         var opj: i32 = 0;
         while (opj < rcoptfrees.idxs.len()) {
-            if (rcoptfrees.idxs[opj] == j && rcoptfrees.blockable[opj]) {
+            if (rcoptfrees.vidxs[opj] < j && j <= rcoptfrees.idxs[opj] && rcoptfrees.blockable[opj]) {
                 var opslot2: i32 = s.slot_of(rcoptfrees.names[opj]);
                 if (opslot2 >= s.n_params) {
                     s = s.with_optret_pending(s.optret_pending.append(optret_opt_entry(opslot2, rcoptfrees, opj)));
@@ -52207,7 +52235,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // checkable by reading them side by side.
         var sej: i32 = 0;
         while (sej < enumfrees.idxs.len()) {
-            if (enumfrees.idxs[sej] == j && util.index_of_str(edon.donors, enumfrees.names[sej]) < 0) {
+            if (enumfrees.vidxs[sej] < j && j <= enumfrees.idxs[sej] && util.index_of_str(edon.donors, enumfrees.names[sej]) < 0) {
                 var seslot2: i32 = s.slot_of(enumfrees.names[sej]);
                 if (seslot2 >= s.n_params) {
                     s = s.with_optret_pending(s.optret_pending.append(util.i32_to_string(seslot2) + "#b"));
@@ -52220,7 +52248,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // set too; the donor suppression mirrors its post-match emission.
         var rej: i32 = 0;
         while (rej < rcenumfrees.idxs.len()) {
-            if (rcenumfrees.idxs[rej] == j && util.index_of_str(ecross.donors, rcenumfrees.names[rej]) < 0) {
+            if (rcenumfrees.vidxs[rej] < j && j <= rcenumfrees.idxs[rej] && util.index_of_str(ecross.donors, rcenumfrees.names[rej]) < 0) {
                 var reslot2: i32 = s.slot_of(rcenumfrees.names[rej]);
                 if (reslot2 >= s.n_params) {
                     s = s.with_optret_pending(s.optret_pending.append(rcenum_pending_entry(reslot2, rcenumfrees.enums[rej], match_moved_rc_payloads(fn.body[j], s.structs))));
