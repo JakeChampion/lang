@@ -774,12 +774,17 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 			want: 32, allocs: 500, frees: 500,
 		},
 		{
-			// REFUSED: a chain makes x itself strarr-unsafe (`var y = x` is a
-			// bare-ident bind the forgiveness list doesn't hold), so x is not an
-			// eligible alias site and src keeps no credit. The shallow is_arr
-			// decs still return the BUFFER; the element box + data leak, which is
-			// the sound direction.
-			name: "strarr_alias_chain_refused",
+			// The CHAIN, credited as one set (#7750). It used to be refused —
+			// `var y = x` is a bare-ident bind the per-site forgiveness list
+			// could not hold, so x was strarr-unsafe and src kept no credit,
+			// leaving the element box and data to leak while the shallow is_arr
+			// decs still returned the buffer.
+			//
+			// strarr_alias_chain_sites_of walks the closure raw and vets the set
+			// through the strarr gate, which is what an element escape from ANY
+			// link has to be caught by — strarr_alias_chain_elem_escape_refused
+			// below is that row.
+			name: "strarr_alias_chain",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
     var src: string[] = [mkstr("x")];
@@ -788,7 +793,61 @@ function round(i: i32): i32 {
     return (x.len() + y.len() + src.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+			want: 68, allocs: 300, frees: 300,
+		},
+		{
+			// REFUSED: an ELEMENT escapes from a MIDDLE link. A string[]'s
+			// release walks the elements, so this is what the strarr gate is
+			// substituted for — the plain walker cannot see it, and the deep
+			// free would dangle `e`.
+			name: "strarr_alias_chain_elem_escape_refused",
+			src: `function mkstr(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var src: string[] = [mkstr("x")];
+    var x: string[] = src;
+    var y: string[] = x;
+    var e: string = x[0];
+    return (y.len() + e.len() + i) % 101;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 68, allocs: 300, frees: 100,
+		},
+		{
+			// The rc-ENUM chain (#7750). Its limb uses the alias sites for ESCAPE
+			// FORGIVENESS only — a confined link takes no release, so the source
+			// stays the sole releaser and the box is freed once however long the
+			// chain is. That is what makes this widening cheap: no link gains a
+			// dec, so the arithmetic the string limb has to reason about does not
+			// arise here.
+			name: "enum_alias_chain",
+			src: `enum E { A(i32[]), B }
+function round(i: i32): i32 {
+    var t: E = E.A([i, i + 1]);
+    var v: E = t;
+    var u: E = v;
+    match (u) { E.A(a) => { return a.len() + i; }, E.B => { return i; } }
+    return 0;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+			want: 4, allocs: 200, frees: 200,
+		},
+		{
+			// REFUSED: a link hands the PAYLOAD out. The enum release deep-drops
+			// it, so this is a use-after-free rather than a leak if admitted —
+			// the condition rcenum_alias_bind_sites_of already applied per site,
+			// now applied to every link.
+			name: "enum_alias_chain_payload_out_refused",
+			src: `enum E { A(i32[]), B }
+function round(i: i32): i32 {
+    var t: E = E.A([i, i + 1]);
+    var v: E = t;
+    var u: E = v;
+    var out: i32[] = [0];
+    match (u) { E.A(a) => { out = a; }, E.B => {} }
+    return out.len() + i;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
+			want: 4, allocs: 300, frees: 100,
 		},
 		{
 			// REFUSED: an ELEMENT BIND from the alias (`var e = x[0]`) is a

@@ -25563,7 +25563,7 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
                 // silently widened the enum class too, and the plan then claimed a
                 // precise drop of a box its own consuming-match reuse still owned.
                 if (vb_borrow) {
-                    return body_unsafe_for_match_borrow(lm.body, name, borrowable, recv_borrow);
+                    return body_unsafe_for_match_borrow(lm.body, name, borrowable, recv_borrow, []);
                 }
                 return body_unsafe_for(lm.body, name, borrowable, recv_borrow);
             }
@@ -26011,6 +26011,45 @@ function strarr_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: 
     return a;
 }
 
+// strarr_alias_chain_sites_of is alias_chain_sites_of with strarr's own gate —
+// the closure walked raw, then the whole set vetted at once with the chain's own
+// binds forgiven (#7750). The substitution is the same one
+// strarr_alias_bind_sites_of makes for the single link: a string[]'s release
+// WALKS THE ELEMENTS, so an element escaping from any link is invisible to the
+// plain walker and would dangle under the deep free.
+//
+// All-or-nothing, for alias_chain_sites_of's reason: one buffer is shared by
+// every link, so a link that escapes taints every release in the set.
+function strarr_alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], str_fresh: string[], strarr_producers: string[], body: ast.Stmt[], acc: string[]): string[] {
+    var sites: string[] = [];
+    var names: string[] = [src];
+    var ni: i32 = 0;
+    while (ni < names.len()) {
+        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], []);
+        var fi: i32 = 0;
+        while (fi < found.len()) {
+            if (util.index_of_str(sites, found[fi]) < 0) {
+                sites = sites.append(found[fi]);
+                names = names.append(reclaim_site_name(found[fi]));
+            }
+            fi = fi + 1;
+        }
+        ni = ni + 1;
+    }
+    if (sites.len() == 0) { return acc; }
+    var reasg: string[] = body_assign_targets(body);
+    var vi: i32 = 1;
+    while (vi < names.len()) {
+        if (util.index_of_str(reasg, names[vi]) >= 0) { return acc; }
+        if (strarr_unsafe_for_alias(body, names[vi], borrowable, str_fresh, strarr_producers, sites, [])) { return acc; }
+        vi = vi + 1;
+    }
+    var out: string[] = acc;
+    var si: i32 = 0;
+    while (si < sites.len()) { out = push_str_unique(out, sites[si]); si = si + 1; }
+    return out;
+}
+
 // rcenum_alias_bind_sites_of is alias_bind_sites_of for the rc-enum classes,
 // with the substitution strarr_alias_bind_sites_of makes for "SARR:": the alias
 // vets through the ENUM gate rather than body_unsafe_for, because an rc-enum's
@@ -26094,13 +26133,36 @@ function bare_alias_bind_sites_of(stmts: ast.Stmt[], src: string, acc: string[])
     return a;
 }
 
-// opt_alias_bind_sites_of keeps the binds of `src` that may share its credit —
-// alias_bind_sites_of's job for the UNMATCHED Option classes ("OPTARR:" /
+// opt_alias_chain_closure is the transitive closure of bare-ident binds from
+// `src` — `src` -> `v` -> `u` -> … — walked RAW. Both Option questions need it
+// and must agree: which binds may share the credit, and whether any bind in the
+// chain was left unvetted (#7750).
+function opt_alias_chain_closure(stmts: ast.Stmt[], src: string): string[] {
+    var sites: string[] = [];
+    var names: string[] = [src];
+    var ni: i32 = 0;
+    while (ni < names.len()) {
+        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], []);
+        var fi: i32 = 0;
+        while (fi < found.len()) {
+            if (util.index_of_str(sites, found[fi]) < 0) {
+                sites = sites.append(found[fi]);
+                names = names.append(reclaim_site_name(found[fi]));
+            }
+            fi = fi + 1;
+        }
+        ni = ni + 1;
+    }
+    return sites;
+}
+
+// opt_alias_bind_sites_of keeps the CHAIN of binds that may share `src`'s credit
+// — alias_bind_sites_of's job for the UNMATCHED Option classes ("OPTARR:" /
 // "OPTSTR:" / "OPTOPTRC:"), with the substitution rcenum_alias_bind_sites_of
-// makes for enums: the alias must additionally not hand the PAYLOAD out. Every
-// one of those releases is a payload release plus a box dec, and only the box is
-// retained at the bind, so an arm that binds and returns the payload moves it out
-// from under the source's deep release (#7687).
+// makes for enums: no link may hand the PAYLOAD out. Every one of those releases
+// is a payload release plus a box dec, and only the box is retained at each bind,
+// so an arm that binds and returns the payload moves it out from under the
+// source's deep release (#7687).
 //
 // body_unsafe_for_match_borrow, not body_unsafe_for: the plain walker reads a
 // bare-ident match scrutinee as an escape, which would refuse every alias that is
@@ -26108,22 +26170,25 @@ function bare_alias_bind_sites_of(stmts: ast.Stmt[], src: string, acc: string[])
 // and wrong for the box, and the payload half is the conjunct after it. Same
 // pairing opt_match_alias_escape_ok makes.
 //
-// The alias takes the class credit qualified by "NODEEP:", never the deep
-// release — see credit_opt_alias_sites.
+// ALL-OR-NOTHING over the chain (#7750): one box is shared by every link, so a
+// link that escapes leaves a reference nothing accounts for and taints every
+// release in the set. Each link retains at its bind and releases BOX-ONLY
+// ("NODEEP:", see credit_opt_alias_sites) while the source keeps the one deep
+// release, so N links mean N extra retains and N extra box decs — the same
+// arithmetic the single-link case rests on, with more owners.
 function opt_alias_bind_sites_of(body: ast.Stmt[], src: string): string[] {
-    var all: string[] = bare_alias_bind_sites_of(body, src, []);
-    var out: string[] = [];
+    var all: string[] = opt_alias_chain_closure(body, src);
+    if (all.len() == 0) { return []; }
+    var reasg: string[] = body_assign_targets(body);
     var i: i32 = 0;
     while (i < all.len()) {
         var nm: string = reclaim_site_name(all[i]);
-        if (util.index_of_str(body_assign_targets(body), nm) < 0
-            && !body_unsafe_for_match_borrow(body, nm, [], [])
-            && !opt_body_binds_rc_payload(body, nm)) {
-            out = out.append(all[i]);
-        }
+        if (util.index_of_str(reasg, nm) >= 0) { return []; }
+        if (body_unsafe_for_match_borrow(body, nm, [], [], all)) { return []; }
+        if (opt_body_binds_rc_payload(body, nm)) { return []; }
         i = i + 1;
     }
-    return out;
+    return all;
 }
 
 // credit_opt_alias_sites gives every vetted alias of an admitted unmatched-Option
@@ -26142,6 +26207,49 @@ function credit_opt_alias_sites(body: ast.Stmt[], keys: string[], pfx: string, o
         i = i + 1;
     }
     return o;
+}
+
+// rcenum_alias_chain_sites_of is rcenum_alias_bind_sites_of over the whole CHAIN
+// (#7750) — the closure walked raw, then the set vetted at once with the chain's
+// own binds forgiven, exactly as alias_chain_sites_of does for the string and
+// struct limbs.
+//
+// The enum family uses these sites for ESCAPE FORGIVENESS only: a confined alias
+// takes no release, so the source stays the sole releaser and the box is freed
+// once however long the chain is. That is what makes the widening cheap here —
+// no link gains a dec, so the arithmetic the string limb has to reason about
+// does not arise. The vetting is still the enum one, because the release
+// deep-drops the payload and a payload extracted from ANY link is invisible to
+// the plain walker.
+function rcenum_alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], structs: parser.StructDecl[], body: ast.Stmt[], acc: string[]): string[] {
+    var sites: string[] = [];
+    var names: string[] = [src];
+    var ni: i32 = 0;
+    while (ni < names.len()) {
+        var found: string[] = bare_alias_bind_sites_of(stmts, names[ni], []);
+        var fi: i32 = 0;
+        while (fi < found.len()) {
+            if (util.index_of_str(sites, found[fi]) < 0) {
+                sites = sites.append(found[fi]);
+                names = names.append(reclaim_site_name(found[fi]));
+            }
+            fi = fi + 1;
+        }
+        ni = ni + 1;
+    }
+    if (sites.len() == 0) { return acc; }
+    var reasg: string[] = body_assign_targets(body);
+    var vi: i32 = 1;
+    while (vi < names.len()) {
+        if (util.index_of_str(reasg, names[vi]) >= 0) { return acc; }
+        if (body_unsafe_for_enumfield_alias(body, names[vi], borrowable, structs, sites)) { return acc; }
+        if (enum_body_binds_rc_payload(body, names[vi], structs)) { return acc; }
+        vi = vi + 1;
+    }
+    var out: string[] = acc;
+    var si: i32 = 0;
+    while (si < sites.len()) { out = push_str_unique(out, sites[si]); si = si + 1; }
+    return out;
 }
 
 // credit_alias_sites appends `pfx` for every alias site in `sites`, so a shared
@@ -26349,20 +26457,20 @@ function stmt_unsafe_for_alias_vb(st: ast.Stmt, name: string, borrowable: string
 // that merely mentions the name stay escapes, and arm guards and arm bodies are
 // still walked in full — as is every other use of the name anywhere in the
 // function, so an alias, a return or a call argument still refuses the candidate.
-function body_unsafe_for_match_borrow(stmts: ast.Stmt[], name: string, borrowable: string[], recv_borrow: string[]): boolean {
-    for stmt in stmts { if (stmt_unsafe_for_match_borrow(stmt, name, borrowable, recv_borrow)) { return true; } }
+function body_unsafe_for_match_borrow(stmts: ast.Stmt[], name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[]): boolean {
+    for stmt in stmts { if (stmt_unsafe_for_match_borrow(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; } }
     return false;
 }
-function stmt_unsafe_for_match_borrow(st: ast.Stmt, name: string, borrowable: string[], recv_borrow: string[]): boolean {
+function stmt_unsafe_for_match_borrow(st: ast.Stmt, name: string, borrowable: string[], recv_borrow: string[], alias_ok: string[]): boolean {
     match (st) {
         ast.StmtIf(f) => {
             if (expr_unsafe_for_vb(f.cond, name, borrowable, recv_borrow, true)) { return true; }
-            return body_unsafe_for_match_borrow(f.then_body, name, borrowable, recv_borrow)
-                || body_unsafe_for_match_borrow(f.else_body, name, borrowable, recv_borrow);
+            return body_unsafe_for_match_borrow(f.then_body, name, borrowable, recv_borrow, alias_ok)
+                || body_unsafe_for_match_borrow(f.else_body, name, borrowable, recv_borrow, alias_ok);
         },
         ast.StmtWhile(w) => {
             if (expr_unsafe_for_vb(w.cond, name, borrowable, recv_borrow, true)) { return true; }
-            return body_unsafe_for_match_borrow(w.body, name, borrowable, recv_borrow);
+            return body_unsafe_for_match_borrow(w.body, name, borrowable, recv_borrow, alias_ok);
         },
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -26371,7 +26479,7 @@ function stmt_unsafe_for_match_borrow(st: ast.Stmt, name: string, borrowable: st
                 _ => { iter_unsafe = expr_unsafe_for_vb(fo.iter, name, borrowable, recv_borrow, true); }
             }
             if (iter_unsafe) { return true; }
-            return body_unsafe_for_match_borrow(fo.body, name, borrowable, recv_borrow);
+            return body_unsafe_for_match_borrow(fo.body, name, borrowable, recv_borrow, alias_ok);
         },
         ast.StmtMatch(m) => {
             var scrut_borrow: boolean = false;
@@ -26382,14 +26490,14 @@ function stmt_unsafe_for_match_borrow(st: ast.Stmt, name: string, borrowable: st
             if (!scrut_borrow && expr_unsafe_for_vb(m.scrutinee, name, borrowable, recv_borrow, true)) { return true; }
             for arm in m.arms {
                 if (arm.has_guard && expr_unsafe_for_vb(arm.guard, name, borrowable, recv_borrow, true)) { return true; }
-                if (body_unsafe_for_match_borrow(arm.body, name, borrowable, recv_borrow)) { return true; }
+                if (body_unsafe_for_match_borrow(arm.body, name, borrowable, recv_borrow, alias_ok)) { return true; }
             }
             return false;
         },
         // The mode rides through the fallback too: a `var t = match (name) { … }`
         // is a StmtVar, so it lands here, and dropping to the strict walker is
         // exactly how the match-EXPRESSION read lost its borrow reading.
-        _ => { var no_alias_mb: string[] = []; return stmt_unsafe_for_alias_vb(st, name, borrowable, recv_borrow, no_alias_mb, true); }
+        _ => { return stmt_unsafe_for_alias_vb(st, name, borrowable, recv_borrow, alias_ok, true); }
     }
 }
 
@@ -26863,7 +26971,7 @@ function precise_drop_names(body: ast.Stmt[], structs: parser.StructDecl[], arr_
                 // reading (#6127); every other candidate kind keeps the coarse walker,
                 // so this widens exactly one class at a time.
                 var borrow_ok: boolean = !body_unsafe_for(body, v.name, borrowable, []);
-                if (!borrow_ok && (is_rcopt || is_opt)) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable, []); }
+                if (!borrow_ok && (is_rcopt || is_opt)) { borrow_ok = !body_unsafe_for_match_borrow(body, v.name, borrowable, [], []); }
                 if ((is_lit || is_opt || is_rcopt || is_enum || is_rcenum || is_map) && !shadowed && reassign_ok && borrow_ok) {
                     var last: i32 = 0 - 1;
                     var k: i32 = i + 1;
@@ -30535,7 +30643,7 @@ function collect_fresh_rcenum_names(stmts: ast.Stmt[], structs: parser.StructDec
                         && !name_used_after(stmts, v.name, match_idx)
                         && !name_escapes_outside_stmt_enumfield(stmts, v.name, match_idx, structs)) {
                         a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
-                    } else if (match_idx < 0 && !body_unsafe_for_enumfield_alias(stmts, v.name, borrowable, structs, rcenum_alias_bind_sites_of(stmts, v.name, borrowable, structs, stmts, []))) {
+                    } else if (match_idx < 0 && !body_unsafe_for_enumfield_alias(stmts, v.name, borrowable, structs, rcenum_alias_chain_sites_of(stmts, v.name, borrowable, structs, stmts, []))) {
                         // NO consuming match in this block. Every gate above exists to
                         // prove the match neither retains the box nor hands out its
                         // payload; with no match there is nothing to prove but that
@@ -38894,7 +39002,7 @@ function binding_escapes_arm(arm: ast.MatchArm, name: string, borrowable: string
 function binding_escapes_arm_scrut(arm: ast.MatchArm, name: string): boolean {
     var none: string[] = [];
     if (arm.has_guard && expr_unsafe_for(arm.guard, name, none, [])) { return true; }
-    return body_unsafe_for_match_borrow(arm.body, name, none, []);
+    return body_unsafe_for_match_borrow(arm.body, name, none, [], []);
 }
 
 // binding_returns_from_arm: the arm-bound payload `name` reaches a `return` inside
@@ -39080,7 +39188,7 @@ function consumed_rcpayload_enum_frees(body: ast.Stmt[], structs: parser.StructD
                         // reaching this second scan): it takes no release, so the
                         // source stays the sole releaser.
                         var escapes: boolean = name_escapes_outside_stmt_enumfield_alias(body, v.name, match_idx, structs,
-                            rcenum_alias_bind_sites_of(body, v.name, borrowable, structs, body, []));
+                            rcenum_alias_chain_sites_of(body, v.name, borrowable, structs, body, []));
                         // An arm binding an ESCAPING rc payload no longer rejects
                         // the candidate (#4400): the free site skips the dec of
                         // each moved (variant, field) pair instead — see
@@ -43453,7 +43561,7 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
 function opt_unmatched_esc_ok(stmts: ast.Stmt[], name: string, key: string, plan_on: boolean, plan_fe: string[], alias_ok: string[]): boolean {
     if (!plan_on) { return !body_unsafe_for_alias(stmts, name, [], [], alias_ok); }
     return util.index_of_str(plan_fe, key) >= 0 && !name_is_match_scrutinee(stmts, name)
-        && bare_alias_bind_sites_of(stmts, name, []).len() == alias_ok.len();
+        && opt_alias_chain_closure(stmts, name).len() == alias_ok.len();
 }
 
 // unmatched_optopt_ann_is / unmatched_optopt_init_is_fresh: the NESTED-OPTION
@@ -46139,7 +46247,7 @@ function arrenum_param_escapes(stmts: ast.Stmt[], name: string, body: ast.Stmt[]
                     _ => {}
                 }
                 if (arrenum_elem_read_of(v.init, name)
-                    && !body_unsafe_for_match_borrow(body, v.name, no_reg, no_reg)
+                    && !body_unsafe_for_match_borrow(body, v.name, no_reg, no_reg, [])
                     && !param_match_binding_escapes(body, v.name)) {
                     st_esc = false;
                 } else if (whole_alias && !arrenum_param_escapes(body, v.name, body)) {
@@ -47438,7 +47546,7 @@ function opt_match_alias_escape_ok(body: ast.Stmt[], name: string, skip: i32, bo
                         ast.ExprIdent(aid) => {
                             if (aid.name == name
                                 && util.index_of_str(body_assign_targets(body), v.name) < 0
-                                && !body_unsafe_for_match_borrow(body, v.name, borrowable, recv_borrow)
+                                && !body_unsafe_for_match_borrow(body, v.name, borrowable, recv_borrow, [])
                                 // …and the alias must not carry the PAYLOAD out.
                                 // The scan above reads `match (x)` as a borrow,
                                 // which holds for the box and not for what its
@@ -58529,7 +58637,7 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
             // release and a loop-local enum passed to a helper leaked unboundedly
             // (#6606) while the identical match written inline was flat.
             if (!param_consumed_in_body(fn.body, pname, reasgn)
-                && !body_unsafe_for_match_borrow(fn.body, pname, none, [])
+                && !body_unsafe_for_match_borrow(fn.body, pname, none, [], [])
                 && !param_match_binding_escapes(fn.body, pname)) { flags = flags + "1"; any = true; }
             else { flags = flags + "0"; }
             pj = pj + 1;
@@ -58869,7 +58977,7 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
                     // monotonically with the rest of the from-above fixpoint.
                     var ip_psal: string[] = param_alias_bind_sites(fn.body, fn.params[pj].name, reg, [], fn.body, []);
                     ip_psal = param_alias_reassign_sites(fn.body, fn.params[pj].name, reg, [], fn.body, ip_psal);
-                    var ip_borrow: boolean = !body_unsafe_for_match_borrow(fn.body, fn.params[pj].name, reg, [])
+                    var ip_borrow: boolean = !body_unsafe_for_match_borrow(fn.body, fn.params[pj].name, reg, [], [])
                         || (ip_psal.len() > 0
                             && !body_unsafe_for_alias(fn.body, fn.params[pj].name, reg, [], ip_psal));
                     if (!param_consumed_in_body(fn.body, fn.params[pj].name, ip_reasgn)
@@ -70348,7 +70456,7 @@ while (sri < sarrs.len()) {
     // what lets the alias take the SAME deep "SARR:" class where a struct
     // alias must take box-only "NODEEP:" — the walk cannot run twice.
     var sanm: string = reclaim_site_name(sarrs[sri]);
-    var sasal: string[] = strarr_alias_bind_sites_of(body, sanm, borrowable, str_fresh_ret, strarr_producers, body, []);
+    var sasal: string[] = strarr_alias_chain_sites_of(body, sanm, borrowable, str_fresh_ret, strarr_producers, body, []);
     // A struct-literal `string[]` field is a counted share on the same terms
     // the string family took in #7557, and it needs the DEEP class rather
     // than a box-only one: the element walk must survive a path where the
