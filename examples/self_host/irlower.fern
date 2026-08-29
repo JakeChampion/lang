@@ -42903,6 +42903,7 @@ function opt_assign_is_fresh(e: ast.Expr, kind: string, inner: string, structs: 
     // call qualifies only through the registry's "f" flag — so this kind is the
     // reason the walker carries the two registries at all (#7712).
     if (kind == "str") { return unmatched_optstr_init_is_fresh(e, opt_fresh_reg, str_fresh_ret); }
+    if (kind == "optopt") { return unmatched_optopt_init_is_fresh(e); }
     return optarr_init_is_fresh(e);
 }
 
@@ -43222,10 +43223,20 @@ function collect_unmatched_optarr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
         match (stmt) {
             ast.StmtVar(v) => {
                 var oa_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe);
-                if (((unmatched_optarr_ann_is(v.type_name) && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg))
-                        || (unmatched_optopt_ann_is(v.type_name) && unmatched_optopt_init_is_fresh(v.init)))
-                    && util.index_of_str(reassigned, v.name) < 0
-                    && oa_esc_ok) {
+                var oa_arr_ok: boolean = unmatched_optarr_ann_is(v.type_name)
+                    && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
+                    && util.index_of_str(reassigned, v.name) < 0;
+                // The nested-Option spelling may be REASSIGNED provided every
+                // rebind allocates its own inner box. The array spelling may not
+                // here: collect_fresh_optarr_names owns its reassigned class, and
+                // admitting one in both places would credit the same box twice.
+                // A nested-Option local has no such sibling, so this is the only
+                // credit it can earn.
+                var oa_opt_ok: boolean = unmatched_optopt_ann_is(v.type_name)
+                    && unmatched_optopt_init_is_fresh(v.init)
+                    && (util.index_of_str(reassigned, v.name) < 0
+                        || opt_rebinds_all_fresh(stmts, v.name, "optopt", "", [], sig_reg_empty(), []));
+                if ((oa_arr_ok || oa_opt_ok) && oa_esc_ok) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
