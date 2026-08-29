@@ -1,0 +1,64 @@
+// An INLINE `as char` cast used as a method receiver. The self-host classified it
+// as i32 and keyed the absent `i32.to_upper`, refusing the whole module, while
+// native compiled and ran it — `examples/tests/unicode_test.fern`'s test_char_level
+// writes exactly `(97 as char).to_upper()`.
+//
+// The receiver-type cascade (expr_scalar_type) tests string, f32, f64, u64, the
+// i64 width, u32 and boolean, then falls through to "i32" — its own comment says
+// so. `char` was in none of those, so an `as char` cast landed on the default.
+// The neighbouring casts were all fine, which is what makes this a gap:
+//
+//   (97 as i64).to_string()   lowered      — recovered by the width check
+//   (97 as f64).to_string()   lowered      — recovered by expr_is_f64
+//   (97 as char).to_upper()   REFUSED
+//   var c: char = 97 as char; c.to_upper()   lowered
+//
+// expr_is_char is DISPATCH-ONLY, the same bargain expr_is_bool documents: a char
+// is an i32 value in an i32 slot, and nothing about its storage, width or rc
+// differs. It exists only so the method keys "char.<m>".
+//
+// This does NOT cover `for c in s.chars()` — that needs a char ARRAY ELEMENT
+// kind, which is separate work (#7763). Only the receiver classification is here.
+//
+// Sentinels are 251-253, above the `% 113` the success path returns.
+import "std/unicode";
+
+// The bail shape: an inline cast receiver, upper and lower.
+function inline_upper(i: i32): i32 {
+    if (((97 as char).to_upper() as i32) != 65) { return 253; }
+    if (((913 as char).to_lower() as i32) != 945) { return 252; }
+    return 3;
+}
+
+// A character with no case mapping must come back unchanged.
+function inline_unchanged(i: i32): i32 {
+    if (((48 as char).to_upper() as i32) != 48) { return 253; }
+    return 1;
+}
+
+// The cast bound to an annotated local first — the spelling that already lowered,
+// kept as a control so a regression on either side is visible.
+function bound_local(i: i32): i32 {
+    var c: char = 97 as char;
+    if ((c.to_upper() as i32) != 65) { return 253; }
+    return 1;
+}
+
+// Controls: the sibling casts whose receivers were classified correctly before
+// this change, so a narrowing of the cascade shows up here too.
+function other_casts(i: i32): i32 {
+    if (((97 as i64) + (1 as i64)) as i32 != 98) { return 253; }
+    if (((97 as f64) * (2 as f64)) as i32 != 194) { return 252; }
+    return 2;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        acc = acc + inline_upper(i) + inline_unchanged(i) + bound_local(i) + other_casts(i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}
