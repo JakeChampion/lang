@@ -1984,13 +1984,16 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 }
 
 // parseUnionDecl parses `type Name = A | B | C;` — a closed
-// sum over named struct types. The first cut requires:
+// sum over named struct types. It requires:
 //
 //   - at least two members (`type X = A;` is rejected — a
 //     one-member union is uselessly an alias);
-//   - each member is a plain Ident (no generic args, no array
-//     suffix, no nested type expression). The checker
-//     resolves each name against `info.Structs`.
+//   - each member names a struct, optionally with type
+//     arguments (`Leaf[T]`). The checker resolves each name
+//     against `info.Structs` and checks the argument count.
+//
+// The union may take its own parameters, which the members'
+// arguments can reference: `type Tree[T] = Leaf[T] | Node[T]`.
 //
 // Source shape: `type Expr = Binary | Unary | Call;`. The
 // `=` keeps the syntax close to type aliases in Go / Rust /
@@ -2006,22 +2009,29 @@ func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := p.expect(lexer.Punct, "="); err != nil {
-		return nil, err
-	}
-	var members []string
-	first, err := p.expect(lexer.Ident, "")
-	if err != nil {
-		return nil, err
-	}
-	members = append(members, first.Text)
-	for p.match(lexer.Punct, "|") {
-		p.advance()
-		mem, err := p.expect(lexer.Ident, "")
+	var typeParams []string
+	if p.match(lexer.Punct, "[") {
+		typeParams, _, err = p.parseTypeParamList()
 		if err != nil {
 			return nil, err
 		}
-		members = append(members, mem.Text)
+	}
+	if _, err := p.expect(lexer.Punct, "="); err != nil {
+		return nil, err
+	}
+	var members []ast.StructType
+	first, err := p.parseUnionMember()
+	if err != nil {
+		return nil, err
+	}
+	members = append(members, first)
+	for p.match(lexer.Punct, "|") {
+		p.advance()
+		mem, err := p.parseUnionMember()
+		if err != nil {
+			return nil, err
+		}
+		members = append(members, mem)
 	}
 	if _, err := p.expect(lexer.Punct, ";"); err != nil {
 		return nil, err
@@ -2029,7 +2039,39 @@ func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
 	if len(members) < 2 {
 		return nil, p.errorf(name.Pos, "union %q must list at least two struct members (use a struct alias for a single type)", name.Text)
 	}
-	return &ast.UnionDecl{P: kw.Pos, Name: name.Text, Members: members}, nil
+	return &ast.UnionDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, Members: members}, nil
+}
+
+// parseUnionMember parses one member of a union alias: a struct name
+// with optional type arguments. Written out rather than routed through
+// parseType because only this one shape is legal here — an array
+// suffix or a slice view in member position should read as a syntax
+// error, not as a type the checker later rejects.
+func (p *parser) parseUnionMember() (ast.StructType, error) {
+	name, err := p.expect(lexer.Ident, "")
+	if err != nil {
+		return ast.StructType{}, err
+	}
+	st := ast.StructType{Name: name.Text}
+	if p.match(lexer.Punct, "[") {
+		p.advance()
+		for {
+			arg, err := p.parseType()
+			if err != nil {
+				return ast.StructType{}, err
+			}
+			st.Args = append(st.Args, arg)
+			if p.match(lexer.Punct, ",") {
+				p.advance()
+				continue
+			}
+			break
+		}
+		if _, err := p.expect(lexer.Punct, "]"); err != nil {
+			return ast.StructType{}, err
+		}
+	}
+	return st, nil
 }
 
 func (p *parser) parseType() (ast.Type, error) {

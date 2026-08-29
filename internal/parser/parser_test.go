@@ -963,6 +963,74 @@ func TestNonLvalueAssignTargetsRejected(t *testing.T) {
 	}
 }
 
+// A union alias may carry its own type parameters, and each member may
+// be instantiated with them (#7737). Both halves are the parser's job:
+// the checker only ever sees what this produced.
+func TestGenericUnionDeclParses(t *testing.T) {
+	prog, err := Parse(`struct Leaf[T] { v: T }
+struct Node[T] { v: T }
+struct Lit { v: i32 }
+type Tree[T] = Leaf[T] | Node[T] | Lit;
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prog.Unions) != 1 {
+		t.Fatalf("unions = %d, want 1", len(prog.Unions))
+	}
+	ud := prog.Unions[0]
+	if got := ud.TypeParams; len(got) != 1 || got[0] != "T" {
+		t.Errorf("TypeParams = %v, want [T]", got)
+	}
+	if len(ud.Members) != 3 {
+		t.Fatalf("members = %d, want 3", len(ud.Members))
+	}
+	for i, want := range []string{"Leaf", "Node", "Lit"} {
+		if ud.Members[i].Name != want {
+			t.Errorf("member %d = %q, want %q", i, ud.Members[i].Name, want)
+		}
+	}
+	// The parameterised members carry their argument; the plain one
+	// carries none — that difference is what the checker's arity rule
+	// reads.
+	for _, i := range []int{0, 1} {
+		args := ud.Members[i].Args
+		if len(args) != 1 {
+			t.Fatalf("member %q args = %v, want one", ud.Members[i].Name, args)
+		}
+		st, ok := args[0].(ast.StructType)
+		if !ok || st.Name != "T" {
+			t.Errorf("member %q arg = %#v, want the type parameter T", ud.Members[i].Name, args[0])
+		}
+	}
+	if got := ud.Members[2].Args; len(got) != 0 {
+		t.Errorf("plain member Lit carries args %v, want none", got)
+	}
+}
+
+// A member's argument list is a type list, not just parameter names: a
+// non-generic union may instantiate a generic member concretely.
+func TestUnionMemberConcreteTypeArgParses(t *testing.T) {
+	prog, err := Parse(`struct Leaf[T] { v: T }
+struct Lit { v: i32 }
+type Tree = Leaf[i32] | Lit;
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ud := prog.Unions[0]
+	if len(ud.TypeParams) != 0 {
+		t.Errorf("TypeParams = %v, want none", ud.TypeParams)
+	}
+	args := ud.Members[0].Args
+	if len(args) != 1 {
+		t.Fatalf("Leaf args = %v, want one", args)
+	}
+	if _, ok := args[0].(ast.NumberType); !ok {
+		t.Errorf("Leaf arg = %#v, want i32", args[0])
+	}
+}
+
 func TestIfExpr(t *testing.T) {
 	prog, err := Parse(`function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
 	if err != nil {

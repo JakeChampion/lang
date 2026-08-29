@@ -1542,13 +1542,19 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		}
 	}
 	for _, ud := range m.prog.Unions {
-		// Mangling lines up with the synthesised EnumDecl the
-		// checker will produce. Member struct names get the same
-		// own-module prefix because they're declared alongside.
+		// Mangling lines up with the synthesised EnumDecl the checker
+		// will produce. Members go through rewriteType rather than a
+		// name prefix of their own: a member carries type arguments
+		// (`Leaf[T]`), so its base name and each argument need the
+		// same own-module-or-qualified treatment every other type
+		// reference gets — and a bare type parameter, which names no
+		// declaration, is left alone by exactly that rule.
 		ud.Name = selfPrefix + ud.Name
-		for i, member := range ud.Members {
-			if ownStructs[member] {
-				ud.Members[i] = selfPrefix + member
+		for i := range ud.Members {
+			var t ast.Type = ud.Members[i]
+			r.rewriteType(&t)
+			if st, ok := t.(ast.StructType); ok {
+				ud.Members[i] = st
 			}
 		}
 	}

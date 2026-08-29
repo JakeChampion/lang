@@ -3696,20 +3696,23 @@ type ResourceDecl struct {
 //     `var e: Expr = Binary(Binary{...})`. The checker's
 //     `assignable` rule recognises the (struct, union) pair
 //     and inserts the wrapping at the AST level.
-//
-// Generics aren't supported on unions in the first cut —
-// `type Tree[T] = Leaf[T] | Node[T]` would need the desugar
-// to thread TypeParams + payload substitution, which adds a
-// pass-ordering wrinkle we punt on until self-host needs it.
 type UnionDecl struct {
 	P    Position
 	Name string
-	// Members lists the struct names that make up the union, in
-	// declaration order. Each name must resolve to a non-generic
-	// StructDecl at desugar time. The parser preserves source
-	// order; checker rewrites preserve it too so the synthesised
-	// enum's variant tags are stable across re-checks.
-	Members []string
+	// TypeParams are the union's own parameters — `T` in
+	// `type Tree[T] = Leaf[T] | Node[T]`. They pass straight to the
+	// synthesised EnumDecl, which is where the existing generic-enum
+	// machinery (including the composite-payload monomorphizer) picks
+	// them up.
+	TypeParams []string
+	// Members lists the struct types that make up the union, in
+	// declaration order, each with whatever type arguments the source
+	// wrote. A member's Name must resolve to a StructDecl at desugar
+	// time, and its Args must match that struct's own parameter count.
+	// The parser preserves source order; checker rewrites preserve it
+	// too so the synthesised enum's variant tags are stable across
+	// re-checks.
+	Members []StructType
 	// Public marks the union as exported across modules — same
 	// semantics as EnumDecl.Public.
 	Public bool

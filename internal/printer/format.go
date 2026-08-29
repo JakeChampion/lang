@@ -380,12 +380,14 @@ func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
 	}
 	f.b.WriteString("type ")
 	f.b.WriteString(ud.Name)
+	f.writeTypeParams(ud.TypeParams, nil, nil)
 	f.b.WriteString(" = ")
 	for i, m := range ud.Members {
 		if i > 0 {
 			f.b.WriteString(" | ")
 		}
-		f.b.WriteString(m)
+		f.b.WriteString(m.Name)
+		f.writeTypeArgs(m.Args)
 	}
 	f.b.WriteString(";\n")
 }

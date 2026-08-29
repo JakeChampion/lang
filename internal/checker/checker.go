@@ -905,27 +905,41 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		seen := map[string]bool{}
 		ok := true
 		for _, member := range ud.Members {
-			if seen[member] {
-				c.errfCode(ud.P, "E016", "duplicate member %q in union %s", member, ud.Name)
+			if seen[member.Name] {
+				c.errfCode(ud.P, "E016", "duplicate member %q in union %s", member.Name, ud.Name)
 				ok = false
 				continue
 			}
-			seen[member] = true
-			sd, isStruct := c.info.Structs[member]
+			seen[member.Name] = true
+			sd, isStruct := c.info.Structs[member.Name]
 			if !isStruct {
-				c.errfCode(ud.P, "E016", "union %s member %q does not name a struct in scope", ud.Name, member)
+				c.errfCode(ud.P, "E016", "union %s member %q does not name a struct in scope", ud.Name, member.Name)
 				ok = false
 				continue
 			}
-			if len(sd.TypeParams) > 0 {
-				c.errfCode(ud.P, "E016", "union %s member %q is generic; generic struct members in unions are not supported yet", ud.Name, member)
+			// A generic struct has to be given its arguments here, because
+			// the variant payload is a concrete type: the union's own
+			// parameters are the only thing in scope to supply them, which
+			// is what `type Tree[T] = Leaf[T]` says and `type Tree = Leaf`
+			// leaves unanswered.
+			if len(member.Args) != len(sd.TypeParams) {
+				if len(sd.TypeParams) == 0 {
+					c.errfCode(ud.P, "E016", "union %s member %q is not generic but was given %d type argument(s)", ud.Name, member.Name, len(member.Args))
+				} else {
+					// Spell the example at the member's real arity: a
+					// one-parameter hint under a two-parameter struct is
+					// advice that does not compile.
+					params := strings.Join(sd.TypeParams, ", ")
+					c.errfCode(ud.P, "E016", "union %s member %q takes %d type argument(s), got %d; a generic struct member needs them supplied (e.g. `type %s[%s] = %s[%s] | …`)",
+						ud.Name, member.Name, len(sd.TypeParams), len(member.Args), ud.Name, params, member.Name, params)
+				}
 				ok = false
 				continue
 			}
 			variants = append(variants, ast.EnumVariant{
 				P:        ud.P,
-				Name:     member,
-				Payloads: []ast.Type{ast.StructType{Name: member}},
+				Name:     member.Name,
+				Payloads: []ast.Type{member},
 			})
 		}
 		if !ok {
@@ -934,6 +948,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		prog.Enums = append(prog.Enums, &ast.EnumDecl{
 			P:            ud.P,
 			Name:         ud.Name,
+			TypeParams:   ud.TypeParams,
 			Variants:     variants,
 			Public:       ud.Public,
 			SourceModule: ud.SourceModule,

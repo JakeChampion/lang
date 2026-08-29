@@ -836,6 +836,41 @@ function main(): i32 {
 	}
 }
 
+// wasm twin of TestX86_64GenericUnions / TestArm64GenericUnions
+// (#7737). The third backend matters here because its enum payload
+// representation differs from the natives', so a parameterised payload
+// that lays out correctly on both natives can still be wrong here.
+//
+// The result is checked inside the guest and returned as 0/1 rather
+// than as the sum: the cli/run lift collapses any nonzero main return
+// to exit 1, so a bare `return total` cannot distinguish 22 from 15.
+func TestWASMGenericUnions(t *testing.T) {
+	src := `struct Leaf[T] { v: T }
+struct Pair[T] { a: T, b: T }
+struct Lit { v: i32 }
+
+type Tree[T] = Leaf[T] | Pair[T] | Lit;
+
+function leafOf(t: Tree[i32]): i32 {
+    match (t) {
+        Leaf(l) => { return l.v; },
+        Pair(p) => { return p.a + p.b; },
+        Lit(x) => { return x.v; },
+    }
+}
+
+function main(): i32 {
+    var a: Tree[i32] = Tree.Leaf(Leaf[i32] { v: 4 });
+    var b: Tree[i32] = Pair[i32] { a: 5, b: 6 };
+    var c: Tree[i32] = Lit { v: 7 };
+    if (leafOf(a) + leafOf(b) + leafOf(c) == 22) { return 0; }
+    return 1;
+}`
+	if got := runWasm(t, src); got != 0 {
+		t.Errorf("generic union on wasm: got %d, want 0 (the three arms must sum to 22)", got)
+	}
+}
+
 func runWasm(t *testing.T, src string) int {
 	t.Helper()
 	stdout, _ := invokeWasmtime(t, src)

@@ -1133,7 +1133,13 @@ pipeline runs. The implicit wrap lets bare struct literals
 flow into union positions without `Member(...)` ceremony.
 
 Punted to follow-ups (don't block self-hosting in practice):
-- Generic union members (`type Tree[T] = Leaf[T] | Node[T]`)
+- ~~Generic union members (`type Tree[T] = Leaf[T] | Node[T]`)~~ — shipped
+  on the native side (#7737). The union alias takes its own type
+  parameters and each member may be instantiated with them or with a
+  concrete type; the desugar hands both to the generic-enum machinery,
+  which already carried composite payloads. The self-host's `TypeAlias`
+  still holds bare member strings, so this is native-only surface for now
+  (#4451).
 - ~~Qualified variant references (`Expr.Add(...)`)~~ — shipped. Unions
   desugar into `prog.Enums` before `c.variantOf` is populated, so a
   qualified constructor resolves through the ordinary enum machinery;
