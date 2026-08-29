@@ -36,8 +36,8 @@ import "./astwalk";
 import "./ircore";
 
 // Linear-memory layout: the low scratch, then a unit's string literals, then
-// its aggregate constants, then the fl_cells-entry freelist head array, then
-// the bump heap. Every boundary above the scratch is COMPUTED from the data
+// its aggregate constants, then the fl_cells-entry small freelist head array,
+// then the large_fl_cells-entry large one, then the bump heap. Every boundary above the scratch is COMPUTED from the data
 // below it — str_region_base -> str_offset -> const_agg_region_base ->
 // fl_base_for -> heap_base_for — so adding a literal shifts the freelist and
 // the heap rather than landing on them. heap_base is also the rc helpers'
@@ -52,6 +52,14 @@ import "./ircore";
 // hazard as a hand-picked address (#6229) — deleted rather than re-derived,
 // since the derived path is what every caller already uses.
 pub function fl_cells(): i32 { return 65536; }
+
+// large_fl_cells is the LARGE tier's head-array length (#7735). The small
+// table above covers block sizes up to fl_cells*8 = 512 KiB; past that a block
+// was bump-only and never came back. The large tier bins those the way the
+// native backends do: LINEAR 512-KiB classes, class = round_up(bytes, 512 KiB)
+// >> 19, so 1..2048 covers 512 KiB..1 GiB and anything larger stays bump-only
+// (index 0 is unused, hence 2049 cells).
+pub function large_fl_cells(): i32 { return 2049; }
 
 // ---- string literals (data section) -----------------------------------------
 // In the IR subset, string literals live in the data section exactly as
@@ -538,14 +546,20 @@ pub function const_agg_offset(sv: string[], cv: string[], idx: i32): i32 {
 pub function fl_base_for_strs(sv: string[], cv: string[]): i32 {
     return const_agg_offset(sv, cv, cv.len());
 }
-pub function heap_base_for_strs(sv: string[], cv: string[]): i32 {
+pub function large_fl_base_for_strs(sv: string[], cv: string[]): i32 {
     return fl_base_for_strs(sv, cv) + fl_cells() * 4;
+}
+pub function heap_base_for_strs(sv: string[], cv: string[]): i32 {
+    return large_fl_base_for_strs(sv, cv) + large_fl_cells() * 4;
 }
 pub function fl_base_for(cache: irlower.LowerResult[]): i32 {
     return fl_base_for_strs(str_values(cache), const_agg_values(cache));
 }
-pub function heap_base_for(cache: irlower.LowerResult[]): i32 {
+pub function large_fl_base_for(cache: irlower.LowerResult[]): i32 {
     return fl_base_for(cache) + fl_cells() * 4;
+}
+pub function heap_base_for(cache: irlower.LowerResult[]): i32 {
+    return large_fl_base_for(cache) + large_fl_cells() * 4;
 }
 
 // cagg_base_global names a UNIT's constant-region base, the sibling of
@@ -7280,10 +7294,11 @@ pub function lc_report_and_exit_wrapper(): string {
 // heap_alloc_helpers emits the bump allocator: a `$heap` global starting
 // at `heap_base` (above all static data) and `$__fern_alloc` which bumps
 // it. Shared by string concat and array allocation.
-pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): string {
+pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl_base: i32): string {
     var hb: string = util.i32_to_string(heap_base);
     var flb: string = util.i32_to_string(fl_base);
     var flc: string = util.i32_to_string(fl_cells);
+    var lflb: string = util.i32_to_string(lfl_base);
     var o: string = "";
     // The over-release detector global lives here (before $__fern_arr_dec,
     // which bumps it, and before rc_runtime_helpers, which also reads it).
@@ -7294,7 +7309,8 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     // wasm's zeroed linear memory. Class = roundup8(blocksize)/8. A freed
     // block (rc reaching 0 in $__fern_arr_dec) is pushed onto its class;
     // $__fern_alloc pops a same-class block before bumping. Blocks larger
-    // than fl_cells*8 bytes are bump-only (never recycled).
+    // than fl_cells*8 bytes (512 KiB) go to the large tier below instead;
+    // only those past 1 GiB are bump-only.
     o = o + "  (func $__fern_alloc (param $n i32) (result i32)\n";
     o = o + "    (local $p i32) (local $cls i32) (local $head i32)\n";
     // A request past 2^31 wraps in the 8-round below, yielding a block far
@@ -7308,7 +7324,20 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "      (local.set $head (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
     o = o + "      (if (local.get $head) (then\n";
     o = o + "        (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (i32.load (i32.add (local.get $head) (i32.const 4))))\n";
-    o = o + "        (return (local.get $head))))))\n";
+    o = o + "        (return (local.get $head)))))\n";
+    // Large tier (#7735): >= 512 KiB. Round the request UP to its class
+    // capacity and bump AT that, so every block in a class has one size and
+    // any freed block satisfies any same-class request — which is what makes
+    // the pop below sound. Setting $n to the capacity is also what the
+    // fall-through bump uses, so a miss costs only the rounding. Over 1 GiB
+    // stays bump-only at the exact size, matching the natives.
+    o = o + "    (else (if (i32.le_u (local.get $n) (i32.const 1073741824)) (then\n";
+    o = o + "      (local.set $n (i32.and (i32.add (local.get $n) (i32.const 524287)) (i32.const -524288)))\n";
+    o = o + "      (local.set $cls (i32.shr_u (local.get $n) (i32.const 19)))\n";
+    o = o + "      (local.set $head (i32.load (i32.add (i32.const " + lflb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
+    o = o + "      (if (local.get $head) (then\n";
+    o = o + "        (i32.store (i32.add (i32.const " + lflb + ") (i32.mul (local.get $cls) (i32.const 4))) (i32.load (i32.add (local.get $head) (i32.const 4))))\n";
+    o = o + "        (return (local.get $head))))))))\n";
     o = o + "    (local.set $p (global.get $heap))\n";
     o = o + "    (global.set $heap (i32.add (global.get $heap) (local.get $n)))\n";
     // The bump is i32, so a heap that lands below the pointer it started
@@ -7323,6 +7352,19 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "    (if (i32.gt_u (global.get $heap) (i32.mul (memory.size) (i32.const 65536)))\n";
     o = o + "      (then (if (i32.eq (memory.grow (i32.div_u (i32.add (i32.sub (global.get $heap) (i32.mul (memory.size) (i32.const 65536))) (i32.const 65535)) (i32.const 65536))) (i32.const -1)) (then (unreachable)))))\n";
     o = o + "    (local.get $p))\n";
+    // $__fern_large_push(base, bytes): return a freed >= 512 KiB block to the
+    // large tier (#7735), the wasm twin of asm_ir's __fern_large_push. Bins by
+    // the same round-up $__fern_alloc used, so a block returns to the class
+    // whose capacity it was bumped at; the successor rides in the bsz slot at
+    // base+4, as the small tier's does. Over 1 GiB is dropped rather than
+    // recycled, matching alloc — a leak, not a free, which is why any free
+    // accounting belongs before this point rather than inside it.
+    o = o + "  (func $__fern_large_push (param $base i32) (param $bytes i32)\n";
+    o = o + "    (local $cls i32)\n";
+    o = o + "    (if (i32.gt_u (local.get $bytes) (i32.const 1073741824)) (then (return)))\n";
+    o = o + "    (local.set $cls (i32.shr_u (i32.and (i32.add (local.get $bytes) (i32.const 524287)) (i32.const -524288)) (i32.const 19)))\n";
+    o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + lflb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
+    o = o + "    (i32.store (i32.add (i32.const " + lflb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base)))\n";
     // $__fern_arr_box(eb) -> a: allocate an rc-headered array block and
     // return the DATA pointer `a`. Block layout: [rc@0][bsz@4][len@8]
     // [cap@12][elems@16..]; a = base+8, so the rc word sits at [a-8]
@@ -7380,7 +7422,8 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
     o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
-    o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base))))\n";
+    o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base)))\n";
+    o = o + "    (else (call $__fern_large_push (local.get $base) (i32.load (i32.add (local.get $base) (i32.const 4))))))\n";
     o = o + "    (call $__fern_str_box (i32.mul (local.get $nf) (i32.const 8))))\n";
     // $__fern_arr_dec(a) -> a: Perceus array release. Same guard chain as
     // the rc helpers (null / SSO low-bit / low-addr / sentinel). rc > 1:
@@ -7408,7 +7451,8 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32): st
     o = o + "    (i32.store (local.get $base) (i32.const 0))\n";
     o = o + "    (if (i32.lt_u (local.get $cls) (i32.const " + flc + ")) (then\n";
     o = o + "      (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
-    o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base))))\n";
+    o = o + "      (i32.store (i32.add (i32.const " + flb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base)))\n";
+    o = o + "    (else (call $__fern_large_push (local.get $base) (i32.load (i32.add (local.get $base) (i32.const 4))))))\n";
     o = o + "    (local.get $a))\n";
     // $__fern_arr_dec_ptr(a) -> a: Perceus release of an array whose ELEMENTS
     // are rc-boxed pointers (string[] / struct[] / array-of-array / tuple[]).
@@ -8190,7 +8234,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
     if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
-        parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells()));
+        parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv)));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
     // The preview2 shims stand in for the preview1 imports mode 0 supplies, so
