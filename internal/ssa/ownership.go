@@ -26,10 +26,37 @@
 // path, which is untouched by any of this.
 package ssa
 
-// rcHelpers are the runtime reference-count entry points. The lift turns
-// both spellings — the flat IR's dedicated OpRcInc / OpRcDec /
-// OpRcIsUnique and the self-host's plain calls — into an OpCall carrying
-// the helper's name, so one set covers both compilers.
+// rcHelpers are the GENERIC runtime reference-count entry points. The
+// lift turns both spellings — the flat IR's dedicated OpRcInc / OpRcDec
+// / OpRcIsUnique and the self-host's plain calls — into an OpCall
+// carrying the helper's name, so one set covers both compilers.
+//
+// # It is not every way a value is released, and the gap is measured
+//
+// The corpus calls 259 distinct release-shaped helpers. Three of them
+// are here. The typed ones are not, and they are not a long tail:
+//
+//	__fern_arr_dec    5084   (more than __fern_rc_dec)
+//	__fern_rc_dec     3517   <- counted
+//	__fern_str_dec    3459
+//	__fern_box_free   3266
+//	__drop_struct_*, __fern_map_drop, __fern_closure_drop, ... 255 more
+//
+// So "not released" from this pass means "not released through one of
+// three generic helpers", and every count derived from it reads low.
+// Measured against a wider set over 3897 pointer parameters: parameters
+// declared `own` with no release go 13 -> 9, borrowed with no release go
+// 3820 -> 3771, and the borrowed-but-released bucket roughly doubles.
+// The shape of the answer survives — the overwhelming majority of
+// pointer parameters really are plain borrows — but the numbers are a
+// floor, not a total.
+//
+// Widening the set is not a matter of adding names: the typed helpers do
+// not all take the counted pointer as argument 0 (`__fern_box_free`
+// takes a receiver, the generated `__drop_*` are per type), so a
+// prefix rule applied without checking each signature would repeat the
+// pass-through-alias mistake in a new place. It needs the signatures,
+// which is #7786's table.
 var rcHelpers = map[string]bool{
 	"__fern_rc_inc":       true,
 	"__fern_rc_dec":       true,
