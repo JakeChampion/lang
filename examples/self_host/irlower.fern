@@ -22708,7 +22708,23 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                                         // key by "<Type>.<method>".
                                         if (srt == "") {
                                             var mrty: string = expr_struct_type(scfa.obj, ms);
-                                            if (mrty != "") { srt = ms.opt_ret_type(mrty + "." + scfa.field); }
+                                            if (mrty != "") {
+                                                srt = ms.opt_ret_type(mrty + "." + scfa.field);
+                                                // A closure-typed FIELD (`st.run(c)` where
+                                                // `run: (C) => Result[C, E]`) is not a method, so the
+                                                // registry keyed "<Type>.<method>" above misses it. The
+                                                // field's declared RETURN spelling is recorded on
+                                                // StructFieldDecl.fn_ret, so read that instead — the
+                                                // struct-field twin of the ParamDecl.fn_ret that seeds
+                                                // closure_opt_rets for a closure PARAM (consulted for a
+                                                // bare-ident callee a few arms up). Covers the array
+                                                // spelling `sts[i].run(c)` too: expr_struct_type resolves
+                                                // an indexed struct array to its ELEMENT type.
+                                                if (srt == "") {
+                                                    var ffr: string = decl_field_fn_ret(ms.structs, mrty, scfa.field);
+                                                    if (ffr.len() >= 8 && (slice_unchecked(ffr, 0, 7) == "Option[" || slice_unchecked(ffr, 0, 7) == "Result[")) { srt = ffr; }
+                                                }
+                                            }
                                             // An Option/Result-RECEIVER method
                                             // (`match (r.map())`) — key
                                             // "Option.<m>" / "Result.<m>" (#3049).

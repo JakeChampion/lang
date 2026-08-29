@@ -1,0 +1,113 @@
+// `match` on a call through a CLOSURE-TYPED STRUCT FIELD. The self-host refused
+// the whole module: the scrutinee's Option/Result type is recovered by a cascade
+// over the callee shape, and for a field access it keys the registry by
+// "<StructType>.<method>" — but a field holding a function is not a method, so
+// the lookup missed and the arm bailed.
+//
+// The declared field type already names the return: `run: (C) => Result[C, string]`.
+// StructFieldDecl.fn_ret records that spelling, and decl_field_fn_ret reads it, so
+// the fix asks the declaration when the registry misses — the struct-field twin of
+// the ParamDecl.fn_ret that already seeds closure_opt_rets for a closure PARAM.
+//
+// Positions, so a future narrowing is visible:
+//   direct    — `st.run(c)`, the plain spelling.
+//   elem      — `sts[i].run(c)`, which is what examples/proposals/pipeline.fern
+//               actually writes. It reaches the struct through an INDEX, so it
+//               depends on expr_struct_type resolving an indexed struct array to
+//               its element type; it refused identically before the fix.
+//   opt       — a field returning Option[T] rather than Result, both arms.
+//   err       — the Err arm, so a fix that only recovered Ok is visible.
+//   method    — a control: an ordinary METHOD returning Result on the same struct,
+//               which went through the registry and lowered before this change.
+//
+// Sentinels are 251-253, above the `% 113` the success path returns.
+struct C { value: i32 }
+struct S { name: string, run: (C) => Result[C, string] }
+struct O { name: string, pick: (i32) => Option[i32] }
+
+function bump(c: C): Result[C, string] {
+    if (c.value < 0) { return Err("negative"); }
+    return Ok(C { value: c.value + 1 });
+}
+
+function refuse(c: C): Result[C, string] { return Err("always"); }
+
+function halve(n: i32): Option[i32] {
+    if (n % 2 == 0) { return Some(n / 2); }
+    return None;
+}
+
+function (s: S) twice(c: C): Result[C, string] {
+    return Ok(C { value: c.value + 2 });
+}
+
+// The bail shape: a closure-typed field called directly.
+function direct(i: i32): i32 {
+    var st: S = S { name: "b", run: bump };
+    match (st.run(C { value: i })) {
+        Ok(n) => { return n.value; },
+        Err(e) => { return 253; }
+    }
+    return 253;
+}
+
+// pipeline.fern's own spelling: the struct reached through an array index.
+function elem(i: i32): i32 {
+    var sts: S[] = [S { name: "b", run: bump }, S { name: "r", run: refuse }];
+    var acc: i32 = 0;
+    match (sts[0].run(C { value: i })) {
+        Ok(n) => { acc = acc + n.value; },
+        Err(e) => { return 253; }
+    }
+    match (sts[1].run(C { value: i })) {
+        Ok(n) => { return 252; },
+        Err(e) => { acc = acc + e.len(); }
+    }
+    return acc;
+}
+
+// An Option-returning field, both arms.
+function opt(i: i32): i32 {
+    var o: O = O { name: "h", pick: halve };
+    var acc: i32 = 0;
+    match (o.pick(i * 2)) {
+        Some(v) => { acc = acc + v; },
+        None => { return 253; }
+    }
+    match (o.pick(i * 2 + 1)) {
+        Some(v) => { return 252; },
+        None => { acc = acc + 1; }
+    }
+    return acc;
+}
+
+// The Err arm on its own, so a fix recovering only Ok is caught.
+function err(i: i32): i32 {
+    var st: S = S { name: "r", run: refuse };
+    match (st.run(C { value: i })) {
+        Ok(n) => { return 253; },
+        Err(e) => { return e.len(); }
+    }
+    return 253;
+}
+
+// Control: an ordinary METHOD on the same struct, which lowered before the fix.
+function method(i: i32): i32 {
+    var st: S = S { name: "b", run: bump };
+    match (st.twice(C { value: i })) {
+        Ok(n) => { return n.value; },
+        Err(e) => { return 253; }
+    }
+    return 253;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        acc = acc + direct(i) + elem(i) + opt(i) + err(i) + method(i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}
