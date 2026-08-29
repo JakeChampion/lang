@@ -118,21 +118,41 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			want: 13, balance: true,
 		},
 		{
-			// STILL LEAKING, deliberately, and it is why #7716 is two changes
-			// rather than one: the MATCHED half of the same rebind never reaches
-			// this collector at all, because its escape gate reads a bare-ident
-			// match scrutinee as an escape. That half belongs to the
-			// consuming-match family, which releases at the match rather than at
-			// the exit sweep. Pinned so it cannot start OVER-releasing while it
-			// waits — the direction a careless widening would take it.
-			name: "reassigned_matched_still_leaks",
+			// The MATCHED half of the same rebind, which never reaches this
+			// collector — its escape gate reads a bare-ident match scrutinee as an
+			// escape — and belongs to the consuming-match family instead. That
+			// family releases the box the match CONSUMES; the "OPTOPTRB:" credit
+			// releases each SUPERSEDED box at its own rebind. The two act on
+			// disjoint values, which is what lets them coexist.
+			//
+			// Relaxing the consuming-match gate ALONE gets only 600/400 — it
+			// reclaims the consumed box and leaks every superseded one — so this
+			// row balancing is what distinguishes the complete fix from that
+			// partial one.
+			name: "reassigned_matched",
 			src: `function round(i: i32): i32 {
     var o: Option[Option[i32]] = Some(Some(i));
     if (i % 2 == 0) { o = Some(Some(i + 1)); }
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 80, wantFrees: 0,
+			want: 80, balance: true,
+		},
+		{
+			// THREE rebinds, the last a `Some(None)`, so the assign-path release
+			// runs repeatedly and over an inner that owns nothing. Every
+			// superseded box is released at its own assignment; native agrees at
+			// 700/700.
+			name: "reassigned_matched_multi_rebind",
+			src: `function round(i: i32): i32 {
+    var o: Option[Option[i32]] = Some(Some(i));
+    o = Some(Some(i + 1));
+    if (i % 2 == 0) { o = Some(Some(i + 2)); }
+    o = Some(None);
+    match (o) { Some(inner) => { match (inner) { Some(v) => { return v; }, None => { return 3; } } }, None => { return 2; } }
+    return 0;
+}` + unmatchedOptoptMain,
+			want: 19, balance: true,
 		},
 		{
 			// REFUSED: a rebind ALIASING an inner box the function still reads.
