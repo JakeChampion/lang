@@ -230,18 +230,20 @@ function round(i: i32): i32 {
 			want: 68, balance: true,
 		},
 		{
-			// STILL LEAKING: the matched `Some(None)` rc-inner shape frees NOTHING
-			// (400/0, 16000, doubling with rounds), where the UNMATCHED spelling of
-			// the same program balances via #7718's guarded walk. Unbounded and
-			// sanitizer-clean, so it is an under-release, and it was unpinned until
-			// now — this row is what stops it drifting into an over-release.
+			// The matched `Some(None)` rc-inner shape, fixed by giving the
+			// consuming-match drop the GUARDED emitter. rcpayload_option_cand used
+			// to exclude a None inner from the rc-inner kind — correctly, for the
+			// unguarded release it took, which read offset 8 unconditionally and
+			// would have handed the free fn whatever that word held. The exclusion
+			// cost both boxes (400/0) rather than saving a release, so with a tag
+			// guard in the emitter the gate widens to any direct construction.
 			name: "rc_inner_matched_none",
 			src: `function round(i: i32): i32 {
     var o: Option[Option[string]] = Some(None);
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 19, wantFrees: 0,
+			want: 19, balance: true,
 		},
 		{
 			// REFUSED: the inner box is ALIASED from a local the function still
