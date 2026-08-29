@@ -86,6 +86,21 @@ func TestSelfHostCaptureLambdaX86IR(t *testing.T) {
 		{"i64-capture-inferred-ret", `function main(): i32 { var base: i64 = 7000000000; var f = () => base + 2000000000; return (f() / 1000000000) as i32; }`, 9},
 		{"i64-param-inferred-ret", `function main(): i32 { var f = (x: i64) => x + 1; return f(5) as i32; }`, 6},
 		{"u64-param-inferred-ret", `function main(): i32 { var f = (x: u64) => x + 3; return f(5) as i32; }`, 8},
+
+		// --- SHADOWS of a boxed capture (#7253) ------------------------------
+		//
+		// A capture the lambda WRITES is boxed into a `$cell$n` (#2850), and
+		// box_rewrite_* then rewrites every read of `n` to `$cell$n[0]`. It
+		// matched the bare ident and recursed through every nested scope — a
+		// lambda body included — with no notion of scope, so any OTHER binding
+		// of the spelling was rewritten to the cell too.
+		//
+		// Each expectation is the interpreter's answer for the same program.
+		// The measured self-host answers before the fix are in the comments:
+		// none of the three crashed, they returned plausible wrong numbers.
+		{"boxed-shadowed-by-for-binder", `function main(): i32 { var n: i32 = 0; var bump = function(): i32 { n = n + 1; return n; }; var s: i32 = bump() + bump(); var xs: i32[] = [0, 1, 2]; for n in xs { s = s + n; } return s; }`, 6},                                                                                                          // was 9: the loop read the cell (2) three times
+		{"boxed-shadowed-by-lambda-param", `function main(): i32 { var n: i32 = 0; var bump = function(): i32 { n = n + 1; return n; }; var twice = (n: i32) => n + n; var a: i32 = bump(); return a + twice(10); }`, 21},                                                                                                                           // was 3: twice became $cell$n[0] + $cell$n[0], ignoring its argument
+		{"boxed-shadowed-by-match-binder", `function pick(k: i32): Option[i32] { if (k > 0) { return Some(41); } return None; } function main(): i32 { var n: i32 = 0; var bump = function(): i32 { n = n + 1; return n; }; var s: i32 = bump() + bump(); match (pick(1)) { Some(n) => { s = s + n; }, None => { s = s + 100; } } return s; }`, 44}, // was 5: the arm read the cell instead of the payload
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

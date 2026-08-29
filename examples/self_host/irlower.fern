@@ -67518,43 +67518,50 @@ function is_mcap_cell_name(n: string): boolean {
 // box_rewrite_expr rewrites every READ of a boxed var `x` to `$cell$x[0]`,
 // recursing all expression forms (including into lambda bodies). The decl name
 // and assign target are handled by box_rewrite_stmt, not here.
-function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[]): ast.Expr {
+function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Expr {
     match (e) {
         ast.ExprIdent(id) => {
-            if (util.index_of_str(boxed, id.name) >= 0) {
+            if (util.index_of_str(boxed, id.name) >= 0 && util.index_of_str(bound, id.name) < 0) {
                 return ast.ExprIndex { array: ast.ExprIdent { name: mcap_cell_name(id.name), line: id.line, col: id.col, ty: "" }, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: id.line, col: id.col }, unchecked: false, ty: "" };
             }
             return e;
         },
-        ast.ExprBinary(b) => { return ast.ExprBinary { op: b.op, left: box_rewrite_expr(b.left, boxed, btypes), right: box_rewrite_expr(b.right, boxed, btypes), line: b.line, col: b.col, ty: b.ty }; },
-        ast.ExprUnary(u) => { return ast.ExprUnary { op: u.op, operand: box_rewrite_expr(u.operand, boxed, btypes), line: u.line, col: u.col, ty: u.ty }; },
+        ast.ExprBinary(b) => { return ast.ExprBinary { op: b.op, left: box_rewrite_expr(b.left, boxed, btypes, bsites, bound), right: box_rewrite_expr(b.right, boxed, btypes, bsites, bound), line: b.line, col: b.col, ty: b.ty }; },
+        ast.ExprUnary(u) => { return ast.ExprUnary { op: u.op, operand: box_rewrite_expr(u.operand, boxed, btypes, bsites, bound), line: u.line, col: u.col, ty: u.ty }; },
         ast.ExprCall(c) => {
             var nargs: ast.Expr[] = [];
-            for arg in c.args { nargs = nargs.append(box_rewrite_expr(arg, boxed, btypes)); }
-            return ast.ExprCall { callee: box_rewrite_expr(c.callee, boxed, btypes), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
+            for arg in c.args { nargs = nargs.append(box_rewrite_expr(arg, boxed, btypes, bsites, bound)); }
+            return ast.ExprCall { callee: box_rewrite_expr(c.callee, boxed, btypes, bsites, bound), args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty };
         },
         ast.ExprArray(a) => {
             var ne: ast.Expr[] = [];
             var i: i32 = 0;
-            while (i < a.elements.len()) { ne = ne.append(box_rewrite_expr(a.elements[i], boxed, btypes)); i = i + 1; }
+            while (i < a.elements.len()) { ne = ne.append(box_rewrite_expr(a.elements[i], boxed, btypes, bsites, bound)); i = i + 1; }
             return ast.ExprArray { ...a, elements: ne };
         },
         ast.ExprTuple(t) => {
             var ne: ast.Expr[] = [];
-            for el in t.elements { ne = ne.append(box_rewrite_expr(el, boxed, btypes)); }
+            for el in t.elements { ne = ne.append(box_rewrite_expr(el, boxed, btypes, bsites, bound)); }
             return ast.ExprTuple { elements: ne, line: t.line, col: t.col };
         },
-        ast.ExprIndex(x) => { return ast.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes), index: box_rewrite_expr(x.index, boxed, btypes), unchecked: x.unchecked, ty: x.ty }; },
-        ast.ExprSlice(sl) => { return ast.ExprSlice { array: box_rewrite_expr(sl.array, boxed, btypes), start: box_rewrite_expr(sl.start, boxed, btypes), end: box_rewrite_expr(sl.end, boxed, btypes), ty: sl.ty, open_end: sl.open_end }; },
+        ast.ExprIndex(x) => { return ast.ExprIndex { array: box_rewrite_expr(x.array, boxed, btypes, bsites, bound), index: box_rewrite_expr(x.index, boxed, btypes, bsites, bound), unchecked: x.unchecked, ty: x.ty }; },
+        ast.ExprSlice(sl) => { return ast.ExprSlice { array: box_rewrite_expr(sl.array, boxed, btypes, bsites, bound), start: box_rewrite_expr(sl.start, boxed, btypes, bsites, bound), end: box_rewrite_expr(sl.end, boxed, btypes, bsites, bound), ty: sl.ty, open_end: sl.open_end }; },
         ast.ExprStructLit(sl) => {
             var nv: ast.Expr[] = [];
-            for fv in sl.field_values { nv = nv.append(box_rewrite_expr(fv, boxed, btypes)); }
+            for fv in sl.field_values { nv = nv.append(box_rewrite_expr(fv, boxed, btypes, bsites, bound)); }
             var nbase: ast.Expr = sl.base;
-            if (sl.has_base) { nbase = box_rewrite_expr(sl.base, boxed, btypes); }
+            if (sl.has_base) { nbase = box_rewrite_expr(sl.base, boxed, btypes, bsites, bound); }
             return ast.ExprStructLit { type_name: sl.type_name, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nbase, line: sl.line, col: sl.col };
         },
-        ast.ExprFieldAccess(fa) => { return ast.ExprFieldAccess { obj: box_rewrite_expr(fa.obj, boxed, btypes), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
-        ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: box_rewrite_stmts(lm.body, boxed, btypes) }; },
+        ast.ExprFieldAccess(fa) => { return ast.ExprFieldAccess { obj: box_rewrite_expr(fa.obj, boxed, btypes, bsites, bound), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }; },
+        ast.ExprLambda(lm) => {
+            // A lambda PARAMETER of a boxed name is a different variable: inside
+            // this body the spelling means the argument, not the enclosing cell.
+            var lb: string[] = bound;
+            var lp: i32 = 0;
+            while (lp < lm.params.len()) { lb = lb.append(lm.params[lp].name); lp = lp + 1; }
+            return ast.ExprLambda { ...lm, body: box_rewrite_stmts(lm.body, boxed, btypes, bsites, lb) };
+        },
         _ => { return e; }
     }
     return e;
@@ -67562,52 +67569,108 @@ function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[]): ast.E
 
 // box_rewrite_stmt rewrites one statement: a boxed var's decl wraps its init in
 // a cell, a boxed assign becomes an in-place `.with`, everything else recurses.
-function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[]): ast.Stmt {
+function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt {
     match (st) {
         ast.StmtVar(v) => {
             var bxi: i32 = util.index_of_str(boxed, v.name);
+            // Only the declaration the cell was built from becomes the cell.
+            // A re-declaration of the spelling is a different variable, and
+            // rewriting it produced a SECOND `$cell$n` — typed from the first
+            // one's entry — that shadowed the real cell for the rest of the
+            // block. Matched on the site because the name cannot tell them apart.
+            if (bxi >= 0 && reclaim_site_key_of(v.name, v.line, v.col) != bsites[bxi]) { bxi = 0 - 1; }
+            if (bxi >= 0 && util.index_of_str(bound, v.name) >= 0) { bxi = 0 - 1; }
             if (bxi >= 0) {
-                var cell: ast.Expr = ast.ExprArray { elements: [box_rewrite_expr(v.init, boxed, btypes)], elem_ty: btypes[bxi], line: 0, col: 0 };
+                var cell: ast.Expr = ast.ExprArray { elements: [box_rewrite_expr(v.init, boxed, btypes, bsites, bound)], elem_ty: btypes[bxi], line: 0, col: 0 };
                 return ast.StmtVar { name: mcap_cell_name(v.name), type_name: btypes[bxi] + "[]", init: cell, line: v.line, col: v.col, is_str: false, fn_ret: "" };
             }
-            return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
+            return ast.StmtVar { name: v.name, type_name: v.type_name, init: box_rewrite_expr(v.init, boxed, btypes, bsites, bound), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
         },
         ast.StmtAssign(a) => {
-            if (util.index_of_str(boxed, a.target) >= 0) {
+            if (util.index_of_str(boxed, a.target) >= 0 && util.index_of_str(bound, a.target) < 0) {
                 // x = v  ->  $cell$x = $cell$x.with(0, v)   (receiver stays the raw cell ident)
                 var cnm: string = mcap_cell_name(a.target);
                 var recv: ast.Expr = ast.ExprIdent { name: cnm, line: a.target_line, col: a.target_col, ty: "" };
-                var wcall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "with", line: a.line, col: a.col, ty: "" }, args: [ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: a.line, col: a.col }, box_rewrite_expr(a.value, boxed, btypes)], line: a.line, col: a.col, type_argc: 0, ty: "" };
+                var wcall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "with", line: a.line, col: a.col, ty: "" }, args: [ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: a.line, col: a.col }, box_rewrite_expr(a.value, boxed, btypes, bsites, bound)], line: a.line, col: a.col, type_argc: 0, ty: "" };
                 return ast.StmtAssign { target: cnm, value: wcall, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
             }
-            return ast.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
+            return ast.StmtAssign { target: a.target, value: box_rewrite_expr(a.value, boxed, btypes, bsites, bound), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
         },
-        ast.StmtReturn(r) => { return ast.StmtReturn { value: box_rewrite_expr(r.value, boxed, btypes), line: r.line, col: r.col }; },
-        ast.StmtExpr(e) => { return ast.StmtExpr { value: box_rewrite_expr(e.value, boxed, btypes), line: e.line }; },
-        ast.StmtIf(f) => { return ast.StmtIf { ...f, cond: box_rewrite_expr(f.cond, boxed, btypes), then_body: box_rewrite_stmts(f.then_body, boxed, btypes), else_body: box_rewrite_stmts(f.else_body, boxed, btypes) }; },
-        ast.StmtWhile(w) => { return ast.StmtWhile { cond: box_rewrite_expr(w.cond, boxed, btypes), body: box_rewrite_stmts(w.body, boxed, btypes), label: w.label, line: w.line, is_loop: w.is_loop }; },
-        ast.StmtFor(fr) => { return ast.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes), body: box_rewrite_stmts(fr.body, boxed, btypes), label: fr.label, line: fr.line }; },
+        ast.StmtReturn(r) => { return ast.StmtReturn { value: box_rewrite_expr(r.value, boxed, btypes, bsites, bound), line: r.line, col: r.col }; },
+        ast.StmtExpr(e) => { return ast.StmtExpr { value: box_rewrite_expr(e.value, boxed, btypes, bsites, bound), line: e.line }; },
+        ast.StmtIf(f) => { return ast.StmtIf { ...f, cond: box_rewrite_expr(f.cond, boxed, btypes, bsites, bound), then_body: box_rewrite_stmts(f.then_body, boxed, btypes, bsites, bound), else_body: box_rewrite_stmts(f.else_body, boxed, btypes, bsites, bound) }; },
+        ast.StmtWhile(w) => { return ast.StmtWhile { cond: box_rewrite_expr(w.cond, boxed, btypes, bsites, bound), body: box_rewrite_stmts(w.body, boxed, btypes, bsites, bound), label: w.label, line: w.line, is_loop: w.is_loop }; },
+        ast.StmtFor(fr) => {
+            // The loop BINDER shadows: `for n in xs` inside a function with a
+            // boxed `n` means the element, not the cell. The iterable is still
+            // in the enclosing scope, so only the body takes the extra binding.
+            var fb: string[] = bound;
+            fb = append_bound_binder(fb, fr.var_name);
+            return ast.StmtFor { var_name: fr.var_name, iter: box_rewrite_expr(fr.iter, boxed, btypes, bsites, bound), body: box_rewrite_stmts(fr.body, boxed, btypes, bsites, fb), label: fr.label, line: fr.line };
+        },
         ast.StmtMatch(m) => {
             var na: ast.MatchArm[] = [];
             for arm in m.arms {
                 // Rewrite a boxed var read in the guard too — else the guard read
                 // the raw slot instead of the box (stale value). No-op when the
                 // guard references no boxed var (box_rewrite_expr returns it as-is).
+                // A payload binder shadows inside its own arm (body AND guard).
+                var ab: string[] = bound;
+                var bxj: i32 = 0;
+                while (bxj < boxed.len()) {
+                    if (sa_pat_binds(arm.pattern, boxed[bxj])) { ab = ab.append(boxed[bxj]); }
+                    bxj = bxj + 1;
+                }
                 var ng: ast.Expr = arm.guard;
-                if (arm.has_guard) { ng = box_rewrite_expr(arm.guard, boxed, btypes); }
-                na = na.append(ast.MatchArm { ...arm, body: box_rewrite_stmts(arm.body, boxed, btypes), guard: ng });
+                if (arm.has_guard) { ng = box_rewrite_expr(arm.guard, boxed, btypes, bsites, ab); }
+                na = na.append(ast.MatchArm { ...arm, body: box_rewrite_stmts(arm.body, boxed, btypes, bsites, ab), guard: ng });
             }
-            return ast.StmtMatch { ...m, scrutinee: box_rewrite_expr(m.scrutinee, boxed, btypes), arms: na };
+            return ast.StmtMatch { ...m, scrutinee: box_rewrite_expr(m.scrutinee, boxed, btypes, bsites, bound), arms: na };
         },
-        ast.StmtDefer(d) => { return ast.StmtDefer { action: box_rewrite_stmt(d.action, boxed, btypes), on_error: d.on_error, line: d.line }; },
+        ast.StmtDefer(d) => { return ast.StmtDefer { action: box_rewrite_stmt(d.action, boxed, btypes, bsites, bound), on_error: d.on_error, line: d.line }; },
         _ => { return st; }
     }
     return st;
 }
 
-function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: string[]): ast.Stmt[] {
+// box_rewrite_stmts walks a statement LIST, so it is where a `var` shadow takes
+// effect: a re-declaration of a boxed name binds it for every LATER statement of
+// that list, and only the declaration the cell was built from is rewritten into
+// the cell (matched on its line:col, since the name alone cannot tell the two
+// apart).
+function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt[] {
     var out: ast.Stmt[] = [];
-    for stmt in stmts { out = out.append(box_rewrite_stmt(stmt, boxed, btypes)); }
+    var bnd: string[] = bound;
+    for stmt in stmts {
+        out = out.append(box_rewrite_stmt(stmt, boxed, btypes, bsites, bnd));
+        match (stmt) {
+            ast.StmtVar(sv) => {
+                if (util.index_of_str(boxed, sv.name) >= 0 && util.index_of_str(bnd, sv.name) < 0
+                    && reclaim_site_key_of(sv.name, sv.line, sv.col) != bsites[util.index_of_str(boxed, sv.name)]) {
+                    bnd = bnd.append(sv.name);
+                }
+            },
+            _ => {}
+        }
+    }
+    return out;
+}
+
+// append_bound_binder appends a binder name, splitting the comma-joined form a
+// tuple destructure and a two-name `for (k, v) in m` use — unsplit, neither name
+// is recognised as a shadow. The astwalk twin of this is append_bound_name.
+function append_bound_binder(acc: string[], name: string): string[] {
+    var start: i32 = 0;
+    var i: i32 = 0;
+    var out: string[] = acc;
+    while (i <= name.len()) {
+        if (i == name.len() || name[i] == b',') {
+            var piece: string = slice_unchecked(name, start, i) + "";
+            if (piece.len() > 0) { out = out.append(piece); }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
     return out;
 }
 
@@ -68196,7 +68259,44 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
     var boxed: string[] = acc.names;
     var btypes: string[] = acc.types;
     if (boxed.len() == 0) { return fd; }
-    return parser.FuncDecl { ...fd, body: box_rewrite_stmts(fd.body, boxed, btypes) };
+    // The DECLARATION SITE of each boxed name, so the rewrite can tell the `var`
+    // the cell is built from apart from a re-declaration of the same spelling
+    // (#7253). First-in-source, which is what cap_type_at resolved the capture's
+    // type against, so the two agree on which binding the cell stands for.
+    var bsites: string[] = [];
+    var si: i32 = 0;
+    while (si < boxed.len()) { bsites = bsites.append(first_var_site(fd.body, boxed[si])); si = si + 1; }
+    var bound: string[] = [];
+    return parser.FuncDecl { ...fd, body: box_rewrite_stmts(fd.body, boxed, btypes, bsites, bound) };
+}
+
+// first_var_site: the binding-site key of the FIRST `var <name>` in `stmts`,
+// pre-order, or "" when the name is a parameter or is never `var`-declared (a
+// boxed parameter has no cell declaration to match, so nothing is rewritten
+// into one and every read of it stays a read of the parameter).
+function first_var_site(stmts: ast.Stmt[], name: string): string {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => { if (v.name == name) { return reclaim_site_key_of(v.name, v.line, v.col); } },
+            ast.StmtIf(f) => {
+                var t: string = first_var_site(f.then_body, name);
+                if (t.len() > 0) { return t; }
+                var e2: string = first_var_site(f.else_body, name);
+                if (e2.len() > 0) { return e2; }
+            },
+            ast.StmtWhile(w) => { var t: string = first_var_site(w.body, name); if (t.len() > 0) { return t; } },
+            ast.StmtFor(fo) => { var t: string = first_var_site(fo.body, name); if (t.len() > 0) { return t; } },
+            ast.StmtMatch(m) => {
+                for arm in m.arms {
+                    var t: string = first_var_site(arm.body, name);
+                    if (t.len() > 0) { return t; }
+                }
+            },
+            ast.StmtDefer(d) => { var t: string = first_var_site([d.action], name); if (t.len() > 0) { return t; } },
+            _ => {}
+        }
+    }
+    return "";
 }
 
 // BoxScan: box_scan_stmts' paired accumulator — boxed capture NAMES and the
