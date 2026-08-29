@@ -1,0 +1,993 @@
+// examples/vcl/parser.fern — recursive-descent parser for VCL 4.0 / 4.1.
+//
+// Fern struct fields are immutable after construction, so there is no
+// mutable parser object to carry a cursor. Every parse function instead
+// takes the token index it starts at and returns the node together with
+// the index just past it — the same shape `std/regex` uses for its
+// pattern parser. One carrier struct per node type is the cost of that,
+// and `ok` / `err` on each is how a failure propagates to the statement
+// or declaration level that can recover from it.
+//
+// Recovery is per-declaration and per-statement: a bad statement costs
+// one diagnostic and resumes at the next `;` or `}`, a bad declaration
+// resumes at the next top-level keyword. So a file with three unrelated
+// errors reports three, not one.
+import "std/string";
+import "std/i32";
+import "./ast";
+import "./diag";
+import "./lexer";
+
+pub struct ParseResult { decls: ast.Decl[], diags: diag.Diag[] }
+
+// no_diag is the placeholder every successful carrier holds. A carrier
+// cannot leave `err` unset — Fern has no null — and an Option per result
+// would cost an allocation on the hot success path.
+function no_diag(): diag.Diag {
+  return diag.at("", 0, 0);
+}
+
+// at reads the token at `i`, clamped to the trailing TEOF. Every parse
+// loop stops on EOF, so clamping turns what would be an out-of-bounds
+// read after an unexpected end of input into one more EOF token and the
+// error message that goes with it.
+function at(toks: lexer.Tok[], i: i32): lexer.Tok {
+  if (i >= toks.len()) {
+    return toks[toks.len() - 1];
+  }
+  return toks[i];
+}
+
+// describe names a token in a diagnostic the way it was written.
+function describe(t: lexer.Tok): string {
+  if (t.is_eof()) {
+    return "end of input";
+  }
+  if (t.is_string()) {
+    return "a string";
+  }
+  return "'" + t.text + "'";
+}
+
+// ---------------------------------------------------------------- expressions
+struct EParse { node: ast.Expr, pos: i32, ok: boolean, err: diag.Diag }
+
+function eok(n: ast.Expr, pos: i32): EParse {
+  return EParse { node: n, pos: pos, ok: true, err: no_diag() };
+}
+
+// eerr carries a dummy node: the caller checks `ok` before touching it.
+function eerr(msg: string, t: lexer.Tok, pos: i32): EParse {
+  var dummy: ast.Expr = ENumber(ast.NumLit { text: "0", line: t.line, col: t.col });
+  return EParse { node: dummy, pos: pos, ok: false, err: diag.at(msg, t.line, t.col) };
+}
+
+struct AParse { args: ast.Expr[], pos: i32, ok: boolean, err: diag.Diag }
+
+// parse_args reads a parenthesised, comma-separated argument list. `i`
+// is the index of the `(`.
+function parse_args(toks: lexer.Tok[], i: i32): AParse {
+  var args: ast.Expr[] = [];
+  var pos: i32 = i + 1;
+  if (at(toks, pos).punct(")")) {
+    return AParse { args: args, pos: pos + 1, ok: true, err: no_diag() };
+  }
+  while (true) {
+    var a: EParse = parse_expr(toks, pos);
+    if (!a.ok) {
+      return AParse { args: args, pos: a.pos, ok: false, err: a.err };
+    }
+    args = args.append(a.node);
+    pos = a.pos;
+    if (at(toks, pos).punct(",")) {
+      pos = pos + 1;
+    } else {
+      break;
+    }
+  }
+  if (!at(toks, pos).punct(")")) {
+    var t: lexer.Tok = at(toks, pos);
+    return AParse { args: args, pos: pos, ok: false, err: diag.at("expected ')' to close the argument list, found " + describe(t), t.line, t.col) };
+  }
+  return AParse { args: args, pos: pos + 1, ok: true, err: no_diag() };
+}
+
+// parse_ident_expr reads a name and, if a `(` follows, the call it heads.
+// `true` and `false` are ordinary identifiers to the lexer and become
+// booleans here.
+function parse_ident_expr(toks: lexer.Tok[], i: i32): EParse {
+  var t: lexer.Tok = at(toks, i);
+  if (t.text == "true" || t.text == "false") {
+    return eok(EBool(ast.BoolLit { value: t.text == "true", line: t.line, col: t.col }), i + 1);
+  }
+  if (at(toks, i + 1).punct("(")) {
+    var a: AParse = parse_args(toks, i + 1);
+    if (!a.ok) {
+      return EParse { node: EVar(ast.VarRef { name: t.text, line: t.line, col: t.col }), pos: a.pos, ok: false, err: a.err };
+    }
+    return eok(ECall(ast.CallExpr { callee: t.text, args: a.args, line: t.line, col: t.col }), a.pos);
+  }
+  return eok(EVar(ast.VarRef { name: t.text, line: t.line, col: t.col }), i + 1);
+}
+
+// parse_primary reads a literal, a name or call, or a parenthesised
+// expression.
+function parse_primary(toks: lexer.Tok[], i: i32): EParse {
+  var t: lexer.Tok = at(toks, i);
+  if (t.punct("(")) {
+    var inner: EParse = parse_expr(toks, i + 1);
+    if (!inner.ok) {
+      return inner;
+    }
+    if (!at(toks, inner.pos).punct(")")) {
+      var bad: lexer.Tok = at(toks, inner.pos);
+      return eerr("expected ')', found " + describe(bad), bad, inner.pos);
+    }
+    return eok(EParen(inner.node), inner.pos + 1);
+  }
+  match (t.kind) {
+    TString => {
+      return eok(EString(ast.StrLit { value: t.text, form: t.aux, line: t.line, col: t.col }), i + 1);
+    },
+    TNumber => {
+      return eok(ENumber(ast.NumLit { text: t.text, line: t.line, col: t.col }), i + 1);
+    },
+    TDuration => {
+      return eok(EDuration(ast.QtyLit { text: t.text, unit: t.aux, line: t.line, col: t.col }), i + 1);
+    },
+    TBytes => {
+      return eok(EBytes(ast.QtyLit { text: t.text, unit: t.aux, line: t.line, col: t.col }), i + 1);
+    },
+    TIdent => {
+      return parse_ident_expr(toks, i);
+    },
+    _ => {
+      return eerr("expected an expression, found " + describe(t), t, i);
+    }
+  }
+}
+
+function parse_unary(toks: lexer.Tok[], i: i32): EParse {
+  var t: lexer.Tok = at(toks, i);
+  if (t.punct("!") || t.punct("-")) {
+    var operand: EParse = parse_unary(toks, i + 1);
+    if (!operand.ok) {
+      return operand;
+    }
+    return eok(EUnary(ast.UnExpr { op: t.text, operand: operand.node, line: t.line, col: t.col }), operand.pos);
+  }
+  return parse_primary(toks, i);
+}
+
+// in_list reports whether `s` is one of `items`.
+function in_list(s: string, items: string[]): boolean {
+  var i: i32 = 0;
+  while (i < items.len()) {
+    if (items[i] == s) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// VCL's `~` (regex match, or ACL membership when the right operand is an
+// ACL name) and its negation sit with the other comparisons.
+function comparison_ops(): string[] {
+  return ["==", "!=", "<", "<=", ">", ">=", "~", "!~"];
+}
+
+// prec_of gives the binding power of a binary operator, 0 for a token
+// that is not one. `+` on strings is concatenation, which is why it
+// shares a level with arithmetic addition.
+function prec_of(t: lexer.Tok): i32 {
+  if (!t.is_punct()) {
+    return 0;
+  }
+  if (t.text == "||") {
+    return 1;
+  }
+  if (t.text == "&&") {
+    return 2;
+  }
+  if (in_list(t.text, comparison_ops())) {
+    return 3;
+  }
+  if (t.text == "+" || t.text == "-") {
+    return 4;
+  }
+  if (t.text == "*" || t.text == "/") {
+    return 5;
+  }
+  return 0;
+}
+
+// parse_binary is precedence climbing: it folds every operator binding at
+// least as tightly as `min_prec` into a left-leaning tree.
+function parse_binary(toks: lexer.Tok[], i: i32, min_prec: i32): EParse {
+  var left: EParse = parse_unary(toks, i);
+  if (!left.ok) {
+    return left;
+  }
+  var node: ast.Expr = left.node;
+  var pos: i32 = left.pos;
+  while (true) {
+    var op: lexer.Tok = at(toks, pos);
+    var p: i32 = prec_of(op);
+    if (p == 0 || p < min_prec) {
+      return eok(node, pos);
+    }
+    var right: EParse = parse_binary(toks, pos + 1, p + 1);
+    if (!right.ok) {
+      return right;
+    }
+    node = EBinary(ast.BinExpr { op: op.text, lhs: node, rhs: right.node, line: op.line, col: op.col });
+    pos = right.pos;
+  }
+  return eok(node, pos);
+}
+
+pub function parse_expr(toks: lexer.Tok[], i: i32): EParse {
+  return parse_binary(toks, i, 1);
+}
+
+// ---------------------------------------------------------------- statements
+// `err` is the failure that stopped this statement, valid only when
+// `ok` is false. `errs` is separate and orthogonal: the diagnostics
+// already recovered from INSIDE a statement that nonetheless parsed —
+// a bad line in the body of an `if` does not stop the `if`. Without the
+// second channel those inner errors would be dropped on the way up, and
+// a file with three unrelated errors would report one.
+struct SParse { node: ast.Stmt, pos: i32, ok: boolean, err: diag.Diag, errs: diag.Diag[] }
+
+function sok(n: ast.Stmt, pos: i32): SParse {
+  var none: diag.Diag[] = [];
+  return SParse { node: n, pos: pos, ok: true, err: no_diag(), errs: none };
+}
+
+// sok_with is `sok` for a statement that parsed while recovering from
+// errors in its own body.
+function sok_with(n: ast.Stmt, pos: i32, errs: diag.Diag[]): SParse {
+  return SParse { node: n, pos: pos, ok: true, err: no_diag(), errs: errs };
+}
+
+function serr(msg: string, t: lexer.Tok, pos: i32): SParse {
+  var dummy: ast.Stmt = SCall(ast.CallStmt { name: "", line: t.line, col: t.col });
+  var none: diag.Diag[] = [];
+  return SParse { node: dummy, pos: pos, ok: false, err: diag.at(msg, t.line, t.col), errs: none };
+}
+
+function serr_from(d: diag.Diag, pos: i32): SParse {
+  var dummy: ast.Stmt = SCall(ast.CallStmt { name: "", line: d.line, col: d.col });
+  var none: diag.Diag[] = [];
+  return SParse { node: dummy, pos: pos, ok: false, err: d, errs: none };
+}
+
+// A block carries the same two channels: `err` is the structural failure
+// (a missing or unclosed brace), `errs` every statement error it
+// recovered from and kept parsing past.
+struct BParse { blk: ast.Block, pos: i32, ok: boolean, err: diag.Diag, errs: diag.Diag[] }
+
+// concat appends every element of `more` to `into`.
+function concat(into: diag.Diag[], more: diag.Diag[]): diag.Diag[] {
+  var out: diag.Diag[] = into;
+  var i: i32 = 0;
+  while (i < more.len()) {
+    out = out.append(more[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// expect_semi consumes the `;` that ends a statement.
+function expect_semi(toks: lexer.Tok[], pos: i32, what: string): SParse {
+  var t: lexer.Tok = at(toks, pos);
+  if (!t.punct(";")) {
+    return serr("expected ';' after " + what + ", found " + describe(t), t, pos);
+  }
+  return sok(SCall(ast.CallStmt { name: "", line: 0, col: 0 }), pos + 1);
+}
+
+// parse_set reads `set <target> <op> <expr>;`.
+function parse_set(toks: lexer.Tok[], i: i32): SParse {
+  var kw: lexer.Tok = at(toks, i);
+  var target: lexer.Tok = at(toks, i + 1);
+  if (!target.is_ident()) {
+    return serr("expected a variable name after 'set', found " + describe(target), target, i + 1);
+  }
+  var op: lexer.Tok = at(toks, i + 2);
+  if (!op.punct("=") && !op.punct("+=") && !op.punct("-=") && !op.punct("*=") && !op.punct("/=")) {
+    return serr("expected an assignment operator after '" + target.text + "', found " + describe(op), op, i + 2);
+  }
+  var v: EParse = parse_expr(toks, i + 3);
+  if (!v.ok) {
+    return serr_from(v.err, v.pos);
+  }
+  var semi: SParse = expect_semi(toks, v.pos, "the assignment");
+  if (!semi.ok) {
+    return semi;
+  }
+  var s: ast.Stmt = SSet(ast.SetStmt { target: target.text, op: op.text, value: v.node, line: kw.line, col: kw.col });
+  return sok(s, semi.pos);
+}
+
+// parse_unset reads `unset <target>;`.
+function parse_unset(toks: lexer.Tok[], i: i32): SParse {
+  var kw: lexer.Tok = at(toks, i);
+  var target: lexer.Tok = at(toks, i + 1);
+  if (!target.is_ident()) {
+    return serr("expected a variable name after 'unset', found " + describe(target), target, i + 1);
+  }
+  var semi: SParse = expect_semi(toks, i + 2, "'unset " + target.text + "'");
+  if (!semi.ok) {
+    return semi;
+  }
+  return sok(SUnset(ast.UnsetStmt { target: target.text, line: kw.line, col: kw.col }), semi.pos);
+}
+
+// parse_return reads a bare `return;` or `return (action);`, where the
+// action may itself take arguments — `return (synth(750, "Moved"));`.
+function parse_return(toks: lexer.Tok[], i: i32): SParse {
+  var kw: lexer.Tok = at(toks, i);
+  var empty: ast.Expr[] = [];
+  if (at(toks, i + 1).punct(";")) {
+    var bare: ast.Stmt = SReturn(ast.ReturnStmt { action: "", args: empty, has_args: false, line: kw.line, col: kw.col });
+    return sok(bare, i + 2);
+  }
+  if (!at(toks, i + 1).punct("(")) {
+    var t: lexer.Tok = at(toks, i + 1);
+    return serr("expected '(' or ';' after 'return', found " + describe(t), t, i + 1);
+  }
+  var action: lexer.Tok = at(toks, i + 2);
+  if (!action.is_ident()) {
+    return serr("expected a return action, found " + describe(action), action, i + 2);
+  }
+  var args: ast.Expr[] = empty;
+  var has_args: boolean = false;
+  var pos: i32 = i + 3;
+  if (at(toks, pos).punct("(")) {
+    var a: AParse = parse_args(toks, pos);
+    if (!a.ok) {
+      return serr_from(a.err, a.pos);
+    }
+    args = a.args;
+    has_args = true;
+    pos = a.pos;
+  }
+  if (!at(toks, pos).punct(")")) {
+    var bad: lexer.Tok = at(toks, pos);
+    return serr("expected ')' to close 'return (', found " + describe(bad), bad, pos);
+  }
+  var semi: SParse = expect_semi(toks, pos + 1, "the return action");
+  if (!semi.ok) {
+    return semi;
+  }
+  var r: ast.Stmt = SReturn(ast.ReturnStmt { action: action.text, args: args, has_args: has_args, line: kw.line, col: kw.col });
+  return sok(r, semi.pos);
+}
+
+// parse_call reads `call <sub>;`.
+function parse_call(toks: lexer.Tok[], i: i32): SParse {
+  var kw: lexer.Tok = at(toks, i);
+  var name: lexer.Tok = at(toks, i + 1);
+  if (!name.is_ident()) {
+    return serr("expected a subroutine name after 'call', found " + describe(name), name, i + 1);
+  }
+  var semi: SParse = expect_semi(toks, i + 2, "'call " + name.text + "'");
+  if (!semi.ok) {
+    return semi;
+  }
+  return sok(SCall(ast.CallStmt { name: name.text, line: kw.line, col: kw.col }), semi.pos);
+}
+
+// parse_new reads `new <name> = <ctor>(...);`, the VMOD object
+// declaration that only `vcl_init` may contain.
+function parse_new(toks: lexer.Tok[], i: i32): SParse {
+  var kw: lexer.Tok = at(toks, i);
+  var name: lexer.Tok = at(toks, i + 1);
+  if (!name.is_ident()) {
+    return serr("expected an object name after 'new', found " + describe(name), name, i + 1);
+  }
+  if (!at(toks, i + 2).punct("=")) {
+    var t: lexer.Tok = at(toks, i + 2);
+    return serr("expected '=' after 'new " + name.text + "', found " + describe(t), t, i + 2);
+  }
+  var init: EParse = parse_expr(toks, i + 3);
+  if (!init.ok) {
+    return serr_from(init.err, init.pos);
+  }
+  var semi: SParse = expect_semi(toks, init.pos, "the object constructor");
+  if (!semi.ok) {
+    return semi;
+  }
+  return sok(SNew(ast.NewStmt { name: name.text, init: init.node, line: kw.line, col: kw.col }), semi.pos);
+}
+
+// parse_include reads `include "path";`, which is legal both at top
+// level and inside a subroutine body.
+function parse_include(toks: lexer.Tok[], i: i32): SParse {
+  var kw: lexer.Tok = at(toks, i);
+  var path: lexer.Tok = at(toks, i + 1);
+  if (!path.is_string()) {
+    return serr("expected a quoted path after 'include', found " + describe(path), path, i + 1);
+  }
+  var semi: SParse = expect_semi(toks, i + 2, "the include path");
+  if (!semi.ok) {
+    return semi;
+  }
+  return sok(SInclude(ast.IncludeStmt { path: path.text, line: kw.line, col: kw.col }), semi.pos);
+}
+
+// parse_expr_stmt reads a call evaluated for effect: `std.log("x");`.
+function parse_expr_stmt(toks: lexer.Tok[], i: i32): SParse {
+  var t: lexer.Tok = at(toks, i);
+  var e: EParse = parse_expr(toks, i);
+  if (!e.ok) {
+    return serr_from(e.err, e.pos);
+  }
+  var semi: SParse = expect_semi(toks, e.pos, "the expression");
+  if (!semi.ok) {
+    return semi;
+  }
+  return sok(SExpr(ast.ExprStmt { value: e.node, line: t.line, col: t.col }), semi.pos);
+}
+
+// arm_keyword reports the `elseif` spelling starting at `i`, or "" when
+// no further arm follows. VCL accepts all three, and the printer puts
+// back whichever was written.
+function arm_keyword(toks: lexer.Tok[], i: i32): string {
+  var t: lexer.Tok = at(toks, i);
+  if (t.word("elseif")) {
+    return "elseif";
+  }
+  if (t.word("elsif")) {
+    return "elsif";
+  }
+  if (t.word("else") && at(toks, i + 1).word("if")) {
+    return "else if";
+  }
+  return "";
+}
+
+// parse_if reads a whole if/elseif/else chain into one flat IfStmt.
+function parse_if(toks: lexer.Tok[], i: i32): SParse {
+  var kw: lexer.Tok = at(toks, i);
+  var arms: ast.IfArm[] = [];
+  var inner: diag.Diag[] = [];
+  var pos: i32 = i;
+  var spelling: string = "if";
+  while (true) {
+    var head: lexer.Tok = at(toks, pos);
+    pos = pos + 1;
+    if (spelling == "else if") {
+      pos = pos + 1;
+    }
+    if (!at(toks, pos).punct("(")) {
+      var t: lexer.Tok = at(toks, pos);
+      return serr("expected '(' after '" + spelling + "', found " + describe(t), t, pos);
+    }
+    var cond: EParse = parse_expr(toks, pos + 1);
+    if (!cond.ok) {
+      return serr_from(cond.err, cond.pos);
+    }
+    if (!at(toks, cond.pos).punct(")")) {
+      var bad: lexer.Tok = at(toks, cond.pos);
+      return serr("expected ')' to close the condition, found " + describe(bad), bad, cond.pos);
+    }
+    var body: BParse = parse_block(toks, cond.pos + 1);
+    if (!body.ok) {
+      return serr_from(body.err, body.pos);
+    }
+    inner = concat(inner, body.errs);
+    arms = arms.append(ast.IfArm { cond: cond.node, body: body.blk, kw: spelling, line: head.line, col: head.col });
+    pos = body.pos;
+    spelling = arm_keyword(toks, pos);
+    if (spelling == "") {
+      break;
+    }
+  }
+  return finish_if(toks, pos, arms, kw, inner);
+}
+
+// finish_if attaches the trailing bare `else` block, if there is one.
+function finish_if(toks: lexer.Tok[], pos: i32, arms: ast.IfArm[], kw: lexer.Tok, inner: diag.Diag[]): SParse {
+  var no_stmts: ast.Stmt[] = [];
+  var empty: ast.Block = ast.Block { stmts: no_stmts, line: 0, col: 0 };
+  if (!at(toks, pos).word("else")) {
+    var plain: ast.Stmt = SIf(ast.IfStmt { arms: arms, else_blk: empty, has_else: false, line: kw.line, col: kw.col });
+    return sok_with(plain, pos, inner);
+  }
+  var eb: BParse = parse_block(toks, pos + 1);
+  if (!eb.ok) {
+    return serr_from(eb.err, eb.pos);
+  }
+  var withelse: ast.Stmt = SIf(ast.IfStmt { arms: arms, else_blk: eb.blk, has_else: true, line: kw.line, col: kw.col });
+  return sok_with(withelse, eb.pos, concat(inner, eb.errs));
+}
+
+// parse_keyword_stmt routes a leading bare word to its statement parser.
+function parse_keyword_stmt(toks: lexer.Tok[], i: i32, w: string): SParse {
+  if (w == "set") {
+    return parse_set(toks, i);
+  }
+  if (w == "unset") {
+    return parse_unset(toks, i);
+  }
+  if (w == "if") {
+    return parse_if(toks, i);
+  }
+  if (w == "return") {
+    return parse_return(toks, i);
+  }
+  if (w == "call") {
+    return parse_call(toks, i);
+  }
+  if (w == "new") {
+    return parse_new(toks, i);
+  }
+  return parse_include(toks, i);
+}
+
+// stmt_keywords is what may open a statement. VCL reserves nothing, so
+// these are recognised by spelling and only in the leading position —
+// `set` is a perfectly good header name anywhere else.
+function stmt_keywords(): string[] {
+  return ["set", "unset", "if", "return", "call", "new", "include"];
+}
+
+function is_keyword_stmt(w: string): boolean {
+  return in_list(w, stmt_keywords());
+}
+
+// parse_stmt reads one statement.
+pub function parse_stmt(toks: lexer.Tok[], i: i32): SParse {
+  var t: lexer.Tok = at(toks, i);
+  if (t.punct("{")) {
+    var b: BParse = parse_block(toks, i);
+    if (!b.ok) {
+      return serr_from(b.err, b.pos);
+    }
+    return sok_with(SBlock(b.blk), b.pos, b.errs);
+  }
+  match (t.kind) {
+    TCSource => {
+      return sok(SCSource(ast.CSourceStmt { code: t.text, line: t.line, col: t.col }), i + 1);
+    },
+    TIdent => {
+      if (is_keyword_stmt(t.text)) {
+        return parse_keyword_stmt(toks, i, t.text);
+      }
+      return parse_expr_stmt(toks, i);
+    },
+    _ => {
+      return serr("expected a statement, found " + describe(t), t, i);
+    }
+  }
+}
+
+// recover_stmt skips to just past the next `;` or to the `}` that ends
+// the enclosing block, so one bad statement costs one diagnostic.
+function recover_stmt(toks: lexer.Tok[], i: i32): i32 {
+  var pos: i32 = i;
+  while (!at(toks, pos).is_eof()) {
+    if (at(toks, pos).punct(";")) {
+      return pos + 1;
+    }
+    if (at(toks, pos).punct("}")) {
+      return pos;
+    }
+    pos = pos + 1;
+  }
+  return pos;
+}
+
+// parse_block reads `{ stmt* }`, recovering within the block so a later
+// statement's errors are still reported.
+pub function parse_block(toks: lexer.Tok[], i: i32): BParse {
+  var open: lexer.Tok = at(toks, i);
+  var stmts: ast.Stmt[] = [];
+  var errs: diag.Diag[] = [];
+  if (!open.punct("{")) {
+    var blk: ast.Block = ast.Block { stmts: stmts, line: open.line, col: open.col };
+    return BParse { blk: blk, pos: i, ok: false, err: diag.at("expected '{', found " + describe(open), open.line, open.col), errs: errs };
+  }
+  var pos: i32 = i + 1;
+  while (!at(toks, pos).punct("}")) {
+    if (at(toks, pos).is_eof()) {
+      var partial: ast.Block = ast.Block { stmts: stmts, line: open.line, col: open.col };
+      return BParse { blk: partial, pos: pos, ok: false, err: diag.at("unclosed '{' opened here", open.line, open.col), errs: errs };
+    }
+    var s: SParse = parse_stmt(toks, pos);
+    errs = concat(errs, s.errs);
+    if (s.ok) {
+      stmts = stmts.append(s.node);
+      pos = s.pos;
+    } else {
+      errs = errs.append(s.err);
+      pos = recover_stmt(toks, s.pos);
+    }
+  }
+  var done: ast.Block = ast.Block { stmts: stmts, line: open.line, col: open.col };
+  return BParse { blk: done, pos: pos + 1, ok: true, err: no_diag(), errs: errs };
+}
+
+// --------------------------------------------------------------- declarations
+struct PParse { blk: ast.PropBlock, pos: i32, ok: boolean, err: diag.Diag }
+
+function perr(msg: string, t: lexer.Tok, pos: i32, props: ast.Prop[]): PParse {
+  var blk: ast.PropBlock = ast.PropBlock { props: props, line: t.line, col: t.col };
+  return PParse { blk: blk, pos: pos, ok: false, err: diag.at(msg, t.line, t.col) };
+}
+
+// parse_prop_block reads a `{ .name = value; … }` body — the shape of a
+// backend, a probe, and an inline `.probe = { … }` alike. A block-valued
+// property may be followed by a `;` or not; Varnish accepts both.
+function parse_prop_block(toks: lexer.Tok[], i: i32): PParse {
+  var open: lexer.Tok = at(toks, i);
+  var props: ast.Prop[] = [];
+  if (!open.punct("{")) {
+    return perr("expected '{', found " + describe(open), open, i, props);
+  }
+  var pos: i32 = i + 1;
+  while (!at(toks, pos).punct("}")) {
+    if (at(toks, pos).is_eof()) {
+      return perr("unclosed '{' opened here", open, pos, props);
+    }
+    var one: PParse = parse_prop(toks, pos, props);
+    if (!one.ok) {
+      return one;
+    }
+    props = one.blk.props;
+    pos = one.pos;
+  }
+  var blk: ast.PropBlock = ast.PropBlock { props: props, line: open.line, col: open.col };
+  return PParse { blk: blk, pos: pos + 1, ok: true, err: no_diag() };
+}
+
+// parse_prop reads one `.name = value;`, appending it to `props`. The
+// accumulator is passed in and returned so a failure still carries the
+// properties read so far, which keeps a partial tree printable.
+function parse_prop(toks: lexer.Tok[], i: i32, props: ast.Prop[]): PParse {
+  var name: lexer.Tok = at(toks, i);
+  if (!name.is_ident() || !name.text.starts_with(".")) {
+    return perr("expected a '.property' name, found " + describe(name), name, i, props);
+  }
+  if (!at(toks, i + 1).punct("=")) {
+    var t: lexer.Tok = at(toks, i + 1);
+    return perr("expected '=' after '" + name.text + "', found " + describe(t), t, i + 1, props);
+  }
+  if (at(toks, i + 2).punct("{")) {
+    var nested: PParse = parse_prop_block(toks, i + 2);
+    if (!nested.ok) {
+      return nested;
+    }
+    var pos: i32 = nested.pos;
+    if (at(toks, pos).punct(";")) {
+      pos = pos + 1;
+    }
+    var bp: ast.Prop = ast.Prop { name: name.text, value: PVBlock(nested.blk), line: name.line, col: name.col };
+    return PParse { blk: ast.PropBlock { props: props.append(bp), line: name.line, col: name.col }, pos: pos, ok: true, err: no_diag() };
+  }
+  var v: EParse = parse_expr(toks, i + 2);
+  if (!v.ok) {
+    return PParse { blk: ast.PropBlock { props: props, line: name.line, col: name.col }, pos: v.pos, ok: false, err: v.err };
+  }
+  if (!at(toks, v.pos).punct(";")) {
+    var bad: lexer.Tok = at(toks, v.pos);
+    return perr("expected ';' after the value of '" + name.text + "', found " + describe(bad), bad, v.pos, props);
+  }
+  var ep: ast.Prop = ast.Prop { name: name.text, value: PVExpr(v.node), line: name.line, col: name.col };
+  return PParse { blk: ast.PropBlock { props: props.append(ep), line: name.line, col: name.col }, pos: v.pos + 1, ok: true, err: no_diag() };
+}
+
+struct DParse { decl: ast.Decl, pos: i32, ok: boolean, err: diag.Diag, errs: diag.Diag[] }
+
+function dok(d: ast.Decl, pos: i32, errs: diag.Diag[]): DParse {
+  return DParse { decl: d, pos: pos, ok: true, err: no_diag(), errs: errs };
+}
+
+function derr(msg: string, t: lexer.Tok, pos: i32): DParse {
+  var dummy: ast.Decl = DVcl(ast.VclDecl { version: "", line: t.line, col: t.col });
+  var none: diag.Diag[] = [];
+  return DParse { decl: dummy, pos: pos, ok: false, err: diag.at(msg, t.line, t.col), errs: none };
+}
+
+function derr_from(d: diag.Diag, pos: i32): DParse {
+  var dummy: ast.Decl = DVcl(ast.VclDecl { version: "", line: d.line, col: d.col });
+  var none: diag.Diag[] = [];
+  return DParse { decl: dummy, pos: pos, ok: false, err: d, errs: none };
+}
+
+function no_errs(): diag.Diag[] {
+  var none: diag.Diag[] = [];
+
+  return none;
+}
+
+// parse_vcl reads the `vcl 4.1;` version marker every file must open
+// with. The version is a plain number to the lexer.
+function parse_vcl(toks: lexer.Tok[], i: i32): DParse {
+  var kw: lexer.Tok = at(toks, i);
+  var ver: lexer.Tok = at(toks, i + 1);
+  match (ver.kind) {
+    TNumber => {
+      if (!at(toks, i + 2).punct(";")) {
+        var t: lexer.Tok = at(toks, i + 2);
+        return derr("expected ';' after the VCL version, found " + describe(t), t, i + 2);
+      }
+      var d: ast.Decl = DVcl(ast.VclDecl { version: ver.text, line: kw.line, col: kw.col });
+      return dok(d, i + 3, no_errs());
+    },
+    _ => {
+      return derr("expected a VCL version number, found " + describe(ver), ver, i + 1);
+    }
+  }
+}
+
+// parse_import reads `import std;` and the explicit-path form
+// `import kv from "/path/libvmod_kv.so";`.
+function parse_import(toks: lexer.Tok[], i: i32): DParse {
+  var kw: lexer.Tok = at(toks, i);
+  var name: lexer.Tok = at(toks, i + 1);
+  if (!name.is_ident()) {
+    return derr("expected a VMOD name after 'import', found " + describe(name), name, i + 1);
+  }
+  var from: string = "";
+  var has_from: boolean = false;
+  var pos: i32 = i + 2;
+  if (at(toks, pos).word("from")) {
+    var path: lexer.Tok = at(toks, pos + 1);
+    if (!path.is_string()) {
+      return derr("expected a quoted path after 'from', found " + describe(path), path, pos + 1);
+    }
+    from = path.text;
+    has_from = true;
+    pos = pos + 2;
+  }
+  if (!at(toks, pos).punct(";")) {
+    var t: lexer.Tok = at(toks, pos);
+    return derr("expected ';' after the import, found " + describe(t), t, pos);
+  }
+  var d: ast.Decl = DImport(ast.ImportDecl { module: name.text, from: from, has_from: has_from, line: kw.line, col: kw.col });
+  return dok(d, pos + 1, no_errs());
+}
+
+// parse_backend reads `backend name { … }` or the VCL 4.1
+// `backend name none;`, which declares a backend that always fails.
+function parse_backend(toks: lexer.Tok[], i: i32): DParse {
+  var kw: lexer.Tok = at(toks, i);
+  var name: lexer.Tok = at(toks, i + 1);
+  if (!name.is_ident()) {
+    return derr("expected a backend name, found " + describe(name), name, i + 1);
+  }
+  var no_props: ast.Prop[] = [];
+  if (at(toks, i + 2).word("none")) {
+    if (!at(toks, i + 3).punct(";")) {
+      var t: lexer.Tok = at(toks, i + 3);
+      return derr("expected ';' after 'backend " + name.text + " none', found " + describe(t), t, i + 3);
+    }
+    var empty: ast.PropBlock = ast.PropBlock { props: no_props, line: name.line, col: name.col };
+    var nd: ast.Decl = DBackend(ast.BackendDecl { name: name.text, props: empty, none: true, line: kw.line, col: kw.col });
+    return dok(nd, i + 4, no_errs());
+  }
+  var body: PParse = parse_prop_block(toks, i + 2);
+  if (!body.ok) {
+    return derr_from(body.err, body.pos);
+  }
+  var d: ast.Decl = DBackend(ast.BackendDecl { name: name.text, props: body.blk, none: false, line: kw.line, col: kw.col });
+  return dok(d, body.pos, no_errs());
+}
+
+function parse_probe(toks: lexer.Tok[], i: i32): DParse {
+  var kw: lexer.Tok = at(toks, i);
+  var name: lexer.Tok = at(toks, i + 1);
+  if (!name.is_ident()) {
+    return derr("expected a probe name, found " + describe(name), name, i + 1);
+  }
+  var body: PParse = parse_prop_block(toks, i + 2);
+  if (!body.ok) {
+    return derr_from(body.err, body.pos);
+  }
+  var d: ast.Decl = DProbe(ast.ProbeDecl { name: name.text, props: body.blk, line: kw.line, col: kw.col });
+  return dok(d, body.pos, no_errs());
+}
+
+function parse_sub(toks: lexer.Tok[], i: i32): DParse {
+  var kw: lexer.Tok = at(toks, i);
+  var name: lexer.Tok = at(toks, i + 1);
+  if (!name.is_ident()) {
+    return derr("expected a subroutine name, found " + describe(name), name, i + 1);
+  }
+  var body: BParse = parse_block(toks, i + 2);
+  if (!body.ok) {
+    return derr_from(body.err, body.pos);
+  }
+  var d: ast.Decl = DSub(ast.SubDecl { name: name.text, body: body.blk, line: kw.line, col: kw.col });
+  return dok(d, body.pos, body.errs);
+}
+
+struct EntryParse { entry: ast.AclEntry, pos: i32, ok: boolean, err: diag.Diag }
+
+// parse_acl_entry reads one ACL line: an optional `!`, a quoted host
+// either bare or wrapped in the VCL 4.1 `( … )` form that defers name
+// resolution to load time, an optional `/bits` mask, and a `;`.
+function parse_acl_entry(toks: lexer.Tok[], i: i32): EntryParse {
+  var start: lexer.Tok = at(toks, i);
+  var pos: i32 = i;
+  var negated: boolean = false;
+  if (at(toks, pos).punct("!")) {
+    negated = true;
+    pos = pos + 1;
+  }
+  var parens: boolean = false;
+  if (at(toks, pos).punct("(")) {
+    parens = true;
+    pos = pos + 1;
+  }
+  var host: lexer.Tok = at(toks, pos);
+  if (!host.is_string()) {
+    var blank: ast.AclEntry = ast.AclEntry { negated: negated, parens: parens, host: "", mask: "", line: host.line, col: host.col };
+    return EntryParse { entry: blank, pos: pos, ok: false, err: diag.at("expected a quoted host in the ACL, found " + describe(host), host.line, host.col) };
+  }
+  pos = pos + 1;
+  var mask: string = "";
+  if (at(toks, pos).punct("/")) {
+    var bits: lexer.Tok = at(toks, pos + 1);
+    match (bits.kind) {
+      TNumber => {
+        mask = bits.text;
+        pos = pos + 2;
+      },
+      _ => {
+        var b2: ast.AclEntry = ast.AclEntry { negated: negated, parens: parens, host: host.text, mask: "", line: start.line, col: start.col };
+        return EntryParse { entry: b2, pos: pos, ok: false, err: diag.at("expected a mask width after '/', found " + describe(bits), bits.line, bits.col) };
+      }
+    }
+  }
+  var entry: ast.AclEntry = ast.AclEntry { negated: negated, parens: parens, host: host.text, mask: mask, line: start.line, col: start.col };
+  if (parens) {
+    if (!at(toks, pos).punct(")")) {
+      var t: lexer.Tok = at(toks, pos);
+      return EntryParse { entry: entry, pos: pos, ok: false, err: diag.at("expected ')' to close the ACL entry, found " + describe(t), t.line, t.col) };
+    }
+    pos = pos + 1;
+  }
+  if (!at(toks, pos).punct(";")) {
+    var semi: lexer.Tok = at(toks, pos);
+    return EntryParse { entry: entry, pos: pos, ok: false, err: diag.at("expected ';' after the ACL entry, found " + describe(semi), semi.line, semi.col) };
+  }
+  return EntryParse { entry: entry, pos: pos + 1, ok: true, err: no_diag() };
+}
+
+function parse_acl(toks: lexer.Tok[], i: i32): DParse {
+  var kw: lexer.Tok = at(toks, i);
+  var name: lexer.Tok = at(toks, i + 1);
+  if (!name.is_ident()) {
+    return derr("expected an ACL name, found " + describe(name), name, i + 1);
+  }
+  if (!at(toks, i + 2).punct("{")) {
+    var t: lexer.Tok = at(toks, i + 2);
+    return derr("expected '{' after 'acl " + name.text + "', found " + describe(t), t, i + 2);
+  }
+  var entries: ast.AclEntry[] = [];
+  var pos: i32 = i + 3;
+  while (!at(toks, pos).punct("}")) {
+    if (at(toks, pos).is_eof()) {
+      return derr("unclosed '{' opened here", at(toks, i + 2), pos);
+    }
+    var e: EntryParse = parse_acl_entry(toks, pos);
+    if (!e.ok) {
+      return derr_from(e.err, e.pos);
+    }
+    entries = entries.append(e.entry);
+    pos = e.pos;
+  }
+  var d: ast.Decl = DAcl(ast.AclDecl { name: name.text, entries: entries, line: kw.line, col: kw.col });
+  return dok(d, pos + 1, no_errs());
+}
+
+// parse_top_include reads a top-level `include "other.vcl";`.
+function parse_top_include(toks: lexer.Tok[], i: i32): DParse {
+  var s: SParse = parse_include(toks, i);
+  if (!s.ok) {
+    return derr_from(s.err, s.pos);
+  }
+  match (s.node) {
+    SInclude(inc) => {
+      return dok(DInclude(inc), s.pos, no_errs());
+    },
+    _ => {
+      return derr("expected an include", at(toks, i), i);
+    }
+  }
+}
+
+// decl_keywords lists what may open a top-level declaration — also the
+// resynchronisation set after a bad one.
+function decl_keywords(): string[] {
+  return ["vcl", "import", "include", "backend", "probe", "acl", "sub"];
+}
+
+function parse_decl(toks: lexer.Tok[], i: i32): DParse {
+  var t: lexer.Tok = at(toks, i);
+  match (t.kind) {
+    TCSource => {
+      var c: ast.Decl = DCSource(ast.CSourceStmt { code: t.text, line: t.line, col: t.col });
+      return dok(c, i + 1, no_errs());
+    },
+    TIdent => {
+      return parse_decl_keyword(toks, i, t);
+    },
+    _ => {
+      return derr("expected a top-level declaration, found " + describe(t), t, i);
+    }
+  }
+}
+
+function parse_decl_keyword(toks: lexer.Tok[], i: i32, t: lexer.Tok): DParse {
+  if (t.text == "vcl") {
+    return parse_vcl(toks, i);
+  }
+  if (t.text == "import") {
+    return parse_import(toks, i);
+  }
+  if (t.text == "include") {
+    return parse_top_include(toks, i);
+  }
+  if (t.text == "backend") {
+    return parse_backend(toks, i);
+  }
+  if (t.text == "probe") {
+    return parse_probe(toks, i);
+  }
+  if (t.text == "acl") {
+    return parse_acl(toks, i);
+  }
+  if (t.text == "sub") {
+    return parse_sub(toks, i);
+  }
+  return derr("expected a top-level declaration, found " + describe(t), t, i);
+}
+
+// recover_decl resynchronises on the next top-level keyword. It always
+// advances at least one token past `from`, which is what guarantees the
+// top-level loop terminates on input it cannot parse at all.
+function recover_decl(toks: lexer.Tok[], from: i32, at_least: i32): i32 {
+  var pos: i32 = from;
+  if (pos < at_least) {
+    pos = at_least;
+  }
+  var kws: string[] = decl_keywords();
+  while (!at(toks, pos).is_eof()) {
+    var t: lexer.Tok = at(toks, pos);
+    if (t.is_ident() && in_list(t.text, kws)) {
+      return pos;
+    }
+    pos = pos + 1;
+  }
+  return pos;
+}
+
+// parse turns VCL source into declarations plus every diagnostic found:
+// the lexer's, then one per declaration or statement that failed. An
+// empty `diags` is the only signal that the tree is complete — a
+// non-empty one still returns whatever parsed, which is what a formatter
+// or an editor wants.
+pub function parse(src: string): ParseResult {
+  var lr: lexer.LexResult = lexer.lex(src);
+  var diags: diag.Diag[] = lr.diags;
+  var decls: ast.Decl[] = [];
+  var pos: i32 = 0;
+  while (!at(lr.toks, pos).is_eof()) {
+    var d: DParse = parse_decl(lr.toks, pos);
+    diags = concat(diags, d.errs);
+    if (d.ok) {
+      decls = decls.append(d.decl);
+      pos = d.pos;
+    } else {
+      diags = diags.append(d.err);
+      pos = recover_decl(lr.toks, d.pos, pos + 1);
+    }
+  }
+  return ParseResult { decls: decls, diags: diags };
+}

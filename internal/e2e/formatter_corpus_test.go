@@ -52,6 +52,7 @@ func TestFormatterExampleCorpusRoundTrip(t *testing.T) {
 		"../../examples/cli",
 		"../../examples/proposals",
 		"../../examples/tests",
+		"../../examples/vcl",
 		"../../examples/wasm",
 		"../../internal/stdlib/std",
 		"../../internal/stdlib/core",

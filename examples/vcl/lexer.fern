@@ -1,0 +1,453 @@
+// examples/vcl/lexer.fern — the VCL tokenizer.
+//
+// Byte-level and ASCII-only, which VCL syntax is; a non-ASCII byte can
+// only appear inside a string or a comment, where it passes through
+// untouched.
+//
+// Three parts of the grammar are worth knowing about before reading:
+//
+//   * An identifier may contain `.` and `-`, so `req.http.X-Forwarded-For`
+//     is ONE token. `-` continues an identifier only when the next byte is
+//     alphanumeric or `_`, which is what keeps `ttl - 10s` a subtraction
+//     while `X-Forwarded-For` stays a name. A property name (`.url`) is
+//     lexed as an identifier that starts with `.`, so the parser needs no
+//     special case for it.
+//   * A number may carry a unit suffix and become a duration (`10s`, `1h`)
+//     or a byte size (`256KB`). The suffixes are matched longest-first, so
+//     `100ms` is milliseconds and not minutes-then-`s`.
+//   * Strings have three long forms and no escape sequences at all. A
+//     backslash in a VCL string is a backslash.
+import "std/string";
+import "std/i32";
+import "./diag";
+
+pub enum TokKind { TIdent, TString, TNumber, TDuration, TBytes, TPunct, TCSource, TEOF }
+
+// One token. `text` is the semantic payload — the identifier, the digits,
+// the string CONTENTS without its delimiters, the operator — and `aux`
+// carries the one extra fact some kinds need: a unit for TDuration and
+// TBytes, and the long-string form ("short" / "brace" / "triple") for
+// TString. Empty otherwise.
+pub struct Tok { kind: TokKind, text: string, aux: string, line: i32, col: i32 }
+
+pub struct LexResult { toks: Tok[], diags: diag.Diag[] }
+
+// A cursor: byte offset plus the 1-based line/column it sits at.
+struct Pos { i: i32, line: i32, col: i32 }
+
+// advance walks the cursor forward to byte offset `to`, counting the
+// newlines it passes so line/col stay correct. Every multi-byte token is
+// scanned to an end offset and then committed through here, so position
+// tracking lives in exactly one place.
+function advance(src: string, p: Pos, to: i32): Pos {
+  var i: i32 = p.i;
+  var line: i32 = p.line;
+  var col: i32 = p.col;
+  while (i < to) {
+    if (src[i] == 10) {
+      line = line + 1;
+      col = 1;
+    } else {
+      col = col + 1;
+    }
+    i = i + 1;
+  }
+  return Pos { i: i, line: line, col: col };
+}
+
+function is_digit(b: u8): boolean {
+  return b >= 48 && b <= 57;
+}
+
+function is_alpha(b: u8): boolean {
+  return b >= 97 && b <= 122 || b >= 65 && b <= 90 || b == 95;
+}
+
+function is_alnum(b: u8): boolean {
+  return is_alpha(b) || is_digit(b);
+}
+
+// ident_end returns the offset just past the identifier starting at `i`.
+// A leading `.` is part of the name (a `.url` property), `.` and `-`
+// continue it, but a `-` only when a name character follows so that
+// `a - b` stays three tokens.
+function ident_end(src: string, i: i32): i32 {
+  var j: i32 = i;
+  if (j < src.len() && src[j] == 46) {
+    j = j + 1;
+  }
+  while (j < src.len()) {
+    var b: u8 = src[j];
+    if (is_alnum(b) || b == 46) {
+      j = j + 1;
+    } else if (b == 45 && j + 1 < src.len() && is_alnum(src[j + 1])) {
+      j = j + 1;
+    } else {
+      return j;
+    }
+  }
+  return j;
+}
+
+// number_end returns the offset just past the digits (and at most one
+// decimal point) starting at `i`.
+function number_end(src: string, i: i32): i32 {
+  var j: i32 = i;
+  while (j < src.len() && is_digit(src[j])) {
+    j = j + 1;
+  }
+  if (j < src.len() && src[j] == 46 && j + 1 < src.len() && is_digit(src[j + 1])) {
+    j = j + 1;
+    while (j < src.len() && is_digit(src[j])) {
+      j = j + 1;
+    }
+  }
+  return j;
+}
+
+// The unit suffixes, longest first within each family so `ms` wins over
+// `m` and `KB` over `B`.
+function duration_units(): string[] {
+  return ["ms", "s", "m", "h", "d", "w", "y"];
+}
+
+function byte_units(): string[] {
+  return ["KB", "MB", "GB", "TB", "B"];
+}
+
+// match_unit returns the first suffix in `units` that appears at `i` and
+// is not itself followed by a name character (so `10secs` is not a
+// duration `10s` followed by `ecs`). "" when none match.
+function match_unit(src: string, i: i32, units: string[]): string {
+  var u: i32 = 0;
+  while (u < units.len()) {
+    var unit: string = units[u];
+    var e: i32 = i + unit.len();
+    if (e <= src.len() && slice_unchecked(src, i, e) == unit) {
+      if (e == src.len() || !is_alnum(src[e])) {
+        return unit;
+      }
+    }
+    u = u + 1;
+  }
+  return "";
+}
+
+// A scan of a delimited run: the offset just past the closing delimiter
+// and the content between, or ok=false when the input ended first.
+struct Run { start: i32, end: i32, close: i32, ok: boolean }
+
+// delimited scans forward from `from` for `closer`, returning the content
+// span and the offset past the closer.
+function delimited(src: string, from: i32, closer: string): Run {
+  var j: i32 = from;
+  while (j + closer.len() <= src.len()) {
+    if (slice_unchecked(src, j, j + closer.len()) == closer) {
+      return Run { start: from, end: j, close: j + closer.len(), ok: true };
+    }
+    j = j + 1;
+  }
+  return Run { start: from, end: src.len(), close: src.len(), ok: false };
+}
+
+// A short `"…"` string, which may not span a line.
+function short_string(src: string, from: i32): Run {
+  var j: i32 = from;
+  while (j < src.len() && src[j] != 34 && src[j] != 10) {
+    j = j + 1;
+  }
+  if (j >= src.len() || src[j] == 10) {
+    return Run { start: from, end: j, close: j, ok: false };
+  }
+  return Run { start: from, end: j, close: j + 1, ok: true };
+}
+
+// comment_end returns the offset just past the comment starting at `i`,
+// or -1 when `i` does not start one. VCL takes all three of `#`, `//`,
+// and `/* … */`. An unterminated block comment runs to end of input,
+// which the caller sees as EOF; vcc reports it and this prototype does
+// not.
+function comment_end(src: string, i: i32): i32 {
+  var b: u8 = src[i];
+  if (b == 35) {
+    return line_end(src, i);
+  }
+  if (b != 47 || i + 1 >= src.len()) {
+    return 0 - 1;
+  }
+  if (src[i + 1] == 47) {
+    return line_end(src, i);
+  }
+  if (src[i + 1] == 42) {
+    return delimited(src, i + 2, "*/").close;
+  }
+  return 0 - 1;
+}
+
+function is_space(b: u8): boolean {
+  return b == 32 || b == 9 || b == 13 || b == 10;
+}
+
+// skip_trivia advances past whitespace and comments to the next token.
+function skip_trivia(src: string, p: Pos): Pos {
+  var cur: Pos = p;
+  while (cur.i < src.len()) {
+    if (is_space(src[cur.i])) {
+      cur = advance(src, cur, cur.i + 1);
+    } else {
+      var ce: i32 = comment_end(src, cur.i);
+      if (ce < 0) {
+        return cur;
+      }
+      cur = advance(src, cur, ce);
+    }
+  }
+  return cur;
+}
+
+function line_end(src: string, i: i32): i32 {
+  var j: i32 = i;
+  while (j < src.len() && src[j] != 10) {
+    j = j + 1;
+  }
+  return j;
+}
+
+// The two-byte operators, checked before the single-byte ones so `!~`
+// never lexes as `!` followed by `~`.
+function two_byte_ops(): string[] {
+  return ["==", "!=", "<=", ">=", "&&", "||", "!~", "+=", "-=", "*=", "/="];
+}
+
+// The single bytes that can open an operator or a delimiter. Kept as a
+// set to scan rather than a chain of comparisons: it is data, and the
+// two-byte operators above are already a list.
+function punct_bytes(): string {
+  return "{}();,=<>~!+-*/&|";
+}
+
+function is_punct_byte(b: u8): boolean {
+  var set: string = punct_bytes();
+  var i: i32 = 0;
+  while (i < set.len()) {
+    if (set[i] == b) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// A token plus the cursor just past it. `ok` is false only for the
+// unterminated-literal cases, which carry `err`.
+struct Scan { tok: Tok, next: Pos, ok: boolean, err: diag.Diag }
+
+function scanned(t: Tok, next: Pos): Scan {
+  return Scan { tok: t, next: next, ok: true, err: diag.at("", 0, 0) };
+}
+
+function scan_failed(t: Tok, next: Pos, msg: string, at: Pos): Scan {
+  return Scan { tok: t, next: next, ok: false, err: diag.at(msg, at.line, at.col) };
+}
+
+// scan_number reads a number and any unit suffix, producing TNumber,
+// TDuration, or TBytes.
+function scan_number(src: string, p: Pos): Scan {
+  var e: i32 = number_end(src, p.i);
+  var text: string = slice_unchecked(src, p.i, e).to_owned();
+  var bu: string = match_unit(src, e, byte_units());
+  if (bu != "") {
+    var t: Tok = Tok { kind: TBytes, text: text, aux: bu, line: p.line, col: p.col };
+    return scanned(t, advance(src, p, e + bu.len()));
+  }
+  var du: string = match_unit(src, e, duration_units());
+  if (du != "") {
+    var d: Tok = Tok { kind: TDuration, text: text, aux: du, line: p.line, col: p.col };
+    return scanned(d, advance(src, p, e + du.len()));
+  }
+  var n: Tok = Tok { kind: TNumber, text: text, aux: "", line: p.line, col: p.col };
+  return scanned(n, advance(src, p, e));
+}
+
+// scan_string reads one of the three string forms. The caller has
+// already established that `p` sits on a `"` or on `{"`.
+function scan_string(src: string, p: Pos): Scan {
+  var form: string = "short";
+  var open: i32 = p.i + 1;
+  var closer: string = "\"";
+  if (src[p.i] == 123) {
+    form = "brace";
+    open = p.i + 2;
+    closer = "\"}";
+  } else if (p.i + 2 < src.len() && slice_unchecked(src, p.i, p.i + 3) == "\"\"\"") {
+    form = "triple";
+    open = p.i + 3;
+    closer = "\"\"\"";
+  }
+  var sp: Run = Run { start: 0, end: 0, close: 0, ok: false };
+  if (form == "short") {
+    sp = short_string(src, open);
+  } else {
+    sp = delimited(src, open, closer);
+  }
+  var tok: Tok = Tok { kind: TString, text: slice_unchecked(src, sp.start, sp.end).to_owned(), aux: form, line: p.line, col: p.col };
+  if (!sp.ok) {
+    return scan_failed(tok, advance(src, p, sp.close), "unterminated string literal", p);
+  }
+  return scanned(tok, advance(src, p, sp.close));
+}
+
+// scan_punct reads the longest operator at `p`.
+function scan_punct(src: string, p: Pos): Scan {
+  var ops: string[] = two_byte_ops();
+  var k: i32 = 0;
+  while (k < ops.len()) {
+    var op: string = ops[k];
+    if (p.i + 2 <= src.len() && slice_unchecked(src, p.i, p.i + 2) == op) {
+      var t2: Tok = Tok { kind: TPunct, text: op, aux: "", line: p.line, col: p.col };
+      return scanned(t2, advance(src, p, p.i + 2));
+    }
+    k = k + 1;
+  }
+  var t1: Tok = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
+  return scanned(t1, advance(src, p, p.i + 1));
+}
+
+// scan_c_source reads an inline-C block, `C{ … }C`, whose body is opaque.
+function scan_c_source(src: string, p: Pos): Scan {
+  var sp: Run = delimited(src, p.i + 2, "}C");
+  var tok: Tok = Tok { kind: TCSource, text: slice_unchecked(src, sp.start, sp.end).to_owned(), aux: "", line: p.line, col: p.col };
+  if (!sp.ok) {
+    return scan_failed(tok, advance(src, p, sp.close), "unterminated C{ … }C block", p);
+  }
+  return scanned(tok, advance(src, p, sp.close));
+}
+
+// at_c_source reports whether `p` starts an inline-C block rather than an
+// identifier that merely begins with C.
+function at_c_source(src: string, i: i32): boolean {
+  return src[i] == 67 && i + 1 < src.len() && src[i + 1] == 123;
+}
+
+// at_brace_string reports whether `p` starts a `{"…"}` long string rather
+// than an ordinary opening brace.
+function at_brace_string(src: string, i: i32): boolean {
+  return src[i] == 123 && i + 1 < src.len() && src[i + 1] == 34;
+}
+
+// scan_one reads the single token at `p`, which is known not to be
+// trivia or end of input.
+//
+// The dispatch is one fork per token class and reads as a table; splitting
+// it would only move the same forks behind names used once.
+// fern-lint: allow cyclomatic-complexity
+function scan_one(src: string, p: Pos): Scan {
+  var b: u8 = src[p.i];
+  if (at_c_source(src, p.i)) {
+    return scan_c_source(src, p);
+  }
+  if (at_brace_string(src, p.i) || b == 34) {
+    return scan_string(src, p);
+  }
+  if (is_digit(b)) {
+    return scan_number(src, p);
+  }
+  if (is_alpha(b)) {
+    var e: i32 = ident_end(src, p.i);
+    var id: Tok = Tok { kind: TIdent, text: slice_unchecked(src, p.i, e).to_owned(), aux: "", line: p.line, col: p.col };
+    return scanned(id, advance(src, p, e));
+  }
+  // A `.` followed by a name byte opens a property name; a bare `.` is
+  // not otherwise part of VCL syntax.
+  if (b == 46 && p.i + 1 < src.len() && is_alpha(src[p.i + 1])) {
+    var pe: i32 = ident_end(src, p.i);
+    var prop: Tok = Tok { kind: TIdent, text: slice_unchecked(src, p.i, pe).to_owned(), aux: "", line: p.line, col: p.col };
+    return scanned(prop, advance(src, p, pe));
+  }
+  if (is_punct_byte(b)) {
+    return scan_punct(src, p);
+  }
+  var bad: Tok = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
+  return scan_failed(bad, advance(src, p, p.i + 1), "unexpected byte '" + slice_unchecked(src, p.i, p.i + 1) + "'", p);
+}
+
+// lex tokenizes a whole VCL source. It always returns a token list ending
+// in TEOF: a lexical error is recorded and scanning continues, so the
+// parser sees the whole file and one bad byte does not hide the rest.
+pub function lex(src: string): LexResult {
+  var toks: Tok[] = [];
+  var diags: diag.Diag[] = [];
+  var cur: Pos = Pos { i: 0, line: 1, col: 1 };
+  while (true) {
+    cur = skip_trivia(src, cur);
+    if (cur.i >= src.len()) {
+      toks = toks.append(Tok { kind: TEOF, text: "", aux: "", line: cur.line, col: cur.col });
+      return LexResult { toks: toks, diags: diags };
+    }
+    var s: Scan = scan_one(src, cur);
+    if (!s.ok) {
+      diags = diags.append(s.err);
+    }
+    toks = toks.append(s.tok);
+    cur = s.next;
+  }
+  return LexResult { toks: toks, diags: diags };
+}
+
+// Kind predicates. The parser branches on token class constantly and a
+// `match` per test would bury every call site, so the four classes it
+// actually discriminates get a name here.
+pub function (t: Tok) is_eof(): boolean {
+  match (t.kind) {
+    TEOF => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+pub function (t: Tok) is_ident(): boolean {
+  match (t.kind) {
+    TIdent => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+pub function (t: Tok) is_string(): boolean {
+  match (t.kind) {
+    TString => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+pub function (t: Tok) is_punct(): boolean {
+  match (t.kind) {
+    TPunct => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+// punct reports whether the token is exactly the operator `s`.
+pub function (t: Tok) punct(s: string): boolean {
+  return t.is_punct() && t.text == s;
+}
+
+// word reports whether the token is exactly the bare identifier `s` —
+// how every VCL keyword is recognised, since none of them are reserved.
+pub function (t: Tok) word(s: string): boolean {
+  return t.is_ident() && t.text == s;
+}
