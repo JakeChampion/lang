@@ -2925,6 +2925,131 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
 
 // infer_call_named_type infers the result of a call to a NAMED callee: the
 // builtin table first, then a user function's declared return type.
+// builtin_i32_names lists the free builtins whose result occupies a plain
+// integer slot. Each comment stays with the names it was written for.
+function builtin_i32_names(): string[] {
+    return [
+        // now_unix_ms / monotonic_ns return i64. The self-host
+        // has no distinct i64 tag — integers live in 64-bit x0
+        // slots and compare via cmp — so "i32" routes them
+        // through the integer path without truncation.
+        "now_unix_ms",
+        "monotonic_ns",
+        // poll(fds, timeout_ms) -> i32 (ready index, or -1).
+        "poll",
+        // timer_fd(ms) -> i32 fd; wasm_timer_pollable(ns) -> i32
+        // (-1 native); wasm_pollable_drop(p) -> i32 (0 native);
+        // wasm_block(p) -> i32 (0 native; on wasm blocks until ready).
+        "timer_fd",
+        // isatty(fd) -> boolean, which the self-host carries in an
+        // integer slot like every other 0/1 value.
+        "isatty",
+        "wasm_timer_pollable",
+        "wasm_pollable_drop",
+        "wasm_block",
+        // wasm_poll(pollables: i32[]) -> i32 (first ready index, or -1).
+        "wasm_poll",
+        "tcp_connect",
+        // tcp_listen(port) -> listener fd / -errno; tcp_accept(fd) ->
+        // connection fd / -errno. The server half of the edge-handler
+        // use case (#4371); both are plain i32 like the client ops.
+        "tcp_listen",
+        "tcp_accept",
+        "tcp_send",
+        "tcp_close",
+        "tcp_pollable",
+        // See asm.fern for rationale.
+        "sleep_ms",
+        // proc_fork() → 0 in the child / child pid in the parent /
+        // -errno; proc_waitpid(pid) → the child's exit status
+        // (shell convention: 128 + signal on a signal death).
+        // Both plain i32, matching native's FuncSigs (#5686).
+        "proc_fork",
+        "proc_waitpid",
+        // proc_exec(path, args) → i32, but only on FAILURE (-errno):
+        // on success execve has replaced the process image, so there
+        // is nothing left to return to. Matches native's FuncSigs.
+        "proc_exec",
+        "f64_bits", "f32_bits",
+        "len",
+        "read_int",
+        // stdout()/stderr() -> Writer (a bare fd i32; fds 1/2). The
+        // write-half sibling of stdin() (#4372); a Writer is just its
+        // fd like a Reader, so `w.write(s)`/`w.close()` dispatch off it.
+        "stdout", "stderr",
+        "str_to_i32",
+        "str_index_of",
+        // Raw-memory intrinsics (#2649 Tier-2 floor). Pointers are
+        // machine words carried as i32; __raw_string is the one that
+        // produces a typed string. The stores return i32 (the value
+        // written) so they stay value-expressions, not void.
+        "__raw_alloc",
+        "__raw_store8",
+        "__raw_load8",
+        "__raw_store_ptr",
+        "__raw_load_ptr",
+        // The inverse (#2649): a live string's data pointer, which
+        // is slot 0 of the box the string value already points at.
+        "__raw_data",
+        // Pointer + offset at full machine width (#2649) — `p + off`
+        // in the source would be narrowed to i32 by arm64.
+        "__raw_addr",
+        // Fresh array box (#2649): __raw_arr_box hands back the data
+        // pointer as i32, __raw_array retypes it as the array value
+        // it already is — the array sibling of __raw_string.
+        "__raw_arr_box",
+        // Syscall sub-floor (#2649): the raw-memory floor's I/O
+        // sibling. Returns the syscall result as i32.
+        "__syscall3",
+        "__syscall4",
+        "__syscall5",
+        "__raw_environ",
+        // Fixed static scratch buffer for syscall leaves (timespec /
+        // stat) — reused, never freed. Returns the buffer ptr as i32.
+        "__raw_scratch",
+        // __arr_push_shared_count(): the rc==1 cliff counter. i32,
+        // unlike the bump mark above — it counts appends, not bytes,
+        // and a healthy run reports 0. Matches native's FuncSigs.
+        "__arr_push_shared_count",
+        // __map_hash_seed(): core/map's per-process string-hash
+        // seed (#6194). i32, never 0. Matches native's FuncSigs.
+        "__map_hash_seed",
+        // __memchr(s, byte, from): the index of the first `byte`
+        // at or after `from`, or -1 (ATLAS-PLATFORM-PLAN §3). i32
+        // for both the index and the not-found sentinel; the
+        // haystack length it searches is an i32 everywhere.
+        "__memchr",
+        // __ascii_run(s, from): the index of the first byte at or
+        // after `from` with its high bit set, or the LENGTH if the
+        // rest is ASCII (ATLAS-PLATFORM-PLAN §3). i32 either way —
+        // both answers are offsets into an i32-length string, which
+        // is why the miss value can be a real index rather than a
+        // sentinel outside the type.
+        "__ascii_run",
+        "__load_i32",
+        "exit",
+        "args_count",
+    ];
+}
+
+// builtin_string_names lists the free builtins that return a string.
+function builtin_string_names(): string[] {
+    return [
+        "read_all_stdin",
+        "i32_to_string",
+        "int__int_to_string",
+        "str_trim",
+        "str_to_upper",
+        "str_to_lower",
+        "str_repeat",
+        "str_replace",
+        "chr",
+        "__raw_string",
+        "arg_at",
+        "string_from_bytes_unchecked",
+    ];
+}
+
 function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState): Ty {
     if (id.name == "Some" && c.args.len() == 1) {
         return ty_option(infer_expr_type(c.args[0], s));
@@ -2937,50 +3062,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "read_file_bytes") { return ty_result(ty_array_i32()); }
     if (id.name == "write_file") { return ty_result(ty_unknown()); }
     if (id.name == "write_file_exec") { return ty_result(ty_unknown()); }
-    // now_unix_ms / monotonic_ns return i64. The self-host
-    // has no distinct i64 tag — integers live in 64-bit x0
-    // slots and compare via cmp — so "i32" routes them
-    // through the integer path without truncation.
-    if (id.name == "now_unix_ms") { return ty_i32(); }
-    if (id.name == "monotonic_ns") { return ty_i32(); }
-    // poll(fds, timeout_ms) -> i32 (ready index, or -1).
-    if (id.name == "poll") { return ty_i32(); }
-    // timer_fd(ms) -> i32 fd; wasm_timer_pollable(ns) -> i32
-    // (-1 native); wasm_pollable_drop(p) -> i32 (0 native);
-    // wasm_block(p) -> i32 (0 native; on wasm blocks until ready).
-    if (id.name == "timer_fd") { return ty_i32(); }
-    // isatty(fd) -> boolean, which the self-host carries in an
-    // integer slot like every other 0/1 value.
-    if (id.name == "isatty") { return ty_i32(); }
-    if (id.name == "wasm_timer_pollable") { return ty_i32(); }
-    if (id.name == "wasm_pollable_drop") { return ty_i32(); }
-    if (id.name == "wasm_block") { return ty_i32(); }
-    // wasm_poll(pollables: i32[]) -> i32 (first ready index, or -1).
-    if (id.name == "wasm_poll") { return ty_i32(); }
+    if (util.index_of_str(builtin_i32_names(), id.name) >= 0) { return ty_i32(); }
     // tcp_recv(fd, max) -> u8[] box; the rest -> i32 (fd /
     // byte count / pollable token / -errno).
     if (id.name == "tcp_recv") { return ty_array_i32(); }
-    if (id.name == "tcp_connect") { return ty_i32(); }
-    // tcp_listen(port) -> listener fd / -errno; tcp_accept(fd) ->
-    // connection fd / -errno. The server half of the edge-handler
-    // use case (#4371); both are plain i32 like the client ops.
-    if (id.name == "tcp_listen") { return ty_i32(); }
-    if (id.name == "tcp_accept") { return ty_i32(); }
-    if (id.name == "tcp_send") { return ty_i32(); }
-    if (id.name == "tcp_close") { return ty_i32(); }
-    if (id.name == "tcp_pollable") { return ty_i32(); }
-    // See asm.fern for rationale.
-    if (id.name == "sleep_ms") { return ty_i32(); }
-    // proc_fork() → 0 in the child / child pid in the parent /
-    // -errno; proc_waitpid(pid) → the child's exit status
-    // (shell convention: 128 + signal on a signal death).
-    // Both plain i32, matching native's FuncSigs (#5686).
-    if (id.name == "proc_fork") { return ty_i32(); }
-    if (id.name == "proc_waitpid") { return ty_i32(); }
-    // proc_exec(path, args) → i32, but only on FAILURE (-errno):
-    // on success execve has replaced the process image, so there
-    // is nothing left to return to. Matches native's FuncSigs.
-    if (id.name == "proc_exec") { return ty_i32(); }
     if (id.name == "remove_file") { return ty_option(ty_unknown()); }
     if (id.name == "create_dir_all") { return ty_option(ty_unknown()); }
     // subprocess(cmd, args, stdin) → ProcessResult struct.
@@ -2992,17 +3077,10 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "read_dir") { return ty_result(ty_array_string()); }
     if (id.name == "stat") { return ty_result(ty_unknown()); }
     if (id.name == "remove_dir_all") { return ty_option(ty_unknown()); }
-    if (id.name == "f64_bits" || id.name == "f32_bits") { return ty_i32(); }
     if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return ty_f64(); }
     // env(name): Option[string] — Some(value) if the
     // variable is set (including empty), None otherwise.
     if (id.name == "env") { return ty_option(ty_string()); }
-    if (id.name == "len") { return ty_i32(); }
-    if (id.name == "read_int") { return ty_i32(); }
-    // stdout()/stderr() -> Writer (a bare fd i32; fds 1/2). The
-    // write-half sibling of stdin() (#4372); a Writer is just its
-    // fd like a Reader, so `w.write(s)`/`w.close()` dispatch off it.
-    if (id.name == "stdout" || id.name == "stderr") { return ty_i32(); }
     // open_reader/open_writer/open_appender(path) -> a Reader/Writer
     // (a bare fd i32) or -errno (#4372 file half). The caller uses
     // r.read_chunk / w.write / .close off the fd, then checks < 0.
@@ -3011,53 +3089,14 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     // read_line() -> Option[string]: line INCLUDING '\n', None at EOF
     // — matches native (#4369). read_all_stdin stays a plain string.
     if (id.name == "read_line") { return ty_option(ty_string()); }
-    if (id.name == "read_all_stdin") { return ty_string(); }
-    if (id.name == "i32_to_string") { return ty_string(); }
-    if (id.name == "int__int_to_string") { return ty_string(); }
-    if (id.name == "str_to_i32") { return ty_i32(); }
+    if (util.index_of_str(builtin_string_names(), id.name) >= 0) { return ty_string(); }
     if (id.name == "str_starts_with") { return ty_bool(); }
     if (id.name == "str_ends_with") { return ty_bool(); }
     if (id.name == "str_contains") { return ty_bool(); }
-    if (id.name == "str_index_of") { return ty_i32(); }
-    if (id.name == "str_trim") { return ty_string(); }
-    if (id.name == "str_to_upper") { return ty_string(); }
-    if (id.name == "str_to_lower") { return ty_string(); }
-    if (id.name == "str_repeat") { return ty_string(); }
-    if (id.name == "str_replace") { return ty_string(); }
-    if (id.name == "chr") { return ty_string(); }
-    // Raw-memory intrinsics (#2649 Tier-2 floor). Pointers are
-    // machine words carried as i32; __raw_string is the one that
-    // produces a typed string. The stores return i32 (the value
-    // written) so they stay value-expressions, not void.
-    if (id.name == "__raw_alloc") { return ty_i32(); }
-    if (id.name == "__raw_store8") { return ty_i32(); }
-    if (id.name == "__raw_load8") { return ty_i32(); }
-    if (id.name == "__raw_store_ptr") { return ty_i32(); }
-    if (id.name == "__raw_load_ptr") { return ty_i32(); }
-    if (id.name == "__raw_string") { return ty_string(); }
-    // The inverse (#2649): a live string's data pointer, which
-    // is slot 0 of the box the string value already points at.
-    if (id.name == "__raw_data") { return ty_i32(); }
-    // Pointer + offset at full machine width (#2649) — `p + off`
-    // in the source would be narrowed to i32 by arm64.
-    if (id.name == "__raw_addr") { return ty_i32(); }
-    // Fresh array box (#2649): __raw_arr_box hands back the data
-    // pointer as i32, __raw_array retypes it as the array value
-    // it already is — the array sibling of __raw_string.
-    if (id.name == "__raw_arr_box") { return ty_i32(); }
     if (id.name == "__raw_array") { return ty_array_i32(); }
-    // Syscall sub-floor (#2649): the raw-memory floor's I/O
-    // sibling. Returns the syscall result as i32.
-    if (id.name == "__syscall3") { return ty_i32(); }
-    if (id.name == "__syscall4") { return ty_i32(); }
-    if (id.name == "__syscall5") { return ty_i32(); }
-    if (id.name == "__raw_environ") { return ty_i32(); }
     // Runtime-symbol spelling of the string comparison (#2649),
     // for helper sources whose strings are raw box pointers.
     if (id.name == "__fern_str_eq") { return ty_bool(); }
-    // Fixed static scratch buffer for syscall leaves (timespec /
-    // stat) — reused, never freed. Returns the buffer ptr as i32.
-    if (id.name == "__raw_scratch") { return ty_i32(); }
     // i64-typed raw word load (kernel-written tv_sec / tv_nsec).
     if (id.name == "__load_i64") { return ty_i64(); }
     // __heap_bump_bytes(): the bump high-water mark. i64, not
@@ -3075,38 +3114,14 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     // not widen its result.
     if (id.name == "__clz32" || id.name == "__ctz32" || id.name == "__popcount32"
         || id.name == "__clz64" || id.name == "__ctz64" || id.name == "__popcount64") { return ty_i32(); }
-    // __arr_push_shared_count(): the rc==1 cliff counter. i32,
-    // unlike the bump mark above — it counts appends, not bytes,
-    // and a healthy run reports 0. Matches native's FuncSigs.
-    if (id.name == "__arr_push_shared_count") { return ty_i32(); }
     // __arr_push_shared_bytes(): the SAME cliff weighted by the
     // bytes each crossing copied. i64, like the bump mark and
     // for the same reason — the quantity is arena-scale, and an
     // i32 would wrap on exactly the runs it exists to measure.
     // Matches native's FuncSigs.
     if (id.name == "__arr_push_shared_bytes") { return ty_i64(); }
-    // __map_hash_seed(): core/map's per-process string-hash
-    // seed (#6194). i32, never 0. Matches native's FuncSigs.
-    if (id.name == "__map_hash_seed") { return ty_i32(); }
-    // __memchr(s, byte, from): the index of the first `byte`
-    // at or after `from`, or -1 (ATLAS-PLATFORM-PLAN §3). i32
-    // for both the index and the not-found sentinel; the
-    // haystack length it searches is an i32 everywhere.
-    if (id.name == "__memchr") { return ty_i32(); }
-    // __ascii_run(s, from): the index of the first byte at or
-    // after `from` with its high bit set, or the LENGTH if the
-    // rest is ASCII (ATLAS-PLATFORM-PLAN §3). i32 either way —
-    // both answers are offsets into an i32-length string, which
-    // is why the miss value can be a real index rather than a
-    // sentinel outside the type.
-    if (id.name == "__ascii_run") { return ty_i32(); }
-    if (id.name == "__load_i32") { return ty_i32(); }
-    if (id.name == "exit") { return ty_i32(); }
-    if (id.name == "args_count") { return ty_i32(); }
-    if (id.name == "arg_at") { return ty_string(); }
     if (id.name == "args") { return ty_array_string(); }
     if (id.name == "__alloc_u8") { return ty_array_i32(); }
-    if (id.name == "string_from_bytes_unchecked") { return ty_string(); }
     if (id.name == "random_bytes") { return ty_array_i32(); }
     if (id.name == "map_new") { return ty_map_str(ty_unknown()); }
     if (id.name == "map_new_i32") { return ty_map_i32(ty_unknown()); }

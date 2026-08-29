@@ -882,12 +882,30 @@ appendix §6.)
   `infer_call_method_type`). It also no longer returns a type NAME: the result
   is a structured `Ty`, which is T2 progress the row predates.
 
-  _Still open, and relocated:_ the hardcoded builtin-name compares did not go
-  away, they moved down a level. `infer_call_named_type` (`:2922-3136`, 215
-  lines) holds **101** and `infer_call_method_type` (`:2780-2918`, 139 lines)
-  holds **47**. No `builtin_return_type(name, args)` table exists anywhere.
-  Anyone picking this row up should read it as "table-drive the two call
-  resolvers", not "split `infer_expr_type`" — that part is spent.
+  _Also done — the NAMED resolver is table-driven._ `infer_call_named_type` is
+  105 lines (was 215) and 55 inline compares (was 101): 47 names returning
+  `ty_i32()` and 12 returning `ty_string()` moved into `builtin_i32_names()` /
+  `builtin_string_names()`, tested with `util.index_of_str` — the shape SH-046
+  established for `is_builtin_function`. Each explanatory comment moved with the
+  names it was written for. The rewrite was verified set-equal: the name-to-`Ty`
+  mapping extracted from both revisions is identical, nothing added, dropped or
+  remapped.
+
+  **Do NOT do the same to `infer_call_method_type`.** The row treats the two
+  resolvers as one job and they are not the same shape. Only 25 of its 47 guards
+  key on the field name alone; 22 conjoin a receiver-type predicate
+  (`is_map(rt) && fa.field == "get"`) and 3 return a type derived from the
+  receiver (`cell_val(rt)`, `mapiter_val(rt)`, `rt`). Decisively, three field
+  names — **`len`, `to_ascii_lower`, `to_ascii_upper`** — appear BOTH
+  receiver-guarded (earlier in the chain) and name-only (later). Hoisting the
+  name-only cases into a table at the top shadows the receiver-guarded ones, so
+  `map.len()` and `u8.to_ascii_lower()` silently infer the wrong type. A table
+  here needs a (receiver-kind, name) key, which is more machinery than the chain
+  it would replace.
+
+  _Noted:_ the table pattern re-allocates its array per call, as
+  `is_builtin_function` has since SH-046. Nothing gates the self-host compiler's
+  own compile time (`docs/TEST-GATES.md`), so that cost is unmeasured on both.
 - [x] **SH-045 — `check_module` rebuilt one function's scope 10-13 times.**
   _Done:_ the count was worse than this entry recorded — 9 rebuilds across the
   body diagnostic passes, a 10th inside `check_func_body` (which the same loop
@@ -1115,10 +1133,6 @@ appendix §6.)
 3. **T3 visitor** (SH-022) — `parser`'s 12 rewrite passes and `checker`'s 15
    scope-threading passes are what is left; `wasm_ir`'s cluster was never an AST
    walk and is done.
-4. **SH-044's remaining half** — table-drive `infer_call_named_type` /
-   `infer_call_method_type` (148 hardcoded name compares between them). The
-   split half of that row is already done, so this needs no visitor and can go
-   earlier if someone wants a self-contained piece.
 5. **T2 structured types** (SH-021 endgame — parser stores `TypeRef`).
 6. **T5 backend interfaces** (SH-024/SH-025) — largest effort, do last with CI as
    backstop. Resolve the 7-key `has_need` drift before lifting anything.
