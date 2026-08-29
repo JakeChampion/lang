@@ -19022,10 +19022,17 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // A reclaimable Option[<scalar-arr-of-arr>] LOOP-LOCAL (#4365): the arr-of-arr sibling —
     // deep-drop the prior iteration's Some payload (inner buffers + outer via
     // __fern_arrarr_free) + the option box before the store.
-    if (slot_is_reclaimable_optarr(sb, slot)) {
+    // Both gated on !slot_nodeep: a "NODEEP:"-qualified Option slot is an ALIAS
+    // (#7687). It owns no payload to deep-drop, and these helpers take no
+    // alias_inc — routing the bind through one drops the retain on the floor and
+    // leaves two slots decing a box with one count, which the census reads as a
+    // clean 200/200 and only __rc_underflow() dissents on. It falls through to
+    // emit_arr_store below, which emits the retain and a shallow dec of the
+    // superseded box.
+    if (slot_is_reclaimable_optarr(sb, slot) && !slot_nodeep(sb, slot)) {
         return emit_optarr_reclaim_store(sb, slot);
     }
-    if (slot_is_reclaimable_optstr(sb, slot)) {
+    if (slot_is_reclaimable_optstr(sb, slot) && !slot_nodeep(sb, slot)) {
         return emit_optstr_reclaim_store(sb, slot);
     }
     if (slot_is_reclaimable_optarrarr(sb, slot)) {
@@ -19178,7 +19185,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     if (vtek.len() > 0 && !vt.alias_inc && slot_is_reclaimable_tuple(sb, slot)) {
         return emit_tup_elem_reclaim_store(sb, slot, vtek);
     }
-    return emit_arr_store(sb, slot, vt.alias_inc, vt.is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot));
+    return emit_arr_store(sb, slot, vt.alias_inc, vt.is_arr || slot_is_reclaimable_struct(sb, slot) || slot_is_reclaimable_tuple(sb, slot) || opt_alias_slot_boxonly(sb, slot));
     return s.fail();
 }
 
@@ -20323,6 +20330,27 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                 // predicate. No credit surgery: the source keeps its one
                 // deep field walk at the exit sweep.
                 else if (!struct_dead_alias_bind(v, se)) { alias_inc = true; }
+            }
+            // An Option/Result box on the three UNMATCHED classes that grant the
+            // alias a credit (#7687). Gated on the CREDIT predicates for the same
+            // reason every limb above is: an inc whose source carries no alias
+            // credit is one nothing gives back.
+            //
+            // These releases are a payload release plus a box dec, so the alias
+            // takes the box-only "NODEEP:" role the struct limb takes, not the
+            // source's deep one — credit_opt_alias_sites grants exactly that
+            // pair. Sharing the deep credit decs the payload twice, which for
+            // `Option[i32[]]` frees the element buffer under the surviving owner.
+            //
+            // No move-on-alias and no dead-alias cancellation here: both are
+            // credit surgery on classes whose release roles this pairing has
+            // measured, and neither is needed to close the leak. The bind
+            // retains and the alias's box-only sweep gives it back on the same
+            // path, which is the duplication contract this ladder is built on.
+            else if (slot_is_reclaimable_optarr(se, aid_slot)
+                     || slot_is_reclaimable_optstr(se, aid_slot)
+                     || slot_is_reclaimable_optopt_rc(se, aid_slot)) {
+                alias_inc = true;
             }
         },
         ast.ExprFieldAccess(sfa) => {
@@ -25048,6 +25076,15 @@ function emit_enum_deep_reinit_store(se: LowerState, slot: i32, enum_name: strin
 // to change nothing. It was tried as the explanation for #6375's gen1 segfault
 // (the theory: a NODEEP-marked block-scoped local silently losing its guard) and
 // DISPROVEN — with the marker visible, granting the deep drop still segfaults.
+// opt_alias_slot_boxonly: slot i is an ALIAS of a credited unmatched-Option
+// local — it carries one of the three class tags qualified by "NODEEP:", so its
+// whole release is a box dec (#7687). The bind store and the exit sweep both ask
+// this so the retain, the superseded-box dec and the sweep dec stay one set.
+function opt_alias_slot_boxonly(s: LowerState, i: i32): boolean {
+    if (!slot_nodeep(s, i)) { return false; }
+    return slot_is_reclaimable_optarr(s, i) || slot_is_reclaimable_optstr(s, i) || slot_is_reclaimable_optopt_rc(s, i);
+}
+
 function slot_nodeep(s: LowerState, i: i32): boolean {
     if (i < 0 || i >= s.locals.len()) { return false; }
     // Keyed on the binding SITE, like the credit it qualifies (#7253): the marker
@@ -25969,6 +26006,88 @@ function rcenum_alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: 
         }
     }
     return a;
+}
+
+// opt_alias_bind_all_sites_of returns the binding-site key of EVERY plain
+// `var v = src` bare-ident bind in `body`, vetted or not. One walk answers both
+// questions the unmatched-Option gate asks — which aliases may share the credit,
+// and whether any alias was left out — so the two cannot come from different
+// traversals and disagree.
+function opt_alias_bind_all_sites_of(stmts: ast.Stmt[], src: string, acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                match (v.init) {
+                    ast.ExprIdent(aid) => {
+                        if (aid.name == src) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                    },
+                    _ => {}
+                }
+            },
+            ast.StmtIf(f) => {
+                a = opt_alias_bind_all_sites_of(f.then_body, src, a);
+                a = opt_alias_bind_all_sites_of(f.else_body, src, a);
+            },
+            ast.StmtWhile(w) => { a = opt_alias_bind_all_sites_of(w.body, src, a); },
+            ast.StmtFor(fo) => { a = opt_alias_bind_all_sites_of(fo.body, src, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = opt_alias_bind_all_sites_of(arm.body, src, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// opt_alias_bind_sites_of keeps the binds of `src` that may share its credit —
+// alias_bind_sites_of's job for the UNMATCHED Option classes ("OPTARR:" /
+// "OPTSTR:" / "OPTOPTRC:"), with the substitution rcenum_alias_bind_sites_of
+// makes for enums: the alias must additionally not hand the PAYLOAD out. Every
+// one of those releases is a payload release plus a box dec, and only the box is
+// retained at the bind, so an arm that binds and returns the payload moves it out
+// from under the source's deep release (#7687).
+//
+// body_unsafe_for_match_borrow, not body_unsafe_for: the plain walker reads a
+// bare-ident match scrutinee as an escape, which would refuse every alias that is
+// itself matched — the commonest use of one. That read is right for the payload
+// and wrong for the box, and the payload half is the conjunct after it. Same
+// pairing opt_match_alias_escape_ok makes.
+//
+// The alias takes the class credit qualified by "NODEEP:", never the deep
+// release — see credit_opt_alias_sites.
+function opt_alias_bind_sites_of(body: ast.Stmt[], src: string): string[] {
+    var all: string[] = opt_alias_bind_all_sites_of(body, src, []);
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < all.len()) {
+        var nm: string = reclaim_site_name(all[i]);
+        if (util.index_of_str(body_assign_targets(body), nm) < 0
+            && !body_unsafe_for_match_borrow(body, nm, [], [])
+            && !opt_body_binds_rc_payload(body, nm)) {
+            out = out.append(all[i]);
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+// credit_opt_alias_sites gives every vetted alias of an admitted unmatched-Option
+// local the SAME class credit as its source, qualified by "NODEEP:" so the alias
+// releases the BOX ONLY. Each of these classes releases a payload and then the
+// box, and the bind retains the box alone — two deep releases would dec the
+// payload twice, which for `Option[i32[]]` frees the element buffer under the
+// surviving owner. The struct family took the same shape for the same reason.
+function credit_opt_alias_sites(body: ast.Stmt[], keys: string[], pfx: string, out: string[]): string[] {
+    var o: string[] = out;
+    var i: i32 = 0;
+    while (i < keys.len()) {
+        var sites: string[] = opt_alias_bind_sites_of(body, reclaim_site_name(keys[i]));
+        o = credit_alias_sites(o, pfx, sites);
+        o = credit_alias_sites(o, "NODEEP:", sites);
+        i = i + 1;
+    }
+    return o;
 }
 
 // credit_alias_sites appends `pfx` for every alias site in `sites`, so a shared
@@ -27212,9 +27331,15 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var ofj: i32 = st.n_params;
     while (ofj < st.locals.len()) {
         if (!slot_list_has(keeps, ofj) && slot_is_reclaimable_optarr(st, ofj)) {
-            st = emit_optarr_deep_free_err(st, ofj, slot_is_reclaimable_optarr_errstr(st, ofj));
-            st = st.emit(ir.op_const_i32(0));
-            st = st.emit(ir.op_store_local(ofj));
+            // A "NODEEP:"-qualified slot is an ALIAS: it retained the box and
+            // nothing else, so it decs the box and leaves the payload to the
+            // source's one deep release (#7687).
+            if (slot_nodeep(st, ofj)) { st = emit_opt_box_only_free(st, ofj); }
+            else {
+                st = emit_optarr_deep_free_err(st, ofj, slot_is_reclaimable_optarr_errstr(st, ofj));
+                st = st.emit(ir.op_const_i32(0));
+                st = st.emit(ir.op_store_local(ofj));
+            }
         }
         ofj = ofj + 1;
     }
@@ -27223,9 +27348,12 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var ostrj: i32 = st.n_params;
     while (ostrj < st.locals.len()) {
         if (!slot_list_has(keeps, ostrj) && slot_is_reclaimable_optstr(st, ostrj)) {
-            st = emit_optstr_deep_free(st, ostrj);
-            st = st.emit(ir.op_const_i32(0));
-            st = st.emit(ir.op_store_local(ostrj));
+            if (slot_nodeep(st, ostrj)) { st = emit_opt_box_only_free(st, ostrj); }
+            else {
+                st = emit_optstr_deep_free(st, ostrj);
+                st = st.emit(ir.op_const_i32(0));
+                st = st.emit(ir.op_store_local(ostrj));
+            }
         }
         ostrj = ostrj + 1;
     }
@@ -27234,7 +27362,8 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var onrj: i32 = st.n_params;
     while (onrj < st.locals.len()) {
         if (!slot_list_has(keeps, onrj) && slot_is_reclaimable_optopt_rc(st, onrj)) {
-            st = emit_optopt_rc_deep_free(st, onrj, nested_opt_inner_freefn(opttup_inner_type(st.locals[onrj].opt_type) + ""));
+            if (slot_nodeep(st, onrj)) { st = emit_opt_box_only_free(st, onrj); }
+            else { st = emit_optopt_rc_deep_free(st, onrj, nested_opt_inner_freefn(opttup_inner_type(st.locals[onrj].opt_type) + "")); }
         }
         onrj = onrj + 1;
     }
@@ -35886,15 +36015,22 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // cannot overlap.
     var ufa: string[] = collect_unmatched_optarr_names(body, opt_fresh_ret, plan_on, plan_fe, []);
     out = reclaimable_unmatched_optarr(body, opt_fresh_ret, ufa, out);
+    // A vetted alias of one of these shares the box and releases it BOX-ONLY
+    // (#7687). Granted here rather than inside reclaimable_unmatched_optarr
+    // because the "OPTARR:" tag is shared with the rebound and match-consumed
+    // classes, whose aliases are the other gates' business.
+    out = credit_opt_alias_sites(body, ufa, "OPTARR:", out);
     // Same quadrant, STRING payload (#6360) — its own tag because the release is
     // __fern_str_free, not the flat dec, and the call form needs the registry's
     // "f" flag rather than bare membership.
     var ufs: string[] = collect_unmatched_optstr_names(body, opt_fresh_ret, str_fresh_ret, plan_on, plan_fe, []);
     out = reclaimable_optstr(ufs, out);
+    out = credit_opt_alias_sites(body, ufs, "OPTSTR:", out);
     // `Option[Option[<rc payload>]]` (#7718) — the two-level release, which the
     // scalar-inner nested sibling's flat dec would strand the inner payload of.
     var uor: string[] = collect_unmatched_optopt_rc_names(body, plan_on, plan_fe, []);
     out = reclaimable_optopt_rc(uor, out);
+    out = credit_opt_alias_sites(body, uor, "OPTOPTRC:", out);
     // The superseded boxes of a MATCH-CONSUMED, reassigned nested Option (#7716)
     // — assign-path only; see collect_optopt_rebind_names for why this cannot
     // collide with the consuming-match family's own release.
@@ -43208,7 +43344,7 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
                 // credit proof keeps call-provenance shapes the plan cannot
                 // yet type through returnsNoParamEscape; the plan adds the
                 // call-arg grants, still refusing any matched local.
-                var os_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe);
+                var os_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe, opt_alias_bind_sites_of(stmts, v.name));
                 if (unmatched_optstr_ann_is(v.type_name)
                     && unmatched_optstr_init_is_fresh(v.init, opt_fresh_reg, str_fresh_ret)
                     && util.index_of_str(reassigned, v.name) < 0
@@ -43232,9 +43368,16 @@ function collect_unmatched_optstr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
 // match share. Off-plan it is the ordinary non-escape proof; on-plan the
 // frame-escape analysis grants it and the two extra clauses re-impose what that
 // analysis does not model — a matched local and an alias bind.
-function opt_unmatched_esc_ok(stmts: ast.Stmt[], name: string, key: string, plan_on: boolean, plan_fe: string[]): boolean {
-    if (!plan_on) { return !body_unsafe_for(stmts, name, [], []); }
-    return util.index_of_str(plan_fe, key) >= 0 && !name_is_match_scrutinee(stmts, name) && !name_is_alias_bound(stmts, name);
+//
+// `alias_ok` is opt_alias_bind_sites_of's verdict for this name (#7687). A
+// vetted alias now carries a retain and a box-only credit of its own, so it is
+// forgiven on both paths; an alias the vetting rejected still refuses the credit
+// outright, because nothing accounts for the reference it takes — which on the
+// plan path is what the count comparison says: every bind vetted, or none of it.
+function opt_unmatched_esc_ok(stmts: ast.Stmt[], name: string, key: string, plan_on: boolean, plan_fe: string[], alias_ok: string[]): boolean {
+    if (!plan_on) { return !body_unsafe_for_alias(stmts, name, [], [], alias_ok); }
+    return util.index_of_str(plan_fe, key) >= 0 && !name_is_match_scrutinee(stmts, name)
+        && opt_alias_bind_all_sites_of(stmts, name, []).len() == alias_ok.len();
 }
 
 // unmatched_optopt_ann_is / unmatched_optopt_init_is_fresh: the NESTED-OPTION
@@ -43352,7 +43495,7 @@ function collect_unmatched_optopt_rc_names(stmts: ast.Stmt[], plan_on: boolean, 
                     && unmatched_optopt_init_is_fresh(v.init)
                     && (util.index_of_str(reassigned, v.name) < 0
                         || opt_rebinds_all_fresh(stmts, v.name, "optopt", "", [], sig_reg_empty(), []))
-                    && opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe)) {
+                    && opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe, opt_alias_bind_sites_of(stmts, v.name))) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
@@ -43383,7 +43526,7 @@ function collect_unmatched_optarr_names(stmts: ast.Stmt[], opt_fresh_reg: SigReg
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                var oa_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe);
+                var oa_esc_ok: boolean = opt_unmatched_esc_ok(stmts, v.name, reclaim_site_key_of(v.name, v.line, v.col), plan_on, plan_fe, opt_alias_bind_sites_of(stmts, v.name));
                 var oa_arr_ok: boolean = unmatched_optarr_ann_is(v.type_name)
                     && unmatched_optarr_init_is_fresh(v.init, opt_fresh_reg)
                     && util.index_of_str(reassigned, v.name) < 0;
@@ -43520,6 +43663,27 @@ function emit_optarr_deep_free_err(se: LowerState, slot: i32, err_str: boolean):
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));            // free the option box
     st = st.emit(ir.op_drop());
     st = st.emit(ir.op_end());                       // end if-not-null
+    return st;
+}
+
+// emit_opt_box_only_free: the BOX-ONLY release for an Option/Result local whose
+// credit is qualified by "NODEEP:" — an ALIAS bind, which retained the box and
+// nothing else (#7687). No tag guard and no payload read: the payload belongs to
+// the source's deep release, which runs exactly once whichever sweep is last.
+// Null-guarded because slots are entry-zeroed and a conditional alias leaves one
+// null; the slot is zeroed so a later pass decs a null rather than a freed box.
+function emit_opt_box_only_free(se: LowerState, slot: i32): LowerState {
+    var st: LowerState = se;
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_store_local(slot));
     return st;
 }
 
