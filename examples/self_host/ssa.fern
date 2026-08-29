@@ -39,16 +39,25 @@ import "./util";
 
 // ---- IR ----------------------------------------------------------------
 
-// SInst kinds (string-tagged to stay simple and printable):
-//   "const_int"  imm = value                      result = i32 const
-//   "const_bool" imm = 0/1                         result = bool const
-//   "binary"     str = op ("+","-","==",…) args=[l,r]
-//   "unary"      str = op ("-","!")        args=[x]
-//   "call"       str = callee name         args=[…]
-//   "param"      imm = param index                 result = the param value
-//   "copy"       args=[x]                          result aliases x (var read)
-//   "phi"        args parallel to the block's Preds; result = the merged
-//                value (operand i flows in when control arrives from Preds[i])
+// SInst is integer-tagged: `kind_tag` holds a kind_id (the registry below;
+// `kind_name` renders one). `args` are value ids, `str` carries a name or
+// operator for the kinds that need text.
+//
+// `imm` IS OVERLOADED — one i32 field carrying four unrelated meanings,
+// discriminated only by kind_tag, which the checker cannot police (SH-049):
+//
+//   const_int    the constant value          const_bool  0 / 1
+//   param        the parameter index         alloc       the slot COUNT
+//   load_elem / store_elem                   the operand WIDTH, 32 or 64
+//
+// So a kind_tag/imm mismatch type-checks and surfaces as a wrong-width load or
+// a wrong-size allocation. Until the tagged union in SH-049 lands, this table
+// is the only thing standing between the two.
+//
+// The kinds carrying no imm leave it 0: binary / unary (op in `str`, operands
+// in `args`), call (callee in `str`), copy (result aliases args[0], a var
+// read), and phi (args parallel to the block's preds — operand i flows in when
+// control arrives from preds[i]).
 pub struct SInst { kind_tag: i32, result: i32, args: i32[], imm: i32, str: string }
 
 // STerm kinds: "ret" (value), "br" (target), "brif" (cond, t, f).
@@ -73,11 +82,10 @@ function t_none(): STerm { return STerm { kind_tag: 0, cond: 0, target: 0, t: 0,
 // ---- integer kind registry (#4394 lever 2 / #5351, foundation slice) ----
 // The SSA analogue of ir.fern's op-kind registry (kind_id / kind_name):
 // a stable 1-based id per SInst kind and per STerm kind, with 0 as the
-// invalid / none sentinel in both spaces. This slice is ADDITIVE — SInst
-// and STerm still carry their string `kind`; the follow-up conversion
-// stamps `kind_tag: i32` from these ids and retires the string from the
-// hot dispatch ladders (ssa_x86 / ssa_arm64 / ssa_wasm / the optimiser),
-// mirroring how ir.fern's registry landed before Op.kind became an int.
+// invalid / none sentinel in both spaces. The conversion this registry was
+// staged for is DONE: SInst and STerm carry `kind_tag: i32` and no string
+// kind, and the backend dispatch ladders switch on the id. What the names
+// are still for is printing and the golden below.
 // The ssa_kind_run driver + TestSelfHostSSAKindRegistry pin the id<->name
 // bijection and both sentinels, so a kind added to one direction (or a
 // duplicated id) fails the golden instead of silently misdispatching a

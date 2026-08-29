@@ -987,28 +987,32 @@ appendix §6.)
 - [x] **SH-048 — `eval_expr` / `compile_expr` giants.** _Done:_ `eval_binary` and
   `eval_unary` extracted from interp's `eval_expr`; the VM's six near-identical
   arg-emit loops folded into one `compile_args` before that backend was retired.
-- [ ] **SH-049 — `ssa.fern:51 SInst` overloads its `imm` field.** The records are
-  **integer-tagged**, not string-tagged: `SInst { kind_tag: i32, result: i32,
-  args: i32[], imm: i32, str: string }` (`:51`) and
-  `STerm { kind_tag: i32, cond, target, t, f, value }` (`:54`). The live defect
-  is that **one `imm: i32` carries four unrelated meanings**, discriminated only
-  by `kind_tag`:
+- [~] **SH-049 — the `imm` overload is documented; the union is a multi-PR job.**
+  _Done:_ two comment blocks that described a finished migration as pending are
+  rewritten, and the `imm` mapping the row identified is now written down at the
+  struct.
 
-  | meaning | example sites |
-  |---|---|
-  | constant value | `ssa.fern:346` (`kind_tag: 1`), `:537` |
-  | param index | documented at `ssa.fern:47` |
-  | operand width, 32 or 64 | `ssa.fern:505` (`imm: 64`), `:572` (`imm: 32`) |
-  | allocation count | `ssa.fern:500` (`imm: 1`), `:565` (`imm: 2`) |
+  The header above `SInst` still said "SInst kinds (**string-tagged** to stay
+  simple and printable)" and listed eight string kind names, when the struct is
+  `kind_tag: i32` and there are 27 kinds. Worse, the kind registry's OWN comment
+  30 lines below said "this slice is ADDITIVE — SInst and STerm **still carry
+  their string `kind`**; the follow-up conversion stamps `kind_tag: i32` ... and
+  retires the string from the hot dispatch ladders". That conversion had already
+  landed. Both blocks described a future that was the past.
 
-  A `kind_tag`/`imm` mismatch is invisible to the checker and shows up as a
-  wrong-width load or a wrong-size allocation. _Fix:_ a tagged union with named
-  `width` / `ret_kind` / `count` fields and a checker-enforced exhaustive
-  `emit_inst`.
-  **Also stale:** the doc-comment block at `ssa.fern:41-50` still describes the
-  kinds as string-tagged (`"const_int"`, `"binary"`, …) and documents the `imm`
-  overload as if it were a feature. Rewrite it against the integer `kind_tag`
-  encoding in the same change.
+  The header now carries the four meanings of `imm` — constant value,
+  parameter index, alloc slot COUNT, operand WIDTH (32/64) — verified against
+  the construction sites rather than copied from the row, plus which kinds leave
+  it 0. That table is the only thing between a `kind_tag`/`imm` mismatch and a
+  wrong-width load, so it belongs at the struct rather than in an audit doc.
+
+  _Still open:_ the tagged union itself. **211 `SInst {` construction sites**
+  across `ssa.fern` (101) and `ssa_lift.fern` (110), plus consumers in three
+  backends, `ssa_lift` and `irlower`. That is a multi-PR change to
+  correctness-critical code the fixpoint is structurally blind to, and it wants
+  its own sequence with the SSA suite and the fixture legs as the gate — not a
+  batch item.
+
 - [~] **SH-050 — the two giants are split; one builtin chain remains.**
   _Done:_ `build_expr` was 524 lines (not the 790 this row long quoted), all
   but 17 of them a single `ExprCall` arm — twelve `build_expr_*` helpers
