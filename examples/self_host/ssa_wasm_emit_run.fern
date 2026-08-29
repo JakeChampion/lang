@@ -7,14 +7,14 @@
 // WAT → execute preserves semantics. Mirrors ssa_emit_run.fern (the native
 // backends' driver); the only difference is the final emit call.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./ssa";
 import "./ssa_wasm";
 
 function main(): i32 {
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
+    var mod: parser.Module = rundriver.parse_stdin("ssa_wasm_emit_run");
     mod = parser.fill_default_args_module(mod);
     // Pointer-returning functions get a 64-bit call result on the native
     // backends; on wasm32 every value is i32, but mark_ptr_calls still needs

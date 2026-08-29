@@ -12,9 +12,9 @@
 // no longer compares two emitters. A module the gates decline is an ERROR on the
 // routed side.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./util";
 import "./asmcore";
 import "./irlower";
@@ -35,11 +35,7 @@ function run(): i32 {
         if (av[ai] == "-ir") { use_ir = true; }
         ai = ai + 1;
     }
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    // This driver resolves no imports; say so loudly rather than letting a
-    // broken program produce a verdict that reads like a compiler gap.
-    var _unresolved: boolean = parser.warn_unresolved_imports(mod, "wasm_ir_run");
+    var mod: parser.Module = rundriver.parse_stdin("wasm_ir_run");
     // Call-arity gate (#4360): shared with wasm_run — an arg-count mismatch
     // must reject before either the IR or the AST-fallback emit runs, not
     // miscompile. Checked on a default-filled COPY (the emit input is

@@ -1112,25 +1112,38 @@ appendix §6.)
   it, #6756) has no counterpart in `asm_load_run`'s flat `add_imports`. Folding
   those together is a behaviour change to the asm loader, so it is its own
   change.
-- [ ] **SH-056 — Retire the redundant `*_run.fern` shims.** There are **56
-  `main()`s across 45 `*_run.fern` files**, and no shared `run_stdin` helper
-  exists. Two large groups are **keepers, not targets**:
-  - **Golden-test drivers pinned by a Go test** — `typeref_run`,
-    `ty_from_ref_run`, `tuple_tags_run`, `type_resolve_run`,
-    `type_resolve_simple_run`, `wasm_extern_sum_run`, `wasm_option_payload_run`,
-    `tuple_elem_tag_run`, `count_type_args_run`, `nth_tuple_elem_run`. Most of
-    the growth in this count is these; each one is the pinning half of an SH-021
-    slice. **Keep them.**
-  - **A `main()` inside a library module** — `parser.fern`, `checker.fern`,
-    `lexer.fern`, `printer.fern`, `interp.fern` (and `constfold`, `flatten`,
-    `literate`, `pipeline`) — is the tree's **in-file test idiom**, not a driver
-    shim. **Do not count these as redundant.**
+- [~] **SH-056 — the shared preamble landed; the shims themselves are pinned.**
+  _Done:_ one dead file deleted (`tmp_wprobe_run.fern` — a leftover probe no
+  test, script, workflow or doc referenced), and the 17 stdin-driven drivers
+  now share `rundriver.parse_stdin(driver)` instead of copying its three lines
+  each (−32 net lines, and `std/io` drops out of the drivers that only wanted
+  `read_all_stdin`).
 
-  What is actually collapsible is the single-mode stdin clone group (`wasm_run`,
-  `asm_run`, `interp_run`, `checker_run`, `ssa_run`, …), which `fern.fern`
-  already supersedes as the unified driver: give them one shared
-  `run_stdin(emit_fn)` and make each a one-line wrapper, keeping only those a Go
-  test pins.
+  **The row's proposed shape does not fit, and the reason matters.** It called
+  for one `run_stdin(emit_fn)` making each driver a one-line wrapper, on the
+  premise that they are clones. They are not: each ends differently — an exit
+  code from a verdict, an exit code from an interpreted value, or emitted text
+  on stdout — and several inject builtins or fill default args in between. Only
+  the FRONT half is shared, so that is what was lifted.
+
+  **The copies had drifted, which is the real find.** `warn_unresolved_imports`
+  existed on 6 of the 17 and not the other 11, so a program with imports fed to
+  one of those 11 got a silent verdict — precisely the "reads like a compiler
+  gap" outcome the warning was written to prevent. Routing every driver through
+  one function makes that drift unrepresentable rather than merely fixed. It is
+  a no-op for an import-free program (the function returns early on
+  `imports.len() == 0`), which is nearly the whole fixture corpus; the two
+  drivers whose tests DO feed imports (`checker_run`, `checker_codes_run`) stay
+  green because the warning goes to stderr and those tests assert on
+  diagnostics and exit codes.
+
+  _Still open:_ retiring shims. Every remaining `*_run.fern` is referenced by a
+  Go test, script or workflow — checked by name across the tree — so the count
+  is not reducible by deletion. The two keeper groups this row already names
+  (golden-test drivers pinned by a Go test; a `main()` inside a library module
+  as the in-file test idiom) account for the rest. **The `main()` count is not
+  a debt number** and chasing it down is not an improvement.
+
 - [x] **SH-058 — `wasm_ir.fern` `emit_function_ir`**, the largest function named
   anywhere in this audit. **1254 → 84 lines (−93%)**: four slices each lifting
   one op family to a plain `Op -> string` helper behind a predicate — string ops

@@ -32,9 +32,9 @@
 // codes mirroring native ast.Ownership) instead of evaluating; pinned by the
 // Go-side gate in internal/e2eselfhost/self_host_strown_dump_test.go.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./ir";
 import "./irexec";
 import "./irlower";
@@ -325,8 +325,7 @@ function main(): i32 {
         ai = ai + 1;
     }
 
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var mod: parser.Module = rundriver.parse_stdin("irlower_run");
 
     // `-str-own` (#4297 CS4): print each function's slot-carried string-
     // ownership facts (irlower.str_own_dump) instead of evaluating — the

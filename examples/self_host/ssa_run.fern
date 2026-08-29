@@ -6,9 +6,9 @@
 // exit code matches — end-to-end proof that AST → SSA → eval preserves the
 // program's value. A `main` outside the slice-1 subset exits 200.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./ssa";
 
 function main(): i32 {
@@ -24,8 +24,7 @@ function main(): i32 {
         ai = ai + 1;
     }
 
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var mod: parser.Module = rundriver.parse_stdin("ssa_run");
     mod = parser.fill_default_args_module(mod);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {

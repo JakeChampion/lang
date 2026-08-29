@@ -1,0 +1,26 @@
+// examples/self_host/rundriver.fern — the shared front half of every
+// stdin-driven `*_run.fern` driver.
+//
+// The drivers are not clones: each ends differently (an exit code from a
+// verdict, from an interpreted value, or emitted text on stdout). What they
+// DID share was the three-line preamble, copied 17 times — and the copies had
+// drifted. Six called warn_unresolved_imports and eleven did not, so a program
+// with imports fed to one of those eleven got a silent verdict: exactly the
+// "reads like a compiler gap" outcome the warning exists to prevent. Routing
+// every driver through one function makes that drift unrepresentable rather
+// than merely fixed.
+
+import "std/io";
+import "./lexer";
+import "./parser";
+
+// parse_stdin reads a program from stdin and parses it, warning when the
+// program has imports no driver here can resolve. `driver` names the caller in
+// that warning. It is a no-op for an import-free program, which is what the
+// fixture corpus is almost entirely made of.
+pub function parse_stdin(driver: string): parser.Module {
+    var src: string = io.read_all_stdin();
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var _unresolved: boolean = parser.warn_unresolved_imports(mod, driver);
+    return mod;
+}

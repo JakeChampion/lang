@@ -15,9 +15,9 @@
 //
 // `-target arm64-linux` selects the backend; `-regalloc` the linear-scan allocator.
 
-import "std/io";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./ssa";
 import "./ssa_x86";
 import "./ssa_arm64";
@@ -47,7 +47,7 @@ function main(): i32 {
     }
 
 
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(io.read_all_stdin()));
+    var mod: parser.Module = rundriver.parse_stdin("ssa_lift_irlower_run");
     mod = parser.fill_default_args_module(mod);
     // Hoist inline lambdas to top-level `<fn>$clo(__env, params…)` functions
     // (irlower's env-FIRST closure ABI), exactly as the production asm_ir path

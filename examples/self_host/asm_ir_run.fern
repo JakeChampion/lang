@@ -19,10 +19,10 @@
 // driver gains an `ir` dependency — the byte-identical self-bootstrap and the
 // ~50 asm_run-based harnesses stay untouched.
 
-import "std/io";
 import "./util";
 import "./lexer";
 import "./parser";
+import "./rundriver";
 import "./asm_ir";
 import "./asm_arm64_ir";
 import "./irlower";
@@ -99,11 +99,7 @@ function run(): i32 {
         eprint("asm_ir_run: unknown -target: " + target + " (want x86-64-linux, arm64-linux, arm64-darwin)\n");
         return 2;
     }
-    var src: string = io.read_all_stdin();
-    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
-    // This driver resolves no imports; say so loudly rather than letting a
-    // broken program produce a verdict that reads like a compiler gap.
-    var _unresolved: boolean = parser.warn_unresolved_imports(mod, "asm_ir_run");
+    var mod: parser.Module = rundriver.parse_stdin("asm_ir_run");
     // Unclassifiable `fn[]` struct field (#5787 / #3457): a field whose
     // construction proves neither fn-pointers nor closures has no safe dispatch
     // — either default crashes — and used to bail to the AST emitter, which
