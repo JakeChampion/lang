@@ -37,7 +37,8 @@ import "./ircore";
 
 // Linear-memory layout: the low scratch, then a unit's string literals, then
 // its aggregate constants, then the fl_cells-entry small freelist head array,
-// then the large_fl_cells-entry large one, then the bump heap. Every boundary above the scratch is COMPUTED from the data
+// then the large_fl_cells-entry large one, then the bump heap. Every boundary
+// above the scratch is COMPUTED from the data
 // below it — str_region_base -> str_offset -> const_agg_region_base ->
 // fl_base_for -> heap_base_for — so adding a literal shifts the freelist and
 // the heap rather than landing on them. heap_base is also the rc helpers'
@@ -549,8 +550,23 @@ pub function fl_base_for_strs(sv: string[], cv: string[]): i32 {
 pub function large_fl_base_for_strs(sv: string[], cv: string[]): i32 {
     return fl_base_for_strs(sv, cv) + fl_cells() * 4;
 }
+// The heap base rounds up to 8, the same way str_region_base and
+// const_agg_region_base round theirs.
+//
+// It needs to: preview-1's path_filestat_get writes a filestat whose first
+// field is a 64-bit device id, and wasmtime rejects an output pointer that is
+// not 8-aligned outright ("Pointer not aligned to 8") rather than tolerating it
+// the way a plain i64.load does. Those buffers come off the bump heap, and the
+// bump only advances by 8-byte-rounded sizes, so the base fixes the alignment
+// of every one of them.
+//
+// This boundary did not need the rounding before: the small freelist table is
+// 65536*4 bytes, 0 mod 8, so it passed the preceding base's alignment straight
+// through. The large table is 2049*4 = 8196 bytes — 4 mod 8 — so it does
+// (#7735).
+function heap_align8(n: i32): i32 { return ((n + 7) / 8) * 8; }
 pub function heap_base_for_strs(sv: string[], cv: string[]): i32 {
-    return large_fl_base_for_strs(sv, cv) + large_fl_cells() * 4;
+    return heap_align8(large_fl_base_for_strs(sv, cv) + large_fl_cells() * 4);
 }
 pub function fl_base_for(cache: irlower.LowerResult[]): i32 {
     return fl_base_for_strs(str_values(cache), const_agg_values(cache));
@@ -559,7 +575,7 @@ pub function large_fl_base_for(cache: irlower.LowerResult[]): i32 {
     return fl_base_for(cache) + fl_cells() * 4;
 }
 pub function heap_base_for(cache: irlower.LowerResult[]): i32 {
-    return large_fl_base_for(cache) + large_fl_cells() * 4;
+    return heap_align8(large_fl_base_for(cache) + large_fl_cells() * 4);
 }
 
 // cagg_base_global names a UNIT's constant-region base, the sibling of
