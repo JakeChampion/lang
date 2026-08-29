@@ -986,14 +986,13 @@ function env_set_at(vals: i32[], i: i32, v: i32): i32[] {
     return out;
 }
 
-// env_put updates vals[i] = v IN PLACE and returns vals. The copying
-// env_set_at is O(len) per call, so a pass that updates a scratch table
-// O(n) times is O(n²) — the dominant cost that OOM'd the optimiser on a
-// large function. env_put is O(1); use it only on a freshly-allocated,
-// locally-owned table that no one else aliases (every optimiser / regalloc
-// scratch array: cset/cval, used, ct, repl, the width and live-range
-// tables). Arrays are reference-typed and index assignment is in place, so
-// the caller's `x = env_put(x, …)` and the mutation refer to the same array.
+// env_put returns vals with element i set to v. `.with` is copy-on-write: it
+// keeps the same buffer when the receiver is uniquely owned and allocates a
+// fresh copy when it is shared, so this is O(1) on a locally-owned scratch
+// table (every optimiser / regalloc array: cset/cval, used, ct, repl, the
+// width and live-range tables) and O(len) on a shared one. That is a COST
+// contract, not a safety one — value semantics hold either way, and no alias
+// observes the write.
 function env_put(vals: i32[], i: i32, v: i32): i32[] {
     vals = vals.with(i, v);
     return vals;
