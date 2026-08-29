@@ -915,6 +915,98 @@ func TestWasmPreview2UdpSendAdapterFree(t *testing.T) {
 	}
 }
 
+// TestWasmPreview2UdpSendRejectsNonLiteralHost pins the host contract:
+// udp_send takes a dotted-quad IPv4 literal, and anything else is
+// -invalid-argument rather than a datagram to a fabricated address.
+// Before #7740 the parser treated every non-'.' byte as a digit, so
+// "localhost" accumulated its letters as (b - '0'), reported success,
+// and sent to whatever address that produced; a fifth group also wrote
+// past the 4-byte octet scratch.
+//
+// One program covers every rejected shape and then does one legitimate
+// send. The malformed calls all carry the payload "x", so the listener
+// asserting that every datagram it sees is the legitimate one is what
+// proves none of them reached the wire.
+func TestWasmPreview2UdpSendRejectsNonLiteralHost(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen udp: %v", err)
+	}
+	defer pc.Close()
+	port := itoa(pc.LocalAddr().(*net.UDPAddr).Port)
+
+	// Each rejected shape gets its own exit code, so a regression names
+	// which one came back non-negative.
+	rejected := []string{
+		"localhost", // a hostname: no dots at all
+		"1.2.3.x",   // a non-digit inside a group
+		"1.2.3.4.5", // five groups — the out-of-bounds octet store
+		"1.2.3.999", // an octet past 255
+		"1..2.3",    // an empty group
+		"1.2.3.",    // a trailing dot
+		".1.2.3",    // a leading dot
+		"",          // empty host
+	}
+	const goodPayload = "only-the-literal"
+	src := "function main(): i32 {\n"
+	for i, host := range rejected {
+		src += "    if (udp_send(\"" + host + "\", " + port + ", \"x\") >= 0) { return " + itoa(i+1) + "; }\n"
+	}
+	src += "    if (udp_send(\"127.0.0.1\", " + port + ", \"" + goodPayload + "\") <= 0) { return 99; }\n"
+	src += "    return 0;\n}\n"
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "hosts.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+	bin := filepath.Join(dir, "fern")
+	if out, err := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern").CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+	componentPath := filepath.Join(dir, "hosts.component.wasm")
+	if out, err := exec.Command(bin, "-target", "wasm32-wasi", "-o", componentPath, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("fern -target wasm (host validation): %v\n%s", err, out)
+	}
+	if out, err := exec.Command("wasm-tools", "validate", componentPath).CombinedOutput(); err != nil {
+		t.Fatalf("validate: %v\n%s", err, out)
+	}
+
+	// A non-zero exit names the shape that was accepted; the run helper
+	// reports the code, so the mapping above is the diagnosis.
+	runWasmtimeUDPFlaky(t, "udp host validation", "run", "-S", "inherit-network", componentPath)
+
+	// Drain everything the listener saw. A retry inside the run helper
+	// can legitimately repeat the good datagram, so the assertion is on
+	// content rather than count: no rejected host may have sent.
+	seen := 0
+	for {
+		pc.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		buf := make([]byte, 2048)
+		n, _, err := pc.ReadFrom(buf)
+		if err != nil {
+			break
+		}
+		if got := string(buf[:n]); got != goodPayload {
+			t.Fatalf("a rejected host reached the wire: datagram = %q", got)
+		}
+		seen++
+	}
+	if seen == 0 {
+		t.Fatal("the valid 127.0.0.1 send produced no datagram")
+	}
+}
+
 // TestWasmPreview2TcpUdpAdapterFree puts both socket families in one
 // program: a TCP listener and a UDP datagram send. The unified composer
 // surfaces wasi:sockets/tcp and wasi:sockets/udp over one

@@ -29,12 +29,22 @@ import (
 	"github.com/jakechampion/lang/internal/wasm/numeric"
 )
 
+// errCodeInvalidArgument is the discriminant of `invalid-argument` in
+// the `wasi:sockets/network` error-code enum
+// (component.WasiSocketsNetworkErrorCodeNames). The socket helpers
+// report failure as the negated error code, so a caller sees -3.
+const errCodeInvalidArgument = 3
+
 // buildUdpSendBody assembles __fern_udp_send.
 //
 // Signature: (host_data, host_len, port, data_data, data_len) → i32 —
 // the byte count accepted by the host (== data length when the single
 // datagram is sent), or -errno on a socket failure. String args lower
 // to (ptr, len) pairs, so host + data arrive as two i32s each.
+//
+// `host` must be a dotted-quad IPv4 literal; anything else returns
+// -EINVAL. The parse runs FIRST, before the socket exists, so a
+// rejected host leaves nothing to drop.
 //
 // Locals (after the 5 params):
 //
@@ -54,6 +64,8 @@ import (
 //	18: $dgram         60+-byte outgoing-datagram record
 //	19: $sent          datagrams accepted (low 32 bits of the u64)
 //	20: $poll          pollable handle (send-permit wait loop)
+//	21: $bad           host-parse rejection flag (0 = well-formed)
+//	22: $digits        digits seen in the octet being parsed
 func buildUdpSendBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	netHandle := idxs["__network_handle"]
@@ -71,6 +83,149 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	outDrop := idxs["wasi_sockets_outgoing_datagram_stream_drop"]
 
 	var body []byte
+
+	// Parse the host as a dotted-quad IPv4 literal BEFORE creating the
+	// socket, so a rejected host leaves no handle to drop. $bad
+	// accumulates every rejection and is read once after the loop; the
+	// octet store is guarded on $octIdx separately, because a host with
+	// a fifth group would otherwise write past the 4-byte $octets.
+	body = emitStrNormalize(body, idxs, 0, 1, 12, 13, 11)
+	body = inst.InstI32Const(body, 4)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 14)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 15) // octIdx
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 16) // acc
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 11) // i
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 21) // bad
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, 22) // digits
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 11)
+		body = inst.InstLocalGet(body, 13)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		// $b = mem[host_buf + i]
+		body = inst.InstLocalGet(body, 12)
+		body = inst.InstLocalGet(body, 11)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstLocalSet(body, 17)
+		// if $b == '.' (46): close the group, advance octIdx, reset acc
+		body = inst.InstLocalGet(body, 17)
+		body = inst.InstI32Const(body, 46)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			// An empty group — a leading dot, or "1..2".
+			body = inst.InstLocalGet(body, 22)
+			body = numeric.InstI32Eqz(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstI32Const(body, 1)
+			body = inst.InstLocalSet(body, 21)
+			body = inst.InstEnd(body)
+			// Store only while octIdx addresses one of the four bytes.
+			body = inst.InstLocalGet(body, 15)
+			body = inst.InstI32Const(body, 3)
+			body = numeric.InstI32LtU(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			{
+				body = inst.InstLocalGet(body, 14)
+				body = inst.InstLocalGet(body, 15)
+				body = numeric.InstI32Add(body)
+				body = inst.InstLocalGet(body, 16)
+				body = memory.InstI32Store8(body, 0, 0)
+				body = inst.InstLocalGet(body, 15)
+				body = inst.InstI32Const(body, 1)
+				body = numeric.InstI32Add(body)
+				body = inst.InstLocalSet(body, 15)
+			}
+			body = inst.InstElse(body)
+			{
+				body = inst.InstI32Const(body, 1)
+				body = inst.InstLocalSet(body, 21)
+			}
+			body = inst.InstEnd(body)
+			body = inst.InstI32Const(body, 0)
+			body = inst.InstLocalSet(body, 16)
+			body = inst.InstI32Const(body, 0)
+			body = inst.InstLocalSet(body, 22)
+		}
+		body = inst.InstElse(body)
+		{
+			// A byte outside '0'..'9'. Without this a hostname's
+			// letters accumulated as (b - '0') and the socket
+			// connected to whatever address they produced (#7740).
+			body = inst.InstLocalGet(body, 17)
+			body = inst.InstI32Const(body, 48)
+			body = numeric.InstI32LtU(body)
+			body = inst.InstLocalGet(body, 17)
+			body = inst.InstI32Const(body, 57)
+			body = numeric.InstI32GtU(body)
+			body = numeric.InstI32Or(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstI32Const(body, 1)
+			body = inst.InstLocalSet(body, 21)
+			body = inst.InstEnd(body)
+			// acc = acc*10 + (b - '0')
+			body = inst.InstLocalGet(body, 16)
+			body = inst.InstI32Const(body, 10)
+			body = numeric.InstI32Mul(body)
+			body = inst.InstLocalGet(body, 17)
+			body = inst.InstI32Const(body, 48)
+			body = numeric.InstI32Sub(body)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 16)
+			body = inst.InstLocalGet(body, 22)
+			body = inst.InstI32Const(body, 1)
+			body = numeric.InstI32Add(body)
+			body = inst.InstLocalSet(body, 22)
+			// An octet past 255 doesn't fit the byte it addresses.
+			// Per-digit, which also bounds acc: it is never above 255
+			// entering a multiply, so acc*10+9 cannot wrap.
+			body = inst.InstLocalGet(body, 16)
+			body = inst.InstI32Const(body, 255)
+			body = numeric.InstI32GtU(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstI32Const(body, 1)
+			body = inst.InstLocalSet(body, 21)
+			body = inst.InstEnd(body)
+		}
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, 11)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 11)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	// Reject unless four groups closed and the last carries a digit.
+	body = inst.InstLocalGet(body, 21)
+	body = inst.InstLocalGet(body, 15)
+	body = inst.InstI32Const(body, 3)
+	body = numeric.InstI32Ne(body)
+	body = numeric.InstI32Or(body)
+	body = inst.InstLocalGet(body, 22)
+	body = numeric.InstI32Eqz(body)
+	body = numeric.InstI32Or(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, -errCodeInvalidArgument)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
+	// store the final octet: $octets[3] = acc
+	body = inst.InstLocalGet(body, 14)
+	body = inst.InstLocalGet(body, 15)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, 16)
+	body = memory.InstI32Store8(body, 0, 0)
 
 	// retptr = alloc(16) — check-send / send land result<u64,…> with
 	// the u64 at +8, so 16 bytes.
@@ -121,77 +276,6 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = emitErrnoNegReturn(body, 5)
 	body = inst.InstEnd(body)
-
-	// Normalize host into a contiguous buffer, then parse the dotted
-	// quad into 4 octet bytes at $octets.
-	body = emitStrNormalize(body, idxs, 0, 1, 12, 13, 11)
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalSet(body, 14)
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstLocalSet(body, 15) // octIdx
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstLocalSet(body, 16) // acc
-	body = inst.InstI32Const(body, 0)
-	body = inst.InstLocalSet(body, 11) // i
-	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
-	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
-	{
-		body = inst.InstLocalGet(body, 11)
-		body = inst.InstLocalGet(body, 13)
-		body = numeric.InstI32GeU(body)
-		body = inst.InstBrIf(body, 1)
-		// $b = mem[host_buf + i]
-		body = inst.InstLocalGet(body, 12)
-		body = inst.InstLocalGet(body, 11)
-		body = numeric.InstI32Add(body)
-		body = memory.InstI32Load8U(body, 0, 0)
-		body = inst.InstLocalSet(body, 17)
-		// if $b == '.' (46): store acc, advance octIdx, reset acc
-		body = inst.InstLocalGet(body, 17)
-		body = inst.InstI32Const(body, 46)
-		body = numeric.InstI32Eq(body)
-		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
-		{
-			body = inst.InstLocalGet(body, 14)
-			body = inst.InstLocalGet(body, 15)
-			body = numeric.InstI32Add(body)
-			body = inst.InstLocalGet(body, 16)
-			body = memory.InstI32Store8(body, 0, 0)
-			body = inst.InstLocalGet(body, 15)
-			body = inst.InstI32Const(body, 1)
-			body = numeric.InstI32Add(body)
-			body = inst.InstLocalSet(body, 15)
-			body = inst.InstI32Const(body, 0)
-			body = inst.InstLocalSet(body, 16)
-		}
-		body = inst.InstElse(body)
-		{
-			// acc = acc*10 + (b - '0')
-			body = inst.InstLocalGet(body, 16)
-			body = inst.InstI32Const(body, 10)
-			body = numeric.InstI32Mul(body)
-			body = inst.InstLocalGet(body, 17)
-			body = inst.InstI32Const(body, 48)
-			body = numeric.InstI32Sub(body)
-			body = numeric.InstI32Add(body)
-			body = inst.InstLocalSet(body, 16)
-		}
-		body = inst.InstEnd(body)
-		body = inst.InstLocalGet(body, 11)
-		body = inst.InstI32Const(body, 1)
-		body = numeric.InstI32Add(body)
-		body = inst.InstLocalSet(body, 11)
-		body = inst.InstBr(body, 0)
-	}
-	body = inst.InstEnd(body) // loop
-	body = inst.InstEnd(body) // block
-	// store the final octet: $octets[octIdx] = acc
-	body = inst.InstLocalGet(body, 14)
-	body = inst.InstLocalGet(body, 15)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 16)
-	body = memory.InstI32Store8(body, 0, 0)
 
 	// stream(sock, Some(ipv4 host:port), retptr) — connect. The option
 	// flattens to opt_disc=1, ipaddr_disc=0(ipv4), port, 4 octets, 6
@@ -329,6 +413,6 @@ func buildUdpSendBody(idxs map[string]uint32) []byte {
 	// whole payload went out — return its byte length.
 	body = inst.InstLocalGet(body, 10)
 
-	locals := inst.PutLocalsOneGroup(nil, 16, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 18, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
