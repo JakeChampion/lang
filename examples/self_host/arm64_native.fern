@@ -1809,10 +1809,10 @@ function arm64_gas_operands(rest: string): string[] {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < rest.len()) {
-        var c: i32 = rest[i] as i32;
-        if (c == 91) { depth = depth + 1; }        // '['
-        else if (c == 93) { depth = depth - 1; }   // ']'
-        else if (c == 44 && depth == 0) {           // ','
+        var c: u8 = rest[i];
+        if (c == b'[') { depth = depth + 1; }
+        else if (c == b']') { depth = depth - 1; }
+        else if (c == b',' && depth == 0) {
             out = out.append(arm64_gas_trim(slice_unchecked(rest, start, i)));
             start = i + 1;
         }
@@ -2796,15 +2796,15 @@ function arm64_gas_strip_comment(raw: string): string {
     var i: i32 = 0;
     var inq: boolean = false;
     while (i < n) {
-        var c: i32 = raw[i] as i32;
+        var c: u8 = raw[i];
         if (inq) {
-            if (c == 92) { i = i + 2; }              // '\' — skip the escaped byte
+            if (c == b'\\') { i = i + 2; }   // skip the escaped byte
             else {
-                if (c == 34) { inq = false; }        // closing '"'
+                if (c == b'"') { inq = false; }
                 i = i + 1;
             }
-        } else if (c == 34) { inq = true; i = i + 1; }
-        else if (c == 47 && i + 1 < n && raw[i + 1] == 47) { return slice_unchecked(raw, 0, i) + ""; }
+        } else if (c == b'"') { inq = true; i = i + 1; }
+        else if (c == b'/' && i + 1 < n && raw[i + 1] == b'/') { return slice_unchecked(raw, 0, i) + ""; }
         else { i = i + 1; }
     }
     return raw;

@@ -1114,7 +1114,7 @@ pub function const_struct_values(packed: string): string[] {
     i = i + 1;
     var start: i32 = i;
     while (i < packed.len()) {
-        if (packed[i] == 44) {                                    // 44 = ','
+        if (packed[i] == b',') {
             out = out.append(slice_unchecked(packed, start, i) + "");
             start = i + 1;
         }
@@ -1280,7 +1280,7 @@ pub function dyn_dispatch_traits(tag: string): string[] {
     var start: i32 = bar + 1;
     var k: i32 = start;
     while (k <= tag.len()) {
-        if (k == tag.len() || tag[k] == 44) {          // ','
+        if (k == tag.len() || tag[k] == b',') {
             if (k > start) { out = out.append(slice_unchecked(tag, start, k) + ""); }
             start = k + 1;
         }
