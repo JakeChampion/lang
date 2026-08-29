@@ -9,6 +9,14 @@ backend gate in front of several BYOW slices (see
 position-wise canonical join for all of these; the self-host can't mirror it
 until the language itself can carry the payloads.
 
+> **Reading note (the layer names below are historical).** The plan was
+> written when the self-host still had AST→target emitters. `wasm.fern`,
+> `asm.fern` and `asm_arm64.fern` are all deleted (#3457, #5972) and
+> `vm.fern` is retired (#4392), so the file/line citations in "Current
+> representation" point at code that no longer exists; the equivalent
+> lowering now lives on the IR path (`irlower.fern` + the `*_ir.fern`
+> backends). The S1–S5 slice contract still reads correctly against it.
+
 This doc scopes that feature: the current representation, the exact
 locations that hardcode the single-`i32`-payload assumption, the
 representation decisions, and a slice plan that stays green (no self-compile
@@ -176,12 +184,17 @@ assume a single `i32` enum payload and 4-byte struct fields:
    float multi-field arms (the fully general join) stay deferred, as on the Go
    side. Gated by `TestSelfHostExternVariantMultiField{Param,Result}CustomProvider`
    (the same `{ click(tuple<u32,u32>), key(u32), close }` shape as the Go tests).
-6. **S6+ — other backends** (ssa pipeline, asm/asm_arm64, interp/vm), each a
-   slice with a target-specific run test, only as the language feature (not
-   just BYOW) warrants it.
+6. ~~**S6+ — other backends** (ssa pipeline, asm/asm_arm64, interp/vm)~~ —
+   re-scoped: three of the four named backends no longer exist (`asm.fern`
+   and `asm_arm64.fern` deleted with #5972, `vm.fern` retired with #4392),
+   and the interpreter already evaluates multi-payload variants. The
+   backend that matters now is the production IR path, which already
+   carries wide payloads and multi-payload arms. What is left is the SSA
+   lift, which still bails on width-64 struct fields, tuple elements and
+   Option payloads — and that track is SHELVED
+   (`docs/SELFHOST-SSA-ALWAYS.md`), so nothing here is scheduled.
 
-S1–S5 land the BYOW self-host parity the matrix is missing; S6+ generalise
-the language feature to the remaining backends.
+S1–S5 land the BYOW self-host parity the matrix is missing.
 
 ## Risks / notes
 

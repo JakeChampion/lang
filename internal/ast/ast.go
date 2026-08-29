@@ -1124,10 +1124,9 @@ func ElemSizeBytesFor(t Type, ptrW int) int {
 // UseTwoWordStrings reports whether the target whose pointer
 // width is `ptrW` carries strings on the operand stack as a
 // `(data, len)` two-word pair (vs the legacy single LSB-tagged
-// pointer slot). Wasm32 (`ptrW == 4`) is always two-word. The
-// arm64 native flip is activated by setting `TwoWordOverride`
-// to true before lowering — that path is in progress on
-// `claude/sso-native-flip-arm64`; see
+// pointer slot). Wasm32 (`ptrW == 4`) is always two-word. arm64
+// opts in by setting `TwoWordOverride` to true before lowering;
+// x86-64 never does, and stays single-word LSB-tagged. See
 // `docs/SSO-NATIVE-FLIP-STATUS.md`.
 //
 // Lives in the `ast` package because both `internal/ir` and
@@ -1142,9 +1141,9 @@ func UseTwoWordStrings(ptrW int) bool {
 }
 
 // TwoWordOverride opts a non-wasm target (ptrW != 4) into the
-// two-word string ABI. Used by the arm64 native flip during
-// the in-progress migration (`docs/SSO-NATIVE-FLIP-STATUS.md`).
-// Set to true before `ir.LowerWith` runs; reset after.
+// two-word string ABI. arm64 sets it; x86-64 does not
+// (`docs/SSO-NATIVE-FLIP-STATUS.md`). Set to true before
+// `ir.LowerWith` runs; reset after.
 //
 // Concurrent codegen — e.g. `TestDifferential_LangsmithMain`'s
 // per-seed parallelism — must serialise its arm64 + x86_64

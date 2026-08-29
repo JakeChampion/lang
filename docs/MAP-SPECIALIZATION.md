@@ -1,7 +1,15 @@
 # Map[K, V] specialization plan
 
-> **Status: proposal, unstarted (0/5 steps)** — tracked in the roadmap
-> umbrella [#4368](https://github.com/JakeChampion/lang/issues/4368). The
+> **Status: proposal, unstarted (0/5 steps), and not tracked by an issue.**
+> Two measured attempts at step 1 (2026-05-28 and 2026-05-31, both recorded
+> below) each regressed code size, and the second diagnosed why: `keyKind`
+> reaches `__map_hash` as a runtime parameter loaded from the Map buffer,
+> never as a constant, so the dispatch cannot fold until step 2's call-site
+> rewrite lands in the same change. Treat this as a perf lever with a
+> documented negative result, not an open gap — anyone picking it up should
+> start from step 1+2 together. What did land instead is #4388's
+> higher-order `_keyed` family, which hoists the branch out of the probe
+> loop while keeping dispatch dynamic. The
 > prose below predates the prelude removal (#1561): the Map runtime now
 > lives in `core/map` + the IR's runtime-tag scheme, not
 > `internal/prelude/prelude.fern`. The wide-scalar-K/V correctness gap that

@@ -118,13 +118,16 @@ the audit history is preserved.
   before any asm is written. The codegen panic stays as a
   defence-in-depth assertion for future helpers that grow
   Linux-only syscalls without a corresponding pre-scan entry.
-- **`internal/ir/ir.go:2531,2660`** — i64 → string cast
-  returns `"not yet supported"`. Dead today (checker rejects
-  it pre-IR), but a latent blocker for the wide-scalar +
-  usize work.
-- **`internal/ir/ir.go:4717`** — `assignment target %T not
-  yet lowered`. Dead code path (checker would catch it
-  first); signals an unfinished lowering case.
+- **`internal/ir/ir.go`, the two `ir: cast from %s to %s not yet
+  supported` sites** — i64 → string lands on the second of them. Dead
+  today (the checker rejects it pre-IR with E033), but a latent blocker
+  for the wide-scalar + usize work.
+- **`internal/ir/ir.go`, `ir: assignment target %T not yet lowered`** —
+  dead code path (the checker would catch it first); signals an
+  unfinished lowering case.
+
+  (Grep the message, not a line number: these have moved twice since
+  they were first recorded here.)
 
 ### Sprawl signals
 
@@ -133,9 +136,10 @@ the audit history is preserved.
 - **`ptrW == 4` checks scattered across ~12 sites** —
   partially unified via `ast.UseTwoWordStrings`; SSO work
   is finishing the consolidation.
-- **SSO native-mirror flip in flight** — wasm32 shipped in
-  PR #382, arm64 in PR #383 + follow-ups. x86-64 mirror is
-  the next chunk; estimated 10-15 PRs.
+- **SSO native-mirror flip, partly landed** — the two-word ABI
+  shipped on wasm32 (PR #382) and arm64 (PR #383 + follow-ups).
+  x86-64 has inline SSO but stays single-word LSB-tagged; its
+  two-word mirror is still open (`docs/SSO-NATIVE-FLIP-STATUS.md`).
 
 ---
 
@@ -909,13 +913,14 @@ which `component_full`'s import-free path can't take):
    env secrets, write an output/log file, respond — tested by
    `TestSelfHostWasmComponentFullIOFSRWEnv` (byte-identical) +
    `TestSelfHostWasmComponentReadWriteEnv` (read→transform-with-env→write).
-   Remaining combinations (random+write, args+fs, clock+fs, …) are now each a
-   capture-the-blob-and-test slice; the **generative component builder**
-   (mirroring `internal/wasm/component/component.go`, computing the
-   lift/lower/instance/canon wiring from the import set) remains the eventual
-   collapse of the blob set, but is no longer blocking real edge programs.
-   It now has a concrete design + phased, byte-identical-validated
-   implementation plan: see `docs/WASM-COMPONENT-GENERATOR.md`.
+   The **generative component builder** that was to collapse the blob set
+   has since shipped: prefix decomposition plus the data-driven
+   `component_suffix` computes the lift/lower/instance/canon wiring from
+   the import set, and every `\xNN` blob it targeted is gone (the
+   constants left in `watbin.fern` are per-interface WIT type blocks,
+   which is the intended end state). A world-driven path exists too
+   (`wit_compose.fern`'s `component_from_world`). See
+   `docs/WASM-COMPONENT-GENERATOR.md`.
 
 The core encoder was also **validated at scale**: beyond the per-feature
 cases, `TestSelfHostWasmBinary` round-trips substantial multi-feature
@@ -955,8 +960,12 @@ read back is truncated. The Go compiler stores `i64[]` elements in 8-byte
 slots (`i64.store` / `i64.load`), so this is a genuine parity gap.
 
 (The self-host **interpreter** is *not* affected by element width — it
-uses a `Value` model, not raw byte slots — but it has its own i64 ceiling:
-`VInt` is i32-backed, so a literal above 2³¹ truncates there regardless.
+uses a `Value` model, not raw byte slots. It once had its own i64 ceiling
+on top of that, `VInt` being i32-backed; that is gone — `VInt64 { hi, lo }`
+carries a wide value, `box_i64` narrows back to `VInt` when it fits, and
+`eval_number_literal` parses a decimal literal through `digits_to_i64` so
+a value beyond i32 range survives. Hex and binary literals keep i32
+semantics deliberately (#4341).
 A separate bug, since fixed, made it *look* like an array problem: the
 interpreter's unary evaluator errored on every `as` cast, so any test that
 narrowed an i64 with `… as i32` returned garbage. See the seventeenth
@@ -970,9 +979,7 @@ backends were already correct** — they store 64-bit elements in 8-byte
 slots and large values round-trip (verified directly; see the nineteenth
 pass, which added the missing native regression tests). So with the wasm
 fix this language-parity gap is **closed across all compiled backends**.
-(`f64[]` shares the same 8-byte slot. The self-host *interpreter* still
-has its separate i32-backed `VInt` ceiling, noted above — that is a
-value-model limitation, not an array one.)
+(`f64[]` shares the same 8-byte slot.)
 
 A seventeenth pass fixed the **interpreter `as` cast** bug surfaced while
 investigating the above: `interp.fern`'s unary evaluator only handled `-`
@@ -1125,7 +1132,10 @@ flow into union positions without `Member(...)` ceremony.
 
 Punted to follow-ups (don't block self-hosting in practice):
 - Generic union members (`type Tree[T] = Leaf[T] | Node[T]`)
-- Qualified variant references (`Expr.Add(...)`)
+- ~~Qualified variant references (`Expr.Add(...)`)~~ — shipped. Unions
+  desugar into `prog.Enums` before `c.variantOf` is populated, so a
+  qualified constructor resolves through the ordinary enum machinery;
+  mirrored self-host-side in `checker.fern`.
 
 **Minimal fix**: union-of-structs sugar over the existing
 enum machinery. Each `type Expr = A | B | C` lowers to an
