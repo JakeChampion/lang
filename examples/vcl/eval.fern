@@ -42,6 +42,26 @@ pub enum Flow { FNext, FReturn(Action) }
 
 pub struct EvalOut { txn: runtime.Txn, val: value.Value, ok: boolean, err: string }
 
+// Constructors for the flow vocabulary, so a COMPILED policy can build the
+// same results a tree-walk does. `machine.run_with` takes any function
+// producing an ExecOut, which is what lets generated code and the
+// interpreter share one state machine rather than each carrying its own.
+pub function fell_through(t: runtime.Txn): ExecOut {
+  return ExecOut { txn: t, flow: FNext, ok: true, err: "" };
+}
+
+pub function returned(t: runtime.Txn, a: Action): ExecOut {
+  return ExecOut { txn: t, flow: FReturn(a), ok: true, err: "" };
+}
+
+pub function failed(t: runtime.Txn, msg: string): ExecOut {
+  return ExecOut { txn: t, flow: FNext, ok: false, err: msg };
+}
+
+pub function synth_action(name: string, status: i64, reason: string): Action {
+  return Action { name: name, status: status, reason: reason };
+}
+
 pub struct ExecOut { txn: runtime.Txn, flow: Flow, ok: boolean, err: string }
 
 function eok(t: runtime.Txn, v: value.Value): EvalOut {
@@ -154,7 +174,9 @@ pub function parse_ipv4(s: string): Option[i64] {
 
 // mask_of returns the high-bit mask for a prefix width, as a packed
 // 32-bit value.
-function mask_of(bits: i32): i64 {
+// Public so the compiler can fold an ACL's masks at compile time rather
+// than emitting the arithmetic into every generated match.
+pub function mask_of(bits: i32): i64 {
   if (bits <= 0) {
     return 0;
   }
@@ -530,8 +552,10 @@ function eval_compare(op: string, lv: value.Value, rv: value.Value): Result[valu
 }
 
 // op_class names the family a binary operator belongs to, so eval_binary
-// branches once per family rather than once per operator.
-function op_class(op: string): string {
+// branches once per family rather than once per operator. Public because
+// the compiler dispatches on the same families, and two copies of this
+// table could disagree about which operator is which.
+pub function op_class(op: string): string {
   if (op == "~" || op == "!~") {
     return "match";
   }

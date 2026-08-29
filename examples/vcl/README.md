@@ -9,6 +9,8 @@ outside `std`.
 $ fern -interp vclfmt.fern   -- testdata/sample.vcl        # parse + reformat
 $ fern -interp vclcheck.fern -- testdata/policy.vcl        # validate, don't run
 $ fern -interp vclrun.fern   -- testdata/policy.vcl GET /static/app.css -n 2
+$ fern -interp vclc.fern     -- testdata/policy.vcl > policy.fern   # compile
+$ fern -target x86-64-linux -o policy policy.fern && ./policy GET /
 --- request 1 ---
   path:        vcl_recv -> vcl_hash -> vcl_miss -> vcl_backend_fetch -> vcl_backend_response -> vcl_deliver
   disposition: deliver (miss)
@@ -21,10 +23,11 @@ $ fern -interp vclrun.fern   -- testdata/policy.vcl GET /static/app.css -n 2
   disposition: deliver (HIT)
 ```
 
-Three drivers: `vclfmt` parses and reprints, `vclcheck` validates without
-running, and `vclrun` executes a request against a policy — checking it
-first, as `varnishd` does at load time. All exit 0 on success, 1 on a VCL
-error, 2 when the file cannot be read or parsed.
+Four drivers: `vclfmt` parses and reprints, `vclcheck` validates without
+running, `vclrun` executes a request against a policy — checking it first,
+as `varnishd` does at load time — and `vclc` compiles a policy to Fern
+source for `fern` to turn into a native binary. All exit 0 on success, 1 on
+a VCL error, 2 when the file cannot be read or parsed.
 
 ## Layout
 
@@ -38,10 +41,12 @@ error, 2 when the file cannot be read or parsed.
 | `runtime.fern` | The five HTTP messages a transaction reads and writes, plus the cache. |
 | `vars.fern` | The variable namespace and its per-subroutine scoping. |
 | `check.fern` | Static validation: scoping, return actions, names, reachability. |
+| `compile.fern` | VCL to Fern source: field accesses, folded constants, ANF. |
+| `report.fern` | The request command line and transaction report, shared by both drivers. |
 | `eval.fern` | Expression evaluation, statement execution, ACL and regex matching. |
 | `machine.fern` | The request state machine and the built-in subroutines. |
-| `vclfmt.fern` / `vclcheck.fern` / `vclrun.fern` | The drivers. |
-| `vcl_test.fern` / `vclbackend_test.fern` / `vclcheck_test.fern` | 41 + 38 + 32 TAP cases. |
+| `vclfmt.fern` / `vclcheck.fern` / `vclrun.fern` / `vclc.fern` | The drivers. |
+| `vcl_test.fern` / `vclbackend_test.fern` / `vclcheck_test.fern` / `vclcompile_test.fern` | 41 + 40 + 32 + 25 TAP cases. |
 
 ## The front end
 
@@ -146,6 +151,52 @@ Each entry in the variable table carries the subroutines that may read and
 write it, and both the checker and the evaluator consult that one table —
 so they cannot disagree about what is legal.
 
+## The compiler
+
+`vclc` turns a checked policy into a Fern module, which `fern` turns into a
+native binary. That is the second of the two routes left once C is out, and
+it needed no new backend:
+
+```
+$ fern -interp vclc.fern -- testdata/policy.vcl > policy.fern
+$ fern -target x86-64-linux -o policy policy.fern
+$ ./policy GET /static/app.css -n 2      # a 285 KB standalone binary
+```
+
+What compiling buys over the tree-walk:
+
+- **A variable becomes a struct field read.** `req.url` compiles to
+  `t.req.url` — no table lookup, no scope test. The check already happened,
+  so none of it survives to run time. `vclcompile_test` asserts the
+  generated source contains no `vars.read` at all.
+- **An ACL becomes a function with its masks folded.** `"192.0.2.0"/24`
+  emits `(ip & 4294967040) == 3221225984`, and longest-prefix-wins becomes
+  generated control flow.
+- **Constants fold.** `1h` is `VDuration(3600.0)`; `256KB` is
+  `VBytes(262144)`.
+- **Control flow becomes Fern control flow.** An `if` is an `if`.
+
+Expressions compile to **A-normal form** — each subexpression into its own
+local, with an explicit check after anything that can fail. That is more
+verbose than nesting calls, and it is what keeps compiled and interpreted
+behaviour identical: `&&` short-circuits through a real branch, so a
+`std.log` on the right does not run when the left already decided, and an
+arithmetic type error reports the message the interpreter reports.
+
+The **state machine is not generated**. `machine.fern` takes a `Driver` —
+a function that runs one subroutine, plus the declared backends — so the
+interpreter supplies a closure over the parsed tree while a compiled policy
+supplies its own dispatcher. The graph is identical for every policy, so
+there is one copy of it.
+
+The gate that matters is differential, not textual:
+`TestVCLCompiledMatchesInterpreted` compiles the sample policy, runs it over
+eleven requests chosen to take different routes through the state machine,
+and diffs every byte against `vclrun`. A string assertion can only say the
+compiler emitted what was intended; the differential says the emitted code
+*means* the same thing — and it is what catches a codegen table drifting
+from the runtime table it mirrors.
+
 ## What it does not do
 
 - **No network and no real origin.** `fetch` fabricates a response: 200
@@ -175,6 +226,7 @@ transaction, subroutine), which is what lets the state machine hand a
 transaction between subroutines and keep every intermediate state for the
 log.
 
-`internal/e2e/vcl_example_test.go` runs all three TAP suites, the formatter
-fixed-point check, the cache miss/hit path, the ACL matrix, and the
-load-time rejection of a bad policy on every CI run.
+`internal/e2e/vcl_example_test.go` runs all four TAP suites, the formatter
+fixed-point check, the cache miss/hit path, the ACL matrix, the load-time
+rejection of a bad policy, the compiled-vs-interpreted differential, and a
+native build of a compiled policy — on every CI run.

@@ -272,6 +272,167 @@ func TestVCLBackendEnforcesACL(t *testing.T) {
 	}
 }
 
+// TestVCLCompileTapSuitePasses runs the compiler's TAP suite, which pins
+// the SHAPE of the generated source.
+func TestVCLCompileTapSuitePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/vcl/vclcompile_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"TAP version 13", "# Suite: vcl-compile", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+	if strings.Contains(out, "not ok") {
+		t.Errorf("a case failed:\n%s", out)
+	}
+}
+
+// TestVCLCompiledMatchesInterpreted is the gate the compiler actually
+// stands on: compile the sample policy to Fern, run the result, and diff
+// its output against the interpreter's over a set of requests chosen to
+// take different paths through the state machine.
+//
+// A string assertion on generated source can only say the compiler emitted
+// what was intended. This says the emitted code MEANS the same thing —
+// which is the only claim worth making about a compiler, and the one that
+// catches a codegen table drifting from the runtime one it mirrors.
+//
+// The generated module goes in a temp dir with an import prefix pointing
+// back at examples/vcl, so nothing is written into the source tree.
+func TestVCLCompiledMatchesInterpreted(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	vclDir := langSrcAbs(t, "examples/vcl")
+	outDir := t.TempDir()
+
+	prefix, err := filepath.Rel(outDir, vclDir)
+	if err != nil {
+		t.Fatalf("relative path from %s to %s: %v", outDir, vclDir, err)
+	}
+	prefix = filepath.ToSlash(prefix) + "/"
+
+	// Compile testdata/policy.vcl with imports pointing back at the runtime.
+	compileCmd := exec.Command(bin, "-interp", "vclc.fern", "--", "-p", prefix, "testdata/policy.vcl")
+	compileCmd.Dir = vclDir
+	var gen, genErr bytes.Buffer
+	compileCmd.Stdout = &gen
+	compileCmd.Stderr = &genErr
+	if err := compileCmd.Run(); err != nil {
+		t.Fatalf("vclc failed: %v\nstderr: %s", err, genErr.String())
+	}
+	genPath := filepath.Join(outDir, "policy.fern")
+	if err := os.WriteFile(genPath, gen.Bytes(), 0o644); err != nil {
+		t.Fatalf("write generated policy: %v", err)
+	}
+
+	// Each case takes a different route: cache hit, pass, uncacheable 5xx,
+	// the built-in cookie pass, pipe on an unknown method, and every arm of
+	// the purge ACL including the exclusion inside the /24.
+	cases := [][]string{
+		{"GET", "/static/app.css", "-n", "3"},
+		{"GET", "/admin"},
+		{"GET", "/status/503", "-n", "2"},
+		{"GET", "/", "Cookie:a=1"},
+		{"GET", "/", "Authorization:Bearer_x"},
+		{"FROBNICATE", "/"},
+		{"PURGE", "/static/app.css", "192.0.2.10"},
+		{"PURGE", "/static/app.css", "192.0.2.23"},
+		{"PURGE", "/static/app.css", "10.0.0.5"},
+		{"PURGE", "/static/app.css", "127.0.0.1"},
+		{"HEAD", "/static/x.css", "-n", "2"},
+	}
+	for _, args := range cases {
+		args := args
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			interpArgs := append([]string{"-interp", "vclrun.fern", "--", "testdata/policy.vcl"}, args...)
+			ic := exec.Command(bin, interpArgs...)
+			ic.Dir = vclDir
+			var iOut, iErr bytes.Buffer
+			ic.Stdout = &iOut
+			ic.Stderr = &iErr
+			_ = ic.Run()
+			iCode := ic.ProcessState.ExitCode()
+
+			compArgs := append([]string{"-interp", genPath, "--"}, args...)
+			cc := exec.Command(bin, compArgs...)
+			cc.Dir = outDir
+			var cOut, cErr bytes.Buffer
+			cc.Stdout = &cOut
+			cc.Stderr = &cErr
+			_ = cc.Run()
+			cCode := cc.ProcessState.ExitCode()
+
+			if iCode != cCode {
+				t.Errorf("exit differs: interpreted %d, compiled %d\ninterp stderr: %s\ncompiled stderr: %s",
+					iCode, cCode, iErr.String(), cErr.String())
+			}
+			if iOut.String() != cOut.String() {
+				t.Errorf("output differs.\ninterpreted:\n%s\ncompiled:\n%s", iOut.String(), cOut.String())
+			}
+		})
+	}
+}
+
+// TestVCLCompiledPolicyBuildsNatively pins that a compiled policy is a
+// real program: it builds to a native binary and that binary behaves like
+// the interpreter.
+func TestVCLCompiledPolicyBuildsNatively(t *testing.T) {
+	if testing.Short() {
+		t.Skip("native build is slow; skipped under -short")
+	}
+	bin := buildLangBinForInterp(t)
+	vclDir := langSrcAbs(t, "examples/vcl")
+	outDir := t.TempDir()
+
+	prefix, err := filepath.Rel(outDir, vclDir)
+	if err != nil {
+		t.Fatalf("relative path: %v", err)
+	}
+	prefix = filepath.ToSlash(prefix) + "/"
+
+	compileCmd := exec.Command(bin, "-interp", "vclc.fern", "--", "-p", prefix, "testdata/policy.vcl")
+	compileCmd.Dir = vclDir
+	var gen, genErr bytes.Buffer
+	compileCmd.Stdout = &gen
+	compileCmd.Stderr = &genErr
+	if err := compileCmd.Run(); err != nil {
+		t.Fatalf("vclc failed: %v\nstderr: %s", err, genErr.String())
+	}
+	genPath := filepath.Join(outDir, "policy.fern")
+	if err := os.WriteFile(genPath, gen.Bytes(), 0o644); err != nil {
+		t.Fatalf("write generated policy: %v", err)
+	}
+
+	exePath := filepath.Join(outDir, "policy")
+	build := exec.Command(bin, "-target", "x86-64-linux", "-o", exePath, genPath)
+	build.Dir = outDir
+	if o, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("native build of the compiled policy failed: %v\n%s", err, o)
+	}
+
+	native := exec.Command(exePath, "GET", "/static/app.css", "-n", "2")
+	native.Dir = outDir
+	nOut, err := native.Output()
+	if err != nil {
+		t.Fatalf("running the compiled policy: %v", err)
+	}
+
+	interp := exec.Command(bin, "-interp", "vclrun.fern", "--", "testdata/policy.vcl",
+		"GET", "/static/app.css", "-n", "2")
+	interp.Dir = vclDir
+	iOut, err := interp.Output()
+	if err != nil {
+		t.Fatalf("running the interpreter: %v", err)
+	}
+
+	if string(nOut) != string(iOut) {
+		t.Errorf("native binary differs from the interpreter.\nnative:\n%s\ninterpreted:\n%s", nOut, iOut)
+	}
+}
+
 // TestVCLBackendRejectsOutOfScopeVariable pins the scoping rule VCL
 // authors trip over most: `req` is not readable while fetching from a
 // backend. The driver must exit 1 and name both the variable and the

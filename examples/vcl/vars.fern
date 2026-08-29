@@ -277,8 +277,9 @@ function write_bereq(t: runtime.Txn, name: string, v: value.Value): runtime.Txn 
   return runtime.Txn { ...t, bereq: runtime.Msg { ...t.bereq, headers: h } };
 }
 
-// as_int coerces an assigned value for an INT-typed variable.
-function as_int(v: value.Value): i64 {
+// as_int coerces an assigned value for an INT-typed variable. Public
+// because compiled code performs the same coercion inline.
+pub function as_int(v: value.Value): i64 {
   match (v) {
     VInt(n) => {
       return n;
@@ -305,8 +306,9 @@ function as_int(v: value.Value): i64 {
   }
 }
 
-// as_secs coerces an assigned value for a DURATION-typed variable.
-function as_secs(v: value.Value): f64 {
+// as_secs coerces an assigned value for a DURATION-typed variable. Public
+// for the same reason as as_int.
+pub function as_secs(v: value.Value): f64 {
   match (v) {
     VDuration(d) => {
       return d;
