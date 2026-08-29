@@ -117,6 +117,9 @@ type rcChecker struct {
 	f        *Func
 	problems []Problem
 	cov      RcCoverage
+	// claims holds every recognised site's donor take, for the
+	// double-claim check that runs once the whole function is read.
+	claims []claim
 }
 
 func (c *rcChecker) report(i int, k OpKind, format string, args ...any) {
@@ -135,14 +138,114 @@ func verifyRc(f *Func) ([]Problem, RcCoverage) {
 			continue
 		}
 		c.cov.Sites++
-		c.site(i)
+		if donor, ok := c.site(i); ok {
+			c.claims = append(c.claims, claim{at: i, donor: donor})
+		}
 	}
+	c.checkDoubleClaims()
 	return c.problems, c.cov
 }
 
+// claim is one recognised site's take of a donor's box.
+type claim struct {
+	at    int
+	donor int32
+}
+
+// checkDoubleClaims reports a donor whose box two sites both take on one
+// path. The first site gives the box away; the second hands the same
+// memory to a second recipient, and the first recipient's value is
+// overwritten under it.
+//
+// Two claims on EXCLUSIVE paths are safe, which is what makes this need
+// reachability rather than a plain "same donor twice" scan: an if-arm's
+// recipient is an ordinary block-scoped var, so sibling arms naturally
+// reuse one name, and the pairing tables deliberately restart the else arm
+// from the same consumed set (#4402 opt 3). Only a second claim reachable
+// from the first, with no rebind of the donor between, is a defect.
+//
+// Sites the recogniser skipped carry no donor and cannot participate, so
+// this is bounded by the same coverage the rest of the pass reports.
+func (c *rcChecker) checkDoubleClaims() {
+	for i, first := range c.claims {
+		for _, second := range c.claims[i+1:] {
+			if second.donor != first.donor {
+				continue
+			}
+			if !c.reaches(first.at, second.at, first.donor) {
+				continue
+			}
+			c.report(second.at, OpCallDirect,
+				"reuse site takes local %d's box, which the site at op %d already took and never rebound: "+
+					"one allocation handed to two recipients", second.donor, first.at)
+		}
+	}
+}
+
+// reaches reports whether control can run from the claim at `from` to the
+// one at `to` without passing a rebind of `donor`.
+//
+// The walk is over structured control flow from `from`'s own scope
+// outwards. An OpElse at the walk's current depth switches to the sibling
+// arm of a scope `from` is inside, so everything up to that scope's OpEnd
+// is unreachable from `from` and is skipped. Everything after an enclosing
+// OpEnd is reachable, because control leaves the scope and continues.
+func (c *rcChecker) reaches(from, to int, donor int32) bool {
+	ops := c.f.Ops
+	depth := 0
+	for i := from + 1; i < to; i++ {
+		switch ops[i].Kind {
+		case OpBlock, OpLoop, OpIf:
+			depth++
+		case OpEnd:
+			if depth > 0 {
+				depth--
+			}
+			// At depth 0 an End closes a scope `from` was inside;
+			// control continues after it, still on the path.
+		case OpElse:
+			if depth == 0 {
+				// The sibling arm of a scope `from` is inside. Skip it
+				// whole: `to` inside it is on the other path.
+				j, ok := skipToMatchingEnd(ops, i)
+				if !ok {
+					return false
+				}
+				if to < j {
+					return false
+				}
+				i = j
+			}
+		case OpStoreLocal, OpTeeLocal:
+			if ops[i].I32 == donor {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// skipToMatchingEnd returns the index of the OpEnd closing the scope whose
+// OpElse is at elseAt.
+func skipToMatchingEnd(ops []Op, elseAt int) (int, bool) {
+	depth := 0
+	for i := elseAt + 1; i < len(ops); i++ {
+		switch ops[i].Kind {
+		case OpBlock, OpLoop, OpIf:
+			depth++
+		case OpEnd:
+			if depth == 0 {
+				return i, true
+			}
+			depth--
+		}
+	}
+	return 0, false
+}
+
 // site checks the one reuse site whose allocator call is at op index
-// call.
-func (c *rcChecker) site(call int) {
+// call, and returns the donor it took when the shape was recognised.
+func (c *rcChecker) site(call int) (int32, bool) {
 	ops := c.f.Ops
 
 	// The token is the allocator's first argument. Every later argument
@@ -154,7 +257,7 @@ func (c *rcChecker) site(call int) {
 	}
 	if j < 0 || ops[j].Kind != OpLoadLocal {
 		c.cov.skip("token argument is not a local load")
-		return
+		return 0, false
 	}
 	tokenSlot := ops[j].I32
 
@@ -168,26 +271,26 @@ func (c *rcChecker) site(call int) {
 	}
 	if k < 0 || ops[k].Kind != OpEnd {
 		c.cov.skip("no token select before the reuse call")
-		return
+		return 0, false
 	}
 	ifAt, elseAt, ok := matchIfBackwards(ops, k)
 	if !ok {
 		c.cov.skip("token select is not a well-formed if")
-		return
+		return 0, false
 	}
 	if elseAt < 0 {
 		c.cov.skip("token select has no decline arm")
-		return
+		return 0, false
 	}
 
 	gate, gateCode := gateDonor(ops, ifAt)
 	if gateCode == gateMissing {
 		c.cov.skip("no uniqueness gate before the token select")
-		return
+		return 0, false
 	}
 	if gateCode == gateNotAFlag {
 		c.cov.skip("token select is not conditioned on a local")
-		return
+		return 0, false
 	}
 
 	// The reuse arm: exactly one store to the token slot, fed by a load
@@ -197,7 +300,7 @@ func (c *rcChecker) site(call int) {
 	token, ok := soleTokenSource(ops, ifAt+1, elseAt, tokenSlot)
 	if !ok {
 		c.cov.skip("reuse arm does not derive the token from one local")
-		return
+		return 0, false
 	}
 
 	// The decline arm usually releases the donor, but not always: the
@@ -209,7 +312,7 @@ func (c *rcChecker) site(call int) {
 	dec, decAt, haveDec, ok := soleDecline(ops, elseAt+1, k)
 	if !ok {
 		c.cov.skip("decline arm releases more than one local")
-		return
+		return 0, false
 	}
 
 	c.cov.Checked++
@@ -226,6 +329,7 @@ func (c *rcChecker) site(call int) {
 				"(gate at op %d, release at op %d): the tested donor leaks on the decline path",
 			dec, gate, ifAt-3, decAt)
 	}
+	return gate, true
 }
 
 // gateDonor reads the uniqueness gate sitting before the token select and

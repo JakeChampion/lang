@@ -523,6 +523,14 @@ function native_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
     ];
 }
 
+// concat_ops lays two op streams end to end.
+function concat_ops(a: ir.Op[], b: ir.Op[]): ir.Op[] {
+    var out: ir.Op[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) { out = out.append(b[i]); i = i + 1; }
+    return out;
+}
+
 // rc_only_skip reports whether the pass counted the site and skipped it for
 // exactly the named reason, with nothing reported.
 function rc_only_skip(ops: ir.Op[], why: string): boolean {
@@ -619,6 +627,40 @@ function rc_checks(): i32 {
         gi = gi + 1;
     }
     if (!seen) { return 208; }
+
+    // ---- one donor claimed twice ---------------------------------------
+    // The first site gives the box away; the second hands the same memory to
+    // a second recipient.
+    var twice: ir.Op[] = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(1, 1));
+    var tw: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", twice);
+    if (tw.sites != 2 || tw.checked != 2) { return 211; }
+    if (tw.problems.len() != 1) { return 212; }
+    if (!util.contains(tw.problems[0].msg, "one allocation handed to two recipients")) { return 213; }
+
+    // Sibling arms are EXCLUSIVE, so two claims there are safe. This is the
+    // false positive the reachability walk exists to avoid, and
+    // docs/rc-log/2026-08-29-xblock-recipient-site-key.md is precisely this
+    // shape: an if-arm's recipient is an ordinary block-scoped var, so sibling
+    // arms naturally reuse one name.
+    var arms: ir.Op[] = concat_ops([ir.op_const_i32(1), ir.op_if(0)], selfhost_reuse(1, 1));
+    arms = concat_ops(arms, [ir.op_else()]);
+    arms = concat_ops(arms, selfhost_reuse(1, 1));
+    arms = concat_ops(arms, [ir.op_end()]);
+    var ar: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", arms);
+    if (ar.checked != 2) { return 214; }
+    if (ar.problems.len() != 0) { return 215; }
+
+    // A store to the donor's slot between the two sites makes the second
+    // claim a different box.
+    var rebound: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(0), ir.op_store_local(1)]);
+    rebound = concat_ops(rebound, selfhost_reuse(1, 1));
+    var rb: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", rebound);
+    if (rb.checked != 2 || rb.problems.len() != 0) { return 216; }
+
+    // Distinct donors never collide.
+    var distinct: ir.Op[] = concat_ops(selfhost_reuse(1, 1), selfhost_reuse(2, 2));
+    var di: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", distinct);
+    if (di.checked != 2 || di.problems.len() != 0) { return 217; }
 
     // ---- coverage renders the tally and the grouped reasons ------------
     if (!util.contains(irverifyrc.rc_coverage_str(sh), "reuse sites modelled 1/1")) { return 209; }
