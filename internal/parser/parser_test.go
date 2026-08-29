@@ -924,6 +924,45 @@ func TestCompoundAssignFieldDesugars(t *testing.T) {
 	}
 }
 
+// hasParseCode reports whether err carries the given stable parse-error code.
+// Parse returns a diag.Errors batch, so the code lives on one of its elements
+// rather than on the top-level error.
+func hasParseCode(err error, code string) bool {
+	var batch diag.Errors
+	if errors.As(err, &batch) {
+		for _, e := range batch {
+			if hasParseCode(e, code) {
+				return true
+			}
+		}
+		return false
+	}
+	var coded diag.Coded
+	return errors.As(err, &coded) && coded.Code() == code
+}
+
+// The lvalue forms are the parser's to police, and ir.go depends on it: its
+// assign lowering handles Ident / Index / FieldAccess (plus the CaptureRef
+// closureconv rewrites an Ident into) and asserts on anything else. A target
+// the parser let through would reach that assertion instead of a diagnostic.
+func TestNonLvalueAssignTargetsRejected(t *testing.T) {
+	for _, src := range []string{
+		`function f(): i32 { 1 = 2; return 0; }`,
+		`function g(): i32 { return 0; } function f(): i32 { g() = 2; return 0; }`,
+		`function f(): i32 { "s" = "t"; return 0; }`,
+		`function f(): i32 { var a: i32 = 1; a.b.c() = 2; return a; }`,
+	} {
+		_, err := Parse(src)
+		if err == nil {
+			t.Errorf("expected P003 for %s, got no error", src)
+			continue
+		}
+		if !hasParseCode(err, "P003") {
+			t.Errorf("want P003 for %s, got %T: %v", src, err, err)
+		}
+	}
+}
+
 func TestIfExpr(t *testing.T) {
 	prog, err := Parse(`function f(b: boolean): i32 { return if (b) { 1 } else { 2 }; }`)
 	if err != nil {

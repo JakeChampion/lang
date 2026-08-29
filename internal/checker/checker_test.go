@@ -6313,6 +6313,33 @@ func TestCastRejectionStillReported(t *testing.T) {
 	}
 }
 
+// A cast with exactly one numeric side is accepted only as a pointer
+// reinterpret — a pointer-shaped value to i32/usize, or back from i32/usize.
+// Everything else has to be E033 HERE, because ir.go's cast lowering asserts
+// it: the branch a rejected shape would reach returns a compiler-bug error,
+// not a diagnostic. `i64 as string` is the shape the roadmap kept filing as a
+// latent i64->string gap; it is rejected on purpose (a 64-bit value
+// reinterpreted as a pointer-shaped handle truncates — E069 — and converting
+// an i64 to text is `.to_string()`), so widening this rule means widening that
+// lowering in the same change.
+func TestOneSidedNumericCastsAreRejectedBeforeIR(t *testing.T) {
+	for _, src := range []string{
+		`function main(): i32 { var n: i64 = 1; var s = n as string; return 0; }`,
+		`function main(): i32 { var n: i64 = 1; var a = n as i32[]; return 0; }`,
+		`function main(): i32 { var f: f64 = 1.5; var s = f as string; return 0; }`,
+		`struct S { v: i32 } function main(): i32 { var n: i64 = 1; var x = n as S; return 0; }`,
+	} {
+		err := checkSource(t, src)
+		if err == nil {
+			t.Errorf("expected E033 for %s, got no error", src)
+			continue
+		}
+		if !hasCode(err, "E033") {
+			t.Errorf("want E033 for %s, got: %v", src, err)
+		}
+	}
+}
+
 // TestByteDisplayGateAndDispatchAgree: the `print(x)` Display gate and the
 // `x.to_string()` dispatch it rewrites to must name the receiver the same
 // way. They didn't for `u8`: the gate ran a width switch that only knew 32

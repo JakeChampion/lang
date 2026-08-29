@@ -118,16 +118,18 @@ the audit history is preserved.
   before any asm is written. The codegen panic stays as a
   defence-in-depth assertion for future helpers that grow
   Linux-only syscalls without a corresponding pre-scan entry.
-- **`internal/ir/ir.go`, the two `ir: cast from %s to %s not yet
-  supported` sites** — i64 → string lands on the second of them. Dead
-  today (the checker rejects it pre-IR with E033), but a latent blocker
-  for the wide-scalar + usize work.
-- **`internal/ir/ir.go`, `ir: assignment target %T not yet lowered`** —
-  dead code path (the checker would catch it first); signals an
-  unfinished lowering case.
-
-  (Grep the message, not a line number: these have moved twice since
-  they were first recorded here.)
+- ~~**`internal/ir/ir.go`'s three "not yet lowered" cast / assignment
+  paths**~~ — settled: none was an unfinished lowering, so all three now
+  read as the assertions they are, naming what guarantees them (#7741).
+  The cast pair is unreachable because the checker accepts exactly the
+  two pointer reinterprets lowered above them, and the int-width table's
+  default because its four cases cover the width square. The assignment
+  one is unreachable because the parser admits only three lvalue forms
+  (P003). `i64 → string` was recorded here for years as a latent
+  wide-scalar blocker; it is a deliberate rejection — reinterpreting a
+  64-bit value as a pointer-shaped handle is the truncation E069 exists
+  to stop, and converting an i64 to text is `.to_string()`, not a cast.
+  Boundary tests now hold each invariant.
 
 ### Sprawl signals
 
