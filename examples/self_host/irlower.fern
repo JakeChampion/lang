@@ -40495,7 +40495,8 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: parser.Struc
                     if (match_idx > vi && msv.len() == 1) {
                         var arms_use: boolean = match_arms_use_name(msv[0], v.name);
                         var dead_after: boolean = !name_used_after(body, v.name, match_idx);
-                        var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx);
+                        var escapes: boolean = name_escapes_outside_stmt(body, v.name, match_idx)
+                            && !opt_match_alias_escape_ok(body, v.name, match_idx, [], []);
                         // A nested payload reads its arm's `match (binding)` as a
                         // BORROW (binding_escapes_arm_scrut); every other payload
                         // kind keeps the coarse walker, so this widens exactly one
@@ -47103,6 +47104,64 @@ function donor_bind_type(body: ast.Stmt[], name: string, structs: parser.StructD
 // reuse optimises, not a real escape). reclaimable_names_of treats a
 // struct-update base as an escape, so d would never be in `reclaim`; this is the
 // reuse-specific reclaimability check that excludes that one base occurrence.
+// opt_match_alias_escape_ok: every escape of `name` outside its consuming match
+// is an ALIAS BIND (`var a = name`) that is safe to read as a borrow — each
+// alias is never reassigned, never escapes on its own, and is never read after
+// the match that frees the box.
+//
+// Without this the alias bind alone refuses the whole class: name_escapes_
+// outside_stmt sees `var x = src` as an escape of src, the per-block free is
+// declined, and NOTHING else picks the value up — Option[<flat scalar array>]
+// has only the reassigned class (collect_fresh_optarr_names) and the
+// non-match-consumed one (collect_unmatched_optarr_names), and an aliased,
+// matched, non-reassigned local falls between them. The enum sibling has
+// carried the equivalent reading since #6606, which is why the same shape over
+// an enum was already clean while this one leaked every round.
+//
+// It cannot double-free. The alias's init is an IDENT, never a fresh
+// `Some(..)`, so no candidate scan admits the alias itself — the source is the
+// only name that can hold the credit, and it frees the one box once. The
+// not-read-after-the-match proof is what keeps the surviving alias from
+// reaching a freed box.
+//
+// The alias is cleared by body_unsafe_for_match_borrow rather than the coarse
+// body_unsafe_for: an alias consumed by its own `match (x)` is reading the box
+// as a BORROW — that match frees nothing, because the alias is not a candidate
+// — and the coarse walker counts it as an escape, which refused the very shape
+// this exists for. Everything else it refuses still refuses: a second alias, a
+// return, a call argument.
+function opt_match_alias_escape_ok(body: ast.Stmt[], name: string, skip: i32, borrowable: string[], recv_borrow: string[]): boolean {
+    var esc: string[] = [];
+    var saw_alias: boolean = false;
+    var i: i32 = 0;
+    while (i < body.len()) {
+        if (i != skip) {
+            var is_alias: boolean = false;
+            match (body[i]) {
+                ast.StmtVar(v) => {
+                    match (v.init) {
+                        ast.ExprIdent(aid) => {
+                            if (aid.name == name
+                                && util.index_of_str(body_assign_targets(body), v.name) < 0
+                                && !body_unsafe_for_match_borrow(body, v.name, borrowable, recv_borrow)
+                                && !name_used_after(body, v.name, skip)) {
+                                is_alias = true;
+                                saw_alias = true;
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+            if (!is_alias) { esc = walk_stmt_escapes(body[i], esc); }
+        }
+        i = i + 1;
+    }
+    if (!saw_alias) { return false; }
+    return util.index_of_str(esc, name) < 0;
+}
+
 function name_escapes_outside_stmt(body: ast.Stmt[], name: string, skip: i32): boolean {
     var esc: string[] = [];
     var i: i32 = 0;
