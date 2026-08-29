@@ -540,13 +540,16 @@ automatically (PR #333).
 Landed across 17 PRs (#320–#336). Six-lens review of the
 midpoint shape captured in `docs/PR-326-REVIEW.md`.
 
-### 2. Inline small strings (SSO) — partially shipped on wasm
+### 2. Inline small strings (SSO) — shipped; x86-64 two-word flip open
 
 **Impact:** zero-alloc for strings ≤ N bytes; significant for
-short keys, status codes, header names. Today every runtime-
-built short string allocates ≥ 16 bytes (alloc round-up).
+short keys, status codes, header names. Before SSO, every
+runtime-built short string allocated ≥ 16 bytes (alloc
+round-up). The cap is now 7 bytes on wasm32 and 15 on arm64;
+x86-64 keeps the 7-byte single-word form.
 
-**Shipped (wasm, single-i32 form, 3-byte cap)**:
+**Shipped first (wasm, single-i32 form, 3-byte cap — since
+superseded by the two-word flip below)**:
 PRs #351–#364 landed the single-i32 tiny SSO encoding (top-bit
 flag + 3-bit length + up-to-3 inline bytes, see
 `fernstring.PackTinyWasm`) without widening the operand-stack
@@ -559,27 +562,25 @@ alloc on inline-form values written to `$__streams_write`. See
 `docs/SSO-PLAN.md` for the full architecture + remaining-work
 list.
 
+**Since shipped:** the two-word ABI flip (`(data_ptr, len)` on
+the operand stack, top bit of `len` flags inline) landed on
+wasm32 and on arm64, and both natives got their own
+`$__fern_str_*` runtime-helper siblings — see
+`docs/SSO-NATIVE-FLIP-STATUS.md`. The `Map[string, V]` hash
+concern is gone with them: `__str_idx` spills an inline
+string's pair to a fixed scratch slot instead of promoting the
+key to the heap, so indexed reads in the hash no longer
+allocate.
+
 **Remaining:**
 
-  - **Two-word ABI flip** (lifts cap from 3 → 7 bytes on wasm,
-    15 on natives). Repurpose the Fern string's runtime
-    representation to `(data_ptr:usize, len:usize)` on the
-    operand stack — top bit of `len` flags inline. Niko-style;
-    Rust / Swift / Zig std all converged on this shape.
-    Pair with the `usize` work — `usize` is the slot type for
-    the length field.
-  - **Native backend mirror** — x86_64 + arm64 need their own
-    `$__fern_str_*` runtime-helper siblings + producer flips.
-    Likely 8–10 PRs per backend, paralleling #351–#362.
-  - **`Map[string, V]` hash optimisation** — the prelude's
-    `__map_hash` does `s[i]` byte-by-byte; under SSO inline
-    keys trigger `$__str_idx`-induced promote-to-heap per
-    call. Needs either a new `string.byte(i)` primitive or a
-    short-key fast path in the hash function.
+  - **x86-64 two-word flip.** x86-64 alone stays on the
+    single-word LSB-tagged form (7-byte cap vs arm64's 15); it
+    never sets `ast.TwoWordOverride`. Mirroring the arm64 flip
+    is the last piece, sketched under "Then: x86_64" in
+    `SSO-NATIVE-FLIP-STATUS.md`.
 
-**Scope:** the wasm single-i32 form is done. The two-word flip
-is medium-large per backend; native mirror is large per backend.
-Pre-requisite for the two-word form: usize (Item 1).
+**Scope:** medium-large, one backend.
 
 ### 3. Pack the operand-stack into 8-byte slots
 

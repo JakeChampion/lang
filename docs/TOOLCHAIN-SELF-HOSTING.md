@@ -669,6 +669,14 @@ End-to-end exit code 42 demo (covered by
     write-file routes — the import sets already match), so no new
     component wrap was needed. End-to-end tests:
     `TestCmdLangComponentWrapCliWith{StdinReadLine,OpenReader,OpenWriter}`.
+  - *(Reading note: the bullets below are the implementation record, and
+    name the per-shape composers of their day — `ComposePreview2CliRun`,
+    `ComposeTcpServerCliRun`, `ComposeUdpClientCliRun` — plus the routing
+    predicates that selected between them. Those are gone: every shape
+    now classifies into one `ComposeRequest` and composes through
+    `ClassifyCore` → `Compose` (`compose_unified.go`), which is why any
+    mix of imports composes today.)*
+
   - **General composition engine. Shipped.**
     `component.ComposePreview2CliRun` (#1326) replaced the bespoke
     per-shape CLI-stream wraps with a data-driven composer: given an
@@ -825,7 +833,8 @@ End-to-end exit code 42 demo (covered by
     compose adapter-free — verified end-to-end
     (`TestWasmPreview2SocketCliExtrasAdapterFree`). The HTTP handler uses
     the same extras path, scoped to what the `wasi:http/proxy` world
-    grants (clocks / random; env / files route to the adapter there).
+    grants (clocks / random; env / files are not granted there, and are
+    rejected with E066 rather than composed).
   - **TCP + filesystem (read / write / append). Shipped.** The
     motivating stream-backed mixes: a static file server (read files off
     disk and serve them) and a logging server (write access logs /
@@ -835,10 +844,7 @@ End-to-end exit code 42 demo (covered by
     `filesystem/types.{open-at, read|write|append-via-stream}`) into its
     mems-loop over the input/output-stream it already surfaces; the
     file's `blocking-read`/`blocking-write` reuses tcp_recv / tcp_send's
-    io/streams lowering. The three directions are mutually exclusive
-    (single-direction `filesystem/types` instance type), enforced by
-    `usesPreview2TcpServer` (a program touching two directions falls
-    through to the adapter). So `tcp_listen`/`accept`/`send` +
+    io/streams lowering. So `tcp_listen`/`accept`/`send` +
     `read_file` (or `write_file` / `open_appender`) + `print` composes
     adapter-free and runs under `wasmtime run --dir`. Verified
     end-to-end — a Go client fetches on-disk content over the socket
@@ -858,23 +864,27 @@ End-to-end exit code 42 demo (covered by
     (`hasFileReadWrite` / `via2`). Verified — `read_file` → `write_file`
     copies content through `wasmtime run --dir`
     (`TestWasmPreview2FileReadWriteAdapterFree`). This was the last CLI
-    rejection; the remaining adapter-forcing cases are all sockets/http
-    mixes. (read+append in one program is still unsupported — the
-    combined body is read+write, not read+append.)
+    rejection. The directions are no longer mutually exclusive: since the
+    composers unified behind `ClassifyCore` → `Compose`, a single program
+    may mix any of them — read+append composes and runs too.
   - **TCP + stdin. Shipped.** A TCP server that also reads stdin (e.g.
     config) composes adapter-free — `ComposeTcpServerCliRun` surfaces
     `wasi:cli/stdin`'s get-stdin (the stdin input-stream reuses the
     connection's blocking-read lowering)
     (`TestWasmPreview2TcpStdinAdapterFree`).
-  - **Still to do — the adapter-retirement punch list:**
-    - **TCP + UDP** in one program — both socket families in one composer.
-    - **UDP + files** — filesystem open-chain into the UDP composer (it
-      now has io/streams from udp+print).
-    - **HTTP handler + files** — filesystem into the http composer
-      (composes, though `wasmtime serve`'s proxy world won't run it).
-    - Then `-wasi-adapter` / preview-1 / `wasm-tools` can be retired
-      from the default toolchain. Inbound `udp_recv`, DNS hostnames, and
-      read+append remain genuinely niche.
+  - **Both socket families, and UDP + files, in one program. Shipped.**
+    The last combinations the shape-specific composers could not express
+    now compose and run adapter-free through the unified path: TCP + UDP
+    (`TestWasmPreview2TcpUdpAdapterFree`) and UDP + the filesystem read
+    open-chain (`TestWasmPreview2UdpFileAdapterFree`). **HTTP handler +
+    files** is settled the other way — `wasm32-wasi-http` does not grant
+    the `fs` capability, so a handler calling `read_file` is an E066
+    diagnostic long before composition (`TestEnforceFsByTarget`); the
+    proxy world has no filesystem to compose against. `-wasi-adapter` /
+    preview-1 / the `wasm-tools` shell-out are themselves already retired
+    (`docs/WASI-PREVIEW2.md`). Still unimplemented, and neither a
+    composer gap: inbound UDP (there is no `udp_bind` builtin) and
+    hostname addressing (`udp_send` parses an IPv4 literal only).
   - **Default-path driver wiring for `-target wasm32-wasi`.** Shipped
     in #1204. `-target wasm32-wasi` without `-wasi-adapter` routes
     through the Go-side preview-2 encoder (cli-run shape)

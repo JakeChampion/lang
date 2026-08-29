@@ -1,9 +1,11 @@
 # Small-String-Optimisation (SSO) migration plan
 
-> **Status: SHIPPED everywhere.** The two-word ABI + inline-SSO encoding is
-> live on wasm32 (`SSO-TWOWORD-EXEC.md`) and on **both** native backends —
-> arm64 AND x86-64 (`SSO-NATIVE-FLIP-STATUS.md`, 2026-06-03). This doc is
-> the historical migration roadmap.
+> **Status: inline SSO is live on every backend; the two-word ABI is not.**
+> wasm32 (`SSO-TWOWORD-EXEC.md`) and arm64 (`SSO-NATIVE-FLIP-STATUS.md`,
+> 2026-06-03) carry the two-word ABI + top-bit-tagged inline encoding;
+> x86-64 has inline SSO on the single-word LSB-tagged ABI (7-byte cap) and
+> mirroring the flip there is the one substantial item still open. This doc
+> is the historical migration roadmap; see "Remaining work" for the rest.
 
 Captures the multi-PR migration strategy for BACKEND-PARITY
 perf item #2 (inline small strings). The change is breaking
@@ -398,19 +400,21 @@ strings too — not SSO-induced.
 
 In rough order of payoff:
 
-1. **Two-word ABI flip** (lifts cap from 3 → 7 bytes). Big
-   per-backend change; the runtime helpers already abstract
-   the inline/heap branch so most consumer-side code stays
-   untouched.
-2. **Native backend SSO** (x86_64 + arm64). Each backend needs
-   its own `$__fern_str_*` siblings in raw assembly. PR
-   sequence likely mirrors the wasm shape (#351–#362) per
-   backend.
-3. **`Map[string, V]` runtime in the prelude**. The hash
-   function does `s[i]` byte-by-byte; under SSO, inline keys
-   trigger `$__str_idx`-induced promote-to-heap per call.
-   Needs either a new `string.byte(i)` primitive or a
-   prelude-only fast path for short keys.
+1. ~~**Two-word ABI flip**~~ — shipped on wasm32 and arm64. **Open on
+   x86-64**, which stays single-word LSB-tagged (7-byte cap); the flip
+   there would lift its cap to 15 and is sketched in
+   `SSO-NATIVE-FLIP-STATUS.md` under "Then: x86_64".
+2. ~~**Native backend SSO**~~ — shipped on both natives. Each got its own
+   `$__fern_str_*` siblings in raw assembly.
+3. ~~**`Map[string, V]` hash under SSO**~~ — the premise is stale.
+   `__str_idx` gained an SSO-aware path that spills an inline string's
+   `(data, len)` pair to a fixed scratch slot (wasm: `strIdxScratchAddr`;
+   x86-64: `emitInlineIdxHelper`), so indexing an inline key no longer
+   promotes it to the heap and nothing allocates per call. What is left is
+   an ordinary perf question: `__map_fnv_str_seeded` assembles each 4-byte
+   block from four indexed loads rather than reading the inline word
+   directly, and beating that needs a raw pointer into a string plus
+   unaligned loads (#6200).
 4. **TryOp on Option[string]** — existing bug where the
    pair-form rebox stores payload at the 8-byte-offset
    layout (arm64 shape) but the success-path read targets

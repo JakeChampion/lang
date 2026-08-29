@@ -1,21 +1,23 @@
-# SSO native flip — COMPLETE (arm64 + x86_64 green)
+# SSO native flip — arm64 shipped; x86-64 still single-word
 
-**STATUS (2026-06-03): SHIPPED on both native backends.** The two-word
-string ABI + top-bit-tagged inline encoding is live on arm64 AND x86_64,
-verified across the codegen unit tests, string/SSO e2e, cross-backend
-differential parity, and the full e2e suite (EXIT=0). The §0–§9 arc below
-is kept as the implementation record.
+**STATUS (2026-06-03): the two-word string ABI + top-bit-tagged inline
+encoding is SHIPPED on arm64**, verified across the codegen unit tests,
+string/SSO e2e, cross-backend differential parity, and the full e2e suite
+(EXIT=0). The §0–§9 arc below is that implementation record.
 
-Knock-on: this **unblocks RC-Perceus item 5g** (native heap-string rc).
-Native heap strings (>15 B, so genuinely heap, not inline-SSO) now reclaim
-to a bounded high-water and are sound (0 over-releases) on both backends —
-verified for the loop var-reinit (`var s = a + b`), reassignment-overwrite
-(`s = s + chunk`), and concat-temp shapes. The "arm64 string reclaim
-deferred / slice 5g" comments still scattered in `internal/ir/ir.go`
-(e.g. emitVarReinitDropOld's StringType case, the assign-overwrite string
-branch) are now **stale** — reclamation works; clean them up as a
-follow-up (do NOT naively add a second dec where one already fires, or it
-double-frees).
+**x86-64 is NOT on the two-word ABI.** It has inline SSO, but in the
+single-word LSB-tagged form (`ssoTagBit`, 7-byte cap, in
+`internal/codegen/x86_64/x86_64.go`): it never sets `ast.TwoWordOverride`, so
+`ast.UseTwoWordStrings(8)` is false for the whole of its emit. Mirroring
+the flip there is still the future work sketched under "Then: x86_64".
+
+Knock-on: the arm64 flip is what RC-Perceus item 5g (native heap-string
+rc) was blocked on, but 5g itself did NOT land with it. `internal/ir/ir.go`
+still deliberately excludes arm64 from the overwrite `__fern_str_dec`
+(the branch is gated on `b.ptrW == 4`), because enabling it over-releases
+on real hardware where qemu user-mode masks the fault; the cost of that
+exclusion is measured in #6554. So the "arm64 string reclaim deferred /
+slice 5g" comments in `ir.go` are load-bearing, not stale.
 
 Companion to `docs/SSO-TWOWORD-EXEC.md`. The wasm32 two-word
 ABI flip is shipped (PR #382, in main). This doc tracks the
