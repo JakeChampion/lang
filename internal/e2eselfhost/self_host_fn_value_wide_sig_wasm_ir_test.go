@@ -72,6 +72,106 @@ function main(): i32 { return (apply((x: i32) => (x as i64) * 3000000000i64) / 1
 	// be unaffected. If this ever fails the fallback has stopped falling back.
 	{"all-i32-control", `function apply(g: (i32) => i32): i32 { return g(5); }
 function main(): i32 { return apply((x: i32) => x * 2); }`},
+
+	// --- the SHADOW rows (#7253) --------------------------------------------
+	//
+	// The sidecars above were kept in name-keyed side tables scanned FORWARD,
+	// while the callee's slot is resolved by slot_of, which scans BACKWARD. So
+	// the operand came from the innermost binding of a spelling and the funcref
+	// type from the outermost, in one expression — guaranteed to disagree under
+	// any shadow. Each row pairs a shadowing program with a one-token RENAME
+	// control: rename the inner binding and nothing else, and the answer must
+	// not move. If a row and its control ever disagree, the key is back on the
+	// name.
+	//
+	// Only an inner binding can be the victim: lower_func seeds params first and
+	// top-level locals after, and the first row of a spelling wins.
+	{"shadowed-sig", `function apply(v: i64): i64 {
+    var g: (i64) => i64 = (x: i64) => x * 2i64;
+    var t: i64 = g(v);
+    if (v > 0i64) {
+        var g: (i32) => i32 = (y: i32) => y + 1;
+        t = t + (g(3) as i64);
+    }
+    return t + g(v + 1i64);
+}
+function main(): i32 { return apply(20i64) as i32; }`},
+	{"shadowed-sig-rename-control", `function apply(v: i64): i64 {
+    var g: (i64) => i64 = (x: i64) => x * 2i64;
+    var t: i64 = g(v);
+    if (v > 0i64) {
+        var h: (i32) => i32 = (y: i32) => y + 1;
+        t = t + (h(3) as i64);
+    }
+    return t + g(v + 1i64);
+}
+function main(): i32 { return apply(20i64) as i32; }`},
+
+	// The RETURN half of the same seed: the inner call inherited the outer's
+	// declared i64 return, so lower_i64 skipped the sign-extend its i32 result
+	// needed and infer_expr_width width-tracked the binding at 64.
+	{"shadowed-ret", `function apply(v: i64): i64 {
+    var g: (i32) => i64 = (x: i32) => (x as i64) * 3000000000i64;
+    var t: i64 = g(1);
+    if (v > 0i64) {
+        var g: (i32) => i32 = (y: i32) => y + 7;
+        var u: i64 = g(3) as i64;
+        t = t + u;
+    }
+    return (t / 1000000000i64) + g(2);
+}
+function main(): i32 { return apply(4i64) as i32; }`},
+	{"shadowed-ret-rename-control", `function apply(v: i64): i64 {
+    var g: (i32) => i64 = (x: i32) => (x as i64) * 3000000000i64;
+    var t: i64 = g(1);
+    if (v > 0i64) {
+        var h: (i32) => i32 = (y: i32) => y + 7;
+        var u: i64 = h(3) as i64;
+        t = t + u;
+    }
+    return (t / 1000000000i64) + g(2);
+}
+function main(): i32 { return apply(4i64) as i32; }`},
+
+	// The DYN-position half (#5276): the inner call inherited the outer's
+	// dyn-boxed argument positions, so a plain integer argument was handed to
+	// lower_dyn_arg and the callee compared a box POINTER against 4. The inner
+	// body compares against a literal deliberately — a `y * 3` body would
+	// multiply an arena address and give a non-reproducible exit.
+	{"shadowed-dyn", `trait Show { function show(self: Self): i32; }
+struct A { v: i32 }
+impl Show for A { function show(self: Self): i32 { return self.v; } }
+function run(k: i32): i32 {
+    var d: (dyn Show) => i32 = (s: dyn Show) => s.show();
+    var t: i32 = d(A { v: k });
+    if (k % 2 == 0) {
+        var d: (i32) => i32 = (y: i32) => if (y == 4) { 1 } else { 0 };
+        t = t + d(4);
+    }
+    return t + d(A { v: 1 });
+}
+function main(): i32 {
+    var t: i32 = 0; var i: i32 = 0;
+    while (i < 100) { t = t + run(i); i = i + 1; }
+    return t % 83;
+}`},
+	{"shadowed-dyn-rename-control", `trait Show { function show(self: Self): i32; }
+struct A { v: i32 }
+impl Show for A { function show(self: Self): i32 { return self.v; } }
+function run(k: i32): i32 {
+    var d: (dyn Show) => i32 = (s: dyn Show) => s.show();
+    var t: i32 = d(A { v: k });
+    if (k % 2 == 0) {
+        var e: (i32) => i32 = (y: i32) => if (y == 4) { 1 } else { 0 };
+        t = t + e(4);
+    }
+    return t + d(A { v: 1 });
+}
+function main(): i32 {
+    var t: i32 = 0; var i: i32 = 0;
+    while (i < 100) { t = t + run(i); i = i + 1; }
+    return t % 83;
+}`},
 }
 
 // TestSelfHostFnValueWideSigWasmIR runs the corpus through the self-host wasm
@@ -126,6 +226,52 @@ func TestSelfHostFnValueWideSigWasmIR(t *testing.T) {
 			}
 			if got := rcmd.ProcessState.ExitCode(); got != want {
 				t.Errorf("%s exited %d, want %d (interp oracle)\nstderr: %s", tc.name, got, want, se.String())
+			}
+		})
+	}
+}
+
+// TestSelfHostFnValueWideSigIRX86_64 runs the same corpus through the self-host
+// x86-64 asm path.
+//
+// The wasm leg is not sufficient for it. Wasm is where a wrong funcref type is
+// LOUD — the validator refuses the module or the dispatch traps — so the rows
+// #6282 was written for fail there first. The register backends have no
+// structural funcref check at all: a mis-widthed argument is a wrong VALUE and
+// nothing complains. Both #7253 shadow rows that move the answer rather than
+// the module (`shadowed-ret`, `shadowed-dyn`) are that shape, and this is the
+// leg that sees them.
+func TestSelfHostFnValueWideSigIRX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	interpBin := buildLangBinForInterp(t)
+	dir := writeSelfHostAsmProject(t)
+	src, err := os.ReadFile("../../examples/self_host/asm_run.fern")
+	if err != nil {
+		t.Fatalf("read asm_run.fern: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+		t.Fatalf("write asm_run.fern: %v", err)
+	}
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+
+	for _, tc := range fnValueWideSigCases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := interpExit(t, interpBin, tc.src)
+
+			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
+			if len(asm) == 0 {
+				t.Fatalf("self-host compiler emitted 0 bytes")
+			}
+			bin := buildBin(t, gcc, dir, tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(bin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], bin)...)
+			}
+			_ = cmd.Run()
+			if got := cmd.ProcessState.ExitCode(); got != want {
+				t.Errorf("%s exited %d, want %d (interp oracle)", tc.name, got, want)
 			}
 		})
 	}
