@@ -230,26 +230,33 @@ on the self-host IR path under `FERN_STRICT_IR=1` on all three targets, and the
 per-module fixpoint is unaffected. Two things it hit that the next conversion
 will hit too:
 
-**The second adoption (SH-028): `util.append_all[T]`.** The payoff the first
-slice predicted, collected. Six byte-identical concat helpers — `append_funcs`
-/ `append_structs` / `append_aliases` / `append_enum_decls` in `flatten.fern`,
-plus a second `append_structs` and an `append_enums` in `modloader.fern` — are
-one generic. The audit row said four; the two in `modloader.fern` were the
-usual drift, found by grepping for the shape rather than trusting the row.
+**The second adoption does not work yet (SH-028, attempted and reverted
+2026-08-29).** One `util.append_all[T]` replacing six byte-identical concat
+helpers in `flatten.fern` and `modloader.fern` type-checks, passes
+`check-sources`, and builds the self-host compiler on both arches — and the
+compiler it builds is broken. `stage2-fixpoint-arm64` dies
+`gen1: segmentation fault` on all three of its `stdlib: true` cases while the
+no-stdlib `lexer` case passes, and locally every `checkSourceModload` case
+dies on a signal, alongside `TestSelfHostGenericCtorIR` and
+`TestSelfHostGenericNestedRet`. Reverting only the generic restores green.
 
-Two things this one establishes that the first could not:
+So the honest state of generics on the self-host path is narrower than "the
+first adoption worked": **astwalk's fold spine works, and the next function to
+be made generic broke the compiler.** Three things follow.
 
-- **An import does not instantiate.** `util.fern` is imported by nearly every
-  module, which looks like the riskiest possible home for the tree's first
-  non-astwalk generic. It is not: monomorphisation follows CALLS, so
-  `append_all` instantiates only in `flatten.fern` and `modloader.fern`, over
-  four element types. Placement in a widely-imported module costs nothing;
-  placement near the callers is what would have cost a duplicate.
-- **The census pin is the thing that makes adoption deliberate.** Adding the
-  generic failed `TestSelfHostFeatureCensus` with "counts 9, pinned at 8" and
-  the instruction to move both the number and this row. That gate, not review,
-  is what stops generic surface growing unnoticed on the one path the fixpoint
-  monomorphises.
+- **`TestSelfHostFeatureCensus`'s pin is load-bearing, not bookkeeping.** It
+  failed with "generic functions: census counts 9, pinned at 8", and that is
+  the only reason the change was treated as an adoption needing fixpoint
+  scrutiny rather than as a dedupe. Without it this lands as a tidy-up and the
+  segfault surfaces later, attributed to something else.
+- **The failure is invisible to the cheap gates.** Type-check, `check-sources`
+  and `build-selfhost` all pass. Only running the built compiler over the
+  module-loading path shows it. That is the SH-050 lesson in a different
+  costume: a compiler that builds is not a compiler that works.
+- **An import still does not instantiate** — `append_all` monomorphises only in
+  `flatten.fern` and `modloader.fern`, over four element types — so the blast
+  radius was small and the breakage was still total. Placement was not the
+  problem.
 
 - **The visitor could not be an arrow lambda — until it could.** A lambda's
   declared parameter types were resolved only when the enclosing function was
