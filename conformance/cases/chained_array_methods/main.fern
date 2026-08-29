@@ -1,0 +1,61 @@
+// Chaining two array-returning builtins — `xs.append(a).append(b)`. Before
+// #7754 this REFUSED to compile: the outer call's receiver resolved as i32
+// ("call to unknown symbol i32.append") and the self-host emitted nothing,
+// while native compiled it. It is the natural way to write a byte-buffer
+// append and appears in the repo's own examples/proposals/wal.fern.
+//
+// The bug was an asymmetry, not a missing feature: expr_is_f64arr and
+// expr_is_i64arr each carried a clause saying `with`/`append` preserve the
+// receiver's element kind, and expr_is_arr_src / expr_is_strarr did not. So
+// an f64[] chain lowered while the identical i32[] chain refused. This case
+// exercises all four element kinds so the limbs cannot drift apart again.
+//
+// Sentinels are 251-253, above the `% 113` the success path returns.
+function scalars(i: i32): i32 {
+    var xs: i32[] = [i];
+    xs = xs.append(i + 1).append(i + 2);
+    if (xs.len() != 3) { return 253; }
+    return xs[2];
+}
+
+function bytes(i: i32): i32 {
+    var bs: u8[] = [];
+    bs = bs.append((i % 256) as u8).append(((i + 1) % 256) as u8);
+    if (bs.len() != 2) { return 253; }
+    return bs.len();
+}
+
+function strings(i: i32): i32 {
+    var ss: string[] = ["a"];
+    ss = ss.append("b").append("c");
+    if (ss.len() != 3) { return 253; }
+    return ss[2].len() + ss.len();
+}
+
+function floats(i: i32): i32 {
+    var fs: f64[] = [1.0];
+    fs = fs.append(2.0).append(3.0);
+    return fs.len();
+}
+
+// `with` chains, and the two mixed orders — every combination refused before.
+function withs(i: i32): i32 {
+    var xs: i32[] = [1, 2, 3];
+    xs = xs.with(0, i).with(1, i + 1);
+    var ys: i32[] = xs.append(9).with(0, 5);
+    var zs: i32[] = xs.with(2, 7).append(8);
+    return ys.len() + zs.len() + xs[1];
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        var a: i32 = scalars(i) + bytes(i) + strings(i) + floats(i) + withs(i);
+        if (a >= 253) { return 252; }
+        acc = acc + a;
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}

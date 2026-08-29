@@ -5874,6 +5874,13 @@ pub function expr_is_strarr(e: ast.Expr, s: LowerState): boolean {
                     if (arr_samekind_call(cfa.field, cfa.obj, c.args.len(), s)) {
                         return expr_is_strarr(cfa.obj, s);
                     }
+                    // `a.with(...)` / `a.append(...)` preserve the receiver's element
+                    // kind: a string[] receiver yields a fresh string[]. The f64 and
+                    // i64 limbs have carried this since they were written; without it
+                    // here a CHAINED `xs.append(a).append(b)` resolved the outer
+                    // receiver as i32 and refused the module (#7754).
+                    if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
+                        && expr_is_strarr(cfa.obj, s)) { return true; }
                     if (cfa.field == "split" && c.args.len() == 1 && expr_is_str(cfa.obj, s)) { return true; }
                     if (cfa.field == "lines" && c.args.len() == 0 && expr_is_str(cfa.obj, s)) { return true; }
                     // `m.keys()` on a string-keyed map / `m.values()` on a
@@ -6102,6 +6109,14 @@ pub function expr_is_arr_src(e: ast.Expr, s: LowerState): boolean {
                     if (arr_samekind_call(cfa.field, cfa.obj, c.args.len(), s)) {
                         return expr_is_arr_src(cfa.obj, s);
                     }
+                    // `a.with(...)` / `a.append(...)` preserve the receiver's element
+                    // kind — the scalar-array limb of the clause expr_is_f64arr and
+                    // expr_is_i64arr already carry. Its absence here is what made a
+                    // CHAINED `xs.append(a).append(b)` resolve its outer receiver as
+                    // i32 and refuse the module, while the same chain on an f64[]
+                    // lowered (#7754).
+                    if (((cfa.field == "with" && c.args.len() == 2) || (cfa.field == "append" && c.args.len() == 1))
+                        && expr_is_arr_src(cfa.obj, s)) { return true; }
                     if ((cfa.field == "bytes" || cfa.field == "as_bytes") && c.args.len() == 0) {
                         return expr_is_str(cfa.obj, s);
                     }
