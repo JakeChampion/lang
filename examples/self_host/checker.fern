@@ -2566,7 +2566,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
   var name: string = "";
   var is_method: boolean = false;
   var recv_type_name: string = "";
-  var recv_ty: Type = t_unknown("__noreceiver__");
+  // Overwritten by the receiver's own type on every path that reads it; the
+  // label is never compared, so this only has to be "unknown".
+  var recv_ty: Type = t_unknown("");
   match (c.callee) {
     ast.ExprIdent(id) => {
       name = id.name;
