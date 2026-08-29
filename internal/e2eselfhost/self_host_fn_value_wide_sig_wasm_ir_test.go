@@ -75,17 +75,20 @@ function main(): i32 { return apply((x: i32) => x * 2); }`},
 
 	// --- the SHADOW rows (#7253) --------------------------------------------
 	//
-	// The sidecars above were kept in name-keyed side tables scanned FORWARD,
-	// while the callee's slot is resolved by slot_of, which scans BACKWARD. So
-	// the operand came from the innermost binding of a spelling and the funcref
-	// type from the outermost, in one expression — guaranteed to disagree under
-	// any shadow. Each row pairs a shadowing program with a one-token RENAME
-	// control: rename the inner binding and nothing else, and the answer must
-	// not move. If a row and its control ever disagree, the key is back on the
-	// name.
+	// A nested `var g = <lambda>` shadowing a top-level one. `subst_fcall_expr`
+	// rewrites every `g(…)` callee it walks past to the outer lambda's hoisted
+	// `__lam_N`, and it recurses into if / while / for / match bodies with no
+	// notion of scope — so the INNER binding's own calls ran the OUTER lambda.
+	// In the emitted asm all three call sites were `call __fn___lam_0` while
+	// `__fn___lam_1` was emitted and never reached.
 	//
-	// Only an inner binding can be the victim: lower_func seeds params first and
-	// top-level locals after, and the first row of a spelling wins.
+	// Each row pairs a shadowing program with a one-token RENAME control: rename
+	// the inner binding and nothing else, and the answer must not move. Both are
+	// oracle-checked against the interpreter, so a row that regresses fails on
+	// its own, and the pair is what says the CAUSE was the name.
+	//
+	// The victim is always the inner binding — the outer one is what the lift
+	// hoisted — so a probe that shadows the other way measures nothing.
 	{"shadowed-sig", `function apply(v: i64): i64 {
     var g: (i64) => i64 = (x: i64) => x * 2i64;
     var t: i64 = g(v);
@@ -120,7 +123,7 @@ function main(): i32 { return apply(20i64) as i32; }`},
     }
     return (t / 1000000000i64) + g(2);
 }
-function main(): i32 { return apply(4i64) as i32; }`},
+function main(): i32 { return (apply(4i64) % 83i64) as i32; }`},
 	{"shadowed-ret-rename-control", `function apply(v: i64): i64 {
     var g: (i32) => i64 = (x: i32) => (x as i64) * 3000000000i64;
     var t: i64 = g(1);
@@ -131,7 +134,7 @@ function main(): i32 { return apply(4i64) as i32; }`},
     }
     return (t / 1000000000i64) + g(2);
 }
-function main(): i32 { return apply(4i64) as i32; }`},
+function main(): i32 { return (apply(4i64) % 83i64) as i32; }`},
 
 	// The DYN-position half (#5276): the inner call inherited the outer's
 	// dyn-boxed argument positions, so a plain integer argument was handed to
