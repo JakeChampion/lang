@@ -27987,7 +27987,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
                 var rslot: i32 = st.slot_of(rcopt.names[rk]);
                 if (rslot >= st.n_params) {
                     if (rcopt.tagged[rk]) { st = emit_opt_tagged_payload_drop(st, rslot, rcopt.pfrees[rk], tagged_errfreefn(rcopt.errstrs[rk])); }
-                    else if (rcopt.inners[rk].len() > 0) { st = emit_nested_opt_payload_drop(st, rslot, rcopt.inners[rk]); }
+                    else if (rcopt.inners[rk].len() > 0) { st = emit_optopt_rc_deep_free(st, rslot, rcopt.inners[rk]); }
                     else if (rcopt.pfrees[rk] != "__fern_rc_dec") { st = emit_opt_payload_drop_via(st, rslot, rcopt.pfrees[rk]); }
                     else if (rcopt.stys[rk].len() > 0) { st = emit_opt_struct_payload_drop(st, rslot, rcopt.stys[rk]); }
                     else { st = emit_opt_payload_drop(st, rslot); }
@@ -39543,11 +39543,13 @@ function rcpayload_option_cand(v: ast.StmtVar, structs: parser.StructDecl[]): Op
     }
     // The rc-INNER sibling: `Option[Option[i32[]]]` / `Option[Option[string]]`,
     // whose inner box owns a payload of its own. Released two levels deep by
-    // emit_nested_opt_payload_drop. The inner must be a `Some(x)` construction,
-    // not `None` and not a live local: `Some(None)` has no payload at offset 8
-    // for the inner release to take, and a local's own reclaim already frees the
-    // box this one would.
-    if (nested_opt_inner_freefn(pt) != "" && opt_arg_is_some_ctor(arg0)) {
+    // emit_optopt_rc_deep_free, whose tag guard is what admits `Some(None)` here
+    // (#7718): the release this used to take read offset 8 unconditionally, so a
+    // None inner would have handed the free fn whatever that word held, and the
+    // gate excluded it for that reason rather than because the box needs no
+    // release — it leaked both boxes instead. A live local is still refused: its
+    // own reclaim already frees the box this drop would.
+    if (nested_opt_inner_freefn(pt) != "" && opt_arg_is_direct_ctor(arg0)) {
         return OptRcCand { variant: kind, ptype: pt };
     }
     // Annotated STRING payload (#4355) — admitted only when FRESH: a literal
@@ -40319,7 +40321,7 @@ function opt_payload_deep_sty(ptype: string, structs: parser.StructDecl[]): stri
 // stay fn-level-only, where the pass and the machinery agree.
 // `inners[i]` is nested_opt_inner_freefn's verdict: non-empty names the release
 // for a NESTED Option payload's OWN payload, routing the drop through
-// emit_nested_opt_payload_drop instead of the one-level helper. Its own field
+// emit_optopt_rc_deep_free instead of the one-level helper. Its own field
 // rather than a marker inside `pfrees` or `stys`, because both of those are read
 // as a single helper name / struct type and a prefixed value would reach
 // op_call_direct or __struct_drop_ as if it were one.
@@ -40648,31 +40650,6 @@ function nested_opt_inner_freefn(pt: string): string {
     if (inner == "string") { return "__fern_str_free"; }
     if (inner == "string[]") { return "__fern_str_arr_free"; }
     return "";
-}
-
-// emit_nested_opt_payload_drop releases an Option local whose payload is ITSELF
-// an Option box owning an rc payload — two levels, where emit_opt_payload_drop_via
-// does one. Spill the inner box out of the outer, hand it to that same helper
-// (which frees its payload, then it, and zeroes the temp), then free the outer
-// box and zero the slot.
-//
-// Depth-first, so no read chases through an already-freed box, and the temp is
-// zeroed by the inner call so a later sweep over it decs a null.
-function emit_nested_opt_payload_drop(s: LowerState, slot: i32, inner_freefn: string): LowerState {
-    var st: LowerState = s;
-    var hn: string = "$nopt" + util.i32_to_string(st.locals.len());
-    st = st.add_local(hn);
-    var h: i32 = st.slot_of(hn);
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_opt_payload());          // the inner Option box
-    st = st.emit(ir.op_store_local(h));
-    st = emit_opt_payload_drop_via(st, h, inner_freefn);
-    st = st.emit(ir.op_load_local(slot));
-    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));   // the outer box
-    st = st.emit(ir.op_drop());
-    st = st.emit(ir.op_const_i32(0));
-    st = st.emit(ir.op_store_local(slot));
-    return st;
 }
 
 function emit_opt_payload_drop(s: LowerState, slot: i32): LowerState {
@@ -43493,14 +43470,15 @@ function emit_optarr_deep_free_err(se: LowerState, slot: i32, err_str: boolean):
 // emit_optopt_rc_deep_free: the EXIT-SWEEP release for an
 // `Option[Option[<rc payload>]]` local (#7718) — two levels, fully guarded.
 //
-// emit_nested_opt_payload_drop already emits this release for the
-// consuming-match path, and cannot be reused here: it delegates to
+// This is the release for BOTH paths — the exit sweep and the
+// consuming-match drop. The unguarded emitter it replaced delegated to
 // emit_opt_payload_drop_via, which carries "no null / tag guard" by design
-// because it runs where the box is known live and the inner variant is known.
-// An exit sweep has neither guarantee — an untaken branch leaves the slot null,
-// the outer box may be None, and a `Some(None)` would otherwise hand the inner
-// free fn whatever the payload word holds. Wrapping that helper in guards does
-// not work either: it frees the OUTER box itself, which must be freed on every
+// because it ran only where the box was known live and the inner variant known.
+// Neither holds at an exit sweep — an untaken branch leaves the slot null, the
+// outer box may be None — and the missing INNER tag guard is what kept
+// `Some(None)` out of the consuming-match candidate set too (#7718), where it
+// leaked both boxes rather than needing no release. Guards could not simply
+// wrap that helper: it frees the OUTER box itself, which must be freed on every
 // path, not only the Some one.
 //
 // Depth-first, and the slot is zeroed at the end so a later pass over it decs a
@@ -52297,7 +52275,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
                     if (rcoptfrees.tagged[roi]) {
                         s = emit_opt_tagged_payload_drop(s, roslot, rcoptfrees.pfrees[roi], tagged_errfreefn(rcoptfrees.errstrs[roi]));
                     } else if (rcoptfrees.inners[roi].len() > 0) {
-                        s = emit_nested_opt_payload_drop(s, roslot, rcoptfrees.inners[roi]);
+                        s = emit_optopt_rc_deep_free(s, roslot, rcoptfrees.inners[roi]);
                     } else if (rcoptfrees.pfrees[roi] != "__fern_rc_dec") {
                         s = emit_opt_payload_drop_via(s, roslot, rcoptfrees.pfrees[roi]);
                     } else if (rcoptfrees.stys[roi].len() > 0) {
