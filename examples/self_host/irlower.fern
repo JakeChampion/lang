@@ -32824,18 +32824,17 @@ function tuple_ret_arrfree_flags(fn: parser.FuncDecl): string {
 // read reclaim refuses a call whose callee NAME is a local (it holds an unknown
 // closure body, not the registered producer), and this credit has to refuse the
 // same shape — otherwise the sweep would free a string no read ever retained.
+// Over astwalk's binder walk rather than a hand-rolled one (#7253): that is the
+// single definition of "what does this statement bind", it splits the
+// comma-joined destructure and `for (k, v)` forms, and it reads match patterns —
+// including `at_binding` and `extra_bindings`. The copy this replaces saw a
+// `var` and a `for` binder only, so a payload binder or a destructure was a
+// declaration it reported as absent, and every caller here uses it to VETO a
+// name-keyed registry hit. A veto that does not fire credits a local that is not
+// the registered producer, and the sweep then frees what no read retained.
 function body_declares_name(stmts: ast.Stmt[], name: string): boolean {
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => { if (v.name == name) { return true; } },
-            ast.StmtIf(f) => { if (body_declares_name(f.then_body, name) || body_declares_name(f.else_body, name)) { return true; } },
-            ast.StmtWhile(w) => { if (body_declares_name(w.body, name)) { return true; } },
-            ast.StmtFor(fo) => { if (fo.var_name == name || body_declares_name(fo.body, name)) { return true; } },
-            ast.StmtMatch(m) => { var k: i32 = 0; while (k < m.arms.len()) { if (body_declares_name(m.arms[k].body, name)) { return true; } k = k + 1; } },
-            _ => {}
-        }
-    }
-    return false;
+    var bound: string[] = astwalk.collect_bound_stmts(stmts, []);
+    return util.index_of_str(bound, name) >= 0;
 }
 
 // local_recv_method_key: "<Type>.<method>" for a `recv.m(..)` callee whose
@@ -36453,18 +36452,21 @@ function struct_lit_field_ident_count(slit: ast.ExprStructLit, name: string): i3
 
 // local_decl_count: how many `var name` declarations `stmts` contains, nested
 // blocks included.
+// Over astwalk's binder walk, for the reason body_declares_name is — and here it
+// was a live miscompile rather than a latent one. The copy this replaces counted
+// `var` declarations only: it did not read `for` binders, match payload binders,
+// or the comma-joined destructure form. try_lift_binding uses the count to
+// refuse the lambda lift when a name means two things, and subst_fcall_expr
+// rewrites `f(…)` inside `for` and `match` bodies — so a `for f in fns` over a
+// lifted `f` counted 1, the lift proceeded, and every element's call was
+// rewritten to the hoisted body. Measured 35 against the interpreter's 99.
 function local_decl_count(stmts: ast.Stmt[], name: string): i32 {
+    var bound: string[] = astwalk.collect_bound_stmts(stmts, []);
     var n: i32 = 0;
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => { if (v.name == name) { n = n + 1; } },
-            ast.StmtIf(f) => { n = n + local_decl_count(f.then_body, name) + local_decl_count(f.else_body, name); },
-            ast.StmtWhile(w) => { n = n + local_decl_count(w.body, name); },
-            ast.StmtFor(fo) => { n = n + local_decl_count(fo.body, name); },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { n = n + local_decl_count(m.arms[a].body, name); a = a + 1; } },
-            ast.StmtDefer(d) => { n = n + local_decl_count([d.action], name); },
-            _ => {}
-        }
+    var i: i32 = 0;
+    while (i < bound.len()) {
+        if (bound[i] == name) { n = n + 1; }
+        i = i + 1;
     }
     return n;
 }
