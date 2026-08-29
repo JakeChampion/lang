@@ -26805,12 +26805,17 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // Pending consumed-match drops (#4353 p1/p3, #6219): a `return` inside a
     // candidate's match arm runs this sweep, so drop the pending payload + box
     // here — the post-match drop site is dead code on this path. The drop
-    // zeroes the slot; entries are "slot#s" (string payload, rc-aware
-    // str_free) / "slot#a" (leak-safe-array payload, shallow dec) / "slot#b"
-    // (scalar-enum or scalar-Option box, shallow dec) / "slot#e<enum>;<moved…>"
-    // (rc-payload enum, runtime variant dispatch — rcenum_pending_entry). Empty
-    // outside candidate arms (set/restored around the match), so the fn-end
-    // sweep and every unrelated return are byte-unchanged.
+    // zeroes the slot; entries are "slot#b" (scalar-enum or scalar-Option box,
+    // shallow dec) / "slot#e<enum>;<moved…>" (rc-payload enum, runtime variant
+    // dispatch — rcenum_pending_entry) / the five Option/Result forms
+    // optret_opt_entry writes. Empty outside candidate arms (set/restored
+    // around the match), so the fn-end sweep and every unrelated return are
+    // byte-unchanged.
+    //
+    // The Option/Result branches below mirror the post-match dispatch in
+    // lower_func / lower_block ARM FOR ARM. They have to: the two sites are
+    // alternatives on disjoint paths, so a release the return path spells more
+    // shallowly is a leak nothing else picks up (#7725).
     var opi: i32 = 0;
     while (opi < st.optret_pending.len()) {
         var ope: string = st.optret_pending[opi];
@@ -26826,10 +26831,15 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 var emi: i32 = 1;
                 while (emi < eparts.len()) { emoved = emoved.append(eparts[emi]); emi = emi + 1; }
                 st = emit_enum_variant_drops_gated(st, opslot, eparts[0], emoved, true);
-            } else if (oph + 1 < ope.len() && ope[oph + 1] == b's') {
-                st = emit_opt_payload_drop_via(st, opslot, "__fern_str_free");
-            } else if (oph + 1 < ope.len() && ope[oph + 1] == b'S') {
-                st = emit_opt_payload_drop_via(st, opslot, "__fern_str_arr_free");
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == b't') {
+                var tparts: string[] = split_semi(slice_unchecked(ope, oph + 2, ope.len()) + "");
+                st = emit_opt_tagged_payload_drop(st, opslot, tparts[0], tparts[1]);
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == b'n') {
+                st = emit_optopt_rc_deep_free(st, opslot, slice_unchecked(ope, oph + 2, ope.len()) + "");
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == b'v') {
+                st = emit_opt_payload_drop_via(st, opslot, slice_unchecked(ope, oph + 2, ope.len()) + "");
+            } else if (oph + 1 < ope.len() && ope[oph + 1] == b'p') {
+                st = emit_opt_struct_payload_drop(st, opslot, slice_unchecked(ope, oph + 2, ope.len()) + "");
             } else {
                 st = emit_opt_payload_drop(st, opslot);
             }
@@ -27833,8 +27843,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
             if (rcopt.idxs[opj] == i && rcopt.blockable[opj]) {
                 var opslot2: i32 = st.slot_of(rcopt.names[opj]);
                 if (opslot2 >= st.n_params) {
-                    var opk: string = optret_payload_tag(rcopt.pfrees[opj]);
-                    st = st.with_optret_pending(st.optret_pending.append(util.i32_to_string(opslot2) + opk));
+                    st = st.with_optret_pending(st.optret_pending.append(optret_opt_entry(opslot2, rcopt, opj)));
                 }
             }
             opj = opj + 1;
@@ -40629,22 +40638,32 @@ function tagged_errfreefn(err_str: boolean): string {
     return "";
 }
 
+// optret_opt_entry encodes one OptRcFrees row as an optret_pending entry, so a
+// `return` out of the row's match arm emits the SAME release the post-match
+// drop does. It carries the whole selection — free fn, nested inner free fn,
+// struct payload type — rather than a tag derived from `pfrees` alone, because
+// the choice among the five releases is not a function of `pfrees`: a nested
+// Option payload and a struct payload both free through __fern_rc_dec, so both
+// used to encode as the shallow drop and the return path stranded the inner
+// string / the struct's rc-array fields (#7725, measured 6400 and 8000 live
+// bytes over 200 rounds against a native backend flat at 0).
+//
+// Every arm of the dispatch in emit_dec_sweep_except_list decodes one of these,
+// in the same order the post-match emissions test them.
+function optret_opt_entry(slot: i32, r: OptRcFrees, i: i32): string {
+    var head: string = util.i32_to_string(slot);
+    if (r.tagged[i]) { return head + "#t" + r.pfrees[i] + ";" + tagged_errfreefn(r.errstrs[i]); }
+    if (r.inners[i].len() > 0) { return head + "#n" + r.inners[i]; }
+    if (r.pfrees[i] != "__fern_rc_dec") { return head + "#v" + r.pfrees[i]; }
+    if (r.stys[i].len() > 0) { return head + "#p" + r.stys[i]; }
+    return head + "#a";
+}
+
 // opt_payload_freefn maps an admitted payload TYPE to the runtime helper that
 // releases it whole. The single place the mapping lives, so the untagged, the
 // tagged and the optret-pending paths cannot disagree about what frees a
 // payload — they used to carry a boolean apiece, which had no room for a third
 // payload kind.
-// optret_payload_tag is opt_payload_freefn's spelling for an optret_pending
-// entry, which carries the release as ONE character after the '#'. Kept next to
-// it so a fourth payload kind cannot get a helper here and no tag there — the
-// reader of these entries falls back to the plain box dec, which for a string[]
-// would strand every element.
-function optret_payload_tag(freefn: string): string {
-    if (freefn == "__fern_str_free") { return "#s"; }
-    if (freefn == "__fern_str_arr_free") { return "#S"; }
-    return "#a";
-}
-
 function opt_payload_freefn(ptype: string): string {
     if (ptype == "string") { return "__fern_str_free"; }
     if (ptype == "string[]") { return "__fern_str_arr_free"; }
@@ -52003,18 +52022,16 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // Statement j is a consumed-match candidate's match: set the pending
         // return-drop entries (#4353 p1/p3, #6219) so a `return` inside an arm
         // frees the payload + box via the return-path sweep — the post-match
-        // drop below is dead code on those paths. Blockable Option/Result kinds
-        // only (string / leak-safe-array payloads carry a COMPLETE drop; a
-        // struct payload's field release belongs to the fn-level machinery).
-        // Restored right after the statement lowers.
+        // drop below is dead code on those paths. Blockable rows only, and the
+        // entry names the row's whole release (optret_opt_entry), not a tag
+        // derived from its free fn. Restored right after the statement lowers.
         var optret_prev: string[] = s.optret_pending;
         var opj: i32 = 0;
         while (opj < rcoptfrees.idxs.len()) {
             if (rcoptfrees.idxs[opj] == j && rcoptfrees.blockable[opj]) {
                 var opslot2: i32 = s.slot_of(rcoptfrees.names[opj]);
                 if (opslot2 >= s.n_params) {
-                    var opk: string = optret_payload_tag(rcoptfrees.pfrees[opj]);
-                    s = s.with_optret_pending(s.optret_pending.append(util.i32_to_string(opslot2) + opk));
+                    s = s.with_optret_pending(s.optret_pending.append(optret_opt_entry(opslot2, rcoptfrees, opj)));
                 }
             }
             opj = opj + 1;

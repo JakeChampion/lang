@@ -196,26 +196,24 @@ function round(i: i32): i32 {
 			want: 13, balance: true,
 		},
 		{
-			// STILL LEAKING, deliberately. What leaks is the STRING's own two
-			// blocks — the two option boxes are freed — and the proof is that
-			// live_bytes scales with the string's LENGTH: 6400 here, 19200 for the
-			// same shape with a 64-char suffix, at identical 800/400 counts.
+			// Was 800/400 live 6400 — the two option boxes freed, the STRING's own
+			// two blocks stranded, with live_bytes scaling by the string's LENGTH
+			// (19200 for the same shape with a 64-char suffix at identical counts).
+			// The cause was not this analysis: the arm RETURNS, and the return-path
+			// sweep re-encoded the release from the payload free fn alone, which
+			// cannot tell a nested-Option payload from a flat one (#7725).
 			//
-			// The literal-inner row below does NOT establish that the string
-			// release works, though an earlier revision of this comment said so:
-			// a literal allocates nothing (400 allocs = 2/round, the two boxes
-			// alone), so it exercises the box release only. Nothing here yet
-			// covers the inner __fern_str_free actually firing.
-			//
-			// Pinned so it cannot drift into an over-release while that is worked.
-			name: "rc_inner_matched_still_partial",
+			// This is the row that covers the inner __fern_str_free actually
+			// firing. The literal-inner row below does not: a literal allocates
+			// nothing, so its 400 allocs are the two option boxes alone.
+			name: "rc_inner_matched_balances",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
     var o: Option[Option[string]] = Some(Some(w("ab")));
     match (o) { Some(inner) => { match (inner) { Some(v) => { return v.len(); }, None => { return 3; } } }, None => { return 2; } }
     return 0;
 }` + unmatchedOptoptMain,
-			want: 19, wantFrees: 400,
+			want: 19, balance: true,
 		},
 		{
 			// The LITERAL-inner control for the row above. It balances — but note
