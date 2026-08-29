@@ -1,0 +1,103 @@
+// A `string[][]` STRUCT FIELD. Passing such a struct as a parameter refused the
+// whole module on the self-host, while native compiled and ran it — so
+// `struct Table { rows: string[][] }` (examples/proposals/csv2json.fern) could
+// not be handed to any function.
+//
+// The two neighbouring spellings both lowered already, which is what made this
+// a gap rather than a limitation:
+//   flat     — a `string[]` field, listed by name in the leak-safe field set;
+//   nested   — an `i32[][]` field, reached via is_leaksafe_array_field.
+// Only the nested STRING array matched nothing: is_leaksafe_array_field bottoms
+// out in the scalar-element arrays, so `string[]` as an ELEMENT is not one, and
+// is_nested_array_field_type misses it for the same reason. That is why the
+// match-arm payload admission has to spell out `|| ptag == "string[][]"`, and
+// this is the struct-field sibling of that pair.
+//
+// Positions, so a future narrowing is visible:
+//   pass     — the shape that refused on its own: the struct crosses a call.
+//   nested   — a two-level read `t.rows[i][j]` through the param.
+//   empty    — an empty outer array, and a row that is empty.
+//   flat     — the `string[]` field that already worked, kept as the control.
+//   scalar   — the `i32[][]` field that already worked, the other control.
+//
+// Constructed inside the loop so a reclamation regression shows up as growth
+// rather than a wrong answer. Sentinels are 251-253, above the `% 113` the
+// success path returns.
+struct Table { rows: string[][], n: i32 }
+struct Flat { rows: string[], n: i32 }
+struct Scalar { rows: i32[][], n: i32 }
+
+// The bail shape: a `string[][]`-carrying struct as a PARAMETER.
+function total_len(t: Table): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < t.rows.len()) {
+        var j: i32 = 0;
+        while (j < t.rows[i].len()) { n = n + t.rows[i][j].len(); j = j + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+function row_count(t: Table): i32 { return t.rows.len(); }
+
+function pass_through(i: i32): i32 {
+    var t: Table = Table { rows: [["ab", "cde"], ["f"]], n: i };
+    return total_len(t) + row_count(t);
+}
+
+// A two-level read through the parameter, and the outer length.
+function nested_read(i: i32): i32 {
+    var t: Table = Table { rows: [["xy"], ["z", "wv"]], n: i };
+    if (t.rows[1][1].len() != 2) { return 253; }
+    return total_len(t);
+}
+
+// An empty outer array and an empty row — the degenerate shapes.
+function empty_rows(i: i32): i32 {
+    var e: Table = Table { rows: [], n: i };
+    var r: Table = Table { rows: [[]], n: i };
+    return total_len(e) + total_len(r) + row_count(r);
+}
+
+// Control: the flat `string[]` field, which lowered before this change.
+function flat_field(i: i32): i32 {
+    var f: Flat = Flat { rows: ["gh", "ijk"], n: i };
+    return flat_len(f);
+}
+
+function flat_len(f: Flat): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < f.rows.len()) { n = n + f.rows[i].len(); i = i + 1; }
+    return n;
+}
+
+// Control: the nested SCALAR array field, the other spelling that already worked.
+function scalar_field(i: i32): i32 {
+    var s: Scalar = Scalar { rows: [[1, 2], [3]], n: i };
+    return scalar_sum(s);
+}
+
+function scalar_sum(s: Scalar): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.rows.len()) {
+        var j: i32 = 0;
+        while (j < s.rows[i].len()) { n = n + s.rows[i][j]; j = j + 1; }
+        i = i + 1;
+    }
+    return n;
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        acc = acc + pass_through(i) + nested_read(i) + empty_rows(i)
+            + flat_field(i) + scalar_field(i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}
