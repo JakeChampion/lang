@@ -718,17 +718,34 @@ findings. Ranked by leverage.
   analysis and test.
 
 ### T6 — Errors & signals smuggled through value types / sentinels
-- [ ] **SH-026 — Stop overloading value types for errors/signals.** Surviving
-  sentinels: `v_err("__noreceiver__")` (`interp.fern:1464`, `:2433`) with its
-  checker twin `t_unknown("__noreceiver__")` (`checker.fern:1972`), and
-  `v_err("__noclosure__")` (`interp.fern:1465`). `lookup_*` returns `name:""` to
-  mean "not found" (`checker.fern:1219 lookup_sig`, `:1508 lookup_struct`,
-  `:1630 lookup_method`, `:1731 lookup_union`), forcing `.name.len() > 0` checks
-  at every call site. **22 bespoke `*Result` structs** each re-implement
-  `(value, ok)` or `(node, next_pos)` — and two of them are both named
-  `CheckResult` in different modules. _Fix:_ a kinded error type;
-  `Option[T]`/`Result[T,E]` now that generics work (T8); meanwhile give the
-  sentinel-carrying values a `kind` field and namespace the internal sentinels.
+- [~] **SH-026 — the surviving "sentinels" were not errors; the real half is
+  blocked on T8.** This row bundles three unrelated things, and they need
+  opposite treatment.
+
+  _Done — and the row's premise on this part was wrong._ The four surviving
+  `__noreceiver__` / `__noclosure__` sites are not signals smuggled through the
+  error channel. **Nothing anywhere compares their message.** They are dead
+  placeholders: `bind_tyargs` reads its `recv` argument only under
+  `if (has_recv)` and the call site passes `false`, and interp's `recv` /
+  `closure_val` plus checker's `recv_ty` are initialisers every path overwrites
+  before reading. Giving them a `kind` field, as the row proposes, would have
+  formalised a category that should not exist.
+
+  They are now `v_absent()` in interp — one named constructor whose comment
+  states that it rides on `VErr` because the union has no neutral variant, not
+  because anything failed — and a plain `t_unknown("")` in the checker, where
+  only "unknown" was ever load-bearing. A `VAbsent` variant was considered and
+  rejected: it would add a dead arm to every exhaustive match over `Value`.
+
+  _Still open, and genuinely real:_ `lookup_sig` / `lookup_struct` /
+  `lookup_method` / `lookup_union` return `name: ""` to mean "not found",
+  forcing a `.name.len() > 0` probe at every call site. That IS a (value, ok)
+  conflation and it wants `Option[T]` — which is T8, so sequence the two
+  together rather than hand-rolling a fifth result shape here.
+
+  _Also still open:_ the 22 bespoke `*Result` structs, two of them both named
+  `CheckResult` in different modules. Same dependency: that is T8's job.
+
 
 ### T7 — O(n²) string accumulation in emitters
 - [ ] **SH-027 — Use a `strbuf`/chunk-join accumulator in the string emitters.**

@@ -310,6 +310,17 @@ function v_struct(type_name: string, names: string[], values: Value[]): Value {
 }
 function v_err(msg: string): Value { return VErr { msg: msg }; }
 
+// v_absent fills a Value slot that is provably never read: the receiver
+// argument at a `has_recv: false` call (bind_tyargs reads `recv` only under
+// that flag), and the `recv` / `closure_val` initialisers every path
+// overwrites before use.
+//
+// It rides on VErr because the union has no neutral variant, NOT because
+// anything went wrong — nothing anywhere compares the message. Adding a
+// VAbsent variant would put a dead arm in every exhaustive match over Value,
+// which is a worse trade than one named constructor.
+function v_absent(): Value { return VErr { msg: "__absent__" }; }
+
 // is_err reports an ABRUPT value — one that must propagate out of the
 // enclosing expression rather than being operated on. Both bottoms qualify:
 // VErr (a diagnostic, which runs to the top) and VTry (a `?` unwind, which
@@ -1585,8 +1596,8 @@ function eval_expr_call(c: ast.ExprCall, env: Env): Value {
     var is_closure: boolean = false;
     var is_variant: boolean = false;
     var variant_name: string = "";
-    var recv: Value = v_err("__noreceiver__");
-    var closure_val: Value = v_err("__noclosure__");
+    var recv: Value = v_absent();
+    var closure_val: Value = v_absent();
     match (c.callee) {
         ast.ExprIdent(id) => {
             // If the name is bound in scope to a VFunc,
@@ -2567,7 +2578,7 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
                 return v_err("arity mismatch calling `" + name + "`");
             }
             var env: Env = new_module_env(funcs, aliases, type_decls);
-            var no_recv: Value = v_err("__noreceiver__");
+            var no_recv: Value = v_absent();
             env = bind_tyargs(env, fd, false, no_recv, args);
             var j: i32 = 0;
             while (j < fd.params.len()) {
