@@ -106,8 +106,109 @@ function is_is_unique(op: ir.Op): boolean {
     return is_call_named(op, "__fern_rc_is_unique");
 }
 
+// rc_release_helpers are the runtime entry points that give up the caller's
+// ownership unit on the pointer they are passed.
+//
+// The mirror of `rcRuntimeSigs`' release and move rows in
+// `internal/ir/rcsigs.go`, pinned against them by
+// TestSelfHostIRVerifyRcReleaseSetMatchesNative. Only the release half is
+// here: the rest of that table — the retains, the inspection, the helpers
+// whose count movement one operand effect cannot express, and the
+// completeness list that forces a new runtime helper to be classified —
+// answers questions this pass does not ask.
+//
+// The last four are the copy-on-write moves: they release the receiver on
+// the shared path and hand back a replacement, so the caller's unit on the
+// operand is gone either way.
+function rc_release_helpers(): string[] {
+    return [
+        "__fern_rc_dec",
+        "__fern_str_dec",
+        "__fern_arr_dec",
+        "__fern_box_free",
+        "__fern_cell_free",
+        "__fern_map_drop",
+        "__fern_closure_drop",
+        "__fern_drop_arr_ptr",
+        "__fern_drop_arr_str",
+        "__free",
+        "__fern_arr_cow_inplace",
+        "__fern_arr_cow_inplace_ptr",
+        "__fern_arr_cow_inplace_str",
+        "__fern_str_append",
+    ];
+}
+
+// generated_drop_prefixes are the per-type drop functions lowering
+// generates. Each takes the value it drops as argument 0, releases it, and
+// returns it.
+//
+// The list is closed rather than a "__drop_" rule: `std/async.fern` defines
+// `__drop_losers(drv, fs, winner)`, which releases none of its three
+// arguments. A "dec" / "drop" / "free" substring rule is worse still — the
+// corpus holds user functions called `mk_free`, `map_inc` and `hex_decode`.
+function generated_drop_prefixes(): string[] {
+    return [
+        "__drop_struct_flat_",
+        "__drop_struct_",
+        "__drop_enum_",
+        "__drop_tuple_",
+        "__drop_dyn_",
+        "__drop_arr_struct_",
+        "__drop_arr_tuple_",
+        "__drop_arr_enum_",
+        "__drop_arr_dyn_",
+        "__drop_arr_arr_",
+        "__drop_arr_of_",
+        "__drop_map_",
+    ];
+}
+
+// generated_drop_names are the generated drops whose name carries no type
+// suffix, so no prefix reaches them.
+function generated_drop_names(): string[] {
+    return ["__drop_arr_closure", "__drop_closure_value", "__map_drop_values"];
+}
+
+// name_has_prefix requires a non-empty suffix: a drop's suffix is the type
+// it drops, so a bare prefix names nothing and is not a drop.
+function name_has_prefix(name: string, prefix: string): boolean {
+    var m: i32 = prefix.len();
+    if (name.len() <= m) { return false; }
+    var i: i32 = 0;
+    while (i < m) {
+        if (name[i] != prefix[i]) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+function name_in(name: string, names: string[]): boolean {
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (name == names[i]) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// releases_operand reports whether a call to `name` gives up the caller's
+// ownership unit on the pointer it is passed.
+function releases_operand(name: string): boolean {
+    if (name_in(name, rc_release_helpers())) { return true; }
+    if (name_in(name, generated_drop_names())) { return true; }
+    var prefixes: string[] = generated_drop_prefixes();
+    var i: i32 = 0;
+    while (i < prefixes.len()) {
+        if (name_has_prefix(name, prefixes[i])) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
 function is_rc_dec(op: ir.Op): boolean {
-    return is_call_named(op, "__fern_rc_dec");
+    if (op.kind_tag != ir.kind_id("call_direct")) { return false; }
+    return releases_operand(op.str);
 }
 
 function is_kind(op: ir.Op, name: string): boolean {

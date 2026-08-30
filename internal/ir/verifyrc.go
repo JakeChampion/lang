@@ -109,8 +109,14 @@ func isIsUniqueOp(op Op) bool {
 }
 
 func isRcDecOp(op Op) bool {
-	return op.Kind == OpRcDec ||
-		(op.Kind == OpCallDirect && op.Str == "__fern_rc_dec")
+	if op.Kind == OpRcDec {
+		return true
+	}
+	if op.Kind != OpCallDirect {
+		return false
+	}
+	_, ok := RcReleases(op.Str)
+	return ok
 }
 
 type rcChecker struct {

@@ -26,57 +26,53 @@
 // path, which is untouched by any of this.
 package ssa
 
-// rcHelpers are the GENERIC runtime reference-count entry points. The
-// lift turns both spellings — the flat IR's dedicated OpRcInc / OpRcDec
-// / OpRcIsUnique and the self-host's plain calls — into an OpCall
-// carrying the helper's name, so one set covers both compilers.
+import "github.com/jakechampion/lang/internal/ir"
+
+// rcSig answers what a call op does to a reference count, or reports
+// that nothing is known about the callee.
 //
-// # It is not every way a value is released, and the gap is measured
+// The table is `internal/ir/rcsigs.go` — the runtime half of #7786's
+// ownership signature table — which names each helper's effect and
+// which argument carries the counted pointer. Keeping it there rather
+// than here is what lets `internal/ir`'s own verifier read the same
+// record, and what makes a new runtime helper fail a completeness test
+// until it is classified.
 //
-// Three helpers are here. The corpus releases through NINE fixed runtime
-// entry points, plus a family of generated per-type drops:
+// The lift turns both spellings of a helper call — the flat IR's
+// dedicated OpRcInc / OpRcDec / OpRcIsUnique and the self-host's plain
+// calls — into an OpCall carrying the helper's name, so one table
+// covers both compilers.
 //
-//	__fern_arr_dec       5084   (more than __fern_rc_dec)
-//	__fern_rc_dec        3517   <- counted
-//	__fern_str_dec       3459
-//	__fern_box_free      3266
-//	__fern_map_drop       389
-//	__fern_closure_drop   137
-//	__free                 82
-//	__map_dec_value        81
-//	__map_free_val_cell    47
-//	__drop_* / __fern_drop_* / __map_drop_*   234 distinct, 6812 calls
-//
-// So "not released" from this pass means "not released through one of
-// three generic helpers", and every count derived from it reads low.
-// Measured against a wider set over 3897 pointer parameters: parameters
-// declared `own` with no release go 13 -> 9, borrowed with no release go
-// 3820 -> 3771, and the borrowed-but-released bucket roughly doubles.
-// The shape of the answer survives — the overwhelming majority of
-// pointer parameters really are plain borrows — but the numbers are a
-// floor, not a total.
-//
-// Nine names and one naming rule is a small table, so the reason not to
-// widen the set here is not size. It is that a helper's RC meaning is
-// its SIGNATURE, not its name: they do not all take the counted pointer
-// as argument 0 (`__fern_box_free` takes a receiver), and a substring
-// rule is worse still — matching "dec" or "free" over the corpus also
-// catches hex_decode, is_non_decreasing and a user function called
-// mk_free, which is how the count above was first misread as 259.
-// Widening needs each signature written down and checked, which is the
-// runtime half of #7786's table.
-var rcHelpers = map[string]bool{
-	"__fern_rc_inc":       true,
-	"__fern_rc_dec":       true,
-	"__fern_rc_is_unique": true,
+// Two things still move counts and still report nothing here, so a
+// count derived from this reads LOW rather than wrong. The
+// `__fern_arr_push_grow` family and `__alloc_reuse` move them in a
+// shape one operand effect cannot express, and rcsigs.go says so
+// entry by entry. User `Drop` finalizers carry whatever name
+// `userDropFnName` resolved, which no rule can recognise — they are
+// defined functions, and their ownership is the interprocedural
+// fixpoint's answer rather than a table's.
+func rcSig(o *Op) (ir.RcSig, Value, bool) {
+	if o == nil || o.Kind != OpCall {
+		return ir.RcSig{}, Value{}, false
+	}
+	sig, ok := ir.RcHelperSig(o.Str)
+	if !ok || sig.Operand >= len(o.Args) {
+		return ir.RcSig{}, Value{}, false
+	}
+	return sig, o.Args[sig.Operand], true
 }
 
 // RCSite is one reference-count operation and what the CFG says about
 // the value it acts on.
 type RCSite struct {
-	Block   *Block
-	Op      *Op
-	Helper  string
+	Block  *Block
+	Op     *Op
+	Helper string
+
+	// Effect is what the call does to the caller's unit on Operand.
+	// A release and a retain read the same in the op stream — both are
+	// a call on a pointer — and only the signature separates them.
+	Effect  ir.RcEffect
 	Operand Value
 
 	// LiveAfter is true when some OTHER use of Operand is reachable from
@@ -88,8 +84,7 @@ type RCSite struct {
 	// as "is this reference count balanced". A retain can hand its count
 	// to a data structure rather than to a later use, and then the value
 	// is legitimately dead afterwards. `__map_own_key` in core/map.fern
-	// is the worked example, and it is every one of the 40 retains the
-	// corpus reports as dead:
+	// is the worked example:
 	//
 	//	__fern_rc_inc(__load_ptr(boxed));   // result discarded
 	//	return boxed;
@@ -99,17 +94,25 @@ type RCSite struct {
 	// nothing is wrong: ownership leaves through the return, because the
 	// buffer is reachable from `boxed` through memory.
 	//
+	// That shape is the whole population, not a corner of it. Lifting
+	// `examples/self_host/fern.fern` — 6514 functions, 0 lift failures —
+	// gives 58137 retains of which 36879 are dead afterwards, and every
+	// single one of the 36879 DISCARDS ITS RESULT. None hands the
+	// pointer to a later use that liveness then failed to see; they all
+	// pass ownership through memory. The proportion is a property of
+	// the program rather than of the analysis: the conformance corpus
+	// reports 51 dead out of 31930.
+	//
 	// So "dead afterwards" is a filter, not a verdict. Separating a
 	// genuine unbalanced retain from this shape needs reachability
 	// THROUGH MEMORY — whether the retained pointer is reachable from a
 	// value that escapes — which this analysis does not have.
 	//
-	// The other direction reads the same way. Of the 622 releases the
-	// corpus reports as live afterwards, 540 are used by their block's
-	// terminator and the top functions are all generated drop glue —
-	// __drop_tuple_*, __drop_struct_*, __drop_enum_* — releasing a field
-	// and then walking on through the container to reach the next one.
-	// Also correct. Telling a premature release from a flat dec on a
+	// The other direction reads the same way. Of the 149818 releases
+	// the self-host reports as live afterwards, 133352 are
+	// `__fern_box_free`, which is the last op of a generated drop before
+	// it returns the pointer it just freed — the uniform result shape
+	// every drop has. Also correct. Telling a premature release from a flat dec on a
 	// value with other owners needs to know the count, which is the
 	// callee ownership signature table (#7786).
 	//
@@ -145,24 +148,27 @@ type RCSite struct {
 // RCSites reports every reference-count operation in f, with the
 // liveness of its operand at that point.
 //
-// The operand is Args[0] throughout: each rc helper takes the pointer it
-// acts on first, and the lift preserves argument order.
+// Which argument the operand is comes from the callee's signature, not
+// from a fixed position: the lift preserves argument order, and
+// `RcSig.Operand` names the index.
 func RCSites(f *Func) []RCSite {
 	uses := BuildUses(f)
 	reach := reachableBlocks(f)
 	var out []RCSite
 	for _, b := range f.Blocks {
 		for oi, o := range b.Ops {
-			if o.Kind != OpCall || !rcHelpers[o.Str] || len(o.Args) == 0 {
+			sig, operand, ok := rcSig(o)
+			if !ok {
 				continue
 			}
 			src, mapped := o.SourceOp()
-			later := usesAfter(uses, reach, b, oi, aliasesOf(f, uses, o.Args[0]), o)
+			later := usesAfter(uses, reach, b, oi, aliasesOf(f, uses, operand), o)
 			out = append(out, RCSite{
 				Block:     b,
 				Op:        o,
 				Helper:    o.Str,
-				Operand:   o.Args[0],
+				Effect:    sig.Effect,
+				Operand:   operand,
 				LaterUses: later,
 				LiveAfter: len(later) > 0,
 				SrcOp:     src,
@@ -176,29 +182,32 @@ func RCSites(f *Func) []RCSite {
 // aliasesOf returns v together with every value that is v under another
 // name.
 //
-// `__fern_rc_inc` and `__fern_rc_dec` hand back the pointer they were
-// given, so the lift gives their result a fresh SSA value that denotes
-// the same object. Code after the call reads the RESULT, not the
-// operand — so asking only about uses of the operand reports almost
-// every retain as having no later use, which is an artifact of the
-// representation rather than a fact about the program. Following the
-// pass-through closure is what makes the question mean what it says.
+// Most reference-count helpers hand back the pointer they were given,
+// so the lift gives their result a fresh SSA value that denotes the
+// same object. Code after the call reads the RESULT, not the operand —
+// so asking only about uses of the operand reports almost every retain
+// as having no later use, which is an artifact of the representation
+// rather than a fact about the program. Following the pass-through
+// closure is what makes the question mean what it says.
 //
-// `__fern_rc_is_unique` is not in the closure: it returns a boolean, not
-// the pointer.
+// `RcSig.ResultIsOperand` is what says which helpers belong in the
+// closure. `__fern_rc_is_unique` does not — it returns a boolean — and
+// neither do the copy-on-write moves, whose result is a different
+// object whenever the receiver was shared.
 func aliasesOf(f *Func, uses *Uses, v Value) []Value {
 	out := []Value{v}
 	seen := map[int32]bool{v.ID: true}
 	for i := 0; i < len(out); i++ {
 		for _, u := range uses.Of(out[i]) {
 			o := u.Op
-			if o == nil || o.Kind != OpCall || o.Result.ID == 0 {
+			if o == nil || o.Result.ID == 0 {
 				continue
 			}
-			if o.Str != "__fern_rc_inc" && o.Str != "__fern_rc_dec" {
+			sig, operand, ok := rcSig(o)
+			if !ok || !sig.ResultIsOperand {
 				continue
 			}
-			if len(o.Args) == 0 || o.Args[0].ID != out[i].ID || seen[o.Result.ID] {
+			if operand.ID != out[i].ID || seen[o.Result.ID] {
 				continue
 			}
 			seen[o.Result.ID] = true
@@ -298,20 +307,28 @@ type ParamMode struct {
 	// borrowed. Retained is the mirror.
 	//
 	// Both are reported rather than collapsed into one verdict, and the
-	// corpus says why. Of 3897 pointer parameters, 53 are declared
-	// borrowed and yet released — and 52 of those are ALSO retained.
+	// measurement says why. Over `examples/self_host/fern.fern` — 6514
+	// lifted functions, 10272 pointer parameters — 921 are declared
+	// borrowed and yet released, and 760 of those are ALSO retained.
 	// They are balanced pairs: the body retains a borrowed parameter for
 	// a local use and releases it when done, demanding no unit from the
-	// caller. Reading Released alone would call all 53 consumed, and be
-	// wrong about 52.
+	// caller. Reading Released alone would call all 921 consumed, and be
+	// wrong about 760 of them.
+	//
+	// The rest of the split, same basis: 9289 borrowed parameters are
+	// never released at all, 48 declared `own` are released, and 14
+	// declared `own` are not. So the overwhelming majority of pointer
+	// parameters are plain borrows, which is the shape a fixpoint should
+	// start from.
 	//
 	// So the rule a fixpoint should start from is not "released" but
 	// "released without a matching retain". Roc's phrasing is that a
 	// parameter flips to owned when an occurrence DEMANDS A UNIT, and a
 	// balanced pair demands nothing.
 	//
-	// The remaining one was __query_pair in std/url.fern, which threads
-	// a Map parameter (`m = m.insert(...)`) and so takes the
+	// The 161 that are released without a retain are the interesting
+	// bucket. __query_pair in std/url.fern is the worked example: it
+	// threads a Map parameter (`m = m.insert(...)`) and so takes the
 	// reassignment's overwrite dec. Map is deliberately outside
 	// computeConsumedParams' promotion — "consumedDropWired keeps Map /
 	// slice / unwired shapes out (their deep drop is incomplete)" — so
@@ -328,9 +345,9 @@ type ParamMode struct {
 // ParamModes reports the local ownership evidence for each of f's
 // parameters, in parameter order.
 //
-// "Acts on" follows the pass-through closure: `__fern_rc_inc` and
-// `__fern_rc_dec` hand back the pointer they were given, so a release of
-// an inc's result is a release of the parameter.
+// "Acts on" follows the pass-through closure: most reference-count
+// helpers hand back the pointer they were given, so a release of an
+// inc's result is a release of the parameter.
 func ParamModes(f *Func) []ParamMode {
 	out := make([]ParamMode, 0, len(f.Params))
 	uses := BuildUses(f)
@@ -341,14 +358,14 @@ func ParamModes(f *Func) []ParamMode {
 		}
 		for _, v := range aliasesOf(f, uses, p) {
 			for _, u := range uses.Of(v) {
-				o := u.Op
-				if o == nil || o.Kind != OpCall || len(o.Args) == 0 || o.Args[0].ID != v.ID {
+				sig, operand, ok := rcSig(u.Op)
+				if !ok || operand.ID != v.ID {
 					continue
 				}
-				switch o.Str {
-				case "__fern_rc_dec":
+				switch sig.Effect {
+				case ir.RcRelease, ir.RcMove:
 					m.Released = true
-				case "__fern_rc_inc":
+				case ir.RcRetain:
 					m.Retained = true
 				}
 			}
