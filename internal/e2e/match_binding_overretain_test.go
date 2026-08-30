@@ -60,11 +60,22 @@ import (
 //
 // And only assigning the binding OUT breaks it. Matching and merely
 // using it — `total = total + v.len()` — or ignoring it entirely both
-// measure 0 unpaired of 3, so the enum box's release does dec its
-// payload. It is not the documented safe leak for ineligible enums
-// either: `enumRcPayloadsEligible` excludes only enums transitively
-// containing a Map, and `ast.EnumRcPayloads` is on, so `Option[u8[]]`
-// takes the counted path.
+// measure 0 unpaired of 3.
+//
+// There is no enum box to blame: grouping the trace by allocation size
+// shows one 32-byte block per iteration and nothing else, so
+// `Some([1,2,3])` does not box the Option separately and the payload
+// array is the only allocation. That makes the accounting exact. Used
+// only: 1, never inc'd, arm-end release takes it to 0. Assigned out: 1,
+// inc'd to 2 by `cur = v`, next iteration's dec-on-overwrite back to 1,
+// never 0.
+//
+// So the arm-end release is ABSENT when the binding is assigned out,
+// while the alias-inc is still emitted — two half-mechanisms
+// disagreeing, one treating the assignment as a move and the other as an
+// alias. Not the documented safe leak for ineligible enums either:
+// `enumRcPayloadsEligible` excludes only enums transitively containing a
+// Map, and `ast.EnumRcPayloads` is on.
 //
 // Which half to repair — release the binding, or suppress the inc — is
 // not established, and each converts a leak into a use-after-free if
