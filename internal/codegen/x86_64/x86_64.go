@@ -2810,9 +2810,12 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		// helpers stay emitted: runtime code tail-calls them and the
 		// debug build below still calls out). rc ops are pass-through —
 		// rax holds the pointer and doubles as the result.
-		if ast.RcFreeDebug || !g.rcInlineOK {
+		if ast.RcFreeDebug || ast.RcTrace || !g.rcInlineOK {
 			// Debug builds keep the call: the helpers carry the
-			// RcPoison use-after-free trap the inline path omits.
+			// RcPoison use-after-free trap the inline path omits, and
+			// under RcTrace they carry the inc/dec event hook. Routing
+			// the diagnostic modes through the helpers keeps the hot
+			// inline sequence free of either.
 			// !rcInlineOK falls back to the call in functions too large to
 			// absorb the inline bloat (see the rcInlineOK field) — the
 			// helper is behaviour-identical to the inline sequence.
@@ -5024,10 +5027,23 @@ func (g *generator) emitAbortMessages(withBacktrace bool) {
 // two arguments) and the argument setup below overwrites the argument
 // registers themselves. Two pushes keeps rsp 16-byte aligned.
 func (g *generator) emitRcTraceEvent(kind byte, ptrReg, sizeReg string) {
+	g.emitRcTraceEventAt(kind, ptrReg, sizeReg, 0)
+}
+
+// emitRcTraceEventAt is emitRcTraceEvent where the caller's return
+// address is not at [rsp] but siteOff bytes above it — a helper that
+// pushed before reaching the hook. Passing the wrong offset does not
+// fail loudly; it silently names the wrong code, so the offset belongs
+// with the site that knows its own prologue.
+func (g *generator) emitRcTraceEventAt(kind byte, ptrReg, sizeReg string, siteOff int) {
 	if !ast.RcTrace {
 		return
 	}
-	g.emit("mov rcx, [rsp]") // site: caller return address, before any push
+	if siteOff == 0 {
+		g.emit("mov rcx, [rsp]") // site: caller return address, before any push
+	} else {
+		g.emit(fmt.Sprintf("mov rcx, [rsp + %d]", siteOff))
+	}
 	g.emit(fmt.Sprintf("push %s", ptrReg))
 	g.emit(fmt.Sprintf("push %s", sizeReg))
 	g.emit(fmt.Sprintf("mov rdx, %s", sizeReg)) // arg 3: size
@@ -5550,6 +5566,12 @@ func (g *generator) emitArrDecRuntime() {
 	g.label(".Larrdec_dec")
 	g.emit("sub ecx, 1")
 	g.emit("mov dword ptr [rdi - 8], ecx")
+	if ast.RcTrace {
+		// One push (rbp) sits between rsp and the return address here,
+		// unlike the leaf helpers.
+		g.emit("xor edx, edx")
+		g.emitRcTraceEventAt('d', "rdi", "rdx", 8)
+	}
 	g.label(".Larrdec_ret")
 	g.emit("pop rbp")
 	g.emit("ret")
@@ -6000,6 +6022,19 @@ func (g *generator) emitRcIncRuntime() {
 	g.emit("js .Lrcinc_ret") // bit 31 set ⇒ static sentinel
 	g.emit("add ecx, 1")
 	g.emit("mov dword ptr [rdi - 8], ecx")
+	if ast.RcTrace {
+		// An `i` event carries no size: the writer rounds its size
+		// argument to a 16 multiple so an alloc and its free agree, and
+		// a refcount put through that rounding reads 16 whatever it
+		// was. Pairing i against d per pointer gives the imbalance,
+		// which is the question a count would have been asked for.
+		g.emit("xor edx, edx")
+		g.emitRcTraceEvent('i', "rdi", "rdx")
+		// The hook calls, so rax — set at entry to the input pointer,
+		// which is this helper's return value — has been clobbered.
+		// rdi survives (the hook saves it), so re-derive.
+		g.emit("mov rax, rdi")
+	}
 	g.label(".Lrcinc_ret")
 	g.emit("ret")
 	g.line(".size __fern_rc_inc, .-__fern_rc_inc")
@@ -6057,6 +6092,13 @@ func (g *generator) emitRcDecRuntime() {
 	g.label(".Lrcdec_dec")
 	g.emit("sub ecx, 1")
 	g.emit("mov dword ptr [rdi - 8], ecx")
+	if ast.RcTrace {
+		// See the `i` event in emitRcIncRuntime for why no count rides
+		// along. rc_dec returns nothing, so unlike inc there is no rax
+		// to re-derive.
+		g.emit("xor edx, edx")
+		g.emitRcTraceEvent('d', "rdi", "rdx")
+	}
 	g.label(".Lrcdec_ret")
 	g.emit("ret")
 	g.line(".size __fern_rc_dec, .-__fern_rc_dec")
