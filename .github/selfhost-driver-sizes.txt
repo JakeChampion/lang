@@ -146,6 +146,19 @@
 # not link checker.fern at all, and found one irlower slice reading +6.8% or
 # +9.2% for the same absolute growth depending only on which driver divided it.
 
+# WHY checker_modload_run MOVED +5.5% (7053860 -> 7438860). Crediting a
+# match-arm binding as an owned projection source in rhsTainted's FieldAccess
+# case (#7837) makes more locals free-eligible, and a free-eligible local's
+# overwrite emits a deep drop where an ineligible one emitted the flat
+# __fern_rc_dec that reclaims nothing. So the growth IS the reclaim code, paid
+# once in .text against a leak that was unbounded in the heap: the examples
+# corpus goes from 229,723 stranded allocations to 162,888, a 29% fall.
+#
+# It trips here and nowhere else because this is one of the three front-end
+# slices, where 385 KB is 5.5% — the same bytes are 1.3% of the tracked
+# artifact, which stayed inside tolerance. That is the two-tier point above
+# working as intended rather than a checker-specific regression.
+
 fern.fern 30366508
 asm_load_run.fern 26544900
 asm_modload_run.fern 25160412
@@ -158,6 +171,6 @@ asm_pathprobe_run.fern 23697068
 ssa_lift_scan_run.fern 23416972
 asm_ir_elig_run.fern 22385692
 irlower_run.fern 23393036
-checker_modload_run.fern 7053860
+checker_modload_run.fern 7438860
 ssa_emit_run.fern 6658876
 ssa_run.fern 6452492
