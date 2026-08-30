@@ -1742,6 +1742,14 @@ type Program struct {
 	// passes (Inline / FlattenBranches / codegen) don't have to
 	// re-derive target-awareness from configuration.
 	PtrW int
+	// TwoWordStr is the string ABI the program was lowered at: a
+	// string is a (data, length) pair rather than one word. True on
+	// wasm and on arm64, where `ast.TwoWordOverride` opts in.
+	//
+	// Recorded here because asking `ast.UseTwoWordStrings` afterwards
+	// does not work — the lowering sets that global and RESTORES it,
+	// so a stored Program answers one-word whatever it was built as.
+	TwoWordStr bool
 	// Vtables lists the per-(trait, concrete-type) method dispatch
 	// tables a `dyn Trait` value's vtable word points at — one entry
 	// per concrete type that implements a trait used in a `dyn` type
@@ -3369,6 +3377,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// rather than at each of the ~40 construction sites,
 	// generated drop bodies included.
 	twoWord := ast.UseTwoWordStrings(ptrW)
+	out.TwoWordStr = twoWord
 	for _, fn := range out.Funcs {
 		fn.PtrW = ptrW
 		fn.TwoWordStr = twoWord

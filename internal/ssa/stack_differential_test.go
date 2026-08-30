@@ -92,8 +92,8 @@ func lowerFixture(t *testing.T, path string, ptrW int, twoWord bool) (*ir.Progra
 // terminator the verifier goes polymorphic and the lift drops the
 // block, so their heights there are two different spellings of
 // "nothing" and comparing them is meaningless.
-func divergence(want []ir.StackAt, fn *ir.Func) (at, wantH, gotH int, liftErr error) {
-	got, err := ssa.StackHeights(fn)
+func divergence(want []ir.StackAt, fn *ir.Func, shapes *ir.CallShapes) (at, wantH, gotH int, liftErr error) {
+	got, err := ssa.StackHeights(fn, shapes)
 	for i := range got {
 		if i >= len(want) {
 			break
@@ -108,10 +108,6 @@ func divergence(want []ir.StackAt, fn *ir.Func) (at, wantH, gotH int, liftErr er
 	return -1, 0, 0, err
 }
 
-// callKinds are the call-shaped ops, the one family whose stack effect
-// the lift cannot yet reproduce. See `only`.
-var callKinds = []ir.OpKind{ir.OpCallDirect, ir.OpCallIndirect, ir.OpCallDirectPair}
-
 func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 	if testing.Short() {
 		t.Skip("lowers the conformance corpus; not a -short test")
@@ -125,51 +121,35 @@ func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 		name    string
 		ptrW    int
 		twoWord bool
-		// floor is the fraction of functions that must agree at every
-		// reachable op.
+		// The lift and the verifier agree at EVERY reachable op of
+		// every function the verifier models, on all three ABIs. Both
+		// gates below are therefore set to exactly that, with no
+		// slack: a single divergence, of any kind, is a regression.
 		//
-		// It is the WEAKER of this test's two gates. An aggregate
-		// percentage moves for reasons that have nothing to do with
-		// the lift — corpus growth, a lowering change, a fix to the
-		// verifier it is measured against — so it catches only a
-		// collapse. `only` below is the gate that carries the signal.
+		// Getting here took three attempts. The first two watched an
+		// aggregate coverage number, which oscillated (99.96 -> 94.10
+		// -> 90.15 -> 92.52 -> 89.99) because it cannot separate "this
+		// fix exposed an older divergence" from "this fix caused one".
+		// What worked was the per-op BREAKDOWN: each op class is a
+		// separate checkable claim, and a correct step shows up as a
+		// class disappearing.
 		//
-		// The arm64 floor was 0.985 when this test first landed, and
-		// that number was measuring nothing: the verifier derived the
-		// string ABI from `ast.UseTwoWordStrings`, a global the
-		// lowering sets and RESTORES, so a two-word program inspected
-		// afterwards was checked as one-word — against a lift that was
-		// also one-word. Two wrong models agreeing is not agreement.
-		//
-		// Measured 2026-08-30 at 0.9977 / 0.7053 / 0.6889 and set just
-		// under. The two-word columns are not comparable with the
-		// figures recorded before `TypeIsTwoWordABI`: the same global
-		// reached `typeSlots` and `localSlots` by a second route, so
-		// the arm64 column was a hybrid of an honest call model and a
-		// one-word slot model.
+		// Two of the bugs this found were in the instrument rather
+		// than the lift. `ast.UseTwoWordStrings` reads a global the
+		// lowering sets and RESTORES, and it reached the checker by
+		// two separate routes, so the arm64 column spent a while
+		// checking a one-word verifier against a one-word lift and
+		// reporting 98.85%. Two wrong models agreeing is not
+		// agreement; `ir.Program.TwoWordStr` is the answer that
+		// survives the lowering.
 		floor float64
 		// only names the op kinds allowed to be a function's FIRST
-		// divergence. Anything else fails outright, whatever the
-		// aggregate says.
-		//
-		// This is the real gate. Bringing an op class into agreement
-		// shows up here as that class disappearing, which cannot be
-		// faked by a change that merely moves the percentage — and a
-		// regression in a class already modelled is caught even when
-		// the corpus grew enough to hide it in the aggregate.
-		//
-		// Calls are what is left: the lift counts a call's operands
-		// with the IR's ARGUMENT count, which undercounts as soon as
-		// one of them is two-word, and it has no signature for a
-		// DEFINED callee, so it cannot tell how many words one
-		// returns. Both need a program-level callee table the lift is
-		// not given. That is the whole of the remaining gap on all
-		// three targets.
+		// divergence. Empty means none are.
 		only []ir.OpKind
 	}{
-		{"x86-64 one-word", 8, false, 0.995, callKinds},
-		{"arm64 two-word", 8, true, 0.700, callKinds},
-		{"wasm32 two-word", 4, false, 0.680, callKinds},
+		{"x86-64 one-word", 8, false, 1.0, nil},
+		{"arm64 two-word", 8, true, 1.0, nil},
+		{"wasm32 two-word", 4, false, 1.0, nil},
 	} {
 		var compared, agreed int
 		firstBy := map[ir.OpKind]int{}
@@ -180,6 +160,7 @@ func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 				continue
 			}
 			heights, _ := ir.StackHeights(ip)
+			shapes := ir.NewCallShapes(ip)
 			for _, fn := range ip.Funcs {
 				want, modelled := heights[fn.Name]
 				if !modelled {
@@ -188,7 +169,7 @@ func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 					continue
 				}
 				compared++
-				at, wantH, gotH, _ := divergence(want, fn)
+				at, wantH, gotH, _ := divergence(want, fn, shapes)
 				if at < 0 {
 					agreed++
 					continue
@@ -212,15 +193,15 @@ func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 		}
 		for k, n := range firstBy {
 			if !slices.Contains(cfg.only, k) {
-				t.Errorf("%s: %d function(s) first diverge at %v, which this lift is "+
-					"supposed to model exactly — only calls are still expected to differ",
+				t.Errorf("%s: %d function(s) first diverge at %v; the lift is supposed to "+
+					"reproduce the verifier's stack effect for every op",
 					cfg.name, n, k)
 			}
 		}
 		rate := float64(agreed) / float64(compared)
 		if rate < cfg.floor {
-			t.Errorf("%s: only %.2f%% of functions agree with the verifier's stack model, "+
-				"under the %.2f%% floor — the lift and the verifier have drifted further apart",
+			t.Errorf("%s: only %.4f%% of functions agree with the verifier's stack model, "+
+				"under the %.2f%% floor — the lift and the verifier have drifted apart",
 				cfg.name, 100*rate, 100*cfg.floor)
 		}
 	}

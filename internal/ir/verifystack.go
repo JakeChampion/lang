@@ -99,6 +99,13 @@ func (c Coverage) Reasons() map[string]int {
 // (synthetic scratch slots are frequently untyped); those are always
 // one integer-shaped word.
 func (s *stackChecker) typeSlots(t ast.Type) []valKind {
+	return typeSlotsABI(t, s.ptrW, s.twoWordStr)
+}
+
+// typeSlotsABI is typeSlots against an ABI stated outright, so
+// `CallShapes` and `stackChecker` share one definition rather than two
+// that agree by accident.
+func typeSlotsABI(t ast.Type, ptrW int, twoWordStr bool) []valKind {
 	switch t.(type) {
 	case nil:
 		return []valKind{kInt}
@@ -107,7 +114,7 @@ func (s *stackChecker) typeSlots(t ast.Type) []valKind {
 	case ast.FloatType:
 		return []valKind{kFloat}
 	}
-	if s.isTwoWord(t) {
+	if TypeIsTwoWordABI(t, ptrW, twoWordStr) {
 		return []valKind{kInt, kInt}
 	}
 	return []valKind{kInt}
@@ -208,6 +215,9 @@ type stackChecker struct {
 	externs    map[string]*ExternFunc
 	twoWordStr bool
 	ptrW       int
+	// shapes is built on first use from the fields above, so a
+	// checker assembled as a literal cannot forget it.
+	shapes *CallShapes
 
 	stack  []valKind
 	frames []ctrlFrame
@@ -385,38 +395,24 @@ func TypeIsTwoWordABI(t ast.Type, ptrW int, twoWordStr bool) bool {
 // failing that the provided-signature table does. A generic builtin with
 // none of the three (a Map method whose key width comes from the
 // instantiation) is genuinely unanswerable, and skips the function.
+func (s *stackChecker) callShapes() *CallShapes {
+	if s.shapes == nil {
+		s.shapes = callShapesFrom(s.known, s.externs, s.ptrW, s.twoWordStr)
+	}
+	return s.shapes
+}
+
 func (s *stackChecker) callArgSlots(op Op) (int, bool) {
-	n := int(op.I32)
-	if !s.twoWordStr {
-		return n, true
-	}
-	if at := op.ArgTypes(); len(at) == n {
-		return s.slotCount(at), !anyErased(at)
-	}
-	if sig := op.Sig(); sig != nil && len(sig.Params) == n {
-		return s.slotCount(sig.Params), !anyErased(sig.Params)
-	}
-	if callee, ok := s.known[op.Str]; ok && len(callee.Params) == n {
-		total := 0
-		for _, pm := range callee.Params {
-			if erased(pm.Type) {
-				return 0, false
-			}
-			total += len(s.typeSlots(pm.Type))
-		}
-		return total, true
-	}
-	if sig, ok := providedSigs[op.Str]; ok && sig.argSlots >= 0 {
-		return sig.argSlots, true
-	}
-	return 0, false
+	n, bail := s.callShapes().ArgSlots(op)
+	return n, bail == ""
 }
 
 // verifyStack runs the pass over one function. It appends to problems
 // only for genuine violations; anything unmodelled sets bail and the
 // function's findings are discarded.
 func verifyStack(f *Func, known map[string]*Func, externs map[string]*ExternFunc, ptrW int) ([]Problem, string) {
-	s := &stackChecker{f: f, known: known, externs: externs, ptrW: ptrW, twoWordStr: ast.UseTwoWordStrings(ptrW)}
+	s := &stackChecker{f: f, known: known, externs: externs, ptrW: ptrW,
+		twoWordStr: ast.UseTwoWordStrings(ptrW)}
 	if erased(f.ReturnType) {
 		return nil, "result type is an unresolved type parameter"
 	}
@@ -718,11 +714,12 @@ func (s *stackChecker) call(i int, op Op) bool {
 		if op.Kind == OpCallDyn {
 			s.pop(i, op.Kind, kInt) // receiver data
 		}
-		if erased(sig.Result) {
-			s.bail = "call through an erased result type"
+		kinds, bail := s.callShapes().resultKinds(op)
+		if bail != "" {
+			s.bail = bail
 			return false
 		}
-		s.push(s.typeSlots(sig.Result)...)
+		s.push(kinds...)
 		return true
 
 	case OpCallClosureDirect:
@@ -732,27 +729,11 @@ func (s *stackChecker) call(i int, op Op) bool {
 		s.popN(i, op.Kind, args, kUnknown)
 	}
 
-	if op.Kind == OpCallDirectPair {
-		s.push(kInt, kInt)
-		return true
+	kinds, bail := s.callShapes().resultKinds(op)
+	if bail != "" {
+		s.bail = bail
+		return false
 	}
-
-	if callee, ok := s.known[op.Str]; ok {
-		if erased(callee.ReturnType) {
-			s.bail = "call to " + op.Str + ", whose result type is an unresolved type parameter"
-			return false
-		}
-		s.push(s.typeSlots(callee.ReturnType)...)
-		return true
-	}
-	if e, ok := s.externs[op.Str]; ok {
-		s.push(s.typeSlots(e.ReturnType)...)
-		return true
-	}
-	if sig, ok := providedSigs[op.Str]; ok {
-		s.push(sig.result.slots(s.twoWordStr)...)
-		return true
-	}
-	s.bail = "unknown result shape for callee " + op.Str
-	return false
+	s.push(kinds...)
+	return true
 }

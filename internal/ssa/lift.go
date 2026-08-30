@@ -100,10 +100,26 @@ func newLifter(in *ir.Func) (*lifter, error) {
 // The switch below is the authoritative list of handled ops; anything else
 // returns an `unsupported op` error.
 func LiftFromIR(in *ir.Func) (*Func, error) {
+	return LiftFromIRWith(in, nil)
+}
+
+// LiftFromIRWith is LiftFromIR given the program's call shapes.
+//
+// A call's stack effect is not derivable from the op alone: an
+// argument's slot count depends on the string ABI, and the result's on
+// the callee's return type, which lives in the Program. Without shapes
+// the lift falls back to the IR's argument count and assumes one
+// result, which is right only when every argument is one word and the
+// callee returns exactly one.
+//
+// nil shapes keeps that fallback, for the tests that lift a Func with
+// no program around it.
+func LiftFromIRWith(in *ir.Func, shapes *ir.CallShapes) (*Func, error) {
 	l, err := newLifter(in)
 	if err != nil {
 		return nil, err
 	}
+	l.shapes = shapes
 
 	for i, op := range in.Ops {
 		// Every op the handler creates is stamped with this source index,
@@ -147,7 +163,7 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 // the slice is shorter than in.Ops and the last entry is the height
 // going into the failing op. Nothing here changes what the lift does —
 // it is the same walk, recorded.
-func StackHeights(in *ir.Func) ([]StackAt, error) {
+func StackHeights(in *ir.Func, shapes *ir.CallShapes) ([]StackAt, error) {
 	if in == nil {
 		return nil, fmt.Errorf("ssa.StackHeights: nil func")
 	}
@@ -155,6 +171,7 @@ func StackHeights(in *ir.Func) ([]StackAt, error) {
 	if err != nil {
 		return nil, err
 	}
+	l.shapes = shapes
 	out := make([]StackAt, 0, len(in.Ops))
 	for i, op := range in.Ops {
 		l.out.SetSourceOp(i)
@@ -293,6 +310,26 @@ func (l *lifter) offset(addr Value, n int) Value {
 	return v
 }
 
+// callShape is how many operand-stack entries op's arguments occupy and
+// how many it leaves. shaped is false when no CallShapes was supplied
+// or it could not answer, in which case argc is the IR's argument count
+// and the result count is not to be trusted.
+func (l *lifter) callShape(op ir.Op) (argc, results int, shaped bool) {
+	argc = int(op.I32)
+	if l.shapes == nil {
+		return argc, 1, false
+	}
+	n, bail := l.shapes.ArgSlots(op)
+	if bail != "" {
+		return argc, 1, false
+	}
+	r, bail := l.shapes.ResultSlots(op)
+	if bail != "" {
+		return n, 1, false
+	}
+	return n, r, true
+}
+
 // popWords removes the top n operand-stack entries and returns them in
 // stack order (deepest first), which is the order an op's arguments are
 // written in.
@@ -399,6 +436,10 @@ func widthOfAstType(t ast.Type) int8 {
 }
 
 type lifter struct {
+	// shapes answers how many operand-stack entries a call moves. nil
+	// when the caller had no program to build it from.
+	shapes *ir.CallShapes
+
 	// slotWords is how many operand-stack entries each flat-IR local
 	// slot holds — 1, or 2 for a two-word value — and slotBase where
 	// that slot's entries start in `slots`. See planSlots.
@@ -710,10 +751,15 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		l.stack = append(l.stack, v)
 	case ir.OpDrop:
-		if len(l.stack) < 1 {
-			return fmt.Errorf("ssa.LiftFromIR: OpDrop at op[%d] needs 1 operand", i)
+		// Dropping a two-word value discards the whole pair, which
+		// the op announces with WidthString.
+		n := 1
+		if op.Width == ir.WidthString {
+			n = 2
 		}
-		l.stack = l.stack[:len(l.stack)-1]
+		if _, err := l.popWords(i, op.Kind, n); err != nil {
+			return err
+		}
 	case ir.OpLoad:
 		if len(l.stack) < 1 {
 			return fmt.Errorf("ssa.LiftFromIR: OpLoad at op[%d] needs addr operand", i)
@@ -884,14 +930,25 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		// OpCallDirect they replaced — lift them as the same
 		// one-result OpCall so SSA passes keep seeing the calls
 		// they saw before the kinds split.
-		argc := int(op.I32)
+		argc, results, shaped := l.callShape(op)
 		if len(l.stack) < argc {
 			return fmt.Errorf("ssa.LiftFromIR: %s at op[%d] needs %d args, stack has %d",
 				op.Kind, i, argc, len(l.stack))
 		}
 		args := append([]Value(nil), l.stack[len(l.stack)-argc:]...)
 		l.stack = l.stack[:len(l.stack)-argc]
-		if op.Kind == ir.OpCallDirect && calleeReturnsNothing(op.Str) {
+		if shaped && results == 2 {
+			// A callee returning a two-word value leaves a pair.
+			a, b := l.out.AddCallPair(l.cur, args...)
+			l.cur.Ops[len(l.cur.Ops)-1].Str = ssaHelperName(op.Str)
+			l.stack = append(l.stack, a, b)
+			break
+		}
+		voidCallee := calleeReturnsNothing(op.Str)
+		if shaped {
+			voidCallee = results == 0
+		}
+		if op.Kind == ir.OpCallDirect && voidCallee {
 			// A void callee pushes nothing, and the IR emits no drop
 			// after one — measured over the conformance corpus: 3942
 			// void calls, none followed by an OpDrop. Pushing a result
@@ -919,7 +976,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		l.stack = append(l.stack, result)
 	case ir.OpCallIndirect:
-		argc := int(op.I32)
+		argc, _, _ := l.callShape(op)
 		// Layout on the stack: [args..., callee_idx]. Pop callee
 		// first, then argc args.
 		if len(l.stack) < argc+1 {
@@ -1042,7 +1099,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 	case ir.OpCallDirectPair:
 		// Pair-returning direct call. I32 = arg count; pushes
 		// (tag, payload) back onto the stack.
-		argc := int(op.I32)
+		argc, _, _ := l.callShape(op)
 		if len(l.stack) < argc {
 			return fmt.Errorf("ssa.LiftFromIR: OpCallDirectPair at op[%d] needs %d args, stack has %d",
 				i, argc, len(l.stack))
@@ -1055,7 +1112,7 @@ func (l *lifter) handle(i int, op ir.Op) error {
 	case ir.OpCallClosureDirect:
 		// (args..., env_ptr) — I32 is the total arg count
 		// including env_ptr. Lift like OpCallDirect.
-		argc := int(op.I32)
+		argc, _, _ := l.callShape(op)
 		if len(l.stack) < argc {
 			return fmt.Errorf("ssa.LiftFromIR: OpCallClosureDirect at op[%d] needs %d args, stack has %d",
 				i, argc, len(l.stack))
