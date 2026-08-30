@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-08-30: 453 fixtures, 321 clean, 132 leaking, 64898
+# Measured 2026-08-30: 453 fixtures, 322 clean, 131 leaking, 64892
 # unpaired allocations. The distribution is heavily skewed - median 4,
 # and regex_captures_assert alone is 54713 of the total.
 #
@@ -167,7 +167,7 @@ general_reuse_crossblock                             0
 general_reuse_crosstype                              0
 general_reuse_struct                                 0
 general_reuse_tuple                                  0
-generic_array_method_chain                           1
+generic_array_method_chain                           0
 generic_array_methods                                1
 generic_associated_fn                                0
 generic_box                                          0
@@ -293,7 +293,7 @@ opt_f32_payload                                      100
 option_is_none_or                                    0
 option_match                                         0
 option_result_and_then                               0
-option_result_combinators                            9
+option_result_combinators                            4
 option_str                                           0
 optresult_transpose                                  5
 ord_struct_enum                                      0
