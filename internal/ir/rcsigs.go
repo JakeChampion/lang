@@ -66,20 +66,12 @@ const (
 	RcMove
 )
 
-// RcSig is one helper's effect and which argument it applies to.
-type RcSig struct {
-	// Operand is the argument index of the counted pointer.
-	//
-	// Every entry below is 0, and that is a measured fact rather than
-	// an assumption the type encodes: the field exists because the
-	// stdlib's own map helpers are not — `__map_dec_value(buf, v)` and
-	// `__map_free_val_cell(buf, v)` release argument 1 and borrow
-	// argument 0. Those are defined Fern functions in
-	// `internal/stdlib/core/map.fern`, so the fixpoint derives them and
-	// they are deliberately absent here; a runtime helper of that shape
-	// would need the index.
-	Operand int
-	Effect  RcEffect
+// RcArg is what a call does to the caller's ownership unit on ONE
+// argument.
+type RcArg struct {
+	// Index is the argument's position.
+	Index  int
+	Effect RcEffect
 
 	// ResultIsOperand is true when the call hands back the pointer it
 	// was given, so the result denotes the same object under a new
@@ -96,34 +88,198 @@ type RcSig struct {
 	ResultIsOperand bool
 }
 
+// RcSig is a callee's effect on each argument that carries an ownership
+// unit. An argument not listed is borrowed.
+//
+// It is a LIST rather than one operand, and the reason is measured
+// rather than anticipated: `__method_Map_set(m, k, v)` consumes both
+// the key and the value. Every runtime helper happens to move a count
+// on exactly one argument, so a single-operand shape fitted them and
+// then could not say what the very first builtin classified needed.
+//
+// The index matters too, and not every counted argument is argument 0:
+// `__map_dec_value(buf, v)` and `__map_free_val_cell(buf, v)` in
+// `internal/stdlib/core/map.fern` release argument 1 and borrow
+// argument 0. Those are defined Fern functions, so the interprocedural
+// fixpoint derives them and they are deliberately absent here — but a
+// runtime helper of that shape would need the index.
+type RcSig struct {
+	Args []RcArg
+}
+
+// Arg reports the effect on argument i, if that argument carries a unit
+// at all.
+func (s RcSig) Arg(i int) (RcArg, bool) {
+	for _, a := range s.Args {
+		if a.Index == i {
+			return a, true
+		}
+	}
+	return RcArg{}, false
+}
+
+// one is the common shape: a helper that moves a count on exactly one
+// argument.
+func one(index int, e RcEffect, resultIsOperand bool) RcSig {
+	return RcSig{Args: []RcArg{{Index: index, Effect: e, ResultIsOperand: resultIsOperand}}}
+}
+
 // rcRuntimeSigs is every runtime helper that moves a reference count,
 // with its effect read off the helper's own definition in
 // `internal/codegen/wasmbin/runtime.go`.
 var rcRuntimeSigs = map[string]RcSig{
-	"__fern_rc_inc":  {0, RcRetain, true},
-	"__fern_str_inc": {0, RcRetain, true},
+	"__fern_rc_inc":  one(0, RcRetain, true),
+	"__fern_str_inc": one(0, RcRetain, true),
 
-	"__fern_rc_dec":       {0, RcRelease, true},
-	"__fern_str_dec":      {0, RcRelease, true},
-	"__fern_arr_dec":      {0, RcRelease, true},
-	"__fern_box_free":     {0, RcRelease, true},
-	"__fern_cell_free":    {0, RcRelease, true},
-	"__fern_map_drop":     {0, RcRelease, true},
-	"__fern_closure_drop": {0, RcRelease, true},
-	"__fern_drop_arr_ptr": {0, RcRelease, true},
-	"__fern_drop_arr_str": {0, RcRelease, true},
+	"__fern_rc_dec":       one(0, RcRelease, true),
+	"__fern_str_dec":      one(0, RcRelease, true),
+	"__fern_arr_dec":      one(0, RcRelease, true),
+	"__fern_box_free":     one(0, RcRelease, true),
+	"__fern_cell_free":    one(0, RcRelease, true),
+	"__fern_map_drop":     one(0, RcRelease, true),
+	"__fern_closure_drop": one(0, RcRelease, true),
+	"__fern_drop_arr_ptr": one(0, RcRelease, true),
+	"__fern_drop_arr_str": one(0, RcRelease, true),
 	// (base, size) with no count to read and no result: an
 	// unconditional return to the freelist. The caller's unit is gone
 	// either way.
-	"__free": {0, RcRelease, false},
+	"__free": one(0, RcRelease, false),
 
-	"__fern_rc_is_unique": {0, RcInspect, false},
+	"__fern_rc_is_unique": one(0, RcInspect, false),
 
-	"__fern_arr_cow_inplace":     {0, RcMove, false},
-	"__fern_arr_cow_inplace_ptr": {0, RcMove, false},
-	"__fern_arr_cow_inplace_str": {0, RcMove, false},
+	"__fern_arr_cow_inplace":     one(0, RcMove, false),
+	"__fern_arr_cow_inplace_ptr": one(0, RcMove, false),
+	"__fern_arr_cow_inplace_str": one(0, RcMove, false),
 	// "CONSUMES a", per its own definition; b is borrowed.
-	"__fern_str_append": {0, RcMove, false},
+	"__fern_str_append": one(0, RcMove, false),
+}
+
+// The BUILTINS the lowering emits by name, and the rule that covers
+// most of them.
+//
+// `providedSigs` in verifyprovided.go records every callee the IR does
+// not define, and that is builtins as well as runtime helpers. The
+// native backends RENAME most builtins to a runtime symbol at emit time
+// — `strbuf_append` becomes `__fern_strbuf_append`, `now_ns` becomes
+// `__fern_now_ns` — so a builtin is usually a helper already classified
+// above under a second spelling. builtinRuntimeAlias is that rule.
+//
+// It only fires on an EXACT `__fern_`-prefixed match, which is what
+// keeps it safe: `string_from_bytes_unchecked` lowers to
+// `__fern_string_from_bytes`, the names do not correspond, the rule
+// declines, and the builtin falls through to an explicit entry. Over
+// the 125 unclassified names the rule answers 58 and leaves 67.
+func builtinRuntimeAlias(name string) (string, bool) {
+	if strings.HasPrefix(name, "__fern_") {
+		return "", false
+	}
+	cand := "__fern_" + strings.TrimPrefix(name, "__")
+	if _, ok := rcRuntimeSigs[cand]; ok {
+		return cand, true
+	}
+	if rcInert[cand] {
+		return cand, true
+	}
+	if _, ok := rcUnmodelled[cand]; ok {
+		return cand, true
+	}
+	return "", false
+}
+
+// rcBuiltinSigs are the builtins that move a count and are NOT covered
+// by the rename rule. Each was read on BOTH sides — the caller-side
+// lowering and the callee-side decision table — because either alone
+// gives the opposite answer.
+var rcBuiltinSigs = map[string]RcSig{
+	// (m, k, v). The key and the value are CONSUMED:
+	// `calleeRetainsAnyArg` names this callee as one that "MOVES /
+	// retains a fresh rc arg into a container without an inc", and
+	// `emitMapSetRetains` emits the compensating retain CALLER-side
+	// for an aliased argument. Reading only the second reads as "the
+	// builtin borrows", which is backwards.
+	//
+	// The RECEIVER is borrowed, and that is a claim worth being able
+	// to check rather than an omission: `m = m.set(k, v)` reassigns,
+	// so the caller's own overwrite releases the old handle, and the
+	// conditional retain `emitMapCowRetainTest` emits is caller-side
+	// too — it exists precisely because that binding is about to be
+	// overwritten.
+	"__method_Map_set": {Args: []RcArg{
+		{Index: 1, Effect: RcRelease},
+		{Index: 2, Effect: RcRelease},
+	}},
+	// (arr, v). Same calleeRetainsAnyArg entry; same caller-side
+	// compensation; same borrowed receiver for the same reason.
+	"__method_Array_push": one(1, RcRelease, false),
+	// (arr, i, v). emitArraySet retains an aliased value before the
+	// store — "it is now co-owned by the buffer slot" — so the buffer
+	// takes a unit and a fresh temp transfers its one reference in.
+	"__method_Array_set": one(2, RcRelease, false),
+	// Reads the rc word. Lowered inline rather than as a call, but
+	// classified so a shadowed spelling that survives is not opaque.
+	"__rc_get": one(0, RcInspect, false),
+}
+
+// rcInertBuiltins are the builtins that move no reference count on any
+// argument.
+//
+// The bulk is the platform surface, which reads its string arguments
+// and returns fresh values, plus the scalar intrinsics. The ones worth
+// naming a reason for:
+//
+//   - `strbuf_append` memcpys the string's bytes past the buffer tail
+//     (its own runtime doc), so it retains nothing.
+//   - `string_from_bytes_unchecked` copies the payload into a fresh
+//     string; the argument is borrowed.
+//   - `cell_new` / `__method_Cell_set` hold SCALARS only in v1 (E057),
+//     so there is no count on the slot to move.
+//   - `__c_call*` hand raw words to a C function, which does not
+//     participate in reference counting at all.
+//   - `__heap_mark` / `__heap_release_to` move the arena's bump
+//     pointer. "Inert" here means no ARGUMENT carries a unit — the
+//     release invalidates memory wholesale, which is a different axis
+//     and not one any caller of this table is asking about.
+var rcInertBuiltins = map[string]bool{
+	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
+	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
+	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
+	"__c_call3": true, "__c_call3_f32": true, "__c_call3_f64": true,
+	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
+
+	"__clz32": true, "__clz64": true, "__ctz32": true, "__ctz64": true,
+	"__popcount32": true, "__popcount64": true, "__round_f64": true,
+	"f32_bits": true, "f32_from_bits": true,
+	"f64_bits": true, "f64_from_bits": true,
+
+	"__heap_mark": true, "__heap_release_to": true,
+
+	"__method_Array_len": true, "__method_slice_len": true,
+	"__method_string_len": true, "__method_Cell_get": true,
+	"__method_Cell_set": true, "cell_new": true,
+
+	"__method_Map_clear": true, "__method_Map_delete": true,
+	"__method_Map_get": true, "__method_Map_get_or": true,
+	"__method_Map_has": true, "__method_Map_iter": true,
+	"__method_Map_keys": true, "__method_Map_len": true,
+	"__method_Map_values": true, "map_new": true,
+	"__method_MapIter_advance": true, "__method_MapIter_has_next": true,
+	"__method_MapIter_key": true, "__method_MapIter_value": true,
+
+	"__method_Reader_close": true, "__method_Reader_read_chunk": true,
+	"__method_Reader_read_line": true,
+	"__method_Writer_close":     true, "__method_Writer_write": true,
+
+	"strbuf_append": true, "strbuf_reset": true, "strbuf_take": true,
+	"string_from_bytes_unchecked": true,
+
+	"proc_exec": true, "proc_fork": true, "proc_waitpid": true,
+	"sleep_ms": true, "subprocess": true, "timer_fd": true,
+
+	// (path, contents) → Result. Both strings are read and written
+	// out; neither is retained. Its sibling `write_file` resolves
+	// through the rename rule, but there is no
+	// `__fern_write_file_exec` helper for this one to follow.
+	"write_file_exec": true,
 }
 
 // rcUnmodelled are helpers that do move counts, and whose movement one
@@ -229,7 +385,14 @@ func RcHelperClassified(name string) bool {
 	if _, ok := rcUnmodelled[name]; ok {
 		return true
 	}
-	return rcInert[name]
+	if rcInert[name] || rcInertBuiltins[name] {
+		return true
+	}
+	if _, ok := rcBuiltinSigs[name]; ok {
+		return true
+	}
+	_, aliased := builtinRuntimeAlias(name)
+	return aliased
 }
 
 // RcClassifiedRuntimeNames lists every runtime helper this file names,
@@ -292,12 +455,23 @@ func RcHelperSig(name string) (RcSig, bool) {
 	if s, ok := rcRuntimeSigs[name]; ok {
 		return s, true
 	}
+	if s, ok := rcBuiltinSigs[name]; ok {
+		return s, true
+	}
+	if alias, ok := builtinRuntimeAlias(name); ok {
+		if s, ok := rcRuntimeSigs[alias]; ok {
+			return s, true
+		}
+		// The alias resolved to an inert or unmodelled helper, which
+		// is a classification but not a signature.
+		return RcSig{}, false
+	}
 	if generatedDropNames[name] {
-		return RcSig{0, RcRelease, true}, true
+		return one(0, RcRelease, true), true
 	}
 	for _, p := range generatedDropPrefixes {
 		if strings.HasPrefix(name, p) && len(name) > len(p) {
-			return RcSig{0, RcRelease, true}, true
+			return one(0, RcRelease, true), true
 		}
 	}
 	return RcSig{}, false
@@ -311,8 +485,15 @@ func RcHelperSig(name string) (RcSig, bool) {
 // exactly these names, and right about the inert ones. Asking lets it
 // tell the two apart and count the gap instead of absorbing it.
 func RcHelperUnmodelled(name string) (reason string, ok bool) {
-	r, ok := rcUnmodelled[name]
-	return r, ok
+	if r, ok := rcUnmodelled[name]; ok {
+		return r, true
+	}
+	if alias, aliased := builtinRuntimeAlias(name); aliased {
+		if r, ok := rcUnmodelled[alias]; ok {
+			return r, true
+		}
+	}
+	return "", false
 }
 
 // RcReleaseNames lists every runtime helper whose signature says a call
@@ -350,19 +531,29 @@ func RcGeneratedDropNames() []string {
 // `internal/ssa` both ask. RcMove counts: the operand's unit is gone,
 // and what comes back is a different unit on the result.
 func RcReleases(name string) (operand int, ok bool) {
-	s, ok := RcHelperSig(name)
-	if !ok || (s.Effect != RcRelease && s.Effect != RcMove) {
+	sig, found := RcHelperSig(name)
+	if !found {
 		return 0, false
 	}
-	return s.Operand, true
+	for _, a := range sig.Args {
+		if a.Effect == RcRelease || a.Effect == RcMove {
+			return a.Index, true
+		}
+	}
+	return 0, false
 }
 
 // RcRetains reports whether a call to name adds a unit on its counted
 // operand.
 func RcRetains(name string) (operand int, ok bool) {
-	s, ok := RcHelperSig(name)
-	if !ok || s.Effect != RcRetain {
+	sig, found := RcHelperSig(name)
+	if !found {
 		return 0, false
 	}
-	return s.Operand, true
+	for _, a := range sig.Args {
+		if a.Effect == RcRetain {
+			return a.Index, true
+		}
+	}
+	return 0, false
 }

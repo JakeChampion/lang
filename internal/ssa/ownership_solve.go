@@ -278,15 +278,17 @@ func demandsUnit(uses *Uses, vs []Value, sigs map[string]Signature) bool {
 			if o == nil {
 				continue
 			}
-			if sig, operand, ok := rcSig(o); ok {
-				if operand.ID != v.ID {
-					continue
-				}
-				switch sig.Effect {
-				case ir.RcRetain:
-					retained = true
-				case ir.RcRelease, ir.RcMove:
-					released = true
+			if ops := rcSig(o); len(ops) > 0 {
+				for _, ro := range ops {
+					if ro.Value.ID != v.ID {
+						continue
+					}
+					switch ro.Arg.Effect {
+					case ir.RcRetain:
+						retained = true
+					case ir.RcRelease, ir.RcMove:
+						released = true
+					}
 				}
 				continue
 			}
