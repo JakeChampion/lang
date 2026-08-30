@@ -59,7 +59,12 @@ func StackHeights(p *Program) (heights map[string][]StackAt, skipped map[string]
 // lift or the verifier by accident rather than by construction, which
 // is exactly the failure this is built to expose.
 func stackHeights(f *Func, known map[string]*Func, externs map[string]*ExternFunc, ptrW int) ([]StackAt, string) {
-	s := &stackChecker{f: f, known: known, externs: externs, ptrW: ptrW, twoWordStr: useTwoWordStrings(ptrW)}
+	// The ABI comes off the FUNC, not from ast.UseTwoWordStrings: that
+	// consults a global the lowering sets and restores, so an arm64
+	// program inspected afterwards answers one-word and the verifier
+	// silently models the wrong ABI. Func.TwoWordStr is what the
+	// lowering actually used.
+	s := &stackChecker{f: f, known: known, externs: externs, ptrW: ptrW, twoWordStr: f.TwoWordStr}
 	if erased(f.ReturnType) {
 		return nil, "result type is an unresolved type parameter"
 	}

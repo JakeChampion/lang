@@ -26,6 +26,13 @@ package ssa_test
 // a way no output ever showed. Fixed in the same change, which is what
 // took one-word agreement from 99.30% to 99.77%.
 //
+// The arm64 column is now real. It first landed at 98.85%, which was
+// an artifact: the verifier read the string ABI from a global the
+// lowering had already restored, so it modelled one-word against a
+// one-word lift. `ir.Func.TwoWordStr` carries the decision with the IR
+// instead, and the honest figure is 77.29% — the two-word gap that
+// #7803 is about, which the column had been hiding.
+//
 // The 359 that remain on one-word are DEFINED callees that return void.
 // `providedSigs` cannot answer for those — they are the program\'s own
 // functions — so closing them needs the callee table the lift does not
@@ -114,13 +121,22 @@ func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 		ptrW    int
 		twoWord bool
 		// floor is the fraction of functions that must agree at every
-		// reachable op. Measured 2026-08-30 at 0.9977 / 0.9885 /
+		// reachable op. Measured 2026-08-30 at 0.9977 / 0.7729 /
 		// 0.6257 and set just under, so ordinary corpus growth does
 		// not trip it but a real regression does.
+		//
+		// The arm64 floor was 0.985 when this test first landed, and
+		// that number was measuring nothing: the verifier derived the
+		// string ABI from `ast.UseTwoWordStrings`, a global the
+		// lowering sets and RESTORES, so a two-word program inspected
+		// afterwards was checked as one-word — against a lift that was
+		// also one-word. Two wrong models agreeing is not agreement.
+		// Reading the ABI off `ir.Func.TwoWordStr` makes the column
+		// real, and real is 0.7729.
 		floor float64
 	}{
 		{"x86-64 one-word", 8, false, 0.995},
-		{"arm64 two-word", 8, true, 0.985},
+		{"arm64 two-word", 8, true, 0.770},
 		{"wasm32 two-word", 4, false, 0.620},
 	} {
 		var compared, agreed int
