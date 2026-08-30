@@ -17,13 +17,20 @@ package ssa_test
 // slot model is wrong.
 //
 // What it found immediately, on the ABI that was supposed to be clean:
-// the lift pushes a Result for EVERY OpCall, including a void-returning
-// one. `print` and `__memcpy` are the worked examples — the verifier
-// pushes nothing, the lift pushes one, and the next op is an ordinary
-// local.load rather than a drop, so the phantom entry just sits there.
-// It does not break code generation (nothing consumes the value and DCE
-// removes it), which is exactly why it survived: the model is wrong in a
-// way no output ever showed.
+// the lift pushed a Result for EVERY OpCall, including a void-returning
+// one. `print` and `__memcpy` were the worked examples — the verifier
+// pushes nothing, the lift pushed one, and the next op is an ordinary
+// local.load rather than a drop, so the phantom entry just sat there.
+// It never broke code generation (nothing consumed the value and DCE
+// removed it), which is exactly why it survived: the model was wrong in
+// a way no output ever showed. Fixed in the same change, which is what
+// took one-word agreement from 99.30% to 99.77%.
+//
+// The 359 that remain on one-word are DEFINED callees that return void.
+// `providedSigs` cannot answer for those — they are the program\'s own
+// functions — so closing them needs the callee table the lift does not
+// have. `__map_cow_inplace` is the example. That is a bounded, named
+// gap rather than an unknown one.
 //
 // So the gate is a RATCHET per configuration rather than a demand for
 // zero. The measured agreement is recorded below; the test fails when it
@@ -107,14 +114,14 @@ func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 		ptrW    int
 		twoWord bool
 		// floor is the fraction of functions that must agree at every
-		// reachable op. Measured 2026-08-30 at 0.9930 / 0.9840 /
-		// 0.6231 and set just under, so ordinary corpus growth does
+		// reachable op. Measured 2026-08-30 at 0.9977 / 0.9885 /
+		// 0.6257 and set just under, so ordinary corpus growth does
 		// not trip it but a real regression does.
 		floor float64
 	}{
-		{"x86-64 one-word", 8, false, 0.990},
-		{"arm64 two-word", 8, true, 0.980},
-		{"wasm32 two-word", 4, false, 0.615},
+		{"x86-64 one-word", 8, false, 0.995},
+		{"arm64 two-word", 8, true, 0.985},
+		{"wasm32 two-word", 4, false, 0.620},
 	} {
 		var compared, agreed int
 		firstBy := map[ir.OpKind]int{}
