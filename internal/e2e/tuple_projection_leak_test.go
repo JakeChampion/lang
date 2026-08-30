@@ -45,10 +45,24 @@ import (
 // so the one that grew is the ARRAY, and that is the one that leaks. The
 // tuple box is freed every time.
 //
-// So `__drop_tuple_…` runs and frees the box but does not release the
-// pointer field that was projected out of it. The field sits one count
-// high, the dec-on-overwrite takes it back to one, and it never reaches
-// zero.
+// ROOT CAUSE: the wrong dec helper. With `FERN_RC_TRACE`'s inc/dec
+// events paired against its alloc/free ones (the a/f pointers name the
+// block, i/d the object 16 bytes above), the leaked arrays read
+// `alloc inc dec dec` — the counts BALANCE and reach zero, and the
+// block is still not freed.
+//
+// `emitRcDecRuntime`'s own doc says why: "on rc == 1 the helper still
+// decrements to 0 instead of calling a type-specific drop handler +
+// freelist push. The bump allocator leaks." `__fern_rc_dec` does not
+// reclaim; `__fern_arr_dec` does. And the leaking shape emits
+// `rc.dec __fern_rc_dec` twice with no `__fern_arr_dec`, while both
+// clean shapes emit neither.
+//
+// So this is a ROUTING defect, not an accounting one: a projected
+// array-typed value is released through the generic helper. The fix is
+// at the dec site, selecting the typed helper for an rc-tracked element
+// type — nothing needs to move an inc or add a dec, which is what the
+// attempt that segfaulted unidiff did.
 //
 // THIS TEST PINS A BUG. A fix makes it fail, which is the point — the
 // same rule the conformance leak census follows.

@@ -402,3 +402,46 @@ but on the TUPLE BOX rather than the payload.
 What is not established is which inc that is, and it should not be
 guessed at: the last attempt to suppress an inc on reasoning rather than
 evidence segfaulted `unidiff`.
+
+## Root cause of the projection leak: the wrong dec helper
+
+The inc/dec tracer (`FERN_RC_TRACE`, extended to emit `i`/`d` events)
+settles it, once its pointers are paired correctly — `a`/`f` name the
+block, `i`/`d` name the object 16 bytes above it:
+
+```
+LEAKED block=0x0000 size=32: alloc  dec
+LEAKED block=0x0040 size=48: alloc  inc  dec  dec
+LEAKED block=0x0070 size=48: alloc  inc  dec  dec
+freed  block=0x0020 size=32: alloc  free  alloc  free
+```
+
+**The counts balance and reach zero, and the blocks are still not
+freed.** So this is neither a missing dec nor an extra inc — the whole
+family of explanations pursued so far is the wrong family.
+
+`emitRcDecRuntime`'s own doc says why:
+
+> Phase-1 simplification: on rc == 1 the helper still decrements to 0
+> instead of calling a type-specific drop handler + freelist push. **The
+> bump allocator leaks**; Phase 3 introduces the real freelist and Phase
+> 1e introduces the drop handlers.
+
+`__fern_rc_dec` does not reclaim, by design. Arrays reclaim through
+`__fern_arr_dec`, which frees on the last reference.
+
+And the projection shape routes the array to the wrong one. The IR diff
+across the three shapes shows it directly: the leaking shape emits
+`rc.dec __fern_rc_dec` twice and **no** `__fern_arr_dec`, while both
+clean shapes emit neither.
+
+So the defect is a **routing** one, not an accounting one: a projected
+array-typed value is released through the generic helper, which
+decrements it to zero and leaves the storage stranded. Three
+independent readings agree — the trace, the helper's own contract, and
+the emitted IR.
+
+That reframes the fix. Nothing needs to move an inc or add a dec, which
+is what the segfaulting attempt did; the dec site needs to select the
+typed helper for an rc-tracked element type, the way every other release
+site already does.
