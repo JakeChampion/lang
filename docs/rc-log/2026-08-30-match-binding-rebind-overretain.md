@@ -517,8 +517,21 @@ per-element leak in a projection looks like.
 
 ### Still not fixed
 
-`iter.filter` and `iter.map` are unchanged at 11 of 14 and 7 of 10. The
-adapters use this shape, so something further separates them from the
-minimal repro — a generic instantiation, or the element being an
-iterator struct rather than an array. That is the next thread, and it
-now starts from a fix that works rather than from a mystery.
+`iter.filter` and `iter.map` are unchanged at 11 of 14 and 7 of 10, and
+they are **not** the same defect. Localised:
+
+- **10 of the 11 leaked blocks are allocated in `ArrayIter::next`**, two
+  per element over a five-element array — the `Some((value, next))`
+  the iterator builds, not anything `filter` owns.
+- `filter`'s only assign reaching the array branch is its accumulator
+  `out`, and that one is already `freeEligible=true` and already emits
+  `__fern_arr_dec`. Nothing there is wrong.
+- `cur = t.1` in `filter` binds an ITERATOR STRUCT, so it takes the
+  struct branch rather than the array branch the fix above is measured
+  through.
+
+So the adapters leak the iterator's own per-element allocations, and the
+projection fix does not reach them. Tracing those allocations
+specifically — they are visible under the new `i`/`d` events — is the
+next thread. It is a different bug that happened to share a symptom,
+which is now the third time on this page.
