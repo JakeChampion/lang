@@ -269,3 +269,63 @@ arm, is not yet established — and `computeMovedLocals`'s own guards
 exist because a move that does not run on every path strands or
 double-counts. So this stops at the diagnosis: eleven measured shapes,
 one op, and an accounting that adds up.
+
+## The move repair was tried, and it is unsound
+
+`markMatchBindingAliasMoves` — mark the assign a move site when the RHS
+is a match-arm binding at its last occurrence, so the alias-inc is
+skipped and the reference transfers. It reuses the existing
+`b.rc.moveSites[node]` mechanism rather than adding one.
+
+It works on the repro: `__rc_get(cur)` goes 2 → **1**, unpaired 3 → **0**,
+and all three controls stay clean. `internal/ir` stays green.
+
+**Then `TestArm64SSABackendDifferential` segfaults.**
+
+```
+examples/proposals/unidiff.fern
+  one build CRASHED and the other did not —
+  flat: signal: segmentation fault, ssa: exit status 0
+```
+
+289 agree, **2 diverge**, against 291 / 0 before. A use-after-free, which
+is exactly the failure the caution was about: the argument for safety was
+"a binding is swept by nobody, so there is nothing to cancel the inc
+against", and that is **false for some shapes** — something does release
+those bindings, and removing the inc over-releases.
+
+Reverted. What it leaves behind is worth more than the patch would have
+been:
+
+- The repair direction is not merely unproven, it is **refuted**, with a
+  named counterexample to work against.
+- The soundness argument is refuted with it: bindings are not uniformly
+  unswept. Any future attempt has to say WHICH bindings are swept and
+  why, rather than assuming none are.
+- The gate that caught it is the arm64 flat-vs-SSA differential, not
+  anything rc-specific — worth knowing, since the rc suites and the leak
+  census were all green on the broken compiler.
+
+That last point is the sharpest: **the census, `internal/ir`, and the rc
+e2e suites all passed a compiler that segfaults a real program.** A leak
+gate cannot see an over-release; only running the program can.
+
+## What this does not reach, either
+
+The census is unchanged by the fix — still 134 leaking fixtures, 66,570
+unpaired allocations — because no conformance fixture uses the bare
+`cur = v` shape.
+
+An earlier revision of this note claimed the `core/iter` adapters leak
+*because of this bug*. **That attribution is wrong.** They are written on
+`cur = t.1`, a tuple PROJECTION, and measured alone that shape has a
+different signature:
+
+| shape | `__rc_get(cur)` | unpaired |
+| --- | --- | --- |
+| `Some(v) => cur = v` (this bug) | 2 | 3 |
+| `Some(t) => cur = t.1` (the adapters) | **1** | **4** |
+
+The projection ends with the refcount CORRECT and leaks the **tuple
+boxes** instead. Two defects in adjacent syntax; the `iter.filter`
+11-of-14 measurement belongs to the second, which is still open.
