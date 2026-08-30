@@ -466,15 +466,28 @@ func RcHelperSig(name string) (RcSig, bool) {
 		// is a classification but not a signature.
 		return RcSig{}, false
 	}
-	if generatedDropNames[name] {
+	if isGeneratedDrop(name) {
 		return one(0, RcRelease, true), true
+	}
+	return RcSig{}, false
+}
+
+// isGeneratedDrop reports whether name is one of the per-type drop
+// functions lowering synthesises, by the naming rule the two tables
+// above describe.
+//
+// One copy: the result axis asks the same question, and a second
+// spelling of the prefix loop is a second thing to keep in step.
+func isGeneratedDrop(name string) bool {
+	if generatedDropNames[name] {
+		return true
 	}
 	for _, p := range generatedDropPrefixes {
 		if strings.HasPrefix(name, p) && len(name) > len(p) {
-			return one(0, RcRelease, true), true
+			return true
 		}
 	}
-	return RcSig{}, false
+	return false
 }
 
 // RcHelperUnmodelled reports whether name is a runtime helper this file
