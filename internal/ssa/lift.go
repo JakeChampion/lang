@@ -168,6 +168,25 @@ type StackAt struct {
 	Reachable bool
 }
 
+// calleeReturnsNothing reports whether a direct callee is DECLARED to
+// return no operand-stack entries.
+//
+// Only `providedSigs` answers — it is the verifier's own record of the
+// callees the IR does not define, and it identified every one of the
+// corpus's 3942 void calls, where op.Sig() identified none. A callee
+// absent from it is a defined function whose shape the lift cannot
+// see, and absence is not evidence of voidness: 149759 calls in that
+// corpus have no declared shape at all, and treating "unknown" as void
+// would drop a real value.
+//
+// The ABI flag does not matter for this question: a void callee
+// returns nothing under either string ABI. It matters only for how
+// many entries a STRING result occupies.
+func calleeReturnsNothing(name string) bool {
+	_, resultSlots, ok := ir.ProvidedCallee(name, false)
+	return ok && resultSlots == 0
+}
+
 // isFloatAstType reports whether `t` is a FloatType (f32/f64).
 // Returns false for nil, ints, bools, and pointer-shaped types.
 func isFloatAstType(t ast.Type) bool {
@@ -684,6 +703,19 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		args := append([]Value(nil), l.stack[len(l.stack)-argc:]...)
 		l.stack = l.stack[:len(l.stack)-argc]
+		if op.Kind == ir.OpCallDirect && calleeReturnsNothing(op.Str) {
+			// A void callee pushes nothing, and the IR emits no drop
+			// after one — measured over the conformance corpus: 3942
+			// void calls, none followed by an OpDrop. Pushing a result
+			// anyway left a value nothing consumed, so every
+			// subsequent stack height was one too high. It never broke
+			// code generation, because DCE removed the dead op, which
+			// is why it survived until the two stack models were
+			// compared per op.
+			o := l.out.AddOpNoResult(l.cur, OpCall, args...)
+			o.Str = ssaHelperName(op.Str)
+			break
+		}
 		result := l.out.AddOp(l.cur, OpCall, args...)
 		o := l.cur.Ops[len(l.cur.Ops)-1]
 		o.Str = ssaHelperName(op.Str)
