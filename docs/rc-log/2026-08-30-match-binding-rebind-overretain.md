@@ -360,3 +360,23 @@ strands the box — not destructuring, not matching, not tuples. Pinned by
 `TestTupleProjectionFromMatchBindingLeaksX86_64`, which carries the three
 clean neighbours alongside the leaking case so the boundary is part of
 the gate rather than a note beside it.
+
+### The drop is emitted; it just does not reclaim
+
+Diffing the lowered IR across the three shapes rules out the obvious
+next guess — that the leaking shape skips the tuple's drop:
+
+| shape | ops in `main` |
+| --- | --- |
+| pointer projected (leaks) | `__drop_tuple_…` ×1, `rc.inc` ×1, `rc.dec` ×2 |
+| scalar field only (clean) | `__drop_tuple_…` ×1 |
+| binding unused (clean) | `__drop_tuple_…` ×1 |
+
+All three emit the drop. The leaking one differs by an extra **inc** and
+two decs. So the box's drop runs and finds a count above zero — the same
+family as the bare-Ident bug, an alias-inc without a matching release,
+but on the TUPLE BOX rather than the payload.
+
+What is not established is which inc that is, and it should not be
+guessed at: the last attempt to suppress an inc on reasoning rather than
+evidence segfaulted `unidiff`.
