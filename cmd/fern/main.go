@@ -1891,7 +1891,7 @@ func buildWasmSSA(prog *ast.Program, info *checker.Info) ([]byte, error) {
 	if target == nil {
 		return nil, fmt.Errorf("no `main` function in program")
 	}
-	f, err := ssa.LiftFromIR(target)
+	f, err := ssa.LiftFromIRWith(target, ir.NewCallShapes(irProg))
 	if err != nil {
 		return nil, fmt.Errorf("ssa.LiftFromIR: %v", err)
 	}
@@ -1949,11 +1949,12 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	// the alias the emitter applies — same map, both ends.
 	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases, dynRoots...)
 	funcs := map[string]*ssa.Func{}
+	shapes := ir.NewCallShapes(irProg)
 	for _, fn := range irProg.Funcs {
 		if live != nil && !live[fn.Name] {
 			continue
 		}
-		f, err := ssa.LiftFromIR(fn)
+		f, err := ssa.LiftFromIRWith(fn, shapes)
 		if err != nil {
 			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
 		}

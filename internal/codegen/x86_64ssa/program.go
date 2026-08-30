@@ -28,8 +28,9 @@ func EmitProgram(prog *ast.Program, info *checker.Info, numAlloc int) (string, e
 	}
 	funcs := make(map[string]*ssa.Func, len(irProg.Funcs))
 	hasMain := false
+	shapes := ir.NewCallShapes(irProg)
 	for _, fn := range irProg.Funcs {
-		f, err := ssa.LiftFromIR(fn)
+		f, err := ssa.LiftFromIRWith(fn, shapes)
 		if err != nil {
 			return "", fmt.Errorf("x86_64ssa: lift %q: %w", fn.Name, err)
 		}
