@@ -47,8 +47,14 @@ import (
 // ceiling alone.
 //
 // x86-64 config only, matching the census: it runs the x86-64 backend,
-// which is the only one with the heap tracer.
-func TestCertifyAgreesWithTheLeakCensus(t *testing.T) {
+// which is the only one with the heap tracer. The name carries that —
+// `test-e2e-other.yml` is a catch-all for everything no dedicated lane
+// claims, and `^TestX86_64` is how `test-e2e-x86_64.yml` claims a test.
+// Measured before choosing: the catch-all lane runs 16m14s locally and
+// 16m58s on a slow runner against an 18m timeout, so 13.6s of new work
+// is enough to time it out, while the x86-64 lane runs 8m37s against
+// 25m.
+func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	if testing.Short() {
 		t.Skip("lowers the whole conformance corpus; not a -short test")
 	}
