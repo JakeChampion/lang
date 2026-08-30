@@ -19,8 +19,9 @@ import (
 // the match-binding over-retain pinned in
 // match_binding_overretain_test.go. The two have different signatures:
 //
-//	Some(v) => cur = v      refcount 2, the PAYLOAD leaks
-//	Some(t) => cur = t.1    refcount 1 (correct), the TUPLE BOX leaks
+//	Some(v) => cur = v      cur's payload ends at refcount 2
+//	Some(t) => cur = t.1    cur's payload ends at 1 (correct), and the
+//	                        PROJECTED ARRAY still leaks, one per call
 //
 // `filter`, `map` and `enumerate` are all written on the second shape —
 // `cur = t.1` inside a match arm, where `t` is the (value, next-iterator)
@@ -33,9 +34,21 @@ import (
 // the binding unused is clean, projecting just the scalar field is
 // clean, and a tuple with no pointer fields at all is clean.
 //
-// Attribution comes from the heap tracer's alloc sites mapped through
-// the symbol table: three of the four leaked boxes are allocated in
-// `step`, one per call, which is the tuple `Some((n+1, [1,2,3]))` builds.
+// Attribution comes from the heap tracer's alloc sites: three of the
+// four leaked boxes come from one site inside `step`, one per call.
+//
+// WHICH object that is was established by SIZE, not by reading the
+// addresses in order — `step` allocates two 32-byte blocks per call and
+// the ordering argument gets it backwards. Growing the array literal
+// from 3 elements to 20 moves one site to 48 bytes and leaves the other
+// at 32; a two-field tuple's box does not depend on the array's length,
+// so the one that grew is the ARRAY, and that is the one that leaks. The
+// tuple box is freed every time.
+//
+// So `__drop_tuple_…` runs and frees the box but does not release the
+// pointer field that was projected out of it. The field sits one count
+// high, the dec-on-overwrite takes it back to one, and it never reaches
+// zero.
 //
 // THIS TEST PINS A BUG. A fix makes it fail, which is the point — the
 // same rule the conformance leak census follows.
@@ -113,7 +126,8 @@ func TestTupleProjectionFromMatchBindingLeaksX86_64(t *testing.T) {
 		src  string
 		want int
 	}{
-		// The bug: the tuple box is dropped once per call.
+		// The bug: the projected array is stranded, one per call, plus
+		// main's initial value.
 		{"pointer field projected", tupleProjLeakSrc, 4},
 		// The boundary.
 		{"binding unused", tupleProjBindingUnusedSrc, 0},
