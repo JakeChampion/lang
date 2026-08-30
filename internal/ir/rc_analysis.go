@@ -425,26 +425,109 @@ func (b *builder) computeDynBorrowedViews() map[string]bool {
 //
 // A function with no value returns gets false: it returns nothing to be fresh.
 func findReturnsFreshBox(prog *ast.Program) map[string]bool {
-	out := map[string]bool{}
+	// Greatest fixpoint: assume every function with a body qualifies, then
+	// eliminate the ones a return disproves. A call may be fresh because its
+	// callee is, so the answer for one function depends on the answers for
+	// others and a single pass would under-approximate mutual recursion.
+	q := map[string]bool{}
 	for _, fn := range prog.Funcs {
-		if fn.Body == nil {
-			continue
+		if fn.Body != nil {
+			q[fn.Name] = true
 		}
-		ok, saw := true, false
-		ast.Walk(fn.Body, func(n ast.Node) bool {
-			r, isRet := n.(*ast.Return)
-			if !isRet || r.Value == nil {
-				return true
-			}
-			saw = true
-			if !allocatesFreshBox(r.Value) {
-				ok = false
-			}
-			return true
-		})
-		out[fn.Name] = ok && saw
 	}
-	return out
+	for {
+		changed := false
+		for _, fn := range prog.Funcs {
+			if fn.Body == nil || !q[fn.Name] {
+				continue
+			}
+			fresh := freshLocalsIn(fn, q)
+			ok, saw := true, false
+			ast.Walk(fn.Body, func(n ast.Node) bool {
+				r, isRet := n.(*ast.Return)
+				if !isRet || r.Value == nil {
+					return true
+				}
+				saw = true
+				if !returnsOwnBox(r.Value, fresh, q) {
+					ok = false
+				}
+				return true
+			})
+			if !ok || !saw {
+				q[fn.Name] = false
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return q
+}
+
+// returnsOwnBox reports whether `e` evaluates to a box this function owns
+// rather than one it was handed.
+func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool) bool {
+	switch x := e.(type) {
+	case *ast.Ident:
+		// A local proven fresh below. A PARAMETER is never in that set, which
+		// is the whole safety property: `return p` hands back the caller's box.
+		return fresh[x.Name]
+	case *ast.Call:
+		id, isIdent := x.Callee.(*ast.Ident)
+		return isIdent && q[id.Name]
+	case *ast.IfExpr:
+		return returnsOwnBox(x.Then, fresh, q) && returnsOwnBox(x.Else, fresh, q)
+	}
+	return allocatesFreshBox(e)
+}
+
+// freshLocalsIn returns the locals of `fn` whose every assigned value is a box
+// the function owns. A name that is also a parameter is excluded outright: a
+// shadowing declaration would otherwise let a parameter's box be reported as
+// fresh, and distinguishing the two costs more than the reclaim is worth.
+func freshLocalsIn(fn *ast.FuncDecl, q map[string]bool) map[string]bool {
+	isParam := map[string]bool{}
+	for _, p := range fn.Params {
+		isParam[p.Name] = true
+	}
+	assigned := map[string][]ast.Expr{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			if x.Init != nil && !isParam[x.Name] {
+				assigned[x.Name] = append(assigned[x.Name], x.Init)
+			}
+		case *ast.Assign:
+			if id, ok := x.Target.(*ast.Ident); ok && !isParam[id.Name] {
+				assigned[id.Name] = append(assigned[id.Name], x.Value)
+			}
+		}
+		return true
+	})
+	fresh := map[string]bool{}
+	for name := range assigned {
+		fresh[name] = true
+	}
+	// Same shape as the outer fixpoint: a local may be initialised from
+	// another, so shrink until stable rather than deciding in one pass.
+	for {
+		changed := false
+		for name := range fresh {
+			for _, rhs := range assigned[name] {
+				if !returnsOwnBox(rhs, fresh, q) {
+					delete(fresh, name)
+					changed = true
+					break
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return fresh
 }
 
 func findReturnsFreshPairPayload(prog *ast.Program, info *checker.Info) map[string]bool {
