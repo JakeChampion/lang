@@ -489,10 +489,20 @@ func (b *builder) freshPairFormEnumResultType(e ast.Expr) (ast.Type, bool) {
 		return nil, false
 	}
 	id := e.(*ast.Call).Callee.(*ast.Ident)
-	if strings.HasPrefix(id.Name, "__") {
+	// User-declared callees only. Membership in the per-function property
+	// maps is the test — they key every decl in prog.Funcs — NOT a "__"
+	// name prefix, which also catches every concrete method: those are
+	// mangled to __method_* by rc time, so the prefix refused the entire
+	// iterator protocol along with the builtins it was aimed at.
+	if _, isUserFn := b.returnsFreshPairPayload[id.Name]; !isUserFn {
 		return nil, false
 	}
-	if !b.returnsNoParamEscape[id.Name] {
+	// The payload BOX must be the callee's own. Deliberately not
+	// returnsNoParamEscape: that asks whether anything reachable from the
+	// result aliases a parameter, and a fresh box holding a counted
+	// reference to a parameter's heap is exactly what an iterator's `next`
+	// returns. See findReturnsFreshPairPayload.
+	if !b.returnsFreshPairPayload[id.Name] {
 		return nil, false
 	}
 	et, ok := b.exprType(e).(ast.EnumType)

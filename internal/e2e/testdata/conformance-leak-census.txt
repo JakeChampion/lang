@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-08-30: 453 fixtures, 319 clean, 134 leaking, 66570
+# Measured 2026-08-30: 453 fixtures, 321 clean, 132 leaking, 64898
 # unpaired allocations. The distribution is heavily skewed - median 4,
 # and regex_captures_assert alone is 54713 of the total.
 #
@@ -92,7 +92,7 @@ char_cast_receiver                                   0
 closure_adder                                        1
 closure_capture_shared_cell                          0
 closure_captures_defining_scope                      6
-closure_field_match                                  650
+closure_field_match                                  600
 closure_returns_composite                            0
 cmp_float_traits                                     0
 compound_assign_wider                                0
@@ -115,8 +115,8 @@ defer_in_loop                                        0
 derive_debug                                         2
 derive_default                                       0
 derive_default_generic_primitive                     0
-derive_from_json                                     37
-derive_from_json_i64                                 15
+derive_from_json                                     35
+derive_from_json_i64                                 14
 derive_json                                          2
 derive_multi_payload                                 20
 div_modulo                                           0
@@ -174,7 +174,7 @@ generic_box                                          0
 generic_call_in_struct_field                         0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      2
-generic_fnarg_typevar                                1850
+generic_fnarg_typevar                                300
 generic_id                                           0
 generic_method_typeparams                            0
 generic_pair                                         0
@@ -324,7 +324,7 @@ pure_copy                                            0
 question_op                                          0
 random_bytes                                         1
 range_for                                            0
-range_value                                          68
+range_value                                          0
 rc_borrowed_box_field                                0
 rc_borrowed_payload_array                            0
 read_all_stdin_chunks                                4
@@ -372,7 +372,7 @@ slice_views                                          6
 smallest_int_literal                                 0
 some_branch                                          0
 sort_strings_delegation_wasm                         2
-split_once                                           1
+split_once                                           0
 sso_concat_inline_plus_inline_heap                   0
 sso_concat_inline_plus_inline_inline                 0
 sso_concat_roundtrip_bytes                           0

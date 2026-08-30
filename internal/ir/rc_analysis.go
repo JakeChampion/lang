@@ -382,6 +382,104 @@ func (b *builder) computeDynBorrowedViews() map[string]bool {
 	return out
 }
 
+// findReturnsFreshPairPayload reports, per function, whether every value
+// return hands back a variant whose payload box is NEWLY ALLOCATED rather
+// than a pointer the function received.
+//
+// It is deliberately shallower than findReturnsNoParamEscape, and the two
+// answer different questions about the same value. That one asks whether
+// anything REACHABLE FROM the result aliases a parameter; this one asks only
+// whether the returned payload POINTER is the callee's own.
+//
+// The pair-form payload release frees that box and deep-drops its fields, so
+// the property it needs is the shallow one: a counted reference the box holds
+// to a parameter's heap is a reference the release is entitled to decrement,
+// because the construction that stored it retained it. Demanding the stronger
+// property refused every iterator's `next` — which returns
+// `Some((elem, Self { xs: self.xs, … }))` — and cost two stranded boxes per
+// element across the whole combinator library (sum, count, fold, map, filter,
+// take all share that shape).
+//
+// A payload that is not a literal construction is refused rather than chased:
+// a call could be proven fresh by a fixpoint like its sibling's, but nothing
+// in the iterator shape needs it and an unproven shape must stay refused —
+// releasing a pointer the callee merely passed through is a use-after-free,
+// where declining to release it is the leak that already exists.
+func findReturnsFreshPairPayload(prog *ast.Program, info *checker.Info) map[string]bool {
+	nullaryVariant := map[string]bool{}
+	payloadCount := map[string]int{}
+	for _, en := range info.Enums {
+		for _, v := range en.Variants {
+			payloadCount[v.Name] = len(v.Payloads)
+			if len(v.Payloads) == 0 {
+				nullaryVariant[v.Name] = true
+			}
+		}
+	}
+	out := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		ok := true
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			r, isRet := n.(*ast.Return)
+			if !isRet || r.Value == nil {
+				return true
+			}
+			if !returnsFreshVariantPayload(r.Value, nullaryVariant, payloadCount) {
+				ok = false
+			}
+			return true
+		})
+		out[fn.Name] = ok
+	}
+	return out
+}
+
+// returnsFreshVariantPayload reports whether `e` is a variant construction
+// whose payload is allocated on the spot — a payloadless variant, or a
+// single-payload constructor applied to a literal.
+func returnsFreshVariantPayload(e ast.Expr, nullaryVariant map[string]bool, payloadCount map[string]int) bool {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return nullaryVariant[x.Name]
+	case *ast.IfExpr:
+		return returnsFreshVariantPayload(x.Then, nullaryVariant, payloadCount) &&
+			returnsFreshVariantPayload(x.Else, nullaryVariant, payloadCount)
+	case *ast.Call:
+		id, isIdent := x.Callee.(*ast.Ident)
+		if !isIdent {
+			return false
+		}
+		if nullaryVariant[id.Name] {
+			return true
+		}
+		if payloadCount[id.Name] != 1 || len(x.Args) != 1 {
+			return false
+		}
+		return allocatesFreshBox(x.Args[0])
+	}
+	return false
+}
+
+// allocatesFreshBox reports whether evaluating `e` necessarily produces a box
+// this function allocated. It does NOT look inside: what the box contains may
+// alias anything, which is the whole point of the distinction above.
+func allocatesFreshBox(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.TupleLit, *ast.StructLit, *ast.ArrayLit:
+		return true
+	case *ast.StringLit:
+		// A static sentinel, below the heap — releasing it is a no-op
+		// under the same guard every rc helper applies.
+		return true
+	case *ast.IfExpr:
+		return allocatesFreshBox(x.Then) && allocatesFreshBox(x.Else)
+	}
+	return false
+}
+
 func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]bool {
 	// Variant-constructor name -> payload types, for the construction recursion.
 	variantPayloads := map[string][]ast.Type{}
