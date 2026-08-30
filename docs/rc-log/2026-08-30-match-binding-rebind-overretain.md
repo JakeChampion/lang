@@ -445,3 +445,33 @@ That reframes the fix. Nothing needs to move an inc or add a dec, which
 is what the segfaulting attempt did; the dec site needs to select the
 typed helper for an rc-tracked element type, the way every other release
 site already does.
+
+### And the routing decision is `freeEligible`
+
+Instrumenting the array branch of `b.assign` names the gate that
+diverges:
+
+| shape | `freeEligible[cur]` | dec emitted | result |
+| --- | --- | --- | --- |
+| `cur = t.1` (projection) | **false** | generic `__fern_rc_dec` | leaks |
+| `cur = v` (bare binding) | true | `__fern_arr_dec` | frees |
+
+That closes the chain, every link measured rather than argued:
+
+1. `cur = t.1` leaves `cur` **not** free-eligible.
+2. So the assign's array branch is skipped and the generic
+   `__fern_rc_dec` is emitted instead of `__fern_arr_dec`.
+3. `__fern_rc_dec` decrements to zero without reclaiming — its own
+   contract.
+4. The array's count reaches zero and its storage is stranded.
+
+The conservatism is deliberate: `computeFreeEligible` excludes
+borrowed-derived locals because **only the owner frees**, and the
+fallback for an ineligible local is a dec that cannot double-free. Safe,
+and leaky. A projection out of a match binding lands on the wrong side
+of that line.
+
+So the fix is not at the dec site after all — it is to establish that a
+projection of an owned value is itself owned, so `cur` stays eligible.
+That is an ownership-inference question, which is where #7786 lives, and
+it is a considerably better-posed one than "which inc is doubled".
