@@ -310,6 +310,14 @@ That last point is the sharpest: **the census, `internal/ir`, and the rc
 e2e suites all passed a compiler that segfaults a real program.** A leak
 gate cannot see an over-release; only running the program can.
 
+The census now checks for a signal death, since it already compiles and
+runs all 453 fixtures and was throwing the exit status away. Re-running
+it against the broken compiler says plainly what that buys: **nothing,
+for this instance.** No conformance fixture crashes; the crash was in
+`examples/proposals/unidiff.fern`, which the census does not cover. The
+check closes the SHAPE of the gap, not that occurrence of it, and
+widening the corpus to `examples/` is what would close both.
+
 ## What this does not reach, either
 
 The census is unchanged by the fix — still 134 leaking fixtures, 66,570

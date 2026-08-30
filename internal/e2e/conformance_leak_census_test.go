@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -49,6 +50,9 @@ import (
 // x86-64 only, like the tracer itself. Fixtures with an `expected.error` file
 // are negative fixtures and are skipped: they are not supposed to compile.
 
+// errCrashed marks a fixture the run killed with a signal.
+var errCrashed = errors.New("fixture crashed (killed by a signal)")
+
 type censusRow struct {
 	name     string
 	unpaired int
@@ -68,6 +72,7 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 	}
 
 	var mu sync.Mutex
+	var crashed []string
 	rows := make([]censusRow, 0, len(cases))
 	sites := map[string]string{}
 	sem := make(chan struct{}, 4)
@@ -81,6 +86,11 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 			n, top, err := traceOneFixture(t, gcc, runner, c)
 			mu.Lock()
 			defer mu.Unlock()
+			if errors.Is(err, errCrashed) {
+				crashed = append(crashed, filepath.Base(c))
+				rows = append(rows, censusRow{filepath.Base(c), -1})
+				return
+			}
 			if err != nil {
 				// A fixture this pass cannot build or run is counted as
 				// unmeasured rather than clean; a silent zero here would
@@ -106,6 +116,19 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 			fmt.Printf("%-52s %d\n", r.name, r.unpaired)
 		}
 		t.Skip("dumped the census; not comparing")
+	}
+
+	// No fixture may die of a signal. This is a correctness floor rather
+	// than a pinned number: a crash is never an acceptable steady state,
+	// so there is nothing to ratchet.
+	if len(crashed) > 0 {
+		sort.Strings(crashed)
+		if len(crashed) > 8 {
+			crashed = append(crashed[:8], "…")
+		}
+		t.Errorf("%d fixture(s) were killed by a signal: %s — an over-release reads as a "+
+			"crash, and the leak counts below cannot see it",
+			len(crashed), strings.Join(crashed, ", "))
 	}
 
 	want := loadCensus(t)
@@ -209,7 +232,32 @@ func traceOneFixture(t *testing.T, gcc string, runner []string, dir string) (int
 	} else {
 		cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), binPath)...)
 	}
-	_, stderr, _ := runSplit(t, cmd)
+	_, stderr, exit := runSplit(t, cmd)
+	// A fixture killed by a signal is a CRASH, not a verdict. Go reports
+	// that as exit code -1; an ordinary non-zero status is just the
+	// program's own `main` result and says nothing.
+	//
+	// This is here because the census did not have it and should have. An
+	// attempted rc fix (docs/rc-log/2026-08-30-match-binding-rebind-
+	// overretain.md) segfaulted a program, and this pass — which compiles
+	// and RUNS all 453 fixtures — stayed green through it, because it read
+	// only the trace and threw the status away. A leak gate is blind to an
+	// over-release by construction; noticing that the program died is the
+	// cheapest repair.
+	//
+	// It would NOT have caught that particular one, and the check was
+	// re-run against the broken compiler to find that out rather than
+	// assumed: the crash was in examples/proposals/unidiff.fern, and this
+	// corpus is conformance/cases only, where nothing crashed. What caught
+	// it was TestArm64SSABackendDifferential, which runs examples/.
+	//
+	// So this closes the shape of the gap, not that instance of it.
+	// Widening the census to examples/ would close the instance too, and
+	// would give leak figures for whole programs rather than fixtures —
+	// worth doing, and a bigger change than this one.
+	if exit == -1 {
+		return 0, "", errCrashed
+	}
 	return pairRcTrace(stderr)
 }
 
