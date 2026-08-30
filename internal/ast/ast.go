@@ -1225,8 +1225,8 @@ var RcFreeEnabled = true
 // payload is move-marked; an own-PARAM payload is inc'd and balanced by the
 // exit-sweep dec (same as a struct field). This gives enum boxes counted
 // payload references, which dissolves the escape-taint + preciseDroppable
-// exclusions that block FBIP enum precise drops. Off by default until the
-// differential gate pins on==off byte-identical + the suite is green.
+// exclusions that block FBIP enum precise drops. On; the differential gate
+// pins on==off byte-identical.
 var EnumRcPayloads = true
 
 // OwnedByDefault (Slice 2, docs/OWNERSHIP-INFERENCE-PLAN.md) flips parameter
@@ -1239,7 +1239,8 @@ var EnumRcPayloads = true
 // (enums first — immutable, so the inc can't disturb the in-place-mutation
 // semantics the borrow model exists for); a borrow-inference optimization that
 // keeps read-only non-escaping params borrowed rides on top in a later slice.
-// OFF by default until the model is complete and the suite is green.
+// On; the differential gate pins on == off byte-identical, so the reclaim is
+// the only effect.
 var OwnedByDefault = true
 
 // BorrowInferEnabled (Slice 2 / borrow inference, docs/OWNERSHIP-INFERENCE-PLAN.md)

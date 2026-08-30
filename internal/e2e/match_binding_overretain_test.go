@@ -56,9 +56,19 @@ import (
 //
 // The asymmetry is the finding: an ordinary local is swept at scope
 // exit, so the inc it takes has something to cancel. A MATCH BINDING is
-// not. Which half to repair — release the binding, or suppress the inc
-// — is not established, and each converts a leak into a use-after-free
-// if chosen wrongly.
+// not.
+//
+// And only assigning the binding OUT breaks it. Matching and merely
+// using it — `total = total + v.len()` — or ignoring it entirely both
+// measure 0 unpaired of 3, so the enum box's release does dec its
+// payload. It is not the documented safe leak for ineligible enums
+// either: `enumRcPayloadsEligible` excludes only enums transitively
+// containing a Map, and `ast.EnumRcPayloads` is on, so `Option[u8[]]`
+// takes the counted path.
+//
+// Which half to repair — release the binding, or suppress the inc — is
+// not established, and each converts a leak into a use-after-free if
+// chosen wrongly.
 //
 // docs/rc-log/2026-08-30-match-binding-rebind-overretain.md.
 
