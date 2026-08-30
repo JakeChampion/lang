@@ -1427,12 +1427,15 @@ var SandboxEnabled = os.Getenv("FERN_SANDBOX") == "1"
 //     agree, and a refcount put through that rounding reads 16 whatever
 //     it was. Pair i against d per pointer for the imbalance instead.
 //
-//   - THE POINTERS ARE NOT IN THE SAME UNITS. a/f name the block
-//     __fern_alloc returned; i/d name the object whose rc word sits at
-//     [ptr-8], which for an array is that block plus a 16-byte header.
-//     Measured at two array sizes, so it is the header and not the
-//     payload. Cross-kind pairing has to add the offset; without it a
-//     block reads as "never retained" when it was.
+//   - THE POINTERS ARE NOT IN THE SAME UNITS, AND THE OFFSET IS NOT ONE
+//     NUMBER. a/f name the block __fern_alloc returned; i/d name the
+//     object whose rc word sits at [ptr-8]. That object is the block
+//     plus a header of 16 bytes for an array (cap/rc/len, __alloc_u8's
+//     `lea rax, [rax + 16]`) but 8 for a box (__fern_alloc_box /
+//     __fern_alloc_rc1, the rc word alone). Cross-kind pairing has to
+//     add the right one per allocation; without it a block reads as
+//     "never retained" when it was, and assuming the array offset
+//     everywhere points 8 bytes past every box.
 //
 //     Beware of confirming this by looking for an i pointer that is also
 //     an a pointer: with several live blocks one object's address
