@@ -60,16 +60,26 @@ func newLifter(in *ir.Func) (*lifter, error) {
 	// start at 0 / 0.0; the bit pattern 0 also serves as
 	// +0.0 in IEEE-754 so float locals work without per-slot
 	// type info).
-	totalSlots := len(in.Params) + len(in.Locals) + len(in.ScratchTypes)
-	l.slots = make([]Value, totalSlots)
+	l.planSlots()
 	l.out.ParamWidths = make([]int8, 0, len(in.Params))
 	l.out.ParamFloats = make([]bool, 0, len(in.Params))
 	l.out.ParamAddrs = make([]bool, 0, len(in.Params))
 	for i, p := range in.Params {
-		l.slots[i] = l.out.AddParam()
-		l.out.ParamWidths = append(l.out.ParamWidths, widthOfAstType(p.Type))
-		l.out.ParamFloats = append(l.out.ParamFloats, isFloatAstType(p.Type))
-		l.out.ParamAddrs = append(l.out.ParamAddrs, isAddressAstType(p.Type))
+		for k := 0; k < l.slotWords[i]; k++ {
+			l.slots[l.slotBase[i]+k] = l.out.AddParam()
+			l.out.ParamIRIndex = append(l.out.ParamIRIndex, i)
+			if k > 0 {
+				// The second entry of a two-word value is a length:
+				// never an address, never a float.
+				l.out.ParamWidths = append(l.out.ParamWidths, l.halfWidth())
+				l.out.ParamFloats = append(l.out.ParamFloats, false)
+				l.out.ParamAddrs = append(l.out.ParamAddrs, false)
+				continue
+			}
+			l.out.ParamWidths = append(l.out.ParamWidths, widthOfAstType(p.Type))
+			l.out.ParamFloats = append(l.out.ParamFloats, isFloatAstType(p.Type))
+			l.out.ParamAddrs = append(l.out.ParamAddrs, isAddressAstType(p.Type))
+		}
 	}
 	l.out.ReturnWidth = widthOfAstType(in.ReturnType)
 	l.out.ReturnFloat = isFloatAstType(in.ReturnType)
@@ -187,6 +197,136 @@ func calleeReturnsNothing(name string) bool {
 	return ok && resultSlots == 0
 }
 
+// The two-word string ABI: the flat IR encodes a move of a (data,
+// length) pair as ONE op that moves TWO operand-stack entries, so a
+// lift assuming one entry per op runs short at the first string it
+// meets. `TestLiftAgreesWithTheVerifiersStackModel` compares this model
+// against `internal/ir/verifystack.go`'s per op, so a mistake here
+// names itself instead of surfacing somewhere downstream.
+
+// twoWordType reports whether a value of type t rides two entries.
+func (l *lifter) twoWordType(t ast.Type) bool {
+	if l.in.PtrW == 0 {
+		return false
+	}
+	return ir.TypeIsTwoWordABI(t, l.in.PtrW, l.in.TwoWordStr)
+}
+
+// planSlots works out how many entries each flat-IR local slot holds
+// and where each starts in `l.slots`.
+//
+// The flat IR indexes a local by ONE number whatever its type, so a
+// single Value per index cannot represent a two-word one. Giving such a
+// slot two consecutive entries keeps `l.slots` a flat []Value, which is
+// what the scope snapshots, the loop-header phis and the join merges
+// all operate on — none of them needs a two-word concept of its own.
+//
+// A slot is two-word when its declared type is, OR when any access to
+// it carries `Width: WidthString`. Both spellings occur, and
+// verifystack.go's localSlots reads them the same way.
+func (l *lifter) planSlots() {
+	in := l.in
+	n := len(in.Params) + len(in.Locals) + len(in.ScratchTypes)
+	two := make([]bool, n)
+	for i := 0; i < n; i++ {
+		two[i] = l.twoWordType(l.slotType(i))
+	}
+	for _, op := range in.Ops {
+		switch op.Kind {
+		case ir.OpLoadLocal, ir.OpStoreLocal, ir.OpTeeLocal:
+			if op.Width == ir.WidthString && int(op.I32) >= 0 && int(op.I32) < n {
+				two[op.I32] = true
+			}
+		}
+	}
+	l.slotWords = make([]int, n)
+	l.slotBase = make([]int, n)
+	total := 0
+	for i := 0; i < n; i++ {
+		l.slotBase[i] = total
+		l.slotWords[i] = 1
+		if two[i] {
+			l.slotWords[i] = 2
+		}
+		total += l.slotWords[i]
+	}
+	l.slots = make([]Value, total)
+}
+
+// slotType is the declared type of flat-IR local slot i, or nil when
+// the lowering left it unrecorded (synthetic scratch slots often are).
+func (l *lifter) slotType(i int) ast.Type {
+	in := l.in
+	switch {
+	case i < len(in.Params):
+		return in.Params[i].Type
+	case i < len(in.Params)+len(in.Locals):
+		if v := in.Locals[i-len(in.Params)]; v != nil {
+			return v.Type
+		}
+		return nil
+	default:
+		return in.ScratchTypes[i-len(in.Params)-len(in.Locals)]
+	}
+}
+
+// slotAt resolves a local-access op to where its entries live and how
+// many there are.
+func (l *lifter) slotAt(i int, op ir.Op) (base, words int, err error) {
+	idx := int(op.I32)
+	if idx < 0 || idx >= len(l.slotWords) {
+		return 0, 0, fmt.Errorf("ssa.LiftFromIR: %v at op[%d] slot %d out of range (have %d slots)",
+			op.Kind, i, idx, len(l.slotWords))
+	}
+	return l.slotBase[idx], l.slotWords[idx], nil
+}
+
+// offset is `addr + n` as an SSA value, or addr itself when n is 0.
+func (l *lifter) offset(addr Value, n int) Value {
+	if n == 0 {
+		return addr
+	}
+	k := l.out.AddOp(l.cur, OpConstInt)
+	l.cur.Ops[len(l.cur.Ops)-1].Imm = int64(n)
+	v := l.out.AddOp(l.cur, OpAdd, addr, k)
+	l.cur.Ops[len(l.cur.Ops)-1].Width, l.cur.Ops[len(l.cur.Ops)-1].Addr = 64, true
+	return v
+}
+
+// popWords removes the top n operand-stack entries and returns them in
+// stack order (deepest first), which is the order an op's arguments are
+// written in.
+func (l *lifter) popWords(i int, kind ir.OpKind, n int) ([]Value, error) {
+	if len(l.stack) < n {
+		return nil, fmt.Errorf("ssa.LiftFromIR: %v at op[%d] needs %d operand(s), stack has %d",
+			kind, i, n, len(l.stack))
+	}
+	args := append([]Value(nil), l.stack[len(l.stack)-n:]...)
+	l.stack = l.stack[:len(l.stack)-n]
+	return args, nil
+}
+
+// strWords is how many operand-stack entries one string value occupies
+// in the lowering that produced this function.
+//
+// It reads the ABI off the Func rather than asking
+// `ast.UseTwoWordStrings`, which consults a global the lowering sets
+// and restores: an arm64 Func inspected afterwards answers one-word.
+func (l *lifter) strWords() int {
+	if l.in.TwoWordStr || l.in.PtrW == 4 {
+		return 2
+	}
+	return 1
+}
+
+// halfWidth is the SSA op width of one half of a two-word value.
+func (l *lifter) halfWidth() int8 {
+	if l.in.PtrW == 8 {
+		return 64
+	}
+	return 0
+}
+
 // isFloatAstType reports whether `t` is a FloatType (f32/f64).
 // Returns false for nil, ints, bools, and pointer-shaped types.
 func isFloatAstType(t ast.Type) bool {
@@ -259,6 +399,12 @@ func widthOfAstType(t ast.Type) int8 {
 }
 
 type lifter struct {
+	// slotWords is how many operand-stack entries each flat-IR local
+	// slot holds — 1, or 2 for a two-word value — and slotBase where
+	// that slot's entries start in `slots`. See planSlots.
+	slotWords []int
+	slotBase  []int
+
 	in  *ir.Func
 	out *Func
 
@@ -358,6 +504,15 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		v := l.out.AddOp(l.cur, OpConstString)
 		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
 		l.stack = append(l.stack, v)
+		// Under the two-word ABI a literal is a (data, length) pair
+		// like any other string, so it leaves TWO entries.
+		// OpConstStringLen is exactly that half and takes the data
+		// value as its argument.
+		if l.strWords() == 2 {
+			n := l.out.AddOp(l.cur, OpConstStringLen, v)
+			l.cur.Ops[len(l.cur.Ops)-1].Width = l.halfWidth()
+			l.stack = append(l.stack, n)
+		}
 	case ir.OpConstF32:
 		v := l.out.AddOp(l.cur, OpConstFloat)
 		l.cur.Ops[len(l.cur.Ops)-1].F64 = float64(op.F32)
@@ -369,44 +524,46 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.cur.Ops[len(l.cur.Ops)-1].Width = 64
 		l.stack = append(l.stack, v)
 	case ir.OpLoadLocal:
-		idx := int(op.I32)
-		if idx < 0 || idx >= len(l.slots) {
-			return fmt.Errorf("ssa.LiftFromIR: OpLoadLocal at op[%d] slot %d out of range (have %d slots)",
-				i, idx, len(l.slots))
+		base, words, serr := l.slotAt(i, op)
+		if serr != nil {
+			return serr
 		}
-		v := l.slots[idx]
-		if !v.IsValid() {
-			// Materialise a default-zero on demand — matches the
-			// legacy IR's "locals start at zero" semantics. We
-			// don't pre-emit zero ops at function entry because
-			// most slots are stored before they're read; emitting
-			// here keeps the entry block uncluttered.
-			v = l.out.AddOp(l.cur, OpConstInt)
-			l.cur.Ops[len(l.cur.Ops)-1].Imm = 0
-			l.slots[idx] = v
+		for k := 0; k < words; k++ {
+			idx := base + k
+			v := l.slots[idx]
+			if !v.IsValid() {
+				// Materialise a default-zero on demand — matches the
+				// legacy IR's "locals start at zero" semantics. We
+				// don't pre-emit zero ops at function entry because
+				// most slots are stored before they're read; emitting
+				// here keeps the entry block uncluttered.
+				v = l.out.AddOp(l.cur, OpConstInt)
+				l.cur.Ops[len(l.cur.Ops)-1].Imm = 0
+				l.slots[idx] = v
+			}
+			l.stack = append(l.stack, v)
 		}
-		l.stack = append(l.stack, v)
 	case ir.OpStoreLocal:
-		idx := int(op.I32)
-		if idx < 0 || idx >= len(l.slots) {
-			return fmt.Errorf("ssa.LiftFromIR: OpStoreLocal at op[%d] slot %d out of range (have %d slots)",
-				i, idx, len(l.slots))
+		base, words, serr := l.slotAt(i, op)
+		if serr != nil {
+			return serr
 		}
-		if len(l.stack) < 1 {
-			return fmt.Errorf("ssa.LiftFromIR: OpStoreLocal at op[%d] needs 1 operand", i)
+		if len(l.stack) < words {
+			return fmt.Errorf("ssa.LiftFromIR: OpStoreLocal at op[%d] needs %d operand(s), stack has %d",
+				i, words, len(l.stack))
 		}
-		l.slots[idx] = l.stack[len(l.stack)-1]
-		l.stack = l.stack[:len(l.stack)-1]
+		copy(l.slots[base:base+words], l.stack[len(l.stack)-words:])
+		l.stack = l.stack[:len(l.stack)-words]
 	case ir.OpTeeLocal:
-		idx := int(op.I32)
-		if idx < 0 || idx >= len(l.slots) {
-			return fmt.Errorf("ssa.LiftFromIR: OpTeeLocal at op[%d] slot %d out of range (have %d slots)",
-				i, idx, len(l.slots))
+		base, words, serr := l.slotAt(i, op)
+		if serr != nil {
+			return serr
 		}
-		if len(l.stack) < 1 {
-			return fmt.Errorf("ssa.LiftFromIR: OpTeeLocal at op[%d] needs 1 operand", i)
+		if len(l.stack) < words {
+			return fmt.Errorf("ssa.LiftFromIR: OpTeeLocal at op[%d] needs %d operand(s), stack has %d",
+				i, words, len(l.stack))
 		}
-		l.slots[idx] = l.stack[len(l.stack)-1]
+		copy(l.slots[base:base+words], l.stack[len(l.stack)-words:])
 	case ir.OpAdd, ir.OpSub, ir.OpMul,
 		ir.OpDivS, ir.OpRemS,
 		ir.OpAnd, ir.OpOr, ir.OpXor,
@@ -563,6 +720,16 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		addr := l.stack[len(l.stack)-1]
 		l.stack = l.stack[:len(l.stack)-1]
+		if op.Width == ir.WidthString {
+			// A two-word string in memory is its data word followed by
+			// its length word, so one IR op is two loads.
+			data := l.out.AddOp(l.cur, OpLoad, addr)
+			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+			n := l.out.AddOp(l.cur, OpLoad, l.offset(addr, l.in.PtrW))
+			l.cur.Ops[len(l.cur.Ops)-1].Width = 64
+			l.stack = append(l.stack, data, n)
+			break
+		}
 		// The IR's OpLoad is a 4-byte (i32-word) load by default; pointer-width
 		// values carry Width == WidthPtr (or an explicit 64). Mirror the stack
 		// machine: full 8-byte load for pointer width, 4-byte otherwise.
@@ -584,6 +751,16 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		}
 		l.stack = append(l.stack, v)
 	case ir.OpStore:
+		if op.Width == ir.WidthString {
+			ops, aerr := l.popWords(i, op.Kind, 3)
+			if aerr != nil {
+				return aerr
+			}
+			addr, data, n := ops[0], ops[1], ops[2]
+			l.out.AddOpNoResult(l.cur, OpStore, addr, data)
+			l.out.AddOpNoResult(l.cur, OpStore, l.offset(addr, l.in.PtrW), n)
+			break
+		}
 		if len(l.stack) < 2 {
 			return fmt.Errorf("ssa.LiftFromIR: OpStore at op[%d] needs (addr, value) operands", i)
 		}
@@ -644,13 +821,13 @@ func (l *lifter) handle(i int, op ir.Op) error {
 			l.out.AddOpNoResult(l.cur, OpStore32, addr, bits)
 		}
 	case ir.OpStrEq, ir.OpStrCmp:
-		if len(l.stack) < 2 {
-			return fmt.Errorf("ssa.LiftFromIR: %s at op[%d] needs 2 operands", op.Kind, i)
+		// These take whole string VALUES, so each operand is a pair
+		// wherever the ABI makes a string one.
+		args, aerr := l.popWords(i, op.Kind, 2*l.strWords())
+		if aerr != nil {
+			return aerr
 		}
-		b := l.stack[len(l.stack)-1]
-		a := l.stack[len(l.stack)-2]
-		l.stack = l.stack[:len(l.stack)-2]
-		v := l.out.AddOp(l.cur, OpCall, a, b)
+		v := l.out.AddOp(l.cur, OpCall, args...)
 		helper := "__str_eq"
 		if op.Kind == ir.OpStrCmp {
 			helper = "__str_ord"
@@ -658,24 +835,35 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		l.cur.Ops[len(l.cur.Ops)-1].Str = helper
 		l.stack = append(l.stack, v)
 	case ir.OpStrConcat:
-		if len(l.stack) < 2 {
-			return fmt.Errorf("ssa.LiftFromIR: OpStrConcat at op[%d] needs 2 operands", i)
+		args, aerr := l.popWords(i, op.Kind, 2*l.strWords())
+		if aerr != nil {
+			return aerr
 		}
-		b := l.stack[len(l.stack)-1]
-		a := l.stack[len(l.stack)-2]
-		l.stack = l.stack[:len(l.stack)-2]
-		v := l.out.AddOp(l.cur, OpCall, a, b)
+		if l.strWords() == 2 {
+			data, n := l.out.AddCallPair(l.cur, args...)
+			o := l.cur.Ops[len(l.cur.Ops)-1]
+			o.Str = "__str_concat"
+			o.Width, o.Addr = 64, true // the concatenated string's buffer
+			l.stack = append(l.stack, data, n)
+			break
+		}
+		v := l.out.AddOp(l.cur, OpCall, args...)
 		o := l.cur.Ops[len(l.cur.Ops)-1]
 		o.Str = "__str_concat"
 		o.Width, o.Addr = 64, true // the concatenated string's buffer
 		l.stack = append(l.stack, v)
 	case ir.OpStrLen:
-		if len(l.stack) < 1 {
-			return fmt.Errorf("ssa.LiftFromIR: OpStrLen at op[%d] needs 1 operand", i)
+		args, aerr := l.popWords(i, op.Kind, l.strWords())
+		if aerr != nil {
+			return aerr
 		}
-		arg := l.stack[len(l.stack)-1]
-		l.stack = l.stack[:len(l.stack)-1]
-		v := l.out.AddOp(l.cur, OpCall, arg)
+		if len(args) == 2 {
+			// Under the two-word ABI the length is the second word of
+			// the value itself, so there is nothing to call.
+			l.stack = append(l.stack, args[1])
+			break
+		}
+		v := l.out.AddOp(l.cur, OpCall, args[0])
 		l.cur.Ops[len(l.cur.Ops)-1].Str = "__str_len"
 		l.stack = append(l.stack, v)
 	case ir.OpAlloc:

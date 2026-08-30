@@ -47,6 +47,7 @@ package ssa_test
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -107,6 +108,10 @@ func divergence(want []ir.StackAt, fn *ir.Func) (at, wantH, gotH int, liftErr er
 	return -1, 0, 0, err
 }
 
+// callKinds are the call-shaped ops, the one family whose stack effect
+// the lift cannot yet reproduce. See `only`.
+var callKinds = []ir.OpKind{ir.OpCallDirect, ir.OpCallIndirect, ir.OpCallDirectPair}
+
 func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 	if testing.Short() {
 		t.Skip("lowers the conformance corpus; not a -short test")
@@ -121,9 +126,13 @@ func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 		ptrW    int
 		twoWord bool
 		// floor is the fraction of functions that must agree at every
-		// reachable op. Measured 2026-08-30 at 0.9977 / 0.7729 /
-		// 0.6257 and set just under, so ordinary corpus growth does
-		// not trip it but a real regression does.
+		// reachable op.
+		//
+		// It is the WEAKER of this test's two gates. An aggregate
+		// percentage moves for reasons that have nothing to do with
+		// the lift — corpus growth, a lowering change, a fix to the
+		// verifier it is measured against — so it catches only a
+		// collapse. `only` below is the gate that carries the signal.
 		//
 		// The arm64 floor was 0.985 when this test first landed, and
 		// that number was measuring nothing: the verifier derived the
@@ -131,13 +140,36 @@ func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 		// lowering sets and RESTORES, so a two-word program inspected
 		// afterwards was checked as one-word — against a lift that was
 		// also one-word. Two wrong models agreeing is not agreement.
-		// Reading the ABI off `ir.Func.TwoWordStr` makes the column
-		// real, and real is 0.7729.
+		//
+		// Measured 2026-08-30 at 0.9977 / 0.7053 / 0.6889 and set just
+		// under. The two-word columns are not comparable with the
+		// figures recorded before `TypeIsTwoWordABI`: the same global
+		// reached `typeSlots` and `localSlots` by a second route, so
+		// the arm64 column was a hybrid of an honest call model and a
+		// one-word slot model.
 		floor float64
+		// only names the op kinds allowed to be a function's FIRST
+		// divergence. Anything else fails outright, whatever the
+		// aggregate says.
+		//
+		// This is the real gate. Bringing an op class into agreement
+		// shows up here as that class disappearing, which cannot be
+		// faked by a change that merely moves the percentage — and a
+		// regression in a class already modelled is caught even when
+		// the corpus grew enough to hide it in the aggregate.
+		//
+		// Calls are what is left: the lift counts a call's operands
+		// with the IR's ARGUMENT count, which undercounts as soon as
+		// one of them is two-word, and it has no signature for a
+		// DEFINED callee, so it cannot tell how many words one
+		// returns. Both need a program-level callee table the lift is
+		// not given. That is the whole of the remaining gap on all
+		// three targets.
+		only []ir.OpKind
 	}{
-		{"x86-64 one-word", 8, false, 0.995},
-		{"arm64 two-word", 8, true, 0.770},
-		{"wasm32 two-word", 4, false, 0.620},
+		{"x86-64 one-word", 8, false, 0.995, callKinds},
+		{"arm64 two-word", 8, true, 0.700, callKinds},
+		{"wasm32 two-word", 4, false, 0.680, callKinds},
 	} {
 		var compared, agreed int
 		firstBy := map[ir.OpKind]int{}
@@ -177,6 +209,13 @@ func TestLiftAgreesWithTheVerifiersStackModel(t *testing.T) {
 		}
 		if sample != "" {
 			t.Logf("     e.g. %s", sample)
+		}
+		for k, n := range firstBy {
+			if !slices.Contains(cfg.only, k) {
+				t.Errorf("%s: %d function(s) first diverge at %v, which this lift is "+
+					"supposed to model exactly — only calls are still expected to differ",
+					cfg.name, n, k)
+			}
 		}
 		rate := float64(agreed) / float64(compared)
 		if rate < cfg.floor {
