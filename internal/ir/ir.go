@@ -2934,6 +2934,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// whatever it points at. See findReturnsFreshPairPayload for why the
 	// pair-form payload release needs this one and not the above.
 	returnsFreshPairPayload := findReturnsFreshPairPayload(prog, info)
+	// Per-function "every value return is a box this callee constructed" —
+	// what rhsTainted's Call case needs to stop inheriting an argument's
+	// borrow taint into a freshly built result (findReturnsFreshBox).
+	returnsFreshBox := findReturnsFreshBox(prog)
 	trmcFuncs, trmcConsumeSafe := findTrmcFuncs(prog, info, ptrW, pairForm)
 	// Borrow inference (BorrowInferEnabled): per-function per-param escape facts.
 	// Both the definition side (paramOwnedByDefault) and the call site
@@ -3005,7 +3009,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, vtableDispatched, addressTaken, growParams)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, vtableDispatched, addressTaken, growParams)
 		if err != nil {
 			return nil, err
 		}
@@ -4885,6 +4889,10 @@ type builder struct {
 	// The pair-form payload reclaim needs this rather than the above —
 	// findReturnsFreshPairPayload says why.
 	returnsFreshPairPayload map[string]bool
+	// returnsFreshBox[name] is true when every value return of the callee
+	// constructs its result. rhsTainted's Call case uses it to stop an
+	// argument's borrow taint flowing into a box the callee built.
+	returnsFreshBox map[string]bool
 	// selfPushMoveCall is the exact `a.append(v)` RHS call node of a
 	// self-append assignment (`a = a.append(v)`, isSelfArrayPushLocal),
 	// set by the Assign lowering just before it lowers the RHS and
@@ -5434,7 +5442,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5459,6 +5467,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		genTupleDrops:           genTupleDrops,
 		returnsNoParamEscape:    returnsNoParamEscape,
 		returnsFreshPairPayload: returnsFreshPairPayload,
+		returnsFreshBox:         returnsFreshBox,
 		trmcFuncs:               trmcFuncs,
 		trmcConsumeSafe:         trmcConsumeSafe,
 		paramEscapes:            paramEscapes,
