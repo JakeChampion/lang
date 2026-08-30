@@ -211,6 +211,45 @@ It is **not** the documented safe leak for ineligible enums either:
 Map, and `ast.EnumRcPayloads` is on, so `Option[u8[]]` takes the counted
 path.
 
+## One iteration is enough
+
+The bug does not need the cross-iteration overwrite at all. Varying how
+many times the loop runs:
+
+| iterations | `__rc_get(cur)` | allocations |
+| --- | --- | --- |
+| 1 | **2** | 2 |
+| 2 | 2 | 3 |
+| 3 | 2 | 4 |
+
+The count is already 2 after a **single** arm execution. So the
+imbalance is entirely within one pass — `Some([1,2,3])` allocates at 1,
+`cur = v` incs to 2, and nothing in that arm decs it. The
+dec-on-overwrite in later iterations is a red herring; it only ever
+takes the count from 2 back to 1.
+
+That is the tightest statement of the bug: **the alias-inc has no
+counterpart inside the arm.**
+
+## Why the move repair is plausible and still unverified
+
+`computeMovedLocals` declines to move an alias nested in control flow
+because its sweep-exclusion is global: an alias that might not run on
+every path strands or double-counts the source. A match-arm binding
+looks different — `bindingSlotScoped` returns a `restore` closure that
+puts the name back after the arm, so `v` is unreadable afterwards and
+there is no later path to strand.
+
+But the same function reuses an existing slot of matching shape rather
+than allocating per arm, so the SLOT outlives the name and is shared
+across iterations. Whether a move-marking is sound against a slot the
+exit sweep may also touch is exactly the question those guards exist to
+answer, and it is not answered here.
+
+So: the measurement is airtight, the repair is not. Suppressing the inc
+where the binding is dead after the arm is the shape to try; proving it
+holds against the reused slot is the work.
+
 ## Where that leaves the fix
 
 The asymmetry is the finding: a pattern binding that holds a reference

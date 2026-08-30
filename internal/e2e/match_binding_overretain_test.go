@@ -77,9 +77,22 @@ import (
 // `enumRcPayloadsEligible` excludes only enums transitively containing a
 // Map, and `ast.EnumRcPayloads` is on.
 //
-// Which half to repair — release the binding, or suppress the inc — is
-// not established, and each converts a leak into a use-after-free if
-// chosen wrongly.
+// ONE ITERATION IS ENOUGH. Varying how many times the loop runs gives
+// __rc_get(cur) = 2 at one, two and three iterations (allocations 2, 3,
+// 4). The count is already wrong after a SINGLE arm execution, so the
+// cross-iteration dec-on-overwrite is a red herring — it only ever takes
+// the count from 2 back to 1. The alias-inc has no counterpart inside
+// the arm.
+//
+// Suppressing that inc is the repair to try: `bindingSlotScoped` returns
+// a restore closure that puts the name back after the arm, so `v` is
+// unreadable afterwards and there is no later path to strand — which is
+// what `computeMovedLocals`' top-level guard exists to prevent. But the
+// same function REUSES an existing slot of matching shape rather than
+// allocating per arm, so the slot outlives the name and is shared across
+// iterations, and whether a move-marking is sound against a slot the
+// exit sweep may also touch is exactly what those guards exist to
+// answer. Not answered here.
 //
 // docs/rc-log/2026-08-30-match-binding-rebind-overretain.md.
 
