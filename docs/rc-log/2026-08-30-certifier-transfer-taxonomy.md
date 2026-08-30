@@ -38,10 +38,19 @@ Classifying the 63,070 by what happened to the value:
 | stored to memory | 5,539 | 8.8% |
 | neither | 4,432 | 7.0% |
 
-So the accounting is dominated by **one unmodelled transfer form**, by
-an order of magnitude. A value handed to a callee that takes it leaves
-the caller's books, and until the walk knows which call positions
-consume, every such hand-off reads as a leak.
+The obvious reading is that the accounting is dominated by one
+unmodelled transfer form: a value handed to a callee that takes it
+leaves the caller's books, so until the walk knows which call positions
+consume, every hand-off reads as a leak.
+
+**That reading is wrong, and measuring it is the only reason I know.**
+Teaching the walk which positions consume — `SolveOwnership` for
+defined callees, `rcsigs.go` for runtime helpers — moves the count from
+63,070 to **62,853**. Two hundred and seventeen, 0.3%.
+
+*Passed to a call* is not *passed to a consuming position*. Almost every
+call argument is borrowed, correctly, so the 84.2% is a description of
+where the values go, not of why they are miscounted.
 
 (The over-release figure comes from the same unsound walk and is not
 evidence of anything on its own — it is reported only so the two
@@ -49,23 +58,32 @@ directions are not confused.)
 
 ## What this changes
 
-#7786 says the ownership signature table "is most of the work in the
-certifier". That is now measured rather than estimated, and it is more
-pointed than it sounds: the join representation — the part Roc's
-docstring warns about, and the part that looked like the risk — is
-**not** the bottleneck. The transfer taxonomy is, and within it,
-call-argument transfer alone accounts for 84% of the error.
+Two things are established, and one deliberately is not.
 
-The order of work follows:
+**The join representation is not the bottleneck.** The part Roc's
+docstring warns about, and the part that looked like the risk, is not
+what stands between here and a working certifier. #7828 settled it; this
+says nothing else was waiting on it.
 
-1. **Call-argument transfer** — which positions consume. `SolveOwnership`
-   already answers this for defined callees and `rcsigs.go` for runtime
-   helpers; the walk has to consult them, and the 0.9% opaque-call
-   residue measured for #7792 is the part that cannot be answered.
-2. **Store transfer** — a unit written into a container or a struct
-   field. 8.8%.
-3. **The remaining 7%**, which is the only part not yet characterised.
-4. **Then** the join summary, on the differing set.
+**Nor is call-argument transfer**, which was the obvious next suspect
+and is worth 0.3%.
 
-Building the lattice first would have been building the cheap part
-first.
+**What the units actually are has not been established.** A first
+attempt to classify the 63,070 by where their unit came from —
+allocation, retain, consumed parameter — produced a large "unknown"
+bucket that turned out to be an inconsistency in the probe's own
+bookkeeping rather than a fact about the program, so it is not reported
+here. The honest state is that the walk marks values as unit-holding
+that should not be, and which values and why is the next question.
+
+That is the work, and it comes before any of the transfer forms:
+
+1. **Establish what holds a unit.** A pointer-valued temporary is
+   usually a borrow. Until the walk starts from a correct set of
+   unit-holders, every transfer form is being fitted to noise.
+2. Then the transfer forms — store (8.8% of the values by destination),
+   and whatever survives.
+3. **Then** the join summary, on the differing set (#7828).
+
+The probe cost about half an hour and refuted two orderings, including
+the one this note originally recommended. That is what it was for.
