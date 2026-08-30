@@ -182,48 +182,78 @@ honest answer here is yes.
 
 ### The actual gap: one predicate answering two questions
 
-The refusal above is right about what it measures and wrong about what the
-reclaim needs. `returnsNoParamEscape` asks
+`returnsNoParamEscape` asks
 
 > does anything REACHABLE FROM the result alias a parameter?
 
-whereas releasing the tuple buffer needs only
+whereas releasing the payload needs only
 
-> is the result POINTER ITSELF freshly allocated?
+> is the returned payload POINTER ITSELF freshly allocated?
 
-`ArrayIter.next` answers no to the first and yes to the second: the tuple box
-is allocated fresh at rc 1 on every call, and what it CONTAINS aliases the
-caller's array. A deep drop needs both properties; a shallow release of the
-buffer needs only the second, because the contents are handed to the bindings.
+`ArrayIter.next` answers no to the first and yes to the second: the tuple is
+allocated fresh at rc 1 on every call, and what it CONTAINS aliases the
+caller's array — through a properly counted reference, which a release is
+entitled to decrement.
 
-So the repair is to split the predicate and give this reclaim a SHALLOW
-verdict — which is the shape `reclaimableMapGetScrutinee` next door already
-has ("The plan's `counted` half decides SHALLOW versus DEEP"), and which
-`emitOwnedConsumingArmDrop` already implements:
+The gate's own comment explains why it is written the strict way. The heap-form
+reclaims lean on "an aliased return is rc>=2 via the return-transfer inc, and
+the free is is_unique-gated", and the pair-form ABI hands back registers with
+no box and no such inc, so freshness has to be proven outright. That reasoning
+is about the RETURNED POINTER being someone else's object. It does not reach
+the case where the returned pointer is fresh and merely points at things that
+are not.
 
-    unique  -> free the box BUFFER only; the bindings inherit the payload counts
-    shared  -> inc the counted bindings, then flat-dec our box reference
+### The release stays DEEP — measured, because reasoning got this wrong first
 
-Two neighbouring reclaims disagreeing on whether the shallow/deep distinction
-exists is the tell that this is a missing case rather than a new concept.
+An earlier draft of this note prescribed adding a SHALLOW verdict here, by
+analogy with `emitOwnedConsumingArmDrop`. That is WRONG, and the counts say so:
 
-Note how this composes with #7837. Now that `cur = t.1` credits the projection
-as owned, it emits an inc, so field 1 is retained by `cur` before the release
-runs. That is what makes the shallow release safe rather than merely
-convenient — and it is why this repair was not available before that landed.
+    A allocated rc 1, owned by the tuple T
+    cur = t.1        retains A          -> rc 2   (one for T, one for cur)
+    shallow free T   drops T's buffer, does NOT dec A
+                                        -> rc 2, only cur holds it: A LEAKS
+    deep drop T      decs A             -> rc 1, held by cur: CORRECT
 
-### The prediction this makes
+Confirmed rather than argued. Bypassing ONLY the freshness test and leaving the
+existing `emitOwnedSlotDrop` — which is already deep — in place:
 
-If the tuple payload is released, the 14 stranded BOXES should free and the
-source array (the fifteenth stranded allocation, and the only one that is not
-a box) should see its retains balance and `xs`'s inc/dec should balance. That is a single measurable outcome,
-and it is how the repair should be judged — not by the conformance fixtures,
-which did not move for the last leak fix that worked.
+| | baseline | freshness bypassed |
+| --- | --- | --- |
+| `iter.filter` / `map` / `sum` pins | 15 / 15 / 15 | **0 / 0 / 0** |
+| `iter.of` alone (boundary) | 0 | 0 |
+| `examples/` unpaired allocations | 162,866 | **161,925** |
+| `examples/` programs leaking | 168 | 166 |
+| `examples/` crashes | 0 | **0** |
+| arm64 flat-vs-ssa differential | 291 agree, 0 diverge | 291 agree, 0 diverge |
 
-Note the neighbouring risk: `markMatchBindingAliasMoves`, an earlier attempt to
-sweep match bindings, SEGFAULTED `unidiff.fern`. "A binding is swept by nobody"
-is false for some shapes, so a repair here must establish WHICH bindings are
-already swept before adding a drop, or it will double-free rather than leak.
+Both corpus figures are from the SAME tree, since comparing against a number
+taken at another commit is its own way of being wrong.
+
+So the emitted release already does the right thing and needs no new shape.
+The whole repair is the predicate: keep the deep drop, and admit a case whose
+returned payload pointer is fresh even though the graph under it is not. The
+bypass above is NOT that fix — it removes the soundness gate entirely, and the
+gate is right about the case it was written for: a pair-form callee that hands
+back a pointer it received. What is needed is a freshness test over the
+returned payload expression (a tuple or struct literal, or a call that is
+itself fresh) rather than over everything reachable from it.
+
+### The prediction, and that it held
+
+The prediction was that releasing the tuple payload frees the 14 stranded
+boxes and lets the source array's retains balance — one measurable outcome,
+and the one the repair should be judged on, NOT the conformance fixtures,
+which did not move at all for the last leak fix that worked. Bypassing the
+freshness test drives all three adapter pins from 15 to 0, so it held.
+
+The neighbouring risk is real and was checked rather than assumed:
+`markMatchBindingAliasMoves`, an earlier attempt to sweep match bindings,
+SEGFAULTED `unidiff.fern` — "a binding is swept by nobody" is false for some
+shapes, and getting it wrong double-frees rather than leaks. The gate that
+caught that attempt is the arm64 flat-vs-ssa differential, and it reads 291
+agree / 0 diverge with the bypass on, alongside 0 crashes over the 282
+runnable example programs. That is not proof the narrowed predicate will be
+sound, but it does say the deep release itself is not what breaks things.
 
 ## The wrong answer this produced first, kept as a warning
 
