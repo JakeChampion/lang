@@ -1,6 +1,9 @@
 package ir
 
-import "testing"
+import (
+	"sort"
+	"testing"
+)
 
 func TestRcHelperSigReadsTheRuntimeTable(t *testing.T) {
 	for _, tc := range []struct {
@@ -23,9 +26,13 @@ func TestRcHelperSigReadsTheRuntimeTable(t *testing.T) {
 			t.Errorf("%s: no signature", tc.name)
 			continue
 		}
-		if got.Operand != tc.operand || got.Effect != tc.effect {
+		if len(got.Args) != 1 {
+			t.Errorf("%s: want one counted argument, got %d", tc.name, len(got.Args))
+			continue
+		}
+		if got.Args[0].Index != tc.operand || got.Args[0].Effect != tc.effect {
 			t.Errorf("%s: got operand %d effect %v, want %d %v",
-				tc.name, got.Operand, got.Effect, tc.operand, tc.effect)
+				tc.name, got.Args[0].Index, got.Args[0].Effect, tc.operand, tc.effect)
 		}
 	}
 }
@@ -56,9 +63,8 @@ func TestRcHelperSigMatchesTheGeneratedDropFamilies(t *testing.T) {
 			t.Errorf("%s: a generated drop must be recognised", name)
 			continue
 		}
-		if got.Operand != 0 || got.Effect != RcRelease {
-			t.Errorf("%s: got operand %d effect %v, want 0 RcRelease",
-				name, got.Operand, got.Effect)
+		if len(got.Args) != 1 || got.Args[0].Index != 0 || got.Args[0].Effect != RcRelease {
+			t.Errorf("%s: want one counted argument 0 released, got %+v", name, got.Args)
 		}
 	}
 }
@@ -127,5 +133,116 @@ func TestRcReleasesAndRcRetainsSplitTheTable(t *testing.T) {
 	}
 	if _, ok := RcRetains("__fern_rc_is_unique"); ok {
 		t.Error("__fern_rc_is_unique reads the count; it retains nothing")
+	}
+}
+
+// Every callee the IR does not define has to carry a reference-count
+// classification, not just the runtime helpers.
+//
+// `providedSigs` is the verifier's record of exactly those callees, and
+// it covers the BUILTINS as well — `strbuf_append`, the Map methods,
+// the platform surface. A builtin that moves a count and is absent from
+// this file reads to `internal/ssa` as an opaque callee that borrows,
+// which is the unsafe direction: a callee that really consumes comes
+// back Borrowed and nothing says so.
+//
+// This is the sibling of TestRcSigsCoverEveryRuntimeHelper in
+// internal/codegen/wasmbin, which does the same against the wasm
+// registry. Two registries, one classification, and a new name in
+// either fails until someone decides which bucket it belongs in.
+func TestEveryProvidedCalleeHasAnRcClassification(t *testing.T) {
+	var missing []string
+	for name := range providedSigs {
+		if !RcHelperClassified(name) {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("%d callee(s) in providedSigs have no reference-count classification — "+
+			"add each to rcRuntimeSigs, rcBuiltinSigs, rcInertBuiltins, rcInert or "+
+			"rcUnmodelled, or give it a __fern_ rename the alias rule can follow: %v",
+			len(missing), missing)
+	}
+	if len(providedSigs) == 0 {
+		t.Fatal("providedSigs is empty — nothing was checked")
+	}
+	t.Logf("%d provided callees, %d unclassified", len(providedSigs), len(missing))
+}
+
+// The rename rule is what keeps the builtin half small, so it has to
+// actually fire — and only on an exact match.
+func TestBuiltinRuntimeAliasFollowsTheRenameAndOnlyOnAnExactMatch(t *testing.T) {
+	for _, tc := range []struct{ builtin, want string }{
+		{"strbuf_append", ""}, // classified directly; no __fern_strbuf_append helper
+		{"read_file", "__fern_read_file"},
+		{"exit", "__fern_exit"},
+		{"__alloc", "__fern_alloc"},
+		{"__memchr", "__fern_memchr"},
+	} {
+		got, ok := builtinRuntimeAlias(tc.builtin)
+		if tc.want == "" {
+			if ok {
+				t.Errorf("%s: must not resolve, got %q", tc.builtin, got)
+			}
+			continue
+		}
+		if !ok || got != tc.want {
+			t.Errorf("%s: got %q (%v), want %q", tc.builtin, got, ok, tc.want)
+		}
+	}
+	// A name that already IS a runtime helper must not be re-aliased
+	// into __fern___fern_x.
+	if _, ok := builtinRuntimeAlias("__fern_rc_dec"); ok {
+		t.Error("a runtime helper must not resolve through the builtin rename rule")
+	}
+	// string_from_bytes_unchecked lowers to __fern_string_from_bytes —
+	// the names do not correspond, so the rule must decline rather than
+	// guess.
+	if _, ok := builtinRuntimeAlias("string_from_bytes_unchecked"); ok {
+		t.Error("the rule must decline a builtin whose runtime target has a different name")
+	}
+}
+
+// The builtins that take a unit, and the receiver that does not.
+func TestBuiltinContainerMutatorsConsumeWhatTheyStore(t *testing.T) {
+	sig, ok := RcHelperSig("__method_Map_set")
+	if !ok {
+		t.Fatal("__method_Map_set: no signature")
+	}
+	if len(sig.Args) != 2 {
+		t.Fatalf("__method_Map_set consumes its key AND its value, got %d counted args", len(sig.Args))
+	}
+	for _, i := range []int{1, 2} {
+		a, ok := sig.Arg(i)
+		if !ok || a.Effect != RcRelease {
+			t.Errorf("__method_Map_set argument %d must be consumed, got %+v (%v)", i, a, ok)
+		}
+	}
+	// The receiver is borrowed: `m = m.set(k, v)` reassigns, so the
+	// caller's own overwrite releases the old handle.
+	if _, ok := sig.Arg(0); ok {
+		t.Error("__method_Map_set's receiver is borrowed; the caller's reassignment releases it")
+	}
+
+	for _, tc := range []struct {
+		name  string
+		index int
+	}{
+		{"__method_Array_push", 1},
+		{"__method_Array_set", 2},
+	} {
+		sig, ok := RcHelperSig(tc.name)
+		if !ok {
+			t.Errorf("%s: no signature", tc.name)
+			continue
+		}
+		a, found := sig.Arg(tc.index)
+		if !found || a.Effect != RcRelease {
+			t.Errorf("%s: argument %d must be consumed, got %+v", tc.name, tc.index, sig.Args)
+		}
+		if _, ok := sig.Arg(0); ok {
+			t.Errorf("%s: the receiver is borrowed", tc.name)
+		}
 	}
 }

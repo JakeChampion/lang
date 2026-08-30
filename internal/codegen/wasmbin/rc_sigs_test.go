@@ -63,9 +63,11 @@ func TestRcSigOperandIsWithinTheHelpersArguments(t *testing.T) {
 			continue
 		}
 		checked++
-		if sig.Operand < 0 || sig.Operand >= len(spec.params) {
-			t.Errorf("%s: signature names operand %d, but the helper takes %d arguments",
-				name, sig.Operand, len(spec.params))
+		for _, a := range sig.Args {
+			if a.Index < 0 || a.Index >= len(spec.params) {
+				t.Errorf("%s: signature names argument %d, but the helper takes %d arguments",
+					name, a.Index, len(spec.params))
+			}
 		}
 	}
 	if checked == 0 {
@@ -77,8 +79,14 @@ func TestRcSigOperandIsWithinTheHelpersArguments(t *testing.T) {
 	// the flag by copy-paste from its neighbours.
 	for name, spec := range runtimeHelperSpecs {
 		sig, ok := ir.RcHelperSig(name)
-		if ok && sig.ResultIsOperand && len(spec.results) == 0 {
-			t.Errorf("%s: the signature says the result is the operand, but the helper returns nothing", name)
+		if !ok {
+			continue
+		}
+		for _, a := range sig.Args {
+			if a.ResultIsOperand && len(spec.results) == 0 {
+				t.Errorf("%s: the signature says argument %d comes back as the result, but the helper returns nothing",
+					name, a.Index)
+			}
 		}
 	}
 	t.Logf("checked %d helper signatures against their argument lists", checked)

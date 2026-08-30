@@ -51,15 +51,29 @@ import "github.com/jakechampion/lang/internal/ir"
 // `userDropFnName` resolved, which no rule can recognise — they are
 // defined functions, and their ownership is the interprocedural
 // fixpoint's answer rather than a table's.
-func rcSig(o *Op) (ir.RcSig, Value, bool) {
+func rcSig(o *Op) []rcOperand {
 	if o == nil || o.Kind != OpCall {
-		return ir.RcSig{}, Value{}, false
+		return nil
 	}
 	sig, ok := ir.RcHelperSig(o.Str)
-	if !ok || sig.Operand >= len(o.Args) {
-		return ir.RcSig{}, Value{}, false
+	if !ok {
+		return nil
 	}
-	return sig, o.Args[sig.Operand], true
+	var out []rcOperand
+	for _, a := range sig.Args {
+		if a.Index < 0 || a.Index >= len(o.Args) {
+			continue
+		}
+		out = append(out, rcOperand{Arg: a, Value: o.Args[a.Index]})
+	}
+	return out
+}
+
+// rcOperand pairs one of a call's counted arguments with the SSA value
+// in that position.
+type rcOperand struct {
+	Arg   ir.RcArg
+	Value Value
 }
 
 // RCSite is one reference-count operation and what the CFG says about
@@ -157,23 +171,24 @@ func RCSites(f *Func) []RCSite {
 	var out []RCSite
 	for _, b := range f.Blocks {
 		for oi, o := range b.Ops {
-			sig, operand, ok := rcSig(o)
-			if !ok {
-				continue
+			// One site per counted argument: a callee that moves a
+			// count on two of them — `__method_Map_set` consumes both
+			// its key and its value — is two facts about one op.
+			for _, ro := range rcSig(o) {
+				src, mapped := o.SourceOp()
+				later := usesAfter(uses, reach, b, oi, aliasesOf(f, uses, ro.Value), o)
+				out = append(out, RCSite{
+					Block:     b,
+					Op:        o,
+					Helper:    o.Str,
+					Effect:    ro.Arg.Effect,
+					Operand:   ro.Value,
+					LaterUses: later,
+					LiveAfter: len(later) > 0,
+					SrcOp:     src,
+					Mapped:    mapped,
+				})
 			}
-			src, mapped := o.SourceOp()
-			later := usesAfter(uses, reach, b, oi, aliasesOf(f, uses, operand), o)
-			out = append(out, RCSite{
-				Block:     b,
-				Op:        o,
-				Helper:    o.Str,
-				Effect:    sig.Effect,
-				Operand:   operand,
-				LaterUses: later,
-				LiveAfter: len(later) > 0,
-				SrcOp:     src,
-				Mapped:    mapped,
-			})
 		}
 	}
 	return out
@@ -203,15 +218,13 @@ func aliasesOf(f *Func, uses *Uses, v Value) []Value {
 			if o == nil || o.Result.ID == 0 {
 				continue
 			}
-			sig, operand, ok := rcSig(o)
-			if !ok || !sig.ResultIsOperand {
-				continue
+			for _, ro := range rcSig(o) {
+				if !ro.Arg.ResultIsOperand || ro.Value.ID != out[i].ID || seen[o.Result.ID] {
+					continue
+				}
+				seen[o.Result.ID] = true
+				out = append(out, o.Result)
 			}
-			if operand.ID != out[i].ID || seen[o.Result.ID] {
-				continue
-			}
-			seen[o.Result.ID] = true
-			out = append(out, o.Result)
 		}
 	}
 	return out
@@ -358,15 +371,16 @@ func ParamModes(f *Func) []ParamMode {
 		}
 		for _, v := range aliasesOf(f, uses, p) {
 			for _, u := range uses.Of(v) {
-				sig, operand, ok := rcSig(u.Op)
-				if !ok || operand.ID != v.ID {
-					continue
-				}
-				switch sig.Effect {
-				case ir.RcRelease, ir.RcMove:
-					m.Released = true
-				case ir.RcRetain:
-					m.Retained = true
+				for _, ro := range rcSig(u.Op) {
+					if ro.Value.ID != v.ID {
+						continue
+					}
+					switch ro.Arg.Effect {
+					case ir.RcRelease, ir.RcMove:
+						m.Released = true
+					case ir.RcRetain:
+						m.Retained = true
+					}
 				}
 			}
 		}

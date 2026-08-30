@@ -305,6 +305,7 @@ var providedSigs = map[string]providedSig{
 	"wasm_timer_pollable":           {-1, rWord},
 	"write":                         {-1, rVoid},
 	"write_file":                    {-1, rWord},
+	"write_file_exec":               {-1, rWord},
 }
 
 // ProvidedCallee reports the verifier's record of a backend-provided
