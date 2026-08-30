@@ -100,10 +100,29 @@ times.
   exists; the three Roc conditions need per-path dominance and liveness. On SSA
   the first is free, since each definition is unique by construction, which is
   an argument for `docs/SSA-CUTOVER-PLAN.md` from a direction it does not list.
-- **The unmodelled four.** `__alloc_reuse` and the `__fern_arr_push_grow` family
-  are the whole remaining closable gap, and they cost three real answers:
-  `ssa__merge_names#a` and the two arm64 GAS emitters are reported borrowed
-  only because their release goes through one of them.
+- **`aliasesOf` does not cross phis, and that is the real limitation.** This
+  entry first said the three parameters `ssa__merge_names#a`,
+  `arm64_native__arm64_gas_data_align#p` and `__gas_data_le#p` were reported
+  borrowed because their release goes through an unmodelled helper. Measured
+  the same day: each has **exactly one direct use of the parameter value, and
+  it is a phi**. Nothing reaches an unmodelled helper from the parameter at
+  all. The alias closure follows rc-helper pass-throughs and borrow-returning
+  calls; every release downstream of a loop header operates on the phi's
+  result, which is a different SSA value, so it is attributed to nothing.
+
+  A threaded `a = a.append(...)` releases the parameter's own buffer on the
+  first iteration's overwrite, so "consumed" is the right answer and the
+  analysis cannot currently reach it. Crossing a phi is not sound in general —
+  its other incoming is usually a different object — so this is per-path
+  accounting, which is the certifier, not a widening of the closure.
+- **The unmodelled four** (`__alloc_reuse` and the `__fern_arr_push_grow`
+  family) are the remaining closable coverage gap, but classifying them will
+  move the opaque count and nothing else: no verdict depends on them. On both
+  of push_grow's paths the caller keeps its unit — the in-place path bumps the
+  receiver's rc and returns it, the grow path allocates and leaves the old
+  buffer to the caller's own dec — so the answer to "does the callee take a
+  unit" is no either way. Not verified by measurement; read off the runtime's
+  own doc.
 - **`ssa.SolveOwnership` drives nothing.** It is read-only, and its opaque
   count is the number that has to reach 0-or-explained before anything lowers
   from it: treating an unknown callee as borrowing is the assumption, and it is
