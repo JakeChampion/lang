@@ -23,12 +23,9 @@ func TestSSARCSitesOverTheCorpus(t *testing.T) {
 		if cfg.name != "x86-64" {
 			return
 		}
-		for _, f := range ip.Funcs {
-			sf, err := ssa.LiftFromIR(f)
-			if err != nil {
-				continue // #7803 tracks the lift's own coverage
-			}
-			for _, s := range ssa.RCSites(sf) {
+		lifted, _ := ssa.LiftProgram(ip) // lift failures are #7803's coverage
+		for _, f := range lifted {
+			for _, s := range ssa.RCSites(f) {
 				sites++
 				if !s.Mapped {
 					unmapped++
