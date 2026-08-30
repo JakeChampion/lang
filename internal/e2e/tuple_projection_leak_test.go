@@ -47,7 +47,8 @@ import (
 //
 // ROOT CAUSE: the wrong dec helper. With `FERN_RC_TRACE`'s inc/dec
 // events paired against its alloc/free ones (the a/f pointers name the
-// block, i/d the object 16 bytes above), the leaked arrays read
+// block and i/d the object, which for the ARRAYS here is 16 bytes above
+// — a box is 8, see ast.RcTrace), the leaked arrays read
 // `alloc inc dec dec` — the counts BALANCE and reach zero, and the
 // block is still not freed.
 //

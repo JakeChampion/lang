@@ -9680,9 +9680,10 @@ func (g *generator) emitStdinRuntime() {
 
 // emitAllocU8Runtime emits `__alloc_u8(n)` — allocates a
 // fresh length-prefixed `u8[]` of n bytes. Returns the data
-// pointer (header + 8); length lives at `[data - 4]`, refcount
-// slot at `[data - 8]` (reserved for phase 1; not initialised
-// here yet — see docs/RC-PERCEUS-PLAN.md).
+// pointer past a 16-byte header: cap at `[data - 12]`, refcount
+// at `[data - 8]`, length at `[data - 4]`. Boxes are the other
+// shape — __fern_alloc_box / __fern_alloc_rc1 carry 8 bytes,
+// the refcount alone.
 func (g *generator) emitAllocU8Runtime() {
 	g.line("")
 	g.line(".globl __alloc_u8")
