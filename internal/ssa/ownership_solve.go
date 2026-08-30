@@ -10,8 +10,9 @@
 // Roc solves the equivalent in `src/lir/arc_solve.zig` as two phases:
 // parameter modes to a fixpoint with returns pessimistically owned,
 // then returns marked borrowed where every returned value is a borrow
-// anchored on a borrowed parameter, then re-solved. This is the first
-// phase. The second is #7789's shape and is named in ReturnsAreOwned.
+// anchored on a borrowed parameter, then re-solved. Both phases are
+// here: this file is A, `ownership_returns.go` is B, and SolveOwnership
+// alternates them.
 //
 // # What the fixpoint is worth, measured
 //
@@ -70,6 +71,23 @@ type Signature struct {
 	// Pointer marks the parameters reference counting can apply to at
 	// all. A scalar is reported Borrowed and means nothing by it.
 	Pointer []bool
+
+	// ReturnBorrowed is true when every value the function returns is
+	// a borrow of its own parameters rather than a unit of its own —
+	// an accessor handing back a field of its receiver, a threading
+	// helper handing back the state it was given.
+	//
+	// ReturnBorrowedFrom names WHICH parameter positions, and that is
+	// the part a plain flag would lose. `q := g(p)` where g returns
+	// its borrowed parameter makes q another name for p, and a later
+	// release of q is a release of p; only the positions let
+	// `aliasesOf` follow the call. See ownership_returns.go.
+	//
+	// False is the safe default and the starting point: a return
+	// nothing proves is a borrow stays owned, so a release of the
+	// result is attributed to the call rather than to a parameter.
+	ReturnBorrowed     bool
+	ReturnBorrowedFrom []int
 }
 
 // Solution is the whole-program answer plus what it could not see.
@@ -117,19 +135,6 @@ type Solution struct {
 	//     one group nothing can close.
 	OpaqueCallees []string
 }
-
-// ReturnsAreOwned records this solver's treatment of return values: a
-// call's result is assumed to carry a unit the caller owns.
-//
-// It is the pessimistic half of Roc's phase A, and it is the safe
-// direction HERE only because nothing lowers from this pass. Assuming a
-// result is owned means a release of it is attributed to the call
-// rather than to any parameter, which under-approximates Consumed —
-// and under-approximating Consumed is the direction that would
-// over-release if it drove lowering. Phase B, which marks a return
-// borrowed when every returned value is a borrow anchored on a borrowed
-// parameter, is what removes the assumption.
-const ReturnsAreOwned = true
 
 // SolveOwnership takes the parameter modes of every function to a
 // fixpoint over the call graph.
@@ -191,6 +196,20 @@ func SolveOwnership(funcs map[string]*Func) Solution {
 				}
 			}
 			sol.Sigs[n] = sig
+		}
+		// Phase B: settle which returns hand back a borrow. A return
+		// that flips changes what the aliases mean — the result of a
+		// call is now another name for what was passed in — so the
+		// alias sets are rebuilt and phase A runs again. Both lattices
+		// only move one way, so the pair terminates.
+		if solveReturns(funcs, names, sol.Sigs) {
+			for _, n := range names {
+				f := funcs[n]
+				for i, p := range f.Params {
+					aliases[n][i] = aliasesOfWithReturns(f, uses[n], p, sol.Sigs)
+				}
+			}
+			changed = true
 		}
 		if !changed {
 			break

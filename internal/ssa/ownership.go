@@ -210,6 +210,20 @@ func RCSites(f *Func) []RCSite {
 // neither do the copy-on-write moves, whose result is a different
 // object whenever the receiver was shared.
 func aliasesOf(f *Func, uses *Uses, v Value) []Value {
+	return aliasesOfWithReturns(f, uses, v, nil)
+}
+
+// aliasesOfWithReturns is aliasesOf plus the call edge: when the
+// signature table says a callee hands back a borrow of the arguments in
+// certain positions, the call's RESULT is another name for whatever
+// this call passed there.
+//
+// That edge is only available with program context, so `aliasesOf` —
+// which answers about one function — passes nil and keeps the
+// helper-only closure it always had. Nothing that reads RCSites or
+// ParamModes silently gains a wider notion of aliasing; the solver, which
+// has the table, opts in.
+func aliasesOfWithReturns(f *Func, uses *Uses, v Value, sigs map[string]Signature) []Value {
 	out := []Value{v}
 	seen := map[int32]bool{v.ID: true}
 	for i := 0; i < len(out); i++ {
@@ -224,6 +238,20 @@ func aliasesOf(f *Func, uses *Uses, v Value) []Value {
 				}
 				seen[o.Result.ID] = true
 				out = append(out, o.Result)
+			}
+			if sigs == nil || o.Kind != OpCall || seen[o.Result.ID] {
+				continue
+			}
+			callee, known := sigs[o.Str]
+			if !known || !callee.ReturnBorrowed {
+				continue
+			}
+			for _, j := range callee.ReturnBorrowedFrom {
+				if j >= 0 && j < len(o.Args) && o.Args[j].ID == out[i].ID {
+					seen[o.Result.ID] = true
+					out = append(out, o.Result)
+					break
+				}
 			}
 		}
 	}
