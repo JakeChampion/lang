@@ -287,3 +287,54 @@ func TestRcTraceX86_64OffEmitsNothing(t *testing.T) {
 		}
 	}
 }
+
+// --- The inc/dec events ------------------------------------------------------
+//
+// The a/f pair says a block was never given back; i/d say why. They are
+// deliberately NOT matched by rcTraceLineRe: `pairRcTrace` reads that
+// regex and treats every non-`a` match as a free, so widening it to
+// [afid] would make each inc silently decrement the leak census's
+// counts. The narrow regex is load-bearing — this one is separate.
+var rcTraceRcLineRe = regexp.MustCompile(`^rctrace ([id]) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16})$`)
+
+func TestRcTraceX86_64EmitsIncAndDecEvents(t *testing.T) {
+	// Three aliases of one array, all released at exit: whatever the
+	// counts are, the incs and decs must balance per pointer.
+	const src = `
+function main(): i32 {
+    var a: u8[] = [1, 2, 3];
+    var b: u8[] = a;
+    var c: u8[] = a;
+    return b.len() + c.len();
+}
+`
+	_, stderr, _ := runRcTraceX86_64(t, src, false)
+	net := map[string]int{}
+	var incs, decs int
+	for _, line := range strings.Split(stderr, "\n") {
+		m := rcTraceRcLineRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if m[3] != "0000000000000000" {
+			t.Errorf("i/d line carries a non-zero size field %q; it is documented as unused "+
+				"because the writer's 16-rounding destroys any count put through it", m[3])
+		}
+		if m[1] == "i" {
+			incs++
+			net[m[2]]++
+		} else {
+			decs++
+			net[m[2]]--
+		}
+	}
+	if incs == 0 || decs == 0 {
+		t.Fatalf("got %d inc and %d dec events; the hook is not firing", incs, decs)
+	}
+	for ptr, n := range net {
+		if n != 0 {
+			t.Errorf("pointer %s nets %+d over its inc/dec events, but every alias here is "+
+				"released before exit", ptr, n)
+		}
+	}
+}
