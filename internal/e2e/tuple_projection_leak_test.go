@@ -59,10 +59,21 @@ import (
 // clean shapes emit neither.
 //
 // So this is a ROUTING defect, not an accounting one: a projected
-// array-typed value is released through the generic helper. The fix is
-// at the dec site, selecting the typed helper for an rc-tracked element
-// type — nothing needs to move an inc or add a dec, which is what the
-// attempt that segfaulted unidiff did.
+// array-typed value is released through the generic helper. Nothing
+// needs to move an inc or add a dec, which is what the attempt that
+// segfaulted unidiff did.
+//
+// The gate that routes it is `freeEligible`. Instrumenting `b.assign`'s
+// array branch: `cur = t.1` leaves cur NOT free-eligible and emits the
+// generic dec, while `cur = v` leaves it eligible and emits
+// `__fern_arr_dec`. The conservatism is deliberate —
+// `computeFreeEligible` excludes borrowed-derived locals because only
+// the owner frees, and the fallback dec cannot double-free. Safe, and
+// leaky.
+//
+// So the repair is not at the dec site either: it is to establish that a
+// projection of an owned value is itself owned, so cur stays eligible.
+// That is an ownership-inference question (#7786).
 //
 // THIS TEST PINS A BUG. A fix makes it fail, which is the point — the
 // same rule the conformance leak census follows.
