@@ -82,22 +82,33 @@ func TestOwnershipSolverAgreesWithTheLoweringsOwnVerdict(t *testing.T) {
 	}
 	sol := ssa.SolveOwnership(funcs)
 
-	var agreeConsumed, agreeBorrowed, solverOnly, incumbentOnly int
+	var agreeConsumed, agreeBorrowed, solverOnly, incumbentOnly, incumbentOnlyViaPhi int
 	solverOnlyTypes := map[string]int{}
 	incumbentOnlyTypes := map[string]int{}
 	for name, sig := range sol.Sigs {
-		irf := irByName[name]
-		if irf == nil || len(irf.ParamConsumed) == 0 {
+		irf, sf := irByName[name], funcs[name]
+		if irf == nil || sf == nil || len(irf.ParamConsumed) == 0 {
 			// Generated drop bodies and anything else built after
 			// lowerFunc carry no verdict. They are not compared.
 			continue
 		}
 		for i, o := range sig.Params {
-			if !sig.Pointer[i] || i >= len(irf.ParamConsumed) || i >= len(irf.Params) {
+			if !sig.Pointer[i] {
 				continue
 			}
-			solver, incumbent := o == ssa.Consumed, irf.ParamConsumed[i]
-			typ := irf.Params[i].Type.String()
+			// Through ParamIRIndex, never i directly: a two-word
+			// parameter becomes TWO SSA parameters, so the two
+			// numberings stop agreeing the moment this is lifted at an
+			// ABI where a string is a (data, len) pair.
+			iri := i
+			if len(sf.ParamIRIndex) == len(sig.Params) {
+				iri = sf.ParamIRIndex[i]
+			}
+			if iri >= len(irf.ParamConsumed) || iri >= len(irf.Params) {
+				continue
+			}
+			solver, incumbent := o == ssa.Consumed, irf.ParamConsumed[iri]
+			typ := irf.Params[iri].Type.String()
 			switch {
 			case solver && incumbent:
 				agreeConsumed++
@@ -109,6 +120,9 @@ func TestOwnershipSolverAgreesWithTheLoweringsOwnVerdict(t *testing.T) {
 			default:
 				incumbentOnly++
 				incumbentOnlyTypes[typ]++
+				if reachesPhi(sf, sf.Params[i]) {
+					incumbentOnlyViaPhi++
+				}
 			}
 		}
 	}
@@ -120,6 +134,7 @@ func TestOwnershipSolverAgreesWithTheLoweringsOwnVerdict(t *testing.T) {
 	t.Logf("%d pointer parameters compared: agree consumed=%d agree borrowed=%d "+
 		"solver-only=%d incumbent-only=%d (%.2f%% agreement)",
 		total, agreeConsumed, agreeBorrowed, solverOnly, incumbentOnly, 100*rate)
+	t.Logf("  of the incumbent-only parameters, %d of %d reach a phi", incumbentOnlyViaPhi, incumbentOnly)
 	logTop(t, "solver-only", solverOnlyTypes)
 	logTop(t, "incumbent-only", incumbentOnlyTypes)
 
@@ -209,4 +224,40 @@ func logTop(t *testing.T, label string, m map[string]int) {
 		}
 		t.Logf("   %-15s %-40s %d", label, x.k, x.v)
 	}
+}
+
+// reachesPhi reports whether p flows into a phi.
+//
+// `aliasesOf` stops at one, so a parameter reassigned in a loop can
+// satisfy its ABI in a way the solver's predicate cannot see.
+//
+// How much of the incumbent-only bucket that explains depends on the
+// population, and the two differ enough to be worth stating separately:
+// 158 of 324 here, but 507 of 517 over the conformance corpus. The
+// self-host's bucket is dominated instead by the threaded state structs
+// described above, whose promotion is callee-internal and leaves the
+// ABI alone — a different cause, already understood.
+//
+// Following the phi edge does NOT fix it, which is why this reports
+// rather than patches. `demandsUnit` is `released && !retained`, and
+// `!retained` is ANTI-monotone in the alias set: widening it finds new
+// retains as readily as new releases. Adding the edge moved the corpus
+// count the wrong way, 517 to 684, and overall agreement from 99.21% to
+// 99.00%. Reconciling the two definitions needs per-path accounting,
+// not a wider alias relation — the cost #7786 records for the
+// certifier, and why Roc's arc_certify.zig carries a join lattice.
+func reachesPhi(f *ssa.Func, p ssa.Value) bool {
+	for _, b := range f.Blocks {
+		for _, o := range b.Ops {
+			if o.Kind != ssa.OpPhi {
+				continue
+			}
+			for _, a := range o.Args {
+				if a == p {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
