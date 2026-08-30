@@ -124,6 +124,9 @@ func Certify(f *Func, sigs map[string]Signature) CertifyReport {
 		out[i] = map[int32]ownState{}
 	}
 
+	// Which roots leave each block by flowing into a successor's phi.
+	feeds := phiFeeds(f, idx, units)
+
 	poisoned := map[int32]bool{}
 	// A forward dataflow to a fixpoint. The lattice is four points and
 	// only ever moves toward ownMaybe, so it settles; the round cap is a
@@ -132,7 +135,7 @@ func Certify(f *Func, sigs map[string]Signature) CertifyReport {
 		changed = false
 		for bi, b := range f.Blocks {
 			cur := blockEntryState(f, b, idx, out, entry, units)
-			applyBlock(b, cur, units, sigs, poisoned)
+			applyBlock(b, cur, units, sigs, poisoned, feeds[bi])
 			if !sameState(cur, out[bi]) {
 				changed = true
 				out[bi] = cur
@@ -233,8 +236,48 @@ func meetOwn(a, b ownState) ownState {
 	}
 }
 
+// phiFeeds reports, per block, the roots that flow out of it into a
+// successor's phi.
+//
+// A value that feeds a phi hands its unit to the phi: everything after
+// the join names the PHI's result, so that is where a later release or
+// return lands, and a walk keyed on the incoming value never sees its
+// own disposal. `docs/rc-log/2026-08-30-ownership-signature-table.md`
+// records the same shape from the other side — "`aliasesOf` does not
+// cross phis, and that is the real limitation" — and says the answer is
+// per-path accounting rather than a wider alias closure. This is that
+// accounting: the transfer is attributed to the EDGE, so an incoming
+// value only loses its unit on the path that actually reaches the join.
+//
+// It is the same rule as the store and the closure capture. A value can
+// still be leaked on a path that never reaches the phi, and this makes
+// the walk blind to that — under-reporting, which is the direction it
+// already fails in.
+func phiFeeds(f *Func, idx map[*Block]int, units Units) [][]int32 {
+	out := make([][]int32, len(f.Blocks))
+	for _, b := range f.Blocks {
+		for _, o := range b.Ops {
+			if o.Kind != OpPhi || !o.Result.IsValid() {
+				continue
+			}
+			for i, a := range o.Args {
+				if i >= len(b.Preds) {
+					break
+				}
+				root := units.Root(a).ID
+				if root == units.Root(o.Result).ID {
+					continue
+				}
+				pi := idx[b.Preds[i]]
+				out[pi] = append(out[pi], root)
+			}
+		}
+	}
+	return out
+}
+
 // applyBlock runs the block's ops over the state.
-func applyBlock(b *Block, cur map[int32]ownState, units Units, sigs map[string]Signature, poisoned map[int32]bool) {
+func applyBlock(b *Block, cur map[int32]ownState, units Units, sigs map[string]Signature, poisoned map[int32]bool, feeds []int32) {
 	for _, o := range b.Ops {
 		if o.Kind == OpPhi {
 			continue // resolved on entry, against the edges
@@ -291,6 +334,12 @@ func applyBlock(b *Block, cur map[int32]ownState, units Units, sigs map[string]S
 		}
 		if b.Term.Value2.IsValid() {
 			cur[units.Root(b.Term.Value2).ID] = ownGone
+		}
+	}
+	// And the unit handed to a successor's phi leaves with it.
+	for _, root := range feeds {
+		if cur[root] == ownHolds {
+			cur[root] = ownGone
 		}
 	}
 }

@@ -281,3 +281,105 @@ func TestCertifyIsSilentOnABalancedLoopBody(t *testing.T) {
 		t.Errorf("a balanced loop body was reported: %+v", rep.Leaks)
 	}
 }
+
+// A unit threaded through a loop is disposed of under the PHI's name,
+// never under the name it was allocated with. A walk keyed on the
+// allocation sees no release and reports a leak — the shape that made
+// `int____int_to_string_u64` report its `__alloc_u8` buffer on every
+// fixture that used it.
+func TestCertifyFollowsAUnitIntoAPhi(t *testing.T) {
+	f := &Func{Name: "f"}
+	entry := f.NewBlock()
+	body := f.NewBlock()
+	exit := f.NewBlock()
+	f.Entry = entry
+
+	v := f.AddOp(entry, OpAlloc)
+	c := f.AddOp(entry, OpConstBool)
+	entry.Term = Terminator{Kind: TermBr, Target: body}
+
+	body.Preds = []*Block{entry, body}
+	next := f.AddOp(body, OpAlloc)
+	cur := f.AddPhi(body, v, next)
+	body.Term = Terminator{Kind: TermBrIf, Cond: c, True: body, False: exit}
+
+	exit.Preds = []*Block{body}
+	dec(f, exit, cur)
+	exit.Term = Terminator{Kind: TermRet}
+
+	if rep := Certify(f, nil); len(rep.Leaks) != 0 {
+		t.Errorf("a unit released through the phi it was threaded into was reported: %+v",
+			rep.Leaks)
+	}
+}
+
+// The transfer is attributed to the EDGE, not to the phi in general: a
+// value that never reaches the join keeps its unit, so a second
+// allocation on a path with no phi is still reported.
+func TestCertifyStillReportsAUnitThatNeverReachesThePhi(t *testing.T) {
+	f := &Func{Name: "f"}
+	entry := f.NewBlock()
+	body := f.NewBlock()
+	exit := f.NewBlock()
+	f.Entry = entry
+
+	v := f.AddOp(entry, OpAlloc)
+	stray := f.AddOp(entry, OpAlloc) // feeds nothing, released nowhere
+	_ = stray
+	c := f.AddOp(entry, OpConstBool)
+	entry.Term = Terminator{Kind: TermBr, Target: body}
+
+	body.Preds = []*Block{entry, body}
+	next := f.AddOp(body, OpAlloc)
+	cur := f.AddPhi(body, v, next)
+	body.Term = Terminator{Kind: TermBrIf, Cond: c, True: body, False: exit}
+
+	exit.Preds = []*Block{body}
+	dec(f, exit, cur)
+	exit.Term = Terminator{Kind: TermRet}
+
+	rep := Certify(f, nil)
+	if len(rep.Leaks) != 1 {
+		t.Fatalf("want the one allocation that feeds no phi reported, got %+v", rep.Leaks)
+	}
+	if rep.Leaks[0].Value.ID != stray.ID {
+		t.Errorf("reported v%d, want the stray allocation v%d", rep.Leaks[0].Value.ID, stray.ID)
+	}
+}
+
+// The result axis places a call that allocates, so a fresh buffer from
+// a runtime helper is tracked the same as an OpAlloc.
+func TestCertifyReportsAnOwnedCallResultNeverReleased(t *testing.T) {
+	f := &Func{Name: "f"}
+	b := f.NewBlock()
+	f.Entry = b
+	n := f.AddOp(b, OpConstInt)
+	f.AddOp(b, OpCall, n)
+	op := b.Ops[len(b.Ops)-1]
+	op.Str, op.Addr = "__alloc_u8", true
+	b.Term = Terminator{Kind: TermRet}
+
+	rep := Certify(f, nil)
+	if len(rep.Leaks) != 1 || rep.Leaks[0].Origin != UnitFresh {
+		t.Errorf("want one fresh-origin leak for the unreleased __alloc_u8 buffer, got %+v",
+			rep.Leaks)
+	}
+}
+
+// An immortal-headered result is fresh, pointer-shaped, and carries no
+// unit: every rc helper short-circuits on the sentinel bit, so nothing
+// can release it and it must never be reported.
+func TestCertifyDoesNotReportAnImmortalCallResult(t *testing.T) {
+	f := &Func{Name: "f"}
+	b := f.NewBlock()
+	f.Entry = b
+	n := f.AddOp(b, OpConstInt)
+	f.AddOp(b, OpCall, n)
+	op := b.Ops[len(b.Ops)-1]
+	op.Str, op.Addr = "__fern_alloc_box", true
+	b.Term = Terminator{Kind: TermRet}
+
+	if rep := Certify(f, nil); len(rep.Leaks) != 0 {
+		t.Errorf("a static-sentinel box was reported as leaked: %+v", rep.Leaks)
+	}
+}
