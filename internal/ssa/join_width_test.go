@@ -30,14 +30,18 @@ import (
 //     Distinct live values at a join are almost always distinct
 //     objects already.
 //
-//   - No lattice exponential in the width is viable, and Bell numbers
-//     are not the binding constraint — the width is. At p99 = 157 and
-//     a maximum of 1879, 2^n is as hopeless as B(n).
+//   - No lattice exponential in the LIVE width is viable, and Bell
+//     numbers are not the binding constraint — the width is. At p99 =
+//     157 and a maximum of 1879, 2^n is as hopeless as B(n).
 //
-// It is a measurement with a ceiling rather than a correctness gate:
-// what would matter is the width GROWING to where even a per-value
-// summary is costly, since that is the assumption the certifier design
-// rests on. See docs/rc-log/2026-08-30-join-width.md.
+// But the live width is the wrong number. A join summary only has to
+// relate the values its predecessors DISAGREE about, and that set is
+// tiny: p50 = 0, p99 = 10, and 61% of joins have no disagreement at
+// all. A correlated summary is affordable over it — B(10) = 115975 —
+// and is not over the live width. That is the design result, and the
+// ceilings below are set on both numbers.
+//
+// See docs/rc-log/2026-08-30-join-width.md.
 func TestJoinWidthStaysBelowWhatALatticeCouldCarry(t *testing.T) {
 	if testing.Short() {
 		t.Skip("lowers the whole self-host compiler; not a -short test")
@@ -67,8 +71,8 @@ func TestJoinWidthStaysBelowWhatALatticeCouldCarry(t *testing.T) {
 	shapes := ir.NewCallShapes(ip)
 
 	var joins int
-	var classHist, valHist []int
-	maxClasses, maxVals := 0, 0
+	var classHist, valHist, diffHist []int
+	maxClasses, maxVals, maxDiff := 0, 0, 0
 	var worst string
 	for _, fn := range ip.Funcs {
 		f, err := LiftFromIRWith(fn, shapes)
@@ -81,6 +85,11 @@ func TestJoinWidthStaysBelowWhatALatticeCouldCarry(t *testing.T) {
 		uses := BuildUses(f)
 		live := liveAtBlockStart(f)
 		ptr := pointerish(f)
+		own := ownershipOut(f, ptr)
+		bidx := map[*Block]int{}
+		for i, bb := range f.Blocks {
+			bidx[bb] = i
+		}
 		for bi, b := range f.Blocks {
 			if len(b.Preds) < 2 {
 				continue
@@ -109,6 +118,27 @@ func TestJoinWidthStaysBelowWhatALatticeCouldCarry(t *testing.T) {
 					}
 				}
 			}
+			// And how many of them the predecessors DISAGREE about,
+			// which is the only set a join summary has to relate.
+			differing := 0
+			for _, v := range vals {
+				first, seen, differs := uint8(0), false, false
+				for _, pb := range b.Preds {
+					st := own[bidx[pb]][v.ID]
+					if !seen {
+						first, seen = st, true
+					} else if st != first {
+						differs = true
+					}
+				}
+				if differs {
+					differing++
+				}
+			}
+			diffHist = append(diffHist, differing)
+			if differing > maxDiff {
+				maxDiff = differing
+			}
 			classHist = append(classHist, classes)
 			valHist = append(valHist, len(vals))
 			if classes > maxClasses {
@@ -121,6 +151,7 @@ func TestJoinWidthStaysBelowWhatALatticeCouldCarry(t *testing.T) {
 	}
 	sort.Ints(classHist)
 	sort.Ints(valHist)
+	sort.Ints(diffHist)
 	pct := func(h []int, p float64) int {
 		if len(h) == 0 {
 			return 0
@@ -146,6 +177,16 @@ func TestJoinWidthStaysBelowWhatALatticeCouldCarry(t *testing.T) {
 	t.Logf("  ALIAS CLASSES        p50=%d p90=%d p99=%d max=%d  (>12: %.2f%%)  worst=%s",
 		pct(classHist, .5), pct(classHist, .9), pct(classHist, .99), maxClasses, over(classHist, 12), worst)
 
+	agreeAll := 0
+	for _, x := range diffHist {
+		if x == 0 {
+			agreeAll++
+		}
+	}
+	t.Logf("  DIFFERING            p50=%d p90=%d p99=%d max=%d  (>12: %.2f%%)  all agree: %.2f%%",
+		pct(diffHist, .5), pct(diffHist, .9), pct(diffHist, .99), maxDiff,
+		over(diffHist, 12), 100*float64(agreeAll)/float64(len(diffHist)))
+
 	if joins < 10000 {
 		t.Fatalf("only %d joins seen; this is no longer measuring the compiler", joins)
 	}
@@ -160,6 +201,85 @@ func TestJoinWidthStaysBelowWhatALatticeCouldCarry(t *testing.T) {
 			"a per-value summary was affordable on the assumption this stayed small",
 			got, p99Ceiling)
 	}
+	// The differing width is the number the design actually rests on:
+	// a correlated summary is affordable over it and not over the live
+	// width. Measured at p99 = 10; the ceiling catches an order change.
+	const p99DifferingCeiling = 40
+	if got := pct(diffHist, .99); got > p99DifferingCeiling {
+		t.Errorf("p99 DIFFERING width is %d, over the %d ceiling — a correlated join "+
+			"summary is only affordable while this stays small",
+			got, p99DifferingCeiling)
+	}
+}
+
+// Ownership state of a value at a block exit. Approximate on purpose:
+// this measures how WIDE the disagreement is, not whether it is right.
+const (
+	stUnknown uint8 = iota
+	stHolds         // holds a unit here
+	stGone          // its unit was discharged on this path
+)
+
+// ownershipOut is a forward walk to a fixpoint giving, per block exit,
+// each pointer value's ownership state.
+func ownershipOut(f *Func, ptr map[int32]bool) []map[int32]uint8 {
+	n := len(f.Blocks)
+	idx := map[*Block]int{}
+	for i, b := range f.Blocks {
+		idx[b] = i
+	}
+	out := make([]map[int32]uint8, n)
+	for i := range out {
+		out[i] = map[int32]uint8{}
+	}
+	for changed, round := true, 0; changed && round < 50; round++ {
+		changed = false
+		for bi, b := range f.Blocks {
+			cur := map[int32]uint8{}
+			for _, pb := range b.Preds {
+				for id, st := range out[idx[pb]] {
+					if prev, ok := cur[id]; ok && prev != st {
+						// Disagreeing predecessors: keep the
+						// stronger claim so a later release is
+						// still seen.
+						cur[id] = stHolds
+					} else {
+						cur[id] = st
+					}
+				}
+			}
+			if bi == 0 {
+				for _, p := range f.Params {
+					if ptr[p.ID] {
+						cur[p.ID] = stHolds
+					}
+				}
+			}
+			for _, o := range b.Ops {
+				if o.Result.IsValid() && ptr[o.Result.ID] {
+					cur[o.Result.ID] = stHolds
+				}
+				if o.Kind != OpCall {
+					continue
+				}
+				if rel, ok := ir.RcReleases(o.Str); ok && rel >= 0 && rel < len(o.Args) {
+					cur[o.Args[rel].ID] = stGone
+				}
+			}
+			if len(cur) != len(out[bi]) {
+				changed = true
+			} else {
+				for id, st := range cur {
+					if out[bi][id] != st {
+						changed = true
+						break
+					}
+				}
+			}
+			out[bi] = cur
+		}
+	}
+	return out
 }
 
 // pointerish resolves, per function, which SSA values reference

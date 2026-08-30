@@ -17,6 +17,9 @@ with more than one predecessor.
 | --- | --- | --- | --- | --- | --- |
 | live pointer values | 2 | 23 | 157 | 1879 | 16.00% |
 | alias classes | 2 | 23 | 154 | 1879 | 15.73% |
+| **differing across predecessors** | **0** | **1** | **10** | 1878 | **0.75%** |
+
+61.11% of joins have **no** value their predecessors disagree about.
 
 These supersede an earlier measurement in this log (29,108 joins, max
 435, 12.9% over 12). That instrument predates the lift modelling
@@ -39,7 +42,27 @@ of 1879, `2^n` is as hopeless as `B(n)`. Roc's B(12) wall is *mild*
 compared with what these joins would demand. A correlated summary is
 not an option to be optimised; it is off the table.
 
-## The tension that is left
+## The live width is the wrong number
+
+A join summary does not have to relate every live value. It has to
+relate the ones its predecessors **disagree** about — a value both arms
+still hold, or both have discharged, needs no summary at all. That set
+is tiny: p50 = 0, p99 = 10, and 61% of joins are empty.
+
+So the tension below dissolves. A **correlated** summary over the
+differing set is affordable — B(10) = 115,975, against B(157) which has
+no name — while the same summary over the live width is not. The
+certifier should carry correlation only across the disagreement, and
+the 0.75% of joins wider than 12 need a documented fallback rather than
+a redesign.
+
+The measurement's ownership walk is deliberately coarse: a two-state
+holds/discharged lattice, direct releases only, and a join rule that
+keeps the stronger claim. It is an estimate of the ORDER, not a
+certified figure — but 0 against 157 at the median, and 10 against 157
+at p99, is not a margin that turns on the approximation.
+
+## The tension that was there before that measurement
 
 The cheap alternative is a **per-value independent** summary: a
 three-valued state (owned on all paths / on some / on none) per live
@@ -58,10 +81,11 @@ So the honest state is a constraint, not a design:
 - independent summaries are **affordable but too weak** for the check
   that motivates the work.
 
-The next question is whether the width that *matters* is the live
-width at all. A join only needs agreement on values whose ownership
-state actually DIFFERS between predecessors, which is plausibly tiny
-even where 1879 values are live. Measuring that needs an ownership
-state per path — the certifier itself — so it cannot be answered by a
-probe from outside, and it is where the design work should go rather
-than into summarising a width that may be the wrong number.
+That was resolved by measuring the differing width above, which turned
+out to be answerable by a probe after all: a coarse forward ownership
+walk is enough to size the disagreement even though it is nowhere near
+enough to certify it.
+
+What is left for the certifier proper is the fallback for the 0.75%
+tail — `wasm_ir__extern_wrappers` reaches 1878 differing values — and
+the accounting itself.
