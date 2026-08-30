@@ -54,6 +54,9 @@ import (
 // 16m58s on a slow runner against an 18m timeout, so 13.6s of new work
 // is enough to time it out, while the x86-64 lane runs 8m37s against
 // 25m.
+//
+// The `unplaced call results` figure it logs is the result axis's own
+// metric: 1527 before `internal/ir/rcresults.go` existed, 498 after.
 func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	if testing.Short() {
 		t.Skip("lowers the whole conformance corpus; not a -short test")
@@ -114,31 +117,26 @@ func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	t.Logf("  by defining op: %s", topCounts(byKind, 6))
 	t.Logf("  worst functions: %s", topCounts(byFunc, 5))
 
-	// Measured 2026-08-30: 8.49%, 62 functions of 730.
+	// Measured 2026-08-30: 2.05%, 15 functions of 730.
 	//
 	// A ratchet, not a specification — the same stance the leak census
 	// itself takes. Every flagged function here is a report the runtime
 	// contradicts and the walk should not make; the ceiling exists so
 	// the number cannot climb back toward the 20.3% the probe this
-	// replaces measured, and so the two open classes below stay visible
+	// replaces measured, and so the one open class below stays visible
 	// instead of being absorbed.
 	//
-	// The two classes, from the breakdown above:
+	// One class is left, from the breakdown above: `make_closure`. A
+	// closure cell is 32 bytes from `__fern_alloc_rc1` with rc=1, and
+	// lowering does not always emit its release. Whether each of these
+	// is the walk missing a transfer or the compiler missing a drop is
+	// unsettled — closure reclamation is on `docs/TEST-GATES.md`'s live
+	// gap list, so both readings are open.
 	//
-	//   - `make_closure`. A closure cell is 32 bytes from
-	//     `__fern_alloc_rc1` with rc=1, and lowering does not always
-	//     emit its release. Whether each of these is the walk missing a
-	//     transfer or the compiler missing a drop is unsettled — closure
-	//     reclamation is on `docs/TEST-GATES.md`'s live gap list, so
-	//     both readings are open.
-	//   - `alloc`. A raw `__fern_alloc` block whose reclamation the walk
-	//     does not reach, usually because it left through a callee the
-	//     signature table reports as borrowing.
-	//
-	// Neither is a filter away. Each wants the same treatment the
-	// interior-address class got: find one, read the SSA, and decide
-	// what the emitted code actually does with it.
-	const rateCeiling = 12.0
+	// The `alloc` and `call` classes that stood beside it are gone: a
+	// unit threaded through a loop is disposed of under the PHI's name,
+	// and attributing that transfer to the edge closed both at once.
+	const rateCeiling = 4.0
 	if rate > rateCeiling {
 		t.Errorf("%.2f%% of functions flagged in fixtures the runtime says are clean, over the "+
 			"%.1f%% ceiling — the walk is reporting leaks the oracle contradicts:\n  by op: %s\n  worst: %s",
