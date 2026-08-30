@@ -684,6 +684,34 @@ func pureReadReceiverBuiltin(name string) bool {
 // an argument to a callee whose parameter in that position is itself
 // counted-retain. Conservative: a param qualifies only when every occurrence
 // is credited.
+// everyOccurrenceSafe decides the three counted-retain summaries from the
+// occurrence tally: the parameter is safe when every appearance of it was
+// classified safe.
+//
+// ZERO occurrences is SAFE, and that is the whole point of naming this.
+// The summaries answer "can this callee retain the argument in a way the
+// caller's escape analysis cannot see" — and a parameter the body never
+// mentions cannot be retained by any means at all, counted or otherwise.
+// It is the strongest form of the property, not the absence of evidence
+// for it.
+//
+// Requiring at least one occurrence read the vacuous case as "unknown"
+// and left the caller's conservative taint in place, which on the native
+// single-word string ABI is a deliberate never-reclaim: computeFreeEligible
+// taints a string ident passed to a user function unless
+// paramCountedRetain clears it, "a leak at worst, never a use-after-free".
+// For an unused parameter there was nothing to be conservative about, and
+// the leak was unconditional — #7798, where three lines allocate one
+// string and free none on x86-64 while arm64 is clean.
+//
+// The tally is sound for this: ast.Walk descends into Lambda bodies and
+// MakeClosure captures, so a parameter a nested closure touches is
+// counted, and a parameter shadowed by a local is excluded by the caller
+// before either function runs.
+func everyOccurrenceSafe(total, safe int) bool {
+	return total == safe
+}
+
 func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) bool {
 	safe := map[*ast.Ident]bool{}
 	mark := func(e ast.Expr) {
@@ -757,7 +785,7 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 		}
 		return true
 	})
-	return total > 0 && total == len(safe)
+	return everyOccurrenceSafe(total, len(safe))
 }
 
 // arrayParamCounted is the array sibling of stringParamCounted: an array
@@ -812,7 +840,7 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) b
 		}
 		return true
 	})
-	return total > 0 && total == len(safe)
+	return everyOccurrenceSafe(total, len(safe))
 }
 
 // structParamProjectionsSafe reports whether every occurrence of struct
@@ -969,7 +997,7 @@ func structParamProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.I
 		}
 		return true
 	})
-	return total > 0 && total == len(safe)
+	return everyOccurrenceSafe(total, len(safe))
 }
 
 func (b *builder) computeConsumedParams() map[string]bool {
