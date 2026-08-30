@@ -798,12 +798,29 @@ func (o *Op) CaptureSlots() []int32 {
 // vars; codegen reads ScratchTypes[i] to declare each slot with the
 // right type (i32 / f32).
 type Func struct {
-	Name         string
-	Params       []ast.Param
-	Locals       []*ast.Var
-	ScratchTypes []ast.Type
-	ReturnType   ast.Type
-	Ops          []Op
+	Name string
+	// ParamConsumed is, per parameter, whether THIS lowering decided the
+	// function reclaims it — the incumbent ownership answer, recorded so
+	// it can be read rather than re-derived.
+	//
+	// #7786 asks for "a whole-program signature relation a verifier can
+	// read" and observes that Fern already computes the ingredients as
+	// "per-function decision tables consumed by lowering". This is that
+	// answer surfaced: the disjunction rc_analysis.go and rc_insert.go
+	// spell out at seven call sites —
+	//
+	//	p.Own || paramOwnedByDefault(p.Type, i) || rc.consumedParams[p.Name]
+	//
+	// — evaluated once, where every input is already in hand.
+	//
+	// Empty on a Func built by hand or generated after lowering, which
+	// no reader should treat as "nothing is consumed".
+	ParamConsumed []bool
+	Params        []ast.Param
+	Locals        []*ast.Var
+	ScratchTypes  []ast.Type
+	ReturnType    ast.Type
+	Ops           []Op
 	// Captures lists the variables a hoisted closure target
 	// captures, in declaration order. Empty for non-closure
 	// functions. Used by codegen to size the env block + decide
@@ -5424,6 +5441,13 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// params, borrow-aware free eligibility, moves, array-set incs, reuse)
 	// computed up front in one place; see rc_analysis.go (#4393).
 	b.computeRcAnalyses()
+	// Record the ownership verdict the plan just reached, per parameter,
+	// so it survives lowering as a readable relation. See
+	// Func.ParamConsumed.
+	out.ParamConsumed = make([]bool, len(fn.Params))
+	for i, p := range fn.Params {
+		out.ParamConsumed[i] = p.Own || b.paramOwnedByDefault(p.Type, i) || b.rc.consumedParams[p.Name]
+	}
 	b.closureTarget = map[string]string{}
 	// Pre-walk the function body to find every Defer
 	// statement. Each gets an "active" flag local: 0 by
