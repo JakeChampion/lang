@@ -42680,28 +42680,57 @@ function arrarr_lit_is_empty(e: ast.Expr): boolean {
     return false;
 }
 
-// arrarr_row_escapes: a bare single-index ROW read (`var row = g[i]` /
-// `row = g[i]`) or a `for row in g` iteration binds an INNER buffer pointer
-// that would dangle when the arr-of-arr reclaim frees the whole structure —
-// such a use rejects the candidate. Transient double-index / method-receiver
-// borrows (`g[i][j]`, `g[i].len()`) don't bind the row and stay admissible
-// (they're inside larger expressions, not a bare ExprIndex RHS).
+// arrarr_row_escapes: a bare single-index ELEMENT read (`var o = xs[i]` /
+// `o = xs[i]`) or a `for o in xs` iteration binds an INNER pointer that would
+// dangle when the reclaim frees the whole structure — such a use rejects the
+// candidate. Transient double-index / method-receiver borrows (`g[i][j]`,
+// `g[i].len()`) don't bind the element and stay admissible (they're inside
+// larger expressions, not a bare ExprIndex RHS).
+//
+// This is the STRICT form, for the classes whose element is an option or tuple
+// BOX (OPTAARR, ARRTUP): the is_arr retain in lower_stmt_var fires on ARRAY-typed
+// binds, so a box bind takes no counted retain and an index read really is a bare
+// borrow there. The arr-of-arr class, whose elements ARE array buffers, takes
+// arrarr_row_escapes_iter — see the pair below.
 function arrarr_row_escapes(stmts: ast.Stmt[], name: string): boolean {
+    return arrarr_row_escapes_ex(stmts, name, false);
+}
+
+// arrarr_row_escapes_iter: the ARR-OF-ARR form, which forgives the two INDEX
+// spellings and rejects only `for row in g`. A row read — `var row = g[i]` or
+// `row = g[i]` — takes a Perceus dup at the bind (the is_arr/ExprIndex retain in
+// lower_stmt_var and its assign twin), so the row is a counted reference and the
+// walk's rc-guarded dec lands on 2, not 1. Rejecting them cost the WHOLE credit
+// and stranded every row — including ones nothing else touched — while the outer
+// buffer alone was reclaimed (#7805: 88 B/round, unbounded, against native's 0).
+// The dup is also what makes a rebound candidate safe: a row bound in an earlier
+// iteration holds a count the self-append reclaim cannot free. `for row in g`
+// emits no such dup (measured: zero rc_inc for the iteration form against one for
+// each index form), which is why it stays an escape on both forms.
+function arrarr_row_escapes_iter(stmts: ast.Stmt[], name: string): boolean {
+    return arrarr_row_escapes_ex(stmts, name, true);
+}
+
+// One walker behind both, rather than a near-copy per class (the 08-22
+// struct-producer rule): `dup_at_index` says whether this class's element bind
+// takes the counted retain that turns an index read from an escape into a
+// borrow the reclaim can outlive.
+function arrarr_row_escapes_ex(stmts: ast.Stmt[], name: string, dup_at_index: boolean): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtVar(v) => { if (expr_is_bare_row_read(v.init, name)) { return true; } },
-            ast.StmtAssign(asg) => { if (expr_is_bare_row_read(asg.value, name)) { return true; } },
+            ast.StmtVar(v) => { if (!dup_at_index && expr_is_bare_row_read(v.init, name)) { return true; } },
+            ast.StmtAssign(asg) => { if (!dup_at_index && expr_is_bare_row_read(asg.value, name)) { return true; } },
             ast.StmtFor(fo) => {
                 match (fo.iter) {
                     ast.ExprIdent(fid) => { if (fid.name == name) { return true; } },
                     _ => {}
                 }
-                if (arrarr_row_escapes(fo.body, name)) { return true; }
+                if (arrarr_row_escapes_ex(fo.body, name, dup_at_index)) { return true; }
             },
-            ast.StmtIf(f) => { if (arrarr_row_escapes(f.then_body, name) || arrarr_row_escapes(f.else_body, name)) { return true; } },
-            ast.StmtWhile(w) => { if (arrarr_row_escapes(w.body, name)) { return true; } },
+            ast.StmtIf(f) => { if (arrarr_row_escapes_ex(f.then_body, name, dup_at_index) || arrarr_row_escapes_ex(f.else_body, name, dup_at_index)) { return true; } },
+            ast.StmtWhile(w) => { if (arrarr_row_escapes_ex(w.body, name, dup_at_index)) { return true; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrarr_row_escapes(arm.body, name)) { return true; } }
+                for arm in m.arms { if (arrarr_row_escapes_ex(arm.body, name, dup_at_index)) { return true; } }
             },
             _ => {}
         }
@@ -70800,7 +70829,7 @@ while (aai < aarrs.len()) {
     // The string[] class has worked this way since #4355.
     if (!(aan.len() > 2 && aan[0] == b'S' && aan[1] == b'|')
         && !arrarr_unsafe_for(body, reclaim_site_name(aan), borrowable, opt_fresh_ret)
-        && !arrarr_row_escapes(body, reclaim_site_name(aan))) {
+        && !arrarr_row_escapes_iter(body, reclaim_site_name(aan))) {
         out = out.append("ARRARR:" + aan);
         // STRICT string-kind credit only when every inner element proved
         // fresh (slot_is_reclaimable_arrarr consults this one when the
