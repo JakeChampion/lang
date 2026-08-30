@@ -1,0 +1,64 @@
+// A generic call as a struct-literal FIELD VALUE, where the arguments alone do
+// not pin the type variable. The self-host refused the whole module:
+//
+//   error[E001]: in fn 'build': call to undefined function 'append_all'
+//
+// The monomorphiser has two ways to instantiate a call. mono_expr infers the
+// type variable from the ARGUMENTS; mono_call_expected also unifies an EXPECTED
+// type against the return. `var x: T[] = f(..)` and `return f(..)` route through
+// the second, but a struct-literal field value went to the first — so a call
+// whose args do not determine T stayed the un-instantiated template and mangled
+// to a name no instantiation defines. The generic-ENUM walk had always passed
+// the declared field type here; the function-generic walk had not.
+//
+// Field-ACCESS arguments are what expose it: a bare ident argument is in the
+// monomorphiser's little type environment, so T is inferable from the args
+// alone and the shape works. `h.xs` is not, so nothing pinned T.
+//
+// Positions:
+//   the bug shape — field-access args, inline in a struct-literal field;
+//   the same call with IDENT args, which always worked, as a control;
+//   a second element type, so a fix that instantiated once for all callers
+//     fails;
+//   the bound-to-a-local spelling, which always worked and must keep working.
+struct A { n: i32 }
+struct S { s: string }
+struct Holder { xs: A[], ys: A[], ss: S[], ts: S[] }
+struct Bag { av: A[], sv: S[] }
+
+function append_all[T](into: T[], more: T[]): T[] {
+    var i: i32 = 0;
+    while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
+    return into;
+}
+
+// The refusing shape: args are field reads, call is inline in a field value.
+function build(h: Holder): Bag {
+    return Bag { av: append_all(h.xs, h.ys), sv: append_all(h.ss, h.ts) };
+}
+
+// Control: ident args in the same position always resolved.
+function build_idents(a: A[], b: A[], s: S[], t: S[]): Bag {
+    return Bag { av: append_all(a, b), sv: append_all(s, t) };
+}
+
+// Control: binding first is the workaround that always worked.
+function build_bound(h: Holder): Bag {
+    var av: A[] = append_all(h.xs, h.ys);
+    var sv: S[] = append_all(h.ss, h.ts);
+    return Bag { av: av, sv: sv };
+}
+
+function main(): i32 {
+    var h: Holder = Holder {
+        xs: [A { n: 1 }],
+        ys: [A { n: 2 }, A { n: 3 }],
+        ss: [S { s: "p" }],
+        ts: [S { s: "q" }],
+    };
+    var b1: Bag = build(h);
+    var b2: Bag = build_idents(h.xs, h.ys, h.ss, h.ts);
+    var b3: Bag = build_bound(h);
+    // 3 + 2 + 3 + 2 + 3 + 2 = 15
+    return b1.av.len() + b1.sv.len() + b2.av.len() + b2.sv.len() + b3.av.len() + b3.sv.len();
+}
