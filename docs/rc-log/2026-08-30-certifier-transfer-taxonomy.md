@@ -112,17 +112,36 @@ walk reads — the same model twice, which is what the differential
 discipline exists to avoid. An earlier revision of this note recommended
 that comparison; it is wrong.
 
-The independent source is the **runtime**. `FERN_LEAKCHECK=1` and
-`__rc_underflow_count()` observe what the counts actually did. Narrower
-than a static oracle, since it sees executed paths only, but independent
-— the property that matters — and it localises: one function whose
-dynamic verdict disagrees with the static walk is a place to look, where
-a total of 63,070 is not.
+The independent source is the **runtime**, and specifically
+`FERN_RC_TRACE=1` rather than `FERN_LEAKCHECK=1`. The distinction
+matters and the flag's own doc comment makes it: leakcheck prints one
+summary line, and
+
+> a `leakcheck: ... live_bytes=4096` line is a true statement nothing
+> can act on
+
+which is the same shape of problem as a total of 63,070. RC_TRACE emits
+one record per heap event —
+
+```
+rctrace <a|f> <ptr> <size> <site>
+```
+
+— where `site` is the **return address of the alloc/free call**, so `-g`
+plus addr2line names the source line. Pairing allocs against frees by
+pointer leaves exactly the sites that allocated memory the program never
+gave back.
+
+That is a per-SITE oracle, finer than the per-function one this note
+first asked for, and it is genuinely independent of the static walk: it
+observes what the counts did, not what the compiler intended. Narrower,
+since it sees executed paths only, and x86-64 only.
 
 So the order is:
 
-1. **An oracle.** Dynamic unit accounting over a small corpus, compared
-   against the static walk per function.
+1. **An oracle.** `FERN_RC_TRACE` over a small corpus, alloc/free
+   records paired by pointer, compared against the static walk per
+   allocation site.
 2. **Then** whatever its disagreement breakdown says, one class at a
    time — the method that worked for the stack.
 3. **Then** the join summary, on the differing set (#7828).
