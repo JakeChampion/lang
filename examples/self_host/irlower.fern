@@ -36222,9 +36222,10 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // from the slot's arrarr_elem kind. Three gates: body_unsafe_for (no
     // return / store / call-arg escape of g itself), NOT reassigned (only the
     // loop re-declaration rebind is handled), and no ROW alias
-    // (arrarr_row_escapes: a bare `var row = g[i]` single-index read or a
-    // `for row in g` iteration binds an inner buffer the free would dangle —
-    // a transient `g[i][j]` / `g[i].len()` borrow is fine).
+    // (arrarr_row_escapes_iter: an index row read takes the is_arr retain so it
+    // is a counted reference the walk's rc-guarded dec cannot free, and `for row
+    // in g` is a transient borrow the loop outlives — only a body that lets the
+    // loop var escape dangles. A `g[i][j]` / `g[i].len()` borrow binds nothing).
     var aarrs: string[] = collect_fresh_arrarr_names(body, opt_fresh_ret, []);
     out = reclaimable_arrarr(aarrs, body, borrowable, opt_fresh_ret, out);
     // Fresh Option[<scalar-arr>][] locals (#4365): `var xs: Option[i32[]][] =
@@ -42693,44 +42694,58 @@ function arrarr_lit_is_empty(e: ast.Expr): boolean {
 // borrow there. The arr-of-arr class, whose elements ARE array buffers, takes
 // arrarr_row_escapes_iter — see the pair below.
 function arrarr_row_escapes(stmts: ast.Stmt[], name: string): boolean {
-    return arrarr_row_escapes_ex(stmts, name, false);
+    return arrarr_row_escapes_ex(stmts, name, false, []);
 }
 
-// arrarr_row_escapes_iter: the ARR-OF-ARR form, which forgives the two INDEX
-// spellings and rejects only `for row in g`. A row read — `var row = g[i]` or
+// arrarr_row_escapes_iter: the ARR-OF-ARR form. A row read — `var row = g[i]` or
 // `row = g[i]` — takes a Perceus dup at the bind (the is_arr/ExprIndex retain in
 // lower_stmt_var and its assign twin), so the row is a counted reference and the
 // walk's rc-guarded dec lands on 2, not 1. Rejecting them cost the WHOLE credit
 // and stranded every row — including ones nothing else touched — while the outer
 // buffer alone was reclaimed (#7805: 88 B/round, unbounded, against native's 0).
 // The dup is also what makes a rebound candidate safe: a row bound in an earlier
-// iteration holds a count the self-append reclaim cannot free. `for row in g`
-// emits no such dup (measured: zero rc_inc for the iteration form against one for
-// each index form), which is why it stays an escape on both forms.
-function arrarr_row_escapes_iter(stmts: ast.Stmt[], name: string): boolean {
-    return arrarr_row_escapes_ex(stmts, name, true);
+// iteration holds a count the self-append reclaim cannot free.
+//
+// `for row in g` emits NO such dup (measured: zero rc_inc against one for each
+// index form), so it is a real borrow — but a TRANSIENT one: the loop completes
+// before the exit reclaim, so the rows are dead by the time the walk runs. It is
+// therefore admitted on the same terms structarr_elem_escapes admits its own
+// iteration, and refused only when the body lets the loop var escape.
+function arrarr_row_escapes_iter(stmts: ast.Stmt[], name: string, borrowable: string[]): boolean {
+    return arrarr_row_escapes_ex(stmts, name, true, borrowable);
 }
 
 // One walker behind both, rather than a near-copy per class (the 08-22
 // struct-producer rule): `dup_at_index` says whether this class's element bind
 // takes the counted retain that turns an index read from an escape into a
-// borrow the reclaim can outlive.
-function arrarr_row_escapes_ex(stmts: ast.Stmt[], name: string, dup_at_index: boolean): boolean {
+// borrow the reclaim can outlive, and whether its iteration is transient enough
+// to admit on a body check rather than outright.
+function arrarr_row_escapes_ex(stmts: ast.Stmt[], name: string, dup_at_index: boolean, borrowable: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => { if (!dup_at_index && expr_is_bare_row_read(v.init, name)) { return true; } },
             ast.StmtAssign(asg) => { if (!dup_at_index && expr_is_bare_row_read(asg.value, name)) { return true; } },
             ast.StmtFor(fo) => {
+                var iterates_name: boolean = false;
                 match (fo.iter) {
-                    ast.ExprIdent(fid) => { if (fid.name == name) { return true; } },
+                    ast.ExprIdent(fid) => { if (fid.name == name) { iterates_name = true; } },
                     _ => {}
                 }
-                if (arrarr_row_escapes_ex(fo.body, name, dup_at_index)) { return true; }
+                if (iterates_name) {
+                    // The loop var is an unretained borrow of each row. For the
+                    // classes whose index bind takes no dup either, that is fatal
+                    // outright; for the arr-of-arr it is transient — the loop ends
+                    // before the exit reclaim — so it turns on whether the body
+                    // lets the row outlive the loop.
+                    if (!dup_at_index) { return true; }
+                    if (body_unsafe_for(fo.body, fo.var_name, borrowable, [])) { return true; }
+                }
+                if (arrarr_row_escapes_ex(fo.body, name, dup_at_index, borrowable)) { return true; }
             },
-            ast.StmtIf(f) => { if (arrarr_row_escapes_ex(f.then_body, name, dup_at_index) || arrarr_row_escapes_ex(f.else_body, name, dup_at_index)) { return true; } },
-            ast.StmtWhile(w) => { if (arrarr_row_escapes_ex(w.body, name, dup_at_index)) { return true; } },
+            ast.StmtIf(f) => { if (arrarr_row_escapes_ex(f.then_body, name, dup_at_index, borrowable) || arrarr_row_escapes_ex(f.else_body, name, dup_at_index, borrowable)) { return true; } },
+            ast.StmtWhile(w) => { if (arrarr_row_escapes_ex(w.body, name, dup_at_index, borrowable)) { return true; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrarr_row_escapes_ex(arm.body, name, dup_at_index)) { return true; } }
+                for arm in m.arms { if (arrarr_row_escapes_ex(arm.body, name, dup_at_index, borrowable)) { return true; } }
             },
             _ => {}
         }
@@ -42758,8 +42773,9 @@ function expr_is_bare_row_read(e: ast.Expr, name: string): boolean {
 // … }` binds each element box only for the loop, which completes before the free
 // — so it is safe UNLESS the loop body lets `p` escape (stores / returns / binds
 // it). A bare element bind `var q = g[i]` / `q = g[i]` is rejected conservatively
-// (q could outlive), matching arrarr's index stance; a transient `g[i].field`
-// read (not a bind) is fine. Field aliasing (`var s = p.name`) is always safe
+// (q could outlive) — the arr-of-arr class admits those, but only because an
+// ARRAY-typed bind takes the is_arr retain, which an element BOX bind does not;
+// a transient `g[i].field` read (not a bind) is fine. Field aliasing (`var s = p.name`) is always safe
 // here — the reclaim is a SHALLOW box dec that never frees a field pointer.
 function structarr_elem_escapes(stmts: ast.Stmt[], name: string, borrowable: string[]): boolean {
     for stmt in stmts {
@@ -70829,7 +70845,7 @@ while (aai < aarrs.len()) {
     // The string[] class has worked this way since #4355.
     if (!(aan.len() > 2 && aan[0] == b'S' && aan[1] == b'|')
         && !arrarr_unsafe_for(body, reclaim_site_name(aan), borrowable, opt_fresh_ret)
-        && !arrarr_row_escapes_iter(body, reclaim_site_name(aan))) {
+        && !arrarr_row_escapes_iter(body, reclaim_site_name(aan), borrowable)) {
         out = out.append("ARRARR:" + aan);
         // STRICT string-kind credit only when every inner element proved
         // fresh (slot_is_reclaimable_arrarr consults this one when the

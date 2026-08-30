@@ -21,10 +21,12 @@ import (
 // at 88 B/round against native's zero.
 //
 // `for row in g` genuinely takes no dup (measured: zero rc_inc for the
-// iteration form against one for each index form), so it stays an escape and
-// keeps the shallow release. TestSelfHostArrArrRowReadHazardsX86_64 pins that
-// the shapes still refused stay CORRECT, which is the half a wrongly-granted
-// credit would break: an over-release is a use-after-free, not a leak.
+// iteration form against one for each index form), but it is a TRANSIENT borrow
+// — the loop ends before the exit reclaim — so it is admitted on the same terms
+// structarr_elem_escapes admits its own iteration: refused only when the body
+// lets the loop var escape. TestSelfHostArrArrRowReadHazardsX86_64 pins that the
+// shapes still refused stay CORRECT, which is the half a wrongly-granted credit
+// would break: an over-release is a use-after-free, not a leak.
 //
 // Differential against native, as the rest of this package is: the assertion is
 // AGREEMENT with the native compiler, not an absolute byte count.
@@ -91,6 +93,7 @@ func TestSelfHostArrArrRowReadReclaimX86_64(t *testing.T) {
 		{"row_bind", arrarrRowBindChurnSrc},
 		{"row_assign", arrarrRowAssignChurnSrc},
 		{"row_escapes_in_struct_field", arrarrRowEscapeChurnSrc},
+		{"for_in_iteration", arrarrRowIterSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			asm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
@@ -123,16 +126,33 @@ func TestSelfHostArrArrRowReadReclaimX86_64(t *testing.T) {
 	}
 }
 
-// arrarrRowIterHazardSrc: `for row in g` takes NO dup, so the credit must still
-// be refused and the rows leak soundly. Pinned on BEHAVIOUR, not bytes — if the
-// credit were wrongly granted here the deep free would dangle a row the loop
-// still reads, which shows up as a wrong answer or a crash rather than as a
-// leak. Rows are distinct so a freed-and-recycled buffer changes the sum.
-const arrarrRowIterHazardSrc = `function round(n: i32): i32 {
+// arrarrRowIterSrc: `for row in g` takes no dup, but the loop completes before
+// the exit reclaim, so the borrow is transient and the credit holds. Rows are
+// distinct so a freed-and-recycled buffer would change the sum.
+const arrarrRowIterSrc = `function round(n: i32): i32 {
     var placed: i32[][] = [[n, n + 1], [n + 2, n + 3], [n + 4, n + 5]];
     var t: i32 = 0;
     for row in placed { t = t + row[0] + row[1]; }
     return t;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 200) { t = t + round(r); r = r + 1; }
+    return t % 7;
+}`
+
+// arrarrRowIterEscapeHazardSrc: the loop var ESCAPES the body, so the borrow is
+// no longer transient and the credit must still be refused. This is the shape
+// that separates "admit transient iteration" from "admit all iteration" — the
+// row outlives the loop with no counted reference, so a granted credit would
+// free a buffer `kept` still names.
+const arrarrRowIterEscapeHazardSrc = `function round(n: i32): i32 {
+    var placed: i32[][] = [[n], [n, n, n, n, n, n, n, n, n]];
+    var kept: i32[] = [0];
+    for row in placed { kept = row; }
+    return kept[0];
 }
 
 function main(): i32 {
@@ -179,7 +199,7 @@ func TestSelfHostArrArrRowReadHazardsX86_64(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"for_in_iteration", arrarrRowIterHazardSrc},
+		{"for_in_loop_var_escapes", arrarrRowIterEscapeHazardSrc},
 		{"rebind_holds_earlier_row", arrarrRowRebindHazardSrc},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
