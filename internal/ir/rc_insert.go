@@ -497,12 +497,22 @@ func (b *builder) freshPairFormEnumResultType(e ast.Expr) (ast.Type, bool) {
 	if _, isUserFn := b.returnsFreshPairPayload[id.Name]; !isUserFn {
 		return nil, false
 	}
-	// The payload BOX must be the callee's own. Deliberately not
-	// returnsNoParamEscape: that asks whether anything reachable from the
-	// result aliases a parameter, and a fresh box holding a counted
-	// reference to a parameter's heap is exactly what an iterator's `next`
-	// returns. See findReturnsFreshPairPayload.
-	if !b.returnsFreshPairPayload[id.Name] {
+	// The payload BOX must not be one the callee received. TWO independent
+	// proofs of that, and either suffices:
+	//
+	//   - nothing REACHABLE FROM the result aliases a parameter, so the
+	//     pointer cannot be one either. This also credits shapes that are
+	//     fresh without being a literal construction — a string concat or
+	//     slice byte-copies into a new buffer — which the second proof
+	//     does not attempt.
+	//   - the returned payload is a literal construction, so the box is
+	//     the callee's own whatever it points AT. This is the one an
+	//     iterator's `next` needs: `Some((elem, Self { xs: self.xs, … }))`
+	//     fails the first proof and passes this one.
+	//
+	// Requiring only the second cost the reclaim on `Some("x" + f(v))`,
+	// which the first had been carrying (TestX86_64PairFormReturningArmReclaim).
+	if !b.returnsNoParamEscape[id.Name] && !b.returnsFreshPairPayload[id.Name] {
 		return nil, false
 	}
 	et, ok := b.exprType(e).(ast.EnumType)
