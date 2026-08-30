@@ -405,6 +405,48 @@ func (b *builder) computeDynBorrowedViews() map[string]bool {
 // in the iterator shape needs it and an unproven shape must stay refused —
 // releasing a pointer the callee merely passed through is a use-after-free,
 // where declining to release it is the leak that already exists.
+// findReturnsFreshBox reports, per function, whether every value return hands
+// back a box the function CONSTRUCTED — a struct, tuple or array literal —
+// rather than a value derived from what it was passed.
+//
+// rhsTainted's *ast.Call case taints a result when ANY argument is tainted.
+// That rule is right for a callee that might hand an argument back, and wrong
+// for one that always builds something new: `__rx_quant(p, pos, gi)` returns
+// `RParse { node: …, pos: …, g: … }`, a fresh box, and the borrow taint on the
+// pattern string `p` says nothing about that box's provenance. The Call case
+// already carves out the same shape one callee at a time — variant
+// constructors, map_new, cell_new — and this generalises it to any callee that
+// provably does it.
+//
+// returnsNoParamEscape cannot serve: it asks whether anything REACHABLE FROM
+// the result aliases a parameter, which is false for every regex parser
+// function (their nodes legitimately carry slices of the pattern). What taint
+// needs is only whether the returned POINTER is the callee's own.
+//
+// A function with no value returns gets false: it returns nothing to be fresh.
+func findReturnsFreshBox(prog *ast.Program) map[string]bool {
+	out := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		ok, saw := true, false
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			r, isRet := n.(*ast.Return)
+			if !isRet || r.Value == nil {
+				return true
+			}
+			saw = true
+			if !allocatesFreshBox(r.Value) {
+				ok = false
+			}
+			return true
+		})
+		out[fn.Name] = ok && saw
+	}
+	return out
+}
+
 func findReturnsFreshPairPayload(prog *ast.Program, info *checker.Info) map[string]bool {
 	nullaryVariant := map[string]bool{}
 	payloadCount := map[string]int{}
@@ -2014,6 +2056,19 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				if en, _, _, isVar := b.lookupVariantOn(id.Name, id.EnumName); isVar && b.enumRcPayloadsEligible(en) {
 					return false
 				}
+			}
+		}
+		// A callee whose every value return CONSTRUCTS its result hands
+		// back a box of its own, so an argument's borrow taint says
+		// nothing about it. This is the general form of the carve-outs
+		// around it — the variant constructor above, map_new and cell_new
+		// below — and it is what keeps a recursive-descent parser's
+		// `RParse { node: …, pos: … }` result reclaimable even though the
+		// pattern string it was parsed from is a borrowed parameter.
+		// findReturnsFreshBox says why returnsNoParamEscape cannot serve.
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			if _, isLocal := b.locals[id.Name]; !isLocal && b.returnsFreshBox[id.Name] {
+				return false
 			}
 		}
 		// Map builtins return the MAP HANDLE, which aliases only the
