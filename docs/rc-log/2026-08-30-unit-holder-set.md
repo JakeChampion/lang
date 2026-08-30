@@ -9,7 +9,10 @@ correct unit-holder set, one named class at a time".
 This is that rebuild. `internal/ssa/units.go` is the unit-holder set,
 `internal/ssa/certify.go` is the walk on it, and
 `internal/e2e/certify_oracle_test.go` is the comparison against the
-census.
+census — named `TestX86_64…` because it lowers at ptrW 8 and mirrors the
+x86-64 backend, and because `test-e2e-other.yml` is a catch-all with no
+room: it runs 16m14s locally and 16m58s on a slow CI runner against an
+18m timeout, and 13.6s of new work times it out.
 
 ## What the probe was doing
 
