@@ -187,12 +187,26 @@ Matching and merely using the binding is clean, and so is ignoring it:
 | `Some(v) => { i = i + 1; }` | 0 / 3 |
 | `Some(v) => { cur = v; }` | **3 / 6** |
 
-So the enum box's release does dec its payload correctly. The imbalance
-appears only when the binding is assigned out — where the alias-inc is
-emitted AND, on the evidence of the refcount, the box's payload-dec no
-longer lands.
+There is no enum box to blame. Grouping the trace by allocation size
+shows **one 32-byte block per iteration and nothing else** in both
+programs — `Some([1, 2, 3])` does not box the Option separately, so the
+payload array is the only allocation on this path.
 
-It is **not** the documented safe leak for ineligible enums:
+That makes the accounting exact:
+
+- **used only** — payload starts at 1, is never inc'd, and the arm-end
+  release takes it to 0. The lowered IR carries one `__fern_arr_dec`,
+  which is that release. Clean.
+- **assigned out** — payload starts at 1, `cur = v` incs to 2, and the
+  next iteration's dec-on-overwrite takes it back to 1. It never reaches
+  0. One leak per iteration, which is the 3 measured.
+
+So the arm-end release that balances the used-only case is **absent**
+when the binding is assigned out, while the alias-inc is still emitted.
+Two half-mechanisms disagreeing: the suppression treats the assignment
+as a move, the inc treats it as an alias.
+
+It is **not** the documented safe leak for ineligible enums either:
 `enumRcPayloadsEligible` excludes only enums transitively containing a
 Map, and `ast.EnumRcPayloads` is on, so `Option[u8[]]` takes the counted
 path.
@@ -203,8 +217,16 @@ The asymmetry is the finding: a pattern binding that holds a reference
 is not released the way an ordinary local is, so an alias-inc taken
 against it has nothing to cancel.
 
-Both repairs carry the same risk in opposite directions — releasing a
-binding that turns out not to own, or suppressing an inc something else
-depends on, each converts a leak into a use-after-free. So this stops at
-a diagnosis narrow enough to act on: one op, one asymmetry, and four
-measured shapes that bound it.
+The two halves have to agree. Either the assignment is a move — and then
+the inc must go, exactly the balanced inc+dec elision `computeMovedLocals`
+already performs for top-level aliases — or it is an alias, and the
+arm-end release must stay.
+
+The move reading is the safer one to implement: removing an inc whose
+matching release is already removed cannot over-release, which is the
+argument `computeMovedLocals` makes for its own case. But which
+suppression fires here, and whether it holds on every path out of the
+arm, is not yet established — and `computeMovedLocals`'s own guards
+exist because a move that does not run on every path strands or
+double-counts. So this stops at the diagnosis: eleven measured shapes,
+one op, and an accounting that adds up.
