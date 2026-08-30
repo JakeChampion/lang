@@ -76,14 +76,58 @@ bookkeeping rather than a fact about the program, so it is not reported
 here. The honest state is that the walk marks values as unit-holding
 that should not be, and which values and why is the next question.
 
-That is the work, and it comes before any of the transfer forms:
+## Five refinements, five negative results
 
-1. **Establish what holds a unit.** A pointer-valued temporary is
-   usually a borrow. Until the walk starts from a correct set of
-   unit-holders, every transfer form is being fitted to noise.
-2. Then the transfer forms — store (8.8% of the values by destination),
-   and whatever survives.
+Each measured rather than argued, over the same 6,370 functions:
+
+| refinement | leaks | over-releases |
+| --- | --- | --- |
+| baseline (holds/gone boolean) | 63,070 | — |
+| plus consuming call positions | 62,853 | — |
+| counts instead of a boolean | 63,124 | 151,977 |
+| plus call results owned | 107,257 | 143,907 |
+
+Counts were the most promising. Perceus routinely emits inc-then-store,
+after which the local holds one unit and the container holds another,
+and a two-state lattice cannot represent that. It made no difference to
+the leaks and exposed 151,977 **negative** counts — values the emitted
+code decrements that the walk never incremented, which says the walk
+does not know where units come from. Marking call results as owned, the
+obvious missing source, made the leaks 70% worse.
+
+## The pattern is the finding
+
+Five refinements, none helping, two actively harmful, each judged by a
+total. That is the failure mode `2026-08-30-lift-two-word-model.md`
+records for #7803: two attempts at that work failed by iterating against
+an aggregate, which cannot separate "this fix exposed an older error"
+from "this fix caused one". What broke the deadlock there was a per-item
+ORACLE and a per-class breakdown.
+
+There is no oracle here yet, and building one is the next slice.
+
+**It cannot be `rc_analysis.go` / `rc_insert.go`.** Those decide where
+the incs and decs go, and the emitted incs and decs are exactly what the
+walk reads — the same model twice, which is what the differential
+discipline exists to avoid. An earlier revision of this note recommended
+that comparison; it is wrong.
+
+The independent source is the **runtime**. `FERN_LEAKCHECK=1` and
+`__rc_underflow_count()` observe what the counts actually did. Narrower
+than a static oracle, since it sees executed paths only, but independent
+— the property that matters — and it localises: one function whose
+dynamic verdict disagrees with the static walk is a place to look, where
+a total of 63,070 is not.
+
+So the order is:
+
+1. **An oracle.** Dynamic unit accounting over a small corpus, compared
+   against the static walk per function.
+2. **Then** whatever its disagreement breakdown says, one class at a
+   time — the method that worked for the stack.
 3. **Then** the join summary, on the differing set (#7828).
 
-The probe cost about half an hour and refuted two orderings, including
-the one this note originally recommended. That is what it was for.
+Everything above about transfer forms is a hypothesis awaiting that
+oracle, not a plan. The probes cost about an hour and refuted five
+orderings, two of which this note recommended in earlier revisions.
+That is what they were for.
