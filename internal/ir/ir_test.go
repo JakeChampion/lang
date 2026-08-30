@@ -1715,13 +1715,38 @@ func TestLowerStringReclaimOnNative(t *testing.T) {
 // like `s.len()` — TestLowerStringReclaimOnNative — still reclaims: the method
 // receiver Args[0] is skipped.)
 func TestLowerStringPassedToUserFnNotReclaimedNative(t *testing.T) {
-	p := lowerSourceWith(t, `function keep(s: string): i32 { return 0; }
+	// The callee must actually be able to retain the argument for the
+	// hazard to exist. `keep` stores it into a container it returns,
+	// which is the uncounted retention the caller's escape analysis
+	// cannot see through — free it caller-side and the stored copy
+	// dangles.
+	p := lowerSourceWith(t, `function keep(s: string): string[] { var xs: string[] = []; return xs.append(s); }
 function build(): i32 {
     var s: string = "a" + "b";
-    return keep(s);
+    return keep(s).len();
 }`, 8)
 	if callsDirect(p, "build", "__fern_str_dec") {
-		t.Errorf("native: a string moved into a user-fn arg must NOT be reclaimed caller-side (retained-copy UAF):\n%s", p)
+		t.Errorf("native: a string a callee may RETAIN must not be reclaimed caller-side (retained-copy UAF):\n%s", p)
+	}
+}
+
+// The mirror, and the case the test above used to be written with: a
+// callee that never mentions its parameter cannot retain it by any
+// means, so the caller's conservative taint has nothing to protect and
+// the string must be reclaimed.
+//
+// Keeping the unused-parameter shape as the NEGATIVE example is what
+// made #7798 invisible: three lines allocating one string and freeing
+// none on the native single-word ABI, while arm64 was clean, with a
+// test asserting that was correct.
+func TestLowerStringPassedToUnusedParamIsReclaimedNative(t *testing.T) {
+	p := lowerSourceWith(t, `function ignore(s: string): i32 { return 0; }
+function build(): i32 {
+    var s: string = "a" + "b";
+    return ignore(s);
+}`, 8)
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("native: a string whose callee never mentions its parameter must be reclaimed:\n%s", p)
 	}
 }
 

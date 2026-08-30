@@ -5485,6 +5485,62 @@ function main(): i32 {
     return (acc - 16) + __rc_underflow_count();
 }`,
 	},
+	{
+		// #7798: a heap string local handed to a parameter the callee never
+		// reads was never freed on the native single-word string ABI.
+		// computeFreeEligible taints a string ident passed to a user
+		// function unless paramCountedRetain clears it — "a leak at worst,
+		// never a use-after-free" — and the three counted-retain summaries
+		// required at least one occurrence of the parameter, so a parameter
+		// the body never mentions read as unknown and the taint stayed. It
+		// is the strongest form of the property, not the absence of it: a
+		// parameter nothing mentions cannot be retained by any means.
+		//
+		// Every row of the issue's bisection is here, including the shapes
+		// that were already clean, because the fix has to leave those alone:
+		// a read parameter, a temp rather than a local, an array local, an
+		// alias, and a store into a container. Before: 13 allocs / 7 frees /
+		// 192 bytes on x86-64, clean on arm64. After: 13 / 13 / 0 on both.
+		name: "unused_param_string_never_freed",
+		src: `
+function two(a: string, b: string): string { return a + b; }
+function ignore(s: string): i32 { return 7; }
+function ignore2(s: string, t: string): i32 { return 7; }
+function halfUse(a: string, b: string): i32 { return a.len(); }
+function ignoreRet(s: string): string { return "z"; }
+function eat(s: string): i32 { return s.len(); }
+function ignoreArr(a: i32[]): i32 { return 7; }
+function main(): i32 {
+    var n: i32 = 0;
+    var s1: string = two("abcd", "efgh");
+    n = n + ignore(s1);
+    var s2: string = two("abcd", "efgh");
+    var s3: string = two("ijkl", "mnop");
+    n = n + ignore2(s2, s3);
+    var s4: string = two("abcd", "efgh");
+    var s5: string = two("ijkl", "mnop");
+    n = n + halfUse(s4, s5);
+    var s6: string = two("abcd", "efgh");
+    var r: string = ignoreRet(s6);
+    n = n + r.len();
+    var s7: string = two("abcd", "efgh");
+    n = n + ignore(s7) + ignore(s7);
+    var s8: string = two("abcd", "efgh");
+    n = n + eat(s8);
+    n = n + ignore(two("abcd", "efgh"));
+    var a1: i32[] = [1, 2, 3];
+    n = n + ignoreArr(a1);
+    var s9: string = two("abcd", "efgh");
+    var t9: string = s9;
+    n = n + t9.len();
+    var s10: string = two("abcd", "efgh");
+    var arr: string[] = [s10];
+    n = n + arr.len();
+    if (n < 0) { return 1; }
+    return __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
