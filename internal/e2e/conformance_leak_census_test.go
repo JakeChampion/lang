@@ -97,6 +97,10 @@ func TestConformanceLeakCensusX86_64(t *testing.T) {
 	wg.Wait()
 	sort.Slice(rows, func(i, j int) bool { return rows[i].name < rows[j].name })
 
+	// CI-DARK: FERN_LEAK_CENSUS_DUMP — a regeneration tool, not coverage:
+	// it prints measured census lines INSTEAD of comparing, so a lane
+	// setting it would disable this gate. The compare path below is the
+	// CI behaviour. Same reasoning as FERN_LEAK_MATRIX_DUMP.
 	if os.Getenv("FERN_LEAK_CENSUS_DUMP") == "1" {
 		for _, r := range rows {
 			fmt.Printf("%-52s %d\n", r.name, r.unpaired)
