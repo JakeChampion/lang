@@ -336,4 +336,27 @@ different signature:
 
 The projection ends with the refcount CORRECT and leaks the **tuple
 boxes** instead. Two defects in adjacent syntax; the `iter.filter`
-11-of-14 measurement belongs to the second, which is still open.
+11-of-14 measurement belongs to the second.
+
+## The projection leak, localised
+
+Site attribution through the symbol table names it: of the four leaked
+boxes, **three are allocated in `step`**, one per call — the tuple
+`Some((n + 1, [1, 2, 3]))` builds. The payload array is fine; `cur` ends
+up solely owning it.
+
+And the trigger is narrow. Three neighbouring shapes are clean, each
+differing by one thing:
+
+| shape | unpaired |
+| --- | --- |
+| `Some(t) => { i = t.0; cur = t.1; }` | **4** |
+| `Some(t) => { i = i + 1; }` (binding unused) | 0 |
+| `Some(t) => { i = t.0; }` (scalar field only) | 0 |
+| the same, on a `(i32, i32)` tuple | 0 |
+
+So it is **projecting an RC-TRACKED field out of the binding** that
+strands the box — not destructuring, not matching, not tuples. Pinned by
+`TestTupleProjectionFromMatchBindingLeaksX86_64`, which carries the three
+clean neighbours alongside the leaking case so the boundary is part of
+the gate rather than a note beside it.
