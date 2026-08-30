@@ -673,6 +673,17 @@ type Func struct {
 	ParamAddrs []bool
 	ReturnAddr bool
 
+	// ParamIRIndex maps each SSA parameter back to the flat-IR
+	// parameter it came from. The two numberings agree until a
+	// two-word value appears: a string parameter under the two-word
+	// ABI becomes TWO SSA parameters, data and length, and both carry
+	// the IR index of the one parameter they encode.
+	//
+	// Anything reading parameters positionally against the IR needs
+	// this — ssa.ParamModes and the ownership differential both do.
+	// Empty on a Func a builder produced directly.
+	ParamIRIndex []int
+
 	// nextValueID is the counter the Builder uses to mint
 	// fresh Values. Per-Func to keep IDs dense + predictable
 	// in dumps.

@@ -339,7 +339,7 @@ func (s *stackChecker) localSlots(op Op) ([]valKind, bool) {
 // isTwoWord reports whether a value of type t rides two operand-stack
 // slots on this target.
 func (s *stackChecker) isTwoWord(t ast.Type) bool {
-	return TypeIsTwoWord(t, s.ptrW)
+	return TypeIsTwoWordABI(t, s.ptrW, s.twoWordStr)
 }
 
 // TypeIsTwoWord reports whether a value of type t rides two operand-stack
@@ -352,9 +352,21 @@ func (s *stackChecker) isTwoWord(t ast.Type) bool {
 // (ptrW 8) into the same two-word ABI, so every pass that decides how many
 // slots a value occupies has to ask this rather than test the width.
 func TypeIsTwoWord(t ast.Type, ptrW int) bool {
+	return TypeIsTwoWordABI(t, ptrW, ast.UseTwoWordStrings(ptrW))
+}
+
+// TypeIsTwoWordABI is TypeIsTwoWord against an ABI stated outright
+// rather than read from `ast.TwoWordOverride`.
+//
+// The lowering sets that global and restores it, so a pass running
+// afterwards — the stack checker over a stored Program, say — reads
+// one-word for arm64 and silently checks the wrong ABI. Callers running
+// during the lowering may use TypeIsTwoWord; anything holding a Func
+// should pass `f.TwoWordStr`.
+func TypeIsTwoWordABI(t ast.Type, ptrW int, twoWordStr bool) bool {
 	switch t.(type) {
 	case ast.StringType:
-		return ast.UseTwoWordStrings(ptrW)
+		return twoWordStr
 	case ast.DynTraitType:
 		return ptrW == 4
 	}
