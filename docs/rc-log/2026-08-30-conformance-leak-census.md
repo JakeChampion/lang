@@ -68,6 +68,36 @@ for reasons unrelated to reference counting. Sites are printed on
 failure instead, where `addr2line` on a `-g` build turns one into a
 source line — which is the half that says where to look.
 
+## The examples corpus, and what the crash floor is worth
+
+The census fails when a fixture is killed by a signal. On its own that
+check is worth little: measured against a compiler that segfaults
+`examples/proposals/unidiff.fern`, the conformance corpus stayed clean,
+because the crash was in `examples/` and this census covers
+`conformance/cases`.
+
+`TestExamplesNoCrashX86_64` runs the same check over the corpus where it
+bites — the same walk the arm64 differential uses, so the two agree on
+what "the examples corpus" means. Against that same broken compiler it
+reports **crash=1**; against a good one, **0**. It catches the instance,
+not merely the shape.
+
+The leak figures over that corpus are much larger than the fixtures':
+
+| corpus | programs run | leaking | unpaired allocs |
+| --- | --- | --- | --- |
+| conformance/cases | 453 | 134 (30%) | 66,570 |
+| examples/ | 284 | 169 (59%) | 229,723 |
+
+They are **logged, not pinned**. The examples run carries listening
+servers and other programs that hit the timeout, and the count of those
+moved between two runs (7, then 8), so a per-program pin there would be
+flaky. The deterministic conformance corpus keeps the pin; the examples
+corpus contributes the crash floor, which does not depend on how many
+programs finished.
+
+Cost: 76 seconds for 312 programs.
+
 ## What this is not
 
 It is not a claim that 134 fixtures have 134 distinct bugs; the regex
