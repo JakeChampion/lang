@@ -67,15 +67,12 @@ func TestOwnershipSolverAgreesWithTheLoweringsOwnVerdict(t *testing.T) {
 	}
 	ip := lowerSelfHost(t)
 
-	funcs := map[string]*ssa.Func{}
+	funcs, _ := ssa.LiftProgram(ip)
 	irByName := map[string]*ir.Func{}
 	for _, fn := range ip.Funcs {
-		sf, err := ssa.LiftFromIR(fn)
-		if err != nil {
-			continue
+		if funcs[fn.Name] != nil {
+			irByName[fn.Name] = fn
 		}
-		funcs[fn.Name] = sf
-		irByName[fn.Name] = fn
 	}
 	if len(funcs) < 1000 {
 		t.Fatalf("only %d functions lifted; the differential is not covering the compiler", len(funcs))
