@@ -177,6 +177,26 @@ So the inc is correct. What an ordinary local has and a match binding
 does not is the balancing half: **the source's own release**. `other` is
 swept at scope exit; `v` is not.
 
+## Only assigning the binding OUT breaks it
+
+Matching and merely using the binding is clean, and so is ignoring it:
+
+| shape | unpaired / allocs |
+| --- | --- |
+| `Some(v) => { total = total + v.len(); }` | 0 / 3 |
+| `Some(v) => { i = i + 1; }` | 0 / 3 |
+| `Some(v) => { cur = v; }` | **3 / 6** |
+
+So the enum box's release does dec its payload correctly. The imbalance
+appears only when the binding is assigned out — where the alias-inc is
+emitted AND, on the evidence of the refcount, the box's payload-dec no
+longer lands.
+
+It is **not** the documented safe leak for ineligible enums:
+`enumRcPayloadsEligible` excludes only enums transitively containing a
+Map, and `ast.EnumRcPayloads` is on, so `Option[u8[]]` takes the counted
+path.
+
 ## Where that leaves the fix
 
 The asymmetry is the finding: a pattern binding that holds a reference
