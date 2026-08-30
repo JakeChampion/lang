@@ -361,6 +361,28 @@ strands the box — not destructuring, not matching, not tuples. Pinned by
 clean neighbours alongside the leaking case so the boundary is part of
 the gate rather than a note beside it.
 
+### It is the ARRAY that leaks, not the tuple box
+
+An earlier revision of this note, and the first version of the test's
+comment, said the **tuple box** leaks. **That was wrong**, and it was
+wrong for a reason worth recording: `step` allocates two 32-byte blocks
+per call, and the claim rested on reading their addresses in order.
+
+Growing the array literal from 3 elements to 20 settles it by size:
+
+```
+alloc#1 site=…40103d size=0x20  freed
+alloc#2 site=…401099 size=0x30  LEAKED
+```
+
+A two-field tuple's box does not depend on the array's length, so the
+site that GREW is the array — and it is the one that leaks. The tuple
+box is freed every call.
+
+So `__drop_tuple_…` runs, frees the box, and does **not** release the
+pointer field projected out of it. The field sits one count high, the
+dec-on-overwrite takes it back to one, and it never reaches zero.
+
 ### The drop is emitted; it just does not reclaim
 
 Diffing the lowered IR across the three shapes rules out the obvious
