@@ -13,7 +13,7 @@ import (
 	"github.com/jakechampion/lang/internal/monomorph"
 )
 
-// --- Projecting a pointer field out of a match binding leaks its box ---------
+// --- Projecting a pointer field out of a match binding, and its reclaim ------
 //
 // This is the leak the `core/iter` adapters actually hit, and it is NOT
 // the match-binding over-retain pinned in
@@ -75,8 +75,10 @@ import (
 // projection of an owned value is itself owned, so cur stays eligible.
 // That is an ownership-inference question (#7786).
 //
-// THIS TEST PINS A BUG. A fix makes it fail, which is the point — the
-// same rule the conformance leak census follows.
+// The leaking row now reads 0 and the three neighbours still read 0, so
+// this pins the REPAIR: a regression in the credited case fails here,
+// and so does one that starts crediting a shape it should not — the
+// neighbours are the boundary, in the test rather than beside it.
 //
 // docs/rc-log/2026-08-30-match-binding-rebind-overretain.md.
 
@@ -151,9 +153,11 @@ func TestTupleProjectionFromMatchBindingLeaksX86_64(t *testing.T) {
 		src  string
 		want int
 	}{
-		// The bug: the projected array is stranded, one per call, plus
-		// main's initial value.
-		{"pointer field projected", tupleProjLeakSrc, 4},
+		// Fixed: the projected array is reclaimed like any other owned
+		// value. This was 4 — one stranded array per call plus main's
+		// initial value — before the binding was credited in
+		// rhsTainted's FieldAccess case.
+		{"pointer field projected", tupleProjLeakSrc, 0},
 		// The boundary.
 		{"binding unused", tupleProjBindingUnusedSrc, 0},
 		{"scalar field only", tupleProjScalarOnlySrc, 0},
@@ -162,10 +166,11 @@ func TestTupleProjectionFromMatchBindingLeaksX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := unpairedAllocs(t, gcc, runner, tc.src)
 			if got != tc.want {
-				t.Errorf("%d unpaired allocation(s), want %d. If this dropped to 0 for "+
-					"\"pointer field projected\", the tuple-box leak is FIXED — update "+
-					"this pin and regenerate the conformance leak census, which should "+
-					"improve with it",
+				t.Errorf("%d unpaired allocation(s), want %d — a projection out of a "+
+					"match binding is meant to be reclaimed like any other owned value. "+
+					"A non-zero count here means the binding stopped being credited in "+
+					"rhsTainted and its overwrite dec went back to the generic "+
+					"__fern_rc_dec, which decrements to zero without reclaiming",
 					got, tc.want)
 			}
 		})

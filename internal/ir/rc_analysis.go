@@ -64,6 +64,8 @@ type rcPlan struct {
 	// sweep skips the local's dec (a net-zero pair). Computed by
 	// computeMovedLocals.
 	movedLocals map[string]bool
+	// matchBindingTypes caches matchBindingTypes()' walk.
+	matchBindingTypes map[string]ast.Type
 	// moveSites[stmt] is true for the specific *ast.Var / *ast.Assign
 	// alias statement that is a move (skips its transfer inc). Keyed
 	// per-site so only the local's LAST alias moves — earlier aliases
@@ -1785,8 +1787,31 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// the tuple still referenced. ownedCallResultType singles maps out
 		// for the same reason; this is that caution, one site over.
 		if id, ok := x.Target.(*ast.Ident); ok {
-			if _, isLocal := b.locals[id.Name]; isLocal {
-				switch b.exprType(id).(type) {
+			_, isLocal := b.locals[id.Name]
+			// A MATCH-ARM BINDING is the same case and was invisible to
+			// it. `b.locals` is the lowering's slot map, which
+			// bindingSlotScoped fills as it enters an arm — this
+			// analysis runs before that, so `Some(t) => cur = t.1` read
+			// as a projection out of nothing and took the conservative
+			// taint. `cur` then missed freeEligible, its overwrite dec
+			// routed to the generic __fern_rc_dec rather than
+			// __fern_arr_dec, and that helper decrements to zero without
+			// reclaiming — so the element leaked once per arm execution
+			// (docs/rc-log/2026-08-30-match-binding-rebind-overretain.md).
+			//
+			// The counted-alias argument carries over unchanged: the
+			// bound tuple deep-drops its elements when the arm ends
+			// (__drop_tuple_<…> is emitted for the binding), so the
+			// extracted element owns its own reference exactly as it
+			// does out of a declared local. Maps stay excluded for the
+			// reason the comment above gives.
+			bt, isBinding := b.matchBindingTypes()[id.Name]
+			if isLocal || isBinding {
+				t := b.exprType(id)
+				if isBinding && t == nil {
+					t = bt
+				}
+				switch t.(type) {
 				case ast.StructType:
 					return false
 				case ast.TupleType:
@@ -5483,4 +5508,42 @@ func sortedByDeclIdx(declIdx map[string]int) []string {
 		return names[i] < names[j]
 	})
 	return names
+}
+
+// matchBindingTypes maps every match-arm binding name in this function
+// to the type the checker resolved for it, computed once per function.
+//
+// The bindings are not in `b.info.Locals` and not yet in `b.locals` when
+// the rc analyses run, so a predicate that asks either of those about a
+// binding gets "no such thing" rather than a type.
+func (b *builder) matchBindingTypes() map[string]ast.Type {
+	if b.rc.matchBindingTypes != nil {
+		return b.rc.matchBindingTypes
+	}
+	out := map[string]ast.Type{}
+	b.rc.matchBindingTypes = out
+	if b.fn == nil || b.fn.Body == nil {
+		return out
+	}
+	add := func(names []string, types []ast.Type) {
+		for i, nm := range names {
+			if i < len(types) && types[i] != nil {
+				out[nm] = types[i]
+			}
+		}
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch m := n.(type) {
+		case *ast.Match:
+			for _, arm := range m.Arms {
+				add(arm.Bindings, arm.BindingTypes)
+			}
+		case *ast.MatchExpr:
+			for _, arm := range m.Arms {
+				add(arm.Bindings, arm.BindingTypes)
+			}
+		}
+		return true
+	})
+	return out
 }

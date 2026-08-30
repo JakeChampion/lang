@@ -475,3 +475,50 @@ So the fix is not at the dec site after all — it is to establish that a
 projection of an owned value is itself owned, so `cur` stays eligible.
 That is an ownership-inference question, which is where #7786 lives, and
 it is a considerably better-posed one than "which inc is doubled".
+
+## Fixed: credit the binding in rhsTainted
+
+`rhsTainted`'s `FieldAccess` case already credits a projection out of a
+struct or tuple **local** as owned, with the counted-alias argument
+spelled out and maps excluded because crediting one segfaulted
+`map_delete_tuple_churn_free`. A match binding simply was not visible to
+it: the test is `b.locals[name]`, the LOWERING's slot map, which
+`bindingSlotScoped` fills on entering an arm — and this analysis runs
+before that.
+
+So `Some(t) => cur = t.1` read as a projection out of nothing, took the
+conservative taint, and lost `cur` its eligibility. The fix supplies the
+binding's type from the arm the checker already resolved, and the
+existing argument carries over unchanged: the bound tuple deep-drops its
+elements when the arm ends, so the extracted element owns its own
+reference exactly as it does out of a declared local. Maps stay
+excluded.
+
+### What it is worth, measured
+
+| corpus | before | after |
+| --- | --- | --- |
+| examples/ unpaired allocations | 229,723 | **162,888** |
+| examples/ programs leaking | 169 | 168 |
+| conformance/cases | 134 / 66,570 | unchanged |
+| arm64 flat-vs-ssa differential | 291 agree, 0 diverge | unchanged |
+| examples/ crashes | 0 | 0 |
+
+**66,835 fewer stranded allocations, a 29% reduction**, on the corpus of
+whole programs. The fixture corpus does not move at all, which is worth
+stating plainly: these fixtures are small enough that the shape barely
+occurs in them, and a fix measured only against them would have looked
+worthless. The programs are where it shows.
+
+The count of leaking programs barely moves (169 → 168) while the volume
+falls by nearly a third — so this was reclaiming high-frequency leaks
+inside programs that still leak for other reasons, which is what a
+per-element leak in a projection looks like.
+
+### Still not fixed
+
+`iter.filter` and `iter.map` are unchanged at 11 of 14 and 7 of 10. The
+adapters use this shape, so something further separates them from the
+minimal repro — a generic instantiation, or the element being an
+iterator struct rather than an array. That is the next thread, and it
+now starts from a fix that works rather than from a mystery.
