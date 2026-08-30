@@ -145,12 +145,46 @@ measured here, as they did across the census: 11/7/0 blocks against
 
 ## Not fixed here, deliberately
 
-The direction is established — an extra retain — but WHICH inc is
-doubled is not. Two candidates sit on this path: the match destructure
-alias-inc for `v`, and the assign alias-inc for `cur = v`. Either alone
-is correct; together they double.
+## The extra op, and what it is not
 
-Removing the wrong one converts a leak into an over-release, which is a
-use-after-free rather than slow growth, so this stops at the diagnosis.
-What it leaves is narrow: a 20-line repro, three mechanisms ruled out by
-measurement, and a refcount that says exactly what is wrong.
+Diffing the lowered IR of the two shapes leaves exactly one op:
+
+```
+match_binding (LEAKS)   op[58] rc.inc __fern_rc_inc      + 3x __fern_arr_dec
+fresh_literal (clean)                                      3x __fern_arr_dec
+```
+
+One alias-inc, on the `cur = v` assignment. The obvious conclusion is
+that this inc is the bug.
+
+**It is not.** An ordinary local aliased in exactly the same position
+gets the same inc and is correctly balanced:
+
+| shape | `__rc_get(cur)` | unpaired |
+| --- | --- | --- |
+| `while { var other = […]; cur = other }` | 1 | 0 |
+| `while { if (…) { cur = other } }` | 1 | 0 |
+| `while { match { Some(v) => cur = v } }` | **2** | **3** |
+
+`computeMovedLocals` explains why the inc is there and why it is right:
+move-on-alias only fires for a TOP-LEVEL `y = x` whose read of `x` is
+x's last occurrence, because the sweep-exclusion is global and an alias
+nested in control flow might not run on every path. Its doc says so
+outright — "aliases inside control flow keep their inc" — and the two
+clean rows above are that rule working.
+
+So the inc is correct. What an ordinary local has and a match binding
+does not is the balancing half: **the source's own release**. `other` is
+swept at scope exit; `v` is not.
+
+## Where that leaves the fix
+
+The asymmetry is the finding: a pattern binding that holds a reference
+is not released the way an ordinary local is, so an alias-inc taken
+against it has nothing to cancel.
+
+Both repairs carry the same risk in opposite directions — releasing a
+binding that turns out not to own, or suppressing an inc something else
+depends on, each converts a leak into a use-after-free. So this stops at
+a diagnosis narrow enough to act on: one op, one asymmetry, and four
+measured shapes that bound it.

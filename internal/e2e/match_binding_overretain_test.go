@@ -45,11 +45,20 @@ import (
 //     site attribution pointed at first: a loop of `append` past
 //     capacity and a `.with` on a shared array both measure clean.
 //
-// What is NOT established is which of the two incs on this path is the
-// duplicate — the match destructure's alias-inc for `v`, or the assign's
-// alias-inc for `cur = v`. Either alone is correct. Removing the wrong
-// one turns a leak into a use-after-free, so the fix wants that
-// established first.
+// The lowered IR differs by exactly ONE op — an `rc.inc` on the
+// `cur = v` assignment — and that inc is NOT the bug. An ordinary local
+// aliased in the same position gets the same inc and is balanced:
+// `while { var other = […]; cur = other }` and the same inside an `if`
+// both measure rc 1 and 0 unpaired. `computeMovedLocals` explains it:
+// move-on-alias fires only for a top-level `y = x` at x's last
+// occurrence, so "aliases inside control flow keep their inc" — working
+// as designed.
+//
+// The asymmetry is the finding: an ordinary local is swept at scope
+// exit, so the inc it takes has something to cancel. A MATCH BINDING is
+// not. Which half to repair — release the binding, or suppress the inc
+// — is not established, and each converts a leak into a use-after-free
+// if chosen wrongly.
 //
 // docs/rc-log/2026-08-30-match-binding-rebind-overretain.md.
 
