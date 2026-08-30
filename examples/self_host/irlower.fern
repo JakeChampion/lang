@@ -23870,11 +23870,18 @@ pub function (s: LowerState) release_tos(freefn: string, site: string): LowerSta
 // `slot` with Perceus accounting, mirroring asm.fern's StmtVar / StmtAssign:
 //   1. retain the new reference (rc_inc) when it ALIASES an rc-tracked array
 //      (alias_inc) — a fresh literal / move-from-call is already owned;
-//   2. when the slot is an OWNED array (do_dec), cow-guarded release of the
-//      OLD value the slot held — `if (old != new) arr_dec(old)` — skipping the
-//      release when an in-place mutator returned the SAME buffer (so the live
-//      value is not freed), and freeing the previous buffer otherwise (the
-//      loop-rebind reclamation);
+//   2. when the slot is an OWNED array (do_dec), release the OLD value the
+//      slot held — the loop-rebind reclamation. Whether that release needs the
+//      cow guard depends on WHO created the count, which is what alias_inc
+//      says (native states the same rule on its Map twin):
+//        - alias_inc: step 1 retained the new reference, so a release is owed
+//          even when old == new. `b = a` run twice is the same pointer both
+//          times, and guarding the release there retains without releasing —
+//          one buffer stranded per repeat (#7814). Unconditional, which also
+//          subsumes the old != new arm.
+//        - otherwise: cow-guarded, `if (old != new) arr_dec(old)`. An in-place
+//          mutator that returned the SAME buffer created no second count, so
+//          dec'ing it would free the live value.
 //   3. store the new value.
 // The new value is stashed in a scratch local because it is read up to three
 // times (retain arg, cow compare, final store). Composed of existing ops, so
@@ -23891,7 +23898,11 @@ pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_de
     if (alias_inc) {
         st = st.retain(tmp, "arr-store-alias");
     }
-    if (do_dec) {
+    if (do_dec && alias_inc) {
+        st = st.emit(ir.op_load_local(slot));      // OLD value the slot holds
+        st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+        st = st.emit(ir.op_drop());
+    } else if (do_dec) {
         st = st.emit(ir.op_load_local(slot));      // OLD value the slot holds
         st = st.emit(ir.op_load_local(tmp));       // new value
         st = st.emit(ir.op_bin("ne", 0, false));   // old != new (cow guard)
