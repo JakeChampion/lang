@@ -405,129 +405,232 @@ func (b *builder) computeDynBorrowedViews() map[string]bool {
 // in the iterator shape needs it and an unproven shape must stay refused —
 // releasing a pointer the callee merely passed through is a use-after-free,
 // where declining to release it is the leak that already exists.
-// findReturnsFreshBox reports, per function, whether every value return hands
-// back a box the function CONSTRUCTED — a struct, tuple or array literal —
-// rather than a value derived from what it was passed.
+// freshBoxSig summarises where a function's result comes from.
+//
+//	ownedElse — every return that is not one of Aliases hands back a box this
+//	            function constructed
+//	Aliases   — parameter indices the result may BE, not merely point at
+//
+// The pair is what lets a caller decide. `__rx_count(p, pos, a)` has
+// `return a` on parameter 2, so in its own frame the result is not fresh —
+// but the box its caller passed for `a` came from that caller's own local, so
+// from there the result IS fresh. A whole-function boolean cannot say that;
+// this can, and it is the ownership-signature shape #7786 asks for on the
+// user-function side.
+type freshBoxSig struct {
+	ownedElse bool
+	Aliases   map[int]bool
+}
+
+// findReturnsFreshBox summarises, per function, whether its result is a box
+// the function owns and which parameters it may alias instead.
 //
 // rhsTainted's *ast.Call case taints a result when ANY argument is tainted.
 // That rule is right for a callee that might hand an argument back, and wrong
-// for one that always builds something new: `__rx_quant(p, pos, gi)` returns
-// `RParse { node: …, pos: …, g: … }`, a fresh box, and the borrow taint on the
-// pattern string `p` says nothing about that box's provenance. The Call case
-// already carves out the same shape one callee at a time — variant
-// constructors, map_new, cell_new — and this generalises it to any callee that
-// provably does it.
+// for one that builds something new: `__rx_quant(p, pos, gi)` returns
+// `RParse { … }`, and the borrow taint on the pattern string `p` says nothing
+// about that box's provenance. The Call case already carves out the same shape
+// one callee at a time — variant constructors, map_new, cell_new — and this
+// generalises it, with the alias mask covering the callees that sometimes pass
+// an argument straight back.
 //
 // returnsNoParamEscape cannot serve: it asks whether anything REACHABLE FROM
 // the result aliases a parameter, which is false for every regex parser
 // function (their nodes legitimately carry slices of the pattern). What taint
-// needs is only whether the returned POINTER is the callee's own.
+// needs is only where the returned POINTER came from.
 //
-// A function with no value returns gets false: it returns nothing to be fresh.
-func findReturnsFreshBox(prog *ast.Program) map[string]bool {
-	// Greatest fixpoint: assume every function with a body qualifies, then
-	// eliminate the ones a return disproves. A call may be fresh because its
-	// callee is, so the answer for one function depends on the answers for
-	// others and a single pass would under-approximate mutual recursion.
-	q := map[string]bool{}
+// A function with no value returns gets ownedElse=false: it returns nothing to
+// be fresh.
+func findReturnsFreshBox(prog *ast.Program) map[string]freshBoxSig {
+	// Greatest fixpoint on ownedElse, least on Aliases: assume every function
+	// qualifies and aliases nothing, then eliminate and widen. A call's answer
+	// depends on its callee's, so one pass would under-approximate the mutual
+	// recursion a recursive-descent parser is built from.
+	sigs := map[string]freshBoxSig{}
 	for _, fn := range prog.Funcs {
-		if fn.Body != nil {
-			q[fn.Name] = true
+		if fn.Body == nil {
+			continue
 		}
+		// A Map result is excluded outright. The handle is copy-on-write, so
+		// "the result may BE argument k" — which is what the alias mask means
+		// for a plain box — does not describe it: a returned handle can share
+		// the argument's buffer while being a different value. rhsTainted's
+		// own map_new / __method_Map_set carve-outs and computeConsumedParams'
+		// Map exclusion make the same distinction. Crediting `url.query_parse`
+		// here regressed stdlib_query_parse_roundtrip from clean to 320 bytes.
+		if isMapType(fn.ReturnType) {
+			continue
+		}
+		sigs[fn.Name] = freshBoxSig{ownedElse: true, Aliases: map[int]bool{}}
 	}
 	for {
 		changed := false
 		for _, fn := range prog.Funcs {
-			if fn.Body == nil || !q[fn.Name] {
+			if fn.Body == nil {
 				continue
 			}
-			fresh := freshLocalsIn(fn, q)
-			ok, saw := true, false
-			ast.Walk(fn.Body, func(n ast.Node) bool {
-				r, isRet := n.(*ast.Return)
-				if !isRet || r.Value == nil {
-					return true
-				}
-				saw = true
-				if !returnsOwnBox(r.Value, fresh, q) {
-					ok = false
-				}
-				return true
-			})
-			if !ok || !saw {
-				q[fn.Name] = false
+			cur, tracked := sigs[fn.Name]
+			if !tracked {
+				continue
+			}
+			ok, aliases, saw := evalFuncResult(fn, sigs)
+			if !saw {
+				ok = false
+			}
+			if ok != cur.ownedElse {
+				cur.ownedElse = ok
 				changed = true
 			}
+			for k := range aliases {
+				if !cur.Aliases[k] {
+					cur.Aliases[k] = true
+					changed = true
+				}
+			}
+			sigs[fn.Name] = cur
 		}
 		if !changed {
 			break
 		}
 	}
-	return q
+	return sigs
 }
 
-// returnsOwnBox reports whether `e` evaluates to a box this function owns
-// rather than one it was handed.
-func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool) bool {
+// evalFuncResult folds every value return of `fn` into one summary.
+func evalFuncResult(fn *ast.FuncDecl, sigs map[string]freshBoxSig) (bool, map[int]bool, bool) {
+	paramIdx := map[string]int{}
+	for i, p := range fn.Params {
+		paramIdx[p.Name] = i
+	}
+	locals := freshLocalsIn(fn, sigs, paramIdx)
+	ok, saw := true, false
+	aliases := map[int]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		r, isRet := n.(*ast.Return)
+		if !isRet || r.Value == nil {
+			return true
+		}
+		saw = true
+		rok, ral := evalOwnBox(r.Value, paramIdx, locals, sigs)
+		if !rok {
+			ok = false
+		}
+		for k := range ral {
+			aliases[k] = true
+		}
+		return true
+	})
+	return ok, aliases, saw
+}
+
+// evalOwnBox reports whether `e` is a box the enclosing function owns, and
+// which of its parameters the value may instead BE.
+func evalOwnBox(e ast.Expr, paramIdx map[string]int, locals map[string]freshBoxSig, sigs map[string]freshBoxSig) (bool, map[int]bool) {
 	switch x := e.(type) {
 	case *ast.Ident:
-		// A local proven fresh below. A PARAMETER is never in that set, which
-		// is the whole safety property: `return p` hands back the caller's box.
-		return fresh[x.Name]
+		if k, isParam := paramIdx[x.Name]; isParam {
+			// Not fresh here, but the caller may know better.
+			return true, map[int]bool{k: true}
+		}
+		if l, known := locals[x.Name]; known {
+			return l.ownedElse, l.Aliases
+		}
+		return false, nil
 	case *ast.Call:
 		id, isIdent := x.Callee.(*ast.Ident)
-		return isIdent && q[id.Name]
+		if !isIdent {
+			return false, nil
+		}
+		sig, known := sigs[id.Name]
+		if !known || !sig.ownedElse {
+			return false, nil
+		}
+		// The callee may hand back one of ITS parameters; resolve each
+		// through the argument we passed for it.
+		out := map[int]bool{}
+		for k := range sig.Aliases {
+			if k >= len(x.Args) {
+				return false, nil
+			}
+			aok, aal := evalOwnBox(x.Args[k], paramIdx, locals, sigs)
+			if !aok {
+				return false, nil
+			}
+			for p := range aal {
+				out[p] = true
+			}
+		}
+		return true, out
 	case *ast.IfExpr:
-		return returnsOwnBox(x.Then, fresh, q) && returnsOwnBox(x.Else, fresh, q)
+		tok, tal := evalOwnBox(x.Then, paramIdx, locals, sigs)
+		eok, eal := evalOwnBox(x.Else, paramIdx, locals, sigs)
+		if !tok || !eok {
+			return false, nil
+		}
+		out := map[int]bool{}
+		for k := range tal {
+			out[k] = true
+		}
+		for k := range eal {
+			out[k] = true
+		}
+		return true, out
 	}
-	return allocatesFreshBox(e)
+	return allocatesFreshBox(e), nil
 }
 
-// freshLocalsIn returns the locals of `fn` whose every assigned value is a box
-// the function owns. A name that is also a parameter is excluded outright: a
-// shadowing declaration would otherwise let a parameter's box be reported as
-// fresh, and distinguishing the two costs more than the reclaim is worth.
-func freshLocalsIn(fn *ast.FuncDecl, q map[string]bool) map[string]bool {
-	isParam := map[string]bool{}
-	for _, p := range fn.Params {
-		isParam[p.Name] = true
-	}
+// freshLocalsIn summarises each local of `fn` the same way, so `return a` can
+// be answered from `a`'s initialiser. A local that is also a parameter name is
+// excluded outright rather than shadow-analysed.
+func freshLocalsIn(fn *ast.FuncDecl, sigs map[string]freshBoxSig, paramIdx map[string]int) map[string]freshBoxSig {
 	assigned := map[string][]ast.Expr{}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Var:
-			if x.Init != nil && !isParam[x.Name] {
-				assigned[x.Name] = append(assigned[x.Name], x.Init)
+			if x.Init != nil {
+				if _, isParam := paramIdx[x.Name]; !isParam {
+					assigned[x.Name] = append(assigned[x.Name], x.Init)
+				}
 			}
 		case *ast.Assign:
-			if id, ok := x.Target.(*ast.Ident); ok && !isParam[id.Name] {
-				assigned[id.Name] = append(assigned[id.Name], x.Value)
+			if id, ok := x.Target.(*ast.Ident); ok {
+				if _, isParam := paramIdx[id.Name]; !isParam {
+					assigned[id.Name] = append(assigned[id.Name], x.Value)
+				}
 			}
 		}
 		return true
 	})
-	fresh := map[string]bool{}
+	out := map[string]freshBoxSig{}
 	for name := range assigned {
-		fresh[name] = true
+		out[name] = freshBoxSig{ownedElse: true, Aliases: map[int]bool{}}
 	}
-	// Same shape as the outer fixpoint: a local may be initialised from
-	// another, so shrink until stable rather than deciding in one pass.
+	// Same two directions as the outer fixpoint, for the same reason: one
+	// local can be initialised from another.
 	for {
 		changed := false
-		for name := range fresh {
-			for _, rhs := range assigned[name] {
-				if !returnsOwnBox(rhs, fresh, q) {
-					delete(fresh, name)
+		for name, rhss := range assigned {
+			cur := out[name]
+			for _, rhs := range rhss {
+				rok, ral := evalOwnBox(rhs, paramIdx, out, sigs)
+				if !rok && cur.ownedElse {
+					cur.ownedElse = false
 					changed = true
-					break
+				}
+				for k := range ral {
+					if !cur.Aliases[k] {
+						cur.Aliases[k] = true
+						changed = true
+					}
 				}
 			}
+			out[name] = cur
 		}
 		if !changed {
 			break
 		}
 	}
-	return fresh
+	return out
 }
 
 func findReturnsFreshPairPayload(prog *ast.Program, info *checker.Info) map[string]bool {
@@ -2150,8 +2253,21 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// pattern string it was parsed from is a borrowed parameter.
 		// findReturnsFreshBox says why returnsNoParamEscape cannot serve.
 		if id, ok := x.Callee.(*ast.Ident); ok {
-			if _, isLocal := b.locals[id.Name]; !isLocal && b.returnsFreshBox[id.Name] {
-				return false
+			if _, isLocal := b.locals[id.Name]; !isLocal {
+				if sig, known := b.returnsFreshBox[id.Name]; known && sig.ownedElse {
+					// The callee may hand back one of its own parameters, so
+					// the verdict is only as good as what we passed for those.
+					fresh := true
+					for k := range sig.Aliases {
+						if k >= len(x.Args) || b.rhsTainted(x.Args[k], tainted) {
+							fresh = false
+							break
+						}
+					}
+					if fresh {
+						return false
+					}
+				}
 			}
 		}
 		// Map builtins return the MAP HANDLE, which aliases only the

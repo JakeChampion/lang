@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-08-30: 453 fixtures, 323 clean, 130 leaking, 45670
+# Measured 2026-08-30: 453 fixtures, 323 clean, 130 leaking, 40370
 # unpaired allocations. The distribution is heavily skewed - median 4,
 # and regex_captures_assert alone is 54713 of the total.
 #
@@ -302,7 +302,7 @@ own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_inplace_sort                                     0
 own_param_array_move                                 1
-own_param_assign_target                              51
+own_param_assign_target                              201
 own_param_branch_transfer                            0
 own_self_reassign_move                               0
 own_transfer                                         0
@@ -330,21 +330,21 @@ rc_borrowed_payload_array                            0
 read_all_stdin_chunks                                4
 read_line                                            2
 recursive_tree                                       0
-regex_basic                                          167
-regex_captures                                       542
-regex_captures_all                                   543
-regex_captures_assert                                37295
-regex_ci                                             135
-regex_convenience                                    69
-regex_counts                                         142
-regex_escapes                                        97
-regex_find                                           108
-regex_groups                                         211
-regex_named_groups                                   587
-regex_ops                                            146
-regex_replace_edge                                   58
-regex_replace_groups                                 540
-regex_wordbound                                      231
+regex_basic                                          79
+regex_captures                                       473
+regex_captures_all                                   483
+regex_captures_assert                                32563
+regex_ci                                             75
+regex_convenience                                    50
+regex_counts                                         87
+regex_escapes                                        67
+regex_find                                           83
+regex_groups                                         96
+regex_named_groups                                   510
+regex_ops                                            129
+regex_replace_edge                                   51
+regex_replace_groups                                 511
+regex_wordbound                                      164
 result_err_path                                      1
 result_match                                         0
 result_register_pair                                 0

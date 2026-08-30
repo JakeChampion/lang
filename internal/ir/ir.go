@@ -4889,10 +4889,12 @@ type builder struct {
 	// The pair-form payload reclaim needs this rather than the above —
 	// findReturnsFreshPairPayload says why.
 	returnsFreshPairPayload map[string]bool
-	// returnsFreshBox[name] is true when every value return of the callee
-	// constructs its result. rhsTainted's Call case uses it to stop an
-	// argument's borrow taint flowing into a box the callee built.
-	returnsFreshBox map[string]bool
+	// returnsFreshBox[name] summarises where the callee's result comes from:
+	// a box it owns, and which parameters it may alias instead. rhsTainted's
+	// Call case uses it to stop an argument's borrow taint flowing into a box
+	// the callee built, resolving each aliased parameter through the argument
+	// actually passed.
+	returnsFreshBox map[string]freshBoxSig
 	// selfPushMoveCall is the exact `a.append(v)` RHS call node of a
 	// self-append assignment (`a = a.append(v)`, isSelfArrayPushLocal),
 	// set by the Assign lowering just before it lowers the RHS and
@@ -5442,7 +5444,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload map[string]bool, returnsFreshBox map[string]freshBoxSig, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
