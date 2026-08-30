@@ -167,12 +167,26 @@ func TestOwnershipSolverAgreesWithTheLoweringsOwnVerdict(t *testing.T) {
 // reports borrowed. The solver marks it consumed because the demand
 // propagates back from the callee that does release it.
 //
-// Whether every one of those is safe is NOT settled here, and this test
-// does not claim it: a parameter the callee releases and the caller
-// does not retain would be an over-release, and telling that apart from
-// a caller that passed a fresh buffer needs the runtime counters rather
-// than more reading. It is the concrete lead this differential exists to
-// produce.
+// That shape reproduces clean, which is the answer the reading could
+// not give. A program with the same structure — a struct field holding
+// the buffer, a forwarder that passes it on without reassigning, a
+// callee that appends — measures 11 allocs / 11 frees / 0 live bytes
+// with `__rc_underflow_count()` at 0 and the sanitizer silent; the same
+// program with a SECOND live owner across the call, read back
+// afterwards so a released buffer would show, measures 103 / 103 / 0
+// and still 0.
+//
+// The reason is the one that makes borrowing safe in the first place:
+// the release the solver sees is a refcount DECREMENT whose reclamation
+// is gated on uniqueness. At rc > 1 the append copies and frees
+// nothing, so the other owner survives; at rc == 1 there is no other
+// owner to lose. The solver cannot see that gate, so its extra
+// "consumed" verdicts here are CONSERVATIVE rather than wrong.
+//
+// Conservative is still a real cost if anything ever lowers from this
+// pass — a spurious consumed verdict makes callers retain, which leaks
+// rather than corrupts. And the measurement is of a reproduction, not
+// of all 122, so it is evidence and not a proof about each one.
 func logTop(t *testing.T, label string, m map[string]int) {
 	t.Helper()
 	type kv struct {
