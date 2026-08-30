@@ -116,3 +116,73 @@ func TestParamModesFollowsThePassThroughAlias(t *testing.T) {
 		t.Errorf("a release of the retain's result is a release of the parameter, got %+v", modes[0])
 	}
 }
+
+// A parameter released through a TYPED helper rather than the generic
+// dec is still released. `__fern_arr_dec` alone outnumbers
+// `__fern_rc_dec` over the corpus, so a pass that knew only the generic
+// helpers reported the majority of releases as none.
+func TestParamModesSeesAReleaseThroughATypedHelper(t *testing.T) {
+	for _, helper := range []string{
+		"__fern_arr_dec",
+		"__fern_str_dec",
+		"__fern_box_free",
+		"__drop_struct_Point",
+		"__map_drop_values",
+	} {
+		f := &Func{Name: "f"}
+		p := f.AddParam()
+		f.ParamAddrs = []bool{true}
+		b := f.NewBlock()
+		f.Entry = b
+		dec := f.AddOpNoResult(b, OpCall, p)
+		dec.Str = helper
+		b.Term = Terminator{Kind: TermRet}
+
+		if modes := ParamModes(f); !modes[0].Released {
+			t.Errorf("%s: releases its operand, got %+v", helper, modes[0])
+		}
+	}
+}
+
+// The mirror: a call whose name merely resembles a release must not be
+// read as one. `__drop_losers` is a real function in std/async.fern and
+// releases none of its arguments.
+func TestParamModesIgnoresCalleesThatOnlyLookLikeReleases(t *testing.T) {
+	for _, callee := range []string{"__drop_losers", "mk_free", "hex_decode", "__fern_str_copy"} {
+		f := &Func{Name: "f"}
+		p := f.AddParam()
+		f.ParamAddrs = []bool{true}
+		b := f.NewBlock()
+		f.Entry = b
+		call := f.AddOpNoResult(b, OpCall, p)
+		call.Str = callee
+		b.Term = Terminator{Kind: TermRet}
+
+		if modes := ParamModes(f); modes[0].Released {
+			t.Errorf("%s: releases nothing, got %+v", callee, modes[0])
+		}
+	}
+}
+
+// A copy-on-write move gives up the caller's unit on the receiver, so it
+// counts as a release — but its result is a DIFFERENT object whenever
+// the receiver was shared, so it is not a pass-through alias. A use of
+// the result says nothing about the operand's liveness.
+func TestRCSitesTreatsAMoveAsAReleaseButNotAnAlias(t *testing.T) {
+	f := &Func{Name: "f"}
+	b := f.NewBlock()
+	f.Entry = b
+	v := f.AddOp(b, OpAlloc)
+	fresh := f.AddOp(b, OpCall, v)
+	b.Ops[len(b.Ops)-1].Str = "__fern_arr_cow_inplace"
+	f.AddOp(b, OpLoad, fresh) // reads the RESULT, not the receiver
+	b.Term = Terminator{Kind: TermRet}
+
+	sites := RCSites(f)
+	if len(sites) != 1 {
+		t.Fatalf("want one rc site, got %d", len(sites))
+	}
+	if sites[0].LiveAfter {
+		t.Error("a use of the move's result is not a use of the receiver")
+	}
+}

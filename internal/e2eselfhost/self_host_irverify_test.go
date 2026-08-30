@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ir"
 )
 
 // TestSelfHostIRVerifyStructure exercises the self-host IR structure verifier
@@ -879,5 +881,98 @@ func TestSelfHostIRVerifyRcCorpusClean(t *testing.T) {
 	if checked != sites {
 		t.Errorf("ownership pass modelled %d of %d reuse sites; every one is modelled today, "+
 			"so a skip is a reuse emitter that has grown a shape the recogniser does not carry", checked, sites)
+	}
+}
+
+// fernStringListRe pulls the elements of one `return [...]` string-array
+// literal out of a named Fern function, so the parity test below reads
+// the self-host's tables from its source rather than from a rebuild.
+func fernStringList(t *testing.T, src, fn string) []string {
+	t.Helper()
+	at := strings.Index(src, "function "+fn+"(")
+	if at < 0 {
+		t.Fatalf("irverifyrc.fern no longer defines %s — this test is no longer comparing anything", fn)
+	}
+	body := src[at:]
+	lo := strings.Index(body, "return [")
+	if lo < 0 {
+		t.Fatalf("%s: no `return [` list found", fn)
+	}
+	body = body[lo:]
+	hi := strings.Index(body, "]")
+	if hi < 0 {
+		t.Fatalf("%s: unterminated list", fn)
+	}
+	out := regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(body[:hi], -1)
+	var names []string
+	for _, m := range out {
+		names = append(names, m[1])
+	}
+	if len(names) == 0 {
+		t.Fatalf("%s: extracted no names — the list shape has changed", fn)
+	}
+	return names
+}
+
+// TestSelfHostIRVerifyRcReleaseSetMatchesNative pins the two verifiers'
+// idea of what a release IS.
+//
+// Both passes read a reuse site's decline arm looking for the release of
+// the donor, and both decide "this op is a release" from the callee's
+// name. A name one side counts and the other does not is a silent
+// divergence of the worst kind: the arm still parses, so nothing is
+// reported — one verifier simply checks a site the other skips, or
+// worse, reads a different op as the release and compares the wrong
+// slot.
+//
+// Native's record is internal/ir/rcsigs.go, which additionally carries
+// the retains, the inspection, the unmodelled helpers and a completeness
+// gate against the wasm runtime registry. Only the release half is
+// mirrored, and only the release half is compared here.
+func TestSelfHostIRVerifyRcReleaseSetMatchesNative(t *testing.T) {
+	path := filepath.Join("..", "..", "examples", "self_host", "irverifyrc.fern")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	src := string(raw)
+
+	for _, tc := range []struct {
+		fn     string
+		native []string
+	}{
+		{"rc_release_helpers", ir.RcReleaseNames()},
+		{"generated_drop_prefixes", ir.RcGeneratedDropPrefixes()},
+		{"generated_drop_names", ir.RcGeneratedDropNames()},
+	} {
+		selfHost := map[string]bool{}
+		for _, n := range fernStringList(t, src, tc.fn) {
+			selfHost[n] = true
+		}
+		native := map[string]bool{}
+		for _, n := range tc.native {
+			native[n] = true
+		}
+		var onlyNative, onlySelfHost []string
+		for n := range native {
+			if !selfHost[n] {
+				onlyNative = append(onlyNative, n)
+			}
+		}
+		for n := range selfHost {
+			if !native[n] {
+				onlySelfHost = append(onlySelfHost, n)
+			}
+		}
+		sort.Strings(onlyNative)
+		sort.Strings(onlySelfHost)
+		if len(onlyNative) > 0 {
+			t.Errorf("%s: internal/ir/rcsigs.go has %d entr(ies) irverifyrc.fern does not: %s",
+				tc.fn, len(onlyNative), strings.Join(onlyNative, ", "))
+		}
+		if len(onlySelfHost) > 0 {
+			t.Errorf("%s: irverifyrc.fern has %d entr(ies) internal/ir/rcsigs.go does not: %s",
+				tc.fn, len(onlySelfHost), strings.Join(onlySelfHost, ", "))
+		}
 	}
 }
