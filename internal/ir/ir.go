@@ -799,6 +799,23 @@ func (o *Op) CaptureSlots() []int32 {
 // right type (i32 / f32).
 type Func struct {
 	Name string
+	// PtrW is the pointer width, in bytes, of the lowering that
+	// produced this function, and TwoWordStr whether that lowering
+	// used the two-word string ABI.
+	//
+	// A consumer handed a bare Func has no other way to ask, and
+	// asking `ast.UseTwoWordStrings` afterwards does not work:
+	// `ast.TwoWordOverride` is a global the lowering sets and
+	// restores, so an arm64 Func read after the fact answers
+	// one-word, silently. The decision has to travel with the IR
+	// that encodes it.
+	//
+	// PtrW is also how far apart the halves of a two-word value sit:
+	// an `OpLoad` with `Width: WidthString` reads data at +0 and
+	// length at +PtrW. Zero and false on a hand-built Func, which
+	// every single-word reader treats as before.
+	PtrW       int
+	TwoWordStr bool
 	// ParamConsumed is, per parameter, whether THIS lowering decided the
 	// function reclaims it — the incumbent ownership answer, recorded so
 	// it can be read rather than re-derived.
@@ -3345,6 +3362,16 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			}
 			f.Ops = filtered
 		}
+	}
+	// Every Func carries the width and the string ABI it was
+	// lowered at, so a consumer handed one on its own reads the
+	// same slot model the lowering used. Stamped in one place
+	// rather than at each of the ~40 construction sites,
+	// generated drop bodies included.
+	twoWord := ast.UseTwoWordStrings(ptrW)
+	for _, fn := range out.Funcs {
+		fn.PtrW = ptrW
+		fn.TwoWordStr = twoWord
 	}
 	return out, nil
 }
