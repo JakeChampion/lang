@@ -35,26 +35,18 @@ func applyCallResultWidth(o *Op, stamp int) {
 	}
 }
 
-// LiftFromIR converts a legacy ir.Func into SSA form.
+// newLifter builds the lift's initial state: the slot array, the
+// parameters, the return shape and the entry block.
 //
-// The legacy IR is a stack-machine encoding: every Op consumes its
-// operand-stack inputs and pushes its result. The lift maintains a runtime
-// stack of SSA Values mirroring that shape — pop N for an N-arg op, push the
-// new Result. Control flow (OpIf / OpBlock / OpLoop and their branches) is
-// tracked on a scope stack, which is what lets a branch find its target block
-// and merge slot values into phis at the join.
-//
-// The switch below is the authoritative list of handled ops; anything else
-// returns an `unsupported op` error.
-func LiftFromIR(in *ir.Func) (*Func, error) {
+// Split out because two entry points need it — LiftFromIR and
+// StackHeights, which walk the same ops and differ only in what they
+// return. A second copy of the setup would be a second thing to keep
+// in step.
+func newLifter(in *ir.Func) (*lifter, error) {
 	if in == nil {
 		return nil, fmt.Errorf("ssa.LiftFromIR: nil func")
 	}
-
-	l := &lifter{
-		in:  in,
-		out: NewFunc(in.Name),
-	}
+	l := &lifter{in: in, out: NewFunc(in.Name)}
 
 	// Slots: a flat array indexed by OpLoadLocal/OpStoreLocal's
 	// I32 immediate. Slots [0, len(Params)) are parameters,
@@ -82,8 +74,26 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 	l.out.ReturnWidth = widthOfAstType(in.ReturnType)
 	l.out.ReturnFloat = isFloatAstType(in.ReturnType)
 	l.out.ReturnAddr = isAddressAstType(in.ReturnType)
-
 	l.cur = l.out.NewBlock()
+	return l, nil
+}
+
+// LiftFromIR converts a legacy ir.Func into SSA form.
+//
+// The legacy IR is a stack-machine encoding: every Op consumes its
+// operand-stack inputs and pushes its result. The lift maintains a runtime
+// stack of SSA Values mirroring that shape — pop N for an N-arg op, push the
+// new Result. Control flow (OpIf / OpBlock / OpLoop and their branches) is
+// tracked on a scope stack, which is what lets a branch find its target block
+// and merge slot values into phis at the join.
+//
+// The switch below is the authoritative list of handled ops; anything else
+// returns an `unsupported op` error.
+func LiftFromIR(in *ir.Func) (*Func, error) {
+	l, err := newLifter(in)
+	if err != nil {
+		return nil, err
+	}
 
 	for i, op := range in.Ops {
 		// Every op the handler creates is stamped with this source index,
@@ -112,6 +122,50 @@ func LiftFromIR(in *ir.Func) (*Func, error) {
 		l.out.SetRet(l.cur, Value{})
 	}
 	return l.out, nil
+}
+
+// StackHeights runs the lift over in and reports the operand-stack
+// height after each op, alongside whatever error stopped it.
+//
+// It is the lift's half of the per-op differential described on
+// `ir.StackHeights`: the two models of the same operand stack disagree
+// under the two-word string ABI, and the failure the lift reports is
+// almost never at the op that diverged. Comparing heights per op names
+// the divergence instead of its downstream symptom.
+//
+// The heights returned cover the ops the lift processed; on an error
+// the slice is shorter than in.Ops and the last entry is the height
+// going into the failing op. Nothing here changes what the lift does —
+// it is the same walk, recorded.
+func StackHeights(in *ir.Func) ([]StackAt, error) {
+	if in == nil {
+		return nil, fmt.Errorf("ssa.StackHeights: nil func")
+	}
+	l, err := newLifter(in)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]StackAt, 0, len(in.Ops))
+	for i, op := range in.Ops {
+		l.out.SetSourceOp(i)
+		if err := l.handle(i, op); err != nil {
+			return out, err
+		}
+		out = append(out, StackAt{Height: len(l.stack), Reachable: l.cur != nil})
+		if l.cur == nil && len(l.scopes) == 0 {
+			return out, nil
+		}
+	}
+	return out, nil
+}
+
+// StackAt is the operand-stack state after one op: how many entries,
+// and whether the point is reachable at all. See ir.StackAt — after a
+// terminator both models abandon the stack, differently, so only the
+// reachable points are comparable.
+type StackAt struct {
+	Height    int
+	Reachable bool
 }
 
 // isFloatAstType reports whether `t` is a FloatType (f32/f64).
