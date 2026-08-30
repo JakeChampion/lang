@@ -2930,6 +2930,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// stage-(b) arg-temp reclaim safely free an owned temp passed to a
 	// pointer-returning callee (findReturnsNoParamEscape).
 	returnsNoParamEscape := findReturnsNoParamEscape(prog, info)
+	// The shallower sibling: the returned payload BOX is the callee's own,
+	// whatever it points at. See findReturnsFreshPairPayload for why the
+	// pair-form payload release needs this one and not the above.
+	returnsFreshPairPayload := findReturnsFreshPairPayload(prog, info)
 	trmcFuncs, trmcConsumeSafe := findTrmcFuncs(prog, info, ptrW, pairForm)
 	// Borrow inference (BorrowInferEnabled): per-function per-param escape facts.
 	// Both the definition side (paramOwnedByDefault) and the call site
@@ -3001,7 +3005,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, vtableDispatched, addressTaken, growParams)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, vtableDispatched, addressTaken, growParams)
 		if err != nil {
 			return nil, err
 		}
@@ -4876,6 +4880,11 @@ type builder struct {
 	// findReturnsNoParamEscape. The stage-(b) arg-temp reclaim reads it to
 	// safely dec an owned temp passed to a POINTER-returning such callee.
 	returnsNoParamEscape map[string]bool
+	// returnsFreshPairPayload[name] is the SHALLOWER property: every value
+	// return hands back a variant whose payload box the callee allocated.
+	// The pair-form payload reclaim needs this rather than the above —
+	// findReturnsFreshPairPayload says why.
+	returnsFreshPairPayload map[string]bool
 	// selfPushMoveCall is the exact `a.append(v)` RHS call node of a
 	// self-append assignment (`a = a.append(v)`, isSelfArrayPushLocal),
 	// set by the Assign lowering just before it lowers the RHS and
@@ -5425,7 +5434,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5435,30 +5444,31 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		InlineHint: fn.InlineHint,
 	}
 	b := &builder{
-		info:                 info,
-		fn:                   fn,
-		out:                  out,
-		locals:               map[string]int32{},
-		scratchType:          map[int32]ast.Type{},
-		mapGetRebox:          map[*ast.Call]mapGetReboxPlan{},
-		ptrW:                 ptrW,
-		dynRcSupported:       dynRcSupported,
-		emitLineMarkers:      emitLineMarkers,
-		pairForm:             pairForm,
-		closureCaps:          closureCaps,
-		genEnumDrops:         genEnumDrops,
-		genTupleDrops:        genTupleDrops,
-		returnsNoParamEscape: returnsNoParamEscape,
-		trmcFuncs:            trmcFuncs,
-		trmcConsumeSafe:      trmcConsumeSafe,
-		paramEscapes:         paramEscapes,
-		paramCountedRetain:   paramCountedRetain,
-		readOnlyComparators:  readOnlyComparators,
-		vtableDispatched:     vtableDispatched,
-		addressTaken:         addressTaken,
-		growParams:           growParams,
-		thisIsPair:           pairForm[fn.Name],
-		dynCoerceDone:        map[ast.Expr]bool{},
+		info:                    info,
+		fn:                      fn,
+		out:                     out,
+		locals:                  map[string]int32{},
+		scratchType:             map[int32]ast.Type{},
+		mapGetRebox:             map[*ast.Call]mapGetReboxPlan{},
+		ptrW:                    ptrW,
+		dynRcSupported:          dynRcSupported,
+		emitLineMarkers:         emitLineMarkers,
+		pairForm:                pairForm,
+		closureCaps:             closureCaps,
+		genEnumDrops:            genEnumDrops,
+		genTupleDrops:           genTupleDrops,
+		returnsNoParamEscape:    returnsNoParamEscape,
+		returnsFreshPairPayload: returnsFreshPairPayload,
+		trmcFuncs:               trmcFuncs,
+		trmcConsumeSafe:         trmcConsumeSafe,
+		paramEscapes:            paramEscapes,
+		paramCountedRetain:      paramCountedRetain,
+		readOnlyComparators:     readOnlyComparators,
+		vtableDispatched:        vtableDispatched,
+		addressTaken:            addressTaken,
+		growParams:              growParams,
+		thisIsPair:              pairForm[fn.Name],
+		dynCoerceDone:           map[ast.Expr]bool{},
 	}
 	if b.thisIsPair {
 		if enumT, ok := fn.ReturnType.(ast.EnumType); ok {

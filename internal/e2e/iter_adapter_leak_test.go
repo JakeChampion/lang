@@ -33,9 +33,21 @@ import (
 // buffer needs only whether the result POINTER ITSELF is fresh.
 // `next` answers no to the first and yes to the second.
 //
-// So these numbers are a GAP LIST, not a contract: they are what the
-// refusal currently costs. The fix drives them to zero, and the two
-// clean neighbours are the boundary that says a fix went too far.
+// FIXED. freshPairFormEnumResultType now asks whether the returned
+// payload BOX is the callee's own, instead of whether anything reachable
+// from the result aliases a parameter — and it identifies a user function
+// by map membership rather than a "__" name prefix, which had been
+// refusing every concrete method along with the builtins it was aimed at.
+// The release itself did not change and is still the deep
+// emitOwnedSlotDrop: the tuple owns the fresh iterator at rc 1, `cur =
+// t.1` retains it to 2, and the deep drop takes it to 1 held by cur. A
+// SHALLOW free would leave it at 2 and still leak, which is why the
+// obvious analogy to emitOwnedConsumingArmDrop is the wrong one here.
+//
+// These rows were 15 / 15 / 15. They now pin the REPAIR: a regression in
+// the credited case fails here, and so does one that starts crediting a
+// shape it should not — the boundary row is in the table rather than
+// beside it.
 //
 // docs/rc-log/2026-08-30-iter-adapter-pair-form-payload.md.
 
@@ -86,25 +98,24 @@ func TestIterAdapterPairFormPayloadLeaksX86_64(t *testing.T) {
 		src  string
 		want int
 	}{
-		// 15 = 7 elements x (one ArrayIter + one tuple) + the source
-		// array, which the stranded iterators keep alive. Identical
-		// across all three because it is the iteration that leaks:
-		// `sum` builds no output array at all and still pays 15, and
-		// filter's and map's output arrays ARE reclaimed.
-		{"filter", iterFilterSrc, 15},
-		{"map", iterMapSrc, 15},
-		{"sum", iterSumSrc, 15},
-		// The boundary. A fix that reaches this row has gone too far.
+		// Was 15 each: 7 elements x (one ArrayIter + one tuple) + the
+		// source array the stranded iterators kept alive. Identical
+		// across all three because it was the iteration that leaked —
+		// `sum` builds no output array at all and still paid 15.
+		{"filter", iterFilterSrc, 0},
+		{"map", iterMapSrc, 0},
+		{"sum", iterSumSrc, 0},
+		// The boundary: binds no pair, so there is nothing to release.
 		{"iter.of alone", iterOfOnlySrc, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := unpairedAllocs(t, gcc, runner, tc.src)
 			if got != tc.want {
-				t.Errorf("%d unpaired allocation(s), want %d — this is a GAP LIST "+
-					"pinned at what the pair-form payload refusal currently costs, so "+
-					"a DROP here is the fix landing and wants this number lowered, "+
-					"while a RISE is a new leak on the iteration path. The zero row "+
-					"is the boundary and must stay zero either way",
+				t.Errorf("%d unpaired allocation(s), want %d — an iterator's next "+
+					"returns a freshly allocated payload box, and the match arm that "+
+					"binds it is meant to release it. A non-zero count here means "+
+					"freshPairFormEnumResultType stopped crediting that box, and every "+
+					"combinator went back to stranding two allocations per element",
 					got, tc.want)
 			}
 		})
