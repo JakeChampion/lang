@@ -346,6 +346,36 @@ func renameTarget(o *Op) Value {
 	return o.Result
 }
 
+// unitFromResult maps the result axis of the ownership signature table
+// onto this pass's origins.
+//
+// `RcResultRaw` and `RcResultOwned` both answer UnitFresh, and the
+// distinction is not lost by that — it is simply not this pass's
+// question. A raw block and an rc-headered one are equally the
+// function's to dispose of; what separates them is what an emitted
+// RELEASE would do (reclaim, versus read a neighbour's bytes), which is
+// the verifier's question. Collapsing them here also keeps a call to
+// `__alloc` classified the same as the `OpAlloc` it is an alias for.
+//
+// `RcResultImmortal` is UnitNone rather than UnitFresh: the block is
+// fresh and pointer-shaped, but its rc word is the static sentinel, so
+// no release can reclaim it and the caller holds nothing to leak.
+func unitFromResult(r ir.RcResult) UnitOrigin {
+	switch r {
+	case ir.RcResultOwned, ir.RcResultRaw:
+		return UnitFresh
+	case ir.RcResultBorrow:
+		return UnitBorrowed
+	case ir.RcResultOperand:
+		// Reached only if the argument axis had no ResultIsOperand to
+		// rename through, which the two-axis agreement gate forbids.
+		return UnitUnknown
+	default:
+		// RcResultNone, and RcResultImmortal.
+		return UnitNone
+	}
+}
+
 // classifyDef places one defining op.
 func classifyDef(o *Op, sigs map[string]Signature) UnitOrigin {
 	switch {
@@ -389,6 +419,9 @@ func classifyDef(o *Op, sigs map[string]Signature) UnitOrigin {
 				// Phase B proved every returned value is a borrow of
 				// a parameter, so the caller got no unit.
 				return UnitBorrowed
+			}
+			if r, known := ir.RcHelperResult(o.Str); known {
+				return unitFromResult(r)
 			}
 		}
 		return UnitUnknown
