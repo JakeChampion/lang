@@ -1426,15 +1426,19 @@ var SandboxEnabled = os.Getenv("FERN_SANDBOX") == "1"
 //     rounds its size argument to a 16 multiple so an alloc and its free
 //     agree, and a refcount put through that rounding reads 16 whatever
 //     it was. Pair i against d per pointer for the imbalance instead.
-//   - Pairing ACROSS kinds is not sound in general. For a plain array
-//     alias the i pointer is the same value __fern_alloc returned, but a
-//     traced projection out of a tuple shows i/d events on pointers 16
-//     bytes above the blocks the a lines report, with the blocks
-//     themselves never inc'd or dec'd. Which objects those higher
-//     pointers belong to is NOT established — the obvious reading, that
-//     the two kinds use block-vs-object conventions, is contradicted by
-//     the plain-array case. Pair within a kind; treat a cross-kind
-//     pairing as a question rather than an answer.
+//
+//   - THE POINTERS ARE NOT IN THE SAME UNITS. a/f name the block
+//     __fern_alloc returned; i/d name the object whose rc word sits at
+//     [ptr-8], which for an array is that block plus a 16-byte header.
+//     Measured at two array sizes, so it is the header and not the
+//     payload. Cross-kind pairing has to add the offset; without it a
+//     block reads as "never retained" when it was.
+//
+//     Beware of confirming this by looking for an i pointer that is also
+//     an a pointer: with several live blocks one object's address
+//     coincides with another block's base often enough to make that test
+//     lie in both directions. Compare within a single allocation.
+//
 //   - Coverage is partial. Only these three helpers are hooked:
 //     __fern_str_dec and the map helpers are not, and __fern_arr_dec's
 //     rc==1 branch frees rather than decrementing, so it shows as an f

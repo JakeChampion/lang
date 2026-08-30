@@ -338,3 +338,56 @@ function main(): i32 {
 		}
 	}
 }
+
+// The i/d pointers name the object; the a/f pointers name the block. For
+// an array those differ by a 16-byte header, so a reader pairing across
+// kinds without the offset concludes a block was never retained.
+//
+// ONE allocation only, deliberately. The obvious form of this test —
+// "no i pointer is also an a pointer" — passes or fails on whether two
+// live blocks happen to sit 16 bytes apart, and an earlier version of it
+// reported the offset did not exist for exactly that reason.
+func TestRcTraceX86_64IncPointerIsTheObjectNotTheBlock(t *testing.T) {
+	const src = `
+function main(): i32 {
+    var a: u8[] = [1, 2, 3];
+    var b: u8[] = a;
+    var c: u8[] = a;
+    var d: u8[] = a;
+    return b.len() + c.len() + d.len();
+}
+`
+	_, stderr, _ := runRcTraceX86_64(t, src, false)
+	var allocs, incs []string
+	for _, line := range strings.Split(stderr, "\n") {
+		if m := rcTraceLineRe.FindStringSubmatch(line); m != nil && m[1] == "a" {
+			allocs = append(allocs, m[2])
+		}
+		if m := rcTraceRcLineRe.FindStringSubmatch(line); m != nil && m[1] == "i" {
+			incs = append(incs, m[2])
+		}
+	}
+	if len(allocs) != 1 {
+		t.Fatalf("this test needs exactly one allocation to compare against, got %d: %v",
+			len(allocs), allocs)
+	}
+	if len(incs) == 0 {
+		t.Fatal("no inc events; the hook is not firing")
+	}
+	block, err := strconv.ParseUint(allocs[0], 16, 64)
+	if err != nil {
+		t.Fatalf("alloc pointer %q: %v", allocs[0], err)
+	}
+	const arrayHeader = 16
+	for _, h := range incs {
+		obj, err := strconv.ParseUint(h, 16, 64)
+		if err != nil {
+			t.Fatalf("inc pointer %q: %v", h, err)
+		}
+		if obj != block+arrayHeader {
+			t.Errorf("inc names %#x and the one allocation is %#x; expected the block plus a "+
+				"%d-byte array header. If the layout changed, ast.RcTrace's cross-kind warning "+
+				"needs the new offset", obj, block, arrayHeader)
+		}
+	}
+}
