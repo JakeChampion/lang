@@ -312,3 +312,80 @@ func TestSolveReturnsPropagatesOwnedAcrossACall(t *testing.T) {
 		t.Error("a forwarder of an owned-returning callee was not proved owned")
 	}
 }
+
+// A fresh box the function STORES into memory and returns as well hands
+// back a borrow of what the container now owns, not a unit. Nothing
+// retained it, so the store is what the container's ownership rests on,
+// and telling every caller it owns the result makes each of them
+// account for a unit it never acquired.
+//
+// `__map_grow_keyed` in core/map.fern is the shape, and it is what made
+// the certifier report `__map_set_keyed_impl` as leaking across 21
+// fixtures the runtime proves clean.
+func TestSolveReturnsWithholdsOwnedWhenTheFreshValueWasStored(t *testing.T) {
+	mk := func(store bool) Signature {
+		f := &Func{Name: "grow", ReturnAddr: true}
+		b := f.NewBlock()
+		f.Entry = b
+		p := f.AddParam()
+		f.ParamAddrs = []bool{true}
+		v := f.AddOp(b, OpAlloc)
+		if store {
+			f.AddOpNoResult(b, OpStore, p, v)
+		}
+		b.Term = Terminator{Kind: TermRet, Value: v}
+		return SolveOwnership(map[string]*Func{"grow": f}).Sigs["grow"]
+	}
+	if got := mk(false); !got.ReturnOwned {
+		t.Error("without the store, a returned allocation is owned")
+	}
+	if got := mk(true); got.ReturnOwned {
+		t.Error("a fresh box stored into a parameter is not the function's to hand out")
+	}
+	// Not a borrow either: the value is a borrow of the CONTAINER, and
+	// ReturnBorrowedFrom can only name a parameter position.
+	if got := mk(true); got.ReturnBorrowed {
+		t.Error("the answer is unknown, not an anchor the pass cannot support")
+	}
+}
+
+// The same fact through the raw pointer store the stdlib writes with.
+// `__store_ptr` moves no COUNT — `rcsigs.go` calls it inert — but the
+// pointer it writes is reachable from the container afterwards exactly
+// as OpStore's is.
+func TestSolveReturnsWithholdsOwnedForARawPointerStore(t *testing.T) {
+	f := &Func{Name: "grow", ReturnAddr: true}
+	b := f.NewBlock()
+	f.Entry = b
+	p := f.AddParam()
+	f.ParamAddrs = []bool{true}
+	v := f.AddOp(b, OpAlloc)
+	st := f.AddOpNoResult(b, OpCall, p, v)
+	st.Str = "__store_ptr"
+	b.Term = Terminator{Kind: TermRet, Value: v}
+
+	if SolveOwnership(map[string]*Func{"grow": f}).Sigs["grow"].ReturnOwned {
+		t.Error("a fresh box written through __store_ptr is not returned owned")
+	}
+}
+
+// Storing a RETAINED copy is the other direction: the container gets a
+// unit of its own and the function keeps the one it allocated, so the
+// return really is owned. This is why the escape set does not follow
+// the rc-helper rename chain.
+func TestSolveReturnsKeepsOwnedWhenTheStoreWasRetained(t *testing.T) {
+	f := &Func{Name: "grow", ReturnAddr: true}
+	b := f.NewBlock()
+	f.Entry = b
+	p := f.AddParam()
+	f.ParamAddrs = []bool{true}
+	v := f.AddOp(b, OpAlloc)
+	inc := f.AddOp(b, OpCall, v)
+	b.Ops[len(b.Ops)-1].Str = "__fern_rc_inc"
+	f.AddOpNoResult(b, OpStore, p, inc)
+	b.Term = Terminator{Kind: TermRet, Value: v}
+
+	if !SolveOwnership(map[string]*Func{"grow": f}).Sigs["grow"].ReturnOwned {
+		t.Error("storing a retained copy leaves the allocation's own unit with the function")
+	}
+}

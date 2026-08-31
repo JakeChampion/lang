@@ -423,7 +423,13 @@ func RcClassifiedRuntimeNames() []string {
 // The list is closed on purpose. `__drop_` alone would swallow
 // `std/async.fern`'s `__drop_losers`, which releases none of its
 // arguments.
+//
+// `__closure_drop_` does not start `__drop_` at all, which is how it
+// came to be missing: the thunk `rc_insert.go` synthesises per closure
+// ends with an unconditional `__fern_closure_drop(arg0)`, so it
+// releases argument 0 exactly like every other member here.
 var generatedDropPrefixes = []string{
+	"__closure_drop_",
 	"__drop_struct_flat_",
 	"__drop_struct_",
 	"__drop_enum_",

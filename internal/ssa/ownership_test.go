@@ -186,3 +186,90 @@ func TestRCSitesTreatsAMoveAsAReleaseButNotAnAlias(t *testing.T) {
 		t.Error("a use of the move's result is not a use of the receiver")
 	}
 }
+
+// A parameter released through a loop-carried phi is consumed.
+//
+// `dup(xs) = Cons(h, dup(t))` is TRMC'd into a loop, so the parameter
+// becomes the first incoming of a phi whose other incoming is the tail
+// loaded from the previous box, and the drop releases the PHI. The
+// alias closure does not cross phis — a phi's incomings really are
+// different objects here — but whichever edge the parameter arrives by,
+// the phi's value on that edge IS the parameter.
+//
+// Reading it Borrowed tells every caller it still owns an argument the
+// callee consumed, which is the direction that costs a leak:
+// `nested_call_temp` pairs all 18 of its allocations at runtime and the
+// certifier reported two of them leaked.
+func TestSolveOwnershipSeesAReleaseThroughALoopCarriedPhi(t *testing.T) {
+	f := &Func{Name: "dup"}
+	entry, header, body, exit := f.NewBlock(), f.NewBlock(), f.NewBlock(), f.NewBlock()
+	f.Entry = entry
+	p := f.AddParam()
+	f.ParamAddrs = []bool{true}
+	f.SetBr(entry, header)
+
+	tail := f.AddOp(body, OpLoad, p) // placeholder operand, replaced below
+	cur := f.AddPhi(header, p, tail)
+	f.SetBrIf(header, cur, body, exit)
+
+	body.Ops[0].Args[0] = cur // the tail is loaded out of THIS iteration's box
+	dec := f.AddOpNoResult(body, OpCall, cur)
+	dec.Str = "__fern_rc_dec"
+	f.SetBr(body, header)
+	exit.Term = Terminator{Kind: TermRet}
+
+	sigs := SolveOwnership(map[string]*Func{"dup": f}).Sigs
+	if sigs["dup"].Params[0] != Consumed {
+		t.Errorf("parameter released through a loop phi reads %v, want consumed", sigs["dup"].Params[0])
+	}
+}
+
+// The same shape with the release removed: nothing consumes the
+// parameter, so following the phi must not invent a verdict.
+func TestSolveOwnershipDoesNotInventAReleaseThroughAPhi(t *testing.T) {
+	f := &Func{Name: "walk"}
+	entry, header, body, exit := f.NewBlock(), f.NewBlock(), f.NewBlock(), f.NewBlock()
+	f.Entry = entry
+	p := f.AddParam()
+	f.ParamAddrs = []bool{true}
+	f.SetBr(entry, header)
+
+	tail := f.AddOp(body, OpLoad, p)
+	cur := f.AddPhi(header, p, tail)
+	f.SetBrIf(header, cur, body, exit)
+	body.Ops[0].Args[0] = cur
+	f.SetBr(body, header)
+	exit.Term = Terminator{Kind: TermRet}
+
+	sigs := SolveOwnership(map[string]*Func{"walk": f}).Sigs
+	if sigs["walk"].Params[0] == Consumed {
+		t.Error("a parameter nothing releases was called consumed")
+	}
+}
+
+// A retain through the phi blocks the conclusion the same way a retain
+// on the value itself does.
+func TestSolveOwnershipLetsARetainThroughAPhiBlockConsumed(t *testing.T) {
+	f := &Func{Name: "hold"}
+	entry, header, body, exit := f.NewBlock(), f.NewBlock(), f.NewBlock(), f.NewBlock()
+	f.Entry = entry
+	p := f.AddParam()
+	f.ParamAddrs = []bool{true}
+	f.SetBr(entry, header)
+
+	tail := f.AddOp(body, OpLoad, p)
+	cur := f.AddPhi(header, p, tail)
+	f.SetBrIf(header, cur, body, exit)
+	body.Ops[0].Args[0] = cur
+	inc := f.AddOpNoResult(body, OpCall, cur)
+	inc.Str = "__fern_rc_inc"
+	dec := f.AddOpNoResult(body, OpCall, cur)
+	dec.Str = "__fern_rc_dec"
+	f.SetBr(body, header)
+	exit.Term = Terminator{Kind: TermRet}
+
+	sigs := SolveOwnership(map[string]*Func{"hold": f}).Sigs
+	if sigs["hold"].Params[0] == Consumed {
+		t.Error("a balanced retain/release through the phi is a borrow, not a consume")
+	}
+}

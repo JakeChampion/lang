@@ -57,6 +57,12 @@ func TestRcHelperSigMatchesTheGeneratedDropFamilies(t *testing.T) {
 		"__drop_closure_value",
 		"__drop_map_str_keys",
 		"__map_drop_values",
+		// The one member whose name does not start __drop_, which is
+		// how it came to be missing from the list. `elide.go` rewrites
+		// some calls to it into the generic `__fern_closure_drop`, so
+		// the identical release was understood under one spelling and
+		// invisible under the other.
+		"__closure_drop___closure_lambda_1",
 	} {
 		got, ok := RcHelperSig(name)
 		if !ok {
@@ -86,6 +92,9 @@ func TestRcHelperSigRejectsNamesASubstringRuleWouldCatch(t *testing.T) {
 		// the same suffix. Both are defined functions, so their
 		// ownership is the interprocedural fixpoint's answer.
 		"__method_string_drop", "__method_Point_foo_drop",
+		// The bare prefix names no closure, and the generic runtime
+		// helper is a different name that rcRuntimeSigs already holds.
+		"__closure_drop_",
 		// Helpers that do move counts in a shape one operand effect
 		// cannot express. They must report nothing rather than a
 		// guess.

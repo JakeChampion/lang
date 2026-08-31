@@ -190,7 +190,7 @@ func SolveOwnership(funcs map[string]*Func) Solution {
 			if i < len(f.ParamAddrs) {
 				sig.Pointer[i] = f.ParamAddrs[i]
 			}
-			as[i] = aliasesOf(f, u, p)
+			as[i] = unitCarriersOf(f, u, p, nil)
 		}
 		sol.Sigs[n] = sig
 		aliases[n] = as
@@ -221,7 +221,7 @@ func SolveOwnership(funcs map[string]*Func) Solution {
 			for _, n := range names {
 				f := funcs[n]
 				for i, p := range f.Params {
-					aliases[n][i] = aliasesOfWithReturns(f, uses[n], p, sol.Sigs)
+					aliases[n][i] = unitCarriersOf(f, uses[n], p, sol.Sigs)
 				}
 			}
 			changed = true

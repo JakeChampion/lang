@@ -1179,8 +1179,10 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		})
 		l.cur = thenB
 	case ir.OpBlock:
-		if op.I32 != ir.BlockTypeVoid {
-			return fmt.Errorf("ssa.LiftFromIR: OpBlock at op[%d] non-void BlockType %d not yet supported", i, op.I32)
+		if op.I32 == ir.BlockTypeStringPair {
+			// Two values, not one. endBlockScope's merge pops a
+			// single stack top, so refuse rather than mis-model it.
+			return fmt.Errorf("ssa.LiftFromIR: OpBlock at op[%d] BlockTypeStringPair not yet supported", i)
 		}
 		postB := l.out.NewBlock()
 		l.scopes = append(l.scopes, scope{
@@ -1285,7 +1287,9 @@ func (l *lifter) handle(i int, op ir.Op) error {
 				return err
 			}
 		case ir.OpBlock:
-			l.endBlockScope(top)
+			if err := l.endBlockScope(top); err != nil {
+				return err
+			}
 		case ir.OpLoop:
 			l.endLoopScope(top)
 		default:
@@ -1632,7 +1636,7 @@ func (l *lifter) endLoopScope(top scope) {
 // recorded during the scope. Source order matches Preds order:
 // brSources were SetBr'd at their OpBr sites earlier in time;
 // the fall-through (if alive) is SetBr'd now and appended last.
-func (l *lifter) endBlockScope(top scope) {
+func (l *lifter) endBlockScope(top scope) error {
 	if l.cur == nil {
 		l.dropAbandonedStack(top)
 	}
@@ -1641,18 +1645,56 @@ func (l *lifter) endBlockScope(top scope) {
 		sources = append(sources, mergeSource{slots: br.slots, stackTop: br.stackTop})
 	}
 	if l.cur != nil {
+		var fellTop Value
+		if top.blockType != ir.BlockTypeVoid {
+			if len(l.stack) != top.stackHeight+1 {
+				return fmt.Errorf("ssa.LiftFromIR: OpEnd: value-producing OpBlock fell through with %d values, want 1",
+					len(l.stack)-top.stackHeight)
+			}
+			fellTop = l.stack[len(l.stack)-1]
+			l.stack = l.stack[:len(l.stack)-1]
+		}
 		l.out.SetBr(l.cur, top.postB)
-		sources = append(sources, mergeSource{slots: append([]Value(nil), l.slots...)})
+		sources = append(sources, mergeSource{
+			slots:    append([]Value(nil), l.slots...),
+			stackTop: fellTop,
+		})
 	}
 
 	if len(sources) == 0 {
-		// Whole scope exited via OpReturn — postB is unreachable.
+		// Whole scope exited via OpReturn — postB is unreachable. A
+		// value-producing one still owes the operand stack a value, or
+		// every later op reads one too few. It is defined IN postB
+		// rather than reusing `undefValue`: entry dominates only the
+		// reachable blocks, and this one is not among them.
 		l.cur = top.postB
-		return
+		if top.blockType != ir.BlockTypeVoid {
+			v := l.out.AddOp(top.postB, OpConstInt)
+			top.postB.Ops[len(top.postB.Ops)-1].Imm = 0
+			l.stack = append(l.stack, v)
+		}
+		return nil
+	}
+
+	// Value-producing block: phi the per-source stack tops, exactly as
+	// endIfScope does. `ir.Inline`'s early-return wrapper is the
+	// producer — each translated OpReturn is an OpBr carrying the
+	// callee's result, and the body's tail falls through with it.
+	if top.blockType != ir.BlockTypeVoid {
+		if len(sources) == 1 {
+			l.stack = append(l.stack, sources[0].stackTop)
+		} else {
+			args := make([]Value, len(sources))
+			for j, s := range sources {
+				args[j] = s.stackTop
+			}
+			l.stack = append(l.stack, l.out.AddPhi(top.postB, args...))
+		}
 	}
 
 	l.mergeSlotsViaPhi(top.postB, sources)
 	l.cur = top.postB
+	return nil
 }
 
 // mapUnsignedVariant returns the unsigned counterpart of a

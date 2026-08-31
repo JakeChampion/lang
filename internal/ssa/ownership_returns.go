@@ -142,6 +142,7 @@ func returnVerdict(f *Func, sigs map[string]Signature) (retVerdict, []int) {
 		return retUnproven, nil
 	}
 	defs := defMap(f)
+	escaped := escapedRoots(f)
 	seen := map[int32]bool{}
 	anchorSet := map[int]bool{}
 
@@ -153,7 +154,7 @@ func returnVerdict(f *Func, sigs map[string]Signature) (retVerdict, []int) {
 				continue
 			}
 			sawReturn = true
-			cls, anchors := classifyValue(f, defs, sigs, b.Term.Value, seen)
+			cls, anchors := classifyValue(f, defs, escaped, sigs, b.Term.Value, seen)
 			switch {
 			case cls == clsUnknown:
 				return retUnproven, nil
@@ -201,7 +202,7 @@ func returnVerdict(f *Func, sigs map[string]Signature) (retVerdict, []int) {
 // value's own previous iteration says nothing new. Every OTHER incoming
 // edge of that phi is still classified, so an owned value reaching the
 // loop still blocks the borrowed conclusion.
-func classifyValue(f *Func, defs map[int32]*Op, sigs map[string]Signature, v Value, seen map[int32]bool) (classification, []int) {
+func classifyValue(f *Func, defs map[int32]*Op, escaped map[int32]bool, sigs map[string]Signature, v Value, seen map[int32]bool) (classification, []int) {
 	if !v.IsValid() {
 		return clsNeutral, nil
 	}
@@ -236,15 +237,15 @@ func classifyValue(f *Func, defs map[int32]*Op, sigs map[string]Signature, v Val
 		// If either operand is owned the result may point into a fresh
 		// object, so the whole thing is owned. Two constants make plain
 		// arithmetic, which is neutral.
-		return mergeClassifications(f, defs, sigs, o.Args, seen)
+		return mergeClassifications(f, defs, escaped, sigs, o.Args, seen)
 	case OpPhi:
-		return mergeClassifications(f, defs, sigs, o.Args, seen)
+		return mergeClassifications(f, defs, escaped, sigs, o.Args, seen)
 	case OpCall:
 		// A helper that hands back the pointer it was given is the
 		// same object under a new name.
 		for _, ro := range rcSig(o) {
 			if ro.Arg.ResultIsOperand {
-				return classifyValue(f, defs, sigs, ro.Value, seen)
+				return classifyValue(f, defs, escaped, sigs, ro.Value, seen)
 			}
 		}
 		callee, known := sigs[ir.CodegenAlias(o.Str)]
@@ -254,7 +255,7 @@ func classifyValue(f *Func, defs map[int32]*Op, sigs map[string]Signature, v Val
 			if r, classified := ir.RcHelperResult(o.Str); classified {
 				switch r {
 				case ir.RcResultOwned, ir.RcResultRaw:
-					return clsFresh, nil
+					return freshUnlessEscaped(escaped, v)
 				case ir.RcResultImmortal, ir.RcResultNone:
 					return clsNeutral, nil
 				}
@@ -262,7 +263,7 @@ func classifyValue(f *Func, defs map[int32]*Op, sigs map[string]Signature, v Val
 			return clsUnknown, nil
 		}
 		if callee.ReturnOwned {
-			return clsFresh, nil
+			return freshUnlessEscaped(escaped, v)
 		}
 		if !callee.ReturnBorrowed {
 			return clsUnknown, nil
@@ -277,10 +278,10 @@ func classifyValue(f *Func, defs map[int32]*Op, sigs map[string]Signature, v Val
 			}
 			args = append(args, o.Args[j])
 		}
-		return mergeClassifications(f, defs, sigs, args, seen)
+		return mergeClassifications(f, defs, escaped, sigs, args, seen)
 	}
 	if isAllocating(o.Kind) {
-		return clsFresh, nil
+		return freshUnlessEscaped(escaped, v)
 	}
 	// Everything else — a load, an indirect call — is UNKNOWN, and
 	// blocks both conclusions.
@@ -302,6 +303,69 @@ func classifyValue(f *Func, defs map[int32]*Op, sigs map[string]Signature, v Val
 	return clsUnknown, nil
 }
 
+// freshUnlessEscaped is the fresh conclusion, withheld when the value
+// has already handed its unit to memory.
+//
+// `__map_grow_keyed` is the shape: it allocates a buffer, stores it
+// into the map with `__store_ptr`, and returns it as well. The store is
+// what the map's ownership rests on — nothing retained the buffer — so
+// the return hands back a BORROW of something the map now owns, and
+// telling every caller it owns the result makes each of them account
+// for a unit it never acquired.
+//
+// It is the mirror of the load case below, which already declines to
+// call a field read owned for the same reason, and the same rule
+// `certify.go` applies within a function: a store transfers.
+//
+// The answer is UNKNOWN rather than borrow. The value really is a
+// borrow, but of the container it was stored into — reachable from a
+// parameter, not identical to one — and `ReturnBorrowedFrom` can only
+// name a parameter position. Refusing both conclusions is the honest
+// answer and the fail-soft one.
+func freshUnlessEscaped(escaped map[int32]bool, v Value) (classification, []int) {
+	if escaped[v.ID] {
+		return clsUnknown, nil
+	}
+	return clsFresh, nil
+}
+
+// escapedRoots collects the values whose unit is handed to memory
+// somewhere in f — a store's value operand, or a capture written into a
+// closure environment.
+//
+// Renames are deliberately NOT followed. Storing `__fern_rc_inc(p)`
+// gives the container a unit of its own and leaves p's with the
+// function, so only a store of the value ITSELF transfers.
+func escapedRoots(f *Func) map[int32]bool {
+	out := map[int32]bool{}
+	for _, b := range f.Blocks {
+		for _, o := range b.Ops {
+			switch o.Kind {
+			case OpMakeClosure, OpMakeEnv, OpBoxDyn:
+				for _, a := range o.Args {
+					out[a.ID] = true
+				}
+			case OpStore, OpStoreF, OpStore32, OpStore8, OpStore16:
+				if n := len(o.Args); n > 0 {
+					out[o.Args[n-1].ID] = true
+				}
+			case OpCall:
+				// The raw stores the stdlib writes through. They move
+				// no COUNT, which is why `rcsigs.go` calls them inert,
+				// but the pointer they write is reachable from the
+				// container afterwards exactly as OpStore's is.
+				switch o.Str {
+				case "__store_ptr", "__store_i64", "__store_i32":
+					if len(o.Args) == 2 {
+						out[o.Args[1].ID] = true
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
 // isAllocating reports the op kinds that produce a unit of their own.
 //
 // The same set `units.go` calls allocating, and deliberately the same
@@ -321,10 +385,10 @@ func isAllocating(k OpKind) bool {
 // so a phi of `Some(box)` and the `None` sentinel stays fresh: a
 // release of a static sentinel short-circuits on its rc word, so the
 // caller may release the result whichever arm ran.
-func mergeClassifications(f *Func, defs map[int32]*Op, sigs map[string]Signature, vs []Value, seen map[int32]bool) (classification, []int) {
+func mergeClassifications(f *Func, defs map[int32]*Op, escaped map[int32]bool, sigs map[string]Signature, vs []Value, seen map[int32]bool) (classification, []int) {
 	cls, anchors := clsNeutral, []int(nil)
 	for _, a := range vs {
-		c, an := classifyValue(f, defs, sigs, a, seen)
+		c, an := classifyValue(f, defs, escaped, sigs, a, seen)
 		switch {
 		case c == clsUnknown:
 			return clsUnknown, nil
