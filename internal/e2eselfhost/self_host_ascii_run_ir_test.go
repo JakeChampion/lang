@@ -15,7 +15,7 @@ import (
 //
 // Same §3.4 ordering as __memchr's sibling suite: every backend answers the
 // same question and only some answer it 16 bytes at a time — native everywhere,
-// self-host on x86-64, a byte loop on self-host arm64 and wasm — so all of them
+// self-host on x86-64 and arm64, a byte loop on self-host wasm — so all of them
 // are held to one expectation. What differs is that this op was made TOTAL
 // BEFORE any caller adopted it, rather than after — __memchr was adopted with
 // one backend (arm64-ssa) still missing an entry, and CI reported it as a link
