@@ -259,30 +259,76 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     }
     if (o.kind_tag == 234) {  // rmemchr
         // operand stack [box, byte, from] (from on top) -> the index of the
-        // LAST `byte` at or before `from`, or -1. SCALAR, per §3.4's
-        // "correct in every backend first, fast one backend at a time".
+        // LAST `byte` at or before `from`, or -1.
         //
-        // The clamp is memchr's mirrored: down to len-1 rather than up to 0,
-        // so a negative `from` finds nothing.
+        // NEON, 16 bytes an iteration, walking DOWN: the block ENDING at the
+        // cursor is loaded at `cursor - 15`. §3.4 step 3 for this tier.
+        //
+        // This is memchr's body read backwards, and the whole difference is
+        // which end of the mask is scanned: the rightmost match is the HIGHEST
+        // set bit, and arm64 has no find-highest, so the bit index is 63 - clz
+        // and the lane is that over four (shrn gives four mask bits per input
+        // byte). memchr divides the LOWEST set bit by the same four.
+        //
+        // x5 is the block base INDEX and x6 its address; both are carried
+        // across iterations and stepped by 16 rather than recomputed from the
+        // cursor, which measured about a third of the loop on the x86-64 twin.
+        // x3 holds len-1 for the clamp and is dead after it, so the hit path
+        // borrows it for the 63.
         var rlo: asmcore.LabelOut = asmcore.fresh_label(s);
         var r_ok: string = rlo.name;
         var rlo2: asmcore.LabelOut = asmcore.fresh_label(rlo.state);
-        var r_loop: string = rlo2.name;
+        var r_vec: string = rlo2.name;
         var rlo3: asmcore.LabelOut = asmcore.fresh_label(rlo2.state);
-        var r_none: string = rlo3.name;
+        var r_next: string = rlo3.name;
         var rlo4: asmcore.LabelOut = asmcore.fresh_label(rlo3.state);
-        var r_done: string = rlo4.name;
-        s = rlo4.state;
+        var r_vecdone: string = rlo4.name;
+        var rlo5: asmcore.LabelOut = asmcore.fresh_label(rlo4.state);
+        var r_tail: string = rlo5.name;
+        var rlo6: asmcore.LabelOut = asmcore.fresh_label(rlo5.state);
+        var r_loop: string = rlo6.name;
+        var rlo7: asmcore.LabelOut = asmcore.fresh_label(rlo6.state);
+        var r_none: string = rlo7.name;
+        var rlo8: asmcore.LabelOut = asmcore.fresh_label(rlo7.state);
+        var r_done: string = rlo8.name;
+        s = rlo8.state;
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
         // Unsigned compare against 255 rejects a negative byte and one above
-        // the range in a single test.
+        // the range in a single test. Checked once, so neither loop below
+        // needs a per-iteration guard.
         s = s.write("    cmp x1, #255\n    b.hi " + r_none + "\n");
         // Clamp `from` down to the last index; an empty string has none.
         s = s.write("    sub x3, x3, #1\n    cmp x3, #0\n    b.lt " + r_none + "\n");
         s = s.write("    cmp x2, x3\n    b.le " + r_ok + "\n    mov x2, x3\n");
         s = s.write(r_ok + ":\n");
-        s = s.write("    cmp x2, #0\n    b.lt " + r_none + "\n");
+        s = s.write("    dup v1.16b, w1\n");
+        // Vector loop while a whole block still fits BELOW the cursor. That
+        // bound keeps the load in bounds at the LOW end, where memchr's
+        // "16 or more left" keeps it in bounds at the high end. A negative
+        // `from` fails this compare and lands on the tail's guard.
+        s = s.write("    cmp x2, #15\n    b.lt " + r_tail + "\n");
+        s = s.write("    sub x5, x2, #15\n    add x6, x0, x5\n");
+        s = s.write(r_vec + ":\n");
+        s = s.write("    ld1 {v0.16b}, [x6]\n    cmeq v0.16b, v0.16b, v1.16b\n");
+        s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
+        s = s.write("    cbz x7, " + r_next + "\n");
+        s = s.write("    clz x4, x7\n    mov x3, #63\n    sub x4, x3, x4\n    lsr x4, x4, #2\n");
+        s = s.write("    add x2, x5, x4\n    b " + r_done + "\n");
+        s = s.write(r_next + ":\n");
+        s = s.write("    sub x5, x5, #16\n    cmp x5, #0\n    b.lt " + r_vecdone + "\n");
+        s = s.write("    sub x6, x6, #16\n    b " + r_vec + "\n");
+        // The next block would start below 0, so the untested bytes are
+        // [0, base-1] where base is the block just cleared. Restore it and
+        // hand that cursor to the scalar tail.
+        s = s.write(r_vecdone + ":\n    add x5, x5, #15\n    mov x2, x5\n");
+        // Scalar tail: the final 0..14 bytes, and the whole algorithm for a
+        // cursor that never had a full block beneath it. The guard sits HERE
+        // rather than before the vector loop because the tail has TWO entry
+        // paths, and the vector one hands over `base - 1` — which is -1 when
+        // the last block started at 0, so a guard only at the top leaves that
+        // path reading [data - 1].
+        s = s.write(r_tail + ":\n    cmp x2, #0\n    b.lt " + r_none + "\n");
         s = s.write(r_loop + ":\n");
         s = s.write("    ldrb w4, [x0, x2]\n");
         s = s.write("    cmp x4, x1\n    b.eq " + r_done + "\n");

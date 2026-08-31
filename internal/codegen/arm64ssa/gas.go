@@ -3039,14 +3039,21 @@ func emitMemchrHelper(w func(string, ...any)) {
 // emitRmemchrHelper writes __fern_rmemchr(s, byte, from) -> the index of the
 // LAST `byte` at or before `from`, or -1 (docs/ATLAS-PLATFORM-PLAN.md §3).
 //
-// SCALAR, per §3.4's "correct in every backend first, fast one backend at a
-// time" — and this backend is listed last in that ordering for the reason its
-// siblings record: it was the seventh of seven and the one an adoption
-// forgets, so it gets the lowering at the same time as the other six rather
-// than after.
+// NEON, 16 bytes an iteration, walking DOWN: the block ENDING at the cursor is
+// loaded at `cursor - 15`.
 //
-// One-word strings with the length at [ptr-4], so the three arguments land in
-// x0/x1/x2 with no slot arithmetic. Leaf: no frame.
+// The mask extraction is __memchr's read backwards. shrn gives four mask bits
+// per input byte, so __memchr divides the LOWEST set bit by four; here the
+// answer is the HIGHEST, and arm64 has no find-highest instruction — `clz`
+// counts leading zeros, so the bit index is 63 - clz and the lane is that over
+// four. x86-64 gets the same step in one instruction (bsr), which is the only
+// place these two vector bodies differ in shape rather than in constants.
+//
+// Strings on this backend are ONE word (the data pointer) with the length at
+// [ptr-4], so the three arguments land in x0/x1/x2 with no slot arithmetic —
+// where the native arm64 twin spends a frame unboxing a two-word SSO string
+// before it can start. Leaf: no frame, and every register it touches
+// (x0..x5, x8..x12, v0/v1) is caller-saved.
 //
 // The clamp is __memchr's mirrored: a forward scan clamps `from` UP to 0, a
 // backward scan clamps it DOWN to len-1, so a negative `from` finds nothing.
@@ -3055,7 +3062,7 @@ func emitRmemchrHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__fern_rmemchr"))
 	w("\tldur w3, [x0, #-4]") // len
 	// A byte outside 0..255 can never occur; ONE unsigned compare covers
-	// both ends, checked once so the loop needs no per-iteration guard.
+	// both ends, checked once so neither loop needs a per-iteration guard.
 	w("\tcmp x1, #255")
 	w("\tb.hi .Lssa_rmemchr_none")
 	// Clamp `from` down to the last index; an empty string has none.
@@ -3065,6 +3072,51 @@ func emitRmemchrHelper(w func(string, ...any)) {
 	w("\tb.le .Lssa_rmemchr_from_ok")
 	w("\tmov w2, w3")
 	w(".Lssa_rmemchr_from_ok:")
+	w("\tdup v1.16b, w1")
+	// Vector loop while a whole block still fits BELOW the cursor. That bound
+	// keeps the load in bounds at the LOW end, where __memchr's "16 or more
+	// left" keeps it in bounds at the high end. A negative `from` fails this
+	// compare and lands on the tail's guard.
+	w("\tcmp w2, #15")
+	w("\tb.lt .Lssa_rmemchr_tail")
+	// w10 = block base index, x11 = its address. Both are carried across
+	// iterations and stepped by 16 rather than recomputed from the cursor.
+	w("\tsub w10, w2, #15")
+	w("\tadd x11, x0, w10, uxtw")
+	w(".Lssa_rmemchr_vec:")
+	w("\tld1 {v0.16b}, [x11]")
+	w("\tcmeq v0.16b, v0.16b, v1.16b")
+	w("\tshrn v0.8b, v0.8h, #4")
+	w("\tfmov x12, d0")
+	w("\tcbz x12, .Lssa_rmemchr_next")
+	// Highest set bit -> lane. Four mask bits per input byte, hence the >>2;
+	// 63 - clz because clz counts from the TOP and the rightmost match is the
+	// highest set bit.
+	w("\tclz x8, x12")
+	w("\tmov x9, #63")
+	w("\tsub x8, x9, x8")
+	w("\tlsr x8, x8, #2")
+	w("\tadd w0, w10, w8") // x0's base is dead from here
+	w("\tret")
+	w(".Lssa_rmemchr_next:")
+	w("\tsub w10, w10, #16")
+	w("\ttbnz w10, #31, .Lssa_rmemchr_vecdone")
+	w("\tsub x11, x11, #16")
+	w("\tb .Lssa_rmemchr_vec")
+	// The next block would start below 0, so the untested bytes are
+	// [0, base-1] where base is the block just cleared. Restore it and hand
+	// that cursor to the scalar tail.
+	w(".Lssa_rmemchr_vecdone:")
+	w("\tadd w10, w10, #15")
+	w("\tmov w2, w10")
+	// Scalar tail: the final 0..14 bytes, and the whole algorithm for a cursor
+	// that never had a full block beneath it.
+	w(".Lssa_rmemchr_tail:")
+	// Checked HERE rather than before the vector loop, because the tail has
+	// TWO entry paths: a cursor with no full block beneath it, and the vector
+	// loop running out. The second hands over `base - 1`, which is -1 when the
+	// last block started at 0 — a guard only at the top leaves that path
+	// reading [data - 1].
 	w("\ttbnz w2, #31, .Lssa_rmemchr_none")
 	w(".Lssa_rmemchr_scan:")
 	// w2 is non-negative here, so `mov w4, w2` zero-extends into x4 for the
