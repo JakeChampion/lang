@@ -793,9 +793,20 @@ construction, and what it exists to pin is the combinator timing.
 One bridge is left, in `std/tcp`'s serve loop: the request buffer is
 still text-typed because `http_parse_request` and `HttpRequest.body`
 are. That is the HTTP MESSAGE layer rather than the transport, and it
-crosses the wasi-http canonical ABI in both compilers (the incoming
-body is marshalled into a two-word `string` field at a hardcoded
-offset), so it is its own slice on #5714 — the last one.
+is its own slice on #5714 — the last one. Its blast radius is the
+wasi-http canonical ABI, where the incoming body is marshalled into a
+two-word `string` field at an offset the wrapper hardcodes. That is
+NATIVE ONLY: `wasm32-wasi-http` has no self-host counterpart (#6636),
+so `internal/codegen/wasmbin` is the only marshalling site, and the
+self-host needs just its two `HttpRequest` declarations
+(`examples/self_host/builtins.fern`, `parser.fern`) moved to `u8[]` so
+the layouts still agree.
+
+The same slice should make the request line and header block reject
+non-ASCII rather than reinterpret it. `method` / `path` / header names
+and values are attacker-supplied bytes today and are turned into
+`string` unchecked, so they are the same hazard one layer up from the
+body.
 
 Costs, stated honestly:
 
