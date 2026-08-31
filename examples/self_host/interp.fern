@@ -2533,6 +2533,28 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             _ => { return v_err("__memchr: first arg must be a string"); }
         }
     }
+    // `__rmemchr(s, byte, from)` — __memchr's backward sibling. The clamp is
+    // the mirrored one and it is the only real difference: a forward scan
+    // clamps `from` UP to 0, so this clamps it DOWN to len-1 and a negative
+    // `from` finds nothing.
+    if (name == "__rmemchr") {
+        if (args.len() != 3) { return v_err("__rmemchr: expected 3 args (s, byte, from)"); }
+        if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) { return v_err("__rmemchr: byte and start must be integers"); }
+        match (args[0]) {
+            VString(s) => {
+                var rwant: i32 = vint_bits(args[1]);
+                if (rwant < 0 || rwant > 255) { return v_int(-1); }
+                var ri: i32 = vint_bits(args[2]);
+                if (ri > s.v.len() - 1) { ri = s.v.len() - 1; }
+                while (ri >= 0) {
+                    if ((s.v[ri] as i32) == rwant) { return v_int(ri); }
+                    ri = ri - 1;
+                }
+                return v_int(-1);
+            },
+            _ => { return v_err("__rmemchr: first arg must be a string"); }
+        }
+    }
     if (name == "__ascii_run") {
         if (args.len() != 2) { return v_err("__ascii_run: expected 2 args (s, from)"); }
         if (!is_i32_arg(args[1])) { return v_err("__ascii_run: start must be an integer"); }

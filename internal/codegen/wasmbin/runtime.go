@@ -271,6 +271,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_ascii_run")
+				case "__fern_rmemchr":
+					// The backward byte search. Scalar for now, so it
+					// reads every byte through str_byte rather than
+					// only the inline ones — one path that is correct
+					// for both string forms.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_rmemchr")
 				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -1328,6 +1336,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildAsciiRunBody,
+	},
+	"__fern_rmemchr": {
+		// (data, len, byte, from) → i32 index of the LAST match, or -1.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildRmemchrBody,
 	},
 	"__fern_print": {
 		// (data, len) → ()
@@ -3676,6 +3690,97 @@ func buildStrLenBody(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 1)
 	body = inst.InstEnd(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildRmemchrBody assembles wasm bytes for __fern_rmemchr: the index of the
+// LAST occurrence of `byte` at or before `from`, or -1.
+//
+// SCALAR, per docs/ATLAS-PLATFORM-PLAN.md §3.4's "correct in every backend
+// first, fast one backend at a time". That also lets it be ONE path where the
+// vector kernels need two: reading every byte through __fern_str_byte is
+// correct for both the heap form and the inline (SSO) form, which has no
+// address at all. A vector version would have to split them again.
+//
+// The clamp is __memchr's mirrored: a forward scan clamps `from` UP to 0, a
+// backward scan clamps it DOWN to len-1, so a negative `from` finds nothing.
+//
+// Locals after the four params: $n (4), $i (5).
+func buildRmemchrBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pData = 0
+		pLen  = 1
+		pByte = 2
+		pFrom = 3
+		lN    = 4
+		lI    = 5
+	)
+	var body []byte
+
+	// A byte outside 0..255 can never occur; checked once so the loop needs
+	// no per-iteration guard.
+	body = inst.InstLocalGet(body, pByte)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstLocalGet(body, pByte)
+	body = inst.InstI32Const(body, 255)
+	body = numeric.InstI32GtS(body)
+	body = numeric.InstI32Or(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, -1)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
+	// $n = logical length.
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lN)
+
+	// $i = min(from, $n - 1). An empty string leaves $i negative, which the
+	// loop guard turns straight into the miss.
+	body = inst.InstLocalGet(body, pFrom)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Sub(body)
+	body = numeric.InstI32GtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lN)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstEnd(body)
+
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstCall(body, strByte)
+	body = inst.InstLocalGet(body, pByte)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	body = inst.InstI32Const(body, -1)
+	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32) // $n, $i
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildMemchrBody assembles wasm bytes for __fern_memchr.

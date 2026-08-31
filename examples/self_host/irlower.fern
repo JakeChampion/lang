@@ -10522,6 +10522,19 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!mc2.ok) { return mc2; }
         return mc2.emit(ir.op_memchr());
     }
+    // __rmemchr(s, byte, from) → i32 (ATLAS-PLATFORM-PLAN §3.3, memchr's
+    // nominated sibling). Identical three-operand substitutable-op shape; the
+    // difference is entirely inside the backends, where `from` clamps down to
+    // len-1 rather than up to 0.
+    if (cid.name == "__rmemchr" && c.args.len() == 3) {
+        var rm0: LowerState = lower_expr(c.args[0], s);
+        if (!rm0.ok) { return rm0; }
+        var rm1: LowerState = lower_expr(c.args[1], rm0);
+        if (!rm1.ok) { return rm1; }
+        var rm2: LowerState = lower_expr(c.args[2], rm1);
+        if (!rm2.ok) { return rm2; }
+        return rm2.emit(ir.op_rmemchr());
+    }
     // __ascii_run(s, from) → i32 (ATLAS-PLATFORM-PLAN §3, second kernel). Two
     // operands, same substitutable-op shape as __memchr; the miss value is the
     // LENGTH rather than -1, so callers can skip a run branch-free.

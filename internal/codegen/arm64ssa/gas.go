@@ -829,6 +829,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__alloc_reuse":             emitAllocReuseHelper,
 	"__str_idx":                 emitStrIdxHelper,
 	"__fern_memchr":             emitMemchrHelper,
+	"__fern_rmemchr":            emitRmemchrHelper,
 	"__fern_ascii_run":          emitAsciiRunHelper,
 	"__arr_idx":                 emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":               emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
@@ -3032,6 +3033,53 @@ func emitMemchrHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_memchr_none:")
 	w("\tmov x0, #-1")
+	w("\tret")
+}
+
+// emitRmemchrHelper writes __fern_rmemchr(s, byte, from) -> the index of the
+// LAST `byte` at or before `from`, or -1 (docs/ATLAS-PLATFORM-PLAN.md §3).
+//
+// SCALAR, per §3.4's "correct in every backend first, fast one backend at a
+// time" — and this backend is listed last in that ordering for the reason its
+// siblings record: it was the seventh of seven and the one an adoption
+// forgets, so it gets the lowering at the same time as the other six rather
+// than after.
+//
+// One-word strings with the length at [ptr-4], so the three arguments land in
+// x0/x1/x2 with no slot arithmetic. Leaf: no frame.
+//
+// The clamp is __memchr's mirrored: a forward scan clamps `from` UP to 0, a
+// backward scan clamps it DOWN to len-1, so a negative `from` finds nothing.
+func emitRmemchrHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_rmemchr"))
+	w("\tldur w3, [x0, #-4]") // len
+	// A byte outside 0..255 can never occur; ONE unsigned compare covers
+	// both ends, checked once so the loop needs no per-iteration guard.
+	w("\tcmp x1, #255")
+	w("\tb.hi .Lssa_rmemchr_none")
+	// Clamp `from` down to the last index; an empty string has none.
+	w("\tsub w3, w3, #1")
+	w("\ttbnz w3, #31, .Lssa_rmemchr_none")
+	w("\tcmp w2, w3")
+	w("\tb.le .Lssa_rmemchr_from_ok")
+	w("\tmov w2, w3")
+	w(".Lssa_rmemchr_from_ok:")
+	w("\ttbnz w2, #31, .Lssa_rmemchr_none")
+	w(".Lssa_rmemchr_scan:")
+	// w2 is non-negative here, so `mov w4, w2` zero-extends into x4 for the
+	// plain register-offset load.
+	w("\tmov w4, w2")
+	w("\tldrb w5, [x0, x4]")
+	w("\tcmp w5, w1")
+	w("\tb.eq .Lssa_rmemchr_found")
+	w("\tsub w2, w2, #1")
+	w("\ttbz w2, #31, .Lssa_rmemchr_scan")
+	w(".Lssa_rmemchr_none:")
+	w("\tmov x0, #-1")
+	w("\tret")
+	w(".Lssa_rmemchr_found:")
+	w("\tmov x0, x2")
 	w("\tret")
 }
 

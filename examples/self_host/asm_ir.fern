@@ -3468,6 +3468,45 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(l_done + ":\n    pushq %rdx\n");
         return s;
     }
+    if (o.kind_tag == 234) {  // rmemchr
+        // operand stack [box, byte, from] (from on top) -> the index of the
+        // LAST `byte` at or before `from`, or -1.
+        //
+        // SCALAR: §3.4 of ATLAS-PLATFORM-PLAN orders a new kernel "correct in
+        // every backend first, fast one backend at a time", so this lands
+        // beside its six siblings and is vectorised later.
+        //
+        // The clamp is memchr's mirrored, and it is the whole difference
+        // between the two bodies: a forward scan clamps `from` UP to 0, a
+        // backward scan clamps it DOWN to len-1, so a negative `from` finds
+        // nothing here.
+        var rlo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var r_ok: string = rlo.name;
+        var rlo2: asmcore.LabelOut = asmcore.fresh_label(rlo.state);
+        var r_loop: string = rlo2.name;
+        var rlo3: asmcore.LabelOut = asmcore.fresh_label(rlo2.state);
+        var r_none: string = rlo3.name;
+        var rlo4: asmcore.LabelOut = asmcore.fresh_label(rlo3.state);
+        var r_done: string = rlo4.name;
+        s = rlo4.state;
+        s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        // A byte outside 0..255 can never match. One UNSIGNED compare covers
+        // both ends, checked once so the loop needs no per-iteration guard.
+        s = s.write("    cmpq $255, %rcx\n    ja " + r_none + "\n");
+        // Clamp `from` down to the last index; an empty string has none.
+        s = s.write("    subq $1, %r8\n    cmpq $0, %r8\n    jl " + r_none + "\n");
+        s = s.write("    cmpq %r8, %rdx\n    jle " + r_ok + "\n    movq %r8, %rdx\n");
+        s = s.write(r_ok + ":\n");
+        s = s.write("    cmpq $0, %rdx\n    jl " + r_none + "\n");
+        s = s.write(r_loop + ":\n");
+        s = s.write("    movzbq (%rax,%rdx), %r9\n");
+        s = s.write("    cmpq %rcx, %r9\n    je " + r_done + "\n");
+        s = s.write("    subq $1, %rdx\n    cmpq $0, %rdx\n    jge " + r_loop + "\n");
+        s = s.write(r_none + ":\n    movq $-1, %rdx\n");
+        s = s.write(r_done + ":\n    pushq %rdx\n");
+        return s;
+    }
     if (o.kind_tag == 227) {  // ascii_run
         // operand stack [box, from] (from on top) -> the index of the first
         // byte at or after `from` with its high bit set, or the LENGTH.

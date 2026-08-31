@@ -680,6 +680,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesMemchr {
 		g.emitMemchrRuntime()
 	}
+	if g.usesRmemchr {
+		g.emitRmemchrRuntime()
+	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
 	}
@@ -941,6 +944,8 @@ type generator struct {
 	usesAsciiRun bool
 	// usesMemchr gates the SSE2 byte-search kernel (__fern_memchr).
 	usesMemchr bool
+	// usesRmemchr gates its backward sibling (__fern_rmemchr).
+	usesRmemchr bool
 	// usesF64Trans gates the f64 transcendental bundle —
 	// __fern_{exp,log,sin,cos,pow}_f64 and its shared .rodata
 	// coefficient table. One flag for all five because `pow` is
@@ -1326,6 +1331,8 @@ func (g *generator) recordUse(target string) {
 		g.usesRandomI32 = true // the lazy first-call draw
 	case "__fern_memchr":
 		g.usesMemchr = true
+	case "__fern_rmemchr":
+		g.usesRmemchr = true
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
@@ -7975,6 +7982,61 @@ func (g *generator) emitMemchrRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_memchr, .-__fern_memchr")
+}
+
+// emitRmemchrRuntime emits `__fern_rmemchr(s, byte, from) -> i32`: the index
+// of the LAST occurrence of `byte` at or before `from`, or -1.
+//
+// SCALAR, and deliberately so: docs/ATLAS-PLATFORM-PLAN.md §3.4 orders a new
+// kernel "correct in every backend first, fast one backend at a time", so no
+// caller can be written against a lowering that does not exist yet.
+// Vectorising this body is a later slice and changes nothing above it.
+//
+// The clamp is __memchr's mirrored, which is the whole difference between the
+// two and the thing a reader porting this gets wrong: a forward scan clamps
+// `from` UP to 0, so a backward scan clamps it DOWN to len-1. A negative
+// `from` therefore finds nothing here, where in __memchr it means "the whole
+// string".
+func (g *generator) emitRmemchrRuntime() {
+	g.line("")
+	g.line(".globl __fern_rmemchr")
+	g.line(".type __fern_rmemchr, @function")
+	g.label("__fern_rmemchr")
+	// rdi = string, esi = byte, edx = from.
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	// A byte outside 0..255 can never occur. Checked once, so the loop needs
+	// no per-iteration guard.
+	g.emit("cmp esi, 255")
+	g.emit("ja .Lrmemchr_miss")
+	// Clamp `from` down to the last index; an empty string has none.
+	g.emit("dec ecx") // ecx = len - 1
+	g.emit("js .Lrmemchr_miss")
+	g.emit("cmp edx, ecx")
+	g.emit("jle .Lrmemchr_from_ok")
+	g.emit("mov edx, ecx")
+	g.label(".Lrmemchr_from_ok")
+	g.emit("test edx, edx")
+	g.emit("js .Lrmemchr_miss")
+	g.label(".Lrmemchr_scan")
+	g.emit("movzx eax, byte ptr [rdi + rdx]")
+	g.emit("cmp eax, esi")
+	g.emit("je .Lrmemchr_hit")
+	g.emit("dec edx")
+	g.emit("jns .Lrmemchr_scan")
+	g.label(".Lrmemchr_miss")
+	g.emit("mov eax, -1")
+	g.emit("jmp .Lrmemchr_ret")
+	g.label(".Lrmemchr_hit")
+	g.emit("mov eax, edx")
+	g.label(".Lrmemchr_ret")
+	g.emit("add rsp, 16")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_rmemchr, .-__fern_rmemchr")
 }
 
 func (g *generator) emitStrcmpRuntime() {

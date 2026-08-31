@@ -708,9 +708,28 @@ sub-opcode is usually another valid instruction and a module that validates and
 runs proves nothing about which one was emitted.
 
 **Step 3 is therefore complete: the kernels are vector on all seven backends.**
-The next increment for this tier is a third kernel rather than another lowering
-— `__str_rfind_from`'s backward scan is the sibling §3.3 nominates, and the
-SwissTable group probe is the one with the widest blast radius.
+
+**`__rmemchr`, the third kernel**, is §3.3's nominated sibling and follows the
+same sequence from the top: total and SCALAR on all seven backends first, so
+nothing can depend on a lowering that does not exist. Its adoption
+(`__str_rfind_from`'s `nLen == 1` tier, "the overwhelmingly common case") and
+its vector bodies are the next two steps.
+
+It earns the slot by the input-vs-needle rule below: like `__memchr` its vector
+length is the HAYSTACK. The one thing that is not a mirror image of the forward
+scan — and so the one thing each of the seven ports can get wrong — is the
+clamp. A forward scan clamps `from` UP to 0; a backward scan clamps it DOWN to
+len-1, so a negative `from` finds nothing here where in `__memchr` it means "the
+whole string". Its corpus therefore pins both ends explicitly rather than
+sharing a generator with the forward one.
+
+Two things the build confirmed that are worth carrying to a fourth kernel.
+First, the assembler prerequisite is now genuinely nothing for a scalar body —
+the whole §3.3a cost was vector encodings, and a new op that lowers to byte
+loops needs none. Second, the extension-tag comment in `ir.fern` said "NEXT FREE
+EXTENSION ID: 233" while `read_file_bytes` already held 233. That is exactly the
+merge drift the paragraph beneath it warns about, and the warning's own advice —
+re-grep for the number rather than trusting the line — is what caught it.
 
 ### 3.5 Testing
 
