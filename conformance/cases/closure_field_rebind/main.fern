@@ -1,0 +1,88 @@
+// Rebinding a CLOSURE-TYPED STRUCT FIELD to a local, then calling the local.
+// The self-host compiled this and the binary segfaulted (#7862): a fn-typed
+// field holds a closure BOX, and a call through such a local has to load the
+// code pointer out of the box's slot 0 and pass the box itself as the
+// environment. The binding was never marked a closure local, so the call
+// treated the box ADDRESS as the code pointer and jumped into heap data.
+// Interp and native both answered correctly throughout, so only an execution
+// differential could see it — no diagnostic ever fired.
+//
+// The mark is set for a closure-box TUPLE element (`var f = t.0`); the
+// named-struct-field sibling (`var g = h.f`) was missing, and the same walk
+// that recovers a tuple-typed field's element tags is where it belongs.
+//
+// Positions, so a future narrowing is visible:
+//   local   — the struct built in the same body.
+//   param   — the struct arrives as a PARAMETER, so nothing in the body names
+//             its type; this reaches the field through expr_struct_type on a
+//             parameter slot rather than a literal.
+//   lambda  — the field holds a lambda rather than a named function, so the
+//             box is built by `__mkclo$` rather than from a const_func.
+//   two     — arity 2, so a fix that hard-codes one argument is visible.
+//   zero    — arity 0: `()` must reach the callee with the env still first.
+//   twice   — one rebinding called twice, so a fix that consumes the box on
+//             the first call is visible.
+//   direct  — a control: `h.f(i)` without the rebinding, which lowered
+//             correctly before this change and must keep doing so.
+//
+// Sentinel is 251, above the `% 113` the success path returns (13).
+struct H { f: (i32) => i32 }
+struct A { g: (i32, i32) => i32 }
+struct Z { z: () => i32 }
+
+function inc(x: i32): i32 { return x + 1; }
+function add(a: i32, b: i32): i32 { return a + b; }
+function seven(): i32 { return 7; }
+
+function local_rebind(i: i32): i32 {
+    var h: H = H { f: inc };
+    var g = h.f;
+    return g(i);
+}
+
+function param_rebind(h: H, i: i32): i32 {
+    var g = h.f;
+    return g(i);
+}
+
+function lambda_rebind(i: i32): i32 {
+    var h: H = H { f: (x: i32): i32 => x * 3 };
+    var g = h.f;
+    return g(i);
+}
+
+function two_args(i: i32): i32 {
+    var a: A = A { g: add };
+    var q = a.g;
+    return q(i, i + 1);
+}
+
+function zero_args(): i32 {
+    var z: Z = Z { z: seven };
+    var q = z.z;
+    return q();
+}
+
+function twice(i: i32): i32 {
+    var h: H = H { f: inc };
+    var g = h.f;
+    return g(i) + g(i * 2);
+}
+
+// Control: the direct field call, which lowered correctly before the fix.
+function direct(i: i32): i32 {
+    var h: H = H { f: inc };
+    return h.f(i);
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 49) {
+        acc = acc + local_rebind(i) + param_rebind(H { f: inc }, i) + lambda_rebind(i);
+        acc = acc + two_args(i) + zero_args() + twice(i) + direct(i);
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 251; }
+    return acc % 113;
+}
