@@ -87,7 +87,12 @@ pub struct TypeTuple { elements: Type[] }
 // (a: T, b: T): RT { … }` or a binding to one. param_types
 // captures the declared parameter types in order; ret_type is
 // the body's declared return type.
-pub struct TypeFunc { param_types: Type[], ret_type: Type }
+//
+// params_known separates a param list that is genuinely empty (a `() => R`
+// callable) from one that was never recorded: a "fn"-coarsened struct FIELD
+// carries no param spellings, so its TypeFunc has an empty list it cannot
+// vouch for. Only a known list may be read as the callable's arity.
+pub struct TypeFunc { param_types: Type[], ret_type: Type, params_known: boolean }
 
 // TypeMap models `Map[K, V]` — a runtime hash-map keyed by K
 // values yielding V values. The actual runtime + method
@@ -330,7 +335,13 @@ function t_tuple(elements: Type[]): Type {
 }
 
 function t_func(param_types: Type[], ret_type: Type): Type {
-  return TypeFunc { param_types: param_types, ret_type: ret_type };
+  return TypeFunc { param_types: param_types, ret_type: ret_type, params_known: true };
+}
+
+// t_func_opaque builds the callable whose parameter list was never recorded,
+// so its emptiness carries no information and no caller may arity-check it.
+function t_func_opaque(ret_type: Type): Type {
+  return TypeFunc { param_types: [], ret_type: ret_type, params_known: false };
 }
 
 function t_map(key: Type, value: Type): Type {
@@ -682,6 +693,36 @@ function is_void(t: Type): boolean {
     }
   }
   return false;
+}
+
+function is_func_type(t: Type): boolean {
+  match (t) {
+    TypeFunc(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// fn_arity_of returns a callable's recorded parameter count, or -1 when `t` is
+// not callable or its parameter list was never recorded (params_known). A
+// caller checking arity must treat -1 as "no claim", not as zero.
+function fn_arity_of(t: Type): i32 {
+  match (t) {
+    TypeFunc(f) => {
+      if (!f.params_known) {
+        return 0 - 1;
+      }
+      return f.param_types.len();
+    },
+    _ => {
+      return 0 - 1;
+    }
+  }
+  return 0 - 1;
 }
 
 // type_contains_unknown reports whether `t` is unknown or has any unknown
@@ -2448,14 +2489,7 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
       // (#5986): a "fn"-coarsened FIELD's TypeFunc carries an empty param
       // list, so comparing signatures would reject constructions the
       // unknown-typed field accepted before fn fields were typed at all.
-      match (from) {
-        TypeFunc(_) => {
-          return true;
-        },
-        _ => {
-          return false;
-        }
-      }
+      return is_func_type(from);
     },
     _ => {
       return false;
@@ -2861,6 +2895,12 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
   var bound_ty: Type = s.lookup(name);
   match (bound_ty) {
     TypeFunc(tf) => {
+      // An unrecorded param list says nothing about the call, so a binding
+      // taken from a fn-typed struct field (`var h = obj.f; h(2)`) types to
+      // the declared return rather than collapsing to unknown.
+      if (!tf.params_known) {
+        return tf.ret_type;
+      }
       if (c.args.len() != tf.param_types.len()) {
         return t_unknown("arity mismatch calling closure `" + name + "`");
       }
@@ -3872,12 +3912,11 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
       // A fn-typed field ("fn"-coarsened spelling) resolves to a TypeFunc
       // from its fn_ret sidecar (#5986), so a closure-field call `h.f()`
       // types to the declared return instead of unknown (which also E038'd
-      // as "calling non-function value"). The param list is empty — a
-      // StructFieldDecl carries no param spellings — so no caller may
-      // arity-check against it; type_assignable's fn arm is coarse for the
-      // same reason.
+      // as "calling non-function value"). A StructFieldDecl carries no param
+      // spellings, hence t_func_opaque: the empty param list is unrecorded,
+      // not arity 0. type_assignable's fn arm is coarse for the same reason.
       if (elem.type_name == "fn" && elem.fn_ret.len() > 0) {
-        ftypes = ftypes.append(t_func([], type_from_name_with_names_and_unions(elem.fn_ret, names, union_names)));
+        ftypes = ftypes.append(t_func_opaque(type_from_name_with_names_and_unions(elem.fn_ret, names, union_names)));
       } else {
         ftypes = ftypes.append(type_from_name_with_names_and_unions(elem.type_name, names, union_names));
       }
@@ -7515,13 +7554,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
     ast.ExprFieldAccess(_) => {},
     _ => {
       var calleet: Type = check_expr(c.callee, s);
-      var callee_is_fn: boolean = false;
-      match (calleet) {
-        TypeFunc(_) => {
-          callee_is_fn = true;
-        },
-        _ => {}
-      }
+      var callee_is_fn: boolean = is_func_type(calleet);
       if (!is_unknown(calleet) && !callee_is_fn) {
         out = out.append(dg_at("E038", "calling non-function value of type " + type_label(calleet), c.line, c.col));
       }
@@ -7650,6 +7683,17 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         }
         if (s.lookup_sig(id.name).name.len() == 0) {
           out = util.append_diags(out, variant_ctor_diags(id.name, c, s));
+        }
+      } else {
+        // E004 (#7311): closure / fn-value call arity. The free-function rule
+        // above is skipped for a name bound in scope, so `var g = dbl; g(1)`
+        // and a lambda bound to a local reached IR lowering unchecked: the
+        // module built and the callee read an argument the caller never
+        // pushed. A -1 arity is a callable that never recorded a parameter
+        // list, which is no claim about the call.
+        var cfa: i32 = fn_arity_of(s.lookup(id.name));
+        if (cfa >= 0 && c.args.len() != cfa) {
+          out = out.append(dg_at("E004", "function expects " + util.i32_to_string(cfa) + " arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
         }
       }
     },
@@ -8547,7 +8591,18 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             vsc = cur.bind(v.name, t_func(fpts, cur.resolve_type(lm.ret_type)));
             cur = vsc;
           },
-          _ => {}
+          _ => {
+            // A function-valued local whose init is not a lambda — `var g = dbl;`,
+            // `var g = mk();`, `var h = obj.f;` — needs the same binding, or the
+            // closure-arity E004 never sees a callee it could check. Only
+            // fn-valued inits are bound: binding every local would make
+            // `defines` true for names the free-function rules still check.
+            var ivt: Type = check_expr(v.init, cur);
+            if (is_func_type(ivt)) {
+              vsc = cur.bind(v.name, ivt);
+              cur = vsc;
+            }
+          }
         }
         out = util.append_diags(out, call_diags(v.init, vsc));
         out = util.append_diags(out, typed_array_elem_diags(v.type_name, v.init, vsc));

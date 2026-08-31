@@ -6742,8 +6742,14 @@ function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
         return (bad_param, bad, p);
     }
     p = p.advance();
+    // Same fn sidecars as an ordinary parameter: fn_param_decl_type reads an
+    // empty fn_param_types as "no parameters", so a path that leaves it blank
+    // while the spelling has some would state the wrong arity.
+    var dtr_fn_pdyn: string = peek_fn_param_dyn(p);
+    var dtr_fn_ptys: string = peek_fn_param_types(p);
     var (tr_name, tr_ret_arr, tr_fn_ret, tr_p) = parse_type_name(p);
     p = tr_p;
+    if (tr_name != "fn") { dtr_fn_pdyn = ""; dtr_fn_ptys = ""; }
     // A destructured parameter can't carry a default value.
     if (p.peek_punct() == "=") {
         return (bad_param, bad, p);
@@ -6751,7 +6757,7 @@ function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
     if (holder.len() == 0) {
         holder = "__ptuple_" + util.i32_to_string(tline) + "_" + util.i32_to_string(tcol);
     }
-    return (ast.ParamDecl { name: holder, type_name: tr_name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: tr_ret_arr, fn_ret: tr_fn_ret, fn_param_dyn: "", fn_param_types: "" },
+    return (ast.ParamDecl { name: holder, type_name: tr_name, own: false, has_default: false, default_value: e_unknown(""), ret_arr: tr_ret_arr, fn_ret: tr_fn_ret, fn_param_dyn: dtr_fn_pdyn, fn_param_types: dtr_fn_ptys },
             ParamDestr { names: names, marker: marker, synth: holder, line: tline, col: tcol }, p);
 }
 
@@ -8230,10 +8236,10 @@ function split_top_commas(s: string): string[] {
 //   is_tuple    — true for "(…)" tuples (base is "", args are the elements),
 //                 distinguishing them from a "Name[…]" generic at render time.
 //
-// Function types ("(…) => R"), `dyn`/`own`/`borrow` handles etc. are already
-// coarsed to opaque spellings ("fn", "dyn Shape", "own R") by parse_type_name, so
-// TypeRef treats them as opaque named bases (a trailing "[]" still peels off,
-// e.g. "dyn Shape[]"); it is not a source-syntax type parser.
+// `dyn`/`own`/`borrow` handles are coarsed to opaque spellings ("dyn Shape",
+// "own R") by parse_type_name, so TypeRef treats them as opaque named bases (a
+// trailing "[]" still peels off, e.g. "dyn Shape[]"); it is not a source-syntax
+// type parser.
 // TypeRef is a decoded type spelling. `is_tuple` and `is_fn` are mutually
 // exclusive shapes over the same `args` list: a tuple's args are its elements,
 // a function's are its parameters followed by its RESULT as the last entry (so
