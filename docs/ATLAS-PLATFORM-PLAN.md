@@ -799,20 +799,26 @@ instruction set at large. The next natural candidate shows it. `trim`'s inner
 question (the index of the first non-whitespace byte) is input-length and fits
 §3.1's five rules, but ASCII whitespace is four separate bytes, so a block test
 needs several compares OR'd together. A survey of the six assemblers for a
-vector bitwise OR finds it in exactly one:
+vector bitwise OR finds it in two of the six:
 
-| assembler | vector OR |
-|---|---|
-| `internal/native/x86_64` | no `por` |
-| `examples/self_host/x86_native.fern` | no `por` |
-| `internal/native/arm64` | `orr` is GPR-only, no arrangement form |
-| `examples/self_host/arm64_native.fern` | `orr` is GPR-only |
-| `internal/wasm/simd` | **`v128.or`** |
-| `examples/self_host/watbin.fern` | no `v128.or` |
+| assembler | vector OR | where the vector surface lives |
+|---|---|---|
+| `internal/native/x86_64` | **`por`** (`66 0F EB`) | `sse.go`'s `sseOps` table |
+| `examples/self_host/x86_native.fern` | missing | `mnem ==` chain |
+| `internal/native/arm64` | missing — `orr` is GPR-only, no arrangement form | `gas.go`'s `case` chain |
+| `examples/self_host/arm64_native.fern` | missing — `orr` is GPR-only | `mnem ==` chain |
+| `internal/wasm/simd` | **`v128.or`** (sub-opcode 80) | `simd.go` |
+| `examples/self_host/watbin.fern` | missing — it knows four v128 ops | `simd_opcode` |
 
-So a fifth kernel of that shape costs five encodings across five assemblers
+So a fifth kernel of that shape costs four encodings across four assemblers
 before a line of it is written. Survey first, as §3.3a's rule says; a zero from
 one kernel does not carry to the next.
+
+Survey by ENUMERATING each assembler's accepted mnemonics, not by grepping for
+one spelling. The six store their surfaces three different ways — a Go table
+keyed by mnemonic, a Go `case` chain, and a Fern `mnem ==` chain — so a grep
+shaped like one of them reports a false absence in the others. A first cut of
+this table claimed x86-64 had no `por`; it has had it since the first kernel.
 
 Two candidates on §4's input-length list do not fit §3.1 at all, which is worth
 recording so nobody re-derives it: `to_upper`/`to_lower` and the base64/hex
