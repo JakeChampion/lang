@@ -120,6 +120,19 @@ func (a *Assembler) LinkMachO(textVAddr, dataVAddr uint64) (text, data []byte, e
 		a.insns[f.at] = ADRP(f.rd, pageDelta)
 	}
 
+	for _, f := range a.adrFixups {
+		sv, ok := symVAddr(f.label)
+		if !ok {
+			return nil, nil, fmt.Errorf("arm64: adr to undefined symbol %q", f.label)
+		}
+		insnVAddr := textVAddr + uint64(f.at)*4
+		delta := int64(sv) - int64(insnVAddr)
+		if delta < -(1<<20) || delta >= 1<<20 {
+			return nil, nil, fmt.Errorf("arm64: adr to %q spans %d bytes — outside the signed 21-bit range (use adrp)", f.label, delta)
+		}
+		a.insns[f.at] = ADR(f.rd, int32(delta))
+	}
+
 	for _, f := range a.lo12Fixups {
 		sv, ok := symVAddr(f.label)
 		if !ok {

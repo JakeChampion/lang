@@ -372,6 +372,47 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tmrs x9, cntvct_el0\n\tmrs x10, cntfrq_el0\n\tmrs x0, cntfrq_el0\n\tmrs x30, cntvct_el0\n",
 		"cbz_cbnz_widths": "" +
 			"\tcbz w0, l0\n\tcbz x0, l0\n\tcbnz w1, l0\n\tcbnz x1, l0\n\tcbz w3, l0\nl0:\n\tret\n",
+		"carry_chain": "" +
+			"\tadds x0, x1, x2\n\tadcs x3, x4, x5\n\tadc x6, x7, x8\n" +
+			"\tsubs w0, w1, w2\n\tsbcs w3, w4, w5\n\tsbc w6, w7, w8\n\tngc x9, x10\n\tngcs w11, w12\n",
+		"long_multiplies": "" +
+			"\tumulh x0, x1, x2\n\tsmulh x3, x4, x5\n\tmadd x6, x7, x8, x9\n\tmadd w6, w7, w8, w9\n" +
+			"\tsmull x0, w1, w2\n\tumull x3, w4, w5\n\tsmaddl x0, w1, w2, x3\n\tumaddl x4, w5, w6, x7\n" +
+			"\tsmsubl x8, w9, w10, x11\n\tumsubl x12, w13, w14, x15\n",
+		"ccmp_chain": "" +
+			"\tcmp x0, #1\n\tccmp x1, #2, #4, eq\n\tccmp x2, x3, #0, ne\n\tccmn w4, #5, #8, gt\n" +
+			"\tccmn x5, x6, #15, le\n\tcsinc x5, x6, x7, lt\n\tcsinv w8, w9, w10, ge\n\tcsneg x11, x12, x13, vs\n" +
+			"\tcinc w8, w9, gt\n\tcinv x10, x11, lo\n\tcneg x10, x11, mi\n\tcsetm x12, hs\n\tcsetm w13, ne\n",
+		"bitfield_ops": "" +
+			"\tbfi x0, x1, #8, #16\n\tbfxil w2, w3, #4, #12\n\tubfiz x4, x5, #12, #20\n\tsbfiz w6, w7, #3, #9\n" +
+			"\textr x8, x9, x10, #24\n\textr w11, w12, w13, #7\n\tror x11, x12, #8\n\tror w13, w14, #3\n\tror x15, x16, x17\n\tror w18, w19, w20\n",
+		"logical_negated": "" +
+			"\ttst x0, x1\n\ttst w2, #0xff\n\ttst x3, x4, lsl #7\n\tands x3, x4, x5, lsl #2\n\tands w6, w7, #0xf\n" +
+			"\tbic x6, x7, x8\n\tbics w9, w10, w11\n\torn x12, x13, x14, lsr #3\n\teon w15, w16, w17\n" +
+			"\tmvn x18, x19\n\tmvn w20, w21, lsl #2\n\tnegs w20, w21\n\tnegs x22, x23\n",
+		"rev_cls_sysregs": "" +
+			"\trev x0, x1\n\trev w2, w3\n\trev32 x4, x5\n\tcls x6, x7\n\tcls w8, w9\n" +
+			"\tmov x0, fp\n\tstr x1, [fp, #-16]\n\tmsr tpidr_el0, x2\n\tmrs x3, fpcr\n\tmsr fpsr, x4\n\tmrs x5, dczid_el0\n",
+		"extended_reg_addressing": "" +
+			"\tldr x0, [x1, w2, uxtw #3]\n\tldr w3, [x4, w5, sxtw #2]\n\tstr x6, [x7, x8, sxtx]\n" +
+			"\tstr w0, [x1, w2, uxtw]\n\tldrb w9, [x10, w11, uxtw]\n\tstrb w12, [x13, w14, sxtw]\n" +
+			"\tstrh w12, [x13, x14, lsl #1]\n\tldrh w15, [x16, w17, sxtw #1]\n\tldr x18, [x19, x20, sxtx #3]\n",
+		"pairs_w_d": "" +
+			"\tldp w0, w1, [x2]\n\tstp w3, w4, [sp, #-8]!\n\tldp w5, w6, [x7], #16\n\tstp w8, w9, [x10, #4]\n" +
+			"\tldp d8, d9, [sp], #32\n\tstp d10, d11, [x12, #-16]!\n\tstp d8, d9, [sp, #16]\n\tldp d0, d1, [x2]\n",
+		"fp_fused_minmax": "" +
+			"\tfmadd d0, d1, d2, d3\n\tfmsub s4, s5, s6, s7\n\tfnmadd d8, d9, d10, d11\n\tfnmsub s12, s13, s14, s15\n" +
+			"\tfnmul d16, d17, d18\n\tfmin s19, s20, s21\n\tfmax d22, d23, d24\n\tfminnm s25, s26, s27\n\tfmaxnm d28, d29, d30\n" +
+			"\tfcsel d25, d26, d27, gt\n\tfccmp s28, s29, #12, le\n\tfcmpe d30, #0.0\n\tfcmpe s1, s2\n\tfsqrt s0, s1\n\tfabs s3, s4\n",
+		"fp32_ldst_unscaled": "" +
+			"\tldr s0, [x1]\n\tstr s2, [x3, #12]\n\tldr s4, [x5], #4\n\tstr s6, [x7, #-4]!\n" +
+			"\tldur s8, [x9, #-4]\n\tstur s10, [x11, #-8]\n\tldurh w0, [x1, #-2]\n\tsturh w2, [x3, #-2]\n" +
+			"\tldursb x4, [x5, #-1]\n\tldursb w4, [x5, #-1]\n\tldursh w6, [x7, #-2]\n\tldursh x6, [x7, #-2]\n\tldursw x8, [x9, #-4]\n",
+		"atomics_loop": "" +
+			"retry:\n\tldaxr x0, [x19]\n\tadd x0, x0, #1\n\tstlxr w1, x0, [x19]\n\tcbnz w1, retry\n\tdmb ish\n" +
+			"\tldar x2, [x19]\n\tstlr x3, [x19]\n\tldxr w4, [x20]\n\tstxr w5, w6, [x21]\n" +
+			"\tldxrb w4, [x20]\n\tldaxrh w5, [x21]\n\tstxrh w5, w6, [x21]\n\tstlxrb w7, w8, [x22]\n" +
+			"\tldarb w9, [x23]\n\tstlrh w10, [x24]\n\tdsb sy\n\tisb\n",
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -15,11 +15,13 @@ import (
 // the existing (proven) code generator unchanged and turns its textual
 // output into bytes, validated byte-for-byte against aarch64-linux-gnu-as.
 //
-// Coverage grows brick by brick. This first slice handles labels, the
-// no-op-for-.text directives, and the move / arithmetic / logical /
-// compare / multiply / branch instruction forms. Anything not yet
-// supported returns an explicit error (with the offending line) rather
-// than silently miscompiling — so coverage gaps are loud.
+// Coverage grows brick by brick: labels, the no-op-for-.text
+// directives, and the integer / bitfield / conditional / scalar-FP /
+// SIMD-byte / load-store (immediate, writeback, register and
+// extended-register offset, pairs, exclusives and barriers) instruction
+// forms. Anything not yet supported returns an explicit error (with the
+// offending line) rather than silently miscompiling — so coverage gaps
+// are loud.
 func Assemble(src string) ([]byte, error) {
 	a := NewAssembler()
 	for lineno, raw := range strings.Split(src, "\n") {
@@ -155,8 +157,37 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmMoveWide(a, mnem, ops)
 	case "add", "sub", "adds", "subs":
 		return asmAddSub(a, mnem, ops)
-	case "and", "orr", "eor", "mul", "udiv", "sdiv", "umulh", "adc", "sbc":
+	case "and", "orr", "eor", "mul", "udiv", "sdiv", "umulh", "adc", "sbc",
+		"adcs", "sbcs", "smulh", "ands", "bic", "bics", "orn", "eon":
 		return asm3Reg(a, mnem, ops)
+	case "ngc":
+		return asm2Reg(a, ops, NGC)
+	case "ngcs":
+		return asm2Reg(a, ops, NGCS)
+	case "madd":
+		return asm4Reg(a, mnem, ops, MADD)
+	case "smull", "umull", "smaddl", "umaddl", "smsubl", "umsubl":
+		return asmMulLong(a, mnem, ops)
+	case "tst":
+		return asmTst(a, ops)
+	case "mvn":
+		return asmMvn(a, ops)
+	case "negs":
+		return asm2Reg(a, ops, NEGS)
+	case "extr":
+		return asmExtr(a, ops)
+	case "ror":
+		return asmRor(a, ops)
+	case "bfi", "bfxil", "ubfiz", "sbfiz":
+		return asmBitfieldInsert(a, mnem, ops)
+	case "ccmp", "ccmn":
+		return asmCondCmp(a, mnem, ops)
+	case "csinc", "csinv", "csneg":
+		return asmCondSel(a, mnem, ops)
+	case "cinc", "cinv", "cneg":
+		return asmCondAlias(a, mnem, ops)
+	case "csetm":
+		return asmCsetm(a, ops)
 	case "csel":
 		return asmCsel(a, ops)
 	case "cset":
@@ -167,8 +198,14 @@ func assembleInsn(a *Assembler, line string) error {
 		return asm2Reg(a, ops, NEG)
 	case "clz":
 		return asm2Reg(a, ops, CLZ)
+	case "cls":
+		return asm2Reg(a, ops, CLS)
 	case "rbit":
 		return asm2Reg(a, ops, RBIT)
+	case "rev":
+		return asmRev(a, ops)
+	case "rev32":
+		return asmRev32(a, ops)
 	case "cnt":
 		return asmCnt(a, ops)
 	case "addv":
@@ -186,29 +223,39 @@ func assembleInsn(a *Assembler, line string) error {
 	case "umov":
 		return asmUmov(a, ops)
 	case "msub":
-		return asmMsub(a, ops)
+		return asm4Reg(a, mnem, ops, MSUB)
 	case "mrs":
 		return asmMrs(a, ops)
-	case "fadd", "fsub", "fmul", "fdiv":
+	case "msr":
+		return asmMsrWrite(a, ops)
+	case "fadd", "fsub", "fmul", "fdiv", "fnmul", "fmin", "fmax", "fminnm", "fmaxnm":
 		return asmFloat3(a, mnem, ops)
+	case "fmadd", "fmsub", "fnmadd", "fnmsub":
+		return asmFMulAdd(a, mnem, ops)
+	case "fcsel":
+		return asmFcsel(a, ops)
+	case "fccmp":
+		return asmFccmp(a, ops)
 	case "fneg":
 		return asmFNeg(a, ops)
 	case "fabs":
-		return asmFUnaryD(a, "fabs", ops, FABS)
+		return asmFUnary(a, "fabs", ops, FABS)
 	case "fsqrt":
-		return asmFUnaryD(a, "fsqrt", ops, FSQRT)
+		return asmFUnary(a, "fsqrt", ops, FSQRT)
 	case "frintm":
-		return asmFUnaryD(a, "frintm", ops, FRINTM)
+		return asmFUnary(a, "frintm", ops, FRINTM)
 	case "frintp":
-		return asmFUnaryD(a, "frintp", ops, FRINTP)
+		return asmFUnary(a, "frintp", ops, FRINTP)
 	case "frintz":
-		return asmFUnaryD(a, "frintz", ops, FRINTZ)
+		return asmFUnary(a, "frintz", ops, FRINTZ)
 	case "frinta":
-		return asmFUnaryD(a, "frinta", ops, FRINTA)
+		return asmFUnary(a, "frinta", ops, FRINTA)
 	case "frintn":
-		return asmFUnaryD(a, "frintn", ops, FRINTN)
+		return asmFUnary(a, "frintn", ops, FRINTN)
 	case "fcmp":
-		return asmFcmp(a, ops)
+		return asmFcmp(a, ops, false)
+	case "fcmpe":
+		return asmFcmp(a, ops, true)
 	case "fmov":
 		return asmFmov(a, ops)
 	case "fcvt":
@@ -233,12 +280,32 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmCmp(a, ops)
 	case "ldr", "str", "ldrb", "strb", "ldrh", "strh":
 		return asmLoadStore(a, mnem, ops)
-	case "ldur", "stur", "ldurb", "sturb":
+	case "ldur", "stur", "ldurb", "sturb", "ldurh", "sturh":
 		return asmUnscaled(a, mnem, ops)
 	case "ldrsb", "ldrsh", "ldrsw":
 		return asmLoadSigned(a, mnem, ops)
+	case "ldursb", "ldursh", "ldursw":
+		return asmLoadSignedUnscaled(a, mnem, ops)
 	case "stp", "ldp":
 		return asmPair(a, mnem, ops)
+	case "ldxr", "ldaxr", "ldxrb", "ldaxrb", "ldxrh", "ldaxrh":
+		return asmLoadExclusive(a, mnem, ops)
+	case "stxr", "stlxr", "stxrb", "stlxrb", "stxrh", "stlxrh":
+		return asmStoreExclusive(a, mnem, ops)
+	case "ldar", "ldarb", "ldarh":
+		return asmAcqRel(a, mnem, ops, LDAR)
+	case "stlr", "stlrb", "stlrh":
+		return asmAcqRel(a, mnem, ops, STLR)
+	case "dmb", "dsb":
+		return asmBarrier(a, mnem, ops)
+	case "isb":
+		// Only the full-system option exists for isb; `isb` and `isb sy`
+		// are the same instruction.
+		if len(ops) > 1 || (len(ops) == 1 && ops[0] != "sy") {
+			return fmt.Errorf("isb takes no operand (or sy)")
+		}
+		a.Emit(ISB())
+		return nil
 	case "b":
 		return one(ops, func(s string) { a.B(s) })
 	case "bl":
@@ -659,15 +726,24 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 	w := is32(ops[0])
-	// and/orr/eor take a logical (bitmask) immediate as the third
-	// operand; the others are register-only.
-	if strings.HasPrefix(ops[2], "#") && (mnem == "and" || mnem == "orr" || mnem == "eor") {
+	// umulh/smulh produce the high half of the 128-bit product; there is
+	// no 32-bit form of the instruction at all.
+	if (mnem == "umulh" || mnem == "smulh") && (w || is32(ops[1]) || is32(ops[2])) {
+		return fmt.Errorf("%s takes only x registers", mnem)
+	}
+	// and/orr/eor/ands take a logical (bitmask) immediate as the third
+	// operand; the others are register-only. In particular bic/orn/eon
+	// have NO immediate encoding (the bitmask class has no invert bit) —
+	// GAS aliases `bic Rd, Rn, #v` to `and Rd, Rn, #~v`, but silently
+	// complementing here would hide which instruction was actually
+	// encoded, so the alias is refused.
+	if strings.HasPrefix(ops[2], "#") {
+		var insn uint32
+		var ok bool
 		imm, err := parseImm(ops[2])
 		if err != nil {
 			return err
 		}
-		var insn uint32
-		var ok bool
 		switch mnem {
 		case "and":
 			insn, ok = ANDimm(rd, rn, uint64(imm), !w)
@@ -675,6 +751,10 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 			insn, ok = ORRimm(rd, rn, uint64(imm), !w)
 		case "eor":
 			insn, ok = EORimm(rd, rn, uint64(imm), !w)
+		case "ands":
+			insn, ok = ANDSimm(rd, rn, uint64(imm), !w)
+		default:
+			return fmt.Errorf("%s does not take an immediate operand", mnem)
 		}
 		if !ok {
 			return fmt.Errorf("%s: %s is not an encodable bitmask immediate", mnem, ops[2])
@@ -687,7 +767,11 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 	// Optional shifted-register form for the logical ops, e.g.
-	// `orr w3, w1, w1, lsl #8`. mul/udiv/sdiv/umulh/adc/sbc take no shift.
+	// `orr w3, w1, w1, lsl #8`. The multiplies, divides, and carry ops
+	// take no shift.
+	if len(ops) > 4 {
+		return fmt.Errorf("%s: too many operands", mnem)
+	}
 	if len(ops) > 3 {
 		st, amt, serr := parseRegShift(ops[3])
 		if serr != nil {
@@ -700,6 +784,16 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 			a.Emit(clearSF(ORRregShift(rd, rn, rm, st, amt), w))
 		case "eor":
 			a.Emit(clearSF(EORregShift(rd, rn, rm, st, amt), w))
+		case "ands":
+			a.Emit(clearSF(ANDSregShift(rd, rn, rm, st, amt), w))
+		case "bic":
+			a.Emit(clearSF(BICregShift(rd, rn, rm, st, amt), w))
+		case "bics":
+			a.Emit(clearSF(BICSregShift(rd, rn, rm, st, amt), w))
+		case "orn":
+			a.Emit(clearSF(ORNregShift(rd, rn, rm, st, amt), w))
+		case "eon":
+			a.Emit(clearSF(EONregShift(rd, rn, rm, st, amt), w))
 		default:
 			return fmt.Errorf("%s does not take a shifted register operand", mnem)
 		}
@@ -712,6 +806,16 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		a.Emit(clearSF(ORRreg(rd, rn, rm), w))
 	case "eor":
 		a.Emit(clearSF(EORreg(rd, rn, rm), w))
+	case "ands":
+		a.Emit(clearSF(ANDSregShift(rd, rn, rm, 0, 0), w))
+	case "bic":
+		a.Emit(clearSF(BICregShift(rd, rn, rm, 0, 0), w))
+	case "bics":
+		a.Emit(clearSF(BICSregShift(rd, rn, rm, 0, 0), w))
+	case "orn":
+		a.Emit(clearSF(ORNregShift(rd, rn, rm, 0, 0), w))
+	case "eon":
+		a.Emit(clearSF(EONregShift(rd, rn, rm, 0, 0), w))
 	case "mul":
 		a.Emit(clearSF(MUL(rd, rn, rm), w))
 	case "udiv":
@@ -721,10 +825,16 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 	case "umulh":
 		// No 32-bit form exists, so this one keeps its SF bit.
 		a.Emit(UMULH(rd, rn, rm))
+	case "smulh":
+		a.Emit(SMULH(rd, rn, rm))
 	case "adc":
 		a.Emit(clearSF(ADC(rd, rn, rm), w))
+	case "adcs":
+		a.Emit(clearSF(ADCS(rd, rn, rm), w))
 	case "sbc":
 		a.Emit(clearSF(SBC(rd, rn, rm), w))
+	case "sbcs":
+		a.Emit(clearSF(SBCS(rd, rn, rm), w))
 	}
 	return nil
 }
@@ -1065,10 +1175,39 @@ func asmCset(a *Assembler, ops []string) error {
 	return nil
 }
 
-// asmMsub handles `msub Xd, Xn, Xm, Xa`.
-func asmMsub(a *Assembler, ops []string) error {
+// asm4Reg handles the four-register multiply-accumulates
+// `madd/msub Rd, Rn, Rm, Ra` (the destination width selects W vs X).
+func asm4Reg(a *Assembler, mnem string, ops []string, enc func(rd, rn, rm, ra uint32) uint32) error {
 	if len(ops) != 4 {
-		return fmt.Errorf("msub expects Xd, Xn, Xm, Xa")
+		return fmt.Errorf("%s expects Rd, Rn, Rm, Ra", mnem)
+	}
+	var r [4]uint32
+	for i, op := range ops {
+		v, err := parseReg(op)
+		if err != nil {
+			return err
+		}
+		r[i] = v
+	}
+	a.Emit(clearSF(enc(r[0], r[1], r[2], r[3]), is32(ops[0])))
+	return nil
+}
+
+// asmMulLong handles the widening multiplies: `smaddl/umaddl/smsubl/
+// umsubl Xd, Wn, Wm, Xa` and the Ra=XZR aliases `smull/umull Xd, Wn,
+// Wm`. The widths are part of the instruction (no sf bit), so a wrong
+// register class is refused rather than reinterpreted.
+func asmMulLong(a *Assembler, mnem string, ops []string) error {
+	alias := mnem == "smull" || mnem == "umull"
+	want := 4
+	if alias {
+		want = 3
+	}
+	if len(ops) != want {
+		return fmt.Errorf("%s expects %d operands", mnem, want)
+	}
+	if is32(ops[0]) || !is32(ops[1]) || !is32(ops[2]) {
+		return fmt.Errorf("%s operands must be Xd, Wn, Wm", mnem)
 	}
 	rd, err := parseReg(ops[0])
 	if err != nil {
@@ -1082,21 +1221,399 @@ func asmMsub(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
-	ra, err := parseReg(ops[3])
-	if err != nil {
-		return err
+	ra := uint32(31)
+	if !alias {
+		if is32(ops[3]) {
+			return fmt.Errorf("%s accumulator must be an x register, got %q", mnem, ops[3])
+		}
+		if ra, err = parseReg(ops[3]); err != nil {
+			return err
+		}
 	}
-	a.Emit(clearSF(MSUB(rd, rn, rm, ra), is32(ops[0])))
+	switch mnem {
+	case "smull", "smaddl":
+		a.Emit(SMADDL(rd, rn, rm, ra))
+	case "umull", "umaddl":
+		a.Emit(UMADDL(rd, rn, rm, ra))
+	case "smsubl":
+		a.Emit(SMSUBL(rd, rn, rm, ra))
+	case "umsubl":
+		a.Emit(UMSUBL(rd, rn, rm, ra))
+	}
 	return nil
 }
 
-// sysRegs maps the system-register names the backend reads to their
-// op0:op1:CRn:CRm:op2 encoding. Only the counter-timer registers the
-// Darwin monotonic clock needs are listed; an unlisted name is an error
-// rather than a guessed encoding.
-var sysRegs = map[string][5]uint32{
-	"cntfrq_el0": {3, 3, 14, 0, 0},
-	"cntvct_el0": {3, 3, 14, 0, 2},
+// asmTst handles `tst Rn, Rm{, <shift> #amt}` and `tst Rn, #bitmask` —
+// the ANDS aliases with Rd=XZR.
+func asmTst(a *Assembler, ops []string) error {
+	if len(ops) < 2 || len(ops) > 3 {
+		return fmt.Errorf("tst expects Rn, Rm|#imm{, shift}")
+	}
+	rn, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	w := is32(ops[0])
+	if strings.HasPrefix(ops[1], "#") {
+		if len(ops) != 2 {
+			return fmt.Errorf("tst immediate form takes no shift")
+		}
+		imm, err := parseImm(ops[1])
+		if err != nil {
+			return err
+		}
+		insn, ok := ANDSimm(31, rn, uint64(imm), !w)
+		if !ok {
+			return fmt.Errorf("tst: %s is not an encodable bitmask immediate", ops[1])
+		}
+		a.Emit(insn)
+		return nil
+	}
+	rm, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	var st, amt uint32
+	if len(ops) > 2 {
+		if st, amt, err = parseRegShift(ops[2]); err != nil {
+			return err
+		}
+	}
+	a.Emit(clearSF(ANDSregShift(31, rn, rm, st, amt), w))
+	return nil
+}
+
+// asmMvn handles `mvn Rd, Rm{, <shift> #amt}` — the ORN alias with
+// Rn=XZR.
+func asmMvn(a *Assembler, ops []string) error {
+	if len(ops) < 2 || len(ops) > 3 {
+		return fmt.Errorf("mvn expects Rd, Rm{, shift}")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rm, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	var st, amt uint32
+	if len(ops) > 2 {
+		if st, amt, err = parseRegShift(ops[2]); err != nil {
+			return err
+		}
+	}
+	a.Emit(clearSF(ORNregShift(rd, 31, rm, st, amt), is32(ops[0])))
+	return nil
+}
+
+// asmExtr handles `extr Rd, Rn, Rm, #lsb`. lsb is bounded by the
+// register width; the encoders mask, so an unchecked value would wrap
+// into a different (valid) extract.
+func asmExtr(a *Assembler, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("extr expects Rd, Rn, Rm, #lsb")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	rm, err := parseReg(ops[2])
+	if err != nil {
+		return err
+	}
+	lsb, err := parseImm(ops[3])
+	if err != nil {
+		return err
+	}
+	return emitExtr(a, rd, rn, rm, lsb, is32(ops[0]))
+}
+
+func emitExtr(a *Assembler, rd, rn, rm uint32, lsb int64, w bool) error {
+	size := int64(64)
+	if w {
+		size = 32
+	}
+	if lsb < 0 || lsb >= size {
+		return fmt.Errorf("extr/ror shift %d out of range 0..%d", lsb, size-1)
+	}
+	if w {
+		a.Emit(EXTRW(rd, rn, rm, uint32(lsb)))
+	} else {
+		a.Emit(EXTR(rd, rn, rm, uint32(lsb)))
+	}
+	return nil
+}
+
+// asmRor handles the standalone rotates: `ror Rd, Rn, #n` (the
+// EXTR Rd, Rn, Rn, #n alias) and `ror Rd, Rn, Rm` (RORV).
+func asmRor(a *Assembler, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("ror expects 3 operands")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(ops[2], "#") {
+		n, err := parseImm(ops[2])
+		if err != nil {
+			return err
+		}
+		return emitExtr(a, rd, rn, rn, n, is32(ops[0]))
+	}
+	rm, err := parseReg(ops[2])
+	if err != nil {
+		return err
+	}
+	a.Emit(clearSF(RORV(rd, rn, rm), is32(ops[0])))
+	return nil
+}
+
+// asmBitfieldInsert handles the BFM/UBFM/SBFM insert aliases
+// `bfi/bfxil/ubfiz/sbfiz Rd, Rn, #lsb, #width`, range-checked like
+// asmBitfieldExtract (the raw immr/imms fields would wrap silently).
+func asmBitfieldInsert(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("%s expects Rd, Rn, #lsb, #width", mnem)
+	}
+	w32 := is32(ops[0])
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	lsb, err := parseImm(ops[2])
+	if err != nil {
+		return err
+	}
+	width, err := parseImm(ops[3])
+	if err != nil {
+		return err
+	}
+	size := int64(64)
+	if w32 {
+		size = 32
+	}
+	if lsb < 0 || width < 1 || lsb+width > size {
+		return fmt.Errorf("%s: field [%d,+%d) out of range for a %d-bit register", mnem, lsb, width, size)
+	}
+	// bfi/ubfiz/sbfiz place a field AT lsb: immr = (-lsb) mod size,
+	// imms = width-1. bfxil extracts FROM lsb: immr = lsb,
+	// imms = lsb+width-1.
+	immr := uint32((size - lsb) % size)
+	imms := uint32(width - 1)
+	if mnem == "bfxil" {
+		immr = uint32(lsb)
+		imms = uint32(lsb + width - 1)
+	}
+	switch {
+	case mnem == "ubfiz" && w32:
+		a.Emit(ubfmW(rd, rn, immr, imms))
+	case mnem == "ubfiz":
+		a.Emit(ubfmX(rd, rn, immr, imms))
+	case mnem == "sbfiz" && w32:
+		a.Emit(sbfmW(rd, rn, immr, imms))
+	case mnem == "sbfiz":
+		a.Emit(sbfmX(rd, rn, immr, imms))
+	case w32: // bfi / bfxil
+		a.Emit(bfmW(rd, rn, immr, imms))
+	default:
+		a.Emit(bfmX(rd, rn, immr, imms))
+	}
+	return nil
+}
+
+// asmCondCmp handles `ccmp/ccmn Rn, Rm|#imm5, #nzcv, <cond>`. The
+// immediate operand is UNSIGNED 0..31 (it is a 5-bit field, not an
+// add/sub imm12), and nzcv is the 4-bit flag pattern used when cond
+// fails.
+func asmCondCmp(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("%s expects Rn, Rm|#imm5, #nzcv, cond", mnem)
+	}
+	rn, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	nzcv, err := parseImm(ops[2])
+	if err != nil {
+		return err
+	}
+	if nzcv < 0 || nzcv > 15 {
+		return fmt.Errorf("%s nzcv %d out of range 0..15", mnem, nzcv)
+	}
+	cond, ok := condCodes[ops[3]]
+	if !ok {
+		return fmt.Errorf("bad condition %q", ops[3])
+	}
+	w := is32(ops[0])
+	if strings.HasPrefix(ops[1], "#") {
+		imm, err := parseImm(ops[1])
+		if err != nil {
+			return err
+		}
+		if imm < 0 || imm > 31 {
+			return fmt.Errorf("%s immediate %d out of range 0..31", mnem, imm)
+		}
+		if mnem == "ccmp" {
+			a.Emit(clearSF(CCMPimm(rn, uint32(imm), uint32(nzcv), cond), w))
+		} else {
+			a.Emit(clearSF(CCMNimm(rn, uint32(imm), uint32(nzcv), cond), w))
+		}
+		return nil
+	}
+	rm, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	if mnem == "ccmp" {
+		a.Emit(clearSF(CCMPreg(rn, rm, uint32(nzcv), cond), w))
+	} else {
+		a.Emit(clearSF(CCMNreg(rn, rm, uint32(nzcv), cond), w))
+	}
+	return nil
+}
+
+var condSelEnc = map[string]func(rd, rn, rm, cond uint32) uint32{
+	"csinc": CSINC, "csinv": CSINV, "csneg": CSNEG,
+}
+
+// asmCondSel handles `csinc/csinv/csneg Rd, Rn, Rm, <cond>`.
+func asmCondSel(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("%s expects Rd, Rn, Rm, cond", mnem)
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	rm, err := parseReg(ops[2])
+	if err != nil {
+		return err
+	}
+	cond, ok := condCodes[ops[3]]
+	if !ok {
+		return fmt.Errorf("bad condition %q", ops[3])
+	}
+	a.Emit(clearSF(condSelEnc[mnem](rd, rn, rm, cond), is32(ops[0])))
+	return nil
+}
+
+// asmCondAlias handles `cinc/cinv/cneg Rd, Rn, <cond>` — the
+// csinc/csinv/csneg aliases with Rn=Rm and the condition INVERTED
+// (like cset), so the operation applies when cond holds.
+func asmCondAlias(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Rd, Rn, cond", mnem)
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	cond, ok := condCodes[ops[2]]
+	if !ok {
+		return fmt.Errorf("bad condition %q", ops[2])
+	}
+	enc := condSelEnc["cs"+mnem[1:]]
+	a.Emit(clearSF(enc(rd, rn, rn, cond^1), is32(ops[0])))
+	return nil
+}
+
+// asmCsetm handles `csetm Rd, <cond>` — Rd = cond ? -1 : 0, the
+// CSINV Rd, XZR, XZR, invert(cond) alias.
+func asmCsetm(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("csetm expects Rd, cond")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	cond, ok := condCodes[ops[1]]
+	if !ok {
+		return fmt.Errorf("bad condition %q", ops[1])
+	}
+	a.Emit(clearSF(CSINV(rd, 31, 31, cond^1), is32(ops[0])))
+	return nil
+}
+
+// asmRev handles `rev Rd, Rn`. The X and W encodings differ in the opc
+// field, not just sf, so this cannot go through asm2Reg + clearSF.
+func asmRev(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("rev expects 2 operands")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	if is32(ops[0]) {
+		a.Emit(REVW(rd, rn))
+	} else {
+		a.Emit(REV64(rd, rn))
+	}
+	return nil
+}
+
+// asmRev32 handles `rev32 Xd, Xn`. X only: the 32-bit-wide operation is
+// spelled `rev Wd, Wn`.
+func asmRev32(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("rev32 expects 2 operands")
+	}
+	if is32(ops[0]) || is32(ops[1]) {
+		return fmt.Errorf("rev32 takes only x registers (use rev for a w register)")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(REV32(rd, rn))
+	return nil
+}
+
+// sysRegs maps the system-register names the backend uses to their
+// op0:op1:CRn:CRm:op2 encoding, plus whether msr may target them from
+// EL0. An unlisted name is an error rather than a guessed encoding.
+var sysRegs = map[string]struct {
+	enc      [5]uint32
+	writable bool
+}{
+	"cntfrq_el0": {enc: [5]uint32{3, 3, 14, 0, 0}},
+	"cntvct_el0": {enc: [5]uint32{3, 3, 14, 0, 2}},
+	"dczid_el0":  {enc: [5]uint32{3, 3, 0, 0, 7}},
+	"tpidr_el0":  {enc: [5]uint32{3, 3, 13, 0, 2}, writable: true},
+	"nzcv":       {enc: [5]uint32{3, 3, 4, 2, 0}, writable: true},
+	"fpcr":       {enc: [5]uint32{3, 3, 4, 4, 0}, writable: true},
+	"fpsr":       {enc: [5]uint32{3, 3, 4, 4, 1}, writable: true},
 }
 
 // asmMrs handles `mrs Xt, <sysreg>`.
@@ -1116,7 +1633,33 @@ func asmMrs(a *Assembler, ops []string) error {
 	if !ok {
 		return fmt.Errorf("unsupported system register %q", ops[1])
 	}
-	a.Emit(MRS(rt, f[0], f[1], f[2], f[3], f[4]))
+	a.Emit(MRS(rt, f.enc[0], f.enc[1], f.enc[2], f.enc[3], f.enc[4]))
+	return nil
+}
+
+// asmMsrWrite handles `msr <sysreg>, Xt` (the register form). A
+// read-only register (dczid_el0, the counter-timers) is refused: the
+// encoding would exist but the write traps or is UNDEFINED at EL0.
+func asmMsrWrite(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("msr expects sysreg, Xt")
+	}
+	if is32(ops[1]) {
+		return fmt.Errorf("msr source must be an x register, got %q", ops[1])
+	}
+	rt, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	name := strings.ToLower(strings.TrimSpace(ops[0]))
+	f, ok := sysRegs[name]
+	if !ok {
+		return fmt.Errorf("unsupported system register %q", ops[0])
+	}
+	if !f.writable {
+		return fmt.Errorf("system register %q is not writable", ops[0])
+	}
+	a.Emit(MSRreg(rt, f.enc[0], f.enc[1], f.enc[2], f.enc[3], f.enc[4]))
 	return nil
 }
 
@@ -1267,7 +1810,8 @@ var loadStoreSize = map[string]struct {
 // asmLoadStore handles the single-register loads and stores in every
 // addressing form: unsigned scaled offset, pre-index (`[Xn, #o]!`) and
 // post-index (`[Xn], #o`) writeback (signed imm9, all sizes), and the
-// register offset `[Xn, Xm{, lsl #3}]` (ldr/str only).
+// register/extended-register offset `[Xn, Xm{, lsl|sxtx {#s}}]` /
+// `[Xn, Wm, uxtw|sxtw {#s}]` (all sizes).
 func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 	sz := loadStoreSize[mnem]
 	is64LdrStr := mnem == "ldr" || mnem == "str"
@@ -1321,21 +1865,26 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 
-	// Register-offset: `<op> Rt, [Xn, Xm{, lsl #s}]`, for every access
-	// width (LoadStoreReg is size-general). The scaled shift, when
-	// present, must equal log2(access size) — for a byte load that is 0,
-	// so `ldrb w0, [x22, x20]` takes the unscaled form.
+	// Register-offset: `<op> Rt, [Xn, Xm{, lsl #s}]` or the
+	// extended-register `[Xn, Wm, uxtw|sxtw {#s}]` / `[Xn, Xm, sxtx {#s}]`,
+	// for every access width (LoadStoreRegExt is size-general). The
+	// amount, when present, must be 0 or log2(access size). For a byte
+	// access both are 0 — but an explicit `#0` still sets the S bit,
+	// which is how GNU as distinguishes `[x1, w2, uxtw]` from
+	// `[x1, w2, uxtw #0]`.
 	if m.hasIndex {
 		var scaled bool
 		switch {
-		case m.indexShift == 0:
+		case !m.indexHasAmt:
 			scaled = false
-		case m.indexShift == size:
+		case m.indexAmt == size:
 			scaled = true
+		case m.indexAmt == 0:
+			scaled = false
 		default:
-			return fmt.Errorf("%s register-offset shift must be lsl #0 or lsl #%d", mnem, size)
+			return fmt.Errorf("%s register-offset shift must be #0 or #%d", mnem, size)
 		}
-		a.Emit(LoadStoreReg(rt, m.base, m.index, size, sz.load, scaled))
+		a.Emit(LoadStoreRegExt(rt, m.base, m.index, size, m.indexOpt, sz.load, scaled))
 		return nil
 	}
 
@@ -1362,17 +1911,26 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 	return nil
 }
 
-// asmLoadStoreFP encodes `ldr/str Dt, <mem>` for a 64-bit FP
-// register in the unsigned-offset, post-index and pre-index modes
-// the transcendental helpers use. Single-precision (S) loads aren't
-// emitted by codegen, so they're a loud gap.
+// asmLoadStoreFP encodes `ldr/str Dt|St, <mem>` for a scalar FP
+// register in the unsigned-offset, post-index and pre-index modes the
+// transcendental helpers use, plus the unscaled fallback.
 func asmLoadStoreFP(a *Assembler, mnem string, rt uint32, single bool, ops []string) error {
-	if single {
-		return fmt.Errorf("%s of a single-precision register not supported yet", mnem)
-	}
 	load := mnem == "ldr"
+	scale := int64(8)
+	unsigned, postIdx, preIdx, unscaled := StrFP64Unsigned, StrFP64PostIdx, StrFP64PreIdx, SturFP64
+	switch {
+	case load && single:
+		unsigned, postIdx, preIdx, unscaled = LdrFP32Unsigned, LdrFP32PostIdx, LdrFP32PreIdx, LdurFP32
+	case load:
+		unsigned, postIdx, preIdx, unscaled = LdrFP64Unsigned, LdrFP64PostIdx, LdrFP64PreIdx, LdurFP64
+	case single:
+		unsigned, postIdx, preIdx, unscaled = StrFP32Unsigned, StrFP32PostIdx, StrFP32PreIdx, SturFP32
+	}
+	if single {
+		scale = 4
+	}
 
-	// Post-index: `<op> Dt, [Xn], #imm9` (3 operands).
+	// Post-index: `<op> Vt, [Xn], #imm9` (3 operands).
 	if len(ops) == 3 {
 		m, err := parseMem(ops[1])
 		if err != nil {
@@ -1385,11 +1943,7 @@ func asmLoadStoreFP(a *Assembler, mnem string, rt uint32, single bool, ops []str
 		if err != nil {
 			return err
 		}
-		if load {
-			a.Emit(LdrFP64PostIdx(rt, m.base, int32(off)))
-		} else {
-			a.Emit(StrFP64PostIdx(rt, m.base, int32(off)))
-		}
+		a.Emit(postIdx(rt, m.base, int32(off)))
 		return nil
 	}
 	if len(ops) != 2 {
@@ -1403,35 +1957,22 @@ func asmLoadStoreFP(a *Assembler, mnem string, rt uint32, single bool, ops []str
 		return fmt.Errorf("%s register-offset addressing not supported for FP yet", mnem)
 	}
 	if m.pre {
-		if load {
-			a.Emit(LdrFP64PreIdx(rt, m.base, int32(m.off)))
-		} else {
-			a.Emit(StrFP64PreIdx(rt, m.base, int32(m.off)))
-		}
+		a.Emit(preIdx(rt, m.base, int32(m.off)))
 		return nil
 	}
-	if m.off < 0 || m.off%8 != 0 {
-		// Unscaled (LDUR/STUR) territory: a negative or non-8-aligned
+	if m.off < 0 || m.off%scale != 0 {
+		// Unscaled (LDUR/STUR) territory: a negative or non-size-aligned
 		// displacement, which the scaled unsigned form cannot encode. GNU as
 		// rewrites `str d0, [x12, #-8]` to `stur` silently, so accepting the
 		// `str`/`ldr` spelling here is matching the reference assembler rather
 		// than being lenient.
 		if m.off < -256 || m.off > 255 {
-			return fmt.Errorf("%s FP offset %d is neither a non-negative multiple of 8 nor in the unscaled range [-256,255]", mnem, m.off)
+			return fmt.Errorf("%s FP offset %d is neither a non-negative multiple of %d nor in the unscaled range [-256,255]", mnem, m.off, scale)
 		}
-		if load {
-			a.Emit(LdurFP64(rt, m.base, int32(m.off)))
-		} else {
-			a.Emit(SturFP64(rt, m.base, int32(m.off)))
-		}
+		a.Emit(unscaled(rt, m.base, int32(m.off)))
 		return nil
 	}
-	imm12 := uint32(m.off) / 8
-	if load {
-		a.Emit(LdrFP64Unsigned(rt, m.base, imm12))
-	} else {
-		a.Emit(StrFP64Unsigned(rt, m.base, imm12))
-	}
+	a.Emit(unsigned(rt, m.base, uint32(m.off/scale)))
 	return nil
 }
 
@@ -1475,13 +2016,10 @@ func asmUnscaled(a *Assembler, mnem string, ops []string) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("%s expects a register and a memory operand", mnem)
 	}
-	// FP register form: `ldur/stur Dt, [Xn, #imm9]`. SIMD&FP load/store has
-	// its own opcode space, exactly as in asmLoadStore above.
+	// FP register form: `ldur/stur Dt|St, [Xn, #imm9]`. SIMD&FP load/store
+	// has its own opcode space, exactly as in asmLoadStore above.
 	if mnem == "ldur" || mnem == "stur" {
 		if vt, single, verr := parseVReg(ops[0]); verr == nil {
-			if single {
-				return fmt.Errorf("%s of a single-precision register not supported yet", mnem)
-			}
 			m, merr := parseMem(ops[1])
 			if merr != nil {
 				return merr
@@ -1492,9 +2030,14 @@ func asmUnscaled(a *Assembler, mnem string, ops []string) error {
 			if m.off < -256 || m.off > 255 {
 				return fmt.Errorf("%s offset %d out of signed 9-bit range", mnem, m.off)
 			}
-			if mnem == "ldur" {
+			switch {
+			case mnem == "ldur" && single:
+				a.Emit(LdurFP32(vt, m.base, int32(m.off)))
+			case mnem == "ldur":
 				a.Emit(LdurFP64(vt, m.base, int32(m.off)))
-			} else {
+			case single:
+				a.Emit(SturFP32(vt, m.base, int32(m.off)))
+			default:
 				a.Emit(SturFP64(vt, m.base, int32(m.off)))
 			}
 			return nil
@@ -1527,24 +2070,83 @@ func asmUnscaled(a *Assembler, mnem string, ops []string) error {
 		a.Emit(LDURB(rt, m.base, off))
 	case "sturb":
 		a.Emit(STURB(rt, m.base, off))
+	case "ldurh":
+		a.Emit(LoadStoreUnscaled(rt, m.base, off, 1, true))
+	case "sturh":
+		a.Emit(LoadStoreUnscaled(rt, m.base, off, 1, false))
 	}
 	return nil
 }
 
-// asmPair handles stp/ldp in all three addressing modes: signed offset
-// (`[Xn, #imm]`), pre-index (`[Xn, #imm]!`), and post-index
-// (`[Xn], #imm`).
-func asmPair(a *Assembler, mnem string, ops []string) error {
-	if len(ops) < 3 {
-		return fmt.Errorf("%s expects two registers and a memory operand", mnem)
+// asmLoadSignedUnscaled handles ldursb/ldursh/ldursw — the sign-
+// extending loads with a signed 9-bit unscaled offset `[Xn{, #imm9}]`.
+func asmLoadSignedUnscaled(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects a register and a memory operand", mnem)
 	}
 	rt, err := parseReg(ops[0])
 	if err != nil {
 		return err
 	}
-	rt2, err := parseReg(ops[1])
+	m, err := parseMem(ops[1])
 	if err != nil {
 		return err
+	}
+	if m.pre || m.hasIndex {
+		return fmt.Errorf("%s takes a plain [Xn, #imm9] operand", mnem)
+	}
+	if m.off < -256 || m.off > 255 {
+		return fmt.Errorf("%s offset %d out of signed 9-bit range", mnem, m.off)
+	}
+	to64 := !is32(ops[0])
+	var size uint32
+	switch mnem {
+	case "ldursb":
+		size = 0
+	case "ldursh":
+		size = 1
+	case "ldursw":
+		if !to64 {
+			return fmt.Errorf("ldursw destination must be an x register, got %q", ops[0])
+		}
+		size = 2
+	}
+	a.Emit(LoadSignedUnscaled(rt, m.base, int32(m.off), size, to64))
+	return nil
+}
+
+// asmPair handles stp/ldp — for X, W, and D register pairs — in all
+// three addressing modes: signed offset (`[Xn, #imm]`), pre-index
+// (`[Xn, #imm]!`), and post-index (`[Xn], #imm`). The register class
+// picks the encoding and the offset scale (W: 4, X/D: 8).
+func asmPair(a *Assembler, mnem string, ops []string) error {
+	if len(ops) < 3 {
+		return fmt.Errorf("%s expects two registers and a memory operand", mnem)
+	}
+	var rt, rt2 uint32
+	var err error
+	wPair, dPair := is32(ops[0]), isFReg(ops[0])
+	if dPair {
+		var s1, s2 bool
+		if rt, s1, err = parseVReg(ops[0]); err != nil {
+			return err
+		}
+		if rt2, s2, err = parseVReg(ops[1]); err != nil {
+			return err
+		}
+		if s1 || s2 {
+			return fmt.Errorf("%s of s-register pairs not supported yet", mnem)
+		}
+	} else {
+		if is32(ops[1]) != wPair {
+			return fmt.Errorf("%s registers must share a width: %q, %q", mnem, ops[0], ops[1])
+		}
+		if rt, err = parseReg(ops[0]); err != nil {
+			return err
+		}
+		if rt2, err = parseReg(ops[1]); err != nil {
+			return err
+		}
 	}
 	m, err := parseMem(ops[2])
 	if err != nil {
@@ -1570,16 +2172,160 @@ func asmPair(a *Assembler, mnem string, ops []string) error {
 	default:
 		return fmt.Errorf("%s: unsupported pair addressing", mnem)
 	}
-	// PairLoadStore scales the offset by 8 into a signed 7-bit field and masks,
+	// The pair encoders scale the offset into a signed 7-bit field and mask,
 	// so an out-of-range offset would encode as a different, valid instruction.
-	if off%8 != 0 || off < -512 || off > 504 {
-		return fmt.Errorf("%s offset %d out of range: must be a multiple of 8 in [-512, 504]", mnem, off)
+	scale := int64(8)
+	if wPair {
+		scale = 4
 	}
-	a.Emit(PairLoadStore(rt, rt2, m.base, int32(off), load, mode))
+	if off%scale != 0 || off < -64*scale || off > 63*scale {
+		return fmt.Errorf("%s offset %d out of range: must be a multiple of %d in [%d, %d]", mnem, off, scale, -64*scale, 63*scale)
+	}
+	switch {
+	case wPair:
+		a.Emit(PairLoadStoreW(rt, rt2, m.base, int32(off), load, mode))
+	case dPair:
+		a.Emit(PairLoadStoreD(rt, rt2, m.base, int32(off), load, mode))
+	default:
+		a.Emit(PairLoadStore(rt, rt2, m.base, int32(off), load, mode))
+	}
 	return nil
 }
 
-// isFReg reports whether an operand names a d-register.
+// exclSize derives the access size of an exclusive/acquire-release
+// mnemonic: a `b`/`h` suffix fixes it (and requires a W data register);
+// otherwise the data register's width selects word vs doubleword.
+func exclSize(mnem, rtOp string) (uint32, error) {
+	switch {
+	case strings.HasSuffix(mnem, "b"):
+		if !is32(rtOp) {
+			return 0, fmt.Errorf("%s data register must be a w register, got %q", mnem, rtOp)
+		}
+		return 0, nil
+	case strings.HasSuffix(mnem, "h"):
+		if !is32(rtOp) {
+			return 0, fmt.Errorf("%s data register must be a w register, got %q", mnem, rtOp)
+		}
+		return 1, nil
+	case is32(rtOp):
+		return 2, nil
+	default:
+		return 3, nil
+	}
+}
+
+// parseExclBase parses the `[Xn]` operand of the exclusive/ordered
+// accesses, which take no offset (a literal `#0` is tolerated, matching
+// GNU as).
+func parseExclBase(mnem, op string) (uint32, error) {
+	m, err := parseMem(op)
+	if err != nil {
+		return 0, err
+	}
+	if m.pre || m.hasIndex || m.off != 0 {
+		return 0, fmt.Errorf("%s takes a plain [Xn] operand", mnem)
+	}
+	return m.base, nil
+}
+
+// asmLoadExclusive handles `ldxr/ldaxr Rt, [Xn]` and the b/h variants.
+func asmLoadExclusive(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects Rt, [Xn]", mnem)
+	}
+	rt, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	size, err := exclSize(mnem, ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseExclBase(mnem, ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(LDXR(rt, rn, size, strings.HasPrefix(mnem, "lda")))
+	return nil
+}
+
+// asmStoreExclusive handles `stxr/stlxr Ws, Rt, [Xn]` and the b/h
+// variants. The status register Ws is always 32-bit.
+func asmStoreExclusive(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Ws, Rt, [Xn]", mnem)
+	}
+	if !is32(ops[0]) {
+		return fmt.Errorf("%s status register must be a w register, got %q", mnem, ops[0])
+	}
+	rs, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rt, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	size, err := exclSize(mnem, ops[1])
+	if err != nil {
+		return err
+	}
+	rn, err := parseExclBase(mnem, ops[2])
+	if err != nil {
+		return err
+	}
+	a.Emit(STXR(rs, rt, rn, size, strings.HasPrefix(mnem, "stl")))
+	return nil
+}
+
+// asmAcqRel handles the non-exclusive ordered accesses `ldar/stlr Rt,
+// [Xn]` and their b/h variants; enc is LDAR or STLR.
+func asmAcqRel(a *Assembler, mnem string, ops []string, enc func(rt, rn, size uint32) uint32) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects Rt, [Xn]", mnem)
+	}
+	rt, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	size, err := exclSize(mnem, ops[0])
+	if err != nil {
+		return err
+	}
+	rn, err := parseExclBase(mnem, ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(enc(rt, rn, size))
+	return nil
+}
+
+// barrierOpts maps a dmb/dsb option name to its 4-bit CRm encoding.
+// Only the option names the runtime uses are listed; an unlisted name
+// would encode a different (weaker) barrier.
+var barrierOpts = map[string]uint32{
+	"sy": 0xF, "st": 0xE, "ld": 0xD,
+	"ish": 0xB, "ishst": 0xA, "ishld": 0x9,
+}
+
+// asmBarrier handles `dmb/dsb <option>`. The option is required — GNU
+// as rejects the bare mnemonic.
+func asmBarrier(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 1 {
+		return fmt.Errorf("%s expects a barrier option", mnem)
+	}
+	opt, ok := barrierOpts[ops[0]]
+	if !ok {
+		return fmt.Errorf("unsupported barrier option %q", ops[0])
+	}
+	if mnem == "dmb" {
+		a.Emit(DMB(opt))
+	} else {
+		a.Emit(DSB(opt))
+	}
+	return nil
+}
+
 // isFReg reports whether an operand names a floating-point register
 // (d-double or s-single).
 func isFReg(operand string) bool {
@@ -1600,57 +2346,128 @@ func parseVReg(s string) (reg uint32, single bool, err error) {
 	return 0, false, fmt.Errorf("bad fp register %q", s)
 }
 
-// asmFloat3 handles fadd/fsub/fmul/fdiv in both precisions; the
-// destination register's width selects single vs double.
+// fpSingle turns a double-precision (ftype=01) scalar FP encoding into
+// its single-precision (ftype=00) twin by clearing bit 22, when single
+// is set.
+func fpSingle(insn uint32, single bool) uint32 {
+	if single {
+		return insn &^ (1 << 22)
+	}
+	return insn
+}
+
+// parseFPRegs parses n same-precision FP registers, returning their
+// numbers and whether they are single-precision. A precision mismatch
+// is a different instruction, so it is refused.
+func parseFPRegs(mnem string, ops []string, n int) (regs []uint32, single bool, err error) {
+	regs = make([]uint32, n)
+	for i := 0; i < n; i++ {
+		r, s, err := parseVReg(ops[i])
+		if err != nil {
+			return nil, false, err
+		}
+		if i == 0 {
+			single = s
+		} else if s != single {
+			return nil, false, fmt.Errorf("%s operands must share a precision: %q vs %q", mnem, ops[0], ops[i])
+		}
+		regs[i] = r
+	}
+	return regs, single, nil
+}
+
+// asmFloat3 handles the three-register scalar FP ops in both
+// precisions; the registers' width (d vs s) selects double vs single.
 func asmFloat3(a *Assembler, mnem string, ops []string) error {
 	if len(ops) != 3 {
 		return fmt.Errorf("%s expects 3 fp registers", mnem)
 	}
-	rd, single, err := parseVReg(ops[0])
+	r, single, err := parseFPRegs(mnem, ops, 3)
 	if err != nil {
 		return err
 	}
-	rn, _, err := parseVReg(ops[1])
+	enc := map[string]func(a, b, c uint32) uint32{
+		"fadd": FADD, "fsub": FSUB, "fmul": FMUL, "fdiv": FDIV,
+		"fnmul": FNMUL, "fmin": FMIN, "fmax": FMAX, "fminnm": FMINNM, "fmaxnm": FMAXNM,
+	}
+	a.Emit(fpSingle(enc[mnem](r[0], r[1], r[2]), single))
+	return nil
+}
+
+// asmFMulAdd handles the fused `fmadd/fmsub/fnmadd/fnmsub Dd, Dn, Dm,
+// Da` (and S) forms.
+func asmFMulAdd(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("%s expects 4 fp registers", mnem)
+	}
+	r, single, err := parseFPRegs(mnem, ops, 4)
 	if err != nil {
 		return err
 	}
-	rm, _, err := parseVReg(ops[2])
+	enc := map[string]func(a, b, c, d uint32) uint32{
+		"fmadd": FMADD, "fmsub": FMSUB, "fnmadd": FNMADD, "fnmsub": FNMSUB,
+	}
+	a.Emit(fpSingle(enc[mnem](r[0], r[1], r[2], r[3]), single))
+	return nil
+}
+
+// asmFcsel handles `fcsel Dd, Dn, Dm, <cond>` (and S).
+func asmFcsel(a *Assembler, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("fcsel expects Vd, Vn, Vm, cond")
+	}
+	r, single, err := parseFPRegs("fcsel", ops, 3)
 	if err != nil {
 		return err
 	}
-	dbl := map[string]func(a, b, c uint32) uint32{"fadd": FADD, "fsub": FSUB, "fmul": FMUL, "fdiv": FDIV}
-	sgl := map[string]func(a, b, c uint32) uint32{"fadd": FADDS, "fsub": FSUBS, "fmul": FMULS, "fdiv": FDIVS}
-	if single {
-		a.Emit(sgl[mnem](rd, rn, rm))
-	} else {
-		a.Emit(dbl[mnem](rd, rn, rm))
+	cond, ok := condCodes[ops[3]]
+	if !ok {
+		return fmt.Errorf("bad condition %q", ops[3])
 	}
+	a.Emit(fpSingle(FCSEL(r[0], r[1], r[2], cond), single))
+	return nil
+}
+
+// asmFccmp handles `fccmp Dn, Dm, #nzcv, <cond>` (and S).
+func asmFccmp(a *Assembler, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("fccmp expects Vn, Vm, #nzcv, cond")
+	}
+	r, single, err := parseFPRegs("fccmp", ops, 2)
+	if err != nil {
+		return err
+	}
+	nzcv, err := parseImm(ops[2])
+	if err != nil {
+		return err
+	}
+	if nzcv < 0 || nzcv > 15 {
+		return fmt.Errorf("fccmp nzcv %d out of range 0..15", nzcv)
+	}
+	cond, ok := condCodes[ops[3]]
+	if !ok {
+		return fmt.Errorf("bad condition %q", ops[3])
+	}
+	a.Emit(fpSingle(FCCMP(r[0], r[1], uint32(nzcv), cond), single))
+	return nil
+}
+
+// asmFUnary handles a unary scalar FP op `<op> Dd, Dn` / `Sd, Sn`
+// (fabs/fsqrt/frint*); enc is the double-precision encoder and the
+// single form is its ftype=00 twin.
+func asmFUnary(a *Assembler, mnem string, ops []string, enc func(rd, rn uint32) uint32) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects 2 fp registers", mnem)
+	}
+	r, single, err := parseFPRegs(mnem, ops, 2)
+	if err != nil {
+		return err
+	}
+	a.Emit(fpSingle(enc(r[0], r[1]), single))
 	return nil
 }
 
 // asmFNeg handles fneg Dd,Dn / Sd,Sn.
-// asmFUnaryD handles a double-precision unary FP op `<op> Dd, Dn`
-// (fabs/fsqrt/frint*). The backend only emits the double form; a
-// single-precision operand is a loud gap.
-func asmFUnaryD(a *Assembler, mnem string, ops []string, enc func(rd, rn uint32) uint32) error {
-	if len(ops) != 2 {
-		return fmt.Errorf("%s expects 2 fp registers", mnem)
-	}
-	rd, single, err := parseVReg(ops[0])
-	if err != nil {
-		return err
-	}
-	rn, _, err := parseVReg(ops[1])
-	if err != nil {
-		return err
-	}
-	if single {
-		return fmt.Errorf("%s single-precision form not supported yet", mnem)
-	}
-	a.Emit(enc(rd, rn))
-	return nil
-}
-
 func asmFNeg(a *Assembler, ops []string) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("fneg expects 2 fp registers")
@@ -1671,10 +2488,16 @@ func asmFNeg(a *Assembler, ops []string) error {
 	return nil
 }
 
-// asmFcmp handles fcmp Dn,Dm / Sn,Sm.
-func asmFcmp(a *Assembler, ops []string) error {
+// asmFcmp handles fcmp/fcmpe Dn,Dm / Sn,Sm. signaling selects fcmpe,
+// which raises Invalid Operation on a quiet NaN too (opc bit 4).
+func asmFcmp(a *Assembler, ops []string, signaling bool) error {
+	name := "fcmp"
+	var e uint32
+	if signaling {
+		name, e = "fcmpe", 0x10
+	}
 	if len(ops) != 2 {
-		return fmt.Errorf("fcmp expects 2 fp registers")
+		return fmt.Errorf("%s expects 2 fp registers", name)
 	}
 	rn, single, err := parseVReg(ops[0])
 	if err != nil {
@@ -1683,23 +2506,21 @@ func asmFcmp(a *Assembler, ops []string) error {
 	// `fcmp Dn, #0.0` — the compare-against-zero form (opc bit 3 set,
 	// Rm=0). Only the literal zero exists as an immediate; anything else
 	// is a parse error.
-	if ops[1] == "#0.0" || ops[1] == "#0" {
-		if single {
-			a.Emit(FCMPS(rn, 0) | 0x08)
-		} else {
-			a.Emit(FCMP(rn, 0) | 0x08)
+	if strings.HasPrefix(ops[1], "#") {
+		if ops[1] != "#0.0" && ops[1] != "#0" {
+			return fmt.Errorf("%s takes only the #0.0 immediate", name)
 		}
+		a.Emit(fpSingle(FCMP(rn, 0)|0x08|e, single))
 		return nil
 	}
-	rm, _, err := parseVReg(ops[1])
+	rm, rmSingle, err := parseVReg(ops[1])
 	if err != nil {
 		return err
 	}
-	if single {
-		a.Emit(FCMPS(rn, rm))
-	} else {
-		a.Emit(FCMP(rn, rm))
+	if rmSingle != single {
+		return fmt.Errorf("%s operands must share a precision: %q vs %q", name, ops[0], ops[1])
 	}
+	a.Emit(fpSingle(FCMP(rn, rm)|e, single))
 	return nil
 }
 
@@ -2047,14 +2868,18 @@ type memOperand struct {
 	off  int64
 	pre  bool // pre-index ("[Xn, #imm]!"): writeback before access
 
-	// Register-offset form ("[Xn, Xm{, lsl #s}]").
-	hasIndex   bool
-	index      uint32
-	indexShift uint32
+	// Register-offset form ("[Xn, Rm{, <extend|lsl> {#amt}}]").
+	indexOpt    uint32 // extend option: UXTW=2, LSL/UXTX=3, SXTW=6, SXTX=7
+	indexAmt    uint32
+	hasIndex    bool
+	index       uint32
+	indexIs32   bool // Wm offset register (only valid with uxtw/sxtw)
+	indexHasAmt bool // explicit #amt (matters for byte accesses: it sets S)
 }
 
 // parseMem parses a bracketed memory operand: [Xn], [Xn, #imm],
-// [Xn, #imm]! (pre-index), or the register-offset [Xn, Xm{, lsl #s}].
+// [Xn, #imm]! (pre-index), or the register-offset
+// [Xn, Xm{, lsl|sxtx {#amt}}] / [Xn, Wm, uxtw|sxtw {#amt}].
 func parseMem(s string) (memOperand, error) {
 	s = strings.TrimSpace(s)
 	var m memOperand
@@ -2099,12 +2924,44 @@ func parseMem(s string) (memOperand, error) {
 	}
 	m.hasIndex = true
 	m.index = idx
+	m.indexIs32 = isWReg(inner[1])
+	m.indexOpt = 3
 	if len(inner) == 3 {
-		sh, err := parseShiftField(inner, 2, "lsl")
-		if err != nil {
-			return m, err
+		f := strings.Fields(inner[2])
+		if len(f) == 0 || len(f) > 2 {
+			return m, fmt.Errorf("bad index extend %q", inner[2])
 		}
-		m.indexShift = sh
+		switch f[0] {
+		case "lsl":
+			if len(f) != 2 {
+				return m, fmt.Errorf("index lsl needs an amount")
+			}
+		case "uxtw":
+			m.indexOpt = 2
+		case "sxtw":
+			m.indexOpt = 6
+		case "sxtx":
+			m.indexOpt = 7
+		default:
+			return m, fmt.Errorf("unsupported index extend %q", f[0])
+		}
+		if len(f) == 2 {
+			n, err := parseImm(f[1])
+			if err != nil {
+				return m, err
+			}
+			if n < 0 {
+				return m, fmt.Errorf("negative index shift %q", inner[2])
+			}
+			m.indexAmt = uint32(n)
+			m.indexHasAmt = true
+		}
+	}
+	// The option must match the offset register's width: uxtw/sxtw widen a
+	// W register, lsl/sxtx take an X register. A mismatch is not a valid
+	// encoding (GNU as rejects it too).
+	if m.indexIs32 != (m.indexOpt == 2 || m.indexOpt == 6) {
+		return m, fmt.Errorf("index register %q does not match extend option", inner[1])
 	}
 	return m, nil
 }
@@ -2144,8 +3001,9 @@ func clearSF(insn uint32, w32 bool) uint32 {
 	return insn
 }
 
-// parseReg parses x0..x30, plus sp/xzr/wzr and the w-aliases (which
-// share register numbers with x for the forms covered so far).
+// parseReg parses x0..x30, plus sp/xzr/wzr, the lr/fp aliases, and the
+// w-registers (which share register numbers with x for the forms
+// covered so far).
 func parseReg(s string) (uint32, error) {
 	s = strings.TrimSpace(s)
 	switch s {
@@ -2153,6 +3011,8 @@ func parseReg(s string) (uint32, error) {
 		return 31, nil
 	case "lr":
 		return 30, nil
+	case "fp":
+		return 29, nil
 	}
 	if len(s) >= 2 && (s[0] == 'x' || s[0] == 'w') {
 		n, err := strconv.Atoi(s[1:])

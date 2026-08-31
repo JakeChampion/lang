@@ -331,17 +331,25 @@ func LoadStoreUnsigned(rt, rn, byteOffset, size uint32, load bool) uint32 {
 }
 
 // LoadStoreReg encodes a register-offset load/store `[Xn, Xm{, lsl #s}]`
-// for any size. option is LSL/UXTX (3); scaled sets S (Xm scaled by the
-// access size).
+// for any size, with option fixed at LSL/UXTX (3); scaled sets S (Xm
+// scaled by the access size).
 func LoadStoreReg(rt, rn, rm, size uint32, load, scaled bool) uint32 {
-	base := (size << 30) | 0x38200800 | (3 << 13)
+	return LoadStoreRegExt(rt, rn, rm, size, 3, load, scaled)
+}
+
+// LoadStoreRegExt is LoadStoreReg with the extend option explicit:
+// UXTW=2, LSL/UXTX=3, SXTW=6, SXTX=7 (bits 15:13). The W-indexed options
+// widen a 32-bit offset register; scaled sets S, shifting the index by
+// log2(access size).
+func LoadStoreRegExt(rt, rn, rm, size, option uint32, load, scaled bool) uint32 {
+	base := (size << 30) | 0x38200800
 	if load {
 		base |= 0x00400000
 	}
 	if scaled {
 		base |= 1 << 12
 	}
-	return base | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rt & regMask)
+	return base | ((rm & regMask) << 16) | ((option & 7) << 13) | ((rn & regMask) << 5) | (rt & regMask)
 }
 
 // The size-specific helpers below wrap the general encoders.
@@ -703,27 +711,6 @@ func SDIV(rd, rn, rm uint32) uint32 {
 	return 0x9AC00C00 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
-// UMULH encodes `umulh Xd, Xn, Xm` — the HIGH 64 bits of the unsigned
-// 64x64 product, which `mul` discards. 64-bit only: there is no
-// 32-bit form, so callers must not clear the SF bit on it.
-// Encoding: base 0x9BC07C00 | Rm<<16 | Rn<<5 | Rd.
-func UMULH(rd, rn, rm uint32) uint32 {
-	return 0x9BC07C00 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
-}
-
-// ADC encodes `adc Xd, Xn, Xm` — add with the carry flag, for the upper
-// limb of a multi-word sum.
-// Encoding: base 0x9A000000 | Rm<<16 | Rn<<5 | Rd.
-func ADC(rd, rn, rm uint32) uint32 {
-	return 0x9A000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
-}
-
-// SBC encodes `sbc Xd, Xn, Xm` — subtract with borrow, the ADC twin.
-// Encoding: base 0xDA000000 | Rm<<16 | Rn<<5 | Rd.
-func SBC(rd, rn, rm uint32) uint32 {
-	return 0xDA000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
-}
-
 // MSUB encodes `msub Xd, Xn, Xm, Xa` — Xd = Xa - Xn*Xm (the building
 // block for the modulo idiom: `udiv q,a,b; msub r,q,b,a`).
 // Encoding: base 0x9B008000 | Rm<<16 | Ra<<10 | Rn<<5 | Rd.
@@ -1029,6 +1016,372 @@ const (
 	CondLE uint32 = 13 // signed <=
 	CondAL uint32 = 14 // always
 )
+
+// ---- Add/subtract with carry ----
+//
+// `<op> Rd, Rn, Rm` — Rd = Rn ± Rm ± C. The 64-bit bases; clearSF gives
+// the W forms. NGC/NGCS are the Rn=XZR aliases.
+//
+// Encoding: sf op S 11010000 Rm 000000 Rn Rd
+// → ADC 0x9A000000, ADCS 0xBA000000, SBC 0xDA000000, SBCS 0xFA000000.
+func ADC(rd, rn, rm uint32) uint32 {
+	return 0x9A000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func ADCS(rd, rn, rm uint32) uint32 {
+	return 0xBA000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func SBC(rd, rn, rm uint32) uint32 {
+	return 0xDA000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func SBCS(rd, rn, rm uint32) uint32 {
+	return 0xFA000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func NGC(rd, rm uint32) uint32  { return SBC(rd, 31, rm) }
+func NGCS(rd, rm uint32) uint32 { return SBCS(rd, 31, rm) }
+
+// UMULH / SMULH encode `<op> Xd, Xn, Xm` — the high 64 bits of the
+// 128-bit product. 64-bit only: the instruction has no sf bit to clear
+// (a W form does not exist).
+//
+// Encoding: 10011011 U 10 Rm 011111 Rn Rd
+// → UMULH base 0x9BC07C00, SMULH base 0x9B407C00.
+func UMULH(rd, rn, rm uint32) uint32 {
+	return 0x9BC07C00 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func SMULH(rd, rn, rm uint32) uint32 {
+	return 0x9B407C00 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// MADD encodes `madd Xd, Xn, Xm, Xa` — Xd = Xa + Xn*Xm (MUL above is
+// the Ra=XZR special case).
+// Encoding: base 0x9B000000 | Rm<<16 | Ra<<10 | Rn<<5 | Rd.
+func MADD(rd, rn, rm, ra uint32) uint32 {
+	return 0x9B000000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// SMADDL / UMADDL / SMSUBL / UMSUBL encode the widening multiplies
+// `<op> Xd, Wn, Wm, Xa` — Xd = Xa ± sign_or_zero_extend(Wn * Wm). The
+// operand widths are fixed (no sf bit): destination and accumulator are
+// X, sources are W. SMULL/UMULL are the Ra=XZR aliases.
+//
+// Encoding: 10011011 U 01 Rm o0 Ra Rn Rd
+// → SMADDL 0x9B200000, UMADDL 0x9BA00000, SMSUBL 0x9B208000, UMSUBL 0x9BA08000.
+func SMADDL(rd, rn, rm, ra uint32) uint32 {
+	return 0x9B200000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func UMADDL(rd, rn, rm, ra uint32) uint32 {
+	return 0x9BA00000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func SMSUBL(rd, rn, rm, ra uint32) uint32 {
+	return 0x9B208000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func UMSUBL(rd, rn, rm, ra uint32) uint32 {
+	return 0x9BA08000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func SMULL(rd, rn, rm uint32) uint32 { return SMADDL(rd, rn, rm, 31) }
+func UMULL(rd, rn, rm uint32) uint32 { return UMADDL(rd, rn, rm, 31) }
+
+// ANDSregShift encodes the flag-setting `ands Rd, Rn, Rm{, <shift> #amt}`;
+// the plain register form is the shiftType=0, amount=0 case. TST is the
+// Rd=XZR alias.
+// Encoding: base 0xEA000000 (opc=11 of the logical shifted-register class).
+func ANDSregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
+	return 0xEA000000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// ANDSimm encodes `ands Rd, Rn, #imm` (logical immediate, opc=11). ok is
+// false when imm is not an encodable bitmask.
+func ANDSimm(rd, rn uint32, imm uint64, sf bool) (uint32, bool) {
+	return logicalImm(0xF2000000, rd, rn, imm, sf)
+}
+
+// BICregShift / BICSregShift / ORNregShift / EONregShift encode the
+// negated logical shifted-register ops `<op> Rd, Rn, Rm{, <shift> #amt}`
+// (bit 21 = invert Rm). The plain register forms are shiftType=0,
+// amount=0. No immediate encoding exists for these — the bitmask class
+// has no invert bit. MVN is ORN's Rn=XZR alias.
+func BICregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
+	return 0x8A200000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func BICSregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
+	return 0xEA200000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func ORNregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
+	return 0xAA200000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func EONregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
+	return 0xCA200000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// NEGS encodes `negs Xd, Xm` — SUBS Xd, XZR, Xm.
+// Encoding: base 0xEB000000 | Rm<<16 | 31<<5 | Rd.
+func NEGS(rd, rm uint32) uint32 {
+	return 0xEB000000 | ((rm & regMask) << 16) | (31 << 5) | (rd & regMask)
+}
+
+// EXTR / EXTRW encode `extr Rd, Rn, Rm, #lsb` — extract a register-width
+// field from the Rn:Rm concatenation starting at bit lsb of Rm. The
+// standalone `ror Rd, Rn, #n` is the Rn=Rm alias.
+//
+// Encoding: sf 00 100111 N 0 Rm imms Rn Rd, N=sf
+// → 64-bit base 0x93C00000 (lsb 0..63), 32-bit base 0x13800000 (lsb 0..31).
+func EXTR(rd, rn, rm, lsb uint32) uint32 {
+	return 0x93C00000 | ((rm & regMask) << 16) | ((lsb & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func EXTRW(rd, rn, rm, lsb uint32) uint32 {
+	return 0x13800000 | ((rm & regMask) << 16) | ((lsb & 0x1f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// RORV encodes `ror Xd, Xn, Xm` — rotate right by the low bits of Xm
+// (data-processing 2-source, the sibling of LSLV/LSRV/ASRV, op2=11).
+// Encoding: base 0x9AC02C00 | Rm<<16 | Rn<<5 | Rd.
+func RORV(rd, rn, rm uint32) uint32 {
+	return 0x9AC02C00 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// bfmX / bfmW are the bitfield-move bases with opc=01 (insert: bits
+// outside the field keep Rd's old value), completing the UBFM/SBFM
+// family above. The bfi/bfxil/ubfiz/sbfiz aliases compute immr/imms in
+// the parser.
+// Encoding: sf 01 100110 N immr imms Rn Rd → X base 0xB3400000 (N=1),
+// W base 0x33000000 (N=0).
+func bfmX(rd, rn, immr, imms uint32) uint32 {
+	return 0xB3400000 | ((immr & 0x3f) << 16) | ((imms & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func bfmW(rd, rn, immr, imms uint32) uint32 {
+	return 0x33000000 | ((immr & 0x1f) << 16) | ((imms & 0x1f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// CCMPreg / CCMPimm / CCMNreg / CCMNimm encode the conditional compares
+// `ccmp/ccmn Rn, Rm|#imm5, #nzcv, <cond>`: if cond holds, compare
+// (setting flags exactly as cmp/cmn would); else set the flags to nzcv.
+// The immediate form's imm5 is UNSIGNED 0..31.
+//
+// Encoding: sf op 111010010 Rm|imm5 cond 0 ir 0 Rn 0 nzcv, ir=1 for the
+// immediate form → CCMP reg 0xFA400000 / imm 0xFA400800, CCMN reg
+// 0xBA400000 / imm 0xBA400800.
+func CCMPreg(rn, rm, nzcv, cond uint32) uint32 {
+	return 0xFA400000 | ((rm & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (nzcv & 0xf)
+}
+func CCMPimm(rn, imm5, nzcv, cond uint32) uint32 {
+	return 0xFA400800 | ((imm5 & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (nzcv & 0xf)
+}
+func CCMNreg(rn, rm, nzcv, cond uint32) uint32 {
+	return 0xBA400000 | ((rm & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (nzcv & 0xf)
+}
+func CCMNimm(rn, imm5, nzcv, cond uint32) uint32 {
+	return 0xBA400800 | ((imm5 & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (nzcv & 0xf)
+}
+
+// CSINC / CSINV / CSNEG encode `<op> Xd, Xn, Xm, <cond>` — Xd = cond ?
+// Xn : (Xm+1 | ~Xm | -Xm). CSET above is CSINC's Rn=Rm=XZR alias; the
+// cinc/cinv/cneg/csetm aliases (inverted cond) live in the parser.
+// Encoding: CSINC 0x9A800400, CSINV 0xDA800000, CSNEG 0xDA800400,
+// each | Rm<<16 | cond<<12 | Rn<<5 | Rd.
+func CSINC(rd, rn, rm, cond uint32) uint32 {
+	return 0x9A800400 | ((rm & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func CSINV(rd, rn, rm, cond uint32) uint32 {
+	return 0xDA800000 | ((rm & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func CSNEG(rd, rn, rm, cond uint32) uint32 {
+	return 0xDA800400 | ((rm & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// REV64 / REVW reverse the byte order of the whole register. The X and W
+// forms differ in the opc field (11 vs 10), not just sf, so clearSF
+// cannot derive one from the other. REV32 (X only — the W-width
+// operation IS `rev Wd, Wn`) reverses bytes within each 32-bit word.
+// Encoding: REV64 0xDAC00C00, REVW 0x5AC00800, REV32 0xDAC00800.
+func REV64(rd, rn uint32) uint32 { return 0xDAC00C00 | ((rn & regMask) << 5) | (rd & regMask) }
+func REVW(rd, rn uint32) uint32  { return 0x5AC00800 | ((rn & regMask) << 5) | (rd & regMask) }
+func REV32(rd, rn uint32) uint32 { return 0xDAC00800 | ((rn & regMask) << 5) | (rd & regMask) }
+
+// CLS encodes `cls Xd, Xn` — count leading sign bits (CLZ's sibling,
+// op=101). clearSF gives the W form.
+// Encoding: base 0xDAC01400 | Rn<<5 | Rd.
+func CLS(rd, rn uint32) uint32 {
+	return 0xDAC01400 | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// ADR encodes `adr Xd, <target>` — Xd = PC + byteDelta. Unlike ADRP the
+// signed 21-bit immediate is in BYTES, spanning ±1 MB.
+// Encoding: op=0 immlo(2) 10000 immhi(19) Rd
+// → base 0x10000000 | immlo<<29 | immhi<<5 | Rd.
+func ADR(rd uint32, byteDelta int32) uint32 {
+	imm := uint32(byteDelta)
+	return 0x10000000 | ((imm & 3) << 29) | (((imm >> 2) & 0x7ffff) << 5) | (rd & regMask)
+}
+
+// PairLoadStoreW / PairLoadStoreD are PairLoadStore for W registers
+// (32-bit GPR pair, offset scaled by 4) and D registers (64-bit FP pair,
+// scaled by 8). Same three addressing modes.
+// Encoding: W base 0x28000000, D base 0x6C000000, each | (load?
+// 0x00400000) | mode<<23 | imm7<<15 | Rt2<<10 | Rn<<5 | Rt.
+func PairLoadStoreW(rt, rt2, rn uint32, byteOffset int32, load bool, mode uint32) uint32 {
+	base := uint32(0x28000000)
+	if load {
+		base |= 0x00400000
+	}
+	base |= mode << 23
+	imm7 := uint32(byteOffset/4) & 0x7f
+	return base | (imm7 << 15) | ((rt2 & regMask) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func PairLoadStoreD(rt, rt2, rn uint32, byteOffset int32, load bool, mode uint32) uint32 {
+	base := uint32(0x6C000000)
+	if load {
+		base |= 0x00400000
+	}
+	base |= mode << 23
+	imm7 := uint32(byteOffset/8) & 0x7f
+	return base | (imm7 << 15) | ((rt2 & regMask) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// FP load/store of a 32-bit S register — the single-precision twins of
+// the D-register forms above, in the same four addressing modes. The
+// unsigned offset is scaled by 4.
+func LdrFP32Unsigned(rt, rn, imm12 uint32) uint32 {
+	return 0xBD400000 | ((imm12 & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func StrFP32Unsigned(rt, rn, imm12 uint32) uint32 {
+	return 0xBD000000 | ((imm12 & 0xfff) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func LdrFP32PostIdx(rt, rn uint32, imm9 int32) uint32 {
+	return 0xBC400400 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func StrFP32PostIdx(rt, rn uint32, imm9 int32) uint32 {
+	return 0xBC000400 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func LdrFP32PreIdx(rt, rn uint32, imm9 int32) uint32 {
+	return 0xBC400C00 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func StrFP32PreIdx(rt, rn uint32, imm9 int32) uint32 {
+	return 0xBC000C00 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func LdurFP32(rt, rn uint32, imm9 int32) uint32 {
+	return 0xBC400000 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+func SturFP32(rt, rn uint32, imm9 int32) uint32 {
+	return 0xBC000000 | ((uint32(imm9) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// LoadSignedUnscaled encodes ldursb/ldursh/ldursw — the sign-extending
+// loads with a signed 9-bit unscaled offset. size 0=byte, 1=half,
+// 2=word; to64 selects the X destination (opc=10) vs W (opc=11). ldursw
+// is size 2, X only.
+// base = (size<<30) | 0x38800000 | (to64 ? 0 : 0x00400000).
+func LoadSignedUnscaled(rt, rn uint32, off int32, size uint32, to64 bool) uint32 {
+	base := (size << 30) | 0x38800000
+	if !to64 {
+		base |= 0x00400000
+	}
+	return base | ((uint32(off) & 0x1ff) << 12) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// ---- Exclusive / acquire-release accesses (ARMv8.0, no LSE) ----
+//
+// size: 0=byte, 1=half, 2=word, 3=doubleword. The status register of
+// the store-exclusives (Rs) is always a W register.
+
+// LDXR encodes `ldxr Rt, [Xn]` (acquire=false) / `ldaxr` (acquire=true).
+// base = (size<<30) | 0x085F7C00 | (acquire ? 0x8000).
+func LDXR(rt, rn, size uint32, acquire bool) uint32 {
+	base := (size << 30) | 0x085F7C00
+	if acquire {
+		base |= 0x8000
+	}
+	return base | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// STXR encodes `stxr Ws, Rt, [Xn]` (release=false) / `stlxr`
+// (release=true): store if the exclusive monitor holds, Ws=0 on success.
+// base = (size<<30) | 0x08007C00 | (release ? 0x8000).
+func STXR(rs, rt, rn, size uint32, release bool) uint32 {
+	base := (size << 30) | 0x08007C00
+	if release {
+		base |= 0x8000
+	}
+	return base | ((rs & regMask) << 16) | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// LDAR / STLR encode the non-exclusive load-acquire / store-release.
+// bases (size<<30) | 0x08DFFC00 and (size<<30) | 0x089FFC00.
+func LDAR(rt, rn, size uint32) uint32 {
+	return (size << 30) | 0x08DFFC00 | ((rn & regMask) << 5) | (rt & regMask)
+}
+func STLR(rt, rn, size uint32) uint32 {
+	return (size << 30) | 0x089FFC00 | ((rn & regMask) << 5) | (rt & regMask)
+}
+
+// DMB / DSB encode the data barriers with a 4-bit option (sy=0xF etc. —
+// see barrierOpts in the parser). ISB takes only the sy option, encoded
+// as the fixed word 0xD5033FDF.
+func DMB(option uint32) uint32 { return 0xD50330BF | ((option & 0xf) << 8) }
+func DSB(option uint32) uint32 { return 0xD503309F | ((option & 0xf) << 8) }
+func ISB() uint32              { return 0xD5033FDF }
+
+// ---- Floating-point fused / three-source and remaining scalar ops ----
+//
+// All are the ftype=01 (double) encodings; clearing bit 22 (see
+// fpSingle in the parser) gives the single-precision form.
+
+// FMADD/FMSUB/FNMADD/FNMSUB Dd, Dn, Dm, Da — fused multiply-add family:
+// Da ± Dn*Dm, negated for the FN* forms.
+// Encoding: 0x1F400000 / 0x1F408000 / 0x1F600000 / 0x1F608000,
+// each | Rm<<16 | Ra<<10 | Rn<<5 | Rd.
+func FMADD(rd, rn, rm, ra uint32) uint32 {
+	return 0x1F400000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FMSUB(rd, rn, rm, ra uint32) uint32 {
+	return 0x1F408000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FNMADD(rd, rn, rm, ra uint32) uint32 {
+	return 0x1F600000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FNMSUB(rd, rn, rm, ra uint32) uint32 {
+	return 0x1F608000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// FNMUL Dd, Dn, Dm — negated multiply; FMIN/FMAX and the FMINNM/FMAXNM
+// NaN-propagating-minNum variants, Dd, Dn, Dm.
+func FNMUL(rd, rn, rm uint32) uint32 {
+	return 0x1E608800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FMIN(rd, rn, rm uint32) uint32 {
+	return 0x1E605800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FMAX(rd, rn, rm uint32) uint32 {
+	return 0x1E604800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FMINNM(rd, rn, rm uint32) uint32 {
+	return 0x1E607800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+func FMAXNM(rd, rn, rm uint32) uint32 {
+	return 0x1E606800 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// FCSEL Dd, Dn, Dm, <cond> — Dd = cond ? Dn : Dm.
+// Encoding: base 0x1E600C00 | Rm<<16 | cond<<12 | Rn<<5 | Rd.
+func FCSEL(rd, rn, rm, cond uint32) uint32 {
+	return 0x1E600C00 | ((rm & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// FCCMP Dn, Dm, #nzcv, <cond> — conditional FP compare: if cond holds,
+// compare; else set the flags to nzcv.
+// Encoding: base 0x1E600400 | Rm<<16 | cond<<12 | Rn<<5 | nzcv.
+func FCCMP(rn, rm, nzcv, cond uint32) uint32 {
+	return 0x1E600400 | ((rm & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (nzcv & 0xf)
+}
+
+// MSRreg encodes `msr <sysreg>, Xt` — write a system register: the MRS
+// encoding with the direction bit (bit 21) clear.
+// Encoding: base 0xD5100000 | (op0&1)<<19 | op1<<16 | CRn<<12 | CRm<<8 | op2<<5 | Rt.
+func MSRreg(rt, op0, op1, crn, crm, op2 uint32) uint32 {
+	return 0xD5100000 |
+		((op0 & 1) << 19) | ((op1 & 7) << 16) |
+		((crn & 15) << 12) | ((crm & 15) << 8) | ((op2 & 7) << 5) |
+		(rt & regMask)
+}
 
 // Put appends insn to buf as 4 little-endian bytes.
 func Put(buf []byte, insn uint32) []byte {

@@ -368,6 +368,9 @@ func (a *Assembler) splice(runs []spliceRun) {
 	for i := range a.adrpFixups {
 		a.adrpFixups[i].at += delta(a.adrpFixups[i].at)
 	}
+	for i := range a.adrFixups {
+		a.adrFixups[i].at += delta(a.adrFixups[i].at)
+	}
 	for i := range a.lo12Fixups {
 		a.lo12Fixups[i].at += delta(a.lo12Fixups[i].at)
 	}

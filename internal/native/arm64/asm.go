@@ -33,6 +33,7 @@ type Assembler struct {
 	inBssSection  bool
 	syms          map[string]symbol
 	adrpFixups    []symFixup
+	adrFixups     []symFixup
 	lo12Fixups    []symFixup
 	quadSymFixups []quadSymFixup
 
@@ -323,6 +324,14 @@ func (a *Assembler) FlushLiterals() {
 func (a *Assembler) ADRPsym(rd uint32, sym string) {
 	a.adrpFixups = append(a.adrpFixups, symFixup{at: len(a.insns), label: sym, rd: rd})
 	a.insns = append(a.insns, ADRP(rd, 0))
+}
+
+// ADRsym emits `adr Xrd, sym` as a placeholder, resolved by
+// BytesProgram once addresses are known. Unlike adrp the offset is
+// byte-relative (±1 MB), so no companion :lo12: add is needed.
+func (a *Assembler) ADRsym(rd uint32, sym string) {
+	a.adrFixups = append(a.adrFixups, symFixup{at: len(a.insns), label: sym, rd: rd})
+	a.insns = append(a.insns, ADR(rd, 0))
 }
 
 // AddLo12 emits `add Xrd, Xrn, #:lo12:sym` as a placeholder.
@@ -620,6 +629,20 @@ func (a *Assembler) bytesProgramAt(textVAddr, rodataVAddr uint64, relocs *[]Relo
 		insnVAddr := textVAddr + uint64(f.at)*4
 		pageDelta := int32(int64(sv>>12) - int64(insnVAddr>>12))
 		a.insns[f.at] = ADRP(f.rd, pageDelta)
+	}
+
+	// adr: sym - insn, in bytes, within the signed 21-bit span.
+	for _, f := range a.adrFixups {
+		sv, ok := symVAddr(f.label)
+		if !ok {
+			return nil, nil, fmt.Errorf("arm64: adr to undefined symbol %q", f.label)
+		}
+		insnVAddr := textVAddr + uint64(f.at)*4
+		delta := int64(sv) - int64(insnVAddr)
+		if delta < -(1<<20) || delta >= 1<<20 {
+			return nil, nil, fmt.Errorf("arm64: adr to %q spans %d bytes — outside the signed 21-bit range (use adrp)", f.label, delta)
+		}
+		a.insns[f.at] = ADR(f.rd, int32(delta))
 	}
 
 	// add #:lo12:sym → low 12 bits of the symbol address.
