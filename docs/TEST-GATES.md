@@ -758,8 +758,8 @@ answer, these are the tools, in the order they are usually reached for:
   therefore build a >7-byte string by concatenation from a **shared** left
   operand that stays live across the loop.
 - **`FERN_RC_TRACE=1`** — one stderr line per heap event:
-  `rctrace <a|f> <ptr> <size> <site>`, all three numbers fixed-width 16-hex,
-  `site` being the *caller's* return address. Stands to `FERN_LEAKCHECK` as
+  `rctrace <a|f> <ptr> <size> <site> <caller>`, all four numbers fixed-width
+  16-hex, `site` being the *caller's* return address. Stands to `FERN_LEAKCHECK` as
   `FERN_RC_UNDERFLOW_TRAP` stands to the underflow counter: leakcheck says a
   leak happened, this says which alloc site it came from. Pair the `a` lines
   against the `f` lines by pointer and what is left never came back; resolve
@@ -769,6 +769,28 @@ answer, these are the tools, in the order they are usually reached for:
   less informative than `a` sites** — every release funnels through the shared
   drop helpers, so a free line usually names `__fern_arr_dec` rather than your
   code. The alloc site is the one that locates a leak. x86-64 only.
+
+  **`caller` is one frame above `site`, and you usually want both.** `site`
+  alone cannot tell a producer from a function code was INLINED INTO, and
+  `ir.Inline` runs twice in every backend battery. Measured on the self-host
+  driver: `site` credited **133 allocations to `lexer__tokenize_impl`**, a
+  1043-line function containing exactly **one** construction, and named the
+  shared allocator `__fern_alloc_rc1` for **1689** blocks whose real producer
+  is one frame further out. Rule of thumb: `site` is trustworthy for a small
+  producer and close to meaningless for a large one; read `caller` whenever
+  `site` names either a runtime helper or a function big enough to have been
+  inlined into.
+
+  It is read through the frame pointer, so it is **best-effort**: a caller
+  that kept none yields an address that resolves to no symbol. Treat an
+  unresolvable `caller` as absent rather than trusting it.
+
+  **The self-host tracer still emits four fields, not five.** Its hook takes
+  `site` as an explicit argument and carries its own `__fern_hev_site` shim,
+  so the frame relationship native relies on does not hold there and the port
+  is not a transcription — and getting it wrong does not fail loudly, it
+  silently names the wrong code. Tracked separately; until it lands, pair a
+  native trace against a self-host one on `site` only.
 
   **Both flags work on the SELF-HOST x86-64 compiler too**, with the same
   spelling and the same output format (`asm_ir.fern`; the arm64 and wasm

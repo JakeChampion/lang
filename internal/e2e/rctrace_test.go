@@ -22,7 +22,7 @@ import (
 // ast.RcTrace (FERN_RC_TRACE=1) makes __fern_alloc and __fern_free each
 // write one line to stderr:
 //
-//	rctrace <a|f> <ptr> <size> <site>
+//	rctrace <a|f> <ptr> <size> <site> <caller>
 //
 // three fixed-width 16-hex-digit numbers, where `site` is the caller's
 // return address — the code that asked for or released the memory.
@@ -100,13 +100,26 @@ func runRcTraceX86_64(t *testing.T, src string, leakCheck bool) (string, string,
 	return runSplit(t, cmd)
 }
 
-var rcTraceLineRe = regexp.MustCompile(`^rctrace ([af]) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16})$`)
+var rcTraceLineRe = regexp.MustCompile(`^rctrace ([af]) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16})$`)
 
 // rcTraceEvent is one parsed `rctrace` line.
 type rcTraceEvent struct {
 	kind       string // "a" | "f"
 	ptr        uint64
 	size, site uint64
+
+	// caller is one frame above site: the return address in whoever
+	// called the function `site` names. It is what separates a producer
+	// from a place code was inlined INTO — `site` alone credited 133
+	// allocations to a 1043-line function containing one construction,
+	// and named `__fern_alloc_rc1` for 1689 blocks whose real producer
+	// is its caller.
+	//
+	// Best-effort: it is read through the frame pointer, so it is only
+	// meaningful where the caller kept one. A frameless caller yields
+	// an address that resolves to nothing, which is why the resolver
+	// side must tolerate an unresolvable value rather than trust it.
+	caller uint64
 }
 
 // parseRcTrace pulls every well-formed rctrace line out of stderr.
@@ -133,7 +146,8 @@ func parseRcTrace(t *testing.T, stderr string) ([]rcTraceEvent, []string) {
 		ptr, _ := strconv.ParseUint(m[2], 16, 64)
 		size, _ := strconv.ParseUint(m[3], 16, 64)
 		site, _ := strconv.ParseUint(m[4], 16, 64)
-		evs = append(evs, rcTraceEvent{kind: m[1], ptr: ptr, size: size, site: site})
+		caller, _ := strconv.ParseUint(m[5], 16, 64)
+		evs = append(evs, rcTraceEvent{kind: m[1], ptr: ptr, size: size, site: site, caller: caller})
 	}
 	return evs, other
 }
@@ -228,6 +242,82 @@ func TestRcTraceX86_64SiteIsPerCallSite(t *testing.T) {
 	}
 }
 
+// rcTraceOneProducerTwoCallersSrc: ONE allocating helper, reached from
+// two different functions. Every allocation therefore shares a `site`,
+// and only `caller` can tell the two apart — which is the whole reason
+// the second frame exists.
+const rcTraceOneProducerTwoCallersSrc = `struct Bx { s: string, n: i32 }
+
+@noinline
+function mk(i: i32, pad: string): Bx { return Bx { s: pad + "0123456789abcdef", n: i }; }
+
+@noinline
+function alpha(pad: string): i32 { var b: Bx = mk(1, pad); return b.n; }
+
+@noinline
+function beta(pad: string): i32 { var b: Bx = mk(2, pad); return b.n; }
+
+function main(): i32 {
+    var pad: string = "wxyz";
+    return alpha(pad) + beta(pad) - 3;
+}`
+
+// The property `site` alone cannot supply: one producer, two callers.
+//
+// `site` names the code that asked for the memory, which conflates a
+// producer with a function code was INLINED INTO — over the self-host
+// driver it credited 133 allocations to a 1043-line function holding
+// exactly one construction. `caller` is one frame further out, so the
+// same producer reached from two places reports two callers.
+func TestRcTraceX86_64CallerSeparatesTwoCallersOfOneProducer(t *testing.T) {
+	_, stderr, _ := runRcTraceX86_64(t, rcTraceOneProducerTwoCallersSrc, false)
+	evs, _ := parseRcTrace(t, stderr)
+
+	// The struct box: allocated inside mk, once per call, from two
+	// different callers. Group callers by site.
+	callersBySite := map[uint64]map[uint64]bool{}
+	for _, e := range evs {
+		if e.kind != "a" {
+			continue
+		}
+		if callersBySite[e.site] == nil {
+			callersBySite[e.site] = map[uint64]bool{}
+		}
+		callersBySite[e.site][e.caller] = true
+	}
+	if len(callersBySite) == 0 {
+		t.Fatal("no alloc events")
+	}
+	split := false
+	for site, callers := range callersBySite {
+		if len(callers) >= 2 {
+			split = true
+		}
+		for c := range callers {
+			if c == site {
+				t.Errorf("site %016x reports caller == site; the second frame is not being read", site)
+			}
+		}
+	}
+	if !split {
+		t.Errorf("no alloc site reports two distinct callers (%v) — mk is reached from both alpha and beta, "+
+			"so a site with one caller means the frame above is not being captured", callersBySite)
+	}
+}
+
+// A caller of zero would mean the frame-pointer read produced nothing
+// at all, which is the failure mode that would make the field look
+// present while carrying no information.
+func TestRcTraceX86_64CallerIsNeverZero(t *testing.T) {
+	_, stderr, _ := runRcTraceX86_64(t, rcTraceOneProducerTwoCallersSrc, false)
+	evs, _ := parseRcTrace(t, stderr)
+	for _, e := range evs {
+		if e.caller == 0 {
+			t.Fatalf("%s event at site %016x has caller 0", e.kind, e.site)
+		}
+	}
+}
+
 // TestRcTraceX86_64AgreesWithLeakCheck is the cross-check that makes
 // the tracer trustworthy: with both flags on, the trace's own tallies
 // must reproduce every number leakcheck reports independently. They
@@ -295,7 +385,7 @@ func TestRcTraceX86_64OffEmitsNothing(t *testing.T) {
 // regex and treats every non-`a` match as a free, so widening it to
 // [afid] would make each inc silently decrement the leak census's
 // counts. The narrow regex is load-bearing — this one is separate.
-var rcTraceRcLineRe = regexp.MustCompile(`^rctrace ([id]) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16})$`)
+var rcTraceRcLineRe = regexp.MustCompile(`^rctrace ([id]) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16}) ([0-9a-f]{16})$`)
 
 func TestRcTraceX86_64EmitsIncAndDecEvents(t *testing.T) {
 	// Three aliases of one array, all released at exit: whatever the
