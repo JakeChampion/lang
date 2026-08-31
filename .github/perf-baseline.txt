@@ -107,6 +107,7 @@ aarch64/string_build.ir	175985640
 aarch64/string_find_byte.text	2125
 aarch64/string_find_byte.ir	123872451
 aarch64/string_rfind_byte.text	2784
+aarch64/string_rfind_byte.ir	111734449
 aarch64/string_scan.text	1594
 aarch64/string_scan.ir	142229869
 aarch64/string_slice.text	534
