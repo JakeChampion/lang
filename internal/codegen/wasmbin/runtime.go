@@ -279,6 +279,13 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_len")
 					needs.add("__fern_str_byte")
 					needs.add("__fern_rmemchr")
+				case "__fern_count_byte":
+					// The byte tally. Scalar for now, and it reads
+					// every byte through str_byte for the same reason
+					// the backward search does.
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__fern_count_byte")
 				case "__fern_print":
 					// fd_write under the hood; transitively
 					// pulls in the byte-copy + alloc helpers.
@@ -1344,6 +1351,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildRmemchrBody,
+	},
+	"__fern_count_byte": {
+		// (data, len, byte) → i32 count of matching bytes.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildCountByteBody,
 	},
 	"__fern_print": {
 		// (data, len) → ()
@@ -3897,6 +3910,87 @@ func buildRmemchrBody(idxs map[string]uint32) []byte {
 
 	body = inst.InstI32Const(body, -1)
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $m
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// buildCountByteBody assembles wasm bytes for __fern_count_byte: how many
+// bytes of the string equal `byte`.
+//
+// SCALAR, per docs/ATLAS-PLATFORM-PLAN.md §3.4's "correct in every backend
+// first, fast one backend at a time".
+//
+// It reads through __fern_str_byte rather than i32.load8_u, which is the same
+// choice __memchr's tail makes and for the same reason: a string with the
+// 0x80000000 flag lives IN its two words with no address to load from, so one
+// reader correct for both forms beats the load it saves. Vectorising this will
+// need __memchr's split into an inline path and an addressed one.
+//
+// No cursor, so no clamp. Both degenerate answers are honest counts rather
+// than sentinels: an out-of-range byte counts 0, an empty string counts 0.
+//
+// Locals after the three params: $n (3), $i (4), $c (5).
+func buildCountByteBody(idxs map[string]uint32) []byte {
+	strLen := idxs["__fern_str_len"]
+	strByte := idxs["__fern_str_byte"]
+	const (
+		pData = 0
+		pLen  = 1
+		pByte = 2
+		lN    = 3
+		lI    = 4
+		lC    = 5
+	)
+	var body []byte
+
+	// A byte outside 0..255 can never occur; checked once so the loop needs
+	// no per-iteration guard. The answer is 0, not -1: a count has no miss.
+	body = inst.InstLocalGet(body, pByte)
+	body = inst.InstI32Const(body, 0)
+	body = numeric.InstI32LtS(body)
+	body = inst.InstLocalGet(body, pByte)
+	body = inst.InstI32Const(body, 255)
+	body = numeric.InstI32GtS(body)
+	body = numeric.InstI32Or(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+
+	// $n = logical length. $i and $c start at 0; an empty string leaves the
+	// loop guard true on entry and returns the 0 already in $c.
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstCall(body, strLen)
+	body = inst.InstLocalSet(body, lN)
+
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstBrIf(body, 1)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstCall(body, strByte)
+	body = inst.InstLocalGet(body, pByte)
+	body = numeric.InstI32Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lC)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lC)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 1)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	body = inst.InstLocalGet(body, lC)
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $c
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

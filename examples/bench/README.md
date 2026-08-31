@@ -19,7 +19,8 @@ Rules for a benchmark in here:
 - **Isolate one cost.** `map_string` and `map_int` are the same shape with
   different key types precisely so the difference between them is readable, and
   `string_find_byte` / `string_rfind_byte` are the same for the forward and
-  backward search kernels.
+  backward search kernels, and `string_count_byte` is the same shape again with
+  the early exit removed.
 - **Make the checksum depend on the work.** Returning 0 is not a checksum: a
   loop optimised away sums to the same 0 as a loop that ran. `string_rfind_byte`
   puts its needle at index 3 rather than 0 for exactly this reason.

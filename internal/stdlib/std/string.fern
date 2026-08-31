@@ -2787,6 +2787,12 @@ pub function (s: string) find_all(sub: string): i32[] {
 pub function (s: string) count_matches(sub: string): i32 {
     var subLen: i32 = sub.len();
     if (subLen == 0) { return 0; }
+    // The single-byte case IS __count_byte, and it is the overwhelmingly
+    // common one. Non-overlapping and every-occurrence agree at length 1, so
+    // this is the same answer in one pass where the loop below pays a
+    // __str_find_from call per hit. Mirrors the `nLen == 1` tier
+    // __str_find_from itself keeps for __memchr.
+    if (subLen == 1) { return __count_byte(s, sub[0] as i32); }
     var n: i32 = s.len();
     var count: i32 = 0;
     var hit: i32 = __str_find_from(s, n, sub, subLen, 0);
@@ -2800,15 +2806,15 @@ pub function (s: string) count_matches(sub: string): i32 {
 // `s.count_byte(b)` — number of bytes equal to b. O(n)
 // single-pass; cheaper than count(byte.to_ascii_string())
 // when the needle is known to be a single byte.
+//
+// This IS __count_byte (docs/ATLAS-PLATFORM-PLAN.md §3.3, fourth kernel), and
+// the adoption is total rather than a tier: unlike its three siblings there is
+// no cursor to clamp and no needle length to test, so there is no shape the
+// intrinsic answers differently. A byte outside 0..255 counts 0 in both, which
+// is the honest answer rather than a sentinel, so the guard the intrinsic
+// keeps for direct callers is unreachable from here.
 pub function (s: string) count_byte(b: i32): i32 {
-    var n: i32 = s.len();
-    var c: i32 = 0;
-    var i: i32 = 0;
-    while (i < n) {
-        if ((s[i] as i32) == b) { c = c + 1; }
-        i = i + 1;
-    }
-    return c;
+    return __count_byte(s, b);
 }
 
 // `s.replace_n(old, new, n)` — like replace() but caps at

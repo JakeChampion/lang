@@ -2515,12 +2515,37 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     // and a byte outside 0..255 cannot occur in the haystack, so both stay
     // total; __ascii_run reports len(s) rather than -1 when the rest is
     // ASCII, which is what lets a caller use it as a branchless skip.
-    if (name == "__memchr") {
-        if (args.len() != 3) { return v_err("__memchr: expected 3 args (s, byte, from)"); }
-        if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) { return v_err("__memchr: byte and start must be integers"); }
+    //
+    // `__count_byte(s, byte)` rides __memchr's arms rather than taking its
+    // own: it needs the same "first arg is a string" destructure, and the
+    // wildcard that destructure costs is ratcheted (§1 of
+    // docs/SELFHOST-LANGUAGE-FRICTION.md) with no headroom to spend on a
+    // second copy of it. It has no cursor, so no clamp, and both degenerate
+    // answers are honest counts rather than sentinels: an out-of-range byte
+    // counts 0 because nothing can equal it, an empty string counts 0
+    // because it has no bytes.
+    if (name == "__memchr" || name == "__count_byte") {
+        var cb: boolean = name == "__count_byte";
+        if (cb) {
+            if (args.len() != 2) { return v_err("__count_byte: expected 2 args (s, byte)"); }
+            if (!is_i32_arg(args[1])) { return v_err("__count_byte: byte must be an integer"); }
+        } else {
+            if (args.len() != 3) { return v_err("__memchr: expected 3 args (s, byte, from)"); }
+            if (!is_i32_arg(args[1]) || !is_i32_arg(args[2])) { return v_err("__memchr: byte and start must be integers"); }
+        }
         match (args[0]) {
             VString(s) => {
                 var want: i32 = vint_bits(args[1]);
+                if (cb) {
+                    if (want < 0 || want > 255) { return v_int(0); }
+                    var ci: i32 = 0;
+                    var cn: i32 = 0;
+                    while (ci < s.v.len()) {
+                        if ((s.v[ci] as i32) == want) { cn = cn + 1; }
+                        ci = ci + 1;
+                    }
+                    return v_int(cn);
+                }
                 if (want < 0 || want > 255) { return v_int(-1); }
                 var mi: i32 = vint_bits(args[2]);
                 if (mi < 0) { mi = 0; }

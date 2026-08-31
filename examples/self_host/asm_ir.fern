@@ -3572,6 +3572,39 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(r_done + ":\n    pushq %rdx\n");
         return s;
     }
+    if (o.kind_tag == 235) {  // count_byte
+        // operand stack [box, byte] (byte on top) -> how many bytes of the
+        // string equal it.
+        //
+        // SCALAR, per §3.4's "correct in every backend first, fast one
+        // backend at a time".
+        //
+        // No cursor and no clamp: %rdx walks 0..len and both degenerate
+        // answers are honest counts rather than sentinels — an out-of-range
+        // byte counts 0 because nothing can equal it, an empty string counts
+        // 0 because it has no bytes.
+        var clo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var c_scan: string = clo.name;
+        var clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
+        var c_next: string = clo2.name;
+        var clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
+        var c_done: string = clo3.name;
+        s = clo3.state;
+        s = s.write("    popq %rcx\n    popq %rax\n");
+        s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+        s = s.write("    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
+        // A byte outside 0..255 can never match. One UNSIGNED compare covers
+        // both ends, checked once so the loop needs no per-iteration guard.
+        s = s.write("    cmpq $255, %rcx\n    ja " + c_done + "\n");
+        s = s.write(c_scan + ":\n");
+        s = s.write("    cmpq %r8, %rdx\n    jge " + c_done + "\n");
+        s = s.write("    movzbq (%rax,%rdx), %r9\n");
+        s = s.write("    cmpq %rcx, %r9\n    jne " + c_next + "\n");
+        s = s.write("    addq $1, %r10\n");
+        s = s.write(c_next + ":\n    addq $1, %rdx\n    jmp " + c_scan + "\n");
+        s = s.write(c_done + ":\n    pushq %r10\n");
+        return s;
+    }
     if (o.kind_tag == 227) {  // ascii_run
         // operand stack [box, from] (from on top) -> the index of the first
         // byte at or after `from` with its high bit set, or the LENGTH.

@@ -13692,6 +13692,21 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __count_byte(s, byte) — the same runtime-helper-call shape, and
+	// ArgTypes is load-bearing for the same reason as its three siblings: a
+	// `string` is two operand slots on arm64 and wasm and one on x86-64.
+	if id.Name == "__count_byte" && len(n.Args) == 2 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_count_byte", Width: ResNarrow, I32: 2,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
 	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
 	// above, and ArgTypes is load-bearing here for the same reason: `string`
 	// is two operand slots on arm64 and wasm, one on x86-64.

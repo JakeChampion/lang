@@ -1283,6 +1283,23 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __count_byte(s, byte) → i32: how many bytes of `s` equal `byte`. The
+	// fourth fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3), and the
+	// first with no early exit — where __memchr stops at the first hit, this
+	// one always reads the whole string, so its vector length is the input in
+	// the strongest sense §4's rule asks for.
+	//
+	// No `from`: a partial count is a slice-then-count, and giving it a cursor
+	// would add a clamp with no caller. The two guards it does keep are
+	// __memchr's — a byte outside 0..255 counts 0, and an empty string
+	// counts 0.
+	c.info.FuncSigs["__count_byte"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __heap_mark(): i64 / __heap_release_to(mark: i64) — one-level arena
 	// checkpoint. Mark captures the bump cursor (plus a freelist-head
 	// snapshot); release_to rewinds to it, reclaiming everything allocated
