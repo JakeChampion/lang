@@ -128,7 +128,7 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"pair_form_payload_borrowing_call":              144,
 	"stdlib_json_cursor_idiom":                      1744,
 	"stdlib_json_roundtrip":                         752,
-	"stdlib_query_parse_roundtrip":                  256,
+	"stdlib_query_parse_roundtrip":                  128,
 	"string_array_append_grow_struct_field":         2784,
 	"string_closure_capture_aliased":                48,
 	"string_closure_capture_churn_free":             6400,
