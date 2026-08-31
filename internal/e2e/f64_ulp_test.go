@@ -417,7 +417,7 @@ func TestF64TranscendentalUlpX86_64(t *testing.T) {
 // exponent, so a fixed shortlist proves only the exponents in it. 1158
 // arguments at four mantissas across every seventh exponent, both signs.
 //
-// x86-64 ONLY, deliberately. arm64, arm64ssa, wasm and the three self-host
+// The two register backends only. arm64ssa, wasm and the three self-host
 // emitters carry the same defect and have not been ported yet, so widening
 // this to them would assert a fix that does not exist. Their status is on
 // #7878; delete this note when the last one lands and fold these arguments
@@ -428,7 +428,7 @@ func TestF64TranscendentalUlpX86_64(t *testing.T) {
 // unbounded in ulp terms — 617 ulp at 2^728, and 3% at the worst-case
 // argument below. The reference is the only oracle these can be measured
 // against.
-func TestF64SinCosLargeArgumentX86_64(t *testing.T) {
+func TestF64SinCosLargeArgument(t *testing.T) {
 	var xs []float64
 	for e := 20; e <= 1023; e += 7 {
 		for _, m := range []float64{1.0, 1.3, 1.7, 1.9} {
@@ -451,11 +451,21 @@ func TestF64SinCosLargeArgumentX86_64(t *testing.T) {
 			f64Case{fmt.Sprintf("__sin_f64(%s)", lit), rs},
 			f64Case{fmt.Sprintf("__cos_f64(%s)", lit), rc})
 	}
-	out, code := compileAndRunX86_64(t, f64UlpProg(cs))
-	if code != 0 {
-		t.Fatalf("x86-64 exited %d\n%s", code, out)
-	}
-	checkF64Output(t, "x86-64-linux", out, cs, maxULP)
+	prog := f64UlpProg(cs)
+	t.Run("x86-64", func(t *testing.T) {
+		out, code := compileAndRunX86_64(t, prog)
+		if code != 0 {
+			t.Fatalf("x86-64 exited %d\n%s", code, out)
+		}
+		checkF64Output(t, "x86-64-linux", out, cs, maxULP)
+	})
+	t.Run("arm64", func(t *testing.T) {
+		out, code := compileAndRunArm64(t, prog)
+		if code != 0 {
+			t.Fatalf("arm64 exited %d\n%s", code, out)
+		}
+		checkF64Output(t, "arm64-linux", out, cs, maxULP)
+	})
 	t.Logf("swept %d arguments (%d cases) over the Payne-Hanek path", len(xs), len(cs))
 }
 
