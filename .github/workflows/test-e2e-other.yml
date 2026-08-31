@@ -89,8 +89,25 @@ jobs:
         # 7,347 tests it ran ~9m40s against it, and the first change to
         # add ~1% anywhere in the compiler hit the ceiling and reported
         # as four failed tests with conclusion "unknown" rather than as
-        # a timeout. 18m matches the arm64 e2e lane.
+        # a timeout. 18m matched the arm64 e2e lane.
+        #
+        # THE SAME THING HAPPENED AGAIN at 18m, which is why this is now
+        # 25m — the x86-64 e2e lane's figure. The lane reached 7,851
+        # tests and 15m55s locally; a compiler change worth -98,265 IR
+        # ops and 1 MB off every self-host driver added 7.6s (+0.8%,
+        # measured both ways on the same box) and CI timed out at
+        # 18m00.0s. A slow runner draw had already taken it to 16m58s of
+        # the 18m while green, so the headroom was ~1 minute against a
+        # 1.5x spread.
+        #
+        # RAISING THE CEILING IS NOT THE FIX, it is the second time the
+        # ceiling has been raised for the same reason. The lane is a
+        # catch-all with no owner and it accretes: it grew 7,631 ->
+        # 7,851 in a matter of hours. Sharding it the way
+        # test-e2e-differential.yml is sharded is the actual answer, and
+        # a timeout bump only buys time to do that. Whoever meets this a
+        # third time should shard rather than raise.
         run: |
-          gotestsum --format pkgname-and-test-fails -- -timeout 18m \
+          gotestsum --format pkgname-and-test-fails -- -timeout 25m \
             -skip '^Test(Arm64|X86_64|WASM|Wasm|SelfHost|Differential)' \
             ./internal/e2e/
