@@ -544,6 +544,28 @@ Worth knowing so you do not assume coverage you do not have:
    the gate reports it as a failure either way, so it is never "someone else's
    row".
 
+
+14. **A measurement over `internal/ir` says nothing about emitted code unless
+   the backend's pass battery has run first.** Every backend runs
+   `Defunctionalise` → `ElideClosurePair` → `InlineZeroCaptureClosures` →
+   `Inline` → `FuseTee` → `FlattenBranches` → `EliminateDeadCode` →
+   `OptimizeCleanup` before emitting, and that battery is not a rounding
+   error: the `rc_is_unique` guards on a never-assigned slot count 5,416
+   after `LowerWith` alone and 2,680 after it, because `ConstPropagate` plus
+   Fold's const-guard rule and `pruneConstIf` already delete half of them
+   (#7787). A figure taken before it overstates shipped code — in that case
+   by 2x. The same applies to a lift into `internal/ssa`: `LiftProgram`
+   deliberately skips `Optimize`, so it sees the pre-battery form too.
+
+15. **A buffered `go test` log is EMPTY until the package finishes, so
+   grepping a running one for `--- FAIL` always answers zero.** Without
+   `-v`, nothing is written until the package completes; a periodic
+   `grep -c '^--- FAIL'` on that file reports 0 whether the run is healthy,
+   wedged, or already killed — the same false comfort as rule 5, from the
+   other end. Watch the process, not the log, or pass `-v` so there is
+   something to read. A long run that has written nothing and has no
+   surviving process did not pass; it died.
+
 ## The IR path-probe tells you WHERE, never whether it is RIGHT
 
 Route a probe program through the single-program path-probe driver
