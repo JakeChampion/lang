@@ -920,6 +920,49 @@ func pureReadReceiverBuiltin(name string) bool {
 	return false
 }
 
+// copyingBuiltinArg reports whether argument i of BUILTIN name is
+// COPIED rather than retained, with a result that cannot alias it —
+// the general, per-argument form of the fact pureReadReceiverBuiltin
+// states for receivers (#7867 slice 2).
+//
+// Membership demands TWO claims, verified against the runtime body
+// (rcsigs.go's rule: read the body, not the name): the callee moves no
+// count on the argument — every member is in the inert registry, which
+// TestCopyingBuiltinArgsAreInertPerTheRegistry pins — AND the call's
+// result cannot alias it. The second is why this is a hand-audited
+// table and not derived from rcInertBuiltins: `__method_Map_get` /
+// `_get_or` / `_keys` / `_values` / `MapIter_key` / `_value` are inert
+// on their arguments and their results alias the receiver's interior,
+// which the inert registry's own header says it does not model.
+// `__method_Map_set` / `__method_Array_push` / `_set` move counts and
+// are already refused at the call site by calleeRetainsAnyArg;
+// `__heap_release_to` invalidates memory wholesale. All deliberately
+// absent.
+//
+//   - strbuf_append memcpys the string's bytes past the buffer tail
+//     and returns void (its runtime doc, all three implementations);
+//   - print / write / eprint write the bytes to an fd, void result;
+//   - __memchr / __rmemchr / __ascii_run / __count_byte scan the
+//     bytes and return a scalar.
+//
+// The checker rejects a user function redeclaring a builtin name, so
+// the table can never answer for a defined function.
+var copyingBuiltinArgs = map[string]int{
+	"strbuf_append": 0,
+	"print":         0,
+	"write":         0,
+	"eprint":        0,
+	"__memchr":      0,
+	"__rmemchr":     0,
+	"__ascii_run":   0,
+	"__count_byte":  0,
+}
+
+func copyingBuiltinArg(name string, i int) bool {
+	idx, ok := copyingBuiltinArgs[name]
+	return ok && i == idx
+}
+
 // stringParamCounted reports whether string parameter `pn` of fn is retained
 // only through counted constructions or non-retaining reads — every appearance
 // is a bare-ident value of a StructLit / TupleLit / ArrayLit slot, the receiver
@@ -1003,6 +1046,19 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 			if id, ok := x.Callee.(*ast.Ident); ok && pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
 				mark(x.Args[0])
 			}
+			// A copying builtin — strbuf_append, print, the byte
+			// scanners — memcpys or writes the bytes out and retains
+			// nothing, and its scalar/void result cannot alias the
+			// argument. (The checker rejects a user function
+			// redeclaring a builtin name, so the table cannot answer
+			// for a defined function.)
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				for ai, a := range x.Args {
+					if copyingBuiltinArg(id.Name, ai) {
+						mark(a)
+					}
+				}
+			}
 			// Passing `s` on to a callee that is ITSELF counted-retain in that
 			// position retains nothing new: whatever the callee does with it is
 			// already known to be a counted store or a pure read. This is the
@@ -1070,6 +1126,16 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) b
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok && pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
 				mark(x.Args[0])
+			}
+			// Copying builtins, for tier parity with the string and
+			// struct classifiers. Nothing in the table takes an array
+			// today, so this arm is inert until one does.
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				for ai, a := range x.Args {
+					if copyingBuiltinArg(id.Name, ai) {
+						mark(a)
+					}
+				}
 			}
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if cs, known := summary[id.Name]; known {
@@ -1210,6 +1276,14 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, s
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
 					markSlotValue(x.Args[0])
+				}
+				// A copying builtin memcpys or writes the bytes out and
+				// its result cannot alias the argument — the per-argument
+				// generalisation of the receiver rule above.
+				for ai, a := range x.Args {
+					if copyingBuiltinArg(id.Name, ai) {
+						markSlotValue(a)
+					}
 				}
 				// `p.f.append(v)` retains the field buffer COUNTED whichever
 				// path the grow helper takes: in place it sets the buffer's rc
@@ -1754,6 +1828,21 @@ func (b *builder) computeFreeEligible() map[string]bool {
 										// have argStart == 1, so their
 										// receiver never reaches this loop.
 										if pureRead && ai == 0 {
+											continue
+										}
+										// A copying-builtin argument: the
+										// bytes are copied or written out
+										// and nothing retains the string,
+										// so the binding must keep its
+										// scope-exit drop. Without this,
+										// `var msg = pfx + body;
+										// strbuf_append(msg);` stranded
+										// msg's buffer once per call — the
+										// bound-local half of #7867's
+										// slice 2, distinct from the
+										// argument-temp half countedArgTemp
+										// fixes.
+										if copyingBuiltinArg(id.Name, ai+argStart) {
 											continue
 										}
 										// ...unless the callee retains this
