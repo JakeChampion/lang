@@ -1311,6 +1311,59 @@ function arm64_addv(buf: i32[], rd: i32, rn: i32, q: boolean): i32[] {
     return arm64_le32(buf, word);
 }
 
+// ---- packed NEON (the fused vector kernels of ATLAS-PLATFORM-PLAN §3) ----
+//
+// The five this assembler was missing for __memchr / __ascii_run. cnt/addv
+// above were its whole SIMD surface before them, and they exist for a scalar
+// popcount rather than for a vector kernel — §3.3a's rule, which is that the
+// assembler for every target a kernel is about to be emitted on needs checking
+// separately, and a self-host backend has one of its own.
+//
+// Advanced SIMD is mandatory in the declared ARMv8-A baseline, so these are
+// hard requirements rather than a fast path; there is nothing to detect.
+
+// ld1 {Vt.16b}, [Xn] -> 0x4C407000 | Rn<<5 | Rt. Only the single-register,
+// no-writeback, 128-bit form: the kernels load one block from a cursor they
+// advance themselves.
+function arm64_ld1_16b(buf: i32[], rt: i32, rn: i32): i32[] {
+    return arm64_le32(buf, 0x4c407000 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
+}
+
+// cmeq Vd.16b, Vn.16b, Vm.16b -> 0x6E208C00 | Rm<<16 | Rn<<5 | Rd. 0xFF or
+// 0x00 per byte lane.
+function arm64_cmeq_16b(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
+    return arm64_le32(buf, 0x6e208c00 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// cmlt Vd.16b, Vn.16b, #0 -> 0x4E20A800 | Rn<<5 | Rd — "high bit set" widened
+// to an all-ones lane, which is what __ascii_run asks and what lets it skip
+// the splat cmeq needs.
+//
+// The #0 is PART OF THE OPCODE, not an immediate field: there is no
+// `cmlt … #1`. A parser that accepts one and folds it into a nonexistent field
+// emits a compare-against-zero that reads correct at the call site, so the
+// caller refuses a non-zero immediate rather than encoding it.
+function arm64_cmlt_zero_16b(buf: i32[], rd: i32, rn: i32): i32[] {
+    return arm64_le32(buf, 0x4e20a800 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// shrn Vd.8b, Vn.8h, #N -> 0x0F008400 | (16-N)<<16 | Rn<<5 | Rd. Narrows each
+// 16-bit lane to one byte carrying N-shifted bits; at N=4 that is four mask
+// bits per input byte, which is how a NEON kernel gets a movemask.
+//
+// The immediate field is 16 MINUS the shift, and only 1..8 are encodable —
+// an out-of-range shift wraps into the immh bits and selects a DIFFERENT
+// element size, so the caller refuses it.
+function arm64_shrn_8b_8h(buf: i32[], rd: i32, rn: i32, shift: i32): i32[] {
+    return arm64_le32(buf, 0x0f008400 | ((((16 - shift) & 0x7f) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// dup Vd.16b, Wn -> 0x4E010C00 | Rn<<5 | Rd. One instruction to broadcast a
+// byte across all 16 lanes, where SSE2 needs movd plus three shuffles.
+function arm64_dup_16b_w(buf: i32[], rd: i32, rn: i32): i32[] {
+    return arm64_le32(buf, 0x4e010c00 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
 // ---- byte/halfword/sign-extending load/store (unsigned scaled imm) ----
 // ldrb/strb size 0 (no scale); ldrh/strh size 1 (÷2); ldrsw size 2 (÷4).
 function arm64_ldrb(buf: i32[], rt: i32, rn: i32, off: i32): i32[] {
@@ -1740,6 +1793,17 @@ function arm64_gas_is_s(tok: string): boolean {
 // cnt/addv encoders set size=00, so a wider element size would assemble as a
 // DIFFERENT instruction on the same bytes rather than fail.
 function arm64_gas_vreg_arr(tok: string): i32 {
+    if (arm64_gas_vreg_of(tok, ".8b") >= 0) { return arm64_gas_vreg_of(tok, ".8b"); }
+    return arm64_gas_vreg_of(tok, ".16b");
+}
+
+// arm64_gas_vreg_of decodes `vN.<arr>` and requires the arrangement to be
+// exactly `want`, returning -1 otherwise. Naming the arrangement at the call
+// site is what keeps a wider element size from assembling as a DIFFERENT
+// instruction on the same bytes: every encoder here pins its own size field,
+// so a `.8h` operand handed to a byte-lane encoder would be silently wrong
+// rather than refused.
+function arm64_gas_vreg_of(tok: string, want: string): i32 {
     var s: string = arm64_gas_trim(tok);
     var dot: i32 = arm64_str_indexof(s, ".");
     if (s.len() < 4 || s[0] != b'v' || dot < 2) { return 0 - 1; }
@@ -1752,9 +1816,17 @@ function arm64_gas_vreg_arr(tok: string): i32 {
         i = i + 1;
     }
     if (n > 31) { return 0 - 1; }
-    var arr: string = slice_unchecked(s, dot, s.len()) + "";
-    if (arr == ".8b" || arr == ".16b") { return n; }
-    return 0 - 1;
+    if ((slice_unchecked(s, dot, s.len()) + "") != want) { return 0 - 1; }
+    return n;
+}
+
+// arm64_gas_vlist_16b decodes `{vN.16b}` — ld1's single-register list form —
+// to its register number, or -1. Only one register: a multi-register list
+// encodes a different opcode in the same bits.
+function arm64_gas_vlist_16b(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    if (s.len() < 3 || s[0] != b'{' || s[s.len() - 1] != b'}') { return 0 - 1; }
+    return arm64_gas_vreg_of(slice_unchecked(s, 1, s.len() - 1) + "", ".16b");
 }
 
 // arm64_gas_vreg_arr_q reports the 128-bit (Q) arrangement.
@@ -1782,12 +1854,65 @@ function arm64_gas_breg(tok: string): i32 {
     return n;
 }
 
+// arm64_gas_bad_neon_token guards the packed-NEON kernels' operands. Each
+// encoder pins one arrangement and one immediate shape, so every deviation has
+// to be REFUSED rather than folded into a field that does not exist:
+//
+//   - cmlt's `#0` is part of the opcode. There is no `cmlt … #1`, and a parser
+//     that encodes one emits a compare-against-zero that reads correct.
+//   - shrn's immediate is 16 MINUS the shift over a 1..8 range. Outside it the
+//     value wraps into immh and selects a different element size.
+//   - ld1 takes a ONE-register list; a longer one is a different opcode.
+function arm64_gas_bad_neon_token(mnem: string, rest: string): string {
+    var ops: string[] = arm64_gas_operands(rest);
+    if (mnem == "ld1") {
+        if (ops.len() != 2) { return mnem + ":arity"; }
+        if (arm64_gas_vlist_16b(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+        // `[Xn]` only: this form has no offset field at all, so both an
+        // immediate and a register in the offset position have to be refused
+        // rather than dropped into an encoding that reads as plain `[Xn]`.
+        var m: Arm64Mem = arm64_gas_mem(ops[1]);
+        if (m.base < 0 || m.off != 0 || m.off_reg >= 0) { return arm64_gas_trim(ops[1]); }
+        return "";
+    }
+    if (mnem == "cmeq") {
+        if (ops.len() != 3) { return mnem + ":arity"; }
+        if (arm64_gas_vreg_of(ops[0], ".16b") < 0) { return arm64_gas_trim(ops[0]); }
+        if (arm64_gas_vreg_of(ops[1], ".16b") < 0) { return arm64_gas_trim(ops[1]); }
+        if (arm64_gas_vreg_of(ops[2], ".16b") < 0) { return arm64_gas_trim(ops[2]); }
+        return "";
+    }
+    if (mnem == "cmlt") {
+        if (ops.len() != 3) { return mnem + ":arity"; }
+        if (arm64_gas_vreg_of(ops[0], ".16b") < 0) { return arm64_gas_trim(ops[0]); }
+        if (arm64_gas_vreg_of(ops[1], ".16b") < 0) { return arm64_gas_trim(ops[1]); }
+        if (arm64_gas_imm(ops[2]) != 0) { return mnem + ":imm"; }
+        return "";
+    }
+    if (mnem == "shrn") {
+        if (ops.len() != 3) { return mnem + ":arity"; }
+        if (arm64_gas_vreg_of(ops[0], ".8b") < 0) { return arm64_gas_trim(ops[0]); }
+        if (arm64_gas_vreg_of(ops[1], ".8h") < 0) { return arm64_gas_trim(ops[1]); }
+        var sh: i32 = arm64_gas_imm(ops[2]);
+        if (sh < 1 || sh > 8) { return mnem + ":imm"; }
+        return "";
+    }
+    // dup
+    if (ops.len() != 2) { return mnem + ":arity"; }
+    if (arm64_gas_vreg_of(ops[0], ".16b") < 0) { return arm64_gas_trim(ops[0]); }
+    if (arm64_gas_reg(ops[1]) < 0 || !arm64_gas_is_w(ops[1])) { return arm64_gas_trim(ops[1]); }
+    return "";
+}
+
 // arm64_gas_bad_vec_token guards cnt/addv's SIMD operands the way
 // arm64_gas_bad_reg_token guards the general-purpose ones: a shape the byte-
 // lane encoders cannot express is returned so the caller records it on
 // p.unknown and refuses the output, rather than letting a -1 sentinel fold
 // into the register field.
 function arm64_gas_bad_vec_token(mnem: string, rest: string): string {
+    if (mnem == "ld1" || mnem == "cmeq" || mnem == "cmlt" || mnem == "shrn" || mnem == "dup") {
+        return arm64_gas_bad_neon_token(mnem, rest);
+    }
     if (mnem != "cnt" && mnem != "addv") { return ""; }
     var ops: string[] = arm64_gas_operands(rest);
     if (ops.len() != 2) { return mnem + ":arity"; }
@@ -2386,6 +2511,29 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_addv(a.code, arm64_gas_breg(ops[0]), arm64_gas_vreg_arr(ops[1]), arm64_gas_vreg_arr_q(ops[1])) };
         return a;
     }
+    // The packed NEON the __memchr / __ascii_run kernels emit. Operand shapes
+    // are vetted in arm64_gas_bad_vec_token before reaching here, so a token
+    // that cannot be encoded has already been recorded and refused.
+    if (mnem == "ld1") {
+        a = Arm64Asm { ...a, code: arm64_ld1_16b(a.code, arm64_gas_vlist_16b(ops[0]), arm64_gas_mem(ops[1]).base) };
+        return a;
+    }
+    if (mnem == "cmeq") {
+        a = Arm64Asm { ...a, code: arm64_cmeq_16b(a.code, arm64_gas_vreg_of(ops[0], ".16b"), arm64_gas_vreg_of(ops[1], ".16b"), arm64_gas_vreg_of(ops[2], ".16b")) };
+        return a;
+    }
+    if (mnem == "cmlt") {
+        a = Arm64Asm { ...a, code: arm64_cmlt_zero_16b(a.code, arm64_gas_vreg_of(ops[0], ".16b"), arm64_gas_vreg_of(ops[1], ".16b")) };
+        return a;
+    }
+    if (mnem == "shrn") {
+        a = Arm64Asm { ...a, code: arm64_shrn_8b_8h(a.code, arm64_gas_vreg_of(ops[0], ".8b"), arm64_gas_vreg_of(ops[1], ".8h"), arm64_gas_imm(ops[2])) };
+        return a;
+    }
+    if (mnem == "dup") {
+        a = Arm64Asm { ...a, code: arm64_dup_16b_w(a.code, arm64_gas_vreg_of(ops[0], ".16b"), arm64_gas_reg(ops[1])) };
+        return a;
+    }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") {
         // post-index `ldrb/strb Wt, [Xn], #imm` (the byte-copy loop): 3
         // operands, ops[1]="[Xn]", ops[2]="#imm".
@@ -2520,6 +2668,7 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "lsl" || mnem == "lsr" || mnem == "asr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
     if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16" || mnem == "clz") { return true; }
     if (mnem == "rbit" || mnem == "cnt" || mnem == "addv") { return true; }  // ctz = rbit+clz; popcount = cnt+addv
+    if (mnem == "ld1" || mnem == "cmeq" || mnem == "cmlt" || mnem == "shrn" || mnem == "dup") { return true; }  // the packed NEON of the §3 kernels
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
     if (mnem == "mrs") { return true; } // sysreg validity checked in the program loop
     if (mnem == "fadd" || mnem == "fsub" || mnem == "fmul" || mnem == "fdiv" || mnem == "fcmp" || mnem == "fmov" || mnem == "fcvtzs" || mnem == "fcvtzu" || mnem == "scvtf" || mnem == "ucvtf") { return true; }
