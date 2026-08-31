@@ -288,8 +288,8 @@ var rcResultNonPointer = map[string]bool{
 	// f64.
 	"__fern_abs_f64": true, "__fern_ceil_f64": true, "__fern_cos_f64": true,
 	"__fern_exp_f64": true, "__fern_floor_f64": true, "__fern_log_f64": true,
-	"__fern_pow_f64": true, "__fern_sin_f64": true, "__fern_sqrt_f64": true,
-	"__fern_trunc_f64": true,
+	"__fern_pow_f64": true, "__fern_round_f64": true, "__fern_sin_f64": true,
+	"__fern_sqrt_f64": true, "__fern_trunc_f64": true,
 
 	// i64.
 	"__fern_arr_push_shared_bytes": true, "__fern_heap_bump_bytes": true,

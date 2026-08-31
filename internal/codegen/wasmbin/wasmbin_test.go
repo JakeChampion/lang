@@ -2837,8 +2837,8 @@ func TestEmitReinterpretF64I64(t *testing.T) {
 }
 
 // TestEmitFloatMathHelpers — round-trip the f64 math helpers
-// that map to native wasm ops (sqrt, abs, floor, ceil, trunc).
-// Each call should match the wasm-native semantics exactly.
+// that map to native wasm ops (sqrt, abs, floor, ceil, trunc)
+// plus round, which is built from them.
 func TestEmitFloatMathHelpers(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -2851,6 +2851,12 @@ func TestEmitFloatMathHelpers(t *testing.T) {
 		{"floor_pos", "__floor_f64", 3.7, "3"},
 		{"ceil_pos", "__ceil_f64", 3.2, "4"},
 		{"trunc_neg", "__trunc_f64", -3.7, "-3"},
+		// round is half-away-from-zero, not f64.nearest's ties-to-even.
+		{"round_half_up", "__round_f64", 2.5, "3"},
+		{"round_half_down", "__round_f64", -2.5, "-3"},
+		// Below the tie: trunc(x + 0.5) would wrongly give 1 here.
+		{"round_just_under_half", "__round_f64", 0.49999999999999994, "0"},
+		{"round_neg", "__round_f64", -3.7, "-4"},
 	}
 	for _, c := range cases {
 		c := c
