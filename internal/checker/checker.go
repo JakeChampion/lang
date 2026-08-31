@@ -11078,6 +11078,119 @@ func bindsVariantPattern(n *ast.Match) bool {
 	return true
 }
 
+// stampRemainderArm decides whether a match's LAST arm can be reached by
+// only one variant, and records the answer on the arm.
+//
+// It is the checker's job because exhaustiveness is proved here and
+// nowhere else: `trmc.go`'s `trmcArmsTotal` re-derives the same fact in
+// lowering today, which is the recovery ast.MatchArm.EnumName's own doc
+// argues against (#6964).
+//
+// Deliberately narrower than the E030 proof beside it. That proof also
+// admits a variant covered JOINTLY by a group of refutable arms
+// (`patsCoverOneField`); this does not, because a group's members each
+// test a sub-pattern and "reaches this arm" then stops being a statement
+// about tags alone. A match that is exhaustive by the wider rule simply
+// keeps its tag test, which is the conservative direction.
+//
+// The write is unconditional. The checker re-runs after monomorphisation
+// over the same nodes, so a true left from an earlier pass would outlive
+// the shape that justified it.
+//
+// Two of the refusals below are DEFENSIVE rather than reachable: the
+// checker already rejects a wildcard that is not last, and a duplicate
+// variant arm, so neither shape reaches here from source. They are kept
+// because this runs over synthesised arms too — every desugar's output
+// passes through the checker — and because false is the answer that
+// costs a tag test rather than running dead code. A test pins that the
+// checker still rejects both, so a later relaxation there cannot quietly
+// make the stamp wrong.
+func stampRemainderArm[A matchArmLike](arms []A, ed *ast.EnumDecl) {
+	for _, a := range arms {
+		a.setCoversRemainder(false)
+	}
+	if ed == nil || len(arms) == 0 {
+		return
+	}
+	last := arms[len(arms)-1]
+	if last.isWildcard() || last.enumName() == "" || last.guard() != nil ||
+		armPayloadsRefutable(last.payloads()) {
+		return
+	}
+	// What the arms BEFORE the last one irrefutably cover. A wildcard
+	// among them already terminates the chain and makes the last arm
+	// dead, so it disqualifies rather than contributes.
+	covered := map[string]bool{}
+	for _, a := range arms[:len(arms)-1] {
+		if a.isWildcard() {
+			return
+		}
+		if a.guard() == nil && !armPayloadsRefutable(a.payloads()) {
+			covered[a.variantName()] = true
+		}
+	}
+	for _, v := range ed.Variants {
+		if v.Name == last.variantName() {
+			// An earlier arm already handles this variant irrefutably,
+			// so the last arm is unreachable. Emitting it
+			// unconditionally would run code that cannot run today.
+			if covered[v.Name] {
+				return
+			}
+			continue
+		}
+		if !covered[v.Name] {
+			return
+		}
+	}
+	last.setCoversRemainder(true)
+}
+
+// matchArmLike is the little of an arm this needs, so the statement and
+// expression forms share one implementation rather than two that drift.
+type matchArmLike interface {
+	isWildcard() bool
+	enumName() string
+	variantName() string
+	guard() ast.Expr
+	payloads() []*ast.TuplePatElem
+	setCoversRemainder(bool)
+}
+
+type stmtArm struct{ a *ast.MatchArm }
+
+func (x stmtArm) isWildcard() bool              { return x.a.IsWildcard }
+func (x stmtArm) enumName() string              { return x.a.EnumName }
+func (x stmtArm) variantName() string           { return x.a.VariantName }
+func (x stmtArm) guard() ast.Expr               { return x.a.Guard }
+func (x stmtArm) payloads() []*ast.TuplePatElem { return x.a.Payloads }
+func (x stmtArm) setCoversRemainder(v bool)     { x.a.CoversRemainder = v }
+
+type exprArm struct{ a *ast.MatchExprArm }
+
+func (x exprArm) isWildcard() bool              { return x.a.IsWildcard }
+func (x exprArm) enumName() string              { return x.a.EnumName }
+func (x exprArm) variantName() string           { return x.a.VariantName }
+func (x exprArm) guard() ast.Expr               { return x.a.Guard }
+func (x exprArm) payloads() []*ast.TuplePatElem { return x.a.Payloads }
+func (x exprArm) setCoversRemainder(v bool)     { x.a.CoversRemainder = v }
+
+func stampRemainderStmtArms(arms []*ast.MatchArm, ed *ast.EnumDecl) {
+	wrapped := make([]matchArmLike, 0, len(arms))
+	for _, a := range arms {
+		wrapped = append(wrapped, stmtArm{a})
+	}
+	stampRemainderArm(wrapped, ed)
+}
+
+func stampRemainderExprArms(arms []*ast.MatchExprArm, ed *ast.EnumDecl) {
+	wrapped := make([]matchArmLike, 0, len(arms))
+	for _, a := range arms {
+		wrapped = append(wrapped, exprArm{a})
+	}
+	stampRemainderArm(wrapped, ed)
+}
+
 func (c *checker) checkMatch(n *ast.Match, s *scope) {
 	// A `let … else` binds for the rest of its block — the desugar's
 	// success arm — so the else branch (the synthesised trailing wildcard)
@@ -11267,6 +11380,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 			}
 		}
 	}
+	stampRemainderStmtArms(n.Arms, ed)
 }
 
 // checkLiteralMatch handles `match (n) { 0 => …, _ => … }` where
@@ -12046,6 +12160,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 			}
 		}
 	}
+	stampRemainderExprArms(n.Arms, ed)
 	if isFloat(result) {
 		n.IsFloat = true
 	}
