@@ -8093,8 +8093,9 @@ pub function is_fcmp_kind(kind: string): boolean {
 // __sqrt_f64 (sqrtsd / fsqrt / f64.sqrt), __floor_f64 / __ceil_f64 / __trunc_f64
 // (roundsd $1/$2/$3 / frintm/p/z / f64.floor/ceil/trunc), and __abs_f64 (sign-bit
 // mask / fabs / f64.abs). __round_f64 (round-half-away, Go's math.Round) is one
-// instruction on arm64 (frinta) but needs trunc(x+copysign(0.5,x)) emulation on
-// x86 (roundsd toward zero) and wasm (f64.nearest is ties-to-even, not -away).
+// instruction on arm64 (frinta) but on x86 (roundsd has no ties-away mode) and
+// wasm (f64.nearest is ties-to-even, not -away) it is emulated as trunc plus an
+// exact fractional-part test — see ir_fround / emit_wasm_fround.
 // The libm transcendentals log/exp/sin/cos lower here too; `pow`, the only
 // two-argument one, lowers as an `fpow` fbin instead (the __pow_f64 call case).
 pub function f64_math_builtin_kind(name: string): string {
