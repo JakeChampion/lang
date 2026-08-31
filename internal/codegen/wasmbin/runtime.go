@@ -3695,16 +3695,26 @@ func buildStrLenBody(_ map[string]uint32) []byte {
 // buildRmemchrBody assembles wasm bytes for __fern_rmemchr: the index of the
 // LAST occurrence of `byte` at or before `from`, or -1.
 //
-// SCALAR, per docs/ATLAS-PLATFORM-PLAN.md §3.4's "correct in every backend
-// first, fast one backend at a time". That also lets it be ONE path where the
-// vector kernels need two: reading every byte through __fern_str_byte is
-// correct for both the heap form and the inline (SSO) form, which has no
-// address at all. A vector version would have to split them again.
+// v128, 16 bytes per iteration, walking DOWN: the block ENDING at the cursor
+// is loaded at `cursor - 15`. `i8x16.bitmask` gives one bit per byte, so the
+// rightmost match is the HIGHEST set bit — `31 - i32.clz(mask)`, where
+// __memchr uses `i32.ctz(mask)` directly. wasm has no find-highest primitive,
+// so it pays the same subtraction arm64 does; x86-64 gets it in one (bsr).
 //
-// The clamp is __memchr's mirrored: a forward scan clamps `from` UP to 0, a
-// backward scan clamps it DOWN to len-1, so a negative `from` finds nothing.
+// Two structural notes, both inherited from __memchr and both forced by the
+// wasm string representation:
 //
-// Locals after the four params: $n (4), $i (5).
+//   - SHORT STRINGS HAVE NO ADDRESS. A string with the 0x80000000 flag lives
+//     IN its two words, so there is nothing for v128.load to point at and
+//     that form takes a scalar loop over __fern_str_byte.
+//   - THE SPLAT IS RECOMPUTED per iteration rather than hoisted, to avoid a
+//     v128 local and the v128 valtype in the locals vector.
+//
+// The scalar tail also reads through __fern_str_byte rather than i32.load8_u:
+// it is at most 15 bytes, and one reader that is correct for both string forms
+// is worth more than the load it saves.
+//
+// Locals after the four params: $n (4), $i (5), $m (6).
 func buildRmemchrBody(idxs map[string]uint32) []byte {
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
@@ -3715,11 +3725,12 @@ func buildRmemchrBody(idxs map[string]uint32) []byte {
 		pFrom = 3
 		lN    = 4
 		lI    = 5
+		lM    = 6
 	)
 	var body []byte
 
-	// A byte outside 0..255 can never occur; checked once so the loop needs
-	// no per-iteration guard.
+	// A byte outside 0..255 can never occur; checked once so neither loop
+	// needs a per-iteration guard.
 	body = inst.InstLocalGet(body, pByte)
 	body = inst.InstI32Const(body, 0)
 	body = numeric.InstI32LtS(body)
@@ -3732,14 +3743,12 @@ func buildRmemchrBody(idxs map[string]uint32) []byte {
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
-	// $n = logical length.
+	// $n = logical length; $i = min(from, $n - 1). An empty string leaves $i
+	// negative, which every loop guard below turns straight into the miss.
 	body = inst.InstLocalGet(body, pData)
 	body = inst.InstLocalGet(body, pLen)
 	body = inst.InstCall(body, strLen)
 	body = inst.InstLocalSet(body, lN)
-
-	// $i = min(from, $n - 1). An empty string leaves $i negative, which the
-	// loop guard turns straight into the miss.
 	body = inst.InstLocalGet(body, pFrom)
 	body = inst.InstLocalSet(body, lI)
 	body = inst.InstLocalGet(body, lI)
@@ -3754,6 +3763,106 @@ func buildRmemchrBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, lI)
 	body = inst.InstEnd(body)
 
+	// Inline (SSO) string: scalar loop through str_byte, the only reader that
+	// can see bytes living in the two words.
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 0)
+		body = numeric.InstI32LtS(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstLocalGet(body, pData)
+		body = inst.InstLocalGet(body, pLen)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstCall(body, strByte)
+		body = inst.InstLocalGet(body, pByte)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalSet(body, lI)
+		body = inst.InstBr(body, 0)
+		body = inst.InstEnd(body) // loop
+		body = inst.InstEnd(body) // block
+		body = inst.InstI32Const(body, -1)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	// Heap string: vector loop while a whole block still fits BELOW the
+	// cursor. That bound keeps the load in bounds at the LOW end, where
+	// __memchr's "16 or more left" keeps it in bounds at the high end.
+	//
+	// Inside the loop $i is the block BASE rather than the cursor, so the
+	// load address is a plain `data + $i` and the block index needs no
+	// per-iteration `- 15`. Its x86-64 and arm64 twins carry the base the
+	// same way, for the reason measured there: recomputing the address each
+	// iteration cost about a third of that loop.
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 15)
+	body = numeric.InstI32GeS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 15)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalSet(body, lI) // $i = first block base
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, pData)
+		body = inst.InstLocalGet(body, lI)
+		body = numeric.InstI32Add(body)
+		// align 0, as in __memchr: a Fern string buffer carries no 16-byte
+		// alignment guarantee and the cursor walks from an arbitrary `from`.
+		body = simd.InstV128Load(body, 0, 0)
+		body = inst.InstLocalGet(body, pByte)
+		body = simd.InstI8x16Splat(body)
+		body = simd.InstI8x16Eq(body)
+		body = simd.InstI8x16Bitmask(body)
+		body = inst.InstLocalTee(body, lM)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		// base + (31 - clz(mask)) — the HIGHEST set bit is the rightmost
+		// matching byte. i32.ctz here would answer the leftmost and be wrong
+		// in exactly the cases this op exists to get right.
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 31)
+		body = inst.InstLocalGet(body, lM)
+		body = numeric.InstI32Clz(body)
+		body = numeric.InstI32Sub(body)
+		body = numeric.InstI32Add(body)
+		body = inst.InstReturn(body)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 16)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalSet(body, lI)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 0)
+		body = numeric.InstI32LtS(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstBr(body, 0)
+		body = inst.InstEnd(body) // loop
+		body = inst.InstEnd(body) // block
+		// The next block would start below 0, so the untested bytes are
+		// [0, base-1] where base is the block just cleared: $i is base-16, so
+		// base-1 is $i+15.
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 15)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, lI)
+	}
+	body = inst.InstEnd(body)
+
+	// Scalar tail: the final 0..14 bytes.
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, lI)
@@ -3779,7 +3888,7 @@ func buildRmemchrBody(idxs map[string]uint32) []byte {
 	body = inst.InstEnd(body) // block
 
 	body = inst.InstI32Const(body, -1)
-	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32) // $n, $i
+	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32) // $n, $i, $m
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
