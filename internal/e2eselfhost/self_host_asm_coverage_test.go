@@ -89,11 +89,26 @@ func probeMnemonics(t *testing.T, path string, mnemonics []string, probes map[st
 	}
 }
 
+// arm64KnownHelpers are the predicate / base-table helpers arm64_gas_known
+// consults instead of spelling those mnemonics as literals in its own body
+// (the #7886 families and the scalar-FP tables). Their bodies are extracted
+// alongside arm64_gas_known's so every mnemonic the assembler accepts is
+// enumerated; a helper that disappears fails loudly in fernFnBody rather
+// than silently shrinking the probed surface.
+var arm64KnownHelpers = []string{
+	"arm64_gas_is_carry", "arm64_gas_is_mulwide", "arm64_gas_is_widening",
+	"arm64_gas_is_logical2", "arm64_gas_is_bitfield", "arm64_gas_is_condsel",
+	"arm64_gas_is_excl_ld", "arm64_gas_is_excl_st", "arm64_gas_is_acqrel",
+	"arm64_gas_is_unscaled2",
+	"arm64_fp3_base", "arm64_fp4_base", "arm64_funary_d_base",
+}
+
 // TestSelfHostAsmCoverageArm64 pins the self-host arm64 assembler's
-// mnemonic allow-list (arm64_gas_known in arm64_native.fern) to the native
-// arm64 assembler: every mnemonic the self-host claims to handle must
-// assemble through internal/native/arm64. The b.<cond> / b<cond> aliases
-// are pattern-matched in the .fern source, not listed, so they are pinned
+// mnemonic allow-list (arm64_gas_known in arm64_native.fern, plus the
+// family helpers it consults) to the native arm64 assembler: every
+// mnemonic the self-host claims to handle must assemble through
+// internal/native/arm64. The b.<cond> / b<cond> aliases are
+// pattern-matched in the .fern source, not listed, so they are pinned
 // here by explicit probes instead of extraction.
 func TestSelfHostAsmCoverageArm64(t *testing.T) {
 	const path = "../../examples/self_host/arm64_native.fern"
@@ -102,6 +117,9 @@ func TestSelfHostAsmCoverageArm64(t *testing.T) {
 		t.Fatalf("reading %s: %v", path, err)
 	}
 	body := fernFnBody(t, string(b), path, "arm64_gas_known")
+	for _, helper := range arm64KnownHelpers {
+		body += "\n" + fernFnBody(t, string(b), path, helper)
+	}
 	mnemonics := mnemonicCases(body, "mnem")
 
 	// One representative, currently-valid instruction per mnemonic in the
@@ -166,11 +184,93 @@ func TestSelfHostAsmCoverageArm64(t *testing.T) {
 		"strh":   "strh w2, [x3, #6]",
 		"ldrsw":  "ldrsw x0, [x1, #4]",
 		"mrs":    "mrs x9, cntvct_el0",
+		"msr":    "msr tpidr_el0, x9",
+		"adr":    "adr x0, l0\nl0:\nret",
+		"adc":    "adc x0, x1, x2",
+		"adcs":   "adcs x0, x1, x2",
+		"sbc":    "sbc x0, x1, x2",
+		"sbcs":   "sbcs w0, w1, w2",
+		"ngc":    "ngc x0, x1",
+		"ngcs":   "ngcs w0, w1",
+		"umulh":  "umulh x0, x1, x2",
+		"smulh":  "smulh x0, x1, x2",
+		"madd":   "madd x0, x1, x2, x3",
+		"smull":  "smull x0, w1, w2",
+		"umull":  "umull x0, w1, w2",
+		"smaddl": "smaddl x0, w1, w2, x3",
+		"umaddl": "umaddl x0, w1, w2, x3",
+		"smsubl": "smsubl x0, w1, w2, x3",
+		"umsubl": "umsubl x0, w1, w2, x3",
+		"tst":    "tst x0, x1",
+		"ands":   "ands x0, x1, x2",
+		"bic":    "bic x0, x1, x2",
+		"bics":   "bics x0, x1, x2",
+		"orn":    "orn x0, x1, x2",
+		"eon":    "eon x0, x1, x2",
+		"mvn":    "mvn x0, x1",
+		"negs":   "negs x0, x1",
+		"extr":   "extr x0, x1, x2, #12",
+		"ror":    "ror x0, x1, #7",
+		"bfi":    "bfi x0, x1, #4, #8",
+		"bfxil":  "bfxil x0, x1, #4, #8",
+		"ubfiz":  "ubfiz x0, x1, #3, #16",
+		"ccmp":   "ccmp x0, x1, #0, eq",
+		"ccmn":   "ccmn x0, #9, #15, lt",
+		"csinc":  "csinc x0, x1, x2, lt",
+		"csinv":  "csinv x0, x1, x2, lt",
+		"csneg":  "csneg x0, x1, x2, lt",
+		"cinc":   "cinc x0, x1, lt",
+		"cinv":   "cinv x0, x1, lt",
+		"cneg":   "cneg x0, x1, lt",
+		"csetm":  "csetm x0, lt",
+		"rev":    "rev x0, x1",
+		"rev32":  "rev32 x0, x1",
+		"cls":    "cls x0, x1",
+		"ldxr":   "ldxr x0, [x1]",
+		"ldxrb":  "ldxrb w0, [x1]",
+		"ldxrh":  "ldxrh w0, [x1]",
+		"ldaxr":  "ldaxr x0, [x1]",
+		"ldaxrb": "ldaxrb w0, [x1]",
+		"ldaxrh": "ldaxrh w0, [x1]",
+		"stxr":   "stxr w2, x0, [x1]",
+		"stxrb":  "stxrb w2, w0, [x1]",
+		"stxrh":  "stxrh w2, w0, [x1]",
+		"stlxr":  "stlxr w2, x0, [x1]",
+		"stlxrb": "stlxrb w2, w0, [x1]",
+		"stlxrh": "stlxrh w2, w0, [x1]",
+		"ldar":   "ldar x0, [x1]",
+		"ldarb":  "ldarb w0, [x1]",
+		"ldarh":  "ldarh w0, [x1]",
+		"stlr":   "stlr x0, [x1]",
+		"stlrb":  "stlrb w0, [x1]",
+		"stlrh":  "stlrh w0, [x1]",
+		"dmb":    "dmb ish",
+		"dsb":    "dsb sy",
+		"isb":    "isb",
+		"ldurb":  "ldurb w0, [x1, #-1]",
+		"sturb":  "sturb w0, [x1, #-1]",
+		"ldurh":  "ldurh w0, [x1, #-2]",
+		"sturh":  "sturh w0, [x1, #-2]",
+		"ldursb": "ldursb x0, [x1, #-1]",
+		"ldursh": "ldursh w0, [x1, #-2]",
+		"ldursw": "ldursw x0, [x1, #-4]",
 		"fadd":   "fadd d0, d1, d2",
 		"fsub":   "fsub d0, d1, d2",
 		"fmul":   "fmul d0, d1, d2",
 		"fdiv":   "fdiv d0, d1, d2",
+		"fnmul":  "fnmul d0, d1, d2",
+		"fmin":   "fmin d0, d1, d2",
+		"fmax":   "fmax d0, d1, d2",
+		"fminnm": "fminnm s0, s1, s2",
+		"fmaxnm": "fmaxnm s0, s1, s2",
+		"fmadd":  "fmadd d0, d1, d2, d3",
+		"fmsub":  "fmsub d0, d1, d2, d3",
+		"fnmadd": "fnmadd s0, s1, s2, s3",
+		"fnmsub": "fnmsub s0, s1, s2, s3",
+		"fcsel":  "fcsel d0, d1, d2, lt",
+		"fccmp":  "fccmp d0, d1, #15, lt",
 		"fcmp":   "fcmp d1, d2",
+		"fcmpe":  "fcmpe d1, #0.0",
 		"fmov":   "fmov d0, d1",
 		"fcvtzs": "fcvtzs x0, d1",
 		"fcvtzu": "fcvtzu w0, d1",
