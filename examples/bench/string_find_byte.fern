@@ -1,0 +1,32 @@
+import "std/string";
+
+// string_find_byte — a single-byte needle scanned across a long haystack that
+// only answers at the very last position.
+//
+// This is the shape `__memchr` exists for (docs/ATLAS-PLATFORM-PLAN.md §3):
+// `index_of` routes a one-byte needle to the fused kernel, so the retired
+// count here is roughly the haystack length over the vector width. That is
+// what makes it a GATE rather than a demonstration — a kernel that quietly
+// returned to a byte-at-a-time loop, on any of the seven backends or through
+// an assembler that stopped encoding the vector body, moves this number by
+// most of an order of magnitude. Nothing else in the corpus would notice.
+//
+// The needle is the only '!' in the string, so every call scans the whole
+// haystack; a hit early on would measure the call overhead instead.
+function haystack(): string {
+    var s: string = "abcdefghijklmnopqrstuvwxyz012345";
+    var k: i32 = 0;
+    while (k < 10) { s = s + s; k = k + 1; }   // 32 B -> 32 KiB
+    return s + "!";
+}
+
+function main(): i32 {
+    var hay: string = haystack();
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 6000) {
+        acc = acc + hay.index_of("!");
+        r = r + 1;
+    }
+    return acc % 97;
+}

@@ -723,7 +723,15 @@ Per rule 5, each kernel ships with:
 - runs on interp, x86-64, arm64, and wasm, plus through the self-host compiler
   on wasm and x86-64;
 - a `__heap_bump_bytes()` assertion that the kernel allocates nothing;
-- once item 1 of §2 exists, a throughput gate.
+- a throughput gate. This was conditional on item 1 of §2 and is now
+  unconditional, because that lane exists: `examples/bench/string_find_byte`
+  and `examples/bench/ascii_scan` put each kernel's VECTOR path under
+  `scripts/perf-bench`, whose retired-instruction counts repeat to the digit.
+  A kernel that returned to a byte-at-a-time loop — on any of the seven
+  backends, or through an assembler that stopped encoding the vector body —
+  moves them by 10.1x and 8.9x against a 1% tolerance. Nothing else in the
+  corpus reaches those paths: the only other caller, `utf8_ingest_validated`,
+  runs the dense-non-ASCII shape the kernel is WORST on.
 
 ---
 
@@ -731,9 +739,9 @@ Per rule 5, each kernel ships with:
 
 1. **Performance-regression CI** on `__heap_bump_bytes()` /
    `__arr_push_shared_bytes()` — protects everything downstream. (§2.1)
-   *Slice 1 landed (`TestX86_64AllocScaling`, allocation asymptotics).
-   Remaining: extending the corpus to the compiler's own hot shapes, and a
-   throughput gate.*
+   *Slice 1 landed (`TestX86_64AllocScaling`, allocation asymptotics). The
+   throughput gate landed too — see §3.5, which no longer defers it. Remaining:
+   extending the corpus to the compiler's own hot shapes.*
 2. **`__memchr` as the first fused kernel**, by the §3.4 ordering. (§3.3)
 3. **`__fern_poll` on kqueue for `arm64-darwin`** (§2c) — the one item here
    that turns a target from half-working into whole. Independent of everything

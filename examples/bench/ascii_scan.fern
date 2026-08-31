@@ -1,0 +1,35 @@
+import "std/utf8" as utf8;
+
+// ascii_scan — UTF-8 validation over a long, overwhelmingly-ASCII body: one
+// 2-byte codepoint every 1 KiB, which is what real text looks like.
+//
+// This is the shape `__ascii_run` exists for (docs/ATLAS-PLATFORM-PLAN.md §3,
+// second kernel): `is_valid_utf8` skips each ASCII run with the fused kernel
+// and only walks the length chain at a lead byte, so the retired count is
+// roughly the body length over the vector width. Like its `__memchr`
+// counterpart it is here to GATE that, not to show it — and the two together
+// cover both kernels' vector paths, which nothing else in the corpus reaches.
+//
+// `utf8_ingest_validated` also calls this code, but on a body with frequent
+// multi-byte codepoints — the corpus §3.4 measured the kernel's WORST case on.
+// This is the complement, so a regression that only hurts long runs shows up.
+function body(): string {
+    var block: string = "a";
+    var k: i32 = 0;
+    while (k < 10) { block = block + block; k = k + 1; }   // 1 B -> 1 KiB
+    var s: string = block + "é";                            // one 2-byte cp per KiB
+    var d: i32 = 0;
+    while (d < 6) { s = s + s; d = d + 1; }                 // -> ~64 KiB
+    return s;
+}
+
+function main(): i32 {
+    var text: string = body();
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 1500) {
+        if (utf8.is_valid_utf8(text)) { acc = acc + 1; }
+        r = r + 1;
+    }
+    return acc % 97;
+}
