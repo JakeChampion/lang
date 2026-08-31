@@ -145,6 +145,75 @@ function main(): i32 {
     if (u4.unknown.len() != 1) { return 28; }
     var u5: Arm64GasProg = arm64_gas_program("add x0, x1, x2, lsl #2\nadd x2, x0, w1, uxtw\n");
     if (u5.unknown.len() != 0) { return 29; }
+    // Packed NEON — the five encodings the __memchr / __ascii_run kernels need
+    // (docs/ATLAS-PLATFORM-PLAN.md §3.3a: the assembler for every target a
+    // kernel is emitted on gets checked, and a self-host backend has one of its
+    // own). Every expectation is aarch64-linux-gnu-as output, little-endian, and
+    // each instruction is checked once with low registers and once with high
+    // ones so a dropped register field cannot pass.
+    // ld1 {v0.16b}, [x8] -> 0x4C407100 -> 00 71 40 4C
+    var n1: Arm64Asm = arm64_gas_assemble("ld1 {v0.16b}, [x8]");
+    if (n1.code[0] != 0 || n1.code[1] != 113 || n1.code[2] != 64 || n1.code[3] != 76) { return 30; }
+    // ld1 {v3.16b}, [x0] -> 0x4C407003 -> 03 70 40 4C
+    var n2: Arm64Asm = arm64_gas_assemble("ld1 {v3.16b}, [x0]");
+    if (n2.code[0] != 3 || n2.code[1] != 112 || n2.code[2] != 64 || n2.code[3] != 76) { return 31; }
+    // cmeq v0.16b, v0.16b, v1.16b -> 0x6E218C00 -> 00 8C 21 6E
+    var n3: Arm64Asm = arm64_gas_assemble("cmeq v0.16b, v0.16b, v1.16b");
+    if (n3.code[0] != 0 || n3.code[1] != 140 || n3.code[2] != 33 || n3.code[3] != 110) { return 32; }
+    // cmeq v5.16b, v6.16b, v7.16b -> 0x6E278CC5 -> C5 8C 27 6E
+    var n4: Arm64Asm = arm64_gas_assemble("cmeq v5.16b, v6.16b, v7.16b");
+    if (n4.code[0] != 197 || n4.code[1] != 140 || n4.code[2] != 39 || n4.code[3] != 110) { return 33; }
+    // cmlt v0.16b, v0.16b, #0 -> 0x4E20A800 -> 00 A8 20 4E
+    var n5: Arm64Asm = arm64_gas_assemble("cmlt v0.16b, v0.16b, #0");
+    if (n5.code[0] != 0 || n5.code[1] != 168 || n5.code[2] != 32 || n5.code[3] != 78) { return 34; }
+    // cmlt v9.16b, v10.16b, #0 -> 0x4E20A949 -> 49 A9 20 4E
+    var n6: Arm64Asm = arm64_gas_assemble("cmlt v9.16b, v10.16b, #0");
+    if (n6.code[0] != 73 || n6.code[1] != 169 || n6.code[2] != 32 || n6.code[3] != 78) { return 35; }
+    // shrn v0.8b, v0.8h, #4 -> 0x0F0C8400 -> 00 84 0C 0F
+    var n7: Arm64Asm = arm64_gas_assemble("shrn v0.8b, v0.8h, #4");
+    if (n7.code[0] != 0 || n7.code[1] != 132 || n7.code[2] != 12 || n7.code[3] != 15) { return 36; }
+    // shrn v2.8b, v3.8h, #4 -> 0x0F0C8462 -> 62 84 0C 0F
+    var n8: Arm64Asm = arm64_gas_assemble("shrn v2.8b, v3.8h, #4");
+    if (n8.code[0] != 98 || n8.code[1] != 132 || n8.code[2] != 12 || n8.code[3] != 15) { return 37; }
+    // The immediate is 16 MINUS the shift, so the two ends of the legal range
+    // pin the direction: #1 -> 0x0F0F8400, #8 -> 0x0F088400.
+    var n9: Arm64Asm = arm64_gas_assemble("shrn v0.8b, v0.8h, #1");
+    if (n9.code[2] != 15 || n9.code[3] != 15) { return 38; }
+    var n10: Arm64Asm = arm64_gas_assemble("shrn v0.8b, v0.8h, #8");
+    if (n10.code[2] != 8 || n10.code[3] != 15) { return 39; }
+    // dup v1.16b, w1 -> 0x4E010C21 -> 21 0C 01 4E
+    var n11: Arm64Asm = arm64_gas_assemble("dup v1.16b, w1");
+    if (n11.code[0] != 33 || n11.code[1] != 12 || n11.code[2] != 1 || n11.code[3] != 78) { return 40; }
+    // dup v11.16b, w12 -> 0x4E010D8B -> 8B 0D 01 4E
+    var n12: Arm64Asm = arm64_gas_assemble("dup v11.16b, w12");
+    if (n12.code[0] != 139 || n12.code[1] != 13 || n12.code[2] != 1 || n12.code[3] != 78) { return 41; }
+    // A whole kernel body assembles clean — the five above plus the scalar
+    // mask arithmetic they feed.
+    var nk: Arm64GasProg = arm64_gas_program("dup v1.16b, w1\nld1 {v0.16b}, [x8]\ncmeq v0.16b, v0.16b, v1.16b\nshrn v0.8b, v0.8h, #4\nfmov x11, d0\nrbit x12, x11\nclz x12, x12\n");
+    if (nk.unknown.len() != 0) { return 42; }
+    // Each shape the encoders CANNOT express is refused, not folded into a
+    // field that does not exist. cmlt's #0 is part of the opcode; shrn's shift
+    // is only 1..8; ld1 takes a one-register list and a bare [Xn]; an
+    // arrangement the encoder does not pin would select a different element
+    // size on the same bytes.
+    var b1: Arm64GasProg = arm64_gas_program("cmlt v0.16b, v0.16b, #1\n");
+    if (b1.unknown.len() != 1) { return 43; }
+    var b2: Arm64GasProg = arm64_gas_program("shrn v0.8b, v0.8h, #9\n");
+    if (b2.unknown.len() != 1) { return 44; }
+    var b3: Arm64GasProg = arm64_gas_program("shrn v0.8b, v0.8h, #0\n");
+    if (b3.unknown.len() != 1) { return 45; }
+    var b4: Arm64GasProg = arm64_gas_program("shrn v0.8b, v0.16b, #4\n");
+    if (b4.unknown.len() != 1) { return 46; }
+    var b5: Arm64GasProg = arm64_gas_program("cmeq v0.8b, v0.8b, v1.8b\n");
+    if (b5.unknown.len() != 1) { return 47; }
+    var b6: Arm64GasProg = arm64_gas_program("ld1 {v0.16b, v1.16b}, [x8]\n");
+    if (b6.unknown.len() != 1) { return 48; }
+    var b7: Arm64GasProg = arm64_gas_program("ld1 {v0.16b}, [x8, #16]\n");
+    if (b7.unknown.len() != 1) { return 49; }
+    var b8: Arm64GasProg = arm64_gas_program("ld1 {v0.16b}, [x8, x9]\n");
+    if (b8.unknown.len() != 1) { return 50; }
+    var b9: Arm64GasProg = arm64_gas_program("dup v1.16b, x1\n");
+    if (b9.unknown.len() != 1) { return 51; }
     return 0;
 }
 `
