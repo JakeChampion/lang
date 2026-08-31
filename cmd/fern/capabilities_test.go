@@ -35,10 +35,14 @@ func TestCapabilitiesReportPathDep(t *testing.T) {
 	root := writeCapsTree(t, map[string]string{
 		"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = { path = \"../helper\" }\n",
 		"app/main.fern": `import "std/fetch";
+import "std/utf8";
 import "helper";
 function main(): i32 {
-  var body: string = fetch.fetch_get(fetch.ipv4(127, 0, 0, 1), 8080, "/");
-  helper.save(body);
+  var body: u8[] = fetch.fetch_get(fetch.ipv4(127, 0, 0, 1), 8080, "/");
+  match (utf8.from_bytes(body)) {
+    Some(text) => { helper.save(text); },
+    None => {},
+  }
   return 0;
 }`,
 		"helper/fern.toml": "[package]\nname = \"helper\"\n",
