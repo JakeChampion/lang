@@ -66,40 +66,60 @@ the argument and the stage-(b) dec is suppressed. That is why the
 scalar-only row above stays clean rather than over-releasing, and it is
 pinned as its own corpus case.
 
-## The result at self-host scale — unmoved, and unexplained
+## The result at self-host scale: the decs run and free nothing
 
-This is the part worth recording. Building the self-host with the patched
-compiler and compiling a three-loop input:
+Building the self-host with the patched compiler and compiling a
+three-loop input, the aggregate counters do not move at all:
 
 | | allocs | frees | live_bytes |
 | --- | --- | --- | --- |
-| baseline | 11379 | 5206 | 530784 |
-| with the credit | 11379 | 5206 | 530784 |
+| baseline | 11387 | 5206 | 531040 |
+| with the credit | 11387 | 5206 | 531040 |
 
-Byte-identical counters. The binaries are **not** identical — the patched
-driver is 65 KB larger, which at roughly 30 bytes a reclaim sequence is
-about the 2,204 `LowerState.emit` call sites the static census predicts.
-So the transform fired at scale and freed nothing.
+The binaries are **not** identical — the patched driver is 65 KB larger,
+about 30 bytes across the 2,204 `LowerState.emit` call sites the static
+census predicts. So the obvious readings are that the transform did not
+fire, or that it fired and the fix is worthless. `FERN_RC_TRACE` on both
+drivers says it is neither:
 
-Two hypotheses were tested and both are wrong:
+| event | baseline | with the credit |
+| --- | --- | --- |
+| inc | 34262 | 34262 |
+| **dec** | 76504 | **76586** |
+| alloc | 11387 | 11387 |
+| free | 5206 | 5206 |
 
-- *The containers are still live at exit.* No: the same shape with the
-  container returned out of the builder and dropped only at `main`'s exit
-  is fixed too (12/6 → 12/12).
+**82 more decrements, zero more frees.** Pairing every `a` against its
+`f` by pointer, the unpaired set is identical between the two builds —
+6181 blocks, 567072 bytes, and the same count in every size class
+(32 B x2654, 16 B x2012, 48 B x917, …).
+
+So the credit is doing exactly what it was derived to do: the temp's
+count goes 2 → 1 instead of staying at 2. None of those references was
+the last one, because each element is still reachable from a container
+the driver never releases. **The element credit is necessary and is not
+sufficient; its runtime payoff is gated behind whatever leaks the
+containers.**
+
+Two hypotheses were tested first and both are wrong, which is worth
+recording so they are not retried:
+
+- *The containers are merely live at process exit.* No: the same shape
+  with the container returned out of a builder and dropped only at
+  `main`'s exit is fixed too (12/6 → 12/12).
 - *`ir.Op` is scalar-only, so the class does not apply.* No: it carries
-  `str: string`.
+  `str: string`, so it is not `isOwnedByDefaultType`.
 
-`paramCountedRetain["__method_irlower__LowerState_emit"]` goes
-`[true false]` → `[true true]`, so the callee half is credited; the
-caller half runs `stashOwnedArgTemp`, which has its own admission. Four
-param positions change over the whole self-host, and 1842 → 1846 counted
-positions total.
+Two smaller facts from the same measurement. Only **four** parameter
+positions change across the whole self-host (1842 → 1846 counted
+positions): `LowerState_emit[1]`, `BState_emit[1]` and two others — the
+2,204 figure is call SITES, not callees. And only 82 of those sites'
+decs execute on this input, which is a three-loop program; the site count
+is a static bound, not a runtime one.
 
-**So the leak the self-host driver has at those sites is one step further
-down than this fix reaches, and what it is has not been established.**
-Recorded as an open lead rather than a claim, because the tempting
-reading — "2,204 sites credited, therefore the class is closed" — is the
-aggregate-hiding-a-per-item-truth mistake this log exists to stop.
+The lead this leaves is precise rather than open-ended: find what holds
+the 6181 unpaired blocks. `stashOwnedArgTemp` is the caller-side
+admission the credit feeds, and it is not implicated here — the decs ran.
 
 ## The instrument trap, which cost four probes
 
