@@ -177,18 +177,26 @@
 # independent, and checker_modload_run now sits below its pre-#7837 figure
 # (7053860) because the dead blocks predate both.
 
-fern.fern 30366508
-asm_load_run.fern 26544900
-asm_modload_run.fern 25160412
-asm_ir_run.fern 25020284
-asm_run.fern 24471628
-wasm_ir_run.fern 24495868
-wasm_run.fern 24442268
-wasm_runio_run.fern 24404028
-asm_pathprobe_run.fern 23697068
-ssa_lift_scan_run.fern 23416972
-asm_ir_elig_run.fern 22385692
-irlower_run.fern 23393036
-checker_modload_run.fern 6631948
-ssa_emit_run.fern 6151420
-ssa_run.fern 5940940
+# 2026-08-31 — every row shrank 12–14.3%, and this is the whole table moving at
+# once rather than a per-driver story: PruneZeroSlotGuards (#7787) deletes the
+# scope-exit drop a frame emits for a local that was never assigned on the path
+# reaching it, which is 10.9% of all IR ops over the self-host compiler. The
+# tracked artifact fern.fern goes 30366508 -> 26733284, a 3.63 MB win. Numbers
+# are the ones driver-sizes measured, pasted from its own corrected-baseline
+# block — none is derived or scaled.
+
+fern.fern 26733284
+asm_load_run.fern 23053940
+asm_modload_run.fern 21812852
+asm_ir_run.fern 21660428
+asm_run.fern 21128156
+wasm_ir_run.fern 21004844
+wasm_run.fern 20963548
+wasm_runio_run.fern 20925740
+asm_pathprobe_run.fern 20195164
+ssa_lift_scan_run.fern 19910964
+asm_ir_elig_run.fern 19035788
+irlower_run.fern 19913900
+checker_modload_run.fern 5566988
+ssa_emit_run.fern 5127420
+ssa_run.fern 4921036
