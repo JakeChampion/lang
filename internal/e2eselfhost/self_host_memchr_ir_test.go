@@ -15,10 +15,10 @@ import (
 //
 // §3.4 orders the work as "total everywhere before fast anywhere". Every
 // backend answers the same question; only some answer it 16 bytes at a time.
-// Self-host x86-64 is SSE2, matching its native twin; self-host arm64 and wasm
-// are still the byte loop step 1 landed. Holding both shapes to one expectation
-// is what these tests are for, and it is the property the remaining vector
-// swaps will be checked against.
+// Self-host x86-64 is SSE2 and self-host arm64 is NEON, matching their native
+// twins; self-host wasm is still the byte loop step 1 landed. Holding both
+// shapes to one expectation is what these tests are for, and it is the property
+// the last vector swap will be checked against.
 //
 // Only once all seven lowerings exist may `std/string` route its single-byte
 // search through the intrinsic: the self-hosted compiler compiles the stdlib,

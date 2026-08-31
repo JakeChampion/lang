@@ -645,10 +645,10 @@ backends use a `[data@0, len@8]` box on the register targets and a
 
 **`__ascii_run`, the second kernel.** Total across all seven, and — unlike
 `__memchr` — made total *before* any caller adopts it, which is the one
-process change the miscount above bought. Both kernels are vectorised on the
-same five of the seven — native x86-64 (SSE2), native arm64 and `-backend ssa`
-(NEON), native wasm (v128), and self-host x86-64 (SSE2) — leaving self-host
-arm64 and self-host wasm scalar. `__ascii_run`'s vector form is cheaper than
+process change the miscount above bought. Both kernels are vectorised on six of
+the seven — native x86-64 and self-host x86-64 (SSE2), native arm64, self-host
+arm64 and `-backend ssa` (NEON), native wasm (v128) — leaving self-host wasm the
+only scalar one. `__ascii_run`'s vector form is cheaper than
 `__memchr`'s on every target, and interestingly for two different reasons:
 
 - x86-64 and wasm save the **compare**. `pmovmskb` / `i8x16.bitmask` gather the
@@ -674,11 +674,24 @@ ASCII unchanged). Worth generalising alongside the input-vs-needle rule below:
 **the rule says whether a kernel pays on its intended corpus; it says nothing
 about what the kernel costs on the corpus it was not chosen for.** Measure both.
 
-Remaining: step 3 for self-host arm64 and self-host wasm — swapping those two
-scalar bodies for vector ones. Each needs its own assembler check first, and
-neither is paid for: `arm64_native.fern` for the arm64 leg, `watbin.fern` for
-the wasm one. Unlike the native tier this is pure speed with no totality
-argument behind it, so it ranks below §4's other items.
+**Self-host arm64 was the third**, and the first of these legs whose assembler
+prerequisite was NOT already paid: `arm64_native.fern`'s entire SIMD surface was
+`cnt`/`addv`, and those exist for a scalar popcount rather than for a vector
+kernel. So `ld1` / `cmeq` / `cmlt` / `shrn` / `dup` landed with it, pinned
+against `aarch64-linux-gnu-as`. Measured under qemu-aarch64 over 131 MB:
+`__memchr` 527 ms → 155 ms, `__ascii_run` 389 ms → 156 ms — the same floor
+caveat as the `-backend ssa` numbers above.
+
+Two of those five encode a shape that cannot be widened, and both were made to
+REFUSE rather than encode: `cmlt`'s `#0` is part of the opcode (there is no
+`cmlt … #1`), and `shrn`'s immediate is 16 MINUS the shift over a 1..8 range, so
+an out-of-range value wraps into `immh` and selects a different element size.
+Same class as the uleb128 hazard §3.3a records for wasm — a wrong encoding that
+assembles and runs.
+
+Remaining: step 3 for self-host wasm, the last scalar body. Its assembler
+prerequisite (`watbin.fern`) is unpaid. Unlike the native tier this is pure
+speed with no totality argument behind it, so it ranks below §4's other items.
 
 ### 3.5 Testing
 

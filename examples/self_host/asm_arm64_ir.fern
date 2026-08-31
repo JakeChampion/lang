@@ -197,30 +197,62 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     }
     if (o.kind_tag == 225) {  // memchr
         // operand stack [box, byte, from] (from on top) -> i32 index or -1.
-        // Scalar for the same reason as the x86-64 sibling: §3.4 makes the
-        // intrinsic total everywhere before making it fast anywhere. The
-        // native arm64 emitter runs a NEON kernel over the same meaning.
+        //
+        // NEON, 16 bytes an iteration, the same kernel the native arm64
+        // emitter runs: dup to splat the needle, then ld1 / cmeq / shrn /
+        // fmov / rbit+clz. §3.4 step 3 for this tier — the meaning is
+        // unchanged, only the speed.
+        //
+        // NEON has no pmovmskb, so the mask comes out as a NIBBLE per input
+        // byte: cmeq gives 0x00/0xFF per lane, `shrn v0.8b, v0.8h, #4` narrows
+        // each 16-bit lane to one byte carrying four of those bits, and the
+        // lane index is therefore the lowest set bit over FOUR.
+        //
+        // The vector load runs only with a full block left, so it never reads
+        // past the string and there is no alignment prologue to pay. x5 is the
+        // cursor pointer (ld1 has no indexed form), x6 the end, x7 the mask.
         var mlo: asmcore.LabelOut = asmcore.fresh_label(s);
         var l_clamped: string = mlo.name;
         var mlo2: asmcore.LabelOut = asmcore.fresh_label(mlo.state);
-        var l_loop: string = mlo2.name;
+        var l_vec: string = mlo2.name;
         var mlo3: asmcore.LabelOut = asmcore.fresh_label(mlo2.state);
-        var l_none: string = mlo3.name;
+        var l_next: string = mlo3.name;
         var mlo4: asmcore.LabelOut = asmcore.fresh_label(mlo3.state);
-        var l_done: string = mlo4.name;
-        s = mlo4.state;
+        var l_tail: string = mlo4.name;
+        var mlo5: asmcore.LabelOut = asmcore.fresh_label(mlo4.state);
+        var l_hit: string = mlo5.name;
+        var mlo6: asmcore.LabelOut = asmcore.fresh_label(mlo5.state);
+        var l_none: string = mlo6.name;
+        var mlo7: asmcore.LabelOut = asmcore.fresh_label(mlo6.state);
+        var l_done: string = mlo7.name;
+        s = mlo7.state;
         s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
         s = s.write("    cmp x2, #0\n    b.ge " + l_clamped + "\n    mov x2, #0\n");
         s = s.write(l_clamped + ":\n");
         // Unsigned compare against 255 rejects both a negative byte and one
-        // above the range in a single test.
+        // above the range in a single test. Checked once, so neither loop
+        // below needs a per-iteration guard.
         s = s.write("    cmp x1, #255\n    b.hi " + l_none + "\n");
-        s = s.write(l_loop + ":\n");
         s = s.write("    cmp x2, x3\n    b.ge " + l_none + "\n");
-        s = s.write("    ldrb w4, [x0, x2]\n");
-        s = s.write("    cmp x4, x1\n    b.eq " + l_done + "\n");
-        s = s.write("    add x2, x2, #1\n    b " + l_loop + "\n");
+        s = s.write("    add x5, x0, x2\n    add x6, x0, x3\n");
+        s = s.write("    dup v1.16b, w1\n");
+        s = s.write(l_vec + ":\n");
+        s = s.write("    sub x7, x6, x5\n    cmp x7, #16\n    b.lt " + l_tail + "\n");
+        s = s.write("    ld1 {v0.16b}, [x5]\n    cmeq v0.16b, v0.16b, v1.16b\n");
+        s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
+        s = s.write("    cbz x7, " + l_next + "\n");
+        s = s.write("    rbit x4, x7\n    clz x4, x4\n    lsr x4, x4, #2\n");
+        s = s.write("    add x5, x5, x4\n    sub x2, x5, x0\n    b " + l_done + "\n");
+        s = s.write(l_next + ":\n    add x5, x5, #16\n    b " + l_vec + "\n");
+        // Scalar tail: fewer than 16 bytes left, and the whole algorithm for a
+        // string shorter than one block.
+        s = s.write(l_tail + ":\n");
+        s = s.write("    cmp x5, x6\n    b.ge " + l_none + "\n");
+        s = s.write("    ldrb w4, [x5]\n");
+        s = s.write("    cmp x4, x1\n    b.eq " + l_hit + "\n");
+        s = s.write("    add x5, x5, #1\n    b " + l_tail + "\n");
+        s = s.write(l_hit + ":\n    sub x2, x5, x0\n    b " + l_done + "\n");
         s = s.write(l_none + ":\n    mov x2, #-1\n");
         s = s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
         return s;
@@ -228,27 +260,51 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind_tag == 227) {  // ascii_run
         // operand stack [box, from] (from on top) -> the index of the first
         // byte at or after `from` with its high bit set, or the LENGTH.
-        // Scalar for memchr's reason; two operands rather than three, there
-        // being no byte to compare against.
+        //
+        // NEON as memchr's is, and cheaper — but for the opposite reason to
+        // the one x86-64 gets. There pmovmskb already gathers the top bit of
+        // each byte, so the COMPARE disappears; NEON has no bitmask and still
+        // needs a compare to widen "high bit set" into an all-ones lane, but
+        // `cmlt v0.16b, v0.16b, #0` compares against zero, so it is the SPLAT
+        // that disappears — there is no operand to broadcast.
         var alo: asmcore.LabelOut = asmcore.fresh_label(s);
         var a_clamped: string = alo.name;
         var alo2: asmcore.LabelOut = asmcore.fresh_label(alo.state);
-        var a_loop: string = alo2.name;
+        var a_vec: string = alo2.name;
         var alo3: asmcore.LabelOut = asmcore.fresh_label(alo2.state);
-        var a_none: string = alo3.name;
+        var a_next: string = alo3.name;
         var alo4: asmcore.LabelOut = asmcore.fresh_label(alo3.state);
-        var a_done: string = alo4.name;
-        s = alo4.state;
+        var a_tail: string = alo4.name;
+        var alo5: asmcore.LabelOut = asmcore.fresh_label(alo4.state);
+        var a_hit: string = alo5.name;
+        var alo6: asmcore.LabelOut = asmcore.fresh_label(alo5.state);
+        var a_none: string = alo6.name;
+        var alo7: asmcore.LabelOut = asmcore.fresh_label(alo6.state);
+        var a_done: string = alo7.name;
+        s = alo7.state;
         s = s.write("    ldr x2, [sp], #16\n    ldr x0, [sp], #16\n");
         s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
         s = s.write("    cmp x2, #0\n    b.ge " + a_clamped + "\n    mov x2, #0\n");
         s = s.write(a_clamped + ":\n");
-        s = s.write(a_loop + ":\n");
         s = s.write("    cmp x2, x3\n    b.ge " + a_none + "\n");
-        s = s.write("    ldrb w4, [x0, x2]\n");
+        s = s.write("    add x5, x0, x2\n    add x6, x0, x3\n");
+        s = s.write(a_vec + ":\n");
+        s = s.write("    sub x7, x6, x5\n    cmp x7, #16\n    b.lt " + a_tail + "\n");
+        s = s.write("    ld1 {v0.16b}, [x5]\n    cmlt v0.16b, v0.16b, #0\n");
+        s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
+        s = s.write("    cbz x7, " + a_next + "\n");
+        s = s.write("    rbit x4, x7\n    clz x4, x4\n    lsr x4, x4, #2\n");
+        s = s.write("    add x5, x5, x4\n    sub x2, x5, x0\n    b " + a_done + "\n");
+        s = s.write(a_next + ":\n    add x5, x5, #16\n    b " + a_vec + "\n");
+        // Scalar tail: the final 0..15 bytes, and the whole algorithm for a
+        // string shorter than one block.
+        s = s.write(a_tail + ":\n");
+        s = s.write("    cmp x5, x6\n    b.ge " + a_none + "\n");
+        s = s.write("    ldrb w4, [x5]\n");
         // ldrb zero-extends, so bit 7 is the high bit.
-        s = s.write("    tbnz w4, #7, " + a_done + "\n");
-        s = s.write("    add x2, x2, #1\n    b " + a_loop + "\n");
+        s = s.write("    tbnz w4, #7, " + a_hit + "\n");
+        s = s.write("    add x5, x5, #1\n    b " + a_tail + "\n");
+        s = s.write(a_hit + ":\n    sub x2, x5, x0\n    b " + a_done + "\n");
         // The miss value is the LENGTH, not -1.
         s = s.write(a_none + ":\n    mov x2, x3\n");
         s = s.write(a_done + ":\n    str x2, [sp, #-16]!\n");

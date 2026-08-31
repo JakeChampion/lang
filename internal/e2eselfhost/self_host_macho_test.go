@@ -99,6 +99,15 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// were actually written (OR of 8 bytes != 0 → the syscall filled
 		// the buffer; a zero OR would mean it silently failed).
 		{"random_bytes", `function main(): i32 { var b: u8[] = random_bytes(8); if (b.len() != 8) { return 1; } var v: i32 = 0; var i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
+		// The packed-NEON kernels (ATLAS-PLATFORM-PLAN §3), which is the only
+		// path that exercises arm64_native.fern's vector encodings: the CLI
+		// assembles its own emitted text in-process, so an unencodable
+		// mnemonic is recorded on p.unknown and the CLI refuses to emit —
+		// visible here as "self-host emit failed" rather than as a wrong
+		// answer. Each haystack's answer is past the first 16-byte block, so
+		// the vector loop runs on the executing half of this lane too.
+		{"memchr", `function main(): i32 { var s = "aaaaaaaaaaaaaaaaaaaa*aaa"; return __memchr(s, 42, 0) + 22; }`, 42},
+		{"ascii_run", `function main(): i32 { var s = "aaaaaaaaaaaaaaaaaaaaaaaa"; return __ascii_run(s, 0) + 18; }`, 42},
 		// Static aggregate constant (#6149) — a struct literal of constants is
 		// interned as a __DATA block whose first word is an ABSOLUTE pointer to
 		// the shape string. dyld slides a PIE image, so that word needs an
