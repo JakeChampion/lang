@@ -501,6 +501,64 @@ function x86enc_selftest_10(): i32 {
     return 0;
 }
 
+function x86enc_selftest_11(): i32 {
+    // Packed SSE2 — the encodings the __memchr / __ascii_run vector kernels
+    // need (docs/ATLAS-PLATFORM-PLAN.md §3.3a: land the assembler's encodings
+    // before emitting a kernel on a target). Every expectation below is GNU
+    // as output, not a hand-derived table.
+    //
+    // Each instruction is checked once with low registers and once with an
+    // x86-64 extended one, because the REX bit is the half a table gets wrong:
+    // omit REX.R and pmovmskb writes %ecx where %r9d was meant, which reads
+    // correct at the call site.
+    // movdqu (%rax,%rdx), %xmm0 -> F3 0F 6F 04 10
+    var va: i32[] = x86_movdqu_load([], 0, x86_rax(), true, x86_rdx(), 1, 0);
+    if (va.len() != 5 || va[0] != 243 || va[1] != 15 || va[2] != 111 || va[3] != 4 || va[4] != 16) { return 111; }
+    // movdqu (%rax), %xmm0 -> F3 0F 6F 00
+    var vb: i32[] = x86_movdqu_load([], 0, x86_rax(), false, 0, 1, 0);
+    if (vb.len() != 4 || vb[0] != 243 || vb[1] != 15 || vb[2] != 111 || vb[3] != 0) { return 112; }
+    // movdqu (%r8,%r9), %xmm3 -> F3 43 0F 6F 1C 08 (REX.X and REX.B both set)
+    var vc: i32[] = x86_movdqu_load([], 3, 8, true, 9, 1, 0);
+    if (vc.len() != 6 || vc[0] != 243 || vc[1] != 67 || vc[2] != 15 || vc[3] != 111 || vc[4] != 28 || vc[5] != 8) { return 113; }
+    // movdqu (%rax,%rdx), %xmm9 -> F3 44 0F 6F 0C 10 (REX.R for the xmm)
+    var vd: i32[] = x86_movdqu_load([], 9, x86_rax(), true, x86_rdx(), 1, 0);
+    if (vd.len() != 6 || vd[0] != 243 || vd[1] != 68 || vd[2] != 15 || vd[3] != 111 || vd[4] != 12 || vd[5] != 16) { return 114; }
+    // pcmpeqb %xmm1, %xmm0 -> 66 0F 74 C1 ; %xmm9,%xmm10 -> 66 45 0F 74 D1
+    var ve: i32[] = x86_pcmpeqb([], 0, 1);
+    if (ve.len() != 4 || ve[0] != 102 || ve[1] != 15 || ve[2] != 116 || ve[3] != 193) { return 115; }
+    var vf: i32[] = x86_pcmpeqb([], 10, 9);
+    if (vf.len() != 5 || vf[0] != 102 || vf[1] != 69 || vf[2] != 15 || vf[3] != 116 || vf[4] != 209) { return 116; }
+    // punpcklbw %xmm1,%xmm1 -> 66 0F 60 C9 ; punpcklwd -> 66 0F 61 C9
+    var vg: i32[] = x86_punpcklbw([], 1, 1);
+    if (vg.len() != 4 || vg[0] != 102 || vg[1] != 15 || vg[2] != 96 || vg[3] != 201) { return 117; }
+    var vh: i32[] = x86_punpcklwd([], 1, 1);
+    if (vh.len() != 4 || vh[0] != 102 || vh[1] != 15 || vh[2] != 97 || vh[3] != 201) { return 118; }
+    var vi: i32[] = x86_punpcklbw([], 10, 9);
+    if (vi.len() != 5 || vi[0] != 102 || vi[1] != 69 || vi[2] != 15 || vi[3] != 96 || vi[4] != 209) { return 119; }
+    // pmovmskb %xmm0,%eax -> 66 0F D7 C0 ; %xmm0,%r9d -> 66 44 0F D7 C8 ;
+    // %xmm10,%ecx -> 66 41 0F D7 CA (REX.R is the GPR, REX.B the xmm)
+    var vj: i32[] = x86_pmovmskb([], x86_rax(), 0);
+    if (vj.len() != 4 || vj[0] != 102 || vj[1] != 15 || vj[2] != 215 || vj[3] != 192) { return 120; }
+    var vk: i32[] = x86_pmovmskb([], 9, 0);
+    if (vk.len() != 5 || vk[0] != 102 || vk[1] != 68 || vk[2] != 15 || vk[3] != 215 || vk[4] != 200) { return 121; }
+    var vl: i32[] = x86_pmovmskb([], x86_rcx(), 10);
+    if (vl.len() != 5 || vl[0] != 102 || vl[1] != 65 || vl[2] != 15 || vl[3] != 215 || vl[4] != 202) { return 122; }
+    // pshufd $0,%xmm1,%xmm1 -> 66 0F 70 C9 00 ; $27,%xmm9,%xmm10 -> 66 45 0F 70 D1 1B
+    var vm: i32[] = x86_pshufd([], 1, 1, 0);
+    if (vm.len() != 5 || vm[0] != 102 || vm[1] != 15 || vm[2] != 112 || vm[3] != 201 || vm[4] != 0) { return 123; }
+    var vn: i32[] = x86_pshufd([], 10, 9, 27);
+    if (vn.len() != 6 || vn[0] != 102 || vn[1] != 69 || vn[2] != 15 || vn[3] != 112 || vn[4] != 209 || vn[5] != 27) { return 124; }
+    // bsfl %eax,%ecx -> 0F BC C8 (no REX) ; %r9d,%r9d -> 45 0F BC C9
+    var vo: i32[] = x86_bsf_r32([], x86_rcx(), x86_rax());
+    if (vo.len() != 3 || vo[0] != 15 || vo[1] != 188 || vo[2] != 200) { return 125; }
+    var vp: i32[] = x86_bsf_r32([], 9, 9);
+    if (vp.len() != 4 || vp[0] != 69 || vp[1] != 15 || vp[2] != 188 || vp[3] != 201) { return 126; }
+    // xorpd rides the same 66 0F shape: %xmm1,%xmm0 -> 66 0F 57 C1.
+    var vq: i32[] = x86_xorpd([], 0, 1);
+    if (vq.len() != 4 || vq[0] != 102 || vq[1] != 15 || vq[2] != 87 || vq[3] != 193) { return 127; }
+    return 0;
+}
+
 function main(): i32 {
     var r: i32 = 0;
     r = x86enc_selftest_1(); if (r != 0) { return r; }
@@ -513,6 +571,7 @@ function main(): i32 {
     r = x86enc_selftest_8(); if (r != 0) { return r; }
     r = x86enc_selftest_9(); if (r != 0) { return r; }
     r = x86enc_selftest_10(); if (r != 0) { return r; }
+    r = x86enc_selftest_11(); if (r != 0) { return r; }
     return 0;
 }
 `

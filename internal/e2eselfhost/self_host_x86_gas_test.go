@@ -337,6 +337,23 @@ function main(): i32 {
     // for stays ignorable.
     var ok: X86Asm = x86_gas_assemble("    .globl m\n    .type m,@function\n    .size m,4\n    .weak w\n");
     if (ok.unknown.len() != 0) { return 34; }
+    // The packed-SSE2 front end, assembled as the __memchr kernel emits it
+    // (docs/ATLAS-PLATFORM-PLAN.md §3): splat, load, compare, gather, scan.
+    // The expected bytes are GNU as output for this exact text — the point
+    // of pinning the whole sequence rather than each mnemonic alone is that
+    // it also proves the parser hands the operands over in the right order,
+    // which a per-encoder check cannot see.
+    var vk: X86Asm = x86_gas_assemble("\tmovd %ecx, %xmm1\n\tpunpcklbw %xmm1, %xmm1\n\tpunpcklwd %xmm1, %xmm1\n\tpshufd $0, %xmm1, %xmm1\n\tmovdqu (%rax,%rdx), %xmm0\n\tpcmpeqb %xmm1, %xmm0\n\tpmovmskb %xmm0, %r9d\n\ttestl %r9d, %r9d\n\tbsfl %r9d, %r9d\n");
+    if (vk.unknown.len() != 0) { return 35; }
+    var want: i32[] = [102, 15, 110, 201, 102, 15, 96, 201, 102, 15, 97, 201,
+        102, 15, 112, 201, 0, 243, 15, 111, 4, 16, 102, 15, 116, 193,
+        102, 68, 15, 215, 200, 69, 133, 201, 69, 15, 188, 201];
+    if (vk.code.len() != want.len()) { return 36; }
+    var vi: i32 = 0;
+    while (vi < want.len()) {
+        if (vk.code[vi] != want[vi]) { return 37; }
+        vi = vi + 1;
+    }
     return 0;
 }
 `
