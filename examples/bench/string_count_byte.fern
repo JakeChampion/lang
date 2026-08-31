@@ -1,0 +1,40 @@
+import "std/string";
+
+// string_count_byte — the byte-tally kernel, the fourth of the fused set
+// (docs/ATLAS-PLATFORM-PLAN.md §3.3): every byte of a long haystack compared
+// against one needle, with the matches counted rather than located.
+//
+// The shape that separates it from string_find_byte beside it: those two
+// return at the first hit, so a scalar loop can get lucky and stop early. This
+// one has no early exit at all — the count is only known after the last byte —
+// so the whole input is read on every call whatever the data looks like. That
+// makes it the cleanest read of §4's "the vector length is the INPUT" rule in
+// the corpus, and the benchmark whose ratio is not capped by where the needle
+// happens to sit.
+//
+// Matches are DENSE (one byte in four) rather than rare, because the thing a
+// vector body gets wrong here is the accumulator, not the search: a kernel
+// that drops a block's partial total, or that stops at the first match, still
+// answers every sparse case correctly. A sparse haystack would measure the
+// scan and miss the bug.
+function haystack(): string {
+    var s: string = "abcdefghijklmnopqrstuvwxyz012345";
+    var k: i32 = 0;
+    while (k < 10) { s = s + s; k = k + 1; }   // 32 B -> 32 KiB
+    return s;
+}
+
+function main(): i32 {
+    var hay: string = haystack();
+    var acc: i32 = 0;
+    var r: i32 = 0;
+    while (r < 6000) {
+        // 'a', 'b', 'c' and 'd' each occur once per 32-byte cycle, so each
+        // call counts 1024 matches spread evenly over the input — the count
+        // scales with the round count, and a hoisted call would show up as a
+        // count that does not.
+        acc = acc + hay.count_byte(97) + hay.count_byte(98);
+        r = r + 1;
+    }
+    return acc % 97;
+}

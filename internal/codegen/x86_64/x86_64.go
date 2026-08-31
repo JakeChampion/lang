@@ -683,6 +683,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesRmemchr {
 		g.emitRmemchrRuntime()
 	}
+	if g.usesCountByte {
+		g.emitCountByteRuntime()
+	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
 	}
@@ -946,6 +949,8 @@ type generator struct {
 	usesMemchr bool
 	// usesRmemchr gates its backward sibling (__fern_rmemchr).
 	usesRmemchr bool
+	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
+	usesCountByte bool
 	// usesF64Trans gates the f64 transcendental bundle —
 	// __fern_{exp,log,sin,cos,pow}_f64 and its shared .rodata
 	// coefficient table. One flag for all five because `pow` is
@@ -1333,6 +1338,8 @@ func (g *generator) recordUse(target string) {
 		g.usesMemchr = true
 	case "__fern_rmemchr":
 		g.usesRmemchr = true
+	case "__fern_count_byte":
+		g.usesCountByte = true
 	case "__fern_heap_bump_bytes":
 		g.usesHeapBumpBytes = true
 		g.usesAlloc = true // reads __fern_heap_ptr / __fern_heap_base
@@ -8115,6 +8122,92 @@ func (g *generator) emitRmemchrRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_rmemchr, .-__fern_rmemchr")
+}
+
+// emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many
+// bytes of `s` equal `byte`.
+//
+// SSE2, 16 bytes an iteration (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 3). The
+// fourth kernel, and the first with no early exit: __memchr stops at the first
+// hit, this reads the whole string every time. That is what makes it the
+// clearest case of §4's input-length rule rather than a marginal one — and it
+// is also why it wins where __memchr's win is capped, since there is no early
+// return for a scalar loop to reach first.
+//
+// The splat and compare are __memchr's exactly; what replaces its mask SCAN is
+// a mask POPCOUNT. pmovmskb gives one bit per byte, so popcnt of it is the
+// number of matches in the block, and the loop accumulates instead of
+// branching out. No per-block branch at all on the hot path, where __memchr
+// still has to test the mask.
+//
+// popcnt is a hard requirement, not a fast path: the declared x86-64 baseline
+// is Haswell-class 2013, and these binaries are static with no runtime
+// dispatch. Unlike lzcnt/tzcnt it FAULTS below that baseline rather than
+// silently decoding as something else, so a wrong assumption here is loud.
+//
+// No cursor, so no clamp. The two degenerate answers are both honest counts
+// rather than sentinels: an out-of-range byte counts 0 because no byte can
+// equal it, and an empty string counts 0 because it has no bytes.
+func (g *generator) emitCountByteRuntime() {
+	g.line("")
+	g.line(".globl __fern_count_byte")
+	g.line(".type __fern_count_byte, @function")
+	g.label("__fern_count_byte")
+	// rdi = string, esi = byte.
+	// Frame: 16 bytes of emitStrDataPtr scratch (the operand may be an
+	// inline SSO string, which has to be spilled to get an address).
+	g.emit("push rbp")
+	g.emit("mov rbp, rsp")
+	g.emit("sub rsp, 16")
+	g.emitStrLen("ecx", "rdi") // ecx = len
+	g.emitStrDataPtr("rdi", "rdi", "[rbp - 16]")
+	g.emit("xor eax, eax") // running count
+	// A byte outside 0..255 can never occur; one unsigned compare covers both
+	// ends, and the answer is 0 rather than -1 because a count has no miss.
+	// Checked once, so neither loop below needs a per-iteration guard.
+	g.emit("cmp esi, 255")
+	g.emit("ja .Lcount_byte_ret")
+	g.emit("xor edx, edx") // cursor, as an INDEX
+	// SSE2 splat, as __memchr's: pshufb would be one instruction but is
+	// SSSE3, outside the declared baseline.
+	g.emit("movd xmm1, esi")
+	g.emit("punpcklbw xmm1, xmm1")
+	g.emit("punpcklwd xmm1, xmm1")
+	g.emit("pshufd xmm1, xmm1, 0")
+	// Vector loop: 16 bytes an iteration while at least 16 remain. The
+	// unaligned load is deliberate for __memchr's reason — the pointer comes
+	// from the allocator, so a 16-byte read starting inside the string cannot
+	// cross into an unmapped page, and a scalar align-up prologue would cost
+	// more than movdqu does anywhere in the baseline.
+	g.label(".Lcount_byte_vec")
+	g.emit("mov r8d, ecx")
+	g.emit("sub r8d, edx")
+	g.emit("cmp r8d, 16")
+	g.emit("jl .Lcount_byte_scan")
+	g.emit("movdqu xmm0, [rdi + rdx]")
+	g.emit("pcmpeqb xmm0, xmm1")
+	g.emit("pmovmskb r9d, xmm0")
+	g.emit("popcnt r9d, r9d")
+	g.emit("add eax, r9d")
+	g.emit("add edx, 16")
+	g.emit("jmp .Lcount_byte_vec")
+	// Scalar tail: the final 0..15 bytes, and the whole algorithm for a string
+	// shorter than one block — the common case in a byte-tally family.
+	g.label(".Lcount_byte_scan")
+	g.emit("cmp edx, ecx")
+	g.emit("jge .Lcount_byte_ret")
+	g.emit("movzx r8d, byte ptr [rdi + rdx]")
+	g.emit("cmp r8d, esi")
+	g.emit("jne .Lcount_byte_next")
+	g.emit("add eax, 1")
+	g.label(".Lcount_byte_next")
+	g.emit("add edx, 1")
+	g.emit("jmp .Lcount_byte_scan")
+	g.label(".Lcount_byte_ret")
+	g.emit("mov rsp, rbp")
+	g.emit("pop rbp")
+	g.emit("ret")
+	g.line(".size __fern_count_byte, .-__fern_count_byte")
 }
 
 func (g *generator) emitStrcmpRuntime() {

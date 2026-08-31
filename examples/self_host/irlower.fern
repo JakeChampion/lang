@@ -10535,6 +10535,16 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!rm2.ok) { return rm2; }
         return rm2.emit(ir.op_rmemchr());
     }
+    // __count_byte(s, byte) → i32 (ATLAS-PLATFORM-PLAN §3.3, fourth kernel).
+    // Two operands, same substitutable-op shape; it has no cursor at all, so
+    // nothing to clamp in either direction.
+    if (cid.name == "__count_byte" && c.args.len() == 2) {
+        var cb0: LowerState = lower_expr(c.args[0], s);
+        if (!cb0.ok) { return cb0; }
+        var cb1: LowerState = lower_expr(c.args[1], cb0);
+        if (!cb1.ok) { return cb1; }
+        return cb1.emit(ir.op_count_byte());
+    }
     // __ascii_run(s, from) → i32 (ATLAS-PLATFORM-PLAN §3, second kernel). Two
     // operands, same substitutable-op shape as __memchr; the miss value is the
     // LENGTH rather than -1, so callers can skip a run branch-free.

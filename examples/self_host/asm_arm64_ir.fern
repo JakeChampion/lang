@@ -337,6 +337,36 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(r_done + ":\n    str x2, [sp, #-16]!\n");
         return s;
     }
+    if (o.kind_tag == 235) {  // count_byte
+        // operand stack [box, byte] (byte on top) -> how many bytes of the
+        // string equal it. SCALAR, per §3.4's "correct in every backend
+        // first, fast one backend at a time".
+        //
+        // No cursor and no clamp: x2 walks 0..len and both degenerate answers
+        // are honest counts rather than sentinels.
+        var clo: asmcore.LabelOut = asmcore.fresh_label(s);
+        var c_scan: string = clo.name;
+        var clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
+        var c_next: string = clo2.name;
+        var clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
+        var c_done: string = clo3.name;
+        s = clo3.state;
+        s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+        s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
+        s = s.write("    mov x2, #0\n    mov x5, #0\n");
+        // Unsigned compare against 255 rejects a negative byte and one above
+        // the range in a single test, checked once so the loop needs no
+        // per-iteration guard.
+        s = s.write("    cmp x1, #255\n    b.hi " + c_done + "\n");
+        s = s.write(c_scan + ":\n");
+        s = s.write("    cmp x2, x3\n    b.ge " + c_done + "\n");
+        s = s.write("    ldrb w4, [x0, x2]\n");
+        s = s.write("    cmp x4, x1\n    b.ne " + c_next + "\n");
+        s = s.write("    add x5, x5, #1\n");
+        s = s.write(c_next + ":\n    add x2, x2, #1\n    b " + c_scan + "\n");
+        s = s.write(c_done + ":\n    str x5, [sp, #-16]!\n");
+        return s;
+    }
     if (o.kind_tag == 227) {  // ascii_run
         // operand stack [box, from] (from on top) -> the index of the first
         // byte at or after `from` with its high bit set, or the LENGTH.

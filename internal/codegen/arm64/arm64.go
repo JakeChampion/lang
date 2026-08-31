@@ -605,6 +605,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesRmemchr {
 		g.emitRmemchrRuntime()
 	}
+	if g.usesCountByte {
+		g.emitCountByteRuntime()
+	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
 	}
@@ -3954,6 +3957,63 @@ func (g *generator) emitRmemchrRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_rmemchr")
+}
+
+// emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many
+// bytes of `s` equal `byte`.
+//
+// SCALAR, per docs/ATLAS-PLATFORM-PLAN.md §3.4's "correct in every backend
+// first, fast one backend at a time" — every backend gets the lowering before
+// any caller adopts it.
+//
+// The fourth kernel, and the first with no early exit: __memchr stops at the
+// first hit, this reads the whole string every time.
+//
+// Two-word string ABI as __memchr's — x0 = data word, x1 = length word, which
+// puts `byte` in w2 — and the same frame, because emitStrDataPtr2W needs 16
+// bytes of scratch to spill an inline SSO string.
+//
+// No cursor, so no clamp. Both degenerate answers are honest counts rather
+// than sentinels: an out-of-range byte counts 0 because nothing can equal it,
+// an empty string counts 0 because it has no bytes.
+func (g *generator) emitCountByteRuntime() {
+	g.line("")
+	g.line(".global __fern_count_byte")
+	g.typeDirective("__fern_count_byte")
+	g.label("__fern_count_byte")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0") // data word
+	g.emit("mov x5, x1") // length word
+	// Order matters as in __memchr: emitStrLen2W overwrites its source on
+	// the inline path, so materialise the pointer first.
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	g.emit("mov w0, #0")                     // running count
+	// A byte outside 0..255 can never occur; one unsigned compare covers
+	// both ends. The answer is 0 rather than -1 because a count has no miss.
+	g.emit("cmp w2, #255")
+	g.emit("b.hi .Lcount_byte_ret")
+	g.emit("mov w3, #0") // cursor
+	g.label(".Lcount_byte_scan")
+	g.emit("cmp w3, w6")
+	g.emit("b.ge .Lcount_byte_ret")
+	// `mov w9, w3` zero-extends into x9 so the byte load can use the plain
+	// register-offset form; the in-process assembler refuses the extended
+	// `[Xn, Wm, uxtw]` addressing rather than dropping the extend, which
+	// makes that a build error and not a wrong answer.
+	g.emit("mov w9, w3")
+	g.emit("ldrb w8, [x7, x9]")
+	g.emit("cmp w8, w2")
+	g.emit("b.ne .Lcount_byte_next")
+	g.emit("add w0, w0, #1")
+	g.label(".Lcount_byte_next")
+	g.emit("add w3, w3, #1")
+	g.emit("b .Lcount_byte_scan")
+	g.label(".Lcount_byte_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_count_byte")
 }
 
 // emitAsciiRunRuntime emits `__fern_ascii_run(s, from) -> i32`: the index of
@@ -10035,6 +10095,8 @@ type generator struct {
 	usesMemchr bool
 	// usesRmemchr gates its backward sibling (__fern_rmemchr).
 	usesRmemchr bool
+	// usesCountByte gates the byte-tally kernel (__fern_count_byte).
+	usesCountByte bool
 	// usesAsciiRun gates the NEON high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesTcp pulls in the full TCP socket runtime
@@ -13232,6 +13294,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesMemchr = true
 		case "__fern_rmemchr":
 			g.usesRmemchr = true
+		case "__fern_count_byte":
+			g.usesCountByte = true
 		case "__fern_ascii_run":
 			g.usesAsciiRun = true
 		case "__fern_heap_bump_bytes":

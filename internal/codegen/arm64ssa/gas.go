@@ -830,6 +830,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_idx":                 emitStrIdxHelper,
 	"__fern_memchr":             emitMemchrHelper,
 	"__fern_rmemchr":            emitRmemchrHelper,
+	"__fern_count_byte":         emitCountByteHelper,
 	"__fern_ascii_run":          emitAsciiRunHelper,
 	"__arr_idx":                 emitArrIdxHelperN("__arr_idx", 2),    // stride 4 (i32)
 	"__arr_idx_1":               emitArrIdxHelperN("__arr_idx_1", 0),  // stride 1 (byte array)
@@ -3132,6 +3133,48 @@ func emitRmemchrHelper(w func(string, ...any)) {
 	w("\tret")
 	w(".Lssa_rmemchr_found:")
 	w("\tmov x0, x2")
+	w("\tret")
+}
+
+// emitCountByteHelper writes __fern_count_byte(s, byte) -> how many bytes of
+// `s` equal `byte` (docs/ATLAS-PLATFORM-PLAN.md §3.3, fourth kernel).
+//
+// SCALAR, per §3.4's "correct in every backend first, fast one backend at a
+// time" — and this backend is listed last in that ordering for the reason its
+// siblings record: it is the seventh of seven and the one an adoption forgets,
+// so it gets the lowering at the same time as the other six rather than after.
+//
+// One-word strings with the length at [ptr-4], so the two arguments land in
+// x0/x1 with no slot arithmetic. Leaf: no frame.
+//
+// No cursor, so no clamp. Both degenerate answers are honest counts rather
+// than sentinels: an out-of-range byte counts 0 because nothing can equal it,
+// an empty string counts 0 because it has no bytes.
+func emitCountByteHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_count_byte"))
+	w("\tldur w2, [x0, #-4]") // len
+	w("\tmov w3, #0")         // cursor
+	w("\tmov w4, #0")         // running count
+	// A byte outside 0..255 can never occur; ONE unsigned compare covers
+	// both ends, checked once so the loop needs no per-iteration guard.
+	w("\tcmp x1, #255")
+	w("\tb.hi .Lssa_count_byte_ret")
+	w(".Lssa_count_byte_scan:")
+	w("\tcmp w3, w2")
+	w("\tb.ge .Lssa_count_byte_ret")
+	// w3 is non-negative here, so `mov w5, w3` zero-extends into x5 for the
+	// plain register-offset load.
+	w("\tmov w5, w3")
+	w("\tldrb w6, [x0, x5]")
+	w("\tcmp w6, w1")
+	w("\tb.ne .Lssa_count_byte_next")
+	w("\tadd w4, w4, #1")
+	w(".Lssa_count_byte_next:")
+	w("\tadd w3, w3, #1")
+	w("\tb .Lssa_count_byte_scan")
+	w(".Lssa_count_byte_ret:")
+	w("\tmov w0, w4")
 	w("\tret")
 }
 

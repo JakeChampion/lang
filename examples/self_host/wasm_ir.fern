@@ -331,6 +331,7 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_uses_str_slice(cache)) { out = out.append("@uses_str_slice"); }
     if (module_uses_memchr(cache)) { out = out.append("@uses_memchr"); }
     if (module_uses_rmemchr(cache)) { out = out.append("@uses_rmemchr"); }
+    if (module_uses_count_byte(cache)) { out = out.append("@uses_count_byte"); }
     if (module_uses_ascii_run(cache)) { out = out.append("@uses_ascii_run"); }
     if (module_uses_str_to_i32(cache)) { out = out.append("@uses_str_to_i32"); }
     if (module_uses_str_trim(cache)) { out = out.append("@uses_str_trim"); }
@@ -646,6 +647,13 @@ pub function module_uses_memchr(cache: irlower.LowerResult[]): boolean {
 pub function module_uses_rmemchr(cache: irlower.LowerResult[]): boolean {
     function is_rmemchr(o: ir.Op): boolean { return o.kind_tag == 234; }  // rmemchr
     return any_op(cache, is_rmemchr);
+}
+
+// module_uses_count_byte gates $__fern_count_byte, the byte tally of
+// ATLAS-PLATFORM-PLAN §3.3. Same shape as module_uses_memchr above.
+pub function module_uses_count_byte(cache: irlower.LowerResult[]): boolean {
+    function is_count_byte(o: ir.Op): boolean { return o.kind_tag == 235; }  // count_byte
+    return any_op(cache, is_count_byte);
 }
 
 // module_uses_ascii_run gates $__fern_ascii_run, the high-bit scan of
@@ -4148,6 +4156,11 @@ function emit_str_op_wat(o: ir.Op): string {
         // A call for memchr's reason: the body loops over its own locals.
         return "    call $__fern_rmemchr\n";
     }
+    if (o.kind_tag == 235) {  // count_byte
+        // stack: s, byte -> how many bytes of s equal it. A call for
+        // memchr's reason: the body loops over its own locals.
+        return "    call $__fern_count_byte\n";
+    }
     if (o.kind_tag == 227) {  // ascii_run
         // stack: s, from -> the first high-bit index, or the length. A
         // call for memchr's reason: the body loops over its own locals.
@@ -5354,6 +5367,34 @@ pub function rmemchr_helper(): string {
     o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
     o = o + "      (br $c)))\n";
     o = o + "    (i32.const -1))\n";
+    return o;
+}
+// count_byte_helper emits $__fern_count_byte(s, byte) -> how many bytes of `s`
+// equal `byte` (ATLAS-PLATFORM-PLAN §3.3, fourth kernel).
+//
+// SCALAR, per §3.4's "correct in every backend first, fast one backend at a
+// time". The self-host wasm string is one [len@0][bytes@4] block, so the byte
+// address is unconditional and there is no inline-string branch to get wrong.
+//
+// No cursor, so no clamp: both degenerate answers are honest counts rather
+// than sentinels — an out-of-range byte counts 0 because nothing can equal it,
+// an empty string counts 0 because it has no bytes.
+//
+// Reads only the source block — no allocation, no calls.
+pub function count_byte_helper(): string {
+    var o: string = "";
+    o = o + "  (func $__fern_count_byte (param $s i32) (param $byte i32) (result i32)\n";
+    o = o + "    (local $len i32) (local $i i32) (local $c i32)\n";
+    // A byte outside 0..255 can never appear; checked first so the scan needs
+    // no per-iteration guard. The answer is 0, not -1: a count has no miss.
+    o = o + "    (if (i32.or (i32.lt_s (local.get $byte) (i32.const 0)) (i32.gt_s (local.get $byte) (i32.const 255))) (then (return (i32.const 0))))\n";
+    o = o + "    (local.set $len (i32.load (local.get $s)))\n";
+    o = o + "    (block $d (loop $c2\n";
+    o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
+    o = o + "      (if (i32.eq (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))) (local.get $byte)) (then (local.set $c (i32.add (local.get $c) (i32.const 1)))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $c2)))\n";
+    o = o + "    (local.get $c))\n";
     return o;
 }
 // ascii_run_helper emits $__fern_ascii_run(s, from) -> the index of the first
@@ -8538,6 +8579,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) { parts = parts.append(substr_helper()); }
     if (need(needs, "@uses_memchr")) { parts = parts.append(memchr_helper()); }
     if (need(needs, "@uses_rmemchr")) { parts = parts.append(rmemchr_helper()); }
+    if (need(needs, "@uses_count_byte")) { parts = parts.append(count_byte_helper()); }
     if (need(needs, "@uses_ascii_run")) { parts = parts.append(ascii_run_helper()); }
     // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.
     if (need(needs, "str_split") || need(needs, "@uses_str_lines")) { parts = parts.append(str_split_helper()); }

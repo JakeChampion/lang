@@ -494,6 +494,20 @@ pub function op_memchr(): Op { return op0("memchr"); }
 // whole string".
 pub function op_rmemchr(): Op { return op0("rmemchr"); }
 
+// count_byte (docs/ATLAS-PLATFORM-PLAN.md §3.3, fourth kernel): pops
+// [str, byte] → the i32 number of bytes equal to `byte`. Allocates nothing
+// and reads only the source bytes.
+//
+// The first of these kernels with NO early exit: memchr stops at the first
+// hit, this reads the whole string every time, which is what makes it the
+// clearest case of §4's "the vector length is the input" rule.
+//
+// No cursor, so no clamp — the one thing its three siblings each get wrong in
+// a different way is simply absent here. Both degenerate answers are honest
+// counts rather than sentinels: a byte outside 0..255 counts 0 because
+// nothing can equal it, and an empty string counts 0 because it has no bytes.
+pub function op_count_byte(): Op { return op0("count_byte"); }
+
 // ascii_run (docs/ATLAS-PLATFORM-PLAN.md §3, second kernel): pops [str, from]
 // → the i32 index of the first byte at or after `from` whose high bit is set,
 // or the string's length if the rest is ASCII. Allocates nothing and reads only
@@ -1661,12 +1675,14 @@ function kind_id_4(name: string): i32 {
     if (name == "write_file_exec") { return 226; }
     if (name == "ascii_run") { return 227; }
     if (name == "rmemchr") { return 234; }
+    if (name == "count_byte") { return 235; }
     if (name == "syscall5") { return 228; }
-    // NEXT FREE EXTENSION ID: 235 (heap_mark=229, heap_release_to=230,
+    // NEXT FREE EXTENSION ID: 236 (heap_mark=229, heap_release_to=230,
     // create_dir_all=231 and isatty=232 are taken below / above;
-    // read_file_bytes=233 and rmemchr=234 are taken too — this line said 233
-    // while read_file_bytes already held it, which is the drift the paragraph
-    // below is about, so re-grep rather than trusting it).
+    // read_file_bytes=233, rmemchr=234 and count_byte=235 are taken too —
+    // this line once said 233 while read_file_bytes already held it, which is
+    // the drift the paragraph below is about, so re-grep rather than
+    // trusting it).
     // ADDING AN EXTENSION TAG: take the next id here AND register it in
     // kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
     // for the number you took. Two branches that each claim "the next free
@@ -1933,6 +1949,7 @@ function kind_name_4(id: i32): string {
     if (id == 226) { return "write_file_exec"; }
     if (id == 227) { return "ascii_run"; }
     if (id == 234) { return "rmemchr"; }
+    if (id == 235) { return "count_byte"; }
     if (id == 228) { return "syscall5"; }
     if (id == 229) { return "heap_mark"; }
     if (id == 230) { return "heap_release_to"; }
@@ -2056,6 +2073,7 @@ function pops2_mem(t: i32): boolean {
         || t == 98 || t == 99 || t == 100 || t == 101                    // str_concat, str_eq, str_cmp, str_index
         || t == 105 || t == 108                                          // str_split, str_repeat
         || t == 114 || t == 115 || t == 116 || t == 227                  // str_starts_with/ends_with/index_of, ascii_run
+        || t == 235                                                      // count_byte
         || t == 127 || t == 128 || t == 130                              // map_get, map_has, map_delete
         || t == 140 || t == 144;                                         // struct_set, tuple_set
 }
@@ -3259,7 +3277,7 @@ pub function is_str_op_kind(tag: i32): boolean {
         || tag == 114
         || tag == 115 || tag == 116 || tag == 98
         || tag == 99 || tag == 100 || tag == 225 || tag == 227
-        || tag == 234;
+        || tag == 234 || tag == 235;
 }
 
 // --- Structured-scope navigation over an op stream ---

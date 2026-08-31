@@ -3033,6 +3033,12 @@ function builtin_i32_names(): string[] {
         // what differs is which end `from` clamps to — down to
         // len-1 here, up to 0 there.
         "__rmemchr",
+        // __count_byte(s, byte): how many bytes of `s` equal `byte`
+        // (ATLAS-PLATFORM-PLAN §3.3, fourth kernel). i32 like its
+        // three siblings, but the only one whose degenerate answers
+        // are real counts rather than sentinels — an out-of-range
+        // byte and an empty string both genuinely count 0.
+        "__count_byte",
         "__load_i32",
         "exit",
         "args_count",

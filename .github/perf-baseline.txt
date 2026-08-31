@@ -51,6 +51,8 @@ x86_64/sort_ints.text	3085
 x86_64/sort_ints.ir	113574190
 x86_64/string_build.text	1329
 x86_64/string_build.ir	144610039
+x86_64/string_count_byte.text	640
+x86_64/string_count_byte.ir	270924854
 x86_64/string_find_byte.text	2179
 x86_64/string_find_byte.ir	136083255
 x86_64/string_rfind_byte.text	2843

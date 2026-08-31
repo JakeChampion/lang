@@ -776,6 +776,37 @@ func New() *Interp {
 		}
 		return Number(-1), nil
 	}}
+	// __count_byte(s, byte): how many bytes of `s` equal `byte`. The
+	// oracle for the fourth fused kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3).
+	//
+	// It keeps __memchr's byte-range guard and drops its cursor: there is no
+	// `from`, so the only two answers a degenerate call can give are 0 for an
+	// out-of-range byte and 0 for an empty string, and both are the honest
+	// count rather than a sentinel.
+	i.Builtins["__count_byte"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__count_byte: expected 2 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__count_byte: expected a string, got %T", args[0])
+		}
+		bn, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__count_byte: expected an integer byte, got %T", args[1])
+		}
+		want := int(int64(bn))
+		if want < 0 || want > 255 {
+			return Number(0), nil
+		}
+		n := 0
+		for _, c := range []byte(string(s)) {
+			if int(c) == want {
+				n++
+			}
+		}
+		return Number(n), nil
+	}}
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
 	// copy was bought by an extra reference. The interpreter has no refcounts
