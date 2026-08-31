@@ -184,8 +184,12 @@ func f64UlpCases() []f64Case {
 	}
 	// pow: the integer-exponent path must be EXACT, not merely close —
 	// pow(3,2) truncating to 8 through `as i32` is what forced it to exist.
+	// The negative bases stay on that same path: off it, ln|x| is only
+	// approximate, so those go in f64SpecialCases where the answer is
+	// exactly representable whatever the kernel does.
 	for _, p := range []struct{ x, y float64 }{
 		{3, 2}, {2, 10}, {10, 3}, {5, 4}, {2, -2}, {7, 0}, {2, 0.5}, {9, 0.5},
+		{-2, 3}, {-2, 4}, {-3, 3}, {-2, -2}, {-2, -3}, {-0.5, 3}, {-1, 2},
 	} {
 		cs = append(cs, f64Case{
 			fmt.Sprintf("__pow_f64(%s, %s)", lit(p.x), lit(p.y)),
@@ -218,6 +222,27 @@ func f64SpecialCases() []f64Case {
 		{fmt.Sprintf("__sin_f64(%s)", fromBits(math.NaN())), math.NaN()},
 		{fmt.Sprintf("__cos_f64(%s)", fromBits(inf)), math.Cos(inf)},
 		{fmt.Sprintf("__cos_f64(%s)", fromBits(math.NaN())), math.NaN()},
+		// pow over a negative base. Off the repeated-squaring path the
+		// general case is exp(y*ln|x|), and ln of a negative base is NaN —
+		// so before the sign/magnitude split these returned NaN for an
+		// ordinary finite answer (#7879). |x| == 1 gives an exactly
+		// representable result at every exponent, which is what lets these
+		// sit here rather than under a ulp bound.
+		{"__pow_f64((0.0 - 1.0), 65.0)", math.Pow(-1, 65)},
+		{"__pow_f64((0.0 - 1.0), 100.0)", math.Pow(-1, 100)},
+		{"__pow_f64((0.0 - 1.0), 1023.0)", math.Pow(-1, 1023)},
+		{"__pow_f64((0.0 - 1.0), 1e10)", math.Pow(-1, 1e10)},
+		{fmt.Sprintf("__pow_f64((0.0 - 1.0), %s)", fromBits(inf)), math.Pow(-1, inf)},
+		{fmt.Sprintf("__pow_f64((0.0 - 1.0), %s)", fromBits(-inf)), math.Pow(-1, -inf)},
+		// A non-integral exponent over a negative base is the one case that
+		// really is NaN, so the split must not over-correct into a value.
+		{"__pow_f64((0.0 - 2.0), 0.5)", math.Pow(-2, 0.5)},
+		{"__pow_f64((0.0 - 8.0), (1.0 / 3.0))", math.Pow(-8, 1.0/3.0)},
+		{"__pow_f64((0.0 - 2.0), 2.5)", math.Pow(-2, 2.5)},
+		// The remaining IEEE-754 pow edges, none of which reach ln at all.
+		{"__pow_f64(0.0, (0.0 - 1.0))", math.Pow(0, -1)},
+		{fmt.Sprintf("__pow_f64(1.0, %s)", fromBits(math.NaN())), math.Pow(1, math.NaN())},
+		{fmt.Sprintf("__pow_f64(%s, 0.0)", fromBits(math.NaN())), math.Pow(math.NaN(), 0)},
 	}
 }
 

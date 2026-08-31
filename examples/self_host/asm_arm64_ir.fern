@@ -6609,16 +6609,62 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write(".Lpow_done:\n");
     s = s.write("    fmov d0, d3\n");
     s = s.write("    ret\n");
+    // General case: x^y = sign * exp(y*ln|x|). ln is defined only for x > 0, so a
+    // negative base is split into a sign and |x| first: for an integral y the sign
+    // is (-1)^y, and a non-integral y makes the result NaN. Every |y| >= 2^53 is an
+    // even integer, which is what leaves pow(x<0, +-Inf) a magnitude rather than a
+    // NaN. Stashes y in callee-saved d8 and the sign in d9 across the log call.
     s = s.write(".Lpow_general:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     s = s.write("    str d8, [sp, #-16]!\n");
+    s = s.write("    str d9, [sp, #-16]!\n");
     s = s.write("    fmov d8, d1\n");
+    s = emit_ldc(s, "d9", ".Lfc_one");                  // sign of the result
+    s = s.write("    fmov x14, d0\n");
+    s = s.write("    tbz x14, #63, .Lpow_mag\n");       // +0 or a positive base
+    s = s.write("    lsl x14, x14, #1\n");
+    s = s.write("    lsr x14, x14, #1\n");
+    s = s.write("    fmov d0, x14\n");                  // |x|
+    s = s.write("    fmov x15, d1\n");
+    s = s.write("    lsl x15, x15, #1\n");
+    s = s.write("    lsr x15, x15, #1\n");              // |y|
+    s = s.write("    ldr x16, =0x4340000000000000\n");
+    s = s.write("    cmp x15, x16\n");
+    s = s.write("    b.lo .Lpow_parity\n");
+    s = s.write("    ldr x16, =0x7ff0000000000000\n");
+    s = s.write("    cmp x15, x16\n");
+    s = s.write("    b.ls .Lpow_mag\n");                // |y| >= 2^53, finite or +-Inf: an even integer
+    s = s.write("    b .Lpow_nan\n");                   // y is NaN
+    s = s.write(".Lpow_parity:\n");
+    s = s.write("    fcvtzs x15, d1\n");
+    s = s.write("    scvtf d2, x15\n");
+    s = s.write("    fcmp d2, d1\n");
+    s = s.write("    b.ne .Lpow_nan\n");                // y is not an integer
+    s = s.write("    tbz x15, #0, .Lpow_mag\n");        // even exponent
+    s = s.write("    fneg d9, d9\n");
+    // |x| == 1 is 1 for every y, including the NaN and +-Inf that exp(y*ln|x|)
+    // would turn into NaN through y*0.
+    s = s.write(".Lpow_mag:\n");
+    s = s.write("    fmov x14, d0\n");
+    s = s.write("    ldr x16, =0x3ff0000000000000\n");
+    s = s.write("    cmp x14, x16\n");
+    s = s.write("    b.eq .Lpow_sign\n");
     s = s.write("    bl __fern_log_f64\n");
     s = s.write("    fmul d0, d8, d0\n");
     s = s.write("    bl __fern_exp_f64\n");
+    s = s.write(".Lpow_sign:\n");
+    s = s.write("    fmul d0, d0, d9\n");
+    s = s.write("    ldr d9, [sp], #16\n");
     s = s.write("    ldr d8, [sp], #16\n");
     s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    s = s.write(".Lpow_nan:\n");
+    s = s.write("    ldr d9, [sp], #16\n");
+    s = s.write("    ldr d8, [sp], #16\n");
+    s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ldr x14, =0x7ff8000000000000\n");
+    s = s.write("    fmov d0, x14\n");
     s = s.write("    ret\n");
     s = s.write(".size __fern_pow_f64, .-__fern_pow_f64\n");
     return s;

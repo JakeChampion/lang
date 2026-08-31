@@ -7715,6 +7715,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// callee-saved d8.
 	fn("__fern_pow_f64")
 	powGen, powLoop, powSkip, powDone := g.freshLabel("powGeneral"), g.freshLabel("powLoop"), g.freshLabel("powSkip"), g.freshLabel("powDone")
+	powMag, powParity, powSign, powNaN := g.freshLabel("powMag"), g.freshLabel("powParity"), g.freshLabel("powSign"), g.freshLabel("powNaN")
 	// Integer-exponent fast path. exp(y*ln x) CANNOT return exactly 9 for
 	// pow(3,2): a 1-ulp error in ln 3 is amplified by the exponential to
 	// ~4e-15 on a result of 9, so it lands just under and truncates to 8.
@@ -7754,18 +7755,63 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.label(powDone)
 	g.emit("movsd xmm0, xmm3")
 	g.emit("ret")
-	// General case: x^y = exp(y*ln x), x>0. The only non-leaf helper;
-	// SysV has no callee-saved xmm registers, so y is stashed on the
-	// stack across the log call where arm64 can use callee-saved d8.
+	// General case: x^y = sign * exp(y*ln|x|). ln is defined only for
+	// x > 0, so a negative base is split into a sign and |x| first: for an
+	// integral y the sign is (-1)^y, and a non-integral y makes the result
+	// NaN. Every |y| >= 2^53 is an even integer, which is what leaves
+	// pow(x<0, +-Inf) a magnitude rather than a NaN.
+	//
+	// The only non-leaf helper: SysV has no callee-saved xmm registers, so
+	// y and the sign multiplier are stashed on the stack across the log
+	// call, where arm64 can use callee-saved d8.
 	g.label(powGen)
 	g.emit("sub rsp, 16")
 	g.emit("movsd [rsp], xmm1")
+	ldc("xmm2", ".Lfc_one")
+	g.emit("movsd [rsp+8], xmm2") // sign of the result
+	g.emit("movq rax, xmm0")
+	g.emit("test rax, rax")
+	g.emit("jns " + powMag) // +0 or a positive base
+	g.emit("movabs rcx, 0x7fffffffffffffff")
+	g.emit("and rax, rcx")
+	g.emit("movq xmm0, rax") // |x|
+	g.emit("movq rdx, xmm1")
+	g.emit("and rdx, rcx") // |y|
+	g.emit("movabs rcx, 0x4340000000000000")
+	g.emit("cmp rdx, rcx")
+	g.emit("jb " + powParity)
+	g.emit("movabs rcx, 0x7ff0000000000000")
+	g.emit("cmp rdx, rcx")
+	g.emit("jbe " + powMag) // |y| >= 2^53, finite or +-Inf: an even integer
+	g.emit("jmp " + powNaN) // y is NaN
+	g.label(powParity)
+	g.emit("cvttsd2si rdx, xmm1")
+	g.emit("cvtsi2sd xmm2, rdx")
+	g.emit("ucomisd xmm2, xmm1")
+	g.emit("jne " + powNaN) // y is not an integer
+	g.emit("test rdx, 1")
+	g.emit("jz " + powMag) // even exponent
+	g.emit("movabs rcx, 0xbff0000000000000")
+	g.emit("movq xmm2, rcx")
+	g.emit("movsd [rsp+8], xmm2") // -1.0
+	g.label(powMag)
+	// |x| == 1 is 1 for every y, including the NaN and +-Inf that
+	// exp(y*ln|x|) would turn into NaN through y*0.
+	g.emit("movq rax, xmm0")
+	g.emit("movabs rcx, 0x3ff0000000000000")
+	g.emit("cmp rax, rcx")
+	g.emit("je " + powSign)
 	g.emit("call __fern_log_f64")
 	g.emit("movsd xmm1, [rsp]")
 	g.emit("mulsd xmm0, xmm1")
 	g.emit("call __fern_exp_f64")
+	g.label(powSign)
+	g.emit("mulsd xmm0, [rsp+8]")
 	g.emit("add rsp, 16")
 	g.emit("ret")
+	g.label(powNaN)
+	g.emit("add rsp, 16")
+	retBits("0x7ff8000000000000")
 	g.line(".size __fern_pow_f64, .-__fern_pow_f64")
 }
 
