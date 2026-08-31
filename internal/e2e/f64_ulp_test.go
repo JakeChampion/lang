@@ -87,9 +87,16 @@ var f64UlpPosInputs = []float64{
 // precision runs out. exp/log/pow keep Go's math, which is accurate to within
 // the bound over the inputs used here.
 
-const piDigits = "3.14159265358979323846264338327950288419716939937510582097494459230781640628620899862803482534211706798"
+// piDigits is 420 significant digits (~1395 bits) and refPrec is sized to
+// match. Both are set by the LARGEST argument the sweep reduces, not by the
+// precision of the answer: r = x - k*(pi/2) cancels away everything but the
+// last few bits, so reducing a value near the top of the exponent range needs
+// pi to ~1024 + 53 bits before the remainder has any correct digits at all.
+// At the previous 350 bits / 101 digits, every input past ~1e19 was reduced
+// against noise, which is why none were in the corpus.
+const piDigits = "3.1415926535897932384626433832795028841971693993751058209749445923078164062862089986280348253421170679821480865132823066470938446095505822317253594081284811174502841027019385211055596446229489549303819644288109756659334461284756482337867831652712019091456485669234603486104543266482133936072602491412737245870066063155881748815209209628292540917153643678925903600113305305488204665213841469519415116094330572703657595919"
 
-const refPrec = 350
+const refPrec = 1400
 
 func bigFrom(f float64) *big.Float { return new(big.Float).SetPrec(refPrec).SetFloat64(f) }
 
@@ -100,11 +107,19 @@ func refSinCos(x float64) (sin, cos float64) {
 	bx := bigFrom(x)
 
 	// k = round(x / (π/2)); r = x − k·(π/2), all at refPrec so the
-	// subtraction that matters is not the one that loses the answer.
-	qf, _ := new(big.Float).SetPrec(refPrec).Quo(bx, half).Float64()
-	k := int64(math.Round(qf))
-	kb := new(big.Float).SetPrec(refPrec).SetInt64(k)
+	// subtraction that matters is not the one that loses the answer. k is a
+	// big.Int because it reaches ~2^1024/(π/2) at the top of the range, where
+	// an int64 silently saturates.
+	q := new(big.Float).SetPrec(refPrec).Quo(bx, half)
+	if q.Sign() >= 0 {
+		q.Add(q, big.NewFloat(0.5))
+	} else {
+		q.Sub(q, big.NewFloat(0.5))
+	}
+	ki, _ := q.Int(nil) // truncation of q±½ is round-half-away
+	kb := new(big.Float).SetPrec(refPrec).SetInt(ki)
 	r := new(big.Float).SetPrec(refPrec).Sub(bx, new(big.Float).SetPrec(refPrec).Mul(half, kb))
+	k := new(big.Int).Mod(ki, big.NewInt(4)).Int64()
 
 	s, c := taylorSinCos(r)
 	neg := func(v *big.Float) *big.Float { return new(big.Float).SetPrec(refPrec).Neg(v) }
@@ -121,13 +136,14 @@ func refSinCos(x float64) (sin, cos float64) {
 	return sin, cos
 }
 
-// taylorSinCos sums the two series for |r| <= π/4, where 60 terms is far past
-// the point the tail drops below 2^-350.
+// taylorSinCos sums the two series for |r| <= π/4. The term count follows
+// refPrec: at 1400 bits the tail has to fall below 2^-1400, which 0.785^n/n!
+// reaches around n = 250.
 func taylorSinCos(r *big.Float) (sin, cos *big.Float) {
 	sin = new(big.Float).SetPrec(refPrec)
 	cos = new(big.Float).SetPrec(refPrec)
 	term := new(big.Float).SetPrec(refPrec).SetInt64(1) // r^n / n!
-	for n := 0; n < 60; n++ {
+	for n := 0; n < 300; n++ {
 		if n > 0 {
 			term.Mul(term, r)
 			term.Quo(term, new(big.Float).SetPrec(refPrec).SetInt64(int64(n)))
@@ -243,6 +259,48 @@ func f64SpecialCases() []f64Case {
 		{"__pow_f64(0.0, (0.0 - 1.0))", math.Pow(0, -1)},
 		{fmt.Sprintf("__pow_f64(1.0, %s)", fromBits(math.NaN())), math.Pow(1, math.NaN())},
 		{fmt.Sprintf("__pow_f64(%s, 0.0)", fromBits(math.NaN())), math.Pow(math.NaN(), 0)},
+	}
+}
+
+// TestRefSinCosLargeArguments gates the ORACLE, which nothing else does.
+//
+// refSinCos is the only trustworthy sin/cos reference in the tree, and every
+// compiled bound below is measured against it — so a silent regression in its
+// precision would relax every one of them at once rather than failing. The
+// expected values here were computed three independent ways that agree to the
+// bit: this reference, a 700-digit Python `decimal` reduction, and glibc's
+// sin/cos via C.
+//
+// They deliberately include the values where Go's math is NOT usable as a
+// check, because that is the point. Go reduces large arguments less
+// accurately than glibc: it is 40 ulp out at 1e30, and at the classic
+// worst-case argument below it returns -4.8435e-19 for a true -4.6872e-19 —
+// a 3% error. `fern -interp` evaluates through Go's math, so the interpreter
+// is wrong there too, and no differential that treats it as the oracle can
+// gate sin/cos at these magnitudes (#7878).
+func TestRefSinCosLargeArguments(t *testing.T) {
+	cases := []struct {
+		x        float64
+		sin, cos float64
+	}{
+		{1e30, 0.009331468931175825, -0.9999564608959665},
+		{1e300, -0.8178819121159085, -0.5753861119575491},
+		{math.MaxFloat64, 0.004961954789184062, -0.9999876894265599},
+		// 6381956970095103 * 2^797 — the standard worst case for argument
+		// reduction, whose reduced argument is ~4.6872e-19.
+		{5.3193726483265414e+255, 1.0, -4.687165924254628e-19},
+	}
+	for _, c := range cases {
+		gotSin, gotCos := refSinCos(c.x)
+		if d := ulpDist(gotSin, c.sin); d != 0 {
+			t.Errorf("refSinCos(%g) sin = %v, want %v (%d ulp)", c.x, gotSin, c.sin, d)
+		}
+		if d := ulpDist(gotCos, c.cos); d != 0 {
+			t.Errorf("refSinCos(%g) cos = %v, want %v (%d ulp)", c.x, gotCos, c.cos, d)
+		}
+		if math.Abs(gotSin) > 1 || math.Abs(gotCos) > 1 {
+			t.Errorf("refSinCos(%g) left [-1,1]: sin=%v cos=%v", c.x, gotSin, gotCos)
+		}
 	}
 }
 
