@@ -153,6 +153,56 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "error[E004]",
 		},
 		{
+			// #7311's last half: a call through a name BOUND IN SCOPE. The
+			// free-function arity rule is skipped for such a name, so nothing
+			// checked a closure call at all — this built clean and the callee
+			// read its second argument out of whatever was in the register
+			// (the binary returned 121 rather than failing).
+			name:     "closure-call-arity-E004",
+			src:      "function main(): i32 { var g = function(a: i32, b: i32): i32 { return a + b; }; return g(1); }\n",
+			wantDiag: "error[E004]",
+		},
+		{
+			// The same hole reached through a named function used as a VALUE
+			// rather than a lambda: `g` is a plain local, so the callee it
+			// resolves to was never consulted for arity.
+			name:     "fn-value-call-arity-E004",
+			src:      "function dbl(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { var g = dbl; return g(1); }\n",
+			wantDiag: "error[E004]",
+		},
+		{
+			// And through a fn-typed PARAMETER, whose TypeFunc comes from the
+			// declaration's sidecars rather than a lambda.
+			name:     "fn-typed-param-call-arity-E004",
+			src:      "function ap(f: (i32, i32) => i32): i32 { return f(1); }\nfunction main(): i32 { return ap((a: i32, b: i32): i32 => a + b); }\n",
+			wantDiag: "error[E004]",
+		},
+		{
+			// Negative control: the same three callable shapes at the correct
+			// arity, including a zero-parameter callable — `()` must read as
+			// arity 0 and not as "no parameter list recorded". Runs to 10.
+			name:     "closure-and-fn-value-at-correct-arity-compile",
+			src:      "function dbl(a: i32, b: i32): i32 { return a + b; }\nfunction z(f: () => i32): i32 { var q = f; return q(); }\nfunction main(): i32 { var g = function(a: i32, b: i32): i32 { return a + b; }; var h = dbl; return g(1, 2) + h(3, 4) + z((): i32 => 0); }\n",
+			wantDiag: "",
+		},
+		{
+			// The load-bearing negative control. A "fn"-coarsened struct FIELD
+			// carries no param spellings, so its TypeFunc's empty param list is
+			// unrecorded rather than arity 0 (TypeFunc.params_known). Without
+			// that distinction the rule above reads it as arity 0 and rejects
+			// this program — which native accepts — with a false
+			// "expects 0 arguments, got 1".
+			//
+			// This pins the checker's silence, not the binary: the self-host
+			// MISCOMPILES the rebind (#7862) — it calls the closure box address
+			// instead of the code pointer in its slot 0, and the binary
+			// segfaults. Native and the interpreter both answer 3. That defect
+			// predates this rule and is unrelated to arity.
+			name:     "fn-typed-struct-field-rebind-has-no-arity-to-check",
+			src:      "struct H { f: (i32) => i32 }\nfunction apply_h(h: H): i32 { var g = h.f; return g(2); }\nfunction inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { return apply_h(H { f: inc }); }\n",
+			wantDiag: "",
+		},
+		{
 			// Negative control: the same builtins at the correct arity, in a
 			// program whose statements all now carry types (print is void,
 			// as_bytes is u8[]) — a wrong arity constant or type arm here
