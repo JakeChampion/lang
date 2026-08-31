@@ -1050,15 +1050,23 @@ pub function (s: LowerState) is_enum_field_alias(name: string): boolean {
     return reclaim_has(s.reclaimable_names, "ENUMALIAS:", name);
 }
 
+// ident_name_or_empty is `e`'s name when it is a BARE ident, and "" otherwise.
+// Three predicates here open-coded the same one-arm match to ask it.
+pub function ident_name_or_empty(e: ast.Expr): string {
+    match (e) {
+        ast.ExprIdent(id) => { return id.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // enum_alias_ident_escapes reports whether `e` is a bare ident on a local bound
 // from an enum field read — the routed-through-a-local form of the direct
 // `enum_field_read_type` container store, and retained at the same three sites.
 pub function enum_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
-    match (e) {
-        ast.ExprIdent(id) => { return s.is_enum_field_alias(id.name); },
-        _ => { return false; }
-    }
-    return false;
+    var nm: string = ident_name_or_empty(e);
+    if (nm.len() == 0) { return false; }
+    return s.is_enum_field_alias(nm);
 }
 
 // struct_alias_ident_escapes reports whether `e` is a bare ident naming a
@@ -1072,16 +1080,11 @@ pub function enum_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
 // balancing. An `own` parameter is excluded from the other side — the caller
 // transferred its reference rather than keeping one (#7853).
 pub function struct_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
-    match (e) {
-        ast.ExprIdent(id) => {
-            if (s.is_own_param(id.name)) { return false; }
-            var sl: i32 = s.slot_of(id.name);
-            if (sl < 0 || sl >= s.n_params) { return false; }
-            return decl_is_struct(s.structs, s.struct_type_of_slot(sl));
-        },
-        _ => { return false; }
-    }
-    return false;
+    var nm: string = ident_name_or_empty(e);
+    if (nm.len() == 0 || s.is_own_param(nm)) { return false; }
+    var sl: i32 = s.slot_of(nm);
+    if (sl < 0 || sl >= s.n_params) { return false; }
+    return decl_is_struct(s.structs, s.struct_type_of_slot(sl));
 }
 
 // is_own_param reports whether `name` is an `own` (consuming) parameter of the
@@ -28922,11 +28925,7 @@ function walk_stmt_escapes(st: ast.Stmt, acc: string[]): string[] {
 // is the second hazard's classic shape, which is why a bare ident in a binding
 // position is refused even though the frame is still very much alive.
 function ident_named_is(e: ast.Expr, name: string): boolean {
-    match (e) {
-        ast.ExprIdent(id) => { return id.name == name; },
-        _ => { return false; }
-    }
-    return false;
+    return ident_name_or_empty(e) == name && name.len() > 0;
 }
 
 // expr_mentions_name: does `name` appear anywhere in `e`? The fallback for an
