@@ -50,6 +50,7 @@ selfhost/arm64-linux/sort_inplace.emit	88297
 selfhost/arm64-linux/sort_ints.emit	88301
 selfhost/arm64-linux/string_build.emit	88285
 selfhost/arm64-linux/string_find_byte.emit	88234
+selfhost/arm64-linux/string_rfind_byte.emit	88229
 selfhost/arm64-linux/string_scan.emit	88405
 selfhost/arm64-linux/string_slice.emit	830
 selfhost/arm64-linux/struct_drop.emit	88771
@@ -69,6 +70,7 @@ selfhost/wasm32-wasi/sort_inplace.emit	51378
 selfhost/wasm32-wasi/sort_ints.emit	51381
 selfhost/wasm32-wasi/string_build.emit	51336
 selfhost/wasm32-wasi/string_find_byte.emit	51308
+selfhost/wasm32-wasi/string_rfind_byte.emit	51298
 selfhost/wasm32-wasi/string_scan.emit	51416
 selfhost/wasm32-wasi/string_slice.emit	312
 selfhost/wasm32-wasi/struct_drop.emit	51664
@@ -88,6 +90,7 @@ selfhost/x86-64-linux/sort_inplace.emit	81280
 selfhost/x86-64-linux/sort_ints.emit	81283
 selfhost/x86-64-linux/string_build.emit	81255
 selfhost/x86-64-linux/string_find_byte.emit	81195
+selfhost/x86-64-linux/string_rfind_byte.emit	81189
 selfhost/x86-64-linux/string_scan.emit	81365
 selfhost/x86-64-linux/string_slice.emit	638
 selfhost/x86-64-linux/struct_drop.emit	81680
