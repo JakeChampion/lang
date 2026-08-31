@@ -828,8 +828,18 @@ exercised rather than the scan):
 | native x86-64 (retired) | 2,765M | 271M | 10.2x |
 | native arm64 (qemu) | 1,690 ms | 571 ms | 3.0x |
 | native wasm (wasmtime) | 886 ms | 25 ms | 36x |
+| `-backend ssa` (arm64, qemu) | 1,798 ms | 571 ms | 3.2x |
+| self-host x86-64 | 256 ms | 20.5 ms | 12.5x |
+| self-host arm64 (qemu) | 1,789 ms | 524 ms | 3.4x |
+| self-host wasm (wasmtime) | 258 ms | 28 ms | 9.2x |
 
-The arm64 row carries the usual qemu floor caveat. The wasm row needs a
+**Step 3 is complete: this kernel is vector on all seven backends**, and it got
+there in one pass rather than the two the two search kernels each needed,
+precisely because §3.3a cost nothing. The three arm64 rows land within 5% of
+each other (571 / 571 / 524 ms) because they are the same instruction sequence;
+what separates their ratios is only the scalar body each replaced.
+
+The arm64 rows carry the usual qemu floor caveat. The native wasm row needs a
 different caveat, and it is worth recording because it is not a vector result:
 that backend's scalar body read **every byte through `__fern_str_byte`**, a
 function call per byte, because one reader is correct for both the inline and

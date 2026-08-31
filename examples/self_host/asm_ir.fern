@@ -3552,32 +3552,55 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // operand stack [box, byte] (byte on top) -> how many bytes of the
         // string equal it.
         //
-        // SCALAR, per §3.4's "correct in every backend first, fast one
-        // backend at a time".
+        // SSE2 with a mask POPCOUNT where memchr scans (§3.4 step 3). The
+        // splat, load and compare are memchr's above, character for
+        // character; what changes is that pmovmskb's result is fed to popcntl
+        // and accumulated rather than tested and branched on, so the hot path
+        // has no per-block branch at all.
         //
-        // No cursor and no clamp: %rdx walks 0..len and both degenerate
-        // answers are honest counts rather than sentinels — an out-of-range
-        // byte counts 0 because nothing can equal it, an empty string counts
-        // 0 because it has no bytes.
+        // popcnt is a hard requirement rather than a fast path: the declared
+        // baseline is Haswell-class 2013 and these binaries carry no runtime
+        // dispatch. Unlike lzcnt/tzcnt it FAULTS below that baseline instead
+        // of silently decoding as something else, so a wrong assumption here
+        // is loud rather than a wrong answer.
+        //
+        // Cursor as an INDEX in %rdx, count in %r10, so the whole body stays
+        // inside the five registers this backend has free.
+        //
+        // No cursor to clamp: both degenerate answers are honest counts
+        // rather than sentinels.
         var clo: asmcore.LabelOut = asmcore.fresh_label(s);
-        var c_scan: string = clo.name;
+        var c_vec: string = clo.name;
         var clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
-        var c_next: string = clo2.name;
+        var c_tail: string = clo2.name;
         var clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
-        var c_done: string = clo3.name;
-        s = clo3.state;
+        var c_next: string = clo3.name;
+        var clo4: asmcore.LabelOut = asmcore.fresh_label(clo3.state);
+        var c_done: string = clo4.name;
+        s = clo4.state;
         s = s.write("    popq %rcx\n    popq %rax\n");
         s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
         s = s.write("    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
         // A byte outside 0..255 can never match. One UNSIGNED compare covers
-        // both ends, checked once so the loop needs no per-iteration guard.
+        // both ends, checked once so neither loop needs a per-iteration guard,
+        // and so the splat below is exact rather than truncating.
         s = s.write("    cmpq $255, %rcx\n    ja " + c_done + "\n");
-        s = s.write(c_scan + ":\n");
+        s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
+        s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
+        s = s.write(c_vec + ":\n");
+        s = s.write("    movq %r8, %r9\n    subq %rdx, %r9\n");
+        s = s.write("    cmpq $16, %r9\n    jl " + c_tail + "\n");
+        s = s.write("    movdqu (%rax,%rdx), %xmm0\n    pcmpeqb %xmm1, %xmm0\n");
+        s = s.write("    pmovmskb %xmm0, %r9d\n    popcntl %r9d, %r9d\n");
+        s = s.write("    addq %r9, %r10\n    addq $16, %rdx\n    jmp " + c_vec + "\n");
+        // Scalar tail: the final 0..15 bytes, and the whole algorithm for a
+        // string shorter than one block.
+        s = s.write(c_tail + ":\n");
         s = s.write("    cmpq %r8, %rdx\n    jge " + c_done + "\n");
         s = s.write("    movzbq (%rax,%rdx), %r9\n");
         s = s.write("    cmpq %rcx, %r9\n    jne " + c_next + "\n");
         s = s.write("    addq $1, %r10\n");
-        s = s.write(c_next + ":\n    addq $1, %rdx\n    jmp " + c_scan + "\n");
+        s = s.write(c_next + ":\n    addq $1, %rdx\n    jmp " + c_tail + "\n");
         s = s.write(c_done + ":\n    pushq %r10\n");
         return s;
     }
