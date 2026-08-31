@@ -24,14 +24,45 @@ func (a *Assembler) appendRodata(sec string, b []byte) {
 	*buf = append(*buf, b...)
 }
 
-func (a *Assembler) alignRodata(sec string, n int) {
-	if n <= 1 {
-		return
+// alignData pads the current data section with zero bytes. Argument shape
+// matches the .text alignText: first arg is a byte count (.align/.balign)
+// or exponent (.p2align), an optional fill value is ignored (data padding
+// is always zero), and an optional max-skip skips the alignment when it
+// would pad more than that many bytes.
+func (a *Assembler) alignData(sec, rest string, p2 bool) error {
+	parts := strings.Split(rest, ",")
+	n, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || n < 0 {
+		return fmt.Errorf("bad alignment %q", rest)
+	}
+	align := n
+	if p2 {
+		if n > 30 {
+			return fmt.Errorf("bad .p2align exponent %d", n)
+		}
+		align = 1 << n
+	}
+	if align <= 1 {
+		return nil
 	}
 	buf := a.dataBuf(sec)
-	for len(*buf)%n != 0 {
-		*buf = append(*buf, 0)
+	pad := (align - len(*buf)%align) % align
+	if pad == 0 {
+		return nil
 	}
+	if len(parts) >= 3 {
+		if ms := strings.TrimSpace(parts[2]); ms != "" {
+			v, err := strconv.Atoi(ms)
+			if err != nil {
+				return fmt.Errorf("bad max-skip %q", rest)
+			}
+			if pad > v {
+				return nil
+			}
+		}
+	}
+	*buf = append(*buf, make([]byte, pad)...)
+	return nil
 }
 
 // appendRodataDirective materialises a data directive into the blob for
@@ -72,19 +103,9 @@ func (a *Assembler) appendRodataDirective(sec, d, rest string) error {
 		return nil
 	case ".align", ".balign":
 		// On x86 GAS these take a byte count (unlike arm64's power-of-two).
-		n, err := strconv.Atoi(strings.TrimSpace(rest))
-		if err != nil {
-			return fmt.Errorf("bad alignment %q", rest)
-		}
-		a.alignRodata(sec, n)
-		return nil
+		return a.alignData(sec, rest, false)
 	case ".p2align":
-		n, err := strconv.Atoi(strings.Fields(rest)[0])
-		if err != nil {
-			return fmt.Errorf("bad .p2align %q", rest)
-		}
-		a.alignRodata(sec, 1<<n)
-		return nil
+		return a.alignData(sec, rest, true)
 	case ".globl", ".global", ".type", ".size", ".intel_syntax":
 		return nil
 	default:

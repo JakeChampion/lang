@@ -38,8 +38,88 @@ var sseOps = map[string]struct{ prefix, op byte }{
 	// x86-64 baseline.
 	"movdqu": {0xF3, 0x6F}, "movdqa": {0x66, 0x6F},
 	"pcmpeqb": {0x66, 0x74}, "pcmpeqw": {0x66, 0x75}, "pcmpeqd": {0x66, 0x76},
+	"pcmpgtb": {0x66, 0x64}, "pcmpgtw": {0x66, 0x65}, "pcmpgtd": {0x66, 0x66},
 	"punpcklbw": {0x66, 0x60}, "punpcklwd": {0x66, 0x61},
-	"por": {0x66, 0xEB}, "pand": {0x66, 0xDB}, "pxor": {0x66, 0xEF},
+	"punpckldq": {0x66, 0x62}, "punpcklqdq": {0x66, 0x6C},
+	"punpckhbw": {0x66, 0x68}, "punpckhwd": {0x66, 0x69},
+	"punpckhdq": {0x66, 0x6A}, "punpckhqdq": {0x66, 0x6D},
+	"por": {0x66, 0xEB}, "pand": {0x66, 0xDB}, "pxor": {0x66, 0xEF}, "pandn": {0x66, 0xDF},
+
+	// Packed integer arithmetic (SSE2).
+	"paddb": {0x66, 0xFC}, "paddw": {0x66, 0xFD}, "paddd": {0x66, 0xFE}, "paddq": {0x66, 0xD4},
+	"psubb": {0x66, 0xF8}, "psubw": {0x66, 0xF9}, "psubd": {0x66, 0xFA}, "psubq": {0x66, 0xFB},
+	"paddusb": {0x66, 0xDC}, "psubusb": {0x66, 0xD8}, "paddsb": {0x66, 0xEC}, "psubsb": {0x66, 0xE8},
+	"pavgb": {0x66, 0xE0}, "pminub": {0x66, 0xDA}, "pmaxub": {0x66, 0xDE},
+	"pminsw": {0x66, 0xEA}, "pmaxsw": {0x66, 0xEE},
+	"pmullw": {0x66, 0xD5}, "pmulhw": {0x66, 0xE5}, "pmulhuw": {0x66, 0xE4}, "pmuludq": {0x66, 0xF4},
+	"psadbw":   {0x66, 0xF6},
+	"packsswb": {0x66, 0x63}, "packuswb": {0x66, 0x67}, "packssdw": {0x66, 0x6B},
+
+	// Vector shifts by a register count (the by-immediate forms are the
+	// 0F 71/72/73 groups, dispatched separately).
+	"psllw": {0x66, 0xF1}, "pslld": {0x66, 0xF2}, "psllq": {0x66, 0xF3},
+	"psrlw": {0x66, 0xD1}, "psrld": {0x66, 0xD2}, "psrlq": {0x66, 0xD3},
+	"psraw": {0x66, 0xE1}, "psrad": {0x66, 0xE2},
+
+	// Packed floating point.
+	"addpd": {0x66, 0x58}, "subpd": {0x66, 0x5C}, "mulpd": {0x66, 0x59}, "divpd": {0x66, 0x5E},
+	"sqrtpd": {0x66, 0x51}, "minpd": {0x66, 0x5D}, "maxpd": {0x66, 0x5F},
+	"addps": {0x00, 0x58}, "subps": {0x00, 0x5C}, "mulps": {0x00, 0x59}, "divps": {0x00, 0x5E},
+	"sqrtps": {0x00, 0x51}, "minps": {0x00, 0x5D}, "maxps": {0x00, 0x5F},
+	"andnpd": {0x66, 0x55}, "orpd": {0x66, 0x56}, "andnps": {0x00, 0x55}, "orps": {0x00, 0x56},
+	"unpcklpd": {0x66, 0x14}, "unpckhpd": {0x66, 0x15},
+
+	// Packed int<->float conversions.
+	"cvtdq2ps": {0x00, 0x5B}, "cvtps2dq": {0x66, 0x5B}, "cvttps2dq": {0xF3, 0x5B},
+	"cvtdq2pd": {0xF3, 0xE6}, "cvtpd2dq": {0xF2, 0xE6}, "cvttpd2dq": {0x66, 0xE6},
+}
+
+// sse38Ops are the three-byte-opcode forms 66 0F 38 <op> /r with an xmm
+// destination (SSE4.1's packed min/max/multiply and ptest — in the declared
+// Haswell baseline).
+var sse38Ops = map[string]byte{
+	"ptest": 0x17, "pmulld": 0x40,
+	"pminsb": 0x38, "pminsd": 0x39, "pminuw": 0x3A, "pminud": 0x3B,
+	"pmaxsb": 0x3C, "pmaxsd": 0x3D, "pmaxuw": 0x3E, "pmaxud": 0x3F,
+}
+
+func (a *Assembler) sse38Op(op byte, ops []operand) error {
+	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size != 128 {
+		return fmt.Errorf("SSE 0F38 op expects xmm, xmm/mem")
+	}
+	dst, src := ops[0], ops[1]
+	a.emit(0x66)
+	a.emitRexRM(false, dst.reg, src)
+	a.emit(0x0F, 0x38, op)
+	a.emitModRM(dst.reg, src)
+	return nil
+}
+
+// vecShiftImmOps maps a shift-by-immediate mnemonic to its 0F 71/72/73
+// group opcode and /digit; the shifted register is ModRM.rm.
+var vecShiftImmOps = map[string]struct {
+	op  byte
+	ext int
+}{
+	"psrlw": {0x71, 2}, "psraw": {0x71, 4}, "psllw": {0x71, 6},
+	"psrld": {0x72, 2}, "psrad": {0x72, 4}, "pslld": {0x72, 6},
+	"psrlq": {0x73, 2}, "psllq": {0x73, 6},
+	"psrldq": {0x73, 3}, "pslldq": {0x73, 7},
+}
+
+func (a *Assembler) vecShiftImm(mnem string, ops []operand) error {
+	if ops[0].kind != opReg || ops[0].size != 128 {
+		return fmt.Errorf("%s expects xmm, imm8", mnem)
+	}
+	e := vecShiftImmOps[mnem]
+	a.emit(0x66)
+	if rex := rexFor(false, 0, ops[0].reg, false); rex != 0 {
+		a.emit(rex)
+	}
+	a.emit(0x0F, e.op)
+	a.emit(modrmReg(e.ext, ops[0].reg))
+	a.emit(byte(ops[1].imm))
+	return nil
 }
 
 // movdqStore encodes the STORE direction of movdqu/movdqa — `movdqu
@@ -61,39 +141,44 @@ func (a *Assembler) movdqStore(prefix byte, ops []operand) error {
 	return nil
 }
 
-// pmovmskb encodes `pmovmskb r32, xmm` (66 0F D7 /r): gather the top bit of
-// each of the 16 bytes into the low 16 bits of a GPR.
+// xmmToGpr encodes the mask-extraction forms pmovmskb (66 0F D7 /r),
+// movmskps (0F 50) and movmskpd (66 0F 50): gather sign bits into a GPR.
 //
-// It is the bridge out of the vector domain — the instruction that turns a
-// pcmpeqb mask into something `bsf` can scan — so its destination is a
+// These are the bridge out of the vector domain — the instructions that turn
+// a compare mask into something `bsf` can scan — so the destination is a
 // GENERAL-PURPOSE register while ModRM.reg still names it. That inversion is
-// why it cannot be a sseOps entry: the table assumes reg is an xmm.
-func (a *Assembler) pmovmskb(ops []operand) error {
-	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size == 128 ||
+// why they cannot be sseOps entries: the table assumes reg is an xmm.
+func (a *Assembler) xmmToGpr(prefix, op byte, ops []operand, name string) error {
+	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size == 128 || ops[0].size < 32 ||
 		ops[1].kind != opReg || ops[1].size != 128 {
-		return fmt.Errorf("pmovmskb expects r32/r64, xmm")
+		return fmt.Errorf("%s expects r32/r64, xmm", name)
 	}
 	dst, src := ops[0], ops[1]
-	a.emit(0x66)
+	if prefix != 0 {
+		a.emit(prefix)
+	}
 	if rex := rexFor(false, dst.reg, src.reg, false); rex != 0 {
 		a.emit(rex)
 	}
-	a.emit(0x0F, 0xD7)
+	a.emit(0x0F, op)
 	a.emit(modrmReg(dst.reg, src.reg))
 	return nil
 }
 
-// pshufd encodes `pshufd xmm, xmm/mem, imm8` (66 0F 70 /r ib): permute the
-// four 32-bit lanes by the immediate's four 2-bit selectors. `pshufd x, x, 0`
-// broadcasts lane 0 to all four, which is the last step of the byte splat.
-func (a *Assembler) pshufd(ops []operand) error {
+// sseImm8 encodes the two-byte-opcode shuffle forms `<op> xmm, xmm/mem,
+// imm8` ([prefix] 0F <op> /r ib): pshufd (66 0F 70), shufps (0F C6),
+// shufpd (66 0F C6). `pshufd x, x, 0` broadcasts lane 0 to all four, which
+// is the last step of the byte splat.
+func (a *Assembler) sseImm8(prefix, op byte, ops []operand, name string) error {
 	if len(ops) != 3 || ops[0].kind != opReg || ops[0].size != 128 || ops[2].kind != opImm {
-		return fmt.Errorf("pshufd expects xmm, xmm/mem, imm8")
+		return fmt.Errorf("%s expects xmm, xmm/mem, imm8", name)
 	}
 	dst, src, imm := ops[0], ops[1], ops[2]
-	a.emit(0x66)
+	if prefix != 0 {
+		a.emit(prefix)
+	}
 	a.emitRexRM(false, dst.reg, src)
-	a.emit(0x0F, 0x70)
+	a.emit(0x0F, op)
 	a.emitModRM(dst.reg, src)
 	a.emit(byte(imm.imm))
 	return nil
@@ -122,6 +207,9 @@ func (a *Assembler) cvtsi2s(prefix byte, ops []operand) error {
 		return fmt.Errorf("cvtsi2sd/ss expects xmm, r/m")
 	}
 	dst, src := ops[0], ops[1]
+	if src.kind == opReg && src.size != 32 && src.size != 64 {
+		return fmt.Errorf("cvtsi2sd/ss source must be a 32- or 64-bit GPR")
+	}
 	a.emit(prefix)
 	a.emitRexRM(src.size == 64, dst.reg, src)
 	a.emit(0x0F, 0x2A)
@@ -132,8 +220,8 @@ func (a *Assembler) cvtsi2s(prefix byte, ops []operand) error {
 // cvtt2si encodes cvttsd2si/cvttss2si (truncating): r32|64 <- xmm/mem.
 // REX.W follows the integer destination width.
 func (a *Assembler) cvtt2si(prefix, op byte, ops []operand) error {
-	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size == 128 {
-		return fmt.Errorf("cvttsd2si/ss expects r, xmm/mem")
+	if len(ops) != 2 || ops[0].kind != opReg || (ops[0].size != 32 && ops[0].size != 64) {
+		return fmt.Errorf("cvttsd2si/ss expects an r32/r64 destination")
 	}
 	dst, src := ops[0], ops[1]
 	a.emit(prefix)
@@ -152,6 +240,11 @@ func (a *Assembler) movqd(ops []operand, isMovd bool) error {
 	dst, src := ops[0], ops[1]
 	dstX := dst.kind == opReg && dst.size == 128
 	srcX := src.kind == opReg && src.size == 128
+	for _, o := range []operand{dst, src} {
+		if o.kind == opReg && o.size != 128 && o.size != 32 && o.size != 64 {
+			return fmt.Errorf("movq/movd GPR operand must be 32- or 64-bit")
+		}
+	}
 	w := !isMovd
 	switch {
 	case dstX && !srcX: // xmm <- r/m : 66 [W] 0F 6E /r, reg=xmm(dst), rm=src
@@ -178,17 +271,20 @@ func (a *Assembler) movqd(ops []operand, isMovd bool) error {
 	return fmt.Errorf("unsupported movq/movd form")
 }
 
-// movsdss encodes scalar movsd/movss between xmm registers or xmm<->memory
-// (load form 0x10 when the destination is an xmm; store form 0x11 when the
-// source is the xmm and the destination is memory).
+// movsdss encodes the 0F 10/0F 11 move family — scalar movsd (F2) / movss
+// (F3) and unaligned-packed movups (no prefix) / movupd (66) — between xmm
+// registers or xmm<->memory (load form 0x10 when the destination is an xmm;
+// store form 0x11 when the source is the xmm and the destination is memory).
 func (a *Assembler) movsdss(prefix byte, ops []operand) error {
 	if len(ops) != 2 {
-		return fmt.Errorf("movsd/movss expects two operands")
+		return fmt.Errorf("movsd/movss/movups/movupd expects two operands")
 	}
 	dst, src := ops[0], ops[1]
 	dstX := dst.kind == opReg && dst.size == 128
 	srcX := src.kind == opReg && src.size == 128
-	a.emit(prefix)
+	if prefix != 0 {
+		a.emit(prefix)
+	}
 	switch {
 	case dstX && srcX:
 		if rex := rexFor(false, dst.reg, src.reg, false); rex != 0 {
@@ -208,20 +304,163 @@ func (a *Assembler) movsdss(prefix byte, ops []operand) error {
 		a.emitModRM(src.reg, dst)
 		return nil
 	}
-	return fmt.Errorf("unsupported movsd/movss form")
+	return fmt.Errorf("unsupported movsd/movss/movups/movupd form")
 }
 
-// roundsd encodes "roundsd xmm, xmm/mem, imm8": 66 0F 3A 0B /r ib.
-func (a *Assembler) roundsd(ops []operand) error {
+// sse3AImm8 encodes the 66 0F 3A <op> /r ib forms with an xmm destination:
+// roundsd (0B), roundss (0A), pcmpistri (63), pcmpestri (61).
+func (a *Assembler) sse3AImm8(op byte, ops []operand, name string) error {
 	if len(ops) != 3 || ops[0].kind != opReg || ops[0].size != 128 || ops[2].kind != opImm {
-		return fmt.Errorf("roundsd expects xmm, xmm/mem, imm8")
+		return fmt.Errorf("%s expects xmm, xmm/mem, imm8", name)
 	}
 	dst, src, imm := ops[0], ops[1], ops[2]
 	a.emit(0x66)
 	a.emitRexRM(false, dst.reg, src)
-	a.emit(0x0F, 0x3A, 0x0B)
+	a.emit(0x0F, 0x3A, op)
 	a.emitModRM(dst.reg, src)
 	a.emit(byte(imm.imm))
+	return nil
+}
+
+// pextr encodes pextrb/w/d/q — extract one lane of an xmm into a GPR or
+// memory. The direction is inverted from most 0F 3A forms: ModRM.rm is the
+// DESTINATION and ModRM.reg the xmm source (66 0F 3A 14/15/16 /r ib, with
+// REX.W selecting the q width on /16). For a register destination pextrw
+// uses the short legacy form 66 0F C5 /r ib instead, whose operands run the
+// usual way round (reg = GPR destination, rm = xmm) — that is what GNU as
+// picks, and the 3A 15 form is reserved for memory destinations.
+func (a *Assembler) pextr(mnem string, ops []operand) error {
+	if len(ops) != 3 || ops[1].kind != opReg || ops[1].size != 128 || ops[2].kind != opImm {
+		return fmt.Errorf("%s expects r/m, xmm, imm8", mnem)
+	}
+	dst, src, imm := ops[0], ops[1], ops[2]
+	var op byte
+	var w bool
+	wantReg := 32
+	switch mnem {
+	case "pextrb":
+		op = 0x14
+	case "pextrw":
+		op = 0x15
+	case "pextrd":
+		op = 0x16
+	case "pextrq":
+		op, w, wantReg = 0x16, true, 64
+	}
+	switch {
+	case dst.kind == opReg && dst.size == wantReg:
+		if mnem == "pextrw" {
+			a.emit(0x66)
+			if rex := rexFor(false, dst.reg, src.reg, false); rex != 0 {
+				a.emit(rex)
+			}
+			a.emit(0x0F, 0xC5)
+			a.emit(modrmReg(dst.reg, src.reg))
+			a.emit(byte(imm.imm))
+			return nil
+		}
+		a.emit(0x66)
+		if rex := rexFor(w, src.reg, dst.reg, false); rex != 0 {
+			a.emit(rex)
+		}
+		a.emit(0x0F, 0x3A, op)
+		a.emit(modrmReg(src.reg, dst.reg))
+		a.emit(byte(imm.imm))
+		return nil
+	case dst.kind == opMem:
+		a.emit(0x66)
+		if rex := memRex(w, src.reg, dst, false); rex != 0 {
+			a.emit(rex)
+		}
+		a.emit(0x0F, 0x3A, op)
+		a.encodeMem(src.reg, dst)
+		a.emit(byte(imm.imm))
+		return nil
+	}
+	return fmt.Errorf("%s destination must be an r%d or memory", mnem, wantReg)
+}
+
+// pinsr encodes pinsrb/w/d/q — insert a GPR or memory value into one lane
+// of an xmm. pinsrb/d/q are 66 0F 3A 20/22 /r ib (REX.W selects q);
+// pinsrw is the legacy two-byte form 66 0F C4 /r ib. ModRM.reg is the xmm
+// destination throughout.
+func (a *Assembler) pinsr(mnem string, ops []operand) error {
+	if len(ops) != 3 || ops[0].kind != opReg || ops[0].size != 128 || ops[2].kind != opImm {
+		return fmt.Errorf("%s expects xmm, r/m, imm8", mnem)
+	}
+	dst, src, imm := ops[0], ops[1], ops[2]
+	var opcode []byte
+	var w bool
+	wantReg := 32
+	switch mnem {
+	case "pinsrb":
+		opcode = []byte{0x0F, 0x3A, 0x20}
+	case "pinsrw":
+		opcode = []byte{0x0F, 0xC4}
+	case "pinsrd":
+		opcode = []byte{0x0F, 0x3A, 0x22}
+	case "pinsrq":
+		opcode, w, wantReg = []byte{0x0F, 0x3A, 0x22}, true, 64
+	}
+	if src.kind == opReg && src.size != wantReg {
+		return fmt.Errorf("%s source must be an r%d or memory", mnem, wantReg)
+	}
+	if src.kind != opReg && src.kind != opMem {
+		return fmt.Errorf("%s source must be a register or memory", mnem)
+	}
+	a.emit(0x66)
+	a.emitRexRM(w, dst.reg, src)
+	a.emit(opcode...)
+	a.emitModRM(dst.reg, src)
+	a.emit(byte(imm.imm))
+	return nil
+}
+
+// crc32 (F2 0F 38 F0/F1 /r): accumulate a CRC-32C over the source into a
+// 32- or 64-bit GPR. The opcode keys on the SOURCE width — F0 for a byte,
+// F1 otherwise, with 66 (before the mandatory F2) for a word source and
+// REX.W for a 64-bit one.
+func (a *Assembler) crc32(ops []operand) error {
+	if len(ops) != 2 || ops[0].kind != opReg || (ops[0].size != 32 && ops[0].size != 64) {
+		return fmt.Errorf("crc32 expects an r32/r64 destination")
+	}
+	dst, src := ops[0], ops[1]
+	srcSize := src.size
+	if src.kind == opMem {
+		srcSize = src.memSize
+		if srcSize == 0 {
+			return fmt.Errorf("crc32 on memory needs a byte/word/dword/qword ptr size")
+		}
+	} else if src.kind != opReg || src.size == 128 {
+		return fmt.Errorf("crc32 source must be a GPR or memory")
+	}
+	// The 64-bit destination pairs only with byte and qword sources; the
+	// 32-bit one with byte/word/dword.
+	if srcSize == 64 && dst.size != 64 || dst.size == 64 && srcSize != 8 && srcSize != 64 {
+		return fmt.Errorf("crc32 operand sizes do not match")
+	}
+	op := byte(0xF1)
+	if srcSize == 8 {
+		op = 0xF0
+	}
+	if srcSize == 16 {
+		a.emit(0x66)
+	}
+	a.emit(0xF2)
+	w := dst.size == 64
+	if src.kind == opReg {
+		if rex := rexFor(w, dst.reg, src.reg, needsRexByte(src)); rex != 0 {
+			a.emit(rex)
+		}
+		a.emit(0x0F, 0x38, op)
+		a.emit(modrmReg(dst.reg, src.reg))
+		return nil
+	}
+	if rex := memRex(w, dst.reg, src, false); rex != 0 {
+		a.emit(rex)
+	}
+	a.emit(0x0F, 0x38, op)
+	a.encodeMem(dst.reg, src)
 	return nil
 }
 

@@ -93,6 +93,8 @@ func parseMem(s string) (operand, error) {
 			o.memSize = 32
 		case "qword":
 			o.memSize = 64
+		case "xmmword":
+			o.memSize = 128
 		case "":
 			// bare "ptr" — leave size unspecified
 		default:
@@ -258,28 +260,26 @@ func splitOperands(rest string) []string {
 	return out
 }
 
-func jccCode(mnem string) (byte, bool) {
-	m := map[string]byte{
-		"jo": 0, "jno": 1, "jb": 2, "jc": 2, "jnae": 2,
-		"jae": 3, "jnb": 3, "jnc": 3, "je": 4, "jz": 4,
-		"jne": 5, "jnz": 5, "jbe": 6, "jna": 6, "ja": 7, "jnbe": 7,
-		"js": 8, "jns": 9, "jp": 10, "jnp": 11,
-		"jl": 12, "jnge": 12, "jge": 13, "jnl": 13,
-		"jle": 14, "jng": 14, "jg": 15, "jnle": 15,
+// condCodes maps a condition suffix ("e", "nz", "ge", …) to its 4-bit
+// condition code, shared by jcc (0F 80+cc), setcc (0F 90+cc) and cmovcc
+// (0F 40+cc).
+var condCodes = map[string]byte{
+	"o": 0, "no": 1, "b": 2, "c": 2, "nae": 2,
+	"ae": 3, "nb": 3, "nc": 3, "e": 4, "z": 4,
+	"ne": 5, "nz": 5, "be": 6, "na": 6, "a": 7, "nbe": 7,
+	"s": 8, "ns": 9, "p": 10, "np": 11,
+	"l": 12, "nge": 12, "ge": 13, "nl": 13,
+	"le": 14, "ng": 14, "g": 15, "nle": 15,
+}
+
+func ccCode(mnem, prefix string) (byte, bool) {
+	if !strings.HasPrefix(mnem, prefix) {
+		return 0, false
 	}
-	cc, ok := m[mnem]
+	cc, ok := condCodes[mnem[len(prefix):]]
 	return cc, ok
 }
 
-func setccCode(mnem string) (byte, bool) {
-	m := map[string]byte{
-		"seto": 0, "setno": 1, "setb": 2, "setc": 2, "setnae": 2,
-		"setae": 3, "setnb": 3, "setnc": 3, "sete": 4, "setz": 4,
-		"setne": 5, "setnz": 5, "setbe": 6, "setna": 6, "seta": 7, "setnbe": 7,
-		"sets": 8, "setns": 9, "setp": 10, "setnp": 11,
-		"setl": 12, "setnge": 12, "setge": 13, "setnl": 13,
-		"setle": 14, "setng": 14, "setg": 15, "setnle": 15,
-	}
-	cc, ok := m[mnem]
-	return cc, ok
-}
+func jccCode(mnem string) (byte, bool)    { return ccCode(mnem, "j") }
+func setccCode(mnem string) (byte, bool)  { return ccCode(mnem, "set") }
+func cmovccCode(mnem string) (byte, bool) { return ccCode(mnem, "cmov") }
