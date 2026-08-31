@@ -602,6 +602,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesMemchr {
 		g.emitMemchrRuntime()
 	}
+	if g.usesRmemchr {
+		g.emitRmemchrRuntime()
+	}
 	if g.usesAsciiRun {
 		g.emitAsciiRunRuntime()
 	}
@@ -3838,6 +3841,67 @@ func (g *generator) emitMemchrRuntime() {
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
 	g.sizeDirective("__fern_memchr")
+}
+
+// emitRmemchrRuntime emits `__fern_rmemchr(s, byte, from) -> i32`: the index
+// of the LAST occurrence of `byte` at or before `from`, or -1.
+//
+// SCALAR, per docs/ATLAS-PLATFORM-PLAN.md §3.4's "correct in every backend
+// first, fast one backend at a time". Vectorising it is a later slice.
+//
+// Two-word string ABI as __memchr's — x0 = data word, x1 = length word, which
+// puts `byte` in w2 and `from` in w3 — and the same frame, because
+// emitStrDataPtr2W needs 16 bytes of scratch to spill an inline SSO string.
+//
+// The clamp is __memchr's mirrored: a forward scan clamps `from` UP to 0, a
+// backward scan clamps it DOWN to len-1, so a negative `from` finds nothing
+// here where in __memchr it means "the whole string".
+func (g *generator) emitRmemchrRuntime() {
+	g.line("")
+	g.line(".global __fern_rmemchr")
+	g.typeDirective("__fern_rmemchr")
+	g.label("__fern_rmemchr")
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("mov x4, x0") // data word
+	g.emit("mov x5, x1") // length word
+	// Order matters as in __memchr: emitStrLen2W overwrites its source on
+	// the inline path, so materialise the pointer first.
+	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
+	g.emitStrLen2W("w6", "x5")               // w6 = byte length
+	// A byte outside 0..255 can never occur; one unsigned compare covers
+	// both ends.
+	g.emit("cmp w2, #255")
+	g.emit("b.hi .Lrmemchr_miss")
+	// Clamp `from` down to the last index; an empty string has none.
+	g.emit("sub w6, w6, #1")
+	g.emit("tbnz w6, #31, .Lrmemchr_miss")
+	g.emit("cmp w3, w6")
+	g.emit("b.le .Lrmemchr_from_ok")
+	g.emit("mov w3, w6")
+	g.label(".Lrmemchr_from_ok")
+	g.emit("tbnz w3, #31, .Lrmemchr_miss")
+	g.label(".Lrmemchr_scan")
+	// `mov w9, w3` zero-extends into x9, so the byte load can use the plain
+	// register-offset form. The extended `[Xn, Wm, uxtw]` addressing would
+	// read better and the in-process assembler does not encode it — it
+	// refuses the line rather than dropping the extend, which is why this is
+	// a build error and not a wrong answer.
+	g.emit("mov w9, w3")
+	g.emit("ldrb w8, [x7, x9]")
+	g.emit("cmp w8, w2")
+	g.emit("b.eq .Lrmemchr_hit")
+	g.emit("sub w3, w3, #1")
+	g.emit("tbz w3, #31, .Lrmemchr_scan")
+	g.label(".Lrmemchr_miss")
+	g.emit("mov w0, #-1")
+	g.emit("b .Lrmemchr_ret")
+	g.label(".Lrmemchr_hit")
+	g.emit("mov w0, w3")
+	g.label(".Lrmemchr_ret")
+	g.emit("ldp x29, x30, [sp], #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_rmemchr")
 }
 
 // emitAsciiRunRuntime emits `__fern_ascii_run(s, from) -> i32`: the index of
@@ -9917,6 +9981,8 @@ type generator struct {
 	usesStrord   bool
 	// usesMemchr gates the NEON byte-search kernel (__fern_memchr).
 	usesMemchr bool
+	// usesRmemchr gates its backward sibling (__fern_rmemchr).
+	usesRmemchr bool
 	// usesAsciiRun gates the NEON high-bit scan kernel (__fern_ascii_run).
 	usesAsciiRun bool
 	// usesTcp pulls in the full TCP socket runtime
@@ -13112,6 +13178,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesRandomI32 = true // the lazy first-call draw
 		case "__fern_memchr":
 			g.usesMemchr = true
+		case "__fern_rmemchr":
+			g.usesRmemchr = true
 		case "__fern_ascii_run":
 			g.usesAsciiRun = true
 		case "__fern_heap_bump_bytes":

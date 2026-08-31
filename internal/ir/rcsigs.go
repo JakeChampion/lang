@@ -330,6 +330,7 @@ var rcInert = map[string]bool{
 	"__fern_arg_at": true, "__fern_arg_count": true, "__fern_args": true,
 	"__fern_arr_push_shared_bytes": true,
 	"__fern_arr_push_shared_count": true, "__fern_ascii_run": true,
+	"__fern_rmemchr":  true,
 	"__fern_ceil_f64": true, "__fern_cos_f64": true,
 	"__fern_create_dir_all": true, "__fern_env": true, "__fern_env_at": true,
 	"__fern_env_count": true, "__fern_eprint": true, "__fern_exit": true,

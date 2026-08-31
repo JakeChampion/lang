@@ -13675,6 +13675,23 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// __rmemchr(s, byte, from) — __memchr's backward sibling, same
+	// runtime-helper-call shape and the same load-bearing ArgTypes: a
+	// `string` is TWO operand slots on arm64 and wasm and one on x86-64, so
+	// without the declaration a backend popping I32=3 reads the length as
+	// the data pointer.
+	if id.Name == "__rmemchr" && len(n.Args) == 3 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			for _, a := range n.Args {
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_rmemchr", Width: ResNarrow, I32: 3,
+				Ext: &OpExt{ArgTypes: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}}}})
+			return nil
+		}
+	}
 	// __ascii_run(s, from) — the same runtime-helper-call shape as __memchr
 	// above, and ArgTypes is load-bearing here for the same reason: `string`
 	// is two operand slots on arm64 and wasm, one on x86-64.

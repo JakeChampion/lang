@@ -734,6 +734,48 @@ func New() *Interp {
 		}
 		return Number(len(b)), nil
 	}}
+	// __rmemchr(s, byte, from) — the index of the LAST occurrence of `byte`
+	// at or before `from`, or -1. __memchr's mirror, and the reference every
+	// backend's lowering is differentially tested against.
+	//
+	// The clamp is the mirrored one: __memchr clamps `from` UP from a
+	// negative to 0 because it walks forward, so this clamps it DOWN to
+	// len(s)-1 because it walks back. A negative `from` therefore finds
+	// nothing here, where in __memchr it means "search the whole string" —
+	// the same rule (start where you were told, inside the string) reading
+	// in the other direction.
+	i.Builtins["__rmemchr"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 3 {
+			return nil, fmt.Errorf("__rmemchr: expected 3 args, got %d", len(args))
+		}
+		s, ok := args[0].(String)
+		if !ok {
+			return nil, fmt.Errorf("__rmemchr: expected a string, got %T", args[0])
+		}
+		bn, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__rmemchr: expected an integer byte, got %T", args[1])
+		}
+		fn, ok := args[2].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__rmemchr: expected an integer start, got %T", args[2])
+		}
+		want := int(int64(bn))
+		if want < 0 || want > 255 {
+			return Number(-1), nil
+		}
+		b := []byte(string(s))
+		from := int(int64(fn))
+		if from > len(b)-1 {
+			from = len(b) - 1
+		}
+		for idx := from; idx >= 0; idx-- {
+			if int(b[idx]) == want {
+				return Number(idx), nil
+			}
+		}
+		return Number(-1), nil
+	}}
 	// __arr_push_shared_count(): the rc==1 cliff counter on the compiled
 	// backends — appends that copied a buffer which still had room, so the
 	// copy was bought by an extra reference. The interpreter has no refcounts

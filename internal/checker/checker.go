@@ -1260,6 +1260,29 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	// __rmemchr(s, byte, from) → i32: the index of the LAST occurrence of
+	// `byte` at or before `from`, or -1. __memchr's mirror, and the third
+	// fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3, which nominates
+	// the backward scan as __memchr's sibling).
+	//
+	// The `from` end is the one that differs, and it has to: a forward scan
+	// clamps a low bound and a backward scan clamps a HIGH one, so `from`
+	// here means "start at this index and walk down". A caller wanting the
+	// whole string passes len(s) - 1, and an out-of-range `from` clamps to
+	// that rather than trapping — the same shape as __memchr's low clamp,
+	// mirrored.
+	//
+	// Same string-not-pointer argument as __memchr's, for the same reason:
+	// nothing that would need a raw pointer into a string's bytes crosses
+	// the language boundary.
+	c.info.FuncSigs["__rmemchr"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// __heap_mark(): i64 / __heap_release_to(mark: i64) — one-level arena
 	// checkpoint. Mark captures the bump cursor (plus a freelist-head
 	// snapshot); release_to rewinds to it, reclaiming everything allocated

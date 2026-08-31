@@ -3027,6 +3027,12 @@ function builtin_i32_names(): string[] {
         // is why the miss value can be a real index rather than a
         // sentinel outside the type.
         "__ascii_run",
+        // __rmemchr(s, byte, from): the index of the LAST `byte` at
+        // or before `from`, or -1 (ATLAS-PLATFORM-PLAN §3.3,
+        // memchr's nominated sibling). Same i32 shape as __memchr's;
+        // what differs is which end `from` clamps to — down to
+        // len-1 here, up to 0 there.
+        "__rmemchr",
         "__load_i32",
         "exit",
         "args_count",

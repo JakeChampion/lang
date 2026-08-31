@@ -61,7 +61,8 @@ function main(): i32 {
         "arr_push_shared_bytes", "const_struct", "clz", "ctz", "popcount",
         "map_hash_seed", "raw_addr", "raw_arr_box", "memchr",
         "write_file_exec", "ascii_run", "syscall5", "heap_mark",
-        "heap_release_to", "create_dir_all", "isatty", "read_file_bytes"
+        "heap_release_to", "create_dir_all", "isatty", "read_file_bytes",
+        "rmemchr"
     ];
     var ext_max: i32 = n;
     var ext_ok: i32 = 0;
@@ -130,7 +131,8 @@ function main(): i32 {
         ir.op_clz(32), ir.op_ctz(64), ir.op_popcount(32),
         ir.op_map_hash_seed(), ir.op_raw_addr(), ir.op_raw_arr_box(),
         ir.op_memchr(), ir.op_write_file_exec(), ir.op_ascii_run(),
-        ir.op_syscall5(), ir.op_create_dir_all(), ir.op_isatty()
+        ir.op_syscall5(), ir.op_create_dir_all(), ir.op_isatty(),
+        ir.op_rmemchr()
     ];
     var names: string[] = [
         "const_i32", "const_str", "load_local",
@@ -143,7 +145,7 @@ function main(): i32 {
         "clz", "ctz", "popcount",
         "map_hash_seed", "raw_addr", "raw_arr_box",
         "memchr", "write_file_exec", "ascii_run", "syscall5",
-        "create_dir_all", "isatty"
+        "create_dir_all", "isatty", "rmemchr"
     ];
     var tag_ok: i32 = 0;
     var tag_bad: i32 = 0;
