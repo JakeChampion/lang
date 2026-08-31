@@ -351,15 +351,19 @@ function __str_rfind_budget(): i32 { return 4; }
 function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 {
     if (nLen == 0) { return sLen; }
     if (nLen > sLen) { return 0 - 1; }
-    if (nLen == 1) {
-        var c: i32 = needle[0] as i32;
-        var b: i32 = sLen - 1;
-        while (b >= 0) {
-            if ((s[b] as i32) == c) { return b; }
-            b = b - 1;
-        }
-        return 0 - 1;
-    }
+    // The single-byte case IS __rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3),
+    // the backward sibling of the kernel __str_find_from routes to above. The
+    // native backends serve it with a 16-byte-per-iteration vector kernel
+    // walking DOWN; the self-host ones with a byte loop identical to the one
+    // this replaces.
+    //
+    // `sLen - 1` is the whole string, and it is the right end to pass: this
+    // intrinsic clamps `from` DOWN where __memchr clamps UP, so a caller
+    // wanting everything names the last index rather than 0. `nLen > sLen`
+    // returned above, so sLen >= 1 and that index exists; `needle[0]` is
+    // always 0..255, so neither of __rmemchr's guards can fire here — they
+    // exist for direct callers.
+    if (nLen == 1) { return __rmemchr(s, needle[0] as i32, sLen - 1); }
 
     // Tier 3a — naive backward scan, metered.
     var spent: i32 = 0;
