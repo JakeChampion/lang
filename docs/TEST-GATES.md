@@ -193,16 +193,18 @@ Worth knowing so you do not assume coverage you do not have:
   commit the minimised entry under the target's `testdata/fuzz/`, which is
   what keeps the case covered once the generator moves.
 
-- **No differential emits a float math call at all** — `pow`, `log`, `exp`,
-  `sin`, `cos` and `sqrt` each appear ZERO times in both
-  `internal/e2e/numeric_property_test.go` and
-  `internal/fernsmith/fernsmith.go`, so the numeric-property
-  sweep — the one built for "float arithmetic and float↔int conversions" —
-  cannot express a call to any of them, and neither can the fernsmith corpus.
-  #6405 is what that costs: compiled `2.0.pow(65.0)` disagrees with the
-  interpreter by several ULP on an exactly-representable value, on all three
-  backends, and had to be found by hand. Anything you want gated about a
-  transcendental needs a written case; a green sweep says nothing about them.
+- **The float TRANSCENDENTALS** — `pow`, `log`, `exp`, `sin` and `cos`. The
+  exactly-specified half of the float math surface is now gated:
+  `TestNumericProperty_FloatMathExact` runs `sqrt` / `floor` / `ceil` /
+  `trunc` / `round` / `abs` over a stress grid on all three backends, and
+  `genFloatMath` puts them in the random sweep. The transcendentals are
+  deliberately outside it, because all three backends share one fdlibm kernel
+  set and are approximations by construction (#5541), so equality against the
+  interpreter is the wrong assertion for them and a ULP-shaped gate does not
+  exist yet. #6405 is what their absence costs: compiled `2.0.pow(65.0)`
+  disagrees with the interpreter by several ULP on an exactly-representable
+  value, on all three backends, and had to be found by hand. Anything you want
+  gated about a transcendental still needs a written case.
 
 - **The ORDER of the self-host checker's diagnostics, and how many times it
   reports the same code.** Every gate over checker output reduces to a set

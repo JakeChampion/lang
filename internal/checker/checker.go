@@ -1331,10 +1331,8 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	//
 	// The user-facing surface is the receiver methods in
 	// `std/float` (`(x: f64).sqrt()`, `(x: f64).floor()`, …)
-	// which dispatch to these primitives. Native / wasm
-	// codegen support follows the same path as `f32_bits` —
-	// for now interp-only is the right scope (the test-runner
-	// migration uses these via `fern -interp`).
+	// which dispatch to these primitives. Every backend
+	// implements all of them.
 	f64ToF64Builtin := &ast.FuncType{
 		Params: []ast.Type{ast.FloatType{Width: 64}},
 		Result: ast.FloatType{Width: 64},
