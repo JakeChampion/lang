@@ -57,6 +57,44 @@ func TestFcvtToIntDestWidth(t *testing.T) {
 	}
 }
 
+// TestWideMulAndCarry pins umulh, adc and sbc — the three the assembler
+// lacked, so a 128-bit multiply-accumulate could not be written for
+// -target arm64-linux at all even though GNU as encodes them fine.
+//
+// umulh has NO 32-bit form: it must keep its sf bit where the neighbouring
+// mul/udiv/sdiv clear theirs for a `w` operand, and clearing it lands on a
+// different instruction. adc and sbc differ only in bit 30, so a wrong base
+// silently swaps add-with-carry for subtract-with-borrow.
+//
+// Expected words are what `aarch64-linux-gnu-as` emits for the same
+// mnemonics, read back with objdump.
+func TestWideMulAndCarry(t *testing.T) {
+	cases := []struct {
+		asm  string
+		want uint32
+	}{
+		{"\tumulh x0, x1, x2\n", 0x9bc27c20},
+		{"\tumulh x15, x14, x13\n", 0x9bcd7dcf},
+		{"\tumulh x30, x0, xzr\n", 0x9bdf7c1e},
+		{"\tadc x0, x1, x2\n", 0x9a020020},
+		{"\tadc x9, x10, x11\n", 0x9a0b0149},
+		{"\tadc x30, x29, x28\n", 0x9a1c03be},
+		{"\tsbc x0, x1, x2\n", 0xda020020},
+		{"\tsbc x5, x6, x7\n", 0xda0700c5},
+		{"\tsbc x30, x29, x28\n", 0xda1c03be},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c.asm)
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c.asm, err)
+		}
+		want := arm64.Put(nil, c.want)
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: got % x, want % x", c.asm, got, want)
+		}
+	}
+}
+
 // TestCBZWidth pins the sf bit on cbz/cbnz to the operand register's
 // width: a `w` operand is the 32-bit (sf=0) compare, an `x` operand the
 // 64-bit (sf=1) compare — matching GNU as. A regression here silently

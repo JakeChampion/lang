@@ -703,6 +703,27 @@ func SDIV(rd, rn, rm uint32) uint32 {
 	return 0x9AC00C00 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
+// UMULH encodes `umulh Xd, Xn, Xm` — the HIGH 64 bits of the unsigned
+// 64x64 product, which `mul` discards. 64-bit only: there is no
+// 32-bit form, so callers must not clear the SF bit on it.
+// Encoding: base 0x9BC07C00 | Rm<<16 | Rn<<5 | Rd.
+func UMULH(rd, rn, rm uint32) uint32 {
+	return 0x9BC07C00 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// ADC encodes `adc Xd, Xn, Xm` — add with the carry flag, for the upper
+// limb of a multi-word sum.
+// Encoding: base 0x9A000000 | Rm<<16 | Rn<<5 | Rd.
+func ADC(rd, rn, rm uint32) uint32 {
+	return 0x9A000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// SBC encodes `sbc Xd, Xn, Xm` — subtract with borrow, the ADC twin.
+// Encoding: base 0xDA000000 | Rm<<16 | Rn<<5 | Rd.
+func SBC(rd, rn, rm uint32) uint32 {
+	return 0xDA000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
 // MSUB encodes `msub Xd, Xn, Xm, Xa` — Xd = Xa - Xn*Xm (the building
 // block for the modulo idiom: `udiv q,a,b; msub r,q,b,a`).
 // Encoding: base 0x9B008000 | Rm<<16 | Ra<<10 | Rn<<5 | Rd.

@@ -155,7 +155,7 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmMoveWide(a, mnem, ops)
 	case "add", "sub", "adds", "subs":
 		return asmAddSub(a, mnem, ops)
-	case "and", "orr", "eor", "mul", "udiv", "sdiv":
+	case "and", "orr", "eor", "mul", "udiv", "sdiv", "umulh", "adc", "sbc":
 		return asm3Reg(a, mnem, ops)
 	case "csel":
 		return asmCsel(a, ops)
@@ -687,7 +687,7 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 	// Optional shifted-register form for the logical ops, e.g.
-	// `orr w3, w1, w1, lsl #8`. mul/udiv/sdiv take no shift.
+	// `orr w3, w1, w1, lsl #8`. mul/udiv/sdiv/umulh/adc/sbc take no shift.
 	if len(ops) > 3 {
 		st, amt, serr := parseRegShift(ops[3])
 		if serr != nil {
@@ -718,6 +718,13 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		a.Emit(clearSF(UDIV(rd, rn, rm), w))
 	case "sdiv":
 		a.Emit(clearSF(SDIV(rd, rn, rm), w))
+	case "umulh":
+		// No 32-bit form exists, so this one keeps its SF bit.
+		a.Emit(UMULH(rd, rn, rm))
+	case "adc":
+		a.Emit(clearSF(ADC(rd, rn, rm), w))
+	case "sbc":
+		a.Emit(clearSF(SBC(rd, rn, rm), w))
 	}
 	return nil
 }
