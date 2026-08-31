@@ -382,6 +382,8 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_ceil_f64")
 				case "__fern_trunc_f64":
 					needs.add("__fern_trunc_f64")
+				case "__fern_round_f64":
+					needs.add("__fern_round_f64")
 				case "__fern_env_count":
 					// wasi_environ_sizes_get + alloc-per-call
 					// for the 8-byte output buffer.
@@ -1518,6 +1520,12 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeF64},
 		results: []byte{encode.ValtypeF64},
 		body:    buildTruncF64Body,
+	},
+	"__fern_round_f64": {
+		// (f64) → f64 — half away from zero; see buildRoundF64Body.
+		params:  []byte{encode.ValtypeF64},
+		results: []byte{encode.ValtypeF64},
+		body:    buildRoundF64Body,
 	},
 	"__fern_env_count": {
 		// () → i32 — count of environment variables (envc).
@@ -6879,6 +6887,39 @@ func buildTruncF64Body(_ map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
 }
 
+// buildRoundF64Body — (f64) → f64, C round(): ties go away from zero, which
+// f64.nearest (ties-to-even) does not do.
+//
+// Locals: param x is 0, t=1 holds trunc(x). NaN and the infinities fall
+// through the |x-t| >= 0.5 test unchanged, since that difference is NaN.
+func buildRoundF64Body(_ map[string]uint32) []byte {
+	const (
+		lx = 0 // param x
+		t  = 1
+	)
+	var body []byte
+	body = inst.InstLocalGet(body, lx)
+	body = numeric.InstF64Trunc(body)
+	body = inst.InstLocalSet(body, t)
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstLocalGet(body, t)
+	body = numeric.InstF64Sub(body)
+	body = numeric.InstF64Abs(body)
+	body = inst.InstF64Const(body, math.Float64bits(0.5))
+	body = numeric.InstF64Ge(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	// t += copysign(1, x)
+	body = inst.InstLocalGet(body, t)
+	body = inst.InstF64Const(body, math.Float64bits(1.0))
+	body = inst.InstLocalGet(body, lx)
+	body = numeric.InstF64Copysign(body)
+	body = numeric.InstF64Add(body)
+	body = inst.InstLocalSet(body, t)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, t)
+	return inst.PutFunctionBody(nil, inst.PutLocalsOneGroup(nil, 1, encode.ValtypeF64), body)
+}
+
 // --- f64 transcendentals (#6404) --------------------------------------------
 //
 // fdlibm kernels, transliterated from the self-host wasm-IR path's WAT emitters
@@ -7364,9 +7405,11 @@ func buildCosF64Body(_ map[string]uint32) []byte {
 //
 // The integral-y path is exact repeated squaring, which is required rather than
 // faster: exp(y*ln x) cannot return exactly 9 for pow(3, 2). Integrality is an
-// i64 round-trip, so NaN and out-of-range y fall out as a huge |n|.
+// i64 round-trip off a SATURATING truncation — the trapping i64.trunc_f64_s
+// aborts the module on a NaN or out-of-range y, where the register backends'
+// cvttsd2si / fcvtzs just produce a value the round-trip then rejects.
 //
-// Locals: f64 acc=2 base=3, then i64 n=4 an=5 (params x=0, y=1).
+// Locals: f64 acc=2 base=3, i64 n=4 an=5, f64 sign=6 (params x=0, y=1).
 func buildPowF64Body(funcs map[string]uint32) []byte {
 	const (
 		lx   = 0
@@ -7375,11 +7418,17 @@ func buildPowF64Body(funcs map[string]uint32) []byte {
 		base = 3
 		n    = 4
 		an   = 5
+		sign = 6
+		// The canonical quiet NaN, and the bit patterns of 2^53 (above
+		// which every f64 is an even integer) and +Inf.
+		nanBits = 0x7ff8000000000000
+		two53   = 0x4340000000000000
+		infBits = 0x7ff0000000000000
 	)
 	var body []byte
 	// n = (i64)y ; if (f64)n == y { ... }
 	body = inst.InstLocalGet(body, ly)
-	body = convert.InstI64TruncF64S(body)
+	body = convert.InstI64TruncSatF64S(body)
 	body = inst.InstLocalSet(body, n)
 	body = inst.InstLocalGet(body, n)
 	body = convert.InstF64ConvertI64S(body)
@@ -7455,12 +7504,83 @@ func buildPowF64Body(funcs map[string]uint32) []byte {
 		body = inst.InstEnd(body)
 	}
 	body = inst.InstEnd(body)
-	// General case: exp(y * log(x)).
+	// General case: sign * exp(y * log(|x|)). log is defined only for x > 0,
+	// so a negative base is split into a sign and |x| first: for an integral
+	// y the sign is (-1)^y, and a non-integral y makes the result NaN. Every
+	// |y| >= 2^53 is an even integer, which is what leaves pow(x<0, ±Inf) a
+	// magnitude rather than a NaN.
+	body = inst.InstF64Const(body, math.Float64bits(1.0))
+	body = inst.InstLocalSet(body, sign)
+	body = inst.InstLocalGet(body, lx)
+	body = convert.InstI64ReinterpretF64(body)
+	body = inst.InstI64Const(body, 0)
+	body = numeric.InstI64LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, lx)
+		body = numeric.InstF64Abs(body)
+		body = inst.InstLocalSet(body, lx)
+		body = inst.InstLocalGet(body, ly)
+		body = numeric.InstF64Abs(body)
+		body = convert.InstI64ReinterpretF64(body)
+		body = inst.InstLocalSet(body, an)
+		body = inst.InstLocalGet(body, an)
+		body = inst.InstI64Const(body, two53)
+		body = numeric.InstI64LtU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			// |y| < 2^53: the round-trip settles integrality and n's low
+			// bit the sign.
+			body = inst.InstLocalGet(body, n)
+			body = convert.InstF64ConvertI64S(body)
+			body = inst.InstLocalGet(body, ly)
+			body = numeric.InstF64Ne(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstF64Const(body, nanBits)
+			body = inst.InstReturn(body)
+			body = inst.InstEnd(body)
+			body = inst.InstLocalGet(body, n)
+			body = inst.InstI64Const(body, 1)
+			body = numeric.InstI64And(body)
+			body = inst.InstI64Const(body, 1)
+			body = numeric.InstI64Eq(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstF64Const(body, math.Float64bits(-1.0))
+			body = inst.InstLocalSet(body, sign)
+			body = inst.InstEnd(body)
+		}
+		body = inst.InstElse(body)
+		{
+			// |y| >= 2^53 is an even integer, +Inf included; only a NaN
+			// exponent is left, and pow(x<0, NaN) is NaN.
+			body = inst.InstLocalGet(body, an)
+			body = inst.InstI64Const(body, infBits)
+			body = numeric.InstI64GtU(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstF64Const(body, nanBits)
+			body = inst.InstReturn(body)
+			body = inst.InstEnd(body)
+		}
+		body = inst.InstEnd(body)
+	}
+	body = inst.InstEnd(body)
+	// |x| == 1 is 1 for every y, including the NaN and ±Inf that
+	// exp(y*log|x|) would turn into NaN through y*0.
+	body = inst.InstLocalGet(body, lx)
+	body = inst.InstF64Const(body, math.Float64bits(1.0))
+	body = numeric.InstF64Eq(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, sign)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstLocalGet(body, sign)
 	body = inst.InstLocalGet(body, ly)
 	body = inst.InstLocalGet(body, lx)
 	body = inst.InstCall(body, funcs["__fern_log_f64"])
 	body = numeric.InstF64Mul(body)
 	body = inst.InstCall(body, funcs["__fern_exp_f64"])
+	body = numeric.InstF64Mul(body)
 	return inst.PutFunctionBody(nil, putLocalsGroups(nil,
-		localGroup{2, encode.ValtypeF64}, localGroup{2, encode.ValtypeI64}), body)
+		localGroup{2, encode.ValtypeF64}, localGroup{2, encode.ValtypeI64},
+		localGroup{1, encode.ValtypeF64}), body)
 }

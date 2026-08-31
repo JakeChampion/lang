@@ -2600,10 +2600,10 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"wasm_pollable_drop":  "__fern_wasm_pollable_drop",
 
 	// f64 math primitives. sqrt / abs / floor / ceil / trunc are wasm
-	// instructions; exp / log / sin / cos / pow have no wasm-native shape
-	// and are emitted as fdlibm-kernel helper bodies by runtime.go, shared
-	// with the x86-64 / arm64 versions. pow falls back to exp(y·log x) off
-	// its integral-exponent path, so it pulls both in.
+	// instructions; round, exp, log, sin, cos and pow have no wasm-native
+	// shape and are emitted as helper bodies by runtime.go, shared with the
+	// x86-64 / arm64 versions. pow falls back to exp(y·log x) off its
+	// integral-exponent path, so it pulls both in.
 	"__sqrt_f64":  "__fern_sqrt_f64",
 	"__exp_f64":   "__fern_exp_f64",
 	"__log_f64":   "__fern_log_f64",
@@ -2614,6 +2614,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"__floor_f64": "__fern_floor_f64",
 	"__ceil_f64":  "__fern_ceil_f64",
 	"__trunc_f64": "__fern_trunc_f64",
+	"__round_f64": "__fern_round_f64",
 	"env_count":   "__fern_env_count",
 	"arg_count":   "__fern_arg_count",
 	"arg_at":      "__fern_arg_at",
