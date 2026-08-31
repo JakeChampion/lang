@@ -408,6 +408,57 @@ func TestF64TranscendentalUlpX86_64(t *testing.T) {
 	checkF64Output(t, "x86-64-linux", out, cs, maxULP)
 }
 
+// TestF64SinCosLargeArgumentX86_64 sweeps the Payne-Hanek path — every
+// argument at or above 2^20, which is where Cody-Waite stops being exact and
+// the old code silently left [-1, 1] entirely (#7878).
+//
+// It is a sweep rather than a handful of literals because the failure it
+// guards is magnitude-dependent: the reduction degrades continuously with the
+// exponent, so a fixed shortlist proves only the exponents in it. 1158
+// arguments at four mantissas across every seventh exponent, both signs.
+//
+// x86-64 ONLY, deliberately. arm64, arm64ssa, wasm and the three self-host
+// emitters carry the same defect and have not been ported yet, so widening
+// this to them would assert a fix that does not exist. Their status is on
+// #7878; delete this note when the last one lands and fold these arguments
+// into f64UlpInputs.
+//
+// The interpreter is NOT one of the lanes here and cannot be: `fern -interp`
+// evaluates through Go's math, whose error near a zero of sin/cos is
+// unbounded in ulp terms — 617 ulp at 2^728, and 3% at the worst-case
+// argument below. The reference is the only oracle these can be measured
+// against.
+func TestF64SinCosLargeArgumentX86_64(t *testing.T) {
+	var xs []float64
+	for e := 20; e <= 1023; e += 7 {
+		for _, m := range []float64{1.0, 1.3, 1.7, 1.9} {
+			x := math.Ldexp(m, e)
+			if math.IsInf(x, 0) {
+				continue
+			}
+			xs = append(xs, x, -x)
+		}
+	}
+	// 6381956970095103 * 2^797, the argument with the smallest reduced
+	// remainder of any double, plus the values named in #7878.
+	xs = append(xs, 5.3193726483265414e+255, 1e30, 1e300, math.MaxFloat64, 9.2e18, 2147483648.0)
+
+	var cs []f64Case
+	for _, x := range xs {
+		rs, rc := refSinCos(x)
+		lit := fmt.Sprintf("f64_from_bits(%d)", int64(math.Float64bits(x)))
+		cs = append(cs,
+			f64Case{fmt.Sprintf("__sin_f64(%s)", lit), rs},
+			f64Case{fmt.Sprintf("__cos_f64(%s)", lit), rc})
+	}
+	out, code := compileAndRunX86_64(t, f64UlpProg(cs))
+	if code != 0 {
+		t.Fatalf("x86-64 exited %d\n%s", code, out)
+	}
+	checkF64Output(t, "x86-64-linux", out, cs, maxULP)
+	t.Logf("swept %d arguments (%d cases) over the Payne-Hanek path", len(xs), len(cs))
+}
+
 func TestF64TranscendentalUlpArm64(t *testing.T) {
 	cs := append(f64UlpCases(), f64SpecialCases()...)
 	out, code := compileAndRunArm64(t, f64UlpProg(cs))
