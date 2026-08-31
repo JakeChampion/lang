@@ -9,6 +9,11 @@
 //     PropagateCopies drops.
 //   - Dropping a dead tee can finally make two constants adjacent
 //     in the op list — Fold then folds them on the next pass.
+//   - PruneZeroSlotGuards turns a uniqueness guard on a never-assigned
+//     slot into the constant it evaluates to, which Fold's
+//     pruneConstIf then deletes the drop body of. It makes the
+//     order-based argument ConstPropagate's incremental slot table
+//     cannot: the table clears at a loop and after a branch.
 //
 // The passes converge quickly (almost always within 2–3 iterations)
 // because each one only ever shrinks the op list or rewrites ops
@@ -22,7 +27,8 @@ package ir
 const optimizeCleanupMaxIterations = 8
 
 // OptimizeCleanup runs PropagateCopies + ConstPropagate + Fold +
-// ReduceStrength to a fixed point on every function in prog. Each
+// ReduceStrength + PruneZeroSlotGuards to a fixed point on every
+// function in prog. Each
 // pass is idempotent on its own; the loop exists because they
 // interact — the output of one can expose new work for the others
 // (a strength-reduced `<expr> ; drop ; const 0` becomes a candidate
@@ -42,7 +48,8 @@ func OptimizeCleanup(prog *Program) {
 		c2 := ConstPropagate(prog)
 		c3 := Fold(prog)
 		c4 := ReduceStrength(prog)
-		if !(c1 || c2 || c3 || c4) {
+		c5 := PruneZeroSlotGuards(prog)
+		if !(c1 || c2 || c3 || c4 || c5) {
 			return
 		}
 	}
