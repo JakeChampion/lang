@@ -31,33 +31,56 @@ Most "SOTA stdlib" shortlists are written for C++ or Rust on x86-64. Three
 facts about Fern change the ranking substantially, and every verdict below is
 conditioned on them.
 
-**1. There is no SIMD — anywhere.** Not in `internal/ir`, not in any of the
-three backends, not as an intrinsic surface in the language. This is the
-single most important constraint, because it removes the top item from most
-published shortlists:
+**1. SIMD exists now, and the prerequisite has been paid.** This section used
+to open "There is no SIMD — anywhere", and that was the audit's single most
+important finding. It is no longer true, and the change is what reorders
+everything below it.
+
+Three fused kernels have shipped through `docs/ATLAS-PLATFORM-PLAN.md` §3's
+contract — a kernel is one IR op taking scalars and returning a scalar, with
+its whole vector lifetime inside its own emitted sequence, so it needs no
+vector register class, no regalloc change and no ABI change:
+
+| Kernel | State |
+| --- | --- |
+| `__memchr` | Vector on all **seven** backends; `std/string`'s single-byte search routes through it (~43x) |
+| `__ascii_run` | Vector on all seven; `std/utf8`'s `is_valid_utf8` routes through it (0.22 → 13.8 GB/s) |
+| `__rmemchr` | Total on all seven, vector on the three native ones (8.8x); `last_index_of` routes through it |
+
+So the rows below no longer split into "implementable" and "not". They split
+three ways, and the distinction matters because two of them are cheap and one
+is a decision:
 
 | Technique | Status in Fern |
 | --- | --- |
-| simdjson-style stage 1/2 parsing | Not implementable |
-| simdutf-style block UTF-8 validation | Not implementable |
-| SwissTable SIMD group probing | Not implementable as designed |
-| SIMD `memchr` / `memcmp` | Not implementable |
-| Sorting networks over vector registers | Not implementable |
+| SIMD `memchr` | **DONE**, forward and backward |
+| simdutf-style block UTF-8 validation | **PARTLY DONE** — `__ascii_run` is the ASCII-skip half, which is what dominates real text |
+| simdjson-style stage 1/2 parsing | Needs a kernel, not a surface |
+| SwissTable SIMD group probing | Needs a kernel; the SWAR variant is still the cheaper first move |
+| Sorting networks over vector registers | Needs a kernel |
+| SIMD `memcmp` | **DEFERRED, not blocked** — see the input-vs-needle rule below |
 
-These are not "not yet prioritised" — they need per-backend lowering
-(SSE2/SSE4.2, NEON, wasm `v128`), which is the **prerequisite** for a whole
-tier of work rather than a row in it. Where a SIMD algorithm has a credible
-SWAR (SIMD-within-a-register, 64-bit-word) variant, the row says so — SWAR is
-available today and is often 4–8× over byte-at-a-time.
+**What actually costs, now that the surface exists.** Not the vector body: the
+ASSEMBLERS. §3.3a's rule is to check the assembler for every target a kernel is
+about to be emitted on and land the encodings first, and the count is higher
+than it looks — there are **seven backends and six assemblers**, because each
+self-host backend has one of its own in Fern (`x86_native.fern`,
+`arm64_native.fern`, `watbin.fern`) alongside the three in `internal/native`.
+Every one of the three kernels above paid that cost separately, and it was the
+dominant cost each time.
 
-**Amended (2026-08-06):** the rows above originally read as blocked on a
-*vector-type surface in the IR*, which turned out to overstate the
-prerequisite — `docs/ATLAS-PLATFORM-PLAN.md` §1.2 argues the payoff is
-reachable without one. "Not implementable" in the table above should be read as
-"not implementable as the published algorithm is written", not as "unreachable
-in Fern". The declared CPU baselines already guarantee 128-bit SIMD on all
-three targets, so the tier also needs no CPU feature detection or runtime
-dispatch (§1.1).
+**Which kernels are worth building** is answered by the rule §4 of that document
+names: *a fused kernel pays when its vector length is the INPUT; it does not pay
+when its vector length is the NEEDLE.* `memchr` scans a haystack, so it pays.
+`memcmp` compares needle-length runs, and needles are short in nearly every real
+caller (`","` is 1 byte, `"https://"` is 8, and Two-Way's `__substr_eq`
+compares exactly needle-length runs), so at 8 bytes the whole compare fits in
+one vector and the cost is call overhead. That is why it is deferred rather than
+blocked, and it is the first question to ask of any candidate below.
+
+Where a SIMD algorithm has a credible SWAR (SIMD-within-a-register, 64-bit-word)
+variant, the row still says so — SWAR needs no kernel at all and is often 4–8×
+over byte-at-a-time.
 
 **2. Memory is a bump arena plus reference counting, not a general malloc.**
 The mimalloc / jemalloc / snmalloc / tcmalloc branch of the usual shortlist
@@ -86,8 +109,14 @@ paths will silently diverge. They did, for `split("")`; see below.
 ## Status table
 
 Verdicts: **DONE** shipped · **GAP** worth doing, unblocked · **BLOCKED** needs
-SIMD or another prerequisite · **N/A** doesn't apply to Fern's model · **OK**
-current implementation is already the right answer.
+a prerequisite · **DEFERRED** reachable and decided against for now, with the
+reason · **N/A** doesn't apply to Fern's model · **OK** current implementation
+is already the right answer.
+
+A row that once read "BLOCKED (SIMD)" now means one of two different things,
+and they are worth telling apart: **needs a kernel** (mechanical — the contract
+and six assemblers are in place, so it is a build item) or **deferred** (the
+input-vs-needle rule says it would not pay).
 
 ### Numeric conversion
 
@@ -133,7 +162,7 @@ the same treatment; it was left alone here to keep the change reviewable.
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| `Map` layout | Open addressing, separate key/value columns | SwissTable control bytes + group probe | BLOCKED on SIMD; **SWAR variant viable** |
+| `Map` layout | Open addressing, separate key/value columns | SwissTable control bytes + group probe | Needs a KERNEL, not a surface; **the SWAR variant is still the cheaper first move** and captures most of the cache-behaviour win |
 | String hash | **FNV-1a over 4-byte blocks + fmix32 avalanche** | wyhash / XXH3 | **DONE (this pass)** |
 | Scalar hash | Wang mix | Fine | OK |
 | Adversarial keys | **Per-process seed XORed into the FNV basis, default on** | SipHash, randomised seed | **DONE for offline attacks (this pass)**; SipHash still wanted against an online oracle |
@@ -180,17 +209,17 @@ seed, so nothing outside it depends on how the seed is used.
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
 | Substring search | **Two-Way (Crochemore–Perrin)** | Two-Way; SIMD/`memchr` for short needles | **DONE (this pass)** |
-| Single-byte search | Scalar scan | SIMD `memchr`; SWAR viable | GAP |
+| Single-byte search | **`__memchr` / `__rmemchr`, vector on the native tier** | SIMD `memchr` | **DONE (both directions)** — forward ~43x through `index_of`, backward 8.8x through `last_index_of` |
 | Backward search (`last_index_of`, `rsplit_once`, `rpartition`) | **Metered naive scan escalating to reverse Two-Way** | Reverse Two-Way | **DONE (this pass)** |
 | `split` / `replace` / `find_all` / `count` | Routed through the Two-Way core | — | **DONE (this pass)** |
 | Case-insensitive search | Naive | Case-folded Two-Way | GAP |
-| `memcpy` / `memcmp` | Runtime helpers | Vectorised, alignment-aware | BLOCKED (SIMD) / SWAR viable |
+| `memcpy` / `memcmp` | Runtime helpers | Vectorised, alignment-aware | `memcmp` **DEFERRED by the input-vs-needle rule** — its favourable shape (long compares) is the uncommon one; `memcpy` is a kernel away, SWAR viable |
 
 ### Unicode
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| UTF-8 validation | Branch ladder over the leading byte, continuation checks inlined | Höhrmann table DFA, then simdutf | **GAP** — the table DFA is unblocked; this row previously read "byte-at-a-time DFA … already the right scalar answer", which reading `is_valid_utf8` disproves |
+| UTF-8 validation | **`__ascii_run` skips each ASCII run 16 bytes at a time**; the multi-byte arms stay a branch ladder in Fern | Höhrmann table DFA, then simdutf | **PARTLY DONE** — 0.22 → 13.8 GB/s on ASCII-heavy text. The split is deliberate: the per-length overlong and surrogate rules are branchy logic that would be duplicated across seven backends, and only the run BETWEEN sequences vectorises. The table DFA for the remaining arms is still unblocked |
 | UTF-8 length / decode | Scalar | Scalar is fine below SIMD | OK |
 | UTF-8 ↔ UTF-16 | `std/utf8` | simdutf | BLOCKED |
 
@@ -198,7 +227,7 @@ seed, so nothing outside it depends on how the seed is used.
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| JSON | `std/json`, scalar | simdjson stage 1/2 | BLOCKED (SIMD) |
+| JSON | `std/json`, scalar | simdjson stage 1/2 | Needs a KERNEL, not a surface — the surface shipped |
 | Lexer character classes | Branch chains in places | 256-entry lookup tables | **GAP, easy, applies to the compiler's own lexer** |
 | CSV | Scalar | SIMD quote/delimiter scan | BLOCKED |
 | Number parsing in parsers | Shared with `parse_float` | Eisel–Lemire | GAP (see above) |
@@ -312,13 +341,18 @@ constraints above.
 9. Table-driven lexer classification.
 10. Magic-number constant division in the compiler.
 
-**Tier 3 — blocked on a vector surface**
+**Tier 3 — was blocked on a vector surface; the surface shipped**
 
-A SIMD surface in the IR (vector types + SSE2/AVX2, NEON, wasm `v128`
-lowering) is the single prerequisite that unblocks simdjson-style parsing,
-simdutf validation, true SwissTable probing, vectorised `memchr`/`memcmp`, and
-sorting networks. It should be evaluated as one project with that whole tier as
-its payoff, not attempted piecemeal.
+A SIMD surface in the IR was named here as the single prerequisite unblocking
+simdjson-style parsing, simdutf validation, true SwissTable probing, vectorised
+`memchr`/`memcmp`, and sorting networks — one project with the whole tier as its
+payoff, not to be attempted piecemeal.
+
+That framing was right and it has been paid off. Three kernels now ship on all
+seven backends (constraint 1 above), so nothing on that list is blocked on the
+surface any more: `memchr` is done in both directions, `memcmp` is deferred by
+the input-vs-needle rule rather than blocked, and the other three each want a
+kernel — a build item now, not a project.
 
 **That evaluation has since happened — see `docs/ATLAS-PLATFORM-PLAN.md` §1.2
 and §3.** Its conclusion changes this tier's cost, not its payoff: a
@@ -331,6 +365,14 @@ lifetime inside one IR op reaches the same payoff with no register class, no
 regalloc change, and no type-system change. The tier is therefore **no longer
 blocked on a language-level vector type**; it is sequenced behind a
 performance-regression gate, with `__memchr` as the first kernel.
+
+**Both of those have since happened too.** `__memchr` shipped as the first
+kernel and the performance-regression gate exists — `examples/bench/`
+`string_find_byte`, `string_rfind_byte` and `ascii_scan` put each kernel's
+vector path under `scripts/perf-bench`, whose retired-instruction counts repeat
+to the digit, so a kernel silently returning to a byte loop moves them by most
+of an order of magnitude. What the build revealed that this section did not
+predict is above: the cost is the six assemblers, not the vector bodies.
 
 ## What landed in this pass
 
