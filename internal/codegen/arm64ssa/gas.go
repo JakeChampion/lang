@@ -2952,39 +2952,83 @@ func emitStrIdxHelper(w func(string, ...any)) {
 // emitMemchrHelper writes __fern_memchr(s, byte, from) -> the index of the
 // first `byte` at or after `from`, or -1 (docs/ATLAS-PLATFORM-PLAN.md §3).
 //
-// SCALAR here, unlike the two native arm64 emitters, which serve the same op
-// with a NEON kernel. This backend needed it at all only because std/string's
-// single-byte search now routes through the intrinsic: before that adoption no
-// module reachable from this target called it, so the missing entry cost
-// nothing and was invisible. It surfaced as a LINK error — `branch to undefined
-// label "fn___fern_memchr"` — not a wrong answer, which is the good failure
-// mode for a missing helper.
+// NEON, 16 bytes an iteration, the same kernel the two native arm64 emitters
+// serve this op with. This backend needed the op at all only because
+// std/string's single-byte search routes through the intrinsic: before that
+// adoption no module reachable from this target called it, so the missing entry
+// cost nothing and was invisible. It surfaced as a LINK error — `branch to
+// undefined label "fn___fern_memchr"` — not a wrong answer, which is the good
+// failure mode for a missing helper.
+//
+// The mask extraction is the interesting half, and it is where NEON differs
+// from SSE2: there is no pmovmskb. The idiom is cmeq to 0x00/0xFF per byte,
+// then `shrn v0.8b, v0.8h, #4` to narrow each 16-bit lane to one byte carrying
+// four mask bits, then fmov the 64 bits out — so each input byte becomes a
+// NIBBLE and the lane index is the lowest set bit over four. Conversely the
+// splat is cheaper: `dup v1.16b, w1` where SSE2 needs four instructions.
 //
 // Strings on this backend are ONE word (the data pointer) with the length at
 // [ptr-4], not the two-word box the native arm64 backend uses, so the three
-// arguments land in x0/x1/x2 with no slot arithmetic. Leaf: no frame.
+// arguments land in x0/x1/x2 with no slot arithmetic. Leaf: no frame, and the
+// registers it touches (x0..x3, x8..x12, v0/v1) are all caller-saved — floats
+// here live as their f64 bit pattern in a GPR, so no v register is live across
+// a call for this to tread on.
+//
+// No feature detection: Advanced SIMD is mandatory in the declared ARMv8-A
+// baseline, so these are hard requirements rather than a fast path.
 func emitMemchrHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_memchr"))
 	w("\tldur w3, [x0, #-4]") // len
 	// A byte outside 0..255 can never occur in the haystack. ONE unsigned
 	// compare covers both ends: a negative arrives as a huge unsigned.
+	// Checked once, so neither loop below needs a per-iteration guard.
 	w("\tcmp x1, #255")
 	w("\tb.hi .Lssa_memchr_none")
 	// `from` clamps at 0 rather than trapping, matching the interpreter.
-	w("\tcmp x2, #0")
-	w("\tb.ge .Lssa_memchr_scan")
-	w("\tmov x2, #0")
-	w(".Lssa_memchr_scan:")
+	w("\tcmp w2, #0")
+	w("\tb.ge .Lssa_memchr_from_ok")
+	w("\tmov w2, #0")
+	w(".Lssa_memchr_from_ok:")
 	w("\tcmp w2, w3")
 	w("\tb.ge .Lssa_memchr_none")
-	w("\tldrb w4, [x0, x2]")
-	w("\tcmp w4, w1")
-	w("\tb.eq .Lssa_memchr_found")
-	w("\tadd x2, x2, #1")
-	w("\tb .Lssa_memchr_scan")
-	w(".Lssa_memchr_found:")
-	w("\tmov x0, x2")
+	w("\tadd x8, x0, w2, uxtw") // cursor = data + from
+	w("\tadd x9, x0, w3, uxtw") // end    = data + len
+	w("\tdup v1.16b, w1")
+	w(".Lssa_memchr_vec:")
+	w("\tsub x10, x9, x8")
+	w("\tcmp x10, #16")
+	w("\tb.lt .Lssa_memchr_tail")
+	// Unaligned load, and never a byte past the string: the branch above
+	// entered this only with a full block left. NEON has no alignment
+	// requirement, so there is no scalar prologue to pay either.
+	w("\tld1 {v0.16b}, [x8]")
+	w("\tcmeq v0.16b, v0.16b, v1.16b")
+	w("\tshrn v0.8b, v0.8h, #4")
+	w("\tfmov x11, d0")
+	w("\tcbz x11, .Lssa_memchr_next")
+	// Lowest set bit -> lane. Four mask bits per input byte, hence the >>2.
+	w("\trbit x12, x11")
+	w("\tclz x12, x12")
+	w("\tlsr x12, x12, #2")
+	w("\tadd x8, x8, x12")
+	w("\tsub x0, x8, x0") // back to an index; x0 is the base's last use
+	w("\tret")
+	w(".Lssa_memchr_next:")
+	w("\tadd x8, x8, #16")
+	w("\tb .Lssa_memchr_vec")
+	// Scalar tail: fewer than 16 bytes left, and the whole algorithm for a
+	// string shorter than one block — the common case in a search family.
+	w(".Lssa_memchr_tail:")
+	w("\tcmp x8, x9")
+	w("\tb.ge .Lssa_memchr_none")
+	w("\tldrb w10, [x8]")
+	w("\tcmp w10, w1")
+	w("\tb.eq .Lssa_memchr_tail_hit")
+	w("\tadd x8, x8, #1")
+	w("\tb .Lssa_memchr_tail")
+	w(".Lssa_memchr_tail_hit:")
+	w("\tsub x0, x8, x0")
 	w("\tret")
 	w(".Lssa_memchr_none:")
 	w("\tmov x0, #-1")
@@ -2995,18 +3039,23 @@ func emitMemchrHelper(w func(string, ...any)) {
 // byte at or after `from` with its high bit set, or len(s) if the rest is ASCII
 // (docs/ATLAS-PLATFORM-PLAN.md §3, second kernel).
 //
-// SCALAR, for emitMemchrHelper's reason and one more. This backend's helpers
-// are hand-written GAS text with no NEON in them at all, and the entry exists
-// here for TOTALITY rather than for speed: §3.4 requires an op to lower on
-// every backend before any caller may adopt it, precisely so an adoption
-// cannot turn into a link error on the target nobody remembered. __memchr
-// learned that the expensive way — it was added to the other six backends,
+// NEON as __memchr's is, and cheaper than it — but for the opposite reason to
+// the one x86-64 gets. There, pmovmskb already gathers the top bit of each
+// byte, so the compare disappears. NEON has no bitmask, so a compare is still
+// needed to widen "high bit set" into an all-ones lane before shrn can narrow
+// it — but `cmlt v0.16b, v0.16b, #0` compares against zero, so it is the SPLAT
+// that disappears: there is no operand to broadcast.
+//
+// The entry existed here first for TOTALITY rather than speed: §3.4 requires an
+// op to lower on every backend before any caller may adopt it, precisely so an
+// adoption cannot turn into a link error on the target nobody remembered.
+// __memchr learned that the expensive way — added to the other six backends,
 // adopted, and only then did CI report `branch to undefined label
 // "fn___fern_memchr"` from this seventh one.
 //
 // One-word strings with the length at [ptr-4], so `from` is x1 with no slot
 // arithmetic — one register earlier than __memchr's x2, there being no byte
-// operand. Leaf: no frame.
+// operand. Leaf: no frame, same caller-saved register set as __memchr's.
 //
 // Returns the length rather than -1 on a miss, matching the intrinsic's
 // branch-free-skip contract everywhere else.
@@ -3015,18 +3064,45 @@ func emitAsciiRunHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__fern_ascii_run"))
 	w("\tldur w2, [x0, #-4]") // len
 	// `from` clamps at 0 rather than trapping, matching the interpreter.
-	w("\tcmp x1, #0")
-	w("\tb.ge .Lssa_ascii_scan")
-	w("\tmov x1, #0")
-	w(".Lssa_ascii_scan:")
+	w("\tcmp w1, #0")
+	w("\tb.ge .Lssa_ascii_from_ok")
+	w("\tmov w1, #0")
+	w(".Lssa_ascii_from_ok:")
 	w("\tcmp w1, w2")
 	w("\tb.ge .Lssa_ascii_none")
-	w("\tldrb w3, [x0, x1]") // zero-extending, so bit 7 is the high bit
-	w("\ttbnz w3, #7, .Lssa_ascii_found")
-	w("\tadd x1, x1, #1")
-	w("\tb .Lssa_ascii_scan")
-	w(".Lssa_ascii_found:")
-	w("\tmov x0, x1")
+	w("\tadd x8, x0, w1, uxtw") // cursor = data + from
+	w("\tadd x9, x0, w2, uxtw") // end    = data + len
+	w(".Lssa_ascii_vec:")
+	w("\tsub x10, x9, x8")
+	w("\tcmp x10, #16")
+	w("\tb.lt .Lssa_ascii_tail")
+	// Unaligned load, never past the string: see __memchr's counterpart.
+	w("\tld1 {v0.16b}, [x8]")
+	w("\tcmlt v0.16b, v0.16b, #0")
+	w("\tshrn v0.8b, v0.8h, #4")
+	w("\tfmov x11, d0")
+	w("\tcbz x11, .Lssa_ascii_next")
+	// Lowest set bit -> lane, four mask bits per input byte.
+	w("\trbit x12, x11")
+	w("\tclz x12, x12")
+	w("\tlsr x12, x12, #2")
+	w("\tadd x8, x8, x12")
+	w("\tsub x0, x8, x0")
+	w("\tret")
+	w(".Lssa_ascii_next:")
+	w("\tadd x8, x8, #16")
+	w("\tb .Lssa_ascii_vec")
+	// Scalar tail: the final 0..15 bytes, and the whole algorithm for a
+	// string shorter than one block.
+	w(".Lssa_ascii_tail:")
+	w("\tcmp x8, x9")
+	w("\tb.ge .Lssa_ascii_none")
+	w("\tldrb w3, [x8]") // zero-extending, so bit 7 is the high bit
+	w("\ttbnz w3, #7, .Lssa_ascii_tail_hit")
+	w("\tadd x8, x8, #1")
+	w("\tb .Lssa_ascii_tail")
+	w(".Lssa_ascii_tail_hit:")
+	w("\tsub x0, x8, x0")
 	w("\tret")
 	w(".Lssa_ascii_none:")
 	w("\tmov x0, x2") // no high byte: the answer is len

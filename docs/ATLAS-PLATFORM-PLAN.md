@@ -593,9 +593,9 @@ The three *self-host* backends followed, and there step 1's scalar-first
 ordering is the whole point rather than a formality: they landed as an inline
 byte loop (`asm_ir.fern` / `asm_arm64_ir.fern`) and a `$__fern_memchr` WAT
 helper (`wasm_ir.fern`). `-backend ssa` (arm64) was the seventh and, as above,
-the forgotten one; it is scalar still. Step 1 is therefore **complete — the
-intrinsic is total** — and step 2 (`std/string` adoption) landed at ~43x on the
-single-byte search path.
+the forgotten one. Step 1 is therefore **complete — the intrinsic is total** —
+and step 2 (`std/string` adoption) landed at ~43x on the single-byte search
+path.
 
 **Self-host x86-64 is now vectorised too** (step 3, first tier): both kernels
 run the same SSE2 shapes as their native twins, measured **702 ms → 61 ms
@@ -605,6 +605,22 @@ holds the cursor as an INDEX rather than a pointer, which keeps the whole body
 inside the five registers the scalar one already used, and the vector load runs
 only with a full block left, so nothing reads past the string and there is no
 alignment prologue.
+
+**`-backend ssa` (arm64) followed**, on the NEON set `internal/native/arm64`
+already carried for the native kernels — the one remaining leg whose assembler
+prerequisite was already paid, which is why it went first of the three. Measured
+under qemu-aarch64 over 131 MB (2,000 scans of a 64 KB haystack answered only at
+the last byte): `__memchr` 515 ms → 151 ms, `__ascii_run` 390 ms → 149 ms. Read
+those as a floor, not as the hardware ratio: qemu charges far more for one NEON
+instruction than for one scalar one, so it systematically understates a vector
+kernel. The architecture-independent claim is the instruction count, ~80 scalar
+ops per 16 bytes down to 8.
+
+Its ABI is the simplest of the seven — one-word strings with the length at
+[ptr-4], so the arguments land in x0/x1/x2 with no slot arithmetic — and it is a
+leaf, so the kernel needs no frame. Floats on this backend live as their f64 bit
+pattern in a GPR, which is what makes v0/v1 free scratch: no vector register is
+live across a call for the kernel to tread on, §3.1's rule 3 for free.
 
 §3.3a's rule was the load-bearing part again, and this time in a place the
 section did not name: the self-host has its OWN in-process assembler
@@ -629,8 +645,10 @@ backends use a `[data@0, len@8]` box on the register targets and a
 
 **`__ascii_run`, the second kernel.** Total across all seven, and — unlike
 `__memchr` — made total *before* any caller adopts it, which is the one
-process change the miscount above bought. x86-64 is SSE2, arm64 is NEON, wasm
-is v128; the other four are scalar. Its vector form is cheaper than
+process change the miscount above bought. Both kernels are vectorised on the
+same five of the seven — native x86-64 (SSE2), native arm64 and `-backend ssa`
+(NEON), native wasm (v128), and self-host x86-64 (SSE2) — leaving self-host
+arm64 and self-host wasm scalar. `__ascii_run`'s vector form is cheaper than
 `__memchr`'s on every target, and interestingly for two different reasons:
 
 - x86-64 and wasm save the **compare**. `pmovmskb` / `i8x16.bitmask` gather the
@@ -656,13 +674,11 @@ ASCII unchanged). Worth generalising alongside the input-vs-needle rule below:
 **the rule says whether a kernel pays on its intended corpus; it says nothing
 about what the kernel costs on the corpus it was not chosen for.** Measure both.
 
-Remaining: step 3 for self-host arm64, self-host wasm, and `-backend ssa`
-(arm64) — swapping those scalar bodies for vector ones. Each needs its own
-assembler check first: `arm64_native.fern` for the self-host arm64 leg,
-`watbin.fern` for the wasm one, `internal/native/arm64` for `-backend ssa`
-(which already gained the NEON set the native arm64 kernels use). Unlike the
-native tier this is pure speed with no totality argument behind it, so it ranks
-below §4's other items.
+Remaining: step 3 for self-host arm64 and self-host wasm — swapping those two
+scalar bodies for vector ones. Each needs its own assembler check first, and
+neither is paid for: `arm64_native.fern` for the arm64 leg, `watbin.fern` for
+the wasm one. Unlike the native tier this is pure speed with no totality
+argument behind it, so it ranks below §4's other items.
 
 ### 3.5 Testing
 
