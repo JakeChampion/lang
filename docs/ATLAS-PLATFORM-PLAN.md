@@ -709,11 +709,30 @@ runs proves nothing about which one was emitted.
 
 **Step 3 is therefore complete: the kernels are vector on all seven backends.**
 
-**`__rmemchr`, the third kernel**, is §3.3's nominated sibling and follows the
+**`__rmemchr`, the third kernel**, is §3.3's nominated sibling and followed the
 same sequence from the top: total and SCALAR on all seven backends first, so
-nothing can depend on a lowering that does not exist. Its adoption
-(`__str_rfind_from`'s `nLen == 1` tier, "the overwhelmingly common case") and
-its vector bodies are the next two steps.
+nothing could depend on a lowering that did not exist. Steps 2 and 3 followed —
+`__str_rfind_from`'s `nLen == 1` tier ("the overwhelmingly common case") routes
+through it, and the three NATIVE backends are vectorised. The self-host tier and
+`-backend ssa` stay scalar, as `__memchr`'s did between its own steps.
+
+Its vector body is `__memchr`'s read backwards, and the whole difference is
+which end of the mask is scanned: the rightmost match is the HIGHEST set bit.
+x86-64 gets that in one instruction (`bsr`); arm64 and wasm have no
+find-highest, so both compute it as `width-1 - clz`. That asymmetry is the
+mirror of the mask-EXTRACTION one §3.4 records for the forward kernel, and it
+lands on a different pair of targets: there wasm and x86-64 were the cheap ones,
+here only x86-64 is.
+
+Measured (`examples/bench/string_rfind_byte`, 6,000 backward scans of a 32 KiB
+haystack answering at index 3): **984M → 112M retired, 8.8x**.
+
+The first cut of that body was **6.1x**, and the gap was not the vector work —
+it was recomputing the block address from the cursor every iteration, about a
+third of the loop. Carrying the base and the pointer across iterations and
+stepping both by 16 is what took it to 8.8x. Worth stating because the forward
+kernel never had this cost: it walks UP from a pointer it already holds, so
+nothing had to be recomputed and nobody had to notice.
 
 It earns the slot by the input-vs-needle rule below: like `__memchr` its vector
 length is the HAYSTACK. The one thing that is not a mirror image of the forward

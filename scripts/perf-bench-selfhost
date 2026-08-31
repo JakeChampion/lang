@@ -51,12 +51,22 @@ STDLIB="$ROOT/internal/stdlib"
 # The self-host CLI needs ABSOLUTE paths: a relative one is unopenable from an
 # arm64-darwin binary (AT_FDCWD is -2 on XNU, not -100), and every other harness
 # in the tree passes absolute for the same reason.
-if [ ! -x bin/fern ]; then
-  echo "perf-bench-selfhost: building bin/fern" >&2
-  go build -o bin/fern ./cmd/fern
-fi
-if [ ! -x bin/fern-selfhost ]; then
-  echo "perf-bench-selfhost: building bin/fern-selfhost" >&2
+# BUILD IF MISSING **OR STALE**. These used to be `[ ! -x ... ]` alone, which
+# means a local run measures whatever binary happens to be lying around. CI
+# never sees it — a fresh checkout has neither — so the trap is local-only and
+# survives. It bit once already: a bin/fern-selfhost from two hours earlier
+# predated a new IR op, so every bench that reached it failed to compile. That
+# failure was loud; the dangerous version is silent, where a stale compiler
+# emits different sizes and the gate reports drift nobody caused.
+#
+# `go build` is incremental, so rebuilding bin/fern unconditionally is close to
+# free. The self-host CLI is not, so it is rebuilt only when its own sources or
+# the compiler that emits it are newer.
+go build -o bin/fern ./cmd/fern
+if [ ! -x bin/fern-selfhost ] ||
+   [ bin/fern -nt bin/fern-selfhost ] ||
+   [ -n "$(find examples/self_host -name '*.fern' -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
+  echo "perf-bench-selfhost: building bin/fern-selfhost (missing or stale)" >&2
   make selfhost-cli >&2
 fi
 SELFHOST="$ROOT/bin/fern-selfhost"

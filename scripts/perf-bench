@@ -48,10 +48,11 @@ case "$(uname -m)" in
   *) echo "perf-bench: unsupported host $(uname -m)" >&2; exit 2 ;;
 esac
 
-if [ ! -x bin/fern ]; then
-  echo "perf-bench: building bin/fern" >&2
-  go build -o bin/fern ./cmd/fern
-fi
+# Unconditionally, not `[ ! -x ]`: go build is incremental so this is close to
+# free when it is current, and building only when MISSING means a local run
+# measures whatever binary is lying around. See perf-bench-selfhost, where the
+# same guard let a two-hour-old compiler into a measurement.
+go build -o bin/fern ./cmd/fern
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
