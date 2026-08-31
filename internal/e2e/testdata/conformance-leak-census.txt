@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-08-30: 453 fixtures, 323 clean, 130 leaking, 45670
+# Measured 2026-08-31: 454 fixtures, 324 clean, 130 leaking, 45670
 # unpaired allocations. The distribution is heavily skewed - median 4,
 # and regex_captures_assert alone is 54713 of the total.
 #
@@ -93,6 +93,7 @@ closure_adder                                        1
 closure_capture_shared_cell                          0
 closure_captures_defining_scope                      6
 closure_field_match                                  600
+closure_field_rebind                                 0
 closure_returns_composite                            0
 cmp_float_traits                                     0
 compound_assign_wider                                0

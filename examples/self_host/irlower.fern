@@ -19080,9 +19080,10 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // registered return type (map_ret_fns), so `m.get_or(...)` dispatches
     // without a `: Map[K,V]` annotation. #3317.
     sb = mark_map_type_from_callee(v, slot, sb);
-    // Binding from a closure-BOX tuple element (`var f = t.0`, element tagged
-    // "clo"): mark f a closure LOCAL so `f(args)` dispatches env-first against
-    // the box — the closure sibling of the map-from-tuple-element bind above.
+    // Binding from a closure BOX — a tuple element (`var f = t.0`, element
+    // tagged "clo") or an fn-typed struct field (`var g = h.f`): mark the
+    // binding a closure LOCAL so `f(args)` dispatches env-first against the
+    // box — the closure sibling of the map-from-tuple-element bind above.
     // A NESTED-tuple element (`var inner = t.0` where t.0's tag is itself a
     // "(…)" tuple spelling) transfers the inner element tags onto the binding
     // (mark_tuple_elems) so `inner.N` reads — and an `inner.N(args)` closure
@@ -19578,6 +19579,11 @@ match (v.init) {
             if (sfoty != "") {
                 var sfft: string = decl_field_type(sb.structs, sfoty, ctfa.field);
                 if (util.is_tuple_type_name(sfft)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(sfft)); }
+                // `var g = h.f` where struct field `f` is fn-typed: the field
+                // holds a closure BOX, so g is a closure local and `g(args)`
+                // must dispatch env-first. Without this g looked like a bare
+                // code pointer and the call jumped to the box address (#7862).
+                else if (is_fn_payload_spelling(sfft) || sfft == "fn" || sfft == "clo") { sb = sb.mark_closure_local(v.name); }
             }
         }
     },
