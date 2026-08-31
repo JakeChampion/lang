@@ -6050,9 +6050,6 @@ type frameLayout struct {
 // slot is the byte offset of spill/phi slot n.
 func (f frameLayout) slot(n int) int { return 8 * (f.slotBase + n) }
 
-// callSave is the byte offset of the k'th register preserved across a call.
-func (f frameLayout) callSave(k int) int { return 8 * (f.callSaveBase + k) }
-
 // outArg is where the caller writes the argument that lands in the callee's
 // stack-argument position k (that is, its (argRegCount+k)'th parameter).
 func (f frameLayout) outArg(k int) int { return 8 * k }

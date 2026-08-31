@@ -143,18 +143,6 @@ func (u Units) Root(v Value) Value {
 // Unplaced is how many values landed in UnitUnknown.
 func (u Units) Unplaced() int { return u.unplaced }
 
-// Carriers is how many distinct values reference counting can apply to
-// at all — everything that is not UnitNone.
-func (u Units) Carriers() int {
-	n := 0
-	for _, o := range u.origin {
-		if o != UnitNone {
-			n++
-		}
-	}
-	return n
-}
-
 // unitStatic reports the op kinds whose result is an address that can
 // never carry a unit.
 //

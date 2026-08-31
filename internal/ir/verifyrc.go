@@ -46,10 +46,7 @@
 // does not blind the pass to the familiar sites around it.
 package ir
 
-import (
-	"fmt"
-	"sort"
-)
+import "fmt"
 
 // RcCoverage records how many reuse sites the ownership pass could
 // model. Checked + the Skipped totals == Sites.
@@ -65,21 +62,6 @@ func (c *RcCoverage) skip(reason string) {
 		c.Skipped = map[string]int{}
 	}
 	c.Skipped[reason]++
-}
-
-// Reasons returns the skip causes, most frequent first.
-func (c RcCoverage) Reasons() []string {
-	out := make([]string, 0, len(c.Skipped))
-	for r := range c.Skipped {
-		out = append(out, r)
-	}
-	sort.Slice(out, func(a, b int) bool {
-		if c.Skipped[out[a]] != c.Skipped[out[b]] {
-			return c.Skipped[out[a]] > c.Skipped[out[b]]
-		}
-		return out[a] < out[b]
-	})
-	return out
 }
 
 // add folds other into c, so a whole-program coverage can be summed from
