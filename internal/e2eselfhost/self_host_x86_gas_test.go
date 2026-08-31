@@ -354,6 +354,18 @@ function main(): i32 {
         if (vk.code[vi] != want[vi]) { return 37; }
         vi = vi + 1;
     }
+    // The backward kernel's tail differs from the forward one's by exactly one
+    // instruction, so the front end is checked on that one: bsrl, not bsfl.
+    // 0F BD C8 / 45 0F BD C9, GNU as output for this text.
+    var vb: X86Asm = x86_gas_assemble("\tbsrl %eax, %ecx\n\tbsrl %r9d, %r9d\n");
+    if (vb.unknown.len() != 0) { return 38; }
+    var bw: i32[] = [15, 189, 200, 69, 15, 189, 201];
+    if (vb.code.len() != bw.len()) { return 39; }
+    var bi: i32 = 0;
+    while (bi < bw.len()) {
+        if (vb.code[bi] != bw[bi]) { return 40; }
+        bi = bi + 1;
+    }
     return 0;
 }
 `

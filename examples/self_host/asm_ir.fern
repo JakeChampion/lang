@@ -3472,32 +3472,73 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // operand stack [box, byte, from] (from on top) -> the index of the
         // LAST `byte` at or before `from`, or -1.
         //
-        // SCALAR: §3.4 of ATLAS-PLATFORM-PLAN orders a new kernel "correct in
-        // every backend first, fast one backend at a time", so this lands
-        // beside its six siblings and is vectorised later.
+        // SSE2, 16 bytes an iteration, walking DOWN: the block ENDING at the
+        // cursor is loaded at `cursor - 15`, and the mask is scanned with
+        // **bsr** rather than bsf, because the HIGHEST set bit is the
+        // rightmost matching byte. That one instruction is the entire
+        // difference from the memchr body above; splat, load, compare and
+        // gather are identical.
         //
-        // The clamp is memchr's mirrored, and it is the whole difference
-        // between the two bodies: a forward scan clamps `from` UP to 0, a
-        // backward scan clamps it DOWN to len-1, so a negative `from` finds
-        // nothing here.
+        // The base index and its address are carried across iterations and
+        // stepped by 16 rather than recomputed from the cursor: measured on
+        // the native twin, recomputing cost about a third of the loop. The
+        // forward kernel never pays this — it walks UP from a pointer it
+        // already holds.
+        //
+        // The clamp is memchr's mirrored: a forward scan clamps `from` UP to
+        // 0, a backward scan clamps it DOWN to len-1, so a negative `from`
+        // finds nothing here.
         var rlo: asmcore.LabelOut = asmcore.fresh_label(s);
         var r_ok: string = rlo.name;
         var rlo2: asmcore.LabelOut = asmcore.fresh_label(rlo.state);
-        var r_loop: string = rlo2.name;
+        var r_vec: string = rlo2.name;
         var rlo3: asmcore.LabelOut = asmcore.fresh_label(rlo2.state);
-        var r_none: string = rlo3.name;
+        var r_hit: string = rlo3.name;
         var rlo4: asmcore.LabelOut = asmcore.fresh_label(rlo3.state);
-        var r_done: string = rlo4.name;
-        s = rlo4.state;
+        var r_step: string = rlo4.name;
+        var rlo5: asmcore.LabelOut = asmcore.fresh_label(rlo4.state);
+        var r_tail: string = rlo5.name;
+        var rlo6: asmcore.LabelOut = asmcore.fresh_label(rlo5.state);
+        var r_loop: string = rlo6.name;
+        var rlo7: asmcore.LabelOut = asmcore.fresh_label(rlo6.state);
+        var r_none: string = rlo7.name;
+        var rlo8: asmcore.LabelOut = asmcore.fresh_label(rlo7.state);
+        var r_done: string = rlo8.name;
+        s = rlo8.state;
         s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
         s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
         // A byte outside 0..255 can never match. One UNSIGNED compare covers
-        // both ends, checked once so the loop needs no per-iteration guard.
+        // both ends, checked once so neither loop needs a per-iteration guard.
         s = s.write("    cmpq $255, %rcx\n    ja " + r_none + "\n");
         // Clamp `from` down to the last index; an empty string has none.
         s = s.write("    subq $1, %r8\n    cmpq $0, %r8\n    jl " + r_none + "\n");
         s = s.write("    cmpq %r8, %rdx\n    jle " + r_ok + "\n    movq %r8, %rdx\n");
         s = s.write(r_ok + ":\n");
+        // Broadcast the needle byte across xmm1 (SSE2 splat; pshufb would be
+        // one instruction but is SSSE3, outside the baseline).
+        s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
+        s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
+        // Vector loop while a whole block still fits BELOW the cursor. That
+        // bound keeps the load in bounds at the LOW end, where memchr's
+        // "16 or more left" keeps it in bounds at the high end.
+        s = s.write("    cmpq $15, %rdx\n    jl " + r_tail + "\n");
+        s = s.write("    movq %rdx, %r9\n    subq $15, %r9\n");   // block base index
+        s = s.write("    movq %rax, %r10\n    addq %r9, %r10\n"); // block address
+        s = s.write(r_vec + ":\n");
+        s = s.write("    movdqu (%r10), %xmm0\n    pcmpeqb %xmm1, %xmm0\n");
+        s = s.write("    pmovmskb %xmm0, %r11d\n    testl %r11d, %r11d\n    jnz " + r_hit + "\n");
+        s = s.write("    subq $16, %r9\n    cmpq $0, %r9\n    jge " + r_step + "\n");
+        // The next block would start below 0, so the untested bytes are
+        // [0, base-1] where base is the block just cleared.
+        s = s.write("    addq $15, %r9\n    movq %r9, %rdx\n    jmp " + r_tail + "\n");
+        s = s.write(r_step + ":\n    subq $16, %r10\n    jmp " + r_vec + "\n");
+        s = s.write(r_hit + ":\n    bsrl %r11d, %r11d\n");
+        s = s.write("    movq %r9, %rdx\n    addq %r11, %rdx\n    jmp " + r_done + "\n");
+        // Scalar tail: the final 0..14 bytes. The cursor is checked HERE
+        // rather than before the vector loop, because the tail has TWO entry
+        // paths and the vector one hands over `base - 1`, which is -1 when the
+        // last block started at 0.
+        s = s.write(r_tail + ":\n");
         s = s.write("    cmpq $0, %rdx\n    jl " + r_none + "\n");
         s = s.write(r_loop + ":\n");
         s = s.write("    movzbq (%rax,%rdx), %r9\n");

@@ -92,6 +92,12 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		// short-string case unchanged.
 		{"memchr", "function main(): i32 { var s = \"aaaaaaaaaaaaaaaaaaaa*aaa\"; return __memchr(s, 42, 0) + 22; }\n", 42, ""},
 		{"asciirun", "function main(): i32 { var s = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __ascii_run(s, 0) + 18; }\n", 42, ""},
+		// The backward kernel, whose vector body needs one encoding the other
+		// two do not: bsr. Its answer is at index 2 with a full block BELOW
+		// it, so the vector loop runs and then hands the tail a cursor — the
+		// two-entry-path shape, exercised end to end through this backend's
+		// own assembler rather than through gcc.
+		{"rmemchr", "function main(): i32 { var s = \"aa*aaaaaaaaaaaaaaaaaaaaa\"; return __rmemchr(s, 42, 23) + 40; }\n", 42, ""},
 		// NOTE: f64 `.sqrt()`/`.floor()`/`.ceil()`/`.trunc()` are an asm.fern
 		// gap — it emits `call __fn_f64__sqrt` etc. without emitting those
 		// method bodies (an undefined reference even for gcc), so they aren't
