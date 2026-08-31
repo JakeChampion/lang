@@ -3185,6 +3185,26 @@ type MatchArm struct {
 	EnumName     string
 	VariantIndex int
 	Payloads     []*TuplePatElem
+	// CoversRemainder marks an arm that matches every value still able to
+	// reach it, so nothing needs to test its tag first.
+	//
+	// True only for the LAST arm of an enum match whose earlier arms
+	// irrefutably cover every other variant, where this arm is itself
+	// irrefutable — no guard, and no payload sub-pattern that can fail.
+	// It is the same predicate the checker already uses to fill its
+	// coverage set (`Guard == nil && !armPayloadsRefutable(Payloads)`),
+	// which is in turn the same question lowering asks through
+	// `armPayloadTest`.
+	//
+	// Stamped by the checker for the reason EnumName is: exhaustiveness is
+	// proved there, and every consumer that wants it has otherwise had to
+	// re-derive it — `trmc.go`'s `trmcArmsTotal` is one such re-derivation
+	// today. FALSE IS THE CONSERVATIVE ANSWER and the zero value, so a
+	// synthesised or hand-built arm gets a tag test rather than silently
+	// running unconditionally; and like EnumName it is written on every
+	// check pass rather than only when true, because the checker re-runs
+	// after monomorphisation over the same nodes.
+	CoversRemainder bool
 	// AltCont marks an arm that continues the previous one's or-pattern
 	// alternative list: `A | B => …` parses to one arm per alternative,
 	// with the guard and body CLONED into each, and nothing else records
@@ -3246,6 +3266,8 @@ type MatchExprArm struct {
 	// the checker on the expression form's arms for the same reason.
 	EnumName     string
 	VariantIndex int
+	// CoversRemainder mirrors MatchArm.CoversRemainder — see there.
+	CoversRemainder bool
 	// Payloads mirrors MatchArm.Payloads: the payload sub-patterns,
 	// parallel to Bindings. See there.
 	Payloads []*TuplePatElem
