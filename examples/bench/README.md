@@ -17,7 +17,15 @@ Rules for a benchmark in here:
 - **Return a checksum**, so a miscompile that skips the work cannot look like
   a win. Exit codes must stay under 126 (WASI refuses anything above).
 - **Isolate one cost.** `map_string` and `map_int` are the same shape with
-  different key types precisely so the difference between them is readable.
+  different key types precisely so the difference between them is readable, and
+  `string_find_byte` / `string_rfind_byte` are the same for the forward and
+  backward search kernels.
+- **Make the checksum depend on the work.** Returning 0 is not a checksum: a
+  loop optimised away sums to the same 0 as a loop that ran. `string_rfind_byte`
+  puts its needle at index 3 rather than 0 for exactly this reason.
+- **Check the count scales with the round count.** Halving the rounds must halve
+  the retired count. If it does not, something is hoisting the call out of the
+  measured loop and the benchmark is measuring nothing while looking healthy.
 - **Size it to 50-300M instructions.** Enough that fixed startup cost does not
   dominate, small enough that callgrind (~50x slowdown) finishes in seconds.
 
