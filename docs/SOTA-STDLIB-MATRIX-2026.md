@@ -19,7 +19,8 @@ The two are meant to be read together and to drift apart slowly:
 
 `ATLAS-PLATFORM-PLAN.md` landed the same day as this file, from a separate
 external blueprint, and the two were written without sight of each other. They
-converge — SIMD deferred, the allocator section largely N/A, concurrency gated
+converge — SIMD then-deferred (since shipped), the allocator section largely
+N/A, concurrency gated
 on a memory-model decision, `rotate`/`byteswap` the cheapest remaining
 intrinsic, a benchmark harness the highest-value missing piece — which is worth
 more than either document alone, since neither borrowed the conclusion. Where
@@ -36,7 +37,13 @@ Every row carries a verdict, and the verdict vocabulary is deliberately small:
 - **GAP** — worth doing and **unblocked today**. These are the only rows that
   can be started without a decision or a prerequisite landing first.
 - **BLOCKED:*x*** — needs *x* first. The prerequisite is named, never left as
-  "needs infrastructure".
+  "needs infrastructure". `BLOCKED:SIMD` no longer appears: the surface shipped,
+  so a row that wanted it is now either SHIPPED, `KERNEL` or DEFERRED.
+- **KERNEL** — reachable today by writing one fused kernel to
+  `ATLAS-PLATFORM-PLAN.md` §3's contract. Mechanical rather than a project, but
+  it is seven lowerings and an assembler check per backend, so it is not free.
+- **DEFERRED:*reason*** — reachable and decided against for now, with the reason
+  stated. Distinct from BLOCKED, which nobody has the option to start.
 - **DECIDE:*x*** — the obstacle is a policy question, not an implementation
   one. Writing code before answering *x* wastes the code.
 - **N/A:*reason*** — the row does not apply to Fern's execution model. This is
@@ -52,18 +59,29 @@ Empty means the module does not exist yet.
 Every verdict below is conditioned on these. They are the reason this matrix
 is not a transcription of the published list.
 
-**1. There is no SIMD — anywhere.** Not a vector type in `internal/ir`, not a
-lowering in any of the three native backends or the three self-host ones, not
-an intrinsic surface in the language. Verified, not assumed: the only match for
-`SIMD` under `internal/ir` is a comment about stack alignment. This deletes the
-top item from most published shortlists — simdjson stage 1/2, simdutf block
-validation, SwissTable group probing as designed, vector `memchr`/`memcmp`,
-sorting networks over vector registers. Those are **one project with one
-payoff**, not eleven independent rows.
+**1. SIMD exists now — the one project has been done.** This constraint used to
+read "There is no SIMD — anywhere", verified rather than assumed, and it deleted
+the top item from most published shortlists. It was right, and it has since been
+paid off: `ATLAS-PLATFORM-PLAN.md` §3's fused-kernel contract shipped
+`__memchr`, `__ascii_run` and `__rmemchr`, vector on all **seven** backends for
+the first two and on the three native ones for the third.
+
+So the rows below no longer collapse into "one project with one payoff". They
+are independent build items again, and the question per row is no longer
+*can it be done* but two others:
+
+- **Does it pay?** `ATLAS-PLATFORM-PLAN.md` §4's rule: a fused kernel pays when
+  its vector length is the INPUT, not the NEEDLE. That is why `memcmp` is
+  DEFERRED rather than blocked — needles are short in nearly every real caller,
+  so the compare fits in one vector and the cost is call overhead.
+- **What does the kernel cost?** Not the vector body. Six ASSEMBLERS: the three
+  in `internal/native` plus one per self-host backend written in Fern
+  (`x86_native.fern`, `arm64_native.fern`, `watbin.fern`). Each of the three
+  shipped kernels paid that separately and it dominated each time.
 
 Where a technique has a **SWAR** variant (SIMD-within-a-register, over a plain
-64-bit word), the row says so. SWAR needs no compiler work and typically buys
-4–8× over byte-at-a-time.
+64-bit word), the row still says so. SWAR needs no kernel at all and typically
+buys 4–8× over byte-at-a-time — often the cheaper first move even now.
 
 **2. Memory is a bump arena plus Perceus reference counting, not a general
 malloc.** Section H of the published list — mimalloc/jemalloc/snmalloc class
@@ -197,7 +215,7 @@ answers**, which makes them the ones to start with.
 
 | # | Primitive | Site | Today | Target | Verdict | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
-| 33 | HashMap | `core/map` | Open addressing, split key/value columns | SwissTable | BLOCKED:SIMD as designed; **SWAR group probe viable** | 1 |
+| 33 | HashMap | `core/map` | Open addressing, split key/value columns | SwissTable | KERNEL as designed; **the SWAR group probe is still the cheaper first move** | 1 |
 | 34 | Large hash map | `core/map` | Same path at every size | F14-style grouped probing | Folds into #33 | 1 |
 | 35 | Small hash map | `core/map` | **Linear scan at ≤ 8 entries** | Inline scan | **SHIPPED** | — |
 | 36 | Ordered map | — | Absent | B-tree | GAP | 3 |
@@ -220,7 +238,9 @@ The remaining structural win is **SWAR group probing**: a SwissTable's
 advantage is mostly cache behaviour, not the vector compare, and a 64-bit word
 of control bytes tests 8 slots per iteration with
 `(x - 0x0101…) & ~x & 0x8080…`. That captures the majority of the benefit with
-no compiler work, and it is the row to do before any SIMD surface exists.
+no compiler work, and it is still the row to do first — not because the SIMD
+surface is missing (it shipped), but because a group-probe kernel would be the
+seven-lowering kind and SWAR gets most of the win for none of it.
 
 Rows 42–44 get **N/A:no-consumer** rather than GAP on purpose. They are
 excellent data structures with no caller in Fern's workloads; adding them is
@@ -233,7 +253,7 @@ stdlib breadth (`STDLIB-ROADMAP.md`'s territory), not algorithmic progress.
 | 45 | `sort` (unstable) | `core/cmp` | Absent — stable sort is the only option | pdqsort | GAP | 1 |
 | 46 | `stable_sort` | `core/cmp` | **Adaptive natural-run merge** | Timsort | **SHIPPED** (MIN_RUN + galloping open) | 1 |
 | 47 | Integer sort | `std/sort` | **Insertion sort, O(n²)**, on the in-place `i32[]` path | Radix / American flag | **GAP — biggest sort win** | 1 |
-| 48 | Tiny sort (network) | — | Absent | Sorting network | BLOCKED:SIMD — scalar networks rarely pay | 5 |
+| 48 | Tiny sort (network) | — | Absent | Sorting network | KERNEL — but scalar networks rarely pay, so the input-vs-needle question comes first | 5 |
 | 49 | Tiny sort (insertion) | `core/cmp` | **Insertion below 32** | Insertion below ~24 | **SHIPPED** | — |
 | 50 | Parallel sort | — | Absent | PPQSort / parallel pdqsort | N/A:no-threads | 6 |
 | 51 | Parallel integer sort | — | Absent | Parallel radix | N/A:no-threads | 6 |
@@ -272,18 +292,18 @@ it is a standing constraint on how stdlib generics can be written at all.
 
 | # | Primitive | Site | Today | Target | Verdict | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
-| 55 | `find_byte` | `std/string` | Scalar scan | SIMD `memchr` | BLOCKED:SIMD; **SWAR viable** | 1 |
+| 55 | `find_byte` | `std/string` | **`__memchr` / `__rmemchr`** | SIMD `memchr` | **SHIPPED** — both directions; ~43x forward, 8.8x backward | — |
 | 56 | `find` | `std/string` | **Two-Way (Crochemore–Perrin)** | Two-Way + SIMD fast path | **SHIPPED** | — |
-| 57 | `count_byte` | `std/string` | Routed through the search core | SIMD | BLOCKED:SIMD | 5 |
+| 57 | `count_byte` | `std/string` | Routed through the search core, which is now vector | SIMD | **SHIPPED via row 55** — a dedicated counting kernel (popcount over the mask, no early exit) is a further KERNEL | 5 |
 | 58 | `starts_with` | `std/string` | Anchored `__substr_eq` | Vector compare | **SHIPPED** (correct shape scalar) | — |
 | 59 | `ends_with` | `std/string` | Anchored `__substr_eq` | Vector compare | **SHIPPED** | — |
-| 60 | `memcmp` | runtime helper | Byte loop | Word-at-a-time, then SIMD | BLOCKED:raw-load; SWAR viable | 2 |
+| 60 | `memcmp` | runtime helper | Byte loop | Word-at-a-time, then SIMD | DEFERRED:needle-length — its favourable shape is the uncommon one (ATLAS §4); SWAR viable | 2 |
 | 61 | `memcpy` | runtime helper | Byte loop | Size-specialised | BLOCKED:raw-load; SWAR viable | 2 |
 | 62 | `memmove` | runtime helper | Byte loop | Overlap-aware | BLOCKED:raw-load | 2 |
-| 63 | ASCII test | `std/string` | Byte loop | High-bit vector test | BLOCKED:SIMD; SWAR viable | 1 |
+| 63 | ASCII test | `std/string` | **`__ascii_run`** | High-bit vector test | **SHIPPED** — 0.22 → 13.8 GB/s through `is_valid_utf8` | — |
 | 64 | ASCII lowercasing | `std/string` | Byte loop | SWAR bit manipulation | GAP — SWAR, unblocked | 1 |
-| 65 | Base64 encode | `std/base64` | Scalar, per-character alphabet ladder | SIMD | BLOCKED:SIMD; table lookup unblocked | 1 |
-| 66 | Base64 decode | `std/base64` | Scalar ladder | SIMD | BLOCKED:SIMD; table lookup unblocked | 1 |
+| 65 | Base64 encode | `std/base64` | Scalar, per-character alphabet ladder | SIMD | KERNEL; table lookup still the cheaper first move | 1 |
+| 66 | Base64 decode | `std/base64` | Scalar ladder | SIMD | KERNEL; table lookup still the cheaper first move | 1 |
 
 Backward search deserves a note because it is the most instructive row that
 already landed: `last_index_of` / `rfind` / `rsplit_once` / `rpartition` run a
@@ -304,10 +324,10 @@ The same is true of `__b64_decode_char`.
 | # | Primitive | Site | Today | Target | Verdict | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
 | 67 | UTF-8 validation | `std/utf8` | **Branch-ladder length dispatch**, inlined continuation checks | Table DFA, then simdutf | **GAP — table DFA is unblocked** | 1 |
-| 68 | UTF-8 → UTF-16 | `std/utf8` | Scalar | SIMD transcoding | BLOCKED:SIMD | 5 |
-| 69 | UTF-16 → UTF-8 | `std/utf8` | Scalar | SIMD transcoding | BLOCKED:SIMD | 5 |
-| 70 | UTF-8 → UTF-32 | `std/utf8` | Scalar | Hybrid | BLOCKED:SIMD | 5 |
-| 71 | UTF-16 validation | `std/utf8` | Scalar | SIMD | BLOCKED:SIMD | 5 |
+| 68 | UTF-8 → UTF-16 | `std/utf8` | Scalar | SIMD transcoding | KERNEL | 5 |
+| 69 | UTF-16 → UTF-8 | `std/utf8` | Scalar | SIMD transcoding | KERNEL | 5 |
+| 70 | UTF-8 → UTF-32 | `std/utf8` | Scalar | Hybrid | KERNEL | 5 |
+| 71 | UTF-16 validation | `std/utf8` | Scalar | SIMD | KERNEL | 5 |
 | 72 | Grapheme iteration | `std/unicode` | `graphemes` / `grapheme_count` / `reverse_graphemes` | UAX #29 | **SHIPPED** | — |
 | 72a | Word segmentation | `std/unicode` | `word_segments` (lossless) / `words` / `word_count` | UAX #29 | **SHIPPED** | — |
 | 73 | Case folding | `std/unicode` | `case_fold`, `eq_ignore_case`, packed tables | Unicode tables | **SHIPPED** | — |
@@ -348,15 +368,15 @@ per ASCII byte, and ASCII is what the ingest path mostly sees.
 
 | # | Primitive | Site | Today | Target | Verdict | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
-| 78 | JSON scanner | `std/json` | Scalar | simdjson stage 1 | BLOCKED:SIMD | 5 |
-| 79 | JSON parser | `std/json` | Scalar recursive descent | simdjson stage 2 | BLOCKED:SIMD | 5 |
+| 78 | JSON scanner | `std/json` | Scalar | simdjson stage 1 | KERNEL | 5 |
+| 79 | JSON parser | `std/json` | Scalar recursive descent | simdjson stage 2 | KERNEL | 5 |
 | 80 | JSON number | `std/json` | Delegates to `parse_float` (Eisel–Lemire) | Eisel–Lemire | **SHIPPED** | — |
-| 81 | CSV scanner | `std/csv` | Scalar | SIMD delimiter detection | BLOCKED:SIMD | 5 |
-| 82 | HTTP parser | `std/http` | Scalar | SIMD classification | BLOCKED:SIMD | 5 |
+| 81 | CSV scanner | `std/csv` | Scalar | SIMD delimiter detection | KERNEL | 5 |
+| 82 | HTTP parser | `std/http` | Scalar | SIMD classification | KERNEL | 5 |
 | 83 | Lexer classes | `internal/lexer`, self-host lexer | Branch chains in places | 256-entry lookup tables | **GAP — easy, and the compiler is the beneficiary** | 1 |
 | 84 | Whitespace scan | lexers | Branch chains | SWAR / table | GAP | 1 |
 | 85 | Identifier scan | lexers | Branch chains | Table-driven ASCII fast path | GAP | 1 |
-| 86 | Quoted-string scan | `std/json`, lexers | Byte loop | SIMD quote/backslash detect | BLOCKED:SIMD; table-driven unblocked | 1 |
+| 86 | Quoted-string scan | `std/json`, lexers | Byte loop | SIMD quote/backslash detect | KERNEL; table-driven still the cheaper first move | 1 |
 
 **Row 83 is the piece of the simdjson lesson that survives without vectors**,
 and it lands on the compiler's own lexer, which is Fern's hottest parsing
@@ -462,7 +482,7 @@ constrains the API and should be designed first, not retrofitted.
 | # | Primitive | Site | Today | Verdict |
 | --- | --- | --- | --- | --- |
 | 123 | BLAKE3 | — | Absent | GAP, phase 6 |
-| 124 | SHA-256 | `std/crypto` | Pure Fern, `u32[]` state | **SHIPPED** — hardware acceleration BLOCKED:SIMD |
+| 124 | SHA-256 | `std/crypto` | Pure Fern, `u32[]` state | **SHIPPED** — hardware acceleration needs a crypto-extension KERNEL, outside the §3 byte-lane contract |
 | 125 | SHA-512 | — | Absent | GAP |
 | 126 | SHA-3 | — | Absent | GAP |
 | 127 | AES-GCM | — | Absent | BLOCKED:no-AES-intrinsics |
