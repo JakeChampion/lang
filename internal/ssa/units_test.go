@@ -203,3 +203,38 @@ func TestUnitsOfReadsABorrowReturningCallee(t *testing.T) {
 		t.Errorf("borrow-returning callee's result = %v, want borrowed", got)
 	}
 }
+
+// A static closure cell is a `.rodata` constant, not a heap block, so
+// it carries no unit — the same answer as an enum sentinel or a
+// vtable. `ir.OpConstFunc` lifts to OpMakeClosure for dispatch
+// uniformity, which is why the kind alone cannot decide this.
+func TestUnitsOfPlacesAStaticClosureCellAsCarryingNothing(t *testing.T) {
+	f := &Func{Name: "f"}
+	b := f.NewBlock()
+	f.Entry = b
+	v := f.AddOp(b, OpMakeClosure)
+	op := b.Ops[len(b.Ops)-1]
+	op.Str, op.StaticCell = "target", true
+	b.Term = Terminator{Kind: TermRet}
+
+	if got := UnitsOf(f, nil).Origin(v); got != UnitNone {
+		t.Errorf("static closure cell origin = %v, want none — a `lea` against "+
+			"`.rodata` can never be released", got)
+	}
+}
+
+// And the heap form still allocates. A zero-capture closure that has
+// NOT been rewritten is a 32-byte rc=1 block, so the two are
+// indistinguishable by kind, Str and capture count alike.
+func TestUnitsOfPlacesAHeapClosureAsFresh(t *testing.T) {
+	f := &Func{Name: "f"}
+	b := f.NewBlock()
+	f.Entry = b
+	v := f.AddOp(b, OpMakeClosure)
+	b.Ops[len(b.Ops)-1].Str = "target"
+	b.Term = Terminator{Kind: TermRet}
+
+	if got := UnitsOf(f, nil).Origin(v); got != UnitFresh {
+		t.Errorf("heap closure origin = %v, want fresh", got)
+	}
+}

@@ -1017,6 +1017,10 @@ func (l *lifter) handle(i int, op ir.Op) error {
 		// the module's function-index table, not the stale op.I32.
 		result := l.out.AddOp(l.cur, OpMakeClosure)
 		l.cur.Ops[len(l.cur.Ops)-1].Str = op.Str
+		// The cell is a `.rodata` constant, not a heap block — the one
+		// difference from a real closure that survives the merge, and
+		// the one reference counting needs. See Op.StaticCell.
+		l.cur.Ops[len(l.cur.Ops)-1].StaticCell = true
 		l.stack = append(l.stack, result)
 	case ir.OpConstVtable:
 		// () → vtable address. The IR names the (trait-set, concrete) pair in

@@ -172,6 +172,17 @@ func unitStatic(k OpKind) bool {
 	return false
 }
 
+// unitAllocatingOp reports whether one op allocates a counted object.
+//
+// Kind alone is not enough for OpMakeClosure: `ir.OpConstFunc` lifts to
+// it as well, and that cell is a `.rodata` constant. See Op.StaticCell.
+func unitAllocatingOp(o *Op) bool {
+	if o.Kind == OpMakeClosure && o.StaticCell {
+		return false
+	}
+	return unitAllocating(o.Kind)
+}
+
 // unitAllocating reports the op kinds that allocate a counted object.
 //
 // OpAlloc is here for the SSA codegen path, where the bump allocator
@@ -379,9 +390,11 @@ func unitFromResult(r ir.RcResult) UnitOrigin {
 // classifyDef places one defining op.
 func classifyDef(o *Op, sigs map[string]Signature) UnitOrigin {
 	switch {
-	case unitAllocating(o.Kind):
+	case unitAllocatingOp(o):
 		return UnitFresh
-	case unitStatic(o.Kind):
+	case unitStatic(o.Kind), o.Kind == OpMakeClosure && o.StaticCell:
+		// A static closure cell joins the sentinels and the vtables: an
+		// address in `.rodata` that nothing can release.
 		return UnitNone
 	}
 	switch o.Kind {

@@ -117,26 +117,29 @@ func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	t.Logf("  by defining op: %s", topCounts(byKind, 6))
 	t.Logf("  worst functions: %s", topCounts(byFunc, 5))
 
-	// Measured 2026-08-30: 2.05%, 15 functions of 730.
+	// Measured 2026-08-31: 0.96%, 7 functions of 729.
 	//
 	// A ratchet, not a specification — the same stance the leak census
 	// itself takes. Every flagged function here is a report the runtime
 	// contradicts and the walk should not make; the ceiling exists so
 	// the number cannot climb back toward the 20.3% the probe this
-	// replaces measured, and so the one open class below stays visible
-	// instead of being absorbed.
+	// replaces measured.
 	//
-	// One class is left, from the breakdown above: `make_closure`. A
-	// closure cell is 32 bytes from `__fern_alloc_rc1` with rc=1, and
-	// lowering does not always emit its release. Whether each of these
-	// is the walk missing a transfer or the compiler missing a drop is
-	// unsettled — closure reclamation is on `docs/TEST-GATES.md`'s live
-	// gap list, so both readings are open.
+	// Every named CLASS is now closed. What is left is 7 findings in 7
+	// functions, all of them a consumed parameter the walk never sees
+	// released — one each rather than a shape repeated across fixtures,
+	// which is what a class looks like once the classes are gone. It is
+	// either the solver marking a parameter consumed that is not, or a
+	// leak the census cannot see because the fixture does not take that
+	// path; deciding needs one traced end to end, and that is the next
+	// slice rather than a filter here.
 	//
-	// The `alloc` and `call` classes that stood beside it are gone: a
-	// unit threaded through a loop is disposed of under the PHI's name,
-	// and attributing that transfer to the edge closed both at once.
-	const rateCeiling = 4.0
+	// The classes that were here and are gone, each with its cause:
+	// `enum_sentinel` (a static .rodata cell read as a unit), `alloc`
+	// and `call` (a unit threaded through a loop is disposed of under
+	// the PHI's name), and `make_closure` (`ir.OpConstFunc` lifts to
+	// OpMakeClosure, and that cell is .rodata too).
+	const rateCeiling = 2.5
 	if rate > rateCeiling {
 		t.Errorf("%.2f%% of functions flagged in fixtures the runtime says are clean, over the "+
 			"%.1f%% ceiling — the walk is reporting leaks the oracle contradicts:\n  by op: %s\n  worst: %s",
