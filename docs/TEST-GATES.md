@@ -741,6 +741,22 @@ answer, these are the tools, in the order they are usually reached for:
   direction: what the rc detector cannot see. Under `-sanitize` the same
   counters also produce a one-line verdict (`fern-sanitizer: leak <K> bytes in
   <N> blocks`) when the balance is positive, so a leak needs no number read.
+
+  **A probe of a call-boundary shape needs `@noinline` on the callee AND on
+  whatever produces the argument.** `internal/ir/inline.go` inlines a
+  single-reference callee, and a loop call site lifts its size cap to 160 ops,
+  so the ordinary probe — one callee, called in a loop — is inlined away.
+  An inlined callee has no argument temp to reclaim, so the shape reads clean
+  whether or not the bug is present. `nm` on the binary is how you check: no
+  `__fn_<callee>` symbol means you measured nothing. This cost four probes on
+  #7867 before it was noticed.
+
+  Two masks specific to STRINGS, both of which make a real leak read as zero:
+  a literal or any string of 7 bytes or fewer is inline/static on single-word
+  x86-64 and allocates no block at all, and a concat whose left operand is
+  uniquely owned grows in place rather than allocating. A string probe must
+  therefore build a >7-byte string by concatenation from a **shared** left
+  operand that stays live across the loop.
 - **`FERN_RC_TRACE=1`** — one stderr line per heap event:
   `rctrace <a|f> <ptr> <size> <site>`, all three numbers fixed-width 16-hex,
   `site` being the *caller's* return address. Stands to `FERN_LEAKCHECK` as

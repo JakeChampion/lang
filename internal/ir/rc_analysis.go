@@ -1190,8 +1190,21 @@ func structParamProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.I
 				// to 2 so the result co-owns it alongside `p.f`, and on the copy
 				// path it allocates a fresh buffer and leaves the receiver's
 				// count untouched.
+				//
+				// The ELEMENT is counted too, and for a plainer reason:
+				// `emitArrayPush` emits `emitAliasInc(Args[1])` whenever
+				// `needsRcIncOnAlias` holds and the value is not a move site.
+				// A bare parameter satisfies both — the predicate is true for
+				// every pointer type, and `isOwnedRcLocal` (which gates every
+				// move site) walks `info.Locals` only, so a parameter is never
+				// one. So the buffer co-owns a counted reference and the
+				// caller's is_unique-gated drop nets the temp to a single
+				// owner. Without this the caller's fresh argument was
+				// stranded: 2 blocks a round for an element carrying a heap
+				// field, linear and unbounded (#7867).
 				if id.Name == "__method_Array_push" && len(x.Args) == 2 {
 					markSlotValue(x.Args[0])
+					markSlotValue(x.Args[1])
 				}
 				if cs, ok := summary[id.Name]; ok {
 					for i, a := range x.Args {
