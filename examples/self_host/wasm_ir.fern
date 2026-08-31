@@ -5237,26 +5237,43 @@ pub function substr_helper(): string {
 // memchr_helper emits $__fern_memchr(s, byte, from) -> the index of the first
 // `byte` at or after `from`, or -1 (ATLAS-PLATFORM-PLAN §3).
 //
-// SCALAR, and that is the plan's ordering rather than an oversight: §3.4 makes
-// the intrinsic total in every backend before making it fast in any, so no
-// caller can be written against a lowering that does not exist yet. The native
-// wasm backend serves the same meaning with a v128 kernel
-// (i8x16.eq / i8x16.bitmask / i32.ctz); substituting one here is a later slice
-// and changes nothing above this function.
+// v128, 16 bytes an iteration — the same kernel the native wasm backend runs,
+// and the wasm leg is the one whose mask extraction is FREE: i8x16.bitmask is
+// pmovmskb, one bit per byte, so i32.ctz of it is the lane index directly. No
+// nibble arithmetic as on NEON, no separate compare as on... well, the compare
+// is here, since a byte search has a needle to match.
 //
-// Reads only the source block ([len@0][bytes@4]) — no allocation, no calls, so
-// it needs no runtime beyond itself.
+// Unlike the native wasm kernel this needs no second scalar path for a short
+// string: the self-host wasm representation is one [len@0][bytes@4] block, so
+// the bytes always have an address, where native wasm's SSO form keeps a short
+// string in its two words with nothing for v128.load to point at.
+//
+// The vector load runs only with a full block left, so it never reads past the
+// block, and its alignment hint is 0 — the cursor is arbitrary, and a hint
+// LARGER than the access is a validation error where a smaller one is legal.
+//
+// Reads only the source block — no allocation, no calls, so it needs no
+// runtime beyond itself.
 pub function memchr_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_memchr (param $s i32) (param $byte i32) (param $from i32) (result i32)\n";
-    o = o + "    (local $len i32) (local $i i32)\n";
+    o = o + "    (local $len i32) (local $i i32) (local $m i32) (local $splat v128)\n";
     // A byte outside 0..255 can never appear in the haystack. Checked first so
-    // the scan needs no per-iteration guard.
+    // neither loop needs a per-iteration guard.
     o = o + "    (if (i32.or (i32.lt_s (local.get $byte) (i32.const 0)) (i32.gt_s (local.get $byte) (i32.const 255))) (then (return (i32.const -1))))\n";
     o = o + "    (local.set $len (i32.load (local.get $s)))\n";
     // `from` clamps rather than traps: negative behaves as 0.
     o = o + "    (local.set $i (local.get $from))\n";
     o = o + "    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (local.set $i (i32.const 0))))\n";
+    o = o + "    (local.set $splat (i8x16.splat (local.get $byte)))\n";
+    o = o + "    (block $vd (loop $vc\n";
+    o = o + "      (br_if $vd (i32.lt_s (i32.sub (local.get $len) (local.get $i)) (i32.const 16)))\n";
+    o = o + "      (local.set $m (i8x16.bitmask (i8x16.eq (v128.load (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))) (local.get $splat))))\n";
+    o = o + "      (if (i32.ne (local.get $m) (i32.const 0)) (then (return (i32.add (local.get $i) (i32.ctz (local.get $m))))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 16)))\n";
+    o = o + "      (br $vc)))\n";
+    // Scalar tail: fewer than 16 bytes left, and the whole algorithm for a
+    // block shorter than one vector.
     o = o + "    (block $d (loop $c\n";
     o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
     o = o + "      (if (i32.eq (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))) (local.get $byte)) (then (return (local.get $i))))\n";
@@ -5269,23 +5286,31 @@ pub function memchr_helper(): string {
 // byte at or after `from` with its high bit set, or the LENGTH if the rest is
 // ASCII (ATLAS-PLATFORM-PLAN §3, second kernel).
 //
-// SCALAR for memchr_helper's reason — §3.4 makes the intrinsic total in every
-// backend before making it fast in any. The native wasm backend serves the same
-// meaning with a v128 kernel, and that one is the cheapest of all six vector
-// forms: i8x16.bitmask gathers the top bit of each byte, which IS this test, so
-// it needs neither a splat nor a compare.
+// v128, and the cheapest of all the vector forms this op takes anywhere:
+// i8x16.bitmask gathers the top bit of each byte, which IS the "not ASCII"
+// test, so the body is load / gather / ctz with neither a splat nor a compare.
+// It needs no v128 LOCAL either — the mask consumes the load directly.
 //
-// `>= 128` rather than a sign test, because i32.load8_u zero-extends.
+// `>= 128` rather than a sign test in the tail, because i32.load8_u
+// zero-extends.
 //
 // Reads only the source block ([len@0][bytes@4]) — no allocation, no calls.
 pub function ascii_run_helper(): string {
     var o: string = "";
     o = o + "  (func $__fern_ascii_run (param $s i32) (param $from i32) (result i32)\n";
-    o = o + "    (local $len i32) (local $i i32)\n";
+    o = o + "    (local $len i32) (local $i i32) (local $m i32)\n";
     o = o + "    (local.set $len (i32.load (local.get $s)))\n";
     // `from` clamps rather than traps: negative behaves as 0.
     o = o + "    (local.set $i (local.get $from))\n";
     o = o + "    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (local.set $i (i32.const 0))))\n";
+    o = o + "    (block $vd (loop $vc\n";
+    o = o + "      (br_if $vd (i32.lt_s (i32.sub (local.get $len) (local.get $i)) (i32.const 16)))\n";
+    o = o + "      (local.set $m (i8x16.bitmask (v128.load (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i)))))\n";
+    o = o + "      (if (i32.ne (local.get $m) (i32.const 0)) (then (return (i32.add (local.get $i) (i32.ctz (local.get $m))))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 16)))\n";
+    o = o + "      (br $vc)))\n";
+    // Scalar tail: the final 0..15 bytes, and the whole algorithm for a block
+    // shorter than one vector.
     o = o + "    (block $d (loop $c\n";
     o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
     o = o + "      (if (i32.ge_u (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))) (i32.const 128)) (then (return (local.get $i))))\n";
