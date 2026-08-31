@@ -58561,6 +58561,14 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
             // unconditional and unaffected.
             var scnt: boolean = true;
             if ((pfx == "SCNT:" || pfx == "ECNT:" || pfx == "TCNT:") && !struct_routes_field_reclaim_at(structs, sfok, sl.type_name)) { scnt = false; }
+            // The STRUCT tier credits ONLY the counted append store below. A
+            // bare param in a field slot takes the construction-side retain
+            // just for a type that routes field reclaim, and crediting it
+            // where that retain does not fire makes the caller's post-call
+            // release an over-release — `wrap(p, i) -> Box { a: p, n: i }`
+            // at rc underflow, which is what callee_wraps_param pins. Refusing
+            // costs the leak that shape already had.
+            if (pfx == "PCNT:") { scnt = false; }
             for fv in sl.field_values { if (!arrparam_use_ok(fv, pn, scnt, reg, pfx, structs, sfok)) { return false; } }
             return true;
         },
