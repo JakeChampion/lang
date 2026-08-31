@@ -2671,7 +2671,7 @@ func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcS
 			// and vtable (cell+ptrW) into fresh locals BEFORE any free, then
 			// dispatch + free the cell. Slots: 0 = cell (param), 1 = data,
 			// 2 = vtable.
-			fn.Params = []ast.Param{{Name: "__dcell", Type: ast.NumberType{}}}
+			fn.Params = []ast.Param{{Name: "__dcell", Type: dropThunkParamType}}
 			// Slots 1 and 2 are scratch, and have to be DECLARED: a
 			// backend that sizes its frame from the declared count
 			// (wasm does) would otherwise write them outside it.
@@ -2719,8 +2719,8 @@ func buildDynDropHelpers(prog *ast.Program, info *checker.Info, ptrW int, dynRcS
 		}
 		// wasm (inline two-word): two params = data, vtable.
 		fn.Params = []ast.Param{
-			{Name: "__ddata", Type: ast.NumberType{}},
-			{Name: "__dvtbl", Type: ast.NumberType{}},
+			{Name: "__ddata", Type: dropThunkParamType},
+			{Name: "__dvtbl", Type: dropThunkParamType},
 		}
 		// d = vtable[methodCount*4] (function-table index of the dtor).
 		emit(Op{Kind: OpLoadLocal, I32: 1})

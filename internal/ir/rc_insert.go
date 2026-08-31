@@ -23,6 +23,18 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 )
 
+// dropThunkParamType is the declared type of a generated drop thunk's
+// argument 0: the heap pointer it releases. `usize` rather than a bare
+// number, because ssa/lift.go reads address-ness off the declared type
+// (NumberType.IsPointerWidth) — a bare-number param reports
+// ParamAddrs=false, which makes ssa/width.go refuse to widen it and the
+// ownership solver skip demandsUnit, so the release the body always
+// performs is invisible (#7866). Width-neutral on the flat backends:
+// widthOfAstType reports 32 for WidthPtr exactly as it does for a bare
+// number, and wasm's valtypeFor still yields i32. Matches the
+// hand-written sibling `__map_drop_values(m: usize): usize`.
+var dropThunkParamType = ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}
+
 // insertConsumedParamEntryIncs splices the consumed-threaded param entry
 // retain-incs into the LOWERED op stream, at the prologue boundary `at`
 // (right after the rc-slot / defer-flag zero-init) — the first RC insertion
@@ -1860,7 +1872,7 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 		Op{Kind: OpReturn})
 	return &Func{
 		Name:       "__closure_drop_" + name,
-		Params:     []ast.Param{{Name: "__cdenv", Type: ast.NumberType{}}},
+		Params:     []ast.Param{{Name: "__cdenv", Type: dropThunkParamType}},
 		ReturnType: ast.NumberType{},
 		Ops:        ops,
 	}
@@ -2341,7 +2353,7 @@ func genArrElemDropFn(fnName, elemCallee, paramName string, ptrW int) *Func {
 	}
 	return &Func{
 		Name:         fnName,
-		Params:       []ast.Param{{Name: paramName, Type: ast.NumberType{}}},
+		Params:       []ast.Param{{Name: paramName, Type: dropThunkParamType}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
@@ -2382,7 +2394,7 @@ func genArrEnumDropFn(elemName string, ptrW int) *Func {
 func genClosureValueDropFn(ptrW int) *Func {
 	return &Func{
 		Name:       "__drop_closure_value",
-		Params:     []ast.Param{{Name: "__cv", Type: ast.NumberType{}}},
+		Params:     []ast.Param{{Name: "__cv", Type: dropThunkParamType}},
 		ReturnType: ast.NumberType{},
 		Ops:        append(closureValueReleaseOps(0, ptrW), Op{Kind: OpLoadLocal, I32: 0}, Op{Kind: OpReturn}),
 	}
@@ -2491,7 +2503,7 @@ func genArrClosureDropFn(ptrW int) *Func {
 	}...)
 	return &Func{
 		Name:         "__drop_arr_closure",
-		Params:       []ast.Param{{Name: "__acl", Type: ast.NumberType{}}},
+		Params:       []ast.Param{{Name: "__acl", Type: dropThunkParamType}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
@@ -2570,7 +2582,7 @@ func genArrArrDropFn(innerStride int32, ptrW int) *Func {
 	}
 	return &Func{
 		Name:         fmt.Sprintf("__drop_arr_arr_%d", innerStride),
-		Params:       []ast.Param{{Name: "__aa", Type: ast.NumberType{}}},
+		Params:       []ast.Param{{Name: "__aa", Type: dropThunkParamType}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
@@ -2633,7 +2645,7 @@ func genArrArrStrDropFn(ptrW int) *Func {
 	}
 	return &Func{
 		Name:         "__drop_arr_arr_str",
-		Params:       []ast.Param{{Name: "__aas", Type: ast.NumberType{}}},
+		Params:       []ast.Param{{Name: "__aas", Type: dropThunkParamType}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
@@ -2696,7 +2708,7 @@ func genArrOfArrDropFn(perElemDrop string, ptrW int) *Func {
 	}
 	return &Func{
 		Name:         "__drop_arr_of_" + perElemDrop,
-		Params:       []ast.Param{{Name: "__ao", Type: ast.NumberType{}}},
+		Params:       []ast.Param{{Name: "__ao", Type: dropThunkParamType}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
@@ -2772,7 +2784,7 @@ func genArrDynDropFn(dynDrop string, ptrW int) *Func {
 	}
 	return &Func{
 		Name:         "__drop_arr_dyn_" + dynDrop,
-		Params:       []ast.Param{{Name: "__ad", Type: ast.NumberType{}}},
+		Params:       []ast.Param{{Name: "__ad", Type: dropThunkParamType}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
@@ -2824,7 +2836,7 @@ func genDynPrimDropFn(prim string, ptrW int) *Func {
 	)
 	return &Func{
 		Name:       "__drop_dynprim_" + prim,
-		Params:     []ast.Param{{Name: "__dp", Type: ast.NumberType{}}},
+		Params:     []ast.Param{{Name: "__dp", Type: dropThunkParamType}},
 		ReturnType: ast.NumberType{},
 		Ops:        ops,
 	}
@@ -2920,7 +2932,7 @@ func genMapValDropFn(perValueDrop string, ptrW int) *Func {
 	}
 	return &Func{
 		Name:         "__drop_map_via_" + perValueDrop,
-		Params:       []ast.Param{{Name: "__dm", Type: ast.NumberType{}}},
+		Params:       []ast.Param{{Name: "__dm", Type: dropThunkParamType}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
@@ -3053,7 +3065,7 @@ func genMapStrColDropFn(name string, colOff int32, ptrW int) *Func {
 	)
 	return &Func{
 		Name:         name,
-		Params:       []ast.Param{{Name: "__dm", Type: ast.NumberType{}}},
+		Params:       []ast.Param{{Name: "__dm", Type: dropThunkParamType}},
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
@@ -3241,7 +3253,7 @@ func genTupleDropFn(mangled string, tt ast.TupleType, info *checker.Info, ptrW i
 		Op{Kind: OpReturn})
 	return &Func{
 		Name:       "__drop_tuple_" + mangled,
-		Params:     []ast.Param{{Name: "__dt", Type: ast.NumberType{}}},
+		Params:     []ast.Param{{Name: "__dt", Type: dropThunkParamType}},
 		ReturnType: ast.NumberType{},
 		Ops:        ops,
 	}
@@ -3323,7 +3335,7 @@ func genStructDropFn(name string, sd *ast.StructDecl, info *checker.Info, ptrW i
 		Op{Kind: OpReturn})
 	return &Func{
 		Name:       "__drop_struct_" + name,
-		Params:     []ast.Param{{Name: "__ds", Type: ast.NumberType{}}},
+		Params:     []ast.Param{{Name: "__ds", Type: dropThunkParamType}},
 		ReturnType: ast.NumberType{},
 		Ops:        ops,
 	}
@@ -3418,7 +3430,7 @@ func genEnumDropFn(name string, ed *ast.EnumDecl, info *checker.Info, ptrW int, 
 		Op{Kind: OpReturn})
 	return &Func{
 		Name:         "__drop_enum_" + name,
-		Params:       []ast.Param{{Name: "__de", Type: ast.NumberType{}}},
+		Params:       []ast.Param{{Name: "__de", Type: dropThunkParamType}},
 		ScratchTypes: []ast.Type{ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
@@ -3693,7 +3705,7 @@ func genStructFlatDropFn(name string, sd *ast.StructDecl, ptrW int) (*Func, bool
 		Op{Kind: OpReturn})
 	return &Func{
 		Name:       "__drop_struct_flat_" + name,
-		Params:     []ast.Param{{Name: "__ds", Type: ast.NumberType{}}},
+		Params:     []ast.Param{{Name: "__ds", Type: dropThunkParamType}},
 		ReturnType: ast.NumberType{},
 		Ops:        ops,
 	}, true
