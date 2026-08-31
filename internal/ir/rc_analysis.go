@@ -834,14 +834,32 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 				case ast.ArrayType:
 					flags[i] = arrayParamCounted(fn, p.Name, out)
 				case ast.StructType:
-					// Struct-param generalisation: credit `p` when every one of
-					// its appearances is a counted store, a non-retaining read,
-					// or a counted call argument — so a result built from it
-					// holds only counted references. This is what lets the
-					// scalar-arg exemption fire for a scanner threaded through
-					// field projections and pure-read methods (lexer.tokenize;
+					// Credit `p` when every one of its appearances is a counted
+					// store, a non-retaining read, or a counted call argument —
+					// so a result built from it holds only counted references.
+					// This is what lets the scalar-arg exemption fire for a
+					// scanner threaded through field projections and pure-read
+					// methods (lexer.tokenize;
 					// docs/SELFHOST-AST-RETIREMENT.md).
-					flags[i] = structParamProjectionsSafe(fn, p.Name, pt.Name, info, out)
+					flags[i] = paramProjectionsSafe(fn, p.Name, pt.Name, info, out)
+				case ast.EnumType:
+					// The same rule, and sound for the same reason:
+					// `needsRcIncOnAlias` is true for an enum, so a bare `p` in
+					// a construction slot is inc'd into the new box exactly as
+					// a struct is. Without this arm the parser's node
+					// constructors — `e_binary(op, l, r)` and its siblings,
+					// whose payloads are `ast.Expr`, an enum — were refused,
+					// and every caller's fresh argument was stranded. Isolated
+					// with a control: `mknode(t, n) -> Node { ty: t, n: n }`
+					// leaks its argument when `t` is an enum and does not when
+					// `t` is a struct, same call shape either way (#7867).
+					flags[i] = paramProjectionsSafe(fn, p.Name, pt.Name, info, out)
+				case ast.TupleType:
+					// A tuple has no nominal declaration to name, so the
+					// projection arms never fire and only the slot / argument /
+					// return rules can credit it. `needsRcIncOnAlias` is true
+					// for a tuple, so those carry the same argument.
+					flags[i] = paramProjectionsSafe(fn, p.Name, "", info, out)
 				}
 			}
 			ptrAllCounted := true
@@ -1068,10 +1086,10 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) b
 	return everyOccurrenceSafe(total, len(safe))
 }
 
-// structParamProjectionsSafe reports whether every occurrence of struct
-// parameter `pn` (declared struct type `sn`) in fn is a COUNTED store, a
-// NON-RETAINING read, or a COUNTED call argument — the struct-param
-// generalisation of the string counted-retain summary, closed over the
+// paramProjectionsSafe reports whether every occurrence of pointer
+// parameter `pn` in fn is a COUNTED store, a NON-RETAINING read, or a
+// COUNTED call argument — the generalisation of the string
+// counted-retain summary to a whole-value parameter, closed over the
 // interprocedural `summary` for the arg-position rule. Conservative by
 // construction: a p-occurrence is credited only when the walk positively
 // proves it safe, and the param qualifies only when EVERY occurrence is
@@ -1082,6 +1100,9 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) b
 //   - a bare `p` or `p.field` stored as a StructLit / TupleLit / ArrayLit slot
 //     value — the construction inc's a pointer field / copies a scalar;
 //   - a SCALAR field read `p.scalarField` anywhere — a value copy;
+//     available only when `sn` names a struct declaration; an enum or a
+//     tuple has no field to read and every projection arm simply never
+//     fires for one;
 //   - the SOURCE of a string slice `p.strField[a:b]` / string index
 //     `p.strField[i]` — a copying read;
 //   - a bare `p` / `p.field` passed as argument i to a call whose callee
@@ -1097,12 +1118,17 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) b
 // keeps `grow(m, k): Map { m = m.insert(k, …); return m; }` out: `m` reaches a
 // builtin `__method_Map_set` argument (never in `summary`) and a bare
 // `return m`, so it is never credited and its scalar `k` is never exempted.
-func structParamProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, summary map[string][]bool) bool {
-	sd, ok := info.Structs[sn]
-	if !ok {
-		return false
-	}
+func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, summary map[string][]bool) bool {
+	// `sn` names a struct declaration for a struct parameter and nothing
+	// for an enum or a tuple. Absence is not a refusal: it makes the
+	// field-type lookup answer "no such field", so the two projection
+	// arms that consult it never credit — which is the right answer for
+	// a value that has no fields to project, rather than a missing one.
+	sd, hasDecl := info.Structs[sn]
 	fieldType := func(name string) (ast.Type, bool) {
+		if !hasDecl {
+			return nil, false
+		}
 		for _, f := range sd.Fields {
 			if f.Name == name {
 				return f.Type, true
