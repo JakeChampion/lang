@@ -415,3 +415,38 @@ func TestCertifyStillReportsAHeapClosure(t *testing.T) {
 		t.Errorf("want the unreleased heap closure reported, got %+v", rep.Leaks)
 	}
 }
+
+// The dataflow runs to a fixpoint with no round cap. It used to stop at
+// 64 sweeps, which silently truncated the answer on the functions least
+// able to afford it — over the self-host compiler three need more than
+// that, one needs 206, and the cap was hiding 41 findings.
+//
+// A chain of blocks needs a sweep per link to propagate, so the shape is
+// cheap to build and would have hit the old cap exactly.
+func TestCertifyRunsToAFixpointWithNoRoundCap(t *testing.T) {
+	const links = 120
+	f := &Func{Name: "f"}
+	blocks := make([]*Block, links+1)
+	for i := range blocks {
+		blocks[i] = f.NewBlock()
+	}
+	f.Entry = blocks[0]
+	// A unit allocated in the first block and released in the last: the
+	// state has to travel the whole chain before the walk settles.
+	v := f.AddOp(blocks[0], OpAlloc)
+	for i := 0; i < links; i++ {
+		blocks[i].Term = Terminator{Kind: TermBr, Target: blocks[i+1]}
+		blocks[i+1].Preds = []*Block{blocks[i]}
+	}
+	dec(f, blocks[links], v)
+	blocks[links].Term = Terminator{Kind: TermRet}
+
+	rep := Certify(f, nil)
+	if len(rep.Leaks) != 0 {
+		t.Errorf("a unit released at the end of a %d-block chain was reported: %+v",
+			links, rep.Leaks)
+	}
+	if rep.Passes == 0 {
+		t.Error("the pass count is not being reported")
+	}
+}
