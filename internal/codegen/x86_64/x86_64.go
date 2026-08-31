@@ -7987,10 +7987,18 @@ func (g *generator) emitMemchrRuntime() {
 // emitRmemchrRuntime emits `__fern_rmemchr(s, byte, from) -> i32`: the index
 // of the LAST occurrence of `byte` at or before `from`, or -1.
 //
-// SCALAR, and deliberately so: docs/ATLAS-PLATFORM-PLAN.md §3.4 orders a new
-// kernel "correct in every backend first, fast one backend at a time", so no
-// caller can be written against a lowering that does not exist yet.
-// Vectorising this body is a later slice and changes nothing above it.
+// SSE2, 16 bytes per iteration, walking DOWN. The block ending at the cursor
+// is loaded at `cursor - 15`, and the mask is scanned with **bsr** rather than
+// bsf: the highest set bit is the rightmost matching byte, which is the answer
+// a backward scan wants. That one substitution is the whole difference from
+// __memchr's vector body — the splat, load, compare and gather are identical.
+//
+// Not lzcnt, for the same reason __memchr does not use tzcnt: lzcnt is BMI1
+// and on a pre-baseline CPU its F3 prefix is IGNORED, so it degrades silently
+// to bsr rather than faulting. Here that would be harmless (bsr is what is
+// wanted) but the reasoning is worth keeping straight — bsr is selected, not
+// tolerated. It also differs from lzcnt in what it returns: a bit INDEX, not
+// a leading-zero count, which is exactly the lane number.
 //
 // The clamp is __memchr's mirrored, which is the whole difference between the
 // two and the thing a reader porting this gets wrong: a forward scan clamps
@@ -8019,6 +8027,56 @@ func (g *generator) emitRmemchrRuntime() {
 	g.emit("jle .Lrmemchr_from_ok")
 	g.emit("mov edx, ecx")
 	g.label(".Lrmemchr_from_ok")
+	// Broadcast the needle byte across xmm1 — the SSE2 splat, as __memchr's.
+	g.emit("movd xmm1, esi")
+	g.emit("punpcklbw xmm1, xmm1")
+	g.emit("punpcklwd xmm1, xmm1")
+	g.emit("pshufd xmm1, xmm1, 0")
+	// Vector loop while a whole block still fits BELOW the cursor, i.e. the
+	// block [edx-15, edx] starts at a non-negative index. That bound is what
+	// keeps the load in bounds at the low end, where __memchr's `>= 16 left`
+	// keeps it in bounds at the high end.
+	g.emit("cmp edx, 15")
+	g.emit("jl .Lrmemchr_tail")
+	// r8d = block base index, r9 = its address. Both are carried across
+	// iterations and stepped by 16, rather than recomputed from the cursor
+	// each time: measured, recomputing cost about a third of the loop.
+	g.emit("mov r8d, edx")
+	g.emit("sub r8d, 15")
+	g.emit("mov r9, rdi")
+	g.emit("add r9, r8")
+	g.label(".Lrmemchr_vec")
+	g.emit("movdqu xmm0, [r9]")
+	g.emit("pcmpeqb xmm0, xmm1")
+	g.emit("pmovmskb eax, xmm0")
+	g.emit("test eax, eax")
+	g.emit("jnz .Lrmemchr_hitvec")
+	g.emit("sub r8d, 16")
+	g.emit("jns .Lrmemchr_step")
+	// The next block would start below 0, so the untested bytes are
+	// [0, base-1] where base is the block just cleared. Restore it and hand
+	// that cursor to the scalar tail.
+	g.emit("add r8d, 15")
+	g.emit("mov edx, r8d")
+	g.emit("jmp .Lrmemchr_tail")
+	g.label(".Lrmemchr_step")
+	g.emit("sub r9, 16")
+	g.emit("jmp .Lrmemchr_vec")
+	g.label(".Lrmemchr_hitvec")
+	// bsr = the HIGHEST set mask bit = the rightmost matching byte in the
+	// block. bsf here would answer the leftmost and be wrong in exactly the
+	// cases this op exists to get right.
+	g.emit("bsr eax, eax")
+	g.emit("add eax, r8d")
+	g.emit("jmp .Lrmemchr_ret")
+	// Scalar tail: the final 0..14 bytes, and the whole algorithm for a
+	// cursor that never had a full block beneath it.
+	g.label(".Lrmemchr_tail")
+	// The cursor is checked HERE rather than before the vector loop, because
+	// the tail has TWO entry paths: a cursor that never had a full block
+	// beneath it, and the vector loop running out. The second hands over
+	// `base - 1`, which is -1 when the last block started at 0 — so a guard
+	// placed only at the top would leave that path reading [data - 1].
 	g.emit("test edx, edx")
 	g.emit("js .Lrmemchr_miss")
 	g.label(".Lrmemchr_scan")

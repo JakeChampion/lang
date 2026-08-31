@@ -3846,8 +3846,15 @@ func (g *generator) emitMemchrRuntime() {
 // emitRmemchrRuntime emits `__fern_rmemchr(s, byte, from) -> i32`: the index
 // of the LAST occurrence of `byte` at or before `from`, or -1.
 //
-// SCALAR, per docs/ATLAS-PLATFORM-PLAN.md §3.4's "correct in every backend
-// first, fast one backend at a time". Vectorising it is a later slice.
+// NEON, 16 bytes per iteration, walking DOWN: the block ENDING at the cursor
+// is loaded at `cursor - 15`.
+//
+// The mask extraction is __memchr's read backwards. shrn gives four mask bits
+// per input byte, so __memchr divides the LOWEST set bit by four; here the
+// answer is the HIGHEST, and arm64 has no find-highest instruction — `clz`
+// counts leading zeros, so the bit index is 63 - clz and the lane is that over
+// four. x86-64 gets the same step in one instruction (bsr), which is the only
+// place these two vector bodies differ in shape rather than in constants.
 //
 // Two-word string ABI as __memchr's — x0 = data word, x1 = length word, which
 // puts `byte` in w2 and `from` in w3 — and the same frame, because
@@ -3880,6 +3887,51 @@ func (g *generator) emitRmemchrRuntime() {
 	g.emit("b.le .Lrmemchr_from_ok")
 	g.emit("mov w3, w6")
 	g.label(".Lrmemchr_from_ok")
+	g.emit("dup v1.16b, w2")
+	// Vector loop while a whole block still fits BELOW the cursor. That bound
+	// keeps the load in bounds at the LOW end, where __memchr's "16 or more
+	// left" keeps it in bounds at the high end.
+	g.emit("cmp w3, #15")
+	g.emit("b.lt .Lrmemchr_tail")
+	// w10 = block base index, x11 = its address. Both are carried across
+	// iterations and stepped by 16 rather than recomputed from the cursor:
+	// measured on the x86-64 twin, recomputing cost about a third of the loop.
+	g.emit("sub w10, w3, #15")
+	g.emit("add x11, x7, w10, uxtw")
+	g.label(".Lrmemchr_vec")
+	g.emit("ld1 {v0.16b}, [x11]")
+	g.emit("cmeq v0.16b, v0.16b, v1.16b")
+	g.emit("shrn v0.8b, v0.8h, #4")
+	g.emit("fmov x12, d0")
+	g.emit("cbz x12, .Lrmemchr_next")
+	// Highest set bit -> lane. Four mask bits per input byte, hence the >>2;
+	// 63 - clz because clz counts from the TOP and the rightmost match is the
+	// highest set bit.
+	g.emit("clz x13, x12")
+	g.emit("mov x14, #63")
+	g.emit("sub x13, x14, x13")
+	g.emit("lsr x13, x13, #2")
+	g.emit("add w0, w10, w13")
+	g.emit("b .Lrmemchr_ret")
+	g.label(".Lrmemchr_next")
+	g.emit("sub w10, w10, #16")
+	g.emit("tbnz w10, #31, .Lrmemchr_vecdone")
+	g.emit("sub x11, x11, #16")
+	g.emit("b .Lrmemchr_vec")
+	// The next block would start below 0, so the untested bytes are
+	// [0, base-1] where base is the block just cleared. Restore it and hand
+	// that cursor to the scalar tail.
+	g.label(".Lrmemchr_vecdone")
+	g.emit("add w10, w10, #15")
+	g.emit("mov w3, w10")
+	// Scalar tail: the final 0..14 bytes, and the whole algorithm for a cursor
+	// that never had a full block beneath it.
+	g.label(".Lrmemchr_tail")
+	// Checked HERE rather than before the vector loop, because the tail has
+	// TWO entry paths: a cursor with no full block beneath it, and the vector
+	// loop running out. The second hands over `base - 1`, which is -1 when the
+	// last block started at 0 — a guard only at the top leaves that path
+	// reading [data - 1].
 	g.emit("tbnz w3, #31, .Lrmemchr_miss")
 	g.label(".Lrmemchr_scan")
 	// `mov w9, w3` zero-extends into x9, so the byte load can use the plain
