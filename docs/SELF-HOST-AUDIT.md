@@ -875,35 +875,21 @@ findings. Ranked by leverage.
   and the site count is unchanged, and gate on emitted bytes.
 
 ### T8 — Hand-rolled options/containers that generics would replace
-- [!] **SH-028 — BLOCKED: the second generic adoption miscompiles the
-  self-host. Attempted 2026-08-29, reverted.**
+- [x] **SH-028 (slice 1) — the `append_*` concat family is now one generic.**
 
-  The `append_*` concat family is the row's easiest slice and it does not work
-  yet. Six byte-identical helpers — `append_funcs` / `append_structs` /
+  Six byte-identical helpers — `append_funcs` / `append_structs` /
   `append_aliases` / `append_enum_decls` in `flatten.fern`, plus a second
   `append_structs` and an `append_enums` in `modloader.fern` (the row says four;
-  it is six) — were replaced by one `util.append_all[T]`. It type-checks, and
-  `check-sources` and `build-selfhost` on both arches pass.
+  it is six) — are replaced by one `util.append_all[T]` over ten call sites.
 
-  **The resulting compiler is broken.** With that one generic added:
-
-  - `stage2-fixpoint-arm64`: 3 of 4 cases die `gen1 (x86 host): signal:
-    segmentation fault`. The discriminator is exact — `lexer` (no stdlib)
-    PASSES, and all three `stdlib: true` cases segfault, i.e. it fails on the
-    module-loading path.
-  - Locally, 12 failures across `Modload|Flatten|Bundle|Import|Generic`:
-    every `checkSourceModload` case "died on a signal rather than answering",
-    plus `TestSelfHostGenericCtorIR/std_set_of` (driver emitted 0 bytes),
-    `TestSelfHostGenericNestedRet{X86_64,Wasm}/enumerate_f64` (segfault).
-
-  Reverting the generic and nothing else makes `TestSelfHostGenericCtorIR` pass
-  again, so the causal chain is established rather than inferred: **a second
-  generic function in this tree yields a self-host compiler that segfaults on
-  module loading and miscompiles generic USER programs.**
-
-  This is a compiler defect that the dedupe exposed, not a defect in the
-  dedupe. Chasing it is a monomorphisation investigation, not "convert family
-  by family", so it wants its own issue with the reproducer above.
+  The 2026-08-29 attempt was reverted because the compiler it built segfaulted
+  on the module-loading path. **That was the test harness, not the language**
+  (#7773): `e2eharness.emitDriverAsm` built every self-host DRIVER binary
+  without `monomorph.Run`, the pass `cmd/fern` always runs and `x86_64.Emit`
+  expects. An un-instantiated generic keeps its erased type parameter, so a
+  `T[]` element read loads at i32 width against an 8-byte stride and truncates
+  the pointer. `bin/fern` compiled every one of these shapes correctly the whole
+  time; only the harness-built drivers were wrong.
 
   **The census pin is what forced this into the open**, and its wording was
   exactly right: generic functions are "the only generic code the self-host
@@ -911,10 +897,10 @@ findings. Ranked by leverage.
   the ninth failed the pin, and the pin is why the change got the fixpoint
   scrutiny that found the segfault instead of shipping as a tidy-up.
 
-  _Prerequisite for the rest of this row:_ `OptInt` / `OptBool` / `OptString`
-  and the 22 `*Result` structs all want generics too, so **the whole row is
-  blocked behind that monomorphisation bug** — and so is T6/SH-026's real
-  remainder (`lookup_*` returning `name: ""`), which depends on `Option[T]`.
+  _Rest of this row:_ `OptInt` / `OptBool` / `OptString` and the 22 `*Result`
+  structs all want generics too. They are no longer blocked, and neither is
+  T6/SH-026's real remainder (`lookup_*` returning `name: ""`), which depends
+  on `Option[T]`.
 
 ---
 
@@ -1342,7 +1328,7 @@ appendix §6.)
 5. **T2 structured types** (SH-021 endgame — parser stores `TypeRef`).
 6. **T5 backend interfaces** (SH-024/SH-025) — largest effort, do last with CI as
    backstop. Resolve the 7-key `has_need` drift before lifting anything.
-7. **SH-028** — no longer blocked; schedule alongside SH-026.
+7. **SH-028** — slice 1 (the `append_*` family) done; schedule the rest alongside SH-026.
 
 Keep the engineering bar from `CLAUDE.md`: every change re-runs the relevant
 suite (x86-64 + WASM locally; CI for arm64/qemu), and each fix ships with the

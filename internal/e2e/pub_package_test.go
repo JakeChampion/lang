@@ -11,6 +11,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // pub(package): a package-scoped helper is usable from a sibling module
@@ -48,6 +49,9 @@ func TestX86_64PubPackage(t *testing.T) {
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {

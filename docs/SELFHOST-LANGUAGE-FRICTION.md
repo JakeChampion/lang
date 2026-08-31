@@ -230,33 +230,40 @@ on the self-host IR path under `FERN_STRICT_IR=1` on all three targets, and the
 per-module fixpoint is unaffected. Two things it hit that the next conversion
 will hit too:
 
-**The second adoption does not work yet (SH-028, attempted and reverted
-2026-08-29).** One `util.append_all[T]` replacing six byte-identical concat
-helpers in `flatten.fern` and `modloader.fern` type-checks, passes
-`check-sources`, and builds the self-host compiler on both arches — and the
-compiler it builds is broken. `stage2-fixpoint-arm64` dies
-`gen1: segmentation fault` on all three of its `stdlib: true` cases while the
-no-stdlib `lexer` case passes, and locally every `checkSourceModload` case
-dies on a signal, alongside `TestSelfHostGenericCtorIR` and
-`TestSelfHostGenericNestedRet`. Reverting only the generic restores green.
+**The second adoption works (SH-028). It was blocked by the test harness, not
+by the language (#7773).** One `util.append_all[T]` replaces six byte-identical
+concat helpers in `flatten.fern` and `modloader.fern`. The first attempt
+(2026-08-29, reverted in #7767) built a compiler that died
+`gen1: segmentation fault` on all three of `stage2-fixpoint-arm64`'s
+`stdlib: true` cases while the no-stdlib `lexer` case passed, alongside
+`TestSelfHostGenericCtorIR` and `TestSelfHostGenericNestedRet`.
 
-So the honest state of generics on the self-host path is narrower than "the
-first adoption worked": **astwalk's fold spine works, and the next function to
-be made generic broke the compiler.** Three things follow.
+The cause was in `e2eharness.emitDriverAsm`, which built every self-host DRIVER
+binary as `modload → constfold → check → Emit` — with no `monomorph.Run`, the
+pass `cmd/fern` always runs and `x86_64.Emit` expects. An un-instantiated
+generic keeps its erased type parameter, and a `T[]` element read then loads at
+i32 width against an 8-byte stride, so the pointer arrives truncated to its low
+half. The compiler was correct throughout; only the drivers the tests built
+were not, which is why `bin/fern` compiled every one of these shapes correctly
+while the harness-built driver segfaulted on them. `CompileAndRunX86_64` had the
+same omission fixed earlier, for the same reason, and `emitDriverAsm` was the
+last path still missing it.
+
+Three things this leaves worth keeping:
 
 - **`TestSelfHostFeatureCensus`'s pin is load-bearing, not bookkeeping.** It
   failed with "generic functions: census counts 9, pinned at 8", and that is
   the only reason the change was treated as an adoption needing fixpoint
   scrutiny rather than as a dedupe. Without it this lands as a tidy-up and the
   segfault surfaces later, attributed to something else.
-- **The failure is invisible to the cheap gates.** Type-check, `check-sources`
-  and `build-selfhost` all pass. Only running the built compiler over the
-  module-loading path shows it. That is the SH-050 lesson in a different
-  costume: a compiler that builds is not a compiler that works.
+- **The failure was invisible to the cheap gates.** Type-check, `check-sources`
+  and `build-selfhost` all passed, and so did every probe run through
+  `bin/fern`. Only a driver the HARNESS built showed it. A compiler that builds
+  is not a compiler that works — and a harness that builds the compiler
+  differently from the compiler is its own version of that.
 - **An import still does not instantiate** — `append_all` monomorphises only in
-  `flatten.fern` and `modloader.fern`, over four element types — so the blast
-  radius was small and the breakage was still total. Placement was not the
-  problem.
+  `flatten.fern` and `modloader.fern`, over four element types. Placement was
+  never the problem.
 
 - **The visitor could not be an arrow lambda — until it could.** A lambda's
   declared parameter types were resolved only when the enclosing function was

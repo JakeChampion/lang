@@ -964,3 +964,11 @@ pub function suggest(name: string, candidates: string[]): string {
     if (best_dist > budget) { return ""; }
     return best;
 }
+
+// append_all concatenates two lists of any element type — the generic that
+// replaced six byte-identical per-type concat helpers in flatten and modloader.
+pub function append_all[T](into: T[], more: T[]): T[] {
+    var i: i32 = 0;
+    while (i < more.len()) { into = into.append(more[i]); i = i + 1; }
+    return into;
+}

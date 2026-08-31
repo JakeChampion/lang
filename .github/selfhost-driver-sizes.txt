@@ -197,6 +197,6 @@ asm_pathprobe_run.fern 20195164
 ssa_lift_scan_run.fern 19910964
 asm_ir_elig_run.fern 19035788
 irlower_run.fern 19913900
-checker_modload_run.fern 5566988
+checker_modload_run.fern 5890620
 ssa_emit_run.fern 5127420
 ssa_run.fern 4921036
