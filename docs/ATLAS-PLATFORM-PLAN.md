@@ -713,8 +713,8 @@ runs proves nothing about which one was emitted.
 same sequence from the top: total and SCALAR on all seven backends first, so
 nothing could depend on a lowering that did not exist. Steps 2 and 3 followed —
 `__str_rfind_from`'s `nLen == 1` tier ("the overwhelmingly common case") routes
-through it, and the three NATIVE backends are vectorised. The self-host tier and
-`-backend ssa` stay scalar, as `__memchr`'s did between its own steps.
+through it, and all seven backends are vectorised, so it stands where the two
+forward kernels do rather than partway.
 
 Its vector body is `__memchr`'s read backwards, and the whole difference is
 which end of the mask is scanned: the rightmost match is the HIGHEST set bit.
@@ -737,6 +737,37 @@ third of the loop. Carrying the base and the pointer across iterations and
 stepping both by 16 is what took it to 8.8x. Worth stating because the forward
 kernel never had this cost: it walks UP from a pointer it already holds, so
 nothing had to be recomputed and nobody had to notice.
+
+The remaining three tiers cost **no assembler work at all** — the first kernel
+in this plan to reach every backend without touching one. `-backend ssa` reads
+`internal/native/arm64`, which the forward kernels had already taught the NEON
+set plus `clz`; `arm64_native.fern` and `watbin.fern` had theirs paid by the
+forward kernels' own §3.3a rounds. That is §3.3a's cost curve behaving as
+predicted: the encodings are a per-INSTRUCTION-SET debt, not a per-kernel one,
+and a fourth kernel built from the same shapes should cost nothing again.
+
+Measured on those three, over 131 MB (2,000 backward scans of a 64 KB haystack
+answering at index 0), harness floor subtracted:
+
+| tier | scalar | vector | |
+|---|---|---|---|
+| `-backend ssa` (arm64, qemu) | 387 ms | 135 ms | 2.9x |
+| self-host arm64 (qemu) | 456 ms | 135 ms | 3.4x |
+| self-host wasm (wasmtime) | 80 ms | 6 ms | 13x |
+
+The two arm64 rows carry the same floor caveat as every other qemu number here:
+qemu charges far more for one NEON instruction than hardware does, so read them
+as a lower bound rather than the hardware ratio. The wasm row does not — it is
+a JIT to native code, and it lands where the forward kernel's ~11x did.
+
+The two arm64 rows are the same kernel and land on the same 135 ms, which is
+what makes the ratio difference readable: the whole gap is in the SCALAR body
+being replaced. `-backend ssa` starts 15% ahead because one-word strings put the
+length at `[ptr-4]` and the three arguments in `x0`/`x1`/`x2`, so its byte loop
+has no unboxing and no frame, where the self-host tier's walks an operand stack
+in memory. A vector kernel wins least against the baseline that was already
+good — the same effect that made self-host x86-64's 15x wider than native's
+8.8x, read from the other end.
 
 It earns the slot by the input-vs-needle rule below: like `__memchr` its vector
 length is the HAYSTACK. The one thing that is not a mirror image of the forward
