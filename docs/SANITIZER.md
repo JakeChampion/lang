@@ -117,9 +117,12 @@ treatment, or a stale reference walks straight past the detector.
 
 A leak verdict says how much and how many, not where. Pair it with
 `FERN_RC_TRACE=1` on the same build to get one `rctrace a …` line per
-allocation carrying its call site; the allocs that never match an `f` line by
-pointer are the leak, attributed to the site that made them. See
-`TEST-GATES.md` for the pairing recipe and its caveats.
+allocation carrying its call site AND the frame above it; the allocs that
+never match an `f` line by pointer are the leak, attributed to the code that
+made them. Read the second frame whenever the first names a runtime helper or
+a function large enough to have been inlined into — `ir.Inline` runs twice in
+every backend battery, and the site field names where code ENDED UP, not who
+wrote it. See `TEST-GATES.md` for the pairing recipe and its caveats.
 
 An over-release or use-after-free names a frame directly, and that frame is
 almost always the answer: the function whose `dec` was wrong, or the holder

@@ -1412,12 +1412,22 @@ var SandboxEnabled = os.Getenv("FERN_SANDBOX") == "1"
 // diagnostic build mode). __fern_alloc and __fern_free each write one
 // line to stderr:
 //
-//	rctrace <a|f> <ptr> <size> <site>
+//	rctrace <a|f> <ptr> <size> <site> <caller>
 //
 // and, since the refcount half of a leak is invisible without them,
 // __fern_rc_inc / __fern_rc_dec / __fern_arr_dec write:
 //
-//	rctrace <i|d> <ptr> 0000000000000000 <site>
+//	rctrace <i|d> <ptr> 0000000000000000 <site> <caller>
+//
+// `caller` is one frame above `site`, read through the frame pointer.
+// It exists because `site` alone cannot tell a producer from a function
+// code was INLINED INTO: over the self-host driver it credited 133
+// allocations to a 1043-line function containing exactly one
+// construction, and named the shared allocator `__fern_alloc_rc1` for
+// 1689 blocks whose real producer is one frame further out. Where the
+// caller kept no frame pointer the field is an address that resolves to
+// nothing, so a consumer must tolerate an unresolvable value rather
+// than trust it.
 //
 // THREE THINGS ABOUT THE i/d LINES, each of which will mislead a reader
 // who assumes otherwise:

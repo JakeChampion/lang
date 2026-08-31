@@ -5025,8 +5025,20 @@ func (g *generator) emitAbortMessages(withBacktrace bool) {
 // sits after the epilogue's pops (so [rsp] is __fern_alloc's own return
 // address); at a free it sits at the leaf entry, where [rsp] is
 // likewise the caller's. Either way that address belongs to the code
-// that asked for or released the memory, which is the only thing worth
-// naming — every block on the heap came from the same two helpers.
+// that asked for or released the memory.
+//
+// A SECOND frame goes out beside it, and the hook positions above are
+// exactly why it can: at both of them the helper's own rbp has been
+// popped (alloc) or not yet pushed (free), so rbp is the CALLER's frame
+// base and [rbp+8] is that caller's return address — one frame further
+// out than `site`.
+//
+// It is there because `site` alone conflates a producer with a function
+// code was inlined into. Over the self-host driver `site` credited 133
+// allocations to a 1043-line function holding one construction, and
+// named `__fern_alloc_rc1` for 1689 blocks. Best-effort: a caller that
+// kept no frame pointer yields an address resolving to nothing, so the
+// consumer must tolerate that rather than trust it.
 //
 // ptrReg/sizeReg are saved and restored around the call rather than
 // left to the callee, because at both hook sites they carry values the
@@ -5056,6 +5068,10 @@ func (g *generator) emitRcTraceEventAt(kind byte, ptrReg, sizeReg string, siteOf
 	g.emit(fmt.Sprintf("mov rdx, %s", sizeReg)) // arg 3: size
 	g.emit(fmt.Sprintf("mov rsi, %s", ptrReg))  // arg 2: ptr
 	g.emit(fmt.Sprintf("mov edi, %d", kind))    // arg 1: 'a' | 'f'
+	// arg 5: the CALLER's return address — one frame above `site`.
+	// Read last, after the argument registers are set, because ptrReg
+	// or sizeReg may itself be r8.
+	g.emit("mov r8, [rbp + 8]") // caller frame: [rbp] = saved rbp, [rbp+8] = its return address
 	g.emit("call __fern_rct_ev")
 	g.emit(fmt.Sprintf("pop %s", sizeReg))
 	g.emit(fmt.Sprintf("pop %s", ptrReg))
@@ -5064,11 +5080,11 @@ func (g *generator) emitRcTraceEventAt(kind byte, ptrReg, sizeReg string, siteOf
 // emitRctRuntime emits `__fern_rct_ev(kind, ptr, size, site)` — the
 // ast.RcTrace (FERN_RC_TRACE=1) event writer. One line to stderr:
 //
-//	rctrace <a|f> <ptr> <size> <site>
+//	rctrace <a|f> <ptr> <size> <site> <caller>
 //
 // with each number fixed-width 16 hex digits (see ast.RcTrace for why
 // fixed-width). System V: edi = kind char, rsi = ptr, rdx = size,
-// rcx = site.
+// rcx = site, r8 = caller.
 //
 // Every register the helper touches is saved, because it is injected
 // mid-flow at sites that have live values in caller-saved registers —
@@ -5083,7 +5099,10 @@ func (g *generator) emitRctRuntime() {
 	g.line(".globl __fern_rct_ev")
 	g.line(".type __fern_rct_ev, @function")
 	g.label("__fern_rct_ev")
-	saved := []string{"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "rbx", "r12", "r13", "r14"}
+	// rbp is saved for one reason only: the push count must stay EVEN
+	// or every `call` below lands on a misaligned stack. r15 made it
+	// odd; rbp is the honest partner because the hook reads through it.
+	saved := []string{"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "rbx", "r12", "r13", "r14", "r15", "rbp"}
 	for _, r := range saved {
 		g.emit("push " + r)
 	}
@@ -5100,6 +5119,7 @@ func (g *generator) emitRctRuntime() {
 	g.emit("add r13, 15")
 	g.emit("and r13, -16")
 	g.emit("mov r14, rcx") // site
+	g.emit("mov r15, r8")  // caller: one frame above site
 	g.emit("lea rsi, [rip + .Lrct_str_pre]")
 	g.emit("mov edx, 8")
 	g.emit("call .Lrct_write")
@@ -5111,7 +5131,7 @@ func (g *generator) emitRctRuntime() {
 	g.emit("mov edx, 1")
 	g.emit("call .Lrct_write")
 	g.emit("add rsp, 16")
-	for _, r := range []string{"r12", "r13", "r14"} {
+	for _, r := range []string{"r12", "r13", "r14", "r15"} {
 		g.emit("lea rsi, [rip + .Lrct_str_sp]")
 		g.emit("mov edx, 1")
 		g.emit("call .Lrct_write")
