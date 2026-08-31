@@ -40,9 +40,10 @@ func TestSelfHostFetchFutureModloadIRX86_64(t *testing.T) {
 import "std/fetch";
 function main(): i32 {
     var host: i32 = 127 | (1 << 24);
-    var f: async.Future[string] = fetch.fetch_future(host, 8080, "/");
-    var fs: async.Future[string][] = [f];
-    var bodies: string[] = async.gather(fs, "");
+    var none: u8[] = [];
+    var f: async.Future[u8[]] = fetch.fetch_future(host, 8080, "/");
+    var fs: async.Future[u8[]][] = [f];
+    var bodies: u8[][] = async.gather(fs, none);
     return bodies[0].len();
 }
 `

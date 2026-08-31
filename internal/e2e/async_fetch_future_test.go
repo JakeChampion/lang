@@ -51,13 +51,19 @@ func TestAsyncFetchFutureFanout(t *testing.T) {
 	const host = 127 | (1 << 24)
 	src := fmt.Sprintf(`import "std/async";
 import "std/fetch";
+import "std/utf8";
 
 function main(): i32 {
-    var f1: async.Future[string] = fetch.fetch_future(%d, %d, "/1");
-    var f2: async.Future[string] = fetch.fetch_future(%d, %d, "/2");
-    var fs: async.Future[string][] = [f1, f2];
-    var bodies: string[] = async.gather(fs, "");
-    if (bodies[0] == "hello-world" && bodies[1] == "hello-world") { return 42; }
+    var none: u8[] = [];
+    var f1: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/1");
+    var f2: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/2");
+    var fs: async.Future[u8[]][] = [f1, f2];
+    var bodies: u8[][] = async.gather(fs, none);
+    var b0: boolean = false;
+    var b1: boolean = false;
+    match (utf8.from_bytes(bodies[0])) { Some(t) => { b0 = t == "hello-world"; }, None => {}, }
+    match (utf8.from_bytes(bodies[1])) { Some(t) => { b1 = t == "hello-world"; }, None => {}, }
+    if (b0 && b1) { return 42; }
     return 85;
 }`, host, port, host, port)
 
@@ -132,9 +138,10 @@ func TestAsyncFetchFutureLargeBody(t *testing.T) {
 import "std/fetch";
 
 function main(): i32 {
-    var f: async.Future[string] = fetch.fetch_future(%d, %d, "/big");
-    var fs: async.Future[string][] = [f];
-    var bodies: string[] = async.gather(fs, "");
+    var none: u8[] = [];
+    var f: async.Future[u8[]] = fetch.fetch_future(%d, %d, "/big");
+    var fs: async.Future[u8[]][] = [f];
+    var bodies: u8[][] = async.gather(fs, none);
     if (bodies[0].len() == %d) { return 42; }
     return bodies[0].len() & 127;  // distinct small code on a truncated read
 }`, host, port, bodyLen)

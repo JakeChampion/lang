@@ -160,12 +160,17 @@ pub function future_chain[T](drv: Sim, at_ns: i64, step_ns: i64, resuspends: i32
 // SimNet (docs/DST-PLATFORM-BRIEF.md, slice 2) — scripted request/response
 // endpoints, the sim sibling of `fetch.fetch_future`. Register upstreams on a
 // `Net`, then `net.fetch_future(host_be, port, path)` returns a
-// `Future[string]` honouring the REAL fetch_future contract: it resolves to
-// the response body; an unregistered endpoint resolves immediately to ""
+// `Future[string]` honouring the REAL fetch_future's SCHEDULING: it resolves
+// to the response body; an unregistered endpoint resolves immediately to ""
 // (the real one's dead-upstream behaviour); a chunked response re-suspends
 // once per chunk (the `__fetch_drain` shape), each chunk arriving at its
 // scheduled virtual time, and resolves to the accumulated body at the LAST
 // chunk's time. Latencies are measured from the fetch call's virtual `now`.
+//
+// Bodies are `string` where the real fetch resolves to `u8[]`: a scripted
+// body is a program value and is well-formed by construction, so the D9
+// invariant the real transport has to respect does not bind here, and the
+// combinator timing these tests pin reads better against text.
 
 // Endpoint — one scripted upstream. A registered `path` of "" matches any
 // path on its host:port. `hits` is a shared Cell (struct fields are frozen —

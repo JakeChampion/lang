@@ -101,10 +101,11 @@ import "std/fetch";
 function handle(): i32 {
     var cache: i32   = fetch.ipv4(10, 0, 0, 1);
     var primary: i32 = fetch.ipv4(10, 0, 0, 2);
-    var bodies: string[] = async.gather([
+    var none: u8[] = [];
+    var bodies: u8[][] = async.gather([
         fetch.fetch_future(cache,   80, "/key"),
         fetch.fetch_future(primary, 80, "/key"),
-    ], "");                       // "" is the fallback for a future that can't complete
+    ], none);                     // the fallback for a future that can't complete
     return bodies.len();          // both fetches overlapped on one thread
 }
 ```
@@ -125,12 +126,13 @@ structural: a loser is simply never resumed.
 import "std/async";
 import "std/fetch";
 
-function fastest(a: i32, b: i32): string {
-    var fs: async.Future[string][] = [
+function fastest(a: i32, b: i32): u8[] {
+    var none: u8[] = [];
+    var fs: async.Future[u8[]][] = [
         fetch.fetch_future(a, 80, "/k"),
         fetch.fetch_future(b, 80, "/k"),
     ];
-    var (winner, body) = async.race(fs, "");
+    var (winner, body) = async.race(fs, none);
     // `winner` is the index that finished first; `body` its result.
     return body;
 }
@@ -148,10 +150,11 @@ whatever answers within `ms` wall-clock milliseconds, and drop the stragglers
 (their slots get `on_timeout`).
 
 ```fern
-var bodies: string[] = async.with_deadline(250, [
+var none: u8[] = [];
+var bodies: u8[][] = async.with_deadline(250, [
     fetch.fetch_future(cache,   80, "/k"),
     fetch.fetch_future(primary, 80, "/k"),
-], "");   // any upstream slower than 250ms lands as ""
+], none);   // any upstream slower than 250ms lands as an empty body
 ```
 
 ---
@@ -196,12 +199,16 @@ var got: Option[string][] = async.with_deadline_on(d, 25, fs);
 `sim.Net` is the sim sibling of `fetch.fetch_future`: register scripted
 endpoints (host/port, optional path — `""` is a host:port wildcard — body,
 first-byte latency, chunking schedule), then fetch them through the
-combinators. The futures honour the real fetch contract: the body on
-success, `""` immediately for an unregistered (dead) upstream, one
-re-suspension per scheduled chunk with the accumulated body resolving at
-the last chunk's virtual time. Registration is value-returning
+combinators. The futures honour the real fetch contract's SCHEDULING: the
+body on success, an empty body immediately for an unregistered (dead)
+upstream, one re-suspension per scheduled chunk with the accumulated body
+resolving at the last chunk's virtual time. Registration is value-returning
 (`n = n.serve(...)`); each endpoint carries a shared `hits` counter for
 call assertions.
+
+Bodies stay `string` here where the real `fetch_future` resolves to `u8[]`:
+a scripted body is a program value, well-formed by construction, and the
+combinator timing this exists to pin reads better against text.
 
 ```fern
 var d: sim.Sim = sim.new(1);
@@ -267,15 +274,20 @@ program and its generator seed for replay
 ## 7. The awaitable fetch: `fetch.fetch_future`
 
 ```fern
-pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[string]
+pub function fetch_future(host_be: i32, port: i32, path: string): async.Future[u8[]]
 ```
 
 Opens the connection and sends the request **non-blocking**, then returns a
 `Pending` future that resolves to the response **body** once the socket is
 readable. Drive several through `gather` / `race` / `with_deadline` and their
-reads overlap on one thread. A connect/send failure resolves immediately to `""`
-so a dead upstream never stalls the fan-out. (`host_be` is the IPv4 address in
-network byte order — build it with `fetch.ipv4(a,b,c,d)`.)
+reads overlap on one thread. A connect/send failure resolves immediately to the
+empty body so a dead upstream never stalls the fan-out. (`host_be` is the IPv4
+address in network byte order — build it with `fetch.ipv4(a,b,c,d)`.)
+
+The body is `u8[]`, not `string`: an upstream serves whatever bytes it likes, so
+a text-typed response would be a `string` that is not well-formed UTF-8
+(`docs/STRINGS-SOTA.md`, D9). Decode where you need text —
+`utf8.from_bytes(body)` is `None` when the bytes are not valid UTF-8.
 
 ---
 

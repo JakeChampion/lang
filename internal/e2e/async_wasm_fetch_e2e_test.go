@@ -49,6 +49,7 @@ func TestAsyncWasmFetchFutureFanout(t *testing.T) {
 	src := `import "std/async";
 import "std/fetch";
 import "std/string";
+import "std/utf8";
 
 function parse(s: string): i32 {
     var n: i32 = 0; var i: i32 = 0;
@@ -56,16 +57,18 @@ function parse(s: string): i32 {
     return n;
 }
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
+function text(b: u8[]): string { match (utf8.from_bytes(b)) { Some(t) => { return t; }, None => { return "?"; } } }
 
 function main(): i32 {
+    var none: u8[] = [];
     var host: i32 = 127 | (1 << 24);   // 127.0.0.1
-    var f1: async.Future[string] = fetch.fetch_future(host, port("PSLOW"), "/a");
-    var f2: async.Future[string] = fetch.fetch_future(host, port("PFAST"), "/b");
-    var fs: async.Future[string][] = [f1, f2];
-    var bodies: string[] = async.gather(fs, "");
+    var f1: async.Future[u8[]] = fetch.fetch_future(host, port("PSLOW"), "/a");
+    var f2: async.Future[u8[]] = fetch.fetch_future(host, port("PFAST"), "/b");
+    var fs: async.Future[u8[]][] = [f1, f2];
+    var bodies: u8[][] = async.gather(fs, none);
     if (bodies.len() != 2) { return 90; }
-    print(bodies[0]);   // task 0 (slow upstream) → "AAA"
-    print(bodies[1]);   // task 1 (fast upstream) → "BBB"
+    print(text(bodies[0]));   // task 0 (slow upstream) → "AAA"
+    print(text(bodies[1]));   // task 1 (fast upstream) → "BBB"
     return 0;
 }`
 
@@ -143,6 +146,7 @@ func TestAsyncWasmRaceFetchDropsLoser(t *testing.T) {
 	src := `import "std/async";
 import "std/fetch";
 import "std/string";
+import "std/utf8";
 
 function parse(s: string): i32 {
     var n: i32 = 0; var i: i32 = 0;
@@ -150,16 +154,18 @@ function parse(s: string): i32 {
     return n;
 }
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
+function text(b: u8[]): string { match (utf8.from_bytes(b)) { Some(t) => { return t; }, None => { return "?"; } } }
 
 function main(): i32 {
+    var none: u8[] = [];
     var host: i32 = 127 | (1 << 24);
-    var fs: async.Future[string][] = [
+    var fs: async.Future[u8[]][] = [
         fetch.fetch_future(host, port("PA"), "/a"),
         fetch.fetch_future(host, port("PB"), "/b")
     ];
-    var (winner, body) = async.race(fs, "");
+    var (winner, body) = async.race(fs, none);
     if (winner < 0) { print("nowinner\n"); return 1; }
-    print(body);   // the winner's body ("AAA" or "BBB")
+    print(text(body));   // the winner's body ("AAA" or "BBB")
     return 0;
 }`
 

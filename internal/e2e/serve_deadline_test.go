@@ -80,7 +80,7 @@ const fetchDeadlineSrc = `
 import "std/fetch";
 function main(): i32 {
     // Silent upstream (accepts, never replies): must time out to None.
-    var slow: Option[string] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", 400);
+    var slow: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", 400);
     var slow_ok: boolean = false;
     match (slow) {
         Some(s) => { },
@@ -88,7 +88,7 @@ function main(): i32 {
     }
     if (!slow_ok) { return 1; }
     // Live upstream: must resolve in time with a 200 status line.
-    var fast: Option[string] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", 5000);
+    var fast: Option[u8[]] = fetch.fetch_get_deadline(fetch.ipv4(127,0,0,1), %d, "/", 5000);
     match (fast) {
         Some(resp) => {
             if (fetch.http_status(resp) == 200) { return 0; }
