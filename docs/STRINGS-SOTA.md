@@ -777,8 +777,25 @@ plain Fern) plus its wasm p1/p2 lanes, all return
 `Err(InvalidUtf8(path))` on malformed content — the case D9 predicted
 and nothing emitted is now real on every lane. `tcp_recv(fd, max)`
 returns `u8[]` (#7467), so no byte-carrying builtin is typed `string`
-any more; the `string_from_bytes_unchecked` bridges in `std/tcp` /
-`std/fetch` are the debt the byte-based HTTP layer retires.
+any more.
+
+The socket TRANSPORT followed. `tcp_recv_deadline` returns
+`Option[u8[]]`, and `std/fetch` is byte-domain end to end —
+`fetch_raw` / `fetch_get` / `get_url` return `u8[]`, their `_deadline`
+siblings `Option[u8[]]`, `fetch_future` an `async.Future[u8[]]`, and
+`http_status` / `http_body` read bytes. An upstream serves whatever
+bytes it likes, so a text-typed response was a `string` this decision
+forbids; callers decode with `utf8.from_bytes` where they want text.
+`std/sim`'s scripted `Net.fetch_future` deliberately stays
+`Future[string]` — its bodies are program values, well-formed by
+construction, and what it exists to pin is the combinator timing.
+
+One bridge is left, in `std/tcp`'s serve loop: the request buffer is
+still text-typed because `http_parse_request` and `HttpRequest.body`
+are. That is the HTTP MESSAGE layer rather than the transport, and it
+crosses the wasi-http canonical ABI in both compilers (the incoming
+body is marshalled into a two-word `string` field at a hardcoded
+offset), so it is its own slice on #5714 — the last one.
 
 Costs, stated honestly:
 
@@ -1007,12 +1024,12 @@ Tracked as epic #5626; issue numbers below.
 |---|---|---|---|
 | 1 | **D7** (#5627) — static tables + range coalescing + ASCII fast path — **DONE** | — | Pure win; made `std/unicode` usable at all (176 KB → 27.8 KB, 22× → parity). Prerequisite for D3. |
 | 2 | **D11** (#5628) — lexer UTF-8 fix + identifier policy — **DONE** | — | Self-contained bug fix; correct diagnostics. Identifiers are ASCII-only. |
-| 3 | **D2** (#5629) — the `char` type | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
-| 4 | **D3 + D4** (#5630) — flip the default, full case mapping | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
+| 3 | **D2** (#5629) — the `char` type — **DONE** | — | Checker + `std/utf8` + `std/unicode` signatures. Big but mechanical; unblocks honest naming everywhere. |
+| 4 | **D3 + D4** (#5630) — flip the default, full case mapping — **DONE** | 1, 3 | Touches the self-host builtin (`irlower.fern` / `asmcore.fern`) **and** the native stdlib — see D3's implementation note. Differential coverage required. |
 | 5 | **D5** (#5631) — normalization + `eq_canonical` — **DONE** | 1 | Shipped `nfc`/`nfd`/`eq_canonical`/`is_nfc`/`is_nfd`. NFKC/NFKD declined — a second full table for a lossy transform. |
 | 6 | **D8** (#5632) — `[u8]` string view — **DONE** | — | Builtin already existed; #5632 added the migrated consumer, the four-backend differential, and the docs. Borrow rule still open (#4814). |
 | 7 | **D6** (#5633) — grapheme segmentation — **DONE**; word segmentation followed under #5552 | 1, 3 | Opt-in. NOT the largest table after all (~17 KB vs normalization's ~58 KB). Returns `str[]` views (was `string[]` until #5695 was fixed). Word_Break coalesces to 1085 ranges, ~13 KB; a program that does not segment words is byte-identical to one built before it existed. |
-| 8 | **D9** (#5634) — the UTF-8 validity invariant | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. |
+| 8 | **D9** (#5634) — the UTF-8 validity invariant — **IN PROGRESS** | 6 | Largest blast radius; do last, after `[u8]` makes "raw bytes" ergonomic. The `s[a:b]` half and every byte-carrying builtin have landed; the HTTP message layer (`http_parse_request`, `HttpRequest.body`) is the remainder, on #5714. |
 | 9 | **D10** (#5635) — document the path assumption — **DONE** | — | Doc-only. Stated in `std/path`, `std/io`, and `read_dir`'s builtin signature. |
 
 #5552 as filed maps onto slices 1, 4, 5, 6, 7. Its step 1 (document the

@@ -76,10 +76,11 @@ pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => H
 
 // tcp_recv_deadline(fd, max, deadline_ms) — recv up to `max` bytes,
 // waiting at most `deadline_ms` for the socket to become readable.
-// Returns `Some(chunk)` when bytes (or EOF — an empty chunk) arrived in
-// time, `None` when the deadline passed first. This is the
-// recv-with-deadline primitive the serve loop and std/fetch's deadline
-// variants are built on.
+// Returns `Some(chunk)` — the raw bytes, `u8[]`, empty at EOF — when the
+// read completed in time, `None` when the deadline passed first. This is
+// the recv-with-deadline primitive the serve loop and std/fetch's
+// deadline variants are built on. Socket bytes are arbitrary, so they
+// stay `u8[]` rather than `string` (D9, docs/STRINGS-SOTA.md).
 //
 // Portability: the wait is the same poll shape `async.with_deadline`
 // uses — native poll(2) honors the millisecond timeout directly (the
@@ -91,7 +92,7 @@ pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => H
 // readiness is unavailable here, and the call degrades to a plain
 // blocking recv — preserving interp behavior at the cost of the
 // deadline.
-pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[string] {
+pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[u8[]] {
     var wait_ms: i32 = deadline_ms;
     if (wait_ms < 1) { wait_ms = 1; }
     var ns_per_ms: i64 = 1000000;
@@ -103,8 +104,7 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[stri
     var dtimer: i32 = wasm_pollable_drop(timer);
     var dtok: i32 = wasm_pollable_drop(tok);
     if (ready == 0) {
-        // PR2 (#5714) makes this path byte-based.
-        return Some(string_from_bytes_unchecked(tcp_recv(fd, max)));
+        return Some(tcp_recv(fd, max));
     }
     if (ready == 1) {
         // The timer pollable fired first (wasm) — deadline.
@@ -117,7 +117,7 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[stri
     if (waited_ns * 2 >= (wait_ms as i64) * ns_per_ms) {
         return None;
     }
-    return Some(string_from_bytes_unchecked(tcp_recv(fd, max)));
+    return Some(tcp_recv(fd, max));
 }
 
 // __serve_loop — the HTTP/1.1 accept loop factored out of
@@ -173,7 +173,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
             if (remaining_ms <= 0) {
                 break;
             }
-            var chunk: string = "";
+            var chunk: u8[] = [];
             var timed_out: boolean = false;
             match (tcp_recv_deadline(fd, 4096, remaining_ms)) {
                 Some(c) => { chunk = c; },
@@ -186,7 +186,14 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
                 // EOF before request complete.
                 break;
             }
-            buf = buf + chunk;
+            // The one remaining wire-bytes-to-string bridge: the request
+            // buffer is text-typed only because `http_parse_request` and
+            // `HttpRequest.body` still are. Bridging per CHUNK rather than
+            // per parse attempt keeps the accumulation a single memcpy of
+            // the growing buffer, as it was when tcp_recv returned a
+            // string. Retired when the HTTP message layer goes byte-based
+            // (#5714).
+            buf = buf + string_from_bytes_unchecked(chunk);
             // Hard cap to keep slow / hostile clients from
             // pinning unbounded memory. Headers must fit in
             // the first 8 KiB; body capped at 1 MiB. Matches

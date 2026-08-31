@@ -34,6 +34,7 @@ import "std/io";
 import "std/http";
 import "std/tcp";
 import "std/fetch";
+import "std/utf8";
 import "std/headers";
 import "./ast";
 import "./diag";
@@ -55,7 +56,17 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
     return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: "backend '" + b.name + "' host '" + b.host + "' is not an IPv4 address" };
   }
   var req: string = wire.build_request(t.bereq, b.host + ":" + b.port.to_string());
-  var raw: string = fetch.fetch_raw(host_be, b.port, req);
+  var raw_bytes: u8[] = fetch.fetch_raw(host_be, b.port, req);
+  // `wire.parse_response` is a text parser, so a non-UTF-8 origin response
+  // is a backend error here rather than something to reinterpret. A proxy
+  // that must pass binary bodies through needs a byte-domain wire parser.
+  var raw: string = "";
+  match (utf8.from_bytes(raw_bytes)) {
+    Some(text) => { raw = text; },
+    None => {
+      return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: "backend '" + b.name + "' returned a response that is not valid UTF-8" };
+    }
+  }
   var p: wire.Parsed = wire.parse_response(raw);
   if (!p.ok) {
     return machine.FetchOut { status: 0, reason: "", headers: empty, body: "", ttl: 0.0 - 1.0, ok: false, err: p.err };
