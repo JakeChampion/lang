@@ -44,8 +44,6 @@
 //     thing it exists to convert.
 package ir
 
-import "sort"
-
 // RcResult is what a call's returned pointer means for the caller's
 // ownership books.
 type RcResult int
@@ -364,16 +362,6 @@ func RcHelperResult(name string) (RcResult, bool) {
 	return RcResultNone, false
 }
 
-// RcHelperResultUnmodelled reports whether the name is a known helper
-// whose result has no single answer, and why.
-func RcHelperResultUnmodelled(name string) (string, bool) {
-	if resolved, ok := builtinRuntimeAlias(name); ok {
-		name = resolved
-	}
-	reason, ok := rcResultUnmodelled[name]
-	return reason, ok
-}
-
 // RcHelperResultClassified reports whether the name has a decision on
 // the result axis at all — the total predicate the completeness gates
 // enumerate against, the twin of RcHelperClassified.
@@ -389,17 +377,4 @@ func RcHelperResultClassified(name string) bool {
 		return true
 	}
 	return isGeneratedDrop(name)
-}
-
-// RcResultImmortalNames returns the helpers whose result carries the
-// static-sentinel header, so a test can check the list against
-// `helperAllocBoxCallers` rather than trusting it to be maintained by
-// hand.
-func RcResultImmortalNames() []string {
-	out := make([]string, 0, len(rcResultImmortal))
-	for n := range rcResultImmortal {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
 }

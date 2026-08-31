@@ -18,9 +18,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ALLOW="tools/deadcode-allowlist.txt"
-DEADCODE_VERSION="v0.45.0"
+# Newest x/tools release that still builds under the Go version
+# .github/actions/setup-fern pins (GOTOOLCHAIN=local forbids the switch a
+# newer requirement would need) — v0.43.0 and up require go >= 1.25.
+DEADCODE_VERSION="v0.42.0"
 
-raw="$(go run "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" -test ./... 2>/dev/null || true)"
+raw="$(go run "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" -test ./...)"
 
 # "internal/lexer/lexer.go:168:17: unreachable func: Error.setFile"
 #   -> "internal/lexer:Error.setFile"
