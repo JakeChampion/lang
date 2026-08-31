@@ -3402,20 +3402,38 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind_tag == 225) {  // memchr
         // operand stack [box, byte, from] (from on top) -> i32 index or -1.
         //
-        // SCALAR, deliberately. §3.4 of ATLAS-PLATFORM-PLAN orders the kernel
-        // as "correct in every backend first, fast one backend at a time":
-        // the native x86-64 emitter serves this with an SSE2 loop, and this
-        // one serves the same meaning a byte at a time. Substituting a vector
-        // body here is a later slice and changes no caller.
+        // SSE2, 16 bytes per iteration: splat the needle across xmm1, then
+        // movdqu / pcmpeqb / pmovmskb / bsf. This is §3.4 step 3 for the
+        // self-host x86-64 tier — the meaning is unchanged, only the speed.
+        //
+        // The cursor is an INDEX in %rdx rather than a pointer, which is what
+        // keeps the whole sequence inside the five registers the scalar body
+        // already used (%rax data, %rcx byte, %rdx cursor, %r8 len, %r9
+        // scratch). There is no end pointer to hold and no index to
+        // reconstruct on a hit.
+        //
+        // The vector load only runs with at least 16 bytes left, so it never
+        // reads past the string and needs no alignment prologue: movdqu is
+        // unaligned by construction and the tail below is the whole algorithm
+        // for anything shorter than one block.
+        //
+        // No feature detection: SSE2 is inside the declared x86-64 baseline
+        // (Haswell-class), so these are hard requirements rather than a fast
+        // path. pshufb would collapse the four-instruction splat into one but
+        // is SSSE3, outside it.
         var mlo: asmcore.LabelOut = asmcore.fresh_label(s);
         var l_clamped: string = mlo.name;
         var mlo2: asmcore.LabelOut = asmcore.fresh_label(mlo.state);
-        var l_loop: string = mlo2.name;
+        var l_vec: string = mlo2.name;
         var mlo3: asmcore.LabelOut = asmcore.fresh_label(mlo2.state);
-        var l_none: string = mlo3.name;
+        var l_hit: string = mlo3.name;
         var mlo4: asmcore.LabelOut = asmcore.fresh_label(mlo3.state);
-        var l_done: string = mlo4.name;
-        s = mlo4.state;
+        var l_tail: string = mlo4.name;
+        var mlo5: asmcore.LabelOut = asmcore.fresh_label(mlo4.state);
+        var l_none: string = mlo5.name;
+        var mlo6: asmcore.LabelOut = asmcore.fresh_label(mlo5.state);
+        var l_done: string = mlo6.name;
+        s = mlo6.state;
         s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
         s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
         // from clamps at 0.
@@ -3423,12 +3441,29 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(l_clamped + ":\n");
         // A byte outside 0..255 can never match. One UNSIGNED compare covers
         // both ends: a negative arrives as a huge unsigned and fails it too.
+        // Checked once here, so neither loop needs a per-iteration guard.
         s = s.write("    cmpq $255, %rcx\n    ja " + l_none + "\n");
-        s = s.write(l_loop + ":\n");
+        // Broadcast the needle byte across xmm1.
+        s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
+        s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
+        s = s.write(l_vec + ":\n");
+        s = s.write("    movq %r8, %r9\n    subq %rdx, %r9\n");
+        s = s.write("    cmpq $16, %r9\n    jl " + l_tail + "\n");
+        s = s.write("    movdqu (%rax,%rdx), %xmm0\n    pcmpeqb %xmm1, %xmm0\n");
+        s = s.write("    pmovmskb %xmm0, %r9d\n    testl %r9d, %r9d\n    jnz " + l_hit + "\n");
+        s = s.write("    addq $16, %rdx\n    jmp " + l_vec + "\n");
+        // bsf gives the lane of the lowest set mask bit — the first matching
+        // byte in this block. NOT tzcnt: that is BMI1, and below the baseline
+        // its F3 prefix is ignored, so it degrades to bsf silently rather than
+        // faulting.
+        s = s.write(l_hit + ":\n    bsfl %r9d, %r9d\n    addq %r9, %rdx\n    jmp " + l_done + "\n");
+        // Scalar tail: fewer than 16 bytes left, and the whole algorithm for a
+        // string shorter than one block.
+        s = s.write(l_tail + ":\n");
         s = s.write("    cmpq %r8, %rdx\n    jge " + l_none + "\n");
         s = s.write("    movzbq (%rax,%rdx), %r9\n");
         s = s.write("    cmpq %rcx, %r9\n    je " + l_done + "\n");
-        s = s.write("    addq $1, %rdx\n    jmp " + l_loop + "\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + l_tail + "\n");
         s = s.write(l_none + ":\n    movq $-1, %rdx\n");
         s = s.write(l_done + ":\n    pushq %rdx\n");
         return s;
@@ -3437,29 +3472,46 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         // operand stack [box, from] (from on top) -> the index of the first
         // byte at or after `from` with its high bit set, or the LENGTH.
         //
-        // SCALAR for memchr's reason above. Two operands rather than three:
-        // there is no byte to compare against, which is also what makes the
-        // native vector forms of this kernel cheaper than memchr's.
+        // SSE2, and CHEAPER than memchr's above: pmovmskb already gathers the
+        // top bit of each byte, which is the entire question here, so the
+        // vector body is load / gather / scan with no splat and no compare.
+        // That asymmetry is the same one the native x86-64 kernel has.
+        //
+        // Cursor as an index in %rdx, vector load only with a full block left:
+        // see the memchr body above for both.
         var alo: asmcore.LabelOut = asmcore.fresh_label(s);
         var a_clamped: string = alo.name;
         var alo2: asmcore.LabelOut = asmcore.fresh_label(alo.state);
-        var a_loop: string = alo2.name;
+        var a_vec: string = alo2.name;
         var alo3: asmcore.LabelOut = asmcore.fresh_label(alo2.state);
-        var a_none: string = alo3.name;
+        var a_hit: string = alo3.name;
         var alo4: asmcore.LabelOut = asmcore.fresh_label(alo3.state);
-        var a_done: string = alo4.name;
-        s = alo4.state;
+        var a_tail: string = alo4.name;
+        var alo5: asmcore.LabelOut = asmcore.fresh_label(alo4.state);
+        var a_none: string = alo5.name;
+        var alo6: asmcore.LabelOut = asmcore.fresh_label(alo5.state);
+        var a_done: string = alo6.name;
+        s = alo6.state;
         s = s.write("    popq %rdx\n    popq %rax\n");
         s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
         // from clamps at 0.
         s = s.write("    cmpq $0, %rdx\n    jge " + a_clamped + "\n    xorq %rdx, %rdx\n");
         s = s.write(a_clamped + ":\n");
-        s = s.write(a_loop + ":\n");
+        s = s.write(a_vec + ":\n");
+        s = s.write("    movq %r8, %r9\n    subq %rdx, %r9\n");
+        s = s.write("    cmpq $16, %r9\n    jl " + a_tail + "\n");
+        s = s.write("    movdqu (%rax,%rdx), %xmm0\n");
+        s = s.write("    pmovmskb %xmm0, %r9d\n    testl %r9d, %r9d\n    jnz " + a_hit + "\n");
+        s = s.write("    addq $16, %rdx\n    jmp " + a_vec + "\n");
+        s = s.write(a_hit + ":\n    bsfl %r9d, %r9d\n    addq %r9, %rdx\n    jmp " + a_done + "\n");
+        // Scalar tail: the final 0..15 bytes, and the whole algorithm for a
+        // string shorter than one block.
+        s = s.write(a_tail + ":\n");
         s = s.write("    cmpq %r8, %rdx\n    jge " + a_none + "\n");
         s = s.write("    movzbq (%rax,%rdx), %r9\n");
         // Zero-extended, so bit 7 is the high bit.
         s = s.write("    testq $128, %r9\n    jnz " + a_done + "\n");
-        s = s.write("    addq $1, %rdx\n    jmp " + a_loop + "\n");
+        s = s.write("    addq $1, %rdx\n    jmp " + a_tail + "\n");
         // The miss value is the LENGTH, not -1 — the branch-free-skip
         // contract this op keeps everywhere.
         s = s.write(a_none + ":\n    movq %r8, %rdx\n");

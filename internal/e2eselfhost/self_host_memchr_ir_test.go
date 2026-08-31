@@ -13,14 +13,14 @@ import (
 // kernel of docs/ATLAS-PLATFORM-PLAN.md §3, completed across the three
 // self-host backends.
 //
-// §3.4 orders the work as "total everywhere before fast anywhere": the native
-// backends serve this op with 16-byte-per-iteration vector kernels (SSE2 /
-// NEON / v128), and the self-host backends serve the same meaning a byte at a
-// time. That asymmetry is deliberate, and it is also what these tests are for
-// — the two tiers must agree on every answer, which is the property a later
-// slice will need when it swaps the scalar bodies for vector ones.
+// §3.4 orders the work as "total everywhere before fast anywhere". Every
+// backend answers the same question; only some answer it 16 bytes at a time.
+// Self-host x86-64 is SSE2, matching its native twin; self-host arm64 and wasm
+// are still the byte loop step 1 landed. Holding both shapes to one expectation
+// is what these tests are for, and it is the property the remaining vector
+// swaps will be checked against.
 //
-// Only once all six lowerings exist may `std/string` route its single-byte
+// Only once all seven lowerings exist may `std/string` route its single-byte
 // search through the intrinsic: the self-hosted compiler compiles the stdlib,
 // the AST emitters are gone, and every backend routes IR-or-error
 // (docs/SELFHOST-AST-RETIREMENT.md), so a missing lowering is a hard compile
@@ -32,8 +32,9 @@ import (
 //
 // The sweep runs length 0..40 with the needle at every position and the scan
 // starting before / at / after it. That range covers two full 16-byte vector
-// blocks plus a partial tail on either side — the boundaries these bodies do
-// not have yet, but the ones they must keep answering correctly when they do.
+// blocks plus a partial tail on either side, so every block boundary a vector
+// body can get wrong — a needle split across two loads, a hit in the tail, a
+// `from` landing mid-block — is swept for each backend that has one.
 //
 // A failure returns a small distinct code rather than a count, so the exit
 // status says WHICH shape disagreed. 42 means every comparison matched.

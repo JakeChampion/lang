@@ -590,12 +590,33 @@ second, scalar path the natives do not need: a short wasm string lives in its
 two words with no address, so there is nothing for `v128.load` to point at.
 
 The three *self-host* backends followed, and there step 1's scalar-first
-ordering is the whole point rather than a formality: `asm_ir.fern` /
-`asm_arm64_ir.fern` emit an inline byte loop, `wasm_ir.fern` a
-`$__fern_memchr` WAT helper. `-backend ssa` (arm64) was the seventh and, as above, the
-forgotten one; it is scalar too. Step 1 is therefore **complete — the intrinsic
-is total** — and step 2 (`std/string` adoption) landed at ~43x on the
+ordering is the whole point rather than a formality: they landed as an inline
+byte loop (`asm_ir.fern` / `asm_arm64_ir.fern`) and a `$__fern_memchr` WAT
+helper (`wasm_ir.fern`). `-backend ssa` (arm64) was the seventh and, as above,
+the forgotten one; it is scalar still. Step 1 is therefore **complete — the
+intrinsic is total** — and step 2 (`std/string` adoption) landed at ~43x on the
 single-byte search path.
+
+**Self-host x86-64 is now vectorised too** (step 3, first tier): both kernels
+run the same SSE2 shapes as their native twins, measured **702 ms → 61 ms
+(11.5x)** for `__memchr` and **695 ms → 60 ms (11.6x)** for `__ascii_run` over
+1.31 GB — 20,000 scans of a 64 KB haystack answered only at the last byte. It
+holds the cursor as an INDEX rather than a pointer, which keeps the whole body
+inside the five registers the scalar one already used, and the vector load runs
+only with a full block left, so nothing reads past the string and there is no
+alignment prologue.
+
+§3.3a's rule was the load-bearing part again, and this time in a place the
+section did not name: the self-host has its OWN in-process assembler
+(`x86_native.fern`), with no packed surface at all — only the scalar float ops
+that shuttle an f64 through xmm. So the encodings (`movdqu` load, `pcmpeqb`,
+`punpcklbw`/`punpcklwd`, `pmovmskb`, `pshufd`, `bsf`) landed with the kernel,
+pinned against GNU `as` both per-encoder and over the whole emitted sequence.
+Its failure mode is milder than the native assemblers' — an unencodable
+mnemonic is recorded on `unknown` and the driver refuses the output — but a
+refusal to compile is still a break, so the rule to carry forward widens: **a
+self-host backend has an assembler of its own, and it needs checking
+separately from the native one for the same target.**
 
 One thing the seven lowerings did *not* end up sharing is a string
 representation, and it is worth recording because it is what made four of the
@@ -635,9 +656,13 @@ ASCII unchanged). Worth generalising alongside the input-vs-needle rule below:
 **the rule says whether a kernel pays on its intended corpus; it says nothing
 about what the kernel costs on the corpus it was not chosen for.** Measure both.
 
-Remaining: step 3 for the self-host and `-backend ssa` (arm64) tiers — swapping those
-scalar bodies for vector ones. Unlike the native tier that is pure speed with
-no totality argument behind it, so it ranks below §4's other items.
+Remaining: step 3 for self-host arm64, self-host wasm, and `-backend ssa`
+(arm64) — swapping those scalar bodies for vector ones. Each needs its own
+assembler check first: `arm64_native.fern` for the self-host arm64 leg,
+`watbin.fern` for the wasm one, `internal/native/arm64` for `-backend ssa`
+(which already gained the NEON set the native arm64 kernels use). Unlike the
+native tier this is pure speed with no totality argument behind it, so it ranks
+below §4's other items.
 
 ### 3.5 Testing
 

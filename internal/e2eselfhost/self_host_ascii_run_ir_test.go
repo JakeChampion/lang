@@ -13,12 +13,13 @@ import (
 // kernel of docs/ATLAS-PLATFORM-PLAN.md §3, completed across the three
 // self-host backends.
 //
-// Same §3.4 ordering as __memchr's sibling suite: the native backends serve
-// this op with 16-byte-per-iteration vector kernels and the self-host backends
-// serve the same meaning a byte at a time, so the two tiers must agree on every
-// answer. What differs is that this op is being made TOTAL BEFORE any caller
-// adopts it, rather than after — __memchr was adopted with one backend
-// (arm64-ssa) still missing an entry, and CI reported it as a link error.
+// Same §3.4 ordering as __memchr's sibling suite: every backend answers the
+// same question and only some answer it 16 bytes at a time — native everywhere,
+// self-host on x86-64, a byte loop on self-host arm64 and wasm — so all of them
+// are held to one expectation. What differs is that this op was made TOTAL
+// BEFORE any caller adopted it, rather than after — __memchr was adopted with
+// one backend (arm64-ssa) still missing an entry, and CI reported it as a link
+// error.
 //
 // The contract difference worth stating once more, because it is what a reader
 // porting the op to an eighth backend gets wrong: a miss returns the LENGTH,
@@ -30,8 +31,8 @@ import (
 //
 // The sweep runs length 0..40 with the high byte at every position and the scan
 // starting before / at / after it — two full 16-byte vector blocks plus a
-// partial tail either side, which are the boundaries these scalar bodies do not
-// have yet but must keep answering correctly when they get them.
+// partial tail either side, so every block boundary a vector body can get wrong
+// is swept for each backend that has one.
 //
 // A failure returns a small distinct code rather than a count, so the exit
 // status says WHICH shape disagreed. 42 means every comparison matched.
