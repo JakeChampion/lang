@@ -7321,6 +7321,22 @@ func (g *generator) emitStrAppendRuntime() {
 // emitStrcmpRuntime emits `__fern_strcmp(a, b)` — returns 0
 // if a and b have the same length AND the same bytes, else 1.
 // Pure equality comparator (no lex ordering), matching arm64.
+// twoOverPiBits is 2/pi in binary, MSB-first, one limb per 64 fraction bits
+// starting at 2^-1 in limb 1 — the table Payne-Hanek reduction indexes with
+// the argument's own exponent. The leading zero limb lets that index start
+// above 2^-1 without a bounds test, and the length covers the largest finite
+// double: reducing near 2^1024 consumes ~1024 bits before the 53 bits of
+// significand and the 64 bits of quotient the reduction actually reads.
+var twoOverPiBits = [...]uint64{
+	0x0000000000000000, 0xa2f9836e4e441529, 0xfc2757d1f534ddc0,
+	0xdb6295993c439041, 0xfe5163abdebbc561, 0xb7246e3a424dd2e0,
+	0x06492eea09d1921c, 0xfe1deb1cb129a73e, 0xe88235f52ebb4484,
+	0xe99c7026b45f7e41, 0x3991d639835339f4, 0x9c845f8bbdf9283b,
+	0x1ff897ffde05980f, 0xef2f118b5a0a6d1f, 0x6d367ecf27cb09b7,
+	0x4f463f669e5fea2d, 0x7527bac7ebe5f17b, 0x3d0739f78a5292ea,
+	0x6bfb5fb11f8d5d08, 0x56033046fc7b6bab, 0xf0cfbc209af4361d,
+}
+
 // emitFloatTranscendentalsRuntime emits the f64 transcendental bundle —
 // __fern_{exp,log,sin,cos,pow}_f64 — plus the shared .rodata table of
 // coefficients. x86-64 has no usable hardware transcendental (the x87
@@ -7374,14 +7390,24 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 		{".Lfc_ln2hi", "6.93147180369123816490e-01"},
 		{".Lfc_ln2lo", "1.90821492927058770002e-10"},
 		{".Lfc_2opi", "6.36619772367581382433e-01"},
-		// pi/2 as THREE 33-bit chunks (~99 bits). Two chunks leave sin(pi)
-		// 285k ulp out: near a zero of sin the reduced argument IS the
-		// answer, so the reduction's absolute error becomes the result's
-		// relative error. A fourth chunk makes it worse, not better — it
-		// perturbs the cancellation the third one sets up.
+		// pi/2 as THREE 33-bit chunks (~99 bits), for |x| < 2^20. Two chunks
+		// leave sin(pi) 285k ulp out: near a zero of sin the reduced argument
+		// IS the answer, so the reduction's absolute error becomes the
+		// result's relative error. A fourth chunk makes it worse, not better
+		// — it perturbs the cancellation the third one sets up.
+		//
+		// The head carries 22 trailing zero mantissa bits, so `x - k*pio2h`
+		// is exact only while k fits in 22 bits. Past that the reduction is
+		// __fern_rem_pio2_large's.
 		{".Lfc_pio2h", "1.57079632673412561417e+00"},
 		{".Lfc_pio2m", "6.07710050630396597660e-11"},
 		{".Lfc_pio2l", "2.02226624879595063154e-21"},
+		// pi/2 as an unevaluated double-double, plus the two scales that turn
+		// __fern_rem_pio2_large's 126-bit fraction into a double.
+		{".Lfc_pio2hi", "1.5707963267948966"},
+		{".Lfc_pio2lo", "6.123233995736766e-17"},
+		{".Lfc_2m62", "2.168404344971009e-19"},
+		{".Lfc_2m115", "2.407412430484045e-35"},
 		// sin kernel, |r| <= pi/4
 		{".Lfc_s1", "-1.66666666666666324348e-01"},
 		{".Lfc_s2", "8.33333333332248946124e-03"},
@@ -7420,6 +7446,10 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	} {
 		g.label(c.lbl)
 		g.line("\t.double " + c.val)
+	}
+	g.label(".Lfc_2opi_bits")
+	for _, w := range twoOverPiBits {
+		g.line(fmt.Sprintf("\t.quad 0x%016x", w))
 	}
 	g.line(".text")
 
@@ -7508,8 +7538,111 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("addsd xmm0, xmm6")
 	g.emit("ret")
 
+	// __fern_rem_pio2_large(xmm0=x, |x| >= 2^20 and finite) → rax = k,
+	// xmm0 = r. Payne-Hanek: multiply the significand by the window of 2/pi
+	// that its exponent selects, keeping 128 bits around the binary point.
+	// The top two bits of that product are the quadrant and the rest is the
+	// fraction of x/(pi/2), which stays fully accurate however large x is —
+	// where Cody-Waite's `x - k*pio2h` needs k to fit in pio2h's 22 zeroed
+	// mantissa bits and returns noise beyond it.
+	g.line("")
+	g.label("__fern_rem_pio2_large")
+	g.emit("movq rdx, xmm0")
+	g.emit("mov r8, rdx")
+	g.emit("shr r8, 63") // sign of x
+	g.emit("mov rcx, rdx")
+	g.emit("shr rcx, 52")
+	g.emit("and ecx, 0x7ff")
+	g.emit("movabs rax, 0x000fffffffffffff")
+	g.emit("and rdx, rax")
+	g.emit("movabs rax, 0x0010000000000000")
+	g.emit("or rdx, rax") // m, the 53-bit significand
+	// x = m*2^(e-1075), and the fraction of x*(2/pi) starts at bit
+	// (e-1075)+62 of the table once the product is read as a Q126.
+	g.emit("sub rcx, 1013")
+	g.emit("mov r9, rcx")
+	g.emit("and r9d, 63") // bit offset within the limb
+	g.emit("shr rcx, 6")  // limb index
+	g.emit("lea r10, [rip+.Lfc_2opi_bits]")
+	g.emit("lea r10, [r10+rcx*8]")
+	g.emit("mov rsi, [r10]")
+	g.emit("mov rdi, [r10+8]")
+	g.emit("mov r11, [r10+16]")
+	g.emit("mov rax, [r10+24]")
+	g.emit("mov ecx, r9d")
+	g.emit("shld rsi, rdi, cl") // w0
+	g.emit("shld rdi, r11, cl") // w1
+	g.emit("shld r11, rax, cl") // w2
+	g.emit("mov r9, rdx")
+	g.emit("mov rax, r9")
+	g.emit("mul rsi")
+	g.emit("mov rsi, rax") // low(m*w0)
+	g.emit("mov rax, r9")
+	g.emit("mul rdi")
+	g.emit("mov rdi, rax") // low(m*w1)
+	g.emit("mov r10, rdx") // high(m*w1)
+	g.emit("mov rax, r9")
+	g.emit("mul r11")      // high(m*w2) in rdx
+	g.emit("add rdi, rdx") // fraction, low 64
+	g.emit("adc rsi, r10") // fraction, high 64
+	g.emit("mov rax, rsi")
+	g.emit("shr rax, 62") // k
+	g.emit("movabs rcx, 0x3fffffffffffffff")
+	g.emit("and rsi, rcx")
+	g.emit("xorpd xmm3, xmm3")
+	// A fraction past 1/2 belongs to the next quadrant, as 1 minus itself.
+	phPos := g.freshLabel("phPos")
+	g.emit("movabs r10, 0x2000000000000000")
+	g.emit("cmp rsi, r10")
+	g.emit("jb " + phPos)
+	g.emit("inc rax")
+	g.emit("mov r11, rsi")
+	g.emit("mov rcx, rdi")
+	g.emit("xor rdi, rdi")
+	g.emit("sub rdi, rcx")
+	// movabs, not `mov 1` + `shl 62`: a shift writes CF, and the borrow
+	// from the sub above has to survive to the sbb below.
+	g.emit("movabs rsi, 0x4000000000000000")
+	g.emit("sbb rsi, r11")
+	g.emit("movabs rcx, 0x8000000000000000")
+	g.emit("movq xmm3, rcx")
+	g.label(phPos)
+	// The low half only contributes below 2^-64, so 11 of its bits fall off
+	// the end of the double anyway; dropping them keeps the conversion
+	// inside the signed range cvtsi2sd works in.
+	g.emit("shr rdi, 11")
+	g.emit("cvtsi2sd xmm1, rsi")
+	g.emit("mulsd xmm1, [rip+.Lfc_2m62]")
+	g.emit("cvtsi2sd xmm2, rdi")
+	g.emit("mulsd xmm2, [rip+.Lfc_2m115]")
+	g.emit("addsd xmm1, xmm2")
+	g.emit("xorpd xmm1, xmm3")
+	phNonNeg := g.freshLabel("phNonNeg")
+	g.emit("test r8, r8")
+	g.emit("jz " + phNonNeg)
+	g.emitF64Negate("xmm1")
+	g.emit("neg rax")
+	g.label(phNonNeg)
+	g.emit("and rax, 3")
+	g.emit("movsd xmm0, xmm1")
+	g.emit("mulsd xmm0, [rip+.Lfc_pio2hi]")
+	g.emit("mulsd xmm1, [rip+.Lfc_pio2lo]")
+	g.emit("addsd xmm0, xmm1")
+	g.emit("ret")
+
 	// emitPio2Reduce: xmm0 = x → rax = quadrant (k&3), xmm0 = r.
 	pio2Reduce := func() {
+		// |x| >= 2^20 puts k past pio2h's 22 exact bits, so the Cody-Waite
+		// chain below reduces against noise there and needs Payne-Hanek.
+		small, done := g.freshLabel("pio2Small"), g.freshLabel("pio2Done")
+		g.emit("movq rax, xmm0")
+		g.emit("shr rax, 52")
+		g.emit("and eax, 0x7ff")
+		g.emit("cmp eax, 1043")
+		g.emit("jb " + small)
+		g.emit("call __fern_rem_pio2_large")
+		g.emit("jmp " + done)
+		g.label(small)
 		ldc("xmm1", ".Lfc_2opi")
 		g.emit("mulsd xmm1, xmm0")
 		g.emit("roundsd xmm1, xmm1, 0") // k, to nearest
@@ -7523,6 +7656,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 		g.emit("mulsd xmm1, [rip+.Lfc_pio2l]")
 		g.emit("subsd xmm0, xmm1") // r
 		g.emit("and rax, 3")
+		g.label(done)
 	}
 
 	// __fern_sin_f64: quadrant 0..3 → sin r, cos r, −sin r, −cos r.
