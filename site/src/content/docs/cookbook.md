@@ -255,15 +255,21 @@ resolver in the standard library yet, so the host is an address:
 
 ```fern
 import "std/fetch";
+import "std/utf8";
 
 function main(): i32 {
     var host: i32 = fetch.ipv4(93, 184, 216, 34);
-    var resp: string = fetch.fetch_get(host, 80, "/");
-    print(fetch.http_body(resp));
+    var resp: u8[] = fetch.fetch_get(host, 80, "/");
+    match (utf8.from_bytes(fetch.http_body(resp))) {
+        Some(text) => { print(text); },
+        None => { print("body is not valid UTF-8"); },
+    }
     return 0;
 }
 ```
 
+Responses are bytes, not text: an upstream can serve a PNG or a truncated
+UTF-8 sequence, so decoding is an explicit step that can fail.
 `fetch.http_status(resp)` reads the status line, and `fetch.fetch_future`
 gives you a future you can hand to `async.gather` to overlap several
 requests on one thread.
