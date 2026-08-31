@@ -117,7 +117,7 @@ func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	t.Logf("  by defining op: %s", topCounts(byKind, 6))
 	t.Logf("  worst functions: %s", topCounts(byFunc, 5))
 
-	// Measured 2026-08-31: ZERO findings, 727 functions over 323
+	// Measured 2026-08-31: ZERO findings, 1087 functions over 323
 	// fixtures the runtime proves clean. The probe this replaces
 	// reported 20.3%.
 	//
@@ -139,6 +139,14 @@ func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	//	                cell is .rodata too
 	//	transferred     the impossible fall-through of an exhaustive
 	//	                match, which lowering no longer emits (#7848)
+	//	call            a callee that stores a fresh box into memory and
+	//	                returns it as well hands back a BORROW, so the
+	//	                result axis may not call it owned
+	//	alloc           a parameter released through a loop-carried phi
+	//	                (a TRMC'd body) is consumed, and the alias
+	//	                closure alone cannot see it
+	//	make_env        `__closure_drop_<name>` was in no drop table, so
+	//	                the release it always performs was invisible
 	//
 	// The floors below still matter more than this line. Zero findings
 	// over a walk that had stopped understanding anything would satisfy
@@ -157,18 +165,20 @@ func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	//
 	// Two different coverage figures, deliberately separate. `skipped`
 	// is the WALK declining a function and is the one this gate owns.
-	// `liftFailed` is `ssa.LiftFromIR` declining one, which is #7803 and
-	// is not the walk's to fix — but it bounds what any answer here can
-	// cover, so it is floored too. It is much worse after the pass
-	// battery than before it (360 against 37): the battery produces
-	// value-typed `OpBlock`s, which the lift refuses outright, so the
-	// program the backend emits is markedly harder to lift than the raw
-	// lowering every existing lift measurement was taken on.
+	// `liftFailed` is `ssa.LiftFromIR` declining one, and it bounds what
+	// any answer here can cover, so it is floored too.
+	//
+	// It used to be 360 here against 37 on the raw lowering: the battery
+	// produces value-typed `OpBlock`s — `ir.Inline`'s early-return
+	// wrapper — and the lift refused them, so the program the backend
+	// emits was markedly harder to lift than the lowering every existing
+	// measurement had been taken on. It is now 0, and the 360 functions
+	// that reappeared are what the three classes above were found in.
 	if skipped > funcs/20 {
 		t.Errorf("the walk declined %d of %d lifted functions — a low flag rate over a walk "+
 			"that gave up is not evidence of anything", skipped, funcs)
 	}
-	if cov := 100 * float64(funcs) / float64(funcs+liftFailed); cov < 55 {
+	if cov := 100 * float64(funcs) / float64(funcs+liftFailed); cov < 99 {
 		t.Errorf("only %.2f%% of functions lifted (%d of %d) — below this the corpus answer "+
 			"describes a minority of the program", cov, funcs, funcs+liftFailed)
 	}

@@ -1066,22 +1066,114 @@ func TestLiftBlockNestedInIf(t *testing.T) {
 	}
 }
 
-// TestLiftBlockRejectsNonVoid — Phase 9 only handles void blocks.
-func TestLiftBlockRejectsNonVoid(t *testing.T) {
+// TestLiftBlockValueFallThrough — a value-producing OpBlock whose only
+// exit is the fall-through. One source, so no phi: the block's value is
+// the value the body left on the stack.
+func TestLiftBlockValueFallThrough(t *testing.T) {
 	in := &ir.Func{
 		Name: "f",
 		Ops: []ir.Op{
 			{Kind: ir.OpBlock, I32: ir.BlockTypeI32},
+			{Kind: ir.OpConstI32, I32: 7},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if n := countOps(out, OpPhi); n != 0 {
+		t.Errorf("phis = %d, want 0 for a single-source block", n)
+	}
+}
+
+// TestLiftBlockValueBrMerge — `ir.Inline`'s early-return wrapper: an
+// OpBr carries the callee's result out of the block and the body's tail
+// falls through with its own, so the block's value is a phi of the two.
+func TestLiftBlockValueBrMerge(t *testing.T) {
+	in := &ir.Func{
+		Name:   "f",
+		Params: []ast.Param{{Name: "c"}},
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeI32}, // depth 0
+			{Kind: ir.OpConstI32, I32: 11},           // the br's carried value
+			{Kind: ir.OpLoadLocal, I32: 0},           // cond
+			{Kind: ir.OpBrIf, I32: 0},
+			{Kind: ir.OpDrop},              // discard the untaken br's value
+			{Kind: ir.OpConstI32, I32: 22}, // fall-through value
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if n := countOps(out, OpPhi); n != 1 {
+		t.Errorf("phis = %d, want 1 merging the br and fall-through values", n)
+	}
+}
+
+// countOps counts ops of one kind across every block of f.
+func countOps(f *Func, k OpKind) int {
+	n := 0
+	for _, b := range f.Blocks {
+		for _, o := range b.Ops {
+			if o.Kind == k {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// TestLiftBlockValueAllPathsReturn — every path leaves via OpReturn, so
+// the post block is unreachable. It still owes the operand stack a
+// value; without one every later op reads one operand too few.
+func TestLiftBlockValueAllPathsReturn(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeI32},
+			{Kind: ir.OpConstI32, I32: 3},
+			{Kind: ir.OpReturn},
+			{Kind: ir.OpEnd},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	if err := Verify(out); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+// TestLiftBlockRejectsStringPair — a two-value block type; the merge
+// pops one stack top, so it is refused rather than mis-modelled.
+func TestLiftBlockRejectsStringPair(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpBlock, I32: ir.BlockTypeStringPair},
 			{Kind: ir.OpEnd},
 			{Kind: ir.OpReturnVoid},
 		},
 	}
 	_, err := LiftFromIR(in)
 	if err == nil {
-		t.Fatal("expected error for non-void OpBlock")
+		t.Fatal("expected error for BlockTypeStringPair")
 	}
-	if !strings.Contains(err.Error(), "non-void BlockType") {
-		t.Errorf("error %q doesn't mention non-void BlockType", err)
+	if !strings.Contains(err.Error(), "BlockTypeStringPair") {
+		t.Errorf("error %q doesn't mention BlockTypeStringPair", err)
 	}
 }
 

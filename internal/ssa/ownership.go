@@ -258,6 +258,52 @@ func aliasesOfWithReturns(f *Func, uses *Uses, v Value, sigs map[string]Signatur
 	return out
 }
 
+// unitCarriersOf is aliasesOfWithReturns plus the phis those values
+// feed, transitively.
+//
+// A value that feeds a phi hands its unit to the phi: after the join
+// everything names the PHI's result, so that is where a later release
+// lands. `certify.go`'s `phiFeeds` states the same rule from the other
+// side, and this is the alias-set half of it.
+//
+// It is what a TRMC'd function needs. `dup(xs) = Cons(h, dup(t))`
+// lowers to a loop, and the parameter becomes the first incoming of a
+// loop-carried phi whose other incoming is the tail loaded from the
+// previous box. The drop that releases the list releases the PHI, so
+// the alias closure alone sees the parameter released nowhere and the
+// solver calls it Borrowed — which then tells every caller it still
+// owns an argument the callee consumed. `nested_call_temp` is that
+// shape: the runtime pairs all 18 allocations and the certifier
+// reported two of them leaked.
+//
+// The precision it does NOT add: a phi is not a rename, so this is used
+// only for the release/retain evidence the param modes rest on. Nothing
+// that reads RCSites gains it, the same way nothing gains the return
+// edge without opting in.
+func unitCarriersOf(f *Func, uses *Uses, v Value, sigs map[string]Signature) []Value {
+	out := aliasesOfWithReturns(f, uses, v, sigs)
+	seen := make(map[int32]bool, len(out))
+	for _, a := range out {
+		seen[a.ID] = true
+	}
+	for i := 0; i < len(out); i++ {
+		for _, u := range uses.Of(out[i]) {
+			if u.Op == nil || u.Op.Kind != OpPhi || !u.Op.Result.IsValid() || seen[u.Op.Result.ID] {
+				continue
+			}
+			seen[u.Op.Result.ID] = true
+			for _, a := range aliasesOfWithReturns(f, uses, u.Op.Result, sigs) {
+				if !seen[a.ID] {
+					seen[a.ID] = true
+					out = append(out, a)
+				}
+			}
+			out = append(out, u.Op.Result)
+		}
+	}
+	return out
+}
+
 // usesAfter returns every use of vs (a value and its pass-through
 // aliases) other than `self` that can be reached from position oi in
 // block b.

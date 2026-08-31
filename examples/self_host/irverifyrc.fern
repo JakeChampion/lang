@@ -161,6 +161,7 @@ function generated_drop_prefixes(): string[] {
         "__drop_arr_arr_",
         "__drop_arr_of_",
         "__drop_map_",
+        "__closure_drop_",
     ];
 }
 
