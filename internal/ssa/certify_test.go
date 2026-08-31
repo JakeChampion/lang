@@ -383,3 +383,35 @@ func TestCertifyDoesNotReportAnImmortalCallResult(t *testing.T) {
 		t.Errorf("a static-sentinel box was reported as leaked: %+v", rep.Leaks)
 	}
 }
+
+// The last class the certifier reported against the runtime oracle: a
+// static closure cell read as a fresh allocation. 102 of the 109
+// findings over the census-clean fixtures were this.
+func TestCertifyDoesNotReportAStaticClosureCell(t *testing.T) {
+	f := &Func{Name: "f"}
+	b := f.NewBlock()
+	f.Entry = b
+	f.AddOp(b, OpMakeClosure)
+	op := b.Ops[len(b.Ops)-1]
+	op.Str, op.StaticCell = "target", true
+	b.Term = Terminator{Kind: TermRet}
+
+	if rep := Certify(f, nil); len(rep.Leaks) != 0 {
+		t.Errorf("a static closure cell was reported as leaked: %+v", rep.Leaks)
+	}
+}
+
+// The heap form is still reported, so the fix is a distinction rather
+// than a blanket exemption for the op kind.
+func TestCertifyStillReportsAHeapClosure(t *testing.T) {
+	f := &Func{Name: "f"}
+	b := f.NewBlock()
+	f.Entry = b
+	f.AddOp(b, OpMakeClosure)
+	b.Ops[len(b.Ops)-1].Str = "target"
+	b.Term = Terminator{Kind: TermRet}
+
+	if rep := Certify(f, nil); len(rep.Leaks) != 1 {
+		t.Errorf("want the unreleased heap closure reported, got %+v", rep.Leaks)
+	}
+}

@@ -1689,3 +1689,42 @@ func TestLiftRejectsStackUnderflow(t *testing.T) {
 		t.Errorf("error %q doesn't mention operands", err)
 	}
 }
+
+// `ir.OpConstFunc` and a zero-capture `ir.OpMakeClosure` both lift to
+// OpMakeClosure with the same Str and no captures. Only StaticCell
+// separates them, and the difference is real: the first is a `lea`
+// against a `.rodata` cell, the second a 32-byte rc=1 heap block.
+func TestLiftMarksAStaticClosureCell(t *testing.T) {
+	in := &ir.Func{
+		Name: "f",
+		Ops: []ir.Op{
+			{Kind: ir.OpConstFunc, Str: "target"},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpMakeClosure, Str: "target"},
+			{Kind: ir.OpDrop},
+			{Kind: ir.OpConstI32, I32: 0},
+			{Kind: ir.OpReturn},
+		},
+	}
+	out, err := LiftFromIR(in)
+	if err != nil {
+		t.Fatalf("LiftFromIR: %v", err)
+	}
+	var got []bool
+	for _, b := range out.Blocks {
+		for _, o := range b.Ops {
+			if o.Kind == OpMakeClosure {
+				got = append(got, o.StaticCell)
+			}
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("want two OpMakeClosure ops, got %d:\n%s", len(got), out)
+	}
+	if !got[0] {
+		t.Error("the OpConstFunc-derived cell is a .rodata constant and must be marked static")
+	}
+	if got[1] {
+		t.Error("a real OpMakeClosure allocates and must not be marked static")
+	}
+}

@@ -522,6 +522,26 @@ type Op struct {
 	// hand-built SSA closures assume).
 	CaptureSlots []int32
 
+	// StaticCell marks an OpMakeClosure whose cell is a static
+	// `.rodata` constant rather than a heap allocation.
+	//
+	// The kind is shared on purpose: `ir.OpConstFunc` — a bare function
+	// value, and what `ir.InlineZeroCaptureClosures` rewrites a
+	// zero-capture `ir.OpMakeClosure` INTO precisely to avoid the
+	// allocation — lifts to `OpMakeClosure` so it dereferences
+	// identically through OpCallIndirect. That uniformity is worth
+	// having and it loses the one fact reference counting needs, since
+	// a `lea` against a `.rodata` cell carries no unit and can never be
+	// released.
+	//
+	// A zero-capture heap closure and a static cell are otherwise
+	// indistinguishable here — same kind, same Str, both with no
+	// captures — so the lift records the difference rather than leaving
+	// a consumer to guess. `ssa.UnitsOf` read every OpMakeClosure as a
+	// fresh allocation before this existed, which was the last class
+	// the certifier reported against the runtime oracle.
+	StaticCell bool
+
 	// SrcOp is the index in the source ir.Func.Ops this Op was lifted from,
 	// PLUS ONE. Zero means no IR origin.
 	//
