@@ -11336,34 +11336,14 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
                 sc = sc.emit(ir.op_load_local(laas));
                 laa_slots = laa_slots.append(laas);
             }
-            // A fresh struct LITERAL argument (`take(P { … })`). The ladder that
-            // reclaims a DISCARDED struct literal lives in lower_stmt_inner's
-            // StmtExpr arm and has no counterpart in expression position, so an
-            // argument temp leaked its box and every rc field it owns — even a
-            // scalar-only struct, whose release there is a single dec. Stash and
-            // free it after the call, on the same terms as the array arm above
-            // and with that arm's two release shapes.
-            var slit_arg: string = "";
-            if (sc.ok && arg_releasable) {
-                match (c.args[ai]) {
-                    ast.ExprStructLit(lsl) => {
-                        if (!lsl.has_base
-                            && (struct_lit_all_scalar(sc.structs, lsl.type_name)
-                                || struct_fields_reusable(sc.structs, lsl.type_name))) {
-                            slit_arg = lsl.type_name;
-                        }
-                    },
-                    _ => {}
-                }
-            }
-            if (slit_arg.len() > 0) {
-                var lsln: string = "$lsl" + util.i32_to_string(sc.locals.len());
-                sc = sc.add_local(lsln);
-                var lsls: i32 = sc.slot_of(lsln);
-                sc = sc.emit(ir.op_store_local(lsls));
-                sc = sc.emit(ir.op_load_local(lsls));
-                lsl_slots = lsl_slots.append(lsls);
-                lsl_types = lsl_types.append(slit_arg);
+            // A fresh STRUCT argument — a literal or a strict-fresh producer
+            // call. Both stash and free on the same terms as the array arm
+            // above; stash_fresh_struct_arg holds the reasoning.
+            var sst: StructArgStash = stash_fresh_struct_arg(sc, c.args[ai], cid.name, ai);
+            sc = sst.state;
+            if (sst.slot >= 0) {
+                lsl_slots = lsl_slots.append(sst.slot);
+                lsl_types = lsl_types.append(sst.type_name);
             }
         }
         if (!sc.ok) { return sc; }
@@ -11446,18 +11426,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         scr = scr.release(laa_slots[lfa], "__fern_rc_dec", "stashed-arr-arg");
         lfa = lfa + 1;
     }
-    // The struct-literal arg temps, in the discarded-statement arm's order: the
-    // deep field drop first, while the box still OWNS its fields, then the box
-    // dec. A scalar-only struct has no reclaim array field and takes the dec
-    // alone, which is exactly what that arm emits for it.
-    var lfs: i32 = 0;
-    while (lfs < lsl_slots.len()) {
-        if (struct_has_reclaim_array_field(scr.structs, lsl_types[lfs])) {
-            scr = scr.release(lsl_slots[lfs], "__struct_drop_" + lsl_types[lfs], "stashed-struct-arg-deep");
-        }
-        scr = scr.release(lsl_slots[lfs], "__fern_rc_dec", "stashed-struct-arg");
-        lfs = lfs + 1;
-    }
+    scr = free_stashed_struct_args(scr, lsl_slots, lsl_types);
     // #5464: a bare-typevar-RETURN pass-through fn (`id[T](x:T):T`,
     // str_ret_argref >= 0) returns i64 on wasm — the uniform 8-byte
     // slot the register backends give every value. Narrow the result
@@ -11488,6 +11457,8 @@ function lower_call_prim_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, pty: s
     else { pm = lower_expr(fa.obj, s); }
     if (!pm.ok) { return pm; }
     var pm_lat: i32[] = [];
+    var pm_lsl: i32[] = [];
+    var pm_lslt: string[] = [];
     // A fresh anonymous RECEIVER at a SOURCE-DECLARED method, the twin of the
     // builtin-method release. The warrant is the callee-side proof
     // recv_borrow_fns_of already computes: the plain "<Type>.<method>" key
@@ -11541,12 +11512,19 @@ function lower_call_prim_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, pty: s
             var pmst: ArgStash = stash_fresh_str_arg(pm, c.args[pai], pty + "." + fa.field, pai);
             pm = pmst.state;
             if (pmst.slot >= 0) { pm_lat = pm_lat.append(pmst.slot); }
+            var pmss: StructArgStash = stash_fresh_struct_arg(pm, c.args[pai], pty + "." + fa.field, pai);
+            pm = pmss.state;
+            if (pmss.slot >= 0) {
+                pm_lsl = pm_lsl.append(pmss.slot);
+                pm_lslt = pm_lslt.append(pmss.type_name);
+            }
         }
         if (!pm.ok) { return pm; }
         pai = pai + 1;
     }
     pm = pm.emit(ir.op_call_direct(pty + "." + fa.field, 1 + c.args.len()));
     pm = free_stashed_str_args(pm, pm_lat);
+    pm = free_stashed_struct_args(pm, pm_lsl, pm_lslt);
     if (prslot >= 0) {
         pm = pm.emit(ir.op_load_local(prslot));
         pm = pm.emit(ir.op_load_local(prroot));
@@ -11581,6 +11559,8 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
     var sm: LowerState = lower_expr(fa.obj, s);
     if (!sm.ok) { return sm; }
     var sm_lat: i32[] = [];
+    var sm_lsl: i32[] = [];
+    var sm_lslt: string[] = [];
     var ai: i32 = 0;
     while (ai < c.args.len()) {
         // A bare fn-name arg at a "fn"-typed method param is a
@@ -11601,12 +11581,19 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
             var smst: ArgStash = stash_fresh_str_arg(sm, c.args[ai], disp_ty + "." + fa.field, ai);
             sm = smst.state;
             if (smst.slot >= 0) { sm_lat = sm_lat.append(smst.slot); }
+            var smss: StructArgStash = stash_fresh_struct_arg(sm, c.args[ai], disp_ty + "." + fa.field, ai);
+            sm = smss.state;
+            if (smss.slot >= 0) {
+                sm_lsl = sm_lsl.append(smss.slot);
+                sm_lslt = sm_lslt.append(smss.type_name);
+            }
         }
         if (!sm.ok) { return sm; }
         ai = ai + 1;
     }
     sm = sm.emit(ir.op_call_direct(disp_ty + "." + fa.field, 1 + c.args.len()));
-    return free_stashed_str_args(sm, sm_lat);
+    sm = free_stashed_str_args(sm, sm_lat);
+    return free_stashed_struct_args(sm, sm_lsl, sm_lslt);
 }
 
 // lower_call_fn_field lowers a call through a CLOSURE-VALUED struct field —
@@ -31017,6 +31004,83 @@ function free_stashed_str_args(s: LowerState, slots: i32[]): LowerState {
     return st;
 }
 
+// StructArgStash is stash_fresh_struct_arg's result: the state with the park
+// emitted, the scratch slot holding the box, and the struct type whose drop the
+// post-call release routes through. slot is -1 when the arg earned no stash.
+struct StructArgStash { state: LowerState, slot: i32, type_name: string }
+
+// stash_fresh_struct_arg parks a fresh STRUCT argument in a scratch and reloads
+// it, so the caller can free the box after the call. The string sibling is
+// stash_fresh_str_arg; both the ident-callee and the method-callee lowering
+// call this one.
+//
+// Two shapes qualify. A no-base struct LITERAL (`take(P { … })`) — the ladder
+// that reclaims a DISCARDED struct literal lives in lower_stmt_inner's StmtExpr
+// arm and has no expression-position counterpart, so the argument temp leaked
+// its box and every rc field it owns, even a scalar-only struct whose release
+// there is a single dec. And a call to a strict-fresh struct PRODUCER
+// (`take(mk(i))`), which no literal arm can reach: every return of such a
+// callee is a no-base literal this frame allocated, so the returned box
+// sole-owns its fields and the same two release shapes apply. A local shadowing
+// the producer's name is refused — the registry is keyed by declaration.
+//
+// Gated like the string sibling: at a borrowable position the callee can
+// neither retain nor return the argument, so the box is dead the moment the
+// call returns, and a counted-retain position admits the same temp because the
+// callee's store leaves it rc 2 on the escaping path and rc 1 otherwise.
+function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai: i32): StructArgStash {
+    if (!s.ok) { return StructArgStash { state: s, slot: 0 - 1, type_name: "" }; }
+    if (!call_arg_borrowable(s, callee, ai)
+        && !arr_param_counted_at(s.sigs.param_counted, callee, ai)) {
+        return StructArgStash { state: s, slot: 0 - 1, type_name: "" };
+    }
+    var ty: string = "";
+    match (arg) {
+        ast.ExprStructLit(lsl) => {
+            if (!lsl.has_base) { ty = lsl.type_name; }
+        },
+        ast.ExprCall(lac) => {
+            match (lac.callee) {
+                ast.ExprIdent(lacid) => {
+                    if (util.index_of_str(s.sigs.return_fresh_struct_ret_fns, lacid.name) >= 0
+                        && s.slot_of(lacid.name) < 0) { ty = s.struct_ret_type(lacid.name); }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    if (ty.len() == 0) { return StructArgStash { state: s, slot: 0 - 1, type_name: "" }; }
+    if (!struct_lit_all_scalar(s.structs, ty) && !struct_fields_reusable(s.structs, ty)) {
+        return StructArgStash { state: s, slot: 0 - 1, type_name: "" };
+    }
+    var lsln: string = "$lsl" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(lsln);
+    var lsls: i32 = st.slot_of(lsln);
+    st = st.emit(ir.op_store_local(lsls));
+    st = st.emit(ir.op_load_local(lsls));
+    return StructArgStash { state: st, slot: lsls, type_name: ty };
+}
+
+// free_stashed_struct_args drains stash_fresh_struct_arg's slots after the
+// call, in the discarded-statement arm's order: the deep field drop first,
+// while the box still OWNS its fields, then the box dec. A scalar-only struct
+// has no reclaim array field and takes the dec alone, which is exactly what
+// that arm emits for it. Net-zero on the operand stack, so the call's result —
+// live beneath — is untouched.
+function free_stashed_struct_args(s: LowerState, slots: i32[], types: string[]): LowerState {
+    var st: LowerState = s;
+    var i: i32 = 0;
+    while (i < slots.len()) {
+        if (struct_has_reclaim_array_field(st.structs, types[i])) {
+            st = st.release(slots[i], "__struct_drop_" + types[i], "stashed-struct-arg-deep");
+        }
+        st = st.release(slots[i], "__fern_rc_dec", "stashed-struct-arg");
+        i = i + 1;
+    }
+    return st;
+}
+
 // discarded_call_callees_stmt collects the bare-ident CALLEE names of DISCARDED
 // call statements (`mk(i);` — a StmtExpr whose value is a direct free call),
 // recursing into control-flow bodies. Only these callees need a "TUPRET:" seed.
@@ -31210,7 +31274,11 @@ function lit_arg_callees_expr(e: ast.Expr, acc: string[]): string[] {
                 ast.ExprFieldAccess(mfa) => {
                     var mhas: boolean = false;
                     for arg in c.args {
-                        match (arg) { ast.ExprString(_) => { mhas = true; }, _ => {
+                        // The same shapes the ident arm collects, minus the
+                        // array literal: this seeds what a METHOD callee's
+                        // lowering can consume, and that path stashes the
+                        // string and struct tiers only.
+                        match (arg) { ast.ExprString(_) => { mhas = true; }, ast.ExprStructLit(_) => { mhas = true; }, ast.ExprCall(_) => { mhas = true; }, _ => {
                             if (str_local_binding_is_fresh(arg)) { mhas = true; }
                         } }
                     }
