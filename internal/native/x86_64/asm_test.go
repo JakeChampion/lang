@@ -305,3 +305,80 @@ func TestEncodeVectorSurface(t *testing.T) {
 		}
 	}
 }
+
+// TestEncodeShld pins the double-precision left shift, which the trig
+// argument reduction uses to extract a 64-bit window from the 2/pi bit table.
+//
+// Its operand direction is the reverse of every other two-register form here:
+// ModRM.reg holds the SOURCE and ModRM.rm the DESTINATION. Encoding it the
+// usual way round assembles cleanly and shifts in bits from the wrong
+// register, so the low/high register pairs below are chosen to make REX.R and
+// REX.B disagree — with the fields swapped, `shld r11, rax, cl` would emit
+// REX.R instead of REX.B and address r8..r15 on the wrong side.
+//
+// Byte sequences captured from `objdump -d -M intel`, as above.
+func TestEncodeShld(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{"shld rsi, rdi, cl", "480fa5fe"},
+		{"shld r11, rax, cl", "490fa5c3"}, // REX.B only
+		{"shld rax, rdx, cl", "480fa5d0"},
+		{"shld r11, r12, cl", "4d0fa5e3"}, // REX.R and REX.B
+		{"shld r8, r9, cl", "4d0fa5c8"},
+		{"shld rdi, rsi, 17", "480fa4f711"},
+		{"shld r15, r14, 1", "4d0fa4f701"},
+	}
+	for _, c := range cases {
+		if got := asm(t, c.src); got != c.want {
+			t.Errorf("asm(%q) = %s, want %s (GNU as)", c.src, got, c.want)
+		}
+	}
+}
+
+// TestEncodeMul pins the one-operand unsigned multiply (F7 /4), the widening
+// form that puts the full 128-bit product in rdx:rax. The trig reduction needs
+// it because the signed `imul` already here discards the high half's meaning
+// for unsigned limbs of the 2/pi table.
+//
+// /4 is one ModRM.reg value away from `imul`'s /5, `div`'s /6 and `neg`'s /3,
+// and all four share the F7 opcode — so a wrong extension digit assembles and
+// runs a different instruction.
+func TestEncodeMul(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{"mul rsi", "48f7e6"},
+		{"mul rdi", "48f7e7"},
+		{"mul rcx", "48f7e1"},
+		{"mul r11", "49f7e3"}, // REX.B
+		{"mul r15", "49f7e7"},
+	}
+	for _, c := range cases {
+		if got := asm(t, c.src); got != c.want {
+			t.Errorf("asm(%q) = %s, want %s (GNU as)", c.src, got, c.want)
+		}
+	}
+}
+
+// TestEncodeAdcSbb pins add-with-carry and subtract-with-borrow, which the
+// trig reduction needs to accumulate a 128-bit product across two registers.
+//
+// They sit between `or` (/1) and `and` (/4) in the same ALU opcode family, so
+// a wrong extension digit is a different arithmetic instruction that still
+// assembles — and one that silently drops the carry, which is precisely the
+// bit these exist to propagate.
+func TestEncodeAdcSbb(t *testing.T) {
+	cases := []struct{ src, want string }{
+		{"adc rax, rdx", "4811d0"},
+		{"adc rsi, r10", "4c11d6"}, // REX.R
+		{"adc r8, rcx", "4911c8"},  // REX.B
+		{"adc r11, r12", "4d11e3"}, // both
+		{"sbb rax, rdx", "4819d0"},
+		{"sbb rsi, r11", "4c19de"},
+		{"sbb r13, r14", "4d19f5"},
+		{"adc rax, 5", "4883d005"},
+		{"sbb rcx, 7", "4883d907"},
+	}
+	for _, c := range cases {
+		if got := asm(t, c.src); got != c.want {
+			t.Errorf("asm(%q) = %s, want %s (GNU as)", c.src, got, c.want)
+		}
+	}
+}

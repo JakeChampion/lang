@@ -505,6 +505,10 @@ func (a *Assembler) insn(line string) error {
 		return a.alu(ops, 0x00, 0)
 	case "or":
 		return a.alu(ops, 0x08, 1)
+	case "adc":
+		return a.alu(ops, 0x10, 2)
+	case "sbb":
+		return a.alu(ops, 0x18, 3)
 	case "and":
 		return a.alu(ops, 0x20, 4)
 	case "sub":
@@ -537,6 +541,8 @@ func (a *Assembler) insn(line string) error {
 		return a.unaryF7(ops, 7)
 	case "div":
 		return a.unaryF7(ops, 6)
+	case "mul":
+		return a.unaryF7(ops, 4)
 	case "neg":
 		return a.unaryF7(ops, 3)
 	case "inc":
@@ -549,6 +555,8 @@ func (a *Assembler) insn(line string) error {
 		return a.shift(ops, 4)
 	case "shr":
 		return a.shift(ops, 5)
+	case "shld":
+		return a.shld(ops)
 	case "lea":
 		return a.lea(ops)
 	case "movzx":
@@ -1182,6 +1190,39 @@ func (a *Assembler) shift(ops []operand, ext int) error {
 		return nil
 	}
 	return fmt.Errorf("shift count must be an immediate or cl")
+}
+
+// shld encodes `shld r/m64, r64, cl` (0F A5 /r) and its imm8 form
+// (0F A4 /r ib) — the double-precision left shift, which fills the vacated
+// low bits of the destination from the HIGH bits of the source.
+//
+// The operand direction is reversed from the usual two-register encoding:
+// ModRM.reg holds the SOURCE and ModRM.rm the DESTINATION, so `shld rsi, rdi,
+// cl` is 48 0f a5 fe with reg=rdi and rm=rsi.
+func (a *Assembler) shld(ops []operand) error {
+	if len(ops) != 3 || ops[0].kind != opReg || ops[1].kind != opReg {
+		return fmt.Errorf("shld expects reg, reg, imm/cl")
+	}
+	dst, src := ops[0], ops[1]
+	w := dst.size == 64
+	switch {
+	case ops[2].kind == opImm:
+		if rex := rexFor(w, src.reg, dst.reg, false); rex != 0 {
+			a.emit(rex)
+		}
+		a.emit(0x0F, 0xA4)
+		a.emit(modrmReg(src.reg, dst.reg))
+		a.emit(byte(ops[2].imm))
+		return nil
+	case ops[2].kind == opReg && ops[2].reg == 1: // cl
+		if rex := rexFor(w, src.reg, dst.reg, false); rex != 0 {
+			a.emit(rex)
+		}
+		a.emit(0x0F, 0xA5)
+		a.emit(modrmReg(src.reg, dst.reg))
+		return nil
+	}
+	return fmt.Errorf("shld count must be an immediate or cl")
 }
 
 func (a *Assembler) lea(ops []operand) error {
