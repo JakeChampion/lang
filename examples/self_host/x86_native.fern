@@ -701,6 +701,97 @@ function x86_movd_xmm_to_gpr(buf: i32[], xmm: i32, gpr: i32): i32[] {
     return buf.append(x86_modrm(3, xmm, gpr));
 }
 
+// ---- packed SSE2 (the fused vector kernels of ATLAS-PLATFORM-PLAN §3) ----
+//
+// Before these this assembler had no packed surface at all — only the scalar
+// float ops that shuttle an f64 through xmm. That gap is §3.3a's rule: check
+// the assembler for every target a vector kernel is about to be emitted on,
+// and land the encodings first. Its failure mode here is a refusal (the
+// mnemonic lands on `unknown` and the driver rejects the output), not a wrong
+// answer — but a refusal to compile is still a break.
+//
+// SSE2 is inside the declared x86-64 baseline (Haswell-class), so a selected
+// instruction is a hard requirement and there is nothing to feature-detect.
+
+// x86_sse_66_rr: the `66 [REX] 0F <op> /r` direct-ModR/M shape shared by
+// pcmpeqb / punpcklbw / punpcklwd / pmovmskb / pshufd / xorpd. AT&T
+// `<op> src, dst` puts dst in the ModR/M reg field and src in rm.
+function x86_sse_66_rr(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
+    buf = buf.append(102); // 0x66
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(opcode);
+    return buf.append(x86_modrm(3, dst, src));
+}
+
+// x86_pcmpeqb: `pcmpeqb <src>, <dst>` (66 0F 74 /r) — per-byte equality,
+// 0xFF or 0x00 in each of the 16 lanes.
+function x86_pcmpeqb(buf: i32[], dst: i32, src: i32): i32[] {
+    return x86_sse_66_rr(buf, 116, dst, src);
+}
+
+// x86_punpcklbw / x86_punpcklwd: `punpckl{bw,wd} <src>, <dst>` (66 0F 60,
+// 61 /r). Two of them after a movd broadcast a byte across all 16 lanes,
+// which is the SSE2 splat; pshufb would do it in one instruction but is
+// SSSE3, outside the baseline.
+function x86_punpcklbw(buf: i32[], dst: i32, src: i32): i32[] {
+    return x86_sse_66_rr(buf, 96, dst, src);
+}
+
+function x86_punpcklwd(buf: i32[], dst: i32, src: i32): i32[] {
+    return x86_sse_66_rr(buf, 97, dst, src);
+}
+
+// x86_pmovmskb: `pmovmskb <xmm>, <gpr32>` (66 0F D7 /r) — the top bit of
+// each of the 16 bytes gathered into the low 16 bits of a general register.
+// The destination is a GPR and the source an xmm; the shape is otherwise
+// x86_sse_66_rr's.
+function x86_pmovmskb(buf: i32[], gpr: i32, xmm: i32): i32[] {
+    return x86_sse_66_rr(buf, 215, gpr, xmm);
+}
+
+// x86_pshufd: `pshufd $imm8, <src>, <dst>` (66 0F 70 /r ib) — the four
+// 32-bit lanes selected two bits each. $0 broadcasts lane 0, which is the
+// last step of the byte splat above.
+function x86_pshufd(buf: i32[], dst: i32, src: i32, imm: i32): i32[] {
+    buf = x86_sse_66_rr(buf, 112, dst, src);
+    return buf.append(imm & 255);
+}
+
+// x86_movdqu_load: `movdqu mem, <xmm>` (F3 0F 6F /r) — an unaligned 16-byte
+// load. Only the load direction is encoded: the kernels read vectors and
+// never store them.
+function x86_movdqu_load(buf: i32[], xmm: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = buf.append(243); // 0xF3
+    var rex: i32 = x86_rex(0, xmm, ix, base);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(111); // 0x6F
+    return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
+}
+
+// x86_bsf_r32: `bsfl <src32>, <dst32>` (0F BC /r) — the index of the lowest
+// set bit, with ZF set when the source is zero (the destination is then
+// undefined, which is why callers branch on ZF first). NOT tzcnt: that is
+// BMI1, and below the baseline its F3 prefix is ignored so it decodes as
+// this instruction anyway.
+function x86_bsf_r32(buf: i32[], dst: i32, src: i32): i32[] {
+    var rex: i32 = x86_rex(0, dst, 0, src);
+    if (rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15);  // 0x0F
+    buf = buf.append(188); // 0xBC
+    return buf.append(x86_modrm(3, dst, src));
+}
+
 // ---- bit-count (Haswell baseline: BMI1 + SSE4.2) ----
 //
 // lzcnt / tzcnt / popcnt share one shape: F3 [REX.W] 0F <op> /r, direct
@@ -1262,14 +1353,7 @@ function x86_roundsd(buf: i32[], dst: i32, src: i32, mode: i32): i32[] {
 // x86_xorpd: `xorpd <dst>, <src>` (66 0F 57 /r) — xor packed doubles;
 // `xorpd %x,%x` zeroes an xmm register.
 function x86_xorpd(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.append(102); // 0x66
-    var rex: i32 = x86_rex(0, dst, 0, src);
-    if (rex != 64) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(15); // 0x0F
-    buf = buf.append(87); // 0x57
-    return buf.append(x86_modrm(3, dst, src));
+    return x86_sse_66_rr(buf, 87, dst, src); // 0x57
 }
 
 // x86_jcc_rel32: a near conditional jump (0F 80+cc) with a 32-bit
@@ -2695,6 +2779,18 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         a = X86Asm { ...a, code: x86_roundsd(a.code, x86_gas_xmm(rdst), x86_gas_xmm(rsrc), x86_gas_atoi(rmode)) };
         return a;
     }
+    // pshufd $imm8, %src, %dst — three operands, roundsd's shape. The byte
+    // splat in the __memchr kernel ends here (ATLAS-PLATFORM-PLAN §3).
+    if (mnem == "pshufd") {
+        var pc1: i32 = x86_gas_top_comma(rest);
+        var pimm: string = x86_gas_trim(slice_unchecked(rest, 0, pc1));
+        var prem: str = slice_unchecked(rest, pc1 + 1, rest.len());
+        var pc2: i32 = x86_gas_top_comma(prem);
+        var psrc: string = x86_gas_trim(slice_unchecked(prem, 0, pc2));
+        var pdst: string = x86_gas_trim(slice_unchecked(prem, pc2 + 1, prem.len()));
+        a = X86Asm { ...a, code: x86_pshufd(a.code, x86_gas_xmm(pdst), x86_gas_xmm(psrc), x86_gas_atoi(pimm)) };
+        return a;
+    }
     if (mnem == "incq") {
         if (x86_str_contains(rest, "(")) {
             var iq: GasMem = x86_gas_parse_mem(rest);
@@ -2766,6 +2862,23 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // `js` guarding every "negative = immortal, skip" arm of the rc runtime
     // (__fern_rc_inc, __fern_arr_dec, __fern_str_free, …) falls through to the
     // decrement / underflow path instead.
+    // Packed SSE2, the vector half of the __memchr / __ascii_run kernels.
+    // `movdqu` is load-only: the kernels read 16-byte blocks and never write
+    // one back.
+    if (mnem == "movdqu") {
+        var vm: GasMem = x86_gas_parse_mem(src);
+        if (vm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+        if (vm.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
+        a = X86Asm { ...a, code: x86_movdqu_load(a.code, x86_gas_xmm(dst), vm.base, vm.has_index, vm.index, vm.scale, vm.disp) };
+        return a;
+    }
+    if (mnem == "pcmpeqb") { a = X86Asm { ...a, code: x86_pcmpeqb(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "punpcklbw") { a = X86Asm { ...a, code: x86_punpcklbw(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "punpcklwd") { a = X86Asm { ...a, code: x86_punpcklwd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
+    // pmovmskb's destination is a GPR, so it parses with x86_gas_reg32 where
+    // the three above take two xmm operands.
+    if (mnem == "pmovmskb") { a = X86Asm { ...a, code: x86_pmovmskb(a.code, x86_gas_reg32(dst), x86_gas_xmm(src)) }; return a; }
+    if (mnem == "bsfl") { a = X86Asm { ...a, code: x86_bsf_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
     if (mnem == "testl") { a = X86Asm { ...a, code: x86_test_r32_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
     // Either `%cl` (variable count, D3 /slash) or an immediate (C1 /slash).
     // Anything else is recorded: a register name read through the immediate
