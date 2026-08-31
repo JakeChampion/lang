@@ -21,5 +21,18 @@ Rules for a benchmark in here:
 - **Size it to 50-300M instructions.** Enough that fixed startup cost does not
   dominate, small enough that callgrind (~50x slowdown) finishes in seconds.
 
-Adding one is a baseline change: run `scripts/perf-bench` and paste the new
-line into `.github/perf-baseline.txt` in the same PR.
+Adding one is a baseline change in **two** files, because two lanes share this
+corpus:
+
+- `scripts/perf-bench` measures the NATIVE compiler's output, both counts, for
+  the host arch → `.github/perf-baseline.txt`. The other arch's `.text` half is
+  a static count over cross-emitted assembly, so it can be produced from either
+  host; only its `.ir` half needs that arch's runner.
+- `scripts/perf-bench-selfhost` measures what the SELF-HOSTED compiler emits,
+  `.emit` only, for all three targets from one build →
+  `.github/perf-baseline-selfhost.txt`.
+
+Paste both sets in the same PR. Naming only the first is how
+`utf8_ingest_unchecked` and `utf8_ingest_validated` came to sit in this corpus
+with six self-host entries and no native ones — measured by a lane that
+compared them against nothing, which reports green.
