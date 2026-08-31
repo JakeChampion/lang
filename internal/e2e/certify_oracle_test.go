@@ -125,14 +125,27 @@ func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	// the number cannot climb back toward the 20.3% the probe this
 	// replaces measured.
 	//
-	// Every named CLASS is now closed. What is left is 7 findings in 7
-	// functions, all of them a consumed parameter the walk never sees
-	// released — one each rather than a shape repeated across fixtures,
-	// which is what a class looks like once the classes are gone. It is
-	// either the solver marking a parameter consumed that is not, or a
-	// leak the census cannot see because the fixture does not take that
-	// path; deciding needs one traced end to end, and that is the next
-	// slice rather than a filter here.
+	// Every class the WALK was wrong about is closed. The 7 findings
+	// left are all one shape, and it is not an analysis defect: the
+	// impossible fall-through of an exhaustive match (#7848).
+	//
+	//	enum List { Cons(i32, List), Nil }   // two variants, both matched
+	//
+	//	block 3:  brif tag == 1, block 10, block 11
+	//	block 11: br block 9 -> block 9: br block 2 -> block 2: ret const 0
+	//
+	// `internal/ir` has no unreachable op, so the arm where the tag is
+	// neither 0 nor 1 returns a fabricated default. The consumed
+	// parameter is released on every arm that can execute and not on
+	// the one that cannot, so the walk is right about the op stream and
+	// wrong about the program.
+	//
+	// It is NOT filtered here, deliberately. #7848's narrow fix — emit
+	// the last arm of an exhaustive match unconditionally instead of
+	// testing its tag — removes the arm rather than exempting it, and a
+	// certifier that has to special-case its own compiler's filler is
+	// not one anything can be gated on. Zero findings is reachable by
+	// construction, which is what this ceiling is a placeholder for.
 	//
 	// The classes that were here and are gone, each with its cause:
 	// `enum_sentinel` (a static .rodata cell read as a unit), `alloc`
