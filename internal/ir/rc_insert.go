@@ -3578,9 +3578,11 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int, dynRcSupported bool) ([]var
 		return 0, false // scalar — nothing to drop
 	}
 	var plan []variantDrop
+	var payloadless []int
 	for i, v := range ed.Variants {
 		if len(v.Payloads) == 0 {
-			continue // payloadless ⇒ static sentinel, no heap box
+			payloadless = append(payloadless, i)
+			continue
 		}
 		offsets, size := payloadLayout(v.Payloads, len(v.Payloads), ptrW)
 		var loads []enumDropLoad
@@ -3597,6 +3599,20 @@ func enumVariantDropPlan(ed *ast.EnumDecl, ptrW int, dynRcSupported bool) ([]var
 	}
 	if len(plan) == 0 {
 		return nil, false
+	}
+	// A payloadless variant is NORMALLY the static .rodata sentinel, which
+	// the is_unique gate declines before the tag switch — but the pair-form
+	// rebox (emitRepackPairAsHeapBox) materialises a REAL rc=1 box for
+	// whatever tag the callee returned, and a unique box matching no arm
+	// fell through the switch with nothing freeing it: one stranded box per
+	// None-returning call of a call-bound Option (#7732). Free it at the
+	// enum's uniform box size, which is the rebox's own layout. An enum
+	// with no uniform size keeps the fall-through — no producer of a
+	// unique payloadless box exists at a non-uniform size.
+	if size, ok := uniformEnumBoxSize(ed, ptrW); ok {
+		for _, tag := range payloadless {
+			plan = append(plan, variantDrop{tag: tag, size: size})
+		}
 	}
 	return plan, true
 }

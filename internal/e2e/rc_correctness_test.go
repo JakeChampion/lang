@@ -6036,6 +6036,38 @@ function main(): i32 {
 }
 `,
 	},
+	{
+		// #7732. A call-bound Option is reboxed
+		// (emitRepackPairAsHeapBox), which materialises a REAL rc=1 box
+		// for whatever tag the callee returned — but the variant drop
+		// plan assumed "payloadless => static sentinel" and gave None no
+		// tag arm, so a unique None box fell through the tag switch
+		// with nothing freeing it: 32 B per None-returning call,
+		// unbounded (measured 300/200, 3200 B live at 200 rounds; the
+		// always-Some control was 400/400 clean, which is how the leak
+		// hid behind it). Both spellings exit the same, so only the
+		// leak gate's zero pin carries the signal — this case exists to
+		// put the shape under that pin on all three backends.
+		name: "pair_repack_payloadless_box_reclaimed",
+		src: `
+@noinline
+function mk(i: i32): Option[i32[]] { if (i % 2 == 0) { return None; } return Some([i, i + 1]); }
+
+@noinline
+function round(i: i32): i32 {
+    var o: Option[i32[]] = mk(i);
+    match (o) { Some(a) => { return a.len(); }, None => { return 2; } }
+    return 0;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 6) { t = t + round(i); i = i + 1; }
+    return (t - 12) + __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

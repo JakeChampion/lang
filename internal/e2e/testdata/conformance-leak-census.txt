@@ -448,7 +448,7 @@ tuple_payload_pattern_expr                           26
 tuple_return_union                                   0
 tuple_variant_payload_subpattern                     0
 two_i64_literals                                     0
-two_nones_share_sentinel                             2
+two_nones_share_sentinel                             0
 type_param_name_collision                            0
 u32_large_to_f64_back                                0
 u32_literal_suffix_width                             0
