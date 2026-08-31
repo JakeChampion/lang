@@ -1061,6 +1061,29 @@ pub function enum_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
     return false;
 }
 
+// struct_alias_ident_escapes reports whether `e` is a bare ident naming a
+// BORROWED STRUCT PARAMETER. That box belongs to the caller, which releases it
+// itself, so a container storing it takes a second owner and the store has to
+// be COUNTED — the struct sibling of enum_alias_ident_escapes above.
+//
+// A LOCAL is deliberately excluded: one that escapes into a container has
+// already lost its reclaim credit to the escape walk, so nothing releases it
+// and the container holds the only reference; retaining there leaks instead of
+// balancing. An `own` parameter is excluded from the other side — the caller
+// transferred its reference rather than keeping one (#7853).
+pub function struct_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprIdent(id) => {
+            if (s.is_own_param(id.name)) { return false; }
+            var sl: i32 = s.slot_of(id.name);
+            if (sl < 0 || sl >= s.n_params) { return false; }
+            return decl_is_struct(s.structs, s.struct_type_of_slot(sl));
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // is_own_param reports whether `name` is an `own` (consuming) parameter of the
 // function being lowered.
 pub function (s: LowerState) is_own_param(name: string): boolean {
@@ -23624,6 +23647,13 @@ pub function lower_arr_append_value(obj: ast.Expr, val: ast.Expr, s: LowerState)
     if (enum_field_read_type(val, st) != "" || enum_alias_ident_escapes(val, st)) {
         st = st.retain_tos("clone-append-elem");
     }
+    // A STRUCT element that is a borrowed parameter ALIASES a box the caller
+    // still owns and still releases. Without the retain that release frees a
+    // box this array holds, which is a use-after-free the leak counters read as
+    // clean — allocs == frees at live_bytes 0, with a dangling element (#7853).
+    if (struct_alias_ident_escapes(val, st)) {
+        st = st.retain_tos("clone-append-struct-elem");
+    }
     // The clone (a fresh slice, cap == len) is grown immediately, so this
     // arr_push ALWAYS reallocs — and the clone is sole-owned (just sliced, no
     // alias), so reclaim the pre-grow clone instead of leaking it. This is the
@@ -31031,7 +31061,8 @@ struct StructArgStash { state: LowerState, slot: i32, type_name: string }
 function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai: i32): StructArgStash {
     if (!s.ok) { return StructArgStash { state: s, slot: 0 - 1, type_name: "" }; }
     if (!call_arg_borrowable(s, callee, ai)
-        && !arr_param_counted_at(s.sigs.param_counted, callee, ai)) {
+        && !arr_param_counted_at(s.sigs.param_counted, callee, ai)
+        && !struct_param_counted_at(s.sigs.param_counted, callee, ai)) {
         return StructArgStash { state: s, slot: 0 - 1, type_name: "" };
     }
     var ty: string = "";
@@ -58543,6 +58574,13 @@ function arrparam_use_ok(e: ast.Expr, pn: string, counted: boolean, reg: string[
                     // method may thread the receiver, so it is not credited.
                     var recv_counted: boolean = fa.field == "len";
                     if (!arrparam_use_ok(fa.obj, pn, recv_counted, reg, pfx, structs, sfok)) { return false; }
+                    // `xs.append(p)` at the STRUCT tier is a COUNTED store: the
+                    // clone-append retains a borrowed-param struct element, so
+                    // the caller's post-call release nets to the reference the
+                    // array owns.
+                    if (pfx == "PCNT:" && fa.field == "append" && c.args.len() == 1) {
+                        return arrparam_use_ok(c.args[0], pn, true, reg, pfx, structs, sfok);
+                    }
                 },
                 _ => { if (!arrparam_use_ok(c.callee, pn, false, reg, pfx, structs, sfok)) { return false; } }
             }
@@ -58632,6 +58670,9 @@ pub function arr_param_counted_at(reg: string[], callee: string, ai: i32): boole
 pub function str_param_counted_at(reg: string[], callee: string, ai: i32): boolean {
     return param_counted_at(reg, "SCNT:", callee, ai);
 }
+pub function struct_param_counted_at(reg: string[], callee: string, ai: i32): boolean {
+    return param_counted_at(reg, "PCNT:", callee, ai);
+}
 
 // borrow_reg_with_counted folds param_counted_of's verdict into the borrowability
 // registry under a "CNT:" key prefix. The verdict was reachable only from the
@@ -58658,7 +58699,7 @@ function borrow_reg_with_counted(reg: string[], pcnt: string[]): string[] {
         var bar: i32 = 0;
         while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
         // Every tier key is five bytes ("ACNT:" / "SCNT:" / "ECNT:" / "DCNT:" /
-        // "TCNT:") — the slice below hard-codes that width;
+        // "TCNT:" / "PCNT:") — the slice below hard-codes that width;
         // a row with no key or no '|' is not one param_counted_of wrote.
         if (bar < row.len() && bar > 5) {
             var key: string = "CNT:" + slice_unchecked(row, 5, bar);
@@ -58711,6 +58752,15 @@ function str_result_cannot_alias(ret: string, structs: parser.StructDecl[]): boo
     return is_scalar_type_name(ret) || decl_is_struct(structs, ret) || decl_is_enum(structs, ret);
 }
 
+// struct_result_cannot_alias: the STRUCT tier's sibling of the two above. A
+// result of the parameter's OWN type could hand the argument straight back,
+// which one post-call release would dangle; a result that CONTAINS it is what
+// the tier exists for.
+function struct_result_cannot_alias(ret: string, pty: string, structs: parser.StructDecl[]): boolean {
+    if (ret == pty) { return false; }
+    return is_scalar_type_name(ret) || decl_is_struct(structs, ret) || decl_is_enum(structs, ret);
+}
+
 // enum_result_cannot_alias: the ENUM tier's sibling of str_result_cannot_alias.
 // The counted claim is that ONE post-call release nets the argument to the
 // owner the callee's construction retained, so a result that could BE the
@@ -58759,6 +58809,8 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             var eaany: boolean = false;
             var tflags: string = "";
             var tany: boolean = false;
+            var pflags: string = "";
+            var pany: boolean = false;
             var pj: i32 = 0;
             while (pj < fn.params.len()) {
                 var aok: boolean = false;
@@ -58846,6 +58898,16 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                     && !fn.params[pj].own
                     && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "DCNT:", structs, sfok)) { eaok = true; }
                 if (eaok) { eaflags = eaflags + "1"; eaany = true; } else { eaflags = eaflags + "0"; }
+                // STRUCT tier. The callee stores a borrowed struct param into a
+                // container, which the clone-append now RETAINS, so the caller's
+                // post-call release and that retain net to the one reference the
+                // result owns (#7853).
+                var pok: boolean = false;
+                if (struct_result_cannot_alias(fn.ret_type, fn.params[pj].type_name, structs)
+                    && decl_is_struct(structs, fn.params[pj].type_name)
+                    && !fn.params[pj].own
+                    && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "PCNT:", structs, sfok)) { pok = true; }
+                if (pok) { pflags = pflags + "1"; pany = true; } else { pflags = pflags + "0"; }
                 pj = pj + 1;
             }
             if (aany) {
@@ -58872,6 +58934,11 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                 var tent: string = "TCNT:" + borrowable_key(fn) + "|" + tflags;
                 next = next.append(tent);
                 if (util.index_of_str(reg, tent) < 0) { changed = true; }
+            }
+            if (pany) {
+                var pent: string = "PCNT:" + borrowable_key(fn) + "|" + pflags;
+                next = next.append(pent);
+                if (util.index_of_str(reg, pent) < 0) { changed = true; }
             }
         }
         reg = next;
