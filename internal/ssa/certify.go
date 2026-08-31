@@ -84,6 +84,16 @@ type CertifyReport struct {
 	// count as a clean bill.
 	Unplaced int
 
+	// Passes is how many sweeps the dataflow needed to settle.
+	//
+	// Reported because it used to be capped at 64, which silently
+	// truncated the answer on exactly the functions least able to
+	// afford it: over the self-host compiler three functions need more
+	// than that and one needs 206, and the cap was hiding 41 findings.
+	// A caller that wants to know the walk ran to completion can see
+	// that it did.
+	Passes int
+
 	// Poisoned is how many roots an opaque callee or a disagreeing join
 	// forced to ownMaybe. The other half of the coverage figure: these
 	// are values the walk saw and then stopped being able to answer
@@ -128,18 +138,59 @@ func Certify(f *Func, sigs map[string]Signature) CertifyReport {
 	feeds := phiFeeds(f, idx, units)
 
 	poisoned := map[int32]bool{}
-	// A forward dataflow to a fixpoint. The lattice is four points and
-	// only ever moves toward ownMaybe, so it settles; the round cap is a
-	// backstop against a malformed CFG rather than an expected exit.
-	for changed, round := true, 0; changed && round < 64; round++ {
-		changed = false
+
+	// A forward dataflow to a fixpoint, driven by a worklist. The
+	// lattice is four points and only ever moves toward ownMaybe, so it
+	// settles.
+	//
+	// The worklist is not a micro-optimisation. Re-scanning every block
+	// each round makes the cost (rounds x blocks x state), and the state
+	// is per-value, so one large function dominates a whole program:
+	// over the self-host compiler `parser__parse_stmt_at` alone took
+	// 1m41s of a 4m48s total. Only a block whose predecessors changed
+	// can change, so only those are requeued.
+	// Blocks are in reverse post-order from the lift, so a round-robin
+	// sweep in index order converges in few passes. The queued set is
+	// what stops an unchanged block being re-walked: cost here is
+	// (passes x queued blocks x state), and the state is per-value, so
+	// on one large function the difference is minutes.
+	//
+	// Ordered rather than FIFO deliberately. A FIFO worklist over a
+	// loop-heavy CFG re-processes blocks far more often than an RPO
+	// sweep — measured at 8m51s against 4m48s over the self-host
+	// compiler — because it keeps revisiting a loop body before its
+	// header has settled.
+	//
+	// There is NO round cap. The lattice only moves toward ownMaybe so
+	// this terminates on its own, and a cap would silently truncate the
+	// answer on exactly the largest functions.
+	queued := make([]bool, len(f.Blocks))
+	for i := range queued {
+		queued[i] = true
+	}
+	for {
+		rep.Passes++
+		any := false
 		for bi, b := range f.Blocks {
+			if !queued[bi] {
+				continue
+			}
+			queued[bi] = false
 			cur := blockEntryState(f, b, idx, out, entry, units)
 			applyBlock(b, cur, units, sigs, poisoned, feeds[bi])
-			if !sameState(cur, out[bi]) {
-				changed = true
-				out[bi] = cur
+			if sameState(cur, out[bi]) {
+				continue
 			}
+			out[bi] = cur
+			any = true
+			for _, sb := range b.Succs() {
+				if si, ok := idx[sb]; ok {
+					queued[si] = true
+				}
+			}
+		}
+		if !any {
+			break
 		}
 	}
 	rep.Poisoned = len(poisoned)
@@ -286,8 +337,22 @@ func applyBlock(b *Block, cur map[int32]ownState, units Units, sigs map[string]S
 			switch units.origin[o.Result.ID] {
 			case UnitFresh, UnitTransferred:
 				cur[o.Result.ID] = ownHolds
-			case UnitBorrowed, UnitNone:
+			case UnitBorrowed:
+				// A borrow can still become a holder — a retain on one
+				// puts a unit in this function's hands — so it has to
+				// carry an explicit "holds nothing" rather than being
+				// absent: absent MEETS as the other side's claim, and a
+				// value retained on one path and not another would then
+				// merge to holding rather than to maybe.
 				cur[o.Result.ID] = ownGone
+			case UnitNone:
+				// Reference counting cannot apply to it and nothing can
+				// promote it — only a borrow is ever retained into
+				// holding, and only fresh or transferred is ever
+				// reported. Keeping it out of the state is what makes
+				// this walk affordable: it is the bulk of every
+				// function's values, and the dataflow cost is a
+				// per-round map copy proportional to the state's size.
 			case UnitUnknown:
 				// A call whose result nobody classifies. Not a leak
 				// candidate and not evidence of anything.
@@ -310,7 +375,9 @@ func applyBlock(b *Block, cur map[int32]ownState, units Units, sigs map[string]S
 			// struct that outlives the block is not this function's to
 			// release any more.
 			if n := len(o.Args); n > 0 {
-				cur[units.Root(o.Args[n-1]).ID] = ownGone
+				if root := units.Root(o.Args[n-1]).ID; units.origin[root] != UnitNone {
+					cur[root] = ownGone
+				}
 			}
 		case OpCall:
 			applyCall(o, cur, units, sigs, poisoned)
