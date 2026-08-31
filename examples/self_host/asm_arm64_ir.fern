@@ -2259,7 +2259,7 @@ function emit_arm64_op_fsqrt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
     // FP instruction, push. frintm/frintp/frintz are round toward -inf /
     // +inf / zero; frinta is round-to-nearest ties-AWAY (= Go's math.Round,
     // so __round_f64 is one instruction here — no emulation needed, unlike
-    // x86/wasm).
+    // x86/wasm, which build it from trunc plus a fractional-part test).
     s = s.write("    ldr x0, [sp], #16\n    fmov d0, x0\n");
     if (o.kind_tag == 57) { s = s.write("    fsqrt d0, d0\n"); }  // fsqrt
     else if (o.kind_tag == 59) { s = s.write("    frintm d0, d0\n"); }  // ffloor

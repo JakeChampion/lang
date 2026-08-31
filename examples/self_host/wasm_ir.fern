@@ -11392,16 +11392,34 @@ function emit_wasm_i32_to_f64(o: ir.Op, parts: string[]): string[] {
 }
 
 function emit_wasm_fround(f64tmp: i32, parts: string[]): string[] {
-    // round-half-away-from-zero (Go's math.Round). wasm's f64.nearest is
-    // ties-to-EVEN, so emulate via trunc(x + copysign(0.5, x)): stash x in
-    // the f64 scratch local, then add copysign(0.5, x) and truncate. (The
-    // other op_funary kinds are single instructions routed via wasm_binop_w;
-    // this one needs the scratch to reuse x twice.)
+    // round-half-AWAY-from-zero (Go's math.Round). wasm's f64.nearest is
+    // ties-to-EVEN, so the answer is built from f64.trunc plus an exact
+    // fractional-part test, matching native's __fern_round_f64 helper:
+    //
+    //     t = trunc(x); if (|x - t| >= 0.5) { t = t + copysign(1.0, x); }
+    //
+    // x - t is exact by construction, which the shorter
+    // trunc(x + copysign(0.5, x)) identity is not: the addition rounds first,
+    // so it answered 1 for 0.5 - 2^-54 and shifted EVERY integral double at or
+    // above 2^52 by one (#7880). NaN and the infinities fall through the test
+    // untouched, since their |x - t| is NaN.
+    //
+    // Both arms recompute trunc(x) rather than parking it: there is a single
+    // f64 scratch local and it holds x, which the copysign still needs, and an
+    // `if` block cannot reach an operand left on the stack outside it.
+    var lx: string = "    local.get " + util.i32_to_string(f64tmp) + "\n";
     parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n");
-    parts = parts.append("    local.get " + util.i32_to_string(f64tmp) + "\n");
-    parts = parts.append("    f64.const 0.5\n");
-    parts = parts.append("    local.get " + util.i32_to_string(f64tmp) + "\n    f64.copysign\n");
-    parts = parts.append("    f64.add\n    f64.trunc\n");
+    parts = parts.append(lx);
+    parts = parts.append(lx + "    f64.trunc\n");
+    parts = parts.append("    f64.sub\n    f64.abs\n");
+    parts = parts.append("    f64.const 0.5\n    f64.ge\n");
+    parts = parts.append("    if (result f64)\n");
+    parts = parts.append(lx + "    f64.trunc\n");
+    parts = parts.append("    f64.const 1.0\n" + lx + "    f64.copysign\n");
+    parts = parts.append("    f64.add\n");
+    parts = parts.append("    else\n");
+    parts = parts.append(lx + "    f64.trunc\n");
+    parts = parts.append("    end\n");
 
     return parts;
 }

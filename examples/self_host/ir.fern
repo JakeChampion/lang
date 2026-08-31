@@ -154,7 +154,7 @@ pub function op_fbin(kind: string): Op {
 // on x86, fsqrt / frint* / fabs on arm64, f64.sqrt / floor / ceil / trunc / abs
 // on wasm). Round-half-away (__round_f64) and the libm transcendentals
 // log/exp/sin/cos are op_funary kinds too, but need multi-instruction emulation
-// or a runtime call on some backends; wasm has neither, so wasm_eligible
+// (x86/wasm; arm64 has frinta) or a runtime call on some backends; wasm has neither, so wasm_eligible
 // subtracts the transcendental kinds there.
 pub function op_funary(kind: string): Op {
     return Op { decl: 0 - 1, kind_tag: kind_id(kind), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: "" };

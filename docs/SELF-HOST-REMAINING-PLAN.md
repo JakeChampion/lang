@@ -251,9 +251,10 @@ error-prone item. The cheap subset is low-risk but `std/float` only fully
 links once all 11 exist.
 
 **Status.** Done. Cheap subset (abs/sqrt/floor/ceil/round/trunc) is
-inlined as single SSE / FP instructions on both backends (`round` is
-ties-away-from-zero: `frinta` on arm64, `trunc(x + copysign(0.5, x))`
-on x86). Transcendentals (sin/cos/exp/log/pow): neither ISA has an
+inlined as single SSE / FP instructions on both backends, except `round`
+(ties-away-from-zero), which is `frinta` on arm64 but `trunc` plus an exact
+fractional-part test on x86 — `roundsd` has no ties-away mode, and the
+shorter `trunc(x + copysign(0.5, x))` identity is not equivalent (#7880). Transcendentals (sin/cos/exp/log/pow): neither ISA has an
 instruction, so both backends call the fdlibm bundle their emitter emits
 (`__fern_<op>_f64`, Cody-Waite reduction + domain guards, <=1 ulp). x86-64
 was on the x87 FPU until #5541's self-host half landed; the accuracy gate

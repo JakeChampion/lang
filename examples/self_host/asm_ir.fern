@@ -3337,6 +3337,34 @@ function ir_div_guarded(tag: i32, width: i32, lb: string): string {
     return s;
 }
 
+// ir_fround renders __round_f64 — round-half-AWAY-from-zero (Go's math.Round).
+// roundsd only offers ties-to-even / floor / ceil / trunc, so the answer is
+// built from trunc plus an exact fractional-part test, mirroring native
+// emitF64UnaryIntrinsic:
+//
+//     t = trunc(x); if (|x - t| >= 0.5) { t = t + copysign(1.0, x); }
+//
+// x - t is exact by construction, which the shorter trunc(x + copysign(0.5, x))
+// identity is not: the addition rounds first, so it answered 1 for
+// 0.5 - 2^-54 and shifted EVERY integral double at or above 2^52 by one (#7880).
+// The ucomisd/jb pair also carries NaN and the infinities through untouched —
+// their |x - t| is NaN, which leaves CF set, so the bump is skipped.
+// `lb` is a per-op-unique label base.
+function ir_fround(lb: string): string {
+    var s: string = "    popq %rax\n    movq %rax, %xmm0\n";                   // x
+    s = s + "    roundsd $3, %xmm0, %xmm1\n";                                  // t = trunc(x)
+    s = s + "    subsd %xmm1, %xmm0\n";                                        // frac = x - t
+    s = s + "    movq %xmm0, %rcx\n    movabsq $0x7fffffffffffffff, %rdx\n    andq %rdx, %rcx\n";
+    s = s + "    movq %rcx, %xmm0\n";                                          // |frac|
+    s = s + "    movabsq $0x3fe0000000000000, %rcx\n    movq %rcx, %xmm2\n";    // 0.5
+    s = s + "    ucomisd %xmm2, %xmm0\n    jb " + lb + "_rdone\n";
+    s = s + "    movq %rax, %rcx\n    movabsq $0x8000000000000000, %rdx\n    andq %rdx, %rcx\n";
+    s = s + "    movabsq $0x3ff0000000000000, %rdx\n    orq %rdx, %rcx\n";      // copysign(1.0, x)
+    s = s + "    movq %rcx, %xmm0\n    addsd %xmm0, %xmm1\n";
+    s = s + lb + "_rdone:\n    movq %xmm1, %rax\n    pushq %rax\n";
+    return s;
+}
+
 // ir_f2i_sat renders a saturating f64 -> signed integer truncation (operand
 // bits on the rt-stack, result on the rt-stack). x86 cvttsd2si is NOT
 // saturating — it returns the 0x8000.. "integer indefinite" on NaN/overflow
@@ -4737,17 +4765,7 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // the old 0.0 - x lowering which flushed -0.0 to +0.0 (#4333).
             s = s.write("    popq %rax\n    movabsq $0x8000000000000000, %rcx\n    xorq %rcx, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 61) {  // fround
-            // round-half-away-from-zero (Go's math.Round): roundsd only offers
-            // ties-to-even / floor / ceil / trunc, so emulate via
-            // trunc(x + copysign(0.5, x)). Build copysign(0.5, x) by OR-ing x's
-            // sign bit into the 0.5 bit pattern (0x3fe0000000000000), add, trunc
-            // ($3). Mirrors the retired x86 AST emitter's __round_f64.
-            s = s.write("    popq %rax\n    movq %rax, %rcx\n");
-            s = s.write("    movabsq $0x8000000000000000, %rdx\n    andq %rdx, %rcx\n");
-            s = s.write("    movabsq $0x3fe0000000000000, %rdx\n    orq %rdx, %rcx\n");
-            s = s.write("    movq %rcx, %xmm1\n    movq %rax, %xmm0\n");
-            s = s.write("    addsd %xmm1, %xmm0\n    roundsd $3, %xmm0, %xmm0\n");
-            s = s.write("    movq %xmm0, %rax\n    pushq %rax\n");
+            s = s.write(ir_fround(lp + util.i32_to_string(i)));
         } else if (o.kind_tag == 51 || o.kind_tag == 52 || o.kind_tag == 53 || o.kind_tag == 54 || o.kind_tag == 49 || o.kind_tag == 50) {  // flt, fle, fgt, fge, feq, fne
             // f64 compare → i32 0/1, NaN-correct: ucomisd sets
             // CF=ZF=PF=1 when unordered, so `<`/`<=`/`==` mask with setnp and
