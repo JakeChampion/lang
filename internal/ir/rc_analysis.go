@@ -832,7 +832,7 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 				case ast.StringType:
 					flags[i] = stringParamCounted(fn, p.Name, out)
 				case ast.ArrayType:
-					flags[i] = arrayParamCounted(fn, p.Name, out)
+					flags[i] = arrayParamCounted(fn, p.Name, pt, info, out)
 				case ast.StructType:
 					// Credit `p` when every one of its appearances is a counted
 					// store, a non-retaining read, or a counted call argument —
@@ -1093,16 +1093,44 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 // (`p.len()`), or an argument to a callee whose parameter in that position is
 // itself counted-retain.
 //
-// It deliberately does NOT credit `p[i]`, which stringParamCounted does: a
-// string's byte index yields a u8 value copy that references nothing, while an
-// array element may be a live reference the read hands out un-counted.
-// Similarly no SliceExpr arm — an array slice can share the buffer.
-func arrayParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) bool {
+// `p[i]` is credited only where the read provably retains nothing (#7867
+// slice 4, and the runtime shape behind #7914's projection leak):
+//   - the element type is SCALAR — the read is a value copy, exactly the
+//     u8 argument stringParamCounted has always used;
+//   - `p[i].scalarField` on a struct element — the projection copies a
+//     scalar out and the element reference never outlives the expression;
+//   - `p[i]` in `__method_Array_push`'s ELEMENT position — emitArrayPush
+//     emits the alias inc unconditionally for a pointer element
+//     (needsRcIncOnAlias, and an Index read is never a move site), so the
+//     container's reference is counted; a scalar element is a copy. The
+//     same argument that credited the bare-parameter element in slice 1.
+//
+// A bare `p[i]` of a POINTER element anywhere else still refuses — it
+// hands out a live reference nothing counts. Similarly no SliceExpr arm —
+// an array slice can share the buffer.
+func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *checker.Info, summary map[string][]bool) bool {
 	safe := map[*ast.Ident]bool{}
 	mark := func(e ast.Expr) {
 		if id, ok := e.(*ast.Ident); ok && id.Name == pn {
 			safe[id] = true
 		}
+	}
+	// paramIndex unwraps `p[i]` (a real array index, not a string or
+	// slice read) to the parameter ident, or nil.
+	paramIndex := func(e ast.Expr) *ast.Ident {
+		ix, ok := e.(*ast.Index)
+		if !ok || ix.IsString || ix.IsSlice {
+			return nil
+		}
+		if id, ok := ix.Array.(*ast.Ident); ok && id.Name == pn {
+			return id
+		}
+		return nil
+	}
+	elemScalar := !rcTrackedSlotType(at.Elem)
+	elemStruct := ""
+	if st, ok := at.Elem.(ast.StructType); ok {
+		elemStruct = st.Name
 	}
 	total := 0
 	ast.Walk(fn.Body, func(n ast.Node) bool {
@@ -1110,6 +1138,23 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) b
 		case *ast.Ident:
 			if x.Name == pn {
 				total++
+			}
+		case *ast.Index:
+			if id := paramIndex(x); id != nil && elemScalar {
+				safe[id] = true
+			}
+		case *ast.FieldAccess:
+			id := paramIndex(x.Target)
+			if id == nil || elemStruct == "" || info == nil {
+				break
+			}
+			if sd, ok := info.Structs[elemStruct]; ok {
+				for _, f := range sd.Fields {
+					if f.Name == x.Field && !rcTrackedSlotType(f.Type) {
+						safe[id] = true
+						break
+					}
+				}
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -1126,6 +1171,11 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) b
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok && pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
 				mark(x.Args[0])
+			}
+			if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "__method_Array_push" && len(x.Args) == 2 {
+				if eid := paramIndex(x.Args[1]); eid != nil {
+					safe[eid] = true
+				}
 			}
 			// Copying builtins, for tier parity with the string and
 			// struct classifiers. Nothing in the table takes an array

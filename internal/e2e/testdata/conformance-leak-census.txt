@@ -61,7 +61,7 @@ audit_io_builtins                                    0
 audit_monotonic_sleep                                0
 audit_now_ns                                         0
 audit_numeric_types                                  0
-audit_std_crypto                                     3
+audit_std_crypto                                     0
 audit_std_json                                       25
 audit_std_numeric                                    3
 audit_std_path_numeric                               0
@@ -80,7 +80,7 @@ boolean_logic                                        0
 boolean_scalar_dispatch                              1
 both_arms_read_p                                     2
 break_continue                                       0
-bytes_writer                                         2
+bytes_writer                                         1
 c2_consuming_reuse                                   0
 cast_in_tuple                                        0
 cast_narrow_binding                                  0

@@ -6068,6 +6068,58 @@ function main(): i32 {
 }
 `,
 	},
+	{
+		// #7867 slice 4 / #7914 item 1. A fresh struct's array field
+		// projected straight into a call argument —
+		// `filter_gate(check_module(...).diags)` — leaked the retained
+		// projection and everything it held (608 B/call measured),
+		// because the callee indexed its parameter and the blanket
+		// Index refusal kept the whole argument reclaim closed. The
+		// credit admits ds[i].line (a scalar projection) and
+		// out.append(ds[i]) (the push emits the element retain), so the
+		// caller's stage-(b) drop fires and the tree balances.
+		name: "projected_fresh_field_into_indexing_callee",
+		src: `
+struct Diag { msg: string, line: i32 }
+struct ModuleTypes { diags: Diag[], names: string[], count: i32 }
+
+@noinline
+function check_module(n: i32, pad: string): ModuleTypes {
+    var ds: Diag[] = [];
+    var ns: string[] = [];
+    var i: i32 = 0;
+    while (i < n) {
+        ds = ds.append(Diag { msg: pad + "diagnostic message", line: i });
+        ns = ns.append(pad + "name_of_something");
+        i = i + 1;
+    }
+    return ModuleTypes { diags: ds, names: ns, count: n };
+}
+
+@noinline
+function filter_gate(ds: Diag[]): Diag[] {
+    var out: Diag[] = [];
+    var i: i32 = 0;
+    while (i < ds.len()) {
+        if (ds[i].line % 2 == 0) { out = out.append(ds[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+function main(): i32 {
+    var pad: string = "xyzw";
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 3) {
+        var gated: Diag[] = filter_gate(check_module(8, pad).diags);
+        t = t + gated.len();
+        r = r + 1;
+    }
+    return (t - 12) + __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
