@@ -90,7 +90,7 @@ selfhost/x86-64-linux/sort_inplace.emit	81280
 selfhost/x86-64-linux/sort_ints.emit	81283
 selfhost/x86-64-linux/string_build.emit	81255
 selfhost/x86-64-linux/string_find_byte.emit	81195
-selfhost/x86-64-linux/string_rfind_byte.emit	81189
+selfhost/x86-64-linux/string_rfind_byte.emit	81216
 selfhost/x86-64-linux/string_scan.emit	81365
 selfhost/x86-64-linux/string_slice.emit	638
 selfhost/x86-64-linux/struct_drop.emit	81680
