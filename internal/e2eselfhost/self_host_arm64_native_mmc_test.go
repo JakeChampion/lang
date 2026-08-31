@@ -11,6 +11,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // TestSelfHostArm64NativeMmcMatchesCrossHost guards the
@@ -66,6 +67,9 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check arm64: %v", err)
 	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	arm64Asm, err := arm64codegen.Emit(prog, info)
 	if err != nil {
 		t.Fatalf("arm64 emit: %v", err)
@@ -83,6 +87,9 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 	info2, err := checker.Check(prog2)
 	if err != nil {
 		t.Fatalf("check x86: %v", err)
+	}
+	if err := monomorph.Run(prog2, info2); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	x86Asm, err := x86_64.Emit(prog2, info2)
 	if err != nil {

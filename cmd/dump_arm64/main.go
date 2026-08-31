@@ -7,6 +7,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/arm64"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/monomorph"
 	"github.com/jakechampion/lang/internal/parser"
 )
 
@@ -24,6 +25,10 @@ func main() {
 	info, err := checker.Check(prog)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "check:", err)
+		os.Exit(1)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		fmt.Fprintln(os.Stderr, "monomorph:", err)
 		os.Exit(1)
 	}
 	asm, err := arm64.Emit(prog, info)

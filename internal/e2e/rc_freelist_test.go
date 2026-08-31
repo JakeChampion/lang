@@ -36,6 +36,9 @@ func runFixtureX86_64FreeOn(t *testing.T, mainPath, stdin string) (string, int) 
 	info, prog := loadCheckMono(t, mainPath)
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	asm, err := x86_64.Emit(prog, info)
 	ast.RcFreeEnabled = prev
 	if err != nil {
@@ -57,6 +60,9 @@ func runFixtureArm64FreeOn(t *testing.T, mainPath, stdin string) (string, int) {
 	info, prog := loadCheckMono(t, mainPath)
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	asm, err := arm64codegen.Emit(prog, info)
 	ast.RcFreeEnabled = prev
 	if err != nil {
@@ -322,6 +328,9 @@ func compileX86_64FreeOn(t *testing.T, src string) (string, []string) {
 	// Emit racing the flag.
 	prev := ast.RcFreeEnabled
 	ast.RcFreeEnabled = true
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	asm, emitErr := x86_64.Emit(prog, info)
 	ast.RcFreeEnabled = prev
 	if emitErr != nil {

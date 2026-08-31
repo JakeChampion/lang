@@ -23,6 +23,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 type cacheEntry[T any] struct {
@@ -402,6 +403,17 @@ func emitDriverAsm(dir, fernName string) (string, error) {
 	info, err := checker.Check(prog)
 	if err != nil {
 		return "", fmt.Errorf("check %s: %w", fernName, err)
+	}
+	// Monomorphise before codegen, as cmd/fern does and as x86_64.Emit
+	// expects. This was the last harness path still feeding Emit an
+	// un-monomorphised program — CompileAndRunX86_64 and CompileAndRunArm64
+	// both already run it. An un-instantiated generic keeps its erased type
+	// parameter, and a `T[]` element read then loads i32-width against an
+	// 8-byte stride: the pointer is truncated to its low half. Every driver
+	// binary the self-host tests build came off this path, so the driver
+	// segfaulted on a shape the compiler itself compiles correctly (#7773).
+	if err := monomorph.Run(prog, info); err != nil {
+		return "", fmt.Errorf("monomorph %s: %w", fernName, err)
 	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // TestSelfHostReaderArm64 is the ARM64 counterpart of
@@ -44,6 +45,9 @@ func TestSelfHostReaderArm64(t *testing.T) {
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
@@ -125,6 +129,9 @@ func TestSelfHostReadFileArm64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
@@ -189,6 +196,9 @@ func TestSelfHostArgsArm64(t *testing.T) {
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/x86_64"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 )
 
 // Runtime-helper symbol-closure check (issue #2649).
@@ -102,6 +103,9 @@ func TestNativeRuntimeHelperClosureX86_64(t *testing.T) {
 			if err != nil {
 				t.Fatalf("check: %v", err)
 			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
 			asm, err := x86_64.Emit(prog, info)
 			if err != nil {
 				t.Fatalf("emit: %v", err)
@@ -131,6 +135,9 @@ func TestNativeRuntimeHelperClosureArm64(t *testing.T) {
 			info, err := checker.Check(prog)
 			if err != nil {
 				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
 			}
 			asm, err := arm64codegen.Emit(prog, info)
 			if err != nil {

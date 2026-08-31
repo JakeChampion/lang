@@ -70,6 +70,7 @@ import (
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/modload"
+	"github.com/jakechampion/lang/internal/monomorph"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
 	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 )
@@ -339,6 +340,9 @@ func runFixtureArm64(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
 	gcc, qemu := arm64Tooling(t)
 	info, prog := loadCheckMono(t, mainPath)
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	asm, err := arm64codegen.Emit(prog, info)
 	if err != nil {
 		t.Fatalf("arm64 emit: %v", err)
@@ -352,6 +356,9 @@ func runFixtureX86_64(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	info, prog := loadCheckMono(t, mainPath)
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
 		t.Fatalf("x86_64 emit: %v", err)

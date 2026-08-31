@@ -728,6 +728,9 @@ func TestX86_64Args(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
@@ -795,6 +798,9 @@ function main(): i32 {
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
@@ -933,6 +939,9 @@ func TestX86_64ReadLine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
@@ -989,6 +998,9 @@ func TestX86_64ReadLineBuiltin(t *testing.T) {
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
@@ -1876,6 +1888,9 @@ func compileX86_64InDir(t *testing.T, src string, seed map[string]string) (stdou
 	info, err := checker.Check(prog)
 	if err != nil {
 		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
 	}
 	asm, err := x86_64.Emit(prog, info)
 	if err != nil {
