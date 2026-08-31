@@ -401,6 +401,19 @@ func assembleProgInsn(a *Assembler, line string) error {
 		// relocation (the high 21 bits of the symbol's page address).
 		a.ADRPsym(rd, strings.TrimSuffix(ops[1], "@PAGE"))
 		return nil
+	case mnem == "adr":
+		if len(ops) != 2 {
+			return fmt.Errorf("adr expects Xd, sym")
+		}
+		if is32(ops[0]) {
+			return fmt.Errorf("adr destination must be an x register, got %q", ops[0])
+		}
+		rd, err := parseReg(ops[0])
+		if err != nil {
+			return err
+		}
+		a.ADRsym(rd, ops[1])
+		return nil
 	case mnem == "add" && len(ops) == 3 && (isLo12(ops[2]) || strings.HasSuffix(ops[2], "@PAGEOFF")):
 		rd, err := parseReg(ops[0])
 		if err != nil {
