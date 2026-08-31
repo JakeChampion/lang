@@ -5884,6 +5884,158 @@ function main(): i32 {
 }
 `,
 	},
+	{
+		// #7867 slice 2, the argument-temp half. A fresh concat handed
+		// to a callee that only SCANS it — a copying builtin — is the
+		// caller's to reclaim: the builtin memcpys or reads the bytes
+		// and retains nothing, so with the parameter uncredited the
+		// temp was stranded, one buffer per call (measured 202/102,
+		// 3200 B live at 100 rounds; exactly 2x at 200). The callee
+		// carries the state's string field into its result so the
+		// call-level returnsNoParamEscape gate stays closed and the
+		// per-argument credit is the only route — the EmitState.write
+		// shape.
+		name: "copying_builtin_arg_temp_is_reclaimed",
+		src: `
+struct St { tag: string, n: i32 }
+
+@noinline
+function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
+
+@noinline
+function scan(s: St, text: string): St {
+    return St { tag: s.tag, n: s.n + __count_byte(text, 97) };
+}
+
+function main(): i32 {
+    var pad: string = "xyzw";
+    var st: St = St { tag: pad + "tagtagtagtag", n: 0 };
+    var i: i32 = 0;
+    while (i < 4) {
+        st = scan(st, mk(pad, i));
+        i = i + 1;
+    }
+    return (st.n - 4) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// #7867 slice 2, the bound-local half — a distinct defect with
+		// the same cause: computeFreeEligible tainted any local passed
+		// to a builtin it did not know, so the binding lost its
+		// FREEING scope-exit drop (measured 100/0, 3200 B live; the
+		// two-word ABIs never took this taint, so the leak was
+		// single-word x86-64's).
+		name: "copying_builtin_bound_local_keeps_its_drop",
+		src: `
+@noinline
+function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
+
+function main(): i32 {
+    var pad: string = "xyzw";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var msg: string = mk(pad, i);
+        t = t + __memchr(msg, 97, 0);
+        i = i + 1;
+    }
+    return (t - 56) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The literal motivating builtin. strbuf_append memcpys the
+		// bytes past the buffer tail (its own runtime doc, both native
+		// implementations) and returns void, so the fresh concat
+		// argument nets to zero owners after the caller's dec
+		// (measured 101/1 before, 101/101 after).
+		name: "strbuf_append_arg_temp_is_reclaimed",
+		src: `
+struct St { n: i32 }
+
+@noinline
+function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
+
+@noinline
+function wr(s: St, text: string): St { strbuf_append(text); return s; }
+
+function main(): i32 {
+    strbuf_reset();
+    var pad: string = "xyzw";
+    var st: St = St { n: 0 };
+    var i: i32 = 0;
+    while (i < 4) {
+        st = wr(st, mk(pad, i));
+        i = i + 1;
+    }
+    var got: string = strbuf_take();
+    return (got.len() - 80) + __rc_underflow_count();
+}
+`,
+		skipWasm: "#7867 — strbuf has no wasm implementation",
+	},
+	{
+		// The refusal that keeps the credit sound: one copying use
+		// does not launder a retaining one. keep both scans its
+		// parameter AND stores it in the array it returns, so
+		// everyOccurrenceSafe refuses the whole param and the caller
+		// keeps its reference alive for the container. Pinned on the
+		// answer + the underflow counter because an over-releasing
+		// build reads BETTER on live_bytes.
+		name: "copying_builtin_use_does_not_launder_a_retaining_one",
+		src: `
+@noinline
+function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
+
+@noinline
+function keep(p: string): string[] {
+    var n: i32 = __count_byte(p, 97);
+    var out: string[] = [];
+    out = out.append(p);
+    if (n < 0) { return []; }
+    return out;
+}
+
+function main(): i32 {
+    var pad: string = "xyzw";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var xs: string[] = keep(mk(pad, i));
+        t = t + xs[0].len();
+        i = i + 1;
+    }
+    return (t - 80) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The own-param interlock: inferParamCountedRetain skips `own`
+		// parameters before any classifier runs, and ownedByCalleeAt
+		// suppresses the caller-side stash — so a copying use inside
+		// an own callee must not become a second release of the same
+		// temp.
+		name: "copying_builtin_own_param_not_double_freed",
+		src: `
+@noinline
+function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
+
+@noinline
+function eat(own text: string): i32 { return __count_byte(text, 97); }
+
+function main(): i32 {
+    var pad: string = "xyzw";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        t = t + eat(pad + "0123456789abcdef");
+        i = i + 1;
+    }
+    return (t - 4) + __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

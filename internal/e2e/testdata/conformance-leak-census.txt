@@ -188,7 +188,7 @@ hex_literal                                          0
 hex_roundtrip                                        2
 higher_order                                         0
 http_content_type                                    9
-http_cookies                                         15
+http_cookies                                         14
 i32_methods                                          0
 i32_payload_rebind                                   2
 i32_to_i64_roundtrip                                 0
@@ -271,7 +271,7 @@ multiline_stdin                                      1
 must_consume_own_sink                                0
 mutual_recursion                                     0
 named_args                                           0
-narrowing_cast_of_expression                         10
+narrowing_cast_of_expression                         0
 negative_abs                                         0
 negative_literal_patterns                            0
 nested_arm_patterns                                  85
@@ -317,7 +317,7 @@ print                                                0
 prop_codec_roundtrip                                 0
 prop_sort_i32                                        900
 prop_sort_strings                                    159
-prop_string_involution                               1124
+prop_string_involution                               580
 prop_url_roundtrip                                   293
 pub_use_reexport                                     0
 pure_collection_aliases                              0
@@ -398,7 +398,7 @@ stream_reader                                        2
 strength_reduction_mul                               0
 string_and_i64                                       0
 string_arr                                           0
-string_builder                                       2
+string_builder                                       0
 string_camel_pascal                                  0
 string_case_predicates                               0
 string_concat                                        0
@@ -461,7 +461,7 @@ u8_method_module                                     0
 underscore_discard                                   1
 union_eval                                           0
 union_lambda_param                                   4
-url_codec                                            2
+url_codec                                            1
 url_roundtrip                                        0
 use_callback_bind                                    0
 user_enum_mixed                                      0
@@ -475,6 +475,6 @@ value_block_shadows_module_fn                        0
 value_block_width_call_arm                           1
 var_inference                                        0
 while_sum                                            0
-wide_shift_by_variable                               5
+wide_shift_by_variable                               0
 wrap_drops_high_half                                 0
 zero_width_slice                                     1
