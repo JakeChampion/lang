@@ -3100,7 +3100,7 @@ func emitMemchrHelper(w func(string, ...any)) {
 // [ptr-4], so the three arguments land in x0/x1/x2 with no slot arithmetic —
 // where the native arm64 twin spends a frame unboxing a two-word SSO string
 // before it can start. Leaf: no frame, and every register it touches
-// (x0..x5, x8..x12, v0/v1) is caller-saved.
+// (x0..x4, x8..x12, v0/v1) is caller-saved.
 //
 // The clamp is __memchr's mirrored: a forward scan clamps `from` UP to 0, a
 // backward scan clamps it DOWN to len-1, so a negative `from` finds nothing.
@@ -3166,11 +3166,8 @@ func emitRmemchrHelper(w func(string, ...any)) {
 	// reading [data - 1].
 	w("\ttbnz w2, #31, .Lssa_rmemchr_none")
 	w(".Lssa_rmemchr_scan:")
-	// w2 is non-negative here, so `mov w4, w2` zero-extends into x4 for the
-	// plain register-offset load.
-	w("\tmov w4, w2")
-	w("\tldrb w5, [x0, x4]")
-	w("\tcmp w5, w1")
+	w("\tldrb w4, [x0, w2, uxtw]")
+	w("\tcmp w4, w1")
 	w("\tb.eq .Lssa_rmemchr_found")
 	w("\tsub w2, w2, #1")
 	w("\ttbz w2, #31, .Lssa_rmemchr_scan")

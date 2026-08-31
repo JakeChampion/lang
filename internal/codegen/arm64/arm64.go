@@ -2571,10 +2571,8 @@ func (g *generator) emitAllocRc1Runtime() {
 // appends — which is what a compiler's own accumulators are made of — crossed
 // the cliff invisibly.
 //
-// x3-x5 are scratch here, ahead of the copy path's frame. The two `mov w`
-// zero-extend their 32-bit inputs into the full x registers, so the 64-bit
-// multiply is exact for a buffer past 4 GiB (umull would say this in one
-// instruction, but the in-process assembler encodes mul and not umull).
+// x3-x5 are scratch here, ahead of the copy path's frame. umull widens
+// both 32-bit inputs, so the byte count is exact for a buffer past 4 GiB.
 func (g *generator) emitArrPushCliffTally(lbl string) {
 	g.label(lbl + "_shared")
 	g.emit("ldur w4, [x0, #-12]") // w4 = cap
@@ -2584,9 +2582,7 @@ func (g *generator) emitArrPushCliffTally(lbl string) {
 	g.emit("ldr w4, [x3]")
 	g.emit("add w4, w4, #1")
 	g.emit("str w4, [x3]")
-	g.emit("mov w3, w1") // oldLen, zero-extended
-	g.emit("mov w4, w2") // stride, zero-extended
-	g.emit("mul x3, x3, x4")
+	g.emit("umull x3, w1, w2") // oldLen * stride, both zero-extended
 	g.adrpAdd("x4", "__fern_arr_push_copied")
 	g.emit("ldr x5, [x4]")
 	g.emit("add x5, x5, x3")
@@ -3937,13 +3933,7 @@ func (g *generator) emitRmemchrRuntime() {
 	// reading [data - 1].
 	g.emit("tbnz w3, #31, .Lrmemchr_miss")
 	g.label(".Lrmemchr_scan")
-	// `mov w9, w3` zero-extends into x9, so the byte load can use the plain
-	// register-offset form. The extended `[Xn, Wm, uxtw]` addressing would
-	// read better and the in-process assembler does not encode it — it
-	// refuses the line rather than dropping the extend, which is why this is
-	// a build error and not a wrong answer.
-	g.emit("mov w9, w3")
-	g.emit("ldrb w8, [x7, x9]")
+	g.emit("ldrb w8, [x7, w3, uxtw]")
 	g.emit("cmp w8, w2")
 	g.emit("b.eq .Lrmemchr_hit")
 	g.emit("sub w3, w3, #1")
