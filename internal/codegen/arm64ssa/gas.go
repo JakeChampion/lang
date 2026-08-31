@@ -3185,13 +3185,20 @@ func emitRmemchrHelper(w func(string, ...any)) {
 // emitCountByteHelper writes __fern_count_byte(s, byte) -> how many bytes of
 // `s` equal `byte` (docs/ATLAS-PLATFORM-PLAN.md §3.3, fourth kernel).
 //
-// SCALAR, per §3.4's "correct in every backend first, fast one backend at a
-// time" — and this backend is listed last in that ordering for the reason its
-// siblings record: it is the seventh of seven and the one an adoption forgets,
-// so it gets the lowering at the same time as the other six rather than after.
+// NEON, 16 bytes an iteration, the same kernel the native arm64 emitter runs
+// (§3.4 step 3). The counting shape is the one place NEON's missing bitmask
+// costs nothing: __memchr needs a lane INDEX and pays the shrn nibble trick to
+// recover it, where a count needs only a POPULATION. cmeq leaves 0xFF in a
+// matching lane, cnt turns each of those into 8, and addv sums the sixteen
+// bytes — at most 16 x 8 = 128, so the total fits the byte addv writes and
+// cannot overflow. The block's count is that over eight.
 //
-// One-word strings with the length at [ptr-4], so the two arguments land in
-// x0/x1 with no slot arithmetic. Leaf: no frame.
+// Strings on this backend are ONE word (the data pointer) with the length at
+// [ptr-4], so the two arguments land in x0/x1 with no slot arithmetic — where
+// the native arm64 twin spends a frame unboxing a two-word SSO string first.
+// Leaf: no frame, and every register it touches (x0..x6, x8..x11, v0/v1) is
+// caller-saved. Floats here live as their f64 bit pattern in a GPR, so no v
+// register is live across a call for this to tread on.
 //
 // No cursor, so no clamp. Both degenerate answers are honest counts rather
 // than sentinels: an out-of-range byte counts 0 because nothing can equal it,
@@ -3200,25 +3207,43 @@ func emitCountByteHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_count_byte"))
 	w("\tldur w2, [x0, #-4]") // len
-	w("\tmov w3, #0")         // cursor
 	w("\tmov w4, #0")         // running count
 	// A byte outside 0..255 can never occur; ONE unsigned compare covers
-	// both ends, checked once so the loop needs no per-iteration guard.
+	// both ends, checked once so neither loop needs a per-iteration guard.
+	// The answer is 0 rather than -1 because a count has no miss.
 	w("\tcmp x1, #255")
 	w("\tb.hi .Lssa_count_byte_ret")
-	w(".Lssa_count_byte_scan:")
-	w("\tcmp w3, w2")
+	w("\tmov x8, x0")           // cursor, as a POINTER: ld1 has no indexed form
+	w("\tadd x9, x0, w2, uxtw") // end = data + len
+	w("\tdup v1.16b, w1")
+	w(".Lssa_count_byte_vec:")
+	w("\tsub x10, x9, x8")
+	w("\tcmp x10, #16")
+	w("\tb.lt .Lssa_count_byte_tail")
+	// Unaligned load, and never past the string: the branch above entered
+	// this only with a full block left. NEON has no alignment requirement,
+	// so there is no scalar prologue to pay either.
+	w("\tld1 {v0.16b}, [x8]")
+	w("\tcmeq v0.16b, v0.16b, v1.16b")
+	w("\tcnt v0.16b, v0.16b")
+	w("\taddv b0, v0.16b")
+	w("\tumov w11, v0.b[0]")
+	w("\tlsr w11, w11, #3")
+	w("\tadd w4, w4, w11")
+	w("\tadd x8, x8, #16")
+	w("\tb .Lssa_count_byte_vec")
+	// Scalar tail: the final 0..15 bytes, and the whole algorithm for a
+	// string shorter than one block.
+	w(".Lssa_count_byte_tail:")
+	w("\tcmp x8, x9")
 	w("\tb.ge .Lssa_count_byte_ret")
-	// w3 is non-negative here, so `mov w5, w3` zero-extends into x5 for the
-	// plain register-offset load.
-	w("\tmov w5, w3")
-	w("\tldrb w6, [x0, x5]")
+	w("\tldrb w6, [x8]")
 	w("\tcmp w6, w1")
 	w("\tb.ne .Lssa_count_byte_next")
 	w("\tadd w4, w4, #1")
 	w(".Lssa_count_byte_next:")
-	w("\tadd w3, w3, #1")
-	w("\tb .Lssa_count_byte_scan")
+	w("\tadd x8, x8, #1")
+	w("\tb .Lssa_count_byte_tail")
 	w(".Lssa_count_byte_ret:")
 	w("\tmov w0, w4")
 	w("\tret")

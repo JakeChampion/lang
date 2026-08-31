@@ -339,32 +339,53 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     }
     if (o.kind_tag == 235) {  // count_byte
         // operand stack [box, byte] (byte on top) -> how many bytes of the
-        // string equal it. SCALAR, per §3.4's "correct in every backend
-        // first, fast one backend at a time".
+        // string equal it.
         //
-        // No cursor and no clamp: x2 walks 0..len and both degenerate answers
-        // are honest counts rather than sentinels.
+        // NEON, 16 bytes an iteration (§3.4 step 3), and the one kernel where
+        // NEON's missing bitmask costs nothing. memchr above needs a lane
+        // INDEX and pays the shrn nibble trick purely to recover it; a count
+        // needs only a POPULATION. cmeq leaves 0xFF in a matching lane, cnt
+        // turns each of those into 8, and addv sums the sixteen bytes — at
+        // most 16 x 8 = 128, so it fits the byte addv writes and cannot
+        // overflow. addv zeroes the rest of the register, so `fmov x4, d0`
+        // hands over the sum with nothing to mask off, and the block's count
+        // is that over eight.
+        //
+        // x5 is the cursor POINTER (ld1 has no indexed form), x6 the end,
+        // x7 the running count.
         var clo: asmcore.LabelOut = asmcore.fresh_label(s);
-        var c_scan: string = clo.name;
+        var c_vec: string = clo.name;
         var clo2: asmcore.LabelOut = asmcore.fresh_label(clo.state);
-        var c_next: string = clo2.name;
+        var c_tail: string = clo2.name;
         var clo3: asmcore.LabelOut = asmcore.fresh_label(clo2.state);
-        var c_done: string = clo3.name;
-        s = clo3.state;
+        var c_next: string = clo3.name;
+        var clo4: asmcore.LabelOut = asmcore.fresh_label(clo3.state);
+        var c_done: string = clo4.name;
+        s = clo4.state;
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
         s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
-        s = s.write("    mov x2, #0\n    mov x5, #0\n");
+        s = s.write("    mov x7, #0\n");
         // Unsigned compare against 255 rejects a negative byte and one above
-        // the range in a single test, checked once so the loop needs no
+        // the range in a single test, checked once so neither loop needs a
         // per-iteration guard.
         s = s.write("    cmp x1, #255\n    b.hi " + c_done + "\n");
-        s = s.write(c_scan + ":\n");
-        s = s.write("    cmp x2, x3\n    b.ge " + c_done + "\n");
-        s = s.write("    ldrb w4, [x0, x2]\n");
+        s = s.write("    mov x5, x0\n    add x6, x0, x3\n");
+        s = s.write("    dup v1.16b, w1\n");
+        s = s.write(c_vec + ":\n");
+        s = s.write("    sub x4, x6, x5\n    cmp x4, #16\n    b.lt " + c_tail + "\n");
+        s = s.write("    ld1 {v0.16b}, [x5]\n    cmeq v0.16b, v0.16b, v1.16b\n");
+        s = s.write("    cnt v0.16b, v0.16b\n    addv b0, v0.16b\n    fmov x4, d0\n");
+        s = s.write("    lsr x4, x4, #3\n    add x7, x7, x4\n");
+        s = s.write("    add x5, x5, #16\n    b " + c_vec + "\n");
+        // Scalar tail: the final 0..15 bytes, and the whole algorithm for a
+        // string shorter than one block.
+        s = s.write(c_tail + ":\n");
+        s = s.write("    cmp x5, x6\n    b.ge " + c_done + "\n");
+        s = s.write("    ldrb w4, [x5]\n");
         s = s.write("    cmp x4, x1\n    b.ne " + c_next + "\n");
-        s = s.write("    add x5, x5, #1\n");
-        s = s.write(c_next + ":\n    add x2, x2, #1\n    b " + c_scan + "\n");
-        s = s.write(c_done + ":\n    str x5, [sp, #-16]!\n");
+        s = s.write("    add x7, x7, #1\n");
+        s = s.write(c_next + ":\n    add x5, x5, #1\n    b " + c_tail + "\n");
+        s = s.write(c_done + ":\n    str x7, [sp, #-16]!\n");
         return s;
     }
     if (o.kind_tag == 227) {  // ascii_run
