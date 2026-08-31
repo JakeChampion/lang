@@ -42,18 +42,6 @@ func TestSolveReturnsProvesAPassThroughIsABorrow(t *testing.T) {
 	}
 }
 
-// A fresh allocation is a unit the caller owns, and must not be
-// mistaken for a borrow.
-func TestSolveReturnsLeavesAFreshAllocationOwned(t *testing.T) {
-	f := retFn("make", 0, func(f *Func, b *Block, ps []Value) Value {
-		return f.AddOp(b, OpAlloc)
-	})
-	sol := SolveOwnership(map[string]*Func{"make": f})
-	if sigOf(t, sol, "make").ReturnBorrowed {
-		t.Error("a returned allocation is owned")
-	}
-}
-
 // An interior pointer — `self + offset` — points into the borrowed
 // object and is a borrow of it. This is the largest category the first
 // draft could not prove.
@@ -69,7 +57,9 @@ func TestSolveReturnsFollowsPointerArithmetic(t *testing.T) {
 		t.Errorf("an interior pointer is a borrow of its base, got %v %v",
 			sig.ReturnBorrowed, sig.ReturnBorrowedFrom)
 	}
-	// But not when the base is fresh.
+	// An interior pointer into a FRESH object is owned rather than
+	// borrowed — and since the split, that is a verdict the pass can
+	// state rather than merely withhold.
 	g := retFn("fresh_field", 0, func(f *Func, b *Block, ps []Value) Value {
 		a := f.AddOp(b, OpAlloc)
 		k := f.AddOp(b, OpConstInt)
@@ -77,28 +67,9 @@ func TestSolveReturnsFollowsPointerArithmetic(t *testing.T) {
 		return f.AddOp(b, OpAdd, a, k)
 	})
 	sol = SolveOwnership(map[string]*Func{"fresh_field": g})
-	if sigOf(t, sol, "fresh_field").ReturnBorrowed {
-		t.Error("an interior pointer into a FRESH object is owned")
-	}
-}
-
-// One owned edge is enough to sink the proof: a function that returns
-// its parameter on one path and a fresh object on another owns its
-// return.
-func TestSolveReturnsRequiresEveryPathToBeABorrow(t *testing.T) {
-	f := NewFunc("maybe")
-	f.ReturnAddr = true
-	p := f.AddParam()
-	f.ParamAddrs = []bool{true}
-	entry, borrow, own := f.NewBlock(), f.NewBlock(), f.NewBlock()
-	f.Entry = entry
-	entry.Term = Terminator{Kind: TermBrIf, Cond: p, True: borrow, False: own}
-	f.SetRet(borrow, p)
-	f.SetRet(own, f.AddOp(own, OpAlloc))
-
-	sol := SolveOwnership(map[string]*Func{"maybe": f})
-	if sigOf(t, sol, "maybe").ReturnBorrowed {
-		t.Error("one allocating path makes the whole return owned")
+	if sig := sigOf(t, sol, "fresh_field"); sig.ReturnBorrowed || !sig.ReturnOwned {
+		t.Errorf("an interior pointer into a fresh object is owned, got borrowed=%v owned=%v",
+			sig.ReturnBorrowed, sig.ReturnOwned)
 	}
 }
 
@@ -111,8 +82,9 @@ func TestSolveReturnsTreatsConstantsAsCarryingNothing(t *testing.T) {
 		return v
 	})
 	sol := SolveOwnership(map[string]*Func{"lit": f})
-	if sigOf(t, sol, "lit").ReturnBorrowed {
-		t.Error("a function returning only a literal has no borrow to hand back")
+	if sig := sigOf(t, sol, "lit"); sig.ReturnBorrowed || sig.ReturnOwned {
+		t.Errorf("a function returning only a literal hands back no unit and no borrow, "+
+			"got borrowed=%v owned=%v", sig.ReturnBorrowed, sig.ReturnOwned)
 	}
 }
 
@@ -159,8 +131,8 @@ func TestSolveReturnsMakesAReleaseOfTheResultAReleaseOfTheArgument(t *testing.T)
 }
 
 // A pair return is the Option / Result ABI's (tag, payload) convention.
-// Which half carries the unit is a different question, so it stays
-// owned rather than being guessed at.
+// Which half carries the unit is a different question, so it gets NO
+// verdict rather than a guessed one — in either direction.
 func TestSolveReturnsDoesNotClassifyAPairReturn(t *testing.T) {
 	f := NewFunc("pair")
 	f.ReturnAddr = true
@@ -172,8 +144,9 @@ func TestSolveReturnsDoesNotClassifyAPairReturn(t *testing.T) {
 	f.SetRetPair(b, tag, p)
 
 	sol := SolveOwnership(map[string]*Func{"pair": f})
-	if sigOf(t, sol, "pair").ReturnBorrowed {
-		t.Error("a pair return is not classified")
+	if sig := sigOf(t, sol, "pair"); sig.ReturnBorrowed || sig.ReturnOwned {
+		t.Errorf("a pair return is not classified, got borrowed=%v owned=%v",
+			sig.ReturnBorrowed, sig.ReturnOwned)
 	}
 }
 
@@ -183,7 +156,159 @@ func TestSolveReturnsSkipsNonAddressReturns(t *testing.T) {
 	f := retFn("scalar", 1, func(f *Func, b *Block, ps []Value) Value { return ps[0] })
 	f.ReturnAddr = false
 	sol := SolveOwnership(map[string]*Func{"scalar": f})
-	if sigOf(t, sol, "scalar").ReturnBorrowed {
-		t.Error("a scalar return carries no unit")
+	if sig := sigOf(t, sol, "scalar"); sig.ReturnBorrowed || sig.ReturnOwned {
+		t.Errorf("a scalar return carries no unit, got borrowed=%v owned=%v",
+			sig.ReturnBorrowed, sig.ReturnOwned)
+	}
+}
+
+// The positive half. A function that returns what it allocated hands
+// the caller a unit, and before clsOwned was split the pass had no way
+// to say so — "allocates" and "not understood" were one answer, and
+// only the second is entitled to block a proof.
+func TestSolveReturnsProvesAnAllocatingReturnIsOwned(t *testing.T) {
+	f := &Func{Name: "mk", ReturnAddr: true}
+	b := f.NewBlock()
+	f.Entry = b
+	v := f.AddOp(b, OpAlloc)
+	b.Term = Terminator{Kind: TermRet, Value: v}
+
+	sigs := SolveOwnership(map[string]*Func{"mk": f}).Sigs
+	if !sigs["mk"].ReturnOwned {
+		t.Error("a function returning its own allocation was not proved to return an owned unit")
+	}
+	if sigs["mk"].ReturnBorrowed {
+		t.Error("the two verdicts are mutually exclusive and both are set")
+	}
+}
+
+// A field read is the case the split must NOT turn into a positive
+// answer: the container owns the reference, so claiming it owned would
+// tell every caller to release something it never acquired.
+func TestSolveReturnsLeavesALoadUnproven(t *testing.T) {
+	f := &Func{Name: "get", ReturnAddr: true}
+	b := f.NewBlock()
+	f.Entry = b
+	p := f.AddParam()
+	f.ParamAddrs = []bool{true}
+	v := f.AddOp(b, OpLoad, p)
+	b.Term = Terminator{Kind: TermRet, Value: v}
+
+	sigs := SolveOwnership(map[string]*Func{"get": f}).Sigs
+	if sigs["get"].ReturnOwned || sigs["get"].ReturnBorrowed {
+		t.Errorf("a field read was given a verdict: owned=%v borrowed=%v",
+			sigs["get"].ReturnOwned, sigs["get"].ReturnBorrowed)
+	}
+}
+
+// One arm borrows and the other allocates: neither conclusion holds on
+// every path, so neither may be claimed.
+func TestSolveReturnsRefusesAMixOfBorrowAndFresh(t *testing.T) {
+	f := &Func{Name: "either", ReturnAddr: true}
+	entry := f.NewBlock()
+	lhs := f.NewBlock()
+	rhs := f.NewBlock()
+	f.Entry = entry
+	p := f.AddParam()
+	f.ParamAddrs = []bool{true}
+	c := f.AddOp(entry, OpConstBool)
+	entry.Term = Terminator{Kind: TermBrIf, Cond: c, True: lhs, False: rhs}
+	lhs.Preds = []*Block{entry}
+	rhs.Preds = []*Block{entry}
+	lhs.Term = Terminator{Kind: TermRet, Value: p}
+	v := f.AddOp(rhs, OpAlloc)
+	rhs.Term = Terminator{Kind: TermRet, Value: v}
+
+	sigs := SolveOwnership(map[string]*Func{"either": f}).Sigs
+	if sigs["either"].ReturnOwned || sigs["either"].ReturnBorrowed {
+		t.Errorf("a function that borrows on one path and allocates on the other was "+
+			"given a verdict: owned=%v borrowed=%v",
+			sigs["either"].ReturnOwned, sigs["either"].ReturnBorrowed)
+	}
+}
+
+// The Option shape: `Some(box)` allocates and `None` is a static
+// sentinel. A release of a sentinel short-circuits on its rc word, so
+// the caller may release the result whichever arm ran — the neutral
+// value yields rather than blocking.
+func TestSolveReturnsTreatsASentinelArmAsYielding(t *testing.T) {
+	f := &Func{Name: "opt", ReturnAddr: true}
+	entry := f.NewBlock()
+	some := f.NewBlock()
+	none := f.NewBlock()
+	f.Entry = entry
+	c := f.AddOp(entry, OpConstBool)
+	entry.Term = Terminator{Kind: TermBrIf, Cond: c, True: some, False: none}
+	some.Preds = []*Block{entry}
+	none.Preds = []*Block{entry}
+	v := f.AddOp(some, OpAlloc)
+	some.Term = Terminator{Kind: TermRet, Value: v}
+	sent := f.AddOp(none, OpEnumSentinel)
+	none.Term = Terminator{Kind: TermRet, Value: sent}
+
+	if !SolveOwnership(map[string]*Func{"opt": f}).Sigs["opt"].ReturnOwned {
+		t.Error("Some(box) beside a None sentinel was not proved owned")
+	}
+}
+
+// A runtime helper whose RESULT axis says immortal carries no unit, so
+// returning one is neutral rather than a blocked proof. Before the
+// result axis existed every call blocked.
+func TestSolveReturnsReadsTheResultAxisForAHelper(t *testing.T) {
+	f := &Func{Name: "boxed", ReturnAddr: true}
+	b := f.NewBlock()
+	f.Entry = b
+	n := f.AddOp(b, OpConstInt)
+	v := f.AddOp(b, OpCall, n)
+	op := b.Ops[len(b.Ops)-1]
+	op.Str, op.Addr = "__fern_alloc_box", true
+	b.Term = Terminator{Kind: TermRet, Value: v}
+
+	sigs := SolveOwnership(map[string]*Func{"boxed": f}).Sigs
+	if sigs["boxed"].ReturnOwned {
+		t.Error("a static-sentinel box was proved owned — nothing can release it")
+	}
+	if sigs["boxed"].ReturnBorrowed {
+		t.Error("a static-sentinel box was proved a borrow of a parameter")
+	}
+}
+
+// And the owned half of the same table: a helper that allocates makes
+// its caller's return owned too.
+func TestSolveReturnsPropagatesAnOwnedHelperResult(t *testing.T) {
+	f := &Func{Name: "buf", ReturnAddr: true}
+	b := f.NewBlock()
+	f.Entry = b
+	n := f.AddOp(b, OpConstInt)
+	v := f.AddOp(b, OpCall, n)
+	op := b.Ops[len(b.Ops)-1]
+	op.Str, op.Addr = "__alloc_u8", true
+	b.Term = Terminator{Kind: TermRet, Value: v}
+
+	if !SolveOwnership(map[string]*Func{"buf": f}).Sigs["buf"].ReturnOwned {
+		t.Error("a return of a freshly allocated buffer was not proved owned")
+	}
+}
+
+// The verdict propagates across the call graph: a forwarder that
+// returns what an owned-returning callee gave it is owned as well.
+func TestSolveReturnsPropagatesOwnedAcrossACall(t *testing.T) {
+	mk := &Func{Name: "mk", ReturnAddr: true}
+	b := mk.NewBlock()
+	mk.Entry = b
+	v := mk.AddOp(b, OpAlloc)
+	b.Term = Terminator{Kind: TermRet, Value: v}
+
+	fwd := &Func{Name: "fwd", ReturnAddr: true}
+	fb := fwd.NewBlock()
+	fwd.Entry = fb
+	r := fwd.AddOp(fb, OpCall)
+	op := fb.Ops[len(fb.Ops)-1]
+	op.Str, op.Addr = "mk", true
+	fb.Term = Terminator{Kind: TermRet, Value: r}
+
+	sigs := SolveOwnership(map[string]*Func{"mk": mk, "fwd": fwd}).Sigs
+	if !sigs["fwd"].ReturnOwned {
+		t.Error("a forwarder of an owned-returning callee was not proved owned")
 	}
 }

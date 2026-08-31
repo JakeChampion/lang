@@ -415,10 +415,17 @@ func classifyDef(o *Op, sigs map[string]Signature) UnitOrigin {
 			return UnitNone
 		}
 		if o.Kind == OpCall {
-			if sig, ok := sigs[ir.CodegenAlias(o.Str)]; ok && sig.ReturnBorrowed {
-				// Phase B proved every returned value is a borrow of
-				// a parameter, so the caller got no unit.
-				return UnitBorrowed
+			if sig, ok := sigs[ir.CodegenAlias(o.Str)]; ok {
+				if sig.ReturnBorrowed {
+					// Phase B proved every returned value is a borrow
+					// of a parameter, so the caller got no unit.
+					return UnitBorrowed
+				}
+				if sig.ReturnOwned {
+					// And the positive half: every returned value
+					// carries a unit, so the caller holds one.
+					return UnitFresh
+				}
 			}
 			if r, known := ir.RcHelperResult(o.Str); known {
 				return unitFromResult(r)

@@ -88,6 +88,21 @@ type Signature struct {
 	// result is attributed to the call rather than to a parameter.
 	ReturnBorrowed     bool
 	ReturnBorrowedFrom []int
+
+	// ReturnOwned is true when every value the function returns carries
+	// a unit of its own, so a caller holds one and must release it.
+	//
+	// The positive half of the same question, and it needed
+	// `classifyValue`'s "owned" to be split first: that answer was a
+	// union of "allocates" and "not understood", and only the second
+	// may block a proof. Merging them is why 4492 functions had no
+	// verdict rather than the right one.
+	//
+	// ReturnOwned and ReturnBorrowed are mutually exclusive; false on
+	// both is "nothing was proved", which is the safe default in both
+	// directions and is what a caller must treat an unplaceable result
+	// as.
+	ReturnOwned bool
 }
 
 // Solution is the whole-program answer plus what it could not see.
@@ -319,7 +334,7 @@ func demandsUnit(uses *Uses, vs []Value, sigs map[string]Signature) bool {
 			if o.Kind != OpCall {
 				continue
 			}
-			if callee, known := sigs[o.Str]; known {
+			if callee, known := sigs[ir.CodegenAlias(o.Str)]; known {
 				if u.Index < len(callee.Params) && callee.Params[u.Index] == Consumed {
 					return true
 				}
@@ -352,6 +367,11 @@ func calleeOwnership(o *Op, sigs map[string]Signature) (callee string, opaque, o
 	case OpCall:
 	default:
 		return "", false, false
+	}
+	if name := ir.CodegenAlias(o.Str); name != o.Str {
+		if _, known := sigs[name]; known {
+			return name, false, true
+		}
 	}
 	if _, known := sigs[o.Str]; known {
 		return o.Str, false, true
