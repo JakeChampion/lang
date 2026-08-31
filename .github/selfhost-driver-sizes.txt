@@ -159,6 +159,24 @@
 # artifact, which stayed inside tolerance. That is the two-tier point above
 # working as intended rather than a checker-specific regression.
 
+# WHY THE THREE FRONT-END SLICES SHRANK (-10.8%, -7.9%, -7.6%). Folding a
+# uniqueness test on the null pointer. `OpRcIsUnique`'s own declaration says
+# "sentinel/static -> 0" and every backend's helper opens with a null guard, so
+# `is_unique(null)` is 0 — but `Fold` had no rule for the op, and
+# `ConstPropagate` was already delivering a literal `const.i32 0` to 8456 of
+# 15582 guards over the conformance corpus. Each one gated a deep drop of a
+# slot holding the zero-init constant: an unreachable block of roughly 20 ops.
+#
+# Every one of the fifteen shrank, from -3.0% (the tracked artifact, 1 MB) to
+# -10.8%. Only three breached tolerance, and they are the same front-end slices
+# the note above records moving +5.5%: 385 KB is 5.5% of a 7 MB driver and 1.3%
+# of a 30 MB one, which is the two-tier point working as intended again.
+#
+# It does NOT undo that growth. #7837 added deep drops that RUN, against an
+# unbounded heap leak; this removes drop blocks that cannot. They are
+# independent, and checker_modload_run now sits below its pre-#7837 figure
+# (7053860) because the dead blocks predate both.
+
 fern.fern 30366508
 asm_load_run.fern 26544900
 asm_modload_run.fern 25160412
@@ -171,6 +189,6 @@ asm_pathprobe_run.fern 23697068
 ssa_lift_scan_run.fern 23416972
 asm_ir_elig_run.fern 22385692
 irlower_run.fern 23393036
-checker_modload_run.fern 7438860
-ssa_emit_run.fern 6658876
-ssa_run.fern 6452492
+checker_modload_run.fern 6631948
+ssa_emit_run.fern 6151420
+ssa_run.fern 5940940
