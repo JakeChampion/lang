@@ -1171,14 +1171,38 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    testq %rax, %rax\n    jns .Lfpow_done\n");
     s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    divsd %xmm3, %xmm5\n    movsd %xmm5, %xmm3\n");
     s = s.write(".Lfpow_done:\n    movsd %xmm3, %xmm0\n    ret\n");
-    // General case: x^y = exp(y·ln x), x > 0. The only non-leaf helper; SysV has
-    // no callee-saved xmm registers, so y is stashed on the stack across the log
-    // call where arm64 can use callee-saved d8.
+    // General case: x^y = sign · exp(y·ln|x|). ln is defined only for x > 0, so
+    // a negative base is split into a sign and |x| first: for an integral y the
+    // sign is (-1)^y, and a non-integral y makes the result NaN. Every |y| >= 2^53
+    // is an even integer, which is what leaves pow(x<0, ±Inf) a magnitude rather
+    // than a NaN.
+    //
+    // The only non-leaf helper: SysV has no callee-saved xmm registers, so y and
+    // the sign multiplier are stashed on the stack across the log call, where
+    // arm64 can use callee-saved d8.
     s = s.write(".Lfpow_general:\n    subq $16, %rsp\n    movsd %xmm1, (%rsp)\n");
+    s = s.write(fc_ld("%xmm2", ".Lfc_one") + "    movsd %xmm2, 8(%rsp)\n");     // sign of the result
+    s = s.write("    movq %xmm0, %rax\n    testq %rax, %rax\n    jns .Lfpow_mag\n");  // +0 or a positive base
+    s = s.write("    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, %rax\n");
+    s = s.write("    movq %rax, %xmm0\n");                                      // |x|
+    s = s.write("    movq %xmm1, %rdx\n    andq %rcx, %rdx\n");                 // |y|
+    s = s.write("    movabsq $0x4340000000000000, %rcx\n    cmpq %rcx, %rdx\n    jb .Lfpow_parity\n");
+    s = s.write("    movabsq $0x7ff0000000000000, %rcx\n    cmpq %rcx, %rdx\n    jbe .Lfpow_mag\n");  // |y| >= 2^53, finite or ±Inf: an even integer
+    s = s.write("    jmp .Lfpow_nan\n");                                        // y is NaN
+    s = s.write(".Lfpow_parity:\n    cvttsd2si %xmm1, %rdx\n    cvtsi2sd %rdx, %xmm2\n");
+    s = s.write("    ucomisd %xmm1, %xmm2\n    jne .Lfpow_nan\n");              // y is not an integer
+    s = s.write("    testq $1, %rdx\n    jz .Lfpow_mag\n");                     // even exponent
+    s = s.write("    movabsq $0xbff0000000000000, %rcx\n    movq %rcx, %xmm2\n    movsd %xmm2, 8(%rsp)\n");
+    // |x| == 1 is 1 for every y, including the NaN and ±Inf that exp(y·ln|x|)
+    // would turn into NaN through y·0.
+    s = s.write(".Lfpow_mag:\n    movq %xmm0, %rax\n");
+    s = s.write("    movabsq $0x3ff0000000000000, %rcx\n    cmpq %rcx, %rax\n    je .Lfpow_sign\n");
     s = s.write("    call __fern_log_f64\n");
     s = s.write("    movsd (%rsp), %xmm1\n    mulsd %xmm1, %xmm0\n");
     s = s.write("    call __fern_exp_f64\n");
+    s = s.write(".Lfpow_sign:\n    mulsd 8(%rsp), %xmm0\n");
     s = s.write("    addq $16, %rsp\n    ret\n");
+    s = s.write(".Lfpow_nan:\n    addq $16, %rsp\n" + fc_retbits("0x7ff8000000000000"));
     s = s.write(".size __fern_pow_f64, .-__fern_pow_f64\n");
     return s;
 }

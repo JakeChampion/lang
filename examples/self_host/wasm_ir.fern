@@ -4615,12 +4615,13 @@ pub function log_func(): string {
 // an optimisation: exp(y*ln x) CANNOT return exactly 9 for pow(3,2), because a
 // 1-ulp error in ln 3 amplified by the exponential lands just under, and
 // `as i32` truncated it to 8. Repeated squaring is exact wherever the result
-// is representable. Integrality is an i64 round-trip, so a NaN or out-of-range
-// y falls out as a huge |n| that the range check rejects.
+// is representable. Integrality is an i64 round-trip off a SATURATING
+// truncation — the trapping i64.trunc_f64_s aborts the module on a NaN or
+// out-of-range y, where the round-trip just rejects the saturated value.
 pub function pow_func(): string {
     var o: string = "";    o = o + "  (func $__fern_pow_f64 (param $x f64) (param $y f64) (result f64)\n";
-    o = o + "    (local $n i64) (local $an i64) (local $acc f64) (local $base f64)\n";
-    o = o + "    (local.set $n (i64.trunc_f64_s (local.get $y)))\n";
+    o = o + "    (local $n i64) (local $an i64) (local $acc f64) (local $base f64) (local $sign f64)\n";
+    o = o + "    (local.set $n (i64.trunc_sat_f64_s (local.get $y)))\n";
     o = o + "    (if (f64.eq (f64.convert_i64_s (local.get $n)) (local.get $y)) (then\n";
     o = o + "      (local.set $an (local.get $n))\n";
     o = o + "      (if (i64.lt_s (local.get $an) (i64.const 0)) (then (local.set $an (i64.sub (i64.const 0) (local.get $an)))))\n";
@@ -4635,7 +4636,26 @@ pub function pow_func(): string {
     o = o + "          (br $lp)))\n";
     o = o + "        (if (i64.lt_s (local.get $n) (i64.const 0)) (then (local.set $acc (f64.div (f64.const 1.0) (local.get $acc)))))\n";
     o = o + "        (return (local.get $acc))))))\n";
-    o = o + "    (call $__fern_exp_f64 (f64.mul (local.get $y) (call $__fern_log_f64 (local.get $x)))))\n";
+    // General case: sign * exp(y*ln|x|). ln is defined only for x > 0, so a
+    // negative base is split into a sign and |x| first: for an integral y the sign
+    // is (-1)^y, and a non-integral y makes the result NaN. Every |y| >= 2^53 is an
+    // even integer, which is what leaves pow(x<0, +-Inf) a magnitude rather than a
+    // NaN. 4845873199050653696 is 2^53, 9218868437227405312 +Inf and
+    // 9221120237041090560 the canonical quiet NaN, as bit patterns.
+    o = o + "    (local.set $sign (f64.const 1.0))\n";
+    o = o + "    (if (i64.lt_s (i64.reinterpret_f64 (local.get $x)) (i64.const 0)) (then\n";
+    o = o + "      (local.set $x (f64.abs (local.get $x)))\n";
+    o = o + "      (local.set $an (i64.reinterpret_f64 (f64.abs (local.get $y))))\n";
+    o = o + "      (if (i64.lt_u (local.get $an) (i64.const 4845873199050653696))\n";
+    o = o + "        (then\n";
+    o = o + "          (if (f64.ne (f64.convert_i64_s (local.get $n)) (local.get $y)) (then (return (f64.reinterpret_i64 (i64.const 9221120237041090560)))))\n";
+    o = o + "          (if (i64.eq (i64.and (local.get $n) (i64.const 1)) (i64.const 1)) (then (local.set $sign (f64.const -1.0)))))\n";
+    o = o + "        (else\n";
+    o = o + "          (if (i64.gt_u (local.get $an) (i64.const 9218868437227405312)) (then (return (f64.reinterpret_i64 (i64.const 9221120237041090560)))))))))\n";
+    // |x| == 1 is 1 for every y, including the NaN and +-Inf that exp(y*ln|x|)
+    // would turn into NaN through y*0.
+    o = o + "    (if (f64.eq (local.get $x) (f64.const 1.0)) (then (return (local.get $sign))))\n";
+    o = o + "    (f64.mul (local.get $sign) (call $__fern_exp_f64 (f64.mul (local.get $y) (call $__fern_log_f64 (local.get $x))))))\n";
     return o;
 }
 
@@ -8394,7 +8414,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // $__fern_log_f64: ln x via a polynomial (same — self-contained f64 math).
     // fpow reuses it too, so its gate folds fpow in.
     if (need(needs, "flog") || need(needs, "fpow")) { parts = parts.append(log_func()); }
-    // $__fern_pow_f64: x^y = exp(y·ln x) — composes the two helpers above.
+    // $__fern_pow_f64: x^y = sign·exp(y·ln|x|) — composes the two helpers above.
     if (need(needs, "fpow")) { parts = parts.append(pow_func()); }
     // $__fern_sin_f64 / $__fern_cos_f64: trig via argument reduction + Taylor
     // polynomials (no transcendental wasm instruction). Self-contained f64 math.

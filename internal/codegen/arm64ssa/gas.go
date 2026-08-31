@@ -1197,7 +1197,7 @@ func emitLogF64Helper(w func(string, ...any)) {
 // to 8. Repeated squaring is exact wherever the result is representable, and it
 // is a LEAF, so it returns before the frame the general path sets up.
 // Integrality is an i64 round-trip, so a NaN or out-of-range y falls out as a
-// huge |n| the range check rejects.
+// huge |n| the range check rejects, sending it to the general path below.
 func emitPowF64Helper(w func(string, ...any)) {
 	ldc := func(reg, lbl string) {
 		w("\tadrp x12, %s", lbl)
@@ -1238,17 +1238,63 @@ func emitPowF64Helper(w func(string, ...any)) {
 	w(".Lssa_pow_done:")
 	w("\tfmov x0, d3")
 	w("\tret")
+	// General case: x^y = sign * exp(y*ln|x|). ln is defined only for x > 0,
+	// so a negative base is split into a sign and |x| first: for an integral y
+	// the sign is (-1)^y, and a non-integral y makes the result NaN. Every
+	// |y| >= 2^53 is an even integer, which is what leaves pow(x<0, +-Inf) a
+	// magnitude rather than a NaN. The f64 bit patterns are movz-able because
+	// their low 48 bits are zero: 16368 = +1.0, 49136 = -1.0, 17216 = 2^53,
+	// 32752 = +Inf, 32760 = quiet NaN.
 	w(".Lssa_pow_gen:")
 	w("\tstp x29, x30, [sp, #-32]!")
 	w("\tmov x29, sp")
 	w("\tstr x19, [sp, #16]")
 	w("\tmov x19, x1")
+	w("\tmovz x15, #16368, lsl #48")
+	w("\ttbz x0, #63, .Lssa_pow_mag")
+	w("\tlsl x0, x0, #1")
+	w("\tlsr x0, x0, #1")
+	w("\tlsl x13, x1, #1")
+	w("\tlsr x13, x13, #1")
+	w("\tmovz x16, #17216, lsl #48")
+	w("\tcmp x13, x16")
+	w("\tb.lo .Lssa_pow_parity")
+	w("\tmovz x16, #32752, lsl #48")
+	w("\tcmp x13, x16")
+	w("\tb.ls .Lssa_pow_mag")
+	w("\tb .Lssa_pow_nan")
+	w(".Lssa_pow_parity:")
+	w("\tfmov d1, x1")
+	w("\tfcvtzs x13, d1")
+	w("\tscvtf d2, x13")
+	w("\tfcmp d2, d1")
+	w("\tb.ne .Lssa_pow_nan")
+	w("\ttbz x13, #0, .Lssa_pow_mag")
+	w("\tmovz x15, #49136, lsl #48")
+	// |x| == 1 is 1 for every y, including the NaN and +-Inf that
+	// exp(y*ln|x|) would turn into NaN through y*0.
+	w(".Lssa_pow_mag:")
+	w("\tmovz x16, #16368, lsl #48")
+	w("\tcmp x0, x16")
+	w("\tb.eq .Lssa_pow_sign")
+	w("\tstr x15, [sp, #24]")
 	w("\tbl %s", fnLabel("__log_f64"))
 	w("\tfmov d0, x0")
 	w("\tfmov d1, x19")
 	w("\tfmul d0, d1, d0")
 	w("\tfmov x0, d0")
 	w("\tbl %s", fnLabel("__exp_f64"))
+	w("\tldr x15, [sp, #24]")
+	w(".Lssa_pow_sign:")
+	w("\tfmov d0, x0")
+	w("\tfmov d1, x15")
+	w("\tfmul d0, d0, d1")
+	w("\tfmov x0, d0")
+	w("\tldr x19, [sp, #16]")
+	w("\tldp x29, x30, [sp], #32")
+	w("\tret")
+	w(".Lssa_pow_nan:")
+	w("\tmovz x0, #32760, lsl #48")
 	w("\tldr x19, [sp, #16]")
 	w("\tldp x29, x30, [sp], #32")
 	w("\tret")
