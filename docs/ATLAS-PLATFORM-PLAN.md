@@ -785,6 +785,77 @@ EXTENSION ID: 233" while `read_file_bytes` already held 233. That is exactly the
 merge drift the paragraph beneath it warns about, and the warning's own advice —
 re-grep for the number rather than trusting the line — is what caught it.
 
+**`__count_byte`, the fourth kernel**, is the first one §3.3a cost *nothing*.
+Not one of the six assemblers needed an encoding: x86-64 had `pmovmskb` and
+`popcnt`, arm64 had `cmeq` with `cnt`/`addv`, wasm had `i8x16.bitmask` with
+`i32.popcnt`, in both the native and the self-host copy of each. That is the
+prediction the paragraph above makes, confirmed — **the encoding debt is
+per-INSTRUCTION-SET, not per-kernel**, so a kernel assembled from shapes already
+paid for is free of §3.3a entirely.
+
+It is also the clearest case of the input-vs-needle rule below, and the first
+kernel with **no early exit**. `__memchr`, `__rmemchr` and `__ascii_run` all stop
+at the first hit, so a scalar loop can get lucky on favourable data; a count is
+only known after the last byte, so the whole input is read on every call
+whatever the data looks like. That shows up directly in the ratio: native
+x86-64 measures **2,765M → 271M retired, 10.2x**, against 8.8x for both search
+kernels on the same corpus, because there is no early return for the scalar
+loop to reach first.
+
+The counting shape also redistributes which target is cheap. A search needs a
+lane INDEX out of the compare; a count needs only a POPULATION, and that is a
+strictly easier question:
+
+| | search pays | count pays |
+|---|---|---|
+| x86-64 | `pmovmskb` then `bsf`/`bsr` | `pmovmskb` then `popcnt` |
+| arm64 | no bitmask — `shrn` nibbles, then divide the bit index by four | `cnt` + `addv`, then divide the sum by eight |
+| wasm | `i8x16.bitmask` then `i32.ctz` | `i8x16.bitmask` then `i32.popcnt` |
+
+arm64 is the row that changes character. For a search the missing bitmask is a
+real cost — the nibble trick exists only to recover an index NEON will not give
+you. For a count it costs nothing, because `cnt` of an all-ones lane is 8 and
+`addv` sums the sixteen bytes to at most 128, which fits the byte `addv` writes.
+The kernel that hurts most on arm64 and the one that hurts least are the same
+instruction sequence up to the compare.
+
+Measured on the three native tiers (`examples/bench/string_count_byte`, 6,000
+rounds x 32 KiB x 2 calls, matches one byte in four so the accumulator is
+exercised rather than the scan):
+
+| tier | scalar | vector | |
+|---|---|---|---|
+| native x86-64 (retired) | 2,765M | 271M | 10.2x |
+| native arm64 (qemu) | 1,690 ms | 571 ms | 3.0x |
+| native wasm (wasmtime) | 886 ms | 25 ms | 36x |
+
+The arm64 row carries the usual qemu floor caveat. The wasm row needs a
+different caveat, and it is worth recording because it is not a vector result:
+that backend's scalar body read **every byte through `__fern_str_byte`**, a
+function call per byte, because one reader is correct for both the inline and
+the heap string form. Splitting the two — a scalar `i32.load8_u` loop for the
+heap form, `__fern_str_byte` only for the inline one — is worth **2.3x** on its
+own (886 ms → 385 ms), and the vector loop is the remaining **15.5x**. Read the
+36x as two changes, not one; the same split is available to the three earlier
+kernels and none of them has taken it.
+
+What a port gets wrong here is different from all three siblings, and the
+difference is an absence: with no cursor there is nothing to clamp, so the trap
+each of the others springs in its own way is simply gone. What replaces it is
+the **accumulator** — a body that returns on the first match, or loses a
+block's partial total, answers every sparse case correctly and fails only where
+matches are dense. Both corpora and the benchmark are weighted for that, and
+every negative control on this kernel targets it: replacing the accumulate with
+an assign, dropping the `popcnt`, dividing the arm64 sum by four instead of
+eight.
+
+Its adoption is also the first that is TOTAL rather than a tier. `__memchr` and
+`__rmemchr` are reached through an `nLen == 1` branch inside a general search;
+`std/string`'s `count_byte` simply *is* `__count_byte`, because with no cursor
+and no needle length there is no shape where the intrinsic and the loop differ.
+`count_matches` gains the tier its siblings have, since at length 1
+non-overlapping and every-occurrence agree.
+
 ### 3.5 Testing
 
 Per rule 5, each kernel ships with:

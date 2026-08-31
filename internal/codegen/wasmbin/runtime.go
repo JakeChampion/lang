@@ -3916,14 +3916,22 @@ func buildRmemchrBody(idxs map[string]uint32) []byte {
 // buildCountByteBody assembles wasm bytes for __fern_count_byte: how many
 // bytes of the string equal `byte`.
 //
-// SCALAR, per docs/ATLAS-PLATFORM-PLAN.md §3.4's "correct in every backend
-// first, fast one backend at a time".
+// v128, 16 bytes an iteration (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 3). The
+// fourth kernel, and the first with no early exit: __memchr stops at the first
+// hit, this reads the whole string every time.
 //
-// It reads through __fern_str_byte rather than i32.load8_u, which is the same
-// choice __memchr's tail makes and for the same reason: a string with the
-// 0x80000000 flag lives IN its two words with no address to load from, so one
-// reader correct for both forms beats the load it saves. Vectorising this will
-// need __memchr's split into an inline path and an addressed one.
+// wasm is the cheapest target for this shape as it was for the forward scan,
+// and for the same reason: i8x16.bitmask is pmovmskb, one bit per byte, so the
+// block's count is i32.popcnt of it directly. No nibble arithmetic as on NEON,
+// and unlike __memchr no ctz either — a population is exactly what bitmask
+// plus popcnt produce, where a lane INDEX needed a second step.
+//
+// The SSO split is __memchr's and forced by the same representation fact:
+// SHORT STRINGS HAVE NO ADDRESS. A string with the 0x80000000 flag lives IN
+// its two words, so there is nothing for v128.load to point at and that form
+// takes a scalar loop over __fern_str_byte. The splat is recomputed per
+// iteration rather than hoisted, to avoid a v128 local and the v128 valtype in
+// the locals vector.
 //
 // No cursor, so no clamp. Both degenerate answers are honest counts rather
 // than sentinels: an out-of-range byte counts 0, an empty string counts 0.
@@ -3942,8 +3950,9 @@ func buildCountByteBody(idxs map[string]uint32) []byte {
 	)
 	var body []byte
 
-	// A byte outside 0..255 can never occur; checked once so the loop needs
-	// no per-iteration guard. The answer is 0, not -1: a count has no miss.
+	// A byte outside 0..255 can never occur; checked once so no loop needs a
+	// per-iteration guard, and so the splat below is exact rather than
+	// truncating. The answer is 0, not -1: a count has no miss.
 	body = inst.InstLocalGet(body, pByte)
 	body = inst.InstI32Const(body, 0)
 	body = numeric.InstI32LtS(body)
@@ -3956,13 +3965,86 @@ func buildCountByteBody(idxs map[string]uint32) []byte {
 	body = inst.InstReturn(body)
 	body = inst.InstEnd(body)
 
-	// $n = logical length. $i and $c start at 0; an empty string leaves the
+	// $n = logical length. $i and $c start at 0; an empty string leaves every
 	// loop guard true on entry and returns the 0 already in $c.
 	body = inst.InstLocalGet(body, pData)
 	body = inst.InstLocalGet(body, pLen)
 	body = inst.InstCall(body, strLen)
 	body = inst.InstLocalSet(body, lN)
 
+	// Inline (SSO) string: scalar loop through __fern_str_byte, the only
+	// reader that can see bytes living in the two words.
+	body = inst.InstLocalGet(body, pLen)
+	body = inst.InstI32Const(body, int32(-0x80000000))
+	body = numeric.InstI32And(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstLocalGet(body, lN)
+		body = numeric.InstI32GeS(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstLocalGet(body, pData)
+		body = inst.InstLocalGet(body, pLen)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstCall(body, strByte)
+		body = inst.InstLocalGet(body, pByte)
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, lC)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, lC)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, lI)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, lI)
+		body = inst.InstBr(body, 0)
+		body = inst.InstEnd(body) // loop
+		body = inst.InstEnd(body) // block
+		body = inst.InstLocalGet(body, lC)
+		body = inst.InstReturn(body)
+	}
+	body = inst.InstEnd(body)
+
+	// Heap string: $data is the byte address, so the vector loop applies.
+	// 16 bytes an iteration while a whole vector fits.
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalGet(body, lN)
+	body = numeric.InstI32GtS(body)
+	body = inst.InstBrIf(body, 1)
+	// $c += i32.popcnt(i8x16.bitmask(i8x16.eq(v128.load($data + $i), splat)))
+	body = inst.InstLocalGet(body, lC)
+	body = inst.InstLocalGet(body, pData)
+	body = inst.InstLocalGet(body, lI)
+	body = numeric.InstI32Add(body)
+	// align 0: a Fern string buffer carries no 16-byte alignment guarantee,
+	// and a hint LARGER than the access is a validation error where a smaller
+	// one is legal.
+	body = simd.InstV128Load(body, 0, 0)
+	body = inst.InstLocalGet(body, pByte)
+	body = simd.InstI8x16Splat(body)
+	body = simd.InstI8x16Eq(body)
+	body = simd.InstI8x16Bitmask(body)
+	body = numeric.InstI32Popcnt(body)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lC)
+	body = inst.InstLocalGet(body, lI)
+	body = inst.InstI32Const(body, 16)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, lI)
+	body = inst.InstBr(body, 0)
+	body = inst.InstEnd(body) // loop
+	body = inst.InstEnd(body) // block
+
+	// Scalar tail: the final 0..15 bytes. It reads with i32.load8_u rather
+	// than __fern_str_byte because this path is heap-only by construction.
 	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, lI)
@@ -3970,9 +4052,9 @@ func buildCountByteBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32GeS(body)
 	body = inst.InstBrIf(body, 1)
 	body = inst.InstLocalGet(body, pData)
-	body = inst.InstLocalGet(body, pLen)
 	body = inst.InstLocalGet(body, lI)
-	body = inst.InstCall(body, strByte)
+	body = numeric.InstI32Add(body)
+	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstLocalGet(body, pByte)
 	body = numeric.InstI32Eq(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
