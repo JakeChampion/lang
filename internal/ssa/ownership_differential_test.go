@@ -79,6 +79,47 @@ func TestOwnershipSolverAgreesWithTheLoweringsOwnVerdict(t *testing.T) {
 	}
 	sol := ssa.SolveOwnership(funcs)
 
+	// Phase B, both directions. Reported here rather than in its own
+	// test because this one already lowers the whole self-host
+	// compiler, and a second copy of that would cost 70 s to measure
+	// the same program.
+	//
+	// Measured 2026-08-31: 3873 address-returning functions, 1494
+	// proved to return an OWNED unit and 127 a borrow. The owned half
+	// was 0 before `classifyValue`'s `clsOwned` was split into "this
+	// allocates" and "this is not understood" — the merged answer let
+	// an unrecognised definition and a fresh allocation block a proof
+	// for the same reason, and only one of them should.
+	//
+	// Floors, not figures: both move with the compiler, and what would
+	// be a defect is a COLLAPSE — a lattice that stopped propagating,
+	// or a split that quietly re-merged.
+	addrRet, owned, borrowed := 0, 0, 0
+	for name, sf := range funcs {
+		if !sf.ReturnAddr {
+			continue
+		}
+		addrRet++
+		switch s := sol.Sigs[name]; {
+		case s.ReturnOwned && s.ReturnBorrowed:
+			t.Fatalf("%s is both owned and borrowed — the two verdicts are exclusive", name)
+		case s.ReturnOwned:
+			owned++
+		case s.ReturnBorrowed:
+			borrowed++
+		}
+	}
+	t.Logf("phase B: %d address-returning functions, %d owned, %d borrowed", addrRet, owned, borrowed)
+	if owned < 500 {
+		t.Errorf("only %d of %d address-returning functions were proved to return an owned "+
+			"unit, under the floor of 500 — the positive half of phase B has collapsed",
+			owned, addrRet)
+	}
+	if borrowed < 40 {
+		t.Errorf("only %d of %d address-returning functions were proved to return a borrow, "+
+			"under the floor of 40 — the borrow proof has collapsed", borrowed, addrRet)
+	}
+
 	var agreeConsumed, agreeBorrowed, solverOnly, incumbentOnly, incumbentOnlyViaPhi int
 	solverOnlyTypes := map[string]int{}
 	incumbentOnlyTypes := map[string]int{}

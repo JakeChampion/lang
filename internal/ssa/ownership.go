@@ -242,7 +242,7 @@ func aliasesOfWithReturns(f *Func, uses *Uses, v Value, sigs map[string]Signatur
 			if sigs == nil || o.Kind != OpCall || seen[o.Result.ID] {
 				continue
 			}
-			callee, known := sigs[o.Str]
+			callee, known := sigs[ir.CodegenAlias(o.Str)]
 			if !known || !callee.ReturnBorrowed {
 				continue
 			}
