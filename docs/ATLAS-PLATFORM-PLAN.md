@@ -725,7 +725,11 @@ lands on a different pair of targets: there wasm and x86-64 were the cheap ones,
 here only x86-64 is.
 
 Measured (`examples/bench/string_rfind_byte`, 6,000 backward scans of a 32 KiB
-haystack answering at index 3): **984M → 112M retired, 8.8x**.
+haystack answering at index 3): **984M → 112M retired, 8.8x**. Self-host x86-64
+followed at **85.6 ms → 5.7 ms (15x)** on the same shape; its assembler needed
+only `bsr` added (`0F BD`, one opcode along from the `bsf` the forward kernel
+already put there), which is the cheapest prerequisite any of the three kernels
+has had.
 
 The first cut of that body was **6.1x**, and the gap was not the vector work —
 it was recomputing the block address from the cursor every iteration, about a

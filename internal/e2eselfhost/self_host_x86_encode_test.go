@@ -556,6 +556,18 @@ function x86enc_selftest_11(): i32 {
     // xorpd rides the same 66 0F shape: %xmm1,%xmm0 -> 66 0F 57 C1.
     var vq: i32[] = x86_xorpd([], 0, 1);
     if (vq.len() != 4 || vq[0] != 102 || vq[1] != 15 || vq[2] != 87 || vq[3] != 193) { return 127; }
+    // bsr, the one instruction separating __rmemchr's vector body from
+    // __memchr's: the HIGHEST set mask bit is the rightmost matching byte.
+    // Same shape as bsf one opcode along, so both are checked together — a
+    // transposed pair would otherwise read plausibly at either call site.
+    // bsrl %eax,%ecx -> 0F BD C8 (no REX) ; %r9d,%r9d -> 45 0F BD C9
+    var vr: i32[] = x86_bsr_r32([], x86_rcx(), x86_rax());
+    if (vr.len() != 3 || vr[0] != 15 || vr[1] != 189 || vr[2] != 200) { return 128; }
+    var vs: i32[] = x86_bsr_r32([], 9, 9);
+    if (vs.len() != 4 || vs[0] != 69 || vs[1] != 15 || vs[2] != 189 || vs[3] != 201) { return 129; }
+    // bsrl %ecx,%r10d -> 44 0F BD D1 (REX.R for the extended DESTINATION)
+    var vt: i32[] = x86_bsr_r32([], 10, x86_rcx());
+    if (vt.len() != 4 || vt[0] != 68 || vt[1] != 15 || vt[2] != 189 || vt[3] != 209) { return 130; }
     return 0;
 }
 
