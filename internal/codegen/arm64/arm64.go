@@ -3962,12 +3962,18 @@ func (g *generator) emitRmemchrRuntime() {
 // emitCountByteRuntime emits `__fern_count_byte(s, byte) -> i32`: how many
 // bytes of `s` equal `byte`.
 //
-// SCALAR, per docs/ATLAS-PLATFORM-PLAN.md §3.4's "correct in every backend
-// first, fast one backend at a time" — every backend gets the lowering before
-// any caller adopts it.
+// NEON, 16 bytes an iteration (docs/ATLAS-PLATFORM-PLAN.md §3.4 step 3). The
+// fourth kernel, and the first with no early exit: __memchr stops at the first
+// hit, this reads the whole string every time.
 //
-// The fourth kernel, and the first with no early exit: __memchr stops at the
-// first hit, this reads the whole string every time.
+// Counting suits NEON better than searching does, and this is the one kernel
+// where the missing bitmask costs nothing. __memchr has to get a LANE INDEX
+// out of the compare, which on arm64 means the shrn nibble trick and then
+// dividing by four; a count only needs a POPULATION, and `cnt` + `addv` give
+// that directly. cmeq leaves 0xFF in a matching lane, cnt turns each of those
+// into 8, and addv sums the sixteen bytes — at most 16 x 8 = 128, so the total
+// fits the byte addv writes and cannot overflow. The block's count is that
+// over eight.
 //
 // Two-word string ABI as __memchr's — x0 = data word, x1 = length word, which
 // puts `byte` in w2 — and the same frame, because emitStrDataPtr2W needs 16
@@ -3991,25 +3997,41 @@ func (g *generator) emitCountByteRuntime() {
 	g.emitStrLen2W("w6", "x5")               // w6 = byte length
 	g.emit("mov w0, #0")                     // running count
 	// A byte outside 0..255 can never occur; one unsigned compare covers
-	// both ends. The answer is 0 rather than -1 because a count has no miss.
+	// both ends, checked once so neither loop needs a per-iteration guard.
+	// The answer is 0 rather than -1 because a count has no miss.
 	g.emit("cmp w2, #255")
 	g.emit("b.hi .Lcount_byte_ret")
-	g.emit("mov w3, #0") // cursor
-	g.label(".Lcount_byte_scan")
-	g.emit("cmp w3, w6")
+	g.emit("mov x8, x7")           // cursor, as a POINTER: ld1 has no indexed form
+	g.emit("add x9, x7, w6, uxtw") // end = data + len
+	g.emit("dup v1.16b, w2")
+	g.label(".Lcount_byte_vec")
+	g.emit("sub x10, x9, x8")
+	g.emit("cmp x10, #16")
+	g.emit("b.lt .Lcount_byte_tail")
+	// Unaligned load, and never past the string: the branch above entered
+	// this only with a full block left. NEON has no alignment requirement,
+	// so there is no scalar prologue to pay either.
+	g.emit("ld1 {v0.16b}, [x8]")
+	g.emit("cmeq v0.16b, v0.16b, v1.16b")
+	g.emit("cnt v0.16b, v0.16b")
+	g.emit("addv b0, v0.16b")
+	g.emit("umov w11, v0.b[0]")
+	g.emit("lsr w11, w11, #3")
+	g.emit("add w0, w0, w11")
+	g.emit("add x8, x8, #16")
+	g.emit("b .Lcount_byte_vec")
+	// Scalar tail: the final 0..15 bytes, and the whole algorithm for a
+	// string shorter than one block.
+	g.label(".Lcount_byte_tail")
+	g.emit("cmp x8, x9")
 	g.emit("b.ge .Lcount_byte_ret")
-	// `mov w9, w3` zero-extends into x9 so the byte load can use the plain
-	// register-offset form; the in-process assembler refuses the extended
-	// `[Xn, Wm, uxtw]` addressing rather than dropping the extend, which
-	// makes that a build error and not a wrong answer.
-	g.emit("mov w9, w3")
-	g.emit("ldrb w8, [x7, x9]")
-	g.emit("cmp w8, w2")
+	g.emit("ldrb w10, [x8]")
+	g.emit("cmp w10, w2")
 	g.emit("b.ne .Lcount_byte_next")
 	g.emit("add w0, w0, #1")
 	g.label(".Lcount_byte_next")
-	g.emit("add w3, w3, #1")
-	g.emit("b .Lcount_byte_scan")
+	g.emit("add x8, x8, #1")
+	g.emit("b .Lcount_byte_tail")
 	g.label(".Lcount_byte_ret")
 	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("ret")
