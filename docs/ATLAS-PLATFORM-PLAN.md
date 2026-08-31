@@ -793,6 +793,33 @@ prediction the paragraph above makes, confirmed — **the encoding debt is
 per-INSTRUCTION-SET, not per-kernel**, so a kernel assembled from shapes already
 paid for is free of §3.3a entirely.
 
+Read that as bounded, not general: the debt is paid for the shapes the four
+kernels use — splat, load, compare, mask-extract, popcount — and not for the
+instruction set at large. The next natural candidate shows it. `trim`'s inner
+question (the index of the first non-whitespace byte) is input-length and fits
+§3.1's five rules, but ASCII whitespace is four separate bytes, so a block test
+needs several compares OR'd together. A survey of the six assemblers for a
+vector bitwise OR finds it in exactly one:
+
+| assembler | vector OR |
+|---|---|
+| `internal/native/x86_64` | no `por` |
+| `examples/self_host/x86_native.fern` | no `por` |
+| `internal/native/arm64` | `orr` is GPR-only, no arrangement form |
+| `examples/self_host/arm64_native.fern` | `orr` is GPR-only |
+| `internal/wasm/simd` | **`v128.or`** |
+| `examples/self_host/watbin.fern` | no `v128.or` |
+
+So a fifth kernel of that shape costs five encodings across five assemblers
+before a line of it is written. Survey first, as §3.3a's rule says; a zero from
+one kernel does not carry to the next.
+
+Two candidates on §4's input-length list do not fit §3.1 at all, which is worth
+recording so nobody re-derives it: `to_upper`/`to_lower` and the base64/hex
+codecs all produce OUTPUT rather than one scalar, so they fail rule 2. Their
+validation halves (is this run all hex digits?) do fit, and are the parts worth
+taking.
+
 It is also the clearest case of the input-vs-needle rule below, and the first
 kernel with **no early exit**. `__memchr`, `__rmemchr` and `__ascii_run` all stop
 at the first hit, so a scalar loop can get lucky on favourable data; a count is
