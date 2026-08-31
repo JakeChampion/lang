@@ -83,12 +83,13 @@ aarch64/array_append.ir	69046974
 aarch64/array_index.text	555
 aarch64/array_index.ir	63698033
 aarch64/ascii_scan.text	1231
+aarch64/ascii_scan.ir	78155927
 aarch64/call_overhead.text	532
 aarch64/call_overhead.ir	33599627
 aarch64/closure_call.text	444
 aarch64/closure_call.ir	209928045
 aarch64/enum_match.text	660
-aarch64/enum_match.ir	176175068
+aarch64/enum_match.ir	174375068
 aarch64/int_loop.text	103
 aarch64/int_loop.ir	60000026
 aarch64/map_int.text	3406
@@ -102,6 +103,7 @@ aarch64/sort_ints.ir	117581521
 aarch64/string_build.text	1232
 aarch64/string_build.ir	175985640
 aarch64/string_find_byte.text	2125
+aarch64/string_find_byte.ir	123872451
 aarch64/string_scan.text	1594
 aarch64/string_scan.ir	142229869
 aarch64/string_slice.text	534
@@ -111,4 +113,6 @@ aarch64/struct_drop.ir	655620288
 aarch64/tokenize.text	1062
 aarch64/tokenize.ir	165150114
 aarch64/utf8_ingest_unchecked.text	55731
+aarch64/utf8_ingest_unchecked.ir	21201427
 aarch64/utf8_ingest_validated.text	56429
+aarch64/utf8_ingest_validated.ir	29690431
