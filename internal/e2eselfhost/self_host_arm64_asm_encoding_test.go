@@ -217,6 +217,152 @@ _start:
     ucvtf d1, w2
     fcvtzu x0, d1
     fcvtzu w5, d6
+    // The #7886 surface (#7887's port): every family gets at least one row
+    // here so the two assemblers cannot drift on it. The full per-family
+    // ground truth (low+high registers, refusals) lives in
+    // self_host_arm64_extops_gas_test.go.
+    adc x23, x9, x28
+    adcs w28, w9, w23
+    sbc w28, w9, w23
+    sbcs x23, x9, x28
+    ngc x23, x9
+    ngcs w28, w9
+    umulh x23, x9, x28
+    smulh x23, x9, x28
+    madd x23, x9, x28, x11
+    madd w23, w9, w28, w11
+    smull x23, w9, w28
+    umull x23, w9, w28
+    smaddl x23, w9, w28, x11
+    umaddl x23, w9, w28, x11
+    smsubl x23, w9, w28, x11
+    umsubl x23, w9, w28, x11
+    tst x23, x9
+    tst w1, w2, lsr #7
+    tst x0, #0xff
+    ands x23, x9, x28
+    ands w9, w10, #0x7
+    ands x1, x2, x3, lsl #4
+    bic x23, x9, x28
+    bic w1, w2, w3, ror #3
+    bics x1, x2, x3, lsr #2
+    orn x1, x2, x3, asr #5
+    eon x23, x9, x28
+    mvn x23, x9
+    mvn w1, w2, asr #3
+    negs x23, x9
+    orr x0, x1, x2, lsl #8
+    and x1, x2, x3, lsr #4
+    eor w1, w2, w3, ror #7
+    cmn x0, x1
+    cmn w1, w2
+    extr x23, x9, x28, #63
+    extr w28, w9, w23, #17
+    ror x23, x9, #63
+    ror w28, w9, w23
+    bfi x23, x9, #40, #16
+    bfi w28, w9, #3, #5
+    bfxil x0, x1, #4, #8
+    ubfiz w28, w9, #3, #5
+    sbfiz x23, x9, #40, #16
+    ccmp x23, x9, #15, lt
+    ccmp w28, #31, #8, hi
+    ccmn x23, #9, #15, lt
+    csinc x23, x9, x28, lt
+    csinv w28, w9, w23, hi
+    csneg x23, x9, x28, lt
+    cinc x23, x9, lt
+    cinv w28, w9, hi
+    cneg x23, x9, lt
+    csetm x23, lt
+    csetm w28, hi
+    csel w1, w2, w3, lt
+    rev x23, x9
+    rev w28, w9
+    rev32 x23, x9
+    cls x23, x9
+    cls w28, w9
+    ldr x23, [x9, w28, uxtw #3]
+    ldr x23, [x9, x28, sxtx]
+    ldr x23, [x9, x28, lsl #3]
+    ldr w23, [x9, w28, sxtw]
+    ldr w0, [x1, x2]
+    str x23, [x9, w28, uxtw #3]
+    str w5, [x6, x7, lsl #2]
+    ldrb w23, [x9, w28, uxtw]
+    ldrb w0, [x1, w2, uxtw #0]
+    strb w23, [x9, x28, sxtx]
+    ldrh w23, [x9, w28, uxtw #1]
+    strh w23, [x9, x28, lsl #1]
+    ldp w23, w9, [x28, #8]
+    stp w23, w9, [x28, #-16]!
+    ldp w23, w9, [x28], #16
+    ldp d23, d9, [x28, #16]
+    stp d8, d9, [sp, #-16]!
+    ldp d23, d9, [x28], #32
+    ldr s23, [x9, #4]
+    str s23, [x9], #-4
+    ldr s23, [x9, #4]!
+    ldr s23, [x9, #-4]
+    stur s23, [x9, #-4]
+    ldr d1, [x2, #8]!
+    str d2, [x3], #-8
+    ldurh w23, [x9, #-2]
+    sturh w0, [x1, #255]
+    ldurb w0, [x1, #1]
+    sturb w2, [x3, #-1]
+    ldursb x23, [x9, #-1]
+    ldursb w23, [x9, #-1]
+    ldursh x23, [x9, #-2]
+    ldursw x23, [x9, #-4]
+    ldxr x23, [x9]
+    ldaxr w23, [x9]
+    stxr w11, x23, [x9]
+    stlxr w11, w23, [x9]
+    ldar x23, [x9]
+    stlr w23, [x9]
+    ldxrb w23, [x9]
+    ldaxrh w23, [x9]
+    stxrh w11, w23, [x9]
+    ldarb w23, [x9]
+    stlrb w23, [x9]
+    dmb sy
+    dmb ishld
+    dsb ish
+    isb
+    fmadd d23, d9, d28, d11
+    fmadd s23, s9, s28, s11
+    fmsub d23, d9, d28, d11
+    fnmadd s23, s9, s28, s11
+    fnmsub d23, d9, d28, d11
+    fnmul d23, d9, d28
+    fmin s23, s9, s28
+    fmax d23, d9, d28
+    fminnm s23, s9, s28
+    fmaxnm d23, d9, d28
+    fcsel d23, d9, d28, lt
+    fcsel s23, s9, s28, hi
+    fccmp d23, d9, #15, lt
+    fccmp s23, s9, #8, hi
+    fcmpe d23, d9
+    fcmpe s23, #0.0
+    fcmp d0, #0.0
+    fadd s1, s2, s3
+    fabs s23, s9
+    fsqrt s23, s9
+    frintm s23, s9
+    frintn s23, s9
+    fneg s2, s3
+    mrs x23, tpidr_el0
+    msr tpidr_el0, x23
+    mrs x23, nzcv
+    msr fpcr, x23
+    mrs x23, dczid_el0
+    mov x0, fp
+    add fp, sp, #32
+    str x0, [fp, #-8]
+    adr x0, Lend
+    adr x23, Lend
 Lend:
     ret
 `
