@@ -1730,10 +1730,32 @@ func (b *builder) computeFreeEligible() map[string]bool {
 							if strings.HasPrefix(id.Name, "__method_") {
 								argStart = 1
 							}
+							// A builtin that COPIES its source rather than
+							// retaining it cannot hold the caller's buffer,
+							// so the taint is protecting against nothing.
+							// `paramCountedRetain` is keyed by user
+							// declaration, so a builtin has no entry and the
+							// exemption below never reaches one — which cost
+							// `slice_unchecked(line, a, b)` its source's
+							// scope-exit drop entirely, one leaked buffer per
+							// source, on top of the unreleased slice itself
+							// (#7876). pureReadReceiverBuiltin is the same
+							// fact this file already states three other
+							// places: "copies bytes OUT of its string
+							// receiver into a fresh buffer".
+							pureRead := pureReadReceiverBuiltin(id.Name)
 							counted := b.paramCountedRetain[id.Name]
 							for ai, a := range s.Args[argStart:] {
 								if aid, ok := a.(*ast.Ident); ok {
 									if _, isStr := b.exprType(aid).(ast.StringType); isStr {
+										// The receiver position of a
+										// copying builtin. Only argument 0
+										// can be one: the `__method_` forms
+										// have argStart == 1, so their
+										// receiver never reaches this loop.
+										if pureRead && ai == 0 {
+											continue
+										}
 										// ...unless the callee retains this
 										// parameter only through counted
 										// constructions, which hold a reference

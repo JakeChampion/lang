@@ -5815,6 +5815,75 @@ function main(): i32 {
 }
 `,
 	},
+	{
+		// #7876, the source half. The escape walk taints every
+		// string-typed IDENT passed as a call argument, because a user
+		// callee may store it into a container it returns and freeing
+		// it caller-side would then dangle. Its only exemption reads
+		// `paramCountedRetain`, which is keyed by USER declaration — so
+		// a BUILTIN has no entry, and `slice_unchecked(line, a, b)`
+		// cost `line` its scope-exit drop outright.
+		//
+		// It is protecting against nothing: `slice_unchecked` copies
+		// bytes OUT of its source (`emitStrSliceRuntime`: "returns a
+		// fresh string"), which is the fact `pureReadReceiverBuiltin`
+		// already states and three other sites in rc_analysis.go
+		// already rely on.
+		//
+		// Before: 1 alloc / 0 frees at four rounds — `line` itself,
+		// leaked. After: 1 / 1. The slice length here is 4, below the
+		// 7-byte inline threshold, so the slices allocate nothing and
+		// the single block is unambiguously the source.
+		name: "string_source_of_slice_builtin_keeps_its_drop",
+		src: `
+@noinline
+function eat(s: str): i32 { return s.len(); }
+
+function main(): i32 {
+    var pad: string = "wxyz";
+    var line: string = pad + "0123456789abcdef0123456789";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        t = t + eat(slice_unchecked(line, 4, 8));
+        i = i + 1;
+    }
+    return (t - 16) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// #7876, the temp half. `slice_unchecked`'s result is a FRESH
+		// string — `emitStrSliceRuntime` says so, and `rcResultOwned`
+		// records that a release is right for all three of its shapes
+		// — but `freshOwnedRcTempType` had no arm for the builtin
+		// spelling, so the argument-position temp was stranded on
+		// every call.
+		//
+		// The slice here is 16 bytes, above the 7-byte inline
+		// threshold, so it is a heap copy on native. Before: 5 allocs
+		// / 1 free at four rounds. The two-word ABIs have no inline
+		// packing and leaked one per call at ANY length, which is why
+		// the sibling case above uses a 4-byte slice and this one does
+		// not — between them they cover both.
+		name: "slice_builtin_arg_temp_is_reclaimed",
+		src: `
+@noinline
+function eat(s: str): i32 { return s.len(); }
+
+function main(): i32 {
+    var pad: string = "wxyz";
+    var line: string = pad + "0123456789abcdef0123456789";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        t = t + eat(slice_unchecked(line, 4, 20));
+        i = i + 1;
+    }
+    return (t - 64) + __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

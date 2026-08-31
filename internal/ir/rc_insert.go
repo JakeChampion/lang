@@ -196,6 +196,26 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		if isMapStringGetOr(x) {
 			return ast.StringType{}, true
 		}
+		// `slice_unchecked(s, a, b)` is the string SliceExpr arm above
+		// spelled as a builtin — `exprNoParamEscape` says so, and the
+		// lowering routes both onto the same `__str_slice`. Its result
+		// is FRESH: the shared empty sentinel, an inline-packed string,
+		// or an rc1 heap copy, and `rcResultOwned` records that a
+		// release is right for all three because an inline or empty
+		// string short-circuits on the inline bit.
+		//
+		// So it is not the hazard ownedCallResultType excludes builtins
+		// for — those return the RECEIVER's buffer in place at rc==1,
+		// which a dec would free out from under a live container. This
+		// one allocates. Without it the argument-position temp was
+		// stranded on every call: one rc1 buffer per call above the
+		// 7-byte inline threshold on native, and per call at ANY length
+		// on the two-word ABIs, which have no inline packing (#7876).
+		if cid, ok := x.Callee.(*ast.Ident); ok && cid.Name == "slice_unchecked" {
+			if t, ok := b.exprType(x).(ast.StringType); ok {
+				return t, true
+			}
+		}
 	}
 	return nil, false
 }

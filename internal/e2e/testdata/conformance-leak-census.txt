@@ -188,7 +188,7 @@ hex_literal                                          0
 hex_roundtrip                                        2
 higher_order                                         0
 http_content_type                                    9
-http_cookies                                         22
+http_cookies                                         15
 i32_methods                                          0
 i32_payload_rebind                                   2
 i32_to_i64_roundtrip                                 0
@@ -311,7 +311,7 @@ own_tree_match                                       0
 pad_multibyte_fill                                   6
 param_destructure                                    0
 param_destructure_struct                             0
-path_join                                            1
+path_join                                            0
 prim_recv_array_method                               0
 print                                                0
 prop_codec_roundtrip                                 0
@@ -387,7 +387,7 @@ sso_print_inline                                     0
 sso_sfb_inline                                       0
 sso_slice_len_1_inline                               0
 sso_slice_len_7_inline                               0
-sso_slice_len_8_heap                                 1
+sso_slice_len_8_heap                                 0
 sso_triple_concat_via_inline                         0
 stdin_double                                         1
 stdin_line                                           2
