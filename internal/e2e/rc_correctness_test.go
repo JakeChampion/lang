@@ -5541,6 +5541,156 @@ function main(): i32 {
 }
 `,
 	},
+	{
+		// #7867 slice 1. `structParamProjectionsSafe` credited
+		// `__method_Array_push`'s RECEIVER and never its ELEMENT, so a
+		// fresh temp handed to a callee that pushes it was stranded: the
+		// callee inc'd the element into the buffer and nothing gave the
+		// caller's own reference back. 2 blocks a round here (the Op box
+		// and its heap string), linear and unbounded — 12 allocs / 6
+		// frees at three rounds before, 12 / 12 after.
+		//
+		// @noinline on both is load-bearing. `inline.go` inlines a
+		// single-reference callee at a loop call site, and an inlined
+		// callee has no argument temp to reclaim, so the shape measures
+		// clean without it whether or not the bug is present.
+		//
+		// The string is built by concatenation rather than written as a
+		// literal: a literal is a static .rodata cell with an immortal
+		// header, so the element's second block would not exist and the
+		// case would understate itself.
+		name: "push_elem_param_counted_pointer_field",
+		src: `
+struct Op { a: i32, s: string, b: i32 }
+struct St { ops: Op[] }
+
+@noinline
+function mkop(i: i32, pad: string): Op { return Op { a: i, s: pad + "0123456789abcdef", b: i * 2 }; }
+
+@noinline
+function emit(s: St, o: Op): St { return St { ops: s.ops.append(o) }; }
+
+function main(): i32 {
+    var pad: string = "xyzw";
+    var st: St = St { ops: [] };
+    var i: i32 = 0;
+    while (i < 3) {
+        st = emit(st, mkop(i, pad));
+        i = i + 1;
+    }
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < st.ops.len()) {
+        t = t * 10 + st.ops[k].a + (st.ops[k].s.len() - 20);
+        k = k + 1;
+    }
+    return (t - 12) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The interlock the element credit must not disturb. A
+		// scalar-only element type is isOwnedByDefaultType, so the
+		// CALLEE reclaims the argument at exit and the caller must not —
+		// `ownedByCalleeAt` suppresses the stage-(b) dec at that
+		// position. This shape was already clean (9 allocs / 9 frees)
+		// and stays clean; it is what would double-free first if the
+		// credit ever reached an owned-by-default position.
+		name: "push_elem_param_scalar_only_owned_by_default",
+		src: `
+struct Op { a: i32, b: i32 }
+struct St { ops: Op[] }
+
+@noinline
+function mkop(i: i32): Op { return Op { a: i, b: i * 2 }; }
+
+@noinline
+function emit(s: St, o: Op): St { return St { ops: s.ops.append(o) }; }
+
+function main(): i32 {
+    var st: St = St { ops: [] };
+    var i: i32 = 0;
+    while (i < 3) {
+        st = emit(st, mkop(i));
+        i = i + 1;
+    }
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < st.ops.len()) {
+        t = t * 10 + st.ops[k].a;
+        k = k + 1;
+    }
+    return (t - 12) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The identity-return shape the reclaim gate exists to refuse,
+		// pinned on the ANSWER and the underflow counter rather than on
+		// a byte count. That distinction is the point: an over-releasing
+		// build reads BETTER on live_bytes, so only the value check and
+		// __rc_underflow dissent.
+		//
+		// `keepf(o) -> o` is admitted today and is correct: the
+		// return-transfer inc puts the temp at rc 2, and the caller's
+		// is_unique-gated drop nets it to exactly one owner.
+		name: "call_arg_temp_returned_identity",
+		src: `
+struct Op { a: i32, s: string }
+
+@noinline
+function mkop(i: i32): Op { return Op { a: i, s: "keep" }; }
+
+@noinline
+function keepf(o: Op): Op { return o; }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var r: Op = keepf(mkop(i));
+        t = t + r.a + r.s.len();
+        i = i + 1;
+    }
+    return (t - 22) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The wrapping shape: the result REACHES the argument through
+		// memory. Admitted by the struct-literal slot arm, because
+		// construction inc's the aliased field, so the temp is at rc 2
+		// across the caller's drop.
+		//
+		// The self-host's counted tier had to REFUSE this exact shape
+		// (#7856) — its construction-side retain is conditional on the
+		// field type routing a reclaim, and `Box { o: o }` does not.
+		// Native's needsRcIncOnAlias is unconditional for every pointer
+		// type, which is why the credit is sound here and was not there.
+		// Pinned so that difference cannot be quietly erased.
+		name: "call_arg_temp_wrapped_in_result",
+		src: `
+struct Op { a: i32, s: string }
+struct Box { o: Op, n: i32 }
+
+@noinline
+function mkop(i: i32): Op { return Op { a: i, s: "wrap" }; }
+
+@noinline
+function wrapf(o: Op, k: i32): Box { return Box { o: o, n: k }; }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var r: Box = wrapf(mkop(i), i * 2);
+        t = t + r.o.a + r.n + r.o.s.len();
+        i = i + 1;
+    }
+    return (t - 34) + __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
