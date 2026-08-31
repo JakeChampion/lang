@@ -917,6 +917,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__pow_f64":                     emitPowF64Helper,
 	"__sin_f64":                     emitSinF64Helper,
 	"__cos_f64":                     emitCosF64Helper,
+	"__rem_pio2_large":              emitRemPio2LargeHelper,
 	"random_i32":                    emitRandomI32Helper,
 	"random_bytes":                  emitRandomBytesHelper,
 }
@@ -987,6 +988,12 @@ func emitTranscendentalRodata(w func(string, ...any)) {
 		{".Lfc_pio2h", "1.57079632673412561417e+00"},
 		{".Lfc_pio2m", "6.07710050630396597660e-11"},
 		{".Lfc_pio2l", "2.02226624879595063154e-21"},
+		// pi/2 as an unevaluated double-double, plus the two scales that turn
+		// __rem_pio2_large's 126-bit fraction into a double.
+		{".Lfc_pio2hi", "1.5707963267948966"},
+		{".Lfc_pio2lo", "6.123233995736766e-17"},
+		{".Lfc_twom62", "2.168404344971009e-19"},
+		{".Lfc_twom115", "2.407412430484045e-35"},
 		{".Lfc_s1", "-1.66666666666666324348e-01"},
 		{".Lfc_s2", "8.33333333332248946124e-03"},
 		{".Lfc_s3", "-1.98412698298579493134e-04"},
@@ -1016,7 +1023,29 @@ func emitTranscendentalRodata(w func(string, ...any)) {
 	} {
 		w("%s: .double %s", c.lbl, c.val)
 	}
+	// 2/pi in binary, MSB-first, one limb per 64 fraction bits starting at
+	// 2^-1 in limb 1 — the window Payne-Hanek indexes with the argument's own
+	// exponent. The leading zero limb lets that index start above 2^-1 without
+	// a bounds test; the length covers the largest finite double. Carried per
+	// backend, like the fdlibm coefficients beside it.
+	w(".Lfc_2opi_bits:")
+	for _, v := range twoOverPiBits {
+		w("\t.quad 0x%016x", v)
+	}
 	w(".text")
+}
+
+// twoOverPiBits is 2/pi in binary, MSB-first, one limb per 64 fraction bits
+// starting at 2^-1 in limb 1. Same table as the native backends': the emit
+// layers are deliberately parallel.
+var twoOverPiBits = [...]uint64{
+	0x0000000000000000, 0xa2f9836e4e441529, 0xfc2757d1f534ddc0,
+	0xdb6295993c439041, 0xfe5163abdebbc561, 0xb7246e3a424dd2e0,
+	0x06492eea09d1921c, 0xfe1deb1cb129a73e, 0xe88235f52ebb4484,
+	0xe99c7026b45f7e41, 0x3991d639835339f4, 0x9c845f8bbdf9283b,
+	0x1ff897ffde05980f, 0xef2f118b5a0a6d1f, 0x6d367ecf27cb09b7,
+	0x4f463f669e5fea2d, 0x7527bac7ebe5f17b, 0x3d0739f78a5292ea,
+	0x6bfb5fb11f8d5d08, 0x56033046fc7b6bab, 0xf0cfbc209af4361d,
 }
 
 // emitExpF64Helper writes __exp_f64(x) -> e^x. x arrives as f64 bits in x0 (the
@@ -1307,14 +1336,34 @@ func emitPowF64Helper(w func(string, ...any)) {
 // the caller selects, which keeps this backend's on-demand helper emission
 // simple — there is no shared kernel subroutine to pull in.
 //
+// prefix keeps the local labels unique across the two inlining sites.
+//
 // frintn, not frinta: ties-to-EVEN, matching x86's `roundsd …, 0` and wasm's
 // `f64.nearest`, so every backend picks the same k.
-func emitSinCosReduction(w func(string, ...any)) {
+func emitSinCosReduction(w func(string, ...any), prefix string) {
 	ldc := func(reg, lbl string) {
 		w("\tadrp x12, %s", lbl)
 		w("\tadd x12, x12, #:lo12:%s", lbl)
 		w("\tldr %s, [x12]", reg)
 	}
+	// |x| >= 2^20 (biased exponent >= 1043) puts k past pio2h's 22 exact
+	// mantissa bits, so the Cody-Waite chain below reduces against noise there
+	// and needs Payne-Hanek. e == 0x7ff (Inf/NaN) stays on the small path,
+	// whose Inf - Inf / NaN propagation reduces it to NaN — the same result
+	// the native backends' trigGuard returns.
+	w("\tfmov x13, d0")
+	w("\tubfx x13, x13, #52, #11")
+	w("\tcmp x13, #1043")
+	w("\tb.lt .Lssa_%s_cw", prefix)
+	w("\tcmp x13, #2047")
+	w("\tb.eq .Lssa_%s_cw", prefix)
+	// The frame lives inside the branch so the common small path stays leaf.
+	w("\tstp x29, x30, [sp, #-16]!")
+	w("\tmov x29, sp")
+	w("\tbl %s", fnLabel("__rem_pio2_large"))
+	w("\tldp x29, x30, [sp], #16")
+	w("\tb .Lssa_%s_red", prefix)
+	w(".Lssa_%s_cw:", prefix)
 	ldc("d1", ".Lfc_twoopi")
 	w("\tfmul d1, d1, d0")
 	w("\tfrintn d1, d1")
@@ -1329,6 +1378,7 @@ func emitSinCosReduction(w func(string, ...any)) {
 	w("\tfmul d1, d1, d2")
 	w("\tfsub d0, d0, d1")
 	w("\tand x10, x10, #3")
+	w(".Lssa_%s_red:", prefix)
 	w("\tfmul d5, d0, d0")
 	w("\tfmul d17, d5, d0")
 	ldc("d6", ".Lfc_s6")
@@ -1384,7 +1434,7 @@ func emitSinF64Helper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__sin_f64"))
 	w("\tfmov d0, x0")
-	emitSinCosReduction(w)
+	emitSinCosReduction(w, "sin")
 	w("\tcmp x10, #0")
 	w("\tb.eq .Lssa_sin_sr")
 	w("\tcmp x10, #1")
@@ -1412,7 +1462,7 @@ func emitCosF64Helper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__cos_f64"))
 	w("\tfmov d0, x0")
-	emitSinCosReduction(w)
+	emitSinCosReduction(w, "cos")
 	w("\tcmp x10, #0")
 	w("\tb.eq .Lssa_cos_cr")
 	w("\tcmp x10, #1")
@@ -1431,6 +1481,102 @@ func emitCosF64Helper(w func(string, ...any)) {
 	w("\tfneg d0, d16")
 	w(".Lssa_cos_ret:")
 	w("\tfmov x0, d0")
+	w("\tret")
+}
+
+// emitRemPio2LargeHelper writes __rem_pio2_large(d0 = x, |x| >= 2^20 and
+// finite) → x10 = k&3, d0 = r. Payne-Hanek: multiplies the significand by the
+// window of 2/pi its exponent selects, keeping 128 bits about the binary
+// point — the top two bits are the quadrant and the rest the fraction of
+// x/(pi/2), neither of which loses accuracy with magnitude, where Cody-Waite
+// needs k to fit in pio2h's 22 zeroed mantissa bits and returns noise past
+// that. Kept in lockstep with the native arm64 backend's
+// __fern_rem_pio2_large, register for register.
+func emitRemPio2LargeHelper(w func(string, ...any)) {
+	ldc := func(reg, lbl string) {
+		w("\tadrp x12, %s", lbl)
+		w("\tadd x12, x12, #:lo12:%s", lbl)
+		w("\tldr %s, [x12]", reg)
+	}
+	w("")
+	w("%s:", fnLabel("__rem_pio2_large"))
+	w("\tfmov x1, d0")
+	w("\tlsr x2, x1, #63")       // sign of x
+	w("\tubfx x3, x1, #52, #11") // biased exponent
+	w("\tand x4, x1, #0x000fffffffffffff")
+	w("\torr x4, x4, #0x0010000000000000") // m, the 53-bit significand
+	// x = m*2^(e-1075), so the fraction of x*(2/pi) starts at bit
+	// (e-1075)+62 of the table once the product is read as a Q126.
+	w("\tsub x3, x3, #1013")
+	w("\tand x5, x3, #63") // bit offset within the limb
+	w("\tlsr x3, x3, #6")  // limb index
+	w("\tadrp x17, .Lfc_2opi_bits")
+	w("\tadd x17, x17, #:lo12:.Lfc_2opi_bits")
+	w("\tadd x17, x17, x3, lsl #3")
+	w("\tldr x6, [x17]")
+	w("\tldr x7, [x17, #8]")
+	w("\tldr x1, [x17, #16]")
+	w("\tldr x3, [x17, #24]")
+	// Each 64-bit window is (T[i] << off) | (T[i+1] >> (64-off)). aarch64
+	// has no variable EXTR, and lsrv masks its count mod 64, so the right
+	// half is spelled as two shifts — a plain >> (64-off) is wrong at off 0.
+	w("\tmov x16, #63")
+	w("\tsub x16, x16, x5")
+	shiftIn := func(dst, hi, lo string) {
+		w("\tlsl %s, %s, x5", dst, hi)
+		w("\tlsr x0, %s, #1", lo)
+		w("\tlsr x0, x0, x16")
+		w("\torr %s, %s, x0", dst, dst)
+	}
+	shiftIn("x13", "x6", "x7") // w0
+	shiftIn("x14", "x7", "x1") // w1
+	shiftIn("x15", "x1", "x3") // w2
+	// acc(128) = lo(m*w0)<<64 + m*w1 + hi(m*w2), i.e. x*(2/pi) as a Q126.
+	w("\tmul x7, x4, x13")
+	w("\tmul x1, x4, x14")
+	w("\tumulh x3, x4, x14")
+	w("\tumulh x6, x4, x15")
+	w("\tadds x1, x1, x6")
+	w("\tadc x7, x7, x3")
+	w("\tlsr x10, x7, #62") // quadrant
+	w("\tand x7, x7, #0x3fffffffffffffff")
+	// A fraction at or above a half belongs to the next quadrant, as the
+	// negative remainder below it — which is what keeps |r| <= pi/4.
+	w("\tmov x0, xzr") // frac is negative iff this becomes 1
+	w("\tmovz x16, #8192, lsl #48")
+	w("\tcmp x7, x16")
+	w("\tb.lo .Lssa_ph_pos")
+	w("\tadd x10, x10, #1")
+	w("\tsubs x1, xzr, x1") // negs: sets the borrow sbc needs
+	w("\tmovz x6, #16384, lsl #48")
+	w("\tsbc x7, x6, x7")
+	w("\tmov x0, #1")
+	w(".Lssa_ph_pos:")
+	// >> 11 keeps the low word inside 53 bits so the conversion is exact,
+	// and matches the other backends bit for bit.
+	w("\tlsr x1, x1, #11")
+	w("\tscvtf d1, x7")
+	ldc("d3", ".Lfc_twom62")
+	w("\tfmul d1, d1, d3")
+	w("\tscvtf d2, x1")
+	ldc("d3", ".Lfc_twom115")
+	w("\tfmul d2, d2, d3")
+	w("\tfadd d1, d1, d2")
+	w("\tcmp x0, #0")
+	w("\tb.eq .Lssa_ph_nn")
+	w("\tfneg d1, d1")
+	w(".Lssa_ph_nn:")
+	w("\tcmp x2, #0")
+	w("\tb.eq .Lssa_ph_sgn")
+	w("\tfneg d1, d1")
+	w("\tneg x10, x10")
+	w(".Lssa_ph_sgn:")
+	w("\tand x10, x10, #3")
+	ldc("d3", ".Lfc_pio2hi")
+	w("\tfmul d0, d1, d3")
+	ldc("d3", ".Lfc_pio2lo")
+	w("\tfmul d1, d1, d3")
+	w("\tfadd d0, d0, d1")
 	w("\tret")
 }
 
@@ -2246,6 +2392,8 @@ var runtimeHelperDeps = map[string][]string{
 	"__method_Reader_close":         {"__fern_io_error"},
 	"open_appender":                 {"__fern_io_error"},
 	"__pow_f64":                     {"__log_f64", "__exp_f64"},
+	"__sin_f64":                     {"__rem_pio2_large"},
+	"__cos_f64":                     {"__rem_pio2_large"},
 }
 
 // heapUsingHelpers are runtime helpers that bump-allocate on the SSA heap, or
