@@ -5691,6 +5691,130 @@ function main(): i32 {
 }
 `,
 	},
+	{
+		// #7867 slice 3. `inferParamCountedRetain`'s type switch had arms
+		// for StringType, ArrayType and StructType and none for
+		// EnumType, so an enum parameter was never credited, and a fresh
+		// enum temp handed to a callee that stores it was stranded.
+		//
+		// This is the shape the parser is built from — `e_binary(op, l,
+		// r)` and its siblings take `ast.Expr` payloads, and `ast.Expr`
+		// is an enum. Before: 8 allocs / 4 frees at four rounds.
+		//
+		// Sound for the same reason the struct arm is: needsRcIncOnAlias
+		// is true for an enum, so the struct construction inc's the
+		// argument, and a parameter is never a move site.
+		name: "enum_param_in_construction_slot",
+		src: `
+enum Ty { I32(i32), Str(string), Unk(string) }
+struct Node { ty: Ty, n: i32 }
+
+@noinline
+function t_i32(): Ty { return Ty.I32(32); }
+
+@noinline
+function mknode(t: Ty, n: i32): Node { return Node { ty: t, n: n }; }
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var nd: Node = mknode(t_i32(), i);
+        acc = acc + nd.n;
+        i = i + 1;
+    }
+    return (acc - 6) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The same for a TUPLE parameter, the other arm the switch was
+		// missing. A tuple has no nominal declaration, so only the slot
+		// / argument / return rules can credit it — the projection arms
+		// never fire. Before: 8 allocs / 4 frees, 128 bytes.
+		name: "tuple_param_in_construction_slot",
+		src: `
+struct Node { ty: (i32, string), n: i32 }
+
+@noinline
+function t_i32(): (i32, string) { return (32, "x"); }
+
+@noinline
+function mknode(t: (i32, string), n: i32): Node { return Node { ty: t, n: n }; }
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var nd: Node = mknode(t_i32(), i);
+        acc = acc + nd.n;
+        i = i + 1;
+    }
+    return (acc - 6) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The control that isolated the two above, kept because it is
+		// what makes them a diagnosis rather than an observation: the
+		// identical call shape with a STRUCT parameter was already clean
+		// (8 allocs / 8 frees), so the only thing that differed was
+		// which arm of the type switch ran.
+		name: "struct_param_in_construction_slot_control",
+		src: `
+struct Ty { w: i32, s: string }
+struct Node { ty: Ty, n: i32 }
+
+@noinline
+function t_i32(): Ty { return Ty { w: 32, s: "x" }; }
+
+@noinline
+function mknode(t: Ty, n: i32): Node { return Node { ty: t, n: n }; }
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var nd: Node = mknode(t_i32(), i);
+        acc = acc + nd.n;
+        i = i + 1;
+    }
+    return (acc - 6) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// An enum parameter the callee only MATCHES on was already clean
+		// and must stay so: a match reads the payload out and retains
+		// nothing, so there is no counted store for the credit to rest
+		// on and the caller's is_unique-gated drop is the only owner.
+		name: "enum_param_matched_only",
+		src: `
+enum Ty { I32(i32), Str(string), Unk(string) }
+
+@noinline
+function t_str(): Ty { return Ty.Str("abcdefghij"); }
+
+@noinline
+function width(t: Ty): i32 {
+    match (t) {
+        Ty.I32(w) => { return w; },
+        Ty.Str(s) => { return s.len(); },
+        Ty.Unk(r) => { return 0; }
+    }
+}
+
+function main(): i32 {
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        acc = acc + width(t_str());
+        i = i + 1;
+    }
+    return (acc - 40) + __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
