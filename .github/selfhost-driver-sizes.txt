@@ -185,7 +185,7 @@
 # are the ones driver-sizes measured, pasted from its own corrected-baseline
 # block — none is derived or scaled.
 
-fern.fern 26733284
+fern.fern 28080148
 asm_load_run.fern 23053940
 asm_modload_run.fern 21812852
 asm_ir_run.fern 21660428
