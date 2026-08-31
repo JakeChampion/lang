@@ -8717,22 +8717,42 @@ func (b *builder) stmt(s ast.Stmt) error {
 				return fmt.Errorf("ir: match arm %q reached lowering unresolved", arm.VariantName)
 			}
 			varIdx := arm.VariantIndex
-			// Outer per-arm block: skip body when tag mismatch.
-			b.openBlock(BlockTypeVoid)
+			// An arm the checker stamped CoversRemainder matches every
+			// value still able to reach it, so testing its tag asks a
+			// question with one answer. Emitting the body straight is what
+			// the unguarded wildcard above already does, and what the tuple
+			// emitter does for an all-binder arm.
+			//
+			// Skipping the two blocks with it is safe because the stamp's
+			// conditions are exactly what makes outerArmD unused: no guard
+			// and no refutable payload, which are its only other branch
+			// sources. brTo records ABSOLUTE depths and converts at emit
+			// time, so every branch nested inside adapts to the two levels
+			// that are no longer there.
+			//
+			// Without this the arm still ends in an unreachable
+			// fall-through — the tag is neither variant — which lowering
+			// has no `unreachable` op to spell and so fills with a
+			// fabricated default (#7848).
 			outerArmD := b.depth
-			// Inner block: matched-path target.
-			b.openBlock(BlockTypeVoid)
-			if pairFormScrutinee {
-				b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
-			} else {
-				b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-				b.emit(Op{Kind: OpMatchTag}) // tag (see OpMatchTag doc)
+			if !arm.CoversRemainder {
+				// Outer per-arm block: skip body when tag mismatch.
+				b.openBlock(BlockTypeVoid)
+				outerArmD = b.depth
+				// Inner block: matched-path target.
+				b.openBlock(BlockTypeVoid)
+				if pairFormScrutinee {
+					b.emit(Op{Kind: OpLoadLocal, I32: tagSlot})
+				} else {
+					b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+					b.emit(Op{Kind: OpMatchTag}) // tag (see OpMatchTag doc)
+				}
+				b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
+				b.emit(Op{Kind: OpEq})
+				b.brTo(b.depth, true) // br 0 = exit inner = match
+				b.brTo(outerArmD, false)
+				b.closeScope() // end inner — matched path lands here
 			}
-			b.emit(Op{Kind: OpConstI32, I32: int32(varIdx)})
-			b.emit(Op{Kind: OpEq})
-			b.brTo(b.depth, true) // br 0 = exit inner = match
-			b.brTo(outerArmD, false)
-			b.closeScope() // end inner — matched path lands here
 			// Payload SUB-PATTERNS are tested here: after the tag test that
 			// licenses reading the payload's bytes, and before any binding.
 			// A failure branches to outerArmD — the NEXT ARM — which is what
@@ -8936,7 +8956,9 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 			restoreArmPayloads()
 			b.brTo(matchEndD, false) // jump past remaining arms
-			b.closeScope()           // end outer per-arm block
+			if !arm.CoversRemainder {
+				b.closeScope() // end outer per-arm block
+			}
 		}
 		b.closeScope() // end of match
 		if reclaimScrut {

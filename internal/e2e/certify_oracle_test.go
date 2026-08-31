@@ -117,46 +117,38 @@ func TestX86_64CertifyAgreesWithTheLeakCensus(t *testing.T) {
 	t.Logf("  by defining op: %s", topCounts(byKind, 6))
 	t.Logf("  worst functions: %s", topCounts(byFunc, 5))
 
-	// Measured 2026-08-31: 0.96%, 7 functions of 729.
+	// Measured 2026-08-31: ZERO findings, 727 functions over 323
+	// fixtures the runtime proves clean. The probe this replaces
+	// reported 20.3%.
 	//
-	// A ratchet, not a specification — the same stance the leak census
-	// itself takes. Every flagged function here is a report the runtime
-	// contradicts and the walk should not make; the ceiling exists so
-	// the number cannot climb back toward the 20.3% the probe this
-	// replaces measured.
+	// So this is no longer a ratchet on a rate — it demands that the
+	// walk make no claim the runtime contradicts, which is the property
+	// Roc's `arc_certify.zig` has and the one #7784 scores soundness on.
+	// A finding here is now a defect in one of two places and both are
+	// worth failing for: the walk has become wrong, or the compiler has
+	// started leaking on a path a clean fixture takes.
 	//
-	// Every class the WALK was wrong about is closed. The 7 findings
-	// left are all one shape, and it is not an analysis defect: the
-	// impossible fall-through of an exhaustive match (#7848).
+	// Every class that used to appear had a cause, and each was fixed
+	// rather than filtered:
 	//
-	//	enum List { Cons(i32, List), Nil }   // two variants, both matched
+	//	enum_sentinel   a static .rodata cell read as a unit
+	//	alloc, call     a unit threaded through a loop is disposed of
+	//	                under the PHI's name, so the walk watched the
+	//	                wrong one
+	//	make_closure    ir.OpConstFunc lifts to OpMakeClosure and that
+	//	                cell is .rodata too
+	//	transferred     the impossible fall-through of an exhaustive
+	//	                match, which lowering no longer emits (#7848)
 	//
-	//	block 3:  brif tag == 1, block 10, block 11
-	//	block 11: br block 9 -> block 9: br block 2 -> block 2: ret const 0
-	//
-	// `internal/ir` has no unreachable op, so the arm where the tag is
-	// neither 0 nor 1 returns a fabricated default. The consumed
-	// parameter is released on every arm that can execute and not on
-	// the one that cannot, so the walk is right about the op stream and
-	// wrong about the program.
-	//
-	// It is NOT filtered here, deliberately. #7848's narrow fix — emit
-	// the last arm of an exhaustive match unconditionally instead of
-	// testing its tag — removes the arm rather than exempting it, and a
-	// certifier that has to special-case its own compiler's filler is
-	// not one anything can be gated on. Zero findings is reachable by
-	// construction, which is what this ceiling is a placeholder for.
-	//
-	// The classes that were here and are gone, each with its cause:
-	// `enum_sentinel` (a static .rodata cell read as a unit), `alloc`
-	// and `call` (a unit threaded through a loop is disposed of under
-	// the PHI's name), and `make_closure` (`ir.OpConstFunc` lifts to
-	// OpMakeClosure, and that cell is .rodata too).
-	const rateCeiling = 2.5
-	if rate > rateCeiling {
-		t.Errorf("%.2f%% of functions flagged in fixtures the runtime says are clean, over the "+
-			"%.1f%% ceiling — the walk is reporting leaks the oracle contradicts:\n  by op: %s\n  worst: %s",
-			rate, rateCeiling, topCounts(byKind, 6), topCounts(byFunc, 10))
+	// The floors below still matter more than this line. Zero findings
+	// over a walk that had stopped understanding anything would satisfy
+	// it, and the coverage figures are what say it did not.
+	if flagged > 0 {
+		t.Errorf("%d function(s) (%.2f%%, %d values) flagged in fixtures the runtime proves "+
+			"clean — either the walk is reporting a leak the oracle contradicts, or the "+
+			"compiler has started leaking on a path one of these fixtures takes. Both are "+
+			"defects; neither is a number to re-record.\n  by op: %s\n  by origin: %s\n  worst: %s",
+			flagged, rate, values, topCounts(byKind, 6), topCounts(byOrigin, 5), topCounts(byFunc, 10))
 	}
 
 	// The other half. A walk that gave up on everything would flag
