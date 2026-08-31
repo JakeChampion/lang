@@ -286,6 +286,7 @@ function valtype_byte(t: string): i32 {
     if (t == "f32") { return 125; }   // 0x7d
     if (t == "f64") { return 124; }   // 0x7c
     if (t == "funcref") { return 112; } // 0x70
+    if (t == "v128") { return 123; }    // 0x7b — the vector kernels' local type
     return 127;
 }
 
@@ -936,6 +937,35 @@ function sat_trunc_opcode(op: string): i32 {
     return 0 - 1;
 }
 
+// simd_opcode maps a fixed-width-SIMD op to its 0xFD-prefixed sub-opcode, or -1.
+// These are what the fused vector kernels of ATLAS-PLATFORM-PLAN §3 need, and
+// §3.3a's rule is why they are pinned against wasm-tools rather than typed from
+// a table: the sub-opcode space is DENSE uleb128, so a wrong byte is very often
+// another VALID instruction. Encode i16x8.bitmask (132) as a raw byte and you
+// get f32x4.pmin — the module still validates, still runs, and computes
+// nonsense. All four below happen to be < 128 and so are one byte each, but
+// that is luck, not a rule, which is why simd_opcode returns the index and
+// leb_u32 writes it.
+//
+// v128.load is the only one carrying a memarg. Its natural alignment is 4
+// (16 bytes), but a kernel cursor is arbitrary, and an alignment hint LARGER
+// than the access is a VALIDATION error where a smaller one is always legal —
+// so simd_load_align answers 0 rather than reusing memarg_align's natural one.
+function simd_opcode(op: string): i32 {
+    if (op == "v128.load") { return 0; }
+    if (op == "i8x16.splat") { return 15; }
+    if (op == "i8x16.eq") { return 35; }
+    if (op == "i8x16.bitmask") { return 100; }
+    return 0 - 1;
+}
+
+// simd_arity gives how many stack operands a SIMD op takes, so enc_instr can
+// encode them post-order without a per-op branch.
+function simd_arity(op: string): i32 {
+    if (op == "i8x16.eq") { return 2; }
+    return 1;
+}
+
 // bulk_mem_opcode maps a bulk-memory op to its 0xFC-prefixed sub-opcode index,
 // or -1 for anything else. Both take three stack operands and trailing memory
 // indexes: `memory.copy` two (dest, src), `memory.fill` one. The IR emitter
@@ -1202,6 +1232,22 @@ function enc_instr(node: SExpr, lnames: string[], fnames: string[], gnames: stri
         out = out.append(252);   // 0xFC
         return leb_u32(out, stf);
     }
+    var sop: i32 = simd_opcode(op);
+    if (sop >= 0) {
+        var sa: i32 = simd_arity(op);
+        var sk: i32 = 1;
+        while (sk <= sa) {
+            out = wcat(out, enc_instr(node.items[sk], lnames, fnames, gnames, labels, tnames));
+            sk = sk + 1;
+        }
+        out = out.append(253);   // 0xFD
+        out = leb_u32(out, sop);
+        if (op == "v128.load") {
+            out = leb_u32(out, 0);   // align: see simd_opcode's note
+            out = leb_u32(out, 0);   // offset
+        }
+        return out;
+    }
     var blk: i32 = bulk_mem_opcode(op);
     if (blk >= 0) {
         // Bulk memory: three operands, then `0xFC idx` and the memory indexes.
@@ -1360,6 +1406,7 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
             var ao: i32 = arith_opcode(op);
             var stf: i32 = sat_trunc_opcode(op);
             var blk: i32 = bulk_mem_opcode(op);
+            var sop: i32 = simd_opcode(op);
             if (ml != 0) {
                 out = out.append(ml);
                 out = leb_u32(out, memarg_align(op));
@@ -1368,6 +1415,15 @@ function enc_flat_body(instrs: SExpr[], lnames: string[], fnames: string[], gnam
                 out = out.append(ms);
                 out = leb_u32(out, memarg_align(op));
                 out = leb_u32(out, 0);
+            } else if (sop >= 0) {
+                // Fixed-width SIMD: `0xFD idx` (operands already on the stack in
+                // the flat form), plus v128.load's memarg.
+                out = out.append(253);   // 0xFD
+                out = leb_u32(out, sop);
+                if (op == "v128.load") {
+                    out = leb_u32(out, 0);
+                    out = leb_u32(out, 0);
+                }
             } else if (stf >= 0) {
                 // Saturating float->int truncation: two-byte `0xFC idx` (operand
                 // already on the stack in the flat form).
