@@ -1078,8 +1078,6 @@ func SMSUBL(rd, rn, rm, ra uint32) uint32 {
 func UMSUBL(rd, rn, rm, ra uint32) uint32 {
 	return 0x9BA08000 | ((rm & regMask) << 16) | ((ra & regMask) << 10) | ((rn & regMask) << 5) | (rd & regMask)
 }
-func SMULL(rd, rn, rm uint32) uint32 { return SMADDL(rd, rn, rm, 31) }
-func UMULL(rd, rn, rm uint32) uint32 { return UMADDL(rd, rn, rm, 31) }
 
 // ANDSregShift encodes the flag-setting `ands Rd, Rn, Rm{, <shift> #amt}`;
 // the plain register form is the shiftType=0, amount=0 case. TST is the
