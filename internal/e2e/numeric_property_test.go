@@ -117,7 +117,7 @@ func wrapMain(body string) string {
 
 // genNumProgram builds one random numeric-operation program.
 func genNumProgram(r *rand.Rand) string {
-	switch r.Intn(8) {
+	switch r.Intn(9) {
 	case 0:
 		return genIntBinary(r)
 	case 1:
@@ -132,6 +132,8 @@ func genNumProgram(r *rand.Rand) string {
 		return genFloatToInt(r)
 	case 6:
 		return genIntSaturating(r)
+	case 7:
+		return genFloatMath(r)
 	default:
 		return genIntToFloat(r)
 	}
@@ -205,6 +207,44 @@ func genFloatBinary(r *rand.Rand) string {
 	op := pick(r, []string{"+", "-", "*", "/"})
 	body := fmt.Sprintf("    var a: %s = %s;\n    var b: %s = %s;\n    print((a %s b).to_string());\n",
 		t.name, pick(r, lits), t.name, pick(r, lits), op)
+	return wrapMain(body)
+}
+
+// floatMathExact are the f64 math methods IEEE-754 pins EXACTLY, so every
+// backend must reproduce the interpreter's bits for every input and this
+// sweep can compare them with plain equality. sqrt is required correctly
+// rounded (IEEE-754 §5.4.1); floor / ceil / trunc / round / abs select or
+// re-sign an existing representable value and have no error term at all.
+//
+// The transcendentals next door — log, exp, sin, cos, pow — are deliberately
+// NOT here. All three backends share one fdlibm kernel set, so they are
+// approximations by construction (#5541) and equality is the wrong assertion
+// for them; #6405 is what their absence costs and needs a ULP-shaped gate
+// rather than this one.
+var floatMathExact = []string{"sqrt", "floor", "ceil", "trunc", "round", "abs"}
+
+// floatMathLits stresses the inputs where an exact operation is easiest to
+// get wrong: the half-way cases that separate round-half-away-from-zero from
+// round-half-to-even, the value just below ½ that breaks a naive
+// trunc(x+0.5), both zeroes, the 2^52 boundary past which every double is
+// already integral, and the non-finite pair.
+var floatMathLits = []string{
+	"0.0", "0.0 - 0.0", "1.0", "0.0 - 1.0", "0.5", "0.0 - 0.5",
+	"2.5", "0.0 - 2.5", "1.5", "0.0 - 1.5", "3.7", "0.0 - 3.7",
+	"0.49999999999999994", "2.0", "0.25", "3.14159265358979",
+	"4503599627370497.0", "16777217.0", "2147483648.0", "9.2e18",
+	"1e-300", "1e10", "1e30", "0.0 - 1e30", "1e300",
+	"1.0 / 0.0", "0.0 - 1.0 / 0.0", "0.0 / 0.0",
+}
+
+// genFloatMath emits one call to an exactly-specified f64 math method.
+// Spelled as the receiver method rather than the `__*_f64` builtin because
+// that is the surface a program actually writes, and it puts the std/float
+// wrapper on the path too.
+func genFloatMath(r *rand.Rand) string {
+	m := pick(r, floatMathExact)
+	body := fmt.Sprintf("    var a: f64 = %s;\n    print((a.%s()).to_string());\n",
+		pick(r, floatMathLits), m)
 	return wrapMain(body)
 }
 
@@ -486,6 +526,42 @@ func TestNumericProperty_Differential(t *testing.T) {
 			"the sweep is mostly skips", ran, seeds, minSeedsRunPct)
 	}
 	t.Logf("%d of %d generated programs reached the oracle", ran, seeds)
+}
+
+// TestNumericProperty_FloatMathExact runs every exactly-specified f64 math
+// method over every stress literal on every backend — the cross product, not
+// a sample, because there are only ~170 cells and each is one compile.
+//
+// Until this landed, `docs/TEST-GATES.md` recorded that no differential
+// emitted a float math call at all: sqrt / floor / ceil / trunc / round / abs
+// had zero coverage in any sweep, and the wasm backend was missing
+// __round_f64 outright without anything noticing.
+func TestNumericProperty_FloatMathExact(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in -short mode")
+	}
+	have, missing := availableLegs(numBackendLegs)
+	if len(have) == 0 {
+		t.Fatalf("no backend can run here (missing: %s) — every cell would compare "+
+			"the interpreter against nothing and the sweep would still report PASS",
+			describeLegs(missing))
+	}
+	t.Logf("backend legs available here: %s", describeLegs(have))
+	tally := newLegTally(have, numMinRunRatio)
+	t.Cleanup(func() { tally.check(t) })
+
+	for _, m := range floatMathExact {
+		for i, lit := range floatMathLits {
+			t.Run(fmt.Sprintf("%s/lit%d", m, i), func(t *testing.T) {
+				body := fmt.Sprintf("    var a: f64 = %s;\n    print((a.%s()).to_string());\n", lit, m)
+				// Hand-written, so an interp gap FAILS rather than skips
+				// (rule 10): a case that stops reaching the oracle is a lost
+				// assertion, not a tolerable one.
+				assertNumProgramAgreesSkipping(t, wrapMain(body), nil, tally)
+				tally.seedCompared()
+			})
+		}
+	}
 }
 
 // TestNumericProperty_Regressions pins the specific programs the
