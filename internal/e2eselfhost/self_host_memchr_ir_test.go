@@ -13,12 +13,13 @@ import (
 // kernel of docs/ATLAS-PLATFORM-PLAN.md §3, completed across the three
 // self-host backends.
 //
-// §3.4 orders the work as "total everywhere before fast anywhere". Every
-// backend answers the same question; only some answer it 16 bytes at a time.
-// Self-host x86-64 is SSE2 and self-host arm64 is NEON, matching their native
-// twins; self-host wasm is still the byte loop step 1 landed. Holding both
-// shapes to one expectation is what these tests are for, and it is the property
-// the last vector swap will be checked against.
+// §3.4 ordered the work as "total everywhere before fast anywhere", and both
+// halves are now done: every backend answers the same question, and all seven
+// answer it 16 bytes at a time — SSE2 on x86-64, NEON on arm64, v128 on wasm,
+// self-host and native alike. Holding them all to ONE expectation is what these
+// tests are for; the corpus was written while every body was scalar and passed
+// unchanged through each vector swap, which is the whole reason it is worth
+// anything.
 //
 // Only once all seven lowerings exist may `std/string` route its single-byte
 // search through the intrinsic: the self-hosted compiler compiles the stdlib,
@@ -34,7 +35,7 @@ import (
 // starting before / at / after it. That range covers two full 16-byte vector
 // blocks plus a partial tail on either side, so every block boundary a vector
 // body can get wrong — a needle split across two loads, a hit in the tail, a
-// `from` landing mid-block — is swept for each backend that has one.
+// `from` landing mid-block — is swept on every backend.
 //
 // A failure returns a small distinct code rather than a count, so the exit
 // status says WHICH shape disagreed. 42 means every comparison matched.

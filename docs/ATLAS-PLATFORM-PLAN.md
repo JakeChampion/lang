@@ -645,10 +645,10 @@ backends use a `[data@0, len@8]` box on the register targets and a
 
 **`__ascii_run`, the second kernel.** Total across all seven, and — unlike
 `__memchr` — made total *before* any caller adopts it, which is the one
-process change the miscount above bought. Both kernels are vectorised on six of
-the seven — native x86-64 and self-host x86-64 (SSE2), native arm64, self-host
-arm64 and `-backend ssa` (NEON), native wasm (v128) — leaving self-host wasm the
-only scalar one. `__ascii_run`'s vector form is cheaper than
+process change the miscount above bought. Both kernels are now vectorised on
+**all seven** — x86-64 native and self-host (SSE2), arm64 native, self-host and
+`-backend ssa` (NEON), wasm native and self-host (v128). `__ascii_run`'s vector
+form is cheaper than
 `__memchr`'s on every target, and interestingly for two different reasons:
 
 - x86-64 and wasm save the **compare**. `pmovmskb` / `i8x16.bitmask` gather the
@@ -689,9 +689,28 @@ an out-of-range value wraps into `immh` and selects a different element size.
 Same class as the uleb128 hazard §3.3a records for wasm — a wrong encoding that
 assembles and runs.
 
-Remaining: step 3 for self-host wasm, the last scalar body. Its assembler
-prerequisite (`watbin.fern`) is unpaid. Unlike the native tier this is pure
-speed with no totality argument behind it, so it ranks below §4's other items.
+**Self-host wasm was the last**, and the cheapest kernel of the fourteen:
+`i8x16.bitmask` is `pmovmskb`, so `i32.ctz` of it is the lane index directly —
+no nibble arithmetic as on NEON, and for `__ascii_run` no splat, no compare and
+not even a `v128` local. Unlike the NATIVE wasm kernel it needs no second scalar
+path either: the self-host representation is one `[len@0][bytes@4]` block, so
+the bytes always have an address, where native wasm's SSO form keeps a short
+string in its two words with nothing for `v128.load` to point at. Measured under
+wasmtime over 131 MB: `__memchr` 65 ms → 12 ms, `__ascii_run` 67 ms → 13 ms
+wall-clock, and ~11x net of the 7 ms this harness spends starting up and
+building the haystack.
+
+Its assembler prerequisite was `watbin.fern`, which had no `0xFD` opcode at all,
+and it is where §3.3a's uleb128 note pays off: the check that matters is not the
+bytes but the DISASSEMBLY. `TestSelfHostWasmBinary` now runs its v128 cases
+through `wasm-tools print` and asserts the mnemonics came back, because a wrong
+sub-opcode is usually another valid instruction and a module that validates and
+runs proves nothing about which one was emitted.
+
+**Step 3 is therefore complete: the kernels are vector on all seven backends.**
+The next increment for this tier is a third kernel rather than another lowering
+— `__str_rfind_from`'s backward scan is the sibling §3.3 nominates, and the
+SwissTable group probe is the one with the widest blast radius.
 
 ### 3.5 Testing
 

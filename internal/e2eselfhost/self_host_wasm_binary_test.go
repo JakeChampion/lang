@@ -139,6 +139,16 @@ func TestSelfHostWasmBinary(t *testing.T) {
 		// block. len() * 10 + first byte offset from 'A': 4*10 + (65-65) = 40.
 		{"string-from-bytes", "function main(): i32 { var s: string = string_from_bytes_unchecked([65, 66, 67, 68]); return s.len() * 10 + ((s[0] as i32) - 65); }", 40},
 		{"string-from-bytes-write", "function main(): i32 { var s: string = string_from_bytes_unchecked([104, 105]); write(s); return s.len(); }", 2},
+		// The v128 kernels (ATLAS-PLATFORM-PLAN §3). This is the only path
+		// that puts watbin's SIMD encodings under load: the WAT leg is parsed
+		// by wasmtime, the binary leg by watbin, and the two must agree — which
+		// is the check a pinned opcode table cannot make on its own, because
+		// the 0xFD sub-opcode space is dense enough that a wrong byte is
+		// usually another VALID instruction. Each haystack's answer is past the
+		// first 16-byte block so the vector loop actually runs.
+		{"memchr-v128", "function main(): i32 { var s: string = \"aaaaaaaaaaaaaaaaaaaa*aaa\"; return __memchr(s, 42, 0) + 22; }", 42},
+		{"memchr-v128-miss", "function main(): i32 { var s: string = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __memchr(s, 42, 0) + 43; }", 42},
+		{"ascii-run-v128", "function main(): i32 { var s: string = \"aaaaaaaaaaaaaaaaaaaaaaaa\"; return __ascii_run(s, 0) + 18; }", 42},
 		// random_i32(): a single i32 of randomness. Used in self-cancelling
 		// arithmetic so the result is deterministic (42) while still
 		// exercising the builtin's call + helper emission end-to-end.
@@ -212,6 +222,30 @@ func TestSelfHostWasmBinary(t *testing.T) {
 				t.Fatalf("write wasm: %v", err)
 			}
 
+			// 2b. For the SIMD cases, disassemble with an EXTERNAL tool and
+			// check the mnemonics came back. Agreeing exit codes would catch
+			// most encoding slips, but not the one ATLAS-PLATFORM-PLAN §3.3a
+			// names: the 0xFD sub-opcode space is dense uleb128, so a wrong
+			// byte is usually another VALID instruction — the module still
+			// validates, still runs, and only a disassembler can say which
+			// instruction was actually emitted. wasm-tools is that oracle;
+			// a typed table cannot be its own.
+			if want, ok := wantSIMDMnemonics[tc.name]; ok {
+				wasmTools, err := exec.LookPath("wasm-tools")
+				if err != nil {
+					t.Skip("wasm-tools not on PATH; skipping the SIMD disassembly check")
+				}
+				text, err := exec.Command(wasmTools, "print", wasmPath).Output()
+				if err != nil {
+					t.Fatalf("wasm-tools print: %v", err)
+				}
+				for _, m := range want {
+					if !strings.Contains(string(text), m) {
+						t.Errorf("disassembly has no %s — watbin encoded some other instruction", m)
+					}
+				}
+			}
+
 			// 3. Run the binary module; assert exit + stdout match the WAT path.
 			binExit, binOut := run(wasmPath)
 			if binExit != tc.exit {
@@ -222,6 +256,17 @@ func TestSelfHostWasmBinary(t *testing.T) {
 			}
 		})
 	}
+}
+
+// wantSIMDMnemonics names, per case, the v128 instructions watbin must have
+// emitted — checked by disassembling its output rather than by pinning bytes,
+// for the reason at the call site. i32.ctz is in the list because it is what
+// turns i8x16.bitmask's result into a lane index, and a kernel that lost it
+// would still validate.
+var wantSIMDMnemonics = map[string][]string{
+	"memchr-v128":      {"i8x16.splat", "v128.load", "i8x16.eq", "i8x16.bitmask", "i32.ctz"},
+	"memchr-v128-miss": {"i8x16.splat", "v128.load", "i8x16.eq", "i8x16.bitmask", "i32.ctz"},
+	"ascii-run-v128":   {"v128.load", "i8x16.bitmask", "i32.ctz"},
 }
 
 // asmReadFileDriver is the assembler's entry point: read the target WAT
