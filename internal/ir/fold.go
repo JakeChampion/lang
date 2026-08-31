@@ -103,6 +103,34 @@ func foldOnce(ops []Op) []Op {
 			i++ // consume the OpBrIf; the const is dropped either way
 			continue
 		}
+		// `OpConstI32 0; OpRcIsUnique` → `OpConstI32 0`.
+		//
+		// The op's own declaration states the contract — "(ptr) → i32
+		// (1 iff rc == 1; sentinel/static → 0)" — and every backend's
+		// helper opens with a null guard, so a uniqueness test on the
+		// null pointer is 0 without exception.
+		//
+		// This is worth a rule because the shape is everywhere and is
+		// entirely machine-made. Lowering emits an `is_unique`-gated
+		// drop for a droppable local at scope exit whether or not the
+		// slot was ever assigned on the path that reaches it, and
+		// ConstPropagate — whose per-scope merge already proves this
+		// for `if (keyKind == 0)` guards — then delivers the zero-init
+		// constant to the test. Measured over the conformance corpus
+		// AFTER OptimizeCleanup: 8456 of 15582 guards already sit on a
+		// literal `const.i32 0` and nothing folded them, because the
+		// folder had no rule for the op.
+		//
+		// Folding it hands the condition to pruneConstIf below, which
+		// takes the decline arm and deletes the rest — an unreachable
+		// block, so no behaviour changes. Only a ZERO operand folds: a
+		// non-null pointer's count is a runtime fact.
+		if i+1 < len(ops) && ops[i].Kind == OpConstI32 && ops[i].I32 == 0 &&
+			ops[i+1].Kind == OpRcIsUnique {
+			out = append(out, Op{Kind: OpConstI32, I32: 0, Pos: ops[i+1].Pos})
+			i++ // consume the guard; is_unique(null) is 0
+			continue
+		}
 		// Binary fold (i32): OpConstI32 a; OpConstI32 b; <binop>.
 		if i+2 < len(ops) &&
 			ops[i].Kind == OpConstI32 && ops[i+1].Kind == OpConstI32 &&

@@ -618,3 +618,89 @@ func TestFoldStripsExtendWrapIdentity(t *testing.T) {
 		}
 	}
 }
+
+// `is_unique(null)` is 0 by the op's own contract, so the guard folds
+// to the constant and the block it conditions goes with it.
+//
+// Built directly rather than lowered from source: the shape this fires
+// on is machine-made — lowering emits an `is_unique`-gated drop for a
+// droppable local at scope exit whether or not the slot was ever
+// assigned on the path that reaches it — and writing the Fern that
+// produces it would pin a lowering detail rather than the fold.
+func TestFoldIsUniqueOnNull(t *testing.T) {
+	fn := &Func{Name: "f", Ops: []Op{
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpIf, I32: BlockTypeVoid},
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpConstI32, I32: 16},
+		{Kind: OpCallDirect, Str: "__fern_box_free", I32: 2},
+		{Kind: OpDrop},
+		{Kind: OpElse},
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1},
+		{Kind: OpDrop},
+		{Kind: OpEnd},
+		{Kind: OpReturn},
+	}}
+	p := &Program{Funcs: []*Func{fn}}
+	Fold(p)
+
+	for _, o := range fn.Ops {
+		if o.Kind == OpRcIsUnique {
+			t.Fatalf("the uniqueness test on null survived the fold:\n%s", p)
+		}
+		if o.Kind == OpCallDirect && o.Str == "__fern_box_free" {
+			t.Errorf("the unreachable reclaim arm survived:\n%s", p)
+		}
+	}
+	// The decline arm is what runs, so its body has to be kept.
+	kept := false
+	for _, o := range fn.Ops {
+		if o.Kind == OpRcDec {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Errorf("the arm that actually executes was dropped:\n%s", p)
+	}
+}
+
+// Only a ZERO operand folds. A non-null pointer's reference count is a
+// runtime fact, and folding it either way would be a guess.
+func TestFoldLeavesIsUniqueOnANonNullConstant(t *testing.T) {
+	fn := &Func{Name: "f", Ops: []Op{
+		{Kind: OpConstI32, I32: 4096},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpDrop},
+		{Kind: OpReturn},
+	}}
+	p := &Program{Funcs: []*Func{fn}}
+	Fold(p)
+
+	found := false
+	for _, o := range fn.Ops {
+		if o.Kind == OpRcIsUnique {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a uniqueness test on a non-null pointer was folded away:\n%s", p)
+	}
+}
+
+// The operand stack has to balance: is_unique pops one and pushes one,
+// and so does the constant that replaces the pair.
+func TestFoldIsUniqueOnNullKeepsTheStackBalanced(t *testing.T) {
+	fn := &Func{Name: "f", Ops: []Op{
+		{Kind: OpConstI32, I32: 0},
+		{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1},
+		{Kind: OpReturn},
+	}}
+	p := &Program{Funcs: []*Func{fn}}
+	Fold(p)
+
+	if len(fn.Ops) != 2 || fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 0 {
+		t.Fatalf("want `const 0; return`, got:\n%s", p)
+	}
+}
