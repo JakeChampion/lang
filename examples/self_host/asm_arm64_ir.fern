@@ -4535,74 +4535,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // (slot_is_reclaimable_strarr). Stack-arg ABI (arr at [sp]); x19/x20/x21
     // hold arr/len/i across the bl calls (callee-saved; x30 saved too —
     // __fn___fern_str_free is a leaf and preserves them).
-    s = s.write("__fn___fern_str_arr_free:\n");
-    s = s.write("    ldr x0, [sp]\n");              // arr
-    s = s.write("    cbz x0, .Lsaf_ret\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Lsaf_ret\n");             // low-addr guard
-    s = s.write("    ldur w1, [x0, #-8]\n");        // rc
-    s = s.write("    tbnz w1, #31, .Lsaf_ret\n");   // negative = immortal -> skip
-    s = s.write("    cmp w1, #1\n");
-    s = s.write("    bgt .Lsaf_dec\n");             // rc>1 -> dec, keep
-    s = s.write("    blt .Lsaf_uf\n");              // rc==0 -> underflow (double free)
-    // rc==1: sole owner -> free every element string box, then the buffer.
-    s = s.write("    stp x19, x30, [sp, #-16]!\n"); // save callee-saved + link
-    s = s.write("    stp x20, x21, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");               // arr
-    s = s.write("    ldr x20, [x19]\n");            // len @ [arr]
-    s = s.write("    mov x21, #0\n");               // i
-    s = s.write(".Lsaf_loop:\n");
-    s = s.write("    cmp x21, x20\n");
-    s = s.write("    bge .Lsaf_freebuf\n");
-    s = s.write("    add x9, x21, #1\n");
-    s = s.write("    ldr x0, [x19, x9, lsl #3]\n"); // element i @ [arr+(i+1)*8]
-    s = s.write("    str x0, [sp, #-16]!\n");       // push stack arg (16-aligned)
-    s = s.write("    bl __fn___fern_str_free\n");   // rc-aware per-element free
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    add x21, x21, #1\n");
-    s = s.write("    b .Lsaf_loop\n");
-    s = s.write(".Lsaf_freebuf:\n");
-    // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
-    s = s.write("    stur wzr, [x19, #-8]\n");      // rc = 0 (defensive vs re-free)
-    s = s.write("    ldur x1, [x19, #-16]\n");      // cap
-    s = s.write("    add x1, x1, #3\n");            // class = cap + 3 words
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x1, x9\n");
-    s = s.write("    bhs .Lsaf_large\n");           // large tier -> recycle via __fern_large_push
-    s = s.write("    sub x2, x19, #16\n");          // base = arr - 16
-    s = lc_bump_free_words(s, "x1", "x3", "x9");
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x9, [x3, x1, lsl #3]\n");  // old head
-    s = s.write("    str x9, [x2]\n");              // *base = old head
-    s = s.write("    str x2, [x3, x1, lsl #3]\n");  // freelist[class] = base
-    s = s.write(".Lsaf_pop:\n");
-    s = s.write("    ldp x20, x21, [sp], #16\n");
-    s = s.write("    ldp x19, x30, [sp], #16\n");
-    s = s.write("    b .Lsaf_ret\n");
-    s = s.write(".Lsaf_dec:\n");
-    s = s.write("    sub w1, w1, #1\n");
-    s = s.write("    stur w1, [x0, #-8]\n");
-    s = s.write("    b .Lsaf_ret\n");
-    s = s.write(".Lsaf_uf:\n");
-    s = s.write("    adrp x2, __fern_rc_underflow\n");
-    s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
-    s = s.write("    ldr w3, [x2]\n");
-    s = s.write("    add w3, w3, #1\n");
-    s = s.write("    str w3, [x2]\n");
-    s = s.write(".Lsaf_ret:\n");
-    s = s.write("    ret\n");
-    // Large tier (#3425): recycle the >=512 KiB string[] outer buffer (base =
-    // arr-16, bytes = class*8) via __fern_large_push instead of leaking. x30 is
-    // saved in the frame (restored at .Lsaf_pop), so the bl is safe; large_push
-    // preserves x19/x20/x21. Accumulates across a -per-module-emit-all batch
-    // otherwise (see the x86 sibling in asm_ir.emit_ir_runtime).
-    s = s.write(".Lsaf_large:\n");
-    s = s.write("    lsl x2, x1, #3\n");            // bytes = class*8
-    s = s.write("    sub x1, x19, #16\n");          // base = arr-16
-    s = s.write("    bl __fern_large_push\n");
-    s = s.write("    b .Lsaf_pop\n");
+    s = emit_arm64_arr_deep_free_variant(s, "str_arr_free", "saf", arm64_arr_deep_free_call("str_free"));
     // __fern_arrarr_free(arr) — SCALAR arr-of-arr reclaim (#4355 slice 9),
     // the arm64 sibling of the x86-64 body in asm_ir.emit_ir_runtime:
     // identical shell to __fn___fern_str_arr_free above, but each element is
@@ -4613,138 +4546,14 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // must not carry the strarrarr body's `bl __fn___fern_str_arr_free`
     // (negative asm-grep contracts, e.g. strarr-elem-alias-excluded).
     if (s.has_need("arrarr_free")) {
-    s = s.write("__fn___fern_arrarr_free:\n");
-    s = s.write("    ldr x0, [sp]\n");
-    s = s.write("    cbz x0, .Laaf_ret\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Laaf_ret\n");
-    s = s.write("    ldur w1, [x0, #-8]\n");
-    s = s.write("    tbnz w1, #31, .Laaf_ret\n");
-    s = s.write("    cmp w1, #1\n");
-    s = s.write("    bgt .Laaf_dec\n");
-    s = s.write("    blt .Laaf_uf\n");
-    s = s.write("    stp x19, x30, [sp, #-16]!\n");
-    s = s.write("    stp x20, x21, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");
-    s = s.write("    ldr x20, [x19]\n");
-    s = s.write("    mov x21, #0\n");
-    s = s.write(".Laaf_loop:\n");
-    s = s.write("    cmp x21, x20\n");
-    s = s.write("    bge .Laaf_freebuf\n");
-    s = s.write("    add x9, x21, #1\n");
-    s = s.write("    ldr x0, [x19, x9, lsl #3]\n");
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_arr_dec\n");    // inner buffer free (rc-guarded)
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    add x21, x21, #1\n");
-    s = s.write("    b .Laaf_loop\n");
-    s = s.write(".Laaf_freebuf:\n");
-    s = s.write("    stur wzr, [x19, #-8]\n");
-    s = s.write("    ldur x1, [x19, #-16]\n");
-    s = s.write("    add x1, x1, #3\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x1, x9\n");
-    s = s.write("    bhs .Laaf_large\n");           // large tier -> recycle via __fern_large_push
-    s = s.write("    sub x2, x19, #16\n");
-    s = lc_bump_free_words(s, "x1", "x3", "x9");
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x9, [x3, x1, lsl #3]\n");
-    s = s.write("    str x9, [x2]\n");
-    s = s.write("    str x2, [x3, x1, lsl #3]\n");
-    s = s.write(".Laaf_pop:\n");
-    s = s.write("    ldp x20, x21, [sp], #16\n");
-    s = s.write("    ldp x19, x30, [sp], #16\n");
-    s = s.write("    b .Laaf_ret\n");
-    s = s.write(".Laaf_dec:\n");
-    s = s.write("    sub w1, w1, #1\n");
-    s = s.write("    stur w1, [x0, #-8]\n");
-    s = s.write("    b .Laaf_ret\n");
-    s = s.write(".Laaf_uf:\n");
-    s = s.write("    adrp x2, __fern_rc_underflow\n");
-    s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
-    s = s.write("    ldr w3, [x2]\n");
-    s = s.write("    add w3, w3, #1\n");
-    s = s.write("    str w3, [x2]\n");
-    s = s.write(".Laaf_ret:\n");
-    s = s.write("    ret\n");
-    // Large tier (#3425): recycle the >=512 KiB arr-of-arr outer buffer instead
-    // of leaking (accumulates across a -per-module-emit-all batch otherwise).
-    s = s.write(".Laaf_large:\n");
-    s = s.write("    lsl x2, x1, #3\n");            // bytes = class*8
-    s = s.write("    sub x1, x19, #16\n");          // base = arr-16
-    s = s.write("    bl __fern_large_push\n");
-    s = s.write("    b .Laaf_pop\n");
+    s = emit_arm64_arr_deep_free_variant(s, "arrarr_free", "aaf", arm64_arr_deep_free_call("arr_dec"));
     }
     // __fern_strarrarr_free(arr) — string[][] reclaim (#4355 slice 9): each
     // element is a string[] INNER buffer released fully by
     // __fn___fern_str_arr_free (string boxes + inner buffer, rc-guarded).
     // Same need-gating rationale as __fn___fern_arrarr_free above.
     if (s.has_need("strarrarr_free")) {
-    s = s.write("__fn___fern_strarrarr_free:\n");
-    s = s.write("    ldr x0, [sp]\n");
-    s = s.write("    cbz x0, .Lssaf_ret\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Lssaf_ret\n");
-    s = s.write("    ldur w1, [x0, #-8]\n");
-    s = s.write("    tbnz w1, #31, .Lssaf_ret\n");
-    s = s.write("    cmp w1, #1\n");
-    s = s.write("    bgt .Lssaf_dec\n");
-    s = s.write("    blt .Lssaf_uf\n");
-    s = s.write("    stp x19, x30, [sp, #-16]!\n");
-    s = s.write("    stp x20, x21, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");
-    s = s.write("    ldr x20, [x19]\n");
-    s = s.write("    mov x21, #0\n");
-    s = s.write(".Lssaf_loop:\n");
-    s = s.write("    cmp x21, x20\n");
-    s = s.write("    bge .Lssaf_freebuf\n");
-    s = s.write("    add x9, x21, #1\n");
-    s = s.write("    ldr x0, [x19, x9, lsl #3]\n");
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_str_arr_free\n"); // inner string[] deep free
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    add x21, x21, #1\n");
-    s = s.write("    b .Lssaf_loop\n");
-    s = s.write(".Lssaf_freebuf:\n");
-    s = s.write("    stur wzr, [x19, #-8]\n");
-    s = s.write("    ldur x1, [x19, #-16]\n");
-    s = s.write("    add x1, x1, #3\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x1, x9\n");
-    s = s.write("    bhs .Lssaf_large\n");          // large tier -> recycle via __fern_large_push
-    s = s.write("    sub x2, x19, #16\n");
-    s = lc_bump_free_words(s, "x1", "x3", "x9");
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x9, [x3, x1, lsl #3]\n");
-    s = s.write("    str x9, [x2]\n");
-    s = s.write("    str x2, [x3, x1, lsl #3]\n");
-    s = s.write(".Lssaf_pop:\n");
-    s = s.write("    ldp x20, x21, [sp], #16\n");
-    s = s.write("    ldp x19, x30, [sp], #16\n");
-    s = s.write("    b .Lssaf_ret\n");
-    s = s.write(".Lssaf_dec:\n");
-    s = s.write("    sub w1, w1, #1\n");
-    s = s.write("    stur w1, [x0, #-8]\n");
-    s = s.write("    b .Lssaf_ret\n");
-    s = s.write(".Lssaf_uf:\n");
-    s = s.write("    adrp x2, __fern_rc_underflow\n");
-    s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
-    s = s.write("    ldr w3, [x2]\n");
-    s = s.write("    add w3, w3, #1\n");
-    s = s.write("    str w3, [x2]\n");
-    s = s.write(".Lssaf_ret:\n");
-    s = s.write("    ret\n");
-    // Large tier (#3425): recycle the >=512 KiB string[][] outer buffer instead
-    // of leaking (accumulates across a -per-module-emit-all batch otherwise).
-    s = s.write(".Lssaf_large:\n");
-    s = s.write("    lsl x2, x1, #3\n");            // bytes = class*8
-    s = s.write("    sub x1, x19, #16\n");          // base = arr-16
-    s = s.write("    bl __fern_large_push\n");
-    s = s.write("    b .Lssaf_pop\n");
+    s = emit_arm64_arr_deep_free_variant(s, "strarrarr_free", "ssaf", arm64_arr_deep_free_call("str_arr_free"));
     }
     // __fern_optarrarr_free(arr) — Option[<scalar-arr>][] reclaim (#4365),
     // the arm64 sibling of the x86-64 body: per element (an rc-headered
@@ -4753,89 +4562,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // then the outer buffer is freed like __fn___fern_arrarr_free. Same
     // register discipline and need-gating rationale as the bodies above.
     if (s.has_need("optarrarr_free")) {
-    s = s.write("__fn___fern_optarrarr_free:\n");
-    s = s.write("    ldr x0, [sp]\n");
-    s = s.write("    cbz x0, .Loaf_ret\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Loaf_ret\n");
-    s = s.write("    ldur w1, [x0, #-8]\n");
-    s = s.write("    tbnz w1, #31, .Loaf_ret\n");
-    s = s.write("    cmp w1, #1\n");
-    s = s.write("    bgt .Loaf_dec\n");
-    s = s.write("    blt .Loaf_uf\n");
-    s = s.write("    stp x19, x30, [sp, #-16]!\n");
-    s = s.write("    stp x20, x21, [sp, #-16]!\n");
-    s = s.write("    mov x19, x0\n");
-    s = s.write("    ldr x20, [x19]\n");
-    s = s.write("    mov x21, #0\n");
-    s = s.write(".Loaf_loop:\n");
-    s = s.write("    cmp x21, x20\n");
-    s = s.write("    bge .Loaf_freebuf\n");
-    s = s.write("    add x9, x21, #1\n");
-    s = s.write("    ldr x0, [x19, x9, lsl #3]\n");   // e = option box
-    s = s.write("    cbz x0, .Loaf_next\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x0, x9\n");
-    s = s.write("    blo .Loaf_next\n");
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_rc_is_unique\n"); // shared box -> skip payload
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write("    cbz x0, .Loaf_box\n");
-    s = s.write("    add x9, x21, #1\n");
-    s = s.write("    ldr x0, [x19, x9, lsl #3]\n");   // reload e
-    s = s.write("    ldr w1, [x0]\n");                // tag @ e+0 (0 = Some/Ok)
-    s = s.write("    cbnz w1, .Loaf_box\n");
-    s = s.write("    ldr x0, [x0, #8]\n");            // payload buffer @ e+8
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_arr_dec\n");      // payload free (rc-guarded)
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write(".Loaf_box:\n");
-    s = s.write("    add x9, x21, #1\n");
-    s = s.write("    ldr x0, [x19, x9, lsl #3]\n");
-    s = s.write("    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_arr_dec\n");      // option box free (rc-guarded)
-    s = s.write("    add sp, sp, #16\n");
-    s = s.write(".Loaf_next:\n");
-    s = s.write("    add x21, x21, #1\n");
-    s = s.write("    b .Loaf_loop\n");
-    s = s.write(".Loaf_freebuf:\n");
-    s = s.write("    stur wzr, [x19, #-8]\n");
-    s = s.write("    ldur x1, [x19, #-16]\n");
-    s = s.write("    add x1, x1, #3\n");
-    s = s.write("    mov x9, #0x10000\n");
-    s = s.write("    cmp x1, x9\n");
-    s = s.write("    bhs .Loaf_large\n");           // large tier -> recycle via __fern_large_push
-    s = s.write("    sub x2, x19, #16\n");
-    s = lc_bump_free_words(s, "x1", "x3", "x9");
-    s = s.write("    adrp x3, __fern_freelist\n");
-    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
-    s = s.write("    ldr x9, [x3, x1, lsl #3]\n");
-    s = s.write("    str x9, [x2]\n");
-    s = s.write("    str x2, [x3, x1, lsl #3]\n");
-    s = s.write(".Loaf_pop:\n");
-    s = s.write("    ldp x20, x21, [sp], #16\n");
-    s = s.write("    ldp x19, x30, [sp], #16\n");
-    s = s.write("    b .Loaf_ret\n");
-    s = s.write(".Loaf_dec:\n");
-    s = s.write("    sub w1, w1, #1\n");
-    s = s.write("    stur w1, [x0, #-8]\n");
-    s = s.write("    b .Loaf_ret\n");
-    s = s.write(".Loaf_uf:\n");
-    s = s.write("    adrp x2, __fern_rc_underflow\n");
-    s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
-    s = s.write("    ldr w3, [x2]\n");
-    s = s.write("    add w3, w3, #1\n");
-    s = s.write("    str w3, [x2]\n");
-    s = s.write(".Loaf_ret:\n");
-    s = s.write("    ret\n");
-    // Large tier (#3425): recycle the >=512 KiB Option[]-array outer buffer
-    // instead of leaking (accumulates across a -per-module-emit-all batch).
-    s = s.write(".Loaf_large:\n");
-    s = s.write("    lsl x2, x1, #3\n");            // bytes = class*8
-    s = s.write("    sub x1, x19, #16\n");          // base = arr-16
-    s = s.write("    bl __fern_large_push\n");
-    s = s.write("    b .Loaf_pop\n");
+    s = emit_arm64_arr_deep_free_variant(s, "optarrarr_free", "oaf", arm64_optarrarr_elem());
     }
     // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
     // map-local slice), the arm64 sibling of the x86-64 body in
@@ -4882,6 +4609,116 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
 // freelist (class 2). The six members differ only in those two symbols; `lbl` is
 // the local-label stem keeping their guard jumps distinct. Stack-arg ABI (box at
 // [sp]); x19 holds the box across both column calls, x9 is scratch.
+// emit_arm64_arr_deep_free_variant writes one member of the array DEEP-FREE
+// family (#2649) — the arm64 twin of asm_ir.emit_ir_arr_deep_free_variant. The
+// four members (string[], arr-of-arr, string[][], Option[]-array) differ ONLY in
+// the symbol, the local-label stem keeping their guard jumps distinct, and
+// `elem`: the asm consuming the element the loop has already loaded into x0
+// (with its slot index in x9).
+//
+// Array layout: cap@[arr-16], rc@[arr-8], len@[arr], element i @ [arr+(i+1)*8].
+// Stack-arg ABI (arr at [sp]); x19/x20/x21 hold arr/len/i across the
+// per-element calls and x30 is saved in the frame, so `elem` may `bl` freely.
+function emit_arm64_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: string, elem: string): asmcore.EmitState {
+    s = s.write("__fn___fern_" + sym + ":\n");
+    s = s.write("    ldr x0, [sp]\n");              // arr
+    s = s.write("    cbz x0, .L" + lbl + "_ret\n");
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x0, x9\n");
+    s = s.write("    blo .L" + lbl + "_ret\n");     // low-addr guard
+    s = s.write("    ldur w1, [x0, #-8]\n");        // rc
+    s = s.write("    tbnz w1, #31, .L" + lbl + "_ret\n"); // negative = immortal -> skip
+    s = s.write("    cmp w1, #1\n");
+    s = s.write("    bgt .L" + lbl + "_dec\n");     // rc>1 -> dec, keep
+    s = s.write("    blt .L" + lbl + "_uf\n");      // rc==0 -> underflow (double free)
+    // rc==1: sole owner -> release every element, then the buffer.
+    s = s.write("    stp x19, x30, [sp, #-16]!\n"); // save callee-saved + link
+    s = s.write("    stp x20, x21, [sp, #-16]!\n");
+    s = s.write("    mov x19, x0\n");               // arr
+    s = s.write("    ldr x20, [x19]\n");            // len @ [arr]
+    s = s.write("    mov x21, #0\n");               // i
+    s = s.write(".L" + lbl + "_loop:\n");
+    s = s.write("    cmp x21, x20\n");
+    s = s.write("    bge .L" + lbl + "_freebuf\n");
+    s = s.write("    add x9, x21, #1\n");
+    s = s.write(elem);
+    s = s.write("    add x21, x21, #1\n");
+    s = s.write("    b .L" + lbl + "_loop\n");
+    s = s.write(".L" + lbl + "_freebuf:\n");
+    // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
+    s = s.write("    stur wzr, [x19, #-8]\n");      // rc = 0 (defensive vs re-free)
+    s = s.write("    ldur x1, [x19, #-16]\n");      // cap
+    s = s.write("    add x1, x1, #3\n");            // class = cap + 3 words
+    s = s.write("    mov x9, #0x10000\n");
+    s = s.write("    cmp x1, x9\n");
+    s = s.write("    bhs .L" + lbl + "_large\n");   // large tier -> __fern_large_push
+    s = s.write("    sub x2, x19, #16\n");          // base = arr - 16
+    s = lc_bump_free_words(s, "x1", "x3", "x9");
+    s = s.write("    adrp x3, __fern_freelist\n");
+    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+    s = s.write("    ldr x9, [x3, x1, lsl #3]\n");  // old head
+    s = s.write("    str x9, [x2]\n");              // *base = old head
+    s = s.write("    str x2, [x3, x1, lsl #3]\n");  // freelist[class] = base
+    s = s.write(".L" + lbl + "_pop:\n");
+    s = s.write("    ldp x20, x21, [sp], #16\n");
+    s = s.write("    ldp x19, x30, [sp], #16\n");
+    s = s.write("    b .L" + lbl + "_ret\n");
+    s = s.write(".L" + lbl + "_dec:\n");
+    s = s.write("    sub w1, w1, #1\n");
+    s = s.write("    stur w1, [x0, #-8]\n");
+    s = s.write("    b .L" + lbl + "_ret\n");
+    s = s.write(".L" + lbl + "_uf:\n");
+    s = s.write("    adrp x2, __fern_rc_underflow\n");
+    s = s.write("    add x2, x2, :lo12:__fern_rc_underflow\n");
+    s = s.write("    ldr w3, [x2]\n");
+    s = s.write("    add w3, w3, #1\n");
+    s = s.write("    str w3, [x2]\n");
+    s = s.write(".L" + lbl + "_ret:\n");
+    s = s.write("    ret\n");
+    // Large tier (#3425): recycle the >=512 KiB outer buffer (base = arr-16,
+    // bytes = class*8) via __fern_large_push instead of leaking. x30 is saved in
+    // the frame (restored at _pop), so the bl is safe; large_push preserves
+    // x19/x20/x21. Accumulates across a -per-module-emit-all batch otherwise.
+    s = s.write(".L" + lbl + "_large:\n");
+    s = s.write("    lsl x2, x1, #3\n");            // bytes = class*8
+    s = s.write("    sub x1, x19, #16\n");          // base = arr-16
+    s = s.write("    bl __fern_large_push\n");
+    s = s.write("    b .L" + lbl + "_pop\n");
+    return s;
+}
+
+// arm64_arr_deep_free_call is the one-element body shared by the three simple
+// members: hand the element to `target` under the stack ABI and drop the slot.
+function arm64_arr_deep_free_call(target: string): string {
+    var e: string = "    ldr x0, [x19, x9, lsl #3]\n"; // element i @ [arr+(i+1)*8]
+    e = e + "    str x0, [sp, #-16]!\n";               // push stack arg (16-aligned)
+    e = e + "    bl __fn___fern_" + target + "\n";
+    return e + "    add sp, sp, #16\n";
+}
+
+// arm64_optarrarr_elem is the Option[]-array element body: unwrap a SOLE-OWNED
+// Some far enough to release its payload buffer, then release the Option box. A
+// shared box (rc>1) skips the payload — another owner still reads it.
+function arm64_optarrarr_elem(): string {
+    var e: string = "    ldr x0, [x19, x9, lsl #3]\n";   // e = option box
+    e = e + "    cbz x0, .Loaf_next\n";
+    e = e + "    mov x9, #0x10000\n    cmp x0, x9\n    blo .Loaf_next\n";
+    e = e + "    str x0, [sp, #-16]!\n    bl __fn___fern_rc_is_unique\n    add sp, sp, #16\n";
+    e = e + "    cbz x0, .Loaf_box\n";
+    e = e + "    add x9, x21, #1\n";
+    e = e + "    ldr x0, [x19, x9, lsl #3]\n";           // reload e
+    e = e + "    ldr w1, [x0]\n";                        // tag @ e+0 (0 = Some/Ok)
+    e = e + "    cbnz w1, .Loaf_box\n";
+    e = e + "    ldr x0, [x0, #8]\n";                    // payload buffer @ e+8
+    e = e + "    str x0, [sp, #-16]!\n    bl __fn___fern_arr_dec\n    add sp, sp, #16\n";
+    e = e + ".Loaf_box:\n";
+    e = e + "    add x9, x21, #1\n";
+    e = e + "    ldr x0, [x19, x9, lsl #3]\n";
+    e = e + "    str x0, [sp, #-16]!\n    bl __fn___fern_arr_dec\n    add sp, sp, #16\n";
+    return e + ".Loaf_next:\n";
+}
+
+
 function emit_arm64_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: string, vfree: string, lbl: string): asmcore.EmitState {
     s = s.write("__fn___fern_map_free" + suffix + ":\n");
     s = s.write("    ldr x0, [sp]\n");                  // box

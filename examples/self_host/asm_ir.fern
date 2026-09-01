@@ -417,6 +417,115 @@ function hev_on(): boolean {
 // elements leak one level), __fern_str_arr_free (per-element string box + data),
 // __fern_arrarr_free (one rc-guarded dec per element box). All three take the
 // buffer as a single stack arg, are null / rc guarded, and preserve %rbx.
+// emit_ir_arr_deep_free_variant writes one member of the array DEEP-FREE family
+// (#2649): the rc guard chain, the sole-owner per-element walk, and the buffer
+// free back to its size class. The four members — string[], arr-of-arr,
+// string[][], Option[]-array — differ ONLY in the symbol, the local-label stem
+// keeping their guard jumps distinct, and `elem`: the asm that consumes the
+// element the loop has already loaded into %rax. Same technique as
+// emit_ir_map_free_variant above.
+//
+// Array layout (__fern_arr_box): cap@[arr-16], rc@[arr-8], len@[arr], element
+// i @ [arr+8+i*8]. Stack-arg ABI (arr at 8(%rsp)); %rbx/%r12/%r13 hold
+// arr/len/i across the per-element calls, so `elem` may call any helper that
+// preserves the callee-saved set.
+function emit_ir_arr_deep_free_variant(s: asmcore.EmitState, sym: string, lbl: string, elem: string): asmcore.EmitState {
+    s = s.write("__fn___fern_" + sym + ":\n");
+    s = s.write("    movq 8(%rsp), %rax\n");        // arr
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .L" + lbl + "_ret\n");
+    s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
+    s = s.write("    jb .L" + lbl + "_ret\n");
+    s = s.write("    movl -8(%rax), %ecx\n");       // rc
+    s = s.write(san_poison_check("%ecx"));
+    s = s.write("    testl %ecx, %ecx\n");
+    s = s.write("    js .L" + lbl + "_ret\n");      // negative = immortal -> skip
+    s = s.write("    cmpl $1, %ecx\n");
+    s = s.write("    jg .L" + lbl + "_dec\n");      // rc>1 -> dec, keep
+    s = s.write("    jl .L" + lbl + "_uf\n");       // rc==0 -> underflow (double free)
+    // rc==1: sole owner -> release every element, then the buffer.
+    s = s.write("    pushq %rbx\n");
+    s = s.write("    pushq %r12\n");
+    s = s.write("    pushq %r13\n");
+    s = s.write("    movq %rax, %rbx\n");           // arr
+    s = s.write("    movq (%rbx), %r12\n");         // len @ [arr]
+    s = s.write("    movq $0, %r13\n");             // i
+    s = s.write(".L" + lbl + "_loop:\n");
+    s = s.write("    cmpq %r12, %r13\n");
+    s = s.write("    jge .L" + lbl + "_freebuf\n");
+    s = s.write("    movq 8(%rbx,%r13,8), %rax\n"); // element i @ [arr+8+i*8]
+    s = s.write(elem);
+    s = s.write("    incq %r13\n");
+    s = s.write("    jmp .L" + lbl + "_loop\n");
+    s = s.write(".L" + lbl + "_freebuf:\n");
+    // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
+    s = s.write(quarantine_rc("-8(%rbx)"));
+    s = s.write("    movl -16(%rbx), %ecx\n");      // cap
+    s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
+    s = s.write("    cmpq $65536, %rcx\n");
+    s = s.write("    jae .L" + lbl + "_large\n");   // large tier -> __fern_large_push
+    s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
+    s = hev_free(s, "%rdx", "%rcx");
+    if (!rc_free_debug_on()) {
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rcx,8), %rdi\n");   // old head
+    s = s.write("    movq %rdi, (%rdx)\n");         // *base = old head
+    s = s.write("    movq %rdx, (%r8,%rcx,8)\n");   // freelist[class] = base
+    }
+    s = s.write(".L" + lbl + "_pop:\n");
+    s = s.write("    popq %r13\n");
+    s = s.write("    popq %r12\n");
+    s = s.write("    popq %rbx\n");
+    s = s.write("    jmp .L" + lbl + "_ret\n");
+    s = s.write(".L" + lbl + "_dec:\n");
+    s = s.write("    subl $1, %ecx\n");
+    s = s.write("    movl %ecx, -8(%rax)\n");
+    s = s.write("    jmp .L" + lbl + "_ret\n");
+    s = s.write(".L" + lbl + "_uf:\n");
+    s = s.write("    incl __fern_rc_underflow(%rip)\n");
+    s = s.write(san_underflow_abort());
+    s = s.write(".L" + lbl + "_ret:\n");
+    s = s.write("    ret\n");
+    // Large tier (#3425): recycle the >=512 KiB outer buffer (base = arr-16,
+    // bytes = words*8) via __fern_large_push instead of leaking. A leaked
+    // buffer dies with the process in the per-window serial emit, but in the
+    // single-process -per-module-emit-all mode it ACCUMULATES across the batch
+    // and blows the arena. %rbx/%r12/%r13 are callee-saved across the call.
+    s = s.write(".L" + lbl + "_large:\n");
+    s = s.write("    leaq -16(%rbx), %r8\n");       // base = arr - 16
+    s = s.write("    leaq 0(,%rcx,8), %rsi\n");     // bytes = words*8
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    jmp .L" + lbl + "_pop\n");
+    return s;
+}
+
+// arr_deep_free_call is the one-element body shared by the three simple members:
+// hand the element to `target` under the stack ABI and drop the slot.
+// optarrarr_elem is the Option[]-array element body: unwrap a SOLE-OWNED Some
+// far enough to release its payload buffer, then release the Option box. A
+// shared box (rc>1) skips the payload — another owner still reads it — and the
+// box's own arr_dec does the decrement.
+function optarrarr_elem(): string {
+    var e: string = "    testq %rax, %rax\n    jz .Loaf_next\n";
+    e = e + "    cmpq $0x10000, %rax\n    jb .Loaf_next\n";
+    e = e + "    pushq %rax\n    call __fn___fern_rc_is_unique\n    addq $8, %rsp\n";
+    e = e + "    testq %rax, %rax\n    jz .Loaf_box\n";
+    e = e + "    movq 8(%rbx,%r13,8), %rax\n";      // reload e
+    e = e + "    movl (%rax), %ecx\n";              // tag @ e+0 (0 = Some/Ok)
+    e = e + "    testl %ecx, %ecx\n    jnz .Loaf_box\n";
+    e = e + "    movq 8(%rax), %rdi\n";             // payload buffer @ e+8
+    e = e + "    pushq %rdi\n    call __fn___fern_arr_dec\n    addq $8, %rsp\n";
+    e = e + ".Loaf_box:\n";
+    e = e + "    movq 8(%rbx,%r13,8), %rax\n";      // reload e
+    e = e + "    pushq %rax\n    call __fn___fern_arr_dec\n    addq $8, %rsp\n";
+    return e + ".Loaf_next:\n";
+}
+
+function arr_deep_free_call(target: string): string {
+    return "    pushq %rax\n    call __fn___fern_" + target + "\n    addq $8, %rsp\n";
+}
+
+
 function emit_ir_map_free_variant(s: asmcore.EmitState, suffix: string, kfree: string, vfree: string, lbl: string): asmcore.EmitState {
     s = s.write("__fn___fern_map_free" + suffix + ":\n");
     s = s.write("    movq 8(%rsp), %rax\n");         // box
@@ -1953,74 +2062,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // slot_is_reclaimable_strarr). Stack-arg ABI (arr at 8(%rsp));
     // %rbx/%r12/%r13 (callee-saved) hold arr/len/i across the per-element
     // calls (__fn___fern_str_free clobbers only %rax/%rcx/%rdx/%rsi/%r8).
-    s = s.write("__fn___fern_str_arr_free:\n");
-    s = s.write("    movq 8(%rsp), %rax\n");        // arr
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jz .Lsaf_ret\n");
-    s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
-    s = s.write("    jb .Lsaf_ret\n");
-    s = s.write("    movl -8(%rax), %ecx\n");       // rc
-    s = s.write(san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n");
-    s = s.write("    js .Lsaf_ret\n");              // negative = immortal -> skip
-    s = s.write("    cmpl $1, %ecx\n");
-    s = s.write("    jg .Lsaf_dec\n");              // rc>1 -> dec, keep
-    s = s.write("    jl .Lsaf_uf\n");               // rc==0 -> underflow (double free)
-    // rc==1: sole owner -> free every element string box, then the buffer.
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");
-    s = s.write("    movq %rax, %rbx\n");           // arr
-    s = s.write("    movq (%rbx), %r12\n");         // len @ [arr]
-    s = s.write("    movq $0, %r13\n");             // i
-    s = s.write(".Lsaf_loop:\n");
-    s = s.write("    cmpq %r12, %r13\n");
-    s = s.write("    jge .Lsaf_freebuf\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n"); // element i @ [arr+8+i*8]
-    s = s.write("    pushq %rax\n");
-    s = s.write("    call __fn___fern_str_free\n"); // rc-aware per-element free
-    s = s.write("    addq $8, %rsp\n");
-    s = s.write("    incq %r13\n");
-    s = s.write("    jmp .Lsaf_loop\n");
-    s = s.write(".Lsaf_freebuf:\n");
-    // buffer free: __fn___fern_arr_dec's rc==1 path (base=arr-16, class=cap+3).
-    s = s.write(quarantine_rc("-8(%rbx)"));
-    s = s.write("    movl -16(%rbx), %ecx\n");      // cap
-    s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
-    s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Lsaf_large\n");           // large tier -> recycle via __fern_large_push
-    s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
-    s = hev_free(s, "%rdx", "%rcx");
-    if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rcx,8), %rdi\n");   // old head
-    s = s.write("    movq %rdi, (%rdx)\n");         // *base = old head
-    s = s.write("    movq %rdx, (%r8,%rcx,8)\n");   // freelist[class] = base
-    }
-    s = s.write(".Lsaf_pop:\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    jmp .Lsaf_ret\n");
-    s = s.write(".Lsaf_dec:\n");
-    s = s.write("    subl $1, %ecx\n");
-    s = s.write("    movl %ecx, -8(%rax)\n");
-    s = s.write("    jmp .Lsaf_ret\n");
-    s = s.write(".Lsaf_uf:\n");
-    s = s.write("    incl __fern_rc_underflow(%rip)\n");
-    s = s.write(san_underflow_abort());
-    s = s.write(".Lsaf_ret:\n");
-    s = s.write("    ret\n");
-    // Large tier (#3425): recycle the >=512 KiB string[] outer buffer (base =
-    // arr-16, bytes = words*8) via __fern_large_push instead of leaking. A leaked
-    // buffer dies with the process in the per-window serial emit, but in the
-    // single-process -per-module-emit-all mode it ACCUMULATES across the batch and
-    // blows the arena. %rbx/%r12/%r13 are callee-saved across the call.
-    s = s.write(".Lsaf_large:\n");
-    s = s.write("    leaq -16(%rbx), %r8\n");        // base = arr - 16
-    s = s.write("    leaq 0(,%rcx,8), %rsi\n");      // bytes = words*8
-    s = s.write("    call __fern_large_push\n");
-    s = s.write("    jmp .Lsaf_pop\n");
+    s = emit_ir_arr_deep_free_variant(s, "str_arr_free", "saf", arr_deep_free_call("str_free"));
     // __fern_arrarr_free(arr) — SCALAR-array-of-arrays reclaim (#4355 slice 9):
     // the arr-of-arr sibling of __fn___fern_str_arr_free with the identical
     // guard chain and buffer free; only the per-element call differs — each
@@ -2033,69 +2075,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // inner `call __fn___fern_str_arr_free` text trips the negative asm-grep
     // contracts (strarr-elem-alias-excluded) in every unrelated program.
     if (s.has_need("arrarr_free")) {
-    s = s.write("__fn___fern_arrarr_free:\n");
-    s = s.write("    movq 8(%rsp), %rax\n");        // arr
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jz .Laaf_ret\n");
-    s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
-    s = s.write("    jb .Laaf_ret\n");
-    s = s.write("    movl -8(%rax), %ecx\n");       // rc
-    s = s.write(san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n");
-    s = s.write("    js .Laaf_ret\n");              // negative = immortal -> skip
-    s = s.write("    cmpl $1, %ecx\n");
-    s = s.write("    jg .Laaf_dec\n");              // rc>1 -> dec, keep
-    s = s.write("    jl .Laaf_uf\n");               // rc==0 -> underflow (double free)
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");
-    s = s.write("    movq %rax, %rbx\n");           // arr
-    s = s.write("    movq (%rbx), %r12\n");         // len @ [arr]
-    s = s.write("    movq $0, %r13\n");             // i
-    s = s.write(".Laaf_loop:\n");
-    s = s.write("    cmpq %r12, %r13\n");
-    s = s.write("    jge .Laaf_freebuf\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n"); // element i @ [arr+8+i*8]
-    s = s.write("    pushq %rax\n");
-    s = s.write("    call __fn___fern_arr_dec\n");  // inner buffer free (rc-guarded)
-    s = s.write("    addq $8, %rsp\n");
-    s = s.write("    incq %r13\n");
-    s = s.write("    jmp .Laaf_loop\n");
-    s = s.write(".Laaf_freebuf:\n");
-    s = s.write(quarantine_rc("-8(%rbx)"));
-    s = s.write("    movl -16(%rbx), %ecx\n");      // cap
-    s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
-    s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Laaf_large\n");           // large tier -> recycle via __fern_large_push
-    s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
-    s = hev_free(s, "%rdx", "%rcx");
-    if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rcx,8), %rdi\n");
-    s = s.write("    movq %rdi, (%rdx)\n");
-    s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
-    }
-    s = s.write(".Laaf_pop:\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    jmp .Laaf_ret\n");
-    s = s.write(".Laaf_dec:\n");
-    s = s.write("    subl $1, %ecx\n");
-    s = s.write("    movl %ecx, -8(%rax)\n");
-    s = s.write("    jmp .Laaf_ret\n");
-    s = s.write(".Laaf_uf:\n");
-    s = s.write("    incl __fern_rc_underflow(%rip)\n");
-    s = s.write(san_underflow_abort());
-    s = s.write(".Laaf_ret:\n");
-    s = s.write("    ret\n");
-    // Large tier (#3425): recycle the >=512 KiB arr-of-arr outer buffer instead of
-    // leaking (accumulates across a -per-module-emit-all batch otherwise).
-    s = s.write(".Laaf_large:\n");
-    s = s.write("    leaq -16(%rbx), %r8\n");        // base = arr - 16
-    s = s.write("    leaq 0(,%rcx,8), %rsi\n");      // bytes = words*8
-    s = s.write("    call __fern_large_push\n");
-    s = s.write("    jmp .Laaf_pop\n");
+    s = emit_ir_arr_deep_free_variant(s, "arrarr_free", "aaf", arr_deep_free_call("arr_dec"));
     }
     // __fern_strarrarr_free(arr) — STRING-array-of-arrays reclaim (#4355
     // slice 9): each element is a string[] INNER buffer released fully by
@@ -2103,69 +2083,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // rc-guarded). Same shell as __fn___fern_arrarr_free above; same
     // need-gating rationale.
     if (s.has_need("strarrarr_free")) {
-    s = s.write("__fn___fern_strarrarr_free:\n");
-    s = s.write("    movq 8(%rsp), %rax\n");        // arr
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jz .Lssaf_ret\n");
-    s = s.write("    cmpq $0x10000, %rax\n");
-    s = s.write("    jb .Lssaf_ret\n");
-    s = s.write("    movl -8(%rax), %ecx\n");
-    s = s.write(san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n");
-    s = s.write("    js .Lssaf_ret\n");
-    s = s.write("    cmpl $1, %ecx\n");
-    s = s.write("    jg .Lssaf_dec\n");
-    s = s.write("    jl .Lssaf_uf\n");
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");
-    s = s.write("    movq %rax, %rbx\n");
-    s = s.write("    movq (%rbx), %r12\n");
-    s = s.write("    movq $0, %r13\n");
-    s = s.write(".Lssaf_loop:\n");
-    s = s.write("    cmpq %r12, %r13\n");
-    s = s.write("    jge .Lssaf_freebuf\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n");
-    s = s.write("    pushq %rax\n");
-    s = s.write("    call __fn___fern_str_arr_free\n"); // inner string[] deep free
-    s = s.write("    addq $8, %rsp\n");
-    s = s.write("    incq %r13\n");
-    s = s.write("    jmp .Lssaf_loop\n");
-    s = s.write(".Lssaf_freebuf:\n");
-    s = s.write(quarantine_rc("-8(%rbx)"));
-    s = s.write("    movl -16(%rbx), %ecx\n");
-    s = s.write("    addq $3, %rcx\n");
-    s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Lssaf_large\n");          // large tier -> recycle via __fern_large_push
-    s = s.write("    leaq -16(%rbx), %rdx\n");
-    s = hev_free(s, "%rdx", "%rcx");
-    if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rcx,8), %rdi\n");
-    s = s.write("    movq %rdi, (%rdx)\n");
-    s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
-    }
-    s = s.write(".Lssaf_pop:\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    jmp .Lssaf_ret\n");
-    s = s.write(".Lssaf_dec:\n");
-    s = s.write("    subl $1, %ecx\n");
-    s = s.write("    movl %ecx, -8(%rax)\n");
-    s = s.write("    jmp .Lssaf_ret\n");
-    s = s.write(".Lssaf_uf:\n");
-    s = s.write("    incl __fern_rc_underflow(%rip)\n");
-    s = s.write(san_underflow_abort());
-    s = s.write(".Lssaf_ret:\n");
-    s = s.write("    ret\n");
-    // Large tier (#3425): recycle the >=512 KiB string[][] outer buffer instead of
-    // leaking (accumulates across a -per-module-emit-all batch otherwise).
-    s = s.write(".Lssaf_large:\n");
-    s = s.write("    leaq -16(%rbx), %r8\n");        // base = arr - 16
-    s = s.write("    leaq 0(,%rcx,8), %rsi\n");      // bytes = words*8
-    s = s.write("    call __fern_large_push\n");
-    s = s.write("    jmp .Lssaf_pop\n");
+    s = emit_ir_arr_deep_free_variant(s, "strarrarr_free", "ssaf", arr_deep_free_call("str_arr_free"));
     }
     // __fern_optarrarr_free(arr) — Option[<scalar-arr>][] reclaim (#4365):
     // walks a fresh, sole-owned array of OPTION boxes. Per element (an
@@ -2177,89 +2095,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // non-escaping Option-array locals (slot_is_reclaimable_optaarr). Same
     // need-gating rationale as the arrarr bodies above.
     if (s.has_need("optarrarr_free")) {
-    s = s.write("__fn___fern_optarrarr_free:\n");
-    s = s.write("    movq 8(%rsp), %rax\n");        // arr
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jz .Loaf_ret\n");
-    s = s.write("    cmpq $0x10000, %rax\n");       // low-addr guard
-    s = s.write("    jb .Loaf_ret\n");
-    s = s.write("    movl -8(%rax), %ecx\n");       // rc
-    s = s.write(san_poison_check("%ecx"));
-    s = s.write("    testl %ecx, %ecx\n");
-    s = s.write("    js .Loaf_ret\n");              // negative = immortal -> skip
-    s = s.write("    cmpl $1, %ecx\n");
-    s = s.write("    jg .Loaf_dec\n");              // rc>1 -> dec, keep
-    s = s.write("    jl .Loaf_uf\n");               // rc==0 -> underflow (double free)
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");
-    s = s.write("    movq %rax, %rbx\n");           // arr
-    s = s.write("    movq (%rbx), %r12\n");         // len @ [arr]
-    s = s.write("    movq $0, %r13\n");             // i
-    s = s.write(".Loaf_loop:\n");
-    s = s.write("    cmpq %r12, %r13\n");
-    s = s.write("    jge .Loaf_freebuf\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n"); // e = option box @ [arr+8+i*8]
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jz .Loaf_next\n");
-    s = s.write("    cmpq $0x10000, %rax\n");
-    s = s.write("    jb .Loaf_next\n");
-    s = s.write("    pushq %rax\n");
-    s = s.write("    call __fn___fern_rc_is_unique\n"); // shared box -> skip payload
-    s = s.write("    addq $8, %rsp\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jz .Loaf_box\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n"); // reload e
-    s = s.write("    movl (%rax), %ecx\n");         // tag @ e+0 (0 = Some/Ok)
-    s = s.write("    testl %ecx, %ecx\n");
-    s = s.write("    jnz .Loaf_box\n");
-    s = s.write("    movq 8(%rax), %rdi\n");        // payload buffer @ e+8
-    s = s.write("    pushq %rdi\n");
-    s = s.write("    call __fn___fern_arr_dec\n");  // payload free (rc-guarded)
-    s = s.write("    addq $8, %rsp\n");
-    s = s.write(".Loaf_box:\n");
-    s = s.write("    movq 8(%rbx,%r13,8), %rax\n"); // reload e
-    s = s.write("    pushq %rax\n");
-    s = s.write("    call __fn___fern_arr_dec\n");  // option box free (rc-guarded)
-    s = s.write("    addq $8, %rsp\n");
-    s = s.write(".Loaf_next:\n");
-    s = s.write("    incq %r13\n");
-    s = s.write("    jmp .Loaf_loop\n");
-    s = s.write(".Loaf_freebuf:\n");
-    s = s.write(quarantine_rc("-8(%rbx)"));
-    s = s.write("    movl -16(%rbx), %ecx\n");      // cap
-    s = s.write("    addq $3, %rcx\n");             // class = cap + 3 words
-    s = s.write("    cmpq $65536, %rcx\n");
-    s = s.write("    jae .Loaf_large\n");           // large tier -> recycle via __fern_large_push
-    s = s.write("    leaq -16(%rbx), %rdx\n");      // base = arr - 16
-    s = hev_free(s, "%rdx", "%rcx");
-    if (!rc_free_debug_on()) {
-    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
-    s = s.write("    movq (%r8,%rcx,8), %rdi\n");
-    s = s.write("    movq %rdi, (%rdx)\n");
-    s = s.write("    movq %rdx, (%r8,%rcx,8)\n");
-    }
-    s = s.write(".Loaf_pop:\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
-    s = s.write("    jmp .Loaf_ret\n");
-    s = s.write(".Loaf_dec:\n");
-    s = s.write("    subl $1, %ecx\n");
-    s = s.write("    movl %ecx, -8(%rax)\n");
-    s = s.write("    jmp .Loaf_ret\n");
-    s = s.write(".Loaf_uf:\n");
-    s = s.write("    incl __fern_rc_underflow(%rip)\n");
-    s = s.write(san_underflow_abort());
-    s = s.write(".Loaf_ret:\n");
-    s = s.write("    ret\n");
-    // Large tier (#3425): recycle the >=512 KiB Option[]-array outer buffer instead
-    // of leaking (accumulates across a -per-module-emit-all batch otherwise).
-    s = s.write(".Loaf_large:\n");
-    s = s.write("    leaq -16(%rbx), %r8\n");        // base = arr - 16
-    s = s.write("    leaq 0(,%rcx,8), %rsi\n");      // bytes = words*8
-    s = s.write("    call __fern_large_push\n");
-    s = s.write("    jmp .Loaf_pop\n");
+    s = emit_ir_arr_deep_free_variant(s, "optarrarr_free", "oaf", optarrarr_elem());
     }
     // __fern_map_free(box) — reclaim a FRESH, sole-owned map local (Perceus
     // map-local slice). The self-host asm map box is a RAW 16-byte __fern_alloc(16)
