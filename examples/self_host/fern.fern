@@ -101,6 +101,7 @@ import "./ssa_arm64";
 import "./ssa_wasm";
 import "./watbin";
 import "./constfold";
+import "./embed";
 import "./platforms";
 import "./caps";
 import "./modloader";
@@ -310,7 +311,7 @@ function is_flag(a: string): boolean {
 }
 
 function usage(): i32 {
-    eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-emit asm|core-module] [-o OUT] <entry.fern> [stdlib-root]\n");
+    eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]\n");
     eprint("       fern -fmt [-w | -d] <entry.fern>             (-w overwrites the file, -d prints a unified diff)\n");
     eprint("       fern -targets                                (list supported targets + capabilities)\n");
     eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
@@ -1305,6 +1306,31 @@ function report_decl_name_errors(mod: parser.Module): boolean {
     return true;
 }
 
+// fold_embedded_assets loads `-embed DIR` and substitutes every asset call in
+// the bundle, returning the rewritten bundle and 0, or the original bundle and
+// the exit code to answer with.
+//
+// It runs even when no directory was given, because that is the case where
+// `__fern_asset(...)` has to be REFUSED rather than ignored: a program asking
+// for a file nobody embedded must not compile into one that silently has none.
+function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, i32) {
+    var assets: embed.Assets = embed.no_assets();
+    if (embed_dir.len() > 0) {
+        var lr: embed.LoadResult = embed.load(embed_dir);
+        if (lr.err.len() > 0) {
+            eprint("fern: " + lr.err);
+            return (b, 1);
+        }
+        assets = lr.assets;
+    }
+    var folded: embed.Folded = embed.fold_assets(b.merged, assets);
+    if (folded.errs.len() > 0) {
+        for msg in folded.errs { eprint("fern: " + msg); }
+        return (b, 1);
+    }
+    return (Bundle { ...b, merged: folded.module }, 0);
+}
+
 // check_bundle type-checks a loaded program and reports its diagnostics,
 // returning the exit code `-check` answers with: 0 well-typed and within
 // every capability grant, 1 otherwise.
@@ -1882,6 +1908,10 @@ function run(): i32 {
     var pos: string[] = [];
     var use_ssa: boolean = false;
     var mode_scan: boolean = false;
+    // -embed DIR: the asset bundle __fern_asset / __fern_assets resolve
+    // against. Empty means the flag was not passed, which makes any use of
+    // either builtin the error (embed.fern / docs/EMBED.md).
+    var embed_dir: string = "";
     // `-O` is the release build: it elides every assert() check, matching
     // native. Constant folding is NOT what this flag selects on either
     // compiler — that runs on every build.
@@ -1968,6 +1998,10 @@ function run(): i32 {
             if (i >= av.len()) { return usage(); }
             target = av[i];
             target_given = true;
+        } else if (a == "-embed") {
+            i = i + 1;
+            if (i >= av.len()) { return usage(); }
+            embed_dir = av[i];
         } else if (a == "-o") {
             i = i + 1;
             if (i >= av.len()) { return usage(); }
@@ -2130,6 +2164,13 @@ function run(): i32 {
 
     var b: Bundle = load_bundle(entry_path, entry_mod, root);
     if (!b.ok) { return 1; }
+    // -embed: resolve __fern_asset / __fern_assets into string literals before
+    // anything else reads the tree, so the checker, the interpreter and every
+    // backend see literals and never learn that assets exist. Native folds them
+    // in the same place, ahead of checker.Check.
+    var (folded_bundle, fold_code) = fold_embedded_assets(b, embed_dir);
+    if (fold_code != 0) { return fold_code; }
+    b = folded_bundle;
     var merged: parser.Module = b.merged;
     var pkgs: caps.Pkg[] = b.pkgs;
 

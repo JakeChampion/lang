@@ -147,12 +147,12 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    passes (#7948), and `internal/codegen/wasmbin` has the `strbuf_*` lowerings it
    was missing (#7951). What is left is the driver — the playground needs a
    stdin/in-memory entry point rather than `fern.fern`, which is a CLI that takes
-   argv paths and writes executables, and it needs the stdlib inside the module,
-   which the self-host compiler has no way to put there (native embeds it with
-   `go:embed`; the self-host CLI reads it from a stdlib root on the command line).
-   `sleep_ms` remains the one builtin with no wasm lowering (#7947), which keeps
-   the native toolchain from compiling `fern.fern` for wasm, so this artifact still
-   has only one witness.
+   argv paths and writes executables. It also needs the stdlib inside the module,
+   and that half is done: `-embed` / `__fern_asset` / `__fern_assets` are on the
+   self-host compiler now (`examples/self_host/embed.fern`), so it can carry its
+   own stdlib the way native's `go:embed` does. `sleep_ms` remains the one builtin
+   with no wasm lowering (#7947), which keeps the native toolchain from compiling
+   `fern.fern` for wasm, so this artifact still has only one witness.
 
 ## Freeze preconditions (all must be green before native is frozen)
 

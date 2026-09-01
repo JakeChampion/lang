@@ -222,9 +222,9 @@ This is not a blocker so much as a signpost: the playground needs a driver
 shaped like `wasm_ir_run.fern` (stdin in, module out) — which is exactly what
 was measured above — not the CLI. A playground driver would additionally need
 the stdlib inside the module, since the self-host resolves `std/…` by host path
-(`modloader.fern:87`) where native serves it from `go:embed`. That is the first
-item under "What it would actually take" below, and the one piece of this whose
-mechanism does not exist on the self-host side at all.
+(`modloader.fern:87`) where native serves it from `go:embed`. The mechanism for
+that exists now on both compilers — see "What it would actually take" below —
+so what remains is the driver wiring it up.
 
 ## Two corrections to how this was framed
 
@@ -255,25 +255,30 @@ source names, with `strbuf_append` reading through the two-word SSO tag rather
 than the self-host's one-word strings. `sleep_ms` is what is left of that
 blocker.
 
-1. **An embedded stdlib for the self-host compiler.** A wasm-hosted compiler has
-   no host filesystem to read `internal/stdlib` from, and the self-host CLI has
-   no other way to find it: `fern.fern` takes the stdlib root as its second
-   positional argument (`fern.fern:1881`) where native serves it from `go:embed`
-   (`internal/stdlib/stdlib.go:37`). Native already has the mechanism the
-   self-host lacks — `-embed DIR` plus `__fern_asset("name")` /
-   `__fern_assets()`, resolved during const folding into ordinary string
-   literals (`docs/EMBED.md`). It works on the wasm target today: the whole
-   stdlib embedded into a core module is **1,610,275 bytes raw / 458,170
-   gzipped**, built in under a second, enumerating all 73 files at runtime under
-   wasmtime. So a driver carrying its own stdlib comes to roughly 3.95 MB raw /
-   1.07 MB gzipped — still 7x under the bundle shipping today. The work is
-   porting `-embed` to the self-host compiler, since the artifact has to be
-   produceable without the native toolchain for this precondition to mean
-   anything.
-2. **A playground driver** — `wasm_ir_run.fern`'s shape plus the stdlib
-   resolution above and the interpret/check entry points, exporting to JS rather
-   than reading stdin.
-3. **The LSP** is the long pole and is not costed here; it has no self-host
+**An embedded stdlib for the self-host compiler** was the second, and it has
+shipped too. A wasm-hosted compiler has no host filesystem to read
+`internal/stdlib` from, and the self-host CLI had no other way to find it:
+`fern.fern` takes the stdlib root as its second positional argument where native
+serves it from `go:embed` (`internal/stdlib/stdlib.go:37`). Native's mechanism —
+`-embed DIR` plus `__fern_asset("name")` / `__fern_assets()`, folded into
+ordinary string literals (`docs/EMBED.md`) — is now on both compilers:
+`examples/self_host/embed.fern`, gated against native case for case by
+`internal/e2eselfhost/self_host_embed_test.go`. The self-host compiler embeds
+its own stdlib and finds `std/io.fern` in the resulting binary by name.
+
+The size is not a problem either. The whole stdlib as a wasm core module is
+**1,610,275 bytes raw / 458,170 gzipped**, built in under a second, all 73 files
+enumerable at runtime under wasmtime — so a driver carrying its own stdlib comes
+to roughly 3.95 MB raw / 1.07 MB gzipped, still 7x under the bundle shipping
+today. The pass costs nothing measurable: compiling `checker_run.fern` takes
+11.0 s with it and 11.1 s without, over three runs each.
+
+What is left:
+
+1. **A playground driver** — `wasm_ir_run.fern`'s shape, resolving `std/…` out
+   of the embedded bundle rather than by host path (`modloader.fern:87`), plus
+   the interpret/check entry points, exporting to JS rather than reading stdin.
+2. **The LSP** is the long pole and is not costed here; it has no self-host
    counterpart at all.
 
 Precondition 3 of §3a — whether the native backends should be deleted at all,

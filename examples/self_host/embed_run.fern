@@ -1,0 +1,206 @@
+// examples/self_host/embed_run.fern — driver for the `-embed` asset bundle
+// (embed.fern, #6643).
+//
+// Two halves, and both matter. The BUNDLE half builds a real directory under
+// temp_dir and walks it, because sorted order, nested paths and binary bytes
+// are properties of the walk rather than of a hand-built Assets value. The
+// SUBSTITUTION half parses source and asserts on the tree that comes back,
+// because "resolved to a literal" is the only thing the rest of the compiler
+// can observe.
+//
+// Exit code 0 means every assertion held; a non-zero code identifies the one
+// that failed, so a regression names its own case without a stdout diff.
+
+import "./ast";
+import "./embed";
+import "./lexer";
+import "./parser";
+import "./util";
+
+// tree writes a fixture directory and returns its path, or "" if the host
+// would not let us.
+function tree(): string {
+    var dir: string = "";
+    match (temp_dir("fern-embed-run")) { Ok(d) => { dir = d; }, Err(e) => { return ""; } }
+    match (create_dir_all(dir + "/sub")) { Ok(u) => { }, Err(e) => { return ""; } }
+    // Written out of order on purpose: `load` has to sort, and a walk that
+    // happens to return them sorted would hide a missing sort.
+    match (write_file(dir + "/z.txt", "ZZZ")) { Ok(u) => { }, Err(e) => { return ""; } }
+    match (write_file(dir + "/a.txt", "AAA")) { Ok(u) => { }, Err(e) => { return ""; } }
+    match (write_file(dir + "/sub/b.txt", "BB")) { Ok(u) => { }, Err(e) => { return ""; } }
+    return dir;
+}
+
+// var_init_of digs the first StmtVar initialiser out of `main`.
+function var_init_of(mod: parser.Module): ast.Expr {
+    for fd in mod.funcs {
+        if (fd.name != "main") { continue; }
+        for st in fd.body {
+            match (st) {
+                ast.StmtVar(v) => { return v.init; },
+                _ => { }
+            }
+        }
+    }
+    return ast.ExprUnknown { kind: "none", line: 0, col: 0 };
+}
+
+// folded_init parses `src`, resolves assets against `a`, and returns the first
+// `var` initialiser in `main` plus every error the pass reported.
+function folded_init(src: string, a: embed.Assets): (ast.Expr, string[]) {
+    var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
+    var folded: embed.Folded = embed.fold_assets(mod, a);
+    return (var_init_of(folded.module), folded.errs);
+}
+
+// str_of returns a string literal's value, or "" for any other node.
+function str_of(e: ast.Expr): string {
+    match (e) {
+        ast.ExprString(s) => { return s.value; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+function main(): i32 {
+    // ---- 1. the bundle -------------------------------------------------
+    var dir: string = tree();
+    if (dir.len() == 0) { return 10; }
+    var lr: embed.LoadResult = embed.load(dir);
+    if (lr.err.len() != 0) { return 11; }
+    var a: embed.Assets = lr.assets;
+    if (!a.present) { return 12; }
+    if (a.root != dir) { return 13; }
+
+    // Sorted, slash-separated, relative to the root — "sub/b.txt", not the
+    // absolute path and not a host separator.
+    if (a.names.len() != 3) { return 14; }
+    if (a.names[0] != "a.txt") { return 15; }
+    if (a.names[1] != "sub/b.txt") { return 16; }
+    if (a.names[2] != "z.txt") { return 17; }
+    if (a.contents[0] != "AAA") { return 18; }
+    if (a.contents[1] != "BB") { return 19; }
+    if (a.contents[2] != "ZZZ") { return 20; }
+
+    if (embed.lookup(a, "sub/b.txt") != 1) { return 21; }
+    if (embed.lookup(a, "nope") != -1) { return 22; }
+
+    // A missing directory is an error, not an empty bundle: silently embedding
+    // nothing would turn a typo into a program that compiles and serves 404s.
+    if (embed.load(dir + "/not-here").err.len() == 0) { return 23; }
+
+    // An EMPTY directory is legitimate, and is not the same as no -embed.
+    var empty_dir: string = dir + "/empty";
+    match (create_dir_all(empty_dir)) { Ok(u) => { }, Err(e) => { return 24; } }
+    var er: embed.LoadResult = embed.load(empty_dir);
+    if (er.err.len() != 0) { return 25; }
+    if (!er.assets.present) { return 26; }
+    if (er.assets.names.len() != 0) { return 27; }
+    if (embed.format_available(er.assets) != "no assets were embedded") { return 28; }
+
+    // ---- 2. the miss diagnostic ----------------------------------------
+    if (embed.format_available(a) != "embedded assets: a.txt, sub/b.txt, z.txt") { return 30; }
+    // A near miss suggests; an unrelated name does not, because a suggestion
+    // that matches almost nothing is worse than none.
+    if (embed.suggest(a, "sub/b.tx") != "sub/b.txt") { return 31; }
+    if (embed.suggest(a, "totally-unrelated-xyzzy") != "") { return 32; }
+    if (embed.suggest(a, "a.txt") != "a.txt") { return 33; }
+
+    // ---- 3. __fern_asset -----------------------------------------------
+    var one: string = "function main(): i32 { var s: string = __fern_asset(\"a.txt\"); return s.len(); }\n";
+    var (e1, err1) = folded_init(one, a);
+    if (err1.len() != 0) { return 40; }
+    if (str_of(e1) != "AAA") { return 41; }
+
+    // Nested one level in: the pass has to reach every expression position,
+    // not just a `var` initialiser it happens to be handed.
+    var nested: string = "function main(): i32 { var s: string = __fern_asset(\"a.txt\") + __fern_asset(\"sub/b.txt\"); return s.len(); }\n";
+    var (e2, err2) = folded_init(nested, a);
+    if (err2.len() != 0) { return 42; }
+    match (e2) {
+        ast.ExprBinary(b) => {
+            if (str_of(b.left) != "AAA") { return 43; }
+            if (str_of(b.right) != "BB") { return 44; }
+        },
+        _ => { return 45; }
+    }
+
+    // ---- 4. every error the pass can report -----------------------------
+    var (e3, err3) = folded_init(one, embed.no_assets());
+    if (err3.len() != 1) { return 50; }
+    if (!util.contains(err3[0], "no assets were embedded")) { return 51; }
+
+    var missing: string = "function main(): i32 { var s: string = __fern_asset(\"a.tx\"); return 0; }\n";
+    var (e4, err4) = folded_init(missing, a);
+    if (err4.len() != 1) { return 52; }
+    if (!util.contains(err4[0], "did you mean \"a.txt\"?")) { return 53; }
+
+    var far: string = "function main(): i32 { var s: string = __fern_asset(\"totally-unrelated-xyzzy\"); return 0; }\n";
+    var (e5, err5) = folded_init(far, a);
+    if (err5.len() != 1) { return 54; }
+    if (!util.contains(err5[0], "embedded assets: a.txt")) { return 55; }
+    if (util.contains(err5[0], "did you mean")) { return 56; }
+
+    var arity: string = "function main(): i32 { var s: string = __fern_asset(\"a.txt\", \"b\"); return 0; }\n";
+    var (e6, err6) = folded_init(arity, a);
+    if (err6.len() != 1) { return 57; }
+    if (!util.contains(err6[0], "takes exactly one argument, got 2")) { return 58; }
+
+    // The name is checked SYNTACTICALLY, before anything could have rewritten
+    // it — an asset resolved from a computed name would have to exist at
+    // runtime, which is the one thing embedding rules out.
+    var computed: string = "function main(): i32 { var n: string = \"a.txt\"; var s: string = __fern_asset(n); return 0; }\n";
+    var (e7, err7) = folded_init(computed, a);
+    if (err7.len() != 1) { return 59; }
+    if (!util.contains(err7[0], "the name cannot be computed")) { return 60; }
+
+    // Two bad names report twice: one failure must not hide the next.
+    var two_bad: string = "function main(): i32 { var s: string = __fern_asset(\"nope1\") + __fern_asset(\"nope2\"); return 0; }\n";
+    var (e8, err8) = folded_init(two_bad, a);
+    if (err8.len() != 2) { return 61; }
+
+    // ---- 5. __fern_assets ----------------------------------------------
+    var all: string = "function main(): i32 { var xs = __fern_assets(); return xs.len(); }\n";
+    var (e9, err9) = folded_init(all, a);
+    if (err9.len() != 0) { return 70; }
+    match (e9) {
+        ast.ExprArray(arr) => {
+            // The element type is stamped whether or not the bundle is empty:
+            // an unstamped empty literal has no width for the checker.
+            if (arr.elem_ty != "(string, string)") { return 71; }
+            if (arr.elements.len() != 3) { return 72; }
+            match (arr.elements[1]) {
+                ast.ExprTuple(t) => {
+                    if (t.elements.len() != 2) { return 73; }
+                    if (str_of(t.elements[0]) != "sub/b.txt") { return 74; }
+                    if (str_of(t.elements[1]) != "BB") { return 75; }
+                },
+                _ => { return 76; }
+            }
+        },
+        _ => { return 77; }
+    }
+
+    var (e10, err10) = folded_init(all, er.assets);
+    if (err10.len() != 0) { return 78; }
+    match (e10) {
+        ast.ExprArray(arr2) => {
+            if (arr2.elements.len() != 0) { return 79; }
+            if (arr2.elem_ty != "(string, string)") { return 80; }
+        },
+        _ => { return 81; }
+    }
+
+    var (e11, err11) = folded_init(all, embed.no_assets());
+    if (err11.len() != 1) { return 82; }
+    if (!util.contains(err11[0], "no assets were embedded")) { return 83; }
+
+    var all_arity: string = "function main(): i32 { var xs = __fern_assets(\"a.txt\"); return 0; }\n";
+    var (e12, err12) = folded_init(all_arity, a);
+    if (err12.len() != 1) { return 84; }
+    if (!util.contains(err12[0], "takes no arguments, got 1")) { return 85; }
+
+    match (remove_dir_all(dir)) { Ok(u) => { }, Err(e) => { } }
+    write("embed: bundle and substitution agree\n");
+    return 0;
+}

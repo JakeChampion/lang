@@ -64,7 +64,7 @@ so explicitly.
 | --- | --- | --- |
 | `BACKEND-PARITY.md` | [tracker] | Cross-backend feature/limitation tracker + macOS support stance. |
 | `NATIVE-CONVERGENCE.md` | [policy] | How `internal/` and the self-host converge; freeze preconditions in #4451. |
-| `PLAYGROUND-SELFHOST-WASM.md` | [record] | Measured answer to §3a precondition 4 (#6643): what it costs to rebuild the browser playground on the self-host compiler. Not size- or memory-bound — 2.3 MB against the current bundle's 28.5 MB, running under wasmtime at 104 MiB. Blocked instead by the driver: `fern.fern` is a CLI, and the self-host compiler has no way to carry the stdlib inside the module. |
+| `PLAYGROUND-SELFHOST-WASM.md` | [record] | Measured answer to §3a precondition 4 (#6643): what it costs to rebuild the browser playground on the self-host compiler. Not size- or memory-bound — 2.3 MB against the current bundle's 28.5 MB, running under wasmtime at 104 MiB. Blocked instead by the driver: `fern.fern` is a CLI, and nothing yet wires the embedded stdlib into a stdin/JS entry point. |
 | `ROADMAP-AND-SELF-HOSTING.md` | [record] | 2026-05-15 tech-debt + self-host-readiness snapshot; live roadmap is CLAUDE.md + issues. |
 | `RESEARCH-ROADMAP.md` | [record] | Reading-order meta-index for the research docs; recommendations now filed as #4412–#4416. |
 | `FREESTANDING-CORE.md` | [policy] | Which builtins need a host and which do not; the core-vs-host rule and every judgement call (#6506). |
