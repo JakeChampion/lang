@@ -847,11 +847,18 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             if (o.i32_imm == 1) {
                 s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
             } else {
+                // __fern_oob_abort sits inside the `heap`-gated block, so a site
+                // branching to it must mark that need — the contract the socket
+                // sites broke in #6164, and the reason the slice check above
+                // marks it too. Only the CHECKED form branches; the elided one
+                // above emits no reference and needs nothing.
+                s = s.mark_heap();
                 s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x2, [x0]\n    cmp x1, x2\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    add x1, x1, #1\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
             }
         } else if (o.kind_tag == 89) {  // arr_set
             // pop val (top), idx, base; store at [data + (idx+1)*8]. Same bounds
             // check as arr_get: an out-of-range write aborts, never corrupts.
+            s = s.mark_heap();
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x3, [x0]\n    cmp x1, x3\n    b.lo 1f\n    b __fern_oob_abort\n1:\n    add x1, x1, #1\n    str x2, [x0, x1, lsl #3]\n");
         } else if (o.kind_tag == 90) {  // arr_len
             // pop base; length header at [data].
