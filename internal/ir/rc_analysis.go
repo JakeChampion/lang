@@ -1026,6 +1026,65 @@ func everyOccurrenceSafe(total, safe int) bool {
 // Scope temp with no owner. That one temp exclusively held 87,584 B of
 // module tables in the self-host driver: the sig and struct tables the
 // whole #7914 census is ranked by.
+// consumedArrayParamPositions is computeConsumedParams' whole-program,
+// ARRAY-only projection: per callee name, which parameter positions that
+// per-function analysis promotes to consumed-threaded. A call site needs the
+// CALLEE's verdict, and computeConsumedParams only ever runs for the function
+// being lowered.
+//
+// Arrays let this be a projection rather than a duplicate. Every other
+// condition in computeConsumedParams routes through the borrow verdict, and
+// isOwnedByDefaultType has no ArrayType arm — so for an array parameter
+// paramOwnedByDefault is always false, paramVerdict is always
+// NotOwnedType (never Borrowed), and typeIsStringArrayFree is always false.
+// The three verdict-dependent gates therefore cannot fire, leaving exactly
+// the conditions below. TestConsumedArrayPositionsMatchTheLoweringVerdict
+// pins the agreement so the two cannot drift apart.
+//
+// What a caller does with it: the consumed-threaded protocol
+// (emitConsumedArrayOverwriteDec) starts its ownership flag at 0, meaning the
+// slot still holds the CALLER's borrow, so the callee never releases the
+// buffer it was handed. A fresh temp passed there is owned by nobody — the
+// callee treats it as borrowed and the caller's stage-(b) reclaim refuses the
+// position, because paramCountedRetain reads false for a parameter the callee
+// hands out bare. One 16 B array literal leaked per call of the self-host's
+// `fold_all([], items)` shape, 119 blocks in a compile (#7914).
+func consumedArrayParamPositions(prog *ast.Program, info *checker.Info, trmcFuncs map[string]bool) map[string][]bool {
+	out := map[string][]bool{}
+	if !ast.RcFreeEnabled {
+		return out
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil || trmcFuncs[fn.Name] {
+			continue
+		}
+		reassigned := map[string]bool{}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			if a, ok := n.(*ast.Assign); ok {
+				if id, ok := a.Target.(*ast.Ident); ok {
+					reassigned[id.Name] = true
+				}
+			}
+			return true
+		})
+		var pos []bool
+		any := false
+		for _, p := range fn.Params {
+			ok := false
+			if _, isArr := p.Type.(ast.ArrayType); isArr && !p.Own && reassigned[p.Name] &&
+				consumedDropWired(p.Type, info, map[string]bool{}) {
+				ok = true
+				any = true
+			}
+			pos = append(pos, ok)
+		}
+		if any {
+			out[fn.Name] = pos
+		}
+	}
+	return out
+}
+
 func countedSeedOccurrences(fn *ast.FuncDecl) map[*ast.Ident]bool {
 	decls := map[string]int{}
 	seeds := map[string][]*ast.Ident{}
