@@ -27,6 +27,13 @@ import (
 // Every want was confirmed against BOTH oracles (bin/fern -interp and the
 // native x86-64 backend agreed on each), never read off the self-host run.
 // Alloc/free counts are the self-host build's own, pinned exactly.
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. Every row was re-measured against the commit
+// before it, and every live_bytes is unchanged — the clean rows stayed clean
+// and each refusal-leak row leaks the same bytes — so what moved is block
+// volume, not behaviour. A pre-fusion number in a row note below is the older
+// one.
 
 type rcEnumIfBlockCase struct {
 	name   string
@@ -122,7 +129,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 50, allocs: 150, frees: 150,
+			want: 50, allocs: 100, frees: 100,
 		}}
 }
 

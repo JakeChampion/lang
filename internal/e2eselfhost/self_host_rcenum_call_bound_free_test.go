@@ -33,6 +33,13 @@ import (
 //
 // Every want was confirmed against the native x86-64 backend. Exit 99 is
 // reserved for __rc_underflow_count().
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. Every row was re-measured against the commit
+// before it, and every live_bytes is unchanged — the clean rows stayed clean
+// and each refusal-leak row leaks the same bytes — so what moved is block
+// volume, not behaviour. A pre-fusion number in a row note below is the older
+// one.
 
 type rcenumCallFreeCase struct {
 	name   string
@@ -129,7 +136,7 @@ function round(i: i32): i32 {
     return a % 101;
 }
 ` + recfMain,
-			want: 12, allocs: 300, frees: 300,
+			want: 12, allocs: 200, frees: 200,
 		},
 		{
 			// A STRUCT payload through a registered producer — the deep drop runs

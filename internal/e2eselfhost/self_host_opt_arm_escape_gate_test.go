@@ -114,16 +114,22 @@ function main(): i32 {
 		// `"zz" + "zzz"` each boxed both operands per evaluation, 2100
 		// balanced alloc/free pairs that said nothing about the escape. Static
 		// string literals (#7080) removed them, dropping allocs 4500 -> 2400
-		// and frees 3300 -> 1200 while leaving the remainder untouched at
-		// 1200 — which is the point: a balanced pair cannot change it.
-		// 1200 boxes x 24 bytes is the 28800 live_bytes below.
+		// and frees 3300 -> 1200 while leaving the remainder untouched — which
+		// is the point: a balanced pair cannot change it.
+		//
+		// What DOES change it is the number of blocks one stranded string
+		// occupies. #7351 made that one rather than two, and the remainder fell
+		// 1200 -> 800 with the leak itself untouched: live_bytes is 28800 on
+		// both sides, the same bytes in fewer blocks.
 		//
 		// A SMALLER remainder means the escaping binding's string was released
 		// under a live alias — a dangle, not the leak this shape must keep. A
-		// larger one means something else stopped being reclaimed.
-		if allocs-frees != 1200 || live == 0 {
-			t.Errorf("allocs=%d frees=%d live_bytes=%d — want allocs-frees=1200 and a "+
-				"nonzero remainder", allocs, frees, live)
+		// larger one means something else stopped being reclaimed. Either way
+		// the live_bytes moves with it, which is what separates those from a
+		// pure block-count change.
+		if allocs-frees != 800 || live != 28800 {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want allocs-frees=800 at "+
+				"live_bytes 28800", allocs, frees, live)
 		}
 	})
 

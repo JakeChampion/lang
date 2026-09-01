@@ -43,6 +43,13 @@ import (
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. Every row was re-measured against the commit
+// before it, and every live_bytes is unchanged — the clean rows stayed clean
+// and each refusal-leak row leaks the same bytes — so what moved is block
+// volume, not behaviour. A pre-fusion number in a row note below is the older
+// one.
 
 type containerAliasCase struct {
 	name   string
@@ -268,7 +275,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var t: string = w("ab"); var n: i32 = 0; if (i % 2 == 0) { var v: string = t; var u: string = v; n = u.len(); } return n + t.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 5, allocs: 200, frees: 200,
+			want: 5, allocs: 100, frees: 100,
 		},
 		{
 			// REFUSED: the LAST link is returned, so the box outlives the frame.
@@ -280,7 +287,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 function esc(i: i32): string { var t: string = w("ab"); var v: string = t; var u: string = v; return u; }
 function round(i: i32): i32 { return esc(i).len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 200, frees: 0,
+			want: 21, allocs: 100, frees: 0,
 		},
 		{
 			// REFUSED: a MIDDLE link is stored into a container that outlives it,
@@ -291,7 +298,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 function sink(xs: string[]): i32 { return xs.len(); }
 function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; var u: string = v; var held: string[] = [v]; return u.len() + sink(held) + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 38, allocs: 300, frees: 100,
+			want: 38, allocs: 200, frees: 100,
 		},
 		{
 			// REFUSED DELIBERATELY, and this row is the reason the chain credit is
@@ -405,7 +412,7 @@ function round(i: i32): i32 {
     return s.len() + i;
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 74, allocs: 200, frees: 200,
+			want: 74, allocs: 100, frees: 100,
 		},
 		{
 			// The source read AFTER the alias, so both are live across the
@@ -556,7 +563,7 @@ function round(i: i32): i32 {
     return v.len() + i;
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 200, frees: 200,
+			want: 21, allocs: 100, frees: 100,
 		},
 		{
 			// The CANCELLED path (#4402 opt 1, string limb): the alias is read
@@ -574,7 +581,7 @@ function round(i: i32): i32 {
     return n + t.len() + i;
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 72, allocs: 200, frees: 200,
+			want: 72, allocs: 100, frees: 100,
 		},
 		{
 			// A PARAMETER is borrowed, never owned, so aliasing one may not RETAIN:
@@ -606,7 +613,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 function plen(p: string): i32 { var v: string = p; return v.len(); }
 function round(i: i32): i32 { var t: string = w("ab"); return plen(t) + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 200, frees: 200,
+			want: 21, allocs: 100, frees: 100,
 		},
 		{
 			// The conditional alias, first-class, and the reason the model is
@@ -621,7 +628,7 @@ function round(i: i32): i32 {
     return t.len() + i;
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 200, frees: 200,
+			want: 21, allocs: 100, frees: 100,
 		},
 		{
 			// `<scalar>.to_string()` — the "STR:" class has TEN producer families and
@@ -632,7 +639,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			src: `import "std/i32";
 function round(i: i32): i32 { var t: string = i.to_string(); var v: string = t; return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 77, allocs: 200, frees: 200,
+			want: 77, allocs: 100, frees: 100,
 		},
 		{
 			// `xs.join(sep)`. Base: allocs=700 frees=500, 3200 live.
@@ -640,7 +647,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			src: `import "std/array";
 function round(i: i32): i32 { var xs: string[] = ["ab", "cd"]; var t: string = xs.join(","); var v: string = t; return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 55, allocs: 700, frees: 700,
+			want: 55, allocs: 400, frees: 400,
 		},
 		{
 			// `<string>.replace(old, new)`. Base: allocs=400 frees=200, 3200 live.
@@ -649,7 +656,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var s: string = w("aXb"); var t: string = s.replace("X", "Y"); var v: string = t; return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 38, allocs: 400, frees: 400,
+			want: 38, allocs: 200, frees: 200,
 		},
 		{
 			// Formerly string_alias_trim_view_partial, the pinned view-class
@@ -664,7 +671,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var s: string = w("  ab  "); var t: str = s.trim(); var v: str = t; return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 55, allocs: 400, frees: 400,
+			want: 55, allocs: 200, frees: 200,
 		},
 		{
 			// REFUSED, and correctly so: a chain `var v = t; var u = v;` makes v itself
@@ -676,7 +683,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; var u: string = v; return u.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 200, frees: 200,
+			want: 21, allocs: 100, frees: 100,
 		},
 		{
 			// REFUSED: a REASSIGNED alias does not hold the box the credit describes
@@ -685,7 +692,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var t: string = w("ab"); var v: string = t; v = w("cd"); return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 400, frees: 0,
+			want: 21, allocs: 200, frees: 0,
 		},
 		{
 			// REFUSED, as a property of the class: a string-builder ACCUMULATOR is
@@ -695,7 +702,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			name: "string_accumulator_alias_refused",
 			src: `function round(i: i32): i32 { var s: string = ""; var k: i32 = 0; while (k < 3) { s = s + "x"; k = k + 1; } var v: string = s; return v.len() + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 600, frees: 0,
+			want: 21, allocs: 300, frees: 0,
 		},
 		{
 			// A FOR-IN ELEMENT source. Unchanged by this change — a loop element is
@@ -706,7 +713,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var xs: string[] = [w("ab")]; var n: i32 = 0; for e in xs { var v: string = e; n = n + v.len(); } return n + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 300, frees: 100,
+			want: 21, allocs: 200, frees: 100,
 		},
 		{
 			// A TUPLE-DESTRUCTURE BINDER source (`var (a, b) = mk(); var v = a;`) —
@@ -719,7 +726,7 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 function mk(): (string, i32) { return (w("ab"), 7); }
 function round(i: i32): i32 { var (a, b) = mk(); var v: string = a; return v.len() + b + i; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 57, allocs: 300, frees: 0,
+			want: 57, allocs: 200, frees: 0,
 		},
 		{
 			// The string[] limb (#7391), and the one whose alias takes the SAME
@@ -742,7 +749,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 68, allocs: 500, frees: 500,
+			want: 68, allocs: 300, frees: 300,
 		},
 		{
 			// The block-scoped alias site — the matrix's if_block row, first-class.
@@ -756,7 +763,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 51, allocs: 500, frees: 500,
+			want: 51, allocs: 300, frees: 300,
 		},
 		{
 			// ELEMENT BYTES read through both slots before the sweep — the answer
@@ -771,7 +778,7 @@ function round(i: i32): i32 {
     return (x[0][0] as i32 + src[1][0] as i32 + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 32, allocs: 500, frees: 500,
+			want: 32, allocs: 300, frees: 300,
 		},
 		{
 			// The CHAIN, credited as one set (#7750). It used to be refused —
@@ -793,7 +800,7 @@ function round(i: i32): i32 {
     return (x.len() + y.len() + src.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 68, allocs: 300, frees: 300,
+			want: 68, allocs: 200, frees: 200,
 		},
 		{
 			// REFUSED: an ELEMENT escapes from a MIDDLE link. A string[]'s
@@ -810,7 +817,7 @@ function round(i: i32): i32 {
     return (y.len() + e.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 68, allocs: 300, frees: 100,
+			want: 68, allocs: 200, frees: 100,
 		},
 		{
 			// The rc-ENUM chain (#7750). Its limb uses the alias sites for ESCAPE
@@ -864,7 +871,7 @@ function round(i: i32): i32 {
     return (e.len() + src.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 67, allocs: 500, frees: 100,
+			want: 67, allocs: 300, frees: 100,
 		},
 		{
 			// The string[] sibling of the row above, and it moved with it: a
@@ -882,7 +889,7 @@ function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc =
 function plen(p: string[]): i32 { var v: string[] = p; return v.len(); }
 function round(i: i32): i32 { var src: string[] = [mkstr("x")]; return (plen(src) + i) % 101; }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 70, allocs: 300, frees: 300,
+			want: 70, allocs: 200, frees: 200,
 		}}
 }
 
