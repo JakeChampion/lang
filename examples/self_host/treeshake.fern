@@ -19,7 +19,9 @@
 //   * a field/method name (`x.eq(...)` keeps every `*.eq`),
 //   * the trait method an operator desugars to (`a < b` keeps `*.cmp`,
 //     `a + b` keeps `*.add`, …) — covering operator overloading even if the
-//     `+`→`.add()` rewrite has not run yet.
+//     `+`→`.add()` rewrite has not run yet,
+//   * the method an array-method helper or an interposed collision provider was
+//     renamed away from (ts_kept_name), neither of which the syntax spells.
 // The collector rides astwalk's fold spine, so it reaches every Expr/Stmt
 // form the parser produces, and, unlike astwalk's capture analysis, does NOT
 // subtract lambda-local bindings — for reachability, keeping an extra
@@ -129,13 +131,38 @@ function ts_array_method_name(name: string): string {
     return "";
 }
 
-// ts_kept_name reports whether function `name` is reachable: by exact name, or
-// — for an array-method helper — by the method name it dispatches from being
-// in `refs`.
+// ts_interposed_method_name returns the `<m>` of a method name
+// parser.claim_method_name INTERPOSED — `B.scale` for a second trait providing
+// `scale` for one type, `__entry.add` for a second module providing `add` for
+// one type — or "" when `name` carries no interposition.
+//
+// The interposed name is one every call site is UNABLE to spell: the source
+// writes `.scale`, and which of the two definitions that means is settled after
+// this pass by dyn_arm_matches / dyn_provider_name. So the walk has to undo the
+// rename the way those two do, or it prunes the loser of every collision. An
+// ordinary name cannot be mistaken for one: module mangling joins with `__`,
+// and a `.` reaches a FuncDecl name only from claim_method_name.
+function ts_interposed_method_name(name: string): string {
+    var last_dot: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < name.len()) {
+        if (name[i] == b'.') { last_dot = i; }
+        i = i + 1;
+    }
+    if (last_dot < 0) { return ""; }
+    return slice_unchecked(name, last_dot + 1, name.len()) + "";
+}
+
+// ts_kept_name reports whether function `name` is reachable: by exact name, by
+// the method name an array-method helper dispatches from, or by the one an
+// interposed method was renamed away from — each of the three a name the syntax
+// spells where the FUNCTION does not.
 function ts_kept_name(name: string, refs: string[]): boolean {
     if (util.has_str(refs, name)) { return true; }
     var m: string = ts_array_method_name(name);
-    return m.len() > 0 && util.has_str(refs, m);
+    if (m.len() > 0 && util.has_str(refs, m)) { return true; }
+    var im: string = ts_interposed_method_name(name);
+    return im.len() > 0 && util.has_str(refs, im);
 }
 
 // treeshake returns `mod` with `mod.funcs` pruned to those reachable, by name,
