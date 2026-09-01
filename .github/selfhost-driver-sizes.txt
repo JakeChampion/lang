@@ -185,18 +185,24 @@
 # are the ones driver-sizes measured, pasted from its own corrected-baseline
 # block — none is derived or scaled.
 
-fern.fern 28080148
-asm_load_run.fern 23053940
-asm_modload_run.fern 21812852
-asm_ir_run.fern 21660428
-asm_run.fern 21128156
-wasm_ir_run.fern 21004844
-wasm_run.fern 20963548
-wasm_runio_run.fern 20925740
-asm_pathprobe_run.fern 20195164
-ssa_lift_scan_run.fern 19910964
-asm_ir_elig_run.fern 19035788
-irlower_run.fern 19913900
-checker_modload_run.fern 5890620
-ssa_emit_run.fern 5127420
-ssa_run.fern 4921036
+# 2026-09-01 — every row shrank 7.5–10.4%, the whole table again: the x86-64
+# assembler now relaxes in-range jmp/jcc to their 2-byte rel8 forms (#7899),
+# and every driver here is an x86-64 ELF it links. The tracked artifact goes
+# 28080148 -> 25163796. Numbers pasted from driver-sizes' corrected-baseline
+# block.
+
+fern.fern 25163796
+asm_load_run.fern 21301828
+asm_modload_run.fern 19954172
+asm_ir_run.fern 19814044
+asm_run.fern 19295564
+wasm_ir_run.fern 19186364
+wasm_run.fern 19149164
+wasm_runio_run.fern 19115452
+asm_pathprobe_run.fern 18401276
+ssa_lift_scan_run.fern 18018772
+asm_ir_elig_run.fern 17200908
+irlower_run.fern 18021740
+checker_modload_run.fern 5362236
+ssa_emit_run.fern 4742412
+ssa_run.fern 4540124
