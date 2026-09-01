@@ -87,31 +87,31 @@ x86_64/utf8_ingest_validated.ir	23599610
 # UNBASELINED here for one CI run, which is the gate saying "measured,
 # recorded, not yet compared" — paste that run's block in rather than guessing.
 aarch64/array_append.text	540
-aarch64/array_append.ir	69046974
+aarch64/array_append.ir	61845690
 aarch64/array_index.text	517
-aarch64/array_index.ir	63698033
+aarch64/array_index.ir	51467989
 aarch64/ascii_scan.text	1033
-aarch64/ascii_scan.ir	78155927
+aarch64/ascii_scan.ir	74108819
 aarch64/call_overhead.text	515
-aarch64/call_overhead.ir	33599627
+aarch64/call_overhead.ir	26624941
 aarch64/closure_call.text	430
-aarch64/closure_call.ir	209928045
+aarch64/closure_call.ir	188298044
 aarch64/enum_match.text	561
-aarch64/enum_match.ir	174375068
+aarch64/enum_match.ir	135450067
 aarch64/int_loop.text	99
-aarch64/int_loop.ir	60000026
+aarch64/int_loop.ir	51000025
 aarch64/map_int.text	3678
-aarch64/map_int.ir	83984882
+aarch64/map_int.ir	68094245
 aarch64/map_probe_chain.text	3698
-aarch64/map_probe_chain.ir	800884878
+aarch64/map_probe_chain.ir	657975402
 aarch64/map_string.text	4817
-aarch64/map_string.ir	204436258	2
+aarch64/map_string.ir	169434945	2
 aarch64/sort_inplace.text	780
-aarch64/sort_inplace.ir	132740196
+aarch64/sort_inplace.ir	116219454
 aarch64/sort_ints.text	2712
-aarch64/sort_ints.ir	117581521
+aarch64/sort_ints.ir	107322459
 aarch64/string_build.text	1131
-aarch64/string_build.ir	175985640
+aarch64/string_build.ir	165944336
 aarch64/string_count_byte.text	551
 aarch64/string_count_byte.ir	295440050
 aarch64/string_find_byte.text	1921
@@ -119,14 +119,14 @@ aarch64/string_find_byte.ir	123872451
 aarch64/string_rfind_byte.text	2523
 aarch64/string_rfind_byte.ir	111734449
 aarch64/string_scan.text	1455
-aarch64/string_scan.ir	142229869
+aarch64/string_scan.ir	130819453
 aarch64/string_slice.text	518
-aarch64/string_slice.ir	164760114
+aarch64/string_slice.ir	156300111
 aarch64/struct_drop.text	2595
-aarch64/struct_drop.ir	655620288
+aarch64/struct_drop.ir	606740287
 aarch64/tokenize.text	959
-aarch64/tokenize.ir	165150114
+aarch64/tokenize.ir	134280111
 aarch64/utf8_ingest_unchecked.text	46292
-aarch64/utf8_ingest_unchecked.ir	21891227
+aarch64/utf8_ingest_unchecked.ir	18247465
 aarch64/utf8_ingest_validated.text	46816
-aarch64/utf8_ingest_validated.ir	30343231
+aarch64/utf8_ingest_validated.ir	24488669
