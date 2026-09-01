@@ -1643,7 +1643,8 @@ pub function wasm_ir_deferrals_ok(cache: irlower.LowerResult[]): boolean {
         // wasm_poll (#4316) proved.
         // open_file (open_reader/open_writer/open_appender) + writer_write NOW lower
         // on the wasm IR path (#4372): $__fern_open_file does path_open under preopen
-        // fd 3 (openat-flags -> WASI oflags/rights/fdflags) and $__fern_writer_write
+        // fd 3 (openat-flags -> WASI oflags/rights/fdflags), boxing the outcome as a
+        // Result[Reader|Writer, IoError] (#7758), and $__fern_writer_write
         // fd_writes the bytes — reusing file_imports' path_open + the fd_write import.
         // subprocess (#4320) and FFI __c_call<n> (#4375) are NOT deferred — both
         // are unsupportable on wasm (no process spawn, no C ABI), so the driver
@@ -3398,9 +3399,8 @@ function emit_host_op_wat(o: ir.Op): string {
         return "    call $__fern_read_all_stdin\n";
     }
     if (o.kind_tag == 168) {  // read_line
-        // 0-arg -> read one line of stdin (fd 0), push a fresh string block
-        // (the line without its trailing newline). The helper
-        // ($__fern_read_line, result i32) is emitted caller-side in
+        // [fd] -> read one line from it, push a fresh Option[string]. The helper
+        // ($__fern_read_line, param fd i32, result i32) is emitted caller-side in
         // wasm_ir_run with the fd_read import + the heap runtime.
         return "    call $__fern_read_line\n";
     }
@@ -3434,8 +3434,9 @@ function emit_host_op_wat(o: ir.Op): string {
     }
     if (o.kind_tag == 203) {  // open_file (#4372)
         // stack: path box -> push the openat flags (i32_imm) -> $__fern_open_file
-        // (path_open under preopen fd 3) -> fd (>= 0, a bare Reader/Writer) or
-        // -errno. wasm_ir_run gates in file_imports (path_open) on the open_file need.
+        // (path_open under preopen fd 3) -> a fresh Result[Reader|Writer, IoError]
+        // box whose Ok payload is the fd a Reader/Writer IS (#7758). wasm_ir_run
+        // gates in file_imports (path_open) on the open_file need.
         return "    i32.const " + util.i32_to_string(o.i32_imm) + "\n    call $__fern_open_file\n";
     }
     if (o.kind_tag == 202) {  // writer_write (#4372)
@@ -6667,15 +6668,18 @@ pub function writefile_func(): string {
     o = o + "    (local.get $tmp))\n";
     return o;
 }
-// open_file_func emits $__fern_open_file(path_box, openat_flags) → fd (>= 0) or
-// -errno (#4372 file half): open `path` under preopen fd 3 via path_open, mapping
-// the openat flags the register backends pass (0 = O_RDONLY, 577 = O_WRONLY|
-// O_CREAT|O_TRUNC, 1089 = O_WRONLY|O_CREAT|O_APPEND) to WASI oflags / rights_base /
-// fdflags. The new fd lands at scratch addr 16 (the same slot write_file uses).
+// open_file_func emits $__fern_open_file(path_box, openat_flags) → a fresh
+// Result[Reader|Writer, IoError] box (#4372 file half, #7758): open `path` under
+// preopen fd 3 via path_open, mapping the openat flags the register backends pass
+// (0 = O_RDONLY, 577 = O_WRONLY|O_CREAT|O_TRUNC, 1089 = O_WRONLY|O_CREAT|O_APPEND)
+// to WASI oflags / rights_base / fdflags. The new fd lands at scratch addr 16 (the
+// same slot write_file uses) and becomes the Ok payload — a Reader/Writer IS its
+// fd; a non-zero WASI errno becomes Err($__fern_build_io_error). Result box shape
+// [tag@0, payload@4] via $__fern_str_box, matching remove_file / stat.
 pub function open_file_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_open_file (param $np i32) (param $flags i32) (result i32)\n";
-    o = o + "    (local $err i32) (local $oflags i32) (local $rights i64) (local $fdflags i32)\n";
+    o = o + "    (local $err i32) (local $oflags i32) (local $rights i64) (local $fdflags i32) (local $res i32)\n";
     o = o + "    (if (i32.eq (local.get $flags) (i32.const 0)) (then\n";
     o = o + "      (local.set $oflags (i32.const 0)) (local.set $rights (i64.const 6)) (local.set $fdflags (i32.const 0)))\n";
     o = o + "    (else (if (i32.eq (local.get $flags) (i32.const 1089)) (then\n";
@@ -6683,8 +6687,14 @@ pub function open_file_func(): string {
     o = o + "    (else\n";
     o = o + "      (local.set $oflags (i32.const 9)) (local.set $rights (i64.const 68)) (local.set $fdflags (i32.const 0))))))\n";
     o = o + "    (local.set $err (call $path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (local.get $oflags) (local.get $rights) (i64.const 0) (local.get $fdflags) (i32.const 16)))\n";
-    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then (return (i32.sub (i32.const 0) (local.get $err)))))\n";
-    o = o + "    (i32.load (i32.const 16)))\n";
+    o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
+    o = o + "      (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "      (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (local.get $err) (local.get $np)))\n";
+    o = o + "      (return (local.get $res))))\n";
+    o = o + "    (i32.store (local.get $res) (i32.const 0))\n";
+    o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (i32.load (i32.const 16)))\n";
+    o = o + "    (local.get $res))\n";
     return o;
 }
 // writer_write_func emits $__fern_writer_write(fd, str_box) → bytes written (>= 0)
@@ -6702,16 +6712,16 @@ pub function writer_write_func(): string {
     o = o + "    (i32.load (i32.const 8)))\n";
     return o;
 }
-// read_line_func emits $__fern_read_line (no args -> Option[string]): one line of
-// stdin INCLUDING its trailing '\n', Some(line) / None at EOF (#4369 — matches
-// native, replacing the old bare-string-stripped block). Reads fd 0 ONE BYTE at
+// read_line_func emits $__fern_read_line (fd -> Option[string]): one line of
+// the fd INCLUDING its trailing '\n', Some(line) / None at EOF (#4369 — matches
+// native, replacing the old bare-string-stripped block). Reads the fd ONE BYTE at
 // a time via fd_read (iovec {ptr,len} at addr 0, byte count at addr 8), stopping
 // at '\n' (len includes it), boxes [len:i32][bytes], and wraps it in an Option
 // box [tag@0, payload@4] via __fern_str_box — the same string + Option layout
 // reader_read_chunk_func builds. Heap-gated (op_allocates).
 pub function read_line_func(): string {
     var o: string = "";
-    o = o + "  (func $__fern_read_line (result i32)\n";
+    o = o + "  (func $__fern_read_line (param $fd i32) (result i32)\n";
     o = o + "    (local $buf i32) (local $nread i32) (local $len i32) (local $blk i32) (local $i i32) (local $opt i32)\n";
     o = o + "    (local.set $buf (call $__fern_alloc (i32.const 256)))\n";
     o = o + "    (local.set $len (i32.const 0))\n";
@@ -6725,7 +6735,7 @@ pub function read_line_func(): string {
     o = o + "      (br_if $d (i32.ge_u (local.get $len) (i32.const 256)))\n";
     o = o + "      (i32.store (i32.const 0) (i32.add (local.get $buf) (local.get $len)))\n";
     o = o + "      (i32.store (i32.const 4) (i32.const 1))\n";
-    o = o + "      (drop (call $fd_read (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
+    o = o + "      (drop (call $fd_read (local.get $fd) (i32.const 0) (i32.const 1) (i32.const 8)))\n";
     o = o + "      (local.set $nread (i32.load (i32.const 8)))\n";
     o = o + "      (br_if $d (i32.eqz (local.get $nread)))\n";
     o = o + "      (local.set $len (i32.add (local.get $len) (i32.const 1)))\n";
@@ -8437,7 +8447,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // is emitted from the module's declarations. A program whose only allocation
     // is a wrapper's return area / lifted string block (module_extern_needs_heap)
     // would otherwise emit `call $__fern_alloc` against nothing.
-    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
+    if (mode == 2 || module_extern_needs_heap(mod) || need(needs, "@allocates") || need(needs, "@uses_arr_i32_helpers") || need(needs, "@uses_i32_to_string") || need(needs, "@uses_i64_to_string") || need(needs, "@uses_u64_to_string") || need(needs, "@uses_u32_to_string") || need(needs, "@uses_chr") || need(needs, "@uses_strbuf") || need(needs, "env") || need(needs, "stat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "sleep_ms") || need(needs, "read_chunk") || need(needs, "reader_close") || need(needs, "open_file") || need(needs, "wasm_poll") || need(needs, "tcp_connect") || need(needs, "tcp_send") || need(needs, "tcp_recv") || need(needs, "tcp_listen") || need(needs, "tcp_accept") || need(needs, "udp_send") || need(needs, "poll")) {
         parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv)));
         parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv)));
     }
@@ -8515,7 +8525,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // sibling of native wasmbin's __build_io_error / asm_ir's
     // __fern_io_error). Emit it once whenever any fs op is present so the
     // helpers' Err/Some payloads carry a matchable variant, not a raw errno.
-    if (need(needs, "stat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")) { parts = parts.append(build_io_error_func(8)); }
+    if (need(needs, "stat") || need(needs, "remove_file") || need(needs, "create_dir_all") || need(needs, "read_dir") || need(needs, "remove_dir_all") || need(needs, "temp_dir") || need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file") || need(needs, "open_file")) { parts = parts.append(build_io_error_func(8)); }
     // $__fern_stat(path, fstype): path_filestat_get -> FileStat struct +
     // Result box. Heap-backed (allocates the buffer + boxes), so folded into
     // the heap gate above.

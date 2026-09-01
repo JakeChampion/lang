@@ -15,16 +15,19 @@ import (
 // that writes to stdout and stderr through their Writers (fds 1 / 2), captures the
 // stdout bytes, and checks the returned byte count — proving stdout()/stderr()
 // (i32 fd constants), Writer.write (inline write(2)) and Writer.close (shared close)
-// lower on the IR path. A Writer is a bare fd, mirroring the self-host Reader.
+// lower on the IR path. A Writer is REPRESENTED by its bare fd, but it is typed
+// `Writer` — stdout() / stderr() return the same nominal type native gives them
+// (#7758), so the annotations below are the ones native accepts.
 //
 // "hello writer\n" is 13 bytes, so main returns 13 (the write count) and stdout
-// carries the line. open_reader/open_writer/open_appender (the file half) are a
-// separate follow-up and are not exercised here.
+// carries the line. Writer.write's RESULT still diverges from native here — the
+// self-host gives the byte count where native gives Option[IoError] — which is
+// why `n` is read from it; the constructors are what #7758 converged.
 const writerStdoutProg = `function main(): i32 {
-    var w: i32 = stdout();
+    var w: Writer = stdout();
     var n: i32 = w.write("hello writer\n");
     w.close();
-    var e: i32 = stderr();
+    var e: Writer = stderr();
     e.write("err line\n");
     e.close();
     return n;

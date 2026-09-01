@@ -188,10 +188,11 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 
 // __fern_tcp_accept is a Fern runtime function (#2649): asmcore.rt_src_tcp_accept — accept(2) with a NULL addr/addrlen.
 
-// __fern_open_fd is a Fern runtime function (#2649): asmcore.rt_src_open_fd,
-// emitted via emit_ir_runtime_fern_fn and gated on the open_file need. It
-// NUL-terminates the path and openat(AT_FDCWD, pathz, flags, mode)s, returning
-// the raw fd or -errno; it allocates the NUL-term buffer, so it needs the heap.
+// __fern_open_res is a Fern runtime function (#2649): asmcore.rt_src_open_res,
+// emitted in the fs bundle below and gated on the open_file need. It
+// NUL-terminates the path and openat(AT_FDCWD, pathz, flags, mode)s, wrapping
+// the outcome as Ok(fd) / Err(io_error) (#7758); it allocates the NUL-term
+// buffer and the Result box, so it needs the heap.
 // __fern_sleep_ms is a Fern runtime function (#2649): asmcore.rt_src_sleep_ms.
 // It writes the timespec into __fern_scratch, so it joins the scratch gate.
 
@@ -4295,12 +4296,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // -errno. Inline (no runtime helper): read data=box[0], len=box[8].
             s = s.write("    popq %rsi\n    popq %rdi\n    movq 8(%rsi), %rdx\n    movq (%rsi), %rsi\n    movq $1, %rax\n    syscall\n    pushq %rax\n");
         } else if (o.kind_tag == 203) {  // open_file (#4372)
-            // [path box]; the Fern __fn___fern_open_fd(path, flags(imm), 0644)
-            // -> fd / -errno via the stack ABI: args pushed 3rd-first, so
-            // param[0] lands at the lowest address. Allocates the NUL-term
-            // buffer, so heap + open_file needs.
+            // [path box]; the Fern __fn___fern_open_res(path, flags(imm), 0644)
+            // -> a fresh Result[Reader|Writer, IoError] box via the stack ABI:
+            // args pushed 3rd-first, so param[0] lands at the lowest address.
+            // Allocates the NUL-term buffer + the Result box, so heap +
+            // open_file needs.
             s = s.write("    popq %rdi\n    movq $" + util.i32_to_string(o.i32_imm) + ", %rsi\n    movq $420, %rdx\n");
-            s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_open_fd\n    addq $24, %rsp\n    pushq %rax\n");
+            s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_open_res\n    addq $24, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("open_file");
         } else if (o.kind_tag == 219) {  // clz
             // LZCNT (BMI1) is DEFINED at zero -- it returns the operand width,
@@ -4413,9 +4415,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    call __fn___fern_read_all_stdin\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("read_all_stdin");
         } else if (o.kind_tag == 168) {  // read_line
-            // no args -> read one line from stdin into a fresh string box (the AST
-            // path's __fern_read_line, which allocates), push the box (a value op).
-            s = s.write("    call __fn___fern_read_line\n    pushq %rax\n");
+            // [fd] IS param[0] (+16); call the Fern-compiled __fn___fern_read_line
+            // (#2649) via the stack ABI -> a fresh Option[string], which allocates.
+            s = s.write("    call __fn___fern_read_line\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("heap"); s = s.need("str_read_line");
         } else if (o.kind_tag == 169) {  // read_file
             // [pathbox] IS param[0] (+16); call the Fern-compiled __fn___fern_read_file
@@ -6981,7 +6983,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // additionally calls the monotonic_ns builtin (op-mediated, so recognized in
     // the bundle like any builtin; its __fn___fern_monotonic_ns is emitted above,
     // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
-    if (s.has_need("stat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
+    if (s.has_need("stat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file")) {
         s = s.write("    .text\n");
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64"); }
@@ -6994,6 +6996,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir("x86_64"); }
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir("x86_64"); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all("x86_64"); }
+        if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res("x86_64"); }
         s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
     }
     // env — now a Fern runtime function (#2649): walks the envp array (via
@@ -7047,10 +7050,6 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("tcp_accept")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept("x86_64"), all_structs, s);
-    }
-    if (s.has_need("open_file")) {
-        s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_open_fd("x86_64"), all_structs, s);
     }
     if (s.has_need("sleep_ms")) {
         s = s.write("    .text\n");

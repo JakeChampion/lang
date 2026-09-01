@@ -23,7 +23,7 @@ func movzX3(imm16 uint32) []byte {
 //
 // The mmap checks can pin x3, because that IS mmap's flags argument — the ABI
 // fixes the register. The openat flag translation cannot: it happens inside
-// __fern_open_fd, which is compiled Fern (#2649), so which register holds the
+// __fern_open_res, which is compiled Fern (#2649), so which register holds the
 // value is a register-allocation detail. Pinning one made this test fail on a
 // migration that changed nothing observable.
 func hasMovzImm(raw []byte, imm16 uint32) bool {
@@ -68,7 +68,7 @@ func TestSelfHostArm64DarwinMmapFlags(t *testing.T) {
 
 	srcPath := filepath.Join(dir, "mmapflags.fern")
 	// The concat forces the arena runtime in; open_writer pulls in
-	// __fern_open_fd, whose openat FLAGS are the same class of per-OS constant
+	// __fern_open_res, whose openat FLAGS are the same class of per-OS constant
 	// (irlower hands it Linux 577 / 1089 target-agnostically).
 	src := "function main(): i32 { var s: string = \"a\" + \"b\"; var w = open_writer(s); return 0; }\n"
 	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
@@ -78,7 +78,7 @@ func TestSelfHostArm64DarwinMmapFlags(t *testing.T) {
 	darwinFlags := movzX3(0x1002) // MAP_ANON | MAP_PRIVATE          (XNU)
 	linuxFlags := movzX3(0x4022)  // MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE
 
-	// 1537 = O_WRONLY|O_CREAT|O_TRUNC on XNU, the translation __fern_open_fd
+	// 1537 = O_WRONLY|O_CREAT|O_TRUNC on XNU, the translation __fern_open_res
 	// applies to the Linux 577 the IR hands it. Present only on the darwin emit.
 	const darwinOTrunc = 1537
 

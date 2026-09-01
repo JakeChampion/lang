@@ -604,11 +604,13 @@ pub function op_tcp_accept(): Op { return op0("tcp_accept"); }
 // a bare fd (like a Reader — see op_read_chunk). `stdout()`/`stderr()` lower to
 // the i32 constants 1/2 directly (no op); `Writer.close()` reuses op_reader_close.
 pub function op_writer_write(): Op { return op0("writer_write"); }
-// `open_file` [path box] -> i32 fd (or -errno): NUL-terminate the path and
-// openat(AT_FDCWD, path, flags, 0644). `flags` is baked into the immediate so
-// one op covers open_reader (O_RDONLY=0), open_writer (O_WRONLY|O_CREAT|O_TRUNC
-// =577) and open_appender (O_WRONLY|O_CREAT|O_APPEND=1089) — the file half of
-// the streaming Reader/Writer surface (#4372).
+// `open_file` [path box] -> a fresh `Result[Reader|Writer, IoError]` box:
+// NUL-terminate the path, openat(AT_FDCWD, path, flags, 0644), then Ok(fd) or
+// Err(io_error(errno, path)). `flags` is baked into the immediate so one op
+// covers open_reader (O_RDONLY=0), open_writer (O_WRONLY|O_CREAT|O_TRUNC=577)
+// and open_appender (O_WRONLY|O_CREAT|O_APPEND=1089) — the file half of the
+// streaming Reader/Writer surface (#4372). The Ok payload is the bare fd a
+// Reader/Writer is represented by (#7758).
 pub function op_open_file(flags: i32): Op {
     return Op { decl: 0 - 1, kind_tag: kind_id("open_file"), i32_imm: flags, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
@@ -849,10 +851,11 @@ pub function op_eprint_str(): Op { return op0("eprint_str"); }
 // inline sys_exit / proc_exit per backend — no runtime helper). It never returns;
 // the pushed dummy keeps the operand-stack shape for a surrounding statement drop.
 pub function op_exit(): Op { return op0("exit"); }
-// `read_line` reads up to 256 bytes (one line) from stdin and returns a fresh
-// string box `{data, len}` (a VALUE op — no args, leaves the box on the stack).
-// Lowers to each backend's __fern_read_line helper. No wasm stdin, so a read_line
-// module is wasm-ineligible (wasm_eligible) and is refused there.
+// `read_line` pops an fd and reads up to 256 bytes (one line) from it, pushing
+// `Option[string]` — Some(line, newline included) or None at EOF before any byte.
+// The fd is an operand, not fd 0, because `r.read_line()` on a file Reader has to
+// read THAT reader (a Reader is its fd); the bare `read_line()` builtin lowers a
+// const 0 for it. Lowers to each backend's __fern_read_line helper.
 pub function op_read_line(): Op { return op0("read_line"); }
 // `read_file` pops a path string value and reads the whole named file, pushing a
 // fresh Result[string, IoError] box: Ok(contents) on success, Err(_) on any I/O
@@ -2007,7 +2010,7 @@ function pops0(t: i32): boolean {
         || t == 121                                                      // opt_none
         || t == 147                                                      // dyn_dispatch (args in locals)
         || t == 152 || t == 153 || t == 155 || t == 156 || t == 157      // block, loop, else, end, br
-        || t == 167 || t == 168                                          // read_int, read_line
+        || t == 167                                                      // read_int
         || t == 180                                                      // args
         || t == 182 || t == 183 || t == 184                              // monotonic_ns, now_ns, now_unix_ms
         || t == 186                                                      // random_i32
@@ -2052,6 +2055,7 @@ function pops1_io(t: i32): boolean {
         || t == 161 || t == 162 || t == 163 || t == 164 || t == 165 || t == 166  // print_*, putchar, exit
         || t == 169 || t == 233 || t == 171 || t == 172 || t == 173      // read_file, read_file_bytes, read_dir, remove_dir_all, remove_file
         || t == 174 || t == 175 || t == 176 || t == 179 || t == 181      // temp_dir, stat, env, reader_close, sleep_ms
+        || t == 168                                                      // read_line (fd)
         || t == 231 || t == 232                                          // create_dir_all, isatty
         || t == 185 || t == 210 || t == 212                              // random_bytes, arg_at, proc_waitpid
         || t == 188 || t == 189 || t == 190 || t == 191 || t == 192      // timer_fd, wasm_*
@@ -3207,6 +3211,9 @@ pub function op_allocates(tag: i32): boolean {
     // read_file boxes the file contents + a Result wrapper; write_file boxes its
     // Result[(), IoError] result — both via __fern_str_box, so they need the heap.
     if (tag == 169 || tag == 170) { return true; }
+    // open_file boxes its Result[Reader|Writer, IoError] result (and the IoError
+    // its error path builds), so it needs the heap runtime (#7758).
+    if (tag == 203) { return true; }
     // read_file_bytes boxes the contents into a fresh u8[] + a Result wrapper.
     if (tag == 233) { return true; }
     // remove_dir_all boxes its Result[(), IoError] result and heap-builds child path

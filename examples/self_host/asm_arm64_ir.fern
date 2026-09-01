@@ -1154,11 +1154,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // -errno. Inline (no helper): len=box[8], data=box[0]; write=64.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x2, [x1, #8]\n    ldr x1, [x1]\n    mov x8, #64\n    svc #0\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 203) {  // open_file (#4372)
-            // [path box] -> __fern_open_fd(x0=path, x1=flags(imm), x2=0644) -> fd /
-            // -errno. Body emitted by asm_arm64.emit_runtime, gated on open_file.
+            // [path box] -> __fern_open_res(x0=path, x1=flags(imm), x2=0644) -> a
+            // fresh Result[Reader|Writer, IoError] box. Body emitted in the fs
+            // bundle below, gated on open_file.
             s = s.need("heap"); s = s.need("open_file");
             s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + util.i32_to_string(o.i32_imm) + "\n    mov x2, #420\n");
-            s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_fd\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
+            s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_open_res\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 120) {  // opt_make
             // Option/Result box [tag@0, payload@8], 2 words. rc-HEADERED via
             // __fern_arr_box(cap=2) — like struct_make/tuple_make — so a fresh,
@@ -1217,10 +1218,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("heap"); s = s.need("read_all_stdin");
             s = s.write("    bl __fn___fern_read_all_stdin\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 168) {  // read_line
-            // no args -> call the Fern-compiled __fn___fern_read_line (#2649) and
-            // push the fresh Option[string]. A zero-arg helper needs no marshalling.
+            // [fd] IS param[0]; call the Fern-compiled __fn___fern_read_line
+            // (#2649) via the stack ABI and push the fresh Option[string].
             s = s.need("heap"); s = s.need("str_read_line");
-            s = s.write("    bl __fn___fern_read_line\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_read_line\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 169) {  // read_file
             // [pathbox] IS param[0]; call the Fern-compiled __fn___fern_read_file
             // (asmcore.rt_src_read_file, #2649) via the stack ABI, as asm_ir does.
@@ -4759,7 +4760,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // emit_rt_fs emits the filesystem and environment surface: the chunked reader,
-// read/write_file, open_fd, envp / env, temp_dir, stat, read_dir, and the
+// read/write_file, open_res, envp / env, temp_dir, stat, read_dir, and the
 // remove_file / remove_dir_all walkers.
 // emit_arm64_map_free_variant is the arm64 sibling of asm_ir's
 // emit_ir_map_free_variant: `__fern_map_free<suffix>(box)` frees the KEYS buffer
@@ -4821,15 +4822,6 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // come from asmcore.sysno / at_fdcwd / oflag keyed by the target, so the
     // Linux and Darwin bodies are one source instead of a `darwin` fork.
 
-
-    // open_fd: the file half of the streaming Reader/Writer surface (#4372),
-    // one helper for open_reader / open_writer / open_appender. Now Fern
-    // (asmcore.rt_src_open_fd) — including the Darwin open-flag translation the
-    // hand-asm did inline, which has to stay a run-time check because irlower
-    // picks the flags and has no target.
-    if (s.has_need("open_file")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_open_fd(tgt), s.struct_decls, s);
-    }
 
     // __fern_envp: the `char **` _start stashes for env() and subprocess.
     // Emitted unconditionally because _start's save is gated on `heap`, not on
@@ -6096,10 +6088,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // arg; the helpers hand it a fresh copy, never their borrowed `path`). This
     // mirrors asm_ir's bundle exactly. read_dir / remove_dir_all joined it: the
     // 4th out-param Darwin's getdirentries64 wants is just __syscall4, and the
-    // dirent name offset is a direntoff row. open_fd was the last leaf still
-    // hand-written; with it Fern too, the register-ABI hand-asm classifier is
-    // gone and this bundle is the only __fern_io_error.
-    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all")) {
+    // dirent name offset is a direntoff row. open_res joined it once open_file
+    // started returning a Result (#7758) — it calls io_error like every other
+    // leaf, so it has to share the bundle's call graph rather than sit alone.
+    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file")) {
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }
         if (s.has_need("read_file")) { fs_src = fs_src + " " + asmcore.rt_src_utf8_valid() + " " + asmcore.rt_src_read_file(tgt); }
@@ -6111,6 +6103,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("temp_dir")) { fs_src = fs_src + " " + asmcore.rt_src_temp_dir(tgt); }
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(tgt); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(tgt); }
+        if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
     }
     // env is the odd one out: no syscall at all, so it needs none of `tgt` and

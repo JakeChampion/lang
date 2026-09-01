@@ -58,9 +58,9 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
 		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
 		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
-		// open_writer is BOUND, not matched: Result[Writer, IoError] destructuring
-		// is outside the IR subset, and emitting __fern_open_fd is all this needs.
-		"    var w = open_writer(\"/tmp/fern_lockin_w.txt\");\n" +
+		// open_writer -> Result[Writer, IoError] (#7758), matched like every other
+		// fallible fs leaf; that is what emits __fern_open_res.
+		"    match (open_writer(\"/tmp/fern_lockin_w.txt\")) { Ok(_) => {}, Err(_) => { return 26; } }\n" +
 		"    if (random_i32() == 0) { return 12; }\n" +
 		// The two socket leaves that take only an fd. The probe is emitted, not
 		// run, so a bogus fd is fine — this only has to make the ops lower.
@@ -121,11 +121,11 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		// list. Darwin's getdirentries64 4th out-param is __syscall4 and its
 		// dirent name offset is a direntoff row, so no per-target body.
 		"read_dir", "remove_dir_all",
-		// The CSPRNG i32 and the Reader/Writer file opener (#2649). open_fd
+		// The CSPRNG i32 and the Reader/Writer file opener (#2649). open_res
 		// carries the Darwin open-flag translation the hand-asm did inline; it
 		// has to stay a run-time check because irlower picks the flags and has
 		// no target, so the Linux emit here simply has no translation to make.
-		"random_i32", "open_fd",
+		"random_i32", "open_res",
 		// The socket leaves that take only an fd (#2649).
 		"tcp_close", "tcp_accept",
 		// sleep_ms is the first __syscall5 consumer — but only on Darwin, which
@@ -216,8 +216,8 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	}
 	// The fs leaves call a Fern __fern_io_error bundled with them, rather than
 	// inlining the five-way errno classification — the "dependencies are the
-	// call graph" shape #2649 is aiming at. open_fd was the last leaf holding
-	// the register-ABI hand-asm sibling alive; it is deleted now.
+	// call graph" shape #2649 is aiming at. open_res joined the bundle when
+	// open_file started returning a Result (#7758) — it calls io_error too.
 	if !strings.Contains(asm, "bl __fn___fern_io_error") {
 		t.Error("the migrated fs leaves do not call the bundled Fern __fern_io_error")
 	}
@@ -314,9 +314,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
 		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
 		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
-		// open_writer is BOUND, not matched: Result[Writer, IoError] destructuring
-		// is outside the IR subset, and emitting __fern_open_fd is all this needs.
-		"    var w = open_writer(\"/tmp/fern_lockin_w.txt\");\n" +
+		// open_writer -> Result[Writer, IoError] (#7758), matched like every other
+		// fallible fs leaf; that is what emits __fern_open_res.
+		"    match (open_writer(\"/tmp/fern_lockin_w.txt\")) { Ok(_) => {}, Err(_) => { return 26; } }\n" +
 		"    if (random_i32() == 0) { return 12; }\n" +
 		// The two socket leaves that take only an fd. The probe is emitted, not
 		// run, so a bogus fd is fine — this only has to make the ops lower.

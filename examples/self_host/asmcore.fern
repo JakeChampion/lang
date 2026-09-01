@@ -632,10 +632,17 @@ pub function rt_src_random_i32(t: string): string {
     return "function __fern_random_i32(): i32 { var p: i32 = __raw_scratch(4); __syscall3(" + sysno(t, "getrandom") + ", p, 4, 0); return __load_i32(p); }";
 }
 
-// rt_src_open_fd backs the file half of the streaming Reader/Writer surface
+// rt_src_open_res backs the file half of the streaming Reader/Writer surface
 // (#4372, #2649 syscall-leaf) — one helper for open_reader (flags 0) /
-// open_writer / open_appender, returning the raw fd or -errno. NUL-terminate the
-// path, openat(AT_FDCWD, pathz, flags, mode).
+// open_writer / open_appender, returning `Result[Reader, IoError]`.
+// NUL-terminate the path, openat(AT_FDCWD, pathz, flags, mode), then wrap:
+// Ok(fd) on success, Err(io_error) on a negative return.
+//
+// A Reader/Writer IS its fd, so the helper's own return spelling is
+// `Result[i32, IoError]`; irlower gives the call site the Reader / Writer
+// spelling (opt_ret_type). io_error CONSUMES its path argument, so it gets a
+// fresh string built from the NUL-terminated buffer rather than the borrowed
+// `path` — the same shape every other leaf in the fs bundle uses.
 //
 // The flags arrive as a PARAMETER, not a per-target constant, because irlower
 // picks them and has no target: the op site passes the Linux value on every
@@ -645,13 +652,13 @@ pub function rt_src_random_i32(t: string): string {
 // and an overwrite leaves the old file's trailing bytes (#6042). The two live
 // combinations are the only ones the op site can produce, and the Linux targets
 // get no branches at all.
-pub function rt_src_open_fd(t: string): string {
+pub function rt_src_open_res(t: string): string {
     var xlate: string = "";
     if (t == "arm64-darwin") {
         xlate = "if (f == " + oflag("x86_64", "wr_creat_trunc") + ") { f = " + oflag(t, "wr_creat_trunc") + "; } "
               + "if (f == " + oflag("x86_64", "wr_creat_append") + ") { f = " + oflag(t, "wr_creat_append") + "; } ";
     }
-    return "function __fern_open_fd(path: string, flags: i32, mode: i32): i32 { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var f: i32 = flags; " + xlate + "return __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, f, mode); }";
+    return "function __fern_open_res(path: string, flags: i32, mode: i32): Result[i32, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var f: i32 = flags; " + xlate + "var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, f, mode); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } return Ok(fd); }";
 }
 
 // rt_src_tcp_close / rt_src_tcp_accept are the two socket leaves that take only
@@ -1075,8 +1082,10 @@ pub function rt_src_reader_close(t: string): string {
     return "function __fern_reader_close(fd: i32): Option[IoError] { __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return None; }";
 }
 
-// rt_src_read_line backs `read_line()` → one line from fd 0 including its '\n',
-// None at EOF with nothing read.
+// rt_src_read_line backs `read_line()` / `r.read_line()` → one line from `fd`
+// including its '\n', None at EOF with nothing read. The fd is a parameter, not
+// a hard-coded 0: a Reader IS its fd, so a file reader's read_line has to read
+// that file (#7758). The bare builtin passes 0.
 //
 // ONE BYTE PER SYSCALL, which is load-bearing and not an oversight (#6052): a
 // single read(0, buf, 256) silently discarded every byte past the first newline,
@@ -1089,7 +1098,7 @@ pub function rt_src_reader_close(t: string): string {
 // The 256-byte cap is observable — a longer line comes back truncated, with the
 // remainder left on the stream — so it is preserved exactly.
 pub function rt_src_read_line(t: string): string {
-    return "function __fern_read_line(): Option[string] { var buf: i32 = __raw_alloc(256); var len: i32 = 0; var go: i32 = 1; while (go == 1) { if (len >= 256) { go = 0; } else { var r: i32 = __syscall3(" + sysno(t, "read") + ", 0, __raw_addr(buf, len), 1); if (r < 1) { go = 0; } else { var c: i32 = __raw_load8(buf, len); len = len + 1; if (c == 10) { go = 0; } } } } if (len == 0) { return None; } return Some(__raw_string(buf, len)); }";
+    return "function __fern_read_line(fd: i32): Option[string] { var buf: i32 = __raw_alloc(256); var len: i32 = 0; var go: i32 = 1; while (go == 1) { if (len >= 256) { go = 0; } else { var r: i32 = __syscall3(" + sysno(t, "read") + ", fd, __raw_addr(buf, len), 1); if (r < 1) { go = 0; } else { var c: i32 = __raw_load8(buf, len); len = len + 1; if (c == 10) { go = 0; } } } } if (len == 0) { return None; } return Some(__raw_string(buf, len)); }";
 }
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
@@ -1101,8 +1110,8 @@ pub function rt_src_read_line(t: string): string {
 // bundle), so the standard inter-procedural RC analysis threads the call-graph
 // edge — this IS the #2649 "dependencies are the call graph" end-state, in
 // miniature. Bundled on BOTH register backends now; the arm64 register-ABI
-// hand-asm __fern_io_error survives only for the leaves still hand-written there
-// (stat / read_dir / remove_dir_all / temp_dir / open_fd).
+// hand-asm __fern_io_error is gone: every leaf that called it, open_res
+// included, is Fern and joins the bundle.
 pub function rt_src_io_error(): string {
     return "function __fern_io_error(e: i32, path: string): IoError { if (e == 2) { return NotFound(path); } if (e == 13) { return PermissionDenied(path); } if (e == 17) { return AlreadyExists(path); } if (e == 4) { return Interrupted; } return Other(path, \"\"); }";
 }
@@ -2974,10 +2983,6 @@ function builtin_i32_names(): string[] {
         "f64_bits", "f32_bits",
         "len",
         "read_int",
-        // stdout()/stderr() -> Writer (a bare fd i32; fds 1/2). The
-        // write-half sibling of stdin() (#4372); a Writer is just its
-        // fd like a Reader, so `w.write(s)`/`w.close()` dispatch off it.
-        "stdout", "stderr",
         "str_to_i32",
         "str_index_of",
         // Raw-memory intrinsics (#2649 Tier-2 floor). Pointers are
@@ -3094,11 +3099,17 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     // env(name): Option[string] — Some(value) if the
     // variable is set (including empty), None otherwise.
     if (id.name == "env") { return ty_option(ty_string()); }
-    // open_reader/open_writer/open_appender(path) -> a Reader/Writer
-    // (a bare fd i32) or -errno (#4372 file half). The caller uses
-    // r.read_chunk / w.write / .close off the fd, then checks < 0.
-    if (id.name == "open_reader" || id.name == "open_writer"
-        || id.name == "open_appender") { return ty_i32(); }
+    // The streaming-I/O constructors, typed as native types them
+    // (#7758): open_reader/open_writer/open_appender(path) ->
+    // Result[Reader|Writer, IoError], stdin() -> Reader, stdout() /
+    // stderr() -> Writer. A Reader/Writer is REPRESENTED by its bare
+    // fd — `r.read_chunk` / `w.write` / `.close` take it directly —
+    // but the TYPE is nominal, so `var r: i32 = open_reader(p)` is
+    // the E003 native reports rather than a silently-accepted box.
+    if (id.name == "open_reader") { return ty_result(ty_named("Reader")); }
+    if (id.name == "open_writer" || id.name == "open_appender") { return ty_result(ty_named("Writer")); }
+    if (id.name == "stdin") { return ty_named("Reader"); }
+    if (id.name == "stdout" || id.name == "stderr") { return ty_named("Writer"); }
     // read_line() -> Option[string]: line INCLUDING '\n', None at EOF
     // — matches native (#4369). read_all_stdin stays a plain string.
     if (id.name == "read_line") { return ty_option(ty_string()); }
@@ -5008,7 +5019,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
         "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
-        "__fn___fern_open_fd",
+        "__fn___fern_open_res",
         "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fn___fern_map_delete",
         // scalar / string keys()/values() snapshots (#4353): a library
