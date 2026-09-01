@@ -242,3 +242,50 @@ func TestMemLoadSeqFoldsTheWidthMaskIntoTheLoad(t *testing.T) {
 		})
 	}
 }
+
+// The renderer only drops the comparison when the emitter's CondFuse says
+// nothing else reads its 0/1, and when the block really does end with it.
+func TestFuseBranchCmpNeedsBothTheAnnotationAndTheShape(t *testing.T) {
+	cmp := x86.Inst{Op: x86.SetCmp, Dst: 3, Src: 2, K: ssa.OpLt}
+	mov := x86.Inst{Op: x86.MovReg, Dst: 3, Src: 1}
+	brIf := func(fuse bool) x86.Term {
+		return x86.Term{Kind: x86.TBrIf, CondReg: 3, CondFuse: fuse}
+	}
+
+	t.Run("fuses and takes the left operand from the dropped copy", func(t *testing.T) {
+		insts, cc, left, right := fuseBranchCmp(x86.MBlock{Insts: []x86.Inst{mov, cmp}, Term: brIf(true)})
+		if cc != "lt" || left != 1 || right != 2 || len(insts) != 0 {
+			t.Errorf("got insts=%v cc=%q left=%d right=%d, want the block emptied and lt on (1, 2)", insts, cc, left, right)
+		}
+	})
+
+	t.Run("no annotation, no fusion", func(t *testing.T) {
+		insts, cc, _, _ := fuseBranchCmp(x86.MBlock{Insts: []x86.Inst{mov, cmp}, Term: brIf(false)})
+		if cc != "" || len(insts) != 2 {
+			t.Errorf("got insts=%v cc=%q, want both instructions kept", insts, cc)
+		}
+	})
+
+	t.Run("comparison is not the last instruction", func(t *testing.T) {
+		trailing := []x86.Inst{cmp, {Op: x86.MovReg, Dst: 9, Src: 8}}
+		insts, cc, _, _ := fuseBranchCmp(x86.MBlock{Insts: trailing, Term: brIf(true)})
+		if cc != "" || len(insts) != 2 {
+			t.Errorf("got insts=%v cc=%q, want both instructions kept", insts, cc)
+		}
+	})
+
+	t.Run("comparison writes a different register than the branch reads", func(t *testing.T) {
+		other := x86.Inst{Op: x86.SetCmp, Dst: 4, Src: 2, K: ssa.OpLt}
+		insts, cc, _, _ := fuseBranchCmp(x86.MBlock{Insts: []x86.Inst{other}, Term: brIf(true)})
+		if cc != "" || len(insts) != 1 {
+			t.Errorf("got insts=%v cc=%q, want the comparison kept", insts, cc)
+		}
+	})
+
+	t.Run("a return terminator never fuses", func(t *testing.T) {
+		insts, cc, _, _ := fuseBranchCmp(x86.MBlock{Insts: []x86.Inst{cmp}, Term: x86.Term{Kind: x86.TRet}})
+		if cc != "" || len(insts) != 1 {
+			t.Errorf("got insts=%v cc=%q, want the comparison kept", insts, cc)
+		}
+	})
+}

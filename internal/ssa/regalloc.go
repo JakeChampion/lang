@@ -264,10 +264,11 @@ func LinearScan(f *Func, target Target) *Allocation {
 }
 
 // isCallOp reports whether an op transfers control to a callee (so values live
-// across it must survive a call).
+// across it must survive a call). The dynamic-dispatch pair belong here too:
+// OpCallDyn calls through a vtable slot, and OpBoxDyn calls the allocator.
 func isCallOp(k OpKind) bool {
 	switch k {
-	case OpCall, OpCallPair, OpCallIndirect:
+	case OpCall, OpCallPair, OpCallIndirect, OpCallDyn, OpBoxDyn:
 		return true
 	}
 	return false

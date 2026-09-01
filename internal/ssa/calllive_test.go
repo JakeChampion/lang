@@ -122,3 +122,28 @@ func TestCallLiveNeverExceedsTheIntervalAnswer(t *testing.T) {
 		}
 	}
 }
+
+// Dynamic dispatch is a call: OpCallDyn goes through a vtable slot and OpBoxDyn
+// calls the allocator. A value live across either must be preserved, so both
+// need a call-live set — without one the emitter falls back to saving the whole
+// caller-saved file at every dynamic call.
+func TestCallLiveCoversDynamicDispatch(t *testing.T) {
+	for _, kind := range []OpKind{OpCallDyn, OpBoxDyn} {
+		f := NewFunc("main")
+		e := f.NewBlock()
+		v := f.AddOp(e, OpConstInt)
+		e.Ops[len(e.Ops)-1].Imm = 7
+		r := f.AddOp(e, kind, v)
+		f.SetRet(e, f.AddOp(e, OpAdd, v, r))
+
+		a := LinearScan(f, Target{NumRegs: 4})
+		live, ok := a.LiveAcrossOp(e.Ops[1])
+		if !ok {
+			t.Errorf("%v has no call-live set", kind)
+			continue
+		}
+		if !live[v.ID] {
+			t.Errorf("%v: v%d is read afterwards but is not live across it: %v", kind, v.ID, live)
+		}
+	}
+}
