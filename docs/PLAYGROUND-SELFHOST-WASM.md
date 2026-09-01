@@ -9,8 +9,9 @@ the self-host compiler instead.
 
 **The precondition is not bounded by module size or by memory.** Both come in
 an order of magnitude *better* than the bundle shipping today. It is bounded by
-two missing-builtin gaps, both named below and neither open-ended. The
-correctness bug that used to head this list (#7948) is fixed.
+a set of missing wasmbin builtins and the shape of the compiler's entry point,
+both named below and neither open-ended. The correctness bug that used to head
+this list (#7948) is fixed, and so is the strbuf third of the builtin gap.
 
 The self-host compiler compiled to wasm **already runs in wasm today**. A
 stdin-driven wasm-emitting driver, compiled to a core module by the self-host
@@ -46,10 +47,10 @@ Two facts worth having before costing anything:
 
 - **Nothing gates the playground's size or memory.** No `-ldflags` beyond
   `-s -w`, no size assertion, no heap or arena limit, no CI check. The only
-  recorded number in the tree is a prose estimate in `web/.gitignore:1-5`
-  ("~5 MB per version of the toolchain"), and it is stale by 5.7x — see below.
-  `scripts/ci-check-driver-sizes` sounds like the gate and is not: it covers
-  self-host *driver* binaries, not this.
+  recorded number in the tree is a prose estimate in `web/.gitignore:1-5`,
+  which said "~5 MB per version of the toolchain" and was stale by 5.7x until
+  this measurement corrected it. `scripts/ci-check-driver-sizes` sounds like the
+  gate and is not: it covers self-host *driver* binaries, not this.
 - **Nothing builds `cmd/fern-wasm` under CI's normal test lanes.** No `go vet`
   or `go build` under `GOOS=js` anywhere; it is compile-checked only by the
   three path-filtered workflows that publish the site (`pages.yml`,
@@ -140,37 +141,41 @@ runs the wasm-hosted driver against the native-hosted one on nested arithmetic
 and asserts identical exit code AND identical WAT: a wasm-hosted compiler is
 only interesting if it agrees with the native one, and until then nothing asked.
 
-### 1. Native `wasmbin` cannot compile the self-host compiler at all (#7947)
+### 1. Native `wasmbin` is missing four builtins the self-host compiler needs (#7947)
 
 ```
 $ ./bin/fern -target wasm32-wasi -emit core-module -o out.wasm examples/self_host/fern.fern
-wasmbin: asm_arm64_ir__peephole_push_pop_arm64: op[0] call: call: unknown callee "strbuf_reset"
+wasmbin: write_output: op[6] call: call: unknown callee "write_file_exec"
 ```
 
-`strbuf_reset` / `strbuf_append` / `strbuf_take` appear nowhere in
-`internal/codegen/wasmbin`. They are **core** builtins
-(`internal/platforms/enforce.go:151-153`), so E066 never refuses them and they
-reach codegen on every target. Every other native backend implements them —
-`arm64.go:5552`, `x86_64.go:8637`, `arm64ssa/gas.go:5902` — and the self-host
-wasm backend implements them too (`examples/self_host/wasm_ir.fern:6120`).
-`wasmbin` is alone in not.
+The `strbuf_*` third of this is **fixed**: `strbuf_reset` / `strbuf_append` /
+`strbuf_take` are core builtins (`internal/platforms/enforce.go:151-153`), so
+E066 never refuses them and they reach codegen on every target, and wasmbin was
+the one backend with no lowering for them at all. It has one now — a growable
+heap buffer over three scratch words, rather than the natives' fixed 64 MiB
+`.bss` reservation, which in linear memory would push `stringStart` and the
+whole heap up by that much.
 
-Same file, three more latent gaps reachable on `wasm32-wasi`: `sleep_ms` and
-`timer_fd` (cap `now`, granted), `write_file_exec` (cap `fs`, granted), plus
-the `__c_call0..4` FFI family, which the checker registers
-(`checker.go:2225`) but `gatedBuiltins` does not cover.
+What remains, and what the error above now names, is the rest of the same gap:
+`sleep_ms` and `timer_fd` (cap `now`, granted), `write_file_exec` (cap `fs`,
+granted — no WASI preview-1 form, `path_open` has no mode, #6133), and the
+`__c_call0..4` FFI family, which the checker registers (`checker.go:2225`) but
+`gatedBuiltins` does not cover.
 
-The consequence for this precondition: the playground's wasm artifact can only
-be produced *by the self-host compiler compiling itself*, never by the native
-toolchain — so there is no independent second witness to cross-check a wasm
-miscompile against, which is why #7948 had to be diagnosed by diffing the two
-TARGETS of one compiler instead.
+The consequence for this precondition is unchanged while any of them is open:
+the playground's wasm artifact can only be produced *by the self-host compiler
+compiling itself*, never by the native toolchain — so there is no independent
+second witness to cross-check a wasm miscompile against, which is why #7948 had
+to be diagnosed by diffing the two TARGETS of one compiler instead.
 
+The gate that should have caught the whole class exists now.
 `TestProvidedSigsAgreeWithWasmRuntime`
-(`internal/codegen/wasmbin/verifier_sigs_test.go:21`) looks like the gate for
-this and is not: it checks arity only for helpers wasmbin already has, and
-`continue`s past names it does not know. A "wasmbin implements every provided
-callee" test does not exist.
+(`internal/codegen/wasmbin/verifier_sigs_test.go:21`) looked like it and was
+not: it checks arity only for helpers wasmbin already has, and `continue`s past
+names it does not know, so a builtin with no lowering at all passed it silently.
+`TestEveryProvidedCalleeHasAWasmLowering` asserts every callee in `providedSigs`
+has somewhere to land, and its known-missing list — the four above — is exact in
+both directions, so a fix cannot leave the table stale.
 
 The hole runs the other way too: `udp_send` is implemented only in `wasmbin`
 (`wasi_udp.go`) and is missing from `internal/codegen/arm64` and
