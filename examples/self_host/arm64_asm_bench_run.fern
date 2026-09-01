@@ -5,7 +5,7 @@
 // measured against a real `.s` without a selfhost-cli rebuild per experiment.
 //
 // With `-words` it also dumps each assembled instruction word as hex, one per
-// line, after the summary. That makes the assembler's ENCODINGS comparable
+// line, after the summary; with `-data`, each .rodata byte the same way. That makes the assembler's ENCODINGS comparable
 // against the native Go assembler (internal/native/arm64, itself gated against
 // gcc by TestNativeLinkArm64MatchesGccLink) on identical input, with no qemu and
 // no execution — see TestSelfHostArm64AsmEncodingMatchesNative. #6047 was an
@@ -20,9 +20,11 @@ import "./arm64_native";
 function main(): i32 {
     var av: string[] = args();
     var dump: boolean = false;
+    var dump_data: boolean = false;
     var i: i32 = 0;
     while (i < av.len()) {
         if (av[i] == "-words") { dump = true; }
+        if (av[i] == "-data") { dump_data = true; }
         i = i + 1;
     }
     var src: string = io.read_all_stdin();
@@ -50,6 +52,16 @@ function main(): i32 {
                 | ((pa2.code[b + 2] as i64) << 16) | ((pa2.code[b + 3] as i64) << 24);
             print("word " + (b / 4).to_string() + " " + w.to_string());
             b = b + 4;
+        }
+    }
+    // With `-data`, the .rodata bytes, one per line. The escape DECODER lives
+    // here and nowhere the `-words` dump can see: an instruction stream is
+    // identical whether `.ascii "\001"` assembled to one byte or to three.
+    if (dump_data) {
+        var d: i32 = 0;
+        while (d < p.data.len()) {
+            print("data " + d.to_string() + " " + p.data[d].to_string());
+            d = d + 1;
         }
     }
     return 0;

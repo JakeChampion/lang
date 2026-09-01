@@ -3689,8 +3689,37 @@ function arm64_gas_data_le(own p: Arm64GasProg, v: i64, n: i32): Arm64GasProg {
     return p;
 }
 
+// arm64_gas_escape decodes the escape whose backslash is at `line[i]`,
+// returning the byte it stands for and how many characters it spans. Mirrored
+// verbatim from x86_gas_escape — the assemblers are deliberately import-free,
+// so the two are kept in sync by hand.
+//
+// The octal form is the one that matters: asmcore.escape_for_ascii writes every
+// byte below 0x20, and 0x7f, as `\NNN`, and GAS reads `\` followed by one to
+// three octal digits. Recognising only `\0` and passing every other digit
+// through as itself left two stray characters in the data blob per control byte
+// and shifted the rest of the literal.
+function arm64_gas_escape(line: string, i: i32): (i32, i32) {
+    var e: i32 = line[i + 1] as i32;
+    if (e == 110) { return (10, 2); }        // \n
+    if (e == 116) { return (9, 2); }         // \t
+    if (e == 114) { return (13, 2); }        // \r
+    if (e >= 48 && e <= 55) {                // \N, \NN, \NNN — octal
+        var v: i32 = e - 48;
+        var n: i32 = 2;
+        while (n < 4 && i + n < line.len()) {
+            var d: i32 = line[i + n] as i32;
+            if (d < 48 || d > 55) { break; }
+            v = v * 8 + (d - 48);
+            n = n + 1;
+        }
+        return (v & 255, n);
+    }
+    return (e, 2);                           // \\ , \" and any other
+}
+
 // arm64_gas_data_asciz appends a `.asciz "…"` string + NUL to the data
-// blob, decoding the common \n \t \0 \\ escapes.
+// blob, decoding the escapes arm64_gas_escape decodes.
 function arm64_gas_data_asciz(own p: Arm64GasProg, line: string): Arm64GasProg {
     var q1: i32 = arm64_str_indexof(line, "\"");
     if (q1 < 0) {
@@ -3701,14 +3730,11 @@ function arm64_gas_data_asciz(own p: Arm64GasProg, line: string): Arm64GasProg {
     while (i < line.len() && line[i] != b'"') {
         var c: i32 = line[i] as i32;
         if (c == 92 && i + 1 < line.len()) { // '\'
-            var e: i32 = line[i + 1] as i32;
-            if (e == 110) { c = 10; }       // \n
-            else if (e == 116) { c = 9; }   // \t
-            else if (e == 48) { c = 0; }    // \0
-            else { c = e; }                 // \\ , \"
-            i = i + 1;
+            var (eb, span) = arm64_gas_escape(line, i);
+            c = eb;
+            i = i + span - 1;
         }
-        p = Arm64GasProg { ...p, data: p.data.append(c) };
+        p = Arm64GasProg { ...p, data: p.data.append(c & 255) };
         i = i + 1;
     }
     p = Arm64GasProg { ...p, data: p.data.append(0) }; // .asciz NUL terminator
@@ -3770,13 +3796,9 @@ function arm64_gas_data_ascii(own p: Arm64GasProg, line: string): Arm64GasProg {
     while (i < line.len() && line[i] != b'"') {
         var c: i32 = line[i] as i32;
         if (c == 92 && i + 1 < line.len()) {
-            var e: i32 = line[i + 1] as i32;
-            if (e == 110) { c = 10; }
-            else if (e == 116) { c = 9; }
-            else if (e == 114) { c = 13; }
-            else if (e == 48) { c = 0; }
-            else { c = e; }
-            i = i + 1;
+            var (eb, span) = arm64_gas_escape(line, i);
+            c = eb;
+            i = i + span - 1;
         }
         p = Arm64GasProg { ...p, data: p.data.append(c & 255) };
         i = i + 1;

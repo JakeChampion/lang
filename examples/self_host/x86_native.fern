@@ -2219,9 +2219,39 @@ function x86_gas_parse_f64(s: string): f64 {
     return f64_from_bits(parse_f64_bits(s));
 }
 
+// x86_gas_escape decodes the escape whose backslash is at `line[i]`, returning
+// the byte it stands for and how many characters it spans.
+//
+// The octal form is the one that matters: asmcore.escape_for_ascii writes every
+// byte below 0x20, and 0x7f, as `\NNN`, and GAS reads `\` followed by one to
+// three octal digits. Recognising only `\0` and passing every other digit
+// through as itself left two stray characters in .rodata per control byte and
+// shifted the rest of the literal — `"A\x01B"` assembled to `A`, NUL, `0`, `1`,
+// `B` and was then truncated at the length the emitter recorded, so it read
+// back as `A`, NUL, `0`. Only the two GAS assemblers were affected; the wasm
+// path spells the same bytes as WAT hex escapes and always round-tripped.
+function x86_gas_escape(line: string, i: i32): (i32, i32) {
+    var e: i32 = line[i + 1] as i32;
+    if (e == 110) { return (10, 2); }        // \n
+    if (e == 116) { return (9, 2); }         // \t
+    if (e == 114) { return (13, 2); }        // \r
+    if (e >= 48 && e <= 55) {                // \N, \NN, \NNN — octal
+        var v: i32 = e - 48;
+        var n: i32 = 2;
+        while (n < 4 && i + n < line.len()) {
+            var d: i32 = line[i + n] as i32;
+            if (d < 48 || d > 55) { break; }
+            v = v * 8 + (d - 48);
+            n = n + 1;
+        }
+        return (v & 255, n);
+    }
+    return (e, 2);                           // \\ , \" and any other
+}
+
 // x86_gas_ascii appends the bytes of a `.ascii "…"` directive's string to
-// `buf`, processing the common C escapes (\n \t \r \0 \\ \"). The string
-// is the part between the first `"` and the closing unescaped `"`.
+// `buf`, processing the escapes x86_gas_escape decodes. The string is the part
+// between the first `"` and the closing unescaped `"`.
 function x86_gas_ascii(buf: i32[], line: string): i32[] {
     var q1: i32 = x86_str_indexof(line, "\"");
     if (q1 < 0) {
@@ -2234,13 +2264,9 @@ function x86_gas_ascii(buf: i32[], line: string): i32[] {
             return buf;
         }
         if (c == 92 && i + 1 < line.len()) { // backslash escape
-            i = i + 1;
-            var e: i32 = line[i] as i32;
-            if (e == 110) { c = 10; }        // \n
-            else { if (e == 116) { c = 9; }  // \t
-            else { if (e == 114) { c = 13; } // \r
-            else { if (e == 48) { c = 0; }   // \0
-            else { c = e; } } } }            // \\ \" and any other -> literal
+            var (eb, span) = x86_gas_escape(line, i);
+            c = eb;
+            i = i + span - 1;
         }
         buf = buf.append(c & 255);
         i = i + 1;
