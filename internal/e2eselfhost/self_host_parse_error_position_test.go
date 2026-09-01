@@ -72,25 +72,7 @@ var parseErrPosCases = []struct {
 // there is nothing here that needs gcc or an emitted binary.
 func TestSelfHostParseErrorPositions(t *testing.T) {
 	fernBin := buildLangBinForInterp(t)
-
-	// Stage the front-end closure once; every case reuses it, differing only
-	// in the embedded source of the generated main.fern.
-	stage := t.TempDir()
-	for _, root := range []string{"lexer.fern", "parser.fern", "asmcore.fern", "util.fern"} {
-		for _, p := range selfHostImportClosure(t, "../../examples/self_host", root) {
-			base := filepath.Base(p)
-			if _, err := os.Stat(filepath.Join(stage, base)); err == nil {
-				continue
-			}
-			src, err := os.ReadFile(p)
-			if err != nil {
-				t.Fatalf("read %s: %v", p, err)
-			}
-			if err := os.WriteFile(filepath.Join(stage, base), src, 0o644); err != nil {
-				t.Fatalf("stage %s: %v", base, err)
-			}
-		}
-	}
+	stage := stageParseProbeTree(t)
 
 	for _, tc := range parseErrPosCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,6 +104,122 @@ func TestSelfHostParseErrorPositions(t *testing.T) {
 			}
 			if m[1] != wantLine || m[2] != wantCol {
 				t.Errorf("position %s:%s, want native's %s:%s\nself-host: %q", m[1], m[2], wantLine, wantCol, got)
+			}
+		})
+	}
+}
+
+// stageParseProbeTree stages the self-host front-end closure (lexer / parser /
+// asmcore / util and their imports) into a temp dir the parse-probe mains are
+// written into.
+func stageParseProbeTree(t *testing.T) string {
+	t.Helper()
+	stage := t.TempDir()
+	for _, root := range []string{"lexer.fern", "parser.fern", "asmcore.fern", "util.fern"} {
+		for _, p := range selfHostImportClosure(t, "../../examples/self_host", root) {
+			base := filepath.Base(p)
+			if _, err := os.Stat(filepath.Join(stage, base)); err == nil {
+				continue
+			}
+			src, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatalf("read %s: %v", p, err)
+			}
+			if err := os.WriteFile(filepath.Join(stage, base), src, 0o644); err != nil {
+				t.Fatalf("stage %s: %v", base, err)
+			}
+		}
+	}
+	return stage
+}
+
+// TestSelfHostParseUnknownDiagSequence pins the FULL output — order,
+// multiplicity, message text, position — of the P001/P002 pre-check
+// (asmcore.parse_unknown_errors_module). No other gate can: the checker-codes
+// drivers run checker.fern's check_module, which never calls asmcore, and the
+// position test above compares only the first diagnostic's position.
+//
+// Every `want` was captured from the hand-written collectors BEFORE they
+// folded onto astwalk (#6993), so the fold is held to reproducing the exact
+// sequence rather than to whatever it happens to print.
+//
+// The load-bearing rows are the punct:; pair. A bare `return;` parses to the
+// sentinel ExprUnknown("punct:;") in the return's value slot and is exempt
+// there — and ONLY there: `var x: i32 = ;` plants the SAME sentinel in an
+// init slot and must stay diagnosed, and `return 1 + ;` plants it nested
+// INSIDE the return's value where it must also stay diagnosed. A collector
+// that exempts the sentinel by kind alone, position-independent, passes every
+// other gate and silently swallows both.
+func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
+	fernBin := buildLangBinForInterp(t)
+	stage := stageParseProbeTree(t)
+
+	cases := []struct {
+		name string
+		src  string
+		// want is the probe's exact stdout, one formatted diagnostic per
+		// line, "" for a clean program.
+		want string
+	}{
+		{"bare-return-clean",
+			"function f(): void {\n  return;\n}\nfunction main(): i32 {\n  f();\n  return 0;\n}\n",
+			""},
+		{"var-init-sentinel",
+			"function main(): i32 {\n  var x: i32 = ;\n  return 0;\n}\n",
+			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:16)"},
+		{"sentinel-nested-in-return",
+			"function main(): i32 {\n  return 1 + ;\n}\n",
+			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:14)"},
+		// Functions in declaration order, then top-level statements LAST —
+		// parse_unknown_errors_module's own loop order — with a multi-error
+		// function reporting in source order. Count and order both pinned.
+		{"multi-error-two-fns-and-toplevel",
+			"var g: i32 = ;\nfunction a(): i32 {\n  var x: i32 = ;\n  var y: i32 = @;\n  return 0;\n}\nfunction b(): i32 {\n  if x > 1) { return 1; }\n  return 1 + ;\n}\nfunction main(): i32 {\n  return a() + b() + g;\n}\n",
+			"error[P001]: in fn 'a': parser-side unknown: punct:; (3:16)\n" +
+				"error[P001]: in fn 'a': parser-side unknown: punct:@ (4:16)\n" +
+				"error[P001]: in fn 'b': parser-side unknown: stmt: missing ( in if (8:6)\n" +
+				"error[P001]: in fn 'b': parser-side unknown: punct:) (8:11)\n" +
+				"error[P001]: in fn 'b': parser-side unknown: punct:; (9:14)\n" +
+				"error[P001]: at top level: parser-side unknown: punct:; (1:14)"},
+		// A sentinel inside a defer's action: the walk descends StmtDefer.
+		{"defer-action-sentinel",
+			"function main(): i32 {\n  defer print(;);\n  return 0;\n}\n",
+			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:15)"},
+		// A sentinel inside a lambda body, reachable only through expression
+		// descent.
+		{"lambda-body-sentinel",
+			"function main(): i32 {\n  var f = function(): i32 { var z: i32 = ;; return 0; };\n  return f();\n}\n",
+			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:42)"},
+		// The one shape that maps to P002 rather than P001 (#6842).
+		{"float-range-p002",
+			"function main(): i32 {\n  var big: f64 = 1e999;\n  return 0;\n}\n",
+			"error[P002]: in fn 'main': invalid float literal \"1e999\": value out of range (2:18)"},
+		// The nameless-function P001 raised by parse_unknown_errors_module
+		// itself, before any walk, followed by the top-level residue.
+		{"malformed-fn-decl",
+			"function (): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
+			"error[P001]: malformed function declaration (1:1)\n" +
+				"error[P001]: at top level: parser-side unknown: punct:: (1:12)"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := filepath.Join(stage, "main.fern")
+			if err := os.WriteFile(probe, []byte(fmt.Sprintf(parseErrPosProbe, fernStringLit(tc.src))), 0o644); err != nil {
+				t.Fatalf("write probe: %v", err)
+			}
+			var out, errb bytes.Buffer
+			cmd := exec.Command(fernBin, "-interp", probe)
+			cmd.Stdout, cmd.Stderr = &out, &errb
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("probe failed: %v\nstdout: %s\nstderr: %s", err, out.String(), errb.String())
+			}
+			got := strings.TrimRight(out.String(), "\n")
+			if got != tc.want {
+				t.Errorf("diagnostic sequence:\n%s\nwant:\n%s\n"+
+					"    A change here means the pre-check's emission order, count, text or\n"+
+					"    position moved. Decide whether the new sequence is right, then move\n"+
+					"    this row.", got, tc.want)
 			}
 		})
 	}
