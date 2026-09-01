@@ -3,6 +3,7 @@ package e2e
 import (
 	"fmt"
 	"math"
+	"math/big"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -43,6 +44,66 @@ func decimalNorm(s string) string {
 		sign = "-"
 	}
 	return fmt.Sprintf("%s%se%d", sign, s, exp)
+}
+
+// shortestTie reports whether two normalised shortest forms are the two sides
+// of an EXACT decimal tie: the same digit count, both exactly equidistant from
+// v. On a tie both are equally correct shortest representations — Dragonbox
+// breaks it to the even final digit, while Go's strconv switched sides between
+// toolchains (2^-12 as binary32: "…62" under Go 1.24, "…63" under 1.26) — so
+// digit-for-digit equality over-pins precisely this case and nothing else.
+// Callers have already proven `got` parses back to v exactly.
+func shortestTie(got, want string, v float64) bool {
+	gd, ge, ok := splitDecimalNorm(got)
+	if !ok {
+		return false
+	}
+	wd, we, ok := splitDecimalNorm(want)
+	if !ok || len(gd) != len(wd) {
+		return false
+	}
+	rv := new(big.Rat).SetFloat64(v)
+	dg := decimalDistance(gd, ge, rv)
+	dw := decimalDistance(wd, we, rv)
+	return dg != nil && dw != nil && dg.Cmp(dw) == 0
+}
+
+// splitDecimalNorm splits a decimalNorm result ("[-]digits e exp") back into
+// its significand digits and exponent.
+func splitDecimalNorm(s string) (digits string, exp int, ok bool) {
+	i := strings.IndexByte(s, 'e')
+	if i < 0 {
+		return "", 0, false
+	}
+	e, err := strconv.Atoi(s[i+1:])
+	if err != nil {
+		return "", 0, false
+	}
+	return s[:i], e, true
+}
+
+// decimalDistance returns |digits·10^exp − rv| as an exact rational, or nil if
+// the digits do not parse.
+func decimalDistance(digits string, exp int, rv *big.Rat) *big.Rat {
+	n, ok := new(big.Int).SetString(digits, 10)
+	if !ok {
+		return nil
+	}
+	r := new(big.Rat).SetInt(n)
+	p := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(abs(exp))), nil)
+	if exp >= 0 {
+		r.Mul(r, new(big.Rat).SetInt(p))
+	} else {
+		r.Quo(r, new(big.Rat).SetInt(p))
+	}
+	return r.Sub(r, rv).Abs(r)
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // runFloatStrings compiles a program that prints one `to_string()` per line for
@@ -98,7 +159,8 @@ func TestFloatShortestPowersOfTwoF64(t *testing.T) {
 				i-1074, got, math.Float64bits(parsed), math.Float64bits(v))
 			continue
 		}
-		if want := decimalNorm(strconv.FormatFloat(v, 'e', -1, 64)); decimalNorm(got) != want {
+		if want := decimalNorm(strconv.FormatFloat(v, 'e', -1, 64)); decimalNorm(got) != want &&
+			!shortestTie(decimalNorm(got), want, v) {
 			t.Errorf("2^%d: to_string=%q normalises to %q, want %q",
 				i-1074, got, decimalNorm(got), want)
 		}
@@ -136,7 +198,8 @@ func TestFloatShortestPowersOfTwoF32(t *testing.T) {
 				i-149, got, math.Float32bits(float32(parsed)), math.Float32bits(v))
 			continue
 		}
-		if want := decimalNorm(strconv.FormatFloat(float64(v), 'e', -1, 32)); decimalNorm(got) != want {
+		if want := decimalNorm(strconv.FormatFloat(float64(v), 'e', -1, 32)); decimalNorm(got) != want &&
+			!shortestTie(decimalNorm(got), want, float64(v)) {
 			t.Errorf("2^%d (f32): to_string=%q normalises to %q, want %q",
 				i-149, got, decimalNorm(got), want)
 		}
@@ -193,7 +256,7 @@ func TestFloatShortestMatchesStrconvExactly(t *testing.T) {
 	bad := 0
 	for i, v := range vals {
 		want := decimalNorm(strconv.FormatFloat(v, 'e', -1, 64))
-		if got := decimalNorm(lines[i]); got != want {
+		if got := decimalNorm(lines[i]); got != want && !shortestTie(got, want, v) {
 			bad++
 			if bad <= 10 {
 				t.Errorf("v=%v (%#x): to_string=%q normalises to %q, want %q",
