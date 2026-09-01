@@ -1040,6 +1040,33 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 			// and leaves the source alone (__str_slice), so it retains nothing
 			// either — the slice half of the same argument.
 			mark(x.Source)
+		case *ast.Binary:
+			// `a + p` copies both operands' bytes into a FRESH buffer on
+			// every backend — __fern_strcat allocates, or returns an
+			// SSO-inline value or the shared empty sentinel, and never
+			// hands back either operand's pointer — so a concat operand
+			// is retained by nothing. This is the same fact
+			// stashOwnedStringOperand states ("a BORROWING string op —
+			// one that reads its operand's bytes and leaves that buffer
+			// alone") and rhsTainted's IsStringConcat case relies on. The
+			// in-place `s = s + rhs` append is not an exception: it needs
+			// freeEligible[s], which a borrowed param never has.
+			//
+			// A comparison reads the same way and yields a bool, which
+			// cannot alias either side.
+			//
+			// Concat is the commonest non-retaining use a string parameter
+			// has, and it was the one occurrence kind with no arm: an
+			// encoder helper `put(reg, key, flags) -> reg.with(b, reg[b] +
+			// key + "|" + flags)` refused BOTH string params, and through
+			// rhsTainted's counted-argument check that taint reached the
+			// caller's ARRAY locals — the self-host's interprocedural
+			// borrow fixpoint stranded all ten of its 3 KB registries per
+			// compile (#7914).
+			if x.IsStringConcat || x.IsStringCmp || x.IsStringOrd {
+				mark(x.Left)
+				mark(x.Right)
+			}
 		case *ast.Call:
 			// `s.len()` — a pure-read builtin reads the receiver and returns a
 			// scalar, retaining nothing, so the receiver occurrence is safe.

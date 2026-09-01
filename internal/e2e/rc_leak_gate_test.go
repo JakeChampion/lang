@@ -59,6 +59,14 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	// single-word only.
 	"copying_builtin_own_param_not_double_freed":     128,
 	"string_pushed_then_returned_bare_stays_refused": 320,
+	// Not this credit's residue — the case went 4032 -> 384 with it, and
+	// its `.append` twin to 0. What is left is one layer down:
+	// __fern_arr_cow_inplace_ptr INCS each element into the copy it
+	// returns, while the caller's array dec-on-overwrite is the
+	// buffer-only __fern_arr_dec, so the old buffer dies without
+	// releasing what the copy retained — one element per rewritten
+	// bucket.
+	"concat_operand_param_rewrites_registry_buckets": 384,
 	"closure_array_capture_churn":                    4752,
 	"closure_call_arg_handed_back_is_not_reclaimed":  1920,
 	"closure_captures_arr_of_struct_churn_free":      14256,
@@ -102,6 +110,13 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	// deliberate refusal class; the own-string case is clean here (the
 	// two-word ABI reclaims it).
 	"string_pushed_then_returned_bare_stays_refused": 448,
+	// The two #7914 concat-credit cases are byte-identical here across
+	// that change: the credit only lifts computeFreeEligible's
+	// single-word string taint, which the two-word ABI never applies.
+	// Both numbers are pre-existing arm64 gaps the x86-64 twin does not
+	// have (0 and 384 there).
+	"concat_operand_param_frees_the_caller_array":    2688,
+	"concat_operand_param_rewrites_registry_buckets": 3072,
 	"accumulator_seeded_from_array_element":          12800,
 	"closure_array_capture_churn":                    4752,
 	"closure_call_arg_handed_back_is_not_reclaimed":  1920,
