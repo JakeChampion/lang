@@ -2078,8 +2078,11 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	}
 
 	// env() is not granted by the wasi:http/proxy world `wasmtime serve`
-	// runs, so an env-using handler must be rejected with a clear message
-	// (rather than composing a component that fails at serve-link time).
+	// runs — the world has no `wasi:cli/environment` import, and a
+	// component carrying one fails to link at instantiation. So an
+	// env-using handler must be rejected, and it is rejected by the
+	// target capability gate at check time (E066, naming the source line)
+	// rather than by the composer after codegen.
 	envSrc := `
 import "std/http";
 import "std/tcp";
@@ -2095,8 +2098,8 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	out, err := exec.Command(bin, "-target", "wasm32-wasi-http", "-o", filepath.Join(dir, "env.wasm"), envPath).CombinedOutput()
 	if err == nil {
 		t.Errorf("expected env handler to reject (proxy world has no environment), but it composed")
-	} else if !bytes.Contains(out, []byte("env")) || !bytes.Contains(out, []byte("proxy world")) {
-		t.Errorf("expected an env / proxy-world rejection, got:\n%s", out)
+	} else if !bytes.Contains(out, []byte("E066")) || !bytes.Contains(out, []byte("`env`")) {
+		t.Errorf("expected an E066 env-capability rejection, got:\n%s", out)
 	}
 }
 

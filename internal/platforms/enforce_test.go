@@ -375,32 +375,42 @@ func TestClassificationCoversCheckerRegistry(t *testing.T) {
 	}
 }
 
-// argv exists only because a process was exec'd, so it is a capability
-// of its own rather than part of `env`: the proxy world has envp and no
-// argv. This is the same shape as the stdout finding in #6507.
-func TestEnforceArgsNotOnProxyWorld(t *testing.T) {
-	src := `function main(): i32 { var a: string[] = args(); return 0; }`
-	for _, target := range []string{"arm64-linux", "arm64-darwin", "arm64-android", "x86-64-linux", "wasm32-wasi"} {
-		t.Run(target, func(t *testing.T) {
-			if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
-				t.Errorf("%s: unexpected violations: %+v", target, vs)
+// The invocation environment is a process's, and the proxy world has no
+// process: it imports neither `wasi:cli/environment` (envp) nor the argv
+// half, so a component reaching for either fails to instantiate under
+// `wasmtime serve` — "component imports instance `wasi:cli/environment`,
+// but a matching implementation was not found in the linker". Gating both
+// turns that into E066 at check time. They stay separate capabilities
+// because they answer different questions of a host that has one and not
+// the other; this is the same shape as the stdout finding in #6507.
+func TestEnforceArgsAndEnvNotOnProxyWorld(t *testing.T) {
+	srcs := map[string]string{
+		"args": `function main(): i32 { var a: string[] = args(); return 0; }`,
+		"env":  `function main(): i32 { var v = env("HOME"); return 0; }`,
+	}
+	for capability, src := range srcs {
+		for _, target := range []string{"arm64-linux", "arm64-darwin", "arm64-android", "x86-64-linux", "wasm32-wasi"} {
+			t.Run(capability+"/"+target, func(t *testing.T) {
+				if vs := platforms.Enforce(prepared(t, src, false), target); len(vs) != 0 {
+					t.Errorf("%s: unexpected violations: %+v", target, vs)
+				}
+			})
+		}
+		t.Run(capability+"/wasm32-wasi-http", func(t *testing.T) {
+			vs := platforms.Enforce(prepared(t, src, false), "wasm32-wasi-http")
+			if len(vs) != 1 || vs[0].Capability != capability {
+				t.Fatalf("violations = %+v, want one %s violation", vs, capability)
 			}
 		})
 	}
-	t.Run("wasm32-wasi-http", func(t *testing.T) {
-		vs := platforms.Enforce(prepared(t, src, false), "wasm32-wasi-http")
-		if len(vs) != 1 || vs[0].Capability != "args" {
-			t.Fatalf("violations = %+v, want one args violation", vs)
-		}
-	})
 }
 
-// `env` and `random` are granted by every descriptor, so wiring them
-// into the gate table rejects nothing today — they exist for the target
-// that will not grant them.
-func TestEnforceEnvAndRandomUniversal(t *testing.T) {
+// `random` is granted by every hosted descriptor, so wiring it into the
+// gate table rejects nothing today — it exists for the target that will
+// not grant it. (`env` used to be listed here too; the proxy world does
+// not import it — see TestEnforceArgsAndEnvNotOnProxyWorld.)
+func TestEnforceRandomUniversal(t *testing.T) {
 	srcs := map[string]string{
-		"env":    `function main(): i32 { var v = env("HOME"); return 0; }`,
 		"random": `function main(): i32 { return random_i32(); }`,
 	}
 	for name, src := range srcs {
@@ -420,9 +430,9 @@ func TestEnforceEnvAndRandomUniversal(t *testing.T) {
 }
 
 // The freestanding target is the one that gives the tables teeth
-// (#6509). `log` / `now` / `env` / `random` are granted by all six
-// hosted descriptors, so gating them rejects nothing there; here every
-// one of them rejects.
+// (#6509). `log` / `now` / `random` are granted by all six hosted
+// descriptors, so gating them rejects nothing there; here every one of
+// them rejects.
 func TestEnforceFreestandingGrantsNoHost(t *testing.T) {
 	srcs := map[string]string{
 		"print":  `function main(): i32 { print("hi"); return 0; }`,

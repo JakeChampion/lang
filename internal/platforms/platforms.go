@@ -181,12 +181,17 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// gap wasmbin's TestBuildReportsUnsupported pins).
 	"wasi-cli": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"},
 
-	// The proxy world: an HTTP handler and nothing else. No argv, no
-	// stdout stream, no filesystem — which is what gives `args` and
-	// `stdout` their teeth as capabilities distinct from `env` and
-	// `log` (#6513, #6516). `fetch` is the planned outbound capability
-	// (docs/STDLIB-DESIGN-RESEARCH.md Rec §10).
-	"wasi-proxy": {"log", "now", "env", "random", "fetch"},
+	// The proxy world: an HTTP handler and nothing else. No stdout
+	// stream and no filesystem — which is what gives `stdout` its teeth
+	// as a capability distinct from `log` (#6513, #6516) — and no
+	// process, so neither `args` nor `env`: the world imports neither
+	// argv nor `wasi:cli/environment`, and a component carrying one
+	// fails to instantiate ("a matching implementation was not found in
+	// the linker") rather than reading empty. Deploy-time configuration
+	// reaches a proxy handler as a binding, not envp
+	// (docs/PLATFORM-RESEARCH.md Rec §7). `fetch` is the planned outbound
+	// capability (docs/STDLIB-DESIGN-RESEARCH.md Rec §10).
+	"wasi-proxy": {"log", "now", "random", "fetch"},
 
 	// No host at all. Everything a program can still reach is
 	// platforms.coreBuiltins; docs/FREESTANDING-CORE.md has the rule
@@ -213,9 +218,10 @@ var environments = map[string]environment{
 		// The proxy world never enters the component; the host calls
 		// the exported `handle`.
 		entry: EntryExports,
-		// `wasmtime serve --env KEY=VAL` style bindings; future hosts
-		// may add kv-namespace + service-binding shapes.
-		bindings: []string{"env"},
+		// No bindings yet: the proxy world has no environment import, so
+		// `wasmtime serve --env KEY=VAL` never reaches the guest. Named
+		// kv-namespace / service / config bindings are Rec §7's job.
+		bindings: nil,
 	},
 
 	// No host at all. No entry point either: a freestanding artifact is

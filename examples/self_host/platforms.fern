@@ -79,9 +79,11 @@ function capability_profile(profile: string): string[] {
         return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"];
     }
     if (profile == "wasi-proxy") {
-        // The proxy world: an HTTP handler and nothing else. No argv, no
-        // stdout stream, no filesystem.
-        return ["log", "now", "env", "random", "fetch"];
+        // The proxy world: an HTTP handler and nothing else. No stdout
+        // stream, no filesystem, and no process — so neither argv nor
+        // envp: `wasi:cli/environment` is not in the world, and a
+        // component importing it fails to instantiate.
+        return ["log", "now", "random", "fetch"];
     }
     // "none" — no host at all. Everything still reachable is core_builtin.
     var empty: string[] = [];
