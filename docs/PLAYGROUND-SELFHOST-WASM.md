@@ -266,19 +266,49 @@ ordinary string literals (`docs/EMBED.md`) — is now on both compilers:
 `internal/e2eselfhost/self_host_embed_test.go`. The self-host compiler embeds
 its own stdlib and finds `std/io.fern` in the resulting binary by name.
 
-The size is not a problem either. The whole stdlib as a wasm core module is
-**1,610,275 bytes raw / 458,170 gzipped**, built in under a second, all 73 files
-enumerable at runtime under wasmtime — so a driver carrying its own stdlib comes
-to roughly 3.95 MB raw / 1.07 MB gzipped, still 7x under the bundle shipping
-today. The pass costs nothing measurable: compiling `checker_run.fern` takes
+The stdlib itself as a wasm core module is **1,610,275 bytes raw / 458,170
+gzipped**, built in under a second, all 73 files enumerable at runtime under
+wasmtime. The pass costs nothing measurable: compiling `checker_run.fern` takes
 11.0 s with it and 11.1 s without, over three runs each.
+
+**A compiling playground driver** was the third, and it runs.
+`examples/self_host/playground_run.fern` reads a program on stdin, resolves its
+`std/…` imports out of an embedded bundle handed to the module loader as a
+sealed overlay (`modloader.Overlay`), and writes a wasm module. Compiled to
+wasm itself and run under `wasmtime` with **no `--dir` at all** — so no preopen
+exists and `path_open` cannot succeed — it compiles a program importing
+`std/i64` and emits a module that runs and returns the right answer, byte-for-
+byte identical to what the natively-hosted driver emits for the same input.
+
+The projection above it was wrong and is corrected here. This page previously
+estimated "roughly 3.95 MB raw / 1.07 MB gzipped" by adding the measured
+`wasm_ir_run` driver to the stdlib. The real driver is **15,008,071 bytes raw /
+1,508,333 gzipped**: it carries the module loader, the flattener, the checker,
+constfold and treeshake on top of what `wasm_ir_run` links, and none of that was
+in the sum. Against the bundle shipping today it is **1.9x smaller raw and 4.2x
+smaller gzipped** — still a win, and still the wrong shape to quote as "an order
+of magnitude", which the raw figure no longer is.
 
 What is left:
 
-1. **A playground driver** — `wasm_ir_run.fern`'s shape, resolving `std/…` out
-   of the embedded bundle rather than by host path (`modloader.fern:87`), plus
-   the interpret/check entry points, exporting to JS rather than reading stdin.
-2. **The LSP** is the long pole and is not costed here; it has no self-host
+1. **The other entry points.** The driver compiles; the playground also
+   interprets and checks. `checker.check_module` + `util.format_diags` covers
+   check. Interpret does not: `examples/self_host/interp.fern` implements **no
+   I/O builtins at all** — no `print` anywhere in its 4,138 lines — so
+   `interp_run.fern` returns an exit code and nothing else. The playground's
+   output pane has no self-host counterpart, which is a second missing consumer
+   alongside the LSP and was not previously recorded here.
+2. **JS bindings.** Reachable, contrary to what the stdin/stdout shape suggests:
+   `@export("iface", "name")` emits canonical-ABI wrappers into a `-emit
+   core-module` build (`wasm_ir.fern:8868`), pulling in `cabi_realloc` for
+   string parameters. What is missing is the page-side JS, not the wasm — the
+   ABI is the component model's, not the shim contract `web/wasi-shim.js`
+   speaks.
+3. **The CLI's own stdlib.** `fern.fern`'s `load_bundle` resolves imports with
+   its own worklist and only falls back to `modloader.resolve_module`, so the
+   overlay does not give `fern -embed` an embedded stdlib. That is its own
+   piece of work.
+4. **The LSP** is the long pole and is not costed here; it has no self-host
    counterpart at all.
 
 Precondition 3 of §3a — whether the native backends should be deleted at all,

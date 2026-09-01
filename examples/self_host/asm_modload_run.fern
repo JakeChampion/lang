@@ -745,7 +745,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         if (cache_dir.len() > 0) {
             var chi: i32 = 0;
             while (chi < parts.len()) {
-                srchashes = srchashes.append(modloader.module_src_hash(dir, entry_path, parts, chi));
+                srchashes = srchashes.append(modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, chi));
                 sighashes_ea = sighashes_ea.append(util.hash_key(modloader.module_sig_string(infmods[chi])));
                 chi = chi + 1;
             }
@@ -840,7 +840,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // sound (never reuses stale), just not incremental for that module.
         var mi: i32 = 0;
         while (mi < parts.len()) {
-            var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, mi);
+            var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, mi);
             print(parts[mi].ns + "|" + src_hash + "|" + sighashes[mi] + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
             mi = mi + 1;
         }
@@ -877,7 +877,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // module_src_hash).
     var cachefile: string = "";
     if (cache_dir.len() > 0) {
-        var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, pm_index);
+        var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, pm_index);
         cachefile = unit_cache_file(cache_dir, parts, infmods, sighashes, src_hash, pm_index, extra, pm_lo, pm_hi);
         if (cachefile.len() > 0) {
             match (read_file(cachefile)) {
@@ -1063,7 +1063,7 @@ function main(): i32 {
     match (read_file(entry_path)) {
         Ok(src) => {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-            var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
+            var loaded: flatten.LoadedModule[] = modloader.load_imports(modloader.no_overlay(), dir, entry);
             if (pm_mode.len() > 0) {
                 return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi, assume_eligible);
             }

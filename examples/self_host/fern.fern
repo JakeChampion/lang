@@ -1238,7 +1238,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
                 // the only way to reach a package that carries its own
                 // manifest — the rules above can only name a sibling file or
                 // something under the stdlib root.
-                var r: modloader.Resolved = modloader.resolve_module(from, ipath, util.module_name(ipath));
+                var r: modloader.Resolved = modloader.resolve_module(modloader.no_overlay(), from, ipath, util.module_name(ipath));
                 if (r.ok) { msrc = r.src; mok = true; mdir = r.dir; }
             }
             if (!mok) {
