@@ -142,14 +142,17 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    memory-bound. The self-host compiler already runs *as* wasm — a stdin-driven
    wasm-emitting driver is 2.3 MB (614 KB gzipped) against the playground
    bundle's 28.5 MB (6.3 MB), and compiles a program under wasmtime in 1.9 s at
-   104 MiB peak. Three things block it, in order: the self-host wasm backend
-   miscompiles the compiler itself on nested arithmetic (a native/wasm-hosted
-   divergence nothing gates — the one test that runs a wasm-hosted compiler
-   feeds it a program with none); `internal/codegen/wasmbin` cannot compile the
-   self-host compiler at all, missing the core `strbuf_*` builtins every other
-   backend has, so only the self-host can emit this artifact and there is no
-   second witness; and the playground needs a stdin/in-memory driver rather
-   than `fern.fern`, which is a CLI and writes executables.
+   104 MiB peak. Two of the three blockers that measurement found are closed: the
+   nested-arithmetic miscompile was a use-after-free in the compiler's own gate
+   passes (#7948), and `internal/codegen/wasmbin` has the `strbuf_*` lowerings it
+   was missing (#7951). What is left is the driver — the playground needs a
+   stdin/in-memory entry point rather than `fern.fern`, which is a CLI that takes
+   argv paths and writes executables, and it needs the stdlib inside the module,
+   which the self-host compiler has no way to put there (native embeds it with
+   `go:embed`; the self-host CLI reads it from a stdlib root on the command line).
+   `sleep_ms` remains the one builtin with no wasm lowering (#7947), which keeps
+   the native toolchain from compiling `fern.fern` for wasm, so this artifact still
+   has only one witness.
 
 ## Freeze preconditions (all must be green before native is frozen)
 
