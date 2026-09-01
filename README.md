@@ -51,7 +51,7 @@ for details):
 #    nightly release: https://github.com/JakeChampion/lang/releases/tag/nightly
 #    (fern-linux-x86_64 / fern-linux-arm64 / fern-darwin-arm64).tar.gz
 
-# 2. go install (needs Go 1.24+)
+# 2. go install (needs Go 1.26+)
 go install github.com/jakechampion/lang/cmd/fern@latest
 
 # 3. Build from a checkout

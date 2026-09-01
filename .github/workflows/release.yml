@@ -61,7 +61,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: "1.24"
+          go-version: "1.26"
           # No go.sum (no external deps) → setup-go's default cache
           # attempt complains. Mirror the existing CI workflows.
           cache: false

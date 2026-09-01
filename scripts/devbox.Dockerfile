@@ -14,7 +14,7 @@
 # scripts/wasm-toolchain-pins. Do not hardcode them here: a second copy of the
 # pins is exactly what buys an opaque `invalid leading byte (0x43)` when it
 # falls behind.
-FROM golang:1.24-bookworm
+FROM golang:1.26-bookworm
 
 ARG WASMTIME_VER
 ARG WASMTOOLS_VER
