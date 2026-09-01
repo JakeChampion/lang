@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -3946,10 +3947,10 @@ func (g *generator) emit(s string) {
 
 // peepWindow is how many recently emitted logical lines are held back from
 // `out` so the streaming peephole can rewrite the tail in place. The longest
-// pattern is 4 lines; 6 leaves margin while bounding held memory to O(1) —
-// crucial because a self-host `.s` is hundreds of MB and a whole-text
+// pattern is P4's 5 lines; 8 leaves margin while bounding held memory to
+// O(1) — crucial because a self-host `.s` is hundreds of MB and a whole-text
 // post-pass would spike RAM.
-const peepWindow = 6
+const peepWindow = 8
 
 // put appends one logical output line (without its trailing newline) to the
 // peephole window, applies the safe local rewrites at the tail, then flushes
@@ -4022,6 +4023,26 @@ func (g *generator) peepholeTail() {
 		}
 	}
 
+	// P4 — constant operand folded into the ALU form. Instruction selection
+	// never inspects an operand for constness, so `x + 5` materialises the 5
+	// into rax, hands it to rcx and consumes it as a register. Once P1 has
+	// collapsed the constant's own push/pop pair the tail reads:
+	//
+	//   push rax / mov eax, K / mov rcx, rax / pop rax / <alu> rax, rcx
+	//     =>  <alu> rax, K
+	//
+	// The four dropped lines leave rax, rsp and the flags exactly as they
+	// found them. The only other state they wrote is rcx, and every consumer
+	// of rcx in this backend writes it before reading it — binPop pops into
+	// it, a call site loads it as the fourth argument register, and a shift
+	// count travels in cl.
+	if n >= 5 {
+		if line, ok := foldConstAlu(w[n-5], w[n-4], w[n-3], w[n-2], w[n-1]); ok {
+			g.peepWin = append(w[:n-5], line)
+			return
+		}
+	}
+
 	// P2 — dead jump: `jmp L` immediately followed by the label `L:` is a
 	// no-op fall-through. Drop the jmp; the label stays for other jumps.
 	if n >= 2 {
@@ -4056,6 +4077,97 @@ func matchPopDst(line string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// foldConstAlu recognises P4's five-line tail and returns the single
+// ALU-with-immediate line that replaces it. See the rule for why dropping
+// the intermediate write to rcx is sound.
+//
+// The subtle part is the immediate's width, because the two constant forms
+// leave rcx holding different 64-bit values for the same printed literal:
+// `movabs rax, K` gives rcx exactly K, while `mov eax, K` gives rcx the
+// ZERO-extended uint32 of K. An `<alu> rax, imm32` sign-extends. So a
+// negative 32-bit constant feeding a 64-bit operation is not foldable —
+// `mov eax, -1` makes rcx 0x00000000FFFFFFFF where `add rax, -1` would add
+// 0xFFFFFFFFFFFFFFFF. A 64-bit operation on a wide constant needs the
+// literal to fit imm32 for the same reason. A 32-bit operation reads only
+// the low half of rcx, which the printed literal always describes.
+func foldConstAlu(l0, l1, l2, l3, l4 string) (string, bool) {
+	if l0 != "\tpush rax" || l3 != "\tpop rax" {
+		return "", false
+	}
+	if l2 != "\tmov rcx, rax" && l2 != "\tmov ecx, eax" {
+		return "", false
+	}
+	k, constWide, ok := matchConstToAcc(l1)
+	if !ok {
+		return "", false
+	}
+	op, aluWide, ok := matchAluAccCounter(l4)
+	if !ok {
+		return "", false
+	}
+
+	imm := k
+	if aluWide {
+		if constWide {
+			if k < math.MinInt32 || k > math.MaxInt32 {
+				return "", false
+			}
+		} else if k < 0 {
+			return "", false
+		}
+	} else {
+		imm = int64(int32(k))
+	}
+
+	acc := "eax"
+	if aluWide {
+		acc = "rax"
+	}
+	if op == "imul" {
+		// The two-operand imul has no immediate form; the three-operand
+		// one is the multiply-by-constant encoding (0x6B ib / 0x69 id).
+		return fmt.Sprintf("\timul %s, %s, %d", acc, acc, imm), true
+	}
+	return fmt.Sprintf("\t%s %s, %d", op, acc, imm), true
+}
+
+// matchConstToAcc matches the constant-materialisation forms this backend
+// emits into the accumulator, returning the literal and whether it was
+// written through the 64-bit register.
+func matchConstToAcc(line string) (k int64, wide, ok bool) {
+	switch {
+	case line == "\txor eax, eax":
+		return 0, false, true
+	case strings.HasPrefix(line, "\tmov eax, "):
+		v, err := strconv.ParseInt(line[len("\tmov eax, "):], 10, 64)
+		return v, false, err == nil
+	case strings.HasPrefix(line, "\tmov rax, "):
+		v, err := strconv.ParseInt(line[len("\tmov rax, "):], 10, 64)
+		return v, true, err == nil
+	case strings.HasPrefix(line, "\tmovabs rax, "):
+		v, err := strconv.ParseInt(line[len("\tmovabs rax, "):], 10, 64)
+		return v, true, err == nil
+	}
+	return 0, false, false
+}
+
+// matchAluAccCounter matches an ALU line whose operands are exactly the
+// accumulator and the counter register — the shape binPop hands to a binary
+// operator — and returns the mnemonic and its operand width. Shifts are
+// excluded: their count travels in cl, not rcx, so they never take this
+// form (their immediate fold is its own rule).
+func matchAluAccCounter(line string) (op string, wide, ok bool) {
+	for _, m := range [...]string{"add", "sub", "and", "or", "xor", "cmp", "test", "imul"} {
+		if line == "\t"+m+" rax, rcx" {
+			return m, true, true
+		}
+		if line == "\t"+m+" eax, ecx" {
+			return m, false, true
+		}
+	}
+	return "", false, false
 }
 
 // captureSlotSize mirrors closureconv.captureSlotSize for
