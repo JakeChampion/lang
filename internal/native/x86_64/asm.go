@@ -507,6 +507,21 @@ func appendNopPad(b []byte, n int) []byte {
 	return b
 }
 
+// prefixed assembles rest behind a rep/lock prefix byte, keeping the 0x66
+// operand-size prefix (which the encoder emits first) ahead of it as GNU as
+// orders them.
+func (a *Assembler) prefixed(prefix byte, rest string) error {
+	at := len(a.text)
+	a.emit(prefix)
+	if err := a.insn(rest); err != nil {
+		return err
+	}
+	if at+1 < len(a.text) && a.text[at+1] == 0x66 {
+		a.text[at], a.text[at+1] = 0x66, prefix
+	}
+	return nil
+}
+
 // insn parses and encodes one .text instruction.
 func (a *Assembler) insn(line string) error {
 	mnem, rest := splitMnemonic(line)
@@ -514,18 +529,15 @@ func (a *Assembler) insn(line string) error {
 	// before `rest` is parsed as an operand list.
 	switch mnem {
 	case "rep", "repe", "repz":
-		a.emit(0xF3)
-		return a.insn(rest)
+		return a.prefixed(0xF3, rest)
 	case "repne", "repnz":
-		a.emit(0xF2)
-		return a.insn(rest)
+		return a.prefixed(0xF2, rest)
 	case "lock":
 		next, _ := splitMnemonic(rest)
 		if !lockable[next] {
 			return fmt.Errorf("lock needs a lockable instruction to prefix (got %q)", next)
 		}
-		a.emit(0xF0)
-		return a.insn(rest)
+		return a.prefixed(0xF0, rest)
 	}
 	opStrs := splitOperands(rest)
 	ops := make([]operand, len(opStrs))

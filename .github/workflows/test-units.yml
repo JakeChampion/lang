@@ -50,6 +50,25 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
+      # llvm-mc second oracle for the assembler differential lanes
+      # (internal/native/{x86_64,arm64} TestEncodingsAgainstLLVMMC, #7895):
+      # the tests skip when llvm-mc is absent, so this install is what makes
+      # that lane real. One leg only — llvm-mc cross-encodes both targets, so
+      # the arm64 leg would repeat the same work. Same tolerable-failure
+      # shape as setup-fern's lld step: a failed install merely skips the
+      # lane, but a hung apt must not eat the job.
+      - name: Ensure llvm-mc (assembler second oracle)
+        if: ${{ matrix.host == 'x86_64' }}
+        run: |
+          if command -v llvm-mc >/dev/null 2>&1 || command -v llvm-mc-18 >/dev/null 2>&1; then
+            echo "llvm-mc already present"
+            exit 0
+          fi
+          sudo timeout 120 apt-get update -qq && sudo timeout 120 apt-get install -y -qq llvm || {
+            echo "llvm install failed or timed out; the llvm-mc oracle lane will skip" >&2
+            exit 0
+          }
+          command -v llvm-mc >/dev/null 2>&1 && llvm-mc --version | head -2 || true
       - name: go test (units)
         # The package set is DERIVED, not enumerated — see
         # scripts/unit-test-packages, which is also what the Netlify smoke

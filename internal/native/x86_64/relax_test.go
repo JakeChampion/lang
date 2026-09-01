@@ -70,6 +70,34 @@ func TestRelaxChainReaction(t *testing.T) {
 	}
 }
 
+// An alignment pad between a branch and its target can make BOTH layouts
+// self-consistent: long js (6) + 120 nops ends at 129, pads 15 to 144, disp
+// 135 — out of rel8 range, so long looks forced; short js (2) ends at 5,
+// pads 3 to 128, disp 123 — in range. Grow-only relaxation must land on the
+// short fixpoint, which is the one GNU as emits (found by the gas fuzz
+// lane; a shrink-only pass kept the long form).
+func TestRelaxAlignmentTwoFixpoints(t *testing.T) {
+	src := "A:\nnop\njmp A\njs L\n" + nops(120) + ".p2align 4\nL: ret"
+	want := "90ebfd787b" + hexNops(120) + "0f1f00" + "c3"
+	if got := asm(t, src); got != want {
+		t.Errorf("two-fixpoint alignment = %s, want %s", got, want)
+	}
+}
+
+// Growth must cascade one branch at a time: with everything short, BOTH
+// branches here are out of range (jle by distance, jno by one byte over the
+// pad). Growing jle first shifts jno by 4, and the pad before its target
+// absorbs the shift — jno lands back in range and must stay short, as GNU
+// as emits it. Pinning both against the all-short layout kept jno long
+// (found by the gas fuzz lane).
+func TestRelaxGrowthCascadeThroughPad(t *testing.T) {
+	src := "A:\n" + nops(140) + "jle A\njno L\n" + nops(120) + ".p2align 4\nL: ret"
+	want := hexNops(140) + "0f8e6effffff" + "717c" + hexNops(120) + "0f1f4000" + "c3"
+	if got := asm(t, src); got != want {
+		t.Errorf("growth cascade = %s, want %s", got, want)
+	}
+}
+
 // A rip-relative data access AFTER a shrunk branch: the ripFixup's at and
 // end offsets (and the .rodata base derived from the final .text length)
 // must be remapped before the disp32 resolves. Layout: text = short jmp

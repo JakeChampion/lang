@@ -173,6 +173,61 @@ func TestSelfHostDialectEncodings(t *testing.T) {
 	}
 }
 
+// TestWidthSensitiveEncodings pins forms the gas fuzz lane (fuzz_gas_test.go)
+// found mis-encoded or refused: the 32-bit sxtb/sxth (SBFM's sf and N bits
+// must BOTH clear — clearing only sf is UNALLOCATED, and the old encoder
+// cleared neither, so `sxtb w23, w1` silently sign-extended into all 64
+// bits), the w-form extended-register add/sub (same missing sf clear),
+// negative/unaligned signed-load offsets (routed to LDURS* as GNU as does),
+// shifted neg/negs, and a bitmask immediate spelled as upper-half unsigned
+// hex. Every expected word is what aarch64-linux-gnu-as emits.
+func TestWidthSensitiveEncodings(t *testing.T) {
+	cases := []struct {
+		asm  string
+		want uint32
+	}{
+		{"\tsxtb w23, w1\n", 0x13001c37},
+		{"\tsxth w5, w6\n", 0x13003cc5},
+		{"\tldrsh w7, [x13, #-255]\n", 0x78d011a7},
+		{"\tldrsb x3, [x4, #-1]\n", 0x389ff083},
+		{"\tldrsw x2, [x3, #-4]\n", 0xb89fc062},
+		{"\tldrsh x1, [x2, #3]\n", 0x78803041},
+		{"\tand x11, x26, #0xfffffff7fffffff7\n", 0x921c7b4b},
+		{"\tadd w1, w2, w3, uxtb\n", 0x0b230041},
+		{"\tsub w4, w5, w6, sxth #2\n", 0x4b26a8a4},
+		{"\tneg x21, x20, lsr #4\n", 0xcb5413f5},
+		{"\tneg w1, w2, lsl #7\n", 0x4b021fe1},
+		{"\tnegs x3, x4, asr #63\n", 0xeb84ffe3},
+		{"\tnegs w5, w6, lsl #1\n", 0x6b0607e5},
+	}
+	for _, c := range cases {
+		got, err := arm64.Assemble(c.asm)
+		if err != nil {
+			t.Fatalf("Assemble(%q): %v", c.asm, err)
+		}
+		want := arm64.Put(nil, c.want)
+		if !bytes.Equal(got, want) {
+			t.Errorf("%q: got % x, want % x", c.asm, got, want)
+		}
+	}
+	// Forms whose "other width" is a different instruction (or none):
+	// refuse rather than silently encoding the wrong one.
+	for _, asm := range []string{
+		"\tsxtw w0, w1\n",           // no 32-bit sxtw
+		"\tuxtb x0, w1\n",           // no x-form uxtb/uxth alias
+		"\tuxth x0, w1\n",           //
+		"\tsxtb x0, x1\n",           // source must be a w register
+		"\tadd w0, w1, x2, uxtx\n",  // no 64-bit offset in the 32-bit form
+		"\tldrsb w0, [x1, x2]\n",    // register-offset signed loads unsupported
+		"\tldrsw w0, [x1]\n",        // ldrsw destination is always x
+		"\tldrsh x0, [x1, #-300]\n", // outside both scaled and unscaled ranges
+	} {
+		if _, err := arm64.Assemble(asm); err == nil {
+			t.Errorf("Assemble(%q): expected an error, got none", asm)
+		}
+	}
+}
+
 // TestAssembleBasic checks Assemble without external tools: a tiny
 // exit(42) snippet must produce the known movz/movz/svc bytes, and
 // labels + a comment must be handled.

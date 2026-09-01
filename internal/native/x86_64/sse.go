@@ -207,11 +207,18 @@ func (a *Assembler) cvtsi2s(prefix byte, ops []operand) error {
 		return fmt.Errorf("cvtsi2sd/ss expects xmm, r/m")
 	}
 	dst, src := ops[0], ops[1]
-	if src.kind == opReg && src.size != 32 && src.size != 64 {
-		return fmt.Errorf("cvtsi2sd/ss source must be a 32- or 64-bit GPR")
+	srcSize := src.size
+	if src.kind == opMem {
+		// The integer source width is invisible in a memory operand, and it
+		// selects REX.W: an unsized qword load would silently convert only
+		// 32 bits.
+		srcSize = src.memSize
+	}
+	if srcSize != 32 && srcSize != 64 {
+		return fmt.Errorf("cvtsi2sd/ss source must be a 32- or 64-bit GPR or dword/qword ptr memory")
 	}
 	a.emit(prefix)
-	a.emitRexRM(src.size == 64, dst.reg, src)
+	a.emitRexRM(srcSize == 64, dst.reg, src)
 	a.emit(0x0F, 0x2A)
 	a.emitModRM(dst.reg, src)
 	return nil
