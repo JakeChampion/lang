@@ -74,7 +74,39 @@ func xr(r *rand.Rand) string                   { return fmt.Sprintf("x%d", r.Int
 func wr(r *rand.Rand) string                   { return fmt.Sprintf("w%d", r.Intn(31)) }
 func dr(r *rand.Rand) string                   { return fmt.Sprintf("d%d", r.Intn(32)) }
 func sr(r *rand.Rand) string                   { return fmt.Sprintf("s%d", r.Intn(32)) }
+func vr(r *rand.Rand) string                   { return fmt.Sprintf("v%d", r.Intn(32)) }
 func a64pick(r *rand.Rand, xs []string) string { return xs[r.Intn(len(xs))] }
+
+// A NEON arrangement: the element size and how many of them fill the 64- or
+// 128-bit register. Which arrangements an instruction admits is per-mnemonic
+// and is the whole point of sweeping them — an unsupported one has to be
+// REFUSED, and a supported one has to pick the same Q and size bits gas does.
+type a64Arr struct {
+	spell string // "8b", "4h", "2s", "2d", …
+	elem  int    // element width in bits
+	lanes int
+}
+
+var (
+	a64ArrB    = []a64Arr{{"8b", 8, 8}, {"16b", 8, 16}}
+	a64ArrBHS  = append(append([]a64Arr{}, a64ArrB...), a64Arr{"4h", 16, 4}, a64Arr{"8h", 16, 8}, a64Arr{"2s", 32, 2}, a64Arr{"4s", 32, 4})
+	a64ArrFull = append(append([]a64Arr{}, a64ArrBHS...), a64Arr{"2d", 64, 2})
+	a64ArrFP   = []a64Arr{{"2s", 32, 2}, {"4s", 32, 4}, {"2d", 64, 2}}
+	a64ArrH    = []a64Arr{{"4h", 16, 4}, {"8h", 16, 8}}
+)
+
+func a64arr(r *rand.Rand, set []a64Arr) a64Arr { return set[r.Intn(len(set))] }
+
+// v3same renders `mnem Vd.<T>, Vn.<T>, Vm.<T>` — the three-register-same
+// shape every integer and FP vector ALU op is spelled in.
+func v3same(r *rand.Rand, mnem string, a a64Arr) string {
+	return fmt.Sprintf("\t%s %s.%s, %s.%s, %s.%s\n", mnem, vr(r), a.spell, vr(r), a.spell, vr(r), a.spell)
+}
+
+// v2same renders `mnem Vd.<T>, Vn.<T>` — the two-register-misc shape.
+func v2same(r *rand.Rand, mnem string, a a64Arr) string {
+	return fmt.Sprintf("\t%s %s.%s, %s.%s\n", mnem, vr(r), a.spell, vr(r), a.spell)
+}
 
 // gp returns a same-width register pair maker: is64 selects x or w names.
 func gp(r *rand.Rand, is64 bool) string {
@@ -833,6 +865,177 @@ func a64Forms() []a64Form {
 			b.WriteString(pad())
 			b.WriteString(fwd + ":\n\tret\n")
 			return b.String()
+		}},
+
+		// ---- NEON / Advanced SIMD -------------------------------------
+		// The arrangement is half the encoding (Q plus the size field), and
+		// which arrangements a mnemonic admits varies per row, so each form
+		// draws from exactly the set its mnemonics accept. A wrong set shows
+		// up immediately as gas refusing the line rather than as a silent
+		// byte difference.
+		{name: "neon_3same_int", gen: func(r *rand.Rand, _ int) string {
+			// Integer three-register-same over every arrangement including 2d.
+			return v3same(r, a64pick(r, []string{
+				"add", "sub", "cmeq", "cmgt", "cmge", "cmhi", "cmhs", "cmtst",
+				"sshl", "ushl",
+			}), a64arr(r, a64ArrFull))
+		}},
+		{name: "neon_3same_nod", gen: func(r *rand.Rand, _ int) string {
+			// The same shape for the mnemonics with no 64-bit element form.
+			return v3same(r, a64pick(r, []string{
+				"mul", "smax", "smin", "umax", "umin",
+			}), a64arr(r, a64ArrBHS))
+		}},
+		{name: "neon_3same_logical", gen: func(r *rand.Rand, _ int) string {
+			// The bitwise row is byte-arrangement only: the operation is
+			// element-size-independent, so gas admits 8b/16b and nothing else.
+			return v3same(r, a64pick(r, []string{"and", "orr", "eor", "bic", "orn"}),
+				a64arr(r, a64ArrB))
+		}},
+		{name: "neon_3same_fp", gen: func(r *rand.Rand, _ int) string {
+			return v3same(r, a64pick(r, []string{
+				"fadd", "fsub", "fmul", "fdiv", "fmax", "fmin",
+				"fcmeq", "fcmge", "fcmgt",
+			}), a64arr(r, a64ArrFP))
+		}},
+		{name: "neon_2misc_int", gen: func(r *rand.Rand, _ int) string {
+			switch r.Intn(4) {
+			case 0:
+				return v2same(r, a64pick(r, []string{"abs", "neg"}), a64arr(r, a64ArrFull))
+			case 1:
+				return v2same(r, a64pick(r, []string{"cnt", "not", "mvn", "rev16"}), a64arr(r, a64ArrB))
+			case 2:
+				// rev32 reverses 32-bit containers, so its elements are
+				// narrower than a word: bytes and halfwords only.
+				return v2same(r, "rev32", a64arr(r, append(append([]a64Arr{}, a64ArrB...), a64ArrH...)))
+			default:
+				// rev64 likewise stops one element size short of the container.
+				return v2same(r, "rev64", a64arr(r, a64ArrBHS))
+			}
+		}},
+		{name: "neon_2misc_fp", gen: func(r *rand.Rand, _ int) string {
+			return v2same(r, a64pick(r, []string{
+				"fabs", "fneg", "fsqrt", "fcvtzs", "fcvtzu", "scvtf", "ucvtf",
+			}), a64arr(r, a64ArrFP))
+		}},
+		{name: "neon_fcmp_zero", gen: func(r *rand.Rand, _ int) string {
+			// The FP compares have no two-operand form: against zero they
+			// take a literal #0.0, which is a distinct encoding from both the
+			// register compare and the integer #0 form above.
+			a := a64arr(r, a64ArrFP)
+			return fmt.Sprintf("\t%s %s.%s, %s.%s, #0.0\n",
+				a64pick(r, []string{"fcmeq", "fcmge", "fcmgt", "fcmle", "fcmlt"}),
+				vr(r), a.spell, vr(r), a.spell)
+		}},
+		{name: "neon_cmp_zero", gen: func(r *rand.Rand, _ int) string {
+			// The compare-against-zero forms take a literal #0 rather than a
+			// second vector, and are a separate encoding from the register
+			// compares above.
+			mnem := a64pick(r, []string{"cmeq", "cmgt", "cmge", "cmle", "cmlt"})
+			a := a64arr(r, a64ArrFull)
+			return fmt.Sprintf("\t%s %s.%s, %s.%s, #0\n", mnem, vr(r), a.spell, vr(r), a.spell)
+		}},
+		{name: "neon_shift_imm", gen: func(r *rand.Rand, _ int) string {
+			a := a64arr(r, a64ArrFull)
+			// Left shifts take 0..esize-1; right shifts take 1..esize. Off by
+			// one either way is a different (or invalid) encoding.
+			if mnem := a64pick(r, []string{"shl", "sli"}); r.Intn(2) == 0 {
+				return fmt.Sprintf("\t%s %s.%s, %s.%s, #%d\n", mnem, vr(r), a.spell, vr(r), a.spell, r.Intn(a.elem))
+			}
+			mnem := a64pick(r, []string{"sshr", "ushr", "sri"})
+			return fmt.Sprintf("\t%s %s.%s, %s.%s, #%d\n", mnem, vr(r), a.spell, vr(r), a.spell, 1+r.Intn(a.elem))
+		}},
+		{name: "neon_permute", gen: func(r *rand.Rand, _ int) string {
+			return v3same(r, a64pick(r, []string{"zip1", "zip2", "uzp1", "uzp2", "trn1", "trn2"}),
+				a64arr(r, a64ArrFull))
+		}},
+		{name: "neon_across", gen: func(r *rand.Rand, _ int) string {
+			// Across-lanes reduces a vector to a SCALAR whose width is the
+			// element width (addv/…) or twice it (the widening saddlv/uaddlv).
+			// .2s is excluded throughout: reducing two 32-bit lanes of a
+			// 64-bit vector has no encoding, and gas refuses it too.
+			a := a64arr(r, []a64Arr{{"8b", 8, 8}, {"16b", 8, 16}, {"4h", 16, 4}, {"8h", 16, 8}, {"4s", 32, 4}})
+			if r.Intn(2) == 0 {
+				scalar := map[int]string{8: "b", 16: "h", 32: "s"}[a.elem]
+				return fmt.Sprintf("\t%s %s%d, %s.%s\n",
+					a64pick(r, []string{"addv", "smaxv", "sminv", "umaxv", "uminv"}),
+					scalar, r.Intn(32), vr(r), a.spell)
+			}
+			wide := map[int]string{8: "h", 16: "s", 32: "d"}[a.elem]
+			return fmt.Sprintf("\t%s %s%d, %s.%s\n",
+				a64pick(r, []string{"saddlv", "uaddlv"}), wide, r.Intn(32), vr(r), a.spell)
+		}},
+		{name: "neon_dup_ins_mov", gen: func(r *rand.Rand, _ int) string {
+			a := a64arr(r, a64ArrFull)
+			elemTag := map[int]string{8: "b", 16: "h", 32: "s", 64: "d"}[a.elem]
+			switch r.Intn(4) {
+			case 0: // dup from a general register — w for the narrow sizes.
+				src := wr(r)
+				if a.elem == 64 {
+					src = xr(r)
+				}
+				return fmt.Sprintf("\tdup %s.%s, %s\n", vr(r), a.spell, src)
+			case 1: // dup from a lane
+				return fmt.Sprintf("\tdup %s.%s, %s.%s[%d]\n", vr(r), a.spell, vr(r), elemTag, r.Intn(a.lanes))
+			case 2: // ins lane <- lane
+				return fmt.Sprintf("\tins %s.%s[%d], %s.%s[%d]\n",
+					vr(r), elemTag, r.Intn(a.lanes), vr(r), elemTag, r.Intn(a.lanes))
+			default: // umov / smov out to a general register
+				if a.elem == 64 {
+					return fmt.Sprintf("\tumov %s, %s.d[%d]\n", xr(r), vr(r), r.Intn(2))
+				}
+				if r.Intn(2) == 0 {
+					return fmt.Sprintf("\tumov %s, %s.%s[%d]\n", wr(r), vr(r), elemTag, r.Intn(a.lanes))
+				}
+				// smov sign-extends, so its destination must be STRICTLY
+				// wider than the element: a .s lane goes only to an x, and
+				// there is no smov out of a .d lane at all (nothing is wider).
+				dst := xr(r)
+				if a.elem < 32 && r.Intn(2) == 0 {
+					dst = wr(r)
+				}
+				return fmt.Sprintf("\tsmov %s, %s.%s[%d]\n", dst, vr(r), elemTag, r.Intn(a.lanes))
+			}
+		}},
+		{name: "neon_ext_tbl", gen: func(r *rand.Rand, _ int) string {
+			a := a64arr(r, a64ArrB)
+			if r.Intn(2) == 0 {
+				return fmt.Sprintf("\text %s.%s, %s.%s, %s.%s, #%d\n",
+					vr(r), a.spell, vr(r), a.spell, vr(r), a.spell, r.Intn(a.lanes))
+			}
+			return fmt.Sprintf("\ttbl %s.%s, {%s.16b}, %s.%s\n", vr(r), a.spell, vr(r), vr(r), a.spell)
+		}},
+		{name: "neon_ldst1", gen: func(r *rand.Rand, _ int) string {
+			a := a64arr(r, a64ArrFull)
+			if r.Intn(4) == 0 {
+				elemTag := map[int]string{8: "b", 16: "h", 32: "s", 64: "d"}[a.elem]
+				_ = elemTag
+				return fmt.Sprintf("\tld1r {%s.%s}, [%s]\n", vr(r), a.spell, baseReg(r))
+			}
+			return fmt.Sprintf("\t%s {%s.%s}, [%s]\n",
+				a64pick(r, []string{"ld1", "st1"}), vr(r), a.spell, baseReg(r))
+		}},
+		{name: "neon_narrow_widen", gen: func(r *rand.Rand, _ int) string {
+			// The narrowing and widening pairs, whose two operands carry
+			// DIFFERENT arrangements — the shape most likely to get one of
+			// the two size fields wrong.
+			narrow := []a64Arr{{"8b", 8, 8}, {"4h", 16, 4}, {"2s", 32, 2}}
+			wide := map[string]string{"8b": "8h", "4h": "4s", "2s": "2d"}
+			n := narrow[r.Intn(len(narrow))]
+			switch r.Intn(3) {
+			case 0:
+				return fmt.Sprintf("\txtn %s.%s, %s.%s\n", vr(r), n.spell, vr(r), wide[n.spell])
+			case 1:
+				return fmt.Sprintf("\tshrn %s.%s, %s.%s, #%d\n",
+					vr(r), n.spell, vr(r), wide[n.spell], 1+r.Intn(n.elem))
+			default:
+				if r.Intn(2) == 0 {
+					return fmt.Sprintf("\t%s %s.%s, %s.%s, #%d\n",
+						a64pick(r, []string{"sshll", "ushll"}), vr(r), wide[n.spell], vr(r), n.spell, r.Intn(n.elem))
+				}
+				return fmt.Sprintf("\t%s %s.%s, %s.%s\n",
+					a64pick(r, []string{"sxtl", "uxtl"}), vr(r), wide[n.spell], vr(r), n.spell)
+			}
 		}},
 	}
 }

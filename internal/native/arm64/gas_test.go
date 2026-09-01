@@ -463,6 +463,39 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"\tldr s0, [x1]\n\tstr s2, [x3, #12]\n\tldr s4, [x5], #4\n\tstr s6, [x7, #-4]!\n" +
 			"\tldur s8, [x9, #-4]\n\tstur s10, [x11, #-8]\n\tldurh w0, [x1, #-2]\n\tsturh w2, [x3, #-2]\n" +
 			"\tldursb x4, [x5, #-1]\n\tldursb w4, [x5, #-1]\n\tldursh w6, [x7, #-2]\n\tldursh x6, [x7, #-2]\n\tldursw x8, [x9, #-4]\n",
+		// SIMD kernel shapes: whole snippets of the code a vector kernel
+		// author actually writes, cross-checked byte-for-byte. The
+		// arrangement sweep itself is pinned in gas_simd_test.go; these
+		// exercise the forms in combination (writeback chains, labels,
+		// mixed arrangements).
+		"neon_horizontal_max_kernel": "" +
+			"\tld1 {v0.16b}, [x0], #16\n\tld1 {v1.16b}, [x0], #16\n\tumax v0.16b, v0.16b, v1.16b\n" +
+			"\tumaxv b2, v0.16b\n\tumov w1, v2.b[0]\n" +
+			"\tsmax v3.8h, v4.8h, v5.8h\n\tsmaxv h6, v3.8h\n\tsminv s7, v8.4s\n\tuminv b9, v10.8b\n",
+		"neon_widening_sum": "" +
+			"\tld1 {v0.16b}, [x1], x2\n\tuaddlv h1, v0.16b\n\tushll v2.8h, v0.8b, #0\n\tushll2 v3.8h, v0.16b, #0\n" +
+			"\tadd v2.8h, v2.8h, v3.8h\n\tuaddlv s4, v2.8h\n\tsaddlv d5, v6.4s\n\tumov w0, v4.s[0]\n" +
+			"\tsxtl v7.4s, v8.4h\n\tuxtl2 v9.2d, v10.4s\n\txtn v11.4h, v12.4s\n\txtn2 v11.8h, v13.4s\n",
+		"neon_zip_shuffle": "" +
+			"\tld1 {v0.16b, v1.16b}, [x0], #32\n\tzip1 v2.16b, v0.16b, v1.16b\n\tzip2 v3.16b, v0.16b, v1.16b\n" +
+			"\tuzp1 v4.8h, v2.8h, v3.8h\n\tuzp2 v5.8h, v2.8h, v3.8h\n\ttrn1 v6.4s, v4.4s, v5.4s\n\ttrn2 v7.2d, v6.2d, v6.2d\n" +
+			"\text v8.16b, v6.16b, v7.16b, #4\n\ttbl v9.16b, {v8.16b}, v1.16b\n\trev64 v10.4s, v9.4s\n" +
+			"\tst1 {v2.16b, v3.16b}, [x1], #32\n",
+		"neon_float_lane_loop": "" +
+			"floop:\n\tld1 {v0.4s}, [x0], #16\n\tld1 {v1.4s}, [x1], #16\n" +
+			"\tfmul v2.4s, v0.4s, v1.4s\n\tfadd v3.4s, v3.4s, v2.4s\n\tfcmgt v4.4s, v0.4s, v1.4s\n" +
+			"\tscvtf v5.4s, v6.4s\n\tfcvtzs v7.2d, v8.2d\n\tfdiv v9.2d, v10.2d, v11.2d\n" +
+			"\tfmin v12.2s, v13.2s, v14.2s\n\tfabs v15.4s, v16.4s\n\tfneg v17.2d, v18.2d\n\tfsqrt v19.4s, v20.4s\n" +
+			"\tfcmlt v21.4s, v22.4s, #0.0\n\tsub x2, x2, #1\n\tcbnz x2, floop\n\tst1 {v3.4s}, [x3]\n",
+		"neon_lane_and_imm_forms": "" +
+			"\tdup v0.16b, w1\nmloop:\n\tld1 {v1.16b}, [x0], #16\n\tcmeq v2.16b, v1.16b, v0.16b\n" +
+			"\tshrn v3.8b, v2.8h, #4\n\tfmov x2, d3\n\tcbz x2, mloop\n\trbit x2, x2\n\tclz x2, x2\n" +
+			"\tmovi v4.16b, #128\n\tmovi v5.2d, #0xff00ff00ff00ff00\n\tmovi d6, #0xffffffffffffffff\n" +
+			"\tins v7.d[1], x3\n\tins v8.s[2], v9.s[0]\n\tdup v10.4s, v11.s[3]\n\tld1r {v12.8h}, [x4], #2\n" +
+			"\tsmov x5, v13.h[2]\n\tsshr v14.4s, v15.4s, #31\n\tshl v16.2d, v17.2d, #3\n\tsli v18.8b, v19.8b, #2\n" +
+			"\tmvn v20.16b, v21.16b\n\tbic v22.8b, v23.8b, v24.8b\n\torn v25.16b, v26.16b, v27.16b\n" +
+			"\tneg v28.4h, v29.4h\n\tabs v30.2s, v31.2s\n\tcmtst v0.2d, v1.2d, v2.2d\n\tcmhi v3.8b, v4.8b, v5.8b\n" +
+			"\tcmle v6.8h, v7.8h, #0\n\tcmge v8.4s, v9.4s, #0\n\trev16 v10.16b, v11.16b\n\trev32 v12.8h, v13.8h\n",
 		"atomics_loop": "" +
 			"retry:\n\tldaxr x0, [x19]\n\tadd x0, x0, #1\n\tstlxr w1, x0, [x19]\n\tcbnz w1, retry\n\tdmb ish\n" +
 			"\tldar x2, [x19]\n\tstlr x3, [x19]\n\tldxr w4, [x20]\n\tstxr w5, w6, [x21]\n" +
@@ -650,15 +683,15 @@ func TestBitCountInsns(t *testing.T) {
 }
 
 // TestBitCountInsnsReject keeps the vector-operand parser loud rather
-// than silently assembling a different instruction. The encoders set
-// size=00 (byte lanes) only, so a wider arrangement — which needs a
-// different size field — must be refused, as must a mismatched pair.
+// than silently assembling a different instruction: cnt exists only for
+// byte lanes, an addv destination must match the element size, and a
+// mismatched arrangement pair is refused.
 func TestBitCountInsnsReject(t *testing.T) {
 	for _, asm := range []string{
-		"\tcnt v0.4h, v0.4h\n",  // halfword lanes: different size field
+		"\tcnt v0.4h, v0.4h\n",  // cnt is byte-only (as in GNU as)
 		"\tcnt v0.8b, v1.16b\n", // mismatched arrangements
-		"\taddv h0, v0.8h\n",    // halfword destination
-		"\taddv b0, v0.4s\n",    // word lanes
+		"\taddv b0, v0.8h\n",    // destination class below the element size
+		"\taddv b0, v0.4s\n",    // likewise, word lanes
 		"\tcnt v0, v0\n",        // no arrangement at all
 		"\trbit x0, x1, x2\n",   // wrong operand count
 	} {
@@ -733,21 +766,21 @@ func TestNeonByteKernelInsns(t *testing.T) {
 // form is usually a valid encoding of a different instruction.
 func TestNeonByteKernelReject(t *testing.T) {
 	for _, asm := range []string{
-		"\tdup v0.4h, w1\n",             // halfword lanes: different size field
+		"\tdup v0.1d, x1\n",             // no 64x1 arrangement in the dup encoding
 		"\tdup v0.16b, x1\n",            // 64-bit source is a different encoding
 		"\tld1 v1.16b, [x0]\n",          // missing the register-list braces
-		"\tld1 {v1.16b}, [x0, #16]\n",   // offset form is a different encoding
-		"\tld1 {v1.16b}, [x0], #16\n",   // writeback form likewise
+		"\tld1 {v1.16b}, [x0, #16]\n",   // offset form does not exist
+		"\tld1 {v1.16b}, [x0], #8\n",    // post-index must be the transfer size
 		"\tcmeq v0.8b, v1.16b, v2.8b\n", // mismatched arrangements
 		"\tcmlt v0.8b, v1.16b, #0\n",    // likewise
 		"\tcmlt v0.16b, v1.16b, #1\n",   // no such instruction: #0 is the opcode
 		"\tcmlt v0.16b, v1.16b\n",       // the immediate is not optional
-		"\tshrn v1.16b, v1.8h, #4\n",    // shrn destination is always 8b
+		"\tshrn v1.16b, v1.8h, #4\n",    // a 16b destination is shrn2's, not shrn's
 		"\tshrn v1.8b, v1.8h, #0\n",     // shift out of range (1..8)
 		"\tshrn v1.8b, v1.8h, #9\n",     //
-		"\tumov x0, v1.b[0]\n",          // X destination is a different encoding
+		"\tumov x0, v1.b[0]\n",          // X destination takes only a .d lane
 		"\tumov w0, v1.b[16]\n",         // lane index out of range
-		"\tumov w0, v1.h[0]\n",          // halfword lane is a different encoding
+		"\tumov w0, v1.d[0]\n",          // W destination cannot take a .d lane
 	} {
 		if _, err := arm64.Assemble(asm); err == nil {
 			t.Errorf("Assemble(%q) succeeded; want a refusal — a wrong "+

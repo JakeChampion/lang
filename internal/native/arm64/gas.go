@@ -16,12 +16,16 @@ import (
 // output into bytes, validated byte-for-byte against aarch64-linux-gnu-as.
 //
 // Coverage grows brick by brick: labels, the no-op-for-.text
-// directives, and the integer / bitfield / conditional / scalar-FP /
-// SIMD-byte / load-store (immediate, writeback, register and
-// extended-register offset, pairs, exclusives and barriers) instruction
-// forms. Anything not yet supported returns an explicit error (with the
-// offending line) rather than silently miscompiling — so coverage gaps
-// are loud.
+// directives, the integer / bitfield / conditional / scalar-FP /
+// load-store (immediate, writeback, register and extended-register
+// offset, pairs, exclusives and barriers) instruction forms, and the
+// Advanced SIMD surface an integer/float lane kernel needs — the
+// arithmetic/compare/min-max/bitwise ops, shifts (immediate, narrowing,
+// widening), permutes and shuffles, lane moves, movi, lane-wise FP and
+// converts, and ld1/st1/ld1r with post-indexing — across the .8b/.16b/
+// .4h/.8h/.2s/.4s/.2d arrangements each encoding actually has. Anything
+// not yet supported returns an explicit error (with the offending line)
+// rather than silently miscompiling — so coverage gaps are loud.
 func Assemble(src string) ([]byte, error) {
 	a := NewAssembler()
 	for lineno, raw := range strings.Split(src, "\n") {
@@ -150,6 +154,15 @@ func assembleInsn(a *Assembler, line string) error {
 		return nil
 	}
 
+	// SIMD forms are recognised by the first operand being a vN.<arr>
+	// register (or lane), so dual-form mnemonics — add, mvn, fadd, scvtf, … —
+	// keep their scalar path when the operands are scalar.
+	if len(ops) > 0 && isVecArrOperand(ops[0]) {
+		if handled, err := asmVecForm(a, mnem, ops); handled {
+			return err
+		}
+	}
+
 	switch mnem {
 	case "mov":
 		return asmMov(a, ops)
@@ -206,22 +219,18 @@ func assembleInsn(a *Assembler, line string) error {
 		return asmRev(a, ops)
 	case "rev32":
 		return asmRev32(a, ops)
-	case "cnt":
-		return asmCnt(a, ops)
-	case "addv":
-		return asmAddv(a, ops)
-	case "dup":
-		return asmDup(a, ops)
-	case "ld1":
-		return asmLd1(a, ops)
-	case "cmeq":
-		return asmCmeq(a, ops)
-	case "cmlt":
-		return asmCmlt(a, ops)
-	case "shrn":
-		return asmShrn(a, ops)
+	case "addv", "smaxv", "sminv", "umaxv", "uminv", "saddlv", "uaddlv":
+		return asmVecAcross(a, mnem, ops)
 	case "umov":
 		return asmUmov(a, ops)
+	case "smov":
+		return asmSmov(a, ops)
+	case "movi":
+		return asmMovi(a, ops)
+	case "ld1", "st1":
+		return asmLdSt1(a, mnem, ops)
+	case "ld1r":
+		return asmLd1r(a, ops)
 	case "msub":
 		return asm4Reg(a, mnem, ops, MSUB)
 	case "mrs":
@@ -861,78 +870,891 @@ func asm2Reg(a *Assembler, ops []string, enc func(x, y uint32) uint32) error {
 	return nil
 }
 
-// asmCnt handles `cnt Vd.8b, Vn.8b` (and the 16b arrangement) — the
-// per-byte population count.
-func asmCnt(a *Assembler, ops []string) error {
-	if len(ops) != 2 {
-		return fmt.Errorf("cnt expects Vd.<T>, Vn.<T>")
+// ---- Advanced SIMD (vector) forms ----
+//
+// The operand grammar is arrangement-driven: every op accepts exactly the
+// element sizes its encoding has bits for, pinned against GNU as, and any
+// other pairing is refused up front — within the SIMD classes most wrong
+// size/Q combinations are a VALID encoding of a different instruction.
+
+// vecArr is a parsed vector arrangement: element size (0=B, 1=H, 2=S, 3=D)
+// and whether it is the 128-bit (Q) form.
+type vecArr struct {
+	size uint32
+	q    bool
+}
+
+func (t vecArr) String() string {
+	names := [4][2]string{{"8b", "16b"}, {"4h", "8h"}, {"2s", "4s"}, {"1d", "2d"}}
+	if t.q {
+		return names[t.size][1]
 	}
-	rd, qd, err := parseVecArr(ops[0])
-	if err != nil {
-		return err
+	return names[t.size][0]
+}
+
+// esize is the element width in bits.
+func (t vecArr) esize() int64 { return 8 << t.size }
+
+var vecArrNames = map[string]vecArr{
+	"8b": {0, false}, "16b": {0, true},
+	"4h": {1, false}, "8h": {1, true},
+	"2s": {2, false}, "4s": {2, true},
+	"1d": {3, false}, "2d": {3, true},
+}
+
+// parseVecArr parses a `vN.<arr>` vector operand. `.1d` parses — ld1/st1
+// have it — but checkArr refuses it everywhere else.
+func parseVecArr(s string) (reg uint32, t vecArr, err error) {
+	s = strings.TrimSpace(s)
+	dot := strings.IndexByte(s, '.')
+	if len(s) < 2 || s[0] != 'v' || dot < 0 {
+		return 0, t, fmt.Errorf("bad vector register %q", s)
 	}
-	rn, qn, err := parseVecArr(ops[1])
-	if err != nil {
-		return err
+	n, e := strconv.Atoi(s[1:dot])
+	if e != nil || n < 0 || n > 31 {
+		return 0, t, fmt.Errorf("bad vector register %q", s)
 	}
-	if qd != qn {
-		return fmt.Errorf("cnt operands must share an arrangement: %q, %q", ops[0], ops[1])
+	t, ok := vecArrNames[s[dot+1:]]
+	if !ok {
+		return 0, t, fmt.Errorf("unsupported vector arrangement %q", s)
 	}
-	a.Emit(CNT(rd, rn, qd))
+	return uint32(n), t, nil
+}
+
+// isVecArrOperand reports whether an operand is a vector register with an
+// arrangement or lane suffix (`v3.16b`, `v0.s[1]`) — what routes a dual-form
+// mnemonic (add, mvn, fadd, scvtf, …) to its SIMD form.
+func isVecArrOperand(s string) bool {
+	s = strings.TrimSpace(s)
+	return len(s) > 1 && s[0] == 'v' && s[1] >= '0' && s[1] <= '9' &&
+		strings.IndexByte(s, '.') > 0
+}
+
+// Element-size masks for checkArr: which arrangements an op's encoding has.
+const (
+	arrB    = 1 << 0
+	arrH    = 1 << 1
+	arrS    = 1 << 2
+	arrD    = 1 << 3
+	arrBHS  = arrB | arrH | arrS
+	arrBHSD = arrBHS | arrD
+	arrSD   = arrS | arrD
+)
+
+// checkArr validates an arrangement against an op's allowed element sizes.
+// `.1d` is refused across the data-processing classes: 64-bit lanes exist
+// only in the full-width (Q) form.
+func checkArr(mnem string, t vecArr, sizes uint32) error {
+	if sizes&(1<<t.size) == 0 || (t.size == 3 && !t.q) {
+		return fmt.Errorf("%s does not support the .%s arrangement", mnem, t)
+	}
 	return nil
 }
 
-// asmAddv handles `addv Bd, Vn.8b` (and the 16b arrangement) — the
-// horizontal byte-lane sum, whose destination is a scalar B register.
-func asmAddv(a *Assembler, ops []string) error {
-	if len(ops) != 2 {
-		return fmt.Errorf("addv expects Bd, Vn.<T>")
+// parseVecArrN parses n vector operands that must share one arrangement.
+func parseVecArrN(mnem string, ops []string, n int) (regs []uint32, t vecArr, err error) {
+	regs = make([]uint32, n)
+	for i := 0; i < n; i++ {
+		r, ti, err := parseVecArr(ops[i])
+		if err != nil {
+			return nil, t, err
+		}
+		if i == 0 {
+			t = ti
+		} else if ti != t {
+			return nil, t, fmt.Errorf("%s operands must share an arrangement: %q vs %q", mnem, ops[0], ops[i])
+		}
+		regs[i] = r
 	}
-	rd, err := parseBReg(ops[0])
+	return regs, t, nil
+}
+
+// The per-mnemonic tables: U bit, opcode, and which element sizes the
+// encoding has. Every size set here — and every one deliberately absent
+// (mul/min/max have no .2d, the bitwise ops and cnt are byte-only, …) —
+// matches what GNU as accepts.
+
+var vecInt3Ops = map[string]struct {
+	u      bool
+	opcode uint32
+	sizes  uint32
+}{
+	"add":   {false, 0x10, arrBHSD},
+	"sub":   {true, 0x10, arrBHSD},
+	"mul":   {false, 0x13, arrBHS},
+	"cmeq":  {true, 0x11, arrBHSD},
+	"cmtst": {false, 0x11, arrBHSD},
+	"cmgt":  {false, 0x06, arrBHSD},
+	"cmge":  {false, 0x07, arrBHSD},
+	"cmhi":  {true, 0x06, arrBHSD},
+	"cmhs":  {true, 0x07, arrBHSD},
+	"smax":  {false, 0x0C, arrBHS},
+	"smin":  {false, 0x0D, arrBHS},
+	"umax":  {true, 0x0C, arrBHS},
+	"umin":  {true, 0x0D, arrBHS},
+	"sshl":  {false, 0x08, arrBHSD},
+	"ushl":  {true, 0x08, arrBHSD},
+}
+
+// The bitwise three-register ops put the operation in the size field, so
+// they exist only in the byte arrangements.
+var vecLogical3Ops = map[string]struct {
+	u    bool
+	size uint32
+}{
+	"and": {false, 0}, "bic": {false, 1}, "orr": {false, 2}, "orn": {false, 3},
+	"eor": {true, 0},
+}
+
+// Compare against zero (two-register misc; #0 is part of the opcode, not an
+// immediate field — a non-zero immediate is no instruction at all).
+var vecCmpZeroOps = map[string]struct {
+	u      bool
+	opcode uint32
+}{
+	"cmeq": {false, 0x09}, "cmgt": {false, 0x08}, "cmge": {true, 0x08},
+	"cmle": {true, 0x09}, "cmlt": {false, 0x0A},
+}
+
+var vecInt2MiscOps = map[string]struct {
+	u      bool
+	opcode uint32
+	sizes  uint32
+}{
+	"neg":   {true, 0x0B, arrBHSD},
+	"abs":   {false, 0x0B, arrBHSD},
+	"not":   {true, 0x05, arrB},
+	"mvn":   {true, 0x05, arrB}, // alias of not
+	"cnt":   {false, 0x05, arrB},
+	"rev16": {false, 0x01, arrB},
+	"rev32": {true, 0x00, arrB | arrH},
+	"rev64": {false, 0x00, arrBHS},
+}
+
+// The lane-wise FP ops read the size field as (szHi<<1 | sz) where sz picks
+// S vs D lanes, so the tables carry szHi instead of a size mask; the
+// arrangements are 2s/4s/2d throughout.
+var vecFP3Ops = map[string]struct {
+	u      bool
+	opcode uint32
+	szHi   bool
+}{
+	"fadd":  {false, 0x1A, false},
+	"fsub":  {false, 0x1A, true},
+	"fmul":  {true, 0x1B, false},
+	"fdiv":  {true, 0x1F, false},
+	"fmax":  {false, 0x1E, false},
+	"fmin":  {false, 0x1E, true},
+	"fcmeq": {false, 0x1C, false},
+	"fcmge": {true, 0x1C, false},
+	"fcmgt": {true, 0x1C, true},
+}
+
+// FP compare against zero (two-register misc; the operand is spelled #0.0).
+// fcmle/fcmlt exist only in this form — their register-operand spellings are
+// the swapped-operand fcmge/fcmgt.
+var vecFPCmpZeroOps = map[string]struct {
+	u      bool
+	opcode uint32
+}{
+	"fcmeq": {false, 0x0D}, "fcmgt": {false, 0x0C}, "fcmge": {true, 0x0C},
+	"fcmle": {true, 0x0D}, "fcmlt": {false, 0x0E},
+}
+
+var vecFP2MiscOps = map[string]struct {
+	u      bool
+	opcode uint32
+	szHi   bool
+}{
+	"fneg":   {true, 0x0F, true},
+	"fabs":   {false, 0x0F, true},
+	"fsqrt":  {true, 0x1F, true},
+	"scvtf":  {false, 0x1D, false},
+	"ucvtf":  {true, 0x1D, false},
+	"fcvtzs": {false, 0x1B, true},
+	"fcvtzu": {true, 0x1B, true},
+}
+
+var vecShiftImmOps = map[string]struct {
+	u      bool
+	opcode uint32
+	left   bool
+}{
+	"shl":  {false, 0x0A, true},
+	"sli":  {true, 0x0A, true},
+	"sshr": {false, 0x00, false},
+	"ushr": {true, 0x00, false},
+	"sri":  {true, 0x08, false},
+}
+
+var vecPermuteOps = map[string]uint32{
+	"zip1": 3, "zip2": 7, "uzp1": 1, "uzp2": 5, "trn1": 2, "trn2": 6,
+}
+
+// asmVecForm dispatches the mnemonics whose SIMD form was recognised from
+// the first operand. handled=false means the mnemonic has no such form and
+// the caller falls through to the scalar dispatch.
+func asmVecForm(a *Assembler, mnem string, ops []string) (handled bool, err error) {
+	if _, ok := vecCmpZeroOps[mnem]; ok {
+		// cmlt/cmle exist only against zero; cmeq/cmgt/cmge also have the
+		// three-register form, told apart by the last operand.
+		if mnem == "cmlt" || mnem == "cmle" ||
+			(len(ops) == 3 && strings.HasPrefix(strings.TrimSpace(ops[2]), "#")) {
+			return true, asmVecCmpZero(a, mnem, ops)
+		}
+	}
+	if _, ok := vecFPCmpZeroOps[mnem]; ok {
+		if mnem == "fcmlt" || mnem == "fcmle" ||
+			(len(ops) == 3 && strings.HasPrefix(strings.TrimSpace(ops[2]), "#")) {
+			return true, asmVecFPCmpZero(a, mnem, ops)
+		}
+	}
+	if _, ok := vecInt3Ops[mnem]; ok {
+		return true, asmVecInt3Same(a, mnem, ops)
+	}
+	if _, ok := vecLogical3Ops[mnem]; ok {
+		return true, asmVecLogical3(a, mnem, ops)
+	}
+	if _, ok := vecFP3Ops[mnem]; ok {
+		return true, asmVecFP3Same(a, mnem, ops)
+	}
+	if _, ok := vecInt2MiscOps[mnem]; ok {
+		return true, asmVecInt2Misc(a, mnem, ops)
+	}
+	if _, ok := vecFP2MiscOps[mnem]; ok {
+		return true, asmVecFP2Misc(a, mnem, ops)
+	}
+	if _, ok := vecShiftImmOps[mnem]; ok {
+		return true, asmVecShiftImm(a, mnem, ops)
+	}
+	if _, ok := vecPermuteOps[mnem]; ok {
+		return true, asmVecPermute(a, mnem, ops)
+	}
+	switch mnem {
+	case "xtn", "xtn2":
+		return true, asmVecXtn(a, mnem, ops)
+	case "shrn", "shrn2":
+		return true, asmVecShrn(a, mnem, ops)
+	case "sshll", "ushll", "sshll2", "ushll2", "sxtl", "uxtl", "sxtl2", "uxtl2":
+		return true, asmVecShll(a, mnem, ops)
+	case "ext":
+		return true, asmVecExt(a, ops)
+	case "tbl":
+		return true, asmVecTbl(a, ops)
+	case "dup":
+		return true, asmVecDup(a, ops)
+	case "ins":
+		return true, asmVecIns(a, ops)
+	case "movi":
+		return true, asmMovi(a, ops)
+	}
+	return false, nil
+}
+
+func asmVecInt3Same(a *Assembler, mnem string, ops []string) error {
+	e := vecInt3Ops[mnem]
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<T>, Vm.<T>", mnem)
+	}
+	r, t, err := parseVecArrN(mnem, ops, 3)
 	if err != nil {
 		return err
 	}
-	rn, q, err := parseVecArr(ops[1])
-	if err != nil {
+	if err := checkArr(mnem, t, e.sizes); err != nil {
 		return err
 	}
-	a.Emit(ADDV(rd, rn, q))
+	a.Emit(Vec3Same(r[0], r[1], r[2], e.opcode, t.size, t.q, e.u))
 	return nil
 }
 
-// asmDup handles `dup Vd.<T>, Wn` — broadcast a GPR's low byte to every lane.
-func asmDup(a *Assembler, ops []string) error {
-	if len(ops) != 2 {
-		return fmt.Errorf("dup expects Vd.<T>, Wn")
+func asmVecLogical3(a *Assembler, mnem string, ops []string) error {
+	e := vecLogical3Ops[mnem]
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<T>, Vm.<T>", mnem)
 	}
-	rd, q, err := parseVecArr(ops[0])
+	r, t, err := parseVecArrN(mnem, ops, 3)
 	if err != nil {
 		return err
 	}
-	if !is32(ops[1]) {
-		return fmt.Errorf("dup source must be a W register, got %q", ops[1])
+	if err := checkArr(mnem, t, arrB); err != nil {
+		return err
+	}
+	a.Emit(Vec3Same(r[0], r[1], r[2], 0x03, e.size, t.q, e.u))
+	return nil
+}
+
+// fpSize builds the FP size field: szHi<<1 | (D lanes).
+func fpSize(t vecArr, szHi bool) uint32 {
+	s := uint32(0)
+	if t.size == 3 {
+		s = 1
+	}
+	if szHi {
+		s |= 2
+	}
+	return s
+}
+
+func asmVecFP3Same(a *Assembler, mnem string, ops []string) error {
+	e := vecFP3Ops[mnem]
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<T>, Vm.<T>", mnem)
+	}
+	r, t, err := parseVecArrN(mnem, ops, 3)
+	if err != nil {
+		return err
+	}
+	if err := checkArr(mnem, t, arrSD); err != nil {
+		return err
+	}
+	a.Emit(Vec3Same(r[0], r[1], r[2], e.opcode, fpSize(t, e.szHi), t.q, e.u))
+	return nil
+}
+
+func asmVecCmpZero(a *Assembler, mnem string, ops []string) error {
+	e := vecCmpZeroOps[mnem]
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<T>, #0", mnem)
+	}
+	r, t, err := parseVecArrN(mnem, ops[:2], 2)
+	if err != nil {
+		return err
+	}
+	if err := checkArr(mnem, t, arrBHSD); err != nil {
+		return err
+	}
+	imm, err := parseImm(ops[2])
+	if err != nil {
+		return err
+	}
+	if imm != 0 {
+		return fmt.Errorf("%s takes only the compare-against-zero form, got #%d", mnem, imm)
+	}
+	a.Emit(Vec2Misc(r[0], r[1], e.opcode, t.size, t.q, e.u))
+	return nil
+}
+
+func asmVecFPCmpZero(a *Assembler, mnem string, ops []string) error {
+	e := vecFPCmpZeroOps[mnem]
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<T>, #0.0", mnem)
+	}
+	r, t, err := parseVecArrN(mnem, ops[:2], 2)
+	if err != nil {
+		return err
+	}
+	if err := checkArr(mnem, t, arrSD); err != nil {
+		return err
+	}
+	if imm := strings.TrimSpace(ops[2]); imm != "#0.0" && imm != "#0" {
+		return fmt.Errorf("%s takes only the #0.0 immediate, got %q", mnem, imm)
+	}
+	a.Emit(Vec2Misc(r[0], r[1], e.opcode, fpSize(t, true), t.q, e.u))
+	return nil
+}
+
+func asmVecInt2Misc(a *Assembler, mnem string, ops []string) error {
+	e := vecInt2MiscOps[mnem]
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<T>", mnem)
+	}
+	r, t, err := parseVecArrN(mnem, ops, 2)
+	if err != nil {
+		return err
+	}
+	if err := checkArr(mnem, t, e.sizes); err != nil {
+		return err
+	}
+	a.Emit(Vec2Misc(r[0], r[1], e.opcode, t.size, t.q, e.u))
+	return nil
+}
+
+func asmVecFP2Misc(a *Assembler, mnem string, ops []string) error {
+	e := vecFP2MiscOps[mnem]
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<T>", mnem)
+	}
+	r, t, err := parseVecArrN(mnem, ops, 2)
+	if err != nil {
+		return err
+	}
+	if err := checkArr(mnem, t, arrSD); err != nil {
+		return err
+	}
+	a.Emit(Vec2Misc(r[0], r[1], e.opcode, fpSize(t, e.szHi), t.q, e.u))
+	return nil
+}
+
+func asmVecShiftImm(a *Assembler, mnem string, ops []string) error {
+	e := vecShiftImmOps[mnem]
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<T>, #shift", mnem)
+	}
+	r, t, err := parseVecArrN(mnem, ops[:2], 2)
+	if err != nil {
+		return err
+	}
+	if err := checkArr(mnem, t, arrBHSD); err != nil {
+		return err
+	}
+	sh, err := parseImm(ops[2])
+	if err != nil {
+		return err
+	}
+	// Left shifts encode esize+shift (0..esize-1), right shifts
+	// 2*esize-shift (1..esize); out of range the immh:immb split would
+	// reinterpret the top bits as a different element size.
+	es := t.esize()
+	var immhb int64
+	if e.left {
+		if sh < 0 || sh >= es {
+			return fmt.Errorf("%s .%s shift must be 0..%d, got %d", mnem, t, es-1, sh)
+		}
+		immhb = es + sh
+	} else {
+		if sh < 1 || sh > es {
+			return fmt.Errorf("%s .%s shift must be 1..%d, got %d", mnem, t, es, sh)
+		}
+		immhb = 2*es - sh
+	}
+	a.Emit(VecShiftImm(r[0], r[1], e.opcode, uint32(immhb), t.q, e.u))
+	return nil
+}
+
+// narrowWidePair validates the arrangement pair of the narrowing/widening
+// ops: `narrow` is the half-width arrangement (its Q bit is the 2-suffix,
+// selecting which half of the 128-bit side is touched), `wide` the
+// full-width one a size up.
+func narrowWidePair(mnem string, narrow, wide vecArr, hi bool) error {
+	if narrow.size > 2 || narrow.q != hi || wide.size != narrow.size+1 || !wide.q {
+		return fmt.Errorf("%s: unsupported arrangement pair .%s, .%s", mnem, narrow, wide)
+	}
+	return nil
+}
+
+// asmVecXtn handles `xtn{2} Vd.<T>, Vn.<Tw>` — extract narrow, halving each
+// lane of the wider source; xtn writes the destination's low half, xtn2 the
+// high half.
+func asmVecXtn(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<Tw>", mnem)
+	}
+	rd, td, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, ts, err := parseVecArr(ops[1])
+	if err != nil {
+		return err
+	}
+	if err := narrowWidePair(mnem, td, ts, mnem == "xtn2"); err != nil {
+		return err
+	}
+	a.Emit(Vec2Misc(rd, rn, 0x12, td.size, td.q, false))
+	return nil
+}
+
+// asmVecShrn handles `shrn{2} Vd.<T>, Vn.<Tw>, #shift` — shift right and
+// narrow. It is how a NEON kernel gets a comparison mask into a GPR at all:
+// x86 has pmovmskb, NEON does not, so the idiom is shrn #4 to compress each
+// 16-bit lane's flag nibble into a byte, then fmov the 64-bit half out.
+func asmVecShrn(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<Tw>, #shift", mnem)
+	}
+	rd, td, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, ts, err := parseVecArr(ops[1])
+	if err != nil {
+		return err
+	}
+	if err := narrowWidePair(mnem, td, ts, mnem == "shrn2"); err != nil {
+		return err
+	}
+	sh, err := parseImm(ops[2])
+	if err != nil {
+		return err
+	}
+	es := td.esize()
+	if sh < 1 || sh > es {
+		return fmt.Errorf("%s .%s shift must be 1..%d, got %d", mnem, td, es, sh)
+	}
+	a.Emit(VecShiftImm(rd, rn, 0x10, uint32(2*es-sh), td.q, false))
+	return nil
+}
+
+// asmVecShll handles `sshll{2}/ushll{2} Vd.<Tw>, Vn.<T>, #shift` — shift
+// left and widen — and the shift-0 aliases sxtl/uxtl: the lane-wise sign/
+// zero extends.
+func asmVecShll(a *Assembler, mnem string, ops []string) error {
+	base := strings.TrimSuffix(mnem, "2")
+	alias := base == "sxtl" || base == "uxtl"
+	want := 3
+	if alias {
+		want = 2
+	}
+	if len(ops) != want {
+		return fmt.Errorf("%s expects %d operands", mnem, want)
+	}
+	rd, td, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, ts, err := parseVecArr(ops[1])
+	if err != nil {
+		return err
+	}
+	hi := strings.HasSuffix(mnem, "2")
+	if err := narrowWidePair(mnem, ts, td, hi); err != nil {
+		return err
+	}
+	var sh int64
+	if !alias {
+		if sh, err = parseImm(ops[2]); err != nil {
+			return err
+		}
+	}
+	es := ts.esize()
+	if sh < 0 || sh >= es {
+		return fmt.Errorf("%s .%s shift must be 0..%d, got %d", mnem, ts, es-1, sh)
+	}
+	a.Emit(VecShiftImm(rd, rn, 0x14, uint32(es+sh), hi, base[0] == 'u'))
+	return nil
+}
+
+func asmVecPermute(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("%s expects Vd.<T>, Vn.<T>, Vm.<T>", mnem)
+	}
+	r, t, err := parseVecArrN(mnem, ops, 3)
+	if err != nil {
+		return err
+	}
+	if err := checkArr(mnem, t, arrBHSD); err != nil {
+		return err
+	}
+	a.Emit(VecPermute(r[0], r[1], r[2], vecPermuteOps[mnem], t.size, t.q))
+	return nil
+}
+
+// asmVecExt handles `ext Vd.<T>, Vn.<T>, Vm.<T>, #index` — byte extract
+// from the Vn:Vm pair. Byte arrangements only; the index counts bytes.
+func asmVecExt(a *Assembler, ops []string) error {
+	if len(ops) != 4 {
+		return fmt.Errorf("ext expects Vd.<T>, Vn.<T>, Vm.<T>, #index")
+	}
+	r, t, err := parseVecArrN("ext", ops[:3], 3)
+	if err != nil {
+		return err
+	}
+	if err := checkArr("ext", t, arrB); err != nil {
+		return err
+	}
+	idx, err := parseImm(ops[3])
+	if err != nil {
+		return err
+	}
+	max := int64(7)
+	if t.q {
+		max = 15
+	}
+	if idx < 0 || idx > max {
+		return fmt.Errorf("ext .%s index must be 0..%d, got %d", t, max, idx)
+	}
+	a.Emit(VecExt(r[0], r[1], r[2], uint32(idx), t.q))
+	return nil
+}
+
+// asmVecTbl handles the single-table-register `tbl Vd.<T>, {Vn.16b}, Vm.<T>`.
+// The table is always .16b; destination and index registers share a byte
+// arrangement.
+func asmVecTbl(a *Assembler, ops []string) error {
+	if len(ops) != 3 {
+		return fmt.Errorf("tbl expects Vd.<T>, {Vn.16b}, Vm.<T>")
+	}
+	rd, td, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	tbl, tt, err := parseVecList("tbl", ops[1])
+	if err != nil {
+		return err
+	}
+	if len(tbl) != 1 || tt != (vecArr{0, true}) {
+		return fmt.Errorf("tbl table must be a single {Vn.16b} register, got %q", ops[1])
+	}
+	rm, tm, err := parseVecArr(ops[2])
+	if err != nil {
+		return err
+	}
+	if td != tm {
+		return fmt.Errorf("tbl operands must share an arrangement: %q vs %q", ops[0], ops[2])
+	}
+	if err := checkArr("tbl", td, arrB); err != nil {
+		return err
+	}
+	a.Emit(VecTbl1(rd, tbl[0], rm, td.q))
+	return nil
+}
+
+// vecImm5 builds the copy-class lane selector: the element size as the
+// lowest set bit, the lane index above it.
+func vecImm5(size, index uint32) uint32 {
+	return (index<<1 | 1) << size
+}
+
+// asmVecDup handles both dup forms: `dup Vd.<T>, Rn` (broadcast a GPR — a W
+// register below doubleword lanes, X for them) and `dup Vd.<T>, Vn.<Ts>[i]`
+// (broadcast one lane).
+func asmVecDup(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("dup expects Vd.<T>, Rn or Vd.<T>, Vn.<Ts>[index]")
+	}
+	rd, t, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	if err := checkArr("dup", t, arrBHSD); err != nil {
+		return err
+	}
+	if strings.Contains(ops[1], "[") {
+		rn, size, idx, err := parseVecLane(ops[1])
+		if err != nil {
+			return err
+		}
+		if size != t.size {
+			return fmt.Errorf("dup lane %q does not match arrangement .%s", ops[1], t)
+		}
+		a.Emit(VecDupElem(rd, rn, vecImm5(size, idx), t.q))
+		return nil
+	}
+	if is32(ops[1]) == (t.size == 3) {
+		return fmt.Errorf("dup .%s source must be a %c register, got %q", t, "wx"[t.size/3], ops[1])
 	}
 	rn, err := parseReg(ops[1])
 	if err != nil {
 		return err
 	}
-	a.Emit(DUP(rd, rn, q))
+	a.Emit(VecDupGPR(rd, rn, 1<<t.size, t.q))
 	return nil
 }
 
-// asmLd1 handles `ld1 {Vt.<T>}, [Xn]` — the single-register, no-writeback
-// load. The braces are part of the syntax, not decoration, so they are
-// required rather than tolerated: accepting a bare `vN.16b` here would let a
-// typo assemble as something else.
-func asmLd1(a *Assembler, ops []string) error {
+// asmVecIns handles `ins Vd.<Ts>[i], Rn` (from a GPR — W below doubleword
+// lanes, X for them) and `ins Vd.<Ts>[i], Vn.<Ts>[j]` (lane to lane).
+func asmVecIns(a *Assembler, ops []string) error {
 	if len(ops) != 2 {
-		return fmt.Errorf("ld1 expects {Vt.<T>}, [Xn]")
+		return fmt.Errorf("ins expects Vd.<Ts>[i], Rn or Vd.<Ts>[i], Vn.<Ts>[j]")
 	}
-	list := strings.TrimSpace(ops[0])
-	if !strings.HasPrefix(list, "{") || !strings.HasSuffix(list, "}") {
-		return fmt.Errorf("ld1 expects a single-register list {Vt.<T>}, got %q", ops[0])
+	rd, size, idx, err := parseVecLane(ops[0])
+	if err != nil {
+		return err
 	}
-	rt, q, err := parseVecArr(strings.TrimSpace(list[1 : len(list)-1]))
+	if isVecArrOperand(ops[1]) {
+		rn, ssize, sidx, err := parseVecLane(ops[1])
+		if err != nil {
+			return err
+		}
+		if ssize != size {
+			return fmt.Errorf("ins lanes must share an element size: %q vs %q", ops[0], ops[1])
+		}
+		a.Emit(VecInsElem(rd, rn, vecImm5(size, idx), sidx<<size))
+		return nil
+	}
+	if is32(ops[1]) == (size == 3) {
+		return fmt.Errorf("ins %q source must be a %c register, got %q", ops[0], "wx"[size/3], ops[1])
+	}
+	rn, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	a.Emit(VecInsGPR(rd, rn, vecImm5(size, idx)))
+	return nil
+}
+
+// asmUmov handles `umov Wd, Vn.<b|h|s>[i]` and `umov Xd, Vn.d[i]` — the
+// zero-extending lane extract. The destination width is fixed by the lane
+// size, so a mismatch is refused rather than reinterpreted.
+func asmUmov(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("umov expects Rd, Vn.<Ts>[index]")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, size, idx, err := parseVecLane(ops[1])
+	if err != nil {
+		return err
+	}
+	if is32(ops[0]) == (size == 3) {
+		return fmt.Errorf("umov %q does not match a .%c lane", ops[0], "bhsd"[size])
+	}
+	a.Emit(VecUmov(rd, rn, vecImm5(size, idx), size == 3))
+	return nil
+}
+
+// asmSmov handles `smov Wd|Xd, Vn.<Ts>[i]` — sign-extending lane extract.
+// W destinations take b/h lanes, X destinations b/h/s; extending a lane to
+// its own width is umov's job, so those pairings do not exist here.
+func asmSmov(a *Assembler, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("smov expects Rd, Vn.<Ts>[index]")
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, size, idx, err := parseVecLane(ops[1])
+	if err != nil {
+		return err
+	}
+	w := is32(ops[0])
+	if (w && size > 1) || size > 2 {
+		return fmt.Errorf("smov %q does not take a .%c lane", ops[0], "bhsd"[size])
+	}
+	a.Emit(VecSmov(rd, rn, vecImm5(size, idx), !w))
+	return nil
+}
+
+var vecAcrossOps = map[string]struct {
+	u      bool
+	opcode uint32
+	widen  bool
+}{
+	"addv":   {false, 0x1B, false},
+	"smaxv":  {false, 0x0A, false},
+	"sminv":  {false, 0x1A, false},
+	"umaxv":  {true, 0x0A, false},
+	"uminv":  {true, 0x1A, false},
+	"saddlv": {false, 0x03, true},
+	"uaddlv": {true, 0x03, true},
+}
+
+// asmVecAcross handles the across-lanes reductions (`addv Bd, Vn.16b`, the
+// min/max reductions, and the widening saddlv/uaddlv): the destination is a
+// scalar whose class matches the element size — one size up for the widening
+// pair. `.2s` and `.2d` have no across-lanes form.
+func asmVecAcross(a *Assembler, mnem string, ops []string) error {
+	e := vecAcrossOps[mnem]
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects a scalar destination and Vn.<T>", mnem)
+	}
+	class, rd, err := parseScalarReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rn, t, err := parseVecArr(ops[1])
+	if err != nil {
+		return err
+	}
+	if t.size == 3 || (t.size == 2 && !t.q) {
+		return fmt.Errorf("%s does not support the .%s arrangement", mnem, t)
+	}
+	want := t.size
+	if e.widen {
+		want++
+	}
+	if class != want {
+		return fmt.Errorf("%s destination %q does not match the .%s arrangement", mnem, ops[0], t)
+	}
+	a.Emit(VecAcross(rd, rn, e.opcode, t.size, t.q, e.u))
+	return nil
+}
+
+// asmMovi handles the modified-immediate moves: `movi Vd.<T>, #imm8` with
+// the byte-position shifts the element size has, and the 64-bit bytemask
+// form `movi Vd.2d, #imm64` / `movi Dd, #imm64` (each byte 0x00 or 0xff).
+func asmMovi(a *Assembler, ops []string) error {
+	if len(ops) < 2 || len(ops) > 3 {
+		return fmt.Errorf("movi expects Vd.<T>|Dd, #imm{, lsl #shift}")
+	}
+	first := strings.TrimSpace(ops[0])
+	if !strings.Contains(first, ".") {
+		// Scalar form: the bytemask into a D register.
+		class, rd, err := parseScalarReg(first)
+		if err != nil || class != 3 {
+			return fmt.Errorf("movi scalar destination must be a D register, got %q", ops[0])
+		}
+		return emitMoviBytemask(a, rd, ops, false)
+	}
+	rd, t, err := parseVecArr(ops[0])
+	if err != nil {
+		return err
+	}
+	if err := checkArr("movi", t, arrBHSD); err != nil {
+		return err
+	}
+	if t.size == 3 {
+		return emitMoviBytemask(a, rd, ops, true)
+	}
+	imm, err := parseImm(ops[1])
+	if err != nil {
+		return err
+	}
+	if imm < 0 || imm > 255 {
+		return fmt.Errorf("movi immediate must be 0..255, got %d", imm)
+	}
+	shift, err := parseShiftField(ops, 2, "lsl")
+	if err != nil {
+		return err
+	}
+	var cmode uint32
+	switch t.size {
+	case 0:
+		if shift != 0 {
+			return fmt.Errorf("movi .%s takes no shift", t)
+		}
+		cmode = 0xE
+	case 1:
+		if shift != 0 && shift != 8 {
+			return fmt.Errorf("movi .%s shift must be 0 or 8, got %d", t, shift)
+		}
+		cmode = 0x8 | shift/8<<1
+	case 2:
+		if shift%8 != 0 || shift > 24 {
+			return fmt.Errorf("movi .%s shift must be 0, 8, 16 or 24, got %d", t, shift)
+		}
+		cmode = shift / 8 << 1
+	}
+	a.Emit(VecMovi(rd, uint32(imm), cmode, t.q, false))
+	return nil
+}
+
+func emitMoviBytemask(a *Assembler, rd uint32, ops []string, q bool) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("movi bytemask form takes no shift")
+	}
+	s := strings.TrimPrefix(strings.TrimSpace(ops[1]), "#")
+	v, err := strconv.ParseUint(s, 0, 64)
+	if err != nil {
+		return fmt.Errorf("bad movi immediate %q", ops[1])
+	}
+	var imm8 uint32
+	for i := 0; i < 8; i++ {
+		switch b := v >> (8 * i) & 0xFF; b {
+		case 0xFF:
+			imm8 |= 1 << i
+		case 0:
+		default:
+			return fmt.Errorf("movi 64-bit immediate %q is not a bytemask (every byte 0x00 or 0xff)", ops[1])
+		}
+	}
+	a.Emit(VecMovi(rd, imm8, 0xE, q, true))
+	return nil
+}
+
+// asmLdSt1 handles ld1/st1 of a register list — one to four consecutive
+// registers, every arrangement including .1d — with no writeback, post-index
+// by immediate, or post-index by register. The immediate must equal the
+// transfer size: the encoding has no immediate field, Rm=31 just means
+// "advance by the size".
+func asmLdSt1(a *Assembler, mnem string, ops []string) error {
+	if len(ops) < 2 || len(ops) > 3 {
+		return fmt.Errorf("%s expects a register list, [Xn] and an optional post-index", mnem)
+	}
+	regs, t, err := parseVecList(mnem, ops[0])
 	if err != nil {
 		return err
 	}
@@ -940,201 +1762,165 @@ func asmLd1(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
-	a.Emit(LD1(rt, rn, q))
+	nregs := uint32(len(regs))
+	load := mnem == "ld1"
+	if len(ops) == 2 {
+		a.Emit(VecLdSt1(regs[0], rn, 0, nregs, t.size, t.q, load, false))
+		return nil
+	}
+	step := int64(nregs) * 8
+	if t.q {
+		step *= 2
+	}
+	rm, err := parsePostIndex(mnem, ops[2], step)
+	if err != nil {
+		return err
+	}
+	a.Emit(VecLdSt1(regs[0], rn, rm, nregs, t.size, t.q, load, true))
 	return nil
 }
 
-// asmCmeq handles `cmeq Vd.<T>, Vn.<T>, Vm.<T>` — the register form of the
-// per-byte equality compare.
-func asmCmeq(a *Assembler, ops []string) error {
-	if len(ops) != 3 {
-		return fmt.Errorf("cmeq expects Vd.<T>, Vn.<T>, Vm.<T>")
+// asmLd1r handles `ld1r {Vt.<T>}, [Xn]` — load one element and replicate —
+// with the same post-index forms as ld1 (the immediate is the ELEMENT size).
+func asmLd1r(a *Assembler, ops []string) error {
+	if len(ops) < 2 || len(ops) > 3 {
+		return fmt.Errorf("ld1r expects {Vt.<T>}, [Xn] and an optional post-index")
 	}
-	rd, qd, err := parseVecArr(ops[0])
+	regs, t, err := parseVecList("ld1r", ops[0])
 	if err != nil {
 		return err
 	}
-	rn, qn, err := parseVecArr(ops[1])
+	if len(regs) != 1 {
+		return fmt.Errorf("ld1r takes a single-register list")
+	}
+	rn, err := parseBracketedBase(ops[1])
 	if err != nil {
 		return err
 	}
-	rm, qm, err := parseVecArr(ops[2])
+	if len(ops) == 2 {
+		a.Emit(VecLd1R(regs[0], rn, 0, t.size, t.q, false))
+		return nil
+	}
+	rm, err := parsePostIndex("ld1r", ops[2], 1<<t.size)
 	if err != nil {
 		return err
 	}
-	if qd != qn || qd != qm {
-		return fmt.Errorf("cmeq operands must share an arrangement: %q, %q, %q", ops[0], ops[1], ops[2])
-	}
-	a.Emit(CMEQ(rd, rn, rm, qd))
+	a.Emit(VecLd1R(regs[0], rn, rm, t.size, t.q, true))
 	return nil
 }
 
-// asmCmlt handles `cmlt Vd.<T>, Vn.<T>, #0` — per-byte signed compare against
-// zero, i.e. "is the high bit set".
-//
-// The immediate is checked to be literally zero rather than encoded: this
-// encoding has no immediate field, #0 is part of the opcode. `cmlt v0.16b,
-// v0.16b, #1` is not a wider version of this instruction, it does not exist,
-// and encoding it as if it were would produce a compare against zero that
-// reads correct at the call site.
-func asmCmlt(a *Assembler, ops []string) error {
-	if len(ops) != 3 {
-		return fmt.Errorf("cmlt expects Vd.<T>, Vn.<T>, #0")
+// parseVecList parses `{Vt.<T>}` … `{Vt.<T>, …+3}` — up to four registers,
+// consecutive mod 32, sharing an arrangement. The braces are part of the
+// syntax, not decoration, so they are required rather than tolerated:
+// accepting a bare `vN.16b` would let a typo assemble as something else.
+func parseVecList(mnem, op string) ([]uint32, vecArr, error) {
+	var t vecArr
+	list := strings.TrimSpace(op)
+	if !strings.HasPrefix(list, "{") || !strings.HasSuffix(list, "}") {
+		return nil, t, fmt.Errorf("%s expects a register list {Vt.<T>, ...}, got %q", mnem, op)
 	}
-	rd, qd, err := parseVecArr(ops[0])
-	if err != nil {
-		return err
+	parts := splitOperands(strings.TrimSpace(list[1 : len(list)-1]))
+	if len(parts) < 1 || len(parts) > 4 {
+		return nil, t, fmt.Errorf("%s register list must name 1..4 registers", mnem)
 	}
-	rn, qn, err := parseVecArr(ops[1])
-	if err != nil {
-		return err
+	regs := make([]uint32, len(parts))
+	for i, p := range parts {
+		r, ti, err := parseVecArr(p)
+		if err != nil {
+			return nil, t, err
+		}
+		if i == 0 {
+			t = ti
+		} else {
+			if ti != t {
+				return nil, t, fmt.Errorf("%s list registers must share an arrangement: %q vs %q", mnem, parts[0], p)
+			}
+			if r != (regs[i-1]+1)%32 {
+				return nil, t, fmt.Errorf("%s list registers must be consecutive: %q after %q", mnem, p, parts[i-1])
+			}
+		}
+		regs[i] = r
 	}
-	if qd != qn {
-		return fmt.Errorf("cmlt operands must share an arrangement: %q, %q", ops[0], ops[1])
-	}
-	imm, err := parseImm(ops[2])
-	if err != nil {
-		return err
-	}
-	if imm != 0 {
-		return fmt.Errorf("cmlt takes only the compare-against-zero form, got #%d", imm)
-	}
-	a.Emit(CMLT(rd, rn, qd))
-	return nil
+	return regs, t, nil
 }
 
-// asmShrn handles `shrn Vd.8b, Vn.8h, #shift` — the narrowing right shift a
-// NEON kernel uses in place of x86's pmovmskb.
-//
-// The arrangements are fixed rather than parsed: the destination is always
-// 8b and the source always 8h for this encoding, so parseVecArr (which only
-// knows byte arrangements) cannot express the source. Checking the spelling
-// literally is what keeps a wrong arrangement from silently assembling.
-func asmShrn(a *Assembler, ops []string) error {
-	if len(ops) != 3 {
-		return fmt.Errorf("shrn expects Vd.8b, Vn.8h, #shift")
+// parsePostIndex parses the post-index operand of the structure loads: an
+// immediate — which must equal `want`, since the encoding has no immediate
+// field, only "advance by the transfer size" — or an X register (number 31
+// is reserved to mean the immediate form, so sp/xzr cannot be the index).
+func parsePostIndex(mnem, op string, want int64) (uint32, error) {
+	op = strings.TrimSpace(op)
+	if strings.HasPrefix(op, "#") {
+		imm, err := parseImm(op)
+		if err != nil {
+			return 0, err
+		}
+		if imm != want {
+			return 0, fmt.Errorf("%s post-index immediate must be #%d (the transfer size), got #%d", mnem, want, imm)
+		}
+		return 31, nil
 	}
-	rd, err := parseVecNamed(ops[0], "8b")
-	if err != nil {
-		return err
+	if is32(op) || op == "sp" || op == "xzr" {
+		return 0, fmt.Errorf("%s post-index register must be x0..x30, got %q", mnem, op)
 	}
-	rn, err := parseVecNamed(ops[1], "8h")
-	if err != nil {
-		return err
-	}
-	sh, err := parseImm(ops[2])
-	if err != nil {
-		return err
-	}
-	if sh < 1 || sh > 8 {
-		return fmt.Errorf("shrn shift must be 1..8, got %d", sh)
-	}
-	a.Emit(SHRN(rd, rn, uint32(sh)))
-	return nil
+	return parseReg(op)
 }
 
-// asmUmov handles `umov Wd, Vn.b[index]` — zero-extending byte-lane extract.
-func asmUmov(a *Assembler, ops []string) error {
-	if len(ops) != 2 {
-		return fmt.Errorf("umov expects Wd, Vn.b[index]")
-	}
-	if !is32(ops[0]) {
-		return fmt.Errorf("umov destination must be a W register, got %q", ops[0])
-	}
-	rd, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
-	rn, idx, err := parseVecLane(ops[1])
-	if err != nil {
-		return err
-	}
-	a.Emit(UMOV(rd, rn, idx))
-	return nil
-}
-
-// parseVecNamed parses `vN.<arr>` requiring exactly the given arrangement.
-func parseVecNamed(s, arr string) (uint32, error) {
-	s = strings.TrimSpace(s)
-	suffix := "." + arr
-	if !strings.HasPrefix(s, "v") || !strings.HasSuffix(s, suffix) {
-		return 0, fmt.Errorf("expected vN.%s, got %q", arr, s)
-	}
-	n, err := strconv.Atoi(s[1 : len(s)-len(suffix)])
-	if err != nil || n < 0 || n > 31 {
-		return 0, fmt.Errorf("bad vector register %q", s)
-	}
-	return uint32(n), nil
-}
-
-// parseVecLane parses `vN.b[i]` — a single byte lane of a vector register.
-func parseVecLane(s string) (reg, index uint32, err error) {
+// parseVecLane parses `vN.<b|h|s|d>[i]` — one lane of a vector register.
+func parseVecLane(s string) (reg, size, index uint32, err error) {
 	s = strings.TrimSpace(s)
 	open := strings.IndexByte(s, '[')
-	if !strings.HasPrefix(s, "v") || open < 0 || !strings.HasSuffix(s, "]") {
-		return 0, 0, fmt.Errorf("expected vN.b[index], got %q", s)
+	dot := strings.IndexByte(s, '.')
+	if !strings.HasPrefix(s, "v") || dot < 0 || open < dot || !strings.HasSuffix(s, "]") {
+		return 0, 0, 0, fmt.Errorf("expected vN.<Ts>[index], got %q", s)
 	}
-	head := s[:open]
-	if !strings.HasSuffix(head, ".b") {
-		return 0, 0, fmt.Errorf("umov lane must be a byte lane (.b), got %q", s)
+	switch s[dot+1 : open] {
+	case "b":
+		size = 0
+	case "h":
+		size = 1
+	case "s":
+		size = 2
+	case "d":
+		size = 3
+	default:
+		return 0, 0, 0, fmt.Errorf("bad lane element size in %q", s)
 	}
-	n, e := strconv.Atoi(head[1 : len(head)-2])
+	n, e := strconv.Atoi(s[1:dot])
 	if e != nil || n < 0 || n > 31 {
-		return 0, 0, fmt.Errorf("bad vector register %q", s)
+		return 0, 0, 0, fmt.Errorf("bad vector register %q", s)
 	}
 	i, e := strconv.Atoi(s[open+1 : len(s)-1])
-	if e != nil || i < 0 || i > 15 {
-		return 0, 0, fmt.Errorf("byte lane index must be 0..15, got %q", s)
+	if e != nil || i < 0 || i > int(15>>size) {
+		return 0, 0, 0, fmt.Errorf("lane index in %q out of range 0..%d", s, 15>>size)
 	}
-	return uint32(n), uint32(i), nil
+	return uint32(n), size, uint32(i), nil
+}
+
+// parseScalarReg parses a bN/hN/sN/dN scalar SIMD register, returning its
+// element-size class (0=B, 1=H, 2=S, 3=D) and number.
+func parseScalarReg(s string) (class, reg uint32, err error) {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 {
+		if i := strings.IndexByte("bhsd", s[0]); i >= 0 {
+			n, e := strconv.Atoi(s[1:])
+			if e == nil && n >= 0 && n <= 31 {
+				return uint32(i), uint32(n), nil
+			}
+		}
+	}
+	return 0, 0, fmt.Errorf("bad scalar SIMD register %q", s)
 }
 
 // parseBracketedBase parses `[xN]` — the base-register-only addressing form
-// ld1 takes. An offset or writeback is a DIFFERENT encoding, so anything
-// beyond a bare register is rejected rather than ignored.
+// the structure loads take. An offset would be a DIFFERENT encoding, so
+// anything beyond a bare register is rejected rather than ignored.
 func parseBracketedBase(s string) (uint32, error) {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "[") || !strings.HasSuffix(s, "]") {
 		return 0, fmt.Errorf("expected [xN], got %q", s)
 	}
 	return parseReg(strings.TrimSpace(s[1 : len(s)-1]))
-}
-
-// parseVecArr parses a `vN.8b` / `vN.16b` vector operand, returning the
-// register number and whether the arrangement is the 128-bit (Q) one.
-// Only the byte arrangements are accepted — the wider element sizes have
-// different `size` fields that these encoders do not set, so accepting
-// them would silently assemble the wrong instruction.
-func parseVecArr(s string) (reg uint32, q bool, err error) {
-	s = strings.TrimSpace(s)
-	dot := strings.IndexByte(s, '.')
-	if len(s) < 2 || s[0] != 'v' || dot < 0 {
-		return 0, false, fmt.Errorf("bad vector register %q", s)
-	}
-	n, e := strconv.Atoi(s[1:dot])
-	if e != nil || n < 0 || n > 31 {
-		return 0, false, fmt.Errorf("bad vector register %q", s)
-	}
-	switch s[dot+1:] {
-	case "8b":
-		return uint32(n), false, nil
-	case "16b":
-		return uint32(n), true, nil
-	}
-	return 0, false, fmt.Errorf("unsupported vector arrangement %q", s)
-}
-
-// parseBReg parses a `bN` scalar byte register — the destination shape
-// of `addv` over a byte arrangement.
-func parseBReg(s string) (uint32, error) {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 && s[0] == 'b' {
-		n, err := strconv.Atoi(s[1:])
-		if err == nil && n >= 0 && n <= 31 {
-			return uint32(n), nil
-		}
-	}
-	return 0, fmt.Errorf("bad byte register %q", s)
 }
 
 // asmCsel handles `csel Xd, Xn, Xm, <cond>`.
@@ -2913,9 +3699,9 @@ func splitMnemonic(line string) (mnem, rest string) {
 	return line, ""
 }
 
-// splitOperands splits the operand list on commas, but keeps commas
-// that sit inside a memory operand's brackets together (so
-// "[x1, #8]" stays one operand).
+// splitOperands splits the operand list on commas, but keeps commas that
+// sit inside a memory operand's brackets or a register list's braces
+// together (so "[x1, #8]" and "{v0.16b, v1.16b}" each stay one operand).
 func splitOperands(rest string) []string {
 	if rest == "" {
 		return nil
@@ -2925,9 +3711,9 @@ func splitOperands(rest string) []string {
 	start := 0
 	for i := 0; i < len(rest); i++ {
 		switch rest[i] {
-		case '[':
+		case '[', '{':
 			depth++
-		case ']':
+		case ']', '}':
 			depth--
 		case ',':
 			if depth == 0 {

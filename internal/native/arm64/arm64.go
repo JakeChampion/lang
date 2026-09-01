@@ -596,99 +596,185 @@ func RBIT(rd, rn uint32) uint32 {
 	return 0xDAC00000 | ((rn & regMask) << 5) | (rd & regMask)
 }
 
-// CNT encodes `cnt Vd.<T>, Vn.<T>` — per-BYTE population count across a
-// SIMD register (advanced SIMD, two-register misc). It is the only
-// hardware popcount AArch64 has; the scalar side has none, which is why
-// a popcount lowering has to route the value through a v-register.
-// `q` selects the 16B arrangement over 8B.
-// Encoding: base 0x0E205800 | Q<<30 | Rn<<5 | Rd.
-func CNT(rd, rn uint32, q bool) uint32 {
-	return 0x0E205800 | qbit(q) | ((rn & regMask) << 5) | (rd & regMask)
+// Advanced SIMD encoders. Each is one encoding CLASS, parameterized by the
+// fields the class actually has (Q, U, size, opcode, …); the per-mnemonic
+// opcode/size tables and the arrangement validation live in gas.go. The
+// classes' shared shape is why "add another vector op" is a table row, not a
+// new function — and why a wrong size/Q pair must be rejected up front:
+// within a class most bit patterns are SOME valid instruction.
+
+// Vec3Same encodes the three-registers-same-arrangement class: the integer
+// ALU ops (add/sub/mul, compares, min/max, sshl/ushl), the bitwise ops
+// (where `size` selects the operation, not a width), and — with `size` read
+// as (0|sz)/(2|sz) — the lane-wise FP ops.
+// Encoding: 0 Q U 01110 size 1 Rm opcode 1 Rn Rd =
+// 0x0E200400 | Q<<30 | U<<29 | size<<22 | Rm<<16 | opcode<<11 | Rn<<5 | Rd.
+func Vec3Same(rd, rn, rm, opcode, size uint32, q, u bool) uint32 {
+	return 0x0E200400 | qbit(q) | ubit(u) | ((size & 3) << 22) | ((rm & regMask) << 16) |
+		((opcode & 0x1F) << 11) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
-// ADDV encodes `addv Bd, Vn.<T>` — horizontal add across the byte lanes,
-// producing a scalar in the destination's low byte. Paired with CNT it
-// completes a popcount: per-byte counts, then summed. Only the byte
-// arrangements (size=00) are encoded, which is all a popcount needs; a
-// 64-lane sum maxes out at 64 and cannot overflow the byte.
-// Encoding: base 0x0E31B800 | Q<<30 | Rn<<5 | Rd.
-func ADDV(rd, rn uint32, q bool) uint32 {
-	return 0x0E31B800 | qbit(q) | ((rn & regMask) << 5) | (rd & regMask)
+// Vec2Misc encodes the two-register miscellaneous class: the unary ops
+// (neg/abs/not/cnt/rev*), the compare-against-zero forms (#0 is part of the
+// opcode, not a field), the narrowing xtn, and — with `size` read as
+// (0|sz)/(2|sz) — the lane-wise FP unaries and int<->float converts.
+// Encoding: 0 Q U 01110 size 10000 opcode 10 Rn Rd =
+// 0x0E200800 | Q<<30 | U<<29 | size<<22 | opcode<<12 | Rn<<5 | Rd.
+func Vec2Misc(rd, rn, opcode, size uint32, q, u bool) uint32 {
+	return 0x0E200800 | qbit(q) | ubit(u) | ((size & 3) << 22) |
+		((opcode & 0x1F) << 12) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
-// The NEON byte-kernel surface (docs/ATLAS-PLATFORM-PLAN.md §3.3a). CNT and
-// ADDV above were added for popcount and were, until these, the assembler's
-// ONLY vector instructions — everything else here is scalar. §3 argued the
-// fused-intrinsic design needs no vector register class in the IR, which
-// holds, but the assemblers still have to encode what the kernels emit; on
-// x86-64 that gap cost a whole extra slice.
-//
-// All four are byte-arrangement only, matching parseVecArr's restriction:
-// the wider element sizes live in the same encodings with a different `size`
-// field, so accepting them without setting it would assemble a different
-// instruction that looks correct.
-
-// DUP encodes `dup Vd.<T>, Wn` — broadcast the low byte of a GPR to every
-// lane. This is the needle splat, and it is one instruction where SSE2 needs
-// four (movd + two punpckl + pshufd).
-// Encoding: base 0x0E010C00 | Q<<30 | Rn<<5 | Rd.
-func DUP(rd, rn uint32, q bool) uint32 {
-	return 0x0E010C00 | qbit(q) | ((rn & regMask) << 5) | (rd & regMask)
+// VecAcross encodes the across-lanes class (addv, s/u min/max-v, the
+// widening s/uaddlv): a horizontal reduction into a scalar register.
+// Encoding: 0 Q U 01110 size 11000 opcode 10 Rn Rd =
+// 0x0E300800 | Q<<30 | U<<29 | size<<22 | opcode<<12 | Rn<<5 | Rd.
+func VecAcross(rd, rn, opcode, size uint32, q, u bool) uint32 {
+	return 0x0E300800 | qbit(q) | ubit(u) | ((size & 3) << 22) |
+		((opcode & 0x1F) << 12) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
-// LD1 encodes `ld1 {Vt.<T>}, [Xn]` — the single-register, no-writeback form.
-// NEON has no alignment requirement here, so this is the direct counterpart
-// of movdqu rather than of movdqa.
-// Encoding: base 0x0C407000 | Q<<30 | Rn<<5 | Rt.
-func LD1(rt, rn uint32, q bool) uint32 {
-	return 0x0C407000 | qbit(q) | ((rn & regMask) << 5) | (rt & regMask)
+// VecShiftImm encodes the shift-by-immediate class: shl/sshr/ushr/sli/sri,
+// the narrowing shrn and the widening sshll/ushll. The element size and the
+// shift amount share the immh:immb field (`immhb`) — immh's top set bit IS
+// the element size, which is why the class has no size field — so the caller
+// derives it: esize+shift for left shifts, 2*esize-shift for right shifts.
+// Encoding: 0 Q U 011110 immh immb opcode 1 Rn Rd =
+// 0x0F000400 | Q<<30 | U<<29 | immhb<<16 | opcode<<11 | Rn<<5 | Rd.
+func VecShiftImm(rd, rn, opcode, immhb uint32, q, u bool) uint32 {
+	return 0x0F000400 | qbit(q) | ubit(u) | ((immhb & 0x7F) << 16) |
+		((opcode & 0x1F) << 11) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
-// CMEQ encodes `cmeq Vd.<T>, Vn.<T>, Vm.<T>` — per-byte equality, producing
-// an all-ones lane where the bytes match. The register form; the
-// compare-against-zero form is a different encoding and is not accepted here.
-// Encoding: base 0x2E208C00 | Q<<30 | Rm<<16 | Rn<<5 | Rd.
-func CMEQ(rd, rn, rm uint32, q bool) uint32 {
-	return 0x2E208C00 | qbit(q) | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+// VecPermute encodes the permute class: zip1/zip2/uzp1/uzp2/trn1/trn2
+// (opc 011/111/001/101/010/110).
+// Encoding: 0 Q 001110 size 0 Rm 0 opc 10 Rn Rd =
+// 0x0E000800 | Q<<30 | size<<22 | Rm<<16 | opc<<12 | Rn<<5 | Rd.
+func VecPermute(rd, rn, rm, opc, size uint32, q bool) uint32 {
+	return 0x0E000800 | qbit(q) | ((size & 3) << 22) | ((rm & regMask) << 16) |
+		((opc & 7) << 12) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
-// CMLT encodes `cmlt Vd.<T>, Vn.<T>, #0` — per-byte signed compare against
-// zero, producing an all-ones lane where the byte's high bit is set.
-//
-// That IS the "not ASCII" test, in one instruction and with no operand to
-// splat, which is what makes the ascii-run kernel cheaper than the memchr one
-// on this side as well as on x86-64 (where the counterpart saving is that
-// pmovmskb alone answers the question, with no compare at all).
-//
-// Only the compare-against-zero form exists — #0 is not an immediate field,
-// it is part of the opcode, so a non-zero immediate is a different instruction
-// entirely and the parser refuses it rather than silently encoding this one.
-// Encoding: base 0x0E20A800 | Q<<30 | Rn<<5 | Rd.
-func CMLT(rd, rn uint32, q bool) uint32 {
-	return 0x0E20A800 | qbit(q) | ((rn & regMask) << 5) | (rd & regMask)
+// VecExt encodes `ext Vd.<T>, Vn.<T>, Vm.<T>, #index` — byte-wise extract
+// from a register pair, the NEON sliding window (palignr's counterpart).
+// Byte arrangements only; index < 8 (8b) / 16 (16b).
+// Encoding: 0 Q 101110 000 Rm 0 imm4 0 Rn Rd =
+// 0x2E000000 | Q<<30 | Rm<<16 | index<<11 | Rn<<5 | Rd.
+func VecExt(rd, rn, rm, index uint32, q bool) uint32 {
+	return 0x2E000000 | qbit(q) | ((rm & regMask) << 16) | ((index & 0xF) << 11) |
+		((rn & regMask) << 5) | (rd & regMask)
 }
 
-// SHRN encodes `shrn Vd.8b, Vn.8h, #shift` — narrowing right shift, halving
-// 16-bit lanes into bytes.
-//
-// It is how a NEON kernel gets a comparison mask into a GPR at all. x86 has
-// pmovmskb, which extracts one bit per byte directly; NEON has no equivalent,
-// so the idiom is shrn #4 to compress each 16-bit lane's flag nibble into a
-// byte, then fmov the resulting 64-bit half out. Recording that here because
-// the absence of pmovmskb is the single biggest shape difference between the
-// two vector kernels.
-//
-// `shift` is in 1..8 and encodes as immh:immb = 16 - shift.
-// Encoding: base 0x0F088400 | (16-shift)<<16 | Rn<<5 | Rd.
-func SHRN(rd, rn, shift uint32) uint32 {
-	return 0x0F088400 | ((16 - (shift & 0x1F)) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+// VecTbl1 encodes `tbl Vd.<T>, {Vn.16b}, Vm.<T>` — the single-table-register
+// byte shuffle (pshufb's counterpart). The table is always .16b.
+// Encoding: 0 Q 001110 000 Rm 0 len=00 op=0 00 Rn Rd =
+// 0x0E000000 | Q<<30 | Rm<<16 | Rn<<5 | Rd.
+func VecTbl1(rd, rn, rm uint32, q bool) uint32 {
+	return 0x0E000000 | qbit(q) | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
-// UMOV encodes `umov Wd, Vn.b[index]` — zero-extending extract of one byte
-// lane into a GPR.
-// Encoding: base 0x0E013C00 | index<<17 | Rn<<5 | Rd.
-func UMOV(rd, rn, index uint32) uint32 {
-	return 0x0E013C00 | ((index & 0xF) << 17) | ((rn & regMask) << 5) | (rd & regMask)
+// The copy class (dup/ins/umov/smov) addresses a lane through imm5: the
+// element size is imm5's lowest set bit and the lane index the bits above
+// it, i.e. imm5 = (index<<1|1) << size.
+
+// VecDupElem encodes `dup Vd.<T>, Vn.<Ts>[index]` — broadcast one lane.
+// Encoding: 0 Q 001110000 imm5 000001 Rn Rd =
+// 0x0E000400 | Q<<30 | imm5<<16 | Rn<<5 | Rd.
+func VecDupElem(rd, rn, imm5 uint32, q bool) uint32 {
+	return 0x0E000400 | qbit(q) | ((imm5 & 0x1F) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// VecDupGPR encodes `dup Vd.<T>, Rn` — broadcast a GPR to every lane (the
+// needle splat; one instruction where SSE2 needs four).
+// Encoding: 0 Q 001110000 imm5 000011 Rn Rd =
+// 0x0E000C00 | Q<<30 | imm5<<16 | Rn<<5 | Rd.
+func VecDupGPR(rd, rn, imm5 uint32, q bool) uint32 {
+	return 0x0E000C00 | qbit(q) | ((imm5 & 0x1F) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// VecInsGPR encodes `ins Vd.<Ts>[index], Rn` — insert a GPR into one lane.
+// Encoding: 01001110000 imm5 000111 Rn Rd =
+// 0x4E001C00 | imm5<<16 | Rn<<5 | Rd.
+func VecInsGPR(rd, rn, imm5 uint32) uint32 {
+	return 0x4E001C00 | ((imm5 & 0x1F) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// VecInsElem encodes `ins Vd.<Ts>[i], Vn.<Ts>[j]` — lane-to-lane move.
+// imm4 is the source index shifted by the element size (j<<size).
+// Encoding: 01101110000 imm5 0 imm4 1 Rn Rd =
+// 0x6E000400 | imm5<<16 | imm4<<11 | Rn<<5 | Rd.
+func VecInsElem(rd, rn, imm5, imm4 uint32) uint32 {
+	return 0x6E000400 | ((imm5 & 0x1F) << 16) | ((imm4 & 0xF) << 11) |
+		((rn & regMask) << 5) | (rd & regMask)
+}
+
+// VecUmov encodes `umov Wd, Vn.<Ts>[index]` (b/h/s lanes) and
+// `umov Xd, Vn.d[index]` (q set) — zero-extending lane extract.
+// Encoding: 0 Q 001110000 imm5 001111 Rn Rd =
+// 0x0E003C00 | Q<<30 | imm5<<16 | Rn<<5 | Rd.
+func VecUmov(rd, rn, imm5 uint32, q bool) uint32 {
+	return 0x0E003C00 | qbit(q) | ((imm5 & 0x1F) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// VecSmov encodes `smov Wd|Xd, Vn.<Ts>[index]` — sign-extending lane
+// extract; q is the destination width (X when set).
+// Encoding: 0 Q 001110000 imm5 001011 Rn Rd =
+// 0x0E002C00 | Q<<30 | imm5<<16 | Rn<<5 | Rd.
+func VecSmov(rd, rn, imm5 uint32, q bool) uint32 {
+	return 0x0E002C00 | qbit(q) | ((imm5 & 0x1F) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// VecMovi encodes the modified-immediate class: `movi Vd.<T>, #imm8` with an
+// optional byte-position shift (cmode selects the element width and shift
+// slot), and — with op set — the 64-bit bytemask form `movi Vd.2d, #imm64` /
+// `movi Dd, #imm64`, where each imm8 bit expands to an all-ones/zero byte.
+// Encoding: 0 Q op 0111100000 abc cmode 01 defgh Rd =
+// 0x0F000400 | Q<<30 | op<<29 | imm8[7:5]<<16 | cmode<<12 | imm8[4:0]<<5 | Rd.
+func VecMovi(rd, imm8, cmode uint32, q, op bool) uint32 {
+	return 0x0F000400 | qbit(q) | ubit(op) | ((imm8 >> 5 & 7) << 16) |
+		((cmode & 0xF) << 12) | ((imm8 & 0x1F) << 5) | (rd & regMask)
+}
+
+// VecLdSt1 encodes ld1/st1 of `nregs` consecutive registers, one structure
+// per element: no writeback (wb false), post-index by register (wb, rm<31),
+// or post-index by the transfer size (wb, rm=31). The register count selects
+// the opcode field (1:0111, 2:1010, 3:0110, 4:0010). NEON has no alignment
+// requirement here, so the single-register load is the direct counterpart of
+// movdqu rather than of movdqa.
+// Encoding: 0 Q 001100 wb L 0 Rm opcode size Rn Rt =
+// 0x0C000000 | Q<<30 | wb<<23 | L<<22 | Rm<<16 | opcode<<12 | size<<10 | Rn<<5 | Rt.
+func VecLdSt1(rt, rn, rm, nregs, size uint32, q, load, wb bool) uint32 {
+	opcode := [5]uint32{0, 7, 0xA, 6, 2}[nregs]
+	insn := 0x0C000000 | qbit(q) | ((rm & regMask) << 16) | (opcode << 12) |
+		((size & 3) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+	if load {
+		insn |= 1 << 22
+	}
+	if wb {
+		insn |= 1 << 23
+	}
+	return insn
+}
+
+// VecLd1R encodes `ld1r {Vt.<T>}, [Xn]` — load one element and replicate it
+// to every lane — with the same writeback options as VecLdSt1 (rm=31 is
+// post-index by the element size).
+// Encoding: 0 Q 001101 wb 10 Rm 1100 size Rn Rt =
+// 0x0D40C000 | Q<<30 | wb<<23 | Rm<<16 | size<<10 | Rn<<5 | Rt.
+func VecLd1R(rt, rn, rm, size uint32, q, wb bool) uint32 {
+	insn := 0x0D40C000 | qbit(q) | ((rm & regMask) << 16) |
+		((size & 3) << 10) | ((rn & regMask) << 5) | (rt & regMask)
+	if wb {
+		insn |= 1 << 23
+	}
+	return insn
+}
+
+func ubit(u bool) uint32 {
+	if u {
+		return 1 << 29
+	}
+	return 0
 }
 
 func qbit(q bool) uint32 {
