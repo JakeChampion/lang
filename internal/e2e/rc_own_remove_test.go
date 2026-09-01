@@ -69,6 +69,18 @@ var ownRemoveCases = []ownRemoveCase{
 	{"D_nested_transfer", `function outer(own p: P, k: i32): P {
     return inner(inner(p, 10), 10);
 }`, 0},
+
+	// The last occurrence is ITSELF an own-call transfer, so move-on-call
+	// claims p whole-function and the sweep skips it on every path. The
+	// per-site claim must still fire for the EARLY transfer: gating it on
+	// movedLocals left that return's retain with no sweep to balance it —
+	// one leaked P per call, and `inner` growing p.data at rc>1 (one copy
+	// per call; the self-host x86 assembler leaked one X86Asm per assembled
+	// instruction through exactly this shape).
+	{"E_early_transfer_last_also_transfers", `function outer(own p: P, k: i32): P {
+    if (k % 2 == 0) { return inner(p, 20); }
+    return inner(p, 20);
+}`, 0},
 }
 
 // src builds the driver. The length check runs before the counter is read, so

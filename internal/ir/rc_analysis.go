@@ -5761,6 +5761,15 @@ func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8
 // The retain it removes was only ever balancing the sweep dec that the
 // exclusion now removes too, so the net rc is unchanged — one release, at the
 // callee, exactly as for the last-occurrence case move-on-call already claims.
+//
+// A p that move-on-call already claimed WHOLE-FUNCTION (movedLocals, via a
+// different, textually-later occurrence) is still claimed here: the sweep
+// then skips p on EVERY path, so an unclaimed early transfer would pay the
+// retain with nothing left to balance it — one leaked box per call, and the
+// callee growing p's buffers at rc>1 (the self-host x86 assembler leaked one
+// X86Asm per instruction exactly this way). No path can release twice: every
+// site this pass claims is a return, so control cannot reach a second
+// claimed transfer after it. Only the same-node guard remains.
 func (b *builder) computeReturnOwnMoves() map[ast.Node]string {
 	out := map[ast.Node]string{}
 	if b.fn.Body == nil || b.thisIsPair || len(b.info.OwnFuncs) == 0 {
@@ -5822,8 +5831,8 @@ func (b *builder) computeReturnOwnMoves() map[ast.Node]string {
 				if !isArgID || !ownParam[arg.Name] || counts[arg.Name] != 1 {
 					continue
 				}
-				if b.rc.movedLocals[arg.Name] || b.rc.ownCallMoveArgs[arg] {
-					continue // move-on-call already claimed it whole-function
+				if b.rc.ownCallMoveArgs[arg] {
+					continue // move-on-call already claimed this very node
 				}
 				out[ret] = arg.Name
 				b.rc.ownCallMoveArgs[arg] = true
