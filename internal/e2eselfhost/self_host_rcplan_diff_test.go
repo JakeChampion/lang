@@ -1321,10 +1321,15 @@ function f(): i32 {
 	return xs.len();
 }
 function main(): i32 { return f(); }`,
-			diverge: map[string]map[string]divergence{
+			// #7914's string tier credits the push element, so native now
+			// frees `v` and `xs` where it used to hold both — the same answer
+			// the self-host already gave. The two pins this case carried as
+			// divergences are anchored agreements now, like
+			// tuple-elem-extract-bind below.
+			anchor: map[string]map[string]string{
 				"f": {
-					"freeEligible": {native: "", selfhost: "v,xs"},
-					"lastUses":     {native: "", selfhost: "v=2,xs=3"},
+					"freeEligible": "v,xs",
+					"lastUses":     "v=2,xs=3",
 				},
 			},
 		},
