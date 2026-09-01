@@ -1455,6 +1455,17 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		if isRuntimeHelperName(fn.Name) {
 			continue
 		}
+		// A receiver method / `impl` member keeps its bare name at the
+		// declaration (the hoist to `__method_<Type>_<Name>` /
+		// `__assoc_<T>_<f>` needs it), so its source-level name never
+		// becomes a `mod__name` decl. Claiming that name here made a
+		// bare call to a same-named FREE function — a builtin like
+		// `env`, or one from an import — rewrite to a `mod__env` that
+		// nothing declares. A module declaring both shapes still lands
+		// in the set through its plain-function half.
+		if fn.Receiver != nil || fn.AssocType != "" {
+			continue
+		}
 		ownFuncs[fn.Name] = true
 	}
 	for _, sd := range m.prog.Structs {
