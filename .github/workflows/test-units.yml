@@ -64,11 +64,17 @@ jobs:
             echo "llvm-mc already present"
             exit 0
           fi
-          sudo timeout 120 apt-get update -qq && sudo timeout 120 apt-get install -y -qq llvm || {
+          if ! sudo timeout 120 apt-get update -qq; then
+            echo "apt-get update failed or timed out; the llvm-mc oracle lane will skip" >&2
+            exit 0
+          fi
+          if ! sudo timeout 120 apt-get install -y -qq llvm; then
             echo "llvm install failed or timed out; the llvm-mc oracle lane will skip" >&2
             exit 0
-          }
-          command -v llvm-mc >/dev/null 2>&1 && llvm-mc --version | head -2 || true
+          fi
+          if command -v llvm-mc >/dev/null 2>&1; then
+            llvm-mc --version | head -2
+          fi
       - name: go test (units)
         # The package set is DERIVED, not enumerated — see
         # scripts/unit-test-packages, which is also what the Netlify smoke
