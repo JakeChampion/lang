@@ -19,13 +19,14 @@
 //   * the trait method an operator desugars to (`a < b` keeps `*.cmp`,
 //     `a + b` keeps `*.add`, …) — covering operator overloading even if the
 //     `+`→`.add()` rewrite has not run yet.
-// The collector visits every Expr/Stmt form (mirroring astwalk's complete
-// traversal) and, unlike astwalk's capture analysis, does NOT subtract
-// lambda-local bindings — for reachability, keeping an extra same-named
-// function is harmless; dropping a referenced one is not. Over-keeping only
-// costs IR budget; it never changes behaviour.
+// The collector rides astwalk's fold spine, so it reaches every Expr/Stmt
+// form the parser produces, and, unlike astwalk's capture analysis, does NOT
+// subtract lambda-local bindings — for reachability, keeping an extra
+// same-named function is harmless; dropping a referenced one is not.
+// Over-keeping only costs IR budget; it never changes behaviour.
 
 import "./ast";
+import "./astwalk";
 import "./parser";
 import "./util";
 
@@ -43,148 +44,62 @@ function ts_op_method(op: string): string {
     return "";
 }
 
-// ts_names_expr appends every name `e` could REFERENCE (idents, field/method
-// names, operator-dispatch methods) to `acc`. Duplicates are fine.
-function ts_names_expr(e: ast.Expr, acc: string[]): string[] {
+// ts_name_of contributes the names ONE node could reference; astwalk's fold
+// supplies the walk, including lambda bodies (their calls are reachable, and
+// lambda-local bindings are deliberately not subtracted). Every variant is
+// spelled out rather than wildcarded so a new expression kind fails E030 here
+// and gets a reachability decision, not a silent empty contribution — the
+// soundness property the hand-written walk this replaces had.
+function ts_name_of(e: ast.Expr, acc: string[]): string[] {
     match (e) {
         ast.ExprIdent(id) => { return acc.append(id.name); },
-        ast.ExprNumber(_) => { return acc; },
-        ast.ExprString(_) => { return acc; },
-        ast.ExprBool(_) => { return acc; },
         ast.ExprBinary(b) => {
             var m: string = ts_op_method(b.op);
-            if (m.len() > 0) { acc = acc.append(m); }
-            acc = ts_names_expr(b.left, acc);
-            return ts_names_expr(b.right, acc);
+            if (m.len() > 0) { return acc.append(m); }
+            return acc;
         },
         ast.ExprUnary(u) => {
-            if (u.op == "-") { acc = acc.append("neg"); }
-            return ts_names_expr(u.operand, acc);
-        },
-        ast.ExprCall(c) => {
-            acc = ts_names_expr(c.callee, acc);
-            var i: i32 = 0;
-            while (i < c.args.len()) { acc = ts_names_expr(c.args[i], acc); i = i + 1; }
-            return acc;
-        },
-        ast.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) { acc = ts_names_expr(a.elements[i], acc); i = i + 1; }
-            return acc;
-        },
-        ast.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) { acc = ts_names_expr(t.elements[i], acc); i = i + 1; }
-            return acc;
-        },
-        ast.ExprMapLit(ml) => {
-            var i: i32 = 0;
-            while (i < ml.keys.len()) {
-                acc = ts_names_expr(ml.keys[i], acc);
-                acc = ts_names_expr(ml.vals[i], acc);
-                i = i + 1;
-            }
-            return acc;
-        },
-        ast.ExprFString(fs) => {
-            var i: i32 = 0;
-            while (i < fs.exprs.len()) {
-                if (fs.is_expr[i]) { acc = ts_names_expr(fs.exprs[i], acc); }
-                i = i + 1;
-            }
-            return acc;
-        },
-        ast.ExprIndex(x) => {
-            acc = ts_names_expr(x.array, acc);
-            return ts_names_expr(x.index, acc);
-        },
-        ast.ExprSlice(sl) => {
-            acc = ts_names_expr(sl.array, acc);
-            acc = ts_names_expr(sl.start, acc);
-            return ts_names_expr(sl.end, acc);
-        },
-        ast.ExprStructLit(sl) => {
-            if (sl.has_base) { acc = ts_names_expr(sl.base, acc); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) { acc = ts_names_expr(sl.field_values[i], acc); i = i + 1; }
+            if (u.op == "-") { return acc.append("neg"); }
             return acc;
         },
         // A method/field name (`x.eq`) is a reference: keep every function with
-        // that simple name. Also recurse into the object.
+        // that simple name. An array-method call `arr.<m>(...)` (`.join` /
+        // `.concat` / `.reverse` / `.flat_map` / `.sort_by` / std/array's
+        // distinct, mode, …) dispatches to the auto-discovered
+        // `__method_Array_<m>` helper, but the syntax names only `<m>` — so
+        // without this the helper looks unreachable and gets pruned, bailing
+        // the whole module (the IR path then fails on `i32.<m>`).
+        // Append the helper's canonical token so ts_kept_name retains it.
         ast.ExprFieldAccess(fa) => {
             acc = acc.append(fa.field);
-            // An array-method call `arr.<m>(...)` (`.join` / `.concat` /
-            // `.reverse` / `.flat_map` / `.sort_by` / std/array's distinct,
-            // mode, …) dispatches to the auto-discovered `__method_Array_<m>`
-            // helper, but the syntax names only `<m>` — so without this the
-            // helper looks unreachable and gets pruned, bailing the whole
-            // module (the IR path then fails on `i32.<m>`).
-            // Append the helper's canonical token so ts_kept_name retains it.
-            acc = acc.append("__method_Array_" + fa.field);
-            return ts_names_expr(fa.obj, acc);
+            return acc.append("__method_Array_" + fa.field);
         },
-        // Walk the WHOLE lambda body — every function it calls is reachable.
-        // (Unlike astwalk's free-var collector we do not subtract lambda-local
-        // bindings: over-keeping a same-named function is safe, dropping a
-        // referenced one is not.)
-        ast.ExprLambda(lm) => {
-            var i: i32 = 0;
-            while (i < lm.body.len()) { acc = ts_names_stmt(lm.body[i], acc); i = i + 1; }
-            return acc;
-        },
+        ast.ExprNumber(_) => { return acc; },
+        ast.ExprString(_) => { return acc; },
+        ast.ExprBool(_) => { return acc; },
+        ast.ExprCall(_) => { return acc; },
+        ast.ExprArray(_) => { return acc; },
+        ast.ExprTuple(_) => { return acc; },
+        ast.ExprMapLit(_) => { return acc; },
+        ast.ExprFString(_) => { return acc; },
+        ast.ExprIndex(_) => { return acc; },
+        ast.ExprSlice(_) => { return acc; },
+        ast.ExprStructLit(_) => { return acc; },
+        ast.ExprLambda(_) => { return acc; },
         ast.ExprUnknown(_) => { return acc; }
     }
     return acc;
 }
 
+// ts_names_expr appends every name `e` could REFERENCE (idents, field/method
+// names, operator-dispatch methods) to `acc`. Duplicates are fine.
+function ts_names_expr(e: ast.Expr, acc: string[]): string[] {
+    return astwalk.fold_expr(e, acc, ts_name_of);
+}
+
 // ts_names_stmt appends every name `st` could reference to `acc`.
 function ts_names_stmt(st: ast.Stmt, acc: string[]): string[] {
-    match (st) {
-        ast.StmtDefer(d) => { return ts_names_stmt(d.action, acc); },
-        ast.StmtVar(v) => { return ts_names_expr(v.init, acc); },
-        ast.StmtReturn(r) => { return ts_names_expr(r.value, acc); },
-        ast.StmtExpr(e) => { return ts_names_expr(e.value, acc); },
-        ast.StmtIf(i) => {
-            acc = ts_names_expr(i.cond, acc);
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) { acc = ts_names_stmt(i.then_body[ti], acc); ti = ti + 1; }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) { acc = ts_names_stmt(i.else_body[ei], acc); ei = ei + 1; }
-            return acc;
-        },
-        ast.StmtWhile(w) => {
-            acc = ts_names_expr(w.cond, acc);
-            var i: i32 = 0;
-            while (i < w.body.len()) { acc = ts_names_stmt(w.body[i], acc); i = i + 1; }
-            return acc;
-        },
-        ast.StmtAssign(a) => { return ts_names_expr(a.value, acc); },
-        ast.StmtMatch(m) => {
-            acc = ts_names_expr(m.scrutinee, acc);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                // A `when` guard is executable code: names it references (e.g. a
-                // method called only from the guard) are reachable, so walk it
-                // too. Without this, treeshake pruned such a function and the
-                // emitted guard called a stripped symbol → segfault.
-                if (m.arms[ai].has_guard) { acc = ts_names_expr(m.arms[ai].guard, acc); }
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) { acc = ts_names_stmt(m.arms[ai].body[bi], acc); bi = bi + 1; }
-                ai = ai + 1;
-            }
-            return acc;
-        },
-        ast.StmtFor(f) => {
-            acc = ts_names_expr(f.iter, acc);
-            var i: i32 = 0;
-            while (i < f.body.len()) { acc = ts_names_stmt(f.body[i], acc); i = i + 1; }
-            return acc;
-        },
-        ast.StmtBreak(_) => { return acc; },
-        ast.StmtContinue(_) => { return acc; },
-        ast.StmtUnknown(_) => { return acc; }
-    }
-    return acc;
+    return astwalk.fold_stmt(st, acc, ts_name_of);
 }
 
 // ts_func_names appends every name function `fd`'s body references to `acc`.
