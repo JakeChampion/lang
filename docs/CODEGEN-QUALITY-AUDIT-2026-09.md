@@ -234,7 +234,7 @@ were reproduced independently of whoever first reported it. Costs are shares of
 | 2 | Constant field/element offsets never folded into the addressing mode — 5 instructions where `ldr xD,[xB,#K]` is 1 | arm64 | **14.6%** of instructions | confirmed independently |
 | 3 | Call-site `rsp` alignment padding at 90 935 sites | x86-64 | **11.4%** of instructions | confirmed |
 | 4 | No ALU/compare immediate operands — constants `movz`'d into a register first | arm64 | **6.7%** of instructions | confirmed |
-| 5 | Reference-count guard materialises its mask in two instructions, 120 323 times; the whole guard is 4 instructions where 2 suffice | arm64 | 1.5% (mask) / **3.1%** (guard) | confirmed |
+| 5 | Reference-count guard materialises its mask in two instructions, 120 377 times; the whole guard is 4 instructions where 2 suffice | arm64 | 1.52% (mask) / **3.03%** (guard) | confirmed independently |
 | 6 | Division and modulo by a compile-time constant emit `idiv` plus a dead zero-divisor and `INT_MIN/-1` guard — no power-of-two reduction, no magic-number reciprocal | both | 67.3% slower than the reciprocal on the probe | confirmed |
 | 7 | `a + b*c` is never `madd`; no `msub`/`mneg`/`smull`/`umull` selection | arm64 | 0 `madd` in 7 933 724 instructions | confirmed |
 | 8 | Shifted/extended register operands never selected — `a + (b << 3)` is 15 instructions against clang's 1 | arm64 | 8 330 folded vs 125 230 standalone `lsl` — 6.2% | confirmed |
@@ -251,6 +251,27 @@ were reproduced independently of whoever first reported it. Costs are shares of
 
 Findings 1–5 alone are **~56% of x86-64's emitted instructions and ~25% of
 arm64's**, and none of them require a register allocator.
+
+Finding 5 deserves its own line, because it is the whole report in six
+instructions. The inlined reference-count heap-range guard is:
+
+```
+    tbnz x0, #0, .LrcopDone      ; tagged? skip
+    mov  x1, #1
+    lsl  x1, x1, #28             ; x1 = 0x10000000
+    cmp  x0, x1
+    b.lo .LrcopDone              ; below the heap base? skip
+    ldur w1, [x0, #-8]
+```
+
+`0x10000000` is `movz x1, #0x1000, lsl #16` — one instruction, and the
+assembler has encoded it all along. And the comparison itself is
+`lsr x1, x0, #28 / cbz x1, .LrcopDone`: two instructions for the four.
+
+The detail that makes it an emblem rather than an oversight: **120 394 of the
+120 394 immediate-form `lsl` instructions in the entire compiler are this one
+line.** The shift-by-constant form is used for exactly one hardcoded
+constant, and never once for a shift the user wrote.
 
 ### 3.1 The one that is already proven
 
