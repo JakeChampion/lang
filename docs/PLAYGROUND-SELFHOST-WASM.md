@@ -89,9 +89,9 @@ Run cost, compiling `function main(): i32 { return 6 * 7; }` under wasmtime:
 | `wasm_ir_run.wasm` under wasmtime | 1.9 s | 104 MiB |
 
 104 MiB is not a browser problem. For scale, the guest modules the playground
-compiles already declare `MemoryMin = 1, MemoryMax = -1`
-(`internal/codegen/wasmbin/wasmbin.go:630-631`) — unbounded growth — and both
-JS shims are already written to survive linear memory detaching under them
+compiles declare `MemoryMax = -1` — unbounded growth — with the initial size
+derived from the static data (`memoryMinPages`, `memlayout.go`), and both JS
+shims are already written to survive linear memory detaching under them
 (`web/wasi-shim.js:38-41`, `web/wasi-http-shim.js:21-24`).
 
 The whole 19-module compiler also links and runs as one wasm module today —
@@ -181,6 +181,15 @@ the playground's wasm artifact can only be produced *by the self-host compiler
 compiling itself*, never by the native toolchain — so there is no independent
 second witness to cross-check a wasm miscompile against, which is why #7948 had
 to be diagnosed by diffing the two TARGETS of one compiler instead.
+
+The IR driver is the exception, and it is a usable partial witness: the native
+toolchain compiles `examples/self_host/wasm_ir_run.fern` to a core module that
+now instantiates and compiles a program handed to it on stdin. It could always
+be *built*; it could not be *started* until the emitted memory was sized from
+the static data (the literals of a whole compiler run well past 64 KiB, and data
+segments are written at instantiation). Invoke it as `wasmtime run --invoke main`
+— a wasmbin core module carries no `_start`, so a plain `wasmtime run` exits 0
+without calling anything.
 
 The gate that should have caught the whole class exists now.
 `TestProvidedSigsAgreeWithWasmRuntime`

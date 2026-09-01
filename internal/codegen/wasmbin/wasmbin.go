@@ -617,23 +617,32 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		m.ExportIdxs = append(m.ExportIdxs, 0)
 	}
 
+	// enableMemory turns on memory 0 and exports it under the canonical
+	// name so tests and host tooling can poke at it. No upper bound —
+	// __fern_alloc grows on demand. The INITIAL size is deliberately not
+	// set here: it follows from the static data, which is only complete
+	// once every data segment has been appended, so it is derived once
+	// just before the module is built.
+	enableMemory := func() {
+		if m.MemoryPresent {
+			return
+		}
+		m.MemoryPresent = true
+		m.MemoryMax = -1
+		m.ExportNames = append(m.ExportNames, "memory")
+		m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
+		m.ExportIdxs = append(m.ExportIdxs, 0)
+	}
+
 	// Memory section is emitted iff any function in the program
 	// touches memory (load / store / sub-width variants / fN load
 	// or store) OR if any runtime helper that touches memory is
 	// pulled in (__fern_alloc grows memory; __fern_str_byte and
 	// transitively __str_eq emit i32.load8_u even in branches
 	// that don't execute at runtime — wasm validation still
-	// requires memory 0 to exist). Memory layout matches the
-	// WAT path: 1 page (64 KiB) with no upper bound.
+	// requires memory 0 to exist).
 	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__fern_alloc"] || helpers.set["__fern_str_byte"] || helpers.set["__load_i32"] || helpers.set["__store_i32"] || helpers.set["__load_i64"] || helpers.set["__store_i64"] || helpers.set["__load_ptr"] || helpers.set["__store_ptr"] || helpers.set["__memcpy"] || helpers.set["__memset"] || len(importNeeds.order) > 0 {
-		m.MemoryPresent = true
-		m.MemoryMin = 1
-		m.MemoryMax = -1
-		// Export the memory under the canonical name so tests
-		// and host tooling can poke at it.
-		m.ExportNames = append(m.ExportNames, "memory")
-		m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
-		m.ExportIdxs = append(m.ExportIdxs, 0)
+		enableMemory()
 	}
 
 	for fnIdx, fn := range prog.Funcs {
@@ -782,14 +791,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// When present, also force the memory section so the data segment
 	// has a target.
 	if len(closureBytes) > 0 {
-		if !m.MemoryPresent {
-			m.MemoryPresent = true
-			m.MemoryMin = 1
-			m.MemoryMax = -1
-			m.ExportNames = append(m.ExportNames, "memory")
-			m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
-			m.ExportIdxs = append(m.ExportIdxs, 0)
-		}
+		enableMemory()
 		m.DataOffsets = append(m.DataOffsets, int32(closuresBase))
 		m.DataInits = append(m.DataInits, closureBytes)
 	}
@@ -799,14 +801,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// it with i64.loads. Like every data segment it needs a memory behind
 	// it, even if nothing else in the module uses one.
 	if helpers.set["__fern_sin_f64"] || helpers.set["__fern_cos_f64"] {
-		if !m.MemoryPresent {
-			m.MemoryPresent = true
-			m.MemoryMin = 1
-			m.MemoryMax = -1
-			m.ExportNames = append(m.ExportNames, "memory")
-			m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
-			m.ExportIdxs = append(m.ExportIdxs, 0)
-		}
+		enableMemory()
 		m.DataOffsets = append(m.DataOffsets, int32(twoOverPiBase))
 		m.DataInits = append(m.DataInits, twoOverPiSegment())
 	}
@@ -817,14 +812,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// closure-cell pool, so subsequent heap allocations land after
 	// the literals.
 	if len(dataBytes) > 0 {
-		if !m.MemoryPresent {
-			m.MemoryPresent = true
-			m.MemoryMin = 1
-			m.MemoryMax = -1
-			m.ExportNames = append(m.ExportNames, "memory")
-			m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
-			m.ExportIdxs = append(m.ExportIdxs, 0)
-		}
+		enableMemory()
 		m.DataOffsets = append(m.DataOffsets, int32(stringStart))
 		m.DataInits = append(m.DataInits, dataBytes)
 	}
@@ -834,14 +822,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// rounded up to 8 bytes — matches the WAT path's choice so
 	// canonical-ABI alignment expectations stay satisfied.
 	if helpers.set["__fern_alloc"] {
-		if !m.MemoryPresent {
-			m.MemoryPresent = true
-			m.MemoryMin = 1
-			m.MemoryMax = -1
-			m.ExportNames = append(m.ExportNames, "memory")
-			m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
-			m.ExportIdxs = append(m.ExportIdxs, 0)
-		}
+		enableMemory()
 		start := stringNextOff
 		if start < allocMinStart {
 			start = allocMinStart
@@ -1202,6 +1183,14 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		m.ExportNames = append(m.ExportNames, "_start")
 		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
 		m.ExportIdxs = append(m.ExportIdxs, startFuncIdx)
+	}
+
+	// Every data segment is in place by now, so the initial memory size can
+	// be derived from the extent they actually span. Deriving it here rather
+	// than at each enableMemory() call site is what keeps it correct: a
+	// segment appended after the memory was switched on still counts.
+	if m.MemoryPresent {
+		m.MemoryMin = memoryMinPages(m.DataOffsets, m.DataInits)
 	}
 
 	return module.Build(m), nil
