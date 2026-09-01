@@ -1705,28 +1705,23 @@ func TestLowerStringReclaimOnNative(t *testing.T) {
 	}
 }
 
-// TestLowerStringPassedToUserFnNotReclaimedNative pins the #4174 follow-up: a
-// native single-word STRING local passed as an argument to a USER function may
-// be RETAINED by the callee (stored into a container it returns — the
-// intraprocedural escape analysis can't see it), so it must NOT be reclaimed
-// caller-side (freeing it would dangle the retained copy — a nested
-// control-flow miscompile observed in a self-host codegen helper). `keep(s)` is a user
-// call, so `s` is tainted and no __fern_str_dec fires for it. (A builtin borrow
-// like `s.len()` — TestLowerStringReclaimOnNative — still reclaims: the method
-// receiver Args[0] is skipped.)
-func TestLowerStringPassedToUserFnNotReclaimedNative(t *testing.T) {
-	// The callee must actually be able to retain the argument for the
-	// hazard to exist. `keep` stores it into a container it returns,
-	// which is the uncounted retention the caller's escape analysis
-	// cannot see through — free it caller-side and the stored copy
-	// dangles.
+// TestLowerStringPassedToPushRetainingFnIsReclaimedNative — the #4174 taint's
+// counted exemption, one credit wider (#7914): the callee stores the argument
+// via `.append`, whose element retain emitArrayPush emits unconditionally, so
+// the retention is COUNTED and the caller's release nets against it (the
+// stored copy stays owned by the buffer, never dangles). The caller therefore
+// reclaims `s` — the behaviour the blanket taint used to block, stranding the
+// buffer once per call. A callee whose retention really is uncounted (a bare
+// `return s`) keeps the taint: TestStringParamPushedThenReturnedBareStaysUncredited.
+func TestLowerStringPassedToPushRetainingFnIsReclaimedNative(t *testing.T) {
 	p := lowerSourceWith(t, `function keep(s: string): string[] { var xs: string[] = []; return xs.append(s); }
 function build(): i32 {
     var s: string = "a" + "b";
     return keep(s).len();
 }`, 8)
-	if callsDirect(p, "build", "__fern_str_dec") {
-		t.Errorf("native: a string a callee may RETAIN must not be reclaimed caller-side (retained-copy UAF):\n%s", p)
+	if !callsDirect(p, "build", "__fern_str_dec") {
+		t.Errorf("native: a string retained only through a COUNTED push store must be "+
+			"reclaimed caller-side — the release nets against the push retain:\n%s", p)
 	}
 }
 

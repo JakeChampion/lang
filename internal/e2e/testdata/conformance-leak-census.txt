@@ -188,7 +188,7 @@ hex_literal                                          0
 hex_roundtrip                                        2
 higher_order                                         0
 http_content_type                                    9
-http_cookies                                         14
+http_cookies                                         12
 i32_methods                                          0
 i32_payload_rebind                                   0
 i32_to_i64_roundtrip                                 0

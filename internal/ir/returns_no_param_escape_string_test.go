@@ -16,7 +16,9 @@ import (
 // the whole chain (enum box + payload struct box + string) was never swept —
 // pinned here by the presence of the __drop_enum_E reinit drop in main.
 // A constructor embedding a PARAM string must NOT get the verdict (its
-// result aliases caller heap) — pinned by the drop's absence.
+// result aliases caller heap) — but its COUNTED aliases (StructLit field
+// inc, push element inc) keep both ends reclaimable, pinned by the
+// drop's presence in the two param legs.
 func dropCallCountInFn(ip *ir.Program, fn, callee string) int {
 	f := funcByName(ip, fn)
 	n := 0
@@ -91,14 +93,15 @@ function main(): i32 {
 		t.Errorf("param-embedding ctor: main emits no __drop_enum_E — a COUNTED param alias must stay reclaimable (inferParamCountedRetain)")
 	}
 
-	// UNCOUNTED param retention: the callee pushes the string into an array it
-	// returns. `xs.append(nm)` is not a counting construction site the summary
-	// recognises (it is a call, not a literal), so the param is NOT counted-only
-	// and the conservative taint stands — the caller must not reclaim `keep`.
-	// This is the #4174 shape: a self-host codegen helper stored a string arg
-	// into an array field of the returned struct and the caller-side str_dec
-	// recycled its box mid-codegen.
-	const uncounted = `struct S { names: string[], n: i32 }
+	// COUNTED push retention (#7914): `xs.append(nm)` retains the element
+	// unconditionally (emitArrayPush), so the summary credits the param and
+	// the caller's enum local is swept — the same balanced pair the
+	// param-embedding StructLit leg above describes, one store kind over.
+	// Runtime-verified: this exact program balances 801/801 with zero
+	// underflows and the oracle answer, where the old conservative answer
+	// stranded the enum box, the payload struct, the names buffer AND the
+	// element retain on every call.
+	const countedPush = `struct S { names: string[], n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E {
     var xs: string[] = [];
@@ -116,7 +119,9 @@ function main(): i32 {
     }
     return acc + keep.len();
 }`
-	if n := dropCallCountInFn(lowerForTest(t, uncounted), "main", "__drop_enum_E"); n != 0 {
-		t.Errorf("uncounted param retention: main emits %d __drop_enum_E calls, want 0 (the append is not a counted construction)", n)
+	if n := dropCallCountInFn(lowerForTest(t, countedPush), "main", "__drop_enum_E"); n == 0 {
+		t.Errorf("counted push retention: main emits no __drop_enum_E — a param retained " +
+			"only through the push's unconditional element inc must leave the caller's " +
+			"enum local sweepable")
 	}
 }

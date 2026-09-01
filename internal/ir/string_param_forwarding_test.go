@@ -65,12 +65,11 @@ func TestStringParamForwardedToARetainingCalleeStaysUncredited(t *testing.T) {
 	}{
 		{"callee returns it", `function keep(s: string): string { return s; }
 function forward(s: string): string { return keep(s); }`},
-		{"callee stores it in an array it returns", `function keep(s: string): string[] {
-    var out: string[] = [];
-    out = out.append(s);
-    return out;
-}
-function forward(s: string): string[] { return keep(s); }`},
+		// "callee stores it in an array it returns" moved to
+		// TestStringParamForwardedToAPushingCalleeIsCounted in
+		// string_param_push_credit_test.go: the push store is a counted
+		// occurrence since the #7914 element credit, so the forwarding
+		// frame is credited too.
 		{"callee binds it to a local", `function keep(s: string): i32 {
     var t: string = s;
     return t.len();
