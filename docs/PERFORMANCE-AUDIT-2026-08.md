@@ -1347,6 +1347,116 @@ the megabyte on both sides. **A change that removes allocation without removing
 work lands in `sys`, so an A/B of the clock alone will report it as noise.**
 `docs/LOCAL-DEV-LOOP.md` carries the rule.
 
+## 4f. The CLI never pruned, and 91% of what it emitted was unreachable
+
+Every section above measures the self-host compiler on `fern.fern` or
+`checker.fern` — compiler sources, which import no stdlib module. On anything
+that DOES import one, the compiler was emitting the whole transitive closure.
+
+`treeshake.treeshake` was called in exactly one place in `examples/self_host/fern.fern`,
+on the diagnostics side of `capability_violations`, and its result was thrown
+away. The module handed to codegen was `flatten.bundle`'s merged output. One
+`import "std/string"` reaches core/int, core/bigint, std/array and std/unicode
+transitively, so `examples/bench/string_count_byte` emitted **958 functions and
+81,463 instructions against the native compiler's 27 and 640**. The machinery
+was not missing — `asm_load_run.fern` has applied the same prune since the
+IR-budget work, and `treeshake.fern` is sound. The production CLI just never
+called it.
+
+**Both size baselines were blind, and that is the reusable lesson.**
+`.github/perf-baseline-selfhost.txt` compares the self-host against ITSELF
+across three targets; its header says the signal it exists for is "two keys
+moving apart", which catches a bundle one BACKEND emits and cannot catch one the
+shared front end emits into all three, because all three move together and the
+ratios hold. `.github/perf-baseline.txt` had the native figure for the same
+benchmark, counted by the same `grep -c '^[[:space:]]'` over the same `.s`. Two
+files in one directory, 127x apart on a line-for-line comparable metric, never
+read against each other. **A ratio between two of your own numbers is not a
+gate against an absolute cost.**
+
+| bench (x86-64, emitted instructions) | native | before | after |
+|---|---|---|---|
+| `string_count_byte` | 640 | 81,463 | **2,859** (−96.5%) |
+| `ascii_scan` | 1,300 | 81,508 | 3,482 (−95.7%) |
+| `sort_ints` | 3,085 | 81,493 | 4,548 (−94.4%) |
+| `map_int` | 4,891 | 7,955 | 1,175 (−85.2%) |
+| `struct_drop` | 3,138 | 81,890 | 10,465 (−87.2%) |
+| `utf8_ingest_unchecked` | 54,567 | 97,736 | 9,868 (−89.9%) |
+| whole corpus | 147,715 | 1,038,644 | **93,275 (−91.0%)** |
+
+The eight benchmarks with no stdlib import emit byte-identical text either side,
+which is the control. The same 84.7–96.9% holds on arm64-linux and wasm32-wasi.
+And the corpus total lands **37% below native's**: the self-host emitter has
+always been the denser of the two (§4e: 1.79 M lines against 10.5 M on
+`fern.fern`) and the dead code was hiding it.
+
+Compile time on those programs, interleaved A/B, three rounds each:
+
+| | before | after | native |
+|---|---|---|---|
+| `string_count_byte` | 1.04 s | **0.38 s** | 0.12 s |
+| `sort_ints` | 1.03 s | 0.37 s | 0.12 s |
+| `map_string` | 1.16 s | 0.52 s | 0.15 s |
+| `struct_drop` | 0.90 s | 0.43 s | 0.12 s |
+
+So §4e's 3.25x is the gap on a stdlib-FREE input. On a program that imports one
+module the gap was ~8x and is now ~3x, and on the two benchmarks with no imports
+at all the self-host compiler is already at or ahead of native
+(`tokenize` 0.008 s against 0.008 s, `int_loop` 0.0034 s against 0.0068 s).
+**Pick the subject as carefully as the metric**, again: every profile in this
+document was taken on the one input class the defect could not touch.
+
+**On the self-compile the clock cannot call it and peak RSS can.** `fern.fern`
+loses 462 of 6,259 functions (−5.1% emitted instructions), and two interleaved
+wall-clock pairs disagree on the sign (before 59.4 / 53.6 s, after 58.4 / 58.0 s).
+Peak RSS repeats to the megabyte across rounds and says **3823.3 MB → 3655.2 MB,
+−4.4%** — §4d's rule working in the direction it predicts, since the prune
+removes allocation (462 fewer function lowerings) and adds a walk.
+
+**Three roots had to come with it, and the corpus found the one that mattered.**
+A reachability walk seeded from `main` drops any function whose only caller is
+generated AFTER the pass:
+
+- **Drop finalizers.** The only caller is the `__drop_struct_<C>` glue lowering
+  synthesises later; native roots them whole-program for the same reason
+  (`treeshake.DropImplMethods`).
+- **`@derive`d methods.** The map lowering emits the call to a key type's
+  `hash`, so `@derive(cmp.Eq, cmp.Hash) struct Sku` lost `Sku.hash` and the wasm
+  leg rejected the module for calling a function it never defines —
+  `map_iter_struct_value`, `map_struct_enum_keys`, `map_struct_key_grow`. Rooted
+  by RECEIVER rather than by a list of derivable method names, so a new derive
+  needs no second place to remember.
+- **Body-bearing `async` functions**, which are component-level exports; latent
+  today because the self-host wasm path does not yet lift them.
+
+`dyn` needs no root and that is structural rather than luck: the self-host
+builds no vtable, `emit_ir_op_dyn_dispatch` generates a tag-compare chain from
+the CALLED method name, and any called name is in `refs` already.
+
+**The walk's own cost was real and most of it was two shapes.** Un-optimised, the
+pass added ~26 s to the 6,259-function self-compile. Two fixes, both leaving the
+kept set bit-for-bit identical:
+
+- The fixpoint re-walked every kept function's whole body **every round**, and a
+  body's name set does not change between rounds. Contributing once — carrying
+  the not-yet-contributed indices and rebuilding that list per round — took the
+  self-compile 82 s → 60.7 s.
+- `ts_name_of` **concatenated** `"__method_Array_" + fa.field` at every field
+  access in the program, to reconstruct a token it then looked up. Matching the
+  helper on the bare `<m>` instead — which the same site already appends — deletes
+  the allocation and is equivalent, because no site appends one without the other.
+
+**The residue is the over-approximation, and it is the follow-up.** A program
+calling one `std/string` method emits 69 functions against native's 1. `refs` is
+a set of SIMPLE names, so `ts_op_method` maps `==` to `eq` and keeps every
+`*.eq` in the program, `<` keeps every `*.cmp`, `+` keeps every `*.add` — and
+those three drag `core/bigint`'s `BigInt__add` / `cmp` / `eq` in, which drag the
+`__bi_*` helpers. The prune now runs after `checker.annotate_module`, so the
+operand types are stamped and available; making the operator roots type-aware is
+the obvious next slice and would take most of the 69. What remains after that is
+that membership is `util.has_str`, a linear scan of a ~20k-name array — §4's
+shape once more, in a ninth file.
+
 ## 8. Reproducing any of this
 
 **Build the A/B baseline from the SAME COMMIT, not just before your edit.**

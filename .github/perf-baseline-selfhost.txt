@@ -28,78 +28,106 @@
 # runtime in every program, including pure-integer ones, until #2649 gated it
 # (int_loop: 468 -> 62). Two keys moving apart is the signal.
 #
+# AND READ IT AGAINST perf-baseline.txt, WHICH IS THE COMPARISON THAT WAS
+# MISSING. Comparing the three targets catches a bundle one BACKEND emits; it
+# cannot catch one the shared front end emits into all three, because all three
+# keys move together and the ratios hold. That is exactly what happened: the
+# self-host CLI never pruned unreachable functions before emitting, so a program
+# importing one stdlib module carried that module's whole transitive closure,
+# and `string_count_byte` sat at 81,231 here against 640 in perf-baseline.txt —
+# same benchmark, same target, same counting method (`grep -c '^[[:space:]]'`
+# over the same `.s`), 127x apart, in two files nobody read together. The gate
+# for it is now TestSelfHostCLIPrunesStdlibImportClosureX86_64 rather than a
+# reading of this file, because both lanes here are advisory.
+#
 # ADVISORY, IN BOTH DIRECTIONS — see scripts/ci-check-perf. When a number moves
 # on purpose, update it in the same PR; the job summary prints the corrected
 # lines ready to paste. Keep the reason in the PR, not here.
 #
-# MEASURED AT c92acc7. The file is one snapshot of one commit, so regenerate it
+# MEASURED AT a595b01. The file is one snapshot of one commit, so regenerate it
 # wholesale (`scripts/perf-bench-selfhost`) and move this line with it — that
 # makes a stale baseline a commit distance anyone can read, rather than
 # something to infer from the size of the drift.
+#
+# THIS REFRESH FOLDS TWO INDEPENDENT MOVEMENTS. Do not read either figure as one
+# effect:
+#
+#   1. The fourteen benchmarks that import a stdlib module fell 84.7-96.9% on
+#      all three targets, when the self-host CLI started pruning unreachable
+#      functions (the note above). Over the whole corpus x86-64 goes 1,038,644
+#      emitted instructions to 93,275, which is 37% BELOW the native compiler's
+#      147,715 on the same corpus — the self-host emitter has always been the
+#      denser of the two, and the dead code was hiding it.
+#   2. The eight benchmarks with no stdlib import moved 0.0% to +4.4%, which is
+#      main drifting between c92acc7 and a595b01 and has nothing to do with the
+#      prune: their emitted text is byte-identical either side of it. wasm32-wasi
+#      shows +0.0% across that group because the drift is in the two native
+#      emitters.
 
-selfhost/arm64-linux/array_append.emit	931
-selfhost/arm64-linux/array_index.emit	897
-selfhost/arm64-linux/ascii_scan.emit	88324
+
+selfhost/arm64-linux/array_append.emit	962
+selfhost/arm64-linux/array_index.emit	928
+selfhost/arm64-linux/ascii_scan.emit	4030
 selfhost/arm64-linux/call_overhead.emit	193
-selfhost/arm64-linux/closure_call.emit	909
-selfhost/arm64-linux/enum_match.emit	929
+selfhost/arm64-linux/closure_call.emit	940
+selfhost/arm64-linux/enum_match.emit	960
 selfhost/arm64-linux/int_loop.emit	99
-selfhost/arm64-linux/map_int.emit	9198
-selfhost/arm64-linux/map_string.emit	96403
-selfhost/arm64-linux/sort_inplace.emit	88350
-selfhost/arm64-linux/sort_ints.emit	88354
-selfhost/arm64-linux/string_build.emit	88338
-selfhost/arm64-linux/string_count_byte.emit	88260
-selfhost/arm64-linux/string_find_byte.emit	88287
-selfhost/arm64-linux/string_rfind_byte.emit	88282
-selfhost/arm64-linux/string_scan.emit	88458
-selfhost/arm64-linux/string_slice.emit	830
-selfhost/arm64-linux/struct_drop.emit	88824
-selfhost/arm64-linux/tokenize.emit	1143
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	106334
-selfhost/arm64-linux/utf8_ingest_validated.emit	106327
+selfhost/arm64-linux/map_int.emit	1312
+selfhost/arm64-linux/map_probe_chain.emit	1359
+selfhost/arm64-linux/map_string.emit	11554
+selfhost/arm64-linux/sort_inplace.emit	3876
+selfhost/arm64-linux/sort_ints.emit	5257
+selfhost/arm64-linux/string_build.emit	11254
+selfhost/arm64-linux/string_count_byte.emit	3371
+selfhost/arm64-linux/string_find_byte.emit	4892
+selfhost/arm64-linux/string_rfind_byte.emit	5451
+selfhost/arm64-linux/string_scan.emit	12928
+selfhost/arm64-linux/string_slice.emit	861
+selfhost/arm64-linux/struct_drop.emit	11740
+selfhost/arm64-linux/tokenize.emit	1174
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	10702
+selfhost/arm64-linux/utf8_ingest_validated.emit	11402
 selfhost/wasm32-wasi/array_append.emit	358
 selfhost/wasm32-wasi/array_index.emit	344
-selfhost/wasm32-wasi/ascii_scan.emit	51345
+selfhost/wasm32-wasi/ascii_scan.emit	1953
 selfhost/wasm32-wasi/call_overhead.emit	128
 selfhost/wasm32-wasi/closure_call.emit	381
 selfhost/wasm32-wasi/enum_match.emit	416
 selfhost/wasm32-wasi/int_loop.emit	93
-selfhost/wasm32-wasi/map_int.emit	4477
-selfhost/x86-64-linux/map_probe_chain.emit	7973
-selfhost/arm64-linux/map_probe_chain.emit	9245
-selfhost/wasm32-wasi/map_probe_chain.emit	4490
-selfhost/wasm32-wasi/map_string.emit	55503
-selfhost/wasm32-wasi/sort_inplace.emit	51386
-selfhost/wasm32-wasi/sort_ints.emit	51389
-selfhost/wasm32-wasi/string_build.emit	51344
-selfhost/wasm32-wasi/string_count_byte.emit	51289
-selfhost/wasm32-wasi/string_find_byte.emit	51316
-selfhost/wasm32-wasi/string_rfind_byte.emit	51306
-selfhost/wasm32-wasi/string_scan.emit	51424
+selfhost/wasm32-wasi/map_int.emit	582
+selfhost/wasm32-wasi/map_probe_chain.emit	595
+selfhost/wasm32-wasi/map_string.emit	6098
+selfhost/wasm32-wasi/sort_inplace.emit	2168
+selfhost/wasm32-wasi/sort_ints.emit	3241
+selfhost/wasm32-wasi/string_build.emit	5807
+selfhost/wasm32-wasi/string_count_byte.emit	1601
+selfhost/wasm32-wasi/string_find_byte.emit	2383
+selfhost/wasm32-wasi/string_rfind_byte.emit	2920
+selfhost/wasm32-wasi/string_scan.emit	6674
 selfhost/wasm32-wasi/string_slice.emit	327
-selfhost/wasm32-wasi/struct_drop.emit	51672
+selfhost/wasm32-wasi/struct_drop.emit	6135
 selfhost/wasm32-wasi/tokenize.emit	448
-selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	63806
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	63793
-selfhost/x86-64-linux/array_append.emit	737
-selfhost/x86-64-linux/array_index.emit	711
-selfhost/x86-64-linux/ascii_scan.emit	81291
+selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	8547
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	8906
+selfhost/x86-64-linux/array_append.emit	765
+selfhost/x86-64-linux/array_index.emit	739
+selfhost/x86-64-linux/ascii_scan.emit	3482
 selfhost/x86-64-linux/call_overhead.emit	148
-selfhost/x86-64-linux/closure_call.emit	697
-selfhost/x86-64-linux/enum_match.emit	767
+selfhost/x86-64-linux/closure_call.emit	725
+selfhost/x86-64-linux/enum_match.emit	795
 selfhost/x86-64-linux/int_loop.emit	64
-selfhost/x86-64-linux/map_int.emit	7925
-selfhost/x86-64-linux/map_string.emit	88364
-selfhost/x86-64-linux/sort_inplace.emit	81338
-selfhost/x86-64-linux/sort_ints.emit	81341
-selfhost/x86-64-linux/string_build.emit	81313
-selfhost/x86-64-linux/string_count_byte.emit	81231
-selfhost/x86-64-linux/string_find_byte.emit	81253
-selfhost/x86-64-linux/string_rfind_byte.emit	81247
-selfhost/x86-64-linux/string_scan.emit	81423
-selfhost/x86-64-linux/string_slice.emit	638
-selfhost/x86-64-linux/struct_drop.emit	81738
-selfhost/x86-64-linux/tokenize.emit	932
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	97575
-selfhost/x86-64-linux/utf8_ingest_validated.emit	97569
+selfhost/x86-64-linux/map_int.emit	1175
+selfhost/x86-64-linux/map_probe_chain.emit	1223
+selfhost/x86-64-linux/map_string.emit	10390
+selfhost/x86-64-linux/sort_inplace.emit	3324
+selfhost/x86-64-linux/sort_ints.emit	4548
+selfhost/x86-64-linux/string_build.emit	10040
+selfhost/x86-64-linux/string_count_byte.emit	2859
+selfhost/x86-64-linux/string_find_byte.emit	4237
+selfhost/x86-64-linux/string_rfind_byte.emit	4716
+selfhost/x86-64-linux/string_scan.emit	11561
+selfhost/x86-64-linux/string_slice.emit	666
+selfhost/x86-64-linux/struct_drop.emit	10465
+selfhost/x86-64-linux/tokenize.emit	960
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	9868
+selfhost/x86-64-linux/utf8_ingest_validated.emit	10525

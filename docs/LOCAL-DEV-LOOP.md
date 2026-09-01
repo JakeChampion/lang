@@ -12,9 +12,11 @@ attempt.
 
 ## Fastest self-host loop: `make selfhost-cli`
 
-Builds the self-host compiler to a native binary for this host — **~2 minutes**
-once on an x86-64 host, **~13 s warm / ~40 s from a cold Go build cache on
-arm64-darwin** (measured 2026-08-06 on an M-series Mac). Then ~1.3 s per
+Builds the self-host compiler to a native binary for this host — **~31 s warm /
+~52 s from a cold Go build cache** on a 4-core x86-64 container (measured
+2026-09-01; the ~2 minutes this said before is not what the target costs, and
+erring high discourages using the fastest loop there is), **~13 s warm / ~40 s
+cold on arm64-darwin** (measured 2026-08-06 on an M-series Mac). Then ~1.3 s per
 program, versus minutes per program interpreted and 90+ minutes for an
 unsharded `internal/e2eselfhost`:
 
