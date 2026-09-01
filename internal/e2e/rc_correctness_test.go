@@ -6120,6 +6120,107 @@ function main(): i32 {
 }
 `,
 	},
+	{
+		// #7914 item 2, the field shape. A Map moved into a struct field
+		// reached dropStructField's partial chain — value column + buf +
+		// handle, no string-KEY column — so every key strand-ed (20/12,
+		// 512 B on one round of 8 inserts) while the same map as a bare
+		// local balanced. The shared appendMapDropChain walks both
+		// columns from every drop site.
+		name: "map_field_struct_reclaimed",
+		src: `
+import "core/map";
+import "std/i32";
+
+struct Tbl { m: Map[string, i32], count: i32 }
+
+@noinline
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
+
+@noinline
+function build(n: i32): Tbl {
+    var m: Map[string, i32] = map_new(8);
+    var i: i32 = 0;
+    while (i < n) { m = m.insert(w("k") + i.to_string(), i * 3); i = i + 1; }
+    return Tbl { m: m, count: n };
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 3) { t = t + build(8).count; r = r + 1; }
+    return (t - 24) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The sharing hazard for the same shape: the map is still read
+		// through the LOCAL after the struct binds it. Both drops run the
+		// full chain and the rc==1 guards arbitrate — whichever owner
+		// holds the last reference walks, the other only dec's. An
+		// over-release here is an underflow, not a number.
+		name: "map_field_shared_live_local",
+		src: `
+import "core/map";
+import "std/i32";
+
+struct Tbl { m: Map[string, i32], count: i32 }
+
+@noinline
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
+
+@noinline
+function round(n: i32): i32 {
+    var m: Map[string, i32] = map_new(8);
+    var i: i32 = 0;
+    while (i < n) { m = m.insert(w("k") + i.to_string(), i * 3); i = i + 1; }
+    var t: Tbl = Tbl { m: m, count: n };
+    return t.count + m.len() + m.get_or(w("k") + "0", 7);
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 3) { t = t + round(8); r = r + 1; }
+    return (t - 48) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// Struct VALUES under the field drop: the value column routes to
+		// the generated __drop_map_via___drop_struct_Pt walk, which
+		// deep-drops each value (array field + string field + box) before
+		// the key column and the buf + handle go.
+		name: "map_field_struct_values_reclaimed",
+		src: `
+import "core/map";
+import "std/i32";
+
+struct Pt { xs: i32[], tag: string }
+struct Tbl { m: Map[string, Pt], count: i32 }
+
+@noinline
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
+
+@noinline
+function build(n: i32): Tbl {
+    var m: Map[string, Pt] = map_new(8);
+    var i: i32 = 0;
+    while (i < n) {
+        m = m.insert(w("k") + i.to_string(), Pt { xs: [i, i + 1], tag: w("t") + i.to_string() });
+        i = i + 1;
+    }
+    return Tbl { m: m, count: n };
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 3) { t = t + build(6).count; r = r + 1; }
+    return (t - 18) + __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

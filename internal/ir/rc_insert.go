@@ -1844,13 +1844,11 @@ func genClosureDropThunk(name string, caps []ast.Param, ptrW int, info *checker.
 						Op{Kind: OpConstI32, I32: int32(ast.ElemSizeBytesFor(at.Elem, ptrW))},
 						Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
 				}
-			} else if isMapType(c.Type) {
-				// Map capture: reclaim the value column + buf + handle
-				// (both helpers self-guard on the map's rc==1 and return
+			} else if st, isMap := c.Type.(ast.StructType); isMap && st.Name == "Map" {
+				// Map capture: the shared full-column reclamation chain
+				// (every helper self-guards on the map's rc==1 and returns
 				// the map ptr, which the trailing OpDrop discards).
-				ops = append(ops,
-					Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1},
-					Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
+				ops = appendMapDropChain(ops, st, info, reg, tupleReg, ptrW)
 			} else if drop, ok := dropFnNameFor(c.Type, info, reg, tupleReg, ptrW, false); ok {
 				// Concrete-struct (or boxed generic-enum) capture: free its
 				// box + nested children.
@@ -2063,13 +2061,33 @@ func mangleTupleInst(tt ast.TupleType) string {
 	return tupleEnumMangler.Replace(tt.String())
 }
 
-// appendMapDrop appends the map-reclamation chain for a map pointer
-// already on the operand stack.
-func appendMapDrop(ops []Op) []Op {
-	return append(ops,
-		Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1},
-		Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1},
-		Op{Kind: OpDrop})
+// appendMapDropChain appends the full map-reclamation chain for a map handle
+// already on the operand stack: the value column (struct / enum values via the
+// generated __drop_map_via_<perValueDrop>; string values via
+// __drop_map_str_values; array values via the generic __map_drop_values, which
+// also covers a Map whose instantiation args are unknown), then any string-KEY
+// column (__drop_map_str_keys), then the buf + handle (__fern_map_drop). Every
+// helper self-guards on the map's own rc==1 — a shared map only dec's — and
+// returns the handle, so the calls chain and the final ptr is left ON the
+// stack for the caller's own OpDrop. This is the one dispatch every map-drop
+// site shares (the exit sweep's slot form, struct fields, tuple elements,
+// closure captures), so the column coverage cannot drift between them.
+func appendMapDropChain(ops []Op, st ast.StructType, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int) []Op {
+	dropValues := "__map_drop_values"
+	if name, ok := mapValDropName(st, info, reg, tupleReg, ptrW); ok {
+		dropValues = name
+	} else if len(st.Args) >= 2 {
+		if _, isStr := st.Args[1].(ast.StringType); isStr {
+			dropValues = "__drop_map_str_values"
+		}
+	}
+	ops = append(ops, Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
+	if len(st.Args) >= 1 {
+		if _, isStr := st.Args[0].(ast.StringType); isStr {
+			ops = append(ops, Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
+		}
+	}
+	return append(ops, Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
 }
 
 // substituteEnumDecl returns a copy of ed with each variant payload's
@@ -3119,8 +3137,8 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 			Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1},
 			Op{Kind: OpDrop})
 	}
-	if isMapType(t) {
-		return appendMapDrop(ops)
+	if st, ok := t.(ast.StructType); ok && st.Name == "Map" {
+		return append(appendMapDropChain(ops, st, info, reg, tupleReg, ptrW), Op{Kind: OpDrop})
 	}
 	// Closure child (struct field / enum payload / tuple element): free the
 	// captures + env through the drop-fn pointer the pair carries, then the
