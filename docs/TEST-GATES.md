@@ -753,6 +753,16 @@ answer, these are the tools, in the order they are usually reached for:
   `__fn_<callee>` symbol means you measured nothing. This cost four probes on
   #7867 before it was noticed.
 
+  **A before/after comparison must build both binaries the same way.** The two
+  compilers under comparison are Go programs, and a branch cut before a
+  `go.mod` toolchain bump builds under a different Go than `origin/main` does —
+  which moves the driver's numbers on its own. A #7914 map-column probe read
+  `frees 6530 → 6140`, `live_bytes +11 KB`, and traced it to one free-site
+  class before finding that disabling every changed site still measured 6140:
+  the whole difference was `go 1.24` against `go 1.26`. Rebase onto
+  `origin/main` first; a leak comparison across two toolchains measures the
+  toolchain.
+
   Two masks specific to STRINGS, both of which make a real leak read as zero:
   a literal or any string of 7 bytes or fewer is inline/static on single-word
   x86-64 and allocates no block at all, and a concat whose left operand is
