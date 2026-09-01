@@ -256,3 +256,93 @@ function main(): i32 {
 			len(missing), strings.Join(missing, ", "))
 	}
 }
+
+// TestSelfHostTreeshakeQualifiesArithmeticRootsX86_64 pins the receiver-qualified
+// arithmetic roots.
+//
+// `refs` is a set of SIMPLE names, so a bare `add` root from any `a + b` kept
+// `add` for every type in the program. On a minimal std/string program that was
+// 24 functions, 12 of them core/bigint's `BigInt.add` / `sub` / `negate` and the
+// `__bi_*` helpers behind them, reached by nothing the program does
+// (docs/PERFORMANCE-AUDIT-2026-08.md §4f, which sizes it by REMOVAL — counting
+// the operator-method impls in the output over-counts by more than 2x, because
+// `eq` and `cmp` are held by explicit `.eq(...)` field accesses regardless).
+//
+// Only the six arithmetic methods resolve by receiver. The comparisons cannot:
+// `annotate_module` stamps ExprBinary.ty with the type of the WHOLE expression,
+// which for `==` is `boolean` and names no impl.
+//
+// The program below is the discriminating case in both directions — it adds two
+// `V`s and, inside `V.add`, two i32s — so it must keep `V.add`, `V.neg` and
+// `i32.add` while dropping every other type's.
+func TestSelfHostTreeshakeQualifiesArithmeticRootsX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("file-loading CLI test runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+	stdlib, err := filepath.Abs(filepath.Join("..", "stdlib"))
+	if err != nil {
+		t.Fatalf("stdlib path: %v", err)
+	}
+
+	const src = `import "std/num";
+
+struct V { n: i32 }
+impl num.Add for V { function add(self: Self, o: Self): Self { return V { n: self.n + o.n }; } }
+impl num.Neg for V { function neg(self: Self): V { return V { n: 0 - self.n }; } }
+
+function main(): i32 {
+    var a: V = V { n: 3 };
+    var b: V = V { n: 4 };
+    var c: V = a + b;
+    var d: V = -c;
+    return d.n + 7;
+}
+`
+	prog := filepath.Join(dir, "ts_arith_prog.fern")
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatalf("write program: %v", err)
+	}
+	asmPath := filepath.Join(dir, "ts_arith_prog.s")
+	if out, err := exec.Command(driverBin, "-target", "x86-64-linux", "-emit", "asm", prog, stdlib, "-o", asmPath).CombinedOutput(); err != nil {
+		t.Fatalf("self-host compile failed: %v\n%s", err, out)
+	}
+	asmBytes, err := os.ReadFile(asmPath)
+	if err != nil {
+		t.Fatalf("read asm: %v", err)
+	}
+	asm := string(asmBytes)
+
+	// Kept: the overload the program invokes, and the scalar impl its own body
+	// reaches. A user impl is the case most at risk — the receiver has to
+	// resolve against the tag a struct carries, which is its nominal name.
+	for _, live := range []string{"__fn_V__add", "__fn_V__neg", "__fn_i32__add"} {
+		if !strings.Contains(asm, "\n"+live+":") {
+			t.Errorf("%s is NOT emitted, but the program reaches it — the qualified root dropped a live impl", live)
+		}
+	}
+	// Dropped: every other type's `add`, which a bare root would have kept.
+	for _, dead := range []string{
+		"__fn_bigint__BigInt__add",
+		"__fn_i64__add",
+		"__fn_u32__add",
+		"__fn_u64__add",
+		"__fn_f32__add",
+		"__fn_f64__add",
+	} {
+		if strings.Contains(asm, "\n"+dead+":") {
+			t.Errorf("%s is emitted, but nothing in the program adds that type — the root was not qualified", dead)
+		}
+	}
+
+	// And the answer is unchanged.
+	bin := buildBin(t, gcc, dir, "ts_arith_prog", asm)
+	run := exec.Command(bin)
+	_ = run.Run()
+	if code := run.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("operator-overload program exited %d, want 0", code)
+	}
+}

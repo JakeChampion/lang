@@ -47,6 +47,38 @@ function ts_op_method(op: string): string {
     return "";
 }
 
+// ts_op_is_arithmetic reports whether `op`'s own result type is also its OPERAND
+// type, which is what lets its root be qualified by that type.
+//
+// True for the arithmetic operators and false for the comparisons, and the
+// difference is not cosmetic: `checker.annotate_module` stamps ExprBinary.ty
+// with the type of the WHOLE expression, so `a + b` on i32 carries "i32" while
+// `a == b` carries "boolean" — which names no impl. The comparisons are also
+// not worth qualifying: measured on a minimal std/string program, stubbing the
+// operator roots out entirely leaves every `*.eq` and `*.cmp` in place anyway,
+// held by explicit `.eq(...)` / `.cmp(...)` field accesses in reachable stdlib
+// code (docs/PERFORMANCE-AUDIT-2026-08.md §4f).
+function ts_op_is_arithmetic(op: string): boolean {
+    return op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
+}
+
+// ts_qualified_root builds the receiver-qualified root `<type tag>|<method>`.
+// The `|` cannot occur in either half — a type tag is a scalar keyword, a
+// struct name or a Map spelling, and a method name is an identifier — so a
+// qualified root can never collide with the bare names sharing the set.
+function ts_qualified_root(tag: string, method: string): string {
+    return tag + "|" + method;
+}
+
+// ts_arith_method reports whether `name` is one of the six methods the
+// arithmetic operators dispatch to — the only names ts_kept_name resolves by
+// receiver. Every other function matches exactly as it did before qualification
+// existed, which is what bounds this change to what was measured.
+function ts_arith_method(name: string): boolean {
+    return name == "add" || name == "sub" || name == "mul"
+        || name == "div" || name == "rem" || name == "neg";
+}
+
 // ts_name_of contributes the names ONE node could reference; astwalk's fold
 // supplies the walk, including lambda bodies (their calls are reachable, and
 // lambda-local bindings are deliberately not subtracted). Every variant is
@@ -58,12 +90,20 @@ function ts_name_of(e: ast.Expr, acc: string[]): string[] {
         ast.ExprIdent(id) => { return acc.append(id.name); },
         ast.ExprBinary(b) => {
             var m: string = ts_op_method(b.op);
-            if (m.len() > 0) { return acc.append(m); }
-            return acc;
+            if (m.len() == 0) { return acc; }
+            // Qualified where the tag identifies the impl, bare otherwise —
+            // and bare is the only answer under a driver that never runs
+            // annotate_module (asm_load_run, asm_modload_run), where every
+            // `ty` is "".
+            if (ts_op_is_arithmetic(b.op) && b.ty.len() > 0) {
+                return acc.append(ts_qualified_root(b.ty, m));
+            }
+            return acc.append(m);
         },
         ast.ExprUnary(u) => {
-            if (u.op == "-") { return acc.append("neg"); }
-            return acc;
+            if (u.op != "-") { return acc; }
+            if (u.ty.len() > 0) { return acc.append(ts_qualified_root(u.ty, "neg")); }
+            return acc.append("neg");
         },
         // A method/field name (`x.eq`) is a reference: keep every function with
         // that simple name. An array-method call `arr.<m>(...)` (`.join` /
@@ -153,16 +193,36 @@ function ts_interposed_method_name(name: string): string {
     return slice_unchecked(name, last_dot + 1, name.len()) + "";
 }
 
-// ts_kept_name reports whether function `name` is reachable: by exact name, by
-// the method name an array-method helper dispatches from, or by the one an
-// interposed method was renamed away from — each of the three a name the syntax
-// spells where the FUNCTION does not.
-function ts_kept_name(name: string, refs: string[]): boolean {
-    if (util.has_str(refs, name)) { return true; }
-    var m: string = ts_array_method_name(name);
+// ts_arith_kept resolves the six arithmetic methods BY RECEIVER, which is the
+// half of the operator over-approximation worth removing: a bare `add` root
+// keeps `add` for every type in the program, and on a minimal std/string
+// program that is 24 functions — 12 of them core/bigint's `BigInt.add` / `sub`
+// / `negate` and the `__bi_*` helpers behind them, reached by nothing the
+// program does (§4f).
+//
+// A receiver spelled as the decl's OWN type parameter is a template no concrete
+// tag can name — monomorph instantiates it after this pass — so it is kept
+// rather than resolved. `base_type_name` strips the argument list, so
+// `impl Add for Box[T]` resolves on `Box`, which is the tag a struct carries.
+function ts_arith_kept(fd: parser.FuncDecl, refs: string[]): boolean {
+    if (fd.receiver_type.len() == 0) { return false; }
+    var base: string = util.base_type_name(fd.receiver_type);
+    if (base.len() == 0) { return false; }
+    if (util.has_str(fd.type_params, base)) { return true; }
+    return util.has_str(refs, ts_qualified_root(base, fd.name));
+}
+
+// ts_kept_name reports whether `fd` is reachable: by exact name, by the method
+// name an array-method helper dispatches from, by the one an interposed method
+// was renamed away from — each a name the syntax spells where the FUNCTION does
+// not — or, for an arithmetic method only, by its receiver type.
+function ts_kept_name(fd: parser.FuncDecl, refs: string[]): boolean {
+    if (util.has_str(refs, fd.name)) { return true; }
+    var m: string = ts_array_method_name(fd.name);
     if (m.len() > 0 && util.has_str(refs, m)) { return true; }
-    var im: string = ts_interposed_method_name(name);
-    return im.len() > 0 && util.has_str(refs, im);
+    var im: string = ts_interposed_method_name(fd.name);
+    if (im.len() > 0 && util.has_str(refs, im)) { return true; }
+    return ts_arith_method(fd.name) && ts_arith_kept(fd, refs);
 }
 
 // treeshake returns `mod` with `mod.funcs` pruned to those reachable, by name,
@@ -259,7 +319,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
         var pi: i32 = 0;
         while (pi < pending.len()) {
             var fi: i32 = pending[pi];
-            if (ts_kept_name(mod.funcs[fi].name, refs)) {
+            if (ts_kept_name(mod.funcs[fi], refs)) {
                 var body_names: string[] = ts_func_names(mod.funcs[fi], []);
                 var bi: i32 = 0;
                 while (bi < body_names.len()) {
@@ -281,7 +341,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
     var kept: parser.FuncDecl[] = [];
     var ki: i32 = 0;
     while (ki < mod.funcs.len()) {
-        if (ts_kept_name(mod.funcs[ki].name, refs)) { kept = kept.append(mod.funcs[ki]); }
+        if (ts_kept_name(mod.funcs[ki], refs)) { kept = kept.append(mod.funcs[ki]); }
         ki = ki + 1;
     }
     return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };

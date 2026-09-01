@@ -1488,18 +1488,36 @@ So the operator roots hold **24 of the 69**, and every one is arithmetic:
 | `core/bigint` | 12 — `BigInt.add` / `sub` / `negate`, `zero`, and the 9 `__bi_*` helpers behind them |
 | scalar `add` / `sub` | 12 — one pair each for i32, i64, u32, u64, f32, f64 |
 
-That makes the follow-up both smaller and more tractable than the 52 suggested.
-It is `+` `-` `*` `/` `%` and unary `-` that want qualifying, not the
-comparisons — and for plain arithmetic the type is already there:
-`ExprBinary.ty` carries the RESULT type, which for a non-overloaded scalar
-operator IS the operand type. (For `==` it is `boolean`, which is why the
+That made the follow-up both smaller and more tractable than the 52 suggested,
+and it is **done**. It is `+` `-` `*` `/` `%` and unary `-` that wanted
+qualifying, not the comparisons — and for plain arithmetic the type was already
+there: `ExprBinary.ty` carries the RESULT type, which for a non-overloaded
+scalar operator IS the operand type. (For `==` it is `boolean`, which is why the
 comparisons could not be qualified this way even if they were worth it; the
 operand's own type is on the operand NODE, since `ExprIdent`, `ExprCall`,
-`ExprIndex` and `ExprFieldAccess` each carry a `ty` too.) Qualifying needs
-`ts_kept_name` to see the FuncDecl rather than the name, so a receiver method
-can be matched on `base_type_name(receiver_type)` against the tag, with the bare
-name kept as the fallback — which is what `asm_load_run` gets unconditionally,
-since it never runs `annotate_module` and every `ty` there is "".
+`ExprIndex` and `ExprFieldAccess` each carry a `ty` too.) `ts_kept_name` now
+takes the FuncDecl rather than the name, so a receiver method resolves on
+`base_type_name(receiver_type)` against the tag, with the bare name as the
+fallback — which is what `asm_load_run` gets unconditionally, since it never
+runs `annotate_module` and every `ty` there is "".
+
+**Only the six arithmetic method names resolve by receiver**, which is what
+bounds the change to what was measured: every other function matches exactly as
+it did before. A receiver spelled as the decl's own type parameter is kept
+rather than resolved — monomorph instantiates such a template after this pass,
+so no concrete tag can name it.
+
+| | |
+|---|---|
+| the probe (one `std/string` method) | 69 → **49** functions, against the 45 that removing the roots entirely gives |
+| `core/bigint` in it | 15 → **3** |
+| `examples/bench`, x86-64 emitted | 93,275 → **82,642 (−11.4%)**, nothing regressed |
+| worst case in the corpus | `sort_inplace` −47.7%, `string_count_byte` −45.2%, `ascii_scan` −37.1% |
+
+49 against a 45 floor is the qualification working rather than falling short:
+the four are arithmetic methods whose receiver really is added somewhere
+reachable. Cumulative over both movements the corpus goes 1,038,644 → 82,642,
+**−92.0%**.
 
 **This is §4d.3's lesson in a new place, and I made the error it warns about.**
 There, 18.5% of samples was worth 6% of the clock. Here, attribution by
