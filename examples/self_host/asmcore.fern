@@ -3896,6 +3896,12 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
     if (util.is_f64_range_kind(kind)) {
         return util.Diag { code: "P002", message: where + ": " + util.f64_range_message(kind), line: line, col: col };
     }
+    // The parser refused to recurse further rather than run the stack out.
+    // P005, matching native, so both front ends name the same code for it.
+    // The statement-level scan prefixes the kind, so match either spelling.
+    if (kind == "nest:too-deep" || kind == "stmt: nest:too-deep") {
+        return util.Diag { code: "P005", message: where + ": input nests too deeply", line: line, col: col };
+    }
     return util.Diag { code: "P001", message: where + ": parser-side unknown: " + kind, line: line, col: col };
 }
 
