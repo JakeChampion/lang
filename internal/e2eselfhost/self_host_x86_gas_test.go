@@ -384,6 +384,26 @@ function main(): i32 {
         if (vb.code[bi] != bw[bi]) { return 40; }
         bi = bi + 1;
     }
+    // SH-005 for the 32-bit ALU group: its encoders take register NUMBERS, and
+    // an operand x86_gas_reg32 cannot name answers -1 — which encoded as a
+    // well-formed instruction naming the wrong register rather than refusing.
+    // cmpl $1, -4(%rax) came out as cmp $1, %eax (#7351).
+    var am: X86Asm = x86_gas_assemble("\tcmpl $1, -4(%rax)\n");
+    if (am.unknown.len() != 1 || am.code.len() != 0) { return 41; }
+    var am2: X86Asm = x86_gas_assemble("\taddl %ecx, 8(%rdx)\n");
+    if (am2.unknown.len() != 1 || am2.code.len() != 0) { return 42; }
+    var am3: X86Asm = x86_gas_assemble("\tsubl (%rsi), %eax\n");
+    if (am3.unknown.len() != 1 || am3.code.len() != 0) { return 43; }
+    // The register forms the group DOES encode stay encoded.
+    var ar: X86Asm = x86_gas_assemble("\tcmpl $1, %edx\n\taddl %ecx, %eax\n");
+    if (ar.unknown.len() != 0) { return 44; }
+    var arw: i32[] = [129, 250, 1, 0, 0, 0, 1, 200];
+    if (ar.code.len() != arw.len()) { return 45; }
+    var ai: i32 = 0;
+    while (ai < arw.len()) {
+        if (ar.code[ai] != arw[ai]) { return 46; }
+        ai = ai + 1;
+    }
     return 0;
 }
 `

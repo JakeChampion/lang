@@ -51,6 +51,10 @@ import (
 //
 // Every want below was confirmed against the native x86-64 backend. Exit 99 is
 // reserved for __rc_underflow_count().
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. A pre-fusion number quoted in a row note below is
+// twice its pin.
 
 type structAliasReassignCase struct {
 	name   string
@@ -155,7 +159,7 @@ function round(i: i32): i32 {
     return s.len();
 }
 ` + sarMain,
-			want: 63, allocs: 160, frees: 160,
+			want: 63, allocs: 80, frees: 80,
 		},
 	}
 }

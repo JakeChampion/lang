@@ -28,10 +28,12 @@ import (
 // generator reaches classes (shadowed siblings, conditional blocks) that no
 // hand-curated corpus stays honest about.
 //
-// WHAT IT DOES NOT ASSERT: byte counts. Layout, capacity schedules and the
-// #7351 per-string alloc split legitimately move totals; zero-vs-nonzero live
-// bytes is the layout-free classification (same reasoning as the alloc
-// differential's cliff counter). Exit codes must MATCH between compilers on
+// WHAT IT DOES NOT ASSERT: byte counts. Layout and capacity schedules
+// legitimately move totals; zero-vs-nonzero live bytes is the layout-free
+// classification (same reasoning as the alloc differential's cliff counter).
+// That is also what makes it blind to one compiler spending twice as many
+// BLOCKS as the other on the same values, which is the whole of #7351 —
+// `TestSelfHostAllocCountMatrixX86_64` is the companion that pins counts. Exit codes must MATCH between compilers on
 // every cell — a mismatch is a miscompile, never a matrix update — and exit 99
 // (the underflow guard) fails hard on either side: an over-release is a bug in
 // any cell, listed or not.

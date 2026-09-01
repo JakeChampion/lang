@@ -306,12 +306,12 @@ one is refused by name before emit — `wasm_ir.wasm_unsupported_builtin` (#6946
 
 | intrinsic | lowers to | notes |
 |---|---|---|
-| `__raw_alloc(n: i32): i32` | `mov n→%rdi; call __fern_alloc` → ptr in `%rax` | the bump/freelist primitive; the one call that stays asm |
+| `__raw_alloc(n: i32): i32` | `add $24, n; mov n→%rdi; call __fern_alloc; add $24, %rax` → ptr in `%rax` | the bump/freelist primitive; the one call that stays asm. The block is 24 bytes longer than asked for and the pointer points PAST that header, which is where `__raw_string` builds the box — so a heap string is ONE allocation (#7351). A buffer that never becomes a string just carries 24 unused bytes |
 | `__raw_store8(ptr: i32, off: i32, v: i32)` | `movb %v, (%ptr,%off)` | write low byte of `v` |
 | `__raw_load8(ptr: i32, off: i32): i32` | `movzbl (%ptr,%off), %eax` | zero-extended byte read (also expressible as `s[i]`, included for symmetry) |
 | `__raw_store_ptr(ptr: i32, off: i32, v: i32)` | `mov %v, (%ptr,%off*W)` | store a word-sized slot (W = pointer width); for writing box `{data,len}` fields and array slots |
 | `__raw_load_ptr(ptr: i32, off: i32): i32` | `mov (%ptr,%off*W), %rax` | word-sized slot read |
-| `__raw_string(data: i32, len: i32): string` | alloc a 16-byte box `{data, len}` | the *one* intrinsic that produces a typed `string`; the bridge from raw bytes back to the surface |
+| `__raw_string(data: i32, len: i32): string` | stamp `{rc, data, len}` into the 24 bytes at `data-24`; the box is `data-16` | the *one* intrinsic that produces a typed `string`; the bridge from raw bytes back to the surface. Allocates NOTHING, and so **requires `data` to be an unadjusted `__raw_alloc` result** — that is the only pointer with the header reserved in front of it. A scratch buffer, an argv entry or an `__raw_addr` interior address writes the box over 24 bytes belonging to something else, which nothing reports at run time; `internal/sourcelint`'s `TestRawStringPointerComesFromRawAlloc` holds the rule |
 | `__syscall3(nr: i32, a1: i32, a2: i32, a3: i32): i32` | `mov nr→%rax; a1→%rdi; a2→%rsi; a3→%rdx; syscall` → result in `%rax` | the I/O sub-floor for the syscall leaves; a single `syscall`/`svc`, no runtime symbol. Native-syscall backends only (x86-64 / arm64 Linux); wasm has no generic syscall |
 | `__raw_scratch(n: i32): i32` | `leaq __fern_scratch(%rip), %rax` | a fixed static (.bss) scratch buffer the syscall leaves hand the kernel to write into (`timespec`, `stat`) — reused, never freed, so no per-call leak. `n` is a size hint; the buffer is fixed. **Non-reentrant** (one leaf reads it fully before another runs) |
 | `__syscall4(nr, a1, a2, a3, a4): i32` | like `__syscall3` plus `a4→%r10; syscall` | the 4-arg sub-floor sibling, for syscalls whose 4th arg is meaningful (`openat`'s `mode` with `O_CREAT`, `newfstatat`'s `flags`) |
@@ -333,7 +333,9 @@ address-taking intrinsic in `asmcore.fern`.
 
 `__raw_string` is the key: it lets a helper allocate a byte buffer with
 `__raw_alloc`, fill it with `__raw_store8`, and hand back a real `string` the
-checker accepts — without the helper ever naming the box layout. Array
+checker accepts — without the helper ever naming the box layout. The pair is
+one allocation, not two: `__raw_alloc` reserves the box's three words ahead of
+the buffer and `__raw_string` fills them in place. Array
 construction reuses the existing `__fern_arr_box` (already a callable runtime
 symbol) wrapped the same way, or stays on the `.append()` path that `str_bytes`
 / `str_lines` already use.

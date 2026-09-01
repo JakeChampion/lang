@@ -1,0 +1,21 @@
+# The allocation-count matrix — blocks allocated PER ROUND by each compiler
+# for the same program (self_host_alloc_count_matrix_test.go, #7351).
+#
+# Format: <cell> <native-blocks> <selfhost-blocks> <note>
+#
+# This file IS the volume-divergence list. The leak matrix classifies each cell
+# clean-or-leak, which is layout-free and therefore blind to one compiler
+# allocating twice as many blocks as the other for the same values — the whole
+# of #7351 was invisible to it. A row where the two numbers differ is a
+# standing statement that they still disagree and why; closing one is progress
+# and belongs to the change that earns it, and a number RISING is a volume
+# regression no runtime detector reports. Regenerate with
+# FERN_ALLOC_COUNT_DUMP=1 — never hand-edit a number without a measured run.
+scalar_only          1   1   struct box only
+bare_arr             1   1   array buffer only
+arr_field            2   2   struct box + array buffer
+bare_str_sso         0   1   native keeps a 2-byte result inline (single-word x86-64 SSO); the self-host has no inline form and heap-allocates every string (#7351 effect 1)
+str_field_sso        1   2   struct box on both; the self-host's extra block is the same inline-form gap
+bare_str_heap        1   1   above the inline threshold: one block per heap string on both sides
+str_field_heap       2   2   struct box + one string block
+arr_and_str_heap     3   3   struct box + array buffer + one string block

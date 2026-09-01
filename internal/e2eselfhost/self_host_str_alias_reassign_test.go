@@ -41,6 +41,11 @@ import (
 //
 // Every want below was confirmed against the native x86-64 backend. Exit 99 is
 // reserved for __rc_underflow_count().
+//
+// A heap string is ONE block: since #7351 the box lives in a header __raw_alloc
+// reserves ahead of the buffer. The per-row notes below quote the counts as
+// they read when each row was written, which was two blocks per string, so a
+// historical number in a note is twice its pin.
 
 type strAliasReassignCase struct {
 	name   string
@@ -70,7 +75,7 @@ func strAliasReassignCases() []strAliasReassignCase {
     return keep.len() * 10 + (keep[0] as i32);
 }
 ` + strarMain,
-			want: 24, allocs: 40, frees: 40,
+			want: 24, allocs: 20, frees: 20,
 		},
 		{
 			// The same shape read back as a VALUE with fresh strings allocated after
@@ -87,7 +92,7 @@ func strAliasReassignCases() []strAliasReassignCase {
     return keep.len() * 10 + (keep[0] as i32) + j1.len() - j1.len() + j2.len() - j2.len();
 }
 ` + strarMain,
-			want: 24, allocs: 120, frees: 120,
+			want: 24, allocs: 60, frees: 60,
 		},
 		{
 			// The BIND form, at parity since #7282. The control that says the
@@ -99,7 +104,7 @@ func strAliasReassignCases() []strAliasReassignCase {
     return keep.len() * 10 + (keep[0] as i32);
 }
 ` + strarMain,
-			want: 24, allocs: 40, frees: 40,
+			want: 24, allocs: 20, frees: 20,
 		},
 		{
 			// THE CONTROL THAT MUST NOT MOVE. The string-builder consume-rebind
@@ -114,7 +119,7 @@ func strAliasReassignCases() []strAliasReassignCase {
     return s.len();
 }
 ` + strarMain,
-			want: 63, allocs: 160, frees: 160,
+			want: 63, allocs: 80, frees: 80,
 		},
 		{
 			// A reassign whose RHS is a FRESH producer rather than an alias. It is
@@ -127,7 +132,7 @@ func strAliasReassignCases() []strAliasReassignCase {
     return s.len() * 10 + (s[0] as i32);
 }
 ` + strarMain,
-			want: 7, allocs: 80, frees: 80,
+			want: 7, allocs: 40, frees: 40,
 		},
 		{
 			// BORROWED PARAMS, and the gap this row pinned is now closed. `var q:
@@ -163,7 +168,7 @@ function round(i: i32): i32 {
     return consume(a, b) + a.len() - a.len();
 }
 ` + strarMain,
-			want: 63, allocs: 80, frees: 80,
+			want: 63, allocs: 40, frees: 40,
 		},
 	}
 }

@@ -861,8 +861,14 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.write("    ldr x0, [sp], #16\n    ldur w0, [x0, #-8]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 81) {  // raw_alloc
             // Tier-2 floor (#2649): pop n → x0, bl __fern_alloc, push ptr.
+            //
+            // The block is 24 bytes longer than asked for and the pointer points
+            // PAST that header, so a buffer that later becomes a string has the
+            // string box's {rc, data, len} words already in front of it and
+            // raw_string needs no second allocation (#7351). A buffer that never
+            // becomes a string just carries 24 unused bytes.
             s = s.mark_heap();
-            s = s.write("    ldr x0, [sp], #16\n    bl __fern_alloc\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x0, [sp], #16\n    add x0, x0, #24\n    bl __fern_alloc\n    add x0, x0, #24\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 82) {  // raw_store8
             // pop v (top), off, ptr; store low byte of v at [ptr+off]; push v back.
             s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    add x0, x0, x1\n    strb w2, [x0]\n    str x2, [sp, #-16]!\n");
@@ -876,10 +882,12 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             // pop off (top), ptr; word slot at [ptr+off*8].
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x0, [x0, x1, lsl #3]\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 86) {  // raw_string
-            // pop [data, len] (len on top); build an rc-headered box via __fern_str_box
-            // (#2649 Option A A1b). len -> x1, data -> x0, call, push the box.
+            // pop [data, len] (len on top); stamp the box into the header
+            // __raw_alloc reserved ahead of `data` (#7351). len -> x1, data -> x0,
+            // call, push the box. Allocates nothing, so a heap string costs ONE
+            // block.
             s = s.mark_heap();
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_box\n    str x0, [sp, #-16]!\n");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_str_box_hdr\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 204) {  // syscall3
             // Syscall sub-floor (#2649), the arm64 sibling of asm_ir's handler:
             // operand stack [nr, a1, a2, a3] (a3 on top) — a3->x2, a2->x1, a1->x0,
@@ -3553,6 +3561,25 @@ function lc_bump_free_words(s: asmcore.EmitState, words: string, t1: string, t2:
     return lc_bump_free_add(s, words + ", lsl #3", t1, t2);
 }
 
+// mov_fused_marker materialises the 32-bit word a FUSED string box carries at
+// base+4 — the four bytes the rc word's 8-byte slot has always had spare —
+// saying its data buffer is inside the same block, so __fn___fern_str_free
+// returns ONE allocation (#7351). The separate-buffer __fern_str_box leaves it 0.
+// Two instructions because no 32-bit immediate reaches this value in one.
+//
+// A magic value rather than 1, and not a positional `data == box + 16` test:
+// both a stale 1 in a recycled block and an allocator that happens to hand a
+// separate buffer the block right after its box would read as fused, and the
+// consequence is not a fault but a block returned to the freelist ONCE where it
+// was taken twice — a phantom leak standing in front of whatever is really
+// wrong. The value spells 7351 in its high half; asm_ir.fused_marker is the
+// x86-64 sibling and the two must agree only with themselves, never across
+// backends.
+function mov_fused_marker(s: asmcore.EmitState, reg: string): asmcore.EmitState {
+    s = s.write("    mov " + reg + ", #32781\n");            // 0x800D
+    return s.write("    movk " + reg + ", #29519, lsl #16\n");  // 0x734F -> 0x734F800D
+}
+
 function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // 16 GiB heap arena, lazily mmap'd at hint 0x10000000 on the first
     // allocation (mirrors the native arm64 emitAllocRuntime) rather than
@@ -3853,11 +3880,18 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
     // __fern_str_box(x0 = data, x1 = len) -> x0 = box (rc-HEADERED, #2649 Option A
-    // A1b). Block = [rc=1@base, data@base+8, len@base+16] (24B, freelist class 3);
-    // box = base+8, so data@box+0 / len@box+8 are UNCHANGED (every string consumer
-    // is untouched) and rc@box-8 rides the SAME 32-bit rc word arrays use
-    // (__fn___fern_rc_is_unique / rc_inc read [ptr,#-8]). Freed by the rc-aware
-    // __fn___fern_str_free at rc==1. The arm64 sibling of the x86 __fern_str_box.
+    // A1b). Block = [rc=1@base, fused=0@base+4, data@base+8, len@base+16] (24B,
+    // freelist class 3); box = base+8, so data@box+0 / len@box+8 are UNCHANGED
+    // (every string consumer is untouched) and rc@box-8 rides the SAME 32-bit rc
+    // word arrays use (__fn___fern_rc_is_unique / rc_inc read [ptr,#-8]). Freed by
+    // the rc-aware __fn___fern_str_free at rc==1.
+    //
+    // This is the SEPARATE-BUFFER form, for data the box does not own the block of:
+    // argv entries, the strbuf drain, the subprocess pipe buffers. Data that came
+    // from __raw_alloc goes through __fern_str_box_hdr instead and costs no second
+    // allocation; the `fused` word at base+4 (zeroed here by the 64-bit rc store)
+    // is what tells __fn___fern_str_free the two apart. The arm64 sibling of the
+    // x86 __fern_str_box.
     s = s.write("__fern_str_box:\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
@@ -3871,6 +3905,25 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    str x3, [x0, #16]\n");         // len  @ base+16
     s = s.write("    add x0, x0, #8\n");            // box = base+8
     s = s.write("    ldp x29, x30, [sp], #16\n");
+    s = s.write("    ret\n");
+    // __fern_str_box_hdr(x0 = data, x1 = len) -> x0 = box — the FUSED form (#7351),
+    // the arm64 sibling of the x86 __fern_str_box_hdr. `data` is a __raw_alloc
+    // pointer, which reserves 24 bytes ahead of itself for exactly this box, so the
+    // whole string is ONE block: rc and the fused marker at data-24, data/len where
+    // every consumer already reads them, box = data-16. Allocates nothing, so it is
+    // a leaf (no frame) and produces no heap-census event — the one __raw_alloc
+    // already accounted for the block. The fused marker is what tells
+    // __fn___fern_str_free to return that single 24+len block. Clobbers x2..x4;
+    // its one call site is an operand-stack op with nothing live in registers.
+    s = s.write("__fern_str_box_hdr:\n");
+    s = s.write("    sub x2, x0, #24\n");           // base = data - 24
+    s = s.write("    mov w3, #1\n");
+    s = s.write("    str w3, [x2]\n");              // rc = 1 @ base
+    s = mov_fused_marker(s, "w4");
+    s = s.write("    stur w4, [x2, #4]\n");         // fused marker @ base+4
+    s = s.write("    str x0, [x2, #8]\n");          // data @ base+8
+    s = s.write("    str x1, [x2, #16]\n");         // len  @ base+16
+    s = s.write("    add x0, x2, #8\n");            // box = base+8 = data-16
     s = s.write("    ret\n");
 
     // Global string-builder primitive — the amortised-O(1) output
@@ -4310,6 +4363,13 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmp w4, #1\n");
     s = s.write("    bgt .Lstrfree_dec\n");        // rc>1 -> dec, keep
     s = s.write("    blt .Lstrfree_uf\n");         // rc==0 -> underflow (double free)
+    // rc==1, FUSED box (#7351): data lives inside this block, so there is one
+    // 24+len-byte allocation to return, not a box and a buffer. x2 is reloaded with
+    // len on both arms.
+    s = s.write("    ldur w2, [x0, #-4]\n");       // fused marker @ box-4
+    s = mov_fused_marker(s, "w3");
+    s = s.write("    cmp w2, w3\n");
+    s = s.write("    beq .Lstrfree_fused\n");
     // rc==1: sole owner -> free data buffer (heap-guarded) then the 24-byte box.
     s = s.write("    ldr x1, [x0]\n");             // data = box[0]
     s = s.write("    ldr x2, [x0, #8]\n");         // len  = box[8]
@@ -4355,6 +4415,36 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    str x10, [x1]\n");            // *base = old head
     s = s.write("    str x1, [x3, #24]\n");        // freelist[3] = base
     s = s.write("    b .Lstrfree_ret\n");
+    // Fused block (#7351): base = box-8 = data-24, size = the 24-byte header plus
+    // the buffer, so class = 3 + ceil(len/8) words. len is the LOGICAL length; a
+    // producer that over-allocated (read_all_stdin's 32 MiB for a short read) hands
+    // the freelist a block bigger than the class it lands in, which wastes the
+    // slack but never overruns — the same trade the separate-buffer path above has
+    // always made when it freed at ceil(len/8). Unlike that path a large block is
+    // RECYCLED rather than leaked: the whole string is one allocation now, so
+    // leaking it would leak the box with it.
+    s = s.write(".Lstrfree_fused:\n");
+    s = s.write("    ldr x2, [x0, #8]\n");         // len = box[8]
+    s = s.write("    add x2, x2, #7\n");           // words = ceil(len/8) + 3
+    s = s.write("    lsr x2, x2, #3\n");
+    s = s.write("    add x2, x2, #3\n");
+    s = s.write("    stur wzr, [x0, #-8]\n");      // rc = 0
+    s = s.write("    sub x1, x0, #8\n");           // base = box-8
+    s = s.write("    cmp x2, x9\n");               // large tier (>=65536 words)
+    s = s.write("    bhs .Lstrfree_fused_large\n");
+    s = lc_bump_free_words(s, "x2", "x3", "x10");
+    s = s.write("    adrp x3, __fern_freelist\n");
+    s = s.write("    add x3, x3, :lo12:__fern_freelist\n");
+    s = s.write("    ldr x10, [x3, x2, lsl #3]\n");   // old head of class `words`
+    s = s.write("    str x10, [x1]\n");            // *base = old head
+    s = s.write("    str x1, [x3, x2, lsl #3]\n"); // freelist[words] = base
+    s = s.write("    b .Lstrfree_ret\n");
+    // Tail-branch to __fern_large_push (x1 = base, x2 = bytes), as .Larrdec_large
+    // does: x30 flows through, and the census bump lives INSIDE that helper, so
+    // this arm must not emit its own.
+    s = s.write(".Lstrfree_fused_large:\n");
+    s = s.write("    lsl x2, x2, #3\n");           // bytes = words * 8
+    s = s.write("    b __fern_large_push\n");
     s = s.write(".Lstrfree_dec:\n");
     s = s.write("    sub w4, w4, #1\n");
     s = s.write("    stur w4, [x0, #-8]\n");

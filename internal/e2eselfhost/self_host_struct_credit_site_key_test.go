@@ -49,6 +49,10 @@ import (
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the native
 // x86-64 backend agreed on each — never read off the self-host run under test.
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. A pre-fusion number quoted in a row note below is
+// twice its pin.
 
 type structKeyCase struct {
 	name string
@@ -97,7 +101,7 @@ func structKeyCases() []structKeyCase {
     if (i % 2 == 1) { var v: P = base;  t = t + v.xs.len(); }
     return t;
 }` + structKeyMainB,
-			want: 34, allocs: 204, frees: 204,
+			want: 34, allocs: 153, frees: 153,
 		},
 		{
 			// THE PAIRWISE CONTROL, and the assertion that carries the most weight:
@@ -120,7 +124,7 @@ func structKeyCases() []structKeyCase {
     if (i % 2 == 1) { var u: P = base;  t = t + u.xs.len(); }
     return t;
 }` + structKeyMainB,
-			want: 34, allocs: 204, frees: 204,
+			want: 34, allocs: 153, frees: 153,
 		},
 		{
 			// The same collision reached through a LOOP rather than two `if`s, so
@@ -137,7 +141,7 @@ func structKeyCases() []structKeyCase {
     }
     return t;
 }` + structKeyMainB,
-			want: 68, allocs: 404, frees: 404,
+			want: 68, allocs: 303, frees: 303,
 		},
 		{
 			// CONTROL — a BLOCK-SCOPED struct local, credited through
@@ -152,7 +156,7 @@ func structKeyCases() []structKeyCase {
     { var v: P = P { xs: [i, i + 1], s: w("p") }; t = t + v.xs.len(); }
     return t;
 }` + structKeyMain,
-			want: 34, allocs: 400, frees: 400,
+			want: 34, allocs: 300, frees: 300,
 		},
 		{
 			// CONTROL — the same binding at FUNCTION scope, which resolves through
@@ -167,7 +171,7 @@ func structKeyCases() []structKeyCase {
     var v: P = P { xs: [i, i + 1], s: w("p") };
     return v.xs.len();
 }` + structKeyMain,
-			want: 34, allocs: 400, frees: 400,
+			want: 34, allocs: 300, frees: 300,
 		},
 		{
 			// CONTROL — a struct from a producer returning the literal DIRECTLY,
@@ -179,7 +183,7 @@ function round(i: i32): i32 {
     var v: P = mk(i);
     return v.xs.len();
 }` + structKeyMain,
-			want: 34, allocs: 400, frees: 400,
+			want: 34, allocs: 300, frees: 300,
 		},
 		{
 			// #7343, now CREDITED. This row was "producer_local_still_refused"
@@ -197,7 +201,7 @@ function round(i: i32): i32 {
     var v: P = mk(i);
     return v.xs.len();
 }` + structKeyMain,
-			want: 34, allocs: 400, frees: 400,
+			want: 34, allocs: 300, frees: 300,
 		},
 		{
 			// The "NODEEP:" witness. The header above explains that the marker is

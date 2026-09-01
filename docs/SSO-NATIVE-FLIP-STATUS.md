@@ -19,6 +19,14 @@ on real hardware where qemu user-mode masks the fault; the cost of that
 exclusion is measured in #6554. So the "arm64 string reclaim deferred /
 slice 5g" comments in `ir.go` are load-bearing, not stale.
 
+**The SELF-HOST has no inline form at all**, on either register backend: every
+string it produces is a heap block, however short. That is the surviving half of
+#7351 (the other half — a heap string costing TWO blocks rather than one — is
+closed, `docs/rc-log/2026-09-01-fused-string-box.md`), and it is the only row
+where `TestSelfHostAllocCountMatrixX86_64` still has the two compilers
+disagreeing. Closing it is this document's arc applied to the self-host: an
+inline arm on every string op, not a codegen tweak.
+
 Companion to `docs/SSO-TWOWORD-EXEC.md`. The wasm32 two-word
 ABI flip is shipped (PR #382, in main). This doc tracks the
 follow-on arc: mirror the two-word ABI on the native

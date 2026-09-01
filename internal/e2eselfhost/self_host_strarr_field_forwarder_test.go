@@ -33,6 +33,10 @@ import (
 // __rc_underflow_count(). All thirteen rows were also run under FERN_SANITIZE=1
 // + FERN_RC_UNDERFLOW_TRAP=1 + FERN_RC_FREE_DEBUG=1: the five admitted rows are
 // silent, and the refused ones report only the leak.
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. A pre-fusion number quoted in a row note below is
+// twice its pin.
 
 type strArrFwdCase struct {
 	name   string
@@ -63,7 +67,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 800, frees: 800,
+			want: 15, allocs: 500, frees: 500,
 		},
 		{
 			// #7417's finding, and what made it worth its own issue: the
@@ -85,7 +89,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 800, frees: 800,
+			want: 15, allocs: 500, frees: 500,
 		},
 		{
 			// The same forwarder as a FREE function taking the struct by
@@ -106,7 +110,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 800, frees: 800,
+			want: 15, allocs: 500, frees: 500,
 		},
 		{
 			// THE SOUNDNESS ROW for the admitted case. `live` is built once
@@ -132,7 +136,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 1, allocs: 806, frees: 806,
+			want: 1, allocs: 504, frees: 504,
 		},
 		{
 			// The control that was already clean: the identical field read
@@ -152,7 +156,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 800, frees: 800,
+			want: 15, allocs: 500, frees: 500,
 		},
 		{
 			// NEGATIVE CONTROL. The result is BOUND, so the caller holds the
@@ -174,7 +178,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 800, frees: 100,
+			want: 15, allocs: 500, frees: 100,
 		},
 		{
 			// NEGATIVE CONTROL. `keep.get()[0]` binds an ELEMENT — the exact
@@ -197,7 +201,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 18, allocs: 800, frees: 100,
+			want: 18, allocs: 500, frees: 100,
 		},
 		{
 			// NEGATIVE CONTROL. `for s in keep.get()` binds every element in
@@ -217,7 +221,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 16, allocs: 800, frees: 100,
+			want: 16, allocs: 500, frees: 100,
 		},
 		{
 			// NEGATIVE CONTROL, free-function half.
@@ -237,7 +241,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 800, frees: 100,
+			want: 15, allocs: 500, frees: 100,
 		},
 		{
 			// NEGATIVE CONTROL, one frame deeper: the element leaves through
@@ -260,7 +264,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 18, allocs: 800, frees: 100,
+			want: 18, allocs: 500, frees: 100,
 		},
 		{
 			// The registry is single-valued: a body whose returns forward two
@@ -282,7 +286,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 15, allocs: 900, frees: 100,
+			want: 15, allocs: 600, frees: 100,
 		},
 		{
 			// The STORE half is untouched: a bare-ident element shared by two
@@ -308,7 +312,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 4, allocs: 1000, frees: 600,
+			want: 4, allocs: 700, frees: 400,
 		},
 		{
 			// A tolerated forwarder borrow and a refused direct element read
@@ -335,7 +339,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 19;
 }`,
-			want: 6, allocs: 1400, frees: 700,
+			want: 6, allocs: 800, frees: 400,
 		},
 	}
 }

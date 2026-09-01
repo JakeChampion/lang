@@ -356,6 +356,21 @@ function rc_free_debug_on(): boolean {
 // quarantine_rc: the rc-word store a free path writes as it releases the
 // block — ast.RcPoison under the quarantine (nothing pushes the block, so the
 // poison survives to the next toucher), the defensive 0 otherwise.
+// fused_marker is the 32-bit word a FUSED string box carries at base+4 — the
+// four bytes the rc word's 8-byte slot has always had spare — saying its data
+// buffer is inside the same block, so __fern_str_free returns ONE allocation
+// (#7351). The separate-buffer __fern_str_box leaves it 0.
+//
+// A magic value rather than 1, and not a positional `data == box + 16` test:
+// both a stale 1 in a recycled block and an allocator that happens to hand a
+// separate buffer the block right after its box would read as fused, and the
+// consequence is not a fault but a block returned to the freelist ONCE where it
+// was taken twice — a phantom leak standing in front of whatever is really
+// wrong. The value spells 7351 in its high half.
+function fused_marker(): i32 {
+    return 1934589965;   // 0x734F800D
+}
+
 function quarantine_rc(addr: string): string {
     if (rc_free_debug_on()) { return "    movl $2129656526, " + addr + "\n"; }
     return "    movl $0, " + addr + "\n";
@@ -1599,25 +1614,45 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    leave\n");
     s = s.write("    ret\n");
     // __fern_str_box(%rdi = data ptr, %rsi = len) -> %rax = box (rc-HEADERED, #2649
-    // Option A). Block = [rc=1@base, data@base+8, len@base+16] (24 bytes, freelist
-    // class 3); box = base+8, so data@box+0 / len@box+8 (byte-identical to the old
-    // raw-16 layout, so every string CONSUMER — len/index/slice/concat/eq — is
-    // unchanged) and rc@box-8 rides the SAME rc word as arrays (__fern_rc_inc /
-    // __fn___fern_rc_is_unique read -8(ptr)). Freed by the rc-aware __fern_str_free at
-    // rc==1. The single choke point for every reclaimable string box (const_str +
-    // raw_string), the asm sibling of the wasm $__fern_str_box.
+    // Option A). Block = [rc=1@base, fused=0@base+4, data@base+8, len@base+16]
+    // (24 bytes, freelist class 3); box = base+8, so data@box+0 / len@box+8
+    // (byte-identical to the old raw-16 layout, so every string CONSUMER —
+    // len/index/slice/concat/eq — is unchanged) and rc@box-8 rides the SAME rc word
+    // as arrays (__fern_rc_inc / __fn___fern_rc_is_unique read -8(ptr)). Freed by the
+    // rc-aware __fern_str_free at rc==1.
+    //
+    // This is the SEPARATE-BUFFER form, for data the box does not own the block of:
+    // argv entries, the strbuf drain, the subprocess pipe buffers. Data that came
+    // from __raw_alloc goes through __fern_str_box_hdr instead and costs no second
+    // allocation; the `fused` word at base+4 (zeroed here by the 8-byte rc store) is
+    // what tells __fern_str_free the two apart.
     s = s.write("__fern_str_box:\n");
     s = hev_shim_site(s, "strbox");
     s = s.write("    pushq %rsi\n");                 // save len
     s = s.write("    pushq %rdi\n");                 // save data (alloc consumes %rdi)
     s = s.write("    movq $24, %rdi\n");
     s = s.write("    call __fern_alloc\n");          // %rax = base
-    s = s.write("    movq $1, (%rax)\n");            // rc = 1 @ base
+    s = s.write("    movq $1, (%rax)\n");            // rc = 1 @ base, fused = 0 @ base+4
     s = s.write("    popq %rdi\n");                  // data
     s = s.write("    popq %rsi\n");                  // len
     s = s.write("    movq %rdi, 8(%rax)\n");         // data @ base+8
     s = s.write("    movq %rsi, 16(%rax)\n");        // len  @ base+16
     s = s.write("    addq $8, %rax\n");              // box = base+8
+    s = s.write("    ret\n");
+    // __fern_str_box_hdr(%rdi = data ptr, %rsi = len) -> %rax = box — the FUSED
+    // form (#7351). `data` is a __raw_alloc pointer, which reserves 24 bytes ahead
+    // of itself for exactly this box, so the whole string is ONE block: rc and the
+    // fused marker at data-24, data/len where every consumer already reads them,
+    // box = data-16. Allocates nothing, so it needs no hev site and no leakcheck
+    // event — the one __raw_alloc already accounted for the block. `fused = 1` is
+    // what tells __fern_str_free to return that single 24+len block.
+    s = s.write("__fern_str_box_hdr:\n");
+    s = s.write("    leaq -24(%rdi), %rax\n");       // base = data - 24
+    s = s.write("    movl $1, (%rax)\n");            // rc = 1 @ base
+    s = s.write("    movl $" + util.i32_to_string(fused_marker()) + ", 4(%rax)\n");   // fused marker @ base+4
+    s = s.write("    movq %rdi, 8(%rax)\n");         // data @ base+8
+    s = s.write("    movq %rsi, 16(%rax)\n");        // len  @ base+16
+    s = s.write("    addq $8, %rax\n");              // box = base+8 = data-16
     s = s.write("    ret\n");
     // RC helpers — stack-arg ABI (arg at 8(%rsp)); rc is the 32-bit field at
     // data-8. Guard chain: null / SSO inline tag / low-address / static
@@ -1759,6 +1794,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpl $1, %ecx\n");
     s = s.write("    jg .Lstrfree_dec\n");          // rc>1 -> dec, keep
     s = s.write("    jl .Lstrfree_uf\n");           // rc==0 -> underflow (double free)
+    // rc==1, FUSED box (#7351): data lives inside this block, so there is one
+    // 24+len-byte allocation to return, not a box and a buffer.
+    s = s.write("    movl -4(%rax), %edx\n");       // fused marker @ box-4
+    s = s.write("    cmpl $" + util.i32_to_string(fused_marker()) + ", %edx\n");
+    s = s.write("    je .Lstrfree_fused\n");
     // rc==1: sole owner -> free data buffer (heap-guarded) then the 24-byte box.
     s = s.write("    movq (%rax), %rcx\n");         // data = box[0]
     s = s.write("    movq 8(%rax), %rdx\n");        // len  = box[8]
@@ -1812,6 +1852,37 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    call __fern_large_push\n");
     s = s.write("    popq %rax\n");
     s = s.write("    jmp .Lstrfree_box\n");
+    // Fused block (#7351): base = box-8 = data-24, size = the 24-byte header plus
+    // the buffer, so class = 3 + ceil(len/8) words. len is the LOGICAL length; a
+    // producer that over-allocated (read_all_stdin's 32 MiB for a short read) hands
+    // the freelist a block bigger than the class it lands in, which wastes the
+    // slack but never overruns — the same trade the separate-buffer path above has
+    // always made when it freed at ceil(len/8).
+    s = s.write(".Lstrfree_fused:\n");
+    s = s.write("    movq 8(%rax), %rdx\n");        // len = box[8]
+    s = s.write("    addq $7, %rdx\n");             // words = ceil(len/8) + 3
+    s = s.write("    shrq $3, %rdx\n");
+    s = s.write("    addq $3, %rdx\n");
+    s = s.write("    leaq -8(%rax), %rcx\n");       // base = box-8
+    s = s.write("    cmpq $65536, %rdx\n");         // large tier -> __fern_large_push
+    s = s.write("    jae .Lstrfree_fused_large\n");
+    s = s.write(quarantine_rc("-8(%rax)"));
+    s = hev_free(s, "%rcx", "%rdx");
+    if (!rc_free_debug_on()) {
+    s = s.write("    leaq __fern_freelist(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rdx,8), %rsi\n");   // old head of class `words`
+    s = s.write("    movq %rsi, (%rcx)\n");         // *base = old head
+    s = s.write("    movq %rcx, (%r8,%rdx,8)\n");   // freelist[words] = base
+    }
+    s = s.write("    jmp .Lstrfree_ret\n");
+    // The large tier's own free hook lives inside __fern_large_push, so this arm
+    // must NOT emit its own — .Lstrfree_large above is silent for the same reason.
+    s = s.write(".Lstrfree_fused_large:\n");
+    s = s.write(quarantine_rc("-8(%rax)"));
+    s = s.write("    movq %rcx, %r8\n");            // base
+    s = s.write("    leaq 0(,%rdx,8), %rsi\n");     // bytes = words*8
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    jmp .Lstrfree_ret\n");
     s = s.write(".Lstrfree_dec:\n");
     s = s.write("    subl $1, %ecx\n");
     s = s.write("    movl %ecx, -8(%rax)\n");
@@ -4191,7 +4262,13 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    popq %rax\n    movl -8(%rax), %eax\n    pushq %rax\n");
         } else if (o.kind_tag == 81) {  // raw_alloc
             // Tier-2 floor (#2649): pop n → %rdi, call __fern_alloc, push ptr.
-            s = s.write("    popq %rdi\n    call __fern_alloc\n    pushq %rax\n");
+            //
+            // The block is 24 bytes longer than asked for and the pointer points
+            // PAST that header, so a buffer that later becomes a string has the
+            // string box's {rc, data, len} words already in front of it and
+            // raw_string needs no second allocation (#7351). A buffer that never
+            // becomes a string just carries 24 unused bytes.
+            s = s.write("    popq %rdi\n    addq $24, %rdi\n    call __fern_alloc\n    addq $24, %rax\n    pushq %rax\n");
             s = s.mark_heap();
         } else if (o.kind_tag == 82) {  // raw_store8
             // pop v (top), off, ptr; store low byte of v at [ptr+off]; push v back
@@ -4207,9 +4284,11 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             // pop off (top), ptr; word slot at [ptr+off*8].
             s = s.write("    popq %rcx\n    popq %rax\n    movq (%rax,%rcx,8), %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 86) {  // raw_string
-            // pop [data, len] (len on top); build an rc-headered box via __fern_str_box
-            // (#2649 Option A). len -> %rsi, data -> %rdi, call, push the box.
-            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_box\n    pushq %rax\n");
+            // pop [data, len] (len on top); stamp the box into the header
+            // __raw_alloc reserved ahead of `data` (#7351). len -> %rsi, data ->
+            // %rdi, call, push the box. Allocates nothing, so a heap string costs
+            // ONE block.
+            s = s.write("    popq %rsi\n    popq %rdi\n    call __fern_str_box_hdr\n    pushq %rax\n");
             s = s.mark_heap();
         } else if (o.kind_tag == 204) {  // syscall3
             // Syscall sub-floor (#2649): operand stack [nr, a1, a2, a3] (a3 on
