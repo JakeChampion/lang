@@ -44,7 +44,35 @@ name: Test e2e other
 
 on:
   pull_request:
+    # DOC-ONLY CHANGES DO NOT NEED THE COMPILER SUITE. This project opens a PR
+    # for every push including doc fixes and comment corrections, and each one
+    # was launching ~85 jobs into a queue that is the binding constraint on
+    # every other PR in flight.
+    #
+    # Deliberately narrow. `*.md` does not cross a `/` in a GitHub path filter,
+    # so it is root-level prose only (README, CLAUDE.md) and the literate
+    # sources under examples/literate/*.fern.md — which ARE compiled — still
+    # trigger everything. docs/ holds no .fern.md and no test fixture; the two
+    # e2e tests that name a docs/ path only cite it in a comment or a failure
+    # message.
+    #
+    # lint.yml deliberately has NO filter, so a doc-only PR still runs one real
+    # gate rather than reporting no checks at all.
+    #
+    # The identical block on every lane is pinned by
+    # TestPRWorkflowsShareOneDocOnlyFilter (internal/sourcelint).
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
+
+# The lanes that have a workflow of their own. Everything else in
+# internal/e2e belongs to this one. Written once: the shard step uses it both
+# to build the list it partitions and, by construction, to decide what runs.
+env:
+  CATCH_ALL_SKIP: '^Test(Arm64|X86_64|WASM|Wasm|SelfHost|Differential)'
 
 # Supersede an in-flight run for the same ref: a new push to the
 # branch / PR (or a new dispatch) cancels the older run instead of
@@ -60,9 +88,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest,    host: x86_64  }
-          - { runner: ubuntu-24.04-arm, host: aarch64 }
-    name: test-e2e-other-${{ matrix.host }}
+          - { runner: ubuntu-latest,    host: x86_64,  nshard: 2, shard: 0 }
+          - { runner: ubuntu-latest,    host: x86_64,  nshard: 2, shard: 1 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 1, shard: 0 }
+    name: test-e2e-other-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -79,35 +108,65 @@ jobs:
           # unseen: this lane was green while the only tests that
           # could catch it never ran anywhere in CI.
           wasmtime: "true"
-      - name: go test (e2e — non-backend-specific)
+      - name: go test (e2e — non-backend-specific, shard ${{ matrix.shard }}/${{ matrix.nshard }})
         # `-skip` (Go 1.20+) is the negation lever the `-run`
         # alternation lacks. Anything not matching the listed
         # prefixes runs here, so adding a new uncategorised test
         # is automatically gated on this lane.
-        # This lane is the only e2e one that had no explicit `-timeout`,
-        # so it inherited Go's 10m default — a number nobody chose. At
-        # 7,347 tests it ran ~9m40s against it, and the first change to
-        # add ~1% anywhere in the compiler hit the ceiling and reported
-        # as four failed tests with conclusion "unknown" rather than as
-        # a timeout. 18m matched the arm64 e2e lane.
-        #
-        # THE SAME THING HAPPENED AGAIN at 18m, which is why this is now
-        # 25m — the x86-64 e2e lane's figure. The lane reached 7,851
-        # tests and 15m55s locally; a compiler change worth -98,265 IR
-        # ops and 1 MB off every self-host driver added 7.6s (+0.8%,
-        # measured both ways on the same box) and CI timed out at
-        # 18m00.0s. A slow runner draw had already taken it to 16m58s of
-        # the 18m while green, so the headroom was ~1 minute against a
-        # 1.5x spread.
-        #
-        # RAISING THE CEILING IS NOT THE FIX, it is the second time the
-        # ceiling has been raised for the same reason. The lane is a
-        # catch-all with no owner and it accretes: it grew 7,631 ->
-        # 7,851 in a matter of hours. Sharding it the way
-        # test-e2e-differential.yml is sharded is the actual answer, and
-        # a timeout bump only buys time to do that. Whoever meets this a
+        # SHARDED, RATHER THAN GIVEN A THIRD TIMEOUT. The ceiling here was
+        # raised twice for the same reason. It started with no explicit
+        # `-timeout` at all, so it inherited Go's 10m default — a number
+        # nobody chose — and at 7,347 tests it ran ~9m40s against it, so the
+        # first change to add ~1% anywhere in the compiler hit the wall and
+        # reported as four failed tests with conclusion "unknown" rather than
+        # as a timeout. 18m matched the arm64 e2e lane. THE SAME THING
+        # HAPPENED AGAIN at 18m: the lane reached 7,851 tests and 15m55s
+        # locally, a compiler change worth -98,265 IR ops added 7.6s (+0.8%),
+        # and CI timed out at 18m00.0s — a slow runner draw had already taken
+        # it to 16m58s while green, so the headroom was ~1 minute against a
+        # 1.5x spread. Hence 25m, and the note left here that whoever met it a
         # third time should shard rather than raise.
+        #
+        # This is that. The x86 leg was ~21 minutes against 25m — about a
+        # minute of headroom again on a slow draw — and the lane is a
+        # catch-all with no owner, so it will keep accreting: it grew 7,631 to
+        # 7,851 tests in a matter of hours. Two x86 shards put each at ~11
+        # min, which is headroom that a year of accretion cannot eat.
+        #
+        # ONE SHARD ON aarch64, because sharding is for the ceiling, not for
+        # speed: that leg runs the same set in ~10 min and is nowhere near
+        # 25m. Splitting it would spend a runner slot to fix a problem it does
+        # not have.
+        #
+        # The partition is scripts/selfhost-shard-tests, the same greedy LPT
+        # the self-host lane uses — it reads names on stdin and is not
+        # specific to that suite. No weights file is passed, so every test
+        # weighs 1 and the partition is a balanced split by count, which is
+        # right for ~1,564 mostly-sub-second tests with no dominating outlier.
+        # A weights file can be added later without touching this.
+        #
+        # SELECTION IS STILL BY NEGATION. `go test -list` enumerates the whole
+        # package and CATCH_ALL_SKIP removes the lanes that have a workflow of
+        # their own, so a new uncategorised test is still gated here
+        # automatically — it lands in the list, and therefore in some shard,
+        # without anyone adding it anywhere. That property is why this lane
+        # uses `-skip` rather than an `-run` allowlist, and sharding must not
+        # cost it.
         run: |
+          set -euo pipefail
+          mapfile -t MINE < <(
+            go test -list '.' ./internal/e2e/ |
+              grep -E '^Test' |
+              grep -vE "$CATCH_ALL_SKIP" |
+              sort |
+              scripts/selfhost-shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}"
+          )
+          if [ ${#MINE[@]} -eq 0 ]; then
+            echo "no tests for shard ${{ matrix.shard }}/${{ matrix.nshard }} — the list or the filter is wrong" >&2
+            exit 1
+          fi
+          echo "shard ${{ matrix.shard }}/${{ matrix.nshard }}: ${#MINE[@]} tests"
+          PAT="^($(IFS='|'; echo "${MINE[*]}"))\$"
           gotestsum --format pkgname-and-test-fails -- -timeout 25m \
-            -skip '^Test(Arm64|X86_64|WASM|Wasm|SelfHost|Differential)' \
+            -run "$PAT" \
             ./internal/e2e/

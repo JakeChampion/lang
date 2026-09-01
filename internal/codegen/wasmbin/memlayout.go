@@ -268,3 +268,36 @@ const (
 	stringPoolClearsClosures  = uint(stringStart - closurePoolEnd)
 	cursorClearsScratch       = uint(allocMinStart - scratchEnd)
 )
+
+// wasmPageSize is linear memory's page granularity: the memory section's
+// limits and `memory.grow` both count in these.
+const wasmPageSize = 65536
+
+// memoryMinPages is the module's INITIAL memory size, in pages, for the
+// given active data segments.
+//
+// Data segments are written at instantiation, before any code runs, so
+// nothing can grow memory ahead of them: an initial size that does not
+// already cover the static data traps the instantiation itself with "out
+// of bounds memory access", never reaching `main`. __fern_alloc grows on
+// demand from there, so only this initial size has to be derived — the
+// maximum stays unbounded.
+//
+// Floored at one page so a module with no static data still gets a memory
+// behind the loads and stores its helper bodies contain.
+func memoryMinPages(offsets []int32, inits [][]byte) uint32 {
+	end := 0
+	for i, off := range offsets {
+		if i >= len(inits) {
+			break
+		}
+		if e := int(off) + len(inits[i]); e > end {
+			end = e
+		}
+	}
+	pages := (end + wasmPageSize - 1) / wasmPageSize
+	if pages < 1 {
+		pages = 1
+	}
+	return uint32(pages)
+}

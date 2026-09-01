@@ -1,0 +1,41 @@
+name: Build the e2e test binaries
+description: >
+  Compile the `go test -c` binaries the self-host lane's jobs run through
+  `go tool test2json`, into e2eselfhost.test (always) and e2e.test (on
+  request) in the working directory.
+
+  This used to be a `build` JOB that compiled once and published the binaries
+  as an artifact every other job downloaded. Compiling once is cheaper in CPU
+  and much more expensive in wall clock: `build` did 0.9 minutes of work after
+  9.4 minutes in the queue, and everything else in the lane sat behind it,
+  because a `needs:` edge means the dependent jobs are not even created — let
+  alone queued — until it finishes. Measured on run 33535490171, that one edge
+  pushed `warm` from a ~9-minute admission to a 32-minute one, and the shards
+  behind `warm` inherited all of it.
+
+  So the lane pays the compile ~27 times, at ~40 s each against a warm build
+  cache, and buys back a queue hop for every job in it. That trade is only
+  right while the queue is the binding constraint — it is, at roughly one job
+  admitted every 20-40 seconds — and it depends on the Go build cache actually
+  being warm, which it now is (see .github/actions/setup-fern).
+
+inputs:
+  e2e:
+    description: >
+      Also compile internal/e2e into e2e.test. The shard jobs need it for the
+      ~30 residual TestSelfHost tests that still live in that package; nothing
+      else does, and it is a separate ~20 s of compile, so it is opt-in.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: compile test binaries (go test -c)
+      shell: bash
+      run: |
+        set -euo pipefail
+        go test -c -o e2eselfhost.test ./internal/e2eselfhost/
+        if [ "${{ inputs.e2e }}" = "true" ]; then
+          go test -c -o e2e.test ./internal/e2e/
+        fi

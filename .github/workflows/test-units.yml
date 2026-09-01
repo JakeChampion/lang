@@ -16,6 +16,28 @@ name: Test units
 
 on:
   pull_request:
+    # DOC-ONLY CHANGES DO NOT NEED THE COMPILER SUITE. This project opens a PR
+    # for every push including doc fixes and comment corrections, and each one
+    # was launching ~85 jobs into a queue that is the binding constraint on
+    # every other PR in flight.
+    #
+    # Deliberately narrow. `*.md` does not cross a `/` in a GitHub path filter,
+    # so it is root-level prose only (README, CLAUDE.md) and the literate
+    # sources under examples/literate/*.fern.md — which ARE compiled — still
+    # trigger everything. docs/ holds no .fern.md and no test fixture; the two
+    # e2e tests that name a docs/ path only cite it in a comment or a failure
+    # message.
+    #
+    # lint.yml deliberately has NO filter, so a doc-only PR still runs one real
+    # gate rather than reporting no checks at all.
+    #
+    # The identical block on every lane is pinned by
+    # TestPRWorkflowsShareOneDocOnlyFilter (internal/sourcelint).
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
   # The unit half of #7319's main smoke (check-sources.yml is the type half):
   # rebase-merge replays commits onto a main their PR's CI never saw, so a
   # semantic coupling between two individually-green PRs only exists in the
@@ -47,9 +69,20 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
+      # THE REPO'S ONE Go-BUILD-CACHE PRODUCER. Every other job in every
+      # other workflow restores this cache and never writes one (see the
+      # restore step in .github/actions/setup-fern). This lane is the
+      # producer because it is the broadest compile in the repo — `go list
+      # ./internal/... ./cmd/...` minus the four slow packages — and it
+      # already runs on push to main, on both arches, which is exactly the
+      # (arch, tree) product the cache key is cut on.
+      - name: Cache day stamp
+        id: day
+        run: echo "stamp=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
+          build-cache-key: ${{ steps.day.outputs.stamp }}
       # llvm-mc second oracle for the assembler differential lanes
       # (internal/native/{x86_64,arm64} TestEncodingsAgainstLLVMMC, #7895):
       # the tests skip when llvm-mc is absent, so this install is what makes
@@ -103,3 +136,25 @@ jobs:
           # shellcheck disable=SC2046 # the package list is deliberately word-split
           gotestsum --format pkgname-and-test-fails -- \
             $(scripts/unit-test-packages)
+      # PUBLISH the cache every other job restores. Main only: a save per PR
+      # job would be ~85 multi-gigabyte writes per push against a 10 GB
+      # repository budget, which is the failure mode that made the previous
+      # key never save at all.
+      #
+      # Once a day, not once a merge: the key carries the date, and
+      # actions/cache/save declines a key that already exists, so the first
+      # main push of the day writes and the rest of the day's merges no-op.
+      # That bounds the write rate without any extra bookkeeping. A day-old
+      # cache is not stale in any way that matters — Go fingerprints entries
+      # per file, so only what changed since recompiles.
+      #
+      # continue-on-error because this is pure optimisation: the declined-key
+      # warning, a full budget, or a flaky upload must never redden main for a
+      # lane whose job is to report test results.
+      - name: Save Go build cache (main only)
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/go-build
+          key: gobuild-${{ runner.os }}-${{ runner.arch }}-go1.26-${{ steps.day.outputs.stamp }}

@@ -46,12 +46,12 @@ arith_precedence                                     0
 arrarr_row_struct_field                              0
 array_chunks_windows_methods                         0
 array_find_last_rposition                            0
-array_generic_reductions                             3
+array_generic_reductions                             0
 array_join                                           0
 array_methods                                        0
 array_of_structs                                     0
 array_reverse                                        0
-array_sort                                           1
+array_sort                                           0
 array_with_rc_elem_drop                              0
 arrpush                                              0
 associated_functions                                 0
@@ -64,7 +64,7 @@ audit_now_ns                                         0
 audit_numeric_types                                  0
 audit_std_crypto                                     0
 audit_std_json                                       25
-audit_std_numeric                                    3
+audit_std_numeric                                    2
 audit_std_path_numeric                               0
 audit_std_string                                     0
 audit_std_textfmt                                    0
@@ -135,7 +135,7 @@ enum_reuse_churn                                     0
 enum_str                                             0
 enum_u64_payload_unsigned_shift                      0
 eq_struct_enum                                       0
-erased_typevar_ret                                   100
+erased_typevar_ret                                   50
 escape_sequences                                     0
 exit                                                 0
 exit_42                                              0
@@ -176,7 +176,7 @@ generic_box                                          0
 generic_call_in_struct_field                         0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      2
-generic_fnarg_typevar                                300
+generic_fnarg_typevar                                0
 generic_id                                           0
 generic_method_typeparams                            0
 generic_pair                                         0
@@ -316,8 +316,8 @@ path_join                                            0
 prim_recv_array_method                               0
 print                                                0
 prop_codec_roundtrip                                 0
-prop_sort_i32                                        900
-prop_sort_strings                                    159
+prop_sort_i32                                        0
+prop_sort_strings                                    1
 prop_string_involution                               580
 prop_url_roundtrip                                   293
 pub_use_reexport                                     0
@@ -373,7 +373,7 @@ slice_unchecked_oob                                  0
 slice_views                                          6
 smallest_int_literal                                 0
 some_branch                                          0
-sort_strings_delegation_wasm                         2
+sort_strings_delegation_wasm                         0
 split_once                                           0
 sso_concat_inline_plus_inline_heap                   0
 sso_concat_inline_plus_inline_inline                 0
@@ -469,7 +469,7 @@ user_enum_mixed                                      0
 user_enum_payloaded_then_payloadless                 0
 user_enum_payloadless                                0
 user_fn_shadows_stdlib_param                         3
-utf8_codepoints                                      5
+utf8_codepoints                                      3
 value_block_branch_tail                              4
 value_block_generic_call_arm                         0
 value_block_shadows_module_fn                        0

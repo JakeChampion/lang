@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+#
+# scripts/codegen-census — classify every instruction a native backend emits
+# for a program, and report what fraction of them compute nothing.
+#
+# The native backends are stack machines: an intermediate value is pushed to
+# the machine stack and reloaded by the op that consumes it. That traffic is
+# invisible to every existing gate — the fixtures check answers, the fixpoint
+# checks reproducibility, the driver-size lane checks bytes — so the ratio of
+# useful work to shuffling has only ever been measured by hand, in one-off
+# audits (docs/PERFORMANCE-AUDIT-2026-08.md, docs/CODEGEN-QUALITY-AUDIT-2026-09.md).
+# This script is that measurement, runnable.
+#
+# Usage:
+#   scripts/codegen-census [-t TARGET] [-b BACKEND] FILE.fern
+#   scripts/codegen-census -c FILE.fern        # compare every backend for both ISAs
+#
+# TARGET defaults to x86-64-linux; -b ssa selects the register-allocating
+# emitter where one exists (arm64-linux only, today).
+#
+# The categories are chosen so they sum to something meaningful rather than to
+# 100%: OVERHEAD counts instructions a register allocator deletes outright, and
+# is the number to drive down. It is deliberately conservative — a frame reload
+# that a register allocator would keep is still counted as useful.
+set -u
+
+BIN=${FERN_BIN:-./bin/fern}
+TARGET=x86-64-linux
+BACKEND=""
+COMPARE=0
+
+while getopts "t:b:c" opt; do
+  case $opt in
+    t) TARGET=$OPTARG ;;
+    b) BACKEND=$OPTARG ;;
+    c) COMPARE=1 ;;
+    *) echo "usage: $0 [-t TARGET] [-b BACKEND] [-c] FILE.fern" >&2; exit 2 ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+if [ $# -ne 1 ]; then
+  echo "usage: $0 [-t TARGET] [-b BACKEND] [-c] FILE.fern" >&2
+  exit 2
+fi
+SRC=$1
+
+if [ ! -x "$BIN" ]; then
+  echo "codegen-census: no compiler at $BIN (go build -o bin/fern ./cmd/fern), or set FERN_BIN" >&2
+  exit 2
+fi
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+# emit TARGET BACKEND -> writes $TMP/asm, prints nothing.
+emit() {
+  local t=$1 b=$2 args=(-target "$1")
+  [ -n "$b" ] && args+=(-backend "$b")
+  if ! "$BIN" "${args[@]}" "$SRC" > "$TMP/asm" 2> "$TMP/err"; then
+    echo "codegen-census: $BIN ${args[*]} $SRC failed:" >&2
+    head -5 "$TMP/err" >&2
+    return 1
+  fi
+}
+
+# count PATTERN — instructions matching a PCRE, over $TMP/asm.
+count() { grep -cP "$1" "$TMP/asm" || true; }
+
+report() {
+  local label=$1 isa=$2
+  local total stack pad shuffle reload useful
+
+  total=$(count '^\t\S')
+  if [ "$total" -eq 0 ]; then
+    printf '%-28s no instructions emitted\n' "$label"
+    return
+  fi
+
+  case $isa in
+    x86)
+      # operand stack: push/pop that are not the frame pointer save.
+      stack=$(( $(count '^\t(push|pop) ') - $(count '^\t(push|pop) rbp$') ))
+      # System V wants rsp 16-aligned at a call; an odd operand-stack depth
+      # makes the emitter pad around the call rather than on every push.
+      pad=$(( $(count '^\t(sub|add) rsp, 8$') ))
+      # rax<->rcx handoffs between the operand stack and the ALU.
+      shuffle=$(count '^\tmov r[a-z0-9]+, r[a-z0-9]+$')
+      reload=$(count '^\tmov r[a-z0-9]+, \[rbp')
+      ;;
+    arm64)
+      stack=$(( $(count '^\tstr x[0-9]+, \[sp, #-16\]!$') + $(count '^\tldr x[0-9]+, \[sp\], #16$') ))
+      pad=0
+      shuffle=$(count '^\tmov x[0-9]+, x[0-9]+$')
+      reload=$(count '^\t(ldur|stur) ')
+      ;;
+    *) echo "codegen-census: unknown isa $isa" >&2; return 1 ;;
+  esac
+
+  # OVERHEAD is the operand stack plus the alignment it forces plus the
+  # register handoffs it needs. Frame reloads are reported but NOT counted:
+  # a register allocator keeps some of them as genuine spills.
+  useful=$(( total - stack - pad - shuffle ))
+  printf '%-28s total=%-9s overhead=%-9s (%5.1f%%)  stack=%-8s pad=%-7s shuffle=%-8s frame=%s\n' \
+    "$label" "$total" "$((stack + pad + shuffle))" \
+    "$(awk -v a=$((stack + pad + shuffle)) -v b="$total" 'BEGIN{printf "%.1f", 100*a/b}')" \
+    "$stack" "$pad" "$shuffle" "$reload"
+}
+
+if [ "$COMPARE" -eq 1 ]; then
+  echo "codegen census: $SRC"
+  emit x86-64-linux "" && report "x86-64 (default)" x86
+  emit arm64-linux "" && report "arm64 (default)" arm64
+  emit arm64-linux ssa && report "arm64 (-backend ssa)" arm64
+else
+  case $TARGET in
+    x86-64-*) ISA=x86 ;;
+    arm64-*)  ISA=arm64 ;;
+    *) echo "codegen-census: $TARGET is not a native target" >&2; exit 2 ;;
+  esac
+  emit "$TARGET" "$BACKEND" || exit 1
+  report "$TARGET${BACKEND:+ -backend $BACKEND}" "$ISA"
+fi

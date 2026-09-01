@@ -66,6 +66,18 @@ var tupleFnIRCases = []struct {
 	// The ANNOTATED sibling: the coarse "fn" payload tag reads as enum-like,
 	// so the closure-local mark must run before the struct/enum bind branch.
 	{"option-fn-payload-annotated", "function main(): i32 { var n = 5; var o: Option[(i32) => i32] = Some(function (x: i32): i32 { return x + n; }); match (o) { Some(f) => { return f(37); }, None => { return 0; } } }", 42},
+	// A bare fn NAME as the payload, rather than a lambda (#7959). The
+	// annotation is what rules out the const reading of a zero-arg name, so
+	// the payload wrap only fires if the annotation survives intact —
+	// flatten's type rewrite used to hand a function type to its
+	// generic-application branch, and `Option[() => i32]` arrived at the lift
+	// as `Option[[i32]]` (an empty base is all the brackets are left of).
+	// The wrap then declined, the name kept the zero-arg const reading, and
+	// the payload held a1's RESULT: `f()` called address 3.
+	{"option-zeroarg-fnname-payload", "function a1(): i32 { return 3; } function main(): i32 { var o: Option[() => i32] = Some(a1); match (o) { Some(f) => { return f(); }, None => { return 0; } } }", 3},
+	// Its >0-arg sibling, which took the fn-VALUE path and always worked —
+	// here so a fix that keys on arity cannot pass by breaking this one.
+	{"option-onearg-fnname-payload", "function inc(x: i32): i32 { return x + 1; } function main(): i32 { var o: Option[(i32) => i32] = Some(inc); match (o) { Some(f) => { return f(41); }, None => { return 0; } } }", 42},
 	// Regression guard for the bind-order move: an enum-payload closure
 	// (`Op.Apply(<lambda>)` matched and called) keeps working.
 	{"enum-fn-payload-regress", "enum Op { Apply((i32) => i32), Nop } function main(): i32 { var n = 5; var o = Op.Apply(function (x: i32): i32 { return x + n; }); match (o) { Apply(f) => { return f(37); }, Nop => { return 0; } } }", 42},

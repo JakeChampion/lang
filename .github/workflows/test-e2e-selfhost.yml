@@ -11,20 +11,29 @@ name: Test e2e self-host
 # RESIDUAL TESTS: ~30 TestSelfHost* functions still live in
 # internal/e2e — files that pair a TestSelfHost* leg with its
 # TestNative* oracle sibling sharing one fixture table (splitting them
-# would sever the fixtures). The build job compiles BOTH test binaries
+# would sever the fixtures). The shard jobs compile BOTH test binaries
 # and the shard script partitions the UNION of both lists,
 # running each test against the binary/package it lives in — so the
 # residuals keep exactly their old coverage.
 #
-# COMPILE ONCE, RUN MANY. A `build` job (per arch) compiles the e2e
-# test binary a single time with `go test -c` and uploads it as an
-# artifact; the sharded `test` jobs download that binary and run their
-# slice of it. Previously every one of the (2 arch × N) shards
-# recompiled the ~32 MB e2e test binary itself (`go test ./...` rebuilds
-# the package per job, ~2.5 min each), so the build cost was paid 2N
-# times. Now it is paid twice. This both saves CI minutes and trims each
-# shard's wall-clock by ~2.5 min — which matters because of the runner
-# behaviour documented under RUNNER PREEMPTION below.
+# COMPILE PER JOB, NOT ONCE. Every job that runs a prebuilt binary
+# compiles it itself, through .github/actions/build-e2e-binaries. A
+# `build` job used to compile once per arch and publish the binaries as
+# an artifact the rest of the lane downloaded — cheaper in CPU, and much
+# more expensive in the thing that actually costs: a `needs:` edge means
+# the dependent jobs are not created, let alone queued, until it
+# finishes. Measured on run 33535490171, `build` did 0.9 minutes of work
+# after 9.4 minutes in the queue, and that single edge pushed `warm` from
+# a ~9-minute admission to a 32-minute one, with every shard behind it
+# inheriting the whole delay.
+#
+# The lane now pays ~40 s of `go test -c` about 27 times instead of once,
+# and every one of those jobs is created at run start. That trade holds
+# only while the queue is the binding constraint (it is — jobs are
+# admitted at roughly one every 20-40 seconds) and only while the Go
+# build cache is warm, which is what the restore/save split in
+# .github/actions/setup-fern is for. If either stops being true, a
+# `build` job is the right shape again.
 #
 # DRIVER WARM ARTIFACTS (x86). The dominant per-shard cost is not the Go test
 # binary but the self-host DRIVERS: each `*_run.fern` driver statically imports
@@ -134,6 +143,28 @@ name: Test e2e self-host
 
 on:
   pull_request:
+    # DOC-ONLY CHANGES DO NOT NEED THE COMPILER SUITE. This project opens a PR
+    # for every push including doc fixes and comment corrections, and each one
+    # was launching ~85 jobs into a queue that is the binding constraint on
+    # every other PR in flight.
+    #
+    # Deliberately narrow. `*.md` does not cross a `/` in a GitHub path filter,
+    # so it is root-level prose only (README, CLAUDE.md) and the literate
+    # sources under examples/literate/*.fern.md — which ARE compiled — still
+    # trigger everything. docs/ holds no .fern.md and no test fixture; the two
+    # e2e tests that name a docs/ path only cite it in a comment or a failure
+    # message.
+    #
+    # lint.yml deliberately has NO filter, so a doc-only PR still runs one real
+    # gate rather than reporting no checks at all.
+    #
+    # The identical block on every lane is pinned by
+    # TestPRWorkflowsShareOneDocOnlyFilter (internal/sourcelint).
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
 
 # Supersede an in-flight run for the same ref: a new push to the
@@ -196,36 +227,6 @@ env:
   QUARANTINED_TESTS: ""
 
 jobs:
-  # Compile the e2e test binary ONCE per arch; the sharded test jobs reuse it.
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        host:
-          - { runner: ubuntu-latest,    name: x86_64  }
-          - { runner: ubuntu-24.04-arm, name: aarch64 }
-    name: build-selfhost-${{ matrix.host.name }}
-    runs-on: ${{ matrix.host.runner }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-fern
-      # Two binaries: the selfhost package plus the remainder package (for
-      # the ~30 residual TestSelfHost tests in mixed fixture files — see
-      # RESIDUAL TESTS above).
-      - name: compile test binaries (go test -c)
-        run: |
-          go test -c -o e2eselfhost.test ./internal/e2eselfhost/
-          go test -c -o e2e.test ./internal/e2e/
-      - uses: actions/upload-artifact@v7
-        with:
-          name: e2e-test-${{ matrix.host.name }}
-          path: |
-            e2eselfhost.test
-            e2e.test
-          retention-days: 1
-          if-no-files-found: error
-
   # WARM THE DRIVER CACHE (x86). The per-shard cost is dominated by self-host
   # DRIVERS, each a ~50-70s Go x86-64 emit of the ~35k-line front-end PLUS a gcc
   # link that, for the bigger drivers, runs another ~minute. With the closure-
@@ -239,8 +240,8 @@ jobs:
   # run, the whole cache is 126 MB after the LARGEST single driver (asm_load_run)
   # and 67 MB after the three-driver ssa job, against ~21 GB free on the runner.
   # What one-per-driver did cost was real: each job pays ~28s of fixed setup
-  # (checkout + setup-fern + download-artifact) to do ~22s of warming, and
-  # `needs: warm` gates all 18 shards on the SLOWEST of them — where "slowest"
+  # (checkout + setup-fern + the test-binary compile) to do ~22s of warming, and
+  # `needs: warm` gates all nine shards on the SLOWEST of them — where "slowest"
   # under a saturated runner pool is decided by queue wait, not by work. On that
   # same run the twelve jobs did 9.4 min of warming spread across a 14.6-min
   # barrier, each waiting separately for a runner. Three jobs draw three queue
@@ -256,7 +257,6 @@ jobs:
   # shards on the SLOWEST warm job, and folding fern.fern in here used to hold
   # every shard back ~2.5 min for an artifact none of them consumed.
   warm:
-    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -278,9 +278,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - uses: actions/download-artifact@v8
-        with:
-          name: e2e-test-x86_64
+      - uses: ./.github/actions/build-e2e-binaries
       - name: warm ${{ matrix.key }} drivers (${{ matrix.drivers }})
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -301,7 +299,7 @@ jobs:
       # .github/selfhost-driver-sizes.txt. `!cancelled()` rather than success()
       # so a partial warm still reports the sizes it did produce.
       #
-      # continue-on-error because all 18 shards `needs: warm`: a measurement
+      # continue-on-error because all nine shards `needs: warm`: a measurement
       # step must not be able to hold the lane. This slice stays advisory for
       # that reason — the enforcing copy is the leaf `driver-sizes` job below,
       # which gates nothing and so can fail. What this step is for is feedback
@@ -337,7 +335,7 @@ jobs:
   # it, in-process, reading the just-built driver from the LOCAL on-disk cache
   # (see the ISOLATED WHOLE-COMPILER DRIVER TESTS note above the env block).
   # Deliberately NOT part of the `warm` matrix: the `test` shards `needs: warm`,
-  # and this ~4-min job would gate all 28 of them on an artifact nobody
+  # and this ~4-min job would gate all nine of them on an artifact nobody
   # downloads (no upload here — nothing consumes fern.fern outside this job).
   # The test step is STRICT. It used to carry continue-on-error so a flaky
   # qemu-aarch64 blip could not fail the lane, but that flag does not
@@ -348,7 +346,6 @@ jobs:
   # go red is not a gate. A test that is genuinely flaky belongs in
   # QUARANTINED_TESTS, by name and with its issue, where it is visible.
   cli:
-    needs: build
     name: cli-driver-tests-x86_64
     runs-on: ubuntu-latest
     # 20, not 15: the wasm-hosted differential re-emits wasm_ir_run.fern twice
@@ -380,9 +377,7 @@ jobs:
         with:
           qemu-package: qemu-user
           cross-gcc: "false"
-      - uses: actions/download-artifact@v8
-        with:
-          name: e2e-test-x86_64
+      - uses: ./.github/actions/build-e2e-binaries
       - name: warm fern.fern (whole self-hosted compiler)
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -445,7 +440,7 @@ jobs:
   #
   # Strict is affordable here and nowhere else in the lane: this is a leaf.
   # Nothing `needs:` it, so a red size gate blocks the merge and holds no other
-  # job — unlike the `warm` copy, whose 18 dependent shards are why that one
+  # job — unlike the `warm` copy, whose nine dependent shards are why that one
   # stays advisory. The escalation #7519 asked for is these two variables plus
   # the absent continue-on-error; the baselines were refreshed to measured main
   # in the same issue, so drift here starts at zero and any finding is real.
@@ -455,10 +450,12 @@ jobs:
   driver-sizes:
     needs: [warm, cli]
     # Runs when a producer FAILED — that is the case worth reporting — but not
-    # when both were SKIPPED, which means `build` fell over and no driver was
-    # ever going to be linked. Without the second clause a red build earns a
-    # second, more confusing red here for measuring nothing. Same guard, same
-    # reason, as the `verify` job's `needs.test.result != 'skipped'`.
+    # when both were SKIPPED, which cannot happen now that neither has an
+    # upstream `needs:` to cascade from, but stays as the cheap guard against a
+    # future one: a skipped producer means no driver was ever going to be
+    # linked, and reporting "nothing was measured" on top of whatever skipped it
+    # buries the real error. Same guard, same reason, as the `verify` job's
+    # `needs.test.result != 'skipped'`.
     if: ${{ !cancelled() && (needs.warm.result != 'skipped' || needs.cli.result != 'skipped') }}
     name: driver-sizes-x86_64
     runs-on: ubuntu-latest
@@ -500,7 +497,6 @@ jobs:
         run: scripts/ci-check-driver-sizes .github/selfhost-driver-sizes.txt "${{ runner.temp }}/union.txt"
 
   gen2:
-    needs: build
     name: const-func-gen2-x86_64
     runs-on: ubuntu-latest
     # The test builds an mmc1/mmc2 pair (a whole-compiler-scale stage-1 binary
@@ -511,9 +507,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - uses: actions/download-artifact@v8
-        with:
-          name: e2e-test-x86_64
+      - uses: ./.github/actions/build-e2e-binaries
       # TestSelfHostConstFuncGen2 is the ONLY guard for a self-referential
       # miscompile: the IR path compiling the code that decides IR eligibility.
       # It needs two generations to show up, so it is invisible to every
@@ -558,7 +552,6 @@ jobs:
   # whole compiler under qemu, and it is left to a human with time rather than
   # paid on every push.
   stage2-fixpoint-arm64:
-    needs: build
     name: stage2-fixpoint-arm64
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -572,9 +565,7 @@ jobs:
         with:
           qemu-package: qemu-user
           cross-gcc: "true"
-      - uses: actions/download-artifact@v8
-        with:
-          name: e2e-test-x86_64
+      - uses: ./.github/actions/build-e2e-binaries
       - name: arm64 stage-2 fixpoint (gen1 == gen2, byte-identical)
         run: |
           set -euo pipefail
@@ -595,7 +586,6 @@ jobs:
   # Its own job because ~5 min is enough to matter inside an LPT shard and
   # nothing about it needs to share one.
   emitall-fixpoint:
-    needs: build
     name: emitall-fixpoint-x86_64
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -604,9 +594,7 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - uses: actions/download-artifact@v8
-        with:
-          name: e2e-test-x86_64
+      - uses: ./.github/actions/build-e2e-binaries
       - name: whole-compiler emit-all fixpoint at batch=8 (gen0 == gen1)
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -638,7 +626,6 @@ jobs:
   # No `needs: warm`: the driver it builds is wasm_modload_run, which no warm job
   # primes, so the artifacts would be a download it does not read.
   wasm-wholecompiler-link:
-    needs: build
     name: wasm-wholecompiler-link-x86_64
     runs-on: ubuntu-latest
     # 12.8 min measured inside a shard; 30 is ~2.3x that, and unlike the shard
@@ -650,9 +637,7 @@ jobs:
         with:
           wasmtime: "true" # the test t.Skips without BOTH wasm-tools and wasmtime
           gotestsum: "true"
-      - uses: actions/download-artifact@v8
-        with:
-          name: e2e-test-x86_64
+      - uses: ./.github/actions/build-e2e-binaries
       - name: whole-compiler wasm link (15 modules, function-windowed, then run)
         env:
           FERN_SELFHOST_BUILD_CACHE: "${{ runner.temp }}/selfhost-unicache"
@@ -683,7 +668,7 @@ jobs:
   # `needs: warm` unlike the wasm twin: this one's driver IS warmed
   # (asm_modload_run, the `load` group), so restoring it skips a ~70 s emit.
   arm64-permodule-wholecompiler:
-    needs: [build, warm]
+    needs: warm
     name: arm64-permodule-wholecompiler-x86_64
     runs-on: ubuntu-latest
     # ~15.7 min measured inside a shard; 35 is ~2.2x that, matching the headroom
@@ -698,9 +683,7 @@ jobs:
       # so this needs both halves of the toolchain.
       - name: aarch64 cross-gcc + qemu
         uses: ./.github/actions/apt-cross-toolchain
-      - uses: actions/download-artifact@v8
-        with:
-          name: e2e-test-x86_64
+      - uses: ./.github/actions/build-e2e-binaries
       - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
@@ -747,7 +730,6 @@ jobs:
   # asm (e2eharness.emitDriverAsm calls x86_64.Emit) and takes host paths as
   # argv, so it cannot run under a qemu prefix.
   fixtures-selfhost:
-    needs: build
     name: fixtures-selfhost-${{ matrix.leg }}
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.job-minutes }}
@@ -797,7 +779,6 @@ jobs:
   # Needs a NATIVE x86_64 host: the driver is emitted as x86-64 asm and takes
   # host paths as argv, so it cannot run under a qemu prefix.
   diff-selfhost:
-    needs: build
     name: diff-selfhost-shard${{ matrix.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -819,7 +800,7 @@ jobs:
         run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
 
   test:
-    needs: [build, warm]
+    needs: warm
     strategy:
       fail-fast: false
       # Explicit include list instead of a host × shard cross-product: the
@@ -830,35 +811,48 @@ jobs:
       # SHARD COUNTS ARE BOUNDED BY THE RUNNER POOL, NOT BY THE WORK. Measured
       # on run 31819148053: the x86 lane's 20 shards did 109 min of work with a
       # 13.0-min longest shard, and the aarch64 lane's 8 shards did 5.8 min in
-      # total — 43 s each, dominated by job setup. Meanwhile 75% of the PR's
-      # whole CI time was queue, not compute. Below the heaviest single test a
-      # shard cannot get faster no matter how many buckets it is split into, so
-      # past that point extra shards only take slots from other lanes. x86 16
-      # keeps the mean at ~6.8 min against a 20-min timeout; aarch64 2 turns
-      # eight ~43 s jobs into two ~3 min ones.
+      # total — 43 s each, dominated by job setup. Below the heaviest single
+      # test a shard cannot get faster no matter how many buckets it is split
+      # into, so past that point extra shards only take slots from other lanes.
+      #
+      # WHEN ADMISSION IS THE CONSTRAINT, MORE SHARDS ARE SLOWER. The lane
+      # finishes when the LAST shard finishes, and under a saturated pool a
+      # shard's start time is set by its place in the admission queue, not by
+      # the work. Measured on run 33535490171: the x86 shards each did 6-11 min
+      # of work after waiting 13-37 min, and admitting 16 of them spread across
+      # 24 minutes. Halving the count roughly halves that tail while each shard
+      # only grows to the mean.
+      #
+      # Halving x86 costs nothing at the long end, because the long end is not
+      # set by the partition. Running the LPT greedy over
+      # .github/selfhost-test-weights.txt: at 16 buckets the heaviest is 12.3
+      # min and at 8 it is still 12.3 min — both are just the single heaviest
+      # test, TestSelfHostAssumeEligibleByteIdenticalX86_64, which no split can
+      # divide. Only the mean moves, 4.8 to 9.6 min of weighted mass; adding
+      # the unweighted remainder (the gap between that model and the 6.8-min
+      # mean actually measured at 16) puts the real numbers at ~13.6 min mean
+      # and ~16 min for the longest shard. Hence 30 rather than 20 minutes of
+      # job budget: 16 min of tests plus setup and the test-binary compile
+      # left no headroom against 20.
+      #
+      # So the rule is that a shard should do more work than it spends queueing.
+      # aarch64 goes to 1 for the same reason from the other side — 2 was
+      # already past the floor, and on that run shard0 ran its tests in 44
+      # seconds having waited 9.8 minutes to do it.
       matrix:
         include:
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 0 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 1 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 2 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 3 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 4 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 5 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 6 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 7 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 8 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 9 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 10 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 11 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 12 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 13 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 14 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 16, shard: 15 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 0 }
-          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 2, shard: 1 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 0 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 1 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 2 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 3 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 4 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 5 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 6 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 7 }
+          - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 1, shard: 0 }
     name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     # TOLERATE PREEMPTION ON X86 ONLY. The long x86 shards are intermittently
     # reclaimed mid-run by the runner pool (see RUNNER PREEMPTION above) — exit
     # 143 / "runner received a shutdown signal", with no test failure. The fix
@@ -917,9 +911,9 @@ jobs:
       - name: aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)
         if: matrix.host == 'x86_64'
         uses: ./.github/actions/apt-cross-toolchain
-      - uses: actions/download-artifact@v8
+      - uses: ./.github/actions/build-e2e-binaries
         with:
-          name: e2e-test-${{ matrix.host }}
+          e2e: "true"
       # DOWNLOAD every driver artifact the `warm` jobs published (x86 only) in a
       # single step: `pattern` places each artifact in its own subdirectory of
       # `path` (content-addressed, byte-identical to a fresh compile), so a
@@ -990,7 +984,7 @@ jobs:
           # (examples/self_host, internal/stdlib) resolve. gotestsum's
           # `--raw-command` runs the prebuilt binary through `go tool test2json`
           # (no recompile); the `standard-verbose` format streams each test's
-          # RUN/PASS/FAIL live. -test.timeout 18m sits under the 20-min job
+          # RUN/PASS/FAIL live. -test.timeout 28m sits under the 30-min job
           # budget so a genuine hang fails cleanly; a preemption reclaim is
           # distinct and out of our control (see RUNNER PREEMPTION above).
           #
@@ -1004,12 +998,12 @@ jobs:
           if [ ${#SEL_SH[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_SH[*]}"))\$"
             ( cd internal/e2eselfhost && gotestsum --format standard-verbose --jsonfile-timing-events "$RUNNER_TEMP/shard-selfhost.json" --raw-command -- \
-                go tool test2json -t -p e2eselfhost "$SH_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
+                go tool test2json -t -p e2eselfhost "$SH_BIN" -test.run "$PAT" -test.v -test.timeout 28m )
           fi
           if [ ${#SEL_RES[@]} -gt 0 ]; then
             PAT="^($(IFS='|'; echo "${SEL_RES[*]}"))\$"
             ( cd internal/e2e && gotestsum --format standard-verbose --jsonfile-timing-events "$RUNNER_TEMP/shard-residual.json" --raw-command -- \
-                go tool test2json -t -p e2e "$E2E_BIN" -test.run "$PAT" -test.v -test.timeout 18m )
+                go tool test2json -t -p e2e "$E2E_BIN" -test.run "$PAT" -test.v -test.timeout 28m )
           fi
       # RECORD THE SHARD'S VERDICT for the off-machine `verify` job. These steps
       # run on FAILURE too, so a shard that ran its tests always leaves a
@@ -1069,8 +1063,8 @@ jobs:
   verify:
     needs: test
     # `needs.test.result != 'skipped'` keeps this quiet when `test` never ran at
-    # all (a `build` failure cascades through `needs`): that is already red at
-    # its source, and reporting all 18 shards "vanished" on top of it would bury
+    # all (a `warm` failure cascades through `needs`): that is already red at
+    # its source, and reporting every shard "vanished" on top of it would bury
     # the real error. `!cancelled()` matches the recording steps' guard — see
     # the note there for why `always()` would manufacture false failures here.
     if: ${{ !cancelled() && needs.test.result != 'skipped' }}
@@ -1096,21 +1090,21 @@ jobs:
       # that unit test rather than silently narrowing what gets enforced.
       - name: verify every shard reported success
         id: verify
-        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=16 aarch64=2
+        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=8 aarch64=1
       # The verifier can only see that a marker is ABSENT, so it names all three
       # causes at once ("runner reclaim, OOM-kill, or timeout"). They want
       # opposite responses, and #6038 has been read as the apt-stall for
       # occurrences on x86_64, a lane that runs no apt install. The job record
       # distinguishes them and is reachable from here, so ask it. Advisory: it
       # cannot change the verdict (the step above already failed) and exits 0
-      # even when the API is unreachable. The 20 must match the shard job's
+      # even when the API is unreachable. The 30 must match the shard job's
       # timeout-minutes — TestSelfHostWorkflowVanishedShardBudgetMatchesTimeout
       # fails if they drift.
       - name: why did a shard leave no outcome
         if: failure() && steps.verify.outcome == 'failure'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci-classify-vanished-shards "${{ github.run_id }}" 20
+        run: scripts/ci-classify-vanished-shards "${{ github.run_id }}" 30
       # AUDIT THE SHARD WEIGHTS against what the shards actually measured
       # (#6823). The durations rode in with the outcome markers, so this costs
       # one awk pass over ~28 small files and no build. Advisory: the findings

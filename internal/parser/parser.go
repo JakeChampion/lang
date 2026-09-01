@@ -193,7 +193,32 @@ type parser struct {
 	// so each merged arm's payload temps are uniquely named. Resets per
 	// Parse() so the desugared names stay deterministic across runs.
 	nestN int
+	// depth is the current recursive-descent nesting depth, maintained by
+	// enter/leave. See maxNestDepth.
+	depth int
 }
+
+// maxNestDepth bounds how deeply recursive descent may nest. Source nested
+// past it is a P005 diagnostic rather than a stack overflow, which is a
+// fatal runtime error no recover() can turn back into an error. One source
+// nesting level costs more than one unit, since a level descends through
+// several of the guarded functions; the deepest source in this repository
+// peaks at 183 units.
+const maxNestDepth = 5000
+
+// enter records one level of recursive-descent nesting, reporting P005 once
+// the input nests past maxNestDepth. Every cycle in the parser's call graph
+// runs through a function that calls it, so no input can recurse without
+// bound — TestRecursionGuardsCoverEveryCycle pins that property.
+func (p *parser) enter() error {
+	p.depth++
+	if p.depth > maxNestDepth {
+		return p.errorfCode(p.peek().Pos, "P005", "input nests deeper than %d levels", maxNestDepth)
+	}
+	return nil
+}
+
+func (p *parser) leave() { p.depth-- }
 
 func (p *parser) peek() lexer.Token { return p.tokens[p.i] }
 
@@ -299,6 +324,31 @@ func (p *parser) moreElems(close string) bool {
 // and the index just past the modifier. Any other shape returns
 // ok=false, keeping `fip` / `fbip` usable as ordinary identifiers.
 func (p *parser) fipModifierAt(i int) (name string, allowance int, next int, ok bool) {
+	name, allowance, next, ok = p.fipModifierShapeAt(i)
+	if !ok {
+		return "", 0, 0, false
+	}
+	// A modifier shape only IS a modifier when the chain of shapes it
+	// starts ends at `function` — otherwise `fip(3)` followed by an
+	// ordinary ident named `fip` would misparse as a modifier pair.
+	// Each shape spans at least one token, so the scan terminates.
+	for j := next; j < len(p.tokens); {
+		if t := p.tokens[j]; t.Kind == lexer.Keyword && t.Text == "function" {
+			return name, allowance, next, true
+		}
+		_, _, after, shapeOK := p.fipModifierShapeAt(j)
+		if !shapeOK {
+			break
+		}
+		j = after
+	}
+	return "", 0, 0, false
+}
+
+// fipModifierShapeAt matches the `fip` / `fbip` token plus its optional
+// graded allowance at i, without judging what follows. next is the index
+// just past the shape.
+func (p *parser) fipModifierShapeAt(i int) (name string, allowance int, next int, ok bool) {
 	if i >= len(p.tokens) || p.tokens[i].Kind != lexer.Ident ||
 		(p.tokens[i].Text != "fip" && p.tokens[i].Text != "fbip") {
 		return "", 0, 0, false
@@ -325,19 +375,7 @@ func (p *parser) fipModifierAt(i int) (name string, allowance int, next int, ok 
 	if j >= len(p.tokens) {
 		return "", 0, 0, false
 	}
-	t := p.tokens[j]
-	if t.Kind == lexer.Keyword && t.Text == "function" {
-		return name, allowance, j, true
-	}
-	if t.Kind == lexer.Ident && (t.Text == "fip" || t.Text == "fbip") {
-		// Only treat the trailing fip/fbip ident as "the sibling modifier"
-		// when it is itself a modifier shape — otherwise `fip(3)` followed
-		// by an expression ident named fip would misparse.
-		if _, _, _, sibOK := p.fipModifierAt(j); sibOK {
-			return name, allowance, j, true
-		}
-	}
-	return "", 0, 0, false
+	return name, allowance, j, true
 }
 
 func (p *parser) expect(kind lexer.Kind, text string) (lexer.Token, error) {
@@ -2075,6 +2113,10 @@ func (p *parser) parseUnionMember() (ast.StructType, error) {
 }
 
 func (p *parser) parseType() (ast.Type, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	t := p.peek()
 	var base ast.Type
 	switch {
@@ -2415,6 +2457,11 @@ func (p *parser) parseBlock() (*ast.Block, error) {
 // `let … else` — so the tail they capture is parsed by exactly the same
 // loop, error sync and progress guard as the block they were written in.
 func (p *parser) parseBlockStmts(block *ast.Block) {
+	if err := p.enter(); err != nil {
+		p.errors = append(p.errors, err)
+		return
+	}
+	defer p.leave()
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		before := p.i
 		// `use IDENT : TYPE <- EXPR;` is a statement-position
@@ -2475,6 +2522,10 @@ func (p *parser) parseBlockStmts(block *ast.Block) {
 }
 
 func (p *parser) parseStmt() (ast.Stmt, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	t := p.peek()
 	if t.Kind == lexer.Punct && t.Text == "{" {
 		return p.parseBlock()
@@ -2885,6 +2936,10 @@ func (p *parser) parseLambda() (ast.Expr, error) {
 // stmts; }` is unaffected: parseStmt dispatches `if` before
 // expression parsing ever sees it.
 func (p *parser) parseIfExpr() (ast.Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	kw := p.advance() // `if`
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
@@ -4173,6 +4228,10 @@ func (p *parser) parseTupleElemVariant(elem *ast.TuplePatElem) error {
 // PAYLOAD slot is the same grammar, so parseTupleElemVariant calls this too —
 // which is what makes `(A(Ok(n)), y)` work without a second element parser.
 func (p *parser) parseTuplePatElem() (ast.TuplePatElem, error) {
+	if err := p.enter(); err != nil {
+		return ast.TuplePatElem{}, err
+	}
+	defer p.leave()
 	et := p.peek()
 	var elem ast.TuplePatElem
 	switch {
@@ -4240,6 +4299,10 @@ func (p *parser) parseTuplePatElems() ([]ast.TuplePatElem, error) {
 // with optional `mod.` qualifier and positional or named bindings),
 // leaving the cursor at the optional `|`, `when`, or `=>` that follows.
 func (p *parser) parseMatchPattern() (matchPattern, error) {
+	if err := p.enter(); err != nil {
+		return matchPattern{}, err
+	}
+	defer p.leave()
 	t := p.peek()
 	// `n @ <pattern>` — bind the whole matched value to `n` while also
 	// matching <pattern>. Recognised only for a real binder name (`_ @ …`
@@ -4987,6 +5050,10 @@ func (p *parser) parseParamPattern() (ast.Param, *ast.Destructure, error) {
 // so position alone would collide. The top level passes "" and keeps the
 // position-derived names it always had.
 func (p *parser) irrefutableDestructure(pos ast.Position, pat matchPattern, site, tag string) (*ast.Destructure, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	switch {
 	case pat.TupleElems != nil:
 		names := make([]string, len(pat.TupleElems))
@@ -5160,6 +5227,10 @@ var compoundOps = map[string]string{
 }
 
 func (p *parser) parseAssign() (ast.Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	left, err := p.parsePipe()
 	if err != nil {
 		return nil, err
@@ -5355,6 +5426,10 @@ func (p *parser) parseMultiplicative() (ast.Expr, error) {
 }
 
 func (p *parser) parseUnary() (ast.Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	if t := p.peek(); t.Kind == lexer.Punct && (t.Text == "-" || t.Text == "!") {
 		op := p.advance()
 		operand, err := p.parseUnary()

@@ -6,16 +6,43 @@ name: Examples
 # (and so a codegen regression on the example surface fails its
 # own check rather than being buried under "go test").
 #
-#   x86_64 lane (ubuntu-latest)    — driver emits arm64 .s only;
-#                                    no link / run (no cross-gcc
-#                                    installed to keep the lane
-#                                    fast).
-#   aarch64 lane (ubuntu-24.04-arm) — driver emits arm64 .s, gcc
-#                                    statically links it, the
-#                                    binary is actually executed.
+# ONE LANE, on ubuntu-24.04-arm: the driver emits arm64 .s, gcc
+# statically links it, and the binary is actually executed.
+#
+# There used to be an x86_64 lane beside it that emitted the same arm64
+# .s and stopped there — no link, no run, because no cross-gcc was
+# installed to keep it fast. That made it a strict subset of this one:
+# same compiler, same `-target arm64-linux`, same output, minus the two
+# steps that can catch anything the emit alone cannot. It cost a runner
+# slot per push to re-check a byte sequence this lane already produces
+# and then proves executable. Codegen output that varied by HOST arch
+# would be a bug in itself, and the differential lanes are what gate
+# that.
 
 on:
   pull_request:
+    # DOC-ONLY CHANGES DO NOT NEED THE COMPILER SUITE. This project opens a PR
+    # for every push including doc fixes and comment corrections, and each one
+    # was launching ~85 jobs into a queue that is the binding constraint on
+    # every other PR in flight.
+    #
+    # Deliberately narrow. `*.md` does not cross a `/` in a GitHub path filter,
+    # so it is root-level prose only (README, CLAUDE.md) and the literate
+    # sources under examples/literate/*.fern.md — which ARE compiled — still
+    # trigger everything. docs/ holds no .fern.md and no test fixture; the two
+    # e2e tests that name a docs/ path only cite it in a comment or a failure
+    # message.
+    #
+    # lint.yml deliberately has NO filter, so a doc-only PR still runs one real
+    # gate rather than reporting no checks at all.
+    #
+    # The identical block on every lane is pinned by
+    # TestPRWorkflowsShareOneDocOnlyFilter (internal/sourcelint).
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
 
 # Supersede an in-flight run for the same ref: a new push to the
@@ -28,14 +55,8 @@ concurrency:
 
 jobs:
   compile:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: ubuntu-latest,    host: x86_64  }
-          - { runner: ubuntu-24.04-arm, host: aarch64 }
-    name: examples-${{ matrix.host }}
-    runs-on: ${{ matrix.runner }}
+    name: examples-aarch64
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -46,10 +67,8 @@ jobs:
           for f in examples/*.fern; do
             name=$(basename "$f" .fern)
             ./bin/fern -target arm64-linux "$f" > "build/$name.s"
-            if [ "${{ matrix.host }}" = "aarch64" ]; then
-              gcc -static -nostdlib "build/$name.s" -o "build/$name"
-              echo "::group::run $name"
-              "./build/$name" || echo "(exited $?)"
-              echo "::endgroup::"
-            fi
+            gcc -static -nostdlib "build/$name.s" -o "build/$name"
+            echo "::group::run $name"
+            "./build/$name" || echo "(exited $?)"
+            echo "::endgroup::"
           done

@@ -6,12 +6,46 @@ name: Fuzz parse round-trip
 # bug. Caught bugs in #588 and #614 that the seed-based sweeps in
 # `go test` didn't surface.
 #
-# 60-second budget per arch — short enough to fit per-PR latency,
-# long enough to exercise the fuzzer beyond its first few thousand
-# inputs.
+# 60-second budget — short enough to fit per-PR latency, long enough
+# to exercise the fuzzer beyond its first few thousand inputs.
+#
+# ONE ARCH, deliberately. The target generates a program and runs it
+# through modload + parser + checker (fuzz_test.go: GenBytes then
+# checkGenerated); no backend, no codegen, nothing that reads the host.
+# So a second leg re-runs an arch-independent property for a second
+# runner slot, which under a saturated pool is a slot the self-host
+# lane does not get. The sibling fuzz-diff lane DOES keep both arches
+# and should: FuzzGenerate_ExecutionAgrees runs the compiled binaries
+# natively, so the host is the thing under test there.
+#
+# Depth comes from nightly-fuzz.yml, which runs this same target on a
+# much longer budget against a persisted corpus. This lane is a smoke
+# test.
 
 on:
   pull_request:
+    # DOC-ONLY CHANGES DO NOT NEED THE COMPILER SUITE. This project opens a PR
+    # for every push including doc fixes and comment corrections, and each one
+    # was launching ~85 jobs into a queue that is the binding constraint on
+    # every other PR in flight.
+    #
+    # Deliberately narrow. `*.md` does not cross a `/` in a GitHub path filter,
+    # so it is root-level prose only (README, CLAUDE.md) and the literate
+    # sources under examples/literate/*.fern.md — which ARE compiled — still
+    # trigger everything. docs/ holds no .fern.md and no test fixture; the two
+    # e2e tests that name a docs/ path only cite it in a comment or a failure
+    # message.
+    #
+    # lint.yml deliberately has NO filter, so a doc-only PR still runs one real
+    # gate rather than reporting no checks at all.
+    #
+    # The identical block on every lane is pinned by
+    # TestPRWorkflowsShareOneDocOnlyFilter (internal/sourcelint).
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
 
 # Supersede an in-flight run for the same ref: a new push to the
@@ -24,14 +58,8 @@ concurrency:
 
 jobs:
   fuzz:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: ubuntu-latest,    host: x86_64  }
-          - { runner: ubuntu-24.04-arm, host: aarch64 }
-    name: fuzz-parse-${{ matrix.host }}
-    runs-on: ${{ matrix.runner }}
+    name: fuzz-parse-x86_64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern

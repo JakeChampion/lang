@@ -361,7 +361,14 @@ function s_var_at(name: string, type_name: string, init: ast.Expr, line: i32, co
 // element can fail to match and a destructuring bind has no else branch. The
 // count is this level's position count, which the no-singleton-tuples rule
 // needs and a comma scan cannot give (a nested position carries its own).
+// parse_destructure_names is the depth-guarded face of parse_destructure_names_nested: see MAX_NEST_DEPTH.
 function parse_destructure_names(p: Par): (string, i32, boolean, Par) {
+    if (p.too_deep()) { return ("", 0, false, p.bail()); }
+    var (g0, g1, g2, gq) = parse_destructure_names_nested(p.with_depth(p.depth + 1));
+    return (g0, g1, g2, gq.with_depth(p.depth));
+}
+
+function parse_destructure_names_nested(p: Par): (string, i32, boolean, Par) {
     p = p.advance(); // consume `(`
     var names: string = "";
     var count: i32 = 0;
@@ -1021,14 +1028,14 @@ pub function resolve_labels_module(mod: Module): Module {
 // flat `fn` tag (#6773). Only `-fmt` sets it: those canonicalisations are what
 // every downstream `== "string"` / `== "fn"` dispatch site reads, and the
 // formatter is the one consumer that parses without compiling.
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean }
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32 }
 
 // scan_struct_names walks the token stream for `struct N` / `pub struct N`
 // declarations and returns the names. A shape scan, not a parse: `struct` is a
 // keyword, so the ident that follows one is always a declared struct name.
 function scan_struct_names(toks: lexer.Token[]): string[] {
     var out: string[] = [];
-    var q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false };
+    var q: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: out, verbatim: false , depth: 0 };
     while (!q.at_end()) {
         if (q.peek_keyword() != "struct") { q = q.advance(); continue; }
         q = q.advance();
@@ -1086,15 +1093,45 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim };
+    return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
 }
 // with_no_struct returns a cursor with the struct-literal-suppression
 // flag set as given (position unchanged).
 function (p: Par) with_no_struct(v: boolean): Par {
-    return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim };
+    return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
 }
 function (p: Par) with_map_kind(v: i32): Par {
-    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim };
+    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
+}
+
+// MAX_NEST_DEPTH bounds recursive descent. Past it the parse stops with a
+// "nest:too-deep" sentinel instead of running the stack out — a native build
+// gets no fatal-error diagnostic for that, just SIGSEGV, so the depth has to
+// be refused before the hardware notices. Chosen to match what native's
+// internal/parser accepts (its own budget is 5000 units at ~2 units per
+// nesting level), so the two front ends agree on which programs are legal.
+// Both count ~2 units per parenthesised level, so the same number here and in
+// native's maxNestDepth puts the two acceptance thresholds on top of each
+// other — pinned by TestSelfHostNestingBoundMatchesNative. The deepest source
+// in this repository nests 183 levels.
+const MAX_NEST_DEPTH: i32 = 5000;
+
+function (p: Par) with_depth(v: i32): Par {
+    return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v };
+}
+
+// too_deep reports whether entering one more recursive-descent level would
+// cross the bound.
+function (p: Par) too_deep(): boolean { return p.depth > MAX_NEST_DEPTH; }
+
+// bail parks the cursor on the final token so every `while (!q.at_end())`
+// loop above the guard unwinds at once. Returning the cursor unmoved would
+// leave those loops spinning on a position that never advances, turning a
+// depth refusal into a hang.
+function (p: Par) bail(): Par {
+    var last: i32 = p.toks.len() - 1;
+    if (last < p.pos) { last = p.pos; }
+    return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth };
 }
 
 // Token-shape queries: each returns "" when the token isn't of
@@ -2006,14 +2043,21 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
 // before parsing and every node the parse produces names the file.
 function parse_expr_from_text(text: string, base_line: i32, base_col: i32): ast.Expr {
     var toks: lexer.Token[] = lexer.rebase_tokens(lexer.tokenize(text), base_line, base_col);
-    var sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false };
+    var sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false , depth: 0 };
     var (r_expr, r_p) = parse_expr(sub);
     return r_expr;
 }
 
 // parse_primary: number, ident (which may extend to call), string,
 // bool, parenthesised expr, unknown otherwise.
+// parse_primary is the depth-guarded face of parse_primary_nested: see MAX_NEST_DEPTH.
 function parse_primary(p: Par): (ast.Expr, Par) {
+    if (p.too_deep()) { return (e_unknown_at("nest:too-deep", p.peek_line(), p.peek_col()), p.bail()); }
+    var (g0, gq) = parse_primary_nested(p.with_depth(p.depth + 1));
+    return (g0, gq.with_depth(p.depth));
+}
+
+function parse_primary_nested(p: Par): (ast.Expr, Par) {
     var t: lexer.Token = p.peek();
     match (t) {
         lexer.TokNumber(x) => {
@@ -2403,7 +2447,14 @@ function precedence(op: string): i32 {
 // parse_binary uses precedence climbing. `min_prec` is the
 // minimum precedence the caller will accept — recursively
 // climbs while the next operator's prec is >= min_prec.
+// parse_binary is the depth-guarded face of parse_binary_nested: see MAX_NEST_DEPTH.
 function parse_binary(p: Par, min_prec: i32): (ast.Expr, Par) {
+    if (p.too_deep()) { return (e_unknown_at("nest:too-deep", p.peek_line(), p.peek_col()), p.bail()); }
+    var (g0, gq) = parse_binary_nested(p.with_depth(p.depth + 1), min_prec);
+    return (g0, gq.with_depth(p.depth));
+}
+
+function parse_binary_nested(p: Par, min_prec: i32): (ast.Expr, Par) {
     var (lhs_expr, lhs_p) = parse_primary(p);
     p = lhs_p;
     while (true) {
@@ -2745,7 +2796,14 @@ function p_tuple_carrier(kinds: i32[], binds: string[], lits: ast.Expr[], pats: 
 // opening `(`, returning the element encoding. A parse problem yields
 // elem_kinds.len() == 0 (the callers emit a degenerate stmt).
 
+// parse_tuple_arm_pattern is the depth-guarded face of parse_tuple_arm_pattern_nested: see MAX_NEST_DEPTH.
 function parse_tuple_arm_pattern(p: Par): (i32[], string[], ast.Expr[], ast.Pattern[], Par) {
+    if (p.too_deep()) { return ([], [], [], [], p.bail()); }
+    var (g0, g1, g2, g3, gq) = parse_tuple_arm_pattern_nested(p.with_depth(p.depth + 1));
+    return (g0, g1, g2, g3, gq.with_depth(p.depth));
+}
+
+function parse_tuple_arm_pattern_nested(p: Par): (i32[], string[], ast.Expr[], ast.Pattern[], Par) {
     var elem_kinds: i32[] = [];
     var binds: string[] = [];
     var lits: ast.Expr[] = [];
@@ -3963,7 +4021,14 @@ function parse_block(p: Par): (ast.Stmt[], Par) {
 // parse_block_body parses statements up to (but not consuming) the block's
 // closing `}`. Split from parse_block so the callback-passing `use` bind can
 // recurse on the rest of the block.
+// parse_block_body is the depth-guarded face of parse_block_body_nested: see MAX_NEST_DEPTH.
 function parse_block_body(p: Par): (ast.Stmt[], Par) {
+    if (p.too_deep()) { return ([s_unknown_at("nest:too-deep", p.peek_line(), p.peek_col())], p.bail()); }
+    var (g0, gq) = parse_block_body_nested(p.with_depth(p.depth + 1));
+    return (g0, gq.with_depth(p.depth));
+}
+
+function parse_block_body_nested(p: Par): (ast.Stmt[], Par) {
     var body: ast.Stmt[] = [];
     while (p.peek_punct() != "}" && !p.at_end()) {
         // `use NAME [: TYPE] <- CALL;` — monadic-bind / callback-passing sugar
@@ -4052,7 +4117,14 @@ function parse_block_or_stmt(p: Par): (ast.Stmt[], Par) {
 // The lexer treats `_` as an identifier (underscore is a valid
 // alpha byte) so wildcards arrive here via peek_ident.
 
+// parse_pattern is the depth-guarded face of parse_pattern_nested: see MAX_NEST_DEPTH.
 function parse_pattern(p: Par): (ast.Pattern, Par) {
+    if (p.too_deep()) { return (p_wildcard(), p.bail()); }
+    var (g0, gq) = parse_pattern_nested(p.with_depth(p.depth + 1));
+    return (g0, gq.with_depth(p.depth));
+}
+
+function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
     // Accumulates the condition implied by any literal payload slots; see
     // PatVariant.lit_cond.
     var lit_cond: ast.Expr = e_bool(true);
@@ -5162,7 +5234,14 @@ function with_stmt_line(st: ast.Stmt, line: i32): ast.Stmt {
 }
 
 // parse_stmt parses one statement and stamps the line it began on.
+// parse_stmt is the depth-guarded face of parse_stmt_nested: see MAX_NEST_DEPTH.
 function parse_stmt(p: Par): (ast.Stmt, Par) {
+    if (p.too_deep()) { return (s_unknown_at("nest:too-deep", p.peek_line(), p.peek_col()), p.bail()); }
+    var (g0, gq) = parse_stmt_nested(p.with_depth(p.depth + 1));
+    return (g0, gq.with_depth(p.depth));
+}
+
+function parse_stmt_nested(p: Par): (ast.Stmt, Par) {
     var stmt_line: i32 = p.peek_line();
     var (parsed, after) = parse_stmt_at(p);
     return (with_stmt_line(parsed, stmt_line), after);
@@ -6033,7 +6112,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
 }
 
 pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
-    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false , depth: 0 };
     var out: ast.Stmt[] = [];
     while (!p.at_end()) {
         var (r_stmt, r_p) = parse_stmt(p);
@@ -6570,7 +6649,14 @@ function parse_type_ident_led(p: Par, base: string): (string, boolean, string, P
     return (nm, false, "", p);
 }
 
+// parse_type_name is the depth-guarded face of parse_type_name_nested: see MAX_NEST_DEPTH.
 function parse_type_name(p: Par): (string, boolean, string, Par) {
+    if (p.too_deep()) { return ("", false, "", p.bail()); }
+    var (g0, g1, g2, gq) = parse_type_name_nested(p.with_depth(p.depth + 1));
+    return (g0, g1, g2, gq.with_depth(p.depth));
+}
+
+function parse_type_name_nested(p: Par): (string, boolean, string, Par) {
     var base: string = p.peek_ident();
     if (base.len() == 0) { base = p.peek_keyword(); }
     if (base == "dyn") { return parse_type_dyn(p); }
@@ -17711,7 +17797,7 @@ function record_field_lines(acc: FieldLines[], verbatim: boolean, name: string, 
 }
 
 function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, TraitDecl[], ImplDecl[], FieldLines[]) {
-    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim };
+    var p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim , depth: 0 };
     var funcs: FuncDecl[] = [];
     var trait_defaults: TraitDefault[] = [];
     var trait_reqs: TraitReq[] = [];

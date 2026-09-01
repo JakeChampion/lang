@@ -5717,8 +5717,9 @@ func buildDropArrPtrBody(helperIdxs map[string]uint32) []byte {
 	// sweep can hand us an array-typed slot that actually holds a
 	// non-pointer (enum tag, small i32, never-taken-branch garbage).
 	// Reading mem[ptr-8] / mem[ptr-4] on such a value would corrupt
-	// the scratch / low-memory region; treat the low 64 KiB as
-	// "not a heap object" and pass it through untouched.
+	// the scratch / low-memory region; treat anything below
+	// rcLowAddrGuard as "not a heap object" and pass it through
+	// untouched.
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstI32Const(body, rcLowAddrGuard)
 	body = numeric.InstI32LtU(body)

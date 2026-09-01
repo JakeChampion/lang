@@ -477,9 +477,10 @@ Worth knowing so you do not assume coverage you do not have:
    a name in `.github/` that resolves to no test; when you retire a test, run
    it before assuming the workflows followed.
 8. **A wrong shard WEIGHT fails the shard, and only by timeout.** An entry that
-   badly understates a test pushes its bucket past the 18-minute
-   `-test.timeout`, so an unrelated PR goes red for a scheduling error — twice
-   so far (#5914, #6823). The `verify` job now audits the declared weights
+   badly understates a test pushes its bucket past the shard `-test.timeout`
+   (28 minutes, tracking the 30-minute job budget), so an unrelated PR goes red
+   for a scheduling error — twice so far (#5914, #6823), both at the earlier
+   18-minute figure. The `verify` job now audits the declared weights
    against the durations the shards report and prints a corrected-weights block
    in its job summary (`scripts/ci-test-weights`); it is advisory, so read the
    summary rather than waiting for a red. Weight pessimistically — the same test
