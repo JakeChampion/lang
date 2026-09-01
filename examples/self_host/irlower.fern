@@ -22174,6 +22174,20 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     if (slot_is_reclaimable_scenum(s, slot)) {
         return emit_arr_store(se, slot, reassign_inc, true);
     }
+    // A "TUP:" tuple rebind whose box RETAINED bare-ident ARRAY elements
+    // (#7226): give those retains back with the superseded box, via the same
+    // emit_tup_elem_reclaim_store the StmtVar re-declaration drives. Without
+    // this branch the shallow store below freed the box and stranded every
+    // retained element buffer. Restricted to 'a' kinds: an array element's
+    // release is one type-fixed rc_dec whichever writer stored it, while a
+    // string position may hold a VIEW local from a different writer than the
+    // one the kinds were recorded from — a str_free there frees a box the
+    // view's own sweep still owns.
+    var atek: string = s.tup_elem_kinds_of(slot);
+    if (atek.len() > 0 && !reassign_inc && tup_kinds_arr_only(atek)
+        && slot_is_reclaimable_tuple_rebind(s, slot)) {
+        return emit_tup_elem_reclaim_store(se, slot, atek);
+    }
     // A reclaimable SCALAR-TUPLE rebind (`p = (i, i + 1)`, credited "TUPREBIND:"):
     // release the box this store supersedes. emit_arr_store's do_dec branch is
     // exactly the right release — cow-guarded so a self-store never frees the live
@@ -24096,6 +24110,19 @@ function emit_tup_struct_elem_release(se: LowerState, slot: i32, n: i32): LowerS
     st = st.emit(ir.op_load_local(eslot));
     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
     return st.emit(ir.op_drop());
+}
+
+// tup_kinds_arr_only: every retained position in `kinds` is an array-family
+// element ('a'), with at least one.
+function tup_kinds_arr_only(kinds: string): boolean {
+    var any: boolean = false;
+    var i: i32 = 0;
+    while (i < kinds.len()) {
+        if (kinds[i] == b'a') { any = true; }
+        else if (kinds[i] != b'.') { return false; }
+        i = i + 1;
+    }
+    return any;
 }
 
 // emit_tup_elem_reclaim_store stores `new` (already on the operand stack) into a
@@ -30015,6 +30042,41 @@ function tuple_type_is_all_scalar(t: string): boolean {
     return any;
 }
 
+// tuple_ann_admits_fresh_mixed reports whether the tuple literal `init` is
+// admissible to the fresh-scalar-tuple ("TUP:") class under the binding's tuple
+// TYPE annotation `t`: a SCALAR-annotated position may hold ANY expression (the
+// type proves the element references nothing), and every non-scalar position
+// must hold a bare IDENT — the shape whose construction retain the
+// element-kinds walk gives back. A non-ident rc element (an array literal, a
+// fresh concat, a union-typed call) belongs to the deep "TUPRC:"/"TUPRCS:"
+// classes, and admitting it here would put one slot in BOTH classes — the
+// double box dec the recorded #7226 negative result measured — so that refusal
+// is the class boundary, not conservatism. Annotation and literal must agree
+// on length; an un-annotated binding answers false and keeps its prior
+// admission.
+function tuple_ann_admits_fresh_mixed(t: string, init: ast.Expr): boolean {
+    if (t.len() < 3 || slice_unchecked(t, 0, 1) != "(") { return false; }
+    match (init) {
+        ast.ExprTuple(tl) => {
+            if (tl.elements.len() == 0) { return false; }
+            var n: i32 = 0;
+            while (n < tl.elements.len()) {
+                var tag: string = tuple_type_elem_tag(t, n);
+                if (tag == "") { return false; }
+                if (!is_scalar_type_name(tag)) {
+                    var okid: boolean = false;
+                    match (tl.elements[n]) { ast.ExprIdent(_) => { okid = true; }, _ => {} }
+                    if (!okid) { return false; }
+                }
+                n = n + 1;
+            }
+            return tuple_type_elem_tag(t, tl.elements.len()) == "";
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // collect_fresh_scalar_tuple_names collects the LOCAL names bound from a fresh
 // scalar tuple literal (`var t = (3, 4)`), recursing into nested control flow the
 // same way collect_fresh_struct_names does. The escape gate (body_unsafe_for) is
@@ -30029,13 +30091,12 @@ function collect_fresh_tuple_in_stmt(st: ast.Stmt, acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
             // A fresh tuple local is reclaimable when its literal is all-scalar
-            // (tuple_lit_is_fresh_scalar) OR its binding annotation is an all-scalar
-            // tuple type (so `(i, 1): (i32, i32)` — variable scalar elements —
-            // qualifies too, not just all-literal tuples).
+            // (tuple_lit_is_fresh_scalar) OR its binding annotation admits it
+            // per-position (tuple_ann_admits_fresh_mixed): scalar positions may
+            // hold any expression — `(i, 1): (i32, i32)`, and `(i + 1, ys):
+            // (i32, i32[])` alike — with bare idents required at rc positions.
             var tfresh: boolean = tuple_lit_is_fresh_scalar(v.init);
-            if (!tfresh && tuple_type_is_all_scalar(v.type_name)) {
-                match (v.init) { ast.ExprTuple(_) => { tfresh = true; }, _ => {} }
-            }
+            if (!tfresh) { tfresh = tuple_ann_admits_fresh_mixed(v.type_name, v.init); }
             if (tfresh) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
             return acc;
         },
@@ -30055,36 +30116,12 @@ function collect_fresh_tuple_in_stmt(st: ast.Stmt, acc: string[]): string[] {
     }
 }
 
-// scalar_tuple_decl_ann_all_scalar: the `var` declaring `name` (searched through
-// nested control flow, since the interesting rebinds sit in loops) annotates it as
-// an all-scalar tuple type. The declaration's ANNOTATION is what lets an assignment
-// be judged — an assignment carries no type of its own, so `p = (i, i + 1)` can only
-// be known scalar-element-wise through the slot it stores into.
-function scalar_tuple_decl_ann_all_scalar(stmts: ast.Stmt[], name: string): boolean {
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => { if (v.name == name) { return tuple_type_is_all_scalar(v.type_name); } },
-            ast.StmtIf(f) => {
-                if (scalar_tuple_decl_ann_all_scalar(f.then_body, name)) { return true; }
-                if (scalar_tuple_decl_ann_all_scalar(f.else_body, name)) { return true; }
-            },
-            ast.StmtWhile(w) => { if (scalar_tuple_decl_ann_all_scalar(w.body, name)) { return true; } },
-            ast.StmtFor(fo) => { if (scalar_tuple_decl_ann_all_scalar(fo.body, name)) { return true; } },
-            ast.StmtMatch(m) => {
-                for arm in m.arms {
-                    if (scalar_tuple_decl_ann_all_scalar(arm.body, name)) { return true; }
-                }
-            },
-            _ => {}
-        }
-    }
-    return false;
-}
-
 // all_assigns_fresh_scalar_tuple: EVERY assignment to `name` (recursively) builds a
-// FRESH scalar tuple — an all-scalar-element literal, or any tuple literal when the
-// declaration annotated the slot all-scalar (`ann_ok`, which is what admits the
-// ubiquitous `p = (i, i + 1)` whose elements are expressions rather than leaves).
+// FRESH scalar tuple — an all-scalar-element literal, or a tuple literal the
+// declaration's ANNOTATION `ann` admits per-position (tuple_ann_admits_fresh_mixed,
+// which is what admits the ubiquitous `p = (i, i + 1)` whose elements are
+// expressions rather than leaves). An assignment carries no type of its own, so
+// the declaring slot's annotation is the one place its elements can be judged.
 //
 // This is the gate on the "TUPREBIND:" credit (#6127). The plain "TUP:" credit is
 // already granted to a rebound name — its escape gate never looked at reassignment —
@@ -30099,34 +30136,33 @@ function scalar_tuple_decl_ann_all_scalar(stmts: ast.Stmt[], name: string): bool
 // assignment anywhere disqualifies the name and it keeps its current leak. The
 // SARR: discipline: validate each rebind rather than refuse the name for being
 // rebound at all.
-function all_assigns_fresh_scalar_tuple(stmts: ast.Stmt[], name: string, ann_ok: boolean): boolean {
+function all_assigns_fresh_scalar_tuple(stmts: ast.Stmt[], name: string, ann: string): boolean {
     for stmt in stmts {
-        if (!stmt_assigns_fresh_scalar_tuple(stmt, name, ann_ok)) { return false; }
+        if (!stmt_assigns_fresh_scalar_tuple(stmt, name, ann)) { return false; }
     }
     return true;
 }
 
-function stmt_assigns_fresh_scalar_tuple(st: ast.Stmt, name: string, ann_ok: boolean): boolean {
+function stmt_assigns_fresh_scalar_tuple(st: ast.Stmt, name: string, ann: string): boolean {
     match (st) {
         ast.StmtAssign(a) => {
             if (a.target != name) { return true; }
             if (tuple_lit_is_fresh_scalar(a.value)) { return true; }
-            if (!ann_ok) { return false; }
-            match (a.value) { ast.ExprTuple(_) => { return true; }, _ => { return false; } }
+            return tuple_ann_admits_fresh_mixed(ann, a.value);
         },
         ast.StmtIf(f) => {
-            return all_assigns_fresh_scalar_tuple(f.then_body, name, ann_ok)
-                && all_assigns_fresh_scalar_tuple(f.else_body, name, ann_ok);
+            return all_assigns_fresh_scalar_tuple(f.then_body, name, ann)
+                && all_assigns_fresh_scalar_tuple(f.else_body, name, ann);
         },
-        ast.StmtWhile(w) => { return all_assigns_fresh_scalar_tuple(w.body, name, ann_ok); },
-        ast.StmtFor(fo) => { return all_assigns_fresh_scalar_tuple(fo.body, name, ann_ok); },
+        ast.StmtWhile(w) => { return all_assigns_fresh_scalar_tuple(w.body, name, ann); },
+        ast.StmtFor(fo) => { return all_assigns_fresh_scalar_tuple(fo.body, name, ann); },
         ast.StmtMatch(m) => {
             for arm in m.arms {
-                if (!all_assigns_fresh_scalar_tuple(arm.body, name, ann_ok)) { return false; }
+                if (!all_assigns_fresh_scalar_tuple(arm.body, name, ann)) { return false; }
             }
             return true;
         },
-        ast.StmtDefer(d) => { return stmt_assigns_fresh_scalar_tuple(d.action, name, ann_ok); },
+        ast.StmtDefer(d) => { return stmt_assigns_fresh_scalar_tuple(d.action, name, ann); },
         _ => { return true; }
     }
 }
@@ -70624,7 +70660,7 @@ while (ti < tups.len()) {
         // at exit, this that the SUPERSEDED box is freeable at the assignment.
         if (util.index_of_str(reassigned, tnm) >= 0
             && all_assigns_fresh_scalar_tuple(body, tnm,
-                    scalar_tuple_decl_ann_all_scalar(body, tnm))) {
+                    rctuple_type_of_decl(body, tnm))) {
             out = out.append("TUPREBIND:" + tups[ti]);
         }
         // The bare-ident element release (#7226) needs the owned-pointer-element
