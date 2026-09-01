@@ -1,0 +1,344 @@
+// examples/self_host/embed.fern — the `-embed DIR` asset bundle, and the pass
+// that resolves `__fern_asset("name")` / `__fern_assets()` against it.
+//
+// The self-host port of `internal/embed` plus the asset half of
+// `internal/constfold`: a directory is walked at compile time, each file
+// becomes an ordinary string literal, and nothing downstream — checker, IR,
+// any backend — learns that assets exist. `docs/EMBED.md` is the contract;
+// this file mirrors it name for name and message for message.
+//
+// Why the self-host needs it at all: a wasm-hosted compiler has no host
+// filesystem to read `internal/stdlib` from, and the CLI's stdlib root is a
+// path on the command line (`fern.fern`'s second positional). Native serves
+// the stdlib from `go:embed`; this is the mechanism that lets the self-host
+// carry it the same way (#6643).
+//
+// The substitution lives here rather than in constfold.fern, which the native
+// split does not have: native folds assets inside `constfold.Fold` because that
+// pass already evaluates `const` initialisers and already returns an error.
+// The self-host constfold is a post-order `astwalk.map_expr` folder with no
+// const phase and no error channel, so an asset arm there would have to invent
+// both. This pass runs BEFORE constfold, so `__fern_asset("a") + __fern_asset("b")`
+// still folds to one literal — constfold sees two string literals by then.
+
+import "./ast";
+import "./astwalk";
+import "./parser";
+import "./util";
+
+// ---- the bundle -------------------------------------------------------
+
+// Assets is one `-embed DIR` bundle. `names` is sorted and `contents` is
+// parallel to it — parallel arrays rather than a map because the lookup is a
+// compile-time linear scan over a few dozen entries and the tree already
+// spells bundles this way (fern.fern's VendorSet, builtins.fern's HeaderMap).
+//
+// `present` distinguishes an EMPTY bundle from NO bundle: `-embed` on a
+// directory holding no files is legitimate and makes `__fern_assets()` an
+// empty array, while omitting `-embed` makes any use of either builtin the
+// error.
+pub struct Assets { root: string, names: string[], contents: string[], present: boolean }
+
+// no_assets is the "-embed was not passed" bundle.
+pub function no_assets(): Assets {
+    return Assets { root: "", names: [], contents: [], present: false };
+}
+
+// LoadResult carries the bundle or the reason there is none. `err` is empty on
+// success.
+pub struct LoadResult { assets: Assets, err: string }
+
+// Walking a symlinked directory would recurse forever, and Fern has no way to
+// see that an entry IS a symlink — `stat` follows them and FileStat carries no
+// link bit, so the native walk's `!d.Type().IsRegular()` skip has no spelling
+// here (#7982). A depth cap turns the hang into a diagnostic; it is well past
+// any real asset tree.
+const MAX_EMBED_DEPTH: i32 = 32;
+
+// load walks `dir` and reads every file under it, keying each by its
+// slash-separated path relative to `dir`. Directories are followed; the walk is
+// a worklist rather than recursion, matching fern.fern's doc_tree/copy_package.
+//
+// Hidden files are NOT skipped, matching native: a `.gitignore` under the embed
+// root is an asset like any other.
+pub function load(dir: string): LoadResult {
+    var names: string[] = [];
+    var contents: string[] = [];
+    // Relative subdirectories still to visit, "" being `dir` itself, and the
+    // depth of each so a symlink loop is bounded rather than fatal-by-hanging.
+    var rels: string[] = [""];
+    var depths: i32[] = [0];
+    var ri: i32 = 0;
+    var listed_root: boolean = false;
+    while (ri < rels.len()) {
+        var rel: string = rels[ri];
+        var depth: i32 = depths[ri];
+        ri = ri + 1;
+        var sdir: string = dir;
+        if (rel.len() > 0) { sdir = dir + "/" + rel; }
+        var entries: string[] = [];
+        var listed: boolean = false;
+        match (read_dir(sdir)) { Ok(ns) => { entries = ns; listed = true; }, Err(e) => { } }
+        if (!listed) {
+            // The root not being a directory is the reportable case; a
+            // subdirectory that stopped being readable mid-walk is not
+            // distinguishable from one that was never there.
+            if (rel.len() == 0) {
+                return LoadResult { assets: no_assets(), err: "-embed " + dir + ": not a directory" };
+            }
+            continue;
+        }
+        listed_root = true;
+        var i: i32 = 0;
+        while (i < entries.len()) {
+            var name: string = entries[i];
+            i = i + 1;
+            var child_rel: string = name + "";
+            if (rel.len() > 0) { child_rel = rel + "/" + name; }
+            var child: string = dir + "/" + child_rel;
+            if (is_dir_path(child)) {
+                if (depth + 1 > MAX_EMBED_DEPTH) {
+                    return LoadResult { assets: no_assets(), err: "-embed " + dir + ": directory nesting deeper than " + util.i32_to_string(MAX_EMBED_DEPTH) + " at " + child_rel + " — a symlink loop?" };
+                }
+                rels = rels.append(child_rel + "");
+                depths = depths.append(depth + 1);
+                continue;
+            }
+            var body: string = "";
+            var read_ok: boolean = false;
+            match (read_file(child)) { Ok(s) => { body = s; read_ok = true; }, Err(e) => { } }
+            if (!read_ok) {
+                return LoadResult { assets: no_assets(), err: "-embed " + dir + ": cannot read " + child_rel };
+            }
+            names = names.append(child_rel + "");
+            contents = contents.append(body + "");
+        }
+    }
+    if (!listed_root) {
+        return LoadResult { assets: no_assets(), err: "-embed " + dir + ": not a directory" };
+    }
+    var (sn, sc) = sort_pairs(names, contents);
+    return LoadResult { assets: Assets { root: dir, names: sn, contents: sc, present: true }, err: "" };
+}
+
+// is_dir_path reports whether `path` names a directory, the same read_dir probe
+// fern.fern's is_dir uses: a file answers ENOTDIR.
+function is_dir_path(path: string): boolean {
+    match (read_dir(path)) {
+        Ok(ns) => { return true; },
+        Err(e) => { return false; },
+    }
+    return false;
+}
+
+// sort_pairs orders `names` ascending, carrying `contents` along. Sorted order
+// is what makes `__fern_assets()` emit the same program on every host — a
+// filesystem-order walk would not.
+function sort_pairs(names: string[], contents: string[]): (string[], string[]) {
+    var on: string[] = [];
+    var oc: string[] = [];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var pos: i32 = 0;
+        while (pos < on.len() && util.str_less(on[pos], names[i])) { pos = pos + 1; }
+        var nn: string[] = [];
+        var nc: string[] = [];
+        var j: i32 = 0;
+        while (j < pos) { nn = nn.append(on[j]); nc = nc.append(oc[j]); j = j + 1; }
+        nn = nn.append(names[i]);
+        nc = nc.append(contents[i]);
+        while (j < on.len()) { nn = nn.append(on[j]); nc = nc.append(oc[j]); j = j + 1; }
+        on = nn;
+        oc = nc;
+        i = i + 1;
+    }
+    return (on, oc);
+}
+
+// lookup returns the index of `name` in the bundle, or -1.
+pub function lookup(a: Assets, name: string): i32 {
+    return util.index_of_str(a.names, name);
+}
+
+// common_affix scores two names by the longer of their shared prefix and their
+// shared suffix, in bytes.
+function common_affix(a: string, b: string): i32 {
+    var n: i32 = a.len();
+    if (b.len() < n) { n = b.len(); }
+    var pre: i32 = 0;
+    while (pre < n && a[pre] == b[pre]) { pre = pre + 1; }
+    var suf: i32 = 0;
+    while (suf < n && a[a.len() - 1 - suf] == b[b.len() - 1 - suf]) { suf = suf + 1; }
+    if (suf > pre) { return suf; }
+    return pre;
+}
+
+// suggest names the closest asset to `want`, or "" when nothing is close
+// enough. The winner must match at least a third of what was typed; ties go to
+// the first in sorted order.
+pub function suggest(a: Assets, want: string): string {
+    var best: string = "";
+    var best_score: i32 = 0;
+    var i: i32 = 0;
+    while (i < a.names.len()) {
+        var score: i32 = common_affix(a.names[i], want);
+        if (score > best_score) { best_score = score; best = a.names[i]; }
+        i = i + 1;
+    }
+    if (best_score * 3 < want.len()) { return ""; }
+    return best;
+}
+
+// format_available renders the bundle for a miss diagnostic: up to ten names,
+// then a count of the rest.
+pub function format_available(a: Assets): string {
+    if (a.names.len() == 0) { return "no assets were embedded"; }
+    var shown: i32 = a.names.len();
+    if (shown > 10) { shown = 10; }
+    var out: string = "embedded assets: ";
+    var i: i32 = 0;
+    while (i < shown) {
+        if (i > 0) { out = out + ", "; }
+        out = out + a.names[i];
+        i = i + 1;
+    }
+    if (a.names.len() > shown) {
+        out = out + " (and " + util.i32_to_string(a.names.len() - shown) + " more)";
+    }
+    return out;
+}
+
+// ---- the substitution pass --------------------------------------------
+
+// ASSET_ONE / ASSET_ALL are the two builtin spellings. Neither is declared
+// anywhere: an occurrence this pass does not substitute reaches the checker as
+// an ordinary undefined callee.
+const ASSET_ONE: string = "__fern_asset";
+const ASSET_ALL: string = "__fern_assets";
+
+// Folded is the pass's result: the rewritten module and every asset error, in
+// source order.
+pub struct Folded { module: parser.Module, errs: string[] }
+
+// FoldAcc threads the bundle and the errors through astwalk's accumulator
+// spine. The accumulator is pointer-shaped, which is what an erased slot can
+// carry.
+struct FoldAcc { assets: Assets, errs: string[] }
+
+// fold_assets replaces every `__fern_asset(...)` / `__fern_assets()` call in
+// `mod` with the literal it names. Errors are collected rather than thrown, so
+// one bad name does not hide the next.
+pub function fold_assets(mod: parser.Module, assets: Assets): Folded {
+    var acc: FoldAcc = FoldAcc { assets: assets, errs: [] };
+    var funcs: parser.FuncDecl[] = [];
+    for fd in mod.funcs {
+        var (body, a2) = astwalk.map_stmts_acc(fd.body, acc, fa_keep_stmt, fa_expr);
+        acc = a2;
+        funcs = funcs.append(parser.FuncDecl { ...fd, body: body });
+    }
+    var (tops, a3) = astwalk.map_stmts_acc(mod.top_stmts, acc, fa_keep_stmt, fa_expr);
+    acc = a3;
+    return Folded { module: parser.Module { ...mod, funcs: funcs, top_stmts: tops }, errs: acc.errs };
+}
+
+// fa_keep_stmt declines every statement, which is how a caller with nothing to
+// say about statements asks the spine to descend into their expressions.
+function fa_keep_stmt(s: ast.Stmt, a: FoldAcc): (ast.Stmt, FoldAcc, boolean) {
+    return (s, a, false);
+}
+
+// fa_expr CLAIMS an asset call, so the spine never walks its arguments. That is
+// what makes the name a syntactic requirement rather than a value one: nothing
+// has rewritten `__fern_asset(NAME)`'s argument by the time it is checked, so a
+// const-bound name is refused exactly as native refuses it.
+function fa_expr(e: ast.Expr, a: FoldAcc): (ast.Expr, FoldAcc, boolean) {
+    match (e) {
+        ast.ExprCall(c) => {
+            var name: string = callee_ident(c.callee);
+            if (name == ASSET_ALL) { return resolve_all(c, a); }
+            if (name == ASSET_ONE) { return resolve_one(c, a); }
+            return (e, a, false);
+        },
+        _ => { return (e, a, false); }
+    }
+    return (e, a, false);
+}
+
+// callee_ident names a directly-called function, or "" for any other callee
+// shape. Matching on the name alone is deliberate: a malformed use is still
+// recognised here and reported as an asset error, rather than falling through
+// to "undefined function".
+function callee_ident(callee: ast.Expr): string {
+    match (callee) {
+        ast.ExprIdent(id) => { return id.name; },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// at renders a call site as `line:col`, the prefix every message below carries.
+function at(line: i32, col: i32): string {
+    return util.i32_to_string(line) + ":" + util.i32_to_string(col) + ": ";
+}
+
+// fail returns the original call untouched with one more error recorded. The
+// call is CLAIMED either way — leaving a bad `__fern_asset` for the checker to
+// rediscover as an undefined callee would report the same source twice under
+// two different names.
+function fail(c: ast.ExprCall, a: FoldAcc, msg: string): (ast.Expr, FoldAcc, boolean) {
+    return (ast.ExprCall { ...c }, FoldAcc { ...a, errs: a.errs.append(msg) }, true);
+}
+
+// resolve_one turns `__fern_asset("name")` into the string literal holding that
+// file's bytes.
+function resolve_one(c: ast.ExprCall, a: FoldAcc): (ast.Expr, FoldAcc, boolean) {
+    if (c.args.len() != 1) {
+        return fail(c, a, at(c.line, c.col) + ASSET_ONE + " takes exactly one argument, got " + util.i32_to_string(c.args.len()));
+    }
+    var lit: string = "";
+    var is_lit: boolean = false;
+    match (c.args[0]) {
+        ast.ExprString(s) => { lit = s.value; is_lit = true; },
+        _ => { }
+    }
+    if (!is_lit) {
+        return fail(c, a, at(c.line, c.col) + ASSET_ONE + " needs a string literal — assets are resolved at compile time, so the name cannot be computed");
+    }
+    if (!a.assets.present) {
+        return fail(c, a, at(c.line, c.col) + ASSET_ONE + "(\"" + lit + "\") but no assets were embedded — pass -embed DIR to the compiler");
+    }
+    var idx: i32 = lookup(a.assets, lit);
+    if (idx < 0) {
+        var msg: string = at(c.line, c.col) + "no embedded asset \"" + lit + "\" under " + a.assets.root;
+        var did: string = suggest(a.assets, lit);
+        if (did.len() > 0) { return fail(c, a, msg + "; did you mean \"" + did + "\"?"); }
+        return fail(c, a, msg + " (" + format_available(a.assets) + ")");
+    }
+    return (ast.ExprString { value: a.assets.contents[idx], line: c.line, col: c.col }, a, true);
+}
+
+// resolve_all turns `__fern_assets()` into `[(name, contents), …]` over the
+// whole bundle, sorted by name.
+//
+// `elem_ty` is stamped whether or not the bundle is empty. An unstamped empty
+// array literal has no element type for the checker or for irlower's slot
+// widths, which is the one place the stamp is load-bearing — but stamping it
+// only there would make the empty bundle the odd case rather than the same one.
+function resolve_all(c: ast.ExprCall, a: FoldAcc): (ast.Expr, FoldAcc, boolean) {
+    if (c.args.len() != 0) {
+        return fail(c, a, at(c.line, c.col) + ASSET_ALL + " takes no arguments, got " + util.i32_to_string(c.args.len()));
+    }
+    if (!a.assets.present) {
+        return fail(c, a, at(c.line, c.col) + ASSET_ALL + "() but no assets were embedded — pass -embed DIR to the compiler");
+    }
+    var elems: ast.Expr[] = [];
+    var i: i32 = 0;
+    while (i < a.assets.names.len()) {
+        var pair: ast.Expr[] = [];
+        pair = pair.append(ast.ExprString { value: a.assets.names[i], line: c.line, col: c.col });
+        pair = pair.append(ast.ExprString { value: a.assets.contents[i], line: c.line, col: c.col });
+        elems = elems.append(ast.ExprTuple { elements: pair, line: c.line, col: c.col });
+        i = i + 1;
+    }
+    return (ast.ExprArray { elements: elems, elem_ty: "(string, string)", line: c.line, col: c.col }, a, true);
+}

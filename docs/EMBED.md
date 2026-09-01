@@ -13,6 +13,13 @@ program.
 fern -embed ./assets -target x86-64-linux -o prog prog.fern
 ```
 
+Both compilers take the flag. The self-host CLI spells it identically and
+still takes the stdlib root as its trailing positional argument:
+
+```
+fern-selfhost -embed ./assets -target x86-64-linux -o prog prog.fern internal/stdlib
+```
+
 ```fern
 const PAGE: string = __fern_asset("html/index.html");
 
@@ -138,6 +145,15 @@ call to an undefined function.
 Symlinks under the embed root are **skipped, not followed**, so an asset
 tree cannot reach outside its root or wedge the walk on a cycle.
 
+That holds for the **native** compiler. The self-host port
+(`examples/self_host/embed.fern`) follows them, because Fern has no way to
+ask whether a path is a symlink — `stat` follows them and `FileStat` carries
+no link bit — so the predicate native spends one `WalkDir` type check on has
+no spelling there. It caps directory nesting at 32 instead, which makes a
+cycle a diagnostic rather than a hang. #7982 tracks the missing surface; on a
+tree with no symlinks, which is every tree either compiler is pointed at
+today, the two agree exactly.
+
 What this gives up, deliberately: **late binding** — changing assets in a
 shipped binary without recompiling. #6069 considered and rejected
 redbean's trailing-ZIP trick, whose whole value is that property; the
@@ -157,6 +173,8 @@ literals and an array of tuples is not one. Bind it with `var`.
 | Enumeration: sorted order, contents, binary bytes, empty bundle, error paths | `internal/constfold/asset_test.go` |
 | End-to-end through the native backend + the CLI diagnostics | `cmd/fern/embed_test.go` |
 | Enumeration end-to-end + the empty-bundle compile | `cmd/fern/embed_test.go` |
+| The self-host bundle + substitution, every error path | `examples/self_host/embed_run.fern`, gated by `internal/e2eselfhost/self_host_embed_test.go` |
+| Native and self-host agreeing on the same source + the same directory | `internal/e2eselfhost/self_host_embed_test.go` |
 
 The e2e test's load-bearing assertion is the **binary** asset: its blob
 carries interior NULs and bytes >= 0x80, so a correct exit code proves both
