@@ -1,0 +1,82 @@
+// std/platform — the capability surface on the `Platform` bag.
+//
+// Every handler takes the bag as its second parameter
+// (`handle(req: HttpRequest, plat: Platform)`,
+// docs/PLATFORM-RESEARCH.md Rec §1). This module is what the bag is
+// FOR: the host effects a handler is allowed to reach — a log sink, a
+// clock, the invocation environment, entropy — reachable as methods on
+// the value it was handed rather than as ambient free functions.
+//
+// The free functions stay: a CLI tool with no handler in sight calls
+// `eprint` / `now_unix_ms` directly and always will. What the bag adds
+// is a handler that cannot reach an effect it was not given, which is
+// the seam the rest of the platform story hangs off — mock platforms in
+// tests (Rec §6), per-target capability sets (Rec §2), effect rows
+// (Rec §10). `fern -lint`'s `ambient-capability` rule reports a handler
+// body that reaches around the bag.
+//
+// Each method needs the target capability named in its comment
+// (`internal/platforms`): a target whose profile lacks it fails the
+// build with E066 rather than at run time. What a handler can call is
+// therefore a property of where it is going — the `wasi-http` proxy
+// world grants log / now / random / fetch and nothing else, so `.env`
+// is a build error there and deploy-time configuration has to arrive
+// as a binding (Rec §7) rather than through envp.
+//
+// Outbound HTTP is the one capability that lives elsewhere:
+// `(plat: Platform).fetch(host, port, path)` is in `std/fetch`, next to
+// the socket machinery that implements it.
+
+// `platform_new()` — the bag as the host serves it, for code that has
+// to build one: a test driving a handler directly, or a caller of
+// `tcp_serve` that wants to hand its own handler the same value the
+// accept loop would. (The serving paths — `std/tcp`'s accept loop and
+// the wasi-http entry wrapper — construct the bag themselves; reaching
+// here for it would put this module's capabilities in their reach.)
+//
+//     var resp: HttpResponse = handle(req, platform_new());
+//
+// `version` is the bag's ABI version, bumped when a capability field is
+// added, so a handler compiled against an older bag can tell.
+pub function platform_new(): Platform {
+    return Platform { version: 1 };
+}
+
+// `.log(msg)` — write one diagnostic line to the platform's log sink.
+// Needs the `log` capability. Newline-terminated; goes to stderr on
+// every target that has one (a proxy-world component has no stdout, so
+// this is the only output a handler gets).
+pub function (plat: Platform) log(msg: string): void {
+    eprint(msg);
+}
+
+// `.now_ms()` — wall-clock milliseconds since the Unix epoch. Needs the
+// `now` capability. Subject to clock adjustment: stamp a response with
+// it, don't time anything with it — that's `.elapsed_ns()`.
+pub function (plat: Platform) now_ms(): i64 {
+    return now_unix_ms();
+}
+
+// `.elapsed_ns()` — monotonically non-decreasing nanoseconds from an
+// unspecified origin. Needs the `now` capability. The difference
+// between two readings is an elapsed time regardless of what the wall
+// clock did in between, which is what a handler's latency budget wants.
+pub function (plat: Platform) elapsed_ns(): i64 {
+    return monotonic_ns();
+}
+
+// `.env(name)` — one variable from the invocation environment. Needs
+// the `env` capability, which only a target with a process has: this is
+// where deploy-time configuration arrives on the native and wasi-cli
+// targets, while a proxy-world handler waits on named bindings
+// (docs/PLATFORM-RESEARCH.md Rec §7). `Some("")` for a variable set to
+// the empty string, `None` for one that is not set.
+pub function (plat: Platform) env(name: string): Option[string] {
+    return env(name);
+}
+
+// `.random_i32()` — one uniformly random i32 from the platform CSPRNG.
+// Needs the `random` capability.
+pub function (plat: Platform) random_i32(): i32 {
+    return random_i32();
+}

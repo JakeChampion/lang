@@ -957,6 +957,43 @@ old `concurrent { … }` / `await` keyword surface.
   `Option[T][]`: `Some(v)` for each that resolved in time, `None` for
   one abandoned at the deadline.
 
+### `std/platform`
+
+The capability surface on the `Platform` bag every handler takes as
+its second parameter (`handle(req: HttpRequest, plat: Platform)` —
+[`docs/PLATFORM-RESEARCH.md`](./PLATFORM-RESEARCH.md) Rec §1). Host
+effects reached as methods on the value the handler was handed, so a
+handler can only reach what it was given. The free functions
+(`eprint`, `now_unix_ms`, …) stay for programs that are not handlers;
+`fern -lint`'s `ambient-capability` rule reports a handler body that
+reaches around the bag.
+
+Each method needs its target capability (`internal/platforms`), so
+what a handler may call depends on where it is going: the `wasi-http`
+proxy world grants log / now / random / fetch, and `.env` is an E066
+there.
+
+```
+import "std/platform";
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    plat.log(req.method + " " + req.path);
+    return http.http_response_ok("ok");
+}
+```
+
+- `platform_new()` — the bag as the host serves it, for tests and
+  hand-driven handlers (the serving paths build their own).
+- `(plat).log(msg)` — one line to the platform's log sink (`log`).
+- `(plat).now_ms()` — wall-clock ms since the epoch (`now`).
+- `(plat).elapsed_ns()` — monotonic ns, for measuring (`now`).
+- `(plat).env(name)` — one variable from the invocation environment,
+  `Option[string]` (`env`).
+- `(plat).random_i32()` — one draw from the platform CSPRNG
+  (`random`).
+- `(plat).fetch(host, port, path)` lives in `std/fetch`, next to the
+  sockets that implement it.
+
 ### `std/mock_platform`
 
 Test-ergonomics helpers for recording and asserting on platform

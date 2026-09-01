@@ -68,6 +68,7 @@ var stdModuleReach = map[string]string{
 	"std/option":        "",
 	"std/path":          "",
 	"std/peg":           "",
+	"std/platform":      "env,log,now,random",
 	"std/rand":          "random",
 	"std/regex":         "",
 	"std/result":        "",
