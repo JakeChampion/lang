@@ -9284,7 +9284,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("add x2, x29, #96")
 	g.emit("mov x3, #%d", atFlags)
 	g.syscallFstatat()
-	g.emit("tbnz x0, #63, .L" + lp + "_err")
+	g.emit("tbnz x0, #63, .L%s_err", lp)
 	if g.darwin {
 		g.emit("ldrh w9, [x29, #100]") // st_mode (u16 @ +4)
 	} else {
@@ -9295,13 +9295,13 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("mov x23, #0")     // is_file
 	g.emit("mov w10, #32768") // S_IFREG
 	g.emit("cmp w9, w10")
-	g.emit("b.ne .L" + lp + "_nf")
+	g.emit("b.ne .L%s_nf", lp)
 	g.emit("mov x23, #1")
 	g.label(".L" + lp + "_nf")
 	g.emit("mov x24, #0")     // is_dir
 	g.emit("mov w10, #16384") // S_IFDIR
 	g.emit("cmp w9, w10")
-	g.emit("b.ne .L" + lp + "_nd")
+	g.emit("b.ne .L%s_nd", lp)
 	g.emit("mov x24, #1")
 	g.label(".L" + lp + "_nd")
 	g.emit("ldr x25, [x29, #%d]", 96+g.statSizeOff()) // st_size
@@ -9316,7 +9316,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("bl __fern_alloc_box")
 	g.emit("str wzr, [x0]") // tag = 0 (Ok)
 	g.emit("str x21, [x0, #8]")
-	g.emit("b .L" + lp + "_return")
+	g.emit("b .L%s_return", lp)
 
 	g.label(".L" + lp + "_err")
 	g.emit("neg x22, x0")
