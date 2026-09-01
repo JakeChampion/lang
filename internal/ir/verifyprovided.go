@@ -19,6 +19,8 @@
 // skipped and counted, so the worst an omission costs is coverage.
 package ir
 
+import "sort"
+
 // providedSig is what a backend-provided callee consumes and produces.
 type providedSig struct {
 	// argSlots is how many operand-stack slots the call's arguments
@@ -327,4 +329,19 @@ func ProvidedCallee(name string, twoWordStr bool) (argSlots, resultSlots int, ok
 		return 0, 0, false
 	}
 	return sig.argSlots, len(sig.result.slots(twoWordStr)), true
+}
+
+// ProvidedCalleeNames lists every callee the table records, sorted.
+//
+// Exported for the same reason as ProvidedCallee, one step further: a
+// backend can be asked not just whether it agrees about a name it knows,
+// but whether it can lower the whole set. Nothing in the compiler
+// consults it.
+func ProvidedCalleeNames() []string {
+	names := make([]string, 0, len(providedSigs))
+	for name := range providedSigs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

@@ -126,8 +126,18 @@ const (
 	// `fd_fdstat_get`, which `isatty` reads `fs_filetype` (byte 0) out of.
 	fdstatBufAddr = arrPushCopiedAddr + 8
 
+	// The string builder's three words: the heap pointer to its byte
+	// buffer, the live length, and the allocated capacity. wasmbin emits
+	// no global section, so the builder's state lives here rather than in
+	// wasm globals the way the self-host wasm backend writes it.
+	// ptr = 0 / cap = 0 is the "no buffer yet" state; the first append
+	// allocates one.
+	strbufPtrAddr = fdstatBufAddr + 24
+	strbufLenAddr = strbufPtrAddr + 4
+	strbufCapAddr = strbufLenAddr + 4
+
 	// scratchEnd is the first address past the named scratch.
-	scratchEnd = fdstatBufAddr + 24
+	scratchEnd = strbufCapAddr + 4
 )
 
 // allocMinStart is the floor for the bump cursor: past every reserved slot

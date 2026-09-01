@@ -130,6 +130,9 @@ var rcResultOwned = map[string]bool{
 	"__fern_str_append": true,
 	// Copies through __fern_str_copy — unlike __fern_arg_at beside it.
 	"__fern_env_at": true,
+	// Snapshots the string builder into a fresh rc=1 string and rewinds
+	// it, so the result aliases nothing the builder goes on to overwrite.
+	"strbuf_take": true,
 
 	// Byte buffers in the __alloc_u8 box shape.
 	"__fern_random_bytes": true,
@@ -282,6 +285,7 @@ var rcResultNonPointer = map[string]bool{
 	"__memcpy": true, "__memset": true, "__store_i32": true,
 	"__store_i64": true, "__store_ptr": true, "__http_entry": true,
 	"__fern_reader_close": true,
+	"strbuf_reset":        true, "strbuf_append": true,
 
 	// f64.
 	"__fern_abs_f64": true, "__fern_ceil_f64": true, "__fern_cos_f64": true,
