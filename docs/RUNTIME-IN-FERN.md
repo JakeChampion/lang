@@ -58,8 +58,8 @@ check whether the floor already says the thing.
 
 What remains hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
-core allocator / map runtime and the array MUTATORS (`__fern_alloc`,
-`__fern_map_*`, `__fern_arr_push`), the net/proc/timer leaves (audited below),
+core allocator and the array MUTATORS (`__fern_alloc`, `__fern_arr_push`),
+what is left of the map runtime, the net/proc/timer leaves (audited below),
 and the per-backend wasm helper bundles. Three helpers stay hand-written on
 principle rather than for want of a wrapper, all on Darwin: `monotonic_ns`
 (`mrs cntvct_el0` is not a syscall), `fork` (it reports failure in the carry
@@ -67,6 +67,44 @@ flag and marks the child in `x1`, and Fern can read neither), and `subprocess`,
 which needs both that `fork` and a `pipe()` that reports its second fd in `x1`
 too. Everywhere else `subprocess` is Fern — the first COMPOSITE to move, and
 the one that showed length is not the same thing as floor distance.
+
+## The map runtime's key search — one Fern helper, eighteen copies gone
+
+`__fern_map_find(keys, key, keykind, eqfn) -> i32` answers the index of `key` in
+the keys array, or -1. It is the whole map runtime's search, and it replaces
+**eighteen** hand-written copies of itself: `map_set`, `map_get` and `map_has`
+each carried a string, an i32 and a struct/enum variant of the same loop, per
+register backend, and `__fern_map_delete`'s Fern body had inlined a fourth.
+
+Two things about the slice generalise beyond maps.
+
+**The right unit was not the whole verb.** The obvious next step after
+`map_delete` was `map_get` — and it is the wrong shape. What the three verbs
+share is the *search*; what they do not share is the answer (an `Option` box, a
+boolean, an in-place overwrite, a two-column compaction) and, for `map_set`, a
+pair of flag bits that decide how the key is freed and which append helper runs.
+Migrating a verb at a time would have carried that tail into Fern with it and
+still left the loop duplicated three ways. Extracting the search alone leaves
+each caller as a handful of hand-asm instructions over a shared body, and the
+callers keep the register-ABI entry points their op sites already call. Look for
+the repeated fragment, not the named helper.
+
+**Nothing new was needed to call it.** `is_fern_helper` already claims a name
+for the helper-call emit and `ir_helper_symbol` already resolves it to
+`__fn___fern_*`, so the three hand-asm callers reach it by symbol under the
+stack ABI they were already using for `__fn___fern_str_eq`, and
+`__fern_map_delete`'s Fern body reaches it through one `irlower` arm of the
+shape `__fern_str_eq` and the RC hooks already had. That is the fourth
+consecutive slice where the floor already said the thing.
+
+The gating is the one place it differs from `map_delete`, deliberately.
+`map_delete` got a need of its OWN because its Fern body is larger than the
+hand-asm it replaced and most map programs never delete; `map_find` rides
+`maps`, because every body in that bundle calls it. The result is a net SHRINK
+for programs that use more than one map verb (−296 bytes on a get/has/set/delete
+mix, −1.6% on `map_struct_enum_keys`) and about +2% for a program using maps
+without deleting, which is the one shape that traded three tight loops for one
+general body.
 
 ## The hot core needs better codegen first, not better expressiveness
 
@@ -623,7 +661,8 @@ remainder splits three ways:
   **has since moved**; strbuf is blocked, and on storage rather than length.
 
   **`map_delete` was the one that looked impossible and was not**, twice over,
-  so both traps are worth keeping.
+  so both traps are worth keeping. Its find loop has since become
+  `__fern_map_find` — see "The map runtime's key search" above.
 
   Its find loop has three arms keyed on `keykind`: string, i32, and
   struct/enum, which calls the key type's derived `__fn_<K>__eq` through a

@@ -10173,6 +10173,28 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!seqR.ok) { return seqR; }
         return seqR.emit(ir.op_str_eq());
     }
+    // __fern_map_find(keys, key, keykind, eqfn): the map runtime's shared key
+    // search, called from __fern_map_delete's body. Same shape as the RC hooks
+    // and __fern_str_eq above — a RUNTIME SYMBOL accepted as surface syntax,
+    // for sources only the self-host compiles.
+    //
+    // Unlike those it is a plain call_direct rather than an IR op of its own:
+    // is_fern_helper claims the name, so both register backends route it
+    // through their helper-call emit and ir_helper_symbol resolves it to the
+    // __fn___fern_map_find that asmcore.rt_src_map_find's body defines. The
+    // arguments lower in REVERSE, which is what leaves arg0 on top of the
+    // operand stack where the stack ABI wants it — the same order n.gcd(m)
+    // uses, and the reason this is not written as a left-to-right loop.
+    if (cid.name == "__fern_map_find" && c.args.len() == 4) {
+        var mf: LowerState = s;
+        var ai: i32 = 3;
+        while (ai >= 0) {
+            mf = lower_expr(c.args[ai], mf);
+            if (!mf.ok) { return mf; }
+            ai = ai - 1;
+        }
+        return mf.emit(ir.op_call_direct("__fern_map_find", 4));
+    }
     // __rc_underflow_count() / __rc_underflow(): read the
     // over-release counter. `__rc_underflow_count` is the
     // NATIVE spelling (internal/checker/checker.go registers
