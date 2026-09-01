@@ -5019,8 +5019,9 @@ func emitDropArrElemHelper(name, elemDrop, tag string) func(w func(string, ...an
 // emitMapDropHelper writes __fern_map_drop(m) -> m: the scope-exit drop for a
 // Map local. A Map handle keeps its rc at [m-8] and its kv-buffer pointer at
 // [m+0]. On the LAST reference (rc == 1) both allocations are released — the buf
-// (ast.MapHeaderBytes + cap*(4 + entryStride), cap at [buf+0], entryStride =
-// 2*ptrW = 16 here) and then the 16-byte handle cell at m-8; on a shared handle
+// (ast.MapHeaderBytes+8 + cap*(4 + entryStride + 1), cap at [buf+0], entryStride
+// = 2*ptrW = 16 here, the +1/+8 being core/map's ctrl bytes and their mirror —
+// __map_buf_bytes) and then the 16-byte handle cell at m-8; on a shared handle
 // (rc > 1) the count is decremented in place. Entry keys and values are NOT
 // walked: the IR emits a __map_drop_values call ahead of this one for the value
 // column. Mirrors the stack-machine backend's emitMapDropRuntime, including its
@@ -5052,9 +5053,9 @@ func emitMapDropHelper(w func(string, ...any)) {
 	w("\tcmp x4, #0x10000")
 	w("\tb.lo .Lssa_mapdrop_freehandle")
 	w("\tldr w5, [x4]")   // cap
-	w("\tmov x6, #20")    // 4 + entryStride(16)
-	w("\tmul x5, x5, x6") // cap * 20
-	w("\tadd x1, x5, #%d", ast.MapHeaderBytes)
+	w("\tmov x6, #21")    // 4 + entryStride(16) + 1 ctrl byte
+	w("\tmul x5, x5, x6") // cap * 21
+	w("\tadd x1, x5, #%d", ast.MapHeaderBytes+8)
 	w("\tmov x0, x4") // base = buf
 	w("\tbl %s", fnLabel("__free"))
 	w(".Lssa_mapdrop_freehandle:")

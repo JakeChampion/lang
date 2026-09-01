@@ -2864,11 +2864,12 @@ func buildMapDropBody(helperIdxs map[string]uint32) []byte {
 			body = inst.InstLocalGet(body, 2)
 			body = memory.InstI32Load(body, 2, 0)
 			body = inst.InstLocalSet(body, 3)
-			// __free(base = buf, size = 24 + cap*(4+entryStride=8) = 24 + cap*12)
+			// __free(base = buf, size = 24+8 + cap*(4+entryStride=8+1 ctrl) =
+			// 32 + cap*13) — must match core/map's __map_buf_bytes.
 			body = inst.InstLocalGet(body, 2) // base
-			body = inst.InstI32Const(body, ast.MapHeaderBytes)
+			body = inst.InstI32Const(body, ast.MapHeaderBytes+8)
 			body = inst.InstLocalGet(body, 3)
-			body = inst.InstI32Const(body, 12)
+			body = inst.InstI32Const(body, 13)
 			body = numeric.InstI32Mul(body)
 			body = numeric.InstI32Add(body) // size
 			body = inst.InstCall(body, free)

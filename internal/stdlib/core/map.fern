@@ -36,6 +36,18 @@
 //   +24  buckets : i32[cap]            (-1 empty, -2 tombstone)
 //   +24+cap*4  entries : (k,v)[cap]    per-entry stride = 2 * __ptr_width()
 //                                      (8 on wasm32, 16 on arm64)
+//   +24+cap*(4+stride)  ctrl : u8[cap + 8]
+//        SwissTable-style control bytes mirroring the bucket column:
+//        128 empty, 254 tombstone, else the key hash's top 7 bits (H2).
+//        The probe loops scan them 8 at a time with SWAR (__map_swar_match)
+//        and only touch the i32 bucket column on an H2 hit. The final 8
+//        bytes mirror the first buckets (ctrl[p] == ctrl[p mod cap] for
+//        p < cap + 8) so an unaligned 8-byte group load starting at any
+//        bucket position wraps without a branch (__map_ctrl_set keeps the
+//        mirror in sync). Probe ORDER is unchanged: a group load at
+//        position b inspects b, b+1, … exactly as the scalar linear probe
+//        did, so bucket placement, tombstone reuse, and the delete
+//        back-pointer walk all keep their pre-SWAR behaviour.
 //
 // Lives in `core/` rather than `std/` because the bodies are
 // raw-memory implementations the user shouldn't reach for
@@ -98,6 +110,55 @@ pub function __map_hdr_bytes(keyKind: i32): i32 {
 // header size — the buf-having counterpart to __map_hdr_bytes.
 function __map_hdr(buf: usize): i32 {
     return __map_hdr_bytes(__load_i32(buf + 8));
+}
+
+// __map_buf_bytes is the kv buffer's total allocation size: header,
+// bucket column, entry column, and the ctrl bytes (cap + 8, the +8 being
+// the wraparound mirror). Every alloc/free/copy of a kv buffer must use
+// this; the Go backends' __fern_map_drop hard-codes the same formula.
+function __map_buf_bytes(cap: i32, hdr: i32): i32 {
+    return hdr + cap * (4 + 2 * __ptr_width()) + cap + 8;
+}
+
+// __map_ctrl_base returns the address of the ctrl-byte column.
+function __map_ctrl_base(buf: usize, cap: i32): usize {
+    return buf + __map_hdr(buf) + cap * (4 + 2 * __ptr_width());
+}
+
+// __map_h2 extracts the ctrl-byte tag from a bucket hash: the top 7 bits,
+// disjoint from the low bits the bucket mask consumes. Always < 128, so a
+// full slot's ctrl byte never collides with empty (128) or tombstone (254).
+function __map_h2(h: i32): i32 {
+    return ((h as u32) >> (25 as u32)) as i32;
+}
+
+// __map_swar_match returns a mask with bit 8j+7 set where byte j of `w`
+// equals `b` — the classic zero-byte finder over `w XOR broadcast(b)`.
+// False positives can only appear in bytes ABOVE a genuine match (a
+// borrow crossing a matched byte), so the LOWEST set bit is always a
+// genuine match and callers that scan matches low-to-high (via __ctz64)
+// or verify each candidate against the entry key are exact.
+function __map_swar_match(w: u64, b: i32): u64 {
+    var lo: u64 = 72340172838076673 as u64;       // 0x0101010101010101
+    var x: u64 = w ^ ((b as u64) * lo);
+    return (x - lo) & (x ^ (18446744073709551615 as u64)) & (9259542123273814144 as u64);
+}
+
+// __map_ctrl_set writes one ctrl byte, maintaining the wraparound mirror:
+// every position p ≡ i (mod cap) below cap + 8 gets the byte. One extra
+// store for i < 8 at cap >= 8; up to two extra at the minimum cap of 4.
+// Byte-granular stores via i32 read-modify-write — the raw-memory shims
+// have no byte store.
+function __map_ctrl_set(ctrlBase: usize, cap: i32, i: i32, v: i32): void {
+    var p: i32 = i;
+    while (p < cap + 8) {
+        var wordOff: i32 = p & (0 - 4);
+        var shift: i32 = (p & 3) * 8;
+        var word: i32 = __load_i32(ctrlBase + wordOff);
+        var keep: i32 = (255 << shift) ^ (0 - 1);
+        __store_i32(ctrlBase + wordOff, (word & keep) | (v << shift));
+        p = p + cap;
+    }
 }
 
 // __map_seed reads the kv buffer's per-map hash seed (at +16).
@@ -242,9 +303,8 @@ pub function __map_hash(k: i32, keyKind: i32): i32 {
 
 pub function map_new_impl(cap_hint: i32, keyKind: i32, valKind: i32): usize {
     var cap: i32 = __map_pow2_ceil(cap_hint);
-    var entryStride: i32 = 2 * __ptr_width();
     var hdr: i32 = __map_hdr_bytes(keyKind);
-    var buf: usize = __alloc(hdr + cap * (4 + entryStride));
+    var buf: usize = __alloc(__map_buf_bytes(cap, hdr));
     __store_i32(buf,      cap);
     __store_i32(buf + 4,  0);
     __store_i32(buf + 8,  keyKind);
@@ -271,6 +331,7 @@ pub function map_new_impl(cap_hint: i32, keyKind: i32, valKind: i32): usize {
     __store_i32(buf + 16, seed);
     __store_i32(buf + 20, 0);                     // pad — keeps buckets 8-byte aligned
     __memset(buf + hdr, 255, cap * 4);            // buckets → all -1
+    __memset(__map_ctrl_base(buf, cap), 128, cap + 8);  // ctrl → all empty
     // Map handle is a heap-allocated pointer cell. 8 bytes
     // accommodates a 64-bit `buf` pointer on arm64; wasm32
     // only needs 4 but the extra padding is cheap and keeps
@@ -321,8 +382,7 @@ pub function __map_cow_inplace(m: usize): usize {
     if (rc <= 1) { return m; }
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
-    var entryStride: i32 = 2 * __ptr_width();
-    var bufBytes: i32 = __map_hdr(buf) + cap * (4 + entryStride);
+    var bufBytes: i32 = __map_buf_bytes(cap, __map_hdr(buf));
     var newBuf: usize = __alloc(bufBytes);
     __memcpy(newBuf, buf, bufBytes);
     __map_own_copied_cols(newBuf);
@@ -421,8 +481,7 @@ function __map_own_key(slot: usize): usize {
 pub function __map_clone(m: usize): usize {
     var buf: usize = __load_ptr(m);
     var cap: i32 = __load_i32(buf);
-    var entryStride: i32 = 2 * __ptr_width();
-    var bufBytes: i32 = __map_hdr(buf) + cap * (4 + entryStride);
+    var bufBytes: i32 = __map_buf_bytes(cap, __map_hdr(buf));
     var newBuf: usize = __alloc(bufBytes);
     __memcpy(newBuf, buf, bufBytes);
     __map_own_copied_cols(newBuf);
@@ -880,6 +939,7 @@ pub function __map_clear_impl(m: usize): void {
     }
     __store_i32(buf + 4, 0);
     __memset(buf + __map_hdr(buf), 255, cap * 4);
+    __memset(__map_ctrl_base(buf, cap), 128, cap + 8);
 }
 
 // ---- the keyed family: THE map implementation ------------------------
@@ -933,15 +993,32 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
         return 0 - 1;
     }
 
-    var bucket: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf)) & mask;
-    while (true) {
-        var b: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
-        if (b == 0 - 1) { return 0 - 1; }
-        if (b != 0 - 2) {
+    // SWAR group probe: load 8 ctrl bytes at the probe position, test all 8
+    // buckets for an H2 tag match at once, and touch the bucket/entry columns
+    // only on a hit. A group containing an empty byte ends the probe — the key,
+    // had it been inserted, would sit at or before the first empty on its probe
+    // path, and that position is inside this group. The `probed` bound caps the
+    // walk at one full sweep, so a table holding only full + tombstone buckets
+    // (constructible at cap 4, which the load factor keeps to 2 live entries)
+    // terminates instead of cycling.
+    var h: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf));
+    var bucket: i32 = h & mask;
+    var h2: i32 = __map_h2(h);
+    var ctrlBase: usize = __map_ctrl_base(buf, cap);
+    var probed: i32 = 0;
+    while (probed < cap) {
+        var w: u64 = __load_i64(ctrlBase + bucket) as u64;
+        var hits: u64 = __map_swar_match(w, h2);
+        while (hits != (0 as u64)) {
+            var pos: i32 = (bucket + (__ctz64(hits) >> 3)) & mask;
+            var b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
             var entryK: usize = __load_ptr(entriesBase + b * entryStride);
             if (eq_fn(entryK, k)) { return b; }
+            hits = hits & (hits - (1 as u64));
         }
-        bucket = (bucket + 1) & mask;
+        if (__map_swar_match(w, 128) != (0 as u64)) { return 0 - 1; }
+        bucket = (bucket + 8) & mask;
+        probed = probed + 8;
     }
     return 0 - 1;
 }
@@ -982,7 +1059,7 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
     var newCap: i32 = 4;
     if (oldCap != 0) { newCap = oldCap << 1; }
     var newMask: i32 = newCap - 1;
-    var newBuf: usize = __alloc(hdr + newCap * (4 + entryStride));
+    var newBuf: usize = __alloc(__map_buf_bytes(newCap, hdr));
     __store_i32(newBuf,      newCap);
     __store_i32(newBuf + 4,  oldLen);
     __store_i32(newBuf + 8,  oldKK);
@@ -990,6 +1067,8 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
     __store_i32(newBuf + 16, seed);   // a grow must not change the map's hash
     __store_i32(newBuf + 20, 0);
     __memset(newBuf + hdr, 255, newCap * 4);
+    var newCtrl: usize = __map_ctrl_base(newBuf, newCap);
+    __memset(newCtrl, 128, newCap + 8);
     var newEntries: usize = newBuf + hdr + newCap * 4;
     var i: i32 = 0;
     while (i < oldLen) {
@@ -997,11 +1076,15 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
         var val: usize = __load_ptr(oldEntries + i * entryStride + ptrW);
         __store_ptr(newEntries + i * entryStride,        key);
         __store_ptr(newEntries + i * entryStride + ptrW, val);
-        var bucket: i32 = __map_bucket_hash(key, hash_fn, seed) & newMask;
+        // Scalar first-empty placement: the fresh table has no tombstones,
+        // and the position it picks is exactly where the group probe looks.
+        var h: i32 = __map_bucket_hash(key, hash_fn, seed);
+        var bucket: i32 = h & newMask;
         while (true) {
             var b: i32 = __load_i32(newBuf + hdr + bucket * 4);
             if (b == 0 - 1) {
                 __store_i32(newBuf + hdr + bucket * 4, i);
+                __map_ctrl_set(newCtrl, newCap, bucket, __map_h2(h));
                 break;
             }
             bucket = (bucket + 1) & newMask;
@@ -1009,8 +1092,7 @@ function __map_grow_keyed(m: usize, hash_fn: (usize) => i32): usize {
         i = i + 1;
     }
     __store_ptr(m, newBuf);
-    var oldBytes: i32 = hdr + oldCap * (4 + entryStride);
-    __free(oldBuf, oldBytes);
+    __free(oldBuf, __map_buf_bytes(oldCap, hdr));
     return newBuf;
 }
 
@@ -1029,30 +1111,51 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
     var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    var bucket: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf)) & mask;
+    // Group probe (see __map_lookup_keyed). insertSlot is the first dead
+    // (tombstone or empty) position in probe order — the same slot the scalar
+    // probe chose — found via the ctz of the combined dead mask; the probe
+    // still runs to the first EMPTY so an existing key anywhere on the path is
+    // seen and overwritten. The load factor guarantees a dead slot inside one
+    // sweep, so insertSlot is always set when the loop exits.
+    var h: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf));
+    var bucket: i32 = h & mask;
+    var h2: i32 = __map_h2(h);
+    var ctrlBase: usize = __map_ctrl_base(buf, cap);
     var insertSlot: i32 = 0 - 1;
+    var probed: i32 = 0;
     var done: boolean = false;
-    while (!done) {
-        var b: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
-        if (b == 0 - 1) {
-            if (insertSlot == 0 - 1) { insertSlot = bucket; }
-            done = true;
-        } else if (b == 0 - 2) {
-            if (insertSlot == 0 - 1) { insertSlot = bucket; }
-            bucket = (bucket + 1) & mask;
-        } else {
+    while (!done && probed < cap) {
+        var w: u64 = __load_i64(ctrlBase + bucket) as u64;
+        var hits: u64 = __map_swar_match(w, h2);
+        while (hits != (0 as u64)) {
+            var pos: i32 = (bucket + (__ctz64(hits) >> 3)) & mask;
+            var b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
             var entryK: usize = __load_ptr(entriesBase + b * entryStride);
             if (eq_fn(entryK, k)) {
                 __map_dec_value(buf, __load_ptr(entriesBase + b * entryStride + ptrW));
                 __store_ptr(entriesBase + b * entryStride + ptrW, v);
                 return m;
             }
-            bucket = (bucket + 1) & mask;
+            hits = hits & (hits - (1 as u64));
+        }
+        var empty: u64 = __map_swar_match(w, 128);
+        if (insertSlot == 0 - 1) {
+            var dead: u64 = empty | __map_swar_match(w, 254);
+            if (dead != (0 as u64)) {
+                insertSlot = (bucket + (__ctz64(dead) >> 3)) & mask;
+            }
+        }
+        if (empty != (0 as u64)) {
+            done = true;
+        } else {
+            bucket = (bucket + 8) & mask;
+            probed = probed + 8;
         }
     }
     __store_ptr(entriesBase + len_ * entryStride,        k);
     __store_ptr(entriesBase + len_ * entryStride + ptrW, v);
     __store_i32(buf + __map_hdr(buf) + insertSlot * 4, len_);
+    __map_ctrl_set(ctrlBase, cap, insertSlot, h2);
     __store_i32(buf + 4, len_ + 1);
     return m;
 }
@@ -1066,25 +1169,46 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
     var ptrW: i32 = __ptr_width();
     var entryStride: i32 = 2 * ptrW;
     var entriesBase: usize = buf + __map_hdr(buf) + cap * 4;
-    var bucket: i32 = __map_bucket_hash(k, hash_fn, seed) & mask;
+    // Group probe (see __map_lookup_keyed), tracking the bucket POSITION of
+    // the hit as well as the entry index, since the hit bucket is what gets
+    // tombstoned.
+    var h: i32 = __map_bucket_hash(k, hash_fn, seed);
+    var bucket: i32 = h & mask;
+    var h2: i32 = __map_h2(h);
+    var ctrlBase: usize = __map_ctrl_base(buf, cap);
     var foundBucket: i32 = 0 - 1;
     var idx: i32 = 0;
-    while (true) {
-        var b: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
-        if (b == 0 - 1) { break; }
-        if (b != 0 - 2) {
+    var probed: i32 = 0;
+    var done: boolean = false;
+    while (!done && probed < cap) {
+        var w: u64 = __load_i64(ctrlBase + bucket) as u64;
+        var hits: u64 = __map_swar_match(w, h2);
+        while (hits != (0 as u64)) {
+            var pos: i32 = (bucket + (__ctz64(hits) >> 3)) & mask;
+            var b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
             var entryK: usize = __load_ptr(entriesBase + b * entryStride);
             if (eq_fn(entryK, k)) {
-                foundBucket = bucket;
+                foundBucket = pos;
                 idx = b;
-                break;
+                done = true;
+                hits = 0 as u64;
+            } else {
+                hits = hits & (hits - (1 as u64));
             }
         }
-        bucket = (bucket + 1) & mask;
+        if (!done) {
+            if (__map_swar_match(w, 128) != (0 as u64)) {
+                done = true;
+            } else {
+                bucket = (bucket + 8) & mask;
+                probed = probed + 8;
+            }
+        }
     }
     if (foundBucket == 0 - 1) { return false; }
     __map_free_val_cell(buf, __load_ptr(entriesBase + idx * entryStride + ptrW));
     __store_i32(buf + __map_hdr(buf) + foundBucket * 4, 0 - 2);
+    __map_ctrl_set(ctrlBase, cap, foundBucket, 254);
     var last: i32 = len_ - 1;
     if (idx != last) {
         // Swap-with-last (keyKind-3 twin of __map_delete_impl) —
