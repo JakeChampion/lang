@@ -9609,6 +9609,60 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// means "already consumed on this path").
 	type movedSet = map[string]ast.Position
 
+	var walkStmt func(st ast.Stmt, moved movedSet)
+	var walkStmts func(stmts []ast.Stmt, moved movedSet)
+
+	// walkNested walks a nested function's body — a lambda or a local
+	// FuncDecl — as STATEMENTS. The self-reassign move admission, the
+	// branch joins and the loop check all live in the statement walk, so a
+	// body reached through the flat expression walk instead loses them:
+	// `a = grow(a, 1)` was accepted at top level and E051 one line deeper
+	// inside a closure (#7452).
+	//
+	// The nested parameters layer over `owned` for the body's extent: an
+	// `own` parameter is owned inside the body it belongs to, and any other
+	// parameter SHADOWS an outer owned name it repeats, so neither the
+	// shadowed name's ownership nor its consumed state crosses the
+	// boundary in either direction.
+	walkNested := func(params []ast.Param, body *ast.Block, moved movedSet) {
+		if body == nil {
+			return
+		}
+		type binding struct {
+			wasOwned bool
+			wasMoved ast.Position
+			hadMoved bool
+		}
+		shadowed := map[string]binding{}
+		for _, p := range params {
+			if _, dup := shadowed[p.Name]; dup {
+				continue
+			}
+			b := binding{wasOwned: owned[p.Name]}
+			b.wasMoved, b.hadMoved = moved[p.Name]
+			shadowed[p.Name] = b
+			if p.Own {
+				owned[p.Name] = true
+			} else {
+				delete(owned, p.Name)
+			}
+			delete(moved, p.Name)
+		}
+		walkStmts(body.Stmts, moved)
+		for name, b := range shadowed {
+			if b.wasOwned {
+				owned[name] = true
+			} else {
+				delete(owned, name)
+			}
+			if b.hadMoved {
+				moved[name] = b.wasMoved
+			} else {
+				delete(moved, name)
+			}
+		}
+	}
+
 	// recordExprUses classifies every owned-param occurrence in `e` and reports
 	// E050 on a use after move; a fresh consume records into `moved`. Borrows
 	// are the projection-target / call-callee idents; every other owned-ident
@@ -9624,8 +9678,15 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		// would otherwise mark the receiver as a borrow; these are un-borrowed
 		// after the walk so the move is recorded.
 		dynConsumed := map[*ast.Ident]bool{}
+		// Lambda bodies are statements, not expression soup: neither walk
+		// below descends into one; walkNested takes them after both, in
+		// source order.
+		var lambdas []*ast.Lambda
 		ast.Walk(e, func(n ast.Node) bool {
 			switch x := n.(type) {
+			case *ast.Lambda:
+				lambdas = append(lambdas, x)
+				return false
 			case *ast.FieldAccess:
 				if id, ok := x.Target.(*ast.Ident); ok {
 					borrow[id] = true
@@ -9741,6 +9802,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			delete(borrow, id)
 		}
 		ast.Walk(e, func(n ast.Node) bool {
+			if _, isLam := n.(*ast.Lambda); isLam {
+				return false
+			}
 			id, ok := n.(*ast.Ident)
 			if !ok || !owned[id.Name] {
 				return true
@@ -9754,6 +9818,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			return true
 		})
+		for _, lam := range lambdas {
+			walkNested(lam.Params, lam.Body, moved)
+		}
 	}
 
 	// joinInto merges a branch's post-state into `dst` IFF the branch does not
@@ -9776,9 +9843,6 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return n
 	}
-
-	var walkStmt func(st ast.Stmt, moved movedSet)
-	var walkStmts func(stmts []ast.Stmt, moved movedSet)
 
 	// loopBody walks a loop body/step on a copy and flags any owned param it
 	// consumes that was still live at loop entry — a later iteration would use
@@ -9803,6 +9867,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		switch x := st.(type) {
 		case *ast.Block:
 			walkStmts(x.Stmts, moved)
+		case *ast.FuncDecl:
+			walkNested(x.Params, x.Body, moved)
 		case *ast.Var:
 			recordExprUses(x.Init, moved)
 		case *ast.ExprStmt:
@@ -9897,6 +9963,10 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			// consume there is still caught (over-counts as consume, never
 			// misses a use-after-move).
 			ast.Walk(st, func(n ast.Node) bool {
+				if fd, ok := n.(*ast.FuncDecl); ok {
+					walkNested(fd.Params, fd.Body, moved)
+					return false
+				}
 				if e, ok := n.(ast.Expr); ok {
 					recordExprUses(e, moved)
 					return false

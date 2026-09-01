@@ -9669,6 +9669,43 @@ function ow_is_owned(ctx: OwnCtx, name: string): boolean {
   return util.has_str(ctx.owned, name);
 }
 
+// ow_nested_ctx layers a nested function's parameters over the enclosing
+// owned set: an `own` parameter is owned inside the body it belongs to, and
+// any other parameter SHADOWS an outer owned name it repeats.
+function ow_nested_ctx(ctx: OwnCtx, params: ast.ParamDecl[]): OwnCtx {
+  var names: string[] = ctx.owned;
+  for param in params {
+    if (param.own) {
+      if (!util.has_str(names, param.name)) {
+        names = names.append(param.name);
+      }
+    } else {
+      names = ow_names_del(names, param.name);
+    }
+  }
+  return OwnCtx { owned: names, ofuncs: ctx.ofuncs, structs: ctx.structs, admit: ctx.admit };
+}
+
+function ow_names_del(names: string[], name: string): string[] {
+  var out: string[] = [];
+  for nm in names {
+    if (nm != name) {
+      out = out.append(nm);
+    }
+  }
+  return out;
+}
+
+// A nested parameter is a fresh binding: an outer name it shadows must not
+// carry its consumed state into the body.
+function ow_nested_moved(m: MovedEntry[], params: ast.ParamDecl[]): MovedEntry[] {
+  var out: MovedEntry[] = m;
+  for param in params {
+    out = ow_moved_del(out, param.name);
+  }
+  return out;
+}
+
 function ow_func_flags(ofuncs: OwnFunc[], name: string): boolean[] {
   for ofunc in ofuncs {
     if (ofunc.name == name) {
@@ -10001,7 +10038,14 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       //
       // The IIFE form is handled in ow_stmt's ExprCall arm instead, where the
       // body DOES belong to the enclosing flow because it runs in place.
-      var inner: OwnWalk = ow_stmts(lm.body, moved, ctx);
+      //
+      // The lambda's PARAMETERS layer over the enclosing owned set. A nested
+      // named function parses as one of these, so without that a local
+      // `function inner(own b)` could not transfer `b` onward, and a plain
+      // parameter repeating an outer owned name would be read as that name
+      // (#7452).
+      var lctx: OwnCtx = ow_nested_ctx(ctx, lm.params);
+      var inner: OwnWalk = ow_stmts(lm.body, ow_nested_moved(moved, lm.params), lctx);
       return OwnWalk { moved: moved, diags: inner.diags };
     },
     _ => {

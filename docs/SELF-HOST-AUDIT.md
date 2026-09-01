@@ -462,14 +462,15 @@ findings. Ranked by leverage.
 
     | code | row | why it is not a missing traversal |
     |---|---|---|
-    | E051 | `own-self-reassign-ok` | the **Go checker over-reports** — the `own` self-reassign allowance is lost inside a lambda body (#7452). The self-host's silence is CORRECT and must not be "fixed" |
+    | E051 | `own-self-reassign-ok` | the **Go checker over-reported** — the `own` self-reassign allowance was lost inside a lambda body (#7452, fixed native-side). The self-host's silence was CORRECT |
     | E044 | `e044-capture-void` | the under-report already pinned in the sequence gate; needs a scoping decision |
 
     **The oracle is not automatically right.** Every other row this gate
     surfaced was a self-host under-report, and the reflex is to close the gap by
     matching native. On `own-self-reassign-ok` that would have taught the
-    self-host to reproduce a false positive. The entry in
-    `lambdaBodyDivergences` says so explicitly for that reason.
+    self-host to reproduce a false positive; the fix went into `checkOwnedParams`
+    instead, which now walks a nested function's body as statements, and the row
+    left `lambdaBodyDivergences`.
 
     `ru_expr` had no `ExprLambda` arm at all — only the IIFE case inside
     `ExprCall`, where the body genuinely belongs to the enclosing flow because
