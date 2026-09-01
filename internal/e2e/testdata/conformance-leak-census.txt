@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-08-31: 454 fixtures, 324 clean, 130 leaking, 45670
+# Measured 2026-09-01: 454 fixtures, 354 clean, 100 leaking, 44855
 # unpaired allocations. The distribution is heavily skewed - median 4,
 # and regex_captures_assert alone is 54713 of the total.
 #
@@ -70,15 +70,15 @@ audit_std_textfmt                                    0
 audit_std_time                                       0
 audit_std_uuid                                       0
 audit_strings_arrays_maps                            1
-audit_types_match                                    2
+audit_types_match                                    0
 base64_roundtrip                                     2
-binding_site_pattern_grammar                         5
+binding_site_pattern_grammar                         0
 bool_in_tuple_with_i64                               0
 bool_to_string                                       0
 bool_to_string_receivers                             0
 boolean_logic                                        0
 boolean_scalar_dispatch                              1
-both_arms_read_p                                     2
+both_arms_read_p                                     0
 break_continue                                       0
 bytes_writer                                         1
 c2_consuming_reuse                                   0
@@ -91,7 +91,7 @@ char_byte_literals                                   0
 char_cast_receiver                                   0
 closure_adder                                        1
 closure_capture_shared_cell                          0
-closure_captures_defining_scope                      6
+closure_captures_defining_scope                      0
 closure_field_match                                  600
 closure_field_rebind                                 0
 closure_returns_composite                            0
@@ -113,13 +113,13 @@ default_args                                         0
 defer_block_form                                     0
 defer_control_flow                                   0
 defer_in_loop                                        0
-derive_debug                                         2
+derive_debug                                         0
 derive_default                                       0
 derive_default_generic_primitive                     0
 derive_from_json                                     35
 derive_from_json_i64                                 14
-derive_json                                          2
-derive_multi_payload                                 20
+derive_json                                          0
+derive_multi_payload                                 0
 div_modulo                                           0
 divmod_inline                                        0
 dyn_trait_dispatch                                   0
@@ -128,12 +128,12 @@ empty_array                                          0
 enum_array_match                                     0
 enum_array_with                                      0
 enum_consume_rebind_alias                            0
-enum_payload                                         1
+enum_payload                                         0
 enum_payload_aliases_container                       35
 enum_reuse_churn                                     0
 enum_str                                             0
-enum_u64_payload_unsigned_shift                      1
-eq_struct_enum                                       6
+enum_u64_payload_unsigned_shift                      0
+eq_struct_enum                                       0
 erased_typevar_ret                                   100
 escape_sequences                                     0
 exit                                                 0
@@ -181,7 +181,7 @@ generic_method_typeparams                            0
 generic_pair                                         0
 generic_receiver_methods                             0
 grow_past_capacity                                   0
-hash_struct_enum                                     5
+hash_struct_enum                                     0
 headers_map                                          0
 hello_world                                          0
 hex_literal                                          0
@@ -190,7 +190,7 @@ higher_order                                         0
 http_content_type                                    9
 http_cookies                                         14
 i32_methods                                          0
-i32_payload_rebind                                   2
+i32_payload_rebind                                   0
 i32_to_i64_roundtrip                                 0
 i64_arith                                            0
 i64_arith_roundtrip                                  0
@@ -206,7 +206,7 @@ i64_value_block_tail                                 0
 if_arm_tuple                                         0
 if_expr_array                                        0
 if_let                                               0
-if_let_pattern_forms                                 3
+if_let_pattern_forms                                 0
 inclusive_range                                      0
 indirect_call_owned_param                            0
 inline_hints                                         0
@@ -226,8 +226,8 @@ json_error_location                                  55
 json_object                                          9
 labeled_loops                                        0
 len_on_empty_u8                                      0
-let_else_pattern_forms                               5
-literal_payload_pattern                              17
+let_else_pattern_forms                               0
+literal_payload_pattern                              0
 log_leveled                                          0
 loop_form                                            0
 loop_var_reclaim                                     0
@@ -246,7 +246,7 @@ map_str_key                                          0
 map_str_str                                          0
 map_str_val                                          0
 map_string_key                                       0
-map_struct_enum_keys                                 26
+map_struct_enum_keys                                 24
 map_struct_key_grow                                  28
 map_struct_value_field                               5
 map_values_str                                       0
@@ -274,7 +274,7 @@ named_args                                           0
 narrowing_cast_of_expression                         0
 negative_abs                                         0
 negative_literal_patterns                            0
-nested_arm_patterns                                  85
+nested_arm_patterns                                  0
 nested_call_temp                                     0
 nested_loops                                         0
 nested_option                                        0
@@ -294,7 +294,7 @@ opt_f32_payload                                      100
 option_is_none_or                                    0
 option_match                                         0
 option_result_and_then                               0
-option_result_combinators                            4
+option_result_combinators                            2
 option_str                                           0
 optresult_transpose                                  5
 ord_struct_enum                                      0
@@ -360,9 +360,9 @@ shadow_rc_binder_forin                               0
 shadow_rc_loop_carried_redecl                        0
 shadow_rc_struct_sibling_scopes                      0
 shadow_rhs_reads_outer                               0
-shadowed_builtin_variant                             4
-shared_variant_name                                  2
-shared_variant_payload                               5
+shadowed_builtin_variant                             2
+shared_variant_name                                  0
+shared_variant_payload                               0
 single_alias                                         0
 single_alias_with_arg                                0
 single_insert                                        0
@@ -426,7 +426,7 @@ sum_12_args_order_check                              0
 sum_8_args                                           0
 sxtw_preserves_sign                                  0
 tco_sum                                              0
-three_arms_bind_p                                    2
+three_arms_bind_p                                    0
 time_leap                                            0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
@@ -437,14 +437,14 @@ try_op_in_closure                                    2
 try_result_struct_payload                            6
 tuple_basics                                         0
 tuple_destructure                                    0
-tuple_elem_variant_pattern                           9
+tuple_elem_variant_pattern                           1
 tuple_element_field_access                           0
 tuple_match                                          0
 tuple_match_expr                                     0
 tuple_nested_destructure                             0
-tuple_nested_tuple_pattern                           6
-tuple_payload_pattern                                14
-tuple_payload_pattern_expr                           26
+tuple_nested_tuple_pattern                           0
+tuple_payload_pattern                                0
+tuple_payload_pattern_expr                           0
 tuple_return_union                                   0
 tuple_variant_payload_subpattern                     0
 two_i64_literals                                     0
@@ -460,7 +460,7 @@ u64_max_to_f64_is_huge                               0
 u8_method_module                                     0
 underscore_discard                                   1
 union_eval                                           0
-union_lambda_param                                   4
+union_lambda_param                                   0
 url_codec                                            1
 url_roundtrip                                        0
 use_callback_bind                                    0
