@@ -347,3 +347,97 @@ function f(): i32 {
     return a.items.len();
 }`)
 }
+
+// --- nested function bodies (#7452) --------------------------------------
+//
+// A lambda body and a local function body are STATEMENTS. The walk that
+// reaches them as one flat expression sees the calls but not the assignments
+// around them, so the self-reassign admission — a statement-level fact — went
+// missing exactly one nesting level in.
+
+func TestOwnGuardAllowsSelfReassignMoveInLambda(t *testing.T) {
+	wantOK(t, "self-reassign-in-lambda", ownConsumer+`
+struct B { items: i32[] }
+function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
+function f(): i32 {
+    var lam = function(): i32 {
+        var a = B { items: [] };
+        a = grow(a, 1);
+        a = grow(a, 2);
+        return a.items.len();
+    };
+    return lam();
+}`)
+}
+
+func TestOwnGuardAllowsSelfReassignMoveInLocalFunc(t *testing.T) {
+	wantOK(t, "self-reassign-in-local-func", ownConsumer+`
+struct B { items: i32[] }
+function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
+function f(): i32 {
+    function inner(): i32 {
+        var a = B { items: [] };
+        a = grow(a, 1);
+        return a.items.len();
+    }
+    return inner();
+}`)
+}
+
+// A local function's OWN `own` parameter is owned inside its body, so it may
+// be transferred onward just like a top-level one's.
+func TestOwnGuardAllowsLocalFuncOwnParamTransfer(t *testing.T) {
+	wantOK(t, "local-func-own-param-transfer", ownConsumer+`
+function f(): i32 {
+    function inner(own b: i32[]): i32 { return consume(b); }
+    return inner([1]);
+}`)
+}
+
+// The rejections still apply inside a nested body — reaching the statements
+// is not the same as exempting them.
+func TestOwnGuardRejectsKeptAliveLocalInLambda(t *testing.T) {
+	wantE051(t, "kept-alive-local-in-lambda", ownConsumer+`
+struct B { items: i32[] }
+function grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }
+function f(): i32 {
+    var lam = function(): i32 {
+        var a = B { items: [] };
+        var c = grow(a, 1);
+        return c.items.len();
+    };
+    return lam();
+}`)
+}
+
+func TestOwnedUseAfterConsumeInLambda(t *testing.T) {
+	wantE050(t, "double-consume-in-lambda", ownPrelude+`
+function f(own xs: i32[]): i32 {
+    var lam = function(): i32 {
+        var a: i32 = sink(xs);
+        return a + sink(xs);   // E050: xs already moved
+    };
+    return lam();
+}`)
+}
+
+// A nested parameter SHADOWS an outer owned name it repeats: the inner `xs` is
+// a borrowed lambda parameter, so consuming it neither transfers (E051 stands)
+// nor marks the outer `xs` moved.
+func TestOwnedNestedParamShadowsOuter(t *testing.T) {
+	src := ownPrelude + `
+function f(own xs: i32[]): i32 {
+    var lam = function(xs: i32[]): i32 { return sink(xs); };
+    return lam([1]) + sink(xs);
+}`
+	err := checkSource(t, src)
+	if err == nil {
+		t.Fatalf("shadowed-nested-param: expected E051 on the borrowed lambda parameter, got none")
+	}
+	if !strings.Contains(err.Error(), "owned parameter must be an owned value") {
+		t.Errorf("shadowed-nested-param: expected E051, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "after it was consumed") {
+		t.Errorf("shadowed-nested-param: the outer owned xs is untouched by the shadowing parameter, got: %v", err)
+	}
+}

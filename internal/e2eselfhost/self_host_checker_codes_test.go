@@ -1424,6 +1424,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"own-self-reassign-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    a = grow(a, 1);\n    a = grow(a, 2);\n    return a.items.len();\n}\n", nil},
 		{"own-kept-alive-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [] };\n    var c: B = grow(a, 1);\n    return c.items.len();\n}\n", []string{"E051"}},
 		{"own-second-read-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    var a: B = B { items: [7] };\n    a = grow(a, a.items[0]);\n    return a.items.len();\n}\n", []string{"E051"}},
+		// The same three, one nesting level in: the admission is a
+		// STATEMENT-level fact, so a walk that reaches a nested body as one
+		// flat expression loses it and flags the transfer (#7452).
+		{"own-self-reassign-local-func-ok", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    function build(): i32 {\n        var a: B = B { items: [] };\n        a = grow(a, 1);\n        return a.items.len();\n    }\n    return build();\n}\n", nil},
+		{"own-kept-alive-local-func-bad", "struct B { items: i32[] }\nfunction grow(own b: B, x: i32): B { return B { items: b.items.append(x) }; }\nfunction main(): i32 {\n    function build(): i32 {\n        var a: B = B { items: [] };\n        var c: B = grow(a, 1);\n        return c.items.len();\n    }\n    return build();\n}\n", []string{"E051"}},
+		// A local function's OWN `own` parameter is owned inside its body, so
+		// it transfers onward like a top-level one's.
+		{"own-local-func-param-transfer-ok", "function consume(own xs: i32[]): i32 { return xs[0]; }\nfunction main(): i32 {\n    function inner(own b: i32[]): i32 { return consume(b); }\n    return inner([1]);\n}\n", nil},
 		{"cell-annot-i32-ok", "function f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-string-ok", "function f(c: Cell[string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-generic-param-ok", "function f[T](c: Cell[T]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
@@ -1708,15 +1716,7 @@ func wrapMainBodyInLambda(src string) string {
 // directions, so a listed row that starts agreeing fails too and must be
 // removed. Emptying this map closes the class.
 var lambdaBodyDivergences = map[string]string{
-	// The SELF-HOST is right here and the Go checker over-reports, so this row
-	// must NOT be "fixed" by matching the oracle. An `own` parameter needs a
-	// fresh construction or another `own` param — passing a local is E051 in
-	// both compilers everywhere — except for the self-reassign form
-	// `a = grow(a, 1)`, which both accept at top level. Move that body into a
-	// lambda and the Go checker loses the allowance and flags every call; the
-	// self-host keeps it. Filed as a Go-side bug.
-	"own-self-reassign-ok": "E051 — Go checker over-reports: the self-reassign allowance is lost inside a lambda body. The self-host's silence is CORRECT",
-	"e044-capture-void":    "E044 — the under-report already pinned in the sequence gate; needs a scoping decision, not a transcription",
+	"e044-capture-void": "E044 — the under-report already pinned in the sequence gate; needs a scoping decision, not a transcription",
 }
 
 func equalStrings(a, b []string) bool {
