@@ -17,9 +17,8 @@ type relaxEvent struct {
 	newStart int
 	newSize  int
 	// Branch (align == 0): the relFixups entry holding the target symbol.
-	fixup   int
-	short   bool
-	noShort bool // pinned long: a pad recompute pushed it back out of range
+	fixup int
+	short bool
 	// Alignment pad (align > 1):
 	align   int
 	maxSkip int // -1 when absent
@@ -58,12 +57,14 @@ func (a *Assembler) trailingPad() *relaxEvent {
 // fixups, and .loc rows onto the new layout. Pad widths are recomputed as
 // code shrinks so aligned labels stay aligned.
 //
-// Sizes are settled by a fixpoint before the single rebuild. Shrinking one
-// branch only moves other targets closer, so a short branch normally stays
-// in range — but a pad between a branch and its target can GROW by up to
-// the shrink amount, which is what the drop-back pass and the iteration
-// cap guard against. On non-convergence every branch stays rel32 (always
-// correct) with pads at their original widths.
+// Sizes are settled by a fixpoint before the single rebuild: every branch
+// with a known target starts short, and any branch out of rel8 range under
+// the current layout is pinned long. Growing is monotone, so the loop
+// terminates, and it lands on the minimal fixpoint — the one GNU as's
+// grow-only relaxation picks. (A layout can have TWO fixpoints when an
+// alignment pad sits between a branch and its target: the pad re-expands
+// around the long form, keeping the long layout self-consistent too, so a
+// shrink-only pass would keep branches gas makes short.)
 func (a *Assembler) relax() error {
 	ev := a.relaxEvents
 	hasBranch := false
@@ -122,16 +123,35 @@ func (a *Assembler) relax() error {
 		}
 		return mapNew(a.textLabels[sym])
 	}
-	target := func(e *relaxEvent) (int, bool) {
-		off, ok := a.textLabels[a.relFixups[e.fixup].sym]
-		return off, ok
+	for i := range ev {
+		e := &ev[i]
+		if e.align > 0 {
+			continue
+		}
+		// Undefined label: stays long, and the rel32 pass reports it.
+		_, ok := a.textLabels[a.relFixups[e.fixup].sym]
+		e.short = ok
+	}
+	// Without text pads every event only ever grows, so two points can only
+	// move apart: a branch out of rel8 range stays out however many others
+	// are pinned, and a whole pass's verdicts can be applied in one batch.
+	// A pad breaks that monotonicity — it can absorb an earlier branch's
+	// growth and pull a later branch back INTO range (which gas's
+	// incremental growth honors) — so with pads present each pass pins only
+	// the first out-of-range branch, then re-lays out. Compiler-emitted
+	// .text has no pads, so the O(passes×n) precise path is confined to
+	// hand-written assembly.
+	hasPad := false
+	for i := range ev {
+		if ev[i].align > 0 {
+			hasPad = true
+			break
+		}
 	}
 	converged := false
-	for iter := 0; iter < 32; iter++ {
+	for iter := 0; iter < len(ev)+2; iter++ {
 		layout()
 		changed := false
-		// Drop back to rel32 any short branch a grown pad pushed out of
-		// range, and pin it there so the fixpoint cannot oscillate.
 		for i := range ev {
 			e := &ev[i]
 			if e.align > 0 || !e.short {
@@ -139,34 +159,11 @@ func (a *Assembler) relax() error {
 			}
 			sym := a.relFixups[e.fixup].sym
 			if disp := labelPos(sym) - (e.newStart + 2); disp < -128 || disp > 127 {
-				e.short, e.noShort = false, true
+				e.short = false
 				changed = true
-			}
-		}
-		if changed {
-			continue // re-layout the growth before shrinking further
-		}
-		for i := range ev {
-			e := &ev[i]
-			if e.align > 0 || e.short || e.noShort {
-				continue
-			}
-			t, ok := target(e)
-			if !ok {
-				continue // undefined label: the rel32 pass reports it
-			}
-			sym := a.relFixups[e.fixup].sym
-			var disp int
-			if t >= e.start+e.size {
-				// Forward: shrinking this branch moves the target along
-				// with the end, so the displacement is the current gap.
-				disp = labelPos(sym) - (e.newStart + e.size)
-			} else {
-				disp = labelPos(sym) - (e.newStart + 2)
-			}
-			if disp >= -128 && disp <= 127 {
-				e.short = true
-				changed = true
+				if hasPad {
+					break
+				}
 			}
 		}
 		if !changed {

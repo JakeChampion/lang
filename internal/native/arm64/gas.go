@@ -173,7 +173,7 @@ func assembleInsn(a *Assembler, line string) error {
 	case "mvn":
 		return asmMvn(a, ops)
 	case "negs":
-		return asm2Reg(a, ops, NEGS)
+		return asmNeg(a, mnem, ops)
 	case "extr":
 		return asmExtr(a, ops)
 	case "ror":
@@ -195,7 +195,7 @@ func assembleInsn(a *Assembler, line string) error {
 	case "cmn":
 		return asmCmn(a, ops)
 	case "neg":
-		return asm2Reg(a, ops, NEG)
+		return asmNeg(a, mnem, ops)
 	case "clz":
 		return asm2Reg(a, ops, CLZ)
 	case "cls":
@@ -576,10 +576,14 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 			if eerr != nil {
 				return eerr
 			}
+			// The 32-bit form has no 64-bit offset register to extend.
+			if w && (opt == 3 || opt == 7) {
+				return fmt.Errorf("%s: %s is not a valid extend for a w destination", mnem, kind[0])
+			}
 			if isAdd {
-				emit(ADDextReg(rd, rn, rm, opt, amt))
+				emit(clearSF(ADDextReg(rd, rn, rm, opt, amt), w))
 			} else {
-				emit(SUBextReg(rd, rn, rm, opt, amt))
+				emit(clearSF(SUBextReg(rd, rn, rm, opt, amt), w))
 			}
 			return nil
 		}
@@ -1283,6 +1287,33 @@ func asmTst(a *Assembler, ops []string) error {
 	return nil
 }
 
+// asmNeg handles `neg/negs Rd, Rm{, shift}` — sub(s) Rd, zr, Rm, shift.
+func asmNeg(a *Assembler, mnem string, ops []string) error {
+	if len(ops) < 2 || len(ops) > 3 {
+		return fmt.Errorf("%s expects Rd, Rm{, shift}", mnem)
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	rm, err := parseReg(ops[1])
+	if err != nil {
+		return err
+	}
+	var st, amt uint32
+	if len(ops) > 2 {
+		if st, amt, err = parseRegShift(ops[2]); err != nil {
+			return err
+		}
+	}
+	insn := SUBregShift(rd, 31, rm, st, amt)
+	if mnem == "negs" {
+		insn |= 1 << 29
+	}
+	a.Emit(clearSF(insn, is32(ops[0])))
+	return nil
+}
+
 // asmMvn handles `mvn Rd, Rm{, <shift> #amt}` — the ORN alias with
 // Rn=XZR.
 func asmMvn(a *Assembler, ops []string) error {
@@ -1781,17 +1812,42 @@ func asmExtend(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
+	if !is32(ops[1]) {
+		return fmt.Errorf("%s source must be a w register, got %q", mnem, ops[1])
+	}
+	// SBFM's sf and N bits must match, so the 32-bit sxtb/sxth clear both;
+	// clearing only sf is an UNALLOCATED encoding.
+	const sfN = 1<<31 | 1<<22
+	w := is32(ops[0])
 	switch mnem {
 	case "sxtb":
-		a.Emit(SXTB(rd, rn))
+		insn := SXTB(rd, rn)
+		if w {
+			insn &^= sfN
+		}
+		a.Emit(insn)
 	case "sxth":
-		a.Emit(SXTH(rd, rn))
+		insn := SXTH(rd, rn)
+		if w {
+			insn &^= sfN
+		}
+		a.Emit(insn)
 	case "sxtw":
+		if w {
+			return fmt.Errorf("sxtw destination must be an x register, got %q", ops[0])
+		}
 		a.Emit(SXTW(rd, rn))
-	case "uxtb":
-		a.Emit(UXTB(rd, rn))
-	case "uxth":
-		a.Emit(UXTH(rd, rn))
+	case "uxtb", "uxth":
+		// A 32-bit result zero-extends to 64 bits anyway, so the x-form
+		// alias does not exist; encoding it as the w form would be silent.
+		if !w {
+			return fmt.Errorf("%s destination must be a w register, got %q", mnem, ops[0])
+		}
+		if mnem == "uxtb" {
+			a.Emit(UXTB(rd, rn))
+		} else {
+			a.Emit(UXTH(rd, rn))
+		}
 	}
 	return nil
 }
@@ -1994,19 +2050,41 @@ func asmLoadSigned(a *Assembler, mnem string, ops []string) error {
 	if m.pre {
 		return fmt.Errorf("%s pre-index addressing not supported yet", mnem)
 	}
-	if m.off < 0 {
-		return fmt.Errorf("%s negative offset not supported yet", mnem)
+	if m.hasIndex {
+		return fmt.Errorf("%s register-offset addressing not supported yet", mnem)
 	}
 	to64 := !is32(ops[0])
-	off := uint32(m.off)
+	var scale int64
+	var size uint32
 	switch mnem {
 	case "ldrsb":
-		a.Emit(LDRSB(rt, m.base, off, to64))
+		scale, size = 1, 0
 	case "ldrsh":
-		a.Emit(LDRSH(rt, m.base, off, to64))
+		scale, size = 2, 1
 	case "ldrsw":
-		a.Emit(LDRSW(rt, m.base, off))
+		if !to64 {
+			return fmt.Errorf("ldrsw destination must be an x register, got %q", ops[0])
+		}
+		scale, size = 4, 2
 	}
+	if m.off >= 0 && m.off%scale == 0 && m.off/scale <= 4095 {
+		off := uint32(m.off)
+		switch mnem {
+		case "ldrsb":
+			a.Emit(LDRSB(rt, m.base, off, to64))
+		case "ldrsh":
+			a.Emit(LDRSH(rt, m.base, off, to64))
+		case "ldrsw":
+			a.Emit(LDRSW(rt, m.base, off))
+		}
+		return nil
+	}
+	// Negative or unaligned: the unscaled LDURS* encodings, as GNU as
+	// routes them.
+	if m.off < -256 || m.off > 255 {
+		return fmt.Errorf("%s offset %d is neither a non-negative multiple of %d nor in the unscaled range [-256,255]", mnem, m.off, scale)
+	}
+	a.Emit(LoadSignedUnscaled(rt, m.base, int32(m.off), size, to64))
 	return nil
 }
 
@@ -3037,12 +3115,23 @@ func parseImm(s string) (int64, error) {
 // which GNU as folds to 144. Each term is an integer literal in any
 // base. Plain literals (including a leading sign / hex) take the fast
 // path through ParseInt.
+// parseIntTerm parses one integer literal, accepting the upper unsigned
+// 64-bit half (e.g. a bitmask immediate written #0xfffffff7fffffff7) as its
+// two's-complement value.
+func parseIntTerm(s string) (int64, error) {
+	if v, err := strconv.ParseInt(s, 0, 64); err == nil {
+		return v, nil
+	}
+	u, err := strconv.ParseUint(s, 0, 64)
+	return int64(u), err
+}
+
 func evalIntExpr(s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, fmt.Errorf("empty immediate")
 	}
-	if v, err := strconv.ParseInt(s, 0, 64); err == nil {
+	if v, err := parseIntTerm(s); err == nil {
 		return v, nil
 	}
 	var total int64
@@ -3069,7 +3158,7 @@ func evalIntExpr(s string) (int64, error) {
 			i++
 		}
 		term := s[start:i]
-		v, err := strconv.ParseInt(term, 0, 64)
+		v, err := parseIntTerm(term)
 		if err != nil {
 			return 0, fmt.Errorf("bad immediate term %q", term)
 		}

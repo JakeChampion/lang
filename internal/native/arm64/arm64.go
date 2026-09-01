@@ -1112,12 +1112,6 @@ func EONregShift(rd, rn, rm, shiftType, amount uint32) uint32 {
 	return 0xCA200000 | ((shiftType & 3) << 22) | ((rm & regMask) << 16) | ((amount & 0x3f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
-// NEGS encodes `negs Xd, Xm` — SUBS Xd, XZR, Xm.
-// Encoding: base 0xEB000000 | Rm<<16 | 31<<5 | Rd.
-func NEGS(rd, rm uint32) uint32 {
-	return 0xEB000000 | ((rm & regMask) << 16) | (31 << 5) | (rd & regMask)
-}
-
 // EXTR / EXTRW encode `extr Rd, Rn, Rm, #lsb` — extract a register-width
 // field from the Rn:Rm concatenation starting at bit lsb of Rm. The
 // standalone `ror Rd, Rn, #n` is the Rn=Rm alias.

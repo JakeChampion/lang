@@ -273,6 +273,12 @@ func TestEncodeVectorSurface(t *testing.T) {
 		// Unaligned 128-bit load (0x6F) and STORE (0x7F). The two directions
 		// are separate opcodes; using the load form for a store assembles
 		// cleanly and reads the wrong address, so both are pinned.
+		// cvtsi2sd/ss from memory: REX.W follows the dword/qword ptr size
+		// (an unsized memory source is rejected — the width is invisible and
+		// silently converting 32 bits was the bug the gas fuzz lane found).
+		{"cvtsi2sd xmm0, qword ptr [rax]", "f2480f2a00"},
+		{"cvtsi2sd xmm1, dword ptr [rbp-8]", "f20f2a4df8"},
+		{"cvtsi2ss xmm2, qword ptr [rdi]", "f3480f2a17"},
 		{"movdqu xmm0, [r8]", "f3410f6f00"},
 		{"movdqu xmm3, [rdi + 16]", "f30f6f5f10"},
 		{"movdqu [rdi], xmm2", "f30f7f17"},
@@ -739,6 +745,11 @@ func TestEncodeStringMisc(t *testing.T) {
 		{"cmpsd", "a7"},
 		{"movsd xmm0, xmm1", "f20f10c1"}, // with operands: the SSE form
 		{"rep movsd", "f3a5"},
+		// The 0x66 operand-size prefix precedes rep/lock, as GNU as orders
+		// them.
+		{"rep movsw", "66f3a5"},
+		{"repne scasw", "66f2af"},
+		{"lock add word ptr [rcx], 300", "66f081012c01"},
 		{"std", "fd"},
 		{"nop", "90"},
 		{"int3", "cc"},
@@ -1101,6 +1112,8 @@ func TestRejectNearMisses(t *testing.T) {
 		"pextrq eax, xmm1, 1",
 		"pinsrb xmm0, al, 1", // pinsr sources are r32 (r64 for q)
 		"pinsrq xmm0, eax, 1",
+		"cvtsi2sd xmm0, [rax]", // unsized memory: the integer width picks REX.W
+		"cvtsi2ss xmm0, word ptr [rax]",
 		"crc32 ax, cx",      // crc32 destination is r32/r64
 		"crc32 rax, ecx",    // 64-bit dst pairs only with r/m8 or r/m64
 		"crc32 eax, [rdi]",  // unsized memory source
