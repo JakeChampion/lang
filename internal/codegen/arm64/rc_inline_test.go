@@ -24,9 +24,9 @@ function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0
 	if strings.Contains(body, "bl __fern_rc_inc") {
 		t.Errorf("rc inc must inline, not `bl __fern_rc_inc`, in g:\n%s", body)
 	}
-	// The inline guard + RMW markers: the below-heap base materialise and
-	// the +1 store to [ptr-8].
-	for _, want := range []string{"lsl x1, x1, #28", "ldur w1, [x0, #-8]", "add w1, w1, #1", "stur w1, [x0, #-8]"} {
+	// The inline guard + RMW markers: the below-heap range test and the +1
+	// store to [ptr-8].
+	for _, want := range []string{"lsr x1, x0, #28", "ldur w1, [x0, #-8]", "add w1, w1, #1", "stur w1, [x0, #-8]"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("inline rc inc missing %q in g:\n%s", want, body)
 		}
@@ -79,8 +79,8 @@ function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0
 		t.Errorf("over-threshold function must call the rc helper, not inline it, in g:\n%s", body)
 	}
 	// The inline-only marker must be absent from g's body — the below-heap
-	// base materialise is unique to the inline sequence.
-	if strings.Contains(body, "lsl x1, x1, #28") {
+	// range test is unique to the inline sequence.
+	if strings.Contains(body, "lsr x1, x0, #28") {
 		t.Errorf("over-threshold function must not emit the inline rc guard in g:\n%s", body)
 	}
 	// The helper is still defined (it always is when any rc op is present).
