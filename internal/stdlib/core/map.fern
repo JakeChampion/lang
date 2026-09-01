@@ -1003,6 +1003,15 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
     // terminates instead of cycling.
     var h: i32 = __map_bucket_hash(k, hash_fn, __map_seed(buf));
     var bucket: i32 = h & mask;
+    // Home-bucket fast path: at the 75% load ceiling most probes end at their
+    // first bucket, where the group machinery costs more than the one compare
+    // it replaces (measured +14% retired on the map_int bench without this).
+    // The group scan below is for the chains that continue past home.
+    var homeB: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+    if (homeB == 0 - 1) { return 0 - 1; }
+    if (homeB >= 0) {
+        if (eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) { return homeB; }
+    }
     var h2: i32 = __map_h2(h);
     var ctrlBase: usize = __map_ctrl_base(buf, cap);
     var probed: i32 = 0;
@@ -1122,8 +1131,21 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
     var h2: i32 = __map_h2(h);
     var ctrlBase: usize = __map_ctrl_base(buf, cap);
     var insertSlot: i32 = 0 - 1;
+    // Home-bucket fast path (see __map_lookup_keyed): an empty home bucket is
+    // a fresh insert, a home-bucket key match is an overwrite; both replicate
+    // the scalar probe's first iteration exactly. A tombstone or a foreign key
+    // at home falls into the group scan, whose dead-mask logic picks the same
+    // slot the scalar probe would have.
+    var homeB: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+    if (homeB == 0 - 1) {
+        insertSlot = bucket;
+    } else if (homeB >= 0 && eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) {
+        __map_dec_value(buf, __load_ptr(entriesBase + homeB * entryStride + ptrW));
+        __store_ptr(entriesBase + homeB * entryStride + ptrW, v);
+        return m;
+    }
     var probed: i32 = 0;
-    var done: boolean = false;
+    var done: boolean = insertSlot != (0 - 1);
     while (!done && probed < cap) {
         var w: u64 = __load_i64(ctrlBase + bucket) as u64;
         var hits: u64 = __map_swar_match(w, h2);
@@ -1174,12 +1196,22 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
     // tombstoned.
     var h: i32 = __map_bucket_hash(k, hash_fn, seed);
     var bucket: i32 = h & mask;
-    var h2: i32 = __map_h2(h);
     var ctrlBase: usize = __map_ctrl_base(buf, cap);
     var foundBucket: i32 = 0 - 1;
     var idx: i32 = 0;
-    var probed: i32 = 0;
+    // Home-bucket fast path (see __map_lookup_keyed).
+    var homeB: i32 = __load_i32(buf + __map_hdr(buf) + bucket * 4);
+    if (homeB == 0 - 1) { return false; }
     var done: boolean = false;
+    if (homeB >= 0) {
+        if (eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) {
+            foundBucket = bucket;
+            idx = homeB;
+            done = true;
+        }
+    }
+    var h2: i32 = __map_h2(h);
+    var probed: i32 = 0;
     while (!done && probed < cap) {
         var w: u64 = __load_i64(ctrlBase + bucket) as u64;
         var hits: u64 = __map_swar_match(w, h2);
