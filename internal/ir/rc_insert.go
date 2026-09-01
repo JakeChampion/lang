@@ -122,7 +122,10 @@ func (b *builder) insertConsumedParamEntryIncs(at int, pos ast.Position) {
 //
 // Ident / field / index reads are borrowed VIEWS (the owner upstream or the
 // exit sweep accounts for them) and are never matched — dec'ing one would
-// over-release. Calls are excluded — a method call can alias its receiver
+// over-release. Calls are matched only where the call is KNOWN to hand back a
+// reference of its own — a variant construction, and the handful of builtins
+// whose retain or allocation this compiler emits itself (see the Call arms);
+// the general call stays out because a method call can alias its receiver
 // (`arr.push(x)` returns the receiver buffer), so dec'ing its result would
 // double-free. MakeClosure is excluded for now (a bare closure temp is
 // effectively nonexistent, and the per-closure capture-drop thunk is keyed
@@ -226,6 +229,52 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		if cid, ok := x.Callee.(*ast.Ident); ok && cid.Name == "slice_unchecked" {
 			if t, ok := b.exprType(x).(ast.StringType); ok {
 				return t, true
+			}
+		}
+		// A VARIANT CONSTRUCTOR carrying payloads (`E.A(mk())`) allocates a
+		// fresh rc=1 box exactly as the ArrayLit / StructLit / TupleLit arms
+		// above do — it is a literal construction that happens to be spelled
+		// as a call, not one of the aliasing calls this switch excludes.
+		//
+		// The drop this admits is DEEP (__drop_enum_<Name> releases payloads),
+		// so it is sound exactly when the construction COUNTED them — and the
+		// gate here is therefore the same pair emitEnumNew's payload inc
+		// carries, rather than a restatement of it:
+		//
+		//   - enumRcPayloadsEligible(enumName). Under the move model
+		//     (EnumRcPayloads off) and for a Map-carrying enum, an aliased
+		//     payload is not inc'd at all, so releasing the box frees a value
+		//     the caller still owns. Both differentials caught exactly this:
+		//     the wasm move leg aborted (134) where the rc leg returned 0, and
+		//     stdlib_json_roundtrip — a JsonValue tree, whose JObject payload
+		//     is a Map — "improved" by 112 bytes on each backend, which was
+		//     the over-release, not a reclaim.
+		//   - !consumingMatchReuse. That path stores moved-out bindings back
+		//     into the box and skips the inc for the same reason.
+		//
+		// With both held, every payload form balances: an aliased ident /
+		// field / index is inc'd (needsRcIncOnAlias), one the move analysis
+		// marked a last use hands over its own reference, and a fresh call
+		// result or literal is owned outright at rc 1.
+		//
+		// Measured against three controls in the identical argument position —
+		// the same value bound to a `var` first, a struct literal, and a tuple
+		// literal — all of which were reclaimed while `sink(E.A(mk(...)))`
+		// stranded its box AND its payload every call (200 allocs / 0 frees
+		// over 100 rounds).
+		//
+		// PAYLOADLESS variants are excluded because they allocate nothing:
+		// emitEnumNew rewrites them to a shared static sentinel, so there is
+		// no fresh box to reclaim. nameShadowsVariant is the checker's own
+		// rule for when a same-named local or user function wins over the
+		// constructor, so a call this arm claims is one callBody really does
+		// lower through emitEnumNew (#7867).
+		if cid, ok := x.Callee.(*ast.Ident); ok && !b.nameShadowsVariant(cid.Name) && !b.rc.consumingMatchReuse[x] {
+			if enumName, _, payloads, isVariant := b.lookupVariantOn(cid.Name, cid.EnumName); isVariant && payloads > 0 &&
+				b.enumRcPayloadsEligible(enumName) {
+				if t := b.exprType(e); ast.IsPointerType(t) {
+					return t, true
+				}
 			}
 		}
 	}
