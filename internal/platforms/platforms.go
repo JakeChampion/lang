@@ -157,8 +157,23 @@ var capabilityProfiles = map[string]capabilityProfile{
 	// assembler failure.
 	//
 	// `proc` (fork/waitpid supervision — docs/CRASH-ONLY-SERVE.md D2')
-	// is native-only: wasm worlds have no processes.
-	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena"},
+	// is native-only: wasm worlds have no processes. So are the three
+	// capabilities below, each for a reason of its own:
+	//
+	//   - `pollfd` — file descriptors a readiness primitive can wait on.
+	//     Wasm's readiness surface is wasi:io/poll pollables, which are
+	//     values rather than numbers in a per-process table.
+	//   - `fsmode` — permission bits on a filesystem entry. Preview1's
+	//     path_open takes no mode argument and the component-model
+	//     filesystem has no permission bits at all, so "executable" is
+	//     not expressible there (#6133).
+	//   - `cabi` — a C calling convention to hand a function pointer to.
+	//     Wasm reaches an unknown callee through a typed table, not
+	//     System V or AAPCS64.
+	//
+	// The `none` profile grants none of them either: a freestanding
+	// artifact reaches platforms.coreBuiltins and nothing else.
+	"hosted-native": {"log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:

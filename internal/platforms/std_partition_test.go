@@ -30,6 +30,10 @@ import (
 //     the question the issue raises: a freestanding target cannot run
 //     the in-language test runner today, and `log` (its output sink) is
 //     only one of the four in the way.
+//   - `std/jni` is hosted on `cabi` alone. It touches no OS surface at
+//     all; what it needs is a C calling convention to hand a JNIEnv
+//     method pointer to, which is a property of the target and not of
+//     anything above it.
 var stdModuleReach = map[string]string{
 	"std/_test_empty":   "",
 	"std/ansi":          "",
@@ -55,7 +59,7 @@ var stdModuleReach = map[string]string{
 	"std/i64":           "",
 	"std/io":            "fs,stdin",
 	"std/io_buffered":   "",
-	"std/jni":           "",
+	"std/jni":           "cabi",
 	"std/json":          "",
 	"std/log":           "log",
 	"std/math":          "random",

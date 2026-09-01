@@ -241,6 +241,53 @@ func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 	}
 }
 
+// `pollfd`, `fsmode` and `cabi` are the three properties wasm lacks that
+// are not about processes or the arena: a file descriptor to poll, a
+// permission bit to set, a C calling convention to call through. Each was
+// reachable on wasm32-wasi until it exploded in the backend — `unknown
+// callee "write_file_exec"` mid-build for a program that type-checked
+// (#7947) — because each rode a capability the wasi profiles do grant.
+func TestEnforceWasmInexpressibleBuiltins(t *testing.T) {
+	cases := []struct {
+		builtin    string
+		capability string
+		src        string
+	}{
+		{"timer_fd", "pollfd", `function main(): i32 { return timer_fd(50); }`},
+		{"write_file_exec", "fsmode", `function main(): i32 {
+    var r = write_file_exec("/tmp/x", "#!/bin/sh\n");
+    return 0;
+}`},
+		{"__c_call2_f64", "cabi", `function main(): i32 {
+    var v: f64 = __c_call2_f64((0 as usize), (0 as usize), (0 as usize));
+    return 0;
+}`},
+	}
+	for _, tc := range cases {
+		for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android"} {
+			t.Run(tc.builtin+"/"+target+"/allowed", func(t *testing.T) {
+				if vs := platforms.Enforce(prepared(t, tc.src, false), target); len(vs) != 0 {
+					t.Errorf("native target %q should provide `%s`; violations = %+v", target, tc.capability, vs)
+				}
+			})
+		}
+		for _, target := range []string{"wasm32-wasi", "wasm32-wasi-http"} {
+			t.Run(tc.builtin+"/"+target+"/rejected", func(t *testing.T) {
+				vs := platforms.Enforce(prepared(t, tc.src, false), target)
+				if len(vs) != 1 {
+					t.Fatalf("violations = %d, want 1: %+v", len(vs), vs)
+				}
+				if vs[0].Builtin != tc.builtin || vs[0].Capability != tc.capability {
+					t.Errorf("violation = %+v, want %s/%s", vs[0], tc.builtin, tc.capability)
+				}
+				if msg := vs[0].Message("<stdin>"); !strings.Contains(msg, tc.capability) || !strings.Contains(msg, "x86-64-linux") {
+					t.Errorf("message should name the capability and its providers: %s", msg)
+				}
+			})
+		}
+	}
+}
+
 // `log` and `now` are universal today — every descriptor grants both —
 // so gating them must not reject anything. The point of the gate is the
 // freestanding target that will not grant them (#6506), not a change to

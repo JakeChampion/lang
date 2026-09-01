@@ -65,12 +65,17 @@ pub struct Descriptor {
 // native's own note claims for it.
 function capability_profile(profile: string): string[] {
     if (profile == "hosted-native") {
-        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp", "proc", "arena", "subprocess"];
+        return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "subprocess"];
     }
     if (profile == "wasi-cli") {
         // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
         // process model, so no `proc`, and no bump-arena rewind, so no
-        // `arena`.
+        // `arena`. The three the wasm worlds lack for reasons of their own:
+        // `pollfd` (readiness is a wasi:io/poll pollable, not a number in a
+        // per-process fd table), `fsmode` (neither preview1's path_open nor
+        // the component-model filesystem has permission bits) and `cabi`
+        // (an unknown callee is reached through a typed table, not System V
+        // or AAPCS64).
         return ["log", "now", "env", "args", "random", "stdin", "stdout", "fs", "tcp"];
     }
     if (profile == "wasi-proxy") {
@@ -217,8 +222,13 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "now_ns", capability: "now" },
         Gate { builtin: "monotonic_ns", capability: "now" },
         Gate { builtin: "sleep_ms", capability: "now" },
-        Gate { builtin: "timer_fd", capability: "now" },
         Gate { builtin: "wasm_timer_pollable", capability: "now" },
+
+        // `timer_fd` is a clock wakeup too, but gated on the FD half rather
+        // than on `now`: it hands back a file descriptor to poll, and that
+        // is what wasm cannot answer. `wasm_timer_pollable` above is the
+        // same wakeup expressed as a wasi:io/poll pollable.
+        Gate { builtin: "timer_fd", capability: "pollfd" },
 
         // The ambient invocation environment. argv and envp are adjacent on
         // the process stack, but they are separate capabilities because the
@@ -245,7 +255,6 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "read_file", capability: "fs" },
         Gate { builtin: "read_file_bytes", capability: "fs" },
         Gate { builtin: "write_file", capability: "fs" },
-        Gate { builtin: "write_file_exec", capability: "fs" },
         Gate { builtin: "open_reader", capability: "fs" },
         Gate { builtin: "open_writer", capability: "fs" },
         Gate { builtin: "open_appender", capability: "fs" },
@@ -254,7 +263,31 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "remove_file", capability: "fs" },
         Gate { builtin: "remove_dir_all", capability: "fs" },
         Gate { builtin: "create_dir_all", capability: "fs" },
-        Gate { builtin: "temp_dir", capability: "fs" }
+        Gate { builtin: "temp_dir", capability: "fs" },
+
+        // Permission bits on a filesystem entry, which is a separate
+        // capability from having a filesystem: a host can offer files and no
+        // mode word to set on them.
+        Gate { builtin: "write_file_exec", capability: "fsmode" },
+
+        // The C-ABI FFI shims. Enumerated rather than matched with
+        // ircore.is_c_call so this table stays the one place the
+        // classification lives; the checker registers exactly these fifteen.
+        Gate { builtin: "__c_call0", capability: "cabi" },
+        Gate { builtin: "__c_call0_f32", capability: "cabi" },
+        Gate { builtin: "__c_call0_f64", capability: "cabi" },
+        Gate { builtin: "__c_call1", capability: "cabi" },
+        Gate { builtin: "__c_call1_f32", capability: "cabi" },
+        Gate { builtin: "__c_call1_f64", capability: "cabi" },
+        Gate { builtin: "__c_call2", capability: "cabi" },
+        Gate { builtin: "__c_call2_f32", capability: "cabi" },
+        Gate { builtin: "__c_call2_f64", capability: "cabi" },
+        Gate { builtin: "__c_call3", capability: "cabi" },
+        Gate { builtin: "__c_call3_f32", capability: "cabi" },
+        Gate { builtin: "__c_call3_f64", capability: "cabi" },
+        Gate { builtin: "__c_call4", capability: "cabi" },
+        Gate { builtin: "__c_call4_f32", capability: "cabi" },
+        Gate { builtin: "__c_call4_f64", capability: "cabi" }
     ];
 }
 
@@ -295,10 +328,10 @@ pub function gated_capability(name: string): string {
     return "";
 }
 
-// forbidden_gates lists the gates a target does NOT satisfy — usually a
-// handful (one for the hosted natives, six for the wasi CLI world), which is
-// what keeps the call-site scan a membership test against a short list rather
-// than a scan of the whole registry per call.
+// forbidden_gates lists the gates a target does NOT satisfy — none for the
+// hosted natives, and the process / arena / wasm-inexpressible set for the
+// wasi worlds. That is what keeps the call-site scan a membership test
+// against a short list rather than a scan of the whole registry per call.
 pub function forbidden_gates(target: string): Gate[] {
     var out: Gate[] = [];
     var d: Descriptor = for_target(target);
