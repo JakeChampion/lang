@@ -351,10 +351,10 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 	// The features. These sites are the ENTIRE fixpoint coverage of each row:
 	// delete them and the self-host stops exercising the feature, whatever the
 	// e2eselfhost fixtures do.
-	pinned(t, c, "generic functions", 9,
-		"Every one is astwalk's fold spine. It is the only generic code the self-host compiles, so it is the only monomorphisation the fixpoint exercises.")
+	pinned(t, c, "generic functions", 12,
+		"Every one is astwalk's — nine on the fold spine, three on the accumulator-carrying map spine (map_expr_acc / map_stmt_acc / map_stmts_acc). It is the only generic code the self-host compiles, so it is the only monomorphisation the fixpoint exercises.")
 	pinned(t, c, "generic structs", 0,
-		"The self-host declares no generic struct, so nothing on the fixpoint path monomorphises a generic TYPE — only generic functions.")
+		"The self-host declares no generic struct, so nothing on the fixpoint path monomorphises a generic TYPE — only generic functions. This is load-bearing, not incidental: a generic struct in a signature promotes its type param to the monomorphiser, and the per-module emit path runs no monomorphiser, so the un-cloned template fails IR verify there — the accumulator spine returns bare tuples for exactly that reason.")
 	pinned(t, c, "arrow lambdas", 6,
 		"Two are astwalk's no-op statement visitors and one is the checker's, in e060_collect_dyn_locals, which wants fold_stmt_nodes for the statement half and has nothing to say about expressions; the other three are constfold's assert probe, the first arrow lambdas here that compute rather than return the accumulator untouched.")
 	pinned(t, c, "anonymous function exprs", 4,
