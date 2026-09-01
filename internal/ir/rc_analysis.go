@@ -1001,8 +1001,64 @@ func everyOccurrenceSafe(total, safe int) bool {
 	return total == safe
 }
 
+// countedSeedOccurrences names the occurrences of a PARAMETER that seed a
+// local which is later reassigned — `var cur: Scope = s;` followed by
+// `cur = advance(stmt, cur)`. computeFreeEligible already treats exactly
+// that binding as a COUNTED alias rather than a borrow (its countedSeed
+// map): needsRcIncOnAlias holds for the initialiser and the source is a
+// parameter, so no move site or borrowed-alias cancellation can reach it
+// and the *ast.Var lowering emits the transfer inc. The local therefore
+// owns a reference of its own, and the caller's argument is retained
+// COUNTED — which is what the counted-retain summaries ask about.
+//
+// The two conditions mirror countedSeed's exactly. Reassignment is
+// required because the transfer inc is emitted only for a rebindable
+// binding: a local that only ever holds the seed keeps the borrow verdict
+// and is a genuine uncounted retention. A duplicated declaration name is
+// refused because the verdict would then govern a slot two bindings share
+// (localNameUnique, spelled here as "declared once" since these summaries
+// run before the builder's slot map exists).
+//
+// This is the grounding case for a threaded walker. `annotate_block(body,
+// s)` binds `s` to `cur` and does nothing else with it, so refusing the
+// binding refused the parameter, and through it every caller in the
+// fixpoint — leaving `annotate_block(stmts, new_scope_full(...))`'s FRESH
+// Scope temp with no owner. That one temp exclusively held 87,584 B of
+// module tables in the self-host driver: the sig and struct tables the
+// whole #7914 census is ranked by.
+func countedSeedOccurrences(fn *ast.FuncDecl) map[*ast.Ident]bool {
+	decls := map[string]int{}
+	seeds := map[string][]*ast.Ident{}
+	reassigned := map[string]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			decls[x.Name]++
+			if id, ok := x.Init.(*ast.Ident); ok {
+				seeds[x.Name] = append(seeds[x.Name], id)
+			}
+		case *ast.Assign:
+			if id, ok := x.Target.(*ast.Ident); ok {
+				reassigned[id.Name] = true
+			}
+		}
+		return true
+	})
+	out := map[*ast.Ident]bool{}
+	for name, ids := range seeds {
+		if decls[name] != 1 || !reassigned[name] {
+			continue
+		}
+		for _, id := range ids {
+			out[id] = true
+		}
+	}
+	return out
+}
+
 func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) bool {
 	safe := map[*ast.Ident]bool{}
+	seedOK := countedSeedOccurrences(fn)
 	mark := func(e ast.Expr) {
 		if id, ok := e.(*ast.Ident); ok && id.Name == pn {
 			safe[id] = true
@@ -1014,6 +1070,9 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 		case *ast.Ident:
 			if x.Name == pn {
 				total++
+				if seedOK[x] {
+					safe[x] = true
+				}
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -1168,6 +1227,7 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 // an array slice can share the buffer.
 func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *checker.Info, summary map[string][]bool) bool {
 	safe := map[*ast.Ident]bool{}
+	seedOK := countedSeedOccurrences(fn)
 	mark := func(e ast.Expr) {
 		if id, ok := e.(*ast.Ident); ok && id.Name == pn {
 			safe[id] = true
@@ -1196,6 +1256,9 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 		case *ast.Ident:
 			if x.Name == pn {
 				total++
+				if seedOK[x] {
+					safe[x] = true
+				}
 			}
 		case *ast.Index:
 			if id := paramIndex(x); id != nil && elemScalar {
@@ -1339,11 +1402,15 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, s
 		}
 	}
 	total := 0
+	seedOK := countedSeedOccurrences(fn)
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Ident:
 			if x.Name == pn {
 				total++
+				if seedOK[x] {
+					safe[x] = true
+				}
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {

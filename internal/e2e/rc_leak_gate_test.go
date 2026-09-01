@@ -93,7 +93,6 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"string_closure_capture_aliased":                 16,
 	"string_closure_capture_churn_free":              3200,
 	"tuple_return_scalar_cursor_recursion":           320,
-	"with_reassign_local_alias_threaded":             27888,
 }
 
 var rcCorpusLeakBaselineArm64 = map[string]int64{
@@ -148,7 +147,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"string_closure_capture_aliased":                 48,
 	"string_closure_capture_churn_free":              6400,
 	"tuple_return_scalar_cursor_recursion":           320,
-	"with_reassign_local_alias_threaded":             55152,
 }
 
 // checkCorpusLeaks runs every corpus case under the leak detector and
