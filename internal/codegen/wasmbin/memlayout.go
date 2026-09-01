@@ -195,10 +195,19 @@ const (
 	maxClosureCells = 116
 	closurePoolEnd  = closuresBase + 8*maxClosureCells
 
+	// twoOverPiBase is the Payne-Hanek 2/pi bit table __fern_sin_f64 /
+	// __fern_cos_f64 read for arguments at or above 2^20 — 21 8-byte LE
+	// limbs, written by their own data segment when either helper is
+	// present (see twoOverPiBits in runtime.go). Static and never
+	// rc-touched, like the vtables.
+	twoOverPiBase  = closurePoolEnd
+	twoOverPiLimbs = 21
+	twoOverPiEnd   = twoOverPiBase + 8*twoOverPiLimbs
+
 	// stringStart is where heap-form string literals begin; the bump
 	// cursor is seeded past the end of that pool, so every heap
 	// allocation lands above all of the static regions.
-	stringStart = closurePoolEnd
+	stringStart = twoOverPiEnd
 )
 
 // rcLowAddrGuard is the address floor the rc helpers use to skip static

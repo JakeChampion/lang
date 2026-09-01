@@ -794,6 +794,23 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		m.DataInits = append(m.DataInits, closureBytes)
 	}
 
+	// Payne-Hanek 2/pi bit table → data segment at twoOverPiBase, whenever
+	// either trig helper is present: their large-argument reduction reads
+	// it with i64.loads. Like every data segment it needs a memory behind
+	// it, even if nothing else in the module uses one.
+	if helpers.set["__fern_sin_f64"] || helpers.set["__fern_cos_f64"] {
+		if !m.MemoryPresent {
+			m.MemoryPresent = true
+			m.MemoryMin = 1
+			m.MemoryMax = -1
+			m.ExportNames = append(m.ExportNames, "memory")
+			m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
+			m.ExportIdxs = append(m.ExportIdxs, 0)
+		}
+		m.DataOffsets = append(m.DataOffsets, int32(twoOverPiBase))
+		m.DataInits = append(m.DataInits, twoOverPiSegment())
+	}
+
 	// Heap-form strings → data segment. Even if no other op used
 	// memory, the data segment requires a memory; force one in
 	// that case. The single segment lives at stringStart, above the
