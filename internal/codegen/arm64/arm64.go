@@ -24,6 +24,7 @@
 package arm64
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"sort"
@@ -10261,9 +10262,18 @@ type generator struct {
 	// (#5548), one entry per instrumented source line. Empty when -cover
 	// is off, which is what every coverage emission is gated on.
 	coverSites []ir.CoverSite
-	out        strings.Builder
+	// out is the assembled text. A bytes.Buffer rather than a
+	// strings.Builder because emitFunc rewrites the region it just wrote
+	// when the finished function turns out too large for a direct
+	// conditional branch (see expandCondBranches).
+	out bytes.Buffer
 	// noPeephole disables the streaming output peephole (Options.NoPeephole).
 	noPeephole bool
+	// directCond selects the one-instruction `b.cond` / `cbz` form over the
+	// inverted-test-plus-`b` trampoline. Set only while emitFunc is emitting
+	// a program function; emitFunc checks the finished size and expands the
+	// branches again if the function outgrew b.cond's reach.
+	directCond bool
 	// peepWin is the streaming peephole's sliding window of recently emitted
 	// logical lines (no trailing newline), held back from `out` until they
 	// can no longer participate in a rewrite. See put / flushPeep.
@@ -11333,6 +11343,15 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	frameSize := 16 + localsSize
 
 	sym := AsmFnName(fn.Name)
+	// Bracket this function's output so the conditional-branch selection can
+	// be checked against b.cond's reach once the finished size is known.
+	// Draining the peephole window first makes `start` an exact boundary; the
+	// window never spans a function boundary anyway (a `.size` directive and a
+	// label sit between two functions, and no rewrite matches across those).
+	g.flushPeep()
+	start := g.out.Len()
+	g.directCond = true
+	defer func() { g.directCond = false }()
 	g.line("")
 	// Emit each function into its OWN section (`-ffunction-sections` style) rather
 	// than one monolithic `.text`. On AArch64 a `bl`/`R_AARCH64_CALL26` reaches only
@@ -11450,6 +11469,8 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.emit("ret")
 	g.sizeDirective(sym)
 	g.line(".ltorg")
+	g.flushPeep()
+	g.reachCheckCondBranches(start)
 	return nil
 }
 
@@ -12110,10 +12131,17 @@ func (g *generator) freshLabel(prefix string) string {
 // does not relax them, so a single huge emitted function (e.g. the self-host
 // compiler's giant dispatch routines) can overflow with "conditional branch out
 // of range". We instead take the INVERTED test over a short forward branch and
-// reach the real target with an unconditional `b` (±128MB range). `skipInsn` is
-// the instruction that skips the jump — the inverse of the intended branch
-// (e.g. "cbnz" to realise a "cbz" target, "cbz" for "cbnz").
-func (g *generator) condBranchFar(skipInsn, reg, target string) {
+// reach the real target with an unconditional `b` (±128MB range). `fireInsn` is
+// the intended branch and `skipInsn` its inverse (e.g. "cbz" / "cbnz").
+//
+// Inside a program function the direct one-instruction form is emitted instead:
+// emitFunc measures the finished function and expands every conditional branch
+// back to the trampoline when the body is large enough for the reach to matter.
+func (g *generator) condBranchFar(fireInsn, skipInsn, reg, target string) {
+	if g.directCond {
+		g.emit("%s %s, %s", fireInsn, reg, target)
+		return
+	}
 	skip := g.freshLabel("brFar")
 	g.emit("%s %s, %s", skipInsn, reg, skip)
 	g.emit("b %s", target)
@@ -12126,12 +12154,207 @@ func (g *generator) condBranchFar(skipInsn, reg, target string) {
 // won't relax it, so a direct `b.<fireCC> target` can overflow ("conditional
 // branch out of range") in a very large emitted function; we take the inverted
 // test over a short forward skip and reach `target` with an unconditional `b`
-// (±128MB). Used by the compare-and-branch fusion (#4378).
+// (±128MB). Used by the compare-and-branch fusion (#4378). Inside a program
+// function the direct form is emitted and emitFunc expands it again only if
+// the finished function is large enough for the reach to matter.
 func (g *generator) condBranchFarCC(fireCC, skipCC, target string) {
+	if g.directCond {
+		g.emit("b.%s %s", fireCC, target)
+		return
+	}
 	skip := g.freshLabel("brFar")
 	g.emit("b.%s %s", skipCC, skip)
 	g.emit("b %s", target)
 	g.label(skip)
+}
+
+// condBranchReachInstrs is the largest function body, in instructions, for
+// which a direct conditional branch is unconditionally safe. b.cond / cbz /
+// tbz reach ±1MB = ±262144 instructions, so any branch inside a body no larger
+// than that reaches any label in it whichever way it points. The margin below
+// the architectural limit costs nothing: only two functions in the self-host
+// compiler come anywhere near it.
+const condBranchReachInstrs = 200000
+
+// invertCC maps an AArch64 condition code to its inverse.
+var invertCC = map[string]string{
+	"eq": "ne", "ne": "eq",
+	"cs": "cc", "cc": "cs",
+	"hs": "lo", "lo": "hs",
+	"mi": "pl", "pl": "mi",
+	"vs": "vc", "vc": "vs",
+	"hi": "ls", "ls": "hi",
+	"ge": "lt", "lt": "ge",
+	"gt": "le", "le": "gt",
+}
+
+// invertCondBranch returns the inverse of a conditional-branch mnemonic — the
+// instruction that SKIPS where the original fires — and whether the mnemonic is
+// one of the reach-limited conditional branches at all. `b` (±128MB), `bl` and
+// the unconditional forms are not.
+func invertCondBranch(mnem string) (string, bool) {
+	switch mnem {
+	case "cbz":
+		return "cbnz", true
+	case "cbnz":
+		return "cbz", true
+	case "tbz":
+		return "tbnz", true
+	case "tbnz":
+		return "tbz", true
+	}
+	if cc, ok := strings.CutPrefix(mnem, "b."); ok {
+		if inv, ok := invertCC[cc]; ok {
+			return "b." + inv, true
+		}
+	}
+	return "", false
+}
+
+// countInstrs counts machine instructions in emitted assembly text: tab-indented
+// lines that are not assembler directives.
+func countInstrs(text []byte) int {
+	n := 0
+	for _, line := range bytes.Split(text, []byte("\n")) {
+		if len(line) > 1 && line[0] == '\t' && line[1] != '.' {
+			n++
+		}
+	}
+	return n
+}
+
+// reachCheckCondBranches keeps the direct `b.cond` / `cbz` form honest. The
+// function just emitted starts at byte `start` of the output. When the whole
+// body fits inside b.cond's reach, every branch in it reaches every label in it
+// whichever way it points and there is nothing to do — the case for all but a
+// couple of the self-host compiler's functions. Otherwise the branches that
+// really are out of reach are expanded into the inverted-test-over-an-
+// unconditional-`b` trampoline, which reaches ±128MB.
+//
+// Deciding after the fact rather than predicting the size from the op stream
+// means the decision is made on the real emitted length and the real branch
+// distances: there is no per-op instruction-count estimate to get wrong, and a
+// long function pays the trampoline only where the distance demands it.
+func (g *generator) reachCheckCondBranches(start int) {
+	if countInstrs(g.out.Bytes()[start:]) <= condBranchReachInstrs {
+		return
+	}
+	body := append([]byte(nil), g.out.Bytes()[start:]...)
+	// Expanding a branch pushes everything after it two instructions further
+	// away, which can put another branch out of reach — so iterate until no
+	// branch needs expanding. Each round only grows the body, and only
+	// branches still over the limit expand, so this terminates.
+	for {
+		expanded, changed := g.expandFarCondBranches(body)
+		if !changed {
+			break
+		}
+		body = expanded
+	}
+	g.out.Truncate(start)
+	g.out.Write(body)
+}
+
+// expandFarCondBranches rewrites the reach-limited conditional branches in one
+// function's emitted text whose target is more than `condBranchReachInstrs`
+// instructions away into a trampoline: the inverted test over a short forward
+// skip, then an unconditional `b` to the real target.
+//
+//	b.eq  L    =>    b.ne .LbrFar_N / b L / .LbrFar_N:
+//	cbz w0, L  =>    cbnz w0, .LbrFar_N / b L / .LbrFar_N:
+//
+// A branch whose target is not a label of this function expands too — nothing
+// bounds a distance that cannot be measured.
+func (g *generator) expandFarCondBranches(body []byte) ([]byte, bool) {
+	lines := bytes.Split(body, []byte("\n"))
+	// Instruction index of every label, and of every line.
+	at := make([]int, len(lines))
+	labelAt := make(map[string]int, 64)
+	n := 0
+	for i, line := range lines {
+		at[i] = n
+		if len(line) > 1 && line[0] == '\t' && line[1] != '.' {
+			n++
+			continue
+		}
+		if l, ok := labelLine(line); ok {
+			labelAt[l] = n
+		}
+	}
+	var out bytes.Buffer
+	out.Grow(len(body) + len(body)/8)
+	changed := false
+	for i, line := range lines {
+		if i > 0 {
+			out.WriteByte('\n')
+		}
+		mnem, head, target, ok := splitCondBranch(line)
+		if !ok {
+			out.Write(line)
+			continue
+		}
+		if tgt, known := labelAt[target]; known && abs(tgt-at[i]) <= condBranchReachInstrs {
+			out.Write(line)
+			continue
+		}
+		inv, _ := invertCondBranch(mnem)
+		skip := g.freshLabel("brFar")
+		fmt.Fprintf(&out, "\t%s %s%s\n\tb %s\n%s:", inv, head, skip, target, skip)
+		changed = true
+	}
+	return out.Bytes(), changed
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// labelLine returns the name defined by a label line (`.LifEnd_3:` / `__fn_f:`)
+// and whether the line is one.
+func labelLine(line []byte) (string, bool) {
+	if len(line) < 2 || line[0] == '\t' || line[len(line)-1] != ':' {
+		return "", false
+	}
+	name := string(line[:len(line)-1])
+	if strings.ContainsAny(name, " \t,") {
+		return "", false
+	}
+	return name, true
+}
+
+// splitCondBranch decomposes an emitted reach-limited conditional branch into
+// its mnemonic, the operands preceding the target (empty for `b.cond`, the
+// register for cbz/cbnz, the register and bit for tbz/tbnz), and the target
+// label. Any other line reports false.
+func splitCondBranch(line []byte) (mnem, head, target string, ok bool) {
+	m, args, ok := splitInsn(line)
+	if !ok {
+		return "", "", "", false
+	}
+	if _, isCond := invertCondBranch(m); !isCond {
+		return "", "", "", false
+	}
+	if comma := strings.LastIndex(args, ", "); comma >= 0 {
+		return m, args[:comma+2], args[comma+2:], true
+	}
+	return m, "", args, true
+}
+
+// splitInsn splits an emitted instruction line into its mnemonic and the rest
+// of its operands. Directives, labels and blank lines report false.
+func splitInsn(line []byte) (mnem, args string, ok bool) {
+	if len(line) < 2 || line[0] != '\t' || line[1] == '.' {
+		return "", "", false
+	}
+	rest := string(line[1:])
+	sp := strings.IndexByte(rest, ' ')
+	if sp <= 0 {
+		return "", "", false
+	}
+	return rest[:sp], rest[sp+1:], true
 }
 
 // isFusableCompare reports whether an integer comparison op produces a 0/1
@@ -12323,6 +12546,24 @@ func (g *generator) emitCmpOperands(cmp ir.Op, imm int64, hasImm bool) {
 	g.cmpForWidth(cmp.Width)
 }
 
+// emitFusedBranch emits the operand setup and the conditional branch of a
+// fused compare-and-branch. An equality test against a folded zero needs no
+// `cmp` at all — cbz / cbnz test the register itself — so the whole comparison
+// collapses to one instruction.
+func (g *generator) emitFusedBranch(cmp ir.Op, imm int64, hasImm bool, fireCC, skipCC, target string) {
+	if hasImm && imm == 0 && (cmp.Kind == ir.OpEq || cmp.Kind == ir.OpNe) {
+		fire, skip := "cbz", "cbnz"
+		if fireCC == "ne" {
+			fire, skip = "cbnz", "cbz"
+		}
+		g.pop()
+		g.condBranchFar(fire, skip, g.regForWidth(cmp.Width)+"0", target)
+		return
+	}
+	g.emitCmpOperands(cmp, imm, hasImm)
+	g.condBranchFarCC(fireCC, skipCC, target)
+}
+
 // tryFoldConstOperand selects a constant that feeds the next op as that op's
 // immediate operand, instead of materialising it into a register and popping
 // both sides. Three folds, in decreasing specificity:
@@ -12443,16 +12684,14 @@ func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope, imm i
 	}
 	switch br.Kind {
 	case ir.OpIf:
-		g.emitCmpOperands(cmp, imm, hasImm)
 		elseL := g.freshLabel("ifElse")
 		endL := g.freshLabel("ifEnd")
-		g.condBranchFarCC(fireCC, skipCC, elseL)
+		g.emitFusedBranch(cmp, imm, hasImm, fireCC, skipCC, elseL)
 		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
 		return j - i, true
 	case ir.OpBrIf:
-		g.emitCmpOperands(cmp, imm, hasImm)
 		target := (*scope)[len(*scope)-1-int(br.I32)].brTarget
-		g.condBranchFarCC(fireCC, skipCC, target)
+		g.emitFusedBranch(cmp, imm, hasImm, fireCC, skipCC, target)
 		return j - i, true
 	}
 	return 0, false
@@ -13016,7 +13255,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		endL := g.freshLabel("ifEnd")
 		// Range-safe `cbz w0, elseL` (see condBranchFar): skip the far jump
 		// when w0 != 0 (cbnz), else fall into the unconditional `b elseL`.
-		g.condBranchFar("cbnz", "w0", elseL)
+		g.condBranchFar("cbz", "cbnz", "w0", elseL)
 		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
 	case ir.OpElse:
 		top := &(*scope)[len(*scope)-1]
@@ -13042,7 +13281,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// w0 form for the same reason as OpIf — only test the
 		// low 32 bits since i32 truthiness is i32-shaped. Range-safe
 		// `cbnz w0, target` (see condBranchFar): skip when w0 == 0.
-		g.condBranchFar("cbz", "w0", target)
+		g.condBranchFar("cbnz", "cbz", "w0", target)
 
 	// -------- memory load / store --------
 
