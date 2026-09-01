@@ -64974,33 +64974,27 @@ function body_assign_targets(stmts: ast.Stmt[]): string[] {
     return assign_targets_into([], stmts);
 }
 
-// assign_targets_into is body_assign_targets threading ONE accumulator instead
-// of returning a fresh array per nesting level for its caller to copy in.
-//
-// The copy is what made it quadratic in nesting DEPTH: an `else if` chain is
-// right-nested, so level i copied the whole result of level i+1 and a chain of
-// n arms cost O(n^2) appends. Callers make that a further factor: this runs at
-// the head of consumed_scalar_enum_frees / consumed_rcpayload_option_frees /
-// consumed_rcpayload_enum_frees, which lower_block runs on every nested block —
-// and an if-chain's else-body IS the whole remaining chain (#6911).
+// assign_targets_into threads ONE accumulator through astwalk's statement
+// spine. It is a hot path: this runs at the head of consumed_scalar_enum_frees /
+// consumed_rcpayload_option_frees / consumed_rcpayload_enum_frees, which
+// lower_block runs on every nested block (#6911) — assign_target_into captures
+// nothing, so the fold allocates nothing per call.
 function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
     for stmt in stmts {
-        match (stmt) {
-            ast.StmtAssign(a) => { out = out.append(a.target); },
-            ast.StmtIf(f) => {
-                out = assign_targets_into(out, f.then_body);
-                out = assign_targets_into(out, f.else_body);
-            },
-            ast.StmtWhile(w) => { out = assign_targets_into(out, w.body); },
-            ast.StmtFor(fr) => { out = assign_targets_into(out, fr.body); },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { out = assign_targets_into(out, arm.body); }
-            },
-            _ => { }
-        }
+        out = astwalk.fold_stmt_nodes(stmt, out, assign_target_into, no_expr_strs, astwalk.descend_none);
     }
     return out;
 }
+
+function assign_target_into(st: ast.Stmt, acc: string[]): string[] {
+    match (st) {
+        ast.StmtAssign(a) => { return acc.append(a.target); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function no_expr_strs(e: ast.Expr, acc: string[]): string[] { return acc; }
 
 function append_all(dst: string[], src: string[]): string[] {
     var i: i32 = 0;
@@ -66085,33 +66079,27 @@ function with_value_is_fn_value(v: ast.Expr, fd: parser.FuncDecl, mfuncs: MFuncs
 // body_binds_lambda reports whether `body` binds `name` to a lambda, at any
 // nesting depth — the shape the lift holds as an env box.
 function body_binds_lambda(body: ast.Stmt[], name: string): boolean {
-    var i: i32 = 0;
-    while (i < body.len()) {
-        match (body[i]) {
+    function binds_lambda_at(st: ast.Stmt, acc: boolean): boolean {
+        if (acc) { return true; }
+        match (st) {
             ast.StmtVar(v) => {
                 if (v.name == name) {
                     if let ast.ExprLambda(_) = v.init { return true; }
                 }
             },
-            ast.StmtIf(bif) => {
-                if (body_binds_lambda(bif.then_body, name)) { return true; }
-                if (body_binds_lambda(bif.else_body, name)) { return true; }
-            },
-            ast.StmtWhile(bwh) => { if (body_binds_lambda(bwh.body, name)) { return true; } },
-            ast.StmtFor(bfr) => { if (body_binds_lambda(bfr.body, name)) { return true; } },
-            ast.StmtMatch(bmt) => {
-                var a: i32 = 0;
-                while (a < bmt.arms.len()) {
-                    if (body_binds_lambda(bmt.arms[a].body, name)) { return true; }
-                    a = a + 1;
-                }
-            },
             _ => {}
         }
-        i = i + 1;
+        return acc;
+    }
+    var found: boolean = false;
+    for st in body {
+        found = astwalk.fold_stmt_nodes(st, found, binds_lambda_at, no_expr_bool, astwalk.descend_none);
+        if (found) { return true; }
     }
     return false;
 }
+
+function no_expr_bool(e: ast.Expr, acc: boolean): boolean { return acc; }
 
 // lift_callee_param_is_fn reports whether free function / method `callee`'s
 // param `idx` is fn-typed (coarse type_name "fn"). The lift-pass mirror of
@@ -68131,21 +68119,17 @@ function append_bound_binder(acc: string[], name: string): string[] {
 function body_var_decl_names(stmts: ast.Stmt[]): string[] {
     var out: string[] = [];
     for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => { out = out.append(v.name); },
-            ast.StmtIf(f) => {
-                out = append_all(out, body_var_decl_names(f.then_body));
-                out = append_all(out, body_var_decl_names(f.else_body));
-            },
-            ast.StmtWhile(w) => { out = append_all(out, body_var_decl_names(w.body)); },
-            ast.StmtFor(fr) => { out = append_all(out, body_var_decl_names(fr.body)); },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { out = append_all(out, body_var_decl_names(arm.body)); }
-            },
-            _ => {}
-        }
+        out = astwalk.fold_stmt_nodes(stmt, out, var_decl_name_into, no_expr_strs, astwalk.descend_none);
     }
     return out;
+}
+
+function var_decl_name_into(st: ast.Stmt, acc: string[]): string[] {
+    match (st) {
+        ast.StmtVar(v) => { return acc.append(v.name); },
+        _ => { return acc; }
+    }
+    return acc;
 }
 
 // ident_used_as_value_expr: does `name` occur in `e` as a VALUE — any ident
