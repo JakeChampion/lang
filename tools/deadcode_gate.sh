@@ -18,10 +18,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ALLOW="tools/deadcode-allowlist.txt"
-# Newest x/tools release that still builds under the Go version
-# .github/actions/setup-fern pins (GOTOOLCHAIN=local forbids the switch a
-# newer requirement would need) — v0.43.0 and up require go >= 1.25.
-DEADCODE_VERSION="v0.42.0"
+# x/tools v0.43.0+ needs go >= 1.25; CI exports GOTOOLCHAIN=local, which
+# forbids a toolchain switch, so this pin may not outrun the Go version
+# .github/actions/setup-fern pins.
+DEADCODE_VERSION="v0.49.0"
 
 raw="$(go run "golang.org/x/tools/cmd/deadcode@${DEADCODE_VERSION}" -test ./...)"
 

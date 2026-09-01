@@ -32,7 +32,7 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 stage=site/public/playground
 
 # Echoed so a toolchain mismatch is one glance into the deploy log rather
-# than a puzzling compile error further down. go.mod needs Go 1.24+, Astro 6
+# than a puzzling compile error further down. go.mod needs Go 1.26+, Astro 6
 # needs Node 22.12+; netlify.toml pins both.
 echo "==> $(go version)"
 echo "==> node $(node --version)"
@@ -52,15 +52,11 @@ cp -L web/*.html web/*.js "$stage/"
 
 goroot="$(go env GOROOT)"
 # Overwrites the committed shim staged just above, on purpose — see the header.
-# Go 1.24 moved wasm_exec.js from $GOROOT/misc/wasm to $GOROOT/lib/wasm.
-if [ -f "$goroot/lib/wasm/wasm_exec.js" ]; then
-  cp "$goroot/lib/wasm/wasm_exec.js" "$stage/wasm_exec.js"
-elif [ -f "$goroot/misc/wasm/wasm_exec.js" ]; then
-  cp "$goroot/misc/wasm/wasm_exec.js" "$stage/wasm_exec.js"
-else
-  echo "error: no wasm_exec.js under $goroot" >&2
+if [ ! -f "$goroot/lib/wasm/wasm_exec.js" ]; then
+  echo "error: no wasm_exec.js under $goroot/lib/wasm" >&2
   exit 1
 fi
+cp "$goroot/lib/wasm/wasm_exec.js" "$stage/wasm_exec.js"
 
 echo "==> generating stdlib reference"
 go run ./cmd/ferndoc -out site/src/content/docs/stdlib/

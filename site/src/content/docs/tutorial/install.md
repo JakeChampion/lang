@@ -48,7 +48,7 @@ cd lang
 go build -o ~/.local/bin/fern ./cmd/fern
 ```
 
-Building needs **Go 1.24+** ([download](https://go.dev/dl/)) and nothing
+Building needs **Go 1.26+** ([download](https://go.dev/dl/)) and nothing
 else. Compiling a Fern program needs nothing else either — no `gcc`, no
 `clang`, no `ld`. Pass `-cc` (for example `-cc clang`) if you would
 rather use your own assembler and linker.

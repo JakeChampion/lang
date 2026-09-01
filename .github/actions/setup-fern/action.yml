@@ -33,7 +33,7 @@ runs:
     - name: Set up Go
       uses: actions/setup-go@v7
       with:
-        go-version: "1.24"
+        go-version: "1.26"
         # No go.sum (no external deps) → setup-go's default cache
         # attempt complains. Disable it here; we run our own cache
         # step below that covers the Go build cache directly.
@@ -53,9 +53,9 @@ runs:
       uses: actions/cache@v6
       with:
         path: ~/.cache/go-build
-        key: gobuild-${{ runner.os }}-${{ runner.arch }}-go1.24-${{ hashFiles('go.mod') }}
+        key: gobuild-${{ runner.os }}-${{ runner.arch }}-go1.26-${{ hashFiles('go.mod') }}
         restore-keys: |
-          gobuild-${{ runner.os }}-${{ runner.arch }}-go1.24-
+          gobuild-${{ runner.os }}-${{ runner.arch }}-go1.26-
 
     # The self-host driver binaries link a ~371 MB freestanding `.s`. The GNU
     # bfd linker (gcc's default) is minutes-slow and memory-heavy on inputs that
