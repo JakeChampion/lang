@@ -285,6 +285,9 @@ func (b *builder) computeRcAnalyses() {
 	// Per-RETURN-SITE own-param transfers, which the whole-function
 	// movedLocals above cannot express (#6125).
 	b.rc.returnOwnMove = b.computeReturnOwnMoves()
+	// `p = f(…, p, …)` re-moves, whose retain was never balanced by an
+	// overwrite-dec.
+	b.computeSelfReassignOwnMoves()
 	b.rc.ctorAliasInced = b.computeCtorAliasInced()
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
 	b.rc.mapCowBindSites = b.computeMapCowBindSites()
@@ -5857,6 +5860,92 @@ func (b *builder) computeReturnOwnMoves() map[ast.Node]string {
 		return true
 	})
 	return out
+}
+
+// computeSelfReassignOwnMoves claims the `p = f(…, p, …)` sites that hand THIS
+// function's `own` param p straight on to another `own` parameter and rebind p
+// to the result. The argument stops paying `ownArgNeedsRetain`'s compensating
+// retain.
+//
+// The retain was never balanced on this shape. A self-reassign emits NO
+// overwrite-dec — callConsumesIdent suppresses it, because the callee owns and
+// drops the old binding — so the extra reference the retain added had nothing
+// left to spend it: one leaked box per call, and the callee growing p's buffers
+// at rc>1, so its first append copied the whole thing. On the self-host x86
+// assembler that came to 130 MB of copies on a single compile, all of it from
+// two `a = f(a); return g(a);` chains in the branch emitters.
+//
+// The claim needs no liveness analysis. The site rebinds p, so the reference
+// the callee consumed is gone from this frame and every later mention of p —
+// the exit sweep included — reads the fresh result the call returned. Two such
+// sites in a row are each sound for the same reason: each consumes the binding
+// current at that point. The guards mirror computeReturnOwnMoves:
+//
+//   - the assignment target is p itself, so the consumed reference is the one
+//     being overwritten (`q = f(p)` would leave p dangling for the sweep);
+//   - exactly one occurrence of p in the whole right-hand side, so
+//     `p = f(p, g(p))` — two transfers, one binding — cannot qualify;
+//   - the occurrence is a bare ident at an `own` position of a direct call.
+func (b *builder) computeSelfReassignOwnMoves() {
+	if b.fn.Body == nil || len(b.info.OwnFuncs) == 0 {
+		return
+	}
+	ownParam := map[string]bool{}
+	for _, p := range b.fn.Params {
+		// Only a param the sweep actually decs can reach ownArgNeedsRetain;
+		// for any other no retain is emitted and there is nothing to claim.
+		if p.Own && rcTrackedSlotType(p.Type) && b.rc.freeEligible[p.Name] {
+			ownParam[p.Name] = true
+		}
+	}
+	if len(ownParam) == 0 {
+		return
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		asg, ok := n.(*ast.Assign)
+		if !ok {
+			return true
+		}
+		target, ok := asg.Target.(*ast.Ident)
+		if !ok || !ownParam[target.Name] {
+			return true
+		}
+		uses := 0
+		ast.Walk(asg.Value, func(inner ast.Node) bool {
+			if id, isID := inner.(*ast.Ident); isID && id.Name == target.Name {
+				uses++
+			}
+			return true
+		})
+		if uses != 1 {
+			return true
+		}
+		call, isCall := asg.Value.(*ast.Call)
+		if !isCall {
+			return true
+		}
+		callee, isID := call.Callee.(*ast.Ident)
+		if !isID {
+			return true
+		}
+		if _, isLocal := b.locals[callee.Name]; isLocal {
+			return true // shadowed by a local — not a direct call
+		}
+		flags, isOwn := b.info.OwnFuncs[callee.Name]
+		if !isOwn {
+			return true
+		}
+		for i := 0; i < len(call.Args) && i < len(flags); i++ {
+			if !flags[i] {
+				continue
+			}
+			if arg, isArgID := call.Args[i].(*ast.Ident); isArgID && arg.Name == target.Name {
+				b.rc.ownCallMoveArgs[arg] = true
+				return true
+			}
+		}
+		return true
+	})
 }
 
 // computeCtorAliasInced collects every local that a container construction

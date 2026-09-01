@@ -81,6 +81,14 @@ var ownRemoveCases = []ownRemoveCase{
     if (k % 2 == 0) { return inner(p, 20); }
     return inner(p, 20);
 }`, 0},
+
+	// A CHAIN: the own param is reassigned from one consuming call and handed
+	// to the next. Both sites transfer p exactly once, and the first call's
+	// result is a fresh unique value, so neither needs a retain.
+	{"F_chained_transfers", `function outer(own p: P, k: i32): P {
+    p = inner(p, 10);
+    return inner(p, 10);
+}`, 0},
 }
 
 // src builds the driver. The length check runs before the counter is read, so
