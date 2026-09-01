@@ -23,6 +23,16 @@ inputs:
       formatter.
     required: false
     default: "false"
+  build-cache-key:
+    description: >
+      Suffix for the Go build cache's exact-match key. Leave empty
+      (the default) to restore-only: the empty suffix matches no
+      saved entry, so the restore falls through to the prefix
+      restore-key and lands the newest cache main published. Only
+      the job that SAVES the cache passes a value here, and it
+      passes the same one to actions/cache/save.
+    required: false
+    default: ""
 
 # Pinned versions — bump together with the corresponding entry in
 # any workflow that overrides them. Kept here so a single edit
@@ -39,21 +49,43 @@ runs:
         # step below that covers the Go build cache directly.
         cache: false
 
-    # Cache the Go build cache (`~/.cache/go-build` on Linux). Each
-    # `go test` invocation compiles the package + its test binary;
-    # without a cache that's repeated work every job. Keyed on host
-    # arch + Go version + go.mod hash (Go-version + module-set
-    # invalidation), with a restore-key on (arch, Go version) so a
-    # source-only edit still lands a warm cache — Go invalidates
-    # individual entries by per-file fingerprint on cache hit.
+    # RESTORE the Go build cache (`~/.cache/go-build` on Linux). Each
+    # `go test` / `go build` invocation compiles the package plus its
+    # test binary; without a cache that is repeated work every job.
+    #
+    # RESTORE-ONLY, by design. This step used to be a full
+    # `actions/cache` keyed on `hashFiles('go.mod')` — and go.mod is
+    # three lines that change only on a Go version bump, so the
+    # primary key was constant. `actions/cache` skips its save step on
+    # an exact-key hit, so every job in every workflow ended with
+    #
+    #     Cache hit occurred on the primary key
+    #     gobuild-Linux-X64-go1.26-7188d594…, not saving cache.
+    #
+    # and the cache stayed a fossil of the tree as it stood when
+    # `go 1.26` landed. It still covered the Go standard library, so
+    # nothing was catastrophically slow, but every package the repo
+    # had changed since was recompiled cold in every job, forever, and
+    # the cache could never grow into the current tree.
+    #
+    # The naive fix — keying on `github.run_id` — is worse: ~85 jobs
+    # per push would each write a multi-gigabyte entry and evict the
+    # 10 GB repository cache budget out from under everything else.
+    # So PR jobs restore and never write, and ONE job on main writes
+    # once a day (see the save step in test-units.yml). The empty
+    # default `build-cache-key` matches no saved entry, so the restore
+    # falls through to the prefix restore-key and lands whichever
+    # dated cache main published most recently. Go then invalidates
+    # individual entries by per-file fingerprint, so a day-old cache
+    # is still correct — only the packages that changed recompile.
     #
     # No module cache step: the repo has no external module deps,
     # `~/go/pkg/mod` stays empty.
-    - name: Cache Go build cache
-      uses: actions/cache@v6
+    - name: Restore Go build cache
+      uses: actions/cache/restore@v6
       with:
         path: ~/.cache/go-build
-        key: gobuild-${{ runner.os }}-${{ runner.arch }}-go1.26-${{ hashFiles('go.mod') }}
+        key: gobuild-${{ runner.os }}-${{ runner.arch }}-go1.26-${{ inputs.build-cache-key }}
         restore-keys: |
           gobuild-${{ runner.os }}-${{ runner.arch }}-go1.26-
 
