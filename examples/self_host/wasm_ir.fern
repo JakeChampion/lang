@@ -4673,14 +4673,106 @@ pub function pow_func(): string {
     return o;
 }
 
+// trig_limbs_func emits $__fern_2opi_limb(i) -> the i'th 64-bit limb of 2/pi
+// in binary, MSB-first, one limb per 64 fraction bits starting at 2^-1 in
+// limb 1 — the window Payne-Hanek indexes with the argument's own exponent.
+// The leading zero limb lets that index start above 2^-1 without a bounds
+// test; the length covers the largest finite double. Same table as the
+// native backends'; carried as a function rather than a data segment so the
+// trig runtime stays self-contained f64/i64 math with no memory-layout
+// coupling.
+pub function trig_limbs_func(): string {
+    var limbs: string[] = [
+        "0", "-6703182060581546711", "-277156292786332224",
+        "-2638381946312093631", "-121206125134887583", "-5249950069107600672",
+        "452944820249399836", "-135693905287338178", "-1692731182770600828",
+        "-1613291254968254911", "4148332274289687028", "-7168499653074671557",
+        "2303758334597371919", "-1211730484530615009", "7869616827067468215",
+        "5712322887342352941", "8441921394348257659", "4397547296490951402",
+        "7780917995555872008", "6197850593633725355", "-1094449336203069923"];
+    var o: string = "";    o = o + "  (func $__fern_2opi_limb (param $i i64) (result i64)\n";
+    var li: i32 = 0;
+    while (li < limbs.len()) {
+        o = o + "    (if (i64.eq (local.get $i) (i64.const " + li.to_string() + ")) (then (return (i64.const " + limbs[li] + "))))\n";
+        li = li + 1;
+    }
+    o = o + "    (i64.const 0))\n";
+    return o;
+}
+
+// trig_mulhi_func emits $__fern_mulhi64(a, b) -> the high 64 bits of the
+// unsigned 128-bit product. wasm has no widening multiply, so it is built
+// from four 32-bit-half i64.muls; the mid-sum cannot overflow ((2^32-1)^2 +
+// (2^32-1) < 2^64).
+pub function trig_mulhi_func(): string {
+    var o: string = "";    o = o + "  (func $__fern_mulhi64 (param $a i64) (param $b i64) (result i64)\n";
+    o = o + "    (local $m1 i64) (local $m2 i64)\n";
+    o = o + "    (local.set $m1 (i64.add (i64.mul (i64.shr_u (local.get $a) (i64.const 32)) (i64.and (local.get $b) (i64.const 4294967295))) (i64.shr_u (i64.mul (i64.and (local.get $a) (i64.const 4294967295)) (i64.and (local.get $b) (i64.const 4294967295))) (i64.const 32))))\n";
+    o = o + "    (local.set $m2 (i64.add (i64.mul (i64.and (local.get $a) (i64.const 4294967295)) (i64.shr_u (local.get $b) (i64.const 32))) (i64.and (local.get $m1) (i64.const 4294967295))))\n";
+    o = o + "    (i64.add (i64.add (i64.mul (i64.shr_u (local.get $a) (i64.const 32)) (i64.shr_u (local.get $b) (i64.const 32))) (i64.shr_u (local.get $m1) (i64.const 32))) (i64.shr_u (local.get $m2) (i64.const 32))))\n";
+    return o;
+}
+
 // trig_reduce_and_polys emits the shared reduction plus sin(r)/cos(r) for
 // $__fern_sin_f64 / $__fern_cos_f64. Locals are declared by the caller.
 // The cos form's (1-w)-hz step recovers the bits 1-hz discards; computing
 // 1 - hz + z*z*p directly costs ~2 ulp.
+//
+// |x| < 2^20 reduces Cody-Waite. At or above (biased exponent >= 1043) k no
+// longer fits pio2h's 22 zeroed mantissa bits, so the large path multiplies
+// the significand by the window of 2/pi the exponent selects instead,
+// keeping 128 bits about the binary point — the top two bits are the
+// quadrant and the rest the fraction of x/(pi/2). It never converts a float
+// to an integer, which also removes the i64.trunc_f64_s trap large
+// arguments used to hit. The Inf/NaN guard runs in the caller, so only
+// finite arguments reach either branch.
 function trig_reduce_and_polys(): string {
-    var o: string = "";    o = o + "    (local.set $k (f64.nearest (f64.mul (local.get $x) (f64.const 0.636619772367581382433))))\n";
-    o = o + "    (local.set $q (i64.and (i64.trunc_f64_s (local.get $k)) (i64.const 3)))\n";
-    o = o + "    (local.set $r (f64.sub (f64.sub (f64.sub (local.get $x) (f64.mul (local.get $k) (f64.const 1.57079632673412561417))) (f64.mul (local.get $k) (f64.const 6.07710050630396597660e-11))) (f64.mul (local.get $k) (f64.const 2.02226624879595063154e-21))))\n";
+    var o: string = "";    o = o + "    (local.set $bits (i64.reinterpret_f64 (local.get $x)))\n";
+    o = o + "    (local.set $e (i64.and (i64.shr_u (local.get $bits) (i64.const 52)) (i64.const 2047)))\n";
+    o = o + "    (if (i64.ge_s (local.get $e) (i64.const 1043))\n";
+    o = o + "      (then\n";
+    o = o + "        (local.set $m (i64.or (i64.and (local.get $bits) (i64.const 4503599627370495)) (i64.const 4503599627370496)))\n";
+    // x = m*2^(e-1075), so the fraction of x*(2/pi) starts at bit
+    // (e-1075)+62 of the table once the product is read as a Q126.
+    o = o + "        (local.set $e (i64.sub (local.get $e) (i64.const 1013)))\n";
+    o = o + "        (local.set $off (i64.and (local.get $e) (i64.const 63)))\n";
+    o = o + "        (local.set $e (i64.shr_u (local.get $e) (i64.const 6)))\n";
+    // Each 64-bit window is (T[i] << off) | (T[i+1] >> (64-off)). wasm
+    // shifts mask the count mod 64, so the right half is spelled as two
+    // shifts — a plain >> (64-off) is wrong at off 0.
+    o = o + "        (local.set $w0 (i64.or (i64.shl (call $__fern_2opi_limb (local.get $e)) (local.get $off)) (i64.shr_u (i64.shr_u (call $__fern_2opi_limb (i64.add (local.get $e) (i64.const 1))) (i64.const 1)) (i64.sub (i64.const 63) (local.get $off)))))\n";
+    o = o + "        (local.set $w1 (i64.or (i64.shl (call $__fern_2opi_limb (i64.add (local.get $e) (i64.const 1))) (local.get $off)) (i64.shr_u (i64.shr_u (call $__fern_2opi_limb (i64.add (local.get $e) (i64.const 2))) (i64.const 1)) (i64.sub (i64.const 63) (local.get $off)))))\n";
+    o = o + "        (local.set $w2 (i64.or (i64.shl (call $__fern_2opi_limb (i64.add (local.get $e) (i64.const 2))) (local.get $off)) (i64.shr_u (i64.shr_u (call $__fern_2opi_limb (i64.add (local.get $e) (i64.const 3))) (i64.const 1)) (i64.sub (i64.const 63) (local.get $off)))))\n";
+    // acc(128) = lo(m*w0)<<64 + m*w1 + hi(m*w2), i.e. x*(2/pi) as a Q126.
+    o = o + "        (local.set $ph (i64.mul (local.get $m) (local.get $w1)))\n";
+    o = o + "        (local.set $lo (i64.add (local.get $ph) (call $__fern_mulhi64 (local.get $m) (local.get $w2))))\n";
+    o = o + "        (local.set $hi (i64.add (i64.add (i64.mul (local.get $m) (local.get $w0)) (call $__fern_mulhi64 (local.get $m) (local.get $w1))) (i64.extend_i32_u (i64.lt_u (local.get $lo) (local.get $ph)))))\n";
+    o = o + "        (local.set $q (i64.shr_u (local.get $hi) (i64.const 62)))\n";
+    o = o + "        (local.set $hi (i64.and (local.get $hi) (i64.const 4611686018427387903)))\n";
+    o = o + "        (local.set $ph (i64.const 0))\n";
+    // A fraction at or above a half belongs to the next quadrant, as the
+    // negative remainder below it — which is what keeps |r| <= pi/4.
+    o = o + "        (if (i64.ge_u (local.get $hi) (i64.const 2305843009213693952)) (then\n";
+    o = o + "          (local.set $q (i64.add (local.get $q) (i64.const 1)))\n";
+    o = o + "          (local.set $hi (i64.sub (i64.sub (i64.const 4611686018427387904) (local.get $hi)) (i64.extend_i32_u (i64.ne (local.get $lo) (i64.const 0)))))\n";
+    o = o + "          (local.set $lo (i64.sub (i64.const 0) (local.get $lo)))\n";
+    o = o + "          (local.set $ph (i64.const 1))))\n";
+    // The low half only contributes below 2^-64, so 11 of its bits fall off
+    // the end of the double anyway; dropping them keeps the signed
+    // conversion exact, matching the other backends bit for bit.
+    o = o + "        (local.set $lo (i64.shr_u (local.get $lo) (i64.const 11)))\n";
+    o = o + "        (local.set $k (f64.add (f64.mul (f64.convert_i64_s (local.get $hi)) (f64.const 2.168404344971009e-19)) (f64.mul (f64.convert_i64_s (local.get $lo)) (f64.const 2.407412430484045e-35))))\n";
+    o = o + "        (if (i64.ne (local.get $ph) (i64.const 0)) (then (local.set $k (f64.neg (local.get $k)))))\n";
+    o = o + "        (if (i64.lt_s (local.get $bits) (i64.const 0)) (then\n";
+    o = o + "          (local.set $k (f64.neg (local.get $k)))\n";
+    o = o + "          (local.set $q (i64.sub (i64.const 0) (local.get $q)))))\n";
+    o = o + "        (local.set $q (i64.and (local.get $q) (i64.const 3)))\n";
+    // r = k*pio2hi + k*pio2lo (pi/2 as an unevaluated double-double).
+    o = o + "        (local.set $r (f64.add (f64.mul (local.get $k) (f64.const 1.5707963267948966)) (f64.mul (local.get $k) (f64.const 6.123233995736766e-17)))))\n";
+    o = o + "      (else\n";
+    o = o + "        (local.set $k (f64.nearest (f64.mul (local.get $x) (f64.const 0.636619772367581382433))))\n";
+    o = o + "        (local.set $q (i64.and (i64.trunc_f64_s (local.get $k)) (i64.const 3)))\n";
+    o = o + "        (local.set $r (f64.sub (f64.sub (f64.sub (local.get $x) (f64.mul (local.get $k) (f64.const 1.57079632673412561417))) (f64.mul (local.get $k) (f64.const 6.07710050630396597660e-11))) (f64.mul (local.get $k) (f64.const 2.02226624879595063154e-21))))))\n";
     o = o + "    (local.set $r2 (f64.mul (local.get $r) (local.get $r)))\n";
     o = o + "    (local.set $sinr (f64.const 1.58969099521155010221e-10))\n";
     o = o + "    (local.set $sinr (f64.add (f64.mul (local.get $sinr) (local.get $r2)) (f64.const -2.50507602534068634195e-08)))\n";
@@ -4706,6 +4798,7 @@ function trig_reduce_and_polys(): string {
 pub function sin_func(): string {
     var o: string = "";    o = o + "  (func $__fern_sin_f64 (param $x f64) (result f64)\n";
     o = o + "    (local $k f64) (local $q i64) (local $r f64) (local $r2 f64) (local $sinr f64) (local $cosr f64) (local $hz f64) (local $cw f64)\n";
+    o = o + "    (local $bits i64) (local $e i64) (local $m i64) (local $off i64) (local $w0 i64) (local $w1 i64) (local $w2 i64) (local $lo i64) (local $hi i64) (local $ph i64)\n";
     o = o + "    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))\n";
     o = o + "    (if (f64.eq (f64.abs (local.get $x)) (f64.reinterpret_i64 (i64.const 9218868437227405312))) (then (return (f64.reinterpret_i64 (i64.const 9221120237041090560)))))\n";
     o = o + trig_reduce_and_polys();
@@ -4721,6 +4814,7 @@ pub function sin_func(): string {
 pub function cos_func(): string {
     var o: string = "";    o = o + "  (func $__fern_cos_f64 (param $x f64) (result f64)\n";
     o = o + "    (local $k f64) (local $q i64) (local $r f64) (local $r2 f64) (local $sinr f64) (local $cosr f64) (local $hz f64) (local $cw f64)\n";
+    o = o + "    (local $bits i64) (local $e i64) (local $m i64) (local $off i64) (local $w0 i64) (local $w1 i64) (local $w2 i64) (local $lo i64) (local $hi i64) (local $ph i64)\n";
     o = o + "    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))\n";
     o = o + "    (if (f64.eq (f64.abs (local.get $x)) (f64.reinterpret_i64 (i64.const 9218868437227405312))) (then (return (f64.reinterpret_i64 (i64.const 9221120237041090560)))))\n";
     o = o + trig_reduce_and_polys();
@@ -8487,8 +8581,14 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     if (need(needs, "flog") || need(needs, "fpow")) { parts = parts.append(log_func()); }
     // $__fern_pow_f64: x^y = sign·exp(y·ln|x|) — composes the two helpers above.
     if (need(needs, "fpow")) { parts = parts.append(pow_func()); }
-    // $__fern_sin_f64 / $__fern_cos_f64: trig via argument reduction + Taylor
-    // polynomials (no transcendental wasm instruction). Self-contained f64 math.
+    // $__fern_sin_f64 / $__fern_cos_f64: trig via argument reduction (Cody-Waite
+    // below 2^20, Payne-Hanek above) + the fdlibm kernels (no transcendental wasm
+    // instruction). Self-contained f64/i64 math; the two shared helpers carry the
+    // 2/pi limb table and the 64x64->128 high multiply the large path needs.
+    if (need(needs, "fsin") || need(needs, "fcos")) {
+        parts = parts.append(trig_limbs_func());
+        parts = parts.append(trig_mulhi_func());
+    }
     if (need(needs, "fsin")) { parts = parts.append(sin_func()); }
     if (need(needs, "fcos")) { parts = parts.append(cos_func()); }
     // $__fern_strcat + $__fern_streq (concat / equality); references
