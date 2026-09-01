@@ -276,6 +276,22 @@ Items that are known-broken in some configuration but considered too
 costly (or too speculative) to fix right now. Each entry should have a
 concrete fix plan and a rough scope estimate.
 
+### Line coverage (`-cover`) is native-only
+
+`-cover` (#5548, `docs/COVERAGE.md`) instruments every executable source line
+with a counter and dumps the table at exit. The instrumentation is an IR pass,
+but each backend still has to emit the counter array, the report table, and
+the exit-seam call — only x86-64 and arm64 do, matching `-sanitize`'s reach.
+
+`ir.LowerWith` **errors** when `ast.CoverEnabled` is set and the caller did not
+pass `CoverPoints()`, so a wasm build under `-cover` refuses rather than
+producing an uninstrumented binary. A coverage run that silently measures zero
+is the failure mode that gate exists to prevent.
+
+Fix plan for wasm: a linear-memory counter region plus a report loop over it,
+written out through the same `fd_write` the string printers use. Scope: the
+loop is the work — the counter bump itself is `i64.load` / `add` / `store`.
+
 ### Heap exhaustion exits 125 on the natives, traps on wasm
 
 Both native backends exit `ExitArenaExhausted` (125) when the arena runs out.

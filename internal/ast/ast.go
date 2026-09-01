@@ -1352,6 +1352,32 @@ func init() { ApplySanitize() }
 // numbers read to say whether it was clean.
 var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
 
+// CoverEnabled turns on line-coverage instrumentation (#5548): the
+// lowering emits an ir.OpCoverPoint at each executable source line, the
+// backend reserves one .bss counter per instrumented (file, line) and
+// increments it in place, and a report loop writes the whole table to
+// stderr at both exit seams — one line per instrumented line, hit or
+// not:
+//
+//	fern-cover: <file>:<line> <count>
+//
+// `fern -cover-report FILE` folds that stream into per-file totals, the
+// uncovered-line list, or lcov. Counters are plain non-atomic adds and
+// the report is unconditional, so this is a measurement build, not a
+// shipping one. x86-64 + arm64 natives; the wasm backend rejects it
+// rather than silently measuring nothing. With the flag OFF the emitted
+// asm is byte-identical to a build from a compiler without the feature.
+// Settable via FERN_COVER=1 (the LeakCheckEnabled precedent) so a
+// harness can instrument a child compile without a fork.
+var CoverEnabled = os.Getenv("FERN_COVER") == "1"
+
+// CoverLinePrefix opens every line of the coverage report an
+// instrumented binary writes to stderr, and is what `fern -cover-report`
+// matches on. It exists so the two natives and the reader agree on one
+// spelling: the report shares stderr with whatever the program itself
+// printed there, so the prefix is the only thing separating the two.
+const CoverLinePrefix = "fern-cover: "
+
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
 // (x86-64 and arm64; a diagnostic build mode, set alongside
 // RcFreeEnabled). Instead of recycling a freed array buffer, the
@@ -3576,6 +3602,16 @@ type FuncDecl struct {
 	// docs/PRELUDE-TO-MODULES.md). Single-file programs and
 	// checker-synthesised decls leave this empty.
 	SourceModule string
+	// SourceFile is the path of the file this function was parsed from,
+	// stamped by modload as it loads each module and never cleared.
+	//
+	// SourceModule cannot serve: it carries method-visibility semantics,
+	// and modload deliberately blanks it on flat-loaded stdlib decls so
+	// they stay universally visible. Anything that needs to say WHERE a
+	// function came from — the coverage report's per-file totals (#5548) —
+	// needs a stamp with no second meaning attached to it. Empty on a
+	// program built straight from the parser and on synthesised decls.
+	SourceFile string
 }
 
 // StructDecl is a top-level `struct` declaration. Fields are stored in

@@ -175,6 +175,14 @@ fall-through.
 
 Worth knowing so you do not assume coverage you do not have:
 
+- **Which source lines any suite actually reaches.** Nothing asserts this, and
+  nothing ever will — but as of #5548 it is now MEASURABLE rather than
+  guessed: `fern -cover` instruments every executable line, the binary dumps
+  the whole table at exit, and `fern -cover-report` folds it into per-file
+  totals, an uncovered-line list, or lcov. Reach for it before arguing from a
+  suite's name about what it proves. Native x86-64 / arm64 only;
+  `docs/COVERAGE.md`.
+
 - **Anything outside the FIXED corpus bounds, on a pull request.** Every
   fernsmith sweep that runs per-PR is a fixed prefix — 2048 exit-byte seeds,
   1024 printable — and both per-PR coverage-guided lanes get 60 seconds from a

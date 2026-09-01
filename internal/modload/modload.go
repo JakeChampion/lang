@@ -473,6 +473,9 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		// module A is only callable from a file whose import
 		// closure reaches A.
 		fn.SourceModule = path
+		// Unlike SourceModule this is never cleared — see the field's
+		// comment for why the two stamps cannot be one.
+		fn.SourceFile = path
 		if fn.Public {
 			mod.publicFuncs[fn.Name] = true
 			if fn.Receiver != nil {
