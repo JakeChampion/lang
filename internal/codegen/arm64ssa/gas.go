@@ -6296,9 +6296,50 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 		w("\tret")
 	}
 
-	for bi, blk := range p.Blocks {
+	order := layoutOrder(p)
+	// nextInLayout[bi] is the block physically following bi in the emitted
+	// order, or -1 for the last one: a branch to it needs no instruction.
+	nextInLayout := make([]int, len(p.Blocks))
+	for i := range nextInLayout {
+		nextInLayout[i] = -1
+	}
+	for oi := 0; oi+1 < len(order); oi++ {
+		nextInLayout[order[oi]] = order[oi+1]
+	}
+
+	for _, bi := range order {
+		blk := p.Blocks[bi]
 		w(".L%s_b%d:", label, bi)
-		for ii, in := range blk.Insts {
+		insts := blk.Insts
+
+		// A conditional branch on a comparison whose 0/1 nothing else reads is
+		// rendered as the comparison plus a flag branch: the cset (and the copy
+		// that fed the cmp) go away entirely.
+		fuseCC, fuseLeft, fuseRight := "", -1, -1
+		if blk.Term.Kind == x86.TBrIf && blk.Term.CondFuse && len(insts) > 0 {
+			c := insts[len(insts)-1]
+			if cc, ok := condCode(c.K); ok && c.Op == x86.SetCmp && c.Dst == blk.Term.CondReg {
+				fuseCC, fuseLeft, fuseRight = cc, c.Dst, c.Src
+				insts = insts[:len(insts)-1]
+				if n := len(insts); n > 0 {
+					m := insts[n-1]
+					if m.Op == x86.MovReg && m.Dst == c.Dst && c.Src != c.Dst {
+						fuseLeft = m.Src
+						insts = insts[:n-1]
+					}
+				}
+			}
+		}
+		movSkip, accLeft := deadAccMoves(insts)
+
+		for ii, in := range insts {
+			if movSkip[ii] {
+				continue
+			}
+			left := accLeft[ii]
+			if left < 0 {
+				left = in.Dst
+			}
 			if in.Op == x86.Call || in.Op == x86.CallPair {
 				// An array index is address arithmetic, not a call: inline it
 				// rather than making the allocator spill around it. The seed
@@ -6387,13 +6428,16 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 				w("\tadd %s, %s, #:lo12:%s", xreg(in.Dst), xreg(in.Dst), lbl)
 				continue
 			}
-			lines, err := asmInst(in, scratch, fr)
+			lines, err := asmInst(in, left, scratch, fr)
 			if err != nil {
 				return err
 			}
 			for _, l := range lines {
 				w("\t%s", l)
 			}
+		}
+		if fuseLeft >= 0 {
+			w("\tcmp %s, %s", xreg(fuseLeft), xreg(fuseRight))
 		}
 		switch blk.Term.Kind {
 		case x86.TRet:
@@ -6408,10 +6452,32 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 			teardown()
 			w("\tret")
 		case x86.TJmp:
-			w("\tb .L%s_b%d", label, blk.Term.Target)
+			if blk.Term.Target != nextInLayout[bi] {
+				w("\tb .L%s_b%d", label, blk.Term.Target)
+			}
 		case x86.TBrIf:
-			w("\tcbnz %s, .L%s_b%d", xreg(blk.Term.CondReg), label, blk.Term.True)
-			w("\tb .L%s_b%d", label, blk.Term.False)
+			taken, notTaken := "cbnz", "cbz"
+			if fuseCC != "" {
+				inv, ok := invCond(fuseCC)
+				if !ok {
+					return fmt.Errorf("arm64ssa: no inverse for condition %q", fuseCC)
+				}
+				taken, notTaken = "b."+fuseCC, "b."+inv
+			}
+			cond := ""
+			if fuseCC == "" {
+				cond = xreg(blk.Term.CondReg) + ", "
+			}
+			switch nxt := nextInLayout[bi]; {
+			case blk.Term.True == nxt:
+				// The taken arm follows, so test the inverse and fall into it.
+				w("\t%s %s.L%s_b%d", notTaken, cond, label, blk.Term.False)
+			case blk.Term.False == nxt:
+				w("\t%s %s.L%s_b%d", taken, cond, label, blk.Term.True)
+			default:
+				w("\t%s %s.L%s_b%d", taken, cond, label, blk.Term.True)
+				w("\tb .L%s_b%d", label, blk.Term.False)
+			}
 		default:
 			return fmt.Errorf("arm64ssa: unsupported terminator %d", blk.Term.Kind)
 		}
@@ -7141,7 +7207,10 @@ func align16(n int) int {
 // asmInst renders one abstract instruction to AArch64 GAS lines. scratch is a
 // free above-the-file register the remainder sequence stages its quotient
 // through.
-func asmInst(in x86.Inst, scratch int, fr frameLayout) ([]string, error) {
+// left is the register holding the instruction's left (accumulator) operand.
+// It is in.Dst for the abstract two-address form; deadAccMoves names another
+// register when the copy that would have put the value there is dropped.
+func asmInst(in x86.Inst, left, scratch int, fr frameLayout) ([]string, error) {
 	switch in.Op {
 	case x86.MovImm:
 		// The immediate is the value in the model's slot (already sign-extended for
@@ -7160,29 +7229,19 @@ func asmInst(in x86.Inst, scratch int, fr frameLayout) ([]string, error) {
 	case x86.BinOp:
 		switch in.K {
 		case ssa.OpShl, ssa.OpShr, ssa.OpShrU, ssa.OpDiv, ssa.OpDivU, ssa.OpRem, ssa.OpRemU:
-			return divShiftSeq(in, scratch), nil
+			return divShiftSeq(in, left, scratch), nil
 		}
 		mnem, ok := binMnemonic(in.K)
 		if !ok {
 			return nil, fmt.Errorf("arm64ssa: binary op %v not supported yet", in.K)
 		}
-		// 3-operand form with dst as both the accumulator and destination, matching
-		// the abstract semantics reg[Dst] = reg[Dst] (K) reg[Src].
-		out := []string{fmt.Sprintf("%s %s, %s, %s", mnem, xreg(in.Dst), xreg(in.Dst), xreg(in.Src))}
+		// 3-operand form: the abstract semantics reg[Dst] = reg[Dst] (K) reg[Src]
+		// name the accumulator twice, but AArch64 can read it from anywhere.
+		out := []string{fmt.Sprintf("%s %s, %s, %s", mnem, xreg(in.Dst), xreg(left), xreg(in.Src))}
 		out = append(out, maskFix(in.Dst, in.W)...)
 		return out, nil
 	case x86.SetCmp:
-		cc, ok := condCode(in.K)
-		if !ok {
-			return nil, fmt.Errorf("arm64ssa: comparison %v not supported yet", in.K)
-		}
-		// 64-bit cmp on sign-extended i32 operands orders correctly for both
-		// signed and unsigned conditions; cset materialises the 0/1 result (no i32
-		// mask needed).
-		return []string{
-			fmt.Sprintf("cmp %s, %s", xreg(in.Dst), xreg(in.Src)),
-			fmt.Sprintf("cset %s, %s", xreg(in.Dst), cc),
-		}, nil
+		return setCmpSeq(in, left)
 	case x86.MemAlloc:
 		return memAllocSeq(in, scratch), nil
 	case x86.MemLoad:
@@ -7194,13 +7253,13 @@ func asmInst(in x86.Inst, scratch int, fr frameLayout) ([]string, error) {
 	case x86.FBin:
 		return fBinSeq(in)
 	case x86.FCmp:
-		return fCmpSeq(in)
+		return fCmpSeq(in, left)
 	case x86.FConv:
 		return fConvSeq(in)
 	case x86.UnNeg:
-		return append([]string{fmt.Sprintf("neg %s, %s", xreg(in.Dst), xreg(in.Dst))}, maskFix(in.Dst, in.W)...), nil
+		return append([]string{fmt.Sprintf("neg %s, %s", xreg(in.Dst), xreg(left))}, maskFix(in.Dst, in.W)...), nil
 	case x86.UnOp:
-		return unOpSeq(in)
+		return unOpSeq(in, left)
 	case x86.Select:
 		return selectSeq(in), nil
 	default:
@@ -7214,8 +7273,9 @@ func asmInst(in x86.Inst, scratch int, fr frameLayout) ([]string, error) {
 // abstract model does before its width mask, so a trailing maskFix reproduces the
 // i32 result. Remainder has no direct instruction: divide into the scratch
 // register, then msub (Xd = Xa - Xn*Xm) yields dividend - quotient*divisor.
-func divShiftSeq(in x86.Inst, scratch int) []string {
+func divShiftSeq(in x86.Inst, left, scratch int) []string {
 	d, s := xreg(in.Dst), xreg(in.Src)
+	a, aw := xreg(left), wreg(left)
 	// A 32-bit op renders in the 32-bit w-form, for TWO independent reasons.
 	//
 	// Operand: the unsigned ops (lsr / udiv / unsigned rem) must not see the
@@ -7242,36 +7302,36 @@ func divShiftSeq(in x86.Inst, scratch int) []string {
 	switch in.K {
 	case ssa.OpShl:
 		if width32 {
-			out = []string{fmt.Sprintf("lsl %s, %s, %s", dw, dw, sw)}
+			out = []string{fmt.Sprintf("lsl %s, %s, %s", dw, aw, sw)}
 		} else {
-			out = []string{fmt.Sprintf("lsl %s, %s, %s", d, d, s)}
+			out = []string{fmt.Sprintf("lsl %s, %s, %s", d, a, s)}
 		}
 	case ssa.OpShr:
 		if width32 {
-			out = []string{fmt.Sprintf("asr %s, %s, %s", dw, dw, sw)} // arithmetic, 32-bit
+			out = []string{fmt.Sprintf("asr %s, %s, %s", dw, aw, sw)} // arithmetic, 32-bit
 		} else {
-			out = []string{fmt.Sprintf("asr %s, %s, %s", d, d, s)} // arithmetic, 64-bit
+			out = []string{fmt.Sprintf("asr %s, %s, %s", d, a, s)} // arithmetic, 64-bit
 		}
 	case ssa.OpShrU:
 		if width32 {
-			out = []string{fmt.Sprintf("lsr %s, %s, %s", dw, dw, sw)} // logical, 32-bit
+			out = []string{fmt.Sprintf("lsr %s, %s, %s", dw, aw, sw)} // logical, 32-bit
 		} else {
-			out = []string{fmt.Sprintf("lsr %s, %s, %s", d, d, s)} // logical, 64-bit
+			out = []string{fmt.Sprintf("lsr %s, %s, %s", d, a, s)} // logical, 64-bit
 		}
 	case ssa.OpDiv:
-		out = []string{fmt.Sprintf("sdiv %s, %s, %s", d, d, s)}
+		out = []string{fmt.Sprintf("sdiv %s, %s, %s", d, a, s)}
 	case ssa.OpDivU:
 		if width32 {
-			out = []string{fmt.Sprintf("udiv %s, %s, %s", dw, dw, sw)} // 32-bit
+			out = []string{fmt.Sprintf("udiv %s, %s, %s", dw, aw, sw)} // 32-bit
 		} else {
-			out = []string{fmt.Sprintf("udiv %s, %s, %s", d, d, s)} // 64-bit
+			out = []string{fmt.Sprintf("udiv %s, %s, %s", d, a, s)} // 64-bit
 		}
 	case ssa.OpRem, ssa.OpRemU:
 		if in.K == ssa.OpRemU && width32 {
 			q := wreg(scratch)
 			out = []string{
-				fmt.Sprintf("udiv %s, %s, %s", q, dw, sw),         // q = d / s (32-bit)
-				fmt.Sprintf("msub %s, %s, %s, %s", dw, q, sw, dw), // d = d - q*s
+				fmt.Sprintf("udiv %s, %s, %s", q, aw, sw),         // q = a / s (32-bit)
+				fmt.Sprintf("msub %s, %s, %s, %s", dw, q, sw, aw), // d = a - q*s
 			}
 		} else {
 			q := xreg(scratch)
@@ -7280,8 +7340,8 @@ func divShiftSeq(in x86.Inst, scratch int) []string {
 				div = "udiv"
 			}
 			out = []string{
-				fmt.Sprintf("%s %s, %s, %s", div, q, d, s),     // q = d / s
-				fmt.Sprintf("msub %s, %s, %s, %s", d, q, s, d), // d = d - q*s
+				fmt.Sprintf("%s %s, %s, %s", div, q, a, s),     // q = a / s
+				fmt.Sprintf("msub %s, %s, %s, %s", d, q, s, a), // d = a - q*s
 			}
 		}
 	}
@@ -7336,26 +7396,29 @@ func memAllocSeq(in x86.Inst, scratch int) []string {
 func memLoadSeq(in x86.Inst) []string {
 	d, dw := xreg(in.Dst), wreg(in.Dst)
 	mem := fmt.Sprintf("[%s, #%d]", xreg(in.Src), in.Imm)
-	var out []string
+	// AArch64's loads already sign- or zero-extend into the full register, so
+	// an i32 result's sign-extension is either part of the load's own form or a
+	// no-op — only the 8-byte load actually narrows.
+	narrow := in.W != 64
 	switch in.Bytes {
 	case 8:
-		out = []string{fmt.Sprintf("ldr %s, %s", d, mem)}
+		return append([]string{fmt.Sprintf("ldr %s, %s", d, mem)}, maskFix(in.Dst, in.W)...)
 	case 4:
-		out = []string{fmt.Sprintf("ldr %s, %s", dw, mem)} // zero-extends to 64
+		if narrow {
+			return []string{fmt.Sprintf("ldrsw %s, %s", d, mem)}
+		}
+		return []string{fmt.Sprintf("ldr %s, %s", dw, mem)} // zero-extends to 64
 	case 2:
 		if in.Signed {
-			out = []string{fmt.Sprintf("ldrsh %s, %s", d, mem)}
-		} else {
-			out = []string{fmt.Sprintf("ldrh %s, %s", dw, mem)}
+			return []string{fmt.Sprintf("ldrsh %s, %s", d, mem)}
 		}
+		return []string{fmt.Sprintf("ldrh %s, %s", dw, mem)}
 	default: // 1 byte
 		if in.Signed {
-			out = []string{fmt.Sprintf("ldrsb %s, %s", d, mem)}
-		} else {
-			out = []string{fmt.Sprintf("ldrb %s, %s", dw, mem)}
+			return []string{fmt.Sprintf("ldrsb %s, %s", d, mem)}
 		}
+		return []string{fmt.Sprintf("ldrb %s, %s", dw, mem)}
 	}
-	return append(out, maskFix(in.Dst, in.W)...)
 }
 
 // memStoreSeq renders a store of the low in.Bytes bytes of Src2 to [Src + Imm].
@@ -7411,14 +7474,14 @@ func fBinSeq(in x86.Inst) ([]string, error) {
 // with x86 ucomisd, so the unsigned condition codes (lo/ls/hi/hs) order finite
 // operands correctly; cset materialises the 0/1 result. NaN is out of scope (the
 // model uses ordered Go comparisons on finite values).
-func fCmpSeq(in x86.Inst) ([]string, error) {
+func fCmpSeq(in x86.Inst, left int) ([]string, error) {
 	cc, ok := fcondCode(in.K)
 	if !ok {
 		return nil, fmt.Errorf("arm64ssa: float compare %v not supported yet", in.K)
 	}
 	d, s := xreg(in.Dst), xreg(in.Src)
 	return []string{
-		fmt.Sprintf("fmov d0, %s", d),
+		fmt.Sprintf("fmov d0, %s", xreg(left)),
 		fmt.Sprintf("fmov d1, %s", s),
 		"fcmp d0, d1",
 		fmt.Sprintf("cset %s, %s", d, cc),
@@ -7561,21 +7624,21 @@ func fcondCode(k ssa.OpKind) (string, bool) {
 // unOpSeq renders the UnOp unary transforms. OpNot is a zero-test materialised
 // with cset (clean 0/1, no mask); the extends map onto the AArch64 sign/zero
 // extraction instructions, which already produce the model's width-masked value.
-func unOpSeq(in x86.Inst) ([]string, error) {
-	d := in.Dst
+func unOpSeq(in x86.Inst, left int) ([]string, error) {
+	d, a := in.Dst, left
 	switch in.K {
 	case ssa.OpNot:
-		return []string{fmt.Sprintf("cmp %s, #0", xreg(d)), fmt.Sprintf("cset %s, eq", xreg(d))}, nil
+		return []string{fmt.Sprintf("cmp %s, #0", xreg(a)), fmt.Sprintf("cset %s, eq", xreg(d))}, nil
 	case ssa.OpTrunc, ssa.OpExtendS:
-		return []string{fmt.Sprintf("sxtw %s, %s", xreg(d), wreg(d))}, nil // sign-extend low 32
+		return []string{fmt.Sprintf("sxtw %s, %s", xreg(d), wreg(a))}, nil // sign-extend low 32
 	case ssa.OpExtendU:
-		return []string{fmt.Sprintf("mov %s, %s", wreg(d), wreg(d))}, nil // 32-bit mov zero-extends
+		return []string{fmt.Sprintf("mov %s, %s", wreg(d), wreg(a))}, nil // 32-bit mov zero-extends
 	case ssa.OpExtend8S:
-		return []string{fmt.Sprintf("sxtb %s, %s", xreg(d), wreg(d))}, nil
+		return []string{fmt.Sprintf("sxtb %s, %s", xreg(d), wreg(a))}, nil
 	case ssa.OpExtend16S:
-		return []string{fmt.Sprintf("sxth %s, %s", xreg(d), wreg(d))}, nil
+		return []string{fmt.Sprintf("sxth %s, %s", xreg(d), wreg(a))}, nil
 	case ssa.OpClz, ssa.OpCtz, ssa.OpPopcount:
-		return bitCountSeq(in), nil
+		return bitCountSeq(in, left), nil
 	}
 	return nil, fmt.Errorf("arm64ssa: unary op %v not supported yet", in.K)
 }
@@ -7591,24 +7654,24 @@ func unOpSeq(in x86.Inst) ([]string, error) {
 // counts, and addv sums them into one. At 32 bits `fmov s0, w` leaves the top
 // four bytes of the 8B group zero, so the same 8-byte sequence serves both
 // widths, and the ≤64 total cannot overflow addv's byte-wide destination.
-func bitCountSeq(in x86.Inst) []string {
-	d, wide := in.Dst, in.W == 64
+func bitCountSeq(in x86.Inst, left int) []string {
+	d, a, wide := in.Dst, left, in.W == 64
 	r := wreg
 	if wide {
 		r = xreg
 	}
 	switch in.K {
 	case ssa.OpClz:
-		return []string{fmt.Sprintf("clz %s, %s", r(d), r(d))}
+		return []string{fmt.Sprintf("clz %s, %s", r(d), r(a))}
 	case ssa.OpCtz:
 		return []string{
-			fmt.Sprintf("rbit %s, %s", r(d), r(d)),
+			fmt.Sprintf("rbit %s, %s", r(d), r(a)),
 			fmt.Sprintf("clz %s, %s", r(d), r(d)),
 		}
 	}
-	mov := fmt.Sprintf("fmov s0, %s", wreg(d))
+	mov := fmt.Sprintf("fmov s0, %s", wreg(a))
 	if wide {
-		mov = fmt.Sprintf("fmov d0, %s", xreg(d))
+		mov = fmt.Sprintf("fmov d0, %s", xreg(a))
 	}
 	return []string{mov, "cnt v0.8b, v0.8b", "addv b0, v0.8b", fmt.Sprintf("fmov %s, s0", wreg(d))}
 }
@@ -7671,6 +7734,98 @@ func condCode(k ssa.OpKind) (string, bool) {
 		return "hs", true
 	}
 	return "", false
+}
+
+// setCmpSeq renders an integer comparison whose left operand lives in `left`.
+// A 64-bit cmp on sign-extended i32 operands orders correctly for both signed
+// and unsigned conditions; cset materialises the 0/1 result (no i32 mask
+// needed).
+func setCmpSeq(in x86.Inst, left int) ([]string, error) {
+	cc, ok := condCode(in.K)
+	if !ok {
+		return nil, fmt.Errorf("arm64ssa: comparison %v not supported yet", in.K)
+	}
+	return []string{
+		fmt.Sprintf("cmp %s, %s", xreg(left), xreg(in.Src)),
+		fmt.Sprintf("cset %s, %s", xreg(in.Dst), cc),
+	}, nil
+}
+
+// invCond returns the AArch64 condition that holds exactly when cc does not,
+// so a branch can be reversed to let its taken arm fall through.
+func invCond(cc string) (string, bool) {
+	switch cc {
+	case "eq":
+		return "ne", true
+	case "ne":
+		return "eq", true
+	case "lt":
+		return "ge", true
+	case "ge":
+		return "lt", true
+	case "le":
+		return "gt", true
+	case "gt":
+		return "le", true
+	case "lo":
+		return "hs", true
+	case "hs":
+		return "lo", true
+	case "ls":
+		return "hi", true
+	case "hi":
+		return "ls", true
+	}
+	return "", false
+}
+
+// accReads reports whether opcode `op` reads its destination register as an
+// input — the abstract model's two-address form, where `dst = dst K src`. Only
+// those instructions can take their left operand from somewhere else.
+//
+// srcIsOperand additionally reports whether the instruction reads Src, which
+// decides whether a copy into Dst can be dropped: when Src IS Dst the copy
+// holds the value being read on the right, so it is not dead.
+func accReads(op x86.Opcode) (acc, srcIsOperand bool) {
+	switch op {
+	case x86.BinOp, x86.SetCmp, x86.FCmp:
+		return true, true
+	case x86.UnNeg, x86.UnOp:
+		return true, false
+	}
+	return false, false
+}
+
+// deadAccMoves locates the register copies that only exist to satisfy the
+// abstract two-address form. `dst = dst K src` needs its left operand copied
+// into the destination first, but every AArch64 instruction the renderer emits
+// for one is three-address (and cmp / fcmp have no destination at all), so the
+// copy is never read and the instruction can name its source directly.
+//
+// skip[i] marks such a copy; left[i] is the register the instruction at i reads
+// as its left operand, or -1 when it reads its destination as usual.
+func deadAccMoves(insts []x86.Inst) (skip []bool, left []int) {
+	skip = make([]bool, len(insts))
+	left = make([]int, len(insts))
+	for i := range left {
+		left[i] = -1
+	}
+	for i := 0; i+1 < len(insts); i++ {
+		m, c := insts[i], insts[i+1]
+		if m.Op != x86.MovReg {
+			continue
+		}
+		acc, srcIsOperand := accReads(c.Op)
+		if !acc || c.Dst != m.Dst {
+			continue
+		}
+		if srcIsOperand && c.Src == m.Dst {
+			continue
+		}
+		skip[i] = true
+		left[i+1] = m.Src
+	}
+	return skip, left
 }
 
 // maskFix mirrors the model's i32 sign-extension: for an i32-width result the low
