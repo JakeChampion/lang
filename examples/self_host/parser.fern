@@ -6204,6 +6204,35 @@ function is_nominal_ret_name(n: string): boolean {
     return true;
 }
 
+// ret_spelling_is_array reports whether a return-type spelling names an array.
+function ret_spelling_is_array(name: string): boolean {
+    return name.len() >= 2 && slice_unchecked(name, name.len() - 2, name.len()) == "[]";
+}
+
+// fn_ret_admitted is the single rule for which RESULT spellings a fn type keeps
+// in its `fn_ret` sidecar. `r_is_arr` says the result is itself an array, which
+// rides on the separate ret_arr bit.
+//
+// Struct and nominal-enum returns let a fn value resolve `g().field` and let
+// monomorphize rewrite a nested `match (cont(tok))` (#3640, #4722). `string`
+// lets a chained string op on an fn-FIELD call result dispatch as a string
+// (#5306 gap 2). A scalar lets a lambda bound to the type be stamped with its
+// declared return instead of re-inferring it from the body. Tuple and array
+// results let the checker resolve a call through the fn value to a real type
+// (#5986).
+//
+// The irlower registry consumers all filter by prefix or is_struct_ret_name, so
+// none of the non-struct spellings adds a spurious struct-return entry.
+function fn_ret_admitted(rr_name: string, r_is_arr: boolean): string {
+    if (r_is_arr) { return rr_name; }
+    if (is_struct_ret_name(rr_name)) { return rr_name; }
+    if (is_nominal_ret_name(rr_name)) { return rr_name; }
+    if (rr_name == "string") { return "string"; }
+    if (is_scalar_ret_name(rr_name)) { return rr_name; }
+    if (util.is_tuple_type_name(rr_name)) { return rr_name; }
+    return "";
+}
+
 function consume_array_suffix(p: Par, name: string): (string, boolean, string, Par) {
     while (p.peek_punct() == "[") {
         p = p.advance();
@@ -6358,7 +6387,17 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
         // load-bearing — `(string) => string[]` re-parses as ONE function
         // returning `string[]`, so `((string) => string)[]` must keep them.
         if (p.verbatim) { return consume_array_suffix(p, tbuf); }
-        return consume_array_suffix(p, "fn");
+        // The coarse tag drops the signature, so recover the RESULT spelling
+        // from the reconstructed inner text and keep it in the fn_ret sidecar
+        // — the same channel the unparenthesised `(T,…) => R` branch fills.
+        // This is the ONLY way an array of functions is spelled, so without it
+        // `(() => f64)[]` records nothing about its element (#5986).
+        var (gname, gret_arr, gunused, gp) = consume_array_suffix(p, "fn");
+        var gref: TypeRef = parse_type_ref(tbuf);
+        if (!ref_is_fn_value(gref)) { return (gname, gret_arr, "", gp); }
+        var gres: string = render_type_ref(ref_fn_result(gref));
+        var g_is_arr: boolean = ret_spelling_is_array(gres);
+        return (gname, g_is_arr, fn_ret_admitted(gres, g_is_arr), gp);
     }
     // Function type `(T1, …) => R`. After the balanced param
     // parens, a `=>` introduces the return type. Consume it
@@ -6377,7 +6416,7 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
         // consumers expect, but the bit rides along so lower_func can
         // admit `for y in f(x)` (flat_map) onto the IR path.
         var (fnr_name, fnr_ret_arr, fnr_fn_ret, fnr_p) = consume_array_suffix(p, "fn");
-        var r_is_arr: boolean = rr_name.len() >= 2 && slice_unchecked(rr_name, rr_name.len() - 2, rr_name.len()) == "[]";
+        var r_is_arr: boolean = ret_spelling_is_array(rr_name);
         // Preserve R when it is a concrete struct return type, so a
         // fn-value `g: () => P` can resolve `g().field` on the IR path
         // (#3640). A bare struct-ish name qualifies — arrays carry their
@@ -6391,31 +6430,7 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
         // bracketed (generic) fn_ret, so a non-struct enum return here
         // adds no spurious struct-return entry — it is read only via the
         // new StructFieldDecl.fn_ret field path.
-        var fn_ret_ty: string = "";
-        if (!r_is_arr && is_struct_ret_name(rr_name)) { fn_ret_ty = rr_name; }
-        else if (!r_is_arr && is_nominal_ret_name(rr_name)) { fn_ret_ty = rr_name; }
-        // Also preserve a plain `string` return (`(i32) => string`): the
-        // StructFieldDecl.fn_ret consumer needs it so a chained string
-        // op on an fn-FIELD call result (`h.f(1).len()`) dispatches as
-        // a string (#5306 gap 2). The struct_ret_fns param consumer
-        // filters "string" out (a string is not a struct), so this adds
-        // no spurious struct-return entry.
-        else if (!r_is_arr && rr_name == "string") { fn_ret_ty = "string"; }
-        // A SCALAR return (`() => f64`) is kept too, so a lambda bound to
-        // this type can be stamped with its declared return instead of
-        // having it re-inferred from the body (irt_guess cannot type a
-        // builtin-method body at all). The one consumer that treated a
-        // non-empty, non-string, unbracketed fn_ret as a STRUCT name now
-        // asks is_struct_ret_name directly, which rejects every scalar.
-        else if (!r_is_arr && is_scalar_ret_name(rr_name)) { fn_ret_ty = rr_name; }
-        // A TUPLE return (`() => (string, i32)`) and an ARRAY return
-        // (`() => string[]`, riding beside the ret_arr bit) keep their
-        // full spelling too, so the checker can resolve a call through
-        // the fn value to a real type (#5986). The irlower registry
-        // consumers all reject tuple / array / bracketed spellings, so
-        // neither adds a spurious registry entry.
-        else if (util.is_tuple_type_name(rr_name)) { fn_ret_ty = rr_name; }
-        else if (r_is_arr) { fn_ret_ty = rr_name; }
+        var fn_ret_ty: string = fn_ret_admitted(rr_name, r_is_arr);
         // `-fmt` keeps the declared signature instead of the flat tag:
         // `fn` names neither what the callback takes nor what it
         // returns, so a reformatted `cmp: (T, T) => i32` would lose

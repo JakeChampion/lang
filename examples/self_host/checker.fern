@@ -2546,6 +2546,48 @@ function type_from_name(name: string): Type {
 // check_expr returns the inferred type. Errors surface as
 // TypeUnknown with a `reason` string so callers can inspect them
 // without an exception channel.
+// call_through_fn_value types a call whose CALLEE is a VALUE expression rather
+// than a name — an array element (`fs[0]()`), a tuple element (`t.0()`), or a
+// nested call's result (`mk()()`). check_expr already types those callees; the
+// call's type is that function type's result, so the answer is read rather
+// than re-derived (#5986). Unknown when the callee is not a function value, so
+// each caller keeps its own diagnostic for the shape it was written for.
+//
+// An opaque fn type (params_known false — the coarse `fn` tag records no
+// parameter spellings) skips the argument checks rather than rejecting the
+// call: an empty param list is "unrecorded", not "zero parameters".
+function call_through_fn_value(c: ast.ExprCall, s: Scope): Type {
+  // A LAMBDA callee is the value-if / value-match IIFE the desugar emits, and
+  // the arm at the head of check_call_expr already types it — from the
+  // branches, and deliberately declining when they disagree so E031 is the only
+  // diagnostic the mixed-arm form draws. Reading the lambda's own return type
+  // here would answer where that arm chose not to.
+  match (c.callee) {
+    ast.ExprLambda(_) => { return t_unknown("immediately-invoked lambda: typed from its branches, not its value"); },
+    _ => {}
+  }
+  var ct: Type = check_expr(c.callee, s);
+  match (ct) {
+    TypeFunc(tf) => {
+      if (!tf.params_known) { return tf.ret_type; }
+      if (c.args.len() != tf.param_types.len()) {
+        return t_unknown("arity mismatch calling function value");
+      }
+      var i: i32 = 0;
+      while (i < c.args.len()) {
+        var at: Type = check_expr(c.args[i], s);
+        if (!settles_to(c.args[i], tf.param_types[i], s) && !type_assignable(at, tf.param_types[i], s.unions)) {
+          return t_unknown("arg-type mismatch calling function value");
+        }
+        i = i + 1;
+      }
+      return tf.ret_type;
+    },
+    _ => {}
+  }
+  return t_unknown("call target is not a function value");
+}
+
 // check_call_expr types an ExprCall (plain / closure / method call).
 // Extracted verbatim from check_expr's ExprCall arm to keep check_expr
 // under the self-host oversized-function compile threshold (#2720); the
@@ -2687,13 +2729,17 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
             recv_type_name = "Map";
           },
           _ => {
+            // `t.0()` — a numeric field access whose element is a fn value is
+            // a call THROUGH that value, not a method on the tuple.
+            var tvr: Type = call_through_fn_value(c, s);
+            if (!is_unknown(tvr)) { return tvr; }
             return t_unknown("method call: receiver isn't a typed value");
           }
         }
       }
     },
     _ => {
-      return t_unknown("call target is not an identifier");
+      return call_through_fn_value(c, s);
     }
   }
   // Builtins: `len(x)` returns i32 for any array or
@@ -3825,6 +3871,20 @@ function func_ret_type(fd: parser.FuncDecl, structs: StructSig[], unions: UnionS
 function var_declared_type(v: ast.StmtVar, s: Scope): Type {
   if (v.is_str) {
     return t_str();
+  }
+  // A "fn"-coarsened annotation records its RESULT in the fn_ret sidecar, and
+  // the declared return is what types a call through the binding (#5986). The
+  // local sibling of fn_param_decl_type; a StmtVar carries no parameter
+  // spellings, so the fn type stays opaque and the call takes no argument
+  // check. Also for an ARRAY of them (`(() => f64)[]`, spelled "fn[]"), whose
+  // element is that same fn type.
+  if (v.fn_ret.len() > 0) {
+    if (v.type_name == "fn") {
+      return t_func_opaque(s.resolve_type(v.fn_ret));
+    }
+    if (v.type_name == "fn[]") {
+      return t_array(t_func_opaque(s.resolve_type(v.fn_ret)));
+    }
   }
   return s.resolve_type(v.type_name);
 }

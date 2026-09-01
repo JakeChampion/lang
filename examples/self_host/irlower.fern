@@ -1527,6 +1527,33 @@ pub function fn_sig_of(p: ast.ParamDecl, tps: string[]): string {
     return params + "_" + rc;
 }
 
+// callee_fn_sig is the funcref signature tag for a call through a fn VALUE that
+// no local slot describes — a struct field, a tuple or array element, or
+// another call's result. `fn_value_sig` answers for a fn-typed local or param
+// by reading the sidecars lower_func seeded onto its slot; these callees have
+// no slot, so the RESULT comes from the checker's stamp on the call itself
+// (#5986: the annotate pass already resolved this type, and re-deriving it is
+// what the carriers exist to stop).
+//
+// Only a ZERO-ARGUMENT call is tagged. The tag must name the funcref's whole
+// signature, and the parameter spellings of these callees are recorded nowhere
+// — a StructFieldDecl carries no param list, and an array's element spelling
+// does not survive the coarse `fn[]` tag. With no arguments the parameter list
+// is empty by construction rather than by re-derivation, so the tag is exact.
+// Every other call keeps the arity-keyed `$fn<N>` form it has today, as does an
+// unannotated build (`asm_ir_run`, the native compiler) where the stamp is ""
+// — which is what keeps this byte-identity-safe.
+//
+// An all-i32 signature declines for the same reason fn_sig_of declines one:
+// `$fn<N>` already describes it.
+function callee_fn_sig(c: ast.ExprCall, with_env: boolean): string {
+    if (c.args.len() != 0) { return ""; }
+    var rc: string = wasm_width_char(c.ty, []);
+    if (rc.len() == 0 || rc == "w") { return ""; }
+    if (with_env) { return "w_" + rc; }
+    return "_" + rc;
+}
+
 // fn_params_sidecars joins a fn value's parameter type list into the
 // comma-separated `fn_param_types` spelling plus the `fn_param_dyn` position
 // list, or an EMPTY array when a position is unannotated.
@@ -11749,7 +11776,7 @@ function lower_call_fn_field(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty: stri
     ffs = ffs.emit(ir.op_load_local(fbslot));
     ffs = ffs.emit(ir.op_const_i32(0));
     ffs = ffs.emit(ir.op_arr_get(32));   // box[0] -> funcval
-    return ffs.emit(ir.op_call_indirect(c.args.len() + 1));
+    return ffs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig(c, true)));
 }
 
 // lower_call_dyn_method dispatches `recv.m(args)` on a `dyn Trait` receiver,
@@ -12446,7 +12473,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             tfs = lower_expr(fa.obj, tfs);
             if (!tfs.ok) { return tfs; }
             tfs = tfs.emit(ir.op_tuple_get(tfn));
-            return tfs.emit(ir.op_call_indirect(c.args.len()));
+            return tfs.emit(ir.op_call_indirect_sig(c.args.len(), callee_fn_sig(c, false)));
         }
         // A closure-BOX tuple element call ("clo" — a lambda /
         // wrapped fn the lift boxed, or a declared fn-typed
@@ -12471,7 +12498,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             tcs = tcs.emit(ir.op_load_local(tcslot));
             tcs = tcs.emit(ir.op_const_i32(0));
             tcs = tcs.emit(ir.op_arr_get(32));
-            return tcs.emit(ir.op_call_indirect(c.args.len() + 1));
+            return tcs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig(c, true)));
         }
     }
     // A MapIter[K, V] receiver (`it.has_next()` / `.key()` /
@@ -13616,7 +13643,7 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
                 bxs = bxs.emit(ir.op_load_local(btslot));
                 bxs = bxs.emit(ir.op_const_i32(0));
                 bxs = bxs.emit(ir.op_arr_get(32));
-                return bxs.emit(ir.op_call_indirect(c.args.len() + 1));
+                return bxs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig(c, true)));
             }
             if (idx_is_arr) {
                 // Plain fn-pointer array element: args, then the element
@@ -13630,7 +13657,7 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
                 }
                 pfs = lower_expr(c.callee, pfs);   // fns[i] -> fn pointer on TOS
                 if (!pfs.ok) { return pfs; }
-                return pfs.emit(ir.op_call_indirect(c.args.len()));
+                return pfs.emit(ir.op_call_indirect_sig(c.args.len(), callee_fn_sig(c, false)));
             }
             return s.fail();
         },
@@ -13719,7 +13746,7 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
                 bs = bs.emit(ir.op_load_local(bslot));          // box again
                 bs = bs.emit(ir.op_const_i32(0));
                 bs = bs.emit(ir.op_arr_get(32));                // box[0] = funcval
-                return bs.emit(ir.op_call_indirect(c.args.len() + 1));
+                return bs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig(c, true)));
             }
             var cocs: LowerState = s;
             for arg in c.args {
@@ -13728,7 +13755,7 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
             }
             var coce: LowerState = lower_expr(c.callee, cocs);
             if (!coce.ok) { return coce; }
-            return coce.emit(ir.op_call_indirect(c.args.len()));
+            return coce.emit(ir.op_call_indirect_sig(c.args.len(), callee_fn_sig(c, false)));
         },
         _ => { return s.fail(); }
     }
