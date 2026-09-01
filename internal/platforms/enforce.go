@@ -28,8 +28,8 @@ import (
 // capability a target must list in Descriptor.Capabilities for the
 // builtin to be callable. Builtins NOT in this table (env, math,
 // map/array/string runtime, …) are ungated — every target provides
-// them. The async/readiness set (poll, timer_fd, wasm_* pollables) is
-// ungated by default, not by decision.
+// them. In the async/readiness set only the pollable CONSTRUCTORS are
+// gated; the helpers that wait on one are core (see coreBuiltins).
 var gatedBuiltins = map[string]string{
 	// Process spawning.
 	"subprocess": "subprocess",
@@ -75,8 +75,13 @@ var gatedBuiltins = map[string]string{
 	"now_ns":              "now",
 	"monotonic_ns":        "now",
 	"sleep_ms":            "now",
-	"timer_fd":            "now",
 	"wasm_timer_pollable": "now",
+
+	// `timer_fd` is a clock wakeup too, but it is gated on the FD half
+	// rather than on `now`: it hands back a file descriptor to poll,
+	// which is what wasm cannot answer. `wasm_timer_pollable` above is
+	// the same wakeup expressed as a wasi:io/poll pollable.
+	"timer_fd": "pollfd",
 
 	// The ambient invocation environment. argv and envp are adjacent on
 	// the process stack and `_start` captures them together, but they
@@ -104,7 +109,6 @@ var gatedBuiltins = map[string]string{
 	"read_file":       "fs",
 	"read_file_bytes": "fs",
 	"write_file":      "fs",
-	"write_file_exec": "fs",
 	"open_reader":     "fs",
 	"open_writer":     "fs",
 	"open_appender":   "fs",
@@ -114,6 +118,20 @@ var gatedBuiltins = map[string]string{
 	"remove_dir_all":  "fs",
 	"create_dir_all":  "fs",
 	"temp_dir":        "fs",
+
+	// Permission bits on a filesystem entry, which is a separate
+	// capability from having a filesystem: a host can offer files and no
+	// mode word to set on them.
+	"write_file_exec": "fsmode",
+
+	// The C-ABI FFI shims (#4375). Enumerated rather than matched by
+	// prefix so this table stays the one place the classification lives —
+	// the checker registers exactly these fifteen names.
+	"__c_call0": "cabi", "__c_call0_f32": "cabi", "__c_call0_f64": "cabi",
+	"__c_call1": "cabi", "__c_call1_f32": "cabi", "__c_call1_f64": "cabi",
+	"__c_call2": "cabi", "__c_call2_f32": "cabi", "__c_call2_f64": "cabi",
+	"__c_call3": "cabi", "__c_call3_f32": "cabi", "__c_call3_f64": "cabi",
+	"__c_call4": "cabi", "__c_call4_f32": "cabi", "__c_call4_f64": "cabi",
 }
 
 // coreBuiltins is the other half of the classification: user-callable

@@ -76,6 +76,16 @@ function main(): i32 {
     // would let the divergence widen unnoticed.
     if (!platforms.has_capability("x86-64-linux", "subprocess")) { return 16; }
     if (platforms.has_capability("wasm32-wasi", "subprocess")) { return 19; }
+    // The three properties a wasm world lacks for reasons of its own: no
+    // pollable file descriptors, no permission bits, no C calling
+    // convention. Each rode a capability the wasi profiles DO grant until
+    // it was split off, so both halves are asserted.
+    if (!platforms.has_capability("x86-64-linux", "pollfd")) { return 80; }
+    if (platforms.has_capability("wasm32-wasi", "pollfd")) { return 81; }
+    if (!platforms.has_capability("x86-64-linux", "fsmode")) { return 82; }
+    if (platforms.has_capability("wasm32-wasi", "fsmode")) { return 83; }
+    if (!platforms.has_capability("x86-64-linux", "cabi")) { return 84; }
+    if (platforms.has_capability("wasm32-wasi", "cabi")) { return 85; }
     // Unknown target, unknown capability: both false, neither an error.
     if (platforms.has_capability("vax-11", "fs")) { return 17; }
     if (platforms.has_capability("wasm32-wasi", "telepathy")) { return 18; }
@@ -84,6 +94,12 @@ function main(): i32 {
     if (platforms.gated_capability("read_file") != "fs") { return 20; }
     if (platforms.gated_capability("proc_fork") != "proc") { return 21; }
     if (platforms.gated_capability("__heap_mark") != "arena") { return 22; }
+    // `timer_fd` is a clock wakeup gated on the FD half rather than on
+    // `now`; `wasm_timer_pollable` is the same wakeup wasm can express.
+    if (platforms.gated_capability("timer_fd") != "pollfd") { return 86; }
+    if (platforms.gated_capability("wasm_timer_pollable") != "now") { return 87; }
+    if (platforms.gated_capability("write_file_exec") != "fsmode") { return 88; }
+    if (platforms.gated_capability("__c_call2_f64") != "cabi") { return 89; }
     // Reading the bump cursor works everywhere; only rewinding it is native.
     if (platforms.gated_capability("__heap_bump_bytes").len() != 0) { return 23; }
     // `exit` is core with a target-specific lowering, not a capability.

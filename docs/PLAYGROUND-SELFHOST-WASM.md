@@ -11,7 +11,11 @@ the self-host compiler instead.
 an order of magnitude *better* than the bundle shipping today. It is bounded by
 a set of missing wasmbin builtins and the shape of the compiler's entry point,
 both named below and neither open-ended. The correctness bug that used to head
-this list (#7948) is fixed, and so is the strbuf third of the builtin gap.
+this list (#7948) is fixed, and so is the strbuf third of the builtin gap. Of
+what the builtin gap turned out to be, only `sleep_ms` is still a missing
+lowering: `timer_fd`, `write_file_exec` and the `__c_call*` family are things
+wasm cannot express, and are now refused by E066 at check time rather than by
+the emitter mid-build.
 
 The self-host compiler compiled to wasm **already runs in wasm today**. A
 stdin-driven wasm-emitting driver, compiled to a core module by the self-host
@@ -141,11 +145,13 @@ runs the wasm-hosted driver against the native-hosted one on nested arithmetic
 and asserts identical exit code AND identical WAT: a wasm-hosted compiler is
 only interesting if it agrees with the native one, and until then nothing asked.
 
-### 1. Native `wasmbin` is missing four builtins the self-host compiler needs (#7947)
+### 1. The native toolchain cannot compile `fern.fern` for wasm (#7947)
 
 ```
 $ ./bin/fern -target wasm32-wasi -emit core-module -o out.wasm examples/self_host/fern.fern
-wasmbin: write_output: op[6] call: call: unknown callee "write_file_exec"
+error[E066]: target "wasm32-wasi" does not provide `fsmode`, required by
+`write_file_exec` (reached via "write_output" from module ".../fern.fern");
+targets providing it: [arm64-android arm64-darwin arm64-linux x86-64-linux]
 ```
 
 The `strbuf_*` third of this is **fixed**: `strbuf_reset` / `strbuf_append` /
@@ -156,11 +162,19 @@ heap buffer over three scratch words, rather than the natives' fixed 64 MiB
 `.bss` reservation, which in linear memory would push `stringStart` and the
 whole heap up by that much.
 
-What remains, and what the error above now names, is the rest of the same gap:
-`sleep_ms` and `timer_fd` (cap `now`, granted), `write_file_exec` (cap `fs`,
-granted — no WASI preview-1 form, `path_open` has no mode, #6133), and the
-`__c_call0..4` FFI family, which the checker registers (`checker.go:2225`) but
-`gatedBuiltins` does not cover.
+Three of the rest were never lowerings wasmbin was missing — they are things
+wasm cannot express, and they now say so at check time. `timer_fd` is gated on
+`pollfd` (wasm has no file descriptors to poll; `wasm_timer_pollable` is the
+analog), `write_file_exec` on `fsmode` (`path_open` has no mode argument and
+the component-model filesystem has no permission bits, #6133), and the
+`__c_call0..4` family on `cabi` (no C ABI on any wasm path) — the same
+refusals the self-host has made since #4317/#4375, moved into
+`internal/platforms` where a target property belongs.
+
+`sleep_ms` is the one genuinely missing lowering left. It stays gated on `now`,
+which wasm grants, because wasm CAN block: subscribe-duration on
+`wasi:clocks/monotonic-clock` plus a wait is the sleep. It is listed alone in
+`providedMissingLowering`.
 
 The consequence for this precondition is unchanged while any of them is open:
 the playground's wasm artifact can only be produced *by the self-host compiler
@@ -174,8 +188,11 @@ The gate that should have caught the whole class exists now.
 not: it checks arity only for helpers wasmbin already has, and `continue`s past
 names it does not know, so a builtin with no lowering at all passed it silently.
 `TestEveryProvidedCalleeHasAWasmLowering` asserts every callee in `providedSigs`
-has somewhere to land, and its known-missing list — the four above — is exact in
-both directions, so a fix cannot leave the table stale.
+has somewhere to land, and its known-missing list — `sleep_ms` alone now — is
+exact in both directions, so a fix cannot leave the table stale. Its sibling
+`TestPlatformExemptionsAreReallyRefused` re-derives the refused list from
+`internal/platforms` rather than trusting it, so moving a name there has to be
+a real refusal.
 
 The hole runs the other way too: `udp_send` is implemented only in `wasmbin`
 (`wasi_udp.go`) and is missing from `internal/codegen/arm64` and
@@ -183,10 +200,9 @@ The hole runs the other way too: `udp_send` is implemented only in `wasmbin`
 
 ### 2. The CLI driver is the wrong entry point
 
-```
-$ ./bin/fern-selfhost -target wasm32-wasi -emit core-module -o out.wasm examples/self_host/fern.fern
-error: write_file_exec is not supported on the wasm target
-```
+Both compilers refuse `fern.fern` for wasm on `write_file_exec` — the
+self-host through its own `capability_violations` gate, native through
+`internal/platforms`, and now with the same E066 text on both sides.
 
 `examples/self_host/fern.fern` is a *CLI*: it takes argv paths, reads files,
 and writes executables. None of that is what the playground wants, and

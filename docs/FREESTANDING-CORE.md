@@ -45,11 +45,14 @@ costs a silent failure on the first target that lacks it.
 | `log` | `print`, `eprint` | somewhere to put a line of diagnostics |
 | `stdout` | `stdout`, `stderr`, `write`, `putchar` | an actual stdout stream |
 | `stdin` | `stdin`, `read_line` | a blocking input stream |
-| `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `sleep_ms`, `timer_fd`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
+| `now` | `now_unix_ms`, `now_ns`, `monotonic_ns`, `sleep_ms`, `wasm_timer_pollable` | a clock, and wakeups driven by one |
+| `pollfd` | `timer_fd` | file descriptors a readiness primitive can wait on |
 | `env` | `env` | envp, captured at process start |
 | `args` | `args` | argv, which exists only because something exec'd you |
 | `random` | `random_bytes`, `random_i32` | entropy: a syscall or a host import, never computed |
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
+| `fsmode` | `write_file_exec` | permission bits on a filesystem entry |
+| `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_send` | a network stack |
 | `proc` | `proc_fork`, `proc_exec`, `proc_waitpid` | processes |
 | `subprocess` | `subprocess` | interp-only; no compiled target provides it |
@@ -99,6 +102,30 @@ that can only ever be answered "no" is not authority — it is a constant.
 
 Note this is why the `std/` partition table below is unchanged by it: `isatty`
 adds no reach, so `std/cli` stays on `env` alone.
+
+**`pollfd`, `fsmode` and `cabi` split three builtins off the capability that
+otherwise carried them** (#7947). Each is a property of the target, not a gap in a
+backend, and the split is what makes the wasm refusal an E066 at check time rather
+than an `unknown callee` out of the emitter:
+
+- `timer_fd` hands back a **file descriptor** to poll. Wasm's readiness surface is
+  wasi:io/poll pollables — values, not numbers in a per-process table — so the fd is
+  what is missing, not the clock. `wasm_timer_pollable` is the same wakeup expressed
+  the way wasm can express it, and stays on `now`.
+- `write_file_exec` needs a **permission bit**. Preview1's `path_open` takes no mode
+  argument and the component-model filesystem has no permission bits at all, so a
+  host can offer files and still not answer this (#6133). `fs` is the filesystem;
+  `fsmode` is the mode word on an entry in it.
+- `__c_call0..4` need a **C calling convention**. Wasm reaches an unknown callee
+  through a typed table, not System V or AAPCS64. The family is enumerated in
+  `gatedBuiltins` rather than matched by prefix, so the table stays the one place the
+  classification lives.
+
+The three are enumerated in the `hosted-native` profile and granted by neither wasi
+profile nor by `none`. A freestanding target could in principle honour `cabi` — a
+calling convention is an ISA property, and nothing about a kernel forbids one — but
+`none` grants nothing at all by construction, and no backend emits for a freestanding
+target yet, so there is nothing to observe. Revisit it with #6510, not before.
 
 **Allocation is core, but it is not free.** `map_new` compiles the same everywhere; what
 differs is where the heap came from. That difference is #6511's problem, not the
@@ -207,7 +234,7 @@ test independently runs the core-safe modules through `Enforce` against `freesta
 so the partition means what the compiler enforces rather than only agreeing with it by
 construction.
 
-Today: **41 of 54 modules are core-safe.** Two results worth knowing:
+Today: **40 of 54 modules are core-safe.** Three results worth knowing:
 
 - **`std/math` is hosted, on `random`.** It reads like an obviously-core numerics module
   and is in fact the random-number module (`random_int` over the platform CSPRNG). A
@@ -216,6 +243,8 @@ Today: **41 of 54 modules are core-safe.** Two results worth knowing:
 - **`std/test` reaches `env`, `fs`, `log` and `now`.** So a freestanding target cannot run
   the in-language test runner, and its output sink is only one of four things in the way.
   Worth knowing before treating "core-safe" and "testable in-language" as the same set.
+- **`std/jni` is hosted on `cabi` alone.** It touches no OS surface at all; what it
+  needs is a calling convention to hand a JNIEnv method pointer to.
 
 The self-host derives the same partition from its own scan (`platforms.reach`, driven by
 `examples/self_host/platforms_reach_run.fern`), and

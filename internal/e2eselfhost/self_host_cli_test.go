@@ -2568,17 +2568,21 @@ function main(): i32 {
 	// carried the refusal all the way down to instruction selection: it named an
 	// IR op nobody wrote (`syscall3`), and before that it emitted the op as a WAT
 	// COMMENT, so the assembler blamed the comment marker ("unknown instruction:
-	// ;;"). Both halves are asserted — the exit code and the builtin's name —
-	// for one raw-floor intrinsic and for timer_fd, which had the same gap.
+	// ;;"). Both halves are asserted — the exit code and the builtin's name.
+	//
+	// `timer_fd` is refused one stage earlier than the raw floor: it is gated on
+	// `pollfd`, which no wasi profile grants, so the CLI's E066 capability gate
+	// answers before wasm_ir's pre-emit gate is reached. Same requirement of the
+	// diagnostic either way — name the builtin.
 	t.Run("wasm-unsupported-builtin-names-the-builtin", func(t *testing.T) {
 		for _, tc := range []struct {
 			name    string
 			src     string
-			mustSay string
+			mustSay []string
 		}{
-			{"syscall-floor", "function main(): i32 { return __syscall3(1, 1, 0, 0); }\n", "__syscall3"},
-			{"raw-memory-floor", "function main(): i32 { var p: i32 = __raw_alloc(64); return 0; }\n", "__raw_alloc"},
-			{"timer-fd", "function main(): i32 { return timer_fd(10); }\n", "timer_fd"},
+			{"syscall-floor", "function main(): i32 { return __syscall3(1, 1, 0, 0); }\n", []string{"__syscall3", "not supported on the wasm target"}},
+			{"raw-memory-floor", "function main(): i32 { var p: i32 = __raw_alloc(64); return 0; }\n", []string{"__raw_alloc", "not supported on the wasm target"}},
+			{"timer-fd", "function main(): i32 { return timer_fd(10); }\n", []string{"timer_fd", "E066", "pollfd"}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				srcPath := filepath.Join(dir, "unsupported_"+tc.name+".fern")
@@ -2596,8 +2600,10 @@ function main(): i32 {
 				if code := cmd.ProcessState.ExitCode(); code != 1 {
 					t.Errorf("exit = %d, want 1; stderr:\n%s", code, stderr.String())
 				}
-				if !strings.Contains(stderr.String(), tc.mustSay) || !strings.Contains(stderr.String(), "not supported on the wasm target") {
-					t.Errorf("stderr does not name %s as unsupported on wasm:\n%s", tc.mustSay, stderr.String())
+				for _, want := range tc.mustSay {
+					if !strings.Contains(stderr.String(), want) {
+						t.Errorf("stderr does not mention %q while refusing on wasm:\n%s", want, stderr.String())
+					}
 				}
 				if strings.Contains(stdout.String(), "(module") {
 					t.Errorf("refused but still emitted a module (%d bytes)", stdout.Len())

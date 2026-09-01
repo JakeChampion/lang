@@ -53,6 +53,19 @@ var providedRefusedByPlatform = map[string]bool{
 	// allocator does not implement.
 	"__heap_mark":       true,
 	"__heap_release_to": true,
+	// `pollfd` — a timer expressed as a file descriptor to poll. Wasm's
+	// readiness surface is wasi:io/poll pollables, which wasm_timer_pollable
+	// already serves.
+	"timer_fd": true,
+	// `fsmode` — permission bits on a filesystem entry, which neither
+	// preview1 nor the component-model filesystem has (#6133).
+	"write_file_exec": true,
+	// `cabi` — a C calling convention to hand a function pointer to.
+	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
+	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
+	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
+	"__c_call3": true, "__c_call3_f32": true, "__c_call3_f64": true,
+	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
 }
 
 // providedNeverReachesCodegen are callees IR lowering consumes before the
@@ -94,14 +107,10 @@ var providedNeverReachesCodegen = map[string]bool{
 // program that type-checks and passes E066. Tracked in #7947; this list may
 // only shrink.
 var providedMissingLowering = map[string]bool{
-	"sleep_ms":        true,
-	"timer_fd":        true,
-	"write_file_exec": true,
-	"__c_call0":       true, "__c_call0_f32": true, "__c_call0_f64": true,
-	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
-	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
-	"__c_call3": true, "__c_call3_f32": true, "__c_call3_f64": true,
-	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
+	// wasm can block — wasi:clocks/monotonic-clock's subscribe-duration
+	// pollable plus a wait is the sleep — so this is a real gap and not a
+	// target property. It stays gated on `now`, which wasm grants.
+	"sleep_ms": true,
 }
 
 // loweringTarget resolves one callee the way emitOp does — through
