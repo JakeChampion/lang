@@ -537,18 +537,28 @@ function x86_movb_mem_reg(buf: i32[], reg8: i32, base: i32, has_index: boolean, 
     return x86_byte_mem_operand(buf, reg8, base, has_index, index, scale, disp);
 }
 
-// x86_movzbq_mem: `movzbq mem, <dst64>` (REX.W 0F B6 /r) — zero-extend a
+// x86_movzb_mem: `movzb{l,q} mem, <dst>` (0F B6 /r) — zero-extend a
 // byte load into a 64-bit register.
-function x86_movzbq_mem(buf: i32[], dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-    buf = x86_byte_mem_rex(buf, 1, dst, has_index, index, base);
+function x86_movzb_mem(buf: i32[], w: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    // Not x86_byte_mem_rex: its force rule exists for a BYTE register
+    // operand, and here the reg field is the 32-/64-bit destination while the
+    // byte lives in memory. Forcing on `dst` 4..7 would put a bare 0x40 in
+    // front of `movzbl (%rax), %esi`, which gas does not.
+    var rex: i32 = x86_rex(w, dst, ix, base);
+    if (rex != 64) { buf = buf.append(rex); }
     buf = buf.append(15);  // 0x0F
     buf = buf.append(182); // 0xB6
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
 }
 
-// x86_movzbq_reg: `movzbq <src8>, <dst64>` (REX.W 0F B6 /r, reg-direct).
-function x86_movzbq_reg(buf: i32[], dst: i32, src8: i32): i32[] {
-    buf = buf.append(x86_rex(1, dst, 0, src8));
+// x86_movzb_reg: `movzb{l,q} <src8>, <dst>` (0F B6 /r, reg-direct), `w`
+// selecting the 64-bit destination. A byte SOURCE of spl/bpl/sil/dil needs a
+// REX of its own even when nothing else does, or those numbers name ah/ch/dh/bh.
+function x86_movzb_reg(buf: i32[], w: i32, dst: i32, src8: i32): i32[] {
+    var rex: i32 = x86_rex(w, dst, 0, src8);
+    if (rex != 64 || x86_rex8_force(8, src8)) { buf = buf.append(rex); }
     buf = buf.append(15);  // 0x0F
     buf = buf.append(182); // 0xB6
     buf = buf.append(x86_modrm(3, dst, src8));
@@ -2394,16 +2404,17 @@ function x86_gas_movb(own a: X86Asm, src: string, dst: string): X86Asm {
     return X86Asm { ...a, code: x86_op_rr(a.code, 8, 136, r1, r2) }; // 88 /r
 }
 
-// x86_gas_movzbq dispatches movzbq: mem->reg64 or reg8->reg64.
-function x86_gas_movzbq(own a: X86Asm, src: string, dst: string): X86Asm {
+// x86_gas_movzb dispatches movzb{l,q}: mem->reg or reg8->reg, `w` selecting
+// the destination width.
+function x86_gas_movzb(own a: X86Asm, w: i32, src: string, dst: string): X86Asm {
     if (x86_str_contains(src, "(")) {
         var m: GasMem = x86_gas_parse_mem(src);
         if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
         if (m.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
-        a = X86Asm { ...a, code: x86_movzbq_mem(a.code, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
+        a = X86Asm { ...a, code: x86_movzb_mem(a.code, w, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
         return a;
     }
-    a = X86Asm { ...a, code: x86_movzbq_reg(a.code, x86_gas_reg(dst), x86_gas_reg8(src)) };
+    a = X86Asm { ...a, code: x86_movzb_reg(a.code, w, x86_gas_reg(dst), x86_gas_reg8(src)) };
     return a;
 }
 
@@ -3548,12 +3559,12 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         return a;
     }
     if (mnem == "movb") { return x86_gas_movb(a, src, dst); }
-    if (mnem == "movzbq") { return x86_gas_movzbq(a, src, dst); }
-    // movzbl (byte -> 32-bit dest, zero-extended) — asm.fern emits it for the
-    // char/byte load `s[i]`. The zero-extended value is identical to movzbq's
-    // (the upper 32 bits are cleared either way), so route to the same encoder;
-    // without this the mnemonic was unhandled and no load was emitted.
-    if (mnem == "movzbl") { return x86_gas_movzbq(a, src, dst); }
+    if (mnem == "movzbq") { return x86_gas_movzb(a, 1, src, dst); }
+    // movzbl (byte -> 32-bit dest) — asm.fern emits it for the char/byte load
+    // `s[i]`. Writing a 32-bit register clears the upper half, so the VALUE
+    // matches movzbq's; the ENCODING does not, and routing it to the 64-bit
+    // form put a REX.W on every one of them.
+    if (mnem == "movzbl") { return x86_gas_movzb(a, 0, src, dst); }
     // cvttsd2si's destination is a GPR of either width; the 32-bit spelling
     // (`%eax`) is the one the emitter writes almost always.
     if (mnem == "cvttsd2si") {
