@@ -204,8 +204,15 @@ function main(): i32 {
     if (b3.unknown.len() != 1) { return 45; }
     var b4: Arm64GasProg = arm64_gas_program("shrn v0.8b, v0.16b, #4\n");
     if (b4.unknown.len() != 1) { return 46; }
+    // The .8b cmeq used to be refused here: the encoder pinned .16b, so the
+    // narrower arrangement had no field to go in. The general Advanced SIMD
+    // path (#8000) reads the arrangement instead, so it is now a valid
+    // instruction and must ASSEMBLE — to the word GNU as gives it.
     var b5: Arm64GasProg = arm64_gas_program("cmeq v0.8b, v0.8b, v1.8b\n");
-    if (b5.unknown.len() != 1) { return 47; }
+    if (b5.unknown.len() != 0) { return 47; }
+    // cmeq v0.8b, v0.8b, v1.8b -> 0x2E218C00 -> 00 8C 21 2E
+    var b5a: Arm64Asm = arm64_gas_assemble("cmeq v0.8b, v0.8b, v1.8b");
+    if (b5a.code[0] != 0 || b5a.code[1] != 140 || b5a.code[2] != 33 || b5a.code[3] != 46) { return 47; }
     var b6: Arm64GasProg = arm64_gas_program("ld1 {v0.16b, v1.16b}, [x8]\n");
     if (b6.unknown.len() != 1) { return 48; }
     var b7: Arm64GasProg = arm64_gas_program("ld1 {v0.16b}, [x8, #16]\n");

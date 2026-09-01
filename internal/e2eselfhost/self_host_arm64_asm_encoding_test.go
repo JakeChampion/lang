@@ -389,6 +389,44 @@ _start:
     ldrsb x23, [x9]
     ldrsh x0, [x1, #4]
     ldrsh w3, [x2, #62]
+    // #8000 wave 2a: the general Advanced SIMD classes. Both assemblers now
+    // read the arrangement as a field, so these rows are what keeps the two
+    // agreeing about size and Q rather than only about the byte forms the
+    // kernels happen to emit.
+    add v23.4s, v9.4s, v28.4s
+    sub v23.8h, v9.8h, v28.8h
+    mul v23.4s, v9.4s, v28.4s
+    cmeq v23.2d, v9.2d, v28.2d
+    cmtst v23.8b, v9.8b, v28.8b
+    cmgt v23.4h, v9.4h, v28.4h
+    cmhi v23.4s, v9.4s, v28.4s
+    smax v23.8h, v9.8h, v28.8h
+    umin v23.4h, v9.4h, v28.4h
+    sshl v23.2d, v9.2d, v28.2d
+    ushl v23.8b, v9.8b, v28.8b
+    and v23.8b, v9.8b, v28.8b
+    bic v23.16b, v9.16b, v28.16b
+    orr v23.8b, v9.8b, v28.8b
+    orn v23.16b, v9.16b, v28.16b
+    eor v23.16b, v9.16b, v28.16b
+    cmeq v23.4s, v9.4s, #0
+    cmge v23.16b, v9.16b, #0
+    cmle v23.2d, v9.2d, #0
+    cmlt v23.4h, v9.4h, #0
+    neg v23.4s, v9.4s
+    abs v23.2d, v9.2d
+    not v23.8b, v9.8b
+    mvn v23.16b, v9.16b
+    rev16 v23.16b, v9.16b
+    rev32 v23.8h, v9.8h
+    rev64 v23.4s, v9.4s
+    // The byte-only forms the §3 kernels emit, which the general path
+    // replaced: same words, now from a table rather than three hand-written
+    // encoders.
+    cnt v0.8b, v0.8b
+    cnt v3.16b, v9.16b
+    cmeq v0.16b, v1.16b, v2.16b
+    cmlt v0.16b, v1.16b, #0
 Lend:
     ret
 `

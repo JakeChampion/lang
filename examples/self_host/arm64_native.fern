@@ -1430,14 +1430,6 @@ function arm64_rbit(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
     if (w) { word = word & 0x7fffffff; }
     return arm64_le32(buf, word);
 }
-// cnt Vd.8b, Vn.8b -> 0x0E205800 | Q<<30 | Rn<<5 | Rd -- per-BYTE population
-// count, the only popcount AArch64 has (there is no scalar form, which is why
-// a popcount lowering routes its value through a v-register).
-function arm64_cnt(buf: i32[], rd: i32, rn: i32, q: boolean): i32[] {
-    var word: i64 = 0x0e205800 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
-    if (q) { word = word | 0x40000000; }
-    return arm64_le32(buf, word);
-}
 // addv Bd, Vn.8b -> 0x0E31B800 | Q<<30 | Rn<<5 | Rd -- horizontal sum across
 // the byte lanes into the destination's low byte. Paired with `cnt` it
 // completes a popcount; the sum tops out at 64, so the byte-wide destination
@@ -1446,6 +1438,155 @@ function arm64_addv(buf: i32[], rd: i32, rn: i32, q: boolean): i32[] {
     var word: i64 = 0x0e31b800 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
     if (q) { word = word | 0x40000000; }
     return arm64_le32(buf, word);
+}
+
+// ---- the general Advanced SIMD classes (#8000) ----
+//
+// Two encodings carry most of the vector surface. Both read `size` as a
+// field, which is what makes them general where the byte-only kernels below
+// are not, and both are shared verbatim with internal/native/arm64.
+
+// arm64_vec3same encodes three-registers-same-arrangement: the integer ALU
+// ops, the bitwise ops (where `size` selects the OPERATION, not a width),
+// and the lane-wise FP ops.
+//   0x0E200400 | Q<<30 | U<<29 | size<<22 | Rm<<16 | opcode<<11 | Rn<<5 | Rd
+function arm64_vec3same_word(rd: i32, rn: i32, rm: i32, opcode: i32, size: i32, q: boolean, u: boolean): i64 {
+    var word: i64 = 0x0e200400 | (((size & 3) as i64) << 22) | (((rm & 31) as i64) << 16)
+        | (((opcode & 31) as i64) << 11) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    if (u) { word = word | 0x20000000; }
+    return word;
+}
+function arm64_vec3same(buf: i32[], rd: i32, rn: i32, rm: i32, opcode: i32, size: i32, q: boolean, u: boolean): i32[] {
+    return arm64_le32(buf, arm64_vec3same_word(rd, rn, rm, opcode, size, q, u));
+}
+
+// arm64_vec2misc encodes two-register miscellaneous: the unary ops and the
+// compare-against-zero forms, where the #0 is part of the opcode rather than
+// an immediate field.
+//   0x0E200800 | Q<<30 | U<<29 | size<<22 | opcode<<12 | Rn<<5 | Rd
+function arm64_vec2misc_word(rd: i32, rn: i32, opcode: i32, size: i32, q: boolean, u: boolean): i64 {
+    var word: i64 = 0x0e200800 | (((size & 3) as i64) << 22)
+        | (((opcode & 31) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    if (u) { word = word | 0x20000000; }
+    return word;
+}
+function arm64_vec2misc(buf: i32[], rd: i32, rn: i32, opcode: i32, size: i32, q: boolean, u: boolean): i32[] {
+    return arm64_le32(buf, arm64_vec2misc_word(rd, rn, opcode, size, q, u));
+}
+
+// The per-mnemonic tables pack U, opcode and the size mask into one entry —
+// U<<12 | opcode<<4 | sizes — so a mnemonic is one lookup and `-1` answers
+// "not one of these". Every size set here, and every one deliberately absent
+// (mul/min/max have no .2d, the bitwise ops are byte-only), matches what GNU
+// as accepts; a mask that is too wide encodes a different instruction rather
+// than failing.
+function arm64_vec_entry(u: boolean, opcode: i32, sizes: i32): i32 {
+    var v: i32 = opcode * 16 + sizes;
+    if (u) { v = v + 4096; }
+    return v;
+}
+function arm64_vec_entry_u(e: i32): boolean { return e >= 4096; }
+function arm64_vec_entry_op(e: i32): i32 { return (e % 4096) / 16; }
+function arm64_vec_entry_sizes(e: i32): i32 { return e % 16; }
+
+// Three-register integer ops. 15 = BHSD, 7 = BHS.
+function arm64_v3int_entry(mnem: string): i32 {
+    if (mnem == "add") { return arm64_vec_entry(false, 16, 15); }
+    if (mnem == "sub") { return arm64_vec_entry(true, 16, 15); }
+    if (mnem == "mul") { return arm64_vec_entry(false, 19, 7); }
+    if (mnem == "cmeq") { return arm64_vec_entry(true, 17, 15); }
+    if (mnem == "cmtst") { return arm64_vec_entry(false, 17, 15); }
+    if (mnem == "cmgt") { return arm64_vec_entry(false, 6, 15); }
+    if (mnem == "cmge") { return arm64_vec_entry(false, 7, 15); }
+    if (mnem == "cmhi") { return arm64_vec_entry(true, 6, 15); }
+    if (mnem == "cmhs") { return arm64_vec_entry(true, 7, 15); }
+    if (mnem == "smax") { return arm64_vec_entry(false, 12, 7); }
+    if (mnem == "smin") { return arm64_vec_entry(false, 13, 7); }
+    if (mnem == "umax") { return arm64_vec_entry(true, 12, 7); }
+    if (mnem == "umin") { return arm64_vec_entry(true, 13, 7); }
+    if (mnem == "sshl") { return arm64_vec_entry(false, 8, 15); }
+    if (mnem == "ushl") { return arm64_vec_entry(true, 8, 15); }
+    return 0 - 1;
+}
+
+// The bitwise three-register ops put the operation in the size field, so they
+// exist only in the byte arrangements. The entry carries that operation
+// selector in the opcode slot; the real opcode is always 3.
+function arm64_vlogical_entry(mnem: string): i32 {
+    if (mnem == "and") { return arm64_vec_entry(false, 0, 1); }
+    if (mnem == "bic") { return arm64_vec_entry(false, 1, 1); }
+    if (mnem == "orr") { return arm64_vec_entry(false, 2, 1); }
+    if (mnem == "orn") { return arm64_vec_entry(false, 3, 1); }
+    if (mnem == "eor") { return arm64_vec_entry(true, 0, 1); }
+    return 0 - 1;
+}
+
+// Compare against zero. cmle/cmlt exist ONLY in this form — their
+// register-operand spellings are the swapped-operand cmge/cmgt.
+function arm64_vcmpzero_entry(mnem: string): i32 {
+    if (mnem == "cmeq") { return arm64_vec_entry(false, 9, 15); }
+    if (mnem == "cmgt") { return arm64_vec_entry(false, 8, 15); }
+    if (mnem == "cmge") { return arm64_vec_entry(true, 8, 15); }
+    if (mnem == "cmle") { return arm64_vec_entry(true, 9, 15); }
+    if (mnem == "cmlt") { return arm64_vec_entry(false, 10, 15); }
+    return 0 - 1;
+}
+
+// Two-register unary integer ops. mvn is an alias of not.
+function arm64_v2misc_entry(mnem: string): i32 {
+    if (mnem == "neg") { return arm64_vec_entry(true, 11, 15); }
+    if (mnem == "abs") { return arm64_vec_entry(false, 11, 15); }
+    if (mnem == "not") { return arm64_vec_entry(true, 5, 1); }
+    if (mnem == "mvn") { return arm64_vec_entry(true, 5, 1); }
+    if (mnem == "cnt") { return arm64_vec_entry(false, 5, 1); }
+    if (mnem == "rev16") { return arm64_vec_entry(false, 1, 1); }
+    if (mnem == "rev32") { return arm64_vec_entry(true, 0, 3); }
+    if (mnem == "rev64") { return arm64_vec_entry(false, 0, 7); }
+    return 0 - 1;
+}
+
+// arm64_gas_vecgen_handles reports whether a mnemonic has a form in one of
+// the four general families above.
+function arm64_gas_vecgen_handles(mnem: string): boolean {
+    return arm64_v3int_entry(mnem) >= 0 || arm64_vlogical_entry(mnem) >= 0
+        || arm64_vcmpzero_entry(mnem) >= 0 || arm64_v2misc_entry(mnem) >= 0;
+}
+
+// arm64_gas_emit_vecgen encodes one of them. Operand shapes are vetted by
+// arm64_gas_bad_vecgen before the program loop reaches here, so anything it
+// could not express has already been recorded and refused; the arity guards
+// are the same belt-and-braces every emitter here carries, because the loop
+// still calls through after recording.
+function arm64_gas_emit_vecgen(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+    var czero: i32 = arm64_vcmpzero_entry(mnem);
+    var three: i32 = arm64_v3int_entry(mnem);
+    if (czero >= 0 && (three < 0 || (ops.len() == 3 && ops[2].len() > 0 && ops[2][0] == b'#'))) {
+        if (ops.len() != 3) { return a; }
+        var cc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        return Arm64Asm { ...a, code: arm64_vec2misc(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_vec_entry_op(czero), arm64_gas_arr_size(cc), arm64_gas_arr_q(cc), arm64_vec_entry_u(czero)) };
+    }
+    if (three >= 0) {
+        if (ops.len() != 3) { return a; }
+        var tc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        return Arm64Asm { ...a, code: arm64_vec3same(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_gas_vreg_any(ops[2]), arm64_vec_entry_op(three), arm64_gas_arr_size(tc), arm64_gas_arr_q(tc), arm64_vec_entry_u(three)) };
+    }
+    var logic: i32 = arm64_vlogical_entry(mnem);
+    if (logic >= 0) {
+        if (ops.len() != 3) { return a; }
+        var lc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        // The operation lives in the size field here; the opcode is always 3.
+        return Arm64Asm { ...a, code: arm64_vec3same(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_gas_vreg_any(ops[2]), 3, arm64_vec_entry_op(logic), arm64_gas_arr_q(lc), arm64_vec_entry_u(logic)) };
+    }
+    var misc: i32 = arm64_v2misc_entry(mnem);
+    if (misc < 0 || ops.len() != 2) { return a; }
+    var mc: i32 = arm64_gas_vreg_arrof(ops[0]);
+    return Arm64Asm { ...a, code: arm64_vec2misc(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+        arm64_vec_entry_op(misc), arm64_gas_arr_size(mc), arm64_gas_arr_q(mc), arm64_vec_entry_u(misc)) };
 }
 
 // ---- packed NEON (the fused vector kernels of ATLAS-PLATFORM-PLAN §3) ----
@@ -1464,24 +1605,6 @@ function arm64_addv(buf: i32[], rd: i32, rn: i32, q: boolean): i32[] {
 // advance themselves.
 function arm64_ld1_16b(buf: i32[], rt: i32, rn: i32): i32[] {
     return arm64_le32(buf, 0x4c407000 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
-}
-
-// cmeq Vd.16b, Vn.16b, Vm.16b -> 0x6E208C00 | Rm<<16 | Rn<<5 | Rd. 0xFF or
-// 0x00 per byte lane.
-function arm64_cmeq_16b(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
-    return arm64_le32(buf, 0x6e208c00 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
-}
-
-// cmlt Vd.16b, Vn.16b, #0 -> 0x4E20A800 | Rn<<5 | Rd — "high bit set" widened
-// to an all-ones lane, which is what __ascii_run asks and what lets it skip
-// the splat cmeq needs.
-//
-// The #0 is PART OF THE OPCODE, not an immediate field: there is no
-// `cmlt … #1`. A parser that accepts one and folds it into a nonexistent field
-// emits a compare-against-zero that reads correct at the call site, so the
-// caller refuses a non-zero immediate rather than encoding it.
-function arm64_cmlt_zero_16b(buf: i32[], rd: i32, rn: i32): i32[] {
-    return arm64_le32(buf, 0x4e20a800 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
 
 // shrn Vd.8b, Vn.8h, #N -> 0x0F008400 | (16-N)<<16 | Rn<<5 | Rd. Narrows each
@@ -2007,8 +2130,9 @@ function arm64_gas_is_sreg(tok: string): boolean {
 
 // arm64_gas_vreg_arr decodes an ARRANGED vector operand (`v0.8b` / `v1.16b`)
 // to its register number, or -1. Only the byte arrangements are accepted: the
-// cnt/addv encoders set size=00, so a wider element size would assemble as a
-// DIFFERENT instruction on the same bytes rather than fail.
+// addv encoder sets size=00, so a wider element size would assemble as a
+// DIFFERENT instruction on the same bytes rather than fail. The general
+// families use arm64_gas_vreg_any and a per-op size mask instead.
 function arm64_gas_vreg_arr(tok: string): i32 {
     if (arm64_gas_vreg_of(tok, ".8b") >= 0) { return arm64_gas_vreg_of(tok, ".8b"); }
     return arm64_gas_vreg_of(tok, ".16b");
@@ -2054,6 +2178,86 @@ function arm64_gas_vreg_arr_q(tok: string): boolean {
     return (slice_unchecked(s, dot, s.len()) + "") == ".16b";
 }
 
+// ---- general vector arrangements (#8000) ----
+//
+// The byte-only helpers above exist because every encoder that used them
+// pinned size=00, so a wider element size would have assembled as a DIFFERENT
+// instruction on the same bytes. The families below carry the size in a field
+// instead, so they need the whole arrangement set, and refusing what an
+// individual op cannot express moves from the parser to a per-op size mask.
+//
+// An arrangement is packed as size*2 + Q, which is the order the encoding
+// itself uses and keeps the two halves one shift apart.
+
+// arm64_gas_arr_code maps an arrangement suffix (no leading dot) to
+// size*2 + Q, or -1. `.1d` parses — ld1/st1 have it — and is refused by the
+// size masks everywhere else.
+function arm64_gas_arr_code(arr: string): i32 {
+    if (arr == "8b") { return 0; }
+    if (arr == "16b") { return 1; }
+    if (arr == "4h") { return 2; }
+    if (arr == "8h") { return 3; }
+    if (arr == "2s") { return 4; }
+    if (arr == "4s") { return 5; }
+    if (arr == "1d") { return 6; }
+    if (arr == "2d") { return 7; }
+    return 0 - 1;
+}
+
+function arm64_gas_arr_size(code: i32): i32 { return code / 2; }
+function arm64_gas_arr_q(code: i32): boolean { return code % 2 == 1; }
+
+// arm64_gas_vreg_any decodes `vN.<arr>` for ANY arrangement, returning the
+// register number, or -1. arm64_gas_vreg_arrof returns the arrangement code
+// of the same token.
+function arm64_gas_vreg_any(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    var dot: i32 = arm64_str_indexof(s, ".");
+    if (s.len() < 4 || s[0] != b'v' || dot < 2) { return 0 - 1; }
+    var n: i32 = 0;
+    var i: i32 = 1;
+    while (i < dot) {
+        var c: i32 = s[i] as i32;
+        if (c < 48 || c > 57) { return 0 - 1; }
+        n = n * 10 + (c - 48);
+        i = i + 1;
+    }
+    if (n > 31) { return 0 - 1; }
+    if (arm64_gas_arr_code(slice_unchecked(s, dot + 1, s.len()) + "") < 0) { return 0 - 1; }
+    return n;
+}
+
+function arm64_gas_vreg_arrof(tok: string): i32 {
+    var s: string = arm64_gas_trim(tok);
+    var dot: i32 = arm64_str_indexof(s, ".");
+    if (dot < 0 || dot + 1 >= s.len()) { return 0 - 1; }
+    return arm64_gas_arr_code(slice_unchecked(s, dot + 1, s.len()) + "");
+}
+
+// arm64_gas_is_vecarr reports whether an operand is an arranged vector
+// register at all — what routes a dual-form mnemonic (add, mvn, neg, …) to
+// its SIMD encoding instead of the scalar one it shares a name with.
+function arm64_gas_is_vecarr(tok: string): boolean {
+    var s: string = arm64_gas_trim(tok);
+    return s.len() > 1 && s[0] == b'v' && s[1] >= b'0' && s[1] <= b'9'
+        && arm64_str_indexof(s, ".") > 0;
+}
+
+// Element-size masks: bit 0 = byte, 1 = halfword, 2 = single, 3 = double.
+function arm64_gas_arr_allowed(sizes: i32, code: i32): boolean {
+    var size: i32 = arm64_gas_arr_size(code);
+    // 64-bit lanes exist only in the full-width form, so `.1d` is refused
+    // across the data-processing classes even where `.2d` is allowed.
+    if (size == 3 && !arm64_gas_arr_q(code)) { return false; }
+    return (sizes / arm64_gas_pow2(size)) % 2 == 1;
+}
+function arm64_gas_pow2(n: i32): i32 {
+    var v: i32 = 1;
+    var i: i32 = 0;
+    while (i < n) { v = v * 2; i = i + 1; }
+    return v;
+}
+
 // arm64_gas_breg decodes a `bN` scalar byte register — the destination shape
 // of an `addv` over a byte arrangement — to its number, or -1.
 function arm64_gas_breg(tok: string): i32 {
@@ -2075,8 +2279,6 @@ function arm64_gas_breg(tok: string): i32 {
 // encoder pins one arrangement and one immediate shape, so every deviation has
 // to be REFUSED rather than folded into a field that does not exist:
 //
-//   - cmlt's `#0` is part of the opcode. There is no `cmlt … #1`, and a parser
-//     that encodes one emits a compare-against-zero that reads correct.
 //   - shrn's immediate is 16 MINUS the shift over a 1..8 range. Outside it the
 //     value wraps into immh and selects a different element size.
 //   - ld1 takes a ONE-register list; a longer one is a different opcode.
@@ -2090,20 +2292,6 @@ function arm64_gas_bad_neon_token(mnem: string, rest: string): string {
         // rather than dropped into an encoding that reads as plain `[Xn]`.
         var m: Arm64Mem = arm64_gas_mem(ops[1]);
         if (m.base < 0 || m.off != 0 || m.off_reg >= 0) { return arm64_gas_trim(ops[1]); }
-        return "";
-    }
-    if (mnem == "cmeq") {
-        if (ops.len() != 3) { return mnem + ":arity"; }
-        if (arm64_gas_vreg_of(ops[0], ".16b") < 0) { return arm64_gas_trim(ops[0]); }
-        if (arm64_gas_vreg_of(ops[1], ".16b") < 0) { return arm64_gas_trim(ops[1]); }
-        if (arm64_gas_vreg_of(ops[2], ".16b") < 0) { return arm64_gas_trim(ops[2]); }
-        return "";
-    }
-    if (mnem == "cmlt") {
-        if (ops.len() != 3) { return mnem + ":arity"; }
-        if (arm64_gas_vreg_of(ops[0], ".16b") < 0) { return arm64_gas_trim(ops[0]); }
-        if (arm64_gas_vreg_of(ops[1], ".16b") < 0) { return arm64_gas_trim(ops[1]); }
-        if (arm64_gas_imm(ops[2]) != 0) { return mnem + ":imm"; }
         return "";
     }
     if (mnem == "shrn") {
@@ -2127,19 +2315,52 @@ function arm64_gas_bad_neon_token(mnem: string, rest: string): string {
 // p.unknown and refuses the output, rather than letting a -1 sentinel fold
 // into the register field.
 function arm64_gas_bad_vec_token(mnem: string, rest: string): string {
-    if (mnem == "ld1" || mnem == "cmeq" || mnem == "cmlt" || mnem == "shrn" || mnem == "dup") {
+    if (mnem == "ld1" || mnem == "shrn" || mnem == "dup") {
         return arm64_gas_bad_neon_token(mnem, rest);
     }
-    if (mnem != "cnt" && mnem != "addv") { return ""; }
     var ops: string[] = arm64_gas_operands(rest);
+    if (ops.len() > 0 && arm64_gas_is_vecarr(ops[0])) { return arm64_gas_bad_vecgen(mnem, ops); }
+    if (mnem != "addv") { return ""; }
     if (ops.len() != 2) { return mnem + ":arity"; }
     if (arm64_gas_vreg_arr(ops[1]) < 0) { return arm64_gas_trim(ops[1]); }
-    if (mnem == "addv") {
-        if (arm64_gas_breg(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
-        return "";
+    if (arm64_gas_breg(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+    return "";
+}
+
+// arm64_gas_bad_vecgen vets the general Advanced SIMD families: the operands
+// must share one arrangement, that arrangement must be one the op's encoding
+// has, and a compare-against-zero's `#0` must be exactly zero — the immediate
+// is part of the opcode, so a non-zero one has no field to go in and would
+// assemble as the zero form.
+function arm64_gas_bad_vecgen(mnem: string, ops: string[]): string {
+    var three: i32 = arm64_v3int_entry(mnem);
+    var logic: i32 = arm64_vlogical_entry(mnem);
+    var czero: i32 = arm64_vcmpzero_entry(mnem);
+    var misc: i32 = arm64_v2misc_entry(mnem);
+    // cmeq/cmgt/cmge have both forms; a trailing immediate is what tells them
+    // apart. cmle/cmlt exist only against zero.
+    var is_czero: boolean = czero >= 0 && (three < 0
+        || (ops.len() == 3 && ops[2].len() > 0 && ops[2][0] == b'#'));
+    var want: i32 = 3;
+    var entry: i32 = three;
+    if (is_czero) { want = 3; entry = czero; }
+    else { if (three >= 0) { want = 3; entry = three; }
+    else { if (logic >= 0) { want = 3; entry = logic; }
+    else { if (misc >= 0) { want = 2; entry = misc; }
+    else { return ""; } } } }
+    if (ops.len() != want) { return mnem + ":arity"; }
+    // A compare against zero reads two vector operands and an immediate.
+    var nvec: i32 = want;
+    if (is_czero) { nvec = 2; }
+    var code: i32 = arm64_gas_vreg_arrof(ops[0]);
+    var i: i32 = 0;
+    while (i < nvec) {
+        if (arm64_gas_vreg_any(ops[i]) < 0) { return arm64_gas_trim(ops[i]); }
+        if (arm64_gas_vreg_arrof(ops[i]) != code) { return mnem + ":arr"; }
+        i = i + 1;
     }
-    if (arm64_gas_vreg_arr(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
-    if (arm64_gas_vreg_arr_q(ops[0]) != arm64_gas_vreg_arr_q(ops[1])) { return arm64_gas_trim(ops[1]); }
+    if (is_czero && arm64_gas_imm(ops[2]) != 0) { return mnem + ":imm"; }
+    if (!arm64_gas_arr_allowed(arm64_vec_entry_sizes(entry), code)) { return mnem + ":arr"; }
     return "";
 }
 
@@ -3053,6 +3274,12 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return a;
     }
     var ops: string[] = arm64_gas_operands(rest);
+    // SIMD forms are recognised by the first operand being an arranged vector
+    // register, so the mnemonics that have both — add, sub, mul, and, orr,
+    // eor, neg, mvn, cmeq — keep their scalar path on scalar operands.
+    if (ops.len() > 0 && arm64_gas_is_vecarr(ops[0]) && arm64_gas_vecgen_handles(mnem)) {
+        return arm64_gas_emit_vecgen(a, mnem, ops);
+    }
     if (mnem == "svc") {
         a = Arm64Asm { ...a, code: arm64_svc(a.code, arm64_gas_imm(ops[0])) };
         return a;
@@ -3386,10 +3613,6 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_rbit(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
         return a;
     }
-    if (mnem == "cnt") {
-        a = Arm64Asm { ...a, code: arm64_cnt(a.code, arm64_gas_vreg_arr(ops[0]), arm64_gas_vreg_arr(ops[1]), arm64_gas_vreg_arr_q(ops[0])) };
-        return a;
-    }
     if (mnem == "addv") {
         a = Arm64Asm { ...a, code: arm64_addv(a.code, arm64_gas_breg(ops[0]), arm64_gas_vreg_arr(ops[1]), arm64_gas_vreg_arr_q(ops[1])) };
         return a;
@@ -3399,14 +3622,6 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     // that cannot be encoded has already been recorded and refused.
     if (mnem == "ld1") {
         a = Arm64Asm { ...a, code: arm64_ld1_16b(a.code, arm64_gas_vlist_16b(ops[0]), arm64_gas_mem(ops[1]).base) };
-        return a;
-    }
-    if (mnem == "cmeq") {
-        a = Arm64Asm { ...a, code: arm64_cmeq_16b(a.code, arm64_gas_vreg_of(ops[0], ".16b"), arm64_gas_vreg_of(ops[1], ".16b"), arm64_gas_vreg_of(ops[2], ".16b")) };
-        return a;
-    }
-    if (mnem == "cmlt") {
-        a = Arm64Asm { ...a, code: arm64_cmlt_zero_16b(a.code, arm64_gas_vreg_of(ops[0], ".16b"), arm64_gas_vreg_of(ops[1], ".16b")) };
         return a;
     }
     if (mnem == "shrn") {
@@ -3541,8 +3756,9 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp" || mnem == "sxtw") { return true; }
     if (mnem == "lsl" || mnem == "lsr" || mnem == "asr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
     if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "adds" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16" || mnem == "clz") { return true; }
-    if (mnem == "rbit" || mnem == "cnt" || mnem == "addv") { return true; }  // ctz = rbit+clz; popcount = cnt+addv
-    if (mnem == "ld1" || mnem == "cmeq" || mnem == "cmlt" || mnem == "shrn" || mnem == "dup") { return true; }  // the packed NEON of the §3 kernels
+    if (mnem == "rbit" || mnem == "addv") { return true; }  // ctz = rbit+clz; popcount = cnt+addv
+    if (mnem == "ld1" || mnem == "shrn" || mnem == "dup") { return true; }  // the packed NEON of the §3 kernels
+    if (arm64_gas_vecgen_handles(mnem)) { return true; }  // the general Advanced SIMD families
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
     if (mnem == "ldrsb" || mnem == "ldrsh") { return true; }
     if (mnem == "sbfx" || mnem == "sxtb" || mnem == "sxth" || mnem == "uxtb" || mnem == "uxth") { return true; }
