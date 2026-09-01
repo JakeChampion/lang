@@ -39,8 +39,9 @@
 //   +24+cap*(4+stride)  ctrl : u8[cap + 8]
 //        SwissTable-style control bytes mirroring the bucket column:
 //        128 empty, 254 tombstone, else the key hash's top 7 bits (H2).
-//        The probe loops scan them 8 at a time with SWAR (__map_swar_match)
-//        and only touch the i32 bucket column on an H2 hit. The final 8
+//        The probe loops scan them 8 at a time with the SWAR zero-byte
+//        finder (inlined at each probe site — see the comment above
+//        __map_swar_lo) and only touch the i32 bucket column on an H2 hit. The final 8
 //        bytes mirror the first buckets (ctrl[p] == ctrl[p mod cap] for
 //        p < cap + 8) so an unaligned 8-byte group load starting at any
 //        bucket position wraps without a branch (__map_ctrl_set keeps the

@@ -48,6 +48,24 @@ function main(): i32 {
     if (s.get_or(20, 0 - 1) != 2) { return 33; }
     if (s.get_or(30, 0 - 1) != 3) { return 34; }
 
+    // Zero-empty table: keys 4/1/3/7 Wang-mix to home buckets 0/1/2/3 at
+    // cap 4, so insert-delete-insert churn leaves 2 live + 2 tombstone
+    // buckets and NO empties. A delete of a missing key must then sweep the
+    // whole table and stop on the probed bound — the scalar probe cycled
+    // forever here, and a group scan without the bound would too.
+    var z: Map[i32, i32] = map_new(1);
+    z = z.insert(4, 40);
+    z = z.insert(1, 10);
+    z = z.without(4).0;
+    z = z.insert(3, 30);
+    z = z.without(1).0;
+    z = z.insert(7, 70);
+    if (z.without(150).1) { return 35; }    // missing key over a full+tombstone table
+    if (z.without(4).1) { return 36; }      // deleted key, ditto
+    if (z.get_or(3, 0 - 1) != 30) { return 37; }
+    if (z.get_or(7, 0 - 1) != 70) { return 38; }
+    if (z.len() != 2) { return 39; }
+
     // len<=8 fast-path boundary: force the map over it, then back under it.
     var f: Map[i32, i32] = map_new(4);
     var fi: i32 = 0;
@@ -137,6 +155,27 @@ function main(): i32 {
         si = si + 1;
     }
     if (sm.has("absent")) { return 12; }
+    // Re-insert the deleted keys over their tombstones, then grow with the
+    // remaining tombstones live: the ctrl byte flipped back to H2 must come
+    // off the SEEDED hash at reinsert, lookup, and rehash time alike.
+    si = 1;
+    while (si < sn) { sm = sm.insert("k" + si.to_string(), si * 5); si = si + 4; }
+    si = sn;
+    while (si < sn + 400) { sm = sm.insert("k" + si.to_string(), si * 3); si = si + 1; }
+    si = 0;
+    while (si < sn + 400) {
+        var sWant: i32 = si * 3;
+        var sAbsent: boolean = false;
+        if (si < sn && si % 2 == 1) {
+            if (si % 4 == 1) { sWant = si * 5; } else { sAbsent = true; }
+        }
+        if (sAbsent) {
+            if (sm.has("k" + si.to_string())) { return 16; }
+        } else {
+            if (sm.get_or("k" + si.to_string(), 0 - 1) != sWant) { return 17; }
+        }
+        si = si + 1;
+    }
 
     // Wide (i64) keys, hashed over both halves of the loaded word.
     var wm: Map[i64, i32] = map_new(4);
