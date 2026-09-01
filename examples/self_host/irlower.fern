@@ -64633,7 +64633,14 @@ function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, 
             ast.StmtVar(v) => {
                 if (v.name == name) {
                     if (v.type_name.len() > 0) { return v.type_name; }
-                    return cap_type_expr(v.init, fd, depth, structs, mfuncs);
+                    var vt: string = cap_type_expr(v.init, fd, depth, structs, mfuncs);
+                    if (vt.len() > 0) { return vt; }
+                    // The binding IS the answer even when un-inferable: stop
+                    // the scan here ("!" maps to "" at the driver). Walking on
+                    // would reach a later `match (name)` whose scrutinee
+                    // resolution re-enters cap_type_at on this same body —
+                    // unbounded mutual recursion.
+                    return "!";
                 }
                 // A tuple-destructure `var (a, b) = t` binds `name` as the
                 // element at its position: resolve the tuple type (annotation
@@ -64850,7 +64857,10 @@ function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, 
     var found: string = "";
     for st in body {
         found = astwalk.fold_stmt_nodes(st, found, cap_type_of, no_expr_str, astwalk.descend_none);
-        if (found.len() > 0) { return found; }
+        if (found.len() > 0) {
+            if (found == "!") { return ""; }
+            return found;
+        }
     }
     return "";
 }
