@@ -35,6 +35,12 @@ import (
 //
 // Every want was confirmed against the native x86-64 backend and bin/fern
 // -interp, never read off the self-host run.
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. Every row was re-measured against main, and every
+// live_bytes is unchanged — the clean rows stayed clean and each refusal-leak
+// row leaks the same bytes it did — so what moved is block volume, not
+// behaviour. A pre-fusion number quoted in a row note below is the older one.
 
 type matchExprBorrowCase struct {
 	name   string
@@ -134,7 +140,7 @@ function round(i: i32): i32 {
     return (match (xs.len()) { 2 => xs[0].len(), _ => 0 }) % 101;
 }
 ` + mebMain,
-			want: 93, allocs: 500, frees: 500,
+			want: 93, allocs: 300, frees: 300,
 		},
 		{
 			// Its control: the same program with a plain element read, always
@@ -146,7 +152,7 @@ function round(i: i32): i32 {
     return xs[0].len() % 101;
 }
 ` + mebMain,
-			want: 93, allocs: 500, frees: 500,
+			want: 93, allocs: 300, frees: 300,
 		},
 		{
 			// REFUSED, and must stay refused: a REAL lambda whose body mentions

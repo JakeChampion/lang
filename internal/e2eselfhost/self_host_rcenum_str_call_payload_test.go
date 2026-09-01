@@ -34,6 +34,12 @@ import (
 // native x86-64 backend agreed on each); alloc/free counts are the self-host
 // build's own, pinned exactly (the 3-vs-1 allocs-per-string ratio against
 // native is #7351, not this change).
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. Every row was re-measured against main, and every
+// live_bytes is unchanged — the clean rows stayed clean and each refusal-leak
+// row leaks the same bytes it did — so what moved is block volume, not
+// behaviour. A pre-fusion number quoted in a row note below is the older one.
 
 type rcEnumStrCallCase struct {
 	name   string
@@ -57,7 +63,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 50, allocs: 150, frees: 150,
+			want: 50, allocs: 100, frees: 100,
 		},
 		{
 			// The match-consumed sibling (consumed_rcpayload_enum_frees), same
@@ -71,7 +77,7 @@ function round(i: i32): i32 {
     return 0;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 300, frees: 300,
+			want: 34, allocs: 200, frees: 200,
 		},
 		{
 			// The REBIND path (all_assigns_fresh_rcenum): every assignment a
@@ -86,7 +92,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 50, allocs: 300, frees: 300,
+			want: 50, allocs: 200, frees: 200,
 		},
 		{
 			// CONTROL — a literal payload was already credited. Must stay
@@ -120,7 +126,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 52, allocs: 250, frees: 0,
+			want: 52, allocs: 150, frees: 0,
 		}}
 }
 

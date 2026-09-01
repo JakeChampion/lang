@@ -52,6 +52,12 @@ import (
 // these literal concats and allocates nothing, so its COUNTS are not a comparison
 // — its ANSWERS are, and they match on every row. Exit 99 is reserved for
 // __rc_underflow_count().
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. Every row was re-measured against main, and every
+// live_bytes is unchanged — the clean rows stayed clean and each refusal-leak
+// row leaks the same bytes it did — so what moved is block volume, not
+// behaviour. A pre-fusion number quoted in a row note below is the older one.
 
 type aliasedParamCase struct {
 	name   string
@@ -85,7 +91,7 @@ func aliasedParamCases() []aliasedParamCase {
 			name: "params_read_directly",
 			src: `function consume(p: string, o: string): i32 { return p.len() + o.len(); }
 ` + apbCaller + apbMain,
-			want: 63, allocs: 80, frees: 80,
+			want: 63, allocs: 40, frees: 40,
 		},
 		{
 			// One param aliased into a local. Base: 80/40 — the caller reclaims
@@ -93,7 +99,7 @@ func aliasedParamCases() []aliasedParamCase {
 			name: "param_aliased_to_local",
 			src: `function consume(p: string, o: string): i32 { var q: string = p; return q.len() + o.len(); }
 ` + apbCaller + apbMain,
-			want: 63, allocs: 80, frees: 80,
+			want: 63, allocs: 40, frees: 40,
 		},
 		{
 			// Both params aliased — one by the bind, one by the reassign. Base:
@@ -102,7 +108,7 @@ func aliasedParamCases() []aliasedParamCase {
 			name: "param_aliased_then_reassigned",
 			src: `function consume(p: string, o: string): i32 { var q: string = p; q = o; return q.len() + p.len(); }
 ` + apbCaller + apbMain,
-			want: 63, allocs: 80, frees: 80,
+			want: 63, allocs: 40, frees: 40,
 		},
 		{
 			// THE SOUNDNESS ROW. The caller reads ITS OWN strings back after the
@@ -127,7 +133,7 @@ function round(i: i32): i32 {
         + j1.len() - j1.len() + j2.len() - j2.len() + j3.len() - j3.len();
 }
 ` + apbMain,
-			want: 7, allocs: 200, frees: 200,
+			want: 7, allocs: 100, frees: 100,
 		},
 		{
 			// THE NEGATIVE CONTROL, and the reason this is a carve-out rather than
@@ -150,7 +156,7 @@ function round(i: i32): i32 {
     return r.len() + a.len() + b.len();
 }
 ` + apbMain,
-			want: 46, allocs: 80, frees: 40,
+			want: 46, allocs: 40, frees: 20,
 		},
 		{
 			// The string-builder accumulator, which reaches these predicates by a
@@ -164,7 +170,7 @@ function round(i: i32): i32 {
     return s.len();
 }
 ` + apbMain,
-			want: 63, allocs: 160, frees: 160,
+			want: 63, allocs: 80, frees: 80,
 		},
 	}
 }
