@@ -2453,16 +2453,21 @@ function x86_gas_mem_rex(buf: i32[], size: i32, reg: i32, m: GasMem, force8: boo
 // disp32 (a rip displacement is measured from the END of the instruction).
 function x86_gas_membytes(own a: X86Asm, reg: i32, m: GasMem, tail: i32): X86Asm {
     if (m.is_rip) {
+        // Every path returns a construction, never `return a`: a bare
+        // param return makes every caller's result borrow-tainted
+        // (findReturnsFreshBox), which un-eligibles the caller's own
+        // state param — one leaked X86Asm per assembled instruction and
+        // a whole-.text copy per append through the leaked reference.
         a = X86Asm { ...a, code: a.code.append(x86_modrm(0, reg, 5)) };
         a = X86Asm { ...a, code: x86_le32(a.code, 0) };
         var patch_off: i32 = a.code.len() - 4;
         a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-        a = X86Asm { ...a, fix_names: a.fix_names.append(m.label) };
         if (tail > 0) {
+            a = X86Asm { ...a, fix_names: a.fix_names.append(m.label) };
             a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
-            a = X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(tail) };
+            return X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(tail) };
         }
-        return a;
+        return X86Asm { ...a, fix_names: a.fix_names.append(m.label) };
     }
     return X86Asm { ...a, code: x86_byte_mem_operand(a.code, reg, m.base, m.has_index, m.index, m.scale, m.disp) };
 }
