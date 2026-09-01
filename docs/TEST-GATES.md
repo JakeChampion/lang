@@ -649,6 +649,25 @@ This cost two wrong diagnoses in one session — a reported SIGSEGV in
 was the same thing one layer up. Both would have been caught by one control
 run.
 
+### …and they do not FLATTEN, so a whole pipeline stage goes ungated
+
+The same fact costs coverage as well as diagnoses. `asm_ir_run.fern` parses one
+source: no imports, no module mangling, no `flatten.fern`. A corpus driven only
+through it never exercises the rewrite every real program goes through, and a
+defect there is invisible to it however many cases the corpus holds.
+
+#7959 is what that cost. `tupleFnZeroArgCases` had covered
+`Option[() => i32] = Some(a1)` since #5834 and passed on both its legs, while
+the flattener re-spelled that annotation as `Option[[i32]]` — the fn type's
+arrow gone, the lift's evidence with it, and the compiled program a SIGSEGV.
+The corpus was right and neither leg could see it.
+
+So when a corpus asserts something the FRONT END decides — an annotation, a
+declared type, a name resolution — give it a `fern.fern` leg too
+(`TestSelfHostFnTypeFlatten*` is the pattern: same table, full CLI, temp project
+on disk). Expect that leg to reach checker refusals the emit driver skips
+straight past; those are findings, not noise (#7961 is one).
+
 ## Diagnostic modes
 
 When a gate fails and the failure is a heap corruption rather than a wrong
