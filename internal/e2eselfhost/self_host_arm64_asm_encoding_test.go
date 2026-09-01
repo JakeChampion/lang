@@ -368,6 +368,27 @@ _start:
     str x0, [fp, #-8]
     adr x0, Lend
     adr x23, Lend
+    // #8000 wave 1: mnemonics the native assembler encoded and the self-host
+    // one did not. The W rows on sbfx and the extends carry the weight — the
+    // 32-bit bitfield encoding is not the 64-bit one with sf cleared, it also
+    // drops N, which is the shape ubfx got wrong.
+    nop
+    br x5
+    sbfx x1, x2, #3, #8
+    sbfx w1, w2, #3, #8
+    ubfx x1, x2, #3, #8
+    ubfx w1, w2, #3, #8
+    sxtb x0, w1
+    sxtb w0, w1
+    sxth x23, w9
+    sxth w23, w9
+    uxtb w0, w1
+    uxth w23, w9
+    ldrsb x0, [x1, #4]
+    ldrsb w0, [x1, #4]
+    ldrsb x23, [x9]
+    ldrsh x0, [x1, #4]
+    ldrsh w3, [x2, #62]
 Lend:
     ret
 `

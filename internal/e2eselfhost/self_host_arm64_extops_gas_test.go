@@ -209,6 +209,63 @@ func TestSelfHostArm64ExtrBitfieldGas(t *testing.T) {
 	})
 }
 
+// TestSelfHostArm64ExtractExtendGas pins #8000 wave 1: the bitfield-EXTRACT
+// pair, the sign/zero-extend aliases, the sign-extending byte/half loads, and
+// the two operand-less-ish branches — every mnemonic the native arm64
+// assembler encoded while the self-host one silently recorded it as unknown.
+//
+// The W rows are the ones with teeth. A 32-bit bitfield instruction is not its
+// 64-bit sibling with sf cleared: N drops too, so `ubfx w1, w2, #3, #8` is
+// 0x53032841 and not 0xd3432841. The self-host's ubfx encoder hardcoded the
+// 64-bit base, so every W-form extract it assembled was a 64-bit UBFM.
+//
+// The ldrsb/ldrsh rows carry the inverse trap: opc names the DESTINATION
+// width, so the X form has the SMALLER base word and reading the pair the
+// obvious way round swaps them.
+func TestSelfHostArm64ExtractExtendGas(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	checkPinnedSelfHost(t, bin, runner, []pinnedAsm{
+		{"nop", 0xd503201f},
+		{"br x5", 0xd61f00a0},
+		{"br x28", 0xd61f0380},
+		{"sbfx x23, x9, #40, #16", 0x9368dd37},
+		{"sbfx w28, w9, #3, #5", 0x13031d3c},
+		{"sbfx x1, x2, #3, #8", 0x93432841},
+		{"ubfx x23, x9, #40, #16", 0xd368dd37},
+		{"ubfx w28, w9, #3, #5", 0x53031d3c},
+		{"ubfx w1, w2, #3, #8", 0x53032841},
+		{"sxtb x23, w9", 0x93401d37},
+		{"sxtb w28, w9", 0x13001d3c},
+		{"sxth x23, w9", 0x93403d37},
+		{"sxth w28, w9", 0x13003d3c},
+		{"uxtb w28, w9", 0x53001d3c},
+		{"uxth w28, w9", 0x53003d3c},
+		// gas takes the X spelling of the unsigned pair and emits the W word
+		// anyway; matching that is what keeps the two assemblers identical on
+		// input a user can legally write.
+		{"uxtb x28, w9", 0x53001d3c},
+		{"ldrsb x23, [x9, #4095]", 0x39bffd37},
+		{"ldrsb w28, [x9]", 0x39c0013c},
+		{"ldrsh x23, [x9, #8190]", 0x79bffd37},
+		{"ldrsh w28, [x9, #2]", 0x79c0053c},
+	})
+	checkRefusedSelfHost(t, bin, runner, []string{
+		// The extract pair now goes through the same range check as the
+		// insert aliases; without it these wrap into a different, valid
+		// instruction rather than failing.
+		"ubfx x0, x1, #60, #8",
+		"ubfx w0, w1, #30, #5",
+		"sbfx x0, x1, #64, #1",
+		"sbfx w0, w1, #0, #0",
+		"ubfx x0, x1, #4",
+		// The sign-extending loads have only an immediate-offset encoder,
+		// so an index register must be refused rather than dropped.
+		"ldrsb x0, [x1, x2]",
+		"ldrsh w0, [x1, w2, uxtw #1]",
+	})
+}
+
 // TestSelfHostArm64CondCmpSelGas: ccmp/ccmn (register and imm5 forms) and
 // the conditional-select family with its inverted-condition aliases.
 func TestSelfHostArm64CondCmpSelGas(t *testing.T) {
