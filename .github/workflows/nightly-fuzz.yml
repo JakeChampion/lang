@@ -154,23 +154,34 @@ jobs:
     needs: window
     name: nightly-differential-selfhost-shard${{ matrix.shard }}
     runs-on: ubuntu-latest
-    # The per-PR lane is 12.4 min for 512 seeds over two shards; the same
-    # 45 minutes it allows leaves room for a window that compiles slower.
+    # 512 seeds cost 12.4 min of work in the per-PR lane, so SEED_WINDOW's
+    # 2048 is ~50 min — over one shard's budget, hence four rather than the
+    # per-PR lane's two. That puts a shard at ~12 min plus the driver build,
+    # the same shape the per-PR lane already runs at, against 45 minutes.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1]
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           gotestsum: "true"
-      - name: go test (self-host, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/2)
+      - name: go test (self-host, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/4)
         env:
           FERN_SELFHOST_DIFF: "1"
           DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
-          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/4"
+          # Tile the whole window. The leg's own default is 512 — sized for
+          # the per-PR lane, where the range is fixed and the cost is paid on
+          # every push. Leaving it there here would sample the first quarter
+          # of each night's 2048 and never look at the other three, since the
+          # base advances by the full SEED_WINDOW. Nightly is the lane that
+          # can afford the whole thing, and tiling with no gap is the reason
+          # the window mechanism exists. Read from SEED_WINDOW rather than
+          # repeated, so the two cannot drift into a gap or an overlap.
+          SELFHOST_DIFF_SEEDS: "${{ env.SEED_WINDOW }}"
         run: |
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
             -run '^TestDifferential_SelfHostX86_64$' ./internal/e2e/
