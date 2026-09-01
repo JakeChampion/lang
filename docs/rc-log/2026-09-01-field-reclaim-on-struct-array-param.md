@@ -90,3 +90,38 @@ witnesses it either way — the cow guard already skips a carried-over field, so
 whether the missing admission can dangle a replaced one needs its own probe
 against the leak matrices, since closing it removes releases the wasm leg's leak
 gates may be relying on (#7648 added the deep half of this arm to fix a leak).
+
+## The next lead, probed (2026-09-01, same day)
+
+The unconditional `frk == "a"` arm was probed directly rather than left as a
+worry. Three shapes, each run on all three engines — `-interp` as the oracle,
+`-target x86-64-linux` under `FERN_LEAKCHECK=1`, and `-target wasm32-wasi
+-emit core-module` under `wasmtime run --invoke main`:
+
+| shape | answer (all three) | x86 leakcheck |
+|---|---|---|
+| clone-form replace of a `string[]` field, 50 rounds | 50 | `allocs=57 frees=57 live_bytes=0` |
+| the superseded buffer **aliased** by a local, read after the replace | 22 | `allocs=4 frees=4 live_bytes=0` |
+| `vals: d.vals.append(v)` — stores that carry element pointers over, 30 rounds | 125 | `allocs=36 frees=36 live_bytes=0` |
+
+All three agree and none leaks, so **the worry does not reproduce on the
+natural shapes**. The reason it holds: the unconditional arm is the SHALLOW
+`$__fern_arr_dec` under the cow guard, and an alias that keeps the superseded
+buffer alive has retained it, so the dec cannot be the last owner. The walk
+that could double-free — the DEEP `$__fern_arr_dec_ptr` over element boxes — is
+admission-gated on wasm too (`sarr_ok` / `strarr_ok`), which is the half that
+matters.
+
+What this does NOT establish: wasm has no leak detector (`docs/TEST-GATES.md`),
+so only the register side's reclamation was measured and the wasm side was
+compared on answers alone; and three hand-written shapes are not the leak
+matrices the lead asked for. The divergence in what the two sides *release* is
+still real — it is just that on these shapes the register backends' extra
+admission costs nothing and wasm's absence of it breaks nothing. A sweep that
+would settle it is the rc corpus with a wasm leg, which does not exist.
+
+One harness note, because it inverts a result: a native `wasmbin` core module
+run as plain `wasmtime run` exits 0 whatever `main` returns — the value comes
+back only under `--invoke main`. A control (`function main(): i32 { return 50; }`)
+reads 0 the first way and 50 the second, so a probe without a control reads
+every wasm answer as a divergence.
