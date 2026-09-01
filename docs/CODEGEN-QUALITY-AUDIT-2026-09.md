@@ -231,7 +231,7 @@ were reproduced independently of whoever first reported it. Costs are shares of
 | # | finding | backend | cost | status |
 |---|---|---|---|---|
 | 1 | No ALU-with-immediate on the expression path — every constant operand is materialised into a register first | x86-64 | **20.3%** of instructions, 13.8% of `.text` | confirmed, fix prototyped |
-| 2 | Constant field/element offsets never folded into the addressing mode — 5 instructions where `ldr xD,[xB,#K]` is 1 | arm64 | **14.8%** of instructions | confirmed |
+| 2 | Constant field/element offsets never folded into the addressing mode — 5 instructions where `ldr xD,[xB,#K]` is 1 | arm64 | **14.6%** of instructions | confirmed independently |
 | 3 | Call-site `rsp` alignment padding at 90 935 sites | x86-64 | **11.4%** of instructions | confirmed |
 | 4 | No ALU/compare immediate operands — constants `movz`'d into a register first | arm64 | **6.7%** of instructions | confirmed |
 | 5 | Reference-count guard materialises its mask in two instructions, 120 323 times; the whole guard is 4 instructions where 2 suffice | arm64 | 1.5% (mask) / **3.1%** (guard) | confirmed |
@@ -438,7 +438,7 @@ by the SSA cutover.
 | | change | worth | shape |
 |---|---|---|---|
 | A1 | x86-64 ALU-with-immediate peephole (finding 1) | **−20.3% instructions, −13.8% `.text`, −9.5% driver wall time** | a 4th rule in `peepholeTail`, `x86_64.go:3987`; window already wide enough. Prototyped and validated byte-identical. |
-| A2 | arm64 addressing-mode folding for constant field offsets (finding 2) | **−14.8% instructions** | match `OpAdd(base, OpConst K)` ahead of `OpLoad`/`OpStore`, `arm64.go:12762`/`:12808`; encoder already has the form |
+| A2 | arm64 addressing-mode folding for constant field offsets (finding 2) | **−14.6% instructions** | match `OpAdd(base, OpConst K)` ahead of `OpLoad`/`OpStore`, `arm64.go:12762`/`:12808`; encoder already has the form |
 | A3 | x86-64 call-alignment elimination (finding 3) | **−11.4% instructions** | spill operands to fixed frame slots instead of `push`/`pop`, so `rsp` never moves in the body and the prologue aligns once. Push→`mov [rbp-N]` is instruction-neutral; the whole `pad` column goes to zero. |
 | A4 | arm64 ALU/compare immediates (finding 4) | **−6.7% instructions** | `binPopImm` variant at `arm64.go:11939`; `imm12` + `lsl #12`, plus `cbz`/`cbnz` when K==0 and a branch follows (8 217 sites) |
 | A5 | arm64 RC guard: fold the mask, then the guard (finding 5) | −1.5%, then **−3.1%** | `arm64.go:13321`; `mov x1,#0x10000000` for the pair, then `lsr x1,x0,#28 / cbz` for the whole guard |
