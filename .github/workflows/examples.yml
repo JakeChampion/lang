@@ -21,6 +21,28 @@ name: Examples
 
 on:
   pull_request:
+    # DOC-ONLY CHANGES DO NOT NEED THE COMPILER SUITE. This project opens a PR
+    # for every push including doc fixes and comment corrections, and each one
+    # was launching ~85 jobs into a queue that is the binding constraint on
+    # every other PR in flight.
+    #
+    # Deliberately narrow. `*.md` does not cross a `/` in a GitHub path filter,
+    # so it is root-level prose only (README, CLAUDE.md) and the literate
+    # sources under examples/literate/*.fern.md — which ARE compiled — still
+    # trigger everything. docs/ holds no .fern.md and no test fixture; the two
+    # e2e tests that name a docs/ path only cite it in a comment or a failure
+    # message.
+    #
+    # lint.yml deliberately has NO filter, so a doc-only PR still runs one real
+    # gate rather than reporting no checks at all.
+    #
+    # The identical block on every lane is pinned by
+    # TestPRWorkflowsShareOneDocOnlyFilter (internal/sourcelint).
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
 
 # Supersede an in-flight run for the same ref: a new push to the
