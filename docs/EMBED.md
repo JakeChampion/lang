@@ -161,8 +161,15 @@ reasoning is preserved in the issue. Nothing here forecloses it: appending
 a ZIP would be purely additive.
 
 A single asset is a compile-time constant and so is legal in a `const`
-initialiser; the **enumeration** is not, because `evalConst` returns scalar
-literals and an array of tuples is not one. Bind it with `var`.
+initialiser; on the **native** compiler the enumeration is not, because
+`evalConst` returns scalar literals and an array of tuples is not one. Bind it
+with `var`.
+
+The self-host compiler accepts `const XS = __fern_assets()` — it has no
+const-evaluation phase to be limited by, so the substituted array reaches
+codegen exactly as a `var` initialiser's would. That is the only case where the
+two disagree, and the restriction is native's implementation rather than the
+language's; #7987 tracks lifting it rather than reproducing it.
 
 ## Coverage
 

@@ -73,12 +73,19 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(assets, "sub"), 0o755); err != nil {
 		t.Fatalf("mkdir assets: %v", err)
 	}
-	for name, body := range map[string]string{
-		"z.txt":     "ZZZ",
-		"a.txt":     "AAA",
-		"sub/b.txt": "BB",
+	for name, body := range map[string][]byte{
+		"z.txt":     []byte("ZZZ"),
+		"a.txt":     []byte("AAA"),
+		"sub/b.txt": []byte("BB"),
+		// The load-bearing asset, and the reason this bundle is written as
+		// bytes: an interior NUL and a byte past 0x7f, which is what an image,
+		// a font or a wasm module looks like. Fern's `read_file` validates
+		// UTF-8 and refuses this file outright, so a walk built on it embeds
+		// text and rejects every directory holding anything else — a
+		// divergence a text-only fixture cannot see.
+		"blob.bin": {'A', 0x00, 'B', 0xff, 'C'},
 	} {
-		if err := os.WriteFile(filepath.Join(assets, filepath.FromSlash(name)), []byte(body), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(assets, filepath.FromSlash(name)), body, 0o644); err != nil {
 			t.Fatalf("write asset %s: %v", name, err)
 		}
 	}
@@ -100,17 +107,19 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 	}{
 		// 3 + 2 = 5: the bytes of two files, one of them nested.
 		{"asset-one", assets, "function main(): i32 {\n    return __fern_asset(\"a.txt\").len() + __fern_asset(\"sub/b.txt\").len();\n}\n", 5},
-		// Names sorted, contents alongside: 5+9+5 name bytes, 3+2+3 contents.
-		{"assets-all", assets, "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 27},
+		// Names sorted, contents alongside: 5+8+9+5 name bytes, 3+5+2+3
+		// contents, the 5 being the binary blob counted by its own length word.
+		{"assets-all", assets, "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 40},
 		// Sorted order is observable, and it is what keeps the emitted program
 		// identical across hosts — a filesystem-order walk would not be.
 		{"assets-sorted", assets, "function main(): i32 {\n    var first: string = \"\";\n    for a in __fern_assets() { if (first.len() == 0) { first = a.0; } }\n    if (first == \"a.txt\") { return 7; }\n    return 9;\n}\n", 7},
 		// An empty bundle yields an empty typed array, so the loop body simply
 		// never runs. The element type has to be stamped for that to compile.
 		{"assets-empty-bundle", empty, "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets() { n = n + 1; }\n    return n;\n}\n", 0},
-		// Binary bytes: the length comes from the literal's own count word, so
-		// an interior NUL is not a terminator.
-		{"asset-binary", assets, "function main(): i32 {\n    return __fern_asset(\"z.txt\").len();\n}\n", 3},
+		// Binary bytes, asserted per byte: nothing truncated at the NUL and
+		// nothing rewrote the 0xff. The length alone would not catch either,
+		// since a walk that mangled the high byte in place keeps the count.
+		{"asset-binary", assets, "function main(): i32 {\n    var b: string = __fern_asset(\"blob.bin\");\n    if (b.len() != 5) { return 1; }\n    if (b[0] != 65 || b[1] != 0 || b[2] != 66) { return 2; }\n    if (b[3] != 255 || b[4] != 67) { return 3; }\n    return 0;\n}\n", 0},
 
 		// Every refusal. Each of these is a program that would otherwise build
 		// with a silently empty asset in it.
@@ -120,6 +129,11 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		{"computed-name", assets, "function main(): i32 {\n    var n: string = \"a.txt\";\n    return __fern_asset(n).len();\n}\n", -1},
 		{"wrong-arity", assets, "function main(): i32 {\n    return __fern_asset(\"a.txt\", \"z.txt\").len();\n}\n", -1},
 		{"enumerate-with-argument", assets, "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets(\"a.txt\") { n = n + 1; }\n    return n;\n}\n", -1},
+		// A nested call is refused on the OUTER argument not being a literal.
+		// Both passes claim an asset call before descending into it, so the
+		// inner one never resolves into a name the outer could then accept —
+		// which a post-order walk would have compiled into a real lookup.
+		{"nested-asset-name", assets, "function main(): i32 {\n    return __fern_asset(__fern_asset(\"a.txt\")).len();\n}\n", -1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			src := filepath.Join(dir, "embed_"+c.name+".fern")

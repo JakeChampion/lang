@@ -28,7 +28,22 @@ function tree(): string {
     match (write_file(dir + "/z.txt", "ZZZ")) { Ok(u) => { }, Err(e) => { return ""; } }
     match (write_file(dir + "/a.txt", "AAA")) { Ok(u) => { }, Err(e) => { return ""; } }
     match (write_file(dir + "/sub/b.txt", "BB")) { Ok(u) => { }, Err(e) => { return ""; } }
+    // The load-bearing asset. An interior NUL and a byte past 0x7f are what a
+    // real bundle carries — an image, a font, a wasm module — and `read_file`
+    // refuses the second of those outright, so a walk built on it embeds text
+    // and rejects every directory holding anything else.
+    match (write_file(dir + "/blob.bin", blob_string())) { Ok(u) => { }, Err(e) => { return ""; } }
     return dir;
+}
+
+// blob_string is "A\0B\xffC": five bytes, one of them NUL and one of them not
+// valid UTF-8 in any position. Built through the unchecked constructor because
+// that is the only way to spell bytes a `string` literal cannot hold.
+function blob_string(): string {
+    var bs: u8[] = [];
+    bs = bs.append(65); bs = bs.append(0); bs = bs.append(66);
+    bs = bs.append(255); bs = bs.append(67);
+    return string_from_bytes_unchecked(bs);
 }
 
 // var_init_of digs the first StmtVar initialiser out of `main`.
@@ -74,37 +89,46 @@ function main(): i32 {
 
     // Sorted, slash-separated, relative to the root — "sub/b.txt", not the
     // absolute path and not a host separator.
-    if (a.names.len() != 3) { return 14; }
+    if (a.names.len() != 4) { return 14; }
     if (a.names[0] != "a.txt") { return 15; }
-    if (a.names[1] != "sub/b.txt") { return 16; }
-    if (a.names[2] != "z.txt") { return 17; }
-    if (a.contents[0] != "AAA") { return 18; }
-    if (a.contents[1] != "BB") { return 19; }
-    if (a.contents[2] != "ZZZ") { return 20; }
+    if (a.names[1] != "blob.bin") { return 16; }
+    if (a.names[2] != "sub/b.txt") { return 17; }
+    if (a.names[3] != "z.txt") { return 18; }
+    if (a.contents[0] != "AAA") { return 19; }
+    if (a.contents[2] != "BB") { return 20; }
+    if (a.contents[3] != "ZZZ") { return 21; }
 
-    if (embed.lookup(a, "sub/b.txt") != 1) { return 21; }
-    if (embed.lookup(a, "nope") != -1) { return 22; }
+    // Byte-exact, and asserted per byte rather than by comparing to a literal:
+    // the point is that nothing truncated at the NUL and nothing rewrote the
+    // 0xff, which a length check alone would not catch.
+    var blob: string = a.contents[1];
+    if (blob.len() != 5) { return 22; }
+    if (blob[0] != 65 || blob[1] != 0 || blob[2] != 66) { return 23; }
+    if (blob[3] != 255 || blob[4] != 67) { return 24; }
+
+    if (embed.lookup(a, "sub/b.txt") != 2) { return 25; }
+    if (embed.lookup(a, "nope") != -1) { return 26; }
 
     // A missing directory is an error, not an empty bundle: silently embedding
     // nothing would turn a typo into a program that compiles and serves 404s.
-    if (embed.load(dir + "/not-here").err.len() == 0) { return 23; }
+    if (embed.load(dir + "/not-here").err.len() == 0) { return 27; }
 
     // An EMPTY directory is legitimate, and is not the same as no -embed.
     var empty_dir: string = dir + "/empty";
-    match (create_dir_all(empty_dir)) { Ok(u) => { }, Err(e) => { return 24; } }
+    match (create_dir_all(empty_dir)) { Ok(u) => { }, Err(e) => { return 28; } }
     var er: embed.LoadResult = embed.load(empty_dir);
-    if (er.err.len() != 0) { return 25; }
-    if (!er.assets.present) { return 26; }
-    if (er.assets.names.len() != 0) { return 27; }
-    if (embed.format_available(er.assets) != "no assets were embedded") { return 28; }
+    if (er.err.len() != 0) { return 29; }
+    if (!er.assets.present) { return 30; }
+    if (er.assets.names.len() != 0) { return 31; }
+    if (embed.format_available(er.assets) != "no assets were embedded") { return 32; }
 
     // ---- 2. the miss diagnostic ----------------------------------------
-    if (embed.format_available(a) != "embedded assets: a.txt, sub/b.txt, z.txt") { return 30; }
+    if (embed.format_available(a) != "embedded assets: a.txt, blob.bin, sub/b.txt, z.txt") { return 33; }
     // A near miss suggests; an unrelated name does not, because a suggestion
     // that matches almost nothing is worse than none.
-    if (embed.suggest(a, "sub/b.tx") != "sub/b.txt") { return 31; }
-    if (embed.suggest(a, "totally-unrelated-xyzzy") != "") { return 32; }
-    if (embed.suggest(a, "a.txt") != "a.txt") { return 33; }
+    if (embed.suggest(a, "sub/b.tx") != "sub/b.txt") { return 34; }
+    if (embed.suggest(a, "totally-unrelated-xyzzy") != "") { return 35; }
+    if (embed.suggest(a, "a.txt") != "a.txt") { return 36; }
 
     // ---- 3. __fern_asset -----------------------------------------------
     var one: string = "function main(): i32 { var s: string = __fern_asset(\"a.txt\"); return s.len(); }\n";
@@ -154,6 +178,15 @@ function main(): i32 {
     if (err7.len() != 1) { return 59; }
     if (!util.contains(err7[0], "the name cannot be computed")) { return 60; }
 
+    // A nested asset call is refused, ONCE, on the outer call's argument not
+    // being a literal — the pass claims a call before the spine descends into
+    // it, so the inner one is never resolved into a name the outer could then
+    // accept. Post-order would compile this into a lookup of "hello asset".
+    var inner: string = "function main(): i32 { var s: string = __fern_asset(__fern_asset(\"a.txt\")); return 0; }\n";
+    var (e13, err13) = folded_init(inner, a);
+    if (err13.len() != 1) { return 62; }
+    if (!util.contains(err13[0], "the name cannot be computed")) { return 63; }
+
     // Two bad names report twice: one failure must not hide the next.
     var two_bad: string = "function main(): i32 { var s: string = __fern_asset(\"nope1\") + __fern_asset(\"nope2\"); return 0; }\n";
     var (e8, err8) = folded_init(two_bad, a);
@@ -168,8 +201,8 @@ function main(): i32 {
             // The element type is stamped whether or not the bundle is empty:
             // an unstamped empty literal has no width for the checker.
             if (arr.elem_ty != "(string, string)") { return 71; }
-            if (arr.elements.len() != 3) { return 72; }
-            match (arr.elements[1]) {
+            if (arr.elements.len() != 4) { return 72; }
+            match (arr.elements[2]) {
                 ast.ExprTuple(t) => {
                     if (t.elements.len() != 2) { return 73; }
                     if (str_of(t.elements[0]) != "sub/b.txt") { return 74; }
