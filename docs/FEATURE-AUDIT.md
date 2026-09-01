@@ -106,7 +106,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Float comparison + NaN semantics | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `< > <= >= == !=` + IEEE NaN: every ordered compare with a NaN is false, only `!=` (incl. `NaN != NaN`) true. Self-host IR pin `TestSelfHostFloatNanIR` (x86-64 + wasm) — x86-64 `ucomisd`+`setcc` folds the unordered/parity flag correctly; wasm `f64.*` is IEEE-direct |
 | `boolean` type + literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | exercised throughout audit fixture |
 | `string` type: `+`, `==`/`!=`, indexing, slice | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | concat, eq/neq, byte index, `.len()`, and slicing: `s[i:j]` is `Option[str]` (`None` out of range or on a split code point), `slice_unchecked(s, i, j)` the byte-indexed `str` that aborts instead |
-| String literals + escape sequences | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `\t \n \r \0 \\ \"` + `\xNN` hex bytes; each decodes to one byte (embedded NUL counts — not C strings). Byte-exact `.len()` / index / concat — native `string_escapes` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
+| String literals + escape sequences | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `\t \n \r \0 \\ \"` + `\xNN` hex bytes; each decodes to one byte (embedded NUL counts — not C strings). Byte-exact `.len()` / index / concat — native `string_escapes` fixture (4 backends) + self-host IR pin (x86-64 + wasm). Control bytes through the self-host's two GAS assemblers are pinned separately by `self_host_string_escape_test.go`; that half was ✅ and broken until 2026-09-01 |
 | f-strings / interpolation | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `f"...{e}..."` desugars (parser) to literal parts + `(e).to_string()` folded with `+`. Native: `TestWASMFStringInterpolation` + closure-capture f-string mirrors. Self-host IR pin (x86-64 + wasm): `TestSelfHostFStringIR` — i32 + string interpolants (the two `to_string` receivers the importless IR path lowers), literal/empty parts, byte offsets, equality |
 | Owned arrays `T[]` + indexing + `.with` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | index, `.len()`, `.with` (reassign idiom); **read-after-`.with` aliases on compiled backends, [#2832](https://github.com/JakeChampion/lang/issues/2832)** |
 | Slice views `[T]` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | borrowed window `a[i:j]`; `.len()`, indexing, `for x in s`, slice-of-slice, empty windows, `[string]` element slices — native `slice_views` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
@@ -252,6 +252,38 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-09-01 — a control byte in a string literal miscompiled on both self-host GAS assemblers (#7986)
+
+The `\xNN` row was ✅ across all six columns and wrong in two of them for any
+byte below 0x20 other than `\t` / `\n` / `\r`, and for 0x7f.
+
+`asmcore.escape_for_ascii` writes those as GAS's three-digit octal `\NNN`,
+which is correct. Both in-process assemblers read it back wrong:
+`x86_gas_ascii` (`x86_native.fern`) and `arm64_gas_data_ascii` /
+`arm64_gas_data_asciz` (`arm64_native.fern`) recognised `\0` as NUL and passed
+every other digit through as itself. So `"A\x01B"` was emitted as
+`.ascii "A\001B"` and assembled to `A`, NUL, `0`, `1`, `B` — two stray bytes,
+everything after them shifted, and the literal then truncated at the length the
+emitter recorded, so it read back as `A`, NUL, `0`. `arm64_gas_data_asciz` also
+had no `\r` case at all, turning a carriage return into the letter `r`.
+
+Each assembler grew a `*_gas_escape` helper decoding one to three octal digits
+the way GAS does, shared by that file's decoders. The two remain hand-mirrored
+copies — the assemblers are deliberately import-free — which is why the arm64
+half is now pinned against `internal/native/arm64` rather than against its twin.
+
+Nothing caught it because nothing in the corpus puts a control byte in a
+literal: the three common ones have single-letter escapes, and a high byte like
+`\xff` is written raw and always round-tripped. It surfaced from `-embed`
+(#6643), where an asset is arbitrary bytes by definition and the first real one
+was a five-byte blob with an interior NUL.
+
+Tests: `internal/e2eselfhost/self_host_string_escape_test.go`. The x86-64 half
+compiles and RUNS the probe under both compilers and compares the bytes it
+prints; the arm64 half compares assembled `.rodata` against
+`internal/native/arm64` on identical GAS text, needing no qemu — the layer the
+bug is in. Verified red before the fix (6 of 10 rows on arm64) and green after.
 
 ### 2026-09-01 — `strbuf_*` implemented in the native wasm backend (#7947)
 
