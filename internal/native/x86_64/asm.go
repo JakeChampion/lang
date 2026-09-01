@@ -1228,6 +1228,14 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 		// 83/81 are the 16/32/64-bit forms and would silently widen the
 		// operation (the mov-imm encoder had the same bug, #3544).
 		if dst.size == 8 {
+			// AL takes the accumulator form 04+8*ext ib, which needs no
+			// ModRM and is what gas selects. ah/ch/dh/bh are reg 4-7 with
+			// highByte set, so they cannot reach it by register number.
+			if dst.reg == 0 && !dst.highByte {
+				a.emit(byte(0x04 + ext<<3))
+				a.emit(byte(src.imm))
+				return nil
+			}
 			if rex := rexFor(false, 0, dst.reg, needsRexByte(dst)); rex != 0 {
 				a.emit(rex)
 			}
@@ -1248,6 +1256,13 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 				a.emit(byte(src.imm))
 				return nil
 			}
+			// AX with a wide immediate: 05+8*ext saves the ModRM byte. Only
+			// past the 83 form above, which is shorter still.
+			if dst.reg == 0 {
+				a.emit(byte(0x05 + ext<<3))
+				a.emit(byte(src.imm), byte(src.imm>>8))
+				return nil
+			}
 			a.emit(0x81)
 			a.emit(modrmReg(ext, dst.reg))
 			a.emit(byte(src.imm), byte(src.imm>>8))
@@ -1265,6 +1280,12 @@ func (a *Assembler) alu(ops []operand, opBase byte, ext int) error {
 		}
 		if rex := rexFor(w, 0, dst.reg, false); rex != 0 {
 			a.emit(rex)
+		}
+		// eAX/rAX with a wide immediate: 05+8*ext, no ModRM.
+		if dst.reg == 0 {
+			a.emit(byte(0x05 + ext<<3))
+			a.emit32(uint32(src.imm))
+			return nil
 		}
 		a.emit(0x81)
 		a.emit(modrmReg(ext, dst.reg))
@@ -1345,6 +1366,13 @@ func (a *Assembler) test(ops []operand) error {
 		o := ops[0]
 		switch o.size {
 		case 8:
+			// The accumulator forms A8 ib / A9 iw|id carry no ModRM, and
+			// test has no sign-extended-imm8 form to be shorter than them.
+			if o.reg == 0 && !o.highByte {
+				a.emit(0xA8)
+				a.emit(byte(ops[1].imm))
+				return nil
+			}
 			if rex := rexFor(false, 0, o.reg, needsRexByte(o)); rex != 0 {
 				a.emit(rex)
 			}
@@ -1354,6 +1382,11 @@ func (a *Assembler) test(ops []operand) error {
 			return nil
 		case 16:
 			a.emit(0x66)
+			if o.reg == 0 {
+				a.emit(0xA9)
+				a.emit(byte(ops[1].imm), byte(ops[1].imm>>8))
+				return nil
+			}
 			if rex := rexFor(false, 0, o.reg, false); rex != 0 {
 				a.emit(rex)
 			}
@@ -1364,6 +1397,11 @@ func (a *Assembler) test(ops []operand) error {
 		}
 		if rex := rexFor(o.size == 64, 0, o.reg, false); rex != 0 {
 			a.emit(rex)
+		}
+		if o.reg == 0 {
+			a.emit(0xA9)
+			a.emit32(uint32(ops[1].imm))
+			return nil
 		}
 		a.emit(0xF7)
 		a.emit(modrmReg(0, o.reg))

@@ -197,8 +197,7 @@ func TestEncodeMovImmToMemSize(t *testing.T) {
 // pins: `cmp byte ptr [rdi], 61` — __fern_env's '=' scan — was encoded as
 // `cmp dword ptr [rdi], 61` (83 3f 3d), so the compare read 3 extra bytes
 // and env() always returned None in natively-linked binaries. Encodings
-// cross-checked against GNU as / objdump (for `cmp al, imm8` GNU as picks
-// the equivalent short 3C ib form; 80 /7 ib is the same comparison).
+// cross-checked against GNU as / objdump.
 func TestEncodeAluImmSize(t *testing.T) {
 	cases := []struct{ src, want string }{
 		{"cmp byte ptr [rdi], 61", "803f3d"},
@@ -208,7 +207,7 @@ func TestEncodeAluImmSize(t *testing.T) {
 		{"cmp word ptr [rdi], 61", "6683 3f3d"},
 		{"cmp dword ptr [rdi], 61", "833f3d"},
 		{"cmp qword ptr [rdi], 61", "48833f3d"},
-		{"cmp al, 61", "80f83d"},
+		{"cmp al, 61", "3c3d"},
 		{"cmp cl, 5", "80f905"},
 		{"cmp sil, 5", "4080fe05"},
 		{"cmp r9b, 5", "4180f905"},
@@ -643,13 +642,9 @@ func TestEncodeIncDecConvert(t *testing.T) {
 
 // TestEncodeTestForms pins the completed test surface: the memory forms
 // (84/85 — test is symmetric, so ModRM.reg is always the register whichever
-// side it was written on), sized memory-immediate forms, and the 16-bit
-// reg,imm form (66 F7 /0 iw), which previously emitted a 32-bit immediate.
-//
-// For an accumulator destination GNU as picks the short A8/A9 forms
-// (`test ax, 258` = 66 a9 02 01); this assembler keeps the uniform F6/F7 /0
-// encoding, which objdump -D -b binary confirms decodes to the identical
-// instruction. Non-accumulator expectations match GNU as exactly.
+// side it was written on), sized memory-immediate forms, the 16-bit reg,imm
+// form (66 F7 /0 iw), and the accumulator forms A8 ib / A9 iw|id, which carry
+// no ModRM byte. Every expectation matches GNU as exactly.
 func TestEncodeTestForms(t *testing.T) {
 	cases := []struct{ src, want string }{
 		{"test rax, [rdi]", "488507"},
@@ -661,9 +656,11 @@ func TestEncodeTestForms(t *testing.T) {
 		{"test dword ptr [rsi], 256", "f70600010000"},
 		{"test qword ptr [rdi], 512", "48f70700020000"},
 		{"test cx, 5", "66f7c10500"},
-		{"test ax, 258", "66f7c00201"},      // gas: 66a90201 (equivalent)
-		{"test al, 1", "f6c001"},            // gas: a801 (equivalent)
-		{"test rax, 256", "48f7c000010000"}, // gas: 48a900010000 (equivalent)
+		{"test ax, 258", "66a90201"},
+		{"test al, 1", "a801"},
+		{"test rax, 256", "48a900010000"},
+		{"test ah, 1", "f6c401"},
+		{"test eax, 70000", "a970110100"},
 	}
 	for _, c := range cases {
 		if got := asm(t, c.src); got != c.want {
@@ -771,11 +768,10 @@ func TestEncodeStringMisc(t *testing.T) {
 // encoded as `add eax, ebx` — no prefix, a silently 32-bit operation — and
 // the same held for every reg/mem/imm form threaded through rmReg/memReg/
 // regMem and the mov/alu immediate paths. Expectations captured from GNU
-// as / objdump -d -M intel; for an accumulator-with-immediate GNU as picks
-// its short form (`add ax, 200` = 66 05 c8 00), where this assembler keeps
-// the uniform 81 /0 encoding — objdump -D -b binary confirms it decodes to
-// the identical instruction (as does 66 87 c8 for `xchg ax, cx`, where gas
-// picks 66 91).
+// as / objdump -d -M intel. The accumulator-with-immediate forms match gas
+// exactly; `xchg ax, cx` is the one shape still encoded uniformly (66 87 c8
+// where gas picks 66 91), which objdump -D -b binary confirms decodes to the
+// identical instruction.
 func TestEncode16BitOperandSize(t *testing.T) {
 	cases := []struct{ src, want string }{
 		{"add ax, bx", "6601d8"},
@@ -787,7 +783,7 @@ func TestEncode16BitOperandSize(t *testing.T) {
 		{"mov r9w, 258", "6641b90201"},
 		{"sub ax, 100", "6683e864"},
 		{"xor cx, dx", "6631d1"},
-		{"cmp ax, 1000", "6681f8e803"}, // gas: 663de803 (short form, equivalent)
+		{"cmp ax, 1000", "663de803"},
 		{"and r8w, r9w", "664521c8"},
 		{"or word ptr [rsi], cx", "66090e"},
 		{"test ax, bx", "6685d8"},

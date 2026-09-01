@@ -21,11 +21,11 @@ import (
 // Deliberately excluded, because our encoding choice differs from GNU as
 // while decoding to the SAME instruction (verified via objdump -D -b binary):
 //
-//   - accumulator-immediate shortenings: gas encodes `test al/ax/eax/rax, imm`
-//     via A8/A9, ALU `al/ax/eax/rax, imm` (when the imm8 form doesn't apply)
-//     via the 04/05/0C/0D/… accumulator opcodes, and `xchg ax/eax/rax, reg`
-//     as 90+r; we use the general F7 /0, 81 /ext, and 87 /r forms. Snippets
-//     keep immediates off the accumulators and xchg off rax/eax/ax.
+//   - xchg with the accumulator: gas encodes `xchg ax/eax/rax, reg` as 90+r
+//     where we use the general 87 /r. Snippets keep xchg off rax/eax/ax.
+//     (The accumulator-immediate shortenings used to be excluded here too;
+//     #7953 gave both assemblers A8/A9 and 04/05+8*ext, so they are compared
+//     byte for byte now.)
 //
 // No other divergences were found across the supported surface.
 func TestAssembleAgainstGNUAs(t *testing.T) {
