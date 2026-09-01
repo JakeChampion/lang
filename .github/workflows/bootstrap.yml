@@ -17,13 +17,17 @@ name: Bootstrap
 #
 # Two jobs, two triggers:
 #
-#   verify   pull_request — `make bootstrap` against the CURRENT pin, on both
-#            Linux hosts. No Go setup, on purpose: a step that quietly needed
-#            it would defeat what the job proves. Runs when the compiler's
-#            source, the stdlib it compiles against, or the bootstrap itself
-#            changes. Red means either the current source uses something the
-#            pinned stage0 does not know — the failure says so, and the fix
-#            is a refresh — or the compiler it built does not work.
+#   verify   `make bootstrap` against the CURRENT pin, on both Linux hosts.
+#            No Go setup, on purpose: a step that quietly needed it would
+#            defeat what the job proves. Red means either the current source
+#            uses something the pinned stage0 does not know — the failure
+#            says so, and the fix is a refresh — or the compiler it built does
+#            not work. Dispatch-only until the first pin exists: GitHub
+#            registers a workflow_dispatch workflow only once it is on the
+#            default branch, so the first stage0 can only be published after
+#            this file lands, and the pull_request trigger (paths: bootstrap/,
+#            examples/self_host/, internal/stdlib/, the Makefile, this file)
+#            lands with that first bootstrap/stage0.lock.
 #
 #   publish  workflow_dispatch with publish=true — builds a NEW stage0 for
 #            all three hosts and releases it. Each host builds a candidate
@@ -44,13 +48,6 @@ name: Bootstrap
 # verified is the thing that runs, not the container.
 
 on:
-  pull_request:
-    paths:
-      - "bootstrap/**"
-      - "examples/self_host/**"
-      - "internal/stdlib/**"
-      - "Makefile"
-      - ".github/workflows/bootstrap.yml"
   workflow_dispatch:
     inputs:
       publish:
@@ -67,7 +64,7 @@ permissions:
 
 jobs:
   verify:
-    if: github.event_name == 'pull_request' || !inputs.publish
+    if: ${{ !inputs.publish }}
     strategy:
       fail-fast: false
       matrix:
