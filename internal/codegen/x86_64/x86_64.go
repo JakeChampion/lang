@@ -1914,6 +1914,13 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 			i += adv
 			continue
 		}
+		// Division by a literal (#7991 follow-up): the divisor is known, so
+		// the zero and INT_MIN/-1 guards are dead code and a power of two is
+		// a shift. See emitConstDivRem.
+		if adv, ok := g.tryConstDivRem(irFn.Ops, i); ok {
+			i += adv
+			continue
+		}
 		if err := g.emitOp(irFn.Ops[i], retLabel, &scope); err != nil {
 			return err
 		}
@@ -2035,10 +2042,25 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit(fmt.Sprintf("lea rax, [rip + %s]", cell))
 		g.push()
 	case ir.OpConstI64:
-		// i64 literal: full 64-bit immediate via `movabs`.
-		// (`mov rax, imm64` is the same instruction in
-		// Intel syntax; the assembler picks the encoding.)
-		g.emit(fmt.Sprintf("movabs rax, %d", op.I64))
+		// i64 literal. `movabs` is ten bytes and only the values that
+		// need all 64 bits have to pay it: a write to eax zero-extends
+		// into rax, so any value that fits in uint32 is five bytes, and
+		// zero is two. Same lever as the i32 path's xor, and zero is
+		// just as common at this width — every zero-init, every counter.
+		switch v := op.I64; {
+		case v == 0:
+			g.emit("xor eax, eax")
+		case v > 0 && v <= math.MaxUint32:
+			// Written as the signed imm32 with the same bit pattern, not
+			// as the unsigned value: `mov eax, -1` and not
+			// `mov eax, 4294967295`. imm32 is a signed field, and every
+			// reader of this line — the peephole's constant folds, the
+			// in-process assembler — is entitled to assume the literal
+			// fits int32.
+			g.emit(fmt.Sprintf("mov eax, %d", int32(uint32(v))))
+		default:
+			g.emit(fmt.Sprintf("movabs rax, %d", v))
+		}
 		g.push()
 	case ir.OpConstF32:
 		// Stash the raw 32-bit bit pattern as an i32 on the
@@ -3534,6 +3556,199 @@ func (g *generator) emitIntDivRem(op ir.Op, isRem bool) {
 	}
 	g.label(lDone)
 	g.push()
+}
+
+// tryConstDivRem lowers `x / K` and `x % K` for a literal K, which the IR
+// hands over as a constant op immediately followed by the divide. Returns the
+// number of extra ops consumed.
+func (g *generator) tryConstDivRem(ops []ir.Op, i int) (int, bool) {
+	if i+1 >= len(ops) {
+		return 0, false
+	}
+	k, ok := constIntOf(ops[i])
+	if !ok {
+		return 0, false
+	}
+	d := ops[i+1]
+	if d.Kind != ir.OpDivS && d.Kind != ir.OpRemS {
+		return 0, false
+	}
+	g.emitConstDivRem(d, d.Kind == ir.OpRemS, k)
+	return 1, true
+}
+
+// constIntOf returns the value of an integer-constant op.
+func constIntOf(op ir.Op) (int64, bool) {
+	switch op.Kind {
+	case ir.OpConstI32:
+		return int64(op.I32), true
+	case ir.OpConstI64:
+		return op.I64, true
+	}
+	return 0, false
+}
+
+// emitConstDivRem divides the top of the operand stack by the literal `k`.
+//
+// Knowing the divisor collapses most of what the generic sequence
+// (emitIntDivRem) spends its instructions on. Its zero test and its
+// INT_MIN/-1 overflow test are both branches on a value that is now a
+// compile-time constant, so they are dead; a power of two needs no divide at
+// all; and 0, 1 and -1 need no code beyond a move.
+//
+// The subtle case is signed division by a power of two, which is NOT an
+// arithmetic shift: `sar` rounds toward negative infinity and the language
+// rounds toward zero, so -1/2 would be -1 rather than 0. Biasing the dividend
+// by 2^k-1 when it is negative — which is what the sar/shr pair computes
+// branchlessly — makes the shift round the way the language does.
+func (g *generator) emitConstDivRem(op ir.Op, isRem bool, k int64) {
+	w64 := op.Width == 64 || op.Width == ir.WidthPtr
+	a, c, d := "eax", "ecx", "edx"
+	bits := 32
+	if w64 {
+		a, c, d = "rax", "rcx", "rdx"
+		bits = 64
+	}
+	g.pop() // dividend
+
+	// Normalise the divisor's magnitude. Unsigned reads the literal's bit
+	// pattern at the operand width; signed keeps the sign for the negation
+	// a negative divisor needs at the end.
+	var mag uint64
+	neg := false
+	if op.Unsigned {
+		if w64 {
+			mag = uint64(k)
+		} else {
+			mag = uint64(uint32(k))
+		}
+	} else {
+		v := k
+		if !w64 {
+			v = int64(int32(k))
+		}
+		// The most negative divisor has no positive magnitude, so it goes
+		// down the generic path rather than through a negation that wraps.
+		min := int64(math.MinInt32)
+		if w64 {
+			min = math.MinInt64
+		}
+		if v == min {
+			g.emitConstDivRemGeneric(op, isRem, k, a, c, d, w64)
+			g.push()
+			return
+		}
+		if v < 0 {
+			neg = true
+			mag = uint64(-v)
+		} else {
+			mag = uint64(v)
+		}
+	}
+
+	switch {
+	case mag == 0:
+		// The generic path's zero arm, with no branch to reach it:
+		// x / 0 = 0, x % 0 = x.
+		if !isRem {
+			g.emit("xor eax, eax")
+		}
+	case mag == 1:
+		// x % ±1 = 0. x / 1 = x. x / -1 = -x, and INT_MIN / -1 keeps the
+		// generic path's answer because `neg` wraps to INT_MIN itself.
+		switch {
+		case isRem:
+			g.emit("xor eax, eax")
+		case neg:
+			g.emit(fmt.Sprintf("neg %s", a))
+		}
+	case isPow2(mag) && pow2Shift(mag) <= maxDivShift(bits, op.Unsigned):
+		sh := pow2Shift(mag)
+		if op.Unsigned {
+			if isRem {
+				g.emit(fmt.Sprintf("and %s, %d", a, immAtWidth(int64(mag-1), bits)))
+			} else {
+				g.emit(fmt.Sprintf("shr %s, %d", a, sh))
+			}
+			break
+		}
+		// Signed: bias by 2^sh-1 when the dividend is negative, so the
+		// shift truncates toward zero rather than toward -infinity.
+		g.emit(fmt.Sprintf("mov %s, %s", c, a))
+		g.emit(fmt.Sprintf("sar %s, %d", c, bits-1))   // all ones iff negative
+		g.emit(fmt.Sprintf("shr %s, %d", c, bits-sh))  // 2^sh-1 iff negative
+		g.emit(fmt.Sprintf("add %s, %s", c, a))        // biased dividend
+		if isRem {
+			// r = x - (x/2^sh)*2^sh, and the multiply is a mask.
+			g.emit(fmt.Sprintf("and %s, %d", c, -(int64(1)<<sh)))
+			g.emit(fmt.Sprintf("sub %s, %s", a, c))
+			break
+		}
+		g.emit(fmt.Sprintf("mov %s, %s", a, c))
+		g.emit(fmt.Sprintf("sar %s, %d", a, sh))
+		if neg {
+			g.emit(fmt.Sprintf("neg %s", a))
+		}
+	default:
+		g.emitConstDivRemGeneric(op, isRem, k, a, c, d, w64)
+	}
+	g.push()
+}
+
+// emitConstDivRemGeneric is the divide itself for a literal divisor that is
+// neither 0 nor ±1 nor a power of two. It is the generic sequence with both
+// guards and all four labels removed: nothing can fault, because the divisor
+// cannot be zero and cannot be -1 with an INT_MIN dividend.
+func (g *generator) emitConstDivRemGeneric(op ir.Op, isRem bool, k int64, a, c, d string, w64 bool) {
+	if w64 {
+		g.emit(fmt.Sprintf("movabs %s, %d", c, k))
+	} else {
+		g.emit(fmt.Sprintf("mov %s, %d", c, int32(k)))
+	}
+	switch {
+	case op.Unsigned:
+		g.emit(fmt.Sprintf("xor %s, %s", d, d))
+		g.emit(fmt.Sprintf("div %s", c))
+	case w64:
+		g.emit("cqo")
+		g.emit("idiv rcx")
+	default:
+		g.emit("cdq")
+		g.emit("idiv ecx")
+	}
+	if isRem {
+		g.emit(fmt.Sprintf("mov %s, %s", a, d))
+	}
+}
+
+func isPow2(v uint64) bool { return v != 0 && v&(v-1) == 0 }
+
+func pow2Shift(v uint64) int {
+	n := 0
+	for ; v > 1; v >>= 1 {
+		n++
+	}
+	return n
+}
+
+// maxDivShift is the largest power-of-two exponent the shift lowering can
+// take. Signed stops one short of the sign bit: the bias sequence needs 2^sh
+// to be representable as a positive value at the operand width.
+func maxDivShift(bits int, unsigned bool) int {
+	if unsigned {
+		return bits - 1
+	}
+	return bits - 2
+}
+
+// immAtWidth renders a mask as the assembler wants it for the operand width:
+// a 32-bit operation takes imm32, so a mask with the top bit set has to be
+// written as its signed form rather than as a value beyond int32.
+func immAtWidth(v int64, bits int) int64 {
+	if bits == 32 {
+		return int64(int32(uint32(v)))
+	}
+	return v
 }
 
 // emitFloatToIntSat lowers a saturating float→int truncation (the
