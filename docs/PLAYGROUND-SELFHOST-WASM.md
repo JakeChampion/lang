@@ -117,7 +117,7 @@ as a second positional argument, where native serves stdlib from `go:embed`
 
 ## The three real blockers
 
-### 1. The wasm-hosted compiler miscompiles nested arithmetic (the blocker)
+### 1. The wasm-hosted compiler miscompiles nested arithmetic (#7948, the blocker)
 
 Same driver source, same input, same compiler, only the target differs — and
 they disagree:
@@ -150,10 +150,48 @@ non-constant operand. Narrowed by bisection:
 | left-nested via parens — `var x = (1 + a) * 1; var y = (1 + a) * 1;` | ok | ok |
 | flat binaries — `var v0 = 0 + a; var v1 = 1 + a;` | ok | ok |
 
-"unknown expression" is the compiler failing to recognise one of its own AST
-expression nodes, so the discriminant it reads back is wrong. That the *second*
-identical nested initializer is what trips it points at reuse or reference
-counting rather than a missing case.
+It is a **use-after-free**, not a lowering-logic divergence and not a missing
+case. Diagnosed 2026-09-01:
+
+- **The parser is not at fault.** Dumped immediately after
+  `rundriver.parse_stdin`, the wasm-hosted and native trees are byte-identical
+  and correct, and stay correct across four read-only re-walks.
+- **It is not an unhandled variant.** `ast.Expr` has 17 members
+  (`ast.fern:188-192`) and `expr_bail_tag` (`irlower.fern:884-902`) names only
+  14, so a map literal, an f-string and `ExprUnknown` all reach the same `_`
+  arm. Adding those three arms did **not** change the message: the discriminant
+  read back matches none of the 17.
+- **The corruption is one node.** At the entry to
+  `wasm_ir.emit_module_mode_or_error`, exactly one node is garbage — the left
+  operand of the *second* `a * a`. The first is intact.
+- **It is a freed box, recycled.** Reading the module after
+  `asmcore.check_undefined_calls` traps at wasm address `0x64692058`, which is
+  the ASCII bytes `X`, ` `, `i`, `d` — a freed union box whose storage had
+  already been handed out to a *string* allocation and was then read back as a
+  pointer. Same address and same backtrace across two independently
+  instrumented builds.
+
+That explains the trigger: it is about **count, not identity**. One nested
+initializer frees an inner-binary box that is never handed out again before it
+is read; two supply enough intervening allocations for the freed box to be
+reused. Every passing row above constant-folds to depth <= 1, so no inner
+binary box exists to free.
+
+Prime suspect: `asmcore.check_undefined_calls` (`asmcore.fern:4759`) and its
+walk `callgate_expr` (`asmcore.fern:4521`) — the last pass to read the module
+before the corruption is observable, and rewritten onto `astwalk` in `a7dc8d0`.
+Two negative results narrow it further, and both are worth keeping: a plain
+recursive borrow-walk over `ast.Expr` does **not** over-release, and a 30-line
+standalone program of the same shape compiles identically on both targets. So
+the defect needs something the real gate passes have — the accumulator rebind
+and struct threading in `callgate_expr` are the candidates — and is not
+"any AST walk on wasm".
+
+The one measurement left is cheap: emit `callgate_expr` both ways from the same
+`bin/fern-selfhost` and diff retain/release placement. Since `irlower` is
+shared, that decides whether the divergence is an `irlower` decision
+conditioned on `LowerState.for_wasm()` (`irlower.fern:858`) or `wasm_ir.fern`'s
+instruction selection for the dec/drop op.
 
 **Nothing gates this.** The one test that runs a wasm-hosted self-host compiler
 (`runShardedCompiler`, `self_host_wasm_wholecompiler_test.go:233`) compiles a
@@ -239,11 +277,13 @@ In dependency order, and the estimate the issue asked for — **this is a
 weekend, not a quarter**, with the caveat that the weekend is blocker 1's and
 its size is unknown until it is root-caused:
 
-1. **Root-cause blocker 1** and pin it with a differential that runs the
-   *wasm-hosted* compiler against the native one on more than a trivial
-   program. Unknown size; everything else is small and none of it matters until
-   this is done, because a compiler that miscompiles nested arithmetic cannot
-   ship to a playground.
+1. **Finish blocker 1** — the use-after-free is localised to `callgate_expr`
+   and one measurement (the retain/release diff above) separates the two
+   remaining candidates. Pin it with a differential that runs the *wasm-hosted*
+   compiler against the native one on nested arithmetic — two or more depth->=2
+   binary initializers with a non-constant operand — asserting identical exit
+   code and identical WAT. Nothing else matters until this is done, because a
+   compiler that miscompiles nested arithmetic cannot ship to a playground.
 2. **strbuf in `wasmbin`** (blocker 2, #7947). Contained: three scratch slots appended
    to the `memlayout.go` chain and three `runtimeHelperSpecs` entries keyed by
    the source names, the way `poll` and `isatty` already are
