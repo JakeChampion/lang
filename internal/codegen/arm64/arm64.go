@@ -32,6 +32,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/ir"
+	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/symname"
 	"github.com/jakechampion/lang/internal/treeshake"
@@ -2220,10 +2221,7 @@ func (g *generator) emitRcIncRuntime() {
 	// rc word at [ptr-8]. A no-capture closure is a bare code address in
 	// .text, far below the heap base — inc'ing it would write [ptr-8] in
 	// read-only .text. x1 is free here (the rc word loads into it next).
-	g.emit("mov x1, #1")
-	g.emit("lsl x1, x1, #28") // x1 = 0x1000_0000 = heap base hint
-	g.emit("cmp x0, x1")
-	g.emit("b.lo .Lrcinc_ret")
+	g.emitBelowHeapGuard(".Lrcinc_ret")
 	g.emit("ldur w1, [x0, #-8]")
 	g.rcPoisonCheck("w1", "w2", ".Lrcinc_live")
 	g.emit("tbnz w1, #31, .Lrcinc_ret")
@@ -2268,10 +2266,7 @@ func (g *generator) emitRcDecRuntime() {
 	// guard only rejected < 0x10000, letting code/rodata
 	// addresses through. x1 is free here (the rc word is loaded
 	// into it just below).
-	g.emit("mov x1, #1")
-	g.emit("lsl x1, x1, #28") // x1 = 0x1000_0000 = heap base hint
-	g.emit("cmp x0, x1")
-	g.emit("b.lo .Lrcdec_ret")
+	g.emitBelowHeapGuard(".Lrcdec_ret")
 	g.emit("ldur w1, [x0, #-8]")
 	g.rcPoisonCheck("w1", "w2", ".Lrcdec_live")
 	g.emit("tbnz w1, #31, .Lrcdec_ret")
@@ -11421,7 +11416,14 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		// `cmp; cset; …; cbz/cbnz` materialise-and-retest chain. Safe
 		// because the IR is single-use: the branch is the comparison's only
 		// consumer.
-		if adv, ok := g.tryFuseCmpBranch(irFn.Ops, i, &scope); ok {
+		if adv, ok := g.tryFuseCmpBranch(irFn.Ops, i, &scope, 0, false); ok {
+			i += adv
+			continue
+		}
+		// Constant-operand folds (#4378's sibling): a constant that feeds a
+		// load address, an ALU op, or a compare becomes that instruction's
+		// immediate operand instead of being materialised into a register.
+		if adv, ok := g.tryFoldConstOperand(irFn.Ops, i, &scope); ok {
 			i += adv
 			continue
 		}
@@ -12180,6 +12182,229 @@ func armCondFor(k ir.OpKind, unsigned bool) (cc, invcc string) {
 	return "", ""
 }
 
+// foldableConst returns the value an OpConstI32 / OpConstI64 materialises,
+// and whether the op is such a constant with a foldable value. Negative
+// values are refused: the emitter materialises an i32 `-1` as the
+// zero-extended `0xffffffff`, so an immediate form computed on the signed
+// value would not reproduce the unfolded result.
+func foldableConst(op ir.Op) (int64, bool) {
+	switch op.Kind {
+	case ir.OpConstI32:
+		if op.I32 < 0 {
+			return 0, false
+		}
+		return int64(op.I32), true
+	case ir.OpConstI64:
+		if op.I64 < 0 {
+			return 0, false
+		}
+		return op.I64, true
+	}
+	return 0, false
+}
+
+// scaledOffsetOK reports whether `off` is expressible as the unsigned scaled
+// immediate of an `size`-byte load/store: a non-negative multiple of the
+// access size whose quotient fits the 12-bit field. Non-multiples would fall
+// back to the unscaled LDUR/STUR form (signed 9-bit) — encodable but only
+// within -256..255, so the emitter sticks to the scaled form it can always
+// reason about.
+func scaledOffsetOK(off, size int64) bool {
+	return off >= 0 && size > 0 && off%size == 0 && off/size < 4096
+}
+
+// addrFoldLoad describes an op that dereferences the address on top of the
+// operand stack with a fixed access width, so a constant byte offset added to
+// that address can move into the load's addressing mode instead of costing
+// its own `add`.
+type addrFoldLoad struct {
+	mnem string // ldr / ldrb
+	reg  string // destination register name (x0 / w0)
+	size int64  // access width in bytes, for the scaled-offset check
+}
+
+// loadFoldForm returns the addressing-mode description for the load ops whose
+// lowering is exactly "pop the address, dereference it, push the result".
+// OpLoad's WidthString fans one address to two reads and OpLoadHalf-style ops
+// do not exist, so anything else refuses.
+func loadFoldForm(op ir.Op) (addrFoldLoad, bool) {
+	switch op.Kind {
+	case ir.OpLoad:
+		switch op.Width {
+		case ir.WidthString:
+			return addrFoldLoad{}, false
+		case 64, ir.WidthPtr:
+			return addrFoldLoad{mnem: "ldr", reg: "x0", size: 8}, true
+		default:
+			return addrFoldLoad{mnem: "ldr", reg: "w0", size: 4}, true
+		}
+	case ir.OpMatchTag:
+		return addrFoldLoad{mnem: "ldr", reg: "w0", size: 4}, true
+	case ir.OpLoadByte:
+		return addrFoldLoad{mnem: "ldrb", reg: "w0", size: 1}, true
+	}
+	return addrFoldLoad{}, false
+}
+
+// emitBelowHeapGuard branches to `target` when x0 is below the heap base
+// (0x1000_0000 — the mmap hint emitAllocRuntime pins), i.e. when the unsigned
+// test `x0 < 2^28` holds. Only heap objects carry an rc word at [ptr-8], so
+// every rc op skips out here for a null-page, .text, .rodata or .data address.
+//
+// Shifting the pointer right by 28 leaves zero exactly when the bound test
+// holds, so the range check needs no materialised bound and no flag-setting
+// compare. x1 is clobbered: every caller loads the rc word into it on the
+// next instruction.
+func (g *generator) emitBelowHeapGuard(target string) {
+	g.emit("lsr x1, x0, #28")
+	g.emit("cbz x1, %s", target)
+}
+
+// imm12OK reports whether `v` is expressible as an AArch64 add/sub/cmp
+// immediate: a 12-bit unsigned value, optionally shifted left by 12. Mirrors
+// the encoder's own addSubImm12.
+func imm12OK(v int64) bool {
+	if v < 0 {
+		return false
+	}
+	if v <= 0xfff {
+		return true
+	}
+	return v&0xfff == 0 && (v>>12) <= 0xfff
+}
+
+// bitmaskImmOK reports whether `v` is encodable as an AArch64 logical (bitmask)
+// immediate in the 64-bit forms of and/orr/eor — a repeating run of set bits,
+// which excludes 0 and all-ones. The predicate is the assembler's own encoder
+// rather than a second implementation of the rotate/run derivation.
+func bitmaskImmOK(v int64) bool {
+	if v < 0 {
+		return false
+	}
+	_, ok := nativearm64.ANDimm(0, 0, uint64(v), true)
+	return ok
+}
+
+// aluImmForm returns the AArch64 mnemonic for an integer binary op whose rhs
+// is a folded constant, and whether `k` is encodable as that instruction's
+// immediate. add/sub take the imm12 class; the logical ops take the bitmask
+// class, which is a different and much narrower test.
+//
+// The emitted form is the 64-bit register form the unfolded lowering already
+// uses: a non-negative constant rides zero-extended in x0 there, so folding it
+// as a 64-bit immediate reproduces the same bits.
+func aluImmForm(kind ir.OpKind, k int64) (string, bool) {
+	switch kind {
+	case ir.OpAdd:
+		return "add", imm12OK(k)
+	case ir.OpSub:
+		return "sub", imm12OK(k)
+	case ir.OpAnd:
+		return "and", bitmaskImmOK(k)
+	case ir.OpOr:
+		return "orr", bitmaskImmOK(k)
+	case ir.OpXor:
+		return "eor", bitmaskImmOK(k)
+	}
+	return "", false
+}
+
+// emitCmpOperands loads a comparison's operands and issues the `cmp` that sets
+// the flags for it. With hasImm the rhs was a constant folded into the compare:
+// only the lhs is popped, and the constant becomes the immediate operand.
+// Without it, both operands are popped into x1 / x0 as before.
+func (g *generator) emitCmpOperands(cmp ir.Op, imm int64, hasImm bool) {
+	if hasImm {
+		g.pop()
+		g.emit("cmp %s0, #%d", g.regForWidth(cmp.Width), imm)
+		return
+	}
+	g.binPop()
+	g.cmpForWidth(cmp.Width)
+}
+
+// tryFoldConstOperand selects a constant that feeds the next op as that op's
+// immediate operand, instead of materialising it into a register and popping
+// both sides. Three folds, in decreasing specificity:
+//
+//   - `const K; add; load`     => `ldr Rt, [x0, #K]`   (tryFoldLoadOffset)
+//   - `const K; cmp; …; br`    => `cmp x0, #K; b.cond`
+//   - `const K; {add,sub,and,orr,eor}` => `<op> x0, x0, #K`
+//   - `const K; cmp`           => `cmp x0, #K; cset`
+//
+// Returns the number of EXTRA ops consumed past index i, and whether a fold
+// fired. Safe for the same reason the compare/branch fusion is: the IR is a
+// single-use stack machine and no label can fall between the ops, so the
+// materialised constant has exactly one consumer.
+func (g *generator) tryFoldConstOperand(ops []ir.Op, i int, scope *[]irScope) (int, bool) {
+	if adv, ok := g.tryFoldLoadOffset(ops, i); ok {
+		return adv, true
+	}
+	k, ok := foldableConst(ops[i])
+	if !ok || i+1 >= len(ops) {
+		return 0, false
+	}
+	next := ops[i+1]
+	if isFusableCompare(next.Kind) {
+		if !imm12OK(k) {
+			return 0, false
+		}
+		// A comparison feeding a branch keeps its fusion (#4378) — the
+		// immediate rides along instead of defeating it.
+		if adv, ok := g.tryFuseCmpBranch(ops, i+1, scope, k, true); ok {
+			return 1 + adv, true
+		}
+		g.emitCmpOperands(next, k, true)
+		cc, _ := armCondFor(next.Kind, next.Unsigned)
+		g.emit("cset w0, %s", cc)
+		g.push()
+		return 1, true
+	}
+	mnem, ok := aluImmForm(next.Kind, k)
+	if !ok {
+		return 0, false
+	}
+	g.pop()
+	g.emit("%s x0, x0, #%d", mnem, k)
+	g.push()
+	return 1, true
+}
+
+// tryFoldLoadOffset folds `const K; add; load` — a field or element offset
+// added to a base pointer and immediately dereferenced — into the load's own
+// scaled-immediate addressing mode. The unfolded form materialises K into a
+// register, pops both operands, adds, then dereferences; the folded form is a
+// single `ldr Rt, [x0, #K]`. Returns the number of EXTRA ops consumed past
+// index i (2: the add and the load) and whether the fold fired.
+//
+// Safe because the IR is a stack machine with no label between the three ops:
+// the constant's only consumer is the add and the add's only consumer is the
+// load, so nothing can observe the intermediate address.
+func (g *generator) tryFoldLoadOffset(ops []ir.Op, i int) (int, bool) {
+	if i+2 >= len(ops) {
+		return 0, false
+	}
+	k, ok := foldableConst(ops[i])
+	if !ok {
+		return 0, false
+	}
+	if ops[i+1].Kind != ir.OpAdd {
+		return 0, false
+	}
+	form, ok := loadFoldForm(ops[i+2])
+	if !ok || !scaledOffsetOK(k, form.size) {
+		return 0, false
+	}
+	g.pop() // base address
+	if k == 0 {
+		g.emit("%s %s, [x0]", form.mnem, form.reg)
+	} else {
+		g.emit("%s %s, [x0, #%d]", form.mnem, form.reg, k)
+	}
+	g.push()
+	return 2, true
+}
+
 // tryFuseCmpBranch fuses `cmp (Not)* {If|BrIf}` into `cmp; b.cond` (#4378, the
 // arm64 mirror of the x86-64 slice). An integer comparison whose 0/1 result
 // flows straight into the following OpIf / OpBrIf — through any number of
@@ -12189,7 +12414,7 @@ func armCondFor(k ir.OpKind, unsigned bool) (cc, invcc string) {
 // whether the fusion fired; when it does not fire the op stream is untouched
 // and normal per-op emission runs. The operand-stack effect is identical to the
 // un-fused path (two operands popped, no boolean pushed then re-popped).
-func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope) (int, bool) {
+func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope, imm int64, hasImm bool) (int, bool) {
 	cmp := ops[i]
 	if !isFusableCompare(cmp.Kind) {
 		return 0, false
@@ -12218,16 +12443,14 @@ func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope) (int,
 	}
 	switch br.Kind {
 	case ir.OpIf:
-		g.binPop()
-		g.cmpForWidth(cmp.Width)
+		g.emitCmpOperands(cmp, imm, hasImm)
 		elseL := g.freshLabel("ifElse")
 		endL := g.freshLabel("ifEnd")
 		g.condBranchFarCC(fireCC, skipCC, elseL)
 		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
 		return j - i, true
 	case ir.OpBrIf:
-		g.binPop()
-		g.cmpForWidth(cmp.Width)
+		g.emitCmpOperands(cmp, imm, hasImm)
 		target := (*scope)[len(*scope)-1-int(br.I32)].brTarget
 		g.condBranchFarCC(fireCC, skipCC, target)
 		return j - i, true
@@ -13379,13 +13602,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			return nil
 		}
 		done := g.freshLabel("rcopDone")
-		g.pop()                         // x0 = ptr
-		g.emit("cbz x0, %s", done)      // null
-		g.emit("tbnz x0, #0, %s", done) // SSO inline-tag (bit 0 set)
-		g.emit("mov x1, #1")
-		g.emit("lsl x1, x1, #28") // x1 = 0x1000_0000 heap base hint
-		g.emit("cmp x0, x1")
-		g.emit("b.lo %s", done)          // below heap
+		g.pop()                          // x0 = ptr
+		g.emit("cbz x0, %s", done)       // null
+		g.emit("tbnz x0, #0, %s", done)  // SSO inline-tag (bit 0 set)
+		g.emitBelowHeapGuard(done)       // below heap
 		g.emit("ldur w1, [x0, #-8]")     // rc
 		g.emit("tbnz w1, #31, %s", done) // static sentinel (negative)
 		if op.Kind == ir.OpRcInc {
