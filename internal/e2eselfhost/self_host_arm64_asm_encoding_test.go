@@ -427,6 +427,41 @@ _start:
     cnt v3.16b, v9.16b
     cmeq v0.16b, v1.16b, v2.16b
     cmlt v0.16b, v1.16b, #0
+    // #8000 wave 2b. The FP rows read size as szHi<<1 | (D lanes) rather than
+    // as a width, so fadd and fsub share an opcode and differ in bits 23:22 —
+    // exactly the sort of thing two independent implementations drift on.
+    fadd v23.4s, v9.4s, v28.4s
+    fadd v23.2d, v9.2d, v28.2d
+    fsub v23.2s, v9.2s, v28.2s
+    fmul v23.4s, v9.4s, v28.4s
+    fdiv v23.2d, v9.2d, v28.2d
+    fmax v23.4s, v9.4s, v28.4s
+    fmin v23.2d, v9.2d, v28.2d
+    fcmeq v23.4s, v9.4s, v28.4s
+    fcmge v23.2d, v9.2d, v28.2d
+    fcmgt v23.4s, v9.4s, v28.4s
+    fcmeq v23.4s, v9.4s, #0.0
+    fcmle v23.4s, v9.4s, #0.0
+    fcmlt v23.2d, v9.2d, #0.0
+    fneg v23.4s, v9.4s
+    fabs v23.2d, v9.2d
+    fsqrt v23.2s, v9.2s
+    scvtf v23.4s, v9.4s
+    ucvtf v23.2d, v9.2d
+    fcvtzs v23.4s, v9.4s
+    fcvtzu v23.2d, v9.2d
+    shl v23.4s, v9.4s, #7
+    shl v23.16b, v9.16b, #3
+    sli v23.2d, v9.2d, #40
+    sshr v23.8h, v9.8h, #5
+    ushr v23.4s, v9.4s, #17
+    sri v23.16b, v9.16b, #6
+    zip1 v23.4s, v9.4s, v28.4s
+    zip2 v23.8h, v9.8h, v28.8h
+    uzp1 v23.16b, v9.16b, v28.16b
+    uzp2 v23.2d, v9.2d, v28.2d
+    trn1 v23.4h, v9.4h, v28.4h
+    trn2 v23.2s, v9.2s, v28.2s
 Lend:
     ret
 `
