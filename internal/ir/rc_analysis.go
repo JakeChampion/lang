@@ -1103,6 +1103,20 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 				id.Name == "__method_Array_push" && len(x.Args) == 2 {
 				mark(x.Args[1])
 			}
+			// `xs.with(i, p)` — __method_Array_set's ELEMENT position is
+			// push's sibling and is counted the same way: for a
+			// pointer-shaped element emitArraySet incs an aliased element,
+			// drops the one it overwrites, and the copy path retains
+			// through __fern_arr_cow_inplace_ptr's element walk, so the
+			// buffer owns a reference of its own. computeFreeEligible
+			// already reads it that way — its Array_set arm routes the
+			// source through escapeOwned under exactly this gate — and the
+			// summary tiers were the half that did not.
+			if id, ok := x.Callee.(*ast.Ident); ok &&
+				id.Name == "__method_Array_set" && len(x.Args) == 3 &&
+				len(x.TypeArgs) == 1 && rcTrackedSlotType(x.TypeArgs[0]) {
+				mark(x.Args[2])
+			}
 			// Passing `s` on to a callee that is ITSELF counted-retain in that
 			// position retains nothing new: whatever the callee does with it is
 			// already known to be a counted store or a pure read. This is the
@@ -1218,6 +1232,17 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 			}
 			if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "__method_Array_push" && len(x.Args) == 2 {
 				if eid := paramIndex(x.Args[1]); eid != nil {
+					safe[eid] = true
+				}
+			}
+			// The `.with` sibling of the push arm above, on the same
+			// terms: emitArraySet's element inc counts the store for a
+			// pointer-shaped element, so a `p[j]` read handed to it is a
+			// counted occurrence rather than a live reference handed out.
+			if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "__method_Array_set" &&
+				len(x.Args) == 3 && len(x.TypeArgs) == 1 && rcTrackedSlotType(x.TypeArgs[0]) {
+				mark(x.Args[2])
+				if eid := paramIndex(x.Args[2]); eid != nil {
 					safe[eid] = true
 				}
 			}
@@ -1399,6 +1424,16 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, s
 				if id.Name == "__method_Array_push" && len(x.Args) == 2 {
 					markSlotValue(x.Args[0])
 					markSlotValue(x.Args[1])
+				}
+				// `.with`'s element position is push's element position:
+				// emitArraySet incs an aliased pointer-shaped element and
+				// the buffer's deep drop gives it back. The RECEIVER is
+				// deliberately absent — `.with` hands the receiver's own
+				// buffer back at rc 1, which is not a retention the caller
+				// can discount.
+				if id.Name == "__method_Array_set" && len(x.Args) == 3 &&
+					len(x.TypeArgs) == 1 && rcTrackedSlotType(x.TypeArgs[0]) {
+					markSlotValue(x.Args[2])
 				}
 				if cs, ok := summary[id.Name]; ok {
 					for i, a := range x.Args {

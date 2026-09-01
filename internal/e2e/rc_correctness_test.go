@@ -6052,6 +6052,81 @@ function main(): i32 {
 `,
 	},
 	{
+		// The array dec-on-overwrite has to walk the old buffer's
+		// elements wherever that buffer still owns them. The buffer-only
+		// __fern_arr_dec is right for exactly one RHS — the self-append,
+		// whose MOVE-grow transfers the elements without an inc — and was
+		// emitted for every RHS, so both shapes here stranded one element
+		// per overwrite (256 B over four rounds on both natives).
+		//
+		// `a = mk()` cannot alias the old value. `b = via_with(b, ...)`
+		// can: the cow hands the receiver's own buffer back at rc 1, so
+		// the deep drop sits behind a pointer-changed test and the
+		// same-buffer arm keeps the shallow dec that releases what the
+		// call added. Dropping that arm rather than guarding it leaks
+		// MORE than the original bug — the buffer never reaches zero —
+		// which is why both shapes ride in one case.
+		name: "array_overwrite_walks_the_superseded_buffer",
+		src: `
+@noinline
+function mk(pad: string, n: i32): string[] {
+    var o: string[] = [];
+    o = o.append(pad + "-0123456789abcdef");
+    return o;
+}
+
+@noinline
+function via_with(a: string[], v: string): string[] { return a.with(0, v); }
+
+function main(): i32 {
+    var pad: string = "wxyz";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var a: string[] = mk(pad, i);
+        a = mk(pad, i + 1);
+        var b: string[] = mk(pad, i);
+        b = via_with(b, pad + "-fedcba9876543210");
+        t = t + a[0].len() + b[0].len();
+        i = i + 1;
+    }
+    return (t - 168) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// `xs.with(i, p)` is `xs.append(p)`'s sibling — emitArraySet incs
+		// an aliased pointer element and the buffer's deep drop gives it
+		// back — but no counted-retain tier had the position, so the
+		// caller's fresh argument had no owner left to release it: 32 B a
+		// round, and the whole point of the arg-temp stash.
+		name: "array_set_element_param_frees_the_caller_temp",
+		src: `
+@noinline
+function put(xs: string[], v: string): string[] { return xs.with(0, v); }
+
+@noinline
+function mk(pad: string): string[] {
+    var o: string[] = [];
+    o = o.append(pad + "-0123456789abcdef");
+    return o;
+}
+
+function main(): i32 {
+    var pad: string = "wxyz";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var a: string[] = mk(pad);
+        var b: string[] = put(a, pad + "-fedcba9876543210");
+        t = t + b[0].len();
+        i = i + 1;
+    }
+    return (t - 84) + __rc_underflow_count();
+}
+`,
+	},
+	{
 		// #7914: a string parameter used only as a CONCAT OPERAND is
 		// retained by nothing — strcat copies both operands into a
 		// fresh buffer — and until the credit landed that occurrence

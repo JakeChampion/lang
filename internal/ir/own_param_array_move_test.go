@@ -75,8 +75,19 @@ func decsBetweenCallAndStore(t *testing.T, fn *ir.Func, callee string) []string 
 		if op.Kind != ir.OpCallDirect || op.Str != callee {
 			continue
 		}
+		// A self-reassigning call's overwrite release sits behind an
+		// identity guard (#7914: a callee can hand the local's own buffer
+		// back). The result is stashed first, so step over the stash to
+		// keep the window this helper has always meant — the ops between
+		// the call and the store that lands the value.
+		j := i + 1
+		if j+4 < len(fn.Ops) && fn.Ops[j].Kind == ir.OpStoreLocal &&
+			fn.Ops[j+1].Kind == ir.OpLoadLocal && fn.Ops[j+2].Kind == ir.OpLoadLocal &&
+			fn.Ops[j+3].Kind == ir.OpNe && fn.Ops[j+4].Kind == ir.OpIf {
+			j += 5
+		}
 		var decs []string
-		for _, after := range fn.Ops[i+1:] {
+		for _, after := range fn.Ops[j:] {
 			if after.Kind == ir.OpStoreLocal {
 				return decs
 			}
