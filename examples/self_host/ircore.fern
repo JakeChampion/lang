@@ -118,6 +118,12 @@ pub function is_fern_helper(name: string): boolean {
         // data buffer + 16-byte box. Default ir_helper_symbol maps it to
         // __fn___fern_str_free; body in emit_ir_runtime. Never user-callable —
         // only the irlower reclaim sites emit the call.
+        // the map runtime's shared key search (#2649): walk the keys array,
+        // return the hit's index or -1. Default ir_helper_symbol maps it to
+        // __fn___fern_map_find; body from asmcore.rt_src_map_find, gated on the
+        // "maps" need. Its only caller in Fern is __fern_map_delete — the
+        // hand-asm map_set / map_get / map_has reach it by symbol.
+        || name == "__fern_map_find"
         || name == "__fern_str_free"
         // string VIEW reclaim (#6544): __fern_str_free plus the one case it
         // must skip — a `s[a:b]` box, which carries the immortal rc sentinel

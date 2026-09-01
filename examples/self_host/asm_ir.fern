@@ -3054,7 +3054,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     s = s.write(".size __fern_map_snapshot_col_str, .-__fern_map_snapshot_col_str\n");
 
-    // __fern_map_set (transcribed from asm.fern for the IR map path).
+    // __fern_map_set: probe with __fern_map_find, then overwrite or append.
     s = s.write(".globl __fern_map_set\n");
     s = s.write(".type __fern_map_set, @function\n");
     s = s.write("__fern_map_set:\n");
@@ -3064,70 +3064,37 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    pushq %r12\n");
     s = s.write("    pushq %r13\n");
     s = s.write("    pushq %r14\n");
-    s = s.write("    pushq %r15\n");
-    s = s.write("    pushq %r8\n");                 // saved struct eq fn ptr @ -48(%rbp), or 0
     // %r9 = per-insert flag bits (bit 0 = kconsume: the incoming KEY is a
     // fresh, sole-owned string temp, from irlower's is_fresh_str_temp; bit 1 =
     // owncols: i32/string-column map whose keys()/values() reads ALL snapshot,
     // so the map solely owns its column buffers — #4353/#5335). Saved to the frame
-    // because the probe loop's __fern_str_eq / eq-fn calls clobber caller-saved
+    // because the __fern_map_find call clobbers caller-saved
     // %r9; bit 0 is reloaded at .Lms_found to free the DISCARDED new key on an
     // overwrite (the register twin of the wasm #4876 fix — a recurring computed
     // key, e.g. word-count `m.set(word, n)`, otherwise leaks one key box per
     // overwrite); bit 1 is reloaded at .Lms_append to pick the reclaim-on-grow
     // __fern_arr_push_owned over the leak-only __fern_arr_push.
     // The extra pad keeps the frame 16-byte aligned for the inner calls.
-    s = s.write("    pushq %r9\n");                 // saved flag bits @ -56(%rbp)
-    s = s.write("    pushq %r9\n");                 // 16-byte align pad @ -64(%rbp)
+    s = s.write("    pushq %r9\n");                 // saved flag bits @ -40(%rbp)
+    s = s.write("    pushq %r9\n");                 // 16-byte align pad @ -48(%rbp)
     s = s.write("    movq %rdi, %r12\n");          // mapbox
     s = s.write("    movq %rsi, %r13\n");          // key
     s = s.write("    movq %rdx, %r14\n");          // val
-    s = s.write("    movq (%r12), %r15\n");        // keys arr
-    s = s.write("    movq $0, %rbx\n");            // i
-    s = s.write("    testq %r8, %r8\n");            // struct/enum key? (eq fn present)
-    s = s.write("    jnz .Lms_loop_struct\n");
-    s = s.write("    testq %rcx, %rcx\n");          // keykind (1 = i32)
-    s = s.write("    jnz .Lms_loop_i32\n");
-    s = s.write("    jmp .Lms_loop\n");            // string case skips the struct loop below
-    s = s.write(".Lms_loop_struct:\n");            // struct/enum-key loop: derived eq via call *
-    s = s.write("    movq (%r15), %rax\n");        // keys.len
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lms_append\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rcx\n");  // keys[i+1] = self
-    s = s.write("    pushq %r13\n");               // arg1 = other (lookup key); stack ABI
-    s = s.write("    pushq %rcx\n");               // arg0 = self (on top, at 16(%rbp))
-    s = s.write("    call *-48(%rbp)\n");          // __fn_<K>__eq(self, other) -> bool
-    s = s.write("    addq $16, %rsp\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jnz .Lms_found\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lms_loop_struct\n");
-    s = s.write(".Lms_loop:\n");                    // string-key loop
-    s = s.write("    movq (%r15), %rax\n");        // keys.len
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lms_append\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rdi\n");  // keys[i+1]
-    s = s.write("    movq %r13, %rsi\n");
-    s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jnz .Lms_found\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lms_loop\n");
-    s = s.write(".Lms_loop_i32:\n");                // i32-key loop
-    s = s.write("    movq (%r15), %rax\n");
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lms_append\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rax\n");   // keys[i+1]
-    s = s.write("    cmpq %r13, %rax\n");
-    s = s.write("    je .Lms_found\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lms_loop_i32\n");
+    // The key search is __fern_map_find's (#2649) — the one body the whole map
+    // runtime shares, in place of the string / i32 / struct triple this
+    // function, map_get and map_has each carried. Stack ABI: args pushed in
+    // REVERSE so arg0 (the keys array) lands on top, four slots dropped after.
+    // A miss answers -1, which is this function's append.
+    s = s.write("    pushq %r8\n");                 // arg3 = derived K.eq, or 0
+    s = s.write("    pushq %rcx\n");               // arg2 = keykind
+    s = s.write("    pushq %rsi\n");               // arg1 = key
+    s = s.write("    movq (%r12), %rax\n");        // arg0 = keys arr
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_map_find\n");
+    s = s.write("    addq $32, %rsp\n");
+    s = s.write("    movq %rax, %rbx\n");          // i, or -1 on a miss
+    s = s.write("    cmpq $0, %rbx\n");
+    s = s.write("    jl .Lms_append\n");
     s = s.write(".Lms_found:\n");
     s = s.write("    movq 8(%r12), %rax\n");        // values arr
     s = s.write("    movq %rbx, %rdx\n");
@@ -3139,7 +3106,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // safely by str_free's guards) so a recurring computed key doesn't leak. An
     // aliased key (kconsume 0) is left untouched — its source local's sweep owns
     // it. str_free preserves %r12/%r13, so the mapbox return is intact.
-    s = s.write("    movq -56(%rbp), %rax\n");      // reload flag bits
+    s = s.write("    movq -40(%rbp), %rax\n");      // reload flag bits
     s = s.write("    testq $1, %rax\n");            // bit 0 = kconsume
     s = s.write("    jz .Lms_found_nokf\n");
     s = s.write("    pushq %r13\n");                // discarded fresh key
@@ -3158,7 +3125,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // keys()/values() still return the RAW keys@0 / vals@8 buffer (an
     // uncounted alias), and arr_push_owned would free the buffer a live
     // `var vs = m.values()` still points to (use-after-free).
-    s = s.write("    movq -56(%rbp), %rax\n");      // reload flag bits
+    s = s.write("    movq -40(%rbp), %rax\n");      // reload flag bits
     s = s.write("    testq $2, %rax\n");            // bit 1 = owncols
     s = s.write("    jnz .Lms_append_owned\n");
     s = s.write("    movq (%r12), %rdi\n");
@@ -3181,8 +3148,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %rax, 8(%r12)\n");
     s = s.write(".Lms_ret:\n");
     s = s.write("    movq %r12, %rax\n");
-    s = s.write("    addq $24, %rsp\n");            // discard align pad + saved kconsume + eq fn ptr
-    s = s.write("    popq %r15\n");
+    s = s.write("    addq $16, %rsp\n");            // discard align pad + saved flag bits
     s = s.write("    popq %r14\n");
     s = s.write("    popq %r13\n");
     s = s.write("    popq %r12\n");
@@ -3190,70 +3156,30 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rbp\n");
     s = s.write("    ret\n");
     s = s.write(".size __fern_map_set, .-__fern_map_set\n");
-    // __fern_map_get + __fern_map_has (transcribed from asm.fern).
+    // __fern_map_get + __fern_map_has: __fern_map_find plus an Option box /
+    // a boolean. Both are thin over the shared search now (#2649).
     s = s.write(".globl __fern_map_get\n");
     s = s.write(".type __fern_map_get, @function\n");
     s = s.write("__fern_map_get:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %rbx\n");
     s = s.write("    pushq %r12\n");
     s = s.write("    pushq %r13\n");
-    s = s.write("    pushq %r15\n");
-    s = s.write("    pushq %r8\n");                 // saved struct eq fn ptr @ -40(%rbp), or 0
     s = s.write("    movq %rdi, %r12\n");          // mapbox
-    s = s.write("    movq %rsi, %r13\n");          // key
-    s = s.write("    movq (%r12), %r15\n");        // keys arr
-    s = s.write("    movq $0, %rbx\n");
-    s = s.write("    testq %r8, %r8\n");            // struct/enum key? (eq fn present)
-    s = s.write("    jnz .Lmg_loop_struct\n");
-    s = s.write("    testq %rdx, %rdx\n");          // keykind (1 = i32)
-    s = s.write("    jnz .Lmg_loop_i32\n");
-    s = s.write("    jmp .Lmg_loop\n");            // string case skips the struct loop below
-    s = s.write(".Lmg_loop_struct:\n");            // struct/enum-key loop: derived eq via call *
-    s = s.write("    movq (%r15), %rax\n");
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lmg_none\n");
-    s = s.write("    movq %rbx, %rax\n");
+    // Key search via __fern_map_find (#2649). Stack ABI: args pushed in
+    // REVERSE so arg0 (the keys array) lands on top, four slots dropped after.
+    s = s.write("    pushq %r8\n");                 // arg3 = derived K.eq, or 0
+    s = s.write("    pushq %rdx\n");               // arg2 = keykind
+    s = s.write("    pushq %rsi\n");               // arg1 = key
+    s = s.write("    movq (%r12), %rax\n");        // arg0 = keys arr
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_map_find\n");
+    s = s.write("    addq $32, %rsp\n");
+    s = s.write("    cmpq $0, %rax\n");
+    s = s.write("    jl .Lmg_none\n");
+    s = s.write("    movq 8(%r12), %rcx\n");        // values arr
     s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rcx\n");  // keys[i+1] = self
-    s = s.write("    pushq %r13\n");               // arg1 = other (lookup key); stack ABI
-    s = s.write("    pushq %rcx\n");               // arg0 = self (on top, at 16(%rbp))
-    s = s.write("    call *-40(%rbp)\n");          // __fn_<K>__eq(self, other) -> bool
-    s = s.write("    addq $16, %rsp\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jnz .Lmg_found\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lmg_loop_struct\n");
-    s = s.write(".Lmg_loop:\n");                    // string-key loop
-    s = s.write("    movq (%r15), %rax\n");
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lmg_none\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rdi\n");
-    s = s.write("    movq %r13, %rsi\n");
-    s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jnz .Lmg_found\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lmg_loop\n");
-    s = s.write(".Lmg_loop_i32:\n");                // i32-key loop
-    s = s.write("    movq (%r15), %rax\n");
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lmg_none\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rax\n");
-    s = s.write("    cmpq %r13, %rax\n");
-    s = s.write("    je .Lmg_found\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lmg_loop_i32\n");
-    s = s.write(".Lmg_found:\n");
-    s = s.write("    movq 8(%r12), %rax\n");        // values arr
-    s = s.write("    movq %rbx, %rdx\n");
-    s = s.write("    incq %rdx\n");
-    s = s.write("    movq (%rax,%rdx,8), %r13\n");   // values[i+1]
+    s = s.write("    movq (%rcx,%rax,8), %r13\n");   // values[i+1]
     s = s.write("    movq $2, %rdi\n");
     s = s.write("    call __fern_arr_box\n");        // Some box (rc-headered)
     s = s.write("    movq $0, (%rax)\n");
@@ -3265,11 +3191,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $1, (%rax)\n");
     s = s.write("    movq $0, 8(%rax)\n");
     s = s.write(".Lmg_ret:\n");
-    s = s.write("    addq $8, %rsp\n");             // discard saved eq fn ptr
-    s = s.write("    popq %r15\n");
     s = s.write("    popq %r13\n");
     s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
     s = s.write("    popq %rbp\n");
     s = s.write("    ret\n");
     s = s.write(".size __fern_map_get, .-__fern_map_get\n");
@@ -3278,70 +3201,22 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_map_has:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
-    s = s.write("    pushq %rbx\n");
-    s = s.write("    pushq %r12\n");
-    s = s.write("    pushq %r13\n");
-    s = s.write("    pushq %r15\n");
-    s = s.write("    pushq %r8\n");                 // saved struct eq fn ptr @ -40(%rbp), or 0
-    s = s.write("    movq %rdi, %r12\n");
-    s = s.write("    movq %rsi, %r13\n");
-    s = s.write("    movq (%r12), %r15\n");
-    s = s.write("    movq $0, %rbx\n");
-    s = s.write("    testq %r8, %r8\n");            // struct/enum key? (eq fn present)
-    s = s.write("    jnz .Lmh_loop_struct\n");
-    s = s.write("    testq %rdx, %rdx\n");          // keykind (1 = i32)
-    s = s.write("    jnz .Lmh_loop_i32\n");
-    s = s.write("    jmp .Lmh_loop\n");            // string case skips the struct loop below
-    s = s.write(".Lmh_loop_struct:\n");            // struct/enum-key loop: derived eq via call *
-    s = s.write("    movq (%r15), %rax\n");
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lmh_no\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rcx\n");  // keys[i+1] = self
-    s = s.write("    pushq %r13\n");               // arg1 = other (lookup key); stack ABI
-    s = s.write("    pushq %rcx\n");               // arg0 = self (on top, at 16(%rbp))
-    s = s.write("    call *-40(%rbp)\n");          // __fn_<K>__eq(self, other) -> bool
-    s = s.write("    addq $16, %rsp\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jnz .Lmh_yes\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lmh_loop_struct\n");
-    s = s.write(".Lmh_loop:\n");                    // string-key loop
-    s = s.write("    movq (%r15), %rax\n");
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lmh_no\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rdi\n");
-    s = s.write("    movq %r13, %rsi\n");
-    s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jnz .Lmh_yes\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lmh_loop\n");
-    s = s.write(".Lmh_loop_i32:\n");                // i32-key loop
-    s = s.write("    movq (%r15), %rax\n");
-    s = s.write("    cmpq %rax, %rbx\n");
-    s = s.write("    jge .Lmh_no\n");
-    s = s.write("    movq %rbx, %rax\n");
-    s = s.write("    incq %rax\n");
-    s = s.write("    movq (%r15,%rax,8), %rax\n");
-    s = s.write("    cmpq %r13, %rax\n");
-    s = s.write("    je .Lmh_yes\n");
-    s = s.write("    incq %rbx\n");
-    s = s.write("    jmp .Lmh_loop_i32\n");
-    s = s.write(".Lmh_yes:\n");
+    // Same __fern_map_find call as map_get (#2649); only the answer differs,
+    // so nothing here outlives the call and the frame holds no saved registers.
+    s = s.write("    pushq %r8\n");                 // arg3 = derived K.eq, or 0
+    s = s.write("    pushq %rdx\n");               // arg2 = keykind
+    s = s.write("    pushq %rsi\n");               // arg1 = key
+    s = s.write("    movq (%rdi), %rax\n");        // arg0 = keys arr
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fn___fern_map_find\n");
+    s = s.write("    addq $32, %rsp\n");
+    s = s.write("    cmpq $0, %rax\n");
+    s = s.write("    jl .Lmh_no\n");
     s = s.write("    movq $1, %rax\n");
     s = s.write("    jmp .Lmh_ret\n");
     s = s.write(".Lmh_no:\n");
     s = s.write("    movq $0, %rax\n");
     s = s.write(".Lmh_ret:\n");
-    s = s.write("    addq $8, %rsp\n");             // discard saved eq fn ptr
-    s = s.write("    popq %r15\n");
-    s = s.write("    popq %r13\n");
-    s = s.write("    popq %r12\n");
-    s = s.write("    popq %rbx\n");
     s = s.write("    popq %rbp\n");
     s = s.write("    ret\n");
     s = s.write(".size __fern_map_has, .-__fern_map_has\n");
@@ -5331,6 +5206,10 @@ function emit_ir_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.
     if (o.str == "__fern_i32_pow") { s = s.need("i32_pow"); }
     // i32_lcm's body calls gcd; runtime_need_deps carries the
     // i32_lcm → i32_gcd edge, so close_needs emits gcd's body too.
+    // __fern_map_find's body is emitted with the maps bundle; a call to it from
+    // __fern_map_delete's Fern body must pull that bundle in, since call_direct
+    // does not imply a need.
+    if (o.str == "__fern_map_find") { s = s.need("maps"); }
     if (o.str == "__fern_i32_gcd") { s = s.need("i32_gcd"); }
     if (o.str == "__fern_i32_lcm") { s = s.need("i32_lcm"); }
     if (o.str == "__fern_arr_i32_index_of") { s = s.need("arr_i32_index_of"); }
@@ -6880,6 +6759,19 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     if (s.has_need("str_eq")) {
         s = s.write("    .text\n");
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_eq(), all_structs, s);
+    }
+    // __fern_map_find (#2649): the map runtime's shared key search. One Fern
+    // body where map_set, map_get and map_has each carried a string, an i32 and
+    // a struct/enum copy of the same loop in hand-asm, and __fern_map_delete a
+    // fourth in Fern.
+    //
+    // Gated on `maps` rather than a need of its own, unlike map_delete: all
+    // three hand-asm bodies in the maps bundle call it, so a program that has
+    // the bundle always reaches it. `maps` already declares str_eq for the
+    // string arm.
+    if (s.has_need("maps")) {
+        s = s.write("    .text\n");
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_map_find(), all_structs, s);
     }
     // __fern_map_delete (#2649): `m.without(k)`. A Fern helper rather than
     // hand-asm — the last of the map ops to move. Gated on its OWN need, not on
