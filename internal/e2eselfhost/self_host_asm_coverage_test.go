@@ -243,6 +243,14 @@ func TestSelfHostAsmCoverageArm64(t *testing.T) {
 		"uminv":  "uminv b0, v1.8b",
 		"saddlv": "saddlv h0, v1.16b",
 		"uaddlv": "uaddlv s0, v1.8h",
+		// Wave 2d: the lane moves, the modified immediate, and the
+		// single-register load/store-structure forms.
+		"umov":   "umov w0, v1.b[5]",
+		"smov":   "smov w0, v1.b[5]",
+		"ins":    "ins v0.b[5], w1",
+		"movi":   "movi v0.16b, #7",
+		"ld1r":   "ld1r {v0.16b}, [x1]",
+		"st1":    "st1 {v0.16b}, [x1]",
 		"addv":   "addv b0, v0.8b",
 		"ld1":    "ld1 {v1.16b}, [x0]",
 		"cmeq":   "cmeq v1.16b, v1.16b, v0.16b",
@@ -372,6 +380,34 @@ func TestSelfHostAsmCoverageArm64(t *testing.T) {
 		if err := assemble(probe); err != nil {
 			t.Errorf("conditional-branch alias probe %q: native assembler rejects it: %v", probe, err)
 		}
+	}
+
+	// The reverse direction (#8000). Everything above pins the self-host to
+	// the native assembler; this pins the native assembler to the self-host,
+	// which is the direction that had no gate at all — every mnemonic #7907
+	// added to internal/native/arm64 landed with nothing asking the Fern side
+	// for it, and the two drifted by 63 before anyone counted.
+	//
+	// There is no exception list, deliberately. One would re-create the hole
+	// in a new shape: a mnemonic could be added to native, listed as an
+	// exception, and never ported. If a native addition genuinely has no
+	// self-host counterpart, the honest move is to say so in the issue that
+	// adds it, not here.
+	//
+	// The b.cc / bcc spellings are the one thing not compared by name: the
+	// self-host matches them by PATTERN rather than listing them, so they
+	// have no literal to extract. The explicit probe loop above is what
+	// covers them.
+	known := map[string]bool{}
+	for _, m := range mnemonics {
+		known[m] = true
+	}
+	condAlias := regexp.MustCompile(`^b\.?[a-z]{2}$`)
+	for _, m := range arm64.KnownMnemonics() {
+		if condAlias.MatchString(m) || known[m] {
+			continue
+		}
+		t.Errorf("internal/native/arm64 assembles %q and the self-host assembler does not know it — port it to arm64_gas_known's families, or the two assemblers have silently drifted again", m)
 	}
 }
 
