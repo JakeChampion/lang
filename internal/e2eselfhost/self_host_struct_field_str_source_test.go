@@ -41,6 +41,10 @@ import (
 //
 // Every want below was confirmed against the native x86-64 backend, which is
 // clean on all seven. Exit 99 is reserved for __rc_underflow_count().
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. A pre-fusion number quoted in a row note below is
+// twice its pin.
 
 type structFieldStrSourceCase struct {
 	name   string
@@ -74,7 +78,7 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
     return (t + src.len() + i) % 101;
 }
 ` + sfssMain,
-			want: 43, allocs: 300, frees: 300,
+			want: 43, allocs: 200, frees: 200,
 		},
 		{
 			// The holder in a nested BLOCK, so it dies before the source does.
@@ -87,7 +91,7 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
     return (t + src.len() + i) % 101;
 }
 ` + sfssMain,
-			want: 43, allocs: 300, frees: 300,
+			want: 43, allocs: 200, frees: 200,
 		},
 		{
 			// The CONDITIONAL holder, and the reason the move site is the gate
@@ -103,7 +107,7 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
     return (t + i) % 101;
 }
 ` + sfssMain,
-			want: 64, allocs: 250, frees: 250,
+			want: 64, allocs: 150, frees: 150,
 		},
 		{
 			// THE ROW THAT CARRIES THE SOUNDNESS. Counts alone read 900/900
@@ -122,7 +126,7 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
     return (t + src.len() + a.len() + b.len() + c.len() + i) % 101;
 }
 ` + sfssMain,
-			want: 25, allocs: 900, frees: 900,
+			want: 25, allocs: 500, frees: 500,
 		},
 		{
 			// THE MOVED CONTROL, and the row that says why the gate is the move
@@ -138,7 +142,7 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
     return (p.f.len() + p.n) % 101;
 }
 ` + sfssMain,
-			want: 73, allocs: 300, frees: 300,
+			want: 73, allocs: 200, frees: 200,
 		},
 		{
 			// REFUSED, and it must stay refused: the holder is RETURNED, so it
@@ -157,7 +161,7 @@ function round(i: i32): i32 {
     return (p.f.len() + p.n) % 101;
 }
 ` + sfssMain,
-			want: 73, allocs: 300, frees: 100,
+			want: 73, allocs: 200, frees: 100,
 		},
 		{
 			// REFUSED on the sole-use condition: `src` fills TWO string fields, so
@@ -173,7 +177,7 @@ function round(i: i32): i32 {
     return (p.f.len() + p.g.len() + p.n + src.len()) % 101;
 }
 ` + sfssMain,
-			want: 11, allocs: 300, frees: 100,
+			want: 11, allocs: 200, frees: 100,
 		},
 	}
 }

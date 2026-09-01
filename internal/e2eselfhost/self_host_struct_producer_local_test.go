@@ -38,6 +38,10 @@ import (
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. A pre-fusion number quoted in a row note below is
+// twice its pin.
 
 type structProducerCase struct {
 	name   string
@@ -60,7 +64,7 @@ function w(a: string): string { return a + "!"; }
 function mk(): P { var p: P = P { xs: [1,2,3], s: w("p") }; return p; }
 function round(i: i32): i32 { var v: P = mk(); return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 19, allocs: 800, frees: 800,
+			want: 19, allocs: 600, frees: 600,
 		},
 		{
 			// CONTROL — the same producer returning the literal DIRECTLY, which
@@ -71,7 +75,7 @@ function w(a: string): string { return a + "!"; }
 function mk(): P { return P { xs: [1,2,3], s: w("p") }; }
 function round(i: i32): i32 { var v: P = mk(); return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 19, allocs: 800, frees: 800,
+			want: 19, allocs: 600, frees: 600,
 		},
 		{
 			// CONTROL — no producer at all. Unchanged.
@@ -81,7 +85,7 @@ function w(a: string): string { return a + "!"; }
 
 function round(i: i32): i32 { var v: P = P { xs: [1,2,3], s: w("p") }; return v.xs.len(); }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 200) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 19, allocs: 800, frees: 800,
+			want: 19, allocs: 600, frees: 600,
 		},
 		{
 			// The smallest shape: one rc-array field, no string. Base 200/0
@@ -117,7 +121,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 1, allocs: 204, frees: 204,
+			want: 1, allocs: 153, frees: 153,
 		},
 		{
 			// Its pairwise witness. The colliding program above matches these
@@ -142,7 +146,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 1, allocs: 204, frees: 204,
+			want: 1, allocs: 153, frees: 153,
 		},
 		{
 			// ADMITTED, and deliberately so after being measured rather than

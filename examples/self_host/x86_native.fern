@@ -2085,12 +2085,23 @@ function x86_gas_movl(own a: X86Asm, src: string, dst: string): X86Asm {
 
 // x86_gas_alu32 dispatches addl/subl/andl/orl/xorl/cmpl: `$imm, %reg` uses
 // the group-1 imm32 form (imm_slash), `%reg, %reg` the reg-reg opcode.
-function x86_gas_alu32(own a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
+//
+// Both encoders take REGISTER numbers, so a memory operand — or any token
+// x86_gas_reg32 does not know — has to be RECORDED (SH-005) rather than fed
+// through: x86_gas_reg32 answers -1 for one, and -1 encodes as a wrong but
+// perfectly well-formed instruction, which is a silent miscompile. `cmpl $1,
+// -4(%rax)` assembled as `cmp $1, %eax` this way and the branch it guarded
+// simply never taken (#7351).
+function x86_gas_alu32(own a: X86Asm, mnem: string, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
+    var d: i32 = x86_gas_reg32(dst);
+    if (d < 0) { return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + src + ", " + dst) }; }
     if (src.len() > 0 && src[0] == b'$') {
-        a = X86Asm { ...a, code: x86_alu_r32_imm32(a.code, imm_slash, x86_gas_reg32(dst), x86_gas_atoi(src)) };
+        a = X86Asm { ...a, code: x86_alu_r32_imm32(a.code, imm_slash, d, x86_gas_atoi(src)) };
         return a;
     }
-    a = X86Asm { ...a, code: x86_binop_r32_r32(a.code, regop, x86_gas_reg32(dst), x86_gas_reg32(src)) };
+    var sr: i32 = x86_gas_reg32(src);
+    if (sr < 0) { return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + src + ", " + dst) }; }
+    a = X86Asm { ...a, code: x86_binop_r32_r32(a.code, regop, d, sr) };
     return a;
 }
 
@@ -2994,12 +3005,12 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "cvtsi2sd") { a = X86Asm { ...a, code: x86_cvtsi2sd(a.code, x86_gas_xmm(dst), x86_gas_reg(src)) }; return a; }
     // 32-bit ALU + moves + extends + cmov + testb (slice 2q).
     if (mnem == "movl") { return x86_gas_movl(a, src, dst); }
-    if (mnem == "addl") { return x86_gas_alu32(a, 0, 1, src, dst); }
-    if (mnem == "subl") { return x86_gas_alu32(a, 5, 41, src, dst); }
-    if (mnem == "andl") { return x86_gas_alu32(a, 4, 33, src, dst); }
-    if (mnem == "orl") { return x86_gas_alu32(a, 1, 9, src, dst); }
-    if (mnem == "xorl") { return x86_gas_alu32(a, 6, 49, src, dst); }
-    if (mnem == "cmpl") { return x86_gas_alu32(a, 7, 57, src, dst); }
+    if (mnem == "addl") { return x86_gas_alu32(a, mnem, 0, 1, src, dst); }
+    if (mnem == "subl") { return x86_gas_alu32(a, mnem, 5, 41, src, dst); }
+    if (mnem == "andl") { return x86_gas_alu32(a, mnem, 4, 33, src, dst); }
+    if (mnem == "orl") { return x86_gas_alu32(a, mnem, 1, 9, src, dst); }
+    if (mnem == "xorl") { return x86_gas_alu32(a, mnem, 6, 49, src, dst); }
+    if (mnem == "cmpl") { return x86_gas_alu32(a, mnem, 7, 57, src, dst); }
     if (mnem == "shrl") { a = X86Asm { ...a, code: x86_shr_r32_imm8(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)) }; return a; }
     if (mnem == "testb") {
         if (src.len() > 0 && src[0] == b'$') {
