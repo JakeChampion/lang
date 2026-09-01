@@ -7412,12 +7412,51 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 		localGroup{9, encode.ValtypeF64}, localGroup{2, encode.ValtypeI64}), body)
 }
 
-// instTrigReduceAndPolys emits the shared Cody-Waite reduction plus sin(r) and
-// cos(r). Locals are declared by the caller as: k=1 r=2 r2=3 sinr=4 cosr=5
-// hz=6 cw=7 (f64), q=8 (i64).
+// twoOverPiBits is 2/pi in binary, MSB-first, one limb per 64 fraction bits
+// starting at 2^-1 in limb 1 — the window Payne-Hanek indexes with the
+// argument's own exponent. The leading zero limb lets that index start above
+// 2^-1 without a bounds test; the length covers the largest finite double.
+// Same table as the native backends': the emit layers are deliberately
+// parallel, so the numeric tables are carried per backend like the fdlibm
+// coefficients beside them.
+var twoOverPiBits = [twoOverPiLimbs]uint64{
+	0x0000000000000000, 0xa2f9836e4e441529, 0xfc2757d1f534ddc0,
+	0xdb6295993c439041, 0xfe5163abdebbc561, 0xb7246e3a424dd2e0,
+	0x06492eea09d1921c, 0xfe1deb1cb129a73e, 0xe88235f52ebb4484,
+	0xe99c7026b45f7e41, 0x3991d639835339f4, 0x9c845f8bbdf9283b,
+	0x1ff897ffde05980f, 0xef2f118b5a0a6d1f, 0x6d367ecf27cb09b7,
+	0x4f463f669e5fea2d, 0x7527bac7ebe5f17b, 0x3d0739f78a5292ea,
+	0x6bfb5fb11f8d5d08, 0x56033046fc7b6bab, 0xf0cfbc209af4361d,
+}
+
+// twoOverPiSegment renders the table as the LE bytes its data segment at
+// twoOverPiBase carries.
+func twoOverPiSegment() []byte {
+	out := make([]byte, 0, 8*twoOverPiLimbs)
+	for _, w := range twoOverPiBits {
+		out = append(out,
+			byte(w), byte(w>>8), byte(w>>16), byte(w>>24),
+			byte(w>>32), byte(w>>40), byte(w>>48), byte(w>>56))
+	}
+	return out
+}
+
+// instTrigReduceAndPolys emits the shared argument reduction plus sin(r) and
+// cos(r). Locals are declared by the caller (trigLocals) as: k=1 r=2 r2=3
+// sinr=4 cosr=5 hz=6 cw=7 (f64), q=8 plus the Payne-Hanek intermediates
+// (i64), addr=25 (i32).
 //
-// pi/2 needs THREE 33-bit chunks: near a zero of sine the reduced argument is
-// the answer, so the reduction's absolute error becomes the relative error.
+// |x| < 2^20 reduces Cody-Waite; pi/2 needs THREE 33-bit chunks there: near a
+// zero of sine the reduced argument is the answer, so the reduction's absolute
+// error becomes the relative error. At or above 2^20 (biased exponent >=
+// 1043) k no longer fits pio2h's 22 zeroed mantissa bits and the chain
+// reduces against noise, so the large path multiplies the significand by the
+// window of 2/pi the exponent selects instead, keeping 128 bits about the
+// binary point — the top two bits are the quadrant and the rest the fraction
+// of x/(pi/2), fully accurate however large x is. It never converts a float
+// to an integer, which is also what removes the i64.trunc_f64_s trap large
+// arguments used to hit. wasm has no widening multiply, so the 53x192-bit
+// product is built from four 32-bit-half i64.muls per limb.
 func instTrigReduceAndPolys(body []byte) []byte {
 	const (
 		lx   = 0
@@ -7429,8 +7468,256 @@ func instTrigReduceAndPolys(body []byte) []byte {
 		hz   = 6
 		cw   = 7
 		q    = 8
+		// Payne-Hanek intermediates (i64).
+		bits = 9  // x reinterpreted
+		e    = 10 // biased exponent, then the table bit index
+		m    = 11 // 53-bit significand
+		off  = 12 // bit offset within the limb
+		t0   = 13 // four raw table limbs …
+		t1   = 14
+		t2   = 15
+		t3   = 16
+		w0   = 17 // … and the three shifted 64-bit windows
+		w1   = 18
+		w2   = 19
+		lo   = 20 // 128-bit fraction accumulator
+		hi   = 21
+		sa   = 22 // mul64 half-product scratch
+		sb   = 23
+		neg  = 24 // fraction folded to the next quadrant
+		addr = 25 // limb address (i32)
 	)
-	// k = nearest(x * 2/pi) ; q = (i64)k & 3
+	// bits = reinterpret(x); e = (bits >> 52) & 0x7ff
+	body = inst.InstLocalGet(body, lx)
+	body = convert.InstI64ReinterpretF64(body)
+	body = inst.InstLocalSet(body, bits)
+	body = inst.InstLocalGet(body, bits)
+	body = inst.InstI64Const(body, 52)
+	body = numeric.InstI64ShrU(body)
+	body = inst.InstI64Const(body, 0x7ff)
+	body = numeric.InstI64And(body)
+	body = inst.InstLocalSet(body, e)
+	// mulhi pushes the high 64 bits of a*b from four 32-bit-half products;
+	// clobbers sa/sb. The mid-sum cannot overflow: (2^32-1)^2 + (2^32-1)
+	// < 2^64.
+	mulhi := func(b []byte, x, y uint32) []byte {
+		const halfMask = 0xffffffff
+		// sa = (x>>32)*(y&M) + ((x&M)*(y&M))>>32
+		b = inst.InstLocalGet(b, x)
+		b = inst.InstI64Const(b, 32)
+		b = numeric.InstI64ShrU(b)
+		b = inst.InstLocalGet(b, y)
+		b = inst.InstI64Const(b, halfMask)
+		b = numeric.InstI64And(b)
+		b = numeric.InstI64Mul(b)
+		b = inst.InstLocalGet(b, x)
+		b = inst.InstI64Const(b, halfMask)
+		b = numeric.InstI64And(b)
+		b = inst.InstLocalGet(b, y)
+		b = inst.InstI64Const(b, halfMask)
+		b = numeric.InstI64And(b)
+		b = numeric.InstI64Mul(b)
+		b = inst.InstI64Const(b, 32)
+		b = numeric.InstI64ShrU(b)
+		b = numeric.InstI64Add(b)
+		b = inst.InstLocalSet(b, sa)
+		// sb = (x&M)*(y>>32) + (sa & M)
+		b = inst.InstLocalGet(b, x)
+		b = inst.InstI64Const(b, halfMask)
+		b = numeric.InstI64And(b)
+		b = inst.InstLocalGet(b, y)
+		b = inst.InstI64Const(b, 32)
+		b = numeric.InstI64ShrU(b)
+		b = numeric.InstI64Mul(b)
+		b = inst.InstLocalGet(b, sa)
+		b = inst.InstI64Const(b, halfMask)
+		b = numeric.InstI64And(b)
+		b = numeric.InstI64Add(b)
+		b = inst.InstLocalSet(b, sb)
+		// push (x>>32)*(y>>32) + (sa>>32) + (sb>>32)
+		b = inst.InstLocalGet(b, x)
+		b = inst.InstI64Const(b, 32)
+		b = numeric.InstI64ShrU(b)
+		b = inst.InstLocalGet(b, y)
+		b = inst.InstI64Const(b, 32)
+		b = numeric.InstI64ShrU(b)
+		b = numeric.InstI64Mul(b)
+		b = inst.InstLocalGet(b, sa)
+		b = inst.InstI64Const(b, 32)
+		b = numeric.InstI64ShrU(b)
+		b = numeric.InstI64Add(b)
+		b = inst.InstLocalGet(b, sb)
+		b = inst.InstI64Const(b, 32)
+		b = numeric.InstI64ShrU(b)
+		return numeric.InstI64Add(b)
+	}
+	body = inst.InstLocalGet(body, e)
+	body = inst.InstI64Const(body, 1043)
+	body = numeric.InstI64GeS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		// m = (bits & mantissa) | 2^52
+		body = inst.InstLocalGet(body, bits)
+		body = inst.InstI64Const(body, 0x000fffffffffffff)
+		body = numeric.InstI64And(body)
+		body = inst.InstI64Const(body, 0x0010000000000000)
+		body = numeric.InstI64Or(body)
+		body = inst.InstLocalSet(body, m)
+		// x = m*2^(e-1075), and the fraction of x*(2/pi) starts at bit
+		// (e-1075)+62 of the table once the product is read as a Q126.
+		body = inst.InstLocalGet(body, e)
+		body = inst.InstI64Const(body, 1013)
+		body = numeric.InstI64Sub(body)
+		body = inst.InstLocalSet(body, e)
+		body = inst.InstLocalGet(body, e)
+		body = inst.InstI64Const(body, 63)
+		body = numeric.InstI64And(body)
+		body = inst.InstLocalSet(body, off)
+		// addr = (e>>6)*8; the segment base rides in the load offsets.
+		body = inst.InstLocalGet(body, e)
+		body = inst.InstI64Const(body, 6)
+		body = numeric.InstI64ShrU(body)
+		body = inst.InstI64Const(body, 3)
+		body = numeric.InstI64Shl(body)
+		body = convert.InstI32WrapI64(body)
+		body = inst.InstLocalSet(body, addr)
+		for i, loc := range []uint32{t0, t1, t2, t3} {
+			body = inst.InstLocalGet(body, addr)
+			body = memory.InstI64Load(body, 3, uint32(twoOverPiBase+8*i))
+			body = inst.InstLocalSet(body, loc)
+		}
+		// Each 64-bit window is (T[i] << off) | (T[i+1] >> (64-off)). wasm
+		// shifts mask the count mod 64, so the right half is spelled as two
+		// shifts — a plain >> (64-off) is wrong at off 0.
+		for _, wnd := range [3][3]uint32{{w0, t0, t1}, {w1, t1, t2}, {w2, t2, t3}} {
+			body = inst.InstLocalGet(body, wnd[1])
+			body = inst.InstLocalGet(body, off)
+			body = numeric.InstI64Shl(body)
+			body = inst.InstLocalGet(body, wnd[2])
+			body = inst.InstI64Const(body, 1)
+			body = numeric.InstI64ShrU(body)
+			body = inst.InstI64Const(body, 63)
+			body = inst.InstLocalGet(body, off)
+			body = numeric.InstI64Sub(body)
+			body = numeric.InstI64ShrU(body)
+			body = numeric.InstI64Or(body)
+			body = inst.InstLocalSet(body, wnd[0])
+		}
+		// acc(128) = lo(m*w0)<<64 + m*w1 + hi(m*w2), i.e. x*(2/pi) as a Q126.
+		body = inst.InstLocalGet(body, m)
+		body = inst.InstLocalGet(body, w1)
+		body = numeric.InstI64Mul(body)
+		body = inst.InstLocalSet(body, t0) // p1lo; the raw limbs are consumed
+		body = mulhi(body, m, w2)
+		body = inst.InstLocalGet(body, t0)
+		body = numeric.InstI64Add(body)
+		body = inst.InstLocalSet(body, lo)
+		// carry out of the low word: lo wrapped iff lo < p1lo
+		body = inst.InstLocalGet(body, lo)
+		body = inst.InstLocalGet(body, t0)
+		body = numeric.InstI64LtU(body)
+		body = convert.InstI64ExtendI32U(body)
+		body = inst.InstLocalGet(body, m)
+		body = inst.InstLocalGet(body, w0)
+		body = numeric.InstI64Mul(body)
+		body = mulhi(body, m, w1)
+		body = numeric.InstI64Add(body)
+		body = numeric.InstI64Add(body)
+		body = inst.InstLocalSet(body, hi)
+		// quadrant = top two bits; fraction = the rest
+		body = inst.InstLocalGet(body, hi)
+		body = inst.InstI64Const(body, 62)
+		body = numeric.InstI64ShrU(body)
+		body = inst.InstLocalSet(body, q)
+		body = inst.InstLocalGet(body, hi)
+		body = inst.InstI64Const(body, 0x3fffffffffffffff)
+		body = numeric.InstI64And(body)
+		body = inst.InstLocalSet(body, hi)
+		body = inst.InstI64Const(body, 0)
+		body = inst.InstLocalSet(body, neg)
+		// A fraction at or above a half belongs to the next quadrant, as the
+		// negative remainder below it — which is what keeps |r| <= pi/4.
+		body = inst.InstLocalGet(body, hi)
+		body = inst.InstI64Const(body, 0x2000000000000000)
+		body = numeric.InstI64GeU(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, q)
+		body = inst.InstI64Const(body, 1)
+		body = numeric.InstI64Add(body)
+		body = inst.InstLocalSet(body, q)
+		// hi = 2^62 - hi - (lo != 0), before lo itself is negated
+		body = inst.InstI64Const(body, 0x4000000000000000)
+		body = inst.InstLocalGet(body, hi)
+		body = numeric.InstI64Sub(body)
+		body = inst.InstLocalGet(body, lo)
+		body = inst.InstI64Const(body, 0)
+		body = numeric.InstI64Ne(body)
+		body = convert.InstI64ExtendI32U(body)
+		body = numeric.InstI64Sub(body)
+		body = inst.InstLocalSet(body, hi)
+		body = inst.InstI64Const(body, 0)
+		body = inst.InstLocalGet(body, lo)
+		body = numeric.InstI64Sub(body)
+		body = inst.InstLocalSet(body, lo)
+		body = inst.InstI64Const(body, 1)
+		body = inst.InstLocalSet(body, neg)
+		body = inst.InstEnd(body)
+		// The low half only contributes below 2^-64, so 11 of its bits fall
+		// off the end of the double anyway; dropping them keeps the signed
+		// conversion exact, matching the other backends bit for bit.
+		body = inst.InstLocalGet(body, lo)
+		body = inst.InstI64Const(body, 11)
+		body = numeric.InstI64ShrU(body)
+		body = inst.InstLocalSet(body, lo)
+		// k = (f64)hi * 2^-62 + (f64)lo * 2^-115  (the fraction in [0, 1/2])
+		body = inst.InstLocalGet(body, hi)
+		body = convert.InstF64ConvertI64S(body)
+		body = inst.InstF64Const(body, math.Float64bits(2.168404344971009e-19))
+		body = numeric.InstF64Mul(body)
+		body = inst.InstLocalGet(body, lo)
+		body = convert.InstF64ConvertI64S(body)
+		body = inst.InstF64Const(body, math.Float64bits(2.407412430484045e-35))
+		body = numeric.InstF64Mul(body)
+		body = numeric.InstF64Add(body)
+		body = inst.InstLocalSet(body, k)
+		body = inst.InstLocalGet(body, neg)
+		body = numeric.InstI64Eqz(body)
+		body = numeric.InstI32Eqz(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, k)
+		body = numeric.InstF64Neg(body)
+		body = inst.InstLocalSet(body, k)
+		body = inst.InstEnd(body)
+		// A negative x negates both the fraction and the quadrant.
+		body = inst.InstLocalGet(body, bits)
+		body = inst.InstI64Const(body, 0)
+		body = numeric.InstI64LtS(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, k)
+		body = numeric.InstF64Neg(body)
+		body = inst.InstLocalSet(body, k)
+		body = inst.InstI64Const(body, 0)
+		body = inst.InstLocalGet(body, q)
+		body = numeric.InstI64Sub(body)
+		body = inst.InstLocalSet(body, q)
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, q)
+		body = inst.InstI64Const(body, 3)
+		body = numeric.InstI64And(body)
+		body = inst.InstLocalSet(body, q)
+		// r = k*pio2hi + k*pio2lo (pi/2 as an unevaluated double-double)
+		body = inst.InstLocalGet(body, k)
+		body = inst.InstF64Const(body, math.Float64bits(1.5707963267948966))
+		body = numeric.InstF64Mul(body)
+		body = inst.InstLocalGet(body, k)
+		body = inst.InstF64Const(body, math.Float64bits(6.123233995736766e-17))
+		body = numeric.InstF64Mul(body)
+		body = numeric.InstF64Add(body)
+		body = inst.InstLocalSet(body, r)
+	}
+	body = inst.InstElse(body)
+	// k = nearest(x * 2/pi) ; q = (i64)k & 3. The truncation is safe here:
+	// |x| < 2^20, and the prologue already returned Inf/NaN.
 	body = inst.InstLocalGet(body, lx)
 	body = inst.InstF64Const(body, math.Float64bits(0.636619772367581382433))
 	body = numeric.InstF64Mul(body)
@@ -7450,6 +7737,7 @@ func instTrigReduceAndPolys(body []byte) []byte {
 		body = numeric.InstF64Sub(body)
 	}
 	body = inst.InstLocalSet(body, r)
+	body = inst.InstEnd(body)
 	body = inst.InstLocalGet(body, r)
 	body = inst.InstLocalGet(body, r)
 	body = numeric.InstF64Mul(body)
@@ -7553,7 +7841,10 @@ func instTrigQuadrant(body []byte, arms [4]struct {
 }
 
 func trigLocals() []byte {
-	return putLocalsGroups(nil, localGroup{7, encode.ValtypeF64}, localGroup{1, encode.ValtypeI64})
+	return putLocalsGroups(nil,
+		localGroup{7, encode.ValtypeF64},
+		localGroup{17, encode.ValtypeI64},
+		localGroup{1, encode.ValtypeI32})
 }
 
 // buildSinF64Body — (f64) → f64, fdlibm sin via the shared reduction.
