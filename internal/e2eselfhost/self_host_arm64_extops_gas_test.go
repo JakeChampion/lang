@@ -441,6 +441,90 @@ func TestSelfHostArm64VectorFPShiftGas(t *testing.T) {
 	})
 }
 
+// TestSelfHostArm64VectorWidenAcrossGas pins #8000 wave 2c: the narrowing and
+// widening shifts, ext, tbl, and the across-lanes reductions.
+//
+// What these get wrong when nothing checks it is the arrangement PAIR. The two
+// operands differ by one element size, and the narrow side's Q bit is the `2`
+// suffix rather than a free choice — xtn and xtn2 are the same opcode, and
+// which half of the 128-bit register is written comes from that bit alone. A
+// mismatched pair is a valid word for a different instruction, so every
+// refusal below is a miscompile that did not happen.
+//
+// The across-lanes rows carry the other version of the same trap: nothing in
+// the encoding says how wide the RESULT is. The mnemonic and the source
+// arrangement decide it together — one element size up for the widening
+// saddlv/uaddlv — so a destination of the wrong class names a register the
+// instruction does not write.
+func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	checkPinnedSelfHost(t, bin, runner, []pinnedAsm{
+		{"xtn v23.8b, v9.8h", 0x0e212937},
+		{"xtn2 v23.16b, v9.8h", 0x4e212937},
+		{"xtn v23.4h, v9.4s", 0x0e612937},
+		{"xtn2 v23.8h, v9.4s", 0x4e612937},
+		{"xtn v23.2s, v9.2d", 0x0ea12937},
+
+		{"shrn v23.8b, v9.8h, #3", 0x0f0d8537},
+		{"shrn2 v23.16b, v9.8h, #3", 0x4f0d8537},
+		{"shrn v23.4h, v9.4s, #9", 0x0f178537},
+
+		{"sshll v23.8h, v9.8b, #3", 0x0f0ba537},
+		{"sshll2 v23.8h, v9.16b, #3", 0x4f0ba537},
+		{"ushll v23.4s, v9.4h, #7", 0x2f17a537},
+		{"ushll2 v23.2d, v9.4s, #17", 0x6f31a537},
+		{"sxtl v23.8h, v9.8b", 0x0f08a537},
+		{"sxtl2 v23.4s, v9.8h", 0x4f10a537},
+		{"uxtl v23.2d, v9.2s", 0x2f20a537},
+		{"uxtl2 v23.8h, v9.16b", 0x6f08a537},
+
+		{"ext v23.16b, v9.16b, v28.16b, #5", 0x6e1c2937},
+		{"ext v23.8b, v9.8b, v28.8b, #3", 0x2e1c1937},
+		{"tbl v23.16b, {v9.16b}, v28.16b", 0x4e1c0137},
+
+		{"smaxv b23, v9.16b", 0x4e30a937},
+		{"sminv h23, v9.8h", 0x4e71a937},
+		{"umaxv s23, v9.4s", 0x6eb0a937},
+		{"uminv b23, v9.8b", 0x2e31a937},
+		{"saddlv h23, v9.16b", 0x4e303937},
+		{"uaddlv s23, v9.8h", 0x6e703937},
+	})
+	checkRefusedSelfHost(t, bin, runner, []string{
+		// The pair must differ by exactly one element size.
+		"xtn v0.8b, v1.4s",
+		"shrn v0.4h, v1.8h, #2",
+		"sshll v0.4s, v1.8b, #1",
+		// The narrow side's Q bit IS the 2 suffix, so it cannot disagree
+		// with the mnemonic.
+		"xtn v0.16b, v1.8h",
+		"xtn2 v0.8b, v1.8h",
+		"sshll2 v0.8h, v1.8b, #1",
+		"uxtl v0.8h, v1.16b",
+		// The wide side is always full width.
+		"xtn v0.2s, v1.1d",
+		// Shift ranges: 1..esize narrowing, 0..esize-1 widening.
+		"shrn v0.8b, v1.8h, #9",
+		"shrn v0.8b, v1.8h, #0",
+		"sshll v0.8h, v1.8b, #8",
+		// ext is byte-only and its index counts bytes within the pair.
+		"ext v0.4s, v1.4s, v2.4s, #1",
+		"ext v0.8b, v1.8b, v2.8b, #8",
+		"ext v0.16b, v1.16b, v2.16b, #16",
+		// tbl's table is a one-register .16b list, braces included.
+		"tbl v0.16b, v1.16b, v2.16b",
+		"tbl v0.16b, {v1.8b}, v2.16b",
+		"tbl v0.8b, {v1.16b}, v2.16b",
+		// The across-lanes destination class follows the arrangement, one
+		// size up for the widening pair, and .2s/.2d have no such form.
+		"smaxv h23, v9.16b",
+		"saddlv b23, v9.16b",
+		"umaxv s23, v9.2s",
+		"addv d23, v9.2d",
+		"sminv v0.8h, v9.8h",
+	})
+}
+
 // TestSelfHostArm64CondCmpSelGas: ccmp/ccmn (register and imm5 forms) and
 // the conditional-select family with its inverted-condition aliases.
 func TestSelfHostArm64CondCmpSelGas(t *testing.T) {
