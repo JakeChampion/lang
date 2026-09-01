@@ -125,6 +125,32 @@ func checkRefusedX86(t *testing.T, bin string, runner []string, lines []string) 
 	}
 }
 
+// TestSelfHostX86MovzbWidthGas pins movzb at BOTH destination widths. The
+// value a movzbl produces is identical to a movzbq's — writing a 32-bit
+// register clears the upper half either way — so routing movzbl to the
+// 64-bit encoder was invisible to every execution test and to the snippet
+// rows, and put a REX.W in front of every byte load a program does. The
+// whole-program gate caught it; these rows keep it caught. Bytes are as +
+// objdump output for this exact text.
+func TestSelfHostX86MovzbWidthGas(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildX86AsmBenchDriver(t, gcc)
+	checkPinnedX86(t, bin, runner, []pinnedX86{
+		{"movzbl %al, %eax", []byte{0x0f, 0xb6, 0xc0}},
+		// spl/bpl/sil/dil need a bare REX even at 32 bits, or the number
+		// names ah/ch/dh/bh instead.
+		{"movzbl %spl, %esi", []byte{0x40, 0x0f, 0xb6, 0xf4}},
+		{"movzbl %r9b, %r10d", []byte{0x45, 0x0f, 0xb6, 0xd1}},
+		// A memory source has no byte REGISTER, so no forced REX: the reg
+		// field here is the 32-bit destination.
+		{"movzbl (%rax,%rcx), %esi", []byte{0x0f, 0xb6, 0x34, 0x08}},
+		{"movzbl 8(%rdi), %eax", []byte{0x0f, 0xb6, 0x47, 0x08}},
+		{"movzbq %al, %rax", []byte{0x48, 0x0f, 0xb6, 0xc0}},
+		{"movzbq %spl, %rsi", []byte{0x48, 0x0f, 0xb6, 0xf4}},
+		{"movzbq (%rax,%rcx), %rsi", []byte{0x48, 0x0f, 0xb6, 0x34, 0x08}},
+	})
+}
+
 // TestSelfHostX86CarryAluGas: adc/sbb at all four widths and every ALU
 // operand form, plus the 83 short-immediate selection the whole group-1
 // family now shares (an imm8 previously always took the 7-byte 81 form).

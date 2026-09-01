@@ -396,11 +396,11 @@ function x86enc_selftest_6(): i32 {
 function x86enc_selftest_7(): i32 {
     var bf: i32[] = x86_movb_reg_mem([], 0, 11, false, 0, 1, 0); // movb %al,(%r11) -> 41 88 03
     if (bf.len() != 3 || bf[0] != 65 || bf[1] != 136 || bf[2] != 3) { return 61; }
-    var bg: i32[] = x86_movzbq_mem([], x86_rax(), x86_rax(), false, 0, 1, 0); // movzbq (%rax),%rax -> 48 0F B6 00
+    var bg: i32[] = x86_movzb_mem([], 1, x86_rax(), x86_rax(), false, 0, 1, 0); // movzbq (%rax),%rax -> 48 0F B6 00
     if (bg.len() != 4 || bg[0] != 72 || bg[1] != 15 || bg[2] != 182 || bg[3] != 0) { return 62; }
-    var bh: i32[] = x86_movzbq_mem([], x86_rdx(), 13, false, 0, 1, 2); // movzbq 2(%r13),%rdx -> 49 0F B6 55 02
+    var bh: i32[] = x86_movzb_mem([], 1, x86_rdx(), 13, false, 0, 1, 2); // movzbq 2(%r13),%rdx -> 49 0F B6 55 02
     if (bh.len() != 5 || bh[0] != 73 || bh[1] != 15 || bh[2] != 182 || bh[3] != 85 || bh[4] != 2) { return 63; }
-    var bj: i32[] = x86_movzbq_reg([], x86_rcx(), 0); // movzbq %al,%rcx -> 48 0F B6 C8
+    var bj: i32[] = x86_movzb_reg([], 1, x86_rcx(), 0); // movzbq %al,%rcx -> 48 0F B6 C8
     if (bj.len() != 4 || bj[0] != 72 || bj[1] != 15 || bj[2] != 182 || bj[3] != 200) { return 64; }
     var bk: i32[] = x86_grp1_imm_r([], 8, 7, 1, 46); // cmpb $46,%cl -> 80 F9 2E
     if (bk.len() != 3 || bk[0] != 128 || bk[1] != 249 || bk[2] != 46) { return 65; }

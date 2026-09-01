@@ -96,6 +96,7 @@ rather than the IR path.
 | Cliff corpus (`rc_arr_push_cliff_test.go`, `rc_call_result_materialise_test.go`, `rc_cliff_bytes_test.go`) | The NATIVE compiler emits no stray retain on the accumulator shapes it enumerates — i.e. they are not quadratic — and that the crossing COUNT and its byte WEIGHT stay in step | Over-*retains* on any other shape, and every self-host emitter |
 | Driver rc guard (`util.rc_underflow_guard`) | The compiler's OWN heap accounting stayed balanced while compiling | Leaks (an over-*retain* is silent), and anything outside the drivers |
 | `FERN_NATIVE_ASM=1` fixtures | The in-process assembler encodes what the backend emits | The gcc path, which the fallback silently hides behind |
+| `TestSelfHostX86WholeProgramMatchesGNUAs` | That `x86_native.fern` assembles a WHOLE PROGRAM — the x86 emitter's own output, runtime and all — into the same instruction stream GNU as does: same count, same mnemonics, same operands, and every direct branch landing on the same instruction. This is the x86 twin of `TestSelfHostArm64WholeProgramMatchesNative` and the gate the #6544 testl/testq bug needed; it found `movzbl` encoded as the 64-bit form on its first run | Encoding LENGTH, which it logs rather than asserts while #7949 (self-host rel8 relaxation) is open — the self-host emits every branch as rel32, so its `.text` runs ~9% longer than gas's on the same input. Operands of rip-relative forms, whose addresses the two lay out differently. And it is one program: what the emitter does not emit is not covered |
 | Assembler encoding fuzz (`internal/native/{x86_64,arm64}` `TestFuzzEncodingsAgainstGNUAs`; second oracle `TestEncodingsAgainstLLVMMC`) | Byte-for-byte agreement of the Go in-process assemblers with GNU as across a seeded form inventory — register-number quirks, imm/disp width boundaries, bitmask/imm7/imm9/imm12 edges, rel8 relaxation — plus llvm-mc as an independent second opinion (a gas-vs-llvm disagreement fails with both encodings printed). The smoke tier (8 cases/form) runs in every normal `go test`; `FERN_ASM_FUZZ=1` runs the deep tier (2000 cases/form), `FERN_ASM_FUZZ_SEED` reseeds. Found on first deep runs: two-fixpoint x86 branch relaxation around alignment pads, the rep/lock-vs-0x66 prefix order, cvtsi2sd memory-width REX.W, arm64 `sxtb w,w` / w-form extended add/sub missing sf clears, signed-load unscaled routing, shifted neg/negs | The self-host assemblers (`x86_native.fern`, `arm64_native.fern`); instruction forms outside the inventory; semantics — an encoding both oracles agree on can still be the wrong instruction for the IR. Both oracle lanes skip when their external assembler is absent, and the arm64-gas lane needs the cross binutils |
 | `RUN_SECCOMP_CORPUS=1` (`TestSeccompFixtureCorpus`) | The seccomp filter is not too TIGHT: every runnable fixture behaves identically sandboxed and not | Whether the filter DENIES anything — that is `TestSeccompFilterDenies`. A permit-all filter passes this gate trivially |
 | `RUN_SHRINK_PROPERTY=1` (`TestGenBytesShrinkIsMonotonicAndValid`) | fernsmith's minimisation contract: chopping a byte off a corpus yields a program that still type-checks and is never LARGER, so a failing fuzz input reduces to a small repro. Runs over all three byte-driven entry points — `GenBytes`, `GenMainBytes`, `GenPrintableMainBytes` — at 2 seeds each unguarded; the env var widens it to 24. Checking only `GenBytes` left the two corpora the differential oracles actually shrink unproven, and adding the other two immediately found two fall-throughs that were not the smallest branch | Whether the generated programs are interesting. A generator that emitted `function main(): i32 { return 0i32; }` for every input satisfies it perfectly |
@@ -375,22 +376,25 @@ Worth knowing so you do not assume coverage you do not have:
   transparent hugepages (measured: 43 MB local, 552 MB on a CI runner, same
   binary and input). It returns i64 — bind it to an `i64` and narrow with an
   explicit `as i32` only where the value has to become an exit code.
-- **The self-host's own x86-64 assembler, on any real program.**
-  `-target x86-64-linux` assembles and links IN-PROCESS (`x86_native.fern` +
-  `elf.fern`) — but every `internal/e2eselfhost` program test asks the driver
-  for `-emit asm` and hands the text to gcc, and so does the x86-64 fixtures
-  leg. What reaches `x86_native.fern` is `TestSelfHostX86{Encode,Gas,Capstone}`
-  (byte-level, one instruction at a time) plus a few small `-o` CLI tests
-  (transitive deps, `pub` visibility, a rip-relative store). No rc-shaped or
-  allocation-shaped program runs through it at all.
+- ~~**The self-host's own x86-64 assembler, on any real program.**~~ Gated
+  since #7898 by `TestSelfHostX86WholeProgramMatchesGNUAs` — see the table
+  above. The history is worth keeping, because it says what the gate is for:
+  every `internal/e2eselfhost` program test asks the driver for `-emit asm`
+  and hands the text to gcc, and so does the x86-64 fixtures leg, so what
+  reached `x86_native.fern` was `TestSelfHostX86{Encode,Gas,Capstone}`
+  (byte-level, one instruction at a time) plus a few small `-o` CLI tests. No
+  rc-shaped or allocation-shaped program ran through it at all.
 
-  So an encoding bug there is invisible to the whole corpus, and one was:
-  `testl %ecx, %ecx` was assembled as `testq %rcx, %rcx` on the argument that
-  the operands are zero-extended and ZF agrees. SF does not — a 32-bit -1 read
-  by `movl` is a large positive at 64 bits — so the `js` on every "negative rc =
-  immortal, skip" arm of the rc runtime fell through to the decrement path, and
-  a program that handed any immortal block to `__fern_str_free` tripped the
-  over-release detector (#6544). Both compilers agreed through gcc.
+  An encoding bug there was therefore invisible to the whole corpus, and one
+  was: `testl %ecx, %ecx` was assembled as `testq %rcx, %rcx` on the argument
+  that the operands are zero-extended and ZF agrees. SF does not — a 32-bit -1
+  read by `movl` is a large positive at 64 bits — so the `js` on every
+  "negative rc = immortal, skip" arm of the rc runtime fell through to the
+  decrement path, and a program that handed any immortal block to
+  `__fern_str_free` tripped the over-release detector (#6544). Both compilers
+  agreed through gcc. The new gate found the same CLASS on its first run:
+  `movzbl` was routed to the 64-bit encoder because the zero-extended VALUE is
+  identical, which put a REX.W on every byte load a program does.
 
   **When a change touches asm the runtime emits, run the program BOTH ways** —
   `bin/fern-selfhost -o prog` and `-emit asm` into gcc — and treat a
