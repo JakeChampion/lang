@@ -81,7 +81,9 @@ x86_64/utf8_ingest_validated.ir	23599610
 # the same per-process hash seed.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
-# constant (int_loop 0.71, string_scan 1.01). A new benchmark reports as
+# constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
+# (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
+# on one program says nothing about the next. A new benchmark reports as
 # UNBASELINED here for one CI run, which is the gate saying "measured,
 # recorded, not yet compared" — paste that run's block in rather than guessing.
 aarch64/array_append.text	540
