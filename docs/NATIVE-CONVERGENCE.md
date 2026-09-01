@@ -137,7 +137,19 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    before any deletion PR makes sense.
 4. **The non-compiler consumers.** `internal/wasm/playground` and
    `cmd/fern-wasm` are built on native codegen; the browser playground would
-   need the self-host compiler compiled to wasm instead.
+   need the self-host compiler compiled to wasm instead. **Measured 2026-09-01
+   (#6643) — `docs/PLAYGROUND-SELFHOST-WASM.md`:** this is not size- or
+   memory-bound. The self-host compiler already runs *as* wasm — a stdin-driven
+   wasm-emitting driver is 2.3 MB (614 KB gzipped) against the playground
+   bundle's 28.5 MB (6.3 MB), and compiles a program under wasmtime in 1.9 s at
+   104 MiB peak. Three things block it, in order: the self-host wasm backend
+   miscompiles the compiler itself on nested arithmetic (a native/wasm-hosted
+   divergence nothing gates — the one test that runs a wasm-hosted compiler
+   feeds it a program with none); `internal/codegen/wasmbin` cannot compile the
+   self-host compiler at all, missing the core `strbuf_*` builtins every other
+   backend has, so only the self-host can emit this artifact and there is no
+   second witness; and the playground needs a stdin/in-memory driver rather
+   than `fern.fern`, which is a CLI and writes executables.
 
 ## Freeze preconditions (all must be green before native is frozen)
 
