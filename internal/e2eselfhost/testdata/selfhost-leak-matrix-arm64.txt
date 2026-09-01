@@ -2,12 +2,15 @@
 # verdict, note. Same loader rules as selfhost-leak-matrix.txt (the x86 file);
 # regenerate with FERN_LEAK_MATRIX_DUMP=1 on TestSelfHostLeakMatrixIRArm64.
 #
-# Six rows differ from the x86 file on the NATIVE side only: native-x86 reads
+# Four rows differ from the x86 file on the NATIVE side only: native-x86 reads
 # clean because SSO keeps these <=7-byte strings inline (allocs=0), while
 # native-arm64 heap-allocates them (no SSO on its concat path) and its own
 # reclaim then leaks the shape - measured 200/100, 16 B/round on the rebind
 # probe. A native-arm64 backend gap surfaced by the cross-ISA census; the
 # self-host columns agree with the x86 file on every cell. Filed as #7446.
+# The two str_arr rows left that set when the array overwrite dec started
+# walking the superseded buffer's elements: what leaked there was the string
+# ELEMENTS, not the SSO gap the other four are about.
 
 arr_i32__fnscope__read                        clean  clean  clean on both sides
 arr_i32__fnscope__unused                      clean  clean  clean on both sides
@@ -35,8 +38,8 @@ str_arr__if_block__read                       clean  clean  clean on both sides
 str_arr__if_block__unused                     clean  clean  clean on both sides
 str_arr__loop_local__read                     clean  clean  clean on both sides
 str_arr__loop_local__unused                   clean  clean  clean on both sides
-str_arr__rebind__read                         leak   clean  self-host ahead of native here: the rebuild-rebind admission lands, while #7446 still leaks native-arm64
-str_arr__rebind__unused                       leak   clean  same as str_arr__rebind__read: self-host clean, native-arm64 still #7446
+str_arr__rebind__read                         clean  clean  both clean: #7446 fell to the array overwrite-depth fix — the superseded buffer now walks its elements
+str_arr__rebind__unused                       clean  clean  same as str_arr__rebind__read
 str_arr__shadow_siblings__read                clean  clean  clean on both sides
 str_arr__shadow_siblings__unused              clean  clean  clean on both sides
 struct_arr_field__fnscope__read               clean  clean  clean on both sides
