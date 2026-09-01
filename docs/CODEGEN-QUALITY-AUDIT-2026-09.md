@@ -28,8 +28,8 @@ registers, or padded `rsp` for a call.
 > and its overhead **12.5% against 42.6%**, and on call-heavy code Fern is now
 > *faster than* `gcc -O0` rather than 1.5× it. Every figure below is marked
 > with which side of that work it was measured on. What remains open is listed
-> in §6; the largest items are constant division, loop rotation, and spill
-> quality on the SSA path.
+> in §6; the largest item by a wide margin is spill quality on the SSA path,
+> then loop rotation and a general magic-number reciprocal.
 
 The thing that prompted this audit — the last day's batch of assembler work —
 turns out to be the sharpest way to see it. **The assemblers can encode far more
@@ -451,6 +451,25 @@ Fix all three and the SSA path lands near 1.0–1.1 M instructions against the
 default's 1.5 M — which is roughly where the census says a real allocator
 should land (1.5 M minus 537 K of measured overhead ≈ 963 K).
 
+### 5.0 The inversion is scale-dependent, not a flat loss
+
+Re-measured after tier A and tier B's B2/B3 landed, the SSA path wins
+comfortably on ordinary programs and loses only at the driver's scale:
+
+| input | arm64 default | arm64 SSA | |
+|---|---:|---:|---|
+| `int_loop` | 99 | 22 | 0.22× |
+| `tokenize` | 959 | 614 | 0.64× |
+| `sort_ints` | 2,712 | 1,555 | 0.57× |
+| `string_scan` | 1,455 | 853 | 0.59× |
+| `checker_run.fern` | 1,149,869 | 1,655,366 | **1.44×** |
+
+That shape is the diagnosis. A backend that were simply missing folds would
+lose everywhere; one that loses only on a million-instruction program with very
+large functions is failing at register pressure, which is what §6.2's
+live-range-splitting item addresses. It is also why B5 stays blocked on a
+figure measured on the compiler and not on the kernels.
+
 ### 5.1 wasm is the backend that is not paying for the mismatch
 
 Worth stating because it isolates the cause. `internal/codegen/wasmbin` emits an
@@ -513,9 +532,10 @@ by the SSA cutover.
 A1–A5 and A7 landed in PR #7991 for both native backends, together with two
 rules the audit had not separated out (P5, the operand-stack round trip around
 an undisturbed value; P6, materialising an argument into its own register).
-Measured after: x86-64 `checker_run.fern` 1,601,565 → 963,165 (−39.9%), arm64
-1,507,466 → 1,150,723 (−23.7%), self-host binaries −28.2% and −26.1%. A6 and
-A8's remaining items did not land — see §6.2.
+Measured after: x86-64 `checker_run.fern` 1,601,565 → 962,540 (−39.9%), arm64
+1,507,466 → 1,149,869 (−23.7%), self-host binaries −28.2% and −26.1%. A6 landed
+in the same PR as a follow-up commit, in its guard-elimination and
+power-of-two halves only; A8's remaining items did not — see §6.2.
 
 Each was validated the same way before the next was started: the 22
 `examples/bench` programs' exit codes against the pre-change compiler, and the
@@ -589,12 +609,18 @@ cross-block analysis to.
 
 ### 6.2 What tier A did NOT close
 
-- **A6, constant division.** Untouched. It is 12 `idiv` sites in the whole
-  compiler, so it moves no static figure, but each carries a dead
-  zero-divisor and `INT_MIN/-1` guard against a literal divisor, and the
-  divide itself is 20–40 cycles where a magic-number reciprocal is ~5. A
-  reciprocal is its own correctness problem — rounding, `INT_MIN`, signedness
-  — and does not belong bundled into a peephole change.
+- **A6's reciprocal half.** The guards and the power-of-two cases landed: a
+  literal divisor makes both the zero-divisor and the `INT_MIN/-1` branch dead,
+  a power of two becomes a shift — biased by `2^k−1` when signed, because
+  `sar` rounds toward −∞ and the language rounds toward zero — and a power-of-two
+  remainder becomes a mask. Semantics are pinned by
+  `conformance/cases/const_divisor_lowering`, which runs 19 signed i32 divisors
+  × 17 dividends plus the i64 and unsigned families through an order-sensitive
+  hash on all four backends. What is still open is the **general magic-number
+  reciprocal** for a non-power-of-two divisor: the divide is 20–40 cycles where
+  a reciprocal is ~5. It is its own correctness problem — rounding, `INT_MIN`,
+  signedness — and it moves no static figure, since the whole compiler has 12
+  `idiv` sites.
 - **A8's remainder.** `movabs` for small and zero constants, `imm8` shifts,
   `lea` folding, and `cmov` are all still unemitted.
 - **Memory-destination ALU**, which is what still separates the `int_loop`
@@ -602,10 +628,13 @@ cross-block analysis to.
 - **Loop rotation** (tier C): the back edge is still an unconditional `jmp`
   rather than the conditional branch, and the dead `.LloopEnd` label is still
   emitted. This one lives in `internal/ir`'s `while` shape, not in a backend.
-- **Spill quality on the SSA path**, now the largest single item anywhere in
-  this document: 52.6% of what that backend emits is stack traffic, because a
-  spilled value is reloaded at every use and the hole-free intervals
-  over-spill. It wants live-range splitting.
+- **Spill quality on the SSA path**, still the largest single item anywhere in
+  this document: 869,159 of the 1,655,366 instructions it emits for
+  `checker_run.fern` are frame-relative loads and stores — **52.5%** — because a
+  spilled value is reloaded at every use and the hole-free intervals over-spill.
+  It wants live-range splitting. Note `scripts/codegen-census` does *not* show
+  this: it counts a frame reload as useful work by design, so its `stack=0` for
+  this backend is a deliberate floor and not a contradiction.
 
 ### 6.3 A gate, so this cannot regress silently
 
