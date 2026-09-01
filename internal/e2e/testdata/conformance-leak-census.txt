@@ -14,9 +14,10 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-01: 454 fixtures, 354 clean, 100 leaking, 44855
-# unpaired allocations. The distribution is heavily skewed - median 4,
-# and regex_captures_assert alone is 54713 of the total.
+# Measured 2026-09-01: 454 fixtures, 354 clean, 100 leaking, 44852
+# unpaired allocations. The distribution is heavily skewed — the median
+# leaking fixture is 3.5, and regex_captures_assert alone is 37295 of the
+# total.
 #
 # The counts are pinned; the alloc SITES are not. A site is a runtime
 # return address, so it moves with any codegen change and would churn
@@ -303,7 +304,7 @@ own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_inplace_sort                                     0
 own_param_array_move                                 1
-own_param_assign_target                              51
+own_param_assign_target                              50
 own_param_branch_transfer                            0
 own_self_reassign_move                               0
 own_transfer                                         0
