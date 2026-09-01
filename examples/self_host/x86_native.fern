@@ -1269,9 +1269,20 @@ function x86_empty_buckets(): i32[] {
     return b;
 }
 
-// x86_asm_new returns an empty assembler state.
+// x86_asm_new returns an empty assembler state for the raw encoder API,
+// which emits every branch rel32 and never relaxes.
 function x86_asm_new(): X86Asm {
-    return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_widths: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, br_long: [], br_n: 0, br_offs: [], br_names: [], br_shorts: [], unknown: [] };
+    return x86_asm_new_for(false, []);
+}
+
+// x86_asm_new_for returns an empty assembler state for a relaxation pass:
+// `relaxing` selects the rel8-capable branch emitters and `longs` pins the
+// branches an earlier pass proved cannot reach their target in rel8. The
+// decisions are part of the initial construction rather than an update
+// applied to a fresh X86Asm, so nothing in the assembler ever holds a second
+// reference to the struct it is threading.
+function x86_asm_new_for(relaxing: boolean, longs: boolean[]): X86Asm {
+    return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_widths: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: relaxing, br_long: x86_bools_copy(longs), br_n: 0, br_offs: [], br_names: [], br_shorts: [], unknown: [] };
 }
 
 // x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata
@@ -3886,6 +3897,13 @@ function x86_bools_differ(x: boolean[], y: boolean[]): boolean {
     return false;
 }
 
+function x86_bools_copy(xs: boolean[]): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) { out = out.append(xs[i]); i = i + 1; }
+    return out;
+}
+
 function x86_bools_all_true(n: i32): boolean[] {
     var out: boolean[] = [];
     var i: i32 = 0;
@@ -3894,8 +3912,7 @@ function x86_bools_all_true(n: i32): boolean[] {
 }
 
 function x86_gas_assemble_pass(src: string, longs: boolean[]): X86Asm {
-    var a: X86Asm = x86_asm_new();
-    a = X86Asm { ...a, relaxing: true, br_long: longs };
+    var a: X86Asm = x86_asm_new_for(true, longs);
     var section: i32 = 0; // 0 = .text, 1 = .rodata
     var lines: string[] = x86_str_split(src, "\n");
     var li: i32 = 0;
