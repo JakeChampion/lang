@@ -6215,84 +6215,6 @@ function consume_array_suffix(p: Par, name: string): (string, boolean, string, P
     return (name, false, "", p);
 }
 
-// coarsen_type_seg coarsens ONE tuple-element spelling: a segment
-// containing a `=>` is a function type — "fn", or "fn[]" for a
-// parenthesized fn-array element ("((i32)=>i32)[]") — unless the
-// segment is itself a nested TUPLE (a parenthesized list with a comma
-// at its own depth 1), which recurses through coarsen_fn_elems. A
-// segment with no arrow passes through unchanged.
-function coarsen_type_seg(seg: string): string {
-    var has_arrow: boolean = false;
-    var k: i32 = 0;
-    while (k + 1 < seg.len()) {
-        if (seg[k] == b'=' && seg[k + 1] == b'>') { has_arrow = true; }
-        k = k + 1;
-    }
-    if (!has_arrow) { return seg; }
-    if (seg.len() >= 2 && seg[0] == b'(') {
-        // Find the close paren matching seg[0], and whether a depth-1
-        // comma appears inside it (a nested tuple's element separator).
-        var d: i32 = 0;
-        var close: i32 = 0 - 1;
-        var comma1: boolean = false;
-        var j: i32 = 0;
-        while (j < seg.len()) {
-            if (seg[j] == b'(' || seg[j] == b'[') { d = d + 1; }
-            else if (seg[j] == b')' || seg[j] == b']') {
-                d = d - 1;
-                if (d == 0 && seg[j] == b')' && close < 0) { close = j; }
-            }
-            else if (seg[j] == b',' && d == 1 && close < 0) { comma1 = true; }
-            j = j + 1;
-        }
-        // `(params) => R` — the parens are a PARAM LIST (arrow follows
-        // the close, possibly with a depth-1 comma between the params):
-        // the whole segment is one fn type.
-        if (close >= 0 && close + 2 < seg.len() && seg[close + 1] == b'=' && seg[close + 2] == b'>') {
-            return "fn";
-        }
-        // Nested tuple (`((i32)=>i32, i32)`), possibly with an array
-        // suffix: recurse on the parenthesized part, keep the suffix.
-        if (comma1 && close >= 0) {
-            return coarsen_fn_elems(slice_unchecked(seg, 0, close + 1) + "") + slice_unchecked(seg, close + 1, seg.len());
-        }
-        // Parenthesized whole-fn element (`((i32)=>i32)` / with "[]").
-        if (close >= 0 && close + 1 < seg.len()) { return "fn" + slice_unchecked(seg, close + 1, seg.len()); }
-        return "fn";
-    }
-    return "fn";
-}
-
-// coarsen_fn_elems rewrites a reconstructed TUPLE type spelling whose
-// elements include function types — "((i32)=>i32, i32)" — so each
-// fn-typed depth-1 segment collapses to the coarse "fn" tag all
-// consumers expect ("(fn, i32)"), mirroring how a standalone fn type
-// coarsens to "fn". Elements with no arrow pass through untouched, so
-// the precise spellings tuple-destructure relies on survive.
-function coarsen_fn_elems(spelling: string): string {
-    if (spelling.len() < 2 || spelling[0] != b'(') { return spelling; }
-    var inner: str = slice_unchecked(spelling, 1, spelling.len() - 1);
-    var out: string = "(";
-    var depth: i32 = 0;
-    var start: i32 = 0;
-    var first: boolean = true;
-    var i: i32 = 0;
-    while (i <= inner.len()) {
-        if (i == inner.len() || (inner[i] == b',' && depth == 0)) {
-            var seg: string = slice_unchecked(inner, start, i) + "";
-            while (seg.len() > 0 && seg[0] == b' ') { seg = slice_unchecked(seg, 1, seg.len()) + ""; }
-            while (seg.len() > 0 && seg[seg.len() - 1] == b' ') { seg = slice_unchecked(seg, 0, seg.len() - 1) + ""; }
-            if (!first) { out = out + ", "; }
-            out = out + coarsen_type_seg(seg);
-            first = false;
-            start = i + 1;
-        } else if (inner[i] == b'[' || inner[i] == b'(') { depth = depth + 1; }
-        else if (inner[i] == b']' || inner[i] == b')') { depth = depth - 1; }
-        i = i + 1;
-    }
-    return out + ")";
-}
-
     // `dyn Trait` (single) or `dyn A + B + …` (multi-trait object) — a
     // runtime trait-object type. The self-host erases it to a coarse
     // `"dyn <trait>"` / `"dyn A + B"` spelling and dispatches method
@@ -6397,16 +6319,18 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
         // parens wrap a whole function type (`(() => i32)`), not a
         // tuple — coarse it to "fn" (a closure box). With a depth-1
         // comma the parens are a TUPLE whose elements include fn
-        // types (`((i32) => i32, i32)`); keep the arrow in the
-        // reconstructed spelling so coarsen_fn_elems below can
-        // collapse just the fn-typed SEGMENTS. (The `(T,…) => R`
-        // form, with `=>` *after* the parens, is handled below.)
+        // types (`((i32) => i32, i32)`), and each such ELEMENT keeps
+        // its signature: the result type is what lets the checker type
+        // `t.N()` (#7961). (The `(T,…) => R` form, with `=>` *after*
+        // the parens, is handled below.)
         if (tpk == "=>") {
             is_fn = true;
-            // `-fmt` spells the arrow the way native prints it; the
-            // compile parse's consumers were written against the
-            // unspaced form coarsen_fn_elems scans.
-            if (p.verbatim) { tbuf = tbuf + " => "; } else { tbuf = tbuf + "=>"; }
+            // Both paths spell the arrow the way render_type_ref does, so a
+            // reconstructed tuple spelling is canonical: parse_type_ref /
+            // render_type_ref round-trip it, which is what lets a fn-typed
+            // ELEMENT keep its signature instead of collapsing to the coarse
+            // tag (#7961).
+            tbuf = tbuf + " => ";
             p = p.advance();
             tprev_word = false;
             continue;
@@ -6509,12 +6433,10 @@ function parse_type_paren(p: Par): (string, boolean, string, Par) {
     // still maps the whole "(…)" to "unknown", so this is a
     // strict superset of the old coarse "tuple" placeholder. A
     // trailing `[]` makes it an array of tuples. An fn-typed
-    // element's spelling collapses to the coarse "fn" tag
-    // (`((i32) => i32, i32)` → "(fn, i32)") — before this,
-    // ANY arrow inside the parens coarsened the WHOLE type to
-    // "fn", so a tuple containing a function wasn't even a
-    // tuple type to the self-host compiler.
-    if (is_fn && !p.verbatim) { tbuf = coarsen_fn_elems(tbuf); }
+    // ELEMENT keeps its full signature — the arrow is what says
+    // "function value" and the result type is what lets the
+    // checker type a call through it (#7961). Consumers ask
+    // parser.ref_is_fn_value rather than matching a spelling.
     return consume_array_suffix(p, tbuf);
 }
 
@@ -8417,6 +8339,31 @@ pub function parse_type_ref(sin: string): TypeRef {
     }
     // Plain scalar / named type (incl. opaque "dyn …" / "own …" spellings).
     return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false, is_fn: false };
+}
+
+// ref_is_fn_value reports whether `r` names a FUNCTION value: the arrow form
+// itself, or the parenthesised grouping of one, which parse_type_ref models as
+// a one-element tuple (Fern has no singleton tuples, so there is nothing else
+// `(X)` can be). Both spellings occur as a tuple ELEMENT — `((i32) => i32, i32)`
+// gives the bare form, `((() => i32), i32)` the grouped one — and the grouping
+// parens are NOT redundant to unwrap: `((string) => string)[]` is an array of
+// functions while `(string) => string[]` is one function returning an array, so
+// they are kept and every consumer asks this instead of matching a spelling.
+//
+// An array of functions is an ARRAY, not a function, so a suffix disqualifies.
+pub function ref_is_fn_value(r: TypeRef): boolean {
+    if (r.array_depth != 0) { return false; }
+    if (r.is_fn) { return true; }
+    return r.is_tuple && r.args.len() == 1 && r.args[0].is_fn;
+}
+
+// ref_fn_result returns the RESULT type of a fn `r` — parse_type_ref puts the
+// parameters and the result in `args` with the result last. Only meaningful
+// when ref_is_fn_value(r); the caller checks that first.
+pub function ref_fn_result(r: TypeRef): TypeRef {
+    var f: TypeRef = r;
+    if (!f.is_fn) { f = f.args[0]; }
+    return f.args[f.args.len() - 1];
 }
 
 // render_type_ref is the inverse of parse_type_ref: it reproduces the canonical
