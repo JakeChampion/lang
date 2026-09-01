@@ -1284,32 +1284,21 @@ function main(): i32 { return raw(3); }`,
 			},
 		},
 		{
-			// KNOWN freeEligible / lastUses DIVERGENCE — the str family's
-			// routing precondition, pinned so it burns down visibly instead
-			// of blocking the wave silently.
+			// The str family's routing precondition, met. Native used to taint
+			// BOTH locals: `xs` as a container the callee stores into and hands
+			// back, and `v` through computeFreeEligible's string-call-arg taint
+			// — a string passed to a user function may be retained by a callee
+			// the intraprocedural analysis cannot see through, so freeing it
+			// caller-side would dangle the retained copy. The exemption is
+			// paramCountedRetain: a callee that keeps the param only through
+			// COUNTED occurrences holds a reference of its own, so the caller's
+			// release is balanced, and an append sink did not qualify.
 			//
-			// Native taints BOTH locals here: `xs` as a container the callee
-			// stores into and hands back, and `v` through computeFreeEligible's
-			// blanket string-call-arg taint (rc_analysis.go ~1423) — a native
-			// single-word string passed to a user function may be retained by
-			// a callee the intraprocedural analysis cannot see through, and
-			// freeing it caller-side then dangles the retained copy. That taint
-			// carries one exemption, paramCountedRetain: a callee keeping the
-			// param only through COUNTED constructions (a struct literal, the
-			// lexer's `*_tok` helpers) holds a reference of its own, so the
-			// caller's release is balanced. An append sink is not counted, so
-			// the taint stands.
-			//
-			// The self-host's ported plan has neither half: rc_fe_walk_expr's
-			// call arm escapes only variant ctors, IIFEs and the direct
-			// set/append/push/with method sinks, and its param seed skips
-			// string params outright. It therefore grants exactly the shape
-			// native refuses. That is harmless while the str release families
-			// stay CREDIT-gated (their own escape walkers refuse a call arg),
-			// and it is why routing them through the plan needs native's taint
-			// ported first: the plan being wider than native there turns a
-			// leak into a dangle. The tuple families are unaffected — their
-			// gates ask about tuple locals, not string args.
+			// Routing the str release families through the plan was blocked on
+			// that taint being ported, because a plan WIDER than native is what
+			// turns a leak into a dangle. Native is no longer the narrower side,
+			// so the block is gone. (The tuple families never depended on it —
+			// their gates ask about tuple locals, not string args.)
 			name: "string-call-arg-taint",
 			src: `function stash(acc: string[], s: string): string[] {
 	return acc.append(s);
