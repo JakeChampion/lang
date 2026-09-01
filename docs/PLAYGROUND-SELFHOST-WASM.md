@@ -156,7 +156,7 @@ measurement found, and it is the one worth closing first: a wasm-hosted
 compiler is only interesting if it agrees with the native one, and today
 nothing asks.
 
-### 2. Native `wasmbin` cannot compile the self-host compiler at all
+### 2. Native `wasmbin` cannot compile the self-host compiler at all (#7947)
 
 ```
 $ ./bin/fern -target wasm32-wasi -emit core-module -o out.wasm examples/self_host/fern.fern
@@ -237,7 +237,7 @@ its size is unknown until it is root-caused:
    program. Unknown size; everything else is small and none of it matters until
    this is done, because a compiler that miscompiles nested arithmetic cannot
    ship to a playground.
-2. **strbuf in `wasmbin`** (blocker 2). Contained: three scratch slots appended
+2. **strbuf in `wasmbin`** (blocker 2, #7947). Contained: three scratch slots appended
    to the `memlayout.go` chain and three `runtimeHelperSpecs` entries keyed by
    the source names, the way `poll` and `isatty` already are
    (`runtime.go:1698,1713`). The self-host wasm implementation
