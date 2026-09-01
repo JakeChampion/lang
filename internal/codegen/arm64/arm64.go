@@ -10266,7 +10266,7 @@ type generator struct {
 	// (#5548), one entry per instrumented source line. Empty when -cover
 	// is off, which is what every coverage emission is gated on.
 	coverSites []ir.CoverSite
-	out strings.Builder
+	out        strings.Builder
 	// noPeephole disables the streaming output peephole (Options.NoPeephole).
 	noPeephole bool
 	// peepWin is the streaming peephole's sliding window of recently emitted
