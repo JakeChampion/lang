@@ -4693,7 +4693,7 @@ pub function trig_limbs_func(): string {
     var o: string = "";    o = o + "  (func $__fern_2opi_limb (param $i i64) (result i64)\n";
     var li: i32 = 0;
     while (li < limbs.len()) {
-        o = o + "    (if (i64.eq (local.get $i) (i64.const " + li.to_string() + ")) (then (return (i64.const " + limbs[li] + "))))\n";
+        o = o + "    (if (i64.eq (local.get $i) (i64.const " + util.i32_to_string(li) + ")) (then (return (i64.const " + limbs[li] + "))))\n";
         li = li + 1;
     }
     o = o + "    (i64.const 0))\n";
