@@ -232,7 +232,12 @@ func TestCITestWeightsFlagsShardNearBudget(t *testing.T) {
 	})
 	w := weightsFile(t, "TestSelfHostHeavy 738\nTestSelfHostMid 130\nTestSelfHostAlso 54\n")
 
-	code, out := runWeights(t, []string{"GITHUB_ACTIONS=1"}, "check", timings, w)
+	// The budget is pinned explicitly rather than left to the script's default:
+	// this test is about the near-budget arithmetic, and the default tracks the
+	// workflow's -test.timeout (TestSelfHostWeightGateBudgetMatchesShardTimeout
+	// is what holds those two together). Without this the fixture's numbers
+	// would have to be restated every time the shard timeout moves.
+	code, out := runWeights(t, []string{"GITHUB_ACTIONS=1", "FERN_WEIGHT_SHARD_BUDGET_SECONDS=1080"}, "check", timings, w)
 	if code != 0 {
 		t.Fatalf("want exit 0, got %d: %s", code, out)
 	}

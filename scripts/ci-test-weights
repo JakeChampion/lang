@@ -33,7 +33,7 @@
 
 set -euo pipefail
 
-# Below this, a wrong weight cannot plausibly threaten an 18-minute shard.
+# Below this, a wrong weight cannot plausibly threaten a 28-minute shard.
 MIN_SECONDS="${FERN_WEIGHT_MIN_FLAG_SECONDS:-60}"
 # Flag when measured exceeds the declared entry by more than this factor.
 UNDER_FACTOR="${FERN_WEIGHT_UNDER_FACTOR:-2}"
@@ -41,7 +41,7 @@ UNDER_FACTOR="${FERN_WEIGHT_UNDER_FACTOR:-2}"
 SAFETY="${FERN_WEIGHT_SAFETY:-1.5}"
 # The shards' `-test.timeout`, in seconds. Pinned to the workflow by
 # TestSelfHostWeightGateBudgetMatchesShardTimeout (internal/sourcelint).
-BUDGET="${FERN_WEIGHT_SHARD_BUDGET_SECONDS:-1080}"
+BUDGET="${FERN_WEIGHT_SHARD_BUDGET_SECONDS:-1680}"
 # A single test costing this share of the budget belongs in OWN_JOB_TESTS
 # rather than in a bigger weight (#6667) — no weight can buy more wall than
 # the job has. Reported as a standing NOTE in the summary only: it is true of
