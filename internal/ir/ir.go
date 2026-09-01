@@ -16888,10 +16888,50 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2})
 					b.emit(Op{Kind: OpDrop})
 				}
+				// The buffer-only dec above is right for the push MOVE-grow
+				// and for nothing else: that helper transfers the old
+				// buffer's elements into the new one WITHOUT an inc, so
+				// walking them here would over-release. Every other RHS
+				// leaves the old buffer owning its own element references —
+				// `a = mk()` outright, and `a = f(a)` through a cowing
+				// callee because __fern_arr_cow_inplace_ptr incs each
+				// element into the copy it hands back. The buffer-only dec
+				// then frees the buffer and strands one element per
+				// overwrite, which is the same reclaim `var a = mk()`
+				// re-executed in a loop already gets right
+				// (emitVarReinitDropOld → emitOwnedSlotDrop).
+				release := arrDec
+				if !b.isSelfArrayPushLocal(n.Value, t.Name) {
+					release = func() { b.emitOwnedSlotDrop(idx, at) }
+				}
 				if b.isConsumedArrayParam(t.Name) {
-					b.emitConsumedArrayOverwriteDec(t.Name, arrDec)
-				} else {
+					b.emitConsumedArrayOverwriteDec(t.Name, release)
+				} else if !b.isSelfArrayPushLocal(n.Value, t.Name) && exprMentionsIdent(n.Value, t.Name) {
+					// A callee can hand the local's OWN buffer back — the cow
+					// took its rc==1 in-place path, the grow had room, or the
+					// callee flowed its argument through unchanged. The slot's
+					// old and new values are then the SAME live buffer, and
+					// what has to go is only the reference the call added, not
+					// the elements: the shallow dec, exactly as before. It is
+					// the pointer-CHANGED arm that is a death, and there the
+					// old buffer still owns the elements the copy inc'd, so it
+					// takes the deep drop. Same identity test isSelfMapMutation
+					// uses; `a = a.with(..)` spelled inline needs no dec at all
+					// and never reaches here (isSelfArraySetReassign, above).
+					newTmp := b.allocSlot()
+					b.locals[fmt.Sprintf("__selfarr_new_%d", newTmp)] = newTmp
+					b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
+					b.emit(Op{Kind: OpLoadLocal, I32: idx})
+					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
+					b.emit(Op{Kind: OpNe})
+					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+					release()
+					b.emit(Op{Kind: OpElse})
 					arrDec()
+					b.emit(Op{Kind: OpEnd})
+					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
+				} else {
+					release()
 				}
 			} else if !b.enumRcPayloadsEligibleForValue(n.Value) && b.constructionMovesIdent(n.Value, t.Name) {
 				// `x = Ctor(.., x, ..)` (e.g. `acc = Cons(1, acc)`): under the
@@ -17710,6 +17750,21 @@ func (b *builder) selfReassignOwnedLocal(rhs ast.Expr, name string, ty ast.Type)
 		return !mentions
 	})
 	return mentions
+}
+
+// exprMentionsIdent reports whether `name` appears anywhere in `e`, so the
+// array overwrite dec can tell a RHS that may hand the local's OWN buffer
+// back (`a = f(a)`) from one that cannot (`a = mk()`). The former needs the
+// identity guard before releasing the old value; the latter does not.
+func exprMentionsIdent(e ast.Expr, name string) bool {
+	found := false
+	ast.Walk(e, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == name {
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 // consumedArrayFlagName is the hidden i32 local that tracks, at runtime,
