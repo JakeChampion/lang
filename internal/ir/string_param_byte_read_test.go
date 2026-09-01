@@ -65,11 +65,9 @@ func TestStringParamThatIsRetainedStaysUncredited(t *testing.T) {
 		src  string
 	}{
 		{"returned bare", `function keep(p: string): string { return p; }`},
-		{"stored in an array and returned", `function keep(p: string): string[] {
-            var out: string[] = [];
-            out = out.append(p);
-            return out;
-        }`},
+		// "stored in an array and returned" moved OUT of this list: the
+		// push store is a counted occurrence since the #7914 element
+		// credit (TestStringParamPushedElementIsCounted).
 		{"bound to a local", `function keep(p: string): i32 {
             var s: string = p;
             return s.len();

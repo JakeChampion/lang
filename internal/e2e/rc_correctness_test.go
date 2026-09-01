@@ -5983,7 +5983,16 @@ function main(): i32 {
 		// keeps its reference alive for the container. Pinned on the
 		// answer + the underflow counter because an over-releasing
 		// build reads BETTER on live_bytes.
-		name: "copying_builtin_use_does_not_launder_a_retaining_one",
+		// Originally the launder pin from #7867 slice 2: the append store
+		// REFUSED the param, and this case pinned the resulting leak to
+		// prove the copying-builtin credit did not launder it. The #7914
+		// push-element credit made that same append a COUNTED occurrence,
+		// so both occurrences are now legitimately safe and the case's job
+		// flipped: it proves the two credits COMPOSE and the returned
+		// array's element stays live through the caller's read. The
+		// refusal it used to watch moved to
+		// string_pushed_then_returned_bare_stays_refused below.
+		name: "copying_builtin_composes_with_push_credit",
 		src: `
 @noinline
 function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
@@ -6004,6 +6013,38 @@ function main(): i32 {
     while (i < 4) {
         var xs: string[] = keep(mk(pad, i));
         t = t + xs[0].len();
+        i = i + 1;
+    }
+    return (t - 80) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The push credit's REFUSAL half: a param that is pushed AND
+		// returned bare has an occurrence nothing counts, so it stays
+		// uncredited and the caller's temp keeps its safe leak — pinned
+		// in the gate so the refusal is watched (the role the launder
+		// pin above used to carry).
+		name: "string_pushed_then_returned_bare_stays_refused",
+		src: `
+@noinline
+function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
+
+@noinline
+function keep(xs: string[], nm: string): string {
+    var ys: string[] = xs.append(nm);
+    if (ys.len() > 99) { return "x"; }
+    return nm;
+}
+
+function main(): i32 {
+    var pad: string = "xyzw";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var base: string[] = [];
+        var got: string = keep(base, mk(pad, i));
+        t = t + got.len();
         i = i + 1;
     }
     return (t - 80) + __rc_underflow_count();
@@ -6218,6 +6259,51 @@ function main(): i32 {
     var r: i32 = 0;
     while (r < 3) { t = t + build(6).count; r = r + 1; }
     return (t - 18) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// #7914 frontier. A fresh string built in argument position for a
+		// callee that stores its parameter via `.append` stranded once per
+		// call — the checker's derived block-scope shape, one 64 B temp per
+		// `child(w(...))` (14/round measured, 44,800 B over 50 rounds).
+		// The push element is a COUNTED store, so stringParamCounted now
+		// credits the position (the array tier's #7867 slice-1/4 argument)
+		// and the caller's stage-(b) release fires. The bare-return
+		// hazard keeps its refusal (h_ret_bare probe, leak-safe).
+		name: "derived_scope_string_arg_temp_reclaimed",
+		src: `
+struct Tab { xs: i32[], n: i32 }
+struct Env { names: string[], t: Tab, depth: i32 }
+
+@noinline
+function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
+
+@noinline
+function (e: Env) child(nm: string): Env {
+    return Env { names: e.names.append(nm), t: e.t, depth: e.depth + 1 };
+}
+
+@noinline
+function walk(e: Env, d: i32): i32 {
+    if (d == 0) { return e.depth + e.t.n + e.names.len(); }
+    var acc: i32 = 0;
+    acc = acc + walk(e.child(w("a")), d - 1);
+    acc = acc + walk(e.child(w("b")), d - 1);
+    return acc + e.depth;
+}
+
+@noinline
+function round(i: i32): i32 {
+    var tab: Tab = Tab { xs: [i, i + 1, i + 2], n: i };
+    var root: Env = Env { names: [], t: tab, depth: 0 };
+    return walk(root, 3) % 97;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 50) { t = t + round(r); r = r + 1; }
+    return (t % 89) - 15 + __rc_underflow_count();
 }
 `,
 	},

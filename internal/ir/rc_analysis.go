@@ -1059,6 +1059,20 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 					}
 				}
 			}
+			// `xs.append(p)` — __method_Array_push's ELEMENT position is a
+			// COUNTED store: emitArrayPush emits the alias inc for a
+			// pointer element unconditionally (needsRcIncOnAlias, and an
+			// Ident read is never a move site), and the buffer's deep drop
+			// gives it back. The same argument that credited the position
+			// in arrayParamCounted (#7867 slices 1 and 4); the string tier
+			// never had it, so a helper storing its string param into an
+			// array — the checker's per-block derived Scope, the #7914
+			// frontier's dominant shape — refused, and every caller's
+			// fresh argument temp stranded uncounted.
+			if id, ok := x.Callee.(*ast.Ident); ok &&
+				id.Name == "__method_Array_push" && len(x.Args) == 2 {
+				mark(x.Args[1])
+			}
 			// Passing `s` on to a callee that is ITSELF counted-retain in that
 			// position retains nothing new: whatever the callee does with it is
 			// already known to be a counted store or a pure read. This is the

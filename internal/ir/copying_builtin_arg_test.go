@@ -35,7 +35,16 @@ func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 // One copying use does not launder a retaining one: everyOccurrenceSafe
 // is all-or-nothing, so a parameter that is ALSO stored keeps the
 // refusal — crediting it would let the caller free a live buffer.
-func TestRetainingUseAlongsideCopyingBuiltinStaysUncredited(t *testing.T) {
+func TestCopyingUseComposesWithThePushCredit(t *testing.T) {
+	// Originally this pinned the refusal: the append store was treated as
+	// uncounted retention, and the copying-builtin credit must not launder
+	// it. The #7914 push-element credit made the append a COUNTED
+	// occurrence (emitArrayPush's unconditional element retain), so both
+	// occurrences are now legitimately safe and the two credits compose —
+	// measured balanced end-to-end by the
+	// copying_builtin_composes_with_push_credit corpus case. The refusal
+	// this used to watch (an occurrence nothing counts) lives on in
+	// TestStringParamPushedThenReturnedBareStaysUncredited.
 	src := `function keep(p: string): string[] {
     var n: i32 = __count_byte(p, 97);
     var out: string[] = [];
@@ -45,9 +54,9 @@ func TestRetainingUseAlongsideCopyingBuiltinStaysUncredited(t *testing.T) {
 }
 function main(): i32 { return 0; }`
 	got := paramCountedFor(t, src, "keep")
-	if len(got) == 1 && got[0] {
-		t.Error("paramCountedRetain[keep] = [true], but the callee stores its parameter " +
-			"in an array it returns — the copying use must not credit the retaining one")
+	if len(got) != 1 || !got[0] {
+		t.Errorf("paramCountedRetain[keep] = %v, want [true] — the copying read and "+
+			"the counted push store are each safe occurrences", got)
 	}
 }
 
