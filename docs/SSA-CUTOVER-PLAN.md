@@ -87,10 +87,11 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **no** | no | unreachable from the CLI |
+| `x86_64ssa` | **yes, since 2026-09-01** | no | reachable; refuses on `EnumSentinel` |
 
-The spread is much wider than "arm64 is ahead". One backend is corpus-complete;
-the other two cannot compile an ordinary program at all.
+The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
+one compiles ordinary programs but has never been differentially tested, and one
+cannot compile a program with two functions in it.
 
 Two concrete blockers, and only two:
 
@@ -120,11 +121,29 @@ Two concrete blockers, and only two:
    (When it is built, note the artifact asymmetry: the default backend emits
    a WASI command, `-backend ssa` a core module exporting `main`, so stdout is
    not comparable without `-component-wrap-cli` or a run-mode adapter.)
-2. **x86-64 is not reachable.** `x86_64ssa` has `EmitModule` (objects) and
-   per-function `EmitAsm`, but no module-level assembly emitter matching
-   arm64's `EmitAsmModule`, so `-backend ssa` rejects `-target x86-64-linux`
-   outright. This is #6979's complaint — the code-size harness measures a
-   pipeline the CLI never runs. Real work, not a wiring line.
+2. **x86-64 was not reachable — and the reason given here was wrong.** This
+   said `x86_64ssa` had "no module-level assembly emitter matching arm64's
+   `EmitAsmModule`", making it "real work, not a wiring line".
+   `x86_64ssa.EmitAsmModule` was already there (`gas.go:53`), multi-function,
+   System V ABI, runtime helpers and all, with its own tests
+   (`gas_call_test.go`). Nothing selected it. The CLI gate listed only
+   `arm64-linux` and `wasm32-wasi`, which is #6979's complaint — a code-size
+   harness measuring a pipeline the CLI never runs.
+
+   Wired 2026-09-01. Measured on the shapes it covers, emitted instructions
+   against the shipping stack machine: `call_overhead` 713 → 137 (**−80.7%**),
+   `int_loop` 114 → 48 (−57.8%), `array_index` 573 → 250 (−56.3%). Over
+   `examples/*.fern` + `examples/bench/*.fern`, **25 of 29 compile**; all four
+   refusals are the single missing opcode `EnumSentinel`, which arm64ssa emits
+   as a shared `.rodata` cell per tag and x86_64ssa's GAS emitter does not yet
+   write. `dyn` is deliberately excluded (`ir.DynSupported()` is not passed):
+   the ops are implemented but `EmitAsmModule` takes no vtable declarations, so
+   the tables they read would be missing at link time.
+
+   What remains for this step is therefore `EnumSentinel`, vtables, and **the
+   corpus differential** — which is the discovery mechanism, not the
+   formality: arm64's first run found four wrong answers and 56 SIGSEGVs, and
+   nothing here has been differentially tested yet.
 
 ## The cutover point
 

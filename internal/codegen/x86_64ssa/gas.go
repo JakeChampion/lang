@@ -656,6 +656,18 @@ func isDeadSelfMove(line string) bool {
 }
 
 var gpRegs = []string{"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"}
+
+// DefaultNumAlloc is the largest allocatable file EmitAsmModule accepts, and so
+// the size a caller with no reason to pick otherwise should ask for.
+//
+// It is len(gpRegs) MINUS numScratch, not len(gpRegs): Program.NumRegFile is
+// `numAlloc + numScratch` (the scratch registers sit above the allocatable file
+// and are mapped out of the same gpRegs), and EmitAsmModule refuses a function
+// whose NumRegFile exceeds the mapping. Asking for all fourteen therefore
+// refuses every function, with a message that reads like a program too complex
+// to allocate rather than a caller asking for an impossible file. Tests sweep
+// smaller files deliberately, to exercise spilling.
+var DefaultNumAlloc = len(gpRegs) - numScratch
 var reg8 = []string{"al", "bl", "cl", "dl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"}
 var reg32 = []string{"eax", "ebx", "ecx", "edx", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"}
 var reg16 = []string{"ax", "bx", "cx", "dx", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w"}

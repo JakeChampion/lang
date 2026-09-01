@@ -60,6 +60,7 @@ import (
 	"github.com/jakechampion/lang/internal/codegen/wasmbin"
 	"github.com/jakechampion/lang/internal/codegen/wasmssa"
 	x86_64codegen "github.com/jakechampion/lang/internal/codegen/x86_64"
+	"github.com/jakechampion/lang/internal/codegen/x86_64ssa"
 	"github.com/jakechampion/lang/internal/constfold"
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/embed"
@@ -1366,8 +1367,8 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	switch backend {
 	case "":
 	case "ssa":
-		if target != "wasm32-wasi" && target != "arm64-linux" {
-			return 1, fmt.Errorf("-backend ssa is not available for -target %s (available for: arm64-linux, wasm32-wasi)", target)
+		if target != "wasm32-wasi" && target != "arm64-linux" && target != "x86-64-linux" {
+			return 1, fmt.Errorf("-backend ssa is not available for -target %s (available for: arm64-linux, x86-64-linux, wasm32-wasi)", target)
 		}
 	default:
 		return 1, fmt.Errorf("unknown -backend %q (want ssa, or omit it for the target's default emitter)", backend)
@@ -1454,6 +1455,36 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		}
 		if err := linkNative(asm, outPath, "", "", nil); err != nil {
 			return 1, fmt.Errorf("arm64/ssa link: %v", err)
+		}
+		return 0, nil
+	}
+
+	if backend == "ssa" && target == "x86-64-linux" {
+		// Experimental SSA-direct x86-64 backend (internal/codegen/x86_64ssa) —
+		// the same pipeline as the arm64 block above (parse → check →
+		// ir.LowerWith → ssa.LiftFromIR → ssa.Optimize → EmitAsmModule), linked
+		// by the same in-process ELF writer the default x86-64 target uses.
+		//
+		// This is phase 2 of #4112 becoming reachable. The emitter and its
+		// module-level assembler have existed and been tested for a while;
+		// nothing selected them, so docs/SSA-CUTOVER-PLAN.md's readiness table
+		// lists x86-64 as "unreachable from the CLI" and calls a module
+		// assembler the long pole. The assembler was already there — see that
+		// doc's corrected note.
+		asm, err := buildX86SSA(prog, info)
+		if err != nil {
+			return 1, fmt.Errorf("x86-64/ssa: %v", err)
+		}
+		// No -o writes the assembly to stdout, as the arm64 SSA path and the
+		// default emitter both do: -o names the output BINARY.
+		if outPath == "" {
+			if _, werr := os.Stdout.WriteString(asm); werr != nil {
+				return 1, werr
+			}
+			return 0, nil
+		}
+		if err := linkNativeX86(asm, outPath, "", "", nil); err != nil {
+			return 1, fmt.Errorf("x86-64/ssa link: %v", err)
 		}
 		return 0, nil
 	}
@@ -1954,6 +1985,53 @@ func buildWasmSSA(prog *ast.Program, info *checker.Info) ([]byte, error) {
 // lift fails, or emit rejects the SSA (a coverage gap) — never a miscompile.
 // Ptr width is fixed at 8 (arm64). numAlloc is 12, the largest register file the
 // renderer's x0..x15 mapping supports (12 allocatable + 4 scratch = 16).
+// buildX86SSA is buildArm64SSA's twin for x86-64: the same lift → optimise →
+// verify loop, emitted through x86_64ssa.EmitAsmModule.
+//
+// It differs in one deliberate way. `ir.DynSupported()` is NOT passed, because
+// x86_64ssa.EmitAsmModule takes no vtable declarations and so writes no vtable
+// `.rodata` — the ops are implemented in emit.go, but the tables they read are
+// not emitted, and a `dyn` program would link against a missing symbol rather
+// than fail cleanly. Lowering without the option makes `dyn` a clean refusal at
+// the IR stage instead, which is the promise this backend makes. Passing the
+// vtables through is the next slice, not a line to add here.
+func buildX86SSA(prog *ast.Program, info *checker.Info) (string, error) {
+	irProg, err := ir.LowerWith(prog, info, 8)
+	if err != nil {
+		return "", fmt.Errorf("ir.LowerWith: %v", err)
+	}
+	ir.ElideClosurePair(irProg, 8)
+	// Dead-function elimination, for the reason the arm64 twin documents: lift
+	// only what `main` reaches, or every imported stdlib module is lifted and a
+	// still-unported helper bails a program that never calls it. CodegenAliases
+	// keeps a Map call site's `_impl` alive — the IR emits `map_new` and only
+	// the emitter knows that resolves to `map_new_impl`.
+	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases)
+	funcs := map[string]*ssa.Func{}
+	shapes := ir.NewCallShapes(irProg)
+	for _, fn := range irProg.Funcs {
+		if live != nil && !live[fn.Name] {
+			continue
+		}
+		f, err := ssa.LiftFromIRWith(fn, shapes)
+		if err != nil {
+			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
+		}
+		ssa.Optimize(f)
+		// After Optimize, never before — the lifter leaves blocks unreachable
+		// for PruneUnreachable to drop, and Verify's use-before-def rule would
+		// reject them. The arm64 twin carries the full reasoning.
+		if err := ssa.Verify(f); err != nil {
+			return "", fmt.Errorf("ssa.Verify %s: %v", fn.Name, err)
+		}
+		funcs[fn.Name] = f
+	}
+	if _, ok := funcs["main"]; !ok {
+		return "", fmt.Errorf("no `main` function in program")
+	}
+	return x86_64ssa.EmitAsmModule(funcs, "main", x86_64ssa.DefaultNumAlloc, nil)
+}
+
 func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	// DynSupported enables `dyn Trait` lowering (OpConstVtable / OpBoxDyn /
 	// OpCallDyn + the per-(trait,concrete) vtables). DynRcSupported is
