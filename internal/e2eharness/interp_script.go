@@ -35,7 +35,7 @@ var (
 	langBinErr  error
 )
 
-func BuildLangBinForInterp(t *testing.T) string {
+func BuildLangBinForInterp(t testing.TB) string {
 	t.Helper()
 	langBinOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "fern-e2e-bin-")

@@ -110,7 +110,7 @@ func isExternalFernImport(imp string) bool {
 // sibling `asm_pathprobe_run.fern` present while building `asm_run.fern`) are
 // excluded, so the same driver hashes identically regardless of what unrelated
 // drivers a test happens to drop alongside it.
-func SelfHostImportClosure(t *testing.T, dir, fernName string) []string {
+func SelfHostImportClosure(t testing.TB, dir, fernName string) []string {
 	t.Helper()
 	files, err := selfHostImportClosure(dir, fernName)
 	if err != nil {
@@ -177,7 +177,7 @@ func selfHostImportClosure(dir, fernName string) ([]string, error) {
 // the same stock driver (e.g. asm_run) share one cache entry even when their
 // project dirs differ in which OTHER drivers they also wrote, and lets the CI
 // `build` job warm a driver under a key the test shards reproduce exactly.
-func HashSelfHostSources(t *testing.T, dir, fernName string) string {
+func HashSelfHostSources(t testing.TB, dir, fernName string) string {
 	t.Helper()
 	files := SelfHostImportClosure(t, dir, fernName)
 	sort.Strings(files)
@@ -234,7 +234,7 @@ func HashSelfHostSources(t *testing.T, dir, fernName string) string {
 // The closure is computed against the SOURCE tree, so it is the same walk
 // HashSelfHostSources keys the build cache on — the copied set and the cache key
 // cannot disagree about what a driver is made of.
-func CopySelfHostDriver(t *testing.T, dir string, entries ...string) {
+func CopySelfHostDriver(t testing.TB, dir string, entries ...string) {
 	t.Helper()
 	var names []string
 	seen := map[string]bool{}
@@ -267,7 +267,7 @@ const selfHostSrcDir = "../../examples/self_host"
 // which is the same staleness #7183 fixed for drivers by deriving the set.
 // Expanding is safe for a list that was already complete: the closure of a
 // complete set is itself, and HashSelfHostSources rejects a set that is not.
-func CopySelfHostFiles(t *testing.T, dir string, names ...string) {
+func CopySelfHostFiles(t testing.TB, dir string, names ...string) {
 	t.Helper()
 	seen := map[string]bool{}
 	for _, name := range names {
@@ -296,7 +296,7 @@ func CopySelfHostFiles(t *testing.T, dir string, names ...string) {
 // link alone runs ~minute — without it a CI shard re-links the same driver
 // per test. The linked binary is copied to dir/out so callers that exec it
 // (or drop sibling files next to it) see a real file in their own dir.
-func BuildSelfHostBin(t *testing.T, gcc, dir, fernName, out string) string {
+func BuildSelfHostBin(t testing.TB, gcc, dir, fernName, out string) string {
 	t.Helper()
 	if InterpDriverMode() {
 		return writeInterpDriverShim(t, dir, fernName, out)
@@ -306,7 +306,7 @@ func BuildSelfHostBin(t *testing.T, gcc, dir, fernName, out string) string {
 	return dst
 }
 
-func CachedDriverBin(t *testing.T, gcc, dir, fernName string) string {
+func CachedDriverBin(t testing.TB, gcc, dir, fernName string) string {
 	t.Helper()
 	key := HashSelfHostSources(t, dir, fernName)
 	path, err := selfHostDriverBinCache.get(key, func() (string, error) {
@@ -506,7 +506,7 @@ func driverLinkArgs(asmPath, binPath string) []string {
 // CachedLink links asm into a static binary once per (gcc, asm) and
 // returns the path to the shared cached binary. Callers copy it to
 // wherever they need it; the cached file must not be mutated.
-func CachedLink(t *testing.T, gcc, asm string) string {
+func CachedLink(t testing.TB, gcc, asm string) string {
 	t.Helper()
 	sum := sha256.Sum256([]byte(gcc + "\x00" + asm))
 	key := hex.EncodeToString(sum[:])
@@ -624,7 +624,7 @@ func linkSelfHostAsm(gcc, base, key, asm, binPath string) error {
 // binary is read-only and only ever exec'd, so a HARDLINK is equivalent and
 // effectively free; we fall back to a copy when the link fails (e.g. src/dst on
 // different filesystems). t.TempDir teardown just drops the extra link.
-func copyExecutable(t *testing.T, src, dst string) {
+func copyExecutable(t testing.TB, src, dst string) {
 	t.Helper()
 	_ = os.Remove(dst) // os.Link fails if dst exists
 	if err := os.Link(src, dst); err == nil {

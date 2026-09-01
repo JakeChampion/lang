@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func WriteSelfHostAsmProject(t *testing.T) string {
+func WriteSelfHostAsmProject(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
 	// rundriver.fern is in the base set because every stdin driver imports it
