@@ -132,17 +132,23 @@ function __map_h2(h: i32): i32 {
     return ((h as u32) >> (25 as u32)) as i32;
 }
 
-// __map_swar_match returns a mask with bit 8j+7 set where byte j of `w`
-// equals `b` — the classic zero-byte finder over `w XOR broadcast(b)`.
-// False positives can only appear in bytes ABOVE a genuine match (a
-// borrow crossing a matched byte), so the LOWEST set bit is always a
-// genuine match and callers that scan matches low-to-high (via __ctz64)
-// or verify each candidate against the entry key are exact.
-function __map_swar_match(w: u64, b: i32): u64 {
-    var lo: u64 = 72340172838076673 as u64;       // 0x0101010101010101
-    var x: u64 = w ^ ((b as u64) * lo);
-    return (x - lo) & (x ^ (18446744073709551615 as u64)) & (9259542123273814144 as u64);
-}
+// The probe loops match ctrl bytes with the classic SWAR zero-byte finder
+// over `w XOR broadcast(b)`:
+//
+//     x = w ^ (b * 0x0101010101010101)
+//     (x - 0x0101010101010101) & ~x & 0x8080808080808080
+//
+// which sets bit 8j+7 where byte j of `w` equals `b`. False positives can
+// only appear in bytes ABOVE a genuine match (a borrow crossing a matched
+// byte), so the LOWEST set bit is always a genuine match, and the loops —
+// which scan matches low-to-high via __ctz64 and verify each candidate
+// against the entry key — are exact. The expression is written out inline
+// at each probe site with the broadcasts hoisted out of the loop: as a
+// helper function it costs two or three real calls per 8-bucket group,
+// which is most of a group's budget.
+function __map_swar_lo(): u64 { return 72340172838076673 as u64; }       // 0x0101…01
+function __map_swar_hi(): u64 { return 9259542123273814144 as u64; }     // 0x8080…80
+function __map_swar_all(): u64 { return 18446744073709551615 as u64; }   // 0xFFFF…FF
 
 // __map_ctrl_set writes one ctrl byte, maintaining the wraparound mirror:
 // every position p ≡ i (mod cap) below cap + 8 gets the byte. One extra
@@ -1012,12 +1018,17 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
     if (homeB >= 0) {
         if (eq_fn(__load_ptr(entriesBase + homeB * entryStride), k)) { return homeB; }
     }
-    var h2: i32 = __map_h2(h);
     var ctrlBase: usize = __map_ctrl_base(buf, cap);
+    var lo: u64 = __map_swar_lo();
+    var hi: u64 = __map_swar_hi();
+    var all: u64 = __map_swar_all();
+    var h2b: u64 = (__map_h2(h) as u64) * lo;
+    var eb: u64 = (128 as u64) * lo;
     var probed: i32 = 0;
     while (probed < cap) {
         var w: u64 = __load_i64(ctrlBase + bucket) as u64;
-        var hits: u64 = __map_swar_match(w, h2);
+        var x: u64 = w ^ h2b;
+        var hits: u64 = (x - lo) & (x ^ all) & hi;
         while (hits != (0 as u64)) {
             var pos: i32 = (bucket + (__ctz64(hits) >> 3)) & mask;
             var b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
@@ -1025,7 +1036,8 @@ function __map_lookup_keyed(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: 
             if (eq_fn(entryK, k)) { return b; }
             hits = hits & (hits - (1 as u64));
         }
-        if (__map_swar_match(w, 128) != (0 as u64)) { return 0 - 1; }
+        var y: u64 = w ^ eb;
+        if (((y - lo) & (y ^ all) & hi) != (0 as u64)) { return 0 - 1; }
         bucket = (bucket + 8) & mask;
         probed = probed + 8;
     }
@@ -1144,11 +1156,18 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
         __store_ptr(entriesBase + homeB * entryStride + ptrW, v);
         return m;
     }
+    var lo: u64 = __map_swar_lo();
+    var hi: u64 = __map_swar_hi();
+    var all: u64 = __map_swar_all();
+    var h2b: u64 = (h2 as u64) * lo;
+    var eb: u64 = (128 as u64) * lo;
+    var tb: u64 = (254 as u64) * lo;
     var probed: i32 = 0;
     var done: boolean = insertSlot != (0 - 1);
     while (!done && probed < cap) {
         var w: u64 = __load_i64(ctrlBase + bucket) as u64;
-        var hits: u64 = __map_swar_match(w, h2);
+        var x: u64 = w ^ h2b;
+        var hits: u64 = (x - lo) & (x ^ all) & hi;
         while (hits != (0 as u64)) {
             var pos: i32 = (bucket + (__ctz64(hits) >> 3)) & mask;
             var b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
@@ -1160,9 +1179,11 @@ pub function __map_set_keyed_impl(m: usize, k: usize, v: usize, hash_fn: (usize)
             }
             hits = hits & (hits - (1 as u64));
         }
-        var empty: u64 = __map_swar_match(w, 128);
+        var y: u64 = w ^ eb;
+        var empty: u64 = (y - lo) & (y ^ all) & hi;
         if (insertSlot == 0 - 1) {
-            var dead: u64 = empty | __map_swar_match(w, 254);
+            var z: u64 = w ^ tb;
+            var dead: u64 = empty | ((z - lo) & (z ^ all) & hi);
             if (dead != (0 as u64)) {
                 insertSlot = (bucket + (__ctz64(dead) >> 3)) & mask;
             }
@@ -1210,11 +1231,16 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
             done = true;
         }
     }
-    var h2: i32 = __map_h2(h);
+    var lo: u64 = __map_swar_lo();
+    var hi: u64 = __map_swar_hi();
+    var all: u64 = __map_swar_all();
+    var h2b: u64 = (__map_h2(h) as u64) * lo;
+    var eb: u64 = (128 as u64) * lo;
     var probed: i32 = 0;
     while (!done && probed < cap) {
         var w: u64 = __load_i64(ctrlBase + bucket) as u64;
-        var hits: u64 = __map_swar_match(w, h2);
+        var x: u64 = w ^ h2b;
+        var hits: u64 = (x - lo) & (x ^ all) & hi;
         while (hits != (0 as u64)) {
             var pos: i32 = (bucket + (__ctz64(hits) >> 3)) & mask;
             var b: i32 = __load_i32(buf + __map_hdr(buf) + pos * 4);
@@ -1229,7 +1255,8 @@ pub function __map_delete_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32
             }
         }
         if (!done) {
-            if (__map_swar_match(w, 128) != (0 as u64)) {
+            var y: u64 = w ^ eb;
+            if (((y - lo) & (y ^ all) & hi) != (0 as u64)) {
                 done = true;
             } else {
                 bucket = (bucket + 8) & mask;
