@@ -63,6 +63,7 @@ Sizes, gzip at -9 because that is what a static host serves:
 |---|---|---|---|
 | `web/fern.wasm` — the playground today | Go, `GOOS=js GOARCH=wasm`, `-s -w` | **28,521,433** | **6,334,648** |
 | `wasm_ir_run` — source → wasm core module | self-host, `-target wasm32-wasi -emit core-module` | **2,344,167** | **613,735** |
+| the whole 19-module compiler, sharded-linked | self-host, per-function-window emit | **2,258,458** | — |
 | `interp_run` — source → interpreted result | same | 787,729 | 221,321 |
 | `checker_run` — type-check only | same | 945,931 | 269,807 |
 | `asm_run` — source → x86-64 asm text | same | 2,100,728 | 570,241 |
@@ -89,10 +90,16 @@ JS shims are already written to survive linear memory detaching under them
 (`web/wasi-shim.js:38-41`, `web/wasi-http-shim.js:21-24`).
 
 The whole 19-module compiler also links and runs as one wasm module today —
-`TestSelfHostWasmWholeCompilerShardedLink`, measured here at 270 s producing
-15,679,514 bytes of WAT, validated, then run to compile a 2-module program.
+`TestSelfHostWasmWholeCompilerShardedLink`, measured here at 241 s over 41
+units, validated, then run to compile a 2-module program. It comes to
+**2,258,458 bytes** as a core module, which is the number to quote: the same
+module is 15,679,514 bytes as WAT text, so the text length that test used to
+report on its own overstates the artifact by 6.9x. Even the entire compiler is
+12.6x under the playground bundle.
+
 That path is sharded per 150-function window across processes because the
-*host-side* emit peaks ~10 GB, not because the result is too big.
+*host-side* emit peaks ~10 GB, not because the result is too big. Nothing about
+the shipped artifact needs sharding.
 
 ### Reproducing
 
