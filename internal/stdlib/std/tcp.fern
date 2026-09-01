@@ -41,9 +41,6 @@
 // Phase 5).
 
 import "std/http";
-// std/headers — the placeholder HttpRequest before parse-success
-// uses header_map_new for the headers field.
-import "std/headers";
 // core/int — int_to_string for the supervisor's worker-death log
 // lines (the raw exit code, straight to stderr).
 import "core/int";
@@ -72,6 +69,49 @@ pub function tcp_serve_deadline(port: i32, handler: (HttpRequest, Platform) => H
         return listener;
     }
     return __serve_loop(listener, handler, recv_deadline_ms);
+}
+
+// tcp_serve_with(port, init, handler) — serve with a caller-owned
+// state value threaded through the request chain. `handler` takes the
+// state alongside the request and returns the state the NEXT request
+// will see, paired with the response to send:
+//
+//     function handle(hits: Map[string, i32], req: HttpRequest,
+//                     plat: Platform): (Map[string, i32], HttpResponse) {
+//         var n: i32 = hits.get_or(req.path, 0) + 1;
+//         return (hits.insert(req.path, n),
+//                 http.http_response_ok(int.int_to_string(n)));
+//     }
+//     var init: Map[string, i32] = map_new(8);
+//     tcp.tcp_serve_with(8080, init, handle);
+//
+// `init` needs the annotated local when its value comes from a
+// context-typed builtin like `map_new`: inline, `S` binds from the
+// unsettled argument before the handler can pin it down.
+//
+// The state lives in the accept loop's own frame, which is what makes
+// it process-lifetime: Fern has no module-level mutable state, and the
+// one alternative — a closure-captured `Cell[T]` — is restricted to
+// cycle-free scalars and strings (E057), so it holds a counter but not
+// a table. Threading has no such limit: `S` is any type.
+//
+// Not available under `tcp_serve_supervised`: a worker death resets
+// the loop frame, so threaded state would silently revert to `init` on
+// every refork. State that must outlive a crash belongs in a store the
+// handler reaches through `plat`.
+pub function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 {
+    return tcp_serve_with_deadline(port, init, handler, __recv_deadline_default());
+}
+
+// tcp_serve_with_deadline(port, init, handler, recv_deadline_ms) —
+// `tcp_serve_with` with an explicit per-request read deadline, the same
+// slow-loris guard `tcp_serve_deadline` applies.
+pub function tcp_serve_with_deadline[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline_ms: i32): i32 {
+    var listener: i32 = tcp_listen(port);
+    if (listener < 0) {
+        return listener;
+    }
+    return __serve_loop_with(listener, init, handler, recv_deadline_ms);
 }
 
 // tcp_recv_deadline(fd, max, deadline_ms) — recv up to `max` bytes,
@@ -120,6 +160,71 @@ pub function tcp_recv_deadline(fd: i32, max: i32, deadline_ms: i32): Option[u8[]
     return Some(tcp_recv(fd, max));
 }
 
+// __read_request(fd, recv_deadline_ms) — drain one connection up to the
+// first parse-success. `None` means no complete request arrived (EOF,
+// the read deadline elapsed, or the size cap was hit); the caller closes
+// the socket without a response, which HTTP/1.1 §10 allows on malformed
+// input.
+//
+// Per-request allocations (recv buffers, the parsed HttpRequest) are
+// reclaimed by reference counting as their last references drop at the
+// end of the caller's iteration. Note: RC cannot collect reference
+// cycles, so a handler that builds a cycle per request leaks until
+// process exit (see docs/CYCLE-COLLECTION-ANALYSIS.md).
+function __read_request(fd: i32, recv_deadline_ms: i32): Option[HttpRequest] {
+    var buf: string = "";
+    var read_start_ns: i64 = monotonic_ns();
+    var deadline_ns: i64 = (recv_deadline_ms as i64) * 1000000;
+    while (true) {
+        // Per-request read deadline (slow-loris guard): the whole
+        // request must arrive within `recv_deadline_ms` or the
+        // connection is dropped without a response.
+        var remaining_ms: i32 = ((deadline_ns - (monotonic_ns() - read_start_ns)) / 1000000) as i32;
+        if (remaining_ms <= 0) {
+            return None;
+        }
+        var chunk: u8[] = [];
+        var timed_out: boolean = false;
+        match (tcp_recv_deadline(fd, 4096, remaining_ms)) {
+            Some(c) => { chunk = c; },
+            None => { timed_out = true; },
+        }
+        if (timed_out) {
+            return None;
+        }
+        if (chunk.len() == 0) {
+            // EOF before request complete.
+            return None;
+        }
+        // The one remaining wire-bytes-to-string bridge: the request
+        // buffer is text-typed only because `http_parse_request` and
+        // `HttpRequest.body` still are. Bridging per CHUNK rather than
+        // per parse attempt keeps the accumulation a single memcpy of
+        // the growing buffer, as it was when tcp_recv returned a
+        // string. Retired when the HTTP message layer goes byte-based
+        // (#5714).
+        buf = buf + string_from_bytes_unchecked(chunk);
+        // Hard cap to keep slow / hostile clients from pinning
+        // unbounded memory. Headers must fit in the first 8 KiB; body
+        // capped at 1 MiB. Matches http_parse_request's internal caps.
+        if (buf.len() > 8192 + 1048576) {
+            return None;
+        }
+        match (http.http_parse_request(buf)) {
+            Some(parsed) => {
+                return Some(parsed);
+            },
+            None => {
+                // Either still partial — keep recv'ing — or
+                // definitively malformed. In either case the next
+                // iteration recv's more bytes; the cap above is what
+                // ends a request that never completes.
+            }
+        }
+    }
+    return None;
+}
+
 // __serve_loop — the HTTP/1.1 accept loop factored out of
 // `tcp_serve` so `tcp_serve_supervised` can run the same loop
 // against a listener fd it does NOT create: the supervising
@@ -142,92 +247,42 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
             // the same as success here.
             continue;
         }
-        // Per-request allocations (recv buffers, parsed
-        // HttpRequest, handler-built HttpResponse, serialized
-        // wire bytes) are reclaimed by reference counting as
-        // their last references drop at the end of the
-        // iteration. Note: RC cannot collect reference cycles,
-        // so a handler that builds a cycle per request leaks
-        // until process exit (see docs/CYCLE-COLLECTION-ANALYSIS.md).
-        // Drain the connection into a single buffer up to the
-        // first parse-success. The parser returns None when
-        // the buffer is too short (header block not yet
-        // terminated by \r\n\r\n, or fewer than Content-Length
-        // body bytes), so we keep recv'ing until either parse
-        // succeeds or we hit a hard cap / EOF.
-        var buf: string = "";
-        var have_request: boolean = false;
-        var req: HttpRequest = HttpRequest {
-            method: "",
-            path: "",
-            body: "",
-            headers: headers.header_map_new(),
-        };
-        var read_start_ns: i64 = monotonic_ns();
-        var deadline_ns: i64 = (recv_deadline_ms as i64) * 1000000;
-        while (true) {
-            // Per-request read deadline (slow-loris guard): the whole
-            // request must arrive within `recv_deadline_ms` or the
-            // connection is dropped without a response.
-            var remaining_ms: i32 = ((deadline_ns - (monotonic_ns() - read_start_ns)) / 1000000) as i32;
-            if (remaining_ms <= 0) {
-                break;
-            }
-            var chunk: u8[] = [];
-            var timed_out: boolean = false;
-            match (tcp_recv_deadline(fd, 4096, remaining_ms)) {
-                Some(c) => { chunk = c; },
-                None => { timed_out = true; },
-            }
-            if (timed_out) {
-                break;
-            }
-            if (chunk.len() == 0) {
-                // EOF before request complete.
-                break;
-            }
-            // The one remaining wire-bytes-to-string bridge: the request
-            // buffer is text-typed only because `http_parse_request` and
-            // `HttpRequest.body` still are. Bridging per CHUNK rather than
-            // per parse attempt keeps the accumulation a single memcpy of
-            // the growing buffer, as it was when tcp_recv returned a
-            // string. Retired when the HTTP message layer goes byte-based
-            // (#5714).
-            buf = buf + string_from_bytes_unchecked(chunk);
-            // Hard cap to keep slow / hostile clients from
-            // pinning unbounded memory. Headers must fit in
-            // the first 8 KiB; body capped at 1 MiB. Matches
-            // http_parse_request's internal caps.
-            if (buf.len() > 8192 + 1048576) {
-                break;
-            }
-            match (http.http_parse_request(buf)) {
-                Some(parsed) => {
-                    req = parsed;
-                    have_request = true;
-                },
-                None => {
-                    // Either still partial — keep recv'ing —
-                    // or definitively malformed. In either
-                    // case the next iteration will recv more
-                    // bytes; if we've already exceeded the
-                    // header cap above we've already broken
-                    // out.
-                }
-            }
-            if (have_request) {
-                break;
-            }
+        match (__read_request(fd, recv_deadline_ms)) {
+            Some(req) => {
+                // Phase 1 Platform: empty placeholder threaded
+                // through the handler call. Future phases will
+                // populate capability fields (fetch / kv / log /
+                // now) per docs/PLATFORM-RESEARCH.md.
+                var plat: Platform = Platform { version: 1 };
+                var resp: HttpResponse = handler(req, plat);
+                tcp_send(fd, http.http_serialize_response(resp));
+            },
+            None => {}
         }
-        if (have_request) {
-            // Phase 1 Platform: empty placeholder threaded
-            // through the handler call. Future phases will
-            // populate capability fields (fetch / kv / log /
-            // now) per docs/PLATFORM-RESEARCH.md.
-            var plat: Platform = Platform { version: 1 };
-            var resp: HttpResponse = handler(req, plat);
-            var wire: string = http.http_serialize_response(resp);
-            tcp_send(fd, wire);
+        tcp_close(fd);
+    }
+    return 0;
+}
+
+// __serve_loop_with — `__serve_loop` threading a caller-owned state
+// value through the handler chain. The state lives in the loop frame,
+// so it is process-lifetime without any language-level global: each
+// request sees the value the previous one returned.
+function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline_ms: i32): i32 {
+    var st: S = init;
+    while (true) {
+        var fd: i32 = tcp_accept(listener);
+        if (fd < 0) {
+            continue;
+        }
+        match (__read_request(fd, recv_deadline_ms)) {
+            Some(req) => {
+                var plat: Platform = Platform { version: 1 };
+                var next: (S, HttpResponse) = handler(st, req, plat);
+                st = next.0;
+                tcp_send(fd, http.http_serialize_response(next.1));
+            },
+            None => {}
         }
         tcp_close(fd);
     }
