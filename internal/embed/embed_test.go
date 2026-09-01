@@ -107,6 +107,35 @@ func TestLoadSkipsSymlinks(t *testing.T) {
 	}
 }
 
+// The ROOT is followed, because it is the path the user typed on the command
+// line and `-embed ./link-to-assets` obviously means the directory behind it.
+//
+// os.Stat has always followed it to decide the argument is a directory at all,
+// but filepath.WalkDir lstats its own root — so before the walk resolved it,
+// this combination passed the directory check and then yielded the link as one
+// non-regular entry, which the skip above dropped. The result was an empty
+// bundle from a directory full of files, and nothing said so: the failure only
+// showed up later as `no embedded asset "x" (no assets were embedded)`.
+func TestLoadFollowsASymlinkedRoot(t *testing.T) {
+	real := writeTree(t, map[string]string{"a.txt": "A", "sub/b.txt": "BB"})
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	set, err := Load(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := set.Names(); !reflect.DeepEqual(got, []string{"a.txt", "sub/b.txt"}) {
+		t.Fatalf("Names() = %v, want the linked directory's contents", got)
+	}
+	// Diagnostics echo the path as typed, not the resolved one: the user has to
+	// recognise what they wrote.
+	if set.Root() != link {
+		t.Errorf("Root() = %q, want the path as passed (%q)", set.Root(), link)
+	}
+}
+
 func TestSuggest(t *testing.T) {
 	root := writeTree(t, map[string]string{
 		"html/index.html": "x",

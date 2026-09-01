@@ -113,6 +113,7 @@ var gatedBuiltins = map[string]string{
 	"open_writer":     "fs",
 	"open_appender":   "fs",
 	"stat":            "fs",
+	"lstat":           "fs",
 	"read_dir":        "fs",
 	"remove_file":     "fs",
 	"remove_dir_all":  "fs",

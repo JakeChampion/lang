@@ -71,6 +71,7 @@ pub function builtin_caps(): BuiltinCap[] {
         BuiltinCap { builtin: "open_writer", capability: "fs" },
         BuiltinCap { builtin: "open_appender", capability: "fs" },
         BuiltinCap { builtin: "stat", capability: "fs" },
+        BuiltinCap { builtin: "lstat", capability: "fs" },
         BuiltinCap { builtin: "read_dir", capability: "fs" },
         BuiltinCap { builtin: "remove_file", capability: "fs" },
         BuiltinCap { builtin: "remove_dir_all", capability: "fs" },

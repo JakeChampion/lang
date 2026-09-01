@@ -594,6 +594,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_str_byte")
 					needs.add("__build_io_error")
 					needs.add("__fern_stat")
+				case "__fern_lstat":
+					// The same, with lookupflags cleared so the
+					// symlink itself is described. Identical set.
+					needs.add("__fern_alloc")
+					needs.add("__fern_str_len")
+					needs.add("__fern_str_byte")
+					needs.add("__build_io_error")
+					needs.add("__fern_lstat")
 				case "__fern_read_dir":
 					// (path) → Result[string[], IoError]. Opens +
 					// lists via the two internal workers, and copies
@@ -972,7 +980,7 @@ var helperAllocBoxCallers = []string{
 	"__fern_reader_close_fd", "__fern_writer_close",
 	"__fern_writer_write", "__fern_reader_read_line_fd",
 	"__fern_reader_read_chunk",
-	"__fern_remove_file", "__fern_stat", "__fern_read_dir",
+	"__fern_remove_file", "__fern_stat", "__fern_lstat", "__fern_read_dir",
 	"__fern_remove_dir_all", "__fern_temp_dir",
 	"__fern_create_dir_all",
 }
@@ -2117,6 +2125,13 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
 		results: []byte{encode.ValtypeI32},
 		body:    buildStatBody,
+	},
+	"__fern_lstat": {
+		// The same shape as __fern_stat, with preview-1 lookupflags
+		// cleared so a symlink reports itself (#7982).
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+		body:    buildLstatBody,
 	},
 	"__fern_open_dir": {
 		// (path_buf, path_byte_len) → i32 — an fd, or -(errno).

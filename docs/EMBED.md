@@ -142,17 +142,21 @@ call to an undefined function.
 
 ## Scope
 
-Symlinks under the embed root are **skipped, not followed**, so an asset
-tree cannot reach outside its root or wedge the walk on a cycle.
+Symlinks **under** the embed root are skipped, not followed, so an asset
+tree cannot reach outside its root or wedge the walk on a cycle. So are
+sockets, FIFOs and device nodes: the rule is "a regular file or a directory,
+or nothing".
 
-That holds for the **native** compiler. The self-host port
-(`examples/self_host/embed.fern`) follows them, because Fern has no way to
-ask whether a path is a symlink — `stat` follows them and `FileStat` carries
-no link bit — so the predicate native spends one `WalkDir` type check on has
-no spelling there. It caps directory nesting at 32 instead, which makes a
-cycle a diagnostic rather than a hang. #7982 tracks the missing surface; on a
-tree with no symlinks, which is every tree either compiler is pointed at
-today, the two agree exactly.
+The **root** is followed, because it is the path named on the command line
+and `-embed ./link-to-assets` plainly means the directory behind it.
+
+Both compilers draw the line in the same place. Native uses `os.Stat` on the
+root and `WalkDir`'s per-entry `lstat` below it; the self-host uses `stat` on
+the root and the `lstat` builtin below it. `lstat` exists for this (#7982) —
+`stat` follows links and `FileStat` carries no link bit, so before it the
+self-host had no way to ask the question at all. Under `lstat` a symlink is
+neither `is_file` nor `is_dir`, which is the same three-way answer
+`fs.DirEntry.Type()` gives a walk.
 
 What this gives up, deliberately: **late binding** — changing assets in a
 shipped binary without recompiling. #6069 considered and rejected
@@ -181,7 +185,9 @@ language's; #7987 tracks lifting it rather than reproducing it.
 | End-to-end through the native backend + the CLI diagnostics | `cmd/fern/embed_test.go` |
 | Enumeration end-to-end + the empty-bundle compile | `cmd/fern/embed_test.go` |
 | The self-host bundle + substitution, every error path | `examples/self_host/embed_run.fern`, gated by `internal/e2eselfhost/self_host_embed_test.go` |
-| Native and self-host agreeing on the same source + the same directory | `internal/e2eselfhost/self_host_embed_test.go` |
+| Native and self-host agreeing on the same source + the same directory, symlinked entries and a symlinked root included | `internal/e2eselfhost/self_host_embed_test.go` |
+| A symlinked root, followed | `internal/embed/embed_test.go` |
+| `lstat` itself, on every backend of both compilers | `internal/e2e/lstat_native_test.go`, `internal/codegen/wasmbin/wasi_fs_dir_test.go`, `internal/e2eselfhost/self_host_lstat_test.go` |
 
 The e2e test's load-bearing assertion is the **binary** asset: its blob
 carries interior NULs and bytes >= 0x80, so a correct exit code proves both

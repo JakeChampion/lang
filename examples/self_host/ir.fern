@@ -929,6 +929,12 @@ pub function op_env(): Op { return op0("env"); }
 // interned "FileStat" name). No wasm file I/O here, so a stat module is wasm-
 // ineligible (wasm_eligible) and is refused there.
 pub function op_stat(): Op { return op0("stat"); }
+// `lstat` is `stat` with AT_SYMLINK_NOFOLLOW: it describes the path itself
+// rather than what it points at, so a symlink comes back neither is_file nor
+// is_dir. Same one-arg VALUE shape, same Result[FileStat, IoError], same
+// FileStat shape pointer — only the flags word each backend passes to
+// fstatat / path_filestat_get differs (#7982).
+pub function op_lstat(): Op { return op0("lstat"); }
 // `subprocess` pops a stdin string, an args string[], and a cmd string (TOS
 // order stdin/args/cmd), spawns the child, pipes its streams, and pushes a fresh
 // ProcessResult struct {stdout, stderr, exit_code} (a VALUE op — three args
@@ -1616,6 +1622,7 @@ function kind_id_4(name: string): i32 {
     if (name == "remove_file") { return 173; }
     if (name == "temp_dir") { return 174; }
     if (name == "stat") { return 175; }
+    if (name == "lstat") { return 236; }
     if (name == "env") { return 176; }
     if (name == "subprocess") { return 177; }
     if (name == "read_chunk") { return 178; }
@@ -1902,6 +1909,7 @@ function kind_name_4(id: i32): string {
     if (id == 173) { return "remove_file"; }
     if (id == 174) { return "temp_dir"; }
     if (id == 175) { return "stat"; }
+    if (id == 236) { return "lstat"; }
     if (id == 176) { return "env"; }
     if (id == 177) { return "subprocess"; }
     if (id == 178) { return "read_chunk"; }

@@ -892,6 +892,7 @@ func New() *Interp {
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["stat"] = &Builtin{Fn: builtinStat}
+	i.Builtins["lstat"] = &Builtin{Fn: builtinLstat}
 	i.Builtins["remove_file"] = &Builtin{Fn: builtinRemoveFile}
 	i.Builtins["create_dir_all"] = &Builtin{Fn: builtinCreateDirAll}
 	i.Builtins["remove_dir_all"] = &Builtin{Fn: builtinRemoveDirAll}
@@ -2099,14 +2100,27 @@ func builtinReadDir(_ *Interp, args []Value) (Value, error) {
 // Symlinks resolve through `os.Stat` (follow), matching the
 // implicit contract of every other file-touching builtin.
 func builtinStat(_ *Interp, args []Value) (Value, error) {
+	return statLike("stat", os.Stat, args)
+}
+
+// builtinLstat is stat without following a final symlink. A link therefore
+// reports neither is_file nor is_dir, which is the answer a directory walk
+// needs to decide between recursing, reading, and skipping.
+func builtinLstat(_ *Interp, args []Value) (Value, error) {
+	return statLike("lstat", os.Lstat, args)
+}
+
+// statLike is the body both share: the only difference between them is which
+// of os.Stat / os.Lstat resolves the path.
+func statLike(name string, resolve func(string) (os.FileInfo, error), args []Value) (Value, error) {
 	if len(args) != 1 {
-		return nil, fmt.Errorf("stat: expected 1 arg, got %d", len(args))
+		return nil, fmt.Errorf("%s: expected 1 arg, got %d", name, len(args))
 	}
 	path, ok := args[0].(String)
 	if !ok {
-		return nil, fmt.Errorf("stat: expected string path, got %T", args[0])
+		return nil, fmt.Errorf("%s: expected string path, got %T", name, args[0])
 	}
-	info, err := os.Stat(string(path))
+	info, err := resolve(string(path))
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}

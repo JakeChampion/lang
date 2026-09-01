@@ -27,6 +27,14 @@ import (
 // preopen rooted at a fresh temp directory, returning main's result.
 func runFsDirProgram(t *testing.T, src string) string {
 	t.Helper()
+	return runFsDirProgramWithSetup(t, src, nil)
+}
+
+// runFsDirProgramWithSetup is runFsDirProgram plus a hook to seed the preopen
+// directory before the module runs — for the things a Fern program cannot
+// create for itself, symlinks being the one that matters here.
+func runFsDirProgramWithSetup(t *testing.T, src string, setup func(dir string)) string {
+	t.Helper()
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
@@ -43,6 +51,9 @@ func runFsDirProgram(t *testing.T, src string) string {
 		t.Fatalf("Build: %v", err)
 	}
 	dir := t.TempDir()
+	if setup != nil {
+		setup(dir)
+	}
 	p := filepath.Join(dir, "prog.wasm")
 	if err := os.WriteFile(p, bin, 0o644); err != nil {
 		t.Fatalf("write wasm: %v", err)
@@ -81,6 +92,56 @@ func TestFsStatAndRemoveFile(t *testing.T) {
     return 42;
 }`
 	if got := runFsDirProgram(t, src); got != "42" {
+		t.Fatalf("got %q, want 42", got)
+	}
+}
+
+// TestFsLstatDoesNotFollowSymlinks — `lstat` is `stat` with preview-1's
+// symlink_follow lookupflag cleared, so path_filestat_get describes the link
+// itself and its filetype comes back SYMBOLIC_LINK: neither REGULAR nor
+// DIRECTORY, so both FileStat flags are false.
+//
+// Asserted against `stat` on the same paths, because that is the only
+// difference between the two helpers — they share a body and differ in one
+// constant, so an lstat that quietly still followed links would agree with stat
+// everywhere and look correct on any test that ran it alone.
+func TestFsLstatDoesNotFollowSymlinks(t *testing.T) {
+	src := `function main(): i32 {
+    // A regular file is a regular file to both.
+    match (lstat("real.txt")) { Err(e) => { return 1; }, Ok(fs) => { if (!fs.is_file) { return 2; } } }
+    // The link to it: lstat sees neither a file nor a directory, stat sees a file.
+    match (lstat("link_to_file")) {
+        Err(e) => { return 3; },
+        Ok(fs) => { if (fs.is_file) { return 4; } if (fs.is_dir) { return 5; } }
+    }
+    match (stat("link_to_file")) { Err(e) => { return 6; }, Ok(fs) => { if (!fs.is_file) { return 7; } } }
+    // The link to a directory, the same way round.
+    match (lstat("link_to_dir")) {
+        Err(e) => { return 8; },
+        Ok(fs) => { if (fs.is_file) { return 9; } if (fs.is_dir) { return 10; } }
+    }
+    match (stat("link_to_dir")) { Err(e) => { return 11; }, Ok(fs) => { if (!fs.is_dir) { return 12; } } }
+    // A real directory is a directory to both.
+    match (lstat("realdir")) { Err(e) => { return 13; }, Ok(fs) => { if (!fs.is_dir) { return 14; } } }
+    // A missing path errors rather than reporting "neither".
+    match (lstat("nope")) { Ok(fs) => { return 15; }, Err(e) => {} }
+    return 42;
+}`
+	setup := func(dir string) {
+		if err := os.WriteFile(filepath.Join(dir, "real.txt"), []byte("hello"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		if err := os.Mkdir(filepath.Join(dir, "realdir"), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.Symlink("real.txt", filepath.Join(dir, "link_to_file")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if err := os.Symlink("realdir", filepath.Join(dir, "link_to_dir")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+	if got := runFsDirProgramWithSetup(t, src, setup); got != "42" {
 		t.Fatalf("got %q, want 42", got)
 	}
 }

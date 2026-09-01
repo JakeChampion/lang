@@ -478,7 +478,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// above; pulled in here for the programs that use file I/O
 	// without the Reader API.
 	if g.usesReadFile || g.usesReadFileBytes || g.usesWriteFile || g.usesWriteFileExec ||
-		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat ||
+		g.usesRemoveFile || g.usesTempDir || g.usesReadDir || g.usesStat || g.usesLstat ||
 		g.usesRemoveDirAll || g.usesCreateDirAll {
 		g.usesAlloc = true
 		g.usesMemcpy = true
@@ -777,6 +777,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesStat {
 		g.emitStatRuntime()
+	}
+	if g.usesLstat {
+		g.emitLstatRuntime()
 	}
 	if g.usesRemoveDirAll {
 		g.emitRemoveDirAllRuntime()
@@ -9238,10 +9241,28 @@ func (g *generator) emitReadDirRuntime() {
 // boxes). Ok = 16-byte box {tag=0, FileStat ptr @8}; Err =
 // 16-byte box {tag=1, IoError @8}.
 func (g *generator) emitStatRuntime() {
+	g.emitStatLikeRuntime("__fern_stat", 0, "st2w")
+}
+
+// emitLstatRuntime emits `__fern_lstat`, the same helper with
+// AT_SYMLINK_NOFOLLOW set: fstatat resolves every path component
+// but the last, so a symlink reports its own st_mode and comes
+// back neither is_file nor is_dir. That three-way answer is what
+// a directory walk needs to choose between recursing, reading and
+// skipping (#7982).
+func (g *generator) emitLstatRuntime() {
+	g.emitStatLikeRuntime("__fern_lstat", 256, "lst2w")
+}
+
+// emitStatLikeRuntime is the shared body. `atFlags` is fstatat's
+// flags word — 0 to follow, AT_SYMLINK_NOFOLLOW (0x100) not to —
+// and `lp` prefixes the local labels so both helpers can be
+// emitted into one object.
+func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.line("")
-	g.line(".global __fern_stat")
-	g.typeDirective("__fern_stat")
-	g.label("__fern_stat")
+	g.line(".global " + sym)
+	g.typeDirective(sym)
+	g.label(sym)
 	// Frame: 96-byte base (fp/lr + x19..x25 + 16-byte inline-
 	// spill scratch at [x29+72]) + 192-byte statbuf at [x29+96]
 	// = 288.
@@ -9257,13 +9278,13 @@ func (g *generator) emitStatRuntime() {
 	g.emit("mov x22, x20")
 	g.emitStrLen2W("w22", "x22")
 	g.emitNulTermPath2W("x21", "x21", "x22")
-	// fstatat(AT_FDCWD, pathz, statbuf, 0)
+	// fstatat(AT_FDCWD, pathz, statbuf, atFlags)
 	g.atFdcwd("x0")
 	g.emit("mov x1, x21")
 	g.emit("add x2, x29, #96")
-	g.emit("mov x3, #0")
+	g.emit("mov x3, #%d", atFlags)
 	g.syscallFstatat()
-	g.emit("tbnz x0, #63, .Lst2w_err")
+	g.emit("tbnz x0, #63, .L" + lp + "_err")
 	if g.darwin {
 		g.emit("ldrh w9, [x29, #100]") // st_mode (u16 @ +4)
 	} else {
@@ -9274,15 +9295,15 @@ func (g *generator) emitStatRuntime() {
 	g.emit("mov x23, #0")     // is_file
 	g.emit("mov w10, #32768") // S_IFREG
 	g.emit("cmp w9, w10")
-	g.emit("b.ne .Lst2w_nf")
+	g.emit("b.ne .L" + lp + "_nf")
 	g.emit("mov x23, #1")
-	g.label(".Lst2w_nf")
+	g.label(".L" + lp + "_nf")
 	g.emit("mov x24, #0")     // is_dir
 	g.emit("mov w10, #16384") // S_IFDIR
 	g.emit("cmp w9, w10")
-	g.emit("b.ne .Lst2w_nd")
+	g.emit("b.ne .L" + lp + "_nd")
 	g.emit("mov x24, #1")
-	g.label(".Lst2w_nd")
+	g.label(".L" + lp + "_nd")
 	g.emit("ldr x25, [x29, #%d]", 96+g.statSizeOff()) // st_size
 	// FileStat box: is_file @0, is_dir @4, size @8.
 	g.emit("mov x0, #16")
@@ -9295,9 +9316,9 @@ func (g *generator) emitStatRuntime() {
 	g.emit("bl __fern_alloc_box")
 	g.emit("str wzr, [x0]") // tag = 0 (Ok)
 	g.emit("str x21, [x0, #8]")
-	g.emit("b .Lst2w_return")
+	g.emit("b .L" + lp + "_return")
 
-	g.label(".Lst2w_err")
+	g.label(".L" + lp + "_err")
 	g.emit("neg x22, x0")
 	g.emit("mov x0, x22")
 	g.emit("mov x1, x19")
@@ -9310,14 +9331,14 @@ func (g *generator) emitStatRuntime() {
 	g.emit("str w9, [x0]") // tag = 1 (Err)
 	g.emit("str x19, [x0, #8]")
 
-	g.label(".Lst2w_return")
+	g.label(".L" + lp + "_return")
 	g.emit("ldr x25, [sp, #64]")
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #288")
 	g.emit("ret")
-	g.sizeDirective("__fern_stat")
+	g.sizeDirective(sym)
 	g.line(".ltorg")
 }
 
@@ -10681,6 +10702,7 @@ type generator struct {
 	usesTempDir      bool
 	usesReadDir      bool
 	usesStat         bool
+	usesLstat        bool
 	usesRemoveDirAll bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime — the only
 	// builtin that can BUILD a directory tree (#6749).
@@ -13974,6 +13996,11 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			// into a FileStat box.
 			target = "__fern_stat"
 			g.usesStat = true
+		case "lstat":
+			// lstat(path): the same, with AT_SYMLINK_NOFOLLOW, so
+			// a symlink reports itself rather than its target.
+			target = "__fern_lstat"
+			g.usesLstat = true
 		case "remove_dir_all":
 			// remove_dir_all(path): Option[IoError] — recursive
 			// rm -rf (openat + getdents64 + unlinkat, self-

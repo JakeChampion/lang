@@ -1745,7 +1745,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_path_unlink_file")
 		}
 	}
-	if helpers.set["__fern_stat"] {
+	if helpers.set["__fern_stat"] || helpers.set["__fern_lstat"] {
 		if opts.Preview2WASI {
 			in.add("wasi_get_directories_p2")
 			in.add("wasi_descriptor_stat_at_p2")
@@ -2261,6 +2261,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_create_dir_all":      buildCreateDirAllBodyP2,
 	"__fern_temp_dir":            buildTempDirBodyP2,
 	"__fern_stat":                buildStatBodyP2,
+	"__fern_lstat":               buildLstatBodyP2,
 	"__fern_open_dir":            buildOpenDirBodyP2,
 	"__fern_read_dir_raw":        buildReadDirRawBodyP2,
 	"__fern_read_dir":            buildReadDirBodyP2,

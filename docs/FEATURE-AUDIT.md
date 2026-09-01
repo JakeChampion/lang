@@ -162,6 +162,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Writer `.write(s)/.close()` | | | | | | ⬜ | |
 | `read_line()` (free) | | | | | | ⬜ | |
 | `read_dir` / `stat` | | | | | | ⬜ | |
+| `lstat(path)` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `stat` without following a final symlink, so a link is neither `is_file` nor `is_dir` (`fs.DirEntry.Type()`'s three-way answer). Every backend is its own stat helper with one constant changed — `AT_SYMLINK_NOFOLLOW` in fstatat's flags, preview-1's `symlink_follow` lookupflag cleared. Added for `-embed`'s walk ([#7982](https://github.com/JakeChampion/lang/issues/7982)). Tests: `lstat_native_test.go`, `wasi_fs_dir_test.go`, `self_host_lstat_test.go` — each compares it against `stat` on the same paths |
 | `remove_file` / `remove_dir_all` | | | | | | ⬜ | |
 | `temp_dir(prefix)` | | | | | | ⬜ | |
 | `subprocess(...)` | | | | | | ⬜ | |
@@ -252,6 +253,42 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-09-01 — `lstat(path)` added on every backend of both compilers (#7982)
+
+Fern could not ask whether a path is a symlink. `stat` follows them, `FileStat`
+carries no link bit, and there is no `readlink`. That is a small gap until
+something needs the answer: `internal/embed` skips every entry that is not a
+regular file, which is what keeps an asset tree from reaching outside its root
+or wedging the walk on a cycle, and the self-host port of `-embed` (#6643) had
+no way to spell that predicate. It capped directory nesting instead, which
+turned a cycle into a diagnostic without matching the behaviour.
+
+`lstat(path): Result[FileStat, IoError]` closes it. Under it a symlink is
+neither `is_file` nor `is_dir` — and neither is a socket, a FIFO or a device
+node — which is exactly the three-way answer `fs.DirEntry.Type()` gives a walk:
+recurse, read, or skip. That is POSIX's own non-following stat, and Go's
+`os.Lstat` + `FileMode.IsRegular()` behaves the same way, so no new field on
+`FileStat` was needed.
+
+It is cheap because it is the same helper with one constant changed:
+`newfstatat` / `fstatat` gains `AT_SYMLINK_NOFOLLOW` in its flags word, and
+preview-1's `path_filestat_get` loses its `symlink_follow` lookupflag (preview-2's
+`stat-at` its `path-flags`). Every backend's stat body was parameterised rather
+than copied — native x86-64, native arm64, `arm64ssa`, `wasmbin` (both worlds),
+the interpreter, and the self-host's `rt_src_stat` plus its three emitters —
+which is also why every test below compares `lstat` AGAINST `stat` on the same
+paths. A copy that quietly still followed links would agree with `stat`
+everywhere and look correct to any test that ran it alone.
+
+Four classifications as usual (`internal/platforms`, `internal/caps`, and both
+self-host mirrors), all `fs`, plus `parser.builtin_function_names()`.
+
+Its first consumer is `examples/self_host/embed.fern`, which now skips
+non-regular entries exactly as `internal/embed` does. `internal/embed` gained a
+fix in the same change: `WalkDir` lstats its own root, so `-embed` naming a
+symlink to a directory passed the directory check and then embedded nothing, in
+silence. Both compilers now follow the root and skip everything below it.
 
 ### 2026-09-01 — a control byte in a string literal miscompiled on both self-host GAS assemblers (#7986)
 

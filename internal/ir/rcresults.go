@@ -165,6 +165,7 @@ var rcResultImmortal = map[string]bool{
 	"__fern_reader_read_chunk":   true,
 	"__fern_remove_file":         true,
 	"__fern_stat":                true,
+	"__fern_lstat":               true,
 	"__fern_read_dir":            true,
 	"__fern_remove_dir_all":      true,
 	"__fern_temp_dir":            true,

@@ -858,6 +858,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__slice_make":                  emitSliceMakeHelper,
 	"__slice_range":                 emitSliceRangeHelper,
 	"stat":                          emitStatHelper,
+	"lstat":                         emitLstatHelper,
 	"monotonic_ns":                  emitClockHelper("monotonic_ns", clockMonotonic, 1_000_000_000, 1),
 	"now_unix_ms":                   emitClockHelper("now_unix_ms", clockRealtime, 1_000, 1_000_000),
 	"sleep_ms":                      emitSleepMsHelper,
@@ -2378,6 +2379,7 @@ var runtimeHelperDeps = map[string][]string{
 	"write_file":                    {"__fern_io_error"},
 	"read_file":                     {"__fern_io_error", "__fern_utf8_valid"},
 	"stat":                          {"__fern_io_error"},
+	"lstat":                         {"__fern_io_error"},
 	"__method_string_as_bytes":      {"__slice_make"},
 	"read_file_bytes":               {"__fern_io_error", "__alloc_u8"},
 	"remove_file":                   {"__fern_io_error"},
@@ -2415,6 +2417,7 @@ var heapUsingHelpers = map[string]bool{
 	"__fern_heap_bump_bytes":        true,
 	"__slice_make":                  true,
 	"stat":                          true,
+	"lstat":                         true,
 	"string_from_bytes_unchecked":   true,
 	"__str_slice":                   true,
 	"args":                          true,
@@ -5411,8 +5414,21 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 // FileStat box laid out {is_file@+0, is_dir@+4, size@+8}, matching the flat
 // backend's.
 func emitStatHelper(w func(string, ...any)) {
+	emitStatLikeHelper(w, "stat", 0, "stat")
+}
+
+// emitLstatHelper writes lstat(path): emitStatHelper with AT_SYMLINK_NOFOLLOW
+// in fstatat's flags word, so a symlink reports its own st_mode and comes back
+// neither is_file nor is_dir (#7982).
+func emitLstatHelper(w func(string, ...any)) {
+	emitStatLikeHelper(w, "lstat", 256, "lstat")
+}
+
+// emitStatLikeHelper is the shared body. `atFlags` is fstatat's flags word and
+// `lp` prefixes the local labels so both helpers can live in one object.
+func emitStatLikeHelper(w func(string, ...any), name string, atFlags int, lp string) {
 	w("")
-	w("%s:", fnLabel("stat"))
+	w("%s:", fnLabel(name))
 	w("\tstp x29, x30, [sp, #-256]!")
 	w("\tmov x29, sp")
 	w("\tstp x19, x20, [sp, #16]")
@@ -5431,14 +5447,14 @@ func emitStatHelper(w func(string, ...any)) {
 	w("\tstr x6, [x3]")
 	emitHeapGuardCall(w)
 	w("\tmov w7, #0")
-	w(".Lssa_stat_cp:")
+	w(".Lssa%s_cp:", lp)
 	w("\tcmp w7, w2")
-	w("\tb.hs .Lssa_stat_cpd")
+	w("\tb.hs .Lssa%s_cpd", lp)
 	w("\tldrb w8, [x19, x7]")
 	w("\tstrb w8, [x4, x7]")
 	w("\tadd w7, w7, #1")
-	w("\tb .Lssa_stat_cp")
-	w(".Lssa_stat_cpd:")
+	w("\tb .Lssa%s_cp", lp)
+	w(".Lssa%s_cpd:", lp)
 	w("\tstrb wzr, [x4, x2]")
 	w("\tmov x24, x4") // path_nul
 	// fstatat(AT_FDCWD, path_nul, statbuf@sp+64, 0).
@@ -5446,10 +5462,10 @@ func emitStatHelper(w func(string, ...any)) {
 	w("\tneg x0, x0") // AT_FDCWD
 	w("\tmov x1, x24")
 	w("\tadd x2, sp, #64")
-	w("\tmov x3, #0")
+	w("\tmov x3, #%d", atFlags)
 	w("\tmov x8, #79") // fstatat
 	w("\tsvc #0")
-	w("\ttbnz x0, #63, .Lssa_stat_err")
+	w("\ttbnz x0, #63, .Lssa%s_err", lp)
 	w("\tldr w9, [sp, #80]")   // st_mode (u32 @ statbuf+16)
 	w("\tldr x22, [sp, #112]") // st_size (i64 @ statbuf+48)
 	w("\tmov w11, #61440")     // S_IFMT
@@ -5457,15 +5473,15 @@ func emitStatHelper(w func(string, ...any)) {
 	w("\tmov x20, #0")     // is_file
 	w("\tmov w10, #32768") // S_IFREG
 	w("\tcmp w9, w10")
-	w("\tb.ne .Lssa_stat_nf")
+	w("\tb.ne .Lssa%s_nf", lp)
 	w("\tmov x20, #1")
-	w(".Lssa_stat_nf:")
+	w(".Lssa%s_nf:", lp)
 	w("\tmov x21, #0")     // is_dir
 	w("\tmov w10, #16384") // S_IFDIR
 	w("\tcmp w9, w10")
-	w("\tb.ne .Lssa_stat_nd")
+	w("\tb.ne .Lssa%s_nd", lp)
 	w("\tmov x21, #1")
-	w(".Lssa_stat_nd:")
+	w(".Lssa%s_nd:", lp)
 	// FileStat box: {rc=1, is_file@+0, is_dir@+4, size@+8}.
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
@@ -5495,8 +5511,8 @@ func emitStatHelper(w func(string, ...any)) {
 	w("\tadd x0, x4, #8")
 	w("\tstr wzr, [x0]") // tag = 0 (Ok)
 	w("\tstr x23, [x0, #8]")
-	w("\tb .Lssa_stat_ret")
-	w(".Lssa_stat_err:")
+	w("\tb .Lssa%s_ret", lp)
+	w(".Lssa%s_err:", lp)
 	w("\tneg x0, x0")  // errno
 	w("\tmov x1, x19") // path
 	w("\tbl %s", fnLabel("__fern_io_error"))
@@ -5516,7 +5532,7 @@ func emitStatHelper(w func(string, ...any)) {
 	w("\tmov w6, #1")
 	w("\tstr w6, [x0]") // tag = 1 (Err)
 	w("\tstr x19, [x0, #8]")
-	w(".Lssa_stat_ret:")
+	w(".Lssa%s_ret:", lp)
 	w("\tldp x23, x24, [sp, #48]")
 	w("\tldp x21, x22, [sp, #32]")
 	w("\tldp x19, x20, [sp, #16]")

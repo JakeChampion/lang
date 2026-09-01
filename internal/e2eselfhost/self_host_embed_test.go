@@ -96,6 +96,37 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		t.Fatalf("mkdir empty: %v", err)
 	}
 
+	// Symlinks. Entries are SKIPPED — that is what keeps an asset tree from
+	// reaching outside its root or wedging the walk on a cycle — while the
+	// ROOT is FOLLOWED, because it is the path the user typed and
+	// `-embed ./link-to-assets` plainly means the directory behind it. Native
+	// draws the line in the same place, with os.Stat on the root and WalkDir's
+	// lstat below it; the self-host needed `lstat` (#7982) to draw it at all.
+	//
+	// The link that escapes the root is the load-bearing one: a walk that
+	// followed it would embed a file the user never put in the bundle.
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("SECRET"), 0o644); err != nil {
+		t.Fatalf("write outside: %v", err)
+	}
+	haveSymlinks := true
+	if err := os.Symlink(outside, filepath.Join(assets, "escape.txt")); err != nil {
+		haveSymlinks = false
+		t.Logf("symlinks unavailable, skipping those rows: %v", err)
+	}
+	linkedRoot := filepath.Join(dir, "linked-assets")
+	if haveSymlinks {
+		// A link to the root's own subdirectory: following it would both
+		// duplicate sub/b.txt under a second name and, on a self-referential
+		// tree, never terminate.
+		if err := os.Symlink(filepath.Join(assets, "sub"), filepath.Join(assets, "loop")); err != nil {
+			t.Fatalf("symlink loop: %v", err)
+		}
+		if err := os.Symlink(assets, linkedRoot); err != nil {
+			t.Fatalf("symlink root: %v", err)
+		}
+	}
+
 	for _, c := range []struct {
 		name string
 		// embedDir is passed to -embed; empty means the flag is omitted.
@@ -116,6 +147,16 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		// An empty bundle yields an empty typed array, so the loop body simply
 		// never runs. The element type has to be stamped for that to compile.
 		{"assets-empty-bundle", empty, "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets() { n = n + 1; }\n    return n;\n}\n", 0},
+		// A symlinked entry is not in the bundle at all, so naming it is the
+		// ordinary unknown-asset refusal. This is the sharp form of the skip:
+		// `escape.txt` points OUTSIDE the embed root, so a walk that followed
+		// it would compile a file the user never put in the bundle — and the
+		// row above proves the same skip leaves the count unchanged, since
+		// `assets-all` still sums to 40 with two symlinks in the directory.
+		{"symlinked-entry-is-not-an-asset", assets, "function main(): i32 {\n    return __fern_asset(\"escape.txt\").len();\n}\n", -1},
+		// Naming a symlinked directory on the command line embeds what it
+		// points at, and gives the same bundle as naming the directory itself.
+		{"assets-follow-symlinked-root", "SYMLINKED_ROOT", "function main(): i32 {\n    var n: i32 = 0;\n    for a in __fern_assets() { n = n + a.0.len() + a.1.len(); }\n    return n;\n}\n", 40},
 		// Binary bytes, asserted per byte: nothing truncated at the NUL and
 		// nothing rewrote the 0xff. The length alone would not catch either,
 		// since a walk that mangled the high byte in place keeps the count.
@@ -136,6 +177,14 @@ func TestSelfHostEmbedMatchesNative(t *testing.T) {
 		{"nested-asset-name", assets, "function main(): i32 {\n    return __fern_asset(__fern_asset(\"a.txt\")).len();\n}\n", -1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			if c.embedDir == "SYMLINKED_ROOT" {
+				if !haveSymlinks {
+					t.Skip("symlinks unavailable")
+				}
+				c.embedDir = linkedRoot
+			} else if !haveSymlinks && c.name == "symlinked-entry-is-not-an-asset" {
+				t.Skip("symlinks unavailable")
+			}
 			src := filepath.Join(dir, "embed_"+c.name+".fern")
 			if err := os.WriteFile(src, []byte(c.src), 0o644); err != nil {
 				t.Fatalf("write: %v", err)
