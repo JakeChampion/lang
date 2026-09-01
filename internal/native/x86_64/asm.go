@@ -856,6 +856,9 @@ func (a *Assembler) insn(line string) error {
 	if cc, ok := setccCode(mnem); ok {
 		return a.setcc(ops, cc)
 	}
+	if s := suggestMnemonic(mnem); s != "" {
+		return fmt.Errorf("unsupported instruction %q (did you mean %q?)", mnem, s)
+	}
 	return fmt.Errorf("unsupported instruction %q", mnem)
 }
 
