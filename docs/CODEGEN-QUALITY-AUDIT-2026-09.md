@@ -26,11 +26,21 @@ The thing that prompted this audit — the last day's batch of assembler work �
 turns out to be the sharpest way to see it. **The assemblers can encode far more
 than the code generator ever asks for.** `internal/native/arm64` encodes `madd`,
 `csel`, `ubfx`, `cbz`, `movn`, logical bitmask immediates, shifted-register
-operands and 78 Advanced-SIMD mnemonics. In the 7.9 M instructions the compiler
-emits for its own sources, `madd` appears **0 times**, `csel` 17 times, `tbz`,
-`bfi`, `rbit` and `rev` **0 times each**, and 72 of the 78 SIMD mnemonics are
-unreachable from any code path. The encoders are correct, fuzzed against two
-oracles, and idle.
+operands and 78 Advanced-SIMD mnemonics. In the 7 933 724 instructions the
+compiler emits for its own sources (`examples/self_host/fern.fern`, arm64),
+`madd` appears **0 times**, `csel` 17 times, `movn`, `bfi`, `sbfx` and `rev`
+**0 times each**, and 72 of the 78 SIMD mnemonics are unreachable from any code
+path.
+
+The distinction that matters, because a raw count understates it: where one of
+these *does* appear, it is a hardcoded string in a runtime helper, never a
+selection over user code. All 258 374 `tbnz` come from the inlined reference-count
+and immortal-tag guards (`arm64.go:2190`, `:1962`); all 7 062 `ubfx` from the
+small-string length-nibble unpack and float exponent extraction
+(`arm64.go:11809`, `:6612`); all 64 `msub` from the decimal- and
+time-conversion helpers (`arm64.go:5529`, `:5804`). **Instruction selection —
+deriving one of these from the shape of an expression — does not happen at
+all.** The encoders are correct, fuzzed against two oracles, and idle.
 
 The good news is that the gap is unusually cheap to close, because it is not an
 architecture problem. Three of the findings below are local peepholes on the
@@ -221,11 +231,11 @@ were reproduced independently of whoever first reported it. Costs are shares of
 | 4 | No ALU/compare immediate operands — constants `movz`'d into a register first | arm64 | **6.7%** of instructions | confirmed |
 | 5 | Reference-count guard materialises its mask in two instructions, 120 323 times; the whole guard is 4 instructions where 2 suffice | arm64 | 1.5% (mask) / **3.1%** (guard) | confirmed |
 | 6 | Division and modulo by a compile-time constant emit `idiv` plus a dead zero-divisor and `INT_MIN/-1` guard — no power-of-two reduction, no magic-number reciprocal | both | 67.3% slower than the reciprocal on the probe | confirmed |
-| 7 | `a + b*c` is never `madd`; no `msub`/`mneg`/`smull`/`umull` selection | arm64 | 0 `madd` in 7.9 M instructions | confirmed |
-| 8 | Shifted/extended register operands never selected — `a + (b << 3)` is 15 instructions against clang's 1 | arm64 | 1 083 folded vs 15 430 standalone `lsl` | confirmed |
+| 7 | `a + b*c` is never `madd`; no `msub`/`mneg`/`smull`/`umull` selection | arm64 | 0 `madd` in 7 933 724 instructions | confirmed |
+| 8 | Shifted/extended register operands never selected — `a + (b << 3)` is 15 instructions against clang's 1 | arm64 | 8 330 folded vs 125 230 standalone `lsl` — 6.2% | confirmed |
 | 9 | 64-bit immediates have no `movn` and no logical-bitmask-immediate path — `-1` costs 4 instructions where clang costs 1 | arm64 | 33 four-instruction chains; 0 `movn` in the binary | confirmed |
 | 10 | No branch-free selection (`csel` 17 in 7.9 M, `cinc`/`csinc`/`cneg` 0); the SSA backend never fuses compare into branch — always `cmp → cset → cbnz` | arm64 | 54 027 `cmp;cset;cbnz` triples on the SSA path | confirmed |
-| 11 | No bitfield selection — shift+mask is 8 instructions where `ubfx` is 1; `ubfx`/`sbfx`/`bfi`/`rev` never reached from user code | arm64 | — | confirmed |
+| 11 | No bitfield selection — shift+mask is 8 instructions where `ubfx` is 1. `ubfx` reaches the output 7 062 times but only as two hardcoded idioms; `sbfx`/`bfi`/`bfxil`/`rev` are 0 | arm64 | — | confirmed |
 | 12 | Shift counts always route through `CL`, never the `imm8` form | x86-64 | — | confirmed |
 | 13 | Every i64 literal is a 10-byte `movabs`, including `0` (`xor eax,eax` is 2 bytes) and values that fit `imm32` (5 bytes) | x86-64 | size only | confirmed |
 | 14 | `base+index*scale` addresses computed into a register, then dereferenced, instead of folded into the load | x86-64 | — | confirmed |
@@ -288,11 +298,11 @@ code generator never asks for what they can encode.
 
 | encoder capability | reachable from codegen? | evidence |
 |---|---|---|
-| arm64 `madd` / `msub` / `mneg` | no | 0 `madd`, 6 `msub` in 7.9 M instructions |
+| arm64 `madd` / `msub` / `mneg` | no | 0 `madd`; the 64 `msub` are hardcoded in the decimal/time helpers |
 | arm64 `csel` / `cset` / `cinc` / `cneg` | barely | 17 `csel`, 0 `cinc`/`csinc`/`cneg` |
-| arm64 `cbz` / `cbnz` / `tbz` / `tbnz` | partly | `cbz`/`cbnz` yes; `tbz`/`tbnz` 0 |
-| arm64 `ubfx` / `sbfx` / `bfi` / `bfxil` | no | never from user code |
-| arm64 `rev` / `rbit` / `clz` | no | `rev` 0, `rbit` 0, `clz` 4 |
+| arm64 `cbz` / `cbnz` / `tbnz` | as fixed idioms only | 130 316 / 30 158 / 258 374 — every one from the inlined RC and immortal-tag guards, none from a user comparison; `tbz` 1 |
+| arm64 `ubfx` / `sbfx` / `bfi` / `bfxil` | as fixed idioms only | 7 062 `ubfx`, all the SSO length unpack and float exponent; `sbfx`/`bfi`/`bfxil` 0 |
+| arm64 `rev` / `rbit` / `clz` | no | `rev` 0, `rbit` 3, `clz` 7 |
 | arm64 `movn`, logical bitmask immediates | no | 0 `movn`; every `and`/`orr`/`eor` is register-register |
 | arm64 shifted / extended register operands | 7% | 1 083 folded against 15 430 standalone `lsl` |
 | arm64 `ldp` / `stp` pairing | prologues only | 1 138 / 1 132, all frame save-restore |
