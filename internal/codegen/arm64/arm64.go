@@ -12592,12 +12592,14 @@ func (g *generator) emitFusedBranch(cmp ir.Op, imm int64, hasImm bool, fireCC, s
 
 // tryFoldConstOperand selects a constant that feeds the next op as that op's
 // immediate operand, instead of materialising it into a register and popping
-// both sides. Three folds, in decreasing specificity:
+// both sides, in decreasing specificity:
 //
-//   - `const K; add; load`     => `ldr Rt, [x0, #K]`   (tryFoldLoadOffset)
-//   - `const K; cmp; …; br`    => `cmp x0, #K; b.cond`
+//   - `const K; add; load`             => `ldr Rt, [x0, #K]` (tryFoldLoadOffset)
+//   - `const K; cmp; …; br`            => `cmp x0, #K; b.cond`, or a bare
+//     cbz / cbnz when K is zero (emitFusedBranch)
+//   - `const K; cmp`                   => `cmp x0, #K; cset`
+//   - `const K; {shl,shr}`             => `lsl|lsr|asr w0, w0, #K`
 //   - `const K; {add,sub,and,orr,eor}` => `<op> x0, x0, #K`
-//   - `const K; cmp`           => `cmp x0, #K; cset`
 //
 // Returns the number of EXTRA ops consumed past index i, and whether a fold
 // fired. Safe for the same reason the compare/branch fusion is: the IR is a
@@ -12841,11 +12843,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpCoverPoint:
 		g.emitCoverPoint(int(op.I32))
 	case ir.OpConstI32:
-		// Materialise the constant into x0 and push. Small
-		// values fit `mov` (imm16); larger ones use `ldr =N`
-		// (assembler pseudo-instruction backed by a literal
-		// pool). i32s use the w0 alias when narrowing matters,
-		// but for the 64-bit operand stack we keep them in x0.
+		// Materialise the constant into x0 and push. Values that fit
+		// `mov`'s imm16 take it; anything wider goes through the
+		// move-wide sequence. i32s use the w0 alias when narrowing
+		// matters, but for the 64-bit operand stack we keep them in x0.
 		v := op.I32
 		if v >= 0 && v <= 0xffff {
 			g.emit("mov x0, #%d", v)
@@ -12855,13 +12856,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push()
 
 	case ir.OpConstI64:
-		// i64 literal. `ldr x0, =N` is the AArch64 assembler's
-		// canonical idiom for a full 64-bit immediate — backed
-		// by a literal pool entry the assembler emits in
-		// `.text` and references via a pc-relative load. The
-		// pool gets flushed by `.ltorg` (we already do this in
-		// the alloc + read-line runtimes) or at end-of-section,
-		// whichever comes first.
+		// i64 literal, materialised by the move-wide sequence rather
+		// than a literal-pool `ldr x0, =N` — see loadImmChunks for why
+		// the pool is unusable here.
 		g.loadImm64("x0", uint64(op.I64))
 		g.push()
 
