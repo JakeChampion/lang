@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/parser"
@@ -29,6 +30,10 @@ func FuzzCheck(f *testing.F) {
 		// errors.
 		`function f(): i32 { return true; }`,
 		`function f(): i32 { return undefined_thing; }`,
+		// The target parses before it checks, so parser recursion is on this
+		// fuzzer's crash surface too: nesting past the parser's bound is what
+		// took the nightly worker down in #7941.
+		"function f(): i32 { return " + strings.Repeat("(", 3000) + "1" + strings.Repeat(")", 3000) + "; }",
 	}
 	for _, s := range seeds {
 		f.Add(s)

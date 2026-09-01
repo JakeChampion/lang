@@ -1,6 +1,9 @@
 package parser
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // FuzzParse asserts the parser never panics, regardless of input.
 // Errors are fine; crashes are not. Run with `go test -fuzz=FuzzParse
@@ -19,6 +22,11 @@ func FuzzParse(f *testing.F) {
 		}`,
 		`function add(a: i32, b: i32): i32 { return a + b; }
 		 function main(): i32 { return add(40, 2); }`,
+		// Nesting past maxNestDepth — the shape that used to exhaust the
+		// stack and kill the worker outright (#7941). The mutator reaches it
+		// by growing a run of one byte, so keep a seed sitting on the far
+		// side of the bound.
+		"function f(): i32 { return " + strings.Repeat("(", 3000) + "1" + strings.Repeat(")", 3000) + "; }",
 	}
 	for _, s := range seeds {
 		f.Add(s)
