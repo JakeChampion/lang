@@ -1413,9 +1413,10 @@ Peak RSS repeats to the megabyte across rounds and says **3823.3 MB → 3655.2 M
 −4.4%** — §4d's rule working in the direction it predicts, since the prune
 removes allocation (462 fewer function lowerings) and adds a walk.
 
-**Three roots had to come with it, and the corpus found the one that mattered.**
-A reachability walk seeded from `main` drops any function whose only caller is
-generated AFTER the pass:
+**Four rules had to come with it, and the two that mattered were found by
+tests rather than by reasoning.** A reachability walk seeded from `main` drops
+any function whose only caller is generated AFTER the pass, and any function
+whose NAME the source cannot spell:
 
 - **Drop finalizers.** The only caller is the `__drop_struct_<C>` glue lowering
   synthesises later; native roots them whole-program for the same reason
@@ -1429,9 +1430,29 @@ generated AFTER the pass:
 - **Body-bearing `async` functions**, which are component-level exports; latent
   today because the self-host wasm path does not yet lift them.
 
-`dyn` needs no root and that is structural rather than luck: the self-host
-builds no vtable, `emit_ir_op_dyn_dispatch` generates a tag-compare chain from
-the CALLED method name, and any called name is in `refs` already.
+- **Methods `parser.claim_method_name` INTERPOSED.** Two traits providing
+  `scale` for one type cannot both be emitted as the flat `P.scale`, so the
+  second is renamed `P.B.scale`; the cross-module shape renames to
+  `i32.__entry.add`. Every call site still writes `.scale`, and which definition
+  that means is settled after this pass by `dyn_arm_matches` /
+  `dyn_provider_name` — so the walk has to undo the rename the way those two do,
+  or it prunes the loser of every collision. `ts_kept_name` matches the segment
+  after the last `.`; an ordinary name cannot be confused with one, since module
+  mangling joins with `__`.
+
+`dyn` needs no root of its own — the self-host builds no vtable, and
+`emit_ir_op_dyn_dispatch` generates a tag-compare chain from the CALLED method
+name, which is in `refs` already. But that is not the same as `dyn` being safe:
+a `dyn` dispatch onto a COLLIDING provider reaches it under the interposed name,
+so it rides on the rule above. Missing it, `TestSelfHostCLIX86_64`'s
+`dyn-picks-the-named-trait-provider` exited 3 where it wants 7 — the arm was
+pruned and dispatch fell through to the other trait's namesake.
+
+**That one reached CI**, because the pre-push set was chosen by what the change
+touched (`treeshake.fern`, the fixture corpus) and this defect lives in what
+`fern.fern` DRIVES. On any change to the CLI driver, `TestSelfHostCLIX86_64` is
+the direct gate and the fixture corpus is not a substitute: the corpus has no
+two-trait collision in it.
 
 **The walk's own cost was real and most of it was two shapes.** Un-optimised, the
 pass added ~26 s to the 6,259-function self-compile. Two fixes, both leaving the
