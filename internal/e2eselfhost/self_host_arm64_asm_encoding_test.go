@@ -256,6 +256,11 @@ _start:
     eor w1, w2, w3, ror #7
     cmn x0, x1
     cmn w1, w2
+    adds x1, x1, x6
+    adds w1, w1, w6
+    adds x1, x1, x21
+    orr x4, x4, #16
+    orr w4, w4, #1
     extr x23, x9, x28, #63
     extr w28, w9, w23, #17
     ror x23, x9, #63

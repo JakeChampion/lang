@@ -1275,14 +1275,32 @@ function arm64_ands_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32
 // arm64_logical_imm_w_ok reports whether `imm` can be re-encoded as a 32-bit
 // logical immediate by dropping the N bit — i.e. it fits in 32 bits and the
 // 64-bit encoding is the single-run (N=1) shape whose immr/imms transfer
-// unchanged. Anything else (a mask that needs a 64-bit element size, or one
-// wider than 32 bits) is REFUSED by the caller rather than encoded on a guess:
+// unchanged. immr transfers only when it is 0 (a run starting at bit 0 —
+// masks like 1, 31, 127, 255): a rotated run re-derives immr against the
+// 32-bit element size (and w4, w4, #16 is immr 28 where the 64-bit form
+// carries 60), so those are REFUSED — along with masks needing a 64-bit
+// element size or wider than 32 bits — rather than encoded on a guess:
 // silently emitting the wrong mask is the #6047 / #6054 failure mode.
 function arm64_logical_imm_w_ok(imm: i32): boolean {
     if (imm < 0) { return false; }
     var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
     if (!bm.ok) { return false; }
-    return bm.n == 1;
+    return bm.n == 1 && bm.immr == 0;
+}
+
+// orr's immediate form `orr Xd, Xn, #imm`: base 0xb2000000 (0x32000000 with
+// N dropped for the 32-bit form — the same N and immr-carry-over rules as
+// arm64_and_imm), same encoder + validity check as `and #imm`. Verified vs
+// GNU as: orr x4, x4, #16 = 0xb27c0084, orr w4, w4, #1 = 0x32000084.
+function arm64_orr_imm_ok(imm: i32): boolean {
+    return arm64_encode_bitmask(imm as i64).ok;
+}
+function arm64_orr_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[] {
+    var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
+    var base: i64 = 0xb2000000;
+    var nbit: i64 = bm.n as i64;
+    if (w) { base = 0x32000000; nbit = 0; }
+    return arm64_le32(buf, base | (nbit << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
 }
 
 // eor's immediate form `eor Xd, Xn, #imm` (the boolean-not idiom `x ^ 1`):
@@ -2364,6 +2382,12 @@ function arm64_gas_bad_ext_token(mnem: string, rest: string): string {
 }
 function arm64_gas_bad_ext_alu(mnem: string, ops: string[]): string {
     if (arm64_gas_is_carry(mnem) || arm64_gas_is_mulwide(mnem)) { return arm64_gas_bad_carrymul(mnem, ops); }
+    // adds is register-only here: an immediate would mis-read as a register.
+    if (mnem == "adds") {
+        if (ops.len() != 3) { return "arity"; }
+        if (ops[2].len() > 0 && ops[2][0] == b'#') { return "imm"; }
+        return "";
+    }
     if (arm64_gas_is_logical2(mnem)) { return arm64_gas_bad_logical2(mnem, ops); }
     if (arm64_gas_is_bitfield(mnem) || mnem == "extr" || mnem == "ror") { return arm64_gas_bad_bitfield(mnem, ops); }
     if (arm64_gas_is_condsel(mnem)) { return arm64_gas_bad_condsel(mnem, ops); }
@@ -3232,6 +3256,13 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         }
         return a;
     }
+    // adds Xd, Xn, Xm — the flag-setting add whose carry the adc chain
+    // consumes (cmn above is its Rd=XZR alias). Register form only; an
+    // immediate operand is refused by the vet, never mis-read as a register.
+    if (mnem == "adds") {
+        a = Arm64Asm { ...a, code: arm64_rrr(a.code, 0xab000000, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
+        return a;
+    }
     if (mnem == "udiv") {
         a = Arm64Asm { ...a, code: arm64_udiv(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2])) };
         return a;
@@ -3407,7 +3438,7 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "cbz" || mnem == "cbnz" || mnem == "tbz" || mnem == "tbnz") { return true; }
     if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp" || mnem == "sxtw") { return true; }
     if (mnem == "lsl" || mnem == "lsr" || mnem == "asr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
-    if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16" || mnem == "clz") { return true; }
+    if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "adds" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16" || mnem == "clz") { return true; }
     if (mnem == "rbit" || mnem == "cnt" || mnem == "addv") { return true; }  // ctz = rbit+clz; popcount = cnt+addv
     if (mnem == "ld1" || mnem == "cmeq" || mnem == "cmlt" || mnem == "shrn" || mnem == "dup") { return true; }  // the packed NEON of the §3 kernels
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
@@ -4371,6 +4402,22 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
                 a = Arm64Asm { ...a, code: arm64_and_imm(a.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm, nw) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("and#") };
+            }
+            continue;
+        }
+        // `orr Xd, Xn, #imm` (logical immediate) — same verified-bitmask path
+        // as `and #imm`. Without this branch the register dispatch read the
+        // immediate token as a register, got -1, masked it to XZR, and
+        // silently encoded `orr Xd, Xn, xzr` — a no-op wearing the right
+        // mnemonic. Register-form `orr` falls through to emit.
+        if (mnem == "orr" && arm64_gas_third_is_imm(rest)) {
+            var oops: string[] = arm64_gas_operands(rest);
+            var oimm: i32 = arm64_gas_imm(oops[2]);
+            var ow: boolean = arm64_gas_is_w(oops[0]);
+            if (arm64_orr_imm_ok(oimm) && (!ow || arm64_logical_imm_w_ok(oimm))) {
+                a = Arm64Asm { ...a, code: arm64_orr_imm(a.code, arm64_gas_reg(oops[0]), arm64_gas_reg(oops[1]), oimm, ow) };
+            } else {
+                p = Arm64GasProg { ...p, unknown: p.unknown.append("orr#") };
             }
             continue;
         }

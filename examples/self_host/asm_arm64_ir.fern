@@ -6407,12 +6407,18 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     // two bits are the quadrant and the rest the fraction of x/(pi/2), which
     // stays fully accurate however large x is. Kept in lockstep with the
     // native arm64 backend's __fern_rem_pio2_large, register for register.
+    // Wide masks load through the literal pool: the self-host assembler's
+    // logical-immediate path parses 32-bit immediates, so a 52-bit bitmask
+    // spelled `and #imm` is refused there — same discipline as this file's
+    // other 64-bit constants.
     s = s.write("__fern_rem_pio2_large:\n");
     s = s.write("    fmov x1, d0\n");
     s = s.write("    lsr x2, x1, #63\n");        // sign of x
     s = s.write("    ubfx x3, x1, #52, #11\n");  // biased exponent
-    s = s.write("    and x4, x1, #0x000fffffffffffff\n");
-    s = s.write("    orr x4, x4, #0x0010000000000000\n"); // m, the 53-bit significand
+    s = s.write("    ldr x0, =0x000fffffffffffff\n");
+    s = s.write("    and x4, x1, x0\n");
+    s = s.write("    ldr x0, =0x0010000000000000\n");
+    s = s.write("    orr x4, x4, x0\n"); // m, the 53-bit significand
     // x = m*2^(e-1075), so the fraction of x*(2/pi) starts at bit
     // (e-1075)+62 of the table once the product is read as a Q126.
     s = s.write("    sub x3, x3, #1013\n");
@@ -6441,7 +6447,8 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    adds x1, x1, x6\n");
     s = s.write("    adc x7, x7, x3\n");
     s = s.write("    lsr x10, x7, #62\n"); // quadrant
-    s = s.write("    and x7, x7, #0x3fffffffffffffff\n");
+    s = s.write("    ldr x16, =0x3fffffffffffffff\n");
+    s = s.write("    and x7, x7, x16\n");
     // A fraction at or above a half belongs to the next quadrant, as the
     // negative remainder below it — which is what keeps |r| <= pi/4.
     s = s.write("    mov x0, xzr\n"); // frac is negative iff this becomes 1
