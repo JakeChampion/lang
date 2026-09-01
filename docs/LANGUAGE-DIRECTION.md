@@ -997,11 +997,27 @@ to smallest. Status pending unless marked.
   the AST node, the checker state-var table, the IR persistent-
   mode ops, and (once the arena reset was also dropped) the
   two-cursor allocator itself — both native backends now use a
-  single bump cursor reclaimed by reference counting. There is
-  currently **no language-level mechanism for process-lifetime
-  state**; if reintroduced it would want a cycle collector
-  alongside it (a `state`-rooted cycle leaks unboundedly — see
+  single bump cursor reclaimed by reference counting. If it were
+  reintroduced it would want a cycle collector alongside it (a
+  `state`-rooted cycle leaks unboundedly — see
   docs/CYCLE-COLLECTION-ANALYSIS.md).
+
+  There is no **module-level** mutable state, then, but that is
+  not the same as no process-lifetime state. Two mechanisms
+  carry a value across the requests of a long-running server:
+
+  - a closure-captured `Cell[T]`, limited to the cycle-free
+    element types E057 admits (scalars and `string`) — enough
+    for a counter, not for a table;
+  - `tcp.tcp_serve_with(port, init, handler)`, which threads a
+    caller-owned `S` through the accept loop's own frame: the
+    handler returns the state the next request sees, paired with
+    its response. `S` is unrestricted, so a `Map` accumulator
+    works here where a cell cannot hold one.
+
+  Threading is the recommended shape — it needs no language
+  feature and no collector, since the state is an ordinary local
+  in a frame that outlives every request.
 - **Numeric literal suffixes — shipped.** `42i64`, `7u8`,
   `0f32`, `1.5f64`, `42f64` (integer text + float suffix
   promotes to a float literal) all parse as the suffixed type
