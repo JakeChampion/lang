@@ -12532,6 +12532,32 @@ func aluImmForm(kind ir.OpKind, k int64) (string, bool) {
 	return "", false
 }
 
+// shiftImmForm returns the AArch64 mnemonic for a shift whose count is a
+// folded constant, and whether `k` is a usable immediate count. The register
+// form MASKS the count to the operand width (a `lsl w0, w1, w0` with w0 = 33
+// shifts by 1); the immediate form has no such wraparound, so a count at or
+// past the width is refused rather than reduced — the masked shift keeps its
+// register form.
+func shiftImmForm(op ir.Op, k int64) (string, bool) {
+	width := int64(32)
+	if op.Width == 64 || op.Width == ir.WidthPtr {
+		width = 64
+	}
+	if k < 0 || k >= width {
+		return "", false
+	}
+	switch op.Kind {
+	case ir.OpShl:
+		return "lsl", true
+	case ir.OpShrS:
+		if op.Unsigned {
+			return "lsr", true
+		}
+		return "asr", true
+	}
+	return "", false
+}
+
 // emitCmpOperands loads a comparison's operands and issues the `cmp` that sets
 // the flags for it. With hasImm the rhs was a constant folded into the compare:
 // only the lhs is popped, and the constant becomes the immediate operand.
@@ -12598,6 +12624,13 @@ func (g *generator) tryFoldConstOperand(ops []ir.Op, i int, scope *[]irScope) (i
 		g.emitCmpOperands(next, k, true)
 		cc, _ := armCondFor(next.Kind, next.Unsigned)
 		g.emit("cset w0, %s", cc)
+		g.push()
+		return 1, true
+	}
+	if mnem, ok := shiftImmForm(next, k); ok {
+		r := g.regForWidth(next.Width)
+		g.pop()
+		g.emit("%s %s0, %s0, #%d", mnem, r, r, k)
 		g.push()
 		return 1, true
 	}
@@ -12704,21 +12737,87 @@ func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope, imm i
 // have no pc-relative dependency, so they are range-safe at any function size.
 // Zero 16-bit chunks are skipped (movz first clears the register).
 func (g *generator) loadImm32(reg string, v uint32) {
-	g.emit("movz %s, #%d", reg, v&0xffff)
-	if (v>>16)&0xffff != 0 {
-		g.emit("movk %s, #%d, lsl #16", reg, (v>>16)&0xffff)
-	}
+	g.loadImmChunks(reg, uint64(v), 2)
 }
 func (g *generator) loadImm64(reg string, v uint64) {
-	g.emit("movz %s, #%d", reg, v&0xffff)
-	if (v>>16)&0xffff != 0 {
-		g.emit("movk %s, #%d, lsl #16", reg, (v>>16)&0xffff)
+	g.loadImmChunks(reg, v, 4)
+}
+
+// moveWidePlan is the movz- or movn-rooted sequence that materialises a
+// constant: the leading move writes 16-bit lane `root` (-1 when every lane
+// already holds the root form's default), and a movk then writes each lane in
+// `fill`.
+type moveWidePlan struct {
+	movn    bool
+	root    int
+	rootImm uint64
+	fill    []int
+}
+
+func (p moveWidePlan) cost() int { return 1 + len(p.fill) }
+
+// planLanes builds the plan for one root form. `dflt` is the lane value that
+// root form leaves behind everywhere it does not write (0 for movz, 0xffff for
+// movn), so a lane already equal to it costs nothing.
+func planLanes(v uint64, chunks int, movn bool, dflt uint64) moveWidePlan {
+	p := moveWidePlan{movn: movn, root: -1}
+	for i := 0; i < chunks; i++ {
+		lane := (v >> (16 * i)) & 0xffff
+		if lane == dflt {
+			continue
+		}
+		if p.root < 0 {
+			p.root = i
+			p.rootImm = lane ^ dflt // movz writes the lane; movn its complement
+			continue
+		}
+		p.fill = append(p.fill, i)
 	}
-	if (v>>32)&0xffff != 0 {
-		g.emit("movk %s, #%d, lsl #32", reg, (v>>32)&0xffff)
+	return p
+}
+
+// planMoveWide picks between the two move-wide roots for `v` over `chunks`
+// 16-bit lanes. movz leaves every lane it does not write at 0, movn at
+// all-ones, so the cheaper root is the one whose default already matches more
+// of the constant: `movz` for 0x0000_0001, `movn` for -1 — one instruction
+// instead of four.
+func planMoveWide(v uint64, chunks int) moveWidePlan {
+	z := planLanes(v, chunks, false, 0)
+	n := planLanes(v, chunks, true, 0xffff)
+	if n.cost() < z.cost() {
+		return n
 	}
-	if (v>>48)&0xffff != 0 {
-		g.emit("movk %s, #%d, lsl #48", reg, (v>>48)&0xffff)
+	return z
+}
+
+// loadImmChunks materialises `v` into `reg` with a move-wide sequence instead
+// of a `ldr reg, =N` literal-pool load. A literal pool is reached by a
+// pc-relative load with only ±1MB range; in a very large emitted function the
+// pool drifts out of range ("pc-relative load offset out of range"). movz /
+// movn / movk have no pc-relative dependency, so they are range-safe at any
+// function size.
+func (g *generator) loadImmChunks(reg string, v uint64, chunks int) {
+	p := planMoveWide(v, chunks)
+	root := "movz"
+	if p.movn {
+		root = "movn"
+	}
+	shift := 0
+	if p.root > 0 {
+		shift = 16 * p.root
+	}
+	if shift == 0 {
+		g.emit("%s %s, #%d", root, reg, p.rootImm)
+	} else {
+		g.emit("%s %s, #%d, lsl #%d", root, reg, p.rootImm, shift)
+	}
+	for _, i := range p.fill {
+		lane := (v >> (16 * i)) & 0xffff
+		if i == 0 {
+			g.emit("movk %s, #%d", reg, lane)
+		} else {
+			g.emit("movk %s, #%d, lsl #%d", reg, lane, 16*i)
+		}
 	}
 }
 
