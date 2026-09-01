@@ -13,14 +13,16 @@ import (
 // path, which miscompiles the element call (exit 255).
 //
 // The slice has three layers:
-//   - parser: a depth-1 comma inside the parens means TUPLE; fn-typed
-//     segments coarsen individually ("((i32)=>i32, i32)" → "(fn, i32)",
-//     coarsen_fn_elems) instead of swallowing the whole type;
+//   - parser: a depth-1 comma inside the parens means TUPLE, and each fn-typed
+//     element keeps its signature ("((i32) => i32, i32)") instead of the whole
+//     type being swallowed — the result type is what lets the checker type a
+//     call through the element (#7961);
 //   - lift: every fn-VALUED tuple element (capturing lambda, no-capture
 //     lambda, unshadowed bare fn name) wraps into a `__mkclo$…` env box, so
 //     the element representation is uniformly a closure box;
 //   - irlower: the "clo" element tag (literal-side elem_type_tag +
-//     declared-side tuple_elem_tags/tuple_type_elem_tag map "fn" → "clo")
+//     declared-side tuple_elem_tags/tuple_type_elem_tag, which both ask
+//     parser.ref_is_fn_value)
 //     drives env-first `t.N(args)` dispatch, closure-local binding for
 //     `var f = t.0`, and the destructure bind.
 //

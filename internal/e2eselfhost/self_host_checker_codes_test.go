@@ -183,6 +183,26 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// function type now, so assigning it where a scalar is declared
 		// draws native's E003 instead of an unknown-typed silence.
 		{"e003-bare-fn-value-mismatch", "function mk(n: i32): i32 { return n + 1; }\nfunction main(): i32 { var x: i32 = mk; return x; }\n", []string{"E003"}},
+		// A fn-typed TUPLE ELEMENT (#7961). The parser used to coarsen an
+		// element containing an arrow to the bare tag `fn`, which no type
+		// resolver had an arm for, so the DECLARED element read `unknown` and
+		// every one of these drew E003 against an init the checker typed
+		// correctly — a refusal native's -check does not make. The element now
+		// keeps its signature and resolves to the opaque callable, so all three
+		// spellings of a fn value in that position are clean: a bare zero-arg
+		// name, a one-param name, and a lambda.
+		{"e003-fn-tuple-elem-zeroarg-clean", "function a1(): i32 { return 3; }\nfunction main(): i32 { var t: ((() => i32), i32) = (a1, 4); return t.1; }\n", nil},
+		{"e003-fn-tuple-elem-onearg-clean", "function inc(x: i32): i32 { return x + 1; }\nfunction main(): i32 { var t: (((i32) => i32), i32) = (inc, 4); return t.1; }\n", nil},
+		{"e003-fn-tuple-elem-lambda-clean", "function main(): i32 { var t: ((() => i32), i32) = (() => 3, 4); return t.1; }\n", nil},
+		// The other half of that resolution, and the reason it is a real type
+		// rather than a hole: a NON-function in a fn-typed element is now
+		// rejected against a TypeFunc, where before it was rejected against an
+		// `unknown` that rejected everything alike. Same code, and now for the
+		// reason native gives it.
+		{"e003-fn-tuple-elem-scalar-init", "function main(): i32 { var t: ((() => i32), i32) = (4, 5); return t.1; }\n", []string{"E003"}},
+		// The control the fix must not blunt: an ordinary element mismatch in a
+		// tuple with no fn in it still draws E003.
+		{"e003-tuple-elem-mismatch", "function main(): i32 { var t: (string, i32) = (1, 2); return t.1; }\n", []string{"E003"}},
 		// The shadowing guard on that fallback: a binding typed opaquely
 		// unknown (here a builtin variant payload) still shadows the module
 		// function table. Without the is_bound gate, `Some(pair)` with a

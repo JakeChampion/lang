@@ -4189,7 +4189,12 @@ pub function tuple_type_elem_tag(t: string, n: i32): string {
     // pass wraps every fn-valued tuple element into a `__mkclo$…` env box),
     // so tag it "clo" for the env-first `t.N(args)` dispatch — mirroring
     // tuple_elem_tags' declared-side mapping.
-    if (rt == "fn") { return "clo"; }
+    //
+    // The element keeps its SIGNATURE now (#7961: coarsening it to the bare tag
+    // threw away the result type the checker needs to type `t.N()`), so the
+    // arrow form is what arrives here. The bare tag still can — a type
+    // parameter substituted with `fn` spells one — so both answer "clo".
+    if (rt == "fn" || parser.ref_is_fn_value(r.args[n])) { return "clo"; }
     return rt;
 }
 
@@ -56448,13 +56453,17 @@ pub function tuple_elem_tags(rt: string): string {
             if (seg.len() > 0 && seg[0] == b' ') { seg = slice_unchecked(seg, 1, seg.len()); }
             if (seg.len() > 0 && seg[seg.len() - 1] == b' ') { seg = slice_unchecked(seg, 0, seg.len() - 1); }
             if (!first) { out = out + ","; }
-            // A declared fn-typed element (the parser coarsens `(T) => R`
-            // segments to "fn") holds a closure BOX at runtime — the lift
-            // pass wraps every fn-valued tuple element (lambda or bare fn
+            // A declared fn-typed element holds a closure BOX at runtime — the
+            // lift pass wraps every fn-valued tuple element (lambda or bare fn
             // name) into a `__mkclo$…` env box — so tag it "clo" for the
             // env-first `t.N(args)` dispatch, matching elem_type_tag's
             // literal-side classification.
-            if (seg == "fn") { out = out + "clo"; }
+            //
+            // The element carries its SIGNATURE (#7961), so the arrow form is
+            // what a segment holds; the bare tag still reaches here from a
+            // substituted type parameter. Same question, same answer, and the
+            // same predicate tuple_type_elem_tag asks.
+            if (seg == "fn" || parser.ref_is_fn_value(parser.parse_type_ref(seg + ""))) { out = out + "clo"; }
             else { out = out + seg; }
             first = false;
             start = i + 1;

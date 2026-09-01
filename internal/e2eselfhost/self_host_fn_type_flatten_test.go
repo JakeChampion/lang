@@ -31,33 +31,7 @@ import (
 //
 // The unit-level half — that rewrite_type_name round-trips a fn spelling and
 // rewrites its parameters and result — is asserted in flatten.fern's own
-// self-test (returns 205-212, TestSelfHostFlattenX86_64).
-
-// fnTypeTupleCheckerGap names the corpus rows this leg cannot run, and why. The
-// self-host CHECKER refuses an annotated fn-typed TUPLE outright — `var t:
-// ((() => i32), i32) = (a1, 4)` draws E003 "cannot assign tuple to variable of
-// type tuple" where native's `-check` accepts it — because the parser coarsens a
-// tuple element containing an arrow to the bare tag "fn" and no type resolver
-// has an arm for that tag, so the DECLARED element reads `unknown` while the
-// init types correctly as a callable. Resolving the tag to the opaque TypeFunc
-// (the shape a "fn"-coarsened struct field and parameter already resolve to)
-// clears E003 and lands the case in the #4346 representability bucket instead:
-// the coarsened spelling records no RESULT type either, so `t.0()` still has no
-// type. Closing it needs the element's return spelling carried past the
-// coarsening, which is checker/parser work of its own — #7961.
-//
-// The stdin driver these rows are also run through (TestSelfHostTupleFnZeroArgIR*)
-// does not type-check, which is why they pass there. Every row without a
-// fn-typed tuple annotation — the Option/Result payloads, the fn return, the
-// user-enum field, and all the const-read regressions — runs here.
-var fnTypeTupleCheckerGap = map[string]bool{
-	"tuple-zeroarg":          true,
-	"tuple-in-array-zeroarg": true,
-	"tuple-two-fn-elems":     true,
-	"tuple-onearg":           true,
-	"tuple-lambda":           true,
-	"const-and-fn-mixed":     true,
-}
+// self-test (returns 205-213, TestSelfHostFlattenX86_64).
 
 // fnTypeCrossModuleCases add what a single source cannot reach: the fn type and
 // the function it names come from DIFFERENT modules, so the spelling being
@@ -108,9 +82,6 @@ func TestSelfHostFnTypeFlattenX86_64(t *testing.T) {
 	}
 
 	for _, tc := range tupleFnZeroArgCases {
-		if fnTypeTupleCheckerGap[tc.name] {
-			continue
-		}
 		t.Run(tc.name, func(t *testing.T) {
 			proj := t.TempDir()
 			mustWriteFile(t, filepath.Join(proj, "main.fern"), tc.src)
@@ -151,9 +122,6 @@ func TestSelfHostFnTypeFlattenWasm(t *testing.T) {
 	}
 
 	for _, tc := range tupleFnZeroArgCases {
-		if fnTypeTupleCheckerGap[tc.name] {
-			continue
-		}
 		t.Run(tc.name, func(t *testing.T) {
 			proj := t.TempDir()
 			mustWriteFile(t, filepath.Join(proj, "main.fern"), tc.src)

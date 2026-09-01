@@ -236,8 +236,10 @@ before the layout code could see it), recorded here because nothing else owns
 it. It is closed end-to-end:
 
 - `parse_type_name` coarsens a parenthesized `=>` type to `"fn"` only when there
-  is NO depth-1 comma. A tuple's fn segments coarsen individually via
-  `coarsen_fn_elems` → `"(fn, i32)"`.
+  is NO depth-1 comma. With one, the parens are a TUPLE and each fn-typed
+  element keeps its full signature — `"((i32) => i32, i32)"` — because the
+  result type is what lets the checker type a call through the element (#7961).
+  Consumers ask `parser.ref_is_fn_value` rather than matching the spelling.
 - The lift pass wraps every fn-valued tuple element into a `__mkclo$` env box.
 - `irlower`'s `"clo"` element tag drives env-first `t.N(args)` dispatch plus
   closure-local binding.
