@@ -1378,6 +1378,13 @@ var CoverEnabled = os.Getenv("FERN_COVER") == "1"
 // printed there, so the prefix is the only thing separating the two.
 const CoverLinePrefix = "fern-cover: "
 
+// CoverBranchPrefix opens every BRANCH row of the same report (#5548
+// slice 3). Its own prefix rather than a third field on a line row: the
+// two carry different shapes — a branch row names a column and an edge —
+// and a reader that had to look past the file:line to tell them apart
+// would misparse a line row for a file whose path contains a space.
+const CoverBranchPrefix = "fern-branch: "
+
 // RcFreeDebug turns the freelist into a use-after-free DETECTOR
 // (x86-64 and arm64; a diagnostic build mode, set alongside
 // RcFreeEnabled). Instead of recycling a freed array buffer, the

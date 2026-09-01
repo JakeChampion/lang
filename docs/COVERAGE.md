@@ -1,4 +1,4 @@
-# Line coverage (`-cover` / `FERN_COVER=1`)
+# Coverage (`-cover` / `FERN_COVER=1`)
 
 Fern's test culture is strong and its coverage story was nothing at all:
 nothing said which lines a suite exercised, so "is this tested?" was answered
@@ -7,7 +7,7 @@ by reading. `-cover` answers it with a number.
 ```sh
 fern -target x86-64-linux -cover -o prog prog.fern
 ./prog 2> cov.txt          # the report shares stderr with the program
-fern -cover-report cov.txt # per-file totals + the uncovered lines
+fern -cover-report cov.txt # per-file line + branch totals, uncovered lists
 fern -cover-report -lcov cov.txt > lcov.info
 ```
 
@@ -17,14 +17,32 @@ a driver you don't invoke directly.
 
 ## What it measures
 
-Line (statement) coverage: how many times each executable source line ran.
-Not branch coverage — a `if (a && b)` line reports as covered when the line
-ran, whatever `b` did. That is the second slice of #5548 and is not built.
+Two things, from one flag.
 
-The unit is a **line**, not a statement: several statements on one line share
-one counter. Where one line holds several basic blocks — `if (c) { a(); } else
-{ b(); }` all on one line — each block bumps the shared counter, so the hit
-count sums the blocks the way gcov's does.
+**Line (statement) coverage** — how many times each executable source line
+ran. The unit is a **line**, not a statement: several statements on one line
+share one counter. Where one line holds several basic blocks — `if (c) { a(); }
+else { b(); }` all on one line — each block bumps the shared counter, so the
+hit count sums the blocks the way gcov's does.
+
+**Branch coverage** — for each conditional the program wrote (`if`, `while`,
+`&&`, `||`), how often it was evaluated and how often it went the true way.
+This is the thing line coverage structurally cannot state:
+
+```fern
+while (i > 99) { i = i + 1; }   // the line runs. the body never does.
+if (n > 10) { return 1; }        // no `else` exists to report as uncovered.
+if (a > 0 && b > 0) { … }        // both operands share one line.
+```
+
+In each case the line reports a hit and the report still says an edge was
+never taken.
+
+Only the conditionals the **author wrote** are counted. The lowering opens far
+more — drop glue, bounds checks, rc tests — and counting those would report
+branches nobody can cover and make the denominator move with unrelated codegen
+changes. `match` arms are not branch sites either; each arm body is on its own
+line, so line coverage already answers which ran.
 
 ## The report
 
@@ -34,7 +52,20 @@ one line per instrumented source line, **hit or not**:
 ```
 fern-cover: /path/to/prog.fern:12 3
 fern-cover: /path/to/prog.fern:13 0
+fern-branch: /path/to/prog.fern:12:5 E 4
+fern-branch: /path/to/prog.fern:12:5 T 3
 ```
+
+A branch is **two** counters, not one per arm: `E` counts evaluations of the
+conditional and `T` counts the ones that went true, so the false edge is
+`E − T`. Fern's structured control flow has no `else` arm to hang a third
+counter on when the source wrote none, and synthesising one to hold a counter
+would have meant the instrumentation changing the shape of the code it
+measures. Subtraction costs nothing and cannot.
+
+The column is part of a branch's identity — `12:5` and `12:19` are the `if` and
+the `&&` on one line. Without it they would share counters and the report could
+not say which arm was missed.
 
 Both exit seams report — falling off `main` and the `exit()` builtin — so a
 CLI that ends in an explicit `exit` measures the same as one that returns.
@@ -51,10 +82,11 @@ runs' output can be concatenated into one measurement.
 
 ## What a `-cover` build costs
 
-- **One increment per executable line reached.** No call, no allocation: an
-  `inc` against a fixed `.bss` slot on x86-64, an `ldr`/`add`/`str` triple on
-  arm64.
-- **One `.rodata` string and one 8-byte counter per instrumented line.**
+- **One increment per executable line reached, and two per conditional
+  evaluated.** No call, no allocation: an `inc` against a fixed `.bss` slot on
+  x86-64, an `ldr`/`add`/`str` triple on arm64.
+- **One `.rodata` string and one 8-byte counter per instrumented line, and two
+  of each per conditional.**
 - **Every function the program declares stays in the binary's lowering.** A
   function nothing calls is the most useful thing a coverage report has to
   say, so the AST tree-shake is skipped under `-cover` and the sites are
@@ -81,8 +113,18 @@ reimplementing the analysis:
 
 - `ir.CoverPoints()` makes the builder emit an `OpCoverPoint` at each
   statement that opens a new source line in its basic block, and publishes the
-  `(file, line)` table as `Program.CoverSites`. The op is `— → —`, modelled on
+  counter table as `Program.CoverSites`. The op is `— → —`, modelled on
   `OpLine` — no stack effect, no pass has to understand it.
+- **Branch counters reuse that same op and the same table.** A branch is two
+  more entries with a different `CoverKind`, so adding branch coverage needed
+  no backend change at all: the emit already knew how to bump counter `i` and
+  print row `i`. `CoverSite.ReportLine` renders a row's fixed text and lives in
+  `internal/ir`, so the two natives cannot drift on the wire format.
+- The eval counter is emitted **before** the condition is lowered, where the
+  operand stack is in a known state and no comparison is waiting for its
+  branch; the true counter goes at the top of the arm, past the conditional
+  jump. So a conditional whose condition diverges (a call that exits) counts as
+  evaluated — the block-entry convention gcov uses.
 - The counter is keyed by `(file, line)`. `ast.Position` carries only a line,
   so the file half comes from `FuncDecl.SourceFile`, which `modload` stamps and
   never clears — unlike `SourceModule`, which is blanked on flat-loaded stdlib
@@ -95,11 +137,12 @@ reimplementing the analysis:
 
 ## Known gaps
 
-- **Branch coverage** — slice 3 of #5548. Both edges of each conditional need
-  their own counter; the line counter cannot distinguish them.
-- **Coverage-guided fuzzing** — slice 4. `internal/fernsmith` generates random
+- **Coverage-guided fuzzing** — slice 4 of #5548. `internal/fernsmith` generates random
   programs blind; feeding it the live edge-hit set turns it into a
   coverage-maximising fuzzer.
+- **`match` arm coverage** — not branch coverage, and not built. Arm bodies sit
+  on their own lines, so line coverage answers which arms ran; a guard on an
+  arm is a conditional the report does not currently see.
 - **wasm** — no instrumentation, so `-cover` errors on the wasm targets.
 - **Literate sources** — a `.fern.md` reports against the tangled `.fern`
   line numbers, not the document's. The remap exists (`internal/literate`) but

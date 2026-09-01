@@ -350,12 +350,16 @@ const (
 	// and the self-host byte-identical fixpoint — never see it.
 	OpLine // () → () (source-line marker; Pos is the payload)
 
-	// OpCoverPoint is the line-coverage counter site (#5548): like OpLine
-	// it consumes and produces nothing, but it does emit code — a single
+	// OpCoverPoint is the coverage counter site (#5548): like OpLine it
+	// consumes and produces nothing, but it does emit code — a single
 	// increment of the counter Program.CoverSites[I32] names. Emitted by
 	// the builder only under the CoverPoints lower-option (`fern -cover`),
 	// so an ordinary build — and the self-host byte-identical fixpoint —
 	// never sees one. I32 is the counter index; Pos is the site it counts.
+	//
+	// One op serves both line and branch counters: a branch is two of
+	// these against two table entries (see CoverKind), which is why the
+	// backends needed no new emit when branch coverage landed.
 	OpCoverPoint // () → () (coverage counter bump; I32 is the site index)
 
 	// opKindCount is one past the last op, not an op itself. It exists so
@@ -1795,6 +1799,51 @@ type Program struct {
 type CoverSite struct {
 	File string
 	Line int
+	// Col is the conditional's column on a branch counter, which is what
+	// separates two branches sharing a line (`a && b` inside an `if`, an
+	// `else if` chain written on one line). Zero on a line counter, whose
+	// identity is the line itself.
+	Col  int
+	Kind CoverKind
+}
+
+// CoverKind says what a counter counts. A branch needs two of them
+// because Fern's structured control flow has no `else` arm to hang a
+// counter on when the source wrote none: counting entries to the
+// conditional and entries to its true arm gives the false arm by
+// subtraction, without the lowering having to synthesise a block.
+type CoverKind uint8
+
+const (
+	// CoverLine counts entries to a source line.
+	CoverLine CoverKind = iota
+	// CoverBranchEval counts evaluations of a conditional.
+	CoverBranchEval
+	// CoverBranchTrue counts the ones that took the true arm. The false
+	// arm's count is CoverBranchEval − CoverBranchTrue.
+	CoverBranchTrue
+)
+
+// ReportLine is the fixed text opening this counter's line in the report
+// an instrumented binary writes at exit — everything up to the count. The
+// backends bake it into `.rodata` verbatim, so it lives here rather than
+// in either of them: a program's coverage output must not depend on which
+// native built it.
+func (s CoverSite) ReportLine() string {
+	file := s.File
+	if file == "" {
+		// A program built straight from the parser, or a decl the checker
+		// synthesised, has no file stamp. Naming that rather than printing
+		// an empty path keeps every report line parseable by one reader.
+		file = "<unknown>"
+	}
+	switch s.Kind {
+	case CoverBranchEval:
+		return fmt.Sprintf("%s%s:%d:%d E ", ast.CoverBranchPrefix, file, s.Line, s.Col)
+	case CoverBranchTrue:
+		return fmt.Sprintf("%s%s:%d:%d T ", ast.CoverBranchPrefix, file, s.Line, s.Col)
+	}
+	return fmt.Sprintf("%s%s:%d ", ast.CoverLinePrefix, file, s.Line)
 }
 
 // coverTable assigns counter indices to (file, line) pairs and records
@@ -1813,7 +1862,19 @@ func newCoverTable() *coverTable {
 // id returns the counter index for one source line, allocating on first
 // sight.
 func (c *coverTable) id(file string, line int) int32 {
-	k := CoverSite{File: file, Line: line}
+	return c.site(CoverSite{File: file, Line: line})
+}
+
+// branch returns the (eval, true) counter pair for one conditional,
+// allocating on first sight. Two counters rather than one per arm — see
+// CoverKind for why the false arm is a subtraction.
+func (c *coverTable) branch(file string, pos ast.Position) (eval, taken int32) {
+	eval = c.site(CoverSite{File: file, Line: pos.Line, Col: pos.Col, Kind: CoverBranchEval})
+	taken = c.site(CoverSite{File: file, Line: pos.Line, Col: pos.Col, Kind: CoverBranchTrue})
+	return eval, taken
+}
+
+func (c *coverTable) site(k CoverSite) int32 {
 	if i, ok := c.index[k]; ok {
 		return i
 	}
@@ -6479,6 +6540,35 @@ func (b *builder) allocSlot() int32 {
 	return s
 }
 
+// coverBranch instruments one source-level conditional (#5548 slice 3).
+// It emits the "evaluated" counter at the point of call — which must be
+// BEFORE the condition is lowered, where the operand stack is in a known
+// state and no comparison is waiting for its branch — and returns the
+// index of the "true arm" counter for the caller to emit once the arm is
+// open. A no-op returning -1 when coverage is off.
+//
+// Only SOURCE-LEVEL conditionals go through here. The lowering opens far
+// more OpIfs than the program wrote — drop glue, rc checks, bounds
+// checks — and counting those would report branches the author cannot
+// see, let alone cover.
+func (b *builder) coverBranch(pos ast.Position) int32 {
+	if b.cover == nil || pos.Line <= 0 {
+		return -1
+	}
+	eval, taken := b.cover.branch(b.coverFile, pos)
+	b.emit(Op{Kind: OpCoverPoint, I32: eval, Pos: pos})
+	return taken
+}
+
+// coverArm emits the true-arm counter coverBranch reserved. Called with
+// the arm already open, so the op lands past the conditional jump.
+func (b *builder) coverArm(taken int32, pos ast.Position) {
+	if taken < 0 {
+		return
+	}
+	b.emit(Op{Kind: OpCoverPoint, I32: taken, Pos: pos})
+}
+
 func (b *builder) emit(op Op) {
 	if op.Pos == (ast.Position{}) {
 		op.Pos = b.curPos
@@ -8081,10 +8171,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			}
 		}
 	case *ast.If:
+		taken := b.coverBranch(n.Pos())
 		if err := b.expr(n.Cond); err != nil {
 			return err
 		}
 		b.openIf(BlockTypeVoid)
+		b.coverArm(taken, n.Pos())
 		if err := b.stmt(n.Then); err != nil {
 			return err
 		}
@@ -8103,11 +8195,16 @@ func (b *builder) stmt(s ast.Stmt) error {
 		breakD := b.depth
 		b.openLoop(BlockTypeVoid)
 		loopD := b.depth
+		// The loop's condition is a conditional like any other: evaluated
+		// once per iteration, true on the edge into the body. A `while`
+		// whose body never runs is the case line coverage cannot state.
+		taken := b.coverBranch(n.Pos())
 		if err := b.expr(n.Cond); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpNot}) // br_if exits when cond was false
 		b.brTo(breakD, true)
+		b.coverArm(taken, n.Pos()) // fell through the exit branch: body entered
 		b.breakStack = append(b.breakStack, breakD)
 		b.contStack = append(b.contStack, loopD)
 		b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: loopD, deferIdxs: b.bodyDeferIdxs(n.Body)})
@@ -11920,10 +12017,16 @@ func (b *builder) binary(n *ast.Binary) error {
 	case "&&":
 		// `a && b` → `if a then b else 0`. The branch pushes b only
 		// when a is truthy, else a normalised 0.
+		//
+		// Instrumented like any other conditional: whether the right
+		// operand was ever evaluated is invisible to line coverage, since
+		// both operands sit on the same line as the operator.
+		taken := b.coverBranch(n.Pos())
 		if err := b.expr(n.Left); err != nil {
 			return err
 		}
 		b.openIf(BlockTypeI32)
+		b.coverArm(taken, n.Pos())
 		if err := b.expr(n.Right); err != nil {
 			return err
 		}
@@ -11934,10 +12037,16 @@ func (b *builder) binary(n *ast.Binary) error {
 	case "||":
 		// `a || b` → `if a then 1 else b`. The truthy branch
 		// normalises a to 1: `||` yields 0/1, not a's value.
+		//
+		// The true arm here is the SHORT-CIRCUIT, so its counter says how
+		// often the right operand was skipped; eval − true is how often
+		// it ran. Same two edges, read the other way round.
+		taken := b.coverBranch(n.Pos())
 		if err := b.expr(n.Left); err != nil {
 			return err
 		}
 		b.openIf(BlockTypeI32)
+		b.coverArm(taken, n.Pos())
 		b.emit(Op{Kind: OpConstI32, I32: 1})
 		b.elseBranch()
 		if err := b.expr(n.Right); err != nil {

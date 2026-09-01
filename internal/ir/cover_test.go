@@ -192,3 +192,135 @@ func TestCoverSitesAreKeyedByFile(t *testing.T) {
 		t.Errorf("table holds %d sites, want 2", len(c.sites))
 	}
 }
+
+// --- Branch coverage, slice 3 (#5548) ----------------------------------
+//
+// A branch counter pair exists to state what a line counter cannot: that
+// a line RAN but one of its edges never did. The properties below are the
+// ones a wrong implementation would break while still producing a
+// plausible-looking report — that both edges of a conditional are
+// accounted for, that two conditionals on one line stay apart, and that
+// the compiler's own conditionals are not counted as the author's.
+
+// Each instrumented conditional gets exactly two counters, and they are
+// the eval/true pair — the false edge is a subtraction, so a lone counter
+// or three would mean the report cannot derive it.
+func TestCoverBranchSitesComeInPairs(t *testing.T) {
+	src := `function pick(n: i32): i32 {
+    if (n > 10) {
+        return 1;
+    }
+    return 2;
+}
+function main(): i32 { return pick(1); }`
+	p := lowerCover(t, src)
+	kinds := map[branchPos][]CoverKind{}
+	for _, s := range p.CoverSites {
+		if s.Kind == CoverLine {
+			continue
+		}
+		k := branchPos{s.File, s.Line, s.Col}
+		kinds[k] = append(kinds[k], s.Kind)
+	}
+	if len(kinds) != 1 {
+		t.Fatalf("got %d branch sites, want 1 (the `if`); table is %+v", len(kinds), p.CoverSites)
+	}
+	for k, got := range kinds {
+		if len(got) != 2 {
+			t.Fatalf("branch at %+v has %d counters, want 2", k, got)
+		}
+		if got[0] != CoverBranchEval || got[1] != CoverBranchTrue {
+			t.Errorf("branch at %+v has kinds %v, want [eval true]", k, got)
+		}
+	}
+}
+
+type branchPos struct {
+	file string
+	line int
+	col  int
+}
+
+// Two conditionals on one line are two branches. Keyed by line alone they
+// would share counters and the report could not say which arm was missed
+// — the `&&` inside an `if` is the everyday form of this.
+func TestCoverBranchSitesSeparateByColumn(t *testing.T) {
+	src := `function guard(a: i32, b: i32): i32 {
+    if (a > 0 && b > 0) { return 1; }
+    return 0;
+}
+function main(): i32 { return guard(0, 1); }`
+	p := lowerCover(t, src)
+	cols := map[int]bool{}
+	for _, s := range p.CoverSites {
+		if s.Kind == CoverBranchEval && s.Line == 2 {
+			cols[s.Col] = true
+		}
+	}
+	if len(cols) != 2 {
+		t.Errorf("line 2 has %d branch sites (columns %v), want 2 — the `if` and the `&&`", len(cols), cols)
+	}
+}
+
+// A `while` is a conditional: its condition runs once per iteration and
+// its true edge is the entry into the body. This is the case line
+// coverage reports as covered while the body never ran.
+func TestCoverBranchInstrumentsWhile(t *testing.T) {
+	src := `function main(): i32 {
+    var i: i32 = 0;
+    while (i > 99) {
+        i = i + 1;
+    }
+    return i;
+}`
+	p := lowerCover(t, src)
+	var found bool
+	for _, s := range p.CoverSites {
+		if s.Kind == CoverBranchEval && s.Line == 3 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the `while` on line 3 has no branch site; table is %+v", p.CoverSites)
+	}
+}
+
+// The lowering opens far more conditionals than the program wrote — drop
+// glue, bounds checks, rc tests. Counting those would report branches the
+// author cannot see, let alone cover, and would make the denominator move
+// with unrelated codegen changes.
+func TestCoverBranchSkipsCompilerConditionals(t *testing.T) {
+	// An array index emits a bounds check; a heap value emits drop glue.
+	// Neither is a branch the author wrote, so neither may appear.
+	src := `function main(): i32 {
+    var xs: i32[] = [1, 2, 3];
+    return xs[1];
+}`
+	p := lowerCover(t, src)
+	for _, s := range p.CoverSites {
+		if s.Kind != CoverLine {
+			t.Errorf("a source with no conditionals produced branch site %+v", s)
+		}
+	}
+}
+
+// The report text is the wire format both natives bake into .rodata and
+// the reader parses back. Pin all three shapes here, where they are
+// defined, rather than in either backend.
+func TestCoverSiteReportLine(t *testing.T) {
+	for _, c := range []struct {
+		site CoverSite
+		want string
+	}{
+		{CoverSite{File: "a.fern", Line: 12}, "fern-cover: a.fern:12 "},
+		{CoverSite{File: "a.fern", Line: 12, Col: 5, Kind: CoverBranchEval}, "fern-branch: a.fern:12:5 E "},
+		{CoverSite{File: "a.fern", Line: 12, Col: 5, Kind: CoverBranchTrue}, "fern-branch: a.fern:12:5 T "},
+		// A program built straight from the parser has no file stamp;
+		// naming that keeps every row parseable by one reader.
+		{CoverSite{Line: 3}, "fern-cover: <unknown>:3 "},
+	} {
+		if got := c.site.ReportLine(); got != c.want {
+			t.Errorf("%+v.ReportLine() = %q, want %q", c.site, got, c.want)
+		}
+	}
+}
