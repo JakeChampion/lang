@@ -1,7 +1,6 @@
 package e2eselfhost
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,17 +28,17 @@ import (
 //
 // # Why the comparison is per-instruction and not byte-for-byte
 //
-// The self-host assembler does not relax branches to rel8 (the native side
-// got that in #7886; the self-host port is #7949), so every short branch is
-// six bytes where gas emits two. Byte equality would therefore report one
-// real fact as thousands of shifted-window differences and could never point at
-// the instruction that actually diverged.
+// A single instruction the two encode to different lengths shifts every later
+// address, so byte equality reports one real fact as thousands of
+// shifted-window differences and can never point at the instruction that
+// actually diverged.
 //
 // So the streams are compared as DECODED INSTRUCTIONS, which is what the
 // gate is for: a dropped, added, or substituted instruction, or a wrong
 // register or immediate, fails — and that is the #6544 class. Encoding
-// LENGTH is compared separately as a logged total, so closing #7949 shows up
-// here as the two sizes converging rather than as a silent nothing.
+// LENGTH is reported separately: the byte totals are logged, and when they
+// differ every instruction that encodes to a different size is named, which
+// is the list #7949's remaining gap has to be worked from.
 func TestSelfHostX86WholeProgramMatchesGNUAs(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	as, objcopy, objdump := findGNUToolsX86(t)
@@ -95,7 +94,7 @@ function main(): i32 {
 
 	gotI := decodeX86(t, objdump, dir, "selfhost.bin", got)
 	wantI := decodeX86(t, objdump, dir, "gas.bin", want)
-	t.Logf("self-host %d bytes / %d insns; gas %d bytes / %d insns (%+d bytes, #7949)",
+	t.Logf("self-host %d bytes / %d insns; gas %d bytes / %d insns (%+d bytes)",
 		len(got), len(gotI), len(want), len(wantI), len(got)-len(want))
 
 	if len(gotI) != len(wantI) {
@@ -113,9 +112,9 @@ function main(): i32 {
 			bad++
 			continue
 		}
-		// A branch operand is an ADDRESS, and the two streams have different
-		// layouts while #7949 is open, so compare where it lands: the index
-		// of the instruction it targets must be the same in both streams.
+		// A branch operand is an ADDRESS, and the two layouts need not agree
+		// byte for byte, so compare where it lands: the index of the
+		// instruction it targets must be the same in both streams.
 		if g.target >= 0 || w.target >= 0 {
 			if g.target != w.target {
 				if bad < 20 {
@@ -141,13 +140,34 @@ function main(): i32 {
 	if bad > 20 {
 		t.Errorf("... and %d more (%d instructions differ of %d)", bad-20, bad, len(wantI))
 	}
+
+	// The streams agree instruction for instruction, so anything left in the
+	// byte total is an encoding the two picked different-sized forms for.
+	// Name them, so a residual gap is a list of sites to work rather than a
+	// number.
+	if len(got) != len(want) {
+		shown := 0
+		for i := range wantI {
+			if gotI[i].size == wantI[i].size {
+				continue
+			}
+			if shown < 20 {
+				t.Logf("insn %d (%s %s): self-host %d bytes, gas %d bytes",
+					i, wantI[i].mnem, wantI[i].ops, gotI[i].size, wantI[i].size)
+			}
+			shown++
+		}
+		t.Logf("%d instructions encode to a different length", shown)
+	}
 }
 
-// x86Insn is one decoded instruction: its mnemonic, its operand text, and —
-// for a direct branch — the INDEX of the instruction it targets, or -1.
+// x86Insn is one decoded instruction: its mnemonic, its operand text, its
+// encoded length in bytes, and — for a direct branch — the INDEX of the
+// instruction it targets, or -1.
 type x86Insn struct {
 	mnem   string
 	ops    string
+	size   int
 	target int
 }
 
@@ -239,8 +259,14 @@ func decodeX86(t *testing.T, objdump, dir, name string, code []byte) []x86Insn {
 			mnem, ops = text[:sp], strings.TrimSpace(text[sp+1:])
 		}
 		idxOf[int(addr)] = len(insns)
+		if n := len(insns); n > 0 {
+			insns[n-1].size = int(addr) - addrs[n-1]
+		}
 		addrs = append(addrs, int(addr))
 		insns = append(insns, x86Insn{mnem: mnem, ops: ops, target: -1})
+	}
+	if n := len(insns); n > 0 {
+		insns[n-1].size = len(code) - addrs[n-1]
 	}
 	// Second pass: a direct branch's operand is a bare hex address; turn it
 	// into the index of the instruction living there.
@@ -271,5 +297,3 @@ func isDirectBranchX86(mnem string) bool {
 	}
 	return strings.HasPrefix(mnem, "j")
 }
-
-var _ = fmt.Sprintf
