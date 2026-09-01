@@ -71,7 +71,7 @@ func InterpDriverMode() bool {
 
 // writeInterpDriverShim writes an executable shim at dir/out that interprets the
 // driver source dir/fernName, and returns its path.
-func writeInterpDriverShim(t *testing.T, dir, fernName, out string) string {
+func writeInterpDriverShim(t testing.TB, dir, fernName, out string) string {
 	t.Helper()
 	fern := BuildLangBinForInterp(t)
 	path := filepath.Join(dir, out)

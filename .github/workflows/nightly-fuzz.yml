@@ -203,6 +203,10 @@ jobs:
           - { runner: ubuntu-24.04-arm, host: aarch64, slug: gen,     pkg: ./internal/fernsmith,  target: FuzzGenerate_ParseRoundTrips, wasmtime: "false" }
           - { runner: ubuntu-latest,    host: x86_64,  slug: parse,   pkg: ./internal/parser,     target: FuzzParse,                    wasmtime: "false" }
           - { runner: ubuntu-latest,    host: x86_64,  slug: check,   pkg: ./internal/checker,    target: FuzzCheck,                    wasmtime: "false" }
+          # The self-host answer to parse/check above (#7967). Its own gate
+          # env because the target skips without it, and x86-64 only: the
+          # driver is emitted as x86-64 asm and takes host paths as argv.
+          - { runner: ubuntu-latest,    host: x86_64,  slug: selfhost, pkg: ./internal/e2e,       target: FuzzSelfHostFrontEnd,         wasmtime: "false", selfhost: "1" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -235,6 +239,9 @@ jobs:
       - name: go test -fuzz=${{ matrix.target }}
         env:
           FUZZTIME: ${{ inputs.fuzztime || '20m' }}
+          # Empty for every row but the self-host one, which is exactly how
+          # that target's gate wants it — unset means skip.
+          FERN_SELFHOST_FUZZ: ${{ matrix.selfhost }}
         run: |
           gotestsum --format testname -- -timeout=40m \
             -fuzz='^${{ matrix.target }}$' -fuzztime="$FUZZTIME" -run=^$ ${{ matrix.pkg }}

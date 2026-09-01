@@ -22,7 +22,7 @@ import (
 // the emitted asm. `qemu-x86_64` is optional — when the host
 // is already x86_64 Linux the binary runs natively. Returns
 // the binary executor command line (qemu prefix or empty).
-func X86_64Tooling(t *testing.T) (gcc string, exec_ []string) {
+func X86_64Tooling(t testing.TB) (gcc string, exec_ []string) {
 	t.Helper()
 	gcc, exec_, ok := LookupX86_64Tooling()
 	if !ok {
@@ -89,7 +89,7 @@ func RunX86_64Bin(runner []string, binPath string, args ...string) *exec.Cmd {
 // Linux x86-64 ELF, runs it, and returns (combined-output,
 // exit-code). Mirrors the arm64 helper's shape so the tests
 // look symmetric.
-func CompileAndRunX86_64(t *testing.T, src string) (stdout string, exitCode int) {
+func CompileAndRunX86_64(t testing.TB, src string) (stdout string, exitCode int) {
 	t.Helper()
 	binPath, runner := CompileX86_64Bin(t, src)
 	cmd := RunX86_64Bin(runner, binPath)
@@ -101,7 +101,7 @@ func CompileAndRunX86_64(t *testing.T, src string) (stdout string, exitCode int)
 // returning the binary path and the runner (empty on native x86-64 hosts).
 // Callers exec it via RunX86_64Bin when they need to wire the child's
 // streams themselves. The arm64 sibling is CompileArm64Bin.
-func CompileX86_64Bin(t *testing.T, src string) (binPath string, runner []string) {
+func CompileX86_64Bin(t testing.TB, src string) (binPath string, runner []string) {
 	t.Helper()
 	gcc, runner := X86_64Tooling(t)
 
