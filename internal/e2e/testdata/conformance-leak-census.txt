@@ -478,5 +478,6 @@ value_block_width_call_arm                           1
 var_inference                                        0
 while_sum                                            0
 wide_shift_by_variable                               0
+widen_cast_follows_source_signedness                 0
 wrap_drops_high_half                                 0
 zero_width_slice                                     1

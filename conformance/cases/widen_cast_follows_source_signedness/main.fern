@@ -1,0 +1,24 @@
+// Widening an integer to 64 bits extends by the SOURCE's signedness, whatever
+// the destination is: a u32 or u8 zero-extends, an i32 sign-extends. So a u32
+// with bit 31 set stays positive as an i64, and -1 as u64 is u64::MAX. The
+// self-host lowering chose by the destination — `as u64` zero, `as i64` sign
+// — which read 2147483648u32 as i64 back as -2147483648 (#8025). A 64-bit
+// source is a reinterpret in both directions, across the 2^63 boundary.
+function main(): i32 {
+  var big: u32 = 2147483648u32;
+  var minus_one: i32 = -1;
+  var byte: u8 = 200u8;
+  var top: u64 = 9223372036854775808u64;
+  var neg: i64 = -1i64;
+  var code: i32 = 0;
+  if ((big as i64) == 2147483648i64) { code = code + 1; }
+  if ((big as u64) == 2147483648u64) { code = code + 2; }
+  if ((minus_one as u64) == 18446744073709551615u64 && (minus_one as i64) == -1i64) { code = code + 4; }
+  if ((byte as i64) == 200i64 && (byte as u64) == 200u64) { code = code + 8; }
+  // Through a call result, which classifies differently from a local.
+  if ((high_u32() as i64) == 4294967295i64) { code = code + 16; }
+  if ((top as i64) == -9223372036854775808i64 && (neg as u64) == 18446744073709551615u64) { code = code + 32; }
+  return code;
+}
+
+function high_u32(): u32 { return 4294967295u32; }
