@@ -4080,6 +4080,40 @@ func (g *generator) peepholeTail() {
 		}
 	}
 
+	// P5 — the value the operand stack was protecting is never disturbed.
+	// `f(a, K)` evaluates a, saves it, materialises K into the accumulator,
+	// moves it to its argument register and restores a:
+	//
+	//   push rax / <materialise into rax> / mov REG, rax / pop rax
+	//     =>  <materialise into REG>
+	//
+	// The materialisation is a pure register write — mov, lea, movzx, movsx,
+	// or the self-xor that makes a zero — so renaming its destination to REG
+	// computes the same thing in one instruction instead of four, and rax is
+	// left holding exactly what the push/pop pair was protecting.
+	//
+	// The same shape appears once more in two-argument call setup, where the
+	// saved value is restored into the OTHER argument register:
+	//
+	//   push rax / mov eax, K / mov rsi, rax / pop rdi / call f
+	//     =>  mov rdi, rax / mov esi, K / call f
+	//
+	// That one needs the `call`. Restoring into rdi rather than rax leaves
+	// the accumulator holding the materialised value in the original and the
+	// saved one in the rewrite, so it is only equivalent where rax is dead —
+	// and a call is exactly where this backend knows it is, rax being
+	// caller-saved and not an argument register.
+	//
+	// Checked after P4, whose five-line shape begins the same way and folds
+	// one instruction further; P4 has already had its chance on this window.
+	if n >= 5 {
+		if lines, ok := foldStackedMaterialise(w[n-5], w[n-4], w[n-3], w[n-2], w[n-1]); ok {
+			tail := w[n-1] // read before append overwrites the matched slots
+			g.peepWin = append(append(w[:n-5], lines...), tail)
+			return
+		}
+	}
+
 	// P2 — dead jump: `jmp L` immediately followed by the label `L:` is a
 	// no-op fall-through. Drop the jmp; the label stays for other jumps.
 	if n >= 2 {
@@ -4205,6 +4239,124 @@ func matchAluAccCounter(line string) (op string, wide, ok bool) {
 		}
 	}
 	return "", false, false
+}
+
+// foldStackedMaterialise recognises P5's shape and returns the lines that
+// replace it: the materialisation written straight to the register the copy
+// was heading for, preceded where needed by the restore the pop was doing.
+//
+// `next` is the line after the pop. It is only consulted for the
+// restore-into-another-register form, which needs it to be a call.
+func foldStackedMaterialise(l0, op, mv, pop, next string) ([]string, bool) {
+	if l0 != "\tpush rax" {
+		return nil, false
+	}
+	reg, ok := matchMovFromAcc(mv)
+	if !ok {
+		return nil, false
+	}
+	restore, ok := matchPopDst(pop)
+	if !ok {
+		return nil, false
+	}
+
+	if restore == "rax" {
+		line, ok := renameAccDest(op, reg)
+		if !ok {
+			return nil, false
+		}
+		return []string{line}, true
+	}
+
+	// Restoring into another register leaves rax holding the saved value
+	// where the original left it holding the materialised one, so this form
+	// is equivalent only where rax is dead. A call is where this backend
+	// knows that: rax is caller-saved and is not an argument register.
+	if !strings.HasPrefix(next, "\tcall ") {
+		return nil, false
+	}
+	// The two destinations must differ, or the rewrite would order the
+	// writes the other way round; and the materialisation must not read the
+	// register the restore now writes before it runs.
+	if reg == restore || readsReg(op, restore) {
+		return nil, false
+	}
+	line, ok := renameAccDest(op, reg)
+	if !ok {
+		return nil, false
+	}
+	return []string{"\tmov " + restore + ", rax", line}, true
+}
+
+// readsReg reports whether an instruction's source operand mentions the
+// given 64-bit register, under either its 64- or 32-bit name.
+func readsReg(line, r64 string) bool {
+	i := strings.IndexByte(line, ',')
+	if i < 0 {
+		return strings.Contains(line, r64) || strings.Contains(line, reg32(r64))
+	}
+	src := line[i+1:]
+	return strings.Contains(src, r64) || strings.Contains(src, reg32(r64))
+}
+
+// matchMovFromAcc matches `mov <r64>, rax` — the copy out of the accumulator,
+// whether it was written as an argument setup or left behind by P1 collapsing
+// a push/pop pair. rax itself is excluded (the copy would be a no-op and the
+// rename meaningless) and so is rsp, which is not a value register.
+func matchMovFromAcc(line string) (string, bool) {
+	const pfx = "\tmov "
+	const sfx = ", rax"
+	if !strings.HasPrefix(line, pfx) || !strings.HasSuffix(line, sfx) {
+		return "", false
+	}
+	reg := line[len(pfx) : len(line)-len(sfx)]
+	if reg == "rax" || reg == "rsp" || reg == "" || strings.ContainsAny(reg, " [],") {
+		return "", false
+	}
+	if reg32(reg) == reg { // not a known 64-bit register name
+		return "", false
+	}
+	return reg, true
+}
+
+// renameAccDest rewrites a materialisation whose destination is the
+// accumulator so that it writes `dst` instead.
+//
+// Only pure register writes qualify, because the rewrite has to be a
+// destination rename and nothing more. Two conditions make it unsound:
+//
+//   - an operand naming rsp, whose value differs by 8 between the two forms
+//     (the push is gone);
+//   - a change of destination width, since `mov eax, K` zero-extends into
+//     rax where `mov rsi, K` would sign-extend K — so a write to eax renames
+//     to the 32-bit name of dst, never the 64-bit one.
+//
+// An operand that reads dst is fine: the read happens before the write within
+// the instruction, and the value it reads is the same one the original form
+// read.
+func renameAccDest(op, dst string) (string, bool) {
+	if op == "\txor eax, eax" {
+		d := reg32(dst)
+		return "\txor " + d + ", " + d, true
+	}
+	for _, m := range [...]string{"mov", "lea", "movzx", "movsx", "movsxd"} {
+		for _, acc := range [...]string{"rax", "eax"} {
+			pfx := "\t" + m + " " + acc + ", "
+			if !strings.HasPrefix(op, pfx) {
+				continue
+			}
+			src := op[len(pfx):]
+			if src == "" || strings.Contains(src, "rsp") || strings.Contains(src, "esp") {
+				return "", false
+			}
+			d := dst
+			if acc == "eax" {
+				d = reg32(dst)
+			}
+			return "\t" + m + " " + d + ", " + src, true
+		}
+	}
+	return "", false
 }
 
 // captureSlotSize mirrors closureconv.captureSlotSize for
