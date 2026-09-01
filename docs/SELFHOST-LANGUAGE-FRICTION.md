@@ -51,17 +51,17 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,156** in 7 modules — `irlower.fern` and `checker.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
-| `astwalk` call sites (walkers on the shared spine) | — | **154** across 12 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, and `irlower.fern`'s cap-type and assign-targets families (#6993) | floor |
+| `astwalk` call sites (walkers on the shared spine) | — | **156** across 13 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `irlower.fern`'s cap-type and assign-targets families, and `treeshake.fern`'s name collector (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
-| `while` + manual index | — | **3,871** loops, **4,193** `x = x + 1` | ceiling on the increments |
+| `while` + manual index | — | **3,858** loops, **4,180** `x = x + 1` | ceiling on the increments |
 | `-1` as "absent" | — | **247** `return 0 - 1` | logged |
 | String-tagged side tables (`"SFRRECV:"`, `"BORROW:"`, …) | — | **65** distinct tag namespaces | — |
 | Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |
 | Explicit `as` casts | — | **715** | logged |
 | Hand-written AST walkers | — | **~130** over `Expr`, **~247** over `Stmt` | — |
-| Wildcard `_ =>` match arms | — | **2,899** of **10,103** arrow tokens (29%) | ceiling |
+| Wildcard `_ =>` match arms | — | **2,899** of **10,079** arrow tokens (29%) | ceiling |
 | Locals with a written type annotation | inference exists | **17,168** of 17,175 (99.9%) | logged |
 | Methods (`function (r: T) name(…)`) | ✅ | **289** in 9 modules | logged |
 
