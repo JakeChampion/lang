@@ -905,6 +905,7 @@ function x86_mov_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: x86_le32(a.code, 0) };
     var patch_off: i32 = a.code.len() - 4;
     a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
     a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
     return a;
 }
@@ -920,6 +921,7 @@ function x86_movl_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm 
     a = X86Asm { ...a, code: x86_le32(a.code, 0) };
     var patch_off: i32 = a.code.len() - 4;
     a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
     a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
     return a;
 }
@@ -939,6 +941,7 @@ function x86_store_imm_rip_label(own a: X86Asm, opcode: i32, w: i32, name: strin
     a = X86Asm { ...a, code: x86_le32(a.code, 0) };
     var patch_off: i32 = a.code.len() - 4;
     a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
     a = X86Asm { ...a, fix_names: a.fix_names.append(name + "") };
     a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
     a = X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(imm_bytes) };
@@ -967,6 +970,7 @@ function x86_mov_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm 
     a = X86Asm { ...a, code: x86_le32(a.code, 0) };
     var patch_off: i32 = a.code.len() - 4;
     a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
     a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
     return a;
 }
@@ -982,6 +986,7 @@ function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm
     a = X86Asm { ...a, code: x86_le32(a.code, 0) };
     var patch_off: i32 = a.code.len() - 4;
     a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
     return X86Asm { ...a, fix_names: a.fix_names.append(name) };
 }
 
@@ -1199,6 +1204,25 @@ pub struct X86Asm {
     lab_next: i32[],
     fix_offs: i32[],
     fix_names: string[],
+    // fix_widths[i] is how many bytes fix_offs[i] patches: 4 for a rel32 /
+    // rip-relative displacement, 1 for a relaxed rel8 branch (#7949).
+    fix_widths: i32[],
+    // Branch relaxation state. br_long[k] pins the k-th relaxable branch
+    // (jcc / jmp to a label, in emission order) to its rel32 form; br_n is
+    // the ordinal handed to the next one. x86_gas_assemble re-emits with a
+    // grow-only br_long until it stops changing, so a pass reads the
+    // PREVIOUS pass's decisions and records what this one needs.
+    // relaxing is set only on the x86_gas_assemble path. The raw encoder
+    // API (x86_jcc_label and friends, used directly by drivers and the
+    // encode self-tests) keeps its original contract: rel32 always, and a
+    // backward branch patched on the spot. Relaxation needs the whole text
+    // and several passes, neither of which a single API call has.
+    relaxing: boolean,
+    br_long: boolean[],
+    br_n: i32,
+    br_offs: i32[],
+    br_names: string[],
+    br_shorts: boolean[],
     // Patch offsets whose instruction continues PAST the disp32 — an
     // immediate store to a rip-relative global (`movq $0, sym(%rip)`) is the
     // only shape that does. A rip displacement is measured from the end of
@@ -1247,7 +1271,7 @@ function x86_empty_buckets(): i32[] {
 
 // x86_asm_new returns an empty assembler state.
 function x86_asm_new(): X86Asm {
-    return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_tail_offs: [], fix_tail_bytes: [], unknown: [] };
+    return X86Asm { code: [], rodata: [], bss_size: 0, dfix_offs: [], dfix_names: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: x86_empty_buckets(), lab_tail: x86_empty_buckets(), lab_next: [], fix_offs: [], fix_names: [], fix_widths: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, br_long: [], br_n: 0, br_offs: [], br_names: [], br_shorts: [], unknown: [] };
 }
 
 // x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata
@@ -1372,23 +1396,59 @@ function x86_final_off(a: X86Asm, name: string, padded_text: i32, bss_base: i32)
 // emitted into a.code: the rel32 field starts at a.code.len()-4. If the
 // target is an already-placed .text label, patch immediately; otherwise
 // queue a fixup for x86_resolve.
+// x86_fixup_or_patch queues the rel32 just emitted for resolution.
+//
+// It used to patch a BACKWARD branch on the spot, since the target was
+// already placed. Relaxation ended that: a displacement baked in mid-emit is
+// computed against the layout at that moment, and a later pass that shortens
+// anything between the branch and its target silently invalidates it, in
+// code nothing revisits. Every branch is queued now and every displacement
+// is computed once, at resolve, against the final layout (#7949).
 function x86_fixup_or_patch(own a: X86Asm, name: string): X86Asm {
-    var patch_off: i32 = a.code.len() - 4;
-    var target: i32 = x86_label_off(a, name);
-    if (target >= 0) {
-        // Take the buffer OUT of the struct before patching. `a.code` read
-        // while `a` still holds it is a second reference, which sends the
-        // `.with` inside x86_patch_rel32 down the copy path — one full
-        // .text clone per backward branch.
-        var code: i32[] = a.code;
-        a = X86Asm { ...a, code: [] };
-        code = x86_patch_rel32(code, patch_off, x86_rel_to(target, patch_off));
-        a = X86Asm { ...a, code: code };
-    } else {
-        a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-        a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
+    var at: i32 = a.code.len() - 4;
+    if (!a.relaxing) {
+        var target: i32 = x86_label_off(a, name);
+        if (target >= 0) {
+            // Take the buffer OUT of the struct before patching: `a.code`
+            // read while `a` still holds it is a second reference, which
+            // sends the `.with` down the copy path — one .text clone per
+            // backward branch.
+            var code: i32[] = a.code;
+            a = X86Asm { ...a, code: [] };
+            code = x86_patch_rel32(code, at, x86_rel_to(target, at));
+            return X86Asm { ...a, code: code };
+        }
     }
-    return a;
+    return x86_queue_fixup(a, at, 4, name);
+}
+
+// x86_queue_fixup records one displacement to patch at resolve: `width`
+// bytes starting at `at`, reaching `name`.
+function x86_queue_fixup(own a: X86Asm, at: i32, width: i32, name: string): X86Asm {
+    a = X86Asm { ...a, fix_offs: a.fix_offs.append(at) };
+    a = X86Asm { ...a, fix_widths: a.fix_widths.append(width) };
+    return X86Asm { ...a, fix_names: a.fix_names.append(name) };
+}
+
+// x86_branch_long reports whether the next relaxable branch must take its
+// rel32 form, per the previous pass's decisions. An ordinal past the end is
+// a branch this pass reached and the last one did not (the first pass
+// reaches them all with no decisions at all), and starts SHORT: the fixpoint
+// only ever grows, so an optimistic start is the one that converges downward
+// onto the layout gas picks.
+function x86_branch_long(a: X86Asm, k: i32): boolean {
+    if (k >= a.br_long.len()) { return false; }
+    return a.br_long[k];
+}
+
+// x86_branch_record notes the k-th relaxable branch for the relaxation pass:
+// where its displacement sits, what it targets, and whether this pass took
+// the short form.
+function x86_branch_record(own a: X86Asm, at: i32, name: string, short: boolean): X86Asm {
+    a = X86Asm { ...a, br_offs: a.br_offs.append(at) };
+    a = X86Asm { ...a, br_names: a.br_names.append(name) };
+    a = X86Asm { ...a, br_shorts: a.br_shorts.append(short) };
+    return X86Asm { ...a, br_n: a.br_n + 1 };
 }
 
 // x86_lea_rip_label emits `lea <dst>, [rip + label]` (REX.W 8D /r, ModR/M
@@ -1404,20 +1464,41 @@ function x86_lea_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
     a = X86Asm { ...a, code: x86_le32(a.code, 0) }; // placeholder disp32
     var patch_off: i32 = a.code.len() - 4;
     a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+    a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
     a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
     return a;
 }
 
 // x86_jcc_label emits a conditional jump to a (possibly forward) label.
 function x86_jcc_label(own a: X86Asm, cc: i32, name: string): X86Asm {
+    var k: i32 = a.br_n;
+    if (a.relaxing && !x86_branch_long(a, k)) { // 0x70+cc ib
+        a = X86Asm { ...a, code: a.code.append(112 + (cc & 15)) };
+        a = X86Asm { ...a, code: a.code.append(0) }; // placeholder rel8
+        var at: i32 = a.code.len() - 1;
+        a = x86_queue_fixup(a, at, 1, name);
+        return x86_branch_record(a, at, name, true);
+    }
     a = X86Asm { ...a, code: x86_jcc_rel32(a.code, cc, 0) }; // placeholder rel32
-    return x86_fixup_or_patch(a, name);
+    var at4: i32 = a.code.len() - 4;
+    a = x86_fixup_or_patch(a, name);
+    return x86_branch_record(a, at4, name, false);
 }
 
 // x86_jmp_label emits an unconditional jump to a label.
 function x86_jmp_label(own a: X86Asm, name: string): X86Asm {
+    var k: i32 = a.br_n;
+    if (a.relaxing && !x86_branch_long(a, k)) { // 0xEB ib
+        a = X86Asm { ...a, code: a.code.append(235) };
+        a = X86Asm { ...a, code: a.code.append(0) }; // placeholder rel8
+        var at: i32 = a.code.len() - 1;
+        a = x86_queue_fixup(a, at, 1, name);
+        return x86_branch_record(a, at, name, true);
+    }
     a = X86Asm { ...a, code: x86_jmp_rel32(a.code, 0) };
-    return x86_fixup_or_patch(a, name);
+    var at4: i32 = a.code.len() - 4;
+    a = x86_fixup_or_patch(a, name);
+    return x86_branch_record(a, at4, name, false);
 }
 
 // x86_call_reg: `call *<reg>` — FF /2, direct ModR/M. Closure and dyn-trait
@@ -1518,6 +1599,18 @@ function x86_resolve(own a: X86Asm): X86Asm {
         // into the ELF header, so refuse rather than emit it (#6045).
         if (target < 0) {
             a = X86Asm { ...a, unknown: a.unknown.append("unresolved symbol " + a.fix_names[i]) };
+        } else if (a.fix_widths[i] == 1) {
+            // A relaxed branch: one byte, and the next instruction is one
+            // byte past the displacement rather than four.
+            var rel8: i32 = target - (patch_off + 1);
+            if (rel8 < (0 - 128) || rel8 > 127) {
+                // The relaxation fixpoint is meant to have pinned this one
+                // long already; reaching here means the layout moved under
+                // it, which would silently branch somewhere else.
+                a = X86Asm { ...a, unknown: a.unknown.append("rel8 out of range for " + a.fix_names[i]) };
+            } else {
+                code = code.with(patch_off, rel8 & 255);
+            }
         } else {
             code = x86_patch_rel32(code, patch_off, x86_rel_to(target, patch_off) - x86_fix_tail(a, patch_off));
         }
@@ -2473,6 +2566,7 @@ function x86_gas_membytes(own a: X86Asm, reg: i32, m: GasMem, tail: i32): X86Asm
         a = X86Asm { ...a, code: x86_le32(a.code, 0) };
         var patch_off: i32 = a.code.len() - 4;
         a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+        a = X86Asm { ...a, fix_widths: a.fix_widths.append(4) };
         if (tail > 0) {
             a = X86Asm { ...a, fix_names: a.fix_names.append(m.label) };
             a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
@@ -3727,8 +3821,81 @@ function x86_gas_comment_start(line: string): i32 {
 // x86_gas_assemble parses a whole GAS program and returns the resolved
 // X86Asm (code + rodata). Lines are classified as label (`name:`),
 // directive (`.…`), or instruction; `#` begins a comment.
+// x86_gas_assemble assembles GAS (AT&T) text, relaxing branches to their
+// rel8 form wherever the final layout allows it (#7949).
+//
+// The relaxation is a RE-EMIT to a fixpoint rather than a layout-and-remap:
+// each pass assembles the whole text with the previous pass's branch-size
+// decisions, so every label offset and every fixup is computed fresh and
+// there is nothing to remap. Decisions only ever go short -> long, so the
+// loop is monotone and terminates, and starting all-short lands on the
+// minimal fixpoint — the layout GNU as picks.
+//
+// A pass whose decisions match the one before it is final: nothing moved, so
+// every displacement it computed is the one the bytes will carry.
 pub function x86_gas_assemble(src: string): X86Asm {
+    var longs: boolean[] = [];
+    var pass: i32 = 0;
+    // Each round pins at least one more branch long, so the branch count
+    // bounds the rounds; the cap is a backstop, and falling out of it keeps
+    // every branch long, which is always correct if larger.
+    while (pass < 24) {
+        var a: X86Asm = x86_gas_assemble_pass(src, longs);
+        var next: boolean[] = x86_relax_grow(a, longs);
+        if (!x86_bools_differ(next, longs)) { return a; }
+        longs = next;
+        pass = pass + 1;
+    }
+    return x86_gas_assemble_pass(src, x86_bools_all_true(longs.len()));
+}
+
+// x86_relax_grow returns the next round's decisions: every branch this pass
+// emitted SHORT whose displacement does not fit rel8 becomes long. Already-long
+// branches stay long, which is what makes the sequence monotone.
+function x86_relax_grow(a: X86Asm, longs: boolean[]): boolean[] {
+    var out: boolean[] = [];
+    var k: i32 = 0;
+    while (k < a.br_offs.len()) {
+        var pinned: boolean = false;
+        if (k < longs.len()) { pinned = longs[k]; }
+        if (!pinned && a.br_shorts[k]) {
+            var target: i32 = x86_label_off(a, a.br_names[k]);
+            // An unresolved target cannot be measured, so it must not stay
+            // short: x86_resolve reports it, and a rel8 placeholder would
+            // hide the report behind a range error instead.
+            if (target < 0) {
+                pinned = true;
+            } else {
+                var rel: i32 = target - (a.br_offs[k] + 1);
+                if (rel < (0 - 128) || rel > 127) { pinned = true; }
+            }
+        }
+        out = out.append(pinned);
+        k = k + 1;
+    }
+    return out;
+}
+
+function x86_bools_differ(x: boolean[], y: boolean[]): boolean {
+    if (x.len() != y.len()) { return true; }
+    var i: i32 = 0;
+    while (i < x.len()) {
+        if (x[i] != y[i]) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function x86_bools_all_true(n: i32): boolean[] {
+    var out: boolean[] = [];
+    var i: i32 = 0;
+    while (i < n) { out = out.append(true); i = i + 1; }
+    return out;
+}
+
+function x86_gas_assemble_pass(src: string, longs: boolean[]): X86Asm {
     var a: X86Asm = x86_asm_new();
+    a = X86Asm { ...a, relaxing: true, br_long: longs };
     var section: i32 = 0; // 0 = .text, 1 = .rodata
     var lines: string[] = x86_str_split(src, "\n");
     var li: i32 = 0;
