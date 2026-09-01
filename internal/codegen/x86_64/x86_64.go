@@ -4026,10 +4026,11 @@ func (g *generator) emit(s string) {
 
 // peepWindow is how many recently emitted logical lines are held back from
 // `out` so the streaming peephole can rewrite the tail in place. The longest
-// pattern is P4's 5 lines; 8 leaves margin while bounding held memory to
-// O(1) — crucial because a self-host `.s` is hundreds of MB and a whole-text
-// post-pass would spike RAM.
-const peepWindow = 8
+// pattern is P6's, which spans a materialisation, its copy, the other
+// arguments' materialisations and the call; 10 covers the shapes that occur
+// while bounding held memory to O(1) — crucial because a self-host `.s` is
+// hundreds of MB and a whole-text post-pass would spike RAM.
+const peepWindow = 10
 
 // put appends one logical output line (without its trailing newline) to the
 // peephole window, applies the safe local rewrites at the tail, then flushes
@@ -4153,6 +4154,35 @@ func (g *generator) peepholeTail() {
 			tail := w[n-1] // read before append overwrites the matched slots
 			g.peepWin = append(append(w[:n-5], lines...), tail)
 			return
+		}
+	}
+
+	// P6 — materialise straight into the argument register. Every value
+	// bound for an argument is computed into the accumulator first and then
+	// copied, because the operand stack has nowhere else to put it:
+	//
+	//   mov rax, [rbp-8] / mov rdi, rax / mov esi, 16 / call f
+	//     =>  mov rdi, [rbp-8] / mov esi, 16 / call f
+	//
+	// Sound for the same reason as P5's second form: the copy is the last
+	// read of rax before a call, and rax is caller-saved and not an argument
+	// register, so what the rename leaves in it cannot be observed. The
+	// instructions allowed between the copy and the call are the other
+	// arguments' own materialisations and the stack adjustment around the
+	// call — none of which touch rax.
+	if n >= 3 && strings.HasPrefix(w[n-1], "\tcall ") {
+		k := n - 2
+		for k >= 1 && isArgSetupNotTouchingAcc(w[k]) {
+			k--
+		}
+		if k >= 1 {
+			if reg, ok := matchMovFromAcc(w[k]); ok {
+				if line, ok := renameAccDest(w[k-1], reg); ok {
+					rest := append([]string(nil), w[k+1:]...)
+					g.peepWin = append(append(w[:k-1], line), rest...)
+					return
+				}
+			}
 		}
 	}
 
@@ -4328,6 +4358,66 @@ func foldStackedMaterialise(l0, op, mv, pop, next string) ([]string, bool) {
 		return nil, false
 	}
 	return []string{"\tmov " + restore + ", rax", line}, true
+}
+
+// isArgSetupNotTouchingAcc reports whether a line is one of the few things
+// that legitimately sit between an argument's copy out of the accumulator and
+// the call that consumes it, and that provably neither read nor write it.
+//
+// A whitelist rather than a scan for "rax": it has to be certain, and the
+// accumulator appears under four names plus its sub-registers, while `call`
+// itself contains the letters of one of them.
+func isArgSetupNotTouchingAcc(line string) bool {
+	if strings.HasPrefix(line, "\tsub rsp, ") || strings.HasPrefix(line, "\tadd rsp, ") {
+		return true
+	}
+	for _, m := range [...]string{"mov", "lea", "movzx", "movsx"} {
+		pfx := "\t" + m + " "
+		if !strings.HasPrefix(line, pfx) {
+			continue
+		}
+		i := strings.Index(line, ", ")
+		if i < 0 {
+			return false
+		}
+		dst, src := line[len(pfx):i], line[i+2:]
+		// A destination that is not a plain register, or either half naming
+		// the accumulator, disqualifies the line.
+		if strings.ContainsAny(dst, " [],") || namesAcc(dst) || namesAcc(src) {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// namesAcc reports whether an operand mentions the accumulator under any of
+// the names this backend writes it as.
+func namesAcc(s string) bool {
+	for _, r := range [...]string{"rax", "eax"} {
+		if strings.Contains(s, r) {
+			return true
+		}
+	}
+	// The 16- and 8-bit names need a boundary check: "al" is a substring of
+	// "call" and "ax" of "rax", both already handled above.
+	for _, r := range [...]string{"ax", "al", "ah"} {
+		for i := 0; i+len(r) <= len(s); i++ {
+			if s[i:i+len(r)] != r {
+				continue
+			}
+			before := i == 0 || !isRegChar(s[i-1])
+			after := i+len(r) == len(s) || !isRegChar(s[i+len(r)])
+			if before && after {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isRegChar(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= '0' && b <= '9'
 }
 
 // readsReg reports whether an instruction's source operand mentions the
