@@ -70,6 +70,36 @@ A lambda's body counts INTO the function that spells it. An inline closure
 is code the reader walks past, so hiding an `if` in one must not make the
 enclosing function read as simpler than it is.
 
+### ambient-capability
+
+Default: `warn`.
+
+A handler's second parameter is its capability bag
+(`handle(req: HttpRequest, plat: Platform)`, docs/PLATFORM-RESEARCH.md
+Rec §1), and `std/platform` puts the host effects on it as methods. The free
+functions still resolve inside a handler body — nothing in the type system
+stops a bare `eprint` — so this rule reports the handler that reaches around
+the bag it was handed, which is what breaks a mock platform in a test and
+what a per-target capability set cannot see.
+
+| Ambient call | Through the bag |
+|---|---|
+| `eprint(msg)` | `plat.log(msg)` |
+| `now_unix_ms()` | `plat.now_ms()` |
+| `monotonic_ns()` | `plat.elapsed_ns()` |
+| `env(name)` | `plat.env(name)` |
+| `random_i32()` | `plat.random_i32()` |
+
+Only exact equivalents are listed: a suggestion that changes what the call
+DOES — a different clock, a different stream — is worse than no suggestion,
+so `print` (the stdout stream, which the proxy world does not have at all)
+and `args` are the target gate's business, not this rule's.
+
+The scope is the body of a `handle` whose second parameter is a `Platform`.
+Working off the parse tree there is no call graph, so an effect one call
+deeper — inside a helper, which is the shape whose fix is to pass the bag
+along — is out of reach.
+
 ## Configuration
 
 Severity is `allow` (the rule does not run), `warn` (prints, exit 0), or
@@ -193,4 +223,6 @@ so the gate compares numbers instead of parsing them back out of prose.
 - **The self-host mirror.** The linter is native-only tooling, like
   `internal/printer`; nothing in the bootstrap path needs it. See
   `docs/NATIVE-CONVERGENCE.md` for when that stops being free.
-- **`--fix`.** Nothing the one rule reports has a mechanical fix.
+- **`--fix`.** `ambient-capability` is the first finding with a mechanical
+  rewrite (`eprint(x)` → `plat.log(x)`, plus the `std/platform` import when
+  it is missing), which is what a fixer would need building for.
