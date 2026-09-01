@@ -799,6 +799,43 @@ jobs:
           DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
         run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
 
+  # The same corpus through the self-host ARM64 emitter (#7967).
+  #
+  # Until this the generated corpus only ever reached the self-host through its
+  # x86-64 emitter; arm64 had fixture coverage and nothing random, so a wrong
+  # answer on a shape no fixture contains had nowhere to surface.
+  #
+  # Still ubuntu-latest, not an arm64 runner: the DRIVER is emitted as x86-64
+  # asm whatever it targets, so an arm64 host cannot run the compiler at all.
+  # The driver runs natively and the arm64 binary it emits runs under qemu —
+  # the same split fixtures-selfhost's arm64 leg uses.
+  #
+  # This is also the only differential leg where the self-host assembles and
+  # links the artifact itself (arm64_native + elf.fern), so it gates those too,
+  # and an assembler gap arrives as a compile failure naming the mnemonic
+  # rather than as a link error.
+  diff-selfhost-arm64:
+    name: diff-selfhost-arm64-shard${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      # Measured at ~0.85 s/seed including the qemu run, so 512 seeds are ~7
+      # min of work — two shards put a bucket well inside the timeout, matching
+      # the x86-64 lane's shape.
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - name: aarch64 cross toolchain + qemu
+        uses: ./.github/actions/apt-cross-toolchain
+      - name: run the fernsmith corpus through the self-host arm64 emitter
+        env:
+          FERN_SELFHOST_DIFF: "1"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+        run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostArm64$' -v -timeout 43m
+
   test:
     needs: warm
     strategy:
