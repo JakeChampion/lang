@@ -135,6 +135,46 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  # The same sweep against the SELF-HOST compiler (#7967).
+  #
+  # Without this the self-host only ever saw seeds 0..511 — the per-PR
+  # diff-selfhost lane's fixed range — while every moving window above
+  # went to the Go backends alone. `docs/NATIVE-CONVERGENCE.md` makes the
+  # self-host the definition once the freeze lands, so the implementation
+  # that will matter most was the one nothing new was ever thrown at.
+  #
+  # x86-64 only, and no qemu: the driver is emitted as x86-64 asm and
+  # takes host paths as argv (same constraint diff-selfhost documents).
+  #
+  # No artifact upload, unlike the native legs — the self-host leg never
+  # reaches preserveDiagArtifacts, so the path would upload nothing. The
+  # seed IS the reproducer here: GenMain(seed) is deterministic for a
+  # given generator revision, and the failure prints the program.
+  differential-selfhost:
+    needs: window
+    name: nightly-differential-selfhost-shard${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    # The per-PR lane is 12.4 min for 512 seeds over two shards; the same
+    # 45 minutes it allows leaves room for a window that compiles slower.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
+      - name: go test (self-host, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/2)
+        env:
+          FERN_SELFHOST_DIFF: "1"
+          DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+        run: |
+          gotestsum --format pkgname-and-test-fails -- -timeout=43m \
+            -run '^TestDifferential_SelfHostX86_64$' ./internal/e2e/
+
   fuzz:
     if: github.repository == 'JakeChampion/lang'
     strategy:
@@ -205,7 +245,7 @@ jobs:
   # land on one long-lived issue rather than a fresh one per night, so a
   # week of the same break is a thread and not eight duplicates.
   report:
-    needs: [window, differential, fuzz]
+    needs: [window, differential, differential-selfhost, fuzz]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -221,7 +261,18 @@ jobs:
               `Nightly run failed: ${url}`,
               ``,
               `Differential window: seeds \`${base}\` onward.`,
-              `Reproduce: \`DIFF_ORACLE_SEED_BASE=${base} go test -run '^TestDifferential' ./internal/e2e/\``,
+              ``,
+              `Reproduce the native legs:`,
+              `\`DIFF_ORACLE_SEED_BASE=${base} go test -run '^TestDifferential_(LangsmithMain|PrintableStdout)$' ./internal/e2e/\``,
+              ``,
+              `Reproduce the self-host leg — it SKIPS without the env var,`,
+              `so a run without it looks like the failure vanished:`,
+              `\`FERN_SELFHOST_DIFF=1 DIFF_ORACLE_SEED_BASE=${base} go test -run '^TestDifferential_SelfHostX86_64$' ./internal/e2e/\``,
+              ``,
+              `A self-host seed outside 0..511 is not in`,
+              `\`testdata/selfhost-diff-x86_64-known-divergences.txt\` — that file`,
+              `only ever covered the per-PR lane's fixed range, so a divergence`,
+              `here is a new finding to triage, not a row to add.`,
               ``,
               `If the coverage-guided half failed, download its`,
               `\`nightly-fuzz-repro-*\` artifact and commit the minimised`,
