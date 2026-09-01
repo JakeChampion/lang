@@ -31,6 +31,21 @@ $ wasm-tools parse out.wat -o out.wasm && wasmtime run out.wasm; echo $?
 2.34 MB of module, 1.9 s, 104 MiB peak. The playground's current bundle is
 28.5 MB.
 
+**That run writes an internal error to stderr, which this page did not say.**
+The command above redirects stdout and never looked at the other stream:
+
+```
+$ echo 'function main(): i32 { return 6 * 7; }' | wasmtime run wasm_ir_run.wasm 2>&1 >/dev/null
+wasm_ir_run: internal error: rc over-release detected (1 dec(s) on an already-released block)
+```
+
+The emitted module is correct either way — that is #7969, a refcount defect in
+the compiler's own execution on the wasm target rather than a miscompile of its
+output — but "already runs in wasm today" is a claim about a run that reports an
+internal error, and it should have said so. Narrowed since: the trigger is
+`args()`. A wasm-hosted driver that never calls it is clean, and adding a
+`for a in args()` loop to one that was clean reproduces it.
+
 ## What the playground actually is
 
 `web/fern.wasm` is **not** the compiler — it is `cmd/fern-wasm` (490 lines,
