@@ -116,7 +116,12 @@ margins that are not close:
 |---|---|---|---|---|---|
 | retired instructions, empty `main` | **7** | 202 429 | 228 519 | 291 170 | 375 878 |
 | binary size, `int_loop` | **4 281 B** | 15 784 B | 785 240 B | 1 874 520 B | 3 942 480 B |
-| executable segment | **550 B** | 329 B | 513 565 B | — | — |
+| executable segment | 550 B | 329 B | 513 565 B | — | — |
+
+The executable-segment row is the one not to over-read: the dynamic build's
+329 bytes exclude every byte of libc it loads at run time, which is what the
+static column's 513 565 makes visible. `-static` is the like-for-like column,
+and it is what the first two rows compare against.
 
 Seven instructions from `_start` to `exit`. That is four to five orders of
 magnitude below every runtime in the comparison, and it is not an accident of
