@@ -897,7 +897,17 @@ function expr_bail_tag(e: ast.Expr): string {
         ast.ExprStructLit(sl) => { return "struct literal `" + sl.type_name + "`"; },
         ast.ExprFieldAccess(fa) => { return "field access `." + fa.field + "`"; },
         ast.ExprLambda(_) => { return "lambda"; },
-        _ => { return "unknown expression"; }
+        ast.ExprUnknown(uk) => { return "unparsed `" + uk.kind + "`"; },
+        // Printer-only nodes: the parser desugars every other parse of these
+        // into the form the compile path is written against, so reaching here
+        // means the desugar was skipped, not that the feature is unlowerable.
+        ast.ExprMapLit(_) => { return "un-desugared map literal"; },
+        ast.ExprFString(_) => { return "un-desugared f-string"; },
+        // Every member of ast.Expr is named above, so this arm is reachable
+        // only when the discriminant is not a valid tag at all — i.e. the node
+        // has been freed and its storage reused (#7948). Keep the two cases
+        // distinguishable: an unhandled variant must never read as corruption.
+        _ => { return "unknown expression (corrupt node tag)"; }
     }
 }
 
