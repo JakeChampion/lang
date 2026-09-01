@@ -1,0 +1,9 @@
+# Seeds whose SELF-HOST arm64 result disagrees with the interpreter's, for
+# TestDifferential_SelfHostArm64 (internal/e2e/diff_oracle_selfhost_arm64_test.go).
+#
+# Format: <seed> <reason + issue>. Blank lines and # comments ignored.
+#
+# Same contract as the x86-64 leg: a listed seed that starts PASSING fails
+# too, because an allowlist nobody prunes is where bugs go to be forgotten.
+# The range this covers is the default 0..511 window; a seed outside it that
+# diverges in the nightly sweep is a new finding to triage, not a row to add.

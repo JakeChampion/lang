@@ -186,6 +186,41 @@ jobs:
           gotestsum --format pkgname-and-test-fails -- -timeout=43m \
             -run '^TestDifferential_SelfHostX86_64$' ./internal/e2e/
 
+  # The moving window through the self-host ARM64 emitter (#7967).
+  #
+  # Its own job rather than a leg of the one above: it needs the qemu step,
+  # and the two legs are independently useful — arm64 is where the self-host
+  # assembles and links the artifact itself, so this is the only nightly lane
+  # covering arm64_native + elf.fern against generated programs.
+  #
+  # ubuntu-latest, not an arm64 runner, for the reason the x86-64 leg gives:
+  # the driver is x86-64 asm whatever it targets, so only its OUTPUT is arm64
+  # and only that runs under qemu.
+  differential-selfhost-arm64:
+    needs: window
+    name: nightly-differential-selfhost-arm64-shard${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
+      - name: aarch64 cross toolchain + qemu
+        uses: ./.github/actions/apt-cross-toolchain
+      - name: go test (self-host arm64, seeds ${{ needs.window.outputs.base }}+, shard ${{ matrix.shard }}/2)
+        env:
+          FERN_SELFHOST_DIFF: "1"
+          DIFF_ORACLE_SEED_BASE: "${{ needs.window.outputs.base }}"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+        run: |
+          gotestsum --format pkgname-and-test-fails -- -timeout=43m \
+            -run '^TestDifferential_SelfHostArm64$' ./internal/e2e/
+
   fuzz:
     if: github.repository == 'JakeChampion/lang'
     strategy:
@@ -263,7 +298,7 @@ jobs:
   # land on one long-lived issue rather than a fresh one per night, so a
   # week of the same break is a thread and not eight duplicates.
   report:
-    needs: [window, differential, differential-selfhost, fuzz]
+    needs: [window, differential, differential-selfhost, differential-selfhost-arm64, fuzz]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
