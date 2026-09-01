@@ -191,18 +191,37 @@
 # 28080148 -> 25163796. Numbers pasted from driver-sizes' corrected-baseline
 # block.
 
+# 2026-09-01 — ten rows GREW 5.4%, two causes, measured apart on irlower_run:
+# 18021740 (this table) -> 18279996 on plain main, +1.43% of drift nothing had
+# banked, -> 19046076 with #6993's env-box lift on astwalk's accumulator spine,
+# +4.19% more. fern.fern and the four small drivers stayed inside tolerance and
+# keep their numbers.
+#
+# The +4.19% is one monomorphised instantiation: map_expr_acc at InlineCloAcc
+# is 2.1 MB of asm, map_stmt_acc 1.1 MB. The multiplier is the accumulator
+# OWNING HEAP, not the walk being generic — the same fold_expr_nodes costs
+# 28 KB at i32 and 353 KB at string, 13x for the type argument alone, and a
+# rewriting spine reconstructs every node on top of that. Consumers added later
+# at the SAME T are free; a new heap-owning T costs this again. So prefer a
+# scalar or index-like accumulator when a pass can be written that way (#6993).
+#
+# Banked with the growth understood rather than after the fact, which is the
+# thing #6826 was written to prevent. Behaviour is unchanged: the whole
+# compiler emitted through the pre- and post-port compilers is byte-identical
+# on x86-64 and wasm.
+
 fern.fern 25163796
-asm_load_run.fern 21301828
-asm_modload_run.fern 19954172
-asm_ir_run.fern 19814044
-asm_run.fern 19295564
-wasm_ir_run.fern 19186364
-wasm_run.fern 19149164
-wasm_runio_run.fern 19115452
-asm_pathprobe_run.fern 18401276
-ssa_lift_scan_run.fern 18018772
+asm_load_run.fern 22460108
+asm_modload_run.fern 21104260
+asm_ir_run.fern 20972268
+asm_run.fern 20442780
+wasm_ir_run.fern 20220220
+wasm_run.fern 20183020
+wasm_runio_run.fern 20149308
+asm_pathprobe_run.fern 19425612
+ssa_lift_scan_run.fern 19043116
 asm_ir_elig_run.fern 17200908
-irlower_run.fern 18021740
+irlower_run.fern 19046076
 checker_modload_run.fern 5362236
 ssa_emit_run.fern 4742412
 ssa_run.fern 4540124
