@@ -266,6 +266,96 @@ func TestSelfHostArm64ExtractExtendGas(t *testing.T) {
 	})
 }
 
+// TestSelfHostArm64VectorGeneralGas pins #8000 wave 2a: the four general
+// Advanced SIMD classes, which the self-host assembler could not spell at all
+// before. Its whole vector surface was the seven mnemonics the §3 kernels
+// emit, each with one arrangement hard-wired, because every encoder pinned
+// size=00 and the parser accepted only `.8b` / `.16b` — a wider element size
+// would have assembled as a DIFFERENT instruction on the same bytes.
+//
+// The first four rows are the three byte-only encoders this wave RETIRED
+// (cnt, the register cmeq, the compare-against-zero cmlt). They are here to
+// prove the general path reproduces them word for word, since the memchr and
+// ascii-run kernels emit exactly those forms.
+//
+// The bitwise rows are the ones to read carefully: and/bic/orr/orn put the
+// OPERATION in the size field, so they exist only in the byte arrangements
+// and their four words differ in bits 23:22 rather than in the opcode.
+func TestSelfHostArm64VectorGeneralGas(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	checkPinnedSelfHost(t, bin, runner, []pinnedAsm{
+		{"cnt v0.8b, v0.8b", 0x0e205800},
+		{"cnt v3.16b, v9.16b", 0x4e205923},
+		{"cmeq v0.16b, v1.16b, v2.16b", 0x6e228c20},
+		{"cmlt v0.16b, v1.16b, #0", 0x4e20a820},
+
+		{"add v23.4s, v9.4s, v28.4s", 0x4ebc8537},
+		{"add v0.2d, v1.2d, v2.2d", 0x4ee28420},
+		{"sub v23.8h, v9.8h, v28.8h", 0x6e7c8537},
+		{"mul v23.4s, v9.4s, v28.4s", 0x4ebc9d37},
+		{"cmeq v23.2d, v9.2d, v28.2d", 0x6efc8d37},
+		{"cmtst v23.8b, v9.8b, v28.8b", 0x0e3c8d37},
+		{"cmgt v23.4h, v9.4h, v28.4h", 0x0e7c3537},
+		{"cmge v23.16b, v9.16b, v28.16b", 0x4e3c3d37},
+		{"cmhi v23.4s, v9.4s, v28.4s", 0x6ebc3537},
+		{"cmhs v23.2s, v9.2s, v28.2s", 0x2ebc3d37},
+		{"smax v23.8h, v9.8h, v28.8h", 0x4e7c6537},
+		{"smin v23.4s, v9.4s, v28.4s", 0x4ebc6d37},
+		{"umax v23.16b, v9.16b, v28.16b", 0x6e3c6537},
+		{"umin v23.4h, v9.4h, v28.4h", 0x2e7c6d37},
+		{"sshl v23.2d, v9.2d, v28.2d", 0x4efc4537},
+		{"ushl v23.8b, v9.8b, v28.8b", 0x2e3c4537},
+
+		{"and v23.8b, v9.8b, v28.8b", 0x0e3c1d37},
+		{"bic v23.16b, v9.16b, v28.16b", 0x4e7c1d37},
+		{"orr v23.8b, v9.8b, v28.8b", 0x0ebc1d37},
+		{"orn v23.16b, v9.16b, v28.16b", 0x4efc1d37},
+		{"eor v23.16b, v9.16b, v28.16b", 0x6e3c1d37},
+
+		{"cmeq v23.4s, v9.4s, #0", 0x4ea09937},
+		{"cmgt v23.8h, v9.8h, #0", 0x4e608937},
+		{"cmge v23.16b, v9.16b, #0", 0x6e208937},
+		{"cmle v23.2d, v9.2d, #0", 0x6ee09937},
+		{"cmlt v23.4h, v9.4h, #0", 0x0e60a937},
+
+		{"neg v23.4s, v9.4s", 0x6ea0b937},
+		{"abs v23.2d, v9.2d", 0x4ee0b937},
+		{"not v23.8b, v9.8b", 0x2e205937},
+		{"mvn v23.16b, v9.16b", 0x6e205937},
+		{"rev16 v23.16b, v9.16b", 0x4e201937},
+		{"rev32 v23.8h, v9.8h", 0x6e600937},
+		{"rev64 v23.4s, v9.4s", 0x4ea00937},
+	})
+	checkRefusedSelfHost(t, bin, runner, []string{
+		// A size the op's encoding does not have. Each of these is a valid
+		// word for a DIFFERENT instruction, so folding it in is worse than
+		// refusing: mul/smax/smin/umax/umin have no 64-bit lanes, and the
+		// bitwise ops none but the byte ones.
+		"mul v0.2d, v1.2d, v2.2d",
+		"smax v0.2d, v1.2d, v2.2d",
+		"and v0.4s, v1.4s, v2.4s",
+		"orn v0.8h, v1.8h, v2.8h",
+		"cnt v0.4s, v1.4s",
+		"rev32 v0.4s, v1.4s",
+		// `.1d` is a real arrangement — ld1/st1 take it — but 64-bit lanes
+		// exist only in the full-width form, so the data-processing classes
+		// refuse it everywhere.
+		"add v0.1d, v1.1d, v2.1d",
+		"neg v0.1d, v1.1d",
+		// Operands must share one arrangement.
+		"add v0.4s, v1.8h, v2.4s",
+		"cmeq v0.16b, v1.8b, #0",
+		// The compare-against-zero immediate is part of the opcode: there is
+		// no `cmlt … #1`, and a parser that folds one in emits the zero form.
+		"cmlt v0.4s, v1.4s, #1",
+		"cmle v0.8b, v1.8b, #4",
+		// Arity.
+		"add v0.4s, v1.4s",
+		"neg v0.4s, v1.4s, v2.4s",
+	})
+}
+
 // TestSelfHostArm64CondCmpSelGas: ccmp/ccmn (register and imm5 forms) and
 // the conditional-select family with its inverted-condition aliases.
 func TestSelfHostArm64CondCmpSelGas(t *testing.T) {
