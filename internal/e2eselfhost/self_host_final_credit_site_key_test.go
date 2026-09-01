@@ -47,6 +47,13 @@ import (
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. Every row was re-measured against the commit
+// before it, and every live_bytes is unchanged — the clean rows stayed clean
+// and each refusal-leak row leaks the same bytes — so what moved is block
+// volume, not behaviour. A pre-fusion number in a row note below is the older
+// one.
 
 type finalKeyCase struct {
 	name   string
@@ -204,7 +211,7 @@ function round(pre: string, i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 750, frees: 350,
+			want: 68, allocs: 600, frees: 300,
 		},
 		{
 			// Its pairwise control — the same program with the second local
@@ -220,7 +227,7 @@ function round(pre: string, i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 750, frees: 350,
+			want: 68, allocs: 600, frees: 300,
 		},
 		{
 			// LATENT, not faulting: "SCENUMS:" leaks its own source box, so the
@@ -358,7 +365,7 @@ function round(pre: string, i: i32): i32 {
     return o.len();
 }
 function main(): i32 { var pre: string = "ab"; var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(pre, i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 500, frees: 500,
+			want: 34, allocs: 400, frees: 400,
 		},
 		{
 			// POSITIVE CONTROL — a single credited binding with no sibling. The

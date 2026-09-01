@@ -42,6 +42,13 @@ import (
 //
 // Every want below was confirmed against the native x86-64 backend. Exit 99 is
 // reserved for __rc_underflow_count().
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. Every row was re-measured against the commit
+// before it, and every live_bytes is unchanged — the clean rows stayed clean
+// and each refusal-leak row leaks the same bytes — so what moved is block
+// volume, not behaviour. A pre-fusion number in a row note below is the older
+// one.
 
 type movedSkipCase struct {
 	name   string
@@ -228,7 +235,7 @@ function round(i: i32): i32 {
     return keep.len() * 10 + (keep[0] as i32) + j1.len() - j1.len() + j2.len() - j2.len();
 }
 ` + mvsChurnMain,
-			want: 24, allocs: 140, frees: 100,
+			want: 24, allocs: 80, frees: 60,
 		},
 		{
 			// GUARD 4 — a nested STRUCT payload stored out. Its store emits no retain

@@ -82,8 +82,13 @@ function main(): i32 {
     var b: i32[] = arm64_movz([], arm64_x16(), 1, 0, false);
     if (b.len() != 4 || b[0] != 48 || b[1] != 0 || b[2] != 128 || b[3] != 210) { return 2; }
     // movk x0, #0x10 -> 0xF2800200 -> 00 02 80 F2
-    var c: i32[] = arm64_movk([], arm64_x0(), 16, 0);
+    var c: i32[] = arm64_movk([], arm64_x0(), 16, 0, false);
     if (c[0] != 0 || c[1] != 2 || c[2] != 128 || c[3] != 242) { return 3; }
+    // movk w0, #0x10 -> 0x72800200 -> 00 02 80 72. The w flag clears sf, as
+    // it does for movz and movn above; without it the 32-bit form assembled as
+    // the 64-bit one.
+    var cw: i32[] = arm64_movk([], arm64_x0(), 16, 0, true);
+    if (cw[0] != 0 || cw[1] != 2 || cw[2] != 128 || cw[3] != 114) { return 33; }
     // movn x0, #0 -> 0x92800000 -> 00 00 80 92
     var d: i32[] = arm64_movn([], arm64_x0(), 0, 0, false);
     if (d[0] != 0 || d[1] != 0 || d[2] != 128 || d[3] != 146) { return 4; }
