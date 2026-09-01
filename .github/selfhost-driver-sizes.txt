@@ -194,8 +194,12 @@
 # 2026-09-01 — ten rows GREW 5.4%, two causes, measured apart on irlower_run:
 # 18021740 (this table) -> 18279996 on plain main, +1.43% of drift nothing had
 # banked, -> 19046076 with #6993's env-box lift on astwalk's accumulator spine,
-# +4.19% more. fern.fern and the four small drivers stayed inside tolerance and
-# keep their numbers.
+# +4.19% more. The tracked artifact fern.fern goes 25163796 -> 26649772, +5.9%:
+# it links every backend, so it pays the instantiation about twice over. It
+# surfaced a run later than the rest only because the job reporting it is a
+# different one — nothing about it was inside tolerance. The four small drivers
+# (asm_ir_elig, checker_modload, ssa_run, ssa_emit) land at +1.2-1.5% and keep
+# their numbers.
 #
 # The +4.19% is one monomorphised instantiation: map_expr_acc at InlineCloAcc
 # is 2.1 MB of asm, map_stmt_acc 1.1 MB. The multiplier is the accumulator
@@ -210,7 +214,7 @@
 # compiler emitted through the pre- and post-port compilers is byte-identical
 # on x86-64 and wasm.
 
-fern.fern 25163796
+fern.fern 26649772
 asm_load_run.fern 22460108
 asm_modload_run.fern 21104260
 asm_ir_run.fern 20972268
