@@ -574,7 +574,11 @@ function capability_violations(merged: parser.Module, target: string): boolean {
         }
         i = i + 1;
     }
-    return true;
+    // The shaken module's answer is the verdict, so an empty `vs` is an ACCEPT:
+    // the flat pre-pass fired on a builtin only unreachable code reaches. This
+    // returned true unconditionally, rejecting such a program with exit 1 and
+    // no diagnostic printed at all, where native accepts it.
+    return vs.len() > 0;
 }
 
 // read_manifest parses `<dir>fern.toml`, or an empty manifest when the entry
@@ -2266,6 +2270,21 @@ function run(): i32 {
         }
         merged = constfold.elide_asserts(merged);
     }
+
+    // Prune functions unreachable from `main` (+ top-level statements + WIT
+    // exports), the same name-based over-approximation asm_load_run applies and
+    // native runs before platforms.Enforce. Without it a program importing one
+    // stdlib module emits that module's whole transitive closure: `import
+    // "std/string"` costs examples/bench/string_count_byte 958 emitted functions
+    // against native's 27.
+    //
+    // After every gate, for the reason the assert elision above is: pruning can
+    // only narrow the emitted program, and running it earlier would widen the
+    // set that compiles — a module ineligible for the IR path can become
+    // eligible once the function that bails it is dropped. The checker and both
+    // capability gates therefore still see the module as written, so no
+    // diagnostic moves.
+    merged = treeshake.treeshake(merged);
 
     // Production default: the IR path. All three targets route IR-or-error
     // (asm_ir / asm_arm64_ir / wasm_ir `.emit_module*_or_error`, #3457), so this

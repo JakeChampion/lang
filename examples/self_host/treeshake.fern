@@ -8,8 +8,9 @@
 // uninstantiated generics individually bail the IR-eligibility gate), so a
 // stdlib-importing program could not compile at all. `treeshake`
 // prunes `mod.funcs` to the functions REACHABLE from `main` (+ top-level
-// statements + WIT exports), so a program that uses only `i32`'s `eq`/`hash`
-// drops the hundreds of unrelated stdlib functions and fits the IR path.
+// statements + WIT exports + Drop finalizers + async entry points), so a
+// program that uses only `i32`'s `eq`/`hash` drops the hundreds of unrelated
+// stdlib functions and fits the IR path.
 //
 // SOUNDNESS — the prune must never drop a function the program can reach. It
 // over-approximates reachability by NAME: a function is kept if its name
@@ -69,11 +70,8 @@ function ts_name_of(e: ast.Expr, acc: string[]): string[] {
         // `__method_Array_<m>` helper, but the syntax names only `<m>` — so
         // without this the helper looks unreachable and gets pruned, bailing
         // the whole module (the IR path then fails on `i32.<m>`).
-        // Append the helper's canonical token so ts_kept_name retains it.
-        ast.ExprFieldAccess(fa) => {
-            acc = acc.append(fa.field);
-            return acc.append("__method_Array_" + fa.field);
-        },
+        // `ts_array_method_name` matches those helpers against this bare `<m>`.
+        ast.ExprFieldAccess(fa) => { return acc.append(fa.field); },
         ast.ExprNumber(_) => { return acc; },
         ast.ExprString(_) => { return acc; },
         ast.ExprBool(_) => { return acc; },
@@ -109,35 +107,42 @@ function ts_func_names(fd: parser.FuncDecl, acc: string[]): string[] {
     return acc;
 }
 
-// ts_array_method_canon returns the canonical `__method_Array_<m>` token of an
-// array-method helper name — stripping any `<mod>__` mangling prefix modload
-// added — or "" if `name` is not such a helper. The method-call syntax
-// `arr.<m>(...)` references the helper only by `m`, so treeshake traces it by
-// this token (appended at every `.<m>` field access) rather than by the
-// mangled function name, which the syntax never spells.
-function ts_array_method_canon(name: string): string {
+// ts_array_method_name returns the `<m>` of an array-method helper name —
+// whatever follows the last `__method_Array_`, past any `<mod>__` mangling
+// prefix modload added — or "" if `name` is not such a helper. The method-call
+// syntax `arr.<m>(...)` references the helper only by `m`, so treeshake traces
+// it by that bare name rather than by the mangled function name, which the
+// syntax never spells.
+//
+// Matching on `<m>` rather than on a reconstructed `__method_Array_<m>` token
+// is what lets the walk stay allocation-free: the token had to be BUILT, by a
+// string concatenation at every field access in the program, and the bare `<m>`
+// the concatenation was appended alongside is already in `refs`.
+function ts_array_method_name(name: string): string {
     var marker: string = "__method_Array_";
     if (name.len() < marker.len()) { return ""; }
     var i: i32 = 0;
     while (i <= name.len() - marker.len()) {
-        if (slice_unchecked(name, i, i + marker.len()) == marker) { return slice_unchecked(name, i, name.len()) + ""; }
+        if (slice_unchecked(name, i, i + marker.len()) == marker) { return slice_unchecked(name, i + marker.len(), name.len()) + ""; }
         i = i + 1;
     }
     return "";
 }
 
 // ts_kept_name reports whether function `name` is reachable: by exact name, or
-// — for an array-method helper — by its canonical token being in `refs`.
+// — for an array-method helper — by the method name it dispatches from being
+// in `refs`.
 function ts_kept_name(name: string, refs: string[]): boolean {
     if (util.has_str(refs, name)) { return true; }
-    var canon: string = ts_array_method_canon(name);
-    return canon.len() > 0 && util.has_str(refs, canon);
+    var m: string = ts_array_method_name(name);
+    return m.len() > 0 && util.has_str(refs, m);
 }
 
 // treeshake returns `mod` with `mod.funcs` pruned to those reachable, by name,
-// from the roots (`main`, top-level statements, WIT exports). Structs / enums /
-// aliases / imports / top_stmts / exports are preserved unchanged (only the
-// function list — the IR-budget axis — is pruned). Idempotent.
+// from the roots (`main`, top-level statements, WIT exports, Drop finalizers,
+// body-bearing async functions). Structs / enums / aliases / imports /
+// top_stmts / exports are preserved unchanged (only the function list — the
+// IR-budget axis — is pruned). Idempotent.
 pub function treeshake(mod: parser.Module): parser.Module {
     // Seed the reachable-name set from the roots.
     var refs: string[] = ["main"];
@@ -146,15 +151,87 @@ pub function treeshake(mod: parser.Module): parser.Module {
     var ei: i32 = 0;
     while (ei < mod.exports.len()) { refs = refs.append(mod.exports[ei].func_name); ei = ei + 1; }
 
+    // A Drop finalizer has no call site to reach: its only caller is the
+    // `__drop_struct_<C>` glue lowering synthesises after this pass, so the walk
+    // would prune it and leave that glue naming a symbol nothing emitted.
+    // Rooted whole-program for the reason native's DropImplMethods is — gating
+    // it on whether a live function can hold a `C` is type reachability this
+    // pass does not compute. `trait_name` is already the simple name here, so
+    // `impl mem.Drop for W` matches without demangling.
+    var di: i32 = 0;
+    while (di < mod.impls.len()) {
+        if (mod.impls[di].trait_name == "Drop") {
+            var dm: i32 = 0;
+            while (dm < mod.impls[di].method_names.len()) {
+                refs = refs.append(mod.impls[di].method_names[dm]);
+                dm = dm + 1;
+            }
+        }
+        di = di + 1;
+    }
+
+    // A `@derive`d method is the same shape as a Drop finalizer: the program
+    // never spells it, and its caller is generated after this pass. A struct
+    // used as a map KEY has its `hash` called by the map lowering, so
+    // `@derive(cmp.Eq, cmp.Hash) struct Sku` lost `Sku.hash` here and the wasm
+    // module was rejected for calling a function it never defines
+    // (conformance/cases/map_iter_struct_value and two siblings).
+    //
+    // Rooted by RECEIVER rather than by a list of the derivable method names.
+    // The names are `synth_derives`' business and a new derive would not think
+    // to update a copy of them here — where the cost of over-keeping is a
+    // hand-written method on a derive-carrying struct surviving, and the cost of
+    // under-keeping is a dangling symbol at link time.
+    var si: i32 = 0;
+    while (si < mod.structs.len()) {
+        if (mod.structs[si].derives.len() > 0) {
+            var fj: i32 = 0;
+            while (fj < mod.funcs.len()) {
+                if (mod.funcs[fj].receiver_type == mod.structs[si].name) {
+                    refs = refs.append(mod.funcs[fj].name);
+                }
+                fj = fj + 1;
+            }
+        }
+        si = si + 1;
+    }
+
+    // An `async function` with a body is an entry point from outside: the
+    // component-level export the wasm path lifts it as. A body-less
+    // `@import(...) async` declaration is an import instead, and is excluded by
+    // the same `import_iface` test native uses.
+    var ai: i32 = 0;
+    while (ai < mod.funcs.len()) {
+        if (mod.funcs[ai].async && mod.funcs[ai].import_iface.len() == 0) {
+            refs = refs.append(mod.funcs[ai].name);
+        }
+        ai = ai + 1;
+    }
+
     // Grow `refs` to a fixpoint: any function whose name is reachable
     // contributes the names ITS body references. Only genuinely NEW names are
     // appended (membership-checked), so `refs` grows monotonically toward a
     // bounded set and the loop terminates.
+    //
+    // Each function contributes AT MOST ONCE, tracked by carrying the
+    // not-yet-contributed indices in `pending` and rebuilding it each round.
+    // A body's name set does not change between rounds, so re-walking it can
+    // only re-derive what the first walk already appended — which made the
+    // whole-body walk and its per-name membership scan cost one round each
+    // rather than one in total. On the compiler compiling itself (6,259
+    // functions) that was 26 s of the 82 s compile; contributing once takes the
+    // pass to under a second and leaves the result identical.
+    var pending: i32[] = [];
+    var pi0: i32 = 0;
+    while (pi0 < mod.funcs.len()) { pending = pending.append(pi0); pi0 = pi0 + 1; }
+
     var changed: boolean = true;
     while (changed) {
         changed = false;
-        var fi: i32 = 0;
-        while (fi < mod.funcs.len()) {
+        var still: i32[] = [];
+        var pi: i32 = 0;
+        while (pi < pending.len()) {
+            var fi: i32 = pending[pi];
             if (ts_kept_name(mod.funcs[fi].name, refs)) {
                 var body_names: string[] = ts_func_names(mod.funcs[fi], []);
                 var bi: i32 = 0;
@@ -165,9 +242,12 @@ pub function treeshake(mod: parser.Module): parser.Module {
                     }
                     bi = bi + 1;
                 }
+            } else {
+                still = still.append(fi);
             }
-            fi = fi + 1;
+            pi = pi + 1;
         }
+        pending = still;
     }
 
     // Keep only the reachable functions.

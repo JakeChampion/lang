@@ -247,19 +247,43 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 		// `exit` is core with a target-specific lowering, not a capability, so
 		// a freestanding program may still stop.
 		{"exit-ok", "arm64-freestanding", "function main(): i32 {\n    exit(0);\n    return 0;\n}\n"},
+		// `print` in a function nothing calls is NOT a violation: the verdict is
+		// the tree-shaken module's, and the flat pre-pass that fires first only
+		// decides whether shaking is worth paying for. capability_violations
+		// returned true unconditionally once that pre-pass fired, so this exited
+		// 1 with no diagnostic printed — which the E066-site comparison alone
+		// cannot see, since both compilers report no site. That is what the exit
+		// code below is here for.
+		{"unreachable-log-ok", "x86-64-freestanding", "function never_called(): void {\n    print(\"x\");\n}\nfunction main(): i32 { return 7; }\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			src := filepath.Join(dir, "fs_"+c.name+".fern")
 			if err := os.WriteFile(src, []byte(c.src), 0o644); err != nil {
 				t.Fatalf("write: %v", err)
 			}
-			nativeOut, _ := exec.Command(nativeBin, "-check", "-target", c.target, src).CombinedOutput()
-			shOut, _ := exec.Command(driverBin, "-check", "-target", c.target, src, stdlib).CombinedOutput()
+			nativeCmd := exec.Command(nativeBin, "-check", "-target", c.target, src)
+			nativeOut, _ := nativeCmd.CombinedOutput()
+			shCmd := exec.Command(driverBin, "-check", "-target", c.target, src, stdlib)
+			shOut, _ := shCmd.CombinedOutput()
 			want := strings.Join(e066Sites(string(nativeOut)), " ")
 			got := strings.Join(e066Sites(string(shOut)), " ")
 			if want != got {
 				t.Errorf("E066 sites differ: native [%s], self-host [%s]\n--- native ---\n%s\n--- self-host ---\n%s",
 					want, got, nativeOut, shOut)
+			}
+			// Whether the program is ACCEPTED, which the site lists agree on
+			// even when one compiler rejects with nothing to show for it.
+			//
+			// Not asserted where the self-host checker reports a construct it
+			// cannot represent: that is #4346's measured gap, it makes the two
+			// compilers disagree on the exit code for reasons that have nothing
+			// to do with capabilities, and `exit-ok` lands on it today.
+			if strings.Contains(string(shOut), "#4346") {
+				return
+			}
+			if wantCode, gotCode := nativeCmd.ProcessState.ExitCode(), shCmd.ProcessState.ExitCode(); wantCode != gotCode {
+				t.Errorf("-check exit differs: native %d, self-host %d\n--- native ---\n%s\n--- self-host ---\n%s",
+					wantCode, gotCode, nativeOut, shOut)
 			}
 		})
 	}
