@@ -9,8 +9,8 @@ the self-host compiler instead.
 
 **The precondition is not bounded by module size or by memory.** Both come in
 an order of magnitude *better* than the bundle shipping today. It is bounded by
-one correctness bug and two missing-builtin gaps, all three of them named below
-and none of them open-ended.
+two missing-builtin gaps, both named below and neither open-ended. The
+correctness bug that used to head this list (#7948) is fixed.
 
 The self-host compiler compiled to wasm **already runs in wasm today**. A
 stdin-driven wasm-emitting driver, compiled to a core module by the self-host
@@ -115,93 +115,32 @@ as a second positional argument, where native serves stdlib from `go:embed`
 (`internal/stdlib/stdlib.go:37`). Building that driver to wasm costs 82.7 s and
 3.19 GB peak on the host — a build-time cost, not a ship-time one.
 
-## The three real blockers
+## The two real blockers
 
-### 1. The wasm-hosted compiler miscompiles nested arithmetic (#7948, the blocker)
+The blocker this measurement led with — **the wasm-hosted compiler
+miscompiling nested arithmetic**, #7948 — is gone, so it is not one of the two
+and is recorded here only because everything below was written around it: the
+same `wasm_ir_run.fern`, compiled by the same self-host CLI with
+only `-target` differing, refused as `unknown expression` a program the native
+build compiled fine. The cause was a use-after-free in the
+compiler's own gate passes, not a lowering divergence: a struct-ARRAY snapshot
+parameter was routed through `__field_reclaim_<ElementType>`, a helper written
+against a struct BOX, so its field offsets walked off the end of a short buffer
+and released what followed. Both backends emitted the call; only wasm's reclaim
+body walks enough field slots to dereference garbage. Root cause, the
+measurement that found it, and the dead ends worth not repeating:
+`rc-log/2026-09-01-field-reclaim-on-struct-array-param.md`.
 
-Same driver source, same input, same compiler, only the target differs — and
-they disagree:
+The coverage gap it exposed is closed too, and it is the part that generalises.
+The one test that ran a wasm-hosted self-host compiler (`runShardedCompiler`,
+`self_host_wasm_wholecompiler_test.go:233`) compiled a two-module program whose
+whole body is `leaf.leaf_tag().len() + 7` — no nested arithmetic, so the bug was
+invisible to it. `TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith` now
+runs the wasm-hosted driver against the native-hosted one on nested arithmetic
+and asserts identical exit code AND identical WAT: a wasm-hosted compiler is
+only interesting if it agrees with the native one, and until then nothing asked.
 
-```fern
-function f(a: i32): i32 { var x: i32 = a + a * a; var y: i32 = a + a * a; return x; }
-function main(): i32 { return f(1); }
-```
-
-```
-$ ./wasm_ir_run.native < repro.fern            # exit 0, valid WAT
-$ wasmtime run --env FERN_STRICT_IR=1 wasm_ir_run.wasm < repro.fern
-FERN_STRICT_IR: f (did not lower: unknown expression)   # exit 3
-```
-
-Both binaries are `examples/self_host/wasm_ir_run.fern` built by the same
-`bin/fern-selfhost`; only `-target` differs. So the **self-host wasm backend
-miscompiles the compiler itself**. Deterministic — 5/5 identical runs.
-
-The trigger is two or more right-nested (depth >= 2) binary initializers with a
-non-constant operand. Narrowed by bisection:
-
-| program shape | native | wasm-hosted |
-|---|---|---|
-| `var x = a + a * a; var y = a + a * a; return x;` | ok | **bails** |
-| `var v0 = 1 + a * 1; var v1 = 1 + a * 1; return v0 + v1;` | ok | **bails** |
-| one such statement only — `var x = a + a * a; return x;` | ok | ok |
-| one nested + one flat — `var x = 1 + a * 1; var y = 2;` | ok | ok |
-| all-constant nesting — `var x = 1 + 2 * 3; var y = 1 + 2 * 3;` | ok | ok |
-| left-nested via parens — `var x = (1 + a) * 1; var y = (1 + a) * 1;` | ok | ok |
-| flat binaries — `var v0 = 0 + a; var v1 = 1 + a;` | ok | ok |
-
-It is a **use-after-free**, not a lowering-logic divergence and not a missing
-case. Diagnosed 2026-09-01:
-
-- **The parser is not at fault.** Dumped immediately after
-  `rundriver.parse_stdin`, the wasm-hosted and native trees are byte-identical
-  and correct, and stay correct across four read-only re-walks.
-- **It is not an unhandled variant.** `ast.Expr` has 17 members
-  (`ast.fern:188-192`) and `expr_bail_tag` (`irlower.fern:884-902`) names only
-  14, so a map literal, an f-string and `ExprUnknown` all reach the same `_`
-  arm. Adding those three arms did **not** change the message: the discriminant
-  read back matches none of the 17.
-- **The corruption is one node.** At the entry to
-  `wasm_ir.emit_module_mode_or_error`, exactly one node is garbage — the left
-  operand of the *second* `a * a`. The first is intact.
-- **It is a freed box, recycled.** Reading the module after
-  `asmcore.check_undefined_calls` traps at wasm address `0x64692058`, which is
-  the ASCII bytes `X`, ` `, `i`, `d` — a freed union box whose storage had
-  already been handed out to a *string* allocation and was then read back as a
-  pointer. Same address and same backtrace across two independently
-  instrumented builds.
-
-That explains the trigger: it is about **count, not identity**. One nested
-initializer frees an inner-binary box that is never handed out again before it
-is read; two supply enough intervening allocations for the freed box to be
-reused. Every passing row above constant-folds to depth <= 1, so no inner
-binary box exists to free.
-
-Prime suspect: `asmcore.check_undefined_calls` (`asmcore.fern:4759`) and its
-walk `callgate_expr` (`asmcore.fern:4521`) — the last pass to read the module
-before the corruption is observable, and rewritten onto `astwalk` in `a7dc8d0`.
-Two negative results narrow it further, and both are worth keeping: a plain
-recursive borrow-walk over `ast.Expr` does **not** over-release, and a 30-line
-standalone program of the same shape compiles identically on both targets. So
-the defect needs something the real gate passes have — the accumulator rebind
-and struct threading in `callgate_expr` are the candidates — and is not
-"any AST walk on wasm".
-
-The one measurement left is cheap: emit `callgate_expr` both ways from the same
-`bin/fern-selfhost` and diff retain/release placement. Since `irlower` is
-shared, that decides whether the divergence is an `irlower` decision
-conditioned on `LowerState.for_wasm()` (`irlower.fern:858`) or `wasm_ir.fern`'s
-instruction selection for the dec/drop op.
-
-**Nothing gates this.** The one test that runs a wasm-hosted self-host compiler
-(`runShardedCompiler`, `self_host_wasm_wholecompiler_test.go:233`) compiles a
-two-module program whose whole body is `leaf.leaf_tag().len() + 7` — no nested
-arithmetic, so the bug is invisible to it. That is the coverage gap this
-measurement found, and it is the one worth closing first: a wasm-hosted
-compiler is only interesting if it agrees with the native one, and today
-nothing asks.
-
-### 2. Native `wasmbin` cannot compile the self-host compiler at all (#7947)
+### 1. Native `wasmbin` cannot compile the self-host compiler at all (#7947)
 
 ```
 $ ./bin/fern -target wasm32-wasi -emit core-module -o out.wasm examples/self_host/fern.fern
@@ -223,8 +162,9 @@ the `__c_call0..4` FFI family, which the checker registers
 
 The consequence for this precondition: the playground's wasm artifact can only
 be produced *by the self-host compiler compiling itself*, never by the native
-toolchain — which also means there is no independent second witness to
-cross-check blocker 1 against.
+toolchain — so there is no independent second witness to cross-check a wasm
+miscompile against, which is why #7948 had to be diagnosed by diffing the two
+TARGETS of one compiler instead.
 
 `TestProvidedSigsAgreeWithWasmRuntime`
 (`internal/codegen/wasmbin/verifier_sigs_test.go:21`) looks like the gate for
@@ -236,7 +176,7 @@ The hole runs the other way too: `udp_send` is implemented only in `wasmbin`
 (`wasi_udp.go`) and is missing from `internal/codegen/arm64` and
 `internal/codegen/x86_64`, though `hosted-native` grants `tcp`, which gates it.
 
-### 3. The CLI driver is the wrong entry point
+### 2. The CLI driver is the wrong entry point
 
 ```
 $ ./bin/fern-selfhost -target wasm32-wasi -emit core-module -o out.wasm examples/self_host/fern.fern
@@ -263,7 +203,7 @@ guarded by `if len(runner) != 0`, where `runner` is empty on a native
 `linux/amd64` host and `[]string{qemu-x86_64}` otherwise
 (`internal/e2eharness/x86_64.go:39-58`). They fire under a **qemu
 cross-runner**, never because of wasm, and none of them fires on an amd64 box.
-The real filesystem constraint is blocker 3, and it is about the driver's
+The real filesystem constraint is blocker 2, and it is about the driver's
 shape, not about these tests.
 
 **`wasm-bin` is not a target.** It was replaced by an `-emit` axis:
@@ -274,17 +214,10 @@ since #6635.
 ## What it would actually take
 
 In dependency order, and the estimate the issue asked for — **this is a
-weekend, not a quarter**, with the caveat that the weekend is blocker 1's and
-its size is unknown until it is root-caused:
+weekend, not a quarter**. The unknown that qualified that estimate was #7948's
+size before it was root-caused; it is closed, and what remains is scoped:
 
-1. **Finish blocker 1** — the use-after-free is localised to `callgate_expr`
-   and one measurement (the retain/release diff above) separates the two
-   remaining candidates. Pin it with a differential that runs the *wasm-hosted*
-   compiler against the native one on nested arithmetic — two or more depth->=2
-   binary initializers with a non-constant operand — asserting identical exit
-   code and identical WAT. Nothing else matters until this is done, because a
-   compiler that miscompiles nested arithmetic cannot ship to a playground.
-2. **strbuf in `wasmbin`** (blocker 2, #7947). Contained: three scratch slots appended
+1. **strbuf in `wasmbin`** (blocker 1, #7947). Contained: three scratch slots appended
    to the `memlayout.go` chain and three `runtimeHelperSpecs` entries keyed by
    the source names, the way `poll` and `isatty` already are
    (`runtime.go:1698,1713`). The self-host wasm implementation
@@ -292,14 +225,14 @@ its size is unknown until it is root-caused:
    one-word strings where wasmbin uses the two-word SSO ABI, so `strbuf_append`
    takes `(data, len)` and must read through the tag like `buildStrConcatBody`
    does. Add the missing completeness test while there.
-3. **A playground driver** — `wasm_ir_run.fern`'s shape plus in-memory stdlib
+2. **A playground driver** — `wasm_ir_run.fern`'s shape plus in-memory stdlib
    resolution and the interpret/check entry points, exporting to JS rather than
    reading stdin.
-4. **The LSP** is the long pole and is not costed here; it has no self-host
+3. **The LSP** is the long pole and is not costed here; it has no self-host
    counterpart at all.
 
 Precondition 3 of §3a — whether the native backends should be deleted at all,
 given `BOOTSTRAP-RESEARCH.md §1` recommends two-implementations-forever so the
 fuzz-diff oracle keeps two witnesses — is untouched by any of this and still
-needs its own call. Blocker 2 sharpens it: today there is no second wasm
+needs its own call. Blocker 1 sharpens it: today there is no second wasm
 witness, because only one of the two compilers can emit this artifact.
