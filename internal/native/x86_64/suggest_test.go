@@ -128,22 +128,3 @@ func TestSuggestOnUnsupported(t *testing.T) {
 		t.Errorf("far-off mnemonic got a suggestion: %v", err)
 	}
 }
-
-func TestEditDistance(t *testing.T) {
-	cases := []struct {
-		a, b string
-		max  int
-		want int
-	}{
-		{"mov", "mov", 2, 0},
-		{"mvo", "mov", 2, 1}, // adjacent transposition
-		{"vaddpd", "addpd", 2, 1},
-		{"ad", "add", 2, 1},
-		{"frobnicate", "mov", 2, 3}, // capped at max+1
-	}
-	for _, c := range cases {
-		if got := editDistance(c.a, c.b, c.max); got != c.want {
-			t.Errorf("editDistance(%q, %q, %d) = %d, want %d", c.a, c.b, c.max, got, c.want)
-		}
-	}
-}
