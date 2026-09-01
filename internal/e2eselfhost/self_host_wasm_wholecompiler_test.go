@@ -204,7 +204,14 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	if out, err := exec.Command(wasmtools, "validate", corePath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate of the whole-compiler link failed: %v\n%s", err, out)
 	}
-	t.Logf("whole-compiler wasm link OK: %d modules, %d units, %d bytes WAT, validated", n, len(jobs), len(wat))
+	// Report the CORE MODULE size, not just the WAT text: the binary is what a
+	// consumer would ship, and the two differ by several-fold. #6643 needed this
+	// number and had to re-derive it — docs/PLAYGROUND-SELFHOST-WASM.md.
+	coreBytes := int64(-1)
+	if fi, err := os.Stat(corePath); err == nil {
+		coreBytes = fi.Size()
+	}
+	t.Logf("whole-compiler wasm link OK: %d modules, %d units, %d bytes WAT, %d bytes core module, validated", n, len(jobs), len(wat), coreBytes)
 	runShardedCompiler(t, wasmtime, wasmtools, dir, corePath)
 }
 
