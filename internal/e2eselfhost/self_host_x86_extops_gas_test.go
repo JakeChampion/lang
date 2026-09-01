@@ -154,6 +154,72 @@ func TestSelfHostX86MovzbWidthGas(t *testing.T) {
 // TestSelfHostX86CarryAluGas: adc/sbb at all four widths and every ALU
 // operand form, plus the 83 short-immediate selection the whole group-1
 // family now shares (an imm8 previously always took the 7-byte 81 form).
+// TestSelfHostX86ConvertExtendGas pins #8020: the scalar converts, movss, the
+// sign-extending byte/word loads, and the flags moves and rep conditionals —
+// the 13 mnemonics internal/native/x86_64 assembled and this one did not.
+//
+// The sign-extend rows share the trap the movzb ones already pin: a byte
+// SOURCE of spl/bpl/sil/dil needs a bare REX even when nothing else does, or
+// those numbers name ah/ch/dh/bh instead. A WORD source has no such
+// ambiguity, so movswl must NOT force one — which is why both are here.
+//
+// The convert rows pin the two axes that are easy to cross: the prefix picks
+// the precision (F2 double, F3 single) and the opcode picks truncating (2C)
+// from rounding (2D), so getting either wrong yields a valid instruction that
+// converts the wrong thing.
+func TestSelfHostX86ConvertExtendGas(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildX86AsmBenchDriver(t, gcc)
+	checkPinnedX86(t, bin, runner, []pinnedX86{
+		{"cvtsd2sil %xmm1, %eax", []byte{0xf2, 0x0f, 0x2d, 0xc1}},
+		{"cvtsd2siq %xmm1, %rax", []byte{0xf2, 0x48, 0x0f, 0x2d, 0xc1}},
+		{"cvtsd2siq %xmm9, %r11", []byte{0xf2, 0x4d, 0x0f, 0x2d, 0xd9}},
+		{"cvtss2sil %xmm1, %eax", []byte{0xf3, 0x0f, 0x2d, 0xc1}},
+		{"cvtss2siq %xmm1, %rax", []byte{0xf3, 0x48, 0x0f, 0x2d, 0xc1}},
+		{"cvttss2sil %xmm1, %eax", []byte{0xf3, 0x0f, 0x2c, 0xc1}},
+		{"cvttss2siq %xmm9, %r11", []byte{0xf3, 0x4d, 0x0f, 0x2c, 0xd9}},
+		// The double-precision pair already existed; they are here so the
+		// generalised encoder is pinned against its own starting point.
+		{"cvttsd2sil %xmm1, %eax", []byte{0xf2, 0x0f, 0x2c, 0xc1}},
+		{"cvttsd2siq %xmm1, %rax", []byte{0xf2, 0x48, 0x0f, 0x2c, 0xc1}},
+		{"cvtsi2ssl %eax, %xmm1", []byte{0xf3, 0x0f, 0x2a, 0xc8}},
+		{"cvtsi2ssq %rax, %xmm1", []byte{0xf3, 0x48, 0x0f, 0x2a, 0xc8}},
+		{"cvtsi2ssl %r9d, %xmm2", []byte{0xf3, 0x41, 0x0f, 0x2a, 0xd1}},
+
+		{"movss %xmm1, %xmm2", []byte{0xf3, 0x0f, 0x10, 0xd1}},
+		{"movss %xmm9, %xmm2", []byte{0xf3, 0x41, 0x0f, 0x10, 0xd1}},
+		{"movss 8(%rdi), %xmm1", []byte{0xf3, 0x0f, 0x10, 0x4f, 0x08}},
+
+		{"movsbl %al, %ecx", []byte{0x0f, 0xbe, 0xc8}},
+		{"movsbl %spl, %esi", []byte{0x40, 0x0f, 0xbe, 0xf4}},
+		{"movsbl %r9b, %r10d", []byte{0x45, 0x0f, 0xbe, 0xd1}},
+		{"movsbq %al, %rcx", []byte{0x48, 0x0f, 0xbe, 0xc8}},
+		{"movsbq 8(%rdi), %rax", []byte{0x48, 0x0f, 0xbe, 0x47, 0x08}},
+		{"movswl %ax, %ecx", []byte{0x0f, 0xbf, 0xc8}},
+		{"movswl %r9w, %r10d", []byte{0x45, 0x0f, 0xbf, 0xd1}},
+		// %si / %di / %bp are word registers 4..7 — the numbers that, as
+		// BYTE registers, would name ah/ch/dh/bh and so force a bare REX.
+		// There is no such ambiguity at word width, so these must carry NO
+		// prefix. Without these rows the force rule can be widened to every
+		// width and nothing fails.
+		{"movswl %si, %ecx", []byte{0x0f, 0xbf, 0xce}},
+		{"movswl %bp, %eax", []byte{0x0f, 0xbf, 0xc5}},
+		{"movswq %di, %rcx", []byte{0x48, 0x0f, 0xbf, 0xcf}},
+		{"movswq %ax, %rcx", []byte{0x48, 0x0f, 0xbf, 0xc8}},
+		{"movswq (%rax,%rcx), %rsi", []byte{0x48, 0x0f, 0xbf, 0x34, 0x08}},
+
+		{"pushfq", []byte{0x9c}},
+		{"popfq", []byte{0x9d}},
+		{"ud2", []byte{0x0f, 0x0b}},
+		// rep and repe are the same F3 byte; repne/repnz are F2, a different
+		// prefix rather than an alias.
+		{"repe cmpsb", []byte{0xf3, 0xa6}},
+		{"repz cmpsb", []byte{0xf3, 0xa6}},
+		{"repne scasb", []byte{0xf2, 0xae}},
+		{"repnz scasb", []byte{0xf2, 0xae}},
+	})
+}
+
 func TestSelfHostX86CarryAluGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildX86AsmBenchDriver(t, gcc)
