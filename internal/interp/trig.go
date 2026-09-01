@@ -146,7 +146,7 @@ func trigKcos(r float64) float64 {
 	p = float64(p*z) + 4.16666666666666019037e-02
 	hz := 0.5 * z
 	w := 1 - hz
-	return w + (((1-w)-hz)+float64(float64(z*p)*z))
+	return w + (((1 - w) - hz) + float64(float64(z*p)*z))
 }
 
 // trigGuard mirrors the backends' prologue: NaN returns itself, ±Inf becomes
