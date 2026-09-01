@@ -371,7 +371,40 @@ Fix all three and the SSA path lands near 1.0–1.1 M instructions against the
 default's 1.5 M — which is roughly where the census says a real allocator
 should land (1.5 M minus 537 K of measured overhead ≈ 963 K).
 
-### 5.1 The unreachable x86-64 twin
+### 5.1 wasm is the backend that is not paying for the mismatch
+
+Worth stating because it isolates the cause. `internal/codegen/wasmbin` emits an
+operand-stack IR to a target that *is* an operand-stack machine, so none of §2's
+overhead exists by construction. On `tokenize.fern` — 951 wasm instructions —
+the equivalent defects are:
+
+| | count | share |
+|---|---|---|
+| `local.tee N; drop` (statement value nobody reads) | 5 | 0.5% |
+| `i32.eqz; br_if` (condition inverted for a top-tested loop) | 3 | 0.3% |
+| `local.set N; local.get N` where `local.tee` does both | 11 | 1.2% |
+
+**About 2%, against the natives' 26.8% and 42.6%.** Locals are used as locals;
+values are not round-tripped through memory. The same three *logical* defects as
+the natives are visible in `int_loop`'s wasm — a non-rotated loop, a discarded
+statement value, and a constant-divisor guard emitted as an out-of-line call
+with the full zero and `INT_MIN/-1` test against the literal `97` — but each
+costs a couple of instructions rather than a couple of hundred thousand.
+
+The reading: the natives' 26–43% is not sloppiness spread through the emitters,
+it is one design decision (an operand-stack IR translated 1:1 onto a register
+machine) charged at every expression. wasm never pays it.
+
+One coverage note that the CLI help does not make: `-backend ssa
+-target wasm32-wasi` refuses any program containing a call that is neither
+self-recursion nor a declared import — `buildWasmSSA` (`cmd/fern/main.go:1880`)
+lifts only `main`. It fails cleanly, as promised (`wasmssa: OpCall to "fib" is
+neither self-recursion … nor a declared import`, exit 1, no module written), but
+that is single-function programs only, far narrower than the arm64 SSA path's
+whole-program coverage, and `-backend`'s help text lists the two targets
+together without the qualification.
+
+### 5.2 The unreachable x86-64 twin
 
 `internal/codegen/x86_64ssa` is a complete SSA emitter — `Emit`,
 `EmitAsmModule`, `EmitProgram`, callee-saved analysis, spilling, phi resolution
@@ -468,6 +501,10 @@ Stated plainly so the gaps are not mistaken for clean bills of health.
   array code and should not pretend to. The right frame is probably Go — same
   self-hosting posture, same static-binary commitment, comparable safety —
   and Fern is 2.08× Go on the one kernel where both were measured cleanly.
+- **The wasm backend beyond §5.1** — `wasmbin` is 25 683 lines and this audit
+  looked at one module's instruction mix. Whether it uses `br_table` for dense
+  switches, multi-value blocks, `memory.copy`/`memory.fill`, or the v128 family
+  that `docs/BACKEND-PARITY.md` puts in the baseline, is unmeasured here.
 - **The reference-counting overhead itself**, beyond the guard in finding 5.
   How much of a realistic program's instructions are retain/release traffic,
   how many of those are necessary, and how Fern compares to Koka, Lean 4, Roc
