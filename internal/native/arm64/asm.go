@@ -3,6 +3,8 @@ package arm64
 import (
 	"fmt"
 	"strconv"
+
+	"github.com/jakechampion/lang/internal/native/cfi"
 )
 
 // Assembler collects a stream of instructions plus named labels and
@@ -45,6 +47,10 @@ type Assembler struct {
 	// DWARF .debug_line rows: the source line active at a .text byte offset,
 	// recorded when the code generator emits a `.loc` directive under -g.
 	locRows []LineRow
+
+	// Call-frame information from `.cfi_*` directives, rendered as .eh_frame
+	// by EhFrame. Offsets are pre-veneer and remapped alongside locRows.
+	cfi cfi.State
 
 	// Branch veneers (see veneer.go): veneerSeq names each synthetic
 	// trampoline label, veneerReach overrides the b/bl span in tests,

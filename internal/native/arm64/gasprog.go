@@ -36,6 +36,25 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 	return a.BytesProgram(textVAddr)
 }
 
+// AssembleProgramEhFrame is AssembleProgram that also renders the .eh_frame
+// image the source's `.cfi_*` directives describe. ehVAddr is where that image
+// will be loaded, because the CIE declares pcrel FDE pointers. Returns a nil
+// image when the source carries no CFI.
+func AssembleProgramEhFrame(src string, textVAddr, ehVAddr uint64) (text, rodata, ehFrame []byte, err error) {
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	text, rodata, err = a.BytesProgram(textVAddr)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if ehFrame, err = a.EhFrame(textVAddr, ehVAddr); err != nil {
+		return nil, nil, nil, err
+	}
+	return text, rodata, ehFrame, nil
+}
+
 // AssembleProgramWX is AssembleProgram for the W^X two-segment ELF layout
 // (elf.StaticExecutableDataWX): .rodata is page-aligned into a separate
 // R+W segment instead of laid contiguously after .text. Pass
@@ -177,6 +196,9 @@ func ParseProgram(src string) (*Assembler, error) {
 func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 	fields := strings.Fields(line)
 	d := fields[0]
+	if strings.HasPrefix(d, ".cfi_") {
+		return sec, a.cfiDirective(d, line)
+	}
 	switch d {
 	case ".text":
 		a.SetBssSection(false)
@@ -234,7 +256,7 @@ func handleProgDirective(a *Assembler, line string, sec int) (int, error) {
 	}
 	switch sec {
 	case secText:
-		return secText, handleDirective(line)
+		return secText, handleDirective(a, line)
 	case secRodata:
 		return secRodata, appendRodataDirective(a, d, strings.TrimSpace(strings.TrimPrefix(line, d)))
 	default: // secIgnore: drop directives too

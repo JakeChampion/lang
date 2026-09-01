@@ -44,7 +44,7 @@ func Assemble(src string) ([]byte, error) {
 			continue
 		}
 		if strings.HasPrefix(line, ".") {
-			if err := handleDirective(line); err != nil {
+			if err := handleDirective(a, line); err != nil {
 				return nil, fmt.Errorf("line %d: %w", lineno+1, err)
 			}
 			continue
@@ -127,14 +127,21 @@ func isIdent(s string) bool {
 }
 
 // handleDirective accepts (and ignores) the assembler directives that
-// don't affect a single-.text-section program, and errors on the rest
-// (e.g. data directives) so the gap is visible.
-func handleDirective(line string) error {
+// don't affect a single-.text-section program, records CFI, and errors on the
+// rest (e.g. data directives) so the gap is visible.
+//
+// `.cfi_startproc` and `.cfi_endproc` used to sit in the ignore list while
+// every other `.cfi_*` fell through to the error, which meant CFI-bearing
+// input was rejected on its first rule directive — half-accepted is not a
+// coherent position for a directive family that describes unwinding.
+func handleDirective(a *Assembler, line string) error {
 	d := strings.Fields(line)[0]
+	if strings.HasPrefix(d, ".cfi_") {
+		return a.cfiDirective(d, line)
+	}
 	switch d {
 	case ".text", ".arch", ".global", ".globl", ".type", ".size",
-		".align", ".p2align", ".balign", ".cfi_startproc", ".cfi_endproc",
-		".ltorg":
+		".align", ".p2align", ".balign", ".ltorg":
 		return nil
 	default:
 		return fmt.Errorf("unsupported directive %q", d)
