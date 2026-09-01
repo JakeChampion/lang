@@ -1,0 +1,42 @@
+// examples/self_host/x86_asm_bench_run.fern — harness for the in-process
+// x86-64 assembler, the x86 twin of arm64_asm_bench_run.fern. Reads GAS
+// (AT&T) text on stdin, runs the whole assemble path (parse/emit + label
+// resolve) and prints the section sizes.
+//
+// With `-bytes` it also dumps each assembled .text byte, one per line,
+// after the summary — making the assembler's ENCODINGS comparable against
+// GNU as ground truth on identical input with no wasm pipeline and no
+// execution (see internal/e2eselfhost/self_host_x86_extops_gas_test.go).
+// x86 instructions are variable-length, so the dump is a byte stream the
+// test walks case by case rather than fixed words.
+import "std/io";
+import "./x86_native";
+
+function main(): i32 {
+    var av: string[] = args();
+    var dump: boolean = false;
+    var i: i32 = 0;
+    while (i < av.len()) {
+        if (av[i] == "-bytes") { dump = true; }
+        i = i + 1;
+    }
+    var src: string = io.read_all_stdin();
+    var a: x86_native.X86Asm = x86_native.x86_gas_assemble(src);
+    print("text=" + a.code.len().to_string() + " rodata=" + a.rodata.len().to_string()
+        + " bump=" + __heap_bump_bytes().to_string() + "\n");
+    if (a.unknown.len() > 0) {
+        var u: i32 = 0;
+        while (u < a.unknown.len()) {
+            print("unknown=" + a.unknown[u]);
+            u = u + 1;
+        }
+    }
+    if (dump) {
+        var b: i32 = 0;
+        while (b < a.code.len()) {
+            print("byte " + b.to_string() + " " + a.code[b].to_string());
+            b = b + 1;
+        }
+    }
+    return 0;
+}

@@ -315,29 +315,29 @@ function x86enc_selftest_3(): i32 {
     // sib byte for [rsp]: scale=0,index=4,base=4 -> 0x24 (36)
     if (x86_sib(0, 4, 4) != 36) { return 29; }
     // slice 2h integer ops (verified vs as/objdump):
-    var aa: i32[] = x86_inc_r64([], x86_rax());   // 48 FF C0
+    var aa: i32[] = x86_unary_r([], 64, 254, 0, x86_rax());   // incq %rax -> 48 FF C0
     if (aa.len() != 3 || aa[0] != 72 || aa[1] != 255 || aa[2] != 192) { return 30; }
     return 0;
 }
 
 function x86enc_selftest_4(): i32 {
-    var bb: i32[] = x86_dec_r64([], x86_rcx());   // 48 FF C9
+    var bb: i32[] = x86_unary_r([], 64, 254, 1, x86_rcx());   // decq %rcx -> 48 FF C9
     if (bb[2] != 201) { return 31; }
-    var cc2: i32[] = x86_neg_r64([], x86_rax());  // 48 F7 D8
+    var cc2: i32[] = x86_unary_r([], 64, 246, 3, x86_rax());  // negq %rax -> 48 F7 D8
     if (cc2[1] != 247 || cc2[2] != 216) { return 32; }
-    var dd: i32[] = x86_test_r64_r64([], x86_rax(), x86_rax()); // 48 85 C0
+    var dd: i32[] = x86_op_rr([], 64, 132, x86_rax(), x86_rax()); // testq -> 48 85 C0
     if (dd[1] != 133 || dd[2] != 192) { return 33; }
-    var ee: i32[] = x86_and_r64_r64([], x86_rax(), x86_rcx());  // 48 21 C8
+    var ee: i32[] = x86_op_rr([], 64, 32, x86_rcx(), x86_rax());  // andq %rcx,%rax -> 48 21 C8
     if (ee[1] != 33 || ee[2] != 200) { return 34; }
-    var ff: i32[] = x86_or_r64_r64([], x86_rax(), x86_rcx());   // 48 09 C8
+    var ff: i32[] = x86_op_rr([], 64, 8, x86_rcx(), x86_rax());   // orq %rcx,%rax -> 48 09 C8
     if (ff[1] != 9 || ff[2] != 200) { return 35; }
-    var gg: i32[] = x86_xor_r64_r64([], x86_rax(), x86_rcx());  // 48 31 C8
+    var gg: i32[] = x86_op_rr([], 64, 48, x86_rcx(), x86_rax());  // xorq %rcx,%rax -> 48 31 C8
     if (gg[1] != 49 || gg[2] != 200) { return 36; }
-    var hh: i32[] = x86_imul_r64_r64([], x86_rax(), x86_rcx()); // 48 0F AF C1
+    var hh: i32[] = x86_op0f_rr([], 64, 175, x86_rax(), x86_rcx()); // imulq %rcx,%rax -> 48 0F AF C1
     if (hh.len() != 4 || hh[1] != 15 || hh[2] != 175 || hh[3] != 193) { return 37; }
-    var ii: i32[] = x86_idiv_r64([], x86_rcx());  // 48 F7 F9
+    var ii: i32[] = x86_unary_r([], 64, 246, 7, x86_rcx());  // idivq %rcx -> 48 F7 F9
     if (ii[1] != 247 || ii[2] != 249) { return 38; }
-    var jj: i32[] = x86_div_r64([], x86_rcx());   // 48 F7 F1
+    var jj: i32[] = x86_unary_r([], 64, 246, 6, x86_rcx());   // divq %rcx -> 48 F7 F1
     if (jj[2] != 241) { return 39; }
     var kk: i32[] = x86_cqo([]);                  // 48 99
     if (kk.len() != 2 || kk[0] != 72 || kk[1] != 153) { return 40; }
@@ -345,7 +345,7 @@ function x86enc_selftest_4(): i32 {
 }
 
 function x86enc_selftest_5(): i32 {
-    var ll: i32[] = x86_shl_r64_imm8([], x86_rax(), 3); // 48 C1 E0 03
+    var ll: i32[] = x86_shift_r_imm([], 64, 4, x86_rax(), 3); // shlq $3,%rax -> 48 C1 E0 03
     if (ll.len() != 4 || ll[1] != 193 || ll[2] != 224 || ll[3] != 3) { return 41; }
     // slice 2i extended registers r8..r15 (verified vs as/objdump):
     if (x86_rex(1, 0, 0, 0) != 72 || x86_rex(1, 12, 0, 13) != 77 || x86_rex(0, 0, 0, 12) != 65) { return 42; }
@@ -359,7 +359,7 @@ function x86enc_selftest_5(): i32 {
     if (rd.len() != 2 || rd[0] != 65 || rd[1] != 84) { return 46; }
     var re: i32[] = x86_pop_r64([], 13); // pop r13 -> 41 5D
     if (re.len() != 2 || re[0] != 65 || re[1] != 93) { return 47; }
-    var rf: i32[] = x86_inc_r64([], 12); // inc r12 -> 49 FF C4
+    var rf: i32[] = x86_unary_r([], 64, 254, 0, 12); // inc r12 -> 49 FF C4
     if (rf[0] != 73 || rf[1] != 255 || rf[2] != 196) { return 48; }
     var rg: i32[] = x86_mov_load_r64([], x86_rax(), 13, 0); // mov rax,[r13] -> 49 8B 45 00
     if (rg.len() != 4 || rg[0] != 73 || rg[1] != 139 || rg[2] != 69 || rg[3] != 0) { return 49; }
@@ -369,7 +369,7 @@ function x86enc_selftest_5(): i32 {
 }
 
 function x86enc_selftest_6(): i32 {
-    var rk: i32[] = x86_imul_r64_r64([], 8, 9); // imul r8,r9 -> 4D 0F AF C1
+    var rk: i32[] = x86_op0f_rr([], 64, 175, 8, 9); // imul r8,r9 -> 4D 0F AF C1
     if (rk.len() != 4 || rk[0] != 77 || rk[1] != 15 || rk[2] != 175 || rk[3] != 193) { return 51; }
     // slice 2j SIB-index addressing (verified vs as/objdump):
     var sa: i32[] = x86_mov_load_r64_idx([], x86_rax(), x86_rax(), x86_rcx(), 1, 0); // 48 8B 04 08
@@ -402,7 +402,7 @@ function x86enc_selftest_7(): i32 {
     if (bh.len() != 5 || bh[0] != 73 || bh[1] != 15 || bh[2] != 182 || bh[3] != 85 || bh[4] != 2) { return 63; }
     var bj: i32[] = x86_movzbq_reg([], x86_rcx(), 0); // movzbq %al,%rcx -> 48 0F B6 C8
     if (bj.len() != 4 || bj[0] != 72 || bj[1] != 15 || bj[2] != 182 || bj[3] != 200) { return 64; }
-    var bk: i32[] = x86_cmpb_imm_reg8([], 1, 46); // cmpb $46,%cl -> 80 F9 2E
+    var bk: i32[] = x86_grp1_imm_r([], 8, 7, 1, 46); // cmpb $46,%cl -> 80 F9 2E
     if (bk.len() != 3 || bk[0] != 128 || bk[1] != 249 || bk[2] != 46) { return 65; }
     // setCC (slice 2m): setl %al -> 0F 9C C0; setge %al -> 0F 9D C0.
     var bl: i32[] = x86_setcc_reg8([], 156, 0);
@@ -414,7 +414,7 @@ function x86enc_selftest_7(): i32 {
     if (sg.len() != 5 || sg[0] != 102 || sg[1] != 72 || sg[2] != 15 || sg[3] != 110 || sg[4] != 200) { return 68; }
     var sh: i32[] = x86_movq_xmm_to_gpr([], 0, 0); // movq %xmm0,%rax -> 66 48 0F 7E C0
     if (sh[3] != 126 || sh[4] != 192) { return 69; }
-    var si2: i32[] = x86_sse_rr([], 94, 0, 1); // divsd %xmm1,%xmm0 -> F2 0F 5E C1
+    var si2: i32[] = x86_sse_any_rr([], 242, 94, 0, 1); // divsd %xmm1,%xmm0 -> F2 0F 5E C1
     if (si2.len() != 4 || si2[0] != 242 || si2[1] != 15 || si2[2] != 94 || si2[3] != 193) { return 70; }
     return 0;
 }
@@ -422,9 +422,12 @@ function x86enc_selftest_7(): i32 {
 function x86enc_selftest_8(): i32 {
     var sj: i32[] = x86_cvttsd2si([], 0, 0); // F2 48 0F 2C C0
     if (sj.len() != 5 || sj[0] != 242 || sj[1] != 72 || sj[2] != 15 || sj[3] != 44 || sj[4] != 192) { return 71; }
-    var sk2: i32[] = x86_cvtsi2sd([], 0, 0); // F2 48 0F 2A C0
+    var sk2: i32[] = x86_cvtsi2sd([], 1, 0, 0); // F2 48 0F 2A C0
     if (sk2[3] != 42 || sk2[4] != 192) { return 72; }
-    var sl: i32[] = x86_ucomisd([], 0, 1); // 66 0F 2E C1
+    // cvtsi2sdl %ecx, %xmm0 -> F2 0F 2A C1 (no REX.W: the 32-bit source)
+    var sk3: i32[] = x86_cvtsi2sd([], 0, 0, 1);
+    if (sk3.len() != 4 || sk3[0] != 242 || sk3[1] != 15 || sk3[2] != 42 || sk3[3] != 193) { return 100; }
+    var sl: i32[] = x86_sse_any_rr([], 102, 46, 0, 1); // ucomisd -> 66 0F 2E C1
     if (sl.len() != 4 || sl[0] != 102 || sl[1] != 15 || sl[2] != 46 || sl[3] != 193) { return 73; }
     // x86_le64_i64: 8 LE bytes of 0x00000000000000FF -> FF then 7 zeros.
     var sm2: i64 = 255;
@@ -455,9 +458,9 @@ function x86enc_selftest_9(): i32 {
     var sja: i32[] = x86_jcc_rel32([], x86_cc_a(), 0); // 0F 87
     if (sja[1] != 135) { return 81; }
     // slice 2q: 32-bit ALU / moves / extends / cmov / testb / rep / xorpd.
-    var ta: i32[] = x86_alu_r32_imm32([], 0, x86_rax(), 128); // addl $128,%eax -> 81 C0 80 00 00 00
+    var ta: i32[] = x86_grp1_imm_r([], 32, 0, x86_rax(), 128); // addl $128,%eax -> 81 C0 80 00 00 00
     if (ta.len() != 6 || ta[0] != 129 || ta[1] != 192 || ta[2] != 128 || ta[3] != 0) { return 82; }
-    var tb: i32[] = x86_shr_r32_imm8([], x86_rax(), 8); // shrl $8,%eax -> C1 E8 08
+    var tb: i32[] = x86_shift_r_imm([], 32, 5, x86_rax(), 8); // shrl $8,%eax -> C1 E8 08
     if (tb.len() != 3 || tb[0] != 193 || tb[1] != 232 || tb[2] != 8) { return 83; }
     var tc: i32[] = x86_mov_r32_r32([], x86_rax(), x86_rcx()); // movl %ecx,%eax -> 89 C8
     if (tc.len() != 2 || tc[0] != 137 || tc[1] != 200) { return 84; }
@@ -465,11 +468,11 @@ function x86enc_selftest_9(): i32 {
     if (td.len() != 3 || td[0] != 65 || td[1] != 137 || td[2] != 199) { return 85; }
     var te: i32[] = x86_movl_load([], x86_rdi(), x86_rbp(), false, 0, 1, 0 - 76); // 8B 7D B4
     if (te.len() != 3 || te[0] != 139 || te[1] != 125 || te[2] != 180) { return 86; }
-    var tf: i32[] = x86_testb_imm_reg8([], 0, 127); // testb $127,%al -> F6 C0 7F
+    var tf: i32[] = x86_test_imm_r([], 8, 0, 127); // testb $127,%al -> F6 C0 7F
     if (tf.len() != 3 || tf[0] != 246 || tf[1] != 192 || tf[2] != 127) { return 87; }
-    var tg: i32[] = x86_testb_reg8_reg8([], 0, 0); // testb %al,%al -> 84 C0
+    var tg: i32[] = x86_op_rr([], 8, 132, 0, 0); // testb %al,%al -> 84 C0
     if (tg.len() != 2 || tg[0] != 132 || tg[1] != 192) { return 88; }
-    var th: i32[] = x86_cmovcc_r64_r64([], x86_cc_l(), x86_rax(), x86_rdx()); // cmovl %rdx,%rax -> 48 0F 4C C2
+    var th: i32[] = x86_cmovcc_rr([], 64, x86_cc_l(), x86_rax(), x86_rdx()); // cmovl %rdx,%rax -> 48 0F 4C C2
     if (th.len() != 4 || th[0] != 72 || th[1] != 15 || th[2] != 76 || th[3] != 194) { return 89; }
     var ti: i32[] = x86_movslq_load([], x86_rax(), x86_rax(), false, 0, 1, 0); // 48 63 00
     if (ti.len() != 3 || ti[0] != 72 || ti[1] != 99 || ti[2] != 0) { return 90; }
@@ -479,14 +482,15 @@ function x86enc_selftest_9(): i32 {
 function x86enc_selftest_10(): i32 {
     var tj: i32[] = x86_movzwq_load([], x86_rax(), 13, true, 15, 1, 16); // movzwq 16(%r13,%r15,1),%rax -> 4B 0F B7 44 3D 10
     if (tj.len() != 6 || tj[0] != 75 || tj[1] != 15 || tj[2] != 183 || tj[3] != 68 || tj[4] != 61 || tj[5] != 16) { return 91; }
-    var tk: i32[] = x86_xorpd([], 0, 1); // xorpd %xmm1,%xmm0 -> 66 0F 57 C1
+    var tk: i32[] = x86_sse_any_rr([], 102, 87, 0, 1); // xorpd %xmm1,%xmm0 -> 66 0F 57 C1
     if (tk.len() != 4 || tk[0] != 102 || tk[1] != 15 || tk[2] != 87 || tk[3] != 193) { return 92; }
-    var tl: i32[] = x86_rep_stosb([]); // F3 AA
-    if (tl.len() != 2 || tl[0] != 243 || tl[1] != 170) { return 93; }
-    var tm: i32[] = x86_cld([]); // FC
-    if (tm.len() != 1 || tm[0] != 252) { return 94; }
+    // rep stosb / cld now route through the string / fixed tables.
+    var tl: X86Asm = x86_gas_emit(x86_asm_new(), "rep", "stosb"); // F3 AA
+    if (tl.code.len() != 2 || tl.code[0] != 243 || tl.code[1] != 170) { return 93; }
+    var tm: X86Asm = x86_gas_emit(x86_asm_new(), "cld", ""); // FC
+    if (tm.code.len() != 1 || tm.code[0] != 252) { return 94; }
     // movsd reg-reg: movsd %xmm0,%xmm3 -> F2 0F 10 D8
-    var tn: i32[] = x86_movsd_rr([], 3, 0);
+    var tn: i32[] = x86_sse_any_rr([], 242, 16, 3, 0);
     if (tn.len() != 4 || tn[0] != 242 || tn[1] != 15 || tn[2] != 16 || tn[3] != 216) { return 95; }
     // movslq reg-reg: movslq %eax,%rax -> 48 63 C0; movslq %r9d,%r8 -> 4D 63 C1
     var to: i32[] = x86_movslq_rr([], x86_rax(), x86_rax());
@@ -494,9 +498,9 @@ function x86enc_selftest_10(): i32 {
     var tp: i32[] = x86_movslq_rr([], 8, 9);
     if (tp[0] != 77 || tp[1] != 99 || tp[2] != 193) { return 97; }
     // sqrtsd %xmm0,%xmm0 -> F2 0F 51 C0; roundsd $1,%xmm0,%xmm0 -> 66 0F 3A 0B C0 01
-    var tq: i32[] = x86_sqrtsd([], 0, 0);
+    var tq: i32[] = x86_sse_any_rr([], 242, 81, 0, 0);
     if (tq.len() != 4 || tq[0] != 242 || tq[1] != 15 || tq[2] != 81 || tq[3] != 192) { return 98; }
-    var tr: i32[] = x86_roundsd([], 0, 0, 1);
+    var tr: i32[] = x86_sse_3a_imm([], 0, 11, 0, 0, 1);
     if (tr.len() != 6 || tr[0] != 102 || tr[1] != 15 || tr[2] != 58 || tr[3] != 11 || tr[4] != 192 || tr[5] != 1) { return 99; }
     return 0;
 }
@@ -511,42 +515,43 @@ function x86enc_selftest_11(): i32 {
     // x86-64 extended one, because the REX bit is the half a table gets wrong:
     // omit REX.R and pmovmskb writes %ecx where %r9d was meant, which reads
     // correct at the call site.
-    // movdqu (%rax,%rdx), %xmm0 -> F3 0F 6F 04 10
-    var va: i32[] = x86_movdqu_load([], 0, x86_rax(), true, x86_rdx(), 1, 0);
-    if (va.len() != 5 || va[0] != 243 || va[1] != 15 || va[2] != 111 || va[3] != 4 || va[4] != 16) { return 111; }
+    // movdqu (%rax,%rdx), %xmm0 -> F3 0F 6F 04 10 (through the GAS layer:
+    // the load direction of the movdq family)
+    var va: X86Asm = x86_gas_emit(x86_asm_new(), "movdqu", "(%rax,%rdx), %xmm0");
+    if (va.code.len() != 5 || va.code[0] != 243 || va.code[1] != 15 || va.code[2] != 111 || va.code[3] != 4 || va.code[4] != 16) { return 111; }
     // movdqu (%rax), %xmm0 -> F3 0F 6F 00
-    var vb: i32[] = x86_movdqu_load([], 0, x86_rax(), false, 0, 1, 0);
-    if (vb.len() != 4 || vb[0] != 243 || vb[1] != 15 || vb[2] != 111 || vb[3] != 0) { return 112; }
+    var vb: X86Asm = x86_gas_emit(x86_asm_new(), "movdqu", "(%rax), %xmm0");
+    if (vb.code.len() != 4 || vb.code[0] != 243 || vb.code[1] != 15 || vb.code[2] != 111 || vb.code[3] != 0) { return 112; }
     // movdqu (%r8,%r9), %xmm3 -> F3 43 0F 6F 1C 08 (REX.X and REX.B both set)
-    var vc: i32[] = x86_movdqu_load([], 3, 8, true, 9, 1, 0);
-    if (vc.len() != 6 || vc[0] != 243 || vc[1] != 67 || vc[2] != 15 || vc[3] != 111 || vc[4] != 28 || vc[5] != 8) { return 113; }
+    var vc: X86Asm = x86_gas_emit(x86_asm_new(), "movdqu", "(%r8,%r9), %xmm3");
+    if (vc.code.len() != 6 || vc.code[0] != 243 || vc.code[1] != 67 || vc.code[2] != 15 || vc.code[3] != 111 || vc.code[4] != 28 || vc.code[5] != 8) { return 113; }
     // movdqu (%rax,%rdx), %xmm9 -> F3 44 0F 6F 0C 10 (REX.R for the xmm)
-    var vd: i32[] = x86_movdqu_load([], 9, x86_rax(), true, x86_rdx(), 1, 0);
-    if (vd.len() != 6 || vd[0] != 243 || vd[1] != 68 || vd[2] != 15 || vd[3] != 111 || vd[4] != 12 || vd[5] != 16) { return 114; }
+    var vd: X86Asm = x86_gas_emit(x86_asm_new(), "movdqu", "(%rax,%rdx), %xmm9");
+    if (vd.code.len() != 6 || vd.code[0] != 243 || vd.code[1] != 68 || vd.code[2] != 15 || vd.code[3] != 111 || vd.code[4] != 12 || vd.code[5] != 16) { return 114; }
     // pcmpeqb %xmm1, %xmm0 -> 66 0F 74 C1 ; %xmm9,%xmm10 -> 66 45 0F 74 D1
-    var ve: i32[] = x86_pcmpeqb([], 0, 1);
+    var ve: i32[] = x86_sse_any_rr([], 102, 116, 0, 1);
     if (ve.len() != 4 || ve[0] != 102 || ve[1] != 15 || ve[2] != 116 || ve[3] != 193) { return 115; }
-    var vf: i32[] = x86_pcmpeqb([], 10, 9);
+    var vf: i32[] = x86_sse_any_rr([], 102, 116, 10, 9);
     if (vf.len() != 5 || vf[0] != 102 || vf[1] != 69 || vf[2] != 15 || vf[3] != 116 || vf[4] != 209) { return 116; }
     // punpcklbw %xmm1,%xmm1 -> 66 0F 60 C9 ; punpcklwd -> 66 0F 61 C9
-    var vg: i32[] = x86_punpcklbw([], 1, 1);
+    var vg: i32[] = x86_sse_any_rr([], 102, 96, 1, 1);
     if (vg.len() != 4 || vg[0] != 102 || vg[1] != 15 || vg[2] != 96 || vg[3] != 201) { return 117; }
-    var vh: i32[] = x86_punpcklwd([], 1, 1);
+    var vh: i32[] = x86_sse_any_rr([], 102, 97, 1, 1);
     if (vh.len() != 4 || vh[0] != 102 || vh[1] != 15 || vh[2] != 97 || vh[3] != 201) { return 118; }
-    var vi: i32[] = x86_punpcklbw([], 10, 9);
+    var vi: i32[] = x86_sse_any_rr([], 102, 96, 10, 9);
     if (vi.len() != 5 || vi[0] != 102 || vi[1] != 69 || vi[2] != 15 || vi[3] != 96 || vi[4] != 209) { return 119; }
     // pmovmskb %xmm0,%eax -> 66 0F D7 C0 ; %xmm0,%r9d -> 66 44 0F D7 C8 ;
     // %xmm10,%ecx -> 66 41 0F D7 CA (REX.R is the GPR, REX.B the xmm)
-    var vj: i32[] = x86_pmovmskb([], x86_rax(), 0);
+    var vj: i32[] = x86_sse_any_rr([], 102, 215, x86_rax(), 0);
     if (vj.len() != 4 || vj[0] != 102 || vj[1] != 15 || vj[2] != 215 || vj[3] != 192) { return 120; }
-    var vk: i32[] = x86_pmovmskb([], 9, 0);
+    var vk: i32[] = x86_sse_any_rr([], 102, 215, 9, 0);
     if (vk.len() != 5 || vk[0] != 102 || vk[1] != 68 || vk[2] != 15 || vk[3] != 215 || vk[4] != 200) { return 121; }
-    var vl: i32[] = x86_pmovmskb([], x86_rcx(), 10);
+    var vl: i32[] = x86_sse_any_rr([], 102, 215, x86_rcx(), 10);
     if (vl.len() != 5 || vl[0] != 102 || vl[1] != 65 || vl[2] != 15 || vl[3] != 215 || vl[4] != 202) { return 122; }
     // pshufd $0,%xmm1,%xmm1 -> 66 0F 70 C9 00 ; $27,%xmm9,%xmm10 -> 66 45 0F 70 D1 1B
-    var vm: i32[] = x86_pshufd([], 1, 1, 0);
+    var vm: i32[] = x86_sse_any_rr([], 102, 112, 1, 1); vm = vm.append(0);
     if (vm.len() != 5 || vm[0] != 102 || vm[1] != 15 || vm[2] != 112 || vm[3] != 201 || vm[4] != 0) { return 123; }
-    var vn: i32[] = x86_pshufd([], 10, 9, 27);
+    var vn: i32[] = x86_sse_any_rr([], 102, 112, 10, 9); vn = vn.append(27);
     if (vn.len() != 6 || vn[0] != 102 || vn[1] != 69 || vn[2] != 15 || vn[3] != 112 || vn[4] != 209 || vn[5] != 27) { return 124; }
     // bsfl %eax,%ecx -> 0F BC C8 (no REX) ; %r9d,%r9d -> 45 0F BC C9
     var vo: i32[] = x86_bsf_r32([], x86_rcx(), x86_rax());
@@ -554,7 +559,7 @@ function x86enc_selftest_11(): i32 {
     var vp: i32[] = x86_bsf_r32([], 9, 9);
     if (vp.len() != 4 || vp[0] != 69 || vp[1] != 15 || vp[2] != 188 || vp[3] != 201) { return 126; }
     // xorpd rides the same 66 0F shape: %xmm1,%xmm0 -> 66 0F 57 C1.
-    var vq: i32[] = x86_xorpd([], 0, 1);
+    var vq: i32[] = x86_sse_any_rr([], 102, 87, 0, 1);
     if (vq.len() != 4 || vq[0] != 102 || vq[1] != 15 || vq[2] != 87 || vq[3] != 193) { return 127; }
     // bsr, the one instruction separating __rmemchr's vector body from
     // __memchr's: the HIGHEST set mask bit is the rightmost matching byte.
@@ -571,6 +576,51 @@ function x86enc_selftest_11(): i32 {
     return 0;
 }
 
+function x86enc_selftest_12(): i32 {
+    // Width-generic encoders (#7893). Every expectation is GNU as output.
+    // addw %ax, %bx -> 66 01 C3 (66 prefix from size 16, byte-op | 1)
+    var wa: i32[] = x86_op_rr([], 16, 0, 0, 3);
+    if (wa.len() != 3 || wa[0] != 102 || wa[1] != 1 || wa[2] != 195) { return 131; }
+    // addw %r8w, %ax -> 66 44 01 C0 (REX.R after the 66)
+    var wb: i32[] = x86_op_rr([], 16, 0, 8, 0);
+    if (wb.len() != 4 || wb[0] != 102 || wb[1] != 68 || wb[2] != 1 || wb[3] != 192) { return 132; }
+    // addq %rcx, %r9 -> 49 01 C9 (REX.B for the rm)
+    var wc: i32[] = x86_op_rr([], 64, 0, 1, 9);
+    if (wc.len() != 3 || wc[0] != 73 || wc[1] != 1 || wc[2] != 201) { return 133; }
+    // addq $6, %rax -> 48 83 C0 06 (the 83 short-immediate selection)
+    var wd: i32[] = x86_grp1_imm_r([], 64, 0, x86_rax(), 6);
+    if (wd.len() != 4 || wd[0] != 72 || wd[1] != 131 || wd[2] != 192 || wd[3] != 6) { return 134; }
+    // subw $300, %bx -> 66 81 EB 2C 01 (iw, not id)
+    var we: i32[] = x86_grp1_imm_r([], 16, 5, 3, 300);
+    if (we.len() != 5 || we[0] != 102 || we[1] != 129 || we[2] != 235 || we[3] != 44 || we[4] != 1) { return 135; }
+    // andb $15, %sil -> 40 80 E6 0F (forced empty REX for sil, byte opcode)
+    var wf: i32[] = x86_grp1_imm_r([], 8, 4, 6, 15);
+    if (wf.len() != 4 || wf[0] != 64 || wf[1] != 128 || wf[2] != 230 || wf[3] != 15) { return 136; }
+    // notw %dx -> 66 F7 D2 ; mulb %cl -> F6 E1 ; incb %spl -> 40 FE C4
+    var wg: i32[] = x86_unary_r([], 16, 246, 2, 2);
+    if (wg.len() != 3 || wg[0] != 102 || wg[1] != 247 || wg[2] != 210) { return 137; }
+    var wh: i32[] = x86_unary_r([], 8, 246, 4, 1);
+    if (wh.len() != 2 || wh[0] != 246 || wh[1] != 225) { return 138; }
+    var wi: i32[] = x86_unary_r([], 8, 254, 0, 4);
+    if (wi.len() != 3 || wi[0] != 64 || wi[1] != 254 || wi[2] != 196) { return 139; }
+    // shlq $1, %rax -> 48 D1 E0 (the D1 shift-by-one form gas selects)
+    var wj: i32[] = x86_shift_r_imm([], 64, 4, x86_rax(), 1);
+    if (wj.len() != 3 || wj[0] != 72 || wj[1] != 209 || wj[2] != 224) { return 140; }
+    // shrb %cl, %bl -> D2 EB
+    var wk: i32[] = x86_shift_r_cl([], 8, 5, 3);
+    if (wk.len() != 2 || wk[0] != 210 || wk[1] != 235) { return 141; }
+    // testw $0x1234, %cx -> 66 F7 C1 34 12
+    var wl: i32[] = x86_test_imm_r([], 16, 1, 4660);
+    if (wl.len() != 5 || wl[0] != 102 || wl[1] != 247 || wl[2] != 193 || wl[3] != 52 || wl[4] != 18) { return 142; }
+    // cmovne %r8d, %ecx -> 41 0F 45 C8 (32-bit width, REX.B)
+    var wm: i32[] = x86_cmovcc_rr([], 32, 5, 1, 8);
+    if (wm.len() != 4 || wm[0] != 65 || wm[1] != 15 || wm[2] != 69 || wm[3] != 200) { return 143; }
+    // pextrq $2, %xmm1, %rax -> 66 48 0F 3A 16 C8 02 (REX.W in the 3A form)
+    var wn: i32[] = x86_sse_3a_imm([], 1, 22, 1, 0, 2);
+    if (wn.len() != 7 || wn[0] != 102 || wn[1] != 72 || wn[2] != 15 || wn[3] != 58 || wn[4] != 22 || wn[5] != 200 || wn[6] != 2) { return 144; }
+    return 0;
+}
+
 function main(): i32 {
     var r: i32 = 0;
     r = x86enc_selftest_1(); if (r != 0) { return r; }
@@ -584,6 +634,7 @@ function main(): i32 {
     r = x86enc_selftest_9(); if (r != 0) { return r; }
     r = x86enc_selftest_10(); if (r != 0) { return r; }
     r = x86enc_selftest_11(); if (r != 0) { return r; }
+    r = x86enc_selftest_12(); if (r != 0) { return r; }
     return 0;
 }
 `

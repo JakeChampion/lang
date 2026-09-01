@@ -167,142 +167,165 @@ function x86_ret(buf: i32[]): i32[] {
     return buf.append(195); // 0xC3
 }
 
-// x86_leave: `leave` (0xC9) — mov rsp, rbp ; pop rbp, the standard frame
-// teardown asm.fern emits.
-function x86_leave(buf: i32[]): i32[] {
-    return buf.append(201); // 0xC9
+
+// ---- width-generic integer encoders ----
+//
+// `size` is the operand width in bits (8/16/32/64), taken from the AT&T
+// mnemonic suffix. Shared rules, mirroring internal/native/x86_64: a
+// 16-bit op carries the 0x66 prefix, an 8-bit op selects the byte opcode
+// (opbase without |1), and a byte register 4..7 (spl..dil) forces an
+// otherwise-empty REX — unprefixed, the same numbers select ah..bh.
+
+// x86_opsel returns the width-selected opcode: opbase for 8-bit, opbase|1
+// for the wider sizes.
+function x86_opsel(opbase: i32, size: i32): i32 {
+    if (size == 8) { return opbase; }
+    return opbase | 1;
 }
 
-// ---- more integer ops (slice 2h) ----
-
-// x86_unary_r64 encodes a single-register group op: REX.W + opcode +
-// ModR/M(3, slash, reg). inc/dec use 0xFF (slash 0/1); neg/div/idiv use
-// 0xF7 (slash 3/6/7).
-function x86_unary_r64(buf: i32[], opcode: i32, slash: i32, reg: i32): i32[] {
-    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
-    buf = buf.append(opcode);
-    buf = buf.append(x86_modrm(3, slash, reg));
+// x86_osz appends the 0x66 operand-size prefix for 16-bit operations.
+function x86_osz(buf: i32[], size: i32): i32[] {
+    if (size == 16) { return buf.append(102); }
     return buf;
 }
 
-// x86_inc_r64 / x86_dec_r64 / x86_neg_r64 / x86_mul_r64 / x86_div_r64 /
-// x86_idiv_r64.
-function x86_inc_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 255, 0, reg); }
-function x86_dec_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 255, 1, reg); }
-function x86_neg_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 247, 3, reg); }
-function x86_mul_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 247, 4, reg); }
-function x86_div_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 247, 6, reg); }
-function x86_idiv_r64(buf: i32[], reg: i32): i32[] { return x86_unary_r64(buf, 247, 7, reg); }
+// x86_rex8_force: an 8-bit register operand spl/bpl/sil/dil needs a REX.
+function x86_rex8_force(size: i32, reg: i32): boolean {
+    return size == 8 && reg >= 4 && reg <= 7;
+}
 
-// x86_shld_r64_cl: `shldq %cl, %src, %dst` (REX.W 0F A5 /r) — shift dst left
-// by %cl, filling the low bits from src's high bits. ModRM.reg holds the
-// SOURCE and ModRM.rm the destination: the operand direction is reversed
-// against the ALU pattern, so the natural spelling shifts in bits from the
-// wrong register and still assembles.
-function x86_shld_r64_cl(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.append(x86_rex(1, src, 0, dst));
-    buf = buf.append(15);  // 0x0F
-    buf = buf.append(165); // 0xA5
-    return buf.append(x86_modrm(3, src, dst));
+// x86_rex_w_of maps a size to the REX.W bit.
+function x86_rex_w_of(size: i32): i32 {
+    if (size == 64) { return 1; }
+    return 0;
+}
+
+// x86_rex_rr appends the REX for a two-register form (ModRM reg + rm).
+function x86_rex_rr(buf: i32[], size: i32, reg: i32, rm: i32): i32[] {
+    var rex: i32 = x86_rex(x86_rex_w_of(size), reg, 0, rm);
+    if (rex != 64 || x86_rex8_force(size, reg) || x86_rex8_force(size, rm)) {
+        buf = buf.append(rex);
+    }
+    return buf;
+}
+
+// x86_rex_r appends the REX for a form whose only register is ModRM.rm.
+function x86_rex_r(buf: i32[], size: i32, reg: i32): i32[] {
+    var rex: i32 = x86_rex(x86_rex_w_of(size), 0, 0, reg);
+    if (rex != 64 || x86_rex8_force(size, reg)) {
+        buf = buf.append(rex);
+    }
+    return buf;
+}
+
+// x86_op_rr: `[66] [REX] op /r`, ModR/M direct — the shape every
+// two-register group op shares (mov 0x88, the ALU rows, test 0x84,
+// xchg 0x86).
+function x86_op_rr(buf: i32[], size: i32, opbase: i32, reg: i32, rm: i32): i32[] {
+    buf = x86_osz(buf, size);
+    buf = x86_rex_rr(buf, size, reg, rm);
+    buf = buf.append(x86_opsel(opbase, size));
+    return buf.append(x86_modrm(3, reg, rm));
+}
+
+// x86_op0f_rr: `[66] [REX] 0F op /r`, ModR/M direct — cmovcc / bt / imul /
+// xadd / cmpxchg. `op` arrives fully width-selected.
+function x86_op0f_rr(buf: i32[], size: i32, op: i32, reg: i32, rm: i32): i32[] {
+    buf = x86_osz(buf, size);
+    buf = x86_rex_rr(buf, size, reg, rm);
+    buf = buf.append(15);
+    buf = buf.append(op);
+    return buf.append(x86_modrm(3, reg, rm));
+}
+
+// x86_imm_fits8 reports whether the sign-extended-imm8 short forms
+// (83 /ext, 6B /r, 6A) can carry `v`.
+function x86_imm_fits8(v: i32): boolean {
+    return v >= (0 - 128) && v <= 127;
+}
+
+// x86_imm_wide appends an immediate at the operation width — imm16 for the
+// 66-prefixed forms, imm32 otherwise (byte forms append directly).
+function x86_imm_wide(buf: i32[], size: i32, imm: i32): i32[] {
+    if (size == 16) {
+        buf = buf.append(imm & 255);
+        return buf.append((imm >> 8) & 255);
+    }
+    return x86_le32(buf, imm);
+}
+
+// x86_grp1_imm_r: `<alu> $imm, %reg` — 80 /ext ib for a byte register, else
+// 83 /ext ib when the immediate fits signed 8 bits, else 81 /ext iw/id.
+// Using 83/81 for a byte operand would silently widen it (#3544's class).
+function x86_grp1_imm_r(buf: i32[], size: i32, ext: i32, reg: i32, imm: i32): i32[] {
+    buf = x86_osz(buf, size);
+    buf = x86_rex_r(buf, size, reg);
+    if (size == 8) {
+        buf = buf.append(128);
+        buf = buf.append(x86_modrm(3, ext, reg));
+        return buf.append(imm & 255);
+    }
+    if (x86_imm_fits8(imm)) {
+        buf = buf.append(131);
+        buf = buf.append(x86_modrm(3, ext, reg));
+        return buf.append(imm & 255);
+    }
+    buf = buf.append(129);
+    buf = buf.append(x86_modrm(3, ext, reg));
+    return x86_imm_wide(buf, size, imm);
+}
+
+// x86_unary_r: the one-operand groups on a register — F6/F7 (not /2, neg
+// /3, mul /4, imul /5, div /6, idiv /7) and FE/FF (inc /0, dec /1).
+function x86_unary_r(buf: i32[], size: i32, opbase: i32, ext: i32, reg: i32): i32[] {
+    buf = x86_osz(buf, size);
+    buf = x86_rex_r(buf, size, reg);
+    buf = buf.append(x86_opsel(opbase, size));
+    return buf.append(x86_modrm(3, ext, reg));
+}
+
+// x86_test_imm_r: `test $imm, %reg` — F6 /0 ib or F7 /0 iw/id (test has no
+// sign-extended-imm8 short form).
+function x86_test_imm_r(buf: i32[], size: i32, reg: i32, imm: i32): i32[] {
+    buf = x86_osz(buf, size);
+    buf = x86_rex_r(buf, size, reg);
+    buf = buf.append(x86_opsel(246, size));
+    buf = buf.append(x86_modrm(3, 0, reg));
+    if (size == 8) { return buf.append(imm & 255); }
+    return x86_imm_wide(buf, size, imm);
+}
+
+// x86_shift_r_imm: the C0/C1 shift-and-rotate group on a register, using
+// the D0/D1 short form when the count is 1 (what GNU as selects).
+function x86_shift_r_imm(buf: i32[], size: i32, ext: i32, reg: i32, imm: i32): i32[] {
+    buf = x86_osz(buf, size);
+    buf = x86_rex_r(buf, size, reg);
+    if (imm == 1) {
+        buf = buf.append(x86_opsel(208, size)); // D0/D1
+        return buf.append(x86_modrm(3, ext, reg));
+    }
+    buf = buf.append(x86_opsel(192, size)); // C0/C1
+    buf = buf.append(x86_modrm(3, ext, reg));
+    return buf.append(imm & 255);
+}
+
+// x86_shift_r_cl: the D2/D3 variable-count (%cl) shift form on a register.
+function x86_shift_r_cl(buf: i32[], size: i32, ext: i32, reg: i32): i32[] {
+    buf = x86_osz(buf, size);
+    buf = x86_rex_r(buf, size, reg);
+    buf = buf.append(x86_opsel(210, size)); // D2/D3
+    return buf.append(x86_modrm(3, ext, reg));
+}
+
+// x86_cmovcc_rr: `cmov<cc> %src, %dst` ([66] [REX] 0F 40+cc /r; reg=dst).
+function x86_cmovcc_rr(buf: i32[], size: i32, cc: i32, dst: i32, src: i32): i32[] {
+    return x86_op0f_rr(buf, size, 64 + (cc & 15), dst, src);
 }
 
 // x86_cqo: `cqo` (0x48 0x99) — sign-extend rax into rdx:rax before idiv.
 function x86_cqo(buf: i32[]): i32[] {
     buf = buf.append(x86_rex_w());
     buf = buf.append(153); // 0x99
-    return buf;
-}
-
-// x86_binop_r64_r64 encodes a `<op> <dst>, <src>` reg-reg form: REX.W +
-// opcode + ModR/M(3, src, dst). Used by and (0x21) / or (0x09) / xor
-// (0x31), matching add (0x01) / sub (0x29)'s shape.
-function x86_binop_r64_r64(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
-    buf = buf.append(x86_rex(1, src, 0, dst));
-    buf = buf.append(opcode);
-    buf = buf.append(x86_modrm(3, src, dst));
-    return buf;
-}
-
-function x86_and_r64_r64(buf: i32[], dst: i32, src: i32): i32[] { return x86_binop_r64_r64(buf, 33, dst, src); }
-function x86_or_r64_r64(buf: i32[], dst: i32, src: i32): i32[] { return x86_binop_r64_r64(buf, 9, dst, src); }
-function x86_xor_r64_r64(buf: i32[], dst: i32, src: i32): i32[] { return x86_binop_r64_r64(buf, 49, dst, src); }
-
-// x86_test_r64_r64: `test <a>, <b>` (REX.W + 0x85 /r). TEST is symmetric;
-// the reg field is `b`, r/m is `a`.
-function x86_test_r64_r64(buf: i32[], a: i32, b: i32): i32[] {
-    buf = buf.append(x86_rex(1, b, 0, a));
-    buf = buf.append(133); // 0x85
-    buf = buf.append(x86_modrm(3, b, a));
-    return buf;
-}
-
-// x86_test_r32_r32: `testl <a>, <b>` — 0x85 /r with NO REX.W, so the flags
-// come from the 32-bit values. REX appears only to reach r8d..r15d.
-function x86_test_r32_r32(buf: i32[], a: i32, b: i32): i32[] {
-    if (a >= 8 || b >= 8) { buf = buf.append(x86_rex(0, b, 0, a)); }
-    buf = buf.append(133); // 0x85
-    buf = buf.append(x86_modrm(3, b, a));
-    return buf;
-}
-
-// x86_test_r64_imm32: `testq $imm32, <reg>` — REX.W F7 /0 id. GNU as picks
-// the shorter A9 form for rax; F7 /0 encodes every register uniformly.
-function x86_test_r64_imm32(buf: i32[], reg: i32, imm: i32): i32[] {
-    buf = buf.append(x86_rex(1, 0, 0, reg));
-    buf = buf.append(247); // 0xF7
-    buf = buf.append(x86_modrm(3, 0, reg));
-    return x86_le32(buf, imm);
-}
-
-// x86_imul_r64_r64: `imul <dst>, <src>` (REX.W + 0x0F 0xAF /r). Note the
-// operand convention is reg=dst, r/m=src — the reverse of add/and.
-function x86_imul_r64_r64(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.append(x86_rex(1, dst, 0, src));
-    buf = buf.append(15);  // 0x0F
-    buf = buf.append(175); // 0xAF
-    buf = buf.append(x86_modrm(3, dst, src));
-    return buf;
-}
-
-// x86_shl_r64_imm8: `shl <reg>, imm8` (REX.W + 0xC1 /4 ib).
-function x86_shl_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
-    return x86_shift_r64_imm8(buf, 4, reg, imm);
-}
-
-// x86_shift_r64_imm8: `<shift>q $imm8, <reg>` (REX.W + 0xC1 /slash ib),
-// the immediate-count sibling of x86_shift_r64_cl (shl 4, shr 5, sar 7).
-function x86_shift_r64_imm8(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
-    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
-    buf = buf.append(193); // 0xC1
-    buf = buf.append(x86_modrm(3, slash, reg));
-    return buf.append(imm & 255);
-}
-
-// x86_sar_r64_imm8: `sarq $imm8, <reg>` (REX.W + 0xC1 /7 ib).
-function x86_sar_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
-    return x86_shift_r64_imm8(buf, 7, reg, imm);
-}
-
-// x86_shr_r64_imm8: `shrq $imm8, <reg>` (REX.W + 0xC1 /5 ib) — the 64-bit
-// sibling of x86_shr_r32_imm8. asm.fern's freelist size-class computation
-// (`shrq $3, %rcx`) needs the full-width logical shift.
-function x86_shr_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
-    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
-    buf = buf.append(193); // 0xC1
-    buf = buf.append(x86_modrm(3, 5, reg));
-    buf = buf.append(imm & 255);
-    return buf;
-}
-
-// x86_bt_r64_imm8: `btq $imm8, <reg>` (REX.W 0F BA /4 ib) — copies the
-// selected bit into CF. asm.fern emits it (with a following jc) for the RC
-// sentinel-bit test in the array-push fast path.
-function x86_bt_r64_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
-    buf = buf.append(x86_rex(1, 0, 0, reg)); // reg in rm field
-    buf = buf.append(15);  // 0x0F
-    buf = buf.append(186); // 0xBA
-    buf = buf.append(x86_modrm(3, 4, reg));
-    buf = buf.append(imm & 255);
     return buf;
 }
 
@@ -396,18 +419,6 @@ function x86_movl_store_imm32(buf: i32[], base: i32, has_index: boolean, index: 
     buf = buf.append(199); // 0xC7 /0
     buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
     return x86_le32(buf, imm);
-}
-
-// x86_alu_store_r64: `<alu>q %src, disp(%base)` — the store-form ALU
-// (add 0x01 / sub 0x29 / cmp 0x39) with a memory destination, the mirror
-// of x86_alu_load_r64. asm.fern emits the cmp form for the array-push
-// capacity check (`cmpq %rcx, -16(%rax)`).
-function x86_alu_store_r64(buf: i32[], opcode: i32, src: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-    var ix: i32 = 0;
-    if (has_index) { ix = index; }
-    buf = buf.append(x86_rex(1, src, ix, base));
-    buf = buf.append(opcode);
-    return x86_byte_mem_operand(buf, src, base, has_index, index, scale, disp);
 }
 
 // ---- SIB index addressing (slice 2j) ----
@@ -544,19 +555,7 @@ function x86_movzbq_reg(buf: i32[], dst: i32, src8: i32): i32[] {
     return buf;
 }
 
-// x86_cmpb_imm_reg8: `cmpb $imm8, <reg8>` (0x80 /7 ib).
-function x86_cmpb_imm_reg8(buf: i32[], reg8: i32, imm: i32): i32[] {
-    var rex: i32 = x86_rex(0, 0, 0, reg8);
-    var force: boolean = (reg8 >= 4 && reg8 <= 7);
-    if (rex != 64 || force) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(128); // 0x80
-    buf = buf.append(x86_modrm(3, 7, reg8));
-    return buf.append(imm & 255);
-}
-
-// ---- push/pop memory + 3-operand imul (slice 2l) ----
+// ---- push/pop memory (slice 2l) ----
 
 // x86_push_mem: `push mem` (0xFF /6) — push a memory operand.
 function x86_push_mem(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
@@ -580,15 +579,6 @@ function x86_pop_mem(buf: i32[], base: i32, has_index: boolean, index: i32, scal
     }
     buf = buf.append(143); // 0x8F
     return x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
-}
-
-// x86_imul_r64_r64_imm32: `imul <dst>, <src>, imm32` (0x69 /r id) — the
-// three-operand form (reg=dst, r/m=src, then imm32).
-function x86_imul_r64_r64_imm32(buf: i32[], dst: i32, src: i32, imm: i32): i32[] {
-    buf = buf.append(x86_rex(1, dst, 0, src));
-    buf = buf.append(105); // 0x69
-    buf = buf.append(x86_modrm(3, dst, src));
-    return x86_le32(buf, imm);
 }
 
 // x86_setcc_reg8: `set<cc> <reg8>` (0F 90+cc /0) — store the condition
@@ -659,35 +649,37 @@ function x86_movq_xmm_to_gpr(buf: i32[], xmm: i32, gpr: i32): i32[] {
     return buf;
 }
 
-// x86_sse_pfx_rr: a prefixed two-byte-opcode reg-reg SSE op
-// `<pfx> 0F <op> /r` with a direct ModR/M. The prefix selects the operand
-// flavour: F2 = scalar double, F3 = scalar single. REX only for xmm8..15.
-function x86_sse_pfx_rr(buf: i32[], pfx: i32, opcode: i32, dst: i32, src: i32): i32[] {
-    buf = buf.append(pfx);
-    var rex: i32 = x86_rex(0, dst, 0, src);
+// x86_sse_any_rr: `[pfx] [REX] 0F <op> /r` with a direct ModR/M — the
+// whole two-byte-opcode SSE surface in one shape. The mandatory prefix
+// selects the operand flavour (F2 scalar double, F3 scalar single, 66
+// packed double / packed integer, 0 = none, the ps forms) and goes BEFORE
+// the REX. ModRM.reg is the first register (usually the xmm destination;
+// pmovmskb/movmsk pass the GPR destination there).
+function x86_sse_any_rr(buf: i32[], pfx: i32, opcode: i32, reg: i32, rm: i32): i32[] {
+    if (pfx != 0) { buf = buf.append(pfx); }
+    var rex: i32 = x86_rex(0, reg, 0, rm);
     if (rex != 64) {
         buf = buf.append(rex);
     }
     buf = buf.append(15); // 0x0F
     buf = buf.append(opcode);
-    buf = buf.append(x86_modrm(3, dst, src));
-    return buf;
+    return buf.append(x86_modrm(3, reg, rm));
 }
 
-// x86_sse_rr: a scalar-double reg-reg op `<op> <dst>, <src>` (F2 0F op /r;
-// addsd 0x58, subsd 0x5C, mulsd 0x59, divsd 0x5E).
-function x86_sse_rr(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
-    return x86_sse_pfx_rr(buf, 242, opcode, dst, src); // 0xF2
-}
-
-// x86_cvtsd2ss narrows a double to a single (F2 0F 5A /r); x86_cvtss2sd is
-// the widening inverse (F3 0F 5A /r).
-function x86_cvtsd2ss(buf: i32[], dst: i32, src: i32): i32[] {
-    return x86_sse_pfx_rr(buf, 242, 90, dst, src); // 0xF2 … 0x5A
-}
-
-function x86_cvtss2sd(buf: i32[], dst: i32, src: i32): i32[] {
-    return x86_sse_pfx_rr(buf, 243, 90, dst, src); // 0xF3 … 0x5A
+// x86_sse_3a_imm: `66 [REX] 0F 3A <op> /r ib` direct — roundsd/roundss,
+// pcmpistri/pcmpestri, and the pextr/pinsr register forms. `w` sets REX.W
+// (pextrq/pinsrq).
+function x86_sse_3a_imm(buf: i32[], w: i32, opcode: i32, reg: i32, rm: i32, imm: i32): i32[] {
+    buf = buf.append(102); // 0x66
+    var rex: i32 = x86_rex(w, reg, 0, rm);
+    if (w == 1 || rex != 64) {
+        buf = buf.append(rex);
+    }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(58); // 0x3A
+    buf = buf.append(opcode);
+    buf = buf.append(x86_modrm(3, reg, rm));
+    return buf.append(imm & 255);
 }
 
 // x86_movd_gpr_to_xmm: `movd <xmm>, <gpr32>` (66 0F 6E /r) — the 32-bit
@@ -726,70 +718,6 @@ function x86_movd_xmm_to_gpr(buf: i32[], xmm: i32, gpr: i32): i32[] {
 //
 // SSE2 is inside the declared x86-64 baseline (Haswell-class), so a selected
 // instruction is a hard requirement and there is nothing to feature-detect.
-
-// x86_sse_66_rr: the `66 [REX] 0F <op> /r` direct-ModR/M shape shared by
-// pcmpeqb / punpcklbw / punpcklwd / pmovmskb / pshufd / xorpd. AT&T
-// `<op> src, dst` puts dst in the ModR/M reg field and src in rm.
-function x86_sse_66_rr(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
-    buf = buf.append(102); // 0x66
-    var rex: i32 = x86_rex(0, dst, 0, src);
-    if (rex != 64) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(15); // 0x0F
-    buf = buf.append(opcode);
-    return buf.append(x86_modrm(3, dst, src));
-}
-
-// x86_pcmpeqb: `pcmpeqb <src>, <dst>` (66 0F 74 /r) — per-byte equality,
-// 0xFF or 0x00 in each of the 16 lanes.
-function x86_pcmpeqb(buf: i32[], dst: i32, src: i32): i32[] {
-    return x86_sse_66_rr(buf, 116, dst, src);
-}
-
-// x86_punpcklbw / x86_punpcklwd: `punpckl{bw,wd} <src>, <dst>` (66 0F 60,
-// 61 /r). Two of them after a movd broadcast a byte across all 16 lanes,
-// which is the SSE2 splat; pshufb would do it in one instruction but is
-// SSSE3, outside the baseline.
-function x86_punpcklbw(buf: i32[], dst: i32, src: i32): i32[] {
-    return x86_sse_66_rr(buf, 96, dst, src);
-}
-
-function x86_punpcklwd(buf: i32[], dst: i32, src: i32): i32[] {
-    return x86_sse_66_rr(buf, 97, dst, src);
-}
-
-// x86_pmovmskb: `pmovmskb <xmm>, <gpr32>` (66 0F D7 /r) — the top bit of
-// each of the 16 bytes gathered into the low 16 bits of a general register.
-// The destination is a GPR and the source an xmm; the shape is otherwise
-// x86_sse_66_rr's.
-function x86_pmovmskb(buf: i32[], gpr: i32, xmm: i32): i32[] {
-    return x86_sse_66_rr(buf, 215, gpr, xmm);
-}
-
-// x86_pshufd: `pshufd $imm8, <src>, <dst>` (66 0F 70 /r ib) — the four
-// 32-bit lanes selected two bits each. $0 broadcasts lane 0, which is the
-// last step of the byte splat above.
-function x86_pshufd(buf: i32[], dst: i32, src: i32, imm: i32): i32[] {
-    buf = x86_sse_66_rr(buf, 112, dst, src);
-    return buf.append(imm & 255);
-}
-
-// x86_movdqu_load: `movdqu mem, <xmm>` (F3 0F 6F /r) — an unaligned 16-byte
-// load. Only the load direction is encoded: the kernels read vectors and
-// never store them.
-function x86_movdqu_load(buf: i32[], xmm: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-    var ix: i32 = 0;
-    if (has_index) { ix = index; }
-    buf = buf.append(243); // 0xF3
-    var rex: i32 = x86_rex(0, xmm, ix, base);
-    if (rex != 64) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(15);  // 0x0F
-    buf = buf.append(111); // 0x6F
-    return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
-}
 
 // x86_bitscan_r32: the `[REX] 0F <op> /r` direct-ModR/M shape shared by bsf
 // (0xBC) and bsr (0xBD). Both set ZF when the source is zero and leave the
@@ -848,28 +776,6 @@ function x86_popcnt_rr(buf: i32[], w: i32, dst: i32, src: i32): i32[] {
     return x86_bitcnt_rr(buf, 184, w, dst, src); // 0xB8
 }
 
-// x86_shift_r64_cl: `<shift>q %cl, <reg>` — REX.W + D3 /slash (shl 4,
-// shr 5, sar 7). Variable count in %cl, as against the imm8 forms
-// (x86_shift_r64_imm8).
-function x86_shift_r64_cl(buf: i32[], slash: i32, reg: i32): i32[] {
-    buf = buf.append(x86_rex(1, 0, 0, reg));
-    buf = buf.append(211); // 0xD3
-    return buf.append(x86_modrm(3, slash, reg));
-}
-
-// x86_byte_alu_rr: a byte ALU op `<op> <src8>, <dst8>` (AT&T order), direct
-// ModR/M — `andb` 0x20, `orb` 0x08. REX is forced when either operand is
-// 4..7 so the encoding selects spl/bpl/sil/dil, not ah/ch/dh/bh.
-function x86_byte_alu_rr(buf: i32[], opcode: i32, dst8: i32, src8: i32): i32[] {
-    var rex: i32 = x86_rex(0, src8, 0, dst8);
-    var force: boolean = (dst8 >= 4 && dst8 <= 7) || (src8 >= 4 && src8 <= 7);
-    if (rex != 64 || force) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(opcode);
-    return buf.append(x86_modrm(3, src8, dst8));
-}
-
 // x86_cvttsd2si: `cvttsd2si <gpr>, <xmm>` (F2 REX.W 0F 2C /r) — truncate a
 // double to a signed 64-bit integer.
 function x86_cvttsd2si(buf: i32[], gpr: i32, xmm: i32): i32[] {
@@ -890,87 +796,19 @@ function x86_cvttsd2si_w(buf: i32[], w: i32, gpr: i32, xmm: i32): i32[] {
     return buf.append(x86_modrm(3, gpr, xmm));
 }
 
-// x86_cvtsi2sd: `cvtsi2sd <xmm>, <gpr>` (F2 REX.W 0F 2A /r) — convert a
-// signed 64-bit integer to a double.
-function x86_cvtsi2sd(buf: i32[], xmm: i32, gpr: i32): i32[] {
+// x86_cvtsi2sd: `cvtsi2sd{l,q} <xmm>, <gpr>` (F2 [REX.W] 0F 2A /r) —
+// convert a signed integer to a double; `w` selects the 64-bit source
+// (the 32-bit form reads only the low half, so the width is load-bearing).
+function x86_cvtsi2sd(buf: i32[], w: i32, xmm: i32, gpr: i32): i32[] {
     buf = buf.append(242); // 0xF2
-    buf = buf.append(x86_rex(1, xmm, 0, gpr));
+    var rex: i32 = x86_rex(w, xmm, 0, gpr);
+    if (w == 1 || rex != 64) {
+        buf = buf.append(rex);
+    }
     buf = buf.append(15); // 0x0F
     buf = buf.append(42); // 0x2A
     buf = buf.append(x86_modrm(3, xmm, gpr));
     return buf;
-}
-
-// x86_ucomisd: `ucomisd <a>, <b>` (66 0F 2E /r) — ordered double compare,
-// setting EFLAGS for the setCC / jCC that follow.
-function x86_ucomisd(buf: i32[], a: i32, b: i32): i32[] {
-    buf = buf.append(102); // 0x66
-    var rex: i32 = x86_rex(0, a, 0, b);
-    if (rex != 64) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(15); // 0x0F
-    buf = buf.append(46); // 0x2E
-    buf = buf.append(x86_modrm(3, a, b));
-    return buf;
-}
-
-// x86_movsd_store: `movsd mem, <xmm>` (F2 0F 11 /r) — store a double.
-function x86_movsd_store(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, xmm: i32): i32[] {
-    var ix: i32 = 0;
-    if (has_index) { ix = index; }
-    buf = buf.append(242); // 0xF2
-    var rex: i32 = x86_rex(0, xmm, ix, base);
-    if (rex != 64) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(15); // 0x0F
-    buf = buf.append(17); // 0x11
-    return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
-}
-
-// x86_movsd_load: `movsd <xmm>, mem` (F2 0F 10 /r) — load a double.
-function x86_movsd_load(buf: i32[], xmm: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-    var ix: i32 = 0;
-    if (has_index) { ix = index; }
-    buf = buf.append(242); // 0xF2
-    var rex: i32 = x86_rex(0, xmm, ix, base);
-    if (rex != 64) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(15); // 0x0F
-    buf = buf.append(16); // 0x10
-    return x86_byte_mem_operand(buf, xmm, base, has_index, index, scale, disp);
-}
-
-// x86_movsd_rr: `movsd <dst>, <src>` reg-reg (F2 0F 10 /r, ModR/M direct).
-function x86_movsd_rr(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.append(242); // 0xF2
-    var rex: i32 = x86_rex(0, dst, 0, src);
-    if (rex != 64) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(15); // 0x0F
-    buf = buf.append(16); // 0x10
-    return buf.append(x86_modrm(3, dst, src));
-}
-
-// x86_movsd_load_rip_label: `movsd <xmm>, sym(%rip)` (F2 0F 10 /r, ModR/M
-// mod=00 rm=101) with a deferred rip-relative fixup — the form asm.fern
-// uses to load a .double constant from .rodata.
-function x86_movsd_load_rip_label(own a: X86Asm, xmm: i32, name: string): X86Asm {
-    a = X86Asm { ...a, code: a.code.append(242) }; // 0xF2
-    if (xmm >= 8) {
-        a = X86Asm { ...a, code: a.code.append(x86_rex(0, xmm, 0, 0)) }; // REX.R
-    }
-    a = X86Asm { ...a, code: a.code.append(15) }; // 0x0F
-    a = X86Asm { ...a, code: a.code.append(16) }; // 0x10
-    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, xmm, 5)) }; // RIP-relative
-    a = X86Asm { ...a, code: x86_le32(a.code, 0) }; // placeholder disp32
-    var patch_off: i32 = a.code.len() - 4;
-    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
-    return a;
 }
 
 // ---- immediate ALU (slice 2b) ----
@@ -1061,23 +899,6 @@ function x86_mov_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm {
     return a;
 }
 
-// x86_alu_load_rip_label: `<alu>q sym(%rip), <dst>` — the load-form ALU
-// (cmp 0x3B / add 0x03 / sub 0x2B) with a rip-relative source and a deferred
-// fixup, the ALU sibling of x86_mov_load_rip_label. asm.fern emits this for e.g.
-// `cmpq __fern_heap_end(%rip), %rdi` in the bump allocator; without a rip-aware
-// path x86_gas_alu encoded it as base %rax (mod=00 rm=000), comparing against
-// [%rax] instead of the symbol, so the alloc bounds check misfired.
-function x86_alu_load_rip_label(own a: X86Asm, opcode: i32, dst: i32, name: string): X86Asm {
-    a = X86Asm { ...a, code: a.code.append(x86_rex(1, dst, 0, 0)) };
-    a = X86Asm { ...a, code: a.code.append(opcode) };
-    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
-    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
-    var patch_off: i32 = a.code.len() - 4;
-    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
-    return a;
-}
-
 // x86_movl_load_rip_label: `movl sym(%rip), <dst32>` (8B /r, no REX.W,
 // ModR/M mod=00 rm=101) with a deferred rip-relative fixup — the 32-bit
 // sibling of x86_mov_load_rip_label. asm.fern reads the
@@ -1086,19 +907,6 @@ function x86_movl_load_rip_label(own a: X86Asm, dst: i32, name: string): X86Asm 
     a = X86Asm { ...a, code: x86_rex_opt(a.code, dst, 0, 0) };
     a = X86Asm { ...a, code: a.code.append(139) }; // 0x8B
     a = X86Asm { ...a, code: a.code.append(x86_modrm(0, dst, 5)) }; // RIP-relative
-    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
-    var patch_off: i32 = a.code.len() - 4;
-    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-    a = X86Asm { ...a, fix_names: a.fix_names.append(name) };
-    return a;
-}
-
-// x86_incl_rip_label: `incl sym(%rip)` (FF /0 m32, ModR/M mod=00 rm=101)
-// with a deferred rip-relative fixup — asm.fern bumps the 32-bit
-// __fern_rc_underflow diagnostic counter this way in the RC dec glue.
-function x86_incl_rip_label(own a: X86Asm, name: string): X86Asm {
-    a = X86Asm { ...a, code: a.code.append(255) }; // 0xFF
-    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5)) }; // RIP-relative, /0
     a = X86Asm { ...a, code: x86_le32(a.code, 0) };
     var patch_off: i32 = a.code.len() - 4;
     a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
@@ -1167,30 +975,6 @@ function x86_movl_store_rip_label(own a: X86Asm, src: i32, name: string): X86Asm
     return X86Asm { ...a, fix_names: a.fix_names.append(name) };
 }
 
-// x86_alu_store_rip_label: `<alu>q <src>, sym(%rip)` — the store-form ALU
-// (add 0x01 / sub 0x29 / cmp 0x39) against a rip-relative global.
-function x86_alu_store_rip_label(own a: X86Asm, opcode: i32, src: i32, name: string): X86Asm {
-    a = X86Asm { ...a, code: a.code.append(x86_rex(1, src, 0, 0)) };
-    a = X86Asm { ...a, code: a.code.append(opcode) };
-    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, src, 5)) }; // RIP-relative
-    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
-    var patch_off: i32 = a.code.len() - 4;
-    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-    return X86Asm { ...a, fix_names: a.fix_names.append(name) };
-}
-
-// x86_incq_rip_label: `incq sym(%rip)` (REX.W FF /0) — the 64-bit sibling
-// of x86_incl_rip_label.
-function x86_incq_rip_label(own a: X86Asm, name: string): X86Asm {
-    a = X86Asm { ...a, code: a.code.append(x86_rex_w()) };
-    a = X86Asm { ...a, code: a.code.append(255) }; // 0xFF
-    a = X86Asm { ...a, code: a.code.append(x86_modrm(0, 0, 5)) }; // /0, RIP-relative
-    a = X86Asm { ...a, code: x86_le32(a.code, 0) };
-    var patch_off: i32 = a.code.len() - 4;
-    a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
-    return X86Asm { ...a, fix_names: a.fix_names.append(name) };
-}
-
 // x86_rex_opt pushes a REX byte only if any extension bit is set (w must
 // be 0 here — used for the 32-bit / byte ops whose default size needs no
 // prefix unless an extended register is involved).
@@ -1200,31 +984,6 @@ function x86_rex_opt(buf: i32[], reg: i32, index: i32, base: i32): i32[] {
         buf = buf.append(rex);
     }
     return buf;
-}
-
-// x86_alu_r32_imm32: `<op>l $imm, <reg32>` group-1 (0x81 /digit id):
-// add /0, and /4, sub /5, cmp /7.
-function x86_alu_r32_imm32(buf: i32[], slash: i32, reg: i32, imm: i32): i32[] {
-    buf = x86_rex_opt(buf, 0, 0, reg);
-    buf = buf.append(129); // 0x81
-    buf = buf.append(x86_modrm(3, slash, reg));
-    return x86_le32(buf, imm);
-}
-
-// x86_binop_r32_r32: `<op>l <src>, <dst>` reg-reg (32-bit): add 0x01,
-// sub 0x29, and 0x21, or 0x09, xor 0x31, cmp 0x39 (reg=src, r/m=dst).
-function x86_binop_r32_r32(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
-    buf = x86_rex_opt(buf, src, 0, dst);
-    buf = buf.append(opcode);
-    return buf.append(x86_modrm(3, src, dst));
-}
-
-// x86_shr_r32_imm8: `shrl $imm8, <reg32>` (0xC1 /5 ib).
-function x86_shr_r32_imm8(buf: i32[], reg: i32, imm: i32): i32[] {
-    buf = x86_rex_opt(buf, 0, 0, reg);
-    buf = buf.append(193); // 0xC1
-    buf = buf.append(x86_modrm(3, 5, reg));
-    return buf.append(imm & 255);
 }
 
 // x86_mov_r32_r32: `movl <src>, <dst>` (0x89 /r, 32-bit).
@@ -1250,37 +1009,6 @@ function x86_movl_load(buf: i32[], dst: i32, base: i32, has_index: boolean, inde
     buf = x86_rex_opt(buf, dst, ix, base);
     buf = buf.append(139); // 0x8B
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
-}
-
-// x86_testb_imm_reg8: `testb $imm8, <reg8>` (0xF6 /0 ib).
-function x86_testb_imm_reg8(buf: i32[], reg8: i32, imm: i32): i32[] {
-    var rex: i32 = x86_rex(0, 0, 0, reg8);
-    var force: boolean = (reg8 >= 4 && reg8 <= 7);
-    if (rex != 64 || force) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(246); // 0xF6
-    buf = buf.append(x86_modrm(3, 0, reg8));
-    return buf.append(imm & 255);
-}
-
-// x86_testb_reg8_reg8: `testb <a>, <b>` (0x84 /r).
-function x86_testb_reg8_reg8(buf: i32[], a: i32, b: i32): i32[] {
-    var rex: i32 = x86_rex(0, b, 0, a);
-    var force: boolean = (a >= 4 && a <= 7) || (b >= 4 && b <= 7);
-    if (rex != 64 || force) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(132); // 0x84
-    return buf.append(x86_modrm(3, b, a));
-}
-
-// x86_cmovcc_r64_r64: `cmov<cc> <dst>, <src>` (REX.W 0F 40+cc /r).
-function x86_cmovcc_r64_r64(buf: i32[], cc: i32, dst: i32, src: i32): i32[] {
-    buf = buf.append(x86_rex(1, dst, 0, src));
-    buf = buf.append(15);           // 0x0F
-    buf = buf.append(64 + (cc & 15)); // 0x40 + cc
-    return buf.append(x86_modrm(3, dst, src));
 }
 
 // x86_movslq_load: `movslq mem, <dst>` (REX.W 0x63 /r) — sign-extend a
@@ -1313,75 +1041,40 @@ function x86_movzwq_load(buf: i32[], dst: i32, base: i32, has_index: boolean, in
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
 }
 
-// ---- string ops + xorpd (slice 2q, runtime memcpy/memset/zeroing) ----
-
-// x86_cld: `cld` (0xFC) — clear the direction flag before a rep move.
-function x86_cld(buf: i32[]): i32[] {
-    return buf.append(252); // 0xFC
-}
-
-// x86_rep_stosb: `rep stosb` (0xF3 0xAA) — fill rcx bytes at [rdi] with al
-// (memset); the runtime zeroes allocations with it.
-function x86_rep_stosb(buf: i32[]): i32[] {
-    buf = buf.append(243); // 0xF3
-    return buf.append(170); // 0xAA
-}
-
-// x86_rep_movsb: `rep movsb` (0xF3 0xA4) — copy rcx bytes [rsi]->[rdi]
-// (memcpy).
-function x86_rep_movsb(buf: i32[]): i32[] {
-    buf = buf.append(243); // 0xF3
-    return buf.append(164); // 0xA4
-}
-
-// x86_rep_stosq: `rep stosq` (0xF3 REX.W 0xAB) — store rax into rcx 8-byte
-// slots at [rdi]. Zeroes a freshly allocated buffer.
-function x86_rep_stosq(buf: i32[]): i32[] {
-    buf = buf.append(243); // 0xF3
-    buf = buf.append(x86_rex_w());
-    return buf.append(171); // 0xAB
-}
-
-// x86_rep_movsq: `rep movsq` (0xF3 REX.W 0xA5) — copy rcx 8-byte slots
-// [rsi] -> [rdi], the 64-bit sibling of x86_rep_movsb.
-function x86_rep_movsq(buf: i32[]): i32[] {
-    buf = buf.append(243); // 0xF3
-    buf = buf.append(x86_rex_w());
-    return buf.append(165); // 0xA5
-}
-
-// x86_sqrtsd: `sqrtsd <src>, <dst>` (F2 0F 51 /r) — scalar-double sqrt
-// (reg=dst, r/m=src).
-function x86_sqrtsd(buf: i32[], dst: i32, src: i32): i32[] {
-    buf = buf.append(242); // 0xF2
-    var rex: i32 = x86_rex(0, dst, 0, src);
-    if (rex != 64) {
-        buf = buf.append(rex);
+// x86_nop_fill appends the n-byte (1..11) NOP GNU as fills .text alignment
+// padding with (binutils' alt_patt: 0F 1F multi-byte NOPs, prefix-padded).
+function x86_nop_fill(buf: i32[], n: i32): i32[] {
+    if (n == 1) { return buf.append(144); }                    // 90
+    if (n == 2) { buf = buf.append(102); return buf.append(144); } // 66 90
+    if (n >= 9 || n == 6) { buf = buf.append(102); }           // leading 66s
+    if (n == 11) { buf = buf.append(102); }
+    if (n >= 10) { buf = buf.append(46); }                     // 2E cs override
+    buf = buf.append(15);  // 0F
+    buf = buf.append(31);  // 1F
+    if (n == 3) { return buf.append(0); }                      // 0F 1F 00
+    if (n == 4) { buf = buf.append(64); return buf.append(0); } // 0F 1F 40 00
+    if (n == 5 || n == 6) {
+        buf = buf.append(68);                                  // 0F 1F 44 00 00
+        buf = buf.append(0);
+        return buf.append(0);
     }
-    buf = buf.append(15); // 0x0F
-    buf = buf.append(81); // 0x51
-    return buf.append(x86_modrm(3, dst, src));
+    if (n == 7) { buf = buf.append(128); } else { buf = buf.append(132); }
+    if (n != 7) { buf = buf.append(0); }                       // SIB 00
+    buf = buf.append(0);
+    buf = buf.append(0);
+    buf = buf.append(0);
+    return buf.append(0);
 }
 
-// x86_roundsd: `roundsd $mode, <src>, <dst>` (66 0F 3A 0B /r ib) — round a
-// double per `mode` (1 floor, 2 ceil, 3 trunc). SSE4.1.
-function x86_roundsd(buf: i32[], dst: i32, src: i32, mode: i32): i32[] {
-    buf = buf.append(102); // 0x66
-    var rex: i32 = x86_rex(0, dst, 0, src);
-    if (rex != 64) {
-        buf = buf.append(rex);
+// x86_nop_pad pads with the longest (11-byte) fill repeated, then one
+// shorter fill — the sequence gas emits for large paddings.
+function x86_nop_pad(buf: i32[], n: i32): i32[] {
+    while (n > 11) {
+        buf = x86_nop_fill(buf, 11);
+        n = n - 11;
     }
-    buf = buf.append(15); // 0x0F
-    buf = buf.append(58); // 0x3A
-    buf = buf.append(11); // 0x0B
-    buf = buf.append(x86_modrm(3, dst, src));
-    return buf.append(mode & 255);
-}
-
-// x86_xorpd: `xorpd <dst>, <src>` (66 0F 57 /r) — xor packed doubles;
-// `xorpd %x,%x` zeroes an xmm register.
-function x86_xorpd(buf: i32[], dst: i32, src: i32): i32[] {
-    return x86_sse_66_rr(buf, 87, dst, src); // 0x57
+    if (n > 0) { buf = x86_nop_fill(buf, n); }
+    return buf;
 }
 
 // x86_jcc_rel32: a near conditional jump (0F 80+cc) with a 32-bit
@@ -1727,16 +1420,6 @@ function x86_call_reg(buf: i32[], reg: i32): i32[] {
     return buf.append(x86_modrm(3, 2, reg));
 }
 
-// x86_call_mem: `call *disp(%base)` — FF /2 over a memory operand, for a
-// callee pointer still in a stack slot.
-function x86_call_mem(buf: i32[], base: i32, disp: i32): i32[] {
-    if (base >= 8) {
-        buf = buf.append(x86_rex(0, 0, 0, base)); // REX.B
-    }
-    buf = buf.append(255); // 0xFF
-    return x86_emit_mem(buf, 2, base, disp);
-}
-
 // x86_jmp_reg: `jmp *<reg>` — FF /4, the tail-call sibling of x86_call_reg.
 function x86_jmp_reg(buf: i32[], reg: i32): i32[] {
     if (reg >= 8) {
@@ -1910,13 +1593,19 @@ function x86_str_split(s: string, sep: string): string[] {
 // whose `code` / `rodata` sections elf.fern wraps into a runnable binary —
 // the final wiring that removes the external `as` + `ld` step.
 //
-// Coverage is the whole surface the IR emitter produces: integer/pointer, byte and 32-bit ALU, jmp/jCC,
-// setCC/cmovCC, the SSE scalar-double set plus the f32 conversions, the
-// bit-count group (lzcnt/tzcnt/popcnt — Haswell baseline, see
-// docs/BACKEND-PARITY.md). Operand forms: `%reg`, `$imm`, `disp(%base)`,
-// `disp(%base,%index,scale)`, `sym(%rip)`, and bare branch-target
-// labels. AT&T operand order is `op src, dst` (the reverse
-// of the encoder's dst,src).
+// Coverage mirrors internal/native/x86_64's surface (#7886/#7893): the
+// integer families at all four operand widths (ALU with carry/borrow, the
+// F6/F7 and FE/FF one-operand groups, shifts/rotates and shld/shrd, the
+// bt group, xadd/cmpxchg/xchg and the validated lock prefix, the string
+// ops), jmp/jCC, setCC, the full cmovCC table, the bit-count group
+// (lzcnt/tzcnt/popcnt — Haswell baseline, see docs/BACKEND-PARITY.md),
+// and SSE/SSE2/SSE4 through that baseline (scalar and packed float math,
+// the packed-integer table, vector shifts, shuffles, pextr/pinsr,
+// pcmp*stri, crc32, the mask gathers). Operand forms: `%reg`, `$imm`,
+// `disp(%base)`, `disp(%base,%index,scale)`, `sym(%rip)`, and bare
+// branch-target labels. AT&T operand order is `op src, dst` (the reverse
+// of the encoder's dst,src), and the mnemonic suffix (b/w/l/q) selects
+// the operand width.
 //
 // Anything not recognised — mnemonic, operand shape, or directive — is
 // recorded in `unknown` rather than dropped (SH-005): a dropped instruction
@@ -2056,6 +1745,66 @@ function x86_gas_reg32(tok: string): i32 {
     return 0 - 1;
 }
 
+// x86_gas_reg16 maps a 16-bit register token (`%ax`, `%r8w`, …) to its
+// number 0..15, or -1.
+function x86_gas_reg16(tok: string): i32 {
+    var s: string = tok;
+    if (s.len() > 0 && s[0] == b'%') {
+        s = slice_unchecked(s, 1, s.len()) + "";
+    }
+    if (s == "ax") { return 0; }
+    if (s == "cx") { return 1; }
+    if (s == "dx") { return 2; }
+    if (s == "bx") { return 3; }
+    if (s == "sp") { return 4; }
+    if (s == "bp") { return 5; }
+    if (s == "si") { return 6; }
+    if (s == "di") { return 7; }
+    if (s == "r8w") { return 8; }
+    if (s == "r9w") { return 9; }
+    if (s == "r10w") { return 10; }
+    if (s == "r11w") { return 11; }
+    if (s == "r12w") { return 12; }
+    if (s == "r13w") { return 13; }
+    if (s == "r14w") { return 14; }
+    if (s == "r15w") { return 15; }
+    return 0 - 1;
+}
+
+// x86_gas_reg64 is the width-STRICT 64-bit parser the suffix families use:
+// only the rXX names. (x86_gas_reg also tolerates the 32-bit spellings for
+// the pre-family handlers, which must not leak into a width check — a
+// `q`-suffixed op naming %eax is an operand-size mismatch, not a 64-bit op.)
+function x86_gas_reg64(tok: string): i32 {
+    if (x86_gas_reg32(tok) >= 0) { return 0 - 1; }
+    return x86_gas_reg(tok);
+}
+
+// x86_gas_reg_w parses a register token at the width the suffix selected.
+function x86_gas_reg_w(tok: string, size: i32): i32 {
+    if (size == 8) { return x86_gas_reg8(tok); }
+    if (size == 16) { return x86_gas_reg16(tok); }
+    if (size == 32) { return x86_gas_reg32(tok); }
+    return x86_gas_reg64(tok);
+}
+
+// x86_gas_suffix_size maps a mnemonic's AT&T size-suffix character to its
+// width in bits, or 0 when the last character is not a size suffix.
+function x86_gas_suffix_size(mnem: string): i32 {
+    if (mnem.len() < 2) { return 0; }
+    var c: u8 = mnem[mnem.len() - 1];
+    if (c == b'b') { return 8; }
+    if (c == b'w') { return 16; }
+    if (c == b'l') { return 32; }
+    if (c == b'q') { return 64; }
+    return 0;
+}
+
+// x86_gas_strip_suffix drops the mnemonic's final character.
+function x86_gas_strip_suffix(mnem: string): string {
+    return slice_unchecked(mnem, 0, mnem.len() - 1) + "";
+}
+
 // x86_gas_movl dispatches movl: $imm->reg, reg->reg, mem->reg (load),
 // reg->mem (store), all 32-bit.
 function x86_gas_movl(own a: X86Asm, src: string, dst: string): X86Asm {
@@ -2094,28 +1843,6 @@ function x86_gas_movl(own a: X86Asm, src: string, dst: string): X86Asm {
         a = X86Asm { ...a, code: x86_movl_store(a.code, m2.base, m2.has_index, m2.index, m2.scale, m2.disp, x86_gas_reg32(src)) };
         return a;
     }
-    return a;
-}
-
-// x86_gas_alu32 dispatches addl/subl/andl/orl/xorl/cmpl: `$imm, %reg` uses
-// the group-1 imm32 form (imm_slash), `%reg, %reg` the reg-reg opcode.
-//
-// Both encoders take REGISTER numbers, so a memory operand — or any token
-// x86_gas_reg32 does not know — has to be RECORDED (SH-005) rather than fed
-// through: x86_gas_reg32 answers -1 for one, and -1 encodes as a wrong but
-// perfectly well-formed instruction, which is a silent miscompile. `cmpl $1,
-// -4(%rax)` assembled as `cmp $1, %eax` this way and the branch it guarded
-// simply never taken (#7351).
-function x86_gas_alu32(own a: X86Asm, mnem: string, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
-    var d: i32 = x86_gas_reg32(dst);
-    if (d < 0) { return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + src + ", " + dst) }; }
-    if (src.len() > 0 && src[0] == b'$') {
-        a = X86Asm { ...a, code: x86_alu_r32_imm32(a.code, imm_slash, d, x86_gas_atoi(src)) };
-        return a;
-    }
-    var sr: i32 = x86_gas_reg32(src);
-    if (sr < 0) { return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + src + ", " + dst) }; }
-    a = X86Asm { ...a, code: x86_binop_r32_r32(a.code, regop, d, sr) };
     return a;
 }
 
@@ -2514,12 +2241,38 @@ function x86_gas_parse_mem(op: string): GasMem {
 function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
     var src_xmm: boolean = x86_gas_is_xmm(src);
     var dst_xmm: boolean = x86_gas_is_xmm(dst);
-    if (dst_xmm && !src_xmm) { // movq %gpr, %xmm
-        a = X86Asm { ...a, code: x86_movq_gpr_to_xmm(a.code, x86_gas_xmm(dst), x86_gas_reg(src)) };
+    if (dst_xmm && src_xmm) { // movq %xmm, %xmm — F3 0F 7E /r, reg = dst
+        a = X86Asm { ...a, code: x86_sse_any_rr(a.code, 243, 126, x86_gas_xmm(dst), x86_gas_xmm(src)) };
         return a;
     }
-    if (src_xmm && !dst_xmm) { // movq %xmm, %gpr
-        a = X86Asm { ...a, code: x86_movq_xmm_to_gpr(a.code, x86_gas_xmm(src), x86_gas_reg(dst)) };
+    if (dst_xmm && !src_xmm) { // movq r/m, %xmm — 66 REX.W 0F 6E /r
+        if (x86_str_contains(src, "(")) {
+            var xm: GasMem = x86_gas_parse_mem(src);
+            if (!x86_gas_mem_ok(xm)) { return x86_gas_bad(a, "movq " + src + ", " + dst); }
+            a = X86Asm { ...a, code: a.code.append(102) };
+            a = X86Asm { ...a, code: x86_gas_mem_rex(a.code, 64, x86_gas_xmm(dst), xm, false) };
+            a = X86Asm { ...a, code: a.code.append(15) };
+            a = X86Asm { ...a, code: a.code.append(110) };
+            return x86_gas_membytes(a, x86_gas_xmm(dst), xm, 0);
+        }
+        var gs: i32 = x86_gas_reg(src);
+        if (gs < 0) { return x86_gas_bad(a, "movq " + src + ", " + dst); }
+        a = X86Asm { ...a, code: x86_movq_gpr_to_xmm(a.code, x86_gas_xmm(dst), gs) };
+        return a;
+    }
+    if (src_xmm && !dst_xmm) { // movq %xmm, r/m — 66 REX.W 0F 7E /r
+        if (x86_str_contains(dst, "(")) {
+            var xm2: GasMem = x86_gas_parse_mem(dst);
+            if (!x86_gas_mem_ok(xm2)) { return x86_gas_bad(a, "movq " + src + ", " + dst); }
+            a = X86Asm { ...a, code: a.code.append(102) };
+            a = X86Asm { ...a, code: x86_gas_mem_rex(a.code, 64, x86_gas_xmm(src), xm2, false) };
+            a = X86Asm { ...a, code: a.code.append(15) };
+            a = X86Asm { ...a, code: a.code.append(126) };
+            return x86_gas_membytes(a, x86_gas_xmm(src), xm2, 0);
+        }
+        var gd: i32 = x86_gas_reg(dst);
+        if (gd < 0) { return x86_gas_bad(a, "movq " + src + ", " + dst); }
+        a = X86Asm { ...a, code: x86_movq_xmm_to_gpr(a.code, x86_gas_xmm(src), gd) };
         return a;
     }
     if (src.len() > 0 && src[0] == b'$') { // $imm -> reg or mem
@@ -2578,62 +2331,6 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
     return X86Asm { ...a, unknown: a.unknown.append("movq " + src + ", " + dst) };
 }
 
-// x86_gas_alu dispatches addq/subq/cmpq (slash = 0 add / 5 sub / 7 cmp):
-// `$imm, %reg`, a memory *source* `mem, %reg`, or `%reg, %reg`.
-function x86_gas_alu(own a: X86Asm, slash: i32, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == b'$') { // $imm -> reg
-        a = X86Asm { ...a, code: x86_alu_r64_imm32(a.code, slash, x86_gas_reg(dst), x86_gas_atoi(src)) };
-        return a;
-    }
-    if (x86_str_contains(src, "(")) { // mem -> reg (load-form ALU)
-        var m: GasMem = x86_gas_parse_mem(src);
-        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
-        var op: i32 = 3; // add 0x03
-        if (slash == 5) { op = 43; } // sub 0x2B
-        if (slash == 7) { op = 59; } // cmp 0x3B
-        if (m.is_rip) { // `<alu>q sym(%rip), %reg` — rip-relative + fixup
-            return x86_alu_load_rip_label(a, op, x86_gas_reg(dst), m.label);
-        }
-        a = X86Asm { ...a, code: x86_alu_load_r64(a.code, op, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
-        return a;
-    }
-    if (x86_str_contains(dst, "(")) { // reg -> mem (store-form ALU: add 0x01 / sub 0x29 / cmp 0x39)
-        var sm: GasMem = x86_gas_parse_mem(dst);
-        if (sm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-        var sop: i32 = 1; // add 0x01
-        if (slash == 5) { sop = 41; } // sub 0x29
-        if (slash == 7) { sop = 57; } // cmp 0x39
-        if (sm.is_rip) {
-            return x86_alu_store_rip_label(a, sop, x86_gas_reg(src), sm.label);
-        }
-        a = X86Asm { ...a, code: x86_alu_store_r64(a.code, sop, x86_gas_reg(src), sm.base, sm.has_index, sm.index, sm.scale, sm.disp) };
-        return a;
-    }
-    var d: i32 = x86_gas_reg(dst);
-    var s: i32 = x86_gas_reg(src);
-    if (slash == 0) {
-        a = X86Asm { ...a, code: x86_add_r64_r64(a.code, d, s) };
-    } else {
-        if (slash == 5) {
-            a = X86Asm { ...a, code: x86_sub_r64_r64(a.code, d, s) };
-        } else {
-            a = X86Asm { ...a, code: x86_cmp_r64_r64(a.code, d, s) };
-        }
-    }
-    return a;
-}
-
-// x86_gas_logic dispatches andq/orq/xorq: `$imm, %reg` uses the group-1
-// imm32 form (slash 4/1/6), `%reg, %reg` the reg-reg opcode (0x21/09/31).
-function x86_gas_logic(own a: X86Asm, imm_slash: i32, regop: i32, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == b'$') {
-        a = X86Asm { ...a, code: x86_alu_r64_imm32(a.code, imm_slash, x86_gas_reg(dst), x86_gas_atoi(src)) };
-        return a;
-    }
-    a = X86Asm { ...a, code: x86_binop_r64_r64(a.code, regop, x86_gas_reg(dst), x86_gas_reg(src)) };
-    return a;
-}
-
 // x86_gas_top_comma returns the index of the first comma at paren depth 0
 // (the operand separator), or -1. A comma inside `(%base,%index,scale)`
 // must not split the operands, so this skips parenthesised commas.
@@ -2658,29 +2355,43 @@ function x86_gas_top_comma(s: string): i32 {
     return 0 - 1;
 }
 
-// x86_gas_movb dispatches movb's three shapes: $imm->mem, reg8->mem (store),
-// mem->reg8 (load), in AT&T src, dst order.
+// x86_gas_movb dispatches movb (AT&T src, dst): $imm->mem, $imm->reg8
+// (B0+rb ib), reg8<->mem, and reg8->reg8 (88 /r). The two register-target
+// shapes previously fell into the memory paths, where the unparsed operand
+// masked to base %rdi — `movb $1, %cl` silently became a store through rdi.
 function x86_gas_movb(own a: X86Asm, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == b'$') { // $imm -> mem
-        var m: GasMem = x86_gas_parse_mem(dst);
-        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-        if (m.is_rip) { return x86_store_imm_rip_label(a, 198, 0, m.label, x86_gas_atoi(src), 1); }   // C6 /0
-        a = X86Asm { ...a, code: x86_movb_imm_mem(a.code, m.base, m.has_index, m.index, m.scale, m.disp, x86_gas_atoi(src)) };
-        return a;
+    if (src.len() > 0 && src[0] == b'$') { // $imm -> mem or reg8
+        if (x86_str_contains(dst, "(")) {
+            var m: GasMem = x86_gas_parse_mem(dst);
+            if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, "movb " + dst); }
+            if (m.is_rip) { return x86_store_imm_rip_label(a, 198, 0, m.label, x86_gas_atoi(src), 1); }   // C6 /0
+            a = X86Asm { ...a, code: x86_movb_imm_mem(a.code, m.base, m.has_index, m.index, m.scale, m.disp, x86_gas_atoi(src)) };
+            return a;
+        }
+        var ri: i32 = x86_gas_reg8(dst);
+        if (ri < 0) { return x86_gas_bad(a, "movb " + src + ", " + dst); }
+        a = X86Asm { ...a, code: x86_rex_r(a.code, 8, ri) };
+        a = X86Asm { ...a, code: a.code.append(176 + (ri & 7)) }; // B0+rb
+        return X86Asm { ...a, code: a.code.append(x86_gas_atoi(src) & 255) };
     }
     if (x86_str_contains(src, "(")) { // mem -> reg8 (load)
         var ms: GasMem = x86_gas_parse_mem(src);
-        if (ms.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
-        if (ms.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
-        a = X86Asm { ...a, code: x86_movb_mem_reg(a.code, x86_gas_reg8(dst), ms.base, ms.has_index, ms.index, ms.scale, ms.disp) };
+        var rl: i32 = x86_gas_reg8(dst);
+        if (!x86_gas_mem_ok(ms) || ms.is_rip || rl < 0) { return x86_gas_bad(a, "movb " + src + ", " + dst); }
+        a = X86Asm { ...a, code: x86_movb_mem_reg(a.code, rl, ms.base, ms.has_index, ms.index, ms.scale, ms.disp) };
         return a;
     }
-    // reg8 -> mem (store)
-    var md: GasMem = x86_gas_parse_mem(dst);
-    if (md.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-    if (md.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + dst) }; }
-    a = X86Asm { ...a, code: x86_movb_reg_mem(a.code, x86_gas_reg8(src), md.base, md.has_index, md.index, md.scale, md.disp) };
-    return a;
+    if (x86_str_contains(dst, "(")) { // reg8 -> mem (store)
+        var md: GasMem = x86_gas_parse_mem(dst);
+        var rs: i32 = x86_gas_reg8(src);
+        if (!x86_gas_mem_ok(md) || md.is_rip || rs < 0) { return x86_gas_bad(a, "movb " + src + ", " + dst); }
+        a = X86Asm { ...a, code: x86_movb_reg_mem(a.code, rs, md.base, md.has_index, md.index, md.scale, md.disp) };
+        return a;
+    }
+    var r1: i32 = x86_gas_reg8(src);
+    var r2: i32 = x86_gas_reg8(dst);
+    if (r1 < 0 || r2 < 0) { return x86_gas_bad(a, "movb " + src + ", " + dst); }
+    return X86Asm { ...a, code: x86_op_rr(a.code, 8, 136, r1, r2) }; // 88 /r
 }
 
 // x86_gas_movzbq dispatches movzbq: mem->reg64 or reg8->reg64.
@@ -2696,22 +2407,972 @@ function x86_gas_movzbq(own a: X86Asm, src: string, dst: string): X86Asm {
     return a;
 }
 
+// ---- suffix-family machinery ----
+//
+// The AT&T mnemonic surface is organised as families keyed on the base
+// mnemonic (suffix stripped) with the operand width taken from the suffix,
+// mirroring internal/native/x86_64's per-family encoders. Anything a
+// family cannot encode is RECORDED (SH-005) — a wrong-width encode is the
+// silent-widening class the native side fixed in #3544/#7886.
+
+// x86_gas_bad records an unsupported instruction shape (SH-005).
+function x86_gas_bad(own a: X86Asm, what: string): X86Asm {
+    return X86Asm { ...a, unknown: a.unknown.append(what) };
+}
+
+// x86_gas_mem_ok rejects the operand shapes the sized encoders do not
+// take: the no-base SIB form and any register token that failed to parse
+// (which would otherwise mask to a real register and encode silently).
+function x86_gas_mem_ok(m: GasMem): boolean {
+    if (m.is_rip) { return true; }
+    if (m.no_base || m.base < 0) { return false; }
+    if (m.has_index && m.index < 0) { return false; }
+    return true;
+}
+
+// x86_gas_mem_rex appends the REX (when needed) for an op with a memory rm
+// operand. `force8` marks an 8-bit REGISTER in the reg field (spl..dil
+// force a REX).
+function x86_gas_mem_rex(buf: i32[], size: i32, reg: i32, m: GasMem, force8: boolean): i32[] {
+    var ix: i32 = 0;
+    var bs: i32 = 0;
+    if (!m.is_rip) {
+        if (m.has_index) { ix = m.index; }
+        bs = m.base;
+    }
+    var rex: i32 = x86_rex(x86_rex_w_of(size), reg, ix, bs);
+    if (rex != 64 || force8) {
+        buf = buf.append(rex);
+    }
+    return buf;
+}
+
+// x86_gas_membytes appends the ModR/M (+SIB+disp) for `m` — or, for a
+// rip-relative operand, the mod=00 rm=101 form with a placeholder disp32
+// and a queued fixup. `tail` is the immediate byte count following the
+// disp32 (a rip displacement is measured from the END of the instruction).
+function x86_gas_membytes(own a: X86Asm, reg: i32, m: GasMem, tail: i32): X86Asm {
+    if (m.is_rip) {
+        a = X86Asm { ...a, code: a.code.append(x86_modrm(0, reg, 5)) };
+        a = X86Asm { ...a, code: x86_le32(a.code, 0) };
+        var patch_off: i32 = a.code.len() - 4;
+        a = X86Asm { ...a, fix_offs: a.fix_offs.append(patch_off) };
+        a = X86Asm { ...a, fix_names: a.fix_names.append(m.label) };
+        if (tail > 0) {
+            a = X86Asm { ...a, fix_tail_offs: a.fix_tail_offs.append(patch_off) };
+            a = X86Asm { ...a, fix_tail_bytes: a.fix_tail_bytes.append(tail) };
+        }
+        return a;
+    }
+    return X86Asm { ...a, code: x86_byte_mem_operand(a.code, reg, m.base, m.has_index, m.index, m.scale, m.disp) };
+}
+
+// x86_gas_mem_op emits `[66] [REX] [0F] <op>` then the memory rm — the
+// shared tail of every sized memory form.
+function x86_gas_mem_op(own a: X86Asm, size: i32, op0f: boolean, op: i32, reg: i32, m: GasMem, force8: boolean, tail: i32): X86Asm {
+    a = X86Asm { ...a, code: x86_osz(a.code, size) };
+    a = X86Asm { ...a, code: x86_gas_mem_rex(a.code, size, reg, m, force8) };
+    if (op0f) { a = X86Asm { ...a, code: a.code.append(15) }; }
+    a = X86Asm { ...a, code: a.code.append(op) };
+    return x86_gas_membytes(a, reg, m, tail);
+}
+
+// x86_gas_split_ops splits an operand list on top-level commas (commas
+// inside `(%b,%i,s)` do not separate operands), trimming each piece.
+function x86_gas_split_ops(rest: string): string[] {
+    var out: string[] = [];
+    var s: string = rest;
+    var c: i32 = x86_gas_top_comma(s);
+    while (c >= 0) {
+        out = out.append(x86_gas_trim(slice_unchecked(s, 0, c)));
+        s = slice_unchecked(s, c + 1, s.len()) + "";
+        c = x86_gas_top_comma(s);
+    }
+    return out.append(x86_gas_trim(s));
+}
+
+// x86_gas_alu_ext maps an ALU base mnemonic to its group-1 /digit; the
+// family's MR opcode row is ext*8 (add 00, or 08, adc 10, sbb 18, and 20,
+// sub 28, xor 30, cmp 38).
+function x86_gas_alu_ext(mnem: string): i32 {
+    if (mnem == "add") { return 0; }
+    if (mnem == "or") { return 1; }
+    if (mnem == "adc") { return 2; }
+    if (mnem == "sbb") { return 3; }
+    if (mnem == "and") { return 4; }
+    if (mnem == "sub") { return 5; }
+    if (mnem == "xor") { return 6; }
+    if (mnem == "cmp") { return 7; }
+    return 0 - 1;
+}
+
+// x86_gas_unary_ext maps an F6/F7-group base mnemonic to its /digit.
+function x86_gas_unary_ext(mnem: string): i32 {
+    if (mnem == "not") { return 2; }
+    if (mnem == "neg") { return 3; }
+    if (mnem == "mul") { return 4; }
+    if (mnem == "imul") { return 5; }
+    if (mnem == "div") { return 6; }
+    if (mnem == "idiv") { return 7; }
+    return 0 - 1;
+}
+
+// x86_gas_incdec_ext maps inc/dec to their FE/FF-group /digit.
+function x86_gas_incdec_ext(mnem: string): i32 {
+    if (mnem == "inc") { return 0; }
+    if (mnem == "dec") { return 1; }
+    return 0 - 1;
+}
+
+// x86_gas_shift_ext maps a shift/rotate base mnemonic to its C0..D3-group
+// /digit.
+function x86_gas_shift_ext(mnem: string): i32 {
+    if (mnem == "rol") { return 0; }
+    if (mnem == "ror") { return 1; }
+    if (mnem == "rcl") { return 2; }
+    if (mnem == "rcr") { return 3; }
+    if (mnem == "shl") { return 4; }
+    if (mnem == "shr") { return 5; }
+    if (mnem == "sar") { return 7; }
+    return 0 - 1;
+}
+
+// x86_gas_bt_idx maps the bit-test family to its index: the register-form
+// opcode is 0xA3 + idx*8 and the immediate-form /digit is 4 + idx.
+function x86_gas_bt_idx(mnem: string): i32 {
+    if (mnem == "bt") { return 0; }
+    if (mnem == "bts") { return 1; }
+    if (mnem == "btr") { return 2; }
+    if (mnem == "btc") { return 3; }
+    return 0 - 1;
+}
+
+// x86_gas_cc_code maps a condition-suffix spelling to its 4-bit condition
+// code (shared by jcc 0F 80+cc, setcc 0F 90+cc, cmovcc 0F 40+cc).
+function x86_gas_cc_code(cond: string): i32 {
+    if (cond == "o") { return 0; }
+    if (cond == "no") { return 1; }
+    if (cond == "b" || cond == "c" || cond == "nae") { return 2; }
+    if (cond == "ae" || cond == "nb" || cond == "nc") { return 3; }
+    if (cond == "e" || cond == "z") { return 4; }
+    if (cond == "ne" || cond == "nz") { return 5; }
+    if (cond == "be" || cond == "na") { return 6; }
+    if (cond == "a" || cond == "nbe") { return 7; }
+    if (cond == "s") { return 8; }
+    if (cond == "ns") { return 9; }
+    if (cond == "p") { return 10; }
+    if (cond == "np") { return 11; }
+    if (cond == "l" || cond == "nge") { return 12; }
+    if (cond == "ge" || cond == "nl") { return 13; }
+    if (cond == "le" || cond == "ng") { return 14; }
+    if (cond == "g" || cond == "nle") { return 15; }
+    return 0 - 1;
+}
+
+// x86_gas_lockable: the base mnemonics the F0 lock prefix may precede —
+// anything else is #UD at runtime, so it is refused at assembly.
+function x86_gas_lockable(mnem: string): boolean {
+    if (x86_gas_alu_ext(mnem) >= 0) { return mnem != "cmp"; }
+    if (x86_gas_incdec_ext(mnem) >= 0) { return true; }
+    if (mnem == "not" || mnem == "neg") { return true; }
+    if (mnem == "xadd" || mnem == "cmpxchg" || mnem == "xchg") { return true; }
+    return x86_gas_bt_idx(mnem) >= 1; // bts/btr/btc, not bt
+}
+
+// ---- fixed-byte mnemonics ----
+
+function x86_pack1(b0: i32): i32 { return 16777216 + b0; }
+function x86_pack2(b0: i32, b1: i32): i32 { return 33554432 + (b1 * 256) + b0; }
+function x86_pack3(b0: i32, b1: i32, b2: i32): i32 { return 50331648 + (b2 * 65536) + (b1 * 256) + b0; }
+
+// x86_gas_fixed_op maps a no-operand mnemonic to its bytes, little-endian
+// with the byte count in the top byte; -1 when not fixed. The cbtw group
+// are the AT&T spellings of cbw/cwde/cdqe/cwd/cdq/cqo.
+function x86_gas_fixed_op(mnem: string): i32 {
+    if (mnem == "ret") { return x86_pack1(195); }
+    if (mnem == "syscall") { return x86_pack2(15, 5); }
+    if (mnem == "leave") { return x86_pack1(201); }
+    if (mnem == "cld") { return x86_pack1(252); }
+    if (mnem == "std") { return x86_pack1(253); }
+    if (mnem == "nop") { return x86_pack1(144); }
+    if (mnem == "int3") { return x86_pack1(204); }
+    if (mnem == "pause") { return x86_pack2(243, 144); }
+    if (mnem == "mfence") { return x86_pack3(15, 174, 240); }
+    if (mnem == "lfence") { return x86_pack3(15, 174, 232); }
+    if (mnem == "sfence") { return x86_pack3(15, 174, 248); }
+    if (mnem == "cbtw") { return x86_pack2(102, 152); }
+    if (mnem == "cwtl") { return x86_pack1(152); }
+    if (mnem == "cltq") { return x86_pack2(72, 152); }
+    if (mnem == "cwtd") { return x86_pack2(102, 153); }
+    if (mnem == "cltd") { return x86_pack1(153); }
+    if (mnem == "cqto") { return x86_pack2(72, 153); }
+    return 0 - 1;
+}
+
+// x86_gas_string_op maps a bare string-op mnemonic (AT&T movsl = Intel
+// movsd, etc.) to its packed bytes; also consulted for the `rep` prefix.
+function x86_gas_string_op(mnem: string): i32 {
+    if (mnem == "movsb") { return x86_pack1(164); }
+    if (mnem == "movsw") { return x86_pack2(102, 165); }
+    if (mnem == "movsl") { return x86_pack1(165); }
+    if (mnem == "movsq") { return x86_pack2(72, 165); }
+    if (mnem == "stosb") { return x86_pack1(170); }
+    if (mnem == "stosw") { return x86_pack2(102, 171); }
+    if (mnem == "stosl") { return x86_pack1(171); }
+    if (mnem == "stosq") { return x86_pack2(72, 171); }
+    if (mnem == "lodsb") { return x86_pack1(172); }
+    if (mnem == "lodsw") { return x86_pack2(102, 173); }
+    if (mnem == "lodsl") { return x86_pack1(173); }
+    if (mnem == "lodsq") { return x86_pack2(72, 173); }
+    if (mnem == "scasb") { return x86_pack1(174); }
+    if (mnem == "scasw") { return x86_pack2(102, 175); }
+    if (mnem == "scasl") { return x86_pack1(175); }
+    if (mnem == "scasq") { return x86_pack2(72, 175); }
+    if (mnem == "cmpsb") { return x86_pack1(166); }
+    if (mnem == "cmpsw") { return x86_pack2(102, 167); }
+    if (mnem == "cmpsl") { return x86_pack1(167); }
+    if (mnem == "cmpsq") { return x86_pack2(72, 167); }
+    return 0 - 1;
+}
+
+// x86_gas_emit_packed appends a packed fixed-byte sequence.
+function x86_gas_emit_packed(own a: X86Asm, packed: i32): X86Asm {
+    var n: i32 = packed / 16777216;
+    a = X86Asm { ...a, code: a.code.append(packed & 255) };
+    if (n >= 2) { a = X86Asm { ...a, code: a.code.append((packed / 256) & 255) }; }
+    if (n >= 3) { a = X86Asm { ...a, code: a.code.append((packed / 65536) & 255) }; }
+    return a;
+}
+
+// ---- integer families ----
+
+// x86_gas_alu_family assembles one sized ALU instruction (AT&T src, dst):
+// reg/reg, memory source, memory destination, and the immediate forms with
+// the 83 short-immediate selection — mirroring the native alu().
+function x86_gas_alu_family(own a: X86Asm, mnem: string, ext: i32, size: i32, src: string, dst: string): X86Asm {
+    var opbase: i32 = ext * 8;
+    if (src.len() > 0 && src[0] == b'$') {
+        var imm: i32 = x86_gas_atoi(src);
+        if (x86_str_contains(dst, "(")) {
+            var mi: GasMem = x86_gas_parse_mem(dst);
+            if (!x86_gas_mem_ok(mi)) { return x86_gas_bad(a, mnem + " " + dst); }
+            if (size == 8 || x86_imm_fits8(imm)) {
+                var opi: i32 = 131; // 83 /ext ib
+                if (size == 8) { opi = 128; } // 80 /ext ib
+                a = x86_gas_mem_op(a, size, false, opi, ext, mi, false, 1);
+                return X86Asm { ...a, code: a.code.append(imm & 255) };
+            }
+            var ib: i32 = 4;
+            if (size == 16) { ib = 2; }
+            a = x86_gas_mem_op(a, size, false, 129, ext, mi, false, ib);
+            return X86Asm { ...a, code: x86_imm_wide(a.code, size, imm) };
+        }
+        var rd: i32 = x86_gas_reg_w(dst, size);
+        if (rd < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        return X86Asm { ...a, code: x86_grp1_imm_r(a.code, size, ext, rd, imm) };
+    }
+    var src_mem: boolean = x86_str_contains(src, "(");
+    var dst_mem: boolean = x86_str_contains(dst, "(");
+    if (src_mem && !dst_mem) { // load form: opbase|2, reg = destination
+        var ml: GasMem = x86_gas_parse_mem(src);
+        var rl: i32 = x86_gas_reg_w(dst, size);
+        if (!x86_gas_mem_ok(ml) || rl < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        return x86_gas_mem_op(a, size, false, x86_opsel(opbase | 2, size), rl, ml, x86_rex8_force(size, rl), 0);
+    }
+    if (dst_mem && !src_mem) { // store form: opbase, reg = source
+        var ms: GasMem = x86_gas_parse_mem(dst);
+        var rs: i32 = x86_gas_reg_w(src, size);
+        if (!x86_gas_mem_ok(ms) || rs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        return x86_gas_mem_op(a, size, false, x86_opsel(opbase, size), rs, ms, x86_rex8_force(size, rs), 0);
+    }
+    var r1: i32 = x86_gas_reg_w(src, size);
+    var r2: i32 = x86_gas_reg_w(dst, size);
+    if (r1 < 0 || r2 < 0 || src_mem) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    return X86Asm { ...a, code: x86_op_rr(a.code, size, opbase, r1, r2) };
+}
+
+// x86_gas_test_family: test at every width — reg/reg (84/85 MR), a memory
+// operand on either side, and the F6/F7 /0 immediate forms.
+function x86_gas_test_family(own a: X86Asm, size: i32, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == b'$') {
+        var imm: i32 = x86_gas_atoi(src);
+        if (x86_str_contains(dst, "(")) {
+            var mi: GasMem = x86_gas_parse_mem(dst);
+            if (!x86_gas_mem_ok(mi)) { return x86_gas_bad(a, "test " + dst); }
+            var ib: i32 = 4;
+            if (size == 8) { ib = 1; }
+            if (size == 16) { ib = 2; }
+            a = x86_gas_mem_op(a, size, false, x86_opsel(246, size), 0, mi, false, ib);
+            if (size == 8) { return X86Asm { ...a, code: a.code.append(imm & 255) }; }
+            return X86Asm { ...a, code: x86_imm_wide(a.code, size, imm) };
+        }
+        var rd: i32 = x86_gas_reg_w(dst, size);
+        if (rd < 0) { return x86_gas_bad(a, "test " + src + ", " + dst); }
+        return X86Asm { ...a, code: x86_test_imm_r(a.code, size, rd, imm) };
+    }
+    var src_mem: boolean = x86_str_contains(src, "(");
+    var dst_mem: boolean = x86_str_contains(dst, "(");
+    if (src_mem != dst_mem) { // one memory side: 84/85 with reg = the register
+        var mop: string = src;
+        var rop: string = dst;
+        if (dst_mem) { mop = dst; rop = src; }
+        var m2: GasMem = x86_gas_parse_mem(mop);
+        var rr: i32 = x86_gas_reg_w(rop, size);
+        if (!x86_gas_mem_ok(m2) || rr < 0) { return x86_gas_bad(a, "test " + src + ", " + dst); }
+        return x86_gas_mem_op(a, size, false, x86_opsel(132, size), rr, m2, x86_rex8_force(size, rr), 0);
+    }
+    var r1: i32 = x86_gas_reg_w(src, size);
+    var r2: i32 = x86_gas_reg_w(dst, size);
+    if (r1 < 0 || r2 < 0 || src_mem) { return x86_gas_bad(a, "test " + src + ", " + dst); }
+    return X86Asm { ...a, code: x86_op_rr(a.code, size, 132, r1, r2) };
+}
+
+// x86_gas_unary_family: the F6/F7 (opbase 246) and FE/FF (opbase 254)
+// one-operand groups, register or sized memory (rip included).
+function x86_gas_unary_family(own a: X86Asm, mnem: string, opbase: i32, ext: i32, size: i32, op: string): X86Asm {
+    if (x86_str_contains(op, "(")) {
+        var m: GasMem = x86_gas_parse_mem(op);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + op); }
+        return x86_gas_mem_op(a, size, false, x86_opsel(opbase, size), ext, m, false, 0);
+    }
+    var r: i32 = x86_gas_reg_w(op, size);
+    if (r < 0) { return x86_gas_bad(a, mnem + " " + op); }
+    return X86Asm { ...a, code: x86_unary_r(a.code, size, opbase, ext, r) };
+}
+
+// x86_gas_shift_family: shifts and rotates — count in %cl (D2/D3), $1
+// (D0/D1, the form GNU as selects for a count of one), or $imm8 (C0/C1) —
+// on a register or sized memory destination.
+function x86_gas_shift_family(own a: X86Asm, mnem: string, ext: i32, size: i32, src: string, dst: string): X86Asm {
+    var by_cl: boolean = (src == "%cl");
+    if (!by_cl && (src.len() == 0 || src[0] != b'$')) { return x86_gas_bad(a, mnem + " " + src); }
+    var imm: i32 = 0;
+    if (!by_cl) { imm = x86_gas_atoi(src); }
+    if (x86_str_contains(dst, "(")) {
+        var m: GasMem = x86_gas_parse_mem(dst);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + dst); }
+        var op: i32 = x86_opsel(210, size); // D2/D3 %cl
+        var tail: i32 = 0;
+        if (!by_cl) {
+            if (imm == 1) { op = x86_opsel(208, size); } else { op = x86_opsel(192, size); tail = 1; }
+        }
+        a = x86_gas_mem_op(a, size, false, op, ext, m, false, tail);
+        if (tail == 1) { return X86Asm { ...a, code: a.code.append(imm & 255) }; }
+        return a;
+    }
+    var r: i32 = x86_gas_reg_w(dst, size);
+    if (r < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    if (by_cl) { return X86Asm { ...a, code: x86_shift_r_cl(a.code, size, ext, r) }; }
+    return X86Asm { ...a, code: x86_shift_r_imm(a.code, size, ext, r, imm) };
+}
+
+// x86_gas_shld_family: shld (0F A4/A5) / shrd (0F AC/AD) — the
+// double-precision shifts: `$imm|%cl, %src, r/m-dst`. ModRM.reg is the
+// SOURCE, the reverse of the usual direction. No 8-bit form.
+function x86_gas_shld_family(own a: X86Asm, mnem: string, opimm: i32, size: i32, rest: string): X86Asm {
+    var ops: string[] = x86_gas_split_ops(rest);
+    if (ops.len() != 3 || size == 8) { return x86_gas_bad(a, mnem + " " + rest); }
+    var rs: i32 = x86_gas_reg_w(ops[1], size);
+    if (rs < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+    var by_cl: boolean = (ops[0] == "%cl");
+    if (!by_cl && (ops[0].len() == 0 || ops[0][0] != b'$')) { return x86_gas_bad(a, mnem + " " + rest); }
+    var op: i32 = opimm;
+    if (by_cl) { op = opimm + 1; }
+    var imm: i32 = 0;
+    var tail: i32 = 0;
+    if (!by_cl) { imm = x86_gas_atoi(ops[0]); tail = 1; }
+    if (x86_str_contains(ops[2], "(")) {
+        var m: GasMem = x86_gas_parse_mem(ops[2]);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + ops[2]); }
+        a = x86_gas_mem_op(a, size, true, op, rs, m, false, tail);
+        if (!by_cl) { return X86Asm { ...a, code: a.code.append(imm & 255) }; }
+        return a;
+    }
+    var rd: i32 = x86_gas_reg_w(ops[2], size);
+    if (rd < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+    a = X86Asm { ...a, code: x86_op0f_rr(a.code, size, op, rs, rd) };
+    if (!by_cl) { return X86Asm { ...a, code: a.code.append(imm & 255) }; }
+    return a;
+}
+
+// x86_gas_bt_family: bt/bts/btr/btc — `%reg|$imm8, r/m` (AT&T: the bit
+// index comes first). Register form 0F A3/AB/B3/BB with reg = the index;
+// immediate form 0F BA /4../7 ib. No 8-bit form.
+function x86_gas_bt_family(own a: X86Asm, mnem: string, idx: i32, size: i32, src: string, dst: string): X86Asm {
+    if (size == 8) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    if (src.len() > 0 && src[0] == b'$') {
+        var imm: i32 = x86_gas_atoi(src);
+        if (x86_str_contains(dst, "(")) {
+            var mi: GasMem = x86_gas_parse_mem(dst);
+            if (!x86_gas_mem_ok(mi)) { return x86_gas_bad(a, mnem + " " + dst); }
+            a = x86_gas_mem_op(a, size, true, 186, 4 + idx, mi, false, 1);
+            return X86Asm { ...a, code: a.code.append(imm & 255) };
+        }
+        var rd: i32 = x86_gas_reg_w(dst, size);
+        if (rd < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        a = X86Asm { ...a, code: x86_op0f_rr(a.code, size, 186, 4 + idx, rd) };
+        return X86Asm { ...a, code: a.code.append(imm & 255) };
+    }
+    var rs: i32 = x86_gas_reg_w(src, size);
+    if (rs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    var regop: i32 = 163 + idx * 8;
+    if (x86_str_contains(dst, "(")) {
+        var m: GasMem = x86_gas_parse_mem(dst);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + dst); }
+        return x86_gas_mem_op(a, size, true, regop, rs, m, false, 0);
+    }
+    var rd2: i32 = x86_gas_reg_w(dst, size);
+    if (rd2 < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    return X86Asm { ...a, code: x86_op0f_rr(a.code, size, regop, rs, rd2) };
+}
+
+// x86_gas_rmw_family: xadd (0F C0/C1) and cmpxchg (0F B0/B1) — reg source
+// in ModRM.reg, register or memory destination.
+function x86_gas_rmw_family(own a: X86Asm, mnem: string, opbase: i32, size: i32, src: string, dst: string): X86Asm {
+    var rs: i32 = x86_gas_reg_w(src, size);
+    if (rs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    var op: i32 = x86_opsel(opbase, size);
+    if (x86_str_contains(dst, "(")) {
+        var m: GasMem = x86_gas_parse_mem(dst);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + dst); }
+        return x86_gas_mem_op(a, size, true, op, rs, m, x86_rex8_force(size, rs), 0);
+    }
+    var rd: i32 = x86_gas_reg_w(dst, size);
+    if (rd < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    return X86Asm { ...a, code: x86_op0f_rr(a.code, size, op, rs, rd) };
+}
+
+// x86_gas_xchg_family: xchg (86/87) — reg/reg or a memory operand on
+// either side (the memory form is implicitly locked by the CPU).
+function x86_gas_xchg_family(own a: X86Asm, mnem: string, size: i32, src: string, dst: string): X86Asm {
+    var src_mem: boolean = x86_str_contains(src, "(");
+    var dst_mem: boolean = x86_str_contains(dst, "(");
+    if (src_mem != dst_mem) {
+        var mop: string = src;
+        var rop: string = dst;
+        if (dst_mem) { mop = dst; rop = src; }
+        var m: GasMem = x86_gas_parse_mem(mop);
+        var rr: i32 = x86_gas_reg_w(rop, size);
+        if (!x86_gas_mem_ok(m) || rr < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        return x86_gas_mem_op(a, size, false, x86_opsel(134, size), rr, m, x86_rex8_force(size, rr), 0);
+    }
+    var r1: i32 = x86_gas_reg_w(src, size);
+    var r2: i32 = x86_gas_reg_w(dst, size);
+    if (r1 < 0 || r2 < 0 || src_mem) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    return X86Asm { ...a, code: x86_op_rr(a.code, size, 134, r1, r2) };
+}
+
+// x86_gas_cmov_family: cmov<cc> with the full condition table and W/L/W16
+// widths. A bare condition spelling (`cmovne`) takes its width from the
+// destination register; a trailing size suffix (`cmovneq`) is explicit.
+function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
+    var cond: string = slice_unchecked(mnem, 4, mnem.len()) + "";
+    var size: i32 = 0;
+    var cc: i32 = x86_gas_cc_code(cond);
+    if (cc >= 0) {
+        size = 64;
+        if (x86_gas_reg32(dst) >= 0) { size = 32; }
+        if (x86_gas_reg16(dst) >= 0) { size = 16; }
+    } else {
+        size = x86_gas_suffix_size(mnem);
+        if (size == 0 || size == 8) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        cc = x86_gas_cc_code(slice_unchecked(cond, 0, cond.len() - 1) + "");
+        if (cc < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    }
+    var rd: i32 = x86_gas_reg_w(dst, size);
+    if (rd < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    if (x86_str_contains(src, "(")) {
+        var m: GasMem = x86_gas_parse_mem(src);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + src); }
+        return x86_gas_mem_op(a, size, true, 64 + cc, rd, m, false, 0);
+    }
+    var rs: i32 = x86_gas_reg_w(src, size);
+    if (rs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    return X86Asm { ...a, code: x86_cmovcc_rr(a.code, size, cc, rd, rs) };
+}
+
+// x86_gas_imul_family: imul at 1 operand (the widening F6/F7 /5 form), 2
+// operands (0F AF /r, reg = dst, register or memory source), or 3 operands
+// (`$imm, %src, %dst` — 6B /r ib or 69 /r iw/id). No 8-bit two/three-op form.
+function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
+    var ops: string[] = x86_gas_split_ops(rest);
+    if (ops.len() == 1) { return x86_gas_unary_family(a, mnem, 246, 5, size, ops[0]); }
+    if (size == 8) { return x86_gas_bad(a, mnem + " " + rest); }
+    if (ops.len() == 2) {
+        var rd: i32 = x86_gas_reg_w(ops[1], size);
+        if (rd < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+        if (x86_str_contains(ops[0], "(")) {
+            var m: GasMem = x86_gas_parse_mem(ops[0]);
+            if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + ops[0]); }
+            return x86_gas_mem_op(a, size, true, 175, rd, m, false, 0);
+        }
+        var rs: i32 = x86_gas_reg_w(ops[0], size);
+        if (rs < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+        return X86Asm { ...a, code: x86_op0f_rr(a.code, size, 175, rd, rs) };
+    }
+    if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') { return x86_gas_bad(a, mnem + " " + rest); }
+    var imm: i32 = x86_gas_atoi(ops[0]);
+    var rs3: i32 = x86_gas_reg_w(ops[1], size);
+    var rd3: i32 = x86_gas_reg_w(ops[2], size);
+    if (rs3 < 0 || rd3 < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+    a = X86Asm { ...a, code: x86_osz(a.code, size) };
+    a = X86Asm { ...a, code: x86_rex_rr(a.code, size, rd3, rs3) };
+    if (x86_imm_fits8(imm)) {
+        a = X86Asm { ...a, code: a.code.append(107) }; // 6B /r ib
+        a = X86Asm { ...a, code: a.code.append(x86_modrm(3, rd3, rs3)) };
+        return X86Asm { ...a, code: a.code.append(imm & 255) };
+    }
+    a = X86Asm { ...a, code: a.code.append(105) };     // 69 /r iw/id
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(3, rd3, rs3)) };
+    return X86Asm { ...a, code: x86_imm_wide(a.code, size, imm) };
+}
+
+// x86_gas_bswap: bswap r32/r64 (0F C8+rd). The 16-bit form is
+// architecturally undefined and there is no byte form — both refuse.
+function x86_gas_bswap(own a: X86Asm, mnem: string, size: i32, op: string): X86Asm {
+    if (size != 32 && size != 64) { return x86_gas_bad(a, mnem + " " + op); }
+    var r: i32 = x86_gas_reg_w(op, size);
+    if (r < 0) { return x86_gas_bad(a, mnem + " " + op); }
+    var rex: i32 = x86_rex(x86_rex_w_of(size), 0, 0, r);
+    if (rex != 64) { a = X86Asm { ...a, code: a.code.append(rex) }; }
+    a = X86Asm { ...a, code: a.code.append(15) };
+    return X86Asm { ...a, code: a.code.append(200 + (r & 7)) };
+}
+
+// x86_gas_crc32_family: `crc32{b,w,l,q} src, r32/r64` — 66? F2 0F 38 F0/F1
+// /r; the suffix names the SOURCE width (the 66 for a word source precedes
+// the mandatory F2), REX.W follows the destination. A 64-bit destination
+// pairs only with byte and qword sources; a 32-bit one with b/w/l.
+function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string): X86Asm {
+    var dsize: i32 = 32;
+    var rd: i32 = x86_gas_reg32(dst);
+    if (rd < 0) { rd = x86_gas_reg64(dst); dsize = 64; }
+    if (rd < 0) { return x86_gas_bad(a, "crc32 " + dst); }
+    if (dsize == 64 && size != 8 && size != 64) { return x86_gas_bad(a, "crc32 " + src + ", " + dst); }
+    if (dsize == 32 && size == 64) { return x86_gas_bad(a, "crc32 " + src + ", " + dst); }
+    var op: i32 = 241;
+    if (size == 8) { op = 240; }
+    if (size == 16) { a = X86Asm { ...a, code: a.code.append(102) }; }
+    a = X86Asm { ...a, code: a.code.append(242) };
+    if (x86_str_contains(src, "(")) {
+        var m: GasMem = x86_gas_parse_mem(src);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, "crc32 " + src); }
+        a = X86Asm { ...a, code: x86_gas_mem_rex(a.code, dsize, rd, m, false) };
+        a = X86Asm { ...a, code: a.code.append(15) };
+        a = X86Asm { ...a, code: a.code.append(56) };
+        a = X86Asm { ...a, code: a.code.append(op) };
+        return x86_gas_membytes(a, rd, m, 0);
+    }
+    var rs: i32 = x86_gas_reg_w(src, size);
+    if (rs < 0) { return x86_gas_bad(a, "crc32 " + src + ", " + dst); }
+    var rex: i32 = x86_rex(x86_rex_w_of(dsize), rd, 0, rs);
+    if (rex != 64 || x86_rex8_force(size, rs)) { a = X86Asm { ...a, code: a.code.append(rex) }; }
+    a = X86Asm { ...a, code: a.code.append(15) };
+    a = X86Asm { ...a, code: a.code.append(56) };
+    a = X86Asm { ...a, code: a.code.append(op) };
+    return X86Asm { ...a, code: a.code.append(x86_modrm(3, rd, rs)) };
+}
+
+// ---- SSE tables and emitters ----
+
+// x86_gas_sse_fp_op: the scalar/packed FLOAT half of the two-byte-opcode
+// SSE table (`[pfx] 0F op /r`, xmm destination), packed as pfx*256+op;
+// -1 when absent. Mirrors internal/native/x86_64's sseOps.
+function x86_gas_sse_fp_op(mnem: string): i32 {
+    if (mnem == "addsd") { return 242 * 256 + 88; }
+    if (mnem == "subsd") { return 242 * 256 + 92; }
+    if (mnem == "mulsd") { return 242 * 256 + 89; }
+    if (mnem == "divsd") { return 242 * 256 + 94; }
+    if (mnem == "sqrtsd") { return 242 * 256 + 81; }
+    if (mnem == "minsd") { return 242 * 256 + 93; }
+    if (mnem == "maxsd") { return 242 * 256 + 95; }
+    if (mnem == "addss") { return 243 * 256 + 88; }
+    if (mnem == "subss") { return 243 * 256 + 92; }
+    if (mnem == "mulss") { return 243 * 256 + 89; }
+    if (mnem == "divss") { return 243 * 256 + 94; }
+    if (mnem == "sqrtss") { return 243 * 256 + 81; }
+    if (mnem == "minss") { return 243 * 256 + 93; }
+    if (mnem == "maxss") { return 243 * 256 + 95; }
+    if (mnem == "ucomisd") { return 102 * 256 + 46; }
+    if (mnem == "comisd") { return 102 * 256 + 47; }
+    if (mnem == "ucomiss") { return 46; }
+    if (mnem == "comiss") { return 47; }
+    if (mnem == "cvtss2sd") { return 243 * 256 + 90; }
+    if (mnem == "cvtsd2ss") { return 242 * 256 + 90; }
+    if (mnem == "movapd") { return 102 * 256 + 40; }
+    if (mnem == "movaps") { return 40; }
+    if (mnem == "xorpd") { return 102 * 256 + 87; }
+    if (mnem == "xorps") { return 87; }
+    if (mnem == "andpd") { return 102 * 256 + 84; }
+    if (mnem == "andps") { return 84; }
+    if (mnem == "andnpd") { return 102 * 256 + 85; }
+    if (mnem == "andnps") { return 85; }
+    if (mnem == "orpd") { return 102 * 256 + 86; }
+    if (mnem == "orps") { return 86; }
+    if (mnem == "addpd") { return 102 * 256 + 88; }
+    if (mnem == "subpd") { return 102 * 256 + 92; }
+    if (mnem == "mulpd") { return 102 * 256 + 89; }
+    if (mnem == "divpd") { return 102 * 256 + 94; }
+    if (mnem == "sqrtpd") { return 102 * 256 + 81; }
+    if (mnem == "minpd") { return 102 * 256 + 93; }
+    if (mnem == "maxpd") { return 102 * 256 + 95; }
+    if (mnem == "addps") { return 88; }
+    if (mnem == "subps") { return 92; }
+    if (mnem == "mulps") { return 89; }
+    if (mnem == "divps") { return 94; }
+    if (mnem == "sqrtps") { return 81; }
+    if (mnem == "minps") { return 93; }
+    if (mnem == "maxps") { return 95; }
+    if (mnem == "unpcklpd") { return 102 * 256 + 20; }
+    if (mnem == "unpckhpd") { return 102 * 256 + 21; }
+    if (mnem == "cvtdq2ps") { return 91; }
+    if (mnem == "cvtps2dq") { return 102 * 256 + 91; }
+    if (mnem == "cvttps2dq") { return 243 * 256 + 91; }
+    if (mnem == "cvtdq2pd") { return 243 * 256 + 230; }
+    if (mnem == "cvtpd2dq") { return 242 * 256 + 230; }
+    if (mnem == "cvttpd2dq") { return 102 * 256 + 230; }
+    return 0 - 1;
+}
+
+// x86_gas_sse_int_op: the packed-INTEGER half of the SSE table (all
+// 66-prefixed). The psll/psrl/psra entries here are the by-%xmm-count
+// forms; the by-immediate forms are the 0F 71/72/73 groups
+// (x86_gas_vshift_op).
+function x86_gas_sse_int_op(mnem: string): i32 {
+    if (mnem == "pcmpeqb") { return 102 * 256 + 116; }
+    if (mnem == "pcmpeqw") { return 102 * 256 + 117; }
+    if (mnem == "pcmpeqd") { return 102 * 256 + 118; }
+    if (mnem == "pcmpgtb") { return 102 * 256 + 100; }
+    if (mnem == "pcmpgtw") { return 102 * 256 + 101; }
+    if (mnem == "pcmpgtd") { return 102 * 256 + 102; }
+    if (mnem == "punpcklbw") { return 102 * 256 + 96; }
+    if (mnem == "punpcklwd") { return 102 * 256 + 97; }
+    if (mnem == "punpckldq") { return 102 * 256 + 98; }
+    if (mnem == "punpcklqdq") { return 102 * 256 + 108; }
+    if (mnem == "punpckhbw") { return 102 * 256 + 104; }
+    if (mnem == "punpckhwd") { return 102 * 256 + 105; }
+    if (mnem == "punpckhdq") { return 102 * 256 + 106; }
+    if (mnem == "punpckhqdq") { return 102 * 256 + 109; }
+    if (mnem == "por") { return 102 * 256 + 235; }
+    if (mnem == "pand") { return 102 * 256 + 219; }
+    if (mnem == "pxor") { return 102 * 256 + 239; }
+    if (mnem == "pandn") { return 102 * 256 + 223; }
+    if (mnem == "paddb") { return 102 * 256 + 252; }
+    if (mnem == "paddw") { return 102 * 256 + 253; }
+    if (mnem == "paddd") { return 102 * 256 + 254; }
+    if (mnem == "paddq") { return 102 * 256 + 212; }
+    if (mnem == "psubb") { return 102 * 256 + 248; }
+    if (mnem == "psubw") { return 102 * 256 + 249; }
+    if (mnem == "psubd") { return 102 * 256 + 250; }
+    if (mnem == "psubq") { return 102 * 256 + 251; }
+    if (mnem == "paddusb") { return 102 * 256 + 220; }
+    if (mnem == "psubusb") { return 102 * 256 + 216; }
+    if (mnem == "paddsb") { return 102 * 256 + 236; }
+    if (mnem == "psubsb") { return 102 * 256 + 232; }
+    if (mnem == "pavgb") { return 102 * 256 + 224; }
+    if (mnem == "pminub") { return 102 * 256 + 218; }
+    if (mnem == "pmaxub") { return 102 * 256 + 222; }
+    if (mnem == "pminsw") { return 102 * 256 + 234; }
+    if (mnem == "pmaxsw") { return 102 * 256 + 238; }
+    if (mnem == "pmullw") { return 102 * 256 + 213; }
+    if (mnem == "pmulhw") { return 102 * 256 + 229; }
+    if (mnem == "pmulhuw") { return 102 * 256 + 228; }
+    if (mnem == "pmuludq") { return 102 * 256 + 244; }
+    if (mnem == "psadbw") { return 102 * 256 + 246; }
+    if (mnem == "packsswb") { return 102 * 256 + 99; }
+    if (mnem == "packuswb") { return 102 * 256 + 103; }
+    if (mnem == "packssdw") { return 102 * 256 + 107; }
+    if (mnem == "psllw") { return 102 * 256 + 241; }
+    if (mnem == "pslld") { return 102 * 256 + 242; }
+    if (mnem == "psllq") { return 102 * 256 + 243; }
+    if (mnem == "psrlw") { return 102 * 256 + 209; }
+    if (mnem == "psrld") { return 102 * 256 + 210; }
+    if (mnem == "psrlq") { return 102 * 256 + 211; }
+    if (mnem == "psraw") { return 102 * 256 + 225; }
+    if (mnem == "psrad") { return 102 * 256 + 226; }
+    return 0 - 1;
+}
+
+// x86_gas_sse_op consults both halves of the SSE table.
+function x86_gas_sse_op(mnem: string): i32 {
+    var v: i32 = x86_gas_sse_fp_op(mnem);
+    if (v >= 0) { return v; }
+    return x86_gas_sse_int_op(mnem);
+}
+
+// x86_gas_sse38_op: the 66 0F 38 <op> /r forms (SSE4.1 packed min/max,
+// pmulld, ptest — inside the Haswell baseline); -1 when absent.
+function x86_gas_sse38_op(mnem: string): i32 {
+    if (mnem == "ptest") { return 23; }
+    if (mnem == "pmulld") { return 64; }
+    if (mnem == "pminsb") { return 56; }
+    if (mnem == "pminsd") { return 57; }
+    if (mnem == "pminuw") { return 58; }
+    if (mnem == "pminud") { return 59; }
+    if (mnem == "pmaxsb") { return 60; }
+    if (mnem == "pmaxsd") { return 61; }
+    if (mnem == "pmaxuw") { return 62; }
+    if (mnem == "pmaxud") { return 63; }
+    return 0 - 1;
+}
+
+// x86_gas_vshift_op: the shift-by-immediate 0F 71/72/73 groups, packed as
+// ext*256+op. pslldq/psrldq exist ONLY here — a register count on those
+// has no encoding and lands on `unknown`.
+function x86_gas_vshift_op(mnem: string): i32 {
+    if (mnem == "psrlw") { return 2 * 256 + 113; }
+    if (mnem == "psraw") { return 4 * 256 + 113; }
+    if (mnem == "psllw") { return 6 * 256 + 113; }
+    if (mnem == "psrld") { return 2 * 256 + 114; }
+    if (mnem == "psrad") { return 4 * 256 + 114; }
+    if (mnem == "pslld") { return 6 * 256 + 114; }
+    if (mnem == "psrlq") { return 2 * 256 + 115; }
+    if (mnem == "psllq") { return 6 * 256 + 115; }
+    if (mnem == "psrldq") { return 3 * 256 + 115; }
+    if (mnem == "pslldq") { return 7 * 256 + 115; }
+    return 0 - 1;
+}
+
+// x86_gas_imm3a_op: the 66 0F 3A <op> /r ib three-operand forms.
+function x86_gas_imm3a_op(mnem: string): i32 {
+    if (mnem == "roundss") { return 10; }
+    if (mnem == "roundsd") { return 11; }
+    if (mnem == "pcmpestri") { return 97; }
+    if (mnem == "pcmpistri") { return 99; }
+    return 0 - 1;
+}
+
+// x86_gas_shuf_op: the [pfx] 0F <op> /r ib shuffles, packed pfx*256+op.
+function x86_gas_shuf_op(mnem: string): i32 {
+    if (mnem == "pshufd") { return 102 * 256 + 112; }
+    if (mnem == "shufps") { return 198; }
+    if (mnem == "shufpd") { return 102 * 256 + 198; }
+    return 0 - 1;
+}
+
+// x86_gas_sse_mem: `[pfx] [REX] 0F <op>` + memory rm (rip included) — the
+// memory side of the SSE table ops and the movdq/mov10 directions.
+function x86_gas_sse_mem(own a: X86Asm, pfx: i32, op: i32, reg: i32, m: GasMem, tail: i32): X86Asm {
+    if (pfx != 0) { a = X86Asm { ...a, code: a.code.append(pfx) }; }
+    a = X86Asm { ...a, code: x86_gas_mem_rex(a.code, 32, reg, m, false) };
+    a = X86Asm { ...a, code: a.code.append(15) };
+    a = X86Asm { ...a, code: a.code.append(op) };
+    return x86_gas_membytes(a, reg, m, tail);
+}
+
+// x86_gas_sse_table: a two-byte-opcode SSE table op, `src, %xmm` with an
+// xmm or memory (rip included) source.
+function x86_gas_sse_table(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: string, dst: string): X86Asm {
+    var xd: i32 = x86_gas_xmm(dst);
+    if (xd < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    if (x86_str_contains(src, "(")) {
+        var m: GasMem = x86_gas_parse_mem(src);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + src); }
+        return x86_gas_sse_mem(a, pfx, op, xd, m, 0);
+    }
+    var xs: i32 = x86_gas_xmm(src);
+    if (xs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    return X86Asm { ...a, code: x86_sse_any_rr(a.code, pfx, op, xd, xs) };
+}
+
+// x86_gas_movdq: movdqu (F3) / movdqa (66) with the direction picked by
+// which side is memory: 0F 6F loads/copies, 0F 7F stores. The store was
+// missing before this port — the operands written backwards through 6F
+// would have READ from the store address instead.
+function x86_gas_movdq(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
+    var pfx: i32 = 243;
+    if (mnem == "movdqa") { pfx = 102; }
+    if (x86_str_contains(dst, "(")) {
+        var m: GasMem = x86_gas_parse_mem(dst);
+        var xs: i32 = x86_gas_xmm(src);
+        if (!x86_gas_mem_ok(m) || xs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        return x86_gas_sse_mem(a, pfx, 127, xs, m, 0);
+    }
+    return x86_gas_sse_table(a, mnem, pfx, 111, src, dst);
+}
+
+// x86_gas_sse_mov10: the 0F 10/0F 11 move family — movsd (F2), movups (no
+// prefix), movupd (66): load into an xmm (10), store from one (11), or a
+// register copy (10). The rip-relative load is how a `.double` constant
+// arrives from .rodata.
+function x86_gas_sse_mov10(own a: X86Asm, mnem: string, pfx: i32, src: string, dst: string): X86Asm {
+    if (x86_str_contains(dst, "(")) {
+        var m: GasMem = x86_gas_parse_mem(dst);
+        var xs: i32 = x86_gas_xmm(src);
+        if (!x86_gas_mem_ok(m) || xs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        return x86_gas_sse_mem(a, pfx, 17, xs, m, 0);
+    }
+    return x86_gas_sse_table(a, mnem, pfx, 16, src, dst);
+}
+
+// x86_gas_movmsk: pmovmskb (66 0F D7), movmskps (0F 50), movmskpd
+// (66 0F 50) — sign-bit gathers into a 32- or 64-bit GPR destination.
+function x86_gas_movmsk(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: string, dst: string): X86Asm {
+    var rd: i32 = x86_gas_reg32(dst);
+    if (rd < 0) { rd = x86_gas_reg64(dst); }
+    var xs: i32 = x86_gas_xmm(src);
+    if (rd < 0 || xs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    return X86Asm { ...a, code: x86_sse_any_rr(a.code, pfx, op, rd, xs) };
+}
+
+// x86_gas_vshift_imm: `psll/psrl/psra $imm8, %xmm` — 66 [REX.B] 0F 71/72/73
+// /ext ib, the shifted register in ModRM.rm.
+function x86_gas_vshift_imm(own a: X86Asm, mnem: string, packed: i32, src: string, dst: string): X86Asm {
+    var xr: i32 = x86_gas_xmm(dst);
+    if (xr < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    a = X86Asm { ...a, code: a.code.append(102) };
+    var rex: i32 = x86_rex(0, 0, 0, xr);
+    if (rex != 64) { a = X86Asm { ...a, code: a.code.append(rex) }; }
+    a = X86Asm { ...a, code: a.code.append(15) };
+    a = X86Asm { ...a, code: a.code.append(packed & 255) };
+    a = X86Asm { ...a, code: a.code.append(x86_modrm(3, packed / 256, xr)) };
+    return X86Asm { ...a, code: a.code.append(x86_gas_atoi(src) & 255) };
+}
+
+// x86_gas_sse38: `66 [REX] 0F 38 <op> /r` (xmm, xmm).
+function x86_gas_sse38(own a: X86Asm, mnem: string, op: i32, src: string, dst: string): X86Asm {
+    var xd: i32 = x86_gas_xmm(dst);
+    var xs: i32 = x86_gas_xmm(src);
+    if (xd < 0 || xs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    a = X86Asm { ...a, code: a.code.append(102) };
+    var rex: i32 = x86_rex(0, xd, 0, xs);
+    if (rex != 64) { a = X86Asm { ...a, code: a.code.append(rex) }; }
+    a = X86Asm { ...a, code: a.code.append(15) };
+    a = X86Asm { ...a, code: a.code.append(56) };
+    a = X86Asm { ...a, code: a.code.append(op) };
+    return X86Asm { ...a, code: a.code.append(x86_modrm(3, xd, xs)) };
+}
+
+// x86_gas_sse_imm3: the `$imm8, %src, %dst` three-operand forms — the
+// 66 0F 3A group (roundsd/roundss/pcmpistri/pcmpestri) and the shuffles
+// (pshufd/shufps/shufpd). The caller guarantees one lookup hits.
+function x86_gas_sse_imm3(own a: X86Asm, mnem: string, rest: string): X86Asm {
+    var ops: string[] = x86_gas_split_ops(rest);
+    if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') { return x86_gas_bad(a, mnem + " " + rest); }
+    var imm: i32 = x86_gas_atoi(ops[0]);
+    var xs: i32 = x86_gas_xmm(ops[1]);
+    var xd: i32 = x86_gas_xmm(ops[2]);
+    if (xs < 0 || xd < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+    var op3a: i32 = x86_gas_imm3a_op(mnem);
+    if (op3a >= 0) {
+        return X86Asm { ...a, code: x86_sse_3a_imm(a.code, 0, op3a, xd, xs, imm) };
+    }
+    var sh: i32 = x86_gas_shuf_op(mnem);
+    a = X86Asm { ...a, code: x86_sse_any_rr(a.code, sh / 256, sh & 255, xd, xs) };
+    return X86Asm { ...a, code: a.code.append(imm & 255) };
+}
+
+// x86_gas_pextr: `pextr{b,w,d,q} $imm, %xmm, r/m` — extract one lane.
+// pextrw with a register destination is the legacy 66 0F C5 /r ib (reg =
+// the GPR); the others are 66 0F 3A 14/16 /r ib with ModRM.rm = the
+// DESTINATION and reg = the xmm source (REX.W selects the q width). A
+// memory destination always takes the 3A form (pextrw's is 3A 15).
+function x86_gas_pextr(own a: X86Asm, mnem: string, rest: string): X86Asm {
+    var ops: string[] = x86_gas_split_ops(rest);
+    if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') { return x86_gas_bad(a, mnem + " " + rest); }
+    var imm: i32 = x86_gas_atoi(ops[0]);
+    var xs: i32 = x86_gas_xmm(ops[1]);
+    if (xs < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+    var op: i32 = 20; // pextrb 3A 14
+    var w: i32 = 0;
+    var dsize: i32 = 32;
+    if (mnem == "pextrw") { op = 21; }
+    if (mnem == "pextrd") { op = 22; }
+    if (mnem == "pextrq") { op = 22; w = 1; dsize = 64; }
+    if (x86_str_contains(ops[2], "(")) {
+        var m: GasMem = x86_gas_parse_mem(ops[2]);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + ops[2]); }
+        a = X86Asm { ...a, code: a.code.append(102) };
+        var msz: i32 = 32;
+        if (w == 1) { msz = 64; }
+        a = X86Asm { ...a, code: x86_gas_mem_rex(a.code, msz, xs, m, false) };
+        a = X86Asm { ...a, code: a.code.append(15) };
+        a = X86Asm { ...a, code: a.code.append(58) };
+        a = X86Asm { ...a, code: a.code.append(op) };
+        a = x86_gas_membytes(a, xs, m, 1);
+        return X86Asm { ...a, code: a.code.append(imm & 255) };
+    }
+    var rd: i32 = x86_gas_reg_w(ops[2], dsize);
+    if (rd < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+    if (mnem == "pextrw") {
+        a = X86Asm { ...a, code: x86_sse_any_rr(a.code, 102, 197, rd, xs) };
+        return X86Asm { ...a, code: a.code.append(imm & 255) };
+    }
+    return X86Asm { ...a, code: x86_sse_3a_imm(a.code, w, op, xs, rd, imm) };
+}
+
+// x86_gas_pinsr: `pinsr{b,w,d,q} $imm, r/m, %xmm` — insert into one lane.
+// pinsrw is the legacy 66 0F C4 /r ib; the others 66 0F 3A 20/22 /r ib
+// (REX.W selects q). ModRM.reg is the xmm destination throughout.
+function x86_gas_pinsr(own a: X86Asm, mnem: string, rest: string): X86Asm {
+    var ops: string[] = x86_gas_split_ops(rest);
+    if (ops.len() != 3 || ops[0].len() == 0 || ops[0][0] != b'$') { return x86_gas_bad(a, mnem + " " + rest); }
+    var imm: i32 = x86_gas_atoi(ops[0]);
+    var xd: i32 = x86_gas_xmm(ops[2]);
+    if (xd < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+    var w: i32 = 0;
+    var ssize: i32 = 32;
+    var op: i32 = 32; // pinsrb 3A 20
+    if (mnem == "pinsrd") { op = 34; }
+    if (mnem == "pinsrq") { op = 34; w = 1; ssize = 64; }
+    var legacy: boolean = (mnem == "pinsrw");
+    if (x86_str_contains(ops[1], "(")) {
+        var m: GasMem = x86_gas_parse_mem(ops[1]);
+        if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, mnem + " " + ops[1]); }
+        a = X86Asm { ...a, code: a.code.append(102) };
+        var msz: i32 = 32;
+        if (w == 1) { msz = 64; }
+        a = X86Asm { ...a, code: x86_gas_mem_rex(a.code, msz, xd, m, false) };
+        a = X86Asm { ...a, code: a.code.append(15) };
+        if (legacy) {
+            a = X86Asm { ...a, code: a.code.append(196) };
+        } else {
+            a = X86Asm { ...a, code: a.code.append(58) };
+            a = X86Asm { ...a, code: a.code.append(op) };
+        }
+        a = x86_gas_membytes(a, xd, m, 1);
+        return X86Asm { ...a, code: a.code.append(imm & 255) };
+    }
+    var rs: i32 = x86_gas_reg_w(ops[1], ssize);
+    if (rs < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+    if (legacy) {
+        a = X86Asm { ...a, code: x86_sse_any_rr(a.code, 102, 196, xd, rs) };
+        return X86Asm { ...a, code: a.code.append(imm & 255) };
+    }
+    return X86Asm { ...a, code: x86_sse_3a_imm(a.code, w, op, xd, rs, imm) };
+}
+
 // x86_gas_emit assembles one instruction line (mnemonic + operand text).
 function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
-    // zero-operand
-    if (mnem == "ret") { a = X86Asm { ...a, code: x86_ret(a.code) }; return a; }
-    if (mnem == "syscall") { a = X86Asm { ...a, code: x86_syscall(a.code) }; return a; }
-    if (mnem == "leave") { a = X86Asm { ...a, code: x86_leave(a.code) }; return a; }
-    if (mnem == "cqto") { a = X86Asm { ...a, code: x86_cqo(a.code) }; return a; }
-    if (mnem == "cld") { a = X86Asm { ...a, code: x86_cld(a.code) }; return a; }
-    // A dropped string-op leaves memory uninitialised, which surfaces far
-    // from here — so an unrecognised suffix is recorded, not ignored (SH-005).
+    // no-operand mnemonics (incl. the AT&T string ops) — fixed byte lists.
+    if (rest.len() == 0) {
+        var fx: i32 = x86_gas_fixed_op(mnem);
+        if (fx < 0) { fx = x86_gas_string_op(mnem); }
+        if (fx >= 0) { return x86_gas_emit_packed(a, fx); }
+    }
+    // rep prefix: F3 + a string op. A dropped string-op leaves memory
+    // uninitialised, surfacing far from here — record, not ignore (SH-005).
     if (mnem == "rep") {
-        if (rest == "stosq") { a = X86Asm { ...a, code: x86_rep_stosq(a.code) }; return a; }
-        if (rest == "stosb") { a = X86Asm { ...a, code: x86_rep_stosb(a.code) }; return a; }
-        if (rest == "movsq") { a = X86Asm { ...a, code: x86_rep_movsq(a.code) }; return a; }
-        if (rest == "movsb") { a = X86Asm { ...a, code: x86_rep_movsb(a.code) }; return a; }
-        return X86Asm { ...a, unknown: a.unknown.append("rep " + rest) };
+        var sop: i32 = x86_gas_string_op(rest);
+        if (sop < 0) { return x86_gas_bad(a, "rep " + rest); }
+        a = X86Asm { ...a, code: a.code.append(243) };
+        return x86_gas_emit_packed(a, sop);
+    }
+    // lock prefix: F0, validated against the lockable set — a lock on
+    // anything else is #UD at runtime, so it is refused at assembly.
+    if (mnem == "lock") {
+        var lsp: i32 = x86_str_indexof(rest, " ");
+        var lm: string = rest;
+        var lr: string = "";
+        if (lsp >= 0) {
+            lm = slice_unchecked(rest, 0, lsp) + "";
+            lr = x86_gas_trim(slice_unchecked(rest, lsp + 1, rest.len()));
+        }
+        var lb: string = lm;
+        if (x86_gas_suffix_size(lm) > 0) { lb = x86_gas_strip_suffix(lm); }
+        if (!x86_gas_lockable(lb)) { return x86_gas_bad(a, "lock " + rest); }
+        a = X86Asm { ...a, code: a.code.append(240) };
+        return x86_gas_emit(a, lm, lr);
     }
     // setCC <reg8>: store a condition flag as 0/1.
     if (mnem == "sete" || mnem == "setz") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 148, x86_gas_reg8(rest)) }; return a; }
@@ -2734,17 +3395,20 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "call" || mnem == "jmp") {
         if (rest.len() > 0 && rest[0] == b'*') {
             var ind: string = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
+            var ext: i32 = 2; // call FF /2
+            if (mnem == "jmp") { ext = 4; } // jmp FF /4
             if (x86_str_contains(ind, "(")) {
+                // `*disp(%base[,%index,scale])` and `*sym(%rip)` — FF /2 //4
+                // over a memory operand (a callee pointer in a stack slot or
+                // a rip-addressed table). The operand size is fixed 64-bit.
                 var cm: GasMem = x86_gas_parse_mem(ind);
-                if (cm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + ind) }; }
-                if (cm.is_rip || cm.has_index || mnem == "jmp") {
-                    return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + rest) };
-                }
-                a = X86Asm { ...a, code: x86_call_mem(a.code, cm.base, cm.disp) };
-                return a;
+                if (!x86_gas_mem_ok(cm)) { return x86_gas_bad(a, mnem + " " + rest); }
+                a = X86Asm { ...a, code: x86_gas_mem_rex(a.code, 32, 0, cm, false) };
+                a = X86Asm { ...a, code: a.code.append(255) }; // 0xFF
+                return x86_gas_membytes(a, ext, cm, 0);
             }
             var ireg: i32 = x86_gas_reg(ind);
-            if (ireg < 0) { return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + rest) }; }
+            if (ireg < 0) { return x86_gas_bad(a, mnem + " " + rest); }
             if (mnem == "jmp") { a = X86Asm { ...a, code: x86_jmp_reg(a.code, ireg) }; }
             else { a = X86Asm { ...a, code: x86_call_reg(a.code, ireg) }; }
             return a;
@@ -2767,8 +3431,14 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "jp") { return x86_jcc_label(a, x86_cc_p(), rest); }
     // one-operand: push/pop take a register or a memory operand
     if (mnem == "pushq") {
-        if (rest.len() > 0 && rest[0] == b'$') { // $imm
-            a = X86Asm { ...a, code: x86_push_imm32(a.code, x86_gas_atoi(rest)) };
+        if (rest.len() > 0 && rest[0] == b'$') { // $imm — 6A ib when it fits
+            var pv: i32 = x86_gas_atoi(rest);
+            if (x86_imm_fits8(pv)) {
+                a = X86Asm { ...a, code: a.code.append(106) };
+                a = X86Asm { ...a, code: a.code.append(pv & 255) };
+                return a;
+            }
+            a = X86Asm { ...a, code: x86_push_imm32(a.code, pv) };
         } else {
             if (x86_str_contains(rest, "(")) {
                 var pm: GasMem = x86_gas_parse_mem(rest);
@@ -2792,68 +3462,26 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         }
         return a;
     }
-    // imulq: 3-operand `$imm, %src, %dst` or 2-operand `%src, %dst`.
-    if (mnem == "imulq") {
-        var c1: i32 = x86_gas_top_comma(rest);
-        var op0: string = x86_gas_trim(slice_unchecked(rest, 0, c1));
-        var remn: str = slice_unchecked(rest, c1 + 1, rest.len());
-        var c2: i32 = x86_gas_top_comma(remn);
-        if (c2 >= 0) {
-            var rs: string = x86_gas_trim(slice_unchecked(remn, 0, c2));       // %src
-            var rd: string = x86_gas_trim(slice_unchecked(remn, c2 + 1, remn.len())); // %dst
-            a = X86Asm { ...a, code: x86_imul_r64_r64_imm32(a.code, x86_gas_reg(rd), x86_gas_reg(rs), x86_gas_atoi(op0)) };
-        } else {
-            a = X86Asm { ...a, code: x86_imul_r64_r64(a.code, x86_gas_reg(x86_gas_trim(remn)), x86_gas_reg(op0)) };
-        }
-        return a;
+    // Suffixed families that split their own operands (any arity), plus
+    // the one-operand groups. Each lookup falls through when it misses, so
+    // an unmatched mnemonic still reaches the two-operand dispatch below.
+    var sfx: i32 = x86_gas_suffix_size(mnem);
+    if (sfx > 0) {
+        var bse: string = x86_gas_strip_suffix(mnem);
+        if (bse == "imul") { return x86_gas_imul_family(a, mnem, sfx, rest); }
+        var ue: i32 = x86_gas_unary_ext(bse);
+        if (ue >= 0) { return x86_gas_unary_family(a, mnem, 246, ue, sfx, rest); }
+        var ide: i32 = x86_gas_incdec_ext(bse);
+        if (ide >= 0) { return x86_gas_unary_family(a, mnem, 254, ide, sfx, rest); }
+        if (bse == "bswap") { return x86_gas_bswap(a, mnem, sfx, rest); }
+        if (bse == "shld") { return x86_gas_shld_family(a, mnem, 164, sfx, rest); }
+        if (bse == "shrd") { return x86_gas_shld_family(a, mnem, 172, sfx, rest); }
     }
-    // roundsd $mode, %src, %dst — three operands (imm, xmm, xmm).
-    if (mnem == "roundsd") {
-        var rc1: i32 = x86_gas_top_comma(rest);
-        var rmode: string = x86_gas_trim(slice_unchecked(rest, 0, rc1));
-        var rrem: str = slice_unchecked(rest, rc1 + 1, rest.len());
-        var rc2: i32 = x86_gas_top_comma(rrem);
-        var rsrc: string = x86_gas_trim(slice_unchecked(rrem, 0, rc2));
-        var rdst: string = x86_gas_trim(slice_unchecked(rrem, rc2 + 1, rrem.len()));
-        a = X86Asm { ...a, code: x86_roundsd(a.code, x86_gas_xmm(rdst), x86_gas_xmm(rsrc), x86_gas_atoi(rmode)) };
-        return a;
-    }
-    // pshufd $imm8, %src, %dst — three operands, roundsd's shape. The byte
-    // splat in the __memchr kernel ends here (ATLAS-PLATFORM-PLAN §3).
-    if (mnem == "pshufd") {
-        var pc1: i32 = x86_gas_top_comma(rest);
-        var pimm: string = x86_gas_trim(slice_unchecked(rest, 0, pc1));
-        var prem: str = slice_unchecked(rest, pc1 + 1, rest.len());
-        var pc2: i32 = x86_gas_top_comma(prem);
-        var psrc: string = x86_gas_trim(slice_unchecked(prem, 0, pc2));
-        var pdst: string = x86_gas_trim(slice_unchecked(prem, pc2 + 1, prem.len()));
-        a = X86Asm { ...a, code: x86_pshufd(a.code, x86_gas_xmm(pdst), x86_gas_xmm(psrc), x86_gas_atoi(pimm)) };
-        return a;
-    }
-    if (mnem == "incq") {
-        if (x86_str_contains(rest, "(")) {
-            var iq: GasMem = x86_gas_parse_mem(rest);
-            if (iq.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) }; }
-            if (!iq.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("incq " + rest) }; }
-            return x86_incq_rip_label(a, iq.label);
-        }
-        a = X86Asm { ...a, code: x86_inc_r64(a.code, x86_gas_reg(rest)) };
-        return a;
-    }
-    // incl sym(%rip) — the 32-bit rip-relative memory increment asm.fern emits
-    // for the __fern_rc_underflow diagnostic counter. Register/other-memory
-    // incl forms don't arise in the emitted runtime.
-    if (mnem == "incl") {
-        var im: GasMem = x86_gas_parse_mem(rest);
-        if (im.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) }; }
-        if (im.is_rip) { return x86_incl_rip_label(a, im.label); }
-        return X86Asm { ...a, unknown: a.unknown.append("incl " + rest) };
-    }
-    if (mnem == "decq") { a = X86Asm { ...a, code: x86_dec_r64(a.code, x86_gas_reg(rest)) }; return a; }
-    if (mnem == "negq") { a = X86Asm { ...a, code: x86_neg_r64(a.code, x86_gas_reg(rest)) }; return a; }
-    if (mnem == "mulq") { a = X86Asm { ...a, code: x86_mul_r64(a.code, x86_gas_reg(rest)) }; return a; }
-    if (mnem == "divq") { a = X86Asm { ...a, code: x86_div_r64(a.code, x86_gas_reg(rest)) }; return a; }
-    if (mnem == "idivq") { a = X86Asm { ...a, code: x86_idiv_r64(a.code, x86_gas_reg(rest)) }; return a; }
+    // three-operand SSE ($imm first): rounds/pcmp*stri + the shuffles, and
+    // the lane extract/insert group.
+    if (x86_gas_imm3a_op(mnem) >= 0 || x86_gas_shuf_op(mnem) >= 0) { return x86_gas_sse_imm3(a, mnem, rest); }
+    if (mnem == "pextrb" || mnem == "pextrw" || mnem == "pextrd" || mnem == "pextrq") { return x86_gas_pextr(a, mnem, rest); }
+    if (mnem == "pinsrb" || mnem == "pinsrw" || mnem == "pinsrd" || mnem == "pinsrq") { return x86_gas_pinsr(a, mnem, rest); }
     // two-operand (split on the top-level comma, skipping (%b,%i,s) commas)
     var ci: i32 = x86_gas_top_comma(rest);
     if (ci < 0) {
@@ -2885,80 +3513,17 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     }
     if (mnem == "movq") { return x86_gas_movq(a, src, dst); }
     if (mnem == "movabsq" || mnem == "movabs") { a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)) }; return a; }
-    if (mnem == "addq") { return x86_gas_alu(a, 0, src, dst); }
-    if (mnem == "subq") { return x86_gas_alu(a, 5, src, dst); }
-    if (mnem == "cmpq") { return x86_gas_alu(a, 7, src, dst); }
-    // adcq/sbbq, reg-reg only — the carry chain the Payne-Hanek trig
-    // reduction accumulates through. Opcodes 0x11/0x19; the /digit family
-    // sits between or and and, so a wrong extension digit is a different
-    // instruction that drops the carry these exist to propagate.
-    if (mnem == "adcq") { a = X86Asm { ...a, code: x86_binop_r64_r64(a.code, 17, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (mnem == "sbbq") { a = X86Asm { ...a, code: x86_binop_r64_r64(a.code, 25, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    // shldq %cl, %src, %dst — the only form the emitted runtime uses.
-    if (mnem == "shldq") {
-        if (src != "%cl") { return X86Asm { ...a, unknown: a.unknown.append("shldq " + src) }; }
-        var hcomma: i32 = x86_gas_top_comma(dst);
-        var hsrc: string = x86_gas_trim(slice_unchecked(dst, 0, hcomma));
-        var hdst: string = x86_gas_trim(slice_unchecked(dst, hcomma + 1, dst.len()));
-        a = X86Asm { ...a, code: x86_shld_r64_cl(a.code, x86_gas_reg(hdst), x86_gas_reg(hsrc)) };
-        return a;
-    }
-    if (mnem == "testq") {
-        if (src.len() > 0 && src[0] == b'$') { // `testq $imm, %reg` — bit-mask test
-            a = X86Asm { ...a, code: x86_test_r64_imm32(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) };
-            return a;
-        }
-        a = X86Asm { ...a, code: x86_test_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)) };
-        return a;
-    }
-    // testl (32-bit test reg,reg). It must NOT route to the 64-bit encoder: an
-    // operand loaded with `movl` is zero-extended, so ZF agrees but SF does not
-    // — a negative 32-bit rc reads as a large positive at 64 bits and the
-    // `js` guarding every "negative = immortal, skip" arm of the rc runtime
-    // (__fern_rc_inc, __fern_arr_dec, __fern_str_free, …) falls through to the
-    // decrement / underflow path instead.
-    // Packed SSE2, the vector half of the __memchr / __ascii_run kernels.
-    // `movdqu` is load-only: the kernels read 16-byte blocks and never write
-    // one back.
-    if (mnem == "movdqu") {
-        var vm: GasMem = x86_gas_parse_mem(src);
-        if (vm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
-        if (vm.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
-        a = X86Asm { ...a, code: x86_movdqu_load(a.code, x86_gas_xmm(dst), vm.base, vm.has_index, vm.index, vm.scale, vm.disp) };
-        return a;
-    }
-    if (mnem == "pcmpeqb") { a = X86Asm { ...a, code: x86_pcmpeqb(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    if (mnem == "punpcklbw") { a = X86Asm { ...a, code: x86_punpcklbw(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    if (mnem == "punpcklwd") { a = X86Asm { ...a, code: x86_punpcklwd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    // pmovmskb's destination is a GPR, so it parses with x86_gas_reg32 where
-    // the three above take two xmm operands.
-    if (mnem == "pmovmskb") { a = X86Asm { ...a, code: x86_pmovmskb(a.code, x86_gas_reg32(dst), x86_gas_xmm(src)) }; return a; }
+    // Packed 16-byte moves (both directions) and the 0F 10/11 move family.
+    if (mnem == "movdqu" || mnem == "movdqa") { return x86_gas_movdq(a, mnem, src, dst); }
+    if (mnem == "movsd") { return x86_gas_sse_mov10(a, mnem, 242, src, dst); }
+    if (mnem == "movups") { return x86_gas_sse_mov10(a, mnem, 0, src, dst); }
+    if (mnem == "movupd") { return x86_gas_sse_mov10(a, mnem, 102, src, dst); }
+    // Sign-bit gathers: the destination is a GPR, not an xmm.
+    if (mnem == "pmovmskb") { return x86_gas_movmsk(a, mnem, 102, 215, src, dst); }
+    if (mnem == "movmskps") { return x86_gas_movmsk(a, mnem, 0, 80, src, dst); }
+    if (mnem == "movmskpd") { return x86_gas_movmsk(a, mnem, 102, 80, src, dst); }
     if (mnem == "bsfl") { a = X86Asm { ...a, code: x86_bsf_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
     if (mnem == "bsrl") { a = X86Asm { ...a, code: x86_bsr_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
-    if (mnem == "testl") { a = X86Asm { ...a, code: x86_test_r32_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
-    // Either `%cl` (variable count, D3 /slash) or an immediate (C1 /slash).
-    // Anything else is recorded: a register name read through the immediate
-    // parser yields 0, i.e. a silent shift by zero.
-    if (mnem == "shlq" || mnem == "shrq" || mnem == "sarq") {
-        var sl: i32 = 4; // shl
-        if (mnem == "shrq") { sl = 5; }
-        if (mnem == "sarq") { sl = 7; }
-        if (src == "%cl") {
-            a = X86Asm { ...a, code: x86_shift_r64_cl(a.code, sl, x86_gas_reg(dst)) };
-            return a;
-        }
-        if (src.len() > 0 && src[0] == b'$') {
-            a = X86Asm { ...a, code: x86_shift_r64_imm8(a.code, sl, x86_gas_reg(dst), x86_gas_atoi(src)) };
-            return a;
-        }
-        return X86Asm { ...a, unknown: a.unknown.append(mnem + " " + src) };
-    }
-    if (mnem == "btq") { a = X86Asm { ...a, code: x86_bt_r64_imm8(a.code, x86_gas_reg(dst), x86_gas_atoi(src)) }; return a; }
-    if (mnem == "andq") { return x86_gas_logic(a, 4, 33, src, dst); }
-    if (mnem == "orq") { return x86_gas_logic(a, 1, 9, src, dst); }
-    if (mnem == "xorq") { return x86_gas_logic(a, 6, 49, src, dst); }
-    if (mnem == "andb") { a = X86Asm { ...a, code: x86_byte_alu_rr(a.code, 32, x86_gas_reg8(dst), x86_gas_reg8(src)) }; return a; }
-    if (mnem == "orb") { a = X86Asm { ...a, code: x86_byte_alu_rr(a.code, 8, x86_gas_reg8(dst), x86_gas_reg8(src)) }; return a; }
     // The `l` forms are not routed to the `q` ones the way testl is: the
     // count differs by width (lzcntl counts from bit 31, lzcntq from 63).
     if (mnem == "lzcntl") { a = X86Asm { ...a, code: x86_lzcnt_rr(a.code, 0, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
@@ -2967,8 +3532,6 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (mnem == "tzcntq") { a = X86Asm { ...a, code: x86_tzcnt_rr(a.code, 1, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
     if (mnem == "popcntl") { a = X86Asm { ...a, code: x86_popcnt_rr(a.code, 0, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
     if (mnem == "popcntq") { a = X86Asm { ...a, code: x86_popcnt_rr(a.code, 1, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (mnem == "cvtsd2ss") { a = X86Asm { ...a, code: x86_cvtsd2ss(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    if (mnem == "cvtss2sd") { a = X86Asm { ...a, code: x86_cvtss2sd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
     // movd moves f32 bits between a GPR and an xmm; which direction depends on
     // which operand is the xmm.
     if (mnem == "movd") {
@@ -2986,39 +3549,6 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // (the upper 32 bits are cleared either way), so route to the same encoder;
     // without this the mnemonic was unhandled and no load was emitted.
     if (mnem == "movzbl") { return x86_gas_movzbq(a, src, dst); }
-    if (mnem == "movsd") {
-        if (x86_str_contains(dst, "(")) { // store: movsd %xmm, mem
-            var sm: GasMem = x86_gas_parse_mem(dst);
-            if (sm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-            a = X86Asm { ...a, code: x86_movsd_store(a.code, sm.base, sm.has_index, sm.index, sm.scale, sm.disp, x86_gas_xmm(src)) };
-            return a;
-        }
-        if (!x86_str_contains(src, "(")) { // reg-reg: movsd %xmm, %xmm
-            a = X86Asm { ...a, code: x86_movsd_rr(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) };
-            return a;
-        }
-        // load into xmm (dst is xmm) from memory / rip
-        var lm: GasMem = x86_gas_parse_mem(src);
-        if (lm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
-        if (lm.is_rip) {
-            return x86_movsd_load_rip_label(a, x86_gas_xmm(dst), lm.label);
-        }
-        a = X86Asm { ...a, code: x86_movsd_load(a.code, x86_gas_xmm(dst), lm.base, lm.has_index, lm.index, lm.scale, lm.disp) };
-        return a;
-    }
-    if (mnem == "addsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 88, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    if (mnem == "subsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 92, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    if (mnem == "mulsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 89, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    if (mnem == "divsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 94, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    // minsd (0x5D) / maxsd (0x5F): asm.fern's float runtime (fmin/fmax
-    // helpers) emits these; they were silently DROPPED until the SH-005
-    // unknown check caught them in the capstone — the helpers assembled
-    // corrupt but the happy path never executed them.
-    if (mnem == "minsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 93, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    if (mnem == "maxsd") { a = X86Asm { ...a, code: x86_sse_rr(a.code, 95, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    if (mnem == "ucomisd") { a = X86Asm { ...a, code: x86_ucomisd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    if (mnem == "xorpd") { a = X86Asm { ...a, code: x86_xorpd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
-    if (mnem == "sqrtsd") { a = X86Asm { ...a, code: x86_sqrtsd(a.code, x86_gas_xmm(dst), x86_gas_xmm(src)) }; return a; }
     // cvttsd2si's destination is a GPR of either width; the 32-bit spelling
     // (`%eax`) is the one the emitter writes almost always.
     if (mnem == "cvttsd2si") {
@@ -3032,41 +3562,58 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         a = X86Asm { ...a, code: x86_cvttsd2si_w(a.code, 1, d64, x86_gas_xmm(src)) };
         return a;
     }
-    if (mnem == "cvtsi2sd") { a = X86Asm { ...a, code: x86_cvtsi2sd(a.code, x86_gas_xmm(dst), x86_gas_reg(src)) }; return a; }
-    // 32-bit ALU + moves + extends + cmov + testb (slice 2q).
-    if (mnem == "movl") { return x86_gas_movl(a, src, dst); }
-    if (mnem == "addl") { return x86_gas_alu32(a, mnem, 0, 1, src, dst); }
-    if (mnem == "subl") { return x86_gas_alu32(a, mnem, 5, 41, src, dst); }
-    if (mnem == "andl") { return x86_gas_alu32(a, mnem, 4, 33, src, dst); }
-    if (mnem == "orl") { return x86_gas_alu32(a, mnem, 1, 9, src, dst); }
-    if (mnem == "xorl") { return x86_gas_alu32(a, mnem, 6, 49, src, dst); }
-    if (mnem == "cmpl") { return x86_gas_alu32(a, mnem, 7, 57, src, dst); }
-    if (mnem == "shrl") { a = X86Asm { ...a, code: x86_shr_r32_imm8(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)) }; return a; }
-    if (mnem == "testb") {
-        if (src.len() > 0 && src[0] == b'$') {
-            a = X86Asm { ...a, code: x86_testb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src)) };
-        } else {
-            a = X86Asm { ...a, code: x86_testb_reg8_reg8(a.code, x86_gas_reg8(dst), x86_gas_reg8(src)) };
+    // cvtsi2sd's unsuffixed spelling is the 64-bit form the emitter writes;
+    // the `l` suffix selects the 32-bit source (no REX.W). A memory source
+    // used to fall into the register parser and encode reg 7 silently.
+    if (mnem == "cvtsi2sd" || mnem == "cvtsi2sdq" || mnem == "cvtsi2sdl") {
+        var cw: i32 = 1;
+        if (mnem == "cvtsi2sdl") { cw = 0; }
+        var cxd: i32 = x86_gas_xmm(dst);
+        if (cxd < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        if (x86_str_contains(src, "(")) {
+            var cm2: GasMem = x86_gas_parse_mem(src);
+            if (!x86_gas_mem_ok(cm2)) { return x86_gas_bad(a, mnem + " " + src); }
+            var csz: i32 = 32;
+            if (cw == 1) { csz = 64; }
+            a = X86Asm { ...a, code: a.code.append(242) };
+            a = X86Asm { ...a, code: x86_gas_mem_rex(a.code, csz, cxd, cm2, false) };
+            a = X86Asm { ...a, code: a.code.append(15) };
+            a = X86Asm { ...a, code: a.code.append(42) };
+            return x86_gas_membytes(a, cxd, cm2, 0);
         }
+        var crs: i32 = x86_gas_reg64(src);
+        if (cw == 0) { crs = x86_gas_reg32(src); }
+        if (crs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        a = X86Asm { ...a, code: x86_cvtsi2sd(a.code, cw, cxd, crs) };
         return a;
     }
-    // The operand-size suffix is optional on cmov in AT&T and the emitter
-    // writes both spellings (`cmovneq` at asm_ir.fern:5293), so strip a
-    // trailing `q` before matching. Every operand here is 64-bit.
-    var cmv: string = mnem;
-    if (cmv.len() > 5 && slice_unchecked(cmv, 0, 4) == "cmov" && cmv[cmv.len() - 1] == b'q') {
-        cmv = slice_unchecked(cmv, 0, cmv.len() - 1) + "";
+    if (mnem == "movl") { return x86_gas_movl(a, src, dst); }
+    // Two-operand suffix families: the ALU rows, test, shifts/rotates, the
+    // bit-test group, the RMW atomics, xchg, and crc32.
+    if (sfx > 0) {
+        var bse2: string = x86_gas_strip_suffix(mnem);
+        var ae: i32 = x86_gas_alu_ext(bse2);
+        if (ae >= 0) { return x86_gas_alu_family(a, mnem, ae, sfx, src, dst); }
+        if (bse2 == "test") { return x86_gas_test_family(a, sfx, src, dst); }
+        var she: i32 = x86_gas_shift_ext(bse2);
+        if (she >= 0) { return x86_gas_shift_family(a, mnem, she, sfx, src, dst); }
+        var bti: i32 = x86_gas_bt_idx(bse2);
+        if (bti >= 0) { return x86_gas_bt_family(a, mnem, bti, sfx, src, dst); }
+        if (bse2 == "xadd") { return x86_gas_rmw_family(a, mnem, 192, sfx, src, dst); }
+        if (bse2 == "cmpxchg") { return x86_gas_rmw_family(a, mnem, 176, sfx, src, dst); }
+        if (bse2 == "xchg") { return x86_gas_xchg_family(a, mnem, sfx, src, dst); }
+        if (bse2 == "crc32") { return x86_gas_crc32_family(a, sfx, src, dst); }
     }
-    if (cmv == "cmovl") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_l(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (cmv == "cmovle") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_le(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (cmv == "cmovg") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_g(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (cmv == "cmovge") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ge(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (cmv == "cmovb") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_b(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (cmv == "cmovbe") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_be(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (cmv == "cmova") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_a(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (cmv == "cmovae") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ae(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (cmv == "cmove" || cmv == "cmovz") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_e(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (cmv == "cmovne" || cmv == "cmovnz") { a = X86Asm { ...a, code: x86_cmovcc_r64_r64(a.code, x86_cc_ne(), x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    // cmovcc: the full condition table, width from suffix or register.
+    if (x86_str_starts_with(mnem, "cmov")) { return x86_gas_cmov_family(a, mnem, src, dst); }
+    // SSE vector shift by immediate, then the two-byte-opcode SSE tables
+    // and the 66 0F 38 group.
+    var vsp: i32 = x86_gas_vshift_op(mnem);
+    if (vsp >= 0 && src.len() > 0 && src[0] == b'$') { return x86_gas_vshift_imm(a, mnem, vsp, src, dst); }
+    var sse: i32 = x86_gas_sse_op(mnem);
+    if (sse >= 0) { return x86_gas_sse_table(a, mnem, sse / 256, sse & 255, src, dst); }
+    var s38: i32 = x86_gas_sse38_op(mnem);
+    if (s38 >= 0) { return x86_gas_sse38(a, mnem, s38, src, dst); }
     // movsxd is the AT&T spelling GNU as also accepts for movslq — same
     // sign-extending 32-to-64 load (REX.W 63 /r), so it shares the handler.
     if (mnem == "movslq" || mnem == "movsxd") {
@@ -3087,15 +3634,6 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         a = X86Asm { ...a, code: x86_movzwq_load(a.code, x86_gas_reg(dst), zm.base, zm.has_index, zm.index, zm.scale, zm.disp) };
         return a;
     }
-    if (mnem == "cmpb") {
-        if (src.len() > 0 && src[0] == b'$') {
-            a = X86Asm { ...a, code: x86_cmpb_imm_reg8(a.code, x86_gas_reg8(dst), x86_gas_atoi(src)) };
-            return a;
-        }
-        // Only the $imm, %reg8 form is encoded; any other operand shape
-        // was silently dropped (SH-005) — record it.
-        return X86Asm { ...a, unknown: a.unknown.append("cmpb " + src) };
-    }
     // Unsupported two-operand mnemonic (grown in later slices): RECORD it
     // (SH-005) — a dropped instruction means the byte stream is corrupt,
     // so drivers fail on `a.unknown` instead of writing the executable.
@@ -3104,14 +3642,48 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
 
 // x86_gas_directive_ignorable reports whether a directive can be dropped
 // without shifting anything: symbol-table metadata (`.globl` / `.weak` /
-// `.type` / `.size`) the in-process linker does not consume, and `.align`
-// in .text, where the emitter's own layout — not the assembler's — decides
-// instruction placement. Everything else must be handled or recorded.
+// `.type` / `.size`) the in-process linker does not consume. Everything
+// else must be handled or recorded.
 function x86_gas_directive_ignorable(line: string): boolean {
     return x86_str_starts_with(line, ".globl") || x86_str_starts_with(line, ".weak")
         || x86_str_starts_with(line, ".type") || x86_str_starts_with(line, ".size")
-        || x86_str_starts_with(line, ".align") || x86_str_starts_with(line, ".file")
-        || x86_str_starts_with(line, ".ident") || x86_str_starts_with(line, ".p2align");
+        || x86_str_starts_with(line, ".file") || x86_str_starts_with(line, ".ident");
+}
+
+// x86_gas_align applies .align/.balign (a byte count on x86 GAS) and
+// .p2align (a power-of-two exponent): NOP-fill in .text (the multi-byte
+// NOPs GNU as uses, honouring the optional max-skip third argument),
+// zero-fill in .rodata/.bss. The optional second argument (a fill value)
+// is ignored, as in the native assembler — .text padding is always
+// executable NOPs.
+function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
+    var sp: i32 = x86_str_indexof(line, " ");
+    if (sp < 0) { return x86_gas_bad(a, line); }
+    var parts: string[] = x86_str_split(slice_unchecked(line, sp + 1, line.len()) + "", ",");
+    var n: i32 = x86_gas_atoi(x86_gas_trim(parts[0]));
+    var align: i32 = n;
+    if (x86_str_starts_with(line, ".p2align")) {
+        if (n > 30) { return x86_gas_bad(a, line); }
+        align = 1;
+        var k: i32 = 0;
+        while (k < n) { align = align * 2; k = k + 1; }
+    }
+    if (align <= 1) { return a; }
+    if (section == 2) {
+        while ((a.bss_size % align) != 0) { a = x86_bss_skip(a, 1); }
+        return a;
+    }
+    if (section == 1) {
+        while ((a.rodata.len() % align) != 0) { a = X86Asm { ...a, rodata: a.rodata.append(0) }; }
+        return a;
+    }
+    var pad: i32 = (align - (a.code.len() % align)) % align;
+    if (pad == 0) { return a; }
+    if (parts.len() >= 3) {
+        var ms: string = x86_gas_trim(parts[2]);
+        if (ms.len() > 0 && pad > x86_gas_atoi(ms)) { return a; }
+    }
+    return X86Asm { ...a, code: x86_nop_pad(a.code, pad) };
 }
 
 // x86_gas_comment_start returns the index of the `#` that begins a comment,
@@ -3253,15 +3825,8 @@ pub function x86_gas_assemble(src: string): X86Asm {
                 // A single byte of initialised data; dropping it shifts
                 // every later .rodata symbol (SH-005).
                 a = X86Asm { ...a, rodata: a.rodata.append(x86_gas_atoi(x86_gas_trim(slice_unchecked(line, 5, line.len()))) & 255) };
-            } else if (x86_str_starts_with(line, ".align")) {
-                var an: i32 = x86_gas_atoi(x86_gas_trim(slice_unchecked(line, 6, line.len())));
-                if (an > 0) {
-                    if (section == 2) {
-                        while ((a.bss_size % an) != 0) { a = x86_bss_skip(a, 1); }
-                    } else if (section == 1) {
-                        while ((a.rodata.len() % an) != 0) { a = X86Asm { ...a, rodata: a.rodata.append(0) }; }
-                    }
-                }
+            } else if (x86_str_starts_with(line, ".align") || x86_str_starts_with(line, ".balign") || x86_str_starts_with(line, ".p2align")) {
+                a = x86_gas_align(a, section, line);
             } else if (!x86_gas_directive_ignorable(line)) {
                 // Every directive above either lays bytes down or moves a
                 // section cursor, so an unrecognised one that silently does
