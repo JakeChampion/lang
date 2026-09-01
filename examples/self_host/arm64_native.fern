@@ -91,8 +91,15 @@ function arm64_movz(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i3
     if (w) { word = word & 0x7fffffff; }   // sf=0: 0xd2800000 -> 0x52800000
     return arm64_le32(buf, word);
 }
-function arm64_movk(buf: i32[], rd: i32, imm16: i32, shift: i32): i32[] {
-    return arm64_le32(buf, arm64_movk_word(rd, imm16, shift));
+// `w` clears sf: 0xf2800000 -> 0x72800000, the 32-bit form. movk was the one
+// member of the move-wide family that took no width and so assembled `movk w4,
+// #imm, lsl #16` as the 64-bit MOVK — the same shape as movn silently emitting
+// nothing (#6060), and caught the same way, by
+// TestSelfHostArm64WholeProgramMatchesNative differing from GNU as in one bit.
+function arm64_movk(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i32[] {
+    var word: i64 = arm64_movk_word(rd, imm16, shift);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
 // `w` clears sf: 0x92800000 -> 0x12800000. Verified vs clang:
 // mov x0,#-100 = 0x92800c60 (movn x0,#99), mov w0,#-100 = 0x12800c60,
@@ -3049,7 +3056,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         if (ops.len() > 2) {
             sh = arm64_gas_lsl_amount(ops[2]);
         }
-        a = Arm64Asm { ...a, code: arm64_movk(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), sh) };
+        a = Arm64Asm { ...a, code: arm64_movk(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), sh, arm64_gas_is_w(ops[0])) };
         return a;
     }
     // `movn Rd, #imm{, lsl #N}` written out explicitly. arm64_gas_known has
