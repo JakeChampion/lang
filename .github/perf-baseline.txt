@@ -99,8 +99,9 @@ aarch64/enum_match.ir	174375068
 aarch64/int_loop.text	103
 aarch64/int_loop.ir	60000026
 aarch64/map_int.text	4536
-aarch64/map_int.ir	81515603
+aarch64/map_int.ir	83984882
 aarch64/map_probe_chain.text	4563
+aarch64/map_probe_chain.ir	800884878
 aarch64/map_string.text	5830
 aarch64/map_string.ir	204436258	2
 aarch64/sort_inplace.text	852
@@ -109,6 +110,8 @@ aarch64/sort_ints.text	3133
 aarch64/sort_ints.ir	117581521
 aarch64/string_build.text	1232
 aarch64/string_build.ir	175985640
+aarch64/string_count_byte.text	564
+aarch64/string_count_byte.ir	295440050
 aarch64/string_find_byte.text	2125
 aarch64/string_find_byte.ir	123872451
 aarch64/string_rfind_byte.text	2784
@@ -122,6 +125,6 @@ aarch64/struct_drop.ir	655620288
 aarch64/tokenize.text	1062
 aarch64/tokenize.ir	165150114
 aarch64/utf8_ingest_unchecked.text	56627
-aarch64/utf8_ingest_unchecked.ir	21201427
+aarch64/utf8_ingest_unchecked.ir	21891227
 aarch64/utf8_ingest_validated.text	57325
-aarch64/utf8_ingest_validated.ir	29690431
+aarch64/utf8_ingest_validated.ir	30343231
