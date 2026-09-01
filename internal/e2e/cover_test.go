@@ -299,3 +299,172 @@ func TestCoverFlagOnEmitsCoverageSymbols(t *testing.T) {
 		}
 	}
 }
+
+// --- Branch coverage, slice 3 (#5548) ----------------------------------
+//
+// The whole point is the case line coverage reports as covered while an
+// edge never ran. coverBranchSrc is built around three of them: a
+// one-armed `if` whose condition is always false (no `else` line exists
+// to report 0), a `while` whose body never runs (the `while` line itself
+// still reports a hit), and an `&&` whose right operand is never reached
+// (both operands sit on the condition's line).
+
+const coverBranchSrc = `function classify(n: i32): i32 {
+    if (n > 10) {
+        return 1;
+    }
+    return 2;
+}
+function guard(a: i32, b: i32): i32 {
+    if (a > 0 && b > 0) { return 1; }
+    return 0;
+}
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 3) { i = i + 1; }
+    while (i > 99) { i = i + 1; }
+    print("ran");
+    return classify(1) + guard(0, 5) - 2;
+}
+`
+
+// coverEdges is one conditional's two counters as the report states them.
+type coverEdges struct{ eval, taken uint64 }
+
+var coverBranchRe = regexp.MustCompile(`^` + regexp.QuoteMeta(ast.CoverBranchPrefix) + `(.*):(\d+):(\d+) ([ET]) (\d+)$`)
+
+// parseCoverBranches folds a run's stderr into (line, col) → edges, and
+// fails if a branch row names a file other than the entry.
+func parseCoverBranches(t *testing.T, stderr, srcPath string) map[[2]int]*coverEdges {
+	t.Helper()
+	out := map[[2]int]*coverEdges{}
+	for _, raw := range strings.Split(stderr, "\n") {
+		if !strings.HasPrefix(raw, ast.CoverBranchPrefix) {
+			continue
+		}
+		m := coverBranchRe.FindStringSubmatch(raw)
+		if m == nil {
+			t.Fatalf("unparseable branch row %q", raw)
+		}
+		if m[1] != srcPath {
+			t.Fatalf("branch row %q names %q, want the entry %q", raw, m[1], srcPath)
+		}
+		line, _ := strconv.Atoi(m[2])
+		col, _ := strconv.Atoi(m[3])
+		n, err := strconv.ParseUint(m[5], 10, 64)
+		if err != nil {
+			t.Fatalf("branch row %q: bad count: %v", raw, err)
+		}
+		k := [2]int{line, col}
+		e := out[k]
+		if e == nil {
+			e = &coverEdges{}
+			out[k] = e
+		}
+		if m[4] == "E" {
+			e.eval = n
+		} else {
+			e.taken = n
+		}
+	}
+	return out
+}
+
+// edgesAt returns the conditional recorded at a line, failing when the
+// line holds none or several — the tests below name a line each.
+func edgesAt(t *testing.T, edges map[[2]int]*coverEdges, line int) *coverEdges {
+	t.Helper()
+	var found []*coverEdges
+	for k, e := range edges {
+		if k[0] == line {
+			found = append(found, e)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("line %d has %d conditionals, want 1", line, len(found))
+	}
+	return found[0]
+}
+
+// assertCoverBranchReport is the shared body of the two backends' checks.
+func assertCoverBranchReport(t *testing.T, stdout, stderr string, code int, srcPath string) {
+	t.Helper()
+	if stdout != "ran\n" {
+		t.Errorf("stdout = %q, want %q — the report goes to stderr only", stdout, "ran\n")
+	}
+	if code != 0 {
+		t.Errorf("exit code = %d, want 0", code)
+	}
+	hits := parseCoverLines(t, stderr, srcPath)
+	edges := parseCoverBranches(t, stderr, srcPath)
+	if len(edges) == 0 {
+		t.Fatalf("no branch rows in stderr:\n%s", stderr)
+	}
+
+	// Line 2's `if (n > 10)` runs once with n == 1, so the true edge
+	// never fires. There is no `else` in the source, so nothing in the
+	// LINE report can say this — which is the whole reason the pair
+	// exists.
+	if e := edgesAt(t, edges, 2); e.eval != 1 || e.taken != 0 {
+		t.Errorf("line 2 `if`: eval=%d taken=%d, want 1 and 0", e.eval, e.taken)
+	}
+
+	// Line 13's `while (i < 3)` evaluates four times and enters three.
+	// A counter that recorded only "reached" would report 1 and 1.
+	if e := edgesAt(t, edges, 13); e.eval != 4 || e.taken != 3 {
+		t.Errorf("line 13 `while`: eval=%d taken=%d, want 4 and 3", e.eval, e.taken)
+	}
+
+	// Line 14's `while (i > 99)` never enters its body — and the LINE
+	// counter for 14 still reports a hit. That contrast is the feature.
+	if e := edgesAt(t, edges, 14); e.eval != 1 || e.taken != 0 {
+		t.Errorf("line 14 `while`: eval=%d taken=%d, want 1 and 0", e.eval, e.taken)
+	}
+	if got := hits[14]; got == 0 {
+		t.Errorf("line 14's LINE counter reports %d — the test's premise is that the line runs while its body does not", got)
+	}
+
+	// Line 8 holds two conditionals: the `if` and the `&&`. guard(0, 5)
+	// makes `a > 0` false, so the `&&` short-circuits and its right
+	// operand never runs — invisible to line coverage, since both
+	// operands are on line 8.
+	var onLine8 []*coverEdges
+	for k, e := range edges {
+		if k[0] == 8 {
+			onLine8 = append(onLine8, e)
+		}
+	}
+	if len(onLine8) != 2 {
+		t.Fatalf("line 8 has %d conditionals, want 2 (the `if` and the `&&`)", len(onLine8))
+	}
+	for _, e := range onLine8 {
+		if e.eval != 1 || e.taken != 0 {
+			t.Errorf("line 8 conditional: eval=%d taken=%d, want 1 and 0", e.eval, e.taken)
+		}
+	}
+}
+
+func TestCoverBranchReportX86_64(t *testing.T) {
+	stdout, stderr, code, srcPath := runCoverX86_64(t, coverBranchSrc)
+	assertCoverBranchReport(t, stdout, stderr, code, srcPath)
+}
+
+func TestCoverBranchReportArm64(t *testing.T) {
+	stdout, stderr, code, srcPath := runCoverArm64(t, coverBranchSrc)
+	assertCoverBranchReport(t, stdout, stderr, code, srcPath)
+}
+
+// A program's coverage output must not depend on which native built it —
+// the reader is one parser, and a divergence here would be invisible
+// until someone compared two runs.
+func TestCoverBranchReportIdenticalAcrossNatives(t *testing.T) {
+	_, x86Err, _, x86Path := runCoverX86_64(t, coverBranchSrc)
+	_, armErr, _, armPath := runCoverArm64(t, coverBranchSrc)
+	// The two runs compile in different temp dirs, so normalise the path
+	// before comparing — everything else must match byte for byte.
+	got := strings.ReplaceAll(armErr, armPath, "ENTRY")
+	want := strings.ReplaceAll(x86Err, x86Path, "ENTRY")
+	if got != want {
+		t.Errorf("arm64 report differs from x86-64:\narm64:\n%s\nx86-64:\n%s", got, want)
+	}
+}

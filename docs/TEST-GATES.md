@@ -177,9 +177,11 @@ Worth knowing so you do not assume coverage you do not have:
 
 - **Which source lines any suite actually reaches.** Nothing asserts this, and
   nothing ever will — but as of #5548 it is now MEASURABLE rather than
-  guessed: `fern -cover` instruments every executable line, the binary dumps
-  the whole table at exit, and `fern -cover-report` folds it into per-file
-  totals, an uncovered-line list, or lcov. Reach for it before arguing from a
+  guessed: `fern -cover` instruments every executable line and every
+  conditional the source wrote, the binary dumps the whole table at exit, and
+  `fern -cover-report` folds it into per-file line AND branch totals, the
+  uncovered lists, or lcov. Branch coverage is the half that catches a suite
+  running a line without ever taking one of its edges. Reach for it before arguing from a
   suite's name about what it proves. Native x86-64 / arm64 only;
   `docs/COVERAGE.md`.
 

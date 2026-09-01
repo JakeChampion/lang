@@ -279,7 +279,7 @@ concrete fix plan and a rough scope estimate.
 ### Line coverage (`-cover`) is native-only
 
 `-cover` (#5548, `docs/COVERAGE.md`) instruments every executable source line
-with a counter and dumps the table at exit. The instrumentation is an IR pass,
+and every source-level conditional with counters and dumps the table at exit. The instrumentation is an IR pass,
 but each backend still has to emit the counter array, the report table, and
 the exit-seam call — only x86-64 and arm64 do, matching `-sanitize`'s reach.
 

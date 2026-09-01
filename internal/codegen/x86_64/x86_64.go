@@ -12256,21 +12256,6 @@ func escapeForGAS(s string) string {
 // report line — `fern-cover: <file>:<line> `, everything up to the count.
 func coverLabel(i int) string { return fmt.Sprintf(".Lcov_s%d", i) }
 
-// coverLineText is the fixed prefix of counter i's report line. Baking
-// the file and line into a literal is what keeps __fern_cov_report a
-// three-call loop with no formatting of its own to do.
-func coverLineText(site ir.CoverSite) string {
-	file := site.File
-	if file == "" {
-		// A program built straight from the parser, or a decl the
-		// checker synthesised, has no file stamp. Naming that rather
-		// than printing an empty path keeps every report line parseable
-		// by the same reader.
-		file = "<unknown>"
-	}
-	return fmt.Sprintf("%s%s:%d ", ast.CoverLinePrefix, file, site.Line)
-}
-
 // emitCoverTable emits the -cover report's read-only half (#5548): one
 // `.asciz` per instrumented line plus a (pointer, length) table
 // __fern_cov_report walks in lockstep with the .bss counters.
@@ -12280,7 +12265,7 @@ func (g *generator) emitCoverTable() {
 	}
 	for i, site := range g.coverSites {
 		g.label(coverLabel(i))
-		g.line("\t.asciz " + escapeForGAS(coverLineText(site)))
+		g.line("\t.asciz " + escapeForGAS(site.ReportLine()))
 	}
 	g.label(".Lcov_str_nl")
 	g.line(`	.asciz "\n"`)
@@ -12288,7 +12273,7 @@ func (g *generator) emitCoverTable() {
 	g.label("__fern_cov_table")
 	for i, site := range g.coverSites {
 		g.line(fmt.Sprintf("\t.quad %s", coverLabel(i)))
-		g.line(fmt.Sprintf("\t.quad %d", len(coverLineText(site))))
+		g.line(fmt.Sprintf("\t.quad %d", len(site.ReportLine())))
 	}
 }
 

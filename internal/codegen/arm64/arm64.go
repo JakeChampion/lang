@@ -9284,7 +9284,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("add x2, x29, #96")
 	g.emit("mov x3, #%d", atFlags)
 	g.syscallFstatat()
-	g.emit("tbnz x0, #63, .L" + lp + "_err")
+	g.emit("tbnz x0, #63, .L%s_err", lp)
 	if g.darwin {
 		g.emit("ldrh w9, [x29, #100]") // st_mode (u16 @ +4)
 	} else {
@@ -9295,13 +9295,13 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("mov x23, #0")     // is_file
 	g.emit("mov w10, #32768") // S_IFREG
 	g.emit("cmp w9, w10")
-	g.emit("b.ne .L" + lp + "_nf")
+	g.emit("b.ne .L%s_nf", lp)
 	g.emit("mov x23, #1")
 	g.label(".L" + lp + "_nf")
 	g.emit("mov x24, #0")     // is_dir
 	g.emit("mov w10, #16384") // S_IFDIR
 	g.emit("cmp w9, w10")
-	g.emit("b.ne .L" + lp + "_nd")
+	g.emit("b.ne .L%s_nd", lp)
 	g.emit("mov x24, #1")
 	g.label(".L" + lp + "_nd")
 	g.emit("ldr x25, [x29, #%d]", 96+g.statSizeOff()) // st_size
@@ -9316,7 +9316,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("bl __fern_alloc_box")
 	g.emit("str wzr, [x0]") // tag = 0 (Ok)
 	g.emit("str x21, [x0, #8]")
-	g.emit("b .L" + lp + "_return")
+	g.emit("b .L%s_return", lp)
 
 	g.label(".L" + lp + "_err")
 	g.emit("neg x22, x0")
@@ -14150,22 +14150,6 @@ func (g *generator) closureCellSym(name string) string {
 // report line — `fern-cover: <file>:<line> `, everything up to the count.
 func coverLabel(i int) string { return fmt.Sprintf(".Lcov_s%d", i) }
 
-// coverLineText is the fixed prefix of counter i's report line. Baking
-// the file and line into a literal is what keeps __fern_cov_report a
-// three-call loop with no formatting of its own to do. Must match the
-// x86-64 twin: a program's coverage output cannot depend on which native
-// built it.
-func coverLineText(site ir.CoverSite) string {
-	file := site.File
-	if file == "" {
-		// A program built straight from the parser, or a decl the checker
-		// synthesised, has no file stamp. Naming that rather than printing
-		// an empty path keeps every report line parseable by one reader.
-		file = "<unknown>"
-	}
-	return fmt.Sprintf("%s%s:%d ", ast.CoverLinePrefix, file, site.Line)
-}
-
 // emitCoverPoint bumps coverage counter idx in place (#5548, -cover).
 // x16/x17 are AArch64's intra-procedure-call scratch registers, dead at
 // the statement boundary this op sits on.
@@ -14196,7 +14180,7 @@ func (g *generator) emitCoverTable() {
 	}
 	for i, site := range g.coverSites {
 		g.label(coverLabel(i))
-		g.line("\t.asciz " + escapeForGAS(coverLineText(site)))
+		g.line("\t.asciz " + escapeForGAS(site.ReportLine()))
 	}
 	g.label(".Lcov_str_nl")
 	g.line(`	.asciz "\n"`)
@@ -14204,7 +14188,7 @@ func (g *generator) emitCoverTable() {
 	g.label("__fern_cov_table")
 	for i, site := range g.coverSites {
 		g.line(fmt.Sprintf("\t.quad %s", coverLabel(i)))
-		g.line(fmt.Sprintf("\t.quad %d", len(coverLineText(site))))
+		g.line(fmt.Sprintf("\t.quad %d", len(site.ReportLine())))
 	}
 }
 

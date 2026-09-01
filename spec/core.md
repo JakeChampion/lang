@@ -262,7 +262,7 @@ this file does not have — see below.
 | --- | --- | --- | --- |
 | `drop` | `* → —` | `Width` | Discards one slot, or the two-word pair under `Width: WidthString`. **Not** an rc operation: `rc.dec` is. |
 | `line` | `— → —` | | A source-position marker carrying `Pos`. Emitted only under native `-g`; it produces no code, and the byte-identical self-host fixpoint never sees one. |
-| `cover` | `— → —` | `I32` | A line-coverage counter site carrying `Pos`, `I32` indexing `Program.CoverSites`. Emitted only under `-cover`; it lowers to one increment of a static counter and, like `line`, the byte-identical self-host fixpoint never sees one. |
+| `cover` | `— → —` | `I32` | A coverage counter site carrying `Pos`, `I32` indexing `Program.CoverSites` — a source line, or one of the two counters a conditional needs. Emitted only under `-cover`; it lowers to one increment of a static counter and, like `line`, the byte-identical self-host fixpoint never sees one. |
 
 ## How this is kept true
 
