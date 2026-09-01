@@ -525,6 +525,97 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 	})
 }
 
+// TestSelfHostArm64VectorLaneGas pins #8000 wave 2d: the lane moves
+// (umov/smov/ins/dup), the modified immediate, and the single-register
+// load/store-structure forms.
+//
+// These address ONE LANE, and every one of them says which lane in the same
+// field: imm5 packs the element size and the index together as
+// (index<<1 | 1) << size. So the size is not a separate thing that could be
+// merely wrong — get it wrong and the index bits MOVE, naming a different lane
+// on a word that still decodes. That is why the refusals check the destination
+// register width against the lane size rather than treating them as
+// independent.
+//
+// movi's shift is the other trap: it is not a shift field. cmode selects which
+// BYTE POSITION of the element the imm8 lands in, so only the positions the
+// element actually has are encodable, and `.2d` is a different encoding again
+// where each imm8 bit expands to a whole byte.
+func TestSelfHostArm64VectorLaneGas(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	checkPinnedSelfHost(t, bin, runner, []pinnedAsm{
+		{"umov w23, v9.b[5]", 0x0e0b3d37},
+		{"umov w23, v9.h[3]", 0x0e0e3d37},
+		{"umov w23, v9.s[1]", 0x0e0c3d37},
+		{"umov x23, v9.d[1]", 0x4e183d37},
+		{"smov w23, v9.b[5]", 0x0e0b2d37},
+		{"smov w23, v9.h[3]", 0x0e0e2d37},
+		{"smov x23, v9.b[2]", 0x4e052d37},
+		{"smov x23, v9.s[1]", 0x4e0c2d37},
+
+		{"ins v23.b[5], w9", 0x4e0b1d37},
+		{"ins v23.h[3], w9", 0x4e0e1d37},
+		{"ins v23.s[1], w9", 0x4e0c1d37},
+		{"ins v23.d[1], x9", 0x4e181d37},
+		{"ins v23.b[5], v9.b[2]", 0x6e0b1537},
+		{"ins v23.d[1], v9.d[0]", 0x6e180537},
+
+		{"dup v23.16b, w9", 0x4e010d37},
+		{"dup v23.4s, w9", 0x4e040d37},
+		{"dup v23.2d, x9", 0x4e080d37},
+		{"dup v23.8h, v9.h[3]", 0x4e0e0537},
+
+		{"movi v23.16b, #7", 0x4f00e4f7},
+		{"movi v23.4s, #7", 0x4f0004f7},
+		{"movi v23.4s, #7, lsl #8", 0x4f0024f7},
+		{"movi v23.8h, #7, lsl #8", 0x4f00a4f7},
+		{"movi v23.2d, #0", 0x6f00e417},
+
+		{"ld1r {v23.16b}, [x9]", 0x4d40c137},
+		{"ld1r {v23.4s}, [x9]", 0x4d40c937},
+		{"ld1 {v23.16b}, [x9]", 0x4c407137},
+		{"ld1 {v23.4s}, [x9]", 0x4c407937},
+		{"st1 {v23.16b}, [x9]", 0x4c007137},
+		{"st1 {v23.2d}, [x9]", 0x4c007d37},
+	})
+	checkRefusedSelfHost(t, bin, runner, []string{
+		// The general register's width is fixed by the lane: only .d reads
+		// into an X register, and smov has no .d form at all — sign-extending
+		// 64 bits to 64 is nothing.
+		"umov x23, v9.b[5]",
+		"umov w23, v9.d[1]",
+		"smov x23, v9.d[0]",
+		"smov w23, v9.s[1]",
+		// ins takes its source width from the lane the same way, and a
+		// lane-to-lane move must not change element size.
+		"ins v23.b[5], x9",
+		"ins v23.d[1], w9",
+		"ins v23.b[5], v9.h[2]",
+		// A lane index runs 0..(16/esize - 1).
+		"umov w23, v9.b[16]",
+		"ins v23.s[4], w9",
+		"dup v23.8h, v9.h[8]",
+		// dup broadcasts a W register below doubleword lanes and an X for
+		// them; a lane source must match the destination arrangement.
+		"dup v23.16b, x9",
+		"dup v23.2d, w9",
+		"dup v23.4s, v9.h[1]",
+		// movi's imm8 is 0..255, and the shift picks a cmode rather than
+		// filling a field, so only the byte positions the element has exist.
+		"movi v23.16b, #256",
+		"movi v23.16b, #7, lsl #8",
+		"movi v23.8h, #7, lsl #16",
+		"movi v23.4s, #7, lsl #32",
+		"movi v23.2d, #7, lsl #8",
+		// The structure forms take a one-register list and a bare [Xn].
+		"ld1 {v23.16b}, [x9, #16]",
+		"ld1 {v23.16b}, [x9, x10]",
+		"st1 v23.16b, [x9]",
+		"ld1r {v23.16b}, [x9, #1]",
+	})
+}
+
 // TestSelfHostArm64CondCmpSelGas: ccmp/ccmn (register and imm5 forms) and
 // the conditional-select family with its inverted-condition aliases.
 func TestSelfHostArm64CondCmpSelGas(t *testing.T) {

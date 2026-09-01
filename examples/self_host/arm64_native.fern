@@ -1636,6 +1636,118 @@ function arm64_gas_esize(code: i32): i32 {
     return 8 * arm64_gas_pow2(arm64_gas_arr_size(code));
 }
 
+// ---- the lane-move and load-structure classes (#8000 wave 2d) ----
+//
+// These address ONE LANE rather than a whole arrangement, and every one of
+// them says which lane in the same field: imm5 packs the element size and the
+// index together as (index<<1 | 1) << size, so the size is recoverable from
+// the position of the lowest set bit. Get the size wrong and the index is
+// wrong too, on a word that still decodes.
+
+// arm64_gas_lane_size decodes the element letter of a `vN.<Ts>[i]` lane
+// operand to 0=B, 1=H, 2=S, 3=D, or -1 when the token is not a lane.
+function arm64_gas_lane_size(tok: string): i32 {
+    var t: string = arm64_gas_trim(tok);
+    var dot: i32 = arm64_str_indexof(t, ".");
+    var ob: i32 = arm64_str_indexof(t, "[");
+    if (t.len() < 5 || t[0] != b'v' || dot < 2 || ob < dot || t[t.len() - 1] != b']') { return 0 - 1; }
+    if (ob != dot + 2) { return 0 - 1; }
+    var c: i32 = t[dot + 1] as i32;
+    if (c == 98) { return 0; }    // 'b'
+    if (c == 104) { return 1; }   // 'h'
+    if (c == 115) { return 2; }   // 's'
+    if (c == 100) { return 3; }   // 'd'
+    return 0 - 1;
+}
+function arm64_gas_lane_reg(tok: string): i32 {
+    var t: string = arm64_gas_trim(tok);
+    if (arm64_gas_lane_size(tok) < 0) { return 0 - 1; }
+    var dot: i32 = arm64_str_indexof(t, ".");
+    var n: i32 = 0;
+    var i: i32 = 1;
+    while (i < dot) {
+        var c: i32 = t[i] as i32;
+        if (c < 48 || c > 57) { return 0 - 1; }
+        n = n * 10 + (c - 48);
+        i = i + 1;
+    }
+    if (n > 31) { return 0 - 1; }
+    return n;
+}
+function arm64_gas_lane_index(tok: string): i32 {
+    var t: string = arm64_gas_trim(tok);
+    var size: i32 = arm64_gas_lane_size(tok);
+    if (size < 0) { return 0 - 1; }
+    var ob: i32 = arm64_str_indexof(t, "[");
+    var n: i32 = 0;
+    var i: i32 = ob + 1;
+    if (i >= t.len() - 1) { return 0 - 1; }
+    while (i < t.len() - 1) {
+        var c: i32 = t[i] as i32;
+        if (c < 48 || c > 57) { return 0 - 1; }
+        n = n * 10 + (c - 48);
+        i = i + 1;
+    }
+    // A lane index runs 0..(16/esize - 1), which is 15>>size.
+    if (n > 15 / arm64_gas_pow2(size)) { return 0 - 1; }
+    return n;
+}
+
+// arm64_vec_imm5 packs an element size and lane index into the imm5 field:
+// (index<<1 | 1) << size, so the size is the position of the lowest set bit.
+function arm64_vec_imm5(size: i32, index: i32): i32 {
+    return (index * 2 + 1) * arm64_gas_pow2(size);
+}
+
+// umov/smov move one lane to a general register; ins moves a general register
+// or another lane INTO one. All four share the imm5 field.
+//   umov 0x0E003C00, smov 0x0E002C00, ins-from-GPR 0x4E001C00
+//   (ins is always Q=1: it writes into the 128-bit register)
+function arm64_vecmovlane(buf: i32[], base: i64, rd: i32, rn: i32, imm5: i32, q: boolean): i32[] {
+    var word: i64 = base | (((imm5 & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    return arm64_le32(buf, word);
+}
+
+// ins Vd.<Ts>[i], Vn.<Ts>[j] — lane to lane. imm4 is the SOURCE index scaled
+// by the element size, in a field the GPR form does not have.
+//   0x6E000400 | imm5<<16 | imm4<<11 | Rn<<5 | Rd
+function arm64_vecinselem(buf: i32[], rd: i32, rn: i32, imm5: i32, imm4: i32): i32[] {
+    return arm64_le32(buf, 0x6e000400 | (((imm5 & 31) as i64) << 16) | (((imm4 & 15) as i64) << 11)
+        | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+
+// dup broadcasts a general register or one lane across every lane.
+//   from GPR  0x0E000C00 | Q<<30 | imm5<<16 | Rn<<5 | Rd, imm5 = 1<<size
+//   from lane 0x0E000400 | Q<<30 | imm5<<16 | Rn<<5 | Rd
+function arm64_vecdup(buf: i32[], base: i64, rd: i32, rn: i32, imm5: i32, q: boolean): i32[] {
+    var word: i64 = base | (((imm5 & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    return arm64_le32(buf, word);
+}
+
+// movi Vd.<T>, #imm8{, lsl #shift} — the modified immediate. cmode says which
+// BYTE POSITION of each element the imm8 lands in, so the shift is not a
+// shift field: it selects the cmode. The .2d form is different again — each
+// bit of imm8 expands to a whole byte of 0x00 or 0xff.
+//   0x0F000400 | Q<<30 | op<<29 | abc<<16 | cmode<<12 | defgh<<5 | Rd
+function arm64_vecmovi(buf: i32[], rd: i32, imm8: i32, cmode: i32, q: boolean, op: boolean): i32[] {
+    var abc: i64 = ((imm8 / 32) & 7) as i64;
+    var defgh: i64 = (imm8 & 31) as i64;
+    var word: i64 = 0x0f000400 | (abc << 16) | (((cmode & 15) as i64) << 12) | (defgh << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    if (op) { word = word | 0x20000000; }
+    return arm64_le32(buf, word);
+}
+
+// The single-register load/store-structure forms, `[Xn]` with no offset:
+//   ld1r 0x0D40C000, ld1 0x0C407000, st1 0x0C007000, each | Q<<30 | size<<10
+function arm64_vecldst1(buf: i32[], base: i64, rt: i32, rn: i32, size: i32, q: boolean): i32[] {
+    var word: i64 = base | (((size & 3) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rt & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    return arm64_le32(buf, word);
+}
+
 // ---- the narrowing / widening / across-lanes classes (#8000 wave 2c) ----
 
 // arm64_vecext encodes `ext Vd.<T>, Vn.<T>, Vm.<T>, #index` — the byte-wise
@@ -1904,29 +2016,6 @@ function arm64_gas_emit_vecgen(a: Arm64Asm, mnem: string, ops: string[]): Arm64A
 // Advanced SIMD is mandatory in the declared ARMv8-A baseline, so these are
 // hard requirements rather than a fast path; there is nothing to detect.
 
-// ld1 {Vt.16b}, [Xn] -> 0x4C407000 | Rn<<5 | Rt. Only the single-register,
-// no-writeback, 128-bit form: the kernels load one block from a cursor they
-// advance themselves.
-function arm64_ld1_16b(buf: i32[], rt: i32, rn: i32): i32[] {
-    return arm64_le32(buf, 0x4c407000 | (((rn & 31) as i64) << 5) | ((rt & 31) as i64));
-}
-
-// shrn Vd.8b, Vn.8h, #N -> 0x0F008400 | (16-N)<<16 | Rn<<5 | Rd. Narrows each
-// 16-bit lane to one byte carrying N-shifted bits; at N=4 that is four mask
-// bits per input byte, which is how a NEON kernel gets a movemask.
-//
-// The immediate field is 16 MINUS the shift, and only 1..8 are encodable —
-// an out-of-range shift wraps into the immh bits and selects a DIFFERENT
-// element size, so the caller refuses it.
-function arm64_shrn_8b_8h(buf: i32[], rd: i32, rn: i32, shift: i32): i32[] {
-    return arm64_le32(buf, 0x0f008400 | ((((16 - shift) & 0x7f) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
-}
-
-// dup Vd.16b, Wn -> 0x4E010C00 | Rn<<5 | Rd. One instruction to broadcast a
-// byte across all 16 lanes, where SSE2 needs movd plus three shuffles.
-function arm64_dup_16b_w(buf: i32[], rd: i32, rn: i32): i32[] {
-    return arm64_le32(buf, 0x4e010c00 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
-}
 
 // ---- byte/halfword/sign-extending load/store (unsigned scaled imm) ----
 // ldrb/strb size 0 (no scale); ldrh/strh size 1 (÷2); ldrsw size 2 (÷4).
@@ -2432,55 +2521,9 @@ function arm64_gas_is_sreg(tok: string): boolean {
     return t.len() >= 2 && t[0] == b's' && t[1] >= b'0' && t[1] <= b'9';
 }
 
-// arm64_gas_vreg_arr decodes an ARRANGED vector operand (`v0.8b` / `v1.16b`)
-// to its register number, or -1. Only the byte arrangements are accepted: the
-// addv encoder sets size=00, so a wider element size would assemble as a
-// DIFFERENT instruction on the same bytes rather than fail. The general
-// families use arm64_gas_vreg_any and a per-op size mask instead.
-function arm64_gas_vreg_arr(tok: string): i32 {
-    if (arm64_gas_vreg_of(tok, ".8b") >= 0) { return arm64_gas_vreg_of(tok, ".8b"); }
-    return arm64_gas_vreg_of(tok, ".16b");
-}
 
-// arm64_gas_vreg_of decodes `vN.<arr>` and requires the arrangement to be
-// exactly `want`, returning -1 otherwise. Naming the arrangement at the call
-// site is what keeps a wider element size from assembling as a DIFFERENT
-// instruction on the same bytes: every encoder here pins its own size field,
-// so a `.8h` operand handed to a byte-lane encoder would be silently wrong
-// rather than refused.
-function arm64_gas_vreg_of(tok: string, want: string): i32 {
-    var s: string = arm64_gas_trim(tok);
-    var dot: i32 = arm64_str_indexof(s, ".");
-    if (s.len() < 4 || s[0] != b'v' || dot < 2) { return 0 - 1; }
-    var n: i32 = 0;
-    var i: i32 = 1;
-    while (i < dot) {
-        var c: i32 = s[i] as i32;
-        if (c < 48 || c > 57) { return 0 - 1; }
-        n = n * 10 + (c - 48);
-        i = i + 1;
-    }
-    if (n > 31) { return 0 - 1; }
-    if ((slice_unchecked(s, dot, s.len()) + "") != want) { return 0 - 1; }
-    return n;
-}
 
-// arm64_gas_vlist_16b decodes `{vN.16b}` — ld1's single-register list form —
-// to its register number, or -1. Only one register: a multi-register list
-// encodes a different opcode in the same bits.
-function arm64_gas_vlist_16b(tok: string): i32 {
-    var s: string = arm64_gas_trim(tok);
-    if (s.len() < 3 || s[0] != b'{' || s[s.len() - 1] != b'}') { return 0 - 1; }
-    return arm64_gas_vreg_of(slice_unchecked(s, 1, s.len() - 1) + "", ".16b");
-}
 
-// arm64_gas_vreg_arr_q reports the 128-bit (Q) arrangement.
-function arm64_gas_vreg_arr_q(tok: string): boolean {
-    var s: string = arm64_gas_trim(tok);
-    var dot: i32 = arm64_str_indexof(s, ".");
-    if (dot < 0) { return false; }
-    return (slice_unchecked(s, dot, s.len()) + "") == ".16b";
-}
 
 // ---- general vector arrangements (#8000) ----
 //
@@ -2562,67 +2605,104 @@ function arm64_gas_pow2(n: i32): i32 {
     return v;
 }
 
-// arm64_gas_breg decodes a `bN` scalar byte register — the destination shape
-// of an `addv` over a byte arrangement — to its number, or -1.
-function arm64_gas_breg(tok: string): i32 {
-    var s: string = arm64_gas_trim(tok);
-    if (s.len() < 2 || s[0] != b'b') { return 0 - 1; }
-    var n: i32 = 0;
-    var i: i32 = 1;
-    while (i < s.len()) {
-        var c: i32 = s[i] as i32;
-        if (c < 48 || c > 57) { return 0 - 1; }
-        n = n * 10 + (c - 48);
-        i = i + 1;
-    }
-    if (n > 31) { return 0 - 1; }
-    return n;
-}
 
-// arm64_gas_bad_neon_token guards the packed-NEON kernels' operands. Each
-// encoder pins one arrangement and one immediate shape, so every deviation has
-// to be REFUSED rather than folded into a field that does not exist:
+// arm64_gas_bad_lane vets the lane-move and load-structure classes. A lane
+// operand carries its element size AND index in one field, so a size the
+// mnemonic does not have does not widen the instruction — it moves the index
+// bits and names a different lane, on a word that still decodes.
 //
-//   - shrn's immediate is 16 MINUS the shift over a 1..8 range. Outside it the
-//     value wraps into immh and selects a different element size.
-//   - ld1 takes a ONE-register list; a longer one is a different opcode.
-function arm64_gas_bad_neon_token(mnem: string, rest: string): string {
-    var ops: string[] = arm64_gas_operands(rest);
-    if (mnem == "ld1") {
+//   - umov/smov read one lane into a general register, and the register width
+//     is fixed by the lane: only .d reads into an X register, and smov has no
+//     .d form at all because sign-extending 64 bits to 64 is nothing.
+//   - ins writes into the 128-bit register, so it has no half-width form.
+//   - ld1/st1/ld1r take a ONE-register list and a bare `[Xn]`: this form has
+//     no offset field, so an offset has to be refused rather than dropped.
+function arm64_gas_bad_lane(mnem: string, ops: string[]): string {
+    if (mnem == "ld1" || mnem == "st1" || mnem == "ld1r") {
         if (ops.len() != 2) { return mnem + ":arity"; }
-        if (arm64_gas_vlist_16b(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
-        // `[Xn]` only: this form has no offset field at all, so both an
-        // immediate and a register in the offset position have to be refused
-        // rather than dropped into an encoding that reads as plain `[Xn]`.
+        if (arm64_gas_vlist_one(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+        var lc: i32 = arm64_gas_vlist_one_arr(ops[0]);
+        if (lc < 0) { return arm64_gas_trim(ops[0]); }
         var m: Arm64Mem = arm64_gas_mem(ops[1]);
         if (m.base < 0 || m.off != 0 || m.off_reg >= 0) { return arm64_gas_trim(ops[1]); }
         return "";
     }
-    if (mnem == "shrn") {
-        if (ops.len() != 3) { return mnem + ":arity"; }
-        if (arm64_gas_vreg_of(ops[0], ".8b") < 0) { return arm64_gas_trim(ops[0]); }
-        if (arm64_gas_vreg_of(ops[1], ".8h") < 0) { return arm64_gas_trim(ops[1]); }
-        var sh: i32 = arm64_gas_imm(ops[2]);
-        if (sh < 1 || sh > 8) { return mnem + ":imm"; }
+    if (mnem == "umov" || mnem == "smov") {
+        if (ops.len() != 2) { return mnem + ":arity"; }
+        var usz: i32 = arm64_gas_lane_size(ops[1]);
+        if (usz < 0 || arm64_gas_lane_index(ops[1]) < 0) { return arm64_gas_trim(ops[1]); }
+        if (arm64_gas_reg(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+        var uw: boolean = arm64_gas_is_w(ops[0]);
+        if (mnem == "umov") {
+            // .d reads into X, everything narrower into W.
+            if (uw == (usz == 3)) { return mnem + ":dst"; }
+            return "";
+        }
+        if (usz == 3) { return mnem + ":arr"; }
+        // smov into W sign-extends a byte or halfword; into X, also a word.
+        if (uw && usz > 1) { return mnem + ":dst"; }
         return "";
     }
-    // dup
-    if (ops.len() != 2) { return mnem + ":arity"; }
-    if (arm64_gas_vreg_of(ops[0], ".16b") < 0) { return arm64_gas_trim(ops[0]); }
-    if (arm64_gas_reg(ops[1]) < 0 || !arm64_gas_is_w(ops[1])) { return arm64_gas_trim(ops[1]); }
+    if (mnem == "ins") {
+        if (ops.len() != 2) { return mnem + ":arity"; }
+        var isz: i32 = arm64_gas_lane_size(ops[0]);
+        if (isz < 0 || arm64_gas_lane_index(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+        var ssz: i32 = arm64_gas_lane_size(ops[1]);
+        if (ssz >= 0) {
+            if (ssz != isz) { return mnem + ":arr"; }
+            if (arm64_gas_lane_index(ops[1]) < 0) { return arm64_gas_trim(ops[1]); }
+            return "";
+        }
+        if (arm64_gas_reg(ops[1]) < 0) { return arm64_gas_trim(ops[1]); }
+        if (arm64_gas_is_w(ops[1]) == (isz == 3)) { return mnem + ":src"; }
+        return "";
+    }
+    if (mnem == "dup") {
+        if (ops.len() != 2) { return mnem + ":arity"; }
+        var dc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        if (arm64_gas_vreg_any(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+        if (!arm64_gas_arr_allowed(15, dc)) { return mnem + ":arr"; }
+        var dsz: i32 = arm64_gas_arr_size(dc);
+        var lsz: i32 = arm64_gas_lane_size(ops[1]);
+        if (lsz >= 0) {
+            if (lsz != dsz) { return mnem + ":arr"; }
+            if (arm64_gas_lane_index(ops[1]) < 0) { return arm64_gas_trim(ops[1]); }
+            return "";
+        }
+        if (arm64_gas_reg(ops[1]) < 0) { return arm64_gas_trim(ops[1]); }
+        if (arm64_gas_is_w(ops[1]) == (dsz == 3)) { return mnem + ":src"; }
+        return "";
+    }
+    // movi
+    if (ops.len() < 2 || ops.len() > 3) { return mnem + ":arity"; }
+    var vc: i32 = arm64_gas_vreg_arrof(ops[0]);
+    if (arm64_gas_vreg_any(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+    if (!arm64_gas_arr_allowed(15, vc)) { return mnem + ":arr"; }
+    var vimm: i32 = arm64_gas_imm(ops[1]);
+    if (vimm < 0 || vimm > 255) { return mnem + ":imm"; }
+    var vsz: i32 = arm64_gas_arr_size(vc);
+    // The shift is not a field: it picks the cmode, so only the byte
+    // positions the element actually has are encodable.
+    var vshift: i32 = 0;
+    if (ops.len() == 3) { vshift = arm64_gas_lsl_amount(ops[2]); }
+    if (vsz == 3 && ops.len() != 2) { return mnem + ":imm"; }
+    if (vsz == 0 && vshift != 0) { return mnem + ":imm"; }
+    if (vsz == 1 && vshift != 0 && vshift != 8) { return mnem + ":imm"; }
+    if (vsz == 2 && (vshift % 8 != 0 || vshift > 24)) { return mnem + ":imm"; }
     return "";
 }
 
-// arm64_gas_bad_vec_token guards cnt/addv's SIMD operands the way
-// arm64_gas_bad_reg_token guards the general-purpose ones: a shape the byte-
-// lane encoders cannot express is returned so the caller records it on
-// p.unknown and refuses the output, rather than letting a -1 sentinel fold
-// into the register field.
+// arm64_gas_bad_vec_token guards the SIMD operands the way
+// arm64_gas_bad_reg_token guards the general-purpose ones: a shape the
+// encoders cannot express is returned so the caller records it on p.unknown
+// and refuses the output, rather than letting a -1 sentinel fold into the
+// register field.
 function arm64_gas_bad_vec_token(mnem: string, rest: string): string {
-    if (mnem == "ld1" || mnem == "dup") {
-        return arm64_gas_bad_neon_token(mnem, rest);
-    }
     var ops: string[] = arm64_gas_operands(rest);
+    if (mnem == "ld1" || mnem == "st1" || mnem == "ld1r" || mnem == "dup"
+        || mnem == "movi" || mnem == "umov" || mnem == "smov" || mnem == "ins") {
+        return arm64_gas_bad_lane(mnem, ops);
+    }
     // The across-lanes reductions come first: their destination is a SCALAR,
     // so routing on ops[0] being an arranged operand would miss them — and
     // then `sminv v0.8h, v9.8h` reaches the encoder with -1 for a register.
@@ -4087,17 +4167,62 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     // The packed NEON the __memchr / __ascii_run kernels emit. Operand shapes
     // are vetted in arm64_gas_bad_vec_token before reaching here, so a token
     // that cannot be encoded has already been recorded and refused.
-    if (mnem == "ld1") {
-        a = Arm64Asm { ...a, code: arm64_ld1_16b(a.code, arm64_gas_vlist_16b(ops[0]), arm64_gas_mem(ops[1]).base) };
-        return a;
-    }
-    if (mnem == "shrn") {
-        a = Arm64Asm { ...a, code: arm64_shrn_8b_8h(a.code, arm64_gas_vreg_of(ops[0], ".8b"), arm64_gas_vreg_of(ops[1], ".8h"), arm64_gas_imm(ops[2])) };
-        return a;
+    if (mnem == "ld1" || mnem == "st1" || mnem == "ld1r") {
+        if (ops.len() != 2) { return a; }
+        var lbase: i64 = 0x0c407000;
+        if (mnem == "st1") { lbase = 0x0c007000; }
+        if (mnem == "ld1r") { lbase = 0x0d40c000; }
+        var lc: i32 = arm64_gas_vlist_one_arr(ops[0]);
+        return Arm64Asm { ...a, code: arm64_vecldst1(a.code, lbase, arm64_gas_vlist_one(ops[0]),
+            arm64_gas_mem(ops[1]).base, arm64_gas_arr_size(lc), arm64_gas_arr_q(lc)) };
     }
     if (mnem == "dup") {
-        a = Arm64Asm { ...a, code: arm64_dup_16b_w(a.code, arm64_gas_vreg_of(ops[0], ".16b"), arm64_gas_reg(ops[1])) };
-        return a;
+        if (ops.len() != 2) { return a; }
+        var dc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        var dsz: i32 = arm64_gas_arr_size(dc);
+        if (arm64_gas_lane_size(ops[1]) >= 0) {
+            return Arm64Asm { ...a, code: arm64_vecdup(a.code, 0x0e000400, arm64_gas_vreg_any(ops[0]),
+                arm64_gas_lane_reg(ops[1]), arm64_vec_imm5(dsz, arm64_gas_lane_index(ops[1])), arm64_gas_arr_q(dc)) };
+        }
+        return Arm64Asm { ...a, code: arm64_vecdup(a.code, 0x0e000c00, arm64_gas_vreg_any(ops[0]),
+            arm64_gas_reg(ops[1]), arm64_gas_pow2(dsz), arm64_gas_arr_q(dc)) };
+    }
+    if (mnem == "movi") {
+        if (ops.len() < 2) { return a; }
+        var mc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        var msz: i32 = arm64_gas_arr_size(mc);
+        var mimm: i32 = arm64_gas_imm(ops[1]);
+        // The .2d form is the bytemask: each imm8 bit expands to a byte.
+        if (msz == 3) {
+            return Arm64Asm { ...a, code: arm64_vecmovi(a.code, arm64_gas_vreg_any(ops[0]), mimm, 14, true, true) };
+        }
+        var mshift: i32 = 0;
+        if (ops.len() == 3) { mshift = arm64_gas_lsl_amount(ops[2]); }
+        // cmode selects the BYTE POSITION the imm8 lands in, so the shift is
+        // not a field of its own.
+        var cmode: i32 = 14;
+        if (msz == 1) { cmode = 8 + (mshift / 8) * 2; }
+        if (msz == 2) { cmode = (mshift / 8) * 2; }
+        return Arm64Asm { ...a, code: arm64_vecmovi(a.code, arm64_gas_vreg_any(ops[0]), mimm, cmode, arm64_gas_arr_q(mc), false) };
+    }
+    if (mnem == "umov" || mnem == "smov") {
+        if (ops.len() != 2) { return a; }
+        var usz: i32 = arm64_gas_lane_size(ops[1]);
+        var ubase: i64 = 0x0e003c00;
+        if (mnem == "smov") { ubase = 0x0e002c00; }
+        return Arm64Asm { ...a, code: arm64_vecmovlane(a.code, ubase, arm64_gas_reg(ops[0]),
+            arm64_gas_lane_reg(ops[1]), arm64_vec_imm5(usz, arm64_gas_lane_index(ops[1])), !arm64_gas_is_w(ops[0])) };
+    }
+    if (mnem == "ins") {
+        if (ops.len() != 2) { return a; }
+        var isz: i32 = arm64_gas_lane_size(ops[0]);
+        var iimm5: i32 = arm64_vec_imm5(isz, arm64_gas_lane_index(ops[0]));
+        if (arm64_gas_lane_size(ops[1]) >= 0) {
+            return Arm64Asm { ...a, code: arm64_vecinselem(a.code, arm64_gas_lane_reg(ops[0]), arm64_gas_lane_reg(ops[1]),
+                iimm5, arm64_gas_lane_index(ops[1]) * arm64_gas_pow2(isz)) };
+        }
+        return Arm64Asm { ...a, code: arm64_vecmovlane(a.code, 0x4e001c00, arm64_gas_lane_reg(ops[0]),
+            arm64_gas_reg(ops[1]), iimm5, false) };
     }
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw"
         || mnem == "ldrsb" || mnem == "ldrsh") {
@@ -4224,7 +4349,8 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "lsl" || mnem == "lsr" || mnem == "asr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
     if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "adds" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16" || mnem == "clz") { return true; }
     if (mnem == "rbit") { return true; }  // ctz = rbit+clz; popcount = cnt+addv
-    if (mnem == "ld1" || mnem == "dup") { return true; }  // the packed NEON of the §3 kernels
+    if (mnem == "ld1" || mnem == "st1" || mnem == "ld1r" || mnem == "dup"
+        || mnem == "movi" || mnem == "umov" || mnem == "smov" || mnem == "ins") { return true; }
     if (arm64_across_entry(mnem) >= 0) { return true; }  // the across-lanes reductions
     if (arm64_gas_vecgen_handles(mnem)) { return true; }  // the general Advanced SIMD families
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }

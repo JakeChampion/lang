@@ -484,6 +484,26 @@ _start:
     umaxv s23, v9.4s
     saddlv h23, v9.16b
     uaddlv s23, v9.8h
+    // #8000 wave 2d: the lane moves, the modified immediate, and the
+    // single-register load/store-structure forms. imm5 packs the element size
+    // and the lane index into one field, so a size disagreement moves the
+    // index rather than widening anything — which is what these rows pin.
+    umov w23, v9.b[5]
+    umov x23, v9.d[1]
+    smov w23, v9.h[3]
+    smov x23, v9.s[1]
+    ins v23.b[5], w9
+    ins v23.d[1], x9
+    ins v23.b[5], v9.b[2]
+    dup v23.16b, w9
+    dup v23.2d, x9
+    dup v23.8h, v9.h[3]
+    movi v23.16b, #7
+    movi v23.4s, #7, lsl #8
+    movi v23.2d, #0
+    ld1r {v23.16b}, [x9]
+    ld1 {v23.4s}, [x9]
+    st1 {v23.2d}, [x9]
 Lend:
     ret
 `
