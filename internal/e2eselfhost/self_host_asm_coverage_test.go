@@ -165,6 +165,7 @@ func TestSelfHostAsmCoverageArm64(t *testing.T) {
 		"orr":    "orr x0, x1, x2",
 		"eor":    "eor x0, x1, x2",
 		"subs":   "subs x2, x2, #1",
+		"adds":   "adds x1, x2, x3",
 		"udiv":   "udiv x0, x1, x2",
 		"sdiv":   "sdiv x0, x1, x2",
 		"msub":   "msub x0, x1, x2, x3",
