@@ -16,8 +16,11 @@
 // tables, the string ops, and SSE/SSE2/SSE4 through the Haswell baseline
 // (scalar and packed float math, packed integer arithmetic/compares/
 // shuffles, vector shifts, movups/movdq*, pextr/pinsr, crc32, pcmp*stri,
-// ptest, round*). An unsupported instruction — or an ambiguous operand
-// size — surfaces as a clear error rather than a miscompile.
+// ptest, round*). Like GNU as, a jmp/jcc to an in-range label is relaxed
+// to its 2-byte rel8 form (EB / 70+cc); only out-of-range branches — and
+// calls, which have no short form — stay rel32. An unsupported
+// instruction — or an ambiguous operand size — surfaces as a clear error
+// rather than a miscompile.
 package x86_64
 
 import (
@@ -70,8 +73,9 @@ type ripFixup struct {
 	sym string
 }
 
-// Assembler accumulates encoded machine code and resolves text-label
-// branch/call targets in a final pass.
+// Assembler accumulates encoded machine code, relaxes in-range branches
+// to their rel8 forms, and resolves text-label branch/call targets in a
+// final pass.
 type Assembler struct {
 	text   []byte
 	rodata []byte
@@ -90,6 +94,7 @@ type Assembler struct {
 	ripFixups    []ripFixup
 	quadSyms     []quadSymFixup
 	locRows      []LineRow
+	relaxEvents  []relaxEvent
 }
 
 // LineRow is one DWARF .debug_line row: the source line active at a code
@@ -214,7 +219,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 			}
 			switch sec {
 			case "text":
-				a.textLabels[label] = len(a.text)
+				a.defineTextLabel(label)
 			case "rodata":
 				a.rodataLabels[label] = len(a.rodata)
 			case "bss":
@@ -246,6 +251,11 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		for i := nRip; i < len(a.ripFixups); i++ {
 			a.ripFixups[i].end = len(a.text)
 		}
+	}
+	// Shrink in-range branches to their rel8 forms and settle the final
+	// layout before any offsets are resolved.
+	if err := a.relax(); err != nil {
+		return nil, nil, nil, nil, nil, err
 	}
 	// Resolve rel32 branch/call targets now that all labels are placed.
 	for _, f := range a.relFixups {
@@ -399,6 +409,9 @@ func (a *Assembler) directive(line, sec string) (string, error) {
 		if sec == "text" && len(fields) >= 3 {
 			if line, err := strconv.Atoi(fields[2]); err == nil {
 				a.locRows = append(a.locRows, LineRow{Offset: len(a.text), Line: line})
+				if e := a.trailingPad(); e != nil {
+					e.locs = append(e.locs, len(a.locRows)-1)
+				}
 			}
 		}
 		return sec, nil
@@ -438,24 +451,32 @@ func (a *Assembler) alignText(d, rest string) error {
 	if align <= 1 {
 		return nil
 	}
-	pad := (align - len(a.text)%align) % align
-	if pad == 0 {
-		return nil
-	}
+	maxSkip := -1
 	if len(parts) >= 3 {
-		maxSkip := strings.TrimSpace(parts[2])
-		if maxSkip != "" {
-			ms, err := strconv.Atoi(maxSkip)
+		if s := strings.TrimSpace(parts[2]); s != "" {
+			maxSkip, err = strconv.Atoi(s)
 			if err != nil {
 				return fmt.Errorf("bad max-skip %q", rest)
 			}
-			if pad > ms {
-				return nil
-			}
 		}
 	}
-	a.nopPad(pad)
+	pad := padWidth(len(a.text), align, maxSkip)
+	// Recorded even when pad is 0: branch relaxation shifts offsets, so
+	// the width must be recomputed against the final layout.
+	a.relaxEvents = append(a.relaxEvents, relaxEvent{start: len(a.text), size: pad, align: align, maxSkip: maxSkip})
+	a.text = appendNopPad(a.text, pad)
 	return nil
+}
+
+// padWidth is the NOP fill needed to bring offset off up to a multiple of
+// align, honouring a gas max-skip (-1 when absent): alignment is skipped
+// entirely when it would insert more than maxSkip bytes.
+func padWidth(off, align, maxSkip int) int {
+	pad := (align - off%align) % align
+	if maxSkip >= 0 && pad > maxSkip {
+		return 0
+	}
+	return pad
 }
 
 // nopPatterns[n] is the n-byte NOP GNU as fills alignment padding with
@@ -475,14 +496,15 @@ var nopPatterns = [12][]byte{
 	11: {0x66, 0x66, 0x2E, 0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00},
 }
 
-func (a *Assembler) nopPad(n int) {
+func appendNopPad(b []byte, n int) []byte {
 	for n > 11 {
-		a.emit(nopPatterns[11]...)
+		b = append(b, nopPatterns[11]...)
 		n -= 11
 	}
 	if n > 0 {
-		a.emit(nopPatterns[n]...)
+		b = append(b, nopPatterns[n]...)
 	}
+	return b
 }
 
 // insn parses and encodes one .text instruction.
@@ -1982,6 +2004,7 @@ func (a *Assembler) jmp(ops []operand) error {
 	if ops[0].kind != opLabel {
 		return fmt.Errorf("jmp expects a label, register, or memory operand")
 	}
+	a.relaxEvents = append(a.relaxEvents, relaxEvent{start: len(a.text), size: 5, fixup: len(a.relFixups)})
 	a.emit(0xE9)
 	a.relFixups = append(a.relFixups, relFixup{at: len(a.text), sym: ops[0].sym})
 	a.emit32(0)
@@ -2036,6 +2059,7 @@ func (a *Assembler) jcc(ops []operand, cc byte) error {
 	if len(ops) != 1 || ops[0].kind != opLabel {
 		return fmt.Errorf("jcc expects a label")
 	}
+	a.relaxEvents = append(a.relaxEvents, relaxEvent{start: len(a.text), size: 6, fixup: len(a.relFixups)})
 	a.emit(0x0F, 0x80+cc)
 	a.relFixups = append(a.relFixups, relFixup{at: len(a.text), sym: ops[0].sym})
 	a.emit32(0)

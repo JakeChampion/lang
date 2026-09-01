@@ -143,15 +143,17 @@ func TestEncodeIntegerSurface(t *testing.T) {
 	}
 }
 
-// rel32 branch/call targets resolve in the final pass: backward, forward,
-// and conditional.
+// Branch/call targets resolve in the final pass: backward, forward, and
+// conditional. In-range jmp/jcc relax to the rel8 forms (as GNU as does);
+// call has no short form and stays rel32. Range boundaries, chain
+// reactions, and the alignment interaction are pinned in relax_test.go.
 func TestEncodeRelativeBranches(t *testing.T) {
 	cases := []struct{ src, want string }{
-		{"L:\njmp L", "e9fbffffff"},   // back -5
-		{"L:\ncall L", "e8fbffffff"},  // back -5
-		{"L:\njz L", "0f84faffffff"},  // back -6
-		{"jmp L\nL:", "e900000000"},   // forward 0
-		{"jne L\nL:", "0f8500000000"}, // forward 0
+		{"L:\njmp L", "ebfe"},        // back -2
+		{"L:\ncall L", "e8fbffffff"}, // back -5
+		{"L:\njz L", "74fe"},         // back -2
+		{"jmp L\nL:", "eb00"},        // forward 0
+		{"jne L\nL:", "7500"},        // forward 0
 	}
 	for _, c := range cases {
 		if got := asm(t, c.src); got != c.want {

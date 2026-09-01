@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/native/elf"
@@ -20,9 +21,6 @@ import (
 // Deliberately excluded, because our encoding choice differs from GNU as
 // while decoding to the SAME instruction (verified via objdump -D -b binary):
 //
-//   - jcc/jmp/call to a label: gas relaxes an in-range branch to the rel8
-//     form; we emit rel32 only (short-branch relaxation is its own roadmap
-//     item). Branch encodings are pinned by TestEncodeRelativeBranches.
 //   - accumulator-immediate shortenings: gas encodes `test al/ax/eax/rax, imm`
 //     via A8/A9, ALU `al/ax/eax/rax, imm` (when the imm8 form doesn't apply)
 //     via the 04/05/0C/0D/… accumulator opcodes, and `xchg ax/eax/rax, reg`
@@ -104,6 +102,19 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"movsw\nstosw\ncmpsq\nlodsb\n",
 		"indirect_branch": "" +
 			"call rax\ncall r11\njmp rdx\njmp r9\nret\nleave\nsyscall\nud2\n",
+		// Label branches: both assemblers relax in-range jmp/jcc to the
+		// rel8 forms; call stays rel32 (it has no short form).
+		"branches": "" +
+			"f:\nxor eax, eax\nmov ecx, 10\n" +
+			"L1:\ninc eax\ndec ecx\njnz L1\n" +
+			"cmp eax, 10\njne L2\nret\nL2:\nud2\n" +
+			"call f\njmp f\n",
+		"branches_out_of_range": "" +
+			"M:\njmp L\n" + strings.Repeat("nop\n", 200) + "L: ret\njne M\n",
+		// An alignment pad between a shrinking branch and its target is
+		// re-sized against the relaxed layout.
+		"branch_alignment": "" +
+			"f:\nxor eax, eax\n.p2align 4\nL1:\ninc eax\ncmp eax, 100\njl L1\nret\n",
 		"sse_scalar": "" +
 			"movq xmm0, rax\nmovq r9, xmm3\nmovq xmm2, xmm7\nmovd xmm1, ecx\nmovd r10d, xmm12\n" +
 			"movsd xmm0, xmm1\nmovsd xmm3, qword ptr [rdi+8]\nmovsd qword ptr [rsp], xmm2\n" +
