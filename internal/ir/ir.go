@@ -350,6 +350,14 @@ const (
 	// and the self-host byte-identical fixpoint — never see it.
 	OpLine // () → () (source-line marker; Pos is the payload)
 
+	// OpCoverPoint is the line-coverage counter site (#5548): like OpLine
+	// it consumes and produces nothing, but it does emit code — a single
+	// increment of the counter Program.CoverSites[I32] names. Emitted by
+	// the builder only under the CoverPoints lower-option (`fern -cover`),
+	// so an ordinary build — and the self-host byte-identical fixpoint —
+	// never sees one. I32 is the counter index; Pos is the site it counts.
+	OpCoverPoint // () → () (coverage counter bump; I32 is the site index)
+
 	// opKindCount is one past the last op, not an op itself. It exists so
 	// a pass over "every op kind" picks up a new one wherever it is added
 	// in this block.
@@ -576,6 +584,8 @@ func (k OpKind) String() string {
 		return "rc.is_unique"
 	case OpLine:
 		return "line"
+	case OpCoverPoint:
+		return "cover"
 	}
 	return "<invalid>"
 }
@@ -1760,6 +1770,57 @@ type Program struct {
 	// compiled-backend `dyn` slices wire it in; nil until then (the IR
 	// still rejects `dyn` on compiled backends — docs/DYN-TRAITS.md §4.2).
 	Vtables []VtableDecl
+	// CoverSites is the line-coverage counter table (#5548): entry i is
+	// the source line OpCoverPoint with I32 == i counts. Populated only
+	// under the CoverPoints lower-option; nil (and every backend's
+	// coverage emission absent) otherwise.
+	//
+	// One entry per distinct (file, line) reached by the lowering, so a
+	// line carrying several statements shares one counter and a line
+	// carrying none has no entry at all — the table IS the denominator
+	// the report divides by. Entries are assigned in first-lowered order,
+	// which is deterministic because the function order is.
+	//
+	// The table is fixed at lowering time and the post-Lower passes never
+	// touch it, which is what makes the report honest about dead code: a
+	// function the dead-function cull removes leaves its sites in the
+	// table with no site left to increment them, and they report 0 —
+	// never called is exactly what that means.
+	CoverSites []CoverSite
+}
+
+// CoverSite is one row of Program.CoverSites: the source line a coverage
+// counter counts. File is as the parser recorded it, so a report can be
+// read against the tree the compile ran in.
+type CoverSite struct {
+	File string
+	Line int
+}
+
+// coverTable assigns counter indices to (file, line) pairs and records
+// them in lowering order. Shared by every lowerFunc call in one
+// LowerWith so a line reached from two functions — an inlined body, a
+// generated drop thunk over a user type — shares its counter.
+type coverTable struct {
+	sites []CoverSite
+	index map[CoverSite]int32
+}
+
+func newCoverTable() *coverTable {
+	return &coverTable{index: map[CoverSite]int32{}}
+}
+
+// id returns the counter index for one source line, allocating on first
+// sight.
+func (c *coverTable) id(file string, line int) int32 {
+	k := CoverSite{File: file, Line: line}
+	if i, ok := c.index[k]; ok {
+		return i
+	}
+	i := int32(len(c.sites))
+	c.sites = append(c.sites, k)
+	c.index[k] = i
+	return i
 }
 
 // VtableDecl is the static dispatch table for one (trait, concrete-type)
@@ -2767,6 +2828,11 @@ type lowerOpts struct {
 	// default: ordinary builds — and the self-host byte-identical fixpoint —
 	// never see OpLine.
 	emitLineMarkers bool
+	// coverPoints makes the builder emit an OpCoverPoint at the entry of
+	// each basic block that starts a new source line (`fern -cover`), and
+	// LowerWith publish the resulting table as Program.CoverSites. Off by
+	// default: an ordinary build emits no coverage op at all.
+	coverPoints bool
 }
 
 // DynSupported marks the calling backend as able to lower `dyn Trait`
@@ -2788,6 +2854,11 @@ func DynRcSupported() LowerOption { return func(o *lowerOpts) { o.dynRcSupported
 // leave it off and never see OpLine.
 func EmitLineMarkers() LowerOption { return func(o *lowerOpts) { o.emitLineMarkers = true } }
 
+// CoverPoints makes the lowering instrument each executable source line
+// with an OpCoverPoint and publish the counter table as
+// Program.CoverSites (#5548, `fern -cover`). Off by default.
+func CoverPoints() LowerOption { return func(o *lowerOpts) { o.coverPoints = true } }
+
 // LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
 // wasm32 and 8 on arm64; it sizes pointer-typed enum payloads,
 // struct fields, array elements, and closure captures so heap
@@ -2796,6 +2867,20 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	var lo lowerOpts
 	for _, opt := range opts {
 		opt(&lo)
+	}
+	// One table for the whole program, so a line reached from two
+	// functions shares its counter. nil when -cover is off, which is what
+	// every builder reads to decide whether to instrument at all.
+	var cover *coverTable
+	if lo.coverPoints {
+		cover = newCoverTable()
+	} else if ast.CoverEnabled {
+		// A backend that has not wired coverage would otherwise lower an
+		// UNinstrumented program under -cover and produce a binary that
+		// says nothing at exit — a coverage run that silently measures
+		// zero is worse than one that refuses. Only the x86-64 and arm64
+		// natives pass CoverPoints today (docs/BACKEND-PARITY.md).
+		return nil, fmt.Errorf("-cover: this backend has no coverage instrumentation — build for x86-64-linux or arm64-linux, or drop -cover")
 	}
 	// `dyn Trait` (runtime trait objects) representation by target
 	// (docs/DYN-TRAITS.md §4.2):
@@ -3009,7 +3094,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, vtableDispatched, addressTaken, growParams)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, vtableDispatched, addressTaken, growParams)
 		if err != nil {
 			return nil, err
 		}
@@ -3386,6 +3471,9 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// generated drop bodies included.
 	twoWord := ast.UseTwoWordStrings(ptrW)
 	out.TwoWordStr = twoWord
+	if cover != nil {
+		out.CoverSites = cover.sites
+	}
 	for _, fn := range out.Funcs {
 		fn.PtrW = ptrW
 		fn.TwoWordStr = twoWord
@@ -5064,6 +5152,19 @@ type builder struct {
 	// statements sharing a line.
 	emitLineMarkers bool
 	lastLineMark    int
+	// cover is the program-wide coverage counter table under
+	// `fern -cover`, nil otherwise; lastCoverLine dedups statements that
+	// share a line WITHIN one basic block. emit() clears it at every
+	// control-flow op, so each block that opens on an already-marked line
+	// re-marks it — the gcov convention, where a line holding two blocks
+	// counts each of them.
+	cover         *coverTable
+	lastCoverLine int
+	// coverFile is the file this function was parsed from
+	// (FuncDecl.SourceFile), the other half of a counter's identity —
+	// ast.Position carries only a line, and two modules' line 12 are not
+	// the same line.
+	coverFile string
 	// defers is the in-source-order list of every Defer
 	// statement in the function body, collected by a pre-walk
 	// before any IR emission. deferSlots holds the synthetic
@@ -5442,7 +5543,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5461,6 +5562,8 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		ptrW:                    ptrW,
 		dynRcSupported:          dynRcSupported,
 		emitLineMarkers:         emitLineMarkers,
+		cover:                   cover,
+		coverFile:               fn.SourceFile,
 		pairForm:                pairForm,
 		closureCaps:             closureCaps,
 		genEnumDrops:            genEnumDrops,
@@ -6380,7 +6483,21 @@ func (b *builder) emit(op Op) {
 	if op.Pos == (ast.Position{}) {
 		op.Pos = b.curPos
 	}
+	if b.cover != nil && isControlFlowOp(op.Kind) {
+		b.lastCoverLine = 0
+	}
 	b.out.Ops = append(b.out.Ops, op)
+}
+
+// isControlFlowOp reports whether an op ends the current basic block, so
+// the coverage instrumentation re-marks the next statement's line even
+// when the block it just closed started on the same one.
+func isControlFlowOp(k OpKind) bool {
+	switch k {
+	case OpBlock, OpLoop, OpIf, OpElse, OpEnd, OpBr, OpBrIf, OpReturn:
+		return true
+	}
+	return false
 }
 
 // openBlock / openLoop / openIf push a scope on the validation control
@@ -7940,6 +8057,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 	if b.emitLineMarkers && b.curPos.Line > 0 && b.curPos.Line != b.lastLineMark {
 		b.lastLineMark = b.curPos.Line
 		b.emit(Op{Kind: OpLine, Pos: b.curPos})
+	}
+	// Under -cover, bump the counter for this statement's line. Placed at
+	// the statement boundary, where the operand stack is empty and no
+	// condition is in flight, so the backends' one-instruction increment
+	// cannot land between a comparison and the branch reading it.
+	if b.cover != nil && b.curPos.Line > 0 && b.curPos.Line != b.lastCoverLine {
+		b.lastCoverLine = b.curPos.Line
+		b.emit(Op{Kind: OpCoverPoint, I32: b.cover.id(b.coverFile, b.curPos.Line), Pos: b.curPos})
 	}
 	switch n := s.(type) {
 	case *ast.Block:

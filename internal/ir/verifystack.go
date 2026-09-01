@@ -660,7 +660,7 @@ func (s *stackChecker) step(i int, op Op) {
 		s.popN(i, op.Kind, int(op.I32), kUnknown)
 		s.push(kInt)
 
-	case OpLine:
+	case OpLine, OpCoverPoint:
 		// No stack effect by construction.
 
 	default:

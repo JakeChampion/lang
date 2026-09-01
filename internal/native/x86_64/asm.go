@@ -71,6 +71,12 @@ type ripFixup struct {
 	at  int
 	end int
 	sym string
+	// addend is the constant term of a `[rip + sym + N]` operand, added
+	// to the symbol's own offset when the fixup resolves. Dropping it
+	// silently aliased every element of a symbol-addressed array onto
+	// element 0 — how the -cover counters (#5548) first read back as one
+	// hot line and the rest untouched.
+	addend int64
 }
 
 // Assembler accumulates encoded machine code, relaxes in-range branches
@@ -340,7 +346,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		} else {
 			return nil, nil, nil, nil, nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
 		}
-		disp := int32(symOff - f.end)
+		disp := int32(int64(symOff) + f.addend - int64(f.end))
 		putLE32(a.text, f.at, uint32(disp))
 	}
 	// Fill ".quad <symbol>" pointer-table slots. In a PIE these values are
@@ -928,7 +934,7 @@ func (a *Assembler) encodeMem(regField int, m operand) {
 	if m.base < 0 && m.sym != "" {
 		// rip-relative: ModRM mod=00, rm=101 means [rip + disp32].
 		a.emit(byte((regField&7)<<3) | 5)
-		a.ripFixups = append(a.ripFixups, ripFixup{at: len(a.text), sym: m.sym})
+		a.ripFixups = append(a.ripFixups, ripFixup{at: len(a.text), sym: m.sym, addend: m.disp})
 		a.emit32(0)
 		return
 	}

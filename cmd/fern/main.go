@@ -650,6 +650,9 @@ func main() {
 	colorMode := flag.String("color", "auto", "colourise diagnostics: auto (default — colour only when stderr is a terminal and NO_COLOR is unset), always, or never.")
 	asciiBoxes := flag.Bool("ascii", false, "with coloured diagnostics, draw the gutter with a plain `|` instead of the box-drawing `│` (also selected automatically when the locale isn't UTF-8).")
 	sanitize := flag.Bool("sanitize", false, "debug build: turn on the heap memory-safety detectors together (native x86-64/arm64). Reports an rc over-release (double free) and a use-after-free of a quarantined block as a named `fern-sanitizer:` line on stderr followed by a fatal SIGILL, and prints a leak census at exit. Costs allocation throughput and never recycles a freed block, so it is for debugging, not for shipping; an unsanitized build is byte-identical to one from a compiler without the feature. Same as FERN_SANITIZE=1.")
+	cover := flag.Bool("cover", false, "measurement build: instrument every executable source line with a hit counter, and write the whole table to stderr at exit — one `fern-cover: <file>:<line> <count>` line per instrumented line, hit or not. Feed the saved stream to `fern -cover-report` for per-file totals, the uncovered-line list, or lcov. Costs an increment per line and keeps functions nothing calls (so they report 0), so it is for measuring a test run, not for shipping; a build without it is byte-identical to one from a compiler without the feature. Native x86-64 and arm64 only — any other target errors rather than emitting an uninstrumented binary. Same as FERN_COVER=1.")
+	coverReport := flag.Bool("cover-report", false, "read a saved `-cover` run's output (`fern -cover-report FILE`, or `-` for stdin) and print per-file line coverage plus the uncovered lines. Lines that don't carry the `fern-cover: ` prefix are ignored, so piping the program's whole stderr is fine. Add -lcov for an lcov tracefile instead. Report mode; no codegen.")
+	lcov := flag.Bool("lcov", false, "with -cover-report, write an lcov tracefile (SF/DA/LF/LH records) instead of the human summary, for the coverage viewers that already read that format.")
 	backtrace := flag.Bool("backtrace", ast.BacktraceEnabled, "emit the frame-pointer backtrace a fatal abort (bounds / arena / sanitizer) prints under its cause line, on the native x86-64 and arm64 backends. `-backtrace=false` drops the walk, the hex printer, and the \"backtrace:\" string from the binary — the size-critical opt-out; the cause line and every exit code (134 / 125 / 124) are unchanged. Same as FERN_BACKTRACE=0, which this flag defaults to.")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: fern [-target <isa>-<environment>] [-backend ssa] [-emit core-module] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]\n       (targets: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, wasm32-wasi, wasm32-wasi-http; `fern -targets` for all)")
@@ -683,6 +686,20 @@ func main() {
 		// is the one wrong conclusion this mode must never support.
 		if !sanitizerTargets[*target] {
 			fmt.Fprintf(os.Stderr, "fern: warning: -sanitize has no effect on -target %s (native x86-64 and arm64 only); this build carries no checks\n", *target)
+		}
+	}
+	if *cover {
+		// The lowering and both natives read this global directly (the
+		// -sanitize precedent), so a late -cover has to be pushed into
+		// it. Composes with FERN_COVER=1, which only ever turns it on.
+		ast.CoverEnabled = true
+		// The instrumentation is a lowering pass, and neither the AST
+		// interpreter nor the REPL lowers anything. Accepting -cover
+		// there would run the program and print no report — silence a
+		// reader would take for "nothing was covered".
+		if *doInterp || *repl {
+			fmt.Fprintln(os.Stderr, "fern: -cover instruments compiled code; -interp and -repl do not lower, so they have no coverage to report")
+			os.Exit(2)
 		}
 	}
 	if *embedDir != "" {
@@ -789,6 +806,18 @@ func main() {
 			}
 		})
 		if err := runCheckTarget(path, checkTarget); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *coverReport {
+		if flag.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "usage: fern -cover-report FILE   (FILE is a saved -cover run's output; `-` reads stdin)")
+			os.Exit(2)
+		}
+		if err := runCoverReport(flag.Arg(0), *lcov, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -1181,6 +1210,19 @@ func enforceTargetCapabilities(srcPath string, prog *ast.Program, info *checker.
 		if fn.ExportIface != "" || fn.ExportWITName != "" || (fn.Async && fn.ImportIface == "") {
 			extras = append(extras, fn.Name)
 		}
+	}
+	// The shake is here so E066 is judged on the REACHABLE set — an
+	// unreachable call to a builtin the target lacks is not a violation.
+	// Under -cover the program itself must survive it: a function nothing
+	// calls is what a coverage report most needs to name, and codegen only
+	// assigns counter sites to functions it lowers. Enforcement still runs
+	// on the shaken set; the full set is put back for codegen, whose own
+	// shake is gated the same way and whose post-lowering cull drops the
+	// dead code again once its sites are registered.
+	var preShake []*ast.FuncDecl
+	if ast.CoverEnabled {
+		preShake = append([]*ast.FuncDecl(nil), prog.Funcs...)
+		defer func() { prog.Funcs = preShake }()
 	}
 	treeshake.Run(prog, info, extras...)
 	vs := platforms.Enforce(prog, target)

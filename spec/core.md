@@ -262,6 +262,7 @@ this file does not have — see below.
 | --- | --- | --- | --- |
 | `drop` | `* → —` | `Width` | Discards one slot, or the two-word pair under `Width: WidthString`. **Not** an rc operation: `rc.dec` is. |
 | `line` | `— → —` | | A source-position marker carrying `Pos`. Emitted only under native `-g`; it produces no code, and the byte-identical self-host fixpoint never sees one. |
+| `cover` | `— → —` | `I32` | A line-coverage counter site carrying `Pos`, `I32` indexing `Program.CoverSites`. Emitted only under `-cover`; it lowers to one increment of a static counter and, like `line`, the byte-identical self-host fixpoint never sees one. |
 
 ## How this is kept true
 
@@ -338,6 +339,7 @@ can be written that makes `LowerWith` emit them.
 | `call_closure_direct` | Introduced by the defunctionalisation pass when a `call_indirect`'s receiver is provably monomorphic. |
 | `make_env` | Introduced by the same pass, when every reader of a closure became a `call_closure_direct` and the `{fn_idx, env_ptr}` pair is dead. |
 | `line` | Emitted only under the `EmitLineMarkers` lower option, which is native `-g`. The byte-identical self-host fixpoint depends on ordinary builds never seeing one. |
+| `cover` | Emitted only under the `CoverPoints` lower option, which is `-cover`. The byte-identical self-host fixpoint depends on ordinary builds never seeing one. |
 
 A row here is checked in both directions: an entry the corpus has
 started reaching is reported and must be deleted, so the list shrinks as

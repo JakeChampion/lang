@@ -282,7 +282,17 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// roots it cannot see from the AST are passed in: a Drop finalizer,
 	// whose sole caller is drop glue IR lowering has not synthesised yet,
 	// and the -shared exports.
-	treeshake.Run(prog, info, append(treeshake.DropImplMethods(info), opts.Exports...)...)
+	// A -cover build keeps every function the program declares, because a
+	// function nothing calls is the single most useful thing a coverage
+	// report has to say and the AST tree-shake runs before lowering — the
+	// only place counter sites are assigned, so a function shaken here has
+	// no row in the table at all rather than a row reading 0. Its CODE
+	// still goes: ir.LiveFunctionsWithAliases culls it after lowering, by
+	// which point its sites are registered. The cost is that -cover
+	// compiles code an ordinary build never lowers.
+	if !ast.CoverEnabled {
+		treeshake.Run(prog, info, append(treeshake.DropImplMethods(info), opts.Exports...)...)
+	}
 	// arm64 supports boxed one-word `dyn Trait` values
 	// (docs/DYN-TRAITS.md §4.2.2): DynSupported lifts the dispatch gate
 	// (the same boxed representation x86-64 uses — both are ptrW==8 — so
@@ -293,6 +303,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	lowerOpts := []ir.LowerOption{ir.DynSupported(), ir.DynRcSupported()}
 	if opts.DebugLines {
 		lowerOpts = append(lowerOpts, ir.EmitLineMarkers())
+	}
+	if ast.CoverEnabled {
+		lowerOpts = append(lowerOpts, ir.CoverPoints())
 	}
 	ip, err := ir.LowerWith(prog, info, 8, lowerOpts...)
 	if err != nil {
@@ -362,7 +375,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		}
 		ip.Funcs = kept
 	}
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, noPeephole: opts.NoPeephole, entry: opts.Entry.OrDefault()}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, coverSites: ip.CoverSites, noPeephole: opts.NoPeephole, entry: opts.Entry.OrDefault()}
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn
 	}
@@ -683,6 +696,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// literal labels, see emitDataSections) is unconditional under
 		// the flag — a no-alloc program just reports zeros.
 		g.emitLcReportRuntime()
+	}
+	if len(g.coverSites) > 0 {
+		g.emitCovReportRuntime()
 	}
 	if g.usesStrBuf {
 		g.emitStrBufRuntime()
@@ -1030,7 +1046,8 @@ func (g *generator) emitDataSections() {
 			g.line("\t.asciz " + escapeForGAS(sanLeakSuffix))
 		}
 	}
-	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || g.usesMapHashSeed || ast.LeakCheckEnabled {
+	g.emitCoverTable()
+	if g.usesAlloc || g.usesEnv || g.usesArgs || g.usesReadLine || g.usesStrIdx || g.usesRcDec || g.usesRcUnderflowCount || g.usesMapHashSeed || ast.LeakCheckEnabled || len(g.coverSites) > 0 {
 		g.line("")
 		if g.darwin {
 			// Mach-O zero-initialised data lives in
@@ -1061,6 +1078,14 @@ func (g *generator) emitDataSections() {
 			g.line(`.align 3`)
 			g.label("__fern_lc_free_bytes")
 			g.line(`	.quad 0`)
+		}
+		if n := len(g.coverSites); n > 0 {
+			// One 8-byte counter per instrumented source line (#5548),
+			// zero-initialised by the loader so a line never reached
+			// reports 0 without the program doing anything.
+			g.line(`.align 3`)
+			g.label("__fern_cov_counters")
+			g.line(fmt.Sprintf("\t.space %d", 8*n))
 		}
 	}
 	if g.usesAlloc {
@@ -5409,12 +5434,18 @@ func (g *generator) emitExitRuntime() {
 		g.sizeDirective("__fern_exit")
 		return
 	}
-	if ast.LeakCheckEnabled {
-		// Leak detector (#5362 slice 1): the exit() builtin bypasses the
-		// _start epilogue, so report here too. The code parks in x19 —
-		// clobbering a callee-save is fine on a path that never returns.
+	// The exit() builtin bypasses the _start epilogue, so both exit-time
+	// reports (leak summary #5362, coverage #5548) run here too. The code
+	// parks in x19 — clobbering a callee-save is fine on a path that never
+	// returns.
+	if ast.LeakCheckEnabled || len(g.coverSites) > 0 {
 		g.emit("mov x19, x0")
-		g.emit("bl __fern_lc_report")
+		if ast.LeakCheckEnabled {
+			g.emit("bl __fern_lc_report")
+		}
+		if len(g.coverSites) > 0 {
+			g.emit("bl __fern_cov_report")
+		}
 		g.emit("mov x0, x19")
 	}
 	g.syscallExit()
@@ -10210,6 +10241,10 @@ func escapeForGAS(s string) string {
 }
 
 type generator struct {
+	// coverSites is ir.Program.CoverSites — the -cover counter table
+	// (#5548), one entry per instrumented source line. Empty when -cover
+	// is off, which is what every coverage emission is gated on.
+	coverSites []ir.CoverSite
 	out strings.Builder
 	// noPeephole disables the streaming output peephole (Options.NoPeephole).
 	noPeephole bool
@@ -11121,14 +11156,19 @@ func (g *generator) emitStartRuntime() {
 		}
 	}
 	g.emit("bl %s", AsmFnName("main"))
-	if ast.LeakCheckEnabled {
-		// Leak detector (#5362 slice 1): print the alloc/free summary
-		// before exiting. main's return value parks in x19 (callee-save,
-		// and _start has no caller to preserve it for; the report helper
-		// itself only touches caller-saved registers) so the exit code
-		// survives the report's syscalls.
+	// The exit-time reports (leak summary #5362, coverage #5548) both run
+	// here, and either can be on alone or both together. main's return
+	// value parks in x19 (callee-save, and _start has no caller to
+	// preserve it for; the report helpers themselves only touch
+	// caller-saved registers) so the exit code survives their syscalls.
+	if ast.LeakCheckEnabled || len(g.coverSites) > 0 {
 		g.emit("mov x19, x0")
-		g.emit("bl __fern_lc_report")
+		if ast.LeakCheckEnabled {
+			g.emit("bl __fern_lc_report")
+		}
+		if len(g.coverSites) > 0 {
+			g.emit("bl __fern_cov_report")
+		}
 		g.emit("mov x0, x19")
 	}
 	g.syscallExit()
@@ -12215,6 +12255,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// .debug_line row. `.loc` never matches a peephole instruction
 		// pattern, so it only ever prevents a fusion at a line boundary.
 		g.line(fmt.Sprintf("\t.loc 1 %d %d", op.Pos.Line, op.Pos.Col))
+	case ir.OpCoverPoint:
+		g.emitCoverPoint(int(op.I32))
 	case ir.OpConstI32:
 		// Materialise the constant into x0 and push. Small
 		// values fit `mov` (imm16); larger ones use `ldr =N`
@@ -14075,4 +14117,148 @@ func (g *generator) closureCellSym(name string) string {
 		return "L__closure_cell_" + name
 	}
 	return "__closure_cell_" + name
+}
+
+// coverLabel is the literal label holding the fixed text of counter i's
+// report line — `fern-cover: <file>:<line> `, everything up to the count.
+func coverLabel(i int) string { return fmt.Sprintf(".Lcov_s%d", i) }
+
+// coverLineText is the fixed prefix of counter i's report line. Baking
+// the file and line into a literal is what keeps __fern_cov_report a
+// three-call loop with no formatting of its own to do. Must match the
+// x86-64 twin: a program's coverage output cannot depend on which native
+// built it.
+func coverLineText(site ir.CoverSite) string {
+	file := site.File
+	if file == "" {
+		// A program built straight from the parser, or a decl the checker
+		// synthesised, has no file stamp. Naming that rather than printing
+		// an empty path keeps every report line parseable by one reader.
+		file = "<unknown>"
+	}
+	return fmt.Sprintf("%s%s:%d ", ast.CoverLinePrefix, file, site.Line)
+}
+
+// emitCoverPoint bumps coverage counter idx in place (#5548, -cover).
+// x16/x17 are AArch64's intra-procedure-call scratch registers, dead at
+// the statement boundary this op sits on.
+//
+// The counter's byte offset is folded into the addressing rather than
+// added to the symbol, because a `ldr`'s unsigned imm12 is scaled by 8
+// and so reaches only the first 4096 counters on its own.
+func (g *generator) emitCoverPoint(idx int) {
+	off := 8 * idx
+	g.adrpAdd("x16", "__fern_cov_counters")
+	if hi := off &^ 0xfff; hi != 0 {
+		// One `add` of the page-sized part; imm12 << 12 covers offsets
+		// up to 16 MiB, i.e. two million instrumented lines.
+		g.emit("add x16, x16, #%d, lsl #12", hi>>12)
+		off &= 0xfff
+	}
+	g.emit("ldr x17, [x16, #%d]", off)
+	g.emit("add x17, x17, #1")
+	g.emit("str x17, [x16, #%d]", off)
+}
+
+// emitCoverTable emits the -cover report's read-only half (#5548): one
+// `.asciz` per instrumented line plus a (pointer, length) table
+// __fern_cov_report walks in lockstep with the .bss counters.
+func (g *generator) emitCoverTable() {
+	if len(g.coverSites) == 0 {
+		return
+	}
+	for i, site := range g.coverSites {
+		g.label(coverLabel(i))
+		g.line("\t.asciz " + escapeForGAS(coverLineText(site)))
+	}
+	g.label(".Lcov_str_nl")
+	g.line(`	.asciz "\n"`)
+	g.line(`.align 3`)
+	g.label("__fern_cov_table")
+	for i, site := range g.coverSites {
+		g.line(fmt.Sprintf("\t.quad %s", coverLabel(i)))
+		g.line(fmt.Sprintf("\t.quad %d", len(coverLineText(site))))
+	}
+}
+
+// emitCovReportRuntime emits `__fern_cov_report()` — the -cover build's
+// exit-time dump (#5548), the arm64 mirror of the x86-64 helper. Walks
+// the whole counter table and writes one line to stderr per instrumented
+// source line, hit or not:
+//
+//	fern-cover: <file>:<line> <count>
+//
+// Every line is reported, zeros included: the table is the denominator
+// `fern -cover-report` divides by, so a line missing from the dump would
+// silently shrink the total rather than show up as uncovered.
+//
+// Called from the _start epilogue and from the exit() builtin's
+// __fern_exit, both of which park the exit code in x19 across the call,
+// so this and its two local subroutines touch caller-saved registers
+// only. The loop counter lives in the frame rather than in a register
+// for the same reason.
+func (g *generator) emitCovReportRuntime() {
+	n := len(g.coverSites)
+	g.line("")
+	g.line(".global __fern_cov_report")
+	g.typeDirective("__fern_cov_report")
+	g.label("__fern_cov_report")
+	g.emit("stp x29, x30, [sp, #-32]!")
+	g.emit("mov x29, sp")
+	g.emit("str xzr, [sp, #16]") // i
+	g.label(".Lcov_loop")
+	g.emit("ldr x9, [sp, #16]")
+	g.loadImm64("x10", uint64(n))
+	g.emit("cmp x9, x10")
+	g.emit("b.hs .Lcov_done")
+	g.adrpAdd("x11", "__fern_cov_table")
+	g.emit("add x11, x11, x9, lsl #4") // 16-byte (pointer, length) entries
+	g.emit("ldr x1, [x11]")
+	g.emit("ldr x2, [x11, #8]")
+	g.emit("bl .Lcov_write")
+	g.emit("ldr x9, [sp, #16]")
+	g.adrpAdd("x11", "__fern_cov_counters")
+	g.emit("ldr x0, [x11, x9, lsl #3]")
+	g.emit("bl .Lcov_wrnum")
+	g.adrpAdd("x1", ".Lcov_str_nl")
+	g.emit("mov x2, #1")
+	g.emit("bl .Lcov_write")
+	g.emit("ldr x9, [sp, #16]")
+	g.emit("add x9, x9, #1")
+	g.emit("str x9, [sp, #16]")
+	g.emit("b .Lcov_loop")
+	g.label(".Lcov_done")
+	g.emit("ldp x29, x30, [sp], #32")
+	g.emit("ret")
+	// .Lcov_write(x1 = buf, x2 = len): one write(2) to stderr. Leaf — no
+	// bl inside, so x30 (the report's return address) survives.
+	g.label(".Lcov_write")
+	g.emit("mov x0, #2")
+	g.syscall("write")
+	g.emit("ret")
+	// .Lcov_wrnum(x0 = unsigned i64): decimal itoa into a 32-byte stack
+	// buffer, digits built backwards from its end (a u64 is at most 20
+	// digits), then one write(2) to stderr. Leaf. Unsigned — a hit count
+	// has no negative form, unlike the leak summary's live-byte balance.
+	g.label(".Lcov_wrnum")
+	g.emit("sub sp, sp, #48")
+	g.emit("add x3, sp, #32")
+	g.emit("mov x4, #10")
+	g.label(".Lcov_wrnum_loop")
+	g.emit("udiv x6, x0, x4")
+	g.emit("msub x7, x6, x4, x0") // remainder = x0 - q*10
+	g.emit("add x7, x7, #48")     // → ASCII digit
+	g.emit("sub x3, x3, #1")
+	g.emit("strb w7, [x3]")
+	g.emit("mov x0, x6")
+	g.emit("cbnz x0, .Lcov_wrnum_loop")
+	g.emit("add x2, sp, #32")
+	g.emit("sub x2, x2, x3") // len
+	g.emit("mov x1, x3")
+	g.emit("mov x0, #2")
+	g.syscall("write")
+	g.emit("add sp, sp, #48")
+	g.emit("ret")
+	g.sizeDirective("__fern_cov_report")
+	g.line(".ltorg")
 }

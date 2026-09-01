@@ -1128,3 +1128,36 @@ func TestRejectNearMisses(t *testing.T) {
 		}
 	}
 }
+
+// A `[rip + sym + N]` operand's constant term is part of the address, not
+// decoration: the parser folds it into operand.disp, and the rip fixup has
+// to add it to the symbol's own offset when it resolves. Dropping it
+// aliased every element of a symbol-addressed array onto element 0 — how
+// the -cover counters (#5548) first read back as one hot line and the rest
+// untouched, with no diagnostic anywhere.
+//
+// Layout: three 7-byte instructions plus `ret`, so .text is 22 bytes and
+// .rodata starts at align8(22)=24 with sym at its head. `lea rax,
+// [rip+sym]` ends at 7 and wants 24−7=17; `[rip+sym+8]` ends at 14 and
+// wants 24+8−14=18; `inc qword ptr [rip+sym+16]` ends at 21 and wants
+// 24+16−21=19. Encodings cross-checked against GNU as.
+func TestEncodeRipRelativeDispAddend(t *testing.T) {
+	src := `
+lea rax, [rip + sym]
+lea rcx, [rip + sym + 8]
+inc qword ptr [rip + sym + 16]
+ret
+.section .rodata
+sym:
+	.quad 0
+	.quad 0
+	.quad 0
+`
+	want := "488d0511000000" + // lea rax, [rip+17]
+		"488d0d12000000" + // lea rcx, [rip+18]
+		"48ff0513000000" + // inc qword ptr [rip+19]
+		"c3"
+	if got := asm(t, src); got != want {
+		t.Errorf("asm rip-relative addend block = %s, want %s", got, want)
+	}
+}
