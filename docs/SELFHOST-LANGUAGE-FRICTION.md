@@ -47,21 +47,21 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **12**, all `astwalk`'s — 9 fold spine, 3 accumulator map spine | pinned |
 | Generic structs | ✅ | **0** — load-bearing: a generic struct in a signature promotes its type param to the monomorphiser, which the per-module emit path does not run (the accumulator spine returns bare tuples for exactly that reason) | pinned |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **91** — 4 anonymous `function(…)` exprs and 87 nested named fns (4 astwalk visitors, 19 `wasm_ir` helper-gate predicates behind `any_op`, 22 in `checker`'s collectors, 16 in `parser` — the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families — and 14 in `irlower` — the cap-family visitors, body_binds_lambda's, and the five visit/descend pairs of the Perceus escape-scanner trio, #6993); the visitors mostly capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
-| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,153** in 8 modules — `irlower.fern` and `checker.fern` carry most of them | floor |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **99** — 4 anonymous `function(…)` exprs and 95 nested named fns (4 astwalk visitors, 19 `wasm_ir` helper-gate predicates behind `any_op`, 22 in `checker`'s collectors, 16 in `parser` — the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families — and 22 in `irlower` — the cap-family visitors, body_binds_lambda's, the five visit/descend pairs of the Perceus escape-scanner trio, and the env-box lift's eight accumulator-spine wrappers, #6993); the visitors mostly capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
+| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,150** in 8 modules — `irlower.fern` and `checker.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
-| `astwalk` call sites (walkers on the shared spine) | — | **163** across 13 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `irlower.fern`'s cap-type, assign-targets and Perceus escape-scanner families, `treeshake.fern`'s name collector, and `asmcore.fern`'s P001/P002 pre-check (#6993) | floor |
+| `astwalk` call sites (walkers on the shared spine) | — | **168** across 13 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `irlower.fern`'s cap-type, assign-targets, Perceus escape-scanner and env-box-lift families, `treeshake.fern`'s name collector, and `asmcore.fern`'s P001/P002 pre-check (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
-| `while` + manual index | — | **3,831** loops, **4,154** `x = x + 1` | ceiling on the increments |
+| `while` + manual index | — | **3,827** loops, **4,149** `x = x + 1` | ceiling on the increments |
 | `-1` as "absent" | — | **247** `return 0 - 1` | logged |
 | String-tagged side tables (`"SFRRECV:"`, `"BORROW:"`, …) | — | **65** distinct tag namespaces | — |
 | Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |
 | Explicit `as` casts | — | **715** | logged |
 | Hand-written AST walkers | — | **~130** over `Expr`, **~247** over `Stmt` | — |
-| Wildcard `_ =>` match arms | — | **2,899** of **10,079** arrow tokens (29%) | ceiling |
+| Wildcard `_ =>` match arms | — | **2,863** of **10,089** arrow tokens (28%) | ceiling |
 | Locals with a written type annotation | inference exists | **17,168** of 17,175 (99.9%) | logged |
 | Methods (`function (r: T) name(…)`) | ✅ | **289** in 9 modules | logged |
 
