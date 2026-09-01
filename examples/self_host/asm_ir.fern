@@ -890,8 +890,21 @@ function fc_trig_guard(ret: string, nan: string): string {
 }
 
 // fc_pio2_reduce: %xmm0 = x -> %rax = quadrant (k&3), %xmm0 = r with |r| <= pi/4.
-function fc_pio2_reduce(): string {
-    return fc_ld("%xmm1", ".Lfc_2opi")
+// prefix keeps the local labels unique across the two emission sites.
+//
+// |x| >= 2^20 (biased exponent >= 1043) puts k past pio2h's 22 exact mantissa
+// bits, so the Cody-Waite chain below reduces against noise there and calls
+// __fern_rem_pio2_large instead. The trig guard already returned Inf/NaN.
+function fc_pio2_reduce(prefix: string): string {
+    return "    movq %xmm0, %rax\n"
+        + "    shrq $52, %rax\n"
+        + "    andq $0x7ff, %rax\n"
+        + "    cmpq $1043, %rax\n"
+        + "    jb .L" + prefix + "_cw\n"
+        + "    call __fern_rem_pio2_large\n"
+        + "    jmp .L" + prefix + "_red\n"
+        + ".L" + prefix + "_cw:\n"
+        + fc_ld("%xmm1", ".Lfc_2opi")
         + "    mulsd %xmm0, %xmm1\n"
         + "    roundsd $0, %xmm1, %xmm1\n"
         + "    cvttsd2si %xmm1, %rax\n"
@@ -901,7 +914,8 @@ function fc_pio2_reduce(): string {
         + "    mulsd %xmm3, %xmm2\n    subsd %xmm2, %xmm0\n"
         + fc_ld("%xmm3", ".Lfc_pio2l")
         + "    mulsd %xmm3, %xmm1\n    subsd %xmm1, %xmm0\n"
-        + "    andq $3, %rax\n";
+        + "    andq $3, %rax\n"
+        + ".L" + prefix + "_red:\n";
 }
 
 // emit_rt_float_transcendentals emits the f64 transcendental bundle — sin, cos,
@@ -948,6 +962,25 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write(".Lfc_pio2h: .double 1.57079632673412561417e+00\n");
     s = s.write(".Lfc_pio2m: .double 6.07710050630396597660e-11\n");
     s = s.write(".Lfc_pio2l: .double 2.02226624879595063154e-21\n");
+    // pi/2 as an unevaluated double-double, plus the two scales that turn
+    // __fern_rem_pio2_large's 126-bit fraction into a double.
+    s = s.write(".Lfc_pio2hi: .double 1.5707963267948966\n");
+    s = s.write(".Lfc_pio2lo: .double 6.123233995736766e-17\n");
+    s = s.write(".Lfc_2m62: .double 2.168404344971009e-19\n");
+    s = s.write(".Lfc_2m115: .double 2.407412430484045e-35\n");
+    // 2/pi in binary, MSB-first, one limb per 64 fraction bits starting at
+    // 2^-1 in limb 1 — the window Payne-Hanek indexes with the argument's own
+    // exponent. The leading zero limb lets that index start above 2^-1 without
+    // a bounds test; the length covers the largest finite double. Same table
+    // as the native backends'.
+    s = s.write(".Lfc_2opi_bits:\n");
+    s = s.write("    .quad 0x0000000000000000\n    .quad 0xa2f9836e4e441529\n    .quad 0xfc2757d1f534ddc0\n");
+    s = s.write("    .quad 0xdb6295993c439041\n    .quad 0xfe5163abdebbc561\n    .quad 0xb7246e3a424dd2e0\n");
+    s = s.write("    .quad 0x06492eea09d1921c\n    .quad 0xfe1deb1cb129a73e\n    .quad 0xe88235f52ebb4484\n");
+    s = s.write("    .quad 0xe99c7026b45f7e41\n    .quad 0x3991d639835339f4\n    .quad 0x9c845f8bbdf9283b\n");
+    s = s.write("    .quad 0x1ff897ffde05980f\n    .quad 0xef2f118b5a0a6d1f\n    .quad 0x6d367ecf27cb09b7\n");
+    s = s.write("    .quad 0x4f463f669e5fea2d\n    .quad 0x7527bac7ebe5f17b\n    .quad 0x3d0739f78a5292ea\n");
+    s = s.write("    .quad 0x6bfb5fb11f8d5d08\n    .quad 0x56033046fc7b6bab\n    .quad 0xf0cfbc209af4361d\n");
     s = s.write(".Lfc_s1: .double -1.66666666666666324348e-01\n");
     s = s.write(".Lfc_s2: .double 8.33333333332248946124e-03\n");
     s = s.write(".Lfc_s3: .double -1.98412698298579493134e-04\n");
@@ -979,6 +1012,73 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write(".Lfc_expovf: .double 709.782712893383973096\n");
     s = s.write(".Lfc_expunf: .double -745.133219101941108420\n");
     s = s.write("    .section .text\n");
+
+    // __fern_rem_pio2_large(%xmm0 = x, |x| >= 2^20 and finite) -> %rax = k&3,
+    // %xmm0 = r. Payne-Hanek: multiply the significand by the window of 2/pi
+    // its exponent selects, keeping 128 bits about the binary point — the top
+    // two bits are the quadrant and the rest the fraction of x/(pi/2), which
+    // stays fully accurate however large x is. Kept in lockstep with the
+    // native x86-64 backend's __fern_rem_pio2_large, register for register.
+    s = s.write("__fern_rem_pio2_large:\n");
+    s = s.write("    movq %xmm0, %rdx\n");
+    s = s.write("    movq %rdx, %r8\n    shrq $63, %r8\n");   // sign of x
+    s = s.write("    movq %rdx, %rcx\n    shrq $52, %rcx\n    andq $0x7ff, %rcx\n");
+    s = s.write("    movabsq $0x000fffffffffffff, %rax\n    andq %rax, %rdx\n");
+    s = s.write("    movabsq $0x0010000000000000, %rax\n    orq %rax, %rdx\n"); // m, the 53-bit significand
+    // x = m*2^(e-1075), and the fraction of x*(2/pi) starts at bit
+    // (e-1075)+62 of the table once the product is read as a Q126.
+    s = s.write("    subq $1013, %rcx\n");
+    s = s.write("    movq %rcx, %r9\n    andq $63, %r9\n");   // bit offset within the limb
+    s = s.write("    shrq $6, %rcx\n");                       // limb index
+    s = s.write("    leaq .Lfc_2opi_bits(%rip), %r10\n");
+    s = s.write("    leaq (%r10,%rcx,8), %r10\n");
+    s = s.write("    movq (%r10), %rsi\n    movq 8(%r10), %rdi\n");
+    s = s.write("    movq 16(%r10), %r11\n    movq 24(%r10), %rax\n");
+    s = s.write("    movq %r9, %rcx\n");
+    s = s.write("    shldq %cl, %rdi, %rsi\n");               // w0
+    s = s.write("    shldq %cl, %r11, %rdi\n");               // w1
+    s = s.write("    shldq %cl, %rax, %r11\n");               // w2
+    s = s.write("    movq %rdx, %r9\n");
+    s = s.write("    movq %r9, %rax\n    mulq %rsi\n    movq %rax, %rsi\n"); // low(m*w0)
+    s = s.write("    movq %r9, %rax\n    mulq %rdi\n    movq %rax, %rdi\n    movq %rdx, %r10\n"); // low/high(m*w1)
+    s = s.write("    movq %r9, %rax\n    mulq %r11\n");       // high(m*w2) in %rdx
+    s = s.write("    addq %rdx, %rdi\n");                     // fraction, low 64
+    s = s.write("    adcq %r10, %rsi\n");                     // fraction, high 64
+    s = s.write("    movq %rsi, %rax\n    shrq $62, %rax\n"); // k
+    s = s.write("    movabsq $0x3fffffffffffffff, %rcx\n    andq %rcx, %rsi\n");
+    s = s.write("    xorpd %xmm3, %xmm3\n");
+    // A fraction past 1/2 belongs to the next quadrant, as 1 minus itself.
+    s = s.write("    movabsq $0x2000000000000000, %r10\n");
+    s = s.write("    cmpq %r10, %rsi\n    jb .Lfph_pos\n");
+    s = s.write("    incq %rax\n");
+    s = s.write("    movq %rsi, %r11\n    movq %rdi, %rcx\n");
+    s = s.write("    xorq %rdi, %rdi\n    subq %rcx, %rdi\n");
+    // movabsq, not mov+shl: a shift writes CF, and the borrow from the sub
+    // above has to survive to the sbbq below.
+    s = s.write("    movabsq $0x4000000000000000, %rsi\n");
+    s = s.write("    sbbq %r11, %rsi\n");
+    s = s.write("    movabsq $0x8000000000000000, %rcx\n    movq %rcx, %xmm3\n");
+    s = s.write(".Lfph_pos:\n");
+    // The low half only contributes below 2^-64, so 11 of its bits fall off
+    // the end of the double anyway; dropping them keeps the conversion inside
+    // the signed range cvtsi2sd works in.
+    s = s.write("    shrq $11, %rdi\n");
+    s = s.write("    cvtsi2sd %rsi, %xmm1\n");
+    s = s.write(fc_ld("%xmm4", ".Lfc_2m62") + "    mulsd %xmm4, %xmm1\n");
+    s = s.write("    cvtsi2sd %rdi, %xmm2\n");
+    s = s.write(fc_ld("%xmm4", ".Lfc_2m115") + "    mulsd %xmm4, %xmm2\n");
+    s = s.write("    addsd %xmm2, %xmm1\n");
+    s = s.write("    xorpd %xmm3, %xmm1\n");
+    s = s.write("    testq %r8, %r8\n    jz .Lfph_nn\n");
+    s = s.write("    movabsq $0x8000000000000000, %rdx\n    movq %rdx, %xmm5\n    xorpd %xmm5, %xmm1\n");
+    s = s.write("    negq %rax\n");
+    s = s.write(".Lfph_nn:\n");
+    s = s.write("    andq $3, %rax\n");
+    s = s.write("    movsd %xmm1, %xmm0\n");
+    s = s.write(fc_ld("%xmm4", ".Lfc_pio2hi") + "    mulsd %xmm4, %xmm0\n");
+    s = s.write(fc_ld("%xmm4", ".Lfc_pio2lo") + "    mulsd %xmm4, %xmm1\n");
+    s = s.write("    addsd %xmm1, %xmm0\n");
+    s = s.write("    ret\n");
 
     // __fern_ksin(%xmm0 = r, |r| <= pi/4) -> sin r. Internal, not exported: sin
     // and cos both reach it after reduction, so the kernel exists once rather
@@ -1023,7 +1123,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write(".type __fern_sin_f64, @function\n");
     s = s.write("__fern_sin_f64:\n");
     s = s.write(fc_trig_guard(".Lfsin_ret", ".Lfsin_nan"));
-    s = s.write(fc_pio2_reduce());
+    s = s.write(fc_pio2_reduce("fsin"));
     s = s.write("    testq $1, %rax\n    jnz .Lfsin_usecos\n");
     s = s.write("    call __fern_ksin\n    jmp .Lfsin_neg\n");
     s = s.write(".Lfsin_usecos:\n    call __fern_kcos\n");
@@ -1039,7 +1139,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write(".type __fern_cos_f64, @function\n");
     s = s.write("__fern_cos_f64:\n");
     s = s.write(fc_trig_guard(".Lfcos_ret", ".Lfcos_nan"));
-    s = s.write(fc_pio2_reduce());
+    s = s.write(fc_pio2_reduce("fcos"));
     s = s.write("    testq $1, %rax\n    jnz .Lfcos_usesin\n");
     s = s.write("    call __fern_kcos\n    jmp .Lfcos_chk\n");
     s = s.write(".Lfcos_usesin:\n    call __fern_ksin\n");
