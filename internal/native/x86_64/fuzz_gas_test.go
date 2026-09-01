@@ -764,11 +764,23 @@ func normalizeInsn(s string) string {
 	return s
 }
 
+// findObjdump returns an objdump that can disassemble x86-64. Being on PATH
+// is not enough: an aarch64 host's objdump is usually built for aarch64 only,
+// and `-m i386:x86-64` then exits 1 — which is a missing tool, not a finding,
+// so it skips like every other absent oracle here.
 func findObjdump(t *testing.T) string {
 	t.Helper()
 	p, err := exec.LookPath("objdump")
 	if err != nil {
 		t.Skip("objdump not on PATH")
+	}
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "probe.bin")
+	if err := os.WriteFile(probe, []byte{0xc3}, 0o644); err != nil { // ret
+		t.Fatal(err)
+	}
+	if err := exec.Command(p, "-D", "-b", "binary", "-m", "i386:x86-64", probe).Run(); err != nil {
+		t.Skipf("objdump does not support i386:x86-64: %v", err)
 	}
 	return p
 }
