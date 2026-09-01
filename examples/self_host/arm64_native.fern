@@ -1430,16 +1430,6 @@ function arm64_rbit(buf: i32[], rd: i32, rn: i32, w: boolean): i32[] {
     if (w) { word = word & 0x7fffffff; }
     return arm64_le32(buf, word);
 }
-// addv Bd, Vn.8b -> 0x0E31B800 | Q<<30 | Rn<<5 | Rd -- horizontal sum across
-// the byte lanes into the destination's low byte. Paired with `cnt` it
-// completes a popcount; the sum tops out at 64, so the byte-wide destination
-// cannot overflow. Only the byte arrangements (size=00) are encoded.
-function arm64_addv(buf: i32[], rd: i32, rn: i32, q: boolean): i32[] {
-    var word: i64 = 0x0e31b800 | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
-    if (q) { word = word | 0x40000000; }
-    return arm64_le32(buf, word);
-}
-
 // ---- the general Advanced SIMD classes (#8000) ----
 //
 // Two encodings carry most of the vector surface. Both read `size` as a
@@ -1646,6 +1636,128 @@ function arm64_gas_esize(code: i32): i32 {
     return 8 * arm64_gas_pow2(arm64_gas_arr_size(code));
 }
 
+// ---- the narrowing / widening / across-lanes classes (#8000 wave 2c) ----
+
+// arm64_vecext encodes `ext Vd.<T>, Vn.<T>, Vm.<T>, #index` — the byte-wise
+// extract from a register pair, NEON's sliding window and palignr's
+// counterpart. Byte arrangements only; the index counts bytes.
+//   0x2E000000 | Q<<30 | Rm<<16 | index<<11 | Rn<<5 | Rd
+function arm64_vecext(buf: i32[], rd: i32, rn: i32, rm: i32, index: i32, q: boolean): i32[] {
+    var word: i64 = 0x2e000000 | (((rm & 31) as i64) << 16) | (((index & 15) as i64) << 11)
+        | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    return arm64_le32(buf, word);
+}
+
+// arm64_vectbl1 encodes `tbl Vd.<T>, {Vn.16b}, Vm.<T>` — the single-table
+// byte shuffle, pshufb's counterpart. The table is always .16b.
+//   0x0E000000 | Q<<30 | Rm<<16 | Rn<<5 | Rd
+function arm64_vectbl1(buf: i32[], rd: i32, rn: i32, rm: i32, q: boolean): i32[] {
+    var word: i64 = 0x0e000000 | (((rm & 31) as i64) << 16)
+        | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    return arm64_le32(buf, word);
+}
+
+// arm64_vecacross encodes the across-lanes reductions: a horizontal fold of
+// every lane into a scalar register.
+//   0x0E300800 | Q<<30 | U<<29 | size<<22 | opcode<<12 | Rn<<5 | Rd
+function arm64_vecacross(buf: i32[], rd: i32, rn: i32, opcode: i32, size: i32, q: boolean, u: boolean): i32[] {
+    var word: i64 = 0x0e300800 | (((size & 3) as i64) << 22)
+        | (((opcode & 31) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    if (u) { word = word | 0x20000000; }
+    return arm64_le32(buf, word);
+}
+
+// arm64_across_entry: the across-lanes table. The size-mask slot carries the
+// WIDENING flag — saddlv/uaddlv produce a result one element size up, so
+// their scalar destination is a class wider than the arrangement.
+function arm64_across_entry(mnem: string): i32 {
+    if (mnem == "addv") { return arm64_vec_entry(false, 27, 0); }
+    if (mnem == "smaxv") { return arm64_vec_entry(false, 10, 0); }
+    if (mnem == "sminv") { return arm64_vec_entry(false, 26, 0); }
+    if (mnem == "umaxv") { return arm64_vec_entry(true, 10, 0); }
+    if (mnem == "uminv") { return arm64_vec_entry(true, 26, 0); }
+    if (mnem == "saddlv") { return arm64_vec_entry(false, 3, 1); }
+    if (mnem == "uaddlv") { return arm64_vec_entry(true, 3, 1); }
+    return 0 - 1;
+}
+
+// arm64_gas_scalar_class decodes a bN/hN/sN/dN scalar SIMD register to its
+// element-size class (0=B, 1=H, 2=S, 3=D), or -1. arm64_gas_scalar_reg gives
+// the number.
+function arm64_gas_scalar_class(tok: string): i32 {
+    var t: string = arm64_gas_trim(tok);
+    if (t.len() < 2) { return 0 - 1; }
+    var c: i32 = t[0] as i32;
+    var cls: i32 = 0 - 1;
+    if (c == 98) { cls = 0; }        // 'b'
+    if (c == 104) { cls = 1; }       // 'h'
+    if (c == 115) { cls = 2; }       // 's'
+    if (c == 100) { cls = 3; }       // 'd'
+    if (cls < 0) { return 0 - 1; }
+    if (arm64_gas_scalar_reg(tok) < 0) { return 0 - 1; }
+    return cls;
+}
+function arm64_gas_scalar_reg(tok: string): i32 {
+    var t: string = arm64_gas_trim(tok);
+    if (t.len() < 2) { return 0 - 1; }
+    var n: i32 = 0;
+    var i: i32 = 1;
+    while (i < t.len()) {
+        var c: i32 = t[i] as i32;
+        if (c < 48 || c > 57) { return 0 - 1; }
+        n = n * 10 + (c - 48);
+        i = i + 1;
+    }
+    if (n > 31) { return 0 - 1; }
+    return n;
+}
+
+// arm64_gas_vlist_one decodes a `{vN.16b}` single-register list. The braces
+// are part of the syntax rather than decoration: accepting a bare `vN.16b`
+// would let a typo assemble as a different instruction.
+function arm64_gas_vlist_one(tok: string): i32 {
+    var t: string = arm64_gas_trim(tok);
+    if (t.len() < 3 || t[0] != b'{' || t[t.len() - 1] != b'}') { return 0 - 1; }
+    return arm64_gas_vreg_any(slice_unchecked(t, 1, t.len() - 1) + "");
+}
+function arm64_gas_vlist_one_arr(tok: string): i32 {
+    var t: string = arm64_gas_trim(tok);
+    if (t.len() < 3 || t[0] != b'{' || t[t.len() - 1] != b'}') { return 0 - 1; }
+    return arm64_gas_vreg_arrof(slice_unchecked(t, 1, t.len() - 1) + "");
+}
+
+// arm64_gas_narrow_wide_ok validates the arrangement pair of a narrowing or
+// widening op. The NARROW side is the half-width arrangement and its Q bit is
+// the `2` suffix — it selects which half of the 128-bit register is touched,
+// so it is not free to disagree with the mnemonic. The wide side is always
+// full-width and exactly one element size up.
+function arm64_gas_narrow_wide_ok(narrow: i32, wide: i32, hi: boolean): boolean {
+    if (narrow < 0 || wide < 0) { return false; }
+    if (arm64_gas_arr_size(narrow) > 2) { return false; }
+    if (arm64_gas_arr_q(narrow) != hi) { return false; }
+    if (arm64_gas_arr_size(wide) != arm64_gas_arr_size(narrow) + 1) { return false; }
+    return arm64_gas_arr_q(wide);
+}
+
+// arm64_gas_shll_kind maps the widening shift mnemonics to a packed
+// (unsigned, high-half, alias) triple: bit 0 = unsigned, bit 1 = the `2`
+// suffix, bit 2 = an sxtl/uxtl alias, which is the same instruction with the
+// shift fixed at zero and no immediate operand. -1 = not one of them.
+function arm64_gas_shll_kind(mnem: string): i32 {
+    if (mnem == "sshll") { return 0; }
+    if (mnem == "sshll2") { return 2; }
+    if (mnem == "ushll") { return 1; }
+    if (mnem == "ushll2") { return 3; }
+    if (mnem == "sxtl") { return 4; }
+    if (mnem == "sxtl2") { return 6; }
+    if (mnem == "uxtl") { return 5; }
+    if (mnem == "uxtl2") { return 7; }
+    return 0 - 1;
+}
+
 // arm64_gas_vecgen_handles reports whether a mnemonic has a form in one of
 // the four general families above.
 function arm64_gas_vecgen_handles(mnem: string): boolean {
@@ -1653,7 +1765,39 @@ function arm64_gas_vecgen_handles(mnem: string): boolean {
         || arm64_vcmpzero_entry(mnem) >= 0 || arm64_v2misc_entry(mnem) >= 0
         || arm64_vfp3_entry(mnem) >= 0 || arm64_vfp2_entry(mnem) >= 0
         || arm64_vfpcmpzero_entry(mnem) >= 0 || arm64_vshift_entry(mnem) >= 0
-        || arm64_vpermute_opc(mnem) >= 0;
+        || arm64_vpermute_opc(mnem) >= 0 || arm64_gas_shll_kind(mnem) >= 0
+        || mnem == "xtn" || mnem == "xtn2" || mnem == "shrn" || mnem == "shrn2"
+        || mnem == "ext" || mnem == "tbl";
+}
+
+// arm64_gas_emit_narrowwide encodes the narrowing and widening shifts. Their
+// two arrangements differ by one element size, which arm64_gas_bad_narrowwide
+// has already checked, so the encoders read only the one that names the
+// instruction's own element size: the NARROW side for xtn/shrn (the result),
+// the narrow SOURCE for sshll/uxtl (the input).
+function arm64_gas_emit_narrowwide(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+    if (mnem == "xtn" || mnem == "xtn2") {
+        if (ops.len() != 2) { return a; }
+        var xc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        return Arm64Asm { ...a, code: arm64_vec2misc(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            18, arm64_gas_arr_size(xc), arm64_gas_arr_q(xc), false) };
+    }
+    if (mnem == "shrn" || mnem == "shrn2") {
+        if (ops.len() != 3) { return a; }
+        var nc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        var nes: i32 = arm64_gas_esize(nc);
+        return Arm64Asm { ...a, code: arm64_vecshift(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            16, 2 * nes - arm64_gas_imm(ops[2]), arm64_gas_arr_q(nc), false) };
+    }
+    var kind: i32 = arm64_gas_shll_kind(mnem);
+    var alias: boolean = kind >= 4;
+    if (ops.len() != 3 && !alias) { return a; }
+    if (ops.len() != 2 && alias) { return a; }
+    var sc: i32 = arm64_gas_vreg_arrof(ops[1]);
+    var amt: i32 = 0;
+    if (!alias) { amt = arm64_gas_imm(ops[2]); }
+    return Arm64Asm { ...a, code: arm64_vecshift(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+        20, arm64_gas_esize(sc) + amt, (kind % 4) >= 2, kind % 2 == 1) };
 }
 
 // arm64_gas_emit_vecgen encodes one of them. Operand shapes are vetted by
@@ -1725,6 +1869,22 @@ function arm64_gas_emit_vecgen(a: Arm64Asm, mnem: string, ops: string[]): Arm64A
         if (arm64_vec_entry_sizes(sh) == 1) { immhb = es + amt; }
         return Arm64Asm { ...a, code: arm64_vecshift(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
             arm64_vec_entry_op(sh), immhb, arm64_gas_arr_q(sc), arm64_vec_entry_u(sh)) };
+    }
+    if (arm64_gas_shll_kind(mnem) >= 0 || mnem == "xtn" || mnem == "xtn2"
+        || mnem == "shrn" || mnem == "shrn2") {
+        return arm64_gas_emit_narrowwide(a, mnem, ops);
+    }
+    if (mnem == "ext") {
+        if (ops.len() != 4) { return a; }
+        var ec: i32 = arm64_gas_vreg_arrof(ops[0]);
+        return Arm64Asm { ...a, code: arm64_vecext(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_gas_vreg_any(ops[2]), arm64_gas_imm(ops[3]), arm64_gas_arr_q(ec)) };
+    }
+    if (mnem == "tbl") {
+        if (ops.len() != 3) { return a; }
+        var tc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        return Arm64Asm { ...a, code: arm64_vectbl1(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vlist_one(ops[1]),
+            arm64_gas_vreg_any(ops[2]), arm64_gas_arr_q(tc)) };
     }
     var pm: i32 = arm64_vpermute_opc(mnem);
     if (pm < 0 || ops.len() != 3) { return a; }
@@ -2459,15 +2619,37 @@ function arm64_gas_bad_neon_token(mnem: string, rest: string): string {
 // p.unknown and refuses the output, rather than letting a -1 sentinel fold
 // into the register field.
 function arm64_gas_bad_vec_token(mnem: string, rest: string): string {
-    if (mnem == "ld1" || mnem == "shrn" || mnem == "dup") {
+    if (mnem == "ld1" || mnem == "dup") {
         return arm64_gas_bad_neon_token(mnem, rest);
     }
     var ops: string[] = arm64_gas_operands(rest);
+    // The across-lanes reductions come first: their destination is a SCALAR,
+    // so routing on ops[0] being an arranged operand would miss them — and
+    // then `sminv v0.8h, v9.8h` reaches the encoder with -1 for a register.
+    if (arm64_across_entry(mnem) >= 0) { return arm64_gas_bad_across(mnem, ops); }
     if (ops.len() > 0 && arm64_gas_is_vecarr(ops[0])) { return arm64_gas_bad_vecgen(mnem, ops); }
-    if (mnem != "addv") { return ""; }
+    return "";
+}
+
+// arm64_gas_bad_across vets the across-lanes reductions. The destination is a
+// SCALAR whose element class must match the arrangement — one size up for the
+// widening saddlv/uaddlv — because nothing in the encoding says how wide the
+// result is; the mnemonic and the source arrangement decide it together, and a
+// mismatched destination would name a register the instruction does not write.
+// `.2s` and `.1d`/`.2d` have no across-lanes form at all: there is nothing to
+// reduce across two lanes that a pairwise op does not already do.
+function arm64_gas_bad_across(mnem: string, ops: string[]): string {
+    var e: i32 = arm64_across_entry(mnem);
     if (ops.len() != 2) { return mnem + ":arity"; }
-    if (arm64_gas_vreg_arr(ops[1]) < 0) { return arm64_gas_trim(ops[1]); }
-    if (arm64_gas_breg(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+    if (arm64_gas_vreg_any(ops[1]) < 0) { return arm64_gas_trim(ops[1]); }
+    var code: i32 = arm64_gas_vreg_arrof(ops[1]);
+    var size: i32 = arm64_gas_arr_size(code);
+    if (size == 3 || (size == 2 && !arm64_gas_arr_q(code))) { return mnem + ":arr"; }
+    var cls: i32 = arm64_gas_scalar_class(ops[0]);
+    if (cls < 0) { return arm64_gas_trim(ops[0]); }
+    var want: i32 = size;
+    if (arm64_vec_entry_sizes(e) == 1) { want = want + 1; }
+    if (cls != want) { return mnem + ":dst"; }
     return "";
 }
 
@@ -2477,6 +2659,8 @@ function arm64_gas_bad_vec_token(mnem: string, rest: string): string {
 // is part of the opcode, so a non-zero one has no field to go in and would
 // assemble as the zero form.
 function arm64_gas_bad_vecgen(mnem: string, ops: string[]): string {
+    var nwbad: string = arm64_gas_bad_narrowwide(mnem, ops);
+    if (nwbad != "-") { return nwbad; }
     var fpbad: string = arm64_gas_bad_vecfp(mnem, ops);
     if (fpbad != "-") { return fpbad; }
     var three: i32 = arm64_v3int_entry(mnem);
@@ -2507,6 +2691,78 @@ function arm64_gas_bad_vecgen(mnem: string, ops: string[]): string {
     }
     if (is_czero && arm64_gas_imm(ops[2]) != 0) { return mnem + ":imm"; }
     if (!arm64_gas_arr_allowed(arm64_vec_entry_sizes(entry), code)) { return mnem + ":arr"; }
+    return "";
+}
+
+// arm64_gas_bad_narrowwide vets the narrowing/widening shifts, ext and tbl,
+// answering "-" for anything else so the caller can tell "clean" from "not
+// mine".
+//
+// The arrangement PAIR is what these get wrong when nothing checks it: the two
+// operands differ by one element size, and the narrow side's Q bit is the `2`
+// suffix rather than a free choice — `xtn2` writes the high half and `xtn` the
+// low one, from the same opcode. A mismatched pair is a valid word for a
+// different instruction.
+function arm64_gas_bad_narrowwide(mnem: string, ops: string[]): string {
+    var kind: i32 = arm64_gas_shll_kind(mnem);
+    var is_xtn: boolean = mnem == "xtn" || mnem == "xtn2";
+    var is_shrn: boolean = mnem == "shrn" || mnem == "shrn2";
+    if (kind < 0 && !is_xtn && !is_shrn && mnem != "ext" && mnem != "tbl") { return "-"; }
+    if (mnem == "ext") {
+        if (ops.len() != 4) { return mnem + ":arity"; }
+        var ec: i32 = arm64_gas_vreg_arrof(ops[0]);
+        var ei: i32 = 0;
+        while (ei < 3) {
+            if (arm64_gas_vreg_any(ops[ei]) < 0) { return arm64_gas_trim(ops[ei]); }
+            if (arm64_gas_vreg_arrof(ops[ei]) != ec) { return mnem + ":arr"; }
+            ei = ei + 1;
+        }
+        // Byte arrangements only, and the index counts bytes within the
+        // concatenated pair: 0..7 for .8b, 0..15 for .16b.
+        if (!arm64_gas_arr_allowed(1, ec)) { return mnem + ":arr"; }
+        var emax: i32 = 7;
+        if (arm64_gas_arr_q(ec)) { emax = 15; }
+        var eidx: i32 = arm64_gas_imm(ops[3]);
+        if (eidx < 0 || eidx > emax) { return mnem + ":imm"; }
+        return "";
+    }
+    if (mnem == "tbl") {
+        if (ops.len() != 3) { return mnem + ":arity"; }
+        var tc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        if (arm64_gas_vreg_any(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+        // The table is a one-register list and always .16b; the destination
+        // and index share a byte arrangement.
+        if (arm64_gas_vlist_one(ops[1]) < 0 || arm64_gas_vlist_one_arr(ops[1]) != 1) { return arm64_gas_trim(ops[1]); }
+        if (arm64_gas_vreg_any(ops[2]) < 0) { return arm64_gas_trim(ops[2]); }
+        if (arm64_gas_vreg_arrof(ops[2]) != tc) { return mnem + ":arr"; }
+        if (!arm64_gas_arr_allowed(1, tc)) { return mnem + ":arr"; }
+        return "";
+    }
+    var want: i32 = 3;
+    if (is_xtn || kind >= 4) { want = 2; }
+    if (ops.len() != want) { return mnem + ":arity"; }
+    if (arm64_gas_vreg_any(ops[0]) < 0) { return arm64_gas_trim(ops[0]); }
+    if (arm64_gas_vreg_any(ops[1]) < 0) { return arm64_gas_trim(ops[1]); }
+    var d: i32 = arm64_gas_vreg_arrof(ops[0]);
+    var n: i32 = arm64_gas_vreg_arrof(ops[1]);
+    var hi: boolean = arm64_str_indexof(mnem, "2") == mnem.len() - 1;
+    if (is_xtn || is_shrn) {
+        // Narrowing: the DESTINATION is the half-width side.
+        if (!arm64_gas_narrow_wide_ok(d, n, hi)) { return mnem + ":arr"; }
+        if (is_shrn) {
+            var nes: i32 = arm64_gas_esize(d);
+            var sh: i32 = arm64_gas_imm(ops[2]);
+            if (sh < 1 || sh > nes) { return mnem + ":imm"; }
+        }
+        return "";
+    }
+    // Widening: the SOURCE is the half-width side.
+    if (!arm64_gas_narrow_wide_ok(n, d, hi)) { return mnem + ":arr"; }
+    if (kind < 4) {
+        var ses: i32 = arm64_gas_esize(n);
+        var amt: i32 = arm64_gas_imm(ops[2]);
+        if (amt < 0 || amt >= ses) { return mnem + ":imm"; }
+    }
     return "";
 }
 
@@ -3821,9 +4077,12 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_rbit(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
         return a;
     }
-    if (mnem == "addv") {
-        a = Arm64Asm { ...a, code: arm64_addv(a.code, arm64_gas_breg(ops[0]), arm64_gas_vreg_arr(ops[1]), arm64_gas_vreg_arr_q(ops[1])) };
-        return a;
+    var acr: i32 = arm64_across_entry(mnem);
+    if (acr >= 0) {
+        if (ops.len() != 2) { return a; }
+        var ac: i32 = arm64_gas_vreg_arrof(ops[1]);
+        return Arm64Asm { ...a, code: arm64_vecacross(a.code, arm64_gas_scalar_reg(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_vec_entry_op(acr), arm64_gas_arr_size(ac), arm64_gas_arr_q(ac), arm64_vec_entry_u(acr)) };
     }
     // The packed NEON the __memchr / __ascii_run kernels emit. Operand shapes
     // are vetted in arm64_gas_bad_vec_token before reaching here, so a token
@@ -3964,8 +4223,9 @@ function arm64_gas_known(mnem: string): boolean {
     if (mnem == "ubfx" || mnem == "cset" || mnem == "adrp" || mnem == "sxtw") { return true; }
     if (mnem == "lsl" || mnem == "lsr" || mnem == "asr" || mnem == "cmn" || mnem == "csel" || mnem == "and") { return true; }
     if (mnem == "orr" || mnem == "eor" || mnem == "subs" || mnem == "adds" || mnem == "udiv" || mnem == "sdiv" || mnem == "msub" || mnem == "rev16" || mnem == "clz") { return true; }
-    if (mnem == "rbit" || mnem == "addv") { return true; }  // ctz = rbit+clz; popcount = cnt+addv
-    if (mnem == "ld1" || mnem == "shrn" || mnem == "dup") { return true; }  // the packed NEON of the §3 kernels
+    if (mnem == "rbit") { return true; }  // ctz = rbit+clz; popcount = cnt+addv
+    if (mnem == "ld1" || mnem == "dup") { return true; }  // the packed NEON of the §3 kernels
+    if (arm64_across_entry(mnem) >= 0) { return true; }  // the across-lanes reductions
     if (arm64_gas_vecgen_handles(mnem)) { return true; }  // the general Advanced SIMD families
     if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh" || mnem == "ldrsw") { return true; }
     if (mnem == "ldrsb" || mnem == "ldrsh") { return true; }

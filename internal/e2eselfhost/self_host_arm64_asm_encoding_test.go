@@ -462,6 +462,28 @@ _start:
     uzp2 v23.2d, v9.2d, v28.2d
     trn1 v23.4h, v9.4h, v28.4h
     trn2 v23.2s, v9.2s, v28.2s
+    // #8000 wave 2c. The narrowing/widening pairs are what two independent
+    // implementations most easily disagree about: xtn and xtn2 share an
+    // opcode and differ only in the Q bit that picks which half is written.
+    xtn v23.8b, v9.8h
+    xtn2 v23.16b, v9.8h
+    xtn v23.2s, v9.2d
+    shrn v23.8b, v9.8h, #3
+    shrn2 v23.16b, v9.8h, #3
+    sshll v23.8h, v9.8b, #3
+    sshll2 v23.8h, v9.16b, #3
+    ushll v23.4s, v9.4h, #7
+    sxtl v23.8h, v9.8b
+    uxtl2 v23.8h, v9.16b
+    ext v23.16b, v9.16b, v28.16b, #5
+    ext v23.8b, v9.8b, v28.8b, #3
+    tbl v23.16b, {v9.16b}, v28.16b
+    addv b23, v9.16b
+    smaxv b23, v9.16b
+    sminv h23, v9.8h
+    umaxv s23, v9.4s
+    saddlv h23, v9.16b
+    uaddlv s23, v9.8h
 Lend:
     ret
 `
