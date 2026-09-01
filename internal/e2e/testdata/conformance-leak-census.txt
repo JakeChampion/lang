@@ -141,7 +141,7 @@ exit                                                 0
 exit_42                                              0
 exit_code                                            0
 exit_max                                             0
-f32_array_element                                    250
+f32_array_element                                    0
 f32_array_param                                      0
 f64_elements                                         0
 f64_if_expr                                          0
@@ -154,7 +154,7 @@ float_arith_ops                                      0
 float_bit_reinterpret                                0
 float_pythagoras                                     0
 float_to_int_saturating                              0
-float_to_string_parity                               6
+float_to_string_parity                               0
 float_width_conversion                               0
 for_in_squares                                       0
 foreach_binding_trailing_comma                       2
@@ -291,7 +291,7 @@ op_trait_generic                                     0
 open_slice_evaluates_base_once                       6
 opt_arr_alias_match_reclaim                          0
 opt_array_struct_field                               0
-opt_f32_payload                                      100
+opt_f32_payload                                      0
 option_is_none_or                                    0
 option_match                                         0
 option_result_and_then                               0

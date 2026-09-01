@@ -6052,6 +6052,97 @@ function main(): i32 {
 `,
 	},
 	{
+		// #7914: a string parameter used only as a CONCAT OPERAND is
+		// retained by nothing — strcat copies both operands into a
+		// fresh buffer — and until the credit landed that occurrence
+		// had no arm. The refusal reached far past the string: the
+		// caller's `flags` local was tainted at the call, and
+		// rhsTainted's counted-argument check carried that taint into
+		// the ARRAY local `reg` is rebound from, so every generation of
+		// the registry took the non-freeing __fern_rc_dec. Measured on
+		// x86-64: 2752 B stranded over four rounds, 93 allocations
+		// against 13 frees; with the credit, 45 allocations and 45
+		// frees. arm64 is byte-identical across the change — its
+		// two-word string ABI never took the taint — which is what its
+		// pinned entry records.
+		name: "concat_operand_param_frees_the_caller_array",
+		src: `
+@noinline
+function put(reg: string[], key: string, flags: string): string[] {
+    return reg.append(key + "|" + flags);
+}
+
+function main(): i32 {
+    var keys: string[] = ["alpha-key-one", "beta-key-two", "gamma-key-three"];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var reg: string[] = [];
+        var k: i32 = 0;
+        while (k < keys.len()) {
+            var flags: string = "";
+            var f: i32 = 0;
+            while (f < 12) { flags = flags + "1"; f = f + 1; }
+            reg = put(reg, keys[k], flags);
+            k = k + 1;
+        }
+        t = t + reg.len();
+        i = i + 1;
+    }
+    return (t - 12) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The same credit through `.with` instead of `.append` — the
+		// self-host's own borrow registry, whose buckets are rewritten
+		// rather than grown. The x86-64 pin is NOT this credit's
+		// residue: it went 4032 -> 384 with it. What is left is a
+		// separate defect one layer down — __fern_arr_cow_inplace_ptr
+		// INCS each element into the copy it hands back, while the
+		// caller's dec-on-overwrite for an array local is the
+		// buffer-only __fern_arr_dec, so the old buffer dies without
+		// releasing the element references the copy retained. One
+		// element per rewritten bucket, and the plain `a = f(...)`
+		// overwrite has it too.
+		name: "concat_operand_param_rewrites_registry_buckets",
+		src: `
+@noinline
+function put(reg: string[], key: string, flags: string): string[] {
+    var b: i32 = key.len() % reg.len();
+    return reg.with(b, reg[b] + key + "|" + flags);
+}
+
+@noinline
+function newreg(): string[] {
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < 8) { out = out.append(""); i = i + 1; }
+    return out;
+}
+
+function main(): i32 {
+    var keys: string[] = ["alpha-key-one", "beta-key-two", "gamma-key-three"];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        var reg: string[] = newreg();
+        var k: i32 = 0;
+        while (k < keys.len()) {
+            var flags: string = "";
+            var f: i32 = 0;
+            while (f < 12) { flags = flags + "1"; f = f + 1; }
+            reg = put(reg, keys[k], flags);
+            k = k + 1;
+        }
+        t = t + reg.len();
+        i = i + 1;
+    }
+    return (t - 32) + __rc_underflow_count();
+}
+`,
+	},
+	{
 		// The own-param interlock: inferParamCountedRetain skips `own`
 		// parameters before any classifier runs, and ownedByCalleeAt
 		// suppresses the caller-side stash — so a copying use inside
