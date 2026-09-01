@@ -32,6 +32,10 @@ import (
 // Every want was confirmed against BOTH oracles; counts are the self-host
 // build's own, measured through this harness (the CLI const-folds
 // literal-literal concats, so probe strings route through a call).
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header, so every count below is half what it was when the
+// rows were written.
 
 type trimOwnedCase struct {
 	name   string
@@ -57,7 +61,7 @@ function round(i: i32): i32 {
     return (v[0] as i32 + clobber.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 17, allocs: 600, frees: 600,
+			want: 17, allocs: 300, frees: 300,
 		},
 		{
 			// The control: no recycler, one call. Used to read 0 — the freed
@@ -71,7 +75,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (v[0] as i32) % 101;
 }`,
-			want: 11, allocs: 4, frees: 4,
+			want: 11, allocs: 2, frees: 2,
 		},
 		{
 			// Same-frame trim + receiver used after — the shape that was
@@ -86,7 +90,7 @@ function round(i: i32): i32 {
     return (v[0] as i32 + s.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 17, allocs: 400, frees: 400,
+			want: 17, allocs: 200, frees: 200,
 		},
 	}
 }

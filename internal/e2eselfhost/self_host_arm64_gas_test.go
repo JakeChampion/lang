@@ -214,6 +214,15 @@ function main(): i32 {
     if (b8.unknown.len() != 1) { return 50; }
     var b9: Arm64GasProg = arm64_gas_program("dup v1.16b, x1\n");
     if (b9.unknown.len() != 1) { return 51; }
+    // movk carries its operand WIDTH, like movz and movn beside it. AArch64
+    // encodes width in the sf bit, not the register name, and arm64_gas_reg maps
+    // w4 and x4 to the same number — so a movk that ignored it assembled
+    // "movk w4, #0x734F, lsl #16" as the 64-bit MOVK, one bit from what GNU as
+    // emits. 0x72AE69E4 (w) and 0xF2AE69E4 (x), little-endian.
+    var k1: Arm64Asm = arm64_gas_assemble("movk w4, #29519, lsl #16");
+    if (k1.code[0] != 228 || k1.code[1] != 105 || k1.code[2] != 174 || k1.code[3] != 114) { return 52; }
+    var k2: Arm64Asm = arm64_gas_assemble("movk x4, #29519, lsl #16");
+    if (k2.code[0] != 228 || k2.code[1] != 105 || k2.code[2] != 174 || k2.code[3] != 242) { return 53; }
     return 0;
 }
 `

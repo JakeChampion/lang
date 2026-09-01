@@ -241,13 +241,19 @@ function round(i: i32): i32 {
 			// because nothing here proves it. Pinned so that widening the
 			// allow-list to cover it is a visible, measured change rather than a
 			// silent one — it must arrive with its own balance, not by accident.
+			//
+			// wantFrees halved with #7351 (one block per heap string, not two)
+			// and both frees here are string frees. That it is the block count and
+			// not the refusal is settled by live_bytes: 14400 before and after,
+			// off 1000/400 then and 600/200 now, same answer. A row whose leaked
+			// bytes MOVE is the refusal changing; this one's did not.
 			name: "refuses_concat_conservative",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     var o: Option[string] = Some(w("ab"));
     match (o) { Some(v) => { var t: string = v + "z"; return t.len(); }, None => { return 2; } }
     return 0;
 }` + matchedOptstrMain,
-			want: 53, wantFrees: 400,
+			want: 53, wantFrees: 200,
 		},
 		{
 			// A non-fresh payload: `Some(p)` of a PARAMETER the caller owns.
