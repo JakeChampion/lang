@@ -90,6 +90,24 @@ func TestSelfHostX86GasDivRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasdiv42", x86GasDivDriverMain, 42)
 }
 
+// TestSelfHostX86GasCarryChainRuns assembles the #7878 Payne-Hanek surface —
+// shldq %cl, one-operand mulq, adcq, sbbq — into a program whose exit code
+// (42) depends on every one of them producing the architecturally correct
+// result, carry flag included.
+func TestSelfHostX86GasCarryChainRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gascarry42", x86GasCarryChainDriverMain, 42)
+}
+
+// TestSelfHostX86GasCarryChainGroundTruth pins the shldq/mulq/adcq/sbbq
+// encodings byte-for-byte against as + objdump, with register choices
+// exercising the REX.R/.B fields. Three of these assemble cleanly when
+// wrong: shld's ModRM.reg is the SOURCE (reversed against the ALU pattern),
+// and adc/sbb sit between or (/1) and and (/4) in one opcode family, where a
+// wrong extension digit is a different instruction that drops the carry.
+func TestSelfHostX86GasCarryChainGroundTruth(t *testing.T) {
+	runX86GasWasmSelfTest(t, "x86_gas_carrychain_groundtruth", x86GasCarryChainGroundTruthMain)
+}
+
 // TestSelfHostX86GasExtRegRuns exercises extended registers r8-r15 in
 // arithmetic (imulq %r13,%r12; 6*7=42) — REX.R/.B on reg-reg + B8 imm.
 func TestSelfHostX86GasExtRegRuns(t *testing.T) {
@@ -425,6 +443,38 @@ function main(): i32 {
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 2; }
     write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasCarryChainDriverMain: shldq shifts 0x0123456789abcdef left 8 filling
+// from 0xfedcba9876543210's top byte (0x23456789abcdeffe); mulq squares
+// 2^32+1 (rdx:rax = 1 : 0x0000000200000001); adcq adds 5+7 plus the carry
+// addq -1+1 left (13); sbbq subtracts 20-6 minus the borrow 0-1 left (13).
+// Any wrong encoding — a reversed shld source, a dropped carry — exits 1.
+const x86GasCarryChainDriverMain = `
+function main(): i32 {
+    var src: string = "\tmovabs $0x0123456789abcdef, %rsi\n\tmovabs $0xfedcba9876543210, %rdi\n\tmovq $8, %rcx\n\tshldq %cl, %rdi, %rsi\n\tmovabs $0x23456789abcdeffe, %rax\n\tcmpq %rax, %rsi\n\tjne bad\n\tmovabs $0x0000000100000001, %rax\n\tmovabs $0x0000000100000001, %rcx\n\tmulq %rcx\n\tmovabs $0x0000000200000001, %rcx\n\tcmpq %rcx, %rax\n\tjne bad\n\tcmpq $1, %rdx\n\tjne bad\n\tmovq $-1, %rax\n\tmovq $1, %rcx\n\taddq %rcx, %rax\n\tmovq $5, %rax\n\tmovq $7, %rcx\n\tadcq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $0, %rax\n\tmovq $1, %rcx\n\tsubq %rcx, %rax\n\tmovq $20, %rax\n\tmovq $6, %rcx\n\tsbbq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $42, %rdi\n\tjmp out\nbad:\n\tmovq $1, %rdi\nout:\n\tmovq $60, %rax\n\tsyscall\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(elf_static_executable_data_x86(a.code, a.rodata)));
+    return 0;
+}
+`
+
+// x86GasCarryChainGroundTruthMain: bytes from as + objdump, not the manual.
+const x86GasCarryChainGroundTruthMain = `
+function main(): i32 {
+    var src: string = "    .text\n_start:\n    shldq %cl, %rdi, %rsi\n    shldq %cl, %rax, %r11\n    shldq %cl, %r12, %r11\n    mulq %rsi\n    mulq %r11\n    adcq %r10, %rsi\n    adcq %rcx, %rax\n    sbbq %r11, %rsi\n    sbbq %rax, %rcx\n";
+    var a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 90; }
+    var exp: i32[] = [72, 15, 165, 254, 73, 15, 165, 195, 77, 15, 165, 227, 72, 247, 230, 73, 247, 227, 76, 17, 214, 72, 17, 200, 76, 25, 222, 72, 25, 193];
+    if (a.code.len() != exp.len()) { return 91; }
+    var i: i32 = 0;
+    while (i < exp.len()) {
+        if (a.code[i] != exp[i]) { return i + 1; }
+        i = i + 1;
+    }
     return 0;
 }
 `
