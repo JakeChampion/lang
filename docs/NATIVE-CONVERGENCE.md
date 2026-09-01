@@ -145,14 +145,17 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    104 MiB peak. Two of the three blockers that measurement found are closed: the
    nested-arithmetic miscompile was a use-after-free in the compiler's own gate
    passes (#7948), and `internal/codegen/wasmbin` has the `strbuf_*` lowerings it
-   was missing (#7951). What is left is the driver — the playground needs a
-   stdin/in-memory entry point rather than `fern.fern`, which is a CLI that takes
-   argv paths and writes executables. It also needs the stdlib inside the module,
-   and that half is done: `-embed` / `__fern_asset` / `__fern_assets` are on the
-   self-host compiler now (`examples/self_host/embed.fern`), so it can carry its
-   own stdlib the way native's `go:embed` does. `sleep_ms` remains the one builtin
-   with no wasm lowering (#7947), which keeps the native toolchain from compiling
-   `fern.fern` for wasm, so this artifact still has only one witness.
+   was missing (#7951). The third — the driver — compiles now:
+   `examples/self_host/playground_run.fern` reads a program on stdin, resolves
+   its `std/…` imports out of an embedded bundle through a sealed
+   `modloader.Overlay`, and emits a wasm module. Hosted in wasm with **no
+   preopens at all** it produces output byte-identical to the natively-hosted
+   build. What remains is not compilation: the playground also interprets, and
+   `examples/self_host/interp.fern` implements no I/O builtins at all, so its
+   output pane has no self-host counterpart — a second missing consumer beside
+   the LSP. `sleep_ms` remains the one builtin with no wasm lowering (#7947),
+   which keeps the native toolchain from compiling `fern.fern` for wasm, so this
+   artifact still has only one witness.
 
 ## Freeze preconditions (all must be green before native is frozen)
 

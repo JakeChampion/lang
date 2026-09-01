@@ -174,7 +174,7 @@ function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], 
 // single source of the path both the read and the write use.
 function cache_file_for(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], idx: i32, lo: i32, hi: i32, cache_dir: string): string {
     if (cache_dir.len() == 0 || sighashes.len() == 0) { return ""; }
-    var src_hash: string = modloader.module_src_hash(dir, entry_path, parts, idx);
+    var src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
     // The window is folded in by module_unit_cache_key so two shards of one
     // module get distinct objects; the filename carries the shard-ns for
     // readability.
@@ -250,7 +250,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     if (pm_mode == "manifest") {
         var mi: i32 = 0;
         while (mi < parts.len()) {
-            print(parts[mi].ns + "|" + modloader.module_src_hash(dir, entry_path, parts, mi)
+            print(parts[mi].ns + "|" + modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, mi)
                 + "|" + sighashes[mi] + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
             mi = mi + 1;
         }
@@ -380,7 +380,7 @@ function main(): i32 {
     match (read_file(entry_path)) {
         Ok(src) => {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-            var loaded: flatten.LoadedModule[] = modloader.load_imports(dir, entry);
+            var loaded: flatten.LoadedModule[] = modloader.load_imports(modloader.no_overlay(), dir, entry);
             return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);
         },
         Err(e) => {

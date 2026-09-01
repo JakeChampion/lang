@@ -117,17 +117,65 @@ function res_read(dir: string, rel: string): Resolved {
 
 // resolve_module_src finds the source for import `path`, discarding the
 // directory it was found in. `resolve_module` is the full answer.
-pub function resolve_module_src(dir: string, path: string, name: string): Option[string] {
-    var r: Resolved = resolve_module(dir, path, name);
+pub function resolve_module_src(ov: Overlay, dir: string, path: string, name: string): Option[string] {
+    var r: Resolved = resolve_module(ov, dir, path, name);
     if (!r.ok) { return None; }
     return Some(r.src);
 }
 
+// Overlay is an in-memory source table consulted BEFORE disk, keyed by the
+// import path as written — `std/io`, `core/map` — with no extension and no
+// basename flattening. It is how a compiler with no filesystem under it
+// resolves imports: a wasm-hosted driver carries its stdlib as `-embed`
+// assets and hands them over as one of these (#6643).
+//
+// Native has had the same thing since the prelude was retired, in two pieces:
+// `stdlib.Resolve` for the embedded std/ + core/ tree and `LoadWith`'s
+// override map for the LSP's unsaved buffers, both consulted before the
+// filesystem resolver (`internal/modload/modload.go`).
+//
+// `srcs` is parallel to `paths` — the tree's idiom for a small keyed table
+// (embed.Assets, fern.fern's VendorSet), and a linear scan over a few dozen
+// modules is not worth a map.
+//
+// `sealed` says the overlay IS the filesystem: a miss is a miss, with no disk
+// read and no manifest probe behind it. Without it an unresolved import in a
+// stdin-fed program falls through to `res_read("", …)`, which reads a
+// CWD-RELATIVE path, and then to try_manifest, which opens `fern.toml` and can
+// reach the user's package cache. For a playground that is not a fallback, it
+// is an escape.
+pub struct Overlay { paths: string[], srcs: string[], sealed: boolean }
+
+// no_overlay is the "resolve from disk exactly as before" value. Every caller
+// that has a real filesystem passes it, and it costs one `len()` per import:
+// util.index_of_str returns -1 on an empty array without entering its loop,
+// and `sealed` is false, so control reaches res_read with the same arguments
+// it had before this existed.
+pub function no_overlay(): Overlay {
+    return Overlay { paths: [], srcs: [], sealed: false };
+}
+
 // resolve_module finds the source for import `path` and the directory it
-// lives in. It tries the full (possibly `std/`-prefixed) path first, then the
-// flat basename in `dir` — so `import "std/io"` resolves to `<dir>/std/io.fern`
-// when vendored there, or `<dir>/io.fern` when laid out flat.
-pub function resolve_module(dir: string, path: string, name: string): Resolved {
+// lives in. The overlay comes first; then the full (possibly `std/`-prefixed)
+// path, then the flat basename in `dir` — so `import "std/io"` resolves to
+// `<dir>/std/io.fern` when vendored there, or `<dir>/io.fern` when laid out
+// flat.
+//
+// The overlay is keyed by the path as WRITTEN, which is why it is consulted
+// here rather than inside res_read: by then the path has already been split
+// two ways, and load_lib calls res_read with a stem of its own. Native draws
+// the line in the same place — `stdlib.ModuleKey(importPath)` runs before any
+// path join.
+//
+// An overlay hit reports `dir` unchanged, so the resolved module's own imports
+// resolve against the root its importer used. Stdlib modules import each other
+// package-root-relative (`import "std/string"`, never `./string`), so those
+// re-enter the overlay whatever `dir` is; passing it through keeps the
+// fallthrough-to-disk case byte-identical to what it was.
+pub function resolve_module(ov: Overlay, dir: string, path: string, name: string): Resolved {
+    var oi: i32 = util.index_of_str(ov.paths, rel_path(path));
+    if (oi >= 0) { return Resolved { src: ov.srcs[oi], dir: dir, ok: true }; }
+    if (ov.sealed) { return res_none(); }
     var direct: Resolved = res_read(dir, rel_path(path));
     if (direct.ok) { return direct; }
     var flat: Resolved = res_read(dir, name);
@@ -341,7 +389,7 @@ function strip_fern_ext(s: string): string {
 // declared dependencies live in its own manifest. Resolving everything
 // against the entry meant a dependency's own dependencies never loaded at
 // all — silently, since an unresolvable import is skipped (#6756).
-pub function load_imports(dir: string, entry: parser.Module): flatten.LoadedModule[] {
+pub function load_imports(ov: Overlay, dir: string, entry: parser.Module): flatten.LoadedModule[] {
     var loaded: flatten.LoadedModule[] = [];
     var seen: string[] = [];
     var queue: string[] = enqueue_imports([], seen, entry);
@@ -354,7 +402,7 @@ pub function load_imports(dir: string, entry: parser.Module): flatten.LoadedModu
         var name: string = base_name(path);
         if (util.has_str(seen, name)) { continue; }
         seen = seen.append(name);
-        var r: Resolved = resolve_module(from, path, name);
+        var r: Resolved = resolve_module(ov, from, path, name);
         if (r.ok) {
             var m: parser.Module = parser.parse_module(lexer.tokenize(r.src));
             loaded = loaded.append(flatten.LoadedModule { name: name, mod: m });
@@ -372,6 +420,12 @@ pub function load_imports(dir: string, entry: parser.Module): flatten.LoadedModu
 // the program's references to JsonValue / IoError / FileStat / … resolve.
 // When the file is absent the program is returned unchanged and
 // module_with_builtins' idempotent synthetic injection fills the types in.
+//
+// Deliberately NOT overlay-aware, unlike its neighbours: builtins.fern lives
+// beside the compiler sources, not under a package root, so it is not a module
+// any import names and there is no import path to key it by. A caller with no
+// filesystem — a wasm-hosted driver — skips this and lets module_with_builtins
+// inject, which is what checker_modload_run already does.
 pub function merge_builtins(dir: string, merged: parser.Module): parser.Module {
     match (read_file(dir + "builtins.fern")) {
         Ok(bsrc) => {
@@ -502,7 +556,7 @@ pub function module_import_path(parts: flatten.PerModule[], ns: string): string 
 // the flat <dir><ns>.fern. The entry reads entry_path. Only a genuinely
 // unresolvable source yields "?", which callers MUST treat as always-rebuild:
 // sound (never reuses stale codegen), just not incremental for that module.
-pub function module_src_hash(dir: string, entry_path: string, parts: flatten.PerModule[], idx: i32): string {
+pub function module_src_hash(ov: Overlay, dir: string, entry_path: string, parts: flatten.PerModule[], idx: i32): string {
     if (parts[idx].is_entry) {
         match (read_file(entry_path)) {
             Ok(esrc) => { return util.hash_key(esrc); },
@@ -511,7 +565,7 @@ pub function module_src_hash(dir: string, entry_path: string, parts: flatten.Per
     }
     var ip: string = module_import_path(parts, parts[idx].ns);
     if (ip.len() > 0) {
-        match (resolve_module_src(dir, ip, parts[idx].ns)) {
+        match (resolve_module_src(ov, dir, ip, parts[idx].ns)) {
             Some(src) => { return util.hash_key(src); },
             None => { },
         }

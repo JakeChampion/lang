@@ -1,0 +1,158 @@
+// examples/self_host/playground_run.fern — the compiler as a service: source
+// on stdin, a wasm module on stdout, and no filesystem underneath (#6643).
+//
+// This is the driver the browser playground needs and `fern.fern` is not.
+// `fern.fern` is a CLI — it takes argv paths, reads them, and writes an
+// executable — while a playground has one program in memory and nowhere to put
+// a file. `wasm_ir_run.fern` has the right SHAPE (stdin in, module out) and
+// resolves nothing: it warns about every import and carries on.
+//
+// What makes the difference is where `std/…` comes from. Native serves the
+// stdlib out of `go:embed`; the self-host CLI reads it from a root named on the
+// command line, which a wasm-hosted compiler does not have. So this driver
+// carries the stdlib as `-embed` assets and hands them to the module loader as
+// an overlay, consulted ahead of disk:
+//
+//     fern -target wasm32-wasi -emit core-module -embed internal/stdlib \
+//         -o playground.wasm examples/self_host/playground_run.fern internal/stdlib
+//
+// `internal/stdlib` appears twice and means two different things. As `-embed`
+// it is the stdlib this driver will carry AT RUNTIME. As the trailing
+// positional it is the stdlib root resolving THIS FILE's own `import "std/io"`
+// at build time. Dropping either one produces a driver that builds and then
+// cannot resolve, or one that cannot build at all.
+//
+// The overlay is sealed, so a miss is an error rather than a disk read. That is
+// the property that makes this safe to run against untrusted source: there is
+// no path from an import to the host filesystem, and `read_file` on a wasm
+// module with no preopens would fail anyway — sealed makes it fail with a
+// diagnostic naming the import instead of a silently-skipped module.
+
+import "./asmcore";
+import "./checker";
+import "./constfold";
+import "./flatten";
+import "./irlower";
+import "./lexer";
+import "./modloader";
+import "./parser";
+import "./treeshake";
+import "./util";
+import "./wasm_ir";
+import "std/io";
+
+// main wraps `run` in the shared rc-over-release guard — see
+// util.rc_underflow_guard. Every self-host driver run self-checks its own heap
+// accounting; a corrupted freelist is otherwise silent (#6021).
+function main(): i32 {
+    return util.rc_underflow_guard("playground_run", run());
+}
+
+// STDLIB_EXT is the suffix an embedded module name carries and an import path
+// does not.
+const STDLIB_EXT: string = ".fern";
+
+// embedded_stdlib turns the `-embed` bundle into the module loader's overlay.
+//
+// Asset names arrive as paths relative to the embed root with the extension
+// intact — `std/io.fern` — and imports are written `std/io`, so the extension
+// comes off and nothing else is rewritten. That is exact rather than
+// approximate because no module under `internal/stdlib` imports a sibling
+// relatively: every one of them spells it package-root-relative (`import
+// "std/string"`, `import "core/int"`), which is the same key the overlay is
+// built with.
+//
+// Non-`.fern` assets are skipped. They are not modules, and an embed root can
+// legitimately hold other things.
+function embedded_stdlib(): modloader.Overlay {
+    var paths: string[] = [];
+    var srcs: string[] = [];
+    for a in __fern_assets() {
+        var name: string = a.0;
+        if (name.len() > STDLIB_EXT.len()
+                && slice_unchecked(name, name.len() - STDLIB_EXT.len(), name.len()) == STDLIB_EXT) {
+            paths = paths.append(slice_unchecked(name, 0, name.len() - STDLIB_EXT.len()) + "");
+            srcs = srcs.append(a.1 + "");
+        }
+    }
+    return modloader.Overlay { paths: paths, srcs: srcs, sealed: true };
+}
+
+// unresolved_imports names every import of `entry` that the loader did not
+// resolve, transitively.
+//
+// load_imports skips an import it cannot resolve, without a word — deliberate
+// in the CLI, where a compiler intrinsic looks exactly like an unresolvable
+// import. In a playground it is a trap: a user who types `import
+// "std/collections"` gets a program that compiles and then fails at a call
+// nothing defines, with nothing pointing at the import. `fern.fern` reports
+// this (`cannot read module:`); so does this.
+//
+// It shares one blind spot with the loader, because it keys the same way the
+// loader does: two imports whose BASENAMES collide (`std/convert` and
+// `std/wasm/convert` both exist) load one and drop the other, and the dropped
+// one looks resolved here. That is the loader's dedupe (modloader.base_name),
+// not this check's, and fixing it means changing what a module is named by.
+function unresolved_imports(entry: parser.Module, loaded: flatten.LoadedModule[]) : string[] {
+    var have: string[] = [];
+    for m in loaded { have = have.append(m.name + ""); }
+    var missing: string[] = [];
+    var wanted: parser.Import[] = entry.imports;
+    for m in loaded { wanted = util.append_all(wanted, m.mod.imports); }
+    for imp in wanted {
+        var name: string = modloader.base_name(imp.path);
+        if (!util.has_str(have, name) && !util.has_str(missing, imp.path)) {
+            missing = missing.append(imp.path + "");
+        }
+    }
+    return missing;
+}
+
+function run(): i32 {
+    var src: string = io.read_all_stdin();
+    var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
+
+    // The entry came from stdin, so it has no directory. With a sealed overlay
+    // that is inert: nothing below resolve_module ever sees the empty root.
+    var ov: modloader.Overlay = embedded_stdlib();
+    var loaded: flatten.LoadedModule[] = modloader.load_imports(ov, "", entry);
+    var missing: string[] = unresolved_imports(entry, loaded);
+    if (missing.len() > 0) {
+        var msg: string = "";
+        for p in missing { msg = msg + "cannot resolve module: " + p + "\n"; }
+        eprint(msg);
+        return 1;
+    }
+
+    var merged: parser.Module = flatten.bundle(entry, loaded);
+    merged = parser.fill_default_args_module(merged);
+    merged = parser.resolve_variant_fields_module(merged);
+
+    // The same gates the CLI and wasm_ir_run put ahead of emit: each rejects a
+    // shape the emitter would otherwise miscompile rather than refuse.
+    var errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(merged));
+    errs = util.append_diags(errs, asmcore.check_map_new_chain(merged));
+    errs = util.append_diags(errs, asmcore.check_undefined_calls(merged));
+    errs = util.append_diags(errs, asmcore.check_decl_names(merged));
+    var fnfld: string = irlower.check_fn_array_fields(merged);
+    if (errs.len() > 0 || fnfld.len() > 0) {
+        eprint(util.format_diags(errs) + fnfld);
+        return 1;
+    }
+    var unsupported: string = wasm_ir.wasm_unsupported_builtin(merged);
+    if (unsupported.len() > 0) {
+        eprint(wasm_ir.wasm_unsupported_message(unsupported));
+        return 1;
+    }
+
+    // Tree-shaking is load-bearing here rather than an optimisation: the
+    // overlay hands the loader every stdlib module the program's imports reach,
+    // and without the shake the emitted module carries all of them.
+    merged = treeshake.treeshake(merged);
+    merged = constfold.fold_module(merged);
+    merged = checker.annotate_module(merged);
+
+    var out: string = wasm_ir.emit_module_mode_or_error(parser.module_with_builtins(merged), false, false);
+    write(out);
+    return 0;
+}
