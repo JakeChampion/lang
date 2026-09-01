@@ -145,17 +145,72 @@ func (a *Assembler) emit32(v uint32) {
 // .text (8-byte aligned), matching the single-segment R+W+X image
 // (elf.StaticExecutableDataX86).
 func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err error) {
-	text, rodata, _, _, _, _, err = assembleProgram(src, textVAddr, false, false, nil)
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, err
+	}
+	return a.BytesProgram(textVAddr)
+}
+
+// BytesProgram lays the parsed program out at textVAddr with .rodata
+// contiguous after .text (8-byte aligned) — the single-segment R+W+X image
+// elf.StaticExecutableDataX86 produces. Mirrors arm64.BytesProgram.
+func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err error) {
+	text, rodata, _, err = a.layout(textVAddr, false, false)
 	return text, rodata, err
 }
+
+// BytesProgramWX is BytesProgram for the W^X two-segment layout
+// (elf.StaticExecutableDataX86WX): .rodata moves to the first page boundary
+// past .text, in its own R+W segment, so the code segment can be mapped R+X.
+func (a *Assembler) BytesProgramWX(textVAddr uint64) (text, rodata []byte, err error) {
+	text, rodata, _, err = a.layout(textVAddr, true, false)
+	return text, rodata, err
+}
+
+// BytesProgramPIE is the W^X layout laid out from a load base of 0, returning
+// the R_X86_64_RELATIVE relocations the `.quad <symbol>` slots need.
+// rip-relative code is base-independent and needs none.
+func (a *Assembler) BytesProgramPIE(textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
+	return a.layout(textVAddr, true, true)
+}
+
+// TextLabelVAddr returns the virtual address of a .text symbol
+// (textVAddr + its byte offset), or false when name is not a defined .text
+// label. Only meaningful after a BytesProgram* call has settled the layout,
+// since branch relaxation moves labels. Mirrors arm64.TextLabelVAddr.
+func (a *Assembler) TextLabelVAddr(name string, textVAddr uint64) (uint64, bool) {
+	off, ok := a.textLabels[name]
+	if !ok {
+		return 0, false
+	}
+	return textVAddr + uint64(off), true
+}
+
+// TextLabelVAddrs is TextLabelVAddr for every .text label — the function
+// symbol table the ELF writer emits into .symtab under `-g`.
+func (a *Assembler) TextLabelVAddrs(textVAddr uint64) map[string]uint64 {
+	out := make(map[string]uint64, len(a.textLabels))
+	for name, off := range a.textLabels {
+		out[name] = textVAddr + uint64(off)
+	}
+	return out
+}
+
+// LocRows are the per-statement `.loc` markers the parse collected, for the
+// DWARF line table.
+func (a *Assembler) LocRows() []LineRow { return a.locRows }
 
 // AssembleProgramWX is AssembleProgram for the W^X two-segment ELF layout
 // (elf.StaticExecutableDataX86WX): .rodata is page-aligned into a separate
 // R+W segment instead of laid contiguously after .text, so the code
 // segment can be mapped R+X. Pass elf.TextVAddrWX as textVAddr.
 func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err error) {
-	text, rodata, _, _, _, _, err = assembleProgram(src, textVAddr, true, false, nil)
-	return text, rodata, err
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, err
+	}
+	return a.BytesProgramWX(textVAddr)
 }
 
 // AssembleProgramEhFrame is AssembleProgram that also renders the .eh_frame
@@ -164,12 +219,15 @@ func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err e
 // FDE's initial_location is the distance from the field to the function.
 // Returns a nil image when the source carries no CFI.
 func AssembleProgramEhFrame(src string, textVAddr, ehVAddr uint64) (text, rodata, ehFrame []byte, err error) {
-	text, rodata, _, _, _, a, err := assembleProgram(src, textVAddr, false, false, nil)
+	a, err := ParseProgram(src)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	ehFrame, err = a.EhFrame(textVAddr, ehVAddr)
+	text, rodata, err = a.BytesProgram(textVAddr)
 	if err != nil {
+		return nil, nil, nil, err
+	}
+	if ehFrame, err = a.EhFrame(textVAddr, ehVAddr); err != nil {
 		return nil, nil, nil, err
 	}
 	return text, rodata, ehFrame, nil
@@ -190,8 +248,11 @@ type Reloc struct {
 // `.quad <symbol>` slots. rip-relative code is base-independent and needs
 // no relocation. Pass elf.TextVAddrPIE as textVAddr.
 func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
-	text, rodata, relocs, _, _, _, err = assembleProgram(src, textVAddr, true, true, nil)
-	return text, rodata, relocs, err
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return a.BytesProgramPIE(textVAddr)
 }
 
 // AssembleProgramWXSyms is AssembleProgramWX that also returns every .text
@@ -200,15 +261,15 @@ func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relo
 // debugger / nm / a backtrace can map a code address back to a name. Pass
 // elf.TextVAddrWX as textVAddr.
 func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, syms map[string]uint64, locRows []LineRow, err error) {
-	text, rodata, _, off, rows, _, err := assembleProgram(src, textVAddr, true, false, nil)
+	a, err := ParseProgram(src)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	syms = make(map[string]uint64, len(off))
-	for name, o := range off {
-		syms[name] = textVAddr + uint64(o)
+	text, rodata, err = a.BytesProgramWX(textVAddr)
+	if err != nil {
+		return nil, nil, nil, nil, err
 	}
-	return text, rodata, syms, rows, nil
+	return text, rodata, a.TextLabelVAddrs(textVAddr), a.LocRows(), nil
 }
 
 // AssembleProgramShared assembles for a shared object (.so): the same
@@ -218,21 +279,34 @@ func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, s
 // records in .dynsym so a dynamic loader can resolve the exports. Pass
 // elf.TextVAddrPIE as textVAddr.
 func AssembleProgramShared(src string, textVAddr uint64, exportNames []string) (text, rodata []byte, relocs []Reloc, exportVAddr map[string]uint64, err error) {
+	a, err := ParseProgram(src)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	text, rodata, relocs, err = a.BytesProgramPIE(textVAddr)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 	exportVAddr = map[string]uint64{}
 	for _, n := range exportNames {
-		exportVAddr[n] = 0 // marker: resolve this label
+		v, ok := a.TextLabelVAddr(n, textVAddr)
+		if !ok {
+			return nil, nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", n)
+		}
+		exportVAddr[n] = v
 	}
-	text, rodata, relocs, _, _, _, err = assembleProgram(src, textVAddr, true, true, exportVAddr)
-	return text, rodata, relocs, exportVAddr, err
+	return text, rodata, relocs, exportVAddr, nil
 }
 
-// assembleProgram is the shared body of AssembleProgram (wx=false,
-// contiguous .rodata), AssembleProgramWX (wx=true, page-aligned .rodata in
-// a separate R+W segment), and AssembleProgramPIE (pie=true: page-aligned,
-// base-0 layout, returning .quad-slot relocations). When exportVAddr is
-// non-nil, each key is resolved to textVAddr + its .text-label offset (for
-// AssembleProgramShared).
-func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map[string]uint64) (text, rodata []byte, relocs []Reloc, syms map[string]int, locRows []LineRow, asm *Assembler, err error) {
+// ParseProgram decodes the Intel-syntax program text into an assembler
+// holding instructions, labels and unresolved fixups — everything that does
+// not depend on where the image will be loaded. The BytesProgram* methods
+// then lay it out at a given address.
+//
+// The split matters because some outputs can only be computed AFTER the
+// layout: .eh_frame declares pcrel FDE pointers, so rendering it needs its own
+// load address, which follows from len(text). Mirrors arm64.ParseProgram.
+func ParseProgram(src string) (*Assembler, error) {
 	a := newAssembler()
 	sec := "text"
 	for lineno, raw := range strings.Split(src, "\n") {
@@ -258,18 +332,19 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 			continue
 		}
 		if strings.HasPrefix(line, ".") {
-			sec, err = a.directive(line, sec)
-			if err != nil {
-				return nil, nil, nil, nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
+			var derr error
+			sec, derr = a.directive(line, sec)
+			if derr != nil {
+				return nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), derr)
 			}
 			continue
 		}
 		if sec != "text" {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("line %d: %q: instruction outside .text", lineno+1, strings.TrimSpace(raw))
+			return nil, fmt.Errorf("line %d: %q: instruction outside .text", lineno+1, strings.TrimSpace(raw))
 		}
 		nRip := len(a.ripFixups)
 		if err := a.insn(line); err != nil {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
+			return nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
 		}
 		// Stamp every rip fixup this instruction produced with the
 		// instruction's end offset — the runtime RIP its disp32 is
@@ -278,16 +353,23 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 			a.ripFixups[i].end = len(a.text)
 		}
 	}
+	return a, nil
+}
+
+// layout resolves every fixup against a concrete load address and returns the
+// final blobs. wx / pie select where .rodata sits relative to .text — see
+// BytesProgram, BytesProgramWX and BytesProgramPIE.
+func (a *Assembler) layout(textVAddr uint64, wx, pie bool) (text, rodata []byte, relocs []Reloc, err error) {
 	// Shrink in-range branches to their rel8 forms and settle the final
 	// layout before any offsets are resolved.
 	if err := a.relax(); err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Resolve rel32 branch/call targets now that all labels are placed.
 	for _, f := range a.relFixups {
 		dst, ok := a.textLabels[f.sym]
 		if !ok {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("undefined label %q", f.sym)
+			return nil, nil, nil, fmt.Errorf("undefined label %q", f.sym)
 		}
 		rel := int32(dst - (f.at + 4))
 		putLE32(a.text, f.at, uint32(rel))
@@ -350,7 +432,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		} else if off, ok := a.textLabels[f.sym]; ok {
 			symOff = off // text symbol: a function address (e.g. a closure body)
 		} else {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
+			return nil, nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
 		}
 		disp := int32(int64(symOff) + f.addend - int64(f.end))
 		putLE32(a.text, f.at, uint32(disp))
@@ -367,7 +449,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		} else if off, ok := a.bssLabels[f.sym]; ok {
 			abs = textVAddr + uint64(bssBase+off)
 		} else {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("undefined .quad symbol %q", f.sym)
+			return nil, nil, nil, fmt.Errorf("undefined .quad symbol %q", f.sym)
 		}
 		for i := 0; i < 8; i++ {
 			a.rodata[f.at+i] = byte(abs >> (8 * i))
@@ -376,15 +458,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 			relocs = append(relocs, Reloc{Offset: rodataVAddr + uint64(f.at), Addend: abs})
 		}
 	}
-	// Resolve requested export symbols to their load-base-relative vaddrs.
-	for name := range exportVAddr {
-		off, ok := a.textLabels[name]
-		if !ok {
-			return nil, nil, nil, nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", name)
-		}
-		exportVAddr[name] = textVAddr + uint64(off)
-	}
-	return a.text, append(a.rodata, a.bss...), relocs, a.textLabels, a.locRows, a, nil
+	return a.text, append(a.rodata, a.bss...), relocs, nil
 }
 
 func putLE32(b []byte, at int, v uint32) {
