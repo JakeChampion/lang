@@ -1,0 +1,32 @@
+// Widening a 32-bit integer to 64 bits takes its signedness from the SOURCE,
+// not from the destination the cast names.
+//
+//   u32 as i64   zero-extends — 4294967295 is a value the destination holds,
+//                so it stays positive rather than becoming -1.
+//   i32 as u64   sign-extends — -1 becomes 0xFFFF_FFFF_FFFF_FFFF, the same
+//                bit pattern reinterpreted, not 0x0000_0000_FFFF_FFFF.
+//
+// Reading the destination instead gets both of these backwards, and only at
+// the top bit: every value below 2^31 agrees under either rule.
+//
+// Returns 0; each failing direction sets its own bit so a partial fix is
+// distinguishable from none.
+function main(): i32 {
+  var bad: i32 = 0;
+  var s: i32 = -1;
+  var u: u32 = 4294967295u32;
+
+  if ((s as i64) != -1i64) { bad = bad + 1; }
+  if ((u as i64) != 4294967295i64) { bad = bad + 2; }
+  if ((u as u64) != 4294967295u64) { bad = bad + 4; }
+  if ((s as u64) != 18446744073709551615u64) { bad = bad + 8; }
+
+  // The same widths reached through an expression rather than a bare
+  // identifier: the operand of the cast is a division whose result is still
+  // a u32 with the top bit set.
+  var big: u32 = 2147483648u32;
+  if ((big / 1u32) as i64 != 2147483648i64) { bad = bad + 16; }
+  if ((big % 3u32) as i64 != 2i64) { bad = bad + 32; }
+
+  return bad;
+}

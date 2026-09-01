@@ -9427,7 +9427,11 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 }
                 var sw: LowerState = lower_expr(u.operand, s);
                 if (!sw.ok) { return sw; }
-                return sw.emit(ir.op_int_extend(u.op == "as_u64"));
+                // The extension's signedness is the SOURCE's, not the
+                // destination's (internal/ir keys it on `srcInt.IsSigned()`):
+                // `u32 as i64` zero-extends, so 4294967295 stays positive, and
+                // `i32 as u64` sign-extends, so -1 becomes 0xFFFF_FFFF_FFFF_FFFF.
+                return sw.emit(ir.op_int_extend(expr_is_u32(u.operand, s) || expr_subword_kind(u.operand, s) != ""));
             }
             // `inner?` with an i64/u64 payload: lower_try emits the width-64 payload
             // read, so the unwrapped value is a true i64 here (the `var x: i64 =
