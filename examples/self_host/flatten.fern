@@ -250,6 +250,31 @@ pub function rewrite_type_name(tn: string, ctx: RewriteCtx): string {
         }
         return out + ")";
     }
+    // A FUNCTION type (`(Flag) => Opt`, `() => i32`): parse_type_ref gives it an
+    // EMPTY base with args = the parameters plus the result last, which is the
+    // same shape a generic application has — so the branch below re-spelled it
+    // as `[Opt]`, losing the parameter list and the arrow along with the empty
+    // base. `Option[() => i32]` reached the closure lift as `Option[[i32]]`, and
+    // with no arrow left in the spelling the annotation stopped ruling out the
+    // zero-arg const reading: the payload was CALLED at construction and the
+    // match arm then called its i32 result (#7959).
+    //
+    // Parameters and result are full spellings, so each needs the same rewrite
+    // the tuple elements get; the array suffix rides after the arrow, exactly as
+    // render_type_ref spells it.
+    if (tref.is_fn) {
+        var fout: string = "(";
+        var fi: i32 = 0;
+        while (fi + 1 < tref.args.len()) {
+            if (fi > 0) { fout = fout + ", "; }
+            fout = fout + rewrite_type_name(parser.render_type_ref(tref.args[fi]), ctx);
+            fi = fi + 1;
+        }
+        fout = fout + ") => " + rewrite_type_name(parser.render_type_ref(tref.args[tref.args.len() - 1]), ctx);
+        var fd: i32 = 0;
+        while (fd < tref.array_depth) { fout = fout + "[]"; fd = fd + 1; }
+        return fout;
+    }
     // A GENERIC application (`Option[Flag]`, `Map[string, Flag]`,
     // `mod.Wrapper[Flag]`, `Option[Flag][]`): rewrite the base AND every type
     // ARGUMENT. The bracket handling further down re-attaches `tn[br:]`
@@ -1221,6 +1246,27 @@ function main(): i32 {
     // A tuple-ARRAY is not a bare tuple: it falls through to the suffix logic, which
     // leaves a non-own base untouched (the array element is not a rewrite target here).
     if (rewrite_type_name("(i32, i32)[]", ctx) != "(i32, i32)[]") { return 204; }
+    // FUNCTION types round-trip, parameters and result rewritten. parse_type_ref
+    // gives a fn an EMPTY base with args = parameters + result, which is the
+    // generic-application shape, so the generic branch used to re-spell
+    // `() => i32` as `[i32]` — dropping the arrow the closure lift reads the
+    // annotation by, and with it the evidence that a zero-arg payload is a fn
+    // VALUE rather than a const to call (#7959).
+    if (rewrite_type_name("() => i32", ctx) != "() => i32") { return 205; }
+    if (rewrite_type_name("(i32) => i32", ctx) != "(i32) => i32") { return 206; }
+    if (rewrite_type_name("(Token) => lexer.Token", ctx) != "(lx__Token) => lexer__Token") { return 207; }
+    if (rewrite_type_name("(i32, Token) => string", ctx) != "(i32, lx__Token) => string") { return 208; }
+    // A fn type as a GENERIC ARGUMENT — the position #7959 was measured in.
+    if (rewrite_type_name("Option[() => i32]", ctx) != "Option[() => i32]") { return 209; }
+    if (rewrite_type_name("Result[() => Token, string]", ctx) != "Result[() => lx__Token, string]") { return 210; }
+    // A fn RETURNING a fn, and one taking one: the nested arrow must survive both
+    // ways round.
+    if (rewrite_type_name("() => (i32) => Token", ctx) != "() => (i32) => lx__Token") { return 211; }
+    if (rewrite_type_name("(() => Token) => i32", ctx) != "(() => lx__Token) => i32") { return 212; }
+    // A trailing `[]` peels before the arrow is found, so parse_type_ref carries
+    // it as the fn's own array_depth; whatever that models, the spelling has to
+    // come back unchanged, and render_type_ref appends the suffix after the arrow.
+    if (rewrite_type_name("() => Token[]", ctx) != "() => lx__Token[]") { return 213; }
 
     // --- `pub use` re-export redirection (type position) ---
     // A facade re-exports lexer's Token; a consumer's `lexer.Token`
