@@ -8,7 +8,7 @@ ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern)
 
-.PHONY: all build test vet deadcode actionlint testnames freeze check-sources selfhost-cli clean examples run-% fmt fmt-check gofmt gofmt-check lint-all
+.PHONY: all build test vet deadcode actionlint testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all
 
 all: build test
 
@@ -101,12 +101,33 @@ check-sources: bin/fern
 # until #6002 (AT_FDCWD is -2 on XNU, not -100), and absolute is what every
 # harness uses anyway. Note the exit code cannot carry a value >= 126: WASI
 # refuses anything outside [0..126), so wasmtime reports 1.
-SELFHOST_TARGET ?= $(shell uname -s | grep -qi darwin && echo arm64-darwin || echo x86-64-linux)
+SELFHOST_TARGET ?= $(shell uname -sm | sed -e 's/^Darwin.*/arm64-darwin/' -e 's/^Linux aarch64/arm64-linux/' -e 's/^Linux x86_64/x86-64-linux/')
 selfhost-cli: bin/fern
 	@mkdir -p bin
 	./bin/fern -target $(SELFHOST_TARGET) -o bin/fern-selfhost examples/self_host/fern.fern
 	@chmod +x bin/fern-selfhost
 	@echo "built bin/fern-selfhost ($(SELFHOST_TARGET)) — see the Makefile comment for the loop"
+
+# Build the same bin/fern-selfhost with NO Go toolchain and NO native backend:
+# a pinned earlier self-host compiler (bootstrap/stage0.lock, fetched once into
+# build/bootstrap/) compiles the current source, and the result must compile
+# and run a program before it is installed. This is the path a checkout has to
+# a Fern compiler once the native backends are gone (docs/NATIVE-CONVERGENCE.md
+# §3a). Deliberately not dependent on bin/fern. `STAGE0=bin/fern-selfhost make
+# bootstrap` runs from a local candidate instead of the pin — how a refresh is
+# checked before it is published. Runbook: docs/BOOTSTRAP.md.
+bootstrap:
+	./bootstrap/bootstrap.sh build
+
+# The reproducibility half: the compiler `make bootstrap` built (stage1)
+# compiles its own source again (stage2), and the two binaries must be
+# byte-identical. Whole-compiler, so it sees what the per-module fixpoints
+# cannot — but it needs the SELF-BUILT compiler to compile the compiler, which
+# today dies past 12 GB on a 16 GB host (docs/BOOTSTRAP.md records the
+# measurement). Red until goal 2's reclaim work closes that, and the first
+# green run is the signal that stage0 can be refreshed without native.
+distcheck:
+	./bootstrap/bootstrap.sh distcheck
 
 # Compile every example to arm64 Linux assembly and (if the
 # cross-compiler is present) link to a static arm64 binary.

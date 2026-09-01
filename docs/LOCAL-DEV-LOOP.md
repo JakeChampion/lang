@@ -10,6 +10,16 @@ these have been wrong by an order of magnitude in the direction that
 discourages using the tool at all, and a stale number costs an hour per
 attempt.
 
+## `make bootstrap`: the Go-less build, and `make distcheck`
+
+`make bootstrap` (pinned stage0 compiling the whole compiler, then the smoke
+test) is **~2.5 min and 4.0 GB peak RSS** on the 4-core x86-64 container
+(measured 2026-09-01), plus a one-time ~4 MB download. `make distcheck` — the
+compiler it built recompiling itself — **dies after ~200 s at 12.2 GB** with a
+SIGSEGV on this tree; that is the known goal-2 gap, not a machine problem, and
+`docs/BOOTSTRAP.md` has the numbers and the recipe. Do not run it alongside
+anything else heavy on a 16 GB box.
+
 ## Fastest self-host loop: `make selfhost-cli`
 
 Builds the self-host compiler to a native binary for this host — **~31 s warm /

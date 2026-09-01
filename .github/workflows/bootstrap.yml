@@ -1,0 +1,172 @@
+name: Bootstrap
+
+# The Go-free path to a Fern compiler, and the pin it starts from.
+#
+# `make bootstrap` (bootstrap/bootstrap.sh) takes a pinned earlier self-host
+# compiler — stage0, named by bootstrap/stage0.lock — and compiles the current
+# examples/self_host/fern.fern with it. The result must compile and run a
+# program before it is installed as bin/fern-selfhost. Nothing here builds or
+# runs bin/fern: this is the demonstration that a checkout reaches a Fern
+# binary without the Go toolchain or the native backends
+# (docs/NATIVE-CONVERGENCE.md §3a precondition 1).
+#
+# `make distcheck` — stage1 recompiling the compiler, byte-identical — is NOT
+# run here: the self-host-built compiler cannot yet compile the compiler on a
+# 16 GB host (docs/BOOTSTRAP.md has the measurement). It is a local target
+# until it goes green; when it does, add it to `verify` below.
+#
+# Two jobs, two triggers:
+#
+#   verify   pull_request — `make bootstrap` against the CURRENT pin, on both
+#            Linux hosts. No Go setup, on purpose: a step that quietly needed
+#            it would defeat what the job proves. Runs when the compiler's
+#            source, the stdlib it compiles against, or the bootstrap itself
+#            changes. Red means either the current source uses something the
+#            pinned stage0 does not know — the failure says so, and the fix
+#            is a refresh — or the compiler it built does not work.
+#
+#   publish  workflow_dispatch with publish=true — builds a NEW stage0 for
+#            all three hosts and releases it. Each host builds a candidate
+#            with the native toolchain (`make selfhost-cli`), proves the
+#            candidate compiles the current compiler and that the result runs
+#            (STAGE0=candidate make bootstrap), and uploads the candidate.
+#            The release job tags an immutable `stage0-<date>-<sha7>` release
+#            with the three gzipped binaries and a ready-to-commit
+#            stage0.lock; committing that lock is the refresh
+#            (docs/BOOTSTRAP.md). Runs on the branch you dispatch it from, so
+#            a PR whose source needs a construct the pin lacks can publish its
+#            own stage0 and pin it in the same PR.
+#
+# The pin is a release asset rather than a file in the tree so that a refresh
+# is a one-line diff: each host's compiler is 3-4 MB compressed, three hosts
+# per refresh, and every refresh would otherwise stay in the history of every
+# clone forever. The lock's sha256 is of the UNCOMPRESSED binary, so what is
+# verified is the thing that runs, not the container.
+
+on:
+  pull_request:
+    paths:
+      - "bootstrap/**"
+      - "examples/self_host/**"
+      - "internal/stdlib/**"
+      - "Makefile"
+      - ".github/workflows/bootstrap.yml"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Build a fresh stage0 on all three hosts and publish it as a stage0-<date>-<sha7> release"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request' || !inputs.publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86-64-linux }
+          - { runner: ubuntu-24.04-arm, host: arm64-linux }
+    name: verify-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    # One whole-compiler compile at ~2.5 min and 4 GB on a 4-core x86-64 host
+    # (measured 2026-09-01), plus the download and the smoke test.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: make bootstrap (pinned stage0 -> stage1, smoke-tested, installed)
+        run: make bootstrap
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    host: x86-64-linux }
+          - { runner: ubuntu-24.04-arm, host: arm64-linux }
+          - { runner: macos-15,         host: arm64-darwin }
+    name: publish-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+
+      - name: native toolchain builds the candidate (make selfhost-cli)
+        run: |
+          make selfhost-cli SELFHOST_TARGET=${{ matrix.host }}
+          mkdir -p build
+          cp bin/fern-selfhost build/candidate
+
+      - name: the candidate compiles the current compiler, and that compiler works
+        run: STAGE0=build/candidate make bootstrap
+
+      - name: package the candidate as this host's stage0
+        run: |
+          mkdir -p dist
+          gzip -n -9 -c build/candidate > "dist/fern-selfhost-${{ matrix.host }}.gz"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sum=$(sha256sum build/candidate | cut -d' ' -f1)
+          else
+            sum=$(shasum -a 256 build/candidate | cut -d' ' -f1)
+          fi
+          echo "${{ matrix.host }} $sum" > "dist/${{ matrix.host }}.pin"
+          ls -la dist
+          cat "dist/${{ matrix.host }}.pin"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage0-${{ matrix.host }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: write stage0.lock
+        run: |
+          tag="stage0-$(date -u +%Y%m%d)-${GITHUB_SHA::7}"
+          echo "tag=$tag" >> "$GITHUB_ENV"
+          {
+            echo "# stage0 pin for \`make bootstrap\` — docs/BOOTSTRAP.md. Refresh: dispatch"
+            echo "# .github/workflows/bootstrap.yml with publish=true and commit the lock it releases."
+            echo "source $GITHUB_SHA"
+            echo "url https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+            cat dist/x86-64-linux.pin dist/arm64-linux.pin dist/arm64-darwin.pin
+          } > dist/stage0.lock
+          rm dist/*.pin
+          cat dist/stage0.lock
+
+      - name: publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "stage0 $tag" \
+            --notes "Self-host compiler snapshot for \`make bootstrap\`, built from $GITHUB_SHA by the native toolchain on each of the three bootstrap hosts and checked there to compile the compiler at that commit. Pin it by committing \`stage0.lock\` to \`bootstrap/stage0.lock\` — see docs/BOOTSTRAP.md." \
+            dist/fern-selfhost-x86-64-linux.gz dist/fern-selfhost-arm64-linux.gz dist/fern-selfhost-arm64-darwin.gz dist/stage0.lock
+          {
+            echo "## stage0 published: \`$tag\`"
+            echo
+            echo "Commit this as \`bootstrap/stage0.lock\`:"
+            echo
+            echo '```'
+            cat dist/stage0.lock
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
