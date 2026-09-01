@@ -615,7 +615,7 @@ func main() {
 	qemu := flag.String("qemu", "qemu-aarch64", "user-mode emulator used by --run")
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
-	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target wasm32-wasi and -target arm64-linux. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
+	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target wasm32-wasi, -target arm64-linux and -target x86-64-linux. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
 	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component — the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
 	componentWrap := flag.Bool("component-wrap", false, "with -emit core-module: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
@@ -1985,53 +1985,6 @@ func buildWasmSSA(prog *ast.Program, info *checker.Info) ([]byte, error) {
 // lift fails, or emit rejects the SSA (a coverage gap) — never a miscompile.
 // Ptr width is fixed at 8 (arm64). numAlloc is 12, the largest register file the
 // renderer's x0..x15 mapping supports (12 allocatable + 4 scratch = 16).
-// buildX86SSA is buildArm64SSA's twin for x86-64: the same lift → optimise →
-// verify loop, emitted through x86_64ssa.EmitAsmModule.
-//
-// It differs in one deliberate way. `ir.DynSupported()` is NOT passed, because
-// x86_64ssa.EmitAsmModule takes no vtable declarations and so writes no vtable
-// `.rodata` — the ops are implemented in emit.go, but the tables they read are
-// not emitted, and a `dyn` program would link against a missing symbol rather
-// than fail cleanly. Lowering without the option makes `dyn` a clean refusal at
-// the IR stage instead, which is the promise this backend makes. Passing the
-// vtables through is the next slice, not a line to add here.
-func buildX86SSA(prog *ast.Program, info *checker.Info) (string, error) {
-	irProg, err := ir.LowerWith(prog, info, 8)
-	if err != nil {
-		return "", fmt.Errorf("ir.LowerWith: %v", err)
-	}
-	ir.ElideClosurePair(irProg, 8)
-	// Dead-function elimination, for the reason the arm64 twin documents: lift
-	// only what `main` reaches, or every imported stdlib module is lifted and a
-	// still-unported helper bails a program that never calls it. CodegenAliases
-	// keeps a Map call site's `_impl` alive — the IR emits `map_new` and only
-	// the emitter knows that resolves to `map_new_impl`.
-	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases)
-	funcs := map[string]*ssa.Func{}
-	shapes := ir.NewCallShapes(irProg)
-	for _, fn := range irProg.Funcs {
-		if live != nil && !live[fn.Name] {
-			continue
-		}
-		f, err := ssa.LiftFromIRWith(fn, shapes)
-		if err != nil {
-			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
-		}
-		ssa.Optimize(f)
-		// After Optimize, never before — the lifter leaves blocks unreachable
-		// for PruneUnreachable to drop, and Verify's use-before-def rule would
-		// reject them. The arm64 twin carries the full reasoning.
-		if err := ssa.Verify(f); err != nil {
-			return "", fmt.Errorf("ssa.Verify %s: %v", fn.Name, err)
-		}
-		funcs[fn.Name] = f
-	}
-	if _, ok := funcs["main"]; !ok {
-		return "", fmt.Errorf("no `main` function in program")
-	}
-	return x86_64ssa.EmitAsmModule(funcs, "main", x86_64ssa.DefaultNumAlloc, nil)
-}
-
 func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 	// DynSupported enables `dyn Trait` lowering (OpConstVtable / OpBoxDyn /
 	// OpCallDyn + the per-(trait,concrete) vtables). DynRcSupported is
@@ -2102,6 +2055,53 @@ func buildArm64SSA(prog *ast.Program, info *checker.Info) (string, error) {
 		return "", fmt.Errorf("no `main` function in program")
 	}
 	return arm64ssa.EmitAsmModule(funcs, "main", arm64ssa.DefaultNumAlloc, nil, irProg.Vtables...)
+}
+
+// buildX86SSA is buildArm64SSA's twin for x86-64: the same lift → optimise →
+// verify loop, emitted through x86_64ssa.EmitAsmModule.
+//
+// It differs in one deliberate way. `ir.DynSupported()` is NOT passed, because
+// x86_64ssa.EmitAsmModule takes no vtable declarations and so writes no vtable
+// `.rodata` — the ops are implemented in emit.go, but the tables they read are
+// not emitted, and a `dyn` program would link against a missing symbol rather
+// than fail cleanly. Lowering without the option makes `dyn` a clean refusal at
+// the IR stage instead, which is the promise this backend makes. Passing the
+// vtables through is the next slice, not a line to add here.
+func buildX86SSA(prog *ast.Program, info *checker.Info) (string, error) {
+	irProg, err := ir.LowerWith(prog, info, 8)
+	if err != nil {
+		return "", fmt.Errorf("ir.LowerWith: %v", err)
+	}
+	ir.ElideClosurePair(irProg, 8)
+	// Dead-function elimination, for the reason the arm64 twin documents: lift
+	// only what `main` reaches, or every imported stdlib module is lifted and a
+	// still-unported helper bails a program that never calls it. CodegenAliases
+	// keeps a Map call site's `_impl` alive — the IR emits `map_new` and only
+	// the emitter knows that resolves to `map_new_impl`.
+	live := ir.LiveFunctionsWithAliases(irProg, ir.CodegenAliases)
+	funcs := map[string]*ssa.Func{}
+	shapes := ir.NewCallShapes(irProg)
+	for _, fn := range irProg.Funcs {
+		if live != nil && !live[fn.Name] {
+			continue
+		}
+		f, err := ssa.LiftFromIRWith(fn, shapes)
+		if err != nil {
+			return "", fmt.Errorf("ssa.LiftFromIR %s: %v", fn.Name, err)
+		}
+		ssa.Optimize(f)
+		// After Optimize, never before — the lifter leaves blocks unreachable
+		// for PruneUnreachable to drop, and Verify's use-before-def rule would
+		// reject them. The arm64 twin carries the full reasoning.
+		if err := ssa.Verify(f); err != nil {
+			return "", fmt.Errorf("ssa.Verify %s: %v", fn.Name, err)
+		}
+		funcs[fn.Name] = f
+	}
+	if _, ok := funcs["main"]; !ok {
+		return "", fmt.Errorf("no `main` function in program")
+	}
+	return x86_64ssa.EmitAsmModule(funcs, "main", x86_64ssa.DefaultNumAlloc, nil)
 }
 
 // Linux dev hosts (cross-compiling) and Macs natively as long

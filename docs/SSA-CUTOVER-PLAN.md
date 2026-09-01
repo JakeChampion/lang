@@ -130,20 +130,41 @@ Two concrete blockers, and only two:
    `arm64-linux` and `wasm32-wasi`, which is #6979's complaint — a code-size
    harness measuring a pipeline the CLI never runs.
 
-   Wired 2026-09-01. Measured on the shapes it covers, emitted instructions
-   against the shipping stack machine: `call_overhead` 713 → 137 (**−80.7%**),
-   `int_loop` 114 → 48 (−57.8%), `array_index` 573 → 250 (−56.3%). Over
-   `examples/*.fern` + `examples/bench/*.fern`, **25 of 29 compile**; all four
-   refusals are the single missing opcode `EnumSentinel`, which arm64ssa emits
-   as a shared `.rodata` cell per tag and x86_64ssa's GAS emitter does not yet
-   write. `dyn` is deliberately excluded (`ir.DynSupported()` is not passed):
-   the ops are implemented but `EmitAsmModule` takes no vtable declarations, so
-   the tables they read would be missing at link time.
+   Wired 2026-09-01. Emitted instructions against the shipping stack machine,
+   on shapes it covers: `call_overhead` 713 → 137 (**−80.7%**), `int_loop`
+   114 → 48 (−57.8%), `array_index` 573 → 250 (−56.3%).
 
-   What remains for this step is therefore `EnumSentinel`, vtables, and **the
-   corpus differential** — which is the discovery mechanism, not the
-   formality: arm64's first run found four wrong answers and 56 SIGSEGVs, and
-   nothing here has been differentially tested yet.
+   **Coverage is a fifth of the corpus, not most of it.** Over all 317
+   `examples/**/*.fern` outside `self_host`: **58 compile, 259 do not.**
+   (Discounting 15 library files with no `main` and 3 refused by E066 rather
+   than by the backend, that is 58 of 299.) The blockers, by count:
+
+   | | |
+   |---|---|
+   | 207 | `EnumSentinel` — modelled in `emit.go:51`, no case in `gas.go`'s render switch |
+   | 25 | float reinterprets (`reinterpret_f64_to_i64` and siblings) |
+   | 5 | more than 6 params — no stack-argument ABI |
+
+   A narrower sweep of `examples/*.fern` + `examples/bench/*.fern` alone reads
+   25 of 29, which is what an early measurement of this work reported. Two
+   shallow directories are not the corpus; the figure above is.
+
+   `dyn` is separately excluded (`ir.DynSupported()` is not passed): the ops are
+   implemented but `EmitAsmModule` takes no vtable declarations, so the tables
+   they read would be missing at link time.
+
+   What remains for this step is therefore `EnumSentinel` (which alone is 65% of
+   the failures), the float reinterprets, the stack-argument ABI, vtables, and
+   **the corpus differential** — the discovery mechanism, not a formality:
+   arm64's first run found four wrong answers and 56 SIGSEGVs, and nothing on
+   x86-64 has been differentially tested at all.
+
+   And note what the instruction counts above are NOT. `docs/SSA-REGALLOC-PLAN.md`
+   §"Where that leaves phase 4" records size and correctness as settled on arm64
+   and **speed as the open blocker**: seven of seventeen benchmarks run
+   1.11×–1.49× slower under SSA (`sort_ints` 1.49×, `map_int` 1.28×), geomean
+   ~0.92×. Fewer instructions is not faster, and on this evidence the two have
+   already diverged once.
 
 ## The cutover point
 
