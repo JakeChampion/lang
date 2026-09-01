@@ -143,8 +143,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"string_array_append_grow_struct_field":                2784,
 	"string_closure_capture_aliased":                       48,
 	"string_closure_capture_churn_free":                    6400,
-	"struct_map_field_churn_free":                          1600,
-	"struct_map_field_escapes":                             32,
 	"tuple_return_scalar_cursor_recursion":                 320,
 	"with_reassign_local_alias_threaded":                   55152,
 }

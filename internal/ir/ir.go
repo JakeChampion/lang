@@ -15700,13 +15700,14 @@ func (b *builder) dropStructField(t ast.Type) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
-	if isMapType(t) {
+	if st, isMap := t.(ast.StructType); isMap && st.Name == "Map" {
 		// A Map-typed field reclaims the whole map structure on the owning
-		// value's last reference: free the value column then the buf + handle.
-		// Both helpers self-guard on the map's own rc==1, so a shared map only
-		// dec's. They return the map ptr, so the stack value chains through.
-		b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
+		// value's last reference, through the shared full-column chain —
+		// value column, string-key column, buf + handle. Every helper
+		// self-guards on the map's own rc==1, so a shared map only dec's.
+		for _, op := range appendMapDropChain(nil, st, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) {
+			b.emit(op)
+		}
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
@@ -16537,33 +16538,10 @@ func (b *builder) emitFieldDropOnStack(t ast.Type) {
 // value sitting underneath (a reinit RHS) is left untouched. Callers gate
 // on RcFreeEnabled + freeEligible.
 func (b *builder) emitMapSlotDrop(slot int32, st ast.StructType) {
-	dropValues := "__map_drop_values"
-	if name, ok := mapValDropName(st, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
-		dropValues = name
-	} else if len(st.Args) >= 2 {
-		// Map[K, string]: reclaim each value's string buffer before freeing
-		// the buf + handle. genMapStrValDropFn branches on UseTwoWordStrings
-		// for the boxed-cell (wasm + arm64-TwoWord) vs direct-pointer
-		// (x86_64 single-word) column shape.
-		if _, isStr := st.Args[1].(ast.StringType); isStr {
-			dropValues = "__drop_map_str_values"
-		}
-	}
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Str: dropValues, I32: 1})
-	b.emit(Op{Kind: OpDrop})
-	// Map[string, V]: reclaim each key's string buffer. Independent of the
-	// value walk above (both self-guard on rc==1); runs before the buf +
-	// handle free.
-	if len(st.Args) >= 1 {
-		if _, isStr := st.Args[0].(ast.StringType); isStr {
-			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-		}
+	for _, op := range appendMapDropChain(nil, st, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) {
+		b.emit(op)
 	}
-	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
