@@ -6310,26 +6310,7 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 	for _, bi := range order {
 		blk := p.Blocks[bi]
 		w(".L%s_b%d:", label, bi)
-		insts := blk.Insts
-
-		// A conditional branch on a comparison whose 0/1 nothing else reads is
-		// rendered as the comparison plus a flag branch: the cset (and the copy
-		// that fed the cmp) go away entirely.
-		fuseCC, fuseLeft, fuseRight := "", -1, -1
-		if blk.Term.Kind == x86.TBrIf && blk.Term.CondFuse && len(insts) > 0 {
-			c := insts[len(insts)-1]
-			if cc, ok := condCode(c.K); ok && c.Op == x86.SetCmp && c.Dst == blk.Term.CondReg {
-				fuseCC, fuseLeft, fuseRight = cc, c.Dst, c.Src
-				insts = insts[:len(insts)-1]
-				if n := len(insts); n > 0 {
-					m := insts[n-1]
-					if m.Op == x86.MovReg && m.Dst == c.Dst && c.Src != c.Dst {
-						fuseLeft = m.Src
-						insts = insts[:n-1]
-					}
-				}
-			}
-		}
+		insts, fuseCC, fuseLeft, fuseRight := fuseBranchCmp(blk)
 		movSkip, accLeft := deadAccMoves(insts)
 
 		for ii, in := range insts {
@@ -7777,6 +7758,40 @@ func invCond(cc string) (string, bool) {
 		return "ls", true
 	}
 	return "", false
+}
+
+// fuseBranchCmp splits a block into the instructions to render and, when its
+// conditional branch can test the flags of a comparison directly, that
+// comparison's condition code and operand registers. The comparison — and the
+// copy that fed its left operand — are then not rendered at all: AArch64's
+// b.<cond> reads the flags cmp already set, so materialising the 0/1 with cset
+// and testing it with cbnz is two wasted instructions.
+//
+// The fusion needs Term.CondFuse, which is the emitter's word that nothing but
+// the terminator reads the comparison's value; the structural checks here
+// confirm the comparison really is the block's last instruction.
+// cc is "" when nothing fuses.
+func fuseBranchCmp(blk x86.MBlock) (insts []x86.Inst, cc string, left, right int) {
+	insts, left, right = blk.Insts, -1, -1
+	if blk.Term.Kind != x86.TBrIf || !blk.Term.CondFuse || len(insts) == 0 {
+		return insts, "", -1, -1
+	}
+	c := insts[len(insts)-1]
+	code, ok := condCode(c.K)
+	if !ok || c.Op != x86.SetCmp || c.Dst != blk.Term.CondReg {
+		return insts, "", -1, -1
+	}
+	cc, left, right = code, c.Dst, c.Src
+	insts = insts[:len(insts)-1]
+	// The same dead copy deadAccMoves would have removed, one instruction
+	// earlier because the comparison itself is gone.
+	if n := len(insts); n > 0 {
+		if m := insts[n-1]; m.Op == x86.MovReg && m.Dst == c.Dst && c.Src != c.Dst {
+			left = m.Src
+			insts = insts[:n-1]
+		}
+	}
+	return insts, cc, left, right
 }
 
 // accReads reports whether opcode `op` reads its destination register as an
