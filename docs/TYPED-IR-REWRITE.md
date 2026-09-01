@@ -308,34 +308,130 @@ Recorded this way deliberately: the plausible one-field sketch is wrong, and
 would cost whoever picks this up a build-and-instrument cycle to discover. The
 signature, not the predicate.
 
-**Root cause, third and final correction: function values are structurally
-all-i32.** Following "the signature" down two more levels ends at a design
-limitation, not a bug:
+**Root cause, third level: function values used to be structurally all-i32,
+and the IR now carries their signature.** `ir.op_call_indirect(argc)` names
+only the arity, so the wasm backend keyed one funcref type per arity and
+hardcoded `(type $fn<N> (func (param i32)xN (result i32)))` — on that keying an
+`f64`-returning fn value cannot be represented at all, and `expr_is_f64` being
+right only means the enclosing function is declared `(result f64)` while the
+`call_indirect` inside it is still typed `(result i32)`, which is the validator
+error the three-line reproducer above hit.
 
-- `ir.op_call_indirect(argc)` carries **only the arity** — no result type, no
-  param types (`ir.fern`).
-- `wasm_ir.fn_support_section_units` therefore emits one signature type per
-  *arity*, hardcoded:
-  `(type $fn<N> (func (param i32)×N (result i32)))`.
+`op_call_indirect_sig(argc, sig)` closed that (#6282). The op carries a width
+string — one char per parameter ('w' i32/pointer, 'l' i64/u64, 'd' f64/f32),
+then `_`, then the result char — and `wasm_ir.fn_type_name` keys the `$fn…` type
+set on it, rendering per-position value types. An EMPTY sig is byte-for-byte
+the old op and keeps the arity-keyed `$fn<N>`, which is what lets the tag be
+added one construction site at a time. The register backends read the arity
+alone and ignore the tag; they need no signature because their result register
+is chosen by the call's own type, which is why a wide fn value is a wasm-only
+defect once the frontend types it.
 
-So on the wasm backend every function value is assumed to take i32 params and
-return i32. An `f64`-returning fn value **cannot be represented at all**, and no
-amount of frontend typing can fix it — `expr_is_f64` being right just means the
-enclosing function is correctly declared `(result f64)` while the
-`call_indirect` inside it is still typed `(result i32)`, which is precisely the
-validator error.
+The general lesson stands and has flipped direction: the carriers push type
+information down toward codegen, and where codegen has nowhere to put it,
+widening the IR — not the frontend — is the work. That widening is done here.
+What follows it is the frontend work of actually filling the field.
 
-Closing it is a coherent but multi-part change: give the IR op a signature (not
-an arity), key the `$fn…` type set on that signature rather than on argument
-count, and keep the fn-value table / `elem` segment consistent with the new
-keying. The native backends need the matching treatment wherever they select an
-indirect-call signature. That is a project, not a slice — but it is now a
-*specified* project, and the three-line reproducer above is its acceptance test.
+### Calls through a fn value that no slot carries
 
-The general lesson for this migration: the typed-IR carriers push type
-information down toward codegen, and this is the first place where the
-information arrives correctly and codegen has nowhere to put it. Where that
-happens, widening the IR — not the frontend — is the work.
+`fn_value_sig` answers for a fn-typed local or parameter by reading the sidecars
+`lower_func` seeded onto its SLOT, and those were the only two tagged sites. A
+fn value reached any other way — a struct field, an array element, a tuple
+element, another call's result — has no slot, so all seven of those sites
+emitted the untagged op. Four shapes with a wide result were live defects,
+measured against the interp oracle (45 in each case):
+
+| call | x86-64 | wasm |
+|---|---|---|
+| `var h: H = H { f: mkval }; h.f()` | 45 | module refused |
+| `var fs: (() => f64)[] = [mkval]; fs[0]()` | 255 | module refused |
+| `var t: (() => f64, i32) = (mkval, 1); t.0()` | 255 | module refused |
+| `var f: (f64) => f64 = scale; f(4.5)` | wrong | module refused |
+
+Two boundaries in that table are worth reading off it. Binding the result to a
+declared local first (`var v: f64 = fs[0]();`) fixed the REGISTER backends —
+the declaration supplies the width — and did nothing for wasm, whose funcref
+type is a separate decision; so the `_local` rows in the pinning suite are a
+control for the register half only. And the zero-argument `var f: () => f64 =
+mkval; f()` was already correct on both, even though the checker could not type
+it: irlower's own slot walk carried the width. That gap is real all the same,
+and closing it is what makes the with-argument form above work.
+
+The x86-64 column is the tell: this is not a codegen gap. **The self-host
+checker could not type three of the four**, so `-check` fell through to
+`ill_typed_hint`, the `ExprCall.ty` stamp was empty, and every width predicate
+downstream read the f64 as an i32. Probing the checker first — the rule the
+`ExprBinary` slice learned — was again what separated a mechanical field
+addition from the real work. Three layers were responsible:
+
+- **`check_call_expr` had no arm for a callee that is a VALUE.** Its callee
+  `match` handled `ExprIdent` and `ExprFieldAccess` and bailed on everything
+  else with "call target is not an identifier", so an `ExprIndex` or a nested
+  `ExprCall` callee never got as far as being typed. `t.0()` failed one level
+  in: the `ExprFieldAccess` arm assumes a field-access callee is a method call,
+  so a numeric field on a tuple returned "receiver isn't a typed value" —
+  even though `check_expr(t.0)` on its own already answered `TypeFunc{ret:
+  f64}`. `call_through_fn_value` types the callee and returns that function
+  type's result, and is now the single rule both bail sites ask.
+- **A fn-typed LOCAL's declared return never reached its binding.**
+  `var_declared_type` resolved `v.type_name` and ignored the `fn_ret` sidecar
+  beside it, so `var f: () => f64` bound the opaque `fn` tag with an unknown
+  result — the local sibling of the `fn_param_decl_type` arm params already had.
+- **The parenthesised fn spelling dropped its result entirely.**
+  `parse_type_paren`'s grouping branch returned `consume_array_suffix(p, "fn")`,
+  whose `fn_ret` channel is hardcoded `""`. That branch is the ONLY way an array
+  of functions is spelled, so `(() => f64)[]` recorded nothing about its element
+  and no consumer could have read one. It now recovers the result from the
+  reconstructed inner spelling through `parse_type_ref`, and both branches admit
+  it through one `fn_ret_admitted` rule rather than two copies of the list.
+
+With those, `callee_fn_sig` supplies the funcref tag at all seven sites from the
+checker's stamp on the call — the carrier answering a question that was
+otherwise a re-derivation. All four shapes now match the interp oracle on
+x86-64 and wasm, pinned per shape with its bound-local and its all-i32 control
+in `internal/e2eselfhost/self_host_fn_value_call_ir_test.go`.
+
+**Open, and precisely bounded: the with-arguments half.** A funcref tag must
+name the whole signature, and the PARAMETER spellings of these callees are
+recorded nowhere — `StructFieldDecl` carries `fn_ret` but no param list, and an
+array's element spelling does not survive the coarse `fn[]` tag. So
+`callee_fn_sig` tags only a zero-argument call, where the parameter list is
+empty by construction rather than by re-derivation, and these still refuse to
+load on wasm:
+
+```fern
+var t: ((f64) => f64, i32) = (scale, 1);   t.0(4.5)      // oracle 45
+var fs: ((f64) => f64)[] = [scale];        fs[0](4.5)    // oracle 45
+struct H { f: (f64) => f64 }               h.f(4.5)      // oracle 45
+```
+
+Deriving the widths from the ARGUMENT expressions would make all three pass and
+is the wrong fix: it re-derives at the call site the thing the declaration
+already stated, which is the drift this whole file documents. The parameters
+have to be carried. Two routes, and the choice is a real one:
+
+- Give `StructFieldDecl` a `fn_param_types` sidecar (`peek_fn_param_types`
+  already exists and is what `parse_param` uses), and read a tuple element's
+  parameters off the `TypeRef` its spelling already preserves. That covers the
+  field and tuple shapes and leaves the array one, whose element spelling is
+  gone before any sidecar could hold it.
+- Stop coarsening. #7961 already made a fn-typed tuple ELEMENT keep its arrow
+  spelling; doing the same for the parenthesised grouping and the top-level
+  `(T,…) => R` form would let `parse_type_ref` answer everywhere and would
+  delete the sidecars rather than add to them. The cost is the 117 sites that
+  match the coarse `"fn"` / `"fn[]"` spelling today, each of which has to ask
+  `parser.ref_is_fn_value` instead. That is the direction this file argues for
+  and it is its own project.
+
+**Also open: `mk()()`, where the callee is a call returning a fn value.**
+`call_through_fn_value` reaches it, but `parse_func_decl` binds the return's
+`fn_ret` and throws it away — `parser.FuncDecl` has no sidecar to put it in,
+unlike `ParamDecl` and `StructFieldDecl` — so `mk` records the bare `"fn"` and
+the call types to a `TypeFunc` with an unknown result. Adding the field is ~70
+struct-literal sites across nine files; un-coarsening `FuncDecl.ret_type`
+instead has only three direct consumers of `== "fn"`, but `ret_type` feeds the
+width and registry machinery far more widely, so it is not the cheap option it
+looks like.
 
 Note how little of this the fixpoint reaches: the self-host's own sources carry
 one fn-typed parameter (`astwalk.fold_expr` / `fold_stmt`, #6993) at one arity
