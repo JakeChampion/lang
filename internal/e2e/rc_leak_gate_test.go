@@ -93,6 +93,11 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"string_closure_capture_aliased":                 16,
 	"string_closure_capture_churn_free":              3200,
 	"tuple_return_scalar_cursor_recursion":           320,
+	// The hand-back half of the guarded arg-temp release: the callee
+	// returned the temp unchanged, so the guard declined the drop and the
+	// result's own reference keeps rhsTainted's conservative call-result
+	// taint. 256 B before the release landed.
+	"consumed_array_arg_temp_released_and_guarded": 128,
 }
 
 var rcCorpusLeakBaselineArm64 = map[string]int64{
@@ -147,6 +152,8 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"string_closure_capture_aliased":                 48,
 	"string_closure_capture_churn_free":              6400,
 	"tuple_return_scalar_cursor_recursion":           320,
+	// See the x86-64 twin — the same guarded hand-back, byte for byte.
+	"consumed_array_arg_temp_released_and_guarded": 128,
 }
 
 // checkCorpusLeaks runs every corpus case under the leak detector and

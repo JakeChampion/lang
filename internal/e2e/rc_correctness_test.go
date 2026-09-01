@@ -6052,6 +6052,51 @@ function main(): i32 {
 `,
 	},
 	{
+		// A fresh array temp handed to a CONSUMED-THREADED array parameter
+		// was owned by nobody. The ownership-flag protocol
+		// (emitConsumedArrayOverwriteDec) starts its flag at 0 — the slot
+		// still holds the caller's borrow — so the callee never releases
+		// the buffer it was handed; and paramCountedRetain refuses the
+		// position, because the body hands the parameter out bare
+		// (`return out`), so the caller's stage-(b) reclaim declined it
+		// too. 16 B a call, the self-host's astwalk fold spine.
+		//
+		// The second call is the hazard the guard exists for: with an
+		// EMPTY item list nothing rebinds `out`, so the callee hands the
+		// temp straight back and the result IS the buffer the caller is
+		// about to release. Its own reference is still unreclaimed (a
+		// call result carries rhsTainted's conservative taint), which is
+		// what the pinned bytes are — the point of the row is that the
+		// answer is right and the underflow counter is 0, i.e. the guard
+		// declined rather than double-freed.
+		name: "consumed_array_arg_temp_released_and_guarded",
+		src: `
+@noinline
+function visit(st: string, acc: string[]): string[] { return acc.append(st); }
+
+@noinline
+function fold_all(out: string[], items: string[]): string[] {
+    var i: i32 = 0;
+    while (i < items.len()) { out = visit(items[i], out); i = i + 1; }
+    return out;
+}
+
+function main(): i32 {
+    var items: string[] = ["alpha-item-one", "beta-item-two", "gamma-item-three"];
+    var empty: string[] = [];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 8) {
+        var got: string[] = fold_all([], items);
+        var none: string[] = fold_all([], empty);
+        t = t + got.len() + none.len();
+        i = i + 1;
+    }
+    return (t - 24) + __rc_underflow_count();
+}
+`,
+	},
+	{
 		// The array dec-on-overwrite has to walk the old buffer's
 		// elements wherever that buffer still owns them. The buffer-only
 		// __fern_arr_dec is right for exactly one RHS — the self-append,

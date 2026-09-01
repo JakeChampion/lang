@@ -3093,6 +3093,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// Per-callee: string params retained only through counted constructions, so
 	// a caller may release its own reference (see inferParamCountedRetain).
 	paramCountedRetain := inferParamCountedRetain(prog, info)
+	// Per-callee: which ARRAY params the consumed-threaded promotion claims,
+	// so a call site can release a fresh temp the callee will treat as a
+	// borrow (consumedArrayParamPositions).
+	consumedArrayArgPos := consumedArrayParamPositions(prog, info, trmcFuncs)
 	readOnlyComparators := computeReadOnlyComparators(info)
 	// Methods reachable through a vtable: their params borrow under every
 	// ownership model, since a call_indirect / call-through-pointer has no
@@ -3155,7 +3159,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, readOnlyComparators, vtableDispatched, addressTaken, growParams)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams)
 		if err != nil {
 			return nil, err
 		}
@@ -5104,6 +5108,12 @@ type builder struct {
 	// retained only by counted constructions, so an argument passed there needs
 	// no conservative escape taint (inferParamCountedRetain).
 	paramCountedRetain map[string][]bool
+	// consumedArrayArgPos[callee][i] is true when array parameter i of
+	// `callee` is consumed-threaded — the ownership-flag protocol, which
+	// leaves the buffer it was HANDED as the caller's. The call site reads it
+	// to release a fresh temp passed there, which nothing else would
+	// (consumedArrayParamPositions).
+	consumedArrayArgPos map[string][]bool
 	// readOnlyComparators is the set of Eq/Hash trait method names
 	// (`__method_<T>_eq` / `__method_<T>_hash`). They are read-only by
 	// contract, so they BORROW their params even under the owned model
@@ -5604,7 +5614,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5636,6 +5646,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		trmcConsumeSafe:         trmcConsumeSafe,
 		paramEscapes:            paramEscapes,
 		paramCountedRetain:      paramCountedRetain,
+		consumedArrayArgPos:     consumedArrayArgPos,
 		readOnlyComparators:     readOnlyComparators,
 		vtableDispatched:        vtableDispatched,
 		addressTaken:            addressTaken,
@@ -14570,6 +14581,28 @@ func (b *builder) callBody(n *ast.Call) error {
 		counted := b.paramCountedRetain[id.Name]
 		return ai < len(counted) && counted[ai]
 	}
+	// The third per-argument admission, and the one that needs a runtime
+	// guard. A CONSUMED-THREADED array parameter runs the ownership-flag
+	// protocol (emitConsumedArrayOverwriteDec), whose flag starts at 0
+	// meaning "this slot still holds the caller's borrow" — so the callee
+	// never releases the buffer it was handed. paramCountedRetain reads
+	// false for such a parameter (the body hands it out bare, `return acc`),
+	// so countedArgTemp refuses the position and a FRESH temp passed there
+	// is owned by nobody: `fold_all([], items)` leaked its 16 B literal per
+	// call, 119 blocks in a self-host compile (#7914).
+	//
+	// The callee CAN hand the temp straight back — nothing rebinds the
+	// parameter when the loop body never runs — so unlike the other two
+	// admissions this one cannot dec unconditionally; see the guard at the
+	// drop site.
+	consumedArrayArgTemp := func(ai int) bool {
+		if !ast.RcFreeEnabled || !calleeIsFunc || calleeIsLocal ||
+			b.pairForm[id.Name] || id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
+			return false
+		}
+		pos := b.consumedArrayArgPos[id.Name]
+		return ai < len(pos) && pos[ai]
+	}
 	// The same reclaim for a call THROUGH a function-typed local or param
 	// (#6460). `h([1, 2])` leaked its argument outright — frees=0, not one
 	// short — where the identical literal handed to a named function is
@@ -14597,6 +14630,9 @@ func (b *builder) callBody(n *ast.Call) error {
 		resultCannotAliasArg(b.exprType(n))
 	var argTempSlots []int32
 	var argTempTypes []ast.Type
+	// Parallel to argTempSlots: true where the drop must be gated on the
+	// call's result not BEING this temp (consumedArrayArgTemp).
+	var argTempGuarded []bool
 	// An `own` (consuming) parameter takes ownership of its argument, so the
 	// callee — not the caller — reclaims a fresh temp passed there. Suppress the
 	// stage-(b) post-call dec at those positions (else the temp is freed twice).
@@ -14618,7 +14654,10 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
-		if (reclaimArgTemps || reclaimIndirectArgTemps || countedArgTemp(ai)) && !toOwnParam {
+		guardArgTemp := !toOwnParam && !reclaimArgTemps && !reclaimIndirectArgTemps &&
+			!countedArgTemp(ai) && consumedArrayArgTemp(ai)
+		if (reclaimArgTemps || reclaimIndirectArgTemps || countedArgTemp(ai) ||
+			guardArgTemp) && !toOwnParam {
 			// An owned-temp arg is either a fresh-allocating literal shape
 			// (freshOwnedRcTempType) OR a fresh-returning user-function call
 			// (ownedCallResultType — `take(mk(i))` leaked the mk result: the
@@ -14635,6 +14674,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			if ok {
 				argTempSlots = append(argTempSlots, slot)
 				argTempTypes = append(argTempTypes, tt)
+				argTempGuarded = append(argTempGuarded, guardArgTemp)
 				continue
 			}
 		}
@@ -14761,9 +14801,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			// path left each buffer untouched, so this returns it to the
 			// incoming count (the inc preceded it; never frees).
 			b.emitGrowBracket(growBracket, OpRcDec, "__fern_rc_dec")
-			for i, slot := range argTempSlots {
-				b.emitOwnedSlotDrop(slot, argTempTypes[i])
-			}
+			b.emitArgTempDropsGuarded(argTempSlots, argTempTypes, argTempGuarded, b.exprType(n))
 			return nil
 		}
 	}
@@ -14873,6 +14911,47 @@ func (b *builder) emitArgTempDrops(slots []int32, types []ast.Type) {
 	for i, slot := range slots {
 		b.emitOwnedSlotDrop(slot, types[i])
 	}
+}
+
+// emitArgTempDropsGuarded is emitArgTempDrops plus the identity guard a
+// consumed-threaded array position needs: that callee may hand the argument
+// straight back (nothing rebinds the parameter when the loop body never runs),
+// and the result then IS the temp, at the one reference the caller holds.
+// Dropping it there frees a live result.
+//
+// The guard is the pointer test, spelled the way the array overwrite and
+// isSelfMapMutation spell theirs: stash the result once, drop each guarded
+// temp only when the result differs, restore the result. A result that cannot
+// be a pointer cannot be the temp, so it needs no test at all. Unguarded
+// slots drop unconditionally, as before — emitOwnedSlotDrop is net-zero on the
+// operand stack either way.
+func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guarded []bool, resultType ast.Type) {
+	needGuard := false
+	for i := range slots {
+		if i < len(guarded) && guarded[i] && ast.IsPointerType(resultType) {
+			needGuard = true
+		}
+	}
+	if !needGuard {
+		b.emitArgTempDrops(slots, types)
+		return
+	}
+	resSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__argtemp_res_%d", resSlot)] = resSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: resSlot})
+	for i, slot := range slots {
+		if i < len(guarded) && guarded[i] {
+			b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpNe})
+			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+			b.emitOwnedSlotDrop(slot, types[i])
+			b.emit(Op{Kind: OpEnd})
+			continue
+		}
+		b.emitOwnedSlotDrop(slot, types[i])
+	}
+	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
 }
 
 // localFuncType returns the static FuncType of the named local. Calls
