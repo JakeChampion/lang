@@ -99,6 +99,12 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 > `stat` is one body like the rest. arm64 also gained the `__raw_scratch` op and
 > its `__fern_scratch` .bss slot, which the helper hands the kernel to write into.
 >
+> Unifying on the 4-arg family is also what made **`lstat` free** (#7982): it is
+> the same body with `AT_SYMLINK_NOFOLLOW` (0x100) in the flags word, so
+> `rt_src_stat` and `rt_src_lstat` share `rt_src_stat_like` and neither can
+> drift from the other. Had the x86-64 leg stayed on the 2-arg `stat`, there
+> would have been nowhere to put the flag.
+>
 > **The array producer left the asm too.** `a[start:end]`
 > (`asmcore.rt_src_arr_slice`) is Fern now, over the `__raw_arr_box` +
 > `__raw_array` pair added to the table below. It is the first helper to move

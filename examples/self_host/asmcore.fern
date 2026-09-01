@@ -1393,7 +1393,22 @@ pub function rt_src_clock(which: string, t: string): string {
 // page-zero and `stat` segfaulted on every path that EXISTS (the Err arm returns
 // before the loads, which is why only stat_dir / fs_builtins_lifecycle failed).
 pub function rt_src_stat(t: string): string {
-    return "function __fern_stat(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz, buf, 0); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = __load_i32(__raw_addr(buf, " + statoff(t, "mode") + ")); var size: i64 = __load_i64(__raw_addr(buf, " + statoff(t, "size") + ")); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
+    return rt_src_stat_like(t, "__fern_stat", "0");
+}
+
+// rt_src_lstat backs `lstat(path)` — the same body with fstatat's flags word set
+// to AT_SYMLINK_NOFOLLOW (0x100), so the final component is described rather
+// than resolved. A symlink's S_IFMT is then S_IFLNK, which is neither S_IFREG
+// nor S_IFDIR, so both flags come back false. That three-way answer is what a
+// directory walk needs to choose between recursing, reading and skipping
+// (#7982); the flags word is the only difference, which is why the two share
+// one body rather than drifting as near-copies.
+pub function rt_src_lstat(t: string): string {
+    return rt_src_stat_like(t, "__fern_lstat", "256");
+}
+
+function rt_src_stat_like(t: string, name: string, at_flags: string): string {
+    return "function " + name + "(path: string): Result[FileStat, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var buf: i32 = __raw_scratch(160); var rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz, buf, " + at_flags + "); if (rc < 0) { return Err(__fern_io_error(0 - rc, __raw_string(pathz, plen))); } var mode: i32 = __load_i32(__raw_addr(buf, " + statoff(t, "mode") + ")); var size: i64 = __load_i64(__raw_addr(buf, " + statoff(t, "size") + ")); var mfmt: i32 = mode & 61440; var isf: boolean = mfmt == 32768; var isd: boolean = mfmt == 16384; return Ok(FileStat { is_file: isf, is_dir: isd, size: size }); }";
 }
 
 pub function (s: EmitState) mark_eprint(): EmitState {
@@ -3094,6 +3109,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     if (id.name == "temp_dir") { return ty_result(ty_string()); }
     if (id.name == "read_dir") { return ty_result(ty_array_string()); }
     if (id.name == "stat") { return ty_result(ty_unknown()); }
+    if (id.name == "lstat") { return ty_result(ty_unknown()); }
     if (id.name == "remove_dir_all") { return ty_option(ty_unknown()); }
     if (id.name == "f64_from_bits" || id.name == "f32_from_bits") { return ty_f64(); }
     // env(name): Option[string] — Some(value) if the

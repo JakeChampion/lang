@@ -10946,6 +10946,12 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!sts.ok) { return sts; }
         return sts.emit(ir.op_stat());
     }
+    // Built-in `lstat(path)` — stat without following a final symlink.
+    if (cid.name == "lstat" && c.args.len() == 1) {
+        var lsts: LowerState = lower_expr(c.args[0], s);
+        if (!lsts.ok) { return lsts; }
+        return lsts.emit(ir.op_lstat());
+    }
     // Built-in `subprocess(cmd, args, stdin)` — spawn a child, pipe
     // its streams, push a fresh ProcessResult struct {stdout, stderr,
     // exit_code}. Unlike stat (Result-wrapped), the struct is returned
@@ -63356,6 +63362,7 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     if (name == "read_dir") { return "Result[string[], IoError]"; }
     if (name == "env") { return "Option[string]"; }
     if (name == "stat") { return "Result[FileStat, IoError]"; }
+    if (name == "lstat") { return "Result[FileStat, IoError]"; }
     // The streaming-I/O constructors (#7758): open_reader -> Result[Reader,
     // IoError], open_writer / open_appender -> Result[Writer, IoError], so
     // `match (open_reader(p)) { Ok(r) => .., Err(e) => .. }` recovers both

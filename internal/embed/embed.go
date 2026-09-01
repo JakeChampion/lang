@@ -92,15 +92,26 @@ func Load(dir string) (*Set, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("-embed %s: not a directory", dir)
 	}
+	// WalkDir lstats its root, so a `-embed` naming a symlink to a directory
+	// yields the link itself as one non-regular entry and the skip below drops
+	// it: an empty bundle from a directory full of files, with nothing said.
+	// os.Stat has already followed the link to decide this IS a directory, so
+	// the walk follows it too and the two agree. Entries under the root are
+	// still lstat'd by WalkDir and still skipped — it is the root that is named
+	// on the command line, and only the root.
+	walkRoot, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, fmt.Errorf("-embed %s: %w", dir, err)
+	}
 	set := &Set{root: dir, files: map[string]string{}}
-	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() || !d.Type().IsRegular() {
 			return nil
 		}
-		rel, err := filepath.Rel(dir, path)
+		rel, err := filepath.Rel(walkRoot, path)
 		if err != nil {
 			return err
 		}

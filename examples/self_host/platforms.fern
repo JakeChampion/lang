@@ -259,6 +259,7 @@ pub function gated_builtins(): Gate[] {
         Gate { builtin: "open_writer", capability: "fs" },
         Gate { builtin: "open_appender", capability: "fs" },
         Gate { builtin: "stat", capability: "fs" },
+        Gate { builtin: "lstat", capability: "fs" },
         Gate { builtin: "read_dir", capability: "fs" },
         Gate { builtin: "remove_file", capability: "fs" },
         Gate { builtin: "remove_dir_all", capability: "fs" },

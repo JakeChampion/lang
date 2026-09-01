@@ -351,7 +351,7 @@ var rcInert = map[string]bool{
 	"__fern_reader_read_line_fd": true, "__fern_remove_dir_all": true,
 	"__fern_remove_file": true, "__fern_rmdir_rec": true,
 	"__fern_round_f64": true, "__fern_sin_f64": true,
-	"__fern_sqrt_f64": true, "__fern_stat": true, "__fern_stderr": true,
+	"__fern_sqrt_f64": true, "__fern_stat": true, "__fern_lstat": true, "__fern_stderr": true,
 	"__fern_stdin": true, "__fern_stdout": true,
 	"__fern_str_byte": true, "__fern_str_copy": true, "__fern_str_len": true,
 	"__fern_string_from_bytes": true, "__fern_tcp_accept": true,

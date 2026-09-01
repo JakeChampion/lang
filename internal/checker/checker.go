@@ -1737,6 +1737,26 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// lstat(path): Result[FileStat, IoError] — stat WITHOUT following a
+	// final symlink, the way POSIX lstat and Go's os.Lstat do.
+	//
+	// A symlink therefore reports `is_file == false` and `is_dir == false`,
+	// and so does a socket, a FIFO or a device node: the two flags say
+	// "regular file" and "directory", and under lstat a link is neither.
+	// That is the same three-way answer `fs.DirEntry.Type()` gives a walk,
+	// and it is what `internal/embed` keys on to decide whether to recurse,
+	// to read, or to skip — the reason this builtin exists (#7982).
+	//
+	// Use `stat` when the question is about the file at the end of the
+	// path, which is nearly always; use this one when the question is
+	// about the path itself.
+	c.info.FuncSigs["lstat"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "FileStat"},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// remove_file(path): Result[void, IoError] — unlink the file.
 	// `Ok(())` on success, `Err(e)` on failure (mirrors
 	// `write_file`). Removing a non-existent file is an

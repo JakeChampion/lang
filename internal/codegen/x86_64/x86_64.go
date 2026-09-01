@@ -848,6 +848,9 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesStat {
 		g.emitStatRuntime()
 	}
+	if g.usesLstat {
+		g.emitLstatRuntime()
+	}
 	if g.usesReaderWriter {
 		// Bundle: open_reader/writer/appender + stdin/stdout/
 		// stderr handle constructors + Reader.read_line /
@@ -1247,6 +1250,7 @@ type generator struct {
 	usesTempDir    bool
 	usesReadDir    bool
 	usesStat       bool
+	usesLstat      bool
 	usesIoError    bool
 	// usesCreateDirAll pulls in the `mkdir -p` runtime
 	// (`__fern_create_dir_all(path) → Result[void, IoError]`), the
@@ -1590,6 +1594,10 @@ func (g *generator) recordUse(target string) {
 		g.usesIoError = true
 	case "stat":
 		g.usesStat = true
+		g.usesAlloc = true
+		g.usesIoError = true
+	case "lstat":
+		g.usesLstat = true
 		g.usesAlloc = true
 		g.usesIoError = true
 	}
@@ -3015,6 +3023,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			target = "__fern_read_dir"
 		case "stat":
 			target = "__fern_stat"
+		case "lstat":
+			target = "__fern_lstat"
 		case "random_bytes":
 			target = "__fern_random_bytes"
 		case "random_i32":
@@ -11742,10 +11752,26 @@ func (g *generator) emitReadDirRuntime() {
 // __fern_alloc_box (immortal, same class as the Result boxes).
 // System V: rdi = path string value.
 func (g *generator) emitStatRuntime() {
+	g.emitStatLikeRuntime("__fern_stat", 0, "st")
+}
+
+// emitLstatRuntime emits `__fern_lstat(path)`, which is the same helper with
+// AT_SYMLINK_NOFOLLOW set: newfstatat resolves every component but the last,
+// so a symlink reports its own st_mode and comes back neither is_file nor
+// is_dir. That three-way answer is what a directory walk needs to choose
+// between recursing, reading and skipping (#7982).
+func (g *generator) emitLstatRuntime() {
+	g.emitStatLikeRuntime("__fern_lstat", 256, "lst")
+}
+
+// emitStatLikeRuntime is the shared body. `atFlags` is newfstatat's flags word
+// — 0 to follow, AT_SYMLINK_NOFOLLOW (0x100) not to — and `lp` prefixes the
+// local labels so the two helpers can both be emitted into one object.
+func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.line("")
-	g.line(".globl __fern_stat")
-	g.line(".type __fern_stat, @function")
-	g.label("__fern_stat")
+	g.line(".globl " + sym)
+	g.line(".type " + sym + ", @function")
+	g.label(sym)
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx") // pathz
@@ -11766,35 +11792,39 @@ func (g *generator) emitStatRuntime() {
 	g.emit("call __fern_alloc")
 	g.emit("mov rbx, rax")
 	g.emit("xor ecx, ecx")
-	g.label(".Lst_cp")
+	g.label(".L" + lp + "_cp")
 	g.emit("cmp rcx, r13")
-	g.emit("jae .Lst_cpd")
+	g.emit("jae .L" + lp + "_cpd")
 	g.emit("mov al, [r12 + rcx]")
 	g.emit("mov [rbx + rcx], al")
 	g.emit("add rcx, 1")
-	g.emit("jmp .Lst_cp")
-	g.label(".Lst_cpd")
+	g.emit("jmp .L" + lp + "_cp")
+	g.label(".L" + lp + "_cpd")
 	g.emit("mov byte ptr [rbx + r13], 0")
-	// newfstatat(AT_FDCWD=-100, pathz, statbuf, 0)
+	// newfstatat(AT_FDCWD=-100, pathz, statbuf, atFlags)
 	g.emit("mov edi, -100")
 	g.emit("mov rsi, rbx")
 	g.emit("mov rdx, rsp")
-	g.emit("xor r10d, r10d")
+	if atFlags == 0 {
+		g.emit("xor r10d, r10d")
+	} else {
+		g.emit(fmt.Sprintf("mov r10d, %d", atFlags))
+	}
 	g.emitSyscall(262)
 	g.emit("test rax, rax")
-	g.emit("js .Lst_err")
+	g.emit("js .L" + lp + "_err")
 	g.emit("mov eax, [rsp + 24]") // st_mode
 	g.emit("and eax, 61440")      // S_IFMT
 	g.emit("xor r12d, r12d")
 	g.emit("cmp eax, 32768") // S_IFREG
-	g.emit("jne .Lst_nf")
+	g.emit("jne .L" + lp + "_nf")
 	g.emit("mov r12d, 1")
-	g.label(".Lst_nf")
+	g.label(".L" + lp + "_nf")
 	g.emit("xor r14d, r14d")
 	g.emit("cmp eax, 16384") // S_IFDIR
-	g.emit("jne .Lst_nd")
+	g.emit("jne .L" + lp + "_nd")
 	g.emit("mov r14d, 1")
-	g.label(".Lst_nd")
+	g.label(".L" + lp + "_nd")
 	g.emit("mov r15, [rsp + 48]") // st_size
 	// FileStat box: is_file @0, is_dir @4, size @8.
 	g.emit("mov edi, 16")
@@ -11807,9 +11837,9 @@ func (g *generator) emitStatRuntime() {
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0") // Ok
 	g.emit("mov [rax + 8], r13")
-	g.emit("jmp .Lst_return")
+	g.emit("jmp .L" + lp + "_return")
 
-	g.label(".Lst_err")
+	g.label(".L" + lp + "_err")
 	g.emit("neg rax")
 	g.emit("mov r13, rax")
 	g.emit("mov edi, r13d")
@@ -11821,7 +11851,7 @@ func (g *generator) emitStatRuntime() {
 	g.emit("mov dword ptr [rax], 1") // Err
 	g.emit("mov [rax + 8], r13")
 
-	g.label(".Lst_return")
+	g.label(".L" + lp + "_return")
 	g.emit("add rsp, 168")
 	g.emit("pop r15")
 	g.emit("pop r14")
@@ -11830,7 +11860,7 @@ func (g *generator) emitStatRuntime() {
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
-	g.line(".size __fern_stat, .-__fern_stat")
+	g.line(".size " + sym + ", .-" + sym)
 }
 
 // emitReaderWriterRuntime emits the full Reader / Writer

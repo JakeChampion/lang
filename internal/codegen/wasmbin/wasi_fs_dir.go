@@ -414,6 +414,21 @@ func buildCreateDirAllBody(idxs map[string]uint32) []byte {
 //	6: $stat_buf  7: $filetype       8: $fs (struct data ptr)
 //	9: $box
 func buildStatBody(idxs map[string]uint32) []byte {
+	return buildStatLikeBody(idxs, 1)
+}
+
+// buildLstatBody assembles __fern_lstat: buildStatBody with lookupflags 0, so
+// path_filestat_get reports the symlink itself rather than its target and the
+// filetype comes back SYMBOLIC_LINK — neither REGULAR nor DIRECTORY, so
+// is_file and is_dir are both false. That three-way answer is what a directory
+// walk needs to choose between recursing, reading and skipping (#7982).
+func buildLstatBody(idxs map[string]uint32) []byte {
+	return buildStatLikeBody(idxs, 0)
+}
+
+// buildStatLikeBody is the shared body; `lookupflags` is preview-1's
+// symlink_follow bit.
+func buildStatLikeBody(idxs map[string]uint32, lookupflags int32) []byte {
 	alloc := idxs["__fern_alloc"]
 	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
@@ -428,9 +443,9 @@ func buildStatBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, 6)
 	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
 
-	// errno = path_filestat_get(preopen, SYMLINK_FOLLOW, path, len, buf)
+	// errno = path_filestat_get(preopen, lookupflags, path, len, buf)
 	body = inst.InstI32Const(body, preopenDirfd)
-	body = inst.InstI32Const(body, 1) // lookupflags: symlink_follow
+	body = inst.InstI32Const(body, lookupflags) // 1 = symlink_follow, 0 = not
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 6)
@@ -1590,6 +1605,20 @@ const (
 //	6: $errno    7: $filetype  8: $fs (struct data ptr)
 //	9: $box     10: $err_ptr  11: $i
 func buildStatBodyP2(idxs map[string]uint32) []byte {
+	return buildStatLikeBodyP2(idxs, 1)
+}
+
+// buildLstatBodyP2 is buildStatBodyP2 with path-flags cleared, so stat-at
+// describes the symlink itself. Its descriptor-type is then neither
+// `regular-file` nor `directory`, matching what preview-1 and both natives
+// report for a link.
+func buildLstatBodyP2(idxs map[string]uint32) []byte {
+	return buildStatLikeBodyP2(idxs, 0)
+}
+
+// buildStatLikeBodyP2 is the shared preview-2 body; `pathFlags` is stat-at's
+// symlink-follow bit.
+func buildStatLikeBodyP2(idxs map[string]uint32, pathFlags int32) []byte {
 	alloc := idxs["__fern_alloc"]
 	allocBox := idxs["__fern_alloc_box"]
 	buildIoErr := idxs["__build_io_error"]
@@ -1611,7 +1640,7 @@ func buildStatBodyP2(idxs map[string]uint32) []byte {
 	// 16 bytes and removes the ordering constraint entirely.
 	body = emitPreopenP2(body, alloc, getDirs, 10, 5)
 
-	// stat-at(preopen, path-flags=symlink-follow, path_buf, len, rb).
+	// stat-at(preopen, path-flags, path_buf, len, rb). 1 = symlink-follow.
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstLocalGet(body, 3)

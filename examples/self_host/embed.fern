@@ -48,47 +48,49 @@ pub function no_assets(): Assets {
 // success.
 pub struct LoadResult { assets: Assets, err: string }
 
-// Walking a symlinked directory would recurse forever, and Fern has no way to
-// see that an entry IS a symlink — `stat` follows them and FileStat carries no
-// link bit, so the native walk's `!d.Type().IsRegular()` skip has no spelling
-// here (#7982). A depth cap turns the hang into a diagnostic; it is well past
-// any real asset tree.
-const MAX_EMBED_DEPTH: i32 = 32;
+// ENTRY_OTHER / ENTRY_DIR / ENTRY_FILE are what `classify` answers, and the
+// three-way split is the whole reason `lstat` exists (#7982): a directory is
+// recursed into, a regular file is read, and anything else — a symlink, a
+// socket, a FIFO, a device — is skipped. That is exactly `internal/embed`'s
+// `d.IsDir() || !d.Type().IsRegular()`, and skipping links is what keeps an
+// asset tree from reaching outside its root or wedging the walk on a cycle.
+const ENTRY_OTHER: i32 = 0;
+const ENTRY_DIR: i32 = 1;
+const ENTRY_FILE: i32 = 2;
 
 // load walks `dir` and reads every file under it, keying each by its
-// slash-separated path relative to `dir`. Directories are followed; the walk is
-// a worklist rather than recursion, matching fern.fern's doc_tree/copy_package.
+// slash-separated path relative to `dir`.
 //
-// Hidden files are NOT skipped, matching native: a `.gitignore` under the embed
-// root is an asset like any other.
+// The ROOT is followed when it is itself a symlink — it is the path the user
+// typed, and `-embed ./link-to-assets` plainly means the directory behind it —
+// while entries under it are not. Native draws the line in the same place, with
+// os.Stat on the root and WalkDir's lstat on everything below.
+//
+// The walk is a worklist rather than recursion, matching fern.fern's
+// doc_tree/copy_package. Hidden files are NOT skipped, matching native: a
+// `.gitignore` under the embed root is an asset like any other.
 pub function load(dir: string): LoadResult {
+    // The root is followed, so `stat` rather than `lstat` decides whether the
+    // argument names a directory at all.
+    var root_dir: boolean = false;
+    match (stat(dir)) { Ok(st) => { root_dir = st.is_dir; }, Err(e) => { } }
+    if (!root_dir) {
+        return LoadResult { assets: no_assets(), err: "-embed " + dir + ": not a directory" };
+    }
     var names: string[] = [];
     var contents: string[] = [];
-    // Relative subdirectories still to visit, "" being `dir` itself, and the
-    // depth of each so a symlink loop is bounded rather than fatal-by-hanging.
+    // Relative subdirectories still to visit, "" being `dir` itself.
     var rels: string[] = [""];
-    var depths: i32[] = [0];
     var ri: i32 = 0;
-    var listed_root: boolean = false;
     while (ri < rels.len()) {
         var rel: string = rels[ri];
-        var depth: i32 = depths[ri];
         ri = ri + 1;
         var sdir: string = dir;
         if (rel.len() > 0) { sdir = dir + "/" + rel; }
         var entries: string[] = [];
         var listed: boolean = false;
         match (read_dir(sdir)) { Ok(ns) => { entries = ns; listed = true; }, Err(e) => { } }
-        if (!listed) {
-            // The root not being a directory is the reportable case; a
-            // subdirectory that stopped being readable mid-walk is not
-            // distinguishable from one that was never there.
-            if (rel.len() == 0) {
-                return LoadResult { assets: no_assets(), err: "-embed " + dir + ": not a directory" };
-            }
-            continue;
-        }
-        listed_root = true;
+        if (!listed) { continue; }
         var i: i32 = 0;
         while (i < entries.len()) {
             var name: string = entries[i];
@@ -96,14 +98,12 @@ pub function load(dir: string): LoadResult {
             var child_rel: string = name + "";
             if (rel.len() > 0) { child_rel = rel + "/" + name; }
             var child: string = dir + "/" + child_rel;
-            if (is_dir_path(child)) {
-                if (depth + 1 > MAX_EMBED_DEPTH) {
-                    return LoadResult { assets: no_assets(), err: "-embed " + dir + ": directory nesting deeper than " + util.i32_to_string(MAX_EMBED_DEPTH) + " at " + child_rel + " — a symlink loop?" };
-                }
+            var kind: i32 = classify(child);
+            if (kind == ENTRY_DIR) {
                 rels = rels.append(child_rel + "");
-                depths = depths.append(depth + 1);
                 continue;
             }
+            if (kind != ENTRY_FILE) { continue; }
             // Bytes, not text. `read_file` validates UTF-8 and refuses a file
             // holding any byte sequence that is not — which is most images,
             // fonts and wasm modules, exactly what an asset bundle carries.
@@ -122,21 +122,24 @@ pub function load(dir: string): LoadResult {
             contents = contents.append(body + "");
         }
     }
-    if (!listed_root) {
-        return LoadResult { assets: no_assets(), err: "-embed " + dir + ": not a directory" };
-    }
     var (sn, sc) = sort_pairs(names, contents);
     return LoadResult { assets: Assets { root: dir, names: sn, contents: sc, present: true }, err: "" };
 }
 
-// is_dir_path reports whether `path` names a directory, the same read_dir probe
-// fern.fern's is_dir uses: a file answers ENOTDIR.
-function is_dir_path(path: string): boolean {
-    match (read_dir(path)) {
-        Ok(ns) => { return true; },
-        Err(e) => { return false; },
+// classify reports what `path` is WITHOUT following a final symlink. A link is
+// neither a regular file nor a directory under lstat, so it lands in
+// ENTRY_OTHER along with sockets, FIFOs and device nodes — and with any path
+// that cannot be stat'd at all, which the caller skips for the same reason.
+function classify(path: string): i32 {
+    match (lstat(path)) {
+        Ok(st) => {
+            if (st.is_dir) { return ENTRY_DIR; }
+            if (st.is_file) { return ENTRY_FILE; }
+            return ENTRY_OTHER;
+        },
+        Err(e) => { return ENTRY_OTHER; },
     }
-    return false;
+    return ENTRY_OTHER;
 }
 
 // sort_pairs orders `names` ascending, carrying `contents` along. Sorted order
