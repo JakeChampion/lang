@@ -95,6 +95,7 @@ type Assembler struct {
 	quadSyms     []quadSymFixup
 	locRows      []LineRow
 	relaxEvents  []relaxEvent
+	cfi          cfiState
 }
 
 // LineRow is one DWARF .debug_line row: the source line active at a code
@@ -136,7 +137,7 @@ func (a *Assembler) emit32(v uint32) {
 // .text (8-byte aligned), matching the single-segment R+W+X image
 // (elf.StaticExecutableDataX86).
 func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err error) {
-	text, rodata, _, _, _, err = assembleProgram(src, textVAddr, false, false, nil)
+	text, rodata, _, _, _, _, err = assembleProgram(src, textVAddr, false, false, nil)
 	return text, rodata, err
 }
 
@@ -145,8 +146,21 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 // R+W segment instead of laid contiguously after .text, so the code
 // segment can be mapped R+X. Pass elf.TextVAddrWX as textVAddr.
 func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err error) {
-	text, rodata, _, _, _, err = assembleProgram(src, textVAddr, true, false, nil)
+	text, rodata, _, _, _, _, err = assembleProgram(src, textVAddr, true, false, nil)
 	return text, rodata, err
+}
+
+// AssembleProgramEhFrame is AssembleProgram that also renders the .eh_frame
+// image the source's `.cfi_*` directives describe. ehVAddr is the address that
+// image will be loaded at, because the CIE declares pcrel FDE pointers: each
+// FDE's initial_location is the distance from the field to the function.
+// Returns a nil image when the source carries no CFI.
+func AssembleProgramEhFrame(src string, textVAddr, ehVAddr uint64) (text, rodata, ehFrame []byte, err error) {
+	text, rodata, _, _, _, a, err := assembleProgram(src, textVAddr, false, false, nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return text, rodata, a.EhFrame(textVAddr, ehVAddr), nil
 }
 
 // Reloc is one R_X86_64_RELATIVE entry: at load time `*(base + Offset) =
@@ -164,7 +178,7 @@ type Reloc struct {
 // `.quad <symbol>` slots. rip-relative code is base-independent and needs
 // no relocation. Pass elf.TextVAddrPIE as textVAddr.
 func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
-	text, rodata, relocs, _, _, err = assembleProgram(src, textVAddr, true, true, nil)
+	text, rodata, relocs, _, _, _, err = assembleProgram(src, textVAddr, true, true, nil)
 	return text, rodata, relocs, err
 }
 
@@ -174,7 +188,7 @@ func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relo
 // debugger / nm / a backtrace can map a code address back to a name. Pass
 // elf.TextVAddrWX as textVAddr.
 func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, syms map[string]uint64, locRows []LineRow, err error) {
-	text, rodata, _, off, rows, err := assembleProgram(src, textVAddr, true, false, nil)
+	text, rodata, _, off, rows, _, err := assembleProgram(src, textVAddr, true, false, nil)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -196,7 +210,7 @@ func AssembleProgramShared(src string, textVAddr uint64, exportNames []string) (
 	for _, n := range exportNames {
 		exportVAddr[n] = 0 // marker: resolve this label
 	}
-	text, rodata, relocs, _, _, err = assembleProgram(src, textVAddr, true, true, exportVAddr)
+	text, rodata, relocs, _, _, _, err = assembleProgram(src, textVAddr, true, true, exportVAddr)
 	return text, rodata, relocs, exportVAddr, err
 }
 
@@ -206,7 +220,7 @@ func AssembleProgramShared(src string, textVAddr uint64, exportNames []string) (
 // base-0 layout, returning .quad-slot relocations). When exportVAddr is
 // non-nil, each key is resolved to textVAddr + its .text-label offset (for
 // AssembleProgramShared).
-func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map[string]uint64) (text, rodata []byte, relocs []Reloc, syms map[string]int, locRows []LineRow, err error) {
+func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map[string]uint64) (text, rodata []byte, relocs []Reloc, syms map[string]int, locRows []LineRow, asm *Assembler, err error) {
 	a := newAssembler()
 	sec := "text"
 	for lineno, raw := range strings.Split(src, "\n") {
@@ -234,16 +248,16 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		if strings.HasPrefix(line, ".") {
 			sec, err = a.directive(line, sec)
 			if err != nil {
-				return nil, nil, nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
+				return nil, nil, nil, nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
 			}
 			continue
 		}
 		if sec != "text" {
-			return nil, nil, nil, nil, nil, fmt.Errorf("line %d: %q: instruction outside .text", lineno+1, strings.TrimSpace(raw))
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("line %d: %q: instruction outside .text", lineno+1, strings.TrimSpace(raw))
 		}
 		nRip := len(a.ripFixups)
 		if err := a.insn(line); err != nil {
-			return nil, nil, nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
 		}
 		// Stamp every rip fixup this instruction produced with the
 		// instruction's end offset — the runtime RIP its disp32 is
@@ -255,13 +269,13 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 	// Shrink in-range branches to their rel8 forms and settle the final
 	// layout before any offsets are resolved.
 	if err := a.relax(); err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	// Resolve rel32 branch/call targets now that all labels are placed.
 	for _, f := range a.relFixups {
 		dst, ok := a.textLabels[f.sym]
 		if !ok {
-			return nil, nil, nil, nil, nil, fmt.Errorf("undefined label %q", f.sym)
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("undefined label %q", f.sym)
 		}
 		rel := int32(dst - (f.at + 4))
 		putLE32(a.text, f.at, uint32(rel))
@@ -324,7 +338,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		} else if off, ok := a.textLabels[f.sym]; ok {
 			symOff = off // text symbol: a function address (e.g. a closure body)
 		} else {
-			return nil, nil, nil, nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("undefined rip-relative symbol %q", f.sym)
 		}
 		disp := int32(symOff - f.end)
 		putLE32(a.text, f.at, uint32(disp))
@@ -341,7 +355,7 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 		} else if off, ok := a.bssLabels[f.sym]; ok {
 			abs = textVAddr + uint64(bssBase+off)
 		} else {
-			return nil, nil, nil, nil, nil, fmt.Errorf("undefined .quad symbol %q", f.sym)
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("undefined .quad symbol %q", f.sym)
 		}
 		for i := 0; i < 8; i++ {
 			a.rodata[f.at+i] = byte(abs >> (8 * i))
@@ -354,11 +368,11 @@ func assembleProgram(src string, textVAddr uint64, wx, pie bool, exportVAddr map
 	for name := range exportVAddr {
 		off, ok := a.textLabels[name]
 		if !ok {
-			return nil, nil, nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", name)
+			return nil, nil, nil, nil, nil, nil, fmt.Errorf("export %q is not a defined .text symbol", name)
 		}
 		exportVAddr[name] = textVAddr + uint64(off)
 	}
-	return a.text, append(a.rodata, a.bss...), relocs, a.textLabels, a.locRows, nil
+	return a.text, append(a.rodata, a.bss...), relocs, a.textLabels, a.locRows, a, nil
 }
 
 func putLE32(b []byte, at int, v uint32) {
@@ -402,6 +416,13 @@ func (a *Assembler) directive(line, sec string) (string, error) {
 		}
 	case ".intel_syntax", ".globl", ".global", ".type", ".size", ".file", ".ident":
 		return sec, nil
+	}
+	if strings.HasPrefix(d, ".cfi_") {
+		// A CFI directive emits no bytes, so the current .text length is the
+		// offset the rule takes effect at.
+		return sec, a.cfiDirective(d, strings.TrimSpace(strings.TrimPrefix(line, d)), len(a.text))
+	}
+	switch d {
 	case ".loc":
 		// `.loc <file> <line> [<col>]` (DWARF line marker, -g). It emits no
 		// bytes, so the current text length is the offset of the next

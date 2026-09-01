@@ -240,6 +240,18 @@ func (a *Assembler) relax() error {
 		a.ripFixups[i].at = mapNew(a.ripFixups[i].at)
 		a.ripFixups[i].end = mapNew(a.ripFixups[i].end)
 	}
+	// CFI offsets are remapped for the same reason .loc rows are, and it
+	// matters more: an FDE stores the DISTANCE between consecutive rules, so
+	// a stale offset does not merely mislabel a line, it unwinds at the wrong
+	// instruction — and the bytes stay well-formed while doing it.
+	for i := range a.cfi.fdes {
+		f := &a.cfi.fdes[i]
+		f.start = mapNew(f.start)
+		f.end = mapNew(f.end)
+		for j := range f.rules {
+			f.rules[j].off = mapNew(f.rules[j].off)
+		}
+	}
 	kept := a.relFixups[:0]
 	for i, f := range a.relFixups {
 		if resolved[i] {
