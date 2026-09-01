@@ -2936,6 +2936,15 @@ pub function opt_recv_base_type(e: ast.Expr, s: LowerState): string {
 // recover the payload.
 pub function elem_type_tag(e: ast.Expr, s: LowerState): string {
     if (expr_is_str(e, s)) { return "string"; }
+    // A map READ method's result (`m.len()` / `m.has(k)` / `m.get(k)` /
+    // `m.get_or(k, d)`): named from the receiver's Map[K, V] rather than left to
+    // the walks below, which key on the RESULT expression and so answer "i32" for
+    // every non-string value column — a `Map[K, i64]` read stored 32-bit wide.
+    // Ahead of the width predicates for the same reason expr_is_str is: they
+    // reach a get_or only through the receiver shapes they each re-walk, and this
+    // resolves all of them once. #7213.
+    var mmtag: string = map_method_elem_tag(e, s);
+    if (mmtag != "") { return mmtag; }
     // A closure-BOX element: a `__mkclo$…` env-box constructor (what the lift
     // pass rewrites every lambda / bare-fn tuple element to), a call to a
     // closure-returning fn, or an ident bound to a closure local. Tagged
@@ -3372,6 +3381,58 @@ function get_or_recv_map_type(obj: ast.Expr, s: LowerState): string {
             }
         },
         _ => {}
+    }
+    return "";
+}
+
+// map_value_slot_tag maps a map's declared VALUE type onto the tuple-element tag
+// vocabulary, with the same normalisation elem_type_tag's own arms perform: u64
+// rides the "i64" slot, boolean / u8 / u32 the "i32" one, and f32 keeps its own
+// tag so its method dispatch does not render at f64 precision. "" for a V the
+// element machinery cannot carry in one tagged slot — an array, a struct, a
+// nested map, an unparseable or generic column.
+function map_value_slot_tag(v: string): string {
+    if (v == "string") { return "string"; }
+    if (v == "f32") { return "f32"; }
+    if (elem_ty_is_f64slot(v)) { return "f64"; }
+    if (elem_ty_is_i64slot(v)) { return "i64"; }
+    if (v == "i32" || v == "u32" || v == "u8" || v == "boolean" || v == "bool") { return "i32"; }
+    return "";
+}
+
+// map_method_elem_tag names the tuple-element tag of a map READ method's result —
+// "i32" for `len` and `has`, the value column's slot tag for `get_or`, and
+// "Option[V]" for `get` — or "" when `e` is not one of those calls, the receiver
+// is not a map, or V has no tag the element machinery can carry.
+//
+// `keys` / `values` answer through the array predicates already, and `iter` stays
+// out: its MapIter box holds a raw pointer into the mapbox, which a tuple slot
+// would outlive. `get`'s payload set is opt_elem_tag_from_ty's, so an admitted
+// Option element is one a later `match (t.N)` can unwrap.
+//
+// elem_type_tag (what the slot is stored as) and tuple_elem_ctor_eligible
+// (whether the element is admitted at all) share it, so an admitted map method
+// always has a tag naming its result — the two cannot drift into storing a
+// `Map[K, string]` read in an "i32" slot. #7213.
+function map_method_elem_tag(e: ast.Expr, s: LowerState): string {
+    match (e) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprFieldAccess(fa) => {
+                    var mt: string = get_or_recv_map_type(fa.obj, s);
+                    if (mt == "") { return ""; }
+                    if (fa.field == "len" && c.args.len() == 0) { return "i32"; }
+                    if (fa.field == "has" && c.args.len() == 1) { return "i32"; }
+                    var vt: string = map_value_slot_tag(map_value_of(mt));
+                    if (vt == "") { return ""; }
+                    if (fa.field == "get_or" && c.args.len() == 2) { return vt; }
+                    if (fa.field == "get" && c.args.len() == 1) { return "Option[" + vt + "]"; }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
     }
     return "";
 }
@@ -6485,41 +6546,13 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     // returns the stored string value, so the result feeds
                     // `.len()` / concat as a string. Without this the result is
                     // mis-tracked as i32 and `.len()` reads the box's data-ptr
-                    // slot as a length (garbage). Keyed off the receiver slot's
-                    // recorded Map type (map_value_of == "string").
-                    if (cfa.field == "get_or" && c.args.len() == 2) {
-                        match (cfa.obj) {
-                            ast.ExprIdent(mgid) => {
-                                if (map_value_of(s.map_type_of(s.slot_of(mgid.name))) == "string") { return true; }
-                            },
-                            // A string-VALUE map reached through a struct field
-                            // (`c.m.get_or(...)`) or a TUPLE element (`t.0.get_or(...)`):
-                            // resolve the receiver's Map type the same way map-method
-                            // dispatch does, so the string result feeds `.len()` /
-                            // concat as a string. #3317.
-                            ast.ExprFieldAccess(mgfa) => {
-                                if (util.is_all_digits(mgfa.field)) {
-                                    if (map_value_of(expr_tuple_elem_tag(mgfa.obj, util.digits_to_i32(mgfa.field), s)) == "string") { return true; }
-                                } else {
-                                    var goty: string = expr_struct_type(mgfa.obj, s);
-                                    if (goty != "" && map_value_of(decl_field_type(s.structs, goty, mgfa.field)) == "string") { return true; }
-                                }
-                            },
-                            // A string-VALUE map reached through an ARRAY element
-                            // (`ms[i].get_or(...)`): the array slot's element map
-                            // type carries V. #3317.
-                            ast.ExprIndex(mgix) => {
-                                match (mgix.array) {
-                                    ast.ExprIdent(mgaid) => {
-                                        var mgasl: i32 = s.slot_of(mgaid.name);
-                                        if (mgasl >= 0 && s.is_arr_slot(mgasl) && map_value_of(s.map_type_of(mgasl)) == "string") { return true; }
-                                    },
-                                    _ => {}
-                                }
-                            },
-                            _ => {}
-                        }
-                    }
+                    // slot as a length (garbage). get_or_recv_map_type resolves
+                    // the receiver the same way the map-op LOWERING does — a map
+                    // local, a struct field, a tuple element, an array element,
+                    // a map-returning call — so the string tracking and the
+                    // dispatch cannot disagree about what a receiver is (#3317).
+                    if (cfa.field == "get_or" && c.args.len() == 2
+                            && map_value_of(get_or_recv_map_type(cfa.obj, s)) == "string") { return true; }
                     // A call THROUGH a string-returning fn-typed struct FIELD
                     // (`h.f(1)` where H.f: (i32) => string): the field's declared
                     // type coarsens to "fn" but its fn_ret keeps the string
@@ -49559,6 +49592,15 @@ function tuple_elem_ctor_eligible(el: ast.Expr, s: LowerState): boolean {
                                 && (expr_is_str(sccfa.obj, s) || expr_is_arr_src(sccfa.obj, s)
                                     || expr_is_strarr(sccfa.obj, s) || expr_is_f64arr(sccfa.obj, s)
                                     || expr_is_i64arr(sccfa.obj, s))) { el_call_ok = true; }
+                        // (f) a MAP read method — the other builtin receiver the
+                        // registry cannot answer for. Admitted exactly when
+                        // map_method_elem_tag names the result kind, so the slot
+                        // is never stored at a width the tag does not carry.
+                        // `m.len()` at a tuple element bailed the whole function
+                        // while `xs.len()` lowered, the difference being nothing
+                        // but the receiver's type; `iter` stays out, its MapIter
+                        // box holding a raw pointer into the mapbox. #7213.
+                        else if (map_method_elem_tag(el, s) != "") { el_call_ok = true; }
                     }
                 },
                 _ => {}
