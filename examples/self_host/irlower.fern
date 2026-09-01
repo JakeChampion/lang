@@ -30380,6 +30380,221 @@ function rctuple_struct_field_counted_store(sl: ast.ExprStructLit, fi: i32, name
     return tuple_field_deep_droppable(decl_field_type_at(structs, sl.type_name, di), structs);
 }
 
+// esc_tuple_field_of: `e` is a field read directly off the bare local `root`
+// (`root.<f>`) — returns `<f>`; "" otherwise.
+function esc_tuple_field_of(e: ast.Expr, root: string): string {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            if (ident_name_or_empty(fa.obj) == root) { return fa.field; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// rctuple_esc_shape classifies one node for the rc-tuple escape scan
+// (rctuple_esc_expr below has the scan's contract). It is the single source of
+// truth BOTH fold closures consult: `descend` walks a node's children exactly
+// when it answers 0, and rctuple_esc_at maps every other answer to a verdict
+// or a re-scan of the shape's chosen children. The codes, shared by all three
+// element-escape scanners (this one, arrtup, arrstruct):
+//   0 — generic: no verdict at this node; the spine walks the children.
+//   1 — settled false: an opaque node (lambda / map-literal / f-string, which
+//       the scan treats as no-use rather than walking into) or a whitelisted
+//       borrow with nothing left to check.
+//   2 — escape.
+//   3 — borrow chain: the access chain itself is safe; every index expression
+//       along it and every call argument still needs its own scan (the
+//       family's chain_esc).
+//   4 — free-function call with per-argument borrow forgiveness.
+//   5 — a sanctioned counted store: forgiven slots are skipped, the rest scanned.
+function rctuple_esc_shape(e: ast.Expr, name: string, ttype: string, structs: parser.StructDecl[]): i32 {
+    match (e) {
+        ast.ExprIdent(id) => { if (id.name == name) { return 2; } return 1; },   // bare whole tuple escapes
+        ast.ExprNumber(_) => { return 1; },
+        ast.ExprString(_) => { return 1; },
+        ast.ExprBool(_) => { return 1; },
+        ast.ExprFieldAccess(fa) => {
+            var tf: string = esc_tuple_field_of(e, name);
+            if (tf.len() > 0) {
+                // name.<i> : a pointer element extracted bare escapes; a scalar
+                // element (or a non-positional field) is a by-value copy.
+                if (util.is_all_digits(tf)
+                    && !is_scalar_type_name(tuple_type_elem_tag(ttype, util.digits_to_i32(tf)))) { return 2; }
+                return 1;
+            }
+            var pf: string = esc_tuple_field_of(fa.obj, name);
+            if (pf.len() > 0 && util.is_all_digits(pf)) {
+                // name.<i>.<f> : a struct-element field read.
+                var ety: string = tuple_type_elem_tag(ttype, util.digits_to_i32(pf));
+                // A NESTED TUPLE element indexes BY POSITION, not by struct
+                // field name: `t.2.0` copies a scalar out of t's tuple element,
+                // a borrow exactly like the struct scalar-field read below.
+                // decl_field_type finds no struct for a `(..)` tag and the ""
+                // it returns is not scalar, so such a read counted as a bare
+                // pointer extraction and cost the whole tuple its reclaim.
+                if (util.is_tuple_type_name(ety) && util.is_all_digits(fa.field)) {
+                    if (is_scalar_type_name(tuple_type_elem_tag(ety, util.digits_to_i32(fa.field)))) { return 1; }
+                    return 2;
+                }
+                if (is_scalar_type_name(decl_field_type(structs, ety, fa.field))) { return 1; }   // scalar struct-field copy
+                return 2;   // struct array/pointer field extracted bare
+            }
+            return 0;
+        },
+        ast.ExprIndex(ix) => {
+            if (ident_name_or_empty(ix.array) == name) { return 2; }   // bare name[..]
+            var bf: string = esc_tuple_field_of(ix.array, name);
+            if (bf.len() > 0 && util.is_all_digits(bf)) { return 3; }   // name.<i>[j] : indexed array-element read
+            match (ix.array) {
+                ast.ExprFieldAccess(bfa) => {
+                    var pbf: string = esc_tuple_field_of(bfa.obj, name);
+                    if (pbf.len() > 0 && util.is_all_digits(pbf)) { return 3; }   // name.<i>.<f>[j] : indexed struct array-field read
+                    return 0;
+                },
+                _ => { return 0; }
+            }
+        },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(_) => { return 4; },
+                ast.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        var rf: string = esc_tuple_field_of(cfa.obj, name);
+                        if (rf.len() > 0 && util.is_all_digits(rf)) { return 3; }   // name.<i>.len() : array-element length borrow
+                        match (cfa.obj) {
+                            ast.ExprFieldAccess(ofa) => {
+                                var orf: string = esc_tuple_field_of(ofa.obj, name);
+                                if (orf.len() > 0 && util.is_all_digits(orf)) { return 3; }   // name.<i>.<f>.len() : struct array-field length borrow
+                            },
+                            _ => {}
+                        }
+                    }
+                    return 0;
+                },
+                _ => { return 0; }
+            }
+        },
+        ast.ExprBinary(_) => { return 0; },
+        ast.ExprUnary(_) => { return 0; },
+        ast.ExprSlice(_) => { return 0; },
+        ast.ExprArray(_) => { return 0; },
+        ast.ExprTuple(_) => { return 0; },
+        ast.ExprStructLit(sl) => {
+            var sfi: i32 = 0;
+            for fv in sl.field_values {
+                if (rctuple_struct_field_counted_store(sl, sfi, name, structs)
+                    && rctuple_esc_expr_is_ident(fv, name)) { return 5; }
+                sfi = sfi + 1;
+            }
+            return 0;
+        },
+        ast.ExprLambda(_) => { return 1; },
+        ast.ExprMapLit(_) => { return 1; },
+        ast.ExprFString(_) => { return 1; },
+        ast.ExprUnknown(_) => { return 1; }
+    }
+    return 0;
+}
+
+// rctuple_chain_esc re-scans the parts of a code-3 borrow chain the shape did
+// not settle: every index expression along it and every call argument. The
+// chain links themselves (field reads, the indexed reads' arrays, a `.len()`
+// callee) were classified safe as one shape, and the root ident is the
+// borrowed local; a link the classifier did not admit errs toward escape.
+function rctuple_chain_esc(x: ast.Expr, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
+    match (x) {
+        ast.ExprCall(c) => {
+            if (rctuple_chain_esc(c.callee, name, ttype, structs, borrowable)) { return true; }
+            for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs, borrowable)) { return true; } }
+            return false;
+        },
+        ast.ExprFieldAccess(fa) => { return rctuple_chain_esc(fa.obj, name, ttype, structs, borrowable); },
+        ast.ExprIndex(ix) => {
+            if (rctuple_chain_esc(ix.array, name, ttype, structs, borrowable)) { return true; }
+            return rctuple_esc_expr(ix.index, name, ttype, structs, borrowable);
+        },
+        ast.ExprIdent(_) => { return false; },
+        _ => { return true; }
+    }
+    return false;
+}
+
+// rctuple_esc_at is the fold visitor: `esc` latches true, and each node
+// answers per its rctuple_esc_shape code.
+function rctuple_esc_at(x: ast.Expr, esc: boolean, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
+    if (esc) { return true; }
+    var code: i32 = rctuple_esc_shape(x, name, ttype, structs);
+    if (code == 2) { return true; }
+    if (code == 3) { return rctuple_chain_esc(x, name, ttype, structs, borrowable); }
+    if (code == 4) {
+        match (x) {
+            ast.ExprCall(c) => {
+                var callee: string = ident_name_or_empty(c.callee);
+                if (callee == name) { return true; }
+                // A DIRECT bare-ident `name` at a PAYLOAD-borrowable param
+                // position of a known free function is a BORROW, not a payload
+                // escape. The key is the "TUPB:" tier, NOT the plain box flag:
+                // box borrowability only proves the callee never keeps the box,
+                // and a callee returning src.1 keys box-borrowable while this
+                // scan's deep reclaim would free the handed-out element under it
+                // (sanitizer-confirmed UAF). TUPB additionally proves no payload
+                // of the param escapes the callee — the question a TUPRCS deep
+                // free actually asks. Without any forgiveness, `round(keep, i)`
+                // with a purely-reading callee cost the caller's rc-tuple its
+                // whole deep reclaim.
+                //
+                // "CNT:" is the second admission: the callee does not merely
+                // borrow, it stores the tuple into a struct literal that RETAINS
+                // it, so the caller's deep free and the holder's field drop net
+                // to one owner. The shared key ORs every counted tier, but only
+                // "TCNT:" can have flagged a position whose param type is a
+                // tuple — the array, string, enum and array-of-boxes tiers each
+                // test a type this argument does not have — so reading the
+                // merged flag cannot borrow another tier's verdict.
+                var rai: i32 = 0;
+                while (rai < c.args.len()) {
+                    var rarg_borrow: boolean = ident_name_or_empty(c.args[rai]) == name
+                        && (param_is_borrowable(borrowable, "TUPB:" + callee, rai)
+                            || param_is_borrowable(borrowable, "CNT:" + callee, rai));
+                    if (!rarg_borrow && rctuple_esc_expr(c.args[rai], name, ttype, structs, borrowable)) { return true; }
+                    rai = rai + 1;
+                }
+                return false;
+            },
+            _ => { return true; }
+        }
+    }
+    if (code == 5) {
+        match (x) {
+            ast.ExprStructLit(sl) => {
+                if (sl.has_base && rctuple_esc_expr(sl.base, name, ttype, structs, borrowable)) { return true; }
+                var sfi: i32 = 0;
+                for fv in sl.field_values {
+                    // `S { t: name, ... }` into a deep-droppable tuple field of a
+                    // type that routes tuple field reclaim is a COUNTED store, not
+                    // an escape: the construction arm inc'd the box and
+                    // emit_struct_tuple_field_drops decs it once per owner, so the
+                    // source keeps its own release (rc 1 -> inc 2 -> this sweep 1 ->
+                    // the struct's field drop 0). Forgiven on the same predicate
+                    // that gates the retain, so the two cannot come apart (#7253) —
+                    // and on the narrower half of it, so a forgiven store is always
+                    // one the retain actually fired for.
+                    if (!(rctuple_struct_field_counted_store(sl, sfi, name, structs)
+                            && rctuple_esc_expr_is_ident(fv, name))) {
+                        if (rctuple_esc_expr(fv, name, ttype, structs, borrowable)) { return true; }
+                    }
+                    sfi = sfi + 1;
+                }
+                return false;
+            },
+            _ => { return true; }
+        }
+    }
+    return false;
+}
+
 // rctuple_esc_expr: does `e` use the fresh rc-tuple local `name` (declared tuple type
 // `ttype`) in a way that ESCAPES an owned pointer the whole-tuple deep-drop would free?
 // The tuple carries at least one owned pointer element (an array / a reclaim-struct box);
@@ -30391,196 +30606,9 @@ function rctuple_struct_field_counted_store(sl: ast.ExprStructLit, fi: i32, name
 // `name.<i>.<f>`. Erring toward escape is a safe leak, never an over-release. Mirrors
 // arrtup_elem_esc_expr, rooted at a bare-local tuple (`name.<i>`) instead of `name[k].<i>`.
 function rctuple_esc_expr(e: ast.Expr, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
-    match (e) {
-        ast.ExprIdent(id) => { return id.name == name; },   // bare whole tuple escapes
-        ast.ExprNumber(_) => { return false; },
-        ast.ExprString(_) => { return false; },
-        ast.ExprBool(_) => { return false; },
-        ast.ExprFieldAccess(fa) => {
-            match (fa.obj) {
-                ast.ExprIdent(oid) => {
-                    if (oid.name == name && util.is_all_digits(fa.field)) {
-                        var tag: string = tuple_type_elem_tag(ttype, util.digits_to_i32(fa.field));
-                        if (is_scalar_type_name(tag)) { return false; }   // scalar element copy
-                        return true;                                      // pointer element extracted bare
-                    }
-                    return false;   // some other local's field: not our name
-                },
-                ast.ExprFieldAccess(pfa) => {
-                    // name.<i>.<f> : a struct-element field read.
-                    match (pfa.obj) {
-                        ast.ExprIdent(pid) => {
-                            if (pid.name == name && util.is_all_digits(pfa.field)) {
-                                var sty: string = tuple_type_elem_tag(ttype, util.digits_to_i32(pfa.field));
-                                // A NESTED TUPLE element indexes BY POSITION, not by
-                                // struct field name: `t.2.0` copies a scalar out of t's
-                                // tuple element, a borrow exactly like the struct
-                                // scalar-field read below. decl_field_type finds no
-                                // struct for a `(..)` tag and the "" it returns is not
-                                // scalar, so such a read counted as a bare pointer
-                                // extraction and cost the whole tuple its reclaim.
-                                if (util.is_tuple_type_name(sty) && util.is_all_digits(fa.field)) {
-                                    return !is_scalar_type_name(tuple_type_elem_tag(sty, util.digits_to_i32(fa.field)));
-                                }
-                                var ft: string = decl_field_type(structs, sty, fa.field);
-                                if (is_scalar_type_name(ft)) { return false; }   // scalar struct-field copy
-                                return true;                                     // struct array/pointer field extracted bare
-                            }
-                        },
-                        _ => {}
-                    }
-                    return rctuple_esc_expr(fa.obj, name, ttype, structs, borrowable);
-                },
-                _ => { return rctuple_esc_expr(fa.obj, name, ttype, structs, borrowable); }
-            }
-        },
-        ast.ExprIndex(ix) => {
-            match (ix.array) {
-                ast.ExprFieldAccess(bfa) => {
-                    match (bfa.obj) {
-                        ast.ExprIdent(bid) => {
-                            // name.<i>[j] : indexed array-element read — safe; check the index.
-                            if (bid.name == name && util.is_all_digits(bfa.field)) {
-                                return rctuple_esc_expr(ix.index, name, ttype, structs, borrowable);
-                            }
-                        },
-                        ast.ExprFieldAccess(ppfa) => {
-                            // name.<i>.<f>[j] : indexed struct array-field read — safe; check the index.
-                            match (ppfa.obj) {
-                                ast.ExprIdent(ppid) => {
-                                    if (ppid.name == name && util.is_all_digits(ppfa.field)) {
-                                        return rctuple_esc_expr(ix.index, name, ttype, structs, borrowable);
-                                    }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                ast.ExprIdent(aid) => { if (aid.name == name) { return true; } },   // bare name[..]
-                _ => {}
-            }
-            return rctuple_esc_expr(ix.array, name, ttype, structs, borrowable) || rctuple_esc_expr(ix.index, name, ttype, structs, borrowable);
-        },
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprFieldAccess(cfa) => {
-                    if (cfa.field == "len") {
-                        match (cfa.obj) {
-                            ast.ExprFieldAccess(ofa) => {
-                                match (ofa.obj) {
-                                    ast.ExprIdent(oid) => {
-                                        // name.<i>.len() : array-element length borrow.
-                                        if (oid.name == name && util.is_all_digits(ofa.field)) {
-                                            for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs, borrowable)) { return true; } }
-                                            return false;
-                                        }
-                                    },
-                                    ast.ExprFieldAccess(o2) => {
-                                        // name.<i>.<f>.len() : struct array-field length borrow.
-                                        match (o2.obj) {
-                                            ast.ExprIdent(o2id) => {
-                                                if (o2id.name == name && util.is_all_digits(o2.field)) {
-                                                    for arg in c.args { if (rctuple_esc_expr(arg, name, ttype, structs, borrowable)) { return true; } }
-                                                    return false;
-                                                }
-                                            },
-                                            _ => {}
-                                        }
-                                    },
-                                    _ => {}
-                                }
-                            },
-                            _ => {}
-                        }
-                    }
-                },
-                _ => {}
-            }
-            if (rctuple_esc_expr(c.callee, name, ttype, structs, borrowable)) { return true; }
-            // A DIRECT bare-ident `name` at a PAYLOAD-borrowable param
-            // position of a known free function is a BORROW, not a payload
-            // escape. The key is the "TUPB:" tier, NOT the plain box flag:
-            // box borrowability only proves the callee never keeps the box,
-            // and a callee returning src.1 keys box-borrowable while this
-            // scan's deep reclaim would free the handed-out element under it
-            // (sanitizer-confirmed UAF). TUPB additionally proves no payload
-            // of the param escapes the callee — the question a TUPRCS deep
-            // free actually asks. Without any forgiveness, `round(keep, i)`
-            // with a purely-reading callee cost the caller's rc-tuple its
-            // whole deep reclaim.
-            var resc_callee: string = "";
-            match (c.callee) {
-                ast.ExprIdent(rcid) => { resc_callee = rcid.name; },
-                _ => {}
-            }
-            var rai: i32 = 0;
-            while (rai < c.args.len()) {
-                var rarg_borrow: boolean = false;
-                match (c.args[rai]) {
-                    ast.ExprIdent(raid) => {
-                        if (raid.name == name && resc_callee.len() > 0
-                            && param_is_borrowable(borrowable, "TUPB:" + resc_callee, rai)) { rarg_borrow = true; }
-                        // …or the param is COUNTED ("TCNT:", folded into the
-                        // shared "CNT:" key): the callee does not merely borrow,
-                        // it stores the tuple into a struct literal that RETAINS
-                        // it, so the caller's deep free and the holder's field
-                        // drop net to one owner. A different question from
-                        // TUPB's, which is why a payload-refusing callee can
-                        // still qualify here.
-                        //
-                        // The shared key ORs every tier, but only "TCNT:" can
-                        // have flagged a position whose param type is a tuple —
-                        // the array, string, enum and array-of-boxes tiers each
-                        // test a type this argument does not have — so reading
-                        // the merged flag cannot borrow another tier's verdict.
-                        if (!rarg_borrow && raid.name == name && resc_callee.len() > 0
-                            && param_is_borrowable(borrowable, "CNT:" + resc_callee, rai)) { rarg_borrow = true; }
-                    },
-                    _ => {}
-                }
-                if (!rarg_borrow && rctuple_esc_expr(c.args[rai], name, ttype, structs, borrowable)) { return true; }
-                rai = rai + 1;
-            }
-            return false;
-        },
-        ast.ExprBinary(b) => { return rctuple_esc_expr(b.left, name, ttype, structs, borrowable) || rctuple_esc_expr(b.right, name, ttype, structs, borrowable); },
-        ast.ExprUnary(u) => { return rctuple_esc_expr(u.operand, name, ttype, structs, borrowable); },
-        ast.ExprSlice(sl) => { return rctuple_esc_expr(sl.array, name, ttype, structs, borrowable) || rctuple_esc_expr(sl.start, name, ttype, structs, borrowable) || rctuple_esc_expr(sl.end, name, ttype, structs, borrowable); },
-        ast.ExprArray(ar) => {
-            var i: i32 = 0;
-            while (i < ar.elements.len()) { if (rctuple_esc_expr(ar.elements[i], name, ttype, structs, borrowable)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.ExprTuple(t) => {
-            for el in t.elements { if (rctuple_esc_expr(el, name, ttype, structs, borrowable)) { return true; } }
-            return false;
-        },
-        ast.ExprStructLit(sl) => {
-            if (sl.has_base && rctuple_esc_expr(sl.base, name, ttype, structs, borrowable)) { return true; }
-            var sfi: i32 = 0;
-            for fv in sl.field_values {
-                // `S { t: name, ... }` into a deep-droppable tuple field of a
-                // type that routes tuple field reclaim is a COUNTED store, not
-                // an escape: the construction arm inc'd the box and
-                // emit_struct_tuple_field_drops decs it once per owner, so the
-                // source keeps its own release (rc 1 -> inc 2 -> this sweep 1 ->
-                // the struct's field drop 0). Forgiven on the same predicate
-                // that gates the retain, so the two cannot come apart (#7253) —
-                // and on the narrower half of it, so a forgiven store is always
-                // one the retain actually fired for.
-                if (!(rctuple_struct_field_counted_store(sl, sfi, name, structs)
-                        && rctuple_esc_expr_is_ident(fv, name))) {
-                    if (rctuple_esc_expr(fv, name, ttype, structs, borrowable)) { return true; }
-                }
-                sfi = sfi + 1;
-            }
-            return false;
-        },
-        _ => { return false; }
-    }
-    return false;
+    function visit(x: ast.Expr, esc: boolean): boolean { return rctuple_esc_at(x, esc, name, ttype, structs, borrowable); }
+    function descend(x: ast.Expr): boolean { return rctuple_esc_shape(x, name, ttype, structs) == 0; }
+    return astwalk.fold_expr_pruned(e, false, visit, descend);
 }
 // rctuple_scrutinee_is_elem_read reports whether `e` is exactly `name.<i>` — a
 // positional read of one element of the candidate tuple local, and nothing more.
@@ -44937,6 +44965,136 @@ function arrtup_elem_type_of_decl(stmts: ast.Stmt[], structs: parser.StructDecl[
     return "";
 }
 
+// esc_elem_field_of: `e` is a field read off an indexed element of the bare
+// local `root` (`root[i].<f>`) — returns `<f>`; "" otherwise. The element
+// index is not inspected here; a code-3 chain re-scan picks it up.
+function esc_elem_field_of(e: ast.Expr, root: string): string {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                ast.ExprIndex(ix) => {
+                    if (ident_name_or_empty(ix.array) == root) { return fa.field; }
+                    return "";
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+// arrtup_elem_esc_shape classifies one node for the array-of-tuples element
+// escape scan (arrtup_elem_esc_expr below has the scan's contract); codes as
+// rctuple_esc_shape's.
+function arrtup_elem_esc_shape(e: ast.Expr, name: string, ttype: string, structs: parser.StructDecl[]): i32 {
+    match (e) {
+        ast.ExprIdent(id) => { if (id.name == name) { return 2; } return 1; },   // bare array escapes
+        ast.ExprNumber(_) => { return 1; },
+        ast.ExprString(_) => { return 1; },
+        ast.ExprBool(_) => { return 1; },
+        ast.ExprFieldAccess(fa) => {
+            var ef: string = esc_elem_field_of(e, name);
+            if (ef.len() > 0 && util.is_all_digits(ef)) {
+                // name[i].N : a bare array/nested/struct element extract escapes; a
+                // scalar element is a value copy with only the index left to check.
+                if (is_scalar_type_name(tuple_type_elem_tag(ttype, util.digits_to_i32(ef)))) { return 3; }
+                return 2;
+            }
+            var pf: string = esc_elem_field_of(fa.obj, name);
+            if (pf.len() > 0 && util.is_all_digits(pf)) {
+                // `name[i].N.field`: struct-field read of a struct tuple element. A SCALAR
+                // field is a borrow (safe, check the index); a struct ARRAY/pointer field
+                // extracted bare escapes (its buffer the reclaim would free). #4365.
+                var stag: string = tuple_type_elem_tag(ttype, util.digits_to_i32(pf));
+                if (decl_is_struct(structs, stag)) {
+                    if (is_scalar_type_name(decl_field_type(structs, stag, fa.field))) { return 3; }
+                    return 2;
+                }
+            }
+            return 0;
+        },
+        ast.ExprIndex(ix) => {
+            if (ident_name_or_empty(ix.array) == name) { return 2; }   // bare name[i] tuple box
+            var bf: string = esc_elem_field_of(ix.array, name);
+            if (bf.len() > 0 && util.is_all_digits(bf)) { return 3; }   // name[i].N[j] : indexed array-field read
+            match (ix.array) {
+                ast.ExprFieldAccess(bfa) => {
+                    var pbf: string = esc_elem_field_of(bfa.obj, name);
+                    if (pbf.len() > 0 && util.is_all_digits(pbf)) { return 3; }   // name[i].N.field[j] : indexed struct array-field read
+                    return 0;
+                },
+                _ => { return 0; }
+            }
+        },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        // `name.len()` on the ARRAY ITSELF — the tuple sibling of the
+                        // arrstruct case: a header read, no element touched, so it is a
+                        // borrow. Without it any `.len()` on the local recursed into the
+                        // callee, hit the bare-ident arm and refused the whole credit. #6127.
+                        if (ident_name_or_empty(cfa.obj) == name) { return 3; }
+                        var rf: string = esc_elem_field_of(cfa.obj, name);
+                        if (rf.len() > 0 && util.is_all_digits(rf)) { return 3; }   // name[i].N.len() : array tuple-element length borrow
+                        match (cfa.obj) {
+                            ast.ExprFieldAccess(pfa) => {
+                                var prf: string = esc_elem_field_of(pfa.obj, name);
+                                if (prf.len() > 0 && util.is_all_digits(prf)) { return 3; }   // name[i].N.field.len() : struct array-field length borrow
+                            },
+                            _ => {}
+                        }
+                    }
+                    return 0;
+                },
+                _ => { return 0; }
+            }
+        },
+        ast.ExprBinary(_) => { return 0; },
+        ast.ExprUnary(_) => { return 0; },
+        ast.ExprSlice(_) => { return 0; },
+        ast.ExprArray(_) => { return 0; },
+        ast.ExprTuple(_) => { return 0; },
+        ast.ExprStructLit(_) => { return 0; },
+        ast.ExprLambda(_) => { return 1; },
+        ast.ExprMapLit(_) => { return 1; },
+        ast.ExprFString(_) => { return 1; },
+        ast.ExprUnknown(_) => { return 1; }
+    }
+    return 0;
+}
+
+// arrtup_chain_esc: rctuple_chain_esc's array-of-tuples sibling — re-scans a
+// code-3 chain's index expressions and call arguments.
+function arrtup_chain_esc(x: ast.Expr, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+    match (x) {
+        ast.ExprCall(c) => {
+            if (arrtup_chain_esc(c.callee, name, ttype, structs)) { return true; }
+            for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs)) { return true; } }
+            return false;
+        },
+        ast.ExprFieldAccess(fa) => { return arrtup_chain_esc(fa.obj, name, ttype, structs); },
+        ast.ExprIndex(ix) => {
+            if (arrtup_chain_esc(ix.array, name, ttype, structs)) { return true; }
+            return arrtup_elem_esc_expr(ix.index, name, ttype, structs);
+        },
+        ast.ExprIdent(_) => { return false; },
+        _ => { return true; }
+    }
+    return false;
+}
+
+// arrtup_elem_esc_at is the fold visitor: `esc` latches true, and each node
+// answers per its arrtup_elem_esc_shape code.
+function arrtup_elem_esc_at(x: ast.Expr, esc: boolean, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+    if (esc) { return true; }
+    var code: i32 = arrtup_elem_esc_shape(x, name, ttype, structs);
+    if (code == 2) { return true; }
+    if (code == 3) { return arrtup_chain_esc(x, name, ttype, structs); }
+    return false;
+}
+
 // arrtup_elem_esc_expr: does `e` use the array-of-tuples local `name` (element tuple
 // type `ttype`) in a way that ESCAPES an owned pointer the whole-structure reclaim
 // would free? The leaf is an ELEMENT field access `name[i].N`: a scalar field is a
@@ -44945,231 +45103,20 @@ function arrtup_elem_type_of_decl(stmts: ast.Stmt[], structs: parser.StructDecl[
 // element (the tuple box) or a bare `name` escapes. Erring toward escape is a safe
 // leak, never an over-release.
 function arrtup_elem_esc_expr(e: ast.Expr, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
-    match (e) {
-        ast.ExprIdent(id) => { return id.name == name; },
-        ast.ExprNumber(_) => { return false; },
-        ast.ExprString(_) => { return false; },
-        ast.ExprBool(_) => { return false; },
-        ast.ExprFieldAccess(fa) => {
-            match (fa.obj) {
-                ast.ExprIndex(ix) => {
-                    match (ix.array) {
-                        ast.ExprIdent(aid) => {
-                            if (aid.name == name && util.is_all_digits(fa.field)) {
-                                var tag: string = tuple_type_elem_tag(ttype, util.digits_to_i32(fa.field));
-                                if (!is_scalar_type_name(tag)) { return true; }   // bare array/nested/struct extract
-                                return arrtup_elem_esc_expr(ix.index, name, ttype, structs);
-                            }
-                        },
-                        _ => {}
-                    }
-                    return arrtup_elem_esc_expr(fa.obj, name, ttype, structs);
-                },
-                ast.ExprFieldAccess(ofa) => {
-                    // `name[i].N.field`: struct-field read of a struct tuple element. A SCALAR
-                    // field is a borrow (safe, check the index); a struct ARRAY/pointer field
-                    // extracted bare escapes (its buffer the reclaim would free). #4365.
-                    match (ofa.obj) {
-                        ast.ExprIndex(oix) => {
-                            match (oix.array) {
-                                ast.ExprIdent(oaid) => {
-                                    if (oaid.name == name && util.is_all_digits(ofa.field)) {
-                                        var stag: string = tuple_type_elem_tag(ttype, util.digits_to_i32(ofa.field));
-                                        if (decl_is_struct(structs, stag)) {
-                                            var sft: string = decl_field_type(structs, stag, fa.field);
-                                            if (is_scalar_type_name(sft)) { return arrtup_elem_esc_expr(oix.index, name, ttype, structs); }
-                                            return true;   // struct array/pointer field extracted bare
-                                        }
-                                    }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                    return arrtup_elem_esc_expr(fa.obj, name, ttype, structs);
-                },
-                _ => { return arrtup_elem_esc_expr(fa.obj, name, ttype, structs); }
-            }
-        },
-        ast.ExprIndex(ix) => {
-            // `name[i].N[j]`: indexed array-field read — safe; check both indices.
-            match (ix.array) {
-                ast.ExprFieldAccess(bfa) => {
-                    match (bfa.obj) {
-                        ast.ExprIndex(bix) => {
-                            match (bix.array) {
-                                ast.ExprIdent(bid) => {
-                                    if (bid.name == name && util.is_all_digits(bfa.field)) {
-                                        return arrtup_elem_esc_expr(bix.index, name, ttype, structs) || arrtup_elem_esc_expr(ix.index, name, ttype, structs);
-                                    }
-                                },
-                                _ => {}
-                            }
-                        },
-                        // `name[i].N.field[j]`: indexed struct ARRAY-field read — safe; check indices.
-                        ast.ExprFieldAccess(bofa) => {
-                            match (bofa.obj) {
-                                ast.ExprIndex(boix) => {
-                                    match (boix.array) {
-                                        ast.ExprIdent(boid) => {
-                                            if (boid.name == name && util.is_all_digits(bofa.field)) {
-                                                return arrtup_elem_esc_expr(boix.index, name, ttype, structs) || arrtup_elem_esc_expr(ix.index, name, ttype, structs);
-                                            }
-                                        },
-                                        _ => {}
-                                    }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                ast.ExprIdent(aid2) => { if (aid2.name == name) { return true; } },   // bare name[i] tuple box
-                _ => {}
-            }
-            return arrtup_elem_esc_expr(ix.array, name, ttype, structs) || arrtup_elem_esc_expr(ix.index, name, ttype, structs);
-        },
-        ast.ExprCall(c) => {
-            // `name[i].N.len()` and `name[i].N.field.len()`: whitelisted borrow methods —
-            // safe receiver, check args.
-            match (c.callee) {
-                ast.ExprFieldAccess(cfa) => {
-                    if (cfa.field == "len") {
-                        match (cfa.obj) {
-                            ast.ExprFieldAccess(pfa) => {
-                                match (pfa.obj) {
-                                    // `name[i].N.len()`: array tuple-element length.
-                                    ast.ExprIndex(pix) => {
-                                        match (pix.array) {
-                                            ast.ExprIdent(pid) => {
-                                                if (pid.name == name && util.is_all_digits(pfa.field)) {
-                                                    if (arrtup_elem_esc_expr(pix.index, name, ttype, structs)) { return true; }
-                                                    for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs)) { return true; } }
-                                                    return false;
-                                                }
-                                            },
-                                            _ => {}
-                                        }
-                                    },
-                                    // `name[i].N.field.len()`: struct array-field length.
-                                    ast.ExprFieldAccess(ppfa) => {
-                                        match (ppfa.obj) {
-                                            ast.ExprIndex(ppix) => {
-                                                match (ppix.array) {
-                                                    ast.ExprIdent(ppid) => {
-                                                        if (ppid.name == name && util.is_all_digits(ppfa.field)) {
-                                                            if (arrtup_elem_esc_expr(ppix.index, name, ttype, structs)) { return true; }
-                                                            for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs)) { return true; } }
-                                                            return false;
-                                                        }
-                                                    },
-                                                    _ => {}
-                                                }
-                                            },
-                                            _ => {}
-                                        }
-                                    },
-                                    _ => {}
-                                }
-                            },
-                            _ => {}
-                        }
-                    }
-                },
-                _ => {}
-            }
-            // `name.len()` on the ARRAY ITSELF — the tuple sibling of the
-            // arrstruct case: a header read, no element touched, so it is a borrow.
-            // Without it any `.len()` on the local recursed into the callee, hit
-            // the bare-ident arm and refused the whole credit. #6127.
-            match (c.callee) {
-                ast.ExprFieldAccess(lfa) => {
-                    match (lfa.obj) {
-                        ast.ExprIdent(lid) => {
-                            if (lid.name == name && lfa.field == "len") {
-                                for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs)) { return true; } }
-                                return false;
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            if (arrtup_elem_esc_expr(c.callee, name, ttype, structs)) { return true; }
-            for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs)) { return true; } }
-            return false;
-        },
-        ast.ExprBinary(b) => { return arrtup_elem_esc_expr(b.left, name, ttype, structs) || arrtup_elem_esc_expr(b.right, name, ttype, structs); },
-        ast.ExprUnary(u) => { return arrtup_elem_esc_expr(u.operand, name, ttype, structs); },
-        ast.ExprSlice(sl) => { return arrtup_elem_esc_expr(sl.array, name, ttype, structs) || arrtup_elem_esc_expr(sl.start, name, ttype, structs) || arrtup_elem_esc_expr(sl.end, name, ttype, structs); },
-        ast.ExprArray(ar) => {
-            var i: i32 = 0;
-            while (i < ar.elements.len()) { if (arrtup_elem_esc_expr(ar.elements[i], name, ttype, structs)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.ExprTuple(t) => {
-            for el in t.elements { if (arrtup_elem_esc_expr(el, name, ttype, structs)) { return true; } }
-            return false;
-        },
-        ast.ExprStructLit(sl) => {
-            if (sl.has_base && arrtup_elem_esc_expr(sl.base, name, ttype, structs)) { return true; }
-            for fv in sl.field_values { if (arrtup_elem_esc_expr(fv, name, ttype, structs)) { return true; } }
-            return false;
-        },
-        _ => { return false; }
-    }
-    return false;
+    function visit(x: ast.Expr, esc: boolean): boolean { return arrtup_elem_esc_at(x, esc, name, ttype, structs); }
+    function descend(x: ast.Expr): boolean { return arrtup_elem_esc_shape(x, name, ttype, structs) == 0; }
+    return astwalk.fold_expr_pruned(e, false, visit, descend);
 }
-function arrtup_elem_esc_stmt(st: ast.Stmt, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
-    match (st) {
-        ast.StmtVar(v) => { return arrtup_elem_esc_expr(v.init, name, ttype, structs); },
-        ast.StmtReturn(r) => { return arrtup_elem_esc_expr(r.value, name, ttype, structs); },
-        ast.StmtExpr(e) => { return arrtup_elem_esc_expr(e.value, name, ttype, structs); },
-        ast.StmtAssign(a) => { return arrtup_elem_esc_expr(a.value, name, ttype, structs); },
-        ast.StmtIf(f) => {
-            if (arrtup_elem_esc_expr(f.cond, name, ttype, structs)) { return true; }
-            var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (arrtup_elem_esc_stmt(f.then_body[ti], name, ttype, structs)) { return true; } ti = ti + 1; }
-            var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (arrtup_elem_esc_stmt(f.else_body[ei], name, ttype, structs)) { return true; } ei = ei + 1; }
-            return false;
-        },
-        ast.StmtWhile(w) => {
-            if (arrtup_elem_esc_expr(w.cond, name, ttype, structs)) { return true; }
-            var i: i32 = 0;
-            while (i < w.body.len()) { if (arrtup_elem_esc_stmt(w.body[i], name, ttype, structs)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.StmtFor(fo) => {
-            if (arrtup_elem_esc_expr(fo.iter, name, ttype, structs)) { return true; }
-            var i: i32 = 0;
-            while (i < fo.body.len()) { if (arrtup_elem_esc_stmt(fo.body[i], name, ttype, structs)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.StmtMatch(m) => {
-            if (arrtup_elem_esc_expr(m.scrutinee, name, ttype, structs)) { return true; }
-            for arm in m.arms {
-                if (arm.has_guard && arrtup_elem_esc_expr(arm.guard, name, ttype, structs)) { return true; }
-                var bi: i32 = 0;
-                while (bi < arm.body.len()) { if (arrtup_elem_esc_stmt(arm.body[bi], name, ttype, structs)) { return true; } bi = bi + 1; }
-            }
-            return false;
-        },
-        ast.StmtDefer(d) => { return arrtup_elem_esc_stmt(d.action, name, ttype, structs); },
-        _ => { return false; }
-    }
-    return false;
-}
+
 // arrtup_elem_payload_escapes: any statement in the body uses `name` (element tuple
-// type `ttype`) in an escaping way per arrtup_elem_esc_stmt. A struct tuple-element
+// type `ttype`) in an escaping way per the scan above. A struct tuple-element
 // SCALAR-field read / indexed array-field read / .len() is a borrow (reclaim proceeds);
 // a whole struct element or a bare struct array-field extraction escapes. #4365.
 function arrtup_elem_payload_escapes(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+    function visit(x: ast.Expr, esc: boolean): boolean { return arrtup_elem_esc_at(x, esc, name, ttype, structs); }
+    function descend(x: ast.Expr): boolean { return arrtup_elem_esc_shape(x, name, ttype, structs) == 0; }
     for stmt in stmts {
-        if (arrtup_elem_esc_stmt(stmt, name, ttype, structs)) { return true; }
+        if (astwalk.fold_stmt_pruned(stmt, false, visit, descend)) { return true; }
     }
     return false;
 }
@@ -45980,6 +45927,175 @@ function arrstruct_elem_type_of_decl(stmts: ast.Stmt[], name: string, structs: p
     return "";
 }
 
+// arrstruct_elem_esc_shape classifies one node for the array-of-structs
+// element escape scan (arrstruct_elem_esc_expr below has the scan's contract);
+// codes as rctuple_esc_shape's.
+function arrstruct_elem_esc_shape(e: ast.Expr, name: string, sty: string, structs: parser.StructDecl[], msites: string[]): i32 {
+    match (e) {
+        ast.ExprIdent(id) => { if (id.name == name) { return 2; } return 1; },   // bare array escapes
+        ast.ExprNumber(_) => { return 1; },
+        ast.ExprString(_) => { return 1; },
+        ast.ExprBool(_) => { return 1; },
+        ast.ExprFieldAccess(fa) => {
+            var ef: string = esc_elem_field_of(e, name);
+            if (ef.len() > 0) {
+                // name[i].f : a bare non-scalar field extract escapes; a scalar
+                // (or unknown) field is a value copy with only the index to check.
+                var ft: string = decl_field_type(structs, sty, ef);
+                if (ft != "" && !is_scalar_type_name(ft)) { return 2; }
+                return 3;
+            }
+            return 0;
+        },
+        ast.ExprIndex(ix) => {
+            if (ident_name_or_empty(ix.array) == name) { return 2; }   // bare name[i] struct box
+            var bf: string = esc_elem_field_of(ix.array, name);
+            if (bf.len() > 0) { return 3; }   // name[i].f[j] : indexed array-field read — safe; check both indices
+            return 0;
+        },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(_) => { return 4; },
+                ast.ExprFieldAccess(cfa) => {
+                    if (cfa.field == "len") {
+                        // `name.len()` on the ARRAY ITSELF — a header read, no element
+                        // touched, so it is a borrow exactly like the element-field
+                        // `.len()`. Left generic it recurses into the callee and hits
+                        // the bare-ident arm, so ANY `.len()` on the local refused the
+                        // whole credit. Measured: the identical array leaked 8000 over
+                        // 100 rounds with `ps.len()` and reclaimed cleanly with
+                        // `ps[0].xs[0]` — reading LESS made it leak, and one `.len()`
+                        // poisoned the credit even alongside an element read. #6127.
+                        if (ident_name_or_empty(cfa.obj) == name) { return 3; }
+                        var rf: string = esc_elem_field_of(cfa.obj, name);
+                        if (rf.len() > 0) { return 3; }   // name[i].f.len() : the whitelisted borrow method
+                    }
+                    // `name.append(<elem>)` / `name.with(i, <elem>)` — the sanctioned
+                    // self-store rebind (#6535). The receiver is READ to copy the
+                    // buffer, and the element stored is one the container may own per
+                    // arrstruct_self_store_elem, so nothing here binds an element
+                    // pointer or extracts a field payload. The shape is checked, not
+                    // assumed: a non-store method or an unsanctioned element falls to
+                    // the generic tail and still escapes through the bare receiver.
+                    if (ident_name_or_empty(cfa.obj) == name
+                        && arrstruct_self_store_elem(e, name, structs, msites)) { return 5; }
+                    return 0;
+                },
+                _ => { return 0; }
+            }
+        },
+        ast.ExprBinary(_) => { return 0; },
+        ast.ExprUnary(_) => { return 0; },
+        ast.ExprSlice(_) => { return 0; },
+        ast.ExprArray(_) => { return 0; },
+        ast.ExprTuple(_) => { return 0; },
+        ast.ExprStructLit(_) => {
+            // The counted field share is not an element-payload escape either:
+            // the field holds a counted reference to the SAME buffer, so the
+            // elements' owned fields are reachable from exactly the two owners
+            // whose walks are both is_unique-gated. Refusing it here sank the
+            // credit even once arrstruct_unsafe_for admitted the share.
+            if (arrstruct_counted_field_share(e, name, structs, msites)) { return 1; }
+            return 0;
+        },
+        ast.ExprLambda(_) => { return 1; },
+        ast.ExprMapLit(_) => { return 1; },
+        ast.ExprFString(_) => { return 1; },
+        ast.ExprUnknown(_) => { return 1; }
+    }
+    return 0;
+}
+
+// arrstruct_chain_esc: rctuple_chain_esc's array-of-structs sibling — re-scans
+// a code-3 chain's index expressions and call arguments.
+function arrstruct_chain_esc(x: ast.Expr, name: string, sty: string, structs: parser.StructDecl[], msites: string[], borrowable: string[]): boolean {
+    match (x) {
+        ast.ExprCall(c) => {
+            if (arrstruct_chain_esc(c.callee, name, sty, structs, msites, borrowable)) { return true; }
+            for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites, borrowable)) { return true; } }
+            return false;
+        },
+        ast.ExprFieldAccess(fa) => { return arrstruct_chain_esc(fa.obj, name, sty, structs, msites, borrowable); },
+        ast.ExprIndex(ix) => {
+            if (arrstruct_chain_esc(ix.array, name, sty, structs, msites, borrowable)) { return true; }
+            return arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites, borrowable);
+        },
+        ast.ExprIdent(_) => { return false; },
+        _ => { return true; }
+    }
+    return false;
+}
+
+// arrstruct_elem_esc_at is the fold visitor: `esc` latches true, and each node
+// answers per its arrstruct_elem_esc_shape code.
+function arrstruct_elem_esc_at(x: ast.Expr, esc: boolean, name: string, sty: string, structs: parser.StructDecl[], msites: string[], borrowable: string[]): boolean {
+    if (esc) { return true; }
+    var code: i32 = arrstruct_elem_esc_shape(x, name, sty, structs, msites);
+    if (code == 2) { return true; }
+    if (code == 3) { return arrstruct_chain_esc(x, name, sty, structs, msites, borrowable); }
+    if (code == 4) {
+        match (x) {
+            ast.ExprCall(c) => {
+                var callee: string = ident_name_or_empty(c.callee);
+                if (callee == name) { return true; }
+                // A bare-ident ARGUMENT at a param proven to touch no ELEMENT of it
+                // ("ELB:") is a borrow, not an escape. Reading it as one cost the
+                // array its whole element walk: `rd(keep, r)` over a callee that only
+                // reads `src.len()` measured 4 allocs / 2 frees against native's 4/4,
+                // the payload stranded — the argument position alone, independent of
+                // the binding source and of any loop.
+                //
+                // The plain box flag is NOT enough, the same as the arrenum twin. It
+                // proves the callee never keeps the BOX, which licenses a box-only
+                // release; this class's release walks the ELEMENTS. Reading
+                // emit_arrstruct_deep_free suggests otherwise — its per-element step
+                // is an rc-GATED field drop plus a plain __fern_rc_dec, and a dec
+                // cannot over-free a box a second owner holds a COUNTED reference to.
+                // That last word is the gap: an element handed out UNCOUNTED has no
+                // such reference, and the box flag says nothing about it. Every
+                // handout probe that could be written by hand reads clean on the box
+                // flag; the compiler's own sources segfault gen2 in three fixpoint
+                // programs. Ask the element question.
+                //
+                // "CNT:" admits a SECOND position, where "ELB:" refuses — the
+                // arrenum twin's reasoning verbatim. A callee that STORES the array
+                // in a struct literal keeps a reference, so the element flag says
+                // no, but that store is COUNTED: the construction incs the array and
+                // the holder's field drop decs it, leaving the caller's own claim
+                // intact and its element walk still owed. Withholding it is the leak
+                // (`struct_arr__param`, a constant 2 objects), not the safety.
+                // param_counted_of's "DCNT:" tier proves the store counted, and
+                // admits only where the element walk exists and no `p[i]` hands one
+                // out.
+                //
+                // Free functions only — a method's receiver is a second borrow
+                // question the tier does not answer.
+                var eai: i32 = 0;
+                while (eai < c.args.len()) {
+                    if (ident_name_or_empty(c.args[eai]) == name) {
+                        if (!(param_is_borrowable(borrowable, "ELB:" + callee, eai)
+                              || param_is_borrowable(borrowable, "CNT:" + callee, eai))) { return true; }
+                    } else if (arrstruct_elem_esc_expr(c.args[eai], name, sty, structs, msites, borrowable)) { return true; }
+                    eai = eai + 1;
+                }
+                return false;
+            },
+            _ => { return true; }
+        }
+    }
+    if (code == 5) {
+        // The sanctioned self-store scans only the FIRST argument — `append`'s
+        // element, `with`'s index. `with`'s element argument was vetted by
+        // arrstruct_self_store_elem (a bare ident or a fresh literal) and the
+        // hand scan never walked it; preserved exactly.
+        match (x) {
+            ast.ExprCall(c) => { return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites, borrowable); },
+            _ => { return true; }
+        }
+    }
+    return false;
+}
+
 // arrstruct_elem_esc_expr: does `e` use the array-of-structs local `name` (element
 // struct type `sty`) in a way that ESCAPES an owned field the reclaim would free? The
 // leaf is an ELEMENT field access `name[i].f`: a scalar field is a safe value copy; an
@@ -45988,251 +46104,16 @@ function arrstruct_elem_type_of_decl(stmts: ast.Stmt[], name: string, structs: p
 // struct box) or a bare `name` escapes — except as an ARGUMENT at an "ELB:"-flagged
 // param, where the callee is proven to touch no element.
 function arrstruct_elem_esc_expr(e: ast.Expr, name: string, sty: string, structs: parser.StructDecl[], msites: string[], borrowable: string[]): boolean {
-    match (e) {
-        ast.ExprIdent(id) => { return id.name == name; },
-        ast.ExprNumber(_) => { return false; },
-        ast.ExprString(_) => { return false; },
-        ast.ExprBool(_) => { return false; },
-        ast.ExprFieldAccess(fa) => {
-            match (fa.obj) {
-                ast.ExprIndex(ix) => {
-                    match (ix.array) {
-                        ast.ExprIdent(aid) => {
-                            if (aid.name == name) {
-                                var ft: string = decl_field_type(structs, sty, fa.field);
-                                if (ft != "" && !is_scalar_type_name(ft)) { return true; }   // bare non-scalar field extract
-                                return arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites, borrowable);
-                            }
-                        },
-                        _ => {}
-                    }
-                    return arrstruct_elem_esc_expr(fa.obj, name, sty, structs, msites, borrowable);
-                },
-                _ => { return arrstruct_elem_esc_expr(fa.obj, name, sty, structs, msites, borrowable); }
-            }
-        },
-        ast.ExprIndex(ix) => {
-            // `name[i].f[j]`: indexed array-field read — safe; check both indices.
-            match (ix.array) {
-                ast.ExprFieldAccess(bfa) => {
-                    match (bfa.obj) {
-                        ast.ExprIndex(bix) => {
-                            match (bix.array) {
-                                ast.ExprIdent(bid) => {
-                                    if (bid.name == name) {
-                                        return arrstruct_elem_esc_expr(bix.index, name, sty, structs, msites, borrowable) || arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites, borrowable);
-                                    }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                ast.ExprIdent(aid2) => { if (aid2.name == name) { return true; } },   // bare name[i] struct box
-                _ => {}
-            }
-            return arrstruct_elem_esc_expr(ix.array, name, sty, structs, msites, borrowable) || arrstruct_elem_esc_expr(ix.index, name, sty, structs, msites, borrowable);
-        },
-        ast.ExprCall(c) => {
-            // `name[i].f.len()`: the one whitelisted borrow method — safe receiver, check args.
-            match (c.callee) {
-                ast.ExprFieldAccess(cfa) => {
-                    match (cfa.obj) {
-                        ast.ExprFieldAccess(pfa) => {
-                            match (pfa.obj) {
-                                ast.ExprIndex(pix) => {
-                                    match (pix.array) {
-                                        ast.ExprIdent(pid) => {
-                                            if (pid.name == name && cfa.field == "len") {
-                                                if (arrstruct_elem_esc_expr(pix.index, name, sty, structs, msites, borrowable)) { return true; }
-                                                for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites, borrowable)) { return true; } }
-                                                return false;
-                                            }
-                                        },
-                                        _ => {}
-                                    }
-                                },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            // `name.len()` on the ARRAY ITSELF — a header read, no element touched,
-            // so it is a borrow exactly like the element-field `.len()` above. It
-            // used to fall through to the generic tail, which recurses into the
-            // callee and hits the bare-ident arm, so ANY `.len()` on the local
-            // refused the whole credit. Measured: the identical array leaked 8000
-            // over 100 rounds with `ps.len()` and reclaimed cleanly with
-            // `ps[0].xs[0]` — reading LESS made it leak, and one `.len()` poisoned
-            // the credit even alongside an element read. #6127.
-            match (c.callee) {
-                ast.ExprFieldAccess(lfa) => {
-                    match (lfa.obj) {
-                        ast.ExprIdent(lid) => {
-                            if (lid.name == name && lfa.field == "len") {
-                                for arg in c.args { if (arrstruct_elem_esc_expr(arg, name, sty, structs, msites, borrowable)) { return true; } }
-                                return false;
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            // `name.append(<fresh struct literal>)` — the sanctioned self-append
-            // rebind (#6535). Same whitelist shape and same reason as `.len()`
-            // above: the receiver is READ to copy the buffer, and the element
-            // stored is a freshly-built sole-owned box, so nothing here binds an
-            // element pointer or extracts a field payload. Without it the
-            // receiver fell to the bare-ident arm and every append-built
-            // array-of-structs refused the credit — the leak this closes.
-            //
-            // The shape is checked, not assumed: a non-append method, a
-            // non-literal element, or an append whose result goes SOMEWHERE ELSE
-            // all fall through to the generic tail below and still escape. The
-            // arg is walked, so `name.append(Val { xs: name[0].xs })` is caught.
-            match (c.callee) {
-                ast.ExprFieldAccess(afa) => {
-                    match (afa.obj) {
-                        ast.ExprIdent(aid3) => {
-                            if (aid3.name == name && arrstruct_self_store_elem(e, name, structs, msites)) {
-                                return arrstruct_elem_esc_expr(c.args[0], name, sty, structs, msites, borrowable);
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            if (arrstruct_elem_esc_expr(c.callee, name, sty, structs, msites, borrowable)) { return true; }
-            // A bare-ident ARGUMENT at a param proven to touch no ELEMENT of it
-            // ("ELB:") is a borrow, not an escape. Reading it as one cost the
-            // array its whole element walk: `rd(keep, r)` over a callee that only
-            // reads `src.len()` measured 4 allocs / 2 frees against native's 4/4,
-            // the payload stranded — the argument position alone, independent of
-            // the binding source and of any loop.
-            //
-            // The plain box flag is NOT enough, the same as the arrenum twin. It
-            // proves the callee never keeps the BOX, which licenses a box-only
-            // release; this class's release walks the ELEMENTS. Reading
-            // emit_arrstruct_deep_free suggests otherwise — its per-element step
-            // is an rc-GATED field drop plus a plain __fern_rc_dec, and a dec
-            // cannot over-free a box a second owner holds a COUNTED reference to.
-            // That last word is the gap: an element handed out UNCOUNTED has no
-            // such reference, and the box flag says nothing about it. Every
-            // handout probe that could be written by hand reads clean on the box
-            // flag; the compiler's own sources segfault gen2 in three fixpoint
-            // programs. Ask the element question.
-            //
-            // Free functions only — a method's receiver is a second borrow
-            // question the tier does not answer.
-            var eb_callee: string = "";
-            match (c.callee) {
-                ast.ExprIdent(ecid) => { eb_callee = ecid.name; },
-                _ => {}
-            }
-            var eai: i32 = 0;
-            while (eai < c.args.len()) {
-                var eb_bare: boolean = false;
-                match (c.args[eai]) {
-                    ast.ExprIdent(eaid) => { if (eaid.name == name) { eb_bare = true; } },
-                    _ => {}
-                }
-                if (eb_bare) {
-                    // "CNT:" admits a SECOND position, where "ELB:" refuses —
-                    // the arrenum twin's reasoning verbatim. A callee that
-                    // STORES the array in a struct literal keeps a reference, so
-                    // the element flag says no, but that store is COUNTED: the
-                    // construction incs the array and the holder's field drop
-                    // decs it, leaving the caller's own claim intact and its
-                    // element walk still owed. Withholding it is the leak
-                    // (`struct_arr__param`, a constant 2 objects), not the
-                    // safety. param_counted_of's "DCNT:" tier proves the store
-                    // counted, and admits only where the element walk exists and
-                    // no `p[i]` hands one out.
-                    if (eb_callee.len() == 0
-                        || !(param_is_borrowable(borrowable, "ELB:" + eb_callee, eai)
-                            || param_is_borrowable(borrowable, "CNT:" + eb_callee, eai))) { return true; }
-                } else if (arrstruct_elem_esc_expr(c.args[eai], name, sty, structs, msites, borrowable)) { return true; }
-                eai = eai + 1;
-            }
-            return false;
-        },
-        ast.ExprBinary(b) => { return arrstruct_elem_esc_expr(b.left, name, sty, structs, msites, borrowable) || arrstruct_elem_esc_expr(b.right, name, sty, structs, msites, borrowable); },
-        ast.ExprUnary(u) => { return arrstruct_elem_esc_expr(u.operand, name, sty, structs, msites, borrowable); },
-        ast.ExprSlice(sl) => { return arrstruct_elem_esc_expr(sl.array, name, sty, structs, msites, borrowable) || arrstruct_elem_esc_expr(sl.start, name, sty, structs, msites, borrowable) || arrstruct_elem_esc_expr(sl.end, name, sty, structs, msites, borrowable); },
-        ast.ExprArray(ar) => {
-            var i: i32 = 0;
-            while (i < ar.elements.len()) { if (arrstruct_elem_esc_expr(ar.elements[i], name, sty, structs, msites, borrowable)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.ExprTuple(t) => {
-            for el in t.elements { if (arrstruct_elem_esc_expr(el, name, sty, structs, msites, borrowable)) { return true; } }
-            return false;
-        },
-        ast.ExprStructLit(slb) => {
-            // The counted field share is not an element-payload escape either:
-            // the field holds a counted reference to the SAME buffer, so the
-            // elements' owned fields are reachable from exactly the two owners
-            // whose walks are both is_unique-gated. Refusing it here sank the
-            // credit even once arrstruct_unsafe_for admitted the share.
-            if (arrstruct_counted_field_share(e, name, structs, msites)) { return false; }
-            if (slb.has_base && arrstruct_elem_esc_expr(slb.base, name, sty, structs, msites, borrowable)) { return true; }
-            var i: i32 = 0;
-            while (i < slb.field_values.len()) { if (arrstruct_elem_esc_expr(slb.field_values[i], name, sty, structs, msites, borrowable)) { return true; } i = i + 1; }
-            return false;
-        },
-        _ => { return false; }
-    }
-    return false;
+    function visit(x: ast.Expr, esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable); }
+    function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites) == 0; }
+    return astwalk.fold_expr_pruned(e, false, visit, descend);
 }
-function arrstruct_elem_esc_stmt(st: ast.Stmt, name: string, sty: string, structs: parser.StructDecl[], msites: string[], borrowable: string[]): boolean {
-    match (st) {
-        ast.StmtVar(v) => { return arrstruct_elem_esc_expr(v.init, name, sty, structs, msites, borrowable); },
-        ast.StmtReturn(r) => { return arrstruct_elem_esc_expr(r.value, name, sty, structs, msites, borrowable); },
-        ast.StmtExpr(e) => { return arrstruct_elem_esc_expr(e.value, name, sty, structs, msites, borrowable); },
-        ast.StmtAssign(a) => { return arrstruct_elem_esc_expr(a.value, name, sty, structs, msites, borrowable); },
-        ast.StmtIf(f) => {
-            if (arrstruct_elem_esc_expr(f.cond, name, sty, structs, msites, borrowable)) { return true; }
-            var ti: i32 = 0;
-            while (ti < f.then_body.len()) { if (arrstruct_elem_esc_stmt(f.then_body[ti], name, sty, structs, msites, borrowable)) { return true; } ti = ti + 1; }
-            var ei: i32 = 0;
-            while (ei < f.else_body.len()) { if (arrstruct_elem_esc_stmt(f.else_body[ei], name, sty, structs, msites, borrowable)) { return true; } ei = ei + 1; }
-            return false;
-        },
-        ast.StmtWhile(w) => {
-            if (arrstruct_elem_esc_expr(w.cond, name, sty, structs, msites, borrowable)) { return true; }
-            var i: i32 = 0;
-            while (i < w.body.len()) { if (arrstruct_elem_esc_stmt(w.body[i], name, sty, structs, msites, borrowable)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.StmtFor(fo) => {
-            if (arrstruct_elem_esc_expr(fo.iter, name, sty, structs, msites, borrowable)) { return true; }
-            var i: i32 = 0;
-            while (i < fo.body.len()) { if (arrstruct_elem_esc_stmt(fo.body[i], name, sty, structs, msites, borrowable)) { return true; } i = i + 1; }
-            return false;
-        },
-        ast.StmtMatch(m) => {
-            if (arrstruct_elem_esc_expr(m.scrutinee, name, sty, structs, msites, borrowable)) { return true; }
-            for arm in m.arms {
-                if (arm.has_guard && arrstruct_elem_esc_expr(arm.guard, name, sty, structs, msites, borrowable)) { return true; }
-                var bi: i32 = 0;
-                while (bi < arm.body.len()) { if (arrstruct_elem_esc_stmt(arm.body[bi], name, sty, structs, msites, borrowable)) { return true; } bi = bi + 1; }
-            }
-            return false;
-        },
-        ast.StmtDefer(d) => { return arrstruct_elem_esc_stmt(d.action, name, sty, structs, msites, borrowable); },
-        _ => { return false; }
-    }
-    return false;
-}
+
 function arrstruct_elem_payload_escapes(stmts: ast.Stmt[], name: string, sty: string, structs: parser.StructDecl[], msites: string[], borrowable: string[]): boolean {
+    function visit(x: ast.Expr, esc: boolean): boolean { return arrstruct_elem_esc_at(x, esc, name, sty, structs, msites, borrowable); }
+    function descend(x: ast.Expr): boolean { return arrstruct_elem_esc_shape(x, name, sty, structs, msites) == 0; }
     for stmt in stmts {
-        if (arrstruct_elem_esc_stmt(stmt, name, sty, structs, msites, borrowable)) { return true; }
+        if (astwalk.fold_stmt_pruned(stmt, false, visit, descend)) { return true; }
     }
     return false;
 }
