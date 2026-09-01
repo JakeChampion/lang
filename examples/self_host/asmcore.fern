@@ -3899,162 +3899,83 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
     return util.Diag { code: "P001", message: where + ": parser-side unknown: " + kind, line: line, col: col };
 }
 
-function collect_expr_unknown_errors(e: ast.Expr, where: string, errs: util.Diag[]): util.Diag[] {
-    match (e) {
-        ast.ExprIdent(_) => { return errs; },
-        ast.ExprNumber(_) => { return errs; },
-        ast.ExprString(_) => { return errs; },
-        ast.ExprBool(_) => { return errs; },
-        ast.ExprBinary(b) => {
-            errs = collect_expr_unknown_errors(b.left, where, errs);
-            return collect_expr_unknown_errors(b.right, where, errs);
-        },
-        ast.ExprUnary(u) => { return collect_expr_unknown_errors(u.operand, where, errs); },
-        ast.ExprCall(c) => {
-            errs = collect_expr_unknown_errors(c.callee, where, errs);
-            var i: i32 = 0;
-            while (i < c.args.len()) {
-                errs = collect_expr_unknown_errors(c.args[i], where, errs);
-                i = i + 1;
-            }
-            return errs;
-        },
-        ast.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                errs = collect_expr_unknown_errors(a.elements[i], where, errs);
-                i = i + 1;
-            }
-            return errs;
-        },
-        ast.ExprTuple(t) => {
-            var i: i32 = 0;
-            while (i < t.elements.len()) {
-                errs = collect_expr_unknown_errors(t.elements[i], where, errs);
-                i = i + 1;
-            }
-            return errs;
-        },
-        ast.ExprMapLit(ml) => {
-            var i: i32 = 0;
-            while (i < ml.keys.len()) {
-                errs = collect_expr_unknown_errors(ml.keys[i], where, errs);
-                errs = collect_expr_unknown_errors(ml.vals[i], where, errs);
-                i = i + 1;
-            }
-            return errs;
-        },
-        ast.ExprFString(fs) => {
-            var i: i32 = 0;
-            while (i < fs.exprs.len()) {
-                if (fs.is_expr[i]) { errs = collect_expr_unknown_errors(fs.exprs[i], where, errs); }
-                i = i + 1;
-            }
-            return errs;
-        },
-        ast.ExprIndex(x) => {
-            errs = collect_expr_unknown_errors(x.array, where, errs);
-            return collect_expr_unknown_errors(x.index, where, errs);
-        },
-        ast.ExprSlice(sl) => {
-            errs = collect_expr_unknown_errors(sl.array, where, errs);
-            errs = collect_expr_unknown_errors(sl.start, where, errs);
-            return collect_expr_unknown_errors(sl.end, where, errs);
-        },
-        ast.ExprStructLit(sl) => {
-            if (sl.has_base) { errs = collect_expr_unknown_errors(sl.base, where, errs); }
-            var i: i32 = 0;
-            while (i < sl.field_values.len()) {
-                errs = collect_expr_unknown_errors(sl.field_values[i], where, errs);
-                i = i + 1;
-            }
-            return errs;
-        },
-        ast.ExprFieldAccess(fa) => { return collect_expr_unknown_errors(fa.obj, where, errs); },
-        ast.ExprLambda(lm) => {
-            var i: i32 = 0;
-            while (i < lm.body.len()) {
-                errs = collect_stmt_unknown_errors(lm.body[i], where, errs);
-                i = i + 1;
-            }
-            return errs;
-        },
-        ast.ExprUnknown(u) => { return errs.append(parse_unknown_error(where, u.kind, u.line, u.col)); }
-    }
-    return errs;
-}
+// UnkScan threads the pre-check's state through astwalk's fold: the
+// diagnostics so far, the `where` label of the enclosing declaration, and the
+// one position-dependent rule. A bare `return;` is encoded as
+// ExprUnknown("punct:;") in the return's VALUE slot, where it is a parser
+// sentinel rather than an error — later checker passes validate it in context
+// (void vs non-void) — but the SAME sentinel anywhere else (`var x = ;`,
+// `return 1 + ;`) is a real parse error. unknown_error_stmt_at arms
+// skip_bare_return on exactly that shape; the fold is pre-order, so the next
+// expression visited is that return's value itself, which consumes the flag.
+struct UnkScan { where: string, skip_bare_return: boolean, errs: util.Diag[] }
 
-function collect_stmt_unknown_errors(st: ast.Stmt, where: string, errs: util.Diag[]): util.Diag[] {
+// Every variant is spelled out rather than wildcarded so a new statement or
+// expression kind fails E030 here and gets a decision about what it reports,
+// not a silent pass — the property the hand-written walks these replace had.
+function unknown_error_stmt_at(st: ast.Stmt, a: UnkScan): UnkScan {
     match (st) {
-        ast.StmtVar(v) => { return collect_expr_unknown_errors(v.init, where, errs); },
         ast.StmtReturn(r) => {
-            // A bare `return;` is encoded as ExprUnknown("punct:;"). It's a
-            // parser sentinel, not a real unknown expression — later checker
-            // passes validate whether it is legal in context (void vs non-void).
             match (r.value) {
                 ast.ExprUnknown(u) => {
-                    if (u.kind == "punct:;") { return errs; }
+                    if (u.kind == "punct:;") { return UnkScan { ...a, skip_bare_return: true }; }
+                    return a;
                 },
-                _ => {}
+                _ => { return a; }
             }
-            return collect_expr_unknown_errors(r.value, where, errs);
+            return a;
         },
-        ast.StmtExpr(e) => { return collect_expr_unknown_errors(e.value, where, errs); },
-        ast.StmtIf(i) => {
-            errs = collect_expr_unknown_errors(i.cond, where, errs);
-            var ti: i32 = 0;
-            while (ti < i.then_body.len()) {
-                errs = collect_stmt_unknown_errors(i.then_body[ti], where, errs);
-                ti = ti + 1;
-            }
-            var ei: i32 = 0;
-            while (ei < i.else_body.len()) {
-                errs = collect_stmt_unknown_errors(i.else_body[ei], where, errs);
-                ei = ei + 1;
-            }
-            return errs;
+        ast.StmtUnknown(u) => {
+            return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, "stmt: " + u.kind, u.line, u.col)) };
         },
-        ast.StmtWhile(w) => {
-            errs = collect_expr_unknown_errors(w.cond, where, errs);
-            var i: i32 = 0;
-            while (i < w.body.len()) {
-                errs = collect_stmt_unknown_errors(w.body[i], where, errs);
-                i = i + 1;
-            }
-            return errs;
-        },
-        ast.StmtAssign(a) => { return collect_expr_unknown_errors(a.value, where, errs); },
-        ast.StmtMatch(m) => {
-            errs = collect_expr_unknown_errors(m.scrutinee, where, errs);
-            var ai: i32 = 0;
-            while (ai < m.arms.len()) {
-                if (m.arms[ai].has_guard) {
-                    errs = collect_expr_unknown_errors(m.arms[ai].guard, where, errs);
-                }
-                var bi: i32 = 0;
-                while (bi < m.arms[ai].body.len()) {
-                    errs = collect_stmt_unknown_errors(m.arms[ai].body[bi], where, errs);
-                    bi = bi + 1;
-                }
-                ai = ai + 1;
-            }
-            return errs;
-        },
-        ast.StmtFor(f) => {
-            errs = collect_expr_unknown_errors(f.iter, where, errs);
-            var i: i32 = 0;
-            while (i < f.body.len()) {
-                errs = collect_stmt_unknown_errors(f.body[i], where, errs);
-                i = i + 1;
-            }
-            return errs;
-        },
-        ast.StmtBreak(_) => { return errs; },
-        ast.StmtContinue(_) => { return errs; },
-        ast.StmtUnknown(u) => { return errs.append(parse_unknown_error(where, "stmt: " + u.kind, u.line, u.col)); },
-        ast.StmtDefer(d) => { return collect_stmt_unknown_errors(d.action, where, errs); }
+        ast.StmtDefer(_) => { return a; },
+        ast.StmtVar(_) => { return a; },
+        ast.StmtExpr(_) => { return a; },
+        ast.StmtIf(_) => { return a; },
+        ast.StmtWhile(_) => { return a; },
+        ast.StmtAssign(_) => { return a; },
+        ast.StmtMatch(_) => { return a; },
+        ast.StmtFor(_) => { return a; },
+        ast.StmtBreak(_) => { return a; },
+        ast.StmtContinue(_) => { return a; }
     }
-    return errs;
+    return a;
+}
+
+function unknown_error_expr_at(e: ast.Expr, a: UnkScan): UnkScan {
+    match (e) {
+        ast.ExprUnknown(u) => {
+            if (a.skip_bare_return) { return UnkScan { ...a, skip_bare_return: false }; }
+            return UnkScan { ...a, errs: a.errs.append(parse_unknown_error(a.where, u.kind, u.line, u.col)) };
+        },
+        ast.ExprIdent(_) => { return a; },
+        ast.ExprNumber(_) => { return a; },
+        ast.ExprString(_) => { return a; },
+        ast.ExprBool(_) => { return a; },
+        ast.ExprBinary(_) => { return a; },
+        ast.ExprUnary(_) => { return a; },
+        ast.ExprCall(_) => { return a; },
+        ast.ExprArray(_) => { return a; },
+        ast.ExprTuple(_) => { return a; },
+        ast.ExprMapLit(_) => { return a; },
+        ast.ExprFString(_) => { return a; },
+        ast.ExprIndex(_) => { return a; },
+        ast.ExprSlice(_) => { return a; },
+        ast.ExprStructLit(_) => { return a; },
+        ast.ExprFieldAccess(_) => { return a; },
+        ast.ExprLambda(_) => { return a; }
+    }
+    return a;
+}
+
+// unknown_errors_stmts appends the P001/P002 diagnostics for every unknown
+// node reachable from `stmts` to `errs`.
+function unknown_errors_stmts(stmts: ast.Stmt[], where: string, errs: util.Diag[]): util.Diag[] {
+    var a: UnkScan = UnkScan { where: where, skip_bare_return: false, errs: errs };
+    for st in stmts {
+        a = astwalk.fold_stmt_nodes(st, a, unknown_error_stmt_at, unknown_error_expr_at, astwalk.descend_all);
+    }
+    return a.errs;
 }
 
 pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
@@ -4067,19 +3988,10 @@ pub function parse_unknown_errors_module(mod: parser.Module): util.Diag[] {
                 line: mod.funcs[fi].line, col: mod.funcs[fi].col });
             where = "in malformed function declaration";
         }
-        var bi: i32 = 0;
-        while (bi < mod.funcs[fi].body.len()) {
-            errs = collect_stmt_unknown_errors(mod.funcs[fi].body[bi], where, errs);
-            bi = bi + 1;
-        }
+        errs = unknown_errors_stmts(mod.funcs[fi].body, where, errs);
         fi = fi + 1;
     }
-    var ti: i32 = 0;
-    while (ti < mod.top_stmts.len()) {
-        errs = collect_stmt_unknown_errors(mod.top_stmts[ti], "at top level", errs);
-        ti = ti + 1;
-    }
-    return errs;
+    return unknown_errors_stmts(mod.top_stmts, "at top level", errs);
 }
 
 // has_to_string reports whether receiver-type name `rt` has a `to_string`
