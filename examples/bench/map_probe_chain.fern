@@ -1,0 +1,30 @@
+import "core/map";
+
+// map_probe_chain — lookups against a map held just under the 75% load-factor
+// ceiling, half of them misses. map_int and map_string sit near 50% load after
+// their growth doubling, where nearly every probe ends at its home bucket, so
+// they cannot see the probe LOOP: a change that slowed or removed the group
+// scan would move them little or not at all. This shape is where the chain
+// walk dominates — at this load a miss must walk to the first empty bucket —
+// so it is the row that regresses if the SWAR group probe stops paying.
+function main(): i32 {
+  var n: i32 = 190000;               // pow2_ceil growth lands this at 72.5% load
+  var m: Map[i32, i32] = Map { };
+  var i: i32 = 0;
+  while (i < n) {
+    m = m.insert(i * 2, i);
+    i = i + 1;
+  }
+  var total: i64 = 0i64;
+  var r: i32 = 0;
+  while (r < 3) {
+    var j: i32 = 0;
+    while (j < n) {
+      total = total + m.get_or(j * 2, 0) as i64;         // hit
+      total = total + m.get_or(j * 2 + 1, 0 - 1) as i64; // miss
+      j = j + 1;
+    }
+    r = r + 1;
+  }
+  return (total % 97i64) as i32;
+}

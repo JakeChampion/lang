@@ -41,9 +41,11 @@ x86_64/enum_match.text	712
 x86_64/enum_match.ir	205650067
 x86_64/int_loop.text	114
 x86_64/int_loop.ir	66000032
-x86_64/map_int.text	3740
-x86_64/map_int.ir	94109018
-x86_64/map_string.text	5071
+x86_64/map_int.text	4893
+x86_64/map_int.ir	96134380
+x86_64/map_probe_chain.text	4923
+x86_64/map_probe_chain.ir	891114763
+x86_64/map_string.text	6204
 x86_64/map_string.ir	208811413	2
 x86_64/sort_inplace.text	910
 x86_64/sort_inplace.ir	153321104
@@ -65,10 +67,10 @@ x86_64/struct_drop.text	3138
 x86_64/struct_drop.ir	619340163
 x86_64/tokenize.text	1058
 x86_64/tokenize.ir	158680089
-x86_64/utf8_ingest_unchecked.text	53400
-x86_64/utf8_ingest_unchecked.ir	21724789
-x86_64/utf8_ingest_validated.text	54076
-x86_64/utf8_ingest_validated.ir	30599989
+x86_64/utf8_ingest_unchecked.text	54553
+x86_64/utf8_ingest_unchecked.ir	22463589
+x86_64/utf8_ingest_validated.text	55229
+x86_64/utf8_ingest_validated.ir	31098389
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -96,9 +98,10 @@ aarch64/enum_match.text	660
 aarch64/enum_match.ir	174375068
 aarch64/int_loop.text	103
 aarch64/int_loop.ir	60000026
-aarch64/map_int.text	3406
+aarch64/map_int.text	4536
 aarch64/map_int.ir	81515603
-aarch64/map_string.text	4702
+aarch64/map_probe_chain.text	4563
+aarch64/map_string.text	5830
 aarch64/map_string.ir	204436258	2
 aarch64/sort_inplace.text	852
 aarch64/sort_inplace.ir	132740196
@@ -118,7 +121,7 @@ aarch64/struct_drop.text	2989
 aarch64/struct_drop.ir	655620288
 aarch64/tokenize.text	1062
 aarch64/tokenize.ir	165150114
-aarch64/utf8_ingest_unchecked.text	55731
+aarch64/utf8_ingest_unchecked.text	56627
 aarch64/utf8_ingest_unchecked.ir	21201427
-aarch64/utf8_ingest_validated.text	56429
+aarch64/utf8_ingest_validated.text	57325
 aarch64/utf8_ingest_validated.ir	29690431
