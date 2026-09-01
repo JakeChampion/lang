@@ -386,24 +386,25 @@ function main(): i32 {
         if (vb.code[bi] != bw[bi]) { return 40; }
         bi = bi + 1;
     }
-    // SH-005 for the 32-bit ALU group: its encoders take register NUMBERS, and
-    // an operand x86_gas_reg32 cannot name answers -1 — which encoded as a
-    // well-formed instruction naming the wrong register rather than refusing.
-    // cmpl $1, -4(%rax) came out as cmp $1, %eax (#7351).
-    var am: X86Asm = x86_gas_assemble("\tcmpl $1, -4(%rax)\n");
-    if (am.unknown.len() != 1 || am.code.len() != 0) { return 41; }
-    var am2: X86Asm = x86_gas_assemble("\taddl %ecx, 8(%rdx)\n");
-    if (am2.unknown.len() != 1 || am2.code.len() != 0) { return 42; }
-    var am3: X86Asm = x86_gas_assemble("\tsubl (%rsi), %eax\n");
-    if (am3.unknown.len() != 1 || am3.code.len() != 0) { return 43; }
-    // The register forms the group DOES encode stay encoded.
-    var ar: X86Asm = x86_gas_assemble("\tcmpl $1, %edx\n\taddl %ecx, %eax\n");
-    if (ar.unknown.len() != 0) { return 44; }
-    var arw: i32[] = [129, 250, 1, 0, 0, 0, 1, 200];
-    if (ar.code.len() != arw.len()) { return 45; }
+    // The 32-bit ALU group over memory operands. #7351 hit this group when its
+    // encoders took register NUMBERS only: an operand x86_gas_reg32 could not
+    // name answered -1, which encoded as a well-formed instruction naming the
+    // wrong register (cmpl $1, -4(%rax) came out as cmp $1, %eax). The
+    // width-generic family encodes the memory forms outright, so the check is
+    // the encoding itself — the shape that cannot silently name a register the
+    // source did not mention.
+    //
+    // Note the immediate: gas picks 83 /7 ib for a $1 that fits signed 8 bits,
+    // at a memory and a register destination alike. The pre-#7886 encoder
+    // always widened to 81 /7 id, which assembles to the same semantics and
+    // different bytes; these are GNU as output for this exact text.
+    var am: X86Asm = x86_gas_assemble("\tcmpl $1, -4(%rax)\n\taddl %ecx, 8(%rdx)\n\tsubl (%rsi), %eax\n\tcmpl $1, %edx\n\taddl %ecx, %eax\n");
+    if (am.unknown.len() != 0) { return 41; }
+    var amw: i32[] = [131, 120, 252, 1, 1, 74, 8, 43, 6, 131, 250, 1, 1, 200];
+    if (am.code.len() != amw.len()) { return 42; }
     var ai: i32 = 0;
-    while (ai < arw.len()) {
-        if (ar.code[ai] != arw[ai]) { return 46; }
+    while (ai < amw.len()) {
+        if (am.code[ai] != amw[ai]) { return 43; }
         ai = ai + 1;
     }
     return 0;
