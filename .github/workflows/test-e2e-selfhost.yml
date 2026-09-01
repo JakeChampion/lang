@@ -166,7 +166,7 @@ concurrency:
 # shards loses no coverage. Adding a NEW test that builds fern.fern? Add its
 # name here too, or it will cold-build inside a preemptable shard again.
 env:
-  ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE"
+  ISOLATED_DRIVER_TESTS: "TestSelfHostCLIX86_64|TestSelfHostArm64NativeViaGoBackend|TestSelfHostArm64LinuxBuilds|TestSelfHostArm64DarwinBuilds|TestSelfHostPubVisibilityX86_64|TestSelfHostConstGrammarX86_64|TestSelfHostConstRefCheckX86_64|TestSelfHostConstAggregateArm64PIE|TestSelfHostWasmHostedCompilerMatchesNativeOnNestedArith"
   # OWN_JOB_TESTS: heavy whole-compiler proofs that RUN in CI but in a job of
   # their own, so their minutes do not lengthen whichever shard the LPT
   # partition happens to drop them into. Excluded from shard selection by the
@@ -351,7 +351,10 @@ jobs:
     needs: build
     name: cli-driver-tests-x86_64
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 20, not 15: the wasm-hosted differential re-emits wasm_ir_run.fern twice
+    # from the warm fern.fern (~145 s measured), and a cap that fails the job is
+    # worse than one with headroom — the job's length is what it runs, not this.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern

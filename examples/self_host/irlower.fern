@@ -2375,8 +2375,11 @@ pub function (s: LowerState) mark_str_own(i: i32, v: i32): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_str_own(s.locals[i], v)) };
 }
 
-// is_struct_slot / struct_type_of_slot / mark_struct_type query and set the
-// struct type held by slot i ("" = not a struct).
+// struct_type_of_slot / mark_struct_type query and set slot i's struct type
+// ("" = neither a struct nor a struct array). An ARRAY slot records its ELEMENT
+// type here, so a non-empty answer means "struct box OR struct-array buffer" —
+// is_arr_slot is what tells the two apart, and any release keyed on this type
+// needs it (a struct-shaped helper reading a buffer walks off its end).
 pub function (s: LowerState) struct_type_of_slot(i: i32): string {
     if (i < 0) { return ""; }
     if (i >= s.locals.len()) { return ""; }
@@ -22135,10 +22138,14 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // frees the REPLACED field buffers (the dominant clone-form leak —
     // `LowerState { ops: s.ops.append(op), … }`) before freeing the box,
     // guarded so neither the new value nor the caller's snapshot is freed.
+    // An ARRAY slot records its ELEMENT type in struct_type_of_slot, so `snty`
+    // there names a struct the slot does NOT hold: __field_reclaim_<T> would
+    // read a BUFFER at struct-field offsets and release whatever lies past its
+    // end. A struct-array param's buffer is released by emit_snapshot_store.
     if (slot_is_snapshot_param(s, slot)) {
         var snsl: i32 = s.slot_of(snapshot_slot_name(slot));
         var snty: string = s.struct_type_of_slot(slot);
-        if (s.struct_routes_field_reclaim(snty)) {
+        if (!s.is_arr_slot(slot) && s.struct_routes_field_reclaim(snty)) {
             return emit_field_reclaim_store(se, slot, snty, snsl);
         }
         return emit_snapshot_store(se, slot, snsl);
