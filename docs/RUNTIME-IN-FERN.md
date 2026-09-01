@@ -122,27 +122,53 @@ because a raw-pointer body never handles the array as a typed value except
 through the type-only bridges. It was correct, and passed every behavioural
 probe on both native backends.
 
-What killed it was emitted size, which is a proxy for speed here:
+What killed it was emitted size, which is a proxy for speed here. The figure
+recorded at the time was 27 hand-asm instructions against 353 Fern-compiled
+(~15 vs ~169 on the in-place fast path) — a 13x expansion.
 
-| | hand-asm | Fern-compiled |
-| --- | --- | --- |
-| total instructions | 27 | 353 |
-| in-place fast path | ~15 | ~169 |
+**The expansion is about 3.3x, not 13x.** The 353 was measured on a branch that
+no longer exists and BEFORE `peephole_push_pop` landed; nothing in the tree
+re-emits that body, so it stood unchecked. Re-measured 2026-09, self-host
+x86-64 and arm64, counting emitted instructions:
 
-The IR's stack-machine lowering spends four instructions and two stack
-round-trips materialising the constant `-8`, and `pushq %rax` / `popq %rax`
-pairs run throughout. Every leaf migrated before this one was dominated by
-something other than its own instruction count — the syscall leaves by syscall
-latency, the array producers by allocation plus an O(n) copy — so codegen
-quality did not matter to any of them. `arr_push` runs on every `.append()`
-and its fast path is fifteen instructions of pointer arithmetic. A 10x
-expansion there is a straight loss.
+| shape | hand-asm | Fern-compiled | ratio |
+| --- | --- | --- | --- |
+| `arr_push` (x86-64) | 60 | 200 | 3.3x |
+| `arr_push` (arm64) | 59 | 206 | 3.5x |
+| `map_snapshot_col` | 20 | 66 | 3.3x |
+| `map_snapshot_col_str` | 31 | 71 | 2.3x |
+| `__fern_map_find` (SHIPPED) | ~41 | 132 | 3.2x |
 
-**So the precondition for the hot core is a better lowering, not a bigger
-floor.** The `len(asm) > N` assertions scattered through `internal/e2eselfhost`
-are what caught it; they read as "did the module bail to the AST path" but they
-double as the only guard against codegen bloat, and raising them to accommodate
-a migration would discard exactly the signal they exist to give.
+The last row is the one to trust: it is not a reconstruction but the helper
+this document's map section describes, measured in a real emitted binary
+against the three-variant hand-asm search it replaced. The `arr_push` rows are
+faithful reconstructions rather than the deleted #6446 source — they carry its
+rc/uniqueness gate but not its two diagnostic counters — so treat them as
+approximate. Note also that the hand-asm moved: today's `__fern_arr_push` is 60
+instructions, not 27, so part of the original gap was two moving targets
+compared across three months.
+
+What follows from 3.3x rather than 13x:
+
+- **Break-even is about 3.3 copies of the hand-asm**, and one Fern source
+  serves BOTH register backends — so a helper duplicated even twice within a
+  backend pays for itself. `map_find` was N=18 and shrank every binary that
+  used more than one map verb.
+- **A single-copy helper still loses**, and `arr_push` is still one: 60 x 2
+  backends = 120 against 200. But that is a 1.7x loss, not a 10x one, and the
+  "353 less 20% is still ~280 against 27" arithmetic below overstates the gap
+  by about four times.
+- **Hotness, not size, is now the live argument against `arr_push`.** Its fast
+  path runs on every `.append()`, and 3.3x on fifteen instructions of pointer
+  arithmetic is still a real per-append cost. That is a different claim from
+  "the codegen is too bad to migrate anything hot", and it should be settled by
+  measuring the fast path against a benchmark rather than by this table.
+
+**So the precondition for the hot core is narrower than "a better lowering".**
+The `len(asm) > N` assertions scattered through `internal/e2eselfhost` are what
+caught the original regression; they read as "did the module bail to the AST
+path" but they double as the only guard against codegen bloat, and raising them
+to accommodate a migration would discard exactly the signal they exist to give.
 
 ### First instalment on that precondition: the push/pop peephole
 
@@ -196,8 +222,9 @@ blobs call migrated helpers as `__fn___fern_*` under the current stack ABI, so
 caller, callee prologue, and every hand-asm call site move together — a roadmap
 decision, not a drive-by.
 
-And none of this on its own clears the `arr_push` bar: 353 instructions less 20%
-is still ~280 against 27.
+And none of this on its own clears the `arr_push` bar, though the gap is
+narrower than it used to read: 200 Fern-compiled instructions against 120 of
+hand-asm across the two backends, per the re-measurement above.
 
 One rule the attempt did establish, which applies to any future raw op: **it
 must push a result.** Every raw op is typed `i32` and the statement lowering
