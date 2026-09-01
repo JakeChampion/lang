@@ -250,10 +250,10 @@ func TestSelfHostX86GasGroundTruth(t *testing.T) {
 // and both REX extension bits.
 const x86GasGroundTruthMain = `
 function main(): i32 {
-    var src: string = "    .text\n_start:\n    andb %dl, %al\n    orb %dl, %al\n    setp %dl\n    setnp %dl\n    movd %eax, %xmm0\n    movd %xmm0, %eax\n    movsxd %eax, %rax\n    cvtsd2ss %xmm0, %xmm1\n    cvtss2sd %xmm0, %xmm1\n    lzcntl %eax, %eax\n    lzcntq %rax, %rax\n    tzcntl %eax, %eax\n    tzcntq %rax, %rax\n    popcntl %eax, %eax\n    popcntq %rax, %rax\n    movq $0, %rax\n    movq $-1, %rax\n    shlq %cl, %rax\n    shrq %cl, %rax\n    sarq %cl, %rax\n    shlq $3, %rax\n    shrq $3, %rcx\n    sarq $3, %rdx\n    testq $1, %rcx\n    call *%r11\n    call *%rax\n    call *-40(%rbp)\n    rep stosq\n    rep movsq\n    rep stosb\n    leaq 0(,%rcx,8), %rsi\n    leaq 16(,%rdx,8), %rsi\n    cvttsd2si %xmm0, %eax\n    cvttsd2si %xmm0, %rax\n    testl %ecx, %ecx\n    testl %r9d, %r8d\n    testl %eax, %r10d\n";
+    var src: string = "    .text\n_start:\n    andb %dl, %al\n    orb %dl, %al\n    setp %dl\n    setnp %dl\n    movd %eax, %xmm0\n    movd %xmm0, %eax\n    movsxd %eax, %rax\n    cvtsd2ss %xmm0, %xmm1\n    cvtss2sd %xmm0, %xmm1\n    lzcntl %eax, %eax\n    lzcntq %rax, %rax\n    tzcntl %eax, %eax\n    tzcntq %rax, %rax\n    popcntl %eax, %eax\n    popcntq %rax, %rax\n    movq $0, %rax\n    movq $-1, %rax\n    shlq %cl, %rax\n    shrq %cl, %rax\n    sarq %cl, %rax\n    shlq $3, %rax\n    shrq $3, %rcx\n    sarq $3, %rdx\n    testq $1, %rcx\n    call *%r11\n    call *%rax\n    call *-40(%rbp)\n    rep stosq\n    rep movsq\n    rep stosb\n    leaq 0(,%rcx,8), %rsi\n    leaq 16(,%rdx,8), %rsi\n    cvttsd2si %xmm0, %eax\n    cvttsd2si %xmm0, %rax\n    testl %ecx, %ecx\n    testl %r9d, %r8d\n    testl %eax, %r10d\n    addw %ax, %bx\n    movb $1, %cl\n    shlb $3, %cl\n    notw (%rdi)\n    adcq %rcx, %rax\n    sbbq $1, %rcx\n";
     var a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0) { return 90; }
-    var exp: i32[] = [32, 208, 8, 208, 15, 154, 194, 15, 155, 194, 102, 15, 110, 192, 102, 15, 126, 192, 72, 99, 192, 242, 15, 90, 200, 243, 15, 90, 200, 243, 15, 189, 192, 243, 72, 15, 189, 192, 243, 15, 188, 192, 243, 72, 15, 188, 192, 243, 15, 184, 192, 243, 72, 15, 184, 192, 72, 199, 192, 0, 0, 0, 0, 72, 199, 192, 255, 255, 255, 255, 72, 211, 224, 72, 211, 232, 72, 211, 248, 72, 193, 224, 3, 72, 193, 233, 3, 72, 193, 250, 3, 72, 247, 193, 1, 0, 0, 0, 65, 255, 211, 255, 208, 255, 85, 216, 243, 72, 171, 243, 72, 165, 243, 170, 72, 141, 52, 205, 0, 0, 0, 0, 72, 141, 52, 213, 16, 0, 0, 0, 242, 15, 44, 192, 242, 72, 15, 44, 192, 133, 201, 69, 133, 200, 65, 133, 194];
+    var exp: i32[] = [32, 208, 8, 208, 15, 154, 194, 15, 155, 194, 102, 15, 110, 192, 102, 15, 126, 192, 72, 99, 192, 242, 15, 90, 200, 243, 15, 90, 200, 243, 15, 189, 192, 243, 72, 15, 189, 192, 243, 15, 188, 192, 243, 72, 15, 188, 192, 243, 15, 184, 192, 243, 72, 15, 184, 192, 72, 199, 192, 0, 0, 0, 0, 72, 199, 192, 255, 255, 255, 255, 72, 211, 224, 72, 211, 232, 72, 211, 248, 72, 193, 224, 3, 72, 193, 233, 3, 72, 193, 250, 3, 72, 247, 193, 1, 0, 0, 0, 65, 255, 211, 255, 208, 255, 85, 216, 243, 72, 171, 243, 72, 165, 243, 170, 72, 141, 52, 205, 0, 0, 0, 0, 72, 141, 52, 213, 16, 0, 0, 0, 242, 15, 44, 192, 242, 72, 15, 44, 192, 133, 201, 69, 133, 200, 65, 133, 194, 102, 1, 195, 177, 1, 192, 225, 3, 102, 247, 23, 72, 17, 200, 72, 131, 217, 1];
     if (a.code.len() != exp.len()) { return 91; }
     var i: i32 = 0;
     while (i < exp.len()) {
@@ -295,9 +295,11 @@ function main(): i32 {
     if (a.unknown.len() != 0) { return 14; }
     var u1: X86Asm = x86_gas_assemble("\tfrobnicate %rax\n");
     if (u1.unknown.len() != 1) { return 15; }
-    var u2: X86Asm = x86_gas_assemble("\tpaddq %xmm0, %xmm1\n");
+    // movw is deliberately unimplemented: it must land on the unknown list,
+    // never encode at the wrong width (the silent-widening audit, #7893).
+    var u2: X86Asm = x86_gas_assemble("\tmovw %ax, %bx\n");
     if (u2.unknown.len() != 1) { return 16; }
-    var u3: X86Asm = x86_gas_assemble("\tcmpb %al, %bl\n");
+    var u3: X86Asm = x86_gas_assemble("\tfnord %xmm0, %xmm1\n");
     if (u3.unknown.len() != 1) { return 17; }
     if (x86_gas_reg8("%rax") != (0 - 1)) { return 14; }
     // xmm parsing + float literal parsing (slice 2n):
