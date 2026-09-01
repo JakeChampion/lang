@@ -22,15 +22,13 @@ package e2e
 // instead of NaN. None of those are "inaccurate" — they are wrong answers on
 // ordinary inputs, and no ulp bound would have caught them because the
 // sweep that found the accuracy problem never probed there.
-//
-// Native wasm does not implement these builtins (there is no __sin_f64 in
-// internal/codegen/wasmbin), so it is deliberately absent rather than skipped.
 
 import (
 	"fmt"
 	"math"
 	"math/big"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,25 +43,31 @@ import (
 // room for an algorithmic error.
 const maxULP = 2
 
-// interpULP is the interpreter's own bound, and it is looser for a reason
-// worth recording: `fern -interp` evaluates these through Go's `math`, which
-// is up to ~7 ulp near a zero of sine (see the oracle note below). So of the
-// three implementations the INTERPRETER is now the least accurate — an
-// inversion that matters because it is the oracle every differential suite
-// compares against. Tightening this means giving the interpreter better
-// kernels, not loosening the compiled bound.
-const interpULP = 8
+// interpULP matches the compiled bound: the interpreter carries its own
+// fdlibm sin/cos (internal/interp/trig.go, the same algorithm the backends
+// emit) rather than delegating to Go's `math`, whose reduction error is
+// unbounded in ulp terms near a zero of sine. Loosening this again would be
+// re-recording Go's inaccuracy as Fern's contract — the fix is always better
+// interpreter kernels, never a bigger bound.
+const interpULP = maxULP
 
 // f64UlpInputs spans the ranges where each function's argument reduction does
 // different work: near zero, around the first few multiples of pi/2 (where
-// sin/cos switch quadrant), and far enough out that a single-rounded pi/2
-// reduction visibly loses digits — |x| ~ 10 was where the old kernels shed
-// about seven of them.
+// sin/cos switch quadrant), far enough out that a single-rounded pi/2
+// reduction visibly loses digits (|x| ~ 10 was where the old kernels shed
+// about seven of them), and past 2^20, where Cody-Waite stops being exact and
+// the Payne-Hanek path takes over (#7878) — up to the top of the exponent
+// range, including 6381956970095103*2^797, the double with the smallest
+// reduced remainder of all. Before those large entries existed, sin(1e18)
+// returned -3.47e18 on every compiled backend and nothing failed.
 var f64UlpInputs = []float64{
 	0, 1e-8, 0.25, 0.5, 0.7853981633974483, 1, 1.5707963267948966,
 	2, 3.141592653589793, 4, 6.283185307179586, 7, 10, 12.5, 25, 100,
 	1000, 12345.678, 1e6,
+	1e7, 1e8, 1e10, 1e15, 1e17, 1e18, 1e20, 1e30, 1e100, 1e300,
+	5.3193726483265414e+255, math.MaxFloat64,
 	-1e-8, -0.5, -1, -2, -3.141592653589793, -7, -10, -100, -1000,
+	-1e7, -1e10, -1e18, -1e30, -1e300, -math.MaxFloat64,
 }
 
 // f64UlpPosInputs are the log-only inputs: strictly positive, spanning
@@ -82,10 +86,10 @@ var f64UlpPosInputs = []float64{
 // implementation and, worse, would have passed a subtly wrong one that
 // happened to reproduce Go's error.
 //
-// So sin/cos are referenced against a 350-bit computation instead: reduce with
-// a 100-digit π, then a Taylor series that converges long before the working
-// precision runs out. exp/log/pow keep Go's math, which is accurate to within
-// the bound over the inputs used here.
+// So sin/cos are referenced against a 1400-bit computation instead: reduce
+// with a 420-digit π, then a Taylor series that converges long before the
+// working precision runs out. exp/log/pow keep Go's math, which is accurate
+// to within the bound over the inputs used here.
 
 // piDigits is 420 significant digits (~1395 bits) and refPrec is sized to
 // match. Both are set by the LARGEST argument the sweep reduces, not by the
@@ -275,9 +279,10 @@ func f64SpecialCases() []f64Case {
 // check, because that is the point. Go reduces large arguments less
 // accurately than glibc: it is 40 ulp out at 1e30, and at the classic
 // worst-case argument below it returns -4.8435e-19 for a true -4.6872e-19 —
-// a 3% error. `fern -interp` evaluates through Go's math, so the interpreter
-// is wrong there too, and no differential that treats it as the oracle can
-// gate sin/cos at these magnitudes (#7878).
+// a 3% error. That inaccuracy is why the interpreter carries its own fdlibm
+// reduction (internal/interp/trig.go) instead of delegating to Go's math,
+// and why this reference, never the interpreter, is the oracle sin/cos are
+// measured against (#7878).
 func TestRefSinCosLargeArguments(t *testing.T) {
 	cases := []struct {
 		x        float64
@@ -377,6 +382,14 @@ func checkF64Output(t *testing.T, backend, out string, cs []f64Case, bound int64
 					backend, c.call, got, c.want, d, bound)
 				bad++
 			}
+			// sin/cos are total on the finite doubles with range [-1, 1], so
+			// a result outside it is a hard range violation whatever the ulp
+			// distance says — this is the oracle-free invariant that would
+			// have caught #7878's 1.78e158 on its own.
+			if (strings.HasPrefix(c.call, "__sin_f64") || strings.HasPrefix(c.call, "__cos_f64")) && math.Abs(got) > 1 {
+				t.Errorf("%s: %s = %v, outside [-1, 1]", backend, c.call, got)
+				bad++
+			}
 		}
 	}
 	if bad > 0 {
@@ -408,25 +421,21 @@ func TestF64TranscendentalUlpX86_64(t *testing.T) {
 	checkF64Output(t, "x86-64-linux", out, cs, maxULP)
 }
 
-// TestF64SinCosLargeArgumentX86_64 sweeps the Payne-Hanek path — every
-// argument at or above 2^20, which is where Cody-Waite stops being exact and
-// the old code silently left [-1, 1] entirely (#7878).
+// TestF64SinCosLargeArgument sweeps the Payne-Hanek path — every argument at
+// or above 2^20, which is where Cody-Waite stops being exact and the old code
+// silently left [-1, 1] entirely (#7878).
 //
 // It is a sweep rather than a handful of literals because the failure it
 // guards is magnitude-dependent: the reduction degrades continuously with the
 // exponent, so a fixed shortlist proves only the exponents in it. 1158
 // arguments at four mantissas across every seventh exponent, both signs.
 //
-// The two register backends only. arm64ssa, wasm and the three self-host
-// emitters carry the same defect and have not been ported yet, so widening
-// this to them would assert a fix that does not exist. Their status is on
-// #7878; delete this note when the last one lands and fold these arguments
-// into f64UlpInputs.
-//
-// The interpreter is NOT one of the lanes here and cannot be: `fern -interp`
-// evaluates through Go's math, whose error near a zero of sin/cos is
-// unbounded in ulp terms — 617 ulp at 2^728, and 3% at the worst-case
-// argument below. The reference is the only oracle these can be measured
+// Every lane that implements sin/cos runs it: both register backends, the
+// SSA arm64 backend, wasm, and the interpreter — the last is a valid lane
+// only because it carries its own fdlibm reduction (internal/interp/trig.go)
+// rather than Go's math, whose error near a zero of sin/cos is unbounded in
+// ulp terms (617 ulp at 2^728, 3% at the worst-case argument below). The
+// reference, not the interpreter, remains the oracle everything is measured
 // against.
 func TestF64SinCosLargeArgument(t *testing.T) {
 	var xs []float64
@@ -452,6 +461,18 @@ func TestF64SinCosLargeArgument(t *testing.T) {
 			f64Case{fmt.Sprintf("__cos_f64(%s)", lit), rc})
 	}
 	prog := f64UlpProg(cs)
+	t.Run("interp", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "sincos_large.fern")
+		if err := os.WriteFile(path, []byte(prog), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		code, out, errOut := runLangInterp(t, buildLangBinForInterp(t), path)
+		if code != 0 {
+			t.Fatalf("interp exited %d\nstdout: %s\nstderr: %s", code, out, errOut)
+		}
+		checkF64Output(t, "interp", out, cs, interpULP)
+	})
 	t.Run("x86-64", func(t *testing.T) {
 		out, code := compileAndRunX86_64(t, prog)
 		if code != 0 {
@@ -466,7 +487,76 @@ func TestF64SinCosLargeArgument(t *testing.T) {
 		}
 		checkF64Output(t, "arm64-linux", out, cs, maxULP)
 	})
+	t.Run("arm64-ssa", func(t *testing.T) {
+		out := compileAndRunArm64SSACapture(t, prog)
+		checkF64Output(t, "arm64-ssa", out, cs, maxULP)
+	})
+	// Until #7878 the wasm backend did not merely lose accuracy here: its
+	// reduction ran every argument through i64.trunc_f64_s, a TRAPPING
+	// instruction, so |x| >= 2^63*pi/2 aborted the module. This lane holds
+	// both properties — no trap, and the same bound as the register backends.
+	t.Run("wasm32-wasi", func(t *testing.T) {
+		out := compileAndRunWasmCapture(t, prog)
+		checkF64Output(t, "wasm32-wasi", out, cs, maxULP)
+	})
 	t.Logf("swept %d arguments (%d cases) over the Payne-Hanek path", len(xs), len(cs))
+}
+
+// compileAndRunWasmCapture compiles src to a raw wasm32-wasi module via the
+// CLI and returns its stdout from `wasmtime run`. Not runWasmCapturingStdout:
+// that helper strips trailing integer-parseable lines to drop the `--invoke`
+// result line, and this file's programs print nothing BUT integers, so it
+// would strip the entire output.
+func compileAndRunWasmCapture(t *testing.T, src string) string {
+	t.Helper()
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mod := filepath.Join(dir, "prog.wasm")
+	cli := buildLangBinForInterp(t)
+	if out, err := exec.Command(cli, "-target", "wasm32-wasi", "-o", mod, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm compile: %v\n%s", err, out)
+	}
+	out, err := exec.Command(wasmtime, "run", mod).Output()
+	if err != nil {
+		t.Fatalf("wasmtime run: %v\n%s", err, out)
+	}
+	return string(out)
+}
+
+// compileAndRunArm64SSACapture compiles src with the SSA arm64 backend
+// (`-target arm64-linux -backend ssa`) and returns its stdout, running the
+// binary natively on arm64 or under qemu elsewhere.
+func compileAndRunArm64SSACapture(t *testing.T, src string) string {
+	t.Helper()
+	qemu := arm64QemuOrEmpty(t)
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "prog")
+	cli := buildLangBinForInterp(t)
+	if out, err := exec.Command(cli, "-target", "arm64-linux", "-backend", "ssa", "-o", bin, srcPath).CombinedOutput(); err != nil {
+		t.Fatalf("arm64-ssa compile: %v\n%s", err, out)
+	}
+	var cmd *exec.Cmd
+	if qemu == "" {
+		cmd = exec.Command(bin)
+	} else {
+		cmd = exec.Command(qemu, bin)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("arm64-ssa run: %v\n%s", err, out)
+	}
+	return string(out)
 }
 
 func TestF64TranscendentalUlpArm64(t *testing.T) {
@@ -476,6 +566,17 @@ func TestF64TranscendentalUlpArm64(t *testing.T) {
 		t.Fatalf("arm64 exited %d\n%s", code, out)
 	}
 	checkF64Output(t, "arm64-linux", out, cs, maxULP)
+}
+
+// TestF64TranscendentalUlpWasm holds the wasm backend to the same bound as
+// the register backends over the full corpus. It had no lane here at all —
+// this file's header used to claim wasm does not implement these builtins,
+// which had been stale since wasmbin gained them — and that absence is why
+// its trig traps and range violations (#7878) went unnoticed.
+func TestF64TranscendentalUlpWasm(t *testing.T) {
+	cs := append(f64UlpCases(), f64SpecialCases()...)
+	out := compileAndRunWasmCapture(t, f64UlpProg(cs))
+	checkF64Output(t, "wasm32-wasi", out, cs, maxULP)
 }
 
 // requireBothRegisterBackends resolves the tooling for BOTH register backends
