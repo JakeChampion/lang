@@ -68,7 +68,15 @@ the two that arc left pinned: the `.with` registry corpus case 384 → 0
 and the 10-round fixpoint probe 2,240 → 0. arm64 moved too (registry
 3,072 → 2,688; fixpoint 5,120 → 2,880) without a single regression.
 
-**Driver: 367,872 → 365,744 B (−2,128, +52 frees)**, output byte-identical.
+**Driver: 371,776 → 369,648 B (−2,128, +52 frees)**, output byte-identical,
+traced and untraced builds agreeing to the byte on both sides.
+
+> A driver measurement is only as good as the `bin/fern` that built it.
+> After a rebase, `go build ./...` does NOT refresh `bin/fern`, so the
+> next driver build pairs an OLD compiler with NEW self-host sources —
+> which read 1,221,824 B here and looked like a 3x regression until the
+> four-way A/B (both commits x traced/untraced) put every output at the
+> same md5. Rebuild `bin/fern` explicitly before every driver run.
 The Array_set credit alone moves the driver 0 bytes — the self-host's
 `.with` element is always a fresh concat, never a parameter — so it is a
 correctness and tier-parity fix, not a frontier one.
