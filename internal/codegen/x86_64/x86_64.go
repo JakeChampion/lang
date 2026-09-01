@@ -893,14 +893,20 @@ type generator struct {
 	// emitted logical lines (no trailing newline), held back from `out`
 	// until they can no longer participate in a rewrite. See put / flushPeep.
 	peepWin []string
-	// opBytes is how far rsp sits below the 16-aligned point the
-	// current function's prologue left it at — the live operand
-	// stack plus any body-level scratch. Only meaningful while a
-	// function body is being emitted (reset per function); the
-	// hand-written runtime helpers keep their own alignment and
-	// are entered at the canonical parity. callAligned reads it
-	// to decide whether a call site needs an 8-byte pad.
+	// opBytes is how far rsp sits below the point the current
+	// function's prologue left it at — the live operand stack plus
+	// any body-level scratch. Only meaningful while a function body
+	// is being emitted (reset per function); the hand-written
+	// runtime helpers keep their own alignment and are entered at
+	// the canonical parity. callAligned reads it to decide whether
+	// a call site needs an 8-byte pad.
 	opBytes int
+	// frameBias is how far the prologue deliberately leaves rsp
+	// from 16-alignment: 0 or 8. A call needs a pad when
+	// (opBytes + frameBias) is not a multiple of 16, so the bias
+	// selects WHICH operand depth is the free one. See
+	// framePrologueBias for why it is 8.
+	frameBias int
 	// labelCounter generates unique branch / scope labels
 	// (`.Lret_main_0`, `.Lif_3` etc.). Per-program rather
 	// than per-function so labels stay globally unique even
@@ -1798,9 +1804,9 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.rcInlineOK = len(irFn.Ops) <= rcInlineMaxOps
 
 	// Compute frame size from the highest local slot the IR
-	// referenced plus the parameter slots. Rounded up to a
-	// 16-byte multiple so `sub rsp, N` leaves rsp 16-aligned
-	// post-prologue.
+	// referenced plus the parameter slots, then add framePrologueBias
+	// so the operand depth calls are usually made at is the aligned
+	// one.
 	maxSlot := int32(-1)
 	for _, op := range irFn.Ops {
 		switch op.Kind {
@@ -1817,8 +1823,17 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	}
 	numSlots := int(maxSlot + 1)
 	localsSize := numSlots * 8
-	if localsSize%16 != 0 {
-		localsSize += 8
+	frameBias := 0
+	if numSlots > 0 {
+		if localsSize%16 != 0 {
+			localsSize += 8
+		}
+		// The bias rides in the `sub rsp, N` the frame already needs, so it
+		// costs nothing here. A frameless function emits no `sub rsp` at
+		// all, where the bias would be a whole extra instruction to save a
+		// pad it may never reach — so it keeps the canonical parity.
+		localsSize += framePrologueBias
+		frameBias = framePrologueBias
 	}
 
 	sym := AsmFnName(fn.Name)
@@ -1831,11 +1846,13 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	if localsSize > 0 {
 		g.emit(fmt.Sprintf("sub rsp, %d", localsSize))
 	}
-	// rsp is 16-aligned here: the call pushed 8, `push rbp` another
-	// 8, and localsSize is a 16-byte multiple. Operand depth is
-	// measured from this point, and the `mov rsp, rbp` epilogue
-	// discards whatever is left, so there is nothing to unwind.
+	// Operand depth is measured from this point, and the
+	// `mov rsp, rbp` epilogue discards whatever is left, so there is
+	// nothing to unwind. rsp sits framePrologueBias below 16-aligned
+	// here: the call pushed 8, `push rbp` another 8, and localsSize
+	// is a 16-byte multiple plus the bias.
 	g.opBytes = 0
+	g.frameBias = frameBias
 	// Param spill into local slots. Args 0..5 arrive in
 	// rdi/rsi/rdx/rcx/r8/r9; args 6+ come on the caller's
 	// stack at [rbp + 16 + 8*(i-6)] (rbp+0 is saved rbp,
@@ -3891,7 +3908,7 @@ func (g *generator) emitCallArgsLoad(argc int) (extra int) {
 	// one 8-byte slot when the live operand depth would otherwise
 	// leave rsp odd at the call.
 	stackSize := overflow * 8
-	if (g.opBytes+stackSize)%16 != 0 {
+	if (g.opBytes+stackSize+g.frameBias)%16 != 0 {
 		stackSize += 8
 	}
 	g.rspAlloc(stackSize)
@@ -3923,10 +3940,30 @@ func (g *generator) emitCallArgsCleanup(argc, extra int) {
 	g.rspFree(extra + slotBytes*argc)
 }
 
+// framePrologueBias is how far below 16-alignment the prologue leaves rsp.
+//
+// System V wants rsp 16-aligned at every `call`, and an 8-byte operand slot
+// flips that, so one of the two operand depths is free and the other pays a
+// `sub rsp, 8` / `add rsp, 8` bracket. Which one is free is entirely the
+// prologue's choice, and a 16-byte-multiple frame picks depth 0.
+//
+// Depth 0 is the wrong pick. A call in the middle of an expression — the
+// argument already evaluated, the callee's result about to be combined with
+// it — happens at an odd number of live slots, and that is what nearly every
+// call in real code is. On examples/self_host/checker_run.fern, 90,935 of
+// 101,848 call sites (89.3%) were at odd depth and paid the bracket: 181,870
+// instructions, 11.4% of the whole program. Biasing the frame by 8 makes
+// those free and charges the 10.7% instead.
+//
+// Per-function parity would save a further ~2,200 instructions on that
+// program — 0.14% — which does not pay for emitting every body twice to
+// count.
+const framePrologueBias = 8
+
 // padTo16 is the byte count that would bring rsp back to 16-byte
 // alignment at the current operand depth: 0 or 8.
 func (g *generator) padTo16() int {
-	pad := g.opBytes % 16
+	pad := (g.opBytes + g.frameBias) % 16
 	if pad < 0 {
 		pad += 16
 	}
