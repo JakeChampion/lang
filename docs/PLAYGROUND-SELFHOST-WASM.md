@@ -221,8 +221,10 @@ and writes executables. None of that is what the playground wants, and
 This is not a blocker so much as a signpost: the playground needs a driver
 shaped like `wasm_ir_run.fern` (stdin in, module out) — which is exactly what
 was measured above — not the CLI. A playground driver would additionally need
-in-memory stdlib resolution, since the self-host resolves `std/…` by host path
-(`modloader.fern:87`) where native serves it from `go:embed`.
+the stdlib inside the module, since the self-host resolves `std/…` by host path
+(`modloader.fern:87`) where native serves it from `go:embed`. That is the first
+item under "What it would actually take" below, and the one piece of this whose
+mechanism does not exist on the self-host side at all.
 
 ## Two corrections to how this was framed
 
@@ -245,19 +247,32 @@ since #6635.
 
 In dependency order, and the estimate the issue asked for — **this is a
 weekend, not a quarter**. The unknown that qualified that estimate was #7948's
-size before it was root-caused; it is closed, and what remains is scoped:
+size before it was root-caused; it is closed, and what remains is scoped.
 
-1. **strbuf in `wasmbin`** (blocker 1, #7947). Contained: three scratch slots appended
-   to the `memlayout.go` chain and three `runtimeHelperSpecs` entries keyed by
-   the source names, the way `poll` and `isatty` already are
-   (`runtime.go:1698,1713`). The self-host wasm implementation
-   (`wasm_ir.fern:6120`) is the reference, with one adaptation — it uses
-   one-word strings where wasmbin uses the two-word SSO ABI, so `strbuf_append`
-   takes `(data, len)` and must read through the tag like `buildStrConcatBody`
-   does. Add the missing completeness test while there.
-2. **A playground driver** — `wasm_ir_run.fern`'s shape plus in-memory stdlib
-   resolution and the interpret/check entry points, exporting to JS rather than
-   reading stdin.
+**strbuf in `wasmbin`** headed this list and shipped in #7951: three scratch
+slots on the `memlayout.go` chain plus `runtimeHelperSpecs` entries keyed by the
+source names, with `strbuf_append` reading through the two-word SSO tag rather
+than the self-host's one-word strings. `sleep_ms` is what is left of that
+blocker.
+
+1. **An embedded stdlib for the self-host compiler.** A wasm-hosted compiler has
+   no host filesystem to read `internal/stdlib` from, and the self-host CLI has
+   no other way to find it: `fern.fern` takes the stdlib root as its second
+   positional argument (`fern.fern:1881`) where native serves it from `go:embed`
+   (`internal/stdlib/stdlib.go:37`). Native already has the mechanism the
+   self-host lacks — `-embed DIR` plus `__fern_asset("name")` /
+   `__fern_assets()`, resolved during const folding into ordinary string
+   literals (`docs/EMBED.md`). It works on the wasm target today: the whole
+   stdlib embedded into a core module is **1,610,275 bytes raw / 458,170
+   gzipped**, built in under a second, enumerating all 73 files at runtime under
+   wasmtime. So a driver carrying its own stdlib comes to roughly 3.95 MB raw /
+   1.07 MB gzipped — still 7x under the bundle shipping today. The work is
+   porting `-embed` to the self-host compiler, since the artifact has to be
+   produceable without the native toolchain for this precondition to mean
+   anything.
+2. **A playground driver** — `wasm_ir_run.fern`'s shape plus the stdlib
+   resolution above and the interpret/check entry points, exporting to JS rather
+   than reading stdin.
 3. **The LSP** is the long pole and is not costed here; it has no self-host
    counterpart at all.
 
