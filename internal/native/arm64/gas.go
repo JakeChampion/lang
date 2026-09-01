@@ -378,6 +378,9 @@ func assembleInsn(a *Assembler, line string) error {
 		a.Emit(BRK(uint16(imm)))
 		return nil
 	default:
+		if sug := suggestMnemonic(mnem); sug != "" {
+			return fmt.Errorf("unsupported instruction %q (did you mean %q?)", mnem, sug)
+		}
 		return fmt.Errorf("unsupported instruction %q", mnem)
 	}
 }
@@ -2662,6 +2665,9 @@ var loadStoreSize = map[string]struct {
 // register/extended-register offset `[Xn, Xm{, lsl|sxtx {#s}}]` /
 // `[Xn, Wm, uxtw|sxtw {#s}]` (all sizes).
 func asmLoadStore(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 2 && len(ops) != 3 {
+		return fmt.Errorf("%s expects a register and a memory operand", mnem)
+	}
 	sz := loadStoreSize[mnem]
 	is64LdrStr := mnem == "ldr" || mnem == "str"
 
@@ -2706,9 +2712,6 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		return nil
 	}
 
-	if len(ops) != 2 {
-		return fmt.Errorf("%s expects a register and a memory operand", mnem)
-	}
 	m, err := parseMem(ops[1])
 	if err != nil {
 		return err
