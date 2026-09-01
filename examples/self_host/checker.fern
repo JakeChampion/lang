@@ -12187,11 +12187,54 @@ function e021_dyn_target(type_name: string): string {
   return t + "";
 }
 
+// e021_dyn_locals_of collects the dyn TARGET of every `var` annotation in a
+// body, in source order. Deliberately NOT e060_collect_dyn_locals, which asks a
+// different question: that one tracks what a NAME's dyn set is and blanks the
+// entry when the name is rebound, because a shadowed name's set is unknowable.
+// Here every annotation is its own use of `dyn T`, so two `var d: dyn Shape`
+// declarations are two sites and E021 is owed at both.
+// e021_dyn_local_at is the statement half of that walk: a `var` whose
+// annotation names a dyn trait contributes that trait. It closes over nothing,
+// so it is a top-level function rather than a nested one — the convention
+// irlower's assign-targets visitors already follow, and what keeps the feature
+// census's closure count measuring closures.
+function e021_dyn_local_at(st: ast.Stmt, a: string[]): string[] {
+  match (st) {
+    ast.StmtVar(v) => {
+      var t: string = e021_dyn_target(v.type_name);
+      if (t.len() > 0) {
+        return a.append(t);
+      }
+      return a;
+    },
+    _ => { return a; }
+  }
+}
+
+// e021_no_expr is the expression half, for a scan that is purely
+// statement-shaped. Top-level for the same reason.
+function e021_no_expr(e: ast.Expr, a: string[]): string[] {
+  return a;
+}
+
+function e021_dyn_locals_of(stmts: ast.Stmt[]): string[] {
+  var res: string[] = [];
+  for stmt in stmts {
+    res = astwalk.fold_stmt_nodes(stmt, res, e021_dyn_local_at, e021_no_expr, astwalk.descend_all);
+  }
+  return res;
+}
+
 // e021_object_safety_diags reports E021 for a `dyn T` annotation whose trait T
-// is not object-safe (#4347 slice 4). Scans function param + return type
-// positions — the sites the Go checker flags (a `dyn T` struct field is NOT
-// flagged there, so it's deliberately excluded to keep parity). A dyn of an
-// object-safe or unknown trait is left alone.
+// is not object-safe (#4347 slice 4). Scans the three positions the Go checker
+// flags: a function parameter, a function return type, and a LOCAL `var`
+// annotation. A `dyn T` STRUCT FIELD is not flagged there, so it is excluded
+// here to keep parity. A dyn of an object-safe or unknown trait is left alone.
+//
+// The local position was missing, so `var d: dyn Shape = …` inside a body was
+// silent where native draws E021 — the same trait in a parameter or return type
+// was caught all along, which is what made the gap look like the whole check
+// being absent rather than one site of three (#7974).
 function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
   var out: util.Diag[] = [];
   for fn in mod.funcs {
@@ -12209,6 +12252,12 @@ function e021_object_safety_diags(mod: parser.Module): util.Diag[] {
       var rm: string = e021_object_unsafe_method(mod, rt);
       if (rm.len() > 0) {
         out = out.append(dg("E021", "trait " + rt + " is not object-safe: method \"" + rm + "\""));
+      }
+    }
+    for lt in e021_dyn_locals_of(fn.body) {
+      var lm: string = e021_object_unsafe_method(mod, lt);
+      if (lm.len() > 0) {
+        out = out.append(dg("E021", "trait " + lt + " is not object-safe: method \"" + lm + "\""));
       }
     }
   }

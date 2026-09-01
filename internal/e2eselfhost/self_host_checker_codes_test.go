@@ -541,6 +541,23 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// The plainly object-safe shape, so a rule that rejects everything is
 		// not mistaken for a rule that works.
 		{"dyn-object-safe-plain", "trait T { function m(self: Self): i32; }\nfunction f(x: dyn T): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		// Every row above annotates a PARAMETER, which is why the gap #7974
+		// names survived: E021 is owed at three positions and only one of them
+		// was pinned. A `dyn T` LOCAL was silent where native draws E021, and a
+		// `dyn T` RETURN worked but had nothing holding it there.
+		{"dyn-unsafe-local", "trait T { function m(self: Self, other: Self): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, other: Self): i32 { return other.v; } }\nfunction main(): i32 { var d: dyn T = S { v: 3 }; return 0; }\n", []string{"E021"}},
+		{"dyn-unsafe-return", "trait T { function m(self: Self, other: Self): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, other: Self): i32 { return other.v; } }\nfunction mk(): dyn T { return S { v: 3 }; }\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
+		// The local walk descends into nested blocks, so an annotation inside an
+		// `if` is a site too — a body-level-only scan passes the row above and
+		// misses this one.
+		{"dyn-unsafe-local-nested", "trait T { function m(self: Self, other: Self): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, other: Self): i32 { return other.v; } }\nfunction main(): i32 { if (true) { var d: dyn T = S { v: 3 }; return 0; } return 1; }\n", []string{"E021"}},
+		// The negative for that position: an object-safe trait in the same local
+		// slot stays clean, so the new site is not just "any dyn local errors".
+		{"dyn-safe-local", "trait T { function m(self: Self, other: i32): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, other: i32): i32 { return self.v + other; } }\nfunction main(): i32 { var d: dyn T = S { v: 3 }; return 0; }\n", nil},
+		// The position native deliberately does NOT flag. It is here so widening
+		// the scan cannot quietly widen it past parity: a `dyn T` STRUCT FIELD
+		// draws nothing from either checker, object-unsafe trait or not.
+		{"dyn-unsafe-struct-field-not-flagged", "trait T { function m(self: Self, other: Self): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, other: Self): i32 { return other.v; } }\nstruct Holder { d: dyn T }\nfunction main(): i32 { return 0; }\n", nil},
 		// E060 (#4347): `d as? T` on a dyn-annotated local — T must be a
 		// declared struct/enum implementing every trait in the dyn set. A
 		// primitive target draws the target-shape arm; a declared struct
