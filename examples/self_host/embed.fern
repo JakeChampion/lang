@@ -104,9 +104,17 @@ pub function load(dir: string): LoadResult {
                 depths = depths.append(depth + 1);
                 continue;
             }
+            // Bytes, not text. `read_file` validates UTF-8 and refuses a file
+            // holding any byte sequence that is not — which is most images,
+            // fonts and wasm modules, exactly what an asset bundle carries.
+            // Native reads assets with os.ReadFile and asks nothing of their
+            // contents, so anything narrower here would refuse directories the
+            // other compiler embeds. The string is never used code-point-wise:
+            // it becomes a literal whose explicit byte length bounds it, which
+            // is what makes an interior NUL a byte rather than a terminator.
             var body: string = "";
             var read_ok: boolean = false;
-            match (read_file(child)) { Ok(s) => { body = s; read_ok = true; }, Err(e) => { } }
+            match (read_file_bytes(child)) { Ok(bs) => { body = string_from_bytes_unchecked(bs); read_ok = true; }, Err(e) => { } }
             if (!read_ok) {
                 return LoadResult { assets: no_assets(), err: "-embed " + dir + ": cannot read " + child_rel };
             }
