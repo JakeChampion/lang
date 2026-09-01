@@ -1860,10 +1860,11 @@ func (g *generator) emitMapDropRuntime() {
 	g.emit("cmp x4, #0x10000")
 	g.emit("b.lo .Lmapdrop_freehandle")
 	g.emit("ldr w5, [x4]")   // cap (zero-extended)
-	g.emit("mov x6, #20")    // 4 + entryStride(16)
-	g.emit("mul x5, x5, x6") // cap * 20
-	// ... plus the kv header, giving the buf's total size (arg1).
-	g.emit("add x1, x5, #%d", ast.MapHeaderBytes)
+	g.emit("mov x6, #21")    // 4 + entryStride(16) + 1 ctrl byte
+	g.emit("mul x5, x5, x6") // cap * 21
+	// ... plus the kv header and the 8-byte ctrl mirror, giving the
+	// buf's total size (arg1) — must match core/map's __map_buf_bytes.
+	g.emit("add x1, x5, #%d", ast.MapHeaderBytes+8)
 	g.emit("mov x0, x4") // base = buf (arg0)
 	g.emit("bl __fern_free")
 	g.label(".Lmapdrop_freehandle")
