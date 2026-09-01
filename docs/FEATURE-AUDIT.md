@@ -171,7 +171,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `random_bytes` / `random_i32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | length + usable value; `random_bytes(n): u8[]` (#5714) |
 | `f32_bits/f32_from_bits/f64_bits/f64_from_bits` | | | | | | ⬜ | |
 | float math builtins `__sqrt_f64` etc. | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | via std/float; self-host IR path (`op_funary`; `TestSelfHostFloatMathIR`): `__sqrt_f64`/`__floor_f64`/`__ceil_f64`/`__trunc_f64`/`__abs_f64` lower to a single hardware instruction on all three backends, and `__round_f64` (round-half-away) lowers too — one instruction on arm64 (`frinta`), emulated on x86/wasm (`roundsd`/`f64.nearest` have no ties-away mode) as `t = trunc(x)` plus `t += copysign(1,x)` when `|x-t| >= 0.5`. The shorter `trunc(x+copysign(0.5,x))` identity is NOT equivalent — its addition rounds first, so it answered 1 for `0.5-2^-54` and shifted every integral double at or above 2^52 by one ([#7880](https://github.com/JakeChampion/lang/issues/7880)). Only the libm transcendentals (`__log_f64`/`__exp_f64`/`__sin_f64`/`__cos_f64`/`__pow_f64`) still route AST |
-| `strbuf_reset/append/take` | ✅ | ✅ | ✅ | | ✅ | ✅ | global string-builder (reset zeroes / append adds bytes / take returns + resets). interp impl added [#3579](https://github.com/JakeChampion/lang/pull/3579); native x86-64/arm64 + self-host IR lower it. **wasm (native) does not implement it** (`unknown callee "strbuf_reset"`) — W left blank. Tests: `interp_strbuf_test.go`, `self_host_strbuf_ir_test.go`, `arm64_strbuf_test.go` |
+| `strbuf_reset/append/take` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | global string-builder (reset zeroes / append adds bytes / take returns + resets). interp impl added [#3579](https://github.com/JakeChampion/lang/pull/3579); native x86-64/arm64 + self-host IR lower it; native wasm added in [#7947](https://github.com/JakeChampion/lang/issues/7947) — a growable heap buffer over three scratch words, not the natives' fixed 64 MiB `.bss`, since a static region that size in linear memory would push the whole heap above it. Tests: `interp_strbuf_test.go`, `self_host_strbuf_ir_test.go`, `arm64_strbuf_test.go`, `wasm_strbuf_test.go` |
 | `__heap_bump_bytes` | ⚠️ | ✅ | ✅ | ✅ | ✅ | 🔧 | bump high-water mark (cursor − region base; 0 before the first alloc), **i64** on every target — the natives return the full 64-bit register, wasm zero-extends its i32 cursor difference. self-host **IR path** ([#3534](https://github.com/JakeChampion/lang/issues/3534)) lowers it inline — x86-64 `__fern_heap_ptr − &__fern_heap`, arm64 `__fern_heap_ptr − (__fern_heap_end − heap_size)`, wasm `$heap − heap_base` — with `ir.op_allocates` admitting it so an introspection-only module still emits the heap runtime. Guarded by `TestSelfHostHeapBumpBytesIR{X86_64,Wasm}` (+ native x86-64 cross-check). interp has no bump allocator so it reports 0 (the pre-alloc zero baseline holds; the growth contract does not). Legacy AST self-host path unchanged (IR-path-only, per goal 1) |
 | `__rc_*` (inc/dec/get/underflow_count) | | | | | | ⬜ | RC introspection |
 | `__arr_push_shared_count` | ⚠️ | ✅ | ✅ | ✅ | ✅ | 🔧 | the rc==1 cliff counter: appends that copied a buffer which still had SPARE CAPACITY, so the copy was bought by an extra reference rather than a full buffer. `__fern_arr_push_grow` mutates in place only at rc == 1, making that threshold a performance-correctness boundary with no diagnostic of its own — a stray retain upstream turns a threaded accumulator from O(n) into O(n²) while the program stays correct. Bumped on the copy path (zero cost on the fast path) and read back over a BSS global on the natives / a low-memory slot on wasm (`arrPushSharedAddr`). interp returns 0: it has no refcounts and copies nothing, which is also the healthy value everywhere. Guarded by `Test{X86_64,Arm64,WASM}ArrPushCliffCounter` (healthy = 0 AND shared = 1, so a counter that never fires cannot pass) and asserted by `Test{X86_64,WASM}ThreadedArrayParamBounded`. Self-host lowering knows it too: `ir.op_arr_push_shared_count` (tag 216), an `irlower.lower_expr` arm, and a per-backend reader over the same store the self-host `__fern_arr_push` bumps on its un-share path — a `.bss` word on x86-64 / arm64, `arr_push_shared_addr` (low scratch, 16) on wasm. Both halves matter: a reader with no bump site reports 0 forever, which reads as healthy |
@@ -252,6 +252,39 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-09-01 — `strbuf_*` implemented in the native wasm backend (#7947)
+
+The last blank in the `strbuf_reset/append/take` row. The three builtins are
+CORE (`internal/platforms`), so E066 never refuses them and they reach codegen
+on every target; `wasmbin` had no spec, no `scanRuntimeHelpers` case and no
+alias, so any wasm program touching one died with
+`unknown callee "strbuf_reset"` — including the whole self-host compiler
+(`fern.fern`).
+
+The wasm builder is a GROWABLE heap buffer addressed by three scratch words
+(ptr / len / cap), doubling from 256 bytes; `take` snapshots into an
+`__fern_alloc_rc1` string and rewinds the length, so the buffer and its
+capacity are reused across builds. It deliberately does NOT copy the natives'
+fixed 64 MiB `.bss` reservation: a static region that size in linear memory
+would push `stringStart` and the whole heap up by 64 MiB. `append` goes
+through the two-word string tag — heap-form bytes move with one `memory.copy`,
+inline/SSO bytes come out through `__fern_str_byte` — the same split
+`__str_concat` makes.
+
+The completeness gate that would have caught this is
+`internal/codegen/wasmbin/provided_lowering_test.go`:
+`TestProvidedSigsAgreeWithWasmRuntime` checks arity only for helpers wasmbin
+already has and skips names it does not know, so a builtin with no lowering at
+all passed it silently. The new tests assert every callee in the verifier's
+`providedSigs` either has a wasm lowering or is one of three explicitly
+justified groups — refused by E066 on wasm32-wasi, rewritten by IR lowering
+before `emitOp`, or a KNOWN-MISSING lowering listed under this issue.
+
+That last group is the honest finding: `sleep_ms`, `timer_fd`,
+`write_file_exec` and the `__c_call*` FFI family are missing from wasmbin the
+same way strbuf was. Compiling `fern.fern` for wasm now gets past strbuf and
+stops at `unknown callee "write_file_exec"`.
 
 ### 2026-08-31 — self-host `fround` was `trunc(x + copysign(0.5, x))` on x86 + wasm, wrong for three input classes
 
