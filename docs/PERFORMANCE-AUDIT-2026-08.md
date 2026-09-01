@@ -1467,16 +1467,52 @@ kept set bit-for-bit identical:
   helper on the bare `<m>` instead — which the same site already appends — deletes
   the allocation and is equivalent, because no site appends one without the other.
 
-**The residue is the over-approximation, and it is the follow-up.** A program
-calling one `std/string` method emits 69 functions against native's 1. `refs` is
-a set of SIMPLE names, so `ts_op_method` maps `==` to `eq` and keeps every
-`*.eq` in the program, `<` keeps every `*.cmp`, `+` keeps every `*.add` — and
-those three drag `core/bigint`'s `BigInt__add` / `cmp` / `eq` in, which drag the
-`__bi_*` helpers. The prune now runs after `checker.annotate_module`, so the
-operand types are stamped and available; making the operator roots type-aware is
-the obvious next slice and would take most of the 69. What remains after that is
-that membership is `util.has_str`, a linear scan of a ~20k-name array — §4's
-shape once more, in a ninth file.
+**The residue is the over-approximation, and sizing it needed the removal, not
+the reading.** A program calling one `std/string` method emits 69 functions
+against native's 1. `refs` is a set of SIMPLE names, so `ts_op_method` maps `==`
+to `eq` and keeps every `*.eq` in the program, `<` keeps every `*.cmp`, `+`
+keeps every `*.add`.
+
+Counting the operator-method impls in that output gives 37, and adding the
+`core/bigint` functions behind them gives ~52 of the 69 — **and that reading is
+wrong.** Stubbing `ts_op_method`'s contribution out entirely, the ceiling for
+any refinement of it, leaves **45 functions, of which 23 are still operator
+impls**: `eq` and `cmp` are held by explicit `.eq(...)` / `.cmp(...)` field
+accesses inside reachable stdlib code, which `ExprFieldAccess` roots by bare
+name whatever the operator arm does.
+
+So the operator roots hold **24 of the 69**, and every one is arithmetic:
+
+| held by the operator roots | |
+|---|---|
+| `core/bigint` | 12 — `BigInt.add` / `sub` / `negate`, `zero`, and the 9 `__bi_*` helpers behind them |
+| scalar `add` / `sub` | 12 — one pair each for i32, i64, u32, u64, f32, f64 |
+
+That makes the follow-up both smaller and more tractable than the 52 suggested.
+It is `+` `-` `*` `/` `%` and unary `-` that want qualifying, not the
+comparisons — and for plain arithmetic the type is already there:
+`ExprBinary.ty` carries the RESULT type, which for a non-overloaded scalar
+operator IS the operand type. (For `==` it is `boolean`, which is why the
+comparisons could not be qualified this way even if they were worth it; the
+operand's own type is on the operand NODE, since `ExprIdent`, `ExprCall`,
+`ExprIndex` and `ExprFieldAccess` each carry a `ty` too.) Qualifying needs
+`ts_kept_name` to see the FuncDecl rather than the name, so a receiver method
+can be matched on `base_type_name(receiver_type)` against the tag, with the bare
+name kept as the fallback — which is what `asm_load_run` gets unconditionally,
+since it never runs `annotate_module` and every `ty` there is "".
+
+**This is §4d.3's lesson in a new place, and I made the error it warns about.**
+There, 18.5% of samples was worth 6% of the clock. Here, attribution by
+CO-OCCURRENCE — these are operator methods, so the operator roots must be what
+keeps them — over-counted the prize by more than 2x. Only removing the roots and
+re-measuring says what they hold.
+
+What remains after that is that membership is `util.has_str`, a linear scan of a
+~20k-name array — §4's shape once more, in a ninth file. Its cost is measured
+only in aggregate (the pass adds ~8 s gross to a 59 s self-compile, against ~4 s
+saved by lowering 462 fewer functions); which part of that is the scan is
+unmeasured, and on this document's own evidence should be established by an A/B
+before anything is indexed.
 
 ## 8. Reproducing any of this
 
