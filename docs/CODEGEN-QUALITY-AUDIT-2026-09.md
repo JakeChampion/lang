@@ -15,12 +15,21 @@ The census numbers are re-runnable: `scripts/codegen-census -c FILE.fern`.
 
 ## 0. The short answer
 
-**No — Fern is not emitting optimal assembly, and the gap is larger than the
-project's own docs imply.** On the tightest possible kernel Fern spends 22
-instructions per iteration where `gcc -O0` spends 5 and Go spends 5. Across the
-self-hosted compiler's own 1.6 M-instruction x86-64 emit, **42.6% of emitted
-instructions compute nothing** — they shuffle values between the machine stack
-and two scratch registers, or pad `rsp` for a call.
+**As audited: no, and the gap was larger than the project's own docs implied.**
+On the tightest possible kernel Fern spent 22 instructions per iteration where
+`gcc -O0` spends 5 and Go spends 5. Across the self-hosted compiler's own
+1.6 M-instruction x86-64 emit, **42.6% of emitted instructions computed
+nothing** — they shuffled values between the machine stack and two scratch
+registers, or padded `rsp` for a call.
+
+> **Status, 2026-09-01.** Tier A of §6 has since landed for both native
+> backends. The same kernel is now 11 instructions per iteration, the x86-64
+> emit of the compiler is **963,165 instructions against 1,601,565 (−39.9%)**
+> and its overhead **12.5% against 42.6%**, and on call-heavy code Fern is now
+> *faster than* `gcc -O0` rather than 1.5× it. Every figure below is marked
+> with which side of that work it was measured on. What remains open is listed
+> in §6; the largest items are constant division, loop rotation, and spill
+> quality on the SSA path.
 
 The thing that prompted this audit — the last day's batch of assembler work —
 turns out to be the sharpest way to see it. **The assemblers can encode far more
@@ -59,19 +68,25 @@ with each toolchain's own process-startup cost subtracted so the number is the
 kernel and not libc's initialiser. Kernels are the project's own
 `examples/bench/*.fern` with line-for-line C / Rust / Go transliterations.
 
-| kernel | Fern | `gcc -O0` | `gcc -O2` | `clang -O2` | `rustc -O` | Go 1.24 |
-|---|---|---|---|---|---|---|
-| `int_loop` — 3 M-iteration i64 accumulate | **66.00 M** | 15.00 M | *eliminated* | *eliminated* | *eliminated* | 15.07 M |
-| `call_overhead` — 1 M non-inlined calls + `fib(24)` | **38.20 M** | 25.55 M | 11.21 M | 11.65 M | 11.65 M | 18.33 M |
-| `array_index` — 100 × 20 000-element i32 sum | **73.87 M** | 24.22 M | 5.53 M | 5.77 M | — | — |
+| kernel | Fern, audited | Fern, after tier A | `gcc -O0` | `gcc -O2` | `clang -O2` | `rustc -O` | Go 1.24 |
+|---|---|---|---|---|---|---|---|
+| `int_loop` — 3 M-iteration i64 accumulate | 66.00 M | **33.00 M** | 15.00 M | *eliminated* | *eliminated* | *eliminated* | 15.07 M |
+| `call_overhead` — 1 M non-inlined calls + `fib(24)` | 38.20 M | **21.00 M** | 25.55 M | 11.21 M | 11.65 M | 11.65 M | 18.33 M |
+| `array_index` — 100 × 20 000-element i32 sum | 73.87 M | **57.47 M** | 24.22 M | 5.53 M | 5.77 M | — | — |
 
-As ratios against Fern:
+As ratios against Fern, audited → after tier A:
 
-| kernel | vs `gcc -O0` | vs Go | vs `gcc -O2` / `clang -O2` / `rustc -O` |
+| kernel | vs `gcc -O0` | vs Go | vs `gcc -O2` |
 |---|---|---|---|
-| `int_loop` | **4.40×** | **4.38×** | n/a — all three optimisers replace the loop with its closed form |
-| `call_overhead` | **1.50×** | **2.08×** | **3.41× / 3.28× / 3.28×** |
-| `array_index` | **3.05×** | — | **13.4×** (7.34× against `gcc -O2 -fno-tree-vectorize`) |
+| `int_loop` | 4.40× → **2.20×** | 4.38× → **2.19×** | n/a — all three optimisers replace the loop with its closed form |
+| `call_overhead` | 1.50× → **0.82×** | 2.08× → **1.15×** | 3.41× → **1.87×** |
+| `array_index` | 3.05× → **2.37×** | — | 13.4× → 10.4× (7.34× → **5.71×** against `-fno-tree-vectorize`) |
+
+**`call_overhead` is the one to read twice: 0.82× means Fern now retires fewer
+instructions than `gcc -O0` on it, and sits 1.15× Go and 1.87× `gcc -O2`.** It
+is also the fairest kernel in the set — a real workload with calls that no
+optimiser can fold away, unlike `int_loop`, which all three replace with its
+closed form.
 
 `int_loop` is the cleanest read in the set: no arrays, no heap, no reference
 counting, no bounds checks. Nothing in Fern's semantics accounts for any part of
@@ -95,16 +110,20 @@ than by reputation:
 | 3 | **naive stack-machine translators** — an IR op maps 1:1 to a mnemonic, intermediates live on the machine stack | 3–13× | ← **Fern's default native backends, today** |
 | 4 | non-JIT bytecode VMs: CPython, Ruby, Lua (interpreted) | 20–100× | |
 
-**Fern sits in tier 3, one tier below `gcc -O0` and `tcc`.** It is not close to
-Go, and Go is the fair aspirational peer: a self-hosted language with its own
-SSA backend, no LLVM dependency, and a comparable commitment to fast builds and
-static binaries.
+**As audited, Fern sat in tier 3, one tier below `gcc -O0` and `tcc`.** After
+tier A it is **in tier 2 and touching the bottom of tier 1**: 1.87× `gcc -O2`
+and 1.15× Go on the call-heavy kernel, 2.2× `gcc -O0` on the bare loop that
+still has no register allocator behind it. Go remains the fair aspirational
+peer — a self-hosted language with its own SSA backend, no LLVM dependency, and
+a comparable commitment to fast builds and static binaries — and it is now one
+kernel's worth of distance away rather than a tier.
 
-Two qualifications, both real and neither rescuing the headline. Fern's `-O2`
-comparisons carry semantics C does not — bounds checks, reference counting, a
-zero-divisor guard — and on `int_loop`, which carries none of them, the gap
-against `gcc -O0` is still 4.4×. And the SSA backend that already exists changes
-the picture materially; §5.
+Two qualifications, both still real. Fern's `-O2` comparisons carry semantics C
+does not — bounds checks, reference counting, a zero-divisor guard — and on
+`int_loop`, which carries none of them, the remaining 2.2× against `gcc -O0` is
+pure codegen: 11 instructions per iteration against 5, because every local is
+still in memory and there is no register allocator. That is the ceiling tier A
+could reach, and it is what §5's SSA path exists to break.
 
 ### 1.3 What Fern *is* best in the world at
 
@@ -145,6 +164,8 @@ the Go implementation's wall time. That ratio is what tier 3 costs.
 `examples/bench/int_loop.fern`, whose whole body is `sum = sum + i; i = i + 1`
 under `while (i < 3000000)`. Fern's x86-64 loop, verbatim, against `gcc -O0`'s:
 
+As audited. The right column is `gcc -O0`; the after-tier-A form follows.
+
 ```
 Fern — 22 instructions/iteration        gcc -O0 — 5 instructions/iteration
 ─────────────────────────────────       ──────────────────────────────────
@@ -173,8 +194,27 @@ Fern — 22 instructions/iteration        gcc -O0 — 5 instructions/iteration
     jmp .LloopTop_2
 ```
 
+After tier A the same loop is eleven instructions, and the three defects below
+are what the difference was:
+
+```
+.LloopTop_2:
+    mov rax, [rbp-16]
+    cmp rax, 3000000          ; the constant is an operand, not a register
+    jge .LblkEnd_1
+    mov rax, [rbp-8]
+    mov rcx, [rbp-16]         ; loaded straight into the register that uses it
+    add rax, rcx
+    mov [rbp-8], rax
+    mov rax, [rbp-16]
+    add rax, 1
+    mov [rbp-16], rax
+    jmp .LloopTop_2           ; still not rotated — §6 tier C
+```
+
 Both keep every local in memory — neither has a register allocator. `gcc -O0`
-still wins 4.4× because it does the three things Fern's emitter does not:
+won 4.4× because it does three things Fern's emitter did not; two are now
+fixed and the third is still open:
 
 1. **It uses immediate operands.** `cmp QWORD PTR -8[rbp], 2999999` is one
    instruction; Fern spends five reaching the same comparison
@@ -187,7 +227,15 @@ still wins 4.4× because it does the three things Fern's emitter does not:
 3. **It rotates the loop.** `gcc` places the condition at the bottom so the
    back edge *is* the conditional branch. Fern tests at the top and pays an
    unconditional `jmp` every iteration — plus it leaves a dead `.LloopEnd_3`
-   label behind it.
+   label behind it. **Still open**; it is a change to the shape `internal/ir`
+   builds for a `while`, not to either backend, which is why it is tier C.
+
+Item 1 is fixed: P4 folds the constant into the compare. Item 2 is only half
+fixed — P5 and P6 load the operand straight into the register that consumes it,
+which is why `mov rcx, [rbp-16]` replaced a four-instruction round trip, but the
+memory-DESTINATION form is still not emitted at all, so `sum`'s load, add and
+store remain three instructions where `gcc -O0` uses one. Item 3 is untouched.
+Together those two are most of the remaining 11-against-5.
 
 Everything else on the list below is a variation on those three.
 
@@ -197,9 +245,15 @@ Everything else on the list below is a variation on those three.
 checker driver — 1 074 functions, the largest realistic program in the tree:
 
 ```
+as audited
 x86-64 (default)      total=1601565  overhead=681648 (42.6%)  stack=297873  pad=181924  shuffle=201851  frame=167617
 arm64  (default)      total=1500332  overhead=401804 (26.8%)  stack=337650  pad=0       shuffle=64154   frame=134995
 arm64  (-backend ssa) total=2015723  overhead=373433 (18.5%)  stack=0       pad=0       shuffle=373433  frame=639
+
+after tier A
+x86-64 (default)      total= 963165  overhead=120350 (12.5%)  stack= 47589  pad= 21783  shuffle= 50978  frame=168498
+arm64  (default)      total=1150723
+arm64  (-backend ssa) total=1655985
 ```
 
 `overhead` counts only instructions a register allocator deletes outright:
@@ -454,7 +508,20 @@ Ordered by (measured value ÷ risk). Everything in tier A is a local change to a
 existing backend with an existing test gate, and none of it blocks or is blocked
 by the SSA cutover.
 
-### Tier A — peepholes and selection, no architecture change
+### Tier A — peepholes and selection, no architecture change — LANDED
+
+A1–A5 and A7 landed in PR #7991 for both native backends, together with two
+rules the audit had not separated out (P5, the operand-stack round trip around
+an undisturbed value; P6, materialising an argument into its own register).
+Measured after: x86-64 `checker_run.fern` 1,601,565 → 963,165 (−39.9%), arm64
+1,507,466 → 1,150,723 (−23.7%), self-host binaries −28.2% and −26.1%. A6 and
+A8's remaining items did not land — see §6.2.
+
+Each was validated the same way before the next was started: the 22
+`examples/bench` programs' exit codes against the pre-change compiler, and the
+self-hosted compiler built by the modified backend emitting byte-identical
+assembly. The original plan, for the record:
+
 
 | | change | worth | shape |
 |---|---|---|---|
@@ -476,7 +543,26 @@ Per `CLAUDE.md`, an optimisation that can live in `internal/ir` should — A6's
 folding half belongs there. A1–A5, A7 and A8 are genuinely target-specific
 instruction selection and belong in the backends.
 
-### Tier B — make the SSA path the default
+### Tier B — make the SSA path the default — PARTLY LANDED
+
+B2 (compare-branch fusion) and B3 (coalescing, taken at the renderer as
+three-address operand reads rather than in the allocator) landed, along with
+block layout and precise per-call live sets. `checker_run.fern` through
+`-backend ssa`: 2,016,062 → 1,655,985 (−17.9%); `cset` 54,872 → 624;
+unconditional branches to the following label 58,343 → 0.
+
+**B1 was measured and deliberately not taken.** Nearly every rc call site on
+this path is already `mov x0, xN; bl f` — two instructions, shorter than the
+stack machine's inline guard — so inlining would trade static size for runtime.
+The 1.7× `box_free` call-site gap is a lowering difference, not a call-sequence
+cost, and is its own investigation.
+
+**B5 is not reachable yet.** The inversion is narrowed, not closed, and the
+honest ratio depends on when it is measured: 1.10× the stack machine as it stood
+before this work, 1.44× the stack machine as it stands after, because tier A
+moved that target in the same PR. Defaulting arm64 to the SSA backend is still
+the wrong call. The original plan:
+
 
 | | change | worth |
 |---|---|---|
@@ -501,7 +587,27 @@ each is a pass over a CFG and `internal/ir`'s flat op stream is exactly the
 representation `docs/SSA-CUTOVER-PLAN.md`'s fourth tripwire says not to add more
 cross-block analysis to.
 
-### 6.1 A gate, so this cannot regress silently
+### 6.2 What tier A did NOT close
+
+- **A6, constant division.** Untouched. It is 12 `idiv` sites in the whole
+  compiler, so it moves no static figure, but each carries a dead
+  zero-divisor and `INT_MIN/-1` guard against a literal divisor, and the
+  divide itself is 20–40 cycles where a magic-number reciprocal is ~5. A
+  reciprocal is its own correctness problem — rounding, `INT_MIN`, signedness
+  — and does not belong bundled into a peephole change.
+- **A8's remainder.** `movabs` for small and zero constants, `imm8` shifts,
+  `lea` folding, and `cmov` are all still unemitted.
+- **Memory-destination ALU**, which is what still separates the `int_loop`
+  body from `gcc -O0`'s.
+- **Loop rotation** (tier C): the back edge is still an unconditional `jmp`
+  rather than the conditional branch, and the dead `.LloopEnd` label is still
+  emitted. This one lives in `internal/ir`'s `while` shape, not in a backend.
+- **Spill quality on the SSA path**, now the largest single item anywhere in
+  this document: 52.6% of what that backend emits is stack traffic, because a
+  spilled value is reloaded at every use and the hole-free intervals
+  over-spill. It wants live-range splitting.
+
+### 6.3 A gate, so this cannot regress silently
 
 Nothing in the tree measures the ratio of useful work to shuffling. The
 fixtures check answers; the fixpoint checks reproducibility; the driver-size
