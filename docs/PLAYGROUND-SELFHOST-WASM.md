@@ -149,7 +149,7 @@ identical nested initializer is what trips it points at reuse or reference
 counting rather than a missing case.
 
 **Nothing gates this.** The one test that runs a wasm-hosted self-host compiler
-(`runShardedCompiler`, `self_host_wasm_wholecompiler_test.go:226`) compiles a
+(`runShardedCompiler`, `self_host_wasm_wholecompiler_test.go:233`) compiles a
 two-module program whose whole body is `leaf.leaf_tag().len() + 7` — no nested
 arithmetic, so the bug is invisible to it. That is the coverage gap this
 measurement found, and it is the one worth closing first: a wasm-hosted
