@@ -4760,7 +4760,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // emit_rt_fs emits the filesystem and environment surface: the chunked reader,
-// read/write_file, open_res, envp / env, temp_dir, stat, read_dir, and the
+// read/write_file, envp / env, temp_dir, stat, read_dir, and the
 // remove_file / remove_dir_all walkers.
 // emit_arm64_map_free_variant is the arm64 sibling of asm_ir's
 // emit_ir_map_free_variant: `__fern_map_free<suffix>(box)` frees the KEYS buffer
@@ -4821,7 +4821,6 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
     // __syscall4 sub-floor. Their syscall numbers, AT_FDCWD and open flag-set
     // come from asmcore.sysno / at_fdcwd / oflag keyed by the target, so the
     // Linux and Darwin bodies are one source instead of a `darwin` fork.
-
 
     // __fern_envp: the `char **` _start stashes for env() and subprocess.
     // Emitted unconditionally because _start's save is gated on `heap`, not on
