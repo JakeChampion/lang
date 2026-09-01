@@ -75,3 +75,11 @@ var knownMnemonics = func() []string {
 func suggestMnemonic(mnem string) string {
 	return suggest.Closest(mnem, knownMnemonics)
 }
+
+// KnownMnemonics is every spelling this assembler accepts, sorted. It backs
+// the did-you-mean suggestion, and the self-host coverage gate reads it as
+// the native vocabulary the Fern assembler is pinned against —
+// TestSuggestListMatchesDispatch keeps it honest against the dispatch.
+func KnownMnemonics() []string {
+	return append([]string(nil), knownMnemonics...)
+}

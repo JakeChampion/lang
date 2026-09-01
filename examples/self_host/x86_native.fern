@@ -559,16 +559,23 @@ function x86_movb_mem_reg(buf: i32[], reg8: i32, base: i32, has_index: boolean, 
 // x86_movzb_mem: `movzb{l,q} mem, <dst>` (0F B6 /r) — zero-extend a
 // byte load into a 64-bit register.
 function x86_movzb_mem(buf: i32[], w: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    return x86_movext_mem(buf, 182, w, dst, base, has_index, index, scale, disp);
+}
+
+// x86_movext_mem is x86_movext_reg's memory-source form.
+// Verified vs gas: movsbl (%rax),%ecx = 0F BE 08, movsbq (%r9),%r11 =
+// 4D 0F BE 19, movswl (%rax),%ecx = 0F BF 08.
+function x86_movext_mem(buf: i32[], op: i32, w: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
     var ix: i32 = 0;
     if (has_index) { ix = index; }
     // Not x86_byte_mem_rex: its force rule exists for a BYTE register
     // operand, and here the reg field is the 32-/64-bit destination while the
-    // byte lives in memory. Forcing on `dst` 4..7 would put a bare 0x40 in
-    // front of `movzbl (%rax), %esi`, which gas does not.
+    // narrow value lives in memory. Forcing on `dst` 4..7 would put a bare
+    // 0x40 in front of `movzbl (%rax), %esi`, which gas does not.
     var rex: i32 = x86_rex(w, dst, ix, base);
     if (rex != 64) { buf = buf.append(rex); }
-    buf = buf.append(15);  // 0x0F
-    buf = buf.append(182); // 0xB6
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(op);
     return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
 }
 
@@ -576,12 +583,25 @@ function x86_movzb_mem(buf: i32[], w: i32, dst: i32, base: i32, has_index: boole
 // selecting the 64-bit destination. A byte SOURCE of spl/bpl/sil/dil needs a
 // REX of its own even when nothing else does, or those numbers name ah/ch/dh/bh.
 function x86_movzb_reg(buf: i32[], w: i32, dst: i32, src8: i32): i32[] {
-    var rex: i32 = x86_rex(w, dst, 0, src8);
-    if (rex != 64 || x86_rex8_force(8, src8)) { buf = buf.append(rex); }
-    buf = buf.append(15);  // 0x0F
-    buf = buf.append(182); // 0xB6
-    buf = buf.append(x86_modrm(3, dst, src8));
-    return buf;
+    return x86_movext_reg(buf, 182, w, dst, src8);
+}
+
+// x86_movext_reg is the whole extend family, reg-direct: `op` is 0F B6/B7 for
+// the zero-extending byte/word loads and 0F BE/BF for the sign-extending
+// ones, and `w` selects a 64-bit destination.
+//
+// Verified vs gas: movsbl %al,%ecx = 0F BE C8, movsbq %al,%rcx = 48 0F BE C8,
+// movswl %ax,%ecx = 0F BF C8, movswq %ax,%rcx = 48 0F BF C8.
+function x86_movext_reg(buf: i32[], op: i32, w: i32, dst: i32, src: i32): i32[] {
+    var rex: i32 = x86_rex(w, dst, 0, src);
+    // A byte SOURCE of spl/bpl/sil/dil needs a REX of its own even when
+    // nothing else does, or those numbers name ah/ch/dh/bh. A WORD source
+    // has no such ambiguity, so the force applies only to the byte opcodes.
+    var force: boolean = (op == 182 || op == 190) && x86_rex8_force(8, src);
+    if (rex != 64 || force) { buf = buf.append(rex); }
+    buf = buf.append(15); // 0x0F
+    buf = buf.append(op);
+    return buf.append(x86_modrm(3, dst, src));
 }
 
 // ---- push/pop memory (slice 2l) ----
@@ -805,39 +825,48 @@ function x86_popcnt_rr(buf: i32[], w: i32, dst: i32, src: i32): i32[] {
     return x86_bitcnt_rr(buf, 184, w, dst, src); // 0xB8
 }
 
-// x86_cvttsd2si: `cvttsd2si <gpr>, <xmm>` (F2 REX.W 0F 2C /r) — truncate a
-// double to a signed 64-bit integer.
-function x86_cvttsd2si(buf: i32[], gpr: i32, xmm: i32): i32[] {
-    return x86_cvttsd2si_w(buf, 1, gpr, xmm);
-}
-
-// x86_cvttsd2si_w is x86_cvttsd2si with an explicit operand width. The
-// 32-bit form truncates to 32 bits and zeroes the upper half, so the width
-// is load-bearing, not a choice of encoding.
-function x86_cvttsd2si_w(buf: i32[], w: i32, gpr: i32, xmm: i32): i32[] {
-    buf = buf.append(242); // 0xF2
+// The scalar int<->float converts are one encoding with two operand
+// directions. `pfx` picks the precision — F2 double, F3 single — and `op`
+// picks the operation: 2C truncating float->int, 2D rounding float->int, 2A
+// int->float. In every one of them `w` is load-bearing rather than a choice
+// of encoding: the 32-bit form reads or writes only the low half.
+//   F2|F3 [REX.W] 0F <op> /r
+//
+// Verified vs gas: cvttsd2si %xmm1,%eax = F2 0F 2C C1,
+// cvtsd2si %xmm1,%rax = F2 48 0F 2D C1, cvtss2si %xmm1,%eax = F3 0F 2D C1,
+// cvttss2si %xmm9,%r11 = F3 4D 0F 2C D9, cvtsi2ss %rax,%xmm1 = F3 48 0F 2A C8.
+function x86_cvt_to_gpr(buf: i32[], pfx: i32, op: i32, w: i32, gpr: i32, xmm: i32): i32[] {
+    buf = buf.append(pfx);
     var rex: i32 = x86_rex(w, gpr, 0, xmm);
     if (w == 1 || rex != 64) {
         buf = buf.append(rex);
     }
     buf = buf.append(15); // 0x0F
-    buf = buf.append(44); // 0x2C
+    buf = buf.append(op);
     return buf.append(x86_modrm(3, gpr, xmm));
 }
-
-// x86_cvtsi2sd: `cvtsi2sd{l,q} <xmm>, <gpr>` (F2 [REX.W] 0F 2A /r) —
-// convert a signed integer to a double; `w` selects the 64-bit source
-// (the 32-bit form reads only the low half, so the width is load-bearing).
-function x86_cvtsi2sd(buf: i32[], w: i32, xmm: i32, gpr: i32): i32[] {
-    buf = buf.append(242); // 0xF2
+function x86_cvt_to_xmm(buf: i32[], pfx: i32, w: i32, xmm: i32, gpr: i32): i32[] {
+    buf = buf.append(pfx);
     var rex: i32 = x86_rex(w, xmm, 0, gpr);
     if (w == 1 || rex != 64) {
         buf = buf.append(rex);
     }
     buf = buf.append(15); // 0x0F
     buf = buf.append(42); // 0x2A
-    buf = buf.append(x86_modrm(3, xmm, gpr));
-    return buf;
+    return buf.append(x86_modrm(3, xmm, gpr));
+}
+
+// x86_cvttsd2si truncates a double to a signed 64-bit integer.
+function x86_cvttsd2si(buf: i32[], gpr: i32, xmm: i32): i32[] {
+    return x86_cvt_to_gpr(buf, 242, 44, 1, gpr, xmm);
+}
+function x86_cvttsd2si_w(buf: i32[], w: i32, gpr: i32, xmm: i32): i32[] {
+    return x86_cvt_to_gpr(buf, 242, 44, w, gpr, xmm);
+}
+
+// x86_cvtsi2sd converts a signed integer to a double.
+function x86_cvtsi2sd(buf: i32[], w: i32, xmm: i32, gpr: i32): i32[] {
+    return x86_cvt_to_xmm(buf, 242, w, xmm, gpr);
 }
 
 // ---- immediate ALU (slice 2b) ----
@@ -2555,6 +2584,39 @@ function x86_gas_movb(own a: X86Asm, src: string, dst: string): X86Asm {
 
 // x86_gas_movzb dispatches movzb{l,q}: mem->reg or reg8->reg, `w` selecting
 // the destination width.
+// x86_gas_movsx_op maps an AT&T sign-extend spelling to its opcode and
+// destination width, packed as op*256 + w; -1 = not one of them. BE reads a
+// byte, BF a word; the `l`/`q` suffix names the destination.
+function x86_gas_movsx_op(mnem: string): i32 {
+    if (mnem == "movsbl") { return 190 * 256 + 0; }
+    if (mnem == "movsbq") { return 190 * 256 + 1; }
+    if (mnem == "movswl") { return 191 * 256 + 0; }
+    if (mnem == "movswq") { return 191 * 256 + 1; }
+    return 0 - 1;
+}
+
+// x86_gas_movext assembles one extend, register or memory source. The source
+// register is parsed at the width the opcode reads — a byte for BE/B6, a word
+// for BF/B7 — so a token of the wrong width is refused rather than folded in
+// at the number it happens to share with a wider register.
+function x86_gas_movext(own a: X86Asm, op: i32, w: i32, src: string, dst: string): X86Asm {
+    var d: i32 = x86_gas_reg(dst);
+    if (w == 0) { d = x86_gas_reg32(dst); }
+    if (d < 0) { return x86_gas_bad(a, "movext " + src + ", " + dst); }
+    if (x86_str_contains(src, "(")) {
+        var m: GasMem = x86_gas_parse_mem(src);
+        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+        if (m.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
+        a = X86Asm { ...a, code: x86_movext_mem(a.code, op, w, d, m.base, m.has_index, m.index, m.scale, m.disp) };
+        return a;
+    }
+    var sr: i32 = x86_gas_reg8(src);
+    if (op == 191 || op == 183) { sr = x86_gas_reg16(src); }
+    if (sr < 0) { return x86_gas_bad(a, "movext " + src + ", " + dst); }
+    a = X86Asm { ...a, code: x86_movext_reg(a.code, op, w, d, sr) };
+    return a;
+}
+
 function x86_gas_movzb(own a: X86Asm, w: i32, src: string, dst: string): X86Asm {
     if (x86_str_contains(src, "(")) {
         var m: GasMem = x86_gas_parse_mem(src);
@@ -2772,6 +2834,14 @@ function x86_gas_fixed_op(mnem: string): i32 {
     if (mnem == "cwtd") { return x86_pack2(102, 153); }
     if (mnem == "cltd") { return x86_pack1(153); }
     if (mnem == "cqto") { return x86_pack2(72, 153); }
+    // #8020. pushfq/popfq are the plain 9C/9D bytes — in 64-bit mode the
+    // operation is already 64-bit wide, so the `q` is spelling rather than a
+    // REX.W, and gas disassembles them back as pushf/popf. ud2 is the
+    // architecturally-guaranteed invalid opcode, which is what a trap or an
+    // unreachable lowers to.
+    if (mnem == "pushfq" || mnem == "pushf") { return x86_pack1(156); }
+    if (mnem == "popfq" || mnem == "popf") { return x86_pack1(157); }
+    if (mnem == "ud2") { return x86_pack2(15, 11); }
     return 0 - 1;
 }
 
@@ -3357,6 +3427,18 @@ function x86_gas_movdq(own a: X86Asm, mnem: string, src: string, dst: string): X
     return x86_gas_sse_table(a, mnem, pfx, 111, src, dst);
 }
 
+// x86_gas_cvt2si maps a float->int convert to its prefix and opcode packed as
+// pfx*256 + op, or -1. The truncating pair is 2C and the rounding pair 2D;
+// F2 reads a double, F3 a single. The AT&T l/q suffixes name the destination
+// width, which the caller reads off the register instead.
+function x86_gas_cvt2si(mnem: string): i32 {
+    if (mnem == "cvttsd2si" || mnem == "cvttsd2sil" || mnem == "cvttsd2siq") { return 242 * 256 + 44; }
+    if (mnem == "cvtsd2si" || mnem == "cvtsd2sil" || mnem == "cvtsd2siq") { return 242 * 256 + 45; }
+    if (mnem == "cvttss2si" || mnem == "cvttss2sil" || mnem == "cvttss2siq") { return 243 * 256 + 44; }
+    if (mnem == "cvtss2si" || mnem == "cvtss2sil" || mnem == "cvtss2siq") { return 243 * 256 + 45; }
+    return 0 - 1;
+}
+
 // x86_gas_sse_mov10: the 0F 10/0F 11 move family — movsd (F2), movups (no
 // prefix), movupd (66): load into an xmm (10), store from one (11), or a
 // register copy (10). The rip-relative load is how a `.double` constant
@@ -3516,12 +3598,21 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         if (fx < 0) { fx = x86_gas_string_op(mnem); }
         if (fx >= 0) { return x86_gas_emit_packed(a, fx); }
     }
-    // rep prefix: F3 + a string op. A dropped string-op leaves memory
-    // uninitialised, surfacing far from here — record, not ignore (SH-005).
-    if (mnem == "rep") {
+    // The repeat prefixes: F3 + a string op for rep/repe/repz, F2 for the
+    // not-equal pair. A dropped string-op leaves memory uninitialised,
+    // surfacing far from here — record, not ignore (SH-005).
+    //
+    // rep and repe are the same F3 byte; the two names exist because the
+    // condition is only meaningful on cmps/scas, where the prefix repeats
+    // while ZF is set. repne/repnz repeat while it is clear, which is a
+    // different byte and not an alias.
+    if (mnem == "rep" || mnem == "repe" || mnem == "repz"
+        || mnem == "repne" || mnem == "repnz") {
         var sop: i32 = x86_gas_string_op(rest);
-        if (sop < 0) { return x86_gas_bad(a, "rep " + rest); }
-        a = X86Asm { ...a, code: a.code.append(243) };
+        if (sop < 0) { return x86_gas_bad(a, mnem + " " + rest); }
+        var rpfx: i32 = 243; // 0xF3
+        if (mnem == "repne" || mnem == "repnz") { rpfx = 242; } // 0xF2
+        a = X86Asm { ...a, code: a.code.append(rpfx) };
         return x86_gas_emit_packed(a, sop);
     }
     // lock prefix: F0, validated against the lockable set — a lock on
@@ -3682,6 +3773,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // Packed 16-byte moves (both directions) and the 0F 10/11 move family.
     if (mnem == "movdqu" || mnem == "movdqa") { return x86_gas_movdq(a, mnem, src, dst); }
     if (mnem == "movsd") { return x86_gas_sse_mov10(a, mnem, 242, src, dst); }
+    if (mnem == "movss") { return x86_gas_sse_mov10(a, mnem, 243, src, dst); }
     if (mnem == "movups") { return x86_gas_sse_mov10(a, mnem, 0, src, dst); }
     if (mnem == "movupd") { return x86_gas_sse_mov10(a, mnem, 102, src, dst); }
     // Sign-bit gathers: the destination is a GPR, not an xmm.
@@ -3715,17 +3807,42 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // matches movzbq's; the ENCODING does not, and routing it to the 64-bit
     // form put a REX.W on every one of them.
     if (mnem == "movzbl") { return x86_gas_movzb(a, 0, src, dst); }
-    // cvttsd2si's destination is a GPR of either width; the 32-bit spelling
-    // (`%eax`) is the one the emitter writes almost always.
-    if (mnem == "cvttsd2si") {
-        var d32: i32 = x86_gas_reg32(dst);
-        if (d32 >= 0) { // `%eax` — 32-bit destination, no REX.W
-            a = X86Asm { ...a, code: x86_cvttsd2si_w(a.code, 0, d32, x86_gas_xmm(src)) };
-            return a;
+    // The sign-extending byte/word loads. AT&T spells the pair of widths in
+    // the mnemonic — movsbl is byte->32, movsbq byte->64, movswl word->32,
+    // movswq word->64 — where Intel writes one movsx and reads the widths off
+    // the operands.
+    var mx: i32 = x86_gas_movsx_op(mnem);
+    if (mx >= 0) { return x86_gas_movext(a, mx / 256, mx % 256, src, dst); }
+    // The float->int converts: cvt(t)sd2si and cvt(t)ss2si, `t` selecting the
+    // truncating form and the sd/ss the source precision. The destination is
+    // a GPR of either width, and the 32-bit spelling (`%eax`) is the one the
+    // emitter writes almost always. The AT&T `l`/`q` suffixes name that width
+    // explicitly and are accepted alongside the bare spelling.
+    var f2i: i32 = x86_gas_cvt2si(mnem);
+    if (f2i >= 0) {
+        var cvw: i32 = 1;
+        var cvd: i32 = x86_gas_reg32(dst);
+        if (cvd >= 0) { cvw = 0; } // `%eax` — 32-bit destination, no REX.W
+        else {
+            cvd = x86_gas_reg(dst);
+            if (cvd < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
         }
-        var d64: i32 = x86_gas_reg(dst);
-        if (d64 < 0) { return X86Asm { ...a, unknown: a.unknown.append("cvttsd2si " + dst) }; }
-        a = X86Asm { ...a, code: x86_cvttsd2si_w(a.code, 1, d64, x86_gas_xmm(src)) };
+        var cvx: i32 = x86_gas_xmm(src);
+        if (cvx < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        a = X86Asm { ...a, code: x86_cvt_to_gpr(a.code, f2i / 256, f2i % 256, cvw, cvd, cvx) };
+        return a;
+    }
+    // cvtsi2ss is cvtsi2sd's single-precision twin: same 2A opcode, F3 rather
+    // than F2. Register source only — the memory form goes through the
+    // cvtsi2sd branch's shape, which this does not share.
+    if (mnem == "cvtsi2ss" || mnem == "cvtsi2ssl" || mnem == "cvtsi2ssq") {
+        var ssw: i32 = 1;
+        if (mnem == "cvtsi2ssl") { ssw = 0; }
+        var ssd: i32 = x86_gas_xmm(dst);
+        var sss: i32 = x86_gas_reg64(src);
+        if (ssw == 0) { sss = x86_gas_reg32(src); }
+        if (ssd < 0 || sss < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        a = X86Asm { ...a, code: x86_cvt_to_xmm(a.code, 243, ssw, ssd, sss) };
         return a;
     }
     // cvtsi2sd's unsuffixed spelling is the 64-bit form the emitter writes;
