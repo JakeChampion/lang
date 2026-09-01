@@ -116,6 +116,14 @@ type Term struct {
 	False   int // TBrIf
 	RetReg  int // TRet / TRetPair (tag)
 	RetReg2 int // TRetPair (payload)
+
+	// CondFuse (TBrIf) reports that CondReg is defined by the SetCmp that ends
+	// this block's instruction run and is read by nothing else. A backend whose
+	// conditional branch tests condition flags directly can then branch on the
+	// comparison and skip materialising the 0/1. It is an annotation only: the
+	// SetCmp is still present and still defines CondReg, so a backend that
+	// ignores the flag stays correct.
+	CondFuse bool
 }
 
 // MBlock is a straight-line instruction run plus a terminator.
@@ -186,6 +194,7 @@ func EmitWithCalleeSaved(f *ssa.Func, numAlloc int, calleeSaved []bool) (*Progra
 	e := &emitter{
 		f:        f,
 		alloc:    alloc,
+		uses:     ssa.BuildUses(f),
 		numAlloc: numAlloc,
 		s0:       numAlloc, s1: numAlloc + 1, s2: numAlloc + 2, s3: numAlloc + 3,
 		idx:        map[*ssa.Block]int{},
@@ -261,6 +270,7 @@ func EmitModule(funcs map[string]*ssa.Func, numAlloc int) (map[string]*Program, 
 type emitter struct {
 	f              *ssa.Func
 	alloc          *ssa.Allocation
+	uses           *ssa.Uses
 	numAlloc       int
 	s0, s1, s2, s3 int
 
@@ -301,13 +311,13 @@ func (e *emitter) loc(id int32) (Loc, bool) {
 // register homes of live-across values are returned. Returns (nil, false) when
 // the op has no program point (then the caller conservatively saves everything).
 func (e *emitter) callSaveRegs(op *ssa.Op) ([]int, bool) {
-	p, ok := e.alloc.OpPos[op]
+	live, ok := e.alloc.LiveAcrossOp(op)
 	if !ok {
 		return nil, false
 	}
 	seen := map[int]bool{}
 	var regs []int
-	for id := range e.alloc.LiveAcross(p) {
+	for id := range live {
 		r, isReg := e.alloc.Reg[id]
 		if !isReg || r >= e.numAlloc || !e.callerSaved(r) || seen[r] {
 			continue
@@ -377,14 +387,28 @@ func (e *emitter) emitBlock(b *ssa.Block) error {
 			return err
 		}
 		e.blocks[bi].Insts = e.cur
+		fuse := e.condFusable(b.Term.Cond, cond)
 		tTarget := e.edgeTarget(b, b.Term.True)
 		fTarget := e.edgeTarget(b, b.Term.False)
-		e.blocks[bi].Term = Term{Kind: TBrIf, CondReg: cond, True: tTarget, False: fTarget}
+		e.blocks[bi].Term = Term{Kind: TBrIf, CondReg: cond, True: tTarget, False: fTarget, CondFuse: fuse}
 
 	default:
 		return fmt.Errorf("x86_64ssa: unsupported terminator %v", b.Term.Kind)
 	}
 	return nil
+}
+
+// condFusable reports whether the just-emitted block ends in the SetCmp that
+// defines `cond`'s home register and nothing other than the terminator reads
+// the comparison's value — the precondition for Term.CondFuse.
+func (e *emitter) condFusable(v ssa.Value, cond int) bool {
+	n := len(e.cur)
+	if n == 0 || e.cur[n-1].Op != SetCmp || e.cur[n-1].Dst != cond {
+		return false
+	}
+	// BuildUses counts the BrIf's own read of Cond, so exactly one use means
+	// the terminator is the only one.
+	return e.uses.Count(v) == 1
 }
 
 // edgeTarget returns the MBlock index to branch to for edge b→s: s directly if
@@ -737,8 +761,14 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 		if err != nil {
 			return err
 		}
-		e.push(Inst{Op: MemLoad, Dst: e.s2, Src: base, Imm: op.Imm, W: 64, Bytes: 8})
-		e.place(op.Result, e.s2)
+		// A load is a single instruction that reads its base and writes its
+		// destination, so it can land straight in the result's register home —
+		// no `avoid`, and no separate placing move.
+		dst := e.coalesceDst(op.Result, -1)
+		e.push(Inst{Op: MemLoad, Dst: dst, Src: base, Imm: op.Imm, W: 64, Bytes: 8})
+		if dst == e.s2 {
+			e.place(op.Result, e.s2)
+		}
 		return nil
 
 	case ssa.OpStoreF:
@@ -895,8 +925,11 @@ func (e *emitter) emitOp(op *ssa.Op) error {
 			return err
 		}
 		bytes, signed := memInfo(op.Kind)
-		e.push(Inst{Op: MemLoad, Dst: e.s2, Src: base, Imm: op.Imm, W: op.Width, Bytes: bytes, Signed: signed})
-		e.place(op.Result, e.s2)
+		dst := e.coalesceDst(op.Result, -1)
+		e.push(Inst{Op: MemLoad, Dst: dst, Src: base, Imm: op.Imm, W: op.Width, Bytes: bytes, Signed: signed})
+		if dst == e.s2 {
+			e.place(op.Result, e.s2)
+		}
 		return nil
 
 	case ssa.OpStore, ssa.OpStore8, ssa.OpStore16, ssa.OpStore32:
