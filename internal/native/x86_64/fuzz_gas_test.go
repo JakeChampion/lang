@@ -39,9 +39,9 @@ const (
 	compareBytes compareMode = iota
 	// compareDecode requires only that both encodings disassemble to the
 	// same instructions (objdump on the raw bytes). Used for the forms where
-	// gas/llvm pick a legal shorter encoding than we do: the accumulator
-	// immediate forms (A8/A9, 04/05/0C/0D/…) and xchg-with-accumulator
-	// (90+r), per the exclusion note on TestAssembleAgainstGNUAs.
+	// gas/llvm pick a legal shorter encoding than we do — now just
+	// xchg-with-accumulator (90+r), per the exclusion note on
+	// TestAssembleAgainstGNUAs.
 	compareDecode
 )
 
@@ -112,8 +112,10 @@ var quirkIdx = []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 4, 5,
 
 func pickReg(r *rand.Rand, width int) string { return gpNames[width][quirkIdx[r.Intn(len(quirkIdx))]] }
 
-// pickRegNonAcc avoids the accumulator, whose immediate forms gas shortens
-// to the dedicated A8/04/05/… opcodes (see compareDecode).
+// pickRegNonAcc avoids the accumulator, which gas shortens `xchg` with to
+// 90+r (see compareDecode). The immediate forms no longer need it — #7953
+// gave both assemblers the A8/A9 and 04/05+8*ext opcodes, so the accumulator
+// is byte-compared like any other register.
 func pickRegNonAcc(r *rand.Rand, width int) string {
 	for {
 		if n := pickReg(r, width); n != gpNames[width][0] {
@@ -289,9 +291,11 @@ func x86Forms() []asmForm {
 		}},
 		{name: "alu_ri", gen: func(r *rand.Rand, _ int) string {
 			w := widths[r.Intn(4)]
-			return nl(fmt.Sprintf("%s %s, %d", pick(r, aluMnems), pickRegNonAcc(r, w), aluImm(r, w)))
+			return nl(fmt.Sprintf("%s %s, %d", pick(r, aluMnems), pickReg(r, w), aluImm(r, w)))
 		}},
-		{name: "alu_ri_acc", mode: compareDecode, gen: func(r *rand.Rand, _ int) string {
+		// Kept as its own form so every run exercises the accumulator opcodes
+		// rather than waiting for alu_ri to roll register 0.
+		{name: "alu_ri_acc", gen: func(r *rand.Rand, _ int) string {
 			w := widths[r.Intn(4)]
 			return nl(fmt.Sprintf("%s %s, %d", pick(r, aluMnems), gpNames[w][0], aluImm(r, w)))
 		}},
@@ -313,9 +317,9 @@ func x86Forms() []asmForm {
 		}},
 		{name: "test_ri", gen: func(r *rand.Rand, _ int) string {
 			w := widths[r.Intn(4)]
-			return nl(fmt.Sprintf("test %s, %d", pickRegNonAcc(r, w), aluImm(r, w)))
+			return nl(fmt.Sprintf("test %s, %d", pickReg(r, w), aluImm(r, w)))
 		}},
-		{name: "test_ri_acc", mode: compareDecode, gen: func(r *rand.Rand, _ int) string {
+		{name: "test_ri_acc", gen: func(r *rand.Rand, _ int) string {
 			w := widths[r.Intn(4)]
 			return nl(fmt.Sprintf("test %s, %d", gpNames[w][0], aluImm(r, w)))
 		}},

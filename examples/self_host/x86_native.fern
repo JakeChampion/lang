@@ -257,10 +257,19 @@ function x86_imm_wide(buf: i32[], size: i32, imm: i32): i32[] {
 // x86_grp1_imm_r: `<alu> $imm, %reg` — 80 /ext ib for a byte register, else
 // 83 /ext ib when the immediate fits signed 8 bits, else 81 /ext iw/id.
 // Using 83/81 for a byte operand would silently widen it (#3544's class).
+//
+// The accumulator has its own one-byte-shorter opcodes, 04+8*ext for AL and
+// 05+8*ext for AX/EAX/RAX, which carry no ModR/M. They only pay past the 83
+// form, which is shorter still for an immediate that fits signed 8 bits.
 function x86_grp1_imm_r(buf: i32[], size: i32, ext: i32, reg: i32, imm: i32): i32[] {
     buf = x86_osz(buf, size);
     buf = x86_rex_r(buf, size, reg);
     if (size == 8) {
+        // x86_gas_reg8 cannot spell ah/ch/dh/bh, so reg 0 is always al.
+        if (reg == 0) {
+            buf = buf.append(4 + ext * 8);
+            return buf.append(imm & 255);
+        }
         buf = buf.append(128);
         buf = buf.append(x86_modrm(3, ext, reg));
         return buf.append(imm & 255);
@@ -269,6 +278,10 @@ function x86_grp1_imm_r(buf: i32[], size: i32, ext: i32, reg: i32, imm: i32): i3
         buf = buf.append(131);
         buf = buf.append(x86_modrm(3, ext, reg));
         return buf.append(imm & 255);
+    }
+    if (reg == 0) {
+        buf = buf.append(5 + ext * 8);
+        return x86_imm_wide(buf, size, imm);
     }
     buf = buf.append(129);
     buf = buf.append(x86_modrm(3, ext, reg));
@@ -285,10 +298,16 @@ function x86_unary_r(buf: i32[], size: i32, opbase: i32, ext: i32, reg: i32): i3
 }
 
 // x86_test_imm_r: `test $imm, %reg` — F6 /0 ib or F7 /0 iw/id (test has no
-// sign-extended-imm8 short form).
+// sign-extended-imm8 short form), and A8 ib / A9 iw|id for the accumulator,
+// which carries no ModR/M.
 function x86_test_imm_r(buf: i32[], size: i32, reg: i32, imm: i32): i32[] {
     buf = x86_osz(buf, size);
     buf = x86_rex_r(buf, size, reg);
+    if (reg == 0) {
+        buf = buf.append(x86_opsel(168, size));
+        if (size == 8) { return buf.append(imm & 255); }
+        return x86_imm_wide(buf, size, imm);
+    }
     buf = buf.append(x86_opsel(246, size));
     buf = buf.append(x86_modrm(3, 0, reg));
     if (size == 8) { return buf.append(imm & 255); }

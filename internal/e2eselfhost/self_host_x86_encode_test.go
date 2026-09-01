@@ -458,8 +458,8 @@ function x86enc_selftest_9(): i32 {
     var sja: i32[] = x86_jcc_rel32([], x86_cc_a(), 0); // 0F 87
     if (sja[1] != 135) { return 81; }
     // slice 2q: 32-bit ALU / moves / extends / cmov / testb / rep / xorpd.
-    var ta: i32[] = x86_grp1_imm_r([], 32, 0, x86_rax(), 128); // addl $128,%eax -> 81 C0 80 00 00 00
-    if (ta.len() != 6 || ta[0] != 129 || ta[1] != 192 || ta[2] != 128 || ta[3] != 0) { return 82; }
+    var ta: i32[] = x86_grp1_imm_r([], 32, 0, x86_rax(), 128); // addl $128,%eax -> 05 80 00 00 00 (accumulator)
+    if (ta.len() != 5 || ta[0] != 5 || ta[1] != 128 || ta[2] != 0) { return 82; }
     var tb: i32[] = x86_shift_r_imm([], 32, 5, x86_rax(), 8); // shrl $8,%eax -> C1 E8 08
     if (tb.len() != 3 || tb[0] != 193 || tb[1] != 232 || tb[2] != 8) { return 83; }
     var tc: i32[] = x86_mov_r32_r32([], x86_rax(), x86_rcx()); // movl %ecx,%eax -> 89 C8
@@ -468,8 +468,8 @@ function x86enc_selftest_9(): i32 {
     if (td.len() != 3 || td[0] != 65 || td[1] != 137 || td[2] != 199) { return 85; }
     var te: i32[] = x86_movl_load([], x86_rdi(), x86_rbp(), false, 0, 1, 0 - 76); // 8B 7D B4
     if (te.len() != 3 || te[0] != 139 || te[1] != 125 || te[2] != 180) { return 86; }
-    var tf: i32[] = x86_test_imm_r([], 8, 0, 127); // testb $127,%al -> F6 C0 7F
-    if (tf.len() != 3 || tf[0] != 246 || tf[1] != 192 || tf[2] != 127) { return 87; }
+    var tf: i32[] = x86_test_imm_r([], 8, 0, 127); // testb $127,%al -> A8 7F (accumulator)
+    if (tf.len() != 2 || tf[0] != 168 || tf[1] != 127) { return 87; }
     var tg: i32[] = x86_op_rr([], 8, 132, 0, 0); // testb %al,%al -> 84 C0
     if (tg.len() != 2 || tg[0] != 132 || tg[1] != 192) { return 88; }
     var th: i32[] = x86_cmovcc_rr([], 64, x86_cc_l(), x86_rax(), x86_rdx()); // cmovl %rdx,%rax -> 48 0F 4C C2

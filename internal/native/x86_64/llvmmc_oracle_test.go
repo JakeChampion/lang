@@ -9,7 +9,7 @@ package x86_64_test
 // llvm-mc's, and (when binutils is present) gas's, and is not auto-resolved.
 //
 // Forms compared by decoded text rather than bytes:
-//   - the compareDecode forms of the gas lane (accumulator/xchg
+//   - the compareDecode forms of the gas lane (xchg-with-accumulator
 //     shortenings, which llvm-mc applies like gas);
 //   - string_ops, because llvm-mc orders a rep prefix BEFORE the 0x66
 //     operand-size prefix ([f3 66 a5] for `rep movsw`) where GNU as — and
