@@ -194,17 +194,21 @@ Worth knowing so you do not assume coverage you do not have:
   what keeps the case covered once the generator moves.
 
 - **The float TRANSCENDENTALS** — `pow`, `log`, `exp`, `sin` and `cos`. The
-  exactly-specified half of the float math surface is now gated:
-  `TestNumericProperty_FloatMathExact` runs `sqrt` / `floor` / `ceil` /
-  `trunc` / `round` / `abs` over a stress grid on all three backends, and
-  `genFloatMath` puts them in the random sweep. The transcendentals are
-  deliberately outside it, because all three backends share one fdlibm kernel
-  set and are approximations by construction (#5541), so equality against the
-  interpreter is the wrong assertion for them and a ULP-shaped gate does not
-  exist yet. #6405 is what their absence costs: compiled `2.0.pow(65.0)`
-  disagrees with the interpreter by several ULP on an exactly-representable
-  value, on all three backends, and had to be found by hand. Anything you want
-  gated about a transcendental still needs a written case.
+  exactly-specified half of the float math surface is gated by
+  `TestNumericProperty_FloatMathExact` (`sqrt` / `floor` / `ceil` / `trunc` /
+  `round` / `abs` over a stress grid on all three backends) and `genFloatMath`
+  in the random sweep. The transcendentals stay outside the equality sweep —
+  they are approximations by construction (#5541) — but they now have their
+  ULP-shaped gate: `internal/e2e/f64_ulp_test.go` measures every backend that
+  implements them (interp, x86-64, arm64, arm64-ssa, wasm, self-host x86-64)
+  against a 1400-bit reference, at 2 ulp, over a corpus spanning the full
+  finite range, plus a 1158-argument magnitude sweep over the Payne-Hanek
+  reduction path (#7878) with an oracle-free `|sin| <= 1` invariant. Two
+  standing cautions: Go's `math.Sin`/`math.Cos` are NOT a usable oracle (their
+  reduction error is unbounded in ulp terms near a zero — the interpreter
+  carries its own fdlibm sin/cos in `internal/interp/trig.go` for exactly this
+  reason), and the self-host arm64/wasm emitters are gated by spot bit-exact
+  cases in `internal/e2eselfhost`, not by the full corpus.
 
 - **The ORDER of the self-host checker's diagnostics, and how many times it
   reports the same code.** Every gate over checker output reduces to a set

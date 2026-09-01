@@ -10,20 +10,23 @@ import (
 
 // TestSelfHostTrigIRWasm pins `__sin_f64(x)` / `__cos_f64(x)` (the lowering behind
 // std/float's `(x: f64) sin()` / `cos()`) on the wasm IR path — the last two libm
-// transcendentals. They had no wasm instruction or IR runtime (wasm_eligible
-// exclusions; the wasm AST path defers them too). fsin/fcos now lower to op_fsin/
-// op_fcos -> $__fern_sin_f64 / $__fern_cos_f64, fresh polynomial runtimes:
-// range-reduce k = round(x/(π/2)), r = x − k·(π/2) ∈ [−π/4, π/4], quadrant q = k&3
-// selects ±sin(r)/±cos(r) from Taylor polynomials in r² — the wasm siblings of
-// asm_arm64's __fern_sin_f64 / __fern_cos_f64 (same coefficients + quadrant logic).
-// Self-contained f64 + i64 math, no imports/heap.
+// transcendentals. fsin/fcos lower to op_fsin/op_fcos ->
+// $__fern_sin_f64 / $__fern_cos_f64, the fdlibm runtimes: reduce (Cody-Waite
+// below 2^20, Payne-Hanek at and above — #7878), quadrant q = k&3 selects
+// ±sin(r)/±cos(r) from the fdlibm kernels in r² — the wasm siblings of the
+// other backends' __fern_sin_f64 / __fern_cos_f64 (same coefficients +
+// quadrant logic). Self-contained f64 + i64 math, no imports/heap.
 //
-// Value-tested (not differential — the wasm AST path has no sin/cos to diff
-// against): the program checks sin and cos at 0, π/6, π/4, π/2, π, 3π/2, 2π and a
-// negative angle against the known f64 values within a 1e-5 ABSOLUTE tolerance
-// (absolute since the outputs cross 0). Exits 0 only if every check passes; the
-// test also pins that the IR path was taken (`call $__fern_sin_f64` +
-// `call $__fern_cos_f64` in the WAT).
+// Two blocks of value checks. The small angles (0, π/6, π/4, π/2, π, 3π/2,
+// 2π, a negative angle) are held to a 1e-5 ABSOLUTE tolerance — absolute
+// since the outputs cross 0, and loose because the driver dialect's float
+// literals don't round-trip 17 digits. The large arguments (1e10, 1e18,
+// 1e30, 1e300, 6381956970095103*2^797) are held EXACTLY, compared as raw bit
+// patterns via f64_bits against the value every fixed backend produces —
+// before the Payne-Hanek port a large argument didn't merely lose accuracy
+// here, it trapped the module on i64.trunc_f64_s. The test also pins that
+// the IR path was taken (`call $__fern_sin_f64` + `call $__fern_cos_f64` in
+// the WAT).
 func TestSelfHostTrigIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host trig wasm IR e2e")
@@ -43,6 +46,15 @@ func TestSelfHostTrigIRWasm(t *testing.T) {
 function ccos(x: f64, expected: f64): boolean {
     return __abs_f64(__cos_f64(x) - expected) <= 0.00001;
 }
+function large(): i32 {
+    if (f64_bits(__sin_f64(f64_from_bits(4756540486875873280i64))) != (0i64 - 4620918289125169950i64)) { return 16; }
+    if (f64_bits(__cos_f64(f64_from_bits(4876203697187506176i64))) != 4593194021479806362i64) { return 17; }
+    if (f64_bits(__sin_f64(f64_from_bits(5055640609639927018i64))) != 4576532847381215078i64) { return 18; }
+    if (f64_bits(__cos_f64(f64_from_bits(5055640609639927018i64))) != (0i64 - 4616190010220143803i64)) { return 19; }
+    if (f64_bits(__sin_f64(f64_from_bits(9094988921128908188i64))) != (0i64 - 4617829991960222842i64)) { return 20; }
+    if (f64_bits(__cos_f64(f64_from_bits(8432616859780293119i64))) != (0i64 - 4890545363570941394i64)) { return 21; }
+    return 0;
+}
 function main(): i32 {
     if (!csin(0.0, 0.0)) { return 1; }
     if (!csin(0.5235987755982988, 0.5)) { return 2; }
@@ -59,7 +71,7 @@ function main(): i32 {
     if (!ccos(3.141592653589793, -1.0)) { return 13; }
     if (!ccos(6.283185307179586, 1.0)) { return 14; }
     if (!ccos(-3.141592653589793, -1.0)) { return 15; }
-    return 0;
+    return large();
 }`
 
 	var cmd *exec.Cmd
@@ -86,6 +98,6 @@ function main(): i32 {
 		t.Fatalf("wasmtime did not exit normally:\n%s", wat)
 	}
 	if code := run.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("trig wasm IR program exited %d, want 0 (a check at case #%d exceeded 1e-5 absolute error)\n--- WAT ---\n%s", code, code, wat)
+		t.Errorf("trig wasm IR program exited %d, want 0 (cases 1-15 are small angles at 1e-5 absolute tolerance; 16-21 are large arguments compared bit-exactly)\n--- WAT ---\n%s", code, wat)
 	}
 }
