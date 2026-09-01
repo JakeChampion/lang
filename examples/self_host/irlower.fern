@@ -10742,11 +10742,13 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         return s.emit(ir.op_const_i32(2));
     }
     // Built-in `open_reader`/`open_writer`/`open_appender(path)` —
-    // open a file, return a Reader/Writer (bare fd) or -errno
-    // (#4372 file half). One op_open_file carries the openat flags:
+    // open a file, push a fresh Result[Reader|Writer, IoError] box
+    // (#4372 file half, #7758): Ok(fd) — a Reader/Writer IS its fd —
+    // or Err(io_error). One op_open_file carries the openat flags:
     // O_RDONLY=0, O_WRONLY|O_CREAT|O_TRUNC=577, O_WRONLY|O_CREAT|
-    // O_APPEND=1089. No wasm fs-open runtime, so wasm_eligible
-    // rejects open_file modules.
+    // O_APPEND=1089. The Result type is resolved by opt_ret_type so
+    // `match (open_reader(p)) { Ok(r) => .., Err(e) => .. }` lowers
+    // like any other Result.
     if ((cid.name == "open_reader" || cid.name == "open_writer"
             || cid.name == "open_appender") && c.args.len() == 1) {
         var ofs: LowerState = lower_expr(c.args[0], s);
@@ -10756,12 +10758,12 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (cid.name == "open_appender") { oflags = 1089; }
         return ofs.emit(ir.op_open_file(oflags));
     }
-    // Built-in `read_line()` — read one line from stdin, return a
-    // fresh string box. A value op; the binding str-tracks the
-    // result (expr_is_str's read_line case). No wasm stdin support,
-    // so wasm_eligible rejects read_line modules; x86 / arm64 lower it.
+    // Built-in `read_line()` — read one line from stdin, return a fresh
+    // Option[string]. op_read_line takes the fd as an operand, so the
+    // bare builtin pushes fd 0; `r.read_line()` pushes its receiver
+    // instead (the method interception in lower_call_method).
     if (cid.name == "read_line" && c.args.len() == 0) {
-        return s.emit(ir.op_read_line());
+        return s.emit(ir.op_const_i32(0)).emit(ir.op_read_line());
     }
     // Built-in `read_file(path)` — read the whole named file, push a
     // fresh Result[string, IoError] box (Ok(contents) / Err(_)). A
@@ -12312,10 +12314,14 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         && !decl_is_struct(s.structs, expr_struct_type(fa.obj, s)) && expr_enum_type(fa.obj, s) == ""
         && !expr_is_str(fa.obj, s) && !expr_is_arr_src(fa.obj, s)) {
         // Reader.read_line() (#4369) -> Option[string] (Some(line incl.
-        // '\n')/None@EOF). op_read_line reads fd 0 (stdin); receiver
-        // not lowered (stdin() = fd 0, the covered case).
+        // '\n')/None@EOF). A Reader IS its fd, so the receiver lowers
+        // as the fd op_read_line reads — reading fd 0 unconditionally
+        // made `open_reader(p)` + `r.read_line()` count stdin's lines
+        // for a file (#7758).
         if (fa.field == "read_line" && c.args.len() == 0) {
-            return s.emit(ir.op_read_line());
+            var rls: LowerState = lower_expr(fa.obj, s);
+            if (!rls.ok) { return rls; }
+            return rls.emit(ir.op_read_line());
         }
         if (fa.field == "read_chunk" && c.args.len() == 1) {
             var rcs: LowerState = lower_expr(fa.obj, s);
@@ -63374,6 +63380,13 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     if (name == "read_dir") { return "Result[string[], IoError]"; }
     if (name == "env") { return "Option[string]"; }
     if (name == "stat") { return "Result[FileStat, IoError]"; }
+    // The streaming-I/O constructors (#7758): open_reader -> Result[Reader,
+    // IoError], open_writer / open_appender -> Result[Writer, IoError], so
+    // `match (open_reader(p)) { Ok(r) => .., Err(e) => .. }` recovers both
+    // payload types. Reader / Writer are represented by the bare fd, so the
+    // Ok binder is an i32 slot the resource intrinsics dispatch off.
+    if (name == "open_reader") { return "Result[Reader, IoError]"; }
+    if (name == "open_writer" || name == "open_appender") { return "Result[Writer, IoError]"; }
     // read_line → Option[string] (#4369): so a `match (read_line()) { Some(s) =>
     // .., None => .. }` scrutinee (or a `var o = read_line()` binding) recovers the
     // payload type and str-tracks the Some binder `s` for `.len()` / write dispatch.

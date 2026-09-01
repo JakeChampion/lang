@@ -8,15 +8,21 @@ import (
 	"testing"
 )
 
-// #4372 (file half): open_reader / open_writer / open_appender must lower on the
-// self-host x86-64 IR path. They complete the streaming Reader/Writer surface (the
-// stream half — stdout()/stderr()/Writer.write — landed already). A Reader/Writer
-// is a bare fd, so all three lower to one op_open_file carrying the openat flags
-// (O_RDONLY=0 / O_WRONLY|O_CREAT|O_TRUNC=577 / O_WRONLY|O_CREAT|O_APPEND=1089),
-// backed by the __fern_open_fd runtime (NUL-terminate the path, openat, return the
-// fd). This program creates a file with open_writer, appends with open_appender,
-// re-opens with open_reader, and the test reads the file back — proving all three
-// openat flag paths + Writer.write + close work end-to-end through the IR backend.
+// #4372 (file half) / #7758: open_reader / open_writer / open_appender must lower
+// on the self-host x86-64 IR path, with NATIVE's signature — Result[Reader, IoError]
+// / Result[Writer, IoError], matched rather than sign-tested. All three lower to one
+// op_open_file carrying the openat flags (O_RDONLY=0 / O_WRONLY|O_CREAT|O_TRUNC=577 /
+// O_WRONLY|O_CREAT|O_APPEND=1089), backed by the __fern_open_res runtime
+// (NUL-terminate the path, openat, then Ok(fd) / Err(io_error)). The Ok payload is
+// the bare fd a Reader/Writer is represented by, so the bound name dispatches the
+// resource intrinsics directly.
+//
+// This program creates a file with open_writer, appends with open_appender, re-opens
+// with open_reader, and finally opens a path that does not exist and matches the
+// IoError variant — proving all three openat flag paths, Writer.write, close, and
+// BOTH Result arms (including the Err payload being a real matchable IoError, not a
+// raw errno) work end-to-end through the IR backend. Byte-identical to what the
+// native compiler runs: `bin/fern -interp` on this source also exits 42.
 func TestSelfHostOpenFileIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -34,21 +40,29 @@ func TestSelfHostOpenFileIRX86_64(t *testing.T) {
 
 	target := filepath.Join(t.TempDir(), "openfile_out.txt")
 	prog := fmt.Sprintf(`function main(): i32 {
-    var w: i32 = open_writer("%s");
-    if (w < 0) { return 91; }
-    var nw: i32 = w.write("hello ");
-    w.close();
-    if (nw < 0) { return 92; }
-    var a: i32 = open_appender("%s");
-    if (a < 0) { return 93; }
-    var na: i32 = a.write("world\n");
-    a.close();
-    if (na < 0) { return 94; }
-    var r: i32 = open_reader("%s");
-    if (r < 0) { return 95; }
-    r.close();
+    match (open_writer("%s")) {
+        Ok(w) => { w.write("hello "); w.close(); },
+        Err(_) => { return 91; }
+    }
+    match (open_appender("%s")) {
+        Ok(a) => { a.write("world\n"); a.close(); },
+        Err(_) => { return 93; }
+    }
+    match (open_reader("%s")) {
+        Ok(r) => { r.close(); },
+        Err(_) => { return 95; }
+    }
+    match (open_reader("%s")) {
+        Ok(r2) => { r2.close(); return 96; },
+        Err(e) => {
+            match (e) {
+                NotFound(_) => {},
+                _ => { return 97; }
+            }
+        }
+    }
     return 42;
-}`, target, target, target)
+}`, target, target, target, filepath.Join(t.TempDir(), "no_such_file.txt"))
 
 	asm := runCapture(t, gcc, runner, driverBin, []byte(prog+"\n"))
 	if len(asm) == 0 {
@@ -59,7 +73,7 @@ func TestSelfHostOpenFileIRX86_64(t *testing.T) {
 	cmd := exec.Command(progBin)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
-		t.Fatalf("open-file program exit = %d, want 42 (open_writer/appender/reader steps; #4372)", code)
+		t.Fatalf("open-file program exit = %d, want 42 (open_writer/appender/reader steps; #4372, #7758)", code)
 	}
 
 	got, err := os.ReadFile(target)

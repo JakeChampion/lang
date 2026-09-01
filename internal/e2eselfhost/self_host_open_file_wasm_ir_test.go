@@ -9,15 +9,17 @@ import (
 )
 
 // TestSelfHostOpenFileWasmIR covers the streaming file-I/O intrinsics
-// open_writer / open_appender / open_reader (op_open_file, returning a bare fd) +
-// Writer.write (op_writer_write) on the self-host WASM IR path (#4372 file half).
-// Before this they deferred to the AST emitter, which had no fs-open runtime. Now
+// open_writer / open_appender / open_reader (op_open_file) + Writer.write
+// (op_writer_write) on the self-host WASM IR path (#4372 file half, #7758).
 // wasm_ir emits $__fern_open_file (path_open under preopen fd 3, mapping the openat
-// flags to WASI oflags/rights/fdflags) and $__fern_writer_write (fd_write). Runs
-// under wasmtime with `--dir=.::/` granting the run dir as fd 3, and verifies the
-// host file. Uses the raw fd intrinsics (`var w: i32 = open_writer(...)`), matching
-// the register-path TestSelfHostOpenFileIR — the single-program driver resolves no
-// std/io, so open_writer is the intrinsic (fd/-errno), not the Result[Writer,…] API.
+// flags to WASI oflags/rights/fdflags, then boxing Ok(fd) / Err($__fern_build_io_error))
+// and $__fern_writer_write (fd_write). Runs under wasmtime with `--dir=.::/` granting
+// the run dir as fd 3, and verifies the host file.
+//
+// The programs use NATIVE's signature — `match (open_writer(p)) { Ok(w) => .., Err(e)
+// => .. }` over Result[Writer, IoError] — which is the whole point of #7758: the
+// self-host used to hand back a bare fd here and refuse the match the native
+// compiler runs. Each source below exits identically under `bin/fern -interp`.
 func TestSelfHostOpenFileWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host open_file wasm IR e2e")
@@ -57,7 +59,7 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 
 	// open_writer + Writer.write + close: writes "hello world" to ow.txt, returns 0.
 	t.Run("writer", func(t *testing.T) {
-		src := `function main(): i32 { var w: i32 = open_writer("ow.txt"); if (w < 0) { return 91; } var nw: i32 = w.write("hello world"); w.close(); if (nw < 0) { return 92; } return 0; }`
+		src := `function main(): i32 { match (open_writer("ow.txt")) { Ok(w) => { w.write("hello world"); w.close(); }, Err(_) => { return 91; } } return 0; }`
 		if code := run(t, src); code != 0 {
 			t.Fatalf("writer exit %d, want 0", code)
 		}
@@ -75,7 +77,7 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "oa.txt"), []byte("AB"), 0o644); err != nil {
 			t.Fatalf("seed oa.txt: %v", err)
 		}
-		src := `function main(): i32 { var a: i32 = open_appender("oa.txt"); if (a < 0) { return 93; } var na: i32 = a.write("CD"); a.close(); if (na < 0) { return 94; } return 0; }`
+		src := `function main(): i32 { match (open_appender("oa.txt")) { Ok(a) => { a.write("CD"); a.close(); }, Err(_) => { return 93; } } return 0; }`
 		if code := run(t, src); code != 0 {
 			t.Fatalf("appender exit %d, want 0", code)
 		}
@@ -94,17 +96,30 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "or.txt"), []byte("hello world"), 0o644); err != nil {
 			t.Fatalf("seed or.txt: %v", err)
 		}
-		src := `function main(): i32 { var r: i32 = open_reader("or.txt"); if (r < 0) { return 95; } match (r.read_chunk(64)) { Some(s) => { r.close(); return s.len(); }, None => { r.close(); return 98; } } }`
+		src := `function main(): i32 { match (open_reader("or.txt")) { Ok(r) => { match (r.read_chunk(64)) { Some(s) => { r.close(); return s.len(); }, None => { r.close(); return 98; } } }, Err(_) => { return 95; } } return 99; }`
 		if code := run(t, src); code != 11 {
 			t.Fatalf("reader exit %d, want 11", code)
 		}
 	})
 
-	// Error path: open_reader on a missing file → fd < 0 → return 42.
+	// Error path: open_reader on a missing file → Err, and the payload is a real
+	// IoError variant (NotFound), not a raw errno — the same value native produces.
 	t.Run("open-error", func(t *testing.T) {
-		src := `function main(): i32 { var r: i32 = open_reader("does_not_exist_xyz.txt"); if (r < 0) { return 42; } r.close(); return 0; }`
+		src := `function main(): i32 { match (open_reader("does_not_exist_xyz.txt")) { Ok(r) => { r.close(); return 0; }, Err(e) => { match (e) { NotFound(_) => { return 42; }, _ => { return 43; } } } } return 1; }`
 		if code := run(t, src); code != 42 {
-			t.Fatalf("open-error exit %d, want 42 (fd < 0)", code)
+			t.Fatalf("open-error exit %d, want 42 (Err(NotFound); #7758)", code)
+		}
+	})
+
+	// r.read_line() reads the RECEIVER's fd, not stdin: a file Reader's lines are
+	// the file's. "a\nbb\n" is 2 + 3 bytes with newlines included → 5 (#7758).
+	t.Run("reader-read-line", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(dir, "rl.txt"), []byte("a\nbb\n"), 0o644); err != nil {
+			t.Fatalf("seed rl.txt: %v", err)
+		}
+		src := `function main(): i32 { match (open_reader("rl.txt")) { Ok(r) => { var n: i32 = 0; while (true) { match (r.read_line()) { Some(l) => { n = n + l.len(); }, None => { r.close(); return n; } } } r.close(); return n; }, Err(_) => { return 90; } } return 91; }`
+		if code := run(t, src); code != 5 {
+			t.Fatalf("reader-read-line exit %d, want 5 (r.read_line reads the file, not stdin; #7758)", code)
 		}
 	})
 }
