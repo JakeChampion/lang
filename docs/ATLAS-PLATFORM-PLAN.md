@@ -943,6 +943,13 @@ Per rule 5, each kernel ships with:
 5. **`byteswap` / `rotate` intrinsics** — small, independent, unblocked. (§2.3)
 6. **SwissTable SWAR group probe** for `core/map` — the one Tier-3 item with a
    credible non-vector variant, so it can proceed in parallel.
+   *Landed, as pure Fern with no kernel: ctrl bytes + SWAR group scan over
+   the unchanged linear-probe order, gated by `examples/bench/map_probe_chain`.
+   1.45x miss-heavy / 1.15x hit-heavy near the load ceiling; the input-vs-
+   corpus lesson applied here too — the group scan is gated behind a scalar
+   home-bucket check, or it loses 12% on the short chains that dominate at
+   typical load. A 16-wide vector group probe through the §3 surface is the
+   follow-up if a workload asks for it.*
 7. Re-evaluate the first-class vector type only after 2 and 4 have landed, with
    real kernels to point at. If the fused set stays under a dozen leaf kernels,
    the register-class project may never be worth it.

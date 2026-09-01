@@ -162,18 +162,21 @@ the same treatment; it was left alone here to keep the change reviewable.
 
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
-| `Map` layout | Open addressing, separate key/value columns | SwissTable control bytes + group probe | Needs a KERNEL, not a surface; **the SWAR variant is still the cheaper first move** and captures most of the cache-behaviour win |
+| `Map` layout | **SwissTable-style ctrl bytes + SWAR group probe**, home-bucket fast path, unchanged linear-probe order | SwissTable + SIMD group probe | **DONE (SWAR, this pass)** — 1.45x miss-heavy / 1.15x hit-heavy near the load ceiling, parity at typical load (`map_probe_chain` gates it); a 16-wide group-probe kernel through the #6198 surface is the remaining step |
 | String hash | **FNV-1a over 4-byte blocks + fmix32 avalanche** | wyhash / XXH3 | **DONE (this pass)** |
 | Scalar hash | Wang mix | Fine | OK |
 | Adversarial keys | **Per-process seed XORed into the FNV basis, default on** | SipHash, randomised seed | **DONE for offline attacks (this pass)**; SipHash still wanted against an online oracle |
 | Tiny map | **Linear scan at or below 8 entries** | Linear scan below ~8 entries | **DONE (this pass)** |
 | Checksum | — | xxHash / CRC32 | GAP |
 
-A SwissTable's control-byte metadata and probe *structure* are worth adopting
-even without SIMD: a SWAR group probe over a 64-bit word tests 8 slots per
-iteration with `(x - 0x0101..) & ~x & 0x8080..`-style tricks. That captures a
-good share of the cache-behaviour win, which is where most of SwissTable's
-advantage actually comes from.
+The SWAR group probe landed in `core/map` without a kernel: a ctrl-byte
+column (H2 tag / empty / tombstone) with an 8-byte wraparound mirror, scanned
+8 buckets per `(x - 0x0101..) & ~x & 0x8080..` word. Probe ORDER stayed
+linear, so bucket placement and delete's back-pointer walk were untouched.
+Two costs surfaced by measuring: the group machinery loses to the scalar
+compare on the ~1-bucket chains that dominate at ≤75% load (fixed by a scalar
+home-bucket fast path), and the match written as a helper function costs
+2-3 real calls per group (fixed by inlining with the broadcasts hoisted).
 
 The string hash now mixes 4-byte blocks and finishes with an fmix32
 avalanche (see below). Going further — wyhash/XXH3-style 64-bit block mixing —
