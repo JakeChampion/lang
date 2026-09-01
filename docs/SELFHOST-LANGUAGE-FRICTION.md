@@ -47,21 +47,21 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **8**, all `astwalk`'s fold spine | pinned |
 | Generic structs | ✅ | **0** | pinned |
-| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **65** — 4 anonymous `function(…)` exprs and 61 nested named fns (4 astwalk visitors, 19 `wasm_ir` helper-gate predicates behind `any_op`, 22 in `checker`'s collectors, 16 in `parser` — the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families); 31 of the 64 capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
-| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,054** in 4 modules — 703 in `irlower.fern`, 304 in `checker.fern`, 32 in `astwalk.fern`, 15 in `visibility.fern` | floor |
+| Closures / lambdas | ✅ `(x: T) => e`, escaping + capturing | **80** — 4 anonymous `function(…)` exprs and 76 nested named fns (4 astwalk visitors, 19 `wasm_ir` helper-gate predicates behind `any_op`, 22 in `checker`'s collectors, 16 in `parser` — the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families — and 3 in `irlower`, the cap-family visitors, #6993); the visitors mostly capture, the gate predicates mostly do not — plus **6** arrow lambdas (3 no-op statement visitors, 3 in `constfold`'s assert probe) | pinned |
+| `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **1,157** in 7 modules — `irlower.fern` and `checker.fern` carry most of them | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **11** spellings in 3 modules (`irverify`'s `NameIndex`, `wasm_ir`'s call set, `builtins`' mirror of `JObject`) | pinned |
-| `astwalk` call sites (walkers on the shared spine) | — | **126** across 12 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, and `interp.fern`'s cellify scans complete (#6993) | floor |
+| `astwalk` call sites (walkers on the shared spine) | — | **148** across 12 modules — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, and `irlower.fern`'s cap-type family (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
-| `while` + manual index | — | **3,811** loops, **4,137** `x = x + 1` | ceiling on the increments |
+| `while` + manual index | — | **3,873** loops, **4,195** `x = x + 1` | ceiling on the increments |
 | `-1` as "absent" | — | **247** `return 0 - 1` | logged |
 | String-tagged side tables (`"SFRRECV:"`, `"BORROW:"`, …) | — | **65** distinct tag namespaces | — |
 | Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |
 | Explicit `as` casts | — | **715** | logged |
 | Hand-written AST walkers | — | **~130** over `Expr`, **~247** over `Stmt` | — |
-| Wildcard `_ =>` match arms | — | **2,737** of **9,760** arrow tokens (28%) | ceiling |
+| Wildcard `_ =>` match arms | — | **2,899** of **10,103** arrow tokens (29%) | ceiling |
 | Locals with a written type annotation | inference exists | **17,168** of 17,175 (99.9%) | logged |
 | Methods (`function (r: T) name(…)`) | ✅ | **289** in 9 modules | logged |
 

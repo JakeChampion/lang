@@ -64463,59 +64463,44 @@ function cap_type(name: string, fd: parser.FuncDecl, structs: parser.StructDecl[
 // "what was it bound FROM", which is the only place a fn-typed local's signature
 // still survives (see cap_param_for).
 function cap_local_init(body: ast.Stmt[], name: string): ast.Expr {
-    var i: i32 = 0;
-    while (i < body.len()) {
-        var found: ast.Expr = parser.e_unknown("");
-        match (body[i]) {
+    function init_of(st: ast.Stmt, acc: ast.Expr): ast.Expr {
+        match (acc) { ast.ExprUnknown(_) => {}, _ => { return acc; } }
+        match (st) {
             ast.StmtVar(v) => { if (v.name == name) { return v.init; } },
-            ast.StmtIf(iff) => {
-                found = cap_local_init(iff.then_body, name);
-                match (found) { ast.ExprUnknown(_) => { found = cap_local_init(iff.else_body, name); }, _ => {} }
-            },
-            ast.StmtWhile(w) => { found = cap_local_init(w.body, name); },
-            ast.StmtFor(fo) => { found = cap_local_init(fo.body, name); },
-            ast.StmtMatch(mm) => {
-                var a: i32 = 0;
-                while (a < mm.arms.len()) {
-                    match (found) { ast.ExprUnknown(_) => { found = cap_local_init(mm.arms[a].body, name); }, _ => {} }
-                    a = a + 1;
-                }
-            },
             _ => {}
         }
-        match (found) { ast.ExprUnknown(_) => {}, _ => { return found; } }
-        i = i + 1;
+        return acc;
     }
-    return parser.e_unknown("");
+    var found: ast.Expr = parser.e_unknown("");
+    for st in body {
+        found = astwalk.fold_stmt_nodes(st, found, init_of, no_expr_expr, astwalk.descend_none);
+        match (found) { ast.ExprUnknown(_) => {}, _ => { return found; } }
+    }
+    return found;
 }
+
+// The statement-shaped cap walks contribute nothing from an expression slot;
+// paired with astwalk.descend_none the spine never enters one.
+function no_expr_expr(e: ast.Expr, acc: ast.Expr): ast.Expr { return acc; }
+function no_expr_str(e: ast.Expr, acc: string): string { return acc; }
 
 // cap_local_fn_ret is the declared RETURN spelling of fn-typed local `name`'s
 // binding (`var f: (i32) => i32` -> "i32"), or "". Same walk as cap_local_init,
 // reading the annotation the parser kept on the StmtVar rather than the
 // initialiser.
 function cap_local_fn_ret(body: ast.Stmt[], name: string): string {
-    var i: i32 = 0;
-    while (i < body.len()) {
-        var found: string = "";
-        match (body[i]) {
+    function fn_ret_of(st: ast.Stmt, acc: string): string {
+        if (acc.len() > 0) { return acc; }
+        match (st) {
             ast.StmtVar(v) => { if (v.name == name) { return v.fn_ret; } },
-            ast.StmtIf(iff) => {
-                found = cap_local_fn_ret(iff.then_body, name);
-                if (found.len() == 0) { found = cap_local_fn_ret(iff.else_body, name); }
-            },
-            ast.StmtWhile(w) => { found = cap_local_fn_ret(w.body, name); },
-            ast.StmtFor(fo) => { found = cap_local_fn_ret(fo.body, name); },
-            ast.StmtMatch(mm) => {
-                var a: i32 = 0;
-                while (a < mm.arms.len()) {
-                    if (found.len() == 0) { found = cap_local_fn_ret(mm.arms[a].body, name); }
-                    a = a + 1;
-                }
-            },
             _ => {}
         }
+        return acc;
+    }
+    var found: string = "";
+    for st in body {
+        found = astwalk.fold_stmt_nodes(st, found, fn_ret_of, no_expr_str, astwalk.descend_none);
         if (found.len() > 0) { return found; }
-        i = i + 1;
     }
     return "";
 }
@@ -64702,13 +64687,14 @@ function tuple_tag_i32_only(t: string): boolean {
     return true;
 }
 
-// cap_type_in_stmts finds `var name` anywhere in `body` (recursing into
-// if/while/for/match blocks) and resolves its type: the annotation when
-// present, else the inferable init. First match wins — shadowing across
-// sibling blocks is an accepted over-approximation, same as the other
-// lift-side body walkers (the fn-gates keep consequences to a declined or
-// extra lift, never a miscompile: the lifted capture param only labels the
-// hoisted function's parameter).
+// cap_type_in_stmts finds the binding of `name` anywhere in `body` — a `var`
+// (annotation or inferable init), a `for` binder, a match-arm pattern — and
+// resolves its type; astwalk's statement spine carries the recursion, with
+// descend_none keeping it out of expressions and lambda bodies. First match
+// wins — shadowing across sibling blocks is an accepted over-approximation,
+// same as the other lift-side body walkers (the fn-gates keep consequences to
+// a declined or extra lift, never a miscompile: the lifted capture param only
+// labels the hoisted function's parameter).
 // map_kv_type returns the KEY or VALUE type of a `Map[K, V]` type string, or ""
 // when the type is not a Map. The split is on the top-level comma, so a nested
 // `Map[i32, Pair[i32, i32]]` keeps its own brackets.
@@ -64732,9 +64718,9 @@ function map_kv_type(mty: string, want_key: boolean): string {
 }
 
 function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, depth: i32, structs: parser.StructDecl[], mfuncs: MFuncs): string {
-    var i: i32 = 0;
-    while (i < body.len()) {
-        match (body[i]) {
+    function cap_type_of(st: ast.Stmt, acc: string): string {
+        if (acc.len() > 0) { return acc; }
+        match (st) {
             ast.StmtVar(v) => {
                 if (v.name == name) {
                     if (v.type_name.len() > 0) { return v.type_name; }
@@ -64769,16 +64755,6 @@ function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, 
                         }
                     }
                 }
-            },
-            ast.StmtIf(f) => {
-                var tt: string = cap_type_in_stmts(f.then_body, name, fd, depth, structs, mfuncs);
-                if (tt.len() > 0) { return tt; }
-                var te: string = cap_type_in_stmts(f.else_body, name, fd, depth, structs, mfuncs);
-                if (te.len() > 0) { return te; }
-            },
-            ast.StmtWhile(w) => {
-                var tw: string = cap_type_in_stmts(w.body, name, fd, depth, structs, mfuncs);
-                if (tw.len() > 0) { return tw; }
             },
             ast.StmtFor(fr) => {
                 // The for-in BINDER: resolve its type from the iterated
@@ -64887,8 +64863,6 @@ function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, 
                         _ => {}
                     }
                 }
-                var tf: string = cap_type_in_stmts(fr.body, name, fd, depth, structs, mfuncs);
-                if (tf.len() > 0) { return tf; }
             },
             ast.StmtMatch(m) => {
                 // A match-arm PAYLOAD BINDING (`match (o) { Some(v) => … }`):
@@ -64958,13 +64932,16 @@ function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, 
                         },
                         _ => {}
                     }
-                    var tm: string = cap_type_in_stmts(arm.body, name, fd, depth, structs, mfuncs);
-                    if (tm.len() > 0) { return tm; }
                 }
             },
             _ => { }
         }
-        i = i + 1;
+        return acc;
+    }
+    var found: string = "";
+    for st in body {
+        found = astwalk.fold_stmt_nodes(st, found, cap_type_of, no_expr_str, astwalk.descend_none);
+        if (found.len() > 0) { return found; }
     }
     return "";
 }
