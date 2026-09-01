@@ -23,6 +23,12 @@ import (
 // The escaping result itself is REFUSED a credit (the non-escape gate), so
 // these shapes now leak their arrays soundly instead of dangling — the pinned
 // counts say so explicitly, and the exits are the part that must hold.
+//
+// Counts here are ONE block per heap string: #7351 fused the box into the
+// buffer's reserved header. Every row was re-measured against main, and every
+// live_bytes is unchanged — the clean rows stayed clean and each refusal-leak
+// row leaks the same bytes it did — so what moved is block volume, not
+// behaviour. A pre-fusion number quoted in a row note below is the older one.
 
 type splitOwnedCase struct {
 	name   string
@@ -48,7 +54,7 @@ function round(i: i32): i32 {
     return (ps[0][0] as i32 + ps.len() + clobber.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 29, allocs: 1200, frees: 600,
+			want: 29, allocs: 700, frees: 400,
 		},
 		{
 			// The lines sibling — same mechanism, same pre-fix wrong answer.
@@ -62,7 +68,7 @@ function round(i: i32): i32 {
     return (rs[0][0] as i32 + rs.len() + clobber.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 29, allocs: 1200, frees: 600,
+			want: 29, allocs: 700, frees: 400,
 		},
 		{
 			// Same-frame split, receiver read after — correct under the views
@@ -77,7 +83,7 @@ function round(i: i32): i32 {
     return (ps[0][0] as i32 + ps.len() + s.len() + i) % 101;
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
-			want: 28, allocs: 1000, frees: 1000,
+			want: 28, allocs: 600, frees: 600,
 		},
 	}
 }
