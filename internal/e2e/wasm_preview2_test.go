@@ -2228,3 +2228,126 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 		t.Errorf("POST body echo = %q; want %q", string(body), want)
 	}
 }
+
+// TestWasmPreview2HttpHandlerPlatformCapabilities drives the capability
+// methods `std/platform` puts on the handler's bag through the proxy world
+// — the target the bag was designed for (docs/PLATFORM-RESEARCH.md Rec §1).
+// The proxy profile grants log / now / random and nothing else, so this is
+// also where the capability split has teeth: the handler's output stream is
+// `plat.log`, there being no stdout to fall back on, and `plat.env` is an
+// E066 here rather than something to call.
+//
+// The status carries whether the clocks and entropy answered (the body
+// names the one that did not), and wasmtime's stderr carries what
+// `plat.log` wrote.
+func TestWasmPreview2HttpHandlerPlatformCapabilities(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("preview-2 toolchain not exercised on windows")
+	}
+	if _, err := exec.LookPath("wasm-tools"); err != nil {
+		t.Skip("wasm-tools not on PATH; skipping preview-2 e2e")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping preview-2 e2e")
+	}
+
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("probe listen: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "caps.fern")
+	src := `
+import "std/http";
+import "std/tcp";
+import "std/platform" as platform;
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    plat.log("handled " + req.path);
+    var floor: i64 = 1600000000000;
+    if (plat.now_ms() < floor) {
+        return http.http_response_text(500, "clock");
+    }
+    if (plat.elapsed_ns() < 0) {
+        return http.http_response_text(500, "monotonic");
+    }
+    if (plat.random_i32() == 0 && plat.random_i32() == 0 && plat.random_i32() == 0) {
+        return http.http_response_text(500, "random");
+    }
+    return http.http_response_ok("caps-ok");
+}
+`
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	bin := filepath.Join(dir, "fern")
+	build := exec.Command("go", "build", "-o", bin, "github.com/jakechampion/lang/cmd/fern")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build lang: %v\n%s", err, out)
+	}
+
+	componentPath := filepath.Join(dir, "caps.component.wasm")
+	emit := exec.Command(bin, "-target", "wasm32-wasi-http", "-o", componentPath, srcPath)
+	var emitOut, emitErr bytes.Buffer
+	emit.Stdout = &emitOut
+	emit.Stderr = &emitErr
+	if err := emit.Run(); err != nil {
+		t.Fatalf("fern -target wasi-http: %v\nstdout:\n%s\nstderr:\n%s", err, emitOut.String(), emitErr.String())
+	}
+
+	addr := net.JoinHostPort("127.0.0.1", itoa(port))
+	run := exec.Command("wasmtime", "serve", "--addr", addr, componentPath)
+	var sout, serr bytes.Buffer
+	run.Stdout = &sout
+	run.Stderr = &serr
+	if err := run.Start(); err != nil {
+		t.Fatalf("wasmtime serve start: %v", err)
+	}
+	t.Cleanup(func() {
+		if run.Process != nil {
+			run.Process.Kill()
+		}
+		run.Wait()
+	})
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	var resp *http.Response
+	for {
+		resp, err = client.Get("http://" + addr + "/caps")
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("dial /caps: %v\nstdout:\n%s\nstderr:\n%s", err, sout.String(), serr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("/caps status = %d, body %q; want 200 (the body names the capability that failed)", resp.StatusCode, string(body))
+	}
+	if string(body) != "caps-ok" {
+		t.Errorf("/caps body = %q; want %q", string(body), "caps-ok")
+	}
+
+	// The guest's log line reaches the host's stderr through
+	// wasi:cli/stderr, which is what the `log` capability names. It is
+	// written before the response is sent but arrives on a different
+	// stream, so give it a moment rather than racing the read.
+	logged := false
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		if strings.Contains(serr.String(), "handled /caps") {
+			logged = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !logged {
+		t.Errorf("plat.log line missing from wasmtime stderr:\n%s", serr.String())
+	}
+}

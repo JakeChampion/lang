@@ -19,11 +19,20 @@
 // serialised wire bytes) is reclaimed before the next
 // `tcp_accept` — bump-allocator semantics matching the wasi-
 // http path's implicit `__http_entry` arena.
+//
+// The second parameter is the handler's capability bag: the host
+// effects it may reach, as methods (std/platform). An access log
+// line is `plat.log`, not a bare `eprint` — an effect the caller
+// hands over can be swapped for one that records, and `fern
+// -lint`'s `ambient-capability` rule reports reaching around it.
+//
 // HttpRequest / HttpResponse struct types live in std/http; the
 // auto-synthesised `main()` calls into std/tcp.
 import "std/http";
 import "std/tcp";
+import "std/platform";
 
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
+  plat.log(req.method + " " + req.path);
   return http.http_response_ok("method=" + req.method + " path=" + req.path + "\n");
 }
