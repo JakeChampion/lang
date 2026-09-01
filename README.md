@@ -56,6 +56,10 @@ go install github.com/jakechampion/lang/cmd/fern@latest
 
 # 3. Build from a checkout
 go build ./cmd/fern
+
+# 4. Bootstrap the self-host compiler from a checkout with no Go at all:
+#    a pinned earlier compiler builds the current one (docs/BOOTSTRAP.md)
+make bootstrap                        # -> bin/fern-selfhost
 ```
 
 ## Build & run

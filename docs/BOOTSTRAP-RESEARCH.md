@@ -692,6 +692,14 @@ spec; diff-oracle is the regression test."
 **Cost: 1 week to wire (one-time).** **Impact: gates Rec
 §3, §4, §5.**
 
+**Built 2026-09-01 (#6644) — `docs/BOOTSTRAP.md` is the
+current shape.** Two stages as below, with two changes
+from this sketch: the snapshot is a native binary per
+host published as a release asset and pinned by sha256
+in `bootstrap/stage0.lock` (wasm is ruled out for now,
+§7), and `make distcheck` is red until the self-built
+compiler can compile the compiler.
+
 Lock in the bootstrap shape:
 
 1. `bootstrap/stage0.wasm.zst` lives in the repo — a
@@ -740,6 +748,12 @@ fern-impl is a `-self-host` opt-in for testers.
 
 **Cost: 1 day.** **Impact: catches regressions early.**
 
+**`make bootstrap` runs on PRs** touching the compiler
+source, the stdlib or the bootstrap itself
+(`.github/workflows/bootstrap.yml`, both Linux hosts,
+no Go installed). `make distcheck` waits on goal 2 —
+`docs/BOOTSTRAP.md`.
+
 Once the fern-impl is feature-complete:
 
 - Every PR runs `make bootstrap` — checks that the snapshot
@@ -757,6 +771,9 @@ Worth it.
 
 **Cost: ongoing, ~30 min per regeneration.** **Impact:
 avoids snapshot rot.**
+
+**Procedure: `docs/BOOTSTRAP.md` "Refreshing the pin"** —
+one workflow dispatch, one lock-file commit.
 
 Regenerate `bootstrap/stage0.wasm.zst` when:
 
@@ -797,6 +814,11 @@ C++/Zig parallel-development era hit.
 ### 7. WASM as the snapshot format, not native
 
 **Cost: 1 week.** **Impact: enables Rec §2, §4.**
+
+**Not adopted (2026-09-01).** Native cannot compile
+`fern.fern` to wasm while `sleep_ms` has no wasm lowering
+(#7947), and compiling the compiler peaks at 4.0 GB —
+wasm32's whole address space. `docs/BOOTSTRAP.md`.
 
 Reasons:
 
@@ -860,10 +882,8 @@ Separate from this research doc. Covers:
 - How to debug a stage1 ≠ stage2 divergence.
 - The two-impl posture and what to do when they diverge.
 
-Lives at `docs/BOOTSTRAP.md`. Companion to
-`ROADMAP-AND-SELF-HOSTING.md`. Written *after* Rec §2
-through §5 land — the doc is a runbook for an existing
-mechanism, not a design proposal.
+Lives at `docs/BOOTSTRAP.md` — written 2026-09-01 with
+Rec §2 and §4.
 
 ## Anti-patterns — explicit "do not adopt"
 

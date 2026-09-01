@@ -116,13 +116,19 @@ The freeze stops native being where features land. Retiring the native
 what it actually needs, because "goal 2 is nearly done" does not imply
 "the backends can go":
 
-1. **A bootstrap that does not need them.** `make selfhost-cli` builds the
+1. **A bootstrap that does not need them.** ~~`make selfhost-cli` builds the
    self-host compiler with `./bin/fern` — the native backends. There is no
-   checked-in stage0 snapshot and no `make bootstrap` / `make distcheck`
-   (`BOOTSTRAP-RESEARCH.md §2` specifies the shape; none of it is built).
-   Delete the native backends today and a clean checkout has no path to a
-   Fern binary at all: the interpreter cannot practically compile the
-   compiler.
+   checked-in stage0 snapshot and no `make bootstrap` / `make distcheck`.~~
+   **Built (#6644), half green:** `make bootstrap` takes a pinned earlier
+   compiler (`bootstrap/stage0.lock`, a release asset per host, sha256-pinned),
+   compiles the current compiler with it, smoke-tests the result and installs it
+   — no Go, no native backend on the path, proven by a CI job with no Go setup.
+   What is NOT closed: the pin itself is still built by native, because the
+   self-built compiler cannot compile the compiler — `make distcheck` (stage1
+   recompiling itself, byte-identical) dies at 12 GB on a 16 GB host where the
+   native-built compiler needs 4 GB. That is goal 2's RECLAIM gap measured as a
+   bootstrap, and the first green `distcheck` is what makes a refresh Go-free.
+   `docs/BOOTSTRAP.md`.
 2. **Every target self-contained on the self-host side.** ~~As of this
    writing `-target x86-64-linux` stops at GAS text and needs an external
    assembler + linker, where `-target arm64-linux` links in-process.~~ **Closed:**
