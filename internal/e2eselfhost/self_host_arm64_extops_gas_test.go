@@ -356,6 +356,91 @@ func TestSelfHostArm64VectorGeneralGas(t *testing.T) {
 	})
 }
 
+// TestSelfHostArm64VectorFPShiftGas pins #8000 wave 2b: the lane-wise FP
+// families, shift-by-immediate, and permute.
+//
+// Two encodings here do not work like the integer classes:
+//
+//   - The FP ops read `size` as szHi<<1 | (D lanes), NOT as an element width.
+//     So fadd .4s and fsub .4s differ in bits 23:22 while sharing an opcode,
+//     and the arrangements are fixed at 2s/4s/2d — a byte or halfword one has
+//     no meaning in this class rather than a narrower one.
+//   - Shift-by-immediate has no size field at all: immh's top set bit IS the
+//     element size, so the amount and the width share immh:immb. The caller
+//     derives esize+shift for a left shift and 2*esize-shift for a right one,
+//     and an out-of-range amount carries into immh and selects a DIFFERENT
+//     element size — which is why the refusals below matter as much as the
+//     encodings.
+func TestSelfHostArm64VectorFPShiftGas(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	checkPinnedSelfHost(t, bin, runner, []pinnedAsm{
+		{"fadd v23.4s, v9.4s, v28.4s", 0x4e3cd537},
+		{"fadd v23.2d, v9.2d, v28.2d", 0x4e7cd537},
+		{"fsub v23.2s, v9.2s, v28.2s", 0x0ebcd537},
+		{"fmul v23.4s, v9.4s, v28.4s", 0x6e3cdd37},
+		{"fdiv v23.2d, v9.2d, v28.2d", 0x6e7cfd37},
+		{"fmax v23.4s, v9.4s, v28.4s", 0x4e3cf537},
+		{"fmin v23.2d, v9.2d, v28.2d", 0x4efcf537},
+		{"fcmeq v23.4s, v9.4s, v28.4s", 0x4e3ce537},
+		{"fcmge v23.2d, v9.2d, v28.2d", 0x6e7ce537},
+		{"fcmgt v23.4s, v9.4s, v28.4s", 0x6ebce537},
+
+		{"fcmeq v23.4s, v9.4s, #0.0", 0x4ea0d937},
+		{"fcmgt v23.2d, v9.2d, #0.0", 0x4ee0c937},
+		{"fcmge v23.2s, v9.2s, #0.0", 0x2ea0c937},
+		{"fcmle v23.4s, v9.4s, #0.0", 0x6ea0d937},
+		{"fcmlt v23.2d, v9.2d, #0.0", 0x4ee0e937},
+
+		{"fneg v23.4s, v9.4s", 0x6ea0f937},
+		{"fabs v23.2d, v9.2d", 0x4ee0f937},
+		{"fsqrt v23.2s, v9.2s", 0x2ea1f937},
+		{"scvtf v23.4s, v9.4s", 0x4e21d937},
+		{"ucvtf v23.2d, v9.2d", 0x6e61d937},
+		{"fcvtzs v23.4s, v9.4s", 0x4ea1b937},
+		{"fcvtzu v23.2d, v9.2d", 0x6ee1b937},
+
+		{"shl v23.4s, v9.4s, #7", 0x4f275537},
+		{"shl v23.16b, v9.16b, #3", 0x4f0b5537},
+		{"sli v23.2d, v9.2d, #40", 0x6f685537},
+		{"sshr v23.8h, v9.8h, #5", 0x4f1b0537},
+		{"ushr v23.4s, v9.4s, #17", 0x6f2f0537},
+		{"sri v23.16b, v9.16b, #6", 0x6f0a4537},
+
+		{"zip1 v23.4s, v9.4s, v28.4s", 0x4e9c3937},
+		{"zip2 v23.8h, v9.8h, v28.8h", 0x4e5c7937},
+		{"uzp1 v23.16b, v9.16b, v28.16b", 0x4e1c1937},
+		{"uzp2 v23.2d, v9.2d, v28.2d", 0x4edc5937},
+		{"trn1 v23.4h, v9.4h, v28.4h", 0x0e5c2937},
+		{"trn2 v23.2s, v9.2s, v28.2s", 0x0e9c6937},
+	})
+	checkRefusedSelfHost(t, bin, runner, []string{
+		// The lane-wise FP class has no byte or halfword arrangement, and
+		// `.1d` is not the scalar-double form.
+		"fadd v0.16b, v1.16b, v2.16b",
+		"fmul v0.8h, v1.8h, v2.8h",
+		"fneg v0.1d, v1.1d",
+		"scvtf v0.4h, v1.4h",
+		// The FP compare-against-zero immediate is spelled #0.0 and is part
+		// of the opcode.
+		"fcmeq v0.4s, v1.4s, #1.0",
+		"fcmlt v0.2d, v1.2d, v2.2d",
+		// A left shift is 0..esize-1, a right shift 1..esize. Outside that
+		// the amount carries into immh and picks a different element size.
+		"shl v0.4s, v1.4s, #32",
+		"shl v0.16b, v1.16b, #8",
+		"sshr v0.8h, v1.8h, #17",
+		"sshr v0.8h, v1.8h, #0",
+		"ushr v0.2d, v1.2d, #65",
+		"sri v0.16b, v1.16b, #0",
+		// Shared arrangement and arity, as everywhere else in the class.
+		"zip1 v0.4s, v1.2d, v2.4s",
+		"trn2 v0.1d, v1.1d, v2.1d",
+		"fadd v0.4s, v1.4s",
+		"fneg v0.4s, v1.4s, v2.4s",
+	})
+}
+
 // TestSelfHostArm64CondCmpSelGas: ccmp/ccmn (register and imm5 forms) and
 // the conditional-select family with its inverted-condition aliases.
 func TestSelfHostArm64CondCmpSelGas(t *testing.T) {

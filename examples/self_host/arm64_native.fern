@@ -1547,11 +1547,113 @@ function arm64_v2misc_entry(mnem: string): i32 {
     return 0 - 1;
 }
 
+// arm64_vecshift encodes the shift-by-immediate class. The element size and
+// the shift amount SHARE the immh:immb field — immh's top set bit IS the
+// element size, which is why the class has no size field of its own — so the
+// caller derives it: esize+shift for a left shift, 2*esize-shift for a right
+// one. Out of range the value carries into immh and selects a different
+// element size, so the range check is the encoding's, not a nicety.
+//   0x0F000400 | Q<<30 | U<<29 | immhb<<16 | opcode<<11 | Rn<<5 | Rd
+function arm64_vecshift(buf: i32[], rd: i32, rn: i32, opcode: i32, immhb: i32, q: boolean, u: boolean): i32[] {
+    var word: i64 = 0x0f000400 | (((immhb & 0x7f) as i64) << 16)
+        | (((opcode & 31) as i64) << 11) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    if (u) { word = word | 0x20000000; }
+    return arm64_le32(buf, word);
+}
+
+// arm64_vecpermute encodes zip1/zip2/uzp1/uzp2/trn1/trn2.
+//   0x0E000800 | Q<<30 | size<<22 | Rm<<16 | opc<<12 | Rn<<5 | Rd
+function arm64_vecpermute(buf: i32[], rd: i32, rn: i32, rm: i32, opc: i32, size: i32, q: boolean): i32[] {
+    var word: i64 = 0x0e000800 | (((size & 3) as i64) << 22) | (((rm & 31) as i64) << 16)
+        | (((opc & 7) as i64) << 12) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (q) { word = word | 0x40000000; }
+    return arm64_le32(buf, word);
+}
+
+// The lane-wise FP ops read `size` as szHi<<1 | (D lanes) rather than as an
+// element width, so their tables carry szHi where the integer ones carry a
+// size mask; the arrangements are 2s/4s/2d throughout (mask 12 = S|D).
+function arm64_gas_fp_size(code: i32, szhi: boolean): i32 {
+    var v: i32 = 0;
+    if (arm64_gas_arr_size(code) == 3) { v = 1; }
+    if (szhi) { v = v + 2; }
+    return v;
+}
+
+// arm64_vfp3_entry: three-register lane-wise FP. The szHi bit rides in the
+// size-mask slot, which is free here because the arrangement set is fixed.
+function arm64_vfp3_entry(mnem: string): i32 {
+    if (mnem == "fadd") { return arm64_vec_entry(false, 26, 0); }
+    if (mnem == "fsub") { return arm64_vec_entry(false, 26, 1); }
+    if (mnem == "fmul") { return arm64_vec_entry(true, 27, 0); }
+    if (mnem == "fdiv") { return arm64_vec_entry(true, 31, 0); }
+    if (mnem == "fmax") { return arm64_vec_entry(false, 30, 0); }
+    if (mnem == "fmin") { return arm64_vec_entry(false, 30, 1); }
+    if (mnem == "fcmeq") { return arm64_vec_entry(false, 28, 0); }
+    if (mnem == "fcmge") { return arm64_vec_entry(true, 28, 0); }
+    if (mnem == "fcmgt") { return arm64_vec_entry(true, 28, 1); }
+    return 0 - 1;
+}
+
+// arm64_vfp2_entry: two-register lane-wise FP, same szHi convention.
+function arm64_vfp2_entry(mnem: string): i32 {
+    if (mnem == "fneg") { return arm64_vec_entry(true, 15, 1); }
+    if (mnem == "fabs") { return arm64_vec_entry(false, 15, 1); }
+    if (mnem == "fsqrt") { return arm64_vec_entry(true, 31, 1); }
+    if (mnem == "scvtf") { return arm64_vec_entry(false, 29, 0); }
+    if (mnem == "ucvtf") { return arm64_vec_entry(true, 29, 0); }
+    if (mnem == "fcvtzs") { return arm64_vec_entry(false, 27, 1); }
+    if (mnem == "fcvtzu") { return arm64_vec_entry(true, 27, 1); }
+    return 0 - 1;
+}
+
+// FP compare against zero, whose operand is spelled `#0.0`. szHi is always
+// set for this class, so the entry needs no flag. fcmle/fcmlt exist ONLY
+// here — their register-operand spellings are the swapped-operand
+// fcmge/fcmgt.
+function arm64_vfpcmpzero_entry(mnem: string): i32 {
+    if (mnem == "fcmeq") { return arm64_vec_entry(false, 13, 0); }
+    if (mnem == "fcmgt") { return arm64_vec_entry(false, 12, 0); }
+    if (mnem == "fcmge") { return arm64_vec_entry(true, 12, 0); }
+    if (mnem == "fcmle") { return arm64_vec_entry(true, 13, 0); }
+    if (mnem == "fcmlt") { return arm64_vec_entry(false, 14, 0); }
+    return 0 - 1;
+}
+
+// Shift by immediate. The size-mask slot carries the direction: 1 = left.
+function arm64_vshift_entry(mnem: string): i32 {
+    if (mnem == "shl") { return arm64_vec_entry(false, 10, 1); }
+    if (mnem == "sli") { return arm64_vec_entry(true, 10, 1); }
+    if (mnem == "sshr") { return arm64_vec_entry(false, 0, 0); }
+    if (mnem == "ushr") { return arm64_vec_entry(true, 0, 0); }
+    if (mnem == "sri") { return arm64_vec_entry(true, 8, 0); }
+    return 0 - 1;
+}
+
+function arm64_vpermute_opc(mnem: string): i32 {
+    if (mnem == "zip1") { return 3; }
+    if (mnem == "zip2") { return 7; }
+    if (mnem == "uzp1") { return 1; }
+    if (mnem == "uzp2") { return 5; }
+    if (mnem == "trn1") { return 2; }
+    if (mnem == "trn2") { return 6; }
+    return 0 - 1;
+}
+
+// arm64_gas_esize is the element width in bits of an arrangement.
+function arm64_gas_esize(code: i32): i32 {
+    return 8 * arm64_gas_pow2(arm64_gas_arr_size(code));
+}
+
 // arm64_gas_vecgen_handles reports whether a mnemonic has a form in one of
 // the four general families above.
 function arm64_gas_vecgen_handles(mnem: string): boolean {
     return arm64_v3int_entry(mnem) >= 0 || arm64_vlogical_entry(mnem) >= 0
-        || arm64_vcmpzero_entry(mnem) >= 0 || arm64_v2misc_entry(mnem) >= 0;
+        || arm64_vcmpzero_entry(mnem) >= 0 || arm64_v2misc_entry(mnem) >= 0
+        || arm64_vfp3_entry(mnem) >= 0 || arm64_vfp2_entry(mnem) >= 0
+        || arm64_vfpcmpzero_entry(mnem) >= 0 || arm64_vshift_entry(mnem) >= 0
+        || arm64_vpermute_opc(mnem) >= 0;
 }
 
 // arm64_gas_emit_vecgen encodes one of them. Operand shapes are vetted by
@@ -1583,10 +1685,52 @@ function arm64_gas_emit_vecgen(a: Arm64Asm, mnem: string, ops: string[]): Arm64A
             arm64_gas_vreg_any(ops[2]), 3, arm64_vec_entry_op(logic), arm64_gas_arr_q(lc), arm64_vec_entry_u(logic)) };
     }
     var misc: i32 = arm64_v2misc_entry(mnem);
-    if (misc < 0 || ops.len() != 2) { return a; }
-    var mc: i32 = arm64_gas_vreg_arrof(ops[0]);
-    return Arm64Asm { ...a, code: arm64_vec2misc(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
-        arm64_vec_entry_op(misc), arm64_gas_arr_size(mc), arm64_gas_arr_q(mc), arm64_vec_entry_u(misc)) };
+    if (misc >= 0) {
+        if (ops.len() != 2) { return a; }
+        var mc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        return Arm64Asm { ...a, code: arm64_vec2misc(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_vec_entry_op(misc), arm64_gas_arr_size(mc), arm64_gas_arr_q(mc), arm64_vec_entry_u(misc)) };
+    }
+    var fz: i32 = arm64_vfpcmpzero_entry(mnem);
+    var f3: i32 = arm64_vfp3_entry(mnem);
+    // fcmeq/fcmge/fcmgt have both forms; the `#0.0` operand tells them apart.
+    if (fz >= 0 && (f3 < 0 || (ops.len() == 3 && ops[2].len() > 0 && ops[2][0] == b'#'))) {
+        if (ops.len() != 3) { return a; }
+        var zc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        return Arm64Asm { ...a, code: arm64_vec2misc(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_vec_entry_op(fz), arm64_gas_fp_size(zc, true), arm64_gas_arr_q(zc), arm64_vec_entry_u(fz)) };
+    }
+    if (f3 >= 0) {
+        if (ops.len() != 3) { return a; }
+        var fc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        return Arm64Asm { ...a, code: arm64_vec3same(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_gas_vreg_any(ops[2]), arm64_vec_entry_op(f3),
+            arm64_gas_fp_size(fc, arm64_vec_entry_sizes(f3) == 1), arm64_gas_arr_q(fc), arm64_vec_entry_u(f3)) };
+    }
+    var f2: i32 = arm64_vfp2_entry(mnem);
+    if (f2 >= 0) {
+        if (ops.len() != 2) { return a; }
+        var f2c: i32 = arm64_gas_vreg_arrof(ops[0]);
+        return Arm64Asm { ...a, code: arm64_vec2misc(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_vec_entry_op(f2), arm64_gas_fp_size(f2c, arm64_vec_entry_sizes(f2) == 1),
+            arm64_gas_arr_q(f2c), arm64_vec_entry_u(f2)) };
+    }
+    var sh: i32 = arm64_vshift_entry(mnem);
+    if (sh >= 0) {
+        if (ops.len() != 3) { return a; }
+        var sc: i32 = arm64_gas_vreg_arrof(ops[0]);
+        var es: i32 = arm64_gas_esize(sc);
+        var amt: i32 = arm64_gas_imm(ops[2]);
+        var immhb: i32 = 2 * es - amt;
+        if (arm64_vec_entry_sizes(sh) == 1) { immhb = es + amt; }
+        return Arm64Asm { ...a, code: arm64_vecshift(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+            arm64_vec_entry_op(sh), immhb, arm64_gas_arr_q(sc), arm64_vec_entry_u(sh)) };
+    }
+    var pm: i32 = arm64_vpermute_opc(mnem);
+    if (pm < 0 || ops.len() != 3) { return a; }
+    var pc: i32 = arm64_gas_vreg_arrof(ops[0]);
+    return Arm64Asm { ...a, code: arm64_vecpermute(a.code, arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
+        arm64_gas_vreg_any(ops[2]), pm, arm64_gas_arr_size(pc), arm64_gas_arr_q(pc)) };
 }
 
 // ---- packed NEON (the fused vector kernels of ATLAS-PLATFORM-PLAN §3) ----
@@ -2333,6 +2477,8 @@ function arm64_gas_bad_vec_token(mnem: string, rest: string): string {
 // is part of the opcode, so a non-zero one has no field to go in and would
 // assemble as the zero form.
 function arm64_gas_bad_vecgen(mnem: string, ops: string[]): string {
+    var fpbad: string = arm64_gas_bad_vecfp(mnem, ops);
+    if (fpbad != "-") { return fpbad; }
     var three: i32 = arm64_v3int_entry(mnem);
     var logic: i32 = arm64_vlogical_entry(mnem);
     var czero: i32 = arm64_vcmpzero_entry(mnem);
@@ -2361,6 +2507,63 @@ function arm64_gas_bad_vecgen(mnem: string, ops: string[]): string {
     }
     if (is_czero && arm64_gas_imm(ops[2]) != 0) { return mnem + ":imm"; }
     if (!arm64_gas_arr_allowed(arm64_vec_entry_sizes(entry), code)) { return mnem + ":arr"; }
+    return "";
+}
+
+// arm64_gas_bad_vecfp vets the FP, shift-by-immediate and permute families.
+// It answers "-" for a mnemonic in none of them, which is what lets
+// arm64_gas_bad_vecgen tell "clean" apart from "not mine" — an empty string
+// means the operands are fine.
+//
+// The FP arrangements are fixed at 2s/4s/2d (mask 12), so a byte or halfword
+// one is refused rather than folded into a size field that means something
+// else entirely here. A shift amount out of range is refused for the sharper
+// reason that immh:immb carries the ELEMENT SIZE as well as the amount: an
+// over-large value lands in immh and selects a different element size.
+function arm64_gas_bad_vecfp(mnem: string, ops: string[]): string {
+    var fz: i32 = arm64_vfpcmpzero_entry(mnem);
+    var f3: i32 = arm64_vfp3_entry(mnem);
+    var f2: i32 = arm64_vfp2_entry(mnem);
+    var sh: i32 = arm64_vshift_entry(mnem);
+    var pm: i32 = arm64_vpermute_opc(mnem);
+    if (fz < 0 && f3 < 0 && f2 < 0 && sh < 0 && pm < 0) { return "-"; }
+    var is_fz: boolean = fz >= 0 && (f3 < 0
+        || (ops.len() == 3 && ops[2].len() > 0 && ops[2][0] == b'#'));
+    // Operand counts: two vectors and an immediate for the compare-against-
+    // zero and shift forms, two for the unary FP ones, three otherwise.
+    var want: i32 = 3;
+    var nvec: i32 = 3;
+    if (is_fz || sh >= 0) { nvec = 2; }
+    else { if (f3 < 0 && pm < 0 && f2 >= 0) { want = 2; nvec = 2; } }
+    if (ops.len() != want) { return mnem + ":arity"; }
+    var code: i32 = arm64_gas_vreg_arrof(ops[0]);
+    var i: i32 = 0;
+    while (i < nvec) {
+        if (arm64_gas_vreg_any(ops[i]) < 0) { return arm64_gas_trim(ops[i]); }
+        if (arm64_gas_vreg_arrof(ops[i]) != code) { return mnem + ":arr"; }
+        i = i + 1;
+    }
+    if (sh >= 0) {
+        if (!arm64_gas_arr_allowed(15, code)) { return mnem + ":arr"; }
+        var es: i32 = arm64_gas_esize(code);
+        var amt: i32 = arm64_gas_imm(ops[2]);
+        if (arm64_vec_entry_sizes(sh) == 1) {
+            if (amt < 0 || amt >= es) { return mnem + ":imm"; }
+        } else {
+            if (amt < 1 || amt > es) { return mnem + ":imm"; }
+        }
+        return "";
+    }
+    if (pm >= 0) {
+        if (!arm64_gas_arr_allowed(15, code)) { return mnem + ":arr"; }
+        return "";
+    }
+    // 12 = S|D: the lane-wise FP ops exist in 2s/4s/2d and nothing else.
+    if (!arm64_gas_arr_allowed(12, code)) { return mnem + ":arr"; }
+    if (is_fz) {
+        var z: string = arm64_gas_trim(ops[2]);
+        if (z != "#0.0" && z != "#0") { return mnem + ":imm"; }
+    }
     return "";
 }
 
@@ -2668,6 +2871,11 @@ function arm64_gas_is_unscaled2(mnem: string): boolean {
 // not exist. "" = clean, or not one of these families.
 function arm64_gas_bad_ext_token(mnem: string, rest: string): string {
     var ops: string[] = arm64_gas_operands(rest);
+    // An arranged vector operand routes the mnemonic to its SIMD form, so the
+    // scalar family checks do not apply — the dual-form ones (fadd, fmul,
+    // fneg, add, …) would reject `v23.4s` as a bad scalar register. The
+    // vector shapes are vetted by arm64_gas_bad_vecgen instead.
+    if (ops.len() > 0 && arm64_gas_is_vecarr(ops[0])) { return ""; }
     var t: string = arm64_gas_bad_ext_alu(mnem, ops);
     if (t.len() > 0) { return t; }
     t = arm64_gas_bad_ext_mem(mnem, ops);
