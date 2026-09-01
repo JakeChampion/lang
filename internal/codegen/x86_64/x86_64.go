@@ -3675,12 +3675,12 @@ func (g *generator) emitConstDivRem(op ir.Op, isRem bool, k int64) {
 		// Signed: bias by 2^sh-1 when the dividend is negative, so the
 		// shift truncates toward zero rather than toward -infinity.
 		g.emit(fmt.Sprintf("mov %s, %s", c, a))
-		g.emit(fmt.Sprintf("sar %s, %d", c, bits-1))   // all ones iff negative
-		g.emit(fmt.Sprintf("shr %s, %d", c, bits-sh))  // 2^sh-1 iff negative
-		g.emit(fmt.Sprintf("add %s, %s", c, a))        // biased dividend
+		g.emit(fmt.Sprintf("sar %s, %d", c, bits-1))  // all ones iff negative
+		g.emit(fmt.Sprintf("shr %s, %d", c, bits-sh)) // 2^sh-1 iff negative
+		g.emit(fmt.Sprintf("add %s, %s", c, a))       // biased dividend
 		if isRem {
 			// r = x - (x/2^sh)*2^sh, and the multiply is a mask.
-			g.emit(fmt.Sprintf("and %s, %d", c, -(int64(1)<<sh)))
+			g.emit(fmt.Sprintf("and %s, %d", c, -(int64(1) << sh)))
 			g.emit(fmt.Sprintf("sub %s, %s", a, c))
 			break
 		}
