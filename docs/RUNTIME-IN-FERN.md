@@ -58,8 +58,8 @@ check whether the floor already says the thing.
 
 What remains hand-written — and what keeps
 [#2649](https://github.com/JakeChampion/lang/issues/2649) open — is the
-core allocator / map runtime and the array MUTATORS (`__fern_alloc`,
-`__fern_map_*`, `__fern_arr_push`), the net/proc/timer leaves (audited below),
+core allocator and the array MUTATORS (`__fern_alloc`, `__fern_arr_push`),
+what is left of the map runtime, the net/proc/timer leaves (audited below),
 and the per-backend wasm helper bundles. Three helpers stay hand-written on
 principle rather than for want of a wrapper, all on Darwin: `monotonic_ns`
 (`mrs cntvct_el0` is not a syscall), `fork` (it reports failure in the carry
@@ -67,6 +67,44 @@ flag and marks the child in `x1`, and Fern can read neither), and `subprocess`,
 which needs both that `fork` and a `pipe()` that reports its second fd in `x1`
 too. Everywhere else `subprocess` is Fern — the first COMPOSITE to move, and
 the one that showed length is not the same thing as floor distance.
+
+## The map runtime's key search — one Fern helper, eighteen copies gone
+
+`__fern_map_find(keys, key, keykind, eqfn) -> i32` answers the index of `key` in
+the keys array, or -1. It is the whole map runtime's search, and it replaces
+**eighteen** hand-written copies of itself: `map_set`, `map_get` and `map_has`
+each carried a string, an i32 and a struct/enum variant of the same loop, per
+register backend, and `__fern_map_delete`'s Fern body had inlined a fourth.
+
+Two things about the slice generalise beyond maps.
+
+**The right unit was not the whole verb.** The obvious next step after
+`map_delete` was `map_get` — and it is the wrong shape. What the three verbs
+share is the *search*; what they do not share is the answer (an `Option` box, a
+boolean, an in-place overwrite, a two-column compaction) and, for `map_set`, a
+pair of flag bits that decide how the key is freed and which append helper runs.
+Migrating a verb at a time would have carried that tail into Fern with it and
+still left the loop duplicated three ways. Extracting the search alone leaves
+each caller as a handful of hand-asm instructions over a shared body, and the
+callers keep the register-ABI entry points their op sites already call. Look for
+the repeated fragment, not the named helper.
+
+**Nothing new was needed to call it.** `is_fern_helper` already claims a name
+for the helper-call emit and `ir_helper_symbol` already resolves it to
+`__fn___fern_*`, so the three hand-asm callers reach it by symbol under the
+stack ABI they were already using for `__fn___fern_str_eq`, and
+`__fern_map_delete`'s Fern body reaches it through one `irlower` arm of the
+shape `__fern_str_eq` and the RC hooks already had. That is the fourth
+consecutive slice where the floor already said the thing.
+
+The gating is the one place it differs from `map_delete`, deliberately.
+`map_delete` got a need of its OWN because its Fern body is larger than the
+hand-asm it replaced and most map programs never delete; `map_find` rides
+`maps`, because every body in that bundle calls it. The result is a net SHRINK
+for programs that use more than one map verb (−296 bytes on a get/has/set/delete
+mix, −1.6% on `map_struct_enum_keys`) and about +2% for a program using maps
+without deleting, which is the one shape that traded three tight loops for one
+general body.
 
 ## The hot core needs better codegen first, not better expressiveness
 
@@ -84,27 +122,53 @@ because a raw-pointer body never handles the array as a typed value except
 through the type-only bridges. It was correct, and passed every behavioural
 probe on both native backends.
 
-What killed it was emitted size, which is a proxy for speed here:
+What killed it was emitted size, which is a proxy for speed here. The figure
+recorded at the time was 27 hand-asm instructions against 353 Fern-compiled
+(~15 vs ~169 on the in-place fast path) — a 13x expansion.
 
-| | hand-asm | Fern-compiled |
-| --- | --- | --- |
-| total instructions | 27 | 353 |
-| in-place fast path | ~15 | ~169 |
+**The expansion is about 3.3x, not 13x.** The 353 was measured on a branch that
+no longer exists and BEFORE `peephole_push_pop` landed; nothing in the tree
+re-emits that body, so it stood unchecked. Re-measured 2026-09, self-host
+x86-64 and arm64, counting emitted instructions:
 
-The IR's stack-machine lowering spends four instructions and two stack
-round-trips materialising the constant `-8`, and `pushq %rax` / `popq %rax`
-pairs run throughout. Every leaf migrated before this one was dominated by
-something other than its own instruction count — the syscall leaves by syscall
-latency, the array producers by allocation plus an O(n) copy — so codegen
-quality did not matter to any of them. `arr_push` runs on every `.append()`
-and its fast path is fifteen instructions of pointer arithmetic. A 10x
-expansion there is a straight loss.
+| shape | hand-asm | Fern-compiled | ratio |
+| --- | --- | --- | --- |
+| `arr_push` (x86-64) | 60 | 200 | 3.3x |
+| `arr_push` (arm64) | 59 | 206 | 3.5x |
+| `map_snapshot_col` | 20 | 66 | 3.3x |
+| `map_snapshot_col_str` | 31 | 71 | 2.3x |
+| `__fern_map_find` (SHIPPED) | ~41 | 132 | 3.2x |
 
-**So the precondition for the hot core is a better lowering, not a bigger
-floor.** The `len(asm) > N` assertions scattered through `internal/e2eselfhost`
-are what caught it; they read as "did the module bail to the AST path" but they
-double as the only guard against codegen bloat, and raising them to accommodate
-a migration would discard exactly the signal they exist to give.
+The last row is the one to trust: it is not a reconstruction but the helper
+this document's map section describes, measured in a real emitted binary
+against the three-variant hand-asm search it replaced. The `arr_push` rows are
+faithful reconstructions rather than the deleted #6446 source — they carry its
+rc/uniqueness gate but not its two diagnostic counters — so treat them as
+approximate. Note also that the hand-asm moved: today's `__fern_arr_push` is 60
+instructions, not 27, so part of the original gap was two moving targets
+compared across three months.
+
+What follows from 3.3x rather than 13x:
+
+- **Break-even is about 3.3 copies of the hand-asm**, and one Fern source
+  serves BOTH register backends — so a helper duplicated even twice within a
+  backend pays for itself. `map_find` was N=18 and shrank every binary that
+  used more than one map verb.
+- **A single-copy helper still loses**, and `arr_push` is still one: 60 x 2
+  backends = 120 against 200. But that is a 1.7x loss, not a 10x one, and the
+  "353 less 20% is still ~280 against 27" arithmetic below overstates the gap
+  by about four times.
+- **Hotness, not size, is now the live argument against `arr_push`.** Its fast
+  path runs on every `.append()`, and 3.3x on fifteen instructions of pointer
+  arithmetic is still a real per-append cost. That is a different claim from
+  "the codegen is too bad to migrate anything hot", and it should be settled by
+  measuring the fast path against a benchmark rather than by this table.
+
+**So the precondition for the hot core is narrower than "a better lowering".**
+The `len(asm) > N` assertions scattered through `internal/e2eselfhost` are what
+caught the original regression; they read as "did the module bail to the AST
+path" but they double as the only guard against codegen bloat, and raising them
+to accommodate a migration would discard exactly the signal they exist to give.
 
 ### First instalment on that precondition: the push/pop peephole
 
@@ -158,8 +222,9 @@ blobs call migrated helpers as `__fn___fern_*` under the current stack ABI, so
 caller, callee prologue, and every hand-asm call site move together — a roadmap
 decision, not a drive-by.
 
-And none of this on its own clears the `arr_push` bar: 353 instructions less 20%
-is still ~280 against 27.
+And none of this on its own clears the `arr_push` bar, though the gap is
+narrower than it used to read: 200 Fern-compiled instructions against 120 of
+hand-asm across the two backends, per the re-measurement above.
 
 One rule the attempt did establish, which applies to any future raw op: **it
 must push a result.** Every raw op is typed `i32` and the statement lowering
@@ -623,7 +688,8 @@ remainder splits three ways:
   **has since moved**; strbuf is blocked, and on storage rather than length.
 
   **`map_delete` was the one that looked impossible and was not**, twice over,
-  so both traps are worth keeping.
+  so both traps are worth keeping. Its find loop has since become
+  `__fern_map_find` — see "The map runtime's key search" above.
 
   Its find loop has three arms keyed on `keykind`: string, i32, and
   struct/enum, which calls the key type's derived `__fn_<K>__eq` through a

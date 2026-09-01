@@ -116,29 +116,48 @@ func TestPeepholeRemovesRedundantStoreReload(t *testing.T) {
 	}
 }
 
-// A non-adjacent push/pop is a live stack slot and must be preserved. In
-// add(), the first operand `a` is pushed, then `b` is evaluated, then `a` is
-// popped — so a `push rax` ... (other lines) ... `pop rax` pair must still be
-// present after the peephole.
+// A push/pop pair whose span actually disturbs the accumulator is a live
+// stack slot and must be preserved.
+//
+// "Non-adjacent" is no longer the test for that. P4 and P5 collapse spans
+// they can prove leave rax alone — a constant materialisation, a load, an
+// address computation — so `a + b` over two locals now folds all the way to
+// `mov rax,[..] / mov rcx,[..] / add rax,rcx` with no slot at all. What must
+// still survive is a span containing something that genuinely writes rax,
+// and a call is the sharpest case: `a + f(b)` has to keep `a` somewhere
+// across the call.
+// livePeepProg keeps `a` on the operand stack across a call, which is the
+// one thing none of the rules may collapse: a call writes rax, so the slot
+// is genuinely holding a value nothing else can reconstruct.
+const livePeepProg = `
+@noinline function f(x: i32): i32 { return x + 1; }
+@noinline function g(a: i32, b: i32): i32 { return a + f(b); }
+function main(): i32 { return g(1, 2); }`
+
 func TestPeepholePreservesLiveStackSlot(t *testing.T) {
-	on := compileOpts(t, peepProg, Options{})
-	lines := strings.Split(on, "\n")
-	sawPush, sawNonAdjacentPop := false, false
-	for i, l := range lines {
-		cur := strings.TrimSpace(l)
-		if cur == "push rax" {
-			// Only count it as a surviving live-slot push if its pop is NOT
-			// the very next line (that case is exactly what P1 removes).
-			if i+1 < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i+1]), "pop ") {
-				sawPush = true
-			}
-		}
-		if cur == "pop rax" {
-			sawNonAdjacentPop = true
-		}
+	on := compileOpts(t, livePeepProg, Options{})
+	body, ok := fnBodyOf(on, "g")
+	if !ok {
+		t.Fatal("g not found in emitted asm")
 	}
-	if !sawPush || !sawNonAdjacentPop {
-		t.Error("a non-adjacent (live) push/pop pair was incorrectly collapsed")
+	if !strings.Contains(body, "push rax") || !strings.Contains(body, "pop rax") {
+		t.Errorf("the slot holding `a` across the call to f was collapsed:\n%s", body)
+	}
+	if !strings.Contains(body, "call __fn_f") {
+		t.Fatalf("precondition: g does not call f:\n%s", body)
+	}
+}
+
+// The other half: a span the rules CAN prove harmless must be collapsed, or
+// P5 is not doing its job. `a + b` over two parameters is the canonical case.
+func TestPeepholeCollapsesUndisturbedSlot(t *testing.T) {
+	on := compileOpts(t, peepProg, Options{})
+	body, ok := fnBodyOf(on, "add")
+	if !ok {
+		t.Fatal("add not found in emitted asm")
+	}
+	if strings.Contains(body, "push rax") {
+		t.Errorf("a slot nothing disturbs survived the peephole:\n%s", body)
 	}
 }
 
@@ -189,9 +208,11 @@ func TestPeepholeRemovesDeadPush(t *testing.T) {
 }
 
 // P3 must not touch a push whose slot IS read before it is freed — that is a
-// live operand-stack slot, and removing it would drop the value.
+// live operand-stack slot, and removing it would drop the value. Uses
+// livePeepProg rather than peepProg because the rules now collapse the
+// latter's slot entirely, correctly: nothing in it disturbs the accumulator.
 func TestPeepholePreservesReadBeforeFree(t *testing.T) {
-	on := compileOpts(t, peepProg, Options{})
+	on := compileOpts(t, livePeepProg, Options{})
 	lines := strings.Split(on, "\n")
 	sawLive := false
 	for i, l := range lines {

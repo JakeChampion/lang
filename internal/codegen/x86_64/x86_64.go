@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
@@ -911,14 +912,20 @@ type generator struct {
 	// emitted logical lines (no trailing newline), held back from `out`
 	// until they can no longer participate in a rewrite. See put / flushPeep.
 	peepWin []string
-	// opBytes is how far rsp sits below the 16-aligned point the
-	// current function's prologue left it at — the live operand
-	// stack plus any body-level scratch. Only meaningful while a
-	// function body is being emitted (reset per function); the
-	// hand-written runtime helpers keep their own alignment and
-	// are entered at the canonical parity. callAligned reads it
-	// to decide whether a call site needs an 8-byte pad.
+	// opBytes is how far rsp sits below the point the current
+	// function's prologue left it at — the live operand stack plus
+	// any body-level scratch. Only meaningful while a function body
+	// is being emitted (reset per function); the hand-written
+	// runtime helpers keep their own alignment and are entered at
+	// the canonical parity. callAligned reads it to decide whether
+	// a call site needs an 8-byte pad.
 	opBytes int
+	// frameBias is how far the prologue deliberately leaves rsp
+	// from 16-alignment: 0 or 8. A call needs a pad when
+	// (opBytes + frameBias) is not a multiple of 16, so the bias
+	// selects WHICH operand depth is the free one. See
+	// framePrologueBias for why it is 8.
+	frameBias int
 	// labelCounter generates unique branch / scope labels
 	// (`.Lret_main_0`, `.Lif_3` etc.). Per-program rather
 	// than per-function so labels stay globally unique even
@@ -1830,9 +1837,9 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.rcInlineOK = len(irFn.Ops) <= rcInlineMaxOps
 
 	// Compute frame size from the highest local slot the IR
-	// referenced plus the parameter slots. Rounded up to a
-	// 16-byte multiple so `sub rsp, N` leaves rsp 16-aligned
-	// post-prologue.
+	// referenced plus the parameter slots, then add framePrologueBias
+	// so the operand depth calls are usually made at is the aligned
+	// one.
 	maxSlot := int32(-1)
 	for _, op := range irFn.Ops {
 		switch op.Kind {
@@ -1849,8 +1856,17 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	}
 	numSlots := int(maxSlot + 1)
 	localsSize := numSlots * 8
-	if localsSize%16 != 0 {
-		localsSize += 8
+	frameBias := 0
+	if numSlots > 0 {
+		if localsSize%16 != 0 {
+			localsSize += 8
+		}
+		// The bias rides in the `sub rsp, N` the frame already needs, so it
+		// costs nothing here. A frameless function emits no `sub rsp` at
+		// all, where the bias would be a whole extra instruction to save a
+		// pad it may never reach — so it keeps the canonical parity.
+		localsSize += framePrologueBias
+		frameBias = framePrologueBias
 	}
 
 	sym := AsmFnName(fn.Name)
@@ -1863,11 +1879,13 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	if localsSize > 0 {
 		g.emit(fmt.Sprintf("sub rsp, %d", localsSize))
 	}
-	// rsp is 16-aligned here: the call pushed 8, `push rbp` another
-	// 8, and localsSize is a 16-byte multiple. Operand depth is
-	// measured from this point, and the `mov rsp, rbp` epilogue
-	// discards whatever is left, so there is nothing to unwind.
+	// Operand depth is measured from this point, and the
+	// `mov rsp, rbp` epilogue discards whatever is left, so there is
+	// nothing to unwind. rsp sits framePrologueBias below 16-aligned
+	// here: the call pushed 8, `push rbp` another 8, and localsSize
+	// is a 16-byte multiple plus the bias.
 	g.opBytes = 0
+	g.frameBias = frameBias
 	// Param spill into local slots. Args 0..5 arrive in
 	// rdi/rsi/rdx/rcx/r8/r9; args 6+ come on the caller's
 	// stack at [rbp + 16 + 8*(i-6)] (rbp+0 is saved rbp,
@@ -1893,6 +1911,13 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		// Safe because the IR is single-use: the branch is the sole
 		// consumer of the comparison's pushed value.
 		if adv, ok := g.tryFuseCmpBranch(irFn.Ops, i, &scope); ok {
+			i += adv
+			continue
+		}
+		// Division by a literal (#7991 follow-up): the divisor is known, so
+		// the zero and INT_MIN/-1 guards are dead code and a power of two is
+		// a shift. See emitConstDivRem.
+		if adv, ok := g.tryConstDivRem(irFn.Ops, i); ok {
 			i += adv
 			continue
 		}
@@ -2017,10 +2042,25 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.emit(fmt.Sprintf("lea rax, [rip + %s]", cell))
 		g.push()
 	case ir.OpConstI64:
-		// i64 literal: full 64-bit immediate via `movabs`.
-		// (`mov rax, imm64` is the same instruction in
-		// Intel syntax; the assembler picks the encoding.)
-		g.emit(fmt.Sprintf("movabs rax, %d", op.I64))
+		// i64 literal. `movabs` is ten bytes and only the values that
+		// need all 64 bits have to pay it: a write to eax zero-extends
+		// into rax, so any value that fits in uint32 is five bytes, and
+		// zero is two. Same lever as the i32 path's xor, and zero is
+		// just as common at this width — every zero-init, every counter.
+		switch v := op.I64; {
+		case v == 0:
+			g.emit("xor eax, eax")
+		case v > 0 && v <= math.MaxUint32:
+			// Written as the signed imm32 with the same bit pattern, not
+			// as the unsigned value: `mov eax, -1` and not
+			// `mov eax, 4294967295`. imm32 is a signed field, and every
+			// reader of this line — the peephole's constant folds, the
+			// in-process assembler — is entitled to assume the literal
+			// fits int32.
+			g.emit(fmt.Sprintf("mov eax, %d", int32(uint32(v))))
+		default:
+			g.emit(fmt.Sprintf("movabs rax, %d", v))
+		}
 		g.push()
 	case ir.OpConstF32:
 		// Stash the raw 32-bit bit pattern as an i32 on the
@@ -3518,6 +3558,199 @@ func (g *generator) emitIntDivRem(op ir.Op, isRem bool) {
 	g.push()
 }
 
+// tryConstDivRem lowers `x / K` and `x % K` for a literal K, which the IR
+// hands over as a constant op immediately followed by the divide. Returns the
+// number of extra ops consumed.
+func (g *generator) tryConstDivRem(ops []ir.Op, i int) (int, bool) {
+	if i+1 >= len(ops) {
+		return 0, false
+	}
+	k, ok := constIntOf(ops[i])
+	if !ok {
+		return 0, false
+	}
+	d := ops[i+1]
+	if d.Kind != ir.OpDivS && d.Kind != ir.OpRemS {
+		return 0, false
+	}
+	g.emitConstDivRem(d, d.Kind == ir.OpRemS, k)
+	return 1, true
+}
+
+// constIntOf returns the value of an integer-constant op.
+func constIntOf(op ir.Op) (int64, bool) {
+	switch op.Kind {
+	case ir.OpConstI32:
+		return int64(op.I32), true
+	case ir.OpConstI64:
+		return op.I64, true
+	}
+	return 0, false
+}
+
+// emitConstDivRem divides the top of the operand stack by the literal `k`.
+//
+// Knowing the divisor collapses most of what the generic sequence
+// (emitIntDivRem) spends its instructions on. Its zero test and its
+// INT_MIN/-1 overflow test are both branches on a value that is now a
+// compile-time constant, so they are dead; a power of two needs no divide at
+// all; and 0, 1 and -1 need no code beyond a move.
+//
+// The subtle case is signed division by a power of two, which is NOT an
+// arithmetic shift: `sar` rounds toward negative infinity and the language
+// rounds toward zero, so -1/2 would be -1 rather than 0. Biasing the dividend
+// by 2^k-1 when it is negative — which is what the sar/shr pair computes
+// branchlessly — makes the shift round the way the language does.
+func (g *generator) emitConstDivRem(op ir.Op, isRem bool, k int64) {
+	w64 := op.Width == 64 || op.Width == ir.WidthPtr
+	a, c, d := "eax", "ecx", "edx"
+	bits := 32
+	if w64 {
+		a, c, d = "rax", "rcx", "rdx"
+		bits = 64
+	}
+	g.pop() // dividend
+
+	// Normalise the divisor's magnitude. Unsigned reads the literal's bit
+	// pattern at the operand width; signed keeps the sign for the negation
+	// a negative divisor needs at the end.
+	var mag uint64
+	neg := false
+	if op.Unsigned {
+		if w64 {
+			mag = uint64(k)
+		} else {
+			mag = uint64(uint32(k))
+		}
+	} else {
+		v := k
+		if !w64 {
+			v = int64(int32(k))
+		}
+		// The most negative divisor has no positive magnitude, so it goes
+		// down the generic path rather than through a negation that wraps.
+		min := int64(math.MinInt32)
+		if w64 {
+			min = math.MinInt64
+		}
+		if v == min {
+			g.emitConstDivRemGeneric(op, isRem, k, a, c, d, w64)
+			g.push()
+			return
+		}
+		if v < 0 {
+			neg = true
+			mag = uint64(-v)
+		} else {
+			mag = uint64(v)
+		}
+	}
+
+	switch {
+	case mag == 0:
+		// The generic path's zero arm, with no branch to reach it:
+		// x / 0 = 0, x % 0 = x.
+		if !isRem {
+			g.emit("xor eax, eax")
+		}
+	case mag == 1:
+		// x % ±1 = 0. x / 1 = x. x / -1 = -x, and INT_MIN / -1 keeps the
+		// generic path's answer because `neg` wraps to INT_MIN itself.
+		switch {
+		case isRem:
+			g.emit("xor eax, eax")
+		case neg:
+			g.emit(fmt.Sprintf("neg %s", a))
+		}
+	case isPow2(mag) && pow2Shift(mag) <= maxDivShift(bits, op.Unsigned):
+		sh := pow2Shift(mag)
+		if op.Unsigned {
+			if isRem {
+				g.emit(fmt.Sprintf("and %s, %d", a, immAtWidth(int64(mag-1), bits)))
+			} else {
+				g.emit(fmt.Sprintf("shr %s, %d", a, sh))
+			}
+			break
+		}
+		// Signed: bias by 2^sh-1 when the dividend is negative, so the
+		// shift truncates toward zero rather than toward -infinity.
+		g.emit(fmt.Sprintf("mov %s, %s", c, a))
+		g.emit(fmt.Sprintf("sar %s, %d", c, bits-1))  // all ones iff negative
+		g.emit(fmt.Sprintf("shr %s, %d", c, bits-sh)) // 2^sh-1 iff negative
+		g.emit(fmt.Sprintf("add %s, %s", c, a))       // biased dividend
+		if isRem {
+			// r = x - (x/2^sh)*2^sh, and the multiply is a mask.
+			g.emit(fmt.Sprintf("and %s, %d", c, -(int64(1) << sh)))
+			g.emit(fmt.Sprintf("sub %s, %s", a, c))
+			break
+		}
+		g.emit(fmt.Sprintf("mov %s, %s", a, c))
+		g.emit(fmt.Sprintf("sar %s, %d", a, sh))
+		if neg {
+			g.emit(fmt.Sprintf("neg %s", a))
+		}
+	default:
+		g.emitConstDivRemGeneric(op, isRem, k, a, c, d, w64)
+	}
+	g.push()
+}
+
+// emitConstDivRemGeneric is the divide itself for a literal divisor that is
+// neither 0 nor ±1 nor a power of two. It is the generic sequence with both
+// guards and all four labels removed: nothing can fault, because the divisor
+// cannot be zero and cannot be -1 with an INT_MIN dividend.
+func (g *generator) emitConstDivRemGeneric(op ir.Op, isRem bool, k int64, a, c, d string, w64 bool) {
+	if w64 {
+		g.emit(fmt.Sprintf("movabs %s, %d", c, k))
+	} else {
+		g.emit(fmt.Sprintf("mov %s, %d", c, int32(k)))
+	}
+	switch {
+	case op.Unsigned:
+		g.emit(fmt.Sprintf("xor %s, %s", d, d))
+		g.emit(fmt.Sprintf("div %s", c))
+	case w64:
+		g.emit("cqo")
+		g.emit("idiv rcx")
+	default:
+		g.emit("cdq")
+		g.emit("idiv ecx")
+	}
+	if isRem {
+		g.emit(fmt.Sprintf("mov %s, %s", a, d))
+	}
+}
+
+func isPow2(v uint64) bool { return v != 0 && v&(v-1) == 0 }
+
+func pow2Shift(v uint64) int {
+	n := 0
+	for ; v > 1; v >>= 1 {
+		n++
+	}
+	return n
+}
+
+// maxDivShift is the largest power-of-two exponent the shift lowering can
+// take. Signed stops one short of the sign bit: the bias sequence needs 2^sh
+// to be representable as a positive value at the operand width.
+func maxDivShift(bits int, unsigned bool) int {
+	if unsigned {
+		return bits - 1
+	}
+	return bits - 2
+}
+
+// immAtWidth renders a mask as the assembler wants it for the operand width:
+// a 32-bit operation takes imm32, so a mask with the top bit set has to be
+// written as its signed form rather than as a value beyond int32.
+func immAtWidth(v int64, bits int) int64 {
+	if bits == 32 {
+		return int64(int32(uint32(v)))
+	}
+	return v
+}
+
 // emitFloatToIntSat lowers a saturating float→int truncation (the
 // IR's OpITruncF32 / OpITruncF64) with the source in xmm0 and the
 // result left in rax. x86's `cvtt*2si` returns the "integer
@@ -3932,7 +4165,7 @@ func (g *generator) emitCallArgsLoad(argc int) (extra int) {
 	// one 8-byte slot when the live operand depth would otherwise
 	// leave rsp odd at the call.
 	stackSize := overflow * 8
-	if (g.opBytes+stackSize)%16 != 0 {
+	if (g.opBytes+stackSize+g.frameBias)%16 != 0 {
 		stackSize += 8
 	}
 	g.rspAlloc(stackSize)
@@ -3964,10 +4197,30 @@ func (g *generator) emitCallArgsCleanup(argc, extra int) {
 	g.rspFree(extra + slotBytes*argc)
 }
 
+// framePrologueBias is how far below 16-alignment the prologue leaves rsp.
+//
+// System V wants rsp 16-aligned at every `call`, and an 8-byte operand slot
+// flips that, so one of the two operand depths is free and the other pays a
+// `sub rsp, 8` / `add rsp, 8` bracket. Which one is free is entirely the
+// prologue's choice, and a 16-byte-multiple frame picks depth 0.
+//
+// Depth 0 is the wrong pick. A call in the middle of an expression — the
+// argument already evaluated, the callee's result about to be combined with
+// it — happens at an odd number of live slots, and that is what nearly every
+// call in real code is. On examples/self_host/checker_run.fern, 90,935 of
+// 101,848 call sites (89.3%) were at odd depth and paid the bracket: 181,870
+// instructions, 11.4% of the whole program. Biasing the frame by 8 makes
+// those free and charges the 10.7% instead.
+//
+// Per-function parity would save a further ~2,200 instructions on that
+// program — 0.14% — which does not pay for emitting every body twice to
+// count.
+const framePrologueBias = 8
+
 // padTo16 is the byte count that would bring rsp back to 16-byte
 // alignment at the current operand depth: 0 or 8.
 func (g *generator) padTo16() int {
-	pad := g.opBytes % 16
+	pad := (g.opBytes + g.frameBias) % 16
 	if pad < 0 {
 		pad += 16
 	}
@@ -3988,10 +4241,11 @@ func (g *generator) emit(s string) {
 
 // peepWindow is how many recently emitted logical lines are held back from
 // `out` so the streaming peephole can rewrite the tail in place. The longest
-// pattern is 4 lines; 6 leaves margin while bounding held memory to O(1) —
-// crucial because a self-host `.s` is hundreds of MB and a whole-text
-// post-pass would spike RAM.
-const peepWindow = 6
+// pattern is P6's, which spans a materialisation, its copy, the other
+// arguments' materialisations and the call; 10 covers the shapes that occur
+// while bounding held memory to O(1) — crucial because a self-host `.s` is
+// hundreds of MB and a whole-text post-pass would spike RAM.
+const peepWindow = 10
 
 // put appends one logical output line (without its trailing newline) to the
 // peephole window, applies the safe local rewrites at the tail, then flushes
@@ -4064,6 +4318,89 @@ func (g *generator) peepholeTail() {
 		}
 	}
 
+	// P4 — constant operand folded into the ALU form. Instruction selection
+	// never inspects an operand for constness, so `x + 5` materialises the 5
+	// into rax, hands it to rcx and consumes it as a register. Once P1 has
+	// collapsed the constant's own push/pop pair the tail reads:
+	//
+	//   push rax / mov eax, K / mov rcx, rax / pop rax / <alu> rax, rcx
+	//     =>  <alu> rax, K
+	//
+	// The four dropped lines leave rax, rsp and the flags exactly as they
+	// found them. The only other state they wrote is rcx, and every consumer
+	// of rcx in this backend writes it before reading it — binPop pops into
+	// it, a call site loads it as the fourth argument register, and a shift
+	// count travels in cl.
+	if n >= 5 {
+		if line, ok := foldConstAlu(w[n-5], w[n-4], w[n-3], w[n-2], w[n-1]); ok {
+			g.peepWin = append(w[:n-5], line)
+			return
+		}
+	}
+
+	// P5 — the value the operand stack was protecting is never disturbed.
+	// `f(a, K)` evaluates a, saves it, materialises K into the accumulator,
+	// moves it to its argument register and restores a:
+	//
+	//   push rax / <materialise into rax> / mov REG, rax / pop rax
+	//     =>  <materialise into REG>
+	//
+	// The materialisation is a pure register write — mov, lea, movzx, movsx,
+	// or the self-xor that makes a zero — so renaming its destination to REG
+	// computes the same thing in one instruction instead of four, and rax is
+	// left holding exactly what the push/pop pair was protecting.
+	//
+	// The same shape appears once more in two-argument call setup, where the
+	// saved value is restored into the OTHER argument register:
+	//
+	//   push rax / mov eax, K / mov rsi, rax / pop rdi / call f
+	//     =>  mov rdi, rax / mov esi, K / call f
+	//
+	// That one needs the `call`. Restoring into rdi rather than rax leaves
+	// the accumulator holding the materialised value in the original and the
+	// saved one in the rewrite, so it is only equivalent where rax is dead —
+	// and a call is exactly where this backend knows it is, rax being
+	// caller-saved and not an argument register.
+	//
+	// Checked after P4, whose five-line shape begins the same way and folds
+	// one instruction further; P4 has already had its chance on this window.
+	if n >= 5 {
+		if lines, ok := foldStackedMaterialise(w[n-5], w[n-4], w[n-3], w[n-2], w[n-1]); ok {
+			tail := w[n-1] // read before append overwrites the matched slots
+			g.peepWin = append(append(w[:n-5], lines...), tail)
+			return
+		}
+	}
+
+	// P6 — materialise straight into the argument register. Every value
+	// bound for an argument is computed into the accumulator first and then
+	// copied, because the operand stack has nowhere else to put it:
+	//
+	//   mov rax, [rbp-8] / mov rdi, rax / mov esi, 16 / call f
+	//     =>  mov rdi, [rbp-8] / mov esi, 16 / call f
+	//
+	// Sound for the same reason as P5's second form: the copy is the last
+	// read of rax before a call, and rax is caller-saved and not an argument
+	// register, so what the rename leaves in it cannot be observed. The
+	// instructions allowed between the copy and the call are the other
+	// arguments' own materialisations and the stack adjustment around the
+	// call — none of which touch rax.
+	if n >= 3 && strings.HasPrefix(w[n-1], "\tcall ") {
+		k := n - 2
+		for k >= 1 && isArgSetupNotTouchingAcc(w[k]) {
+			k--
+		}
+		if k >= 1 {
+			if reg, ok := matchMovFromAcc(w[k]); ok {
+				if line, ok := renameAccDest(w[k-1], reg); ok {
+					rest := append([]string(nil), w[k+1:]...)
+					g.peepWin = append(append(w[:k-1], line), rest...)
+					return
+				}
+			}
+		}
+	}
+
 	// P2 — dead jump: `jmp L` immediately followed by the label `L:` is a
 	// no-op fall-through. Drop the jmp; the label stays for other jumps.
 	if n >= 2 {
@@ -4095,6 +4432,275 @@ func matchPopDst(line string) (string, bool) {
 		reg := line[len(pfx):]
 		if reg != "" && reg != "rsp" && !strings.ContainsAny(reg, " [],") {
 			return reg, true
+		}
+	}
+	return "", false
+}
+
+// foldConstAlu recognises P4's five-line tail and returns the single
+// ALU-with-immediate line that replaces it. See the rule for why dropping
+// the intermediate write to rcx is sound.
+//
+// The subtle part is the immediate's width, because the two constant forms
+// leave rcx holding different 64-bit values for the same printed literal:
+// `movabs rax, K` gives rcx exactly K, while `mov eax, K` gives rcx the
+// ZERO-extended uint32 of K. An `<alu> rax, imm32` sign-extends. So a
+// negative 32-bit constant feeding a 64-bit operation is not foldable —
+// `mov eax, -1` makes rcx 0x00000000FFFFFFFF where `add rax, -1` would add
+// 0xFFFFFFFFFFFFFFFF. A 64-bit operation on a wide constant needs the
+// literal to fit imm32 for the same reason. A 32-bit operation reads only
+// the low half of rcx, which the printed literal always describes.
+func foldConstAlu(l0, l1, l2, l3, l4 string) (string, bool) {
+	if l0 != "\tpush rax" || l3 != "\tpop rax" {
+		return "", false
+	}
+	if l2 != "\tmov rcx, rax" && l2 != "\tmov ecx, eax" {
+		return "", false
+	}
+	k, constWide, ok := matchConstToAcc(l1)
+	if !ok {
+		return "", false
+	}
+	op, aluWide, ok := matchAluAccCounter(l4)
+	if !ok {
+		return "", false
+	}
+
+	imm := k
+	if aluWide {
+		if constWide {
+			if k < math.MinInt32 || k > math.MaxInt32 {
+				return "", false
+			}
+		} else if k < 0 {
+			return "", false
+		}
+	} else {
+		imm = int64(int32(k))
+	}
+
+	acc := "eax"
+	if aluWide {
+		acc = "rax"
+	}
+	if op == "imul" {
+		// The two-operand imul has no immediate form; the three-operand
+		// one is the multiply-by-constant encoding (0x6B ib / 0x69 id).
+		return fmt.Sprintf("\timul %s, %s, %d", acc, acc, imm), true
+	}
+	return fmt.Sprintf("\t%s %s, %d", op, acc, imm), true
+}
+
+// matchConstToAcc matches the constant-materialisation forms this backend
+// emits into the accumulator, returning the literal and whether it was
+// written through the 64-bit register.
+func matchConstToAcc(line string) (k int64, wide, ok bool) {
+	switch {
+	case line == "\txor eax, eax":
+		return 0, false, true
+	case strings.HasPrefix(line, "\tmov eax, "):
+		v, err := strconv.ParseInt(line[len("\tmov eax, "):], 10, 64)
+		return v, false, err == nil
+	case strings.HasPrefix(line, "\tmov rax, "):
+		v, err := strconv.ParseInt(line[len("\tmov rax, "):], 10, 64)
+		return v, true, err == nil
+	case strings.HasPrefix(line, "\tmovabs rax, "):
+		v, err := strconv.ParseInt(line[len("\tmovabs rax, "):], 10, 64)
+		return v, true, err == nil
+	}
+	return 0, false, false
+}
+
+// matchAluAccCounter matches an ALU line whose operands are exactly the
+// accumulator and the counter register — the shape binPop hands to a binary
+// operator — and returns the mnemonic and its operand width. Shifts are
+// excluded: their count travels in cl, not rcx, so they never take this
+// form (their immediate fold is its own rule).
+func matchAluAccCounter(line string) (op string, wide, ok bool) {
+	for _, m := range [...]string{"add", "sub", "and", "or", "xor", "cmp", "test", "imul"} {
+		if line == "\t"+m+" rax, rcx" {
+			return m, true, true
+		}
+		if line == "\t"+m+" eax, ecx" {
+			return m, false, true
+		}
+	}
+	return "", false, false
+}
+
+// foldStackedMaterialise recognises P5's shape and returns the lines that
+// replace it: the materialisation written straight to the register the copy
+// was heading for, preceded where needed by the restore the pop was doing.
+//
+// `next` is the line after the pop. It is only consulted for the
+// restore-into-another-register form, which needs it to be a call.
+func foldStackedMaterialise(l0, op, mv, pop, next string) ([]string, bool) {
+	if l0 != "\tpush rax" {
+		return nil, false
+	}
+	reg, ok := matchMovFromAcc(mv)
+	if !ok {
+		return nil, false
+	}
+	restore, ok := matchPopDst(pop)
+	if !ok {
+		return nil, false
+	}
+
+	if restore == "rax" {
+		line, ok := renameAccDest(op, reg)
+		if !ok {
+			return nil, false
+		}
+		return []string{line}, true
+	}
+
+	// Restoring into another register leaves rax holding the saved value
+	// where the original left it holding the materialised one, so this form
+	// is equivalent only where rax is dead. A call is where this backend
+	// knows that: rax is caller-saved and is not an argument register.
+	if !strings.HasPrefix(next, "\tcall ") {
+		return nil, false
+	}
+	// The two destinations must differ, or the rewrite would order the
+	// writes the other way round; and the materialisation must not read the
+	// register the restore now writes before it runs.
+	if reg == restore || readsReg(op, restore) {
+		return nil, false
+	}
+	line, ok := renameAccDest(op, reg)
+	if !ok {
+		return nil, false
+	}
+	return []string{"\tmov " + restore + ", rax", line}, true
+}
+
+// isArgSetupNotTouchingAcc reports whether a line is one of the few things
+// that legitimately sit between an argument's copy out of the accumulator and
+// the call that consumes it, and that provably neither read nor write it.
+//
+// A whitelist rather than a scan for "rax": it has to be certain, and the
+// accumulator appears under four names plus its sub-registers, while `call`
+// itself contains the letters of one of them.
+func isArgSetupNotTouchingAcc(line string) bool {
+	if strings.HasPrefix(line, "\tsub rsp, ") || strings.HasPrefix(line, "\tadd rsp, ") {
+		return true
+	}
+	for _, m := range [...]string{"mov", "lea", "movzx", "movsx"} {
+		pfx := "\t" + m + " "
+		if !strings.HasPrefix(line, pfx) {
+			continue
+		}
+		i := strings.Index(line, ", ")
+		if i < 0 {
+			return false
+		}
+		dst, src := line[len(pfx):i], line[i+2:]
+		// A destination that is not a plain register, or either half naming
+		// the accumulator, disqualifies the line.
+		if strings.ContainsAny(dst, " [],") || namesAcc(dst) || namesAcc(src) {
+			return false
+		}
+		return true
+	}
+	return false
+}
+
+// namesAcc reports whether an operand mentions the accumulator under any of
+// the names this backend writes it as.
+func namesAcc(s string) bool {
+	for _, r := range [...]string{"rax", "eax"} {
+		if strings.Contains(s, r) {
+			return true
+		}
+	}
+	// The 16- and 8-bit names need a boundary check: "al" is a substring of
+	// "call" and "ax" of "rax", both already handled above.
+	for _, r := range [...]string{"ax", "al", "ah"} {
+		for i := 0; i+len(r) <= len(s); i++ {
+			if s[i:i+len(r)] != r {
+				continue
+			}
+			before := i == 0 || !isRegChar(s[i-1])
+			after := i+len(r) == len(s) || !isRegChar(s[i+len(r)])
+			if before && after {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isRegChar(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= '0' && b <= '9'
+}
+
+// readsReg reports whether an instruction's source operand mentions the
+// given 64-bit register, under either its 64- or 32-bit name.
+func readsReg(line, r64 string) bool {
+	i := strings.IndexByte(line, ',')
+	if i < 0 {
+		return strings.Contains(line, r64) || strings.Contains(line, reg32(r64))
+	}
+	src := line[i+1:]
+	return strings.Contains(src, r64) || strings.Contains(src, reg32(r64))
+}
+
+// matchMovFromAcc matches `mov <r64>, rax` — the copy out of the accumulator,
+// whether it was written as an argument setup or left behind by P1 collapsing
+// a push/pop pair. rax itself is excluded (the copy would be a no-op and the
+// rename meaningless) and so is rsp, which is not a value register.
+func matchMovFromAcc(line string) (string, bool) {
+	const pfx = "\tmov "
+	const sfx = ", rax"
+	if !strings.HasPrefix(line, pfx) || !strings.HasSuffix(line, sfx) {
+		return "", false
+	}
+	reg := line[len(pfx) : len(line)-len(sfx)]
+	if reg == "rax" || reg == "rsp" || reg == "" || strings.ContainsAny(reg, " [],") {
+		return "", false
+	}
+	if reg32(reg) == reg { // not a known 64-bit register name
+		return "", false
+	}
+	return reg, true
+}
+
+// renameAccDest rewrites a materialisation whose destination is the
+// accumulator so that it writes `dst` instead.
+//
+// Only pure register writes qualify, because the rewrite has to be a
+// destination rename and nothing more. Two conditions make it unsound:
+//
+//   - an operand naming rsp, whose value differs by 8 between the two forms
+//     (the push is gone);
+//   - a change of destination width, since `mov eax, K` zero-extends into
+//     rax where `mov rsi, K` would sign-extend K — so a write to eax renames
+//     to the 32-bit name of dst, never the 64-bit one.
+//
+// An operand that reads dst is fine: the read happens before the write within
+// the instruction, and the value it reads is the same one the original form
+// read.
+func renameAccDest(op, dst string) (string, bool) {
+	if op == "\txor eax, eax" {
+		d := reg32(dst)
+		return "\txor " + d + ", " + d, true
+	}
+	for _, m := range [...]string{"mov", "lea", "movzx", "movsx", "movsxd"} {
+		for _, acc := range [...]string{"rax", "eax"} {
+			pfx := "\t" + m + " " + acc + ", "
+			if !strings.HasPrefix(op, pfx) {
+				continue
+			}
+			src := op[len(pfx):]
+			if src == "" || strings.Contains(src, "rsp") || strings.Contains(src, "esp") {
+				return "", false
+			}
+			d := dst
+			if acc == "eax" {
+				d = reg32(dst)
+			}
+			return "\t" + m + " " + d + ", " + src, true
 		}
 	}
 	return "", false

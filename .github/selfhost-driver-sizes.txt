@@ -101,11 +101,11 @@
 # (ssa_run, ssa_emit_run, both inside tolerance and so not in its paste block)
 # were linked off-CI with the method item 1 validates.
 #
-# Note the two tiers: the three drivers at 6.4-7.1 MB link a front-end slice
-# only, while the rest sit at 22-30 MB. A 6 MB driver moving 5% is 300 KB and
-# means something different from the tracked artifact moving 5%; the percentage
-# is what is compared, deliberately, so a small driver's regression is not lost
-# inside a big one's noise.
+# Note the two tiers: the three drivers at 3.1-3.7 MB link a front-end slice
+# only, while the rest sit at 12-19 MB. A small driver moving 5% is a different
+# quantity of bytes from the tracked artifact moving 5%; the percentage is what
+# is compared, deliberately, so a small driver's regression is not lost inside a
+# big one's noise.
 #
 # WHAT THE FIFTEEN DO NOT SEE (#7519). These drivers are not a sample of the
 # compiler. Each links one import closure, and a module outside it contributes
@@ -139,8 +139,8 @@
 #
 # PICK THE DENOMINATOR THAT SEES YOUR CHANGE. A change confined to one module is
 # honestly measured against the SMALLEST driver linking it, not against the
-# tracked artifact: checker.fern -> checker_modload_run (8.2 MB), the front end
-# or ssa -> ssa_run (6.5 MB), irlower.fern -> asm_ir_elig_run (26.3 MB).
+# tracked artifact: checker.fern -> checker_modload_run (3.7 MB), the front end
+# or ssa -> ssa_run (3.1 MB), irlower.fern -> asm_ir_elig_run (12.0 MB).
 # Dividing by the wrong one is not a small error. #7519 found the 311-loop
 # checker migration registering EXACTLY 0 bytes against irlower_run, which does
 # not link checker.fern at all, and found one irlower slice reading +6.8% or
@@ -214,18 +214,18 @@
 # compiler emitted through the pre- and post-port compilers is byte-identical
 # on x86-64 and wasm.
 
-fern.fern 26649772
-asm_load_run.fern 22460108
-asm_modload_run.fern 21104260
-asm_ir_run.fern 20972268
-asm_run.fern 20442780
-wasm_ir_run.fern 20220220
-wasm_run.fern 20183020
-wasm_runio_run.fern 20149308
-asm_pathprobe_run.fern 19425612
-ssa_lift_scan_run.fern 19043116
-asm_ir_elig_run.fern 17200908
-irlower_run.fern 19046076
-checker_modload_run.fern 5362236
-ssa_emit_run.fern 4742412
-ssa_run.fern 4540124
+fern.fern 19007172
+asm_load_run.fern 15779660
+asm_modload_run.fern 14767876
+asm_ir_run.fern 14652252
+asm_run.fern 14204684
+wasm_ir_run.fern 14137692
+wasm_run.fern 14112764
+wasm_runio_run.fern 14083164
+asm_pathprobe_run.fern 13392236
+ssa_lift_scan_run.fern 13144900
+asm_ir_elig_run.fern 11986956
+irlower_run.fern 13151964
+checker_modload_run.fern 3748436
+ssa_emit_run.fern 3276076
+ssa_run.fern 3094268

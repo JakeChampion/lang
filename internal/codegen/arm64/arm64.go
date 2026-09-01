@@ -24,6 +24,7 @@
 package arm64
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"sort"
@@ -32,6 +33,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/ir"
+	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/symname"
 	"github.com/jakechampion/lang/internal/treeshake"
@@ -2220,10 +2222,7 @@ func (g *generator) emitRcIncRuntime() {
 	// rc word at [ptr-8]. A no-capture closure is a bare code address in
 	// .text, far below the heap base — inc'ing it would write [ptr-8] in
 	// read-only .text. x1 is free here (the rc word loads into it next).
-	g.emit("mov x1, #1")
-	g.emit("lsl x1, x1, #28") // x1 = 0x1000_0000 = heap base hint
-	g.emit("cmp x0, x1")
-	g.emit("b.lo .Lrcinc_ret")
+	g.emitBelowHeapGuard(".Lrcinc_ret")
 	g.emit("ldur w1, [x0, #-8]")
 	g.rcPoisonCheck("w1", "w2", ".Lrcinc_live")
 	g.emit("tbnz w1, #31, .Lrcinc_ret")
@@ -2268,10 +2267,7 @@ func (g *generator) emitRcDecRuntime() {
 	// guard only rejected < 0x10000, letting code/rodata
 	// addresses through. x1 is free here (the rc word is loaded
 	// into it just below).
-	g.emit("mov x1, #1")
-	g.emit("lsl x1, x1, #28") // x1 = 0x1000_0000 = heap base hint
-	g.emit("cmp x0, x1")
-	g.emit("b.lo .Lrcdec_ret")
+	g.emitBelowHeapGuard(".Lrcdec_ret")
 	g.emit("ldur w1, [x0, #-8]")
 	g.rcPoisonCheck("w1", "w2", ".Lrcdec_live")
 	g.emit("tbnz w1, #31, .Lrcdec_ret")
@@ -9284,7 +9280,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("add x2, x29, #96")
 	g.emit("mov x3, #%d", atFlags)
 	g.syscallFstatat()
-	g.emit("tbnz x0, #63, .L" + lp + "_err")
+	g.emit("tbnz x0, #63, .L%s_err", lp)
 	if g.darwin {
 		g.emit("ldrh w9, [x29, #100]") // st_mode (u16 @ +4)
 	} else {
@@ -9295,13 +9291,13 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("mov x23, #0")     // is_file
 	g.emit("mov w10, #32768") // S_IFREG
 	g.emit("cmp w9, w10")
-	g.emit("b.ne .L" + lp + "_nf")
+	g.emit("b.ne .L%s_nf", lp)
 	g.emit("mov x23, #1")
 	g.label(".L" + lp + "_nf")
 	g.emit("mov x24, #0")     // is_dir
 	g.emit("mov w10, #16384") // S_IFDIR
 	g.emit("cmp w9, w10")
-	g.emit("b.ne .L" + lp + "_nd")
+	g.emit("b.ne .L%s_nd", lp)
 	g.emit("mov x24, #1")
 	g.label(".L" + lp + "_nd")
 	g.emit("ldr x25, [x29, #%d]", 96+g.statSizeOff()) // st_size
@@ -9316,7 +9312,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("bl __fern_alloc_box")
 	g.emit("str wzr, [x0]") // tag = 0 (Ok)
 	g.emit("str x21, [x0, #8]")
-	g.emit("b .L" + lp + "_return")
+	g.emit("b .L%s_return", lp)
 
 	g.label(".L" + lp + "_err")
 	g.emit("neg x22, x0")
@@ -10266,9 +10262,18 @@ type generator struct {
 	// (#5548), one entry per instrumented source line. Empty when -cover
 	// is off, which is what every coverage emission is gated on.
 	coverSites []ir.CoverSite
-	out        strings.Builder
+	// out is the assembled text. A bytes.Buffer rather than a
+	// strings.Builder because emitFunc rewrites the region it just wrote
+	// when the finished function turns out too large for a direct
+	// conditional branch (see expandCondBranches).
+	out bytes.Buffer
 	// noPeephole disables the streaming output peephole (Options.NoPeephole).
 	noPeephole bool
+	// directCond selects the one-instruction `b.cond` / `cbz` form over the
+	// inverted-test-plus-`b` trampoline. Set only while emitFunc is emitting
+	// a program function; emitFunc checks the finished size and expands the
+	// branches again if the function outgrew b.cond's reach.
+	directCond bool
 	// peepWin is the streaming peephole's sliding window of recently emitted
 	// logical lines (no trailing newline), held back from `out` until they
 	// can no longer participate in a rewrite. See put / flushPeep.
@@ -11338,6 +11343,15 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	frameSize := 16 + localsSize
 
 	sym := AsmFnName(fn.Name)
+	// Bracket this function's output so the conditional-branch selection can
+	// be checked against b.cond's reach once the finished size is known.
+	// Draining the peephole window first makes `start` an exact boundary; the
+	// window never spans a function boundary anyway (a `.size` directive and a
+	// label sit between two functions, and no rewrite matches across those).
+	g.flushPeep()
+	start := g.out.Len()
+	g.directCond = true
+	defer func() { g.directCond = false }()
 	g.line("")
 	// Emit each function into its OWN section (`-ffunction-sections` style) rather
 	// than one monolithic `.text`. On AArch64 a `bl`/`R_AARCH64_CALL26` reaches only
@@ -11421,7 +11435,14 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 		// `cmp; cset; …; cbz/cbnz` materialise-and-retest chain. Safe
 		// because the IR is single-use: the branch is the comparison's only
 		// consumer.
-		if adv, ok := g.tryFuseCmpBranch(irFn.Ops, i, &scope); ok {
+		if adv, ok := g.tryFuseCmpBranch(irFn.Ops, i, &scope, 0, false); ok {
+			i += adv
+			continue
+		}
+		// Constant-operand folds (#4378's sibling): a constant that feeds a
+		// load address, an ALU op, or a compare becomes that instruction's
+		// immediate operand instead of being materialised into a register.
+		if adv, ok := g.tryFoldConstOperand(irFn.Ops, i, &scope); ok {
 			i += adv
 			continue
 		}
@@ -11448,6 +11469,8 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.emit("ret")
 	g.sizeDirective(sym)
 	g.line(".ltorg")
+	g.flushPeep()
+	g.reachCheckCondBranches(start)
 	return nil
 }
 
@@ -12108,10 +12131,17 @@ func (g *generator) freshLabel(prefix string) string {
 // does not relax them, so a single huge emitted function (e.g. the self-host
 // compiler's giant dispatch routines) can overflow with "conditional branch out
 // of range". We instead take the INVERTED test over a short forward branch and
-// reach the real target with an unconditional `b` (±128MB range). `skipInsn` is
-// the instruction that skips the jump — the inverse of the intended branch
-// (e.g. "cbnz" to realise a "cbz" target, "cbz" for "cbnz").
-func (g *generator) condBranchFar(skipInsn, reg, target string) {
+// reach the real target with an unconditional `b` (±128MB range). `fireInsn` is
+// the intended branch and `skipInsn` its inverse (e.g. "cbz" / "cbnz").
+//
+// Inside a program function the direct one-instruction form is emitted instead:
+// emitFunc measures the finished function and expands every conditional branch
+// back to the trampoline when the body is large enough for the reach to matter.
+func (g *generator) condBranchFar(fireInsn, skipInsn, reg, target string) {
+	if g.directCond {
+		g.emit("%s %s, %s", fireInsn, reg, target)
+		return
+	}
 	skip := g.freshLabel("brFar")
 	g.emit("%s %s, %s", skipInsn, reg, skip)
 	g.emit("b %s", target)
@@ -12124,12 +12154,207 @@ func (g *generator) condBranchFar(skipInsn, reg, target string) {
 // won't relax it, so a direct `b.<fireCC> target` can overflow ("conditional
 // branch out of range") in a very large emitted function; we take the inverted
 // test over a short forward skip and reach `target` with an unconditional `b`
-// (±128MB). Used by the compare-and-branch fusion (#4378).
+// (±128MB). Used by the compare-and-branch fusion (#4378). Inside a program
+// function the direct form is emitted and emitFunc expands it again only if
+// the finished function is large enough for the reach to matter.
 func (g *generator) condBranchFarCC(fireCC, skipCC, target string) {
+	if g.directCond {
+		g.emit("b.%s %s", fireCC, target)
+		return
+	}
 	skip := g.freshLabel("brFar")
 	g.emit("b.%s %s", skipCC, skip)
 	g.emit("b %s", target)
 	g.label(skip)
+}
+
+// condBranchReachInstrs is the largest function body, in instructions, for
+// which a direct conditional branch is unconditionally safe. b.cond / cbz /
+// tbz reach ±1MB = ±262144 instructions, so any branch inside a body no larger
+// than that reaches any label in it whichever way it points. The margin below
+// the architectural limit costs nothing: only two functions in the self-host
+// compiler come anywhere near it.
+const condBranchReachInstrs = 200000
+
+// invertCC maps an AArch64 condition code to its inverse.
+var invertCC = map[string]string{
+	"eq": "ne", "ne": "eq",
+	"cs": "cc", "cc": "cs",
+	"hs": "lo", "lo": "hs",
+	"mi": "pl", "pl": "mi",
+	"vs": "vc", "vc": "vs",
+	"hi": "ls", "ls": "hi",
+	"ge": "lt", "lt": "ge",
+	"gt": "le", "le": "gt",
+}
+
+// invertCondBranch returns the inverse of a conditional-branch mnemonic — the
+// instruction that SKIPS where the original fires — and whether the mnemonic is
+// one of the reach-limited conditional branches at all. `b` (±128MB), `bl` and
+// the unconditional forms are not.
+func invertCondBranch(mnem string) (string, bool) {
+	switch mnem {
+	case "cbz":
+		return "cbnz", true
+	case "cbnz":
+		return "cbz", true
+	case "tbz":
+		return "tbnz", true
+	case "tbnz":
+		return "tbz", true
+	}
+	if cc, ok := strings.CutPrefix(mnem, "b."); ok {
+		if inv, ok := invertCC[cc]; ok {
+			return "b." + inv, true
+		}
+	}
+	return "", false
+}
+
+// countInstrs counts machine instructions in emitted assembly text: tab-indented
+// lines that are not assembler directives.
+func countInstrs(text []byte) int {
+	n := 0
+	for _, line := range bytes.Split(text, []byte("\n")) {
+		if len(line) > 1 && line[0] == '\t' && line[1] != '.' {
+			n++
+		}
+	}
+	return n
+}
+
+// reachCheckCondBranches keeps the direct `b.cond` / `cbz` form honest. The
+// function just emitted starts at byte `start` of the output. When the whole
+// body fits inside b.cond's reach, every branch in it reaches every label in it
+// whichever way it points and there is nothing to do — the case for all but a
+// couple of the self-host compiler's functions. Otherwise the branches that
+// really are out of reach are expanded into the inverted-test-over-an-
+// unconditional-`b` trampoline, which reaches ±128MB.
+//
+// Deciding after the fact rather than predicting the size from the op stream
+// means the decision is made on the real emitted length and the real branch
+// distances: there is no per-op instruction-count estimate to get wrong, and a
+// long function pays the trampoline only where the distance demands it.
+func (g *generator) reachCheckCondBranches(start int) {
+	if countInstrs(g.out.Bytes()[start:]) <= condBranchReachInstrs {
+		return
+	}
+	body := append([]byte(nil), g.out.Bytes()[start:]...)
+	// Expanding a branch pushes everything after it two instructions further
+	// away, which can put another branch out of reach — so iterate until no
+	// branch needs expanding. Each round only grows the body, and only
+	// branches still over the limit expand, so this terminates.
+	for {
+		expanded, changed := g.expandFarCondBranches(body)
+		if !changed {
+			break
+		}
+		body = expanded
+	}
+	g.out.Truncate(start)
+	g.out.Write(body)
+}
+
+// expandFarCondBranches rewrites the reach-limited conditional branches in one
+// function's emitted text whose target is more than `condBranchReachInstrs`
+// instructions away into a trampoline: the inverted test over a short forward
+// skip, then an unconditional `b` to the real target.
+//
+//	b.eq  L    =>    b.ne .LbrFar_N / b L / .LbrFar_N:
+//	cbz w0, L  =>    cbnz w0, .LbrFar_N / b L / .LbrFar_N:
+//
+// A branch whose target is not a label of this function expands too — nothing
+// bounds a distance that cannot be measured.
+func (g *generator) expandFarCondBranches(body []byte) ([]byte, bool) {
+	lines := bytes.Split(body, []byte("\n"))
+	// Instruction index of every label, and of every line.
+	at := make([]int, len(lines))
+	labelAt := make(map[string]int, 64)
+	n := 0
+	for i, line := range lines {
+		at[i] = n
+		if len(line) > 1 && line[0] == '\t' && line[1] != '.' {
+			n++
+			continue
+		}
+		if l, ok := labelLine(line); ok {
+			labelAt[l] = n
+		}
+	}
+	var out bytes.Buffer
+	out.Grow(len(body) + len(body)/8)
+	changed := false
+	for i, line := range lines {
+		if i > 0 {
+			out.WriteByte('\n')
+		}
+		mnem, head, target, ok := splitCondBranch(line)
+		if !ok {
+			out.Write(line)
+			continue
+		}
+		if tgt, known := labelAt[target]; known && abs(tgt-at[i]) <= condBranchReachInstrs {
+			out.Write(line)
+			continue
+		}
+		inv, _ := invertCondBranch(mnem)
+		skip := g.freshLabel("brFar")
+		fmt.Fprintf(&out, "\t%s %s%s\n\tb %s\n%s:", inv, head, skip, target, skip)
+		changed = true
+	}
+	return out.Bytes(), changed
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// labelLine returns the name defined by a label line (`.LifEnd_3:` / `__fn_f:`)
+// and whether the line is one.
+func labelLine(line []byte) (string, bool) {
+	if len(line) < 2 || line[0] == '\t' || line[len(line)-1] != ':' {
+		return "", false
+	}
+	name := string(line[:len(line)-1])
+	if strings.ContainsAny(name, " \t,") {
+		return "", false
+	}
+	return name, true
+}
+
+// splitCondBranch decomposes an emitted reach-limited conditional branch into
+// its mnemonic, the operands preceding the target (empty for `b.cond`, the
+// register for cbz/cbnz, the register and bit for tbz/tbnz), and the target
+// label. Any other line reports false.
+func splitCondBranch(line []byte) (mnem, head, target string, ok bool) {
+	m, args, ok := splitInsn(line)
+	if !ok {
+		return "", "", "", false
+	}
+	if _, isCond := invertCondBranch(m); !isCond {
+		return "", "", "", false
+	}
+	if comma := strings.LastIndex(args, ", "); comma >= 0 {
+		return m, args[:comma+2], args[comma+2:], true
+	}
+	return m, "", args, true
+}
+
+// splitInsn splits an emitted instruction line into its mnemonic and the rest
+// of its operands. Directives, labels and blank lines report false.
+func splitInsn(line []byte) (mnem, args string, ok bool) {
+	if len(line) < 2 || line[0] != '\t' || line[1] == '.' {
+		return "", "", false
+	}
+	rest := string(line[1:])
+	sp := strings.IndexByte(rest, ' ')
+	if sp <= 0 {
+		return "", "", false
+	}
+	return rest[:sp], rest[sp+1:], true
 }
 
 // isFusableCompare reports whether an integer comparison op produces a 0/1
@@ -12180,6 +12405,282 @@ func armCondFor(k ir.OpKind, unsigned bool) (cc, invcc string) {
 	return "", ""
 }
 
+// foldableConst returns the value an OpConstI32 / OpConstI64 materialises,
+// and whether the op is such a constant with a foldable value. Negative
+// values are refused: the emitter materialises an i32 `-1` as the
+// zero-extended `0xffffffff`, so an immediate form computed on the signed
+// value would not reproduce the unfolded result.
+func foldableConst(op ir.Op) (int64, bool) {
+	switch op.Kind {
+	case ir.OpConstI32:
+		if op.I32 < 0 {
+			return 0, false
+		}
+		return int64(op.I32), true
+	case ir.OpConstI64:
+		if op.I64 < 0 {
+			return 0, false
+		}
+		return op.I64, true
+	}
+	return 0, false
+}
+
+// scaledOffsetOK reports whether `off` is expressible as the unsigned scaled
+// immediate of an `size`-byte load/store: a non-negative multiple of the
+// access size whose quotient fits the 12-bit field. Non-multiples would fall
+// back to the unscaled LDUR/STUR form (signed 9-bit) — encodable but only
+// within -256..255, so the emitter sticks to the scaled form it can always
+// reason about.
+func scaledOffsetOK(off, size int64) bool {
+	return off >= 0 && size > 0 && off%size == 0 && off/size < 4096
+}
+
+// addrFoldLoad describes an op that dereferences the address on top of the
+// operand stack with a fixed access width, so a constant byte offset added to
+// that address can move into the load's addressing mode instead of costing
+// its own `add`.
+type addrFoldLoad struct {
+	mnem string // ldr / ldrb
+	reg  string // destination register name (x0 / w0)
+	size int64  // access width in bytes, for the scaled-offset check
+}
+
+// loadFoldForm returns the addressing-mode description for the load ops whose
+// lowering is exactly "pop the address, dereference it, push the result".
+// OpLoad's WidthString fans one address to two reads and OpLoadHalf-style ops
+// do not exist, so anything else refuses.
+func loadFoldForm(op ir.Op) (addrFoldLoad, bool) {
+	switch op.Kind {
+	case ir.OpLoad:
+		switch op.Width {
+		case ir.WidthString:
+			return addrFoldLoad{}, false
+		case 64, ir.WidthPtr:
+			return addrFoldLoad{mnem: "ldr", reg: "x0", size: 8}, true
+		default:
+			return addrFoldLoad{mnem: "ldr", reg: "w0", size: 4}, true
+		}
+	case ir.OpMatchTag:
+		return addrFoldLoad{mnem: "ldr", reg: "w0", size: 4}, true
+	case ir.OpLoadByte:
+		return addrFoldLoad{mnem: "ldrb", reg: "w0", size: 1}, true
+	}
+	return addrFoldLoad{}, false
+}
+
+// emitBelowHeapGuard branches to `target` when x0 is below the heap base
+// (0x1000_0000 — the mmap hint emitAllocRuntime pins), i.e. when the unsigned
+// test `x0 < 2^28` holds. Only heap objects carry an rc word at [ptr-8], so
+// every rc op skips out here for a null-page, .text, .rodata or .data address.
+//
+// Shifting the pointer right by 28 leaves zero exactly when the bound test
+// holds, so the range check needs no materialised bound and no flag-setting
+// compare. x1 is clobbered: every caller loads the rc word into it on the
+// next instruction.
+func (g *generator) emitBelowHeapGuard(target string) {
+	g.emit("lsr x1, x0, #28")
+	g.emit("cbz x1, %s", target)
+}
+
+// imm12OK reports whether `v` is expressible as an AArch64 add/sub/cmp
+// immediate: a 12-bit unsigned value, optionally shifted left by 12. Mirrors
+// the encoder's own addSubImm12.
+func imm12OK(v int64) bool {
+	if v < 0 {
+		return false
+	}
+	if v <= 0xfff {
+		return true
+	}
+	return v&0xfff == 0 && (v>>12) <= 0xfff
+}
+
+// bitmaskImmOK reports whether `v` is encodable as an AArch64 logical (bitmask)
+// immediate in the 64-bit forms of and/orr/eor — a repeating run of set bits,
+// which excludes 0 and all-ones. The predicate is the assembler's own encoder
+// rather than a second implementation of the rotate/run derivation.
+func bitmaskImmOK(v int64) bool {
+	if v < 0 {
+		return false
+	}
+	_, ok := nativearm64.ANDimm(0, 0, uint64(v), true)
+	return ok
+}
+
+// aluImmForm returns the AArch64 mnemonic for an integer binary op whose rhs
+// is a folded constant, and whether `k` is encodable as that instruction's
+// immediate. add/sub take the imm12 class; the logical ops take the bitmask
+// class, which is a different and much narrower test.
+//
+// The emitted form is the 64-bit register form the unfolded lowering already
+// uses: a non-negative constant rides zero-extended in x0 there, so folding it
+// as a 64-bit immediate reproduces the same bits.
+func aluImmForm(kind ir.OpKind, k int64) (string, bool) {
+	switch kind {
+	case ir.OpAdd:
+		return "add", imm12OK(k)
+	case ir.OpSub:
+		return "sub", imm12OK(k)
+	case ir.OpAnd:
+		return "and", bitmaskImmOK(k)
+	case ir.OpOr:
+		return "orr", bitmaskImmOK(k)
+	case ir.OpXor:
+		return "eor", bitmaskImmOK(k)
+	}
+	return "", false
+}
+
+// shiftImmForm returns the AArch64 mnemonic for a shift whose count is a
+// folded constant, and whether `k` is a usable immediate count. The register
+// form MASKS the count to the operand width (a `lsl w0, w1, w0` with w0 = 33
+// shifts by 1); the immediate form has no such wraparound, so a count at or
+// past the width is refused rather than reduced — the masked shift keeps its
+// register form.
+func shiftImmForm(op ir.Op, k int64) (string, bool) {
+	width := int64(32)
+	if op.Width == 64 || op.Width == ir.WidthPtr {
+		width = 64
+	}
+	if k < 0 || k >= width {
+		return "", false
+	}
+	switch op.Kind {
+	case ir.OpShl:
+		return "lsl", true
+	case ir.OpShrS:
+		if op.Unsigned {
+			return "lsr", true
+		}
+		return "asr", true
+	}
+	return "", false
+}
+
+// emitCmpOperands loads a comparison's operands and issues the `cmp` that sets
+// the flags for it. With hasImm the rhs was a constant folded into the compare:
+// only the lhs is popped, and the constant becomes the immediate operand.
+// Without it, both operands are popped into x1 / x0 as before.
+func (g *generator) emitCmpOperands(cmp ir.Op, imm int64, hasImm bool) {
+	if hasImm {
+		g.pop()
+		g.emit("cmp %s0, #%d", g.regForWidth(cmp.Width), imm)
+		return
+	}
+	g.binPop()
+	g.cmpForWidth(cmp.Width)
+}
+
+// emitFusedBranch emits the operand setup and the conditional branch of a
+// fused compare-and-branch. An equality test against a folded zero needs no
+// `cmp` at all — cbz / cbnz test the register itself — so the whole comparison
+// collapses to one instruction.
+func (g *generator) emitFusedBranch(cmp ir.Op, imm int64, hasImm bool, fireCC, skipCC, target string) {
+	if hasImm && imm == 0 && (cmp.Kind == ir.OpEq || cmp.Kind == ir.OpNe) {
+		fire, skip := "cbz", "cbnz"
+		if fireCC == "ne" {
+			fire, skip = "cbnz", "cbz"
+		}
+		g.pop()
+		g.condBranchFar(fire, skip, g.regForWidth(cmp.Width)+"0", target)
+		return
+	}
+	g.emitCmpOperands(cmp, imm, hasImm)
+	g.condBranchFarCC(fireCC, skipCC, target)
+}
+
+// tryFoldConstOperand selects a constant that feeds the next op as that op's
+// immediate operand, instead of materialising it into a register and popping
+// both sides, in decreasing specificity:
+//
+//   - `const K; add; load`             => `ldr Rt, [x0, #K]` (tryFoldLoadOffset)
+//   - `const K; cmp; …; br`            => `cmp x0, #K; b.cond`, or a bare
+//     cbz / cbnz when K is zero (emitFusedBranch)
+//   - `const K; cmp`                   => `cmp x0, #K; cset`
+//   - `const K; {shl,shr}`             => `lsl|lsr|asr w0, w0, #K`
+//   - `const K; {add,sub,and,orr,eor}` => `<op> x0, x0, #K`
+//
+// Returns the number of EXTRA ops consumed past index i, and whether a fold
+// fired. Safe for the same reason the compare/branch fusion is: the IR is a
+// single-use stack machine and no label can fall between the ops, so the
+// materialised constant has exactly one consumer.
+func (g *generator) tryFoldConstOperand(ops []ir.Op, i int, scope *[]irScope) (int, bool) {
+	if adv, ok := g.tryFoldLoadOffset(ops, i); ok {
+		return adv, true
+	}
+	k, ok := foldableConst(ops[i])
+	if !ok || i+1 >= len(ops) {
+		return 0, false
+	}
+	next := ops[i+1]
+	if isFusableCompare(next.Kind) {
+		if !imm12OK(k) {
+			return 0, false
+		}
+		// A comparison feeding a branch keeps its fusion (#4378) — the
+		// immediate rides along instead of defeating it.
+		if adv, ok := g.tryFuseCmpBranch(ops, i+1, scope, k, true); ok {
+			return 1 + adv, true
+		}
+		g.emitCmpOperands(next, k, true)
+		cc, _ := armCondFor(next.Kind, next.Unsigned)
+		g.emit("cset w0, %s", cc)
+		g.push()
+		return 1, true
+	}
+	if mnem, ok := shiftImmForm(next, k); ok {
+		r := g.regForWidth(next.Width)
+		g.pop()
+		g.emit("%s %s0, %s0, #%d", mnem, r, r, k)
+		g.push()
+		return 1, true
+	}
+	mnem, ok := aluImmForm(next.Kind, k)
+	if !ok {
+		return 0, false
+	}
+	g.pop()
+	g.emit("%s x0, x0, #%d", mnem, k)
+	g.push()
+	return 1, true
+}
+
+// tryFoldLoadOffset folds `const K; add; load` — a field or element offset
+// added to a base pointer and immediately dereferenced — into the load's own
+// scaled-immediate addressing mode. The unfolded form materialises K into a
+// register, pops both operands, adds, then dereferences; the folded form is a
+// single `ldr Rt, [x0, #K]`. Returns the number of EXTRA ops consumed past
+// index i (2: the add and the load) and whether the fold fired.
+//
+// Safe because the IR is a stack machine with no label between the three ops:
+// the constant's only consumer is the add and the add's only consumer is the
+// load, so nothing can observe the intermediate address.
+func (g *generator) tryFoldLoadOffset(ops []ir.Op, i int) (int, bool) {
+	if i+2 >= len(ops) {
+		return 0, false
+	}
+	k, ok := foldableConst(ops[i])
+	if !ok {
+		return 0, false
+	}
+	if ops[i+1].Kind != ir.OpAdd {
+		return 0, false
+	}
+	form, ok := loadFoldForm(ops[i+2])
+	if !ok || !scaledOffsetOK(k, form.size) {
+		return 0, false
+	}
+	g.pop() // base address
+	if k == 0 {
+		g.emit("%s %s, [x0]", form.mnem, form.reg)
+	} else {
+		g.emit("%s %s, [x0, #%d]", form.mnem, form.reg, k)
+	}
+	g.push()
+	return 2, true
+}
+
 // tryFuseCmpBranch fuses `cmp (Not)* {If|BrIf}` into `cmp; b.cond` (#4378, the
 // arm64 mirror of the x86-64 slice). An integer comparison whose 0/1 result
 // flows straight into the following OpIf / OpBrIf — through any number of
@@ -12189,7 +12690,7 @@ func armCondFor(k ir.OpKind, unsigned bool) (cc, invcc string) {
 // whether the fusion fired; when it does not fire the op stream is untouched
 // and normal per-op emission runs. The operand-stack effect is identical to the
 // un-fused path (two operands popped, no boolean pushed then re-popped).
-func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope) (int, bool) {
+func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope, imm int64, hasImm bool) (int, bool) {
 	cmp := ops[i]
 	if !isFusableCompare(cmp.Kind) {
 		return 0, false
@@ -12218,18 +12719,14 @@ func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope) (int,
 	}
 	switch br.Kind {
 	case ir.OpIf:
-		g.binPop()
-		g.cmpForWidth(cmp.Width)
 		elseL := g.freshLabel("ifElse")
 		endL := g.freshLabel("ifEnd")
-		g.condBranchFarCC(fireCC, skipCC, elseL)
+		g.emitFusedBranch(cmp, imm, hasImm, fireCC, skipCC, elseL)
 		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
 		return j - i, true
 	case ir.OpBrIf:
-		g.binPop()
-		g.cmpForWidth(cmp.Width)
 		target := (*scope)[len(*scope)-1-int(br.I32)].brTarget
-		g.condBranchFarCC(fireCC, skipCC, target)
+		g.emitFusedBranch(cmp, imm, hasImm, fireCC, skipCC, target)
 		return j - i, true
 	}
 	return 0, false
@@ -12242,21 +12739,87 @@ func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope) (int,
 // have no pc-relative dependency, so they are range-safe at any function size.
 // Zero 16-bit chunks are skipped (movz first clears the register).
 func (g *generator) loadImm32(reg string, v uint32) {
-	g.emit("movz %s, #%d", reg, v&0xffff)
-	if (v>>16)&0xffff != 0 {
-		g.emit("movk %s, #%d, lsl #16", reg, (v>>16)&0xffff)
-	}
+	g.loadImmChunks(reg, uint64(v), 2)
 }
 func (g *generator) loadImm64(reg string, v uint64) {
-	g.emit("movz %s, #%d", reg, v&0xffff)
-	if (v>>16)&0xffff != 0 {
-		g.emit("movk %s, #%d, lsl #16", reg, (v>>16)&0xffff)
+	g.loadImmChunks(reg, v, 4)
+}
+
+// moveWidePlan is the movz- or movn-rooted sequence that materialises a
+// constant: the leading move writes 16-bit lane `root` (-1 when every lane
+// already holds the root form's default), and a movk then writes each lane in
+// `fill`.
+type moveWidePlan struct {
+	movn    bool
+	root    int
+	rootImm uint64
+	fill    []int
+}
+
+func (p moveWidePlan) cost() int { return 1 + len(p.fill) }
+
+// planLanes builds the plan for one root form. `dflt` is the lane value that
+// root form leaves behind everywhere it does not write (0 for movz, 0xffff for
+// movn), so a lane already equal to it costs nothing.
+func planLanes(v uint64, chunks int, movn bool, dflt uint64) moveWidePlan {
+	p := moveWidePlan{movn: movn, root: -1}
+	for i := 0; i < chunks; i++ {
+		lane := (v >> (16 * i)) & 0xffff
+		if lane == dflt {
+			continue
+		}
+		if p.root < 0 {
+			p.root = i
+			p.rootImm = lane ^ dflt // movz writes the lane; movn its complement
+			continue
+		}
+		p.fill = append(p.fill, i)
 	}
-	if (v>>32)&0xffff != 0 {
-		g.emit("movk %s, #%d, lsl #32", reg, (v>>32)&0xffff)
+	return p
+}
+
+// planMoveWide picks between the two move-wide roots for `v` over `chunks`
+// 16-bit lanes. movz leaves every lane it does not write at 0, movn at
+// all-ones, so the cheaper root is the one whose default already matches more
+// of the constant: `movz` for 0x0000_0001, `movn` for -1 — one instruction
+// instead of four.
+func planMoveWide(v uint64, chunks int) moveWidePlan {
+	z := planLanes(v, chunks, false, 0)
+	n := planLanes(v, chunks, true, 0xffff)
+	if n.cost() < z.cost() {
+		return n
 	}
-	if (v>>48)&0xffff != 0 {
-		g.emit("movk %s, #%d, lsl #48", reg, (v>>48)&0xffff)
+	return z
+}
+
+// loadImmChunks materialises `v` into `reg` with a move-wide sequence instead
+// of a `ldr reg, =N` literal-pool load. A literal pool is reached by a
+// pc-relative load with only ±1MB range; in a very large emitted function the
+// pool drifts out of range ("pc-relative load offset out of range"). movz /
+// movn / movk have no pc-relative dependency, so they are range-safe at any
+// function size.
+func (g *generator) loadImmChunks(reg string, v uint64, chunks int) {
+	p := planMoveWide(v, chunks)
+	root := "movz"
+	if p.movn {
+		root = "movn"
+	}
+	shift := 0
+	if p.root > 0 {
+		shift = 16 * p.root
+	}
+	if shift == 0 {
+		g.emit("%s %s, #%d", root, reg, p.rootImm)
+	} else {
+		g.emit("%s %s, #%d, lsl #%d", root, reg, p.rootImm, shift)
+	}
+	for _, i := range p.fill {
+		lane := (v >> (16 * i)) & 0xffff
+		if i == 0 {
+			g.emit("movk %s, #%d", reg, lane)
+		} else {
+			g.emit("movk %s, #%d, lsl #%d", reg, lane, 16*i)
+		}
 	}
 }
 
@@ -12280,11 +12843,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 	case ir.OpCoverPoint:
 		g.emitCoverPoint(int(op.I32))
 	case ir.OpConstI32:
-		// Materialise the constant into x0 and push. Small
-		// values fit `mov` (imm16); larger ones use `ldr =N`
-		// (assembler pseudo-instruction backed by a literal
-		// pool). i32s use the w0 alias when narrowing matters,
-		// but for the 64-bit operand stack we keep them in x0.
+		// Materialise the constant into x0 and push. Values that fit
+		// `mov`'s imm16 take it; anything wider goes through the
+		// move-wide sequence. i32s use the w0 alias when narrowing
+		// matters, but for the 64-bit operand stack we keep them in x0.
 		v := op.I32
 		if v >= 0 && v <= 0xffff {
 			g.emit("mov x0, #%d", v)
@@ -12294,13 +12856,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		g.push()
 
 	case ir.OpConstI64:
-		// i64 literal. `ldr x0, =N` is the AArch64 assembler's
-		// canonical idiom for a full 64-bit immediate — backed
-		// by a literal pool entry the assembler emits in
-		// `.text` and references via a pc-relative load. The
-		// pool gets flushed by `.ltorg` (we already do this in
-		// the alloc + read-line runtimes) or at end-of-section,
-		// whichever comes first.
+		// i64 literal, materialised by the move-wide sequence rather
+		// than a literal-pool `ldr x0, =N` — see loadImmChunks for why
+		// the pool is unusable here.
 		g.loadImm64("x0", uint64(op.I64))
 		g.push()
 
@@ -12793,7 +13351,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		endL := g.freshLabel("ifEnd")
 		// Range-safe `cbz w0, elseL` (see condBranchFar): skip the far jump
 		// when w0 != 0 (cbnz), else fall into the unconditional `b elseL`.
-		g.condBranchFar("cbnz", "w0", elseL)
+		g.condBranchFar("cbz", "cbnz", "w0", elseL)
 		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
 	case ir.OpElse:
 		top := &(*scope)[len(*scope)-1]
@@ -12819,7 +13377,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		// w0 form for the same reason as OpIf — only test the
 		// low 32 bits since i32 truthiness is i32-shaped. Range-safe
 		// `cbnz w0, target` (see condBranchFar): skip when w0 == 0.
-		g.condBranchFar("cbz", "w0", target)
+		g.condBranchFar("cbnz", "cbz", "w0", target)
 
 	// -------- memory load / store --------
 
@@ -13379,13 +13937,10 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			return nil
 		}
 		done := g.freshLabel("rcopDone")
-		g.pop()                         // x0 = ptr
-		g.emit("cbz x0, %s", done)      // null
-		g.emit("tbnz x0, #0, %s", done) // SSO inline-tag (bit 0 set)
-		g.emit("mov x1, #1")
-		g.emit("lsl x1, x1, #28") // x1 = 0x1000_0000 heap base hint
-		g.emit("cmp x0, x1")
-		g.emit("b.lo %s", done)          // below heap
+		g.pop()                          // x0 = ptr
+		g.emit("cbz x0, %s", done)       // null
+		g.emit("tbnz x0, #0, %s", done)  // SSO inline-tag (bit 0 set)
+		g.emitBelowHeapGuard(done)       // below heap
 		g.emit("ldur w1, [x0, #-8]")     // rc
 		g.emit("tbnz w1, #31, %s", done) // static sentinel (negative)
 		if op.Kind == ir.OpRcInc {

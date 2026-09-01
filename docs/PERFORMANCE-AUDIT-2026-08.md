@@ -1525,12 +1525,38 @@ CO-OCCURRENCE — these are operator methods, so the operator roots must be what
 keeps them — over-counted the prize by more than 2x. Only removing the roots and
 re-measuring says what they hold.
 
-What remains after that is that membership is `util.has_str`, a linear scan of a
-~20k-name array — §4's shape once more, in a ninth file. Its cost is measured
-only in aggregate (the pass adds ~8 s gross to a 59 s self-compile, against ~4 s
-saved by lowering 462 fewer functions); which part of that is the scan is
-unmeasured, and on this document's own evidence should be established by an A/B
-before anything is indexed.
+**What remains is `util.has_str`, and it should NOT be indexed.** Membership is
+a linear scan of the `refs` array — §4's shape once more, in a ninth file — and
+the obvious next step is the `head` / `next` index every other instance of that
+shape got. It was measured first, and the measurement says not to.
+
+Instrumenting the pass over a whole self-compile:
+
+| | |
+|---|---|
+| fixpoint rounds | 11 |
+| functions | 6,027 |
+| `refs` at the end | 12,200 |
+| `ts_kept_name` calls | 28,901 |
+| dedupe probes | 261,670 |
+
+A HIT stops at the name's position; a MISS scans all 12,200, and an unkept
+function is re-probed every round, so the arithmetic makes misses look like
+~1.1e9 string compares and 3–4 s of the run. **The arithmetic is wrong.**
+Doubling exactly the miss path — a treeshake-local `has_str` whose miss scans
+twice, hits untouched, which adds one whole miss cost — measures **+1.49 s and
++0.48 s over two interleaved pairs on a ~96 s self-compile.** So the entire miss
+scan is at most ~1.5 s, i.e. **under 1.5% of the compile**, and an index can
+save no more than that.
+
+That is item 7's story recurring (#6909 indexed a registry and measured
+−0.18%), and the third time in this section that estimating a cost from its
+SHAPE rather than from removing it over-counted by 2–3x. The pass's remaining
+cost is the walk — `ts_func_names` folding every kept body — not the lookup.
+
+Note the two pairs disagree by 3x, so ~1.5 s is a ceiling rather than a
+measurement; it is bounded well enough to decide against the work, and not
+well enough to quote as the scan's cost.
 
 ## 8. Reproducing any of this
 

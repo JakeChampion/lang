@@ -27,6 +27,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/jakechampion/lang/internal/native/cfi"
 )
 
 // Operand kinds.
@@ -101,7 +103,7 @@ type Assembler struct {
 	quadSyms     []quadSymFixup
 	locRows      []LineRow
 	relaxEvents  []relaxEvent
-	cfi          cfiState
+	cfi          cfi.State
 }
 
 // LineRow is one DWARF .debug_line row: the source line active at a code
@@ -166,7 +168,11 @@ func AssembleProgramEhFrame(src string, textVAddr, ehVAddr uint64) (text, rodata
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return text, rodata, a.EhFrame(textVAddr, ehVAddr), nil
+	ehFrame, err = a.EhFrame(textVAddr, ehVAddr)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return text, rodata, ehFrame, nil
 }
 
 // Reloc is one R_X86_64_RELATIVE entry: at load time `*(base + Offset) =
@@ -426,7 +432,7 @@ func (a *Assembler) directive(line, sec string) (string, error) {
 	if strings.HasPrefix(d, ".cfi_") {
 		// A CFI directive emits no bytes, so the current .text length is the
 		// offset the rule takes effect at.
-		return sec, a.cfiDirective(d, strings.TrimSpace(strings.TrimPrefix(line, d)), len(a.text))
+		return sec, a.cfiDirective(d, line, len(a.text))
 	}
 	switch d {
 	case ".loc":

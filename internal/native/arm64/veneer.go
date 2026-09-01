@@ -385,6 +385,14 @@ func (a *Assembler) splice(runs []spliceRun) {
 		old := a.locRows[i].Offset / 4
 		a.locRows[i].Offset = (old + delta(old)) * 4
 	}
+	// CFI offsets move for the same reason, and it matters more: an FDE
+	// stores the DISTANCE between consecutive rules, so a stale offset does
+	// not merely mislabel a line, it unwinds at the wrong instruction while
+	// the bytes stay well-formed.
+	a.cfi.Remap(func(off int) int {
+		old := off / 4
+		return (old + delta(old)) * 4
+	})
 
 	out := make([]uint32, 0, len(a.insns)+total)
 	next := 0

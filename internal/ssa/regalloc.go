@@ -61,6 +61,81 @@ type Allocation struct {
 	// whose interval strictly spans a call's point is live across it). Nil until
 	// LinearScan populates it.
 	OpPos map[*Op]int
+	// CallLive maps each call op to the Value IDs live immediately after it —
+	// the values the callee must not clobber, hence the ones the caller saves.
+	// Nil until LinearScan populates it.
+	CallLive map[*Op]map[int32]bool
+}
+
+// LiveAcrossOp returns the values live across the call op `op`, and whether the
+// answer is known. It is LiveAcross with the imprecision taken out: live
+// intervals are hole-free, so a value defined early and used late spans every
+// call in between whether or not it is live there, and each of those calls then
+// saves and reloads a register nothing will read. The per-point walk in
+// callLiveSets answers exactly instead.
+//
+// Under-saving would be a miscompile, so it matters that this can only shrink
+// the set safely: an interval covers every point at which its value is really
+// live, and no two values whose intervals overlap share a register, so at the
+// call's point the register holding a value the walk drops holds nothing else
+// that is live either.
+func (a *Allocation) LiveAcrossOp(op *Op) (map[int32]bool, bool) {
+	s, ok := a.CallLive[op]
+	return s, ok
+}
+
+// callLiveSets walks each block backwards from its live-out set, so that at
+// every op it holds exactly the values live immediately after that op, and
+// records that set at each call.
+func callLiveSets(f *Func, live *Liveness) map[*Op]map[int32]bool {
+	out := map[*Op]map[int32]bool{}
+	for _, b := range f.Blocks {
+		cur := map[int32]bool{}
+		for id := range live.LiveOut[b] {
+			cur[id] = true
+		}
+		// A terminator reads its operands at the block's exit, after every op.
+		for _, v := range termUses(b.Term) {
+			if v.IsValid() {
+				cur[v.ID] = true
+			}
+		}
+		for i := len(b.Ops) - 1; i >= 0; i-- {
+			op := b.Ops[i]
+			if isCallOp(op.Kind) {
+				s := make(map[int32]bool, len(cur))
+				for id := range cur {
+					s[id] = true
+				}
+				// The call defines its results AT the call, so they are not
+				// live across it however long they live afterwards.
+				if op.Result.IsValid() {
+					delete(s, op.Result.ID)
+				}
+				if op.Result2.IsValid() {
+					delete(s, op.Result2.ID)
+				}
+				out[op] = s
+			}
+			if op.Result.IsValid() {
+				delete(cur, op.Result.ID)
+			}
+			if op.Result2.IsValid() {
+				delete(cur, op.Result2.ID)
+			}
+			// A phi reads its args on the incoming edges, not here, so they are
+			// live-out of the predecessors rather than live before the phi.
+			if op.Kind == OpPhi {
+				continue
+			}
+			for _, arg := range op.Args {
+				if arg.IsValid() {
+					cur[arg.ID] = true
+				}
+			}
+		}
+	}
+	return out
 }
 
 // LiveAcross returns the set of Value IDs whose live interval strictly spans the
@@ -173,29 +248,27 @@ func LinearScan(f *Func, target Target) *Allocation {
 	live := ComputeLiveness(f)
 	iv := LiveIntervals(f, live)
 	opPos, _, _ := linearizePoints(f)
-	// A value is call-crossing if its interval strictly spans any call op's
-	// point — the allocator steers those toward callee-saved registers.
+	callLive := callLiveSets(f, live)
+	// A value is call-crossing if it is live across any call — the allocator
+	// steers those toward callee-saved registers.
 	crosses := map[int32]bool{}
-	tmp := &Allocation{Intervals: iv}
-	for _, b := range f.Blocks {
-		for _, op := range b.Ops {
-			if isCallOp(op.Kind) {
-				for id := range tmp.LiveAcross(opPos[op]) {
-					crosses[id] = true
-				}
-			}
+	for _, s := range callLive {
+		for id := range s {
+			crosses[id] = true
 		}
 	}
 	alloc := allocateLinear(iv, target, crosses)
 	alloc.OpPos = opPos
+	alloc.CallLive = callLive
 	return alloc
 }
 
 // isCallOp reports whether an op transfers control to a callee (so values live
-// across it must survive a call).
+// across it must survive a call). The dynamic-dispatch pair belong here too:
+// OpCallDyn calls through a vtable slot, and OpBoxDyn calls the allocator.
 func isCallOp(k OpKind) bool {
 	switch k {
-	case OpCall, OpCallPair, OpCallIndirect:
+	case OpCall, OpCallPair, OpCallIndirect, OpCallDyn, OpBoxDyn:
 		return true
 	}
 	return false

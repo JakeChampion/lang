@@ -249,6 +249,37 @@ pub function rt_src_str_concat(): string {
     return "function __fern_str_concat(a: string, b: string): string { var la: i32 = a.len(); var lb: i32 = b.len(); var p: i32 = __raw_alloc(la + lb); __memcpy(p, __raw_data(a), la); __memcpy(__raw_addr(p, la), __raw_data(b), lb); return __raw_string(p, la + lb); }";
 }
 
+// rt_src_map_find (#2649): the map runtime's ONE key-search loop — walk the
+// keys array comparing against `key`, return the hit's index or -1.
+//
+// It replaces eighteen copies of itself: map_set, map_get and map_has each
+// carried a string, an i32 and a struct/enum variant of this loop, hand-written
+// per register backend, and __fern_map_delete carried a fourth in Fern. The
+// three variants collapse into one `if` chain here because the dispatch is a
+// per-call test rather than three entry points; the wasm backend's
+// $__fern_map_find has had that shape all along.
+//
+// Every parameter is i32 because all four are raw: `keys` and `key` are box
+// pointers, and `eqfn` is a bare code address the op site supplies for a
+// struct/enum key (0 otherwise). It must NOT be spelled `fn` — that marks it a
+// closure local, which dispatches env-first through box[0] with arity+1 and
+// would read the callee's first instruction word as a call target. Declared
+// i32 it takes the plain-indirect path instead, which is the stack-ABI call the
+// hand-asm wrote by hand.
+//
+// `keys` is the keys ARRAY, not the map box: map_set needs the index against a
+// buffer it is about to append to, and map_delete walks both columns, so the
+// callers own the [keys, values] indirection. An array box holds its length at
+// word 0 and element i at word i+1.
+//
+// The struct/enum arm is tested FIRST and the eq fn wins over keykind, which is
+// the precedence the hand-asm dispatched on: a struct key's op site passes a
+// keykind alongside the address, and comparing those box pointers with `==`
+// would miss a freshly built key that compares equal by value (#6081).
+pub function rt_src_map_find(): string {
+    return "function __fern_map_find(keys: i32, key: i32, keykind: i32, eqfn: i32): i32 { var n: i32 = __raw_load_ptr(keys, 0); var i: i32 = 0; var found: i32 = 0 - 1; while (i < n) { var k: i32 = __raw_load_ptr(keys, i + 1); var hit: i32 = 0; if (eqfn != 0) { if (eqfn(k, key)) { hit = 1; } } else { if (keykind != 0) { if (k == key) { hit = 1; } } else { if (__fern_str_eq(k, key)) { hit = 1; } } } if (hit == 1) { found = i; i = n; } else { i = i + 1; } } return found; }";
+}
+
 // rt_src_map_delete (#2649): `m.without(k)` — the map with the key removed,
 // paired with whether it was there.
 //
@@ -265,8 +296,11 @@ pub function rt_src_str_concat(): string {
 // layout is NOT the array one — a tuple's element i sits at word i, element 0
 // deliberately overwriting the length word (see op_tuple_make). __raw_arr_box
 // gives it the refcount header the old bare __fern_alloc(16) left off.
+//
+// The search is __fern_map_find's; what is left here is the compaction that
+// closes the hole in both columns.
 pub function rt_src_map_delete(): string {
-    return "function __fern_map_delete(mapbox: i32, key: i32, keykind: i32, eqfn: i32): i32 { var keys: i32 = __raw_load_ptr(mapbox, 0); var n: i32 = __raw_load_ptr(keys, 0); var i: i32 = 0; var found: i32 = 0 - 1; while (i < n) { var k: i32 = __raw_load_ptr(keys, i + 1); var hit: i32 = 0; if (eqfn != 0) { if (eqfn(k, key)) { hit = 1; } } else { if (keykind != 0) { if (k == key) { hit = 1; } } else { if (__fern_str_eq(k, key)) { hit = 1; } } } if (hit == 1) { found = i; i = n; } else { i = i + 1; } } var existed: i32 = 0; if (found >= 0) { var ks: i32 = __raw_load_ptr(mapbox, 0); var m: i32 = __raw_load_ptr(ks, 0); var j: i32 = found; while (j < m - 1) { __raw_store_ptr(ks, j + 1, __raw_load_ptr(ks, j + 2)); j = j + 1; } __raw_store_ptr(ks, 0, m - 1); var vs: i32 = __raw_load_ptr(mapbox, 1); var j2: i32 = found; while (j2 < m - 1) { __raw_store_ptr(vs, j2 + 1, __raw_load_ptr(vs, j2 + 2)); j2 = j2 + 1; } __raw_store_ptr(vs, 0, m - 1); existed = 1; } var r: i32 = __raw_arr_box(2); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); return r; }";
+    return "function __fern_map_delete(mapbox: i32, key: i32, keykind: i32, eqfn: i32): i32 { var keys: i32 = __raw_load_ptr(mapbox, 0); var found: i32 = __fern_map_find(keys, key, keykind, eqfn); var existed: i32 = 0; if (found >= 0) { var ks: i32 = __raw_load_ptr(mapbox, 0); var m: i32 = __raw_load_ptr(ks, 0); var j: i32 = found; while (j < m - 1) { __raw_store_ptr(ks, j + 1, __raw_load_ptr(ks, j + 2)); j = j + 1; } __raw_store_ptr(ks, 0, m - 1); var vs: i32 = __raw_load_ptr(mapbox, 1); var j2: i32 = found; while (j2 < m - 1) { __raw_store_ptr(vs, j2 + 1, __raw_load_ptr(vs, j2 + 2)); j2 = j2 + 1; } __raw_store_ptr(vs, 0, m - 1); existed = 1; } var r: i32 = __raw_arr_box(2); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); return r; }";
 }
 
 pub function (s: EmitState) mark_str_eq(): EmitState {
@@ -3137,6 +3171,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     // Runtime-symbol spelling of the string comparison (#2649),
     // for helper sources whose strings are raw box pointers.
     if (id.name == "__fern_str_eq") { return ty_bool(); }
+    // Runtime-symbol spelling of the map runtime's shared key search
+    // (#2649) — the index of `key` in the keys array, or -1.
+    if (id.name == "__fern_map_find") { return ty_i32(); }
     // i64-typed raw word load (kernel-written tv_sec / tv_nsec).
     if (id.name == "__load_i64") { return ty_i64(); }
     // __heap_bump_bytes(): the bump high-water mark. i64, not
@@ -3629,14 +3666,15 @@ pub function runtime_need_deps(name: string): string[] {
         return dtrim;
     }
     if (name == "map_delete") {
-        // The Fern __fern_map_delete body compares string keys with str_eq and
-        // walks the same parallel arrays the rest of the map runtime does, so
-        // it needs the whole maps bundle behind it.
+        // The Fern __fern_map_delete body calls __fern_map_find and walks the
+        // same parallel arrays the rest of the map runtime does, so it needs
+        // the whole maps bundle behind it.
         var dmd: string[] = ["maps"];
         return dmd;
     }
     if (name == "maps") {
-        // __fern_map_set calls __fern_str_eq (string-key path) and __fern_arr_push.
+        // The bundle's shared __fern_map_find calls __fern_str_eq (string-key
+        // path) and __fern_map_set calls __fern_arr_push.
         var d: string[] = ["str_eq", "arr_push", "heap"];
         return d;
     }
@@ -4956,6 +4994,10 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_open_res",
         "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fn___fern_map_delete",
+        // the shared key search all four of those reach (#2649); the entry owns
+        // the single definition, so the per-module link needs it exported like
+        // every other Fern-written runtime helper.
+        "__fn___fern_map_find",
         // scalar / string keys()/values() snapshots (#4353): a library
         // module's kind 131/132 flag-0/flag-2 read calls these; the entry
         // owns the definitions.

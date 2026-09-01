@@ -1,6 +1,10 @@
 package x86_64
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/jakechampion/lang/internal/native/suggest"
+)
 
 // switchMnemonics lists every mnemonic the insn dispatch switch handles by
 // name (the cc-suffixed families and the sseOps/sse38Ops tables are appended
@@ -67,75 +71,7 @@ var knownMnemonics = func() []string {
 }()
 
 // suggestMnemonic returns the closest supported mnemonic when the input is a
-// near-miss (one edit for short names, two for longer — enough to catch a
-// typo or an AVX spelling like vaddpd), or "" when nothing is close. Ties go
-// to the lexicographically first candidate so the message is deterministic.
+// near-miss, or "" when nothing is close.
 func suggestMnemonic(mnem string) string {
-	if len(mnem) < 2 {
-		return ""
-	}
-	maxDist := 1
-	if len(mnem) > 4 {
-		maxDist = 2
-	}
-	best, bestDist := "", maxDist+1
-	for _, k := range knownMnemonics {
-		if d := editDistance(mnem, k, maxDist); d < bestDist {
-			best, bestDist = k, d
-		}
-	}
-	return best
-}
-
-// editDistance is the optimal-string-alignment distance (Levenshtein plus
-// adjacent transposition), capped: once every entry in a row exceeds max the
-// true distance cannot come back under it, so max+1 is returned early.
-func editDistance(a, b string, max int) int {
-	if len(a)-len(b) > max || len(b)-len(a) > max {
-		return max + 1
-	}
-	prev2 := make([]int, len(b)+1)
-	prev := make([]int, len(b)+1)
-	cur := make([]int, len(b)+1)
-	for j := 0; j <= len(b); j++ {
-		prev[j] = j
-	}
-	for i := 1; i <= len(a); i++ {
-		cur[0] = i
-		rowMin := cur[0]
-		for j := 1; j <= len(b); j++ {
-			cost := 1
-			if a[i-1] == b[j-1] {
-				cost = 0
-			}
-			d := min3(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
-			if i > 1 && j > 1 && a[i-1] == b[j-2] && a[i-2] == b[j-1] {
-				if t := prev2[j-2] + 1; t < d {
-					d = t
-				}
-			}
-			cur[j] = d
-			if d < rowMin {
-				rowMin = d
-			}
-		}
-		if rowMin > max {
-			return max + 1
-		}
-		prev2, prev, cur = prev, cur, prev2
-	}
-	if prev[len(b)] > max {
-		return max + 1
-	}
-	return prev[len(b)]
-}
-
-func min3(a, b, c int) int {
-	if b < a {
-		a = b
-	}
-	if c < a {
-		a = c
-	}
-	return a
+	return suggest.Closest(mnem, knownMnemonics)
 }
