@@ -1082,10 +1082,60 @@ instructions, so this is the same trade the raw pokes just took, one size up:
 the caller-saves around the call cost more than the work.
 
 `__fern_box_free` is the sharper one. On this backend it is a bare `ret` — the
-heap does not reclaim — so those 165-202 sites are a `bl` and a full caller-save
-around a function that does nothing. Eliding it is not the fix, because the
-`RC-4+` freelist slice makes it real again; inlining the rc primitives is,
-and it survives that slice.
+heap does not reclaim — so those 165-202 sites were a `bl` and a full caller-save
+around a function that does nothing.
+
+### A call saves what its callee can disturb, not what is live
+
+Inlining the rc primitives, the way the flat backend does, was the obvious
+answer and it is not the one taken: it trades code size for the win, and the
+epic is about code size. The cost is not in the helper bodies — six instructions
+each — it is in the caller-saves the allocator plants around a call whose callee
+it knows nothing about.
+
+For this file's own helpers, it can know. `helperClobbers` derives from each
+emitted body which caller-saved registers a call to it can leave changed, and
+`callLines` keeps only those (plus the argument registers the caller's own
+parallel move writes on the way in). The derivation is over-approximated twice:
+a register a body so much as MENTIONS counts, and a branch to anything that is
+not another helper — a compiled module function, which uses the whole register
+file — counts as every one. An indirect branch has no body to read, so it counts
+as every one too. The callee-saved half never enters it: a helper that touches
+one already has to save and restore it (`TestRuntimeHelpersPreserveCalleeSaved`).
+
+The rc primitives name x0 and x1 and nothing else, so a value homed in x2..x11
+and live across an inc, a dec or an is_unique stops being stored and reloaded at
+each of them; `__fern_box_free` names nothing at all, so those 165-202 sites now
+cost the `bl` alone.
+
+Both directions move, which is what distinguishes this from inlining:
+
+| bench | before | after | `.text` |
+|---|---|---|---|
+| `pvec_with` | 2.10x | **1.83x** | 92.99% |
+| `map_probe_chain` | 1.88x | **1.64x** | 99.35% |
+| `map_int` | 1.94x | **1.68x** | 99.34% |
+| `map_string` | 1.45x | **1.38x** | 99.35% |
+| `ordmap_insert` | 2.34x | 2.29x | 92.58% |
+| `pmap_insert` | 1.90x | 1.93x | 93.28% |
+
+`.text` over those fifteen benchmarks is 95.79% of what it was, and the emitted
+stack traffic in `ordmap_insert`'s module falls 25% (1539 sp-relative
+loads/stores to 1157). `pmap_insert`'s row is within the noise of this
+container; `enum_match` is unchanged and byte-identical.
+
+The narrowing does less than the call counts suggest because the allocator
+already steers call-crossing values into the callee-saved half (#7550) — where
+that succeeds there was no save to remove. It is the values it could not fit
+there, in the functions with the most live at once, that were paying.
+
+Which is why compiler-shaped input gains most of all. `checker_modload_run`'s
+`.text` falls from 2,749,016 to 2,423,504 bytes — **88.2%**, against 95.8% over
+the benchmark set — and its output stays byte-identical to the previous build's
+on every self-host module tried. That is the largest single size win in this
+epic since the callee-saved partition, and like the `stp`/`ldp` pairing it cost
+no allocator complexity: allocation is untouched, only the set of registers a
+call bothers to save.
 
 ### Reclamation is a memory fix, not a speed fix
 
