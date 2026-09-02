@@ -1550,7 +1550,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_arr_push_grow_move_ptr": emitAliasHelper("__fern_arr_push_grow_move_ptr", "__fern_arr_push_grow"),
 	"__fern_arr_push_grow_move_str": emitAliasHelper("__fern_arr_push_grow_move_str", "__fern_arr_push_grow"),
 	"__fern_arr_cow_inplace":        emitArrCowInplaceHelper,
-	"__fern_arr_cow_inplace_ptr":    emitAliasHelper("__fern_arr_cow_inplace_ptr", "__fern_arr_cow_inplace"),
+	"__fern_arr_cow_inplace_ptr":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_ptr", "__fern_rc_inc", "cowp"),
 	"__fern_arr_cow_inplace_str":    emitAliasHelper("__fern_arr_cow_inplace_str", "__fern_arr_cow_inplace"),
 	"__str_eq":                      emitStrEqHelper,
 	"__str_ord":                     emitStrOrdHelper,
@@ -1578,7 +1578,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_move_ptr": {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_move_str": {"__fern_arr_push_grow"},
-	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace"},
+	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
 }
 
@@ -2186,6 +2186,57 @@ func emitArrCowInplaceHelper(w func(string, ...any)) {
 	emitBcopyCall(w, "r11", "rdi", "rax")
 	w("\tmov rax, r11")
 	w("\tret")
+}
+
+// emitArrCowInplaceElemHelper writes the element-retaining
+// __fern_arr_cow_inplace_ptr(arr, stride) -> buf: the scalar helper's fast
+// path and copy, then `elemInc` on every element the fresh buffer now shares
+// with the receiver, so each array owns its own reference. A raw copy leaves
+// the elements at unchanged count, and a consuming match one level down then
+// reads a child both arrays reach as unique and rewrites it in place — the
+// snapshot of a persistent vector changing under a `.with`. rdi=arr,
+// esi=stride; returns rax=buf.
+func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		lbl := func(suffix string) string { return ".Lssa_" + tag + "_" + suffix }
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tmov eax, %s", memRef("rdi", -8)) // rc
+		w("\tcmp eax, 1")
+		w("\tjne %s", lbl("slow"))
+		w("\tmov rax, rdi")
+		w("\tret")
+		w("%s:", lbl("slow"))
+		// Four callee-saved pushes plus the return address leave rsp 8 mod
+		// 16; the extra 8 realigns it for the calls below.
+		w("\tpush rbx")
+		w("\tpush r12")
+		w("\tpush r13")
+		w("\tpush r14")
+		w("\tsub rsp, 8")
+		w("\tmov r12d, esi") // stride
+		w("\tcall %s", fnLabel("__fern_arr_cow_inplace"))
+		w("\tmov rbx, rax")                    // buf
+		w("\tmov r13d, %s", memRef("rbx", -4)) // len
+		w("\txor r14d, r14d")                  // i
+		w("%s:", lbl("loop"))
+		w("\tcmp r14d, r13d")
+		w("\tjge %s", lbl("done"))
+		w("\tmov eax, r14d")
+		w("\timul eax, r12d")       // i*stride
+		w("\tmov rdi, [rbx + rax]") // element
+		w("\tcall %s", fnLabel(elemInc))
+		w("\tadd r14d, 1")
+		w("\tjmp %s", lbl("loop"))
+		w("%s:", lbl("done"))
+		w("\tmov rax, rbx")
+		w("\tadd rsp, 8")
+		w("\tpop r14")
+		w("\tpop r13")
+		w("\tpop r12")
+		w("\tpop rbx")
+		w("\tret")
+	}
 }
 
 // The four single-byte scan kernels the std/string routines lower to. All take a

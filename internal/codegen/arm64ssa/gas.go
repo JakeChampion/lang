@@ -848,7 +848,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_arr_push_grow_move_str": emitAliasHelper("__fern_arr_push_grow_move_str", "__fern_arr_push_grow"),
 	"__alloc_u8":                    emitAllocU8Helper,
 	"__fern_arr_cow_inplace":        emitArrCowInplaceHelper,
-	"__fern_arr_cow_inplace_ptr":    emitAliasHelper("__fern_arr_cow_inplace_ptr", "__fern_arr_cow_inplace"),
+	"__fern_arr_cow_inplace_ptr":    emitArrCowInplaceElemHelper("__fern_arr_cow_inplace_ptr", "__fern_rc_inc", "cowp"),
 	"__fern_arr_cow_inplace_str":    emitAliasHelper("__fern_arr_cow_inplace_str", "__fern_arr_cow_inplace"),
 	"__fern_heap_bump_bytes":        emitHeapBumpBytesHelper,
 	"__method_string_as_bytes":      emitStringAsBytesHelper,
@@ -2374,7 +2374,7 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_move_ptr": {"__fern_arr_push_grow"},
 	"__fern_arr_push_grow_move_str": {"__fern_arr_push_grow"},
-	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace"},
+	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
 	"write_file":                    {"__fern_io_error"},
 	"read_file":                     {"__fern_io_error", "__fern_utf8_valid"},
@@ -5758,17 +5758,18 @@ func emitSleepMsHelper(w func(string, ...any)) {
 
 // emitAliasHelper writes `name` as a tail-branch alias of `target`.
 //
-// It is how the element-RETAINING variants of the array helpers are satisfied
-// here: __fern_arr_push_grow_ptr / _str and their _move_ siblings, and
-// __fern_arr_cow_inplace_ptr / _str. The shared IR routes rc-tracked-element
-// appends and copy-on-writes to those variants (#3425, #3457) so that backends
-// whose drop walk FREES elements stay balanced — the fresh buffer must own its
-// own reference to each element it copied. The SSA runtime's dec helpers never
-// free (leak-world bump heap, docs/SSA-RC-RUNTIME.md), so nothing can observe
-// the missing retain and the plain body is behaviour-identical.
+// It is how the element-RETAINING grow variants are satisfied here:
+// __fern_arr_push_grow_ptr / _str and their _move_ siblings. The shared IR
+// routes rc-tracked-element appends to those variants (#3425, #3457) so that
+// backends whose drop walk FREES elements stay balanced — the fresh buffer must
+// own its own reference to each element it copied. The SSA runtime's dec
+// helpers never free (leak-world bump heap, docs/SSA-RC-RUNTIME.md), so a
+// missing retain is unobservable through a release alone.
 //
-// If the SSA runtime ever gains freeing decs, every one of these must become a
-// real element-retaining body like the native/wasm ones.
+// It IS observable through a uniqueness check, which is why the copy-on-write
+// sibling is no longer an alias: see emitArrCowInplaceElemHelper. The _str
+// spellings stay aliases only because this backend lowers single-word strings,
+// so the IR never selects them (`twoWordStrings` is false here).
 func emitAliasHelper(name, target string) func(w func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
@@ -6114,6 +6115,51 @@ func emitArrCowInplaceHelper(w func(string, ...any)) {
 	emitBcopyCall(w, "x11", "x15", "x14")
 	w("\tmov x0, x11") // return new_data
 	w("\tret")
+}
+
+// emitArrCowInplaceElemHelper writes the element-retaining
+// __fern_arr_cow_inplace_ptr(arr, stride) -> buf: the scalar helper's fast
+// path and copy, then `elemInc` on every element the fresh buffer now shares
+// with the receiver, so each array owns its own reference. A raw copy leaves
+// the elements at unchanged count, and a consuming match one level down then
+// reads a child both arrays reach as unique and rewrites it in place — the
+// snapshot of a persistent vector changing under a `.with`. x0=arr, w1=stride;
+// returns x0=buf.
+func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		lbl := func(suffix string) string { return ".Lssa_" + tag + "_" + suffix }
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tldur w2, [x0, #-8]") // rc
+		w("\tcmp w2, #1")
+		w("\tb.ne %s", lbl("slow"))
+		w("\tret")
+		w("%s:", lbl("slow"))
+		w("\tstp x29, x30, [sp, #-48]!")
+		w("\tmov x29, sp")
+		w("\tstp x19, x20, [sp, #16]")
+		w("\tstp x21, x22, [sp, #32]")
+		w("\tmov x20, x1") // stride
+		w("\tbl %s", fnLabel("__fern_arr_cow_inplace"))
+		w("\tmov x19, x0")          // buf
+		w("\tldur w21, [x19, #-4]") // len
+		w("\tmov x22, #0")          // i
+		w("%s:", lbl("loop"))
+		w("\tcmp w22, w21")
+		w("\tb.ge %s", lbl("done"))
+		w("\tmul x0, x22, x20") // i*stride
+		w("\tadd x0, x19, x0")  // &buf[i]
+		w("\tldr x0, [x0]")     // element
+		w("\tbl %s", fnLabel(elemInc))
+		w("\tadd x22, x22, #1")
+		w("\tb %s", lbl("loop"))
+		w("%s:", lbl("done"))
+		w("\tmov x0, x19")
+		w("\tldp x21, x22, [sp, #32]")
+		w("\tldp x19, x20, [sp, #16]")
+		w("\tldp x29, x30, [sp], #48")
+		w("\tret")
+	}
 }
 
 // emitFunc writes one function. It emits the body twice: the first pass finds
