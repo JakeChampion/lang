@@ -1363,11 +1363,52 @@ function arm64_and_imm_ok(imm: i32): boolean {
 // and w10,w9,#255 = 0x12001d2a, and w9,w9,#1 = 0x12000129,
 // and w0,w1,#31 = 0x12001020, and x10,x9,#255 = 0x92401d2a.
 function arm64_and_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[] {
-    var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
-    var base: i64 = 0x92000000;
-    var nbit: i64 = bm.n as i64;
-    if (w) { base = 0x12000000; nbit = 0; }
-    return arm64_le32(buf, base | (nbit << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+    return arm64_le32(buf, arm64_logical_imm_word(0x92000000, w, rd, rn, imm as i64));
+}
+
+// ---- the logical-immediate family ----
+//
+// and, ands, orr and eor share one immediate encoding and differ only in the
+// opcode above it, so they share one encoder here. The 32-bit form is NOT the
+// 64-bit one with sf cleared: it needs N=0 and the pattern REPLICATED across
+// both halves, so its fields come from encoding (v<<32)|v rather than from
+// passing the 64-bit immr/imms through. Passing them through was why a run
+// rotated off bit 0 — `and w1, w2, #0xfffe`, which gas encodes — was refused
+// (#8138).
+
+// arm64_bm_rep32 writes a 32-bit pattern out at 64 bits, which is what it
+// means as a 32-bit logical immediate.
+function arm64_bm_rep32(v: i64): i64 {
+    var lo: i64 = v & 0xffffffff;
+    return (lo << 32) | lo;
+}
+
+// arm64_logical_imm_bits gives the (N, immr, imms) for `imm` at the width, or
+// ok=false when it is not a bitmask there. A 32-bit immediate must come out
+// with N=0: N=1 selects the 64-bit element size, which the 32-bit instruction
+// has no room to name.
+function arm64_logical_imm_bits(imm: i64, w: boolean): Arm64Bm {
+    if (!w) { return arm64_encode_bitmask(imm); }
+    // A positive value wider than the register is not this instruction's
+    // immediate at all; rep32 would quietly keep its low half.
+    if (imm > 0xffffffff) { return Arm64Bm { n: 0, immr: 0, imms: 0, ok: false }; }
+    // Replicating forces an element size of 32 or less, so N comes back 0 on
+    // its own — the 32-bit form has no way to say otherwise.
+    return arm64_encode_bitmask(arm64_bm_rep32(imm));
+}
+
+function arm64_logical_imm_ok(imm: i64, w: boolean): boolean {
+    return arm64_logical_imm_bits(imm, w).ok;
+}
+
+// arm64_logical_imm_word builds the word. `base` is the 64-bit opcode; the
+// 32-bit one is the same with sf cleared, for all four mnemonics.
+function arm64_logical_imm_word(base: i64, w: boolean, rd: i32, rn: i32, imm: i64): i64 {
+    var bm: Arm64Bm = arm64_logical_imm_bits(imm, w);
+    var b: i64 = base;
+    if (w) { b = base & 0x7fffffff; }
+    return b | ((bm.n as i64) << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10)
+        | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
 }
 
 // arm64_ands_imm encodes the flag-setting `ands Rd, Rn, #imm` (tst is the
@@ -1375,11 +1416,7 @@ function arm64_and_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[
 // 32-bit form — the same N rule as arm64_and_imm. Callers must check
 // arm64_and_imm_ok / arm64_logical_imm_w_ok first.
 function arm64_ands_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[] {
-    var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
-    var base: i64 = 0xf2000000;
-    var nbit: i64 = bm.n as i64;
-    if (w) { base = 0x72000000; nbit = 0; }
-    return arm64_le32(buf, base | (nbit << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+    return arm64_le32(buf, arm64_logical_imm_word(0xf2000000, w, rd, rn, imm as i64));
 }
 
 // arm64_logical_imm_w_ok reports whether `imm` can be re-encoded as a 32-bit
@@ -1393,9 +1430,7 @@ function arm64_ands_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32
 // silently emitting the wrong mask is the #6047 / #6054 failure mode.
 function arm64_logical_imm_w_ok(imm: i32): boolean {
     if (imm < 0) { return false; }
-    var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
-    if (!bm.ok) { return false; }
-    return bm.n == 1 && bm.immr == 0;
+    return arm64_logical_imm_ok(imm as i64, true);
 }
 
 // orr's immediate form `orr Xd, Xn, #imm`: base 0xb2000000 (0x32000000 with
@@ -1406,11 +1441,7 @@ function arm64_orr_imm_ok(imm: i32): boolean {
     return arm64_encode_bitmask(imm as i64).ok;
 }
 function arm64_orr_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[] {
-    var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
-    var base: i64 = 0xb2000000;
-    var nbit: i64 = bm.n as i64;
-    if (w) { base = 0x32000000; nbit = 0; }
-    return arm64_le32(buf, base | (nbit << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+    return arm64_le32(buf, arm64_logical_imm_word(0xb2000000, w, rd, rn, imm as i64));
 }
 
 // eor's immediate form `eor Xd, Xn, #imm` (the boolean-not idiom `x ^ 1`):
@@ -1423,11 +1454,7 @@ function arm64_eor_imm_ok(imm: i32): boolean {
 // 32-bit form: base 0x52000000, N=0 — same rule as arm64_and_imm above.
 // Verified vs clang: eor w9,w9,#1 = 0x52000129.
 function arm64_eor_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[] {
-    var bm: Arm64Bm = arm64_encode_bitmask(imm as i64);
-    var base: i64 = 0xd2000000;
-    var nbit: i64 = bm.n as i64;
-    if (w) { base = 0x52000000; nbit = 0; }
-    return arm64_le32(buf, base | (nbit << 22) | ((bm.immr as i64) << 16) | ((bm.imms as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+    return arm64_le32(buf, arm64_logical_imm_word(0xd2000000, w, rd, rn, imm as i64));
 }
 
 // ---- subs / divide / rev16 ----
@@ -3485,9 +3512,7 @@ function arm64_gas_bad_logical2(mnem: string, ops: string[]): string {
 }
 // The same validity rule the and#/eor# program-loop paths apply.
 function arm64_gas_bad_bitmask_imm(tok: string, w: boolean): string {
-    var imm: i32 = arm64_gas_imm(tok);
-    if (!arm64_and_imm_ok(imm)) { return "imm"; }
-    if (w && !arm64_logical_imm_w_ok(imm)) { return "imm"; }
+    if (!arm64_logical_imm_ok(arm64_gas_imm64(tok), w)) { return "imm"; }
     return "";
 }
 // arm64_gas_third_is_imm reports whether a logical op's THIRD operand is
@@ -5545,10 +5570,10 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // carries a '#', in the shift amount — falls through to emit.
         if (mnem == "and" && arm64_gas_third_is_imm(rest)) {
             var nops: string[] = arm64_gas_operands(rest);
-            var nimm: i32 = arm64_gas_imm(nops[2]);
+            var nimm: i64 = arm64_gas_imm64(nops[2]);
             var nw: boolean = arm64_gas_is_w(nops[0]);
-            if (arm64_and_imm_ok(nimm) && (!nw || arm64_logical_imm_w_ok(nimm))) {
-                a = Arm64Asm { ...a, code: arm64_and_imm(a.code, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm, nw) };
+            if (arm64_logical_imm_ok(nimm, nw)) {
+                a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0x92000000, nw, arm64_gas_reg(nops[0]), arm64_gas_reg(nops[1]), nimm)) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("and#") };
             }
@@ -5561,10 +5586,10 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // mnemonic. Register-form `orr` falls through to emit.
         if (mnem == "orr" && arm64_gas_third_is_imm(rest)) {
             var oops: string[] = arm64_gas_operands(rest);
-            var oimm: i32 = arm64_gas_imm(oops[2]);
+            var oimm: i64 = arm64_gas_imm64(oops[2]);
             var ow: boolean = arm64_gas_is_w(oops[0]);
-            if (arm64_orr_imm_ok(oimm) && (!ow || arm64_logical_imm_w_ok(oimm))) {
-                a = Arm64Asm { ...a, code: arm64_orr_imm(a.code, arm64_gas_reg(oops[0]), arm64_gas_reg(oops[1]), oimm, ow) };
+            if (arm64_logical_imm_ok(oimm, ow)) {
+                a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0xb2000000, ow, arm64_gas_reg(oops[0]), arm64_gas_reg(oops[1]), oimm)) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("orr#") };
             }
@@ -5574,10 +5599,10 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // as `and #imm`. Register-form `eor` falls through to emit.
         if (mnem == "eor" && arm64_gas_third_is_imm(rest)) {
             var eops: string[] = arm64_gas_operands(rest);
-            var eimm: i32 = arm64_gas_imm(eops[2]);
+            var eimm: i64 = arm64_gas_imm64(eops[2]);
             var ew: boolean = arm64_gas_is_w(eops[0]);
-            if (arm64_eor_imm_ok(eimm) && (!ew || arm64_logical_imm_w_ok(eimm))) {
-                a = Arm64Asm { ...a, code: arm64_eor_imm(a.code, arm64_gas_reg(eops[0]), arm64_gas_reg(eops[1]), eimm, ew) };
+            if (arm64_logical_imm_ok(eimm, ew)) {
+                a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_logical_imm_word(0xd2000000, ew, arm64_gas_reg(eops[0]), arm64_gas_reg(eops[1]), eimm)) };
             } else {
                 p = Arm64GasProg { ...p, unknown: p.unknown.append("eor#") };
             }
