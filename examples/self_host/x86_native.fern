@@ -449,6 +449,23 @@ function x86_movl_store_imm32(buf: i32[], base: i32, has_index: boolean, index: 
 // x86_lea_idx_nobase: `lea disp(,%index,scale), <dst>` — REX.W 8D with a
 // SIB whose base field is 101 (no base) and mod=00, so a disp32 always
 // follows. Element-offset computation.
+// x86_lea_load emits `lea` at any destination width: 0x8D with the same
+// reg-mem operand as the ALU loads, under an operand-size prefix for 16 and
+// REX.W for 64. The REX byte is emitted only when it carries something —
+// a bare 0x40 is legal but not what gas writes, and the differential
+// compares bytes.
+function x86_lea_load(buf: i32[], size: i32, dst: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
+    var ix: i32 = 0;
+    if (has_index) { ix = index; }
+    buf = x86_osz(buf, size);
+    var w: i32 = 0;
+    if (size == 64) { w = 1; }
+    var rex: i32 = x86_rex(w, dst, ix, base);
+    if (rex != 64) { buf = buf.append(rex); }
+    buf = buf.append(141); // 0x8D
+    return x86_byte_mem_operand(buf, dst, base, has_index, index, scale, disp);
+}
+
 function x86_lea_idx_nobase(buf: i32[], dst: i32, index: i32, scale: i32, disp: i32): i32[] {
     buf = buf.append(x86_rex(1, dst, index, 0));
     buf = buf.append(141); // 0x8D
@@ -2546,6 +2563,57 @@ function x86_gas_top_comma(s: string): i32 {
 // x86_gas_movb dispatches movb (AT&T src, dst): $imm->mem, $imm->reg8
 // (B0+rb ib), reg8<->mem, and reg8->reg8 (88 /r). The two register-target
 // shapes previously fell into the memory paths, where the unparsed operand
+// x86_gas_extend_op maps an AT&T extend spelling to its opcode and
+// DESTINATION SIZE, packed as op*256 + size/8; -1 = not one of them.
+//
+// B6/BE read a byte and B7/BF a word — that is the SOURCE. The suffix's
+// second letter names the destination, and all three destination sizes are
+// encodable: 16 takes a 0x66 operand-size prefix, 64 takes REX.W, 32 takes
+// neither. Sizing this by destination rather than by a REX.W flag is what
+// lets movzbw and movsbw exist at all.
+function x86_gas_extend_op(mnem: string): i32 {
+    if (mnem == "movzbw") { return 182 * 256 + 2; }
+    if (mnem == "movzbl") { return 182 * 256 + 4; }
+    if (mnem == "movzbq") { return 182 * 256 + 8; }
+    if (mnem == "movzwl") { return 183 * 256 + 4; }
+    if (mnem == "movzwq") { return 183 * 256 + 8; }
+    if (mnem == "movsbw") { return 190 * 256 + 2; }
+    if (mnem == "movsbl") { return 190 * 256 + 4; }
+    if (mnem == "movsbq") { return 190 * 256 + 8; }
+    if (mnem == "movswl") { return 191 * 256 + 4; }
+    if (mnem == "movswq") { return 191 * 256 + 8; }
+    return 0 - 1;
+}
+
+// x86_gas_movext assembles one extend, register or memory source. The source
+// register is parsed at the width the opcode reads — a byte for B6/BE, a word
+// for B7/BF — so a token of the wrong width is refused rather than folded in.
+//
+// The register path is not optional: reading a register token as a memory
+// operand encodes a LOAD from whatever base the parse falls back to, which is
+// a valid instruction reading the wrong place (#8083).
+function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: string): X86Asm {
+    var w: i32 = 0;
+    if (size == 64) { w = 1; }
+    var d: i32 = x86_gas_reg_w(dst, size);
+    if (d < 0) { return x86_gas_bad(a, "movext " + src + ", " + dst); }
+    // A 16-bit destination is the 32-bit encoding under an operand-size
+    // prefix; no REX.W is involved either way.
+    if (size == 16) { a = X86Asm { ...a, code: x86_osz(a.code, 16) }; }
+    if (x86_str_contains(src, "(")) {
+        var m: GasMem = x86_gas_parse_mem(src);
+        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
+        if (m.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
+        a = X86Asm { ...a, code: x86_movext_mem(a.code, op, w, d, m.base, m.has_index, m.index, m.scale, m.disp) };
+        return a;
+    }
+    var sr: i32 = x86_gas_reg8(src);
+    if (op == 191 || op == 183) { sr = x86_gas_reg16(src); }
+    if (sr < 0) { return x86_gas_bad(a, "movext " + src + ", " + dst); }
+    a = X86Asm { ...a, code: x86_movext_reg(a.code, op, w, d, sr) };
+    return a;
+}
+
 // masked to base %rdi — `movb $1, %cl` silently became a store through rdi.
 function x86_gas_movb(own a: X86Asm, src: string, dst: string): X86Asm {
     if (src.len() > 0 && src[0] == b'$') { // $imm -> mem or reg8
@@ -2582,52 +2650,6 @@ function x86_gas_movb(own a: X86Asm, src: string, dst: string): X86Asm {
     return X86Asm { ...a, code: x86_op_rr(a.code, 8, 136, r1, r2) }; // 88 /r
 }
 
-// x86_gas_movzb dispatches movzb{l,q}: mem->reg or reg8->reg, `w` selecting
-// the destination width.
-// x86_gas_movsx_op maps an AT&T sign-extend spelling to its opcode and
-// destination width, packed as op*256 + w; -1 = not one of them. BE reads a
-// byte, BF a word; the `l`/`q` suffix names the destination.
-function x86_gas_movsx_op(mnem: string): i32 {
-    if (mnem == "movsbl") { return 190 * 256 + 0; }
-    if (mnem == "movsbq") { return 190 * 256 + 1; }
-    if (mnem == "movswl") { return 191 * 256 + 0; }
-    if (mnem == "movswq") { return 191 * 256 + 1; }
-    return 0 - 1;
-}
-
-// x86_gas_movext assembles one extend, register or memory source. The source
-// register is parsed at the width the opcode reads — a byte for BE/B6, a word
-// for BF/B7 — so a token of the wrong width is refused rather than folded in
-// at the number it happens to share with a wider register.
-function x86_gas_movext(own a: X86Asm, op: i32, w: i32, src: string, dst: string): X86Asm {
-    var d: i32 = x86_gas_reg(dst);
-    if (w == 0) { d = x86_gas_reg32(dst); }
-    if (d < 0) { return x86_gas_bad(a, "movext " + src + ", " + dst); }
-    if (x86_str_contains(src, "(")) {
-        var m: GasMem = x86_gas_parse_mem(src);
-        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
-        if (m.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
-        a = X86Asm { ...a, code: x86_movext_mem(a.code, op, w, d, m.base, m.has_index, m.index, m.scale, m.disp) };
-        return a;
-    }
-    var sr: i32 = x86_gas_reg8(src);
-    if (op == 191 || op == 183) { sr = x86_gas_reg16(src); }
-    if (sr < 0) { return x86_gas_bad(a, "movext " + src + ", " + dst); }
-    a = X86Asm { ...a, code: x86_movext_reg(a.code, op, w, d, sr) };
-    return a;
-}
-
-function x86_gas_movzb(own a: X86Asm, w: i32, src: string, dst: string): X86Asm {
-    if (x86_str_contains(src, "(")) {
-        var m: GasMem = x86_gas_parse_mem(src);
-        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
-        if (m.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
-        a = X86Asm { ...a, code: x86_movzb_mem(a.code, w, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
-        return a;
-    }
-    a = X86Asm { ...a, code: x86_movzb_reg(a.code, w, x86_gas_reg(dst), x86_gas_reg8(src)) };
-    return a;
-}
 
 // ---- suffix-family machinery ----
 //
@@ -3744,10 +3766,22 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     }
     var src: string = x86_gas_trim(slice_unchecked(rest, 0, ci));
     var dst: string = x86_gas_trim(slice_unchecked(rest, ci + 1, rest.len()));
-    if (mnem == "leaq") {
+    // lea at every width AT&T spells. Intel writes one `lea` and reads the
+    // width off the destination register; AT&T names it in the suffix, so
+    // each spelling needs an arm or the instruction is dropped.
+    if (mnem == "leaq" || mnem == "leal" || mnem == "leaw") {
+        var lsz: i32 = 64;
+        if (mnem == "leal") { lsz = 32; }
+        if (mnem == "leaw") { lsz = 16; }
+        var ld: i32 = x86_gas_reg_w(dst, lsz);
+        if (ld < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
         var m: GasMem = x86_gas_parse_mem(src);
         if (m.is_rip) { // `leaq sym(%rip), %reg`
-            return x86_lea_rip_label(a, x86_gas_reg(dst), m.label);
+            // The rip fixup writes a 64-bit-form displacement; the narrower
+            // spellings have no such emitter, so they are refused rather
+            // than given one that would relocate the wrong field.
+            if (lsz != 64) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+            return x86_lea_rip_label(a, ld, m.label);
         }
         // `leaq disp(%base)` / `disp(%base,%index,scale)` — a plain address
         // computation (lea 0x8D, same reg-mem encoding as the ALU loads). asm.fern
@@ -3757,10 +3791,11 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         // got a bogus rip fixup (an empty label → address 0) and loaded a garbage
         // pointer — which crashed the string-keyed-map compare (mapstr).
         if (m.no_base) { // `leaq disp(,%index,scale), %reg` — index/scale only
-            a = X86Asm { ...a, code: x86_lea_idx_nobase(a.code, x86_gas_reg(dst), m.index, m.scale, m.disp) };
+            if (lsz != 64) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+            a = X86Asm { ...a, code: x86_lea_idx_nobase(a.code, ld, m.index, m.scale, m.disp) };
             return a;
         }
-        a = X86Asm { ...a, code: x86_alu_load_r64(a.code, 141, x86_gas_reg(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
+        a = X86Asm { ...a, code: x86_lea_load(a.code, lsz, ld, m.base, m.has_index, m.index, m.scale, m.disp) };
         return a;
     }
     if (mnem == "movq") { return x86_gas_movq(a, src, dst); }
@@ -3796,18 +3831,13 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         return a;
     }
     if (mnem == "movb") { return x86_gas_movb(a, src, dst); }
-    if (mnem == "movzbq") { return x86_gas_movzb(a, 1, src, dst); }
-    // movzbl (byte -> 32-bit dest) — asm.fern emits it for the char/byte load
-    // `s[i]`. Writing a 32-bit register clears the upper half, so the VALUE
-    // matches movzbq's; the ENCODING does not, and routing it to the 64-bit
-    // form put a REX.W on every one of them.
-    if (mnem == "movzbl") { return x86_gas_movzb(a, 0, src, dst); }
-    // The sign-extending byte/word loads. AT&T spells the pair of widths in
-    // the mnemonic — movsbl is byte->32, movsbq byte->64, movswl word->32,
-    // movswq word->64 — where Intel writes one movsx and reads the widths off
-    // the operands.
-    var mx: i32 = x86_gas_movsx_op(mnem);
-    if (mx >= 0) { return x86_gas_movext(a, mx / 256, mx % 256, src, dst); }
+    // The zero- and sign-extending loads. AT&T spells BOTH widths in the
+    // mnemonic — movzbl is byte->32, movswq word->64 — where Intel writes one
+    // movzx/movsx and reads the widths off the operands. So every spelling
+    // needs an entry here, and a missing one is an instruction the assembler
+    // drops rather than an error it reports.
+    var mx: i32 = x86_gas_extend_op(mnem);
+    if (mx >= 0) { return x86_gas_movext(a, mx / 256, (mx % 256) * 8, src, dst); }
     // The float->int converts: cvt(t)sd2si and cvt(t)ss2si, `t` selecting the
     // truncating form and the sd/ss the source precision. The destination is
     // a GPR of either width, and the 32-bit spelling (`%eax`) is the one the
@@ -3903,13 +3933,6 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         } else {
             a = X86Asm { ...a, code: x86_movslq_rr(a.code, x86_gas_reg(dst), x86_gas_reg32(src)) };
         }
-        return a;
-    }
-    if (mnem == "movzwq") {
-        var zm: GasMem = x86_gas_parse_mem(src);
-        if (zm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
-        if (zm.is_rip) { return X86Asm { ...a, unknown: a.unknown.append("rip-relative operand not encoded here: " + src) }; }
-        a = X86Asm { ...a, code: x86_movzwq_load(a.code, x86_gas_reg(dst), zm.base, zm.has_index, zm.index, zm.scale, zm.disp) };
         return a;
     }
     // Unsupported two-operand mnemonic (grown in later slices): RECORD it
