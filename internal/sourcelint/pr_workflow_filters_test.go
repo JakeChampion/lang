@@ -210,14 +210,22 @@ func TestGateLanesRunOnMain(t *testing.T) {
 				e.Name(), got, want)
 		}
 
-		// A ref-keyed group with cancel-in-progress cannot report on main at
-		// all once merges land faster than the lane runs: each merge cancels
-		// the previous main run before it finishes.
-		if strings.Contains(src, "cancel-in-progress: true") &&
-			!strings.Contains(src, "github.ref == 'refs/heads/main' && github.sha") {
-			t.Errorf("%s: main runs share a concurrency group and cancel each other. "+
-				"Key main on the SHA (see test-units.yml) so back-to-back merges "+
-				"each keep their own run", e.Name())
+		// How main is grouped, in both directions it can go wrong.
+		if conc, ok := concurrencyBlock(src); ok {
+			if strings.Contains(conc, "cancel-in-progress: true") {
+				t.Errorf("%s: main cancels its own in-flight run. Once merges land "+
+					"faster than the lane runs, each cancels the previous before it "+
+					"finishes and the lane reports on main never — exempt main with "+
+					"`cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}` "+
+					"(see test-units.yml)", e.Name())
+			}
+			if strings.Contains(conc, "github.sha") {
+				t.Errorf("%s: main is keyed on the SHA, so every merge gets its own "+
+					"concurrency group and supersedes nothing. A burst of rebase-merges "+
+					"then holds an uncancellable run each, ahead of every open PR "+
+					"(#8124). Key main on the ref (see test-units.yml) so a burst "+
+					"coalesces to its newest commit", e.Name())
+			}
 		}
 	}
 
@@ -244,6 +252,32 @@ func triggerBlock(on, name string) (string, bool) {
 	var b strings.Builder
 	for _, l := range lines[start+1:] {
 		if strings.TrimSpace(l) != "" && !strings.HasPrefix(l, "    ") {
+			break
+		}
+		b.WriteString(l)
+		b.WriteString("\n")
+	}
+	return b.String(), true
+}
+
+// concurrencyBlock returns the body of the workflow-level `concurrency:`
+// mapping. Scoped rather than matched against the whole file so a job-level
+// group, or the word in a comment, is not read as the workflow's own.
+func concurrencyBlock(src string) (string, bool) {
+	lines := strings.Split(src, "\n")
+	start := -1
+	for i, l := range lines {
+		if l == "concurrency:" {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	var b strings.Builder
+	for _, l := range lines[start+1:] {
+		if strings.TrimSpace(l) != "" && !strings.HasPrefix(l, " ") {
 			break
 		}
 		b.WriteString(l)

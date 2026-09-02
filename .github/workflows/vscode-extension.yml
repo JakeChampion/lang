@@ -32,13 +32,21 @@ on:
 # Supersede an in-flight run for the same ref: a new push to the
 # branch / PR (or a new dispatch) cancels the older run instead of
 # letting both sit in the queue. Keyed per-workflow + per-ref so
-# distinct PRs and the main branch never cancel each other. Main runs
-# key on the SHA instead: back-to-back merges each keep their own run,
-# so a failure names the merge that caused it rather than the newest
-# of several — the same attribution choice check-sources.yml makes.
+# distinct PRs and the main branch never cancel each other.
+#
+# main is the one ref that never cancels: its run finishes and reports
+# even when the next merge lands mid-run. It gets ONE group, not one per
+# SHA. A SHA-keyed group supersedes nothing, so a burst of back-to-back
+# rebase-merges held an uncancellable run each — six of them stacked ~90
+# runs into the queue every open PR was waiting behind (#8124). With one
+# group GitHub keeps at most one main run executing and one pending,
+# cancelling the older pending, so a burst coalesces to its newest
+# commit. The cost is attribution: a red main names a span of merges
+# rather than one. check-sources.yml keeps the per-merge attribution —
+# one ~1-minute job can afford a slot per merge; this lane cannot.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   validate:
