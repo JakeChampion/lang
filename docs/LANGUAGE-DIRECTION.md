@@ -1690,17 +1690,33 @@ isn't there, so the checker rejects.
 question — adding effect rows is a real surface-syntax
 change, and the value depends on how many bugs the
 checker catches that we wouldn't have caught otherwise.
-Worth a prototype branch when we have a sufficiently
-large body of handler code to measure against.
+
+The prototype ran (#5320,
+`docs/EFFECT-ROWS-BRIEF.md`) and the surface did not
+survive it. A `uses [...]` clause verified against an
+inferred per-function effect SET was built, measured and
+dropped; what landed is the analysis and `fern -effects`,
+with no new syntax. Two of the four effects sketched
+above did not survive either — `throws[E]` is covered by
+`use` + `?` (deprioritised below), and `suspend` would
+re-introduce the function colouring the concurrency
+decision rejects. What is left is the capability axis,
+and it is a set rather than a row: scoped, duplicable
+labels are justified only by elimination forms, and there
+is no `catch fs`.
 
 ### When to revisit
 
-When we ship native HTTP servers on arm64 (this PR /
-follow-ups), there'll be real handler code in the test
-suite that exercises `<io>` / `<throws>` / `<state>`
-patterns. That's the right moment to prototype the
-effect-row checker rules and see if they catch
-anything real.
+The trigger — a real handler corpus — has fired, and the
+prototype measured it. 96% of the 6,075 functions in the
+self-hosted compiler reach no effect at all, and there
+the crude "an indirect call reaches anything" rule costs
+nothing. On the handler corpus it costs 315 of 1,184
+functions, because `handle` escapes into `tcp_serve` and
+`std/platform` made it effectful. So the open question is
+no longer whether effect rows are affordable but whether
+they are needed on function TYPES for the handler shape;
+`EFFECT-ROWS-BRIEF.md` §5.3 and §7 carry it.
 
 ### Concurrency: structured fan-out over a stackless task runtime
 
