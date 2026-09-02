@@ -231,10 +231,21 @@ func encodeBitmask(imm uint64, regSize int) (n, immr, imms uint32, ok bool) {
 // logicalImm builds a logical-immediate instruction from its 64-bit
 // base opcode, clearing the sf bit for the 32-bit form. ok is false
 // when imm isn't an encodable bitmask.
+//
+// The 32-bit form takes the low half of imm, so a negative written at
+// 64-bit width (`and w1, w2, #-16` arrives as 0xFFFFFFFFFFFFFFF0) names
+// the same mask as its unsigned spelling. GNU as accepts a high half
+// that is either all-zero or all-one and drops it; a high half that is
+// neither names a value the destination cannot hold and is rejected.
 func logicalImm(base64, rd, rn uint32, imm uint64, sf bool) (uint32, bool) {
 	regSize := 32
 	if sf {
 		regSize = 64
+	} else {
+		if hi := imm >> 32; hi != 0 && hi != 0xffffffff {
+			return 0, false
+		}
+		imm &= 0xffffffff
 	}
 	n, immr, imms, ok := encodeBitmask(imm, regSize)
 	if !ok {
