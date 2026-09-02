@@ -648,16 +648,17 @@ func TestFormatGenericFreeFunctionRoundTrip(t *testing.T) {
 	}
 }
 
-// A generic *method* spells its type parameters in leading position,
-// before the receiver, so the receiver type can reference them. The
-// formatter must keep the clause; dropping it leaves an unbounded `T`
-// that fails to typecheck.
+// A generic *method* spells its type parameters after its name, the form
+// spec/grammar.ebnf derives and the stdlib is written in; the parser also
+// accepts them before the receiver, and the formatter normalises that
+// spelling. The clause itself must survive: dropping it leaves an
+// unbounded `T` that fails to typecheck.
 func TestFormatGenericMethodRoundTrip(t *testing.T) {
 	src := `struct Box[T] { xs: T[] }
 pub function [T: Eq] (b: Box[T]) has(x: T): boolean { return false; }`
 	got := formatSrc(t, src)
-	if !strings.Contains(got, "function [T: Eq] (b: Box[T]) has(x: T): boolean") {
-		t.Errorf("expected leading-position method type params; got:\n%s", got)
+	if !strings.Contains(got, "function (b: Box[T]) has[T: Eq](x: T): boolean") {
+		t.Errorf("expected the method's type params after its name; got:\n%s", got)
 	}
 	if again := formatSrc(t, got); got != again {
 		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
