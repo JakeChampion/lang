@@ -132,10 +132,7 @@ func TestPeepholeGateDetectsADeadJump(t *testing.T) {
 // in the linked binary. Everything above is text; this is the only assertion
 // that the bytes mean anything.
 func TestEmittedCFIDecodesAsUnwindData(t *testing.T) {
-	gcc, err := exec.LookPath("gcc")
-	if err != nil {
-		t.Skip("gcc not on PATH")
-	}
+	gcc := findX86Gcc(t)
 	readelf, err := exec.LookPath("readelf")
 	if err != nil {
 		t.Skip("readelf not on PATH")
@@ -166,4 +163,33 @@ func TestEmittedCFIDecodesAsUnwindData(t *testing.T) {
 			t.Errorf("decoded .eh_frame is missing %q", want)
 		}
 	}
+}
+
+// findX86Gcc locates a gcc that actually targets x86-64, verified by
+// assembling an Intel-syntax probe rather than by trusting the name.
+//
+// `gcc` on an aarch64 runner is the NATIVE aarch64 gcc, which happily
+// accepts the file and then reports "unknown mnemonic `push`" several
+// hundred times. This test did exactly that on test-units-aarch64 — the
+// only failure in 6460 — because it looked the tool up by name and I had
+// only ever run it on amd64. internal/native/x86_64's gas differential has
+// probed for this since it landed; this is the same guard.
+func findX86Gcc(t *testing.T) string {
+	t.Helper()
+	for _, name := range []string{"x86_64-linux-gnu-gcc", "gcc", "clang"} {
+		bin, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		dir := t.TempDir()
+		probe := filepath.Join(dir, "probe.s")
+		if err := os.WriteFile(probe, []byte(".intel_syntax noprefix\n.text\n.globl _start\n_start:\n\tpush rbp\n\tret\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if exec.Command(bin, "-c", "-o", filepath.Join(dir, "probe.o"), probe).Run() == nil {
+			return bin
+		}
+	}
+	t.Skip("no gcc/clang on PATH that assembles x86-64 Intel syntax")
+	return ""
 }
