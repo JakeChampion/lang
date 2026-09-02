@@ -48,12 +48,23 @@ func decimalNorm(s string) string {
 
 // shortestTie reports whether two normalised shortest forms are the two sides
 // of an EXACT decimal tie: the same digit count, both exactly equidistant from
-// v. On a tie both are equally correct shortest representations — Dragonbox
-// breaks it to the even final digit, while Go's strconv switched sides between
-// toolchains (2^-12 as binary32: "…62" under Go 1.24, "…63" under 1.26) — so
-// digit-for-digit equality over-pins precisely this case and nothing else.
-// Callers have already proven `got` parses back to v exactly.
-func shortestTie(got, want string, v float64) bool {
+// v, and `got` itself parsing back to v. On a tie both are equally correct
+// shortest representations — Dragonbox breaks it to the even final digit, while
+// Go's strconv switched sides between toolchains (2^-12 as binary32: "…62"
+// under Go 1.24, "…63" under 1.26) — so digit-for-digit equality over-pins
+// precisely this case and nothing else.
+//
+// Equidistant does not imply round-trip, which is why the parse is established
+// here rather than assumed of the caller. At a power of two the gap below the
+// value is half the gap above it, so the two sides of a tie can straddle the
+// rounding interval: for 2^-24 they are 5960464477539063e-23 and
+// 5960464477539062e-23, and the lower one parses back one ULP short — the
+// shorter-interval miscompile TestFloatShortestPowersOfTwoF64 exists to catch,
+// which a distance test alone would wave through as a tie.
+func shortestTie(got, want string, v float64, bits int) bool {
+	if !roundTripsTo(got, v, bits) {
+		return false
+	}
 	gd, ge, ok := splitDecimalNorm(got)
 	if !ok {
 		return false
@@ -66,6 +77,19 @@ func shortestTie(got, want string, v float64) bool {
 	dg := decimalDistance(gd, ge, rv)
 	dw := decimalDistance(wd, we, rv)
 	return dg != nil && dw != nil && dg.Cmp(dw) == 0
+}
+
+// roundTripsTo reports whether a decimal parses back to exactly v at the given
+// bit width.
+func roundTripsTo(s string, v float64, bits int) bool {
+	p, err := strconv.ParseFloat(s, bits)
+	if err != nil {
+		return false
+	}
+	if bits == 32 {
+		return float64(float32(p)) == v
+	}
+	return p == v
 }
 
 // splitDecimalNorm splits a decimalNorm result ("[-]digits e exp") back into
@@ -106,6 +130,44 @@ func abs(x int) int {
 	return x
 }
 
+// TestShortestTieAdmitsOnlyExactTies pins what shortestTie relaxes: the two
+// sides of an exact decimal tie, and nothing else. The pair at 2^-24 is the
+// case worth the round-trip guard — the two sides are exactly equidistant, yet
+// only one of them parses back to the value.
+func TestShortestTieAdmitsOnlyExactTies(t *testing.T) {
+	// 2^-12 as binary32: both 8-digit sides are exactly 5e-12 away and both
+	// parse back, so either is a correct shortest form. Go 1.24 chose the
+	// first, Go 1.26 and Dragonbox disagree about which.
+	pow12 := math.Ldexp(1, -12)
+	// 2^-24 as binary64: equidistant sides, but the lower one lands one ULP
+	// short because the gap below a power of two is half the gap above it.
+	pow24 := math.Ldexp(1, -24)
+	// Every 1-digit decimal from 3e-324 to 7e-324 parses to the smallest
+	// subnormal, so a same-length pair here round-trips without being a tie.
+	tiny := math.SmallestNonzeroFloat64
+
+	for _, tc := range []struct {
+		name      string
+		got, want string
+		v         float64
+		bits      int
+		accept    bool
+	}{
+		{"tie, round-half-to-even's side", "24414062e-11", "24414063e-11", pow12, 32, true},
+		{"tie, strconv's side", "24414063e-11", "24414062e-11", pow12, 32, true},
+		{"equidistant but one ULP short", "5960464477539062e-23", "5960464477539063e-23", pow24, 64, false},
+		{"the side of that pair that parses back", "5960464477539063e-23", "5960464477539062e-23", pow24, 64, true},
+		{"exact, but a digit longer", "244140625e-12", "24414063e-11", pow12, 32, false},
+		{"parses back, but is not equidistant", "4e-324", "5e-324", tiny, 64, false},
+		{"not a decimal at all", "?0.0001", "24414063e-11", pow12, 32, false},
+	} {
+		if got := shortestTie(tc.got, tc.want, tc.v, tc.bits); got != tc.accept {
+			t.Errorf("%s: shortestTie(%q, %q, %v, %d) = %v, want %v",
+				tc.name, tc.got, tc.want, tc.v, tc.bits, got, tc.accept)
+		}
+	}
+}
+
 // runFloatStrings compiles a program that prints one `to_string()` per line for
 // `n` values and returns the lines.
 func runFloatStrings(t *testing.T, body string, n int) []string {
@@ -130,7 +192,8 @@ func runFloatStrings(t *testing.T, body string, n int) []string {
 // two it accepted a significand one digit too short: 2^-1019 formatted as
 // "1.780059086805761e-307", which parses back to 18014398509481983 — one ULP
 // BELOW the value being formatted. Every power of two must round-trip exactly
-// and agree with Go's shortest digit for digit.
+// and agree with Go's shortest digit for digit, or be the other side of an
+// exact tie with it (shortestTie).
 func TestFloatShortestPowersOfTwoF64(t *testing.T) {
 	var vals []float64
 	for e := -1074; e <= 1023; e++ {
@@ -160,7 +223,7 @@ func TestFloatShortestPowersOfTwoF64(t *testing.T) {
 			continue
 		}
 		if want := decimalNorm(strconv.FormatFloat(v, 'e', -1, 64)); decimalNorm(got) != want &&
-			!shortestTie(decimalNorm(got), want, v) {
+			!shortestTie(decimalNorm(got), want, v, 64) {
 			t.Errorf("2^%d: to_string=%q normalises to %q, want %q",
 				i-1074, got, decimalNorm(got), want)
 		}
@@ -199,7 +262,7 @@ func TestFloatShortestPowersOfTwoF32(t *testing.T) {
 			continue
 		}
 		if want := decimalNorm(strconv.FormatFloat(float64(v), 'e', -1, 32)); decimalNorm(got) != want &&
-			!shortestTie(decimalNorm(got), want, float64(v)) {
+			!shortestTie(decimalNorm(got), want, float64(v), 32) {
 			t.Errorf("2^%d (f32): to_string=%q normalises to %q, want %q",
 				i-149, got, decimalNorm(got), want)
 		}
@@ -207,12 +270,14 @@ func TestFloatShortestPowersOfTwoF32(t *testing.T) {
 }
 
 // TestFloatShortestMatchesStrconvExactly is the stronger form of
-// TestFloatShortestRoundTrip. Dragonbox is correctly rounded and produces the
-// UNIQUE shortest representation, so the digits must equal Go's shortest
-// exactly — not merely be no longer than them, which is all the round-trip
-// tests could assert while the formatter was approximate. Covers the boundary
-// classes each Dragonbox branch handles: subnormals, the normal/subnormal
-// seam, powers of ten, the extremes, and a random spread.
+// TestFloatShortestRoundTrip. Dragonbox is correctly rounded, so the digits
+// must equal Go's shortest exactly — not merely be no longer than them, which
+// is all the round-trip tests could assert while the formatter was
+// approximate. The shortest form is unique except at an exact decimal tie,
+// where both sides are equally correct and shortestTie admits the one
+// round-half-to-even picks. Covers the boundary classes each Dragonbox branch
+// handles: subnormals, the normal/subnormal seam, powers of ten, the extremes,
+// and a random spread.
 func TestFloatShortestMatchesStrconvExactly(t *testing.T) {
 	vals := []float64{
 		0.1, 0.2, 0.3, 0.1 + 0.2, 1.0 / 3.0, 1.5, 2.25, 100, 123456.789,
@@ -256,7 +321,7 @@ func TestFloatShortestMatchesStrconvExactly(t *testing.T) {
 	bad := 0
 	for i, v := range vals {
 		want := decimalNorm(strconv.FormatFloat(v, 'e', -1, 64))
-		if got := decimalNorm(lines[i]); got != want && !shortestTie(got, want, v) {
+		if got := decimalNorm(lines[i]); got != want && !shortestTie(got, want, v, 64) {
 			bad++
 			if bad <= 10 {
 				t.Errorf("v=%v (%#x): to_string=%q normalises to %q, want %q",
