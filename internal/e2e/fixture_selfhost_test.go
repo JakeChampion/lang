@@ -85,8 +85,13 @@ import (
 //
 // # What they skip, and why each skip is principled
 //
-//   - compile-error fixtures (expected.error): front-end only, backend-agnostic,
-//     already covered once by TestFernFixtures.
+//   - compile-error fixtures (expected.error): front-end only and
+//     backend-agnostic, so running them once per backend leg buys nothing. Note
+//     what that does NOT mean: TestFernFixtures covers the NATIVE front end, and
+//     the self-host has its own checker, so for years this skip left the
+//     self-host's rejections untested rather than tested elsewhere — eleven of
+//     them are missing. TestSelfHostRejectsConformanceErrorCasesX86_64 is where
+//     they are gated now, once rather than per leg.
 //   - fixtures whose `backends` file omits this leg's target: if a program cannot
 //     run on the native backend for a target it will not run on the self-host one
 //     either, and a shared opt-out beats inventing a second exclusion mechanism.
