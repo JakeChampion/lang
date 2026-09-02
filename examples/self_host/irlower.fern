@@ -3185,6 +3185,15 @@ pub function opt_recv_base_type(e: ast.Expr, s: LowerState): string {
 // recover the payload.
 pub function elem_type_tag(e: ast.Expr, s: LowerState): string {
     if (expr_is_str(e, s)) { return "string"; }
+    // A Cell element carries its DECLARED spelling, `Cell[T]`, so a tuple built
+    // from a literal tags its slot the same way the `: (i32, Cell[i32])`
+    // annotation does. That agreement is what lets `t.N.get()` recognise the
+    // element as a cell; tagging it by the element's own width instead made the
+    // read key on `i32.get`, an unknown symbol, and bail the module. One
+    // pointer slot either way — a cell IS a one-element array box.
+    var celt: string = cell_new_elem_tag(e, s);
+    if (celt == "") { celt = cell_elem_type(e, s); }
+    if (celt != "") { return "Cell[" + celt + "]"; }
     // A map READ method's result (`m.len()` / `m.has(k)` / `m.get(k)` /
     // `m.get_or(k, d)`): named from the receiver's Map[K, V] rather than left to
     // the walks below, which key on the RESULT expression and so answer "i32" for
@@ -3298,6 +3307,13 @@ pub function elem_type_tag(e: ast.Expr, s: LowerState): string {
 pub function (s: LowerState) mark_map_type(i: i32, t: string): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_map_type(s.locals[i], t)) };
 }
+// is_cell_type_name reports whether a declared type SPELLING is a `Cell[T]`.
+// The tuple-element tags and the struct-field table both hold the spelling
+// verbatim, so this one test answers for either.
+pub function is_cell_type_name(t: string): boolean {
+    return t.len() > 5 && slice_unchecked(t, 0, 5) == "Cell[";
+}
+
 // cell_elem_of_type_name returns T for a `Cell[T]` type spelling, "" otherwise —
 // the shared reader behind both the local-annotation marking and the param
 // column, so a Cell PARAM tracks exactly like a Cell local.
@@ -3311,6 +3327,24 @@ pub function cell_elem_of_type_name(t: string): string {
 pub function (s: LowerState) mark_cell(i: i32, t: string): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_cell(s.locals[i], t)) };
 }
+
+// mark_cell_slot_from_type marks a slot bound to a `Cell[T]` value whose type is
+// known only as a SPELLING — an enum variant payload, an Option/Result payload.
+// mark_cell records is_cell (+is_arr) and the element kind; the element-typed
+// array columns beside it are what make the 1-element index read at the right
+// width. Without this the bound name stayed plain and `c.get()` dispatched as a
+// method on the ELEMENT type ("call to unknown symbol i32.get"), bailing the
+// module — the payload sibling of the unannotated `var c = cell_new(0)` binding.
+pub function (s: LowerState) mark_cell_slot_from_type(slot: i32, ty: string): LowerState {
+    var elem: string = cell_elem_of_type_name(ty);
+    if (elem == "") { return s; }
+    var out: LowerState = s.mark_cell(slot, elem);
+    if (elem == "string") { return out.mark_strarr(slot, true); }
+    if (elem == "i64" || elem == "u64") { return out.mark_i64arr(slot, true); }
+    if (elem == "f64") { return out.mark_f64arr(slot, true); }
+    return out;
+}
+
 pub function (s: LowerState) map_type_of(i: i32): string {
     if (i < 0 || i >= s.locals.len()) { return ""; }
     return s.locals[i].map_type;
@@ -6458,30 +6492,41 @@ pub function cell_elem_type(e: ast.Expr, s: LowerState): string {
             return "";
         },
         ast.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                return cell_elem_of_type_name(expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s));
+            }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return ""; }
-            var ft: string = decl_field_type(s.structs, oty, fa.field);
-            if (ft.len() > 5 && slice_unchecked(ft, 0, 5) == "Cell[") { return slice_unchecked(ft, 5, ft.len() - 1) + ""; }
-            return "";
+            return cell_elem_of_type_name(decl_field_type(s.structs, oty, fa.field));
         },
         _ => { return ""; }
     }
 }
 
-// field_arr_decl_type spells a struct field's declared type the way the ARRAY
-// classifiers need to read it. A Cell[T] is a 1-element array of T (#5510) and
-// `c.get()` desugars to `c[0]`, so by the time a classifier is asked about the
-// receiver the cell IS that array — but the field still reads `Cell[f64]`, not
-// `f64[]`, and every classifier below matches on the array spelling. Without
-// this a Cell[f64] FIELD indexes 4-byte where the same cell in a LOCAL indexes
-// 8 (mark_cell records the element kind on the slot), which is invalid wasm:
-// `expected f64, found i32`. The Cell sibling of the #6093 field cases.
+// arr_spelling_of_type_name renders a declared type SPELLING the way the ARRAY
+// classifiers need to read it: `Cell[T]` becomes `T[]`, everything else is
+// unchanged. A Cell[T] is a 1-element array of T (#5510) and `c.get()` desugars
+// to `c[0]`, so by the time a classifier is asked about the receiver the cell IS
+// that array — but the spelling still reads `Cell[f64]`, and every classifier
+// matches on the array form. Without it a `Cell[f64]` indexes 4-byte where the
+// same cell in a LOCAL indexes 8 (mark_cell records the element kind on the
+// slot): invalid wasm on a struct field, and on a tuple element a silent read of
+// the low half. The Cell sibling of the #6093 field cases.
+pub function arr_spelling_of_type_name(t: string): string {
+    var elem: string = cell_elem_of_type_name(t);
+    if (elem != "") { return elem + "[]"; }
+    return t;
+}
+
+// field_arr_decl_type and tuple_elem_arr_tag are that map applied to the two
+// places a classifier reads a declared type from: a struct field's table entry
+// and a tuple's recorded element tags.
 pub function field_arr_decl_type(structs: parser.StructDecl[], struct_name: string, field: string): string {
-    var ft: string = decl_field_type(structs, struct_name, field);
-    if (ft.len() > 5 && slice_unchecked(ft, 0, 5) == "Cell[") {
-        return slice_unchecked(ft, 5, ft.len() - 1) + "[]";
-    }
-    return ft;
+    return arr_spelling_of_type_name(decl_field_type(structs, struct_name, field));
+}
+
+pub function tuple_elem_arr_tag(obj: ast.Expr, n: i32, s: LowerState): string {
+    return arr_spelling_of_type_name(expr_tuple_elem_tag(obj, n, s));
 }
 
 // cell_new_elem_tag returns the element-type spelling for a `cell_new(x)`
@@ -6544,11 +6589,18 @@ pub function expr_is_cell(e: ast.Expr, s: LowerState): boolean {
         // A struct FIELD typed Cell[T] — `cx.lam_ctr` where lam_ctr: Cell[i32].
         // The self-host compiler holds its cells this way, so this arm is what
         // the whole-compiler wasm path needs (locals alone don't cover it).
+        // A numeric field is a TUPLE element instead (`t.1` where the tuple is
+        // `(i32, Cell[i32])`): its declared spelling survives verbatim in the
+        // element tags, so the same `Cell[` test answers for it. Without this
+        // `t.1.get()` never desugared to the index and bailed as a call to the
+        // unknown symbol `i32.get`.
         ast.ExprFieldAccess(fa) => {
+            if (util.is_all_digits(fa.field)) {
+                return is_cell_type_name(expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s));
+            }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
-            var ft: string = decl_field_type(s.structs, oty, fa.field);
-            return ft.len() > 5 && slice_unchecked(ft, 0, 5) == "Cell[";
+            return is_cell_type_name(decl_field_type(s.structs, oty, fa.field));
         },
         _ => { return false; }
     }
@@ -6624,7 +6676,7 @@ pub function expr_is_strarr(e: ast.Expr, s: LowerState): boolean {
             // A `string[]` TUPLE element `t.N` (`(["a","b"], x)`): the element's
             // recorded tuple tag is `string[]`, so `t.N[i]` reads as a string. #3353.
             if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "string[]";
+                return tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s) == "string[]";
             }
             // A string[]-typed struct field read `p.items` is a string[].
             var oty: string = expr_struct_type(fa.obj, s);
@@ -6745,7 +6797,7 @@ pub function expr_is_f64arr(e: ast.Expr, s: LowerState): boolean {
         // is `f64[]`, so `t.N` is an f64[] (drives a `var xs = t.N` rebind). #3353.
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
-                return is_float_array_type_name(expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s));
+                return is_float_array_type_name(tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s));
             }
             // A NAMED struct field declared f64[] — the f64 twin of the i64[]
             // case in expr_is_i64arr, and broken the same way for the same
@@ -8671,7 +8723,7 @@ pub function arr_index_is_f64(arr: ast.Expr, s: LowerState): boolean {
         // (f64) width — the tuple-element sibling of the struct-field case. #3353.
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
-                return is_float_array_type_name(expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s));
+                return is_float_array_type_name(tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s));
             }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
@@ -8742,7 +8794,7 @@ pub function arr_index_is_i64(arr: ast.Expr, s: LowerState): boolean {
         // `p.vals[i]` where p's field `vals` is an i64[] struct field.
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
+                return tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
             }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
@@ -8832,7 +8884,7 @@ pub function expr_is_i64arr(e: ast.Expr, s: LowerState): boolean {
         // above). #3353.
         ast.ExprFieldAccess(fa) => {
             if (util.is_all_digits(fa.field)) {
-                return expr_tuple_elem_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
+                return tuple_elem_arr_tag(fa.obj, util.digits_to_i32(fa.field), s) == "i64[]";
             }
             // A NAMED struct field declared i64[] / u64[]. Only the tuple case
             // above was handled, so `p.vals.append(v)` on an `i64[]` field
@@ -24026,6 +24078,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // `p.field` resolves. It is BORROWED from the enum box
                         // (not a fresh `var p = P{...}`), so it is never in
                         // reclaimable_names — correctly left to leak, no double-free.
+                        else if (is_cell_type_name(ptag)) { ms = ms.mark_cell_slot_from_type(pbslot, ptag); }
                         else if ((decl_is_struct(ms.structs, ptag) && decl_is_leaksafe(ms.structs, ptag)) || is_enum_like_name(ptag, ms.structs)) { ms = ms.mark_struct_type(pbslot, ptag); }
                         // A nested Option/Result payload: record the bound
                         // slot's Option/Result type so the inner match (or a
@@ -24265,6 +24318,8 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                             // accept is_fn_payload_spelling here too (the
                             // built-in Option/Result fn-payload arm's sibling).
                             ms = ms.mark_closure_local(bname);
+                        } else if (is_cell_type_name(ev_ty)) {
+                            ms = ms.mark_cell_slot_from_type(bslot, ev_ty);
                         } else if (decl_is_struct(ms.structs, ev_ty) || is_enum_like_name(ev_ty, ms.structs)) {
                             ms = ms.mark_struct_type(bslot, ev_ty);
                         } else if (is_map_type_name(ev_ty)) {
@@ -50852,6 +50907,13 @@ function tuple_elem_ctor_eligible(el: ast.Expr, s: LowerState): boolean {
     // closure-returning fn / a closure-local ident — elem_type_tag's "clo"):
     // a leak-only heap box in one pointer slot, like a struct element.
     var el_clo_ok: boolean = elem_type_tag(el, s) == "clo";
+    // A `cell_new(v)` element: a cell IS a one-element array box, so it rides
+    // one pointer slot exactly as the array cases above do. A cell LOCAL was
+    // already admitted through el_arr_ok / el_typedarr_ok (its slot is marked
+    // is_arr), so only the direct constructor call was left bailing the whole
+    // module — the difference being nothing but whether the cell was named
+    // first.
+    var el_cell_ok: boolean = cell_new_elem_tag(el, s) != "";
     // A CALL element with a statically-known SCALAR result:
     // (a) a free-fn call whose callee is in no NONSCALAR-return registry — its
     //     result is one scalar slot, i32-class (`(add(1,2), 4)`) or WIDE
@@ -50925,7 +50987,7 @@ function tuple_elem_ctor_eligible(el: ast.Expr, s: LowerState): boolean {
         },
         _ => {}
     }
-    if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok && !el_clo_ok && !el_call_ok) { return false; }
+    if (expr_is_nonscalar(el, s) && !expr_is_str(el, s) && expr_struct_type(el, s) == "" && !el_arr_ok && !el_typedarr_ok && !el_opt_ok && !el_tuple_ok && !el_result_ok && !el_map_ok && !el_enum_ok && !el_clo_ok && !el_call_ok && !el_cell_ok) { return false; }
     return true;
 }
 
