@@ -7,20 +7,13 @@ import (
 )
 
 // switchMnemonics lists every mnemonic the insn dispatch switch handles by
-// name (the cc-suffixed families and the sseOps/sse38Ops tables are appended
-// by knownMnemonics). TestSuggestListMatchesDispatch extracts the case
-// strings from the source and fails when the two drift.
+// name. The cc-suffixed families, the sseOps/sse38Ops tables and the
+// no-operand vocabulary (x86tbl.FixedOps, reached by lookup rather than by a
+// case) are appended by knownMnemonics.
+// TestSuggestListMatchesDispatch extracts the case strings from the source
+// and fails when the two drift.
 var switchMnemonics = []string{
 	"rep", "repe", "repz", "repne", "repnz", "lock",
-	"ret", "syscall", "ud2", "nop", "int3", "leave", "pause",
-	"mfence", "lfence", "sfence",
-	"cbw", "cwde", "cdqe", "cwd", "pushfq", "popfq", "cdq", "cqo",
-	"cld", "std",
-	"movsb", "movsw", "movsd", "movsq",
-	"stosb", "stosw", "stosd", "stosq",
-	"cmpsb", "cmpsw", "cmpsd", "cmpsq",
-	"scasb", "scasw", "scasd", "scasq",
-	"lodsb", "lodsw", "lodsd", "lodsq",
 	"push", "pop", "mov", "movabs",
 	"add", "or", "adc", "sbb", "and", "sub", "xor", "cmp",
 	"test", "imul", "bsf", "bsr", "lzcnt", "tzcnt", "popcnt",
@@ -53,6 +46,9 @@ var knownMnemonics = func() []string {
 		}
 	}
 	for _, m := range switchMnemonics {
+		add(m)
+	}
+	for m := range fixedOps {
 		add(m)
 	}
 	for m := range sseOps {

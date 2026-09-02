@@ -44,13 +44,26 @@ func TestSuggestListMatchesDispatch(t *testing.T) {
 	for _, m := range regexp.MustCompile(`mnem == "([a-z0-9]+)"`).FindAllStringSubmatch(body, -1) {
 		fromSwitch[m[1]] = true
 	}
+	// The two directions are checked against different sets. A mnemonic the
+	// dispatch handles may be covered either by the hand-written list or by
+	// the no-operand table it looks up, so the forward check uses the union
+	// — but a STALE hand-list entry is only detectable against the hand list
+	// itself, and the table legitimately carries spellings (cbtw, cdqe) that
+	// have no case of their own.
 	inList := map[string]bool{}
 	for _, m := range switchMnemonics {
 		inList[m] = true
 	}
+	covered := map[string]bool{}
+	for m := range inList {
+		covered[m] = true
+	}
+	for m := range fixedOps {
+		covered[m] = true
+	}
 	for m := range fromSwitch {
-		if !inList[m] {
-			t.Errorf("dispatch handles %q but switchMnemonics omits it — add it so suggestions know it", m)
+		if !covered[m] {
+			t.Errorf("dispatch handles %q but neither switchMnemonics nor x86tbl.FixedOps covers it — suggestions will not know it", m)
 		}
 	}
 	for m := range inList {

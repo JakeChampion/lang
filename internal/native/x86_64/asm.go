@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/jakechampion/lang/internal/native/cfi"
+	"github.com/jakechampion/lang/internal/native/x86tbl"
 )
 
 // Operand kinds.
@@ -674,10 +675,15 @@ func (a *Assembler) insn(line string) error {
 	// Prefix mnemonics wrap a whole instruction, so they must recurse
 	// before `rest` is parsed as an operand list.
 	switch mnem {
-	case "rep", "repe", "repz":
+	case "rep", "repe", "repz", "repne", "repnz":
+		next, _ := splitMnemonic(rest)
+		if !repeatable[next] {
+			return fmt.Errorf("%s needs a repeatable instruction to prefix (got %q)", mnem, next)
+		}
+		if mnem == "repne" || mnem == "repnz" {
+			return a.prefixed(0xF2, rest)
+		}
 		return a.prefixed(0xF3, rest)
-	case "repne", "repnz":
-		return a.prefixed(0xF2, rest)
 	case "lock":
 		next, _ := splitMnemonic(rest)
 		if !lockable[next] {
@@ -694,136 +700,22 @@ func (a *Assembler) insn(line string) error {
 		}
 		ops[i] = o
 	}
-	switch mnem {
-	case "ret":
-		a.emit(0xC3)
-		return nil
-	case "syscall":
-		a.emit(0x0F, 0x05)
-		return nil
-	case "ud2":
-		a.emit(0x0F, 0x0B)
-		return nil
-	case "nop":
-		a.emit(0x90)
-		return nil
-	case "int3":
-		a.emit(0xCC)
-		return nil
-	case "leave":
-		a.emit(0xC9)
-		return nil
-	case "pause":
-		a.emit(0xF3, 0x90)
-		return nil
-	case "mfence":
-		a.emit(0x0F, 0xAE, 0xF0)
-		return nil
-	case "lfence":
-		a.emit(0x0F, 0xAE, 0xE8)
-		return nil
-	case "sfence":
-		a.emit(0x0F, 0xAE, 0xF8)
-		return nil
-	case "cbw":
-		a.emit(0x66, 0x98)
-		return nil
-	case "cwde":
-		a.emit(0x98)
-		return nil
-	case "cdqe":
-		a.emit(0x48, 0x98)
-		return nil
-	case "cwd":
-		a.emit(0x66, 0x99)
-		return nil
-	// pushfq / popfq — save and restore RFLAGS. The x86-64 SSA backend's heap
-	// guard needs them: every way to compare its cursor against the limit writes
-	// flags, and it is called from bump sites that may keep flags live.
-	case "pushfq":
-		a.emit(0x9C)
-		return nil
-	case "popfq":
-		a.emit(0x9D)
-		return nil
-	case "cdq":
-		a.emit(0x99)
-		return nil
-	case "cqo":
-		a.emit(0x48, 0x99)
-		return nil
-	case "cld":
-		a.emit(0xFC)
-		return nil
-	case "std":
-		a.emit(0xFD)
-		return nil
-	case "movsb":
-		a.emit(0xA4)
-		return nil
-	case "movsw":
-		a.emit(0x66, 0xA5)
-		return nil
-	case "movsq":
-		a.emit(0x48, 0xA5)
-		return nil
-	case "stosb":
-		a.emit(0xAA)
-		return nil
-	case "stosw":
-		a.emit(0x66, 0xAB)
-		return nil
-	case "stosd":
-		a.emit(0xAB)
-		return nil
-	case "stosq":
-		a.emit(0x48, 0xAB)
-		return nil
-	case "cmpsb":
-		a.emit(0xA6)
-		return nil
-	case "cmpsw":
-		a.emit(0x66, 0xA7)
-		return nil
-	case "cmpsq":
-		a.emit(0x48, 0xA7)
-		return nil
-	case "scasb":
-		a.emit(0xAE)
-		return nil
-	case "scasw":
-		a.emit(0x66, 0xAF)
-		return nil
-	case "scasd":
-		a.emit(0xAF)
-		return nil
-	case "scasq":
-		a.emit(0x48, 0xAF)
-		return nil
-	case "lodsb":
-		a.emit(0xAC)
-		return nil
-	case "lodsw":
-		a.emit(0x66, 0xAD)
-		return nil
-	case "lodsd":
-		a.emit(0xAD)
-		return nil
-	case "lodsq":
-		a.emit(0x48, 0xAD)
-		return nil
-	case "movsd", "cmpsd":
-		// With NO operands these are the dword string ops movs/cmps (A5/A7);
-		// with operands the same mnemonics are the SSE scalar-double forms
-		// handled below.
-		if len(ops) == 0 {
-			if mnem == "movsd" {
-				a.emit(0xA5)
-			} else {
-				a.emit(0xA7)
-			}
+	// The no-operand vocabulary — the plain byte sequences and the string
+	// ops — comes from internal/native/x86tbl, which the self-host tables
+	// are generated from. gas accepts several of these under BOTH spellings
+	// (cltq and cdqe, pushf and pushfq); the table carries which, so the two
+	// assemblers cannot drift a spelling apart again.
+	//
+	// The guard is len(ops): `movsd` and `cmpsd` name the dword string ops
+	// with no operands and the SSE scalar-double moves with them, so an
+	// operand list sends them on to the SSE arms below.
+	if len(ops) == 0 {
+		if b, ok := fixedOps[mnem]; ok {
+			a.emit(b...)
 			return nil
 		}
+	}
+	switch mnem {
 	case "push":
 		return a.pushPop(ops, 0x50)
 	case "pop":
@@ -2275,6 +2167,14 @@ func needsRexByte(o operand) bool {
 
 // lockable is the set of instructions the F0 lock prefix applies to;
 // anything else is #UD at runtime, so it is rejected at assembly.
+// fixedOps and repeatable are the no-operand vocabulary and the set a rep
+// prefix may precede, both derived from the one table the self-host
+// assembler's is generated from.
+var (
+	fixedOps   = x86tbl.FixedOpMap()
+	repeatable = x86tbl.RepeatableMnemonics()
+)
+
 var lockable = map[string]bool{
 	"add": true, "adc": true, "and": true, "btc": true, "btr": true,
 	"bts": true, "cmpxchg": true, "dec": true, "inc": true, "neg": true,

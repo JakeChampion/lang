@@ -38,6 +38,61 @@ var blocks = []block{
 		end:      "// END GENERATED SSE TABLES",
 		generate: genSSETables,
 	},
+	{
+		begin:    "// BEGIN GENERATED FIXED-OP TABLE (cmd/x86tblgen) — do not edit by hand.",
+		end:      "// END GENERATED FIXED-OP TABLE",
+		generate: genFixedTable,
+	},
+}
+
+// genFixedTable renders the no-operand vocabulary: the byte lookup the bare
+// path consults, and the rep-eligibility predicate.
+//
+// Only the AT&T spellings are emitted — the self-host assembler reads AT&T,
+// so `stosd` (Intel only) must NOT appear here even though it names the same
+// bytes as `stosl`. That distinction is the whole reason the table carries a
+// mode per spelling rather than one list.
+func genFixedTable() string {
+	var b strings.Builder
+	b.WriteString(`// x86_gas_fixed_op maps a no-operand mnemonic to its bytes, little-endian
+// with the byte count in the top byte; -1 when not fixed. gas accepts both
+// dialects' spellings of the sign-extend group (cltq and cdqe are one
+// instruction), so both are here.
+function x86_gas_fixed_op(mnem: string): i32 {
+`)
+	for _, f := range x86tbl.FixedOps {
+		terms := make([]string, 0, 2)
+		for _, s := range f.ATTSpellings() {
+			terms = append(terms, fmt.Sprintf("mnem == %q", s))
+		}
+		args := make([]string, 0, 3)
+		for _, by := range f.Bytes {
+			args = append(args, fmt.Sprint(by))
+		}
+		fmt.Fprintf(&b, "    if (%s) { return x86_pack%d(%s); }\n",
+			strings.Join(terms, " || "), len(f.Bytes), strings.Join(args, ", "))
+	}
+	b.WriteString("    return 0 - 1;\n}\n")
+
+	b.WriteString(`
+// x86_gas_rep_ok reports whether a rep/repne prefix may precede the mnemonic.
+// That is the string ops plus ` + "`rep ret`" + ` and ` + "`rep nop`" + `, the two idioms gas also
+// takes; anything else it rejects outright, and the prefix would otherwise be
+// emitted in front of an instruction that ignores it.
+function x86_gas_rep_ok(mnem: string): boolean {
+`)
+	for _, f := range x86tbl.FixedOps {
+		if !f.Repeatable {
+			continue
+		}
+		terms := make([]string, 0, 2)
+		for _, s := range f.ATTSpellings() {
+			terms = append(terms, fmt.Sprintf("mnem == %q", s))
+		}
+		fmt.Fprintf(&b, "    if (%s) { return true; }\n", strings.Join(terms, " || "))
+	}
+	b.WriteString("    return false;\n}\n")
+	return b.String()
 }
 
 // genSSETables renders the two halves the self-host dispatch consults in

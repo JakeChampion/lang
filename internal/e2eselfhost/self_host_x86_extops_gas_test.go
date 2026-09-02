@@ -542,6 +542,34 @@ func TestSelfHostX86AtomicsStringMiscGas(t *testing.T) {
 		{"rep scasb", []byte{0xf3, 0xae}},
 		{"rep cmpsl", []byte{0xf3, 0xa7}},
 		{"rep movsl", []byte{0xf3, 0xa5}},
+		// The operand-size prefix goes BEFORE the repeat prefix. gas
+		// assembles `rep movsw` as 66 F3 A5; emitting F3 66 A5 decodes to
+		// the same instruction, so only a byte-level oracle sees it — and
+		// every rep case pinned here before #7903 phase 3 happened to be a
+		// width with no 66. A REX is NOT moved: `rep movsq` stays F3 48 A5.
+		{"rep movsw", []byte{0x66, 0xf3, 0xa5}},
+		{"rep stosw", []byte{0x66, 0xf3, 0xab}},
+		{"rep scasw", []byte{0x66, 0xf3, 0xaf}},
+		{"rep cmpsw", []byte{0x66, 0xf3, 0xa7}},
+		{"repne scasw", []byte{0x66, 0xf2, 0xaf}},
+		{"rep movsq", []byte{0xf3, 0x48, 0xa5}},
+		// The two non-string idioms gas takes after rep: `rep ret` is the
+		// AMD branch-prediction workaround and `rep nop` IS pause.
+		{"rep ret", []byte{0xf3, 0xc3}},
+		{"rep nop", []byte{0xf3, 0x90}},
+		// The Intel spellings gas accepts in AT&T syntax too — one
+		// instruction under two names, which is how eight of these went
+		// missing from one assembler without any byte test noticing.
+		{"cbw", []byte{0x66, 0x98}},
+		{"cwde", []byte{0x98}},
+		{"cdqe", []byte{0x48, 0x98}},
+		{"cwd", []byte{0x66, 0x99}},
+		{"cdq", []byte{0x99}},
+		{"cqo", []byte{0x48, 0x99}},
+		{"movsd", []byte{0xa5}},
+		{"cmpsd", []byte{0xa7}},
+		{"pushf", []byte{0x9c}},
+		{"popf", []byte{0x9d}},
 		{"movb $1, %cl", []byte{0xb1, 0x01}},
 		{"movb $255, %sil", []byte{0x40, 0xb6, 0xff}},
 		{"movb %al, %bl", []byte{0x88, 0xc3}},
@@ -551,6 +579,18 @@ func TestSelfHostX86AtomicsStringMiscGas(t *testing.T) {
 		"lock movq $1, (%rdi)",
 		"lock btq $1, (%rdi)",
 		"rep frob",
+		// gas: "invalid instruction `leave' after `rep'". The prefix is not
+		// a no-op in front of these — it is refused, so accepting it would
+		// emit a byte the CPU reads as part of an instruction it does not
+		// belong to.
+		"rep leave",
+		"rep cld",
+		"repne addq $1, %rax",
+		// The dword string ops are spelled with `l` in AT&T; the `d`
+		// spellings are Intel-only and gas rejects them here.
+		"stosd",
+		"lodsd",
+		"scasd",
 		"xchgq $1, %rax",
 		"pushw %ax",
 	})
