@@ -1175,6 +1175,22 @@ pub function (s: LowerState) is_own_param(name: string): boolean {
     return util.index_of_str(s.own_params, name) >= 0;
 }
 
+// A consumed-threaded array parameter is a borrowed array param the body
+// reassigns (`acc = f(acc)`, `acc = acc.append(v)`). Its slot holds the caller's
+// buffer until the first rebind replaces it, and a value this frame owns after;
+// which one is a runtime fact, kept in the hidden "$ownflag_<name>" local (0:
+// the caller's borrow, 1: ours). An entry retain would encode the same bit in
+// the refcount, but rc == 1 is the gate of __fern_arr_push's in-place path, so
+// it would turn every append the buffer sees into a whole-buffer copy.
+function ownflag_name(name: string): string { return "$ownflag_" + name; }
+
+// ownflag_slot_of returns the ownership-flag slot of parameter slot `slot`, or
+// -1 when it is not a consumed-threaded array parameter.
+pub function (s: LowerState) ownflag_slot_of(slot: i32): i32 {
+    if (slot < 0 || slot >= s.n_params) { return 0 - 1; }
+    return s.slot_of(ownflag_name(s.locals[slot].slot_name));
+}
+
 // add_local binds `name` to a fresh slot (its index = the old slot count),
 // not-an-array by default.
 pub function (s: LowerState) add_local(name: string): LowerState {
@@ -15931,6 +15947,7 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
     // the TryOp failure edge (ir.go ~11486). Deferred / errdefer
     // actions replayed above (try_cleanup) run BEFORE this sweep, mirroring
     // native's cleanup-then-sweep order at the TryOp edge.
+    ts = emit_consumed_param_exit(ts, inner, false);
     ts = emit_dec_sweep_except(ts, 0 - 1);
     ts = ts.emit(ir.op_return());
     ts = ts.emit(ir.op_end());
@@ -18237,6 +18254,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
             }
             if (ret_is_bare) {
                 var bs: LowerState = s.emit(ir.op_const_i32(0));
+                bs = emit_consumed_param_exit(bs, r.value, false);
                 bs = emit_dec_sweep_except(bs, 0 - 1);
                 return bs.emit(ir.op_return());
             }
@@ -18461,9 +18479,23 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                 if (rps >= 0 && rps < s.n_params && s.is_arr_slot(rps)) {
                     var rpl: LowerState = lower_expr(r.value, s);
                     if (!rpl.ok) { return rpl; }
+                    var rpfl: i32 = s.ownflag_slot_of(rps);
                     if (!s.is_own_param(rpid)) {
-                        rpl = rpl.retain_tos("ret-borrowed-param");
+                        if (rpfl >= 0) {
+                            // A consumed-threaded param (ownflag_name) is the
+                            // caller's only while its flag is 0; a buffer this
+                            // frame owns is handed over as it stands.
+                            rpl = rpl.emit(ir.op_load_local(rpfl));
+                            rpl = rpl.emit(ir.op_const_i32(0));
+                            rpl = rpl.emit(ir.op_bin("eq", 0, false));
+                            rpl = rpl.emit(ir.op_if(0));
+                            rpl = rpl.retain(rps, "ret-borrowed-param");
+                            rpl = rpl.emit(ir.op_end());
+                        } else {
+                            rpl = rpl.retain_tos("ret-borrowed-param");
+                        }
                     }
+                    rpl = emit_consumed_param_exit(rpl, r.value, true);
                     rpl = emit_dec_sweep_except(rpl, 0 - 1);
                     return rpl.emit(ir.op_return());
                 }
@@ -18490,6 +18522,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
             // local array `a` previously freed `a` here while the returned box still
             // referenced it. Everything else is released as usual.
             var moved_slots: i32[] = returned_moved_arr_slots(r.value, se, []);
+            se = emit_consumed_param_exit(se, r.value, true);
             se = emit_dec_sweep_except_list(se, moved_slots);
             return se.emit(ir.op_return());
         },
@@ -22093,7 +22126,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             if (s.is_aliased_name(a.target) || s.is_borrowed_name(a.target)) {
                                 var wcl: LowerState = lower_arr_with_value(wfa.obj, wc.args[0], wc.args[1], s);
                                 if (!wcl.ok) { return wcl; }
-                                return wcl.emit(ir.op_store_local(slot));
+                                return emit_arr_store(wcl, slot, false, false);
                             }
                             // A reclaimable string[] (#6407): the slot owns
                             // every element box, so overwriting one must
@@ -22149,7 +22182,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                 apf = lower_expr(wc.args[0], apf);
                                 if (!apf.ok) { return apf; }
                                 apf = apf.emit(ir.op_arr_push_f64());
-                                return apf.emit(ir.op_store_local(slot));
+                                return emit_arr_store(apf, slot, false, false);
                             }
                             // i64[] / u64[] (8-byte element): lower the value as
                             // an i64 and grow via the 8-byte arr_push_i64. u64
@@ -22160,7 +22193,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                 ap8 = lower_i64(wc.args[0], ap8);
                                 if (!ap8.ok) { return ap8; }
                                 ap8 = ap8.emit(ir.op_arr_push_i64());
-                                return ap8.emit(ir.op_store_local(slot));
+                                return emit_arr_store(ap8, slot, false, false);
                             }
                             var aps: LowerState = s.emit(ir.op_load_local(slot));
                             // A bare named-fn VALUE appended to a plain-fn-
@@ -22290,15 +22323,15 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             // pointer one byte low (" E06" / ")E06"). Only the
                             // FIRST append can see the caller's buffer, but that is
                             // not statically knowable, so the whole reassign takes
-                            // the plain push: arrays grow geometrically, so this
-                            // leaks O(log n) pre-grow buffers per call, the same
-                            // profile the aliased branch already accepts.
+                            // the plain push; the store below frees the superseded
+                            // buffer once the param's ownership flag says this
+                            // frame owns it (emit_consumed_param_store).
                             if (s.is_aliased_name(a.target) || slot < s.n_params) {
                                 aps = aps.emit(ir.op_arr_push());
                             } else {
                                 aps = aps.emit(ir.op_arr_push_owned());
                             }
-                            aps = aps.emit(ir.op_store_local(slot));
+                            aps = emit_arr_store(aps, slot, false, false);
                             // If the appended value is a closure BOX — a
                             // `__mkclo$…` env-box marker (capturing `$clo` or
                             // wrapped no-capture `$wrap`), a closure-returning
@@ -22423,7 +22456,7 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // leaks one count (sound), never over-frees. An "ENVCAP:" capture extract
     // is excluded for the same reason as the bind: the sweep skips it as a
     // borrow, so a retain would leak.
-    if (!reassign_inc && s.is_arr_slot(slot) && slot >= s.n_params
+    if (!reassign_inc && s.is_arr_slot(slot) && (slot >= s.n_params || s.ownflag_slot_of(slot) >= 0)
             && !reclaim_has(s.reclaimable_names, "ENVCAP:", s.reclaim_site_key(slot))) {
         match (a.value) {
             ast.ExprFieldAccess(_) => { reassign_inc = true; },
@@ -24495,7 +24528,67 @@ pub function (s: LowerState) release_tos(freefn: string, site: string): LowerSta
 // The new value is stashed in a scratch local because it is read up to three
 // times (retain arg, cow compare, final store). Composed of existing ops, so
 // every backend + eval_ops lower it for free.
+// emit_consumed_param_store stores the value on the operand stack into a
+// consumed-threaded array parameter's slot (ownflag_name), releasing what the
+// slot held when this frame owned it:
+//
+//     if (new != old) { if (flag) rc_dec(old); flag = 1; }
+//
+// A different pointer means the RHS handed the slot an owned reference — a
+// grown push buffer, a fresh call result, or a retained alias — and the old one
+// lost this binding: the caller's borrow while the flag is 0 (its owner still
+// releases it), a superseded buffer of ours once it is 1. The same pointer is
+// an in-place push or an identity return and changes nothing. The release is
+// the buffer-only __fern_rc_dec: a grown copy shares the old buffer's elements
+// without retains, so an element walk here would free what the new buffer
+// still holds.
+function emit_consumed_param_store(se: LowerState, slot: i32, alias_inc: boolean, flag: i32): LowerState {
+    var scratch: string = "$ocp" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(scratch);
+    var tmp: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_store_local(tmp));
+    if (alias_inc) { st = st.retain(tmp, "arr-store-alias"); }
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(tmp));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(flag));
+    st = st.emit(ir.op_if(0));
+    st = st.release(slot, "__fern_rc_dec", "consumed-param-old");
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_const_i32(1));
+    st = st.emit(ir.op_store_local(flag));
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(tmp));
+    return st.emit(ir.op_store_local(slot));
+}
+
+// emit_consumed_param_exit releases, at a return, every consumed-threaded array
+// parameter's buffer this frame owns (flag 1) and is not handing back: a param
+// named anywhere in the returned value is left alone, since the value may be
+// that buffer or alias it. Net-zero on the operand stack.
+function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean): LowerState {
+    var st: LowerState = s;
+    var ret_names: string[] = [];
+    var named: boolean = false;
+    var i: i32 = 0;
+    while (i < st.n_params) {
+        var fl: i32 = st.ownflag_slot_of(i);
+        if (fl >= 0 && has_ret && !named) { ret_names = astwalk.collect_idents_expr(ret, []); named = true; }
+        if (fl >= 0 && util.index_of_str(ret_names, st.locals[i].slot_name) < 0) {
+            st = st.emit(ir.op_load_local(fl));
+            st = st.emit(ir.op_if(0));
+            st = st.release(i, "__fern_rc_dec", "consumed-param-exit");
+            st = st.emit(ir.op_end());
+        }
+        i = i + 1;
+    }
+    return st;
+}
+
 pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_dec: boolean): LowerState {
+    var ofl: i32 = se.ownflag_slot_of(slot);
+    if (ofl >= 0) { return emit_consumed_param_store(se, slot, alias_inc, ofl); }
     if (!alias_inc && !do_dec) {
         // No RC bookkeeping: a bare store (the common non-array case).
         return se.emit(ir.op_store_local(slot));
@@ -52880,9 +52973,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // assignment. A name key handed the inner slot the outer one's credit and
     // released a box the block-level pass claims at its own consuming match.
     var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
+    var asg_targets: string[] = body_assign_targets(fn.body);
     var scrb_i: i32 = 0;
     while (scrb_i < scenrb.names.len()) {
-        if (util.index_of_str(body_assign_targets(fn.body), scenrb.names[scrb_i]) >= 0) {
+        if (util.index_of_str(asg_targets, scenrb.names[scrb_i]) >= 0) {
             reclaim = reclaim.append("SCENRB:" + scenrb.sites[scrb_i]);
         }
         scrb_i = scrb_i + 1;
@@ -53014,6 +53108,20 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
     var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    // Consumed-threaded array params (ownflag_name): allocate and zero each flag
+    // before any body op, in parameter order, so slot numbering is deterministic.
+    // A declared `own` param is excluded — the caller moved its reference in.
+    var ofl_own: string[] = own_param_names_of(fn);
+    var ofl_i: i32 = 0;
+    while (ofl_i < s.n_params) {
+        var ofl_nm: string = s.locals[ofl_i].slot_name;
+        if (s.is_arr_slot(ofl_i) && util.index_of_str(asg_targets, ofl_nm) >= 0 && util.index_of_str(ofl_own, ofl_nm) < 0) {
+            s = s.add_local(ownflag_name(ofl_nm));
+            s = s.emit(ir.op_const_i32(0));
+            s = s.emit(ir.op_store_local(s.slot_of(ownflag_name(ofl_nm))));
+        }
+        ofl_i = ofl_i + 1;
+    }
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
