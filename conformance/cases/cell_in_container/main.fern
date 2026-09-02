@@ -12,13 +12,13 @@ import "std/i32";
 // element walks the slot with __fern_drop_arr_str, a scalar one frees the box
 // with __fern_arr_dec.
 //
-// The row pins 2, and neither is a cell box: a `Cell[string]` held by a
-// CONTAINER strands one slot buffer per container beyond the first, where the
-// same cells as top-level locals are clean and plain accumulating strings are
-// clean. That is slot accounting rather than child-drop routing, so it has
-// its own fix site; docs/rc-log/2026-09-02-cell-container-child-drop.md
-// carries the scaling measurement. Every shape here was worse before this
-// fixture existed — the boxes leaked too.
+// The row pins 0. Getting there took a second fix at a third site: with three
+// containers in one function, Perceus reuse hands each dead box to the next,
+// and the reuse branch released the previous occupant's cell field through a
+// bare `__fern_rc_dec` — so N containers stranded N - 1 boxes. That is why
+// this fixture keeps all three blocks in one `main` rather than splitting
+// them: each block alone was already clean before that fix.
+// docs/rc-log/2026-09-02-cell-reuse-field-drop.md.
 
 enum Holder { Has(Cell[string]), Nothing }
 
