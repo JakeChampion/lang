@@ -1,0 +1,50 @@
+import "std/i32";
+
+// A `Cell[T]` reached as a TUPLE ELEMENT and as an ENUM PAYLOAD — the two
+// container shapes whose exit sweep inlines its own drop instead of calling
+// the generated `__drop_tuple_*` / `__drop_enum_*`, and hands each rc-tracked
+// child to `dropStructField`. A cell there used to take a bare
+// `__fern_rc_dec`, which decrements without freeing the one-element array box
+// a cell is, so every one stranded an allocation. Nothing about that shows in
+// the output — the census row is the assertion, and it pins this at 0.
+//
+// Both element kinds are here because they pick different helpers: a string
+// element walks the slot with __fern_drop_arr_str, a scalar one frees the box
+// with __fern_arr_dec.
+//
+// The row pins 2, and neither is a cell box: a `Cell[string]` held by a
+// CONTAINER strands one slot buffer per container beyond the first, where the
+// same cells as top-level locals are clean and plain accumulating strings are
+// clean. That is slot accounting rather than child-drop routing, so it has
+// its own fix site; docs/rc-log/2026-09-02-cell-container-child-drop.md
+// carries the scaling measurement. Every shape here was worse before this
+// fixture existed — the boxes leaked too.
+
+enum Holder { Has(Cell[string]), Nothing }
+
+function main(): i32 {
+    // Tuple element, scalar cell.
+    var ti: (i32, Cell[i32]) = (7, cell_new(0));
+    ti.1.set(ti.1.get() + ti.0);
+    print(ti.1.get().to_string());          // 7
+
+    // Enum payload, string cell, reached through a match binding.
+    var h: Holder = Has(cell_new("x"));
+    match (h) {
+        Has(c) => {
+            c.set(c.get() + "y");
+            print(c.get());                 // xy
+        },
+        Nothing => { print("none"); }
+    }
+
+    // One cell, two tuples: each holder decrements and the last one frees,
+    // which is what makes freeing here safe without borrow tracking — both
+    // array helpers walk only at the cell's own rc == 1.
+    var shared: Cell[string] = cell_new("s");
+    var t1: (i32, Cell[string]) = (1, shared);
+    var t2: (i32, Cell[string]) = (2, shared);
+    t1.1.set("s!");
+    print(t2.1.get());                      // s!
+    return 0;
+}
