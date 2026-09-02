@@ -3083,8 +3083,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// Per-function "every value return is a box this callee constructed" —
 	// what rhsTainted's Call case needs to stop inheriting an argument's
 	// borrow taint into a freshly built result (findReturnsFreshBox).
-	returnsFreshBox := findReturnsFreshBox(prog)
 	trmcFuncs, trmcConsumeSafe := findTrmcFuncs(prog, info, ptrW, pairForm)
+	returnsFreshBox := findReturnsFreshBox(prog, pairForm, trmcFuncs)
 	// Borrow inference (BorrowInferEnabled): per-function per-param escape facts.
 	// Both the definition side (paramOwnedByDefault) and the call site
 	// (calleeParamOwnedByDefault) consult this so they agree on which

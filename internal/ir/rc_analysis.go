@@ -427,7 +427,7 @@ func (b *builder) computeDynBorrowedViews() map[string]bool {
 // needs is only whether the returned POINTER is the callee's own.
 //
 // A function with no value returns gets false: it returns nothing to be fresh.
-func findReturnsFreshBox(prog *ast.Program) map[string]bool {
+func findReturnsFreshBox(prog *ast.Program, pairForm, trmcFuncs map[string]bool) map[string]bool {
 	// Greatest fixpoint: assume every function with a body qualifies, then
 	// eliminate the ones a return disproves. A call may be fresh because its
 	// callee is, so the answer for one function depends on the answers for
@@ -445,6 +445,11 @@ func findReturnsFreshBox(prog *ast.Program) map[string]bool {
 				continue
 			}
 			fresh := freshLocalsIn(fn, q)
+			retained := returnedAliasIsRetained(fn, pairForm, trmcFuncs)
+			isParam := map[string]bool{}
+			for _, p := range fn.Params {
+				isParam[p.Name] = true
+			}
 			ok, saw := true, false
 			ast.Walk(fn.Body, func(n ast.Node) bool {
 				r, isRet := n.(*ast.Return)
@@ -452,7 +457,7 @@ func findReturnsFreshBox(prog *ast.Program) map[string]bool {
 					return true
 				}
 				saw = true
-				if !returnsOwnBox(r.Value, fresh, q) {
+				if !returnsOwnBox(r.Value, fresh, q, retained, isParam) {
 					ok = false
 				}
 				return true
@@ -469,19 +474,54 @@ func findReturnsFreshBox(prog *ast.Program) map[string]bool {
 	return q
 }
 
+// returnedAliasIsRetained reports whether returning an alias — a bare ident, a
+// field read, an index — hands the caller a reference of its OWN rather than a
+// borrow of the callee's.
+//
+// It does, because the Return lowering already pays for it: needsRcIncOnAlias
+// is true for every rcTrackedSlotType and does not care whether the aliased
+// base is a local or a parameter, so `return acc` and `return s.types[i]` both
+// emit the transfer inc, and the one shape that skips it (move-on-return for a
+// bare owned local) excludes that local from the exit sweep instead, which is
+// the same transfer without the traffic.
+//
+// Two rewrites reach a return before that inc does, and are refused rather
+// than reasoned about: the pair-form ABI pushes (tag, payload) and returns
+// early, and TRMC rewrites returns into an accumulator store.
+//
+// Returning a bare PARAMETER is refused separately, in returnsOwnBox, because
+// the inc is only half the accounting. `m = __query_pair(m, …)` threads a map
+// through a parameter the callee never releases — the ownership-flag protocol
+// starts at 0, meaning the slot still holds the caller's borrow — so the
+// rebind declines the dec that would balance the return's inc, and the map
+// grows a reference per iteration. Crediting it leaked all of
+// url.query_parse. A PROJECTION of a parameter is a different object the
+// callee never owned, so no protocol can decline to release it, and it keeps
+// the credit.
+func returnedAliasIsRetained(fn *ast.FuncDecl, pairForm, trmcFuncs map[string]bool) bool {
+	if pairForm[fn.Name] || trmcFuncs[fn.Name] {
+		return false
+	}
+	return fn.ReturnType != nil && rcTrackedSlotType(fn.ReturnType)
+}
+
 // returnsOwnBox reports whether `e` evaluates to a box this function owns
-// rather than one it was handed.
-func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool) bool {
+// rather than one it was handed. `retained` is returnedAliasIsRetained for the
+// enclosing function: with it, a returned alias is owned because the lowering
+// inc'd it on the way out.
+func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool, retained bool, isParam map[string]bool) bool {
 	switch x := e.(type) {
 	case *ast.Ident:
-		// A local proven fresh below. A PARAMETER is never in that set, which
-		// is the whole safety property: `return p` hands back the caller's box.
-		return fresh[x.Name]
+		// isParam: see returnedAliasIsRetained on the threaded accumulator.
+		return fresh[x.Name] || (retained && !isParam[x.Name])
+	case *ast.FieldAccess, *ast.Index:
+		return retained
 	case *ast.Call:
 		id, isIdent := x.Callee.(*ast.Ident)
 		return isIdent && q[id.Name]
 	case *ast.IfExpr:
-		return returnsOwnBox(x.Then, fresh, q) && returnsOwnBox(x.Else, fresh, q)
+		return returnsOwnBox(x.Then, fresh, q, retained, isParam) &&
+			returnsOwnBox(x.Else, fresh, q, retained, isParam)
 	}
 	return allocatesFreshBox(e)
 }
@@ -519,7 +559,9 @@ func freshLocalsIn(fn *ast.FuncDecl, q map[string]bool) map[string]bool {
 		changed := false
 		for name := range fresh {
 			for _, rhs := range assigned[name] {
-				if !returnsOwnBox(rhs, fresh, q) {
+				// retained=false: the transfer inc is emitted at RETURN
+				// sites only, so an assignment's RHS earns no credit from it.
+				if !returnsOwnBox(rhs, fresh, q, false, isParam) {
 					delete(fresh, name)
 					changed = true
 					break
