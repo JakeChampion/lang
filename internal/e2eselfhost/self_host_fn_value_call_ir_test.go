@@ -48,8 +48,10 @@ import (
 // is rebuilt from the binding's own two sidecars and carried on the slot, and
 // travels with a whole-array alias rebind.
 //
-// `mk()()` still emits an arity-keyed funcref. That residual and its cause are
-// recorded in docs/TYPED-IR-REWRITE.md.
+// The fnretcall_* rows close the last of these shapes: `mk()()`, whose callee is
+// a CALL. Its result has no slot and no spelling at the call site, so the
+// signature comes from the callee's own declaration — the two FuncDecl sidecars,
+// registered per module by ret_fn_sigs_of.
 var fnValueCallCases = []struct {
 	name string
 	src  string
@@ -289,6 +291,46 @@ function scale(x: f64): f64 { return x * 10.0; }
 function main(): i32 {
     var r: Reg = Reg { hs: [scale] };
     return r.hs[0](4.5) as i32;
+}`},
+
+	// `mk()()` — the callee is itself a CALL returning a fn value. The result
+	// has no slot and no spelling at the call site; what names it is the
+	// CALLEE's own declaration, which parse_func_decl used to compute and throw
+	// away. Both legs were wrong before: the register backends read an f64 out
+	// of an integer register (255 and 0 against an oracle of 45), and wasm typed
+	// the funcref all-i32.
+	{"fnretcall_f64", `function mk(): () => f64 { return () => 4.5; }
+function main(): i32 {
+    return (mk()() * 10.0) as i32;
+}`},
+	{"fnretcall_arg_f64", `function mk(): (f64) => f64 { return (x: f64) => x * 10.0; }
+function main(): i32 {
+    return mk()(4.5) as i32;
+}`},
+	{"fnretcall_arg_mixed", `function mk(): (i64, f64) => f64 { return (a: i64, x: f64) => x * (a as f64); }
+function main(): i32 {
+    return mk()(10i64, 4.5) as i32;
+}`},
+	{"fnretcall_i64", `function mk(): () => i64 { return () => 7000000045i64; }
+function main(): i32 {
+    return (mk()() % 1000i64) as i32;
+}`},
+	// The all-i32 control: `$fn<N>` already names this signature, so the tag
+	// declines and this shape's emitted bytes are the ones it had before.
+	{"fnretcall_i32", `function mk(): () => i32 { return () => 45; }
+function main(): i32 {
+    return mk()();
+}`},
+	{"fnretcall_arg_i32", `function mk(): (i32) => i32 { return (x: i32) => x + 5; }
+function main(): i32 {
+    return mk()(40);
+}`},
+	// A CAPTURING returned lambda, which dispatches env-first: the same declared
+	// signature must drive that arm's argument widths and its funcref tag too,
+	// with the leading 'w' for the env box.
+	{"fnretcall_closure_f64", `function mk(k: f64): (f64) => f64 { return (x: f64) => x * k; }
+function main(): i32 {
+    return mk(10.0)(4.5) as i32;
 }`},
 
 	// A GENERIC struct's fn field. Annotation runs on the erased form, so a

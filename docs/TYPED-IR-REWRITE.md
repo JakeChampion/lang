@@ -500,8 +500,38 @@ field sibling of `var_declared_type`'s, and both stay `t_func_opaque` on
 purpose: the parameter spellings exist to name a funcref, and checking arguments
 against them would start rejecting calls that type-check today.
 
-**Still open:** `mk()()`, where `parse_func_decl` computes the returned fn
-type's `fn_ret` and discards it — `parser.FuncDecl` has no field for it.
+### `mk()()`: the callee is a CALL, and its declaration is what names it
+
+The last of these shapes. `mk()(4.5)` has a callee with no slot, no field and no
+spelling anywhere at the call site — what describes it is the *callee's own
+declaration*, and `parse_func_decl` computed the returned fn type's `fn_ret`
+from `parse_type_name` and threw it away.
+
+It was worse than an arity-keyed funcref. Both register backends were **silently
+wrong**: `mk()()` returning f64 exited 255 and `mk()(4.5)` exited 0, against an
+oracle of 45, because the result was read out of an integer register.
+
+Both routes were measured before building, the lesson from the `"fn[]"` revert
+applied rather than restated. `FuncDecl.ret_type == "fn"` has only **3** direct
+consumers, which makes un-coarsening look cheap — but `.ret_type` is read **372**
+times, and those readers are exactly the kind that depend on a tag's shape rather
+than its text. The additive route touches 112 construction literals of which 45
+already spread, so 67 needed editing. Sixty-seven mechanical edits beat 372
+behavioural unknowns.
+
+So `FuncDecl` gained `ret_fn_ret` and `ret_fn_param_types`, filled by the same
+lookahead trio, substituted by the monomorphiser and renamed by flatten.
+`func_ret_type` resolves a `"fn"` return to `t_func_opaque` — the function-level
+member of the family, and opaque for the family's reason. irlower registers
+`ret_fn_sigs_of` once per module, keyed by callee name, so both arms of the
+`mk()()` lowering — the plain fn-pointer one and the env-first closure one —
+read the same tag for their argument widths and their funcref type.
+
+**One arm is not the fix.** Tagging the emission on both arms but lowering
+arguments at declared widths on only one passed every row except the
+two-parameter closure case, which wasm rejected with `expected i64, found i32`.
+The rule this file states twice already is worth stating once more: *one declared
+signature drives both halves, at every site that dispatches.*
 
 The larger alternative remains what this file argues for: **stop coarsening.**
 #7961 made a fn-typed tuple ELEMENT keep its arrow spelling; doing the same for

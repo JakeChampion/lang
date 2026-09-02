@@ -3914,7 +3914,7 @@ pub function synth_script_main(mod: parser.Module): parser.Module {
         import_iface: "", import_wit: "", type_param_count: 0,
         bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false,
         is_pub: true,
-    is_const: false };
+    is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
     return parser.Module { ...mod, funcs: mod.funcs.append(entry), top_stmts: [] };
 }
 
