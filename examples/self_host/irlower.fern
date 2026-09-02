@@ -62029,6 +62029,13 @@ function rc_fe_variant_ctor_args(args: ast.Expr[], en: string, s: FeState, struc
     var st: FeState = s;
     var counted: boolean = enum_payloads_counted_at_ctor(structs, en);
     for arg in args {
+        // A SCALAR payload cannot alias heap, so escaping it marks a source
+        // nothing can reach through — and the any-tainted-arg call rule then
+        // refuses every later call that merely passes the same scalar on:
+        // `var e = A(i); var h = wrap(e, i)` lost h's whole struct credit to
+        // the taint `A(i)` put on `i`. rc_fe_rhs_tainted's ExprBinary arm
+        // draws this line already, for the same reason.
+        if (rc_scalar_type_name(rc_fe_expr_type(arg, st.types_n, st.types_t, structs))) { continue; }
         if (counted) { st = FeState { ...st, tainted: rc_fe_escape_owned(arg, st.tainted, st.types_n, st.types_t, structs, env_n, env_s) }; }
         else { st = FeState { ...st, tainted: rc_fe_escape(arg, st.tainted, st.types_n, st.types_t, structs, env_n, env_s) }; }
     }

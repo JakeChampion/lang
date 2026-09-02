@@ -1,9 +1,18 @@
-# 2026-09-02 — `match (h.e)` disqualified its struct from the field reclaim
+# 2026-09-02 — the two leaks stacked on `enum_scalar__callarg__stored_struct`
 
-`enum_scalar__callarg__stored_struct` is the only self-host row left in either
-leak matrix. Two independent leaks are stacked on it. One is fixed here; the
-other is still open, and the change that closes it on the matrix segfaults the
-compiler, so the row keeps its `clean leak` verdict.
+That row was the only self-host one left in either leak matrix, and two
+independent leaks were stacked on it. **Both are now closed**, and the row moves
+`leak` to `clean` on both arches: the self-host side of both matrices is clean
+end to end (x86-64 134/134; arm64 130 with four `leak clean` rows that are
+native-side #7446 gaps).
+
+Leak 1 was `match (h.e)` marking its own field unsafe. Leak 2 was a variant
+constructor escaping a SCALAR payload argument, whose taint the any-tainted-arg
+call rule then spread to the result of every later call passing that scalar on.
+The credit that appeared to close leak 2 first — `freshbox_ret_fns_of` — passed
+both matrix legs on both arches and SEGFAULTED the compiler; it is not what
+fixed it, and the record of that is kept below because the reasoning that led
+to it was wrong in an instructive way.
 
 ## The shape
 
@@ -175,14 +184,48 @@ drop, upstream of anything the caller's free-eligibility verdict could reach.
 `freshbox_ret_fns_of` closed it from the far end, which is consistent with its
 being both effective and unsound.
 
-## What is still not explained
+## Leak 2 closed: a variant ctor escaped a SCALAR payload argument
 
-Which gate drops `H` from the drop-emission set when an enum parameter is stored
-into it. The `ECNT:` tier looked like the answer and is not: its own admission
-(`struct_routes_field_reclaim_at`) is satisfied here, via the direct-enum-field
-arm of `struct_has_reclaim_array_field`, and the string-field variant that
-satisfies it by a different arm is clean. Leak 2 is now localised by
-measurement, but not yet attributed.
+Instrumented rather than read — six candidate gates had already died to reading
+on this row. Three narrowing dumps through `eprint` in a throwaway build of the
+driver (45 s each with the native compiler), then reverted:
+
+1. The bare-site struct credit `h@L:C` is present for every clean probe and
+   absent for the leaking one, so the refusal is inside `reclaimable_names_of`.
+2. `collect_fresh_ret_call_names` is NOT the refuser: both probes put `h` into
+   `fresh`. The credit is dropped by `reclaimable_fresh_struct`.
+3. Of that function's eight admission terms, exactly ONE differs —
+   `in_plan_fe`, i.e. `free_eligible_sites_of`. Everything else matches.
+
+Dumping the taint set itself then named the cause:
+
+| probe                       | tainted set                              |
+|-----------------------------|------------------------------------------|
+| the leaking cell            | `arm:x`, `arm:y`, **`i@6:5`**, `h@9:9`   |
+| the array-param twin        | *(empty)*                                |
+
+`var e: E = A(i)` escapes the ctor's argument — and `i` is an `i32`. A scalar
+cannot alias heap, so that taint marks a source nothing can reach through, but
+`rc_fe_rhs_tainted`'s any-tainted-arg rule then refuses the result of every
+later call that merely passes the same scalar on. `wrap(e, i)` inherited it,
+`h` lost its struct credit, and `__struct_drop_H` was never EMITTED — which is
+why the struct and its enum field both leaked, and why the read, the argument's
+ownership and the struct's field-reclaim routing all measured irrelevant.
+
+`rc_fe_variant_ctor_args` now skips a scalar argument. The same line is already
+drawn one arm over, for the same reason: `rc_fe_rhs_tainted`'s `ExprBinary` arm
+records that the old conservative default "refused `mkw(i % 8)` through its own
+scalar ARGUMENT (the any-tainted-arg call rule)".
+
+Why the neighbouring probes never showed it: `k_paramunused` also writes `A(i)`,
+but its callee IS in `noesc`, and the noesc check short-circuits before the
+any-arg loop; `e_mkinside` and `p_arrmixed` build the ctor inside the callee, so
+the caller's `i` is never a ctor argument at all.
+
+Eleven probes go clean on both legs, and `enum_scalar__callarg__stored_struct`
+moves `leak` to `clean` on both arches — the last self-host row in either
+matrix. x86-64 now reads 134/134 clean-clean; arm64 130 clean-clean with four
+`leak clean` rows that are native-side #7446 gaps, not self-host ones.
 
 The four arm64 rows reading `leak clean` are native-arm64 #7446 gaps where the
 self-host is AHEAD, and are untouched.
