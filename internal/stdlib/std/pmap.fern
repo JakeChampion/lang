@@ -687,18 +687,18 @@ pub function (m: PMap[K, V]) is_empty(): boolean {
 // `insert(k, v)` — the map with `k -> v`; an existing `k` takes the new
 // value. Never touches the receiver's nodes, so a snapshot taken
 // before the call is unchanged after it.
-pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) insert(k: K, v: V): PMap[K, V] {
+pub function (m: PMap[K, V]) insert[K: cmp.Hash + cmp.Eq, V](k: K, v: V): PMap[K, V] {
   return PMap { root: __hm_insert(m.root, __hm_mix(k.hash()), 0, k, v) };
 }
 
 // `remove(k)` — the map without `k`; the receiver unchanged when `k`
 // is absent.
-pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) remove(k: K): PMap[K, V] {
+pub function (m: PMap[K, V]) remove[K: cmp.Hash + cmp.Eq, V](k: K): PMap[K, V] {
   return PMap { root: __hm_remove(m.root, __hm_mix(k.hash()), 0, k) };
 }
 
 // `get(k)` — `Some(value)` when `k` is present.
-pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) get(k: K): Option[V] {
+pub function (m: PMap[K, V]) get[K: cmp.Hash + cmp.Eq, V](k: K): Option[V] {
   match (__hm_find(m.root, __hm_mix(k.hash()), k)) {
     Leaf(h, lk, lv) => {
       return Some(lv);
@@ -716,7 +716,7 @@ pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) get(k: K): Option[V] {
 }
 
 // `get_or(k, fallback)` — the value at `k`, or `fallback`.
-pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) get_or(k: K, fallback: V): V {
+pub function (m: PMap[K, V]) get_or[K: cmp.Hash + cmp.Eq, V](k: K, fallback: V): V {
   match (__hm_find(m.root, __hm_mix(k.hash()), k)) {
     Leaf(h, lk, lv) => {
       return lv;
@@ -734,7 +734,7 @@ pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) get_or(k: K, fallback: V)
 }
 
 // `contains(k)` — is `k` a key?
-pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) contains(k: K): boolean {
+pub function (m: PMap[K, V]) contains[K: cmp.Hash + cmp.Eq, V](k: K): boolean {
   match (__hm_find(m.root, __hm_mix(k.hash()), k)) {
     Leaf(h, lk, lv) => {
       return true;
@@ -753,7 +753,7 @@ pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) contains(k: K): boolean {
 
 // `update(k, f)` — the map with the value at `k` replaced by `f(old)`;
 // the receiver unchanged when `k` is absent.
-pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) update(k: K, f: (V) => V): PMap[K, V] {
+pub function (m: PMap[K, V]) update[K: cmp.Hash + cmp.Eq, V](k: K, f: (V) => V): PMap[K, V] {
   var h: i32 = __hm_mix(k.hash());
   match (__hm_find(m.root, h, k)) {
     Leaf(lh, lk, lv) => {
@@ -785,7 +785,7 @@ pub function (m: PMap[K, V]) values(): V[] {
 }
 
 // `fold(init, f)` — `f` over every entry in hash order.
-pub function [K, V, A] (m: PMap[K, V]) fold(init: A, f: (A, K, V) => A): A {
+pub function (m: PMap[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
   return __hm_fold(m.root, init, f);
 }
 
@@ -796,12 +796,12 @@ pub function (m: PMap[K, V]) for_each(f: (K, V) => void): void {
 
 // `map_values(f)` — the map with every value replaced by `f(value)`;
 // keys and shape are unchanged.
-pub function [K, V, W] (m: PMap[K, V]) map_values(f: (V) => W): PMap[K, W] {
+pub function (m: PMap[K, V]) map_values[K, V, W](f: (V) => W): PMap[K, W] {
   return PMap { root: __hm_map_values(m.root, f) };
 }
 
 // `filter(pred)` — the map of the entries `pred(k, v)` accepts.
-pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) filter(pred: (K, V) => boolean): PMap[K, V] {
+pub function (m: PMap[K, V]) filter[K: cmp.Hash + cmp.Eq, V](pred: (K, V) => boolean): PMap[K, V] {
   var out: PMap[K, V] = pmap_new();
   var ks: K[] = m.keys();
   var vs: V[] = m.values();
@@ -817,7 +817,7 @@ pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) filter(pred: (K, V) => bo
 
 // `union(other)` — every entry of both; a key in both keeps THIS map's
 // value. The smaller map is folded into the larger, O(m log32 n).
-pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) union(other: PMap[K, V]): PMap[K, V] {
+pub function (m: PMap[K, V]) union[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
   if (m.len() >= other.len()) {
     var out: PMap[K, V] = m;
     var ks: K[] = other.keys();
@@ -844,7 +844,7 @@ pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) union(other: PMap[K, V]):
 
 // `intersection(other)` — the entries whose key is in both, with THIS
 // map's values.
-pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) intersection(other: PMap[K, V]): PMap[K, V] {
+pub function (m: PMap[K, V]) intersection[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
   var out: PMap[K, V] = pmap_new();
   var ks: K[] = m.keys();
   var vs: V[] = m.values();
@@ -859,7 +859,7 @@ pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) intersection(other: PMap[
 }
 
 // `difference(other)` — this map's entries whose key is NOT in `other`.
-pub function [K: cmp.Hash + cmp.Eq, V] (m: PMap[K, V]) difference(other: PMap[K, V]): PMap[K, V] {
+pub function (m: PMap[K, V]) difference[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
   var out: PMap[K, V] = m;
   var ks: K[] = other.keys();
   var i: i32 = 0;

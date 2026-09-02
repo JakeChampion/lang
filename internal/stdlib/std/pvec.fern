@@ -493,7 +493,7 @@ pub function (v: PVec[T]) to_array(): T[] {
 }
 
 // `fold(init, f)` — `f` over every element in order.
-pub function [T, A] (v: PVec[T]) fold(init: A, f: (A, T) => A): A {
+pub function (v: PVec[T]) fold[T, A](init: A, f: (A, T) => A): A {
   var a: A = __pv_fold(v.root, init, f);
   var i: i32 = 0;
   while (i < v.tail.len()) {
@@ -514,7 +514,7 @@ pub function (v: PVec[T]) for_each(f: (T) => void): void {
 }
 
 // `map(f)` — the vector of `f(x)` for every element, in order.
-pub function [T, U] (v: PVec[T]) map(f: (T) => U): PVec[U] {
+pub function (v: PVec[T]) map[T, U](f: (T) => U): PVec[U] {
   var out: PVec[U] = pvec_new();
   var xs: T[] = v.to_array();
   var i: i32 = 0;

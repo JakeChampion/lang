@@ -810,18 +810,18 @@ pub function (m: OrdMap[K, V]) is_empty(): boolean {
 // `insert(k, v)` — the map with `k -> v`; an existing `k` takes the new
 // value. Never touches the receiver's nodes, so a snapshot taken
 // before the call is unchanged after it.
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) insert(k: K, v: V): OrdMap[K, V] {
+pub function (m: OrdMap[K, V]) insert[K: cmp.Ord, V](k: K, v: V): OrdMap[K, V] {
   return OrdMap { root: __om_insert(m.root, k, v) };
 }
 
 // `remove(k)` — the map without `k`; the receiver unchanged when `k`
 // is absent.
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) remove(k: K): OrdMap[K, V] {
+pub function (m: OrdMap[K, V]) remove[K: cmp.Ord, V](k: K): OrdMap[K, V] {
   return OrdMap { root: __om_delete(m.root, k) };
 }
 
 // `get(k)` — `Some(value)` when `k` is present.
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) get(k: K): Option[V] {
+pub function (m: OrdMap[K, V]) get[K: cmp.Ord, V](k: K): Option[V] {
   match (__om_find(m.root, k)) {
     Tip => {
       return None;
@@ -833,7 +833,7 @@ pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) get(k: K): Option[V] {
 }
 
 // `get_or(k, fallback)` — the value at `k`, or `fallback`.
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) get_or(k: K, fallback: V): V {
+pub function (m: OrdMap[K, V]) get_or[K: cmp.Ord, V](k: K, fallback: V): V {
   match (__om_find(m.root, k)) {
     Tip => {
       return fallback;
@@ -845,7 +845,7 @@ pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) get_or(k: K, fallback: V): V {
 }
 
 // `contains(k)` — is `k` a key?
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) contains(k: K): boolean {
+pub function (m: OrdMap[K, V]) contains[K: cmp.Ord, V](k: K): boolean {
   match (__om_find(m.root, k)) {
     Tip => {
       return false;
@@ -858,7 +858,7 @@ pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) contains(k: K): boolean {
 
 // `update(k, f)` — the map with the value at `k` replaced by `f(old)`;
 // the receiver unchanged when `k` is absent.
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) update(k: K, f: (V) => V): OrdMap[K, V] {
+pub function (m: OrdMap[K, V]) update[K: cmp.Ord, V](k: K, f: (V) => V): OrdMap[K, V] {
   match (__om_find(m.root, k)) {
     Tip => {
       return m;
@@ -927,7 +927,7 @@ pub function (m: OrdMap[K, V]) value_at(i: i32): Option[V] {
 }
 
 // `index_of(k)` — the rank of `k` in key order, or -1 when absent.
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) index_of(k: K): i32 {
+pub function (m: OrdMap[K, V]) index_of[K: cmp.Ord, V](k: K): i32 {
   return __om_index_of(m.root, k);
 }
 
@@ -945,7 +945,7 @@ pub function (m: OrdMap[K, V]) values(): V[] {
 }
 
 // `fold(init, f)` — `f(f(f(init, k0, v0), k1, v1), …)` in key order.
-pub function [K, V, A] (m: OrdMap[K, V]) fold(init: A, f: (A, K, V) => A): A {
+pub function (m: OrdMap[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
   return __om_fold(m.root, init, f);
 }
 
@@ -956,7 +956,7 @@ pub function (m: OrdMap[K, V]) for_each(f: (K, V) => void): void {
 
 // `map_values(f)` — the map with every value replaced by `f(value)`;
 // keys and shape are unchanged, so this is O(n) with no rebalancing.
-pub function [K, V, W] (m: OrdMap[K, V]) map_values(f: (V) => W): OrdMap[K, W] {
+pub function (m: OrdMap[K, V]) map_values[K, V, W](f: (V) => W): OrdMap[K, W] {
   return OrdMap { root: __om_map_values(m.root, f) };
 }
 
@@ -967,29 +967,29 @@ pub function (m: OrdMap[K, V]) filter(pred: (K, V) => boolean): OrdMap[K, V] {
 
 // `union(other)` — every entry of both; a key in both keeps THIS map's
 // value. O(m log(n/m + 1)).
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) union(other: OrdMap[K, V]): OrdMap[K, V] {
+pub function (m: OrdMap[K, V]) union[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
   return OrdMap { root: __om_union(m.root, other.root) };
 }
 
 // `intersection(other)` — the entries whose key is in both, with THIS
 // map's values.
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) intersection(other: OrdMap[K, V]): OrdMap[K, V] {
+pub function (m: OrdMap[K, V]) intersection[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
   return OrdMap { root: __om_intersection(m.root, other.root) };
 }
 
 // `difference(other)` — this map's entries whose key is NOT in `other`.
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) difference(other: OrdMap[K, V]): OrdMap[K, V] {
+pub function (m: OrdMap[K, V]) difference[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
   return OrdMap { root: __om_difference(m.root, other.root) };
 }
 
 // `split(k)` — the entries below `k` and the entries above it, as two
 // maps (an entry AT `k` is in neither). O(log n).
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) split_lt(k: K): OrdMap[K, V] {
+pub function (m: OrdMap[K, V]) split_lt[K: cmp.Ord, V](k: K): OrdMap[K, V] {
   var sp: OrdSplit[K, V] = __om_split(m.root, k);
   return OrdMap { root: sp.lt };
 }
 
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) split_gt(k: K): OrdMap[K, V] {
+pub function (m: OrdMap[K, V]) split_gt[K: cmp.Ord, V](k: K): OrdMap[K, V] {
   var sp: OrdSplit[K, V] = __om_split(m.root, k);
   return OrdMap { root: sp.gt };
 }
@@ -997,6 +997,6 @@ pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) split_gt(k: K): OrdMap[K, V] {
 // `is_valid()` — do the ordering, size, and balance invariants hold
 // over every node? Always true for a map built through this module;
 // exposed for tests and for anyone porting the balance rules.
-pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) is_valid(): boolean {
+pub function (m: OrdMap[K, V]) is_valid[K: cmp.Ord, V](): boolean {
   return __om_valid(m.root);
 }
