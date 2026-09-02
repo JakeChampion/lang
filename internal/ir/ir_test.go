@@ -130,13 +130,23 @@ func TestLowerForLoopWithStep(t *testing.T) {
 		}
 		return sum;
 	}`)
-	// for expands to: outer block (break) + loop + inner block
-	// (continue) wrapping the body, then step + back-edge.
+	// for expands to: outer block (break) + a guard on the condition + loop
+	// + inner block (continue) wrapping the body, then step and the bottom
+	// test, which is itself the back edge.
 	mustContainOp(t, p, "f", OpBlock)
 	mustContainOp(t, p, "f", OpLoop)
-	mustContainOp(t, p, "f", OpBrIf) // condition exit
-	mustContainOp(t, p, "f", OpBr)   // back-edge
+	mustContainOp(t, p, "f", OpBrIf)
 	mustContainOp(t, p, "f", OpEnd)
+	// Rotated, so there is no unconditional jump anywhere in the loop: the
+	// guard and the back edge are both br_if. A plain `br` reappearing here
+	// means the rotation stopped firing for `i < 10`.
+	if n := countOp(p, "f", OpBr); n != 0 {
+		t.Errorf("rotated loop should emit no unconditional br, got %d", n)
+	}
+	// Two br_if: the entry guard and the back edge.
+	if n := countOp(p, "f", OpBrIf); n != 2 {
+		t.Errorf("expected 2 br_if (guard + back edge), got %d", n)
+	}
 }
 
 func TestLowerDirectCall(t *testing.T) {
@@ -2854,4 +2864,20 @@ func TestLowerArrayOfTupleStringReclaim(t *testing.T) {
 	if !called {
 		t.Errorf("expected SOME function to call %s while reclaiming the array's tuple elements; got:\n%s", td.Name, p)
 	}
+}
+
+// countOp returns how many times op appears in the named function.
+func countOp(p *Program, fn string, kind OpKind) int {
+	n := 0
+	for _, f := range p.Funcs {
+		if f.Name != fn {
+			continue
+		}
+		for _, op := range f.Ops {
+			if op.Kind == kind {
+				n++
+			}
+		}
+	}
+	return n
 }

@@ -233,6 +233,7 @@ let_else_pattern_forms                               0
 literal_payload_pattern                              0
 log_leveled                                          0
 loop_form                                            0
+loop_rotation_shapes                                 0
 loop_var_reclaim                                     0
 map_cleared_alias                                    0
 map_heap_value_probe                                 0

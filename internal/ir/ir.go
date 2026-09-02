@@ -6562,6 +6562,49 @@ func (b *builder) allocSlot() int32 {
 // more OpIfs than the program wrote — drop glue, rc checks, bounds
 // checks — and counting those would report branches the author cannot
 // see, let alone cover.
+// rotateLoops reports whether `while` / `for` may be lowered test-at-bottom.
+//
+// Off under -cover: rotation duplicates the condition, and the branch-coverage
+// counters (#5548) are placed per conditional in the source, so a second copy
+// would either double-count the test or leave the loop's exit edge unmarked
+// depending on where the counter went. An instrumented build is not the one
+// whose branch count matters, so it keeps the straightforward shape.
+func (b *builder) rotateLoops() bool { return b.cover == nil }
+
+// cheapToDuplicate reports whether a loop condition is small enough to emit
+// twice. Rotation trades code size for one fewer branch per iteration, and the
+// trade is only worth taking while the duplicated text is a few instructions:
+// `i < n` costs two and saves one per iteration, where a condition calling a
+// function duplicates the whole call sequence for the same single branch.
+//
+// Deliberately narrow — idents, literals, and operators over them. A call, an
+// index, a field read or anything allocating is refused, which also keeps
+// rotation away from conditions whose lowering has effects worth emitting only
+// once.
+func cheapToDuplicate(e ast.Expr, depth int) bool {
+	if depth > 3 {
+		return false
+	}
+	switch x := e.(type) {
+	case *ast.Ident, *ast.NumberLit, *ast.BoolLit:
+		return true
+	case *ast.Unary:
+		// `-v` on a composite is rewritten to a `neg` method call.
+		if x.NegCall != nil {
+			return false
+		}
+		return cheapToDuplicate(x.Operand, depth+1)
+	case *ast.Binary:
+		// String `+` and string `==` / `!=` lower to runtime calls, whatever
+		// their operands look like.
+		if x.IsStringConcat || x.IsStringCmp {
+			return false
+		}
+		return cheapToDuplicate(x.Left, depth+1) && cheapToDuplicate(x.Right, depth+1)
+	}
+	return false
+}
+
 func (b *builder) coverBranch(pos ast.Position) int32 {
 	if b.cover == nil || pos.Line <= 0 {
 		return -1
@@ -8199,6 +8242,60 @@ func (b *builder) stmt(s ast.Stmt) error {
 		}
 		b.closeScope()
 	case *ast.While:
+		if b.rotateLoops() && cheapToDuplicate(n.Cond, 0) {
+			// Rotated: the test moves to the BOTTOM, where it doubles as the
+			// back edge, and a copy guards entry. One conditional branch per
+			// iteration instead of a conditional exit plus an unconditional
+			// jump back.
+			//
+			//   block               <- break target
+			//     cond; not; br_if  <- guard, runs once
+			//     loop
+			//       block           <- continue target
+			//         body
+			//         iter cleanup
+			//       end
+			//       cond; br_if     <- bottom test IS the back edge
+			//     end
+			//   end
+			//
+			// The condition is still evaluated N+1 times in the same order —
+			// once per body entry plus the failing test — so duplicating the
+			// text costs nothing at runtime and changes no semantics.
+			b.openBlock(BlockTypeVoid)
+			breakD := b.depth
+			if err := b.expr(n.Cond); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpNot})
+			b.brTo(breakD, true)
+			b.openLoop(BlockTypeVoid)
+			loopD := b.depth
+			b.openBlock(BlockTypeVoid)
+			contD := b.depth
+			b.breakStack = append(b.breakStack, breakD)
+			b.contStack = append(b.contStack, contD)
+			b.loopFrames = append(b.loopFrames, loopFrame{label: n.Label, breakD: breakD, contD: contD, deferIdxs: b.bodyDeferIdxs(n.Body)})
+			if err := b.stmt(n.Body); err != nil {
+				return err
+			}
+			// Inside the continue-block, so it runs on the fall-through edge
+			// only; a `continue` branches to the block's end and emits its own.
+			if err := b.emitIterDeferCleanup(b.loopFrames[len(b.loopFrames)-1].deferIdxs); err != nil {
+				return err
+			}
+			b.loopFrames = b.loopFrames[:len(b.loopFrames)-1]
+			b.breakStack = b.breakStack[:len(b.breakStack)-1]
+			b.contStack = b.contStack[:len(b.contStack)-1]
+			b.closeScope() // close continue-block
+			if err := b.expr(n.Cond); err != nil {
+				return err
+			}
+			b.brTo(loopD, true) // conditional back-edge
+			b.closeScope()      // close loop
+			b.closeScope()      // close break-block
+			break
+		}
 		// `block` carries break, `loop` carries continue. The body sits
 		// inside both: br 1 exits the outer block (break); br 0 jumps
 		// back to the loop top (continue / iteration).
@@ -8267,15 +8364,28 @@ func (b *builder) stmt(s ast.Stmt) error {
 				return err
 			}
 		}
+		rotate := b.rotateLoops() && cheapToDuplicate(n.Cond, 0)
 		b.openBlock(BlockTypeVoid)
 		breakD := b.depth
+		if rotate {
+			// Same rotation as `while`: guard once here, and the bottom test
+			// below doubles as the back edge. The step still runs between the
+			// continue target and that test, so `continue` reaches it.
+			if err := b.expr(n.Cond); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpNot})
+			b.brTo(breakD, true)
+		}
 		b.openLoop(BlockTypeVoid)
 		loopD := b.depth
-		if err := b.expr(n.Cond); err != nil {
-			return err
+		if !rotate {
+			if err := b.expr(n.Cond); err != nil {
+				return err
+			}
+			b.emit(Op{Kind: OpNot})
+			b.brTo(breakD, true)
 		}
-		b.emit(Op{Kind: OpNot})
-		b.brTo(breakD, true)
 		b.openBlock(BlockTypeVoid)
 		contD := b.depth
 		b.breakStack = append(b.breakStack, breakD)
@@ -8298,7 +8408,14 @@ func (b *builder) stmt(s ast.Stmt) error {
 				return err
 			}
 		}
-		b.brTo(loopD, false)
+		if rotate {
+			if err := b.expr(n.Cond); err != nil {
+				return err
+			}
+			b.brTo(loopD, true) // conditional back-edge
+		} else {
+			b.brTo(loopD, false)
+		}
 		b.closeScope() // close loop
 		b.closeScope() // close break-block
 	case *ast.Break:
