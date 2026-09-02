@@ -153,6 +153,66 @@ func typeIsStringArrayFreeIn(info *checker.Info, t ast.Type, seen map[string]boo
 	return false
 }
 
+// typeDeepDropWired reports whether a value of type `t` is fully reclaimed by
+// the generated deep-drop machinery (__drop_struct_ / __drop_enum_ /
+// __drop_tuple_ / the array / string helpers) on EVERY backend — the
+// precondition for a callee to own a value it did not build, which both an
+// owned-by-default parameter and a consumed-threaded one release at exit. It
+// allows scalars, strings, and arrays / structs / enums / tuples of wired
+// types; it rejects Map (its deep drop is incomplete), slices, closures, and
+// unknown / generic / runtime-handle types whose drop is not statically wired.
+func typeDeepDropWired(t ast.Type, info *checker.Info, seen map[string]bool) bool {
+	switch ty := t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType, ast.StringType:
+		return true
+	case ast.ArrayType:
+		return typeDeepDropWired(ty.Elem, info, seen)
+	case ast.TupleType:
+		for _, e := range ty.Elems {
+			if !typeDeepDropWired(e, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		if ty.Name == "Map" {
+			return false
+		}
+		if seen["s:"+ty.Name] {
+			return true
+		}
+		seen["s:"+ty.Name] = true
+		sd, ok := info.Structs[ty.Name]
+		if !ok {
+			return false // runtime handle (Reader / Writer / MapIter) / unknown
+		}
+		for _, f := range sd.Fields {
+			if !typeDeepDropWired(f.Type, info, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		if seen["e:"+ty.Name] {
+			return true
+		}
+		seen["e:"+ty.Name] = true
+		ed, ok := info.Enums[ty.Name]
+		if !ok {
+			return false
+		}
+		for _, v := range ed.Variants {
+			for _, pl := range v.Payloads {
+				if !typeDeepDropWired(pl, info, seen) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
+}
+
 func typeTransitivelyContainsMap(info *checker.Info, t ast.Type, seen map[string]bool) bool {
 	switch ty := t.(type) {
 	case ast.StructType:
@@ -210,63 +270,60 @@ func enumTransitivelyContainsMap(info *checker.Info, enumName string, seen map[s
 }
 
 // isOwnedByDefaultType reports whether a parameter of type `t` is owned by the
-// callee under Slice 2 (OwnedByDefault). Rolled out per category, enums first:
-// they're immutable (so the caller-side retain inc can't disturb the in-place
-// mutation the borrow model protects) and, post-1b, their boxes are rc-counted
-// and deep-droppable. The callee reclaims such a parameter at exit; the caller
-// retains it with an inc at the call site.
+// callee under Slice 2 (OwnedByDefault): the callee reclaims such a parameter
+// at exit; the caller retains it with an inc at the call site.
 func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
-	return ownedByDefaultTypeIn(b.info, b.ptrW, t)
+	return ownedByDefaultTypeIn(b.info, t)
 }
 
 // ownedByDefaultTypeIn is isOwnedByDefaultType for a pass that runs before
 // any builder exists (paramVerdictFacts).
-func ownedByDefaultTypeIn(info *checker.Info, ptrW int, t ast.Type) bool {
-	if !ast.OwnedByDefault {
-		return false
-	}
+func ownedByDefaultTypeIn(info *checker.Info, t ast.Type) bool {
+	return ast.OwnedByDefault && ownedByDefaultShapeIn(info, t)
+}
+
+// ownedByDefaultShape is the TYPE half of isOwnedByDefaultType, independent of
+// the flag: the set of types the owned model covers. computeConsumedParams
+// reads it with the flag off too — a type the owned model would cover stays
+// on the borrow baseline there, so the OwnedByDefault-vs-borrow differential
+// compares the two models on the same set of parameters.
+//
+// Every admitted shape is immutable after construction (the checker rejects
+// `p.x = v`; the idiom is a whole-value rebuild), so the caller-side retain
+// inc can never disturb an in-place mutation through the parameter — there is
+// none. What the callee's exit sweep then needs is a fully wired deep drop
+// (typeDeepDropWired): arrays and strings included, so an enum carrying its
+// children in an array (a HAMT / vector node) is owned like a box-only one,
+// and a consuming match can hand the child array to its binding at the box's
+// own count — the unique path then rewrites it in place. Map-bearing shapes,
+// slices, closures and unresolved generics stay on the borrow model.
+func (b *builder) ownedByDefaultShape(t ast.Type) bool {
+	return ownedByDefaultShapeIn(b.info, t)
+}
+
+func ownedByDefaultShapeIn(info *checker.Info, t ast.Type) bool {
 	switch ty := t.(type) {
 	case ast.EnumType:
-		// Enums (sub-slice 2a): only those whose deep drop is a pure, fully-wired
-		// box/enum walk — transitively scalar/enum/tuple payloads (no array /
-		// string / Map, keeping the array-payload deep-drop + self-overwrite-
-		// reuse interaction out of scope, e.g. `enum Bag { Keep(i32[]) }`) AND a
-		// UNIFORM box layout (emitDec only frees a uniform enum; a non-uniform
-		// one like `Shape { Circle(i32), Rect(i32,i32) }` flat-decs without
-		// freeing, so owned-by-default would mis-reclaim it). That is the FBIP
-		// list/tree case; other enums keep the borrow model for now.
-		if !enumRcPayloadsEligibleIn(info, ty.Name) || !typeIsStringArrayFreeIn(info, t, map[string]bool{}) {
-			return false
-		}
-		ed, ok := info.Enums[ty.Name]
-		if !ok {
-			return false
-		}
-		_, uniform := uniformEnumBoxSize(ed, ptrW)
-		return uniform
+		// Boxes are rc-counted (enumRcPayloadsEligible). The layout need not
+		// be uniform: the exit sweep's tag switch frees each variant at its
+		// own size, and a consuming match knows its arm's variant
+		// statically (enumVariantBoxSize); only the TRMC cell free still
+		// wants one size and checks for it itself (trmcShapeConsumeSafe).
+		return enumRcPayloadsEligibleIn(info, ty.Name) && typeDeepDropWired(t, info, map[string]bool{})
 	case ast.StructType:
-		// Structs (sub-slice 2c): Fern struct fields are immutable after
-		// construction (the checker rejects `p.x = v`; the idiom is a
-		// whole-struct rebuild `p = P{...old, x: v}`), so — exactly like enums —
-		// the caller-side retain inc that owned-by-default adds can never disturb
-		// an in-place mutation through the parameter; there is none. Admit a
-		// struct whose deep drop is the fully-wired pointer-box walk: transitively
-		// string/array/slice/Map-free (so __drop_struct_<N> never hits an unwired
-		// field) and backed by a real StructDecl. Runtime handles (Map / Reader /
-		// Writer / MapIter) have no decl and are rejected by typeIsStringArrayFree
-		// anyway; the box is uniform by construction (no variants), so no
-		// uniformity check is needed. Per-field rc counting (Phase 1e-struct-ii)
-		// balances the drop.
+		// A real StructDecl (runtime handles — Map / Reader / Writer / MapIter
+		// — have none and are rejected by typeDeepDropWired anyway); the box
+		// is uniform by construction. Per-field rc counting (Phase
+		// 1e-struct-ii) balances __drop_struct_<N>.
 		if _, ok := info.Structs[ty.Name]; !ok {
 			return false
 		}
-		return typeIsStringArrayFreeIn(info, t, map[string]bool{})
+		return typeDeepDropWired(t, info, map[string]bool{})
 	case ast.TupleType:
-		// Tuples (sub-slice 2c): immutable, uniform headered boxes whose elements
-		// are rc-counted (the projection-site dup balances the per-element drop
-		// in emitDec's tuple branch). Same string/array/slice/Map-free gate as
-		// structs keeps the deep drop on the fully-wired path.
-		return typeIsStringArrayFreeIn(info, t, map[string]bool{})
+		// Uniform headered boxes whose elements are rc-counted (the
+		// projection-site dup balances the per-element drop in emitDec's
+		// tuple branch).
+		return typeDeepDropWired(t, info, map[string]bool{})
 	}
 	return false
 }

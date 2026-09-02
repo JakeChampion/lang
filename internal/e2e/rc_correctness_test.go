@@ -3849,7 +3849,7 @@ function main(): i32 {
 	},
 	{
 		// A Map param threaded through `m = m.insert(..)` sits on the borrow
-		// baseline (consumedDropWired keeps Maps off the consumed promotion).
+		// baseline (typeDeepDropWired keeps Maps off the consumed promotion).
 		// On the cow-copy path its overwrite dec used to release the caller's
 		// handle, which the frame never owned: with `g` aliasing `base` after
 		// an in-place iteration, the next copy left `base` at rc 1 with two
@@ -6888,6 +6888,420 @@ function main(): i32 {
     return (t - 20) + __rc_underflow_count();
 }
 `,
+	},
+	{
+		// #8056: an array-carrying enum is owned by default, its consuming
+		// match hands the child array to the binding, and a self-reassign
+		// argument is MOVED into the owned position — so a uniquely held
+		// trie is rewritten in place on the unique path. The take-out
+		// (`kids.with(sub, E)` before the descent) is the library idiom that
+		// keeps the child unique too. Value-correct after 40 rounds; the
+		// leak gate pins it at zero.
+		name: "array_payload_enum_unique_path_in_place",
+		src: `
+enum N { E, L(i32[]), B(N[]) }
+function with_in(node: N, shift: i32, i: i32, x: i32): N {
+    match (node) {
+        B(kids) => {
+            var sub: i32 = i >> shift & 31;
+            var child: N = kids[sub];
+            var rest: N[] = kids.with(sub, E);
+            child = with_in(child, shift - 5, i, x);
+            return B(rest.with(sub, child));
+        },
+        L(xs) => { return L(xs.with(i & 31, x)); },
+        E => { return E; }
+    }
+}
+function get(node: N, shift: i32, i: i32): i32 {
+    match (node) {
+        B(kids) => { return get(kids[i >> shift & 31], shift - 5, i); },
+        L(xs) => { return xs[i & 31]; },
+        E => { return -1; }
+    }
+}
+function build(): N {
+    var kids: N[] = [];
+    var a: i32 = 0;
+    while (a < 4) {
+        var xs: i32[] = [];
+        var b: i32 = 0;
+        while (b < 32) { xs = xs.append(a * 32 + b); b = b + 1; }
+        kids = kids.append(L(xs));
+        a = a + 1;
+    }
+    return B(kids);
+}
+function main(): i32 {
+    var t: N = build();
+    var r: i32 = 0;
+    while (r < 40) {
+        var j: i32 = 0;
+        while (j < 128) { t = with_in(t, 5, j, j + r); j = j + 1; }
+        r = r + 1;
+    }
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < 128) { sum = sum + get(t, 5, i); i = i + 1; }
+    return (sum - 13120) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The shared path of the same trie: two snapshots are held across
+		// two rounds of updates and must read back unchanged, while the
+		// value that was unique after the first copy goes on in place.
+		name: "array_payload_enum_shared_path_copies",
+		src: `
+enum N { E, L(i32[]), B(N[]) }
+function with_in(node: N, shift: i32, i: i32, x: i32): N {
+    match (node) {
+        B(kids) => {
+            var sub: i32 = i >> shift & 31;
+            var child: N = kids[sub];
+            var rest: N[] = kids.with(sub, E);
+            child = with_in(child, shift - 5, i, x);
+            return B(rest.with(sub, child));
+        },
+        L(xs) => { return L(xs.with(i & 31, x)); },
+        E => { return E; }
+    }
+}
+function get(node: N, shift: i32, i: i32): i32 {
+    match (node) {
+        B(kids) => { return get(kids[i >> shift & 31], shift - 5, i); },
+        L(xs) => { return xs[i & 31]; },
+        E => { return -1; }
+    }
+}
+function build(): N {
+    var kids: N[] = [];
+    var a: i32 = 0;
+    while (a < 4) {
+        var xs: i32[] = [];
+        var b: i32 = 0;
+        while (b < 32) { xs = xs.append(a * 32 + b); b = b + 1; }
+        kids = kids.append(L(xs));
+        a = a + 1;
+    }
+    return B(kids);
+}
+function main(): i32 {
+    var t: N = build();
+    var snap: N = t;
+    var j: i32 = 0;
+    while (j < 128) { t = with_in(t, 5, j, j + 7); j = j + 1; }
+    var snap2: N = t;
+    j = 0;
+    while (j < 128) { t = with_in(t, 5, j, j + 9); j = j + 1; }
+    var sum: i32 = 0;
+    var s1: i32 = 0;
+    var s2: i32 = 0;
+    var i: i32 = 0;
+    while (i < 128) {
+        sum = sum + get(t, 5, i);
+        s1 = s1 + get(snap, 5, i);
+        s2 = s2 + get(snap2, 5, i);
+        i = i + 1;
+    }
+    if (s1 != 8128) { return 1; }
+    if (s2 != 9024) { return 2; }
+    return (sum - 9280) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The HAMT shape: a NON-uniform enum (Leaf is a 16-byte box, Br 24)
+		// is owned by default too — each consuming arm frees the box at its
+		// own variant's size — and the wrapper takes the root out of the
+		// handle before descending.
+		name: "non_uniform_enum_owned_consuming_match",
+		src: `
+struct CK { bucket: i32, id: i32 }
+enum H { E, L(i32, CK, i32), Br(i32, H[]) }
+struct PM { root: H }
+function ck_eq(a: CK, b: CK): boolean { return a.bucket == b.bucket && a.id == b.id; }
+function ins(n: H, h: i32, shift: i32, k: CK, v: i32): H {
+    match (n) {
+        E => { return L(h, k, v); },
+        L(lh, lk, lv) => {
+            if (lh == h && ck_eq(lk, k)) { return L(h, k, v); }
+            var kids: H[] = [L(lh, lk, lv), L(h, k, v)];
+            return Br(0, kids);
+        },
+        Br(bm, kids) => {
+            var idx: i32 = h >> shift & 3;
+            if (idx >= kids.len()) { return Br(bm, kids.append(L(h, k, v))); }
+            var child: H = kids[idx];
+            var rest: H[] = kids.with(idx, E);
+            child = ins(child, h, shift + 2, k, v);
+            return Br(bm, rest.with(idx, child));
+        }
+    }
+}
+function find(n: H, h: i32, shift: i32, k: CK): i32 {
+    match (n) {
+        E => { return -1; },
+        L(lh, lk, lv) => { if (ck_eq(lk, k)) { return lv; } return -1; },
+        Br(bm, kids) => {
+            var idx: i32 = h >> shift & 3;
+            if (idx >= kids.len()) { return -1; }
+            return find(kids[idx], h, shift + 2, k);
+        }
+    }
+}
+function (m: PM) insert(k: CK, v: i32): PM {
+    var root: H = m.root;
+    m = PM { ...m, root: E };
+    root = ins(root, k.bucket, 0, k, v);
+    return PM { ...m, root: root };
+}
+function main(): i32 {
+    var c: PM = PM { root: E };
+    var i: i32 = 0;
+    while (i < 64) { c = c.insert(CK { bucket: i, id: i }, i); i = i + 1; }
+    var r: i32 = 0;
+    while (r < 5) {
+        var j: i32 = 0;
+        while (j < 64) { c = c.insert(CK { bucket: j, id: j }, j + r); j = j + 1; }
+        r = r + 1;
+    }
+    var sum: i32 = 0;
+    i = 0;
+    while (i < 64) { sum = sum + find(c.root, i, 0, CK { bucket: i, id: i }); i = i + 1; }
+    return (sum - 2272) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A string-carrying enum is owned by default: the rebuilt value and
+		// a snapshot both read back right.
+		name: "string_payload_enum_owned",
+		src: `
+enum S { A(string, i32), Z }
+function bump(s: S, tag: string): S {
+    match (s) {
+        A(txt, n) => { return A(txt + tag, n + 1); },
+        Z => { return Z; }
+    }
+}
+function len_of(s: S): i32 {
+    match (s) {
+        A(txt, n) => { return txt.len() + n; },
+        Z => { return 0; }
+    }
+}
+function main(): i32 {
+    var s: S = A("x", 0);
+    var i: i32 = 0;
+    while (i < 200) { s = bump(s, "y"); i = i + 1; }
+    var snap: S = s;
+    s = bump(s, "zz");
+    if (len_of(snap) != 401) { return 1; }
+    return (len_of(s) - 404) + __rc_underflow_count();
+}`,
+	},
+	{
+		// `.append` on an array bound out of a NON-consuming match of a
+		// borrowed enum grew the caller's buffer in place when it had room
+		// (`.with` had the guard, `.append` did not): 33 is right, 34 was
+		// the bug. Interpreter and natives now agree.
+		name: "append_on_borrowed_match_binding_copies",
+		src: `
+enum N { L(i32), B(i32, N[]) }
+function grow(n: N, v: i32): N {
+    match (n) {
+        L(x) => { return n; },
+        B(c, kids) => { return B(c + 1, kids.append(L(v))); }
+    }
+}
+function count(n: N): i32 {
+    match (n) {
+        L(x) => { return 1; },
+        B(c, kids) => { return kids.len(); }
+    }
+}
+function main(): i32 {
+    var ks: N[] = [];
+    ks = ks.append(L(1));
+    ks = ks.append(L(2));
+    ks = ks.append(L(3));
+    var a: N = B(0, ks);
+    var before: i32 = count(a);
+    var c: N = grow(a, 4);
+    var after: i32 = count(a);
+    return (before * 10 + after - 33) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A struct passed as a FIELD argument (`push(h.b)`) was never
+		// bracketed by the #4873 containment, so the callee's rc==1 append
+		// grew `h.b.xs` in place. The bracket now follows the field chain.
+		name: "struct_field_arg_append_bracketed",
+		src: `
+struct Box { xs: i32[] }
+struct Holder { b: Box }
+function push(b: Box, x: i32): Box {
+    var ys: i32[] = b.xs.append(x);
+    return Box { xs: ys };
+}
+function size(b: Box): i32 { return b.xs.len(); }
+function main(): i32 {
+    var xs: i32[] = [];
+    xs = xs.append(1);
+    xs = xs.append(2);
+    xs = xs.append(3);
+    var h: Holder = Holder { b: Box { xs: xs } };
+    var before: i32 = size(h.b);
+    var c: Box = push(h.b, 4);
+    var after: i32 = size(h.b);
+    return (before * 10 + after - 33) + __rc_underflow_count();
+}`,
+	},
+	{
+		// An owned array local whose textually-last use is a consuming
+		// `.with`, on a function that can return before reaching it: the
+		// consuming site nulls the slot, so the early path still releases
+		// the buffer (it used to be skipped on every path — 150 blocks
+		// stranded here). Leak-only; the leak gate holds it at zero.
+		name: "with_receiver_released_on_early_return",
+		src: `
+enum N { L(i32), B(i32, N[]) }
+function mk(c: i32, flag: boolean): N {
+    var ks: N[] = [];
+    ks = ks.append(L(1));
+    ks = ks.append(L(2));
+    if (flag) { return L(c); }
+    return B(c, ks.with(0, L(c)));
+}
+function count(n: N): i32 {
+    match (n) {
+        L(x) => { return 1; },
+        B(c, kids) => { return kids.len(); }
+    }
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var i: i32 = 0;
+    while (i < 100) {
+        var n: N = mk(i, i % 2 == 0);
+        total = total + count(n);
+        i = i + 1;
+    }
+    return (total - 150) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The tree-walk read path (`var cur = root; cur = kids[..]`) taints
+		// `root` through the alias, which used to keep an owned parameter's
+		// count forever: one whole trie stranded per lookup. An owned
+		// parameter now spends its count unless it ESCAPED into an uncounted
+		// sink. Leak-only; the leak gate holds it at zero.
+		name: "owned_param_alias_walk_releases_count",
+		src: `
+enum N { E, L(i32[]), B(N[]) }
+struct PV { len: i32, root: N, tail: i32[] }
+function leaf_for(root: N, shift: i32, i: i32): i32[] {
+    var cur: N = root;
+    var level: i32 = shift;
+    var descending: boolean = true;
+    while (descending) {
+        match (cur) {
+            B(kids) => { cur = kids[i >> level & 31]; level = level - 5; },
+            L(xs) => { return xs; },
+            E => { descending = false; }
+        }
+    }
+    var none: i32[] = [];
+    return none;
+}
+function (v: PV) get_or(i: i32, fallback: i32): i32 {
+    if (i < 0 || i >= v.len) { return fallback; }
+    var leaf: i32[] = leaf_for(v.root, 5, i);
+    return leaf[i & 31];
+}
+function build(): PV {
+    var kids: N[] = [];
+    var a: i32 = 0;
+    while (a < 4) {
+        var xs: i32[] = [];
+        var b: i32 = 0;
+        while (b < 32) { xs = xs.append(a * 32 + b); b = b + 1; }
+        kids = kids.append(L(xs));
+        a = a + 1;
+    }
+    var t: i32[] = [];
+    t = t.append(7);
+    return PV { len: 128, root: B(kids), tail: t };
+}
+function main(): i32 {
+    var v: PV = build();
+    var sum: i32 = 0;
+    var i: i32 = 0;
+    while (i < 128) { sum = sum + v.get_or(i, -1); i = i + 1; }
+    return (sum - 8128) + __rc_underflow_count();
+}`,
+	},
+	{
+		// `root = ins(root, .., k, v)` carries k into root, which is
+		// returned: the escape analysis followed only `var` initialisers,
+		// so k read as borrowable and the caller's fresh key temp was never
+		// released (one key box per insert). Leak-only.
+		name: "param_escapes_through_assignment",
+		src: `
+struct CK { bucket: i32, id: i32 }
+enum H { E, L(i32, CK, i32) }
+struct PM { root: H }
+function ins(n: H, k: CK, v: i32): H {
+    match (n) {
+        E => { return L(0, k, v); },
+        L(lh, lk, lv) => { return L(lh, k, v); }
+    }
+}
+function (m: PM) insert(k: CK, v: i32): PM {
+    var root: H = m.root;
+    m = PM { ...m, root: E };
+    root = ins(root, k, v);
+    return PM { ...m, root: root };
+}
+function main(): i32 {
+    var c: PM = PM { root: E };
+    var i: i32 = 0;
+    while (i < 50) { c = c.insert(CK { bucket: i, id: i }, i); i = i + 1; }
+    match (c.root) {
+        E => { return 1; },
+        L(lh, lk, lv) => { return (lk.id - 49) + __rc_underflow_count(); }
+    }
+}`,
+	},
+	{
+		// A closure forwards its captured struct to a callee that keeps the
+		// param (owned), and runs more than once: the env's reference is
+		// retained at each call, or the second run reads a freed ctx.
+		name: "closure_capture_passed_to_owned_param",
+		src: `
+struct Ctx { decls: string[] }
+struct Txn { headers: string[] }
+struct Out { ctx: Ctx, txn: Txn, n: i32 }
+function run_sub(ctx: Ctx, t: Txn, name: string): Out {
+    var hs: string[] = t.headers.append(name);
+    return Out { ctx: ctx, txn: Txn { headers: hs }, n: hs.len() };
+}
+function driver(decls: string[]): (string, Txn) => Out {
+    var ctx: Ctx = Ctx { decls: decls };
+    var runner: (string, Txn) => Out = function(name: string, t: Txn): Out { return run_sub(ctx, t, name); };
+    return runner;
+}
+function main(): i32 {
+    var run: (string, Txn) => Out = driver(["a", "b"]);
+    var t: Txn = Txn { headers: ["h"] };
+    var i: i32 = 0;
+    var total: i32 = 0;
+    while (i < 4) {
+        var out: Out = run("s", t);
+        t = out.txn;
+        total = total + out.n + out.ctx.decls.len();
+        i = i + 1;
+    }
+    return (total - 22) + __rc_underflow_count();
+}`,
 	},
 }
 

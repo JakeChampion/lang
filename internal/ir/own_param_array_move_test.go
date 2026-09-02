@@ -34,16 +34,28 @@ func fnNamed(t *testing.T, ip *ir.Program, name string) *ir.Func {
 // An `own` array param is a MOVE. Passing it to __fern_arr_cow_inplace with no
 // pre-call inc hands the reference over — the helper returns the SAME pointer on
 // its rc==1 branch and dec's the receiver itself on the copy branch — so the
-// callee's exit sweep must NOT dec it again. It used to, freeing a buffer the
-// returned value still pointed at (#6013).
-func TestOwnParamWithReceiverNotSweptAtExit(t *testing.T) {
+// callee must not release it again. It used to, freeing a buffer the returned
+// value still pointed at (#6013). The consuming site nulls the param's slot
+// (`local.load S; const 0; local.store S` right before the cow call), so the
+// exit sweep's arr_dec meets a null.
+func TestOwnParamWithReceiverNulledAtConsume(t *testing.T) {
 	ip := lowerForTest(t, `function wr(own buf: i32[], at: i32, w: i32): i32[] { return buf.with(at, w); }
 function main(): i32 { var b: i32[] = [1, 2, 3]; b = wr(b, 0, 9); return b.len(); }`)
-	got := rcOpTrace(fnNamed(t, ip, "wr"))
-	if want := "arr_cow_inplace"; got != want {
-		t.Errorf("wr rc trace = %q, want %q\n"+
-			"a trailing arr_dec is the #6013 over-release: cow_inplace already took the\n"+
-			"reference, so dec'ing the param frees the buffer being returned", got, want)
+	wr := fnNamed(t, ip, "wr")
+	if got, want := rcOpTrace(wr), "arr_cow_inplace arr_dec"; got != want {
+		t.Errorf("wr rc trace = %q, want %q", got, want)
+	}
+	nulled := false
+	for i, op := range wr.Ops {
+		if op.Kind == ir.OpCallDirect && op.Str == "__fern_arr_cow_inplace" && i >= 4 &&
+			wr.Ops[i-4].Kind == ir.OpLoadLocal && wr.Ops[i-3].Kind == ir.OpConstI32 && wr.Ops[i-3].I32 == 0 &&
+			wr.Ops[i-2].Kind == ir.OpStoreLocal && wr.Ops[i-2].I32 == wr.Ops[i-4].I32 {
+			nulled = true
+		}
+	}
+	if !nulled {
+		t.Errorf("wr does not null the own receiver's slot at the consuming `.with` — "+
+			"the trailing arr_dec would then be the #6013 over-release; ops:\n%s", ip)
 	}
 }
 

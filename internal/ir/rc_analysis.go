@@ -56,7 +56,7 @@ type rcPlan struct {
 	// owns nothing on entry and a fresh copy after the first cow copy, so the
 	// overwrite dec and the exit release are gated on a runtime ownership bit
 	// (ownFlagName), as a consumed-threaded array param's are. Maps stay off
-	// consumedParams (consumedDropWired), and without the bit the overwrite
+	// consumedParams (typeDeepDropWired), and without the bit the overwrite
 	// dec on the copy path released the caller's handle.
 	cowMapParams map[string]bool
 	// freeEligible[name] is true for array-typed locals the
@@ -122,8 +122,8 @@ type rcPlan struct {
 	// rc==1 in-place reuse aliases/mutates the still-live receiver (#2832).
 	arraySetInc map[*ast.Call]bool
 	// arraySetConsumed holds the names of bare-ident `.with` receivers whose
-	// reference __fern_arr_cow_inplace CONSUMES, so the exit sweep must not
-	// dec them a second time. It is exactly the complement of arraySetInc for
+	// reference __fern_arr_cow_inplace CONSUMES, and arraySetConsumedSites
+	// the calls that do it. It is exactly the complement of arraySetInc for
 	// a bare-ident receiver that is not a reassign-to-self: no pre-call inc is
 	// emitted there, so the helper sees the receiver's own rc and — per its
 	// contract, both branches — takes that reference over:
@@ -133,27 +133,21 @@ type rcPlan struct {
 	//   rc  > 1 → copies and decrements arr's rc itself, returning a fresh
 	//             rc=1 buffer; the receiver's reference is already released.
 	//
-	// Either way the callee's obligation is discharged inside the helper, so
-	// sweeping the receiver at exit is an over-release: with the freelist on
-	// it FREES a buffer the result still points at. That is #6013 — an `own`
-	// array param returned through `.with` came back freed, and a second call
-	// on the recycled block read a corrupted length (3 for a 7-element array),
-	// silently, on every compiled backend. A reassign-to-self
-	// (`buf = buf.with(…)`) is NOT here: the result flows back into the same
-	// slot, which then genuinely owns a reference the sweep must release.
-	arraySetConsumed map[string]bool
-	// arraySetConsumedReinit is the per-ITERATION half of arraySetConsumed:
-	// the receiver is a `var` whose declaration and consuming `.with` sit in
-	// one block, the `.with` after the declaration with no early exit
-	// between, so every execution of that declaration is followed by the
-	// transfer. A loop re-runs the declaration, and its re-init drop
-	// (emitVarReinitDropOld) is a second release site for the same slot —
-	// with nothing left in it to release, that drop frees the buffer the
-	// RESULT still points at. arraySetConsumed alone cannot answer this: it
-	// only knows the occurrence was textually last, which for a `.with`
-	// nested in an `if` leaves the iterations that skipped it holding a
-	// reference the re-init drop is the only site to release.
-	arraySetConsumedReinit map[string]bool
+	// Either way the frame's obligation is discharged inside the helper, so
+	// the call site ZEROES the receiver's slot once the value is on the
+	// operand stack (emitArraySet): every later release of that slot — the
+	// exit sweep, a loop's re-init drop — meets a null and no-ops, while an
+	// exit path that never reached the `.with` (an early return before it)
+	// still releases the reference the slot holds. Releasing a consumed slot
+	// again was #6013 — an `own` array param returned through `.with` came
+	// back freed, and a second call on the recycled block read a corrupted
+	// length (3 for a 7-element array), silently, on every compiled backend.
+	// A reassign-to-self (`buf = buf.with(…)`) is NOT here: the result flows
+	// back into the same slot, which then genuinely owns a reference the
+	// sweep must release. The name set is what computeBorrowedAliases
+	// consults: a consumed receiver is not borrowable, nor is an alias of one.
+	arraySetConsumed      map[string]bool
+	arraySetConsumedSites map[*ast.Call]bool
 	// reuseSources pairs a construction site C (the *ast.StructLit or
 	// *ast.TupleLit node) with the name of a dead, owned struct/tuple local D
 	// whose box C reuses in place — the general FBIP win (Perceus reuse
@@ -192,7 +186,8 @@ type rcPlan struct {
 	// every binding occurrence of the name in the whole function sits in an
 	// unguarded non-wildcard arm of a consumingOwnedMatches match, the name
 	// shadows no param / declared local / loop var, and its type is a sweepable
-	// box (enum / user struct / tuple) consistent across occurrences. These
+	// single-word pointer (enum / user struct / tuple / array / native
+	// single-word string) consistent across occurrences. These
 	// names are NOT borrow-tainted in computeFreeEligible (unlike ordinary
 	// match bindings), get a pre-allocated zeroed slot in the prologue, and are
 	// deep-dropped by the exit sweep exactly like owned locals. Every pointer
@@ -201,6 +196,25 @@ type rcPlan struct {
 	// the plan instead (see the fixpoint in computeConsumingOwnedMatches).
 	// Filled by computeConsumingOwnedMatches.
 	consumingBindings map[string]ast.Type
+	// borrowedBindings names the arm bindings (and `@` bindings) of every
+	// NON-consuming match: the arm loads the payload straight out of the
+	// scrutinee's box with no retain, so a binding holds the box's own
+	// reference and its buffer's rc==1 says nothing about the box's owners.
+	// The array fast paths (`.with` in computeArraySetIncs, `.append` in
+	// appendDecision) force the copy on such a receiver — an in-place write
+	// would edit a value a snapshot of the enum still reads, and the box's
+	// later drop would release the element the write stored. Bindings of a
+	// consuming match (an `own` scrutinee, or an owned-by-default one the
+	// analysis promoted) own their reference and keep the in-place path.
+	// Filled by computeBorrowedBindings.
+	borrowedBindings map[string]bool
+	// ownedArgMoves marks the call arguments (bare-ident nodes) this frame
+	// hands to an OWNED-BY-DEFAULT parameter without a retain, because the
+	// value dies at the call — the counted model's dup elision, the
+	// owned-by-default sibling of ownCallMoveArgs. The call site zeroes the
+	// argument's slot once the value is on the operand stack. Filled by
+	// computeOwnedArgMoves, which also records each in moveSites.
+	ownedArgMoves map[*ast.Ident]bool
 	// preciseDrops[stmtIdx] lists the owned locals to deep-drop + zero right
 	// after lowering that top-level statement (Perceus garbage-free precise
 	// drops — computePreciseDrops).
@@ -283,6 +297,7 @@ func (b *builder) computeRcAnalyses() {
 	// Computed before freeEligible, which consults consumingBindings (a
 	// qualifying binding becomes a counted owner instead of a tainted borrow).
 	b.rc.consumingOwnedMatches, b.rc.consumingBindings = b.computeConsumingOwnedMatches()
+	b.rc.borrowedBindings = b.computeBorrowedBindings()
 	// Borrow-aware free analysis: which array locals are OWNED and
 	// thus safe to return to the freelist at rc==0. Borrowed /
 	// borrowed-derived locals are excluded (only the owner frees).
@@ -301,10 +316,12 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
 	b.rc.mapCowBindSites = b.computeMapCowBindSites()
 	b.rc.arraySetInc = b.computeArraySetIncs()
-	b.rc.arraySetConsumedReinit = b.computeArraySetConsumedReinit()
 	b.computeBorrowedAliases()
 	b.rc.dynAliasElemArrays = map[string]bool{}
 	b.rc.dynBorrowedViews = b.computeDynBorrowedViews()
+	// After the borrow analyses: a borrowed view's source must stay in its
+	// slot until the exit sweep, so it is never moved into a call.
+	b.rc.ownedArgMoves = b.computeOwnedArgMoves()
 	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
 	b.rc.consumingMatchReuse = b.computeConsumingMatchReuse()
 }
@@ -511,7 +528,7 @@ func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFu
 // it loses three of the five frees in `url.query_parse("a=1")`, 256 B on the
 // smallest form that shows it. The accounting behind that is NOT established.
 // `__query_pair` — the callee whose verdict flips — reassigns its `Map`
-// parameter and returns it, but it is not a consumed param (consumedDropWired
+// parameter and returns it, but it is not a consumed param (typeDeepDropWired
 // excludes Map), so the ownership-flag protocol is not what withholds the
 // balancing dec. Three probes reproducing the shape outside the stdlib (a
 // threaded map param, the same with `string[]` values through
@@ -1277,9 +1294,9 @@ func everyOccurrenceSafe(total, safe int) bool {
 //
 // Arrays let this be a projection rather than a duplicate. Every other
 // condition in computeConsumedParams routes through the borrow verdict, and
-// isOwnedByDefaultType has no ArrayType arm — so for an array parameter
+// ownedByDefaultShape has no ArrayType arm — so for an array parameter
 // paramOwnedByDefault is always false, paramVerdict is always
-// NotOwnedType (never Borrowed), and typeIsStringArrayFree is always false.
+// NotOwnedType (never Borrowed), and the owned-shape skip never fires.
 // The three verdict-dependent gates therefore cannot fire, leaving exactly
 // the conditions below. TestConsumedArrayPositionsMatchTheLoweringVerdict
 // pins the agreement so the two cannot drift apart.
@@ -1315,7 +1332,7 @@ func consumedArrayParamPositions(prog *ast.Program, info *checker.Info, trmcFunc
 		for _, p := range fn.Params {
 			ok := false
 			if _, isArr := p.Type.(ast.ArrayType); isArr && !p.Own && reassigned[p.Name] &&
-				consumedDropWired(p.Type, info, map[string]bool{}) {
+				typeDeepDropWired(p.Type, info, map[string]bool{}) {
 				ok = true
 				any = true
 			}
@@ -2042,12 +2059,12 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		default:
 			continue
 		}
-		// Only types owned-by-default EXCLUDES — string/array-bearing ones.
-		// A string/array-free struct is already handled by owned-by-default
-		// (when that flag is on) and must stay on the borrow baseline when it
-		// is off; promoting it here would diverge the OwnedByDefault-vs-borrow
-		// differential gate. consumedDropWired keeps Map / slice / unwired
-		// shapes out (their deep drop is incomplete).
+		// Only types owned-by-default EXCLUDES (ownedByDefaultShape, read
+		// without the flag): a shape the owned model covers is already
+		// handled by it when the flag is on and must stay on the borrow
+		// baseline when it is off; promoting it here would diverge the
+		// OwnedByDefault-vs-borrow differential gate. typeDeepDropWired keeps
+		// Map / slice / unwired shapes out (their deep drop is incomplete).
 		//
 		// EXCEPT when borrow inference DEMOTED the param (verdict Borrowed):
 		// the caller then passes without an inc, and the reassignment's
@@ -2056,17 +2073,14 @@ func (b *builder) computeConsumedParams() map[string]bool {
 		// frees early, and the still-live aliases double-free (the
 		// `c = c2;` cursor-threading loop in a recursive `(T, Cur)`-tuple
 		// reader was the repro: freelist link clobbered by a reused block's
-		// rc header). String/array-BEARING params never hit this because
-		// this very promotion already covered them; the scalar-only shape
-		// needs it exactly when the borrow demotion applies. The
-		// OwnedByDefault-vs-borrow differential gate is unaffected: with
-		// the flag off the verdict is NotOwnedType, not Borrowed, and the
-		// skip below still fires.
-		if b.typeIsStringArrayFree(p.Type, map[string]bool{}) &&
+		// rc header). The OwnedByDefault-vs-borrow differential gate is
+		// unaffected: with the flag off the verdict is NotOwnedType, not
+		// Borrowed, and the skip below still fires.
+		if b.ownedByDefaultShape(p.Type) &&
 			b.paramVerdict(b.fn.Name, p.Type, i) != paramVerdictBorrowed {
 			continue
 		}
-		if !consumedDropWired(p.Type, b.info, map[string]bool{}) {
+		if !typeDeepDropWired(p.Type, b.info, map[string]bool{}) {
 			continue
 		}
 		res[p.Name] = true
@@ -2190,6 +2204,13 @@ func (b *builder) countedBindingAlias(target string, e ast.Expr) bool {
 // stable set since taint can flow backward through `x = f(y)`.
 func (b *builder) computeFreeEligible() map[string]bool {
 	tainted := map[string]bool{}
+	// escaped is the subset of `tainted` that reached an UNCOUNTED sink
+	// (`escape` below, propagated backward through aliases like the rest of
+	// the taint): the value may be held somewhere no count records. The
+	// remaining taint only says a slot may alias something it did not
+	// retain, which forbids a precise drop but not the release of a count
+	// the frame genuinely owns — see the owned-param loop at the end.
+	escaped := map[string]bool{}
 	for i, p := range b.fn.Params {
 		// `own` (consuming) params are OWNED by the callee — they're
 		// freeEligible (reclaimed / reused here) rather than borrowed, the
@@ -2242,6 +2263,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 		switch x := e.(type) {
 		case *ast.Ident:
 			tainted[x.Name] = true
+			escaped[x.Name] = true
 		case *ast.Index:
 			if ast.IsPointerType(b.exprType(x)) {
 				escape(x.Array)
@@ -2612,10 +2634,15 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				// Backward alias propagation: a tainted local
 				// assigned a bare Ident shares that source's
 				// buffer, so the source must not be freed either
-				// (`tmp = arr; m.set(k, tmp)` taints arr too).
+				// (`tmp = arr; m.set(k, tmp)` taints arr too) — and
+				// an escaped one carries the escape back with it.
 				if tainted[name] {
 					if src, ok := rhs.(*ast.Ident); ok && !tainted[src.Name] {
 						tainted[src.Name] = true
+						changed = true
+					}
+					if src, ok := rhs.(*ast.Ident); ok && escaped[name] && !escaped[src.Name] {
+						escaped[src.Name] = true
 						changed = true
 					}
 				}
@@ -2694,9 +2721,25 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	for i, p := range b.fn.Params {
 		// `own` params and (Slice 2) owned-by-default params are both reclaimed
 		// by the callee; a consumed-threaded param (computeConsumedParams) is
-		// promoted to callee-owned the same way. An escaped one was re-tainted
-		// and is skipped here.
-		if (!p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name]) || tainted[p.Name] {
+		// promoted to callee-owned the same way.
+		//
+		// An `own` param that was tainted at all is skipped (a safe leak). An
+		// owned-by-default / consumed param is skipped only when its value
+		// ESCAPED into an uncounted sink: the caller retained it (or the
+		// entry inc did), so the frame holds a count it must spend at exit,
+		// and every reference the frame can leave behind is counted — a
+		// returned payload takes the transfer inc, a stored one the
+		// construction inc — so the is_unique-gated deep drop cannot free
+		// under anything live. Alias taint alone (`var cur = t; cur = l`, the
+		// walk every tree lookup is written as) used to keep the count
+		// forever: one whole tree per call.
+		if !p.Own && !b.paramOwnedByDefault(p.Type, i) && !b.rc.consumedParams[p.Name] {
+			continue
+		}
+		if p.Own && tainted[p.Name] {
+			continue
+		}
+		if !p.Own && escaped[p.Name] {
 			continue
 		}
 		switch t := p.Type.(type) {
@@ -3448,6 +3491,7 @@ func (b *builder) storedArrayElemOperand(call *ast.Call, callee string) (ast.Exp
 func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	incs := map[*ast.Call]bool{}
 	b.rc.arraySetConsumed = map[string]bool{}
+	b.rc.arraySetConsumedSites = map[*ast.Call]bool{}
 	if b.fn.Body == nil {
 		return incs
 	}
@@ -3553,45 +3597,15 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		}
 		return true
 	})
-	// Match-arm bindings of a NON-consuming match are borrows too: the arm
-	// loads the payload pointer straight out of the scrutinee's box with no
-	// retain, so the array sits at the box's own rc==1 and an in-place cow
-	// would rewrite the box's payload — a snapshot of the enum would see
-	// the edit, and the box's later drop would release the element the cow
-	// stored (`B(n, kids) => B(n, kids.with(i, v))`). A consuming match
-	// (an `own` scrutinee, or an owned-by-default one the analysis
-	// promoted) moves or dups the payload into the binding, so its bindings
-	// own their reference and keep the in-place path.
-	borrowedBinding := map[string]bool{}
-	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		m, ok := n.(*ast.Match)
-		if !ok {
-			return true
-		}
-		if _, consuming := b.rc.consumingOwnedMatches[m]; consuming {
-			return true
-		}
-		if _, ownScrut := b.ownParamEnumScrutinee(m.Tag); ownScrut {
-			return true
-		}
-		for _, arm := range m.Arms {
-			for _, name := range arm.Bindings {
-				if name != "" && name != "_" {
-					borrowedBinding[name] = true
-				}
-			}
-			if arm.AtBinding != "" {
-				borrowedBinding[arm.AtBinding] = true
-			}
-		}
-		return true
-	})
+	// Match-arm bindings of a NON-consuming match are borrows too
+	// (rc.borrowedBindings): `B(n, kids) => B(n, kids.with(i, v))` must
+	// not rewrite the box's payload.
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		c, ok := n.(*ast.Call)
 		if !ok || !isArraySetCall(c) {
 			return true
 		}
-		if rid, rok := c.Args[0].(*ast.Ident); rok && (borrowedParam[rid.Name] || borrowedBinding[rid.Name]) {
+		if rid, rok := c.Args[0].(*ast.Ident); rok && (borrowedParam[rid.Name] || b.rc.borrowedBindings[rid.Name]) {
 			incs[c] = true
 			return true
 		}
@@ -3629,18 +3643,54 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		// "last" re-executes (liveAcrossBackEdge above).
 		incs[c] = !order.isLast(rid) || liveAcrossBackEdge[c]
 		// No inc means cow_inplace consumes this receiver's reference (see
-		// arraySetConsumed) — record it so the exit sweep skips it. Both roles
-		// the sweep releases qualify: a declared owned local, and an OWNED param
-		// (which the sweep reclaims in its own extra pass, `own` /
-		// owned-by-default / consumed — the same predicate used there). A
-		// borrowed param already took the incs=true path above, so it cannot
-		// reach here; an untracked name has nothing swept either way.
-		if !incs[c] && (b.isOwnedRcLocal(rid.Name) || b.isOwnedRcParam(rid.Name)) {
+		// arraySetConsumed) — record the site so emitArraySet zeroes the
+		// slot. Every role the sweep releases qualifies: a declared owned
+		// local, an OWNED param (which the sweep reclaims in its own extra
+		// pass, `own` / owned-by-default / consumed — the same predicate used
+		// there), and a consuming-match binding (swept as a counted owner). A
+		// borrowed param or binding already took the incs=true path above, so
+		// it cannot reach here; an untracked name has nothing swept either way.
+		_, consumingBinding := b.rc.consumingBindings[rid.Name]
+		if !incs[c] && (b.isOwnedRcLocal(rid.Name) || b.isOwnedRcParam(rid.Name) || consumingBinding) {
 			b.rc.arraySetConsumed[rid.Name] = true
+			b.rc.arraySetConsumedSites[c] = true
 		}
 		return true
 	})
 	return incs
+}
+
+// computeBorrowedBindings collects the arm bindings of every non-consuming
+// match in the body; see rcState.borrowedBindings for what that means.
+func (b *builder) computeBorrowedBindings() map[string]bool {
+	out := map[string]bool{}
+	if b.fn.Body == nil {
+		return out
+	}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		m, ok := n.(*ast.Match)
+		if !ok {
+			return true
+		}
+		if _, consuming := b.rc.consumingOwnedMatches[m]; consuming {
+			return true
+		}
+		if _, ownScrut := b.ownParamEnumScrutinee(m.Tag); ownScrut {
+			return true
+		}
+		for _, arm := range m.Arms {
+			for _, name := range arm.Bindings {
+				if name != "" && name != "_" {
+					out[name] = true
+				}
+			}
+			if arm.AtBinding != "" {
+				out[arm.AtBinding] = true
+			}
+		}
+		return true
+	})
+	return out
 }
 
 // markArraySetReceivers records every `.with` call under n whose ident
@@ -3657,82 +3707,6 @@ func markArraySetReceivers(n ast.Node, declared map[string]bool, out map[*ast.Ca
 		}
 		return true
 	})
-}
-
-// computeArraySetConsumedReinit narrows arraySetConsumed to the receivers a
-// per-iteration re-declaration must ALSO leave alone (see the field comment).
-// A receiver qualifies when its `var` declaration and the consuming `.with`
-// are top-level statements of one block, in that order, with no `return` /
-// `break` / `continue` / `?` between them — the same dominance rule
-// markLoopBodyConstructionMoves uses to extend a move into a loop body, and
-// for the same reason: it is what makes the transfer unconditional between
-// one execution of the declaration and the next.
-//
-// Without it a loop-body `var it = mk(); var a = it.with(…)` released the
-// buffer twice — the `.with` moved it into `a`, the next iteration's re-init
-// drop freed it anyway, and `a`'s own release then landed on a recycled
-// block. Both natives SIGSEGV'd on a struct-element array and silently
-// double-freed a scalar one (#6877).
-func (b *builder) computeArraySetConsumedReinit() map[string]bool {
-	out := map[string]bool{}
-	if b.fn.Body == nil || len(b.rc.arraySetConsumed) == 0 {
-		return out
-	}
-	// Consuming `.with` receivers named by `e`, ignoring any nested inside a
-	// conditional (an if/match expression) or a lambda body — reaching the
-	// call from there is not guaranteed by reaching the statement.
-	consumedIn := func(e ast.Expr, hit func(string)) {
-		ast.Walk(e, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.IfExpr, *ast.MatchExpr, *ast.FuncDecl:
-				return false
-			case *ast.Call:
-				if isArraySetCall(x) {
-					if rid, ok := x.Args[0].(*ast.Ident); ok && b.rc.arraySetConsumed[rid.Name] {
-						hit(rid.Name)
-					}
-				}
-			}
-			return true
-		})
-	}
-	ast.Walk(b.fn.Body, func(n ast.Node) bool {
-		blk, ok := n.(*ast.Block)
-		if !ok {
-			return true
-		}
-		exitsBefore := make([]int, len(blk.Stmts)+1)
-		for i, st := range blk.Stmts {
-			exitsBefore[i+1] = exitsBefore[i]
-			if stmtHasEarlyExit(st) {
-				exitsBefore[i+1]++
-			}
-		}
-		declAt := map[string]int{}
-		for i, st := range blk.Stmts {
-			var val ast.Expr
-			switch s := st.(type) {
-			case *ast.Var:
-				val = s.Init
-			case *ast.ExprStmt:
-				if a, ok := s.Expr.(*ast.Assign); ok {
-					val = a.Value
-				}
-			}
-			if val != nil {
-				consumedIn(val, func(name string) {
-					if d, dok := declAt[name]; dok && exitsBefore[i] == exitsBefore[d] {
-						out[name] = true
-					}
-				})
-			}
-			if v, ok := st.(*ast.Var); ok {
-				declAt[v.Name] = i
-			}
-		}
-		return true
-	})
-	return out
 }
 
 // computeReuseSources is the general-FBIP pairing analysis: it matches a
@@ -4855,8 +4829,10 @@ func (b *builder) localIsDynTrait(name string) bool {
 
 func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	switch e.(type) {
-	case *ast.Ident, *ast.FieldAccess, *ast.Index:
-		// continue
+	case *ast.Ident, *ast.FieldAccess, *ast.Index, *ast.CaptureRef:
+		// A CaptureRef reads the closure env's own reference (inc'd at
+		// MakeClosure, dec'd by the env drop thunk), so it aliases like a
+		// local.
 	default:
 		return false
 	}
@@ -4988,8 +4964,9 @@ func (b *builder) computeConsumingMatchReuse() map[*ast.Call]bool {
 //   - the function has no defers (their exit paths re-route returned values
 //     through synthetic slots; keep them out of scope);
 //   - the scrutinee is an *ast.Ident naming a non-`own` param with
-//     paramOwnedByDefault (which implies isOwnedByDefaultType: rc-eligible,
-//     string/array-free, uniform-box enum) and no same-named declared local;
+//     paramOwnedByDefault (which implies isOwnedByDefaultType: an
+//     rc-eligible enum whose deep drop is wired) and no same-named declared
+//     local;
 //   - the ident is the name's last occurrence (identOrder.isLast — dead after
 //     the match and unused in arm bodies/guards), so zeroing the slot after the
 //     per-arm release can't strand a later read;
@@ -5121,8 +5098,22 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 		if len(et.Args) > 0 {
 			ed = substituteEnumDecl(ed, et.Args)
 		}
-		if _, ok := uniformEnumBoxSize(ed, b.ptrW); !ok {
-			return true
+		// Every payload-carrying arm frees the box at ITS variant's size
+		// (the layout need not be uniform), so each must be sizable — a
+		// generic-erased payload is not. A payloadless arm matches a
+		// static sentinel and releases nothing.
+		for _, arm := range m.Arms {
+			if arm.IsWildcard || arm.Literal != nil || arm.VariantName == "" {
+				continue
+			}
+			for _, v := range ed.Variants {
+				if v.Name != arm.VariantName || len(v.Payloads) == 0 {
+					continue
+				}
+				if _, sized := enumVariantBoxSize(ed, arm.VariantName, b.ptrW); !sized {
+					return true
+				}
+			}
 		}
 		matches[m] = id.Name
 		return true
@@ -5142,15 +5133,20 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 	// Dropping a match demotes its arms to non-qualifying occurrences, which
 	// can invalidate names shared with other matches — hence the fixpoint
 	// (monotone: matches only leave, names only get worse; terminates).
+	// An array binding is a single-word buffer pointer on every backend and
+	// the sweep's array arm deep-drops it; a string binding qualifies only
+	// where the shared-branch dup can retain it with a flat rc_inc
+	// (ownMatchDupPayload — single-word native strings), since a two-word
+	// string's length is not a pointer.
 	sweepable := func(t ast.Type) bool {
 		switch tt := t.(type) {
-		case ast.EnumType:
+		case ast.EnumType, ast.TupleType, ast.ArrayType:
 			return true
 		case ast.StructType:
 			_, isUser := b.info.Structs[tt.Name]
 			return isUser
-		case ast.TupleType:
-			return true
+		case ast.StringType:
+			return ownMatchDupPayload(t, b.ptrW)
 		}
 		return false
 	}
@@ -6589,6 +6585,80 @@ func (b *builder) computeSelfReassignOwnMoves() {
 		}
 		return true
 	})
+}
+
+// computeOwnedArgMoves claims the call arguments this frame hands to an
+// OWNED-BY-DEFAULT parameter without a retain: a bare ident naming a value
+// the frame holds one reference to (frameOwnsIdent) that DIES at the call
+// (callArgDeaths — the self-reassign `x = f(.., x, ..)` and `return f(..,
+// x, ..)` shapes, and a sole-occurrence param outside any loop). The
+// reference the callee would otherwise be retained into is transferred
+// instead, so the callee sees the value at the caller's own count — a
+// uniquely held tree reaches its consuming match on the unique branch and
+// rewrites the path in place, where a retained argument always copied it.
+//
+// The call site zeroes the argument's slot once the value is on the operand
+// stack, so every later release of that slot — the exit sweep, a
+// self-reassign's overwrite dec, a loop re-init drop — meets a null and
+// no-ops under the helpers' guards, exactly as the consuming owned match
+// zeroes its scrutinee. A name a defer or a lambda can still read after the
+// statement (deferOrLambdaNames) is never moved: it would read the null.
+func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
+	out := map[*ast.Ident]bool{}
+	if b.fn.Body == nil {
+		return out
+	}
+	deaths := callArgDeaths(b.fn)
+	esc := deferOrLambdaNames(b.fn.Body)
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.Call)
+		if !ok {
+			return true
+		}
+		callee, isID := call.Callee.(*ast.Ident)
+		if !isID {
+			return true
+		}
+		if _, isLocal := b.locals[callee.Name]; isLocal {
+			return true // shadowed by a local — not a direct call
+		}
+		sig, isFunc := b.info.FuncSigs[callee.Name]
+		if !isFunc {
+			return true
+		}
+		for i, a := range call.Args {
+			arg, isArgID := a.(*ast.Ident)
+			if !isArgID || i >= len(sig.Params) || !deaths[call][arg.Name] || esc[arg.Name] {
+				continue
+			}
+			if !b.calleeParamOwnedByDefault(callee.Name, sig.Params[i], i) || !b.frameOwnsIdent(arg.Name) {
+				continue
+			}
+			out[arg] = true
+			b.rc.moveSites[arg] = true
+		}
+		return true
+	})
+	return out
+}
+
+// frameOwnsIdent reports whether `name` holds a reference this frame may hand
+// away: a declared rc-tracked local — every binding form leaves it holding
+// exactly one (an alias inc, a fresh result, a transferred return) — that is
+// neither a borrowed view nor the source one reads through (borrowedAlias /
+// borrowSources / dynBorrowedViews), or a parameter the frame owns by a
+// count (own / owned-by-default / consumed, but not the flag-carrying
+// consumed array). Deliberately not freeEligible: that asks whether the frame
+// may FREE the value, and its taint excludes anything that might alias a
+// live one; moving needs only that the frame holds a reference.
+func (b *builder) frameOwnsIdent(name string) bool {
+	if b.rc.borrowedAlias[name] || b.rc.borrowSources[name] || b.rc.dynBorrowedViews[name] {
+		return false
+	}
+	if b.isOwnedRcLocal(name) {
+		return true
+	}
+	return b.isOwnedRcParam(name) && !b.isConsumedArrayParam(name)
 }
 
 // computeCtorAliasInced collects every local that a container construction

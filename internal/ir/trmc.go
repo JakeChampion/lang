@@ -855,8 +855,8 @@ func (b *builder) emitTrmcAdvance(selfCall *ast.Call) error {
 // shallow free discards the box and decs NONE of its payloads, so it is correct
 // only when, for every recursive arm:
 //
-//   - the scrutinee parameter is owned-by-default-eligible (uniform box,
-//     string/array/Map-free), AND
+//   - the scrutinee parameter is owned-by-default-eligible and its enum has
+//     a uniform box (the loop frees every cell at one size), AND
 //   - the self-call advances the matched param to a bare binding ident — the
 //     "tail" cell whose reference we STEAL (move forward as the next
 //     scrutinee), which must itself be the same enum (a same-class cell), AND
@@ -883,6 +883,17 @@ func (b *builder) trmcShapeConsumeSafe(sh *trmcShape) bool {
 	}
 	scrutEnum, ok := b.fn.Params[mp].Type.(ast.EnumType)
 	if !ok || !b.isOwnedByDefaultType(scrutEnum) {
+		return false
+	}
+	// emitTrmcConsumeScrut frees every cell at one statically known size.
+	ed, ok := b.info.Enums[scrutEnum.Name]
+	if !ok {
+		return false
+	}
+	if len(scrutEnum.Args) > 0 {
+		ed = substituteEnumDecl(ed, scrutEnum.Args)
+	}
+	if _, uniform := uniformEnumBoxSize(ed, b.ptrW); !uniform {
 		return false
 	}
 	for _, arm := range sh.arms {

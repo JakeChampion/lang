@@ -12,8 +12,8 @@ import (
 // reader reclaims its argument when it holds the last reference) must produce
 // byte-identical OUTPUT whether it's on or the borrow model is used. rc is
 // invisible, so any divergence is an over-release / corrupted reclaim surfaced
-// by a real program. First sub-slice scope: uniform, string/array/Map-free,
-// non-TRMC enums (the FBIP list/tree case).
+// by a real program. The owned set is every enum / struct / tuple whose deep
+// drop is wired (typeDeepDropWired), arrays and strings included.
 
 func TestX86_64OwnedByDefaultMatchesBorrow(t *testing.T) {
 	forEachRunnableFixture(t, "x86_64", func(t *testing.T, f *fixtureSpec) {

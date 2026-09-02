@@ -215,24 +215,13 @@ function __hm_coll_index[K: cmp.Hash + cmp.Eq, V](leaves: HNode[K, V][], k: K): 
   return 0 - 1;
 }
 
-// __hm_insert_branch is the Branch arm of __hm_insert: descend into the
-// child the hash selects, or open a new slot for the leaf.
-function __hm_insert_branch[K: cmp.Hash + cmp.Eq, V](bm: i32, s: i32, kids: HNode[K, V][], h: i32, shift: i32, k: K, v: V): HNode[K, V] {
-  var bit: i32 = 1 << __hm_frag(h, shift);
-  var idx: i32 = __hm_slot(bm, bit);
-  if ((bm & bit) == 0) {
-    var fresh: HNode[K, V] = Leaf(h, k, v);
-    var grown: HNode[K, V][] = __hm_insert_at(kids, idx, fresh);
-    return Branch(bm | bit, s + 1, grown);
-  }
-  var old: i32 = __hm_size(kids[idx]);
-  var child: HNode[K, V] = __hm_insert(kids[idx], h, shift + 5, k, v);
-  var added: i32 = __hm_size(child) - old;
-  return Branch(bm, s + added, kids.with(idx, child));
-}
-
 // __hm_insert returns the trie with `k -> v` added or replaced; `h` is
-// the mixed hash of `k`.
+// the mixed hash of `k`. The match consumes `n`, so on the unique path
+// each level's box is released and its child array rewritten in place:
+// the arms rebuild the node from its bindings rather than reading `n`
+// again, and the Branch arm takes the child OUT of its slot
+// (`kids.with(idx, Empty)`) before descending, so it reaches the recursive
+// call at its own count; see docs/PERSISTENT-COLLECTIONS.md.
 pub function __hm_insert[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift: i32, k: K, v: V): HNode[K, V] {
   match (n) {
     Empty => {
@@ -243,12 +232,12 @@ pub function __hm_insert[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift:
         return Leaf(h, k, v);
       }
       var fresh: HNode[K, V] = Leaf(h, k, v);
-      return __hm_pair(n, lh, fresh, h, shift);
+      return __hm_pair(Leaf(lh, lk, lv), lh, fresh, h, shift);
     },
     Coll(ch, leaves) => {
       if (ch != h) {
         var fresh: HNode[K, V] = Leaf(h, k, v);
-        return __hm_pair(n, ch, fresh, h, shift);
+        return __hm_pair(Coll(ch, leaves), ch, fresh, h, shift);
       }
       var i: i32 = __hm_coll_index(leaves, k);
       if (i >= 0) {
@@ -257,7 +246,20 @@ pub function __hm_insert[K: cmp.Hash + cmp.Eq, V](n: HNode[K, V], h: i32, shift:
       return Coll(ch, leaves.append(Leaf(h, k, v)));
     },
     Branch(bm, s, kids) => {
-      return __hm_insert_branch(bm, s, kids, h, shift, k, v);
+      var bit: i32 = 1 << __hm_frag(h, shift);
+      var idx: i32 = __hm_slot(bm, bit);
+      if ((bm & bit) == 0) {
+        var fresh: HNode[K, V] = Leaf(h, k, v);
+        var grown: HNode[K, V][] = __hm_insert_at(kids, idx, fresh);
+        return Branch(bm | bit, s + 1, grown);
+      }
+      var e: HNode[K, V] = Empty;
+      var child: HNode[K, V] = kids[idx];
+      var rest: HNode[K, V][] = kids.with(idx, e);
+      var old: i32 = __hm_size(child);
+      child = __hm_insert(child, h, shift + 5, k, v);
+      var added: i32 = __hm_size(child) - old;
+      return Branch(bm, s + added, rest.with(idx, child));
     }
   }
 }
@@ -688,7 +690,11 @@ pub function (m: PMap[K, V]) is_empty(): boolean {
 // value. Never touches the receiver's nodes, so a snapshot taken
 // before the call is unchanged after it.
 pub function (m: PMap[K, V]) insert[K: cmp.Hash + cmp.Eq, V](k: K, v: V): PMap[K, V] {
-  return PMap { root: __hm_insert(m.root, __hm_mix(k.hash()), 0, k, v) };
+  var e: HNode[K, V] = Empty;
+  var root: HNode[K, V] = m.root;
+  m = PMap { ...m, root: e };
+  root = __hm_insert(root, __hm_mix(k.hash()), 0, k, v);
+  return PMap { ...m, root: root };
 }
 
 // `remove(k)` — the map without `k`; the receiver unchanged when `k`
