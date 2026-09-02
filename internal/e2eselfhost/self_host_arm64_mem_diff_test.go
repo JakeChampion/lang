@@ -142,3 +142,43 @@ func TestSelfHostArm64MemOffsetsMatchNative(t *testing.T) {
 		}
 	}
 }
+
+// TestSelfHostArm64RefusesUnencodableOffsets is the other half. An offset
+// that fits NEITHER encoding must be refused, not encoded anyway: both
+// immediate fields wrap, so an accepted one is a valid instruction reading
+// a different address. gas refuses all of these.
+func TestSelfHostArm64RefusesUnencodableOffsets(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	checkRefusedSelfHost(t, bin, runner, []string{
+		// Past the scaled ceiling, each access size.
+		"ldrb w1, [x2, #4096]",
+		"strb w1, [x2, #4096]",
+		"ldrh w1, [x2, #8192]",
+		"ldr w1, [x2, #16384]",
+		"ldr x1, [x2, #32768]",
+		"ldrsw x1, [x2, #16384]",
+		// Below the unscaled floor.
+		"ldrb w1, [x2, #-257]",
+		"ldr x1, [x2, #-257]",
+		// Unaligned AND past the unscaled range: neither form reaches it
+		// (1004 is not a multiple of 8, and 8191 not of 2).
+		"ldrh w1, [x2, #8191]",
+		"ldr x1, [x2, #1004]",
+	})
+}
+
+// TestSelfHostArm64AcceptsTheLastLegalOffset guards the refusal from
+// swallowing the boundary itself.
+func TestSelfHostArm64AcceptsTheLastLegalOffset(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+	checkPinnedSelfHost(t, bin, runner, []pinnedAsm{
+		{"ldrb w1, [x2, #4095]", 0x397ffc41},
+		{"ldrh w1, [x2, #8190]", 0x797ffc41},
+		{"ldr w1, [x2, #16380]", 0xb97ffc41},
+		{"ldr x1, [x2, #32760]", 0xf97ffc41},
+		{"ldrb w1, [x2, #-256]", 0x38500041},
+		{"ldrh w1, [x2, #255]", 0x784ff041},
+	})
+}

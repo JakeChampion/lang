@@ -3279,9 +3279,32 @@ function arm64_gas_bad_ext_mem(mnem: string, ops: string[]): string {
     if (arm64_gas_is_unscaled2(mnem)) { return arm64_gas_bad_unscaled2(mnem, ops); }
     if (mnem == "stp" || mnem == "ldp") { return arm64_gas_bad_pair(mnem, ops); }
     if (mnem == "ldr" || mnem == "str" || mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh") {
-        return arm64_gas_bad_regext(mnem, ops);
+        var re: string = arm64_gas_bad_regext(mnem, ops);
+        if (re != "") { return re; }
+    }
+    if (mnem == "ldr" || mnem == "str" || mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh"
+        || mnem == "ldrsb" || mnem == "ldrsh" || mnem == "ldrsw") {
+        return arm64_gas_bad_ldst_off(mnem, ops);
     }
     return "";
+}
+
+// An immediate offset must fit ONE of the two encodings: the scaled
+// unsigned imm12 (a non-negative multiple of the access size, reaching
+// 4095*size) or the unscaled signed imm9 (-256..255, any alignment). An
+// offset in neither is not merely unrepresentable — both fields WRAP, so
+// emitting one anyway yields a valid instruction addressing somewhere else
+// entirely. gas refuses these with "immediate offset out of range".
+function arm64_gas_bad_ldst_off(mnem: string, ops: string[]): string {
+    if (ops.len() != 2) { return ""; }                        // post-index takes another path
+    if (arm64_str_indexof(ops[1], "[") < 0) { return ""; }    // `ldr x0, =literal`
+    if (arm64_gas_has_bang(ops[1])) { return ""; }            // pre-index is its own imm9
+    if (arm64_gas_is_d(ops[0]) || arm64_gas_is_sreg(ops[0])) { return ""; } // FP scales differ
+    var m: Arm64Mem = arm64_gas_mem(ops[1]);
+    if (m.off_reg >= 0) { return ""; }
+    if (arm64_ldst_scalable(m.off, arm64_gas_ldst_size(mnem, ops[0]))) { return ""; }
+    if (m.off >= (0 - 256) && m.off <= 255) { return ""; }
+    return "off";
 }
 function arm64_gas_bad_ext_fp(mnem: string, ops: string[]): string {
     if (mnem == "fcmp" || mnem == "fcmpe") { return arm64_gas_bad_fcmp(ops); }
