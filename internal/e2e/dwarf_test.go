@@ -3,9 +3,13 @@ package e2e
 import (
 	"debug/dwarf"
 	goelf "debug/elf"
+	"encoding/binary"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -811,4 +815,159 @@ func sleb128(b []byte) (int64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// TestDWARFMultiFile is the gate #7902 names: a program spanning two source
+// files, built with -g for both native targets, whose line table names the
+// right file for every row, carries columns, marks the first row of each
+// function prologue_end, and whose .debug_frame describes each function —
+// decoded with Go's debug/dwarf, and with addr2line where it is on PATH,
+// since that is the consumer the issue asks to satisfy.
+func TestDWARFMultiFile(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// @noinline keeps twice a real function in its own file; inlining would
+	// copy its rows into main, which is a valid table but not this test.
+	lib := "@noinline pub function twice(x: i32): i32 {\n    var y: i32 = x * 2;\n    return y;\n}\n"
+	main := "import \"./lib/util\";\nfunction main(): i32 {\n    var a: i32 = util.twice(20);\n    return a + 2;\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "lib", "util.fern"), []byte(lib), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(main), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	addr2line, _ := exec.LookPath("addr2line")
+
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(dir, "prog-"+target)
+			cmd := exec.Command(bin, "-g", "-target", target, "-o", out, src)
+			cmd.Dir = dir
+			if o, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("-g build: %v\n%s", err, o)
+			}
+			f, err := goelf.Open(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			d, err := f.DWARF()
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := d.Reader()
+			cu, err := r.Next()
+			if err != nil || cu == nil {
+				t.Fatalf("no CU: %v", err)
+			}
+			type span struct{ lo, hi uint64 }
+			fns := map[string]span{}
+			for {
+				e, err := r.Next()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if e == nil {
+					break
+				}
+				if e.Tag == dwarf.TagSubprogram {
+					name, _ := e.Val(dwarf.AttrName).(string)
+					lo, _ := e.Val(dwarf.AttrLowpc).(uint64)
+					hi, _ := e.Val(dwarf.AttrHighpc).(uint64)
+					fns[name] = span{lo, hi}
+				}
+			}
+			lr, err := d.LineReader(cu)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var rows []dwarf.LineEntry
+			for {
+				var le dwarf.LineEntry
+				if err := lr.Next(&le); err != nil {
+					break
+				}
+				if !le.EndSequence {
+					rows = append(rows, le)
+				}
+			}
+			// Per function: which file its rows name, whether exactly its
+			// first row is prologue_end, and that columns came through.
+			// Subprogram names are module-qualified, as the symbol table spells them.
+			want := map[string]string{"util__twice": filepath.Join("lib", "util.fern"), "main": "main.fern"}
+			for fn, file := range want {
+				pc, ok := fns[fn]
+				if !ok {
+					t.Errorf("no subprogram %q in %v", fn, fns)
+					continue
+				}
+				var inFn []dwarf.LineEntry
+				for _, le := range rows {
+					if le.Address >= pc.lo && le.Address < pc.hi {
+						inFn = append(inFn, le)
+					}
+				}
+				if len(inFn) < 2 {
+					t.Errorf("%s: %d line rows, want per-statement rows", fn, len(inFn))
+					continue
+				}
+				for i, le := range inFn {
+					if le.File == nil || !strings.HasSuffix(le.File.Name, file) {
+						t.Errorf("%s row %d at %#x names %v, want a path ending in %s", fn, i, le.Address, le.File, file)
+					}
+					if le.Column == 0 {
+						t.Errorf("%s row %d at %#x has no column", fn, i, le.Address)
+					}
+					if le.PrologueEnd != (i == 0) {
+						t.Errorf("%s row %d at %#x prologue_end=%v — exactly the first row past the prologue should carry it", fn, i, le.Address, le.PrologueEnd)
+					}
+					if !le.IsStmt {
+						t.Errorf("%s row %d at %#x is not is_stmt", fn, i, le.Address)
+					}
+				}
+				if addr2line != "" {
+					o, err := exec.Command(addr2line, "-e", out, fmt.Sprintf("%#x", inFn[0].Address)).Output()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got := strings.TrimSpace(string(o)); !strings.HasSuffix(got, file+":"+strconv.Itoa(inFn[0].Line)) {
+						t.Errorf("addr2line %#x = %q, want a path ending in %s:%d", inFn[0].Address, got, file, inFn[0].Line)
+					}
+				}
+			}
+
+			// .debug_frame: the debugger-facing container of the unwind
+			// rules, one FDE per user function at its exact range.
+			sec := f.Section(".debug_frame")
+			if sec == nil {
+				t.Fatal("no .debug_frame in the -g image")
+			}
+			df, err := sec.Data()
+			if err != nil {
+				t.Fatal(err)
+			}
+			covered := map[uint64]uint64{}
+			for off := 0; off+8 <= len(df); {
+				n := int(binary.LittleEndian.Uint32(df[off:]))
+				if n == 0 {
+					t.Fatalf(".debug_frame has a zero-length entry at %#x; that terminator belongs to .eh_frame", off)
+				}
+				if binary.LittleEndian.Uint32(df[off+4:]) != 0xffffffff {
+					lo := binary.LittleEndian.Uint64(df[off+8:])
+					covered[lo] = lo + binary.LittleEndian.Uint64(df[off+16:])
+				}
+				off += 4 + n
+			}
+			for fn := range want {
+				pc := fns[fn]
+				if hi, ok := covered[pc.lo]; !ok || hi != pc.hi {
+					t.Errorf("%s [%#x,%#x): .debug_frame FDE covers [%#x,%#x)", fn, pc.lo, pc.hi, pc.lo, hi)
+				}
+			}
+		})
+	}
 }

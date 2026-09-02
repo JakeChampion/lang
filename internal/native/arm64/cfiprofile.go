@@ -76,6 +76,15 @@ func (a *Assembler) cfiDirective(d, line string) error {
 	return a.cfi.Directive(arm64CFI, d, strings.TrimSpace(strings.TrimPrefix(line, d)), len(a.insns)*4)
 }
 
+// DebugFrame renders the recorded CFI as the `.debug_frame` section of a
+// final binary whose .text is at textVAddr.
+func (a *Assembler) DebugFrame(textVAddr uint64) ([]byte, error) {
+	if _, err := a.TextLen(); err != nil {
+		return nil, err
+	}
+	return a.cfi.DebugFrame(arm64CFI, textVAddr)
+}
+
 // EhFrame renders the recorded CFI as a .eh_frame image for a final binary
 // whose .text is at textVAddr and whose .eh_frame is at ehVAddr.
 func (a *Assembler) EhFrame(textVAddr, ehVAddr uint64) ([]byte, error) {

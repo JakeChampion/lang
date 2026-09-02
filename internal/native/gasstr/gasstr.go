@@ -18,9 +18,16 @@
 // that, which is how this surfaced).
 //
 // Decoding is therefore byte-wise, never rune-wise.
+//
+// The DWARF `.file` / `.loc` directives live here too: both assemblers record
+// them identically, and a row type each side defined for itself is the
+// drift class #7903 exists to kill.
 package gasstr
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // Unquote decodes one double-quoted GNU-as string operand into its bytes,
 // resolving the escapes GAS recognises and passing every other byte —
@@ -102,4 +109,105 @@ func hexVal(c byte) int {
 	default:
 		return int(c-'A') + 10
 	}
+}
+
+// LineRow is one DWARF .debug_line row as a `.loc` directive records it: the
+// source position active at a byte offset within .text. The offset is the
+// next instruction's, since `.loc` emits no bytes; the image writer converts
+// it to an absolute address. File indexes the `.file N "path"` table.
+//
+// Both assemblers record exactly this, so it is shared rather than written
+// twice; the ELF writer has its own row type keyed by absolute address.
+type LineRow struct {
+	Offset        int
+	File          int
+	Line          int
+	Col           int
+	PrologueEnd   bool
+	EpilogueBegin bool
+	// IsStmt is the state machine's is_stmt register as of this row.
+	IsStmt bool
+}
+
+// FileDirective parses the operands of a `.file` directive into the table
+// files, returning the (possibly newly allocated) table. Only the numbered
+// DWARF form `.file N "path"` defines an entry; the bare `.file "path"` form
+// is the ELF source-name symbol and is accepted without effect.
+func FileDirective(files map[int]string, ops []string) (map[int]string, error) {
+	if len(ops) == 1 {
+		return files, nil
+	}
+	if len(ops) != 2 {
+		return files, fmt.Errorf(".file: want `.file N \"path\"`, got %d operands", len(ops))
+	}
+	n, err := strconv.Atoi(ops[0])
+	if err != nil || n < 1 {
+		return files, fmt.Errorf(".file: bad file number %q", ops[0])
+	}
+	path, err := Unquote(ops[1])
+	if err != nil {
+		return files, fmt.Errorf(".file %d: %v", n, err)
+	}
+	if files == nil {
+		files = map[int]string{}
+	}
+	if prev, dup := files[n]; dup && prev != path {
+		return files, fmt.Errorf(".file %d: already %q, now %q", n, prev, path)
+	}
+	files[n] = path
+	return files, nil
+}
+
+// LocDirective parses the operands of `.loc file line [column] [options]`
+// into the row for the code at offset off. The options gas defines and this
+// accepts are prologue_end, epilogue_begin and `is_stmt N`; anything else
+// (isa, discriminator, basic_block, a view) is refused rather than dropped,
+// since a consumer would then read a table that silently disagrees with the
+// source.
+//
+// is_stmt is a register of the line-number state machine, not a per-row
+// flag: `is_stmt 0` stays in force for every later `.loc` until an
+// `is_stmt 1`, which is why the previous row's value is an input. The other
+// two flags apply to their own row only.
+func LocDirective(ops []string, off int, isStmt bool) (LineRow, error) {
+	row := LineRow{Offset: off, IsStmt: isStmt}
+	if len(ops) < 2 {
+		return row, fmt.Errorf(".loc: want `.loc file line [column]`")
+	}
+	var err error
+	if row.File, err = strconv.Atoi(ops[0]); err != nil || row.File < 1 {
+		return row, fmt.Errorf(".loc: bad file number %q", ops[0])
+	}
+	if row.Line, err = strconv.Atoi(ops[1]); err != nil || row.Line < 0 {
+		return row, fmt.Errorf(".loc: bad line %q", ops[1])
+	}
+	rest := ops[2:]
+	if len(rest) > 0 {
+		if col, err := strconv.Atoi(rest[0]); err == nil {
+			if col < 0 {
+				return row, fmt.Errorf(".loc: bad column %q", rest[0])
+			}
+			row.Col = col
+			rest = rest[1:]
+		}
+	}
+	for len(rest) > 0 {
+		switch rest[0] {
+		case "prologue_end":
+			row.PrologueEnd = true
+			rest = rest[1:]
+		case "epilogue_begin":
+			row.EpilogueBegin = true
+			rest = rest[1:]
+		case "is_stmt":
+			if len(rest) < 2 || (rest[1] != "0" && rest[1] != "1") {
+				return row, fmt.Errorf(".loc: is_stmt wants 0 or 1")
+			}
+			row.IsStmt = rest[1] == "1"
+			rest = rest[2:]
+		default:
+			return row, fmt.Errorf(".loc: unsupported option %q", rest[0])
+		}
+	}
+	return row, nil
 }

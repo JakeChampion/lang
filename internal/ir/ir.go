@@ -8297,9 +8297,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 	// Under native -g, mark each new source line so the backend can build a
 	// DWARF .debug_line row. OpLine consumes/produces nothing and emits no
 	// machine code; it just carries the Pos.
+	// Str names the file the position is in: inlining copies these ops into
+	// callers in other files, and a marker that only knew its line would
+	// then be attributed to the caller's file.
 	if b.emitLineMarkers && b.curPos.Line > 0 && b.curPos.Line != b.lastLineMark {
 		b.lastLineMark = b.curPos.Line
-		b.emit(Op{Kind: OpLine, Pos: b.curPos})
+		b.emit(Op{Kind: OpLine, Pos: b.curPos, Str: b.fn.SourceFile})
 	}
 	// Under -cover, bump the counter for this statement's line. Placed at
 	// the statement boundary, where the operand stack is empty and no

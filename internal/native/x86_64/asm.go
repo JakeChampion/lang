@@ -28,6 +28,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jakechampion/lang/internal/native/gasstr"
+
 	"github.com/jakechampion/lang/internal/native/cfi"
 	"github.com/jakechampion/lang/internal/native/x86tbl"
 )
@@ -103,6 +105,7 @@ type Assembler struct {
 	ripFixups    []ripFixup
 	quadSyms     []quadSymFixup
 	locRows      []LineRow
+	files        map[int]string
 	relaxEvents  []relaxEvent
 	cfi          cfi.State
 	// relax rewrites .text and remaps every recorded offset onto the new
@@ -112,14 +115,12 @@ type Assembler struct {
 	relaxErr  error
 }
 
-// LineRow is one DWARF .debug_line row: the source line active at a code
-// offset within .text, recorded when the code generator emits a `.loc`
-// directive under -g (the offset is the next instruction's, since `.loc`
-// emits no bytes). The linker converts Offset to an absolute vaddr.
-type LineRow struct {
-	Offset int
-	Line   int
-}
+// LineRow is one DWARF .debug_line row, recorded when the code generator
+// emits a `.loc` directive under -g: the source position active at a code
+// offset within .text (the next instruction's, since `.loc` emits no bytes).
+// The linker converts Offset to an absolute vaddr. File indexes the table
+// `.file N "path"` directives built (Files).
+type LineRow = gasstr.LineRow
 
 // quadSymFixup records a ".quad <symbol>" slot in .rodata (a function- or
 // data-pointer table entry) to be filled with the symbol's absolute
@@ -228,6 +229,9 @@ func (a *Assembler) TextLabelVAddrs(textVAddr uint64) map[string]uint64 {
 // LocRows are the per-statement `.loc` markers the parse collected, for the
 // DWARF line table.
 func (a *Assembler) LocRows() []LineRow { return a.locRows }
+
+// Files is the `.file N "path"` table the `.loc` rows index into.
+func (a *Assembler) Files() map[int]string { return a.files }
 
 // SegmentAddrs is the image writer's map: given the final size of .text it
 // says where .text and the data blob load. The data address cannot be known
@@ -540,8 +544,20 @@ func (a *Assembler) directive(line, sec string) (string, error) {
 		default:
 			return "ignore", nil // e.g. .note.GNU-stack
 		}
-	case ".intel_syntax", ".globl", ".global", ".type", ".size", ".file", ".ident":
+	case ".intel_syntax", ".globl", ".global", ".type", ".size", ".ident":
 		return sec, nil
+	case ".cfi_sections":
+		// Which of .eh_frame / .debug_frame gas would write. Here the image
+		// writer decides — .eh_frame always, .debug_frame under -g — so the
+		// directive only has to be accepted for a source to assemble the
+		// same way through both.
+		return sec, nil
+	case ".file":
+		// `.file N "path"` names a .debug_line file; the bare `.file "path"`
+		// form is the ELF source-name symbol and emits nothing here.
+		var err error
+		a.files, err = gasstr.FileDirective(a.files, fields[1:])
+		return sec, err
 	}
 	if strings.HasPrefix(d, ".cfi_") {
 		// A CFI directive emits no bytes, so the current .text length is the
@@ -550,16 +566,23 @@ func (a *Assembler) directive(line, sec string) (string, error) {
 	}
 	switch d {
 	case ".loc":
-		// `.loc <file> <line> [<col>]` (DWARF line marker, -g). It emits no
-		// bytes, so the current text length is the offset of the next
-		// instruction — the address this source line begins at.
-		if sec == "text" && len(fields) >= 3 {
-			if line, err := strconv.Atoi(fields[2]); err == nil {
-				a.locRows = append(a.locRows, LineRow{Offset: len(a.text), Line: line})
-				if e := a.trailingPad(); e != nil {
-					e.locs = append(e.locs, len(a.locRows)-1)
-				}
-			}
+		// `.loc <file> <line> [<col>] [options]` (DWARF line marker, -g). It
+		// emits no bytes, so the current text length is the offset of the
+		// next instruction — the address this source position begins at.
+		if sec != "text" {
+			return sec, fmt.Errorf(".loc outside .text")
+		}
+		isStmt := true
+		if n := len(a.locRows); n > 0 {
+			isStmt = a.locRows[n-1].IsStmt
+		}
+		row, err := gasstr.LocDirective(fields[1:], len(a.text), isStmt)
+		if err != nil {
+			return sec, err
+		}
+		a.locRows = append(a.locRows, row)
+		if e := a.trailingPad(); e != nil {
+			e.locs = append(e.locs, len(a.locRows)-1)
 		}
 		return sec, nil
 	}

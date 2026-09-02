@@ -71,6 +71,7 @@ import (
 	"github.com/jakechampion/lang/internal/monomorph"
 	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
+	"github.com/jakechampion/lang/internal/native/gasstr"
 	nativemacho "github.com/jakechampion/lang/internal/native/macho"
 	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 	"github.com/jakechampion/lang/internal/parser"
@@ -1807,6 +1808,13 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// source path and displays the source, not just addresses.
 	dbgSrc := srcPath
 	dbgCompDir, _ := os.Getwd()
+	// The `.file` table is keyed by the path modload stamps on every
+	// declaration, which is absolute; naming the main file by the path as
+	// typed would list it twice.
+	dbgMainFile, err := filepath.Abs(srcPath)
+	if err != nil {
+		dbgMainFile = srcPath
+	}
 	// DWARF variable DIEs (#5537 slice 3 locals/params): map each function to
 	// its scalar parameters + locals with frame offsets, so gdb/lldb can
 	// `info args` / `print <var>`. x86-64 and arm64 (Linux ELF); gated on -g.
@@ -1818,9 +1826,9 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	var asm string
 	switch target {
 	case "x86-64-linux":
-		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{Exports: exportNames, DebugLines: emitDebugSyms})
+		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{Exports: exportNames, DebugLines: emitDebugSyms, DebugSource: dbgMainFile})
 	default:
-		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames, DebugLines: emitDebugSyms && !darwin && !android})
+		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames, DebugLines: emitDebugSyms && !darwin && !android, DebugSource: dbgMainFile})
 	}
 	if err != nil {
 		return 1, err
@@ -2204,11 +2212,17 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		fs := nativeelf.FuncSyms(syms, textEnd)
 		// Per-statement DWARF .debug_line rows from the assembler's `.loc`
 		// markers (#5537 slice 2); Offset is text-relative → absolute vaddr.
-		rows := make([]nativeelf.LineRow, 0, len(locRows))
-		for _, r := range locRows {
-			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
+		frame, err := a.DebugFrame(nativeelf.TextVAddrWX)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
 		}
-		bin := nativeelf.StaticExecutableDataWXSymsRows(text, u, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
+		bin, err := nativeelf.StaticExecutableDataWXDebug(text, u, rodata, nativeelf.Debug{
+			Syms: fs, Files: a.Files(), Rows: absoluteRows(locRows), SrcFile: srcFile, CompDir: compDir,
+			TextEnd: textEnd, Vars: funcVars, Frame: frame,
+		})
+		if err != nil {
+			return fmt.Errorf("native linker: %w", err)
+		}
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -2368,6 +2382,19 @@ func sharedExports(names, asmNames []string, vaddr map[string]uint64) []nativeel
 		out[i] = nativeelf.Export{Name: n, Value: vaddr[asmNames[i]]}
 	}
 	return out
+}
+
+// absoluteRows turns the assembler's text-relative `.loc` rows into the
+// absolute-address rows the DWARF line table is written from.
+func absoluteRows(locRows []gasstr.LineRow) []nativeelf.LineRow {
+	rows := make([]nativeelf.LineRow, 0, len(locRows))
+	for _, r := range locRows {
+		rows = append(rows, nativeelf.LineRow{
+			Addr: nativeelf.TextVAddrWX + uint64(r.Offset), File: r.File, Line: r.Line, Col: r.Col,
+			PrologueEnd: r.PrologueEnd, EpilogueBegin: r.EpilogueBegin, IsStmt: r.IsStmt,
+		})
+	}
+	return rows
 }
 
 // linkNativeX86 is the x86-64 counterpart of linkNative: it assembles and
@@ -2554,13 +2581,17 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		syms, locRows := a.TextLabelVAddrs(nativeelf.TextVAddrWX), a.LocRows()
 		textEnd := nativeelf.TextVAddrWX + uint64(len(text))
 		fs := nativeelf.FuncSyms(syms, textEnd)
-		// Per-statement DWARF .debug_line rows from the assembler's `.loc`
-		// markers (#5537 slice 2); Offset is text-relative → absolute vaddr.
-		rows := make([]nativeelf.LineRow, 0, len(locRows))
-		for _, r := range locRows {
-			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
+		frame, err := a.DebugFrame(nativeelf.TextVAddrWX)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
 		}
-		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, u, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
+		bin, err := nativeelf.StaticExecutableDataX86WXDebug(text, u, rodata, nativeelf.Debug{
+			Syms: fs, Files: a.Files(), Rows: absoluteRows(locRows), SrcFile: srcFile, CompDir: compDir,
+			TextEnd: textEnd, Vars: funcVars, Frame: frame,
+		})
+		if err != nil {
+			return fmt.Errorf("native linker: %w", err)
+		}
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}

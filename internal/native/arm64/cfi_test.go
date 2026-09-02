@@ -375,3 +375,92 @@ func TestArm64MachOEhFramePointersAreAbsolute(t *testing.T) {
 		t.Errorf("address_range = %d bytes, want 12 (three instructions)", got)
 	}
 }
+
+// a64DebugFrameFromGas is ehFrameFromAarch64Gas for the .debug_frame
+// contribution `.cfi_sections .debug_frame` makes gas write.
+func a64DebugFrameFromGas(t *testing.T, as, objcopy, src string) []byte {
+	t.Helper()
+	dir := t.TempDir()
+	sPath := filepath.Join(dir, "df.s")
+	oPath := filepath.Join(dir, "df.o")
+	binPath := filepath.Join(dir, "df.debugframe")
+	if err := os.WriteFile(sPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(as, sPath, "-o", oPath).CombinedOutput(); err != nil {
+		t.Fatalf("gas rejected the source: %v\n%s", err, out)
+	}
+	// Not `-O binary`: that keeps only ALLOC sections, and .debug_frame is
+	// not one.
+	if out, err := exec.Command(objcopy, "--dump-section", ".debug_frame="+binPath, oPath, oPath+".2").CombinedOutput(); err != nil {
+		t.Fatalf("objcopy: %v\n%s", err, out)
+	}
+	b, err := os.ReadFile(binPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// a64DebugFrameMaskLocs zeroes each FDE's 8-byte initial_location: gas
+// leaves it for a relocation, we write the address.
+func a64DebugFrameMaskLocs(b []byte) []byte {
+	out := append([]byte(nil), b...)
+	for off := 0; off+8 <= len(out); {
+		n := int(a64LE32(out, off))
+		if n == 0 {
+			break
+		}
+		if a64LE32(out, off+4) != 0xffffffff && off+16 <= len(out) {
+			copy(out[off+8:off+16], make([]byte, 8))
+		}
+		off += 4 + n
+	}
+	return out
+}
+
+// TestArm64DebugFrameMatchesGNUAs is the aarch64 twin of the x86-64
+// .debug_frame differential: same rules as .eh_frame, every framing field
+// different, and the code alignment of 4 still in force.
+func TestArm64DebugFrameMatchesGNUAs(t *testing.T) {
+	as, objcopy := findAarch64Binutils(t)
+	cases := map[string]string{
+		"frame_pointer": "\t.text\n\t.cfi_sections .debug_frame\n\t.globl f\nf:\n\t.cfi_startproc\n" +
+			"\tstp x29, x30, [sp, #-16]!\n\t.cfi_def_cfa_offset 16\n" +
+			"\t.cfi_offset x29, -16\n\t.cfi_offset x30, -8\n" +
+			"\tmov x29, sp\n\t.cfi_def_cfa_register x29\n" +
+			"\tldp x29, x30, [sp], #16\n\t.cfi_def_cfa sp, 0\n\tret\n\t.cfi_endproc\n",
+		"two_procs": "\t.text\n\t.cfi_sections .debug_frame\n\t.globl a1\na1:\n\t.cfi_startproc\n" +
+			"\tstp x29, x30, [sp, #-16]!\n\t.cfi_def_cfa_offset 16\n" +
+			"\t.cfi_offset x29, -16\n\t.cfi_offset x30, -8\n" +
+			"\tmov x29, sp\n\t.cfi_def_cfa_register x29\n" +
+			"\tldp x29, x30, [sp], #16\n\t.cfi_def_cfa sp, 0\n\tret\n\t.cfi_endproc\n" +
+			"\t.globl a2\na2:\n\t.cfi_startproc\n" +
+			"\tsub sp, sp, #32\n\t.cfi_def_cfa_offset 32\n" +
+			"\tadd sp, sp, #32\n\t.cfi_def_cfa_offset 0\n\tret\n\t.cfi_endproc\n",
+		"long_advance": "\t.text\n\t.cfi_sections .debug_frame\n\t.globl m\nm:\n\t.cfi_startproc\n" +
+			"\tsub sp, sp, #16\n\t.cfi_def_cfa_offset 16\n" +
+			a64Nops(80) +
+			"\tadd sp, sp, #16\n\t.cfi_def_cfa_offset 0\n\tret\n\t.cfi_endproc\n",
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			want := a64DebugFrameFromGas(t, as, objcopy, src)
+			if len(want) == 0 {
+				t.Fatal("gas produced no .debug_frame")
+			}
+			a, err := arm64.ParseProgram(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := a.DebugFrame(0x400000)
+			if err != nil {
+				t.Fatalf("DebugFrame: %v", err)
+			}
+			if w, g := a64DebugFrameMaskLocs(want), a64DebugFrameMaskLocs(got); !bytes.Equal(w, g) {
+				t.Errorf(".debug_frame differs (initial_location masked)\ngas:  %s\nours: %s",
+					hex.EncodeToString(want), hex.EncodeToString(got))
+			}
+		})
+	}
+}
