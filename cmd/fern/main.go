@@ -2177,10 +2177,15 @@ func linkDarwin(asm, outPath, cc string) error {
 // Unsupported instructions surface as an error rather than a miscompile.
 func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nativeelf.LocalVar) error {
 	if emitDebugSyms {
-		text, rodata, syms, locRows, err := nativearm64.AssembleProgramWXSyms(asm, nativeelf.SegmentAddrsWXArm64)
+		a, err := nativearm64.ParseProgram(asm)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
+		text, rodata, ehFrame, err := layoutArm64WithEhFrame(a)
+		if err != nil {
+			return err
+		}
+		syms, locRows := a.TextLabelVAddrs(nativeelf.TextVAddrWX), a.LocRows()
 		textEnd := nativeelf.TextVAddrWX + uint64(len(text))
 		fs := nativeelf.FuncSyms(syms, textEnd)
 		// Per-statement DWARF .debug_line rows from the assembler's `.loc`
@@ -2189,20 +2194,21 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		for _, r := range locRows {
 			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
 		}
-		// nil: the arm64 emitter does not emit `.cfi_*` yet (#7901), so
-		// there is nothing to place. Wiring the three-step here before that
-		// lands would only ever render an empty image.
-		bin := nativeelf.StaticExecutableDataWXSymsRows(text, nil, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
+		bin := nativeelf.StaticExecutableDataWXSymsRows(text, ehFrame, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
 		return os.Chmod(outPath, 0o755)
 	}
-	text, rodata, err := nativearm64.AssembleProgramWX(asm, nativeelf.SegmentAddrsWXArm64)
+	a, err := nativearm64.ParseProgram(asm)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
-	bin := nativeelf.StaticExecutableDataWX(text, rodata)
+	text, rodata, ehFrame, err := layoutArm64WithEhFrame(a)
+	if err != nil {
+		return err
+	}
+	bin := nativeelf.StaticExecutableDataWXEhFrame(text, ehFrame, rodata)
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}
@@ -2212,6 +2218,30 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		return err
 	}
 	return nil
+}
+
+// layoutArm64WithEhFrame runs the three steps an image carrying unwind data
+// takes: settle .text's size, render .eh_frame at the address that follows
+// from it, then resolve everything against the data address that follows from
+// ITS length. Each depends on the one before, and a CIE declaring pcrel FDE
+// pointers means the image is only correct at the address it was rendered for.
+//
+// Asm with no `.cfi_*` renders an empty image and the addresses reduce to the
+// layout without one, byte for byte.
+func layoutArm64WithEhFrame(a *nativearm64.Assembler) (text, rodata, ehFrame []byte, err error) {
+	textLen, err := a.TextLen()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("native assembler: %w", err)
+	}
+	textVAddr, ehVAddr, _ := nativeelf.SegmentAddrsWXEhArm64(textLen, 1)
+	if ehFrame, err = a.EhFrame(textVAddr, ehVAddr); err != nil {
+		return nil, nil, nil, fmt.Errorf("native assembler: %w", err)
+	}
+	textVAddr, _, dataVAddr := nativeelf.SegmentAddrsWXEhArm64(textLen, len(ehFrame))
+	if text, rodata, err = a.BytesProgramWX(textVAddr, dataVAddr); err != nil {
+		return nil, nil, nil, fmt.Errorf("native assembler: %w", err)
+	}
+	return text, rodata, ehFrame, nil
 }
 
 // linkNativePIE assembles arm64 assembly into a static position-independent

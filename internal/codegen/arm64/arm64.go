@@ -11383,8 +11383,23 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// #localsSize - (i+1)*8]. We use the [sp, #N] form so all
 	// local accesses are positive offsets — easier to reason
 	// about and avoids the negative-offset encoding edge cases.
+	// Unwind rules for the frame this prologue builds (#7901). Pinned from
+	// aarch64-linux-gnu-as on the same three instructions: the CFA starts at
+	// sp+0 — the CIE's initial rule, with NO rule for the return address,
+	// because on entry it is in x30 and not spilled — moves to sp+16 once the
+	// pair is saved, and is then tracked through x29. Both saved registers
+	// need a rule; x30 is the one an unwinder returns through.
+	//
+	// Nothing may be inserted between a `b L` and its `L:` — the peephole's
+	// dead-branch rewrite matches those two lines as neighbours — which is
+	// why the epilogue's rule goes after the `ldp`, not before the label.
+	g.emit(".cfi_startproc")
 	g.emit("stp x29, x30, [sp, #-16]!")
+	g.emit(".cfi_def_cfa_offset 16")
+	g.emit(".cfi_offset x29, -16")
+	g.emit(".cfi_offset x30, -8")
 	g.emit("mov x29, sp")
+	g.emit(".cfi_def_cfa_register x29")
 	if localsSize > 0 {
 		g.emitSpSub(localsSize)
 	}
@@ -11473,7 +11488,11 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.label(retLabel)
 	g.emit("mov sp, x29")
 	g.emit("ldp x29, x30, [sp], #16")
+	// Back to the CIE's initial rule. sp+0, not sp+8 as on x86-64: there is
+	// no return address on the stack here once the pair is popped.
+	g.emit(".cfi_def_cfa sp, 0")
 	g.emit("ret")
+	g.emit(".cfi_endproc")
 	g.sizeDirective(sym)
 	g.line(".ltorg")
 	g.flushPeep()
