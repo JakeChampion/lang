@@ -108,7 +108,7 @@ for build / re-insert / remove / lookup / fold on every module.
 
 ## What the compiler needed (fixed in this PR)
 
-Writing the library against the native compiler found seven bugs, all fixed
+Writing the library against the native compiler found nine bugs, all fixed
 at their source with tests:
 
 1. **Monomorphiser: an array of a generic enum inside its own variant**
@@ -165,6 +165,30 @@ at their source with tests:
    by `variant_payload_counted_retain_test.go` and the
    `rc_variant_payload_arg_temp` e2e census. String-keyed inserts into
    both maps now leak zero blocks.
+8. **RC leak: a loop counter passed as an argument stranded the call's
+   result** — `rhsTainted` gave every non-concat binary the tainted
+   default, so a reassigned scalar (`i = i + 1`) read as "may alias a
+   borrow", and the any-argument-tainted call rule then kept
+   `t = bump(t, i)` from ever reclaiming `t` while `t = bump(t, 1)` did.
+   A scalar can alias only by carrying a raw pointer, and that provenance
+   is already on its operands (the pointer→integer cast and a parameter
+   both read as tainted), so a binary or unary now inherits exactly its
+   operands' taint. Pinned by the `loop_counter_arg_keeps_result_reclaimable`
+   corpus case on both native leak gates.
+9. **RC soundness: a cow-threaded Map parameter released the caller's
+   handle** — `m = m.insert(k, v)` on a borrow-baseline Map param dec'd
+   the old handle whenever the cow copied, though the frame never owned
+   it; with a caller's `g` aliasing `base` after an in-place iteration,
+   the next copy left `base` at rc 1 with two owners and `g`'s
+   re-declaration drop freed it (`grow(base, 2)`: exit 121 on a plain
+   build, a use-after-free under `-sanitize`; the existing negative only
+   passed because its `i + 2` argument carried the taint from fix 8).
+   Such a param now carries the runtime ownership bit consumed-threaded
+   array params already use (`cowMapParams`): the overwrite releases the
+   old handle only once an earlier copy replaced the caller's, and the
+   exit sweep releases what the frame owns. Pinned by the
+   `map_param_cow_thread_literal_arg` corpus case and the
+   `param-receiver-literal-negative` row of the map-intermediate suites.
 
 The self-hosted compiler needed its own fixes: its monomorphiser did not
 recover a generic instantiation from a clone-typed match binding, an indexed

@@ -3826,6 +3826,59 @@ function main(): i32 {
 }`,
 	},
 	{
+		// A reassigned loop counter is a scalar built by arithmetic. Under the
+		// blanket Binary taint it counted as "may alias a borrow", and the
+		// any-arg-tainted call rule then stranded `t` at exit — while the same
+		// loop with `bump(t, 1)` reclaimed everything. The leak gate holds this
+		// at 0 on both natives.
+		name: "loop_counter_arg_keeps_result_reclaimable",
+		src: `
+enum N { L(i32), B(i32, N[]) }
+function bump(n: N, v: i32): N {
+    match (n) {
+        L(x) => { return n; },
+        B(c, kids) => { return B(c + v, kids); },
+    }
+}
+function main(): i32 {
+    var t: N = B(0, [L(1), L(2), L(3)]);
+    var i: i32 = 0;
+    while (i < 3) { t = bump(t, i); i = i + 1; }
+    match (t) { L(x) => { return 7; }, B(c, k) => { return c - 3 + __rc_underflow_count(); } }
+}`,
+	},
+	{
+		// A Map param threaded through `m = m.insert(..)` sits on the borrow
+		// baseline (consumedDropWired keeps Maps off the consumed promotion).
+		// On the cow-copy path its overwrite dec used to release the caller's
+		// handle, which the frame never owned: with `g` aliasing `base` after
+		// an in-place iteration, the next copy left `base` at rc 1 with two
+		// owners and g's re-declaration drop freed it (exit 121 on a plain
+		// build, a use-after-free under the sanitizer). The ownership bit
+		// (cowMapParams) decs only what the frame owns and releases it at
+		// exit, so the shape is value-correct and reclaims fully.
+		name: "map_param_cow_thread_literal_arg",
+		src: `import "core/map";
+function grow(m: Map[i32, i32], k: i32): Map[i32, i32] {
+    m = m.insert(k, k * 7);
+    return m;
+}
+function main(): i32 {
+    var base: Map[i32, i32] = map_new(8);
+    base = base.insert(1, 11);
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < 40) {
+        var g: Map[i32, i32] = grow(base, 2);
+        acc = acc + g.get_or(1, 0) + g.get_or(2, 0);
+        i = i + 1;
+    }
+    if (base.get_or(1, 0) != 11) { return 121; }
+    if (acc != 40 * 25) { return 120; }
+    return __rc_underflow_count();
+}`,
+	},
+	{
 		// The same `.with` self-reassign reached through a LOCAL ALIAS of the
 		// borrowed param rather than the param itself, threaded recursively —
 		// the shape the self-host checker's e060_collect_dyn_locals is built

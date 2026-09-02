@@ -5780,14 +5780,15 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	}
 	// Consumed-threaded ARRAY params carry their ownership as an explicit bit
 	// rather than as an entry retain, because a retain costs them the in-place
-	// append (isConsumedArrayParam). Allocate and zero the bit here, in
-	// parameter order, so the slot numbering is deterministic.
+	// append (isConsumedArrayParam); a cow-threaded Map param (cowMapParams)
+	// carries the same bit. Allocate and zero it here, in parameter order, so
+	// the slot numbering is deterministic.
 	for _, p := range fn.Params {
-		if !b.isConsumedArrayParam(p.Name) {
+		if !b.isConsumedArrayParam(p.Name) && !b.rc.cowMapParams[p.Name] {
 			continue
 		}
 		slot := b.allocSlot()
-		b.locals[consumedArrayFlagName(p.Name)] = slot
+		b.locals[ownFlagName(p.Name)] = slot
 		b.emit(Op{Kind: OpConstI32, I32: 0})
 		b.emit(Op{Kind: OpStoreLocal, I32: slot})
 	}
@@ -17233,7 +17234,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		// differs from the old (i.e. cow copied). Other rc-tracked
 		// reassignments keep the unconditional dec.
 		if isArrayTypeOfLocal(t.Name, b) {
-			if flagSlot, hasFlag := b.locals[consumedArrayFlagName(t.Name)]; hasFlag &&
+			if flagSlot, hasFlag := b.locals[ownFlagName(t.Name)]; hasFlag &&
 				isSelfArraySetReassign(n.Value, t.Name) && b.isConsumedArrayParam(t.Name) {
 				// `p = p.with(i, v)` on a consumed-threaded ARRAY param. Whether
 				// an overwrite dec is owed depends on whether THIS frame owns
@@ -17303,9 +17304,22 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp})  // new handle
 				b.emit(Op{Kind: OpNe})                      // cow copied?
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
-				b.emit(Op{Kind: OpDrop})
+				flagSlot, hasFlag := b.locals[ownFlagName(t.Name)]
+				if mst, isMap := structOrEnumTypeOfLocal(t.Name, b); hasFlag && b.rc.cowMapParams[t.Name] && isMap {
+					// A borrow-baseline Map param owns the old handle only once
+					// an earlier copy replaced the caller's; the bit says which,
+					// and is set because the frame owns what came back.
+					b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
+					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+					b.emitMapOverwriteDrop(idx, mst.(ast.StructType))
+					b.emit(Op{Kind: OpEnd})
+					b.emit(Op{Kind: OpConstI32, I32: 1})
+					b.emit(Op{Kind: OpStoreLocal, I32: flagSlot})
+				} else {
+					b.emit(Op{Kind: OpLoadLocal, I32: idx})
+					b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+					b.emit(Op{Kind: OpDrop})
+				}
 				b.emit(Op{Kind: OpEnd})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp}) // restore new for the store
 			} else if at, isArr := localArrayType(t.Name, b); isArr && ast.RcFreeEnabled && !b.callConsumesIdent(n.Value, t.Name) && (b.rc.freeEligible[t.Name] || b.selfReassignOwnedLocal(n.Value, t.Name, at) || b.isSelfArrayPushLocal(n.Value, t.Name)) {
@@ -17450,12 +17464,17 @@ func (b *builder) assign(n *ast.Assign) error {
 				//     table leaked behind it — 1328 B an iteration in the
 				//     temporary-bound insert loop of #6227.
 				//   - new == old — the same reference carried across the
-				//     rebind. A release is owed only if an alias inc created a
-				//     second count for it (`m = m2`); a self-mutation created
-				//     none, and dec'ing there is the over-release
-				//     isSelfMapMutation's COW-aware branch exists to avoid.
+				//     rebind. A release is owed only if a second count was
+				//     created for it: the alias inc of `m = m2`, or the return
+				//     transfer inc of a callee that handed the local's own
+				//     handle back (`m = f(m)`, the query_parse threading). A
+				//     self-mutation created none, and dec'ing there is the
+				//     over-release isSelfMapMutation's COW-aware branch exists
+				//     to avoid.
 				if mst, isMap := sety.(ast.StructType); isMap && mst.Name == "Map" {
-					aliasInced := needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n]
+					_, isCall := n.Value.(*ast.Call)
+					aliasInced := (needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n]) ||
+						(isCall && exprMentionsIdent(n.Value, t.Name))
 					newTmp := b.allocSlot()
 					b.locals[fmt.Sprintf("__mapow_new_%d", newTmp)] = newTmp
 					b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
@@ -18223,10 +18242,10 @@ func exprMentionsIdent(e ast.Expr, name string) bool {
 	return found
 }
 
-// consumedArrayFlagName is the hidden i32 local that tracks, at runtime,
-// whether a consumed-threaded ARRAY param's slot still holds the caller's
-// borrow (0) or a reference this frame owns (1).
-func consumedArrayFlagName(param string) string { return "__ownflag_" + param }
+// ownFlagName is the hidden i32 local that tracks, at runtime, whether a
+// consumed-threaded ARRAY param's or a cow-threaded Map param's slot still
+// holds the caller's borrow (0) or a reference this frame owns (1).
+func ownFlagName(param string) string { return "__ownflag_" + param }
 
 // isConsumedArrayParam reports whether `name` is a parameter that
 // computeConsumedParams promoted AND whose type is an array.
@@ -18283,7 +18302,7 @@ func (b *builder) isConsumedArrayParam(name string) bool {
 // isConsumedArrayParam).
 func (b *builder) emitConsumedArrayOverwriteDec(name string, emitDec func()) {
 	idx, hasSlot := b.locals[name]
-	flagSlot, ok := b.locals[consumedArrayFlagName(name)]
+	flagSlot, ok := b.locals[ownFlagName(name)]
 	if !ok || !hasSlot {
 		// No flag was allocated (the prologue only allocates for promoted
 		// array params); fall back to the unconditional dec.
