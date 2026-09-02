@@ -6603,6 +6603,57 @@ function main(): i32 {
 `,
 	},
 	{
+		// #8104. A read-only accessor that hands back a SUB-OBJECT of its
+		// receiver — an element, or the array field itself — used to make
+		// the receiver escape, which put it on the owned rung: a caller-side
+		// retain and an is_unique-gated deep drop at every call, on a method
+		// that reclaims nothing. The projection carries its own unit (the
+		// Return lowering incs it), so the receiver borrows now.
+		//
+		// What the case watches is the drop that credit removes. `b` is the
+		// only owner of its cells array; if the returned element were NOT
+		// inc'd, borrowing the receiver would leave `everything` and the two
+		// Slots pointing into a buffer the round's exit sweep frees, and the
+		// next round's writes would land in it. Value-checked at 979 so a
+		// stale read fails, __rc_underflow_count() folded in so an
+		// over-release does, and leak-gated at 0 on both backends so the
+		// removed drop cannot become a leak.
+		name: "projection_accessor_receiver_borrows",
+		src: `
+struct Slot { n: i32, tag: i32 }
+struct Bag { cells: Slot[], k: i32 }
+
+@noinline
+function (b: Bag) at(i: i32): Slot { return b.cells[i % 3]; }
+
+@noinline
+function (b: Bag) all(): Slot[] { return b.cells; }
+
+@noinline
+function (b: Bag) via(i: i32): Slot { return b.at(i); }
+
+@noinline
+function round(r: i32): i32 {
+    var cs: Slot[] = [];
+    var i: i32 = 0;
+    while (i < 3) { cs = cs.append(Slot { n: r + i, tag: i }); i = i + 1; }
+    var b: Bag = Bag { cells: cs, k: r };
+    var c: Slot = b.at(r);
+    var d: Slot = b.via(r + 1);
+    var everything: Slot[] = b.all();
+    return c.n + d.tag + everything.len();
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var r: i32 = 0;
+    while (r < 40) { t = t + round(r); r = r + 1; }
+    if (t != 979) { return 1; }
+    return __rc_underflow_count();
+}
+`,
+	},
+	{
 		// A MIXED-return function: fresh on one path, a bare projection of
 		// a borrowed parameter on the other. The projection return takes
 		// the Return lowering's transfer inc like any other alias, so the
