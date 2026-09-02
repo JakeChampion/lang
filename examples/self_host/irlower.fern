@@ -67097,6 +67097,81 @@ function fd_returns_boxed_fn_array(fd: parser.FuncDecl, mfuncs: MFuncs): boolean
     return false;
 }
 
+// fd_passes_fn_array_elem reports whether `fd` binds a local from an ARRAY
+// ELEMENT (`var f = fs[i]`) and then hands that local to a fn-typed parameter.
+//
+// The lift boxes every fn-value ARGUMENT, so the callee's fn-typed param
+// dispatches env-first — it reads slot 0 of what it assumes is a [funcval,
+// caps…] box. An element read out of a POINTER array is a bare code address
+// there, so the dispatch jumps through whatever the first instruction word
+// decodes as (SIGSEGV, #8090). Answering yes puts this function's fn-value
+// array LITERALS on the env-box ABI, so the element the binding reads and the
+// parameter that receives it agree by construction. #5071's uniformity rule,
+// one container out — the ARGUMENT sibling of fd_returns_boxed_fn_array and
+// fd_stores_fn_value_array.
+function fd_passes_fn_array_elem(fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+    var names: string[] = fd_index_bound_names(fd.body);
+    if (names.len() == 0) { return false; }
+    var calls: ast.Expr[] = [];
+    var si: i32 = 0;
+    while (si < fd.body.len()) {
+        calls = astwalk.fold_stmt(fd.body[si], calls, call_exprs_of);
+        si = si + 1;
+    }
+    var ci: i32 = 0;
+    while (ci < calls.len()) {
+        match (calls[ci]) {
+            ast.ExprCall(c) => {
+                match (c.callee) {
+                    ast.ExprIdent(cid) => {
+                        var ai: i32 = 0;
+                        while (ai < c.args.len()) {
+                            if (lift_callee_param_is_fn(mfuncs, cid.name, ai) || lift_local_fn_param_is_fn(fd, cid.name, ai)) {
+                                match (c.args[ai]) {
+                                    ast.ExprIdent(aid) => { if (util.index_of_str(names, aid.name) >= 0) { return true; } },
+                                    _ => {}
+                                }
+                            }
+                            ai = ai + 1;
+                        }
+                    },
+                    _ => {}
+                }
+            },
+            _ => {}
+        }
+        ci = ci + 1;
+    }
+    return false;
+}
+
+// fd_index_bound_names collects the names `body` binds from an ARRAY ELEMENT
+// (`var f = fs[i]`), at any statement depth. Binders live on statements, so the
+// walk needs no descent into initialisers (body_binds_lambda's rule).
+function fd_index_bound_names(body: ast.Stmt[]): string[] {
+    var out: string[] = [];
+    for st in body {
+        out = astwalk.fold_stmt_nodes(st, out, idx_bound_name_at, no_expr_strs, astwalk.descend_none);
+    }
+    return out;
+}
+
+function idx_bound_name_at(st: ast.Stmt, acc: string[]): string[] {
+    match (st) {
+        ast.StmtVar(v) => {
+            if let ast.ExprIndex(_) = v.init { return acc.append(v.name); }
+        },
+        _ => {}
+    }
+    return acc;
+}
+
+// call_exprs_of collects every call node an expression holds.
+function call_exprs_of(e: ast.Expr, acc: ast.Expr[]): ast.Expr[] {
+    if let ast.ExprCall(_) = e { return acc.append(e); }
+    return acc;
+}
+
 // array_holds_fn_value reports whether the literal has any fn-VALUED element, so
 // the uniformity rule above applies to it at all (an i32[] never does).
 function array_holds_fn_value(arr: ast.ExprArray, mfuncs: MFuncs): boolean {
@@ -67440,6 +67515,43 @@ function lift_arg_is_passthrough_fn_value(arg: ast.Expr, mfuncs: MFuncs): boolea
                     while (i < c.args.len()) {
                         if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
                                 && lift_arg_is_passthrough_fn_value(c.args[i], mfuncs)) { return true; }
+                        i = i + 1;
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return false;
+}
+
+// array_elem_is_env_boxed reports whether an ARRAY-literal element already
+// arrives as an env box, which puts the whole literal on the env-first dispatch
+// ABI (#5071): a capturing lambda (box [funcval, caps…]); a value-position
+// `if`/`match`, whose hoist yields a box for either kind of arm lambda (#6256);
+// and a generic passthrough call handing either straight back (`id(<lambda>)`,
+// `pick(c, <iife>, …)`), whose boxing at the erased-generic parameter is
+// unconditional.
+//
+// A NON-capturing lambda element on its own is absent by design: an array of
+// only those keeps the bare fn-pointer representation and its plain dispatch.
+function array_elem_is_env_boxed(e: ast.Expr, fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: MFuncs): boolean {
+    match (e) {
+        ast.ExprLambda(lam) => { return lambda_captures(lam, fd).len() > 0; },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprLambda(il) => {
+                    return c.args.len() == 0 && il.params.len() == 0
+                        && iife_arms_have_lambda(il.body, mfuncs)
+                        && iife_arms_hold_fn_value(il.body, fd, structs, mfuncs);
+                },
+                ast.ExprIdent(cid) => {
+                    var i: i32 = 0;
+                    while (i < c.args.len()) {
+                        if (lift_callee_is_typevar_passthrough(mfuncs, cid.name, i)
+                                && (lift_arg_is_passthrough_fn_value(c.args[i], mfuncs)
+                                    || array_elem_is_env_boxed(c.args[i], fd, structs, mfuncs))) { return true; }
                         i = i + 1;
                     }
                 },
@@ -68274,36 +68386,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
             var has_cap_lam: boolean = false;
             var sc: i32 = 0;
             while (sc < arr.elements.len()) {
-                match (arr.elements[sc]) {
-                    ast.ExprLambda(sclam) => { if (lambda_captures(sclam, fd).len() > 0) { has_cap_lam = true; } },
-                    ast.ExprCall(sccall) => {
-                        match (sccall.callee) {
-                            ast.ExprLambda(scil) => {
-                                if (sccall.args.len() == 0 && scil.params.len() == 0
-                                    && iife_arms_have_lambda(scil.body, mfuncs)
-                                    && iife_arms_hold_fn_value(scil.body, fd, structs, mfuncs)) { has_cap_lam = true; }
-                            },
-                            // A generic PASSTHROUGH element (`id(<lambda>)`,
-                            // `pick(c, <lambda>, …)`) forwards the box the lift
-                            // puts at its erased-generic parameter, so the array
-                            // holding it is on the env-first ABI whether or not
-                            // anything captures — the boxing at that parameter is
-                            // unconditional. Without this the sibling elements
-                            // stayed bare fn pointers under a binding that
-                            // dispatches every element as a box.
-                            ast.ExprIdent(scfid) => {
-                                var sa: i32 = 0;
-                                while (sa < sccall.args.len()) {
-                                    if (lift_callee_is_typevar_passthrough(mfuncs, scfid.name, sa)
-                                            && lift_arg_is_passthrough_fn_value(sccall.args[sa], mfuncs)) { has_cap_lam = true; }
-                                    sa = sa + 1;
-                                }
-                            },
-                            _ => {}
-                        }
-                    },
-                    _ => {}
-                }
+                if (array_elem_is_env_boxed(arr.elements[sc], fd, structs, mfuncs)) { has_cap_lam = true; }
                 sc = sc + 1;
             }
             // Bound names in this function's scope (params + body binders): a
@@ -68320,7 +68403,8 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
             // container further out again: the store boxes its value, and the
             // array it clones is this literal.
             if (!has_cap_lam && afnval
-                    && (fd_returns_boxed_fn_array(fd, mfuncs) || fd_stores_fn_value_array(fd, mfuncs, abound))) {
+                    && (fd_returns_boxed_fn_array(fd, mfuncs) || fd_stores_fn_value_array(fd, mfuncs, abound)
+                        || fd_passes_fn_array_elem(fd, mfuncs))) {
                 has_cap_lam = true;
             }
             var i: i32 = 0;
