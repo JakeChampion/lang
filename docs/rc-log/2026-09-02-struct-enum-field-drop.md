@@ -99,20 +99,61 @@ the other programs differ structurally — the never-read control emits no match
 at all and reads 12 — so a count is evidence only against a program that
 differs in one edit.
 
+## The obvious fix is a use-after-free — do not take it
+
+`lower_stmt_match` already has the release site and the helper: after the outer
+`end`, `if (match_scrut_is_map_get(m, ms)) { ms = emit_scalar_enum_box_free(ms,
+scrut_slot); }`. Adding a second gate for the enum-field shape
+(`enum_field_read_type(m.scrutinee, s).len() > 0`, `@` bindings refused as the
+map_get gate refuses them) is a four-line change, and it looks right:
+
+- `w_inlineenum` and `v_inline` go to **200/200, live_bytes 0**
+- the matrix cell goes 200/0 to **200/100** (4,800 B, half closed)
+- every previously-clean control stays clean
+- `__rc_underflow_count()` stays 0 — every cell still exits 53, not 99
+
+It is still wrong. Under `FERN_SANITIZE`, where nothing is recycled and a
+touched freed block traps:
+
+```
+fern-sanitizer: use-after-free (touched a quarantined block)
+```
+
+The unfixed baseline is UAF-clean under the same leg; the scrutinee release
+ALONE introduces it, with the freshbox credit not applied. So the field read is
+a **borrow**, not a counted alias: the box stays owned by the struct, and
+releasing `$mscrut` frees it while the struct still holds it. The refcount never
+goes negative, which is why the underflow counter and the leak census both pass
+a program that is reading freed memory.
+
+That kills the whole "release the scrutinee" direction, and it is the third
+hypothesis this one cell has defeated.
+
+## What the sanitize leg is for
+
+`TestSelfHostLeakMatrixX86_64` compiles each cell twice — once for the census,
+once under `FERN_SANITIZE` — and says so itself: *"a latent defect the census
+could not see; fix it, never pin it"*. The census sees only the leak direction.
+Any fix here has to clear BOTH legs, and a green census plus a zero underflow
+counter is not evidence of soundness. It was the only thing standing between
+this change and a pushed use-after-free.
+
+## What is NOT established
+
+Stacking the freshbox credit (`freshbox_ret_fns_of`) on top of the scrutinee
+release takes the matrix cell to 200/200 and the whole x86-64 matrix to 134
+clean/clean rows. That result is built on the unsound release, so it proves
+nothing about the credit on its own — measured alone, it still moves the matrix
+by zero rows. Do not read the 134 as a green light for either half.
+
 ## Next lead
 
-Release `$mscrut` after the match when the scrutinee's lowering took a counted
-alias, and ONLY then: an unconditional release would over-free a bare-ident
-scrutinee, turning a leak into a use-after-free. The gate wants whatever
-predicate already decides the container-read alias_inc — the `rc_fe_rhs_tainted`
-FieldAccess arm calls that the "dup-at-extract" pair. `r_bindthenmatch` is the
-clean control proving the released path exists and the bound form takes it.
+The struct's deep drop IS emitted in the leaking form — `__struct_drop_H` is
+called the same number of times in all three variants — so the missing release
+is not a suppressed `emit_struct_field_drops`. What differs is the
+`__fern_arr_dec` count between the never-read control (12), the bound form (9)
+and the leaking one (8), and only the last pair differs by a single edit.
 
-Every leak-matrix cell asserts `__rc_underflow_count() != 0 -> 99`, so an
-over-release shows up as a wrong exit across many cells rather than as silence.
-Use that as the detector.
-
-Then account for the call form's extra 101 frees separately.
-
-The four arm64 rows reading `leak clean` are native-arm64 `#7446` gaps where
-the self-host is AHEAD, and are untouched by this.
+Look for what the match-on-field does to `h`'s own eligibility, not for a
+release to add at the match. And validate under `FERN_SANITIZE` from the first
+build, not at the end.
