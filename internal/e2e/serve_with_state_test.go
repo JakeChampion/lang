@@ -76,3 +76,48 @@ func responseBodyTail(resp string) string {
 	}
 	return resp[i+4:]
 }
+
+// The same threading, with no `main` written at all: `init(): S` and a
+// state-taking `handle` are the two-phase lifecycle the auto-main
+// synthesis recognises (docs/PLATFORM-RESEARCH.md Rec §3), so the
+// program is the two entry points and nothing else. What this pins over
+// the test above is the WIRING — that the synthesised main routes
+// through tcp_serve_with and hands it init()'s value, rather than
+// building the state per request or dropping it.
+const serveInitStateSrc = `
+import "std/http";
+import "std/tcp";
+import "core/int";
+
+function init(): Map[string, i32] {
+    return map_new(8);
+}
+
+function handle(hits: Map[string, i32], req: HttpRequest, plat: Platform): (Map[string, i32], HttpResponse) {
+    var n: i32 = 1;
+    match (hits.get(req.path)) {
+        Some(prev) => { n = prev + 1; },
+        None => {}
+    }
+    return (hits.insert(req.path, n),
+            http.http_response_ok(req.path + "=" + int.int_to_string(n)));
+}`
+
+func TestServeInitProvidedStateX86_64(t *testing.T) {
+	port := freeLoopbackPort(t)
+	bin, runner := buildSupervisedServeBin(t, serveInitStateSrc)
+	_, _ = startSupervisedServer(t, bin, runner, fmt.Sprintf("PORT=%d", port))
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	waitServerReady(t, addr, 10*time.Second)
+
+	for want := 1; want <= 3; want++ {
+		resp := httpRoundTrip(t, addr, "/a", 5*time.Second)
+		if got := responseBodyTail(resp); got != fmt.Sprintf("/a=%d", want) {
+			t.Fatalf("request %d to /a: body %q, want %q (init's state did not reach the next request)",
+				want, got, fmt.Sprintf("/a=%d", want))
+		}
+	}
+	if got := responseBodyTail(httpRoundTrip(t, addr, "/b", 5*time.Second)); got != "/b=1" {
+		t.Fatalf("first request to /b: body %q, want \"/b=1\"", got)
+	}
+}

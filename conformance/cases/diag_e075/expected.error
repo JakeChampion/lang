@@ -1,0 +1,1 @@
+`init` returns a value, but the handler takes no state parameter to thread it through

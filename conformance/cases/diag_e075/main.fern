@@ -1,0 +1,21 @@
+// Pins E075: `init` returns a value for the handler to carry, and the
+// handler takes no state parameter — so the synthesised `main` would build
+// the state at startup and immediately drop it, which is the shape a
+// process-lifetime cache is written in by mistake
+// (docs/PLATFORM-RESEARCH.md Rec §3).
+//
+// The two halves pair as `init(): S` with
+// `handle(state: S, req: HttpRequest, plat: Platform): (S, HttpResponse)`;
+// either one alone is the error. This case takes the direction that used to
+// be accepted silently — the other (a handler taking a state nothing
+// produces) never type-checked, it just reported a call nobody wrote.
+import "std/http";
+import "std/tcp";
+
+function init(): i32 {
+    return 7;
+}
+
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return http.http_response_ok("ok");
+}

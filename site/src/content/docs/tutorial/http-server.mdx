@@ -177,12 +177,53 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 ```
 
+## State that outlives one request
+
+A counter, a cache, a connection pool — anything a handler wants to keep
+between requests — comes from `init`, not from a top-level variable
+(Fern has none). `init` runs once at startup; its return value is handed
+to every request and the value the handler returns is what the next one
+sees.
+
+```fern
+import "std/http";
+import "std/tcp";
+import "core/int";
+
+function init(): Map[string, i32] {
+    return map_new(8);
+}
+
+function handle(hits: Map[string, i32], req: HttpRequest,
+                plat: Platform): (Map[string, i32], HttpResponse) {
+    var n: i32 = 1;
+    match (hits.get(req.path)) {
+        Some(prev) => { n = prev + 1; },
+        None => {}
+    }
+    return (hits.insert(req.path, n),
+            http.http_response_ok(int.int_to_string(n)));
+}
+```
+
+```bash
+curl http://localhost:8080/a   # → 1
+curl http://localhost:8080/a   # → 2
+curl http://localhost:8080/b   # → 1
+```
+
+The state lives in the accept loop, so it is per process: a handler
+compiled for `wasm32-wasi-http` cannot take one, because that world
+builds a fresh instance per request. An `init` returning nothing is still
+useful — it runs before the first request, which is where a start-up log
+line or an env-var read goes.
+
 ## Compile and serve
 
 The same file builds two ways. As a WASI HTTP component:
 
 ```bash
-fern -target wasi-http -o handler.wasm handler.fern
+fern -target wasm32-wasi-http -o handler.wasm handler.fern
 wasmtime serve handler.wasm
 # → curl http://localhost:8080/hello
 ```
@@ -190,7 +231,7 @@ wasmtime serve handler.wasm
 Or as a native standalone server:
 
 ```bash
-fern -target arm64 -o handler handler.fern   # or -target x86-64
+fern -target arm64-linux -o handler handler.fern   # or -target x86-64-linux
 PORT=8080 ./handler &
 curl -X POST -d 'hi' http://localhost:8080/echo
 ```

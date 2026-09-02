@@ -123,13 +123,19 @@ func freeLoopbackPort(t *testing.T) int {
 // killing only the parent would orphan a worker still holding
 // the listener — with stderr teed to a file the caller can poll.
 // Cleanup kills the whole group.
-func startSupervisedServer(t *testing.T, bin string, runner []string) (cmd *exec.Cmd, stderrPath string) {
+// extraEnv entries are `KEY=VALUE` additions to the child's environment —
+// what a server whose port comes from `PORT` needs, rather than from a
+// literal baked into its source.
+func startSupervisedServer(t *testing.T, bin string, runner []string, extraEnv ...string) (cmd *exec.Cmd, stderrPath string) {
 	t.Helper()
 	var c *exec.Cmd
 	if len(runner) == 0 {
 		c = exec.Command(bin)
 	} else {
 		c = exec.Command(runner[0], append(runner[1:], bin)...)
+	}
+	if len(extraEnv) > 0 {
+		c.Env = append(os.Environ(), extraEnv...)
 	}
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stderrPath = filepath.Join(t.TempDir(), "stderr.log")

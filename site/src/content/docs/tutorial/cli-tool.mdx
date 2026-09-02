@@ -186,7 +186,7 @@ compile a native binary:
 printf 'one\ntwo Fern\nthree\n' | fern -interp grep.fern
 
 # Native binary (no external toolchain needed on Linux):
-fern -target x86-64 -o grep grep.fern    # or -target arm64
+fern -target x86-64-linux -o grep grep.fern    # or -target arm64-linux
 printf 'one\ntwo Fern\nthree\n' | ./grep -i fern
 ```
 

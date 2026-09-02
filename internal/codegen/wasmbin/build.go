@@ -161,6 +161,21 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		treeshakeExtras = append(treeshakeExtras, src)
 	}
 	if opts.HttpHandler {
+		// The wrapper calls `handle(req, plat)` with two arguments it
+		// builds itself, so a handler that takes process-lifetime state
+		// (docs/PLATFORM-RESEARCH.md Rec §3) has no caller here: the
+		// proxy world's instance is per-request, and nothing on this
+		// target runs `init` or holds what it returns. Refuse by name —
+		// the alternative is a two-argument call against a
+		// three-parameter function, which surfaces as a wasm validation
+		// error naming neither.
+		for _, fn := range prog.Funcs {
+			if fn.Name == "handle" && fn.Receiver == nil && len(fn.Params) == 3 {
+				return nil, fmt.Errorf("a handler taking process-lifetime state is not supported on the http proxy world: " +
+					"its instance is per-request, so nothing holds the state between calls — use " +
+					"`handle(req: HttpRequest, plat: Platform): HttpResponse`")
+			}
+		}
 		// `handle` is called by the wrapper but the treeshake
 		// walker doesn't see the call (the wrapper lives in
 		// emit-time wasm bytes, not the AST). Same shape for
