@@ -3631,21 +3631,16 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         a = X86Asm { ...a, code: a.code.append(240) };
         return x86_gas_emit(a, lm, lr);
     }
-    // setCC <reg8>: store a condition flag as 0/1.
-    if (mnem == "sete" || mnem == "setz") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 148, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setne" || mnem == "setnz") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 149, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setl") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 156, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setle") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 158, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setg") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 159, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setge") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 157, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setb") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 146, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setbe") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 150, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "seta") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 151, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setae") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 147, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "sets") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 152, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setp") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 154, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setnp") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 155, x86_gas_reg8(rest)) }; return a; }
-    if (mnem == "setns") { a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 153, x86_gas_reg8(rest)) }; return a; }
+    // setCC <reg8>: store a condition flag as 0/1, for any spelling the
+    // shared condition table knows — the aliases (setnae/setnb/setna/setnbe/
+    // setnge/setnl/setng/setnle) included. The second opcode byte is 0x90+cc.
+    if (x86_str_starts_with(mnem, "set")) {
+        var scc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 3, mnem.len()) + "");
+        if (scc >= 0) {
+            a = X86Asm { ...a, code: x86_setcc_reg8(a.code, 144 + scc, x86_gas_reg8(rest)) };
+            return a;
+        }
+    }
     // branch / call: one operand = a label
     // A `*` operand means INDIRECT — through a register or stack slot — not
     // a branch to a label of that name.
@@ -3673,19 +3668,13 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         if (mnem == "jmp") { return x86_jmp_label(a, rest); }
         return x86_call_label(a, rest);
     }
-    if (mnem == "je" || mnem == "jz") { return x86_jcc_label(a, x86_cc_e(), rest); }
-    if (mnem == "jne" || mnem == "jnz") { return x86_jcc_label(a, x86_cc_ne(), rest); }
-    if (mnem == "jge") { return x86_jcc_label(a, x86_cc_ge(), rest); }
-    if (mnem == "jl") { return x86_jcc_label(a, x86_cc_l(), rest); }
-    if (mnem == "jle") { return x86_jcc_label(a, x86_cc_le(), rest); }
-    if (mnem == "jg") { return x86_jcc_label(a, x86_cc_g(), rest); }
-    if (mnem == "jb" || mnem == "jc") { return x86_jcc_label(a, x86_cc_b(), rest); }
-    if (mnem == "jae" || mnem == "jnc") { return x86_jcc_label(a, x86_cc_ae(), rest); }
-    if (mnem == "jbe") { return x86_jcc_label(a, x86_cc_be(), rest); }
-    if (mnem == "ja") { return x86_jcc_label(a, x86_cc_a(), rest); }
-    if (mnem == "js") { return x86_jcc_label(a, x86_cc_s(), rest); }
-    if (mnem == "jns") { return x86_jcc_label(a, x86_cc_ns(), rest); }
-    if (mnem == "jp") { return x86_jcc_label(a, x86_cc_p(), rest); }
+    // jCC <label>: any spelling the shared condition table knows, aliases
+    // (jnae/jnb/jna/jnbe/jnge/jnl/jng/jnle) included. `jmp` is handled above,
+    // and "mp" is not a condition, so it could not be caught here regardless.
+    if (x86_str_starts_with(mnem, "j")) {
+        var jcc: i32 = x86_gas_cc_code(slice_unchecked(mnem, 1, mnem.len()) + "");
+        if (jcc >= 0) { return x86_jcc_label(a, jcc, rest); }
+    }
     // one-operand: push/pop take a register or a memory operand
     if (mnem == "pushq") {
         if (rest.len() > 0 && rest[0] == b'$') { // $imm — 6A ib when it fits
