@@ -68,7 +68,9 @@
 //	  directly via WebAssembly.instantiate against web/wasi-shim.js
 //	  — no component / jco transpile step — to run the compiled
 //	  backend (not the AST interpreter) in-browser. Base64-encoded
-//	  like fernCompileComponent.
+//	  like fernCompileComponent. `_start` ends in proc_exit(main()),
+//	  so the exit code the shim reports is main's own return and
+//	  agrees with what the interpreter pane shows.
 //
 //	fernCompileHttpHandlerCore(src) -> {
 //	    wasm:   string,        // base64 of a wasi:http core module

@@ -178,6 +178,54 @@ func TestCompileCoreWasmRunsUnderWasmtime(t *testing.T) {
 	}
 }
 
+// The page prints an exit line under both Run panes and they disagreed: the
+// interpreter reported main's own return, the wasm run reported 0, because the
+// synthesised `_start` called main and dropped the result. Only an explicit
+// `exit(n)` came through — the case TestCompileCoreWasmRunsUnderWasmtime above
+// happens to use — while `return n`, which most of the page's examples use, did
+// not.
+func TestCompileCoreWasmReportsMainsReturnAsTheExitCode(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH; skipping core-wasm execution check")
+	}
+	for _, tc := range []struct {
+		name     string
+		src      string
+		wantExit int
+		wantOut  string
+	}{
+		{"a-returned-value", `function main(): i32 { return 20; }`, 20, ""},
+		{"zero-stays-success", `function main(): i32 { return 0; }`, 0, ""},
+		{"output-and-a-code", `function main(): i32 {
+  print("both");
+  return 5;
+}`, 5, "both"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bin, err := CompileCoreWasm(tc.src)
+			if err != nil {
+				t.Fatalf("CompileCoreWasm: %v", err)
+			}
+			path := filepath.Join(t.TempDir(), "prog.wasm")
+			if err := os.WriteFile(path, bin, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var sout, serr bytes.Buffer
+			run := exec.Command(wasmtime, "run", path)
+			run.Stdout = &sout
+			run.Stderr = &serr
+			_ = run.Run()
+			if got := run.ProcessState.ExitCode(); got != tc.wantExit {
+				t.Errorf("exit code = %d, want %d (stderr: %s)", got, tc.wantExit, serr.String())
+			}
+			if got := strings.TrimSpace(sout.String()); got != tc.wantOut {
+				t.Errorf("stdout = %q, want %q", got, tc.wantOut)
+			}
+		})
+	}
+}
+
 func TestCompileHttpHandlerCoreStructure(t *testing.T) {
 	src := `
 import "std/http";
