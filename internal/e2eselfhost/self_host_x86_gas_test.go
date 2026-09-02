@@ -524,7 +524,7 @@ function main(): i32 {
     var src: string = ".text\n.globl _start\n_start:\n\tmovabs $17179869184, %rcx\n\tshrq $30, %rcx\n\tbtq $4, %rcx\n\tjc bitok\n\tmovq $1, %rdi\n\tjmp done\nbitok:\n\tincl counter(%rip)\n\tincl counter(%rip)\n\tmovl counter(%rip), %eax\n\tsubq $16, %rsp\n\tmovq $0, 8(%rsp)\n\tmovl $24, 8(%rsp)\n\tmovq 8(%rsp), %rdi\n\taddq %rax, %rdi\n\taddq %rcx, %rdi\n\tcmpq %rcx, 8(%rsp)\n\tja done\n\tmovq $2, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .bss\n.align 8\ncounter: .quad 0\n";
     var a: X86Asm = x86_gas_assemble(src);
     var entry: i32 = x86_label_off(a, "_start");
-    write(string_from_bytes_unchecked(elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, entry)));
+    write(string_from_bytes_unchecked(elf_program_x86(a.code, [], [], a.rodata, a.bss_size, entry)));
     return 0;
 }
 `
