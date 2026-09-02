@@ -59,11 +59,13 @@ by the payload; the **data pointer** that flows through the program points
 - Static / immortal cells carry rc word `0x80000000` (top bit) so
   `is_unique` — and therefore `dec`/`drop` — always skip them.
 
-The SSA path currently makes **no** static cells: even a bare
-`OpConstFunc` value lifts to a heap `OpMakeClosure(0)`. So on the SSA path
-every function value is an `rc == 1` heap cell (the immortal-sentinel case
-only needs to be *honoured* by the helpers, not produced, until/unless the
-SSA path grows `.rodata` cells).
+A bare `OpConstFunc` value lifts to a capture-free `OpMakeClosure(0)`,
+whose four words are all compile-time constants — so both native SSA
+backends emit it as one immortal `.rodata` cell per target rather than
+allocating one per evaluation, alongside the string literals and enum
+sentinels. Those cells are what the immortal sentinel is for here: the
+helpers must honour it, and the reuse pass must read `is_unique` false on
+one, or a token would be handed back pointing at read-only memory.
 
 ## Approach
 
@@ -83,13 +85,21 @@ keeps the emitter simple and matches the native model, and is invisible to
 the differential oracle (exit codes are offset-independent).
 
 No freelist reuse initially: the SSA bump heap never frees. `__fern_free`
-/ the closure-env reclamation can **no-op the physical free** (leak within
-the process) while still performing the *observable* work — deciding
-uniqueness, dispatching the embedded drop-fn over captures. Reuse analysis
-and real reclamation are a later goal-2 slice; leaking is memory-safe and
-correct for short-lived programs (the language's stated use case), and the
-whole-program differential tests still pass because results don't depend
-on reclamation.
+/ the closure-env reclamation **no-op the physical free** (leak within the
+process) while still performing the *observable* work — deciding
+uniqueness, dispatching the embedded drop-fn over captures. Leaking is
+memory-safe, and the whole-program differential tests pass because results
+do not depend on reclamation — but peak RSS is linear in a program's
+allocation volume where the flat backend's is flat, and `CLAUDE.md` puts
+long-running, allocation-heavy programs in scope. So this is a gap the
+`RC-4+` freelist slice below owes, not a settled boundary.
+
+What it is NOT is a speed problem. Disabling the flat backend's freelist
+pop reproduces this backend's memory profile row for row on the
+allocation-heavy benchmarks and costs 3–15% of the time
+(`docs/SSA-REGALLOC-PLAN.md`, "Reclamation is a memory fix, not a speed
+fix"). Build the slice for bounded memory; the benchmark ratios will not
+move.
 
 ### Helper port order (leaf-first)
 

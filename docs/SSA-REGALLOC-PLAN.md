@@ -1013,6 +1013,82 @@ the allocator work in this plan was originally about.
 So phase 4 is blocked on codegen quality in loop bodies, with seven named
 reproducers to work against. Nothing else about it is outstanding.
 
+### What the map-shaped reproducers were actually paying
+
+Two of the named reproducers were not loop-body codegen at all. Both were
+per-call overheads that the map benchmarks execute on every lookup, and both are
+gone.
+
+**A bare function name allocated a closure cell every time it was evaluated.**
+`__map_lookup` picks a hash and an eq function by key kind and hands them to
+`__map_lookup_keyed`. `OpConstFunc` lifts to a capture-free `OpMakeClosure`, and
+both SSA backends bump-allocated that `{fn_idx, env=0, drop_idx=0, 0}` cell —
+40 bytes and a heap-guard call, twice per lookup, for four words that are
+compile-time constants. They are one immortal `.rodata` cell per target now, the
+same shape the string literals and enum sentinels already had, materialised with
+an `adrp`/`add` pair. The lift slice always described this cell as static; only
+the emit was not.
+
+**The raw pokes were out-of-line one-instruction functions.** `__load_i32` /
+`__load_u8` / `__load_i64` / `__load_ptr` / `__store_i32` / `__store_i64` /
+`__store_ptr` / `__ptr_width` / `__str_len` are what `core/map.fern` reaches its
+untyped kv buffer through, several per probe. arm64ssa emitted them as leaf
+helpers and called them; x86_64ssa had no emitter for them at all, so a program
+using one was refused. Both inline them at the call site now, like the array
+index, and the arm64 helper bodies are deleted. The cost was never the `bl` —
+it is that a call makes the allocator save every caller-saved register holding a
+value live across it, which the **stack traffic is the caller-save area**
+section above measures at 92% of this backend's stack traffic.
+
+Ratio to the flat backend, best-of-5 under qemu-aarch64, and peak RSS:
+
+| bench | before | after | RSS before | RSS after | flat RSS |
+|---|---|---|---|---|---|
+| `map_int` | 3.25× | **1.61×** | 20,320 KB | 10,172 KB | 10,300 KB |
+| `map_string` | 2.25× | **1.30×** | 20,696 KB | 10,136 KB | 10,168 KB |
+| `map_probe_chain` | 2.58× | **1.76×** | 119,636 KB | 15,700 KB | 15,828 KB |
+| `utf8_ingest_unchecked` | 1.31× | 1.07× | | | |
+| `utf8_ingest_validated` | 1.24× | 1.05× | | | |
+| `tokenize` | 1.13× | 0.97× | | | |
+| `string_slice` | 0.78× | 0.68× | | | |
+
+No program in the corpus is slower than before, and every exit code still
+matches the flat build's. The memory column is the static cell: the allocation
+those benchmarks were doing per lookup was all of their heap growth, so their
+peak RSS now sits on the flat backend's.
+
+Still slower than flat: `ordmap_insert` 2.31×, `pvec_with` 2.03×, `pmap_insert`
+1.96×, `map_probe_chain` 1.76×, `map_int` 1.61×, `enum_match` 1.13×,
+`map_string` 1.30×, `call_overhead` 1.26×. The three persistent-collection rows
+barely moved, so whatever they pay is a third thing, not these two.
+
+### Reclamation is a memory fix, not a speed fix
+
+The SSA heap never frees (`docs/SSA-RC-RUNTIME.md`), and the obvious reading is
+that the slow benchmarks are slow because their live set grows without bound and
+locality collapses. That reading is wrong, and the control experiment is cheap:
+build the flat backend with its freelist POP disabled — same IR, same frees,
+same everything else, nothing reused.
+
+| bench | flat | flat, no reuse | SSA | flat RSS | no-reuse RSS | SSA RSS |
+|---|---|---|---|---|---|---|
+| `map_probe_chain` | 0.672s | 0.674s | 1.898s | 15,960 KB | 15,832 KB | 119,768 KB |
+| `map_int` | 0.060s | 0.082s | 0.215s | 10,172 KB | 10,172 KB | 20,308 KB |
+| `ordmap_insert` | 0.529s | 0.553s | 1.176s | 10,172 KB | 54,240 KB | 62,560 KB |
+| `pvec_with` | 0.343s | 0.380s | 0.722s | 10,172 KB | 27,376 KB | 28,644 KB |
+| `pmap_insert` | 0.316s | 0.351s | 0.624s | 10,204 KB | 20,076 KB | 22,628 KB |
+
+Turning reuse off reproduces the SSA backend's **memory** profile almost exactly
+— row for row, which is what confirms that the SSA path allocates the same
+volume the flat one does rather than more — and costs **3–15% of the time**,
+against the 2–3.5× being explained. So the freelist slice (`RC-4+`) is worth
+building for what it is, bounded memory in a long-running program, and nobody
+should expect the benchmark ratios to move when it lands.
+
+(`map_probe_chain` is the one row where no-reuse does not reproduce SSA's
+memory: 15.8 MB against 119.6 MB. That gap was the closure cell above, and it
+is closed.)
+
 The lesson is the one this epic keeps relearning in a new costume. Six ceilings
 were found by lifting the previous one, none of them the register allocator; the
 seventh was found by measuring a quantity nobody had measured. `.text` size was

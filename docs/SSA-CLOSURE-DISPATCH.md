@@ -116,9 +116,14 @@ representation real programs use).
 `fn` in the cell is a **code address**:
 
 - `OpMakeClosure` / `OpConstFunc`: store `lea reg, [rip + fnLabel(target)]`
-  at `cell+0`, the env pointer at `cell+8`. (`OpConstFunc` can use a static
-  `.rodata` cell; `OpMakeClosure` uses the `.bss` bump heap already in
-  place.)
+  at `cell+0`, the env pointer at `cell+8`. A CAPTURE-FREE cell (which is
+  what `OpConstFunc` lifts to) is all compile-time constants, so both
+  native backends emit one immortal `.rodata` cell per target — carrying
+  the same `0x80000000` rc header the string literals do — and materialise
+  the value as its address. A capturing one uses the bump heap. Allocating
+  the capture-free cell instead put a bump sequence and a heap-guard call
+  wherever a bare function name was evaluated, which in `core/map` is twice
+  per lookup.
 - `OpCallIndirect`: `mov r11, [ptr+0]` (fn addr); `mov <scratch>, [ptr+8]`
   (env); set up the SysV arg registers as `(args…, env)`; `call r11`
   (register-indirect — `FF /2`, already supported by the assembler). This
