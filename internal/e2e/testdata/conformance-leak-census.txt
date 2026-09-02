@@ -317,6 +317,7 @@ own_tree_match                                       0
 pad_multibyte_fill                                   6
 param_destructure                                    0
 param_destructure_struct                             0
+param_strarr_elem_shared                             0
 path_join                                            0
 prim_recv_array_method                               0
 print                                                0

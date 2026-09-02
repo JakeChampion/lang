@@ -233,6 +233,13 @@ pub struct LocalInfo {
     fn_ret: string,
     fn_opt_ret: string,
     str_own: i32,
+    // str_caller_elem: an is_str slot holding an ELEMENT of a caller-owned
+    // string[] — a parameter's element read directly (`var e = p[i]`, `for e
+    // in p`) or through another such local. The caller frees that array deep,
+    // so a container storing the element takes a second owner and the store
+    // has to be counted; the reclaim walkers cannot see across the call to
+    // withhold the caller's free the way they withhold a local array's.
+    str_caller_elem: boolean,
     // borrowed_arr: an is_arr slot that holds a BORROWED buffer whose owner is
     // some other live value, so the exit dec-sweep must not release it. Set at
     // the only binding form that reads a buffer straight out of a live box
@@ -251,7 +258,11 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, borrowed_arr: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false };
+}
+
+pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
+    return LocalInfo { ...li, str_caller_elem: v };
 }
 
 pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
@@ -1129,6 +1140,33 @@ pub function struct_alias_ident_escapes(e: ast.Expr, s: LowerState): boolean {
     var sl: i32 = s.slot_of(nm);
     if (sl < 0 || sl >= s.n_params) { return false; }
     return decl_is_struct(s.structs, s.struct_type_of_slot(sl));
+}
+
+// strarr_param_slot_of returns the slot when `e` is a bare ident naming a
+// string[] PARAMETER, else -1.
+function strarr_param_slot_of(e: ast.Expr, s: LowerState): i32 {
+    var nm: string = ident_name_or_empty(e);
+    if (nm.len() == 0) { return 0 - 1; }
+    var sl: i32 = s.slot_of(nm);
+    if (sl < 0 || sl >= s.n_params || !s.is_strarr_slot(sl)) { return 0 - 1; }
+    return sl;
+}
+
+// str_param_elem_escapes reports whether `e` evaluates to a string ELEMENT of
+// a caller-owned string[]: a parameter indexed directly (`p[i]`), or a local
+// such a read bound (LocalInfo.str_caller_elem — `var e = p[i]`, `for e in p`,
+// an alias of either). The caller frees that array deep at its own exit, so a
+// container storing the element takes a second owner and the store must be
+// COUNTED — the string sibling of struct_alias_ident_escapes. A LOCAL array's
+// element is deliberately not here: sharing one withdraws the local's deep
+// free (strarr_unsafe_for), so the container holds the only release.
+pub function str_param_elem_escapes(e: ast.Expr, s: LowerState): boolean {
+    match (e) {
+        ast.ExprIndex(ix) => { return strarr_param_slot_of(ix.array, s) >= 0; },
+        ast.ExprIdent(id) => { return s.is_str_caller_elem_slot(s.slot_of(id.name)); },
+        _ => { return false; }
+    }
+    return false;
 }
 
 // is_own_param reports whether `name` is an `own` (consuming) parameter of the
@@ -2455,6 +2493,15 @@ pub function (s: LowerState) str_own_slot(i: i32): i32 {
 
 pub function (s: LowerState) mark_str_own(i: i32, v: i32): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_str_own(s.locals[i], v)) };
+}
+
+// is_str_caller_elem_slot / mark_str_caller_elem query and set LocalInfo.str_caller_elem.
+pub function (s: LowerState) is_str_caller_elem_slot(i: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    return s.locals[i].str_caller_elem;
+}
+pub function (s: LowerState) mark_str_caller_elem(i: i32, v: boolean): LowerState {
+    return LowerState { ...s, locals: s.locals.with(i, li_set_str_caller_elem(s.locals[i], v)) };
 }
 
 // struct_type_of_slot / mark_struct_type query and set slot i's struct type
@@ -12147,6 +12194,9 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     if (!aps.ok) { return aps; }
     aps = lower_expr(c.args[0], aps);
     if (!aps.ok) { return aps; }
+    // An element of a caller-owned string[] is a second owner once stored
+    // (str_param_elem_escapes), here as in the self-append and clone forms.
+    if (str_param_elem_escapes(c.args[0], aps)) { aps = aps.retain_tos("append-param-str-elem"); }
     aps = aps.emit(ir.op_arr_push());
     if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_dec"); }
     return aps;
@@ -14390,6 +14440,12 @@ function lower_expr_array(arr: ast.ExprArray, s: LowerState): LowerState {
             _ => {
                 if (enum_field_read_type(arr.elements[i], sa) != "") {
                     sa = sa.retain_tos("arrlit-enum-field");
+                }
+                // `[p[i]]` over a string[] PARAMETER (str_param_elem_escapes);
+                // the local-routed form is an ident and takes the
+                // slot_is_rc_container retain above.
+                else if (str_param_elem_escapes(arr.elements[i], sa)) {
+                    sa = sa.retain_tos("arrlit-param-str-elem");
                 }
             }
         }
@@ -19390,6 +19446,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // box) -- both are the conservative never-free class. No consumer yet;
     // behaviour-identical.
     if (vt.is_str) { sb = sb.mark_str_own(slot, str_binding_ownership(v.init, se)); }
+    if (vt.is_str) { sb = sb.mark_str_caller_elem(slot, str_param_elem_escapes(v.init, se)); }
     sb = sb.mark_strarr(slot, vt.is_strarr);
     // The type gate the reclaim collector cannot make: confirm here, where the
     // receiver's type is known, that a `SARRB:` candidate really is the builtin.
@@ -21981,6 +22038,9 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // decision reads it yet (CS4 is behaviour-identical).
     if (s.is_str_slot(slot)) {
         if (str_binding_ownership(a.value, s) != s.str_own_slot(slot)) { s = s.mark_str_own(slot, 1); }
+        // Flow-insensitive: once any binding is a caller-owned element, every
+        // later store of the slot is counted (retaining is the safe direction).
+        if (str_param_elem_escapes(a.value, s)) { s = s.mark_str_caller_elem(slot, true); }
     }
     // `d = <expr>` where `d` is a SCALAR `dyn Trait` local (its
     // local_struct_type starts with "dyn "): the RHS coerces to `dyn
@@ -22182,6 +22242,12 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                         if (s.moves_local_at(apel.name, apel.line, apel.col)) { aps = aps.note_moved_elided(apelslot); }
                                         else { aps = aps.retain(apelslot, "append-arrstruct-elem"); }
                                     }
+                                    // A string ELEMENT of a caller-owned array, routed
+                                    // through a local: the caller's deep free is the
+                                    // element's release, so this store is a second owner.
+                                    else if (apelslot >= 0 && s.is_str_caller_elem_slot(apelslot)) {
+                                        aps = aps.retain(apelslot, "append-param-str-elem");
+                                    }
                                 },
                                 // A DIRECT ENUM field read (`branches.append(nxt.node)`)
                                 // escapes the same way, against the k_enum dec of the
@@ -22191,6 +22257,12 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                                 _ => {
                                     if (enum_field_read_type(wc.args[0], aps) != "") {
                                         aps = aps.retain_tos("append-enum-field");
+                                    }
+                                    // `xs.append(p[i])` over a string[] PARAMETER: the
+                                    // element belongs to the caller's array (see
+                                    // str_param_elem_escapes).
+                                    else if (str_param_elem_escapes(wc.args[0], aps)) {
+                                        aps = aps.retain_tos("append-param-str-elem");
                                     }
                                 }
                             }
@@ -23131,7 +23203,10 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     ff = ff.emit(ir.op_store_local(idxslot));
     ff = ff.add_local(fr.var_name);
     var xslot: i32 = ff.slot_of(fr.var_name);
-    if (elem_is_str) { ff = ff.mark_str(xslot, true); }
+    if (elem_is_str) {
+        ff = ff.mark_str(xslot, true);
+        if (aslot < ff.n_params) { ff = ff.mark_str_caller_elem(xslot, true); }
+    }
     if (elem_is_bool) { ff = ff.mark_bool(xslot, true); }
     if (elem_is_f64) { ff = ff.mark_f64(xslot, true); }
     // `for v in <f32[]>`: the element is an f32. Dispatch-only, exactly as the
@@ -24164,6 +24239,12 @@ pub function lower_arr_append_value(obj: ast.Expr, val: ast.Expr, s: LowerState)
     // clean — allocs == frees at live_bytes 0, with a dangling element (#7853).
     if (struct_alias_ident_escapes(val, st)) {
         st = st.retain_tos("clone-append-struct-elem");
+    }
+    // The string sibling: an element of a caller-owned string[] (#6644's
+    // distcheck: the compiler's own reclaimable_credit appended a parameter's
+    // rows into a second array, and the caller's sweep freed them under it).
+    if (str_param_elem_escapes(val, st)) {
+        st = st.retain_tos("clone-append-param-str-elem");
     }
     // The clone (a fresh slice, cap == len) is grown immediately, so this
     // arr_push ALWAYS reallocs — and the clone is sole-owned (just sliced, no
@@ -52782,7 +52863,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, borrowed_arr: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false });
         lzi = lzi + 1;
     }
     // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees
