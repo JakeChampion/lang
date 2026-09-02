@@ -6937,11 +6937,12 @@ func buildStdinBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
 	getStdin := idxs["wasi_get_stdin_p2"]
 	var body []byte
-	// 12-byte Reader struct: rc sentinel @ +0, {handle} @ +8 — matching
-	// the file Reader (buildOpenReaderBodyP2). The leading static rc
+	// 16-byte Reader struct: rc sentinel @ +0, {handle} @ +8,
+	// noDescriptor @ +12 — matching the file Reader
+	// (buildOpenReaderBodyP2). The leading static rc
 	// sentinel keeps __fern_retain / __fern_drop (which mutate mem[ptr-8])
 	// off the preceding static data segment — see issue #2550.
-	body = inst.InstI32Const(body, 12)
+	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 0)
 	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
@@ -6953,6 +6954,9 @@ func buildStdinBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, getStdin) // handle = get-stdin()
 	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, noDescriptor)
+	body = memory.InstI32Store(body, 2, 4)
 	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)

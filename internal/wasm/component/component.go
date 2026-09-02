@@ -1842,12 +1842,15 @@ type FsFeatures struct {
 	// it returns: the pull method and the resource drop come with it,
 	// so one flag covers three imports.
 	ReadDir bool
+	// DropDesc is [resource-drop]descriptor — how a body releases the
+	// descriptor open-at handed it.
+	DropDesc bool
 }
 
 // Any reports whether the request touches the filesystem at all.
 func (f FsFeatures) Any() bool {
 	return f.OpenAt || f.Read || f.Write || f.Append ||
-		f.Unlink || f.Mkdir || f.Rmdir || f.Stat || f.ReadDir
+		f.Unlink || f.Mkdir || f.Rmdir || f.Stat || f.ReadDir || f.DropDesc
 }
 
 // WasiFilesystemTypesPathInstanceTypeBody is the wasi:filesystem/types

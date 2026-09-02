@@ -307,6 +307,9 @@ func Compose(coreBytes []byte, req ComposeRequest, coreExportName string) []byte
 				gImport{iface: fsTypes, name: composeDirStreamDrop, kind: gDrop, resourceT: g.surfaced["directory-entry-stream"]},
 			)
 		}
+		if req.File.DropDesc {
+			g.add(gImport{iface: fsTypes, name: "[resource-drop]descriptor", kind: gDrop, resourceT: g.surfaced["descriptor"]})
+		}
 	}
 
 	// io/streams methods + drops.

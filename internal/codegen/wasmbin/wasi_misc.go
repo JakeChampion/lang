@@ -291,14 +291,14 @@ func buildCachedHandleWriterBodyP2(idxs map[string]uint32, get uint32, initAddr,
 	body = inst.InstI32Const(body, 1)
 	body = memory.InstI32Store(body, 2, 0)
 	body = inst.InstEnd(body)
-	// Writer struct: 12 bytes (rc sentinel @ +0, {handle} @ +8) — the
-	// same layout open_writer's Writer uses. The leading static rc
+	// Writer struct: 16 bytes (rc sentinel @ +0, {handle} @ +8,
+	// noDescriptor @ +12) — the same layout open_writer's Writer uses. The leading static rc
 	// sentinel (0x80000000) is mandatory: the Writer is a refcounted
 	// heap value, so __fern_retain / __fern_drop read & mutate
 	// mem[ptr-8]. Without the header, the first heap object's ptr-8
 	// underflows into the preceding static data segment and retain
 	// corrupts a string literal (issue #2550).
-	body = inst.InstI32Const(body, 12)
+	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 0)
 	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
@@ -311,6 +311,9 @@ func buildCachedHandleWriterBodyP2(idxs map[string]uint32, get uint32, initAddr,
 	body = inst.InstI32Const(body, handleAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI32Const(body, noDescriptor)
+	body = memory.InstI32Store(body, 2, 4)
 	body = inst.InstLocalGet(body, 0)
 	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
