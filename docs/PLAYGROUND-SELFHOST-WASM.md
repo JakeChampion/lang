@@ -296,7 +296,7 @@ gzipped**, built in under a second, all 73 files enumerable at runtime under
 wasmtime. The pass costs nothing measurable: compiling `checker_run.fern` takes
 11.0 s with it and 11.1 s without, over three runs each.
 
-**A compiling and checking playground driver** was the third, and it runs.
+**A compiling, checking and interpreting playground driver** was the third, and it runs.
 `examples/self_host/playground_run.fern` reads a program on stdin, resolves its
 `std/…` imports out of an embedded bundle handed to the module loader as a
 sealed overlay (`modloader.Overlay`), and writes a wasm module. Compiled to
@@ -316,10 +316,10 @@ of magnitude", which the raw figure no longer is.
 
 What is left:
 
-1. **The other entry points.** The driver compiles and checks; the playground
-   also interprets. `-check` selects the diagnostics-only mode from argv and
-   reports `line:col: error[E0XX]: message`, hosted in wasm as well as
-   natively. Its verdict is the diagnostics rather than
+1. **The other entry points — done.** The driver compiles, checks and
+   interprets, each selected from argv. `-check` reports
+   `line:col: error[E0XX]: message` and emits nothing, hosted in wasm as well
+   as natively. Its verdict is the diagnostics rather than
    `ModuleTypes.all_well_typed`, which is false for any program the partial
    checker (#4346) merely cannot model — `import "std/string"` is enough — and
    would fail almost everything with nothing printed. So check under-reports
@@ -341,9 +341,21 @@ What is left:
    `write(1, &byte, 1)`) and `TestX86_64NativePutchar`, so the interpreter was
    the outlier and now writes one byte too.
 
-   What the interpreter still lacks is the rest of the I/O surface:
-   `print_int` / `eprint_int`, the reader/writer handles, and anything touching
-   the filesystem or the clock. The LSP remains the other missing consumer.
+   What the interpreter still lacks is the reader/writer handles and anything
+   touching the filesystem or the clock. (An earlier revision of this list also
+   named `print_int` / `eprint_int`; they are not user-callable — native
+   answers E001 on both. `__fern_print_int` is a runtime helper the backends
+   emit for `i32.to_string`, and a program prints a number by importing
+   `std/i32` and concatenating, which the string arm already covers.)
+
+   The sharper limit was the DRIVER, not the evaluator: `interp_run.fern` has
+   no module loader, so an interpreted program could not resolve `std/i32` and
+   therefore could not turn a number into a string at all — it warns and exits
+   254. `playground_run.fern` already carried the sealed stdlib overlay that
+   answers this, so `-interp` lives there: it evaluates the same bundle the
+   compile path emits, prints the program's own output, and exits with the
+   program's own code. All three panes now have a self-host counterpart, and
+   the LSP is the only missing consumer left.
 2. **JS bindings.** Reachable, contrary to what the stdin/stdout shape suggests:
    `@export("iface", "name")` emits canonical-ABI wrappers into a `-emit
    core-module` build (`wasm_ir.fern:8868`), pulling in `cabi_realloc` for
