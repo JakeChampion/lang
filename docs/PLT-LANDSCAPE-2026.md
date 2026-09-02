@@ -223,8 +223,24 @@ Pony, Hylo, Austral, Granule deeply. The under-mined ones:
 Re-examined and left standing, so nobody re-litigates them from this
 doc: **comptime** stays deferred on `COMPTIME-BRIEF.md`'s trigger
 conditions (nothing since changes them). **Surface effect rows** stay
-deferred — Koka itself demonstrates the annotation burden; Effekt is
-the model *if* the trigger (a real handler corpus) ever fires.
+deferred — and the prototype that could have reversed that instead
+confirmed it. The trigger (a real handler corpus) fired, #5320 built a
+`uses [...]` clause, measured it, and dropped it: what shipped is the
+analysis (`internal/effects`, `fern -effects`) with no surface syntax.
+`EFFECT-ROWS-BRIEF.md` §2 has the four reasons; the shortest is that an
+opt-in clause catches nothing while E070/E066 already answer the
+questions people ask, and `std/platform`'s capability bag is the
+Effekt-shaped answer this survey already preferred.
+
+Its measurement does split the annotation-burden question in two, and
+that part is worth keeping. The burden Koka demonstrates lands on
+higher-order signatures. On the self-hosted compiler it is nil — not one
+of 6,075 functions reaches an effect through a function value. On the
+handler corpus, once `std/platform` gave the bag real capabilities, it is
+315 of 1,184: the handler escapes into `tcp_serve`, so one effectful
+escaping function poisons every indirect call. So the compiler lane and
+the handler lane are not the same question, and any future attempt at
+rows on function TYPES should be argued on the handler lane alone.
 **Salsa-shape query compilation** stays deferred (Carbon's bet is
 aging well; `RESEARCH-ROADMAP.md` Tier F). **SIMD**, **borrow
 checker**, **wasm-GC targeting** (linear-memory RC is the right

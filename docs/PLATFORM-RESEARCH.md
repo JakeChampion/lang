@@ -1029,6 +1029,26 @@ declare a subset (for documentation) and the checker
 verifies. Composes with the Kyo-flavoured effects work
 sketched in `LANGUAGE-DIRECTION.md ▸ Algebraic effects`.
 
+**Prototyped and not adopted** (#5320,
+`docs/EFFECT-ROWS-BRIEF.md`). The clause was built and
+measured, then dropped: it is opt-in so it catches
+nothing by default, E070/E066 already answer the
+questions people ask at the granularity they ask them,
+and the `Platform` bag (Rec §1, now real via
+`std/platform`) is the better answer to the same problem.
+What shipped is the analysis — `fern -effects` — with no
+surface syntax.
+
+Two corrections to the sketch above stand for any future
+attempt. The check runs the other way: a declared row
+must be an UPPER bound on what the function reaches,
+since only that direction is a sound promise to a caller,
+and over-declaration must stay legal so adding an effect
+to a callee does not break every caller. And the labels
+should be `internal/caps`' v1 vocabulary rather than a
+new dotted `io.*` set: a fourth capability vocabulary is
+a cost, not a design.
+
 ### 11. `waitUntil`-shape background work
 
 **Cost: 2 weeks.** **Impact: low until we have observability
