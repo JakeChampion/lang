@@ -79,7 +79,7 @@ enum_scalar__rebind__match                    clean  clean  clean on both sides
 enum_scalar__shadow_siblings__unused          clean  clean  clean on both sides
 enum_scalar__shadow_siblings__match           clean  clean  clean on both sides
 enum_scalar__callarg__read                    clean  clean  the plan-routed escape gate no longer refuses a plain call arg (native parity: computeFreeEligible does not taint call args)
-enum_scalar__callarg__stored_struct           clean  leak   callee returns the arg inside a struct LITERAL, so native now credits the result as a box of its own (findReturnsFreshBox) and reclaims it; the self-host compiler carries its own copy of that taint rule and still leaks. A goal-2 port, not a native gap
+enum_scalar__callarg__stored_struct           clean  leak  a STRUCT FIELD OF ENUM TYPE is never released by the self-host's struct drop. NOT the call taint rule the note here used to name: native stays clean on this cell with findReturnsFreshBox disabled outright, and the same struct built INLINE in main, with no callee at all, already leaks 3,960 B (200 allocs / 101 frees). The call form only makes it total (200 / 0). An ARRAY field is clean on both sides and a scalar-only struct is clean, so the gap is the enum field specifically. See docs/rc-log/2026-09-02-struct-enum-field-drop.md
 enum_scalar__callarg__stored_arr              clean  clean  callee keeps the arg in a returned array: the counted element store retains it, the buffer deep-drop and the caller sweep balance
 tuple_mixed__fnscope__read                    clean  clean  clean on both sides
 tuple_mixed__fnscope__unused                  clean  clean  clean on both sides
