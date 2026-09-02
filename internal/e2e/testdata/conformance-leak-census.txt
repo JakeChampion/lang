@@ -14,9 +14,9 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-01: 455 fixtures, 355 clean, 100 leaking, 44852
+# Measured 2026-09-02: 456 fixtures, 364 clean, 92 leaking, 40830
 # unpaired allocations. The distribution is heavily skewed — the median
-# leaking fixture is 3.5, and regex_captures_assert alone is 37295 of the
+# leaking fixture is 3, and regex_captures_assert alone is 35247 of the
 # total.
 #
 # The counts are pinned; the alloc SITES are not. A site is a runtime
@@ -218,6 +218,7 @@ int_byte_swap                                        0
 int_checked_div                                      0
 int_checked_ops                                      3
 int_div_rem_by_zero                                  0
+int_extend_signedness                                0
 int_min_arithmetic                                   0
 int_saturating_ops                                   0
 int_shift_count_masked                               0
