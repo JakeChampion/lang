@@ -1824,8 +1824,7 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("cmp x1, #16")
 	g.emit("csel x3, x1, x3, hi") // headerBytes = max(16, stride)
 	g.emit("ldur w4, [x0, #-12]") // cap
-	g.emit("mul x5, x4, x1")      // cap * stride
-	g.emit("add x5, x5, x3")      // + headerBytes = size
+	g.emit("madd x5, x4, x1, x3") // size = cap * stride + headerBytes
 	g.emit("sub x0, x0, x3")      // base = data - headerBytes (arg0)
 	g.emit("mov x1, x5")          // size (arg1)
 	g.emit("bl __fern_free")
@@ -2669,8 +2668,7 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("cmp w21, w24")
 	g.emit("csel w24, w21, w24, ge") // w24 = max(stride, 16)
 	// allocSize = headerBytes + newCap * stride
-	g.emit("mul w0, w23, w21")
-	g.emit("add w0, w0, w24")
+	g.emit("madd w0, w23, w21, w24")
 	g.emit("bl __fern_alloc")
 	// x0 = base; new_data = base + headerBytes (in w24).
 	g.emit("add x25, x0, x24")
@@ -2769,8 +2767,7 @@ func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
 	g.emit("cmp w21, w24")
 	g.emit("csel w24, w21, w24, ge")
 	// allocSize = headerBytes + newCap * stride
-	g.emit("mul w0, w23, w21")
-	g.emit("add w0, w0, w24")
+	g.emit("madd w0, w23, w21, w24")
 	g.emit("bl __fern_alloc")
 	g.emit("add x25, x0, x24") // x25 = new_data
 	g.emit("sub w1, w24, #12")
@@ -2875,8 +2872,7 @@ func (g *generator) emitArrPushGrowStrRuntime(moveForm bool) {
 	g.emit("mov w24, #16")
 	g.emit("cmp w21, w24")
 	g.emit("csel w24, w21, w24, ge") // headerBytes = max(16, stride)
-	g.emit("mul w0, w23, w21")
-	g.emit("add w0, w0, w24")
+	g.emit("madd w0, w23, w21, w24")
 	g.emit("bl __fern_alloc")
 	g.emit("add x25, x0, x24") // x25 = new_data
 	g.emit("sub w1, w24, #12")
@@ -2979,8 +2975,7 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	g.emit("cmp w20, w23")
 	g.emit("csel w23, w20, w23, ge")
 	// allocSize = headerBytes + cap * stride.
-	g.emit("mul w0, w22, w20")
-	g.emit("add w0, w0, w23")
+	g.emit("madd w0, w22, w20, w23")
 	g.emit("bl __fern_alloc")
 	g.emit("add x24, x0, x23") // x24 = new_data = base + headerBytes
 	// [base + headerBytes - 12] = cap
@@ -3066,8 +3061,7 @@ func (g *generator) emitArrCowInPlacePtrRuntime(strForm bool) {
 	g.emit("cmp w20, w23")
 	g.emit("csel w23, w20, w23, ge")
 	// allocSize = headerBytes + cap * stride.
-	g.emit("mul w0, w22, w20")
-	g.emit("add w0, w0, w23")
+	g.emit("madd w0, w22, w20, w23")
 	g.emit("bl __fern_alloc")
 	g.emit("add x24, x0, x23") // x24 = new_data = base + headerBytes
 	// [base + headerBytes - 12] = cap
@@ -3162,8 +3156,7 @@ func (g *generator) emitDropArrPtrRuntime() {
 	g.emit("cmp w22, w21")
 	g.emit("b.ge .Ldrop_decarr")
 	// x0 = mem[ptr + i*stride] (ptr-width element load).
-	g.emit("mul x0, x22, x20")
-	g.emit("add x0, x19, x0")
+	g.emit("madd x0, x22, x20, x19")
 	g.emit("ldr x0, [x0]")
 	g.emit("bl __fern_rc_dec")
 	g.emit("add x22, x22, #1")
@@ -3184,8 +3177,7 @@ func (g *generator) emitDropArrPtrRuntime() {
 		g.emit("cmp x20, #16")
 		g.emit("csel x3, x20, x3, hi") // headerBytes = max(16, stride)
 		g.emit("ldur w4, [x19, #-12]") // cap
-		g.emit("mul x1, x4, x20")      // cap * stride
-		g.emit("add x1, x1, x3")       // + headerBytes = size (arg2)
+		g.emit("madd x1, x4, x20, x3") // size = cap * stride + headerBytes (arg2)
 		g.emit("sub x0, x19, x3")      // base = ptr - headerBytes (arg1)
 		g.emit("bl __fern_free")
 		g.emit("mov x0, x19") // return ptr
@@ -3247,10 +3239,9 @@ func (g *generator) emitDropArrStrRuntime() {
 	g.emit("b.ge .Ldrop_arr_str_decarr")
 	// (x0, x1) = (data, len) of element i = (mem[ptr+i*stride],
 	// mem[ptr+i*stride+8]).
-	g.emit("mul x0, x22, x20")
-	g.emit("add x0, x19, x0")  // x0 = &elem[i]
-	g.emit("ldr x1, [x0, #8]") // x1 = elem.len
-	g.emit("ldr x0, [x0]")     // x0 = elem.data
+	g.emit("madd x0, x22, x20, x19") // x0 = &elem[i]
+	g.emit("ldr x1, [x0, #8]")       // x1 = elem.len
+	g.emit("ldr x0, [x0]")           // x0 = elem.data
 	g.emit("bl __fern_str_dec")
 	g.emit("add x22, x22, #1")
 	g.emit("b .Ldrop_arr_str_loop")
@@ -3268,8 +3259,7 @@ func (g *generator) emitDropArrStrRuntime() {
 		g.emit("cmp x20, #16")
 		g.emit("csel x3, x20, x3, hi")
 		g.emit("ldur w4, [x19, #-12]")
-		g.emit("mul x1, x4, x20")
-		g.emit("add x1, x1, x3")
+		g.emit("madd x1, x4, x20, x3")
 		g.emit("sub x0, x19, x3")
 		g.emit("bl __fern_free")
 		g.emit("mov x0, x19")
@@ -3896,9 +3886,7 @@ func (g *generator) emitRmemchrRuntime() {
 	g.emit("sub w6, w6, #1")
 	g.emit("tbnz w6, #31, .Lrmemchr_miss")
 	g.emit("cmp w3, w6")
-	g.emit("b.le .Lrmemchr_from_ok")
-	g.emit("mov w3, w6")
-	g.label(".Lrmemchr_from_ok")
+	g.emit("csel w3, w3, w6, le")
 	g.emit("dup v1.16b, w2")
 	// Vector loop while a whole block still fits BELOW the cursor. That bound
 	// keeps the load in bounds at the LOW end, where __memchr's "16 or more
@@ -5453,11 +5441,9 @@ func (g *generator) emitLcReportRuntime() {
 	g.emit("sub sp, sp, #48") // 32-byte digit buffer + 16 spare
 	g.emit("add x3, sp, #32")
 	g.emit("mov x4, #10")
-	g.emit("mov x5, #0") // sign flag
 	g.emit("cmp x0, #0")
-	g.emit("b.ge .Llc_wrnum_loop")
-	g.emit("neg x0, x0")
-	g.emit("mov x5, #1")
+	g.emit("cneg x0, x0, lt") // |value|
+	g.emit("cset x5, lt")     // sign flag
 	g.label(".Llc_wrnum_loop")
 	g.emit("udiv x6, x0, x4")
 	g.emit("msub x7, x6, x4, x0") // remainder = x0 - q*10
@@ -6716,9 +6702,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	base()
 	pio2Reduce()
 	sinCos, sinNeg, sinDone := g.freshLabel("sinUseCos"), g.freshLabel("sinNeg"), g.freshLabel("sinDone")
-	g.emit("and x13, x10, #1")
-	g.emit("cmp x13, #0")
-	g.emit("b.ne %s", sinCos)
+	g.emit("tbnz x10, #0, %s", sinCos)
 	g.emit("bl __fern_ksin")
 	g.emit("b %s", sinNeg)
 	g.label(sinCos)
@@ -6743,9 +6727,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	base()
 	pio2Reduce()
 	cosSin, cosChk, cosDone := g.freshLabel("cosUseSin"), g.freshLabel("cosChk"), g.freshLabel("cosDone")
-	g.emit("and x13, x10, #1")
-	g.emit("cmp x13, #0")
-	g.emit("b.ne %s", cosSin)
+	g.emit("tbnz x10, #0, %s", cosSin)
 	g.emit("bl __fern_kcos")
 	g.emit("b %s", cosChk)
 	g.label(cosSin)
@@ -6932,15 +6914,12 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	ldc("d3", "one") // accumulator
 	g.emit("fmov d4, d0")
 	g.label(powLoop)
-	g.emit("and x13, x11, #1")
-	g.emit("cmp x13, #0")
-	g.emit("b.eq %s", powSkip)
+	g.emit("tbz x11, #0, %s", powSkip)
 	g.emit("fmul d3, d3, d4")
 	g.label(powSkip)
 	g.emit("fmul d4, d4, d4")
 	g.emit("lsr x11, x11, #1")
-	g.emit("cmp x11, #0")
-	g.emit("b.ne %s", powLoop)
+	g.emit("cbnz x11, %s", powLoop)
 	g.emit("cmp x10, #0")
 	g.emit("b.ge %s", powDone)
 	ldc("d5", "one") // negative exponent: reciprocal
@@ -9074,20 +9053,11 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	} else {
 		g.emit("ldr w9, [x29, #112]") // st_mode (u32 @ +16)
 	}
-	g.emit("mov w11, #61440") // S_IFMT (0xF000)
-	g.emit("and w9, w9, w11")
-	g.emit("mov x23, #0")     // is_file
-	g.emit("mov w10, #32768") // S_IFREG
-	g.emit("cmp w9, w10")
-	g.emit("b.ne .L%s_nf", lp)
-	g.emit("mov x23, #1")
-	g.label(".L" + lp + "_nf")
-	g.emit("mov x24, #0")     // is_dir
-	g.emit("mov w10, #16384") // S_IFDIR
-	g.emit("cmp w9, w10")
-	g.emit("b.ne .L%s_nd", lp)
-	g.emit("mov x24, #1")
-	g.label(".L" + lp + "_nd")
+	g.emit("and w9, w9, #0xf000")                     // S_IFMT
+	g.emit("cmp w9, #32768")                          // S_IFREG
+	g.emit("cset x23, eq")                            // is_file
+	g.emit("cmp w9, #16384")                          // S_IFDIR
+	g.emit("cset x24, eq")                            // is_dir
 	g.emit("ldr x25, [x29, #%d]", 96+g.statSizeOff()) // st_size
 	// FileStat box: is_file @0, is_dir @4, size @8.
 	g.emit("mov x0, #16")

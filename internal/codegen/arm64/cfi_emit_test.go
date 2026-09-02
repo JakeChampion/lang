@@ -218,3 +218,43 @@ func findArm64Gcc(t *testing.T) string {
 	t.Skip("no gcc/clang on PATH that assembles aarch64")
 	return ""
 }
+
+// adoptSrc reaches the runtime helpers the adoption checks look at: array
+// append and drop (string elements, so the element walk is emitted), an
+// aliased element store (the copy-on-write clone), string ordering and
+// float→u64.
+const adoptSrc = `function main(): i32 {
+  var xs: string[] = [];
+  xs = xs.append("a" + "b");
+  xs = xs.append("c");
+  var ys: string[] = xs;
+  ys = ys.append("d");
+  ys = ys.with(0, "z");
+  var lt: boolean = xs[0] < ys[1];
+  var f: f64 = 3.5;
+  var u: u64 = f as u64;
+  if (lt && u == 3u64) { return xs.len(); }
+  return 1;
+}`
+
+// TestRuntimeUsesFusedForms pins the arm64 runtime shapes that use the
+// instructions the assembler gained (#7887): madd for the element-address
+// and allocation-size arithmetic, tbnz/tbz/cbnz for the low-bit tests in the
+// trig and pow kernels, csel/cset/cneg for the clamps and flags. A
+// regression to the two-instruction forms would still be correct, which is
+// why nothing else notices it.
+func TestRuntimeUsesFusedForms(t *testing.T) {
+	asm := compile(t, adoptSrc, Options{})
+	for _, want := range []string{
+		"madd x0, x22, x20, x19", // &elem[i] in the array walks
+		"madd x5, x4, x1, x3",    // __fern_arr_box: size = cap*stride + headerBytes
+		"madd w0, w23, w21, w24", // arr_push allocSize
+	} {
+		if !strings.Contains(asm, want) {
+			t.Errorf("runtime asm no longer contains %q", want)
+		}
+	}
+	if strings.Contains(asm, "\tmul x0, x22, x20\n\tadd x0, x19, x0") {
+		t.Error("runtime asm still computes &elem[i] as mul + add")
+	}
+}
