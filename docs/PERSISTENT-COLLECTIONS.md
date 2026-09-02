@@ -108,7 +108,7 @@ for build / re-insert / remove / lookup / fold on every module.
 
 ## What the compiler needed (fixed in this PR)
 
-Writing the library against the native compiler found five bugs, all fixed
+Writing the library against the native compiler found seven bugs, all fixed
 at their source with tests:
 
 1. **Monomorphiser: an array of a generic enum inside its own variant**
@@ -144,13 +144,42 @@ at their source with tests:
    because the default width is recorded as zero; it now fires only when
    every T-bearing argument is literal-shaped. Pre-existing on `main`; pinned
    by `TestCastDoesNotRetargetPinnedGenericCall`.
+6. **RC leak: an `own` array accumulator threaded through recursion lost a
+   buffer per call.** `rhsTainted` tainted `acc = into(l, acc)` whenever
+   another argument was borrow-tainted (a binding of a borrowed enum), so
+   `acc` lost `freeEligible`, `return acc` took the borrow-style transfer
+   inc with no exit dec, and the next append after the call boundary copied
+   and stranded the source. The ordered map only escaped because its
+   single-payload enum is owned-by-default. An `own` parameter now seeds
+   the fresh set in `findReturnsFreshBox` and stays fresh through owned
+   rebinds. Pinned by `own_accumulator_fresh_return_test.go` and the
+   `rc_own_accumulator_recursion` e2e census (x86-64 and wasm).
+7. **RC leak: a fresh call result stored into a variant payload through a
+   borrowed parameter was stranded at rc 2** — `inferParamCountedRetain`
+   had no credit for a variant-constructor payload store, so the caller
+   never released the temp the constructor had retained. This is what
+   leaked every string key on insert. `variantCtorCountedIn` now credits
+   the store under exactly `emitEnumNew`'s inc gate (payload-carrying
+   variant, rc-eligible enum, no consuming-match-reuse site), and a
+   variant construction counts as a fresh box in `returnsOwnBox`. Pinned
+   by `variant_payload_counted_retain_test.go` and the
+   `rc_variant_payload_arg_temp` e2e census. String-keyed inserts into
+   both maps now leak zero blocks.
 
-The self-hosted compiler needed its own fixes (its monomorphiser did not
+The self-hosted compiler needed its own fixes: its monomorphiser did not
 recover a generic instantiation from a clone-typed match binding, an indexed
-element, or a generic-struct field read, and could not pin a bare nullary
-variant in a payload position); those live in `examples/self_host/parser.fern`
-with rows in `internal/e2eselfhost/self_host_generic_ctor_ir_test.go` and a
-wasm leg.
+element, or a generic-struct field read; could not pin a bare nullary variant
+in a payload position; and instantiated the free generics a generic-struct
+method reaches with the struct's own type variables (`__om_insert__K__V`),
+so every chain below `insert` dangled. Its rc lowering also returned a
+match-bound array payload without a transfer retain (a use-after-free in the
+vector's leaf descent under FERN_SANITIZE=1). Those live in
+`examples/self_host/parser.fern` / `irlower.fern`, with rows in
+`internal/e2eselfhost/self_host_generic_ctor_ir_test.go` (x86-64 and wasm
+legs), `self_host_stdlib_modules_ir_test.go` (all five modules through the
+self-host loader), and `self_host_arr_return_transfer_ir_test.go`. The
+self-host does not yet reclaim these structures' nodes (the RECLAIM half of
+goal 2), so its unique path allocates where native reuses; the answers agree.
 
 ## What the compiler still owes them (measured, tracked)
 
@@ -158,18 +187,6 @@ Each of these is a native rc precision gap the library works around by
 choosing a shape; none affects correctness, and the sanitizer census is the
 gate for closing them.
 
-- **A fresh call result passed to a borrowed parameter that stores it in a
-  variant payload is stranded at rc 2** (`inferParamCountedRetain` has no
-  variant-constructor credit). This is why the library binds every recursive
-  result to a local before handing it to `__om_balance` / `__hm_pair`, and it
-  is why `m.insert("k" + i.to_string(), v)` still leaks the key string for a
-  string-keyed node (2,033 blocks over 500 inserts in the census). The fix is
-  the credit, mirroring `emitEnumNew`'s inc gate exactly.
-- **An `own` array accumulator threaded through recursion leaks one buffer
-  per call** — the flat loop is clean, every recursive form copies once per
-  frame and strands the source. `keys()` / `values()` / `to_array()` over the
-  32-way nodes pay this (one buffer per leaf); the ordered map's two-way
-  recursion happens not to.
 - **Array-carrying and string-carrying enums are excluded from
   owned-by-default** (`isOwnedByDefaultType`, `typeIsStringArrayFree`), so a
   HAMT or vector node is always a borrow inside the update and its child
@@ -179,7 +196,9 @@ gate for closing them.
   it needs) turns the unique path of both into the zero-copy path the ordered
   map already has.
 - **A closure argument allocated per loop iteration is not reclaimed**
-  (`update(k, f)` in a loop: one env box per call).
+  (`update(k, f)` in a loop: one env box per call), and the split / join /
+  glue paths of `union`, `filter` and `update` still strand some nodes
+  (199 / 502 / 1,001 blocks in the census on 1,000-entry maps).
 - **A method-call temp used as a receiver leaks its box**
   (`a.union(b).len()`), the existing "method results that may alias the
   receiver" fallback.
@@ -195,8 +214,8 @@ the alternative allocating or leaking.
 - **Bound methods, never operators**, on type-parameter values (`k.cmp(nk)`,
   `k.eq(other)`, `k.hash()`): `==` resolves through a `Type.eq` lookup the
   defining module cannot see (#6846).
-- **Recursive results bound to locals** before being passed on (the stranded
-  temp above).
+- **Recursive results bound to locals** before being passed on — the shape
+  the counted-retain analysis credits most precisely.
 - **Bitmap arithmetic in i32, logical shifts through `u32`**, popcount via
   `count_ones()` — `u32 +` / `<<` are not truncated on every self-host
   backend.
