@@ -33,10 +33,11 @@ func freshBoxFor(t *testing.T, src string) map[string]bool {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if _, err := checker.Check(prog); err != nil {
+	info, err := checker.Check(prog)
+	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	return findReturnsFreshBox(prog, map[string]bool{}, map[string]bool{})
+	return findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{})
 }
 
 func TestReturnedAliasCountsAsAFreshBox(t *testing.T) {
@@ -77,7 +78,8 @@ func TestPairFormAndTrmcAreRefusedTheAliasCredit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if _, err := checker.Check(prog); err != nil {
+	info, err := checker.Check(prog)
+	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
 	for _, tc := range []struct {
@@ -87,7 +89,7 @@ func TestPairFormAndTrmcAreRefusedTheAliasCredit(t *testing.T) {
 		{"pair-form", map[string]bool{"pick_index": true}, map[string]bool{}},
 		{"trmc", map[string]bool{}, map[string]bool{"pick_index": true}},
 	} {
-		if findReturnsFreshBox(prog, tc.pair, tc.trm)["pick_index"] {
+		if findReturnsFreshBox(prog, info, tc.pair, tc.trm)["pick_index"] {
 			t.Errorf("%s: returnsFreshBox[pick_index] = true, want false — that "+
 				"rewrite returns before the transfer inc is emitted", tc.what)
 		}

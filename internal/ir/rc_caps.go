@@ -36,6 +36,7 @@ package ir
 
 import (
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/checker"
 )
 
 // rcTrackedSlotType reports whether a local/param SLOT of this type holds an
@@ -146,7 +147,7 @@ func (b *builder) typeIsStringArrayFree(t ast.Type, seen map[string]bool) bool {
 	return false
 }
 
-func (b *builder) typeTransitivelyContainsMap(t ast.Type, seen map[string]bool) bool {
+func typeTransitivelyContainsMap(info *checker.Info, t ast.Type, seen map[string]bool) bool {
 	switch ty := t.(type) {
 	case ast.StructType:
 		if ty.Name == "Map" {
@@ -156,45 +157,45 @@ func (b *builder) typeTransitivelyContainsMap(t ast.Type, seen map[string]bool) 
 			return false
 		}
 		seen["s:"+ty.Name] = true
-		sd, ok := b.info.Structs[ty.Name]
+		sd, ok := info.Structs[ty.Name]
 		if !ok {
 			return false
 		}
 		for _, f := range sd.Fields {
-			if b.typeTransitivelyContainsMap(f.Type, seen) {
+			if typeTransitivelyContainsMap(info, f.Type, seen) {
 				return true
 			}
 		}
 		return false
 	case ast.EnumType:
-		return b.enumTransitivelyContainsMap(ty.Name, seen)
+		return enumTransitivelyContainsMap(info, ty.Name, seen)
 	case ast.TupleType:
 		for _, e := range ty.Elems {
-			if b.typeTransitivelyContainsMap(e, seen) {
+			if typeTransitivelyContainsMap(info, e, seen) {
 				return true
 			}
 		}
 		return false
 	case ast.ArrayType:
-		return b.typeTransitivelyContainsMap(ty.Elem, seen)
+		return typeTransitivelyContainsMap(info, ty.Elem, seen)
 	case ast.SliceType:
-		return b.typeTransitivelyContainsMap(ty.Elem, seen)
+		return typeTransitivelyContainsMap(info, ty.Elem, seen)
 	}
 	return false
 }
 
-func (b *builder) enumTransitivelyContainsMap(enumName string, seen map[string]bool) bool {
+func enumTransitivelyContainsMap(info *checker.Info, enumName string, seen map[string]bool) bool {
 	if seen["e:"+enumName] {
 		return false
 	}
 	seen["e:"+enumName] = true
-	ed, ok := b.info.Enums[enumName]
+	ed, ok := info.Enums[enumName]
 	if !ok {
 		return true // unknown / generic-erased — conservative (exclude)
 	}
 	for _, v := range ed.Variants {
 		for _, pl := range v.Payloads {
-			if b.typeTransitivelyContainsMap(pl, seen) {
+			if typeTransitivelyContainsMap(info, pl, seen) {
 				return true
 			}
 		}
@@ -266,7 +267,13 @@ func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
 // body, and Map key/value reclamation is itself an open gap. Excluded enums keep
 // the move model (flag-off behaviour) at every site, a documented safe leak.
 func (b *builder) enumRcPayloadsEligible(enumName string) bool {
-	return ast.EnumRcPayloads && !b.enumTransitivelyContainsMap(enumName, map[string]bool{})
+	return enumRcPayloadsEligibleIn(b.info, enumName)
+}
+
+// enumRcPayloadsEligibleIn is enumRcPayloadsEligible for a pass that runs
+// before any builder exists (inferParamCountedRetain).
+func enumRcPayloadsEligibleIn(info *checker.Info, enumName string) bool {
+	return ast.EnumRcPayloads && !enumTransitivelyContainsMap(info, enumName, map[string]bool{})
 }
 
 // enumRcPayloadsEligibleForValue is the expression form: true when `e` is a
