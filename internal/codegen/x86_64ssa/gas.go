@@ -16,6 +16,37 @@ import (
 // first six integer/pointer args arrive in these registers, in order.
 var sysvArgRegs = []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 
+// stackArgCount is how many of n arguments travel on the stack rather than in
+// sysvArgRegs. Arguments past the sixth are the caller's to push, so this is a
+// property of a call site, not a limit on how many parameters a function has.
+func stackArgCount(n int) int {
+	if n <= len(sysvArgRegs) {
+		return 0
+	}
+	return n - len(sysvArgRegs)
+}
+
+// inArgMem is where the callee finds the argument that landed in stack-argument
+// position k. The frame is rbp-based (push rbp; mov rbp, rsp), so the saved rbp
+// is at [rbp], the return address at [rbp + 8], and the first stack argument at
+// [rbp + 16].
+func inArgMem(k int) string { return fmt.Sprintf("qword ptr [rbp + %d]", 16+8*k) }
+
+// pushStackArgs pushes the arguments past the register half, highest index
+// first, so the lowest-numbered stack argument ends up at [rsp] when the call
+// executes — which is where the callee's inArgMem(0) reads it from.
+func pushStackArgs(argLocs []Loc) []string {
+	var out []string
+	for i := len(argLocs) - 1; i >= len(sysvArgRegs); i-- {
+		if l := argLocs[i]; l.IsReg {
+			out = append(out, fmt.Sprintf("push %s", reg(l.Reg)))
+		} else {
+			out = append(out, fmt.Sprintf("push qword ptr %s", slotMem(l.Slot)))
+		}
+	}
+	return out
+}
+
 // EmitAsm lowers an SSA function to a complete, runnable x86-64 GAS program
 // (Intel syntax) with a `_start` that calls the function with no arguments and
 // exits with its return value. See EmitAsmArgs for the parameterised form.
@@ -71,9 +102,6 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		if err != nil {
 			return "", fmt.Errorf("emit %q: %w", name, err)
 		}
-		if len(p.ParamLocs) > len(sysvArgRegs) {
-			return "", fmt.Errorf("x86_64ssa: %q has %d params, real-asm supports up to %d", name, len(p.ParamLocs), len(sysvArgRegs))
-		}
 		if p.NumRegFile > len(gpRegs) {
 			return "", fmt.Errorf("x86_64ssa: %q needs %d registers but only %d are available", name, p.NumRegFile, len(gpRegs))
 		}
@@ -124,14 +152,29 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	if heap {
 		emitHeapReserve(w)
 	}
-	// Load the entry arguments into the SysV argument registers before the call.
-	for i := range ep.ParamLocs {
-		var v int64
+	// Load the entry arguments before the call: the first six in the SysV
+	// argument registers, the rest pushed. The kernel enters _start with rsp
+	// 16-aligned, so an odd number of stack arguments needs a pad to keep the
+	// callee's own frame aligned.
+	entryStack := stackArgCount(len(ep.ParamLocs))
+	entryArg := func(i int) int64 {
 		if i < len(entryArgs) {
-			v = entryArgs[i]
+			return entryArgs[i]
 		}
-		w("\tmov %s, %d", sysvArgRegs[i], v)
+		return 0
 	}
+	if entryStack%2 != 0 {
+		w("\tsub rsp, 8")
+	}
+	for i := len(ep.ParamLocs) - 1; i >= len(sysvArgRegs); i-- {
+		w("\tmov rax, %d", entryArg(i))
+		w("\tpush rax")
+	}
+	for i := 0; i < len(ep.ParamLocs) && i < len(sysvArgRegs); i++ {
+		w("\tmov %s, %d", sysvArgRegs[i], entryArg(i))
+	}
+	// No cleanup after the call: _start exits through the syscall below and
+	// never returns, so the pushed arguments die with the process.
 	w("\tcall %s", fnLabel(entry))
 	w("\tmov edi, eax")     // exit code = return value
 	w("\tmov eax, %d", 231) // sysExitGroup
@@ -273,7 +316,7 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	for i, r := range saved {
 		w("\tmov %s, %s", savedSlot(i), reg(r))
 	}
-	for _, line := range paramMoveLines(p.ParamLocs) {
+	for _, line := range paramMoveLines(p.ParamLocs, scratch) {
 		w("\t%s", line)
 	}
 
@@ -474,27 +517,37 @@ func callSavedSet(in Inst, numAlloc int) []int {
 
 // callLines renders a direct call under the System V ABI. Only the caller-saved
 // registers holding values live across the call are preserved (callSavedSet).
-// Arguments are passed via the stack — pushed from their homes then popped into
-// the arg registers — so the home→arg-register shuffle can't clobber a
-// not-yet-consumed source. The result (rax) is captured into the scratch
-// register, which is never in the saved set, so the restores don't overwrite it.
+// The first six arguments move from their homes into rdi/rsi/… as a parallel
+// copy (argMoveLines); the rest are pushed, and pushed FIRST, because that copy
+// is what scrambles the homes they read. The result (rax) is captured into the
+// scratch register, which is never in the saved set, so the restores don't
+// overwrite it.
 func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
-	if len(in.ArgLocs) > len(sysvArgRegs) {
-		return nil, fmt.Errorf("x86_64ssa: real-asm call supports up to %d args, got %d", len(sysvArgRegs), len(in.ArgLocs))
-	}
 	saved := callSavedSet(in, numAlloc)
+	nStack := stackArgCount(len(in.ArgLocs))
 	var out []string
-	// 16-byte stack alignment at the call: the args no longer touch the stack,
-	// so only the pad + saved pushes shift rsp. Pad to make their count even.
-	pad := (len(saved) % 2) * 8
+	// 16-byte stack alignment at the call: rsp is 16-aligned in the body, and
+	// the pad, the saved registers and the stack arguments are all that shift
+	// it, so pad to make their combined count even.
+	pad := ((len(saved) + nStack) % 2) * 8
 	if pad != 0 {
 		out = append(out, "sub rsp, 8")
 	}
 	for _, r := range saved {
 		out = append(out, fmt.Sprintf("push %s", reg(r)))
 	}
-	out = append(out, argMoveLines(in.ArgLocs)...)
+	// The stack arguments are pushed before the register half is shuffled: they
+	// read the arguments' homes, and argMoveLines is what scrambles those.
+	out = append(out, pushStackArgs(in.ArgLocs)...)
+	regArgs := in.ArgLocs
+	if nStack > 0 {
+		regArgs = in.ArgLocs[:len(sysvArgRegs)]
+	}
+	out = append(out, argMoveLines(regArgs)...)
 	out = append(out, fmt.Sprintf("call %s", fnLabel(in.Callee)))
+	if nStack > 0 {
+		out = append(out, fmt.Sprintf("add rsp, %d", 8*nStack))
+	}
 	restore := func() {
 		for i := len(saved) - 1; i >= 0; i-- {
 			out = append(out, fmt.Sprintf("pop %s", reg(saved[i])))
@@ -563,15 +616,12 @@ func inSaveSet(saved []int, r int) bool {
 // the module function-address table (fnTableSym); env_ptr (at +8) is appended as the
 // callee's LAST argument (docs/SSA-CLOSURE-DISPATCH.md). Caller-saved registers
 // are conservatively preserved as in callLines. The resolved target address is
-// stashed on the stack across the argument-register shuffle (so no scratch
-// register needs to dodge the arg registers), then popped into rax — never an
-// argument register, and its own live value is already in the caller-saved set —
-// and called register-indirect.
+// stashed on the stack across the argument shuffle (so no scratch register needs
+// to dodge the arg registers) and read back into rax — never an argument
+// register, and its own live value is already in the caller-saved set — to be
+// called register-indirect. It is read rather than popped because any stack
+// arguments sit between it and rsp, waiting for the callee.
 func callIndirectLines(in Inst, numAlloc, scratch int) ([]string, error) {
-	if len(in.ArgLocs)+1 > len(sysvArgRegs) {
-		return nil, fmt.Errorf("x86_64ssa: real-asm indirect call supports up to %d args incl. env, got %d",
-			len(sysvArgRegs), len(in.ArgLocs)+1)
-	}
 	s0 := numAlloc     // env staging (free during this inst)
 	s1 := numAlloc + 1 // fn_idx, then the resolved target address
 	var out []string
@@ -597,31 +647,52 @@ func callIndirectLines(in Inst, numAlloc, scratch int) ([]string, error) {
 	)
 	// Preserve the caller-saved registers live across the call (see callLines).
 	saved := callSavedSet(in, numAlloc)
-	pad := (len(saved) % 2) * 8
+	// The env pointer rides as the callee's final argument, so the argument
+	// sequence is one longer than ArgLocs.
+	nArgs := len(in.ArgLocs) + 1
+	nStack := stackArgCount(nArgs)
+	nReg := nArgs - nStack
+	// Everything below the call shifts rsp by 8: the pad, the saved registers,
+	// the stashed target, and the stack arguments. The register-half pushes are
+	// popped again before the call, so they do not count.
+	pad := ((len(saved) + 1 + nStack) % 2) * 8
 	if pad != 0 {
 		out = append(out, "sub rsp, 8")
 	}
 	for _, r := range saved {
 		out = append(out, fmt.Sprintf("push %s", reg(r)))
 	}
-	// Stash the target address (deepest), then push the args (arg0 first) and the
-	// env pointer last, so env lands in the callee's final parameter register.
-	out = append(out, fmt.Sprintf("push %s", reg(s1)))
-	for _, l := range in.ArgLocs {
-		stage(scratch, l)
+	// pushArg pushes the i'th argument in the callee's numbering; the last one
+	// is the env pointer, already staged in s0.
+	pushArg := func(i int) {
+		if i == nArgs-1 {
+			out = append(out, fmt.Sprintf("push %s", reg(s0)))
+			return
+		}
+		stage(scratch, in.ArgLocs[i])
 		out = append(out, fmt.Sprintf("push %s", reg(scratch)))
 	}
-	out = append(out, fmt.Sprintf("push %s", reg(s0))) // env — last argument
-	// Pop into arg registers in reverse (env is the highest-indexed arg), then
-	// recover the target address into rax and call it.
-	n := len(in.ArgLocs)
-	for i := n; i >= 0; i-- {
+	// Stash the target address deepest, then the stack arguments highest-index
+	// first so the lowest lands at [rsp] once the register half is popped off,
+	// then the register half (arg0 first) to be popped into its registers.
+	out = append(out, fmt.Sprintf("push %s", reg(s1)))
+	for i := nArgs - 1; i >= nReg; i-- {
+		pushArg(i)
+	}
+	for i := 0; i < nReg; i++ {
+		pushArg(i)
+	}
+	// Pop into arg registers in reverse, then recover the target address and
+	// call it. The target sits above the stack arguments, which stay in place
+	// for the callee to read.
+	for i := nReg - 1; i >= 0; i-- {
 		out = append(out, fmt.Sprintf("pop %s", sysvArgRegs[i]))
 	}
 	out = append(out,
-		"pop rax", // recover the stashed target address
+		fmt.Sprintf("mov rax, qword ptr [rsp + %d]", 8*nStack), // recover the stashed target
 		"call rax",
 		fmt.Sprintf("mov %s, rax", reg(scratch)), // capture result
+		fmt.Sprintf("add rsp, %d", 8*(nStack+1)), // drop the stack args + the stash
 	)
 	for i := len(saved) - 1; i >= 0; i-- {
 		out = append(out, fmt.Sprintf("pop %s", reg(saved[i])))
@@ -725,24 +796,45 @@ func gpIndex(name string) int {
 //     break one with `xchg` and redirect the moves that read the swapped
 //     register. (Sources and destinations are each distinct, so this is the
 //     standard parallel-move resolution and always terminates.)
-func paramMoveLines(paramLocs []Loc) []string {
+//   - Stack params last. Their homes may be argument registers that steps A and
+//     B still need as sources, and by here those are all consumed. A slot-homed
+//     one goes through `scratch`, since x86 has no memory-to-memory mov.
+func paramMoveLines(paramLocs []Loc, scratch int) []string {
 	var out []string
+	regParams := paramLocs
+	if len(regParams) > len(sysvArgRegs) {
+		regParams = regParams[:len(sysvArgRegs)]
+	}
 	// Step A: slot-homed params (read arg regs, write memory).
-	for i, loc := range paramLocs {
+	for i, loc := range regParams {
 		if !loc.IsReg && loc.Slot >= 0 {
 			out = append(out, fmt.Sprintf("mov %s, %s", slotMem(loc.Slot), sysvArgRegs[i]))
 		}
 	}
 	// Step B: register-homed params — parallel register copy.
 	var moves [][2]int // {dst, src} gpRegs indices
-	for i, loc := range paramLocs {
+	for i, loc := range regParams {
 		if loc.IsReg {
 			if src := gpIndex(sysvArgRegs[i]); src != loc.Reg {
 				moves = append(moves, [2]int{loc.Reg, src})
 			}
 		}
 	}
-	return append(out, resolveRegMoves(moves)...)
+	out = append(out, resolveRegMoves(moves)...)
+	// Step C: stack params.
+	for i := len(sysvArgRegs); i < len(paramLocs); i++ {
+		loc := paramLocs[i]
+		mem := inArgMem(i - len(sysvArgRegs))
+		switch {
+		case loc.IsReg:
+			out = append(out, fmt.Sprintf("mov %s, %s", reg(loc.Reg), mem))
+		case loc.Slot >= 0:
+			out = append(out,
+				fmt.Sprintf("mov %s, %s", reg(scratch), mem),
+				fmt.Sprintf("mov %s, %s", slotMem(loc.Slot), reg(scratch)))
+		}
+	}
+	return out
 }
 
 // argMoveLines moves call arguments from their allocated homes into the System V
