@@ -51,6 +51,17 @@ on:
       - "internal/stdlib/**"
       - "Makefile"
       - ".github/workflows/bootstrap.yml"
+  # Also on main: a rebase-merge replays commits onto a main their PR's CI never
+  # saw, so a coupling between two individually-green PRs exists only in the
+  # merge. Filter mirrors the pull_request one; pinned by TestGateLanesRunOnMain.
+  push:
+    branches: [main]
+    paths:
+      - "bootstrap/**"
+      - "examples/self_host/**"
+      - "internal/stdlib/**"
+      - "Makefile"
+      - ".github/workflows/bootstrap.yml"
   workflow_dispatch:
     inputs:
       publish:
@@ -58,8 +69,11 @@ on:
         type: boolean
         default: false
 
+# Main runs key on the SHA rather than the ref: back-to-back merges each keep
+# their own run, so a failure names the merge that caused it rather than the
+# newest of several.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: true
 
 permissions:

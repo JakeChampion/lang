@@ -137,3 +137,135 @@ func onBlock(src string) (string, bool) {
 	}
 	return b.String(), true
 }
+
+// lifecycleHookLanes are `pull_request` workflows that launch no test suite, so
+// there is nothing for a main run to prove.
+var lifecycleHookLanes = map[string]bool{
+	// Fires once when a PR closes, to reap that branch's orphaned runs.
+	"cancel-on-merge.yml": true,
+}
+
+// Every gate lane runs on main as well as on the pull request, with the same
+// path filter on both.
+//
+// PRs here are rebase-merged, so each commit lands on a main that its own PR's
+// CI never saw: a coupling between two individually-green PRs exists only in
+// the combination, and only a run against the merge reports it. For a long
+// time only test-units.yml and check-sources.yml covered main, which left the
+// compiler suite — every e2e lane, the fuzzers, the fixpoints — proving
+// something about PR heads and nothing at all about the branch people ship
+// from. A red main was discoverable only by dispatching the lanes by hand.
+//
+// The two halves are checked together because either alone is a silent gap: a
+// push trigger whose filter has drifted from the pull_request one runs a
+// different set of merges than it runs PRs, which is worse than not running.
+func TestGateLanesRunOnMain(t *testing.T) {
+	dir := filepath.Join("..", "..", ".github", "workflows")
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read workflows: %v", err)
+	}
+
+	var checked []string
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yml") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		src := string(b)
+
+		on, ok := onBlock(src)
+		if !ok || !strings.Contains(on, "pull_request:") {
+			continue
+		}
+		if lifecycleHookLanes[e.Name()] || strings.Contains(on, "types: [closed]") {
+			continue
+		}
+		checked = append(checked, e.Name())
+
+		push, ok := triggerBlock(on, "push")
+		if !ok {
+			t.Errorf("%s gates pull requests but not main: add a `push: branches: [main]` "+
+				"trigger mirroring its pull_request filter, or list it in "+
+				"lifecycleHookLanes if it launches no suite", e.Name())
+			continue
+		}
+		if !strings.Contains(push, "branches: [main]") {
+			t.Errorf("%s: push trigger is not scoped to main — every branch would "+
+				"fire it twice, once for the push and once for the PR", e.Name())
+		}
+
+		pr, ok := triggerBlock(on, "pull_request")
+		if !ok {
+			t.Errorf("%s: pull_request trigger found by substring but not by block — "+
+				"did the `on:` format change?", e.Name())
+			continue
+		}
+		if got, want := pathFilter(push), pathFilter(pr); got != want {
+			t.Errorf("%s: the push filter has drifted from the pull_request one, so "+
+				"main and PRs run different sets of changes\n  push:         %s\n  pull_request: %s",
+				e.Name(), got, want)
+		}
+
+		// A ref-keyed group with cancel-in-progress cannot report on main at
+		// all once merges land faster than the lane runs: each merge cancels
+		// the previous main run before it finishes.
+		if strings.Contains(src, "cancel-in-progress: true") &&
+			!strings.Contains(src, "github.ref == 'refs/heads/main' && github.sha") {
+			t.Errorf("%s: main runs share a concurrency group and cancel each other. "+
+				"Key main on the SHA (see test-units.yml) so back-to-back merges "+
+				"each keep their own run", e.Name())
+		}
+	}
+
+	if len(checked) == 0 {
+		t.Fatal("no pull_request workflows found — did the `on:` format change?")
+	}
+	sort.Strings(checked)
+}
+
+// triggerBlock returns the body of one trigger inside an `on:` mapping —
+// everything indented under `  <name>:` up to the next key at that indent.
+func triggerBlock(on, name string) (string, bool) {
+	lines := strings.Split(on, "\n")
+	start := -1
+	for i, l := range lines {
+		if l == "  "+name+":" || strings.HasPrefix(l, "  "+name+": ") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	var b strings.Builder
+	for _, l := range lines[start+1:] {
+		if strings.TrimSpace(l) != "" && !strings.HasPrefix(l, "    ") {
+			break
+		}
+		b.WriteString(l)
+		b.WriteString("\n")
+	}
+	return b.String(), true
+}
+
+// pathFilter reduces a trigger body to its filter kind plus its quoted
+// entries, so two triggers compare equal when they select the same changes
+// however their comments and blank lines differ.
+func pathFilter(block string) string {
+	kind := "(none)"
+	var entries []string
+	for _, l := range strings.Split(block, "\n") {
+		t := strings.TrimSpace(l)
+		switch {
+		case t == "paths:" || t == "paths-ignore:":
+			kind = t
+		case strings.HasPrefix(t, `- "`):
+			entries = append(entries, strings.TrimPrefix(t, "- "))
+		}
+	}
+	return kind + " " + strings.Join(entries, " ")
+}

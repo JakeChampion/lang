@@ -42,8 +42,14 @@ on:
   # rebase-merge replays commits onto a main their PR's CI never saw, so a
   # semantic coupling between two individually-green PRs only exists in the
   # combination — and only a run against the merge itself can report it.
+  # Filter mirrors the pull_request one; pinned by TestGateLanesRunOnMain.
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "LICENSE"
+      - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
 
 # Supersede an in-flight run for the same ref: a new push to the
