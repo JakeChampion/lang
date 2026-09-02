@@ -3863,6 +3863,17 @@ function func_ret_type(fd: parser.FuncDecl, structs: StructSig[], unions: UnionS
   if (fd.ret_str) {
     return t_str();
   }
+  // A fn-VALUE return coarsens to the flat "fn" / "fn[]" tag, so the declared
+  // result comes from the ret_fn_ret sidecar — which is what types `mk()(4.5)`,
+  // whose callee is this call. The function-level sibling of var_declared_type's
+  // and collect_struct_sigs' arms, opaque for the same reason: the parameter
+  // spellings exist to name a funcref in irlower, and checking arguments against
+  // them here would reject calls that type-check today (#5986).
+  if (fd.ret_fn_ret.len() > 0) {
+    var rt: Type = type_from_name_erasing_tparams(fd.ret_fn_ret, fd.type_params, structs, unions);
+    if (fd.ret_type == "fn") { return t_func_opaque(rt); }
+    if (fd.ret_type == "fn[]") { return t_array(t_func_opaque(rt)); }
+  }
   return type_from_name_erasing_tparams(fd.ret_type, fd.type_params, structs, unions);
 }
 

@@ -491,6 +491,13 @@ pub struct FnSigs {
     // (rc_fe_call_ret_type) reads it instead of scanning the funcs list per
     // binding (#6074: derive module-scale facts once per module).
     ret_type_fns: SigReg,
+    // ret_fn_sigs: "name|<tag>" rows for every non-generic function that RETURNS
+    // a fn value, the tag being the funcref signature a call THROUGH that result
+    // dispatches on (`mk()(4.5)`). Built from the FuncDecl sidecars through the
+    // same fn_sig_of rules a parameter, field, tuple element and array element
+    // go through, so none of the five can disagree (#5986). A function whose
+    // returned signature is all-i32 records no row: `$fn<N>` already names it.
+    ret_fn_sigs: SigReg,
     // noesc_ret_fns: "name|" rows for the returns-no-param-escape subset
     // oracle (noesc_ret_fns_of) — rc_fe_rhs_tainted's user-call arm untaints
     // a qualified callee's result regardless of argument taint.
@@ -14037,27 +14044,56 @@ function lower_expr_call(c: ast.ExprCall, e: ast.Expr, s: LowerState): LowerStat
                 bs = bs.mark_arr(bslot, true);
                 bs = bs.emit(ir.op_store_local(bslot));
                 bs = bs.emit(ir.op_load_local(bslot));          // __env (the box)
-                for arg in c.args {
-                    bs = lower_expr(arg, bs);
+                // One declared signature drives both halves — the width each
+                // argument is lowered at and the funcref type the call names.
+                // The tag describes the REAL parameters, so it is indexed from
+                // argument 0; the env box's leading 'w' is added by
+                // callee_fn_sig_declared, after the widths are read (#5986).
+                var bxsig: string = call_ret_fn_sig(cocall, s);
+                var bxai: i32 = 0;
+                while (bxai < c.args.len()) {
+                    bs = lower_fn_value_arg_wc(c.args[bxai], sig_arg_width_char(bxsig, bxai), bs);
                     if (!bs.ok) { return bs; }
+                    bxai = bxai + 1;
                 }
                 bs = bs.emit(ir.op_load_local(bslot));          // box again
                 bs = bs.emit(ir.op_const_i32(0));
                 bs = bs.emit(ir.op_arr_get(32));                // box[0] = funcval
-                return bs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig(c, true)));
+                return bs.emit(ir.op_call_indirect_sig(c.args.len() + 1,
+                    callee_fn_sig_declared(bxsig, c, true)));
             }
             var cocs: LowerState = s;
-            for arg in c.args {
-                cocs = lower_expr(arg, cocs);
+            // One declared signature drives both halves — the width each argument
+            // is lowered at and the funcref type the call names (#5986).
+            var cocsig: string = call_ret_fn_sig(cocall, s);
+            var cocai: i32 = 0;
+            while (cocai < c.args.len()) {
+                cocs = lower_fn_value_arg_wc(c.args[cocai], sig_arg_width_char(cocsig, cocai), cocs);
                 if (!cocs.ok) { return cocs; }
+                cocai = cocai + 1;
             }
             var coce: LowerState = lower_expr(c.callee, cocs);
             if (!coce.ok) { return coce; }
-            return coce.emit(ir.op_call_indirect_sig(c.args.len(), callee_fn_sig(c, false)));
+            return coce.emit(ir.op_call_indirect_sig(c.args.len(),
+                callee_fn_sig_declared(cocsig, c, false)));
         },
         _ => { return s.fail(); }
     }
     return s.fail();
+}
+
+// call_ret_fn_sig is the funcref signature tag for a call THROUGH the result of
+// another call — `mk()(4.5)`, whose callee is itself a call returning a fn value.
+// The result has no slot and no declared spelling at the call site; what names it
+// is the CALLEE's own declaration, recorded on FuncDecl and registered by
+// ret_fn_sigs_of. "" for a method or an indirect inner callee, and for a
+// signature `$fn<N>` already describes, both of which keep today's emission.
+function call_ret_fn_sig(inner: ast.ExprCall, s: LowerState): string {
+    match (inner.callee) {
+        ast.ExprIdent(id) => { return sig_reg_value_last(s.sigs.ret_fn_sigs, s.mod_fn_name(id.name)); },
+        _ => {}
+    }
+    return "";
 }
 
 // lower_expr_slice lowers a slice expression `a[lo:hi]`.
@@ -59878,7 +59914,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
 pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
     var r: SigReg = sig_reg_empty();
-    return FnSigs { arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, noesc_ret_fns: r,
+    return FnSigs { arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, ret_fn_sigs: r, noesc_ret_fns: r,
         opt_ret_fns: r, i64_ret_fns: r, tuple_ret_fns: r, arrtup_ret_fns: r, struct_ret_fns: r, map_ret_fns: r,
         f64_ret_fns: r, f64arr_ret_fns: r, i64arr_ret_fns: r, erased_elem_ret_fns: r, fn_param_sigs: r, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: r,
@@ -59895,6 +59931,29 @@ pub function ret_type_fns_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
     for fn in funcs {
         if (fn.type_params.len() == 0) { out = out.append(fn.name + "|" + fn.ret_type); }
+    }
+    return out;
+}
+
+// ret_fn_sigs_of: "name|<tag>" for every non-generic function returning a fn
+// VALUE whose signature is not already described by the arity-keyed `$fn<N>`
+// form. The row is what a call through the RESULT dispatches on, so `mk()(4.5)`
+// names the funcref the returned value really has instead of assuming all-i32.
+// A generic function is skipped for the reason annotation is: its spelling can
+// name a bare type parameter, which only the monomorphised clone resolves — and
+// the clone, carrying substituted sidecars, gets its own row.
+pub function ret_fn_sigs_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        if (fn.type_params.len() > 0) { continue; }
+        if (fn.ret_type != "fn" || fn.ret_fn_ret.len() == 0) { continue; }
+        var tys: string[] = [];
+        if (fn.ret_fn_param_types.len() > 0) { tys = split_type_list(fn.ret_fn_param_types); }
+        var pd: ast.ParamDecl = fn_param_decl(fn.name, tys, fn.ret_fn_ret);
+        if (pd.type_name.len() == 0) { continue; }
+        var tag: string = fn_sig_of(pd, []);
+        if (tag.len() == 0) { continue; }
+        out = out.append(fn.name + "|" + tag);
     }
     return out;
 }
@@ -60271,6 +60330,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
     return FnSigs {
         arr_ret_fns: sig_reg_of(arr_ret_fns),
         ret_type_fns: sig_reg_of(ret_type_fns_of(funcs)),
+        ret_fn_sigs: sig_reg_of(ret_fn_sigs_of(funcs)),
         noesc_ret_fns: sig_reg_of(noesc_ret_fns_of(funcs, structs)),
         str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)),
         bool_ret_fns: sig_reg_of(bool_ret_fns_of(funcs)),
@@ -64170,7 +64230,7 @@ function lift_call_arg(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
             if (lambda_has_no_captures(lam, gfns)) {
                 var nm: string = "__lam_" + util.i32_to_string(acc.counter);
                 var tp: string[] = [];
-                var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true };
+                var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: tp, params: lam.params, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" };
                 var nacc: LiftAcc = LiftAcc { funcs: acc.funcs.append(nf), counter: acc.counter + 1 };
                 return LiftExpr { expr: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, acc: nacc };
             }
@@ -65577,7 +65637,7 @@ function try_lift_binding(body: ast.Stmt[], idx: i32, fname: string, lam: ast.Ex
     }
     var lname: string = "__lam_" + util.i32_to_string(acc.counter);
     var notp: string[] = [];
-    var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true };
+    var newfn: parser.FuncDecl = parser.FuncDecl { name: lname, receiver_name: "", receiver_type: "", type_params: notp, params: lparams, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" };
     var capargs: ast.Expr[] = [];
     var ca: i32 = 0;
     while (ca < caps.len()) { capargs = capargs.append(ast.ExprIdent { name: caps[ca], line: 0, col: 0, ty: "" }); ca = ca + 1; }
@@ -65761,7 +65821,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     var bk: i32 = 0;
     while (bk < lam.body.len()) { bd = bd.append(lam.body[bk]); bk = bk + 1; }
     var notp: string[] = [];
-    var clo: parser.FuncDecl = parser.FuncDecl { name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true };
+    var clo: parser.FuncDecl = parser.FuncDecl { name: cloname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" };
     return HoistResult { func: clo, ok: true };
 }
 
@@ -65868,7 +65928,7 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
     var pj: i32 = 0;
     while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
     var notp: string[] = [];
-    return parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true };
+    return parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: lam.ret_type, body: lam.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" };
 }
 
 // make_wrap_named_func builds the env-taking trampoline for a BARE FN-NAME field
@@ -65877,7 +65937,7 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
 // up by name in `mfuncs`). Declines (ok:false) if no receiver-less function of
 // that name is found — the field then stays as-is and the module bails.
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): HoistResult {
-    var none: parser.FuncDecl = parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true };
+    var none: parser.FuncDecl = parser.FuncDecl { name: "", receiver_name: "", receiver_type: "", type_params: [], params: [], ret_type: "", body: [], line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" };
     var fi: i32 = 0;
     while (fi < mfuncs.decls.len()) {
         if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
@@ -65893,7 +65953,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
             var call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: fnname, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
             var bd: ast.Stmt[] = [ast.StmtReturn { value: call, line: 0, col: 0 }];
             var notp: string[] = [];
-            return HoistResult { func: parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true }, ok: true };
+            return HoistResult { func: parser.FuncDecl { name: wrapname, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" }, ok: true };
         }
         fi = fi + 1;
     }
@@ -67331,7 +67391,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
     // the worklist do NOT get this (#5281), which is why it is applied here
     // rather than at the drain.
     var dlr: DesugarRet = desugar_lambda_returns(lam.body, 0);
-    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true };
+    var nf: parser.FuncDecl = parser.FuncDecl { name: nm, receiver_name: "", receiver_type: "", type_params: notp, params: ps, ret_type: "fn", body: dlr.body, line: 0, col: 0, import_iface: "", import_wit: "", type_param_count: 0, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, ret_str: false, ret_slice: false, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "" };
     var ncall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: nm, line: 0, col: 0, ty: "" }, args: args, line: 0, col: 0, type_argc: 0, ty: "" };
     return InlineCloRes { expr: ncall, funcs: funcs.append(nf), counter: counter + 1 };
 }

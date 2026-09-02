@@ -659,7 +659,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
             ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
         };
-        funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, ctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, ctx), body: rewrite_block(fd.body, bctx), is_pub: true });
+        funcs = funcs.append(parser.FuncDecl { ...fd, name: new_name, receiver_type: rewrite_type_name(fd.receiver_type, ctx), params: rewrite_params(fd.params, bctx), ret_type: rewrite_type_name(fd.ret_type, ctx), ret_fn_ret: rewrite_type_name(fd.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(fd.ret_fn_param_types, ctx), body: rewrite_block(fd.body, bctx), is_pub: true });
         i = i + 1;
     }
     var structs: parser.StructDecl[] = [];
