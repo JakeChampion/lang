@@ -76,7 +76,7 @@ function main(): i32 {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	facts := paramVerdictFacts{info: info, ptrW: 8, paramEscapes: inferParamEscapes(prog, info)}
+	facts := paramVerdictFacts{info: info, ptrW: 8, paramEscapes: inferParamEscapes(prog, info, nil, nil)}
 	q := findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{}, facts.ownedParam)
 	if !q["walk"] {
 		t.Error("returnsFreshBox[walk] = false, want true — `return t` of an owned-by-default enum " +

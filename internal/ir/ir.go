@@ -3086,7 +3086,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// Both the definition side (paramOwnedByDefault) and the call site
 	// (calleeParamOwnedByDefault) consult this so they agree on which
 	// owned-by-default params are kept borrowed.
-	paramEscapes := inferParamEscapes(prog, info)
+	paramEscapes := inferParamEscapes(prog, info, pairForm, trmcFuncs)
 	// Per-callee: string params retained only through counted constructions, so
 	// a caller may release its own reference (see inferParamCountedRetain).
 	paramCountedRetain := inferParamCountedRetain(prog, info)
@@ -3836,13 +3836,49 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 	return exprRefsTainted(e, tainted)
 }
 
+// returnedCountedProjection reports whether returning `e` hands back a
+// SUB-OBJECT of a tainted value rather than the value itself — a field read
+// or an element — under a return the lowering retains.
+//
+// It is the exact inverse of the two branches of taintedReachesSlot it
+// overrides, and only at the return sink. Those branches call a projection an
+// escape because the parameter's sub-heap flows out; what they do not model is
+// that the Return lowering inc's every rc-tracked alias on the way out
+// (needsRcIncOnAlias), so what flows out carries a unit of its OWN. The
+// parameter's box does not: `p.toks[p.pos]` is a different object, and the
+// caller's own reference is what keeps `p` alive across the call either way.
+//
+// So the callee has nothing to reclaim and nothing to transfer, which is the
+// borrowed verdict. `returnsOwnBox` already reads a returned projection this
+// way from the other side — "a different object the callee never owned" — and
+// `retained` is that file's own `returnedAliasIsRetained`, which refuses
+// pair-form and TRMC because each rewrites the return before the inc is
+// reached.
+//
+// Deliberately not extended to the taint propagation: `var t = p.toks[i];
+// return t` still escapes. The credit rests on the inc the RETURN emits, and
+// only a return can be shown to emit it here.
+func returnedCountedProjection(e ast.Expr, tainted map[string]bool, retained bool) bool {
+	if !retained {
+		return false
+	}
+	switch x := e.(type) {
+	case *ast.FieldAccess:
+		return exprRefsTainted(x.Target, tainted)
+	case *ast.Index:
+		return exprRefsTainted(x.Array, tainted)
+	}
+	return false
+}
+
 // paramEscapesInFn reports whether parameter `pname` of `fn` escapes, given the
 // current per-callee escape facts. It first taints every local / binding that
 // carries pname's heap (match bindings of a tainted scrutinee, and any var whose
 // init lets a tainted value reach its slot), then checks the escape sinks:
 // returns, and tainted whole-value arguments passed to a retain sink or an
-// escaping `own` position.
-func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, variantPayloads map[string][]ast.Type, escapes map[string][]bool) bool {
+// escaping `own` position. `retained` is returnedAliasIsRetained for `fn`, which
+// excuses a returned projection (returnedCountedProjection).
+func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, variantPayloads map[string][]ast.Type, escapes map[string][]bool, retained bool) bool {
 	tainted := map[string]bool{pname: true}
 	// Declared types of the slots an assignment can write, for the same
 	// slot-typed reachability test a `var` initialiser gets: `x = f(p)`
@@ -3905,7 +3941,8 @@ func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, varian
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Return:
-			if x.Value != nil && taintedReachesSlot(x.Value, fn.ReturnType, tainted, info, variantPayloads, escapes) {
+			if x.Value != nil && !returnedCountedProjection(x.Value, tainted, retained) &&
+				taintedReachesSlot(x.Value, fn.ReturnType, tainted, info, variantPayloads, escapes) {
 				escaped = true
 			}
 		case *ast.Call:

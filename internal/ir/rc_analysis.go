@@ -794,6 +794,8 @@ func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]
 // that parameter's heap value can ESCAPE the function — flow out through the
 // return value, or be stored into a caller-visible container (a retain sink such
 // as `m.set` / `arr.push`, or an `own` argument the callee itself lets escape).
+// Returning a counted PROJECTION of the parameter is not a flow-out: a
+// different object leaves, carrying its own unit (returnedCountedProjection).
 // A NON-escaping parameter is reclaim-safe: under an owned-by-default model the
 // callee may free it at the end without transferring ownership out, and if it is
 // additionally only read it may be borrowed. This is the foundation analysis for
@@ -807,7 +809,7 @@ func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]
 // of the result, it does. Unknown / builtin callees are treated conservatively
 // (assume they escape a tainted argument) so the result is a sound
 // under-approximation of "borrowable".
-func inferParamEscapes(prog *ast.Program, info *checker.Info) map[string][]bool {
+func inferParamEscapes(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool) map[string][]bool {
 	variantPayloads := map[string][]ast.Type{}
 	for _, en := range info.Enums {
 		for _, v := range en.Variants {
@@ -828,7 +830,8 @@ func inferParamEscapes(prog *ast.Program, info *checker.Info) map[string][]bool 
 				if escapes[fn.Name][i] || !ast.IsPointerType(p.Type) {
 					continue
 				}
-				if paramEscapesInFn(fn, p.Name, info, variantPayloads, escapes) {
+				if paramEscapesInFn(fn, p.Name, info, variantPayloads, escapes,
+					returnedAliasIsRetained(fn, pairForm, trmcFuncs)) {
 					escapes[fn.Name][i] = true
 					changed = true
 				}
