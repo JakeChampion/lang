@@ -1521,32 +1521,41 @@ func usesCallIndirect(progs map[string]*Program) bool {
 // name the IR emits, so the `call fn_<name>` site links against the label
 // fnLabel(name) writes.
 var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
-	"__fern_rc_is_unique":         emitRcIsUniqueHelper,
-	"__fern_rc_inc":               emitRcIncHelper,
-	"__fern_rc_dec":               emitRcDecHelper,
-	"__fern_closure_drop":         emitClosureDropHelper,
-	"__fern_box_free":             emitBoxFreeHelper,
-	"__str_len":                   emitStrLenHelper,
-	"__fern_arr_dec":              emitArrDecHelper,
-	"__arr_idx":                   emitArrIdxHelperN("__arr_idx", 2),
-	"__arr_idx_nc":                emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
-	"__arr_idx_1":                 emitArrIdxHelperN("__arr_idx_1", 0),
-	"__arr_idx_1_nc":              emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
-	"__arr_idx_8":                 emitArrIdxHelperN("__arr_idx_8", 3),
-	"__arr_idx_8_nc":              emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
-	"__arr_idx_16":                emitArrIdxHelperN("__arr_idx_16", 4),
-	"__arr_idx_16_nc":             emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
-	"__str_idx":                   emitArrIdxHelperN("__str_idx", 0),
-	"__fern_memchr":               emitMemchrHelper,
-	"__fern_rmemchr":              emitRmemchrHelper,
-	"__fern_ascii_run":            emitAsciiRunHelper,
-	"__fern_count_byte":           emitCountByteHelper,
-	"__alloc_u8":                  emitAllocU8Helper,
-	"string_from_bytes_unchecked": emitStringFromBytesHelper,
-	"__str_eq":                    emitStrEqHelper,
-	"__str_ord":                   emitStrOrdHelper,
-	"__str_concat":                emitStrConcatHelper,
-	"__fern_str_dec":              emitStrDecHelper,
+	"__fern_rc_is_unique":           emitRcIsUniqueHelper,
+	"__fern_rc_inc":                 emitRcIncHelper,
+	"__fern_rc_dec":                 emitRcDecHelper,
+	"__fern_closure_drop":           emitClosureDropHelper,
+	"__fern_box_free":               emitBoxFreeHelper,
+	"__str_len":                     emitStrLenHelper,
+	"__fern_arr_dec":                emitArrDecHelper,
+	"__arr_idx":                     emitArrIdxHelperN("__arr_idx", 2),
+	"__arr_idx_nc":                  emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
+	"__arr_idx_1":                   emitArrIdxHelperN("__arr_idx_1", 0),
+	"__arr_idx_1_nc":                emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
+	"__arr_idx_8":                   emitArrIdxHelperN("__arr_idx_8", 3),
+	"__arr_idx_8_nc":                emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
+	"__arr_idx_16":                  emitArrIdxHelperN("__arr_idx_16", 4),
+	"__arr_idx_16_nc":               emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
+	"__str_idx":                     emitArrIdxHelperN("__str_idx", 0),
+	"__fern_memchr":                 emitMemchrHelper,
+	"__fern_rmemchr":                emitRmemchrHelper,
+	"__fern_ascii_run":              emitAsciiRunHelper,
+	"__fern_count_byte":             emitCountByteHelper,
+	"__alloc_u8":                    emitAllocU8Helper,
+	"string_from_bytes_unchecked":   emitStringFromBytesHelper,
+	"__str_slice":                   emitStrSliceHelper,
+	"__fern_arr_push_grow":          emitArrPushGrowHelper,
+	"__fern_arr_push_grow_ptr":      emitAliasHelper("__fern_arr_push_grow_ptr", "__fern_arr_push_grow"),
+	"__fern_arr_push_grow_str":      emitAliasHelper("__fern_arr_push_grow_str", "__fern_arr_push_grow"),
+	"__fern_arr_push_grow_move_ptr": emitAliasHelper("__fern_arr_push_grow_move_ptr", "__fern_arr_push_grow"),
+	"__fern_arr_push_grow_move_str": emitAliasHelper("__fern_arr_push_grow_move_str", "__fern_arr_push_grow"),
+	"__fern_arr_cow_inplace":        emitArrCowInplaceHelper,
+	"__fern_arr_cow_inplace_ptr":    emitAliasHelper("__fern_arr_cow_inplace_ptr", "__fern_arr_cow_inplace"),
+	"__fern_arr_cow_inplace_str":    emitAliasHelper("__fern_arr_cow_inplace_str", "__fern_arr_cow_inplace"),
+	"__str_eq":                      emitStrEqHelper,
+	"__str_ord":                     emitStrOrdHelper,
+	"__str_concat":                  emitStrConcatHelper,
+	"__fern_str_dec":                emitStrDecHelper,
 }
 
 // heapUsingHelpers are runtime helpers that allocate on the SSA bump heap, so
@@ -1555,14 +1564,22 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 var heapUsingHelpers = map[string]bool{
 	"__str_concat":                true,
 	"__alloc_u8":                  true,
-	"string_from_bytes_unchecked": true,
+	"string_from_bytes_unchecked": true, "__str_slice": true,
+	"__fern_arr_push_grow":   true,
+	"__fern_arr_cow_inplace": true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
 // calls another must have that callee emitted too — the module never references
 // it directly). Transitively closed by referencedRuntimeHelpers.
 var runtimeHelperDeps = map[string][]string{
-	"__fern_closure_drop": {"__fern_box_free", "__fern_rc_dec"},
+	"__fern_closure_drop":           {"__fern_box_free", "__fern_rc_dec"},
+	"__fern_arr_push_grow_ptr":      {"__fern_arr_push_grow"},
+	"__fern_arr_push_grow_str":      {"__fern_arr_push_grow"},
+	"__fern_arr_push_grow_move_ptr": {"__fern_arr_push_grow"},
+	"__fern_arr_push_grow_move_str": {"__fern_arr_push_grow"},
+	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace"},
+	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
 }
 
 // referencedRuntimeHelpers returns, sorted, the runtime-helper names to append to
@@ -1915,6 +1932,9 @@ func emitBcopyCall(w func(string, ...any), dst, src, n string) {
 // cannot name it), so this gate is what puts it in the module.
 var bcopyUsingHelpers = map[string]bool{
 	"string_from_bytes_unchecked": true,
+	"__str_slice":                 true,
+	"__fern_arr_push_grow":        true,
+	"__fern_arr_cow_inplace":      true,
 }
 
 // usesBcopy reports whether any referenced helper calls __ssa_bcopy.
@@ -1994,6 +2014,177 @@ func emitStringFromBytesHelper(w func(string, ...any)) {
 	w("\tlea r10, [r8 + 8]") // data
 	emitBcopyCall(w, "r10", "rdi", "rsi")
 	w("\tmov rax, r10")
+	w("\tret")
+}
+
+// emitAliasHelper writes `<name>:` as a jump to another helper. The bump heap
+// never reclaims, so the _ptr / _str / _move_ptr / _move_str variants — which
+// natively differ only by an element-retain or element-release walk — have
+// nothing to do that the plain helper does not. arm64ssa aliases the same set.
+func emitAliasHelper(name, target string) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		w("\tjmp %s", fnLabel(target))
+	}
+}
+
+// emitStrSliceHelper writes __str_slice(base, low, high) -> data: a fresh string
+// holding base[low:high]. Traps (exit 134) on low < 0, high > src_len, or
+// low > high, matching the native helper.
+//
+// low and high arrive as i32 and are SIGN-EXTENDED before the bounds compares.
+// Skipping that is #5294: a negative low arrives zero-extended in the low half,
+// so a 64-bit compare reads it as a large positive and the trap never fires.
+// rdi=base, esi=low, edx=high; returns rax=data.
+func emitStrSliceHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__str_slice"))
+	w("\tmovsxd rsi, esi")
+	w("\tmovsxd rdx, edx")
+	w("\tmov r8d, %s", memRef("rdi", -4)) // src_len (non-negative; zero-extends)
+	w("\ttest rsi, rsi")
+	w("\tjs .Lssa_strslice_trap")
+	w("\tcmp rdx, r8")
+	w("\tjg .Lssa_strslice_trap")
+	w("\tcmp rsi, rdx")
+	w("\tjg .Lssa_strslice_trap")
+	w("\tmov r9d, edx")
+	w("\tsub r9d, esi") // new_len = high - low
+	// Bump-allocate new_len+8: rc=1@base, len@base+4, data@base+8.
+	w("\tmov r10, [rip + %s]", heapPtrSym)
+	w("\tadd r10, 7")
+	w("\tand r10, -8")
+	w("\tmov dword ptr [r10], 1") // rc = 1
+	w("\tmov [r10 + 4], r9d")     // len
+	w("\tlea r11, [r10 + 8]")     // data
+	w("\tmov rax, r11")
+	w("\tadd rax, r9")
+	w("\tmov [rip + %s], rax", heapPtrSym)
+	w("\t%s", heapGuardCall)
+	w("\tlea rax, [rdi + rsi]") // src = base + low
+	emitBcopyCall(w, "r11", "rax", "r9")
+	w("\tmov rax, r11")
+	w("\tret")
+	w(".Lssa_strslice_trap:")
+	w("\tmov edi, 134")
+	w("\tmov eax, 231") // exit_group
+	w("\tsyscall")
+}
+
+// emitArrPushGrowHelper writes __fern_arr_push_grow(arr, oldLen, stride) ->
+// new_data, the array-append growth helper.
+//
+// Fast path, and the one that matters: an array uniquely held (rc == 1) with
+// spare capacity bumps its rc to 2 and its length in place and returns the same
+// pointer. Otherwise a fresh buffer of newCap = max(2*newLen, 4) elements, past
+// a headerBytes = max(16, stride) prefix, with the old elements copied over.
+//
+// The old buffer LEAKS: this heap does not reclaim (docs/SSA-RC-RUNTIME.md).
+// rdi=arr, esi=oldLen, edx=stride; returns rax=new_data.
+func emitArrPushGrowHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_arr_push_grow"))
+	w("\tmov eax, %s", memRef("rdi", -8)) // rc
+	w("\tcmp eax, 1")
+	w("\tjne .Lssa_apg_copy")
+	w("\tmov ecx, %s", memRef("rdi", -12)) // cap
+	w("\tcmp esi, ecx")
+	w("\tjge .Lssa_apg_copy")
+	w("\tmov dword ptr [rdi - 8], 2") // rc = 2
+	w("\tlea eax, [rsi + 1]")
+	w("\tmov [rdi - 4], eax") // len = oldLen + 1
+	w("\tmov rax, rdi")
+	w("\tret")
+	w(".Lssa_apg_copy:")
+	w("\tmov r8d, esi")
+	w("\tadd r8d, 1") // newLen
+	w("\tmov r9d, r8d")
+	w("\tshl r9d, 1")
+	w("\tcmp r9d, 4")
+	w("\tjge .Lssa_apg_cap_ok")
+	w("\tmov r9d, 4") // newCap = max(2*newLen, 4)
+	w(".Lssa_apg_cap_ok:")
+	w("\tmov r10d, 16")
+	w("\tcmp edx, 16")
+	w("\tjle .Lssa_apg_hdr_ok")
+	w("\tmov r10d, edx") // headerBytes = max(stride, 16)
+	w(".Lssa_apg_hdr_ok:")
+	w("\tmov r11d, r9d")
+	w("\timul r11d, edx")
+	w("\tadd r11d, r10d") // allocSize = headerBytes + newCap*stride
+	w("\tmov rax, [rip + %s]", heapPtrSym)
+	w("\tadd rax, 7")
+	w("\tand rax, -8") // base (8-aligned)
+	w("\tmov rcx, rax")
+	w("\tadd rcx, r11")
+	w("\tmov [rip + %s], rcx", heapPtrSym)
+	w("\t%s", heapGuardCall) // preserves rax and rcx, so base survives
+	w("\tmov r11, rax")
+	w("\tadd r11, r10")               // new_data = base + headerBytes
+	w("\tmov [r11 - 12], r9d")        // cap = newCap
+	w("\tmov dword ptr [r11 - 8], 1") // rc = 1
+	w("\tmov [r11 - 4], r8d")         // len = newLen
+	w("\tmov eax, esi")
+	w("\timul eax, edx") // nbytes = oldLen*stride (32-bit, zero-extends)
+	emitBcopyCall(w, "r11", "rdi", "rax")
+	w("\tmov rax, r11")
+	w("\tret")
+}
+
+// emitArrCowInplaceHelper writes __fern_arr_cow_inplace(arr, stride) -> buf, the
+// copy-on-write helper behind `arr[i] = v`.
+//
+// rc == 1 means uniquely held: return the array unchanged and let the caller
+// store into it. Shared means copy — and the copy TAKES the caller's reference,
+// so arr's rc drops by one on the way out, skipping a static sentinel whose rc
+// word has the high bit set (writing one would fault on .rodata).
+//
+// rdi=arr, esi=stride; returns rax=buf. Note the fast path needs an explicit
+// `mov rax, rdi`: arm64's sibling gets it free because x0 is both the argument
+// and the result, and five helpers returned the wrong register for want of that
+// on this backend (#8044).
+func emitArrCowInplaceHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_arr_cow_inplace"))
+	w("\tmov eax, %s", memRef("rdi", -8)) // rc
+	w("\tcmp eax, 1")
+	w("\tjne .Lssa_cow_slow")
+	w("\tmov rax, rdi")
+	w("\tret")
+	w(".Lssa_cow_slow:")
+	w("\tmov r8d, %s", memRef("rdi", -4))  // len
+	w("\tmov r9d, %s", memRef("rdi", -12)) // cap
+	w("\tmov eax, %s", memRef("rdi", -8))
+	w("\ttest eax, eax")
+	w("\tjs .Lssa_cow_skipdec") // high bit = static sentinel
+	w("\tsub eax, 1")
+	w("\tmov [rdi - 8], eax")
+	w(".Lssa_cow_skipdec:")
+	w("\tmov r10d, 16")
+	w("\tcmp esi, 16")
+	w("\tjle .Lssa_cow_hdr_ok")
+	w("\tmov r10d, esi") // headerBytes = max(stride, 16)
+	w(".Lssa_cow_hdr_ok:")
+	w("\tmov r11d, r9d")
+	w("\timul r11d, esi")
+	w("\tadd r11d, r10d") // allocSize = headerBytes + cap*stride
+	w("\tmov rax, [rip + %s]", heapPtrSym)
+	w("\tadd rax, 7")
+	w("\tand rax, -8")
+	w("\tmov rcx, rax")
+	w("\tadd rcx, r11")
+	w("\tmov [rip + %s], rcx", heapPtrSym)
+	w("\t%s", heapGuardCall)
+	w("\tmov r11, rax")
+	w("\tadd r11, r10")               // new_data = base + headerBytes
+	w("\tmov [r11 - 12], r9d")        // cap
+	w("\tmov dword ptr [r11 - 8], 1") // rc = 1
+	w("\tmov [r11 - 4], r8d")         // len
+	w("\tmov eax, r8d")
+	w("\timul eax, esi") // nbytes = len*stride
+	emitBcopyCall(w, "r11", "rdi", "rax")
+	w("\tmov rax, r11")
 	w("\tret")
 }
 
