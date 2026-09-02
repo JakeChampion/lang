@@ -1101,7 +1101,7 @@ func TestStaticExecutableDataWXSymsRows(t *testing.T) {
 		{Addr: base + 8, Line: 8},
 		{Addr: base + 16, Line: 9},
 	}
-	bin := elf.StaticExecutableDataX86WXSymsRows(text, data, syms, rows, "prog.fern", "/tmp", base+uint64(len(text)), nil)
+	bin := elf.StaticExecutableDataX86WXSymsRows(text, nil, data, syms, rows, "prog.fern", "/tmp", base+uint64(len(text)), nil)
 
 	f, err := goelf.NewFile(bytes.NewReader(bin))
 	if err != nil {
@@ -1152,7 +1152,7 @@ func TestDebugInfoLocalVars(t *testing.T) {
 			{Name: "sum", TypeKey: "i32", Offset: -24, IsParam: false},
 		},
 	}
-	bin := elf.StaticExecutableDataX86WXSymsRows(text, nil, syms, nil, "prog.fern", "/tmp", base+16, funcVars)
+	bin := elf.StaticExecutableDataX86WXSymsRows(text, nil, nil, syms, nil, "prog.fern", "/tmp", base+16, funcVars)
 
 	f, err := goelf.NewFile(bytes.NewReader(bin))
 	if err != nil {
