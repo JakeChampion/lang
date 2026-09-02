@@ -10,6 +10,7 @@ import (
 	"github.com/jakechampion/lang/internal/native/arm64"
 	"github.com/jakechampion/lang/internal/native/elf"
 	"github.com/jakechampion/lang/internal/native/x86_64"
+	"github.com/jakechampion/lang/internal/native/x86tbl"
 )
 
 // Coverage parity between the self-host assemblers and the native (Go)
@@ -446,14 +447,10 @@ var x86KnownHelpers = []string{
 // than by extraction.
 
 // x86ConditionSpellings is every condition suffix the x86-64 condition table
-// accepts, aliases included. Both assemblers dispatch jCC / setCC / cmovCC by
-// matching the prefix and looking the rest up here, so this one list is what
-// the parity gates enumerate.
-var x86ConditionSpellings = []string{
-	"o", "no", "b", "c", "nae", "ae", "nb", "nc", "e", "z", "ne", "nz",
-	"be", "na", "a", "nbe", "s", "ns", "p", "np",
-	"l", "nge", "ge", "nl", "le", "ng", "g", "nle",
-}
+// accepts, aliases included — read from the shared table both assemblers are
+// built from (#7903), never listed again here. A gate that keeps its own copy
+// of the vocabulary it is checking cannot notice the vocabulary changing.
+var x86ConditionSpellings = x86tbl.CondSpellings()
 
 func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 	const path = "../../examples/self_host/x86_native.fern"
