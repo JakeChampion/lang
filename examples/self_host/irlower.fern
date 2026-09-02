@@ -18322,6 +18322,28 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                 bs = emit_dec_sweep_except(bs, 0 - 1);
                 return bs.emit(ir.op_return());
             }
+            // `return T { ...p, f: v }` over an `own` struct param admitted for
+            // in-place update (own_update_params_of): reuse p's box through the
+            // same emitter as the self-assign form, binding the result to a
+            // hidden local the sweep keeps, then hand it back.
+            match (r.value) {
+                ast.ExprStructLit(rsl) => {
+                    if (rsl.has_base) {
+                        var rbn: string = ident_name_or_empty(rsl.base);
+                        if (rbn.len() > 0 && s.is_own_param(rbn) && s.is_self_assign_reuse_name(rbn)
+                            && sa_is_self_update(r.value, rbn, rsl.type_name)) {
+                            var rname: string = "$ownret" + util.i32_to_string(s.locals.len());
+                            var ro: LowerState = emit_self_overwrite_reuse(rname, "", r.value, rbn, false, s, true);
+                            if (!ro.ok) { return ro; }
+                            var rslot: i32 = ro.slot_of(rname);
+                            ro = ro.emit(ir.op_load_local(rslot));
+                            ro = emit_dec_sweep_except(ro, rslot);
+                            return ro.emit(ir.op_return());
+                        }
+                    }
+                },
+                _ => {}
+            }
             // i64-returning function: lower the value as an i64, run the exit
             // dec-sweep over array locals (no moved array — i64 isn't one), then
             // return. The wasm sig declares (result i64); x86/arm64 are unchanged.
@@ -24323,27 +24345,8 @@ pub function lower_arr_append_value(obj: ast.Expr, val: ast.Expr, s: LowerState)
         if (!st.ok) { return st; }
         return st.emit(ir.op_arr_push_f64());
     }
-    st = lower_expr(val, st);
+    st = lower_append_elem_value(val, st);
     if (!st.ok) { return st; }
-    // A DIRECT ENUM field read appended here aliases the source struct's enum box,
-    // which __struct_drop_<T>'s k_enum arm decs on reclamation — retain it so that
-    // dec only releases the dup, exactly as the in-place append path does (#6049).
-    if (enum_field_read_type(val, st) != "" || enum_alias_ident_escapes(val, st)) {
-        st = st.retain_tos("clone-append-elem");
-    }
-    // A STRUCT element that is a borrowed parameter ALIASES a box the caller
-    // still owns and still releases. Without the retain that release frees a
-    // box this array holds, which is a use-after-free the leak counters read as
-    // clean — allocs == frees at live_bytes 0, with a dangling element (#7853).
-    if (struct_alias_ident_escapes(val, st)) {
-        st = st.retain_tos("clone-append-struct-elem");
-    }
-    // The string sibling: an element of a caller-owned string[] (#6644's
-    // distcheck: the compiler's own reclaimable_credit appended a parameter's
-    // rows into a second array, and the caller's sweep freed them under it).
-    if (str_param_elem_escapes(val, st)) {
-        st = st.retain_tos("clone-append-param-str-elem");
-    }
     // The clone (a fresh slice, cap == len) is grown immediately, so this
     // arr_push ALWAYS reallocs — and the clone is sole-owned (just sliced, no
     // alias), so reclaim the pre-grow clone instead of leaking it. This is the
@@ -24351,6 +24354,28 @@ pub function lower_arr_append_value(obj: ast.Expr, val: ast.Expr, s: LowerState)
     // immutable-update (the EmitState/LowerState threading) flows through here
     // (#3452 / #3425).
     return st.emit(ir.op_arr_push_owned());
+}
+
+// lower_append_elem_value lowers a pointer-width element about to be pushed
+// onto an array the frame owns, with the retains a stored reference owes: a
+// direct enum field read or enum alias (the source struct's __struct_drop_<T>
+// decs it, #6049), a struct element that is a borrowed parameter (the caller
+// still releases it, #7853), and a string element of a caller-owned string[]
+// (#6644). Shared by the clone-form append and the in-place field append of an
+// `own` base's reuse arm, so the two store the same reference.
+function lower_append_elem_value(val: ast.Expr, s: LowerState): LowerState {
+    var st: LowerState = lower_expr(val, s);
+    if (!st.ok) { return st; }
+    if (enum_field_read_type(val, st) != "" || enum_alias_ident_escapes(val, st)) {
+        st = st.retain_tos("clone-append-elem");
+    }
+    if (struct_alias_ident_escapes(val, st)) {
+        st = st.retain_tos("clone-append-struct-elem");
+    }
+    if (str_param_elem_escapes(val, st)) {
+        st = st.retain_tos("clone-append-param-str-elem");
+    }
+    return st;
 }
 
 // emit_arr_share emits one side of an array share bracket: load `slot`, call
@@ -29219,7 +29244,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
         }
         if (soi >= 0) {
             match (stmts[i]) {
-                ast.StmtVar(rv) => { st = emit_self_overwrite_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, so.bases[soi], true, st); },
+                ast.StmtVar(rv) => { st = emit_self_overwrite_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, so.bases[soi], true, st, false); },
                 _ => { st = lower_stmt(stmts[i], st); },
             }
         } else if (xri >= 0) {
@@ -49107,6 +49132,194 @@ function sa_param_named(params: ast.ParamDecl[], name: string): boolean {
     return false;
 }
 
+// struct_fields_reusable_own widens struct_fields_reusable_param for the OWN-BASE
+// update: string, string[], struct[] and enum[] fields are admitted too, because
+// the emitter releases each of those override kinds (buffer-only here) and
+// retains each carried copy on its fresh arm.
+function struct_fields_reusable_own(structs: parser.StructDecl[], struct_name: string): boolean {
+    if (struct_fields_reusable_param(structs, struct_name)) { return true; }
+    for sd in structs {
+        if (sd.name == struct_name) {
+            if (sd.fields.len() == 0) { return false; }
+            for fld in sd.fields {
+                var t: string = fld.type_name;
+                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t)
+                    && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)
+                    && t != "string" && t != "string[]" && !is_struct_array_field_type(structs, t) && !is_enum_array_field_type(structs, t)) { return false; }
+            }
+            return true;
+        }
+    }
+    return false;
+}
+// own_field_inplace_append: is override value `v` for field `fname` of type
+// `fty` exactly `base.fname.append(x)` over a pointer-width-element array? That
+// is the override an `own` base's reuse arm may perform in place on the field it
+// already owns (emit_self_overwrite_reuse), storing the element exactly as the
+// clone form does (lower_append_elem_value). Wide-element arrays (i64 / f64)
+// keep the clone form, whose push op carries the element width.
+function own_field_inplace_append(v: ast.Expr, base: string, fname: string, fty: string, structs: parser.StructDecl[]): boolean {
+    var narrow: boolean = is_leaksafe_array_field(fty) && fty != "i64[]" && fty != "u64[]" && !is_float_array_type_name(fty);
+    if (!narrow && fty != "string[]" && !is_struct_array_field_type(structs, fty) && !is_enum_array_field_type(structs, fty)) { return false; }
+    match (v) {
+        ast.ExprCall(c) => {
+            if (c.args.len() != 1) { return false; }
+            match (c.callee) {
+                ast.ExprFieldAccess(cfa) => {
+                    if (cfa.field != "append") { return false; }
+                    match (cfa.obj) {
+                        ast.ExprFieldAccess(ofa) => { return ofa.field == fname && ident_name_or_empty(ofa.obj) == base; },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// own_field_append_arg is the appended element of a value own_field_inplace_append
+// admitted.
+function own_field_append_arg(v: ast.Expr): ast.Expr {
+    match (v) {
+        ast.ExprCall(c) => { return c.args[0]; },
+        _ => { return v; }
+    }
+    return v;
+}
+
+// own_update_params_of names the declared `own` struct parameters of a free
+// function whose functional updates (`p = T { ...p, f: v }`, `return T { ...p,
+// f: v }`) may reuse p's box in place. The caller MOVED its reference in, so the
+// box is this frame's to overwrite; the runtime __fern_rc_is_unique guard in
+// emit_self_overwrite_reuse degrades a counted alias to a fresh copy. What the
+// scan has to establish is the part no guard covers: every override of a
+// pointer field hands the box an OWNED value — a literal, a clone-form append
+// or `.with` on the field itself, or a call result (owned by the identity
+// convention) — never a bare local or another struct's field, which the box
+// would then share uncounted with the local's sweep; and p itself is only ever
+// read (`p.f`), passed on, or spread as a base.
+function own_update_params_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+    var out: string[] = [];
+    if (fn.receiver_name.len() > 0) { return out; }
+    for pd in fn.params {
+        if (!pd.own || !decl_is_struct(structs, pd.type_name) || !struct_fields_reusable_own(structs, pd.type_name)) { continue; }
+        var sc: OwnUpdScan = OwnUpdScan { name: pd.name, tyname: pd.type_name, structs: structs, bare: 0, ok_uses: 0, updates: 0, bad: false };
+        for st in fn.body { sc = astwalk.fold_stmt_nodes(st, sc, own_upd_scan_stmt, own_upd_scan_expr, astwalk.descend_all); }
+        if (!sc.bad && sc.updates > 0 && sc.bare == sc.ok_uses) { out = out.append(pd.name); }
+    }
+    return out;
+}
+
+struct OwnUpdScan { name: string, tyname: string, structs: parser.StructDecl[], bare: i32, ok_uses: i32, updates: i32, bad: boolean }
+
+function own_upd_scan_stmt(st: ast.Stmt, acc: OwnUpdScan): OwnUpdScan {
+    match (st) {
+        ast.StmtVar(v) => {
+            // `var q = p` aliases the box under a second, swept name.
+            if (ident_name_or_empty(v.init) == acc.name) { return OwnUpdScan { ...acc, bad: true }; }
+            return acc;
+        },
+        // A rebind of p is a self-update, or `p = f(.., p, ..)` — the callee took
+        // the box and handed one back, so p again holds a box this frame owns.
+        ast.StmtAssign(a) => {
+            if (a.target != acc.name || sa_is_self_update(a.value, acc.name, acc.tyname)) { return acc; }
+            match (a.value) {
+                ast.ExprCall(c) => {
+                    for arg in c.args { if (ident_name_or_empty(arg) == acc.name) { return acc; } }
+                    return OwnUpdScan { ...acc, bad: true };
+                },
+                _ => { return OwnUpdScan { ...acc, bad: true }; }
+            }
+        },
+        // `return p` hands the box back whole — the move the `own` contract
+        // already makes uncounted.
+        ast.StmtReturn(r) => {
+            if (ident_name_or_empty(r.value) == acc.name) { return OwnUpdScan { ...acc, ok_uses: acc.ok_uses + 1 }; }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+function own_upd_scan_expr(e: ast.Expr, acc: OwnUpdScan): OwnUpdScan {
+    match (e) {
+        ast.ExprIdent(id) => {
+            if (id.name == acc.name) { return OwnUpdScan { ...acc, bare: acc.bare + 1 }; }
+            return acc;
+        },
+        ast.ExprFieldAccess(fa) => {
+            if (ident_name_or_empty(fa.obj) == acc.name) { return OwnUpdScan { ...acc, ok_uses: acc.ok_uses + 1 }; }
+            return acc;
+        },
+        ast.ExprCall(c) => {
+            var a: OwnUpdScan = acc;
+            for arg in c.args {
+                if (ident_name_or_empty(arg) == acc.name) { a = OwnUpdScan { ...a, ok_uses: a.ok_uses + 1 }; }
+            }
+            return a;
+        },
+        ast.ExprStructLit(sl) => {
+            if (!sl.has_base || ident_name_or_empty(sl.base) != acc.name) { return acc; }
+            if (sl.type_name != acc.tyname) { return OwnUpdScan { ...acc, bad: true }; }
+            var fi: i32 = 0;
+            while (fi < sl.field_names.len()) {
+                var fty: string = decl_field_type(acc.structs, sl.type_name, sl.field_names[fi]);
+                if (!own_override_owned(fty, sl.field_values[fi], acc.name, acc.structs)) { return OwnUpdScan { ...acc, bad: true }; }
+                fi = fi + 1;
+            }
+            return OwnUpdScan { ...acc, ok_uses: acc.ok_uses + 1, updates: acc.updates + 1 };
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// own_override_owned: does override value `v` for a field of type `fty` hand the
+// box an owned reference? Scalars always; an array from a literal, a call, or an
+// `.append` / `.with` on the base's own field; a nested struct from a base-less
+// literal; a string from a literal or a concatenation. A bare identifier or a
+// field read of anything else is an uncounted alias and refuses the function.
+function own_override_owned(fty: string, v: ast.Expr, base: string, structs: parser.StructDecl[]): boolean {
+    if (reuse_field_is_scalar(fty)) { return true; }
+    if (is_leaksafe_array_field(fty) || fty == "string[]" || is_struct_array_field_type(structs, fty) || is_enum_array_field_type(structs, fty)) {
+        match (v) {
+            ast.ExprArray(_) => { return true; },
+            ast.ExprCall(c) => {
+                match (c.callee) {
+                    ast.ExprIdent(_) => { return true; },
+                    ast.ExprFieldAccess(cfa) => {
+                        if (cfa.field != "append" && cfa.field != "with") { return false; }
+                        match (cfa.obj) {
+                            ast.ExprFieldAccess(ofa) => { return ident_name_or_empty(ofa.obj) == base; },
+                            _ => { return false; }
+                        }
+                    },
+                    _ => { return false; }
+                }
+            },
+            _ => { return false; }
+        }
+    }
+    if (decl_is_struct(structs, fty)) {
+        match (v) {
+            ast.ExprStructLit(isl) => { return !isl.has_base; },
+            _ => { return false; }
+        }
+    }
+    if (fty == "string") {
+        match (v) {
+            ast.ExprString(_) => { return true; },
+            ast.ExprBinary(_) => { return true; },
+            _ => { return false; }
+        }
+    }
+    return false;
+}
+
 // lower_stmt_or_self_assign_reuse routes an admitted self-assign record update
 // (self_assign_update_names, seeded as "SAREUSE:<name>") to the in-place reuse
 // emitter; everything else lowers normally.
@@ -49117,7 +49330,7 @@ function lower_stmt_or_self_assign_reuse(st: ast.Stmt, s: LowerState): LowerStat
                 match (a.value) {
                     ast.ExprStructLit(slit) => {
                         if (sa_is_self_update(a.value, a.target, slit.type_name)) {
-                            return emit_self_overwrite_reuse(a.target, "", a.value, a.target, false, s);
+                            return emit_self_overwrite_reuse(a.target, "", a.value, a.target, false, s, s.is_own_param(a.target));
                         }
                     },
                     _ => {}
@@ -49159,7 +49372,7 @@ function lower_stmt_or_self_assign_reuse(st: ast.Stmt, s: LowerState): LowerStat
 // roles, so c binds no new local and step 5's donor zeroing is skipped. Step 1
 // is what makes it work at all — an override that reads p (`n: p.n + 1`) has
 // already been evaluated into its temp before the box is touched.
-function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Expr, base_name: string, release_prior: boolean, s: LowerState): LowerState {
+function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Expr, base_name: string, release_prior: boolean, s: LowerState, shallow: boolean): LowerState {
     var dslot: i32 = s.slot_of(base_name);
     if (dslot < 0) { return s.fail(); }
     match (init) {
@@ -49168,9 +49381,15 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
             // 1. Evaluate every OVERRIDE value into a temp local FIRST (native
             //    tryStructReuseOverwrite step 1): the reads of d's old fields all
             //    complete before any box surgery, on both branches.
+            //    An `own` base's `f: d.f.append(x)` over a scalar-element array
+            //    field is the exception (inplace[j]): on the reuse arm it pushes
+            //    onto the field the box already owns, so it is evaluated PER ARM
+            //    below — in place where the box is unique, the clone form where
+            //    it is shared and the buffer must stay untouched for the alias.
             var st: LowerState = s;
             var tslots: i32[] = [];
             var fidxs: i32[] = [];
+            var inplace: boolean[] = [];
             var fj: i32 = 0;
             while (fj < slit.field_names.len()) {
                 var fidx: i32 = st.field_index_in(slit.type_name, slit.field_names[fj]);
@@ -49178,7 +49397,10 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                 var tname: string = "$sor" + util.i32_to_string(dslot) + "_" + util.i32_to_string(fj);
                 st = st.add_local(tname);
                 var tslot: i32 = st.slot_of(tname);
-                if (struct_field_is_i64(st.structs, slit.type_name, fidx)) {
+                var ip: boolean = shallow && own_field_inplace_append(slit.field_values[fj], base_name, slit.field_names[fj], decl_field_type(st.structs, slit.type_name, slit.field_names[fj]), st.structs);
+                if (ip) {
+                    st = st.emit(ir.op_const_i32(0));
+                } else if (struct_field_is_i64(st.structs, slit.type_name, fidx)) {
                     st = lower_i64(slit.field_values[fj], st);
                 } else {
                     st = lower_expr(slit.field_values[fj], st);
@@ -49187,6 +49409,7 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                 st = st.emit(ir.op_store_local(tslot));
                 tslots = tslots.append(tslot);
                 fidxs = fidxs.append(fidx);
+                inplace = inplace.append(ip);
                 fj = fj + 1;
             }
             // Bind c's slot up front — both branches store the result box there.
@@ -49251,7 +49474,18 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
             var rj: i32 = 0;
             while (rj < fidxs.len()) {
                 var rfty: string = decl_field_type(st.structs, slit.type_name, slit.field_names[rj]);
-                if (is_leaksafe_array_field(rfty)) {
+                if (inplace[rj]) {
+                    // The field's own buffer grows in place (the box is unique,
+                    // so nothing else reads it); a grow frees the superseded
+                    // buffer itself (arr_push_owned), so there is no old value
+                    // to release here.
+                    st = st.emit(ir.op_load_local(bslot));
+                    st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
+                    st = lower_append_elem_value(own_field_append_arg(slit.field_values[rj]), st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_arr_push_owned());
+                    st = st.emit(ir.op_store_local(tslots[rj]));
+                } else if (is_leaksafe_array_field(rfty)) {
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -49259,10 +49493,13 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                 } else if (decl_is_struct(st.structs, rfty)) {
                     // Nested-struct override: FULL freeing drop of the OLD inner box
                     // (deep-drop its rc fields first when it owns any — each self-
-                    // guarded on rc==1 — then free the inner box header).
+                    // guarded on rc==1 — then free the inner box header). A
+                    // `shallow` caller (an `own` base, whose override values are
+                    // owned but may share the old value's children) releases the
+                    // box only.
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
-                    if (struct_has_reclaim_array_field(st.structs, rfty)) {
+                    if (!shallow && struct_has_reclaim_array_field(st.structs, rfty)) {
                         st = st.emit(ir.op_call_direct("__struct_drop_" + rfty, 1));
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
@@ -49293,24 +49530,39 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                     // STRING[] override: DEEP rc-guarded __fern_str_arr_free of
                     // the OLD value (elements + buffer); the base's string[]
                     // values are element-fresh gated (donor_enum_fields_fresh),
-                    // so never a live alias.
+                    // so never a live alias. `shallow`: the new value may be a
+                    // clone of the old one sharing its elements uncounted
+                    // (`names: a.names.append(x)`), so the buffer alone goes.
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
-                    st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
+                    if (shallow) { st = st.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                    else { st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1)); }
                     st = st.emit(ir.op_drop());
                 } else if (is_struct_array_field_type(st.structs, rfty) || is_enum_array_field_type(st.structs, rfty)) {
                     // struct[]/enum[] override: per-element shallow free of the
                     // OLD value via __fern_arrarr_free; the base's values are
                     // element-fresh gated (donor_enum_fields_fresh), so never a
-                    // live alias.
+                    // live alias. `shallow`: buffer only, as for string[].
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.structs, slit.type_name, fidxs[rj])));
-                    st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1));
+                    if (shallow) { st = st.emit(ir.op_call_direct("__fern_rc_dec", 1)); }
+                    else { st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1)); }
                     st = st.emit(ir.op_drop());
                 }
                 rj = rj + 1;
             }
             st = st.emit(ir.op_else());
+            // The in-place overrides take the clone form here: d's box is shared,
+            // so its buffer must stay as the alias reads it.
+            var ipj: i32 = 0;
+            while (ipj < fidxs.len()) {
+                if (inplace[ipj]) {
+                    st = lower_expr(slit.field_values[ipj], st);
+                    if (!st.ok) { return st; }
+                    st = st.emit(ir.op_store_local(tslots[ipj]));
+                }
+                ipj = ipj + 1;
+            }
             // FRESH arm (d's box is SHARED; box is a new rc=1 block): the spread's
             // carried fields don't come along for free — copy the shape word and
             // every NON-overridden field from d's still-live box (the aliases hold
@@ -53032,6 +53284,12 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         var sar: string[] = self_assign_update_names(fn.body, fn.params, structs, sg.return_fresh_struct_ret_fns);
         var sari: i32 = 0;
         while (sari < sar.len()) { reclaim = reclaim.append("SAREUSE:" + sar[sari]); sari = sari + 1; }
+        // An `own` struct param updated in place (own_update_params_of) joins
+        // the same set: its self-updates and its `return T { ...p, … }` reuse
+        // p's box, releasing each overridden field's old value.
+        var oup: string[] = own_update_params_of(fn, structs);
+        var oupi: i32 = 0;
+        while (oupi < oup.len()) { reclaim = reclaim.append("SAREUSE:" + oup[oupi]); oupi = oupi + 1; }
     }
     // #6713: seed the frame-allocated string VIEW set as "VIEWFRAME:<name>" —
     // the slice-bound locals whose every use borrows the view (view_frame_names_of).
@@ -53475,7 +53733,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             }
         } else if (reuse_i >= 0) {
             match (fn.body[j]) {
-                ast.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, reuse.bases[reuse_i], false, s); },
+                ast.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, reuse.bases[reuse_i], false, s, false); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (xreuse_i >= 0) {
@@ -53494,7 +53752,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
             // Own-param functional-update base (#4356 slice 12): same emitter as a
             // fresh-literal self-overwrite base — the base name resolves to a param slot.
             match (fn.body[j]) {
-                ast.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, ownso.bases[ownso_i], false, s); },
+                ast.StmtVar(rv) => { s = emit_self_overwrite_reuse(rv.name, reclaim_site_key_of(rv.name, rv.line, rv.col), rv.init, ownso.bases[ownso_i], false, s, false); },
                 _ => { s = lower_stmt(fn.body[j], s); },
             }
         } else if (xtuple_i >= 0) {

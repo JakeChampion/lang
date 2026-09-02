@@ -1,0 +1,80 @@
+// A functional update of an `own` struct parameter — `a = Asm { ...a, code:
+// le32(a.code, v) }`, `return Asm { ...a, n: a.n + 1 }` — is how every
+// assembler in the compiler threads its state: the caller moved its box in,
+// so the box is the callee's to overwrite. The self-host built a fresh box per
+// update and never released the old one or the field value it replaced; a
+// helper that appended in place handed the same buffer back with a retain
+// nothing balanced, so the next append copied the whole code buffer. One box
+// and one copied buffer per emitted instruction is what exhausted the arena
+// when the self-built compiler assembled natively (#6644). The update now
+// reuses the parameter's box and releases each overridden field's old value,
+// with the runtime uniqueness guard degrading a shared box to a copy. Every
+// result is read back after churn.
+struct Asm { code: i32[], names: string[], n: i32 }
+
+function le32(buf: i32[], v: i32): i32[] {
+  buf = buf.append(v & 255);
+  buf = buf.append((v >> 8) & 255);
+  buf = buf.append((v >> 16) & 255);
+  buf = buf.append((v >> 24) & 255);
+  return buf;
+}
+
+// self-update from a helper that appends in place, then a return-position update
+function emit_word(own a: Asm, v: i32): Asm {
+  a = Asm { ...a, code: le32(a.code, v) };
+  return Asm { ...a, n: a.n + 1 };
+}
+
+// return-position clone-form append on the base's own field
+function emit_byte(own a: Asm, b: i32): Asm {
+  return Asm { ...a, code: a.code.append(b) };
+}
+
+// a string[] field override: the clone shares the old elements
+function emit_name(own a: Asm, nm: string): Asm {
+  return Asm { ...a, names: a.names.append(nm) };
+}
+
+// an early path that passes the box on instead of updating it
+function emit_maybe(own a: Asm, v: i32, skip: boolean): Asm {
+  if (skip) { return emit_byte(a, 7); }
+  a = Asm { ...a, code: le32(a.code, v) };
+  return Asm { ...a, n: a.n + 2 };
+}
+
+function assemble(n: i32): Asm {
+  var a: Asm = Asm { code: [], names: [], n: 0 };
+  var i: i32 = 0;
+  while (i < n) {
+    a = emit_word(a, i * 7);
+    a = emit_byte(a, i & 255);
+    a = emit_name(a, "n");
+    a = emit_maybe(a, i, i % 3 == 0);
+    i = i + 1;
+  }
+  return a;
+}
+
+function churn(): i32 {
+  var junk: string[] = [];
+  var i: i32 = 0;
+  while (i < 300) { junk = junk.append("junk"); i = i + 1; }
+  return junk.len();
+}
+
+function main(): i32 {
+  var total: i32 = 0;
+  var r: i32 = 0;
+  while (r < 8) {
+    var a: Asm = assemble(60);
+    churn();
+    var k: i32 = 0;
+    while (k < a.code.len()) { total = total + a.code[k]; k = k + 1; }
+    k = 0;
+    while (k < a.names.len()) { total = total + a.names[k].len(); k = k + 1; }
+    total = total + a.n;
+    r = r + 1;
+  }
+  return total % 64;
+}

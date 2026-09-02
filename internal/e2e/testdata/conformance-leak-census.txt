@@ -314,6 +314,7 @@ own_param_array_move                                 0
 own_param_assign_target                              50
 own_param_branch_transfer                            0
 own_self_reassign_move                               0
+own_struct_update_reuse                              0
 own_transfer                                         0
 own_tree_match                                       0
 pad_multibyte_fill                                   6
