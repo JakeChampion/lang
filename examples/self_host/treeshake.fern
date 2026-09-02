@@ -47,19 +47,42 @@ function ts_op_method(op: string): string {
     return "";
 }
 
-// ts_op_is_arithmetic reports whether `op`'s own result type is also its OPERAND
-// type, which is what lets its root be qualified by that type.
+// ts_op_is_arithmetic reports whether `op` dispatches to a method that
+// ts_arith_kept resolves by receiver, so its root is worth qualifying.
 //
-// True for the arithmetic operators and false for the comparisons, and the
-// difference is not cosmetic: `checker.annotate_module` stamps ExprBinary.ty
-// with the type of the WHOLE expression, so `a + b` on i32 carries "i32" while
-// `a == b` carries "boolean" — which names no impl. The comparisons are also
-// not worth qualifying: measured on a minimal std/string program, stubbing the
-// operator roots out entirely leaves every `*.eq` and `*.cmp` in place anyway,
-// held by explicit `.eq(...)` / `.cmp(...)` field accesses in reachable stdlib
-// code (docs/PERFORMANCE-AUDIT-2026-08.md §4f).
+// True for the arithmetic operators and false for the comparisons. The
+// comparisons are not worth qualifying: measured on a minimal std/string
+// program, stubbing the operator roots out entirely leaves every `*.eq` and
+// `*.cmp` in place anyway, held by explicit `.eq(...)` / `.cmp(...)` field
+// accesses in reachable stdlib code (docs/PERFORMANCE-AUDIT-2026-08.md §4f).
 function ts_op_is_arithmetic(op: string): boolean {
     return op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
+}
+
+// ts_recv_tag is the type an operator's root is qualified by: the type of the
+// OPERAND, which is what ts_arith_kept matches against a method's
+// receiver_type. Not the type of the whole expression — those differ exactly
+// where a composite operator overload does not return Self, and `a * b` whose
+// `mul` returns f64 would look for `f64|mul` while the method that implements
+// it is `V.mul`. Every failing case of that shape is a scalar-returning
+// overload.
+//
+// "" for the forms annotate_module does not stamp, and under a driver that
+// never runs it at all (asm_load_run, asm_modload_run) — the caller falls back
+// to the bare root there, which over-keeps and stays sound.
+function ts_recv_tag(e: ast.Expr): string {
+    match (e) {
+        ast.ExprIdent(id) => { return id.ty; },
+        ast.ExprBinary(b) => { return b.ty; },
+        ast.ExprUnary(u) => { return u.ty; },
+        ast.ExprCall(c) => { return c.ty; },
+        ast.ExprIndex(ix) => { return ix.ty; },
+        ast.ExprSlice(sl) => { return sl.ty; },
+        ast.ExprFieldAccess(fa) => { return fa.ty; },
+        ast.ExprStructLit(lit) => { return lit.type_name; },
+        _ => { return ""; }
+    }
+    return "";
 }
 
 // ts_qualified_root builds the receiver-qualified root `<type tag>|<method>`.
@@ -91,18 +114,17 @@ function ts_name_of(e: ast.Expr, acc: string[]): string[] {
         ast.ExprBinary(b) => {
             var m: string = ts_op_method(b.op);
             if (m.len() == 0) { return acc; }
-            // Qualified where the tag identifies the impl, bare otherwise —
-            // and bare is the only answer under a driver that never runs
-            // annotate_module (asm_load_run, asm_modload_run), where every
-            // `ty` is "".
-            if (ts_op_is_arithmetic(b.op) && b.ty.len() > 0) {
-                return acc.append(ts_qualified_root(b.ty, m));
+            // Qualified where the tag identifies the impl, bare otherwise.
+            if (ts_op_is_arithmetic(b.op)) {
+                var bt: string = ts_recv_tag(b.left);
+                if (bt.len() > 0) { return acc.append(ts_qualified_root(bt, m)); }
             }
             return acc.append(m);
         },
         ast.ExprUnary(u) => {
             if (u.op != "-") { return acc; }
-            if (u.ty.len() > 0) { return acc.append(ts_qualified_root(u.ty, "neg")); }
+            var ut: string = ts_recv_tag(u.operand);
+            if (ut.len() > 0) { return acc.append(ts_qualified_root(ut, "neg")); }
             return acc.append("neg");
         },
         // A method/field name (`x.eq`) is a reference: keep every function with
