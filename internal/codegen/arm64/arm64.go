@@ -11462,29 +11462,13 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	// Nothing may be inserted between a `b L` and its `L:` — the peephole's
 	// dead-branch rewrite matches those two lines as neighbours — which is
 	// why the epilogue's rule goes after the `ldp`, not before the label.
-	//
-	// Not on Darwin. Two reasons, either sufficient: the Mach-O writer has
-	// no __eh_frame, so the directives would describe an image that cannot
-	// carry them; and this emitter names local labels with ELF's `.L`
-	// prefix, which on Mach-O is NOT the temporary-symbol prefix (`L` is).
-	// Each one is therefore a real symbol that atomizes the section, so the
-	// distance across it is not a constant and the assembler rejects the
-	// epilogue rule outright — `invalid CFI advance_loc expression`. That
-	// label bug is real, pre-existing and independent of CFI; #8065.
-	emitCFI := !g.darwin
-	if emitCFI {
-		g.emit(".cfi_startproc")
-	}
+	g.emit(".cfi_startproc")
 	g.emit("stp x29, x30, [sp, #-16]!")
-	if emitCFI {
-		g.emit(".cfi_def_cfa_offset 16")
-		g.emit(".cfi_offset x29, -16")
-		g.emit(".cfi_offset x30, -8")
-	}
+	g.emit(".cfi_def_cfa_offset 16")
+	g.emit(".cfi_offset x29, -16")
+	g.emit(".cfi_offset x30, -8")
 	g.emit("mov x29, sp")
-	if emitCFI {
-		g.emit(".cfi_def_cfa_register x29")
-	}
+	g.emit(".cfi_def_cfa_register x29")
 	if localsSize > 0 {
 		g.emitSpSub(localsSize)
 	}
@@ -11573,15 +11557,11 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.label(retLabel)
 	g.emit("mov sp, x29")
 	g.emit("ldp x29, x30, [sp], #16")
-	if !g.darwin {
-		// Back to the CIE's initial rule. sp+0, not sp+8 as on x86-64: there
-		// is no return address on the stack here once the pair is popped.
-		g.emit(".cfi_def_cfa sp, 0")
-	}
+	// Back to the CIE's initial rule. sp+0, not sp+8 as on x86-64: there
+	// is no return address on the stack here once the pair is popped.
+	g.emit(".cfi_def_cfa sp, 0")
 	g.emit("ret")
-	if !g.darwin {
-		g.emit(".cfi_endproc")
-	}
+	g.emit(".cfi_endproc")
 	g.sizeDirective(sym)
 	g.line(".ltorg")
 	g.flushPeep()

@@ -2586,47 +2586,57 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 
 // linkNativeDarwin assembles arm64 asm and wraps it in a static, ad-hoc-
 // signed Mach-O executable entirely in-process (internal/native/macho) —
-// no clang/ld64. Experimental: covers the integer/control-flow surface
-// the assembler handles; @PAGE/@PAGEOFF data addressing (strings, heap)
-// is not yet supported and surfaces as a clear assembler error.
+// no clang/ld64. Code, the __eh_frame its `.cfi_*` directives describe, and
+// the data blob are laid out against one address map, so the assembler's
+// adrp @PAGE / @PAGEOFF and the FDEs' pcrel pointers agree with where the
+// container puts things.
 func linkNativeDarwin(asm, outPath string) error {
 	a, err := nativearm64.ParseProgram(asm)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
-	// Code lives in __TEXT, data (string constants + globals) in a separate
-	// __DATA segment; the assembler resolves adrp @PAGE / @PAGEOFF against
-	// the addresses the Mach-O layout will place them at.
-	textLen, dataLen := a.MachOTextLen(), a.MachODataLen()
 	// Under -g, an LC_SYMTAB naming every function is emitted into __LINKEDIT
 	// (#5537 slice 1 for arm64-darwin). Its 24-byte load command shifts every
-	// address, so the assembler must resolve against the syms-inclusive layout.
-	if emitDebugSyms {
-		textVAddr, dataVAddr := nativemacho.SegmentAddrsSyms(textLen, dataLen)
-		text, data, err := a.LinkMachO(textVAddr, dataVAddr)
-		if err != nil {
-			return fmt.Errorf("native assembler: %w", err)
-		}
-		syms := nativemacho.FuncSyms(a.TextLabelVAddrs(textVAddr), textVAddr+uint64(len(text)))
-		bin := nativemacho.StaticExecutableSyms(text, data, filepath.Base(outPath), syms, a.MachODataRebaseOffsets())
-		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-			return err
-		}
-		return os.Chmod(outPath, 0o755)
-	}
-	textVAddr, dataVAddr := nativemacho.SegmentAddrs(textLen, dataLen)
-	text, data, err := a.LinkMachO(textVAddr, dataVAddr)
+	// address, so the layout is asked for with the same answer.
+	text, eh, data, m, err := layoutMachO(a, emitDebugSyms)
 	if err != nil {
-		return fmt.Errorf("native assembler: %w", err)
+		return err
 	}
-	bin := nativemacho.StaticExecutable(text, data, filepath.Base(outPath), a.MachODataRebaseOffsets())
+	var bin []byte
+	if emitDebugSyms {
+		syms := nativemacho.FuncSyms(a.TextLabelVAddrs(m.Text), m.Text+uint64(len(text)))
+		bin = nativemacho.StaticExecutableSyms(text, eh, data, filepath.Base(outPath), syms, a.MachODataRebaseOffsets())
+	} else {
+		bin = nativemacho.StaticExecutable(text, eh, data, filepath.Base(outPath), a.MachODataRebaseOffsets())
+	}
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}
-	if err := os.Chmod(outPath, 0o755); err != nil {
-		return err
+	return os.Chmod(outPath, 0o755)
+}
+
+// layoutMachO is the Mach-O counterpart of layoutWithUnwind: the code size
+// settles first (literal pool, veneers), a map with a placeholder unwind
+// length fixes the code and __eh_frame addresses — neither depends on the
+// unwind image's own size — the image is rendered there, and the real length
+// then places __DATA. Asm carrying no `.cfi_*` renders no image and gets the
+// map without a __eh_frame section.
+func layoutMachO(a *nativearm64.Assembler, syms bool) (text, eh, data []byte, m nativemacho.ImageMap, err error) {
+	fail := func(err error) ([]byte, []byte, []byte, nativemacho.ImageMap, error) {
+		return nil, nil, nil, nativemacho.ImageMap{}, fmt.Errorf("native assembler: %w", err)
 	}
-	return nil
+	textLen, dataLen := a.MachOTextLen(), a.MachODataLen()
+	if a.HasCFI() {
+		m = nativemacho.SegmentMap(textLen, 1, dataLen, syms)
+		if eh, err = a.MachOEhFrame(m.Text, m.EhFrame); err != nil {
+			return fail(err)
+		}
+	}
+	m = nativemacho.SegmentMap(textLen, len(eh), dataLen, syms)
+	if text, data, err = a.LinkMachO(m.Text, m.Data); err != nil {
+		return fail(err)
+	}
+	return text, eh, data, m, nil
 }
 
 func link(asm, outPath, cc string) error {
