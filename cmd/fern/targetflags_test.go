@@ -113,7 +113,7 @@ func TestBackendSSAKeepsCapabilityEnforcement(t *testing.T) {
 func TestBackendRejectsBadCombinations(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 	cases := map[string]struct{ target, backend, want string }{
-		"no ssa for x86-64": {"x86-64-linux", "ssa", "not available for -target x86-64"},
+		"no ssa for darwin": {"arm64-darwin", "ssa", "not available for -target arm64-darwin"},
 		"unknown backend":   {"wasm32-wasi", "nope", `unknown -backend "nope"`},
 	}
 	for name, c := range cases {
