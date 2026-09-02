@@ -19,3 +19,4 @@
 !/.claude/settings.json
 !/.claude/hooks/
 /unicodegen
+/x86tblgen
