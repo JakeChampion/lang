@@ -629,9 +629,6 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	if g.usesStrcat {
 		g.emitStrcatRuntime()
 	}
-	if g.usesRawIntPokes {
-		g.emitRawIntPokesRuntime()
-	}
 	if g.usesMemset {
 		g.emitMemsetRuntime()
 	}
@@ -4354,90 +4351,6 @@ func (g *generator) emitStrcmpRuntime2W() {
 	g.emit("ldp x29, x30, [sp], #64")
 	g.emit("ret")
 	g.sizeDirective("__fern_strcmp")
-	g.line(".ltorg")
-}
-
-// emitRawIntPokesRuntime emits `__store_i32(addr, val)` and
-// `__load_i32(addr) -> i32`. The lang Map runtime calls these
-// for its mixed bucket-index + entries buffer where the
-// caller owns the layout (no length prefix). Single STR / LDR
-// + ret each — leaf functions.
-//
-// Also emits `__store_ptr(addr, val)` / `__load_ptr(addr)`,
-// the pointer-width counterparts. On 64-bit arm64 these
-// store/load 8 bytes so that heap addresses round-trip
-// without truncation. The Map runtime uses these for its
-// data-ptr field (`m → buf` handle indirection); the rest
-// of its mixed buffer stays i32 for compact length / hash /
-// bucket-index storage. Same flag gates both pairs so a
-// Map-using program pulls them in together.
-func (g *generator) emitRawIntPokesRuntime() {
-	g.line("")
-	g.line(".global __load_i32")
-	g.typeDirective("__load_i32")
-	g.label("__load_i32")
-	g.emit("ldr w0, [x0]")
-	g.emit("ret")
-	g.sizeDirective("__load_i32")
-
-	g.line("")
-	g.line(".global __store_i32")
-	g.typeDirective("__store_i32")
-	g.label("__store_i32")
-	g.emit("str w1, [x0]")
-	g.emit("ret")
-	g.sizeDirective("__store_i32")
-
-	g.line("")
-	g.line(".global __load_ptr")
-	g.typeDirective("__load_ptr")
-	g.label("__load_ptr")
-	g.emit("ldr x0, [x0]") // 8-byte load
-	g.emit("ret")
-	g.sizeDirective("__load_ptr")
-
-	g.line("")
-	g.line(".global __store_ptr")
-	g.typeDirective("__store_ptr")
-	g.label("__store_ptr")
-	g.emit("str x1, [x0]") // 8-byte store
-	g.emit("ret")
-	g.sizeDirective("__store_ptr")
-
-	// `__load_i64` / `__store_i64` — 8-byte load / store.
-	// Used by the Map runtime's wide-scalar-boxed key path
-	// (keyKind=2) to dereference an i64 / u64 / f64 key
-	// from a heap cell. On arm64 a usize is already 8 bytes
-	// so the lang-level Map[i64, _] path stays on keyKind=0
-	// without these — the symbols still need linkable
-	// bodies because the stdlib references them by name
-	// regardless of target.
-	g.line("")
-	g.line(".global __load_i64")
-	g.typeDirective("__load_i64")
-	g.label("__load_i64")
-	g.emit("ldr x0, [x0]")
-	g.emit("ret")
-	g.sizeDirective("__load_i64")
-
-	g.line("")
-	g.line(".global __store_i64")
-	g.typeDirective("__store_i64")
-	g.label("__store_i64")
-	g.emit("str x1, [x0]")
-	g.emit("ret")
-	g.sizeDirective("__store_i64")
-
-	// `__ptr_width()` returns 8 on arm64. The Map runtime uses
-	// this to size per-entry key/value slots; pairs with the
-	// wasm backend's `i32.const 4` constant function.
-	g.line("")
-	g.line(".global __ptr_width")
-	g.typeDirective("__ptr_width")
-	g.label("__ptr_width")
-	g.emit("mov w0, #8")
-	g.emit("ret")
-	g.sizeDirective("__ptr_width")
 	g.line(".ltorg")
 }
 
@@ -10444,11 +10357,6 @@ type generator struct {
 	// Mirrors the .LStr_Empty pattern from PR #299 for the
 	// array seam.
 	usesArrEmpty bool
-	// usesRawIntPokes tracks whether the program calls
-	// __load_i32 / __store_i32 — primitives the lang Map
-	// runtime uses for its mixed bucket-index + entries
-	// buffer. Single LDR / STR + ret each.
-	usesRawIntPokes bool
 	// usesMemset gates emission of the byte-grain
 	// __memset(dst, byte, n) helper the Map clear path uses.
 	usesMemset bool
@@ -11364,6 +11272,42 @@ func (g *generator) callSym(op ir.Op, target string) string {
 		return op.Str
 	}
 	return g.sym(target)
+}
+
+// emitRawPokeIntrinsic lowers the raw-memory pokes the stdlib and
+// internal/fernrt are written on — a load or store at an address, and the
+// pointer width — to the one instruction each is, with the operands taken
+// from the operand stack and a result pushed back. Reports false for any
+// other callee.
+func (g *generator) emitRawPokeIntrinsic(name string) bool {
+	switch name {
+	case "__load_u8", "__load_i32", "__load_i64", "__load_ptr":
+		g.pop() // addr → x0
+		switch name {
+		case "__load_u8":
+			g.emit("ldrb w0, [x0]")
+		case "__load_i32":
+			g.emit("ldr w0, [x0]")
+		default:
+			g.emit("ldr x0, [x0]")
+		}
+		g.push()
+	case "__store_i32", "__store_i64", "__store_ptr":
+		g.pop() // value (on top) → x0
+		g.emit("mov x1, x0")
+		g.pop() // addr → x0
+		if name == "__store_i32" {
+			g.emit("str w1, [x0]")
+		} else {
+			g.emit("str x1, [x0]")
+		}
+	case "__ptr_width":
+		g.emit("mov x0, #8")
+		g.push()
+	default:
+		return false
+	}
+	return true
 }
 
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
@@ -14123,6 +14067,9 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.push()
 			return nil
 		}
+		if g.emitRawPokeIntrinsic(target) {
+			return nil
+		}
 		// f64 transcendentals — arm64 has no hardware sin/cos/exp/log,
 		// so these call into polynomial-approximation runtime helpers
 		// (emitFloatTranscendentalsRuntime). The arg(s) ride the
@@ -14336,8 +14283,6 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		case "__slice_range":
 			target = "__fern_slice_range"
 			g.usesSliceRange = true
-		case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr", "__ptr_width":
-			g.usesRawIntPokes = true
 		case "__memset":
 			g.usesMemset = true
 		case "__alloc_u8":
