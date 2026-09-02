@@ -84,6 +84,7 @@ both_arms_read_p                                     0
 break_continue                                       0
 bytes_writer                                         1
 c2_consuming_reuse                                   0
+call_result_arg_temp                                 0
 cast_in_tuple                                        0
 cast_narrow_binding                                  0
 cell_string_accumulate                               2

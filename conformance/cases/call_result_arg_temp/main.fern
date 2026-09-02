@@ -1,0 +1,48 @@
+// A call result handed straight to another call — `has(targets(xs, []), v)`
+// — is a temp no slot owns: the callee returns the accumulator it was
+// handed, so the caller owns one reference to it, and nothing released it
+// once the borrowing call returned. One buffer per call leaked, and in the
+// compiler that is the walk result every release analysis hands to
+// `index_of_str` at the head of each nested block. The temp is now stashed
+// and released after the call, like a fresh literal in the same position.
+function targets(xs: i32[], acc: i32[]): i32[] {
+    for x in xs {
+        acc = acc.append(x * 2);
+    }
+    return acc;
+}
+
+function has(ys: i32[], v: i32): boolean {
+    var i: i32 = 0;
+    while (i < ys.len()) {
+        if (ys[i] == v) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function pick(xs: i32[]): i32[] {
+    if (xs.len() > 4) { return targets(xs, []); }
+    var e: i32[] = [];
+    return targets(xs, e);
+}
+
+function churn(): i32 {
+    var junk: i32[][] = [];
+    var i: i32 = 0;
+    while (i < 200) { junk = junk.append([i, i + 1, i + 2, i + 3, i + 4, i + 5]); i = i + 1; }
+    return junk.len();
+}
+
+function main(): i32 {
+    var xs: i32[] = [1, 2, 3, 4, 5, 6];
+    var hits: i32 = 0;
+    var i: i32 = 0;
+    while (i < 300) {
+        if (has(targets(xs, []), (i % 14) * 2)) { hits = hits + 1; }
+        if (has(pick(xs), i % 13)) { hits = hits + 1; }
+        i = i + 1;
+    }
+    churn();
+    return hits % 64;
+}

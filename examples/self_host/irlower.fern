@@ -574,6 +574,11 @@ pub struct FnSigs {
     // function — the argument there was MOVED in, so a callee handing it straight
     // back returns it uncounted (rebind_call_same_dec).
     own_positions: string[],
+    // consumed_arr_positions: "fn|idx" for every consumed-threaded array
+    // parameter of a free function (reassigned, not `own` — the ownflag_name
+    // protocol): the callee never releases the incoming buffer, so a temp the
+    // caller hands there has no owner but the caller, once the call returns.
+    consumed_arr_positions: string[],
     // trmc_consume_fns: "fn|param" entries for TRMC functions whose loop CONSUMES
     // its scrutinee, freeing each cell as it walks past (#5333). Both halves of
     // that bargain read this one registry — the loop's release and the call
@@ -11783,6 +11788,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
     var ai: i32 = 0;
     var lat_slots: i32[] = [];
     var laa_slots: i32[] = [];
+    var lca_slots: i32[] = [];
     var lsl_slots: i32[] = [];
     var lsl_types: string[] = [];
     while (ai < c.args.len()) {
@@ -11899,17 +11905,24 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             var arrlit_arg: boolean = false;
             if (sc.ok) {
                 match (c.args[ai]) {
-                    ast.ExprArray(laa) => { arrlit_arg = discardable_scalar_arr_lit(laa, sc); },
-                    // A fresh scalar-array PRODUCER CALL (`size(mk(i))`) is the
-                    // same temp one step removed — the "ARR:" registry proves
-                    // every return is a sole-owned scalar-element buffer this
-                    // frame allocated, which is exactly what the literal arm
-                    // proves syntactically. A local shadowing the callee's name
-                    // is refused: the registry is keyed by declaration.
+                    // An EMPTY literal holds nothing a shallow dec could strand,
+                    // whatever its element type: `fold(items, [])`'s seed.
+                    ast.ExprArray(laa) => { arrlit_arg = laa.elements.len() == 0 || discardable_scalar_arr_lit(laa, sc); },
+                    // A scalar-array PRODUCER CALL (`size(mk(i))`) is the same
+                    // temp one step removed: the "ARR:" registry proves every
+                    // return is a sole-owned buffer this frame allocated, and
+                    // "ARROWN:" (#7259) that every return leaves the caller
+                    // owning one reference — an accumulator handed back
+                    // (`has(targets(xs, []), v)`), which no slot ever sweeps.
+                    // Both are scalar-element by admission, so the shallow dec
+                    // below is complete. A local shadowing the callee's name is
+                    // refused: the registries are keyed by declaration.
                     ast.ExprCall(lac) => {
                         match (lac.callee) {
                             ast.ExprIdent(lacid) => {
-                                arrlit_arg = util.index_of_str(sc.sigs.return_fresh_struct_ret_fns, "ARR:" + lacid.name) >= 0
+                                arrlit_arg = (util.index_of_str(sc.sigs.return_fresh_struct_ret_fns, "ARR:" + lacid.name) >= 0
+                                        || (util.index_of_str(sc.sigs.return_fresh_struct_ret_fns, "ARROWN:" + lacid.name) >= 0
+                                            && is_leaksafe_array_field(sig_reg_value_of(sc.sigs.ret_type_fns, lacid.name))))
                                     && sc.slot_of(lacid.name) < 0;
                                 // A "STRARR:" producer — a POINTER-element array
                                 // — is stashable only at a COUNTED-RETAIN
@@ -11949,13 +11962,23 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             // freed memory.
             var arg_releasable: boolean = call_arg_borrowable(sc, cid.name, ai)
                 || arr_param_counted_at(sc.sigs.param_counted, cid.name, ai);
-            if (arrlit_arg && sc.ok && arg_releasable) {
+            // A CONSUMED-THREADED position (consumed_arr_positions) admits the
+            // same temp on different grounds: the callee's ownership flag
+            // starts clear, so it never releases the buffer it was handed,
+            // and a fresh temp there has no owner once the call returns —
+            // `fold(items, [])`'s literal, once per call. The callee can hand
+            // the buffer straight back when nothing rebinds the parameter, so
+            // this release is guarded on the result differing from the temp.
+            var arg_consumed: boolean = !arg_releasable
+                && util.index_of_str(sc.sigs.consumed_arr_positions, cid.name + "|" + util.i32_to_string(ai)) >= 0;
+            if (arrlit_arg && sc.ok && (arg_releasable || arg_consumed)) {
                 var laan: string = "$laa" + util.i32_to_string(sc.locals.len());
                 sc = sc.add_local(laan);
                 var laas: i32 = sc.slot_of(laan);
                 sc = sc.emit(ir.op_store_local(laas));
                 sc = sc.emit(ir.op_load_local(laas));
-                laa_slots = laa_slots.append(laas);
+                if (arg_consumed) { lca_slots = lca_slots.append(laas); }
+                else { laa_slots = laa_slots.append(laas); }
             }
             // A fresh STRUCT argument — a literal or a strict-fresh producer
             // call. Both stash and free on the same terms as the array arm
@@ -12047,6 +12070,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         scr = scr.release(laa_slots[lfa], "__fern_rc_dec", "stashed-arr-arg");
         lfa = lfa + 1;
     }
+    scr = release_consumed_arg_temps(scr, lca_slots, cid.name);
     scr = free_stashed_struct_args(scr, lsl_slots, lsl_types);
     // #5464: a bare-typevar-RETURN pass-through fn (`id[T](x:T):T`,
     // str_ret_argref >= 0) returns i64 on wasm — the uniform 8-byte
@@ -12065,6 +12089,37 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         else { scr = scr.emit(ir.op_int_wrap(true)); }
     }
     return scr;
+}
+
+// release_consumed_arg_temps frees the temps handed to consumed-threaded
+// positions (lca_slots) after the call, each behind a pointer-changed test
+// against the call's result when the callee returns an array — the callee
+// hands the temp itself back when nothing rebinds its parameter. A result
+// that cannot be a pointer takes no test. The result stays on the operand
+// stack.
+function release_consumed_arg_temps(se: LowerState, slots: i32[], callee: string): LowerState {
+    if (slots.len() == 0) { return se; }
+    if (!sig_reg_has_name(se.sigs.arr_ret_fns, callee)) {
+        var sp: LowerState = se;
+        var pi: i32 = 0;
+        while (pi < slots.len()) { sp = sp.release(slots[pi], "__fern_rc_dec", "consumed-arg-temp"); pi = pi + 1; }
+        return sp;
+    }
+    var rname: string = "$lcr" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(rname);
+    var rs: i32 = st.slot_of(rname);
+    st = st.emit(ir.op_store_local(rs));
+    var i: i32 = 0;
+    while (i < slots.len()) {
+        st = st.emit(ir.op_load_local(rs));
+        st = st.emit(ir.op_load_local(slots[i]));
+        st = st.emit(ir.op_bin("ne", 0, false));
+        st = st.emit(ir.op_if(0));
+        st = st.release(slots[i], "__fern_rc_dec", "consumed-arg-temp");
+        st = st.emit(ir.op_end());
+        i = i + 1;
+    }
+    return st.emit(ir.op_load_local(rs));
 }
 
 // lower_call_prim_method dispatches `recv.m(args)` where the receiver is a
@@ -38714,8 +38769,16 @@ function arrown_obj_struct_type(fn: parser.FuncDecl, name: string, structs: pars
 // reference — the three shapes in the section comment. An array LITERAL moves
 // rather than retains, so it carries its elements with it and is admitted only
 // at a scalar element type.
-function arrown_ret_value(e: ast.Expr, fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+function arrown_ret_value(e: ast.Expr, fn: parser.FuncDecl, structs: parser.StructDecl[], acc: string[]): boolean {
     match (e) {
+        // A forwarding call to a free function already admitted: its result is
+        // the caller's on every path, so it is this function's caller's too.
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => { return util.index_of_str(acc, "ARROWN:" + cid.name) >= 0; },
+                _ => { return false; }
+            }
+        },
         ast.ExprFieldAccess(fa) => {
             match (fa.obj) {
                 ast.ExprIdent(oid) => {
@@ -38745,14 +38808,14 @@ function arrown_ret_value(e: ast.Expr, fn: parser.FuncDecl, structs: parser.Stru
 
 // body_has_non_arrown_return: some return in `stmts` hands back something the
 // caller does not own, so it cannot be told it owns one on every path.
-function body_has_non_arrown_return(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+function body_has_non_arrown_return(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: parser.StructDecl[], acc: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtReturn(r) => { if (!arrown_ret_value(r.value, fn, structs)) { return true; } },
-            ast.StmtIf(f) => { if (body_has_non_arrown_return(f.then_body, fn, structs) || body_has_non_arrown_return(f.else_body, fn, structs)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_non_arrown_return(w.body, fn, structs)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_non_arrown_return(fo.body, fn, structs)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_non_arrown_return(m.arms[a].body, fn, structs)) { return true; } a = a + 1; } },
+            ast.StmtReturn(r) => { if (!arrown_ret_value(r.value, fn, structs, acc)) { return true; } },
+            ast.StmtIf(f) => { if (body_has_non_arrown_return(f.then_body, fn, structs, acc) || body_has_non_arrown_return(f.else_body, fn, structs, acc)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_non_arrown_return(w.body, fn, structs, acc)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_non_arrown_return(fo.body, fn, structs, acc)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_non_arrown_return(m.arms[a].body, fn, structs, acc)) { return true; } a = a + 1; } },
             ast.StmtDefer(_) => {},
             _ => {}
         }
@@ -38764,10 +38827,10 @@ function body_has_non_arrown_return(stmts: ast.Stmt[], fn: parser.FuncDecl, stru
 // reference to the result. All-or-nothing — the consumers release
 // unconditionally, so one path that hands back a borrow refuses the whole
 // function.
-pub function fn_returns_owned_arr(fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+pub function fn_returns_owned_arr(fn: parser.FuncDecl, structs: parser.StructDecl[], acc: string[]): boolean {
     return arrown_ret_type(structs, fn.ret_type)
         && body_has_return(fn.body)
-        && !body_has_non_arrown_return(fn.body, fn, structs);
+        && !body_has_non_arrown_return(fn.body, fn, structs, acc);
 }
 
 // fresh_enum_ret_value: `e` is a return value of an enum-returning fn that the
@@ -38986,7 +39049,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // borrowed buffer or moved a fresh one out. Consumed by the same
         // in-place release sites; the two overlap where a body is all fresh
         // literals, and both spell the same shallow dec there.
-        if (fn_returns_owned_arr(fn, structs)) {
+        if (fn_returns_owned_arr(fn, structs, out)) {
             out = out.append("ARROWN:" + arrkey);
         }
         // "STRARR:<name>" — the POINTER-element sibling of "ARR:" (#6491): a FREE
@@ -60847,7 +60910,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
     return FnSigs { ...sg, fresh_struct_ret_fns: e, consume_safe_params: e,
         return_fresh_struct_ret_fns: e, recv_borrow_fns: e, str_fresh_ret_fns: e,
         opt_fresh_ret_fns: sig_reg_empty(), strfld_ok_types: e, tuple_fresh_ret_fns: e, own_positions: e,
-        param_counted: e };
+        consumed_arr_positions: e, param_counted: e };
 }
 
 // fn_sigs_empty is the all-empty registry, for the analysis-only lowerings that
@@ -60861,7 +60924,7 @@ pub function fn_sigs_empty(): FnSigs {
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: r,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
-        tuple_fresh_ret_fns: e, own_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e };
+        tuple_fresh_ret_fns: e, own_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e };
 }
 
 // ret_type_fns_of: "name|ret_type" rows for every non-generic function, in
@@ -61302,6 +61365,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         strfld_ok_types: sfok,
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
         own_positions: own_positions_of(funcs),
+        consumed_arr_positions: consumed_arr_positions_of(funcs),
         param_counted: pcnt,
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
         handback_params: handback_params_of(funcs),
@@ -71190,6 +71254,26 @@ pub function own_positions_of(funcs: parser.FuncDecl[]): string[] {
         var i: i32 = 0;
         while (i < fn.params.len()) {
             if (fn.params[i].own) { out = out.append(fn.name + "|" + util.i32_to_string(i)); }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// consumed_arr_positions_of lists "fname|idx" for every consumed-threaded
+// array parameter of a free function: reassigned in the body and not `own`,
+// the predicate lower_func allocates an ownership flag for.
+pub function consumed_arr_positions_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    for fn in funcs {
+        if (fn.receiver_name.len() > 0) { continue; }
+        var reassigned: string[] = body_assign_targets(fn.body);
+        var i: i32 = 0;
+        while (i < fn.params.len()) {
+            var p: ast.ParamDecl = fn.params[i];
+            if (!p.own && is_array_type_name(p.type_name) && util.index_of_str(reassigned, p.name) >= 0) {
+                out = out.append(fn.name + "|" + util.i32_to_string(i));
+            }
             i = i + 1;
         }
     }
