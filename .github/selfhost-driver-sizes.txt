@@ -214,8 +214,30 @@
 # compiler emitted through the pre- and post-port compilers is byte-identical
 # on x86-64 and wasm.
 
-fern.fern 19007172
-asm_load_run.fern 15779660
+# 2026-09-02 — three rows grew past tolerance; the other twelve moved +0.5-4.6%
+# and keep their numbers. One commit tips all three: 78045cb (ir: reclaim own
+# accumulators through recursion and variant-payload temps). Bisected on
+# checker_modload_run over the 86 commits since the previous refresh, then
+# confirmed on the other two. Those deltas were measured with the in-process
+# linker rather than CI's asm-plus-gcc path, so read them as deltas and not
+# against the figures below:
+#
+#   checker_modload_run   3748748 -> 4019084   (+7.2%, and its whole breach)
+#   asm_load_run         15943420 -> 16541436  (+3.8%, on +1.0% of prior drift)
+#   fern.fern            19648332 -> 20250444  (+3.1%, on +3.4% of prior drift)
+#
+# The growth is reclaim code, as #7837's was: seeding findReturnsFreshBox with
+# an `own` parameter keeps a threaded accumulator free-eligible, and crediting a
+# variant-constructor payload store makes more locals emit a deep drop where a
+# flat __fern_rc_dec stood. It buys the leaks that commit's census takes to zero
+# — own-accumulator recursion 100-256 blocks, string-keyed ordmap insert 1637,
+# pmap insert 500. checker_modload_run breaches on 78045cb alone; the other two
+# were already carrying drift nothing had banked and cross the line with it.
+#
+# Numbers pasted from driver-sizes' corrected-baseline block.
+
+fern.fern 20389708
+asm_load_run.fern 16680700
 asm_modload_run.fern 14767876
 asm_ir_run.fern 14652252
 asm_run.fern 14204684
@@ -226,6 +248,6 @@ asm_pathprobe_run.fern 13392236
 ssa_lift_scan_run.fern 13144900
 asm_ir_elig_run.fern 11986956
 irlower_run.fern 13151964
-checker_modload_run.fern 3748436
+checker_modload_run.fern 4023180
 ssa_emit_run.fern 3276076
 ssa_run.fern 3094268
