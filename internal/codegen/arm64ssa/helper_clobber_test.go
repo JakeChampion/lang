@@ -59,11 +59,6 @@ func TestRuntimeHelpersPreserveCalleeSaved(t *testing.T) {
 	}
 }
 
-func mentionsReg(asm, reg string) bool {
-	re := regexp.MustCompile(`\b` + reg + `\b`)
-	return re.MatchString(asm)
-}
-
 // savesReg / restoresReg look for the register in a destination-of-store
 // position: `str reg,` / `stp reg, other,` / `stp other, reg,` and the ldr/ldp
 // mirror.

@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/codegen/arm64"
@@ -6446,7 +6447,14 @@ func maxCallSaveSlots(p *x86.Program, numAlloc int) int {
 	for _, blk := range p.Blocks {
 		for _, in := range blk.Insts {
 			switch in.Op {
-			case x86.Call, x86.CallPair, x86.CallIndirect, x86.CallDyn:
+			case x86.Call, x86.CallPair:
+				// The same narrowing callLines applies, so a frame reserves the
+				// slots its calls will use rather than the ones they would have.
+				saved := liveAcrossToSave(callSavedSet(in, numAlloc), ir.CodegenAlias(in.Callee), len(in.ArgLocs))
+				if n := len(saved); n > most {
+					most = n
+				}
+			case x86.CallIndirect, x86.CallDyn:
 				if n := len(callSavedSet(in, numAlloc)); n > most {
 					most = n
 				}
@@ -6642,6 +6650,136 @@ func inlineArrIdxLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) (
 	return append(out, maskFix(in.Dst, in.W)...), true
 }
 
+// helperClobbers is, per runtime helper this file emits, the caller-saved
+// allocatable registers a call to it can leave changed.
+//
+// It is derived from the emitted body rather than declared beside it, and
+// over-approximated in the safe direction twice over: a register the body so
+// much as MENTIONS counts as clobbered even when it saves and restores it, and
+// a branch to anything that is not another helper — a compiled module function,
+// which uses the whole file — counts as all of them. The callee-saved half never
+// appears: TestRuntimeHelpersPreserveCalleeSaved makes a helper that touches one
+// save and restore it.
+//
+// What it buys is at the call sites. The rc primitives touch x0 and x1 and
+// nothing else, so a value the allocator homed in x2..x11 and kept live across
+// an inc, a dec or an is_unique no longer costs a store and a reload at each
+// one — and there are 70 to 86 sites of each in a program built on a persistent
+// collection. `__fern_box_free`, a bare `ret` while this heap does not reclaim,
+// stops costing anything at all.
+var helperClobbers = sync.OnceValue(computeHelperClobbers)
+
+// renderHelper returns a helper body's assembly text.
+func renderHelper(emit func(w func(string, ...any))) string {
+	var b strings.Builder
+	emit(func(format string, args ...any) {
+		fmt.Fprintf(&b, format, args...)
+		b.WriteByte('\n')
+	})
+	return b.String()
+}
+
+// helperBranchTargets returns the labels a body branches to, `bl` and the `b`
+// of a tail call alike — a tail call hands its callee's clobbers straight back
+// to us. Local `.L` labels are branches within the body, not calls.
+func helperBranchTargets(asm string) []string {
+	re := regexp.MustCompile(`(?m)\b(?:bl|b)\s+([A-Za-z_.][\w.]*)`)
+	var out []string
+	for _, m := range re.FindAllStringSubmatch(asm, -1) {
+		if !strings.HasPrefix(m[1], ".") {
+			out = append(out, m[1])
+		}
+	}
+	return out
+}
+
+// branchesIndirectly reports whether a body reaches a target held in a register
+// (`blr` / `br`), which helperBranchTargets cannot name.
+func branchesIndirectly(asm string) bool {
+	return regexp.MustCompile(`(?m)^\s*(blr|br)\b`).MatchString(asm)
+}
+
+func computeHelperClobbers() map[string][]bool {
+	// The two routines a body reaches by their bare labels rather than through
+	// fnLabel, so a branch to either resolves like any other helper.
+	bodies := map[string]string{
+		heapGuardSym: renderHelper(emitHeapGuard),
+		bcopySym:     renderHelper(emitBcopy),
+	}
+	for name, emit := range runtimeHelperEmitters {
+		bodies[fnLabel(name)] = renderHelper(emit)
+	}
+	all := make([]bool, firstCalleeSaved)
+	for r := range all {
+		all[r] = true
+	}
+	sets := map[string][]bool{}
+	for label, asm := range bodies {
+		set := make([]bool, firstCalleeSaved)
+		if branchesIndirectly(asm) {
+			// The target is a register, so there is no body to read: assume the
+			// worst rather than let a future helper narrow a set it should not.
+			copy(set, all)
+			sets[label] = set
+			continue
+		}
+		for r := range set {
+			set[r] = mentionsReg(asm, armX[r]) || mentionsReg(asm, armW[r])
+		}
+		sets[label] = set
+	}
+	// Fixed point over the call graph: a body inherits every callee's set, and
+	// a callee that is not a helper of this file is a compiled function.
+	for changed := true; changed; {
+		changed = false
+		for label, asm := range bodies {
+			for _, target := range helperBranchTargets(asm) {
+				callee, known := sets[target]
+				if !known {
+					callee = all
+				}
+				for r, c := range callee {
+					if c && !sets[label][r] {
+						sets[label][r] = true
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	return sets
+}
+
+// mentionsReg reports whether asm names a register, as an operand or anywhere
+// else. Word-bounded, so the `x1` inside an immediate like #0x10000 is not one.
+func mentionsReg(asm, reg string) bool {
+	return regexp.MustCompile(`\b` + reg + `\b`).MatchString(asm)
+}
+
+// liveAcrossToSave narrows the allocator's live-across set to the registers this
+// call can actually disturb: what the callee clobbers, plus the argument
+// registers the caller's own parallel move writes on the way in (the saves
+// precede that move, so they protect against it too). A callee this file does
+// not emit — a compiled module function — is assumed to use every one.
+func liveAcrossToSave(saved []int, callee string, args int) []int {
+	clob, known := helperClobbers()[fnLabel(callee)]
+	if !known {
+		return saved
+	}
+	if args > argRegCount {
+		args = argRegCount
+	}
+	out := make([]int, 0, len(saved))
+	for _, r := range saved {
+		// A register past the caller-saved run is one the set says nothing
+		// about, so it keeps its save.
+		if r < args || r >= len(clob) || clob[r] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // callLines renders a direct call under the AArch64 PCS. The CALLER-SAVED
 // registers holding values live across the call (in.SaveRegs, computed by the
 // allocator) are spilled to the reserved call-save area — sp stays fixed, so
@@ -6653,7 +6791,7 @@ func inlineArrIdxLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) (
 // above the allocatable file, never in the save set — before the saved
 // registers are restored, then placed into the destination.
 func callLines(in x86.Inst, numAlloc, scratch int, fr frameLayout) ([]string, error) {
-	saved := callSavedSet(in, numAlloc)
+	saved := liveAcrossToSave(callSavedSet(in, numAlloc), ir.CodegenAlias(in.Callee), len(in.ArgLocs))
 	// s0 — the first scratch register — stages the pair-return payload. It is
 	// above the allocatable file (never in the save set) and distinct from the
 	// result-capture scratch (s3), so neither the restores nor the tag placement
