@@ -184,6 +184,15 @@ func (r *runtimeNeeds) add(name string) {
 	}
 	r.set[name] = true
 	r.order = append(r.order, name)
+	// cabi_realloc's body aligns the bump cursor and then forwards to
+	// __fern_alloc, so pinning it alone is not enough: buildCabiReallocBody
+	// looks the callee up by name, an absent one reads back as funcidx 0, and
+	// the module fails to validate against whatever function happens to sit
+	// there. Callers that pin cabi_realloc for a HOST to call (preview-2
+	// wrapping, a string- or list-param @export) have no reason to know that.
+	if name == "cabi_realloc" {
+		r.add("__fern_alloc")
+	}
 }
 
 // scanRuntimeHelpers walks the IR program and records every
