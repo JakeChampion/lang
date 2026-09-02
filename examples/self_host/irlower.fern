@@ -18381,7 +18381,8 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
     match (st) {
         ast.StmtVar(v) =>{
             var sv: LowerState = lower_stmt_var(v, s);
-            return seed_snapshot_local(v, sv);
+            sv = seed_snapshot_local(v, sv);
+            return release_last_use_source(v, sv);
         },
         ast.StmtAssign(a) =>{ return lower_stmt_assign(a, s); },
         ast.StmtReturn(r) => {
@@ -27862,7 +27863,13 @@ function body_consume_unsafe_seen(stmts: ast.Stmt[], name: string, borrowable: s
             // between the two, so nothing st shares with name's box is released
             // before name holds it again; from then on the two are one lineage.
             var handback: boolean = i + 1 < stmts.len() && ident_name_or_empty(v_init_field_obj(stmts[i + 1], name)) == q;
-            if (!own_rebinds || handback) { i = i + 1; continue; }
+            // The last use: `var q: T = g(.., name, ..)` binds the last value
+            // derived from name's box, and the lowering releases that box at the
+            // same statement (release_last_use_source) — a move-out, as a bare
+            // `return name` is.
+            var lastuse: boolean = own_rebinds && !handback
+                && reclaim_site_name(last_use_consumer_in(stmts, name, var_annot_at_top(stmts, name), borrowable, consume_safe)) == q;
+            if (!own_rebinds || handback || lastuse) { i = i + 1; continue; }
             return true;
         }
         if (stmt_consume_unsafe_for(stmt, name, borrowable, consume_safe, recv_borrow, own_rebinds, seen)) { return true; }
@@ -39192,8 +39199,14 @@ function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: pa
                 var call_alias: boolean = !snap_init_ok && !alias_init && src.len() > 0 && src != "!"
                     && init_derives_from(v.init, src, borrowable, consume_safe);
                 var rebinds_only: boolean = alias_init || call_alias;
+                // A local never rebound still has a generation to release when
+                // its last use binds another local over it (last_use_consumer_in).
+                var lu: string = "";
+                if (v.type_name.len() > 0 && (snap_init_ok || rebinds_only) && src != "!" && decl_is_struct(structs, v.type_name)) {
+                    lu = last_use_consumer_in(stmts, v.name, v.type_name, borrowable, consume_safe);
+                }
                 if (v.type_name.len() > 0
-                    && util.index_of_str(reassigned, v.name) >= 0
+                    && (util.index_of_str(reassigned, v.name) >= 0 || lu.len() > 0)
                     && (snap_init_ok || rebinds_only)
                     && src != "!"
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)
@@ -39202,6 +39215,7 @@ function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: pa
                     var key: string = reclaim_site_key_of(v.name, v.line, v.col);
                     if (!rebinds_only) { a = push_str_unique(a, key); }
                     if (src.len() > 0) { a = push_str_unique(a, "SNAPSRC:" + key + "|" + src); }
+                    if (lu.len() > 0) { a = push_str_unique(a, "LASTUSE:" + lu + "|" + v.name); }
                 }
             },
             ast.StmtIf(f) => { a = collect_snap_locals(f.then_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); a = collect_snap_locals(f.else_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); },
@@ -71726,6 +71740,13 @@ while (sli < snap_locals.len()) {
     // "SNAPSRC:<site>|<name>" rides along for seed_snapshot_local; the site it
     // names still takes the rebind-release marker below.
     var is_src: boolean = row.len() > 8 && slice_unchecked(row, 0, 8) == "SNAPSRC:";
+    // "LASTUSE:<site>|<name>" rides along for release_last_use_source; the
+    // site it names is the consumer's, not a credit.
+    if (row.len() > 8 && slice_unchecked(row, 0, 8) == "LASTUSE:") {
+        if (util.index_of_str(reclaim, row) < 0) { reclaim = reclaim.append(row); }
+        sli = sli + 1;
+        continue;
+    }
     if (is_src) {
         var bar: i32 = 8;
         while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
@@ -71888,14 +71909,129 @@ function snapshot_slot_name(i: i32): string {
 // compares equal to it and is left alone.
 function seed_snapshot_local(v: ast.StmtVar, sv: LowerState): LowerState {
     if (!sv.ok) { return sv; }
-    var src: string = snapshot_source_of(sv.reclaimable_names, reclaim_site_key_of(v.name, v.line, v.col));
+    var src: string = site_row_value(sv.reclaimable_names, "SNAPSRC:", reclaim_site_key_of(v.name, v.line, v.col));
     if (src.len() == 0) { return sv; }
     var slot: i32 = sv.slot_of(v.name);
     var srcslot: i32 = sv.slot_of(src);
     if (slot < 0 || srcslot < 0 || sv.struct_type_of_slot(slot).len() == 0) { return sv; }
     var st: LowerState = sv.add_local(snapshot_slot_name(slot));
-    st = st.emit(ir.op_load_local(srcslot));
+    if (last_use_release_slot(v, st) == srcslot) {
+        // The source's box goes at this statement (release_last_use_source),
+        // so the derived local inherits the source's own snapshot, or none.
+        var ss: i32 = st.slot_of(snapshot_slot_name(srcslot));
+        if (ss >= 0) { st = st.emit(ir.op_load_local(ss)); } else { st = st.emit(ir.op_const_i32(0)); }
+    } else {
+        st = st.emit(ir.op_load_local(srcslot));
+    }
     return st.emit(ir.op_store_local(st.slot_of(snapshot_slot_name(slot))));
+}
+
+// last_use_release_slot: the slot of the local whose last use `var q2: T =
+// g(.., name, ..)` at `v` is — a "LASTUSE:" row names it, and it is a local of
+// q2's own struct type — else -1.
+function last_use_release_slot(v: ast.StmtVar, s: LowerState): i32 {
+    var name: string = site_row_value(s.reclaimable_names, "LASTUSE:", reclaim_site_key_of(v.name, v.line, v.col));
+    if (name.len() == 0) { return 0 - 1; }
+    var slot: i32 = s.slot_of(name);
+    var q2: i32 = s.slot_of(v.name);
+    if (slot < s.n_params || q2 < 0 || s.is_arr_slot(slot)) { return 0 - 1; }
+    var sty: string = s.struct_type_of_slot(slot);
+    if (sty.len() == 0 || sty != s.struct_type_of_slot(q2)) { return 0 - 1; }
+    return slot;
+}
+
+// release_last_use_source: `var q2: T = g(.., name, ..)` bound the last value
+// derived from name, so name's box is dead. Release it the way a rebind would,
+// with q2 standing in for the new value: a field q2 carries on is kept, the
+// replaced ones and the box go, a shared box gives up this slot's count. When g
+// handed name's own box back, q2 holds its own count on it and name's is
+// released. At an `own` position the callee took the box — reused in place or
+// freed — and nothing here may read it. The slot is zeroed either way, so the
+// exit sweep of a credited local finds nothing.
+function release_last_use_source(v: ast.StmtVar, sv: LowerState): LowerState {
+    if (!sv.ok) { return sv; }
+    var slot: i32 = last_use_release_slot(v, sv);
+    if (slot < 0) { return sv; }
+    var st: LowerState = sv;
+    if (!arg_moved_into_callee(v.init, site_row_value(sv.reclaimable_names, "LASTUSE:", reclaim_site_key_of(v.name, v.line, v.col)), sv)) {
+        var q2: i32 = st.slot_of(v.name);
+        var sty: string = st.struct_type_of_slot(slot);
+        var snls: i32 = st.slot_of(snapshot_slot_name(slot));
+        var scratch: string = "$lu" + util.i32_to_string(st.locals.len());
+        st = st.add_local(scratch);
+        var os: i32 = st.slot_of(scratch);
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_store_local(os));                      // old
+        st = st.emit(ir.op_load_local(q2));                       // new
+        if (!reclaim_has(st.reclaimable_names, "NOFLD:", st.reclaim_site_key(slot)) && st.struct_routes_field_reclaim(sty)) {
+            st = emit_field_reclaim_store(st, slot, sty, snls);
+        } else {
+            st = st.emit(ir.op_load_local(slot));                 // old (arg1)
+            if (snls >= 0) { st = st.emit(ir.op_load_local(snls)); } else { st = st.emit(ir.op_const_i32(0)); }
+            st = st.emit(ir.op_call_direct("__fern_snapshot_dec", 3));   // frees old unless new or snap; returns new
+            st = st.emit(ir.op_store_local(slot));
+        }
+        st = st.emit(ir.op_load_local(os));
+        st = st.emit(ir.op_load_local(q2));
+        st = st.emit(ir.op_bin("eq", 0, false));
+        if (snls >= 0) {
+            st = st.emit(ir.op_load_local(os));
+            st = st.emit(ir.op_load_local(snls));
+            st = st.emit(ir.op_bin("ne", 0, false));
+            st = st.emit(ir.op_bin("and", 0, false));
+        }
+        st = st.emit(ir.op_if(0));
+        st = st.emit(ir.op_load_local(os));
+        st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+        st = st.emit(ir.op_drop());
+        st = st.emit(ir.op_end());
+    }
+    st = st.emit(ir.op_const_i32(0));
+    return st.emit(ir.op_store_local(slot));
+}
+
+// arg_moved_into_callee: `name` sits at a declared `own` position of e's callee
+// — or at an argument position of a method, which the registry cannot see. The
+// receiver of a method call is a borrow.
+function arg_moved_into_callee(e: ast.Expr, name: string, s: LowerState): boolean {
+    if (call_recv_ident(e) == name) { return false; }
+    return !rebind_call_same_dec(e, name, s);
+}
+
+// last_use_consumer_in: the site key of the `var q2: ty = g(.., name, ..)` /
+// `var q2: ty = name.m(…)` in `stmts` after which name is never mentioned
+// again, else "". `name` is declared at the top level of this list, so no
+// statement outside it can read it either.
+function last_use_consumer_in(stmts: ast.Stmt[], name: string, ty: string, borrowable: string[], consume_safe: string[]): string {
+    if (ty.len() == 0) { return ""; }
+    var j: i32 = 0;
+    while (j < stmts.len()) {
+        match (stmts[j]) {
+            ast.StmtVar(v) => {
+                if (v.name != name && v.type_name == ty
+                    && init_derives_from(v.init, name, borrowable, consume_safe)
+                    && !stmts_mention_from(stmts, j + 1, name)) { return reclaim_site_key_of(v.name, v.line, v.col); }
+            },
+            _ => {}
+        }
+        j = j + 1;
+    }
+    return "";
+}
+function var_annot_at_top(stmts: ast.Stmt[], name: string): string {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => { if (v.name == name) { return v.type_name; } },
+            _ => {}
+        }
+    }
+    return "";
+}
+function stmts_mention_from(stmts: ast.Stmt[], from: i32, name: string): boolean {
+    var seen: string[] = [];
+    var j: i32 = from;
+    while (j < stmts.len()) { seen = astwalk.collect_idents_stmt(stmts[j], seen); j = j + 1; }
+    return util.index_of_str(seen, name) >= 0;
 }
 
 // tail_release_snapshot_locals: `return q.m(…)` / `return g(.., q, ..)` where q
@@ -71955,10 +72091,9 @@ function tail_release_one(name: string, s: LowerState): LowerState {
     return st.emit(ir.op_load_local(slot));
 }
 
-// snapshot_source_of: the variable a "SNAPSRC:<site>|<name>" row names for `site`,
-// else "".
-function snapshot_source_of(names: string[], site: string): string {
-    var pfx: string = "SNAPSRC:" + site + "|";
+// site_row_value: the name a "<tag><site>|<name>" row carries for `site`, else "".
+function site_row_value(names: string[], tag: string, site: string): string {
+    var pfx: string = tag + site + "|";
     var i: i32 = 0;
     while (i < names.len()) {
         var e: string = names[i];

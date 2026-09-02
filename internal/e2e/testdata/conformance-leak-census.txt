@@ -431,6 +431,7 @@ struct_field_wide_array_append                       0
 struct_nested                                        0
 struct_producer_returns_local                        0
 struct_state_handback                                0
+struct_state_last_use                                0
 struct_tuple_field_reclaim                           0
 struct_tuple_field_shared                            0
 sum_10_args                                          0
