@@ -482,7 +482,13 @@ func extractFuncBody(asm, sym string) string {
 		}
 		lineStart := off + next + 1
 		rest := body[lineStart:]
-		if len(rest) > 0 && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '.' && rest[0] != '\n' {
+		// A local label is not the next function. `.L…` is the ELF spelling;
+		// Mach-O's is a bare `L…` (no dot), so an arm64-darwin body ended at its
+		// first branch target and everything after it — including the syscall
+		// number the caller is looking for — read as absent rather than wrong.
+		// Nothing local is ever a call target, so neither prefix can be a
+		// function here.
+		if len(rest) > 0 && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '.' && rest[0] != 'L' && rest[0] != '\n' {
 			if end := strings.Index(rest, "\n"); end < 0 || strings.Contains(rest[:end], ":") {
 				return body[:lineStart]
 			}
