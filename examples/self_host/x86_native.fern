@@ -2741,6 +2741,7 @@ function x86_gas_split_ops(rest: string): string[] {
     return out.append(x86_gas_trim(s));
 }
 
+// BEGIN GENERATED GPR GROUP TABLES (cmd/x86tblgen) — do not edit by hand.
 // x86_gas_alu_ext maps an ALU base mnemonic to its group-1 /digit; the
 // family's MR opcode row is ext*8 (add 00, or 08, adc 10, sbb 18, and 20,
 // sub 28, xor 30, cmp 38).
@@ -2775,13 +2776,13 @@ function x86_gas_incdec_ext(mnem: string): i32 {
 }
 
 // x86_gas_shift_ext maps a shift/rotate base mnemonic to its C0..D3-group
-// /digit.
+// /digit. sal is gas's alias for shl and takes shl's /4.
 function x86_gas_shift_ext(mnem: string): i32 {
     if (mnem == "rol") { return 0; }
     if (mnem == "ror") { return 1; }
     if (mnem == "rcl") { return 2; }
     if (mnem == "rcr") { return 3; }
-    if (mnem == "shl") { return 4; }
+    if (mnem == "shl" || mnem == "sal") { return 4; }
     if (mnem == "shr") { return 5; }
     if (mnem == "sar") { return 7; }
     return 0 - 1;
@@ -2796,6 +2797,29 @@ function x86_gas_bt_idx(mnem: string): i32 {
     if (mnem == "btc") { return 3; }
     return 0 - 1;
 }
+
+// x86_gas_lockable: the base mnemonics the F0 lock prefix may precede —
+// anything else is #UD at runtime, so it is refused at assembly.
+function x86_gas_lockable(mnem: string): boolean {
+    return mnem == "adc"
+        || mnem == "add"
+        || mnem == "and"
+        || mnem == "btc"
+        || mnem == "btr"
+        || mnem == "bts"
+        || mnem == "cmpxchg"
+        || mnem == "dec"
+        || mnem == "inc"
+        || mnem == "neg"
+        || mnem == "not"
+        || mnem == "or"
+        || mnem == "sbb"
+        || mnem == "sub"
+        || mnem == "xadd"
+        || mnem == "xchg"
+        || mnem == "xor";
+}
+// END GENERATED GPR GROUP TABLES
 
 // BEGIN GENERATED CONDITION TABLE (cmd/x86tblgen) — do not edit by hand.
 // x86_gas_cc_code maps a condition-suffix spelling to its 4-bit condition
@@ -2822,16 +2846,6 @@ function x86_gas_cc_code(cond: string): i32 {
     return 0 - 1;
 }
 // END GENERATED CONDITION TABLE
-
-// x86_gas_lockable: the base mnemonics the F0 lock prefix may precede —
-// anything else is #UD at runtime, so it is refused at assembly.
-function x86_gas_lockable(mnem: string): boolean {
-    if (x86_gas_alu_ext(mnem) >= 0) { return mnem != "cmp"; }
-    if (x86_gas_incdec_ext(mnem) >= 0) { return true; }
-    if (mnem == "not" || mnem == "neg") { return true; }
-    if (mnem == "xadd" || mnem == "cmpxchg" || mnem == "xchg") { return true; }
-    return x86_gas_bt_idx(mnem) >= 1; // bts/btr/btc, not bt
-}
 
 // ---- fixed-byte mnemonics ----
 

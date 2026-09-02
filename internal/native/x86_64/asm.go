@@ -738,6 +738,29 @@ func (a *Assembler) insn(line string) error {
 			return nil
 		}
 	}
+	// The ModRM.reg-extension families come from internal/native/x86tbl,
+	// which the self-host tables are generated from: one vocabulary, so a
+	// spelling one side knows and the other does not cannot exist. imul
+	// goes first because its one-operand form is group 3's /5 while its
+	// two- and three-operand forms are not group 3 at all.
+	if mnem == "imul" {
+		return a.imul(ops)
+	}
+	if ext, ok := x86tbl.ALU.Ext(mnem); ok {
+		return a.alu(ops, ext*8, int(ext))
+	}
+	if ext, ok := x86tbl.Shift.Ext(mnem); ok {
+		return a.shift(ops, int(ext))
+	}
+	if ext, ok := x86tbl.Unary.Ext(mnem); ok {
+		return a.unaryF7(ops, int(ext))
+	}
+	if ext, ok := x86tbl.IncDec.Ext(mnem); ok {
+		return a.incDec(ops, int(ext))
+	}
+	if idx, ok := x86tbl.BitTest.Ext(mnem); ok {
+		return a.btOp(ops, 0xA3+8*idx, 4+int(idx))
+	}
 	switch mnem {
 	case "push":
 		return a.pushPop(ops, 0x50)
@@ -747,26 +770,8 @@ func (a *Assembler) insn(line string) error {
 		return a.mov(ops, false)
 	case "movabs":
 		return a.mov(ops, true)
-	case "add":
-		return a.alu(ops, 0x00, 0)
-	case "or":
-		return a.alu(ops, 0x08, 1)
-	case "adc":
-		return a.alu(ops, 0x10, 2)
-	case "sbb":
-		return a.alu(ops, 0x18, 3)
-	case "and":
-		return a.alu(ops, 0x20, 4)
-	case "sub":
-		return a.alu(ops, 0x28, 5)
-	case "xor":
-		return a.alu(ops, 0x30, 6)
-	case "cmp":
-		return a.alu(ops, 0x38, 7)
 	case "test":
 		return a.test(ops)
-	case "imul":
-		return a.imul(ops)
 	case "bsf":
 		// The scan-forward sibling of bsr. tzcnt below is the same opcode
 		// with an F3 prefix; bsf itself was simply never needed until the
@@ -783,46 +788,10 @@ func (a *Assembler) insn(line string) error {
 		return a.bitOp(ops, 0xBC, 0xF3)
 	case "popcnt":
 		return a.bitOp(ops, 0xB8, 0xF3)
-	case "idiv":
-		return a.unaryF7(ops, 7)
-	case "div":
-		return a.unaryF7(ops, 6)
-	case "mul":
-		return a.unaryF7(ops, 4)
-	case "neg":
-		return a.unaryF7(ops, 3)
-	case "not":
-		return a.unaryF7(ops, 2)
-	case "inc":
-		return a.incDec(ops, 0)
-	case "dec":
-		return a.incDec(ops, 1)
-	case "sar":
-		return a.shift(ops, 7)
-	case "shl":
-		return a.shift(ops, 4)
-	case "shr":
-		return a.shift(ops, 5)
 	case "shld":
 		return a.shld(ops)
 	case "shrd":
 		return a.shrd(ops)
-	case "rol":
-		return a.shift(ops, 0)
-	case "ror":
-		return a.shift(ops, 1)
-	case "rcl":
-		return a.shift(ops, 2)
-	case "rcr":
-		return a.shift(ops, 3)
-	case "bt":
-		return a.btOp(ops, 0xA3, 4)
-	case "bts":
-		return a.btOp(ops, 0xAB, 5)
-	case "btr":
-		return a.btOp(ops, 0xB3, 6)
-	case "btc":
-		return a.btOp(ops, 0xBB, 7)
 	case "bswap":
 		return a.bswap(ops)
 	case "xadd":
@@ -2198,12 +2167,8 @@ var (
 	repeatable = x86tbl.RepeatableMnemonics()
 )
 
-var lockable = map[string]bool{
-	"add": true, "adc": true, "and": true, "btc": true, "btr": true,
-	"bts": true, "cmpxchg": true, "dec": true, "inc": true, "neg": true,
-	"not": true, "or": true, "sbb": true, "sub": true, "xadd": true,
-	"xchg": true, "xor": true,
-}
+// lockable is the set gas allows the F0 prefix on, from the shared table.
+var lockable = x86tbl.Lockable()
 
 // noXmm rejects xmm registers reaching a GPR-only encoder, where the
 // register number would otherwise encode a general-purpose register

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -140,6 +141,42 @@ func TestSSEIntHalfIsAll66Prefixed(t *testing.T) {
 	for _, o := range x86tbl.SSEHalfOps(x86tbl.SSEIntHalf) {
 		if o.Prefix != 0x66 {
 			t.Errorf("%q is in the packed-integer half with prefix %#02x, but that half is documented as all 66-prefixed", o.Mnemonic, o.Prefix)
+		}
+	}
+}
+
+// TestGoAssemblerAcceptsEveryGroupSpelling is the group-table twin: every
+// spelling in every ModRM.reg-extension family assembles through the Go
+// assembler in the form the family takes, so a spelling in the table is a
+// spelling both assemblers reach.
+func TestGoAssemblerAcceptsEveryGroupSpelling(t *testing.T) {
+	forms := map[string]string{
+		x86tbl.ALU.Name:     "%s rax, rcx",
+		x86tbl.Shift.Name:   "%s rax, 3",
+		x86tbl.Unary.Name:   "%s rax",
+		x86tbl.IncDec.Name:  "%s rax",
+		x86tbl.BitTest.Name: "%s rax, 3",
+	}
+	for _, g := range x86tbl.Groups {
+		form, ok := forms[g.Name]
+		if !ok {
+			t.Fatalf("group %q has no probe form here", g.Name)
+		}
+		for _, sp := range g.Spellings() {
+			probe := fmt.Sprintf(form, sp)
+			if _, _, err := x86_64.AssembleProgram(probe+"\n", 0x400000); err != nil {
+				t.Errorf("%q: %v", probe, err)
+			}
+		}
+	}
+	// And the lock set reaches the prefix path.
+	for _, sp := range x86tbl.LockableSpellings() {
+		probe := "lock " + sp + " qword ptr [rbx], rax"
+		if sp == "inc" || sp == "dec" || sp == "not" || sp == "neg" {
+			probe = "lock " + sp + " qword ptr [rbx]"
+		}
+		if _, _, err := x86_64.AssembleProgram(probe+"\n", 0x400000); err != nil {
+			t.Errorf("%q: %v", probe, err)
 		}
 	}
 }
