@@ -358,10 +358,15 @@ What is left:
    the LSP is the only missing consumer left.
 2. **JS bindings.** Reachable, contrary to what the stdin/stdout shape suggests:
    `@export("iface", "name")` emits canonical-ABI wrappers into a `-emit
-   core-module` build (`wasm_ir.fern:8868`), pulling in `cabi_realloc` for
-   string parameters. What is missing is the page-side JS, not the wasm — the
-   ABI is the component model's, not the shim contract `web/wasi-shim.js`
-   speaks.
+   core-module` build in both compilers, and a module whose exports take a
+   string or a `list<T>` also exports `cabi_realloc`, the canonical ABI's guest
+   allocator. A page calls `cabi_realloc(0, 0, align, n)`, writes `n` bytes at
+   the returned pointer and passes `(ptr, n)`; the allocator forwards to
+   `__fern_alloc`, which grows memory, so the argument size is bounded by the
+   host's memory limit rather than by the module's initial page. A string result
+   comes back as a pointer to a `[ptr, len]` pair the page reads directly. That
+   is about twenty lines of page-side JS. The ABI is the component model's, not
+   the shim contract `web/wasi-shim.js` speaks, so the two do not share code.
 3. **The CLI's own stdlib.** `fern.fern`'s `load_bundle` resolves imports with
    its own worklist and only falls back to `modloader.resolve_module`, so the
    overlay does not give `fern -embed` an embedded stdlib. That is its own
