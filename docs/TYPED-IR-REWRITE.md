@@ -429,6 +429,44 @@ carries — `struct_type`, `opt_type`, `map_type`, `arrarr_elem`, `cell_elem` �
 which is the shape to reach for when a derived tag cannot answer a question the
 declaration could.
 
+### Un-coarsening `"fn[]"` was tried and reverted — the couplings are behavioural
+
+The array element looked like the cheap one. Rather than a
+`StmtVar.fn_param_types` sidecar (58 construction literals plus the
+monomorphiser, lift and flatten rebuild sites), just stop coarsening: let
+`((f64) => f64)[]` keep its spelling and give the fifteen sites that match the
+flat `"fn[]"` tag one `parser.is_fn_array_type_name` predicate. Fifteen sites
+against fifty-eight, and it DELETES machinery. It was tried, it worked for the
+calls, and it was reverted.
+
+**Counting the textual matches measured the wrong thing.** The dependencies on
+the coarse spelling are behavioural, and neither of the two found is a match on
+`"fn[]"`:
+
+- **The whole-array alias bind reached its arm by accident.** `var xs = r.hs`
+  is claimed by the ENUM-array-field arm, because the coarse element `"fn"`
+  reads as enum-like to `is_enum_like_name`. With the spelling kept,
+  `(() => i32)` is not an enum name, the arm declines, the slot is never marked,
+  and `xs[0]()` bails the IR path. Nameable and fixable — a `fnarr_field_read_type`
+  sibling — but nothing in the source says the alias depends on that
+  misclassification.
+- **Something in the rc / struct-drop path also keys off it.** With the alias
+  fixed and every call answering correctly, the `rc-soundness` churn probe in
+  `self_host_fnptr_array_field_ir_test.go` reports a LEAK (exit 98, the heap
+  growing across two identical churn runs) where the base returns 0. Not
+  root-caused before the revert.
+
+Two lessons worth more than the slice. **A tag with a long history accretes
+readers that depend on its shape rather than its text**, so `grep` bounds the
+edit and not the risk. And **the suites named for the thing you are changing are
+the gate**: the fixture legs, the formatter corpus, the checker differentials and
+the annotate suites were all green on the reverted work; the two suites that
+caught it are the two with `FnptrArrayField` and `CloArrayFieldBind` in their
+names, and running them was not part of the plan until CI failed.
+
+The sidecar route stands recommended for whoever picks this up: additive, so no
+existing consumer sees a changed spelling, at the cost of the literal count.
+
 **Still open for an ARRAY element:**
 
 ```fern
