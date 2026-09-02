@@ -154,3 +154,42 @@ func TestEmittedCFIDecodesAsUnwindData(t *testing.T) {
 		}
 	}
 }
+
+// TestDarwinEmitsNoCFI pins the Darwin exclusion and, more usefully, checks
+// the emitted Mach-O asm is one the platform assembler accepts.
+//
+// Two independent reasons the directives stay off there. The Mach-O writer
+// has no __eh_frame, so they would describe an image that cannot carry them.
+// And this emitter names local labels with ELF's `.L` prefix — on Mach-O the
+// temporary-symbol prefix is `L`, so each `.L…` is a REAL symbol, which
+// atomizes the section and makes the distance across it non-constant:
+// llvm-mc rejects the epilogue rule with "invalid CFI advance_loc
+// expression". That label bug is pre-existing and independent (#8065); CFI is
+// simply the first thing that needed distances to be computable.
+func TestDarwinEmitsNoCFI(t *testing.T) {
+	asm := compile(t, cfiSrc, Options{Darwin: true})
+	for _, d := range []string{".cfi_startproc", ".cfi_def_cfa", ".cfi_offset", ".cfi_endproc"} {
+		if strings.Contains(asm, d) {
+			t.Errorf("Darwin asm contains %s — the Mach-O writer has no __eh_frame, and the .L-prefixed labels make the assembler reject it (#8065)", d)
+		}
+	}
+	// The Linux path must still have them, or this test would pass by the
+	// emitter having stopped emitting CFI everywhere.
+	if !strings.Contains(compile(t, cfiSrc, Options{}), ".cfi_startproc") {
+		t.Fatal("the non-Darwin path lost its CFI, so this exclusion proves nothing")
+	}
+
+	mc, err := exec.LookPath("llvm-mc")
+	if err != nil {
+		t.Skip("llvm-mc not on PATH")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "d.s")
+	if err := os.WriteFile(p, []byte(asm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(mc, "-triple=arm64-apple-darwin", "-filetype=obj", "-o", filepath.Join(dir, "d.o"), p).CombinedOutput()
+	if err != nil {
+		t.Errorf("the Darwin assembler rejects the emitted asm: %v\n%s", err, out)
+	}
+}
