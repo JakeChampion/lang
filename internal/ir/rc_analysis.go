@@ -489,15 +489,26 @@ func findReturnsFreshBox(prog *ast.Program, pairForm, trmcFuncs map[string]bool)
 // than reasoned about: the pair-form ABI pushes (tag, payload) and returns
 // early, and TRMC rewrites returns into an accumulator store.
 //
-// Returning a bare PARAMETER is refused separately, in returnsOwnBox, because
-// the inc is only half the accounting. `m = __query_pair(m, …)` threads a map
-// through a parameter the callee never releases — the ownership-flag protocol
-// starts at 0, meaning the slot still holds the caller's borrow — so the
-// rebind declines the dec that would balance the return's inc, and the map
-// grows a reference per iteration. Crediting it leaked all of
-// url.query_parse. A PROJECTION of a parameter is a different object the
-// callee never owned, so no protocol can decline to release it, and it keeps
-// the credit.
+// Returning a bare PARAMETER is refused separately, in returnsOwnBox, and the
+// refusal is empirical: crediting it loses three of the five frees in
+// `url.query_parse("a=1")`, 256 B on the smallest form that shows it. The
+// accounting behind that is NOT established. `__query_pair` — the callee whose
+// verdict flips — reassigns its `Map` parameter and returns it, but it is not
+// a consumed param (consumedDropWired excludes Map), so the ownership-flag
+// protocol is not what withholds the balancing dec. Three probes reproducing
+// the shape outside the stdlib (a threaded map param, the same with `string[]`
+// values through get/append/insert, and the same behind a map-returning
+// wrapper) all read identically credited and refused, so the trigger is
+// narrower than the shape and is still unidentified.
+//
+// Refusing only the parameters a callee REASSIGNS is also enough to keep
+// query_parse clean and measures 21,104 B better on the self-host driver
+// (276,496 against 297,600). It is not taken: with no mechanism established,
+// that boundary is only known to exclude the one case that could be measured,
+// which is the wrong basis for widening a credit that has already leaked once.
+//
+// A PROJECTION of a parameter keeps the credit — a different object the callee
+// never owned — and no probe has found a shape where that is unsafe.
 func returnedAliasIsRetained(fn *ast.FuncDecl, pairForm, trmcFuncs map[string]bool) bool {
 	if pairForm[fn.Name] || trmcFuncs[fn.Name] {
 		return false
