@@ -1284,10 +1284,42 @@ func emitPreopenP2(body []byte, alloc, getDirs, rbLocal, preopenLocal uint32) []
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, rbLocal)
-	body = inst.InstLocalGet(body, rbLocal)
-	body = inst.InstCall(body, getDirs)
-	body = inst.InstLocalGet(body, rbLocal)
+	return emitPreopenCachedP2(body, getDirs, rbLocal, preopenLocal)
+}
+
+// emitPreopenCachedP2 is emitPreopenP2 for a caller that already has a
+// return area in rbLocal, which most of them do — the same buffer the
+// method call after this one writes its result into.
+//
+// The lookup runs ONCE per process: get-directories mints a fresh
+// own<descriptor> on every call and nothing drops it, so per-operation
+// lookups grew the host's resource table until it ran out of keys. The
+// preopen set is fixed at instantiation, so the cached handle stays valid
+// for the life of the program; the init flag is separate because 0 is a
+// valid handle. rbLocal is only read inside the cache-miss arm, so a
+// caller may fill it afterwards.
+func emitPreopenCachedP2(body []byte, getDirs, rbLocal, preopenLocal uint32) []byte {
+	body = inst.InstI32Const(body, preopenInitAddr)
 	body = memory.InstI32Load(body, 2, 0)
+	body = numeric.InstI32Eqz(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		// get-directories(rb): list header (base @ rb+0, count @ rb+4).
+		body = inst.InstLocalGet(body, rbLocal)
+		body = inst.InstCall(body, getDirs)
+		// mem[preopenHandleAddr] = mem[mem[rb+0] + 0] — the first tuple's
+		// descriptor handle.
+		body = inst.InstI32Const(body, preopenHandleAddr)
+		body = inst.InstLocalGet(body, rbLocal)
+		body = memory.InstI32Load(body, 2, 0)
+		body = memory.InstI32Load(body, 2, 0)
+		body = memory.InstI32Store(body, 2, 0)
+		body = inst.InstI32Const(body, preopenInitAddr)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstI32Const(body, preopenHandleAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, preopenLocal)
 	return body
