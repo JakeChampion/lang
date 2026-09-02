@@ -1525,8 +1525,19 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__fern_box_free":     emitBoxFreeHelper,
 	"__str_len":           emitStrLenHelper,
 	"__fern_arr_dec":      emitArrDecHelper,
-	"__arr_idx":           emitArrIdxHelper,
-	"__arr_idx_nc":        emitArrIdxNCHelper,
+	"__arr_idx":           emitArrIdxHelperN("__arr_idx", 2),
+	"__arr_idx_nc":        emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
+	"__arr_idx_1":         emitArrIdxHelperN("__arr_idx_1", 0),
+	"__arr_idx_1_nc":      emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
+	"__arr_idx_8":         emitArrIdxHelperN("__arr_idx_8", 3),
+	"__arr_idx_8_nc":      emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
+	"__arr_idx_16":        emitArrIdxHelperN("__arr_idx_16", 4),
+	"__arr_idx_16_nc":     emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
+	"__str_idx":           emitArrIdxHelperN("__str_idx", 0),
+	"__fern_memchr":       emitMemchrHelper,
+	"__fern_rmemchr":      emitRmemchrHelper,
+	"__fern_ascii_run":    emitAsciiRunHelper,
+	"__fern_count_byte":   emitCountByteHelper,
 	"__str_eq":            emitStrEqHelper,
 	"__str_ord":           emitStrOrdHelper,
 	"__str_concat":        emitStrConcatHelper,
@@ -1736,36 +1747,52 @@ func emitArrDecHelper(w func(string, ...any)) {
 	rcPassThroughRet(w)
 }
 
-// emitArrIdxHelper writes __arr_idx(base, idx) -> elem address: a bounds-checked
-// index into a length-prefixed i32 (stride-4) array. Compares idx against the
-// array's length at [base-4] with a single unsigned compare (a negative idx is
-// huge unsigned, so it fails too) and, on out-of-range, exits 134 — matching the
-// native array-index trap and wasm's `unreachable`. Returns base + idx*4; the
-// caller's OpLoad reads the element. The IR lowers `a[i]` to a call here (the
-// native backends inline the same address compute). Leaf.
-func emitArrIdxHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__arr_idx"))
-	w("\tmov edx, %s", memRef("rdi", -4)) // len
-	w("\tcmp esi, edx")
-	w("\tjb .Lssa_arridx_ok")
-	w("\tmov edi, 134")
-	w("\tmov eax, 231") // exit_group
-	w("\tsyscall")
-	w(".Lssa_arridx_ok:")
-	w("\tlea rax, [rdi + rsi*4]")
-	w("\tret")
+// emitArrIdxHelperN writes an indexing helper `<name>(base, idx) -> elem
+// address` for a length-prefixed array of stride 1<<shift.
+//
+// Checked forms compare idx against the length at [base-4] with a SINGLE
+// unsigned compare — a negative idx arrives as a huge unsigned and fails the
+// same test — and exit 134 out of range, matching the native array-index trap
+// and wasm's `unreachable`. The `_nc` forms are the address compute alone, for
+// sites the checker has already proved in range. Returns base + idx*stride; the
+// caller's OpLoad reads the element. Leaf.
+//
+// The local label is keyed by NAME rather than by shift: two helpers can share a
+// stride (`__str_idx` and `__arr_idx_1` are both byte-stride), and keying on the
+// shift would emit the same label twice in one module.
+func emitArrIdxHelperN(name string, shift int) func(w func(string, ...any)) {
+	return emitArrIdxHelperNChecked(name, shift, true)
+}
+
+func emitArrIdxHelperNChecked(name string, shift int, checked bool) func(w func(string, ...any)) {
+	return func(w func(string, ...any)) {
+		w("")
+		w("%s:", fnLabel(name))
+		if checked {
+			ok := fmt.Sprintf(".Lssa_idx_%s_ok", strings.TrimLeft(name, "_"))
+			w("\tmov edx, %s", memRef("rdi", -4)) // len
+			w("\tcmp esi, edx")
+			w("\tjb %s", ok)
+			w("\tmov edi, 134")
+			w("\tmov eax, 231") // exit_group
+			w("\tsyscall")
+			w("%s:", ok)
+		}
+		// lea scales by 1, 2, 4 or 8 only, so stride 16 needs the shift spelled
+		// out. rsi is dead after it either way.
+		if shift <= 3 {
+			w("\tlea rax, [rdi + rsi*%d]", 1<<shift)
+		} else {
+			w("\tshl rsi, %d", shift)
+			w("\tlea rax, [rdi + rsi]")
+		}
+		w("\tret")
+	}
 }
 
 // emitArrIdxNCHelper is emitArrIdxHelper minus the bounds check — the
 // elided (`_nc`) variant used when the caller proved the index in range
 // (ForEach desugar, #4380 lever 3). Just base + idx*4.
-func emitArrIdxNCHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__arr_idx_nc"))
-	w("\tlea rax, [rdi + rsi*4]")
-	w("\tret")
-}
 
 // emitStrEqHelper writes __str_eq(a, b) -> i32: 1 if the two single-word strings
 // are byte-equal, else 0. Fast paths on pointer identity and length mismatch
@@ -1832,6 +1859,139 @@ func emitStrOrdHelper(w func(string, ...any)) {
 	w("\tmov eax, ecx")
 	w("\tsub eax, edx")
 	w("\tmovsx rax, eax")
+	w("\tret")
+}
+
+// The four single-byte scan kernels the std/string routines lower to. All take a
+// string as ONE word — the data pointer, with the byte length at [ptr-4] — so
+// there is no unboxing step; the native x86-64 twins spend a frame pulling a
+// two-word SSO string apart before they can start.
+//
+// Scalar, a byte an iteration, matching __str_concat's copy loops rather than
+// the SSE2 kernels the native backend and arm64ssa run. This path has no corpus
+// differential yet, so the first version of each is the one whose correctness is
+// readable off the page; vectorising them is a later slice with a net under it,
+// and docs/ATLAS-PLATFORM-PLAN.md §3 has the block algorithms when it comes.
+//
+// Two conventions are shared and worth stating once. A byte operand outside
+// 0..255 can never occur in the haystack, and ONE unsigned compare covers both
+// ends because a negative arrives as a huge unsigned — checked before the loop
+// so no iteration pays for it. And `from` CLAMPS rather than trapping, matching
+// the interpreter: a forward scan clamps it up to 0, a backward scan clamps it
+// down to len-1.
+
+// emitMemchrHelper writes __fern_memchr(s, byte, from) -> the index of the first
+// `byte` at or after `from`, or -1. Leaf.
+func emitMemchrHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_memchr"))
+	w("\tmov r8d, %s", memRef("rdi", -4)) // len
+	w("\tcmp rsi, 255")
+	w("\tja .Lssa_memchr_miss")
+	w("\ttest edx, edx")
+	w("\tjns .Lssa_memchr_from_ok")
+	w("\txor edx, edx") // clamp `from` up to 0
+	w(".Lssa_memchr_from_ok:")
+	w(".Lssa_memchr_loop:")
+	w("\tcmp edx, r8d")
+	w("\tjae .Lssa_memchr_miss")
+	w("\tmovzx r9d, byte ptr [rdi + rdx]")
+	w("\tcmp r9d, esi")
+	w("\tje .Lssa_memchr_hit")
+	w("\tadd edx, 1")
+	w("\tjmp .Lssa_memchr_loop")
+	w(".Lssa_memchr_hit:")
+	w("\tmov eax, edx")
+	w("\tret")
+	w(".Lssa_memchr_miss:")
+	w("\tmov eax, -1")
+	w("\tret")
+}
+
+// emitRmemchrHelper writes __fern_rmemchr(s, byte, from) -> the index of the LAST
+// `byte` at or before `from`, or -1. __fern_memchr walked backwards, with the
+// clamp mirrored. Leaf.
+func emitRmemchrHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_rmemchr"))
+	w("\tmov r8d, %s", memRef("rdi", -4)) // len
+	w("\tcmp rsi, 255")
+	w("\tja .Lssa_rmemchr_miss")
+	w("\ttest edx, edx")
+	w("\tjs .Lssa_rmemchr_miss") // from < 0: nothing at or before it
+	w("\tcmp edx, r8d")
+	w("\tjb .Lssa_rmemchr_start_ok")
+	w("\tmov edx, r8d")
+	w("\tsub edx, 1") // clamp `from` down to len-1
+	w(".Lssa_rmemchr_start_ok:")
+	w("\ttest edx, edx")
+	w("\tjs .Lssa_rmemchr_miss") // the empty string clamped to -1
+	w(".Lssa_rmemchr_loop:")
+	w("\tmovzx r9d, byte ptr [rdi + rdx]")
+	w("\tcmp r9d, esi")
+	w("\tje .Lssa_rmemchr_hit")
+	w("\tsub edx, 1")
+	w("\tjns .Lssa_rmemchr_loop")
+	w("\tjmp .Lssa_rmemchr_miss")
+	w(".Lssa_rmemchr_hit:")
+	w("\tmov eax, edx")
+	w("\tret")
+	w(".Lssa_rmemchr_miss:")
+	w("\tmov eax, -1")
+	w("\tret")
+}
+
+// emitAsciiRunHelper writes __fern_ascii_run(s, from) -> the index of the first
+// byte at or after `from` with its high bit set, or len(s) if the rest is ASCII.
+// The length rather than -1 on a miss, matching the intrinsic's branch-free-skip
+// contract on the other backends. Leaf.
+func emitAsciiRunHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_ascii_run"))
+	w("\tmov r8d, %s", memRef("rdi", -4)) // len
+	w("\ttest esi, esi")
+	w("\tjns .Lssa_ascii_from_ok")
+	w("\txor esi, esi") // clamp `from` up to 0
+	w(".Lssa_ascii_from_ok:")
+	w(".Lssa_ascii_loop:")
+	w("\tcmp esi, r8d")
+	w("\tjae .Lssa_ascii_none")
+	w("\tmovzx r9d, byte ptr [rdi + rsi]")
+	w("\ttest r9d, 128")
+	w("\tjnz .Lssa_ascii_hit")
+	w("\tadd esi, 1")
+	w("\tjmp .Lssa_ascii_loop")
+	w(".Lssa_ascii_hit:")
+	w("\tmov eax, esi")
+	w("\tret")
+	w(".Lssa_ascii_none:")
+	w("\tmov eax, r8d") // no high byte: the answer is len
+	w("\tret")
+}
+
+// emitCountByteHelper writes __fern_count_byte(s, byte) -> how many bytes of `s`
+// equal `byte`. No cursor, so no clamp; both degenerate answers are honest
+// counts rather than sentinels — an out-of-range byte counts 0 because nothing
+// can equal it, an empty string counts 0 because it has no bytes. Leaf.
+func emitCountByteHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__fern_count_byte"))
+	w("\tmov r8d, %s", memRef("rdi", -4)) // len
+	w("\txor eax, eax")                   // running count
+	w("\tcmp rsi, 255")
+	w("\tja .Lssa_count_ret")
+	w("\txor edx, edx")
+	w(".Lssa_count_loop:")
+	w("\tcmp edx, r8d")
+	w("\tjae .Lssa_count_ret")
+	w("\tmovzx r9d, byte ptr [rdi + rdx]")
+	w("\tcmp r9d, esi")
+	w("\tjne .Lssa_count_next")
+	w("\tadd eax, 1")
+	w(".Lssa_count_next:")
+	w("\tadd edx, 1")
+	w("\tjmp .Lssa_count_loop")
+	w(".Lssa_count_ret:")
 	w("\tret")
 }
 
