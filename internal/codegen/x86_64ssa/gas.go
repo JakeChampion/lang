@@ -145,6 +145,9 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	for _, h := range helpers {
 		runtimeHelperEmitters[h](w)
 	}
+	if usesBcopy(helpers) {
+		emitBcopy(w)
+	}
 	if heap {
 		emitHeapGuard(w)
 	}
@@ -1518,37 +1521,41 @@ func usesCallIndirect(progs map[string]*Program) bool {
 // name the IR emits, so the `call fn_<name>` site links against the label
 // fnLabel(name) writes.
 var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
-	"__fern_rc_is_unique": emitRcIsUniqueHelper,
-	"__fern_rc_inc":       emitRcIncHelper,
-	"__fern_rc_dec":       emitRcDecHelper,
-	"__fern_closure_drop": emitClosureDropHelper,
-	"__fern_box_free":     emitBoxFreeHelper,
-	"__str_len":           emitStrLenHelper,
-	"__fern_arr_dec":      emitArrDecHelper,
-	"__arr_idx":           emitArrIdxHelperN("__arr_idx", 2),
-	"__arr_idx_nc":        emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
-	"__arr_idx_1":         emitArrIdxHelperN("__arr_idx_1", 0),
-	"__arr_idx_1_nc":      emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
-	"__arr_idx_8":         emitArrIdxHelperN("__arr_idx_8", 3),
-	"__arr_idx_8_nc":      emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
-	"__arr_idx_16":        emitArrIdxHelperN("__arr_idx_16", 4),
-	"__arr_idx_16_nc":     emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
-	"__str_idx":           emitArrIdxHelperN("__str_idx", 0),
-	"__fern_memchr":       emitMemchrHelper,
-	"__fern_rmemchr":      emitRmemchrHelper,
-	"__fern_ascii_run":    emitAsciiRunHelper,
-	"__fern_count_byte":   emitCountByteHelper,
-	"__str_eq":            emitStrEqHelper,
-	"__str_ord":           emitStrOrdHelper,
-	"__str_concat":        emitStrConcatHelper,
-	"__fern_str_dec":      emitStrDecHelper,
+	"__fern_rc_is_unique":         emitRcIsUniqueHelper,
+	"__fern_rc_inc":               emitRcIncHelper,
+	"__fern_rc_dec":               emitRcDecHelper,
+	"__fern_closure_drop":         emitClosureDropHelper,
+	"__fern_box_free":             emitBoxFreeHelper,
+	"__str_len":                   emitStrLenHelper,
+	"__fern_arr_dec":              emitArrDecHelper,
+	"__arr_idx":                   emitArrIdxHelperN("__arr_idx", 2),
+	"__arr_idx_nc":                emitArrIdxHelperNChecked("__arr_idx_nc", 2, false),
+	"__arr_idx_1":                 emitArrIdxHelperN("__arr_idx_1", 0),
+	"__arr_idx_1_nc":              emitArrIdxHelperNChecked("__arr_idx_1_nc", 0, false),
+	"__arr_idx_8":                 emitArrIdxHelperN("__arr_idx_8", 3),
+	"__arr_idx_8_nc":              emitArrIdxHelperNChecked("__arr_idx_8_nc", 3, false),
+	"__arr_idx_16":                emitArrIdxHelperN("__arr_idx_16", 4),
+	"__arr_idx_16_nc":             emitArrIdxHelperNChecked("__arr_idx_16_nc", 4, false),
+	"__str_idx":                   emitArrIdxHelperN("__str_idx", 0),
+	"__fern_memchr":               emitMemchrHelper,
+	"__fern_rmemchr":              emitRmemchrHelper,
+	"__fern_ascii_run":            emitAsciiRunHelper,
+	"__fern_count_byte":           emitCountByteHelper,
+	"__alloc_u8":                  emitAllocU8Helper,
+	"string_from_bytes_unchecked": emitStringFromBytesHelper,
+	"__str_eq":                    emitStrEqHelper,
+	"__str_ord":                   emitStrOrdHelper,
+	"__str_concat":                emitStrConcatHelper,
+	"__fern_str_dec":              emitStrDecHelper,
 }
 
 // heapUsingHelpers are runtime helpers that allocate on the SSA bump heap, so
 // the .bss heap section + cursor must be emitted whenever one is referenced even
 // if the program body has no direct heap op.
 var heapUsingHelpers = map[string]bool{
-	"__str_concat": true,
+	"__str_concat":                true,
+	"__alloc_u8":                  true,
+	"string_from_bytes_unchecked": true,
 }
 
 // runtimeHelperDeps records the helper→helper call edges (a helper that tail-
@@ -1859,6 +1866,134 @@ func emitStrOrdHelper(w func(string, ...any)) {
 	w("\tmov eax, ecx")
 	w("\tsub eax, edx")
 	w("\tmovsx rax, eax")
+	w("\tret")
+}
+
+// bcopySym names the shared forward byte copy every allocating helper routes
+// through. It is internal — the IR never calls it — so it carries a bare symbol
+// rather than an fnLabel, the way __ssa_heap_guard does.
+const bcopySym = "__ssa_bcopy"
+
+// emitBcopy writes __ssa_bcopy(rdi=dst, rsi=src, rdx=n): a forward copy of n
+// bytes. Regions must not overlap.
+//
+// One instruction does the work. `rep movsb` is the fast path on the declared
+// Haswell-2013 baseline (ERMSB), which is why this backend needs no size-classed
+// SSE2 copy like the native __fern_memcpy — and why arm64ssa's sibling, which
+// has no such instruction, spends fifteen lines on a 16/8/1 ladder.
+//
+// It clobbers only rdi, rsi and rcx, all caller-saved and all already dead at
+// every call site (each passes its own arguments in them). `cld` is one byte of
+// insurance: System V guarantees DF is clear at every call boundary and nothing
+// in this backend sets it, but a copy running backwards would corrupt the heap
+// silently rather than fault.
+func emitBcopy(w func(string, ...any)) {
+	w("")
+	w("%s:", bcopySym)
+	w("\tcld")
+	w("\tmov rcx, rdx")
+	w("\trep movsb")
+	w("\tret")
+}
+
+// emitBcopyCall writes a copy of n bytes from src to dst through __ssa_bcopy.
+// The three names are the registers holding the arguments; they are moved into
+// rdi/rsi/rdx in an order that survives any overlap between them — rdx first,
+// then rsi, then rdi, so a value already sitting in a destination register is
+// read before it is overwritten.
+func emitBcopyCall(w func(string, ...any), dst, src, n string) {
+	for _, mv := range [][2]string{{"rdx", n}, {"rsi", src}, {"rdi", dst}} {
+		if mv[0] != mv[1] {
+			w("\tmov %s, %s", mv[0], mv[1])
+		}
+	}
+	w("\tcall %s", bcopySym)
+}
+
+// bcopyUsingHelpers are the helpers that call __ssa_bcopy, so the shared routine
+// is emitted whenever one of them is. It is not in runtimeHelperEmitters (the IR
+// cannot name it), so this gate is what puts it in the module.
+var bcopyUsingHelpers = map[string]bool{
+	"string_from_bytes_unchecked": true,
+}
+
+// usesBcopy reports whether any referenced helper calls __ssa_bcopy.
+func usesBcopy(helpers []string) bool {
+	for _, h := range helpers {
+		if bcopyUsingHelpers[h] {
+			return true
+		}
+	}
+	return false
+}
+
+// emitAllocU8Helper writes __alloc_u8(n) -> data: a fresh length-prefixed u8[]
+// of n bytes, returning the data pointer past the 16-byte header (cap@-12,
+// rc=1@-8, len@-4).
+//
+// The n data bytes are ZERO-FILLED. The interpreter hands back a zeroed u8[],
+// so a read-before-write caller — SHA padding is the one that found this, #2768
+// — depends on it, and the bump cursor walks memory that a previous allocation
+// may have written. n==0 runs the fill zero times and yields a valid header-only
+// buffer whose len reads 0.
+//
+// Unlike the native helper, which calls __fern_alloc, this inlines the raw bump
+// so it needs no frame of its own. rdi=n, returns rax=data.
+func emitAllocU8Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__alloc_u8"))
+	w("\tmov esi, edi") // n, preserved across the bump
+	w("\tmov edx, esi")
+	w("\tadd edx, 16") // allocSize = n + header (a 32-bit write zero-extends)
+	w("\tmov r8, [rip + %s]", heapPtrSym)
+	w("\tadd r8, 7")
+	w("\tand r8, -8") // base, 8-aligned
+	w("\tmov r9, r8")
+	w("\tadd r9, rdx")
+	w("\tmov [rip + %s], r9", heapPtrSym)
+	w("\t%s", heapGuardCall)
+	w("\tlea rax, [r8 + 16]")            // data
+	w("\tmov dword ptr [rax - 12], esi") // cap = n
+	w("\tmov dword ptr [rax - 8], 1")    // rc = 1
+	w("\tmov dword ptr [rax - 4], esi")  // len = n
+	// Zero the payload. rep stosb writes through rdi and consumes rcx, so the
+	// return value is parked in r10 for the duration.
+	w("\tmov r10, rax")
+	w("\tmov rdi, rax")
+	w("\tmov ecx, esi")
+	w("\txor eax, eax")
+	w("\tcld")
+	w("\trep stosb")
+	w("\tmov rax, r10")
+	w("\tret")
+}
+
+// emitStringFromBytesHelper writes string_from_bytes_unchecked(bs) -> data: copy
+// a u8[] payload into a fresh string and return its data pointer — the
+// round-trip companion to s.bytes().
+//
+// Strings here are single-word and rc-headered (rc=1@base+0, len@base+4,
+// data@base+8, the layout ConstStr and __str_concat already use) with no
+// small-string inline form, so this is a bump allocation and a copy. The native
+// twin spends most of its body deciding whether the result fits in seven inline
+// bytes and packing it if so; none of that survives the representation change.
+// rdi=bs (the u8[] data pointer, its length at [bs-4]), returns rax=data.
+func emitStringFromBytesHelper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("string_from_bytes_unchecked"))
+	w("\tmov esi, %s", memRef("rdi", -4)) // len (a 32-bit write zero-extends)
+	w("\tmov r8, [rip + %s]", heapPtrSym)
+	w("\tadd r8, 7")
+	w("\tand r8, -8")            // base, 8-aligned
+	w("\tmov dword ptr [r8], 1") // rc = 1
+	w("\tmov [r8 + 4], esi")     // len
+	w("\tlea r9, [r8 + 8]")
+	w("\tadd r9, rsi")
+	w("\tmov [rip + %s], r9", heapPtrSym)
+	w("\t%s", heapGuardCall)
+	w("\tlea r10, [r8 + 8]") // data
+	emitBcopyCall(w, "r10", "rdi", "rsi")
+	w("\tmov rax, r10")
 	w("\tret")
 }
 
