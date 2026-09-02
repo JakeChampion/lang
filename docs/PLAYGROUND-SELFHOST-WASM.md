@@ -325,11 +325,20 @@ What is left:
    would fail almost everything with nothing printed. So check under-reports
    where the port is incomplete rather than rejecting valid programs.
 
-   Interpret is what is left: `examples/self_host/interp.fern` implements **no
-   I/O builtins at all** — no `print` anywhere in its 4,138 lines — so
-   `interp_run.fern` returns an exit code and nothing else. The playground's
-   output pane has no self-host counterpart, which is a second missing consumer
-   alongside the LSP.
+   Interpret now writes: `interp.fern` implements `print` / `write` / `eprint`,
+   compared against the native interpreter on all three channels by
+   `internal/e2eselfhost/self_host_interp_io_test.go`. It had **no I/O builtins
+   at all** before — no `print` anywhere in its 4,138 lines — so
+   `interp_run.fern` reported an exit code and nothing else, and the exit-code
+   driver test next door passed either way.
+
+   What the interpreter still lacks is the rest of the I/O surface:
+   `putchar`, `print_int` / `eprint_int`, the reader/writer handles, and
+   anything touching the filesystem or the clock. `putchar` is the one with a
+   question attached rather than just work — native writes `%c` of its argument
+   as a RUNE where the compiled backends write a byte, so the two disagree
+   above 127, and that is a parity call to make before either side is copied.
+   The LSP remains the other missing consumer.
 2. **JS bindings.** Reachable, contrary to what the stdin/stdout shape suggests:
    `@export("iface", "name")` emits canonical-ABI wrappers into a `-emit
    core-module` build (`wasm_ir.fern:8868`), pulling in `cabi_realloc` for
