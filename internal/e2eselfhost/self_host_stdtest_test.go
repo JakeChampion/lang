@@ -243,6 +243,15 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"fuzz_shrink", langSrcAbs(t, "examples/tests/fuzz_shrink_test.fern"), ""},
 		{"filesystem_ops", langSrcAbs(t, "examples/tests/filesystem_ops_test.fern"), ""},
 		{"enum_payload_sort_rc", langSrcAbs(t, "examples/tests/enum_payload_sort_rc_test.fern"), ""},
+		// The persistent collections (#6794): generic enum trees reached
+		// through generic-struct methods and bounded free generics — the
+		// shape the self-host monomorphiser erased to `__K__V` clones before
+		// it was taught to instantiate them concretely.
+		{"ordmap", langSrcAbs(t, "examples/tests/ordmap_test.fern"), ""},
+		{"ordset", langSrcAbs(t, "examples/tests/ordset_test.fern"), ""},
+		{"pmap", langSrcAbs(t, "examples/tests/pmap_test.fern"), ""},
+		{"pset", langSrcAbs(t, "examples/tests/pset_test.fern"), ""},
+		{"pvec", langSrcAbs(t, "examples/tests/pvec_test.fern"), ""},
 		{"float_math", langSrcAbs(t, "examples/tests/float_math_test.fern"), ""},
 		{"float_convert", langSrcAbs(t, "examples/tests/float_convert_test.fern"), ""},
 		{"float_hypot", langSrcAbs(t, "examples/tests/float_hypot_test.fern"), ""},

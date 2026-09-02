@@ -586,6 +586,9 @@ pub struct LowerState {
     // sigs: the module-wide signature registry (see FnSigs). Threaded read-only
     // except for the two call-site-augmented views lower_func installs.
     sigs: FnSigs,
+    // clo_base: the receiver-qualified name (clo_owner_name) every closure /
+    // wrapper hoisted out of this function is named under.
+    clo_base: string,
     // cur_fn: the name of the function being lowered. An escaping capturing
     // ExprLambda in it is hoisted to `<cur_fn>$clo(__env, params…)`; lowering
     // the lambda emits const_func(<cur_fn>$clo) + the captures into a tuple box.
@@ -13823,7 +13826,7 @@ function lower_expr_lambda(lam: ast.ExprLambda, s: LowerState): LowerState {
     // behind it, which a whole-program build silently swallows and every
     // per-unit link fails on, far from the source line (#7215). Refuse
     // here instead, so the gap is a bail naming this expression.
-    var clo: string = s.cur_fn + "$clo";
+    var clo: string = s.clo_base + "$clo";
     if (!s.is_user_fn(clo)) {
         return s.note_fail("lambda: no lifted `" + clo + "` for the escaping closure").fail();
     }
@@ -52893,7 +52896,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
     // A fn-typed PARAM (`f: (i32) => i32`, coarse type_name "fn") now holds a
     // UNIFORM env box [funcval, caps…] — the same shape a closure local /
     // closure-array element / fn-typed struct field carries (slice #3445
@@ -63306,7 +63309,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -65762,6 +65765,15 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     return HoistResult { func: clo, ok: true };
 }
 
+// clo_owner_name is the name a function's hoisted closures / wrappers / iife
+// temps are keyed under: receiver-qualified (`OrdSet__i32.filter`), the same
+// spelling lower_module registers the method by, so two methods sharing a bare
+// name (`OrdSet.filter` / `PSet.filter`) never mint the same `$clo0` symbol.
+function clo_owner_name(fd: parser.FuncDecl): string {
+    if (fd.receiver_type.len() > 0) { return util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    return fd.name;
+}
+
 // hoist_escaping_closure handles a function whose body ends in
 // `return <capturing lambda>` — a first-class closure (slice 3a). It hoists the
 // lambda body to `<fd>$clo(__env: i32[], origparams…)` via make_clo_func (each
@@ -65774,7 +65786,7 @@ function hoist_escaping_closure(fd: parser.FuncDecl, gfns: string[], structs: pa
         ast.StmtReturn(r) => {
             match (r.value) {
                 ast.ExprLambda(lam) => {
-                    return make_clo_func(lam, fd.name + "$clo", fd, gfns, structs, mfuncs);
+                    return make_clo_func(lam, clo_owner_name(fd) + "$clo", fd, gfns, structs, mfuncs);
                 },
                 _ => { return HoistResult { func: none, ok: false }; }
             }
@@ -65817,7 +65829,7 @@ struct InlineCloAcc { funcs: parser.FuncDecl[], counter: i32 }
 function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], structs: parser.StructDecl[], mfuncs: MFuncs): InlineCloRes {
     var caps: string[] = lambda_captures(lam, fd);
     if (caps.len() == 0) { return InlineCloRes { expr: ast.ExprLambda { ...lam, body: lam.body }, funcs: funcs, counter: counter }; }
-    var cloname: string = fd.name + "$clo" + util.i32_to_string(counter);
+    var cloname: string = clo_owner_name(fd) + "$clo" + util.i32_to_string(counter);
     var hr: HoistResult = make_clo_func(lam, cloname, fd, gfns, structs, mfuncs);
     if (!hr.ok) { return InlineCloRes { expr: ast.ExprLambda { ...lam, body: lam.body }, funcs: funcs, counter: counter }; }
     var capargs: ast.Expr[] = [];
@@ -65902,7 +65914,7 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, funcs: parser.Func
             var caps: string[] = lambda_captures(lam, fd);
             if (caps.len() > 0) { return try_inline_closure(lam, fd, funcs, counter, gfns, structs, mfuncs); }
             // No-capture lambda → wrap trampoline (body inlined, __env ignored).
-            var wn: string = fd.name + "$wrap" + util.i32_to_string(counter);
+            var wn: string = clo_owner_name(fd) + "$wrap" + util.i32_to_string(counter);
             var wf: parser.FuncDecl = make_wrap_lambda_func(lam, wn);
             var marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
             return InlineCloRes { expr: marker, funcs: funcs.append(wf), counter: counter + 1 };
@@ -65926,7 +65938,7 @@ function try_fn_field_value(e: ast.Expr, fd: parser.FuncDecl, funcs: parser.Func
                 return InlineCloRes { expr: e, funcs: funcs, counter: counter };
             }
             // Bare fn-name field (`Box { f: dbl }`): build a trampoline calling it.
-            var wn2: string = fd.name + "$wrap" + util.i32_to_string(counter);
+            var wn2: string = clo_owner_name(fd) + "$wrap" + util.i32_to_string(counter);
             var hr: HoistResult = make_wrap_named_func(id.name, wn2, mfuncs);
             if (!hr.ok) { return InlineCloRes { expr: e, funcs: funcs, counter: counter }; }
             var marker2: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn2, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
@@ -67299,7 +67311,7 @@ function hoist_value_iife(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: parse
         args = args.append(ast.ExprIdent { name: caps[ci], line: 0, col: 0, ty: "" });
         ci = ci + 1;
     }
-    var nm: string = fd.name + "$iife" + util.i32_to_string(counter);
+    var nm: string = clo_owner_name(fd) + "$iife" + util.i32_to_string(counter);
     var notp: string[] = [];
     // Declared `fn` return, not the IIFE lambda's own ret_type. The hoist only
     // fires when the arms yield a fn value, so this function IS a higher-order
@@ -68080,7 +68092,7 @@ function ilc_stmt_at(st: ast.Stmt, acc: InlineCloAcc, fd: parser.FuncDecl, gfns:
                     // function, so the init is an ordinary value copy — see
                     // lift_ident_is_param (#6191, and #6854 for this site).
                     if (!lift_ident_is_param(fd, vid.name) && lift_module_fn_arity(mfuncs, vid.name) >= 1) {
-                        var wn: string = fd.name + "$wrap" + util.i32_to_string(ct);
+                        var wn: string = clo_owner_name(fd) + "$wrap" + util.i32_to_string(ct);
                         var hr: HoistResult = make_wrap_named_func(vid.name, wn, mfuncs);
                         if (hr.ok) {
                             var marker: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "__mkclo$" + wn, line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };

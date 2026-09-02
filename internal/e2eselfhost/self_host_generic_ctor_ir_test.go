@@ -207,6 +207,44 @@ function main(): i32 {
     if (ks.len() == 200 && total == 19900 && hitv == 65 && size(sp.lt) + size(sp.gt) == 199) { return 42; }
     return 1;
 }`},
+	// A generic-struct method with its OWN extra type param (`W`) bound only
+	// through a fn param's return, forwarding that fn param to a free generic:
+	// the clone's env carries the param as `fn => i32`, so `mv(m.root, f)`
+	// binds W from it instead of leaving the callee un-instantiated.
+	// 20 + 22 = 42.
+	{"method_fn_param_forwarded_to_generic", `enum Tree[K, V] { Leaf, Node(K, V) }
+struct M[K, V] { root: Tree[K, V] }
+function mv[K, V, W](t: Tree[K, V], f: (V) => W): Tree[K, W] {
+    match (t) { Leaf => { return Leaf; }, Node(k, v) => { return Node(k, f(v)); } }
+}
+pub function (m: M[K, V]) map_values[K, V, W](f: (V) => W): M[K, W] { return M { root: mv(m.root, f) }; }
+function main(): i32 {
+    var m: M[i32, i32] = M { root: Node(1, 20) };
+    var n: M[i32, i32] = m.map_values((v: i32) => v + 22);
+    match (n.root) { Node(k, v) => { return v; }, Leaf => { return 0; } }
+}`},
+	// Two generic structs each declare a `filter` that hoists a capturing
+	// lambda: the hoisted closures are named under the receiver-qualified
+	// method (`A__i32.filter$clo0` / `B__i32.filter$clo0`), not the bare
+	// `filter`, so the two symbols do not collide at link time.
+	// 3 * 10 + 3 + 9 = 42.
+	{"closure_named_per_receiver", `struct A[T] { xs: T[] }
+struct B[T] { xs: T[] }
+function keep[T](xs: T[], p: (T) => boolean): T[] {
+    var out: T[] = [];
+    var i: i32 = 0;
+    while (i < xs.len()) { if (p(xs[i])) { out = out.append(xs[i]); } i = i + 1; }
+    return out;
+}
+pub function (a: A[T]) filter(pred: (T) => boolean): A[T] { return A { xs: keep(a.xs, (x: T) => pred(x)) }; }
+pub function (b: B[T]) filter(pred: (T) => boolean): B[T] { return B { xs: keep(b.xs, (x: T) => pred(x)) }; }
+function main(): i32 {
+    var a: A[i32] = A { xs: [1, 2, 3, 4, 5, 6] };
+    var b: B[i32] = B { xs: [1, 2, 3, 4, 5] };
+    var ea: A[i32] = a.filter((x: i32) => x % 2 == 0);
+    var ob: B[i32] = b.filter((x: i32) => x % 2 == 1);
+    return ea.xs.len() * 10 + ob.xs.len() + 9;
+}`},
 }
 
 func TestSelfHostGenericCtorIR(t *testing.T) {
