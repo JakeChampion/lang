@@ -3217,6 +3217,20 @@ func appendChildDrop(ops []Op, t ast.Type, info *checker.Info, ptrW int, reg map
 	if st, ok := t.(ast.StructType); ok && st.Name == "Map" {
 		return append(appendMapDropChain(ops, st, info, reg, tupleReg, ptrW), Op{Kind: OpDrop})
 	}
+	// Cell child (struct field / enum payload / tuple element): a cell is a
+	// one-element array box, so it reclaims through the array machinery keyed
+	// on the instantiation element type — the same call emitCellDropOnStack
+	// makes for a cell LOCAL. The generic struct path below would dec the box
+	// without ever releasing the slot, which is how a `Cell[string]` field
+	// stranded its buffer. The helper self-guards on the cell's own rc, so a
+	// cell two structs share only dec's here.
+	if st, ok := t.(ast.StructType); ok && st.Name == "Cell" {
+		helper, stride := cellDropHelper(cellElemOf(st), ptrW)
+		return append(ops,
+			Op{Kind: OpConstI32, I32: stride},
+			Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2},
+			Op{Kind: OpDrop})
+	}
 	// Closure child (struct field / enum payload / tuple element): free the
 	// captures + env through the drop-fn pointer the pair carries, then the
 	// pair block. The fall-through below is a bare __fern_rc_dec, which
