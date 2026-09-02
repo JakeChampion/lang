@@ -91,7 +91,8 @@ const (
 	OpTeeLocal   // (T)               → T   (store + leave value on stack)
 
 	// Integer / pointer arithmetic and comparison. All consume two i32
-	// and produce one i32 except OpNeg / OpNot, which consume one.
+	// and produce one i32 except OpNot, which consumes one. There is no
+	// integer negate op: `0 - x` and `x * -1` both spell it.
 	OpAdd
 	OpSub
 	OpMul

@@ -2,11 +2,13 @@ package x86_64
 
 // Shape tests for division by a literal divisor.
 //
-// The semantics are pinned by conformance/cases/const_divisor_lowering, which
-// runs the whole family on every backend. What is checked here is that the
-// x86-64 emitter actually takes the specialised path — a lowering that quietly
-// stopped firing would still compute the right answers, so a correctness
-// corpus cannot notice it.
+// The semantics are pinned by conformance/cases/const_divisor_runtime, which
+// runs the whole family on every backend with dividends the folder cannot see
+// through. (Its companion const_divisor_lowering folds away entirely and pins
+// the folder instead.) What is checked here is that the x86-64 emitter
+// actually takes the specialised path — a lowering that quietly stopped firing
+// would still compute the right answers, so a correctness corpus cannot notice
+// it.
 
 import (
 	"strings"
@@ -163,5 +165,71 @@ function main(): i32 { return k() as i32; }`, Options{})
 				t.Errorf("%s should not need %q:\n%s", c.lit, c.avoid, body)
 			}
 		})
+	}
+}
+
+// divBody32 is divBody at i32 width, where the reciprocal lives: the
+// multiply-high comes from `imul`/`mul`'s edx:eax result, so there is nothing
+// to widen and no 64-bit magic to derive.
+func divBody32(t *testing.T, expr string) string {
+	t.Helper()
+	asm := compileOpts(t, `
+@noinline function d(x: i32): i32 { return `+expr+`; }
+function main(): i32 { return d(7); }`, Options{})
+	body, ok := fnBodyOf(asm, "d")
+	if !ok {
+		t.Fatal("d not found in emitted asm")
+	}
+	return body
+}
+
+// A divisor that is neither 0, +/-1 nor a power of two becomes the
+// multiply-high reciprocal, so no divide is left at all.
+func TestNonPow2DivisorBecomesTheReciprocal(t *testing.T) {
+	for _, tc := range []struct {
+		expr string
+		want string // the magic, which pins ir.DeriveMagic*32's answer too
+	}{
+		{"x / 3", "mov eax, 1431655766"},
+		{"x / 7", "mov eax, -1840700269"},
+		{"x / -7", "mov eax, 1840700269"},
+		{"x % 97", "mov eax, 354224107"},
+	} {
+		t.Run(tc.expr, func(t *testing.T) {
+			body := divBody32(t, tc.expr)
+			if strings.Contains(body, "idiv") || strings.Contains(body, "div ecx") {
+				t.Errorf("the divide survived:\n%s", body)
+			}
+			if !strings.Contains(body, tc.want) {
+				t.Errorf("expected the magic %q:\n%s", tc.want, body)
+			}
+			// The dividend has to survive the multiply for the fixup and for
+			// a remainder's multiply-back, which is why it goes in ecx and
+			// the magic in eax rather than the other way round.
+			if !strings.Contains(body, "mov ecx, eax") {
+				t.Errorf("the dividend was not stashed in ecx:\n%s", body)
+			}
+		})
+	}
+}
+
+// The reciprocal is i32-only: at i64 width the high half would need `imul r64`
+// and a 64-bit magic, so the divide stays.
+func TestWideNonPow2DivisorKeepsTheDivide(t *testing.T) {
+	body := divBody(t, "x / 97i64")
+	if !strings.Contains(body, "idiv") {
+		t.Errorf("i64 / 97 should still be a divide:\n%s", body)
+	}
+}
+
+// A power of two still takes the shift, which is cheaper than the reciprocal
+// and must not have been swallowed by the new arm.
+func TestPow2DivisorStillShifts(t *testing.T) {
+	body := divBody32(t, "x / 8")
+	if strings.Contains(body, "idiv") || strings.Contains(body, "imul") {
+		t.Errorf("x / 8 should be the biased shift, not a divide or a reciprocal:\n%s", body)
+	}
+	if !strings.Contains(body, "sar") {
+		t.Errorf("expected the biased shift:\n%s", body)
 	}
 }

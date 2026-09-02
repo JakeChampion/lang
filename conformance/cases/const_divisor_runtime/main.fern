@@ -1,0 +1,99 @@
+// Division and remainder by a LITERAL divisor, with a RUNTIME dividend.
+//
+// The companion case `const_divisor_lowering` folds away entirely — every
+// one of its dividends is a literal, so the whole corpus collapses at
+// compile time and it pins the constant FOLDER. This one reads its
+// dividends out of an array inside a loop, which is opaque to the folder,
+// so the divisions survive to codegen and the emitted sequence is what
+// answers. Together they pin both halves against each other.
+//
+// The shapes reached here: signed and unsigned power-of-two (a shift, and
+// for signed a shift biased by 2^k-1 so it truncates toward zero rather
+// than toward negative infinity), a negative divisor, and the
+// magic-number reciprocal for everything else. i64 by a non-power-of-two
+// keeps its divide, which this case also covers.
+//
+// -1 is deliberately absent: INT_MIN / -1 overflows, and it is an identity
+// the folder already pins. So is 0, whose result is defined but whose
+// lowering has no runtime form to exercise.
+//
+// The hash is multiplicative so two errors of opposite sign cannot cancel.
+function main(): i32 {
+  // Seeded at 2 rather than 1 so a correct run cannot exit 1, which is
+  // indistinguishable from the harness failing to run the program at all.
+  var h: i64 = 2i64;
+  var xs: i32[] = [0, 1, -1, 2, -2, 3, -3, 7, -7, 97, -97, 1023, -1023, 1024, -1024, 65536, -65536, 123456789, -123456789, 2147483647, -2147483648];
+  var us: u32[] = [0u32, 1u32, 2u32, 7u32, 97u32, 1023u32, 1024u32, 65535u32, 65536u32, 123456789u32, 2147483647u32, 2147483648u32, 4294967294u32, 4294967295u32];
+  var ws: i64[] = [0i64, 1i64, -1i64, 2i64, -2i64, 7i64, -7i64, 4095i64, 4096i64, 1000000007i64, -1000000007i64, 9223372036854775807i64, -9223372036854775808i64];
+  var uws: u64[] = [0u64, 1u64, 7u64, 4095u64, 4096u64, 1000000007u64, 9223372036854775807u64, 18446744073709551615u64];
+  var i: i32 = 0;
+
+  while (i < 21) {
+    var v: i32 = xs[i];
+    h = h * 1000003i64 + (v / 2) as i64; h = h * 1000003i64 + (v % 2) as i64;
+    h = h * 1000003i64 + (v / -2) as i64; h = h * 1000003i64 + (v % -2) as i64;
+    h = h * 1000003i64 + (v / 4) as i64; h = h * 1000003i64 + (v % 4) as i64;
+    h = h * 1000003i64 + (v / -4) as i64; h = h * 1000003i64 + (v % -4) as i64;
+    h = h * 1000003i64 + (v / 8) as i64; h = h * 1000003i64 + (v % 8) as i64;
+    h = h * 1000003i64 + (v / 1024) as i64; h = h * 1000003i64 + (v % 1024) as i64;
+    h = h * 1000003i64 + (v / -1024) as i64; h = h * 1000003i64 + (v % -1024) as i64;
+    h = h * 1000003i64 + (v / 3) as i64; h = h * 1000003i64 + (v % 3) as i64;
+    h = h * 1000003i64 + (v / -3) as i64; h = h * 1000003i64 + (v % -3) as i64;
+    h = h * 1000003i64 + (v / 7) as i64; h = h * 1000003i64 + (v % 7) as i64;
+    h = h * 1000003i64 + (v / -7) as i64; h = h * 1000003i64 + (v % -7) as i64;
+    h = h * 1000003i64 + (v / 10) as i64; h = h * 1000003i64 + (v % 10) as i64;
+    h = h * 1000003i64 + (v / 97) as i64; h = h * 1000003i64 + (v % 97) as i64;
+    h = h * 1000003i64 + (v / -97) as i64; h = h * 1000003i64 + (v % -97) as i64;
+    h = h * 1000003i64 + (v / 100) as i64; h = h * 1000003i64 + (v % 100) as i64;
+    h = h * 1000003i64 + (v / 2147483647) as i64; h = h * 1000003i64 + (v % 2147483647) as i64;
+    h = h * 1000003i64 + (v / -2147483648) as i64; h = h * 1000003i64 + (v % -2147483648) as i64;
+    i = i + 1;
+  }
+
+  i = 0;
+  while (i < 14) {
+    var uv: u32 = us[i];
+    h = h * 1000003i64 + (uv / 2u32) as i64; h = h * 1000003i64 + (uv % 2u32) as i64;
+    h = h * 1000003i64 + (uv / 4u32) as i64; h = h * 1000003i64 + (uv % 4u32) as i64;
+    h = h * 1000003i64 + (uv / 8u32) as i64; h = h * 1000003i64 + (uv % 8u32) as i64;
+    h = h * 1000003i64 + (uv / 1024u32) as i64; h = h * 1000003i64 + (uv % 1024u32) as i64;
+    h = h * 1000003i64 + (uv / 3u32) as i64; h = h * 1000003i64 + (uv % 3u32) as i64;
+    h = h * 1000003i64 + (uv / 7u32) as i64; h = h * 1000003i64 + (uv % 7u32) as i64;
+    h = h * 1000003i64 + (uv / 97u32) as i64; h = h * 1000003i64 + (uv % 97u32) as i64;
+    h = h * 1000003i64 + (uv / 65535u32) as i64; h = h * 1000003i64 + (uv % 65535u32) as i64;
+    h = h * 1000003i64 + (uv / 2147483648u32) as i64; h = h * 1000003i64 + (uv % 2147483648u32) as i64;
+    h = h * 1000003i64 + (uv / 4294967295u32) as i64; h = h * 1000003i64 + (uv % 4294967295u32) as i64;
+    i = i + 1;
+  }
+
+  i = 0;
+  while (i < 13) {
+    var w: i64 = ws[i];
+    h = h * 1000003i64 + (w / 2i64); h = h * 1000003i64 + (w % 2i64);
+    h = h * 1000003i64 + (w / -2i64); h = h * 1000003i64 + (w % -2i64);
+    h = h * 1000003i64 + (w / 4i64); h = h * 1000003i64 + (w % 4i64);
+    h = h * 1000003i64 + (w / 8i64); h = h * 1000003i64 + (w % 8i64);
+    h = h * 1000003i64 + (w / 4096i64); h = h * 1000003i64 + (w % 4096i64);
+    h = h * 1000003i64 + (w / 3i64); h = h * 1000003i64 + (w % 3i64);
+    h = h * 1000003i64 + (w / -3i64); h = h * 1000003i64 + (w % -3i64);
+    h = h * 1000003i64 + (w / 97i64); h = h * 1000003i64 + (w % 97i64);
+    h = h * 1000003i64 + (w / 1000000007i64); h = h * 1000003i64 + (w % 1000000007i64);
+    h = h * 1000003i64 + (w / -1000000007i64); h = h * 1000003i64 + (w % -1000000007i64);
+    i = i + 1;
+  }
+
+  i = 0;
+  while (i < 8) {
+    var uw: u64 = uws[i];
+    h = h * 1000003i64 + (uw / 2u64) as i64; h = h * 1000003i64 + (uw % 2u64) as i64;
+    h = h * 1000003i64 + (uw / 4u64) as i64; h = h * 1000003i64 + (uw % 4u64) as i64;
+    h = h * 1000003i64 + (uw / 4096u64) as i64; h = h * 1000003i64 + (uw % 4096u64) as i64;
+    h = h * 1000003i64 + (uw / 3u64) as i64; h = h * 1000003i64 + (uw % 3u64) as i64;
+    h = h * 1000003i64 + (uw / 97u64) as i64; h = h * 1000003i64 + (uw % 97u64) as i64;
+    h = h * 1000003i64 + (uw / 1000000007u64) as i64; h = h * 1000003i64 + (uw % 1000000007u64) as i64;
+    i = i + 1;
+  }
+
+  if (h < 0i64) { h = 0i64 - h; }
+  return (h % 251i64) as i32;
+}

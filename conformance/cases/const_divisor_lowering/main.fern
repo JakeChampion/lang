@@ -2,13 +2,16 @@
 // constant-divisor lowering special-cases, on both signednesses and both
 // widths.
 //
-// A known divisor lets the backend drop the zero test and the INT_MIN/-1
-// overflow test — both are branches on a compile-time constant — and turn a
-// power of two into a shift. Signed division by a power of two is the case
-// worth having a corpus entry for: it is NOT an arithmetic shift, because
-// `sar` rounds toward negative infinity where the language rounds toward
-// zero, so -1/2 must be 0 and not -1. The lowering biases the dividend by
-// 2^k-1 when it is negative to correct that, and this case pins the result.
+// EVERY DIVIDEND HERE IS A LITERAL, so the whole corpus folds at compile time
+// and the emitted program is one constant: this case pins the constant FOLDER,
+// and reaches no lowering at all. `const_divisor_runtime` is its counterpart —
+// same shapes, dividends read out of an array inside a loop so the folder
+// cannot see them — and the two are only meaningful together, since either one
+// alone leaves half the arithmetic unchecked.
+//
+// Signed division by a power of two is the case worth pinning on both sides:
+// it is NOT an arithmetic shift, because `sar` rounds toward negative infinity
+// where the language rounds toward zero, so -1/2 must be 0 and not -1.
 //
 // The hash is multiplicative rather than a sum so that two errors of opposite
 // sign cannot cancel, and every quotient and remainder is folded into it in
