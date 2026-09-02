@@ -256,7 +256,7 @@ pub struct LocalInfo {
     borrowed_arr: boolean,
     // moved_claim: a borrowed_arr binding that IS the box's counted reference
     // rather than a borrow of it, because the box is one this frame built and
-    // nothing outside the frame owns the buffer (scrutinee_is_frame_constructed).
+    // no owner of the buffer outlives the call (scrutinee_owns_no_surviving_claim).
     // borrowed_arr still holds — the slot stays out of the exit sweep — but the
     // premise it is usually read with, "the box keeps its reference", does not:
     // whether by the consuming match's moved-payload skip or by there being no
@@ -24159,7 +24159,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // other owner survives the call, so an escaping return
                         // hands that single reference on rather than counting a
                         // second one. See LocalInfo.moved_claim.
-                        if (ms.is_arr_slot(bslot) && scrutinee_is_frame_constructed(m.scrutinee, ms)) {
+                        if (ms.is_arr_slot(bslot) && scrutinee_owns_no_surviving_claim(m.scrutinee, ms)) {
                             ms = ms.mark_moved_claim(bslot, true);
                         }
                     }
@@ -28174,19 +28174,38 @@ function split_semi(s: string): string[] {
     return out.append(slice_unchecked(s, start, s.len()) + "");
 }
 
-// scrutinee_is_frame_constructed reports whether a match scrutinee names an enum
-// local THIS FRAME built — the "FRESHBOX:" credit frame_constructed_enum_names_of
-// leaves. Anything else (a parameter, a field read, an unresolved shape) answers
-// false, which is the conservative side: the box may be someone else's.
-function scrutinee_is_frame_constructed(scrut: ast.Expr, s: LowerState): boolean {
+// scrutinee_owns_no_surviving_claim reports whether the enum box a match arm
+// binds its payload out of has NO owner that outlives the call — the question
+// the escaping return of that binding turns on (#8070). Two shapes qualify:
+//
+//   * a box THIS FRAME BUILT, carrying the "FRESHBOX:" credit
+//     frame_constructed_enum_names_of leaves. The consuming match's
+//     moved-payload skip hands the field over and the box is dropped on the way
+//     out, so the buffer's single claim leaves with the returned value.
+//     EXCEPT one: a box the exit sweep will deep-free (credited "RCENUMS:", the
+//     no-consuming-match half) does dec the payload on the return path, so its
+//     escaping value still needs a count of its own.
+//
+//   * a NON-BORROWABLE parameter. Returning an arm binding out of `match (p)`
+//     is itself what param_match_binding_escapes refuses borrowability for, so
+//     the caller cannot release that argument and strands the box — its claim
+//     on the payload is never dec'd by anyone, which makes the returned value
+//     the only live owner. Retaining on top strands the buffer as well, which
+//     is one extra unfreed allocation per call.
+//
+// Everything else answers false and keeps the retain: a BORROWABLE param, whose
+// caller does release the box; a local that merely aliases one (`var cur = root`
+// descending a trie), where the owner outside is untouched; a field read; any
+// shape the scan cannot resolve. That is the safe side — a needless retain
+// leaks, a missing one is a use-after-free.
+function scrutinee_owns_no_surviving_claim(scrut: ast.Expr, s: LowerState): boolean {
     match (scrut) {
         ast.ExprIdent(id) => {
             var sl: i32 = s.slot_of(id.name);
-            if (sl < s.n_params) { return false; }
-            // A box the EXIT SWEEP will deep-free (credited "RCENUMS:", the
-            // no-consuming-match half) is the one frame-constructed shape that
-            // still owes the retain: that sweep runs on the return path too and
-            // decs the payload, so the escaping value needs a count of its own.
+            if (sl < 0) { return false; }
+            if (sl < s.n_params) {
+                return !param_is_borrowable(s.sigs.borrowable_params, s.cur_fn, sl);
+            }
             if (slot_is_reclaimable_rcenum_sweep(s, sl)) { return false; }
             return reclaim_has(s.reclaimable_names, "FRESHBOX:", s.reclaim_site_key(sl));
         },
