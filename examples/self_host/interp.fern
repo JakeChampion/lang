@@ -2439,6 +2439,38 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             _ => { return v_err("len: argument must be array, string, or map"); }
         }
     }
+    // The string-taking I/O trio, matching internal/interp's builtinPrint /
+    // builtinWrite / builtinEprint: print and eprint append a newline, write
+    // does not, and eprint goes to stderr. The interpreter is itself a Fern
+    // program, so each one is the same builtin the interpreted program asked
+    // for, applied one level up.
+    //
+    // Without these the evaluator could report an exit code and nothing else,
+    // so a program's OUTPUT had no self-host witness at all (#6643).
+    //
+    // `putchar` is deliberately absent: it takes a number, and native writes
+    // `%c` of it as a RUNE where the compiled backends write a byte, so the
+    // two disagree above 127. That is a parity question to settle rather than
+    // a line to guess at.
+    if (name == "print" || name == "write" || name == "eprint") {
+        if (args.len() != 1) { return v_err(name + " takes exactly 1 argument"); }
+        match (args[0]) {
+            VString(s) => {
+                // The typed local is load-bearing for the bootstrap: passing
+                // `s.v` straight to a Display-constrained builtin resolves the
+                // field against the wrong variant under the pinned stage0
+                // (VInt, VBool and VString all name their payload `v`), and
+                // stage1 fails to build with E038 on an i32. Elsewhere `s.v`
+                // is fine — it is this argument position that misresolves.
+                var text: string = s.v;
+                if (name == "print") { print(text); }
+                else if (name == "write") { write(text); }
+                else { eprint(text); }
+                return v_int(0);
+            },
+            _ => { return v_err(name + ": argument must be a string"); }
+        }
+    }
     // map_new(cap) — capacity arg is accepted but ignored
     // since VMap uses dynamic parallel arrays.
     if (name == "map_new") {
