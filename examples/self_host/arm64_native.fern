@@ -4437,7 +4437,7 @@ function arm64_gas_prog_new(): Arm64GasProg {
         dref_offs: [], dref_syms: [],
         bss_size: 0, bss_names: [], bss_offs: [],
         unknown: [],
-        cfi: cfi_new(),
+        cfi: cfi_new(cfi_profile_arm64()),
     };
 }
 
@@ -4445,20 +4445,16 @@ function arm64_gas_prog_new(): Arm64GasProg {
 // offset `off`; a directive the recorder cannot take is a refusal.
 function arm64_cfi_directive(own p: Arm64GasProg, line: string, off: i32): Arm64GasProg {
     var before: i32 = p.cfi.bad.len();
-    var st: CfiState = p.cfi;
-    p = Arm64GasProg { ...p, cfi: cfi_new() };
-    st = cfi_directive(st, cfi_profile_arm64(), line, off);
+    var st: CfiState = cfi_directive(p.cfi, line, off);
     p = Arm64GasProg { ...p, cfi: st };
-    if (st.bad.len() > before) {
-        p = Arm64GasProg { ...p, unknown: p.unknown.append(st.bad[st.bad.len() - 1]) };
-    }
+    if (st.bad.len() > before) { p = Arm64GasProg { ...p, unknown: p.unknown.append(st.bad[st.bad.len() - 1]) }; }
     return p;
 }
 
 // arm64_eh_frame renders the recorded CFI as the .eh_frame of an image
 // whose .text is at text_vaddr and whose .eh_frame is at eh_vaddr.
 pub function arm64_eh_frame(p: Arm64GasProg, text_vaddr: i64, eh_vaddr: i64): i32[] {
-    return cfi_eh_frame(p.cfi, cfi_profile_arm64(), text_vaddr, eh_vaddr);
+    return cfi_eh_frame(p.cfi, text_vaddr, eh_vaddr);
 }
 
 // arm64_eh_frame_hdr_len is the size of the .eh_frame_hdr the program
@@ -4469,7 +4465,7 @@ pub function arm64_eh_frame_hdr_len(p: Arm64GasProg): i32 {
 
 // arm64_eh_frame_hdr renders the search table PT_GNU_EH_FRAME points at.
 pub function arm64_eh_frame_hdr(p: Arm64GasProg, text_vaddr: i64, eh_vaddr: i64, hdr_vaddr: i64): i32[] {
-    return cfi_eh_frame_hdr(p.cfi, cfi_profile_arm64(), text_vaddr, eh_vaddr, hdr_vaddr);
+    return cfi_eh_frame_hdr(p.cfi, text_vaddr, eh_vaddr, hdr_vaddr);
 }
 
 // arm64_gas_known reports whether a mnemonic is handled by the assembler
@@ -6620,6 +6616,7 @@ pub struct CfiProfile {
 // effect at. Rule bodies are kept in one flat byte array, indexed by
 // rule_pos/rule_len, since the self-host has no arrays of arrays.
 pub struct CfiState {
+    profile: CfiProfile, // the target's CIE shape and register vocabulary
     open: boolean,
     fde_start: i32[],
     fde_end: i32[],
@@ -6635,8 +6632,8 @@ pub struct CfiState {
     bad: string[],
 }
 
-pub function cfi_new(): CfiState {
-    return CfiState { open: false, fde_start: [], fde_end: [], rule_fde: [], rule_off: [], rule_pos: [], rule_len: [], rule_bytes: [], bad: [] };
+pub function cfi_new(p: CfiProfile): CfiState {
+    return CfiState { profile: p, open: false, fde_start: [], fde_end: [], rule_fde: [], rule_off: [], rule_pos: [], rule_len: [], rule_bytes: [], bad: [] };
 }
 
 // cfi_empty reports whether no span was recorded — the image is then empty.
@@ -6763,27 +6760,30 @@ function cfi_le32_i64(b: i32[], v: i64): i32[] {
 
 // ---- recording ---------------------------------------------------------
 
-function cfi_add_rule(own s: CfiState, off: i32, body: i32[]): CfiState {
+function cfi_add_rule(s: CfiState, off: i32, body: i32[]): CfiState {
     var fde: i32 = s.fde_start.len() - 1;
-    s = CfiState { ...s, rule_fde: s.rule_fde.append(fde) };
-    s = CfiState { ...s, rule_off: s.rule_off.append(off) };
-    s = CfiState { ...s, rule_pos: s.rule_pos.append(s.rule_bytes.len()) };
-    s = CfiState { ...s, rule_len: s.rule_len.append(body.len()) };
+    var pos: i32 = s.rule_bytes.len();
     var bytes: i32[] = s.rule_bytes;
-    s = CfiState { ...s, rule_bytes: [] };
     var i: i32 = 0;
     while (i < body.len()) { bytes = bytes.append(body[i]); i = i + 1; }
-    return CfiState { ...s, rule_bytes: bytes };
+    return CfiState {
+        ...s,
+        rule_fde: s.rule_fde.append(fde),
+        rule_off: s.rule_off.append(off),
+        rule_pos: s.rule_pos.append(pos),
+        rule_len: s.rule_len.append(body.len()),
+        rule_bytes: bytes,
+    };
 }
 
-function cfi_bad(own s: CfiState, what: string): CfiState {
+function cfi_bad(s: CfiState, what: string): CfiState {
     return CfiState { ...s, bad: s.bad.append(what) };
 }
 
 // cfi_directive records one `.cfi_*` line for the code at .text offset
 // `off`. `line` is the whole directive as written; anything this module
 // cannot express lands on s.bad rather than being dropped.
-pub function cfi_directive(own s: CfiState, p: CfiProfile, line: string, off: i32): CfiState {
+pub function cfi_directive(s: CfiState, line: string, off: i32): CfiState {
     var t: string = cfi_trim(line);
     var sp: i32 = 0;
     while (sp < t.len() && t[sp] != b' ' && t[sp] != b'\t') { sp = sp + 1; }
@@ -6796,35 +6796,32 @@ pub function cfi_directive(own s: CfiState, p: CfiProfile, line: string, off: i3
     if (d == ".cfi_startproc" || d == ".cfi_endproc") { return cfi_proc_directive(s, d, ops, off); }
     if (!s.open) { return cfi_bad(s, d + " outside .cfi_startproc/.cfi_endproc"); }
     if (d == ".cfi_def_cfa" || d == ".cfi_def_cfa_register" || d == ".cfi_def_cfa_offset") {
-        return cfi_cfa_directive(s, p, d, ops, rest, off);
+        return cfi_cfa_directive(s, d, ops, rest, off);
     }
     if (d == ".cfi_remember_state") { return cfi_add_rule(s, off, [cfi_op_remember_state()]); }
     if (d == ".cfi_restore_state") { return cfi_add_rule(s, off, [cfi_op_restore_state()]); }
-    return cfi_reg_directive(s, p, d, ops, rest, off);
+    return cfi_reg_directive(s, d, ops, rest, off);
 }
 
 // cfi_proc_directive opens or closes an FDE.
-function cfi_proc_directive(own s: CfiState, d: string, ops: string[], off: i32): CfiState {
+function cfi_proc_directive(s: CfiState, d: string, ops: string[], off: i32): CfiState {
     if (d == ".cfi_startproc") {
         if (s.open) { return cfi_bad(s, ".cfi_startproc inside an open .cfi_startproc"); }
         if (ops.len() > 0 && ops[0].len() > 0) { return cfi_bad(s, ".cfi_startproc " + ops[0] + " is not supported"); }
-        s = CfiState { ...s, fde_start: s.fde_start.append(off) };
-        s = CfiState { ...s, fde_end: s.fde_end.append(off) };
-        return CfiState { ...s, open: true };
+        return CfiState { ...s, fde_start: s.fde_start.append(off), fde_end: s.fde_end.append(off), open: true };
     }
     if (!s.open) { return cfi_bad(s, ".cfi_endproc without .cfi_startproc"); }
-    s = CfiState { ...s, fde_end: s.fde_end.with(s.fde_end.len() - 1, off) };
-    return CfiState { ...s, open: false };
+    return CfiState { ...s, fde_end: s.fde_end.with(s.fde_end.len() - 1, off), open: false };
 }
 
 // cfi_cfa_directive records a rule that moves the CFA.
-function cfi_cfa_directive(own s: CfiState, p: CfiProfile, d: string, ops: string[], rest: string, off: i32): CfiState {
+function cfi_cfa_directive(s: CfiState, d: string, ops: string[], rest: string, off: i32): CfiState {
     if (d == ".cfi_def_cfa_offset") {
         if (ops.len() < 1 || !cfi_is_int(ops[0])) { return cfi_bad(s, d + " " + rest); }
         return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_offset()], cfi_atoi(ops[0])));
     }
     if (ops.len() < 1) { return cfi_bad(s, d + ": missing register operand"); }
-    var r: i32 = cfi_reg_num(p, ops[0]);
+    var r: i32 = cfi_reg_num(s.profile, ops[0]);
     if (r < 0) { return cfi_bad(s, d + " " + rest); }
     if (d == ".cfi_def_cfa_register") {
         return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_register()], r));
@@ -6834,15 +6831,15 @@ function cfi_cfa_directive(own s: CfiState, p: CfiProfile, d: string, ops: strin
 }
 
 // cfi_reg_directive records a rule about one register's saved location.
-function cfi_reg_directive(own s: CfiState, p: CfiProfile, d: string, ops: string[], rest: string, off: i32): CfiState {
+function cfi_reg_directive(s: CfiState, d: string, ops: string[], rest: string, off: i32): CfiState {
     if (ops.len() < 1) { return cfi_bad(s, d + ": missing register operand"); }
-    var r: i32 = cfi_reg_num(p, ops[0]);
+    var r: i32 = cfi_reg_num(s.profile, ops[0]);
     if (r < 0) { return cfi_bad(s, d + " " + rest); }
     if (d == ".cfi_offset") {
         if (ops.len() < 2 || !cfi_is_int(ops[1])) { return cfi_bad(s, d + " " + rest); }
         var n: i32 = cfi_atoi(ops[1]);
-        if (n % p.data_align != 0) { return cfi_bad(s, d + " " + ops[0] + ": offset not a multiple of the data alignment"); }
-        var f: i32 = n / p.data_align;
+        if (n % s.profile.data_align != 0) { return cfi_bad(s, d + " " + ops[0] + ": offset not a multiple of the data alignment"); }
+        var f: i32 = n / s.profile.data_align;
         // A positive CFA-relative offset needs the extended_sf form, which
         // this module does not produce; refuse rather than unwind wrongly.
         if (f < 0) { return cfi_bad(s, d + " " + ops[0] + ": positive offset is not supported"); }
@@ -6851,7 +6848,7 @@ function cfi_reg_directive(own s: CfiState, p: CfiProfile, d: string, ops: strin
     }
     if (d == ".cfi_register") {
         if (ops.len() < 2) { return cfi_bad(s, d + ": missing operand"); }
-        var rb: i32 = cfi_reg_num(p, ops[1]);
+        var rb: i32 = cfi_reg_num(s.profile, ops[1]);
         if (rb < 0) { return cfi_bad(s, d + " " + rest); }
         return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_register()], r), rb));
     }
@@ -6912,7 +6909,7 @@ function cfi_cat(a: i32[], b: i32[]): i32[] {
 
 // cfi_fde_payload renders one FDE's payload (everything after its length
 // field) for the FDE at section offset `at`, not yet padded.
-function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr: i64, eh_vaddr: i64): i32[] {
+function cfi_fde_payload(s: CfiState, k: i32, at: i32, text_vaddr: i64, eh_vaddr: i64): i32[] {
     var b: i32[] = [];
     b = cfi_le32(b, at + 4);   // CIE pointer: the distance BACK to the CIE
     var field_va: i64 = eh_vaddr + ((at + 8) as i64);
@@ -6923,7 +6920,7 @@ function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr
     var r: i32 = 0;
     while (r < s.rule_fde.len()) {
         if (s.rule_fde[r] == k) {
-            b = cfi_advance(b, p, s.rule_off[r] - pc);
+            b = cfi_advance(b, s.profile, s.rule_off[r] - pc);
             pc = s.rule_off[r];
             var q: i32 = 0;
             while (q < s.rule_len[r]) { b = b.append(s.rule_bytes[s.rule_pos[r] + q]); q = q + 1; }
@@ -6938,16 +6935,16 @@ function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr
 // one FDE per span, a zero-length terminator. Empty when nothing was
 // recorded. Every entry's payload is padded to 4 and the last one further
 // so the section is a multiple of 8, which is gas's rule for both targets.
-pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr: i64): i32[] {
+pub function cfi_eh_frame(s: CfiState, text_vaddr: i64, eh_vaddr: i64): i32[] {
     if (cfi_empty(s) || s.open) { return []; }
-    var out: i32[] = cfi_cie(p);
+    var out: i32[] = cfi_cie(s.profile);
     var at: i32 = out.len();
     var n: i32 = s.fde_start.len();
     var payloads: i32[] = [];     // every payload, concatenated
     var lens: i32[] = [];
     var k: i32 = 0;
     while (k < n) {
-        var pl: i32[] = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
+        var pl: i32[] = cfi_fde_payload(s, k, at, text_vaddr, eh_vaddr);
         if (k == n - 1 && (at + 4 + pl.len()) % 8 != 0) {
             pl = cfi_cat(pl, [0, 0, 0, 0]);
         }
@@ -6982,17 +6979,17 @@ pub function cfi_eh_frame_hdr_len(s: CfiState): i32 {
 // eh_frame_ptr is pcrel from its own field; every table row is datarel from
 // the start of this section — the two bases a swapped implementation gets
 // wrong while still decoding.
-pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr: i64, hdr_vaddr: i64): i32[] {
+pub function cfi_eh_frame_hdr(s: CfiState, text_vaddr: i64, eh_vaddr: i64, hdr_vaddr: i64): i32[] {
     if (cfi_empty(s) || s.open) { return []; }
     // FDE offsets within .eh_frame: the CIE first, then each padded FDE.
-    var cie_len: i32 = cfi_cie(p).len();
+    var cie_len: i32 = cfi_cie(s.profile).len();
     var at: i32 = cie_len;
     var n: i32 = s.fde_start.len();
     var fns: i64[] = [];
     var fdes: i64[] = [];
     var k: i32 = 0;
     while (k < n) {
-        var pl: i32[] = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
+        var pl: i32[] = cfi_fde_payload(s, k, at, text_vaddr, eh_vaddr);
         var plen: i32 = pl.len();
         if (k == n - 1 && (at + 4 + plen) % 8 != 0) { plen = plen + 4; }
         fns = fns.append(text_vaddr + (s.fde_start[k] as i64));
