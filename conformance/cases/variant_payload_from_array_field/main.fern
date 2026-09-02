@@ -1,0 +1,72 @@
+// A variant built over a struct's ARRAY FIELD — `Leaf(v.tail)`, the level-grow
+// of std/pvec's append — took the buffer without a count: the constructor
+// retained a bare local's buffer (#3720) and nothing else. The holder's next
+// rebind then released the replaced field through __field_reclaim_<T>, and
+// the leaf read freed memory. The read is now retained like the local's, so
+// the holder's release leaves the leaf its buffer. Every leaf is read back
+// after churn.
+enum E { Leaf(i32[]), Branch(E[]), Empty }
+struct Vec { root: E, tail: i32[], n: i32 }
+
+function vnew(): Vec {
+    var e: E = Empty;
+    var t: i32[] = [];
+    return Vec { root: e, tail: t, n: 0 };
+}
+
+function push(v: Vec, x: i32): Vec {
+    if (v.tail.len() < 4) {
+        return Vec { ...v, tail: v.tail.append(x), n: v.n + 1 };
+    }
+    var leaf: E = Leaf(v.tail);
+    var fresh: i32[] = [x];
+    match (v.root) {
+        Empty => { return Vec { root: leaf, tail: fresh, n: v.n + 1 }; },
+        Leaf(xs) => { return Vec { root: Branch([v.root, leaf]), tail: fresh, n: v.n + 1 }; },
+        Branch(kids) => { return Vec { root: Branch(kids.append(leaf)), tail: fresh, n: v.n + 1 }; }
+    }
+}
+
+function sum_node(e: E): i32 {
+    match (e) {
+        Leaf(xs) => {
+            var t: i32 = 0;
+            var i: i32 = 0;
+            while (i < xs.len()) { t = t + xs[i]; i = i + 1; }
+            return t;
+        },
+        Branch(kids) => {
+            var t: i32 = 0;
+            for k in kids { t = t + sum_node(k); }
+            return t;
+        },
+        Empty => { return 0; }
+    }
+}
+
+// leaf-sized buffers, so a freed leaf is handed out again and read back wrong
+function churn(): i32 {
+    var junk: i32[][] = [];
+    var i: i32 = 0;
+    while (i < 400) { junk = junk.append([i, i, i, i]); i = i + 1; }
+    return junk.len();
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    var r: i32 = 0;
+    while (r < 6) {
+        var v: Vec = vnew();
+        var i: i32 = 0;
+        while (i < 40) {
+            v = push(v, i);
+            i = i + 1;
+        }
+        churn();
+        var k: i32 = 0;
+        while (k < v.tail.len()) { total = total + v.tail[k]; k = k + 1; }
+        total = total + sum_node(v.root) + v.n;
+        r = r + 1;
+    }
+    return total % 64;
+}

@@ -1,0 +1,49 @@
+// The state travels back inside a fresh result struct: `var st: Stash =
+// stash(sc, i); sc = st.state;`. For the alias `sc` that is a use whose result
+// is bound under another name, and for the callee's parameter a move into the
+// returned literal — both now count as the box coming back to the caller
+// rather than escaping, so `sc` keeps its snapshot-guarded rebind reclaim and
+// the callee's parameter stays consume-safe. Every result is read back after
+// churn.
+struct Builder { ops: i32[], n: i32 }
+struct Stash { state: Builder, slot: i32 }
+
+function (b: Builder) emit(op: i32): Builder { return Builder { ...b, ops: b.ops.append(op) }; }
+
+function stash(b: Builder, v: i32): Stash {
+  var sb: Builder = b.emit(v);
+  return Stash { state: sb, slot: v };
+}
+
+function lower_call(b: Builder, n: i32): Builder {
+  var sc: Builder = b;
+  var i: i32 = 0;
+  while (i < n) {
+    var st: Stash = stash(sc, i);
+    sc = st.state;
+    sc = sc.emit(st.slot + 100);
+    i = i + 1;
+  }
+  return sc;
+}
+
+function churn(): i32 {
+  var junk: string[] = [];
+  var i: i32 = 0;
+  while (i < 300) { junk = junk.append("junk"); i = i + 1; }
+  return junk.len();
+}
+
+function main(): i32 {
+  var total: i32 = 0;
+  var r: i32 = 0;
+  while (r < 8) {
+    var b: Builder = Builder { ops: [], n: 0 };
+    b = lower_call(b, 20);
+    churn();
+    var k: i32 = 0;
+    while (k < b.ops.len()) { total = total + b.ops[k]; k = k + 1; }
+    r = r + 1;
+  }
+  return total % 64;
+}
