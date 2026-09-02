@@ -8873,9 +8873,28 @@ func (b *builder) stmt(s ast.Stmt) error {
 				b.emitOwnedTempStackDrop(t)
 				break
 			}
+			// WidthString marks a TWO-SLOT drop, not a string one: the
+			// backends emit a second pop for it. Two types are two slots
+			// where the discard has to say so — an SSO string (data, len),
+			// and a `dyn Trait` in wasm's inline [data, vtable] form. The
+			// boxed native `dyn` is one word and takes the default.
+			//
+			// Missing the dyn case leaked one operand slot per discarded
+			// `dyn`-typed statement — `d = Concrete{...};` is an assignment
+			// EXPRESSION whose value lands here. It went unseen because such
+			// a statement is nearly always inside a loop, and a loop used to
+			// end in an unconditional back edge, which makes the rest of the
+			// block unreachable and stops wasm validating the stack there.
 			w := 0
-			if _, isString := b.exprType(n.Expr).(ast.StringType); isString && b.twoWordStrings() {
-				w = WidthString
+			switch b.exprType(n.Expr).(type) {
+			case ast.StringType:
+				if b.twoWordStrings() {
+					w = WidthString
+				}
+			case ast.DynTraitType:
+				if !b.dynBoxed() {
+					w = WidthString
+				}
 			}
 			b.emit(Op{Kind: OpDrop, Width: w})
 		}
