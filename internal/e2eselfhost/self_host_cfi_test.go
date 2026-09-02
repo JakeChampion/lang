@@ -146,3 +146,70 @@ func TestSelfHostCfiMatchesNativeArm64(t *testing.T) {
 		})
 	}
 }
+
+// TestSelfHostCfiMatchesNativeArm64Darwin is the Mach-O half of the same
+// differential (#8112). The recording is identical; the profile is not, and
+// every field that differs is one a "same rules, clear sf" implementation
+// gets wrong silently:
+//
+//   - the code alignment factor is 1, so `stp; mov` advances by 4 rather
+//     than by 1. Reusing the ELF factor moves every rule to a quarter of its
+//     instruction offset, which still decodes.
+//   - FDE pointers are 8-byte pcrel absolute (0x10), not sdata4 (0x1b), and
+//     each FDE is padded to end on 8 rather than 4.
+//
+// There is no .eh_frame_hdr to compare: dyld's _dyld_find_unwind_sections
+// hands the section to libunwind directly, so nothing searches a table.
+func TestSelfHostCfiMatchesNativeArm64Darwin(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+
+	cases := []struct{ name, src string }{
+		{"frame_pointer",
+			".text\n__fn_f:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x29, -16\n.cfi_offset x30, -8\nmov x29, sp\n.cfi_def_cfa_register x29\nmov w0, #7\nldp x29, x30, [sp], #16\n.cfi_def_cfa sp, 0\nret\n.cfi_endproc\n"},
+		// Long enough that the advance leaves the packed 6-bit form — under
+		// code alignment 1 that happens four times sooner than it does on ELF,
+		// so this is where a copied advance encoder shows up.
+		{"two_procs_long",
+			".text\n__fn_a:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x29, -16\n.cfi_offset x30, -8\nmov x29, sp\n.cfi_def_cfa_register x29\n" + strings.Repeat("nop\n", 70) + "ldp x29, x30, [sp], #16\n.cfi_def_cfa sp, 0\nret\n.cfi_endproc\n" +
+				"__fn_b:\n.cfi_startproc\nsub sp, sp, #32\n.cfi_def_cfa_offset 32\nadd sp, sp, #32\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n"},
+		// Three spans, so the 8-alignment padding applies to entries that are
+		// not the last one as well.
+		{"three_procs",
+			".text\n__fn_a:\n.cfi_startproc\nsub sp, sp, #16\n.cfi_def_cfa_offset 16\nadd sp, sp, #16\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n" +
+				"__fn_b:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x30, -8\nldp x29, x30, [sp], #16\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n" +
+				"__fn_c:\n.cfi_startproc\nnop\n.cfi_remember_state\nnop\n.cfi_restore_state\nret\n.cfi_endproc\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			a, err := arm64.ParseProgram(c.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := a.MachOEhFrame(cfiTextVAddr, cfiEhVAddr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(want) == 0 {
+				t.Fatal("native rendered no __eh_frame — the case carries no CFI")
+			}
+			out := runX86BenchDriver(t, bin, runner, c.src, "-ehframe-darwin")
+			if refused := asmRefusals(out); len(refused) > 0 {
+				t.Fatalf("the self-host assembler refused: %v", refused)
+			}
+			got, _ := parseEhDump(out)
+			if string(got) != string(want) {
+				t.Errorf("__eh_frame differs\nself-host % x\nnative    % x", got, want)
+			}
+			// The two profiles must not render the same bytes, or the case
+			// proves nothing about the Darwin one.
+			elf, err := a.EhFrame(cfiTextVAddr, cfiEhVAddr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(elf) == string(want) {
+				t.Error("the ELF and Mach-O profiles rendered identical bytes for this case, so it cannot tell them apart")
+			}
+		})
+	}
+}

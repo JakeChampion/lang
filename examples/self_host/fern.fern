@@ -2464,8 +2464,16 @@ function run(): i32 {
                 return 2;
             }
             var pa: arm64_native.Arm64Asm = prog.asm;
-            var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), prog.data.len(), prog.bss_size);
-            var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), prog.data.len(), prog.bss_size);
+            // __eh_frame sits inside __TEXT between the code and __DATA, and
+            // its section header shifts the first code byte, so its LENGTH is
+            // needed before any address is. It does not depend on either
+            // address, so rendering it once at the final length and again at
+            // the final addresses is exact rather than a fixpoint.
+            var deh_len: i32 = arm64_native.arm64_eh_frame_darwin_len(prog);
+            var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
+            var ev: i64 = arm64_native.macho_eh_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
+            var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), deh_len, prog.data.len(), prog.bss_size);
+            var deh: i32[] = arm64_native.arm64_eh_frame_darwin(prog, tv, ev);
             prog = arm64_native.arm64_gas_link(prog, tv, dv);
             if (prog.unknown.len() > 0) {
                 var _lr: string = arm64_refusals("arm64-darwin", "linker", prog.unknown);
@@ -2477,7 +2485,7 @@ function run(): i32 {
             // emitter writes the entry after the user's functions.
             var deoff: i32 = arm64_native.macho_entry_off(pa2);
             var dreb: i32[] = arm64_native.arm64_gas_rebase_offs(prog);
-            out_asm = string_from_bytes_unchecked(to_u8(arm64_native.macho_executable(pa2.code, prog.data, "fern", deoff, prog.bss_size, dreb)));
+            out_asm = string_from_bytes_unchecked(to_u8(arm64_native.macho_executable(pa2.code, deh, prog.data, "fern", deoff, prog.bss_size, dreb)));
         }
     } else if (target == "wasm32-wasi" && emit_text) {
         // WASI core module in text format (WAT). Runnable directly by

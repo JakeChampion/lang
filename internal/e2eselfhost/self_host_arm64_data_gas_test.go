@@ -97,11 +97,12 @@ const arm64MachOSymbolDriverMain = "\n" +
 	"    asm = asm + \"    .quad 42\\n\";\n" +
 	"    var p: Arm64GasProg = arm64_gas_program(asm);\n" +
 	"    var pa: Arm64Asm = p.asm;\n" +
-	"    var tvaddr: i64 = macho_text_vaddr(pa.code.len(), p.data.len(), p.bss_size);\n" +
-	"    var dvaddr: i64 = macho_data_vaddr(pa.code.len(), p.data.len(), p.bss_size);\n" +
+	"    var tvaddr: i64 = macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);\n" +
+	"    var dvaddr: i64 = macho_data_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);\n" +
 	"    p = arm64_gas_link(p, tvaddr, dvaddr);\n" +
 	"    var pa2: Arm64Asm = p.asm;\n" +
-	"    var bin: i32[] = macho_executable(pa2.code, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n" +
+	"    var none: i32[] = [];\n" +
+	"    var bin: i32[] = macho_executable(pa2.code, none, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n" +
 	"    write(string_from_bytes_unchecked(bin));\n" +
 	"    return 0;\n" +
 	"}\n"

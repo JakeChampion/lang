@@ -72,11 +72,15 @@ func TestSelfHostArm64DarwinAssemblesRealRuntime(t *testing.T) {
 			// `p = arm64_gas_link(p, …)` rebind and crashes the signature hash.
 			sb.WriteString("    if (p.unknown.len() > 0) { write(\"UNKNOWN:\"); var ui: i32 = 0; while (ui < p.unknown.len()) { if (ui > 0) { write(\",\"); } write(p.unknown[ui]); ui = ui + 1; } return 0; }\n")
 			sb.WriteString("    var pa: Arm64Asm = p.asm;\n")
-			sb.WriteString("    var tv: i64 = macho_text_vaddr(pa.code.len(), p.data.len(), p.bss_size);\n")
-			sb.WriteString("    var dv: i64 = macho_data_vaddr(pa.code.len(), p.data.len(), p.bss_size);\n")
+			// Same unwind orchestration as fern.fern's arm64-darwin path.
+			sb.WriteString("    var ehlen: i32 = arm64_eh_frame_darwin_len(p);\n")
+			sb.WriteString("    var tv: i64 = macho_text_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+			sb.WriteString("    var ev: i64 = macho_eh_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+			sb.WriteString("    var dv: i64 = macho_data_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+			sb.WriteString("    var eh: i32[] = arm64_eh_frame_darwin(p, tv, ev);\n")
 			sb.WriteString("    p = arm64_gas_link(p, tv, dv);\n")
 			sb.WriteString("    var pa2: Arm64Asm = p.asm;\n")
-			sb.WriteString("    var bin: i32[] = macho_executable(pa2.code, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
+			sb.WriteString("    var bin: i32[] = macho_executable(pa2.code, eh, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
 			sb.WriteString("    write(string_from_bytes_unchecked(bin));\n    return 0;\n}\n")
 
 			wat := runCapture(t, gcc, runner, wrun, []byte(sb.String()))

@@ -22,18 +22,20 @@ function main(): i32 {
     var dump: boolean = false;
     var dump_data: boolean = false;
     var dump_eh: boolean = false;
+    var dump_eh_darwin: boolean = false;
     var i: i32 = 0;
     while (i < av.len()) {
         if (av[i] == "-words") { dump = true; }
         if (av[i] == "-data") { dump_data = true; }
         if (av[i] == "-ehframe") { dump_eh = true; }
+        if (av[i] == "-ehframe-darwin") { dump_eh_darwin = true; }
         i = i + 1;
     }
     var src: string = io.read_all_stdin();
     var p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(src);
     var pa: arm64_native.Arm64Asm = p.asm;
-    var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), p.data.len(), p.bss_size);
-    var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), p.data.len(), p.bss_size);
+    var tv: i64 = arm64_native.macho_text_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
+    var dv: i64 = arm64_native.macho_data_vaddr(pa.code.len(), 0, p.data.len(), p.bss_size);
     p = arm64_native.arm64_gas_link(p, tv, dv);
     var pa2: arm64_native.Arm64Asm = p.asm;
     print("text=" + pa2.code.len().to_string() + " data=" + p.data.len().to_string()
@@ -77,6 +79,14 @@ function main(): i32 {
         var hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, 4194304 as i64, 4194560 as i64, 4194432 as i64);
         e = 0;
         while (e < hdr.len()) { print("hdr " + e.to_string() + " " + hdr[e].to_string()); e = e + 1; }
+    }
+    // With `-ehframe-darwin`, the same recording under the Mach-O profile.
+    // There is no .eh_frame_hdr on Darwin: dyld hands the section to
+    // libunwind directly, so nothing looks a function up through a table.
+    if (dump_eh_darwin) {
+        var deh: i32[] = arm64_native.arm64_eh_frame_darwin(p, 4194304 as i64, 4194560 as i64);
+        var de: i32 = 0;
+        while (de < deh.len()) { print("eh " + de.to_string() + " " + deh[de].to_string()); de = de + 1; }
     }
     return 0;
 }
