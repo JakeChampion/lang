@@ -297,9 +297,10 @@ func TestPlatformFetch(t *testing.T) {
 
 	src := fmt.Sprintf(`import "std/fetch";
 import "std/string";
+import "std/platform";
 
 function main(): i32 {
-    var p: Platform = Platform { version: 1 };
+    var p: Platform = platform.platform_new();
     var status: i32 = p.fetch("127.0.0.1", %d, "/");   // i32 status code
     if (status == 200) { return 42; }
     return status;

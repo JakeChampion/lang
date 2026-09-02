@@ -225,6 +225,14 @@ function __read_request(fd: i32, recv_deadline_ms: i32): Option[HttpRequest] {
     return None;
 }
 
+// __host_platform — the bag the accept loops hand every handler: the host
+// mode, and a sink nothing writes to. Recording is a MockPlatform's job; it
+// builds a bag over its own cell (std/mock_platform). Built once per loop
+// rather than per request, since no request can change it.
+function __host_platform(): Platform {
+    return Platform { version: 1, mode: 0, sink: cell_new("") };
+}
+
 // __serve_loop — the HTTP/1.1 accept loop factored out of
 // `tcp_serve` so `tcp_serve_supervised` can run the same loop
 // against a listener fd it does NOT create: the supervising
@@ -236,6 +244,7 @@ function __read_request(fd: i32, recv_deadline_ms: i32): Option[HttpRequest] {
 // exposed yet). `recv_deadline_ms` bounds each connection's
 // request read (see `tcp_serve_deadline`).
 function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpResponse, recv_deadline_ms: i32): i32 {
+    var plat: Platform = __host_platform();
     while (true) {
         var fd: i32 = tcp_accept(listener);
         if (fd < 0) {
@@ -249,11 +258,6 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
         }
         match (__read_request(fd, recv_deadline_ms)) {
             Some(req) => {
-                // Phase 1 Platform: empty placeholder threaded
-                // through the handler call. Future phases will
-                // populate capability fields (fetch / kv / log /
-                // now) per docs/PLATFORM-RESEARCH.md.
-                var plat: Platform = Platform { version: 1 };
                 var resp: HttpResponse = handler(req, plat);
                 tcp_send(fd, http.http_serialize_response(resp));
             },
@@ -270,6 +274,7 @@ function __serve_loop(listener: i32, handler: (HttpRequest, Platform) => HttpRes
 // request sees the value the previous one returned.
 function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse), recv_deadline_ms: i32): i32 {
     var st: S = init;
+    var plat: Platform = __host_platform();
     while (true) {
         var fd: i32 = tcp_accept(listener);
         if (fd < 0) {
@@ -277,7 +282,6 @@ function __serve_loop_with[S](listener: i32, init: S, handler: (S, HttpRequest, 
         }
         match (__read_request(fd, recv_deadline_ms)) {
             Some(req) => {
-                var plat: Platform = Platform { version: 1 };
                 var next: (S, HttpResponse) = handler(st, req, plat);
                 st = next.0;
                 tcp_send(fd, http.http_serialize_response(next.1));

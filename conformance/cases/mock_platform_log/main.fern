@@ -1,31 +1,50 @@
 import "std/mock_platform";
+import "std/platform";
+import "std/http";
+import "std/headers";
 import "std/i32";
-import "core/int";
 
-// Exercises std/mock_platform's call-recording log (MockPlatform holds a
-// MockCall[]) across all four native backends: functional struct-spread
-// append of an array-of-struct, indexed array-of-struct field reads, the
-// has_call membership scan, and find_call's Option[MockCall] payload.
+// Exercises std/mock_platform's recording seam across all four native
+// backends: a handler is handed the mock's bag and reaches its capabilities
+// through it, the calls land in the cell the mock and the bag share, and
+// `calls()` parses the log back into MockCall values. Nothing here reaches
+// the host — the `.log` lines would go to stderr on a host bag.
 // FEATURE-AUDIT std/mock_platform row.
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    plat.log("serving " + req.path);
+    match (plat.env("REGION")) {
+        Some(v) => { plat.log("region=" + v); },
+        None => { plat.log("no-region"); }
+    }
+    plat.log("done");
+    return http.http_response_ok("body-" + req.path);
+}
+
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    m = m.record("fetch", "GET /a");
-    m = m.record("kv_set", "k=v");
-    m = m.record("fetch", "GET /b");
-    print(m.call_count().to_string());          // 3
-    print(m.calls[0].name);                      // fetch
-    print(m.calls[1].args);                      // k=v
-    if (m.has_call("kv_set")) { print("has-kv"); } else { print("no-kv"); }
-    if (m.has_call("missing")) { print("has-missing"); } else { print("no-missing"); }
-    match (m.find_call("fetch")) {
-        Some(c) => { print(c.args); },           // GET /a (first match)
+    var req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: "", headers: headers.header_map_new() };
+    var resp: HttpResponse = handle(req, m.as_platform());
+    print(resp.body);                            // body-/a
+    print(m.call_count().to_string());           // 4
+    var cs: MockCall[] = m.calls();
+    print(cs[0].name);                           // log
+    print(cs[0].args);                           // serving /a
+    print(cs[1].name);                           // env
+    print(cs[1].args);                           // REGION
+    if (m.has_call("env")) { print("has-env"); } else { print("no-env"); }
+    if (m.has_call("fetch")) { print("has-fetch"); } else { print("no-fetch"); }
+    match (m.find_call("log")) {
+        Some(c) => { print(c.args); },           // serving /a (first match)
         None => { print("none"); },
     }
     match (m.find_call("nope")) {
         Some(c) => { print("unexpected"); },
         None => { print("find-none"); },
     }
-    var m2: MockPlatform = m.reset();
-    print(m2.call_count().to_string());          // 0
+    // A hand-driven entry lands in the same log as the handler's.
+    m.record("kv_set", "k=v");
+    print(m.call_count().to_string());           // 5
+    m.reset();
+    print(m.call_count().to_string());           // 0
     return 0;
 }

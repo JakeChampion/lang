@@ -1,8 +1,12 @@
-3
-fetch
-k=v
-has-kv
-no-missing
-GET /a
+body-/a
+4
+log
+serving /a
+env
+REGION
+has-env
+no-fetch
+serving /a
 find-none
+5
 0

@@ -74,6 +74,7 @@ struct HttpResponse { status: i32, body: string, headers: HeaderMap }
 // a signature mentioning it — `(HttpRequest, Platform) => HttpResponse`, which
 // is every std/tcp serve entry point — could not resolve and `__serve_loop`
 // bailed — and the AST emitter it then fell to could not emit tcp_listen /
-// poll either (#5686). Phase 1 carries a single `version: i32` placeholder so the struct
-// has a well-defined ABI without zero-sized-struct edge cases.
-struct Platform { version: i32 }
+// poll either (#5686). `version` is the bag's ABI version; `mode` and `sink`
+// carry the mock seam (Rec §6) — a recording bag is mode 1 over a cell that
+// std/platform's capability methods append to instead of reaching the host.
+struct Platform { version: i32, mode: i32, sink: Cell[string] }

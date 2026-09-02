@@ -20,7 +20,10 @@
 //	HttpResponse (24 bytes): status@+0, body@+8/+12,
 //	                          headers@+16 (HeaderMap ptr)
 //	HeaderMap    (8 bytes):  names_ptr@+0, values_ptr@+4
-//	Platform     (4 bytes):  version@+0
+//
+// Platform is deliberately absent from that list: the wrapper never touches
+// its layout, calling the compiler-synthesised `__fern_platform_new` for the
+// bag instead.
 //
 // Resource lifetime (matches the WAT path):
 //   - `req` (incoming-request) is borrowed for `.method` /
@@ -163,7 +166,7 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 //     HeaderMap from fields.entries via the lang-side
 //     __method_HeaderMap_append.
 //  8. Drop the fields handle.
-//  9. Build a 4-byte Platform { version: 1 } and call user
+//  9. Call `__fern_platform_new` for the Platform bag, then user
 //     `handle(req_struct, plat)`.
 //  10. Read HttpResponse fields (status, body, headers).
 //  11. Build outgoing-response: fields.new → fields.append for

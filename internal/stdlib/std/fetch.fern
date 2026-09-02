@@ -24,6 +24,8 @@ import "std/async";
 // std/tcp — tcp_recv_deadline, the recv-with-deadline primitive behind
 // the *_deadline fetch variants.
 import "std/tcp";
+import "std/platform";
+import "core/int";
 
 // ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
 // i32 that tcp_connect wants in sin_addr. ipv4(127,0,0,1) addresses
@@ -332,7 +334,15 @@ pub function parse_ipv4(s: string): i32 {
 // (an i32, e.g. 200 / 404), or -1 on a parse / connect / malformed-response
 // failure. For the response BODY, or to overlap several fetches, use
 // `fetch_future` through `async.gather` / `async.race`. Blocking.
+//
+// A recording bag reaches no socket: the call is logged as `fetch` with a
+// `host:port path` summary and answered -1, the same value a real fetch gives
+// for a host it could not reach (std/mock_platform).
 pub function (plat: Platform) fetch(host: string, port: i32, path: string): i32 {
+    if (plat.is_mock()) {
+        plat.record("fetch", host + ":" + int.int_to_string(port) + " " + path);
+        return -1;
+    }
     var h: i32 = parse_ipv4(host);
     if (h < 0) {
         return -1;

@@ -34,6 +34,13 @@ import (
 //     all; what it needs is a C calling convention to hand a JNIEnv
 //     method pointer to, which is a property of the target and not of
 //     anything above it.
+//   - `std/mock_platform` and `std/fetch` reach what `std/platform` reaches,
+//     because both import it for the recording seam — `.is_mock` / `.record`
+//     sit on the bag next to the capability methods. Neither CALLS a
+//     capability (a mock exists precisely so nothing does), so this is
+//     module-granular reach and not what either module can do; E066 is
+//     post-tree-shake, so a freestanding program using only the mock's log
+//     still builds.
 var stdModuleReach = map[string]string{
 	"std/_test_empty":   "",
 	"std/ansi":          "",
@@ -47,7 +54,7 @@ var stdModuleReach = map[string]string{
 	"std/csv":           "",
 	"std/dotenv":        "",
 	"std/error":         "",
-	"std/fetch":         "env,log,now,proc,tcp",
+	"std/fetch":         "env,log,now,proc,random,tcp",
 	"std/float":         "",
 	"std/format":        "",
 	"std/fuzz":          "env,fs,log,now,random",
@@ -63,7 +70,7 @@ var stdModuleReach = map[string]string{
 	"std/json":          "",
 	"std/log":           "log",
 	"std/math":          "random",
-	"std/mock_platform": "",
+	"std/mock_platform": "env,log,now,random",
 	"std/num":           "",
 	"std/option":        "",
 	"std/ordmap":        "",

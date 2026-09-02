@@ -1074,6 +1074,10 @@ what a handler may call depends on where it is going: the `wasi-http`
 proxy world grants log / now / random / fetch, and `.env` is an E066
 there.
 
+Substituting the bag is what makes a handler testable: a recording bag
+(`std/mock_platform`) answers each method from a log instead of the host,
+and every method here asks which kind it is before acting.
+
 ```
 import "std/platform";
 
@@ -1097,12 +1101,24 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 
 ### `std/mock_platform`
 
-Test-ergonomics helpers for recording and asserting on platform
-capability calls (log / fetch / kv / now) once `Platform` grows
-beyond its placeholder shape.
+A `Platform` that records instead of acting. `m.as_platform()` gives a
+handler a bag over the mock's own sink, so every capability call it makes
+lands in `m`'s log and nothing reaches the host:
 
-- `mock_platform_new()`; `(m).record(call)`, `(m).reset()`.
-- `(m).call_count()`, `(m).has_call(name)`, `(m).find_call(name)`.
+```fern
+var m: MockPlatform = mock_platform.mock_platform_new();
+var resp: HttpResponse = handle(req, m.as_platform());
+assert_eq(m.calls()[0].name, "log");
+```
+
+Mocked capabilities answer a fixed value — 0 for `now_ms` / `elapsed_ns` /
+`random_i32`, `None` for `env`, -1 for `fetch`, and `log` swallows the line.
+
+- `mock_platform_new()`; `(m).as_platform()`.
+- `(m).record(name, args)`, `(m).reset()` — mutate through the shared cell,
+  so a bag already handed to a handler writes to the same log.
+- `(m).calls()`, `(m).call_count()`, `(m).has_call(name)`,
+  `(m).find_call(name)`.
 
 ### `std/test`
 

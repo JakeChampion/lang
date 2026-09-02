@@ -51,10 +51,32 @@ pointer pairing is what sees it, which is the same lesson as
 `../TEST-GATES.md`'s over-retain note — worth repeating because the silent
 detector is the one that runs by default.
 
+## Still leaking: a cell held by the other container kinds
+
+The field arm is the one this fixes. A cell reached as an ARRAY ELEMENT, a
+TUPLE ELEMENT, or an ENUM PAYLOAD still strands exactly 1, where the same
+container holding a plain heap string is clean — so it is the cell, not the
+container:
+
+| container                  | plain heap string | `Cell[string]` | `Cell[i32]` |
+|----------------------------|-------------------|----------------|-------------|
+| `T[]` element              | 0                 | 1              | 1           |
+| `(i32, T)` element         | 0                 | 1              | —           |
+| `enum H { Has(T), No }`    | 0                 | 1              | —           |
+
+They are the same class but NOT the same fix site, which is why they are not
+in this diff. The tuple and enum arms already reach the new `appendChildDrop`
+branch — the lowering emits `__fern_drop_arr_str` once for each — so their
+residual 1 has some other cause and wants its own narrowing. The array arm
+does not reach it at all: `dropStructField`'s ArrayType case picks
+`__fern_drop_arr_ptr` for an rc-tracked element, which walks with
+`__fern_rc_dec` and so never frees a cell box. Fixing that one needs a walker
+that applies the CELL drop per element, i.e. a new runtime helper on four
+backends — a change of a different size from this branch.
+
 ## Next lead
 
-Two neighbouring leaks turned up while narrowing this one, neither
-cell-shaped. An `Option[<struct>]` returned from a scan strands 1. And
+Two further leaks turned up while narrowing this one, neither cell-shaped. An `Option[<struct>]` returned from a scan strands 1. And
 passing a freshly built struct DIRECTLY as a call argument — `f(make())`,
 never bound to a local — into a callee that returns a heap struct strands 3,
 where binding it to a local first is clean at 0. The second is the sharper

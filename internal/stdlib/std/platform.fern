@@ -26,6 +26,20 @@
 // Outbound HTTP is the one capability that lives elsewhere:
 // `(plat: Platform).fetch(host, port, path)` is in `std/fetch`, next to
 // the socket machinery that implements it.
+//
+// A bag is either a host bag or a recording one. Every method here asks
+// which before it acts: a recording bag appends the call to its sink and
+// answers a fixed value, so a test can hand a handler a mock and read back
+// what it tried to do without the effect happening (std/mock_platform).
+
+// PLATFORM_MODE_HOST / PLATFORM_MODE_MOCK — what the bag's `mode` field
+// selects. A host bag performs its effects; a recording one appends them to
+// its sink and leaves the host alone, which is what makes the bag
+// substitutable (docs/PLATFORM-RESEARCH.md Rec §6). Private: `platform_new`
+// and `platform_mock` below are the only two ways to build a bag, so no
+// caller has to name a mode.
+const PLATFORM_MODE_HOST: i32 = 0;
+const PLATFORM_MODE_MOCK: i32 = 1;
 
 // `platform_new()` — the bag as the host serves it, for code that has
 // to build one: a test driving a handler directly, or a caller of
@@ -39,7 +53,32 @@
 // `version` is the bag's ABI version, bumped when a capability field is
 // added, so a handler compiled against an older bag can tell.
 pub function platform_new(): Platform {
-    return Platform { version: 1 };
+    return Platform { version: 1, mode: PLATFORM_MODE_HOST, sink: cell_new("") };
+}
+
+// `platform_mock(sink)` — a bag that records into `sink` instead of reaching
+// the host. std/mock_platform is the caller: it passes its own cell, so the
+// mock and the handler write one log through two views.
+pub function platform_mock(sink: Cell[string]): Platform {
+    return Platform { version: 1, mode: PLATFORM_MODE_MOCK, sink: sink };
+}
+
+// `.is_mock()` — is this a recording bag? Each capability method below asks
+// before performing its effect, and so does `.fetch`, the one capability that
+// lives next to the socket machinery in std/fetch rather than here.
+pub function (plat: Platform) is_mock(): boolean {
+    return plat.mode == PLATFORM_MODE_MOCK;
+}
+
+// `.record(name, args)` — append one call to a recording bag's log; a no-op
+// on a host bag. The log is one string because a cell's element must be a
+// scalar or a string (E057), and std/mock_platform parses it back into
+// MockCall values. An entry is name, tab, args, newline — so a tab or a
+// newline inside `args` splits it, which is why what gets recorded is a
+// summary of the arguments rather than a payload.
+pub function (plat: Platform) record(name: string, args: string): void {
+    if (plat.mode != PLATFORM_MODE_MOCK) { return; }
+    plat.sink.set(plat.sink.get() + name + "\t" + args + "\n");
 }
 
 // `.log(msg)` — write one diagnostic line to the platform's log sink.
@@ -47,6 +86,10 @@ pub function platform_new(): Platform {
 // every target that has one (a proxy-world component has no stdout, so
 // this is the only output a handler gets).
 pub function (plat: Platform) log(msg: string): void {
+    if (plat.is_mock()) {
+        plat.record("log", msg);
+        return;
+    }
     eprint(msg);
 }
 
@@ -54,6 +97,10 @@ pub function (plat: Platform) log(msg: string): void {
 // `now` capability. Subject to clock adjustment: stamp a response with
 // it, don't time anything with it — that's `.elapsed_ns()`.
 pub function (plat: Platform) now_ms(): i64 {
+    if (plat.is_mock()) {
+        plat.record("now_ms", "");
+        return 0i64;
+    }
     return now_unix_ms();
 }
 
@@ -62,6 +109,10 @@ pub function (plat: Platform) now_ms(): i64 {
 // between two readings is an elapsed time regardless of what the wall
 // clock did in between, which is what a handler's latency budget wants.
 pub function (plat: Platform) elapsed_ns(): i64 {
+    if (plat.is_mock()) {
+        plat.record("elapsed_ns", "");
+        return 0i64;
+    }
     return monotonic_ns();
 }
 
@@ -72,11 +123,19 @@ pub function (plat: Platform) elapsed_ns(): i64 {
 // (docs/PLATFORM-RESEARCH.md Rec §7). `Some("")` for a variable set to
 // the empty string, `None` for one that is not set.
 pub function (plat: Platform) env(name: string): Option[string] {
+    if (plat.is_mock()) {
+        plat.record("env", name);
+        return None;
+    }
     return env(name);
 }
 
 // `.random_i32()` — one uniformly random i32 from the platform CSPRNG.
 // Needs the `random` capability.
 pub function (plat: Platform) random_i32(): i32 {
+    if (plat.is_mock()) {
+        plat.record("random_i32", "");
+        return 0;
+    }
     return random_i32();
 }
