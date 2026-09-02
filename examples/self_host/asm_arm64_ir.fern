@@ -7130,6 +7130,59 @@ function darwin_sysno(n: i32): i32 {
     return 0 - 1;
 }
 
+// darwin_retarget_locals rewrites ELF's ".L" temporary-symbol prefix to
+// Mach-O's bare "L". Only the leading "." is dropped, so ".Lret_3" becomes
+// "Lret_3" and every reference changes with the definition.
+//
+// Without it every local label is a REAL Mach-O symbol, and Mach-O atomizes
+// a section at each real symbol: the linker may reorder the pieces, so the
+// assembler cannot treat the distance across a label as a compile-time
+// constant. The first thing needing such a distance is CFI, where llvm-mc
+// rejects the epilogue rule with "invalid CFI advance_loc expression"
+// (#8065). The native emitter does the same thing in its printer.
+//
+// The scan skips quoted regions. That is the lexical rule rather than a
+// carve-out: in assembly a ".L" token is a symbol reference EVERYWHERE
+// except inside a string operand, and the `.ascii` payloads of a program's
+// own string literals flow through this same line loop. A blind replacement
+// would silently corrupt any Fern program with ".L" in a literal.
+function darwin_retarget_locals(line: string): string {
+    var n: i32 = line.len();
+    var i: i32 = 0;
+    var in_str: boolean = false;
+    var out: string = "";
+    var run: i32 = 0;
+    while (i < n) {
+        var c: u8 = line[i];
+        if (in_str) {
+            if (c == 92 && i + 1 < n) { i = i + 1; }        // backslash escape
+            else if (c == 34) { in_str = false; }           // closing quote
+        } else if (c == 34) {
+            in_str = true;
+        } else if (c == 46 && i + 1 < n && line[i + 1] == 76
+                   && (i == 0 || !darwin_is_sym_byte(line[i - 1]))) {
+            // ".L" at a token boundary: copy everything up to the dot and
+            // skip it, leaving the "L".
+            out = out + slice_unchecked(line, run, i);
+            run = i + 1;
+            i = i + 1;
+            continue;
+        }
+        i = i + 1;
+    }
+    if (run == 0) { return line; }
+    return out + slice_unchecked(line, run, n);
+}
+
+// darwin_is_sym_byte reports whether the byte can appear inside an assembler
+// symbol name, so ".L" preceded by one is part of a longer name.
+function darwin_is_sym_byte(b: u8): boolean {
+    if (b == 95 || b == 36 || b == 46) { return true; }     // _ $ .
+    if (b >= 48 && b <= 57) { return true; }                // 0-9
+    if (b >= 97 && b <= 122) { return true; }               // a-z
+    return b >= 65 && b <= 90;                              // A-Z
+}
+
 pub function darwinize(asm: string): string {
     // Accumulate through the global strbuf, exactly as EmitState.write does
     // and for the same reason: `out = out + line` is O(n^2) and fatal here.
@@ -7241,7 +7294,7 @@ pub function darwinize(asm: string): string {
             }
 
             if (keep) {
-                strbuf_append(out_line);
+                strbuf_append(darwin_retarget_locals(out_line));
                 if (has_nl) {
                     strbuf_append("\n");
                 }
