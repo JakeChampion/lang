@@ -570,9 +570,10 @@ pub struct FnSigs {
     strfld_ok_types: string[],
     // tuple_fresh_ret_fns: functions returning a fresh, sole-owned tuple box.
     tuple_fresh_ret_fns: string[],
-    // move_arr_params: "fn|param" entries whose array argument is MOVED into the
-    // callee rather than borrowed.
-    move_arr_params: string[],
+    // own_positions: "fn|idx" for every declared `own` parameter of a free
+    // function — the argument there was MOVED in, so a callee handing it straight
+    // back returns it uncounted (rebind_call_same_dec).
+    own_positions: string[],
     // trmc_consume_fns: "fn|param" entries for TRMC functions whose loop CONSUMES
     // its scrutinee, freeing each cell as it walks past (#5333). Both halves of
     // that bargain read this one registry — the loop's release and the call
@@ -1088,7 +1089,7 @@ pub function (s: LowerState) is_self_assign_reuse_name(name: string): boolean {
 pub function (s: LowerState) is_trmc_consume_arg(name: string, idx: i32): boolean {
     // The empty-registry early-out keeps the key concat off every call-argument
     // of every module that has no consuming TRMC function at all, which is most
-    // of them (the move_arr_params scan takes the same shape for the same reason).
+    // of them.
     if (s.sigs.trmc_consume_fns.len() == 0) { return false; }
     return util.index_of_str(s.sigs.trmc_consume_fns, name + "|" + util.i32_to_string(idx)) >= 0;
 }
@@ -1197,6 +1198,49 @@ pub function (s: LowerState) is_own_param(name: string): boolean {
 // the refcount, but rc == 1 is the gate of __fern_arr_push's in-place path, so
 // it would turn every append the buffer sees into a whole-buffer copy.
 function ownflag_name(name: string): string { return "$ownflag_" + name; }
+
+// borrowed_arr_param_slot returns the slot of a bare identifier naming a
+// borrowed array parameter (or a borrowed match binding), else -1.
+function borrowed_arr_param_slot(e: ast.Expr, s: LowerState): i32 {
+    var nm: string = ident_name_or_empty(e);
+    if (nm.len() == 0) { return 0 - 1; }
+    var sl: i32 = s.slot_of(nm);
+    if (sl < 0 || !s.is_arr_slot(sl)) { return 0 - 1; }
+    if (sl < s.n_params) {
+        if (s.is_own_param(nm)) { return 0 - 1; }
+        return sl;
+    }
+    if (s.is_borrowed_arr_slot(sl)) { return sl; }
+    return 0 - 1;
+}
+
+// rebind_call_same_dec: at `x = f(…)`, does a result that is the SAME pointer as
+// x's old value carry a count of its own that the store must release? A call
+// result does: a bare-parameter return retains, and an in-place append on a
+// borrowed param retains on identity (lower_call_append), so the old reference
+// is superseded by the counted one. The exception is a declared `own` position
+// holding x — the caller moved its reference in and gets it back uncounted. A
+// callee reached through a function value cannot declare `own`.
+function rebind_call_same_dec(value: ast.Expr, target: string, s: LowerState): boolean {
+    match (value) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => {
+                    var i: i32 = 0;
+                    while (i < c.args.len()) {
+                        if (ident_name_or_empty(c.args[i]) == target
+                            && util.index_of_str(s.sigs.own_positions, cid.name + "|" + util.i32_to_string(i)) >= 0) { return false; }
+                        i = i + 1;
+                    }
+                    return true;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
 
 // ownflag_slot_of returns the ownership-flag slot of parameter slot `slot`, or
 // -1 when it is not a consumed-threaded array parameter.
@@ -12241,6 +12285,26 @@ function lower_call_append(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     if (str_param_elem_escapes(c.args[0], aps)) { aps = aps.retain_tos("append-param-str-elem"); }
     aps = aps.emit(ir.op_arr_push());
     if (apcs >= 0) { aps = emit_arr_share(aps, apcs, "__fern_arr_share_dec"); }
+    // An in-place push on a BORROWED param's buffer hands that same buffer out
+    // as a second reference — the caller's slot still holds the first — so the
+    // result is counted exactly as a bare `return p` is (the return-transfer
+    // retain). Guarded on identity: a grow or a shared-receiver copy hands back
+    // a fresh rc 1 buffer that already is the one reference. A declared `own`
+    // param is the callee's to give back uncounted, as in the bare return.
+    var iprs: i32 = borrowed_arr_param_slot(fa.obj, aps);
+    if (apcs < 0 && iprs >= 0) {
+        var ipscratch: string = "$ipa" + util.i32_to_string(aps.locals.len());
+        aps = aps.add_local(ipscratch);
+        var iptmp: i32 = aps.slot_of(ipscratch);
+        aps = aps.emit(ir.op_store_local(iptmp));
+        aps = aps.emit(ir.op_load_local(iptmp));
+        aps = aps.emit(ir.op_load_local(iprs));
+        aps = aps.emit(ir.op_bin("eq", 0, false));
+        aps = aps.emit(ir.op_if(0));
+        aps = aps.retain(iptmp, "append-inplace-borrowed");
+        aps = aps.emit(ir.op_end());
+        aps = aps.emit(ir.op_load_local(iptmp));
+    }
     return aps;
 }
 
@@ -22760,8 +22824,9 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // box, and a SHALLOW __fern_rc_dec, which is all a scalar tuple needs (no
     // element walk, nothing inside to dangle). Without it "TUP:" freed only the
     // final value at scope exit and every rebind's box leaked (#6127).
-    return emit_arr_store(se, slot, reassign_inc,
-        target_is_arr || slot_is_reclaimable_struct(s, slot) || slot_is_reclaimable_tuple_rebind(s, slot));
+    return emit_arr_store_from(se, slot, reassign_inc,
+        target_is_arr || slot_is_reclaimable_struct(s, slot) || slot_is_reclaimable_tuple_rebind(s, slot),
+        s.is_arr_slot(slot) && rebind_call_same_dec(a.value, a.target, s));
     return s.fail();
 }
 
@@ -24577,16 +24642,18 @@ pub function (s: LowerState) release_tos(freefn: string, site: string): LowerSta
 // slot held when this frame owned it:
 //
 //     if (new != old) { if (flag) rc_dec(old); flag = 1; }
+//     else if (same_dec) { rc_dec(old); }
 //
 // A different pointer means the RHS handed the slot an owned reference — a
 // grown push buffer, a fresh call result, or a retained alias — and the old one
 // lost this binding: the caller's borrow while the flag is 0 (its owner still
-// releases it), a superseded buffer of ours once it is 1. The same pointer is
-// an in-place push or an identity return and changes nothing. The release is
-// the buffer-only __fern_rc_dec: a grown copy shares the old buffer's elements
-// without retains, so an element walk here would free what the new buffer
-// still holds.
-function emit_consumed_param_store(se: LowerState, slot: i32, alias_inc: boolean, flag: i32): LowerState {
+// releases it), a superseded buffer of ours once it is 1. The same pointer from
+// a self-append changes nothing; from a call it carries the callee's retain
+// (rebind_call_same_dec), which the release cancels whatever the flag says. The
+// release is the buffer-only __fern_rc_dec: a grown copy shares the old buffer's
+// elements without retains, so an element walk here would free what the new
+// buffer still holds.
+function emit_consumed_param_store(se: LowerState, slot: i32, alias_inc: boolean, flag: i32, same_dec: boolean): LowerState {
     var scratch: string = "$ocp" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
     var tmp: i32 = st.slot_of(scratch);
@@ -24602,6 +24669,10 @@ function emit_consumed_param_store(se: LowerState, slot: i32, alias_inc: boolean
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_const_i32(1));
     st = st.emit(ir.op_store_local(flag));
+    if (same_dec) {
+        st = st.emit(ir.op_else());
+        st = st.release(slot, "__fern_rc_dec", "consumed-param-same");
+    }
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));
     return st.emit(ir.op_store_local(slot));
@@ -24631,8 +24702,25 @@ function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean
 }
 
 pub function emit_arr_store(se: LowerState, slot: i32, alias_inc: boolean, do_dec: boolean): LowerState {
+    return emit_arr_store_from(se, slot, alias_inc, do_dec, false);
+}
+
+// emit_arr_store_from is emit_arr_store with the right-hand side's identity
+// accounting made explicit: `same_dec` says a result equal to the slot's old
+// value carries its own count (rebind_call_same_dec), so the old reference is
+// released either way instead of only when the pointer changed.
+pub function emit_arr_store_from(se: LowerState, slot: i32, alias_inc: boolean, do_dec: boolean, same_dec: boolean): LowerState {
     var ofl: i32 = se.ownflag_slot_of(slot);
-    if (ofl >= 0) { return emit_consumed_param_store(se, slot, alias_inc, ofl); }
+    if (ofl >= 0) { return emit_consumed_param_store(se, slot, alias_inc, ofl, same_dec); }
+    if (same_dec && do_dec && !alias_inc) {
+        var sscratch: string = "$rea" + util.i32_to_string(se.locals.len());
+        var sst: LowerState = se.add_local(sscratch);
+        var stmp: i32 = sst.slot_of(sscratch);
+        sst = sst.emit(ir.op_store_local(stmp));
+        sst = sst.release(slot, "__fern_rc_dec", "arr-store-old");
+        sst = sst.emit(ir.op_load_local(stmp));
+        return sst.emit(ir.op_store_local(slot));
+    }
     if (!alias_inc && !do_dec) {
         // No RC bookkeeping: a bare store (the common non-array case).
         return se.emit(ir.op_store_local(slot));
@@ -30388,8 +30476,7 @@ function borrowed_rebinds(stmts: ast.Stmt[], acc: string[], top: boolean): strin
 //   - a `var X = Y` bare-ident rebind that borrowed_rebind_closure credits.
 //
 // `own` params are excluded: the caller TRANSFERRED the buffer, so the in-place
-// store is the point of the annotation. `own_names` carries the declared ones
-// plus the ones move_arr_params_of inferred.
+// store is the point of the annotation.
 //
 // A `$cell$` param is excluded too, and is the one param that is neither owned
 // nor borrowed: it is a mutable capture's shared cell, handed to the lifted body
@@ -53046,7 +53133,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
     var aliased: string[] = aliased_array_names_of(fn.body);
-    var own_names: string[] = mv_own_params_for(fn, sg.move_arr_params);
+    var own_names: string[] = own_param_names_of(fn);
     var borrowed: string[] = borrowed_names_of(fn, own_names);
     // #6134: seed the SELF-ASSIGN record-update reuse set as "SAREUSE:<name>" —
     // the locals whose every `p = T { ...p, … }` reuses p's own box in place
@@ -58729,26 +58816,6 @@ function fnarr_param_all_closurearr(funcs: parser.FuncDecl[], fname: string, pid
     return nseen > 0 && nok == nseen && nident == nseen;
 }
 
-// mv_own_params_for returns `fn`'s DECLARED `own` params plus the array params
-// move_arr_params_of inferred for it ("fname|pname" entries). Both reach
-// LowerState.own_params, whose only consumer is lower_stmt_return's
-// return-transfer retain — an inferred name skips that retain and nothing else,
-// because every other ownership decision reads `fn.params[i].own` off the decl.
-// See the move-inference block comment (#6074).
-function mv_own_params_for(fn: parser.FuncDecl, move_arr_params: string[]): string[] {
-    var out: string[] = own_param_names_of(fn);
-    if (move_arr_params.len() == 0) { return out; }
-    var i: i32 = 0;
-    while (i < fn.params.len()) {
-        var key: string = fn.name + "|" + fn.params[i].name;
-        if (util.index_of_str(move_arr_params, key) >= 0 && util.index_of_str(out, fn.params[i].name) < 0) {
-            out = out.append(fn.params[i].name);
-        }
-        i = i + 1;
-    }
-    return out;
-}
-
 // own_param_names_of returns the names of `fn`'s `own` (consuming) parameters.
 function own_param_names_of(fn: parser.FuncDecl): string[] {
     var out: string[] = [];
@@ -60205,7 +60272,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
     var e: string[] = [];
     return FnSigs { ...sg, fresh_struct_ret_fns: e, consume_safe_params: e,
         return_fresh_struct_ret_fns: e, recv_borrow_fns: e, str_fresh_ret_fns: e,
-        opt_fresh_ret_fns: sig_reg_empty(), strfld_ok_types: e, tuple_fresh_ret_fns: e, move_arr_params: e,
+        opt_fresh_ret_fns: sig_reg_empty(), strfld_ok_types: e, tuple_fresh_ret_fns: e, own_positions: e,
         param_counted: e };
 }
 
@@ -60220,7 +60287,7 @@ pub function fn_sigs_empty(): FnSigs {
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: r,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
-        tuple_fresh_ret_fns: e, move_arr_params: e, param_counted: e, trmc_consume_fns: e, handback_params: e };
+        tuple_fresh_ret_fns: e, own_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e };
 }
 
 // ret_type_fns_of: "name|ret_type" rows for every non-generic function, in
@@ -60660,7 +60727,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         opt_fresh_ret_fns: sig_reg_of(opt_fresh_ret_fns_of(funcs, structs)),
         strfld_ok_types: sfok,
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
-        move_arr_params: move_arr_params_of(funcs),
+        own_positions: own_positions_of(funcs),
         param_counted: pcnt,
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
         handback_params: handback_params_of(funcs),
@@ -70224,266 +70291,18 @@ function grow_dying_passes_stmt(st: ast.Stmt, params: string[], acc: string[]): 
     return acc;
 }
 
-// --- inferred array-param MOVE (#6074) ---------------------------------------
-//
-// `return <bare array param>` emits a return-transfer retain (lower_stmt_return):
-// the callee is handing out an alias of a buffer the CALLER still owns, and
-// without the retain the two exit sweeps over-release it. An `own` param is
-// excluded — the caller MOVED its reference in, so there is no second owner to
-// count.
-//
-// That retain is what makes a threaded accumulator quadratic here. On a
-// self-reassign call site nothing balances it: the caller's overwrite dec is
-// cow-guarded (`if (old != new)`), an identity return leaves the pointer
-// unchanged, so the dec is skipped and the buffer's rc ratchets to 2 and STAYS
-// there. rc == 1 is exactly the uniqueness test __fern_arr_push's in-place fast
-// path gates on, so every later append copies the whole buffer — correct
-// output, O(n^2) bytes moved. Measured on 20k threaded appends: 2.3 GB here
-// against native's 223 KB, because native promotes the same param to
-// consumed-threading (computeConsumedParams admits ArrayType). #6074.
-//
-// The retain is only OWED when the caller might keep its reference. When every
-// call site moves the argument in, the callee can skip it exactly as it does
-// for `own` — which is what this infers. The admission rule is the one the
-// checker already applies to `own` arguments (ow_self_move_admits, native's
-// selfMoveArgs): the call is `x = f(.., x, ..)` with `x` a bare ident passed
-// EXACTLY once. Every other shape disqualifies the param — a bind
-// (`var c = g(b)`, where b and c are both swept and one count cannot cover two
-// sweeps), a nested call, an argument position, or a bare reference to the
-// function as a value (calls through it are invisible here).
-//
-// `funcs` is the modload-MERGED program (every module's decls, mangled
-// `<mod>__name`), so this sees every call site in the build rather than one
-// module's — the same basis grow_param_flags_of's caller-side grow bracket
-// relies on.
-//
-// Returns "fname|pname" entries. lower_func folds them into own_params, whose
-// only consumer is that retain, so nothing else in the lowering shifts.
-
-// mv_returns_bare reports whether `stmts` contains `return <name>;` — the one
-// emission site this inference changes.
-function mv_returns_bare(stmts: ast.Stmt[], name: string): boolean {
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtReturn(r) => {
-                match (r.value) {
-                    ast.ExprIdent(id) => { if (id.name == name) { return true; } },
-                    _ => {}
-                }
-            },
-            ast.StmtIf(f) => {
-                if (mv_returns_bare(f.then_body, name)) { return true; }
-                if (mv_returns_bare(f.else_body, name)) { return true; }
-            },
-            ast.StmtWhile(w) => { if (mv_returns_bare(w.body, name)) { return true; } },
-            ast.StmtFor(fr) => { if (mv_returns_bare(fr.body, name)) { return true; } },
-            ast.StmtMatch(m) => {
-                for arm in m.arms {
-                    if (mv_returns_bare(arm.body, name)) { return true; }
-                }
-            },
-            ast.StmtDefer(d) => {
-                var one: ast.Stmt[] = [d.action];
-                if (mv_returns_bare(one, name)) { return true; }
-            },
-            _ => {}
-        }
-    }
-    return false;
-}
-
-// mv_violate_expr disqualifies every candidate call it can reach: any call to a
-// candidate that is NOT the self-move statement shape handled in mv_scan_stmt,
-// and any bare reference to a candidate's NAME (a function value hides its call
-// sites from this scan entirely). Entries are "B:<fname>|<argidx>", plus
-// "B:<fname>|*" for the bare-reference case, which disqualifies every param.
-function mv_violate_expr(e: ast.Expr, fnames: string[], acc: string[]): string[] {
-    var a: string[] = acc;
-    match (e) {
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    if (util.index_of_str(fnames, cid.name) >= 0) {
-                        var vi: i32 = 0;
-                        while (vi < c.args.len()) {
-                            a = push_str_unique(a, "B:" + cid.name + "|" + util.i32_to_string(vi));
-                            vi = vi + 1;
-                        }
-                    }
-                },
-                _ => { a = mv_violate_expr(c.callee, fnames, a); }
-            }
-            for arg in c.args { a = mv_violate_expr(arg, fnames, a); }
-            return a;
-        },
-        ast.ExprIdent(id) => {
-            if (util.index_of_str(fnames, id.name) >= 0) { a = push_str_unique(a, "B:" + id.name + "|*"); }
-            return a;
-        },
-        ast.ExprBinary(b) => { a = mv_violate_expr(b.left, fnames, a); return mv_violate_expr(b.right, fnames, a); },
-        ast.ExprUnary(u) => { return mv_violate_expr(u.operand, fnames, a); },
-        ast.ExprArray(ar) => {
-            var i: i32 = 0;
-            while (i < ar.elements.len()) { a = mv_violate_expr(ar.elements[i], fnames, a); i = i + 1; }
-            return a;
-        },
-        ast.ExprTuple(t) => {
-            for el in t.elements { a = mv_violate_expr(el, fnames, a); }
-            return a;
-        },
-        ast.ExprIndex(x) => { a = mv_violate_expr(x.array, fnames, a); return mv_violate_expr(x.index, fnames, a); },
-        ast.ExprSlice(sl) => {
-            a = mv_violate_expr(sl.array, fnames, a);
-            a = mv_violate_expr(sl.start, fnames, a);
-            return mv_violate_expr(sl.end, fnames, a);
-        },
-        ast.ExprStructLit(sl2) => {
-            if (sl2.has_base) { a = mv_violate_expr(sl2.base, fnames, a); }
-            var i: i32 = 0;
-            while (i < sl2.field_values.len()) { a = mv_violate_expr(sl2.field_values[i], fnames, a); i = i + 1; }
-            return a;
-        },
-        ast.ExprFieldAccess(fa) => { return mv_violate_expr(fa.obj, fnames, a); },
-        ast.ExprLambda(lm) => {
-            var i: i32 = 0;
-            while (i < lm.body.len()) { a = mv_scan_stmt(lm.body[i], fnames, a); i = i + 1; }
-            return a;
-        },
-        _ => { return a; }
-    }
-    return a;
-}
-
-// mv_scan_stmt walks one statement, admitting the self-move shape
-// `x = f(.., x, ..)` ("S:<fname>|<argidx>" for the position holding x, and a
-// violation for every OTHER position of that call — those arguments are not
-// moves) and disqualifying every other reachable candidate call.
-function mv_scan_stmt(st: ast.Stmt, fnames: string[], acc: string[]): string[] {
-    var a: string[] = acc;
-    match (st) {
-        ast.StmtAssign(asg) => {
-            match (asg.value) {
-                ast.ExprCall(c) => {
-                    match (c.callee) {
-                        ast.ExprIdent(cid) => {
-                            if (util.index_of_str(fnames, cid.name) >= 0) {
-                                // The target ident must be passed EXACTLY once:
-                                // twice and one occurrence outlives the move.
-                                var occ: i32 = 0;
-                                for arg in c.args {
-                                    match (arg) {
-                                        ast.ExprIdent(aid) => { if (aid.name == asg.target) { occ = occ + 1; } },
-                                        _ => {}
-                                    }
-                                }
-                                var ai2: i32 = 0;
-                                while (ai2 < c.args.len()) {
-                                    var isself: boolean = false;
-                                    match (c.args[ai2]) {
-                                        ast.ExprIdent(aid2) => {
-                                            if (aid2.name == asg.target && occ == 1) { isself = true; }
-                                        },
-                                        _ => {}
-                                    }
-                                    var key: string = cid.name + "|" + util.i32_to_string(ai2);
-                                    if (isself) { a = push_str_unique(a, "S:" + key); }
-                                    else { a = push_str_unique(a, "B:" + key); }
-                                    ai2 = ai2 + 1;
-                                }
-                                for arg in c.args { a = mv_violate_expr(arg, fnames, a); }
-                                return a;
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-            return mv_violate_expr(asg.value, fnames, a);
-        },
-        ast.StmtVar(v) => { return mv_violate_expr(v.init, fnames, a); },
-        ast.StmtReturn(r) => { return mv_violate_expr(r.value, fnames, a); },
-        ast.StmtExpr(e) => { return mv_violate_expr(e.value, fnames, a); },
-        ast.StmtDefer(d) => { return mv_scan_stmt(d.action, fnames, a); },
-        ast.StmtIf(f) => {
-            a = mv_violate_expr(f.cond, fnames, a);
-            var ti: i32 = 0;
-            while (ti < f.then_body.len()) { a = mv_scan_stmt(f.then_body[ti], fnames, a); ti = ti + 1; }
-            var ei: i32 = 0;
-            while (ei < f.else_body.len()) { a = mv_scan_stmt(f.else_body[ei], fnames, a); ei = ei + 1; }
-            return a;
-        },
-        ast.StmtWhile(w) => {
-            a = mv_violate_expr(w.cond, fnames, a);
-            var wi: i32 = 0;
-            while (wi < w.body.len()) { a = mv_scan_stmt(w.body[wi], fnames, a); wi = wi + 1; }
-            return a;
-        },
-        ast.StmtFor(fr) => {
-            a = mv_violate_expr(fr.iter, fnames, a);
-            var fi: i32 = 0;
-            while (fi < fr.body.len()) { a = mv_scan_stmt(fr.body[fi], fnames, a); fi = fi + 1; }
-            return a;
-        },
-        ast.StmtMatch(m) => {
-            a = mv_violate_expr(m.scrutinee, fnames, a);
-            for arm in m.arms {
-                var bi: i32 = 0;
-                while (bi < arm.body.len()) { a = mv_scan_stmt(arm.body[bi], fnames, a); bi = bi + 1; }
-            }
-            return a;
-        },
-        _ => { return a; }
-    }
-    return a;
-}
-
-// move_arr_params_of is the pass: "fname|pname" for every free-function array
-// param whose every call site moves it in. See the block comment above.
-pub function move_arr_params_of(funcs: parser.FuncDecl[]): string[] {
-    // Candidate function names first, so the scan below can recognise a call
-    // to one (and a bare reference to one) in a single walk.
-    var fnames: string[] = [];
-    for fk in funcs {
-        if (fk.receiver_type.len() == 0) {
-            var reassigned: string[] = body_assign_targets(fk.body);
-            var pj: i32 = 0;
-            while (pj < fk.params.len()) {
-                var p: ast.ParamDecl = fk.params[pj];
-                if (!p.own && is_array_type_name(p.type_name)
-                    && util.index_of_str(reassigned, p.name) >= 0
-                    && mv_returns_bare(fk.body, p.name)) {
-                    fnames = push_str_unique(fnames, fk.name);
-                }
-                pj = pj + 1;
-            }
-        }
-    }
-    if (fnames.len() == 0) { return []; }
-    // One scan of the whole program's statements.
-    var marks: string[] = [];
-    for fn in funcs {
-        var bi2: i32 = 0;
-        while (bi2 < fn.body.len()) { marks = mv_scan_stmt(fn.body[bi2], fnames, marks); bi2 = bi2 + 1; }
-    }
+// own_positions_of lists "fname|idx" for every declared `own` parameter of a
+// free function. A caller rebinding a local from such a call (`x = f(x)`) must
+// not release on an identity return: it moved its reference in, and the callee
+// hands the same buffer back without the return-transfer retain.
+pub function own_positions_of(funcs: parser.FuncDecl[]): string[] {
     var out: string[] = [];
-    for f2 in funcs {
-        if (f2.receiver_type.len() == 0 && util.index_of_str(fnames, f2.name) >= 0) {
-            var reassigned2: string[] = body_assign_targets(f2.body);
-            var pj2: i32 = 0;
-            while (pj2 < f2.params.len()) {
-                var p2: ast.ParamDecl = f2.params[pj2];
-                var key2: string = f2.name + "|" + util.i32_to_string(pj2);
-                if (!p2.own && is_array_type_name(p2.type_name)
-                    && util.index_of_str(reassigned2, p2.name) >= 0
-                    && mv_returns_bare(f2.body, p2.name)
-                    && util.index_of_str(marks, "S:" + key2) >= 0
-                    && util.index_of_str(marks, "B:" + key2) < 0
-                    && util.index_of_str(marks, "B:" + f2.name + "|*") < 0) {
-                    out = out.append(f2.name + "|" + p2.name);
-                }
-                pj2 = pj2 + 1;
-            }
+    for fn in funcs {
+        if (fn.receiver_name.len() > 0) { continue; }
+        var i: i32 = 0;
+        while (i < fn.params.len()) {
+            if (fn.params[i].own) { out = out.append(fn.name + "|" + util.i32_to_string(i)); }
+            i = i + 1;
         }
     }
     return out;
