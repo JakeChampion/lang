@@ -356,17 +356,42 @@ What is left:
    compile path emits, prints the program's own output, and exits with the
    program's own code. All three panes now have a self-host counterpart, and
    the LSP is the only missing consumer left.
-2. **JS bindings.** Reachable, contrary to what the stdin/stdout shape suggests:
-   `@export("iface", "name")` emits canonical-ABI wrappers into a `-emit
-   core-module` build in both compilers, and a module whose exports take a
-   string or a `list<T>` also exports `cabi_realloc`, the canonical ABI's guest
-   allocator. A page calls `cabi_realloc(0, 0, align, n)`, writes `n` bytes at
-   the returned pointer and passes `(ptr, n)`; the allocator forwards to
-   `__fern_alloc`, which grows memory, so the argument size is bounded by the
+2. **Getting the driver into a page.** Two routes, and the stdin/stdout one is
+   now the shorter.
+
+   **As a command.** `-emit command-module` writes a WASI preview-1 command:
+   the core module plus a `_start` that runs main and exits with its value.
+   That is the shape `web/wasi-shim.js` already runs, so the driver goes into a
+   page as-is — source on stdin, artifact on stdout, mode in argv. Verified
+   end-to-end under wasmtime on a 13 MB `playground_run.wasm`: `-check` exits 0
+   silent on a good program and 1 with `1:24: error[E002]: …` on a bad one,
+   `-interp` prints the program's output and exits with the program's own code
+   (42, not the 0/1 a component reports), and the compile path writes WAT.
+
+   The exit code is why the form had to exist. The default `-target
+   wasm32-wasi` composes a wasi:cli/run component, whose `run: func() -> result`
+   carries ok or err and nothing wider, and `-emit core-module` has no `_start`
+   at all — `wasmtime run` on one calls nothing and exits 0, which reads exactly
+   like a program that ran and succeeded. Both were dead ends for a driver whose
+   whole verdict is its exit code.
+
+   What the page still needs is on the JS side: `web/wasi-shim.js` implements no
+   `fd_read` and reports `argc = 0`, so it can supply neither the source nor the
+   mode. The driver imports 11 preview-1 functions and the shim answers 9 of
+   them; the two gaps are that stdin and that argv.
+
+   **As exports.** `@export("iface", "name")` emits canonical-ABI wrappers into
+   a `-emit core-module` build in both compilers, and a module whose exports
+   take a string or a list also exports `cabi_realloc`, the canonical ABI's
+   guest allocator. A page calls `cabi_realloc(0, 0, align, n)`, writes `n`
+   bytes at the returned pointer and passes `(ptr, n)`; the allocator forwards
+   to `__fern_alloc`, which grows memory, so the argument size is bounded by the
    host's memory limit rather than by the module's initial page. A string result
    comes back as a pointer to a `[ptr, len]` pair the page reads directly. That
-   is about twenty lines of page-side JS. The ABI is the component model's, not
-   the shim contract `web/wasi-shim.js` speaks, so the two do not share code.
+   is about twenty lines of page-side JS, and a cleaner API than argv and pipes
+   — but it needs export entry points written into the driver first, where the
+   command route needs nothing from the driver at all. The two ABIs share no
+   code: this one is the component model's, the other the shim contract's.
 3. **The CLI's own stdlib.** `fern.fern`'s `load_bundle` resolves imports with
    its own worklist and only falls back to `modloader.resolve_module`, so the
    overlay does not give `fern -embed` an embedded stdlib. That is its own

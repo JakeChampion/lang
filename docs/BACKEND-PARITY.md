@@ -17,8 +17,14 @@ bare `arm64` meaning arm64-Linux.
 | arm64-freestanding, x86-64-freestanding | | freestanding | — | — | declared + type-checkable; no emitter yet (#6510) |
 
 Two axes are deliberately NOT in the name: `-backend ssa` selects an alternate
-emitter for the same target, and `-emit core-module` an alternate output form
-(#6536). Both used to be spelled as targets (`arm64-ssa`, `wasm-bin`), which is
+emitter for the same target, and `-emit` an alternate output form (#6536).
+`wasm32-wasi` has three: the default composes a wasi:cli/run component,
+`-emit core-module` writes the raw core module (no entry point — `wasmtime run`
+on one calls nothing), and `-emit command-module` writes a WASI preview-1
+command, the same core bytes plus a `_start` that runs main and exits with its
+value. The exit code is what separates the last two from the first: a
+`wasi:cli/run` component reports ok or err and nothing wider, so `return 42`
+reaches the host as 1. Both used to be spelled as targets (`arm64-ssa`, `wasm-bin`), which is
 what let `wasm-ssa` skip capability enforcement entirely.
 
 The **self-host driver spells targets the same way** since #6635 — it took the
