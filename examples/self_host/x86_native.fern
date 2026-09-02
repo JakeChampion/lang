@@ -412,35 +412,6 @@ function x86_mov_store_r64(buf: i32[], base: i32, disp: i32, src: i32): i32[] {
     return x86_emit_mem(buf, src, base, disp);
 }
 
-// x86_mov_store_imm32: `movq $imm32, disp(%base[,%index,scale])` — a 64-bit
-// immediate-to-memory store (REX.W C7 /0 + mem operand + sign-extended imm32).
-// asm.fern emits it for the array-box header init (`movq $1, 8(%rax)` — the
-// refcount) and similar constant stores. x86_gas_movq previously mis-routed a
-// `$imm` source into its immediate-to-REGISTER branch regardless of the
-// destination, so `movq $1, 8(%rax)` emitted `mov $1, %edi` (clobbering %rdi)
-// and dropped the store — corrupting every freshly-boxed array's count field,
-// which crashed the string-keyed-map compare (mapstr).
-function x86_mov_store_imm32(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, imm: i32): i32[] {
-    var ix: i32 = 0;
-    if (has_index) { ix = index; }
-    buf = buf.append(x86_rex(1, 0, ix, base));
-    buf = buf.append(199); // 0xC7 /0
-    buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
-    return x86_le32(buf, imm);
-}
-
-// x86_movl_store_imm32: `movl $imm32, disp(%base)` (C7 /0 m32 id, no
-// REX.W) — the 32-bit sibling of x86_mov_store_imm32. asm.fern emits it
-// to zero a freed box's 32-bit refcount field (`movl $0, -8(%rax)`).
-function x86_movl_store_imm32(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, imm: i32): i32[] {
-    var ix: i32 = 0;
-    if (has_index) { ix = index; }
-    buf = x86_rex_opt(buf, 0, ix, base);
-    buf = buf.append(199); // 0xC7 /0
-    buf = x86_byte_mem_operand(buf, 0, base, has_index, index, scale, disp);
-    return x86_le32(buf, imm);
-}
-
 // ---- SIB index addressing (slice 2j) ----
 //
 // `[base + index*scale + disp]` needs a SIB byte (ModR/M rm = 100). The
@@ -564,13 +535,6 @@ function x86_movb_imm_mem(buf: i32[], base: i32, has_index: boolean, index: i32,
 function x86_movb_reg_mem(buf: i32[], reg8: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
     buf = x86_byte_mem_rex(buf, 0, reg8, has_index, index, base);
     buf = buf.append(136); // 0x88
-    return x86_byte_mem_operand(buf, reg8, base, has_index, index, scale, disp);
-}
-
-// x86_movb_mem_reg: `movb mem, <reg8>` (0x8A /r) — byte load.
-function x86_movb_mem_reg(buf: i32[], reg8: i32, base: i32, has_index: boolean, index: i32, scale: i32, disp: i32): i32[] {
-    buf = x86_byte_mem_rex(buf, 0, reg8, has_index, index, base);
-    buf = buf.append(138); // 0x8A
     return x86_byte_mem_operand(buf, reg8, base, has_index, index, scale, disp);
 }
 
@@ -1072,15 +1036,6 @@ function x86_mov_r32_r32(buf: i32[], dst: i32, src: i32): i32[] {
     buf = x86_rex_opt(buf, src, 0, dst);
     buf = buf.append(137); // 0x89
     return buf.append(x86_modrm(3, src, dst));
-}
-
-// x86_movl_store: `movl <src>, mem` (0x89 /r) — 32-bit store.
-function x86_movl_store(buf: i32[], base: i32, has_index: boolean, index: i32, scale: i32, disp: i32, src: i32): i32[] {
-    var ix: i32 = 0;
-    if (has_index) { ix = index; }
-    buf = x86_rex_opt(buf, src, ix, base);
-    buf = buf.append(137); // 0x89
-    return x86_byte_mem_operand(buf, src, base, has_index, index, scale, disp);
 }
 
 // x86_movl_load: `movl mem, <dst>` (0x8B /r) — 32-bit load (zero-extends).
@@ -2053,47 +2008,6 @@ function x86_gas_strip_suffix(mnem: string): string {
     return slice_unchecked(mnem, 0, mnem.len() - 1) + "";
 }
 
-// x86_gas_movl dispatches movl: $imm->reg, reg->reg, mem->reg (load),
-// reg->mem (store), all 32-bit.
-function x86_gas_movl(own a: X86Asm, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == b'$') { // $imm -> reg or mem
-        if (x86_str_contains(dst, "(")) { // `movl $imm, disp(%base)` (C7 /0 m32 id)
-            var mi: GasMem = x86_gas_parse_mem(dst);
-            if (mi.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-            if (mi.is_rip) { return x86_store_imm_rip_label(a, 199, 0, mi.label, x86_gas_atoi(src), 4); }   // C7 /0, no REX.W
-            a = X86Asm { ...a, code: x86_movl_store_imm32(a.code, mi.base, mi.has_index, mi.index, mi.scale, mi.disp, x86_gas_atoi(src)) };
-            return a;
-        }
-        a = X86Asm { ...a, code: x86_mov_r32_imm32(a.code, x86_gas_reg32(dst), x86_gas_atoi(src)) };
-        return a;
-    }
-    var src_mem: boolean = x86_str_contains(src, "(");
-    var dst_mem: boolean = x86_str_contains(dst, "(");
-    if (!src_mem && !dst_mem) { // reg -> reg
-        a = X86Asm { ...a, code: x86_mov_r32_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) };
-        return a;
-    }
-    if (src_mem && !dst_mem) { // mem -> reg (load)
-        var m: GasMem = x86_gas_parse_mem(src);
-        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
-        if (m.is_rip) { // `movl sym(%rip), %reg32` — rip-relative + fixup
-            return x86_movl_load_rip_label(a, x86_gas_reg32(dst), m.label);
-        }
-        a = X86Asm { ...a, code: x86_movl_load(a.code, x86_gas_reg32(dst), m.base, m.has_index, m.index, m.scale, m.disp) };
-        return a;
-    }
-    if (!src_mem && dst_mem) { // reg -> mem (store)
-        var m2: GasMem = x86_gas_parse_mem(dst);
-        if (m2.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-        if (m2.is_rip) { // `movl %reg32, sym(%rip)`
-            return x86_movl_store_rip_label(a, x86_gas_reg32(src), m2.label);
-        }
-        a = X86Asm { ...a, code: x86_movl_store(a.code, m2.base, m2.has_index, m2.index, m2.scale, m2.disp, x86_gas_reg32(src)) };
-        return a;
-    }
-    return a;
-}
-
 // x86_gas_is_xmm reports whether a token names an xmm register.
 function x86_gas_is_xmm(tok: string): boolean {
     return x86_str_contains(tok, "xmm");
@@ -2549,60 +2463,7 @@ function x86_gas_movq(own a: X86Asm, src: string, dst: string): X86Asm {
         a = X86Asm { ...a, code: x86_movq_xmm_to_gpr(a.code, x86_gas_xmm(src), gd) };
         return a;
     }
-    if (src.len() > 0 && src[0] == b'$') { // $imm -> reg or mem
-        if (x86_str_contains(dst, "(")) { // $imm -> mem (e.g. `movq $1, 8(%rax)`)
-            var mi: GasMem = x86_gas_parse_mem(dst);
-            if (mi.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-            if (mi.is_rip) { return x86_store_imm_rip_label(a, 199, 1, mi.label, x86_gas_atoi(src), 4); }   // REX.W C7 /0
-            a = X86Asm { ...a, code: x86_mov_store_imm32(a.code, mi.base, mi.has_index, mi.index, mi.scale, mi.disp, x86_gas_atoi(src)) };
-            return a;
-        }
-        // Must SIGN-extend (REX.W C7 /0 id), not the zero-extending 32-bit
-        // B8+r id — `movq $-1, %rax` is -1, not 4294967295. An immediate too
-        // wide for a signed 32-bit field takes the 10-byte movabsq.
-        var iv: i64 = x86_gas_atoi64(src);
-        if (iv >= (0 - 2147483648) as i64 && iv <= (2147483647) as i64) {
-            a = X86Asm { ...a, code: x86_mov_r64_imm32(a.code, x86_gas_reg(dst), iv as i32) };
-        } else {
-            a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), iv) };
-        }
-        return a;
-    }
-    var src_mem: boolean = x86_str_contains(src, "(");
-    var dst_mem: boolean = x86_str_contains(dst, "(");
-    if (!src_mem && !dst_mem) { // reg -> reg
-        a = X86Asm { ...a, code: x86_mov_r64_r64(a.code, x86_gas_reg(dst), x86_gas_reg(src)) };
-        return a;
-    }
-    if (src_mem && !dst_mem) { // mem -> reg (load)
-        var m: GasMem = x86_gas_parse_mem(src);
-        if (m.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }
-        if (m.is_rip) {
-            return x86_mov_load_rip_label(a, x86_gas_reg(dst), m.label);
-        }
-        if (m.has_index) {
-            a = X86Asm { ...a, code: x86_mov_load_r64_idx(a.code, x86_gas_reg(dst), m.base, m.index, m.scale, m.disp) };
-        } else {
-            a = X86Asm { ...a, code: x86_mov_load_r64(a.code, x86_gas_reg(dst), m.base, m.disp) };
-        }
-        return a;
-    }
-    if (!src_mem && dst_mem) { // reg -> mem (store)
-        var m2: GasMem = x86_gas_parse_mem(dst);
-        if (m2.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + dst) }; }
-        if (m2.is_rip) {
-            return x86_mov_store_rip_label(a, x86_gas_reg(src), m2.label);
-        }
-        if (m2.has_index) {
-            a = X86Asm { ...a, code: x86_mov_store_r64_idx(a.code, m2.base, m2.index, m2.scale, m2.disp, x86_gas_reg(src)) };
-        } else {
-            a = X86Asm { ...a, code: x86_mov_store_r64(a.code, m2.base, m2.disp, x86_gas_reg(src)) };
-        }
-        return a;
-    }
-    // mem -> mem has no x86 encoding, so reaching here means the operand
-    // shapes were misparsed; record rather than drop (SH-005).
-    return X86Asm { ...a, unknown: a.unknown.append("movq " + src + ", " + dst) };
+    return x86_gas_mov_rm(a, "movq", 64, src, dst);
 }
 
 // x86_gas_top_comma returns the index of the first comma at paren depth 0
@@ -2629,9 +2490,6 @@ function x86_gas_top_comma(s: string): i32 {
     return 0 - 1;
 }
 
-// x86_gas_movb dispatches movb (AT&T src, dst): $imm->mem, $imm->reg8
-// (B0+rb ib), reg8<->mem, and reg8->reg8 (88 /r). The two register-target
-// shapes previously fell into the memory paths, where the unparsed operand
 // x86_gas_extend_op maps an AT&T extend spelling to its opcode and
 // DESTINATION SIZE, packed as op*256 + size/8; -1 = not one of them.
 //
@@ -2683,41 +2541,6 @@ function x86_gas_movext(own a: X86Asm, op: i32, size: i32, src: string, dst: str
     return a;
 }
 
-// masked to base %rdi — `movb $1, %cl` silently became a store through rdi.
-function x86_gas_movb(own a: X86Asm, src: string, dst: string): X86Asm {
-    if (src.len() > 0 && src[0] == b'$') { // $imm -> mem or reg8
-        if (x86_str_contains(dst, "(")) {
-            var m: GasMem = x86_gas_parse_mem(dst);
-            if (!x86_gas_mem_ok(m)) { return x86_gas_bad(a, "movb " + dst); }
-            if (m.is_rip) { return x86_store_imm_rip_label(a, 198, 0, m.label, x86_gas_atoi(src), 1); }   // C6 /0
-            a = X86Asm { ...a, code: x86_movb_imm_mem(a.code, m.base, m.has_index, m.index, m.scale, m.disp, x86_gas_atoi(src)) };
-            return a;
-        }
-        var ri: i32 = x86_gas_reg8(dst);
-        if (ri < 0) { return x86_gas_bad(a, "movb " + src + ", " + dst); }
-        a = X86Asm { ...a, code: x86_rex_r(a.code, 8, ri) };
-        a = X86Asm { ...a, code: a.code.append(176 + (ri & 7)) }; // B0+rb
-        return X86Asm { ...a, code: a.code.append(x86_gas_atoi(src) & 255) };
-    }
-    if (x86_str_contains(src, "(")) { // mem -> reg8 (load)
-        var ms: GasMem = x86_gas_parse_mem(src);
-        var rl: i32 = x86_gas_reg8(dst);
-        if (!x86_gas_mem_ok(ms) || ms.is_rip || rl < 0) { return x86_gas_bad(a, "movb " + src + ", " + dst); }
-        a = X86Asm { ...a, code: x86_movb_mem_reg(a.code, rl, ms.base, ms.has_index, ms.index, ms.scale, ms.disp) };
-        return a;
-    }
-    if (x86_str_contains(dst, "(")) { // reg8 -> mem (store)
-        var md: GasMem = x86_gas_parse_mem(dst);
-        var rs: i32 = x86_gas_reg8(src);
-        if (!x86_gas_mem_ok(md) || md.is_rip || rs < 0) { return x86_gas_bad(a, "movb " + src + ", " + dst); }
-        a = X86Asm { ...a, code: x86_movb_reg_mem(a.code, rs, md.base, md.has_index, md.index, md.scale, md.disp) };
-        return a;
-    }
-    var r1: i32 = x86_gas_reg8(src);
-    var r2: i32 = x86_gas_reg8(dst);
-    if (r1 < 0 || r2 < 0) { return x86_gas_bad(a, "movb " + src + ", " + dst); }
-    return X86Asm { ...a, code: x86_op_rr(a.code, 8, 136, r1, r2) }; // 88 /r
-}
 
 
 // ---- suffix-family machinery ----
@@ -2794,6 +2617,84 @@ function x86_gas_mem_op(own a: X86Asm, size: i32, op0f: boolean, op: i32, reg: i
     if (op0f) { a = X86Asm { ...a, code: a.code.append(15) }; }
     a = X86Asm { ...a, code: a.code.append(op) };
     return x86_gas_membytes(a, reg, m, tail);
+}
+
+// x86_gas_mov_rm encodes the width-generic mov shapes at 8/16/32/64 bits:
+// 88/89 (reg -> r/m), 8A/8B (r/m -> reg), C6/C7 /0 (imm -> r/m) and B0/B8+r
+// (imm -> reg). The per-width entry points strip what is NOT generic off the
+// front first — movq's xmm forms and its imm32-or-movabs choice — and the
+// rip-relative label emitters differ per width, so they are dispatched here
+// by size rather than folded in.
+function x86_gas_mov_rm(own a: X86Asm, mnem: string, size: i32, src: string, dst: string): X86Asm {
+    if (src.len() > 0 && src[0] == b'$') {
+        var imm: i32 = x86_gas_atoi(src);
+        var tail: i32 = 4;
+        if (size == 8) { tail = 1; }
+        if (size == 16) { tail = 2; }
+        if (x86_str_contains(dst, "(")) {
+            var mi: GasMem = x86_gas_parse_mem(dst);
+            if (!x86_gas_mem_ok(mi)) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+            if (mi.is_rip) {
+                // x86_store_imm_rip_label writes no operand-size prefix.
+                if (size == 16) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+                return x86_store_imm_rip_label(a, x86_opsel(198, size), x86_rex_w_of(size), mi.label, imm, tail);
+            }
+            a = x86_gas_mem_op(a, size, false, x86_opsel(198, size), 0, mi, false, tail);
+            if (size == 8) { return X86Asm { ...a, code: a.code.append(imm & 255) }; }
+            return X86Asm { ...a, code: x86_imm_wide(a.code, size, imm) };
+        }
+        var rd: i32 = x86_gas_reg_w(dst, size);
+        if (rd < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        if (size == 64) {
+            // 64 bits must SIGN-extend (REX.W C7 /0 id), not take the
+            // zero-extending B8+r id — `movq $-1, %rax` is -1, not
+            // 4294967295. An immediate too wide for a signed 32-bit field
+            // takes the 10-byte movabsq.
+            var iv: i64 = x86_gas_atoi64(src);
+            if (iv >= (0 - 2147483648) as i64 && iv <= (2147483647) as i64) {
+                return X86Asm { ...a, code: x86_mov_r64_imm32(a.code, rd, iv as i32) };
+            }
+            return X86Asm { ...a, code: x86_movabsq(a.code, rd, iv) };
+        }
+        a = X86Asm { ...a, code: x86_osz(a.code, size) };
+        a = X86Asm { ...a, code: x86_rex_r(a.code, size, rd) };
+        if (size == 8) {
+            a = X86Asm { ...a, code: a.code.append(176 + (rd & 7)) }; // B0+rb ib
+            return X86Asm { ...a, code: a.code.append(imm & 255) };
+        }
+        a = X86Asm { ...a, code: a.code.append(184 + (rd & 7)) }; // B8+rd
+        return X86Asm { ...a, code: x86_imm_wide(a.code, size, imm) };
+    }
+    var src_mem: boolean = x86_str_contains(src, "(");
+    var dst_mem: boolean = x86_str_contains(dst, "(");
+    if (src_mem && !dst_mem) { // load: 8A/8B, ModRM.reg = destination
+        var ml: GasMem = x86_gas_parse_mem(src);
+        var rl: i32 = x86_gas_reg_w(dst, size);
+        if (!x86_gas_mem_ok(ml) || rl < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        if (ml.is_rip) {
+            if (size == 64) { return x86_mov_load_rip_label(a, rl, ml.label); }
+            if (size == 32) { return x86_movl_load_rip_label(a, rl, ml.label); }
+            return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+        }
+        return x86_gas_mem_op(a, size, false, x86_opsel(138, size), rl, ml, x86_rex8_force(size, rl), 0);
+    }
+    if (dst_mem && !src_mem) { // store: 88/89, ModRM.reg = source
+        var ms: GasMem = x86_gas_parse_mem(dst);
+        var rs: i32 = x86_gas_reg_w(src, size);
+        if (!x86_gas_mem_ok(ms) || rs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        if (ms.is_rip) {
+            if (size == 64) { return x86_mov_store_rip_label(a, rs, ms.label); }
+            if (size == 32) { return x86_movl_store_rip_label(a, rs, ms.label); }
+            return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+        }
+        return x86_gas_mem_op(a, size, false, x86_opsel(136, size), rs, ms, x86_rex8_force(size, rs), 0);
+    }
+    var r1: i32 = x86_gas_reg_w(src, size);
+    var r2: i32 = x86_gas_reg_w(dst, size);
+    // mem -> mem has no x86 encoding, so a src_mem here is a misparse:
+    // record rather than drop (SH-005).
+    if (r1 < 0 || r2 < 0 || src_mem) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+    return X86Asm { ...a, code: x86_op_rr(a.code, size, 136, r1, r2) };
 }
 
 // x86_gas_split_ops splits an operand list on top-level commas (commas
@@ -3950,7 +3851,8 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         }
         return a;
     }
-    if (mnem == "movb") { return x86_gas_movb(a, src, dst); }
+    if (mnem == "movb") { return x86_gas_mov_rm(a, "movb", 8, src, dst); }
+    if (mnem == "movw") { return x86_gas_mov_rm(a, "movw", 16, src, dst); }
     // The zero- and sign-extending loads. AT&T spells BOTH widths in the
     // mnemonic — movzbl is byte->32, movswq word->64 — where Intel writes one
     // movzx/movsx and reads the widths off the operands. So every spelling
@@ -4015,7 +3917,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         a = X86Asm { ...a, code: x86_cvtsi2sd(a.code, cw, cxd, crs) };
         return a;
     }
-    if (mnem == "movl") { return x86_gas_movl(a, src, dst); }
+    if (mnem == "movl") { return x86_gas_mov_rm(a, "movl", 32, src, dst); }
     // Two-operand suffix families: the ALU rows, test, shifts/rotates, the
     // bit-test group, the RMW atomics, xchg, and crc32.
     if (sfx > 0) {
