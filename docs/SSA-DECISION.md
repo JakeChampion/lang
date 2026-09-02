@@ -1,7 +1,8 @@
 # SSA: ship-or-shelve decision
 
 **Status:** SHELVED for production backends (decided 2026-05-31).
-**Re-evaluation date:** 2026-09-01 (or earlier if a trigger below fires).
+**Re-evaluation date:** 2026-09-01 — REACHED, decision still open. Fresh
+numbers are recorded below; the call has not been made.
 **Owner:** compiler / IR.
 
 ## The question
@@ -14,10 +15,9 @@ the repo (~469 tests). **But it is not on any production path.** The
 shipping backends — `internal/codegen/{arm64,x86_64,wasmbin}` — all consume
 the flat, structured-control-flow `ir.Program` and run only the
 peephole-grade passes in `internal/ir/` (`fold`, `dce`, `copyprop`,
-`constprop`, `inline`, `strength`, `tco`, `defunctionalise`). The only
-consumer of the SSA layer is the experimental `-target wasm32-wasi -backend ssa` emitter
-(`internal/codegen/wasmssa/`), which covers i32/i64/f32/f64 + memory + a
-reducible-CFG subset.
+`constprop`, `inline`, `strength`, `tco`, `defunctionalise`). Every consumer
+of the SSA layer is behind `-backend ssa`: `wasmssa`, `arm64ssa`, and — since
+2026-09-01 — `x86_64ssa`. None is the default for any target.
 
 So we are carrying a substantial, well-tested optimization framework whose
 benefit to shipped artifacts is currently zero. This doc forces the call:
@@ -82,6 +82,48 @@ compared, 0 refused, 0 divergences, and the known-divergences file is empty.
 The four wrong answers and 56 SIGSEGVs recorded below were fixed.
 
 Tripwires 1-3 remain unfired and unmeasured.
+
+## Re-evaluation input (2026-09-02) — the date passed; the call is OPEN
+
+The 2026-09-01 date arrived and nothing was recorded against it. This section
+is the "fresh numbers" half of the procedure below, so the date does not rot a
+second time. **It does not make the decision**, which is the owner's: neither
+"re-shelve and set the next date" nor "schedule the cutover" is chosen here.
+
+Tripwire state is unchanged from 2026-08-29: **4 fired, 1-3 unfired and
+unmeasured.** `docs/SSA-CUTOVER-PLAN.md` was written, as a fired tripwire
+requires.
+
+What moved since, all on the x86-64 backend the plan named as the long pole:
+
+- **It is reachable from the CLI** (#8012). The plan's stated blocker — no
+  module-level assembly emitter — was stale; `x86_64ssa.EmitAsmModule` had
+  been there all along and nothing selected it.
+- **`EnumSentinel` landed** (#8044), which was the emit-stage long pole, along
+  with a wrong-answer bug it exposed in the rc helpers: five of them returned
+  the rc header where the IR contract says they return their pointer.
+- **Coverage has two numbers and they are far apart.** Emitting assembly:
+  58 → 256 of 317 corpus programs. Producing a runnable binary: **8 → 9.**
+- **The helper gap is 84 symbols** (#8047), with a step-function unlock curve —
+  nothing moves until the eleventh, 19 reach 152 programs, then it flattens.
+  `x86_64ssa` has 13 helper emitters against `arm64ssa`'s ~120.
+
+Two things that bear on the choice and are easy to lose:
+
+- **Fewer instructions is not faster.** `docs/SSA-REGALLOC-PLAN.md` records
+  size and correctness as settled on arm64 and **speed as the open blocker**:
+  seven of seventeen benchmarks run 1.11x-1.49x slower under SSA, geomean
+  ~0.92x. And on x86-64 the allocated path is already LARGER on call-heavy
+  loops, for want of call-clobber awareness
+  (`TestX86_64SSACallHeavyLoopIsLargerToday`).
+- **The alternative route is further along than this document suggests.** SSA
+  as an ANALYSIS representation rather than a codegen path is substantially
+  built: `Op.SrcOp` provenance with a totality gate
+  (`internal/e2e/ssa_lift_provenance_test.go`), and
+  `internal/ssa/{ownership,ownership_solve,ownership_returns,units,certify}.go`
+  are 2,100+ lines of interprocedural ownership over the lifted form. That
+  route feeds roadmap goal 2 (Perceus in the self-host) directly, where the
+  codegen cutover does not.
 
 ## What happens on the re-evaluation date
 
