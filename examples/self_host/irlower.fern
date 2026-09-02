@@ -10294,10 +10294,23 @@ function lower_variant_ctor_args(args: ast.Expr[], decl_idx: i32, selfrebind: st
         // literal isn't a local, so the sweep never frees it (it leaks — the
         // safe-leak invariant for nested payloads). The inc pops + re-pushes the
         // same pointer, leaving struct_make's arg order intact.
+        // A FIELD READ (`Leaf(v.tail)`) aliases a buffer the holder's box owns,
+        // and a rebind of the holder releases that buffer through
+        // __field_reclaim_<T>'s array arm — std/pvec's level-grow lost its first
+        // leaf that way — so the variant takes a count of its own. Only for a
+        // scalar-element field: that is the payload kind
+        // emit_enum_variant_payload_drops releases with one dec, so the count
+        // has a release; a struct-array field has none there and the count
+        // would strand the buffer.
         if (is_array_type_name(fty)) {
             match (args[i]) {
                 ast.ExprIdent(paid) => {
                     if (st.is_arr_slot(st.slot_of(paid.name))) {
+                        st = st.retain_tos("variant-arr-payload");
+                    }
+                },
+                ast.ExprFieldAccess(_) => {
+                    if (scalar_arr_field_type(args[i], st).len() > 0) {
                         st = st.retain_tos("variant-arr-payload");
                     }
                 },
@@ -18366,7 +18379,10 @@ function lower_stmt_grow_exempt(st: ast.Stmt, s: LowerState): LowerState {
 function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
     if (!s.ok) { return s; }
     match (st) {
-        ast.StmtVar(v) =>{ return lower_stmt_var(v, s); },
+        ast.StmtVar(v) =>{
+            var sv: LowerState = lower_stmt_var(v, s);
+            return seed_snapshot_local(v, sv);
+        },
         ast.StmtAssign(a) =>{ return lower_stmt_assign(a, s); },
         ast.StmtReturn(r) => {
             // A bare `return;` in a VOID function — parse_expr yields an
@@ -18674,6 +18690,7 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
             }
             var se: LowerState = lower_expr(r.value, s);
             if (!se.ok) { return se; }
+            se = tail_release_snapshot_locals(r.value, se);
             // Perceus move-on-return: any array local the returned value MOVES out
             // (a bare array local, an `.append` receiver, or an array under a
             // returned enum / struct-enum-field — see returned_moved_arr_slots) is
@@ -22831,8 +22848,23 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // before the box. A scalar-only reclaimable struct keeps the plain box
     // free via emit_arr_store's do_dec.
     var asty: string = s.struct_type_of_slot(slot);
-    if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && !slot_nodeep(s, slot) && s.struct_routes_field_reclaim(asty)) {
-        return emit_field_reclaim_store(se, slot, asty, 0 - 1);
+    // A snapshot LOCAL: a struct local whose binding recorded the box it was
+    // derived from (seed_snapshot_local). Its rebind releases the superseded
+    // box's replaced fields under the snapshot guard a snapshot PARAM gets, so a
+    // field still carried from that source box is never freed from under it —
+    // a fresh-ret local bound from a borrowed param is exactly that shape, and
+    // the alias `var sc: T = s` threaded through consume-rebinds has no other
+    // credit. "NOFLD:" keeps the release box-only where a value derived from the
+    // local was bound elsewhere and may outlive the rebind.
+    var snls: i32 = 0 - 1;
+    if (!target_is_arr && slot >= s.n_params && asty.len() > 0) { snls = s.slot_of(snapshot_slot_name(slot)); }
+    var nofld: boolean = reclaim_has(s.reclaimable_names, "NOFLD:", s.reclaim_site_key(slot));
+    if (snls >= 0 && !slot_is_reclaimable_struct(s, slot)) {
+        if (!nofld && s.struct_routes_field_reclaim(asty)) { return emit_field_reclaim_store(se, slot, asty, snls); }
+        return emit_snapshot_store(se, slot, snls);
+    }
+    if (!target_is_arr && slot_is_reclaimable_struct(s, slot) && !nofld && s.struct_routes_field_reclaim(asty)) {
+        return emit_field_reclaim_store(se, slot, asty, snls);
     }
     // A reclaimable rc-TUPLE local REBIND (`p = (i, "hi")` / `p = (i, [i, i+1])`,
     // #6127): deep-drop the superseded chain — the fresh rc children then the box —
@@ -25415,9 +25447,10 @@ function nddo_reach(structs: parser.StructDecl[], sty: string, visiting: string[
 // old box (the __fern_snapshot_dec tail). A per-type helper, never inline: a
 // builder has hundreds of rebinds and inlining ~16 ops × the field count at each
 // would OOM the native driver's emit of the large modules (#3452). `snap_slot`
-// >= 0 is the SNAPSHOT-param case (free a box != the caller's original); < 0 is
-// the LOCAL consume-rebind case (no snapshot — the helper is passed snap=0, so
-// only the != new guard applies, and the box free is cow-guarded as before).
+// >= 0 names the snapshot slot — a snapshot PARAM's entry copy, or the box a
+// snapshot LOCAL was derived from (seed_snapshot_local) — and a field or box
+// equal to it is left alone; < 0 is a local with no source (the helper is passed
+// snap=0, so only the != new guard applies).
 //
 // rc-GATED on the OLD BOX. The helper's per-field guards compare against `new`
 // and `snap`; neither says whether a SECOND OWNER holds the old box, and freeing
@@ -25425,10 +25458,9 @@ function nddo_reach(structs: parser.StructDecl[], sty: string, visiting: string[
 // element appended into a container and then rebound (`ps = ps.append(p);
 // p = P { … }`) had the container reading buffers this store had freed. So the
 // whole reclaim runs only for the sole owner; a shared old box takes the
-// box-only path, which for a LOCAL rebind is this slot giving up its counted
-// reference (__fern_rc_dec) so the surviving owner reaches rc 1 and does the
-// deep work. A snapshot PARAM has no counted reference to give up — the caller
-// owns the box — so it takes neither.
+// box-only path: this slot gives up its counted reference (__fern_rc_dec) so
+// the surviving owner reaches rc 1 and does the deep work — unless the old box
+// IS the snapshot, held uncounted, which gets neither.
 function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_slot: i32): LowerState {
     var scratch: string = "$frs" + util.i32_to_string(se.locals.len());
     var st: LowerState = se.add_local(scratch);
@@ -25446,20 +25478,25 @@ function emit_field_reclaim_store(se: LowerState, slot: i32, sty: string, snap_s
     }
     st = st.emit(ir.op_call_direct("__field_reclaim_" + sty, 3));   // frees replaced fields + box; returns new
     st = st.emit(ir.op_drop());
-    if (snap_slot < 0) {
-        st = st.emit(ir.op_else());
-        // Shared, and this slot is about to stop pointing at it: hand back the
-        // count. Cow-guarded, because a self-store (`p = f(p)` returning the same
-        // box) must keep it. Shallow — the fields belong to whoever finds rc 1.
+    st = st.emit(ir.op_else());
+    // Shared, and this slot is about to stop pointing at it: hand back the
+    // count. Cow-guarded, because a self-store (`p = f(p)` returning the same
+    // box) must keep it, and never the snapshot — the caller's box is held
+    // uncounted. Shallow — the fields belong to whoever finds rc 1.
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_load_local(tmp));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    if (snap_slot >= 0) {
         st = st.emit(ir.op_load_local(slot));
-        st = st.emit(ir.op_load_local(tmp));
+        st = st.emit(ir.op_load_local(snap_slot));
         st = st.emit(ir.op_bin("ne", 0, false));
-        st = st.emit(ir.op_if(0));
-        st = st.emit(ir.op_load_local(slot));
-        st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-        st = st.emit(ir.op_drop());
-        st = st.emit(ir.op_end());
+        st = st.emit(ir.op_bin("and", 0, false));
     }
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(slot));
+    st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
+    st = st.emit(ir.op_drop());
+    st = st.emit(ir.op_end());
     st = st.emit(ir.op_end());
     st = st.emit(ir.op_load_local(tmp));                         // new
     return st.emit(ir.op_store_local(slot));
@@ -27730,12 +27767,29 @@ function stmt_unsafe_for_allow_ret(st: ast.Stmt, name: string, borrowable: strin
 // argument lets `name` escape. (Method calls are already safe via the receiver-
 // borrow rule, so only free-call rebinds need this.)
 function is_consume_rebind_call(e: ast.Expr, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
+    return consume_rebind_kind(e, name, borrowable, consume_safe, recv_borrow) > 0;
+}
+// consume_rebind_kind: 0 when `e` is not a consume-rebind call for name; 2 when
+// it is and every `name` argument sits at a BORROWABLE position, so the callee
+// can neither return nor keep the box; 1 when some position is consume-safe
+// only, so the result may carry it.
+function consume_rebind_kind(e: ast.Expr, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): i32 {
     match (e) {
         ast.ExprCall(c) => {
             var callee_name: string = "";
+            var method: string = "";
+            var all_borrow: boolean = true;
             match (c.callee) {
-                ast.ExprIdent(cid) => { if (cid.name == name) { return false; } callee_name = cid.name; },
-                _ => { return false; }
+                ast.ExprIdent(cid) => { if (cid.name == name) { return 0; } callee_name = cid.name; },
+                // `x.m(.., name, ..)`: the receiver's type is not known here, so a
+                // position is consume-safe only when every method of that name
+                // agrees (method_param_borrowable_all over the consume-safe
+                // registry). The receiver itself is a borrow, as in the strict walk.
+                ast.ExprFieldAccess(fa) => {
+                    if (ident_name_or_empty(fa.obj).len() == 0) { return 0; }
+                    method = fa.field;
+                },
+                _ => { return 0; }
             }
             var saw_name: boolean = false;
             var ai: i32 = 0;
@@ -27747,33 +27801,136 @@ function is_consume_rebind_call(e: ast.Expr, name: string, borrowable: string[],
                 }
                 if (arg_is_name) {
                     saw_name = true;
-                    if (!(param_is_borrowable(consume_safe, callee_name, ai) || param_is_borrowable(borrowable, callee_name, ai))) { return false; }
+                    if (method.len() > 0) {
+                        if (!method_param_borrowable_all(consume_safe, method, ai)) { return 0; }
+                        all_borrow = false;
+                    } else if (!(param_is_borrowable(consume_safe, callee_name, ai) || param_is_borrowable(borrowable, callee_name, ai))) { return 0; }
+                    else if (!(param_is_borrowable(borrowable, callee_name, ai) || param_is_borrowable(borrowable, "CNT:" + callee_name, ai))) { all_borrow = false; }
                 } else {
-                    if (expr_unsafe_for(c.args[ai], name, borrowable, recv_borrow)) { return false; }
+                    if (expr_unsafe_for(c.args[ai], name, borrowable, recv_borrow)) { return 0; }
                 }
                 ai = ai + 1;
             }
-            return saw_name;
+            if (!saw_name) { return 0; }
+            if (all_borrow) { return 2; }
+            return 1;
         },
-        _ => { return false; }
+        _ => { return 0; }
     }
-    return false;
+    return 0;
 }
 
 // body_consume_unsafe_for: body_unsafe_for_allow_ret PLUS the consume-rebind
 // relaxation — a `name = g(.., name, ..)` whose callee is consume-safe at name's
-// position(s) is NOT an escape.
-function body_consume_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
-    for stmt in stmts { if (stmt_consume_unsafe_for(stmt, name, borrowable, consume_safe, recv_borrow)) { return true; } }
+// position(s) is NOT an escape — and two more:
+//
+//   - `var q: T = name`, and `var q: R = g(.., name, ..)` with name at a
+//     consume-safe position, bind a second name over name's box or over one the
+//     callee derived from it. Not an escape when q's own uses all pass this
+//     scan, PROVIDED name's own rebinds release nothing (`own_rebinds` false):
+//     that is the question the consume-safe registry asks, where the box is the
+//     caller's and only the caller releases it. Asked for a snapshot param or
+//     local (`own_rebinds` true), whose rebinds do release, the alias stays an
+//     escape — a later rebind could free the generation q still names — except
+//     as the handback pair `var q: R = g(.., name, ..); name = q.f;`.
+//   - `return g(.., name, ..)` with name at a consume-safe position, and
+//     `return T { f: name, … }`: the box goes back to the caller inside the
+//     result, the move-out a bare `return name` already is.
+function body_consume_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[], own_rebinds: boolean): boolean {
+    return body_consume_unsafe_seen(stmts, name, borrowable, consume_safe, recv_borrow, own_rebinds, [name]);
+}
+// body_consume_unsafe_seen carries the names whose uses this scan has already
+// walked. A derived local is walked once per scan, not once per path the alias
+// graph reaches it by: with every parameter presumed safe on the registry's
+// first pass, each `var x: T = f(.., name, ..)` is a candidate, and the paths
+// through a function with dozens of them are exponential — the self-host's own
+// build went from 80 s to never finishing. A name already walked was either
+// found safe or is an ancestor still being walked, and a real escape aborts the
+// whole scan at the statement that has it whichever walk meets it first.
+function body_consume_unsafe_seen(stmts: ast.Stmt[], name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[], own_rebinds: boolean, seen: string[]): boolean {
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var stmt: ast.Stmt = stmts[i];
+        var q: string = consume_alias_bound_by(stmt, name, borrowable, consume_safe, recv_borrow);
+        if (q.len() > 0) {
+            if (q == name) { return true; }
+            if (util.index_of_str(seen, q) < 0
+                && body_consume_unsafe_seen(stmts, q, borrowable, consume_safe, recv_borrow, false, seen.append(q))) { return true; }
+            // The handback: `var st: R = g(.., name, ..); name = st.f;` — the callee
+            // returned name's box, or one derived from it, inside a fresh result the
+            // very next statement unpacks back into name. No rebind of name lies
+            // between the two, so nothing st shares with name's box is released
+            // before name holds it again; from then on the two are one lineage.
+            var handback: boolean = i + 1 < stmts.len() && ident_name_or_empty(v_init_field_obj(stmts[i + 1], name)) == q;
+            if (!own_rebinds || handback) { i = i + 1; continue; }
+            return true;
+        }
+        if (stmt_consume_unsafe_for(stmt, name, borrowable, consume_safe, recv_borrow, own_rebinds, seen)) { return true; }
+        i = i + 1;
+    }
     return false;
 }
-function stmt_consume_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): boolean {
+
+// v_init_field_obj: the object of a field read `name = obj.f` at `st`, else an
+// empty-named ident.
+function v_init_field_obj(st: ast.Stmt, name: string): ast.Expr {
+    match (st) {
+        ast.StmtAssign(a) => {
+            if (a.target == name) {
+                match (a.value) {
+                    ast.ExprFieldAccess(fa) => { return fa.obj; },
+                    _ => {}
+                }
+            }
+        },
+        _ => {}
+    }
+    return ast.ExprIdent { name: "", line: 0, col: 0, ty: "" };
+}
+
+// consume_alias_bound_by: the local a `var q: T = name` / `var q: R = g(.., name, ..)`
+// binds over name's box, else "". The call form counts only where g may hand
+// the box back — name at a consume-safe position that is NOT borrowable
+// (consume_rebind_kind 1); at a borrowable one the callee can neither return
+// nor keep it, so q holds nothing of name's and the binding is the plain borrow
+// the strict walk already admits.
+function consume_alias_bound_by(st: ast.Stmt, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[]): string {
+    match (st) {
+        ast.StmtVar(v) => {
+            if (v.type_name.len() == 0) { return ""; }
+            if (ident_name_or_empty(v.init) == name) { return v.name; }
+            if (consume_rebind_kind(v.init, name, borrowable, consume_safe, recv_borrow) == 1) { return v.name; }
+            return "";
+        },
+        // `q = g(.., name, ..)` into ANOTHER local is the same binding one
+        // statement later than its declaration.
+        ast.StmtAssign(a) => {
+            if (a.target == name) { return ""; }
+            if (consume_rebind_kind(a.value, name, borrowable, consume_safe, recv_borrow) == 1) { return a.target; }
+            return "";
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
+function stmt_consume_unsafe_for(st: ast.Stmt, name: string, borrowable: string[], consume_safe: string[], recv_borrow: string[], own_rebinds: boolean, seen: string[]): boolean {
     match (st) {
         ast.StmtVar(v) => { return expr_unsafe_for(v.init, name, borrowable, recv_borrow); },
         ast.StmtReturn(r) => {
             match (r.value) {
                 ast.ExprIdent(_) => { return false; },   // `return name`: move-out, safe
-                _ => { return expr_unsafe_for(r.value, name, borrowable, recv_borrow); }
+                ast.ExprStructLit(rsl) => {
+                    if (rsl.has_base && ident_name_or_empty(rsl.base).len() == 0 && expr_unsafe_for(rsl.base, name, borrowable, recv_borrow)) { return true; }
+                    for fv in rsl.field_values {
+                        if (ident_name_or_empty(fv) != name && expr_unsafe_for(fv, name, borrowable, recv_borrow)) { return true; }
+                    }
+                    return false;
+                },
+                _ => {
+                    if (is_consume_rebind_call(r.value, name, borrowable, consume_safe, recv_borrow)) { return false; }
+                    return expr_unsafe_for(r.value, name, borrowable, recv_borrow);
+                }
             }
         },
         ast.StmtExpr(e) => { return expr_unsafe_for(e.value, name, borrowable, recv_borrow); },
@@ -27783,11 +27940,11 @@ function stmt_consume_unsafe_for(st: ast.Stmt, name: string, borrowable: string[
         },
         ast.StmtIf(f) => {
             if (expr_unsafe_for(f.cond, name, borrowable, recv_borrow)) { return true; }
-            return body_consume_unsafe_for(f.then_body, name, borrowable, consume_safe, recv_borrow) || body_consume_unsafe_for(f.else_body, name, borrowable, consume_safe, recv_borrow);
+            return body_consume_unsafe_seen(f.then_body, name, borrowable, consume_safe, recv_borrow, own_rebinds, seen) || body_consume_unsafe_seen(f.else_body, name, borrowable, consume_safe, recv_borrow, own_rebinds, seen);
         },
         ast.StmtWhile(w) => {
             if (expr_unsafe_for(w.cond, name, borrowable, recv_borrow)) { return true; }
-            return body_consume_unsafe_for(w.body, name, borrowable, consume_safe, recv_borrow);
+            return body_consume_unsafe_seen(w.body, name, borrowable, consume_safe, recv_borrow, own_rebinds, seen);
         },
         ast.StmtFor(fo) => {
             var iter_unsafe: boolean = true;
@@ -27796,13 +27953,13 @@ function stmt_consume_unsafe_for(st: ast.Stmt, name: string, borrowable: string[
                 _ => { iter_unsafe = expr_unsafe_for(fo.iter, name, borrowable, recv_borrow); }
             }
             if (iter_unsafe) { return true; }
-            return body_consume_unsafe_for(fo.body, name, borrowable, consume_safe, recv_borrow);
+            return body_consume_unsafe_seen(fo.body, name, borrowable, consume_safe, recv_borrow, own_rebinds, seen);
         },
         ast.StmtMatch(m) => {
             if (expr_unsafe_for(m.scrutinee, name, borrowable, recv_borrow)) { return true; }
             for arm in m.arms {
                 if (arm.has_guard && expr_unsafe_for(arm.guard, name, borrowable, recv_borrow)) { return true; }
-                if (body_consume_unsafe_for(arm.body, name, borrowable, consume_safe, recv_borrow)) { return true; }
+                if (body_consume_unsafe_seen(arm.body, name, borrowable, consume_safe, recv_borrow, own_rebinds, seen)) { return true; }
             }
             return false;
         },
@@ -37540,14 +37697,14 @@ function snapshot_param_slots_of(fn: parser.FuncDecl, borrowable: string[], cons
     var base: i32 = 0;
     if (fn.receiver_name.len() > 0) {
         base = 1;
-        if (util.index_of_str(reassigned, fn.receiver_name) >= 0 && !body_consume_unsafe_for(fn.body, fn.receiver_name, borrowable, consume_safe, [])) {
+        if (util.index_of_str(reassigned, fn.receiver_name) >= 0 && !body_consume_unsafe_for(fn.body, fn.receiver_name, borrowable, consume_safe, [], true)) {
             out = out.append(util.i32_to_string(0));
         }
     }
     var pi: i32 = 0;
     while (pi < fn.params.len()) {
         var pn: string = fn.params[pi].name;
-        if (util.index_of_str(reassigned, pn) >= 0 && !body_consume_unsafe_for(fn.body, pn, borrowable, consume_safe, [])) {
+        if (util.index_of_str(reassigned, pn) >= 0 && !body_consume_unsafe_for(fn.body, pn, borrowable, consume_safe, [], true)) {
             out = out.append(util.i32_to_string(base + pi));
         }
         pi = pi + 1;
@@ -37557,17 +37714,19 @@ function snapshot_param_slots_of(fn: parser.FuncDecl, borrowable: string[], cons
 
 // --- fresh-struct-return classification + snapshot-LOCAL reclaim (#3457) ------
 //
-// The dominant self-host builder is a fresh-bound LOCAL that is MOVED OUT:
+// The dominant self-host builder is a LOCAL that is threaded and MOVED OUT:
 //   var st: LowerState = se.emit(op);   // bound from a fresh-RET method
 //   st = st.emit(op2);                  // threaded via own methods (safe)
 //   return st;                          // moved out
 // `reclaimable_names_of` excludes it (`return st` is an escape under
 // body_unsafe_for), so its intermediate rebind clones leak. The snapshot-LOCAL
-// path reclaims each REBIND (via the shipped emit_field_reclaim_store, snap = 0)
-// and KEEPS the final via struct move-on-return — sound only because the binding
-// is a FRESH-struct-returning call (st owns a fresh box, never an alias of the
-// borrowed receiver/param: a `return self` method would make the rebind reclaim
-// free the caller's box, a UAF). fresh_struct_ret_fns is exactly that guard.
+// path reclaims each REBIND via emit_field_reclaim_store and KEEPS the final via
+// struct move-on-return. The rebind release is guarded by a snapshot of the box
+// the binding DERIVED from (`se` here): a fresh box copies the borrowed
+// receiver's fields uncounted, so without it the first rebind released a field
+// buffer the caller still owned. The same snapshot admits the alias `var sc = s`
+// and the call-derived `var sl = lower_expr(x, s)`, whose box may BE the
+// source's; those two earn no struct credit and reclaim by their rebinds only.
 
 // is_fresh_struct_ret_value reports whether a return value is a freshly
 // CONSTRUCTED struct — a literal or struct-update of a leaf-safe struct. A bare
@@ -38969,11 +39128,14 @@ function is_fresh_ret_binding(e: ast.Expr, recv_type: string, fresh_ret: string[
     }
     return false;
 }
-// snapshot_local_names_of: fresh-ret-bound struct LOCALS (with rc-array fields)
-// that are threaded (reassigned) and only-safe-uses-plus-return — the local
-// analogue of snapshot_param_slots_of. No entry snapshot (a pure local has no
-// caller original); each rebind reclaims via emit_field_reclaim_store (snap = 0)
-// and the moved-out final is kept by struct move-on-return.
+// snapshot_local_names_of: the struct LOCALS that are threaded (reassigned) and
+// only-safe-uses-plus-return — the local analogue of snapshot_param_slots_of.
+// Three bindings qualify (collect_snap_locals): a fresh-ret call, which earns
+// the struct credit; the alias `var q: T = p`; and a call derived from a
+// same-typed variable. Each row is the binding-site key, and a "SNAPSRC:<site>|
+// <name>" row names the variable whose box seed_snapshot_local copies as the
+// rebind release's snapshot; the moved-out final is kept by struct
+// move-on-return.
 function snapshot_local_names_of(fn: parser.FuncDecl, structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], consume_safe: string[], ret_fresh: string[]): string[] {
     var reassigned: string[] = body_assign_targets(fn.body);
     return collect_snap_locals(fn.body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, []);
@@ -39006,13 +39168,40 @@ function collect_snap_locals(stmts: ast.Stmt[], fn: parser.FuncDecl, structs: pa
                         _ => {}
                     }
                 }
+                // The variable the binding is DERIVED from (snapshot_source_of_init):
+                // the alias `var q: T = p` names p; a fresh-ret init names its
+                // receiver or the one same-typed argument whose fields the result
+                // carries. seed_snapshot_local copies that box right after the
+                // binding, and every rebind's field release is guarded against it,
+                // so a field the superseded box still shares with the source is
+                // left alone. Without the guard `var st = se.add_local(1);
+                // st = st.emit(2)` released se.ops, the CALLER's buffer, at the
+                // first rebind. "!" — a computed receiver, two candidate sources —
+                // refuses the credit outright.
+                //
+                // The alias earns no struct credit of its own: its final box may
+                // still be p's, which no sweep may touch. Its rebinds alone reclaim.
+                var src: string = snapshot_source_of_init(v, fn);
+                var alias_init: boolean = src.len() > 0 && src == ident_name_or_empty(v.init);
+                // The call-derived local, `var q: T = g(.., p, ..)` / `var q: T =
+                // p.m(…)` from a producer that is NOT fresh-ret (it may hand p's
+                // own box back): the snapshot of p's box guards exactly that case,
+                // and a derived box is q's alone, so it joins the alias in
+                // reclaiming by its rebinds only. p's position has to be
+                // consume-safe, so the callee kept no second reference.
+                var call_alias: boolean = !snap_init_ok && !alias_init && src.len() > 0 && src != "!"
+                    && init_derives_from(v.init, src, borrowable, consume_safe);
+                var rebinds_only: boolean = alias_init || call_alias;
                 if (v.type_name.len() > 0
                     && util.index_of_str(reassigned, v.name) >= 0
-                    && snap_init_ok
+                    && (snap_init_ok || rebinds_only)
+                    && src != "!"
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)
-                    && struct_has_reclaim_array_field(structs, v.type_name)
-                    && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe, [])) {
-                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                    && (rebinds_only || struct_has_reclaim_array_field(structs, v.type_name))
+                    && !body_consume_unsafe_for(fn.body, v.name, borrowable, consume_safe, [], true)) {
+                    var key: string = reclaim_site_key_of(v.name, v.line, v.col);
+                    if (!rebinds_only) { a = push_str_unique(a, key); }
+                    if (src.len() > 0) { a = push_str_unique(a, "SNAPSRC:" + key + "|" + src); }
                 }
             },
             ast.StmtIf(f) => { a = collect_snap_locals(f.then_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); a = collect_snap_locals(f.else_body, fn, structs, borrowable, fresh_ret, consume_safe, reassigned, ret_fresh, a); },
@@ -53427,17 +53616,16 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var snaps: string[] = snapshot_param_slots_of(fn, sg.borrowable_params, sg.consume_safe_params);
     var snj: i32 = 0;
     while (snj < snaps.len()) { reclaim = reclaim.append("SNAP:" + snaps[snj]); snj = snj + 1; }
-    // Snapshot-LOCAL reclaim (#3457): fresh-ret-bound struct LOCALS threaded +
-    // moved out (`var st = se.emit(op); st = st.emit(..); return st`). Added as
-    // BINDING-SITE keys so slot_is_reclaimable_struct fires — this is the SECOND
-    // producer of that credit, in a different function from the first, and a key
-    // migration has to enumerate producers rather than callers (#7292's lesson:
-    // a writer need not be a caller of the thing being changed). Each rebind
-    // reclaims via
-    // the StmtAssign emit_field_reclaim_store path (snap = 0) and the moved-out
-    // final is kept by the struct move-on-return in StmtReturn. Sound because the
-    // binding is a FRESH-struct-returning call (st owns a fresh box, not an alias
-    // of the borrowed receiver — sg.fresh_struct_ret_fns is the guard).
+    // Snapshot-LOCAL reclaim (#3457): struct LOCALS threaded and moved out
+    // (`var st = se.emit(op); st = st.emit(..); return st`, and the alias and
+    // call-derived forms `var sc = s` / `var sl = lower_expr(x, s)`). A fresh-ret
+    // binding is added as a BINDING-SITE key so slot_is_reclaimable_struct fires —
+    // this is the SECOND producer of that credit, in a different function from the
+    // first, and a key migration has to enumerate producers rather than callers
+    // (#7292's lesson: a writer need not be a caller of the thing being changed).
+    // Each rebind reclaims via the StmtAssign emit_field_reclaim_store path under
+    // the snapshot of the box the binding derived from; the moved-out final is
+    // kept by the struct move-on-return in StmtReturn.
     reclaim = reclaim_snapshot_locals(fn, sg, structs, reclaim);
     // Array/map locals that acquire a lasting local alias — the in-place
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
@@ -60215,6 +60403,33 @@ function arrenum_elem_borrow_flags(fn: parser.FuncDecl, boxflags: string): strin
     return elb;
 }
 
+// method_param_borrowable_all: every "<Type>.<method>" entry in the registry
+// has position `idx` borrowable, and there is at least one. The receiver's type
+// is not known to the AST-side walks, so a method argument is a borrow only when
+// the method name settles it whatever the receiver turns out to be.
+function method_param_borrowable_all(reg: string[], method: string, idx: i32): boolean {
+    var found: boolean = false;
+    var bi: i32 = 0;
+    while (bi < reg.len()) {
+        var e: string = reg[bi];
+        var n: i32 = e.len();
+        var p: i32 = 0;
+        while (p < n) {
+            var bar: i32 = p;
+            while (bar < n && e[bar] != b'|') { bar = bar + 1; }
+            var end: i32 = bar;
+            while (end < n && e[end] != b'\n') { end = end + 1; }
+            if (bar < n && bar - p > method.len() && e[bar - method.len() - 1] == b'.' && bytes_at(e, bar - method.len(), method)) {
+                found = true;
+                if (bar + 1 + idx >= end || e[bar + 1 + idx] != b'1') { return false; }
+            }
+            p = end + 1;
+        }
+        bi = bi + 1;
+    }
+    return found;
+}
+
 // borrowable_key is the registry key for a function's borrowability entry: the
 // bare name for a free function, "<Type>.<method>" for a receiver method.
 function borrowable_key(fn: parser.FuncDecl): string {
@@ -60480,44 +60695,56 @@ function regs_equal(a: string[], b: string[]): boolean {
 
 // consume_safe_params_interproc: the consume-safe (escape) registry — a param is
 // consume-safe iff its box does not escape the callee (`body_consume_unsafe_for`),
-// the relaxation that admits `s = g(.., s, ..)` consume-rebinds. A least-fixpoint
-// from below (like borrowable_params_interproc): each pass re-runs the escape walk
-// against the previous registry, so a param forwarding into an already-consume-safe
-// callee becomes consume-safe, growing monotonically to convergence. Seeded with
-// `borrowable` (every borrowable param is consume-safe) and using it for the
-// borrow side of the per-arg check. Encoded "callee|flags" like borrowable.
-// Computed ONCE per module on the emit path, threaded into lower_func.
+// the relaxation that admits `s = g(.., s, ..)` consume-rebinds. Encoded
+// "callee|flags" like borrowable. Computed ONCE per module on the emit path,
+// threaded into lower_func.
+//
+// A GREATEST fixpoint: every parameter starts consume-safe, and each pass strikes
+// out the ones whose body escapes them under the previous pass's registry, until
+// a pass strikes nothing. The lowering threads its state through a mutually
+// recursive call graph — `sc = lower_expr(x, sc)` inside the very functions
+// lower_expr dispatches to — and a least fixpoint from below never admits such a
+// cycle, since each member is safe only once the others already are; measured,
+// it left every `var sc: LowerState = s` in the compiler with no reclaim. From
+// above the cycle stands unless some member really lets the box escape. That is
+// what makes it sound: an escape is a concrete statement, the first pass strikes
+// the parameter it escapes, and each following pass strikes the forwarders one
+// call further out, so a parameter still marked at convergence has no chain to
+// any escape. Convergence is exact (regs_equal), never a size test — a pass can
+// flip one flag inside an existing entry.
 pub function consume_safe_params_interproc(funcs: parser.FuncDecl[], borrowable: string[]): string[] {
-    // Seeded to an EMPTY bucket array rather than `[]` so the first convergence
-    // test compares a real registry against the zero-length sentinel and runs at
-    // least one pass. A `[]` seed answers every probe false exactly as an
-    // all-empty bucket array does, so the analysis is unchanged.
     var reg: string[] = borrow_reg_new();
-    var cap: i32 = 8;
+    for fn in funcs {
+        if (fn.params.len() > 0) {
+            var seed: string = "";
+            var sj: i32 = 0;
+            while (sj < fn.params.len()) { seed = seed + "1"; sj = sj + 1; }
+            reg = borrow_reg_put(reg, borrowable_key(fn), seed);
+        }
+    }
     var iter: i32 = 0;
     var prev: string[] = [];
-    // EXACT convergence, not `reg.len() != prevsize`. The size test was already
-    // imprecise — a pass can flip a flag inside an existing entry ("10" -> "11")
-    // without changing the entry count, and the loop would stop believing it had
-    // converged — and under bucketing it is outright wrong, because the length is
-    // a constant 251 and it would report convergence after a single pass.
-    // Under-converging from below is conservative (fewer consume-safe params, so
-    // reclaims are missed rather than unsound), which is why the old test was a
-    // precision bug and not a leak.
-    while (iter < cap && !regs_equal(reg, prev)) {
+    // The cap is a guard against a non-terminating scan, not a budget: striking
+    // out is monotone, so the passes are bounded by the number of parameters,
+    // and a run that hits the cap hands back an empty registry — nothing
+    // consume-safe — rather than a partly-struck one that still marks an escape.
+    while (!regs_equal(reg, prev)) {
+        if (iter >= 200) { return borrow_reg_new(); }
         prev = reg;
         var next: string[] = borrow_reg_new();
         for fn in funcs {
             if (fn.params.len() > 0) {
+                var key: string = borrowable_key(fn);
                 var flags: string = "";
                 var any: boolean = false;
                 var pj: i32 = 0;
                 while (pj < fn.params.len()) {
-                    if (!body_consume_unsafe_for(fn.body, fn.params[pj].name, borrowable, reg, [])) { flags = flags + "1"; any = true; }
+                    if (param_is_borrowable(reg, key, pj)
+                        && !body_consume_unsafe_for(fn.body, fn.params[pj].name, borrowable, reg, [], false)) { flags = flags + "1"; any = true; }
                     else { flags = flags + "0"; }
                     pj = pj + 1;
                 }
-                if (any) { next = borrow_reg_put(next, borrowable_key(fn), flags); }
+                if (any) { next = borrow_reg_put(next, key, flags); }
             }
         }
         reg = next;
@@ -71284,11 +71511,21 @@ function reclaim_snapshot_locals(fn: parser.FuncDecl, sg: FnSigs, structs: parse
 var snap_locals: string[] = snapshot_local_names_of(fn, structs, sg.borrowable_params, sg.fresh_struct_ret_fns, sg.consume_safe_params, sg.return_fresh_struct_ret_fns);
 var sli: i32 = 0;
 while (sli < snap_locals.len()) {
-    // Key-to-key against the credits reclaimable_names_of already published,
-    // and the comparison gets SHARPER for it: two same-named bindings no
-    // longer collapse into one another.
-    if (util.index_of_str(reclaim, snap_locals[sli]) < 0) {
-        reclaim = reclaim.append(snap_locals[sli]);
+    var row: string = snap_locals[sli];
+    var key: string = row;
+    // "SNAPSRC:<site>|<name>" rides along for seed_snapshot_local; the site it
+    // names still takes the rebind-release marker below.
+    var is_src: boolean = row.len() > 8 && slice_unchecked(row, 0, 8) == "SNAPSRC:";
+    if (is_src) {
+        var bar: i32 = 8;
+        while (bar < row.len() && row[bar] != b'|') { bar = bar + 1; }
+        key = slice_unchecked(row, 8, bar) + "";
+        if (util.index_of_str(reclaim, row) < 0) { reclaim = reclaim.append(row); }
+    } else if (util.index_of_str(reclaim, key) < 0) {
+        // Key-to-key against the credits reclaimable_names_of already published,
+        // and the comparison gets SHARPER for it: two same-named bindings no
+        // longer collapse into one another.
+        reclaim = reclaim.append(key);
         // Same "NODEEP:" marking reclaimable_names_of applies to its own
         // bare credits (#3425 residual): a snapshot-LOCAL used as a method
         // receiver / bare call arg with the result bound ELSEWHERE (e.g.
@@ -71298,8 +71535,17 @@ while (sli < snap_locals.len()) {
         // chain (`var st = se.emit(op); st = st.emit(..); return st`) stays
         // unmarked — self-rebinds are exempt and a bare `return st` is a
         // read — so its rebind field-reclaim and deep sweep both survive.
-        if (moves_fields_stmts(fn.body, reclaim_site_name(snap_locals[sli]), [])) { reclaim = reclaim.append("NODEEP:" + snap_locals[sli]); }
+        // A bare ARGUMENT derives too: the callee may hand back a box sharing
+        // the local's fields (a spread copy retains none of its arrays), and
+        // moves_fields_expr flags only a receiver. `return emit_arr_store(apf, …)`
+        // left `apf` deep-swept under the very box it had just been copied into.
+        if (moves_fields_stmts(fn.body, reclaim_site_name(key), []) || derived_anywhere(fn, reclaim_site_name(key), structs)) { reclaim = reclaim.append("NODEEP:" + key); }
     }
+    // "NOFLD:" keeps the REBIND release box-only where a value derived from the
+    // local may outlive a later rebind and still share the fields that rebind
+    // releases (derived_outlives_rebind). NODEEP, which decides the exit sweep,
+    // stays the coarser mark: at exit every derived value is live at once.
+    if (derived_outlives_rebind(fn, reclaim_site_name(key), structs)) { reclaim = push_str_unique(reclaim, "NOFLD:" + key); }
     sli = sli + 1;
 }
 
@@ -71422,6 +71668,253 @@ while (sni < snaps.len()) {
 // the param's spelling, which is a second key that can drift from the first.
 function snapshot_slot_name(i: i32): string {
     return "$snap$" + util.i32_to_string(i);
+}
+
+// seed_snapshot_local: a struct local whose binding recorded the variable its
+// value derives from ("SNAPSRC:<site>|<name>", snapshot_local_names_of) gets a
+// hidden copy of that variable's box, `$snap$<slot>`, right after the binding.
+// lower_stmt_assign hands it to the rebind release as the snapshot a snapshot
+// PARAM gets at entry: a field the rebound box still carries from the source
+// compares equal to it and is left alone.
+function seed_snapshot_local(v: ast.StmtVar, sv: LowerState): LowerState {
+    if (!sv.ok) { return sv; }
+    var src: string = snapshot_source_of(sv.reclaimable_names, reclaim_site_key_of(v.name, v.line, v.col));
+    if (src.len() == 0) { return sv; }
+    var slot: i32 = sv.slot_of(v.name);
+    var srcslot: i32 = sv.slot_of(src);
+    if (slot < 0 || srcslot < 0 || sv.struct_type_of_slot(slot).len() == 0) { return sv; }
+    var st: LowerState = sv.add_local(snapshot_slot_name(slot));
+    st = st.emit(ir.op_load_local(srcslot));
+    return st.emit(ir.op_store_local(st.slot_of(snapshot_slot_name(slot))));
+}
+
+// tail_release_snapshot_locals: `return q.m(…)` / `return g(.., q, ..)` where q
+// is a snapshot local with no struct credit (the alias `var q: T = p`): the
+// result is the last value derived from q's box, and that box is dead once the
+// result exists. Release it the way a rebind would, with the result standing in
+// for the new value — a field it carries on compares equal and is kept, the
+// replaced ones and the box go — then put the result back on the stack. A
+// credited local is left to its exit sweep.
+function tail_release_snapshot_locals(v: ast.Expr, s: LowerState): LowerState {
+    var st: LowerState = s;
+    for an in call_operand_idents(v) { st = tail_release_one(an, st); }
+    return st;
+}
+
+// call_operand_idents: a call's operands by name — element 0 the receiver of a
+// method call `x.m(…)` ("!" when computed, "" for a free call), then each
+// argument in position order, "" where it is not a bare ident. Empty for
+// anything that is not a call.
+function call_operand_idents(e: ast.Expr): string[] {
+    var out: string[] = [];
+    match (e) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprFieldAccess(fa) => {
+                    var rn: string = ident_name_or_empty(fa.obj);
+                    if (rn.len() == 0) { rn = "!"; }
+                    out = out.append(rn);
+                },
+                _ => { out = out.append(""); }
+            }
+            for arg in c.args { out = out.append(ident_name_or_empty(arg)); }
+        },
+        _ => {}
+    }
+    return out;
+}
+function call_recv_ident(e: ast.Expr): string {
+    var ops: string[] = call_operand_idents(e);
+    if (ops.len() == 0) { return ""; }
+    return ops[0];
+}
+function tail_release_one(name: string, s: LowerState): LowerState {
+    if (name.len() == 0) { return s; }
+    var slot: i32 = s.slot_of(name);
+    if (slot < s.n_params || s.is_arr_slot(slot) || slot_is_reclaimable_struct(s, slot)) { return s; }
+    var sty: string = s.struct_type_of_slot(slot);
+    if (sty.len() == 0) { return s; }
+    var snls: i32 = s.slot_of(snapshot_slot_name(slot));
+    if (snls < 0) { return s; }
+    var st: LowerState = s;
+    if (!reclaim_has(s.reclaimable_names, "NOFLD:", s.reclaim_site_key(slot)) && s.struct_routes_field_reclaim(sty)) {
+        st = emit_field_reclaim_store(st, slot, sty, snls);
+    } else {
+        st = emit_snapshot_store(st, slot, snls);
+    }
+    return st.emit(ir.op_load_local(slot));
+}
+
+// snapshot_source_of: the variable a "SNAPSRC:<site>|<name>" row names for `site`,
+// else "".
+function snapshot_source_of(names: string[], site: string): string {
+    var pfx: string = "SNAPSRC:" + site + "|";
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var e: string = names[i];
+        if (e.len() > pfx.len() && bytes_at(e, 0, pfx)) { return slice_unchecked(e, pfx.len(), e.len()) + ""; }
+        i = i + 1;
+    }
+    return "";
+}
+
+// init_derives_from: `e` is a call that may hand back `src`'s box or one built
+// from it — `src.m(…)` (the receiver is a borrow the method may spread), or
+// `g(.., src, ..)` with src at a consume-safe position.
+function init_derives_from(e: ast.Expr, src: string, borrowable: string[], consume_safe: string[]): boolean {
+    if (call_recv_ident(e) == src) { return true; }
+    return is_consume_rebind_call(e, src, borrowable, consume_safe, []);
+}
+
+// derived_outlives_rebind: some value derived from `name` — bound under another
+// name whose type can carry name's fields — may still be live when a later
+// rebind of name releases the fields the two share. A derivation is any
+// mention of name in the bound value: as a receiver, as an argument at any
+// position (a borrowable callee may still spread-copy it into its result), or
+// as a spread base. Program order decides: a derivation followed by a rebind,
+// or a derivation inside a loop that also rebinds. A binding of scalar or
+// string type carries no field; the handback pair `var q: R = g(.., name, ..);
+// name = q.f;` makes q's box name's own; a return-position use is never
+// followed by a rebind.
+struct DorScan { seen: boolean, hazard: boolean }
+function derived_outlives_rebind(fn: parser.FuncDecl, name: string, structs: parser.StructDecl[]): boolean {
+    return dor_scan(fn.body, name, fn, structs, false, false).hazard;
+}
+function dor_scan(stmts: ast.Stmt[], name: string, fn: parser.FuncDecl, structs: parser.StructDecl[], seen0: boolean, rebinding_loop: boolean): DorScan {
+    var seen: boolean = seen0;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        var st: ast.Stmt = stmts[i];
+        match (st) {
+            ast.StmtAssign(a) => {
+                if (a.target == name) {
+                    if (seen) { return DorScan { seen: true, hazard: true }; }
+                } else if (expr_mentions_name(a.value, name) && dor_type_can_hold(decl_type_in_fn(fn, a.target), structs)) {
+                    if (rebinding_loop) { return DorScan { seen: true, hazard: true }; }
+                    seen = true;
+                }
+            },
+            ast.StmtVar(v) => {
+                if (expr_mentions_name(v.init, name) && dor_type_can_hold(v.type_name, structs)) {
+                    if (i + 1 < stmts.len() && ident_name_or_empty(v_init_field_obj(stmts[i + 1], name)) == v.name) {
+                        if (seen) { return DorScan { seen: true, hazard: true }; }
+                        i = i + 1;
+                    } else {
+                        if (rebinding_loop) { return DorScan { seen: true, hazard: true }; }
+                        seen = true;
+                    }
+                }
+            },
+            ast.StmtIf(f) => {
+                var r1: DorScan = dor_scan(f.then_body, name, fn, structs, seen, rebinding_loop);
+                if (r1.hazard) { return r1; }
+                var r2: DorScan = dor_scan(f.else_body, name, fn, structs, seen, rebinding_loop);
+                if (r2.hazard) { return r2; }
+                seen = r1.seen || r2.seen;
+            },
+            ast.StmtWhile(w) => {
+                var rw: DorScan = dor_scan(w.body, name, fn, structs, seen, rebinding_loop || util.index_of_str(body_assign_targets(w.body), name) >= 0);
+                if (rw.hazard) { return rw; }
+                seen = rw.seen;
+            },
+            ast.StmtFor(fo) => {
+                var rf: DorScan = dor_scan(fo.body, name, fn, structs, seen, rebinding_loop || util.index_of_str(body_assign_targets(fo.body), name) >= 0);
+                if (rf.hazard) { return rf; }
+                seen = rf.seen;
+            },
+            ast.StmtMatch(m) => {
+                var any_seen: boolean = seen;
+                for arm in m.arms {
+                    var ra: DorScan = dor_scan(arm.body, name, fn, structs, seen, rebinding_loop);
+                    if (ra.hazard) { return ra; }
+                    if (ra.seen) { any_seen = true; }
+                }
+                seen = any_seen;
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return DorScan { seen: seen, hazard: false };
+}
+// derived_anywhere: the exit-sweep form of the same question — some value
+// derived from `name` is bound under another name, or returned other than as
+// the bare local, so at exit it may still share the fields a deep drop of
+// name's box would free. Order is irrelevant at exit: every such value is live
+// then.
+function derived_anywhere(fn: parser.FuncDecl, name: string, structs: parser.StructDecl[]): boolean {
+    return derived_scan(fn.body, name, fn, structs);
+}
+function derived_scan(stmts: ast.Stmt[], name: string, fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => { if (expr_mentions_name(v.init, name) && dor_type_can_hold(v.type_name, structs)) { return true; } },
+            ast.StmtAssign(a) => { if (a.target != name && expr_mentions_name(a.value, name) && dor_type_can_hold(decl_type_in_fn(fn, a.target), structs)) { return true; } },
+            ast.StmtReturn(r) => { if (ident_name_or_empty(r.value) != name && expr_mentions_name(r.value, name)) { return true; } },
+            ast.StmtIf(f) => { if (derived_scan(f.then_body, name, fn, structs) || derived_scan(f.else_body, name, fn, structs)) { return true; } },
+            ast.StmtWhile(w) => { if (derived_scan(w.body, name, fn, structs)) { return true; } },
+            ast.StmtFor(fo) => { if (derived_scan(fo.body, name, fn, structs)) { return true; } },
+            ast.StmtMatch(m) => { for arm in m.arms { if (derived_scan(arm.body, name, fn, structs)) { return true; } } },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// dor_type_can_hold: a value of declared type `t` can carry a struct's fields —
+// a struct, an array or Option/Result of one, a tuple, or an unstated type.
+function dor_type_can_hold(t: string, structs: parser.StructDecl[]): boolean {
+    if (t.len() == 0) { return true; }
+    var b: string = t;
+    while (b.len() > 2 && slice_unchecked(b, b.len() - 2, b.len()) == "[]") { b = slice_unchecked(b, 0, b.len() - 2) + ""; }
+    if (b.len() > 0 && b[0] == b'(') { return true; }
+    var base: string = util.base_type_name(b);
+    if (base == "Option" || base == "Result" || base == "fn") { return true; }
+    return decl_is_struct(structs, base);
+}
+
+// snapshot_source_of_init: the variable whose box `v`'s init is DERIVED from —
+// the alias `var q: T = p` names p; a call names its receiver, or the one
+// bare-ident argument declared at v's type, since a fresh-ret producer's result
+// carries the fields of the same-typed value it was built from. "" when the
+// init derives from no variable (a producer building from scratch, or one whose
+// same-typed operand this AST-side lookup cannot type); "!" when it cannot be
+// told — a computed receiver, or two candidate sources.
+function snapshot_source_of_init(v: ast.StmtVar, fn: parser.FuncDecl): string {
+    var iname: string = ident_name_or_empty(v.init);
+    if (iname.len() > 0) { return iname; }
+    var src: string = "";
+    var ops: string[] = call_operand_idents(v.init);
+    if (ops.len() > 0 && ops[0] == "!") { return "!"; }
+    for an in ops {
+        if (an.len() == 0 || an == "!" || decl_type_in_fn(fn, an) != v.type_name) { continue; }
+        if (src.len() > 0 && src != an) { return "!"; }
+        src = an;
+    }
+    return src;
+}
+
+// decl_type_in_fn: the declared type of `name` in `fn` — receiver, parameter,
+// or the annotation of its `var` — "" when it has none the AST states.
+function decl_type_in_fn(fn: parser.FuncDecl, name: string): string {
+    if (fn.receiver_name.len() > 0 && fn.receiver_name == name) { return util.base_type_name(fn.receiver_type); }
+    for pd in fn.params { if (pd.name == name) { return pd.type_name; } }
+    return var_annot_in_stmts(fn.body, name);
+}
+function var_annot_in_stmts(stmts: ast.Stmt[], name: string): string {
+    for stmt in stmts {
+        var t: string = "";
+        match (stmt) {
+            ast.StmtVar(v) => { if (v.name == name) { return v.type_name; } },
+            ast.StmtIf(f) => { t = var_annot_in_stmts(f.then_body, name); if (t.len() == 0) { t = var_annot_in_stmts(f.else_body, name); } },
+            ast.StmtWhile(w) => { t = var_annot_in_stmts(w.body, name); },
+            ast.StmtFor(fo) => { t = var_annot_in_stmts(fo.body, name); },
+            ast.StmtMatch(m) => { for arm in m.arms { if (t.len() == 0) { t = var_annot_in_stmts(arm.body, name); } } },
+            _ => {}
+        }
+        if (t.len() > 0) { return t; }
+    }
+    return "";
 }
 
 function reclaimable_scalar_tuple(body: ast.Stmt[], borrowable: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], tretn: string[], tups: string[], out: string[]): string[] {
