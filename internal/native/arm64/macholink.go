@@ -45,6 +45,23 @@ func (a *Assembler) MachODataRebaseOffsets() []int {
 	return offs
 }
 
+// HasCFI reports whether the program recorded any `.cfi_*` span, which is
+// what decides whether the Mach-O __TEXT segment carries a __eh_frame section
+// — and that section's load command shifts every address, so the container
+// has to know before anything is rendered.
+func (a *Assembler) HasCFI() bool { return !a.cfi.Empty() }
+
+// MachOEhFrame renders the recorded CFI as the __TEXT,__eh_frame image of a
+// Mach-O whose code is at textVAddr and whose __eh_frame is at ehVAddr. The
+// pool must already be flushed and the veneers planted (MachOTextLen does
+// both) so the offsets the rules were recorded at have been remapped.
+func (a *Assembler) MachOEhFrame(textVAddr, ehVAddr uint64) ([]byte, error) {
+	if _, err := a.TextLen(); err != nil {
+		return nil, err
+	}
+	return a.cfi.EhFrame(arm64DarwinCFI, textVAddr, ehVAddr)
+}
+
 // LinkMachO resolves all vaddr-dependent fixups for a Mach-O layout where
 // code lives at textVAddr (the __TEXT segment) and the data blob lives at
 // dataVAddr (a separate __DATA segment, not contiguous with text), then

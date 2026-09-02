@@ -18,6 +18,9 @@ var x86CFI = &cfi.Profile{
 	CodeAlign: 1,
 	DataAlign: -8,
 	RAColumn:  16,
+	PtrEnc:    0x1b, // DW_EH_PE_pcrel | DW_EH_PE_sdata4
+	PtrSize:   4,
+	FDEAlign:  4,
 	InitialRules: []byte{
 		0x0c, 0x07, 0x08, // DW_CFA_def_cfa rsp, 8
 		0x90, 0x01, // DW_CFA_offset r16 (rip) at CFA-8

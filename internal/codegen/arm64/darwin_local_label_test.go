@@ -100,9 +100,9 @@ func countOutsideStrings(asm, sub string) int {
 
 // TestDarwinCFIAssemblesWithMachOLabels is the payoff, and the reason #8065
 // was filed: with ELF's prefix the platform assembler rejects the epilogue
-// rule outright. The listing here is the emitted Darwin prologue shape with
-// CFI added by hand, since the emitter still withholds `.cfi_*` on Darwin
-// for the separate reason that the Mach-O writer has no __eh_frame.
+// rule outright. The listing is the emitted Darwin prologue shape; the
+// emitter's own output goes through the same assembler in
+// TestDarwinEmitsCFI.
 func TestDarwinCFIAssemblesWithMachOLabels(t *testing.T) {
 	mc, err := exec.LookPath("llvm-mc")
 	if err != nil {

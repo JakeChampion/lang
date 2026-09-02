@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/symname"
@@ -406,5 +408,133 @@ func TestArm64DarwinCcOptsOut(t *testing.T) {
 	out := filepath.Join(dir, "prog")
 	if err := exec.Command(bin, "-target", "arm64-darwin", "-cc", "/bin/false", "-o", out, src).Run(); err == nil {
 		t.Errorf("expected build to fail when -cc points at a failing linker, but it succeeded")
+	}
+}
+
+// TestArm64DarwinEhFrame is the darwin end of #7901: a `fern -target
+// arm64-darwin` build carries a __TEXT,__eh_frame whose FDEs describe the
+// program — one per user function, starting exactly at the function's symbol
+// and ending no later than the next symbol. Mach-O symbols carry no size, so
+// the next symbol's start is the only oracle for the end; the literal pool
+// `.ltorg` puts after each `.cfi_endproc` is what keeps the two from being
+// equal. Structural on every host; the consumer check runs where
+// llvm-dwarfdump is on PATH.
+func TestArm64DarwinEhFrame(t *testing.T) {
+	bin := buildFernCLI(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "prog.fern")
+	prog := "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); }\n" +
+		"function fact(n: i32): i32 { if (n <= 1) { return 1; } return n * fact(n - 1); }\n" +
+		"function main(): i32 { return fib(9) + fact(1); }\n"
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "prog")
+	// -g, so the symbol table is there to check the FDEs against.
+	if o, err := exec.Command(bin, "-g", "-target", "arm64-darwin", "-o", out, src).CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, o)
+	}
+	f, err := macho.Open(out)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer f.Close()
+	sec := f.Section("__eh_frame")
+	if sec == nil {
+		t.Fatal("no __TEXT,__eh_frame in the image — the emitter's CFI was recorded and discarded")
+	}
+	if sec.Seg != "__TEXT" {
+		t.Fatalf("__eh_frame is in %s, want __TEXT", sec.Seg)
+	}
+	eh, err := sec.Data()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// FDE ranges: 8-byte pcrel initial_location, 8-byte address_range.
+	var fdes [][2]uint64
+	for off := 0; off+4 <= len(eh); {
+		n := int(binary.LittleEndian.Uint32(eh[off:]))
+		if n == 0 {
+			break
+		}
+		if off+4+n > len(eh) {
+			t.Fatalf("entry at %#x claims %d bytes past the end of a %d-byte __eh_frame", off, n, len(eh))
+		}
+		body := eh[off+4 : off+4+n]
+		if binary.LittleEndian.Uint32(body) != 0 {
+			field := sec.Addr + uint64(off) + 8
+			start := uint64(int64(field) + int64(binary.LittleEndian.Uint64(body[4:])))
+			fdes = append(fdes, [2]uint64{start, start + binary.LittleEndian.Uint64(body[12:])})
+		}
+		off += 4 + n
+	}
+	if f.Symtab == nil {
+		t.Fatal("-g build has no LC_SYMTAB")
+	}
+	var syms []macho.Symbol
+	for _, s := range f.Symtab.Syms {
+		syms = append(syms, s)
+	}
+	sort.Slice(syms, func(i, j int) bool { return syms[i].Value < syms[j].Value })
+	text := f.Section("__text")
+	next := func(i int) uint64 {
+		if i+1 < len(syms) {
+			return syms[i+1].Value
+		}
+		return text.Addr + text.Size
+	}
+	want := map[uint64]string{}
+	ends := map[uint64]uint64{}
+	for i, s := range syms {
+		ends[s.Value] = next(i)
+		if strings.HasPrefix(s.Name, "__fn_") {
+			want[s.Value] = s.Name
+		}
+	}
+	if len(want) != 3 {
+		t.Fatalf("found %d user functions, want the 3 the fixture declares: %v", len(want), want)
+	}
+	covered := map[uint64]bool{}
+	for _, r := range fdes {
+		end, ok := ends[r[0]]
+		if !ok {
+			t.Errorf("an FDE covers [%#x, %#x), which does not start at any symbol", r[0], r[1])
+			continue
+		}
+		if r[1] <= r[0] || r[1] > end {
+			t.Errorf("the FDE at %#x ends at %#x, past the next symbol at %#x — a stale range that was never remapped", r[0], r[1], end)
+		}
+		if covered[r[0]] {
+			t.Errorf("two FDEs describe the function at %#x", r[0])
+		}
+		covered[r[0]] = true
+	}
+	for at, name := range want {
+		if !covered[at] {
+			t.Errorf("%s at %#x has no FDE — unwinding stops there", name, at)
+		}
+	}
+
+	dump, err := exec.LookPath("llvm-dwarfdump")
+	if err != nil {
+		t.Skip("llvm-dwarfdump not on PATH; FDE ranges checked structurally only")
+	}
+	o, err := exec.Command(dump, "--eh-frame", out).Output()
+	if err != nil {
+		t.Fatalf("llvm-dwarfdump rejects the image's __eh_frame: %v", err)
+	}
+	for _, w := range []string{
+		"Return address column: 30",
+		"DW_CFA_def_cfa_offset: +16",
+		"DW_CFA_offset: W29 -16",
+		"DW_CFA_offset: W30 -8",
+		"DW_CFA_def_cfa_register: W29",
+	} {
+		if !strings.Contains(string(o), w) {
+			t.Errorf("decoded __eh_frame is missing %q", w)
+		}
+	}
+	if n := strings.Count(string(o), " FDE "); n != len(fdes) {
+		t.Errorf("llvm-dwarfdump decodes %d FDEs, the walk found %d", n, len(fdes))
 	}
 }

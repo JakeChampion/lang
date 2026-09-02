@@ -74,18 +74,31 @@ func (m *image) section(sect, seg string, addr uint64, size int, offset uint32, 
 }
 
 // segmentText writes __PAGEZERO and the r-x __TEXT segment, which holds
-// the Mach-O header + load commands + the __text (code) section. textOff
-// is the file offset of code within the segment (== after the header +
-// load commands).
-func (m *image) segmentText(textOff uint64, textLen int) {
+// the Mach-O header + load commands + the __text (code) section and, when
+// ehLen > 0, the __eh_frame section at ehOff. textOff is the file offset of
+// code within the segment (== after the header + load commands).
+//
+// __eh_frame is the section dyld's _dyld_find_unwind_sections hands to
+// libunwind by NAME: there is no load command pointing at it, so the name is
+// the whole contract.
+func (m *image) segmentText(textOff uint64, textLen int, ehOff uint64, ehLen int) {
 	const (
 		sAttrPureInstrs = 0x80000000
 		sAttrSomeInstrs = 0x00000400
 	)
-	textVMSize := uint64(alignUp(int(textOff)+textLen, pageSize))
+	end := int(textOff) + textLen
+	nsects := uint32(1)
+	if ehLen > 0 {
+		end = int(ehOff) + ehLen
+		nsects = 2
+	}
+	textVMSize := uint64(alignUp(end, pageSize))
 	m.segment("__PAGEZERO", 0, baseVAddr, 0, 0, 0, 0, 0)
-	m.segment("__TEXT", baseVAddr, textVMSize, 0, textVMSize, vmProtRead|vmProtExecute, vmProtRead|vmProtExecute, 1)
+	m.segment("__TEXT", baseVAddr, textVMSize, 0, textVMSize, vmProtRead|vmProtExecute, vmProtRead|vmProtExecute, nsects)
 	m.section("__text", "__TEXT", baseVAddr+textOff, textLen, uint32(textOff), 2, sAttrPureInstrs|sAttrSomeInstrs)
+	if ehLen > 0 {
+		m.section("__eh_frame", "__TEXT", baseVAddr+ehOff, ehLen, uint32(ehOff), 3, 0)
+	}
 }
 
 func (m *image) segmentData(vaddr, vmsize, fileoff uint64, dataLen int) {
