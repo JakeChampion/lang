@@ -44,24 +44,10 @@ sites only, so an assignment's RHS earns nothing from it.
 available. Nothing in `findTrmcFuncs` reads the fresh-box map, so the order is
 free.
 
-## The inc is only half the accounting — a bare parameter is refused
+## A bare parameter is refused, and the first explanation of why was wrong
 
-Crediting a bare returned PARAMETER leaked `std/url` outright, and the
-mechanism is worth stating because it is the same asymmetry #7995 is about.
-
-`query_parse` threads a map through an accumulator:
-
-```
-m = __query_pair(m, s, pair_start, i);
-```
-
-`__query_pair` ends `return m` on its own parameter, so the return inc fires.
-The caller's rebind is where the balancing dec would go, and the consumed-param
-ownership flag starts at 0 — *this slot still holds the caller's borrow* — so
-the rebind deliberately declines it. Nothing balances the inc, and the map
-gains a reference per pair.
-
-Measured on `url.query_parse("a=1")`, the smallest form that shows it:
+Crediting a bare returned PARAMETER loses three of the five frees in
+`url.query_parse("a=1")` — 256 B on the smallest form that shows it:
 
 | | allocs | frees | live bytes |
 | --- | --- | --- | --- |
@@ -69,10 +55,35 @@ Measured on `url.query_parse("a=1")`, the smallest form that shows it:
 | bare-parameter credit | 5 | 2 | **256** |
 | parameter refused | 5 | 5 | 0 |
 
-A PROJECTION of a parameter keeps the credit, and the distinction is not a
-carve-out: the protocol governs whether the callee released the parameter's own
-reference, and `r.names[i]` is a different object the callee never owned, so no
-protocol can decline to release it.
+This entry originally attributed that to the consumed-param ownership flag:
+`__query_pair` threads a map through its parameter, so the story was that the
+caller's rebind declines the dec that would balance the return's inc. **That is
+wrong**, and it shipped in this file, in `rc_analysis.go`, and in the commit
+message. `__query_pair`'s parameter is not a consumed param at all —
+`consumedDropWired` excludes `Map`, and instrumenting `computeConsumedParams`
+over that whole compilation prints **zero** consumed params. The ownership-flag
+protocol is not involved.
+
+The real accounting is still unidentified. Three probes reproducing the shape
+outside the stdlib — a threaded map parameter, the same with `string[]` values
+through get / append / insert, and the same behind a map-returning wrapper —
+all read **identically** credited and refused (4,480 / 336 / 288 B both ways),
+so the trigger is narrower than the shape.
+
+## What that costs, and why it is not being widened yet
+
+Refusing only the parameters a callee REASSIGNS also keeps query_parse clean,
+and measures **21,104 B better**: driver 276,496 against the 297,600 this
+entry banks, with every probe clean and output byte-identical.
+
+It is not taken. With no mechanism established, "reassigned" is only known to
+exclude the one case that could be measured — a boundary shaped like the
+symptom, on a credit that has already leaked once. Whoever picks this up should
+start by identifying what actually withholds the free in query_parse, not by
+applying that condition.
+
+A PROJECTION of a parameter keeps the credit: a different object the callee
+never owned, and no probe has found a shape where that is unsafe.
 
 ## Measured
 
@@ -100,11 +111,12 @@ local-ident arm — accumulator folds that end `return out`.
 
 ## Still on the table
 
-The unrefused credit — bare parameters included — reads **261,488 B** on the base it was
-measured against, another −35,792 on top of this. It is not available yet because it needs the exclusion
-narrowed from "any parameter" to "a parameter this callee threads under the
-consumed-param protocol", which is `computeConsumedParams` generalised beyond
-the array projection #7995 added. That is the next increment, not this one.
+The wholly unrefused credit — every bare parameter included — reads **261,488
+B**, another −35,792 on top of this, and it is the version that leaks
+query_parse. The reassigned-only boundary above recovers 21,104 of that safely
+as far as any probe can tell. Both are blocked on the same missing thing: what
+actually withholds the free in query_parse. That is the next question, and it
+is a question, not an increment.
 
 ## Banked
 
