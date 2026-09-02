@@ -2691,36 +2691,16 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
                         s = s.write("    ldr x1, [x11, #" + off + "]\n");  // reload buffer
                     }
                 }
-                // The walk borrows x11 (buffer) and x12 (index): they survive
-                // __fern_arr_dec / __fern_rc_is_unique (which clobber only
-                // x0..x3,x9) but hold old/snap for the rest of the field loop, so
-                // both are reloaded from the stack args afterwards. x10 (new) is
-                // untouched from here on.
-                s = s.write("    mov x11, x1\n");                  // a = old.field_k (buffer)
-                s = s.write("    cmp x11, #16, lsl #12\n");        // null/low -> skip walk
-                s = s.write("    blo .Lafr_" + san + "_buf" + ks + "\n");
-                s = s.write("    str x11, [sp, #-16]!\n");
-                s = s.write("    bl __fn___fern_rc_is_unique\n");  // shared (rc>1) -> skip element walk
+                // __fern_arrarr_free is the same sole-owner element walk plus
+                // buffer free __struct_drop's box_walk_dec arm calls, so the two
+                // release a dead struct/enum-array buffer identically. It
+                // preserves x10/x11/x12 (it saves x19/x20/x21 and x30; its
+                // per-element __fern_arr_dec clobbers only x0..x3,x9), which is
+                // what retires the register borrow and reload this walk needed.
+                s = s.need("arrarr_free");
+                s = s.write("    str x1, [sp, #-16]!\n");          // old.field_k (buffer)
+                s = s.write("    bl __fn___fern_arrarr_free\n");   // element walk at rc==1, then the buffer
                 s = s.write("    add sp, sp, #16\n");
-                s = s.write("    cbz x0, .Lafr_" + san + "_buf" + ks + "\n");
-                s = s.write("    mov x12, #0\n");                  // i = 0
-                s = s.write(".Lafr_" + san + "_loop" + ks + ":\n");
-                s = s.write("    ldr x0, [x11]\n");                // len = buffer[0]
-                s = s.write("    cmp x12, x0\n");
-                s = s.write("    bge .Lafr_" + san + "_buf" + ks + "\n");
-                s = s.write("    add x1, x12, #1\n");
-                s = s.write("    ldr x0, [x11, x1, lsl #3]\n");    // elem = buffer[(i+1)*8]
-                s = s.write("    str x0, [sp, #-16]!\n");
-                s = s.write("    bl __fn___fern_arr_dec\n");       // shallow dec the element box
-                s = s.write("    add sp, sp, #16\n");
-                s = s.write("    add x12, x12, #1\n");
-                s = s.write("    b .Lafr_" + san + "_loop" + ks + "\n");
-                s = s.write(".Lafr_" + san + "_buf" + ks + ":\n");
-                s = s.write("    str x11, [sp, #-16]!\n");         // buffer (x11 survives both calls)
-                s = s.write("    bl __fn___fern_arr_dec\n");       // shallow dec/free the dead buffer
-                s = s.write("    add sp, sp, #16\n");
-                s = s.write("    ldr x11, [sp, #32]\n");           // restore old
-                s = s.write("    ldr x12, [sp, #16]\n");           // restore snap
             } else {
                 s = s.write("    str x1, [sp, #-16]!\n");
                 if (fr_str || fr_str_arr) {
@@ -2761,11 +2741,12 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
 // arm64 transcription of asm_ir.emit_ir_struct_drop_one. Stack-arg ABI: [sp]=box.
 // For each rc-tracked ARRAY field (offset (k+1)*8 off the box's data pointer) it
 // releases the field BUFFER via __fn___fern_arr_dec (rc-guarded shallow dec/free);
-// for a struct/enum-array field it FIRST walks the buffer (when uniquely owned)
-// dec'ing each element box, then dec's the buffer. Returns `box` in x0 (the call
-// site drops it). x10/x11/x12 hold box/buffer/index across the field loop —
-// __fern_arr_dec and __fern_rc_is_unique clobber only x0..x3,x9, so they survive;
-// the low-addr guard uses `cmp #16, lsl #12` (= 0x10000) to avoid tying up x9
+// for a struct/enum-array field __fn___fern_arrarr_free does the same one level
+// deeper: the element boxes when the buffer is uniquely owned, then the buffer.
+// Returns `box` in x0 (the call site drops it). x10 holds box across the field
+// loop — __fern_arr_dec and __fern_arrarr_free preserve it, and the helpers that
+// do not (__fern_str_free, __struct_drop_*) reload it from the stack arg; the
+// low-addr guard uses `cmp #16, lsl #12` (= 0x10000) to avoid tying up x9
 // across the calls. The nested bls need LR saved, hence the stp x29,x30 frame;
 // each call's arg is pushed at [sp] (the helpers' frameless ABI) then popped.
 // IR array layout: len at buffer[0], element i at buffer[(i+1)*8], rc at buffer-8.
@@ -2807,29 +2788,14 @@ function emit_arm64_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.
             s = s.write("    add sp, sp, #16\n");
             s = s.write("    ldr x10, [sp, #16]\n");                // reload box (helper clobbered x10)
         } else if (op.kind == "box_walk_dec") {
-            s = s.write("    ldr x11, [x10, #" + off + "]\n");      // buffer = box.field_k
-            s = s.write("    cmp x11, #16, lsl #12\n");             // null/low -> skip walk
-            s = s.write("    blo .Lasd_" + san + "_buf" + ks + "\n");
-            s = s.write("    str x11, [sp, #-16]!\n");
-            s = s.write("    bl __fn___fern_rc_is_unique\n");       // shared (rc>1) -> skip element walk
-            s = s.write("    add sp, sp, #16\n");
-            s = s.write("    cbz x0, .Lasd_" + san + "_buf" + ks + "\n");
-            s = s.write("    mov x12, #0\n");                       // i = 0
-            s = s.write(".Lasd_" + san + "_loop" + ks + ":\n");
-            s = s.write("    ldr x0, [x11]\n");                     // len = buffer[0]
-            s = s.write("    cmp x12, x0\n");
-            s = s.write("    bge .Lasd_" + san + "_buf" + ks + "\n");  // i >= len -> done
-            s = s.write("    add x1, x12, #1\n");
-            s = s.write("    ldr x0, [x11, x1, lsl #3]\n");         // elem = buffer[(i+1)*8]
+            // __fern_arrarr_free IS this directive: sole-owner gate, one
+            // __fern_arr_dec per element, then the buffer freed by arr_dec's own
+            // rc==1 path. Its immortal / shared / underflow arms answer exactly
+            // as the open-coded walk's rc_is_unique + trailing arr_dec did.
+            s = s.need("arrarr_free");
+            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // buffer = box.field_k
             s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.write("    bl __fn___fern_arr_dec\n");            // shallow dec the element box
-            s = s.write("    add sp, sp, #16\n");
-            s = s.write("    add x12, x12, #1\n");
-            s = s.write("    b .Lasd_" + san + "_loop" + ks + "\n");
-            s = s.write(".Lasd_" + san + "_buf" + ks + ":\n");
-            s = s.write("    ldr x0, [x10, #" + off + "]\n");       // reload buffer (x11 may be past-end)
-            s = s.write("    str x0, [sp, #-16]!\n");
-            s = s.write("    bl __fn___fern_arr_dec\n");            // shallow dec the buffer slab
+            s = s.write("    bl __fn___fern_arrarr_free\n");        // element walk at rc==1, then the buffer
             s = s.write("    add sp, sp, #16\n");
         } else if (op.kind == "deep_struct_drop") {
             var fsan: string = asmcore.sanitize_label(op.ty);
@@ -4532,15 +4498,17 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     // hold arr/len/i across the bl calls (callee-saved; x30 saved too —
     // __fn___fern_str_free is a leaf and preserves them).
     s = emit_arm64_arr_deep_free_variant(s, "str_arr_free", "saf", arm64_arr_deep_free_call("str_free"));
-    // __fern_arrarr_free(arr) — SCALAR arr-of-arr reclaim (#4355 slice 9),
-    // the arm64 sibling of the x86-64 body in asm_ir.emit_ir_runtime:
-    // identical shell to __fn___fern_str_arr_free above, but each element is
-    // a scalar-element INNER buffer released fully by one rc-guarded
-    // __fn___fern_arr_dec. Same register discipline (x19/x20/x21 + x30
-    // saved across the bl). Gated on need (seeded at asm_arm64_ir's
-    // helper-call emit), mirroring the x86 gating: an unrelated binary
-    // must not carry the strarrarr body's `bl __fn___fern_str_arr_free`
-    // (negative asm-grep contracts, e.g. strarr-elem-alias-excluded).
+    // __fern_arrarr_free(arr) — one rc-guarded dec per element, then the buffer
+    // (#4355 slice 9), the arm64 sibling of the x86-64 body in
+    // asm_ir.emit_ir_runtime: identical shell to __fn___fern_str_arr_free above,
+    // but each element is released fully by one rc-guarded __fn___fern_arr_dec.
+    // Same two callers as x86 — an arr-of-arr local (elements are inner scalar
+    // buffers) and the struct/enum-array field release in __struct_drop_<T> /
+    // __field_reclaim_<T> (elements are struct/enum boxes). Same register
+    // discipline (x19/x20/x21 + x30 saved across the bl). Gated on need (seeded
+    // at both), mirroring the x86 gating: an unrelated binary must not carry the
+    // strarrarr body's `bl __fn___fern_str_arr_free` (negative asm-grep
+    // contracts, e.g. strarr-elem-alias-excluded).
     if (s.has_need("arrarr_free")) {
     s = emit_arm64_arr_deep_free_variant(s, "arrarr_free", "aaf", arm64_arr_deep_free_call("arr_dec"));
     }
