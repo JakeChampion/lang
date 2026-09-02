@@ -134,7 +134,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           # Disambiguate per matrix cell so the upload doesn't
-          # collide across the 4-job matrix on the same PR.
+          # collide across the 2-job matrix on the same PR.
           name: diff-oracle-failures-${{ matrix.host.name }}-shard${{ matrix.shard.index }}
           path: ${{ runner.temp }}/fern-diff-failures
           if-no-files-found: ignore
