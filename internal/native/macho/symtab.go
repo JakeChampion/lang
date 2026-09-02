@@ -16,15 +16,19 @@ type Sym struct {
 }
 
 // FuncSyms turns an assembler's label→absolute-vaddr map into a sorted []Sym,
-// mirroring elf.FuncSyms: assembler-local labels (any name beginning with ".")
-// are dropped — they are branch targets, not functions — and the rest are
-// sorted by address. Mach-O nlist entries carry no size field, so unlike the
-// ELF path no inter-symbol gap is computed.
+// mirroring elf.FuncSyms: assembler-local labels are dropped — they are branch
+// targets, not functions — and the rest are sorted by address. Mach-O nlist
+// entries carry no size field, so unlike the ELF path no inter-symbol gap is
+// computed.
+//
+// Local means Mach-O's rule, not ELF's: the temporary-label prefix here is a
+// bare `L`, which is what the emitters write for this target (#8065). A `.`
+// prefix is still dropped, since hand-written input may carry it.
 func FuncSyms(labels map[string]uint64, textEndVAddr uint64) []Sym {
 	_ = textEndVAddr // accepted for signature parity with elf.FuncSyms
 	syms := make([]Sym, 0, len(labels))
 	for name, v := range labels {
-		if name == "" || strings.HasPrefix(name, ".") {
+		if name == "" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "L") {
 			continue
 		}
 		syms = append(syms, Sym{Name: name, Value: v})
