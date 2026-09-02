@@ -80,7 +80,9 @@ func TestArm64DarwinPollUsesKqueue(t *testing.T) {
 // the whole wait degrades.
 func TestArm64DarwinPollSkipsNegativeFds(t *testing.T) {
 	body := fernPollBody(t, compile(t, pollSrc, Options{Darwin: true}))
-	if !strings.Contains(body, "b.lt .Lkq_skip") {
+	// Mach-O's temporary-symbol prefix is a bare "L", not ELF's ".L" (#8065),
+	// and this is a Darwin listing.
+	if !strings.Contains(body, "b.lt Lkq_skip") {
 		t.Error("arm64-darwin __fern_poll has no negative-fd skip; std/tcp passes -1 " +
 			"(wasm_timer_pollable on native) in the fd set and kevent(2) rejects it " +
 			"with EBADF rather than ignoring it as poll(2) does")

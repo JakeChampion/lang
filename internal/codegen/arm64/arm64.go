@@ -10758,7 +10758,76 @@ const peepWindow = 4
 // any line that has aged out of the window to `out`. All emission funnels
 // through here (line / emit / label), so the peephole sees every line in
 // emission order regardless of which helper produced it.
+// retargetLocals rewrites ELF's ".L" temporary-symbol prefix to Mach-O's
+// bare "L". Only the leading "." is dropped, so ".Lret_3" becomes "Lret_3"
+// and every reference to it changes with the definition.
+//
+// Without this every local label is a REAL Mach-O symbol, and Mach-O
+// atomizes a section at each one: the linker may reorder the pieces, so the
+// assembler cannot treat the distance across a label as a compile-time
+// constant. The first thing that needs such a distance is CFI, where
+// llvm-mc rejects the epilogue rule with "invalid CFI advance_loc
+// expression" (#8065).
+//
+// This lives in the printer rather than at the label-construction sites
+// because there are no such sites to speak of: of the 895 ".L" occurrences
+// in this emitter only 382 are a bare label literal, and the rest are
+// embedded inside whole instruction strings ("b .Lret_3"). Applying the
+// prefix where the symbol is printed is also what LLVM does — its
+// PrivateGlobalPrefix is a property of the target's asm printer, not of the
+// names the emitter thinks in.
+//
+// The scan skips quoted regions, which is not a special case but the
+// lexical rule: in assembly a ".L" token is a symbol reference EVERYWHERE
+// except inside a string operand. String data reaches this same function
+// (`.asciz` goes through g.line like everything else), so a blind
+// replacement would corrupt any Fern program with ".L" in a literal.
+func retargetLocals(s string) string {
+	if !strings.Contains(s, ".L") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	inStr := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			b.WriteByte(c)
+			if c == '\\' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		if c == '"' {
+			inStr = true
+			b.WriteByte(c)
+			continue
+		}
+		// Only at a token boundary: ".L" preceded by a symbol byte is part
+		// of a longer name, not the prefix.
+		if c == '.' && i+1 < len(s) && s[i+1] == 'L' && (i == 0 || !isSymByte(s[i-1])) {
+			continue // drop the dot, keep the L
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// isSymByte reports whether b can appear inside an assembler symbol name.
+func isSymByte(b byte) bool {
+	return b == '_' || b == '$' || b == '.' ||
+		(b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
 func (g *generator) put(s string) {
+	if g.darwin {
+		s = retargetLocals(s)
+	}
 	if g.noPeephole {
 		g.out.WriteString(s)
 		g.out.WriteByte('\n')
