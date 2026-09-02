@@ -1,8 +1,9 @@
 # 2026-09-02 — `match (h.e)` disqualified its struct from the field reclaim
 
-`enum_scalar__callarg__stored_struct` was the only self-host row left in either
-leak matrix. Two independent leaks were stacked on it, and three wrong
-explanations sat on top of those. Both matrices now read zero self-host gaps.
+`enum_scalar__callarg__stored_struct` is the only self-host row left in either
+leak matrix. Two independent leaks are stacked on it. One is fixed here; the
+other is still open, and the change that closes it on the matrix segfaults the
+compiler, so the row keeps its `clean leak` verdict.
 
 ## The shape
 
@@ -53,26 +54,55 @@ same borrow the `var` case already is. One word.
 Closes the inline shape: `w_inlineenum`, `v_inline` and the eight-field
 `sz_big` all reach 200/200, sanitizer-clean. The call form stays at 200/0.
 
-## Leak 2 — the returned struct was refused free-eligibility
+## Leak 2 is still open, and the credit for it segfaults the compiler
 
-`freshbox_ret_fns_of`, a subset port of native `findReturnsFreshBox`: a
-knock-out fixpoint over functions whose every value return is a literal they
-constructed (struct / tuple / array / string), consulted from
-`rc_fe_rhs_tainted`'s user-call arm. `wrap` qualifies, so `h` is no longer
-tainted by its argument and earns its sweep. Takes the matrix cell 200/0 to
-200/200.
+`freshbox_ret_fns_of` — the subset port of native `findReturnsFreshBox` —
+does close the call form on the leak matrix: `cell` goes 200/0 to 200/200,
+clean on BOTH matrix legs, and the whole x86-64 matrix reads 134 clean/clean.
 
-Subset in the sense `noesc_ret_fns_of` is: native additionally credits returned
-ALIASES and returns built from fresh locals, so every name admitted here is
-admitted there too.
+It also segfaults the compiler.
 
-## Order matters, and it cost two reverts
+```
+stage2-fixpoint-arm64
+  gen2 (self-host-built aarch64, under qemu): signal: segmentation fault
+  FAIL sort_wider   FAIL float_math   FAIL process_assertions   PASS lexer
+```
 
-`freshbox_ret_fns_of` was written and reverted twice before this. Measured
-against the unfixed tree it moved the matrix by **zero rows** — leak 1 held the
-call form at 0 frees, where a free-eligibility credit cannot show. Reverting an
-analysis with no measurable effect was right each time on the evidence
-available; it only earns its place once leak 1 is fixed.
+Bisected locally, one case, same tree twice:
+
+| tree                                    | `sort_wider` |
+|-----------------------------------------|--------------|
+| scrutinee-borrow + freshbox             | FAIL, 125 s  |
+| scrutinee-borrow only                   | **ok**, 121 s |
+
+So the leak-2 credit is the unsound half and is not landed. Leak 1's fix is,
+and stands on its own: it closes the inline shape and leaves the call form at
+200/0, which is why `enum_scalar__callarg__stored_struct` keeps its
+`clean leak` verdict.
+
+## The prediction that was wrong
+
+Asked which half was unsound before bisecting, the answer given was the
+scrutinee-borrow change: it widens the admission gate whose own comment warns
+that under-counting reads is what "re-open[ed] the use-after-free #6148 was
+reverted for", and marking a match scrutinee safe marks one FEWER thing unsafe
+— exactly that direction.
+
+The reasoning is sound and the conclusion was wrong. `freshbox` widens
+free-eligibility for CALL RESULTS, and that is what breaks at compiler scale.
+The correct half would have been reverted by luck and the wrong one by
+argument.
+
+## Why the matrix could not see it
+
+Both matrix legs, census and `FERN_SANITIZE`, are green on both arches with
+`freshbox` applied. The cells are small generated programs; the compiler
+compiling itself is not, and only the stage-2 fixpoint runs that.
+
+This is the SECOND gate escalation on this one row. The scrutinee release
+passed the census and was caught by the sanitize leg. The freshbox credit
+passed both legs and was caught by the stage-2 fixpoint. Neither is a
+sufficient gate for a reclaim-widening change on its own.
 
 ## Three explanations that were wrong, and how each died
 
@@ -93,7 +123,8 @@ available; it only earns its place once leak 1 is fixed.
 
 ## Standing rule from this one
 
-Validate under `FERN_SANITIZE` from the first build. The census leg passed that
+Validate under `FERN_SANITIZE` **and** run the stage-2 fixpoint before claiming
+a reclaim-widening change works. The census leg passed that
 use-after-free: 200/200, underflow 0, every previously-clean control still
 clean. Only the quarantine leg — where nothing is recycled and a touched freed
 block traps — caught it. A green census plus a zero underflow counter is not
