@@ -7013,8 +7013,9 @@ function parse_param(p: Par): (ast.ParamDecl, Par) {
 struct TpList { tnames: string[], tbounds: string[] }
 
 // parse_type_param_list consumes `[T]` / `[T: Bound, U]` when the cursor sits
-// on `[`, else returns an empty list with the cursor untouched. A function
-// writes one list after its name; a METHOD writes one before its receiver.
+// on `[`, else returns an empty list with the cursor untouched. The list
+// follows the name; a METHOD may also write it before its receiver, and the
+// printer normalises that spelling to the post-name form.
 function parse_type_param_list(p: Par): (TpList, Par) {
     var names: string[] = [];
     var bounds: string[] = [];

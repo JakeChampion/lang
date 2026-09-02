@@ -1997,21 +1997,18 @@ function print_func_decl(fd: parser.FuncDecl, f: Fmt): (string, Fmt) {
     out = out + "function ";
     // Type parameters. `function first[T](xs: T[])` formatted without them
     // leaves every `T` in the signature unbound, so the file stops compiling.
-    // A METHOD's go BEFORE its receiver clause (`function [U] (o: Opt) map`),
-    // which is where native prints them and the only spelling that re-parses:
-    // the receiver's own type variables come from the receiver type.
+    // They follow the name for methods too (`function (o: Opt[T]) map[U]`),
+    // the form spec/grammar.ebnf derives and native prints; the receiver's
+    // own type variables are bound by the receiver type.
     var tps: string = print_type_params(fd);
     // Receiver clause: `(recv: RecvType)` after `function` and
     // before the method name. Both fields empty for plain funcs.
     if (fd.receiver_name.len() > 0) {
-        if (tps.len() > 0) { out = out + tps + " "; }
         out = out + "(" + fd.receiver_name;
         if (fd.receiver_type.len() > 0) { out = out + ": " + fd.receiver_type; }
         out = out + ") ";
-        out = out + fd.name;
-    } else {
-        out = out + fd.name + tps;
     }
+    out = out + fd.name + tps;
     var (dpats, dpre) = param_patterns_for(fd.params, fd.body);
     out = out + "(";
     var i: i32 = 0;
@@ -3286,8 +3283,9 @@ function check_visibility_and_destructuring(): i32 {
         _ => { return 295; }
     }
 
-    // #6773: a METHOD's type parameters are written before its receiver. The
-    // parser accepts that spelling now, so the printer's own output re-parses.
+    // #6773: a METHOD's type parameters written before its receiver parse
+    // too; the printer writes them after the name, and both spellings carry
+    // the same declaration.
     var srcMt: string = "enum Opt[T] { Some(T), None } pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
     var rtMt: parser.Module = roundtrip_module(srcMt);
     var mmi: i32 = func_index(rtMt.funcs, "map");

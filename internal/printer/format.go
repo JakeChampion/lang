@@ -758,13 +758,6 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 	}
 	f.b.WriteString("function ")
 	if fn.Receiver != nil {
-		// A method's type parameters go in leading position, before
-		// the receiver, so the receiver type (`Box[T]`) can reference
-		// them — the shape the parser documents as canonical.
-		if len(fn.TypeParams) > 0 {
-			f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs)
-			f.b.WriteByte(' ')
-		}
 		f.b.WriteByte('(')
 		if fn.Receiver.Own {
 			f.b.WriteString("own ")
@@ -775,11 +768,11 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString(") ")
 	}
 	f.b.WriteString(fn.Name)
-	// A free function spells its type parameters after the name
-	// (`function name[T](x: T): T`) — the dominant in-source style.
-	if fn.Receiver == nil {
-		f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs)
-	}
+	// Type parameters follow the name for free functions and methods alike
+	// (`function name[T](x: T)`, `function (b: Box[T]) has[T: Eq](x: T)`) —
+	// the form spec/grammar.ebnf derives; the receiver's own variables are
+	// bound by the receiver type.
+	f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs)
 	f.b.WriteByte('(')
 	for i, p := range fn.Params {
 		if i > 0 {
