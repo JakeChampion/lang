@@ -66997,6 +66997,54 @@ function lift_iife_conditions(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: par
 // whose condition / scrutinee / guard slots must stay unwalked.
 function ilc_keep_expr(x: ast.Expr, a: InlineCloAcc): (ast.Expr, InlineCloAcc, boolean) { return (x, a, true); }
 
+// lift_iife_arm_values puts the VALUES an inline IIFE's arms return through the
+// ORDINARY expression lift — the walk every other expression position gets.
+//
+// hoist_value_iife and box_iife_arm_array_elems own those returns when the arms
+// yield a fn value or an array of them. An arm yielding anything else — an
+// ordinary call, say — is owned by nobody, and the arms are STATEMENTS inside an
+// expression, so the expression walk stops at the IIFE and never reaches it. A
+// fn-typed ARGUMENT of a call in such an arm therefore stayed raw while every
+// other call site of the same callee boxed its own: the callee's fn parameter
+// dispatches env-first and got a bare code address (#8090, seed 15035).
+//
+// Returns only, and the caller gates it on the fn-value paths not having claimed
+// the arms — running two of these over one node would box a value twice. The
+// condition is lift_iife_conditions'.
+function lift_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: parser.StructDecl[]): (ast.Stmt[], InlineCloAcc) {
+    function vs(s: ast.Stmt, a: InlineCloAcc): (ast.Stmt, InlineCloAcc, boolean) {
+        match (s) {
+            ast.StmtReturn(r) => {
+                var vr: InlineCloRes = lift_inline_closures_expr(r.value, fd, a.funcs, a.counter, gfns, structs, mfuncs);
+                return (ast.StmtReturn { value: vr.expr, line: r.line, col: r.col }, InlineCloAcc { funcs: vr.funcs, counter: vr.counter }, true);
+            },
+            ast.StmtIf(_) => { return (s, a, false); },
+            ast.StmtMatch(mm) => {
+                var fs: parser.FuncDecl[] = a.funcs;
+                var ct: i32 = a.counter;
+                var narms: ast.MatchArm[] = [];
+                for arm in mm.arms {
+                    var (abs, aba) = lift_iife_arm_values(arm.body, fd, fs, ct, gfns, mfuncs, structs);
+                    fs = aba.funcs; ct = aba.counter;
+                    narms = narms.append(ast.MatchArm { ...arm, body: abs });
+                }
+                return (ast.StmtMatch { ...mm, arms: narms }, InlineCloAcc { funcs: fs, counter: ct }, true);
+            },
+            ast.StmtVar(_) => { return (s, a, true); },
+            ast.StmtExpr(_) => { return (s, a, true); },
+            ast.StmtAssign(_) => { return (s, a, true); },
+            ast.StmtWhile(_) => { return (s, a, true); },
+            ast.StmtFor(_) => { return (s, a, true); },
+            ast.StmtDefer(_) => { return (s, a, true); },
+            ast.StmtBreak(_) => { return (s, a, false); },
+            ast.StmtContinue(_) => { return (s, a, false); },
+            ast.StmtUnknown(_) => { return (s, a, false); }
+        }
+        return (s, a, true);
+    }
+    return astwalk.map_stmts_acc(stmts, InlineCloAcc { funcs: funcs, counter: counter }, vs, ilc_keep_expr);
+}
+
 // box_iife_arm_values rewrites each arm's returned VALUE through
 // try_fn_field_value — box_iife_arm_array_elems one container in, for an IIFE
 // whose arms yield the fn value itself rather than an array of them. A nested
@@ -68530,11 +68578,26 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                     // than racing for the same node.
                     if (call.args.len() == 0 && ielam.params.len() == 0) {
                         var iebody: ast.Stmt[] = ielam.body;
-                        match (ncallee) { ast.ExprLambda(nl) => { iebody = nl.body; }, _ => {} }
+                        if let ast.ExprLambda(nl) = ncallee { iebody = nl.body; }
                         var (icrs, icra) = lift_iife_conditions(iebody, fd, fs, ct, gfns, mfuncs, structs);
                         if (icra.counter > ct) {
                             fs = icra.funcs; ct = icra.counter;
                             ncallee = ast.ExprLambda { ...ielam, body: icrs };
+                        }
+                    }
+                    // An arm whose value is an ORDINARY expression is claimed by
+                    // none of the paths above, so nothing ever put it through the
+                    // expression lift at all — see lift_iife_arm_values. Gated on
+                    // the fn-value paths NOT owning the arms, so no value is
+                    // walked twice.
+                    if (call.args.len() == 0 && ielam.params.len() == 0
+                            && !iife_arms_hold_fn_value(ielam.body, fd, structs, mfuncs)) {
+                        var avbody: ast.Stmt[] = ielam.body;
+                        if let ast.ExprLambda(nl2) = ncallee { avbody = nl2.body; }
+                        var (avs, ava) = lift_iife_arm_values(avbody, fd, fs, ct, gfns, mfuncs, structs);
+                        if (ava.counter > ct) {
+                            fs = ava.funcs; ct = ava.counter;
+                            ncallee = ast.ExprLambda { ...ielam, body: avs };
                         }
                     }
                 },

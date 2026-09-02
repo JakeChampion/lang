@@ -205,6 +205,21 @@ function main(): i32 { var fs: ((i32) => i32)[] = [((x: i32) => (x + 2i32))]; va
 	// 1 + (1 + 40) = 42.
 	{"fnarr-param-two-call-sites", `function apply_all(fs: ((i32) => i32)[]): i32 { var acc: i32 = 0i32; for f in fs { acc = acc + f(1i32); } return acc; }
 function main(): i32 { return apply_all([((x: i32) => 1i32), ((y: i32) => apply_all([((z: i32) => (y + 40i32))]))]); }`, 42},
+	// #8090 (seed 15035) — the fn-value ARGUMENT of a call sitting in a
+	// value-position `if` ARM. The arms are statements inside an expression, so
+	// the expression lift stops at the IIFE; hoist_value_iife and the arm-array
+	// boxing own the returns only when the arms yield fn values, and an arm
+	// yielding an ordinary call is owned by nobody. The lambda stayed raw while
+	// the callee's fn parameter dispatches env-first, so it read slot 0 of a bare
+	// code address. gen_f0's other parameters are load-bearing: the reduction
+	// keeps them because a shorter signature does not reach the same path.
+	{"iife-arm-call-fn-argument", `enum Color { Red, Green, Blue }
+enum Status { Active, Inactive, Pending }
+function gen_f0(p0: Color, p1: Status, p2: (i32, i64), p3: (i32) => i32): i32 { return p3(2i32); }
+function main(): i32 {
+  var xs: i32[] = [(0i32 ^ (if (false) { 109i32 } else { gen_f0(Blue, Active, (733i32, 747i64), ((x: i32) => (x + 40i32))) }))];
+  return xs[0i32];
+}`, 42},
 	// The direction the promotion must not disturb: one call site, all
 	// no-capture, stays on the bare fn-pointer representation. 1 + 41 = 42.
 	{"fnarr-param-single-site-stays-pointers", `function apply_all(fs: ((i32) => i32)[]): i32 { var acc: i32 = 0i32; for f in fs { acc = acc + f(1i32); } return acc; }
