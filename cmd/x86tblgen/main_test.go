@@ -82,3 +82,64 @@ func TestEverySpellingIsDistinct(t *testing.T) {
 		t.Errorf("the table lists %d spellings, want the 28 GNU as accepts", len(seen))
 	}
 }
+
+// TestGoAssemblerAcceptsEverySSEOp closes the loop on the Go side for the SSE
+// vocabulary: the table is only a single source of truth if the assembler
+// generated from it actually reaches every row.
+//
+// Both operand shapes, because the table's own doc says the rows are the
+// `xmm <- xmm/mem` forms and a row that only worked register-to-register
+// would be half a form.
+func TestGoAssemblerAcceptsEverySSEOp(t *testing.T) {
+	for _, o := range x86tbl.SSEOps {
+		for _, probe := range []string{
+			o.Mnemonic + " xmm1, xmm2",
+			o.Mnemonic + " xmm1, [rax]",
+		} {
+			if _, _, err := x86_64.AssembleProgram(probe+"\n", 0x400000); err != nil {
+				t.Errorf("%q: the Go assembler rejects a form the shared table lists: %v", probe, err)
+			}
+		}
+	}
+}
+
+// TestSSEHalvesPartitionTheTable pins the split the generated dispatch
+// depends on. x86_gas_emit consults the float half before the integer one, so
+// a row in both halves would be shadowed and a row in neither would vanish
+// from the self-host without the Go side noticing.
+func TestSSEHalvesPartitionTheTable(t *testing.T) {
+	seen := map[string]x86tbl.SSEHalf{}
+	for _, o := range x86tbl.SSEOps {
+		if prev, dup := seen[o.Mnemonic]; dup {
+			t.Errorf("%q appears twice, in halves %d and %d", o.Mnemonic, prev, o.Half)
+		}
+		seen[o.Mnemonic] = o.Half
+	}
+	fp, in := x86tbl.SSEHalfOps(x86tbl.SSEFloatHalf), x86tbl.SSEHalfOps(x86tbl.SSEIntHalf)
+	none := x86tbl.SSEHalfOps(x86tbl.SSENoHalf)
+	if got, want := len(fp)+len(in)+len(none), len(x86tbl.SSEOps); got != want {
+		t.Errorf("the halves account for %d rows, the table has %d", got, want)
+	}
+	// The only rows outside both halves are the pair whose direction AT&T
+	// decides from the operands; anything else there is a row the self-host
+	// silently cannot reach.
+	for _, o := range none {
+		if o.Mnemonic != "movdqa" && o.Mnemonic != "movdqu" {
+			t.Errorf("%q is in neither half — the self-host has no table entry for it, and only movdqa/movdqu are meant to be handled outside the tables", o.Mnemonic)
+		}
+	}
+	if len(none) != 2 {
+		t.Errorf("%d rows outside the halves, want exactly movdqa and movdqu", len(none))
+	}
+}
+
+// TestSSEIntHalfIsAll66Prefixed pins what the integer half's doc comment
+// claims. A row with the wrong prefix still encodes something, so nothing
+// else would catch it.
+func TestSSEIntHalfIsAll66Prefixed(t *testing.T) {
+	for _, o := range x86tbl.SSEHalfOps(x86tbl.SSEIntHalf) {
+		if o.Prefix != 0x66 {
+			t.Errorf("%q is in the packed-integer half with prefix %#02x, but that half is documented as all 66-prefixed", o.Mnemonic, o.Prefix)
+		}
+	}
+}

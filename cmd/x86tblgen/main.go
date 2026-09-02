@@ -33,6 +33,46 @@ var blocks = []block{
 		end:      "// END GENERATED CONDITION TABLE",
 		generate: genCondTable,
 	},
+	{
+		begin:    "// BEGIN GENERATED SSE TABLES (cmd/x86tblgen) — do not edit by hand.",
+		end:      "// END GENERATED SSE TABLES",
+		generate: genSSETables,
+	},
+}
+
+// genSSETables renders the two halves the self-host dispatch consults in
+// order, float before integer. The split comes from the table rather than
+// being recomputed: which half a mnemonic sits in decides whether an earlier
+// arm can claim it first.
+//
+// A row with no mandatory prefix is written as a bare opcode, not
+// `0 * 256 + op`, which is what the hand-written source did — matching it is
+// what let the first generated output be diffed against the file it replaced.
+func genSSETables() string {
+	var b strings.Builder
+	b.WriteString("// x86_gas_sse_fp_op: the scalar/packed FLOAT half of the two-byte-opcode\n" +
+		"// SSE table (`[pfx] 0F op /r`, xmm destination), packed as pfx*256+op;\n" +
+		"// -1 when absent. Mirrors internal/native/x86_64's sseOps.\n")
+	writeSSEHalf(&b, "x86_gas_sse_fp_op", x86tbl.SSEFloatHalf)
+	b.WriteString("\n// x86_gas_sse_int_op: the packed-INTEGER half of the SSE table (all\n" +
+		"// 66-prefixed). The psll/psrl/psra entries here are the by-%xmm-count\n" +
+		"// forms; the by-immediate forms are the 0F 71/72/73 groups\n" +
+		"// (x86_gas_vshift_op).\n")
+	writeSSEHalf(&b, "x86_gas_sse_int_op", x86tbl.SSEIntHalf)
+	return b.String()
+}
+
+// writeSSEHalf renders one lookup function.
+func writeSSEHalf(b *strings.Builder, fn string, half x86tbl.SSEHalf) {
+	fmt.Fprintf(b, "function %s(mnem: string): i32 {\n", fn)
+	for _, o := range x86tbl.SSEHalfOps(half) {
+		if o.Prefix == 0 {
+			fmt.Fprintf(b, "    if (mnem == %q) { return %d; }\n", o.Mnemonic, o.Op)
+			continue
+		}
+		fmt.Fprintf(b, "    if (mnem == %q) { return %d * 256 + %d; }\n", o.Mnemonic, o.Prefix, o.Op)
+	}
+	b.WriteString("    return 0 - 1;\n}\n")
 }
 
 // genCondTable renders x86_gas_cc_code: the suffix-to-code lookup jCC, setCC
