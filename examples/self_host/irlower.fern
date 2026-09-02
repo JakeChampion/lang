@@ -24778,6 +24778,13 @@ function emit_consumed_param_store(se: LowerState, slot: i32, alias_inc: boolean
 // parameter's buffer this frame owns (flag 1) and is not handing back: a param
 // named anywhere in the returned value is left alone, since the value may be
 // that buffer or alias it. Net-zero on the operand stack.
+//
+// Being named in a RETURNED CALL is not that case. `return f(p, …)` hands back a
+// result that carries its own count (rebind_call_same_dec — the same rule the
+// rebind store applies one statement earlier), so the reference this frame owns
+// is superseded rather than handed back, exactly as it is at `p = f(p, …)`.
+// Skipping it there leaves the buffer at rc 2 with one owner, and the caller's
+// next in-place append reads it as shared and copies the whole thing.
 function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean): LowerState {
     var st: LowerState = s;
     var ret_names: string[] = [];
@@ -24786,7 +24793,8 @@ function emit_consumed_param_exit(s: LowerState, ret: ast.Expr, has_ret: boolean
     while (i < st.n_params) {
         var fl: i32 = st.ownflag_slot_of(i);
         if (fl >= 0 && has_ret && !named) { ret_names = astwalk.collect_idents_expr(ret, []); named = true; }
-        if (fl >= 0 && util.index_of_str(ret_names, st.locals[i].slot_name) < 0) {
+        if (fl >= 0 && (util.index_of_str(ret_names, st.locals[i].slot_name) < 0
+            || (has_ret && rebind_call_same_dec(ret, st.locals[i].slot_name, st)))) {
             st = st.emit(ir.op_load_local(fl));
             st = st.emit(ir.op_if(0));
             st = st.release(i, "__fern_rc_dec", "consumed-param-exit");
