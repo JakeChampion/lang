@@ -212,15 +212,14 @@ func buildExternAsyncStringResultWrapper(nparams int, rawImport string) func(map
 // buildExternListResultWrapper is the integer-array counterpart of the
 // string-result wrapper: it lowers a `list<T>` result the same way (canonical
 // return area), then materializes a Fern `T[]` array. A native array is
-// length-prefixed — the value is a pointer to the elements with the element
-// count at `ptr-4` — so the wrapper allocates `4 + count*stride`, stores the
-// element count, memory.copys the host bytes (`count*stride` of them) just past
-// it, and returns the element pointer. `stride` is the element size in bytes (1
-// for u8, 4 for i32, …); a stride of 1 emits the same bytes as the original
-// u8-only wrapper. Wrapper type is (scalar params…) -> i32.
+// a pointer to its elements behind an `arrHeaderBytes` header (cap / rc / len
+// at -12 / -8 / -4) — so the wrapper allocates header + `count*stride`, writes
+// the header, memory.copys the host bytes (`count*stride` of them) into the
+// payload, and returns the element pointer. `stride` is the element size in
+// bytes (1 for u8, 4 for i32, …). Wrapper type is (scalar params…) -> i32.
 //
 // Locals after the params: 0:$rb (return area) 1:$dp (host data) 2:$n (count)
-// 3:$arr (array block base).
+// 3:$arr (array data pointer).
 func buildExternListResultWrapper(nparams int, rawImport string, stride uint32) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
@@ -231,8 +230,7 @@ func buildExternListResultWrapper(nparams int, rawImport string, stride uint32) 
 		arr := uint32(nparams + 3)
 
 		// pushByteLen leaves `count*stride` (the byte length) on the stack. For
-		// stride 1 it's just the count, so the u8 path is byte-for-byte the old
-		// wrapper (no multiply emitted).
+		// stride 1 it's just the count (no multiply emitted).
 		pushByteLen := func(b []byte) []byte {
 			b = inst.InstLocalGet(b, n)
 			if stride != 1 {
@@ -241,6 +239,7 @@ func buildExternListResultWrapper(nparams int, rawImport string, stride uint32) 
 			}
 			return b
 		}
+		pushCount := func(b []byte) []byte { return inst.InstLocalGet(b, n) }
 
 		var body []byte
 		// rb = (__fern_alloc(12) + 3) & ~3 — 4-byte aligned return area.
@@ -263,26 +262,15 @@ func buildExternListResultWrapper(nparams int, rawImport string, stride uint32) 
 		body = inst.InstLocalGet(body, rb)
 		body = memory.InstI32Load(body, 2, 4)
 		body = inst.InstLocalSet(body, n)
-		// arr = __fern_alloc(4 + count*stride); store count; copy bytes to arr+4.
-		body = inst.InstI32Const(body, 4)
-		body = pushByteLen(body)
-		body = numeric.InstI32Add(body)
-		body = inst.InstCall(body, alloc)
-		body = inst.InstLocalSet(body, arr)
+		// arr = a fresh count-element T[] (cap / rc / len header).
+		body = emitArrHeaderAlloc(body, alloc, arr, arrRcOwned, pushCount, pushByteLen)
+		// memory.copy(arr, dp, count*stride)
 		body = inst.InstLocalGet(body, arr)
-		body = inst.InstLocalGet(body, n)
-		body = memory.InstI32Store(body, 2, 0) // count @ arr+0
-		// memory.copy(arr+4, dp, count*stride)
-		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
 		body = inst.InstLocalGet(body, dp)
 		body = pushByteLen(body)
 		body = memory.InstMemoryCopy(body)
-		// return arr + 4 (pointer to elements; count lives at ptr-4).
+		// return the element pointer.
 		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
 
 		locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
 		return inst.PutFunctionBody(nil, locals, body)
@@ -293,7 +281,7 @@ func buildExternListResultWrapper(nparams int, rawImport string, stride uint32) 
 // buildExternListResultWrapper: the raw import is a `canon lower async` call
 // `(scalar params…, retptr) -> i32 status`, so after the call there is a status
 // to DROP before reading the return-area (ptr,len) and materialising a Fern T[]
-// (host bytes copied past a length prefix at native `stride`). For a
+// (host bytes copied into a header-prefixed array at native `stride`). For a
 // synchronously-completing import the host has already written the canonical
 // (ptr,len) into the return area (bytes materialised in this module's memory via
 // the lower's realloc option). Wrapper type is (scalar params…) -> i32.
@@ -315,6 +303,7 @@ func buildExternAsyncListResultWrapper(nparams int, rawImport string, stride uin
 			}
 			return b
 		}
+		pushCount := func(b []byte) []byte { return inst.InstLocalGet(b, n) }
 
 		var body []byte
 		// rb = (__fern_alloc(16) + 3) & ~3 — 4-byte-aligned return area (ptr@+0,
@@ -340,25 +329,14 @@ func buildExternAsyncListResultWrapper(nparams int, rawImport string, stride uin
 		body = inst.InstLocalGet(body, rb)
 		body = memory.InstI32Load(body, 2, 4)
 		body = inst.InstLocalSet(body, n)
-		// arr = __fern_alloc(4 + count*stride); store count; copy bytes to arr+4.
-		body = inst.InstI32Const(body, 4)
-		body = pushByteLen(body)
-		body = numeric.InstI32Add(body)
-		body = inst.InstCall(body, alloc)
-		body = inst.InstLocalSet(body, arr)
+		// arr = a fresh count-element T[] (cap / rc / len header).
+		body = emitArrHeaderAlloc(body, alloc, arr, arrRcOwned, pushCount, pushByteLen)
 		body = inst.InstLocalGet(body, arr)
-		body = inst.InstLocalGet(body, n)
-		body = memory.InstI32Store(body, 2, 0) // count @ arr+0
-		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
 		body = inst.InstLocalGet(body, dp)
 		body = pushByteLen(body)
 		body = memory.InstMemoryCopy(body)
-		// return arr + 4 (element pointer; count at ptr-4).
+		// return the element pointer.
 		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
 
 		locals := inst.PutLocalsOneGroup(nil, 7, encode.ValtypeI32) // rb,dp,n,arr,status,task,ws
 		return inst.PutFunctionBody(nil, locals, body)
@@ -375,9 +353,9 @@ func buildExternAsyncListResultWrapper(nparams int, rawImport string, stride uin
 // repeatedly `stream.read` directly into a grow-on-demand Fern array — on a
 // BLOCKED read (`0xffffffff`) wait on the set and take the completed result from
 // the event area (`evt+4 = (count<<4)|code`) — appending `count` elements each
-// iteration until `code != 0` (CLOSED/EOF). Finally it writes the length prefix,
-// `stream.drop-readable`s the handle, drops the set, and returns the Fern array
-// element pointer. Wrapper type is `(scalar params…) -> i32`.
+// iteration until `code != 0` (CLOSED/EOF). Finally it writes the array's
+// cap / rc / len header, `stream.drop-readable`s the handle, drops the set, and
+// returns the Fern array element pointer. Wrapper type is `(scalar params…) -> i32`.
 func buildExternAsyncStreamResultWrapper(nparams int, rawImport string, stride uint32) func(map[string]uint32) []byte {
 	return func(idxs map[string]uint32) []byte {
 		alloc := idxs["__fern_alloc"]
@@ -396,7 +374,7 @@ func buildExternAsyncStreamResultWrapper(nparams int, rawImport string, stride u
 		rd := uint32(nparams + 4)       // stream readable handle
 		ws := uint32(nparams + 5)       // read-loop waitable-set
 		evt := uint32(nparams + 6)      // read-completion event buffer
-		arr := uint32(nparams + 7)      // Fern array region: [len@+0][elems@+4]
+		arr := uint32(nparams + 7)      // Fern array data pointer (cap/rc/len header behind it)
 		cap := uint32(nparams + 8)      // capacity in elements
 		total := uint32(nparams + 9)    // elements collected so far
 		rs := uint32(nparams + 10)      // read status / completed result
@@ -437,8 +415,10 @@ func buildExternAsyncStreamResultWrapper(nparams int, rawImport string, stride u
 		body = inst.InstI32Const(body, 16)
 		body = inst.InstCall(body, alloc)
 		body = inst.InstLocalSet(body, evt)
-		body = inst.InstI32Const(body, int32(4+initCap*int(stride)))
+		body = inst.InstI32Const(body, int32(arrHeaderBytes+initCap*int(stride)))
 		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, arrHeaderBytes)
+		body = numeric.InstI32Add(body)
 		body = inst.InstLocalSet(body, arr)
 		body = inst.InstI32Const(body, initCap)
 		body = inst.InstLocalSet(body, cap)
@@ -464,17 +444,15 @@ func buildExternAsyncStreamResultWrapper(nparams int, rawImport string, stride u
 		body = inst.InstI32Const(body, 2)
 		body = numeric.InstI32Mul(body)
 		body = inst.InstLocalSet(body, cap)
-		body = inst.InstI32Const(body, 4) // nd = alloc(4 + cap*stride)
+		body = inst.InstI32Const(body, arrHeaderBytes) // nd = alloc(hdr + cap*stride) + hdr
 		body = elemBytes(body, cap)
 		body = numeric.InstI32Add(body)
 		body = inst.InstCall(body, alloc)
+		body = inst.InstI32Const(body, arrHeaderBytes)
+		body = numeric.InstI32Add(body)
 		body = inst.InstLocalSet(body, nd)
-		body = inst.InstLocalGet(body, nd) // memory.copy(nd+4, arr+4, total*stride)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
+		body = inst.InstLocalGet(body, nd) // memory.copy(nd, arr, total*stride)
 		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
 		body = elemBytes(body, total)
 		body = memory.InstMemoryCopy(body)
 		body = inst.InstLocalGet(body, nd)
@@ -484,11 +462,9 @@ func buildExternAsyncStreamResultWrapper(nparams int, rawImport string, stride u
 		body = numeric.InstI32Sub(body)
 		body = inst.InstLocalSet(body, avail)
 		body = inst.InstEnd(body) // if grow
-		// rs = stream.read(rd, arr + 4 + total*stride, avail).
+		// rs = stream.read(rd, arr + total*stride, avail).
 		body = inst.InstLocalGet(body, rd)
 		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
 		body = elemBytes(body, total)
 		body = numeric.InstI32Add(body)
 		body = inst.InstLocalGet(body, avail)
@@ -525,21 +501,20 @@ func buildExternAsyncStreamResultWrapper(nparams int, rawImport string, stride u
 		body = inst.InstEnd(body)     // loop
 		body = inst.InstEnd(body)     // block $done
 
-		// store the length prefix; unjoin + drop the readable end + the set.
-		body = inst.InstLocalGet(body, arr)
-		body = inst.InstLocalGet(body, total)
-		body = memory.InstI32Store(body, 2, 0) // count @ arr+0
-		body = inst.InstLocalGet(body, rd)     // waitable.join(rd, 0) — unjoin before drops
+		// Write the cap / rc / len header; unjoin + drop the readable end
+		// and the set.
+		body = emitArrHeaderStore(body, arr, arrRcOwned,
+			func(b []byte) []byte { return inst.InstLocalGet(b, cap) },
+			func(b []byte) []byte { return inst.InstLocalGet(b, total) })
+		body = inst.InstLocalGet(body, rd) // waitable.join(rd, 0) — unjoin before drops
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstCall(body, wj)
 		body = inst.InstLocalGet(body, rd)
 		body = inst.InstCall(body, sdropr)
 		body = inst.InstLocalGet(body, ws)
 		body = inst.InstCall(body, wsd)
-		// return arr + 4 (element pointer; count at ptr-4).
+		// return the element pointer.
 		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
 
 		locals := inst.PutLocalsOneGroup(nil, 13, encode.ValtypeI32) // rb,status,task,wsAwait,rd,ws,evt,arr,cap,total,rs,avail,nd
 		return inst.PutFunctionBody(nil, locals, body)
@@ -907,9 +882,9 @@ func streamParamLocals() []byte {
 // native stride), a Fern bool array element is a 4-byte slot while the canonical
 // `list<bool>` element is a single byte, so the host bytes must be byte-EXPANDED:
 // the wrapper reads each canonical byte (i32.load8_u, a 0/1) and stores it as a
-// 4-byte i32 element. The native array is length-prefixed (count at `ptr-4`), so
-// it allocs `4 + count*4`, stores the count, runs the expand loop, and returns
-// the element pointer. Wrapper type is (scalar params…) -> i32.
+// 4-byte i32 element. So it allocs `arrHeaderBytes + count*4`, writes the
+// cap / rc / len header, runs the expand loop, and returns the element pointer.
+// Wrapper type is (scalar params…) -> i32.
 //
 // Locals after the params: 0:$rb 1:$dp (host data) 2:$n (count) 3:$arr 4:$i.
 func buildExternBoolListResultWrapper(nparams int, rawImport string) func(map[string]uint32) []byte {
@@ -943,18 +918,14 @@ func buildExternBoolListResultWrapper(nparams int, rawImport string) func(map[st
 		body = inst.InstLocalGet(body, rb)
 		body = memory.InstI32Load(body, 2, 4)
 		body = inst.InstLocalSet(body, n)
-		// arr = __fern_alloc(4 + count*4); store count @ arr+0.
-		body = inst.InstI32Const(body, 4)
-		body = inst.InstLocalGet(body, n)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Mul(body)
-		body = numeric.InstI32Add(body)
-		body = inst.InstCall(body, alloc)
-		body = inst.InstLocalSet(body, arr)
-		body = inst.InstLocalGet(body, arr)
-		body = inst.InstLocalGet(body, n)
-		body = memory.InstI32Store(body, 2, 0)
-		// for i in 0..n: i32.store(arr+4+i*4, i32.load8_u(dp+i)).
+		// arr = a fresh count-element bool[] (cap / rc / len header).
+		pushCount := func(b []byte) []byte { return inst.InstLocalGet(b, n) }
+		body = emitArrHeaderAlloc(body, alloc, arr, arrRcOwned, pushCount, func(b []byte) []byte {
+			b = inst.InstLocalGet(b, n)
+			b = inst.InstI32Const(b, 4)
+			return numeric.InstI32Mul(b)
+		})
+		// for i in 0..n: i32.store(arr+i*4, i32.load8_u(dp+i)).
 		body = inst.InstI32Const(body, 0)
 		body = inst.InstLocalSet(body, i)
 		body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
@@ -963,10 +934,8 @@ func buildExternBoolListResultWrapper(nparams int, rawImport string) func(map[st
 		body = inst.InstLocalGet(body, n)
 		body = numeric.InstI32GeU(body)
 		body = inst.InstBrIf(body, 1)
-		// store address: arr + 4 + i*4
+		// store address: arr + i*4
 		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
 		body = inst.InstLocalGet(body, i)
 		body = inst.InstI32Const(body, 4)
 		body = numeric.InstI32Mul(body)
@@ -984,10 +953,8 @@ func buildExternBoolListResultWrapper(nparams int, rawImport string) func(map[st
 		body = inst.InstBr(body, 0)
 		body = inst.InstEnd(body) // loop
 		body = inst.InstEnd(body) // block
-		// return arr + 4.
+		// return the element pointer.
 		body = inst.InstLocalGet(body, arr)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
 
 		locals := inst.PutLocalsOneGroup(nil, 5, encode.ValtypeI32)
 		return inst.PutFunctionBody(nil, locals, body)
@@ -2086,20 +2053,14 @@ func buildExportListParamWrapper(idxs map[string]uint32, userFuncIdx uint32, par
 		}
 		base := baseLocal + ai
 		lenL := s.start + 1
-		// base = __fern_alloc(4 + len*stride)
-		body = inst.InstI32Const(body, 4)
-		body = pushByteLen(body, lenL, s.stride)
-		body = numeric.InstI32Add(body)
-		body = inst.InstCall(body, alloc)
-		body = inst.InstLocalSet(body, base)
-		// count @ base+0
+		// base = a fresh len-element array (cap / rc / len header); the
+		// local holds its DATA pointer.
+		pushLen := func(b []byte) []byte { return inst.InstLocalGet(b, lenL) }
+		body = emitArrHeaderAlloc(body, alloc, base, arrRcOwned, pushLen, func(b []byte) []byte {
+			return pushByteLen(b, lenL, s.stride)
+		})
+		// memory.copy(base, ptr, len*stride)
 		body = inst.InstLocalGet(body, base)
-		body = inst.InstLocalGet(body, lenL)
-		body = memory.InstI32Store(body, 2, 0)
-		// memory.copy(base+4, ptr, len*stride)
-		body = inst.InstLocalGet(body, base)
-		body = inst.InstI32Const(body, 4)
-		body = numeric.InstI32Add(body)
 		body = inst.InstLocalGet(body, s.start)
 		body = pushByteLen(body, lenL, s.stride)
 		body = memory.InstMemoryCopy(body)
@@ -2110,9 +2071,7 @@ func buildExportListParamWrapper(idxs map[string]uint32, userFuncIdx uint32, par
 	for _, s := range slots {
 		switch s.kind {
 		case kArray:
-			body = inst.InstLocalGet(body, baseLocal+ai)
-			body = inst.InstI32Const(body, 4)
-			body = numeric.InstI32Add(body) // element pointer (count at ptr-4)
+			body = inst.InstLocalGet(body, baseLocal+ai) // element pointer (count at ptr-4)
 			ai++
 		case kString:
 			body = inst.InstLocalGet(body, s.start)
@@ -2282,23 +2241,13 @@ func buildExternAsyncMemParamWrapper(ex *ir.ExternFunc, rawImport string, resKin
 			body = inst.InstLocalGet(body, rb)
 			body = memory.InstI32Load(body, 2, 4)
 			body = inst.InstLocalSet(body, nL)
-			body = inst.InstI32Const(body, 4)
-			body = pushByteLen(body)
-			body = numeric.InstI32Add(body)
-			body = inst.InstCall(body, alloc)
-			body = inst.InstLocalSet(body, arr)
+			body = emitArrHeaderAlloc(body, alloc, arr, arrRcOwned,
+				func(b []byte) []byte { return inst.InstLocalGet(b, nL) }, pushByteLen)
 			body = inst.InstLocalGet(body, arr)
-			body = inst.InstLocalGet(body, nL)
-			body = memory.InstI32Store(body, 2, 0) // count @ arr+0
-			body = inst.InstLocalGet(body, arr)
-			body = inst.InstI32Const(body, 4)
-			body = numeric.InstI32Add(body)
 			body = inst.InstLocalGet(body, dp)
 			body = pushByteLen(body)
 			body = memory.InstMemoryCopy(body)
-			body = inst.InstLocalGet(body, arr)
-			body = inst.InstI32Const(body, 4)
-			body = numeric.InstI32Add(body) // return arr + 4 (count at ptr-4)
+			body = inst.InstLocalGet(body, arr) // element pointer (count at ptr-4)
 		default: // asyncResScalar
 			body = inst.InstLocalGet(body, rb)
 			switch resultVT {

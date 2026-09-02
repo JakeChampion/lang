@@ -922,42 +922,15 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 }
 
 // emitEmptyStrArray builds a valid empty growable string[] and stores
-// its data pointer in `slot`. The array runtime keeps cap @ base-12,
-// rc @ base-8, len @ base-4 with elements at base+0 (see
-// buildArrPushGrowBody), and uses headerBytes = max(16, stride), so a
-// 16-byte header is allocated and the data pointer is alloc+16.
-// Starting from a real (cap=0, len=0) array means the first `.push`
-// reads len=0 from the canonical -4 slot and takes the copy path
-// cleanly — no reliance on the 4 bytes before the allocation being
-// zero (a bump/arena allocator doesn't guarantee that across the
-// per-request arena reset).
+// its data pointer in `slot`. Starting from a real (cap=0, len=0)
+// array means the first `.push` reads len=0 from the canonical -4 slot
+// and takes the copy path cleanly — no reliance on the 4 bytes before
+// the allocation being zero (a bump/arena allocator doesn't guarantee
+// that across the per-request arena reset).
 func emitEmptyStrArray(body []byte, idxs map[string]uint32, slot uint32) []byte {
 	alloc := idxs["__fern_alloc"]
-	// base = alloc(16) + 16
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstI32Const(body, 16)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalSet(body, slot)
-	// cap = 0 @ base-12
-	body = inst.InstLocalGet(body, slot)
-	body = inst.InstI32Const(body, 12)
-	body = numeric.InstI32Sub(body)
-	body = inst.InstI32Const(body, 0)
-	body = memory.InstI32Store(body, 2, 0)
-	// rc = 1 @ base-8
-	body = inst.InstLocalGet(body, slot)
-	body = inst.InstI32Const(body, 8)
-	body = numeric.InstI32Sub(body)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
-	// len = 0 @ base-4
-	body = inst.InstLocalGet(body, slot)
-	body = inst.InstI32Const(body, 4)
-	body = numeric.InstI32Sub(body)
-	body = inst.InstI32Const(body, 0)
-	body = memory.InstI32Store(body, 2, 0)
-	return body
+	zero := func(b []byte) []byte { return inst.InstI32Const(b, 0) }
+	return emitArrHeaderAlloc(body, alloc, slot, arrRcOwned, zero, zero)
 }
 
 // emitMethodDispatch reads the method variant landed at retptr by

@@ -10283,13 +10283,18 @@ func (g *generator) emitEnvRuntime() {
 // string with a trailing NUL preserved (for libc-shape
 // consumers like `puts`). Result is cached in
 // `__fern_args_cache` so repeat calls are O(1). Same shape
-// arm64 uses (PR #267 ptr-width-stride layout):
+// arm64 uses:
 //
-//	[pad:4 | len:4 | argv0_ptr:8 | argv1_ptr:8 | ...]
+//	[pad:4 | cap:4 | rc:4 | len:4 | argv0_ptr:8 | argv1_ptr:8 | ...]
 //
-// data ptr = base + 8 (8-aligned). length prefix at
-// `data - 4`. Element stride 8 bytes, one full pointer per
-// argv entry.
+// data ptr = base + 16 (16-aligned), so cap / rc / len sit at the
+// canonical data - 12 / -8 / -4. Element stride 8 bytes, one full
+// pointer per argv entry.
+//
+// The rc word is the static sentinel, not 1: the cache hands the same
+// pointer to every caller, so no single scope-exit dec can be the last
+// one and an owned header would free the array out from under the
+// cache on the first `for a in args()` that ends.
 func (g *generator) emitArgsRuntime() {
 	g.line("")
 	g.line(".globl __fern_args")
@@ -10316,9 +10321,9 @@ func (g *generator) emitArgsRuntime() {
 	// (Phase 2-prep layout).
 	g.emit("lea rdi, [rbx * 8 + 16]")
 	g.emit("call __fern_alloc")
-	g.emit("lea r14, [rax + 16]")           // r14 = data ptr (16-aligned)
-	g.emit("mov dword ptr [r14 - 12], ebx") // cap = argc (Phase 2-prep)
-	g.emit("mov dword ptr [r14 - 8], 1")    // rc = 1
+	g.emit("lea r14, [rax + 16]")                 // r14 = data ptr (16-aligned)
+	g.emit("mov dword ptr [r14 - 12], ebx")       // cap = argc (Phase 2-prep)
+	g.emit("mov dword ptr [r14 - 8], 0x80000000") // rc = static sentinel
 	// Outer string[] container length via the array seam (the
 	// per-element string stores in the loop below use
 	// emitStrLenStore).
