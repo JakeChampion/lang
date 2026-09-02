@@ -57,12 +57,50 @@ whose effect is unmeasured is surface, not progress.
 have repeatedly lagged reality. A gap list is a tracker, and so is a note
 someone (here, me) wrote one round earlier.
 
+## Where the release goes missing
+
+`lower_stmt_match` lowers the scrutinee into a fresh scratch local:
+
+```fern
+var ms: LowerState = lower_expr(m.scrutinee, s);
+var scrut: string = "$mscrut" + util.i32_to_string(ms.locals.len());
+ms = ms.add_local(scrut);
+ms = ms.emit(ir.op_store_local(scrut_slot));
+```
+
+`$mscrut` is written in exactly one place and read in none: grep finds the
+construction above and one unrelated comment, and nothing releases the slot.
+For a bare-ident scrutinee that is right — the load is a borrow and there is
+nothing to release. For a field access of rc-tracked type it is not: the read
+takes a counted alias, and the count is never given back.
+
+The emitted asm says the same thing, and says which helper is missing. The two
+programs differ only by the bind, and their `main` bodies differ by exactly one
+call:
+
+```
+$ diff <(calls in w_inlineenum) <(calls in r_bindthenmatch)
+<       8 call __fn___fern_arr_dec
+>       9 call __fn___fern_arr_dec
+```
+
+One `__fern_arr_dec`. Not a `__struct_drop` — that count is identical on both
+sides, which is the same thing the never-read control says.
+
 ## Next lead
 
-Find where a match lowers its scrutinee when that scrutinee is a field access
-rather than a local, and what retains it. `r_bindthenmatch` is the clean
-control that says the released path exists and the bound form takes it. Then
-account for the call form's extra 101 frees separately.
+Release `$mscrut` after the match when the scrutinee's lowering took a counted
+alias, and ONLY then: an unconditional release would over-free a bare-ident
+scrutinee, turning a leak into a use-after-free. The gate wants whatever
+predicate already decides the container-read alias_inc — the `rc_fe_rhs_tainted`
+FieldAccess arm calls that the "dup-at-extract" pair. `r_bindthenmatch` is the
+clean control proving the released path exists and the bound form takes it.
+
+Every leak-matrix cell asserts `__rc_underflow_count() != 0 -> 99`, so an
+over-release shows up as a wrong exit across many cells rather than as silence.
+Use that as the detector.
+
+Then account for the call form's extra 101 frees separately.
 
 The four arm64 rows reading `leak clean` are native-arm64 `#7446` gaps where
 the self-host is AHEAD, and are untouched by this.
