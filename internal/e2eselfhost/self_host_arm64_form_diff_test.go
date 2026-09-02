@@ -92,16 +92,20 @@ func arm64FormCases() []string {
 			}
 		}
 	}
-	// Bitmask immediates. Only the shapes the self-host encoder reaches today
-	// are here; the rotated and repeating patterns it cannot express are
-	// pinned as REFUSALS by TestSelfHostArm64RefusesUnencodableForms, which is
-	// where that gap is recorded.
-	for _, imm := range []string{"0x1", "0x3", "0xff", "0xffff"} {
+	// Bitmask immediates: runs anchored at bit 0, runs rotated off it, the
+	// all-ones-but-one shapes, and the repeating patterns only the smaller
+	// element sizes reach. The rotated and repeating ones are what a 32-bit
+	// immediate can only express by being replicated into 64 bits first
+	// (#8138); passing the 64-bit fields through instead refused them.
+	for _, imm := range []string{"0x1", "0x3", "0xff", "0xffff", "0xfffe",
+		"0xf0f0f0f0", "0x1010101", "0x8000000f", "0xfffffffe", "0x3fffc000"} {
 		add("and w1, w2, #%s", imm)
 		add("orr w1, w2, #%s", imm)
 		add("eor w1, w2, #%s", imm)
 	}
-	for _, imm := range []string{"0x1", "0xff", "0xffff", "0xfffffffffffffffe"} {
+	for _, imm := range []string{"0x1", "0xff", "0xffff", "0xffffffff",
+		"0xf0f0f0f0f0f0f0f0", "0x5555555555555555", "0xfffffffffffffffe",
+		"0x0000ffff0000ffff", "0xff00ff00ff00ff00"} {
 		add("and x1, x2, #%s", imm)
 		add("orr x1, x2, #%s", imm)
 		add("eor x1, x2, #%s", imm)
@@ -119,8 +123,8 @@ func arm64FormCases() []string {
 	}
 	// `mov reg, #imm` — the assembler chooses movz, movn or an orr-immediate.
 	// 4294967295 is absent on purpose: it needs two mov-wide chunks, so gas
-	// and native reach for an orr-bitmask the self-host has no encoder for.
-	// It is pinned as a refusal instead.
+	// and native build it with an orr-bitmask, which this assembler does not
+	// reach for. It is pinned as a refusal instead — a safe one.
 	for _, imm := range []string{"0", "1", "65535", "65536", "-1", "-2"} {
 		add("mov x1, #%s", imm)
 	}
@@ -237,40 +241,20 @@ func TestSelfHostArm64FormsMatchNative(t *testing.T) {
 	}
 }
 
-// TestSelfHostArm64RefusesUnencodableForms is the other half, and it records a
-// real capability gap rather than hiding it. Every line here is one GAS and
-// internal/native/arm64 both encode and the self-host assembler cannot:
+// TestSelfHostArm64RefusesUnencodableForms pins the one shape gas encodes and
+// this assembler does not: a mov immediate needing two mov-wide chunks, which
+// gas builds with an orr-bitmask rather than a mov. Refusing is safe — the
+// driver checks p.unknown and declines to write the image — and refusing is
+// what it does now; before #7903 phase 5 it encoded `movn x1, #0` and loaded
+// -1 instead.
 //
-//   - the rotated and repeating bitmask immediates. The self-host reaches the
-//     runs anchored at bit 0 and little else; N:immr:imms in general is not
-//     implemented.
-//   - a mov immediate needing two mov-wide chunks, which gas builds with an
-//     orr-bitmask — the same missing encoder.
-//
-// Pinned as refusals because a refusal is SAFE: the driver checks p.unknown
-// and declines to write the image, so the build stops instead of running wrong
-// bytes. What is not safe is encoding them anyway, which is what this family
-// used to do at every width (#7903 phase 5). When the bitmask encoder lands,
-// these move up into the match set and this test shrinks.
+// The row asserts native still ENCODES it, so it fails the day the gap closes
+// rather than outliving it.
 func TestSelfHostArm64RefusesUnencodableForms(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
 
-	var lines []string
-	for _, imm := range []string{"0xfffe", "0xf0f0f0f0", "0x1010101", "0x8000000f"} {
-		for _, m := range []string{"and", "orr", "eor"} {
-			lines = append(lines, fmt.Sprintf("%s w1, w2, #%s", m, imm))
-		}
-	}
-	for _, imm := range []string{"0xffffffff", "0xf0f0f0f0f0f0f0f0", "0x5555555555555555"} {
-		for _, m := range []string{"and", "orr", "eor"} {
-			lines = append(lines, fmt.Sprintf("%s x1, x2, #%s", m, imm))
-		}
-	}
-	lines = append(lines, "mov x1, #4294967295")
-
-	// The oracle half: each of these must be something native CAN encode, or
-	// the row is pinning the wrong thing.
+	lines := []string{"mov x1, #4294967295"}
 	for _, ln := range lines {
 		if _, _, err := arm64.AssembleProgram(ln+"\n", 0x400000); err != nil {
 			t.Errorf("%-40s internal/native/arm64 refuses it too, so this row does not "+
@@ -280,9 +264,9 @@ func TestSelfHostArm64RefusesUnencodableForms(t *testing.T) {
 	checkRefusedSelfHost(t, bin, runner, lines)
 }
 
-// TestSelfHostArm64RefusesUnencodableImm12 pins the other direction: an
-// add/sub immediate NEITHER assembler can encode must be refused by both, not
-// masked into a different number by one of them.
+// TestSelfHostArm64RefusesUnencodableImmediates pins the other direction: an
+// immediate NEITHER assembler can encode must be refused by both, not masked
+// into a different number by one of them.
 //
 // imm12 is twelve unsigned bits, optionally shifted left twelve, so it holds
 // 0..4095 and the multiples of 4096 up to 0xFFF000 — nothing between two
@@ -290,7 +274,7 @@ func TestSelfHostArm64RefusesUnencodableForms(t *testing.T) {
 // every one of these to twelve bits and encoded it anyway, which is how
 // `sub sp, sp, #4096` became `sub sp, sp, #0`: a function needing a frame
 // that large allocated none at all, and nothing failed at assemble time.
-func TestSelfHostArm64RefusesUnencodableImm12(t *testing.T) {
+func TestSelfHostArm64RefusesUnencodableImmediates(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
 
@@ -302,6 +286,11 @@ func TestSelfHostArm64RefusesUnencodableImm12(t *testing.T) {
 		"cmn w2, #4097",          // and cmn
 		"adds x1, x2, #16777216", // 0x1000000: one past 0xFFF000
 		"subs w1, w2, #-1",       // negative: imm12 is unsigned
+		// A logical immediate wider than the register it applies to. The low
+		// half of each IS a valid bitmask, so a width check that is not there
+		// encodes that instead of refusing — a different mask, silently.
+		"and w1, w2, #0x1000000ff",
+		"orr w1, w2, #0x300000001",
 	}
 	for _, ln := range lines {
 		if _, _, err := arm64.AssembleProgram(ln+"\n", 0x400000); err == nil {
