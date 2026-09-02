@@ -113,15 +113,70 @@ function arm64_movn(buf: i32[], rd: i32, imm16: i32, shift: i32, w: boolean): i3
 
 // ---- add / sub (immediate) ----
 
+// ---- the add / sub / adds / subs family ----
+//
+// One family, four mnemonics, three operand forms. They differ only in fixed
+// bits: op picks add from sub, S the flag-setting pair, sf the width, and one
+// more bit the immediate form from the shifted-register one. Writing them as
+// ten separate encoders is what let each of these hide independently — the
+// register forms never took a width at all (`add w1, w2, w3` assembled as
+// `add x1, x2, x3`), `subs` dropped its shift, `adds` refused every form but
+// the bare register one, and every immediate at or above 4096 was masked to
+// twelve bits and silently lost (`sub sp, sp, #4096` became `sub sp, sp, #0`,
+// so a frame that big was never allocated).
+
+// arm64_addsub_base is the fixed-bit prefix: add is 0, sub sets bit 30, the
+// flag-setting pair sets bit 29, a 64-bit operation sets sf, and the immediate
+// form has a different opcode field from the shifted-register one.
+function arm64_addsub_base(is_sub: boolean, s: boolean, w: boolean, imm: boolean): i64 {
+    var base: i64 = 0x0b000000;      // shifted register, 32-bit, add
+    if (imm) { base = 0x11000000; }  // immediate, 32-bit, add
+    if (is_sub) { base = base | 0x40000000; }
+    if (s) { base = base | 0x20000000; }
+    if (!w) { base = base | 0x80000000; }
+    return base;
+}
+
+// arm64_addsub_imm_ok reports whether an immediate is encodable at all. imm12
+// is unsigned and either unshifted or shifted left twelve, so 0..4095 and the
+// multiples of 4096 up to 0xFFF000 are reachable and NOTHING else is. A value
+// between two multiples above 4095 needs a materialise, which is the caller's
+// job — encoding it anyway adds a different number.
+function arm64_addsub_imm_ok(imm: i32): boolean {
+    if (imm < 0) { return false; }
+    if (imm <= 4095) { return true; }
+    if ((imm & 4095) != 0) { return false; }
+    return (imm / 4096) <= 4095;
+}
+
+function arm64_addsub_imm_word(is_sub: boolean, s: boolean, w: boolean, rd: i32, rn: i32, imm: i32): i64 {
+    var base: i64 = arm64_addsub_base(is_sub, s, w, true);
+    var v: i32 = imm;
+    if (v > 4095) {
+        base = base | 0x400000; // sh = 1: the field counts units of 4096
+        v = v / 4096;
+    }
+    return base | (((v & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
+// arm64_addsub_reg_word is the shifted-register form. `st` is the shift type
+// (0 lsl, 1 lsr, 2 asr) and `amount` its 6-bit count; a bare `add Xd, Xn, Xm`
+// is this form with both zero.
+function arm64_addsub_reg_word(is_sub: boolean, s: boolean, w: boolean, rd: i32, rn: i32, rm: i32, st: i32, amount: i32): i64 {
+    return arm64_addsub_base(is_sub, s, w, false)
+        | (((st & 3) as i64) << 22) | (((rm & 31) as i64) << 16)
+        | (((amount & 63) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
 // arm64_addimm_word encodes `add Xd, Xn, #imm12` (64-bit, no lsl #12).
 //   sf=1 op=0 S=0 100010 sh=0 imm12 Rn Rd -> 0x91000000 | imm12<<10 | Rn<<5 | Rd
 function arm64_addimm_word(rd: i32, rn: i32, imm12: i32): i64 {
-    return 0x91000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    return arm64_addsub_imm_word(false, false, false, rd, rn, imm12);
 }
 
 // arm64_subimm_word encodes `sub Xd, Xn, #imm12` (64-bit) — base 0xD1000000.
 function arm64_subimm_word(rd: i32, rn: i32, imm12: i32): i64 {
-    return 0xd1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    return arm64_addsub_imm_word(true, false, false, rd, rn, imm12);
 }
 
 // `w` clears sf: add 0x91000000 -> 0x11000000, sub 0xd1000000 -> 0x51000000.
@@ -167,10 +222,7 @@ function arm64_addsub_ext_sp(buf: i32[], is_sub: boolean, rd: i32, rn: i32, rm: 
 // past [0] (verified vs llvm-mc: add x0,x1,x0,lsl #2 = 0x8b000820,
 // sub x3,x4,x5,lsl #3 = 0xcb050c83).
 function arm64_addsubreg_shift_word(is_sub: boolean, rd: i32, rn: i32, rm: i32, st: i32, amount: i32): i64 {
-    var base: i64 = 0x8b000000;
-    if (is_sub) { base = 0xcb000000; }
-    return base | (((st & 3) as i64) << 22) | (((rm & 31) as i64) << 16)
-        | (((amount & 63) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    return arm64_addsub_reg_word(is_sub, false, false, rd, rn, rm, st, amount);
 }
 function arm64_addsubreg_shift(buf: i32[], is_sub: boolean, rd: i32, rn: i32, rm: i32, st: i32, amount: i32, w: boolean): i32[] {
     var word: i64 = arm64_addsubreg_shift_word(is_sub, rd, rn, rm, st, amount);
@@ -181,12 +233,12 @@ function arm64_addsubreg_shift(buf: i32[], is_sub: boolean, rd: i32, rn: i32, rm
 // arm64_addreg_word encodes `add Xd, Xn, Xm` (shifted-register, zero shift).
 //   sf=1 op=0 S=0 01011 -> 0x8B000000 | Rm<<16 | Rn<<5 | Rd
 function arm64_addreg_word(rd: i32, rn: i32, rm: i32): i64 {
-    return 0x8b000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    return arm64_addsub_reg_word(false, false, false, rd, rn, rm, 0, 0);
 }
 
 // arm64_subreg_word encodes `sub Xd, Xn, Xm` -> base 0xCB000000.
 function arm64_subreg_word(rd: i32, rn: i32, rm: i32): i64 {
-    return 0xcb000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    return arm64_addsub_reg_word(true, false, false, rd, rn, rm, 0, 0);
 }
 
 // arm64_movreg_word encodes `mov Xd, Xm` — AArch64 spells it
@@ -249,7 +301,7 @@ function arm64_cmpreg_word(rn: i32, rm: i32): i64 {
 // arm64_cmpimm_word encodes `cmp Xn, #imm12` — `subs XZR, Xn, #imm12`.
 //   0xF1000000 | imm12<<10 | Rn<<5 | 31
 function arm64_cmpimm_word(rn: i32, imm12: i32): i64 {
-    return 0xf1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | 31;
+    return arm64_addsub_imm_word(true, true, false, 31, rn, imm12);
 }
 
 // `w` clears sf: cmp-reg 0xeb.. -> 0x6b.., cmp-imm 0xf1.. -> 0x71... A 64-bit
@@ -1385,11 +1437,11 @@ function arm64_eor_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[
 
 // subs Xd, Xn, Xm (flag-setting subtract) -> 0xEB000000.
 function arm64_subsreg(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
-    return arm64_le32(buf, 0xeb000000 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+    return arm64_le32(buf, arm64_addsub_reg_word(true, true, false, rd, rn, rm, 0, 0));
 }
 // subs Xd, Xn, #imm12 -> 0xF1000000 (cmp is the Rd=31 special case).
 function arm64_subsimm(buf: i32[], rd: i32, rn: i32, imm12: i32): i32[] {
-    return arm64_le32(buf, 0xf1000000 | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+    return arm64_le32(buf, arm64_addsub_imm_word(true, true, false, rd, rn, imm12));
 }
 // udiv / sdiv Xd, Xn, Xm -> 0x9AC00800 / 0x9AC00C00.
 function arm64_udiv(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
@@ -1397,6 +1449,14 @@ function arm64_udiv(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
 }
 function arm64_sdiv(buf: i32[], rd: i32, rn: i32, rm: i32): i32[] {
     return arm64_le32(buf, 0x9ac00c00 | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64));
+}
+// The `w` forms of the divides: sf clears, as everywhere else.
+function arm64_div_w(buf: i32[], signed: boolean, rd: i32, rn: i32, rm: i32, w: boolean): i32[] {
+    var word: i64 = 0x9ac00800;
+    if (signed) { word = 0x9ac00c00; }
+    word = word | (((rm & 31) as i64) << 16) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (w) { word = word & 0x7fffffff; }
+    return arm64_le32(buf, word);
 }
 // rev16 Xd, Xn -> 0xDAC00400 | Rn<<5 | Rd.
 // `w` clears sf: 0xdac00400 -> 0x5ac00400. rev16 on a 32-bit value byte-swaps
@@ -2418,6 +2478,17 @@ function arm64_gas_imm(tok: string): i32 {
     return arm64_gas_atoi(s);
 }
 
+// arm64_gas_imm64 parses the same token at full width. The i32 form above
+// truncates, which made `mov x1, #4294967295` indistinguishable from
+// `mov x1, #-1` — and the mov-wide path then encoded the latter.
+function arm64_gas_imm64(tok: string): i64 {
+    var s: string = arm64_gas_trim(tok);
+    if (s.len() > 0 && s[0] == b'#') {
+        s = slice_unchecked(s, 1, s.len()) + "";
+    }
+    return arm64_gas_atoi64(s);
+}
+
 // arm64_gas_reg parses a register token: x0..x30 / w0..w30 (same number),
 // d0..d31 / s0..s31 (FP), plus the aliases sp / lr / xzr / wzr. Returns
 // -1 for anything else — a STRICT digit parse, so `x1a` (previously 1 via
@@ -3106,7 +3177,9 @@ function arm64_gas_movwide_out_of_range(mnem: string, rest: string): boolean {
     if (ops.len() < 2) { return false; }
     if (ops[1].len() == 0 || ops[1][0] != b'#') { return false; }   // register form
     if (ops.len() > 2 && arm64_gas_lsl_amount(ops[2]) != 0) { return false; }  // explicit shift
-    var v: i64 = arm64_gas_imm(ops[1]) as i64;
+    // At full width: an immediate that does not survive the i32 parse used to
+    // reach the emitter as a different number entirely.
+    var v: i64 = arm64_gas_imm64(ops[1]);
     if (v < 0) { v = (0 - v) - 1; }
     return arm64_movwide_hw(v) < 0;
 }
@@ -3199,6 +3272,19 @@ function arm64_gas_extend_option(tok: string): i32 {
 // below cover what the backend emits; anything else must refuse the line
 // rather than drop the operand, which is what made `add x0, x1, x0, lsl #2`
 // read element [0] for every index (#6849).
+// arm64_gas_addsub_imm_unsupported reports an add/sub/adds/subs (or a cmp/cmn
+// alias) whose immediate imm12 cannot hold. cmp and cmn name one fewer
+// operand, so the immediate sits one place earlier.
+function arm64_gas_addsub_imm_unsupported(mnem: string, rest: string): boolean {
+    var at: i32 = 2;
+    if (mnem == "cmp" || mnem == "cmn") { at = 1; }
+    else if (mnem != "add" && mnem != "sub" && mnem != "adds" && mnem != "subs") { return false; }
+    var ops: string[] = arm64_gas_operands(rest);
+    if (ops.len() <= at) { return false; }
+    if (ops[at].len() == 0 || ops[at][0] != b'#') { return false; }
+    return !arm64_addsub_imm_ok(arm64_gas_imm(ops[at]));
+}
+
 function arm64_gas_addsub_operand_unsupported(mnem: string, rest: string): boolean {
     if (mnem != "add" && mnem != "sub") { return false; }
     var ops: string[] = arm64_gas_operands(rest);
@@ -3280,12 +3366,6 @@ function arm64_gas_bad_ext_token(mnem: string, rest: string): string {
 }
 function arm64_gas_bad_ext_alu(mnem: string, ops: string[]): string {
     if (arm64_gas_is_carry(mnem) || arm64_gas_is_mulwide(mnem)) { return arm64_gas_bad_carrymul(mnem, ops); }
-    // adds is register-only here: an immediate would mis-read as a register.
-    if (mnem == "adds") {
-        if (ops.len() != 3) { return "arity"; }
-        if (ops[2].len() > 0 && ops[2][0] == b'#') { return "imm"; }
-        return "";
-    }
     if (arm64_gas_is_logical2(mnem)) { return arm64_gas_bad_logical2(mnem, ops); }
     if (arm64_gas_is_bitfield(mnem) || mnem == "extr" || mnem == "ror"
         || mnem == "ubfx" || mnem == "sbfx") { return arm64_gas_bad_bitfield(mnem, ops); }
@@ -4012,50 +4092,56 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_movn(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), nsh, arm64_gas_is_w(ops[0])) };
         return a;
     }
-    if (mnem == "add" || mnem == "sub") {
-        var is_sub: boolean = (mnem == "sub");
-        var ad: i32 = arm64_gas_reg(ops[0]);
-        var an: i32 = arm64_gas_reg(ops[1]);
-        if (ops[2].len() > 0 && ops[2][0] == b'#') {
-            if (is_sub) {
-                a = Arm64Asm { ...a, code: arm64_subimm(a.code, ad, an, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
-            } else {
-                a = Arm64Asm { ...a, code: arm64_addimm(a.code, ad, an, arm64_gas_imm(ops[2]), arm64_gas_is_w(ops[0])) };
-            }
-            return a;
+    // add / sub / adds / subs, and the cmp / cmn aliases that are the same
+    // instructions writing the zero register. One arm for all six: they share
+    // every operand form, and the widths and the shifted immediate went
+    // missing precisely because they did not share an encoder.
+    if (mnem == "add" || mnem == "sub" || mnem == "adds" || mnem == "subs"
+        || mnem == "cmp" || mnem == "cmn") {
+        var is_sub: boolean = (mnem == "sub" || mnem == "subs" || mnem == "cmp");
+        var sets: boolean = (mnem == "adds" || mnem == "subs" || mnem == "cmp" || mnem == "cmn");
+        // cmp/cmn discard the result, so they name one fewer operand: shift
+        // the operand list to the three-operand shape the rest expects.
+        var cmpalias: boolean = (mnem == "cmp" || mnem == "cmn");
+        var dst: string = ops[0];
+        var src: string[] = ops;
+        if (cmpalias) {
+            dst = "xzr";
+            if (arm64_gas_is_w(ops[0])) { dst = "wzr"; }
+            src = [dst].append(ops[0]).append(ops[1]);
+            if (ops.len() >= 3) { src = src.append(ops[2]); }
         }
-        var am: i32 = arm64_gas_reg(ops[2]);
+        var w: boolean = arm64_gas_is_w(src[0]);
+        var ad: i32 = arm64_gas_reg(src[0]);
+        var an: i32 = arm64_gas_reg(src[1]);
+        if (src[2].len() > 0 && src[2][0] == b'#') {
+            var iv: i32 = arm64_gas_imm(src[2]);
+            // imm12 reaches 0..4095 and the multiples of 4096 up to 0xFFF000
+            // and nothing else. Masking the rest to twelve bits encodes a
+            // different number, silently, which is what this refuses.
+            return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_imm_word(is_sub, sets, w, ad, an, iv)) };
+        }
+        var am: i32 = arm64_gas_reg(src[2]);
         // A fourth operand is a shift or an extend applied to Xm, and it is
         // part of the VALUE: `add Xd, Xn, Xm, lsl #2` scales an array index by
         // the element size. arm64_gas_addsub_operand_unsupported refuses any
         // other spelling, so nothing reaches here silently unshifted.
-        if (ops.len() >= 4) {
-            var ext: i32 = arm64_gas_extend_option(ops[3]);
+        if (src.len() >= 4) {
+            var ext: i32 = arm64_gas_extend_option(src[3]);
             if (ext >= 0) {
-                a = Arm64Asm { ...a, code: arm64_addsub_ext(a.code, is_sub, ad, an, am, ext, arm64_gas_lsl_amount(ops[3])) };
+                a = Arm64Asm { ...a, code: arm64_addsub_ext(a.code, is_sub, ad, an, am, ext, arm64_gas_lsl_amount(src[3])) };
                 return a;
             }
-            a = Arm64Asm { ...a, code: arm64_addsubreg_shift(a.code, is_sub, ad, an, am,
-                arm64_gas_shift_type(ops[3]), arm64_gas_lsl_amount(ops[3]), arm64_gas_is_w(ops[0])) };
+            return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_reg_word(is_sub, sets, w, ad, an, am,
+                arm64_gas_shift_type(src[3]), arm64_gas_lsl_amount(src[3]))) };
+        }
+        // An sp operand takes the extended-register encoding, not the shifted
+        // one — the same written syntax, a different instruction.
+        if (arm64_gas_trim(src[1]) == "sp") {
+            a = Arm64Asm { ...a, code: arm64_addsub_ext_sp(a.code, is_sub, ad, an, am) };
             return a;
         }
-        if (arm64_gas_trim(ops[1]) == "sp") {
-            a = Arm64Asm { ...a, code: arm64_addsub_ext_sp(a.code, is_sub, ad, an, am) };
-        } else if (is_sub) {
-            a = Arm64Asm { ...a, code: arm64_subreg(a.code, ad, an, am) };
-        } else {
-            a = Arm64Asm { ...a, code: arm64_addreg(a.code, ad, an, am) };
-        }
-        return a;
-    }
-    if (mnem == "cmp") {
-        var cn: i32 = arm64_gas_reg(ops[0]);
-        if (ops[1].len() > 0 && ops[1][0] == b'#') {
-            a = Arm64Asm { ...a, code: arm64_cmpimm(a.code, cn, arm64_gas_imm(ops[1]), arm64_gas_is_w(ops[0])) };
-        } else {
-            a = Arm64Asm { ...a, code: arm64_cmpreg(a.code, cn, arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
-        }
-        return a;
+        return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_reg_word(is_sub, sets, w, ad, an, am, 0, 0)) };
     }
     if (mnem == "ldr" || mnem == "str") {
         var rt: i32 = arm64_gas_reg(ops[0]);
@@ -4101,7 +4187,7 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         return Arm64Asm { ...a, code: arm64_str(a.code, rt, m.base, m.off, arm64_gas_is_w(ops[0])) };
     }
     if (mnem == "neg") {
-        a = Arm64Asm { ...a, code: arm64_neg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1])) };
+        a = Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_reg_word(true, false, arm64_gas_is_w(ops[0]), arm64_gas_reg(ops[0]), 31, arm64_gas_reg(ops[1]), 0, 0)) };
         return a;
     }
     if (mnem == "ubfx" || mnem == "sbfx") {
@@ -4181,15 +4267,6 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         }
         return a;
     }
-    if (mnem == "cmn") {
-        if (ops[1].len() > 0 && ops[1][0] == b'#') {
-            a = Arm64Asm { ...a, code: arm64_cmn_imm(a.code, arm64_gas_reg(ops[0]), arm64_gas_imm(ops[1]), arm64_gas_is_w(ops[0])) };
-            return a;
-        }
-        // register form: `adds XZR, Xn, Xm`.
-        a = Arm64Asm { ...a, code: arm64_rrr(a.code, 0xab000000, 31, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_is_w(ops[0])) };
-        return a;
-    }
     if (mnem == "csel") {
         a = Arm64Asm { ...a, code: arm64_condsel(a.code, 0x9a800000, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_w(ops[0])) };
         return a;
@@ -4210,27 +4287,8 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         a = Arm64Asm { ...a, code: arm64_logical_shift(a.code, lb, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), lst, lamt, arm64_gas_is_w(ops[0])) };
         return a;
     }
-    if (mnem == "subs") {
-        if (ops[2].len() > 0 && ops[2][0] == b'#') {
-            a = Arm64Asm { ...a, code: arm64_subsimm(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2])) };
-        } else {
-            a = Arm64Asm { ...a, code: arm64_subsreg(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2])) };
-        }
-        return a;
-    }
-    // adds Xd, Xn, Xm — the flag-setting add whose carry the adc chain
-    // consumes (cmn above is its Rd=XZR alias). Register form only; an
-    // immediate operand is refused by the vet, never mis-read as a register.
-    if (mnem == "adds") {
-        a = Arm64Asm { ...a, code: arm64_rrr(a.code, 0xab000000, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
-        return a;
-    }
-    if (mnem == "udiv") {
-        a = Arm64Asm { ...a, code: arm64_udiv(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2])) };
-        return a;
-    }
-    if (mnem == "sdiv") {
-        a = Arm64Asm { ...a, code: arm64_sdiv(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2])) };
+    if (mnem == "udiv" || mnem == "sdiv") {
+        a = Arm64Asm { ...a, code: arm64_div_w(a.code, mnem == "sdiv", arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_is_w(ops[0])) };
         return a;
     }
     if (mnem == "msub") {
@@ -5392,6 +5450,15 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         // instruction that computes the wrong address (#6849).
         if (arm64_gas_addsub_operand_unsupported(mnem, rest)) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":shift") };
+        }
+        // Same discipline for an add/sub immediate outside imm12's reach. The
+        // field is twelve unsigned bits, optionally shifted left twelve, so it
+        // holds 0..4095 and the multiples of 4096 up to 0xFFF000 and nothing
+        // else. Masking anything else to twelve bits encodes a DIFFERENT
+        // number and the instruction still assembles: `sub sp, sp, #4096`
+        // became `sub sp, sp, #0`, so a frame that big was never allocated.
+        if (arm64_gas_addsub_imm_unsupported(mnem, rest)) {
+            p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":imm12") };
         }
         // A mov-wide immediate that does not fit imm16 (or whose complement does
         // not, for the MOVN path) would be silently TRUNCATED into a different
