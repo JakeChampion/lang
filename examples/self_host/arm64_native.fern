@@ -215,21 +215,6 @@ function arm64_addsub_ext_sp(buf: i32[], is_sub: boolean, rd: i32, rn: i32, rm: 
     return arm64_le32(buf, arm64_addsub_ext_sp_word(is_sub, rd, rn, rm));
 }
 
-// arm64_addsubreg_shift_word encodes `add/sub Xd, Xn, Xm, <shift> #amount`:
-// shift type in bits 23:22 (0=LSL, 1=LSR, 2=ASR) and the 6-bit amount in
-// bits 15:10. The backend scales an array index by its element size with
-// `add Xd, Xn, Xm, lsl #N`, so dropping the shift corrupts every element
-// past [0] (verified vs llvm-mc: add x0,x1,x0,lsl #2 = 0x8b000820,
-// sub x3,x4,x5,lsl #3 = 0xcb050c83).
-function arm64_addsubreg_shift_word(is_sub: boolean, rd: i32, rn: i32, rm: i32, st: i32, amount: i32): i64 {
-    return arm64_addsub_reg_word(is_sub, false, false, rd, rn, rm, st, amount);
-}
-function arm64_addsubreg_shift(buf: i32[], is_sub: boolean, rd: i32, rn: i32, rm: i32, st: i32, amount: i32, w: boolean): i32[] {
-    var word: i64 = arm64_addsubreg_shift_word(is_sub, rd, rn, rm, st, amount);
-    if (w) { word = word & 0x7fffffff; }
-    return arm64_le32(buf, word);
-}
-
 // arm64_addreg_word encodes `add Xd, Xn, Xm` (shifted-register, zero shift).
 //   sf=1 op=0 S=0 01011 -> 0x8B000000 | Rm<<16 | Rn<<5 | Rd
 function arm64_addreg_word(rd: i32, rn: i32, rm: i32): i64 {
@@ -1415,8 +1400,8 @@ function arm64_logical_imm_word(base: i64, w: boolean, rd: i32, rn: i32, imm: i6
 // Rd=XZR alias): base 0xF2000000, or 0x72000000 with N dropped for the
 // 32-bit form — the same N rule as arm64_and_imm. Callers must check
 // arm64_and_imm_ok / arm64_logical_imm_w_ok first.
-function arm64_ands_imm(buf: i32[], rd: i32, rn: i32, imm: i32, w: boolean): i32[] {
-    return arm64_le32(buf, arm64_logical_imm_word(0xf2000000, w, rd, rn, imm as i64));
+function arm64_ands_imm(buf: i32[], rd: i32, rn: i32, imm: i64, w: boolean): i32[] {
+    return arm64_le32(buf, arm64_logical_imm_word(0xf2000000, w, rd, rn, imm));
 }
 
 // arm64_logical_imm_w_ok reports whether `imm` can be re-encoded as a 32-bit
@@ -3780,7 +3765,7 @@ function arm64_gas_emit_logical2(a: Arm64Asm, mnem: string, ops: string[]): Arm6
     var rm_tok: string = ops[base_n - 1];
     if (rm_tok.len() > 0 && rm_tok[0] == b'#') {
         if (mnem != "tst" && mnem != "ands") { return a; }
-        return Arm64Asm { ...a, code: arm64_ands_imm(a.code, rd, rn, arm64_gas_imm(rm_tok), w) };
+        return Arm64Asm { ...a, code: arm64_ands_imm(a.code, rd, rn, arm64_gas_imm64(rm_tok), w) };
     }
     var st: i32 = 0;
     var amt: i32 = 0;
