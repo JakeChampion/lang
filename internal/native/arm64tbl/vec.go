@@ -46,16 +46,6 @@ type VecTable struct {
 	Ops []VecOp
 }
 
-// Lookup returns the row for a mnemonic.
-func (t VecTable) Lookup(mnem string) (VecOp, bool) {
-	for _, op := range t.Ops {
-		if op.Mnemonic == mnem {
-			return op, true
-		}
-	}
-	return VecOp{}, false
-}
-
 // VecInt3 is the three-register integer class. Aux is the size mask.
 var VecInt3 = VecTable{
 	FernFn: "arm64_v3int_entry",
