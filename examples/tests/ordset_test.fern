@@ -1,0 +1,108 @@
+import "std/test";
+import "std/ordset" as ordset;
+import "std/option";
+import "std/i32";
+
+// examples/tests/ordset_test.fern — pure-Fern coverage of std/ordset, the
+// persistent ordered set over std/ordmap's tree: membership, add /
+// remove with structural sharing, sorted iteration and rank access, and
+// the set algebra.
+function test_of_dedup(): test.TestOutcome {
+  var s: ordset.OrdSet[i32] = ordset.ordset_of([3, 1, 2, 3, 1]);
+  if (s.len() != 3 || !s.is_valid()) {
+    return test.fail("len " + s.len().to_string() + " != 3");
+  }
+  var arr: i32[] = s.to_array();
+  return test.assert_true(arr.len() == 3 && arr[0] == 1 && arr[1] == 2 && arr[2] == 3);
+}
+
+function test_add_is_persistent(): test.TestOutcome {
+  var a: ordset.OrdSet[i32] = ordset.ordset_of([1, 2]);
+  var b: ordset.OrdSet[i32] = a.add(3);
+  if (a.len() != 2 || b.len() != 3) {
+    return test.fail("add mutated receiver");
+  }
+  return test.assert_true(!a.contains(3) && b.contains(3) && b.add(3).len() == 3);
+}
+
+function test_remove(): test.TestOutcome {
+  var s: ordset.OrdSet[i32] = ordset.ordset_new();
+  var i: i32 = 0;
+  while (i < 500) {
+    s = s.add(i * 31 % 500);
+    i = i + 1;
+  }
+  var keep: ordset.OrdSet[i32] = s;
+  i = 0;
+  while (i < 500) {
+    if (i % 2 == 0) {
+      s = s.remove(i);
+    }
+    i = i + 1;
+  }
+  if (s.len() != 250 || keep.len() != 500 || !s.is_valid()) {
+    return test.fail("remove");
+  }
+  if (s.contains(4) || !s.contains(5) || !keep.contains(4)) {
+    return test.fail("membership");
+  }
+  return test.assert_eq(s.remove(4).len(), 250);
+}
+
+function test_order_and_rank(): test.TestOutcome {
+  var s: ordset.OrdSet[i32] = ordset.ordset_of([50, 10, 40, 20, 30]);
+  var arr: i32[] = s.to_array();
+  if (arr[0] != 10 || arr[4] != 50) {
+    return test.fail("order");
+  }
+  if (s.min().unwrap_or(-1) != 10 || s.max().unwrap_or(-1) != 50) {
+    return test.fail("min/max");
+  }
+  if (s.at(2).unwrap_or(-1) != 30 || s.at(5).is_some() || s.index_of(40) != 3 || s.index_of(41) != -1) {
+    return test.fail("rank");
+  }
+  return test.assert_eq(s.fold(0, (a: i32, x: i32) => a + x), 150);
+}
+
+function test_algebra(): test.TestOutcome {
+  var a: ordset.OrdSet[i32] = ordset.ordset_of([1, 2, 3, 4]);
+  var b: ordset.OrdSet[i32] = ordset.ordset_of([3, 4, 5, 6]);
+  var u: ordset.OrdSet[i32] = a.union(b);
+  var x: ordset.OrdSet[i32] = a.intersection(b);
+  var d: ordset.OrdSet[i32] = a.difference(b);
+  if (u.len() != 6 || x.len() != 2 || d.len() != 2) {
+    return test.fail("sizes");
+  }
+  if (!u.is_valid() || !x.is_valid() || !d.is_valid()) {
+    return test.fail("invalid");
+  }
+  var ux: i32[] = x.to_array();
+  if (ux[0] != 3 || ux[1] != 4 || !d.contains(1) || d.contains(3)) {
+    return test.fail("members");
+  }
+  if (!ordset.ordset_of([3, 1]).is_subset(a) || a.is_subset(b) || !a.equals(ordset.ordset_of([4, 3, 2, 1]))) {
+    return test.fail("subset/equals");
+  }
+  return test.assert_true(a.len() == 4 && b.len() == 4);
+}
+
+function test_filter_strings(): test.TestOutcome {
+  var s: ordset.OrdSet[string] = ordset.ordset_of(["pear", "apple", "fig", "apple"]);
+  var arr: string[] = s.to_array();
+  if (arr.len() != 3 || arr[0] != "apple" || arr[2] != "pear") {
+    return test.fail("string order");
+  }
+  var short: ordset.OrdSet[string] = s.filter((x: string) => x.len() <= 4);
+  return test.assert_true(short.len() == 2 && short.contains("fig") && !short.contains("apple"));
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("std/ordset");
+  r = r.it("of dedups", test_of_dedup);
+  r = r.it("add is persistent", test_add_is_persistent);
+  r = r.it("remove", test_remove);
+  r = r.it("order and rank", test_order_and_rank);
+  r = r.it("algebra", test_algebra);
+  r = r.it("filter + strings", test_filter_strings);
+  return r.finish();
+}

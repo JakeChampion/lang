@@ -1,0 +1,270 @@
+import "std/test";
+import "std/pmap" as pmap;
+import "std/option";
+import "std/i32";
+import "core/cmp";
+
+// examples/tests/pmap_test.fern — pure-Fern coverage of std/pmap, the
+// persistent hash map (hash array mapped trie). The load-bearing
+// contracts exercised here are STRUCTURAL SHARING (a snapshot taken
+// before an update is unchanged after it), the trie invariants after
+// every kind of update (`is_valid`, including collapse on remove),
+// hash-collision handling through a key type whose hash is deliberately
+// coarse, and the set algebra. i32, string, and user-struct keys are
+// covered.
+// Every key with the same `bucket` hashes alike, so collision nodes
+// form and are told apart by `eq`.
+@derive(cmp.Eq)
+struct Coarse { bucket: i32, id: i32 }
+
+impl cmp.Hash for Coarse {
+  function hash(self: Coarse): i32 {
+    return self.bucket;
+  }
+}
+
+function test_new_is_empty(): test.TestOutcome {
+  var m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  if (!m.is_empty() || m.len() != 0) {
+    return test.fail("empty map has entries");
+  }
+  return test.assert_true(m.get(1).is_none() && !m.contains(1) && m.is_valid());
+}
+
+function test_insert_get(): test.TestOutcome {
+  var m: pmap.PMap[i32, string] = pmap.pmap_new();
+  m = m.insert(2, "two");
+  m = m.insert(1, "one");
+  m = m.insert(3, "three");
+  if (m.len() != 3 || !m.is_valid()) {
+    return test.fail("len " + m.len().to_string() + " != 3");
+  }
+  if (m.get_or(2, "") != "two" || m.get_or(9, "none") != "none") {
+    return test.fail("get_or");
+  }
+  return test.assert_eq(m.get(1).unwrap_or(""), "one");
+}
+
+function test_insert_replaces(): test.TestOutcome {
+  var m: pmap.PMap[i32, i32] = pmap.from_arrays([1, 2, 1], [10, 20, 11]);
+  if (m.len() != 2) {
+    return test.fail("duplicate key grew the map");
+  }
+  return test.assert_eq(m.get_or(1, -1), 11);
+}
+
+function test_insert_is_persistent(): test.TestOutcome {
+  var m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  var i: i32 = 0;
+  while (i < 2000) {
+    m = m.insert(i * 37 % 2000, i);
+    i = i + 1;
+  }
+  var snapshot: pmap.PMap[i32, i32] = m;
+  i = 0;
+  while (i < 2000) {
+    m = m.insert(i, i + 5000);
+    i = i + 1;
+  }
+  if (snapshot.len() != 2000 || m.len() != 2000) {
+    return test.fail("lengths");
+  }
+  i = 0;
+  while (i < 2000) {
+    if (snapshot.get_or(i * 37 % 2000, -1) != i) {
+      return test.fail("snapshot changed at " + i.to_string());
+    }
+    if (m.get_or(i, -1) != i + 5000) {
+      return test.fail("update lost at " + i.to_string());
+    }
+    i = i + 1;
+  }
+  return test.assert_true(snapshot.is_valid() && m.is_valid());
+}
+
+function test_remove(): test.TestOutcome {
+  var m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  var i: i32 = 0;
+  while (i < 1000) {
+    m = m.insert(i * 53 % 1000, i);
+    i = i + 1;
+  }
+  var keep: pmap.PMap[i32, i32] = m;
+  i = 0;
+  while (i < 1000) {
+    if (i % 3 != 0) {
+      m = m.remove(i);
+    }
+    if (!m.is_valid()) {
+      return test.fail("invalid after removing " + i.to_string());
+    }
+    i = i + 1;
+  }
+  if (m.len() != 334 || keep.len() != 1000) {
+    return test.fail("len after remove: " + m.len().to_string());
+  }
+  if (m.contains(1) || !m.contains(3) || !keep.contains(1)) {
+    return test.fail("membership after remove");
+  }
+  // Removing an absent key is a no-op; removing everything empties it.
+  if (m.remove(1).len() != 334) {
+    return test.fail("remove absent");
+  }
+  i = 0;
+  while (i < 1000) {
+    m = m.remove(i);
+    i = i + 1;
+  }
+  return test.assert_true(m.is_empty() && m.is_valid());
+}
+
+function test_iteration(): test.TestOutcome {
+  var m: pmap.PMap[i32, i32] = pmap.from_arrays([5, 1, 4, 2, 3], [50, 10, 40, 20, 30]);
+  var ks: i32[] = m.keys();
+  var vs: i32[] = m.values();
+  if (ks.len() != 5 || vs.len() != 5) {
+    return test.fail("lengths");
+  }
+  // keys() and values() line up entry for entry, whatever the order.
+  var i: i32 = 0;
+  var total: i32 = 0;
+  while (i < 5) {
+    if (vs[i] != ks[i] * 10) {
+      return test.fail("keys/values misaligned at " + i.to_string());
+    }
+    total = total + ks[i];
+    i = i + 1;
+  }
+  if (total != 15) {
+    return test.fail("keys missing");
+  }
+  var sum: i32 = m.fold(0, (a: i32, k: i32, v: i32) => a + k * v);
+  return test.assert_eq(sum, 550);
+}
+
+function test_update_map_filter(): test.TestOutcome {
+  var m: pmap.PMap[i32, i32] = pmap.from_arrays([1, 2, 3, 4], [1, 2, 3, 4]);
+  var u: pmap.PMap[i32, i32] = m.update(2, (v: i32) => v * 100);
+  if (u.get_or(2, -1) != 200 || m.get_or(2, -1) != 2) {
+    return test.fail("update");
+  }
+  if (m.update(9, (v: i32) => v).len() != 4) {
+    return test.fail("update absent");
+  }
+  var d: pmap.PMap[i32, i32] = m.map_values((v: i32) => v * 2);
+  if (d.get_or(4, -1) != 8 || !d.is_valid()) {
+    return test.fail("map_values");
+  }
+  var f: pmap.PMap[i32, i32] = m.filter((k: i32, v: i32) => k % 2 == 0);
+  if (f.len() != 2 || f.contains(1) || !f.contains(4) || !f.is_valid()) {
+    return test.fail("filter");
+  }
+  return test.assert_eq(m.len(), 4);
+}
+
+function test_set_algebra(): test.TestOutcome {
+  var a: pmap.PMap[i32, i32] = pmap.pmap_new();
+  var b: pmap.PMap[i32, i32] = pmap.pmap_new();
+  var i: i32 = 0;
+  while (i < 500) {
+    a = a.insert(i, 1);
+    i = i + 1;
+  }
+  i = 250;
+  while (i < 750) {
+    b = b.insert(i, 2);
+    i = i + 1;
+  }
+  var u: pmap.PMap[i32, i32] = a.union(b);
+  if (u.len() != 750 || !u.is_valid() || u.get_or(300, -1) != 1 || u.get_or(600, -1) != 2) {
+    return test.fail("union (left-biased)");
+  }
+  var u2: pmap.PMap[i32, i32] = b.union(a);
+  if (u2.len() != 750 || u2.get_or(300, -1) != 2) {
+    return test.fail("union other way");
+  }
+  var x: pmap.PMap[i32, i32] = a.intersection(b);
+  if (x.len() != 250 || !x.is_valid() || x.get_or(300, -1) != 1 || x.contains(100)) {
+    return test.fail("intersection");
+  }
+  var d: pmap.PMap[i32, i32] = a.difference(b);
+  if (d.len() != 250 || !d.is_valid() || d.contains(300) || !d.contains(100)) {
+    return test.fail("difference");
+  }
+  return test.assert_true(a.len() == 500 && b.len() == 500);
+}
+
+function test_string_keys(): test.TestOutcome {
+  var m: pmap.PMap[string, i32] = pmap.pmap_new();
+  var i: i32 = 0;
+  while (i < 300) {
+    m = m.insert("key-" + i.to_string(), i);
+    i = i + 1;
+  }
+  if (m.len() != 300 || !m.is_valid() || m.get_or("key-77", -1) != 77 || m.contains("key-300")) {
+    return test.fail("string insert/get");
+  }
+  var snap: pmap.PMap[string, i32] = m;
+  m = m.remove("key-77");
+  if (snap.len() != 300 || m.len() != 299 || !snap.contains("key-77") || m.contains("key-77")) {
+    return test.fail("string snapshot");
+  }
+  return test.assert_true(m.is_valid());
+}
+
+function test_collisions(): test.TestOutcome {
+  var c: pmap.PMap[Coarse, i32] = pmap.pmap_new();
+  var i: i32 = 0;
+  while (i < 200) {
+    c = c.insert(Coarse { bucket: i % 5, id: i }, i);
+    i = i + 1;
+  }
+  if (c.len() != 200 || !c.is_valid()) {
+    return test.fail("collision insert");
+  }
+  if (c.get_or(Coarse { bucket: 3, id: 13 }, -1) != 13 || c.contains(Coarse { bucket: 3, id: 14 })) {
+    return test.fail("collision lookup");
+  }
+  var snap: pmap.PMap[Coarse, i32] = c;
+  i = 0;
+  while (i < 200) {
+    if (i % 2 == 0) {
+      c = c.remove(Coarse { bucket: i % 5, id: i });
+    }
+    i = i + 1;
+  }
+  if (c.len() != 100 || !c.is_valid() || snap.len() != 200) {
+    return test.fail("collision remove");
+  }
+  if (c.contains(Coarse { bucket: 0, id: 10 }) || !c.contains(Coarse { bucket: 1, id: 11 })) {
+    return test.fail("collision membership");
+  }
+  var total: i32 = c.fold(0, (a: i32, k: Coarse, v: i32) => a + v);
+  return test.assert_eq(total, 10000);
+}
+
+function test_for_each(): test.TestOutcome {
+  var m: pmap.PMap[i32, i32] = pmap.from_arrays([2, 1], [20, 10]);
+  var seen: i32 = 0;
+  function visit(k: i32, v: i32): void {
+    seen = seen + k * 100 + v;
+  }
+  m.for_each(visit);
+  return test.assert_eq(seen, 330);
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("std/pmap");
+  r = r.it("new is empty", test_new_is_empty);
+  r = r.it("insert + get", test_insert_get);
+  r = r.it("insert replaces", test_insert_replaces);
+  r = r.it("insert is persistent", test_insert_is_persistent);
+  r = r.it("remove", test_remove);
+  r = r.it("iteration", test_iteration);
+  r = r.it("update/map/filter", test_update_map_filter);
+  r = r.it("set algebra", test_set_algebra);
+  r = r.it("string keys", test_string_keys);
+  r = r.it("collisions", test_collisions);
+  r = r.it("for_each", test_for_each);
+  return r.finish();
+}

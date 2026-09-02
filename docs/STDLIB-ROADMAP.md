@@ -473,6 +473,17 @@ These landed in the chunks above but weren't on the original
 prioritised list — recording them so a future audit doesn't
 think they're free additions to make.
 
+- **Persistent collections** (#6794): `std/ordmap` / `std/ordset`
+  (weight-balanced tree, join-based set algebra, rank access),
+  `std/pmap` / `std/pset` (32-way HAMT), `std/pvec` (32-way trie +
+  tail). Structural sharing on the shared path, in-place update
+  through the compiler's reuse pass on the unique path — the
+  combination Fern's immutable values + Perceus make possible and
+  no GC'd or ownership-typed library can offer. Covered by
+  `examples/tests/{ordmap,ordset,pmap,pset,pvec}_test.fern` and
+  `internal/e2e/persistent_collections_test.go` (interp / x86-64 /
+  wasm / arm64). Design and measurements:
+  `docs/PERSISTENT-COLLECTIONS.md`.
 - **i32[] math**: `arr.sum()` / `arr.max()` / `arr.min()`.
   Constrained-receiver i32-element dispatch. `max` / `min`
   return `Option[i32]` to handle empty arrays. Inspired by

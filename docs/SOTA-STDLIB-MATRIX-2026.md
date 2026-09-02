@@ -218,7 +218,7 @@ answers**, which makes them the ones to start with.
 | 33 | HashMap | `core/map` | Open addressing, split key/value columns | SwissTable | KERNEL as designed; **the SWAR group probe is still the cheaper first move** | 1 |
 | 34 | Large hash map | `core/map` | Same path at every size | F14-style grouped probing | Folds into #33 | 1 |
 | 35 | Small hash map | `core/map` | **Linear scan at ≤ 8 entries** | Inline scan | **SHIPPED** | — |
-| 36 | Ordered map | — | Absent | B-tree | GAP | 3 |
+| 36 | Ordered map | `std/ordmap` | Weight-balanced tree, join-based algebra, rank access (#6794) | B-tree | SHIPPED | — |
 | 37 | Identity map | `core/map` | Wang mix on scalars | Integer hashing | **SHIPPED** | — |
 | 38 | General hash | `core/map` | FNV-1a over 4-byte blocks + fmix32 | XXH3 / wyhash | BLOCKED:raw-load (#6200) | 2 |
 | 39 | Adversarial hash | `core/map` | Per-process seeded FNV (#6194) | SipHash-1-3 | GAP — closes the online-oracle case | 1 |
@@ -589,7 +589,7 @@ is cheaper to decide now than to migrate.
 | 160 | Sparse bitset | — | Roaring — GAP after #159 |
 | 161 | Deque | — | GAP — circular buffer, phase 3 |
 | 162 | Priority queue | — | GAP — d-ary heap, phase 3 |
-| 163 | Ordered set | — | GAP — B-tree, phase 3 |
+| 163 | Ordered set | `std/ordset` | SHIPPED — over `std/ordmap` (#6794) |
 | 164 | Interval tree | — | N/A:no-consumer |
 | 165 | Radix trie | — | N/A:no-consumer |
 | 166 | Prefix map | — | N/A:no-consumer |
@@ -622,8 +622,8 @@ data structure.
 | 174 | Rope | N/A:no-consumer — the LSP reparses whole files |
 | 175 | Piece table | N/A:no-consumer |
 | 176 | Gap buffer | N/A:no-consumer |
-| 177 | Immutable vector | DECIDE:value-semantics — interacts with Perceus reuse |
-| 178 | Persistent map | DECIDE:value-semantics |
+| 177 | Immutable vector | `std/pvec` | SHIPPED — 32-way trie + tail; in place when unique, path-copied when shared (#6794) |
+| 178 | Persistent map | `std/pmap` / `std/pset` | SHIPPED — 32-way HAMT; in place when unique, path-copied when shared (#6794) |
 | 179 | Hash-consing | GAP, narrow — the interner is the useful 80% |
 
 Row 177/178 get DECIDE rather than GAP for a Fern-specific reason worth

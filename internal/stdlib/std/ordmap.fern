@@ -1,0 +1,1002 @@
+// std/ordmap — a persistent, ordered map with structural sharing.
+//
+// `OrdMap[K, V]` is a weight-balanced binary tree (Adams's bounded-
+// balance trees, the shape behind Haskell's Data.Map) keyed by any
+// `core/cmp.Ord` type. Every operation is value-returning:
+//
+//   import "std/ordmap";
+//   var m: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
+//   m = m.insert("b", 2);
+//   m = m.insert("a", 1);
+//   var snapshot: ordmap.OrdMap[string, i32] = m;   // O(1), shares every node
+//   m = m.insert("c", 3);                           // snapshot is unchanged
+//   m.get("a");          // Some(1)
+//   m.keys();            // ["a", "b", "c"]  (always in key order)
+//   snapshot.len();      // 2
+//
+// # Two paths, one API
+//
+// An update rebuilds the O(log n) nodes on the path to the key and
+// shares everything else with the input. Which of two things happens
+// to those path nodes is decided by the compiler, not by this module:
+//
+//   - **Shared** (another binding still holds the input, as `snapshot`
+//     above): the path nodes are freshly allocated and the input is
+//     left intact — the classic persistent structure, O(log n) per
+//     update, O(1) snapshot.
+//   - **Unique** (the input's binding dies at the call, as in
+//     `m = m.insert(k, v)`): the reference-counting reuse pass writes
+//     the new nodes into the old nodes' boxes in place, so the same
+//     source line allocates nothing at all.
+//
+// So `m = m.insert(k, v)` in a loop costs what a mutable balanced tree
+// costs, and taking a snapshot first costs one pointer copy. Neither
+// path needs a transient/builder API, and there is no `own` on the
+// receiver: an `own` receiver would forbid `var m2 = m.insert(k, v)`
+// (E051), which is the whole point of a persistent map.
+//
+// # Ordering and equality
+//
+// Keys are ordered by the bound's `cmp` method, never the `<` operator
+// (which resolves through a `Type.cmp` lookup not visible from this
+// module, #6846), so a `@derive(cmp.Ord)` struct or enum works as a
+// key. Two keys are the same key when `cmp` returns 0. Iteration —
+// `keys()`, `values()`, `fold`, `for_each` — is always in ascending key
+// order, and `key_at(i)` / `index_of(k)` give O(log n) rank access
+// because every node stores the size of its subtree.
+//
+// # Complexity
+//
+//   insert / get / contains / remove / min / max / key_at / index_of
+//     O(log n)
+//   union / intersection / difference        O(m log(n/m + 1))
+//     (split-and-join, Blelloch et al. "Just Join for Parallel
+//      Ordered Sets"), so merging a small map into a large one is
+//      O(m log n) rather than O(n + m).
+//   keys / values / fold / for_each / filter / map_values   O(n)
+//   from_arrays                                              O(n log n)
+//
+// The balance parameters are delta = 3, ratio = 2 (Hirai & Yamamoto,
+// "Balancing weight-balanced trees", 2011), the pair proven correct
+// for every rebalancing shape join-based union produces.
+import "core/cmp";
+
+// The tree. `Bin` is (left, key, value, right, size); `Tip` is the
+// empty tree. The size field makes `len()` O(1) and rank queries
+// O(log n). No methods are declared on this enum: a generic enum with
+// receiver methods is not monomorphised by the self-hosted compiler, so
+// every operation is a free function and the public methods live on
+// the `OrdMap` wrapper. The `pub __om_*` node functions exist for
+// `std/ordset`, which shares this tree with unit values.
+pub enum OrdNode[K, V] { Tip, Bin(OrdNode[K, V], K, V, OrdNode[K, V], i32) }
+
+// The public handle. Construct one only through `ordmap_new` /
+// `from_arrays`; the `root` field is an implementation detail.
+pub struct OrdMap[K, V] { root: OrdNode[K, V] }
+
+// `ordmap_new()` — the empty map. The key and value types are fixed by
+// the annotation at the binding (`var m: OrdMap[string, i32] =
+// ordmap_new();`).
+pub function ordmap_new[K, V](): OrdMap[K, V] {
+  var e: OrdNode[K, V] = Tip;
+  return OrdMap { root: e };
+}
+
+// `from_arrays(keys, values)` — the map holding `keys[i] -> values[i]`
+// for every i. A key repeated in `keys` takes its LAST value. The two
+// arrays must have the same length; extra entries in the longer one are
+// ignored.
+pub function from_arrays[K: cmp.Ord, V](keys: K[], values: V[]): OrdMap[K, V] {
+  var m: OrdMap[K, V] = ordmap_new();
+  var n: i32 = keys.len();
+  if (values.len() < n) {
+    n = values.len();
+  }
+  var i: i32 = 0;
+  while (i < n) {
+    m = m.insert(keys[i], values[i]);
+    i = i + 1;
+  }
+  return m;
+}
+
+// ---- node helpers ---------------------------------------------------
+pub function __om_size[K, V](t: OrdNode[K, V]): i32 {
+  match (t) {
+    Tip => {
+      return 0;
+    },
+    Bin(l, k, v, r, s) => {
+      return s;
+    }
+  }
+}
+
+// __om_bin builds a node from already-balanced children.
+function __om_bin[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): OrdNode[K, V] {
+  return Bin(l, k, v, r, __om_size(l) + __om_size(r) + 1);
+}
+
+function __om_single[K, V](k: K, v: V): OrdNode[K, V] {
+  var e: OrdNode[K, V] = Tip;
+  return Bin(e, k, v, e, 1);
+}
+
+// __om_rotate_l: the right subtree is too heavy. A single rotation when
+// its inner child is light, a double rotation otherwise.
+function __om_rotate_l[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): OrdNode[K, V] {
+  match (r) {
+    Tip => {
+      return __om_bin(l, k, v, r);
+    },
+    Bin(rl, rk, rv, rr, rs) => {
+      if (__om_size(rl) < 2 * __om_size(rr)) {
+        var nl: OrdNode[K, V] = __om_bin(l, k, v, rl);
+        return __om_bin(nl, rk, rv, rr);
+      }
+      match (rl) {
+        Tip => {
+          var nl: OrdNode[K, V] = __om_bin(l, k, v, rl);
+          return __om_bin(nl, rk, rv, rr);
+        },
+        Bin(rll, rlk, rlv, rlr, rls) => {
+          var nl: OrdNode[K, V] = __om_bin(l, k, v, rll);
+          var nr: OrdNode[K, V] = __om_bin(rlr, rk, rv, rr);
+          return __om_bin(nl, rlk, rlv, nr);
+        }
+      }
+    }
+  }
+}
+
+// __om_rotate_r: mirror of __om_rotate_l for a too-heavy left subtree.
+function __om_rotate_r[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): OrdNode[K, V] {
+  match (l) {
+    Tip => {
+      return __om_bin(l, k, v, r);
+    },
+    Bin(ll, lk, lv, lr, ls) => {
+      if (__om_size(lr) < 2 * __om_size(ll)) {
+        var nr: OrdNode[K, V] = __om_bin(lr, k, v, r);
+        return __om_bin(ll, lk, lv, nr);
+      }
+      match (lr) {
+        Tip => {
+          var nr: OrdNode[K, V] = __om_bin(lr, k, v, r);
+          return __om_bin(ll, lk, lv, nr);
+        },
+        Bin(lrl, lrk, lrv, lrr, lrs) => {
+          var nl: OrdNode[K, V] = __om_bin(ll, lk, lv, lrl);
+          var nr: OrdNode[K, V] = __om_bin(lrr, k, v, r);
+          return __om_bin(nl, lrk, lrv, nr);
+        }
+      }
+    }
+  }
+}
+
+// __om_balance restores the weight invariant after one child changed
+// size by at most one element (insert / delete) — the precondition for
+// a single (possibly double) rotation to suffice.
+function __om_balance[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): OrdNode[K, V] {
+  var sl: i32 = __om_size(l);
+  var sr: i32 = __om_size(r);
+  if (sl + sr <= 1) {
+    return Bin(l, k, v, r, sl + sr + 1);
+  }
+  if (sr > 3 * sl) {
+    return __om_rotate_l(l, k, v, r);
+  }
+  if (sl > 3 * sr) {
+    return __om_rotate_r(l, k, v, r);
+  }
+  return Bin(l, k, v, r, sl + sr + 1);
+}
+
+pub function __om_insert[K: cmp.Ord, V](t: OrdNode[K, V], k: K, v: V): OrdNode[K, V] {
+  match (t) {
+    Tip => {
+      return __om_single(k, v);
+    },
+    Bin(l, nk, nv, r, s) => {
+      var c: i32 = k.cmp(nk);
+      if (c < 0) {
+        var nl: OrdNode[K, V] = __om_insert(l, k, v);
+        return __om_balance(nl, nk, nv, r);
+      }
+      if (c > 0) {
+        var nr: OrdNode[K, V] = __om_insert(r, k, v);
+        return __om_balance(l, nk, nv, nr);
+      }
+      return Bin(l, k, v, r, s);
+    }
+  }
+}
+
+// __om_find returns the node holding `k`, or Tip. Iterative, so a
+// lookup never recurses.
+pub function __om_find[K: cmp.Ord, V](t: OrdNode[K, V], k: K): OrdNode[K, V] {
+  var cur: OrdNode[K, V] = t;
+  var searching: boolean = true;
+  while (searching) {
+    match (cur) {
+      Tip => {
+        searching = false;
+      },
+      Bin(l, nk, nv, r, s) => {
+        var c: i32 = k.cmp(nk);
+        if (c == 0) {
+          return cur;
+        }
+        if (c < 0) {
+          cur = l;
+        } else {
+          cur = r;
+        }
+      }
+    }
+  }
+  return cur;
+}
+
+// __om_min_node / __om_max_node return the leftmost / rightmost node
+// (Tip for an empty tree).
+pub function __om_min_node[K, V](t: OrdNode[K, V]): OrdNode[K, V] {
+  var cur: OrdNode[K, V] = t;
+  var walking: boolean = true;
+  while (walking) {
+    match (cur) {
+      Tip => {
+        walking = false;
+      },
+      Bin(l, k, v, r, s) => {
+        match (l) {
+          Tip => {
+            return cur;
+          },
+          Bin(ll, lk, lv, lr, ls) => {
+            cur = l;
+          }
+        }
+      }
+    }
+  }
+  return cur;
+}
+
+pub function __om_max_node[K, V](t: OrdNode[K, V]): OrdNode[K, V] {
+  var cur: OrdNode[K, V] = t;
+  var walking: boolean = true;
+  while (walking) {
+    match (cur) {
+      Tip => {
+        walking = false;
+      },
+      Bin(l, k, v, r, s) => {
+        match (r) {
+          Tip => {
+            return cur;
+          },
+          Bin(rl, rk, rv, rr, rs) => {
+            cur = r;
+          }
+        }
+      }
+    }
+  }
+  return cur;
+}
+
+function __om_delete_min[K, V](t: OrdNode[K, V]): OrdNode[K, V] {
+  match (t) {
+    Tip => {
+      return t;
+    },
+    Bin(l, k, v, r, s) => {
+      match (l) {
+        Tip => {
+          return r;
+        },
+        Bin(ll, lk, lv, lr, ls) => {
+          var nl: OrdNode[K, V] = __om_delete_min(l);
+          return __om_balance(nl, k, v, r);
+        }
+      }
+    }
+  }
+}
+
+function __om_delete_max[K, V](t: OrdNode[K, V]): OrdNode[K, V] {
+  match (t) {
+    Tip => {
+      return t;
+    },
+    Bin(l, k, v, r, s) => {
+      match (r) {
+        Tip => {
+          return l;
+        },
+        Bin(rl, rk, rv, rr, rs) => {
+          var nr: OrdNode[K, V] = __om_delete_max(r);
+          return __om_balance(l, k, v, nr);
+        }
+      }
+    }
+  }
+}
+
+// __om_glue joins two trees whose sizes differ by at most a constant
+// factor and whose keys are already separated (every key of `l` is
+// below every key of `r`), by lifting the larger side's extreme
+// element to the root.
+function __om_glue[K, V](l: OrdNode[K, V], r: OrdNode[K, V]): OrdNode[K, V] {
+  match (l) {
+    Tip => {
+      return r;
+    },
+    Bin(ll, lk, lv, lr, ls) => {
+      match (r) {
+        Tip => {
+          return l;
+        },
+        Bin(rl, rk, rv, rr, rs) => {
+          if (ls > rs) {
+            match (__om_max_node(l)) {
+              Tip => {
+                return r;
+              },
+              Bin(ml, mk, mv, mr, ms) => {
+                var nl: OrdNode[K, V] = __om_delete_max(l);
+                return __om_balance(nl, mk, mv, r);
+              }
+            }
+          }
+          match (__om_min_node(r)) {
+            Tip => {
+              return l;
+            },
+            Bin(ml, mk, mv, mr, ms) => {
+              var nr: OrdNode[K, V] = __om_delete_min(r);
+              return __om_balance(l, mk, mv, nr);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+pub function __om_delete[K: cmp.Ord, V](t: OrdNode[K, V], k: K): OrdNode[K, V] {
+  match (t) {
+    Tip => {
+      return t;
+    },
+    Bin(l, nk, nv, r, s) => {
+      var c: i32 = k.cmp(nk);
+      if (c < 0) {
+        var nl: OrdNode[K, V] = __om_delete(l, k);
+        return __om_balance(nl, nk, nv, r);
+      }
+      if (c > 0) {
+        var nr: OrdNode[K, V] = __om_delete(r, k);
+        return __om_balance(l, nk, nv, nr);
+      }
+      return __om_glue(l, r);
+    }
+  }
+}
+
+// ---- join / split (the set-algebra core) ----------------------------
+function __om_insert_min[K, V](k: K, v: V, t: OrdNode[K, V]): OrdNode[K, V] {
+  match (t) {
+    Tip => {
+      return __om_single(k, v);
+    },
+    Bin(l, nk, nv, r, s) => {
+      var nl: OrdNode[K, V] = __om_insert_min(k, v, l);
+      return __om_balance(nl, nk, nv, r);
+    }
+  }
+}
+
+function __om_insert_max[K, V](k: K, v: V, t: OrdNode[K, V]): OrdNode[K, V] {
+  match (t) {
+    Tip => {
+      return __om_single(k, v);
+    },
+    Bin(l, nk, nv, r, s) => {
+      var nr: OrdNode[K, V] = __om_insert_max(k, v, r);
+      return __om_balance(l, nk, nv, nr);
+    }
+  }
+}
+
+// __om_join builds the tree (l, k, v, r) for ARBITRARY sizes of `l` and
+// `r` (every key of `l` below `k`, every key of `r` above): descend the
+// heavier side until the two are within the balance bound, then rebuild.
+function __om_join[K, V](l: OrdNode[K, V], k: K, v: V, r: OrdNode[K, V]): OrdNode[K, V] {
+  match (l) {
+    Tip => {
+      return __om_insert_min(k, v, r);
+    },
+    Bin(ll, lk, lv, lr, ls) => {
+      match (r) {
+        Tip => {
+          return __om_insert_max(k, v, l);
+        },
+        Bin(rl, rk, rv, rr, rs) => {
+          if (3 * ls < rs) {
+            var nl: OrdNode[K, V] = __om_join(l, k, v, rl);
+            return __om_balance(nl, rk, rv, rr);
+          }
+          if (3 * rs < ls) {
+            var nr: OrdNode[K, V] = __om_join(lr, k, v, r);
+            return __om_balance(ll, lk, lv, nr);
+          }
+          return Bin(l, k, v, r, ls + rs + 1);
+        }
+      }
+    }
+  }
+}
+
+// __om_merge concatenates two key-separated trees of arbitrary size
+// (the keyless __om_join).
+function __om_merge[K, V](l: OrdNode[K, V], r: OrdNode[K, V]): OrdNode[K, V] {
+  match (l) {
+    Tip => {
+      return r;
+    },
+    Bin(ll, lk, lv, lr, ls) => {
+      match (r) {
+        Tip => {
+          return l;
+        },
+        Bin(rl, rk, rv, rr, rs) => {
+          if (3 * ls < rs) {
+            var nl: OrdNode[K, V] = __om_merge(l, rl);
+            return __om_balance(nl, rk, rv, rr);
+          }
+          if (3 * rs < ls) {
+            var nr: OrdNode[K, V] = __om_merge(lr, r);
+            return __om_balance(ll, lk, lv, nr);
+          }
+          return __om_glue(l, r);
+        }
+      }
+    }
+  }
+}
+
+// A split of a tree around a key: the entries below it, the node
+// holding it (Tip when absent), and the entries above it.
+pub struct OrdSplit[K, V] { lt: OrdNode[K, V], hit: OrdNode[K, V], gt: OrdNode[K, V] }
+
+function __om_split[K: cmp.Ord, V](t: OrdNode[K, V], k: K): OrdSplit[K, V] {
+  match (t) {
+    Tip => {
+      return OrdSplit { lt: t, hit: t, gt: t };
+    },
+    Bin(l, nk, nv, r, s) => {
+      var c: i32 = k.cmp(nk);
+      if (c < 0) {
+        var sp: OrdSplit[K, V] = __om_split(l, k);
+        var gt: OrdNode[K, V] = __om_join(sp.gt, nk, nv, r);
+        return OrdSplit { lt: sp.lt, hit: sp.hit, gt: gt };
+      }
+      if (c > 0) {
+        var sp: OrdSplit[K, V] = __om_split(r, k);
+        var lt: OrdNode[K, V] = __om_join(l, nk, nv, sp.lt);
+        return OrdSplit { lt: lt, hit: sp.hit, gt: sp.gt };
+      }
+      return OrdSplit { lt: l, hit: t, gt: r };
+    }
+  }
+}
+
+// __om_union is left-biased: a key in both keeps `a`'s value.
+pub function __om_union[K: cmp.Ord, V](a: OrdNode[K, V], b: OrdNode[K, V]): OrdNode[K, V] {
+  match (a) {
+    Tip => {
+      return b;
+    },
+    Bin(al, ak, av, ar, asz) => {
+      match (b) {
+        Tip => {
+          return a;
+        },
+        Bin(bl, bk, bv, br, bsz) => {
+          var sp: OrdSplit[K, V] = __om_split(b, ak);
+          var l: OrdNode[K, V] = __om_union(al, sp.lt);
+          var r: OrdNode[K, V] = __om_union(ar, sp.gt);
+          return __om_join(l, ak, av, r);
+        }
+      }
+    }
+  }
+}
+
+// __om_intersection keeps `a`'s values for the keys present in both.
+pub function __om_intersection[K: cmp.Ord, V](a: OrdNode[K, V], b: OrdNode[K, V]): OrdNode[K, V] {
+  match (a) {
+    Tip => {
+      return a;
+    },
+    Bin(al, ak, av, ar, asz) => {
+      match (b) {
+        Tip => {
+          return b;
+        },
+        Bin(bl, bk, bv, br, bsz) => {
+          var sp: OrdSplit[K, V] = __om_split(b, ak);
+          var l: OrdNode[K, V] = __om_intersection(al, sp.lt);
+          var r: OrdNode[K, V] = __om_intersection(ar, sp.gt);
+          match (sp.hit) {
+            Tip => {
+              return __om_merge(l, r);
+            },
+            Bin(hl, hk, hv, hr, hs) => {
+              return __om_join(l, ak, av, r);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// __om_difference drops from `a` every key present in `b`.
+pub function __om_difference[K: cmp.Ord, V](a: OrdNode[K, V], b: OrdNode[K, V]): OrdNode[K, V] {
+  match (a) {
+    Tip => {
+      return a;
+    },
+    Bin(al, ak, av, ar, asz) => {
+      match (b) {
+        Tip => {
+          return a;
+        },
+        Bin(bl, bk, bv, br, bsz) => {
+          var sp: OrdSplit[K, V] = __om_split(a, bk);
+          var l: OrdNode[K, V] = __om_difference(sp.lt, bl);
+          var r: OrdNode[K, V] = __om_difference(sp.gt, br);
+          return __om_merge(l, r);
+        }
+      }
+    }
+  }
+}
+
+// __om_empty / __om_holds / __om_key exist for `std/ordset`: a module
+// cannot name another module's variants, so the set builds its empty
+// root and reads a node's key through these.
+pub function __om_empty[K, V](): OrdNode[K, V] {
+  var e: OrdNode[K, V] = Tip;
+  return e;
+}
+
+pub function __om_holds[K, V](t: OrdNode[K, V]): boolean {
+  match (t) {
+    Tip => {
+      return false;
+    },
+    Bin(l, k, v, r, s) => {
+      return true;
+    }
+  }
+}
+
+pub function __om_key[K, V](t: OrdNode[K, V]): Option[K] {
+  match (t) {
+    Tip => {
+      return None;
+    },
+    Bin(l, k, v, r, s) => {
+      return Some(k);
+    }
+  }
+}
+
+// ---- traversals -------------------------------------------------------
+//
+// The accumulator-threading helpers take their array as `own` and are
+// called in the self-reassigning form `acc = f(t, acc)`, so the append
+// runs on a uniquely-held buffer and grows it in place rather than
+// copying it at every node.
+pub function __om_keys_into[K, V](t: OrdNode[K, V], own acc: K[]): K[] {
+  match (t) {
+    Tip => {
+      return acc;
+    },
+    Bin(l, k, v, r, s) => {
+      acc = __om_keys_into(l, acc);
+      acc = acc.append(k);
+      acc = __om_keys_into(r, acc);
+      return acc;
+    }
+  }
+}
+
+function __om_values_into[K, V](t: OrdNode[K, V], own acc: V[]): V[] {
+  match (t) {
+    Tip => {
+      return acc;
+    },
+    Bin(l, k, v, r, s) => {
+      acc = __om_values_into(l, acc);
+      acc = acc.append(v);
+      acc = __om_values_into(r, acc);
+      return acc;
+    }
+  }
+}
+
+pub function __om_fold[K, V, A](t: OrdNode[K, V], init: A, f: (A, K, V) => A): A {
+  match (t) {
+    Tip => {
+      return init;
+    },
+    Bin(l, k, v, r, s) => {
+      var a: A = __om_fold(l, init, f);
+      a = f(a, k, v);
+      return __om_fold(r, a, f);
+    }
+  }
+}
+
+pub function __om_for_each[K, V](t: OrdNode[K, V], f: (K, V) => void): void {
+  match (t) {
+    Tip => {
+      return;
+    },
+    Bin(l, k, v, r, s) => {
+      __om_for_each(l, f);
+      f(k, v);
+      __om_for_each(r, f);
+    }
+  }
+}
+
+// __om_map_values rebuilds the tree with every value transformed; the
+// shape (and so the balance) is unchanged.
+function __om_map_values[K, V, W](t: OrdNode[K, V], f: (V) => W): OrdNode[K, W] {
+  match (t) {
+    Tip => {
+      var e: OrdNode[K, W] = Tip;
+      return e;
+    },
+    Bin(l, k, v, r, s) => {
+      var nl: OrdNode[K, W] = __om_map_values(l, f);
+      var nr: OrdNode[K, W] = __om_map_values(r, f);
+      return Bin(nl, k, f(v), nr, s);
+    }
+  }
+}
+
+// __om_filter keeps the entries the predicate accepts, joining the
+// surviving halves around each kept key.
+pub function __om_filter[K, V](t: OrdNode[K, V], pred: (K, V) => boolean): OrdNode[K, V] {
+  match (t) {
+    Tip => {
+      return t;
+    },
+    Bin(l, k, v, r, s) => {
+      var fl: OrdNode[K, V] = __om_filter(l, pred);
+      var fr: OrdNode[K, V] = __om_filter(r, pred);
+      if (pred(k, v)) {
+        return __om_join(fl, k, v, fr);
+      }
+      return __om_merge(fl, fr);
+    }
+  }
+}
+
+// __om_at returns the node of rank `i` (0-based, in key order), Tip
+// when out of range.
+pub function __om_at[K, V](t: OrdNode[K, V], i: i32): OrdNode[K, V] {
+  var cur: OrdNode[K, V] = t;
+  var want: i32 = i;
+  if (want < 0) {
+    var e: OrdNode[K, V] = Tip;
+    return e;
+  }
+  var walking: boolean = true;
+  while (walking) {
+    match (cur) {
+      Tip => {
+        walking = false;
+      },
+      Bin(l, k, v, r, s) => {
+        var sl: i32 = __om_size(l);
+        if (want < sl) {
+          cur = l;
+        } else if (want == sl) {
+          return cur;
+        } else {
+          want = want - sl - 1;
+          cur = r;
+        }
+      }
+    }
+  }
+  return cur;
+}
+
+// __om_index_of returns the rank of `k`, or -1 when absent.
+pub function __om_index_of[K: cmp.Ord, V](t: OrdNode[K, V], k: K): i32 {
+  var cur: OrdNode[K, V] = t;
+  var below: i32 = 0;
+  var walking: boolean = true;
+  while (walking) {
+    match (cur) {
+      Tip => {
+        walking = false;
+      },
+      Bin(l, nk, nv, r, s) => {
+        var c: i32 = k.cmp(nk);
+        if (c == 0) {
+          return below + __om_size(l);
+        }
+        if (c < 0) {
+          cur = l;
+        } else {
+          below = below + __om_size(l) + 1;
+          cur = r;
+        }
+      }
+    }
+  }
+  return 0 - 1;
+}
+
+// __om_ordered: every key of `l` is below `k` and every key of `r` above
+// it (checked at the extremes, which is enough once the children are
+// themselves valid).
+function __om_ordered[K: cmp.Ord, V](l: OrdNode[K, V], k: K, r: OrdNode[K, V]): boolean {
+  match (__om_max_node(l)) {
+    Tip => {},
+    Bin(ml, mk, mv, mr, ms) => {
+      if (mk.cmp(k) >= 0) {
+        return false;
+      }
+    }
+  }
+  match (__om_min_node(r)) {
+    Tip => {},
+    Bin(ml, mk, mv, mr, ms) => {
+      if (mk.cmp(k) <= 0) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// __om_valid checks the ordering, size, and balance invariants over the
+// whole tree — the test hook behind `is_valid()`.
+pub function __om_valid[K: cmp.Ord, V](t: OrdNode[K, V]): boolean {
+  match (t) {
+    Tip => {
+      return true;
+    },
+    Bin(l, k, v, r, s) => {
+      var sl: i32 = __om_size(l);
+      var sr: i32 = __om_size(r);
+      if (s != sl + sr + 1) {
+        return false;
+      }
+      if (sl + sr > 1 && (sr > 3 * sl || sl > 3 * sr)) {
+        return false;
+      }
+      if (!__om_ordered(l, k, r)) {
+        return false;
+      }
+      return __om_valid(l) && __om_valid(r);
+    }
+  }
+}
+
+// ---- public surface ---------------------------------------------------
+// `len()` — the number of entries. O(1).
+pub function (m: OrdMap[K, V]) len(): i32 {
+  return __om_size(m.root);
+}
+
+// `is_empty()` — true when there are no entries.
+pub function (m: OrdMap[K, V]) is_empty(): boolean {
+  return __om_size(m.root) == 0;
+}
+
+// `insert(k, v)` — the map with `k -> v`; an existing `k` takes the new
+// value. Never touches the receiver's nodes, so a snapshot taken
+// before the call is unchanged after it.
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) insert(k: K, v: V): OrdMap[K, V] {
+  return OrdMap { root: __om_insert(m.root, k, v) };
+}
+
+// `remove(k)` — the map without `k`; the receiver unchanged when `k`
+// is absent.
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) remove(k: K): OrdMap[K, V] {
+  return OrdMap { root: __om_delete(m.root, k) };
+}
+
+// `get(k)` — `Some(value)` when `k` is present.
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) get(k: K): Option[V] {
+  match (__om_find(m.root, k)) {
+    Tip => {
+      return None;
+    },
+    Bin(l, nk, nv, r, s) => {
+      return Some(nv);
+    }
+  }
+}
+
+// `get_or(k, fallback)` — the value at `k`, or `fallback`.
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) get_or(k: K, fallback: V): V {
+  match (__om_find(m.root, k)) {
+    Tip => {
+      return fallback;
+    },
+    Bin(l, nk, nv, r, s) => {
+      return nv;
+    }
+  }
+}
+
+// `contains(k)` — is `k` a key?
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) contains(k: K): boolean {
+  match (__om_find(m.root, k)) {
+    Tip => {
+      return false;
+    },
+    Bin(l, nk, nv, r, s) => {
+      return true;
+    }
+  }
+}
+
+// `update(k, f)` — the map with the value at `k` replaced by `f(old)`;
+// the receiver unchanged when `k` is absent.
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) update(k: K, f: (V) => V): OrdMap[K, V] {
+  match (__om_find(m.root, k)) {
+    Tip => {
+      return m;
+    },
+    Bin(l, nk, nv, r, s) => {
+      return OrdMap { root: __om_insert(m.root, k, f(nv)) };
+    }
+  }
+}
+
+// `min_key()` / `max_key()` — the smallest / largest key. O(log n).
+pub function (m: OrdMap[K, V]) min_key(): Option[K] {
+  match (__om_min_node(m.root)) {
+    Tip => {
+      return None;
+    },
+    Bin(l, k, v, r, s) => {
+      return Some(k);
+    }
+  }
+}
+
+pub function (m: OrdMap[K, V]) max_key(): Option[K] {
+  match (__om_max_node(m.root)) {
+    Tip => {
+      return None;
+    },
+    Bin(l, k, v, r, s) => {
+      return Some(k);
+    }
+  }
+}
+
+// `remove_min()` / `remove_max()` — the map without its smallest /
+// largest entry (unchanged when empty).
+pub function (m: OrdMap[K, V]) remove_min(): OrdMap[K, V] {
+  return OrdMap { root: __om_delete_min(m.root) };
+}
+
+pub function (m: OrdMap[K, V]) remove_max(): OrdMap[K, V] {
+  return OrdMap { root: __om_delete_max(m.root) };
+}
+
+// `key_at(i)` / `value_at(i)` — the entry of rank `i` (0-based, in key
+// order); `None` when out of range. O(log n).
+pub function (m: OrdMap[K, V]) key_at(i: i32): Option[K] {
+  match (__om_at(m.root, i)) {
+    Tip => {
+      return None;
+    },
+    Bin(l, k, v, r, s) => {
+      return Some(k);
+    }
+  }
+}
+
+pub function (m: OrdMap[K, V]) value_at(i: i32): Option[V] {
+  match (__om_at(m.root, i)) {
+    Tip => {
+      return None;
+    },
+    Bin(l, k, v, r, s) => {
+      return Some(v);
+    }
+  }
+}
+
+// `index_of(k)` — the rank of `k` in key order, or -1 when absent.
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) index_of(k: K): i32 {
+  return __om_index_of(m.root, k);
+}
+
+// `keys()` / `values()` — the entries in ascending key order.
+pub function (m: OrdMap[K, V]) keys(): K[] {
+  var acc: K[] = [];
+  acc = __om_keys_into(m.root, acc);
+  return acc;
+}
+
+pub function (m: OrdMap[K, V]) values(): V[] {
+  var acc: V[] = [];
+  acc = __om_values_into(m.root, acc);
+  return acc;
+}
+
+// `fold(init, f)` — `f(f(f(init, k0, v0), k1, v1), …)` in key order.
+pub function [K, V, A] (m: OrdMap[K, V]) fold(init: A, f: (A, K, V) => A): A {
+  return __om_fold(m.root, init, f);
+}
+
+// `for_each(f)` — call `f(k, v)` on every entry in key order.
+pub function (m: OrdMap[K, V]) for_each(f: (K, V) => void): void {
+  __om_for_each(m.root, f);
+}
+
+// `map_values(f)` — the map with every value replaced by `f(value)`;
+// keys and shape are unchanged, so this is O(n) with no rebalancing.
+pub function [K, V, W] (m: OrdMap[K, V]) map_values(f: (V) => W): OrdMap[K, W] {
+  return OrdMap { root: __om_map_values(m.root, f) };
+}
+
+// `filter(pred)` — the map of the entries `pred(k, v)` accepts.
+pub function (m: OrdMap[K, V]) filter(pred: (K, V) => boolean): OrdMap[K, V] {
+  return OrdMap { root: __om_filter(m.root, pred) };
+}
+
+// `union(other)` — every entry of both; a key in both keeps THIS map's
+// value. O(m log(n/m + 1)).
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) union(other: OrdMap[K, V]): OrdMap[K, V] {
+  return OrdMap { root: __om_union(m.root, other.root) };
+}
+
+// `intersection(other)` — the entries whose key is in both, with THIS
+// map's values.
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) intersection(other: OrdMap[K, V]): OrdMap[K, V] {
+  return OrdMap { root: __om_intersection(m.root, other.root) };
+}
+
+// `difference(other)` — this map's entries whose key is NOT in `other`.
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) difference(other: OrdMap[K, V]): OrdMap[K, V] {
+  return OrdMap { root: __om_difference(m.root, other.root) };
+}
+
+// `split(k)` — the entries below `k` and the entries above it, as two
+// maps (an entry AT `k` is in neither). O(log n).
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) split_lt(k: K): OrdMap[K, V] {
+  var sp: OrdSplit[K, V] = __om_split(m.root, k);
+  return OrdMap { root: sp.lt };
+}
+
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) split_gt(k: K): OrdMap[K, V] {
+  var sp: OrdSplit[K, V] = __om_split(m.root, k);
+  return OrdMap { root: sp.gt };
+}
+
+// `is_valid()` — do the ordering, size, and balance invariants hold
+// over every node? Always true for a map built through this module;
+// exposed for tests and for anyone porting the balance rules.
+pub function [K: cmp.Ord, V] (m: OrdMap[K, V]) is_valid(): boolean {
+  return __om_valid(m.root);
+}

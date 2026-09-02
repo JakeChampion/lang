@@ -1,0 +1,257 @@
+import "std/test";
+import "std/ordmap" as ordmap;
+import "std/option";
+import "std/i32";
+
+// examples/tests/ordmap_test.fern — pure-Fern coverage of std/ordmap, the
+// persistent ordered map (weight-balanced tree). The load-bearing
+// contracts exercised here are STRUCTURAL SHARING (a snapshot taken
+// before an update is unchanged after it, for inserts, removes, and the
+// set algebra), the balance / ordering invariants after every kind of
+// update (`is_valid`), and sorted iteration with rank access. i32 and
+// string keys are both covered.
+function test_new_is_empty(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  if (!m.is_empty() || m.len() != 0) {
+    return test.fail("empty map has entries");
+  }
+  return test.assert_true(m.get(1).is_none() && !m.contains(1) && m.min_key().is_none());
+}
+
+function test_insert_get(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, string] = ordmap.ordmap_new();
+  m = m.insert(2, "two");
+  m = m.insert(1, "one");
+  m = m.insert(3, "three");
+  if (m.len() != 3) {
+    return test.fail("len " + m.len().to_string() + " != 3");
+  }
+  if (m.get_or(2, "") != "two" || m.get_or(9, "none") != "none") {
+    return test.fail("get_or");
+  }
+  return test.assert_eq(m.get(1).unwrap_or(""), "one");
+}
+
+function test_insert_replaces(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, i32] = ordmap.from_arrays([1, 2, 1], [10, 20, 11]);
+  if (m.len() != 2) {
+    return test.fail("duplicate key grew the map");
+  }
+  return test.assert_eq(m.get_or(1, -1), 11);
+}
+
+// Structural sharing: the snapshot keeps its entries while the updated
+// map moves on. The regression guard for an in-place path rewrite
+// leaking into a value another binding still holds.
+function test_insert_is_persistent(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  var i: i32 = 0;
+  while (i < 200) {
+    m = m.insert(i * 37 % 200, i);
+    i = i + 1;
+  }
+  var snapshot: ordmap.OrdMap[i32, i32] = m;
+  i = 0;
+  while (i < 200) {
+    m = m.insert(i, i + 1000);
+    i = i + 1;
+  }
+  if (snapshot.len() != 200 || m.len() != 200) {
+    return test.fail("lengths");
+  }
+  i = 0;
+  while (i < 200) {
+    if (snapshot.get_or(i * 37 % 200, -1) != i) {
+      return test.fail("snapshot changed at " + i.to_string());
+    }
+    if (m.get_or(i, -1) != i + 1000) {
+      return test.fail("update lost at " + i.to_string());
+    }
+    i = i + 1;
+  }
+  return test.assert_true(snapshot.is_valid() && m.is_valid());
+}
+
+function test_remove(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  var i: i32 = 0;
+  while (i < 300) {
+    m = m.insert(i * 53 % 300, i);
+    i = i + 1;
+  }
+  var keep: ordmap.OrdMap[i32, i32] = m;
+  i = 0;
+  while (i < 300) {
+    if (i % 3 != 0) {
+      m = m.remove(i);
+    }
+    if (!m.is_valid()) {
+      return test.fail("invalid after removing " + i.to_string());
+    }
+    i = i + 1;
+  }
+  if (m.len() != 100 || keep.len() != 300) {
+    return test.fail("len after remove: " + m.len().to_string());
+  }
+  if (m.contains(1) || !m.contains(3) || !keep.contains(1)) {
+    return test.fail("membership after remove");
+  }
+  // Removing an absent key is a no-op.
+  return test.assert_eq(m.remove(1).len(), 100);
+}
+
+function test_sorted_iteration(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, i32] = ordmap.from_arrays([5, 1, 4, 2, 3], [50, 10, 40, 20, 30]);
+  var ks: i32[] = m.keys();
+  var vs: i32[] = m.values();
+  if (ks.len() != 5 || vs.len() != 5) {
+    return test.fail("lengths");
+  }
+  var i: i32 = 0;
+  while (i < 5) {
+    if (ks[i] != i + 1 || vs[i] != (i + 1) * 10) {
+      return test.fail("order at " + i.to_string());
+    }
+    i = i + 1;
+  }
+  var sum: i32 = m.fold(0, (a: i32, k: i32, v: i32) => a + k * v);
+  return test.assert_eq(sum, 550);
+}
+
+function test_rank(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  var i: i32 = 0;
+  while (i < 100) {
+    m = m.insert(i * 2, i);
+    i = i + 1;
+  }
+  if (m.key_at(0).unwrap_or(-1) != 0 || m.key_at(99).unwrap_or(-1) != 198 || m.key_at(100).is_some()) {
+    return test.fail("key_at");
+  }
+  if (m.value_at(10).unwrap_or(-1) != 10) {
+    return test.fail("value_at");
+  }
+  if (m.index_of(40) != 20 || m.index_of(41) != -1) {
+    return test.fail("index_of");
+  }
+  return test.assert_true(m.min_key().unwrap_or(-1) == 0 && m.max_key().unwrap_or(-1) == 198);
+}
+
+function test_min_max_remove(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, i32] = ordmap.from_arrays([3, 1, 2], [0, 0, 0]);
+  var r: ordmap.OrdMap[i32, i32] = m.remove_min().remove_max();
+  if (r.len() != 1 || !r.contains(2)) {
+    return test.fail("remove_min/max");
+  }
+  return test.assert_eq(m.len(), 3);
+}
+
+function test_update_map_filter(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, i32] = ordmap.from_arrays([1, 2, 3, 4], [1, 2, 3, 4]);
+  var u: ordmap.OrdMap[i32, i32] = m.update(2, (v: i32) => v * 100);
+  if (u.get_or(2, -1) != 200 || m.get_or(2, -1) != 2) {
+    return test.fail("update");
+  }
+  if (m.update(9, (v: i32) => v).len() != 4) {
+    return test.fail("update absent");
+  }
+  var d: ordmap.OrdMap[i32, i32] = m.map_values((v: i32) => v * 2);
+  if (d.get_or(4, -1) != 8 || !d.is_valid()) {
+    return test.fail("map_values");
+  }
+  var f: ordmap.OrdMap[i32, i32] = m.filter((k: i32, v: i32) => k % 2 == 0);
+  if (f.len() != 2 || f.contains(1) || !f.contains(4) || !f.is_valid()) {
+    return test.fail("filter");
+  }
+  return test.assert_eq(m.len(), 4);
+}
+
+function test_set_algebra(): test.TestOutcome {
+  var a: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  var b: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  var i: i32 = 0;
+  while (i < 500) {
+    a = a.insert(i, 1);
+    i = i + 1;
+  }
+  i = 250;
+  while (i < 750) {
+    b = b.insert(i, 2);
+    i = i + 1;
+  }
+  var u: ordmap.OrdMap[i32, i32] = a.union(b);
+  if (u.len() != 750 || !u.is_valid() || u.get_or(300, -1) != 1 || u.get_or(600, -1) != 2) {
+    return test.fail("union (left-biased)");
+  }
+  var x: ordmap.OrdMap[i32, i32] = a.intersection(b);
+  if (x.len() != 250 || !x.is_valid() || x.get_or(300, -1) != 1 || x.contains(100)) {
+    return test.fail("intersection");
+  }
+  var d: ordmap.OrdMap[i32, i32] = a.difference(b);
+  if (d.len() != 250 || !d.is_valid() || d.contains(300) || !d.contains(100)) {
+    return test.fail("difference");
+  }
+  // The operands are untouched.
+  return test.assert_true(a.len() == 500 && b.len() == 500);
+}
+
+function test_split(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  var i: i32 = 0;
+  while (i < 100) {
+    m = m.insert(i, i);
+    i = i + 1;
+  }
+  var lo: ordmap.OrdMap[i32, i32] = m.split_lt(40);
+  var hi: ordmap.OrdMap[i32, i32] = m.split_gt(40);
+  if (lo.len() != 40 || hi.len() != 59 || !lo.is_valid() || !hi.is_valid()) {
+    return test.fail("split sizes");
+  }
+  return test.assert_true(lo.max_key().unwrap_or(-1) == 39 && hi.min_key().unwrap_or(-1) == 41);
+}
+
+function test_string_keys(): test.TestOutcome {
+  var m: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
+  m = m.insert("pear", 3);
+  m = m.insert("apple", 1);
+  m = m.insert("fig", 2);
+  var ks: string[] = m.keys();
+  if (ks.len() != 3 || ks[0] != "apple" || ks[1] != "fig" || ks[2] != "pear") {
+    return test.fail("string order");
+  }
+  var snap: ordmap.OrdMap[string, i32] = m;
+  m = m.remove("fig");
+  if (snap.len() != 3 || m.len() != 2 || !snap.contains("fig")) {
+    return test.fail("string snapshot");
+  }
+  return test.assert_eq(m.get_or("pear", -1), 3);
+}
+
+function test_for_each(): test.TestOutcome {
+  var m: ordmap.OrdMap[i32, i32] = ordmap.from_arrays([2, 1], [20, 10]);
+  var seen: i32 = 0;
+  // Key order: 1 then 2, so the running total is 110 then 110 * 3 + 220.
+  function visit(k: i32, v: i32): void {
+    seen = seen * 3 + k * 100 + v;
+  }
+  m.for_each(visit);
+  return test.assert_eq(seen, 550);
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("std/ordmap");
+  r = r.it("new is empty", test_new_is_empty);
+  r = r.it("insert + get", test_insert_get);
+  r = r.it("insert replaces", test_insert_replaces);
+  r = r.it("insert is persistent", test_insert_is_persistent);
+  r = r.it("remove", test_remove);
+  r = r.it("sorted iteration", test_sorted_iteration);
+  r = r.it("rank access", test_rank);
+  r = r.it("min/max remove", test_min_max_remove);
+  r = r.it("update/map/filter", test_update_map_filter);
+  r = r.it("set algebra", test_set_algebra);
+  r = r.it("split", test_split);
+  r = r.it("string keys", test_string_keys);
+  r = r.it("for_each", test_for_each);
+  return r.finish();
+}

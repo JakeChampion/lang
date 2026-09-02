@@ -1,0 +1,31 @@
+import "std/pmap";
+
+// pmap_insert — the persistent hash map's unique path: build 4000 entries
+// with the self-reassigning `m = m.insert(k, v)` (the shape the rc reuse pass
+// updates in place), then re-insert every key 20 times so each round rebuilds
+// its path with no snapshot held. Same key shape as map_int, so the two
+// isolate what the HAMT costs over the open-addressed core/map.
+function main(): i32 {
+  var m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  var i: i32 = 0;
+  while (i < 4000) {
+    m = m.insert(i * 7, i);
+    i = i + 1;
+  }
+  var r: i32 = 0;
+  while (r < 20) {
+    var j: i32 = 0;
+    while (j < 4000) {
+      m = m.insert(j * 7, j + r);
+      j = j + 1;
+    }
+    r = r + 1;
+  }
+  var total: i64 = 0i64;
+  i = 0;
+  while (i < 4000) {
+    total = total + m.get_or(i * 7, 0) as i64;
+    i = i + 1;
+  }
+  return (total % 97i64) as i32;
+}
