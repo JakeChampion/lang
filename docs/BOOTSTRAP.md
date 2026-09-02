@@ -99,17 +99,22 @@ Measured 2026-09-02 on a 4-core, 16 GB x86-64 host:
 
 | step | compiler | wall | peak RSS | result |
 |---|---|---|---|---|
-| stage1 | native-built stage0 compiling `fern.fern` | 86 s | 4.0 GB | 6.9 MB binary, works |
-| stage2 | stage1 compiling `fern.fern` | ~155 s | 13.9 GB | **OOM-killed** by the host |
+| stage1 | native-built stage0 compiling `fern.fern` | 79 s | 4.0 GB | 7.3 MB binary, works |
+| stage2 | stage1 compiling `fern.fern` | ~140 s | 13.7 GB | **OOM-killed** by the host |
 
 The self-built compiler no longer crashes on its own source — it did, at 12.2
 GB with a read of address 1, until `rc-log/2026-09-02-param-strarr-elem-counted-share.md`
-— it runs out of memory. Leak-check-instrumented builds of both compilers on
-`checker.fern` show why: the same number of allocations, a third of the frees
-(stage0 441 MB live, stage1 2.96 GB). The self-host's reclaim frees less than
-native's on the compiler's own code, so a compiler compiled by it leaks its way
-to the host's ceiling; that entry lists the leaking sites in order. This is the
-RECLAIM side of roadmap goal 2 measured as a bootstrap, and the first green
+— it runs out of memory. Its native assembler no longer does either: a
+sanitized stage1 assembles `lexer.fern`, `parser.fern` and `checker.fern`
+natively (`rc-log/2026-09-02-own-struct-update-reuse.md`), where each
+exhausted the 16 GiB arena. What remains is the compile's own retention.
+Leak-check-instrumented builds of both compilers on `checker.fern` show it: the
+same number of allocations, a third of the frees (stage0 441 MB live, stage1
+2.96 GB). The self-host's reclaim frees less than native's on the compiler's
+own code, so a compiler compiled by it leaks its way to the host's ceiling; the
+rc-log entries of 2026-09-02 list the leaking sites in order and what each
+slice closed. This is the RECLAIM side of roadmap goal 2 measured as a
+bootstrap, and the first green
 `distcheck` is what makes a refresh Go-free. `TestSelfHostPerModuleEmitAllFixpointX86_64`
 is green on the same tree because it compiles the compiler eight units per
 process; the whole-program compile is the configuration nothing else gates.
