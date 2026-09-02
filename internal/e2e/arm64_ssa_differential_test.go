@@ -99,14 +99,18 @@ const (
 	// a gap quiet.
 	arm64SSADiffMinCompared = 281
 
-	// arm64SSADiffRunTimeout bounds one execution. The heaviest corpus
-	// program (examples/bench/struct_drop.fern) takes ~0.9 s under
-	// qemu-aarch64 on a 4-core container, so this is ~16x headroom.
+	// arm64SSADiffRunTimeout bounds one execution. It is sized against the
+	// programs that never terminate at all — the listening servers under
+	// examples/wasm and examples/cli/yes.fern, which reach it by design under
+	// both backends and so pay it twice. Those dominate the lane: at 30 s they
+	// were two thirds of the whole run.
 	//
-	// It is really sized against the programs that never terminate at all —
-	// the listening servers under examples/wasm and examples/cli/yes.fern,
-	// which reach it by design under both backends and so pay it twice. Those
-	// dominate the lane: at 30 s they were two thirds of the whole run.
+	// It is NOT headroom over the heaviest real program, and an earlier note
+	// here claiming ~16x was measurably wrong: examples/bench/pmap_insert.fern
+	// took 49.8 s under `-backend ssa` on this container while the wall was
+	// 15 s (#8069). What a wall can say is "this did not finish", which is why
+	// crossing it is now its own outcome rather than a disagreement, and why
+	// the performance question is asked as a ratio (ssaSlowdown) instead.
 	arm64SSADiffRunTimeout = 15 * time.Second
 
 	// arm64SSADiffMaxCapture caps per-stream capture. examples/cli/yes.fern
@@ -137,7 +141,7 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 	unstable := loadKnownDivergences(t, arm64SSADiffUnstableFile)
 	arm64SSADiffCheckListedPaths(t, corpus, known, unstable)
 
-	var baselineRejected, refused, agreed, diverged int64
+	var baselineRejected, refused, agreed, diverged, timedOut, tooSlow int64
 	for _, rel := range corpus {
 		rel := rel
 		reason, isKnown := known[rel]
@@ -193,6 +197,30 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 
 			base := runArm64Binary(runner, baseBin)
 			ssa := runArm64Binary(runner, ssaBin)
+			// A wall expiring on one side and not the other is a TIMEOUT, and
+			// saying so is the point: it is not an answer mismatch, and it
+			// cannot tell a hang from a program that is merely slower than the
+			// wall allows. Reported as a disagreement it reads as "flaky under
+			// emulation" and gets moved past — which is what happened to a 66x
+			// performance gap (#8069).
+			if base.timedOut != ssa.timedOut {
+				atomic.AddInt64(&timedOut, 1)
+				late, other := "ssa", base
+				if base.timedOut {
+					late, other = "flat", ssa
+				}
+				if isKnown {
+					stale("did not FINISH under one backend", arm64SSADiffDetail(base, ssa))
+					return
+				}
+				t.Errorf("the %s build did not finish within %s on %s, while the other exited %d.\n"+
+					"This is a TIMEOUT, not a disagreement — neither build has been shown to give\n"+
+					"the wrong answer. Time the two directly before reading it as a hang: this leg\n"+
+					"runs under qemu on a cross host, where the same work takes several times\n"+
+					"longer than on the native runner the wall was sized for.\n%s",
+					late, arm64SSADiffRunTimeout, rel, other.exit, arm64SSADiffDetail(base, ssa))
+				return
+			}
 			_, stdoutUnstable := unstable[rel]
 			if d := arm64SSADiffCompare(base, ssa, stdoutUnstable); d != "" {
 				atomic.AddInt64(&diverged, 1)
@@ -214,16 +242,31 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 				t.Errorf("%s is listed in testdata/%s (%s) but it AGREES now — delete the entry",
 					rel, arm64SSADiffKnownFile, reason)
 			}
+			// Same answer, wildly different cost. A breach is re-measured once
+			// before it is reported: these runs share a loaded machine with the
+			// rest of the corpus, and one slow sample is not a finding.
+			if d := ssaSlowdown(base.elapsed, ssa.elapsed); d != "" {
+				base2 := runArm64Binary(runner, baseBin)
+				ssa2 := runArm64Binary(runner, ssaBin)
+				if d2 := ssaSlowdown(base2.elapsed, ssa2.elapsed); d2 != "" {
+					atomic.AddInt64(&tooSlow, 1)
+					t.Errorf("%s: %s\nSecond measurement: %s", rel, d2, d)
+				} else {
+					t.Logf("%s: a slowdown that did not reproduce on a second run, so not reported: %s", rel, d)
+				}
+			}
 		})
 	}
 
 	t.Cleanup(func() {
 		a, r, d, b := atomic.LoadInt64(&agreed), atomic.LoadInt64(&refused),
 			atomic.LoadInt64(&diverged), atomic.LoadInt64(&baselineRejected)
+		to, slow := atomic.LoadInt64(&timedOut), atomic.LoadInt64(&tooSlow)
 		compared := a + d
 		t.Logf("arm64 flat-vs-ssa differential over %d corpus programs: %d agree, %d ssa-refused, "+
-			"%d diverge (%d listed as known), %d baseline-rejected",
-			len(corpus), a, r, d, len(known), b)
+			"%d diverge (%d listed as known), %d baseline-rejected, %d timed out on one side, "+
+			"%d over the %.0fx slowdown gate",
+			len(corpus), a, r, d, len(known), b, to, slow, ssaDiffMaxSlowdown)
 		if compared < arm64SSADiffMinCompared {
 			t.Errorf("only %d of %d corpus programs built under BOTH backends and ran, below the %d "+
 				"floor (%d ssa-refused, %d baseline-rejected). Refusals are a documented endpoint, "+
@@ -244,12 +287,10 @@ func TestArm64SSABackendDifferential(t *testing.T) {
 func arm64SSADiffCompare(base, ssa arm64Run, stdoutUnstable bool) string {
 	switch {
 	case base.timedOut != ssa.timedOut:
-		hung, other := "ssa", base
-		if base.timedOut {
-			hung, other = "flat", ssa
-		}
-		return fmt.Sprintf("the %s build HUNG (killed at %s) while the other exited %d\n%s",
-			hung, arm64SSADiffRunTimeout, other.exit, arm64SSADiffDetail(base, ssa))
+		// Handled by the caller as its own outcome: a wall expiring says
+		// nothing about the answer, so it is neither an agreement nor a
+		// disagreement (#8069).
+		return ""
 	case base.timedOut && ssa.timedOut:
 		return "" // Both run forever by design; nothing else is observable.
 	case base.exited != ssa.exited:
@@ -406,6 +447,8 @@ type arm64Run struct {
 	exited   bool
 	state    string
 	timedOut bool
+	// elapsed is what the ratio gate compares (#8069); see ssaSlowdown.
+	elapsed time.Duration
 }
 
 // runArm64Binary executes bin (directly, or under runner when cross-hosted)
@@ -425,6 +468,7 @@ func runArm64Binary(runner, bin string) arm64Run {
 	if err := cmd.Start(); err != nil {
 		return arm64Run{stderr: err.Error(), exit: -1, state: err.Error()}
 	}
+	started := time.Now()
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	r := arm64Run{exit: -1}
@@ -435,6 +479,7 @@ func runArm64Binary(runner, bin string) arm64Run {
 		_ = cmd.Process.Kill()
 		<-done
 	}
+	r.elapsed = time.Since(started)
 	r.stdout, r.stderr = so.String(), se.String()
 	if ps := cmd.ProcessState; ps != nil {
 		r.exit, r.exited, r.state = ps.ExitCode(), ps.Exited(), ps.String()

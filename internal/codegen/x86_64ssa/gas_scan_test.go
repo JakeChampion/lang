@@ -1,6 +1,7 @@
 package x86_64ssa
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/ssa"
@@ -122,6 +123,21 @@ func TestAsmRunCountByte(t *testing.T) {
 		{"byte-negative", "banana", -1, 0},
 		{"every-byte", "aaaa", 'a', 4},
 		{"high-byte", "a\xffb\xff", 0xff, 2},
+		// The 16-byte vector body and the boundaries around it. Every case
+		// above is shorter than one block, so before these the vector loop was
+		// never entered at all and a kernel that dropped a block's partial
+		// total, or ran one block too many, passed the whole table.
+		{"one-block-exact", strings.Repeat("a", 16), 'a', 16},
+		{"one-block-none", strings.Repeat("b", 16), 'a', 0},
+		{"one-block-plus-one", strings.Repeat("a", 17), 'a', 17},
+		{"one-block-then-tail", strings.Repeat("b", 16) + "aaa", 'a', 3},
+		{"tail-then-nothing", "aaa" + strings.Repeat("b", 16), 'a', 3},
+		{"two-blocks-exact", strings.Repeat("ab", 16), 'a', 16},
+		{"two-blocks-and-tail", strings.Repeat("ab", 16) + "aaaaa", 'a', 21},
+		{"block-boundary-straddle", strings.Repeat("b", 15) + "aa" + strings.Repeat("b", 15), 'a', 2},
+		{"last-byte-only", strings.Repeat("b", 47) + "a", 'a', 1},
+		{"first-byte-only", "a" + strings.Repeat("b", 47), 'a', 1},
+		{"high-byte-vector", strings.Repeat("\xff", 20), 0xff, 20},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := scanResult(t, "__fern_count_byte", c.s, c.b); got != c.want {
@@ -129,4 +145,51 @@ func TestAsmRunCountByte(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The vector body must require exactly as many bytes as it consumes.
+//
+// Requiring FEWER reads past the end of the string, and behaviour cannot see
+// that reliably: the bytes after a literal are the next literal's header, so
+// whether an overread changes the answer depends on what happens to sit there.
+// Requiring MORE is merely slower — the scalar tail picks the rest up. So the
+// two constants are checked against each other rather than against a run.
+func TestCountByteVectorGuardMatchesStride(t *testing.T) {
+	f := ssa.NewFunc("main")
+	e := f.NewBlock()
+	f.SetRet(e, callOp(f, e, "__fern_count_byte", constStr(f, e, "banana"), constOp(f, e, 'a')))
+	asm, err := EmitAsmModule(map[string]*ssa.Func{"main": f}, "main", 8, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(asm, ".Lssa_count_vec:")
+	end := strings.Index(asm, ".Lssa_count_loop:")
+	if start < 0 || end < 0 || end < start {
+		t.Fatalf("no vector body between .Lssa_count_vec and .Lssa_count_loop in the emitted helper")
+	}
+	body := asm[start:end]
+	if !strings.Contains(body, "movdqu") {
+		t.Fatal("the vector body has no 16-byte load, so this test checked nothing")
+	}
+	guard := operandAfter(t, body, "cmp r9d, ")
+	stride := operandAfter(t, body, "add edx, ")
+	if guard != stride {
+		t.Errorf("__fern_count_byte requires %s bytes before a block but advances %s: "+
+			"requiring fewer than it consumes reads past the end of the string\n%s",
+			guard, stride, body)
+	}
+}
+
+// operandAfter returns the rest of the first line in body that starts with
+// prefix, failing when there is none — an absent instruction must not read as
+// a satisfied assertion.
+func operandAfter(t *testing.T, body, prefix string) string {
+	t.Helper()
+	for _, ln := range strings.Split(body, "\n") {
+		if ln = strings.TrimSpace(ln); strings.HasPrefix(ln, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(ln, prefix))
+		}
+	}
+	t.Fatalf("no %q in the emitted vector body:\n%s", prefix, body)
+	return ""
 }
