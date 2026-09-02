@@ -195,6 +195,21 @@ function main(): i32 { var fs: ((i32) => i32)[] = [id((if (false) { ((x: i32) =>
 	{"elem-bound-passed-to-fn-param", `function apply(f: (i32) => i32, n: i32): i32 { return f(n); }
 function main(): i32 { var fs: ((i32) => i32)[] = [((x: i32) => (x + 2i32))]; var f: (i32) => i32 = fs[0i32]; return apply(f, 40i32); }`, 42},
 
+	// #8090 — the disagreement one container further out: an `fn[]` PARAMETER
+	// gets one dispatch ABI across all its call sites, and here two of them want
+	// different ones. The outer literal is all-no-capture, so the lift hoists it
+	// to bare fn pointers; the inner one captures `y`, so it has no
+	// representation but env boxes. The all-call-sites proof then fails on the
+	// disagreement, the parameter dispatches plain, and the box array's elements
+	// are called as code. A site with no choice settles the ABI for the rest.
+	// 1 + (1 + 40) = 42.
+	{"fnarr-param-two-call-sites", `function apply_all(fs: ((i32) => i32)[]): i32 { var acc: i32 = 0i32; for f in fs { acc = acc + f(1i32); } return acc; }
+function main(): i32 { return apply_all([((x: i32) => 1i32), ((y: i32) => apply_all([((z: i32) => (y + 40i32))]))]); }`, 42},
+	// The direction the promotion must not disturb: one call site, all
+	// no-capture, stays on the bare fn-pointer representation. 1 + 41 = 42.
+	{"fnarr-param-single-site-stays-pointers", `function apply_all(fs: ((i32) => i32)[]): i32 { var acc: i32 = 0i32; for f in fs { acc = acc + f(1i32); } return acc; }
+function main(): i32 { return apply_all([((x: i32) => 1i32), ((y: i32) => 41i32)]); }`, 42},
+
 	// The match SCRUTINEE sibling: same blind spot, the other selector.
 	{"iife-scrutinee-closure-arg", `function g(fs: ((i32) => i32)[], n: i64): boolean { return fs[0i32](1i32) > n as i32; }
 function main(): i32 { var v2: i32 = 5i32; return (match (g([((x: i32) => (x + v2))], 1i64)) { true => 7i32, _ => 1i32 }); }`, 7},

@@ -66649,6 +66649,38 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
     return HoistResult { func: none, ok: false };
 }
 
+// BoxedArrayRes is box_array_lit_elems's result: the rewritten literal plus the
+// hoisted functions and the counter the rewrite consumed.
+struct BoxedArrayRes { expr: ast.Expr, funcs: parser.FuncDecl[], counter: i32 }
+
+// box_array_lit_elems routes every element of an array literal through
+// try_fn_field_value, so the whole literal carries env boxes: a capturing lambda
+// becomes a `__mkclo$<fd>$cloN` box, a no-capture lambda or bare fn name a
+// `$wrapN` trampoline box, and an already-boxed element flows through. The same
+// uniform-box loop box_iife_arm_array_elems runs over an IIFE arm's literal.
+function box_array_lit_elems(e: ast.Expr, fd: parser.FuncDecl, funcs: parser.FuncDecl[], counter: i32, gfns: string[], mfuncs: MFuncs, structs: parser.StructDecl[]): BoxedArrayRes {
+    if let ast.ExprArray(arr) = e {
+        var fs: parser.FuncDecl[] = funcs;
+        var ct: i32 = counter;
+        var nelems: ast.Expr[] = [];
+        var i: i32 = 0;
+        while (i < arr.elements.len()) {
+            var er: InlineCloRes = try_fn_field_value(arr.elements[i], fd, fs, ct, gfns, mfuncs, structs);
+            fs = er.funcs; ct = er.counter; nelems = nelems.append(er.expr);
+            i = i + 1;
+        }
+        return BoxedArrayRes { expr: ast.ExprArray { ...arr, elements: nelems }, funcs: fs, counter: ct };
+    }
+    return BoxedArrayRes { expr: e, funcs: funcs, counter: counter };
+}
+
+// expr_is_array_lit reports whether `e` is an array LITERAL written at this
+// position — the only argument form box_array_lit_elems can rewrite.
+function expr_is_array_lit(e: ast.Expr): boolean {
+    if let ast.ExprArray(_) = e { return true; }
+    return false;
+}
+
 // try_fn_field_value lifts ONE fn-typed struct-field value into a `__mkclo$…`
 // env-box marker. Capturing inline lambda → try_inline_closure (box [funcval,
 // caps…]). No-capture inline lambda → a `$wrapN` trampoline, marker with no cap
@@ -67479,6 +67511,111 @@ function lift_callee_param_is_fn(mfuncs: MFuncs, callee: string, idx: i32): bool
     return false;
 }
 
+// lift_callee_param_is_fnarr is lift_callee_param_is_fn for an fn-ARRAY
+// parameter (`((T) => R)[]`, coarsed "fn[]").
+function lift_callee_param_is_fnarr(mfuncs: MFuncs, callee: string, idx: i32): boolean {
+    var i: i32 = mfuncs.head[util.hash_bucket(callee, mfuncs.head.len())];
+    while (i >= 0) {
+        if (mfuncs.decls[i].name == callee && idx < mfuncs.decls[i].params.len() && mfuncs.decls[i].params[idx].type_name == "fn[]") {
+            return true;
+        }
+        i = mfuncs.next[i];
+    }
+    return false;
+}
+
+// fnarr_param_forces_boxes reports whether SOME call site of free function
+// `callee` passes, at `pidx`, an array literal that HAS to carry env boxes.
+//
+// An `fn[]` parameter has one dispatch ABI across every call site — decided by
+// fn_param_sigs_of's caparams proof, which demands that every site agree — so a
+// site with no choice settles it for all of them: an element that captures, a
+// value-position `if`/`match`, or a generic passthrough has no representation
+// other than a box. Its disagreeing siblings are then boxed too (the caller of
+// this), which is what leaves the proof one representation to see instead of
+// two.
+//
+// #8090: `apply_all([a, b])` and `apply_all([<capturing>])` reached the same
+// parameter as a POINTER array and a BOX array. The proof failed on the
+// disagreement, so the parameter dispatched plain — and the box array's
+// elements were called as code.
+function fnarr_param_forces_boxes(mfuncs: MFuncs, structs: parser.StructDecl[], callee: string, pidx: i32): boolean {
+    var fi: i32 = 0;
+    while (fi < mfuncs.decls.len()) {
+        if (fd_passes_boxed_fnarr_lit(mfuncs.decls[fi], callee, pidx, structs, mfuncs)) { return true; }
+        fi = fi + 1;
+    }
+    return false;
+}
+
+// lambda_exprs_of collects every lambda an expression holds.
+function lambda_exprs_of(e: ast.Expr, acc: ast.Expr[]): ast.Expr[] {
+    if let ast.ExprLambda(_) = e { return acc.append(e); }
+    return acc;
+}
+
+// fd_with_lambda_scopes folds every lambda's params and body in `fd` into one
+// flattened scope, so lambda_captures answers against the names an element
+// lambda can actually see rather than only `fd`'s own.
+//
+// The lift itself is exact here — it hoists each lambda and re-asks with that
+// hoisted function as the scope — but this query runs BEFORE any of that, from
+// a sibling call site, where the enclosing lambda is not a function yet. The
+// flattening OVER-approximates: a name bound in an unrelated lambda reads as
+// visible. That direction is the safe one — it can only decide an element is
+// boxed when it might not be, and an over-boxed literal is correct, just one
+// indirection slower.
+function fd_with_lambda_scopes(fd: parser.FuncDecl): parser.FuncDecl {
+    var lams: ast.Expr[] = [];
+    var li: i32 = 0;
+    while (li < fd.body.len()) {
+        lams = astwalk.fold_stmt(fd.body[li], lams, lambda_exprs_of);
+        li = li + 1;
+    }
+    var ps: ast.ParamDecl[] = fd.params;
+    var nb: ast.Stmt[] = fd.body;
+    var i: i32 = 0;
+    while (i < lams.len()) {
+        if let ast.ExprLambda(lam) = lams[i] {
+            var pj: i32 = 0;
+            while (pj < lam.params.len()) { ps = ps.append(lam.params[pj]); pj = pj + 1; }
+            var bj: i32 = 0;
+            while (bj < lam.body.len()) { nb = nb.append(lam.body[bj]); bj = bj + 1; }
+        }
+        i = i + 1;
+    }
+    return parser.FuncDecl { ...fd, params: ps, body: nb };
+}
+
+// fd_passes_boxed_fnarr_lit is fnarr_param_forces_boxes for one function body.
+function fd_passes_boxed_fnarr_lit(fd0: parser.FuncDecl, callee: string, pidx: i32, structs: parser.StructDecl[], mfuncs: MFuncs): boolean {
+    var fd: parser.FuncDecl = fd_with_lambda_scopes(fd0);
+    var calls: ast.Expr[] = [];
+    var si: i32 = 0;
+    while (si < fd0.body.len()) {
+        calls = astwalk.fold_stmt(fd0.body[si], calls, call_exprs_of);
+        si = si + 1;
+    }
+    var ci: i32 = 0;
+    while (ci < calls.len()) {
+        if let ast.ExprCall(c) = calls[ci] {
+            if let ast.ExprIdent(cid) = c.callee {
+                if (cid.name == callee && pidx < c.args.len()) {
+                    if let ast.ExprArray(arr) = c.args[pidx] {
+                        var ei: i32 = 0;
+                        while (ei < arr.elements.len()) {
+                            if (array_elem_is_env_boxed(arr.elements[ei], fd, structs, mfuncs)) { return true; }
+                            ei = ei + 1;
+                        }
+                    }
+                }
+            }
+        }
+        ci = ci + 1;
+    }
+    return false;
+}
+
 // lift_ident_is_param reports whether `name` is bound LOCALLY in `fd` — as its
 // receiver, one of its parameters, or a `var` in its body. Any of those SHADOWS
 // a module function of the same name, so a lift-pass path that would otherwise
@@ -68298,6 +68435,16 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                 } else if (!is_mkclo && cnm.len() > 0 && (lift_callee_param_is_fn(mfuncs, cnm, ai) || lift_local_fn_param_is_fn(fd, cnm, ai))) {
                     var fr: InlineCloRes = try_fn_field_value(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
                     fs = fr.funcs; ct = fr.counter; nargs = nargs.append(fr.expr);
+                } else if (!is_mkclo && cnm.len() > 0 && expr_is_array_lit(call.args[ai])
+                           && lift_callee_param_is_fnarr(mfuncs, cnm, ai)
+                           && fnarr_param_forces_boxes(mfuncs, structs, cnm, ai)) {
+                    // An fn-ARRAY argument at a parameter another call site has
+                    // already committed to env boxes (#8090). The parameter gets
+                    // ONE dispatch ABI, so this literal boxes too — the array
+                    // sibling of the scalar fn-value rule above, and the same
+                    // uniform treatment #5071 gives one literal, one container out.
+                    var bxr: BoxedArrayRes = box_array_lit_elems(call.args[ai], fd, fs, ct, gfns, mfuncs, structs);
+                    fs = bxr.funcs; ct = bxr.counter; nargs = nargs.append(bxr.expr);
                 } else if (!is_mkclo && cnm.len() > 0 && lift_callee_is_typevar_passthrough(mfuncs, cnm, ai)
                            && lift_arg_is_fn_value(call.args[ai], mfuncs)) {
                     // A fn value at an ERASED-GENERIC parameter (`id(<lambda>)`).
