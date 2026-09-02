@@ -1,0 +1,40 @@
+// Widening a 32-bit integer to 64 bits: which extension is used is a property
+// of the SOURCE type, not the destination.
+//
+// `u32 as i64` zero-extends and `i32 as u64` sign-extends, because what the
+// high 32 bits should be is decided by the value being widened. Taking the
+// signedness from the destination instead gets both of these wrong, and only
+// once bit 31 is set — every value below 2^31 agrees either way, which is why
+// this needs a case that crosses it.
+//
+// The hash is multiplicative so two errors of opposite sign cannot cancel.
+function main(): i32 {
+  var h: i64 = 1i64;
+
+  // u32 -> i64: zero-extend. 2^31 and above must stay positive.
+  var uv: u32 = 0u32;
+  uv = 0u32;          h = h * 1000003i64 + (uv as i64);
+  uv = 1u32;          h = h * 1000003i64 + (uv as i64);
+  uv = 2147483647u32; h = h * 1000003i64 + (uv as i64);
+  uv = 2147483648u32; h = h * 1000003i64 + (uv as i64);
+  uv = 4294967295u32; h = h * 1000003i64 + (uv as i64);
+
+  // i32 -> u64: sign-extend, so a negative source fills the high half.
+  var iv: i32 = 0;
+  iv = 0;           h = h * 1000003i64 + (iv as u64) as i64;
+  iv = 1;           h = h * 1000003i64 + (iv as u64) as i64;
+  iv = -1;          h = h * 1000003i64 + (iv as u64) as i64;
+  iv = 2147483647;  h = h * 1000003i64 + (iv as u64) as i64;
+  iv = -2147483648; h = h * 1000003i64 + (iv as u64) as i64;
+
+  // i32 -> i64 and u32 -> u64, the cases both rules already agreed on.
+  iv = -123456789;    h = h * 1000003i64 + (iv as i64);
+  uv = 4000000000u32; h = h * 1000003i64 + (uv as u64) as i64;
+
+  // u8 and boolean leave bit 31 clear, so the two extensions agree — pinned
+  // so a future change cannot quietly break them on the way past.
+  var b: u8 = 255u8;
+  h = h * 1000003i64 + (b as i64);
+
+  return (h % 251i64) as i32;
+}

@@ -9427,7 +9427,14 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 }
                 var sw: LowerState = lower_expr(u.operand, s);
                 if (!sw.ok) { return sw; }
-                return sw.emit(ir.op_int_extend(u.op == "as_u64"));
+                // The SOURCE's signedness picks the extension, not the
+                // destination's: `u32 as i64` zero-extends and `i32 as u64`
+                // sign-extends, because what the high 32 bits should be is a
+                // property of the value being widened. Native decides it the
+                // same way (`srcInt.IsSigned()` in internal/ir). u8 and
+                // boolean need no case of their own — their values leave bit
+                // 31 clear, so the two extensions agree.
+                return sw.emit(ir.op_int_extend(expr_is_u32(u.operand, s)));
             }
             // `inner?` with an i64/u64 payload: lower_try emits the width-64 payload
             // read, so the unwrapped value is a true i64 here (the `var x: i64 =
