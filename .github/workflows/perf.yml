@@ -60,12 +60,14 @@ on:
       - ".github/ISSUE_TEMPLATE/**"
   workflow_dispatch:
 
-# Main runs key on the SHA rather than the ref: back-to-back merges each keep
-# their own run, so a failure names the merge that caused it rather than the
-# newest of several.
+# main never cancels its own in-flight run, and gets one concurrency group
+# rather than one per SHA: a SHA-keyed group supersedes nothing, so a burst of
+# back-to-back rebase-merges holds an uncancellable run each and buries every
+# open PR's checks behind it (#8124). One group coalesces the burst to its
+# newest commit, at the cost of a red main naming a span of merges.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   bench:
