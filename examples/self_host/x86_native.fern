@@ -2874,23 +2874,31 @@ function x86_gas_bt_idx(mnem: string): i32 {
 // x86_gas_lockable: the base mnemonics the F0 lock prefix may precede —
 // anything else is #UD at runtime, so it is refused at assembly.
 function x86_gas_lockable(mnem: string): boolean {
-    return mnem == "adc"
-        || mnem == "add"
-        || mnem == "and"
-        || mnem == "btc"
-        || mnem == "btr"
-        || mnem == "bts"
-        || mnem == "cmpxchg"
-        || mnem == "dec"
-        || mnem == "inc"
-        || mnem == "neg"
-        || mnem == "not"
-        || mnem == "or"
-        || mnem == "sbb"
-        || mnem == "sub"
-        || mnem == "xadd"
-        || mnem == "xchg"
-        || mnem == "xor";
+    var names: string[] = [
+        "adc",
+        "add",
+        "and",
+        "btc",
+        "btr",
+        "bts",
+        "cmpxchg",
+        "dec",
+        "inc",
+        "neg",
+        "not",
+        "or",
+        "sbb",
+        "sub",
+        "xadd",
+        "xchg",
+        "xor",
+    ];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (names[i] == mnem) { return true; }
+        i = i + 1;
+    }
+    return false;
 }
 // END GENERATED GPR GROUP TABLES
 
@@ -4394,7 +4402,8 @@ pub struct CfiProfile {
     data_align: i32,   // a saved-register offset is stored divided by it (-8)
     ra_column: i32,    // the return address's column (16 = rip, 30 = lr)
     initial: i32[],    // the CIE's initial CFA program, as gas emits it
-    x86: boolean,      // which register vocabulary cfi_reg_num reads
+    reg_names: string[], // the register spellings a directive may name ...
+    reg_nums: i32[],     // ... and the DWARF column each one is
 }
 
 // CfiState is what the directives record: one span per
@@ -4496,32 +4505,10 @@ function cfi_reg_num(p: CfiProfile, tok: string): i32 {
         if (n < 0) { return 0 - 1; }
         return n;
     }
-    if (p.x86) {
-        if (tok == "rax") { return 0; }
-        if (tok == "rdx") { return 1; }
-        if (tok == "rcx") { return 2; }
-        if (tok == "rbx") { return 3; }
-        if (tok == "rsi") { return 4; }
-        if (tok == "rdi") { return 5; }
-        if (tok == "rbp") { return 6; }
-        if (tok == "rsp") { return 7; }
-        if (tok == "r8") { return 8; }
-        if (tok == "r9") { return 9; }
-        if (tok == "r10") { return 10; }
-        if (tok == "r11") { return 11; }
-        if (tok == "r12") { return 12; }
-        if (tok == "r13") { return 13; }
-        if (tok == "r14") { return 14; }
-        if (tok == "r15") { return 15; }
-        if (tok == "rip") { return 16; }
-        return 0 - 1;
-    }
-    if (tok == "sp") { return 31; }
-    if (tok == "fp") { return 29; }
-    if (tok == "lr") { return 30; }
-    if (tok.len() >= 2 && tok[0] == b'x' && cfi_is_int(slice_unchecked(tok, 1, tok.len()) + "")) {
-        var xn: i32 = cfi_atoi(slice_unchecked(tok, 1, tok.len()) + "");
-        if (xn >= 0 && xn <= 30) { return xn; }
+    var i: i32 = 0;
+    while (i < p.reg_names.len()) {
+        if (p.reg_names[i] == tok) { return p.reg_nums[i]; }
+        i = i + 1;
     }
     return 0 - 1;
 }
@@ -4598,6 +4585,18 @@ pub function cfi_directive(own s: CfiState, p: CfiProfile, line: string, off: i3
     var ops: string[] = cfi_split_ops(rest);
 
     if (d == ".cfi_sections") { return s; }  // the image writer decides
+    if (d == ".cfi_startproc" || d == ".cfi_endproc") { return cfi_proc_directive(s, d, ops, off); }
+    if (!s.open) { return cfi_bad(s, d + " outside .cfi_startproc/.cfi_endproc"); }
+    if (d == ".cfi_def_cfa" || d == ".cfi_def_cfa_register" || d == ".cfi_def_cfa_offset") {
+        return cfi_cfa_directive(s, p, d, ops, rest, off);
+    }
+    if (d == ".cfi_remember_state") { return cfi_add_rule(s, off, [cfi_op_remember_state()]); }
+    if (d == ".cfi_restore_state") { return cfi_add_rule(s, off, [cfi_op_restore_state()]); }
+    return cfi_reg_directive(s, p, d, ops, rest, off);
+}
+
+// cfi_proc_directive opens or closes an FDE.
+function cfi_proc_directive(own s: CfiState, d: string, ops: string[], off: i32): CfiState {
     if (d == ".cfi_startproc") {
         if (s.open) { return cfi_bad(s, ".cfi_startproc inside an open .cfi_startproc"); }
         if (ops.len() > 0 && ops[0].len() > 0) { return cfi_bad(s, ".cfi_startproc " + ops[0] + " is not supported"); }
@@ -4605,67 +4604,55 @@ pub function cfi_directive(own s: CfiState, p: CfiProfile, line: string, off: i3
         s = CfiState { ...s, fde_end: s.fde_end.append(off) };
         return CfiState { ...s, open: true };
     }
-    if (d == ".cfi_endproc") {
-        if (!s.open) { return cfi_bad(s, ".cfi_endproc without .cfi_startproc"); }
-        s = CfiState { ...s, fde_end: s.fde_end.with(s.fde_end.len() - 1, off) };
-        return CfiState { ...s, open: false };
-    }
-    if (!s.open) { return cfi_bad(s, d + " outside .cfi_startproc/.cfi_endproc"); }
+    if (!s.open) { return cfi_bad(s, ".cfi_endproc without .cfi_startproc"); }
+    s = CfiState { ...s, fde_end: s.fde_end.with(s.fde_end.len() - 1, off) };
+    return CfiState { ...s, open: false };
+}
 
-    if (d == ".cfi_def_cfa") {
-        if (ops.len() < 2) { return cfi_bad(s, d + ": missing operand"); }
-        var r: i32 = cfi_reg_num(p, ops[0]);
-        if (r < 0 || !cfi_is_int(ops[1])) { return cfi_bad(s, d + " " + rest); }
-        var body: i32[] = cfi_uleb(cfi_uleb([cfi_op_def_cfa()], r), cfi_atoi(ops[1]));
-        return cfi_add_rule(s, off, body);
-    }
-    if (d == ".cfi_def_cfa_register") {
-        if (ops.len() < 1) { return cfi_bad(s, d + ": missing register operand"); }
-        var r1: i32 = cfi_reg_num(p, ops[0]);
-        if (r1 < 0) { return cfi_bad(s, d + " " + rest); }
-        return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_register()], r1));
-    }
+// cfi_cfa_directive records a rule that moves the CFA.
+function cfi_cfa_directive(own s: CfiState, p: CfiProfile, d: string, ops: string[], rest: string, off: i32): CfiState {
     if (d == ".cfi_def_cfa_offset") {
         if (ops.len() < 1 || !cfi_is_int(ops[0])) { return cfi_bad(s, d + " " + rest); }
         return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_offset()], cfi_atoi(ops[0])));
     }
+    if (ops.len() < 1) { return cfi_bad(s, d + ": missing register operand"); }
+    var r: i32 = cfi_reg_num(p, ops[0]);
+    if (r < 0) { return cfi_bad(s, d + " " + rest); }
+    if (d == ".cfi_def_cfa_register") {
+        return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_register()], r));
+    }
+    if (ops.len() < 2 || !cfi_is_int(ops[1])) { return cfi_bad(s, d + " " + rest); }
+    return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_def_cfa()], r), cfi_atoi(ops[1])));
+}
+
+// cfi_reg_directive records a rule about one register's saved location.
+function cfi_reg_directive(own s: CfiState, p: CfiProfile, d: string, ops: string[], rest: string, off: i32): CfiState {
+    if (ops.len() < 1) { return cfi_bad(s, d + ": missing register operand"); }
+    var r: i32 = cfi_reg_num(p, ops[0]);
+    if (r < 0) { return cfi_bad(s, d + " " + rest); }
     if (d == ".cfi_offset") {
-        if (ops.len() < 2) { return cfi_bad(s, d + ": missing operand"); }
-        var r2: i32 = cfi_reg_num(p, ops[0]);
-        if (r2 < 0 || !cfi_is_int(ops[1])) { return cfi_bad(s, d + " " + rest); }
+        if (ops.len() < 2 || !cfi_is_int(ops[1])) { return cfi_bad(s, d + " " + rest); }
         var n: i32 = cfi_atoi(ops[1]);
         if (n % p.data_align != 0) { return cfi_bad(s, d + " " + ops[0] + ": offset not a multiple of the data alignment"); }
         var f: i32 = n / p.data_align;
         // A positive CFA-relative offset needs the extended_sf form, which
         // this module does not produce; refuse rather than unwind wrongly.
         if (f < 0) { return cfi_bad(s, d + " " + ops[0] + ": positive offset is not supported"); }
-        if (r2 < 64) { return cfi_add_rule(s, off, cfi_uleb([cfi_op_offset() | r2], f)); }
-        return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_offset_extended()], r2), f));
+        if (r < 64) { return cfi_add_rule(s, off, cfi_uleb([cfi_op_offset() | r], f)); }
+        return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_offset_extended()], r), f));
     }
     if (d == ".cfi_register") {
         if (ops.len() < 2) { return cfi_bad(s, d + ": missing operand"); }
-        var ra: i32 = cfi_reg_num(p, ops[0]);
         var rb: i32 = cfi_reg_num(p, ops[1]);
-        if (ra < 0 || rb < 0) { return cfi_bad(s, d + " " + rest); }
-        return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_register()], ra), rb));
+        if (rb < 0) { return cfi_bad(s, d + " " + rest); }
+        return cfi_add_rule(s, off, cfi_uleb(cfi_uleb([cfi_op_register()], r), rb));
     }
     if (d == ".cfi_restore") {
-        if (ops.len() < 1) { return cfi_bad(s, d + ": missing register operand"); }
-        var r3: i32 = cfi_reg_num(p, ops[0]);
-        if (r3 < 0) { return cfi_bad(s, d + " " + rest); }
-        if (r3 < 64) { return cfi_add_rule(s, off, [cfi_op_restore() | r3]); }
-        return cfi_add_rule(s, off, cfi_uleb([cfi_op_restore_extended()], r3));
+        if (r < 64) { return cfi_add_rule(s, off, [cfi_op_restore() | r]); }
+        return cfi_add_rule(s, off, cfi_uleb([cfi_op_restore_extended()], r));
     }
-    if (d == ".cfi_undefined" || d == ".cfi_same_value") {
-        if (ops.len() < 1) { return cfi_bad(s, d + ": missing register operand"); }
-        var r4: i32 = cfi_reg_num(p, ops[0]);
-        if (r4 < 0) { return cfi_bad(s, d + " " + rest); }
-        var op: i32 = cfi_op_undefined();
-        if (d == ".cfi_same_value") { op = cfi_op_same_value(); }
-        return cfi_add_rule(s, off, cfi_uleb([op], r4));
-    }
-    if (d == ".cfi_remember_state") { return cfi_add_rule(s, off, [cfi_op_remember_state()]); }
-    if (d == ".cfi_restore_state") { return cfi_add_rule(s, off, [cfi_op_restore_state()]); }
+    if (d == ".cfi_undefined") { return cfi_add_rule(s, off, cfi_uleb([cfi_op_undefined()], r)); }
+    if (d == ".cfi_same_value") { return cfi_add_rule(s, off, cfi_uleb([cfi_op_same_value()], r)); }
     return cfi_bad(s, "unsupported CFI directive " + d);
 }
 
@@ -4833,6 +4820,12 @@ pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_va
 // cfi_profile_x86 is the CIE gas emits for x86-64: CFA at rsp+8 with the
 // return address at CFA-8.
 pub function cfi_profile_x86(): CfiProfile {
-    return CfiProfile { code_align: 1, data_align: 0 - 8, ra_column: 16, initial: [12, 7, 8, 144, 1], x86: true };
+    return CfiProfile {
+        code_align: 1, data_align: 0 - 8, ra_column: 16, initial: [12, 7, 8, 144, 1],
+        // DWARF's x86-64 column order, which is not the encoding order.
+        reg_names: ["rax", "rdx", "rcx", "rbx", "rsi", "rdi", "rbp", "rsp",
+            "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "rip"],
+        reg_nums: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+    };
 }
 
