@@ -427,7 +427,7 @@ func (b *builder) computeDynBorrowedViews() map[string]bool {
 // needs is only whether the returned POINTER is the callee's own.
 //
 // A function with no value returns gets false: it returns nothing to be fresh.
-func findReturnsFreshBox(prog *ast.Program, pairForm, trmcFuncs map[string]bool) map[string]bool {
+func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool) map[string]bool {
 	// Greatest fixpoint: assume every function with a body qualifies, then
 	// eliminate the ones a return disproves. A call may be fresh because its
 	// callee is, so the answer for one function depends on the answers for
@@ -444,7 +444,8 @@ func findReturnsFreshBox(prog *ast.Program, pairForm, trmcFuncs map[string]bool)
 			if fn.Body == nil || !q[fn.Name] {
 				continue
 			}
-			fresh := freshLocalsIn(fn, q)
+			ctorFresh := variantCtorFreshIn(info, shadowingNames(fn, info))
+			fresh := freshLocalsIn(fn, q, ctorFresh)
 			retained := returnedAliasIsRetained(fn, pairForm, trmcFuncs)
 			isParam := map[string]bool{}
 			for _, p := range fn.Params {
@@ -457,7 +458,7 @@ func findReturnsFreshBox(prog *ast.Program, pairForm, trmcFuncs map[string]bool)
 					return true
 				}
 				saw = true
-				if !returnsOwnBox(r.Value, fresh, q, retained, isParam) {
+				if !returnsOwnBox(r.Value, fresh, q, retained, isParam, ctorFresh) {
 					ok = false
 				}
 				return true
@@ -519,33 +520,62 @@ func returnedAliasIsRetained(fn *ast.FuncDecl, pairForm, trmcFuncs map[string]bo
 // returnsOwnBox reports whether `e` evaluates to a box this function owns
 // rather than one it was handed. `retained` is returnedAliasIsRetained for the
 // enclosing function: with it, a returned alias is owned because the lowering
-// inc'd it on the way out.
-func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool, retained bool, isParam map[string]bool) bool {
+// inc'd it on the way out. `ctorFresh` is variantCtorFreshIn for the function:
+// a variant construction of an rc-payload enum is a fresh rc=1 box whose
+// pointer payloads are inc'd in, the carve-out rhsTainted's Call case makes
+// for a direct `Ctor(..)`, one call deeper — it is what lets a tree insert's
+// `__om_single` / `__om_bin` / `__om_balance` chain prove fresh, so the
+// intermediate node a caller binds is reclaimable.
+func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool, retained bool, isParam map[string]bool, ctorFresh func(*ast.Call) bool) bool {
 	switch x := e.(type) {
 	case *ast.Ident:
-		// isParam: see returnedAliasIsRetained on the threaded accumulator.
+		// fresh: a local proven fresh below, or an `own` parameter threaded
+		// only through owned values (freshLocalsIn). isParam: see
+		// returnedAliasIsRetained on the threaded accumulator — a BORROWED
+		// parameter's rebind may decline the dec that balances the return inc.
 		return fresh[x.Name] || (retained && !isParam[x.Name])
 	case *ast.FieldAccess, *ast.Index:
 		return retained
 	case *ast.Call:
 		id, isIdent := x.Callee.(*ast.Ident)
-		return isIdent && q[id.Name]
+		if !isIdent {
+			return false
+		}
+		switch id.Name {
+		case "__method_Array_push", "__method_Array_set":
+			// A cow mutator returns the receiver's own buffer (the rc==1
+			// in-place path) or a fresh copy of it, and stores the element
+			// counted either way — so the result is the function's box
+			// exactly when the receiver is. retained=false: the transfer inc
+			// covers the returned expression, which is the call, not its
+			// receiver, so a returned-alias receiver earns nothing from it.
+			return len(x.Args) > 0 && returnsOwnBox(x.Args[0], fresh, q, false, isParam, ctorFresh)
+		}
+		return q[id.Name] || ctorFresh(x)
 	case *ast.IfExpr:
-		return returnsOwnBox(x.Then, fresh, q, retained, isParam) &&
-			returnsOwnBox(x.Else, fresh, q, retained, isParam)
+		return returnsOwnBox(x.Then, fresh, q, retained, isParam, ctorFresh) &&
+			returnsOwnBox(x.Else, fresh, q, retained, isParam, ctorFresh)
 	}
 	return allocatesFreshBox(e)
 }
 
-// freshLocalsIn returns the locals of `fn` whose every assigned value is a box
-// the function owns. A name that is also a parameter is excluded outright: a
-// shadowing declaration would otherwise let a parameter's box be reported as
-// fresh, and distinguishing the two costs more than the reclaim is worth.
-func freshLocalsIn(fn *ast.FuncDecl, q map[string]bool) map[string]bool {
+// freshLocalsIn returns the names in `fn` whose every assigned value is a box
+// the function owns: declared locals, and `own` parameters — the caller moved
+// its reference in, so the box is this function's to hand back, and it stays
+// so across rebinds from owned values (`acc = acc.append(x)`, `acc = walk(t,
+// acc)` with walk itself in q). A local that shadows a parameter name is
+// excluded outright, and so is an `own` parameter that any binding shadows:
+// distinguishing the two costs more than the reclaim is worth.
+func freshLocalsIn(fn *ast.FuncDecl, q map[string]bool, ctorFresh func(*ast.Call) bool) map[string]bool {
 	isParam := map[string]bool{}
+	ownParam := map[string]bool{}
 	for _, p := range fn.Params {
 		isParam[p.Name] = true
+		if p.Own && rcTrackedSlotType(p.Type) {
+			ownParam[p.Name] = true
+		}
 	}
+	shadowed := shadowingNames(fn, nil)
 	assigned := map[string][]ast.Expr{}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -554,7 +584,7 @@ func freshLocalsIn(fn *ast.FuncDecl, q map[string]bool) map[string]bool {
 				assigned[x.Name] = append(assigned[x.Name], x.Init)
 			}
 		case *ast.Assign:
-			if id, ok := x.Target.(*ast.Ident); ok && !isParam[id.Name] {
+			if id, ok := x.Target.(*ast.Ident); ok && (!isParam[id.Name] || ownParam[id.Name]) {
 				assigned[id.Name] = append(assigned[id.Name], x.Value)
 			}
 		}
@@ -562,7 +592,14 @@ func freshLocalsIn(fn *ast.FuncDecl, q map[string]bool) map[string]bool {
 	})
 	fresh := map[string]bool{}
 	for name := range assigned {
-		fresh[name] = true
+		if !isParam[name] {
+			fresh[name] = true
+		}
+	}
+	for name := range ownParam {
+		if !shadowed[name] {
+			fresh[name] = true
+		}
 	}
 	// Same shape as the outer fixpoint: a local may be initialised from
 	// another, so shrink until stable rather than deciding in one pass.
@@ -572,7 +609,7 @@ func freshLocalsIn(fn *ast.FuncDecl, q map[string]bool) map[string]bool {
 			for _, rhs := range assigned[name] {
 				// retained=false: the transfer inc is emitted at RETURN
 				// sites only, so an assignment's RHS earns no credit from it.
-				if !returnsOwnBox(rhs, fresh, q, false, isParam) {
+				if !returnsOwnBox(rhs, fresh, q, false, isParam, ctorFresh) {
 					delete(fresh, name)
 					changed = true
 					break
@@ -584,6 +621,23 @@ func freshLocalsIn(fn *ast.FuncDecl, q map[string]bool) map[string]bool {
 		}
 	}
 	return fresh
+}
+
+// tuplePatBinders lists every name a tuple pattern binds, nested elements
+// and `@` binders included.
+func tuplePatBinders(elems []ast.TuplePatElem) []string {
+	var out []string
+	for _, el := range elems {
+		out = append(out, el.Name, el.AtBinding)
+		out = append(out, el.VariantBindings...)
+		out = append(out, tuplePatBinders(el.Nested)...)
+		for _, vp := range el.VariantPayloads {
+			if vp != nil {
+				out = append(out, tuplePatBinders([]ast.TuplePatElem{*vp})...)
+			}
+		}
+	}
+	return out
 }
 
 func findReturnsFreshPairPayload(prog *ast.Program, info *checker.Info) map[string]bool {
@@ -812,17 +866,150 @@ func computeReadOnlyComparators(info *checker.Info) map[string]bool {
 // taint. That is enough for the shape this targets: the lexer's eight `*_tok`
 // helpers and the parser's `e_*` node constructors, each of which does nothing
 // with its string parameter but store it in the node it returns. Widening it
-// (transitive calls, pure reads, locals that only flow into constructions,
-// variant-constructor payloads) needs its own fixpoint and is a follow-up.
+// (transitive calls, pure reads, locals that only flow into constructions)
+// needs its own fixpoint and is a follow-up.
+//
+// A variant-constructor payload is a counted store too — emitEnumNew inc's an
+// aliased payload under the same predicate a StructLit field takes — so
+// `Node(l, k, r)` credits its arguments, but only where that inc is actually
+// emitted: variantCtorCountedIn mirrors emitEnumNew's gate. A credit the
+// retain does not honour is an over-release (a use-after-free), where a
+// missing credit is only the leak this closes: the fresh `ins(l, k)` temp a
+// tree insert hands to a node-building helper was stranded at rc 2 on every
+// call, one node per insert.
 //
 // A parameter shadowed by a local / match binding of the same name disqualifies
 // it: the occurrence counting below cannot tell the two apart.
+// variantCtorCountedIn returns the predicate "this call is a variant
+// construction whose aliased payloads emitEnumNew inc's". It mirrors that
+// emitter's gate exactly, minus the two terms that can never hold for a
+// parameter occurrence — a parameter is not a move site (markConstructionMoves
+// only marks owned rc locals), and needsRcIncOnAlias is true for every
+// pointer-shaped parameter type the classifiers credit:
+//
+//   - the callee resolves to a payload-carrying variant, and the name is not
+//     shadowed by a local, a binding or a user function (nameShadowsVariant);
+//   - the enum's payloads are rc-counted (enumRcPayloadsEligible);
+//   - the construction is not a consuming-match reuse site, which stores its
+//     payloads without the inc. computeConsumingMatchReuse pairs the sole
+//     `return Ctor(..)` of an arm of a `match` on an `own` enum parameter;
+//     every such return is refused here without re-checking its other
+//     gates (box uniformity, the reuse flag), the conservative direction.
+func variantCtorCountedIn(fn *ast.FuncDecl, info *checker.Info, shadowed map[string]bool) func(*ast.Call) bool {
+	ctorFresh := variantCtorFreshIn(info, shadowed)
+	if !ast.EnumRcPayloads || info == nil || fn.Body == nil {
+		return func(*ast.Call) bool { return false }
+	}
+	ownParam := map[string]bool{}
+	for i, flag := range info.OwnFuncs[fn.Name] {
+		if flag && i < len(fn.Params) {
+			ownParam[fn.Params[i].Name] = true
+		}
+	}
+	reuseSite := map[*ast.Call]bool{}
+	if len(ownParam) > 0 {
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			m, ok := n.(*ast.Match)
+			if !ok {
+				return true
+			}
+			if tag, ok := m.Tag.(*ast.Ident); !ok || !ownParam[tag.Name] {
+				return true
+			}
+			for _, arm := range m.Arms {
+				if arm.Body == nil || len(arm.Body.Stmts) != 1 {
+					continue
+				}
+				if ret, ok := arm.Body.Stmts[0].(*ast.Return); ok && ret.Value != nil {
+					if call, ok := ret.Value.(*ast.Call); ok {
+						reuseSite[call] = true
+					}
+				}
+			}
+			return true
+		})
+	}
+	return func(c *ast.Call) bool { return !reuseSite[c] && ctorFresh(c) }
+}
+
+// variantCtorFreshIn returns the predicate "this call constructs a fresh rc=1
+// box of an rc-payload enum" — the callee resolves to a payload-carrying
+// variant (callBody's dispatch, minus a name a local, a binding or a user
+// function shadows: nameShadowsVariant) of an enum whose payloads emitEnumNew
+// counts (enumRcPayloadsEligible). Under that gate the construction inc's
+// every aliased payload, so the box owns what it holds; a Map-carrying enum
+// stores its payloads uncounted and is refused, exactly as rhsTainted's
+// direct-constructor carve-out refuses it.
+func variantCtorFreshIn(info *checker.Info, shadowed map[string]bool) func(*ast.Call) bool {
+	if !ast.EnumRcPayloads || info == nil {
+		return func(*ast.Call) bool { return false }
+	}
+	return func(c *ast.Call) bool {
+		id, ok := c.Callee.(*ast.Ident)
+		if !ok || shadowed[id.Name] {
+			return false
+		}
+		if _, isFunc := info.FuncSigs[id.Name]; isFunc {
+			return false
+		}
+		en, _, payloads, isVariant := lookupVariantIn(info, id.Name, id.EnumName)
+		return isVariant && payloads > 0 && enumRcPayloadsEligibleIn(info, en)
+	}
+}
+
+// shadowingNames lists every name `fn` binds besides its parameters — declared
+// locals, match-arm binders (payload, `@` and tuple-pattern binders included)
+// and for-each variables. A parameter reusing one of these names cannot be
+// told from the binding by an occurrence walk, and a variant constructor by
+// that name is not what a call to it reaches.
+func shadowingNames(fn *ast.FuncDecl, info *checker.Info) map[string]bool {
+	out := map[string]bool{}
+	if info != nil {
+		for _, v := range info.Locals[fn] {
+			out[v.Name] = true
+		}
+	}
+	bind := func(names ...string) {
+		for _, nm := range names {
+			if nm != "" {
+				out[nm] = true
+			}
+		}
+	}
+	if fn.Body == nil {
+		return out
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			bind(x.Name)
+		case *ast.Match:
+			for _, arm := range x.Arms {
+				bind(arm.Bindings...)
+				bind(arm.AtBinding)
+				bind(tuplePatBinders(arm.TupleElems)...)
+			}
+		case *ast.MatchExpr:
+			for _, arm := range x.Arms {
+				bind(arm.Bindings...)
+				bind(arm.AtBinding)
+				bind(tuplePatBinders(arm.TupleElems)...)
+			}
+		case *ast.ForEach:
+			bind(x.Var)
+		}
+		return true
+	})
+	return out
+}
+
 func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][]bool {
 	// Precompute the shadowed-name set per function once (match / match-expr
 	// bindings that reuse a parameter name).
 	type fnCtx struct {
-		fn       *ast.FuncDecl
-		shadowed map[string]bool
+		fn          *ast.FuncDecl
+		shadowed    map[string]bool
+		ctorCounted func(*ast.Call) bool
 	}
 	ctxs := make([]fnCtx, 0, len(prog.Funcs))
 	out := map[string][]bool{}
@@ -830,28 +1017,8 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 		if fn.Body == nil {
 			continue
 		}
-		sh := map[string]bool{}
-		for _, v := range info.Locals[fn] {
-			sh[v.Name] = true
-		}
-		ast.Walk(fn.Body, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.Match:
-				for _, arm := range x.Arms {
-					for _, nm := range arm.Bindings {
-						sh[nm] = true
-					}
-				}
-			case *ast.MatchExpr:
-				for _, arm := range x.Arms {
-					for _, nm := range arm.Bindings {
-						sh[nm] = true
-					}
-				}
-			}
-			return true
-		})
-		ctxs = append(ctxs, fnCtx{fn, sh})
+		sh := shadowingNames(fn, info)
+		ctxs = append(ctxs, fnCtx{fn, sh, variantCtorCountedIn(fn, info, sh)})
 		out[fn.Name] = make([]bool, len(fn.Params))
 	}
 	// Least-fixpoint: struct-param crediting consults the summary for the
@@ -865,7 +1032,7 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 	for {
 		changed := false
 		for _, c := range ctxs {
-			fn, sh := c.fn, c.shadowed
+			fn, sh, ctorCounted := c.fn, c.shadowed, c.ctorCounted
 			flags := make([]bool, len(fn.Params))
 			for i, p := range fn.Params {
 				// A parameter carrying no heap (i32 / bool / f64 / …) can never
@@ -886,9 +1053,9 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 				}
 				switch pt := p.Type.(type) {
 				case ast.StringType:
-					flags[i] = stringParamCounted(fn, p.Name, out)
+					flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted)
 				case ast.ArrayType:
-					flags[i] = arrayParamCounted(fn, p.Name, pt, info, out)
+					flags[i] = arrayParamCounted(fn, p.Name, pt, info, out, ctorCounted)
 				case ast.StructType:
 					// Credit `p` when every one of its appearances is a counted
 					// store, a non-retaining read, or a counted call argument —
@@ -897,7 +1064,7 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 					// scanner threaded through field projections and pure-read
 					// methods (lexer.tokenize;
 					// docs/SELFHOST-AST-RETIREMENT.md).
-					flags[i] = paramProjectionsSafe(fn, p.Name, pt.Name, info, out)
+					flags[i] = paramProjectionsSafe(fn, p.Name, pt.Name, info, out, ctorCounted)
 				case ast.EnumType:
 					// The same rule, and sound for the same reason:
 					// `needsRcIncOnAlias` is true for an enum, so a bare `p` in
@@ -909,13 +1076,13 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 					// with a control: `mknode(t, n) -> Node { ty: t, n: n }`
 					// leaks its argument when `t` is an enum and does not when
 					// `t` is a struct, same call shape either way (#7867).
-					flags[i] = paramProjectionsSafe(fn, p.Name, pt.Name, info, out)
+					flags[i] = paramProjectionsSafe(fn, p.Name, pt.Name, info, out, ctorCounted)
 				case ast.TupleType:
 					// A tuple has no nominal declaration to name, so the
 					// projection arms never fire and only the slot / argument /
 					// return rules can credit it. `needsRcIncOnAlias` is true
 					// for a tuple, so those carry the same argument.
-					flags[i] = paramProjectionsSafe(fn, p.Name, "", info, out)
+					flags[i] = paramProjectionsSafe(fn, p.Name, "", info, out, ctorCounted)
 				}
 			}
 			ptrAllCounted := true
@@ -1168,7 +1335,7 @@ func countedSeedOccurrences(fn *ast.FuncDecl) map[*ast.Ident]bool {
 	return out
 }
 
-func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) bool {
+func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool, ctorCounted func(*ast.Call) bool) bool {
 	safe := map[*ast.Ident]bool{}
 	seedOK := countedSeedOccurrences(fn)
 	mark := func(e ast.Expr) {
@@ -1288,6 +1455,12 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 				len(x.TypeArgs) == 1 && rcTrackedSlotType(x.TypeArgs[0]) {
 				mark(x.Args[2])
 			}
+			// A variant-constructor payload is inc'd like a StructLit field.
+			if ctorCounted(x) {
+				for _, a := range x.Args {
+					mark(a)
+				}
+			}
 			// Passing `s` on to a callee that is ITSELF counted-retain in that
 			// position retains nothing new: whatever the callee does with it is
 			// already known to be a counted store or a pure read. This is the
@@ -1337,7 +1510,7 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool) 
 // A bare `p[i]` of a POINTER element anywhere else still refuses — it
 // hands out a live reference nothing counts. Similarly no SliceExpr arm —
 // an array slice can share the buffer.
-func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *checker.Info, summary map[string][]bool) bool {
+func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *checker.Info, summary map[string][]bool, ctorCounted func(*ast.Call) bool) bool {
 	safe := map[*ast.Ident]bool{}
 	seedOK := countedSeedOccurrences(fn)
 	mark := func(e ast.Expr) {
@@ -1421,6 +1594,16 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 					safe[eid] = true
 				}
 			}
+			// A variant-constructor payload is inc'd like a StructLit field
+			// (a pointer element read `p[i]`) or copied (a scalar one).
+			if ctorCounted(x) {
+				for _, a := range x.Args {
+					mark(a)
+					if eid := paramIndex(a); eid != nil {
+						safe[eid] = true
+					}
+				}
+			}
 			// Copying builtins, for tier parity with the string and
 			// struct classifiers. Nothing in the table takes an array
 			// today, so this arm is inert until one does.
@@ -1478,7 +1661,7 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 // keeps `grow(m, k): Map { m = m.insert(k, …); return m; }` out: `m` reaches a
 // builtin `__method_Map_set` argument (never in `summary`) and a bare
 // `return m`, so it is never credited and its scalar `k` is never exempted.
-func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, summary map[string][]bool) bool {
+func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, summary map[string][]bool, ctorCounted func(*ast.Call) bool) bool {
 	// `sn` names a struct declaration for a struct parameter and nothing
 	// for an enum or a tuple. Absence is not a refusal: it makes the
 	// field-type lookup answer "no such field", so the two projection
@@ -1620,6 +1803,14 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, s
 							markSlotValue(a)
 						}
 					}
+				}
+			}
+			// A variant-constructor payload is a counted slot exactly like a
+			// StructLit field: a bare `p` is inc'd in, a `p.field` is inc'd
+			// (pointer) or copied (scalar).
+			if ctorCounted(x) {
+				for _, a := range x.Args {
+					markSlotValue(a)
 				}
 			}
 		case *ast.Assign:

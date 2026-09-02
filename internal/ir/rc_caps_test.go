@@ -81,7 +81,7 @@ func TestRcTransitiveClassifierVerdicts(t *testing.T) {
 	}
 	for _, tc := range cases {
 		free := b.typeIsStringArrayFree(tc.t, map[string]bool{})
-		hasMap := b.typeTransitivelyContainsMap(tc.t, map[string]bool{})
+		hasMap := typeTransitivelyContainsMap(b.info, tc.t, map[string]bool{})
 		if free != tc.wantFree || hasMap != tc.wantMap {
 			t.Errorf("%s: (stringArrayFree=%v, containsMap=%v), want (%v, %v)",
 				tc.name, free, hasMap, tc.wantFree, tc.wantMap)

@@ -3085,7 +3085,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// what rhsTainted's Call case needs to stop inheriting an argument's
 	// borrow taint into a freshly built result (findReturnsFreshBox).
 	trmcFuncs, trmcConsumeSafe := findTrmcFuncs(prog, info, ptrW, pairForm)
-	returnsFreshBox := findReturnsFreshBox(prog, pairForm, trmcFuncs)
+	returnsFreshBox := findReturnsFreshBox(prog, info, pairForm, trmcFuncs)
 	// Borrow inference (BorrowInferEnabled): per-function per-param escape facts.
 	// Both the definition side (paramOwnedByDefault) and the call site
 	// (calleeParamOwnedByDefault) consult this so they agree on which
@@ -5959,8 +5959,14 @@ func needsImplicitReturn(ops []Op) bool {
 // scrutinee with no static enum type, or an Ident the checker left
 // unstamped — and keeps the legacy scan for those.
 func (b *builder) lookupVariantOn(name, enumName string) (foundEnum string, varIdx int, payloadCount int, ok bool) {
+	return lookupVariantIn(b.info, name, enumName)
+}
+
+// lookupVariantIn is lookupVariantOn for a pass that runs before any builder
+// exists (inferParamCountedRetain).
+func lookupVariantIn(info *checker.Info, name, enumName string) (foundEnum string, varIdx int, payloadCount int, ok bool) {
 	if enumName != "" {
-		if ed, ok := b.info.Enums[enumName]; ok {
+		if ed, ok := info.Enums[enumName]; ok {
 			for i, v := range ed.Variants {
 				if v.Name == name {
 					return enumName, i, len(v.Payloads), true
@@ -5969,7 +5975,7 @@ func (b *builder) lookupVariantOn(name, enumName string) (foundEnum string, varI
 		}
 		return "", 0, 0, false
 	}
-	for ename, ed := range b.info.Enums {
+	for ename, ed := range info.Enums {
 		for i, v := range ed.Variants {
 			if v.Name == name {
 				return ename, i, len(v.Payloads), true
