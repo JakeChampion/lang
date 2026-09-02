@@ -48,11 +48,19 @@ func TestSelfHostFieldReclaimWasm(t *testing.T) {
 		"function main(): i32 { var seed: Acc = Acc { items: [0] }; var r: Acc = build(seed, 2000000); return r.items[0] - 1999999; }"
 	const cap = "16777216" // 16 MiB — ~16× the bounded footprint, ~1/10 the leak
 
-	// The real $__field_reclaim_Acc body opens with the old-is-heap guard then the
-	// cow check on field 0 at the IR offset 8 — the pass-through is just
-	// `(local.get $new))`. Pinning this guarantees IR routing + the real shape.
+	// The real $__field_reclaim_Acc body opens with the old-is-heap guard ANDed
+	// with the identity-reclaim guard (#6644: old == new replaced nothing, so the
+	// carried-field arm below must not release), then the cow check on field 0 at
+	// the IR offset 8 — the pass-through is just `(local.get $new))`. Pinning this
+	// guarantees IR routing + the real shape.
 	const wantBody = "(func $__field_reclaim_Acc (param $new i32) (param $old i32) (param $snap i32) (result i32)\n" +
-		"    (if (i32.ge_u (local.get $old)"
+		"    (if (i32.and (i32.ge_u (local.get $old)"
+
+	// The heap base is a per-program constant, so the identity operand cannot be
+	// reached from wantBody by one substring — it is pinned separately, and the
+	// pair is what makes the guard rather than just its i32.and wrapper the thing
+	// under test.
+	const wantIdentityGuard = "(i32.ne (local.get $old) (local.get $new))) (then"
 
 	cases := []struct {
 		name string
@@ -85,6 +93,9 @@ func TestSelfHostFieldReclaimWasm(t *testing.T) {
 			}
 			if !strings.Contains(string(wat), wantBody) {
 				t.Fatalf("%s: emitted $__field_reclaim body missing the real shape\nwant substring:\n%s\n--- WAT ---\n%s", tc.name, wantBody, wat)
+			}
+			if !strings.Contains(string(wat), wantIdentityGuard) {
+				t.Fatalf("%s: emitted $__field_reclaim body missing the identity-reclaim guard\nwant substring:\n%s\n--- WAT ---\n%s", tc.name, wantIdentityGuard, wat)
 			}
 			watPath := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watPath, wat, 0o644); err != nil {
