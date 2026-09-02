@@ -2439,6 +2439,11 @@ func emitAsciiRunHelper(w func(string, ...any)) {
 // equal `byte`. No cursor, so no clamp; both degenerate answers are honest
 // counts rather than sentinels — an out-of-range byte counts 0 because nothing
 // can equal it, an empty string counts 0 because it has no bytes. Leaf.
+//
+// The vector body mirrors the flat backend's kernel because the scalar one it
+// replaced was 12.6x slower on examples/bench/string_count_byte.fern, which is
+// what the differential's ratio gate reports (#8069). Byte-at-a-time is a fine
+// helper right up until a program counts 32 KiB twice per round, 6000 rounds.
 func emitCountByteHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_count_byte"))
@@ -2447,6 +2452,29 @@ func emitCountByteHelper(w func(string, ...any)) {
 	w("\tcmp rsi, 255")
 	w("\tja .Lssa_count_ret")
 	w("\txor edx, edx")
+	// SSE2 splat of the needle across xmm1: pshufb would be one instruction
+	// but is SSSE3, outside the declared Haswell baseline.
+	w("\tmovd xmm1, esi")
+	w("\tpunpcklbw xmm1, xmm1")
+	w("\tpunpcklwd xmm1, xmm1")
+	w("\tpshufd xmm1, xmm1, 0")
+	// 16 bytes an iteration while at least 16 remain, then the scalar loop
+	// takes the 0..15-byte tail — and the whole string when it is shorter than
+	// one block. The load is unaligned on purpose: the pointer comes from the
+	// allocator, so a 16-byte read starting inside the string cannot cross into
+	// an unmapped page, and a scalar align-up prologue would cost more.
+	w(".Lssa_count_vec:")
+	w("\tmov r9d, r8d")
+	w("\tsub r9d, edx")
+	w("\tcmp r9d, 16")
+	w("\tjl .Lssa_count_loop")
+	w("\tmovdqu xmm0, [rdi + rdx]")
+	w("\tpcmpeqb xmm0, xmm1")
+	w("\tpmovmskb r9d, xmm0")
+	w("\tpopcnt r9d, r9d")
+	w("\tadd eax, r9d")
+	w("\tadd edx, 16")
+	w("\tjmp .Lssa_count_vec")
 	w(".Lssa_count_loop:")
 	w("\tcmp edx, r8d")
 	w("\tjae .Lssa_count_ret")

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // Differential execution of `-target x86-64-linux -backend ssa` against the
@@ -63,8 +64,9 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 	fern := buildFernCLI(t)
 	corpus := arm64SSADiffCorpus(t) // the same walk; the corpus is not per-target
 
-	var baselineRejected, refused, agreed, diverged int64
+	var baselineRejected, refused, agreed, diverged, tooSlow int64
 	for _, rel := range corpus {
+		rel := rel
 		t.Run(rel, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
@@ -96,8 +98,12 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 				return
 			}
 
+			started := time.Now()
 			baseOut, baseCode := runBin(exec.Command(baseBin), "")
+			flatElapsed := time.Since(started)
+			started = time.Now()
 			ssaOut, ssaCode := runBin(exec.Command(ssaBin), "")
+			ssaElapsed := time.Since(started)
 			if baseCode != ssaCode {
 				atomic.AddInt64(&diverged, 1)
 				t.Errorf("`-backend ssa` DISAGREES with the shipping x86-64 backend on the exit code: "+
@@ -113,6 +119,23 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 				return
 			}
 			atomic.AddInt64(&agreed, 1)
+			// Same answer, wildly different cost (#8069). Re-measured once
+			// before it is reported: the corpus runs in parallel on a shared
+			// machine, and one slow sample is not a finding.
+			if d := ssaSlowdown(flatElapsed, ssaElapsed); d != "" {
+				started = time.Now()
+				_, _ = runBin(exec.Command(baseBin), "")
+				flat2 := time.Since(started)
+				started = time.Now()
+				_, _ = runBin(exec.Command(ssaBin), "")
+				ssa2 := time.Since(started)
+				if d2 := ssaSlowdown(flat2, ssa2); d2 != "" {
+					atomic.AddInt64(&tooSlow, 1)
+					t.Errorf("%s: %s\nSecond measurement: %s", rel, d2, d)
+				} else {
+					t.Logf("%s: a slowdown that did not reproduce on a second run, so not reported: %s", rel, d)
+				}
+			}
 		})
 	}
 
@@ -121,7 +144,8 @@ func TestX86_64SSABackendDifferential(t *testing.T) {
 			atomic.LoadInt64(&diverged), atomic.LoadInt64(&baselineRejected)
 		compared := a + d
 		t.Logf("x86-64 flat-vs-ssa differential over %d corpus programs: %d agree, %d ssa-refused, "+
-			"%d diverge, %d baseline-rejected", len(corpus), a, r, d, b)
+			"%d diverge, %d baseline-rejected, %d over the %.0fx slowdown gate",
+			len(corpus), a, r, d, b, atomic.LoadInt64(&tooSlow), ssaDiffMaxSlowdown)
 		if compared < x86SSADiffMinCompared {
 			t.Errorf("only %d of %d corpus programs built under BOTH backends and ran, below the %d "+
 				"floor (%d ssa-refused, %d baseline-rejected). Refusals are a documented endpoint, "+
