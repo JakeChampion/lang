@@ -27,6 +27,25 @@ var genericCtorIRCases = []struct {
 	name string
 	src  string
 }{
+	// A struct named with a single capital letter is a NOMINAL, not a type
+	// variable: `twice(v)` with `v: P` must bind T = P and instantiate the
+	// bounded template, or main is left calling a dropped symbol
+	// (conformance/cases/trait_method_bound_wins). 5 + 5 + 33 = 43.
+	{"one_letter_struct_binds_bounded_generic", `struct P { x: i32 }
+trait A { function scale(self: Self): i32; }
+impl A for P { function scale(self: Self): i32 { return self.x; } }
+function twice[T: A](v: T): i32 { return v.scale() + v.scale(); }
+function main(): i32 { var v: P = P { x: 5 }; return twice(v) + 33; }`},
+	// A generic array method used as a RECEIVER: `a.map(inc)` types as `U[]`
+	// with U ERASED (an unbounded method param is never monomorphised), and
+	// `.fold` binds its element var to that erased U — the convention every
+	// chained combinator rests on. A guard refusing "concrete types that mention
+	// a variable" left the chain generic (conformance
+	// generic_array_method_chain). [2, 3] folded = 5, + 30 = 35.
+	{"array_method_chain_receiver", `import "std/array";
+function inc(x: i32): i32 { return x + 1; }
+function add(a: i32, b: i32): i32 { return a + b; }
+function main(): i32 { var a: i32[] = [1, 2]; return a.map(inc).fold(0, add) + 30; }`},
 	// The minimal failing shape: a no-arg constructor with an empty-array field,
 	// instantiated from the var annotation. len 0 + 40 = 40.
 	{"empty_ctor_i32", `struct Box[T] { xs: T[] }

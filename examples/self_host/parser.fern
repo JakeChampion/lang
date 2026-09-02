@@ -8548,10 +8548,6 @@ function sanitize_key(s: string): string {
 // (`Map[K, V]` vs `Map[i32, string]` ⊢ K=i32, V=string). First binding
 // for a variable wins (so a later opaque argument can't clobber it).
 function bind_unify(pattern: string, concrete: string, tparams: string[], binds: MEnv): MEnv {
-    // A spelling that still mentions a type variable (`K`, `OrdNode[K, V]`
-    // from an enclosing generic's own params) is not a usable concrete type:
-    // binding it would key a clone named after the variable (`f__K__V`).
-    if (mono_ty_mentions_var(concrete)) { return binds; }
     if (tp_index(pattern, tparams) >= 0) {
         if (binds.elook(pattern).len() == 0 && concrete.len() > 0) {
             return binds.ebind(pattern, concrete);
