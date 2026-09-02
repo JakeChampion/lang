@@ -1874,8 +1874,21 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.line(fmt.Sprintf(".globl %s", sym))
 	g.line(fmt.Sprintf(".type %s, @function", sym))
 	g.label(sym)
+	// Unwind rules for the frame this prologue builds (#7901). The CFA
+	// starts at rsp+8 (the CIE's initial rule, set by the call), moves to
+	// rsp+16 once rbp is pushed, and is then tracked through rbp for the
+	// body. gas emits exactly this stream for the same three instructions.
+	//
+	// Nothing may be inserted between a `jmp L` and its `L:` — the streaming
+	// peephole's dead-jump rewrite matches those two lines as neighbours —
+	// which is why the epilogue's rules go after `pop rbp`, not before the
+	// jump that reaches it. TestPeepholeStillFiresWithCFI pins that.
+	g.emit(".cfi_startproc")
 	g.emit("push rbp")
+	g.emit(".cfi_def_cfa_offset 16")
+	g.emit(".cfi_offset rbp, -16")
 	g.emit("mov rbp, rsp")
+	g.emit(".cfi_def_cfa_register rbp")
 	if localsSize > 0 {
 		g.emit(fmt.Sprintf("sub rsp, %d", localsSize))
 	}
@@ -1932,7 +1945,9 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 	g.label(retLabel)
 	g.emit("mov rsp, rbp")
 	g.emit("pop rbp")
+	g.emit(".cfi_def_cfa rsp, 8")
 	g.emit("ret")
+	g.emit(".cfi_endproc")
 	g.line(fmt.Sprintf(".size %s, .-%s", sym, sym))
 	return nil
 }
