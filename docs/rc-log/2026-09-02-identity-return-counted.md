@@ -91,3 +91,16 @@ the monomorphiser substituted only the lambda's BODY, so the lifted identity
 lambda kept an untyped `a` and returned it without the retain — and the frame
 above released a count that was never added. `subst_expr` now substitutes a
 lambda's parameter and return annotations too.
+
+## Consequence, measured later
+
+`TestSelfHostGrowSoleOccurrenceX86_64` had pinned four shapes at zero copies
+where native reads 49: a result bound to a new name (`var t = f(b, v);
+return f(t, v + 1)`), nested as an argument (`f(f(b, v), v + 1)`), pushed
+inline (`t.append(v + 1)`), or returned through a second call after a rebind.
+Under this convention the in-place push's result arrives at rc 2 — the
+caller's reference and the result's own — so the next push on it copies once
+per call: 44 on each, and the superseded generation is stranded on three of
+them (44–50 blocks over 50 rounds). No use-after-free under the sanitizer.
+The rows now pin 44; the caller-side release of a dead argument's identity
+count at a binding position is the argument-temp slice, and takes them back.
