@@ -48,6 +48,9 @@ const (
 	pageAlignX86 = 0x1000
 	emAArch64    = 183 // EM_AARCH64 (e_machine)
 	emX86_64     = 62  // EM_X86_64 (e_machine)
+	// ptGNUEhFrame is PT_GNU_EH_FRAME, the program header whose segment is
+	// the .eh_frame_hdr search table.
+	ptGNUEhFrame = 0x6474e550
 )
 
 // pageAlignFor is the segment/p_align page size for the target machine: 4 KiB
@@ -67,40 +70,50 @@ func pageUpFor(v uint64, machine uint16) uint64 {
 	return (v + a - 1) &^ (a - 1)
 }
 
-// segmentAddrsWX returns the virtual addresses the W^X two-segment image
-// (StaticExecutableDataWX and its -g / explicit-entry siblings) loads .text
-// and the data blob at, for a program whose .text is textLen bytes.
-//
-// This is the single authority on that map. The assembler resolves data
-// references against the dataVAddr returned here rather than applying the
-// placement rule a second time, so nothing can be inserted between .text
-// and the data segment without both sides seeing it. The Mach-O path has
-// worked this way since it landed (macho.SegmentAddrs).
-func segmentAddrsWX(textLen int, machine uint16) (textVAddr, dataVAddr uint64) {
-	t, _, d := segmentAddrsWXEh(textLen, 0, machine)
-	return t, d
+// ImageMap is where a W^X image's parts are loaded. The ELF writer owns it
+// (#8034): the assembler resolves references against the addresses returned
+// here rather than applying the placement rule a second time, so nothing can
+// be inserted between two sections without both sides seeing it. The Mach-O
+// path has worked this way since it landed (macho.SegmentAddrs).
+type ImageMap struct {
+	// Text is where .text begins. It never moves: everything else in the
+	// image is placed after it, so a PC-relative fixup resolved against it
+	// stays correct however much unwind or data follows.
+	Text uint64
+	// EhHdr and EhFrame are the unwind sections, both 0 when the image
+	// carries none. .eh_frame_hdr comes FIRST, which is the order ld emits
+	// and what makes the layout expressible in one pass: its size is fixed
+	// by the FDE count alone, so .eh_frame can be placed before either
+	// image has been rendered.
+	EhHdr   uint64
+	EhFrame uint64
+	// Data is the R+W segment: the first page boundary past everything above.
+	Data uint64
 }
 
-// segmentAddrsWXEh is segmentAddrsWX for an image that also carries unwind
-// data. .eh_frame sits 8-aligned inside the R+X segment, immediately after
-// .text, so .text's address — and every PC-relative fixup already resolved
-// against it — is unchanged by adding it. The data segment then starts on
-// the first page boundary past the END of .eh_frame rather than past .text.
+// segmentMapWXEh is the single authority on the W^X address map, for an image
+// whose .text is textLen bytes and which carries hdrLen + ehLen bytes of
+// unwind data (0 and 0 for one that carries none).
 //
-// That placement is only expressible because the writer owns the map: the
-// assembler is told where the data segment landed instead of deriving it
-// from .text's size, so bytes can be inserted between the two (#8034).
-//
-// ehLen 0 is exactly segmentAddrsWX — no bytes, no 8-alignment, and the
-// data segment where it has always been.
-func segmentAddrsWXEh(textLen, ehLen int, machine uint16) (textVAddr, ehVAddr, dataVAddr uint64) {
-	textVAddr = TextVAddrWX
-	textEnd := textVAddr + uint64(textLen)
-	if ehLen == 0 {
-		return textVAddr, 0, pageUpFor(textEnd, machine)
+// Render the unwind sections at the addresses it returns — the CIE declares
+// pcrel FDE pointers and .eh_frame_hdr's table is datarel, so both images are
+// only correct at the addresses they were rendered for.
+func segmentMapWXEh(textLen, hdrLen, ehLen int, machine uint16) ImageMap {
+	m := ImageMap{Text: TextVAddrWX}
+	end := m.Text + uint64(textLen)
+	if hdrLen > 0 && ehLen > 0 {
+		m.EhHdr = align4(end)
+		m.EhFrame = align8(m.EhHdr + uint64(hdrLen))
+		end = m.EhFrame + uint64(ehLen)
 	}
-	ehVAddr = align8(textEnd)
-	return textVAddr, ehVAddr, pageUpFor(ehVAddr+uint64(ehLen), machine)
+	m.Data = pageUpFor(end, machine)
+	return m
+}
+
+// segmentAddrsWX is segmentMapWXEh for an image with no unwind data.
+func segmentAddrsWX(textLen int, machine uint16) (textVAddr, dataVAddr uint64) {
+	m := segmentMapWXEh(textLen, 0, 0, machine)
+	return m.Text, m.Data
 }
 
 // segmentAddrsPIE is segmentAddrsWX for the base-0 images — the static PIE
@@ -133,18 +146,17 @@ func SegmentAddrsPIEX86(textLen int) (textVAddr, dataVAddr uint64) {
 	return segmentAddrsPIE(textLen, emX86_64)
 }
 
-// SegmentAddrsWXEhArm64 is the arm64 W^X segment map for an image carrying
-// unwind data: .eh_frame 8-aligned after .text inside the R+X segment, the
-// data segment on the first page boundary past it. Render the .eh_frame at
-// the ehVAddr it returns — the CIE declares pcrel FDE pointers, so the
-// image is only correct at the address it was rendered for.
-func SegmentAddrsWXEhArm64(textLen, ehLen int) (textVAddr, ehVAddr, dataVAddr uint64) {
-	return segmentAddrsWXEh(textLen, ehLen, emAArch64)
+// SegmentMapWXEhArm64 is the arm64 W^X address map for an image carrying
+// unwind data. hdrLen comes from the assembler's EhFrameHdrLen, which depends
+// only on the FDE count; ehLen may be any non-zero placeholder on the call
+// that only needs EhHdr / EhFrame, since neither depends on it.
+func SegmentMapWXEhArm64(textLen, hdrLen, ehLen int) ImageMap {
+	return segmentMapWXEh(textLen, hdrLen, ehLen, emAArch64)
 }
 
-// SegmentAddrsWXEhX86 is the x86-64 counterpart of SegmentAddrsWXEhArm64.
-func SegmentAddrsWXEhX86(textLen, ehLen int) (textVAddr, ehVAddr, dataVAddr uint64) {
-	return segmentAddrsWXEh(textLen, ehLen, emX86_64)
+// SegmentMapWXEhX86 is the x86-64 counterpart of SegmentMapWXEhArm64.
+func SegmentMapWXEhX86(textLen, hdrLen, ehLen int) ImageMap {
+	return segmentMapWXEh(textLen, hdrLen, ehLen, emX86_64)
 }
 
 // TextVAddr is the virtual address at which .text begins in the
@@ -153,13 +165,23 @@ func SegmentAddrsWXEhX86(textLen, ehLen int) (textVAddr, ehVAddr, dataVAddr uint
 // references (adrp / :lo12:); pass it to arm64.AssembleProgram.
 const TextVAddr = baseVAddr + ehSize + phSize
 
+// phNumWX is the program-header count of the W^X image: PT_LOAD(R+X),
+// PT_LOAD(R+W), and a third slot for PT_GNU_EH_FRAME.
+//
+// That third slot is reserved whether or not the image carries unwind data —
+// it holds a PT_NULL, which the spec defines as an ignored entry, when it
+// does not. Making the count conditional would make .text's address depend
+// on whether CFI was recorded, and .text's address is handed to the
+// assembler before its own contents are laid out, let alone .eh_frame's. One
+// address map for every W^X image is worth 56 bytes.
+const phNumWX = 3
+
 // TextVAddrWX is the virtual address at which .text begins in the
-// W^X two-segment image: just past the ELF header + *two* program
-// headers (code + data), so it sits one phSize further in than
-// TextVAddr. Pass it to arm64.BytesProgramWX / x86_64.AssembleProgramWX
+// W^X image: just past the ELF header + phNumWX program headers.
+// Pass it to arm64.BytesProgramWX / x86_64.AssembleProgramWX
 // as the textVAddr so PC-relative fixups line up with the layout
 // StaticExecutableDataWX produces.
-const TextVAddrWX = baseVAddr + ehSize + 2*phSize
+const TextVAddrWX = baseVAddr + ehSize + phNumWX*phSize
 
 // PIE (position-independent / ET_DYN) constants. A Fern PIE is a static,
 // no-PLT/GOT image whose only load-base-dependent values are the
@@ -281,11 +303,12 @@ func StaticExecutableDataX86WX(text, data []byte) []byte {
 }
 
 func staticExecutableDataWX(text, data []byte, machine uint16) []byte {
-	return imageWX(text, nil, data, machine, 0)
+	return imageWX(text, Unwind{}, data, machine, 0)
 }
 
 // StaticExecutableDataWXEhFrame is StaticExecutableDataWX with unwind data:
-// ehFrame is placed 8-aligned inside the R+X segment, right after .text, and
+// the .eh_frame_hdr and .eh_frame images are placed inside the R+X segment,
+// right after .text with a PT_GNU_EH_FRAME over the header, and
 // the data segment moves to the first page boundary past it. .text's address
 // is unchanged, so nothing the assembler already resolved shifts — but the
 // data segment does, which is why the assembler must have been given the
@@ -293,14 +316,14 @@ func staticExecutableDataWX(text, data []byte, machine uint16) []byte {
 //
 // A nil or empty ehFrame produces byte-identical output to
 // StaticExecutableDataWX. arm64 (EM_AARCH64).
-func StaticExecutableDataWXEhFrame(text, ehFrame, data []byte) []byte {
-	return imageWX(text, ehFrame, data, emAArch64, 0)
+func StaticExecutableDataWXEhFrame(text []byte, u Unwind, data []byte) []byte {
+	return imageWX(text, u, data, emAArch64, 0)
 }
 
 // StaticExecutableDataX86WXEhFrame is the x86-64 counterpart. Pair it with
 // SegmentAddrsWXEhX86.
-func StaticExecutableDataX86WXEhFrame(text, ehFrame, data []byte) []byte {
-	return imageWX(text, ehFrame, data, emX86_64, 0)
+func StaticExecutableDataX86WXEhFrame(text []byte, u Unwind, data []byte) []byte {
+	return imageWX(text, u, data, emX86_64, 0)
 }
 
 // StaticExecutableDataWXEntry is StaticExecutableDataWX with an explicit
@@ -312,30 +335,44 @@ func StaticExecutableDataX86WXEhFrame(text, ehFrame, data []byte) []byte {
 // and crashes. arm64 (EM_AARCH64); an x86-64 sibling can pass emX86_64 to
 // imageWX the day the self-host x86 dialect becomes natively parseable.
 func StaticExecutableDataWXEntry(text, data []byte, entryOff uint64) []byte {
-	return imageWX(text, nil, data, emAArch64, entryOff)
+	return imageWX(text, Unwind{}, data, emAArch64, entryOff)
 }
 
-// imageWX emits an ELF header (e_phnum = 2) + two PT_LOAD program headers
-// followed by .text and, on the next page boundary, the data blob. The
-// code segment (headers + .text) is mapped R+X; the data segment is mapped
-// R+W. File offsets equal virtual-address offsets (both measured from
-// baseVAddr) so the page-aligned data offset is congruent to its load
-// address mod the page size — what mmap requires.
-func imageWX(text, ehFrame, data []byte, machine uint16, entryOff uint64) []byte {
-	const headers = ehSize + 2*phSize      // 64 + 112 = 176
-	textEnd := uint64(headers + len(text)) // end of .text
-	_, ehVAddr, dataVAddr := segmentAddrsWXEh(len(text), len(ehFrame), machine)
-	dataOff := dataVAddr - baseVAddr        // file offset == vaddr offset of data
-	codeVAddr := uint64(baseVAddr)          // headers + .text (+ .eh_frame)
+// Unwind is the pair of sections a runtime unwinder needs: the .eh_frame
+// images the CFI produces, and the .eh_frame_hdr search table
+// PT_GNU_EH_FRAME points at. Both or neither — a header describing an absent
+// .eh_frame indexes nothing, and an .eh_frame with no header is reachable by
+// a debugger reading section headers and by nothing else.
+type Unwind struct {
+	Hdr   []byte
+	Frame []byte
+}
+
+// empty reports whether there is no unwind data to place.
+func (u Unwind) empty() bool { return len(u.Hdr) == 0 || len(u.Frame) == 0 }
+
+// imageWX emits an ELF header + phNumWX program headers — two PT_LOADs, then
+// PT_GNU_EH_FRAME or an ignored PT_NULL — followed by .text, the unwind
+// sections, and on the next page boundary the data blob. The code segment
+// (headers + .text + unwind) is mapped R+X; the data segment is mapped R+W.
+// File offsets equal virtual-address offsets (both measured from baseVAddr)
+// so the page-aligned data offset is congruent to its load address mod the
+// page size — what mmap requires.
+func imageWX(text []byte, u Unwind, data []byte, machine uint16, entryOff uint64) []byte {
+	const headers = ehSize + phNumWX*phSize // 64 + 168 = 232
+	m := segmentMapWXEh(len(text), len(u.Hdr), len(u.Frame), machine)
+	dataOff := m.Data - baseVAddr           // file offset == vaddr offset of data
+	codeVAddr := uint64(baseVAddr)          // headers + .text (+ unwind)
 	entry := uint64(TextVAddrWX) + entryOff // entry instruction within .text
 	// The R+X segment runs to the end of .eh_frame when there is one — it is
 	// alloc, like every other toolchain's, because unwinding happens at
 	// runtime.
-	codeSz := textEnd
-	ehOff := uint64(0)
-	if len(ehFrame) > 0 {
-		ehOff = ehVAddr - baseVAddr
-		codeSz = ehOff + uint64(len(ehFrame))
+	codeSz := uint64(headers + len(text))
+	hdrOff, ehOff := uint64(0), uint64(0)
+	if !u.empty() {
+		hdrOff = m.EhHdr - baseVAddr
+		ehOff = m.EhFrame - baseVAddr
+		codeSz = ehOff + uint64(len(u.Frame))
 	}
 	dataSz := uint64(len(data)) // p_memsz: the full segment (incl. .bss)
 	// .bss is materialised as trailing zero bytes in `data`, and a PT_LOAD with
@@ -363,12 +400,12 @@ func imageWX(text, ehFrame, data []byte, machine uint16, entryOff uint64) []byte
 	buf = le32(buf, 0)                        // e_flags
 	buf = le16(buf, ehSize)                   // e_ehsize
 	buf = le16(buf, phSize)                   // e_phentsize
-	buf = le16(buf, 2)                        // e_phnum (code + data)
+	buf = le16(buf, phNumWX)                  // e_phnum (code + data + unwind)
 	buf = le16(buf, 0)                        // e_shentsize
 	buf = le16(buf, 0)                        // e_shnum
 	buf = le16(buf, 0)                        // e_shstrndx
 
-	// ---- Program header 0 (56 bytes): R+X code (headers + .text) ----
+	// ---- Program header 0 (56 bytes): R+X code (headers + .text + unwind) ----
 	buf = le32(buf, 1)                     // p_type  = PT_LOAD
 	buf = le32(buf, 5)                     // p_flags = PF_R | PF_X
 	buf = le64(buf, 0)                     // p_offset
@@ -382,25 +419,53 @@ func imageWX(text, ehFrame, data []byte, machine uint16, entryOff uint64) []byte
 	buf = le32(buf, 1)                     // p_type  = PT_LOAD
 	buf = le32(buf, 6)                     // p_flags = PF_R | PF_W
 	buf = le64(buf, dataOff)               // p_offset
-	buf = le64(buf, dataVAddr)             // p_vaddr
-	buf = le64(buf, dataVAddr)             // p_paddr
+	buf = le64(buf, m.Data)                // p_vaddr
+	buf = le64(buf, m.Data)                // p_paddr
 	buf = le64(buf, dataFileSz)            // p_filesz (initialised prefix only; .bss is NOBITS)
 	buf = le64(buf, dataSz)                // p_memsz  (full segment incl. zero-filled .bss)
 	buf = le64(buf, pageAlignFor(machine)) // p_align
 
-	// ---- body: .text, then page padding, then the data blob's initialised
-	// prefix (the trailing .bss zeros are supplied by the loader via memsz). ----
-	buf = append(buf, text...)
-	if len(ehFrame) > 0 {
-		for uint64(len(buf)) < ehOff {
-			buf = append(buf, 0)
-		}
-		buf = append(buf, ehFrame...)
+	// ---- Program header 2 (56 bytes): PT_GNU_EH_FRAME over .eh_frame_hdr ----
+	//
+	// This is the ONLY way a runtime unwinder finds .eh_frame: it walks the
+	// program headers with dl_iterate_phdr, and there is no fallback that
+	// scans section headers. Without it a backtrace from inside the running
+	// program stops at the first frame however complete the CFI is.
+	if u.empty() {
+		// PT_NULL: an ignored entry, holding the slot so .text sits at
+		// TextVAddrWX in every W^X image alike.
+		buf = append(buf, make([]byte, phSize)...)
+	} else {
+		buf = le32(buf, ptGNUEhFrame)
+		buf = le32(buf, 4) // p_flags = PF_R
+		buf = le64(buf, hdrOff)
+		buf = le64(buf, m.EhHdr)
+		buf = le64(buf, m.EhHdr)
+		buf = le64(buf, uint64(len(u.Hdr)))
+		buf = le64(buf, uint64(len(u.Hdr)))
+		buf = le64(buf, 4) // p_align: the table is sdata4 throughout
 	}
-	for uint64(len(buf)) < dataOff {
+
+	// ---- body: .text, the unwind sections, then page padding, then the data
+	// blob's initialised prefix (the trailing .bss zeros are supplied by the
+	// loader via memsz). ----
+	buf = append(buf, text...)
+	if !u.empty() {
+		buf = padZeroTo(buf, hdrOff)
+		buf = append(buf, u.Hdr...)
+		buf = padZeroTo(buf, ehOff)
+		buf = append(buf, u.Frame...)
+	}
+	buf = padZeroTo(buf, dataOff)
+	return append(buf, data[:dataFileSz]...)
+}
+
+// padZeroTo zero-fills buf up to the given file offset.
+func padZeroTo(buf []byte, off uint64) []byte {
+	for uint64(len(buf)) < off {
 		buf = append(buf, 0)
 	}
-	return append(buf, data[:dataFileSz]...)
+	return buf
 }
 
 // trailingTrimZeros returns the length of b with trailing zero bytes removed —
@@ -846,37 +911,37 @@ func StaticExecutableDataWXSyms(text, data []byte, syms []Sym) []byte {
 // assembler's `.loc` markers). srcFile names the source (relative to compDir,
 // which the CU records so a debugger can locate it). Empty rows behave like
 // the plain symtab image. textEndVAddr bounds the line program's final range.
-func StaticExecutableDataX86WXSymsRows(text, ehFrame, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64, funcVars map[string][]LocalVar) []byte {
+func StaticExecutableDataX86WXSymsRows(text []byte, u Unwind, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64, funcVars map[string][]LocalVar) []byte {
 	var dl []byte
 	if len(rows) > 0 {
 		dl = buildDebugLineRows(rows, uint64(TextVAddrWX), textEndVAddr, srcFile)
 	}
-	return imageWXSymsLines(text, ehFrame, data, emX86_64, 0, syms, dl, srcFile, compDir, funcVars)
+	return imageWXSymsLines(text, u, data, emX86_64, 0, syms, dl, srcFile, compDir, funcVars)
 }
 
 // StaticExecutableDataWXSymsRows is the arm64 counterpart of
 // StaticExecutableDataX86WXSymsRows.
-func StaticExecutableDataWXSymsRows(text, ehFrame, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64, funcVars map[string][]LocalVar) []byte {
+func StaticExecutableDataWXSymsRows(text []byte, u Unwind, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64, funcVars map[string][]LocalVar) []byte {
 	var dl []byte
 	if len(rows) > 0 {
 		dl = buildDebugLineRows(rows, uint64(TextVAddrWX), textEndVAddr, srcFile)
 	}
-	return imageWXSymsLines(text, ehFrame, data, emAArch64, 0, syms, dl, srcFile, compDir, funcVars)
+	return imageWXSymsLines(text, u, data, emAArch64, 0, syms, dl, srcFile, compDir, funcVars)
 }
 
 // imageWXSyms builds the W^X image (imageWX) and appends a section table with
 // a .symtab. The sections are all non-alloc and live after the loadable
 // segments, so the running image is identical to imageWX's.
 func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym) []byte {
-	return imageWXSymsLines(text, nil, data, machine, entryOff, syms, nil, "", "", nil)
+	return imageWXSymsLines(text, Unwind{}, data, machine, entryOff, syms, nil, "", "", nil)
 }
 
 // imageWXSymsLines is imageWXSyms plus an optional pre-encoded DWARF
 // .debug_line table (debugLine). When debugLine is empty no line section is
 // emitted and the CU carries no DW_AT_stmt_list — identical to the plain
 // symtab+DIE image.
-func imageWXSymsLines(text, ehFrame, data []byte, machine uint16, entryOff uint64, syms []Sym, debugLine []byte, srcName, compDir string, funcVars map[string][]LocalVar) []byte {
-	buf := imageWX(text, ehFrame, data, machine, entryOff)
+func imageWXSymsLines(text []byte, u Unwind, data []byte, machine uint16, entryOff uint64, syms []Sym, debugLine []byte, srcName, compDir string, funcVars map[string][]LocalVar) []byte {
+	buf := imageWX(text, u, data, machine, entryOff)
 
 	// .strtab: NUL, then each symbol name NUL-terminated.
 	strtab := []byte{0}
@@ -899,8 +964,9 @@ func imageWXSymsLines(text, ehFrame, data []byte, machine uint16, entryOff uint6
 	nStrtab := addShName(".strtab")
 	nShstrtab := addShName(".shstrtab")
 	nDebugAbbrev := addShName(".debug_abbrev")
-	var nEhFrame uint32
-	if len(ehFrame) > 0 {
+	var nEhFrameHdr, nEhFrame uint32
+	if !u.empty() {
+		nEhFrameHdr = addShName(".eh_frame_hdr")
 		nEhFrame = addShName(".eh_frame")
 	}
 	nDebugInfo := addShName(".debug_info")
@@ -956,7 +1022,7 @@ func imageWXSymsLines(text, ehFrame, data []byte, machine uint16, entryOff uint6
 	pad8()
 	shoff := uint64(len(buf))
 
-	textOff := uint64(ehSize + 2*phSize) // .text file offset in the WX image
+	textOff := uint64(ehSize + phNumWX*phSize) // .text file offset in the WX image
 	// [0] SHT_NULL
 	buf = appendShdr(buf, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 	// [1] .text: PROGBITS, ALLOC|EXECINSTR
@@ -975,16 +1041,16 @@ func imageWXSymsLines(text, ehFrame, data []byte, machine uint16, entryOff uint6
 		buf = appendShdr(buf, nDebugLine, 1, 0, 0, debugLineOff, uint64(len(debugLine)), 0, 0, 1, 0)
 		shnum = 8
 	}
-	// .eh_frame: PROGBITS, SHF_ALLOC — it is inside the R+X segment, unlike
-	// the .debug_* sections above. Appended last so the fixed indices this
-	// function relies on (and e_shstrndx = 4) do not shift. Without a header
-	// the bytes are in the image but a debugger cannot find them, which is
-	// what makes this the difference between placing unwind data and having
-	// usable unwind data.
-	if len(ehFrame) > 0 {
-		_, ehVAddr, _ := segmentAddrsWXEh(len(text), len(ehFrame), machine)
-		buf = appendShdr(buf, nEhFrame, 1, 0x2, ehVAddr, ehVAddr-baseVAddr, uint64(len(ehFrame)), 0, 0, 8, 0)
-		shnum++
+	// The unwind sections: PROGBITS, SHF_ALLOC — they are inside the R+X
+	// segment, unlike the .debug_* sections above. Appended last so the fixed
+	// indices this function relies on (and e_shstrndx = 4) do not shift.
+	// PT_GNU_EH_FRAME is what a running program unwinds through; these headers
+	// are what a debugger and `readelf -S` read.
+	if !u.empty() {
+		m := segmentMapWXEh(len(text), len(u.Hdr), len(u.Frame), machine)
+		buf = appendShdr(buf, nEhFrameHdr, 1, 0x2, m.EhHdr, m.EhHdr-baseVAddr, uint64(len(u.Hdr)), 0, 0, 4, 0)
+		buf = appendShdr(buf, nEhFrame, 1, 0x2, m.EhFrame, m.EhFrame-baseVAddr, uint64(len(u.Frame)), 0, 0, 8, 0)
+		shnum += 2
 	}
 
 	// Patch the ELF header's section-table fields (imageWX left them zero).

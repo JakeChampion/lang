@@ -32,6 +32,7 @@ package cfi
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -375,14 +376,32 @@ func (p *Profile) CIE() []byte {
 // relocatable object leaves that zero and emits a relocation; these assemblers
 // produce final images, so it is computed here.
 func (s *State) EhFrame(p *Profile, textVAddr, ehVAddr uint64) ([]byte, error) {
+	out, _, err := s.render(p, textVAddr, ehVAddr)
+	return out, err
+}
+
+// fdeLoc is one row of the .eh_frame_hdr search table: where a function
+// starts and where the FDE describing it landed inside .eh_frame.
+type fdeLoc struct {
+	fn  uint64
+	fde uint64
+}
+
+// render lays out the .eh_frame image and reports, for each FDE, the pair of
+// addresses .eh_frame_hdr's search table indexes it by. The two come from one
+// pass because an FDE's address is only known while the entries are being
+// placed; recomputing it in a second walk is the divergence this package
+// exists to prevent.
+func (s *State) render(p *Profile, textVAddr, ehVAddr uint64) ([]byte, []fdeLoc, error) {
 	if s.open {
-		return nil, fmt.Errorf(".cfi_startproc without .cfi_endproc")
+		return nil, nil, fmt.Errorf(".cfi_startproc without .cfi_endproc")
 	}
 	if len(s.fdes) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	out := p.CIE()
 	payloads := make([][]byte, 0, len(s.fdes))
+	locs := make([]fdeLoc, 0, len(s.fdes))
 	// Entry starts have to be known before the payloads are written, since an
 	// FDE's CIE pointer and pcrel initial_location both measure from its own
 	// position. Lengths are fixed by the 4-alignment, so a first pass over the
@@ -400,13 +419,17 @@ func (s *State) EhFrame(p *Profile, textVAddr, ehVAddr uint64) ([]byte, error) {
 		for _, r := range f.rules {
 			var err error
 			if b, err = p.advance(b, r.off-pc); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			pc = r.off
 			b = append(b, r.body...)
 		}
 		b = pad4(b)
 		payloads = append(payloads, b)
+		locs = append(locs, fdeLoc{
+			fn:  textVAddr + uint64(f.start),
+			fde: ehVAddr + uint64(at),
+		})
 		at += 4 + len(b)
 	}
 	// The section as a whole lands on 8; only the last entry absorbs it, and
@@ -418,5 +441,66 @@ func (s *State) EhFrame(p *Profile, textVAddr, ehVAddr uint64) ([]byte, error) {
 	for _, b := range payloads {
 		out = append(le32(out, uint32(len(b))), b...)
 	}
-	return append(out, 0, 0, 0, 0), nil
+	return append(out, 0, 0, 0, 0), locs, nil
+}
+
+// .eh_frame_hdr encoding bytes, pinned from a `ld --eh-frame-hdr` static link
+// read back with `objdump -s -j .eh_frame_hdr`, which opens `01 1b 03 3b`.
+const (
+	hdrVersion    = 1
+	hdrFramePtrEc = 0x1b // DW_EH_PE_pcrel | DW_EH_PE_sdata4
+	hdrCountEnc   = 0x03 // DW_EH_PE_udata4
+	hdrTableEnc   = 0x3b // DW_EH_PE_datarel | DW_EH_PE_sdata4
+	// hdrPrefix is version + the three encoding bytes + eh_frame_ptr +
+	// fde_count, ahead of the 8-byte table rows.
+	hdrPrefix = 12
+	hdrRow    = 8
+)
+
+// EhFrameHdrLen is the size of the .eh_frame_hdr EhFrameHdr will render, or 0
+// when there is no unwind data to describe. It depends only on the number of
+// FDEs, so a caller can place the section — and everything after it — before
+// either image exists.
+func (s *State) EhFrameHdrLen() int {
+	if len(s.fdes) == 0 {
+		return 0
+	}
+	return hdrPrefix + hdrRow*len(s.fdes)
+}
+
+// EhFrameHdr renders the .eh_frame_hdr binary-search table that
+// PT_GNU_EH_FRAME points at, for the .eh_frame EhFrame renders at the same
+// textVAddr / ehVAddr.
+//
+// A runtime unwinder reaches .eh_frame exclusively through this header: it
+// walks the program headers with dl_iterate_phdr, finds PT_GNU_EH_FRAME, and
+// reads eh_frame_ptr out of the first bytes here. There is no fallback that
+// scans for the section — an image whose .eh_frame only has a SECTION header
+// unwinds in a debugger and nowhere else.
+//
+// The two pointer fields use different bases, and swapping them produces a
+// header that decodes without complaint and indexes garbage: eh_frame_ptr is
+// pcrel, measured from the field itself, while every table entry is datarel,
+// measured from the START of this section (hdrVAddr).
+func (s *State) EhFrameHdr(p *Profile, textVAddr, ehVAddr, hdrVAddr uint64) ([]byte, error) {
+	_, locs, err := s.render(p, textVAddr, ehVAddr)
+	if err != nil {
+		return nil, err
+	}
+	if len(locs) == 0 {
+		return nil, nil
+	}
+	// The table is binary-searched, so it must be sorted by function address.
+	// FDEs are recorded in .text order and so already are, but a lookup that
+	// silently misses is not a failure mode worth leaving to that.
+	sort.Slice(locs, func(i, j int) bool { return locs[i].fn < locs[j].fn })
+
+	b := []byte{hdrVersion, hdrFramePtrEc, hdrCountEnc, hdrTableEnc}
+	b = le32(b, uint32(int32(int64(ehVAddr)-int64(hdrVAddr+4))))
+	b = le32(b, uint32(len(locs)))
+	for _, l := range locs {
+		b = le32(b, uint32(int32(int64(l.fn)-int64(hdrVAddr))))
+		b = le32(b, uint32(int32(int64(l.fde)-int64(hdrVAddr))))
+	}
+	return b, nil
 }

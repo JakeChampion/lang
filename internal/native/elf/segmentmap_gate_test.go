@@ -112,3 +112,69 @@ func TestSegmentMapGateSeesCalls(t *testing.T) {
 		t.Fatalf("the scan found only %d segment-map call sites — the pattern has gone stale, which makes TestSegmentMapMatchesAssembler vacuous", n)
 	}
 }
+
+// mapRe matches a use of one of the unwind-carrying address maps.
+var mapRe = regexp.MustCompile(`\bSegmentMapWXEh(X86|Arm64)\b`)
+
+// TestUnwindMapUsesAreTypePinned covers the same mismatch for the unwind
+// layout, which does not go through an Assemble… call and so is invisible to
+// the scan above. The pairing is meant to be a compile error there — the
+// address map is chosen inside layoutX86 / layoutArm64, whose parameter types
+// name the assembler — so what this checks is that it stayed that way: every
+// production use of one of these maps sits in a function whose signature
+// names the matching target.
+//
+// A use in a function that names neither is the shape the gate exists to
+// stop: it means the map is being picked somewhere the compiler cannot check
+// the choice.
+func TestUnwindMapUsesAreTypePinned(t *testing.T) {
+	uses := 0
+	err := filepath.WalkDir("../../..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if nm := d.Name(); nm == ".git" || nm == "vendor" || nm == ".claude" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Test files pick maps freely and assert the addresses they get back.
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		fn := ""
+		for i, line := range strings.Split(string(src), "\n") {
+			if strings.HasPrefix(line, "func ") {
+				fn = line
+			}
+			// A doc comment names the function it documents, so matching in
+			// one would attribute the use to whatever came before it.
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
+			}
+			m := mapRe.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			uses++
+			if targetOf(fn) != m[1] {
+				t.Errorf("%s:%d: the %s unwind map is chosen in a function whose signature does not name that target (%q) — pick it in a wrapper typed to the assembler instead, so a mismatch does not compile",
+					path, i+1, m[1], strings.TrimSuffix(fn, " {"))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The elf package's own two definitions, plus one wrapper per target in
+	// the driver. Fewer means the naming moved and this scan sees nothing.
+	if uses < 4 {
+		t.Fatalf("the scan found only %d uses of the unwind maps — the pattern has gone stale, which makes this test vacuous", uses)
+	}
+}

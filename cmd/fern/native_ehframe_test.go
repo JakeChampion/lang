@@ -63,6 +63,64 @@ function main(): i32 { return fib(9); }`
 	if uint64(off) < codeOff || uint64(off) >= codeOff+codeSz {
 		t.Errorf(".eh_frame at %#x is outside the R+X segment [%#x, %#x) — an unwinder would read unmapped memory", off, codeOff, codeOff+codeSz)
 	}
+
+	// The discoverability half. A running program's unwinder reaches
+	// .eh_frame only through PT_GNU_EH_FRAME: it walks the program headers
+	// with dl_iterate_phdr and reads .eh_frame's address out of the segment
+	// that header covers. Nothing scans for the section, so up to here the
+	// unwind data is complete, mapped, and unreachable from inside the
+	// process.
+	hdrOff, hdrSz, ok := ehFrameHdrSeg(img)
+	if !ok {
+		t.Fatal("no PT_GNU_EH_FRAME in the linked image — a backtrace from inside this program stops at the first frame however complete the CFI is")
+	}
+	hdr := img[hdrOff : hdrOff+hdrSz]
+	if got := hdr[:4]; string(got) != "\x01\x1b\x03\x3b" {
+		t.Fatalf(".eh_frame_hdr opens % x, want 01 1b 03 3b", got)
+	}
+	// File offsets equal vaddr offsets from baseVAddr in this image, so an
+	// address is its offset plus the load base.
+	const base = 0x400000
+	hdrVAddr := base + hdrOff
+	ptr := uint64(int64(hdrVAddr+4) + int64(int32(binary.LittleEndian.Uint32(hdr[4:]))))
+	if want := base + uint64(off); ptr != want {
+		t.Errorf("eh_frame_ptr resolves to %#x, want the .eh_frame at %#x", ptr, want)
+	}
+	n := int(binary.LittleEndian.Uint32(hdr[8:]))
+	if n == 0 {
+		t.Fatal("the search table is empty, so the program carries FDEs nothing can find")
+	}
+	if want := uint64(12 + 8*n); hdrSz != want {
+		t.Errorf(".eh_frame_hdr is %d bytes for %d FDEs, want %d", hdrSz, n, want)
+	}
+	for i := 0; i < n; i++ {
+		row := hdr[12+8*i:]
+		fn := uint64(int64(hdrVAddr) + int64(int32(binary.LittleEndian.Uint32(row))))
+		fde := uint64(int64(hdrVAddr) + int64(int32(binary.LittleEndian.Uint32(row[4:]))))
+		if fn < base+codeOff || fn >= base+codeOff+codeSz {
+			t.Errorf("row %d names a function at %#x, outside the R+X segment", i, fn)
+		}
+		if fde < ptr || fde >= base+codeOff+codeSz {
+			t.Errorf("row %d names an FDE at %#x, outside .eh_frame", i, fde)
+		}
+	}
+}
+
+// ehFrameHdrSeg returns the file offset and size of the PT_GNU_EH_FRAME
+// segment — the .eh_frame_hdr an unwinder reads.
+func ehFrameHdrSeg(img []byte) (off, size uint64, ok bool) {
+	if len(img) < 64 {
+		return 0, 0, false
+	}
+	phoff := binary.LittleEndian.Uint64(img[32:])
+	phnum := int(binary.LittleEndian.Uint16(img[56:]))
+	for i := 0; i < phnum; i++ {
+		p := img[phoff+uint64(i)*56:]
+		if binary.LittleEndian.Uint32(p) == 0x6474e550 { // PT_GNU_EH_FRAME
+			return binary.LittleEndian.Uint64(p[8:]), binary.LittleEndian.Uint64(p[32:]), true
+		}
+	}
+	return 0, 0, false
 }
 
 // findCIE locates the first .eh_frame CIE by its fixed prefix: a length, a
