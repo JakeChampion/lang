@@ -730,7 +730,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // its batch. The entry gets the full runtime-need roots as its extra_needs.
         // x86 shares the bases; -target arm64-linux uses the arm64 emitter unchanged.
         var needs: string[] = ircore.all_runtime_need_roots();
-        var wpb: irlower.FnSigs = asm_ir.wp_fn_sigs(all_funcs, all_structs);
+        var wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_structs);
         var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
         // Incremental object cache (#3451 step 6 / #3458). This is the mode the
         // DEFAULT build flow runs in — emit_per_module_spawned execs a child per
