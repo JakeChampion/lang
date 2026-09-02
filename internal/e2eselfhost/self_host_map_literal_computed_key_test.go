@@ -190,6 +190,41 @@ function main(): i32 {
     var m: Map[i32, i32] = mk(10i32, 20i32, 30i32);
     return m.get_or(10i32, 0i32) + m.get_or(20i32, 0i32) + m.get_or(30i32, 0i32) + m.len();
 }`},
+	// #8090 — a key read out of an ARRAY ELEMENT. Hand-written that is rare,
+	// but the lift makes it the common spelling: a mutable local a closure
+	// captures is boxed into a one-element cell and every read of it rewritten
+	// to `$cell$k[0]`, so an integer key WRITTEN as a bare ident arrives at the
+	// evidence walk as an index. Neither shape carried evidence, so both built
+	// string-keyed and SIGSEGV'd on the second insert's compare.
+	{"element_keys_from_int_array", `import "core/map";
+function take(m: Map[i32, i32]): i32 { return m.get_or(3i32, 0i32) + m.get_or(4i32, 0i32) + m.len(); }
+function main(): i32 {
+    var xs: i32[] = [3i32, 4i32];
+    return take(Map { xs[0i32]: 6i32, xs[1i32]: 4i32 });
+}`},
+	// The cell shape itself, reduced from fernsmith seed 15072: both keys are
+	// mutated locals read from inside a lifted lambda (the value-position `if`
+	// is one), which is what boxes them.
+	{"boxed_mutable_local_keys", `import "core/map";
+struct S0 { n: i32, s: string }
+function reads(m: Map[i32, i32]): (i32) => i32 { return ((x: i32) => (m.get_or(144i32, 0i32) + m.get_or(145i32, 0i32) + m.len())); }
+function main(): i32 {
+    var k0: i32 = 143i32;
+    var k1: i32 = 144i32;
+    k0 = k0 + 1i32;
+    k1 = k1 + 1i32;
+    var w: S0 = (if (true) { S0 { n: k0, s: "a" } } else { S0 { n: k1, s: "b" } });
+    var f: (i32) => i32 = reads(Map { k0: 6i32, k1: 4i32 });
+    return f(0i32) + w.n - 144i32;
+}`},
+	// The element shape's string direction: a `string[]` element key must keep
+	// the constructor's spelling, exactly as an ident one does.
+	{"element_string_keys_stay_string", `import "core/map";
+function take(m: Map[string, i32]): i32 { return m.get_or("ab", 0i32) + m.get_or("cd", 0i32) + m.len(); }
+function main(): i32 {
+    var ss: string[] = ["ab", "cd"];
+    return take(Map { ss[0i32]: 6i32, ss[1i32]: 4i32 });
+}`},
 	// The direction the evidence rule must never flip: string-typed ident keys
 	// in the same un-annotated position stay string-keyed.
 	{"ident_string_keys_stay_string", `import "core/map";
