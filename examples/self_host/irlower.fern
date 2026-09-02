@@ -6463,6 +6463,22 @@ pub function cell_elem_type(e: ast.Expr, s: LowerState): string {
     }
 }
 
+// field_arr_decl_type spells a struct field's declared type the way the ARRAY
+// classifiers need to read it. A Cell[T] is a 1-element array of T (#5510) and
+// `c.get()` desugars to `c[0]`, so by the time a classifier is asked about the
+// receiver the cell IS that array — but the field still reads `Cell[f64]`, not
+// `f64[]`, and every classifier below matches on the array spelling. Without
+// this a Cell[f64] FIELD indexes 4-byte where the same cell in a LOCAL indexes
+// 8 (mark_cell records the element kind on the slot), which is invalid wasm:
+// `expected f64, found i32`. The Cell sibling of the #6093 field cases.
+pub function field_arr_decl_type(structs: parser.StructDecl[], struct_name: string, field: string): string {
+    var ft: string = decl_field_type(structs, struct_name, field);
+    if (ft.len() > 5 && slice_unchecked(ft, 0, 5) == "Cell[") {
+        return slice_unchecked(ft, 5, ft.len() - 1) + "[]";
+    }
+    return ft;
+}
+
 // cell_new_elem_tag returns the element-type spelling for a `cell_new(x)`
 // initialiser (so an UNANNOTATED `var c = cell_new(x)` binding can record the
 // same is_cell / element-kind columns the `: Cell[T]` spelling gives it), or ""
@@ -6731,7 +6747,7 @@ pub function expr_is_f64arr(e: ast.Expr, s: LowerState): boolean {
             // reason: only the tuple form was handled. #6093.
             var foty: string = expr_struct_type(fa.obj, s);
             if (foty == "") { return false; }
-            return is_float_array_type_name(decl_field_type(s.structs, foty, fa.field));
+            return is_float_array_type_name(field_arr_decl_type(s.structs, foty, fa.field));
         },
         _ => { return false; }
     }
@@ -8654,7 +8670,7 @@ pub function arr_index_is_f64(arr: ast.Expr, s: LowerState): boolean {
             }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
-            return is_float_array_type_name(decl_field_type(s.structs, oty, fa.field));
+            return is_float_array_type_name(field_arr_decl_type(s.structs, oty, fa.field));
         },
         // Direct index of a slice expression `a[lo:hi][i]`: an f64[] slice is
         // itself an f64[], so recurse into the sliced array — mirroring
@@ -8725,7 +8741,7 @@ pub function arr_index_is_i64(arr: ast.Expr, s: LowerState): boolean {
             }
             var oty: string = expr_struct_type(fa.obj, s);
             if (oty == "") { return false; }
-            var fdt: string = decl_field_type(s.structs, oty, fa.field);
+            var fdt: string = field_arr_decl_type(s.structs, oty, fa.field);
             // u64[] as well as i64[]: both are 8-byte elements, and the
             // ExprIdent arm above has always accepted both (is_u64_slot). This
             // one is belt-and-braces rather than a fix — a `u64[]` field index
@@ -8820,7 +8836,7 @@ pub function expr_is_i64arr(e: ast.Expr, s: LowerState): boolean {
             // elsewhere. #6093.
             var foty: string = expr_struct_type(fa.obj, s);
             if (foty == "") { return false; }
-            var fft: string = decl_field_type(s.structs, foty, fa.field);
+            var fft: string = field_arr_decl_type(s.structs, foty, fa.field);
             return fft == "i64[]" || fft == "u64[]";
         },
         ast.ExprCall(c) => {

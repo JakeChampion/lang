@@ -32,6 +32,25 @@ var cellWasmIRCases = []struct {
 	// A Cell living in a struct field: the receiver is a field access rather
 	// than a bare ident.
 	{"struct-field", `struct Box { c: Cell[i32] } function main(): i32 { var b: Box = Box { c: cell_new(5) }; b.c.set(b.c.get() + 1); return b.c.get(); }`, 6},
+	// A WIDE element through that field access. The i32 case above passes on a
+	// 4-byte read either way, so it could not catch the width being taken from
+	// the field's declared spelling: a LOCAL `Cell[f64]` records its element
+	// kind on the slot, while a FIELD reads `Cell[f64]`, which none of the
+	// array classifiers matched — so `b.c.get()` indexed 4-byte and the module
+	// failed to validate outright ("expected f64, found i32"). That is what
+	// made a self-host-built interp_run.wasm invalid: interp.fern's Value has
+	// `VCellF { c: Cell[f64] }`, read at interp.fern:657.
+	//
+	// The local twin is here as the control that already worked, so a
+	// regression tells you which of the two paths broke.
+	{"local-f64", `function main(): i32 { var c: Cell[f64] = cell_new(2.5); return (c.get() * 2.0) as i32; }`, 5},
+	{"struct-field-f64", `struct Box { c: Cell[f64] } function main(): i32 { var b: Box = Box { c: cell_new(2.5) }; return (b.c.get() * 2.0) as i32; }`, 5},
+	// set as well as get: the two took their width from different places —
+	// set consulted the cell's element type, get went through the array
+	// classifiers — so only one of them was wrong.
+	{"struct-field-f64-set", `struct Box { c: Cell[f64] } function main(): i32 { var b: Box = Box { c: cell_new(2.5) }; b.c.set(b.c.get() + 0.5); return (b.c.get() * 2.0) as i32; }`, 6},
+	// The other 8-byte element, whose classifiers carry the same field arm.
+	{"struct-field-i64", `struct Box { c: Cell[i64] } function main(): i32 { var b: Box = Box { c: cell_new(5000000000 as i64) }; return (b.c.get() / (1000000000 as i64)) as i32; }`, 5},
 }
 
 // TestSelfHostCellWasmIR runs each case through the self-hosted wasm IR driver
