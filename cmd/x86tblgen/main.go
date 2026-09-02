@@ -84,13 +84,21 @@ func genGPRTables() string {
 	b.WriteString(`// x86_gas_lockable: the base mnemonics the F0 lock prefix may precede —
 // anything else is #UD at runtime, so it is refused at assembly.
 function x86_gas_lockable(mnem: string): boolean {
+    var names: string[] = [
 `)
-	terms := make([]string, 0, 20)
+	// One spelling per line, so the generated source diffs line by line.
 	for _, sp := range x86tbl.LockableSpellings() {
-		terms = append(terms, fmt.Sprintf("mnem == %q", sp))
+		fmt.Fprintf(&b, "        %q,\n", sp)
 	}
-	// One condition per line, so the generated source diffs line by line.
-	fmt.Fprintf(&b, "    return %s;\n}\n", strings.Join(terms, "\n        || "))
+	b.WriteString(`    ];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (names[i] == mnem) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+`)
 	return b.String()
 }
 
