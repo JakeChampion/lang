@@ -436,7 +436,7 @@ func (b *builder) computeDynBorrowedViews() map[string]bool {
 // needs is only whether the returned POINTER is the callee's own.
 //
 // A function with no value returns gets false: it returns nothing to be fresh.
-func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool) map[string]bool {
+func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool, ownedParam func(*ast.FuncDecl, int) bool) map[string]bool {
 	// Greatest fixpoint: assume every function with a body qualifies, then
 	// eliminate the ones a return disproves. A call may be fresh because its
 	// callee is, so the answer for one function depends on the answers for
@@ -456,9 +456,9 @@ func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFu
 			ctorFresh := variantCtorFreshIn(info, shadowingNames(fn, info))
 			fresh := freshLocalsIn(fn, q, ctorFresh)
 			retained := returnedAliasIsRetained(fn, pairForm, trmcFuncs)
-			isParam := map[string]bool{}
-			for _, p := range fn.Params {
-				isParam[p.Name] = true
+			refused := map[string]bool{}
+			for i, p := range fn.Params {
+				refused[p.Name] = !ownedParam(fn, i)
 			}
 			ok, saw := true, false
 			ast.Walk(fn.Body, func(n ast.Node) bool {
@@ -467,7 +467,7 @@ func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFu
 					return true
 				}
 				saw = true
-				if !returnsOwnBox(r.Value, fresh, q, retained, isParam, ctorFresh) {
+				if !returnsOwnBox(r.Value, fresh, q, retained, refused, ctorFresh) {
 					ok = false
 				}
 				return true
@@ -499,20 +499,28 @@ func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFu
 // than reasoned about: the pair-form ABI pushes (tag, payload) and returns
 // early, and TRMC rewrites returns into an accumulator store.
 //
-// Returning a bare PARAMETER is refused separately, in returnsOwnBox, and the
-// refusal is empirical: crediting it loses three of the five frees in
-// `url.query_parse("a=1")`, 256 B on the smallest form that shows it. The
-// accounting behind that is NOT established. `__query_pair` — the callee whose
-// verdict flips — reassigns its `Map` parameter and returns it, but it is not
-// a consumed param (consumedDropWired excludes Map), so the ownership-flag
-// protocol is not what withholds the balancing dec. Three probes reproducing
-// the shape outside the stdlib (a threaded map param, the same with `string[]`
-// values through get/append/insert, and the same behind a map-returning
-// wrapper) all read identically credited and refused, so the trigger is
-// narrower than the shape and is still unidentified.
+// Returning a bare PARAMETER is credited only where the parameter is
+// OWNED-BY-DEFAULT (paramVerdictOwned): the caller retained the argument on the
+// way in and the callee's exit sweep releases that reference under the same
+// is_unique gate it uses for a local, so the transfer inc is the caller's own.
+// That is what lets a tree walk's `Tip => return t` arm — `__om_filter`,
+// `__om_glue`, `__om_union` — keep every caller's binding of its result
+// reclaimable.
 //
-// Refusing only the parameters a callee REASSIGNS is also enough to keep
-// query_parse clean and measures 21,104 B better on the self-host driver
+// A BORROWED parameter is refused, and the refusal is empirical: crediting
+// it loses three of the five frees in `url.query_parse("a=1")`, 256 B on the
+// smallest form that shows it. The accounting behind that is NOT established.
+// `__query_pair` — the callee whose verdict flips — reassigns its `Map`
+// parameter and returns it, but it is not a consumed param (consumedDropWired
+// excludes Map), so the ownership-flag protocol is not what withholds the
+// balancing dec. Three probes reproducing the shape outside the stdlib (a
+// threaded map param, the same with `string[]` values through
+// get/append/insert, and the same behind a map-returning wrapper) all read
+// identically credited and refused, so the trigger is narrower than the shape
+// and is still unidentified.
+//
+// Refusing only the borrowed parameters a callee REASSIGNS is also enough to
+// keep query_parse clean and measures 21,104 B better on the self-host driver
 // (276,496 against 297,600). It is not taken: with no mechanism established,
 // that boundary is only known to exclude the one case that could be measured,
 // which is the wrong basis for widening a credit that has already leaked once.
@@ -535,14 +543,15 @@ func returnedAliasIsRetained(fn *ast.FuncDecl, pairForm, trmcFuncs map[string]bo
 // for a direct `Ctor(..)`, one call deeper — it is what lets a tree insert's
 // `__om_single` / `__om_bin` / `__om_balance` chain prove fresh, so the
 // intermediate node a caller binds is reclaimable.
-func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool, retained bool, isParam map[string]bool, ctorFresh func(*ast.Call) bool) bool {
+func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool, retained bool, refused map[string]bool, ctorFresh func(*ast.Call) bool) bool {
 	switch x := e.(type) {
 	case *ast.Ident:
 		// fresh: a local proven fresh below, or an `own` parameter threaded
-		// only through owned values (freshLocalsIn). isParam: see
-		// returnedAliasIsRetained on the threaded accumulator — a BORROWED
-		// parameter's rebind may decline the dec that balances the return inc.
-		return fresh[x.Name] || (retained && !isParam[x.Name])
+		// only through owned values (freshLocalsIn). refused: the BORROWED
+		// parameters — see returnedAliasIsRetained on the threaded
+		// accumulator, whose rebind may decline the dec that balances the
+		// return inc.
+		return fresh[x.Name] || (retained && !refused[x.Name])
 	case *ast.FieldAccess, *ast.Index:
 		return retained
 	case *ast.Call:
@@ -558,12 +567,12 @@ func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool, retaine
 			// exactly when the receiver is. retained=false: the transfer inc
 			// covers the returned expression, which is the call, not its
 			// receiver, so a returned-alias receiver earns nothing from it.
-			return len(x.Args) > 0 && returnsOwnBox(x.Args[0], fresh, q, false, isParam, ctorFresh)
+			return len(x.Args) > 0 && returnsOwnBox(x.Args[0], fresh, q, false, refused, ctorFresh)
 		}
 		return q[id.Name] || ctorFresh(x)
 	case *ast.IfExpr:
-		return returnsOwnBox(x.Then, fresh, q, retained, isParam, ctorFresh) &&
-			returnsOwnBox(x.Else, fresh, q, retained, isParam, ctorFresh)
+		return returnsOwnBox(x.Then, fresh, q, retained, refused, ctorFresh) &&
+			returnsOwnBox(x.Else, fresh, q, retained, refused, ctorFresh)
 	}
 	return allocatesFreshBox(e)
 }
@@ -1071,7 +1080,7 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 					// scanner threaded through field projections and pure-read
 					// methods (lexer.tokenize;
 					// docs/SELFHOST-AST-RETIREMENT.md).
-					flags[i] = paramProjectionsSafe(fn, p.Name, pt.Name, info, out, ctorCounted)
+					flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
 				case ast.EnumType:
 					// The same rule, and sound for the same reason:
 					// `needsRcIncOnAlias` is true for an enum, so a bare `p` in
@@ -1083,13 +1092,20 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 					// with a control: `mknode(t, n) -> Node { ty: t, n: n }`
 					// leaks its argument when `t` is an enum and does not when
 					// `t` is a struct, same call shape either way (#7867).
-					flags[i] = paramProjectionsSafe(fn, p.Name, pt.Name, info, out, ctorCounted)
+					flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
 				case ast.TupleType:
 					// A tuple has no nominal declaration to name, so the
 					// projection arms never fire and only the slot / argument /
 					// return rules can credit it. `needsRcIncOnAlias` is true
 					// for a tuple, so those carry the same argument.
-					flags[i] = paramProjectionsSafe(fn, p.Name, "", info, out, ctorCounted)
+					flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
+				case *ast.FuncType:
+					// A function value is retained by the same counted slots
+					// (`needsRcIncOnAlias` is true for a closure) and read,
+					// without retaining, by being CALLED — the callee-position
+					// arm of paramProjectionsSafe. This is what lets a caller
+					// release the lambda it passes to `m.update(k, f)`.
+					flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
 				}
 			}
 			ptrAllCounted := true
@@ -1646,41 +1662,105 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 // credited (`total == len(safe)`), so any unhandled or escaping use
 // disqualifies the whole param.
 //
+// The rules apply to `p` and to every binding a `match (p)` introduces — a
+// payload binding is an uncounted alias of p's interior, so it is held to the
+// same rules, and the match itself is then a non-retaining read. That is what
+// credits the tree walks (`match (t) { Tip => …, Bin(l, k, v, r) => … }`) that
+// every persistent-collection function is built out of.
+//
 // Credited (safe) occurrences:
 //   - a bare `p` or `p.field` stored as a StructLit / TupleLit / ArrayLit slot
 //     value — the construction inc's a pointer field / copies a scalar;
-//   - a SCALAR field read `p.scalarField` anywhere — a value copy;
-//     available only when `sn` names a struct declaration; an enum or a
-//     tuple has no field to read and every projection arm simply never
-//     fires for one;
+//   - a SCALAR field read `p.scalarField` anywhere — a value copy; an enum or
+//     a tuple has no field to read and the projection arms never fire for one;
+//   - a SCALAR element read `p.arrField[i]` / `xs[i]` on a tracked array —
+//     a value copy;
 //   - the SOURCE of a string slice `p.strField[a:b]` / string index
 //     `p.strField[i]` — a copying read;
+//   - the scrutinee of a `match`, whose bindings are then tracked;
+//   - a function-typed `p` in CALLEE position — the call loads and dispatches;
 //   - a bare `p` / `p.field` passed as argument i to a call whose callee
 //     parameter i is itself counted-retain (`summary[C][i]`) — the method
 //     receiver `l.at_end()` and the self-reassign source `l.advance()`;
+//   - a bare `p` / `p.field` RETURNED — the return-transfer inc counts it;
 //   - `p` as the TARGET of an assignment (`p = …`) — a rebind, not a retention;
 //     the old value's fate is decided by the RHS classification and the
 //     reassigned-param overwrite dec (computeConsumedParams).
 //
-// Everything else (a bare `p` outside a slot, a pointer field read that
-// escapes, `p` passed to an UNCOUNTED / builtin argument, `x = p`, `return p`,
-// an array-slice source) is left uncredited and disqualifies — which is what
+// Everything else (a bare `p` outside a slot, a pointer field or element read
+// that escapes, `p` passed to an UNCOUNTED / builtin argument, `x = p`, an
+// array-slice source) is left uncredited and disqualifies — which is what
 // keeps `grow(m, k): Map { m = m.insert(k, …); return m; }` out: `m` reaches a
-// builtin `__method_Map_set` argument (never in `summary`) and a bare
-// `return m`, so it is never credited and its scalar `k` is never exempted.
-func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, summary map[string][]bool, ctorCounted func(*ast.Call) bool) bool {
-	// `sn` names a struct declaration for a struct parameter and nothing
-	// for an enum or a tuple. Absence is not a refusal: it makes the
-	// field-type lookup answer "no such field", so the two projection
-	// arms that consult it never credit — which is the right answer for
-	// a value that has no fields to project, rather than a missing one.
-	sd, hasDecl := info.Structs[sn]
-	fieldType := func(name string) (ast.Type, bool) {
-		if !hasDecl {
+// builtin `__method_Map_set` argument (never in `summary`), so it is never
+// credited and its scalar `k` is never exempted.
+func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summary map[string][]bool, ctorCounted func(*ast.Call) bool) bool {
+	// tracked holds `pn` and every binding a match over a tracked name
+	// introduces: a payload binding is an uncounted alias of the value's
+	// interior, so it is held to exactly the rules the parameter is, and the
+	// match itself then reads without retaining. typeOf carries each tracked
+	// name's static type for the scalar-read arms; a binding whose type is
+	// unresolved (or a type variable) stays tracked with no usable type, so
+	// none of its reads is credited.
+	tracked := map[string]bool{pn: true}
+	typeOf := map[string]ast.Type{}
+	for _, p := range fn.Params {
+		if p.Name == pn {
+			typeOf[pn] = p.Type
+		}
+	}
+	for {
+		grew := false
+		track := func(tag ast.Expr, names []string, types []ast.Type) {
+			id, ok := tag.(*ast.Ident)
+			if !ok || !tracked[id.Name] {
+				return
+			}
+			for i, nm := range names {
+				var bt ast.Type
+				if i < len(types) {
+					bt = types[i]
+				}
+				if _, isVar := bt.(ast.ParamType); bt != nil && !isVar && !ast.IsPointerType(bt) {
+					continue
+				}
+				if !tracked[nm] {
+					tracked[nm] = true
+					typeOf[nm] = bt
+					grew = true
+				}
+			}
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			switch m := n.(type) {
+			case *ast.Match:
+				for _, arm := range m.Arms {
+					track(m.Tag, arm.Bindings, arm.BindingTypes)
+				}
+			case *ast.MatchExpr:
+				for _, arm := range m.Arms {
+					track(m.Tag, arm.Bindings, arm.BindingTypes)
+				}
+			}
+			return true
+		})
+		if !grew {
+			break
+		}
+	}
+	// fieldTypeOf resolves `owner.field` for a tracked struct-typed name. An
+	// enum or a tuple has no declaration to consult, so the answer is "no
+	// such field" and the projection arms simply never credit it.
+	fieldTypeOf := func(owner, field string) (ast.Type, bool) {
+		st, ok := typeOf[owner].(ast.StructType)
+		if !ok {
+			return nil, false
+		}
+		sd, ok := info.Structs[st.Name]
+		if !ok {
 			return nil, false
 		}
 		for _, f := range sd.Fields {
-			if f.Name == name {
+			if f.Name == field {
 				return f.Type, true
 			}
 		}
@@ -1689,30 +1769,84 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, s
 	safe := map[*ast.Ident]bool{}
 	// markSlotValue credits a p-use that sits directly in a counted position —
 	// a construction slot or a counted call argument: a bare `p` (the whole
-	// struct is inc'd in) or a `p.field` (a pointer field is inc'd, a scalar is
-	// copied).
+	// struct is inc'd in), a `p.field` (a pointer field is inc'd, a scalar is
+	// copied), or an element `xs[i]` / `p.field[i]` read straight into the
+	// position (inc'd or copied the same way).
 	markSlotValue := func(e ast.Expr) {
 		switch v := e.(type) {
 		case *ast.Ident:
-			if v.Name == pn {
+			if tracked[v.Name] {
 				safe[v] = true
 			}
 		case *ast.FieldAccess:
-			if id, ok := v.Target.(*ast.Ident); ok && id.Name == pn {
+			if id, ok := v.Target.(*ast.Ident); ok && tracked[id.Name] {
 				safe[id] = true
 			}
+		case *ast.Index:
+			if v.IsString || v.IsSlice {
+				return
+			}
+			switch arr := v.Array.(type) {
+			case *ast.Ident:
+				if tracked[arr.Name] {
+					safe[arr] = true
+				}
+			case *ast.FieldAccess:
+				if id, ok := arr.Target.(*ast.Ident); ok && tracked[id.Name] {
+					safe[id] = true
+				}
+			}
 		}
+	}
+	// scalarElemRead reports the tracked root of an index read whose element
+	// is a plain scalar — `p.tail[i]`, or `xs[i]` on a tracked array binding
+	// — which copies a value out and retains nothing.
+	scalarElemRead := func(x *ast.Index) (*ast.Ident, bool) {
+		var root *ast.Ident
+		var at ast.Type
+		switch arr := x.Array.(type) {
+		case *ast.Ident:
+			root, at = arr, typeOf[arr.Name]
+		case *ast.FieldAccess:
+			id, ok := arr.Target.(*ast.Ident)
+			if !ok {
+				return nil, false
+			}
+			root = id
+			at, _ = fieldTypeOf(id.Name, arr.Field)
+		default:
+			return nil, false
+		}
+		arrT, ok := at.(ast.ArrayType)
+		if !ok || !tracked[root.Name] {
+			return nil, false
+		}
+		switch arrT.Elem.(type) {
+		case ast.NumberType, ast.BoolType, ast.FloatType:
+			return root, true
+		}
+		return nil, false
 	}
 	total := 0
 	seedOK := countedSeedOccurrences(fn)
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Ident:
-			if x.Name == pn {
+			if tracked[x.Name] {
 				total++
 				if seedOK[x] {
 					safe[x] = true
 				}
+			}
+		case *ast.Match:
+			// The bindings are tracked (above), so the match reads the box
+			// without anything escaping uncounted.
+			if id, ok := x.Tag.(*ast.Ident); ok && tracked[id.Name] {
+				safe[id] = true
+			}
+		case *ast.MatchExpr:
+			if id, ok := x.Tag.(*ast.Ident); ok && tracked[id.Name] {
+				safe[id] = true
 			}
 		case *ast.StructLit:
 			for _, f := range x.Fields {
@@ -1737,8 +1871,8 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, s
 		case *ast.FieldAccess:
 			// A scalar field read is a pure value copy — safe wherever it
 			// appears, not only in a slot.
-			if id, ok := x.Target.(*ast.Ident); ok && id.Name == pn {
-				if ft, ok := fieldType(x.Field); ok && !ast.IsPointerType(ft) {
+			if id, ok := x.Target.(*ast.Ident); ok && tracked[id.Name] {
+				if ft, ok := fieldTypeOf(id.Name, x.Field); ok && !ast.IsPointerType(ft) {
 					safe[id] = true
 				}
 			}
@@ -1751,9 +1885,11 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, s
 			}
 		case *ast.Index:
 			// A string byte read yields a scalar — the source read retains
-			// nothing.
+			// nothing; neither does a scalar element read.
 			if x.IsString {
 				markSlotValue(x.Array)
+			} else if root, ok := scalarElemRead(x); ok {
+				safe[root] = true
 			}
 		case *ast.Call:
 			// A `p` / `p.field` passed as argument i to a call whose callee
@@ -1762,6 +1898,11 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn, sn string, info *checker.Info, s
 			// A builtin / external callee is absent from `summary`, so its
 			// arguments stay uncredited (the map-mutator receiver guard).
 			if id, ok := x.Callee.(*ast.Ident); ok {
+				// Calling THROUGH a function-typed `p` loads the pair and
+				// dispatches; the closure itself is not retained.
+				if tracked[id.Name] {
+					safe[id] = true
+				}
 				if pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
 					markSlotValue(x.Args[0])
 				}

@@ -330,11 +330,13 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 	// A per-closure __closure_drop_<name> thunk reads captures at
 	// [env+offset], so it's only correct when the closure is a BARE
 	// ENV — i.e. the slot was elided above. For a closure that did
-	// NOT elide (e.g. never called, so no canonical reader to confirm
-	// elidability) the slot still holds a {fn, env} PAIR; downgrade
-	// its thunk drop to the generic, pair-safe __fern_closure_drop so
-	// the thunk doesn't deref the pair's fn field. Captures of such
-	// (rare) closures leak, which is safe.
+	// NOT elide — one passed to a function, the ordinary callback —
+	// the slot still holds a {fn, env} PAIR; downgrade its thunk drop
+	// to the generic, pair-safe __fern_closure_drop so the thunk
+	// doesn't deref the pair's fn field. Captures of such closures
+	// leak. Routing this drop through __drop_closure_value instead
+	// frees a Scope's closure field out from under the self-host
+	// checker (docs/rc-log/2026-09-02-persistent-collections-residual-leaks.md).
 	for i := 0; i+1 < len(fn.Ops); i++ {
 		if fn.Ops[i].Kind != OpLoadLocal || elidedSlot[fn.Ops[i].I32] {
 			continue

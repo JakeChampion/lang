@@ -3,6 +3,7 @@ package ir
 import (
 	"testing"
 
+	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/parser"
 )
@@ -27,6 +28,10 @@ function main(): i32 {
         pick_local(r, 0).len() + pick_param("z").len() + scalar_param(1);
 }`
 
+// noOwnedParams is the ownership fact for a program with no owned-by-default
+// parameter: every bare parameter return is then refused.
+func noOwnedParams(*ast.FuncDecl, int) bool { return false }
+
 func freshBoxFor(t *testing.T, src string) map[string]bool {
 	t.Helper()
 	prog, err := parser.Parse(src)
@@ -37,7 +42,50 @@ func freshBoxFor(t *testing.T, src string) map[string]bool {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	return findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{})
+	return findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{}, noOwnedParams)
+}
+
+// An OWNED-BY-DEFAULT parameter returned bare is credited: the callee's exit
+// sweep releases the reference it was handed, so the transfer inc is the
+// caller's own. `Tip => return t` is the arm every tree rebuild ends in, and
+// refusing it stranded one node per rebuild in the set algebra. The verdict
+// is the lowering's own ladder, so a borrowed parameter — an escaping Map,
+// the threaded accumulator the refusal exists for — stays refused.
+func TestReturnedOwnedByDefaultParamIsCredited(t *testing.T) {
+	src := `
+enum Node { Tip, Bin(Node, i32, Node) }
+function walk(t: Node): Node {
+    match (t) {
+        Tip => { return t; },
+        Bin(l, k, r) => { return Bin(walk(l), k, walk(r)); }
+    }
+}
+function thread(m: Map[i32, i32], k: i32): Map[i32, i32] { m = m.insert(k, 1); return m; }
+function main(): i32 {
+    var m: Map[i32, i32] = map_new(4);
+    match (walk(Bin(Tip, 1, Tip))) {
+        Tip => { return 1; },
+        Bin(l, k, r) => { return thread(m, k).len() - 1; }
+    }
+}`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	facts := paramVerdictFacts{info: info, ptrW: 8, paramEscapes: inferParamEscapes(prog, info)}
+	q := findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{}, facts.ownedParam)
+	if !q["walk"] {
+		t.Error("returnsFreshBox[walk] = false, want true — `return t` of an owned-by-default enum " +
+			"parameter hands the caller the reference the callee's sweep would otherwise balance")
+	}
+	if q["thread"] {
+		t.Error("returnsFreshBox[thread] = true, want false — a Map parameter is borrowed, and the " +
+			"bare-parameter credit is refused for a borrow")
+	}
 }
 
 func TestReturnedAliasCountsAsAFreshBox(t *testing.T) {
@@ -50,11 +98,11 @@ func TestReturnedAliasCountsAsAFreshBox(t *testing.T) {
 	}
 }
 
-// A bare PARAMETER return is refused even though it takes the same inc: a
-// threaded accumulator (`m = f(m, …)`) reaches a callee whose ownership-flag
-// protocol declines to release the parameter, so nothing balances the inc and
-// the value gains a reference per call. Crediting it leaked url.query_parse
-// outright — 5 blocks on a single `query_parse("a=1")`.
+// A bare BORROWED parameter return is refused even though it takes the same
+// inc: a threaded accumulator (`m = f(m, …)`) reaches a callee whose
+// ownership-flag protocol declines to release the parameter, so nothing
+// balances the inc and the value gains a reference per call. Crediting it
+// leaked url.query_parse outright — 5 blocks on a single `query_parse("a=1")`.
 func TestReturnedBareParamIsRefusedTheAliasCredit(t *testing.T) {
 	if q := freshBoxFor(t, retainedSrc); q["pick_param"] {
 		t.Error("returnsFreshBox[pick_param] = true, want false — a threaded " +
@@ -89,7 +137,7 @@ func TestPairFormAndTrmcAreRefusedTheAliasCredit(t *testing.T) {
 		{"pair-form", map[string]bool{"pick_index": true}, map[string]bool{}},
 		{"trmc", map[string]bool{}, map[string]bool{"pick_index": true}},
 	} {
-		if findReturnsFreshBox(prog, info, tc.pair, tc.trm)["pick_index"] {
+		if findReturnsFreshBox(prog, info, tc.pair, tc.trm, noOwnedParams)["pick_index"] {
 			t.Errorf("%s: returnsFreshBox[pick_index] = true, want false — that "+
 				"rewrite returns before the transfer inc is emitted", tc.what)
 		}

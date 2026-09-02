@@ -127,9 +127,10 @@ func (b *builder) insertConsumedParamEntryIncs(at int, pos ast.Position) {
 // whose retain or allocation this compiler emits itself (see the Call arms);
 // the general call stays out because a method call can alias its receiver
 // (`arr.push(x)` returns the receiver buffer), so dec'ing its result would
-// double-free. MakeClosure is excluded for now (a bare closure temp is
-// effectively nonexistent, and the per-closure capture-drop thunk is keyed
-// by local name) — those keep their prior plain handling.
+// double-free. A MakeClosure is a fresh rc=1 pair whose env retains its
+// captures at construction, so it is the closure-shaped literal; the drop
+// has no local name to route a per-closure thunk through, so it releases
+// through the pair's own drop-fn pointer (emitArgTempDrop).
 // appendCopyTempType classifies a call ARGUMENT that is an `.append`, whose
 // result is an owned temp the borrowing callee will not release — the #4357
 // "consumed by a borrowing call" leak class, one whole array buffer per call
@@ -176,6 +177,13 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 	switch x := e.(type) {
 	case *ast.ArrayLit, *ast.StructLit, *ast.TupleLit:
 		if t := b.exprType(e); ast.IsPointerType(t) {
+			return t, true
+		}
+	case *ast.MakeClosure:
+		// A lambda in argument position, `m.update(k, (v: i32) => v + i)`:
+		// the callee borrows a function value (isOwnedByDefaultType has no
+		// FuncType arm), so the caller is the pair's only owner.
+		if t, ok := b.exprType(e).(*ast.FuncType); ok {
 			return t, true
 		}
 	case *ast.Binary:

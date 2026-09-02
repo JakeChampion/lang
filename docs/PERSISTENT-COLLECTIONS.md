@@ -219,13 +219,35 @@ gate for closing them.
   32-slot arrays are not. Widening the gate (with the array-payload deep drop
   it needs) turns the unique path of both into the zero-copy path the ordered
   map already has.
-- **A closure argument allocated per loop iteration is not reclaimed**
-  (`update(k, f)` in a loop: one env box per call), and the split / join /
-  glue paths of `union`, `filter` and `update` still strand some nodes
-  (199 / 502 / 1,001 blocks in the census on 1,000-entry maps).
-- **A method-call temp used as a receiver leaks its box**
-  (`a.union(b).len()`), the existing "method results that may alias the
-  receiver" fallback.
+  It also carries the one residual `examples/tests/ordmap_test.fern` still
+  shows (5 of its 7 blocks): a string-valued or string-keyed node found by
+  `match (__om_find(m.root, k))` in `get` / `get_or` is never released —
+  `__om_find` returns it with the transfer inc, and `reclaimableMatchScrutinee`
+  refuses a scrutinee whose arms bind pointers. The i32-valued twin of the
+  same program is clean.
+- **A fresh temp passed to a POINTER-returning method whose parameter reaches
+  a self-recursive callee is not reclaimed** — `s.concat(v.slice(0, 2))`, 2
+  of the 4 blocks in `examples/tests/pvec_test.fern`. The per-position admission asks
+  `inferParamCountedRetain` whether `concat` retains `other` counted; its
+  least fixpoint starts every parameter uncredited and can never ground one a
+  function passes to itself (`__pv_into_elems(xs, i + 1, acc)` behind
+  `to_array`), so the whole chain stays refused. A greatest fixpoint would
+  credit it; that is a design change to the summary, not a gap in a rule.
+
+- **A closure LOCAL handed to a callee leaks its pair and env** — the
+  `visit` in `test_for_each` of every module's test (2 blocks each). Its
+  slot cannot elide, so the exit sweep's thunk is downgraded to the pair-only
+  release; dispatching through the pair's drop-fn pointer instead frees a
+  closure the self-host checker's `Scope` still holds
+  (`docs/rc-log/2026-09-02-persistent-collections-residual-leaks.md`). Pinned
+  by the `closure_local_passed_to_callee_released` corpus case.
+
+Closed on 2026-09-02 (#8057), each pinned by an rc-corpus case both native
+leak gates hold at zero: a lambda in argument position (pair + env per
+call), the `Tip => return t` arm of every tree rebuild (`union` / `filter`:
+960 / 1,368 blocks on 1,000-entry maps), and a fresh temp handed to a
+pointer-returning method whose reads are value copies. `pvec.with` below the tail and `a.union(b).len()` measured clean
+before that round: the blocks once attributed to them were the rebuild leak.
 
 ## Shapes the library uses on purpose
 
