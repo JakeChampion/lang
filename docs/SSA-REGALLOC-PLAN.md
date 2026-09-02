@@ -1147,6 +1147,37 @@ epic since the callee-saved partition, and like the `stp`/`ldp` pairing it cost
 no allocator complexity: allocation is untouched, only the set of registers a
 call bothers to save.
 
+### A call into a bare `ret`
+
+`__fern_box_free` and `__free` are do-nothing helpers on this backend — the
+heap does not reclaim, so both bodies are a single `ret`. Compiled code called
+them anyway: 165 sites in `ordmap_insert`, 196 in `pmap_insert`, each with its
+argument setup, on the path every drop takes.
+
+A call to a helper whose emitted body is exactly a `ret` is the identity on its
+first argument (the AArch64 PCS passes and returns in x0), so it lowers to that
+move, and usually to nothing once the move is a self-move. The set is derived
+from the emitted text rather than listed, which is what makes it temporary in
+the right direction: when the `RC-4+` freelist slice gives those bodies work,
+the derivation stops matching and the call sites come back on their own.
+
+Helper-to-helper branches are left alone — `__fern_closure_drop` tail-branches
+to `__fern_box_free` and the body has to stay for it.
+
+| bench | before | after | `.text` |
+|---|---|---|---|
+| `pmap_insert` | 1.89x | **1.69x** | 87.3% |
+| `ordmap_insert` | 2.06x | **1.99x** | 85.9% |
+| `pvec_with` | 1.83x | 1.84x | 86.8% |
+| `struct_drop` | 0.76x | 0.73x | 99.7% |
+
+The size number is the one to read: **13-14% of `.text` off the three
+persistent-collection programs**, where a drop-heavy body is most of the code.
+The time moves are small — best-of-15 gives `ordmap_insert` 0.625s to 0.605s
+and `pmap_insert` 0.330s to 0.295s, `pvec_with` unchanged within noise — which
+is the expected shape: the elided instructions were cheap, there were simply a
+great many of them. Programs that never drop a box are byte-identical.
+
 ### Reclamation is a memory fix, not a speed fix
 
 The SSA heap never frees (`docs/SSA-RC-RUNTIME.md`), and the obvious reading is
