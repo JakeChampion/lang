@@ -361,11 +361,18 @@ func findScope(stack []scopeFrame, target *ssa.Block) (depth int, kind scopeKind
 // that doesn't yet have a scope — typically a loop header
 // about to open its LoopScope).
 //
-// Depths come from findScope. BlockScope at depth 0 acts as
-// fallthrough (the wrap's end is the next thing executed);
-// LoopScope at depth 0 means "restart loop" — never a
-// fallthrough. When findScope misses, the target must be the
-// `nextBlock` (natural fallthrough into a loop header).
+// Depths come from findScope. LoopScope at depth 0 means
+// "restart loop" — never a fallthrough.
+//
+// A target is a FALLTHROUGH only when it is `nextBlock`, since
+// nextBlock is by construction the next thing emitted. Having a
+// BlockScope at depth 0 is not enough on its own: that scope
+// closes when its target is emitted, and if the target is not
+// nextBlock, what comes next is something else entirely — a
+// `loop` opening for nextBlock, say. Treating such a target as
+// fallthrough drops the branch, and where the branch was a
+// conditional it drops the condition with it and runs the arm
+// unconditionally.
 func lowerReloopTerm(body []byte, b *ssa.Block, stack []scopeFrame, nextBlock *ssa.Block, ctx *emitCtx) ([]byte, error) {
 	switch b.Term.Kind {
 	case ssa.TermRet:
@@ -383,8 +390,8 @@ func lowerReloopTerm(body []byte, b *ssa.Block, stack []scopeFrame, nextBlock *s
 			}
 			return nil, fmt.Errorf("relooper: TermBr target not in scope stack and not next-RPO")
 		}
-		if kind == skBlock && depth == 0 {
-			return body, nil // fallthrough
+		if target == nextBlock && kind == skBlock && depth == 0 {
+			return body, nil // the scope closes here and lands on target
 		}
 		return inst.InstBr(body, uint32(depth)), nil
 	case ssa.TermBrIf:
@@ -402,8 +409,12 @@ func lowerReloopTerm(body []byte, b *ssa.Block, stack []scopeFrame, nextBlock *s
 		}
 		tDepth, tKind, tOK := findScope(stack, t)
 		fDepth, fKind, fOK := findScope(stack, fb)
-		tFall := (tOK && tKind == skBlock && tDepth == 0) || (!tOK && t == nextBlock)
-		fFall := (fOK && fKind == skBlock && fDepth == 0) || (!fOK && fb == nextBlock)
+		// Only nextBlock can be fallen through to, whether it is reached by
+		// closing a block scope that ends here or by having no scope yet (a
+		// loop header about to open one). Two DIFFERENT targets can never
+		// both be it — the shape that used to reach the drop below.
+		tFall := t == nextBlock && (!tOK || (tKind == skBlock && tDepth == 0))
+		fFall := fb == nextBlock && (!fOK || (fKind == skBlock && fDepth == 0))
 		if !tOK && !tFall {
 			return nil, fmt.Errorf("relooper: TermBrIf True target not in scope stack and not next-RPO")
 		}
@@ -413,7 +424,9 @@ func lowerReloopTerm(body []byte, b *ssa.Block, stack []scopeFrame, nextBlock *s
 		body = pushValue(body, b.Term.Cond, ctx)
 		switch {
 		case tFall && fFall:
-			return append(body, 0x1a), nil
+			// Both arms fall through, so both are nextBlock and the branch
+			// decides nothing. Only the condition's value is left to discard.
+			return append(body, 0x1a), nil // drop
 		case tFall:
 			body = append(body, 0x45) // i32.eqz
 			return inst.InstBrIf(body, uint32(fDepth)), nil
