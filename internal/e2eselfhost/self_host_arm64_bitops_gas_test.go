@@ -97,7 +97,16 @@ function main(): i32 {
     // destination of the wrong shape.
     if (arm64_gas_bad_vec_token("cnt", "v0.4h, v0.4h").len() == 0) { return 14; }
     if (arm64_gas_bad_vec_token("cnt", "v0.8b, v1.16b").len() == 0) { return 15; }
-    if (arm64_gas_bad_vec_token("addv", "h0, v0.8h").len() == 0) { return 16; }
+    // addv h0, v0.8h is a real instruction, and the across-lanes class encodes
+    // it (llvm-mc: 00 b8 71 4e). What must still be refused is a destination
+    // whose element class the arrangement does not name: nothing in the
+    // encoding says how wide the result is, so addv b0, v0.8h would name a
+    // register the instruction does not write. A .2s source has no
+    // across-lanes form at all.
+    var l1: Arm64Asm = arm64_gas_assemble("addv h0, v0.8h");
+    if (l1.code[0] != 0 || l1.code[1] != 184 || l1.code[2] != 113 || l1.code[3] != 78) { return 21; }
+    if (arm64_gas_bad_vec_token("addv", "b0, v0.8h").len() == 0) { return 22; }
+    if (arm64_gas_bad_vec_token("addv", "s0, v0.2s").len() == 0) { return 23; }
     if (arm64_gas_bad_vec_token("addv", "v0.8b, v0.8b").len() == 0) { return 17; }
     if (arm64_gas_bad_vec_token("cnt", "v0.8b").len() == 0) { return 18; }
     // …and a well-formed pair must NOT be refused.
