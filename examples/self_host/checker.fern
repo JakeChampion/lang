@@ -2433,17 +2433,22 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
     TypeTuple(te) => {
       match (from) {
         TypeTuple(fe) => {
-          // Same arity, element-wise assignable. An unknown source
-          // element is a wildcard (mirrors the array / map rule) so a
-          // generic tuple `(T, U)` — whose params erase to `unknown` —
-          // flows into any concrete tuple slot, and a literal whose
-          // element infers `unknown` doesn't false-positive.
+          // Same arity, element-wise assignable. An unknown element on
+          // EITHER side is a wildcard, exactly as the array arm above
+          // treats its element: a generic tuple `(T, U)` — whose params
+          // erase to `unknown` — flows into any concrete tuple slot, a
+          // literal whose element infers `unknown` doesn't false-positive,
+          // and a DESTINATION element this resolver cannot name is not a
+          // rejection. That last direction is what a spelling like
+          // `Cell[i32]` needs: it resolves to unknown here, so a bare
+          // `var c: Cell[i32] = …` skips the check entirely while the same
+          // element inside a tuple used to fail it.
           if (fe.elements.len() != te.elements.len()) {
             return false;
           }
           var i: i32 = 0;
           while (i < te.elements.len()) {
-            if (!is_unknown(fe.elements[i]) && !type_assignable(fe.elements[i], te.elements[i], unions)) {
+            if (!is_unknown(fe.elements[i]) && !is_unknown(te.elements[i]) && !type_assignable(fe.elements[i], te.elements[i], unions)) {
               return false;
             }
             i = i + 1;

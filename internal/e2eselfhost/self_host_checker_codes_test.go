@@ -656,6 +656,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"inferred-struct-array-clean", "struct P { v: i32 }\nfunction main(): i32 { var ps = [P { v: 3 }, P { v: 4 }]; return ps[0].v + ps[1].v; }\n", nil},
 		// Tuple literal with an i32[] element — clean from both checkers.
 		{"tuple-arr-elem-clean", "function main(): i32 { var t = ([10, 20], 9); var a = t.0; return a[0] + t.1; }\n", nil},
+		// A tuple whose ANNOTATION names an element type this resolver cannot
+		// resolve — `Cell[T]` is one — must not be rejected for that. The
+		// element goes unknown here, and an unknown destination element is a
+		// wildcard exactly as it is in the array arm beside it: a bare
+		// `var c: Cell[i32] = cell_new(0)` skipped the check entirely while
+		// the same element inside a tuple used to draw E003.
+		{"tuple-cell-elem-clean", "function main(): i32 { var t: (i32, Cell[i32]) = (7, cell_new(0)); return t.0 - 7; }\n", nil},
+		{"tuple-cell-string-elem-clean", "function main(): i32 { var t: (i32, Cell[string]) = (7, cell_new(\"a\")); return t.0 - 7; }\n", nil},
 		{"dup-field", "struct P { x: i32, x: i32 }\nfunction main(): i32 { return 0; }\n", []string{"E007"}},
 		{"dup-param", "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return 0; }\n", []string{"E018"}},
 		{"dup-field-and-param", "struct P { y: i32, y: i32 }\nfunction g(b: i32, b: i32): i32 { return b; }\nfunction main(): i32 { return 0; }\n", []string{"E007", "E018"}},
