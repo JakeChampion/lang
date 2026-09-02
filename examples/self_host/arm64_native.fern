@@ -1481,6 +1481,7 @@ function arm64_vec_entry_u(e: i32): boolean { return e >= 4096; }
 function arm64_vec_entry_op(e: i32): i32 { return (e % 4096) / 16; }
 function arm64_vec_entry_sizes(e: i32): i32 { return e % 16; }
 
+// BEGIN GENERATED ARM64 V3INT_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Three-register integer ops. 15 = BHSD, 7 = BHS.
 function arm64_v3int_entry(mnem: string): i32 {
     if (mnem == "add") { return arm64_vec_entry(false, 16, 15); }
@@ -1500,7 +1501,9 @@ function arm64_v3int_entry(mnem: string): i32 {
     if (mnem == "ushl") { return arm64_vec_entry(true, 8, 15); }
     return 0 - 1;
 }
+// END GENERATED ARM64 V3INT_ENTRY TABLE
 
+// BEGIN GENERATED ARM64 VLOGICAL_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // The bitwise three-register ops put the operation in the size field, so they
 // exist only in the byte arrangements. The entry carries that operation
 // selector in the opcode slot; the real opcode is always 3.
@@ -1512,7 +1515,9 @@ function arm64_vlogical_entry(mnem: string): i32 {
     if (mnem == "eor") { return arm64_vec_entry(true, 0, 1); }
     return 0 - 1;
 }
+// END GENERATED ARM64 VLOGICAL_ENTRY TABLE
 
+// BEGIN GENERATED ARM64 VCMPZERO_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Compare against zero. cmle/cmlt exist ONLY in this form — their
 // register-operand spellings are the swapped-operand cmge/cmgt.
 function arm64_vcmpzero_entry(mnem: string): i32 {
@@ -1523,7 +1528,9 @@ function arm64_vcmpzero_entry(mnem: string): i32 {
     if (mnem == "cmlt") { return arm64_vec_entry(false, 10, 15); }
     return 0 - 1;
 }
+// END GENERATED ARM64 VCMPZERO_ENTRY TABLE
 
+// BEGIN GENERATED ARM64 V2MISC_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Two-register unary integer ops. mvn is an alias of not.
 function arm64_v2misc_entry(mnem: string): i32 {
     if (mnem == "neg") { return arm64_vec_entry(true, 11, 15); }
@@ -1536,6 +1543,7 @@ function arm64_v2misc_entry(mnem: string): i32 {
     if (mnem == "rev64") { return arm64_vec_entry(false, 0, 7); }
     return 0 - 1;
 }
+// END GENERATED ARM64 V2MISC_ENTRY TABLE
 
 // arm64_vecshift encodes the shift-by-immediate class. The element size and
 // the shift amount SHARE the immh:immb field — immh's top set bit IS the
@@ -1571,6 +1579,7 @@ function arm64_gas_fp_size(code: i32, szhi: boolean): i32 {
     return v;
 }
 
+// BEGIN GENERATED ARM64 VFP3_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // arm64_vfp3_entry: three-register lane-wise FP. The szHi bit rides in the
 // size-mask slot, which is free here because the arrangement set is fixed.
 function arm64_vfp3_entry(mnem: string): i32 {
@@ -1585,7 +1594,9 @@ function arm64_vfp3_entry(mnem: string): i32 {
     if (mnem == "fcmgt") { return arm64_vec_entry(true, 28, 1); }
     return 0 - 1;
 }
+// END GENERATED ARM64 VFP3_ENTRY TABLE
 
+// BEGIN GENERATED ARM64 VFP2_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // arm64_vfp2_entry: two-register lane-wise FP, same szHi convention.
 function arm64_vfp2_entry(mnem: string): i32 {
     if (mnem == "fneg") { return arm64_vec_entry(true, 15, 1); }
@@ -1597,7 +1608,9 @@ function arm64_vfp2_entry(mnem: string): i32 {
     if (mnem == "fcvtzu") { return arm64_vec_entry(true, 27, 1); }
     return 0 - 1;
 }
+// END GENERATED ARM64 VFP2_ENTRY TABLE
 
+// BEGIN GENERATED ARM64 VFPCMPZERO_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // FP compare against zero, whose operand is spelled `#0.0`. szHi is always
 // set for this class, so the entry needs no flag. fcmle/fcmlt exist ONLY
 // here — their register-operand spellings are the swapped-operand
@@ -1610,7 +1623,9 @@ function arm64_vfpcmpzero_entry(mnem: string): i32 {
     if (mnem == "fcmlt") { return arm64_vec_entry(false, 14, 0); }
     return 0 - 1;
 }
+// END GENERATED ARM64 VFPCMPZERO_ENTRY TABLE
 
+// BEGIN GENERATED ARM64 VSHIFT_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Shift by immediate. The size-mask slot carries the direction: 1 = left.
 function arm64_vshift_entry(mnem: string): i32 {
     if (mnem == "shl") { return arm64_vec_entry(false, 10, 1); }
@@ -1620,7 +1635,9 @@ function arm64_vshift_entry(mnem: string): i32 {
     if (mnem == "sri") { return arm64_vec_entry(true, 8, 0); }
     return 0 - 1;
 }
+// END GENERATED ARM64 VSHIFT_ENTRY TABLE
 
+// BEGIN GENERATED ARM64 VPERMUTE_OPC TABLE (cmd/arm64tblgen) — do not edit by hand.
 function arm64_vpermute_opc(mnem: string): i32 {
     if (mnem == "zip1") { return 3; }
     if (mnem == "zip2") { return 7; }
@@ -1630,6 +1647,7 @@ function arm64_vpermute_opc(mnem: string): i32 {
     if (mnem == "trn2") { return 6; }
     return 0 - 1;
 }
+// END GENERATED ARM64 VPERMUTE_OPC TABLE
 
 // arm64_gas_esize is the element width in bits of an arrangement.
 function arm64_gas_esize(code: i32): i32 {
@@ -1782,6 +1800,7 @@ function arm64_vecacross(buf: i32[], rd: i32, rn: i32, opcode: i32, size: i32, q
     return arm64_le32(buf, word);
 }
 
+// BEGIN GENERATED ARM64 ACROSS_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // arm64_across_entry: the across-lanes table. The size-mask slot carries the
 // WIDENING flag — saddlv/uaddlv produce a result one element size up, so
 // their scalar destination is a class wider than the arrangement.
@@ -1795,6 +1814,7 @@ function arm64_across_entry(mnem: string): i32 {
     if (mnem == "uaddlv") { return arm64_vec_entry(true, 3, 1); }
     return 0 - 1;
 }
+// END GENERATED ARM64 ACROSS_ENTRY TABLE
 
 // arm64_gas_scalar_class decodes a bN/hN/sN/dN scalar SIMD register to its
 // element-size class (0=B, 1=H, 2=S, 3=D), or -1. arm64_gas_scalar_reg gives
