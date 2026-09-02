@@ -234,7 +234,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// blocking-read, wasi:http response bodies, etc.) has the
 	// host write through it. Mirrors the WAT path's
 	// always-export shape.
-	if opts.ForceMemorySection {
+	if opts.ForceMemorySection || exportsNeedGuestAlloc(prog) {
 		helpers.add("cabi_realloc")
 	}
 	importNeeds := scanImports(prog, helpers, opts)
@@ -792,7 +792,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// A composite-result `@import` extern (P4c) also needs the host
 	// to call back into cabi_realloc to materialize its returned
 	// bytes, so export it whenever such a wrapper is present.
-	if opts.ForceMemorySection || len(externWrappers) > 0 {
+	if opts.ForceMemorySection || len(externWrappers) > 0 || exportsNeedGuestAlloc(prog) {
 		if idx, ok := funcIdx["cabi_realloc"]; ok {
 			m.ExportNames = append(m.ExportNames, "cabi_realloc")
 			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
@@ -1319,6 +1319,27 @@ func paramValtypes(params []ast.Param) ([]byte, error) {
 		out = append(out, vts...)
 	}
 	return out, nil
+}
+
+// exportsNeedGuestAlloc reports whether any `@export` function takes a string or
+// numeric-array parameter, which the canonical ABI passes as `(ptr, len)` into
+// the guest's own memory. The host has nowhere to put those bytes unless the
+// module exports an allocator, so such a module must surface cabi_realloc even
+// when it is a plain core module with no component wrapping around it.
+func exportsNeedGuestAlloc(prog *ir.Program) bool {
+	for _, exp := range prog.Exports {
+		for _, fn := range prog.Funcs {
+			if fn.Name != exp.Name {
+				continue
+			}
+			for _, prm := range fn.Params {
+				if isStringType(prm.Type) || isScalarArrayParamType(prm.Type) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // canonicalExportParamVts flattens an `@export` function's parameters to the

@@ -1115,7 +1115,11 @@ world-driven composer (P2) wires it.
      `(ptr,len)` — which maps directly to wasmbin's two-word string, so no
      wrapper is needed (vs. the string-*result* wrapper). `ComposeExportsFromWorld`
      aliases `cabi_realloc` when any export has a string param
-     (`exportNeedsRealloc`). Gated by `TestExportStringParamRunsViaConsumer`: a
+     (`exportNeedsRealloc`), and the core module itself exports it under the
+     same rule (`exportsNeedGuestAlloc`, widened to `list<T>` params) so a host
+     that instantiates the core module directly — the browser playground's
+     shape, with no component wrap — has somewhere to put the argument bytes.
+     Gated by `TestExportStringParamRunsViaConsumer`: a
      Fern `@export len_of(s: string): i32 { return s.len(); }` reactor, and a
      Fern consumer calling `len_of("hello") == 5`, link + run under wasmtime.
    - **Slice 5d self-host — string-param export. ✅ Done.** `wasm.fern`'s
