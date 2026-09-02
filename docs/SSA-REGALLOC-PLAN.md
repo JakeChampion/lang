@@ -1062,6 +1062,31 @@ Still slower than flat: `ordmap_insert` 2.31×, `pvec_with` 2.03×, `pmap_insert
 `map_string` 1.30×, `call_overhead` 1.26×. The three persistent-collection rows
 barely moved, so whatever they pay is a third thing, not these two.
 
+### What the persistent-collection rows pay, measured but not yet fixed
+
+`ordmap_insert` 2.31x, `pvec_with` 2.03x and `pmap_insert` 1.96x barely moved
+for either fix above, and counting call sites in their emitted modules says
+why — it is the RC helpers, reached by a call each:
+
+| callee | `ordmap_insert` | `pvec_with` | `pmap_insert` |
+|---|---|---|---|
+| `__fern_box_free` | 165 | 202 | 196 |
+| `__fern_rc_dec` | 84 | 86 | 81 |
+| `__fern_rc_is_unique` | 84 | 76 | 70 |
+| `__fern_rc_inc` | 40 | 55 | 32 |
+
+The flat backend inlines all three of the rc primitives (`emitRcInc` /
+`emitRcDec` / `rcop` in `internal/codegen/arm64`) — its hot pmap functions
+contain zero calls to `__fern_rc_is_unique`. Each is a guard chain of about six
+instructions, so this is the same trade the raw pokes just took, one size up:
+the caller-saves around the call cost more than the work.
+
+`__fern_box_free` is the sharper one. On this backend it is a bare `ret` — the
+heap does not reclaim — so those 165-202 sites are a `bl` and a full caller-save
+around a function that does nothing. Eliding it is not the fix, because the
+`RC-4+` freelist slice makes it real again; inlining the rc primitives is,
+and it survives that slice.
+
 ### Reclamation is a memory fix, not a speed fix
 
 The SSA heap never frees (`docs/SSA-RC-RUNTIME.md`), and the obvious reading is
