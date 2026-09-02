@@ -80,8 +80,8 @@ name: Test e2e self-host
 # toolchain rather than skipping for lack of qemu / cross-gcc. The
 # aarch64 runner skips the x86 self-host driver builds (and vice-versa),
 # so the x86 lane is the long pole; the aarch64 shards finish in well
-# under a minute — which is why the aarch64 lane runs 2 shards to the
-# x86 lane's 16 (its per-shard cost is dominated by job setup, so
+# under a minute — which is why the aarch64 lane runs 1 shard to the
+# x86 lane's 6 (its per-shard cost is dominated by job setup, so
 # near-empty shards are just wasted runner slots delaying the x86
 # fan-out under the account-wide concurrent-job cap).
 #
@@ -262,7 +262,7 @@ jobs:
   # and 67 MB after the three-driver ssa job, against ~21 GB free on the runner.
   # What one-per-driver did cost was real: each job pays ~28s of fixed setup
   # (checkout + setup-fern + the test-binary compile) to do ~22s of warming, and
-  # `needs: warm` gates all nine shards on the SLOWEST of them — where "slowest"
+  # `needs: warm` gates all seven shards on the SLOWEST of them — where "slowest"
   # under a saturated runner pool is decided by queue wait, not by work. On that
   # same run the twelve jobs did 9.4 min of warming spread across a 14.6-min
   # barrier, each waiting separately for a runner. Three jobs draw three queue
@@ -320,7 +320,7 @@ jobs:
       # .github/selfhost-driver-sizes.txt. `!cancelled()` rather than success()
       # so a partial warm still reports the sizes it did produce.
       #
-      # continue-on-error because all nine shards `needs: warm`: a measurement
+      # continue-on-error because all seven shards `needs: warm`: a measurement
       # step must not be able to hold the lane. This slice stays advisory for
       # that reason — the enforcing copy is the leaf `driver-sizes` job below,
       # which gates nothing and so can fail. What this step is for is feedback
@@ -356,7 +356,7 @@ jobs:
   # it, in-process, reading the just-built driver from the LOCAL on-disk cache
   # (see the ISOLATED WHOLE-COMPILER DRIVER TESTS note above the env block).
   # Deliberately NOT part of the `warm` matrix: the `test` shards `needs: warm`,
-  # and this ~4-min job would gate all nine of them on an artifact nobody
+  # and this ~4-min job would gate all seven of them on an artifact nobody
   # downloads (no upload here — nothing consumes fern.fern outside this job).
   # The test step is STRICT. It used to carry continue-on-error so a flaky
   # qemu-aarch64 blip could not fail the lane, but that flag does not
@@ -802,19 +802,26 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      # Two shards, not four: the whole lane is 12.4 min of work (measured on
-      # run 31819148053), so four buckets bought ~3 min each against a 45-min
-      # timeout while holding four slots in a pool that was the binding
-      # constraint on the run.
+      # ONE shard. This went four to two when the lane was 12.4 min of work
+      # (run 31819148053); it is now 4.3 min — the two shards measured 2.3 and
+      # 2.0 min on run 33645749262 while waiting 57 and 25 min for a runner.
+      # A shard that queues for ten times what it runs is a slot spent on job
+      # setup, and splitting a fixed corpus costs no coverage however few
+      # buckets it lands in: shard 0 of 1 is every seed.
+      #
+      # nshard rides the matrix so the partition denominator cannot drift from
+      # the number of jobs — the same idiom test-e2e-other.yml uses, and pinned
+      # by TestShardDenominatorMatchesMatrix.
       matrix:
-        shard: [0, 1]
+        include:
+          - { nshard: 1, shard: 0 }
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
       - name: run the fernsmith corpus through the self-host compiler
         env:
           FERN_SELFHOST_DIFF: "1"
-          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/${{ matrix.nshard }}"
         run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
 
   # The same corpus through the self-host ARM64 emitter (#7967).
@@ -838,11 +845,13 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      # Measured at ~0.85 s/seed including the qemu run, so 512 seeds are ~7
-      # min of work — two shards put a bucket well inside the timeout, matching
-      # the x86-64 lane's shape.
+      # ONE shard, matching the x86-64 lane's shape above and for its reason:
+      # the two shards measured 2.5 and 2.4 min on run 33645749262, so the
+      # whole 512-seed leg is ~5 min and a second bucket buys a runner slot's
+      # worth of setup. Splitting a fixed corpus costs no coverage.
       matrix:
-        shard: [0, 1]
+        include:
+          - { nshard: 1, shard: 0 }
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
@@ -851,7 +860,7 @@ jobs:
       - name: run the fernsmith corpus through the self-host arm64 emitter
         env:
           FERN_SELFHOST_DIFF: "1"
-          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/${{ matrix.nshard }}"
         run: go test ./internal/e2e/ -run '^TestDifferential_SelfHostArm64$' -v -timeout 43m
 
   test:
@@ -859,7 +868,7 @@ jobs:
     strategy:
       fail-fast: false
       # Explicit include list instead of a host × shard cross-product: the
-      # aarch64 lane runs 2 shards to x86's 16 (see the matrix-per-arch note
+      # aarch64 lane runs 1 shard to x86's 6 (see the matrix-per-arch note
       # in the header). `nshard` rides along so the partition script agrees
       # with the number of jobs actually scheduled.
       #
@@ -878,17 +887,22 @@ jobs:
       # 24 minutes. Halving the count roughly halves that tail while each shard
       # only grows to the mean.
       #
-      # Halving x86 costs nothing at the long end, because the long end is not
-      # set by the partition. Running the LPT greedy over
-      # .github/selfhost-test-weights.txt: at 16 buckets the heaviest is 12.3
-      # min and at 8 it is still 12.3 min — both are just the single heaviest
-      # test, TestSelfHostAssumeEligibleByteIdenticalX86_64, which no split can
-      # divide. Only the mean moves, 4.8 to 9.6 min of weighted mass; adding
-      # the unweighted remainder (the gap between that model and the 6.8-min
-      # mean actually measured at 16) puts the real numbers at ~13.6 min mean
-      # and ~16 min for the longest shard. Hence 30 rather than 20 minutes of
-      # job budget: 16 min of tests plus setup and the test-binary compile
-      # left no headroom against 20.
+      # Cutting x86 costs almost nothing at the long end, because the long end
+      # is not set by the partition. Running the LPT greedy over
+      # .github/selfhost-test-weights.txt (85 tests, 76.5 min of weighted mass)
+      # the longest bucket goes 12.3 min at 16 buckets, 12.3 at 8, 12.3 at 7,
+      # 12.8 at 6, then breaks upward: 15.3 at 5 and 19.1 at 4. Up to 7 that
+      # number is just the single heaviest test,
+      # TestSelfHostAssumeEligibleByteIdenticalX86_64 at 738 s, which no split
+      # can divide — so at 8 buckets six of the eight carried 8.9 min while one
+      # test pinned the first at 12.3, which is capacity bought and not used.
+      # 6 is where the mean meets that floor.
+      #
+      # Adding the unweighted remainder (the gap between this model and the
+      # 6.8-min mean actually measured at 16 buckets — about 32 min of mass the
+      # weights file does not name) the real longest shard is ~16 min at 8 and
+      # ~18 min at 6. The 30-minute budget holds either way, and the model is
+      # calibrated: it reproduces the ~16 min that was measured at 8.
       #
       # So the rule is that a shard should do more work than it spends queueing.
       # aarch64 goes to 1 for the same reason from the other side — 2 was
@@ -896,14 +910,12 @@ jobs:
       # seconds having waited 9.8 minutes to do it.
       matrix:
         include:
-          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 0 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 1 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 2 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 3 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 4 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 5 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 6 }
-          - { runner: ubuntu-latest, host: x86_64, nshard: 8, shard: 7 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 0 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 1 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 2 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 3 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 4 }
+          - { runner: ubuntu-latest, host: x86_64, nshard: 6, shard: 5 }
           - { runner: ubuntu-24.04-arm, host: aarch64, nshard: 1, shard: 0 }
     name: test-e2e-selfhost-${{ matrix.host }}-shard${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
@@ -1145,7 +1157,7 @@ jobs:
       # that unit test rather than silently narrowing what gets enforced.
       - name: verify every shard reported success
         id: verify
-        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=8 aarch64=1
+        run: scripts/ci-verify-shard-outcomes shard-outcomes x86_64=6 aarch64=1
       # The verifier can only see that a marker is ABSENT, so it names all three
       # causes at once ("runner reclaim, OOM-kill, or timeout"). They want
       # opposite responses, and #6038 has been read as the apt-stall for

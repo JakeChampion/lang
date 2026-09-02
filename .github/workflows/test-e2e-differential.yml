@@ -6,20 +6,24 @@ name: Test e2e differential
 # and wasmbin backends. Asserts byte-for-byte agreement.
 #
 # This is the heaviest single e2e test on the suite (~5+ min for
-# the full 2048-seed sweep). Sharded two ways via the
-# `DIFF_ORACLE_SHARD=I/N` env var the test honours: each shard
-# claims `seed % N == I`, so the 2048 seeds split as 1024 per
-# shard. Crossed with the per-arch matrix that gives 4 parallel
-# jobs.
+# the full 2048-seed sweep). Split via the `DIFF_ORACLE_SHARD=I/N`
+# env var the test honours: each shard claims `seed % N == I`, so at
+# N=1 one job sweeps all 2048 seeds. Crossed with the per-arch matrix
+# that gives 2 parallel jobs.
 #
-# The shard count is set by queue pressure, not by the work. Measured
-# on run 31819148034: at four shards per arch the lane did 18.5 min of
-# work across 8 jobs and its longest shard was 2.6 min, on a PR where
-# 75% of all CI time was spent waiting for a runner rather than using
-# one. Two shards puts each at ~4.8 min against a 15-min timeout and
-# hands 4 slots back to the pool. Bump this (and DIFF_ORACLE_SHARD's
-# /N with it) if per-shard wall-clock creeps toward the slow lanes as
-# the corpus grows.
+# The shard count is set by queue pressure, not by the work, and it has
+# come down twice for that reason: four per arch (run 31819148034, 18.5
+# min of work across 8 jobs), then two. On run 33675174529 the four
+# jobs ran 4.6-5.0 min each after waiting 30-40 min for a runner — six
+# to eight times more queueing than working, which is a slot spent on
+# job setup. ONE shard per arch sweeps the whole corpus in ~9.5 min.
+#
+# Splitting a fixed corpus costs no coverage at any N: every seed is
+# claimed by exactly one bucket, and at N=1 that bucket is the sweep.
+# So this trades wall-clock for slots and nothing else. Raise it again
+# if per-shard wall-clock creeps toward the slow lanes as the corpus
+# grows; nshard rides the matrix, so the denominator moves with the
+# job count rather than being restated by hand.
 #
 # Needs wasmtime because the wasmbin sub-test invokes
 # `wasmtime run --invoke main`. arm64 sub-tests skip on x86 (no
@@ -98,21 +102,26 @@ jobs:
         host:
           - { runner: ubuntu-latest,    name: x86_64,  require: "x86_64,wasmbin"      }
           - { runner: ubuntu-24.04-arm, name: aarch64, require: "arm64-linux,wasmbin" }
-        # Two shards = 1024 seeds each. See the shard-count note above
-        # before changing this (keep DIFF_ORACLE_SHARD's /N in sync).
-        shard: [0, 1]
-    name: test-e2e-differential-${{ matrix.host.name }}-shard${{ matrix.shard }}
+        # One shard = the whole 2048-seed sweep. See the shard-count note
+        # above before changing this; nshard rides along so the partition
+        # denominator cannot drift from the number of jobs scheduled, which
+        # is pinned by TestShardDenominatorMatchesMatrix.
+        shard:
+          - { index: 0, nshard: 1 }
+    name: test-e2e-differential-${{ matrix.host.name }}-shard${{ matrix.shard.index }}
     runs-on: ${{ matrix.host.runner }}
-    timeout-minutes: 15
+    # ~9.5 min of sweep at one shard; 25 keeps the ~2x headroom the lane had
+    # at 15 minutes against a 4.8-min shard.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
           gotestsum: "true"
-      - name: go test (differential shard ${{ matrix.shard }}/2)
+      - name: go test (differential shard ${{ matrix.shard.index }}/${{ matrix.shard.nshard }})
         env:
-          DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+          DIFF_ORACLE_SHARD: "${{ matrix.shard.index }}/${{ matrix.shard.nshard }}"
           FERN_REQUIRE_DIFF_BACKENDS: "${{ matrix.host.require }}"
           # Per-shard artifact dir so multiple shards on the
           # same runner don't clobber each other's failed-
@@ -126,7 +135,7 @@ jobs:
         with:
           # Disambiguate per matrix cell so the upload doesn't
           # collide across the 4-job matrix on the same PR.
-          name: diff-oracle-failures-${{ matrix.host.name }}-shard${{ matrix.shard }}
+          name: diff-oracle-failures-${{ matrix.host.name }}-shard${{ matrix.shard.index }}
           path: ${{ runner.temp }}/fern-diff-failures
           if-no-files-found: ignore
           retention-days: 7
