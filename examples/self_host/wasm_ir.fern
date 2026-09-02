@@ -104,11 +104,7 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     // UNDER-report the drops emit actually generates, so a per-module link
     // references a `$__field_reclaim_<T>` / `$__struct_drop_<T>` body the RC-body
     // emission never produced (#5508).
-    var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(ircore.wp_fn_sigs(all_funcs, all_structs), mod.trait_reqs),
-        // Array-param moves stay scoped to THIS module.
-        move_arr_params: irlower.move_arr_params_of(mod.funcs),
-    };
+    var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(ircore.wp_fn_sigs(all_funcs, all_structs), mod.trait_reqs);
     var out: irlower.LowerResult[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
