@@ -1546,6 +1546,18 @@ pub function fn_sig_of(p: ast.ParamDecl, tps: string[]): string {
 //
 // An all-i32 signature declines for the same reason fn_sig_of declines one:
 // `$fn<N>` already describes it.
+// callee_fn_sig_declared prefers a signature the DECLARATION recorded, which is
+// exact at any arity, and falls back to the stamp-derived zero-argument tag.
+// `with_env` prepends the 'w' for the env box a closure dispatch passes as the
+// hidden first argument, exactly as fn_value_sig does.
+function callee_fn_sig_declared(declared: string, c: ast.ExprCall, with_env: boolean): string {
+    if (declared.len() > 0) {
+        if (with_env) { return "w" + declared; }
+        return declared;
+    }
+    return callee_fn_sig(c, with_env);
+}
+
 function callee_fn_sig(c: ast.ExprCall, with_env: boolean): string {
     if (c.args.len() != 0) { return ""; }
     var rc: string = wasm_width_char(c.ty, []);
@@ -2048,8 +2060,17 @@ pub function (s: LowerState) fn_value_ret(i: i32): string {
 // dispatches through comes from the same tag, so pushing an i32 literal at an
 // i64 position is a module wasm will not even load.
 pub function (s: LowerState) fn_arg_width_char(i: i32, ai: i32): string {
+    return sig_arg_width_char(s.fn_value_sig(i, false), ai);
+}
+
+// sig_arg_width_char reads argument `ai`'s width char out of a funcref signature
+// TAG (the un-prefixed form: parameters, "_", result). "" when the position is
+// past the parameter list or is plain i32-shaped, which both mean "lower it the
+// ordinary way". The slot-keyed and declaration-keyed callers share this so a
+// call cannot lower its arguments at one width and name another in its funcref
+// type — the two halves the wasm validator compares.
+pub function sig_arg_width_char(tag: string, ai: i32): string {
     if (ai < 0) { return ""; }
-    var tag: string = s.fn_value_sig(i, false);
     var us: i32 = 0;
     while (us < tag.len() && tag[us] != b'_') { us = us + 1; }
     if (ai >= us) { return ""; }
@@ -4909,6 +4930,73 @@ pub function decl_field_fn_ret(structs: parser.StructDecl[], struct_name: string
     return "";
 }
 
+// decl_field_fn_param_types returns the recorded PARAMETER spellings of the
+// fn-typed field struct_name.field (StructFieldDecl.fn_param_types), or "".
+// The sibling of decl_field_fn_ret; "" means either a zero-parameter fn type or
+// a field that is not one, which decl_field_fn_sig separates by asking fn_ret.
+pub function decl_field_fn_param_types(structs: parser.StructDecl[], struct_name: string, field: string): string {
+    for sd in structs {
+        if (sd.name == struct_name) {
+            for fld in sd.fields {
+                if (fld.name == field) { return fld.fn_param_types; }
+            }
+            return "";
+        }
+    }
+    return "";
+}
+
+// decl_type_params returns the declaring struct's own type parameters, the list
+// wasm_width_char must decline against: a field spelled `() => T` has no width
+// until the struct is instantiated.
+pub function decl_type_params(structs: parser.StructDecl[], struct_name: string): string[] {
+    for sd in structs {
+        if (sd.name == struct_name) { return sd.type_params; }
+    }
+    return [];
+}
+
+// call_fn_field_ret is the DECLARED return-type spelling of a call through a
+// fn-typed struct FIELD (`h.f(args)`), or "". The field's own type coarsens to
+// the flat "fn" tag with the result in its fn_ret sidecar, so no walk over the
+// callee can answer — and neither can the checker's stamp where the struct is
+// GENERIC, because annotation runs on the erased form and a `(T) => T` field
+// stamps nothing for the clone to inherit.
+//
+// One leaf, because each predicate used to learn this separately: expr_is_str
+// grew the string case (#5306 gap 2) and the width predicates never grew theirs,
+// so a `Box[i64]`'s `b.f(x) as i32` lowered without its i32.wrap_i64 and the
+// wasm validator refused the module (#5986).
+pub function call_fn_field_ret(c: ast.ExprCall, s: LowerState): string {
+    match (c.callee) {
+        ast.ExprFieldAccess(cfa) => {
+            var rty: string = expr_struct_type(cfa.obj, s);
+            if (rty == "") { return ""; }
+            if (decl_field_type(s.structs, rty, cfa.field) != "fn") { return ""; }
+            return decl_field_fn_ret(s.structs, rty, cfa.field);
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// decl_field_fn_sig is the funcref signature tag of the fn-typed field
+// struct_name.field, built from the two sidecars the parser records for it
+// through the same fn_sig_of rules a fn-typed PARAM goes through — so a field
+// call and a parameter call cannot disagree about the signature they dispatch
+// on. "" when the field records no return, when a position is a bare type
+// parameter, or when the signature is all-i32 and `$fn<N>` already names it.
+pub function decl_field_fn_sig(structs: parser.StructDecl[], struct_name: string, field: string): string {
+    var ret: string = decl_field_fn_ret(structs, struct_name, field);
+    if (ret.len() == 0) { return ""; }
+    var ptys: string = decl_field_fn_param_types(structs, struct_name, field);
+    var tys: string[] = [];
+    if (ptys.len() > 0) { tys = split_type_list(ptys); }
+    var pd: ast.ParamDecl = fn_param_decl(field, tys, ret);
+    if (pd.type_name.len() == 0) { return ""; }
+    return fn_sig_of(pd, decl_type_params(structs, struct_name));
+}
+
 // field_access_is_closurearr returns true when `e` is a struct-field read
 // `obj.field` whose field is a closure/fn ARRAY — spelled "fn[]"
 // (parse_type_name coarsens `(() => T)[]` to "fn[]"). Its element is a closure
@@ -6606,9 +6694,7 @@ pub function expr_is_str(e: ast.Expr, s: LowerState): boolean {
                     // dispatched and read 0 even though the closure returned the
                     // string correctly (#5306 gap 2 — an annotated rebind
                     // `var r: string = h.f(1)` already worked).
-                    var ffrty: string = expr_struct_type(cfa.obj, s);
-                    if (ffrty != "" && decl_field_type(s.structs, ffrty, cfa.field) == "fn"
-                        && decl_field_fn_ret(s.structs, ffrty, cfa.field) == "string") { return true; }
+                    if (call_fn_field_ret(c, s) == "string") { return true; }
                     // `it.key()` / `it.value()` on a `MapIter[K, V]` receiver returns
                     // the key / value box; when that side is `string` the result
                     // feeds `.len()` / concat as a string. Without this `.len()`
@@ -9144,6 +9230,12 @@ pub function infer_expr_width(e: ast.Expr, s: LowerState): i32 {
                     _ => {}
                 }
             }
+            // A call through a fn-typed struct FIELD declared to return i64/u64
+            // is a 64-bit value. Paired with lower_i64's arm below: split across
+            // two derivations, a disagreement is a module the wasm validator
+            // rejects.
+            var ffw: string = call_fn_field_ret(c, s);
+            if (ffw == "i64" || ffw == "u64") { return 64; }
             match (c.callee) {
                 ast.ExprIdent(cid) => {
                     // An indirect call through a fn value declared to return
@@ -9572,6 +9664,11 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                     }
                 },
                 ast.ExprFieldAccess(cfa) => {
+                    // The fn-FIELD call load site, paired with infer_expr_width's
+                    // reading of the same leaf: the call already yields its 8-byte
+                    // result, so the width-32 sign-extend below would truncate it.
+                    var lffr: string = call_fn_field_ret(c, s);
+                    if (lffr == "i64" || lffr == "u64") { return lower_expr(e, s); }
                     var crty: string = method_recv_tyname(cfa.obj, s);
                     if (crty != "" && s.is_i64_ret_fn(crty + "." + cfa.field)) { return lower_expr(e, s); }
                     // `m.get_or(k, d)` on an i64/u64 map IS an i64 value: the get
@@ -10052,7 +10149,13 @@ pub function lower_subprocess_call(c: ast.ExprCall, s: LowerState): LowerState {
 // declaring i64: the register backends read half a word and wasm refuses to
 // load the module at all.
 function lower_fn_value_arg(a: ast.Expr, fslot: i32, ai: i32, s: LowerState): LowerState {
-    var wc: string = s.fn_arg_width_char(fslot, ai);
+    return lower_fn_value_arg_wc(a, s.fn_arg_width_char(fslot, ai), s);
+}
+
+// lower_fn_value_arg_wc is lower_fn_value_arg with the width char already
+// resolved, for a callee whose signature comes from a DECLARATION rather than
+// from a slot.
+function lower_fn_value_arg_wc(a: ast.Expr, wc: string, s: LowerState): LowerState {
     if (wc == "l") { return lower_i64(a, s); }
     if (wc == "d" && !expr_is_f64(a, s) && infer_expr_width(a, s) == 32) {
         var fvs: LowerState = lower_expr(a, s);
@@ -11773,14 +11876,21 @@ function lower_call_fn_field(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty: stri
     var fbslot: i32 = ffs.slot_of(fbtmp);
     ffs = ffs.emit(ir.op_store_local(fbslot));
     ffs = ffs.emit(ir.op_load_local(fbslot));   // __env (the box)
-    for arg in c.args {
-        ffs = lower_expr(arg, ffs);
+    // One declared signature drives both halves: the width each argument is
+    // lowered at, and the funcref type the call names. Split across two
+    // derivations they disagree, and a disagreement is a module the wasm
+    // validator rejects (#5986).
+    var fsig: string = decl_field_fn_sig(s.structs, rty, fa.field);
+    var fai: i32 = 0;
+    while (fai < c.args.len()) {
+        ffs = lower_fn_value_arg_wc(c.args[fai], sig_arg_width_char(fsig, fai), ffs);
         if (!ffs.ok) { return ffs; }
+        fai = fai + 1;
     }
     ffs = ffs.emit(ir.op_load_local(fbslot));
     ffs = ffs.emit(ir.op_const_i32(0));
     ffs = ffs.emit(ir.op_arr_get(32));   // box[0] -> funcval
-    return ffs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig(c, true)));
+    return ffs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig_declared(fsig, c, true)));
 }
 
 // lower_call_dyn_method dispatches `recv.m(args)` on a `dyn Trait` receiver,

@@ -391,37 +391,67 @@ otherwise a re-derivation. All four shapes now match the interp oracle on
 x86-64 and wasm, pinned per shape with its bound-local and its all-i32 control
 in `internal/e2eselfhost/self_host_fn_value_call_ir_test.go`.
 
-**Open, and precisely bounded: the with-arguments half.** A funcref tag must
-name the whole signature, and the PARAMETER spellings of these callees are
-recorded nowhere — `StructFieldDecl` carries `fn_ret` but no param list, and an
-array's element spelling does not survive the coarse `fn[]` tag. So
-`callee_fn_sig` tags only a zero-argument call, where the parameter list is
-empty by construction rather than by re-derivation, and these still refuse to
-load on wasm:
+### The with-arguments half: the parameters have to be CARRIED
+
+A funcref tag must name the whole signature, so a call carrying arguments needs
+the callee's parameter widths as well as its result. Deriving them from the
+ARGUMENT expressions at the call site would work and is the wrong fix — it
+re-derives what the declaration already stated, which is the drift this whole
+file documents. `StructFieldDecl` now carries a `fn_param_types` sidecar beside
+its `fn_ret`, filled by the same non-consuming `peek_fn_param_types` lookahead
+`parse_param` uses, substituted by the monomorphiser and renamed by flatten
+alongside the spellings it sits with.
+
+`decl_field_fn_sig` builds the tag from those two sidecars through `fn_sig_of` —
+the same rules a fn-typed PARAM goes through, so a field call and a parameter
+call cannot disagree about the signature they dispatch on. And the tag drives
+BOTH halves of the call: `sig_arg_width_char` reads each argument's width out of
+it, so the width an argument is lowered at and the funcref type the call names
+come from one string. That pairing is the point — split across two derivations
+they disagree, and a disagreement is a module the validator rejects.
+
+**Still open for a TUPLE or ARRAY element**, where no sidecar holds the
+parameters yet:
 
 ```fern
 var t: ((f64) => f64, i32) = (scale, 1);   t.0(4.5)      // oracle 45
 var fs: ((f64) => f64)[] = [scale];        fs[0](4.5)    // oracle 45
-struct H { f: (f64) => f64 }               h.f(4.5)      // oracle 45
 ```
 
-Deriving the widths from the ARGUMENT expressions would make all three pass and
-is the wrong fix: it re-derives at the call site the thing the declaration
-already stated, which is the drift this whole file documents. The parameters
-have to be carried. Two routes, and the choice is a real one:
+Both are reachable without new machinery, and neither needs the parser's type
+cluster widened: a tuple element keeps its full arrow spelling (#7961), so
+`ref_fn_param_spellings` answers straight off its `TypeRef`; and the
+parenthesised grouping branch — the only way an array of functions is spelled —
+already decodes that same `TypeRef` to recover the result, so it has the
+parameters in hand at the point it currently discards them. What each needs is
+somewhere to put them: the element spellings are coarsened at slot-record time
+(`tuple_elem_tags` maps a fn element to the bare `"clo"` dispatch tag), so the
+signature is gone before lowering sees it.
 
-- Give `StructFieldDecl` a `fn_param_types` sidecar (`peek_fn_param_types`
-  already exists and is what `parse_param` uses), and read a tuple element's
-  parameters off the `TypeRef` its spelling already preserves. That covers the
-  field and tuple shapes and leaves the array one, whose element spelling is
-  gone before any sidecar could hold it.
-- Stop coarsening. #7961 already made a fn-typed tuple ELEMENT keep its arrow
-  spelling; doing the same for the parenthesised grouping and the top-level
-  `(T,…) => R` form would let `parse_type_ref` answer everywhere and would
-  delete the sidecars rather than add to them. The cost is the 117 sites that
-  match the coarse `"fn"` / `"fn[]"` spelling today, each of which has to ask
-  `parser.ref_is_fn_value` instead. That is the direction this file argues for
-  and it is its own project.
+The larger alternative remains what this file argues for: **stop coarsening.**
+#7961 made a fn-typed tuple ELEMENT keep its arrow spelling; doing the same for
+the parenthesised grouping and the top-level `(T,…) => R` form would let
+`parse_type_ref` answer everywhere and would DELETE the sidecars rather than add
+to them. The cost is the 117 sites matching the coarse `"fn"` / `"fn[]"`
+spelling today, each of which has to ask `parser.ref_is_fn_value` instead. That
+is its own project, and a big-bang one against a byte-identity gate.
+
+### A generic struct's fn field has no stamp to inherit
+
+`Box[T] { f: (T) => T }` at `Box[i64]` compiled clean and emitted a module the
+wasm validator refused: `b.f(45i64) as i32` lowered with no `i32.wrap_i64`.
+
+The cause is this file's own rule read from the other side. Annotation runs on
+the ERASED form, so a field spelled `(T) => T` stamps nothing and the clone
+inherits nothing — the checker cannot answer here however well it is wired. The
+declared sidecars, substituted by the monomorphiser, are the only source. And
+the predicates had each learned that separately: `expr_is_str` grew the fn-field
+arm for the string case (#5306 gap 2) and the width predicates never grew
+theirs.
+
+`call_fn_field_ret` is the one leaf now, read by `expr_is_str`,
+`infer_expr_width` and `lower_i64`'s load site together, so the next scalar kind
+is added in one place rather than missed in three.
 
 **Also open: `mk()()`, where the callee is a call returning a fn value.**
 `call_through_fn_value` reaches it, but `parse_func_decl` binds the return's
