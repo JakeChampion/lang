@@ -2917,6 +2917,14 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// Skipped silently when both handle() and main() are
 	// user-defined — don't surprise users who want their
 	// own main alongside the wasi-http handler.
+	// The Platform bag has exactly one constructor, and the compiler owns
+	// it (docs/PLATFORM-RESEARCH.md Rec §2). Synthesised whenever a `handle`
+	// exists — including on wasi-http, where the entry wrapper calls it
+	// rather than building the struct out of raw memory, so a field added
+	// to the bag costs the wrapper nothing.
+	if hasHandleDecl(prog) && findDecl(prog, platformCtorName) == nil {
+		prog.Funcs = append(prog.Funcs, synthesisePlatformCtor())
+	}
 	if hasHandleDecl(prog) && !hasMainDecl(prog) {
 		// A mispaired init/handle has already been reported against the
 		// declaration that is wrong; synthesising main on top of it adds
@@ -16580,6 +16588,43 @@ func initProvidesState(prog *ast.Program) bool {
 		return false
 	}
 	return !isVoidReturn(init.ReturnType) && len(handle.Params) == 3
+}
+
+// platformCtorName is the compiler-owned Platform constructor. The `__fern_`
+// prefix is the emitted-runtime-symbol convention, and keeps the name out of
+// any namespace a program can spell.
+const platformCtorName = "__fern_platform_new"
+
+// synthesisePlatformCtor builds:
+//
+//	function __fern_platform_new(): Platform {
+//	    return Platform { version: 1 };
+//	}
+//
+// The capability bag built in Fern, where the struct's layout is the
+// compiler's own, rather than in a backend's idea of it. The wasi-http entry
+// wrapper (internal/codegen/wasmbin/wasi_http.go) is the caller that matters:
+// it is hand-written wasm, and it used to allocate the struct and store the
+// field itself, which is a copy of the layout that goes stale the day the bag
+// grows a capability. std/tcp's accept loop still writes the literal — it is
+// Fern source the checker re-checks, so it cannot drift silently.
+func synthesisePlatformCtor() *ast.FuncDecl {
+	pos := ast.Position{}
+	lit := &ast.StructLit{
+		P:        pos,
+		TypeName: "Platform",
+		Fields: []ast.FieldInit{{
+			Name:  "version",
+			Value: &ast.NumberLit{P: pos, Value: 1},
+		}},
+	}
+	return &ast.FuncDecl{
+		P:          pos,
+		Name:       platformCtorName,
+		Params:     nil,
+		ReturnType: ast.StructType{Name: "Platform"},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: lit}}},
+	}
 }
 
 // synthesiseHandleMain builds:

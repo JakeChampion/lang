@@ -239,6 +239,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	bytesToStr := idxs["__bytes_to_lang_string"]
 	hmAppend, hasHMAppend := idxs["__method_HeaderMap_append"]
 	handleFn, hasHandle := idxs["handle"]
+	platformCtor, hasPlatformCtor := idxs["__fern_platform_new"]
 	reqMethod := idxs["wasi_http_request_method"]
 	reqPath := idxs["wasi_http_request_path_with_query"]
 	reqHeaders := idxs["wasi_http_request_headers"]
@@ -661,12 +662,20 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = inst.InstCall(body, reqDrop)
 
-	// ================ Build Platform { version: 1 } and call handle ================
-	body = inst.InstI32Const(body, 4)
-	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 25)
-	body = inst.InstI32Const(body, 1)
-	body = memory.InstI32Store(body, 2, 0)
+	// ================ Build the Platform bag and call handle ================
+	// Through the compiler-synthesised constructor, not by allocating the
+	// struct and storing its fields here: this wrapper is hand-written wasm
+	// and would otherwise carry a second copy of the bag's layout, which is
+	// the copy that goes stale when a capability field lands.
+	if hasPlatformCtor {
+		body = inst.InstCall(body, platformCtor)
+		body = inst.InstLocalSet(body, 25)
+	} else {
+		// No constructor in the module — a handler-less program, whose
+		// `handle` call below is skipped anyway. Keep local 25 defined.
+		body = inst.InstI32Const(body, 0)
+		body = inst.InstLocalSet(body, 25)
+	}
 
 	if hasHandle {
 		body = inst.InstLocalGet(body, 17)

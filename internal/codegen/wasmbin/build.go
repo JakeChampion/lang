@@ -181,7 +181,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		// emit-time wasm bytes, not the AST). Same shape for
 		// `__method_HeaderMap_append` — the wrapper calls it
 		// per header entry from the canonical-ABI fields list.
-		treeshakeExtras = append(treeshakeExtras, "handle", "__method_HeaderMap_append")
+		treeshakeExtras = append(treeshakeExtras, "handle", "__method_HeaderMap_append", "__fern_platform_new")
 		// The auto-synthesised `main()` (synthesised by the checker)
 		// calls `tcp_serve` and pulls in wasi:sockets imports
 		// the http world's WIT doesn't have. Drop it before
@@ -244,7 +244,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		liveExtras = []string{"int_to_string", "int__int_to_string"}
 	}
 	if opts.HttpHandler {
-		liveExtras = append(liveExtras, "handle", "__method_HeaderMap_append")
+		liveExtras = append(liveExtras, "handle", "__method_HeaderMap_append", "__fern_platform_new")
 	}
 	if opts.AsyncExportName != "" {
 		// Root the async export's source function for the IR-level cull
