@@ -269,10 +269,6 @@ func slotsHaveDynTrait(slots []ast.Type) bool {
 	return false
 }
 
-// isInlineable reports whether fn meets every eligibility rule.
-// Internal control flow (block / loop / if / br / brif) and direct
-// calls to other functions are allowed; OpCallIndirect /
-// OpMakeClosure / oversized bodies disqualify.
 // dropWalksElements reports whether a generated drop helper loops over
 // elements — an array, map or closure-capture walk — rather than releasing
 // a fixed set of fields.
@@ -285,6 +281,10 @@ func dropWalksElements(fn *Func) bool {
 	return false
 }
 
+// isInlineable reports whether fn meets every eligibility rule.
+// Internal control flow (block / loop / if / br / brif) and direct
+// calls to other functions are allowed; OpCallIndirect /
+// OpMakeClosure / oversized bodies disqualify.
 func isInlineable(fn *Func) bool {
 	// Source-level hints (#4412 Rec §14): @noinline is absolute;
 	// @inline lifts only the SIZE cap — every shape-safety exclusion
