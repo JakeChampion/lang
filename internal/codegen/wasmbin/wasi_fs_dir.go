@@ -685,7 +685,7 @@ func emitIsDotName(body []byte, nameLocal, namlenLocal uint32) []byte {
 //
 //	2: $path_buf  3: $path_byte_len  4: $i      5: $fd
 //	6: $buf       7: $used           8: $off    9: $namlen
-//	10: $name     11: $count         12: $arr_raw
+//	10: $name     11: $count         12: $arr_base
 //	13: $arr      14: $errno         15: $err_ptr  16: $box
 func buildReadDirBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
@@ -762,20 +762,21 @@ func buildReadDirBody(idxs map[string]uint32) []byte {
 		return b
 	})
 
-	// arr_raw = alloc(count*8 + 4); mem[arr_raw] = count; arr = arr_raw+4.
+	// arr_base = alloc(arrHeaderBytes + count*8); arr = arr_base +
+	// arrHeaderBytes, with the canonical cap / rc / len header.
+	body = inst.InstI32Const(body, arrHeaderBytes)
 	body = inst.InstLocalGet(body, 11)
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Mul(body)
-	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Add(body)
 	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 12)
-	body = inst.InstLocalGet(body, 11)
-	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalSet(body, 12)
 	body = inst.InstLocalGet(body, 12)
-	body = inst.InstI32Const(body, 4)
+	body = inst.InstI32Const(body, arrHeaderBytes)
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalSet(body, 13)
+	pushCount := func(b []byte) []byte { return inst.InstLocalGet(b, 11) }
+	body = emitArrHeaderStore(body, 13, arrRcOwned, pushCount, pushCount)
 
 	// Pass 2: fill. Reuse local 11 as the write index.
 	body = inst.InstI32Const(body, 0)
@@ -1984,7 +1985,7 @@ func emitDirRecWalk(body []byte, bufLocal, countLocal, iLocal, recLocal uint32, 
 // Locals after the two params:
 //
 //	2: $path_buf  3: $path_byte_len  4: $i     5: $dirfd
-//	6: $buf       7: $count          8: $rec   9: $arr_raw
+//	6: $buf       7: $count          8: $rec   9: $arr_base
 //	10: $arr     11: $idx           12: $data 13: $len
 //	14: $errno   15: $err_ptr       16: $box
 func buildReadDirBodyP2(idxs map[string]uint32) []byte {
@@ -2020,20 +2021,21 @@ func buildReadDirBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalSet(body, 7)
 
-	// arr_raw = alloc(count*8 + 4); mem[arr_raw] = count; arr = +4.
+	// arr_base = alloc(arrHeaderBytes + count*8); arr = arr_base +
+	// arrHeaderBytes, with the canonical cap / rc / len header.
+	body = inst.InstI32Const(body, arrHeaderBytes)
 	body = inst.InstLocalGet(body, 7)
 	body = inst.InstI32Const(body, 8)
 	body = numeric.InstI32Mul(body)
-	body = inst.InstI32Const(body, 4)
 	body = numeric.InstI32Add(body)
 	body = inst.InstCall(body, alloc)
-	body = inst.InstLocalTee(body, 9)
-	body = inst.InstLocalGet(body, 7)
-	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalSet(body, 9)
 	body = inst.InstLocalGet(body, 9)
-	body = inst.InstI32Const(body, 4)
+	body = inst.InstI32Const(body, arrHeaderBytes)
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalSet(body, 10)
+	pushCount := func(b []byte) []byte { return inst.InstLocalGet(b, 7) }
+	body = emitArrHeaderStore(body, 10, arrRcOwned, pushCount, pushCount)
 
 	body = emitDirRecWalk(body, 6, 7, 11, 8, func(b []byte) []byte {
 		// (data, len) = __fern_str_copy(name) — the host's name buffer

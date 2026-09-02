@@ -6260,6 +6260,11 @@ func (g *generator) emitProcWaitpidRuntime() {
 // libc-shaped consumers like `puts`). Result is cached in
 // `__fern_args_cache` so repeat calls are O(1).
 //
+// The rc word is the static sentinel, not 1: the cache hands the same
+// pointer to every caller, so no single scope-exit dec can be the last
+// one and an owned header would free the array out from under the
+// cache on the first `for a in args()` that ends.
+//
 // Slot layout uses callee-save x19..x23 across the inner
 // __fern_alloc / __fern_memcpy calls; AAPCS64 mandates
 // preservation, so the saved-pair pattern at function entry
@@ -6302,7 +6307,8 @@ func (g *generator) emitArgsRuntime() {
 	g.emit("add x21, x0, #16")      // x21 = result data pointer (16-aligned)
 	g.emit("stur w19, [x21, #-12]") // cap = argc (Phase 2-prep)
 	g.emit("mov w9, #1")
-	g.emit("stur w9, [x21, #-8]")  // rc = 1 (phase 1 of RC rollout)
+	g.emit("lsl w9, w9, #31")      // w9 = 0x80000000 (static sentinel)
+	g.emit("stur w9, [x21, #-8]")  // rc: the cache is immortal (see the doc comment)
 	g.emit("stur w19, [x21, #-4]") // length prefix = argc
 	// for (i = 0; i < argc; i++)
 	g.emit("mov x22, #0") // x22 = i
@@ -6394,7 +6400,8 @@ func (g *generator) emitArgsRuntime2W() {
 	g.emit("add x21, x0, #16")      // x21 = data pointer (past header)
 	g.emit("stur w19, [x21, #-12]") // cap = argc (Phase 2-prep)
 	g.emit("mov w9, #1")
-	g.emit("stur w9, [x21, #-8]")  // rc = 1 (phase 1 of RC rollout)
+	g.emit("lsl w9, w9, #31")      // w9 = 0x80000000 (static sentinel)
+	g.emit("stur w9, [x21, #-8]")  // rc: the cache is immortal (see the doc comment)
 	g.emit("stur w19, [x21, #-4]") // length prefix = argc
 	g.emit("mov x22, #0")          // loop counter i
 	g.label(".Largs2w_loop")
