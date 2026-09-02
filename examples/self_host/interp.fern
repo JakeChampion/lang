@@ -2448,10 +2448,6 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
     // Without these the evaluator could report an exit code and nothing else,
     // so a program's OUTPUT had no self-host witness at all (#6643).
     //
-    // `putchar` is deliberately absent: it takes a number, and native writes
-    // `%c` of it as a RUNE where the compiled backends write a byte, so the
-    // two disagree above 127. That is a parity question to settle rather than
-    // a line to guess at.
     if (name == "print" || name == "write" || name == "eprint") {
         if (args.len() != 1) { return v_err(name + " takes exactly 1 argument"); }
         match (args[0]) {
@@ -2470,6 +2466,15 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
             },
             _ => { return v_err(name + ": argument must be a string"); }
         }
+    }
+    // `putchar(n)` writes ONE BYTE, the low 8 bits of n — `write(1, &byte, 1)`
+    // on every compiled backend. It is not a codepoint encoder, so 233 is the
+    // lone byte e9 rather than the two bytes UTF-8 would spell it with, and a
+    // value outside 0..255 wraps rather than saturating or erroring.
+    if (name == "putchar") {
+        if (args.len() != 1 || !is_i32_arg(args[0])) { return v_err("putchar takes exactly 1 integer argument"); }
+        putchar(vint_bits(args[0]));
+        return v_int(0);
     }
     // map_new(cap) — capacity arg is accepted but ignored
     // since VMap uses dynamic parallel arrays.

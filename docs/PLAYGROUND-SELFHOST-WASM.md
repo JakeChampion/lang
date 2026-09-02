@@ -332,13 +332,18 @@ What is left:
    `interp_run.fern` reported an exit code and nothing else, and the exit-code
    driver test next door passed either way.
 
+   `putchar` landed with it, and settling its parity question found a native
+   bug rather than a self-host one. Measured across all four engines, the three
+   compiled backends wrote the low byte (`putchar(233)` → `e9`) and
+   `internal/interp` wrote `%c` of the argument as a rune (`c3 a9`); an
+   argument outside a rune's range gave U+FFFD instead of wrapping. The
+   backends match `docs/FEATURE-AUDIT.md` ("`putchar` (byte)",
+   `write(1, &byte, 1)`) and `TestX86_64NativePutchar`, so the interpreter was
+   the outlier and now writes one byte too.
+
    What the interpreter still lacks is the rest of the I/O surface:
-   `putchar`, `print_int` / `eprint_int`, the reader/writer handles, and
-   anything touching the filesystem or the clock. `putchar` is the one with a
-   question attached rather than just work — native writes `%c` of its argument
-   as a RUNE where the compiled backends write a byte, so the two disagree
-   above 127, and that is a parity call to make before either side is copied.
-   The LSP remains the other missing consumer.
+   `print_int` / `eprint_int`, the reader/writer handles, and anything touching
+   the filesystem or the clock. The LSP remains the other missing consumer.
 2. **JS bindings.** Reachable, contrary to what the stdin/stdout shape suggests:
    `@export("iface", "name")` emits canonical-ABI wrappers into a `-emit
    core-module` build (`wasm_ir.fern:8868`), pulling in `cabi_realloc` for

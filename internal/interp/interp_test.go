@@ -124,6 +124,50 @@ func TestPrintBuiltin(t *testing.T) {
 	}
 }
 
+// putchar writes ONE BYTE — the low 8 bits of its argument — which is what
+// __fern_putchar does on every compiled backend (`write(1, &byte, 1)`) and what
+// docs/FEATURE-AUDIT.md specifies. The interpreter used to write `%c` of the
+// argument, encoding it as a rune, so it disagreed with all three backends for
+// anything above 127: putchar(233) produced the two UTF-8 bytes c3 a9 where the
+// backends produce the single byte e9, and an argument outside a rune's range
+// produced U+FFFD instead of wrapping.
+//
+// The cases are the ones that discriminate. 65 agrees under either rule, so it
+// is the control; the rest do not.
+func TestPutcharWritesOneByte(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		arg  string
+		want string
+	}{
+		{"ascii-agrees-either-way", "65", "A"},
+		{"high-byte-is-not-utf8-encoded", "233", "\xe9"},
+		{"top-of-range", "255", "\xff"},
+		{"zero-is-a-nul-byte", "0", "\x00"},
+		{"above-a-byte-wraps", "321", "A"},
+		{"negative-takes-its-low-byte", "0 - 1", "\xff"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(`function main(): void { putchar(` + tc.arg + `); }`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := New()
+			var buf bytes.Buffer
+			i.Stdout = &buf
+			for _, fn := range prog.Funcs {
+				i.Register(fn)
+			}
+			if _, err := i.CallByName("main", nil); err != nil {
+				t.Fatal(err)
+			}
+			if got := buf.String(); got != tc.want {
+				t.Errorf("putchar(%s) wrote % x, want % x", tc.arg, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIndirectCallViaLocal(t *testing.T) {
 	v, _ := evalProgram(t, `
 		function dbl(x: i32): i32 { return x * 2; }
