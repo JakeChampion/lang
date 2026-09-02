@@ -144,13 +144,16 @@ two modules hold the same functions:
 | native | 3,944 | 10,442,809 | 2,647 |
 | self-host | 3,854 | 1,860,754 | 482 |
 
-Within 2% on the count, 5.5x on the bytes each one costs. Nor is it a flat
-per-function overhead: on a small array-building program with reference
-counting in it, native emits the SMALLER module (1,253 bytes against 2,144),
-so whatever native spends the bytes on is something these sources do a lot of.
-Naming it wants a per-function diff on a function both compilers emit, which
-is awkward while the self-host emits no name section — worth its own issue
-rather than more guessing here.
+Within 2% on the count, 5.5x on the bytes each one costs — and that average
+hides the shape. The median function is only 1.5x larger; twenty functions
+carry 55.6% of native's code section, and `irlower__lower_call_named` alone is
+**1,866,949 bytes**, 18% of the module, where the self-host's LARGEST function
+is 29,509. Those are the long dispatch chains, so whatever native emits per
+branch is paid thousands of times in one body. On a small array-building
+program with reference counting in it native emits the smaller module (1,253
+bytes against 2,144), so this is superlinear in something these bodies do a
+lot of rather than a constant overhead. #8121 has the distribution and the
+named functions; what native spends the bytes on is still unopened.
 
 (One incidental find from the same measurement: the self-host emits a distinct
 function type per function — 3,865 types for 3,854 functions, where native
