@@ -3444,6 +3444,45 @@ function map_key_int_evidence(k: ast.Expr, s: LowerState): boolean {
         // where the annotate pass ran; "" (the asm / wasm drivers) is no
         // evidence and keeps the constructor's kind.
         ast.ExprCall(kc) => { return is_int_irtag(kc.ty); },
+        // An ELEMENT key `xs[i]`. Written by hand it is rare, but the lift pass
+        // makes it the common shape: a mutable local a closure captures is boxed
+        // into a one-element cell and every read rewritten to `$cell$x[0]`, so an
+        // integer key SPELLED as a bare ident reaches here as an index (#8090).
+        ast.ExprIndex(kix) => {
+            if (is_int_irtag(kix.ty)) { return true; }
+            return arr_elem_is_int(kix.array, s);
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// arr_elem_is_int reports POSITIVE evidence that indexing `a` reads an INTEGER
+// element — the element-axis counterpart of is_i32_scalar_slot, which answers
+// the same question about a slot's own value.
+//
+// Positive only, for map_key_int_evidence's reason: an array this cannot type
+// answers false, so a string[] element is never flipped to an integer key.
+function arr_elem_is_int(a: ast.Expr, s: LowerState): boolean {
+    match (a) {
+        ast.ExprIdent(aid) => {
+            var asl: i32 = s.slot_of(aid.name);
+            if (asl < 0 || asl >= s.locals.len()) { return false; }
+            if (!s.is_arr_slot(asl) && !s.is_i64arr_slot(asl)) { return false; }
+            if (s.is_strarr_slot(asl)) { return false; }
+            if (s.is_f64arr_slot(asl)) { return false; }
+            if (s.is_closurearr_slot(asl)) { return false; }
+            if (s.is_fnarr_slot(asl)) { return false; }
+            if (s.is_arrarr_slot(asl)) { return false; }
+            // An array of structs / enums records its ELEMENT type here, a map
+            // array its element Map[K, V], a tuple array its element tags — each
+            // a pointer element, none of them an integer.
+            if (s.struct_type_of_slot(asl).len() > 0) { return false; }
+            if (s.opt_type_of_slot(asl).len() > 0) { return false; }
+            if (s.map_type_of(asl).len() > 0) { return false; }
+            if (s.locals[asl].tuple_elems.len() > 0) { return false; }
+            return true;
+        },
         _ => { return false; }
     }
     return false;
