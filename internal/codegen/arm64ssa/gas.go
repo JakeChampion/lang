@@ -2591,7 +2591,7 @@ func emitRcIsUniqueHelper(w func(string, ...any)) {
 }
 
 // emitRcIncHelper writes __fern_rc_inc(data): bump the count at [data-8] by one,
-// guarded. Void, leaf.
+// guarded. Returns the pointer it was given (x0 untouched), leaf.
 func emitRcIncHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_inc"))
@@ -2608,7 +2608,7 @@ func emitRcIncHelper(w func(string, ...any)) {
 
 // emitRcDecHelper writes __fern_rc_dec(data): drop the count at [data-8] by one,
 // same guard chain. Does NOT free at rc==0 — the SSA bump heap never reclaims
-// (docs/SSA-RC-RUNTIME.md). Void, leaf.
+// (docs/SSA-RC-RUNTIME.md). Returns the pointer it was given (x0 untouched), leaf.
 func emitRcDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_dec"))

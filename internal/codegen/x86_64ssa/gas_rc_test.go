@@ -74,3 +74,46 @@ func TestAsmRunRcIncDec(t *testing.T) {
 		t.Errorf("is_unique after inc,inc,dec = %d, want 0 (rc=2)", got)
 	}
 }
+
+// The rc/drop helpers hand back the pointer they were given: ir.OpRcInc and
+// ir.OpRcDec are documented `(ptr) -> ptr`, and the drop calls are emitted with
+// ir.ResAddr, so the code around them reads the result out of rax and keeps
+// using it as the object.
+//
+// On x86-64 the argument (rdi) and the result (rax) are different registers, so
+// that is a property each body has to establish — unlike arm64, where both are
+// x0 and leaving it alone is enough. These bodies use eax as the scratch for the
+// rc word, which is exactly the value that must not be returned.
+//
+// Reading the cell back THROUGH each helper's result is what pins it: a helper
+// returning the rc header (0x80000000, or a small count) instead of the pointer
+// faults on the load rather than quietly answering something plausible. The
+// tests above call these helpers for their side effect only, which is why the
+// contract went unchecked.
+func TestAsmRunRcHelpersReturnTheirPointer(t *testing.T) {
+	through := func(helper string, extra ...int64) int {
+		f := ssa.NewFunc("main")
+		e := f.NewBlock()
+		args := []ssa.Value{makeEnvOp(f, e, constOp(f, e, 9))} // rc=1 cell, 9 at [c+0]
+		for _, a := range extra {
+			args = append(args, constOp(f, e, a))
+		}
+		f.SetRet(e, loadMem(f, e, callOp(f, e, helper, args...), 0, ssa.OpLoad8U))
+		return assembleRunModule(t, map[string]*ssa.Func{"main": f}, "main", 8, nil)
+	}
+	for _, tc := range []struct {
+		helper string
+		extra  []int64 // trailing args: arr_dec takes a stride, box_free a size
+	}{
+		{helper: "__fern_rc_inc"},
+		{helper: "__fern_rc_dec"},
+		{helper: "__fern_str_dec"},
+		{helper: "__fern_closure_drop"},
+		{helper: "__fern_arr_dec", extra: []int64{8}},
+		{helper: "__fern_box_free", extra: []int64{8}},
+	} {
+		if got := through(tc.helper, tc.extra...); got != 9 {
+			t.Errorf("%s: reading [result+0] gave %d, want 9 — the helper must return its argument", tc.helper, got)
+		}
+	}
+}

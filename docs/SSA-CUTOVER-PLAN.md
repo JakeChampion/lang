@@ -87,7 +87,7 @@ backend.** The cutover is much closer than the shelve doc reads.
 |---|---|---|---|
 | `arm64ssa` | yes | yes | 281/281 compared, 0 refused, 0 divergences |
 | `wasmssa` | yes | no | **single user function only** — measured below |
-| `x86_64ssa` | **yes, since 2026-09-01** | no | reachable; refuses on `EnumSentinel` |
+| `x86_64ssa` | **yes, since 2026-09-01** | no | emits 256/317; links 9 — the runtime-helper table is the wall |
 
 The spread is much wider than "arm64 is ahead". One backend is corpus-complete,
 one compiles ordinary programs but has never been differentially tested, and one
@@ -134,28 +134,46 @@ Two concrete blockers, and only two:
    on shapes it covers: `call_overhead` 713 → 137 (**−80.7%**), `int_loop`
    114 → 48 (−57.8%), `array_index` 573 → 250 (−56.3%).
 
-   **Coverage is a fifth of the corpus, not most of it.** Over all 317
-   `examples/**/*.fern` outside `self_host`: **58 compile, 259 do not.**
-   (Discounting 15 library files with no `main` and 3 refused by E066 rather
-   than by the backend, that is 58 of 299.) The blockers, by count:
+   **Coverage has two numbers, and they are far apart.** Over all 317
+   `examples/**/*.fern` outside `self_host`, measured 2026-09-02 with
+   `EnumSentinel` landed:
+
+   | | emits asm | links + runs |
+   |---|---|---|
+   | before `EnumSentinel` | 58 | 8 |
+   | after | **256** | **9** |
+
+   Quote both or neither. `-backend ssa` without `-o` stops after instruction
+   selection, and that is the 58 → 256 column: `EnumSentinel` really was the
+   emit-stage long pole, and it is gone. Ask for a binary and the LINK stage
+   decides, and there the wall is the runtime-helper table, so end-to-end moves
+   by one program. An early measurement of this work reported "58 of 317
+   compile" without saying which of the two it was; it was the emit column, and
+   read as end-to-end it overstates the state by 50 programs.
+
+   The blockers after `EnumSentinel`, by count:
 
    | | |
    |---|---|
-   | 207 | `EnumSentinel` — modelled in `emit.go:51`, no case in `gas.go`'s render switch |
-   | 25 | float reinterprets (`reinterpret_f64_to_i64` and siblings) |
-   | 5 | more than 6 params — no stack-argument ABI |
+   | 247 | a runtime helper with no entry in `runtimeHelperEmitters` — `__fern_drop_arr_str` alone is 195, then `__arr_idx_8` (18), `__alloc_u8` (8), `__ptr_width` (7), `__str_idx` and `__fern_arr_push_grow` (4 each), a nine-name tail |
+   | 34 | float reinterprets (`reinterpret_f64_to_i64` and siblings) |
+   | 15 | library files with no `main` — not a backend refusal |
+   | 7 | more than 6 params — no stack-argument ABI |
+   | 5 | E066 / checker errors — not a backend refusal either |
 
-   A narrower sweep of `examples/*.fern` + `examples/bench/*.fern` alone reads
-   25 of 29, which is what an early measurement of this work reported. Two
-   shallow directories are not the corpus; the figure above is.
+   Each of those labels is a `call` the emitter writes with nothing behind it,
+   so it is caught by the assembler rather than by a diagnostic naming the
+   backend. arm64ssa has `checkNoDanglingCalls` for exactly this — it fails at
+   emit time, naming the helper, so a coverage gap reads as one. x86-64 has no
+   equivalent, which is why the 242 arrive as `undefined label`.
 
    `dyn` is separately excluded (`ir.DynSupported()` is not passed): the ops are
    implemented but `EmitAsmModule` takes no vtable declarations, so the tables
    they read would be missing at link time.
 
-   What remains for this step is therefore `EnumSentinel` (which alone is 65% of
-   the failures), the float reinterprets, the stack-argument ABI, vtables, and
-   **the corpus differential** — the discovery mechanism, not a formality:
+   What remains for this step is therefore the runtime-helper table (the whole
+   of the next slice), the float reinterprets, the stack-argument ABI, vtables,
+   and **the corpus differential** — the discovery mechanism, not a formality:
    arm64's first run found four wrong answers and 56 SIGSEGVs, and nothing on
    x86-64 has been differentially tested at all.
 

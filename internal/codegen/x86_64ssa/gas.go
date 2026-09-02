@@ -108,6 +108,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		}
 	}
 	strLabels, strOrder := collectStrings(progs, names)
+	sentLabels, sentOrder := collectSentinels(progs, names)
 	// fn_idx for closures: a function's index in the module's (sorted) emission
 	// order — the same value the model's function-index table carries. Indices
 	// are 1-based: table slot 0 is the reserved null reference (see fnTableSym).
@@ -137,7 +138,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	w("\tsyscall")
 	w("")
 	for _, name := range names {
-		if err := emitFuncBody(w, name, progs[name], numAlloc, strLabels, fnIndex); err != nil {
+		if err := emitFuncBody(w, name, progs[name], numAlloc, strLabels, sentLabels, fnIndex); err != nil {
 			return "", err
 		}
 	}
@@ -171,6 +172,23 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 			}
 		}
 	}
+	if len(sentOrder) > 0 {
+		// Shared static enum sentinels: one 4-byte cell per distinct tag, holding
+		// the tag at offset 0 — the same [ptr+0] load a heap `[tag=N]` box answers,
+		// so a match site does not care which it got. Each cell carries the string
+		// literals' 8-byte immortal header (rc sentinel 0x80000000 at [ptr-8],
+		// padding at [ptr-4]) so a scope-exit drop short-circuits instead of
+		// writing to .rodata. Consecutive cells stay contiguous, so each label's
+		// header is exactly the 8 bytes before it.
+		w("")
+		w(".section .rodata")
+		for _, tag := range sentOrder {
+			w("\t.4byte 0x80000000")
+			w("\t.4byte 0")
+			w("%s:", sentLabels[tag])
+			w("\t.4byte %d", tag)
+		}
+	}
 	if usesCallIndirect(progs) {
 		// Function-address dispatch table: a reserved null slot, then one .quad
 		// per function in module (sorted) order, so table[fn_idx] is the callee's
@@ -195,13 +213,17 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		w("\t.quad 0")
 	}
 	w(".section .note.GNU-stack,\"\",@progbits")
-	return b.String(), nil
+	asm := b.String()
+	if err := checkNoDanglingCalls(asm); err != nil {
+		return "", err
+	}
+	return asm, nil
 }
 
 // emitFuncBody writes one function's label, prologue, parameter moves, block
 // bodies, and epilogue. Block labels are namespaced by the function label so
 // several functions coexist in one program.
-func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int, strLabels map[string]string, fnIndex map[string]int) error {
+func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
 	label := fnLabel(name)
 	// s3 — the last register in the file — is the free scratch the div/shift and
 	// call sequences stage operands through. It is above the allocatable range
@@ -227,7 +249,7 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 	probeW := func(format string, args ...any) {
 		fmt.Fprintf(&probe, format+"\n", args...)
 	}
-	if err := emitFuncBlocks(probeW, label, p, numAlloc, scratch, strLabels, fnIndex, func() {}); err != nil {
+	if err := emitFuncBlocks(probeW, label, p, numAlloc, scratch, strLabels, sentLabels, fnIndex, func() {}); err != nil {
 		return err
 	}
 	saved := calleeSavedIn(probe.String(), p.NumRegFile)
@@ -252,7 +274,7 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 		w("\t%s", line)
 	}
 
-	return emitFuncBlocks(w, label, p, numAlloc, scratch, strLabels, fnIndex, restore)
+	return emitFuncBlocks(w, label, p, numAlloc, scratch, strLabels, sentLabels, fnIndex, restore)
 }
 
 // emitFuncBlocks writes every block body and terminator. Split out of
@@ -260,7 +282,7 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 // to discover which callee-saved registers the output names, then once for real
 // with the matching save/restore. `restore` emits the callee-saved reloads that
 // precede each return.
-func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, fnIndex map[string]int, restore func()) error {
+func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int, restore func()) error {
 	for bi, blk := range p.Blocks {
 		w(".L_%s_b%d:", label, bi)
 		for ii, in := range blk.Insts {
@@ -294,6 +316,14 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 				lbl, ok := strLabels[in.Str]
 				if !ok {
 					return fmt.Errorf("x86_64ssa: ConstStr %q has no .rodata label", in.Str)
+				}
+				w("\tlea %s, [rip + %s]", reg(in.Dst), lbl)
+				continue
+			}
+			if in.Op == EnumSentinel {
+				lbl, ok := sentLabels[in.Imm]
+				if !ok {
+					return fmt.Errorf("x86_64ssa: EnumSentinel tag %d has no .rodata cell", in.Imm)
 				}
 				w("\tlea %s, [rip + %s]", reg(in.Dst), lbl)
 				continue
@@ -1366,6 +1396,90 @@ func collectStrings(progs map[string]*Program, names []string) (map[string]strin
 	return labels, order
 }
 
+// checkNoDanglingCalls reports a `call` or `jmp` to a label the module never
+// defines.
+//
+// referencedRuntimeHelpers walks the call graph and emits the runtime helpers it
+// finds, but a callee with no entry in runtimeHelperEmitters is simply skipped —
+// a user function is a legitimate skip, and a helper the table has never heard of
+// was one too. The call went out with nothing behind it and the failure surfaced
+// in the assembler as `undefined label "fn___fern_drop_arr_str"`, which names
+// neither the backend nor the fact that this is a coverage gap. 247 of the 317
+// example programs fail that way today.
+//
+// The point is to fail HERE instead, naming the helpers, so a gap in the table
+// reads as one. `call rax` and the other register/indirect forms are not label
+// references and are skipped; conditional jumps only ever target local labels,
+// which are defined, so collecting `jmp` (the tail-call form) is enough.
+func checkNoDanglingCalls(asm string) error {
+	defined := map[string]bool{}
+	var called []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(asm, "\n") {
+		switch {
+		case strings.HasPrefix(line, "\tcall "), strings.HasPrefix(line, "\tjmp "):
+			t := strings.TrimSpace(line[strings.IndexByte(line, ' ')+1:])
+			if !isLabelRef(t) || seen[t] {
+				continue
+			}
+			seen[t] = true
+			called = append(called, t)
+		case strings.HasSuffix(line, ":") && len(line) > 0 && line[0] != '\t':
+			defined[strings.TrimSuffix(line, ":")] = true
+		}
+	}
+	var missing []string
+	for _, t := range called {
+		if !defined[t] {
+			missing = append(missing, t)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("x86_64ssa: %d call target(s) the module never defines — a runtime helper with no emitter, or a function missing from the module: %s",
+		len(missing), strings.Join(missing, ", "))
+}
+
+// isLabelRef reports whether a branch operand names a label rather than a
+// register or a memory operand (`call rax`, `call [rip + tbl]`).
+func isLabelRef(t string) bool {
+	if t == "" || gpIndex(t) >= 0 {
+		return false
+	}
+	for i := 0; i < len(t); i++ {
+		c := t[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// collectSentinels assigns a .rodata label to each distinct enum-sentinel tag
+// (EnumSentinel.Imm) used in the module, in first-seen order — so every
+// OpEnumSentinel for a given tag references the same shared static cell, which
+// is what makes two `None`s compare equal by address.
+func collectSentinels(progs map[string]*Program, names []string) (map[int64]string, []int64) {
+	labels := map[int64]string{}
+	var order []int64
+	for _, name := range names {
+		for _, blk := range progs[name].Blocks {
+			for _, in := range blk.Insts {
+				if in.Op == EnumSentinel {
+					if _, ok := labels[in.Imm]; !ok {
+						labels[in.Imm] = fmt.Sprintf("sent_%d", len(order))
+						order = append(order, in.Imm)
+					}
+				}
+			}
+		}
+	}
+	return labels, order
+}
+
 // usesHeap reports whether any emitted program contains a heap op (so the heap
 // section + cursor init are only emitted when needed).
 func usesHeap(progs map[string]*Program) bool {
@@ -1489,10 +1603,24 @@ func emitRcIsUniqueHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
+// rcPassThroughRet writes the shared exit of a pass-through runtime helper. The
+// rc/drop family hands back the pointer it was given — ir.OpRcInc and ir.OpRcDec
+// are documented `(ptr) -> ptr`, and the drop calls carry ir.ResAddr — so a
+// caller reads the result out of rax and uses it. These bodies use eax as the
+// scratch for the rc word, which leaves the header value there, so rax has to be
+// restored from rdi before returning. The arm64 sibling needs no equivalent: the
+// argument and the result share x0, so leaving it untouched already satisfies
+// the contract.
+func rcPassThroughRet(w func(string, ...any)) {
+	w("\tmov rax, rdi")
+	w("\tret")
+}
+
 // emitRcIncHelper writes __fern_rc_inc(data): bump the reference count at
 // [data-8] by one, guarded like __fern_rc_is_unique (null / low-address /
 // static-sentinel) so it is safe on a slot that might hold a non-pointer or a
-// static cell. Void, leaf. On the SSA path every rc-managed value is a heap
+// static cell. Returns the pointer it was given, leaf. On the SSA path every
+// rc-managed value is a heap
 // pointer (function values are heap cells, not code addresses), so the
 // 0x10000 low-address guard is sufficient — a code/rodata address never flows
 // in. Mirrors the native __fern_rc_inc (minus the SSO string tag, which the SSA
@@ -1510,14 +1638,14 @@ func emitRcIncHelper(w func(string, ...any)) {
 	w("\tadd eax, 1")
 	w("\tmov %s, eax", memRef("rdi", -8))
 	w(".Lssa_rcinc_ret:")
-	w("\tret")
+	rcPassThroughRet(w)
 }
 
 // emitRcDecHelper writes __fern_rc_dec(data): drop the reference count at
 // [data-8] by one, same guard chain as __fern_rc_inc. It does NOT free at rc==0
 // — the SSA bump heap never reclaims (docs/SSA-RC-RUNTIME.md: leak-until-a-later
 // reuse slice); the free-and-reclaim decision belongs to __fern_closure_drop /
-// the per-type drop thunks. Void, leaf.
+// the per-type drop thunks. Returns the pointer it was given, leaf.
 func emitRcDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_dec"))
@@ -1531,7 +1659,7 @@ func emitRcDecHelper(w func(string, ...any)) {
 	w("\tsub eax, 1")
 	w("\tmov %s, eax", memRef("rdi", -8))
 	w(".Lssa_rcdec_ret:")
-	w("\tret")
+	rcPassThroughRet(w)
 }
 
 // emitClosureDropHelper writes __fern_closure_drop(data): the scope-exit drop the
@@ -1555,7 +1683,7 @@ func emitClosureDropHelper(w func(string, ...any)) {
 	w(".Lssa_cd_dec:")
 	w("\tjmp %s", fnLabel("__fern_rc_dec"))
 	w(".Lssa_cd_ret:")
-	w("\tret")
+	rcPassThroughRet(w)
 }
 
 // emitBoxFreeHelper writes __fern_box_free(data, size) -> data: release an
@@ -1605,7 +1733,7 @@ func emitArrDecHelper(w func(string, ...any)) {
 	w("\tsub eax, 1")
 	w("\tmov %s, eax", memRef("rdi", -8))
 	w(".Lssa_arrdec_ret:")
-	w("\tret")
+	rcPassThroughRet(w)
 }
 
 // emitArrIdxHelper writes __arr_idx(base, idx) -> elem address: a bounds-checked
@@ -1779,7 +1907,7 @@ func emitStrDecHelper(w func(string, ...any)) {
 	w("\tsub eax, 1")
 	w("\tmov %s, eax", memRef("rdi", -8))
 	w(".Lssa_strdec_ret:")
-	w("\tret")
+	rcPassThroughRet(w)
 }
 
 // rcxReg/raxReg/rdxReg are the fixed registers the shift/div sequences pin.
