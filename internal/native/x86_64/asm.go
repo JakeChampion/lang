@@ -104,6 +104,11 @@ type Assembler struct {
 	locRows      []LineRow
 	relaxEvents  []relaxEvent
 	cfi          cfi.State
+	// relax rewrites .text and remaps every recorded offset onto the new
+	// layout, so it runs at most once per Assembler; a second pass would
+	// remap already-remapped offsets. TextLen and layout both need it done.
+	relaxDone bool
+	relaxErr  error
 }
 
 // LineRow is one DWARF .debug_line row: the source line active at a code
@@ -156,23 +161,45 @@ func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err err
 // contiguous after .text (8-byte aligned) — the single-segment R+W+X image
 // elf.StaticExecutableDataX86 produces. Mirrors arm64.BytesProgram.
 func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err error) {
-	text, rodata, _, err = a.layout(textVAddr, false, false)
+	n, err := a.TextLen()
+	if err != nil {
+		return nil, nil, err
+	}
+	// The single-segment image pads .text to 8 and appends the data blob
+	// (elf.staticExecutableData), so .rodata needs no page rule and no
+	// address from the writer.
+	text, rodata, _, err = a.layout(textVAddr, textVAddr+uint64(align8(n)), false)
 	return text, rodata, err
 }
 
+// TextLen returns the final size of .text in bytes, having shrunk in-range
+// branches to their rel8 forms so the count is stable. The image writer
+// needs it to build the segment map (elf.SegmentAddrsWXX86), and every
+// later fixup resolves against that map, so this runs before any address
+// is chosen.
+func (a *Assembler) TextLen() (int, error) {
+	if err := a.relax(); err != nil {
+		return 0, err
+	}
+	return len(a.text), nil
+}
+
 // BytesProgramWX is BytesProgram for the W^X two-segment layout
-// (elf.StaticExecutableDataX86WX): .rodata moves to the first page boundary
-// past .text, in its own R+W segment, so the code segment can be mapped R+X.
-func (a *Assembler) BytesProgramWX(textVAddr uint64) (text, rodata []byte, err error) {
-	text, rodata, _, err = a.layout(textVAddr, true, false)
+// (elf.StaticExecutableDataX86WX): .rodata moves into its own R+W segment,
+// so the code segment can be mapped R+X. Both addresses come from the image
+// writer — elf.SegmentAddrsWXX86(TextLen()) — rather than being derived
+// here, so there is one authority on where the data segment starts.
+func (a *Assembler) BytesProgramWX(textVAddr, rodataVAddr uint64) (text, rodata []byte, err error) {
+	text, rodata, _, err = a.layout(textVAddr, rodataVAddr, false)
 	return text, rodata, err
 }
 
 // BytesProgramPIE is the W^X layout laid out from a load base of 0, returning
 // the R_X86_64_RELATIVE relocations the `.quad <symbol>` slots need.
-// rip-relative code is base-independent and needs none.
-func (a *Assembler) BytesProgramPIE(textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
-	return a.layout(textVAddr, true, true)
+// rip-relative code is base-independent and needs none. Both addresses come
+// from elf.SegmentAddrsPIEX86(TextLen()).
+func (a *Assembler) BytesProgramPIE(textVAddr, rodataVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
+	return a.layout(textVAddr, rodataVAddr, true)
 }
 
 // TextLabelVAddr returns the virtual address of a .text symbol
@@ -201,16 +228,37 @@ func (a *Assembler) TextLabelVAddrs(textVAddr uint64) map[string]uint64 {
 // DWARF line table.
 func (a *Assembler) LocRows() []LineRow { return a.locRows }
 
+// SegmentAddrs is the image writer's map: given the final size of .text it
+// says where .text and the data blob load. The data address cannot be known
+// any earlier — branch relaxation settles the size — and deriving it here
+// instead would leave the image with two authorities that have to agree.
+// Pass elf.SegmentAddrsWXX86 or elf.SegmentAddrsPIEX86.
+type SegmentAddrs func(textLen int) (textVAddr, dataVAddr uint64)
+
+// resolve parses src, settles the size of .text, and asks addrs where the
+// image puts things.
+func resolve(src string, addrs SegmentAddrs) (a *Assembler, textVAddr, dataVAddr uint64, err error) {
+	if a, err = ParseProgram(src); err != nil {
+		return nil, 0, 0, err
+	}
+	n, err := a.TextLen()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	textVAddr, dataVAddr = addrs(n)
+	return a, textVAddr, dataVAddr, nil
+}
+
 // AssembleProgramWX is AssembleProgram for the W^X two-segment ELF layout
 // (elf.StaticExecutableDataX86WX): .rodata is page-aligned into a separate
 // R+W segment instead of laid contiguously after .text, so the code
-// segment can be mapped R+X. Pass elf.TextVAddrWX as textVAddr.
-func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err error) {
-	a, err := ParseProgram(src)
+// segment can be mapped R+X. Pass elf.SegmentAddrsWXX86.
+func AssembleProgramWX(src string, addrs SegmentAddrs) (text, rodata []byte, err error) {
+	a, textVAddr, dataVAddr, err := resolve(src, addrs)
 	if err != nil {
 		return nil, nil, err
 	}
-	return a.BytesProgramWX(textVAddr)
+	return a.BytesProgramWX(textVAddr, dataVAddr)
 }
 
 // AssembleProgramEhFrame is AssembleProgram that also renders the .eh_frame
@@ -246,26 +294,26 @@ type Reloc struct {
 // executable (elf.StaticPieExecutableX86): the W^X layout laid out from a
 // load base of 0, returning the R_X86_64_RELATIVE relocations for the
 // `.quad <symbol>` slots. rip-relative code is base-independent and needs
-// no relocation. Pass elf.TextVAddrPIE as textVAddr.
-func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
-	a, err := ParseProgram(src)
+// no relocation. Pass elf.SegmentAddrsPIEX86.
+func AssembleProgramPIE(src string, addrs SegmentAddrs) (text, rodata []byte, relocs []Reloc, err error) {
+	a, textVAddr, dataVAddr, err := resolve(src, addrs)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return a.BytesProgramPIE(textVAddr)
+	return a.BytesProgramPIE(textVAddr, dataVAddr)
 }
 
 // AssembleProgramWXSyms is AssembleProgramWX that also returns every .text
 // label resolved to its absolute virtual address (textVAddr + offset) — the
 // function-symbol table the ELF writer emits into .symtab under `-g`, so a
 // debugger / nm / a backtrace can map a code address back to a name. Pass
-// elf.TextVAddrWX as textVAddr.
-func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, syms map[string]uint64, locRows []LineRow, err error) {
-	a, err := ParseProgram(src)
+// elf.SegmentAddrsWXX86.
+func AssembleProgramWXSyms(src string, addrs SegmentAddrs) (text, rodata []byte, syms map[string]uint64, locRows []LineRow, err error) {
+	a, textVAddr, dataVAddr, err := resolve(src, addrs)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	text, rodata, err = a.BytesProgramWX(textVAddr)
+	text, rodata, err = a.BytesProgramWX(textVAddr, dataVAddr)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -277,13 +325,13 @@ func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, s
 // exportNames to its load-base-relative virtual address (textVAddr +
 // offset) and returns them in exportVAddr — the addresses elf.SharedLibrary
 // records in .dynsym so a dynamic loader can resolve the exports. Pass
-// elf.TextVAddrPIE as textVAddr.
-func AssembleProgramShared(src string, textVAddr uint64, exportNames []string) (text, rodata []byte, relocs []Reloc, exportVAddr map[string]uint64, err error) {
-	a, err := ParseProgram(src)
+// elf.SegmentAddrsPIEX86.
+func AssembleProgramShared(src string, addrs SegmentAddrs, exportNames []string) (text, rodata []byte, relocs []Reloc, exportVAddr map[string]uint64, err error) {
+	a, textVAddr, dataVAddr, err := resolve(src, addrs)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	text, rodata, relocs, err = a.BytesProgramPIE(textVAddr)
+	text, rodata, relocs, err = a.BytesProgramPIE(textVAddr, dataVAddr)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -356,12 +404,14 @@ func ParseProgram(src string) (*Assembler, error) {
 	return a, nil
 }
 
-// layout resolves every fixup against a concrete load address and returns the
-// final blobs. wx / pie select where .rodata sits relative to .text — see
-// BytesProgram, BytesProgramWX and BytesProgramPIE.
-func (a *Assembler) layout(textVAddr uint64, wx, pie bool) (text, rodata []byte, relocs []Reloc, err error) {
+// layout resolves every fixup against the concrete load addresses the image
+// writer chose for .text and the data blob, and returns the final blobs.
+// pie makes the layout base-relative, so the `.quad <symbol>` slots collect
+// R_X86_64_RELATIVE relocations.
+func (a *Assembler) layout(textVAddr, rodataVAddr uint64, pie bool) (text, rodata []byte, relocs []Reloc, err error) {
 	// Shrink in-range branches to their rel8 forms and settle the final
-	// layout before any offsets are resolved.
+	// layout before any offsets are resolved. A no-op when TextLen already
+	// ran, which it must have for rodataVAddr to be right.
 	if err := a.relax(); err != nil {
 		return nil, nil, nil, err
 	}
@@ -374,20 +424,9 @@ func (a *Assembler) layout(textVAddr uint64, wx, pie bool) (text, rodata []byte,
 		rel := int32(dst - (f.at + 4))
 		putLE32(a.text, f.at, uint32(rel))
 	}
-	// Resolve rip-relative data references. In the single-segment image
-	// StaticExecutableDataX86 pads .text to 8 bytes and appends .rodata,
-	// so .rodata begins at align8(len(text)) within the segment. In the
-	// W^X / PIE images .rodata moves to the first 4 KiB page boundary past
-	// .text (a separate R+W segment), so its segment-relative base is
-	// pageUp(textVAddr+len(text)) - textVAddr. Either way rodataBase is the
-	// data blob's offset from textVAddr, so the textVAddr base still cancels
-	// in (symVAddr - ripEnd).
-	rodataBase := align8(len(a.text))
-	if wx || pie {
-		const page = 0x1000 // must match elf.pageAlignFor(emX86_64) (x86-64 = 4 KiB pages)
-		rodataBase = int((textVAddr+uint64(len(a.text))+page-1)&^(page-1) - textVAddr)
-	}
-	rodataVAddr := textVAddr + uint64(rodataBase)
+	// rodataBase is the data blob's offset from textVAddr, so the textVAddr
+	// base cancels in (symVAddr - ripEnd).
+	rodataBase := int(rodataVAddr - textVAddr)
 
 	// .bss sits immediately after .rodata in the blob, 16-aligned so the
 	// widest scalar in it stays naturally aligned. Placing it last is what

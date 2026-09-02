@@ -1224,7 +1224,7 @@ int main(int c,char**v){
 func sharedLibX86(t *testing.T, asm string, names ...string) []byte {
 	t.Helper()
 	asmNames := symname.Fns(names)
-	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, asmNames)
+	text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.SegmentAddrsPIEX86, asmNames)
 	if err != nil {
 		t.Fatalf("AssembleProgramShared: %v", err)
 	}

@@ -19,7 +19,7 @@ import (
 // Non-heap programs assemble fine too: their data blob is empty.
 func assembleWX(t *testing.T, asm string) []byte {
 	t.Helper()
-	text, rodata, err := nativearm64.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
+	text, rodata, err := nativearm64.AssembleProgramWX(asm, nativeelf.SegmentAddrsWXArm64)
 	if err != nil {
 		t.Fatalf("AssembleProgramWX: %v\n--- asm ---\n%s", err, asm)
 	}

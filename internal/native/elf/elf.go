@@ -67,6 +67,49 @@ func pageUpFor(v uint64, machine uint16) uint64 {
 	return (v + a - 1) &^ (a - 1)
 }
 
+// segmentAddrsWX returns the virtual addresses the W^X two-segment image
+// (StaticExecutableDataWX and its -g / explicit-entry siblings) loads .text
+// and the data blob at, for a program whose .text is textLen bytes.
+//
+// This is the single authority on that map. The assembler resolves data
+// references against the dataVAddr returned here rather than applying the
+// placement rule a second time, so nothing can be inserted between .text
+// and the data segment without both sides seeing it. The Mach-O path has
+// worked this way since it landed (macho.SegmentAddrs).
+func segmentAddrsWX(textLen int, machine uint16) (textVAddr, dataVAddr uint64) {
+	return TextVAddrWX, pageUpFor(TextVAddrWX+uint64(textLen), machine)
+}
+
+// segmentAddrsPIE is segmentAddrsWX for the base-0 images — the static PIE
+// (StaticPieExecutable) and the shared object (SharedLibrary) — whose
+// headers carry one more program header and whose addresses are measured
+// from a load base of 0.
+func segmentAddrsPIE(textLen int, machine uint16) (textVAddr, dataVAddr uint64) {
+	return TextVAddrPIE, pageUpFor(TextVAddrPIE+uint64(textLen), machine)
+}
+
+// SegmentAddrsWXArm64 is the arm64 W^X segment map. Pass it to
+// arm64.AssembleProgramWX and friends, which apply it once branch
+// relaxation has settled the size of .text.
+func SegmentAddrsWXArm64(textLen int) (textVAddr, dataVAddr uint64) {
+	return segmentAddrsWX(textLen, emAArch64)
+}
+
+// SegmentAddrsWXX86 is the x86-64 W^X segment map (4 KiB pages).
+func SegmentAddrsWXX86(textLen int) (textVAddr, dataVAddr uint64) {
+	return segmentAddrsWX(textLen, emX86_64)
+}
+
+// SegmentAddrsPIEArm64 is the arm64 static-PIE / shared-object segment map.
+func SegmentAddrsPIEArm64(textLen int) (textVAddr, dataVAddr uint64) {
+	return segmentAddrsPIE(textLen, emAArch64)
+}
+
+// SegmentAddrsPIEX86 is the x86-64 static-PIE / shared-object segment map.
+func SegmentAddrsPIEX86(textLen int) (textVAddr, dataVAddr uint64) {
+	return segmentAddrsPIE(textLen, emX86_64)
+}
+
 // TextVAddr is the virtual address at which .text begins in the
 // single-segment image (just past the ELF header + one program
 // header). The assembler needs this to resolve PC-relative symbol
@@ -223,14 +266,14 @@ func StaticExecutableDataWXEntry(text, data []byte, entryOff uint64) []byte {
 // baseVAddr) so the page-aligned data offset is congruent to its load
 // address mod the page size — what mmap requires.
 func imageWX(text, data []byte, machine uint16, entryOff uint64) []byte {
-	const headers = ehSize + 2*phSize        // 64 + 112 = 176
-	textEnd := uint64(headers + len(text))   // end of the R+X segment
-	dataOff := pageUpFor(textEnd, machine)   // file offset == vaddr offset of data
-	codeVAddr := uint64(baseVAddr)           // headers + .text
-	dataVAddr := uint64(baseVAddr) + dataOff // .rodata + writable globals
-	entry := uint64(TextVAddrWX) + entryOff  // entry instruction within .text
-	codeSz := textEnd                        // headers + .text live in one segment
-	dataSz := uint64(len(data))              // p_memsz: the full segment (incl. .bss)
+	const headers = ehSize + 2*phSize      // 64 + 112 = 176
+	textEnd := uint64(headers + len(text)) // end of the R+X segment
+	_, dataVAddr := segmentAddrsWX(len(text), machine)
+	dataOff := dataVAddr - baseVAddr        // file offset == vaddr offset of data
+	codeVAddr := uint64(baseVAddr)          // headers + .text
+	entry := uint64(TextVAddrWX) + entryOff // entry instruction within .text
+	codeSz := textEnd                       // headers + .text live in one segment
+	dataSz := uint64(len(data))             // p_memsz: the full segment (incl. .bss)
 	// .bss is materialised as trailing zero bytes in `data`, and a PT_LOAD with
 	// p_filesz < p_memsz has the kernel zero-fill [filesz, memsz). So store only up
 	// to the last non-zero byte in the file and let the loader supply the rest —
@@ -323,7 +366,8 @@ func StaticPieExecutableX86(text, data []byte, relocs []Reloc) []byte {
 func staticPie(text, data []byte, relocs []Reloc, machine uint16) []byte {
 	const headers = ehSize + phNumPIE*phSize // 64 + 168 = 232
 	textEnd := uint64(headers + len(text))   // end of the R+X segment
-	dataOff := pageUpFor(textEnd, machine)   // page boundary: start of R+W data
+	// Base-0 image, so the data segment's file offset and vaddr coincide.
+	_, dataOff := segmentAddrsPIE(len(text), machine)
 
 	// Within the R+W segment: data blob, then (8-aligned) .rela.dyn, then
 	// .dynamic. All offsets/vaddrs are relative to a load base of 0.
@@ -443,7 +487,7 @@ func align4(v uint64) uint64 { return (v + 3) &^ 3 }
 func sharedLib(text, data []byte, relocs []Reloc, exports []Export, soname string, machine uint16) []byte {
 	const headers = ehSize + phNumPIE*phSize // 232: ELF header + 3 program headers
 	textEnd := uint64(headers + len(text))
-	dataOff := pageUpFor(textEnd, machine) // R+W segment starts on a page boundary
+	_, dataOff := segmentAddrsPIE(len(text), machine)
 
 	// Build .dynstr: index 0 is the empty string; then the soname (if any)
 	// and each export name, NUL-terminated. Record their offsets.

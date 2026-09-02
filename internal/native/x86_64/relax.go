@@ -66,6 +66,15 @@ func (a *Assembler) trailingPad() *relaxEvent {
 // around the long form, keeping the long layout self-consistent too, so a
 // shrink-only pass would keep branches gas makes short.)
 func (a *Assembler) relax() error {
+	if a.relaxDone {
+		return a.relaxErr
+	}
+	a.relaxDone = true
+	a.relaxErr = a.relaxOnce()
+	return a.relaxErr
+}
+
+func (a *Assembler) relaxOnce() error {
 	ev := a.relaxEvents
 	hasBranch := false
 	for i := range ev {

@@ -53,14 +53,17 @@ type Assembler struct {
 	cfi cfi.State
 
 	// Branch veneers (see veneer.go): veneerSeq names each synthetic
-	// trampoline label, veneerReach overrides the b/bl span in tests,
-	// veneerPasses records how many rounds it took to reach a fixed
-	// point, and veneerErr carries a failure from MachOTextLen (which
-	// plants veneers but cannot return an error) to LinkMachO.
+	// trampoline label, veneerReach overrides the b/bl span in tests, and
+	// veneerPasses records how many rounds it took to reach a fixed point.
 	veneerSeq    int
 	veneerReach  int
 	veneerPasses int
-	veneerErr    error
+	// Flushing the literal pool and planting veneers settles the size of
+	// .text. It runs once per Assembler: a second round starts a fresh
+	// veneer fixpoint over already-veneered code, which reaches its fixed
+	// point immediately and reports zero passes.
+	settled   bool
+	settleErr error
 	// relaxReach overrides the conditional branches' span (relax.go) in
 	// tests, so one need not emit a megabyte of instructions to reach it.
 	relaxReach int
@@ -463,29 +466,45 @@ func (a *Assembler) Bytes() ([]byte, error) {
 // (8-byte aligned). It returns the final .text and .rodata blobs. This is
 // the single-segment layout (elf.StaticExecutableData / R+W+X).
 func (a *Assembler) BytesProgram(textVAddr uint64) (text, rodata []byte, err error) {
-	a.FlushLiterals()
-	if err := a.fitBranches(); err != nil {
+	n, err := a.TextLen()
+	if err != nil {
 		return nil, nil, err
 	}
-	rodataVAddr := textVAddr + uint64(len(a.insns)*4)
+	rodataVAddr := textVAddr + uint64(n)
 	if rem := rodataVAddr % 8; rem != 0 {
 		rodataVAddr += 8 - rem
 	}
 	return a.bytesProgramAt(textVAddr, rodataVAddr, nil, nil)
 }
 
+// TextLen returns the final size of .text in bytes, having flushed the
+// literal pool and planted any branch veneers so the count is stable. The
+// image writer needs it to build the segment map (elf.SegmentAddrsWX,
+// macho.SegmentAddrs), and every later fixup resolves against that map, so
+// this runs before any address is chosen.
+func (a *Assembler) TextLen() (int, error) {
+	if !a.settled {
+		a.settled = true
+		a.FlushLiterals()
+		a.settleErr = a.fitBranches()
+	}
+	if a.settleErr != nil {
+		return 0, a.settleErr
+	}
+	return len(a.insns) * 4, nil
+}
+
 // BytesProgramWX is BytesProgram for the W^X two-segment ELF layout
-// (elf.StaticExecutableDataWX): .rodata is placed on the first 16 KiB page
-// boundary at or after the end of .text — a separate R+W PT_LOAD — rather
-// than contiguously after it, so the code segment can be mapped R+X. The
-// page size matches elf.pageAlign; pass elf.TextVAddrWX as textVAddr.
-func (a *Assembler) BytesProgramWX(textVAddr uint64) (text, rodata []byte, err error) {
-	a.FlushLiterals()
-	if err := a.fitBranches(); err != nil {
+// (elf.StaticExecutableDataWX): .rodata lives in its own R+W PT_LOAD rather
+// than contiguously after .text, so the code segment can be mapped R+X.
+//
+// Both addresses come from the image writer — elf.SegmentAddrsWX(TextLen())
+// — rather than being derived here, so there is one authority on where the
+// data segment starts.
+func (a *Assembler) BytesProgramWX(textVAddr, rodataVAddr uint64) (text, rodata []byte, err error) {
+	if _, err := a.TextLen(); err != nil {
 		return nil, nil, err
 	}
-	const page = 0x10000 // must match elf.pageAlign
-	rodataVAddr := (textVAddr + uint64(len(a.insns)*4) + page - 1) &^ (page - 1)
 	return a.bytesProgramAt(textVAddr, rodataVAddr, nil, nil)
 }
 
@@ -528,17 +547,15 @@ func (a *Assembler) TextLabelVAddrs(textVAddr uint64) map[string]uint64 {
 
 // BytesProgramPIE resolves the program for a static position-independent
 // executable (elf.StaticPieExecutable): the same W^X two-segment layout,
-// but laid out relative to a load base of 0 (pass elf.TextVAddrPIE as
-// textVAddr) and returning the list of R_AARCH64_RELATIVE relocations for
-// the `.quad <symbol>` slots. PC-relative fixups (branches, adrp/:lo12:,
-// ldr-literals) are base-independent and need no relocation.
-func (a *Assembler) BytesProgramPIE(textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
-	a.FlushLiterals()
-	if err := a.fitBranches(); err != nil {
+// but laid out relative to a load base of 0, returning the list of
+// R_AARCH64_RELATIVE relocations for the `.quad <symbol>` slots.
+// PC-relative fixups (branches, adrp/:lo12:, ldr-literals) are
+// base-independent and need no relocation. Both addresses come from
+// elf.SegmentAddrsPIE(TextLen()).
+func (a *Assembler) BytesProgramPIE(textVAddr, rodataVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
+	if _, err := a.TextLen(); err != nil {
 		return nil, nil, nil, err
 	}
-	const page = 0x10000 // must match elf.pageAlign
-	rodataVAddr := (textVAddr + uint64(len(a.insns)*4) + page - 1) &^ (page - 1)
 
 	// Synthetic symbols the self-relocation prologue references via
 	// adrp/:lo12:. Their addresses are relative to a load base of 0 and

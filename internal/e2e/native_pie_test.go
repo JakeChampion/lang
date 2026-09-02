@@ -56,7 +56,7 @@ function main(): i32 { return fib(10); }`, 55, ""},
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			asm := compileToArm64Asm(t, c.src)
-			text, rodata, relocs, err := na.AssembleProgramPIE(asm, nativeelf.TextVAddrPIE)
+			text, rodata, relocs, err := na.AssembleProgramPIE(asm, nativeelf.SegmentAddrsPIEArm64)
 			if err != nil {
 				t.Fatalf("AssembleProgramPIE: %v", err)
 			}
@@ -93,7 +93,7 @@ func TestArm64NativePIEEmitsRelocs(t *testing.T) {
 function dbl(x: i32): i32 { return x * 2; }
 function main(): i32 { return apply(dbl, 21); }`
 	asm := compileToArm64Asm(t, src)
-	text, rodata, relocs, err := na.AssembleProgramPIE(asm, nativeelf.TextVAddrPIE)
+	text, rodata, relocs, err := na.AssembleProgramPIE(asm, nativeelf.SegmentAddrsPIEArm64)
 	if err != nil {
 		t.Fatalf("AssembleProgramPIE: %v", err)
 	}
@@ -175,7 +175,7 @@ function main(): i32 { var d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49, 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			asm := compileToArm64AsmPIE(t, c.src)
-			text, rodata, relocs, err := na.AssembleProgramPIE(asm, nativeelf.TextVAddrPIE)
+			text, rodata, relocs, err := na.AssembleProgramPIE(asm, nativeelf.SegmentAddrsPIEArm64)
 			if err != nil {
 				t.Fatalf("AssembleProgramPIE: %v", err)
 			}
@@ -225,7 +225,7 @@ function main(): i32 { var d: dyn Shape = Sq { s: 7 }; return d.area(); }`, 49, 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			asm := compileToX86AsmPIE(t, c.src)
-			text, rodata, relocs, err := nativex86.AssembleProgramPIE(asm, nativeelf.TextVAddrPIE)
+			text, rodata, relocs, err := nativex86.AssembleProgramPIE(asm, nativeelf.SegmentAddrsPIEX86)
 			if err != nil {
 				t.Fatalf("AssembleProgramPIE: %v", err)
 			}

@@ -40,7 +40,7 @@ var (
 		name: "arm64",
 		emit: arm64codegen.Emit,
 		assemble: func(src string) error {
-			_, _, err := nativearm64.AssembleProgramWX(src, nativeelf.TextVAddrWX)
+			_, _, err := nativearm64.AssembleProgramWX(src, nativeelf.SegmentAddrsWXArm64)
 			return err
 		},
 	}
@@ -48,7 +48,7 @@ var (
 		name: "x86_64",
 		emit: x86_64.Emit,
 		assemble: func(src string) error {
-			_, _, err := nativex86.AssembleProgramWX(src, nativeelf.TextVAddrWX)
+			_, _, err := nativex86.AssembleProgramWX(src, nativeelf.SegmentAddrsWXX86)
 			return err
 		},
 	}

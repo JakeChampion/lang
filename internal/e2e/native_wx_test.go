@@ -116,7 +116,7 @@ func buildX86(t *testing.T, asm string, wx bool) string {
 	var err error
 	var bin []byte
 	if wx {
-		text, rodata, err = nativex86.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
+		text, rodata, err = nativex86.AssembleProgramWX(asm, nativeelf.SegmentAddrsWXX86)
 		if err == nil {
 			bin = nativeelf.StaticExecutableDataX86WX(text, rodata)
 		}
@@ -143,7 +143,7 @@ func buildArm64(t *testing.T, asm string, wx bool) string {
 	var err error
 	var bin []byte
 	if wx {
-		text, rodata, err = na.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
+		text, rodata, err = na.AssembleProgramWX(asm, nativeelf.SegmentAddrsWXArm64)
 		if err == nil {
 			bin = nativeelf.StaticExecutableDataWX(text, rodata)
 		}

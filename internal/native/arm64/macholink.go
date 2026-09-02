@@ -11,9 +11,8 @@ import (
 // (which needs the code size to place the __DATA segment). A veneering
 // failure is held until LinkMachO, which can report it.
 func (a *Assembler) MachOTextLen() int {
-	a.FlushLiterals()
-	a.veneerErr = a.fitBranches()
-	return len(a.insns) * 4
+	n, _ := a.TextLen()
+	return n
 }
 
 // MachODataLen returns the size of the data blob (__const / __data plus the
@@ -59,11 +58,7 @@ func (a *Assembler) MachODataRebaseOffsets() []int {
 // the code signature over the smaller file, which is separate work.
 func (a *Assembler) LinkMachO(textVAddr, dataVAddr uint64) (text, data []byte, err error) {
 	a.padForBss()
-	a.FlushLiterals()
-	if a.veneerErr != nil {
-		return nil, nil, a.veneerErr
-	}
-	if err := a.fitBranches(); err != nil {
+	if _, err := a.TextLen(); err != nil {
 		return nil, nil, err
 	}
 	for _, f := range a.litFixups {

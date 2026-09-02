@@ -2177,7 +2177,7 @@ func linkDarwin(asm, outPath, cc string) error {
 // Unsupported instructions surface as an error rather than a miscompile.
 func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nativeelf.LocalVar) error {
 	if emitDebugSyms {
-		text, rodata, syms, locRows, err := nativearm64.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
+		text, rodata, syms, locRows, err := nativearm64.AssembleProgramWXSyms(asm, nativeelf.SegmentAddrsWXArm64)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
@@ -2195,7 +2195,7 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		}
 		return os.Chmod(outPath, 0o755)
 	}
-	text, rodata, err := nativearm64.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
+	text, rodata, err := nativearm64.AssembleProgramWX(asm, nativeelf.SegmentAddrsWXArm64)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
@@ -2219,7 +2219,7 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 // .dynamic. Same W^X two-segment layout, but ET_DYN at a load base of 0 so
 // the kernel can map it at an arbitrary address (required by Android).
 func linkNativePIE(asm, outPath string) error {
-	text, rodata, relocs, err := nativearm64.AssembleProgramPIE(asm, nativeelf.TextVAddrPIE)
+	text, rodata, relocs, err := nativearm64.AssembleProgramPIE(asm, nativeelf.SegmentAddrsPIEArm64)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
@@ -2245,7 +2245,7 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 	asmNames := symname.Fns(exportNames)
 	var so []byte
 	if target == "x86-64-linux" {
-		text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, asmNames)
+		text, rodata, relocs, ev, err := nativex86.AssembleProgramShared(asm, nativeelf.SegmentAddrsPIEX86, asmNames)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
@@ -2255,7 +2255,7 @@ func linkNativeShared(asm, outPath, target string, exportNames []string) error {
 		}
 		so = nativeelf.SharedLibraryX86(text, rodata, elfRelocs, sharedExports(exportNames, asmNames, ev), soname)
 	} else { // arm64 / arm64-android
-		text, rodata, relocs, ev, err := nativearm64.AssembleProgramShared(asm, nativeelf.TextVAddrPIE, asmNames)
+		text, rodata, relocs, ev, err := nativearm64.AssembleProgramShared(asm, nativeelf.SegmentAddrsPIEArm64, asmNames)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
@@ -2456,7 +2456,7 @@ func dwarfLocalVars(prog *ast.Program, info *checker.Info, target string) map[st
 
 func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]nativeelf.LocalVar) error {
 	if emitDebugSyms {
-		text, rodata, syms, locRows, err := nativex86.AssembleProgramWXSyms(asm, nativeelf.TextVAddrWX)
+		text, rodata, syms, locRows, err := nativex86.AssembleProgramWXSyms(asm, nativeelf.SegmentAddrsWXX86)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
@@ -2474,7 +2474,7 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		}
 		return os.Chmod(outPath, 0o755)
 	}
-	text, rodata, err := nativex86.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
+	text, rodata, err := nativex86.AssembleProgramWX(asm, nativeelf.SegmentAddrsWXX86)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
