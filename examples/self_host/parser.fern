@@ -8661,10 +8661,12 @@ function lambda_ret_of(e: ast.Expr, env: MEnv, funcs: MFns): string {
         // param reachable only through `f: (T) => U` stays unbound and the
         // call keeps the un-instantiated template. A name the env already
         // binds is a LOCAL holding a closure, not a reference to the
-        // like-named top-level function — its declared return type says
-        // nothing about the value, so leave it unknown as before.
+        // like-named top-level function: a fn PARAM carries its return type
+        // in the "fn => <ret>" encoding (env_from_params); any other local
+        // says nothing about the value and stays unknown.
         ast.ExprIdent(fid) => {
-            if (env.elook(fid.name).len() > 0) { return ""; }
+            var et: string = env.elook(fid.name);
+            if (et.len() > 0) { return me_fn_ret_spelling(et); }
             return func_ret_of(funcs.decls, fid.name);
         },
         _ => { return ""; }
@@ -8810,7 +8812,8 @@ function type_str_vars(ty: string, acc: string[]): string[] {
             var tok: string = slice_unchecked(ty, start, i) + "";
             // A token applied to type arguments (`H[i32]`) is a type
             // constructor, never a variable — Fern has no higher-kinded params.
-            var applied: boolean = i < n && ty[i] == b'[';
+            // `T[]` is the array suffix, not an application.
+            var applied: boolean = i + 1 < n && ty[i] == b'[' && ty[i + 1] != b']';
             if (tok.len() == 1 && tok[0] >= b'A' && tok[0] <= b'Z' && !applied && !util.has_str(out, tok)) {
                 out = out.append(tok);
             }
@@ -9541,10 +9544,12 @@ function mono_ty_mentions_var(t: string): boolean {
             }
             // A following `[` makes the letter an applied type constructor
             // (`H[i32]`), never a variable — Fern has no higher-kinded params.
+            // `T[]` is the array suffix, not an application.
             var next_id: boolean = false;
             if (i + 1 < n) {
                 var q: i32 = t[i + 1] as i32;
-                next_id = (q >= 65 && q <= 90) || (q >= 97 && q <= 122) || (q >= 48 && q <= 57) || q == 95 || q == 91;
+                next_id = (q >= 65 && q <= 90) || (q >= 97 && q <= 122) || (q >= 48 && q <= 57) || q == 95;
+                if (q == 91 && !(i + 2 < n && t[i + 2] == b']')) { next_id = true; }
             }
             if (!prev_id && !next_id) { return true; }
         }
@@ -9785,12 +9790,18 @@ function mono_stmts(stmts: ast.Stmt[], env: MEnv, funcs: MFns, ins: Insts, ret_t
     return RStmts { rstmts: out, rins3: cur };
 }
 
-// env_from_params seeds an MEnv with a function's parameter types.
+// env_from_params seeds an MEnv with a function's parameter types. A fn-typed
+// param coarsens to "fn" with its return type held in fn_ret; it is encoded as
+// "fn => <ret>" (the me_env_from_params encoding) so lambda_ret_of can bind a
+// callee's return-position type var from a fn PARAM passed on (`map_values(f)`
+// calling `__om_map_values(t, f)` with `f: (V) => W`).
 function env_from_params(params: ast.ParamDecl[]): MEnv {
     var e: MEnv = MEnv { mnames: [], mtypes: [] };
     var i: i32 = 0;
     while (i < params.len()) {
-        e = e.ebind(params[i].name, params[i].type_name);
+        var pt: string = params[i].type_name;
+        if (pt == "fn" && params[i].fn_ret.len() > 0) { pt = "fn => " + params[i].fn_ret; }
+        e = e.ebind(params[i].name, pt);
         i = i + 1;
     }
     return e;
