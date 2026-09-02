@@ -59,9 +59,11 @@ pub function (n: i32) midpoint(other: i32): i32 {
 //
 // Method-style chosen so call sites read as `s[i].is_ascii_digit()`
 // — matches the rest of the i32 / string receiver surface's
-// `to_string()` / `is_empty()` shape. `__is_ascii_ws`
-// stays as a free function for the `trim()` body that pre-
-// dates this surface.
+// `to_string()` / `is_empty()` shape. The whitespace predicate is
+// the one member whose body lives elsewhere: std/string's
+// `__is_ascii_ws` is the single implementation, which
+// `is_ascii_white_space` widens its byte into, since the `trim()`
+// family calls it directly and pre-dates this surface.
 
 pub function (b: u8) is_ascii_digit(): boolean {
     return b >= 48 && b <= 57;
@@ -76,7 +78,7 @@ pub function (b: u8) is_ascii_alnum(): boolean {
 }
 
 pub function (b: u8) is_ascii_white_space(): boolean {
-    return b == 32 || b == 9 || b == 10 || b == 13 || b == 11 || b == 12;
+    return string.__is_ascii_ws(b as i32);
 }
 
 // `(b: u8) is_ascii_newline()` — true for LF (10) or CR (13). Use
