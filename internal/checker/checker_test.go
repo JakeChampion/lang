@@ -3403,6 +3403,89 @@ function main(): i32 { return init(); }`)
 	}
 }
 
+// The Platform bag's constructor is compiler-owned and synthesised for any
+// program with a handler, whether or not that program also has a `main`.
+// The wasi-http entry wrapper calls it in place of building the struct out
+// of raw memory, so its absence is a wrapper that has to know the layout.
+func TestPlatformConstructorIsSynthesisedForHandlers(t *testing.T) {
+	const decls = `function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function __port_from_env(name: string, def: i32): i32 { return def; }
+`
+	const handler = `function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+}`
+	cases := map[string]struct {
+		src  string
+		want bool
+	}{
+		"handler with synthesised main": {decls + handler, true},
+		"handler with its own main":     {decls + handler + "\nfunction main(): i32 { return 0; }", true},
+		"no handler at all":             {decls + "function main(): i32 { return 0; }", false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if _, err := Check(prog); err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			ctor := findDecl(prog, "__fern_platform_new")
+			if tc.want && ctor == nil {
+				t.Fatalf("no __fern_platform_new synthesised; got %v", funcNamesOf(prog))
+			}
+			if !tc.want && ctor != nil {
+				t.Fatal("__fern_platform_new synthesised for a program with no handler")
+			}
+			if ctor == nil {
+				return
+			}
+			if st, ok := ctor.ReturnType.(ast.StructType); !ok || st.Name != "Platform" {
+				t.Errorf("constructor returns %v, want Platform", ctor.ReturnType)
+			}
+			if len(ctor.Params) != 0 {
+				t.Errorf("constructor takes %d params, want 0", len(ctor.Params))
+			}
+		})
+	}
+}
+
+// A program that declares the constructor itself keeps its own: the
+// synthesis fills a gap, it does not overwrite a definition.
+func TestPlatformConstructorNotSynthesisedOverUserDefinition(t *testing.T) {
+	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function __port_from_env(name: string, def: i32): i32 { return def; }
+function __fern_platform_new(): Platform { return Platform { version: 7 }; }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	n := 0
+	for _, fn := range prog.Funcs {
+		if fn.Name == "__fern_platform_new" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d __fern_platform_new declarations, want 1 (the user's)", n)
+	}
+}
+
+// funcNamesOf is the failure-message helper for the two tests above.
+func funcNamesOf(prog *ast.Program) []string {
+	out := make([]string, 0, len(prog.Funcs))
+	for _, fn := range prog.Funcs {
+		out = append(out, fn.Name)
+	}
+	return out
+}
+
 // TestUserDefinedMainSkipsSynthEvenWithInit — when the user
 // writes their own main(), the synth-main path is skipped
 // entirely. User's main has the freedom to call init() (or
