@@ -118,20 +118,21 @@ function main(): i32 {
     if (b2[96] != 130 || b2[97] != 0) { return 27; }
 
     // ---- W^X two-segment layout ----
-    // arm64 W^X: 4-byte text + 8-byte data. headers = 64 + 2*56 = 176;
-    // text_end = 180; data_off = page_up(180) = 65536; total = 65544.
+    // arm64 W^X: 4-byte text + 8-byte data. headers = 64 + 3*56 = 232 (the
+    // third slot is PT_GNU_EH_FRAME, PT_NULL here); text_end = 236;
+    // data_off = page_up(236) = 65536; total = 65544.
     var t3: i32[] = [0, 0, 128, 210];
     var d3: i32[] = [7, 7, 7, 7, 7, 7, 7, 7];
     var b3: i32[] = elf_static_executable_data_wx(t3, d3);
     if (b3.len() != 65536 + 8) { return 28; }
-    // e_phnum = 2 @56.
-    if (b3[56] != 2 || b3[57] != 0) { return 29; }
-    // e_entry = 0x4000B0 (base + 176) @24 (LE 176,0,64,0).
-    if (b3[24] != 176 || b3[25] != 0 || b3[26] != 64 || b3[27] != 0) { return 30; }
+    // e_phnum = 3 @56.
+    if (b3[56] != 3 || b3[57] != 0) { return 29; }
+    // e_entry = 0x4000E8 (base + 232) @24 (LE 232,0,64,0).
+    if (b3[24] != 232 || b3[25] != 0 || b3[26] != 64 || b3[27] != 0) { return 30; }
     // phdr0 @64: p_type = PT_LOAD (1), p_flags = 5 (R|X) @68.
     if (b3[64] != 1 || b3[68] != 5) { return 31; }
-    // phdr0 p_offset = 0 @72; p_filesz = 180 (headers + text) @96.
-    if (b3[72] != 0 || b3[96] != 180 || b3[97] != 0) { return 32; }
+    // phdr0 p_offset = 0 @72; p_filesz = 236 (headers + text) @96.
+    if (b3[72] != 0 || b3[96] != 236 || b3[97] != 0) { return 32; }
     // phdr1 @120: p_type = PT_LOAD (1), p_flags = 6 (R|W) @124.
     if (b3[120] != 1 || b3[124] != 6) { return 33; }
     // phdr1 p_offset = 65536 @128 (LE 0,0,1,0).
@@ -140,10 +141,28 @@ function main(): i32 {
     if (b3[136] != 0 || b3[137] != 0 || b3[138] != 65 || b3[139] != 0) { return 35; }
     // phdr1 p_filesz = 8 @152.
     if (b3[152] != 8 || b3[153] != 0) { return 36; }
-    // .text @176..179; page padding zero; data blob @65536.
-    if (b3[176] != 0 || b3[177] != 0 || b3[178] != 128 || b3[179] != 210) { return 37; }
-    if (b3[180] != 0 || b3[1000] != 0 || b3[65535] != 0) { return 38; }
+    // phdr2 @176 is PT_NULL: no unwind data in this image.
+    if (b3[176] != 0 || b3[177] != 0 || b3[178] != 0 || b3[179] != 0) { return 53; }
+    // .text @232..235; page padding zero; data blob @65536.
+    if (b3[232] != 0 || b3[233] != 0 || b3[234] != 128 || b3[235] != 210) { return 37; }
+    if (b3[236] != 0 || b3[1000] != 0 || b3[65535] != 0) { return 38; }
     if (b3[65536] != 7 || b3[65543] != 7) { return 39; }
+    // The same image carrying unwind data: .eh_frame_hdr (12 bytes) lands
+    // 4-aligned right after .text, .eh_frame (16 bytes) 8-aligned after it,
+    // and phdr2 becomes PT_GNU_EH_FRAME over the header.
+    var h3: i32[] = [1, 27, 3, 59, 0, 0, 0, 0, 0, 0, 0, 0];
+    var e3: i32[] = [12, 0, 0, 0, 0, 0, 0, 0, 1, 122, 82, 0, 1, 120, 30, 1];
+    var b8: i32[] = elf_image_wx_unwind(t3, h3, e3, d3, elf_em_aarch64(), 0, 0);
+    // p_type @176 = 0x6474e550 (LE 80,229,116,100), p_flags @180 = 4.
+    if (b8[176] != 80 || b8[177] != 229 || b8[178] != 116 || b8[179] != 100) { return 54; }
+    if (b8[180] != 4) { return 55; }
+    // p_offset @184 = 236 (232 + 4 text, already 4-aligned); p_filesz @208 = 12.
+    if (b8[184] != 236 || b8[185] != 0 || b8[208] != 12 || b8[209] != 0) { return 56; }
+    // header bytes at 236, .eh_frame at align8(248) = 248, data still at 65536.
+    if (b8[236] != 1 || b8[237] != 27 || b8[248] != 12 || b8[256] != 1 || b8[257] != 122) { return 57; }
+    // phdr0 p_filesz @96 = 264 (the R+X segment now ends past .eh_frame).
+    if (b8[96] != 8 || b8[97] != 1) { return 58; }
+    if (b8[65536] != 7 || b8.len() != 65536 + 8) { return 59; }
     // x86-64 W^X with a 16-byte .bss past the data: p_memsz = p_filesz + bss.
     var b4: i32[] = elf_static_executable_bss_x86_wx_at(t3, d3, 16, 0);
     // e_machine = EM_X86_64 (62) @18.

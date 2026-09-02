@@ -633,8 +633,17 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
     if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
     irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
+    // Unwind rules for the frame this prologue builds (#7901), the native
+    // arm64 emitter's stream: the CFA starts at sp+0 with no return-address
+    // rule (x30 is not spilled on entry), moves to sp+16 once the pair is
+    // saved, and is then tracked through x29.
+    s = s.write("    .cfi_startproc\n");
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    .cfi_def_cfa_offset 16\n");
+    s = s.write("    .cfi_offset x29, -16\n");
+    s = s.write("    .cfi_offset x30, -8\n");
     s = s.write("    mov x29, sp\n");
+    s = s.write("    .cfi_def_cfa_register x29\n");
     var frame: i32 = r.n_locals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = fr_sub_imm(s, "sp", "sp", frame); }
@@ -785,7 +794,10 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
         } else if (o.kind_tag == 34) {  // not
             s = s.write("    ldr x0, [sp], #16\n    cmp x0, #0\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 160) {  // return
-            s = s.write("    ldr x0, [sp], #16\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n");
+            // The inline epilogue pops the frame record, so the CFA is sp+0
+            // at the `ret`; the rule is remembered and restored for the code
+            // after it, which is still inside the frame.
+            s = s.write("    ldr x0, [sp], #16\n    .cfi_remember_state\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    .cfi_def_cfa sp, 0\n    ret\n    .cfi_restore_state\n");
         } else if (o.kind_tag == 154) {  // if
             var elseidx: i32 = ir.find_matching_else(r.ops, i + 1);
             var tgt: string = "";
@@ -1613,7 +1625,7 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
     s = s.write(lp + util.i32_to_string(r.ops.len()) + ":\n");
 
     // Fallback (subset functions always end in `return`).
-    s = s.write("    mov x0, #0\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    ret\n");
+    s = s.write("    mov x0, #0\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    .cfi_def_cfa sp, 0\n    ret\n    .cfi_endproc\n");
 
     // Flush the literal pool at the function boundary. Every `const_i32` /
     // `const_i64` above emits `ldr x0, =N`, whose pool entry the assembler

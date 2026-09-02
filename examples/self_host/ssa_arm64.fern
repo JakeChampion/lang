@@ -443,18 +443,14 @@ function emit_term(f: ssa.SFunc, reg_of: i32[], widths: i32[], isfloat: i32[], b
         // An f64 return goes in d0; otherwise w0/x0.
         if (isfloat[t.value] == 1) {
             out = out + "    ldr d0, " + slot(t.value) + "\n";
-            out = out + "    mov sp, x29\n";
-            out = out + "    ldp x29, x30, [sp], #16\n";
-            return out + "    ret\n";
+            return out + arm64_epilogue();
         }
         var w: i32 = widths[t.value];
         var dst: string = "w0";
         if (w == 64) { dst = "x0"; }
         if (reg_of[t.value] >= 0) { out = out + "    mov " + dst + ", " + regn(reg_of, t.value, w) + "\n"; }
         else { out = out + "    ldr " + dst + ", " + slot(t.value) + "\n"; }
-        out = out + "    mov sp, x29\n";
-        out = out + "    ldp x29, x30, [sp], #16\n";
-        return out + "    ret\n";
+        return out + arm64_epilogue();
     }
     if (t.kind_tag == 2) {  // const_bool
         out = emit_phi_moves(f, reg_of, widths, blk.id, t.target, out);
@@ -483,7 +479,10 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
     widths = wmerged;
     var chunks: string[] = [];
     chunks = chunks.append("__fn_" + f.name + ":\n");
-    chunks = chunks.append("    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n");
+    // Unwind rules for the frame (#7901): CFA sp+0 on entry with no
+    // return-address rule, sp+16 once the pair is saved, then tracked
+    // through x29.
+    chunks = chunks.append("    .cfi_startproc\n    stp x29, x30, [sp, #-16]!\n    .cfi_def_cfa_offset 16\n    .cfi_offset x29, -16\n    .cfi_offset x30, -8\n    mov x29, sp\n    .cfi_def_cfa_register x29\n");
     var frame: i32 = f.nvals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0 && frame <= 4095) {
@@ -533,6 +532,7 @@ pub function emit_func(f: ssa.SFunc, reg_of: i32[]): string {
         chunks = chunks.append(emit_term(f, reg_of, widths, isfloat, blk, ""));
         bi = bi + 1;
     }
+    chunks = chunks.append("    .cfi_endproc\n");
     return util.str_join_chunks(chunks);
 }
 
@@ -868,4 +868,11 @@ pub function emit_program(funcs: ssa.SFunc[], use_regalloc: boolean): string {
     parts = parts.append("    mov x8, #93\n");
     parts = parts.append("    svc #0\n");
     return util.str_join_chunks(parts);
+}
+
+// arm64_epilogue is a block's return: the frame record is popped, so the
+// CFA is sp+0 at the `ret`, and the rule is remembered and restored for the
+// blocks emitted after it, which are still inside the frame.
+function arm64_epilogue(): string {
+    return "    .cfi_remember_state\n    mov sp, x29\n    ldp x29, x30, [sp], #16\n    .cfi_def_cfa sp, 0\n    ret\n    .cfi_restore_state\n";
 }

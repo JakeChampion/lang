@@ -15,9 +15,11 @@ import "./x86_native";
 function main(): i32 {
     var av: string[] = args();
     var dump: boolean = false;
+    var dump_eh: boolean = false;
     var i: i32 = 0;
     while (i < av.len()) {
         if (av[i] == "-bytes") { dump = true; }
+        if (av[i] == "-ehframe") { dump_eh = true; }
         i = i + 1;
     }
     var src: string = io.read_all_stdin();
@@ -37,6 +39,18 @@ function main(): i32 {
             print("byte " + b.to_string() + " " + a.code[b].to_string());
             b = b + 1;
         }
+    }
+    // With `-ehframe`, the .eh_frame and .eh_frame_hdr the program's `.cfi_*`
+    // directives render, at the fixed addresses the differential renders the
+    // native ones at: .text 0x400000, .eh_frame_hdr 0x400080, .eh_frame
+    // 0x400100.
+    if (dump_eh) {
+        var eh: i32[] = x86_native.x86_eh_frame(a, 4194304 as i64, 4194560 as i64);
+        var e: i32 = 0;
+        while (e < eh.len()) { print("eh " + e.to_string() + " " + eh[e].to_string()); e = e + 1; }
+        var hdr: i32[] = x86_native.x86_eh_frame_hdr(a, 4194304 as i64, 4194560 as i64, 4194432 as i64);
+        e = 0;
+        while (e < hdr.len()) { print("hdr " + e.to_string() + " " + hdr[e].to_string()); e = e + 1; }
     }
     return 0;
 }

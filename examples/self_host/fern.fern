@@ -168,12 +168,21 @@ function arm64_elf_binary(asm: string, emit_syms: boolean): string {
         return arm64_refusals("arm64-linux", "assembler", p.unknown);
     }
     var pa: arm64_native.Arm64Asm = p.asm;
-    // W^X two-segment layout: .text loads R+X at elf_text_vaddr_wx() and the
-    // data blob (.rodata + globals + the .bss heap) loads R+W on the first
-    // page boundary past .text, so no mapping is both writable and
-    // executable (required by W^X-enforcing loaders such as Android's).
+    // W^X two-segment layout: .text loads R+X at elf_text_vaddr_wx(), the
+    // unwind data the `.cfi_*` directives rendered follows it in the same
+    // segment, and the data blob (.rodata + globals + the .bss heap) loads
+    // R+W on the first page boundary past those, so no mapping is both
+    // writable and executable (required by W^X-enforcing loaders such as
+    // Android's). The unwind images are rendered before the link because
+    // the data address depends on their size; neither depends on the data.
+    var text_len: i32 = pa.code.len();
     var tv: i64 = (elf.elf_text_vaddr_wx()) as i64;
-    var dv: i64 = (elf.elf_data_vaddr_wx(pa.code.len())) as i64;
+    var hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
+    var hv: i64 = (elf.elf_eh_hdr_vaddr_wx(text_len)) as i64;
+    var ev: i64 = (elf.elf_eh_frame_vaddr_wx(text_len, hdr_len)) as i64;
+    var eh: i32[] = arm64_native.arm64_eh_frame(p, tv, ev);
+    var hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv, ev, hv);
+    var dv: i64 = (elf.elf_data_vaddr_wx_unwind(text_len, hdr.len(), eh.len())) as i64;
     p = arm64_native.arm64_gas_link(p, tv, dv);
     // Symbol resolution happens IN the link, so its refusals land here rather
     // than in the parse check above. Reporting them matters more than it
@@ -186,7 +195,7 @@ function arm64_elf_binary(asm: string, emit_syms: boolean): string {
     var pa2: arm64_native.Arm64Asm = p.asm;
     var eoff: i32 = arm64_native.arm64_asm_label_off(pa2, "_start");
     if (eoff < 0) { eoff = 0; }
-    var bin: i32[] = elf.elf_image_wx(pa2.code, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
+    var bin: i32[] = elf.elf_image_wx_unwind(pa2.code, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size);
     if (emit_syms) {
         // `-g`, the W^X counterpart of the x86 path. Arm64Asm records no
         // section per label — every label it holds is a .text label — so the
@@ -247,7 +256,7 @@ function x86_elf_binary(asm: string, emit_syms: boolean): string {
     var a: x86_native.X86Asm = x86_native.x86_gas_assemble(asm);
     // Absolute `.quad <label>` pointers need the load address, which the ELF
     // container picks — the analogue of arm64_gas_link's data-vaddr argument.
-    a = x86_native.x86_resolve_data(a, elf.elf_text_vaddr());
+    a = x86_native.x86_resolve_data(a, elf.elf_text_vaddr_x86());
     // Anything unencodable means bytes were dropped, so every offset past
     // the first is wrong — refuse rather than write it (SH-005, #6045).
     if (a.unknown.len() > 0) {
@@ -261,7 +270,16 @@ function x86_elf_binary(asm: string, emit_syms: boolean): string {
         eprint("fern: -target x86-64: no _start symbol in the emitted program\n");
         return "";
     }
-    var bin: i32[] = elf.elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, eoff);
+    // The unwind data the `.cfi_*` directives rendered, at the addresses the
+    // image places it — .text's size is final here, and the data base the
+    // assembler resolved against already accounts for these sections.
+    var tv: i64 = (elf.elf_text_vaddr_x86()) as i64;
+    var hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
+    var hv: i64 = (elf.elf_eh_hdr_vaddr_x86(a.code.len())) as i64;
+    var ev: i64 = (elf.elf_eh_frame_vaddr_x86(a.code.len(), hdr_len)) as i64;
+    var eh: i32[] = x86_native.x86_eh_frame(a, tv, ev);
+    var hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
+    var bin: i32[] = elf.elf_program_x86(a.code, hdr, eh, a.rodata, a.bss_size, eoff);
     if (emit_syms) {
         // `-g`: a static .symtab so nm / a debugger / a profiler can map an
         // address back to a function. Only .text labels (section 0) become
@@ -269,7 +287,7 @@ function x86_elf_binary(asm: string, emit_syms: boolean): string {
         // lets a backtrace attribute an address INSIDE a function rather
         // than only an exact entry point.
         var end: i32 = a.code.len();
-        bin = elf.elf_append_symtab(bin, elf.elf_text_vaddr(), elf.elf_text_off(), a.code.len(),
+        bin = elf.elf_append_symtab(bin, elf.elf_text_vaddr_x86(), elf.elf_text_off_x86(), a.code.len(),
             elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
             elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
             elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end));

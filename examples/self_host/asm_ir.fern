@@ -3778,8 +3778,16 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
     if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
     irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vsigs);
     s = s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n");
+    // Unwind rules for the frame this prologue builds (#7901): the CFA starts
+    // at rsp+8 (the CIE's rule), moves to rsp+16 once rbp is pushed, and is
+    // then tracked through rbp. Each inline epilogue restores the rule for
+    // the code that follows it.
+    s = s.write("    .cfi_startproc\n");
     s = s.write("    pushq %rbp\n");
+    s = s.write("    .cfi_def_cfa_offset 16\n");
+    s = s.write("    .cfi_offset %rbp, -16\n");
     s = s.write("    movq %rsp, %rbp\n");
+    s = s.write("    .cfi_def_cfa_register %rbp\n");
     var frame: i32 = r.n_locals * 8;
     if (frame % 16 != 0) { frame = frame + 8; }
     if (frame > 0) { s = s.write("    subq $" + util.i32_to_string(frame) + ", %rsp\n"); }
@@ -3918,7 +3926,10 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 34) {  // not
             s = s.write("    popq %rax\n    testq %rax, %rax\n    setz %al\n    movzbq %al, %rax\n    pushq %rax\n");
         } else if (o.kind_tag == 160) {  // return
-            s = s.write("    popq %rax\n    leave\n    ret\n");
+            // `leave` pops rbp, so the CFA is rsp+8 at the `ret`; the rule is
+            // remembered and restored for the code after it, which is still
+            // inside the frame.
+            s = s.write("    popq %rax\n    .cfi_remember_state\n    leave\n    .cfi_def_cfa %rsp, 8\n    ret\n    .cfi_restore_state\n");
         } else if (o.kind_tag == 154) {  // if
             // jump to the matching else (if any) or end when the cond is false.
             var elseidx: i32 = ir.find_matching_else(r.ops, i + 1);
@@ -4685,7 +4696,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
     // Fallback (subset functions always end in `return`).
     s = s.write("    movq $0, %rax\n");
     s = s.write("    leave\n");
+    s = s.write("    .cfi_def_cfa %rsp, 8\n");
     s = s.write("    ret\n");
+    s = s.write("    .cfi_endproc\n");
     return s;
 }
 
