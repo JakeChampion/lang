@@ -2759,6 +2759,14 @@ func asmLoadStore(a *Assembler, mnem string, ops []string) error {
 		a.Emit(LoadStoreUnscaled(rt, m.base, int32(m.off), size, sz.load))
 		return nil
 	}
+	// The scaled field is 12 bits, so the largest offset it reaches is
+	// 4095*size. One step past that wraps to zero rather than overflowing
+	// out of the instruction: `ldr x1, [x2, #32768]` would encode as
+	// `ldr x1, [x2]`, a valid instruction addressing the wrong memory. gas
+	// refuses it; so must this.
+	if m.off>>size > 4095 {
+		return fmt.Errorf("%s scaled offset %d out of range (0..%d in steps of %d)", mnem, m.off, 4095<<size, 1<<size)
+	}
 	a.Emit(LoadStoreUnsigned(rt, m.base, uint32(m.off), size, sz.load))
 	return nil
 }
@@ -2823,6 +2831,9 @@ func asmLoadStoreFP(a *Assembler, mnem string, rt uint32, single bool, ops []str
 		}
 		a.Emit(unscaled(rt, m.base, int32(m.off)))
 		return nil
+	}
+	if m.off/scale > 4095 {
+		return fmt.Errorf("%s FP scaled offset %d out of range (0..%d in steps of %d)", mnem, m.off, 4095*scale, scale)
 	}
 	a.Emit(unsigned(rt, m.base, uint32(m.off/scale)))
 	return nil
