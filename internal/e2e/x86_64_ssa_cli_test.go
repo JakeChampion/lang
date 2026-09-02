@@ -63,6 +63,15 @@ function main(): i32 { return add3(2, 3, 4) - 14; }
     return t - 14;
 }
 `},
+		// Payloadless enum variants: each is a pointer to a shared .rodata cell
+		// holding the tag, so the match reads [ptr+0] the same way it reads a heap
+		// box.
+		{"enum-match", `enum Shape { Circle, Square }
+function main(): i32 {
+    var s: Shape = Shape.Square;
+    match (s) { Shape.Circle => { return 1; }, Shape.Square => { return 0; } }
+}
+`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -97,31 +106,106 @@ function main(): i32 { return add3(2, 3, 4) - 14; }
 		})
 	}
 
-	// The coverage endpoint. An enum program reaches x86_64ssa's `EnumSentinel`
-	// opcode, which its GAS emitter does not yet write (arm64ssa's does, via a
-	// shared .rodata cell per tag) — so this is the documented refusal, and the
-	// test pins that it stays a refusal rather than becoming a wrong answer.
-	// When EnumSentinel lands, this case starts compiling and the assertion
-	// below is what will say so.
-	t.Run("uncovered-refuses-cleanly", func(t *testing.T) {
-		dir := t.TempDir()
-		src := mustWrite(t, dir, "enum.fern", `enum Shape { Circle, Square }
+	// The coverage endpoints. Two shapes are outside the subset for different
+	// reasons, and BOTH must refuse with a diagnostic naming the backend — that
+	// is the property that makes the subset safe to widen one slice at a time.
+	//
+	//   - A float reinterpret is refused during instruction selection, by name.
+	//   - A program needing a runtime helper the emitter has no body for used to
+	//     get all the way to the assembler and die on `undefined label
+	//     "fn___fern_drop_arr_str"`, which names neither the backend nor the
+	//     coverage gap. checkNoDanglingCalls now catches it at emit time.
+	for _, c := range []struct {
+		name string
+		src  string
+		want string // a fragment the diagnostic must carry
+	}{
+		// f64_bits, on a value the constant folder cannot see through — a literal
+		// argument is folded in the IR and never reaches the backend at all.
+		{"float-reinterpret", `function widen(n: i32): f64 { return n as f64 + 0.5; }
 function main(): i32 {
-    var s: Shape = Shape.Circle;
-    match (s) { Shape.Circle => { return 0; }, Shape.Square => { return 1; } }
+    var b: i64 = f64_bits(widen(3));
+    return (b % 7) as i32;
+}
+`, "reinterpret_f64_to_i64"},
+		{"missing-runtime-helper", `function main(): i32 {
+    var xs: string[] = ["a", "b"];
+    return xs.len() as i32;
+}
+`, "call target(s) the module never defines"},
+	} {
+		t.Run("uncovered-refuses-cleanly/"+c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := mustWrite(t, dir, "prog.fern", c.src)
+			out, err := exec.Command(fern, "-target", "x86-64-linux", "-backend", "ssa", "-o", filepath.Join(dir, "out"), src).CombinedOutput()
+			if err == nil {
+				t.Skipf("%s now compiles through x86-64 SSA — fold this case into the covered table above", c.name)
+			}
+			if !strings.Contains(string(out), "x86-64/ssa:") {
+				t.Errorf("an uncovered construct must refuse with a diagnostic naming the backend, got:\n%s", out)
+			}
+			if !strings.Contains(string(out), c.want) {
+				t.Errorf("the diagnostic must say what is missing (%q), got:\n%s", c.want, out)
+			}
+			if strings.Contains(string(out), "undefined label") {
+				t.Errorf("a coverage gap must be refused by the backend, not discovered by the assembler:\n%s", out)
+			}
+			if strings.Contains(string(out), "signal:") || strings.Contains(string(out), "panic:") {
+				t.Errorf("an uncovered construct must REFUSE, not crash:\n%s", out)
+			}
+		})
+	}
+}
+
+// The register allocator has no call-clobber awareness: EmitAsmModule saves
+// EVERY caller-saved allocatable register that could hold a live-across-call
+// value, around every call. On straight-line code that costs nothing, and the
+// covered table above shows the allocated path 56-81% smaller. Put calls inside
+// a loop and the saves multiply — and enums bring calls with them, because a
+// match drops its scrutinee through __fern_rc_inc / __fern_rc_dec.
+//
+// Measured on the program below: 217 instructions against the stack machine's
+// 208, of which 34 are push/pop against its 6. So the allocator wins the body
+// and loses it back at the call boundary. This is the gate for fixing that —
+// when a real clobber set lands, the case flips and says so.
+func TestX86_64SSACallHeavyLoopIsLargerToday(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("x86-64 backends are not exercised on windows")
+	}
+	fern := buildFernCLI(t)
+	dir := t.TempDir()
+	src := mustWrite(t, dir, "prog.fern", `enum Shape { Circle, Square, Triangle }
+function pick(n: i32): Shape {
+    if (n == 0) { return Shape.Circle; }
+    if (n == 1) { return Shape.Square; }
+    return Shape.Triangle;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        match (pick(i)) {
+            Shape.Circle => { t = t + 1; },
+            Shape.Square => { t = t + 10; },
+            Shape.Triangle => { t = t + 100; }
+        }
+        i = i + 1;
+    }
+    return t - 111;
 }
 `)
-		out, err := exec.Command(fern, "-target", "x86-64-linux", "-backend", "ssa", "-o", filepath.Join(dir, "out"), src).CombinedOutput()
-		if err == nil {
-			t.Skip("enums now compile through x86-64 SSA — EnumSentinel landed; fold this case into the covered table above")
-		}
-		if !strings.Contains(string(out), "x86-64/ssa:") {
-			t.Errorf("an uncovered construct must refuse with a diagnostic naming the backend, got:\n%s", out)
-		}
-		if strings.Contains(string(out), "signal:") || strings.Contains(string(out), "panic:") {
-			t.Errorf("an uncovered construct must REFUSE, not crash:\n%s", out)
-		}
-	})
+	baseAsm := mustEmitAsm(t, fern, src, false)
+	ssaAsm := mustEmitAsm(t, fern, src, true)
+	baseN, ssaN := countAsmInstructions(baseAsm), countAsmInstructions(ssaAsm)
+	if ssaN < baseN {
+		t.Skipf("SSA now emits %d against the stack machine's %d — call-clobber awareness landed; "+
+			"move this program into TestX86_64SSABackendCLI's covered table and delete this test", ssaN, baseN)
+	}
+	saves := strings.Count(ssaAsm, "\tpush ") + strings.Count(ssaAsm, "\tpop ")
+	if saves <= strings.Count(baseAsm, "\tpush ")+strings.Count(baseAsm, "\tpop ") {
+		t.Errorf("SSA is larger (%d vs %d) but not from caller-save traffic (%d push/pop) — "+
+			"the cost has moved somewhere else and this test no longer measures what it says", ssaN, baseN, saves)
+	}
 }
 
 // mustEmitAsm returns the GAS text a backend writes to stdout for src. Both the
