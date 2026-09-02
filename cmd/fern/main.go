@@ -2474,11 +2474,34 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		}
 		return os.Chmod(outPath, 0o755)
 	}
-	text, rodata, err := nativex86.AssembleProgramWX(asm, nativeelf.SegmentAddrsWXX86)
+	a, err := nativex86.ParseProgram(asm)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
-	bin := nativeelf.StaticExecutableDataX86WX(text, rodata)
+	// Three steps, because each address depends on the one before: branch
+	// relaxation settles .text's size, .eh_frame goes 8-aligned after it, and
+	// only then is the data segment's address known. The first call asks for
+	// the .eh_frame address alone — its length cannot matter to where it
+	// starts — so the image can be rendered at the address it will load at,
+	// which a CIE declaring pcrel FDE pointers requires.
+	//
+	// Asm carrying no `.cfi_*` renders an empty image, and both calls then
+	// reduce to the layout without one, byte for byte.
+	textLen, err := a.TextLen()
+	if err != nil {
+		return fmt.Errorf("native assembler: %w", err)
+	}
+	textVAddr, ehVAddr, _ := nativeelf.SegmentAddrsWXEhX86(textLen, 1)
+	ehFrame, err := a.EhFrame(textVAddr, ehVAddr)
+	if err != nil {
+		return fmt.Errorf("native assembler: %w", err)
+	}
+	textVAddr, _, dataVAddr := nativeelf.SegmentAddrsWXEhX86(textLen, len(ehFrame))
+	text, rodata, err := a.BytesProgramWX(textVAddr, dataVAddr)
+	if err != nil {
+		return fmt.Errorf("native assembler: %w", err)
+	}
+	bin := nativeelf.StaticExecutableDataX86WXEhFrame(text, ehFrame, rodata)
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}
