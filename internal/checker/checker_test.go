@@ -6329,6 +6329,105 @@ function main(): i32 { var s: string = "hey"; return f(s).len(); }`); err != nil
 // deliberate "resolve me from context" form and so conflicts with nothing.
 //
 // Found by sweeping fernsmith printable seeds past CI's range (seed 603).
+// A payloadless variant of a generic enum written bare (`Leaf`) types as the
+// argless `Tree`, the same "not yet resolved" form as an under-inferred
+// variant call. In a payload or field position whose expected type is the
+// enum's instantiation (`Tree[K, V]`) it binds nothing and conflicts with
+// nothing — the recursive-tree constructor `Node(Leaf, k, v, Leaf)` must not
+// need a pre-annotated local per empty child.
+func TestBareNullaryVariantUnifiesWithGenericEnumInstantiation(t *testing.T) {
+	const decls = `enum Tree[K, V] { Leaf, Node(Tree[K, V], K, V, Tree[K, V]) }
+struct TMap[K, V] { root: Tree[K, V], size: i32 }
+`
+	for _, tc := range []struct{ name, body string }{
+		{"variant payload", `function one[K, V](k: K, v: V): Tree[K, V] { return Node(Leaf, k, v, Leaf); }
+function main(): i32 { var t: Tree[i32, i32] = one(1, 2); return 0; }`},
+		{"struct field", `function empty[K, V](): TMap[K, V] { return TMap { root: Leaf, size: 0 }; }
+function main(): i32 { var m: TMap[i32, string] = empty(); return m.size; }`},
+		{"concrete payload", `function main(): i32 { var t: Tree[i32, i32] = Node(Leaf, 1, 2, Leaf); return 0; }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := checkSource(t, decls+tc.body); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+	// A DIFFERENT enum's argless form is still a mismatch.
+	t.Run("other enum rejected", func(t *testing.T) {
+		err := checkSource(t, decls+`enum Other { Nil }
+function main(): i32 { var t: Tree[i32, i32] = Node(Nil, 1, 2, Leaf); return 0; }`)
+		if err == nil || !strings.Contains(err.Error(), "payload 0 type Other, expected Tree[K, V]") {
+			t.Fatalf("expected the payload mismatch, got %v", err)
+		}
+	})
+}
+
+// A cast around a generic call whose type parameter an ARGUMENT already
+// pins must not retarget the instantiation: `get_or(b, 0, 7i32) as i64`
+// with `b: Box[i32]` is a conversion of an i32 result, not a request for
+// `get_or[i64]`. The destination-driven restamp exists for `id(7) as i64`,
+// where only literals reach T; it used to fire here too because a T bound
+// to plain `i32` is recorded at the default width and read as unsettled
+// (monomorph then rejected its own clone: "expected Box__i64, got
+// Box__i32").
+func TestCastDoesNotRetargetPinnedGenericCall(t *testing.T) {
+	const decls = `struct Box[T] { x: T }
+function get_or2[T](b: Box[T], i: i32, fallback: T): T { if (i == 0) { return b.x; } return fallback; }
+pub function (b: Box[T]) get_or(i: i32, fallback: T): T { if (i == 0) { return b.x; } return fallback; }
+function id[T](x: T): T { return x; }
+`
+	for _, tc := range []struct{ name, body string }{
+		{"free function, literal fallback", `function main(): i32 { var b: Box[i32] = Box { x: 41 }; var t: i64 = get_or2(b, 0, 0) as i64; return t as i32; }`},
+		{"method, typed literal fallback", `function main(): i32 { var b: Box[i32] = Box { x: 41 }; var t: i64 = b.get_or(0, 7i32) as i64; return t as i32; }`},
+		{"var destination", `function main(): i32 { var b: Box[i32] = Box { x: 41 }; var t: i64 = (b.get_or(0, 0) as i64) + 1i64; return t as i32; }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(decls + tc.body)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info, err := Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			_ = info
+			// The destination must not have rewritten the call's T.
+			ast.WalkProgram(prog, func(n ast.Node) bool {
+				c, ok := n.(*ast.Call)
+				if !ok || len(c.TypeArgs) != 1 {
+					return true
+				}
+				if id, ok := c.Callee.(*ast.Ident); ok && (id.Name == "get_or2" || strings.HasSuffix(id.Name, "get_or")) {
+					if nt, ok := c.TypeArgs[0].(ast.NumberType); !ok || nt.NormalWidth() != 32 {
+						t.Errorf("%s instantiated at %v, want i32", id.Name, c.TypeArgs[0])
+					}
+				}
+				return true
+			})
+		})
+	}
+	// The literal-only shape keeps its destination-driven width.
+	t.Run("literal-only call still settles from the cast", func(t *testing.T) {
+		prog, err := parser.Parse(decls + `function main(): i32 { var t: i64 = id(7) as i64; return t as i32; }`)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if _, err := Check(prog); err != nil {
+			t.Fatalf("check: %v", err)
+		}
+		ast.WalkProgram(prog, func(n ast.Node) bool {
+			if c, ok := n.(*ast.Call); ok {
+				if id, ok := c.Callee.(*ast.Ident); ok && id.Name == "id" && len(c.TypeArgs) == 1 {
+					if nt, ok := c.TypeArgs[0].(ast.NumberType); !ok || nt.NormalWidth() != 64 {
+						t.Errorf("id instantiated at %v, want i64", c.TypeArgs[0])
+					}
+				}
+			}
+			return true
+		})
+	})
+}
+
 func TestGenericArglessEnumArgInMethodReceiver(t *testing.T) {
 	// `g` returns a Box so the receiver position can use a user-defined
 	// method — checkSource resolves no stdlib, so `.to_string()` is not

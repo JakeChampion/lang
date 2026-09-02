@@ -7124,10 +7124,20 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 		sub[p.Name] = actual
 		return true
 	}
-	// Generic enum positions: unify pairwise.
+	// Generic enum positions: unify pairwise. An argless actual of the same
+	// generic enum — a bare payloadless variant (`Leaf`) or a construction
+	// whose args the payloads alone cannot fill — is the "not yet resolved"
+	// form: less specific than any instantiation, so it binds nothing and
+	// conflicts with nothing.
 	if e, ok := expected.(ast.EnumType); ok {
 		a, ok := actual.(ast.EnumType)
-		if !ok || a.Name != e.Name || len(a.Args) != len(e.Args) {
+		if !ok || a.Name != e.Name {
+			return false
+		}
+		if len(a.Args) == 0 && len(e.Args) > 0 {
+			return true
+		}
+		if len(a.Args) != len(e.Args) {
 			return false
 		}
 		for i := range e.Args {
@@ -13863,7 +13873,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// Arg 0 of a dispatch-rewritten call is the receiver, typed above.
 			at := recvType
 			if !(recvIsArg0 && i == 0) {
+				// A bare variant call in argument position (`f(Leaf(h, k, v))`)
+				// is disambiguated by the parameter's monomorphised enum the
+				// same way a var / return / field destination disambiguates it.
+				if i < len(ft.Params) {
+					pt := ft.Params[i]
+					if sub != nil {
+						pt = substituteType(pt, sub)
+					}
+					if c.monomorphCloneEnumName(pt) != "" {
+						c.expectedType = pt
+					}
+				}
 				at = c.checkExpr(n.Args[i], s)
+				c.expectedType = nil
 			}
 			c.elemHint = nil
 			if i < len(ft.Params) && at != nil {
@@ -15865,13 +15888,26 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 		// re-check rejected the i64 literal arg.
 		if id, ok := x.Callee.(*ast.Ident); ok && !c.shadowedGenericCalls[x] {
 			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
+				// An argument whose parameter mentions T and which is not
+				// a still-unsettled literal PINS T: `get_or(b, 0, 7i32)`
+				// with `b: Box[i32]` has T = i32 whatever the destination
+				// says. The TypeArgs entry alone cannot tell — a T bound to
+				// plain `i32` is recorded at the default width, which reads
+				// as unsettled — so only restamp when every T-bearing
+				// argument is literal-shaped.
+				pinned := false
 				for i, p := range fn.Params {
 					if i >= len(x.Args) {
 						break
 					}
 					if pt, ok := p.Type.(ast.ParamType); ok {
 						_ = pt
+						if !unsettledNumericShape(x.Args[i]) {
+							pinned = true
+						}
 						c.settleInt(x.Args[i], hn)
+					} else if containsParamType(p.Type) {
+						pinned = true
 					}
 				}
 				// Re-stamp TypeArgs only when the existing entry
@@ -15879,13 +15915,36 @@ func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
 				// didn't fix T at a concrete width. A concrete
 				// entry (e.g. from a typed-literal arg) wins
 				// over the surrounding-context hint.
-				if len(fn.TypeParams) == 1 && len(x.TypeArgs) == 1 &&
+				if !pinned && len(fn.TypeParams) == 1 && len(x.TypeArgs) == 1 &&
 					isPolymorphicNumeric(x.TypeArgs[0]) {
 					x.TypeArgs[0] = hn
 				}
 			}
 		}
 	}
+}
+
+// unsettledNumericShape reports whether `e` is an expression whose width a
+// destination hint may still decide: a bare literal (or a sign / arithmetic
+// tree of them) that no earlier settle pass stamped. Anything else — an
+// identifier, a call, a field, a typed literal — has a type of its own.
+func unsettledNumericShape(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		return x.Width == 0 && !x.IsFloat
+	case *ast.FloatLit:
+		return x.Width == 0
+	case *ast.Unary:
+		return (x.Op == "-" || x.Op == "+") && unsettledNumericShape(x.Operand)
+	case *ast.Binary:
+		if x.IntWidth != 0 || x.FloatWidth != 0 || x.IsStringConcat {
+			return false
+		}
+		return unsettledNumericShape(x.Left) && unsettledNumericShape(x.Right)
+	case *ast.IfExpr:
+		return x.Then != nil && x.Else != nil && unsettledNumericShape(x.Then) && unsettledNumericShape(x.Else)
+	}
+	return false
 }
 
 // isPolymorphicNumeric reports whether t is an unsettled
