@@ -343,13 +343,13 @@ pub function e_unknown(kind: string): ast.Expr { return ast.ExprUnknown { kind: 
 pub function e_unknown_at(kind: string, line: i32, col: i32): ast.Expr { return ast.ExprUnknown { kind: kind, line: line, col: col }; }
 
 function s_var(name: string, type_name: string, init: ast.Expr): ast.Stmt {
-    return ast.StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0, is_str: false, fn_ret: "" };
+    return ast.StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" };
 }
 // s_var_at is s_var with an explicit source position (used at the parse
 // site so a `var` declaration's diagnostics — E003 / E013 / E020 — point
 // at the `var` keyword).
 function s_var_at(name: string, type_name: string, init: ast.Expr, line: i32, col: i32): ast.Stmt {
-    return ast.StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, is_str: false, fn_ret: "" };
+    return ast.StmtVar { name: name, type_name: type_name, init: init, line: line, col: col, is_str: false, fn_ret: "", fn_param_types: "" };
 }
 
 // parse_destructure_names consumes `(a, b, …)` with the cursor ON the opening
@@ -5862,16 +5862,25 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         // so a lambda init can be stamped with it below. "" when the binding has
         // no annotation or the annotation is not a fn type.
         var v_fn_ret: string = "";
+        // The declared fn type's PARAMETER spellings, the other half of the
+        // signature `fn_ret` names — peeked before parse_type_name coarsens the
+        // annotation to "fn" / "fn[]", exactly as parse_param and
+        // parse_struct_field do it. Kept only when the resulting tag makes one
+        // of the two peeks meaningful (fn_param_types_for).
+        var v_fn_ptys: string = "";
         if (p.peek_punct() == ":") {
             p = p.advance();
             if (p.peek_ident() == "str") {
                 var vstr_probe: Par = p.advance();
                 if (vstr_probe.peek_punct() == "=") { v_is_str = true; }
             }
+            var vtr_fn_ptys: string = peek_fn_param_types(p);
+            var vtr_arr_ptys: string = peek_fn_array_param_types(p);
             var (vtr_name, vtr_ret_arr, vtr_fn_ret, vtr_p) = parse_type_name(p);
             p = vtr_p;
             type_name = vtr_name;
             v_fn_ret = vtr_fn_ret;
+            v_fn_ptys = fn_param_types_for(vtr_name, vtr_fn_ptys, vtr_arr_ptys);
         }
         if (p.peek_punct() != "=") {
             return (s_unknown(p, "missing = in var"), p);
@@ -5930,7 +5939,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         // builtin surface. The annotation outranks the inference.
         init_expr = stamp_lambda_ret(init_expr, v_fn_ret);
         init_expr = stamp_value_block_ret(init_expr, type_name);
-        return (ast.StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str, fn_ret: v_fn_ret }, p);
+        return (ast.StmtVar { name: name, type_name: type_name, init: init_expr, line: vline, col: vcol, is_str: v_is_str, fn_ret: v_fn_ret, fn_param_types: v_fn_ptys }, p);
     }
     if (kw == "return") {
         var rline: i32 = p.peek_line();
@@ -6917,6 +6926,29 @@ function peek_fn_param_types(p0: Par): string {
     return types;
 }
 
+// peek_fn_array_param_types is peek_fn_param_types asked of an ARRAY of fn
+// values — `((f64) => f64)[]`, coarsened by parse_type_name to the flat "fn[]"
+// tag. The ELEMENT's parameter spellings are what a call through `fs[0](4.5)`
+// needs, so step over the grouping paren the array element is written in and ask
+// the fn-type peek about what is inside it. "" for anything that is not one,
+// which is indistinguishable from a zero-parameter element for the same reason
+// peek_fn_param_types is — callers keep the result only when parse_type_name
+// agreed the tag is "fn[]".
+function peek_fn_array_param_types(p0: Par): string {
+    if (p0.peek_punct() != "(") { return ""; }
+    return peek_fn_param_types(p0.advance());
+}
+
+// fn_param_types_for keeps whichever of the two peeks the resulting type tag
+// makes meaningful: the fn-type one for a bare `fn`, the array one for `fn[]`,
+// and "" for every other tag (both peeks answer "" for a non-fn type, but so do
+// they for a zero-parameter fn, so the tag is what separates them).
+function fn_param_types_for(type_name: string, fn_ptys: string, arr_ptys: string): string {
+    if (type_name == "fn") { return fn_ptys; }
+    if (type_name == "fn[]") { return arr_ptys; }
+    return "";
+}
+
 function parse_param(p: Par): (ast.ParamDecl, Par) {
     var name: string = p.peek_ident();
     if (name.len() == 0) {
@@ -7411,16 +7443,17 @@ function parse_struct_field(p: Par): (StructFieldDecl, Par) {
         return (StructFieldDecl { name: name, type_name: "", fn_ret: "", fn_param_types: "" }, p);
     }
     p = p.advance();
-    // The PARAMETER spellings of a fn-typed field, peeked before parse_type_name
-    // coarsens the whole type to "fn" — the same non-consuming lookahead
-    // parse_param uses, and cleared on the same rule (it answers "" both for a
-    // zero-arg fn type and for a non-fn type, so only a "fn" tag makes it
-    // meaningful). Without them a funcref tag cannot name a field call's
-    // signature and irlower has to fall back to the arity-keyed form (#5986).
+    // The PARAMETER spellings of a fn-typed field — or, for `hs: ((i32) => i32)[]`,
+    // of its ELEMENT — peeked before parse_type_name coarsens the whole type to
+    // "fn" / "fn[]". The same non-consuming lookahead parse_param uses, kept on
+    // the same rule: both peeks answer "" for a non-fn type as well as for a
+    // zero-parameter one, so the resulting tag is what makes one meaningful.
+    // Without them a funcref tag cannot name a field call's signature and
+    // irlower has to fall back to the arity-keyed form (#5986).
     var sftr_fn_ptys: string = peek_fn_param_types(p);
+    var sftr_arr_ptys: string = peek_fn_array_param_types(p);
     var (sftr_name, sftr_ret_arr, sftr_fn_ret, sftr_p) = parse_type_name(p);
-    if (sftr_name != "fn") { sftr_fn_ptys = ""; }
-    return (StructFieldDecl { name: name, type_name: sftr_name, fn_ret: sftr_fn_ret, fn_param_types: sftr_fn_ptys }, sftr_p);
+    return (StructFieldDecl { name: name, type_name: sftr_name, fn_ret: sftr_fn_ret, fn_param_types: fn_param_types_for(sftr_name, sftr_fn_ptys, sftr_arr_ptys) }, sftr_p);
 }
 
 // parse_struct_decl consumes `struct Name { field, field, … }`
@@ -9529,7 +9562,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
             var iv: RExpr = mono_call_expected(v.init, v.type_name, env, funcs, ins);
             var ty: string = v.type_name;
             if (ty.len() == 0) { ty = mono_infer(v.init, env, funcs); }
-            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }, renv: env.ebind(v.name, ty), rins2: iv.rins };
+            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, renv: env.ebind(v.name, ty), rins2: iv.rins };
         },
         ast.StmtReturn(r) => {
             // A `return mk()` binds a bounded-generic constructor's type params
@@ -9795,7 +9828,7 @@ function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): ast.S
     while (i < stmts.len()) {
         var st: ast.Stmt = stmts[i];
         match (st) {
-            ast.StmtVar(v) => { out = out.append(ast.StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }); },
+            ast.StmtVar(v) => { out = out.append(ast.StmtVar { name: v.name, type_name: subst_ty(v.type_name, tparams, cts), init: subst_expr(v.init, tparams, cts), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }); },
             ast.StmtReturn(r) => { out = out.append(ast.StmtReturn { value: subst_expr(r.value, tparams, cts), line: r.line, col: r.col }); },
             ast.StmtExpr(x) => { out = out.append(ast.StmtExpr { value: subst_expr(x.value, tparams, cts), line: x.line }); },
             ast.StmtAssign(a) => { out = out.append(ast.StmtAssign { target: a.target, value: subst_expr(a.value, tparams, cts), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
@@ -9875,7 +9908,7 @@ function retarget_self_lit_stmts(stmts: ast.Stmt[], base: string, mang: string):
     while (i < stmts.len()) {
         var st: ast.Stmt = stmts[i];
         match (st) {
-            ast.StmtVar(v) => { out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }); },
+            ast.StmtVar(v) => { out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }); },
             ast.StmtReturn(r) => { out = out.append(ast.StmtReturn { value: retarget_self_lit_expr(r.value, base, mang), line: r.line, col: r.col }); },
             ast.StmtExpr(x) => { out = out.append(ast.StmtExpr { value: retarget_self_lit_expr(x.value, base, mang), line: x.line }); },
             ast.StmtAssign(a) => { out = out.append(ast.StmtAssign { target: a.target, value: retarget_self_lit_expr(a.value, base, mang), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }); },
@@ -10775,7 +10808,7 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
             // generic-struct annotation takes its instantiation from that
             // annotation: rewrite it to `Box__Inner.default()`.
             var ninit: ast.Expr = retype_struct_lit(retype_assoc_ctor(iv.rexpr, ta.ty, gstructs), ta.ty, gstructs);
-            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: false, fn_ret: v.fn_ret }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
+            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, is_str: false, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, renv: env.ebind(v.name, ta.ty), rins2: ta.mins };
         },
         ast.StmtReturn(r) => {
             var rv: RExpr = ms_expr(r.value, env, gstructs, funcs, ins);
@@ -11856,7 +11889,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
                 }
             }
             if (vty.len() == 0) { vty = me_scrutinee_type(v.init, env, enums, structs, funcs); }
-            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col, is_str: false, fn_ret: v.fn_ret }, renv: env.ebind(v.name, vty), rins2: cins };
+            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nty, init: iv.rexpr, line: v.line, col: v.col, is_str: false, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, renv: env.ebind(v.name, vty), rins2: cins };
         },
         ast.StmtReturn(r) => {
             var rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
@@ -12533,7 +12566,7 @@ function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32
             ast.StmtVar(v) => {
                 var vve: DeferEdgeExpr = dl_edges_expr(v.init, actions, flags, start, armed, label, own_level);
                 armed = vve.armed;
-                out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret });
+                out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types });
             },
             ast.StmtExpr(x) => {
                 var xve: DeferEdgeExpr = dl_edges_expr(x.value, actions, flags, start, armed, label, own_level);
@@ -12694,7 +12727,7 @@ function dl_collect_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[]): Defer
         },
         ast.StmtVar(v) => {
             var ir: DeferExprAcc = dl_collect_expr(v.init, actions, flags);
-            var one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }];
+            var one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }];
             return DeferAcc { stmts: one, actions: ir.actions, flags: ir.flags };
         },
         ast.StmtReturn(r) => {
@@ -12873,7 +12906,7 @@ function dl_expand_return_stmt(st: ast.Stmt, cleanup_all: ast.Stmt[], cleanup_er
             return out;
         },
         ast.StmtVar(v) => {
-            var one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, cleanup_all, cleanup_err), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }];
+            var one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, cleanup_all, cleanup_err), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }];
             return one;
         },
         ast.StmtExpr(x) => {
@@ -13959,7 +13992,7 @@ function rvf_expr(e: ast.Expr, structs: StructDecl[]): ast.Expr {
 
 function rvf_stmt(st: ast.Stmt, structs: StructDecl[]): ast.Stmt {
     match (st) {
-        ast.StmtVar(v) => { return ast.StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }; },
+        ast.StmtVar(v) => { return ast.StmtVar { name: v.name, type_name: v.type_name, init: rvf_expr(v.init, structs), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }; },
         ast.StmtReturn(r) => { return ast.StmtReturn { value: rvf_expr(r.value, structs), line: r.line, col: r.col }; },
         ast.StmtExpr(x) => { return ast.StmtExpr { value: rvf_expr(x.value, structs), line: x.line }; },
         ast.StmtIf(f) => { return ast.StmtIf { ...f, cond: rvf_expr(f.cond, structs), then_body: rvf_block(f.then_body, structs), else_body: rvf_block(f.else_body, structs) }; },
@@ -15153,7 +15186,7 @@ function elb_mark_stmts(stmts: ast.Stmt[], idx: string, arr: string): ast.Stmt[]
 }
 function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
     match (st) {
-        ast.StmtVar(v) => { return ast.StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret }; },
+        ast.StmtVar(v) => { return ast.StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }; },
         ast.StmtReturn(r) => { return ast.StmtReturn { value: elb_mark_expr(r.value, idx, arr), line: r.line, col: r.col }; },
         ast.StmtExpr(x) => { return ast.StmtExpr { value: elb_mark_expr(x.value, idx, arr), line: x.line }; },
         ast.StmtAssign(a) => { return ast.StmtAssign { target: a.target, value: elb_mark_expr(a.value, idx, arr), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }; },
@@ -15395,7 +15428,7 @@ function cf_inline_fn_body(body: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
                             if (cf_all_zero_arg_fn_elems(arr.elements, funcs) && cf_decl_count(out, v.name) == 1) {
                                 var asc: CFScan = cf_arr_scan_stmts(out, v.name);
                                 if (asc.vals == 0 && asc.calls >= 1) {
-                                    keep = ast.StmtVar { name: v.name, type_name: "fn[]", init: v.init, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
+                                    keep = ast.StmtVar { name: v.name, type_name: "fn[]", init: v.init, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
                                 }
                             }
                         },
@@ -15513,7 +15546,7 @@ function fnv_rewrite_stmt(st: ast.Stmt, whole: ast.Stmt[], funcs: FuncDecl[], st
                 match (v.init) {
                     ast.ExprIdent(rid) => {
                         if (fnv_is_struct_ret_zero_arg(funcs, structs, rid.name) && fnv_name_called_in_block(whole, v.name)) {
-                            return ast.StmtVar { name: v.name, type_name: "fn", init: v.init, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
+                            return ast.StmtVar { name: v.name, type_name: "fn", init: v.init, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
                         }
                     },
                     _ => {}
@@ -17689,7 +17722,7 @@ function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: str
     match (st) {
         ast.StmtVar(v) => {
             var init: ast.Expr = settle_to_name(settle_expr(v.init, names, types, funcs, structs), v.type_name);
-            return ast.StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
+            return ast.StmtVar { name: v.name, type_name: v.type_name, init: init, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
         },
         ast.StmtReturn(r) => {
             return ast.StmtReturn { value: settle_to_name(settle_expr(r.value, names, types, funcs, structs), ret_type), line: r.line, col: r.col };
