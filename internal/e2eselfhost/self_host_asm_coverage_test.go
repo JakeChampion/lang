@@ -419,15 +419,15 @@ func TestSelfHostAsmCoverageArm64(t *testing.T) {
 
 // x86KnownHelpers are the lookup helpers x86_gas_emit consults instead of
 // spelling those mnemonics as literals in its own body — the suffix
-// families' base-mnemonic tables, the fixed/string byte tables, and the
-// SSE tables (#7893). Their bodies are extracted alongside x86_gas_emit's
+// families' base-mnemonic tables, the no-operand byte table and its
+// rep-eligibility predicate, and the SSE tables (#7893). Their bodies are extracted alongside x86_gas_emit's
 // so every mnemonic the assembler accepts is enumerated; a helper that
 // disappears fails loudly in fernFnBody rather than silently shrinking
 // the probed surface.
 var x86KnownHelpers = []string{
 	"x86_gas_alu_ext", "x86_gas_unary_ext", "x86_gas_incdec_ext",
 	"x86_gas_shift_ext", "x86_gas_bt_idx",
-	"x86_gas_fixed_op", "x86_gas_string_op",
+	"x86_gas_fixed_op", "x86_gas_rep_ok",
 	"x86_gas_sse_fp_op", "x86_gas_sse_int_op", "x86_gas_sse38_op",
 	"x86_gas_vshift_op", "x86_gas_imm3a_op", "x86_gas_shuf_op",
 	"x86_gas_cvt2si", "x86_gas_extend_op",
@@ -441,10 +441,13 @@ var x86KnownHelpers = []string{
 //
 // The probe line IS the AT&T-to-Intel mapping table: suffix-family bases
 // (add/test/shl/...) probe suffix-less because Intel syntax carries the
-// width on the operands; the renamed mnemonics are cqto to cqo,
-// cbtw/cwtl/cltq/cwtd/cltd to cbw/cwde/cdqe/cwd/cdq, movabsq to movabs,
+// width on the operands; the renamed mnemonics are movabsq to movabs,
 // movslq to movsxd, movzbq/movzbl/movzwq to movzx, and the l-suffixed
-// string ops to their Intel d spellings (movsl = movsd, ...). The rep
+// string ops to their Intel d spellings (movsl = movsd, ...).
+//
+// The sign-extend group and pushf/popf probe as THEMSELVES rather than
+// translating: gas accepts both dialects' spellings of those in both syntax
+// modes, so since #7903 phase 3 both assemblers do too. The rep
 // prefix is dispatched on "rep" with the string op matched inside that
 // branch, so its probe covers the whole accepted set. cmovcc is
 // dispatched by pattern (a condition table plus an optional width
@@ -475,7 +478,7 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 		"ret":       "ret",
 		"syscall":   "syscall",
 		"leave":     "leave",
-		"cqto":      "cqo",
+		"cqto":      "cqto",
 		"cld":       "cld",
 		"std":       "std",
 		"nop":       "nop",
@@ -484,11 +487,18 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 		"mfence":    "mfence",
 		"lfence":    "lfence",
 		"sfence":    "sfence",
-		"cbtw":      "cbw",
-		"cwtl":      "cwde",
-		"cltq":      "cdqe",
-		"cwtd":      "cwd",
-		"cltd":      "cdq",
+		"cmpsd":     "cmpsd",
+		"cbw":       "cbw",
+		"cwde":      "cwde",
+		"cdqe":      "cdqe",
+		"cwd":       "cwd",
+		"cdq":       "cdq",
+		"cqo":       "cqo",
+		"cbtw":      "cbtw",
+		"cwtl":      "cwtl",
+		"cltq":      "cltq",
+		"cwtd":      "cwtd",
+		"cltd":      "cltd",
 		"rep":       "rep movsb\nrep movsq\nrep stosb\nrep stosq",
 		"lock":      "lock add qword ptr [rdi], 1",
 		"movsb":     "movsb",
@@ -599,9 +609,9 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 		"movsbw":     "movsx cx, al",
 		"movswq":     "movsx rcx, ax",
 		"pushfq":     "pushfq",
-		"pushf":      "pushfq",
+		"pushf":      "pushf",
 		"popfq":      "popfq",
-		"popf":       "popfq",
+		"popf":       "popf",
 		"ud2":        "ud2",
 		"repe":       "repe cmpsb",
 		"repz":       "repz cmpsb",
