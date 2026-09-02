@@ -12,7 +12,8 @@ import (
 // describes — a struct field, an array element, a tuple element (#5986,
 // docs/TYPED-IR-REWRITE.md §"Calls through a fn value that no slot carries").
 //
-// 17 of these 32 subtests fail on the sources this landed against. The
+// The zero-argument rows landed first: 17 of the 32 subtests they made up then
+// failed on the sources they went in against. The
 // self-host checker had no arm for a call whose callee is a value expression,
 // so `fs[0]()` and `t.0()` typed unknown and the register backends read an f64
 // result out of an integer register (exit 255 against an oracle of 45); and
@@ -30,12 +31,15 @@ import (
 // is what holds the emitted bytes identical for every program that was already
 // correct.
 //
-// Every case here is a ZERO-ARGUMENT call, which is the half this closes. A
-// call through one of these values WITH arguments needs the callee's parameter
-// widths too, and only a ParamDecl records parameter spellings — so
-// `t.0(4.5)`, `fs[0](4.5)` and `h.f(4.5)` still emit an arity-keyed funcref and
-// still fail to load on wasm. That residual, and its cause, are recorded in
-// docs/TYPED-IR-REWRITE.md.
+// The fnfield_arg_* rows are the WITH-ARGUMENT half for a struct field, which a
+// `fn_param_types` sidecar on StructFieldDecl carries. One declared signature
+// drives both the width each argument is lowered at and the funcref type the
+// call names; split across two derivations they disagree, and a disagreement is
+// a module the validator rejects.
+//
+// The same call through a TUPLE ELEMENT or an ARRAY ELEMENT still emits an
+// arity-keyed funcref and still fails to load on wasm, as does `mk()()`. Those
+// residuals and their causes are recorded in docs/TYPED-IR-REWRITE.md.
 var fnValueCallCases = []struct {
 	name string
 	src  string
@@ -134,17 +138,79 @@ function main(): i32 {
     var f: () => i64 = mkval;
     return (f() % 1000i64) as i32;
 }`},
-	// The one fn-value shape whose PARAMETER spellings are recorded (a
-	// ParamDecl keeps fn_param_types), so it carries a full funcref tag
-	// through fn_sig_of — and the one WITH-ARGUMENT call that works. It failed
-	// on both legs before, because the declared return never reached the
-	// binding; the same call through a struct field, tuple element or array
-	// element still declines, since only this declaration form records the
-	// parameters at all.
+	// A fn-typed local was the FIRST shape to carry a full funcref tag with
+	// arguments, because a ParamDecl records parameter spellings. It failed on
+	// both legs before, because the declared return never reached the binding.
+	// A struct field carries its own spellings now (the fnfield_arg_* rows
+	// below); a tuple element and an array element still do not.
 	{"fnlocal_annotated_arg_f64", `function scale(x: f64): f64 { return x * 10.0; }
 function main(): i32 {
     var f: (f64) => f64 = scale;
     return f(4.5) as i32;
+}`},
+
+	// A call through a fn-typed struct FIELD carrying ARGUMENTS. The funcref
+	// type must name every position, so these need the field's parameter
+	// spellings, not just its return.
+	{"fnfield_arg_f64", `struct H { f: (f64) => f64 }
+function scale(x: f64): f64 { return x * 10.0; }
+function main(): i32 {
+    var h: H = H { f: scale };
+    return h.f(4.5) as i32;
+}`},
+	{"fnfield_arg_mixed", `struct H { f: (i64, f64) => f64 }
+function comb(a: i64, x: f64): f64 { return x * (a as f64); }
+function main(): i32 {
+    var h: H = H { f: comb };
+    return h.f(10i64, 4.5) as i32;
+}`},
+	{"fnfield_arg_i64_ret", `struct H { f: (i64) => i64 }
+function id64(x: i64): i64 { return x; }
+function main(): i32 {
+    var h: H = H { f: id64 };
+    return h.f(45i64) as i32;
+}`},
+	{"fnfield_arg_i32_to_i64", `struct H { f: (i32) => i64 }
+function widen(x: i32): i64 { return x as i64; }
+function main(): i32 {
+    var h: H = H { f: widen };
+    return h.f(45) as i32;
+}`},
+	{"fnfield_arg_string", `struct H { f: (string) => i32 }
+function slen(s: string): i32 { return s.len(); }
+function main(): i32 {
+    var h: H = H { f: slen };
+    return h.f("x") + 44;
+}`},
+	{"fnfield_arg_i32", `struct H { f: (i32) => i32 }
+function add5(x: i32): i32 { return x + 5; }
+function main(): i32 {
+    var h: H = H { f: add5 };
+    return h.f(40);
+}`},
+
+	// A GENERIC struct's fn field. Annotation runs on the erased form, so a
+	// `(T) => T` field stamps nothing for the clone to inherit and the checker
+	// carries no answer here — the declared sidecars, substituted by the
+	// monomorphiser, are the only source. Without the width half the `as i32`
+	// lowered with no i32.wrap_i64 and the module was refused.
+	{"fnfield_generic_wide", `struct Box[T] { f: (T) => T }
+function id64(x: i64): i64 { return x; }
+function main(): i32 {
+    var b: Box[i64] = Box[i64] { f: id64 };
+    return b.f(45i64) as i32;
+}`},
+	{"fnfield_generic_i32", `struct Box[T] { f: (T) => T }
+function id32(x: i32): i32 { return x; }
+function main(): i32 {
+    var b: Box[i32] = Box[i32] { f: id32 };
+    return b.f(45);
+}`},
+	{"fnfield_generic_wide_field_arg", `struct Box[T] { f: (T) => T, seed: T }
+function id64(x: i64): i64 { return x; }
+function main(): i32 {
+    var b: Box[i64] = Box[i64] { f: id64, seed: 45i64 };
+    return b.f(b.seed) as i32;
 }`},
 }
 

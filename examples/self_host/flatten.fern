@@ -590,6 +590,22 @@ function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl
     return out;
 }
 
+// rewrite_type_name_list renames every element of a comma-joined type-spelling
+// list, so a fn-typed field's parameter types follow its own type_name and
+// fn_ret through the module-mangling rename.
+function rewrite_type_name_list(list: string, ctx: RewriteCtx): string {
+    if (list.len() == 0) { return ""; }
+    var parts: string[] = parser.split_top_commas(list);
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        if (i > 0) { out = out + ","; }
+        out = out + rewrite_type_name(parts[i], ctx);
+        i = i + 1;
+    }
+    return out;
+}
+
 function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx): parser.StructFieldDecl[] {
     var out: parser.StructFieldDecl[] = [];
     var i: i32 = 0;
@@ -597,7 +613,8 @@ function rewrite_struct_fields(fields: parser.StructFieldDecl[], ctx: RewriteCtx
         out = out.append(parser.StructFieldDecl {
             name: fields[i].name,
             type_name: rewrite_type_name(fields[i].type_name, ctx),
-            fn_ret: rewrite_type_name(fields[i].fn_ret, ctx)
+            fn_ret: rewrite_type_name(fields[i].fn_ret, ctx),
+            fn_param_types: rewrite_type_name_list(fields[i].fn_param_types, ctx)
         });
         i = i + 1;
     }
