@@ -121,6 +121,11 @@ func TestSelfHostX86Capstone(t *testing.T) {
 			// Stage B: the driver reads in.s, assembles it, writes the ELF.
 			bin, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", driverPath).Output()
 			if err != nil {
+				// The driver's stderr names WHICH line it refused; without it
+				// every refusal reads as a bare "exit status 2".
+				if ee, ok := err.(*exec.ExitError); ok {
+					t.Fatalf("wasmtime run (driver): %v\n%s", err, ee.Stderr)
+				}
 				t.Fatalf("wasmtime run (driver): %v", err)
 			}
 			if len(bin) < 4 || bin[0] != 0x7f || bin[1] != 'E' || bin[2] != 'L' || bin[3] != 'F' {
@@ -170,6 +175,7 @@ function main(): i32 {
             // recorded here rather than by the assembler.
             a = x86_resolve_data(a, elf_text_vaddr_x86());
             if (a.unknown.len() > 0) {
+                eprint("unencodable: " + a.unknown[0] + "\n");
                 return 2;
             }
             var entry: i32 = x86_label_off(a, "_start");
