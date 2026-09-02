@@ -67126,11 +67126,18 @@ function fd_passes_fn_array_elem(fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
                     ast.ExprIdent(cid) => {
                         var ai: i32 = 0;
                         while (ai < c.args.len()) {
-                            if (lift_callee_param_is_fn(mfuncs, cid.name, ai) || lift_local_fn_param_is_fn(fd, cid.name, ai)) {
-                                match (c.args[ai]) {
-                                    ast.ExprIdent(aid) => { if (util.index_of_str(names, aid.name) >= 0) { return true; } },
-                                    _ => {}
-                                }
+                            // The name test FIRST, and only then the parameter
+                            // types: both lookups are whole-table scans (the
+                            // module's functions, then this body's local ones),
+                            // and running them per argument of every call in the
+                            // function is what a compiler-sized body cannot pay
+                            // for. Almost no argument is one of these names.
+                            match (c.args[ai]) {
+                                ast.ExprIdent(aid) => {
+                                    if (util.index_of_str(names, aid.name) >= 0
+                                            && (lift_callee_param_is_fn(mfuncs, cid.name, ai) || lift_local_fn_param_is_fn(fd, cid.name, ai))) { return true; }
+                                },
+                                _ => {}
                             }
                             ai = ai + 1;
                         }
@@ -67145,9 +67152,14 @@ function fd_passes_fn_array_elem(fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
     return false;
 }
 
-// fd_index_bound_names collects the names `body` binds from an ARRAY ELEMENT
-// (`var f = fs[i]`), at any statement depth. Binders live on statements, so the
-// walk needs no descent into initialisers (body_binds_lambda's rule).
+// fd_index_bound_names collects the FN-TYPED names `body` binds from an ARRAY
+// ELEMENT (`var f: (i32) => i32 = fs[i]`), at any statement depth. Binders live
+// on statements, so the walk needs no descent into initialisers
+// (body_binds_lambda's rule).
+//
+// Fn-typed, not every index binding: only a fn value can reach a fn-typed
+// parameter, and the declared type is the cheap test that keeps the caller's
+// call walk off the overwhelming majority of functions.
 function fd_index_bound_names(body: ast.Stmt[]): string[] {
     var out: string[] = [];
     for st in body {
@@ -67159,6 +67171,7 @@ function fd_index_bound_names(body: ast.Stmt[]): string[] {
 function idx_bound_name_at(st: ast.Stmt, acc: string[]): string[] {
     match (st) {
         ast.StmtVar(v) => {
+            if (v.type_name != "fn" && fn_param_from_spelling("", v.type_name).type_name != "fn") { return acc; }
             if let ast.ExprIndex(_) = v.init { return acc.append(v.name); }
         },
         _ => {}
