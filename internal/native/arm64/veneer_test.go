@@ -29,7 +29,7 @@ func assembleShortReach(t *testing.T, src string, reach int) (*Assembler, []uint
 		t.Fatalf("ParseProgram: %v", err)
 	}
 	a.veneerReach = reach
-	if _, _, err := a.BytesProgramWX(elf.TextVAddrWX); err != nil {
+	if _, _, err := bytesWX(a); err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
 	return a, a.insns
@@ -115,7 +115,7 @@ func TestVeneerNotPlantedInRange(t *testing.T) {
 		t.Fatalf("ParseProgram: %v", err)
 	}
 	before := len(a.insns)
-	if _, _, err := a.BytesProgramWX(elf.TextVAddrWX); err != nil {
+	if _, _, err := bytesWX(a); err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
 	if len(a.insns) != before {
@@ -233,7 +233,7 @@ func TestVeneerSecondPassKeepsIslandsIntact(t *testing.T) {
 		t.Fatalf("ParseProgram: %v", err)
 	}
 	a.veneerReach = 8
-	text, data, err := a.BytesProgramWX(elf.TextVAddrWX)
+	text, data, err := bytesWX(a)
 	if err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
@@ -258,7 +258,7 @@ func TestVeneerEnvReach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseProgram: %v", err)
 	}
-	if _, _, err := a.BytesProgramWX(elf.TextVAddrWX); err != nil {
+	if _, _, err := bytesWX(a); err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
 	if a.veneerSeq == 0 {
@@ -272,7 +272,7 @@ func TestVeneerEnvReach(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseProgram: %v", err)
 	}
-	if _, _, err := b.BytesProgramWX(elf.TextVAddrWX); err != nil {
+	if _, _, err := bytesWX(b); err != nil {
 		t.Fatalf("BytesProgramWX with a malformed reach: %v", err)
 	}
 	if b.veneerSeq != 0 {
@@ -345,7 +345,7 @@ func TestVeneerExecutes(t *testing.T) {
 		t.Fatalf("ParseProgram: %v", err)
 	}
 	a.veneerReach = shortReach
-	text, data, err := a.BytesProgramWX(elf.TextVAddrWX)
+	text, data, err := bytesWX(a)
 	if err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestVeneerInteriorIslandsExecute(t *testing.T) {
 		t.Fatalf("ParseProgram: %v", err)
 	}
 	a.veneerReach = shortReach
-	text, data, err := a.BytesProgramWX(elf.TextVAddrWX)
+	text, data, err := bytesWX(a)
 	if err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestVeneerRealImm26Ceiling(t *testing.T) {
 	if span <= imm26Reach {
 		t.Fatalf("call spans %d instructions, want more than the imm26 reach of %d", span, imm26Reach)
 	}
-	text, data, err := a.BytesProgramWX(elf.TextVAddrWX)
+	text, data, err := bytesWX(a)
 	if err != nil {
 		t.Fatalf("BytesProgramWX over the imm26 ceiling: %v", err)
 	}

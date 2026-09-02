@@ -34,7 +34,7 @@ const nativeLinkMinAsmBytes = 8 << 20
 // surfaces as a clear error (never a miscompile); callers fall back to
 // the gcc path on error.
 func nativeLinkX86(asm, binPath string) error {
-	text, rodata, err := nativex86.AssembleProgramWX(asm, nativeelf.TextVAddrWX)
+	text, rodata, err := nativex86.AssembleProgramWX(asm, nativeelf.SegmentAddrsWXX86)
 	if err != nil {
 		return fmt.Errorf("native assemble: %w", err)
 	}
@@ -54,7 +54,7 @@ func nativeLinkX86(asm, binPath string) error {
 // .text's first instruction. Callers fall back to the aarch64 gcc path
 // on error.
 func nativeLinkArm64(asm, binPath string) error {
-	text, rodata, entryOff, err := nativearm64.AssembleProgramWXEntry(asm, nativeelf.TextVAddrWX, "_start")
+	text, rodata, entryOff, err := nativearm64.AssembleProgramWXEntry(asm, nativeelf.SegmentAddrsWXArm64, "_start")
 	if err != nil {
 		return fmt.Errorf("native assemble (arm64): %w", err)
 	}

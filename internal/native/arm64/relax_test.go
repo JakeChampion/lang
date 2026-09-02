@@ -2,8 +2,6 @@ package arm64
 
 import (
 	"testing"
-
-	"github.com/jakechampion/lang/internal/native/elf"
 )
 
 // assembleShortRelax parses gas source, shrinks the conditional-branch
@@ -17,7 +15,7 @@ func assembleShortRelax(t *testing.T, src string, reach int) (*Assembler, []uint
 		t.Fatalf("ParseProgram: %v", err)
 	}
 	a.relaxReach = reach
-	if _, _, err := a.BytesProgramWX(elf.TextVAddrWX); err != nil {
+	if _, _, err := bytesWX(a); err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
 	return a, a.insns
@@ -103,7 +101,7 @@ func TestOnlyTheBranchThatCannotReachIsRelaxed(t *testing.T) {
 	// imm14's real span is a sixteenth of imm19's; mirror that ratio.
 	a.relaxReach = 1 << 18
 	before := len(a.insns)
-	if _, _, err := a.BytesProgramWX(elf.TextVAddrWX); err != nil {
+	if _, _, err := bytesWX(a); err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
 	if len(a.insns) != before {

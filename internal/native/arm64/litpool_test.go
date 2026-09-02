@@ -3,8 +3,6 @@ package arm64
 import (
 	"encoding/binary"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/native/elf"
 )
 
 // assembleShortLitReach parses gas source, shrinks the ldr-literal span, and
@@ -17,7 +15,7 @@ func assembleShortLitReach(t *testing.T, src string, reach int) (*Assembler, []u
 		t.Fatalf("ParseProgram: %v", err)
 	}
 	a.relaxReach = reach
-	if _, _, err := a.BytesProgramWX(elf.TextVAddrWX); err != nil {
+	if _, _, err := bytesWX(a); err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
 	return a, a.insns
@@ -70,7 +68,7 @@ func TestNearLiteralIsUntouched(t *testing.T) {
 		t.Fatalf("ParseProgram: %v", err)
 	}
 	before.relaxReach = 64
-	if _, _, err := before.BytesProgramWX(elf.TextVAddrWX); err != nil {
+	if _, _, err := bytesWX(before); err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
 	// ldr, ret, then the two words of the 64-bit literal — nothing spliced in.

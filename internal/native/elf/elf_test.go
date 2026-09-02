@@ -229,7 +229,7 @@ func TestAssembledDataWXRunsUnderQemu(t *testing.T) {
 		"\t.balign 8\n" +
 		"val:\n" +
 		"\t.8byte 42\n"
-	text, rodata, err := arm64.AssembleProgramWX(src, elf.TextVAddrWX)
+	text, rodata, err := arm64.AssembleProgramWX(src, elf.SegmentAddrsWXArm64)
 	if err != nil {
 		t.Fatalf("AssembleProgramWX: %v", err)
 	}
@@ -1278,7 +1278,7 @@ func TestInterleavedBssIsNotMaterialised(t *testing.T) {
 			"big:\n\t.skip " + itoa(reserve) + "\n" +
 			".section .rodata\n" + // initialised data AFTER the reservation
 			"msg:\n\t.asciz \"hi\"\n"
-		text, data, err := x86.AssembleProgramWX(src, elf.TextVAddrWX)
+		text, data, err := x86.AssembleProgramWX(src, elf.SegmentAddrsWXX86)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1297,7 +1297,7 @@ func TestInterleavedBssIsNotMaterialised(t *testing.T) {
 			"big:\n\t.skip " + itoa(reserve) + "\n" +
 			"\t.section .rodata\n" +
 			"msg:\n\t.asciz \"hi\"\n"
-		text, data, err := arm64.AssembleProgramWX(src, elf.TextVAddrWX)
+		text, data, err := arm64.AssembleProgramWX(src, elf.SegmentAddrsWXArm64)
 		if err != nil {
 			t.Fatal(err)
 		}

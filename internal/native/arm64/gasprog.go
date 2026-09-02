@@ -28,6 +28,27 @@ const (
 	secIgnore // a section we don't materialise (e.g. .note.GNU-stack)
 )
 
+// SegmentAddrs is the image writer's map: given the final size of .text it
+// says where .text and the data blob load. The data address cannot be known
+// any earlier — branch relaxation and the literal pool settle the size — and
+// deriving it here instead would leave the image with two authorities that
+// have to agree. Pass elf.SegmentAddrsWXArm64 or elf.SegmentAddrsPIEArm64.
+type SegmentAddrs func(textLen int) (textVAddr, dataVAddr uint64)
+
+// resolve parses src, settles the size of .text, and asks addrs where the
+// image puts things.
+func resolve(src string, addrs SegmentAddrs) (a *Assembler, textVAddr, dataVAddr uint64, err error) {
+	if a, err = ParseProgram(src); err != nil {
+		return nil, 0, 0, err
+	}
+	n, err := a.TextLen()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	textVAddr, dataVAddr = addrs(n)
+	return a, textVAddr, dataVAddr, nil
+}
+
 func AssembleProgram(src string, textVAddr uint64) (text, rodata []byte, err error) {
 	a, err := ParseProgram(src)
 	if err != nil {
@@ -58,24 +79,24 @@ func AssembleProgramEhFrame(src string, textVAddr, ehVAddr uint64) (text, rodata
 // AssembleProgramWX is AssembleProgram for the W^X two-segment ELF layout
 // (elf.StaticExecutableDataWX): .rodata is page-aligned into a separate
 // R+W segment instead of laid contiguously after .text. Pass
-// elf.TextVAddrWX as textVAddr.
-func AssembleProgramWX(src string, textVAddr uint64) (text, rodata []byte, err error) {
-	a, err := ParseProgram(src)
+// elf.SegmentAddrsWXArm64.
+func AssembleProgramWX(src string, addrs SegmentAddrs) (text, rodata []byte, err error) {
+	a, textVAddr, dataVAddr, err := resolve(src, addrs)
 	if err != nil {
 		return nil, nil, err
 	}
-	return a.BytesProgramWX(textVAddr)
+	return a.BytesProgramWX(textVAddr, dataVAddr)
 }
 
 // AssembleProgramWXSyms is AssembleProgramWX that also returns every .text
 // label resolved to its absolute virtual address — the function-symbol table
-// the ELF writer emits into .symtab under `-g`. Pass elf.TextVAddrWX.
-func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, syms map[string]uint64, locRows []LineRow, err error) {
-	a, err := ParseProgram(src)
+// the ELF writer emits into .symtab under `-g`.
+func AssembleProgramWXSyms(src string, addrs SegmentAddrs) (text, rodata []byte, syms map[string]uint64, locRows []LineRow, err error) {
+	a, textVAddr, dataVAddr, err := resolve(src, addrs)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	text, rodata, err = a.BytesProgramWX(textVAddr)
+	text, rodata, err = a.BytesProgramWX(textVAddr, dataVAddr)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -89,12 +110,12 @@ func AssembleProgramWXSyms(src string, textVAddr uint64) (text, rodata []byte, s
 // there — but the SELF-HOST arm64 emitter declares `.globl _start` up
 // top while defining the label after other functions, so its binaries
 // need the real offset or they start executing mid-function.
-func AssembleProgramWXEntry(src string, textVAddr uint64, entry string) (text, rodata []byte, entryOff uint64, err error) {
-	a, err := ParseProgram(src)
+func AssembleProgramWXEntry(src string, addrs SegmentAddrs, entry string) (text, rodata []byte, entryOff uint64, err error) {
+	a, textVAddr, dataVAddr, err := resolve(src, addrs)
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	text, rodata, err = a.BytesProgramWX(textVAddr)
+	text, rodata, err = a.BytesProgramWX(textVAddr, dataVAddr)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -108,26 +129,26 @@ func AssembleProgramWXEntry(src string, textVAddr uint64, entry string) (text, r
 // AssembleProgramPIE is AssembleProgram for a static position-independent
 // executable (elf.StaticPieExecutable): the W^X layout laid out from a
 // load base of 0, returning the R_AARCH64_RELATIVE relocations for the
-// `.quad <symbol>` slots. Pass elf.TextVAddrPIE as textVAddr.
-func AssembleProgramPIE(src string, textVAddr uint64) (text, rodata []byte, relocs []Reloc, err error) {
-	a, err := ParseProgram(src)
+// `.quad <symbol>` slots. Pass elf.SegmentAddrsPIEArm64.
+func AssembleProgramPIE(src string, addrs SegmentAddrs) (text, rodata []byte, relocs []Reloc, err error) {
+	a, textVAddr, dataVAddr, err := resolve(src, addrs)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return a.BytesProgramPIE(textVAddr)
+	return a.BytesProgramPIE(textVAddr, dataVAddr)
 }
 
 // AssembleProgramShared assembles for a shared object (.so): the same
 // base-0 PIE layout, also resolving each name in exportNames to its
 // load-base-relative virtual address (textVAddr + its .text offset) in
 // exportVAddr — the addresses elf.SharedLibrary records in .dynsym. Pass
-// elf.TextVAddrPIE as textVAddr.
-func AssembleProgramShared(src string, textVAddr uint64, exportNames []string) (text, rodata []byte, relocs []Reloc, exportVAddr map[string]uint64, err error) {
-	a, err := ParseProgram(src)
+// elf.SegmentAddrsPIEArm64.
+func AssembleProgramShared(src string, addrs SegmentAddrs, exportNames []string) (text, rodata []byte, relocs []Reloc, exportVAddr map[string]uint64, err error) {
+	a, textVAddr, dataVAddr, err := resolve(src, addrs)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	text, rodata, relocs, err = a.BytesProgramPIE(textVAddr)
+	text, rodata, relocs, err = a.BytesProgramPIE(textVAddr, dataVAddr)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}

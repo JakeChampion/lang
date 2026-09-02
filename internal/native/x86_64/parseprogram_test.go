@@ -8,6 +8,18 @@ import (
 	"github.com/jakechampion/lang/internal/native/x86_64"
 )
 
+// bytesWX lays a out at the addresses the W^X image map picks for it — the
+// two steps every caller takes: measure .text, then ask the image writer
+// where .text and the data blob go.
+func bytesWX(a *x86_64.Assembler) (text, data []byte, err error) {
+	n, err := a.TextLen()
+	if err != nil {
+		return nil, nil, err
+	}
+	textVAddr, dataVAddr := elf.SegmentAddrsWXX86(n)
+	return a.BytesProgramWX(textVAddr, dataVAddr)
+}
+
 const twoPhaseSrc = ".text\n.globl _start\n_start:\n\tmov rax, 60\n\tmov rdi, 0\n\tsyscall\n"
 
 // TestParseProgramMatchesOneShot pins the two-phase API to the one-shot
@@ -18,15 +30,16 @@ func TestParseProgramMatchesOneShot(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		lay  func(*x86_64.Assembler) ([]byte, []byte, error)
-		one  func(string, uint64) ([]byte, []byte, error)
-		addr uint64
+		one  func(string) ([]byte, []byte, error)
 	}{
 		{"contiguous", func(a *x86_64.Assembler) ([]byte, []byte, error) {
 			return a.BytesProgram(elf.TextVAddr)
-		}, x86_64.AssembleProgram, elf.TextVAddr},
-		{"wx", func(a *x86_64.Assembler) ([]byte, []byte, error) {
-			return a.BytesProgramWX(elf.TextVAddrWX)
-		}, x86_64.AssembleProgramWX, elf.TextVAddrWX},
+		}, func(src string) ([]byte, []byte, error) {
+			return x86_64.AssembleProgram(src, elf.TextVAddr)
+		}},
+		{"wx", bytesWX, func(src string) ([]byte, []byte, error) {
+			return x86_64.AssembleProgramWX(src, elf.SegmentAddrsWXX86)
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			a, err := x86_64.ParseProgram(twoPhaseSrc)
@@ -37,7 +50,7 @@ func TestParseProgramMatchesOneShot(t *testing.T) {
 			if err != nil {
 				t.Fatalf("layout: %v", err)
 			}
-			wantText, wantRodata, err := c.one(twoPhaseSrc, c.addr)
+			wantText, wantRodata, err := c.one(twoPhaseSrc)
 			if err != nil {
 				t.Fatalf("one-shot: %v", err)
 			}
@@ -62,7 +75,7 @@ func TestEhFrameAfterLayout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseProgram: %v", err)
 	}
-	text, _, err := a.BytesProgramWX(elf.TextVAddrWX)
+	text, _, err := bytesWX(a)
 	if err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
@@ -97,7 +110,7 @@ func TestTextLabelVAddrs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseProgram: %v", err)
 	}
-	if _, _, err := asm.BytesProgramWX(elf.TextVAddrWX); err != nil {
+	if _, _, err := bytesWX(asm); err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
 	all := asm.TextLabelVAddrs(elf.TextVAddrWX)

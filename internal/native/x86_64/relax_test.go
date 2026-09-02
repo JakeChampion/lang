@@ -131,7 +131,7 @@ func TestRelaxRipEndAtEmptyPad(t *testing.T) {
 // at the short form's follower (offset 2).
 func TestRelaxLocRowsAndSyms(t *testing.T) {
 	src := ".loc 1 5\njz L\n.loc 1 7\nL: ret"
-	text, _, syms, rows, err := AssembleProgramWXSyms(src, elf.TextVAddrWX)
+	text, _, syms, rows, err := AssembleProgramWXSyms(src, elf.SegmentAddrsWXX86)
 	if err != nil {
 		t.Fatalf("AssembleProgramWXSyms: %v", err)
 	}
