@@ -74,6 +74,28 @@ func arm64FormCases() []string {
 	add("cmp x2, x3")
 	add("cmn x2, x3")
 	add("cmp w2, w3")
+	// imm12 is unsigned, so a negative is the opposite mnemonic carrying the
+	// magnitude (`add #-16` is `sub #16`, `cmp` becomes `cmn`), and an
+	// explicit `, lsl #12` names the shift instead of leaving it derived —
+	// `#0, lsl #12` keeps sh=1 rather than collapsing to the unshifted form.
+	for _, m := range []string{"add", "sub", "adds", "subs"} {
+		for _, imm := range []string{"-1", "-16", "-4095", "-4096", "-16773120"} {
+			add("%s x1, x2, #%s", m, imm)
+			add("%s w1, w2, #%s", m, imm)
+		}
+		add("%s x1, x2, #1, lsl #12", m)
+		add("%s x1, x2, #0, lsl #12", m)
+		add("%s w1, w2, #4095, lsl #12", m)
+		add("%s x1, x2, #7, lsl #0", m)
+		add("%s x1, x2, #-1, lsl #12", m)
+	}
+	add("cmp x1, #-16")
+	add("cmn x1, #-16")
+	add("cmp w1, #-4096")
+	add("cmn w1, #-1")
+	add("add sp, sp, #-16")
+	add("sub sp, sp, #-16")
+	add("add sp, sp, #-4096")
 	add("cmp x2, #4095")
 	add("cmp x2, #4096")
 	add("cmn w2, #1")
@@ -300,7 +322,14 @@ func TestSelfHostArm64RefusesUnencodableImmediates(t *testing.T) {
 		"cmp x2, #5000",          // the cmp alias takes the same field
 		"cmn w2, #4097",          // and cmn
 		"adds x1, x2, #16777216", // 0x1000000: one past 0xFFF000
-		"subs w1, w2, #-1",       // negative: imm12 is unsigned
+		"add x1, x2, #-4097",     // negative, and the magnitude does not fit
+		"cmn x1, #-16777215",     // likewise through the alias
+		// An explicit shift operand names the field directly, so only the
+		// bare twelve bits are reachable and only lsl #0 / lsl #12 spell it.
+		"add x1, x2, #4096, lsl #12",
+		"add x1, x2, #-4096, lsl #12",
+		"add x1, x2, #5, lsr #12",
+		"add x1, x2, #5, lsl #13",
 		// A logical immediate wider than the register it applies to. The low
 		// half of each IS a valid bitmask, so a width check that is not there
 		// encodes that instead of refusing — a different mask, silently.
