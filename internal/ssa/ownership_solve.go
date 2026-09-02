@@ -176,11 +176,17 @@ func SolveOwnership(funcs map[string]*Func) Solution {
 
 	sol := Solution{Sigs: make(map[string]Signature, len(funcs))}
 	uses := make(map[string]*Uses, len(funcs))
+	blockIndex := make(map[string]map[*Block]int, len(funcs))
 	aliases := make(map[string][][]Value, len(funcs))
 	for _, n := range names {
 		f := funcs[n]
 		u := BuildUses(f)
 		uses[n] = u
+		idx := make(map[*Block]int, len(f.Blocks))
+		for i, b := range f.Blocks {
+			idx[b] = i
+		}
+		blockIndex[n] = idx
 		sig := Signature{
 			Params:  make([]ParamOwnership, len(f.Params)),
 			Pointer: make([]bool, len(f.Params)),
@@ -201,11 +207,16 @@ func SolveOwnership(funcs map[string]*Func) Solution {
 		changed := false
 		for _, n := range names {
 			f, sig := funcs[n], sol.Sigs[n]
+			var units Units
+			placed := false
 			for i := range f.Params {
 				if !sig.Pointer[i] || sig.Params[i] == Consumed {
 					continue
 				}
-				if demandsUnit(uses[n], aliases[n][i], sol.Sigs) {
+				if !placed {
+					units, placed = UnitsOf(f, sol.Sigs), true
+				}
+				if demandsUnit(f, blockIndex[n], uses[n], units, aliases[n][i], sol.Sigs) {
 					sig.Params[i] = Consumed
 					changed = true
 				}
@@ -261,22 +272,35 @@ func SolveOwnership(funcs map[string]*Func) Solution {
 // demandsUnit reports whether the body takes an ownership unit from the
 // caller for the parameter whose value-and-aliases are vs.
 //
-// Two ways it can:
+// The question is asked PER PATH: along every path from entry to a
+// return, the body's retains of the carriers are counted against what
+// it releases, hands to a consuming callee, stores into memory, or
+// captures into a closure. A path that gives away more than
+// it retained ends holding less than it was handed, so the caller must
+// have handed a unit over — the parameter is consumed. A body that
+// retains a borrowed value for a local use and releases it when done is
+// balanced on every path and demands nothing: over the self-host
+// compiler 760 of the 921 borrowed parameters that are released are
+// also retained, and reading the release alone would call all 921
+// consumed.
 //
-//   - it RELEASES the value without a matching retain. Not "releases":
-//     over the self-host compiler 760 of the 921 borrowed parameters
-//     that are released are also retained, and a body that retains a
-//     borrowed parameter for a local use and releases it when done
-//     demands nothing. Reading the release alone would call all 921
-//     consumed and be wrong about 760.
-//   - it PASSES the value to a callee that consumes that argument. That
-//     is the interprocedural edge, and it is why this is a fixpoint:
-//     the callee's answer is the same question one level down.
+// Counting over the whole body instead — "released and never retained"
+// — reads a retain on one arm and a release on another as balanced, and
+// under the owned-by-default model that is the common shape rather than
+// a corner: `return a` on an owned parameter is a transfer inc beside
+// the exit sweep's drop, and the arm that rebuilds instead just drops.
+// The whole-body reading called such a parameter Borrowed, so every
+// caller that had MOVED its argument in read as still holding it.
 //
-// Retain and release are counted over the whole body rather than per
-// path. A retain on one arm and a release on another reads as balanced
-// here and is not; separating them needs per-path accounting, which is
-// the certifier (#7782 slice 3) rather than this.
+// The discharge set is the certifier's (`applyBlock`) less the return.
+// A returned parameter carries no rc op of its own: the typed lowering
+// pairs it with a transfer inc (borrowed) or an inc beside the exit
+// sweep's drop (owned), and the untyped `usize` helpers under `core/map`
+// hand back the raw word — `__map_get_or_impl` returns its fallback on
+// the miss path and nothing on the hit path. Counting the return as a
+// discharge read that fallback as consumed and then held on the hit
+// path, in every fixture the runtime proves clean. The inc and drop
+// beside a return are the evidence; the return is not.
 //
 // The value has to REACH the callee as an argument, directly or through
 // a pass-through alias. A parameter stored into a struct that is then
@@ -304,44 +328,185 @@ func SolveOwnership(funcs map[string]*Func) Solution {
 //     release is real and the table cannot see it, so it reads
 //     Borrowed. This is what the unmodelled bucket costs, priced at
 //     three parameters.
-func demandsUnit(uses *Uses, vs []Value, sigs map[string]Signature) bool {
-	retained, released := false, false
+func demandsUnit(f *Func, idx map[*Block]int, uses *Uses, units Units, vs []Value, sigs map[string]Signature) bool {
+	carrier := make(map[int32]bool, len(vs))
+	for _, v := range vs {
+		carrier[v.ID] = true
+	}
+	// Per-block net movement, gathered from the carriers' use sites
+	// rather than by scanning every op: an op that reads two carriers
+	// is visited once per carrier, so its delta is split per operand.
+	// Most parameters move no count anywhere, and a body with no
+	// net-release block has no path below zero, so the dataflow runs
+	// only when some block gives more away than it takes.
+	delta := make([]int, len(f.Blocks))
+	negative := false
 	for _, v := range vs {
 		for _, u := range uses.Of(v) {
-			o := u.Op
-			if o == nil {
+			if u.Op == nil {
 				continue
 			}
-			if ops := rcSig(o); len(ops) > 0 {
-				for _, ro := range ops {
-					if ro.Value.ID != v.ID {
+			if bi, ok := idx[u.Block]; ok {
+				delta[bi] += unitDelta(u.Op, u.Index, v, sigs)
+				negative = negative || delta[bi] < 0
+			}
+		}
+	}
+	if !negative {
+		return false
+	}
+	// A phi in the carrier set holds the parameter's unit only along
+	// the edges a carrier feeds it. Along an edge that brings another
+	// value instead — the reassigned accumulator, `acc = push(acc, x)`
+	// merging with the untouched `acc` — the phi's later release spends
+	// that value's unit, not the parameter's, so the path is credited
+	// with it on the way in. A borrow brings nothing: a TRMC'd walk
+	// loads the tail out of the cell it then releases, and that release
+	// is the parameter's. Anything else is credited, an unplaced call
+	// result included — the `__fern_arr_push_grow` family is unmodelled
+	// and every threaded array accumulator flows through it, and
+	// reading its result as unit-less called all of them consumed.
+	credit := map[int][]int{}
+	for _, b := range f.Blocks {
+		for _, o := range b.Ops {
+			if o.Kind != OpPhi || !carrier[o.Result.ID] {
+				continue
+			}
+			bi := idx[b]
+			for i, a := range o.Args {
+				if i >= len(b.Preds) || carrier[a.ID] {
+					continue
+				}
+				if og := units.Origin(a); og == UnitBorrowed || og == UnitNone {
+					continue
+				}
+				if credit[bi] == nil {
+					credit[bi] = make([]int, len(b.Preds))
+				}
+				credit[bi][i]++
+			}
+		}
+	}
+
+	// Forward dataflow to a fixpoint. A block's entry balance is the
+	// minimum over its predecessors' exits — the path that gave the most
+	// away is the one that decides — so the state only ever moves down,
+	// and the clamp at -balanceCap makes a loop with a net release settle
+	// rather than count forever.
+	//
+	// Worklist-driven, as in `certify.go`: only a block whose
+	// predecessor changed can change, and a full sweep per pass made
+	// this quadratic on the self-host parser's largest functions.
+	const unreached = int(^uint(0) >> 1)
+	in := make([]int, len(f.Blocks))
+	out := make([]int, len(f.Blocks))
+	queued := make([]bool, len(f.Blocks))
+	for i := range in {
+		in[i], out[i] = unreached, unreached
+	}
+	entry := idx[f.Entry]
+	in[entry] = 0
+	queued[entry] = true
+	for pending := true; pending; {
+		pending = false
+		for i, b := range f.Blocks {
+			if !queued[i] {
+				continue
+			}
+			queued[i] = false
+			if b != f.Entry {
+				in[i] = unreached
+				for j, pb := range b.Preds {
+					pi, ok := idx[pb]
+					if !ok || out[pi] == unreached {
 						continue
 					}
-					switch ro.Arg.Effect {
-					case ir.RcRetain:
-						retained = true
-					case ir.RcRelease, ir.RcMove:
-						released = true
+					v := out[pi]
+					if c := credit[i]; c != nil {
+						v += c[j]
+					}
+					if v < in[i] {
+						in[i] = v
 					}
 				}
+			}
+			if in[i] == unreached {
 				continue
 			}
-			// A call to a function with a signature: the argument
-			// position this value lands in decides. Everything else —
-			// an indirect or dynamic call, an unknown name, a helper
-			// whose count movement rcsigs.go cannot express — borrows,
-			// and calleeOwnership counts it as the assumption it is.
-			if o.Kind != OpCall {
+			v := clampBalance(in[i] + delta[i])
+			if out[i] == v {
 				continue
 			}
-			if callee, known := sigs[ir.CodegenAlias(o.Str)]; known {
-				if u.Index < len(callee.Params) && callee.Params[u.Index] == Consumed {
-					return true
+			out[i] = v
+			for _, sb := range b.Succs() {
+				if si, ok := idx[sb]; ok {
+					queued[si] = true
+					pending = true
 				}
 			}
 		}
 	}
-	return released && !retained
+	for i, b := range f.Blocks {
+		if (b.Term.Kind == TermRet || b.Term.Kind == TermRetPair) && out[i] != unreached && out[i] < 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// balanceCap bounds the per-path balance in both directions. Below zero
+// the sign is all that is read, and above it a retain can only be
+// cancelled by as many releases, so anything past it is the same answer.
+const balanceCap = 8
+
+func clampBalance(n int) int {
+	if n < -balanceCap {
+		return -balanceCap
+	}
+	if n > balanceCap {
+		return balanceCap
+	}
+	return n
+}
+
+// unitDelta is what one op does to the balance through the carrier `v`
+// it reads at Args[i]: +1 for a retain, -1 for a release, move, hand-off
+// to a consuming callee, store into memory, or closure capture.
+func unitDelta(o *Op, i int, v Value, sigs map[string]Signature) int {
+	if ops := rcSig(o); len(ops) > 0 {
+		d := 0
+		for _, ro := range ops {
+			if ro.Value.ID != v.ID || ro.Arg.Index != i {
+				continue
+			}
+			switch ro.Arg.Effect {
+			case ir.RcRetain:
+				d++
+			case ir.RcRelease, ir.RcMove:
+				d--
+			}
+		}
+		return d
+	}
+	switch o.Kind {
+	case OpCall:
+		// Everything without a signature — an unknown name, a helper
+		// whose count movement rcsigs.go cannot express — borrows, and
+		// calleeOwnership counts it as the assumption it is.
+		if callee, known := sigs[ir.CodegenAlias(o.Str)]; known &&
+			i < len(callee.Params) && callee.Params[i] == Consumed {
+			return -1
+		}
+	case OpStore, OpStoreF, OpStore32:
+		// Ownership passes into the container; the value operand is the
+		// last one.
+		if i == len(o.Args)-1 {
+			return -1
+		}
+	case OpMakeClosure, OpMakeEnv, OpBoxDyn:
+		return -1
+	}
+	return 0
 }
 
 // calleeOwnership classifies one op as a call site and says whether its

@@ -222,3 +222,111 @@ func TestSolveOwnershipIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// twoArmFn builds `entry -> (armA | armB)`, each arm returning, with one
+// pointer parameter. The arms are filled in by the caller.
+func twoArmFn(name string) (f *Func, p Value, armA, armB *Block) {
+	f = NewFunc(name)
+	p = f.AddParam()
+	f.ParamAddrs = []bool{true}
+	entry := f.NewBlock()
+	f.Entry = entry
+	armA, armB = f.NewBlock(), f.NewBlock()
+	cond := f.AddOp(entry, OpLoad, p)
+	f.SetBrIf(entry, cond, armA, armB)
+	armA.Term = Terminator{Kind: TermRet}
+	armB.Term = Terminator{Kind: TermRet}
+	return f, p, armA, armB
+}
+
+// The accounting is per path. One arm retains the parameter for a local
+// use and gives the hold back; the other releases it outright. Counted
+// over the whole body that is "retained and released" and reads as
+// balanced, but the second arm ends holding less than it was handed,
+// so the parameter is consumed.
+//
+// Under the owned-by-default model this is the ordinary shape, not a
+// corner: `return a` on an owned parameter is a transfer inc beside the
+// exit sweep's drop, and the arm that rebuilds instead just drops.
+func TestSolveOwnershipCountsRetainsAndReleasesPerPath(t *testing.T) {
+	f, p, armA, armB := twoArmFn("rebuild")
+	held := call(f, armA, "__fern_rc_inc", p)
+	callVoid(f, armA, "__fern_rc_dec", p)
+	armA.Term = Terminator{Kind: TermRet, Value: held}
+	callVoid(f, armB, "__fern_rc_dec", p)
+
+	sol := SolveOwnership(map[string]*Func{"rebuild": f})
+	if got := modeOf(t, sol, "rebuild", 0); got != Consumed {
+		t.Errorf("a release on one arm is a demand however the other arm balances, got %v", got)
+	}
+}
+
+// A store hands the unit to the container. Without a retain first the
+// body has given away what it was handed; with one it has not.
+func TestSolveOwnershipTreatsAStoreAsADischarge(t *testing.T) {
+	moved := callFn("moved", 2, func(f *Func, b *Block, ps []Value) {
+		f.AddOpNoResult(b, OpStore, ps[1], ps[0])
+	})
+	shared := callFn("shared", 2, func(f *Func, b *Block, ps []Value) {
+		held := call(f, b, "__fern_rc_inc", ps[0])
+		f.AddOpNoResult(b, OpStore, ps[1], held)
+	})
+	sol := SolveOwnership(map[string]*Func{"moved": moved, "shared": shared})
+	if got := modeOf(t, sol, "moved", 0); got != Consumed {
+		t.Errorf("a parameter stored without a retain is consumed, got %v", got)
+	}
+	if got := modeOf(t, sol, "shared", 0); got != Borrowed {
+		t.Errorf("a parameter retained and then stored is borrowed, got %v", got)
+	}
+}
+
+// A bare return of a parameter is not evidence either way: the typed
+// lowering pairs it with an inc, and the untyped `usize` helpers hand
+// back the raw word (`__map_get_or_impl` returns its fallback on the
+// miss path). Reading it as a discharge called that fallback consumed,
+// and the certifier then held it on the hit path.
+func TestSolveOwnershipIgnoresABareReturnOfAParameter(t *testing.T) {
+	f, p, armA, _ := twoArmFn("get_or")
+	armA.Term = Terminator{Kind: TermRet, Value: p}
+
+	sol := SolveOwnership(map[string]*Func{"get_or": f})
+	if got := modeOf(t, sol, "get_or", 0); got != Borrowed {
+		t.Errorf("a returned parameter with no rc traffic is borrowed, got %v", got)
+	}
+}
+
+// A threaded accumulator: the parameter is retained at entry, one arm
+// hands it to a consuming callee and continues with the FRESH result,
+// the other keeps it, and the exit releases whichever the phi holds.
+// On the rebuilt path the phi's release spends the fresh value's unit,
+// not the parameter's, so the parameter is borrowed — the whole-body
+// reading agreed, and a per-path count that ignored what the phi was
+// fed on that edge called every such accumulator consumed.
+func TestSolveOwnershipCreditsAFreshValueEnteringACarrierPhi(t *testing.T) {
+	sink := callFn("push", 1, func(f *Func, b *Block, ps []Value) {
+		callVoid(f, b, "__fern_rc_dec", ps[0])
+		size := f.AddOp(b, OpConstInt)
+		f.AddOp(b, OpAlloc, size)
+	})
+	f := NewFunc("thread")
+	p := f.AddParam()
+	f.ParamAddrs = []bool{true}
+	entry, grow, keep, exit := f.NewBlock(), f.NewBlock(), f.NewBlock(), f.NewBlock()
+	f.Entry = entry
+	held := call(f, entry, "__fern_rc_inc", p)
+	cond := f.AddOp(entry, OpLoad, p)
+	f.SetBrIf(entry, cond, grow, keep)
+	size := f.AddOp(grow, OpConstInt)
+	fresh := f.AddOp(grow, OpAlloc, size)
+	callVoid(f, grow, "push", held)
+	f.SetBr(grow, exit)
+	f.SetBr(keep, exit)
+	cur := f.AddPhi(exit, fresh, held)
+	callVoid(f, exit, "__fern_rc_dec", cur)
+	exit.Term = Terminator{Kind: TermRet}
+
+	sol := SolveOwnership(map[string]*Func{"push": sink, "thread": f})
+	if got := modeOf(t, sol, "thread", 0); got != Borrowed {
+		t.Errorf("the phi's release on the rebuilt path spends the fresh unit, got %v", got)
+	}
+}
