@@ -617,7 +617,7 @@ func main() {
 	repl := flag.Bool("repl", false, "start an interactive REPL via the AST interpreter")
 	doInterp := flag.Bool("interp", false, "run FILE.fern (or `-` for stdin) through the AST interpreter — no codegen, no link, no binary. main()'s return value becomes the process exit code (clamped to 0..255). State is fresh per invocation; the REPL flag keeps an interactive session across lines.")
 	backend := flag.String("backend", "", "alternate code-generation backend for the selected -target, instead of its default emitter. `ssa` selects the SSA-direct backend (register allocation instead of the stack-machine emitter, so the emitted .text is markedly smaller), available for -target wasm32-wasi, -target arm64-linux and -target x86-64-linux. Coverage is a subset of the language — the integer core, control flow, calls, memory, strings, arrays, and the RC runtime — and an unsupported op errors rather than miscompiles. Unlike the old `-target wasm-ssa` / `-target arm64-ssa` spellings this replaces, the target keeps its descriptor, so capability enforcement (E066) applies here exactly as it does to the default emitter.")
-	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component — the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
+	emit := flag.String("emit", "", "output form for the selected -target, instead of its default. `core-module` emits a raw wasm core module (runnable via `wasmtime run --invoke <fn>`) instead of composing a component; `command-module` emits a WASI preview-1 COMMAND module — the same core bytes plus a `_start` that runs main and exits with its value, which is what a preview-1 host (`wasmtime run`, or a browser shim like web/wasi-shim.js) runs directly. Both are the wasm targets only. Replaces the old `-target wasm-bin` spelling: an output format is a property of the artifact, not of the machine it runs on, so it does not belong in the target name.")
 	componentWrap := flag.Bool("component-wrap", false, "with -emit core-module: wrap the core module as a self-contained preview-2 component via internal/wasm/component (no wasm-tools shell-out, no preview-1 adapter). Lifts main() as a component-level u32-returning export. Supports any mix of the migrated preview-2 imports; unrecognised imports surface a clear error.")
 	componentWrapCli := flag.Bool("component-wrap-cli", false, "like -component-wrap but emits the wasi:cli/run@0.2.0 export shape so the produced component runs under plain `wasmtime run prog.wasm` (no --invoke). main()'s return value lowers to result<_, _>: 0 = ok, non-zero = err. void main is supported (auto-wrapped to return 0). Same WASI coverage as -component-wrap.")
 	asyncExport := flag.Bool("async-export", false, "with -emit core-module: wrap the core as a WASI Preview-3 component-model-async component exporting `run: async func() -> u32` (lifted from main, which must return i32). The result is delivered via `canon task.return`. Run with `wasmtime run -W component-model-async,component-model-async-stackful --invoke 'run()'`. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
@@ -1395,8 +1395,14 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		if target != "wasm32-wasi" && target != "wasm32-wasi-http" {
 			return 1, fmt.Errorf("-emit core-module is not available for -target %s (available for: wasm32-wasi, wasm32-wasi-http)", target)
 		}
+	case "command-module":
+		// A command runs `main` and exits. wasm32-wasi-http has no main —
+		// it is a reactor exporting a handler — so it has nothing to start.
+		if target != "wasm32-wasi" {
+			return 1, fmt.Errorf("-emit command-module is not available for -target %s (available for: wasm32-wasi)", target)
+		}
 	default:
-		return 1, fmt.Errorf("unknown -emit %q (want core-module, or omit it for the target's default output form)", emit)
+		return 1, fmt.Errorf("unknown -emit %q (want core-module or command-module, or omit it for the target's default output form)", emit)
 	}
 
 	if d := platforms.ForTarget(target); d != nil && d.NoBackend {
@@ -1500,6 +1506,33 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		}
 		if err := linkNativeX86(asm, outPath, "", "", nil); err != nil {
 			return 1, fmt.Errorf("x86-64/ssa link: %v", err)
+		}
+		return 0, nil
+	}
+
+	if emit == "command-module" {
+		// A WASI preview-1 COMMAND: the same core bytes as core-module plus
+		// the `_start` a preview-1 host calls, and an exported `memory` for
+		// it to read. main's return becomes the process exit code, which is
+		// the only channel a command has for a value — the wasi:cli/run
+		// component the default output composes carries ok/err and nothing
+		// wider.
+		//
+		// This is the shape web/wasi-shim.js runs, so it is what a browser
+		// needs to host a Fern program — or a Fern compiler — without a
+		// component transpile.
+		if outPath == "" {
+			return 1, fmt.Errorf("-emit command-module requires -o OUTPUT")
+		}
+		bin, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
+			ExitWithMainResult: true,
+			ForceMemorySection: true,
+		})
+		if err != nil {
+			return 1, err
+		}
+		if err := os.WriteFile(outPath, bin, 0o644); err != nil {
+			return 1, err
 		}
 		return 0, nil
 	}
