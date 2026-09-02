@@ -461,6 +461,10 @@ func (a *Assembler) Bytes() ([]byte, error) {
 	return buf, nil
 }
 
+// LocRows are the per-statement `.loc` markers the parse collected, for the
+// DWARF line table. Mirrors x86_64.LocRows.
+func (a *Assembler) LocRows() []LineRow { return a.locRows }
+
 // BytesProgram resolves branches AND symbol references (adrp / add
 // #:lo12:), laying .text at textVAddr and .rodata immediately after
 // (8-byte aligned). It returns the final .text and .rodata blobs. This is
