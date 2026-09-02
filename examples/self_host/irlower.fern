@@ -527,6 +527,7 @@ pub struct FnSigs {
     // oracle (noesc_ret_fns_of) — rc_fe_rhs_tainted's user-call arm untaints
     // a qualified callee's result regardless of argument taint.
     noesc_ret_fns: SigReg,
+    freshbox_ret_fns: SigReg,
     // closure_fns: functions whose body returns a closure box (a hoisted
     // escaping lambda). `var f = <call to one>` marks f a closure local.
     closure_fns: string[],
@@ -53365,7 +53366,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // per-BLOCK variant is the quadratic trap the performance audit records).
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
-    if (plan_on) { plan_fe = free_eligible_sites_of(fn, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
+    if (plan_on) { plan_fe = free_eligible_sites_of(fn, structs, sg.ret_type_fns, sg.noesc_ret_fns, sg.freshbox_ret_fns); }
     var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
@@ -56119,7 +56120,13 @@ function structfld_collect_unsafe_stmts(stmts: ast.Stmt[], acc: string[], borrow
                 a = structfld_collect_unsafe_stmts(fo.body, a, borrowable);
             },
             ast.StmtMatch(m) => {
-                a = structfld_collect_unsafe(m.scrutinee, a, borrowable);
+                // A match SCRUTINEE is a transient borrow, exactly as a `var`
+                // initialiser is (StmtVar above): the box is read to test its
+                // tag and outlives nothing the arms do not own in their own
+                // right. Marking it unsafe disqualified the whole struct type
+                // from __field_reclaim_<T>, so `match (h.e)` stranded the enum
+                // field 100 times over where `var t = h.e; match (t)` did not.
+                a = structfld_safe_operand(m.scrutinee, a, borrowable);
                 for arm in m.arms {
                     if (arm.has_guard) { a = structfld_collect_unsafe(arm.guard, a, borrowable); }
                     a = structfld_collect_unsafe_stmts(arm.body, a, borrowable);
@@ -60558,7 +60565,7 @@ pub function fn_sigs_without_ownership(sg: FnSigs): FnSigs {
 pub function fn_sigs_empty(): FnSigs {
     var e: string[] = [];
     var r: SigReg = sig_reg_empty();
-    return FnSigs { arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, ret_fn_sigs: r, noesc_ret_fns: r,
+    return FnSigs { arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, ret_fn_sigs: r, noesc_ret_fns: r, freshbox_ret_fns: r,
         opt_ret_fns: r, i64_ret_fns: r, tuple_ret_fns: r, arrtup_ret_fns: r, struct_ret_fns: r, map_ret_fns: r,
         f64_ret_fns: r, f64arr_ret_fns: r, i64arr_ret_fns: r, erased_elem_ret_fns: r, fn_param_sigs: r, closure_fns: e,
         closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: r,
@@ -60881,6 +60888,73 @@ function noesc_collect_rets(stmts: ast.Stmt[], acc: ast.Expr[]): ast.Expr[] {
     return a;
 }
 
+// freshbox_ret_fns_of: a strict SUBSET port of native findReturnsFreshBox —
+// the functions whose every value return hands back a box the function
+// CONSTRUCTED rather than one derived from what it was handed.
+// rc_fe_rhs_tainted's user-call arm untaints such a call however tainted its
+// arguments are: they were only READ to build the result, so a borrow taint on
+// them says nothing about the new box.
+//
+// noesc_ret_fns_of cannot serve, and the difference is the point. It asks
+// whether anything REACHABLE FROM the result aliases a parameter, which is
+// false for `wrap(e, i) -> H { e: e, n: i }` — the struct legitimately holds
+// the argument. What taint needs is only whether the returned POINTER is the
+// callee's own, and it is: the literal retains its payloads, so the caller's
+// binding owns a reference rather than borrowing one.
+//
+// Subset in the same sense noesc_ret_fns_of is: native additionally credits a
+// returned ALIAS and returns built from fresh LOCALS, so every name admitted
+// here is admitted there too. A function with no value return is refused.
+//
+// Measured against a tree WITHOUT the match-scrutinee borrow fix this moves the
+// leak matrix by zero rows — the scrutinee leak holds the call form at 0 frees,
+// where a free-eligibility credit cannot show. It was reverted twice on that
+// evidence before the ordering was understood; see
+// docs/rc-log/2026-09-02-struct-enum-field-drop.md.
+//
+// Rows are "name|" for sig_reg_has_name, matching noesc_ret_fns_of.
+pub function freshbox_ret_fns_of(funcs: parser.FuncDecl[]): string[] {
+    var q: string[] = [];
+    for fn in funcs { q = q.append(fn.name); }
+    var qs: NoescSet = noesc_set_of(q);
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        for fn in funcs {
+            if (!noesc_set_has(qs, "", fn.name)) { continue; }
+            var rets: ast.Expr[] = noesc_collect_rets(fn.body, []);
+            var ok: boolean = rets.len() > 0;
+            for r in rets { if (!freshbox_ret_expr_ok(r, qs)) { ok = false; } }
+            if (!ok) { qs = noesc_set_kill(qs, fn.name); changed = true; }
+        }
+    }
+    var out: string[] = [];
+    for fn in funcs { if (noesc_set_has(qs, "", fn.name)) { out = out.append(fn.name + "|"); } }
+    return out;
+}
+
+// freshbox_ret_expr_ok: native returnsOwnBox restricted to its
+// allocatesFreshBox arm plus the call recursion. A string literal counts
+// because it is a static sentinel below the heap, where release is the no-op
+// every rc helper guards for. An ident, a projection and an index are refused:
+// those are native's `retained` credit, which this port does not take.
+function freshbox_ret_expr_ok(e: ast.Expr, qs: NoescSet): boolean {
+    match (e) {
+        ast.ExprStructLit(_) => { return true; },
+        ast.ExprTuple(_) => { return true; },
+        ast.ExprArray(_) => { return true; },
+        ast.ExprString(_) => { return true; },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => { return noesc_set_has(qs, "", cid.name); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 pub function noesc_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
     // Variant ctor names count as qualified callees (a ctor is a fresh box
     // whose qualifying args cannot alias a param), seeded permanently.
@@ -60976,6 +61050,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         ret_type_fns: sig_reg_of(ret_type_fns_of(funcs)),
         ret_fn_sigs: sig_reg_of(ret_fn_sigs_of(funcs)),
         noesc_ret_fns: sig_reg_of(noesc_ret_fns_of(funcs, structs)),
+        freshbox_ret_fns: sig_reg_of(freshbox_ret_fns_of(funcs)),
         str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)),
         bool_ret_fns: sig_reg_of(bool_ret_fns_of(funcs)),
         strarr_ret_fns: sig_reg_of(strarr_ret_fns_of(funcs)),
@@ -61934,7 +62009,7 @@ function rc_fe_walk_stmts(stmts: ast.Stmt[], s: FeState, structs: parser.StructD
 // string slices are owned; ident reads the taint set; projections and array
 // slices are tainted; calls are owned unless the receiver or any arg is
 // tainted; unknown shapes default tainted.
-function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[], noesc: SigReg, env: string): boolean {
+function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], types_t: string[], structs: parser.StructDecl[], noesc: SigReg, freshbox: SigReg, env: string): boolean {
     match (e) {
         ast.ExprArray(_) => { return false; },
         ast.ExprStructLit(_) => { return false; },
@@ -62020,15 +62095,16 @@ function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], ty
                     // the subset oracle): the result is fresh however tainted
                     // the inputs — they are only READ to build it.
                     if (sig_reg_has_name(noesc, cid.name)) { return false; }
+                    if (sig_reg_has_name(freshbox, cid.name)) { return false; }
                 },
                 ast.ExprFieldAccess(fa) => {
                     // method call: aliases the receiver only.
-                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs, noesc, env);
+                    return rc_fe_rhs_tainted(fa.obj, tainted, types_n, types_t, structs, noesc, freshbox, env);
                 },
                 _ => {}
             }
             for arg in c.args {
-                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs, noesc, env)) { return true; }
+                if (rc_fe_rhs_tainted(arg, tainted, types_n, types_t, structs, noesc, freshbox, env)) { return true; }
             }
             return false;
         },
@@ -62039,19 +62115,19 @@ function rc_fe_rhs_tainted(e: ast.Expr, tainted: string[], types_n: string[], ty
 
 // free_eligible_of: the ported analysis. Returns the name-set (unsorted) of
 // freeEligible locals + own/consumed params for `fn`.
-pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg): string[] {
-    return rc_fe_run(fn, structs, retreg, noesc, false);
+pub function free_eligible_of(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg, freshbox: SigReg): string[] {
+    return rc_fe_run(fn, structs, retreg, noesc, freshbox, false);
 }
 
 // free_eligible_sites_of: the same analysis keyed by BINDING SITE — the
 // verdicts the plan-routed release gates consume. A shadow-sibling pair or a
 // binder collision resolves per binding here, where the name-level dump
 // variant (kept above for native parity) must collapse them.
-pub function free_eligible_sites_of(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg): string[] {
-    return rc_fe_run(fn, structs, retreg, noesc, true);
+pub function free_eligible_sites_of(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg, freshbox: SigReg): string[] {
+    return rc_fe_run(fn, structs, retreg, noesc, freshbox, true);
 }
 
-function rc_fe_run(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg, site_mode: boolean): string[] {
+function rc_fe_run(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: SigReg, noesc: SigReg, freshbox: SigReg, site_mode: boolean): string[] {
     var st: FeState = FeState { tainted: [], an: [], av: [], av_env: [], types_n: [], types_t: [], decl_s: [], site_mode: site_mode };
     // param types recorded first (projection unwrap + destructure typing).
     var consumed: string[] = consumed_params_of(fn, structs);
@@ -62087,7 +62163,7 @@ function rc_fe_run(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: Si
         var i: i32 = 0;
         while (i < st.an.len()) {
             var name: string = st.an[i];
-            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs, noesc, st.av_env[i])) {
+            if (util.index_of_str(st.tainted, name) < 0 && rc_fe_rhs_tainted(st.av[i], st.tainted, st.types_n, st.types_t, structs, noesc, freshbox, st.av_env[i])) {
                 st = FeState { ...st, tainted: st.tainted.append(name) };
                 changed = true;
             }
@@ -63664,7 +63740,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
     }
     // freeEligible (#4482 — between consumedParams and preciseDrops, matching
     // native dumpRcPlan's line order): name-sorted, comma-joined.
-    var fe: string[] = free_eligible_of(fn, structs, sig_reg_of(ret_type_fns_of(funcs)), sig_reg_of(noesc_ret_fns_of(funcs, structs)));
+    var fe: string[] = free_eligible_of(fn, structs, sig_reg_of(ret_type_fns_of(funcs)), sig_reg_of(noesc_ret_fns_of(funcs, structs)), sig_reg_of(freshbox_ret_fns_of(funcs)));
     if (fe.len() > 0) {
         var fes: string[] = [];
         var fi: i32 = 0;
