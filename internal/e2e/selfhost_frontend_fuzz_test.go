@@ -37,16 +37,22 @@ const selfHostFuzzEnv = "FERN_SELFHOST_FUZZ"
 // TestDifferential_SelfHostX86_64, and at the nesting bound in
 // TestSelfHostDeepNestingMatchesNativeAndDoesNotCrash.
 //
-// # Why this is not coverage-guided in any real sense
+// # Why THIS target is not coverage-guided
 //
 // An iteration spawns a process and runs a whole compiler front end, so it
-// costs milliseconds where an in-process target costs microseconds. Worse,
-// Go's coverage instrumentation cannot see inside a Fern binary, so the
-// feedback that makes `-fuzz` steer is simply absent — what mutates is the
-// input, with nothing observing which self-host paths it reached. Real
-// coverage-guided self-host fuzzing needs #5548 (coverage instrumentation for
-// the Fern test runner) first. Until then this is a fast random walk with a
-// persistent corpus, which is still enough to find a segfault.
+// costs milliseconds where an in-process target costs microseconds. And Go's
+// coverage instrumentation cannot see inside a Fern binary, so the feedback
+// that makes `-fuzz` steer is absent here — what mutates is the input, with
+// nothing observing which self-host paths it reached. That makes this a fast
+// random walk over arbitrary TEXT with a persistent corpus, which is still
+// enough to find a segfault, and it is why the target is cheap enough to run
+// alongside the Go front-end fuzzers.
+//
+// Coverage-guided self-host fuzzing now exists separately, built on #5548's
+// `-cover`: TestSelfHostCoverageGuidedFuzz reads the counters an instrumented
+// self-host binary dumps at exit and keeps the inputs that reach new ones.
+// It steers GENERATED programs rather than arbitrary text, and costs ~500 ms
+// an iteration, so it is a nightly lane rather than a `-fuzz` target.
 //
 // Run with:
 //

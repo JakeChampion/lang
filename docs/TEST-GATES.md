@@ -182,8 +182,11 @@ Worth knowing so you do not assume coverage you do not have:
   `fern -cover-report` folds it into per-file line AND branch totals, the
   uncovered lists, or lcov. Branch coverage is the half that catches a suite
   running a line without ever taking one of its edges. Reach for it before arguing from a
-  suite's name about what it proves. Native x86-64 / arm64 only;
-  `docs/COVERAGE.md`.
+  suite's name about what it proves. It is also what the nightly
+  coverage-guided self-host fuzzer steers by — the only lane that observes
+  which paths inside the SELF-HOST compiler a generated program reaches, since
+  Go's instrumentation cannot see into a Fern binary. Native x86-64 / arm64
+  only; `docs/COVERAGE.md`.
 
 - **Anything outside the FIXED corpus bounds, on a pull request.** Every
   fernsmith sweep that runs per-PR is a fixed prefix — 2048 exit-byte seeds,

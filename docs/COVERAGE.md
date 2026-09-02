@@ -135,11 +135,45 @@ reimplementing the analysis:
 - `ast.CoverLinePrefix` is the one spelling of the wire format, shared by both
   natives and the reader.
 
+## Coverage-guided fuzzing of the self-host compiler
+
+Every `go test -fuzz` target in the repo steers by Go's coverage
+instrumentation, which cannot see inside a Fern binary. So the self-host
+compiler — the implementation `NATIVE-CONVERGENCE.md` makes the definition
+once the freeze lands — had no coverage-guided fuzzing at all.
+
+`-cover` closes that, and the feedback needs nothing new: one input is one
+compiler process, so the report the binary already writes at exit *is* that
+input's coverage.
+
+```sh
+FERN_SELFHOST_COVER_FUZZ=1 FERN_SELFHOST_COVER_FUZZ_TIME=5m   go test -run '^TestSelfHostCoverageGuidedFuzz$' ./internal/e2e/
+```
+
+The loop is AFL-shaped: mutate a corpus entry, let fernsmith turn the bytes
+into a program, run the instrumented compiler, and keep the entry when it
+reached a counter nothing had reached before. `FERN_SELFHOST_COVER_FUZZ_CORPUS`
+points at a directory the corpus is loaded from and saved back to, which is
+what makes the nightly lane compound instead of restarting from six seed bytes
+every night.
+
+Counter **ordinals** are the identity, not the site text: the table is baked in
+at compile time, so the Nth row of one run is the Nth of every run, and the hit
+set is a bitset over row positions. At ~148k rows per iteration that is the
+difference between a fuzzer and a parser.
+
+Cost is ~500 ms an iteration — a process spawn, a front-end run, and ~10 MB of
+counter rows. Four orders of magnitude above the in-process Go targets, which
+is why it is a nightly lane (`nightly-fuzz.yml`) and not a per-PR one.
+
+`TestSelfHostCoverageFeedbackBeatsBlindMutation` is the property that keeps it
+honest: two arms, same seeds, same iteration count, same RNG stream, differing
+only in whether a discovery joins the corpus. Feedback must reach strictly more
+counters. Without it the lane would keep reporting a plausible number long
+after the steering stopped working.
+
 ## Known gaps
 
-- **Coverage-guided fuzzing** — slice 4 of #5548. `internal/fernsmith` generates random
-  programs blind; feeding it the live edge-hit set turns it into a
-  coverage-maximising fuzzer.
 - **`match` arm coverage** — not branch coverage, and not built. Arm bodies sit
   on their own lines, so line coverage answers which arms ran; a guard on an
   arm is a conditional the report does not currently see.
