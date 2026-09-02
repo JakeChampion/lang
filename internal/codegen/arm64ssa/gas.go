@@ -307,6 +307,25 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 			w("\t.4byte %d", tag)
 		}
 	}
+	if targets := staticClosureTargets(progs, names); len(targets) > 0 {
+		// Capture-free closure cells: {fn_idx, env=0, drop_idx=0, 0}, the same
+		// four words closureLines writes on the heap for a capturing one. Each
+		// carries the immortal 8-byte header a string literal does — rc sentinel
+		// (0x80000000) at [ptr-8], padding at [ptr-4] — so inc / dec / is_unique
+		// and closure_drop all short-circuit rather than write a read-only cell,
+		// and the reuse pass never takes one as a token (is_unique reads false).
+		w(".section .rodata")
+		for _, t := range targets {
+			w(".align 3")
+			w("\t.4byte 0x80000000")
+			w("\t.4byte 0")
+			w("%s:", staticClosureLabel(fnIndex[t]))
+			w("\t.quad %d", fnIndex[t])
+			w("\t.quad 0")
+			w("\t.quad 0")
+			w("\t.quad 0")
+		}
+	}
 	if usesCallIndirect(progs) {
 		// Function-address dispatch table: a reserved null slot, then one .quad
 		// per function in module (sorted) order, so table[fn_idx] is the callee's
@@ -772,8 +791,14 @@ func usesHeap(progs map[string]*x86.Program) bool {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
 				switch in.Op {
-				case x86.MemAlloc, x86.MemLoad, x86.MemStore, x86.MakeEnv, x86.MakeClosure, x86.BoxDyn:
+				case x86.MemAlloc, x86.MemLoad, x86.MemStore, x86.MakeEnv, x86.BoxDyn:
 					return true
+				case x86.MakeClosure:
+					// A capture-free cell is static .rodata (staticClosureTargets),
+					// so it needs no arena.
+					if len(in.ArgLocs) > 0 {
+						return true
+					}
 				}
 			}
 		}
@@ -838,15 +863,6 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"proc_exec":                 emitProcExecHelper,
 	"__fern_box_free":           emitBoxFreeHelper,
 	"__fern_closure_drop":       emitClosureDropHelper,
-	"__str_len":                 emitStrLenHelper,
-	"__ptr_width":               emitPtrWidthHelper,
-	"__load_i32":                emitLoadI32Helper,
-	"__load_u8":                 emitLoadU8Helper,
-	"__store_i32":               emitStoreI32Helper,
-	"__load_ptr":                emitLoadPtrHelper,
-	"__store_ptr":               emitStorePtrHelper,
-	"__load_i64":                emitLoadI64Helper,
-	"__store_i64":               emitStoreI64Helper,
 	"__memset":                  emitMemsetHelper,
 	"__alloc":                   emitAllocHelper,
 	"__free":                    emitFreeHelper,
@@ -2521,6 +2537,36 @@ func collectSentinels(progs map[string]*x86.Program, names []string) (map[int64]
 	return labels, order
 }
 
+// staticClosureTargets returns, in module order, every function a CAPTURE-FREE
+// MakeClosure names. Such a cell holds {fn_idx, env=0, drop_idx=0, 0} — all four
+// words known at compile time and never written again — so one immortal .rodata
+// cell per target stands in for every evaluation of the value. Allocating it
+// instead cost a bump sequence and a heap-guard call each time the value was
+// materialised, which for a bare function name passed to a helper (core/map
+// hands __map_lookup_keyed its hash and eq functions on every lookup) is per
+// call.
+func staticClosureTargets(progs map[string]*x86.Program, names []string) []string {
+	seen := map[string]bool{}
+	var order []string
+	for _, name := range names {
+		for _, blk := range progs[name].Blocks {
+			for _, in := range blk.Insts {
+				if in.Op != x86.MakeClosure || len(in.ArgLocs) > 0 || seen[in.Callee] {
+					continue
+				}
+				seen[in.Callee] = true
+				order = append(order, in.Callee)
+			}
+		}
+	}
+	return order
+}
+
+// staticClosureLabel names the .rodata cell for the target at dispatch-table
+// index idx. Keyed on the index rather than the name so it needs no table of
+// its own: closureLines already resolves the callee to its index.
+func staticClosureLabel(idx int) string { return fmt.Sprintf("clo_%d", idx) }
+
 // referencedRuntimeHelpers returns, sorted, every runtime helper any emitted
 // program calls (that arm64 has an emitter for), plus the transitive closure of
 // their helper→helper dependencies (runtimeHelperDeps).
@@ -2727,43 +2773,6 @@ func emitClosureDropHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// Single-word strings carry their byte length as a 4-byte field immediately
-// before the data (length at [ptr-4]); heap strings also have the rc word at
-// [ptr-8], literals an immortal sentinel there. The helpers below match that
-// layout, the arm64 siblings of the x86-64 string helpers.
-
-// emitStrLenHelper writes __str_len(ptr) -> i32: the byte length at [ptr-4].
-func emitStrLenHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__str_len"))
-	w("\tldur w0, [x0, #-4]")
-	w("\tret")
-}
-
-// emitPtrWidthHelper writes __ptr_width() -> i32: the target's pointer size in
-// bytes, 8 here. The Map runtime calls it to size a per-entry key/value slot, so
-// the same core/map.fern source lays out 8-byte slots on the natives and 4-byte
-// ones on wasm32. Mirrors the arm64 stack-machine backend's constant function
-// (`mov w0, #8; ret`) and the wasm backend's `i32.const 4`. Leaf.
-func emitPtrWidthHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__ptr_width"))
-	w("\tmov w0, #8")
-	w("\tret")
-}
-
-// The raw-memory intrinsics core/map.fern is written against: it manipulates its
-// kv buffer through explicit loads and stores rather than through typed field
-// access, because the buffer is one untyped allocation whose layout depends on
-// the target's pointer width. The stack-machine backend emits these as real
-// two-instruction leaf functions too (emitRawIntPokesRuntime), so calling them
-// rather than inlining costs nothing this path does not already pay.
-//
-// Return widths matter here: __load_ptr / __load_i64 hand back a full 8-byte
-// value, so ssa.ResolveWidths classifies them wide or the direct-call sequence's
-// i32 sign-extend mask would truncate a high heap address. __load_i32 is
-// genuinely 32-bit and wants the mask. The stores are void.
-
 // emitAllocHelper writes __alloc(n) -> ptr: a raw bump of n 8-aligned bytes with
 // NO rc header, the primitive core/map.fern builds its kv buffer out of (it lays
 // down its own header words at buf+0..20). Contrast __alloc_u8, which reserves a
@@ -2944,61 +2953,6 @@ func emitFreeHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-func emitLoadI32Helper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__load_i32"))
-	w("\tldr w0, [x0]")
-	w("\tret")
-}
-
-// emitLoadU8Helper writes __load_u8(addr) -> i32: one byte, zero-extended.
-func emitLoadU8Helper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__load_u8"))
-	w("\tldrb w0, [x0]")
-	w("\tret")
-}
-
-func emitStoreI32Helper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__store_i32"))
-	w("\tstr w1, [x0]")
-	w("\tret")
-}
-
-func emitLoadPtrHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__load_ptr"))
-	w("\tldr x0, [x0]")
-	w("\tret")
-}
-
-func emitStorePtrHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__store_ptr"))
-	w("\tstr x1, [x0]")
-	w("\tret")
-}
-
-// __load_i64 / __store_i64 are the 8-byte pair the Map runtime's wide-scalar
-// boxed-key path (keyKind 2) uses to reach an i64 / u64 / f64 key through its
-// heap cell. On arm64 a usize is already 8 bytes, so `Map[i64, _]` itself stays
-// on keyKind 0 and never calls these — but the stdlib names them regardless of
-// target, so the symbols need linkable bodies.
-func emitLoadI64Helper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__load_i64"))
-	w("\tldr x0, [x0]")
-	w("\tret")
-}
-
-func emitStoreI64Helper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__store_i64"))
-	w("\tstr x1, [x0]")
-	w("\tret")
-}
-
 // emitMemsetHelper writes __memset(dst, byte, n): splat the low byte of `byte`
 // across a 64-bit pattern, store it 8 bytes at a time, then finish the tail one
 // byte at a time. The Map runtime uses it to fill a fresh bucket array with the
@@ -3025,6 +2979,11 @@ func emitMemsetHelper(w func(string, ...any)) {
 	w(".Lssa_mset_done:")
 	w("\tret")
 }
+
+// Single-word strings carry their byte length as a 4-byte field immediately
+// before the data (length at [ptr-4]); heap strings also have the rc word at
+// [ptr-8], literals an immortal sentinel there. The string helpers below match
+// that layout, the arm64 siblings of the x86-64 string helpers.
 
 // emitStrEqHelper writes __str_eq(a, b) -> i32: 1 if the two single-word strings
 // are byte-equal, else 0. Fast paths on pointer identity and length mismatch,
@@ -6307,6 +6266,12 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 				// An array index is address arithmetic, not a call: inline it
 				// rather than making the allocator spill around it. The seed
 				// keeps the bounds-check label unique per site.
+				if lines, ok := inlinePokeLines(in, fr, numAlloc); ok {
+					for _, l := range lines {
+						w("\t%s", l)
+					}
+					continue
+				}
 				if lines, ok := inlineArrIdxLines(in, fr, numAlloc, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)); ok {
 					for _, l := range lines {
 						if strings.HasSuffix(l, ":") {
@@ -6539,6 +6504,89 @@ var arrIdxInline = map[string]struct {
 	"__arr_idx_1_nc":  {0, false},
 	"__arr_idx_8_nc":  {3, false},
 	"__arr_idx_16_nc": {4, false},
+}
+
+// pokeInline maps each raw-memory intrinsic core/map.fern is written against
+// onto the one instruction it is. mnem is the load/store mnemonic (empty for
+// __ptr_width's constant), wide selects an x-register operand over a w one,
+// store writes ArgLocs[1] through ArgLocs[0] and yields nothing, and off is the
+// displacement — negative for a string's length field, which is why that one
+// takes the unscaled ldur form.
+//
+// core/map.fern reaches its kv buffer through these rather than through typed
+// field access, because the buffer is one untyped allocation whose layout
+// depends on the target's pointer width — so a map lookup runs several of them
+// per probe. The stack-machine backends inline them at the call site too.
+var pokeInline = map[string]struct {
+	mnem  string
+	wide  bool
+	store bool
+	off   int
+}{
+	"__load_i32":  {mnem: "ldr"},
+	"__load_u8":   {mnem: "ldrb"},
+	"__load_i64":  {mnem: "ldr", wide: true},
+	"__load_ptr":  {mnem: "ldr", wide: true},
+	"__str_len":   {mnem: "ldur", off: -4},
+	"__store_i32": {mnem: "str", store: true},
+	"__store_i64": {mnem: "str", wide: true, store: true},
+	"__store_ptr": {mnem: "str", wide: true, store: true},
+	"__ptr_width": {},
+}
+
+// inlinePokeLines renders a raw-memory intrinsic as that instruction, or reports
+// false when the callee is something else. Same trade as inlineArrIdxLines: the
+// cost was never the `bl` but the caller-saves the allocator plants around it.
+//
+// Each case reproduces the helper body exactly, the width included — a load
+// through a w-register leaves the value zero-extended and the trailing maskFix
+// sign-extends it, which is what the call sequence did with the helper's result.
+func inlinePokeLines(in x86.Inst, fr frameLayout, numAlloc int) ([]string, bool) {
+	form, ok := pokeInline[ir.CodegenAlias(in.Callee)]
+	if !ok || in.Op != x86.Call {
+		return nil, false
+	}
+	s0, s1 := numAlloc, numAlloc+1
+	var out []string
+	materialise := func(l x86.Loc, tmp int) int {
+		if l.IsReg {
+			return l.Reg
+		}
+		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(tmp), fr.slot(l.Slot)))
+		return tmp
+	}
+	operand := func(r int) string {
+		if form.wide {
+			return xreg(r)
+		}
+		return wreg(r)
+	}
+	switch {
+	case form.mnem == "": // __ptr_width(): a constant, no operands
+		if len(in.ArgLocs) != 0 {
+			return nil, false
+		}
+		out = append(out, fmt.Sprintf("mov %s, #8", wreg(in.Dst)))
+	case form.store:
+		if len(in.ArgLocs) != 2 {
+			return nil, false
+		}
+		addr := materialise(in.ArgLocs[0], s0)
+		val := materialise(in.ArgLocs[1], s1)
+		// Void, so there is no result to place and no width to fix.
+		return append(out, fmt.Sprintf("%s %s, [%s]", form.mnem, operand(val), xreg(addr))), true
+	default:
+		if len(in.ArgLocs) != 1 {
+			return nil, false
+		}
+		addr := materialise(in.ArgLocs[0], s0)
+		if form.off != 0 {
+			out = append(out, fmt.Sprintf("%s %s, [%s, #%d]", form.mnem, operand(in.Dst), xreg(addr), form.off))
+		} else {
+			out = append(out, fmt.Sprintf("%s %s, [%s]", form.mnem, operand(in.Dst), xreg(addr)))
+		}
+	}
+	return append(out, maskFix(in.Dst, in.W)...), true
 }
 
 // inlineArrIdxLines renders an array-index call as the address compute it is,
@@ -6847,15 +6895,14 @@ func closureLines(in x86.Inst, numAlloc int, fnIndex map[string]int, fr frameLay
 	}
 	if len(in.ArgLocs) == 0 {
 		// No captures: env_ptr = 0 and drop_idx = 0 — there is no env block to
-		// free, so nothing may dispatch the drop sub-pair. Matches the native
-		// backends' zero-capture pair.
-		alloc(in.Dst, 32, -1)
-		out = append(out, fmt.Sprintf("mov %s, #%d", xreg(stage), idx))
-		out = append(out, fmt.Sprintf("str %s, [%s, #0]", xreg(stage), xreg(in.Dst)))
-		for _, off := range []int{8, 16, 24} {
-			out = append(out, fmt.Sprintf("str xzr, [%s, #%d]", xreg(in.Dst), off))
-		}
-		return out, nil
+		// free, so nothing may dispatch the drop sub-pair. Every word is a
+		// compile-time constant, so the cell is the module's immortal .rodata one
+		// (staticClosureTargets) and materialising the value is its address.
+		lbl := staticClosureLabel(idx)
+		return append(out,
+			fmt.Sprintf("adrp %s, %s", xreg(in.Dst), lbl),
+			fmt.Sprintf("add %s, %s, #:lo12:%s", xreg(in.Dst), xreg(in.Dst), lbl),
+		), nil
 	}
 	// drop_idx = __closure_drop_<target>'s index, or 0 when the module has no
 	// such thunk (RcFree off, or a target dead-function elimination culled).

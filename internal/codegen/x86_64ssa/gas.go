@@ -235,6 +235,25 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 			w("\t.4byte %d", tag)
 		}
 	}
+	if targets := staticClosureTargets(progs, names); len(targets) > 0 {
+		// Capture-free closure cells: {fn_idx, env=0, drop_idx=0, 0}, the same
+		// four words closureLines writes on the heap for a capturing one. Each
+		// carries the immortal 8-byte header a string literal does, so inc / dec
+		// / is_unique and closure_drop all short-circuit rather than write a
+		// read-only cell, and the reuse pass never takes one as a token.
+		w("")
+		w(".section .rodata")
+		for _, t := range targets {
+			w(".align 8")
+			w("\t.4byte 0x80000000")
+			w("\t.4byte 0")
+			w("%s:", staticClosureLabel(fnIndex[t]))
+			w("\t.quad %d", fnIndex[t])
+			w("\t.quad 0")
+			w("\t.quad 0")
+			w("\t.quad 0")
+		}
+	}
 	if usesCallIndirect(progs) {
 		// Function-address dispatch table: a reserved null slot, then one .quad
 		// per function in module (sorted) order, so table[fn_idx] is the callee's
@@ -334,6 +353,12 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 		for _, in := range blk.Insts {
 			if in.Op == Select {
 				for _, l := range selectLines(in) {
+					w("\t%s", l)
+				}
+				continue
+			}
+			if lines, ok := inlinePokeLines(in, numAlloc); ok {
+				for _, l := range lines {
 					w("\t%s", l)
 				}
 				continue
@@ -1434,18 +1459,10 @@ func closureLines(in Inst, numAlloc int, fnIndex map[string]int) ([]string, erro
 	}
 	if len(in.ArgLocs) == 0 {
 		// No captures: env_ptr = 0 and drop_idx = 0 — there is no env block to
-		// free, so nothing may dispatch the drop sub-pair. Matches the native
-		// backends' zero-capture pair.
-		alloc(in.Dst, 32)
-		out = append(out,
-			fmt.Sprintf("mov %s, %d", reg(scratch), idx),
-			fmt.Sprintf("mov %s, %s", memRef(reg(in.Dst), 0), reg(scratch)),
-			fmt.Sprintf("mov %s, 0", reg(scratch)),
-		)
-		for _, off := range []int64{8, 16, 24} {
-			out = append(out, fmt.Sprintf("mov %s, %s", memRef(reg(in.Dst), off), reg(scratch)))
-		}
-		return out, nil
+		// free, so nothing may dispatch the drop sub-pair. Every word is a
+		// compile-time constant, so the cell is the module's immortal .rodata one
+		// (staticClosureTargets) and materialising the value is its address.
+		return append(out, fmt.Sprintf("lea %s, [rip + %s]", reg(in.Dst), staticClosureLabel(idx))), nil
 	}
 	// drop_idx = __closure_drop_<target>'s index, or 0 when the module has no
 	// such thunk (RcFree off, or a target dead-function elimination culled).
@@ -1572,6 +1589,122 @@ func collectSentinels(progs map[string]*Program, names []string) (map[int64]stri
 	return labels, order
 }
 
+// pokeInline maps each raw-memory intrinsic core/map.fern is written against
+// onto the one instruction it is. mnem is the mnemonic (empty for __ptr_width's
+// constant), wide selects a 64-bit operand over a 32-bit one, store writes
+// ArgLocs[1] through ArgLocs[0] and yields nothing, and off is the displacement
+// — negative for a string's length field.
+//
+// core/map.fern reaches its kv buffer through these rather than through typed
+// field access, because the buffer is one untyped allocation whose layout
+// depends on the target's pointer width — so a map lookup runs several of them
+// per probe. The stack-machine backends and arm64ssa inline them at the call
+// site too; this backend used to have no emitter for them at all, so a program
+// that used one was refused.
+var pokeInline = map[string]struct {
+	mnem  string
+	wide  bool
+	store bool
+	off   int64
+}{
+	"__load_i32":  {mnem: "mov"},
+	"__load_u8":   {mnem: "movzx"},
+	"__load_i64":  {mnem: "mov", wide: true},
+	"__load_ptr":  {mnem: "mov", wide: true},
+	"__str_len":   {mnem: "mov", off: -4},
+	"__store_i32": {mnem: "mov", store: true},
+	"__store_i64": {mnem: "mov", wide: true, store: true},
+	"__store_ptr": {mnem: "mov", wide: true, store: true},
+	"__ptr_width": {},
+}
+
+// inlinePokeLines renders a raw-memory intrinsic as that instruction, or reports
+// false when the callee is something else. The cost was never the `call` but the
+// caller-saves the allocator plants around it.
+//
+// Each case reproduces the width the helper would have returned: a 4-byte load
+// through a 32-bit register leaves the value zero-extended and the trailing
+// maskFix sign-extends it, exactly as the call sequence did with the result.
+func inlinePokeLines(in Inst, numAlloc int) ([]string, bool) {
+	form, ok := pokeInline[in.Callee]
+	if !ok || in.Op != Call {
+		return nil, false
+	}
+	s0, s1 := numAlloc, numAlloc+1
+	var out []string
+	materialise := func(l Loc, tmp int) int {
+		if l.IsReg {
+			return l.Reg
+		}
+		out = append(out, fmt.Sprintf("mov %s, %s", reg(tmp), slotMem(l.Slot)))
+		return tmp
+	}
+	operand := func(r int) string {
+		if form.wide {
+			return reg(r)
+		}
+		return reg32n(r)
+	}
+	switch {
+	case form.mnem == "": // __ptr_width(): a constant, no operands
+		if len(in.ArgLocs) != 0 {
+			return nil, false
+		}
+		out = append(out, fmt.Sprintf("mov %s, 8", reg32n(in.Dst)))
+	case form.store:
+		if len(in.ArgLocs) != 2 {
+			return nil, false
+		}
+		addr := materialise(in.ArgLocs[0], s0)
+		val := materialise(in.ArgLocs[1], s1)
+		// Void, so there is no result to place and no width to fix.
+		return append(out, fmt.Sprintf("mov %s, %s", memRef(reg(addr), form.off), operand(val))), true
+	case form.mnem == "movzx":
+		if len(in.ArgLocs) != 1 {
+			return nil, false
+		}
+		addr := materialise(in.ArgLocs[0], s0)
+		out = append(out, fmt.Sprintf("movzx %s, byte ptr %s", reg32n(in.Dst), memRef(reg(addr), form.off)))
+	default:
+		if len(in.ArgLocs) != 1 {
+			return nil, false
+		}
+		addr := materialise(in.ArgLocs[0], s0)
+		out = append(out, fmt.Sprintf("mov %s, %s", operand(in.Dst), memRef(reg(addr), form.off)))
+	}
+	if fix := maskFix(in.Dst, in.W); fix != "" {
+		out = append(out, strings.TrimPrefix(fix, "\n\t"))
+	}
+	return out, true
+}
+
+// staticClosureTargets returns, in module order, every function a CAPTURE-FREE
+// MakeClosure names. Such a cell holds {fn_idx, env=0, drop_idx=0, 0} — all four
+// words known at compile time and never written again — so one immortal .rodata
+// cell per target stands in for every evaluation of the value, where allocating
+// it cost a bump sequence and a heap-guard call each time.
+func staticClosureTargets(progs map[string]*Program, names []string) []string {
+	seen := map[string]bool{}
+	var order []string
+	for _, name := range names {
+		for _, blk := range progs[name].Blocks {
+			for _, in := range blk.Insts {
+				if in.Op != MakeClosure || len(in.ArgLocs) > 0 || seen[in.Callee] {
+					continue
+				}
+				seen[in.Callee] = true
+				order = append(order, in.Callee)
+			}
+		}
+	}
+	return order
+}
+
+// staticClosureLabel names the .rodata cell for the target at dispatch-table
+// index idx. Keyed on the index rather than the name so it needs no table of
+// its own: closureLines already resolves the callee to its index.
+func staticClosureLabel(idx int) string { return fmt.Sprintf("clo_%d", idx) }
+
 // usesHeap reports whether any emitted program contains a heap op (so the heap
 // section + cursor init are only emitted when needed).
 func usesHeap(progs map[string]*Program) bool {
@@ -1579,8 +1712,14 @@ func usesHeap(progs map[string]*Program) bool {
 		for _, blk := range p.Blocks {
 			for _, in := range blk.Insts {
 				switch in.Op {
-				case MemAlloc, MemLoad, MemStore, MakeEnv, MakeClosure:
+				case MemAlloc, MemLoad, MemStore, MakeEnv:
 					return true
+				case MakeClosure:
+					// A capture-free cell is static .rodata
+					// (staticClosureTargets), so it needs no arena.
+					if len(in.ArgLocs) > 0 {
+						return true
+					}
 				}
 			}
 		}
