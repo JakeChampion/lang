@@ -113,6 +113,12 @@ aarch64/map_probe_chain.text	3765
 aarch64/map_probe_chain.ir	657975402
 aarch64/map_string.text	4879
 aarch64/map_string.ir	169434945	2
+aarch64/ordmap_insert.text	75112
+aarch64/ordmap_insert.ir	536862419
+aarch64/pmap_insert.text	37490
+aarch64/pmap_insert.ir	594520936
+aarch64/pvec_with.text	15072
+aarch64/pvec_with.ir	586374090
 aarch64/sort_inplace.text	780
 aarch64/sort_inplace.ir	116219454
 aarch64/sort_ints.text	2769
