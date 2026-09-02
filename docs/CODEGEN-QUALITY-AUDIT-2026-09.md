@@ -686,9 +686,12 @@ share stays at 52.5% in both, unmoved to the digit — which is the tell: the
 traffic is structural to the emitter, not a function of how well the allocator
 chooses. Splitting the 869,756 by position:
 
-- **375,250 (43.1%)** sit contiguous with a `bl` — the caller-saved
-  save/restore around each of 173,693 calls, plus outgoing stack arguments, at
-  2.2 frame ops per call.
+- **375,250 (43.1%)**, which is **22.6% of all output**, sit contiguous with a
+  `bl` — the caller-saved save/restore around each of 173,693 calls, plus
+  outgoing stack arguments, at 2.2 frame ops and 2.39 registers moved per call.
+  All but 39,796 of those are single `ldr`/`str`, not `ldp`/`stp`: pairing is
+  not where this traffic lives, so a peephole that pairs adjacent saves would
+  address the encoding and not the cause.
 - **494,506 (56.9%)** are elsewhere, and spill reloads can account for at most
   196,049 of the total either way.
 
@@ -727,10 +730,13 @@ Stated plainly so the gaps are not mistaken for clean bills of health.
   how many of those are necessary, and how Fern compares to Koka, Lean 4, Roc
   and Swift, is its own audit. `docs/rc-log/` holds the live state.
 - ~~**Register pressure and spill quality** on the SSA path~~ — now measured,
-  in §6.4, and the hint in this bullet was wrong. The `ldp`/`stp` pairs it
-  pointed at (80 639 / 74 365 today, down from 99 367 / 92 997 before #7991
-  narrowed the per-call live sets) are call-boundary save/restore, not spill
-  traffic: only 0.9% of values spill at all.
+  in §6.4, and the hint in this bullet was wrong twice over. Only 0.9% of
+  values spill at all, so the `ldp`/`stp` pairs it pointed at (80 639 / 74 365
+  today, down from 99 367 / 92 997 before #7991 narrowed the per-call live sets)
+  are not spill traffic — and they are not call-boundary traffic either:
+  **74.3% of them sit nowhere near a `bl`**, so they are frame save-restore in
+  prologues and epilogues. The call-boundary traffic §6.4 does identify is
+  overwhelmingly single `ldr`/`str`.
 - **Cache and branch behaviour.** Every dynamic number here is retired
   instructions, which is deterministic and reproducible but blind to memory
   hierarchy. A 20% instruction reduction is not automatically a 20% speedup —
