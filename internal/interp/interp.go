@@ -2627,7 +2627,13 @@ func builtinPutchar(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("putchar: expected number arg, got %T", args[0])
 	}
-	fmt.Fprintf(i.Stdout, "%c", rune(int64(n)))
+	// One BYTE, the low 8 bits, which is what __fern_putchar does on every
+	// compiled backend (`write(1, &byte, 1)`) and what docs/FEATURE-AUDIT.md
+	// specifies. Writing `%c` of the argument instead encoded it as a rune, so
+	// anything above 127 came out as its multi-byte UTF-8 form — putchar(233)
+	// wrote c3 a9 where the backends write e9 — and a value outside a rune's
+	// range wrote U+FFFD rather than wrapping.
+	i.Stdout.Write([]byte{byte(int64(n))})
 	return Void{}, nil
 }
 

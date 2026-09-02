@@ -95,6 +95,29 @@ var interpIOProgs = []struct {
   print(a + b);
   return 0;
 }`},
+	// putchar writes ONE BYTE — the low 8 bits — not a codepoint. 65 agrees
+	// under either rule and is the control; the rest discriminate, and each was
+	// a real disagreement before internal/interp was fixed to match the three
+	// compiled backends (233 came out as the two UTF-8 bytes c3 a9, 321 as
+	// U+0141, -1 as U+FFFD).
+	{"putchar-writes-bytes-not-codepoints", `function main(): i32 {
+  putchar(65);
+  putchar(233);
+  putchar(255);
+  putchar(0);
+  putchar(321);
+  putchar(0 - 1);
+  putchar(10);
+  return 0;
+}`},
+	// putchar shares stdout with write, and neither adds anything of its own.
+	{"putchar-interleaved-with-write", `function main(): i32 {
+  write("a");
+  putchar(66);
+  write("c");
+  putchar(10);
+  return 0;
+}`},
 	// Inside a loop and a call, so the builtin is reached from more than the
 	// top-level statement position.
 	{"from-a-loop-and-a-call", `function shout(s: string): i32 {
