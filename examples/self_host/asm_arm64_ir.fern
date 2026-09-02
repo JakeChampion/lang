@@ -2606,6 +2606,8 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
     s = s.write("    stp x29, x30, [sp, #-16]!\n");     // save LR for the nested bls
     s = s.write("    cmp x11, #16, lsl #12\n");         // old null/low -> skip fields
     s = s.write("    blo .Lafr_" + san + "_box\n");
+    s = s.write("    cmp x11, x10\n");                  // same box: nothing replaced
+    s = s.write("    beq .Lafr_" + san + "_box\n");
     var k: i32 = 0;
     while (k < n) {
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);

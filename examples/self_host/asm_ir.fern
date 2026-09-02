@@ -5419,6 +5419,11 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
     s = s.write("    movq 8(%rsp), %r9\n");        // snap
     s = s.write("    cmpq $0x10000, %r10\n");      // old null / low-addr -> skip fields
     s = s.write("    jb .Lfr_" + san + "_box\n");
+    // The SAME box in old and new — a rebind whose callee reused it in place —
+    // replaced nothing, and the carried-field arm below releases without the
+    // cow compare, so it would dec the only reference to a nested box.
+    s = s.write("    cmpq %r10, %r11\n");
+    s = s.write("    je .Lfr_" + san + "_box\n");
     var k: i32 = 0;
     while (k < n) {
         var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
