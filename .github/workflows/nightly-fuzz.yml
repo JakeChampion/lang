@@ -294,11 +294,87 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  # Coverage-guided fuzzing of the SELF-HOST compiler (#5548 slice 4).
+  #
+  # Every `fuzz` row above steers by Go's coverage instrumentation, which
+  # cannot see inside a Fern binary — so the self-host compiler, the one
+  # `docs/NATIVE-CONVERGENCE.md` makes the definition once the freeze lands,
+  # had no coverage-guided lane at all. `FuzzSelfHostFrontEnd` says as much in
+  # its own comment. `-cover` closes it: the instrumented self-host binary
+  # dumps its counters at exit, one process per input, and the loop keeps the
+  # inputs that reached counters nothing had reached before.
+  #
+  # Its own job rather than a `fuzz` matrix row: it is not a `go test -fuzz`
+  # target at all. Go owns corpus membership for those, and the feedback here
+  # comes from a Fern binary Go cannot instrument, so the loop, the corpus and
+  # the persistence are the test's own.
+  #
+  # x86-64 only and no qemu, the constraint every self-host lane documents:
+  # the driver is emitted as x86-64 asm and takes host paths as argv.
+  #
+  # Budget: ~500 ms an iteration (a process spawn, a front-end run, and ~10 MB
+  # of counter rows), so 25 minutes is ~3k inputs. Four orders of magnitude
+  # per input above the in-process lanes, which is exactly why it is nightly.
+  fuzz-selfhost-coverage:
+    if: github.repository == 'JakeChampion/lang'
+    name: nightly-fuzz-selfhost-coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          gotestsum: "true"
+
+      # The corpus is this lane's whole point: a night that discovers an input
+      # reaching new self-host coverage must hand it to the next night, or the
+      # lane restarts from six seed bytes every time and never gets past the
+      # shallow shapes. Same key shape as the `fuzz` rows — run_id so each
+      # night saves, restore-key so it picks up the most recent previous one.
+      - name: Restore self-host coverage corpus
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/selfhost-cover-corpus
+          key: selfhost-cover-corpus-${{ github.run_id }}
+          restore-keys: |
+            selfhost-cover-corpus-
+
+      - name: Coverage-guided self-host fuzz
+        env:
+          FERN_SELFHOST_COVER_FUZZ: "1"
+          FERN_SELFHOST_COVER_FUZZ_TIME: "25m"
+          FERN_SELFHOST_COVER_FUZZ_CORPUS: "${{ runner.temp }}/selfhost-cover-corpus"
+        run: |
+          gotestsum --format testname -- -timeout=43m \
+            -run '^TestSelfHostCoverageGuidedFuzz$' ./internal/e2e/
+
+      # The acceptance property from #5548: feedback must reach counters blind
+      # mutation of the same budget does not. Iteration-budgeted, so it says
+      # the same thing on a loaded runner as on an idle one. Runs after the
+      # campaign because it rebuilds the instrumented driver; a failure here
+      # means the steering has stopped working, which the campaign above
+      # cannot tell you — it would keep reporting a number either way.
+      - name: Feedback beats blind mutation
+        env:
+          FERN_SELFHOST_COVER_FUZZ: "1"
+        run: |
+          gotestsum --format testname -- -timeout=30m \
+            -run '^TestSelfHostCoverageFeedbackBeatsBlindMutation$' ./internal/e2e/
+
+      - name: Upload discovered corpus
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-selfhost-cover-corpus
+          path: ${{ runner.temp }}/selfhost-cover-corpus
+          if-no-files-found: ignore
+          retention-days: 30
+
   # A nightly nobody looks at is a nightly that does not exist. Failures
   # land on one long-lived issue rather than a fresh one per night, so a
   # week of the same break is a thread and not eight duplicates.
   report:
-    needs: [window, differential, differential-selfhost, differential-selfhost-arm64, fuzz]
+    needs: [window, differential, differential-selfhost, differential-selfhost-arm64, fuzz, fuzz-selfhost-coverage]
     if: failure() && github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
