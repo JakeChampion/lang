@@ -3215,6 +3215,7 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
 
 // ---- SSE tables and emitters ----
 
+// BEGIN GENERATED SSE TABLES (cmd/x86tblgen) — do not edit by hand.
 // x86_gas_sse_fp_op: the scalar/packed FLOAT half of the two-byte-opcode
 // SSE table (`[pfx] 0F op /r`, xmm destination), packed as pfx*256+op;
 // -1 when absent. Mirrors internal/native/x86_64's sseOps.
@@ -3332,6 +3333,7 @@ function x86_gas_sse_int_op(mnem: string): i32 {
     if (mnem == "psrad") { return 102 * 256 + 226; }
     return 0 - 1;
 }
+// END GENERATED SSE TABLES
 
 // x86_gas_sse_op consults both halves of the SSE table.
 function x86_gas_sse_op(mnem: string): i32 {

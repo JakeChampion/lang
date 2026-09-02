@@ -1,6 +1,10 @@
 package x86_64
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/jakechampion/lang/internal/native/x86tbl"
+)
 
 // SSE scalar floating-point support. The Fern x86-64 code generator keeps
 // f64 values in general-purpose registers as bit patterns and shuttles
@@ -15,64 +19,16 @@ import "fmt"
 // operand size is implied by the mandatory prefix, so REX.W is never set
 // (REX.R/B still extend xmm8..15). A zero prefix means "no mandatory
 // prefix" (the scalar/packed-single compare forms).
-var sseOps = map[string]struct{ prefix, op byte }{
-	"addsd": {0xF2, 0x58}, "subsd": {0xF2, 0x5C}, "mulsd": {0xF2, 0x59}, "divsd": {0xF2, 0x5E}, "sqrtsd": {0xF2, 0x51},
-	"addss": {0xF3, 0x58}, "subss": {0xF3, 0x5C}, "mulss": {0xF3, 0x59}, "divss": {0xF3, 0x5E}, "sqrtss": {0xF3, 0x51},
-	"minsd": {0xF2, 0x5D}, "maxsd": {0xF2, 0x5F}, "minss": {0xF3, 0x5D}, "maxss": {0xF3, 0x5F},
-	"ucomisd": {0x66, 0x2E}, "comisd": {0x66, 0x2F}, "ucomiss": {0x00, 0x2E}, "comiss": {0x00, 0x2F},
-	"cvtss2sd": {0xF3, 0x5A}, "cvtsd2ss": {0xF2, 0x5A},
-	"movapd": {0x66, 0x28}, "movaps": {0x00, 0x28},
-	"xorpd": {0x66, 0x57}, "xorps": {0x00, 0x57}, "andpd": {0x66, 0x54}, "andps": {0x00, 0x54},
-
-	// PACKED-BYTE ops, the vector-kernel surface (docs/ATLAS-PLATFORM-PLAN.md
-	// §3). Everything above this line is SCALAR floating point — the f64
-	// shuttling the code generator does — and that is why the assembler had no
-	// vector instructions at all until now: nothing had ever asked for one.
-	//
-	// These four happen to fit the same [prefix] 0F <op> /r shape, so they are
-	// table entries rather than encoders. `movdqu` is the unaligned 128-bit
-	// load/store, `pcmpeqb` the byte-wise compare producing an all-ones mask
-	// per equal lane, and the two `punpckl*` forms are the SSE2 way to
-	// broadcast a byte across a register (interleave with itself twice, then
-	// pshufd) — SSSE3's single-instruction `pshufb` is outside the declared
-	// x86-64 baseline.
-	"movdqu": {0xF3, 0x6F}, "movdqa": {0x66, 0x6F},
-	"pcmpeqb": {0x66, 0x74}, "pcmpeqw": {0x66, 0x75}, "pcmpeqd": {0x66, 0x76},
-	"pcmpgtb": {0x66, 0x64}, "pcmpgtw": {0x66, 0x65}, "pcmpgtd": {0x66, 0x66},
-	"punpcklbw": {0x66, 0x60}, "punpcklwd": {0x66, 0x61},
-	"punpckldq": {0x66, 0x62}, "punpcklqdq": {0x66, 0x6C},
-	"punpckhbw": {0x66, 0x68}, "punpckhwd": {0x66, 0x69},
-	"punpckhdq": {0x66, 0x6A}, "punpckhqdq": {0x66, 0x6D},
-	"por": {0x66, 0xEB}, "pand": {0x66, 0xDB}, "pxor": {0x66, 0xEF}, "pandn": {0x66, 0xDF},
-
-	// Packed integer arithmetic (SSE2).
-	"paddb": {0x66, 0xFC}, "paddw": {0x66, 0xFD}, "paddd": {0x66, 0xFE}, "paddq": {0x66, 0xD4},
-	"psubb": {0x66, 0xF8}, "psubw": {0x66, 0xF9}, "psubd": {0x66, 0xFA}, "psubq": {0x66, 0xFB},
-	"paddusb": {0x66, 0xDC}, "psubusb": {0x66, 0xD8}, "paddsb": {0x66, 0xEC}, "psubsb": {0x66, 0xE8},
-	"pavgb": {0x66, 0xE0}, "pminub": {0x66, 0xDA}, "pmaxub": {0x66, 0xDE},
-	"pminsw": {0x66, 0xEA}, "pmaxsw": {0x66, 0xEE},
-	"pmullw": {0x66, 0xD5}, "pmulhw": {0x66, 0xE5}, "pmulhuw": {0x66, 0xE4}, "pmuludq": {0x66, 0xF4},
-	"psadbw":   {0x66, 0xF6},
-	"packsswb": {0x66, 0x63}, "packuswb": {0x66, 0x67}, "packssdw": {0x66, 0x6B},
-
-	// Vector shifts by a register count (the by-immediate forms are the
-	// 0F 71/72/73 groups, dispatched separately).
-	"psllw": {0x66, 0xF1}, "pslld": {0x66, 0xF2}, "psllq": {0x66, 0xF3},
-	"psrlw": {0x66, 0xD1}, "psrld": {0x66, 0xD2}, "psrlq": {0x66, 0xD3},
-	"psraw": {0x66, 0xE1}, "psrad": {0x66, 0xE2},
-
-	// Packed floating point.
-	"addpd": {0x66, 0x58}, "subpd": {0x66, 0x5C}, "mulpd": {0x66, 0x59}, "divpd": {0x66, 0x5E},
-	"sqrtpd": {0x66, 0x51}, "minpd": {0x66, 0x5D}, "maxpd": {0x66, 0x5F},
-	"addps": {0x00, 0x58}, "subps": {0x00, 0x5C}, "mulps": {0x00, 0x59}, "divps": {0x00, 0x5E},
-	"sqrtps": {0x00, 0x51}, "minps": {0x00, 0x5D}, "maxps": {0x00, 0x5F},
-	"andnpd": {0x66, 0x55}, "orpd": {0x66, 0x56}, "andnps": {0x00, 0x55}, "orps": {0x00, 0x56},
-	"unpcklpd": {0x66, 0x14}, "unpckhpd": {0x66, 0x15},
-
-	// Packed int<->float conversions.
-	"cvtdq2ps": {0x00, 0x5B}, "cvtps2dq": {0x66, 0x5B}, "cvttps2dq": {0xF3, 0x5B},
-	"cvtdq2pd": {0xF3, 0xE6}, "cvtpd2dq": {0xF2, 0xE6}, "cvttpd2dq": {0x66, 0xE6},
-}
+// sseOps is the two-byte-opcode SSE vocabulary, from the shared table the
+// self-host assembler is generated from (#7903). Keeping one list is what
+// stops a form existing on one side and not the other.
+var sseOps = func() map[string]struct{ prefix, op byte } {
+	m := make(map[string]struct{ prefix, op byte }, 128)
+	for k, v := range x86tbl.SSEOpMap() {
+		m[k] = struct{ prefix, op byte }{v.Prefix, v.Op}
+	}
+	return m
+}()
 
 // sse38Ops are the three-byte-opcode forms 66 0F 38 <op> /r with an xmm
 // destination (SSE4.1's packed min/max/multiply and ptest — in the declared
