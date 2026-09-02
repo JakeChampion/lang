@@ -58,8 +58,11 @@ pairs to 0, and `TestSelfHostStage2FixpointArm64` passes.
 ## Still leaking: the second container onwards
 
 The last row above is the one thing this does not fix, and it is a different
-mechanism — Perceus REUSE, not the exit sweep. Narrowed and fixed the same
-day: `2026-09-02-cell-reuse-field-drop.md`.
+mechanism — Perceus REUSE, not the exit sweep. Narrowed the same day and still
+OPEN: the routing that would fix it frees a cell box that can still be aliased,
+and miscompiles the self-hosted compiler. `2026-09-02-cell-reuse-field-drop.md`
+carries the narrowing, the bisect, and the premise a fix has to establish
+first.
 
 ## Also still open, from the earlier entry
 
