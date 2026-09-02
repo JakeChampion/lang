@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/effects"
 )
 
 // Use records one capability a package can reach, with an example
@@ -58,52 +59,12 @@ type Row struct {
 // capability, and each chain is the first one a FIFO walk over the
 // program's (deterministic) declaration order discovers.
 func Analyze(prog *ast.Program, pkgOf func(module string) string) []Row {
-	funcs := map[string]*ast.FuncDecl{}
-	bySimple := map[string][]string{}
-	for _, fn := range prog.Funcs {
-		funcs[fn.Name] = fn
-		if fn.MethodSimpleName != "" {
-			bySimple[fn.MethodSimpleName] = append(bySimple[fn.MethodSimpleName], fn.Name)
-		}
-	}
-
-	edges := map[string][]string{}
-	direct := map[string][]string{}
-	for _, fn := range prog.Funcs {
-		if fn.Body == nil {
-			continue
-		}
-		name := fn.Name
-		seenEdge := map[string]bool{}
-		seenBuiltin := map[string]bool{}
-		addEdge := func(callee string) {
-			if callee == name || seenEdge[callee] {
-				return
-			}
-			seenEdge[callee] = true
-			edges[name] = append(edges[name], callee)
-		}
-		ast.Walk(fn.Body, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.Call:
-				if id, ok := x.Callee.(*ast.Ident); ok {
-					if _, tagged := BuiltinCaps[id.Name]; tagged && !seenBuiltin[id.Name] {
-						seenBuiltin[id.Name] = true
-						direct[name] = append(direct[name], id.Name)
-					}
-				} else if fa, ok := x.Callee.(*ast.FieldAccess); ok && x.DynTrait != "" {
-					for _, m := range bySimple[fa.Field] {
-						addEdge(m)
-					}
-				}
-			case *ast.Ident:
-				if _, isFn := funcs[x.Name]; isFn {
-					addEdge(x.Name)
-				}
-			}
+	g := effects.Build(prog, func(name string) bool {
+		if _, tagged := BuiltinCaps[name]; tagged {
 			return true
-		})
-	}
+		}
+		return Ungated[name]
+	})
 
 	pkgRoots := map[string][]string{}
 	var pkgOrder []string
@@ -120,7 +81,7 @@ func Analyze(prog *ast.Program, pkgOf func(module string) string) []Row {
 
 	rows := make([]Row, 0, len(pkgOrder))
 	for _, p := range pkgOrder {
-		rows = append(rows, Row{Package: p, Uses: walk(pkgRoots[p], edges, direct)})
+		rows = append(rows, Row{Package: p, Uses: walk(pkgRoots[p], g)})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Package < rows[j].Package })
 	return rows
@@ -128,7 +89,15 @@ func Analyze(prog *ast.Program, pkgOf func(module string) string) []Row {
 
 // walk BFSes from the package's declared functions and returns the
 // capabilities reached, each with the first chain discovered.
-func walk(roots []string, edges, direct map[string][]string) []Use {
+//
+// Indirect calls are deliberately NOT followed here: this report
+// attributes a closure's capabilities to the package that DEFINED it
+// (a lambda body is walked as part of its enclosing function), which
+// is the object-capability reading — passing a closure IS passing a
+// capability. The per-function rows in internal/effects make the
+// opposite choice, because a function that invokes a value does
+// perform whatever that value does; see docs/EFFECT-ROWS-BRIEF.md.
+func walk(roots []string, g *effects.Graph) []Use {
 	parent := map[string]string{}
 	visited := map[string]bool{}
 	var queue []string
@@ -143,8 +112,14 @@ func walk(roots []string, edges, direct map[string][]string) []Use {
 	for len(queue) > 0 {
 		fn := queue[0]
 		queue = queue[1:]
-		for _, b := range direct[fn] {
-			c := BuiltinCaps[b]
+		for _, b := range g.Builtins[fn] {
+			// The shared graph records every builtin call, tagged or
+			// not, so one walk can serve several vocabularies. Only
+			// the tagged ones carry a capability here.
+			c, tagged := BuiltinCaps[b]
+			if !tagged {
+				continue
+			}
 			if _, done := found[c]; done {
 				continue
 			}
@@ -154,7 +129,7 @@ func walk(roots []string, edges, direct map[string][]string) []Use {
 			}
 			found[c] = Use{Capability: c, Chain: append(chain, b)}
 		}
-		for _, callee := range edges[fn] {
+		for _, callee := range g.Edges[fn] {
 			if visited[callee] {
 				continue
 			}
