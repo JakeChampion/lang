@@ -295,7 +295,10 @@ func TestDebugImageCarriesEhFrameSection(t *testing.T) {
 		t.Fatal(err)
 	}
 	syms := []elf.Sym{{Name: "_start", Value: m.Text, Size: 4}}
-	img := elf.StaticExecutableDataX86WXSymsRows(text, u, data, syms, nil, "p.fern", "/tmp", m.Text+uint64(len(text)), nil)
+	img, err := elf.StaticExecutableDataX86WXDebug(text, u, data, elf.Debug{Syms: syms, SrcFile: "p.fern", CompDir: "/tmp", TextEnd: m.Text + uint64(len(text))})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	f, err := goelf.NewFile(bytes.NewReader(img))
 	if err != nil {

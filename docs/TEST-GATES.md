@@ -896,8 +896,12 @@ answer, these are the tools, in the order they are usually reached for:
 
   The self-host driver has no `-g`, so resolve its sites against the linked
   binary's symtab (`nm -n`) rather than addr2line.
-- **`-g`** — emits a `.symtab`, without which a gdb backtrace through a Fern
-  binary is addresses only. It is also what resolves the abort backtrace the
+- **`-g`** — emits a `.symtab` and DWARF (`.debug_info` subprogram DIEs, a
+  `.debug_line` table with per-statement rows carrying file, column and
+  `prologue_end` across every module, and `.debug_frame`), without which a
+  gdb backtrace through a Fern binary is addresses only. Unwind data itself
+  (`.eh_frame` + `PT_GNU_EH_FRAME`) is in every native image, `-g` or not.
+  `-g` is also what resolves the abort backtrace the
   natives print under a fatal abort (#5538); `-backtrace=false` /
   `FERN_BACKTRACE=0` suppresses that walk at compile time, so leave it alone
   while debugging.

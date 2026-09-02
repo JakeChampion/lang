@@ -285,3 +285,107 @@ func pad8() string {
 	}
 	return s
 }
+
+// debugFrameFromGas assembles src with `.cfi_sections .debug_frame` in force
+// and returns the .debug_frame contribution.
+func debugFrameFromGas(t *testing.T, as, objcopy, src string) []byte {
+	t.Helper()
+	dir := t.TempDir()
+	sPath := filepath.Join(dir, "df.s")
+	oPath := filepath.Join(dir, "df.o")
+	binPath := filepath.Join(dir, "df.debugframe")
+	if err := os.WriteFile(sPath, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(as, "--64", sPath, "-o", oPath).CombinedOutput(); err != nil {
+		t.Fatalf("gas rejected the source: %v\n%s", err, out)
+	}
+	// Not `-O binary`: that keeps only ALLOC sections, and .debug_frame is
+	// not one.
+	if out, err := exec.Command(objcopy, "--dump-section", ".debug_frame="+binPath, oPath, oPath+".2").CombinedOutput(); err != nil {
+		t.Fatalf("objcopy: %v\n%s", err, out)
+	}
+	b, err := os.ReadFile(binPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// debugFrameMaskLocs zeroes each FDE's 8-byte initial_location in a
+// .debug_frame image: gas leaves it for a relocation, we write the address.
+// The CIE id is 0xffffffff here, so an FDE is any entry whose id is not that.
+func debugFrameMaskLocs(b []byte) []byte {
+	out := append([]byte(nil), b...)
+	for off := 0; off+8 <= len(out); {
+		n := int(ehLE32(out, off))
+		if n == 0 {
+			break
+		}
+		if ehLE32(out, off+4) != 0xffffffff && off+16 <= len(out) {
+			copy(out[off+8:off+16], make([]byte, 8))
+		}
+		off += 4 + n
+	}
+	return out
+}
+
+// TestDebugFrameMatchesGNUAs pins the debugger-facing container of the same
+// rules .eh_frame carries. Every framing field differs from .eh_frame's —
+// CIE id, augmentation, pointer width, entry alignment, terminator — and gas
+// with `.cfi_sections .debug_frame` is the oracle for all of them at once.
+func TestDebugFrameMatchesGNUAs(t *testing.T) {
+	as, objcopy := findX86Binutils(t)
+	cases := map[string]string{
+		"frame_pointer": "\t.intel_syntax noprefix\n\t.text\n\t.cfi_sections .debug_frame\n\t.globl f\nf:\n\t.cfi_startproc\n" +
+			"\tpush rbp\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset rbp, -16\n" +
+			"\tmov rbp, rsp\n\t.cfi_def_cfa_register rbp\n" +
+			"\tpop rbp\n\t.cfi_def_cfa rsp, 8\n\tret\n\t.cfi_endproc\n",
+		// Two FDEs of different lengths, so the entry padding rule is
+		// exercised at more than one phase.
+		"two_procs": "\t.intel_syntax noprefix\n\t.text\n\t.cfi_sections .debug_frame\n\t.globl f\nf:\n\t.cfi_startproc\n" +
+			"\tpush rbp\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset rbp, -16\n" +
+			"\tmov rbp, rsp\n\t.cfi_def_cfa_register rbp\n" +
+			"\tpop rbp\n\t.cfi_def_cfa rsp, 8\n\tret\n\t.cfi_endproc\n" +
+			"\t.globl g\ng:\n\t.cfi_startproc\n\tsub rsp, 8\n\t.cfi_def_cfa_offset 16\n" +
+			"\tadd rsp, 8\n\t.cfi_def_cfa_offset 8\n\tret\n\t.cfi_endproc\n" +
+			"\t.globl h\nh:\n\t.cfi_startproc\n\tpush rbx\n\t.cfi_def_cfa_offset 16\n\t.cfi_offset rbx, -16\n" +
+			"\tpush r12\n\t.cfi_def_cfa_offset 24\n\t.cfi_offset r12, -24\n" +
+			"\tpop r12\n\t.cfi_def_cfa_offset 16\n\tpop rbx\n\t.cfi_def_cfa_offset 8\n\tret\n\t.cfi_endproc\n",
+		"long_advance": "\t.intel_syntax noprefix\n\t.text\n\t.cfi_sections .debug_frame\n\t.globl m\nm:\n\t.cfi_startproc\n" +
+			"\tsub rsp, 8\n\t.cfi_def_cfa_offset 16\n" + pad64() +
+			"\tadd rsp, 8\n\t.cfi_def_cfa_offset 8\n\tret\n\t.cfi_endproc\n",
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			want := debugFrameFromGas(t, as, objcopy, src)
+			if len(want) == 0 {
+				t.Fatal("gas produced no .debug_frame")
+			}
+			a, err := x86_64.ParseProgram(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := a.DebugFrame(0x401000)
+			if err != nil {
+				t.Fatalf("DebugFrame: %v", err)
+			}
+			if w, g := debugFrameMaskLocs(want), debugFrameMaskLocs(got); !bytes.Equal(w, g) {
+				t.Errorf(".debug_frame differs (initial_location masked)\ngas:  %s\nours: %s",
+					hex.EncodeToString(want), hex.EncodeToString(got))
+			}
+			// The field the mask hides: absolute, not pcrel.
+			var locs []uint64
+			for off := 0; off+8 <= len(got); {
+				n := int(ehLE32(got, off))
+				if ehLE32(got, off+4) != 0xffffffff {
+					locs = append(locs, uint64(ehLE32(got, off+8))|uint64(ehLE32(got, off+12))<<32)
+				}
+				off += 4 + n
+			}
+			if len(locs) == 0 || locs[0] != 0x401000 {
+				t.Errorf("first FDE initial_location = %#x, want the absolute .text address 0x401000", locs)
+			}
+		})
+	}
+}

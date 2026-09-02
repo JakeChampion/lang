@@ -290,6 +290,10 @@ type Options struct {
 	// DWARF `.loc` directives, so the assembler can build a .debug_line
 	// source-line table (#5537 slice 2). Set under `fern -g`.
 	DebugLines bool
+	// DebugSource is the program's main source path — the `.file` a
+	// position with no recorded file is attributed to, and file 1 of the
+	// line table. Required with DebugLines.
+	DebugSource string
 
 	// Entry is the target's entry shape (#6510). The zero value means
 	// platforms.EntryProcess: emit `_start` plus the argc/argv/envp
@@ -510,6 +514,11 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// AST↔IR pairing is BY NAME, not by index: the dead-function cull above
 	// removes entries from ip.Funcs, which an index walk would mispair silently
 	// (#4377).
+	if opts.DebugLines {
+		if err := g.emitFileTable(ip, opts.DebugSource); err != nil {
+			return "", nil, err
+		}
+	}
 	irIdx := make(map[string]int, len(ip.Funcs))
 	for i, f := range ip.Funcs {
 		irIdx[f.Name] = i
@@ -880,7 +889,16 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 // program state.
 type generator struct {
 	info *checker.Info
-	out  strings.Builder
+	// dw is the DWARF `.file` table under DebugLines: the index each source
+	// path was assigned, in the order they were first seen; and whether the
+	// next `.loc` in the current function is the first past its prologue.
+	dw struct {
+		files           map[string]int
+		order           []string
+		src             string
+		prologuePending bool
+	}
+	out strings.Builder
 	// pie emits the static-PIE self-relocation prologue at `_start`
 	// (see Options.PIE).
 	pie bool
@@ -1870,6 +1888,7 @@ func (g *generator) callSym(op ir.Op, target string) string {
 // scope-tracking state lives in `scope` (currently unused —
 // PR 1 has no block / loop / if ops to dispatch).
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
+	g.dw.prologuePending = true
 	// #4402 opt 2b: inline rc ops only when the function is small enough that
 	// the ~10-instruction-per-op expansion doesn't balloon the emitted `.s`
 	// (and the assembler's peak RSS). Only the self-host compiler's largest
@@ -2021,12 +2040,12 @@ type irScope struct {
 func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	switch op.Kind {
 	case ir.OpLine:
-		// Source-line marker → DWARF `.loc` directive (file 1). Emits no
-		// machine code; the assembler records the current text offset as a
+		// Source-position marker → DWARF `.loc` directive. Emits no machine
+		// code; the assembler records the current text offset as a
 		// .debug_line row. `.loc` never matches a peephole instruction
 		// pattern, so it only ever prevents a fusion at a line boundary —
 		// never corrupts one.
-		g.line(fmt.Sprintf("\t.loc 1 %d %d", op.Pos.Line, op.Pos.Col))
+		g.line(g.locDirective(op))
 	case ir.OpCoverPoint:
 		// Line-coverage counter bump (#5548, -cover). One read-modify-write
 		// against a fixed .bss slot: no register is touched, and the flags
@@ -12917,4 +12936,56 @@ func (g *generator) emitCovReportRuntime() {
 	g.emit("add rsp, 40")
 	g.emit("ret")
 	g.line(".size __fern_cov_report, .-__fern_cov_report")
+}
+
+// emitFileTable writes the `.file N "path"` table the `.loc` rows index,
+// covering every file an OpLine in the program names. Inlining copies markers
+// across files, so the table is built from the ops rather than from the
+// functions that survived the cull; a marker with no recorded file belongs to
+// the main source.
+func (g *generator) emitFileTable(ip *ir.Program, src string) error {
+	if src == "" {
+		return fmt.Errorf("DebugLines needs DebugSource, the file a position without one belongs to")
+	}
+	g.dw.files = map[string]int{}
+	g.dw.src = src
+	g.dwFile(src)
+	for _, f := range ip.Funcs {
+		for _, op := range f.Ops {
+			if op.Kind == ir.OpLine {
+				g.dwFile(op.Str)
+			}
+		}
+	}
+	for i, path := range g.dw.order {
+		g.line(fmt.Sprintf("\t.file %d %s", i+1, escapeForGAS(path)))
+	}
+	return nil
+}
+
+// dwFile returns the `.file` index for path, assigning the next one on
+// first use. The empty path is the main source.
+func (g *generator) dwFile(path string) int {
+	if path == "" {
+		path = g.dw.src
+	}
+	if n, ok := g.dw.files[path]; ok {
+		return n
+	}
+	g.dw.order = append(g.dw.order, path)
+	g.dw.files[path] = len(g.dw.order)
+	return len(g.dw.order)
+}
+
+// locDirective renders an OpLine as `.loc file line column`, marking the
+// first row of each function `prologue_end`: it is the address of the first
+// statement, past the frame setup, which is where a breakpoint on the
+// function belongs.
+func (g *generator) locDirective(op ir.Op) string {
+	s := fmt.Sprintf("\t.loc %d %d %d", g.dwFile(op.Str), op.Pos.Line, op.Pos.Col)
+	if g.dw.prologuePending {
+		s += " prologue_end"
+		g.dw.prologuePending = false
+	}
+	return s
 }

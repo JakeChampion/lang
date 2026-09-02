@@ -1104,11 +1104,16 @@ func TestStaticExecutableDataWXSymsRows(t *testing.T) {
 	base := uint64(elf.TextVAddrWX)
 	syms := []elf.Sym{{Name: "main", Value: base, Size: uint64(len(text))}}
 	rows := []elf.LineRow{
-		{Addr: base, Line: 7},
-		{Addr: base + 8, Line: 8},
-		{Addr: base + 16, Line: 9},
+		{Addr: base, File: 1, Line: 7, IsStmt: true},
+		{Addr: base + 8, File: 1, Line: 8, IsStmt: true},
+		{Addr: base + 16, File: 1, Line: 9, IsStmt: true},
 	}
-	bin := elf.StaticExecutableDataX86WXSymsRows(text, elf.Unwind{}, data, syms, rows, "prog.fern", "/tmp", base+uint64(len(text)), nil)
+	bin, err := elf.StaticExecutableDataX86WXDebug(text, elf.Unwind{}, data, elf.Debug{
+		Syms: syms, Rows: rows, SrcFile: "prog.fern", CompDir: "/tmp", TextEnd: base + uint64(len(text)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	f, err := goelf.NewFile(bytes.NewReader(bin))
 	if err != nil {
@@ -1159,7 +1164,12 @@ func TestDebugInfoLocalVars(t *testing.T) {
 			{Name: "sum", TypeKey: "i32", Offset: -24, IsParam: false},
 		},
 	}
-	bin := elf.StaticExecutableDataX86WXSymsRows(text, elf.Unwind{}, nil, syms, nil, "prog.fern", "/tmp", base+16, funcVars)
+	bin, err := elf.StaticExecutableDataX86WXDebug(text, elf.Unwind{}, nil, elf.Debug{
+		Syms: syms, SrcFile: "prog.fern", CompDir: "/tmp", TextEnd: base + 16, Vars: funcVars,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	f, err := goelf.NewFile(bytes.NewReader(bin))
 	if err != nil {

@@ -141,7 +141,7 @@ func TestRelaxLocRowsAndSyms(t *testing.T) {
 	if got := syms["L"]; got != elf.TextVAddrWX+2 {
 		t.Errorf("sym L = %#x, want %#x", got, elf.TextVAddrWX+2)
 	}
-	wantRows := []LineRow{{Offset: 0, Line: 5}, {Offset: 2, Line: 7}}
+	wantRows := []LineRow{{Offset: 0, File: 1, Line: 5, IsStmt: true}, {Offset: 2, File: 1, Line: 7, IsStmt: true}}
 	if len(rows) != len(wantRows) || rows[0] != wantRows[0] || rows[1] != wantRows[1] {
 		t.Errorf("locRows = %v, want %v", rows, wantRows)
 	}

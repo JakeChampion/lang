@@ -481,6 +481,54 @@ func (s *State) render(p *Profile, textVAddr, ehVAddr uint64) ([]byte, []fdeLoc,
 	return append(out, 0, 0, 0, 0), locs, nil
 }
 
+// DebugFrame renders the recorded CFI as a `.debug_frame` section for a
+// binary whose .text is at textVAddr — the debugger-facing twin of EhFrame,
+// pinned from `as` with `.cfi_sections .debug_frame` on both targets.
+//
+// It is the same rules in a different container, and every container field
+// differs: the CIE id is 0xffffffff rather than 0, there is no augmentation
+// (so no pointer-encoding byte and no augmentation-length in the FDEs), an
+// FDE's CIE pointer is the CIE's offset within the section rather than a
+// distance back, initial_location and address_range are 8-byte absolute
+// values, every entry ends on an 8-byte boundary, and there is no terminator.
+// Emitting .eh_frame bytes under this name would decode as garbage rules at
+// garbage addresses.
+func (s *State) DebugFrame(p *Profile, textVAddr uint64) ([]byte, error) {
+	if s.open {
+		return nil, fmt.Errorf(".cfi_startproc without .cfi_endproc")
+	}
+	if len(s.fdes) == 0 {
+		return nil, nil
+	}
+	var b []byte
+	b = le32(b, 0xffffffff) // CIE id
+	b = append(b, 1)        // version
+	b = append(b, 0)        // augmentation ""
+	b = ULEB(b, p.CodeAlign)
+	b = SLEB(b, p.DataAlign)
+	b = ULEB(b, p.RAColumn)
+	b = append(b, p.InitialRules...)
+	out := append(le32(nil, uint32(len(padEntry(b, 0, 8)))), padEntry(b, 0, 8)...)
+	for _, f := range s.fdes {
+		var b []byte
+		b = le32(b, 0) // CIE pointer: the CIE is at offset 0
+		b = le64(b, textVAddr+uint64(f.start))
+		b = le64(b, uint64(f.end-f.start))
+		pc := f.start
+		for _, r := range f.rules {
+			var err error
+			if b, err = p.advance(b, r.off-pc); err != nil {
+				return nil, err
+			}
+			pc = r.off
+			b = append(b, r.body...)
+		}
+		b = padEntry(b, len(out), 8)
+		out = append(le32(out, uint32(len(b))), b...)
+	}
+	return out, nil
+}
+
 // .eh_frame_hdr encoding bytes, pinned from a `ld --eh-frame-hdr` static link
 // read back with `objdump -s -j .eh_frame_hdr`, which opens `01 1b 03 3b`.
 const (
