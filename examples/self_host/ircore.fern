@@ -4,11 +4,13 @@
 // files; what lives here decides WHETHER a module lowers and WHAT the shared
 // names are, never what instruction comes out.
 //
-// Five groups:
+// Seven groups:
 //
-//   * the eligibility scan — ir_eligible / eligible_core* / all_eligible* and
-//     the FERN_STRICT_IR refusal, the gate every `*_or_error` entry asks
-//     before it emits;
+//   * the eligibility scan — ir_eligible / eligible_core* / all_eligible*, the
+//     gate every `*_or_error` entry asks before it emits;
+//   * the refusals all three share — strict_ir_refuse, eprint_ir_ineligible and
+//     unsupported_op_refuse, each an eprint-then-exit(3) whose only per-backend
+//     part is the name it prints;
 //   * the helper-name map — is_fern_helper / ir_helper_symbol and the
 //     `__struct_drop_<T>` / `__field_reclaim_<T>` name<->type pair, plus the
 //     C-call classifier;
@@ -16,6 +18,8 @@
 //     str_box_label;
 //   * the AST pre-passes each backend runs before it emits — lift_lambdas and
 //     script_normalized;
+//   * wp_fn_sigs, the whole-program lowering side-tables every emit path
+//     derives once over all_funcs before it enters its per-function loop;
 //   * all_runtime_need_roots, the closed root set the per-module driver feeds
 //     the entry unit.
 //
@@ -924,4 +928,50 @@ pub function eprint_ir_ineligible(): void {
 // elision that follows can only make a module more eligible (#7170).
 pub function module_ir_eligible(mod: parser.Module): boolean {
     return all_eligible(script_normalized(lift_lambdas(mod)));
+}
+
+// unsupported_op_refuse ends compilation for an IR op that reached a backend's
+// op dispatch with no instruction selection for it (#6917). `backend` names the
+// one that refused.
+//
+// Each backend used to return a COMMENT where an instruction belongs — "# ir:
+// unsupported bin <name>" on x86-64, "// ir:" on arm64, ";; ir:" in the WAT —
+// so the operation was silently DROPPED and the program ran on with whatever
+// happened to be in the result register. That is how `print_i64` printed
+// nothing and `udp_send` sent nothing, each for as long as it took someone to
+// notice. Neither produced a diagnostic, and FERN_STRICT_IR=1 did not catch
+// either: this path never consulted it.
+//
+// Dropping an op is not reliably even a loud failure on wasm. A binary op
+// leaves its two operands behind and wasmtime rejects the module — with a
+// stack-height complaint that names neither the op nor the function. A UNARY op
+// is pops-1 pushes-1, so omitting it keeps the stack balanced and the module
+// validates and runs, computing the wrong answer with nothing to read.
+//
+// There is no AST emitter left to degrade into, so an op reaching here is always
+// a miscompile. The refusal is therefore unconditional rather than
+// strict-mode-only. The `string` return is what the selectors' call sites want:
+// they `return unsupported_op_refuse(...)` in the position an instruction
+// string would have taken.
+pub function unsupported_op_refuse(tag: i32, backend: string): string {
+    eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the " + backend + " backend — refusing to emit a silently dropped operation (#6917)\n");
+    exit(3);
+    return "";
+}
+
+// wp_fn_sigs derives the whole-program FnSigs base once. These are the
+// pre-`append_dyn` registries (the expensive O(all_funcs) part); a caller folds
+// in its own module's trait_reqs via irlower.fn_sigs_with_dyn, which is cheap,
+// and overrides the registries it wants module-scoped on top.
+//
+// A caller that also needs the raw borrowable-params fixpoint for a tail of its
+// own (strfld_ok_types, structfld_reclaim_ok_types_of) builds the trio inline
+// instead: FnSigs.borrowable_params is the counted form, not `bparams`, so
+// routing through here would mean running borrowable_params_interproc twice.
+pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): irlower.FnSigs {
+    var bparams: string[] = irlower.borrowable_params_interproc(funcs);
+    return irlower.FnSigs {
+        ...irlower.fn_sigs_for_borrow(funcs, structs, array_ret_fns_of(funcs), bparams),
+        consume_safe_params: irlower.consume_safe_params_interproc(funcs, bparams),
+    };
 }

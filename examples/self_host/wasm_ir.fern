@@ -104,10 +104,8 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     // UNDER-report the drops emit actually generates, so a per-module link
     // references a `$__field_reclaim_<T>` / `$__struct_drop_<T>` body the RC-body
     // emission never produced (#5508).
-    var bp: string[] = irlower.borrowable_params_interproc(all_funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(all_funcs, all_structs, ircore.array_ret_fns_of(all_funcs), bp), mod.trait_reqs),
-        consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bp),
+        ...irlower.fn_sigs_with_dyn(ircore.wp_fn_sigs(all_funcs, all_structs), mod.trait_reqs),
         // Array-param moves stay scoped to THIS module.
         move_arr_params: irlower.move_arr_params_of(mod.funcs),
     };
@@ -669,31 +667,6 @@ pub function module_uses_str_slice(cache: irlower.LowerResult[]): boolean {
     return any_op(cache, is_str_slice);
 }
 
-// unsupported_op_refuse ends compilation for an IR op with no instruction
-// selection on this backend, the wasm half of #6917.
-//
-// Both binary selectors used to return ";; ir: unsupported bin <name>" — a WAT
-// COMMENT where an instruction belongs — and the op dispatch's terminal `else`
-// routes EVERY unrecognised tag here, so an op this backend does not model was
-// silently dropped. The register backends were fixed for exactly this; their
-// version of the bug is on record as `print_i64` printing nothing and `udp_send`
-// sending nothing, each for as long as it took someone to notice.
-//
-// Dropping an op is not reliably even a loud failure here. A binary op leaves its
-// two operands behind and wasmtime rejects the module — with a stack-height
-// complaint that names neither the op nor the function. A UNARY op is pops-1
-// pushes-1, so omitting it keeps the stack balanced and the module validates and
-// runs, computing the wrong answer with nothing to read.
-//
-// There is no AST emitter left to degrade into, so an op reaching here is always a
-// miscompile. The refusal is unconditional rather than strict-mode-only, matching
-// the register backends.
-function unsupported_op_refuse(tag: i32): string {
-    eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") on the wasm backend — refusing to emit a silently dropped operation (#6917)\n");
-    exit(3);
-    return "";
-}
-
 // wasm_binop renders the wasm instruction for one IR i32 binary op. 64-bit
 // values never appear in the i32 subset, so every op is the i32.* form.
 function wasm_binop(tag: i32): string {
@@ -731,7 +704,7 @@ function wasm_binop(tag: i32): string {
     if (tag == 42) { return "i32.le_u"; }
     if (tag == 43) { return "i32.gt_u"; }
     if (tag == 44) { return "i32.ge_u"; }
-    return unsupported_op_refuse(tag);
+    return ircore.unsupported_op_refuse(tag, "wasm");
 }
 
 // wasm_binop_w selects the i64 instruction variant when the operand width is 64
@@ -788,7 +761,7 @@ function wasm_binop_w(tag: i32, width: i32): string {
     if (tag == 52) { return "f64.le"; }
     if (tag == 53) { return "f64.gt"; }
     if (tag == 54) { return "f64.ge"; }
-    return unsupported_op_refuse(tag);
+    return ircore.unsupported_op_refuse(tag, "wasm");
 }
 
 // slot_in_list reports membership of slot x in an i32 list (the LowerResult's
@@ -3327,7 +3300,7 @@ function emit_map_op_wat(o: ir.Op): string {
         }
         return util.str_join_chunks(parts);
     }
-    return unsupported_op_refuse(o.kind_tag);
+    return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
 }
 
 // is_host_op_kind is true for an IR op that reaches the HOST rather than
@@ -3524,7 +3497,7 @@ function emit_host_op_wat(o: ir.Op): string {
         // push a dummy i32 for the statement-level drop.
         return "    call $proc_exit\n    i32.const 0\n";
     }
-    return unsupported_op_refuse(o.kind_tag);
+    return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
 }
 
 // emit_dyn_dispatch_wat renders the dyn_dispatch op: the vtable search that
@@ -4236,7 +4209,7 @@ function emit_str_op_wat(o: ir.Op): string {
         // stack: a, b -> $__fern_strcmp(a, b) -> signed -/0/+.
         return "    call $__fern_strcmp\n";
     }
-    return unsupported_op_refuse(o.kind_tag);
+    return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
 }
 
 // emit_function_ir renders one IR-eligible function as a WAT (func ...). Locals

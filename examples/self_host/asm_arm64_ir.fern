@@ -89,24 +89,6 @@ function fr_str(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState 
 // ir_bin_asm renders the arm64 for one IR binary op: lhs in x0, rhs in x1,
 // result in x0 — mirroring asm_arm64's own ExprBinary sequences (64-bit ops,
 // signed i32 div/rem via sdiv/msub) so the IR and AST paths agree.
-// unsupported_op_refuse ends compilation for an IR op with no instruction
-// selection on this backend (#6917).
-//
-// It used to return "// ir: unsupported bin <name>" — a COMMENT where an
-// instruction belongs — so the operation was silently DROPPED and the program ran
-// on with whatever happened to be in the result register. That is how `print_i64`
-// printed nothing and `udp_send` sent nothing, each for as long as it took someone
-// to notice. Neither produced a diagnostic, and FERN_STRICT_IR=1 did not catch
-// either: this path never consulted it.
-//
-// There is no AST emitter left to degrade into, so an op reaching here is always a
-// miscompile. The refusal is therefore unconditional rather than strict-mode-only.
-function unsupported_op_refuse(tag: i32): string {
-    eprint("error: no instruction selection for IR op " + ir.kind_name(tag) + " (kind " + util.i32_to_string(tag) + ") — refusing to emit a silently dropped operation (#6917)\n");
-    exit(3);
-    return "";
-}
-
 function ir_bin_asm(tag: i32, width: i32): string {
     if (tag == 21) { return "    add x0, x0, x1\n"; }
     if (tag == 22) { return "    sub x0, x0, x1\n"; }
@@ -158,7 +140,7 @@ function ir_bin_asm(tag: i32, width: i32): string {
     if (tag == 42) { return "    cmp x0, x1\n    cset x0, ls\n"; }
     if (tag == 43) { return "    cmp x0, x1\n    cset x0, hi\n"; }
     if (tag == 44) { return "    cmp x0, x1\n    cset x0, hs\n"; }
-    return unsupported_op_refuse(tag);
+    return ircore.unsupported_op_refuse(tag, "arm64");
 }
 
 // ir_shift_imm_asm renders a shift whose COUNT is the constant `prev` pushed
@@ -583,7 +565,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     }
     // Guarded, so this tail is unreachable rather than a catch-all (#6917) —
     // see the matching note in asm_ir.emit_str_op.
-    unsupported_op_refuse(o.kind_tag);
+    ircore.unsupported_op_refuse(o.kind_tag, "arm64");
     return s;
 }
 
