@@ -696,11 +696,36 @@ chooses. Splitting the 869,756 by position:
   196,049 of the total either way.
 
 The work this points at is therefore call-boundary traffic, not interval shape:
-getting call-crossing values into callee-saved registers so they need no save at
-all (`arm64ssa` allocates 22 registers of which only 10 are callee-saved, so an
-eleventh call-crossing value is saved and restored at every call it spans), and
-the out-arg path. Live-range splitting stays worth having for its own sake and
-is not the headline.
+call-crossing values that live in a caller-saved register are saved and restored
+at every call they span. `arm64ssa` allocates 22 registers of which 10 are
+callee-saved — indices 12..21 mapping onto `x19`..`x28`, which is exactly the set
+the AArch64 PCS provides, so there is no eleventh to hand out. Live-range
+splitting stays worth having for its own sake and is not the headline.
+
+**But the placement is already as good as the ten registers allow.** Probing
+every register assignment over `checker_run.fern`:
+
+| call-crossing values given a register | 30,254 |
+|---|---:|
+| got a callee-saved register | 20,951 (69.3%) |
+| missed **while one was free** | **0** |
+| missed because none was free | 9,303 (30.7%) |
+
+`pickReg`'s class preference never once passed over a free callee-saved register
+for a value that crosses a call. The 30.7% that miss do so under genuine
+pressure: ten registers against 30,254 call-crossing values.
+
+4,770 non-crossing values do take a callee-saved register, and since the probe
+samples at the moment of choice it cannot rule out that some of those later
+cause the misses — so reserving part of the run for crossing values is not
+disproven. It is bounded, though: it could recover at most 4,770 of the 9,303,
+and a register reserved but idle buys spills, which the experiment above shows
+this backend pays dearly for. The dominant term is pressure, not policy.
+
+Which means the remaining lever is **reducing how many values cross calls at
+all** — rematerialising a cheap value after the call rather than preserving it
+across — not placing them better. That is a different pass from anything tier B
+contemplated.
 
 The rejected patch is not in the tree; this section is what it bought.
 
