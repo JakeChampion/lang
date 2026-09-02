@@ -2232,6 +2232,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{usizeT, ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
+	// `__load_u8(addr)` — one byte, zero-extended. The byte-scanning
+	// runtime helpers in internal/fernrt are written on it.
+	c.info.FuncSigs["__load_u8"] = &ast.FuncType{
+		Params: []ast.Type{usizeT},
+		Result: ast.NumberType{},
+	}
 	// `__load_ptr` / `__store_ptr` — pointer-width memory pokes.
 	// Address AND value are usize so the full 8-byte pointer
 	// shape survives on natives. On wasm32 both collapse to i32

@@ -269,6 +269,69 @@ first migrations actually took, which was simpler than first proposed. The near-
 the symbol-closure link check) has already landed (PRs #2650, #3697); this
 doc picks up where that left off.
 
+## Native: the runtime's Fern half (`internal/fernrt`, #8038)
+
+The native backends have the same twin problem the self-host solved above,
+one copy per backend: `internal/codegen/x86_64`, `internal/codegen/arm64`,
+`internal/codegen/arm64ssa` and `internal/codegen/wasmbin` each carried a
+hand-written `__fern_utf8_valid`. `internal/fernrt` is the native answer:
+`runtime.fern` defines a helper as an ordinary Fern function under its exact
+runtime symbol name, and a backend that needs it asks `fernrt.Func` for the
+declaration and lowered IR and emits it through the same function emitter it
+uses for user code. One source, lowered per target. There is no bootstrap
+circularity on this side — Go compiles the source — so the only constraint is
+the one the self-host has: a body may reach only the provided-callee floor
+(`__load_u8`, `__load_i64`, `__load_ptr`, `__alloc`, …) and never an
+operation that lowers to a call of the helper it implements.
+`TestHelpersCallOnlyTheFloorOrEachOther` pins that.
+
+How each backend reaches a helper:
+
+- **x86-64 / arm64** — a hand-written body that calls one declares it with
+  `needFern` next to its other use-flags (`read_file` is the one that needs
+  `__fern_utf8_valid`), the pre-scan walks the helper's IR for the flags it
+  sets, and the helper is emitted through `emitFunc` at the head of the
+  runtime chain under `AsmFnName(name)` — `__fn___fern_utf8_valid` — which is
+  the symbol the hand-asm calls.
+- **arm64ssa** — `referencedRuntimeHelpers` reports the Fern helpers the
+  module reaches (through `runtimeHelperDeps` as well), and each is lifted
+  with `ssa.LiftFromIRWith`, optimised, verified and emitted as a module
+  function under `fnLabel(name)`; the scan repeats until a lifted helper
+  reaches nothing new.
+- **wasmbin** — `injectFernHelpers` moves the helper out of the
+  `runtimeHelperSpecs` set and into `prog.Funcs`, unexported, so `emitBody`
+  lowers it and `funcIdx` resolves its name for the hand-built bodies; its
+  own needs are scanned in like a user function's.
+
+A Fern helper is a function, not a provided callee: it has no row in
+`verifyprovided.go`, `rcsigs.go` or `rcresults.go`, and
+`TestRcSigsCoverEveryRuntimeHelper` fails if one is left behind. The floor
+primitive it needed, `__load_u8`, IS a provided callee and has all four
+lowerings plus the checker signature.
+
+The gate is `internal/e2e/read_file_utf8_differential_test.go`: every 1- and
+2-byte sequence, the 3-/4-byte boundaries and an eight-byte ASCII word skip
+at every offset, `read_file`'s verdict against `std/utf8.is_valid_utf8`, run
+on x86-64, arm64 and wasm. Its first wasm run found that every preview-2 file
+body leaked the descriptor it opened — fixed alongside, pinned by
+`TestWASMFileBuiltinsReleaseDescriptors`.
+
+What the move costs, measured on x86-64 with eight `read_file`s of a
+32 MiB file: ASCII text is at parity with the hand-written scan (the
+eight-byte word skip is the same loop), multibyte text is about 1.45× slower
+(690 ms against 478 ms) — the stack-machine codegen's price for the
+per-byte path, after the raw pokes were made inline instructions rather
+than calls. That is the same trade the self-host made for its Fern helpers
+("The hot core needs better codegen first" above); the fix is codegen, not
+a return to asm.
+
+Next candidates are the pure byte scanners that do not touch the string
+encoding (`__fern_utf8_valid` was chosen because its callers hand it raw
+bytes); anything reading a `string` value needs the backend's SSO seam
+expressed on the floor first, and the SIMD kernels (`memchr`, `count_byte`,
+`ascii_run`) stay hand-written because the instruction selection is the
+point.
+
 ## The end goal, restated
 
 The backend runtime helpers — `__fern_alloc`, `__fern_str_eq`,
@@ -280,9 +343,9 @@ The backend runtime helpers — `__fern_alloc`, `__fern_str_eq`,
 | self-host x86-64 | `asm_ir.fern` `emit_ir_runtime` | `need`/`has_need` + `runtime_need_deps`/`close_needs`, shared via `asmcore.fern` |
 | self-host arm64 | `asm_arm64_ir.fern` | same |
 | self-host wasm | `wasm_ir.fern` helper bundles | `module_uses_*` + ad-hoc `if` coupling |
-| native (Go) x86-64 | `internal/codegen/x86_64/x86_64.go` | `recordUse` use-flags |
-| native (Go) arm64 | `internal/codegen/arm64/arm64.go` | `recordUse` use-flags |
-| native (Go) wasm | `internal/codegen/wasmbin/runtime.go` | use-flags |
+| native (Go) x86-64 | `internal/codegen/x86_64/x86_64.go` | `recordUse` use-flags; Fern helpers via `internal/fernrt` |
+| native (Go) arm64 | `internal/codegen/arm64/arm64.go` | `recordUse` use-flags; Fern helpers via `internal/fernrt` |
+| native (Go) wasm | `internal/codegen/wasmbin/runtime.go` | use-flags; Fern helpers via `internal/fernrt` |
 
 Their inter-helper dependencies are tracked **out of band**: a helper body
 that `call`s another helper is a link-time edge nothing in the compiler
