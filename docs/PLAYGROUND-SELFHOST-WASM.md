@@ -31,20 +31,30 @@ $ wasm-tools parse out.wat -o out.wasm && wasmtime run out.wasm; echo $?
 2.34 MB of module, 1.9 s, 104 MiB peak. The playground's current bundle is
 28.5 MB.
 
-**That run writes an internal error to stderr, which this page did not say.**
-The command above redirects stdout and never looked at the other stream:
+**That run used to write an internal error to stderr, which this page did not
+say.** The command redirects stdout and never looked at the other stream, which
+carried:
 
 ```
-$ echo 'function main(): i32 { return 6 * 7; }' | wasmtime run wasm_ir_run.wasm 2>&1 >/dev/null
 wasm_ir_run: internal error: rc over-release detected (1 dec(s) on an already-released block)
 ```
 
-The emitted module is correct either way — that is #7969, a refcount defect in
-the compiler's own execution on the wasm target rather than a miscompile of its
-output — but "already runs in wasm today" is a claim about a run that reports an
-internal error, and it should have said so. Narrowed since: the trigger is
-`args()`. A wasm-hosted driver that never calls it is clean, and adding a
-`for a in args()` loop to one that was clean reproduces it.
+The emitted module was correct either way — that was #7969, a refcount defect
+in the compiler's own execution on the wasm target rather than a miscompile of
+its output — but "already runs in wasm today" is a claim about a run that
+reported an internal error, and it should have said so.
+
+Fixed. The trigger was `args()`: `__fern_args` handed Fern an array with a bare
+4-byte length prefix where a 16-byte cap / rc / len header belongs, so the
+caller's scope-exit dec read a refcount word that was whatever preceded the
+allocation. Writing `rc = 1` there is also wrong — the array is a cached
+process-lifetime singleton, so no one reference can be the last, and x86-64
+segfaulted on a second `for a in args()` — which is why the header is the
+static sentinel. Seven wasmbin helpers carried the same bare-prefix defect. The
+emitted WAT is byte-identical across the fix on all three backends; stderr is
+now empty. Note the invocation: a wasmbin core module carries no `_start`, so a
+plain `wasmtime run` exits 0 having called nothing and looks like an empty
+answer. Use `--invoke main`, which appends main's return value to stdout.
 
 ## What the playground actually is
 
@@ -286,7 +296,7 @@ gzipped**, built in under a second, all 73 files enumerable at runtime under
 wasmtime. The pass costs nothing measurable: compiling `checker_run.fern` takes
 11.0 s with it and 11.1 s without, over three runs each.
 
-**A compiling playground driver** was the third, and it runs.
+**A compiling and checking playground driver** was the third, and it runs.
 `examples/self_host/playground_run.fern` reads a program on stdin, resolves its
 `std/…` imports out of an embedded bundle handed to the module loader as a
 sealed overlay (`modloader.Overlay`), and writes a wasm module. Compiled to
@@ -306,13 +316,20 @@ of magnitude", which the raw figure no longer is.
 
 What is left:
 
-1. **The other entry points.** The driver compiles; the playground also
-   interprets and checks. `checker.check_module` + `util.format_diags` covers
-   check. Interpret does not: `examples/self_host/interp.fern` implements **no
+1. **The other entry points.** The driver compiles and checks; the playground
+   also interprets. `-check` selects the diagnostics-only mode from argv and
+   reports `line:col: error[E0XX]: message`, hosted in wasm as well as
+   natively. Its verdict is the diagnostics rather than
+   `ModuleTypes.all_well_typed`, which is false for any program the partial
+   checker (#4346) merely cannot model — `import "std/string"` is enough — and
+   would fail almost everything with nothing printed. So check under-reports
+   where the port is incomplete rather than rejecting valid programs.
+
+   Interpret is what is left: `examples/self_host/interp.fern` implements **no
    I/O builtins at all** — no `print` anywhere in its 4,138 lines — so
    `interp_run.fern` returns an exit code and nothing else. The playground's
    output pane has no self-host counterpart, which is a second missing consumer
-   alongside the LSP and was not previously recorded here.
+   alongside the LSP.
 2. **JS bindings.** Reachable, contrary to what the stdin/stdout shape suggests:
    `@export("iface", "name")` emits canonical-ABI wrappers into a `-emit
    core-module` build (`wasm_ir.fern:8868`), pulling in `cabi_realloc` for
