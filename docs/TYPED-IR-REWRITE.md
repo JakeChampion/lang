@@ -410,23 +410,38 @@ it, so the width an argument is lowered at and the funcref type the call names
 come from one string. That pairing is the point — split across two derivations
 they disagree, and a disagreement is a module the validator rejects.
 
-**Still open for a TUPLE or ARRAY element**, where no sidecar holds the
-parameters yet:
+**A TUPLE element carries the same tag now, from the declaration rather than a
+second derivation.** `t.0(4.5)` was the same defect: the element's tag is the
+coarse `"clo"` dispatch marker, and no signature can be recovered from it.
+
+The fix is not a parallel list of element signatures. `tuple_elem_tags` is
+*supposed* to be lossy — every element consumer wants the dispatch tag, and
+widening the tag in place would break the fourteen `== "clo"` gates that read
+it, including the two call sites themselves. What was missing is the
+declaration: `LocalInfo.tuple_type` keeps the slot's declared tuple SPELLING
+beside the tags derived from it, so `tuple_elem_fn_sig` can parse the element's
+own `TypeRef` and hand it to `fn_sig_of_ref`. Fifteen of the sites that record
+element tags already had that spelling in hand and now keep it; the rest record
+nothing and the call declines exactly as before.
+
+`tuple_type` joins the family of declared-spelling sidecars a slot already
+carries — `struct_type`, `opt_type`, `map_type`, `arrarr_elem`, `cell_elem` —
+which is the shape to reach for when a derived tag cannot answer a question the
+declaration could.
+
+**Still open for an ARRAY element:**
 
 ```fern
-var t: ((f64) => f64, i32) = (scale, 1);   t.0(4.5)      // oracle 45
 var fs: ((f64) => f64)[] = [scale];        fs[0](4.5)    // oracle 45
 ```
 
-Both are reachable without new machinery, and neither needs the parser's type
-cluster widened: a tuple element keeps its full arrow spelling (#7961), so
-`ref_fn_param_spellings` answers straight off its `TypeRef`; and the
-parenthesised grouping branch — the only way an array of functions is spelled —
-already decodes that same `TypeRef` to recover the result, so it has the
-parameters in hand at the point it currently discards them. What each needs is
-somewhere to put them: the element spellings are coarsened at slot-record time
-(`tuple_elem_tags` maps a fn element to the bare `"clo"` dispatch tag), so the
-signature is gone before lowering sees it.
+This one does need a new sidecar. `((f64) => f64)[]` reaches the checker and
+irlower as the flat `"fn[]"` tag: the parenthesised grouping branch has the
+`TypeRef` in hand and now keeps the element's RESULT on `StmtVar.fn_ret`, but
+there is no field for its parameters. Giving `StmtVar` a `fn_param_types`
+sidecar is the direct route and is mechanical — 55 construction literals, plus
+the monomorphiser / lift / flatten rebuild sites, where a dropped copy silently
+costs precision rather than failing to compile.
 
 The larger alternative remains what this file argues for: **stop coarsening.**
 #7961 made a fn-typed tuple ELEMENT keep its arrow spelling; doing the same for

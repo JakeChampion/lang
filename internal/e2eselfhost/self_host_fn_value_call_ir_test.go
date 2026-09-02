@@ -37,9 +37,14 @@ import (
 // call names; split across two derivations they disagree, and a disagreement is
 // a module the validator rejects.
 //
-// The same call through a TUPLE ELEMENT or an ARRAY ELEMENT still emits an
-// arity-keyed funcref and still fails to load on wasm, as does `mk()()`. Those
-// residuals and their causes are recorded in docs/TYPED-IR-REWRITE.md.
+// The fntuple_arg_* rows are the same half for a TUPLE ELEMENT, which the slot
+// carries as its declared tuple SPELLING (`tuple_type`) rather than a second
+// list of tags: the element tags are the coarse "clo"/"fn" dispatch markers by
+// design, and a signature cannot be recovered from those.
+//
+// An ARRAY ELEMENT call with arguments still emits an arity-keyed funcref and
+// still fails to load on wasm, as does `mk()()`. Those residuals and their
+// causes are recorded in docs/TYPED-IR-REWRITE.md.
 var fnValueCallCases = []struct {
 	name string
 	src  string
@@ -187,6 +192,35 @@ function add5(x: i32): i32 { return x + 5; }
 function main(): i32 {
     var h: H = H { f: add5 };
     return h.f(40);
+}`},
+
+	// A call through a fn-typed TUPLE ELEMENT carrying ARGUMENTS. The element
+	// tag is the coarse "clo", so the funcref type comes from the declared
+	// tuple spelling the slot now keeps.
+	{"fntuple_arg_f64", `function scale(x: f64): f64 { return x * 10.0; }
+function main(): i32 {
+    var t: ((f64) => f64, i32) = (scale, 1);
+    return t.0(4.5) as i32;
+}`},
+	{"fntuple_arg_mixed", `function comb(a: i64, x: f64): f64 { return x * (a as f64); }
+function main(): i32 {
+    var t: ((i64, f64) => f64, i32) = (comb, 1);
+    return t.0(10i64, 4.5) as i32;
+}`},
+	{"fntuple_arg_i64_ret", `function id64(x: i64): i64 { return x; }
+function main(): i32 {
+    var t: ((i64) => i64, i32) = (id64, 1);
+    return t.0(45i64) as i32;
+}`},
+	{"fntuple_arg_i32", `function add5(x: i32): i32 { return x + 5; }
+function main(): i32 {
+    var t: ((i32) => i32, i32) = (add5, 1);
+    return t.0(40);
+}`},
+	{"fntuple_arg_string", `function slen(s: string): i32 { return s.len(); }
+function main(): i32 {
+    var t: ((string) => i32, i32) = (slen, 1);
+    return t.0("x") + 44;
 }`},
 
 	// A GENERIC struct's fn field. Annotation runs on the erased form, so a

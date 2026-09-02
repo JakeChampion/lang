@@ -90,6 +90,14 @@ pub struct LocalInfo {
     // "string,i32,Point"), "" if not a tuple. Lets `t.N` and tuple destructuring
     // recover each element's type.
     tuple_elems: string,
+    // tuple_type: the slot's DECLARED tuple spelling ("((f64) => f64, i32)"),
+    // "" when the binding had none to record. tuple_elems is derived from this
+    // and is lossy on purpose — a fn element coarsens to the "clo" dispatch tag,
+    // which is what every element consumer wants and is not enough to name the
+    // funcref a call through that element dispatches on. Keeping the
+    // declaration is what lets `t.N(args)` build a real signature instead of
+    // re-deriving one (#5986).
+    tuple_type: string,
     map_type: string,
     // is_i64: an i64 value — drives i64 instruction selection and wasm i64 local
     // typing. i32 is the default.
@@ -235,7 +243,7 @@ pub struct LocalInfo {
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, borrowed_arr: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, borrowed_arr: false };
 }
 
 pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
@@ -305,6 +313,10 @@ pub function li_set_opt_type(li: LocalInfo, v: string): LocalInfo {
 
 pub function li_set_tuple_elems(li: LocalInfo, v: string): LocalInfo {
     return LocalInfo { ...li, tuple_elems: v };
+}
+
+pub function li_set_tuple_type(li: LocalInfo, v: string): LocalInfo {
+    return LocalInfo { ...li, tuple_type: v };
 }
 
 pub function li_set_map_type(li: LocalInfo, v: string): LocalInfo {
@@ -2451,6 +2463,15 @@ pub function (s: LowerState) opt_type_of_slot(i: i32): string {
 }
 
 // mark_tuple_elems records slot i's comma-joined tuple element-type tags.
+// mark_tuple_type records the slot's DECLARED tuple spelling alongside the
+// element tags derived from it. The tags answer "what kind is element N";
+// only the spelling can answer "what signature does a call through element N
+// dispatch on", because a fn element's tag is the coarse "clo" (#5986).
+pub function (s: LowerState) mark_tuple_type(i: i32, t: string): LowerState {
+    if (i < 0 || i >= s.locals.len()) { return s; }
+    return LowerState { ...s, locals: s.locals.with(i, li_set_tuple_type(s.locals[i], t)) };
+}
+
 pub function (s: LowerState) mark_tuple_elems(i: i32, t: string): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_tuple_elems(s.locals[i], t)) };
 }
@@ -4974,6 +4995,68 @@ pub function call_fn_field_ret(c: ast.ExprCall, s: LowerState): string {
             if (rty == "") { return ""; }
             if (decl_field_type(s.structs, rty, cfa.field) != "fn") { return ""; }
             return decl_field_fn_ret(s.structs, rty, cfa.field);
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// fn_sig_of_ref is fn_sig_of asked of a structured fn TYPE rather than a
+// ParamDecl's sidecars — the same width rules, reached from a spelling that was
+// never coarsened. "" when `r` is not a fn value, when a position is a bare type
+// parameter, or when the signature is all-i32 and `$fn<N>` already names it.
+pub function fn_sig_of_ref(r: parser.TypeRef, tps: string[]): string {
+    if (!parser.ref_is_fn_value(r)) { return ""; }
+    var ret: string = parser.render_type_ref(parser.ref_fn_result(r));
+    if (ret.len() == 0) { return ""; }
+    var ptys: string = parser.ref_fn_param_spellings(r);
+    var tys: string[] = [];
+    if (ptys.len() > 0) { tys = split_type_list(ptys); }
+    var pd: ast.ParamDecl = fn_param_decl("$elem", tys, ret);
+    if (pd.type_name.len() == 0) { return ""; }
+    return fn_sig_of(pd, tps);
+}
+
+// tuple_elem_fn_sig is the funcref signature tag for a call through element `n`
+// of the tuple `e` — the tuple sibling of decl_field_fn_sig. The element's tag
+// is the coarse "clo"/"fn" dispatch marker, so the signature has to come from
+// the DECLARED tuple spelling: the slot's tuple_type for a local, the field's
+// declared type for a tuple struct field, or the array's element spelling for
+// an array of tuples. "" when none of those recorded one, which leaves the call
+// on the arity-keyed form it has today.
+pub function tuple_elem_fn_sig(e: ast.Expr, n: i32, s: LowerState): string {
+    var t: string = tuple_decl_type(e, s);
+    if (t.len() == 0) { return ""; }
+    var r: parser.TypeRef = parser.parse_type_ref(t);
+    if (r.array_depth != 0 || !r.is_tuple) { return ""; }
+    if (n < 0 || n >= r.args.len()) { return ""; }
+    return fn_sig_of_ref(r.args[n], []);
+}
+
+// tuple_decl_type is the declared tuple SPELLING behind a tuple expression, or
+// "". The routes mirror expr_tuple_elem_tag's, minus the ones that only ever
+// held coarsened tags.
+function tuple_decl_type(e: ast.Expr, s: LowerState): string {
+    match (e) {
+        ast.ExprIdent(id) => {
+            var sl: i32 = s.slot_of(id.name);
+            if (sl < 0 || sl >= s.locals.len()) { return ""; }
+            return s.locals[sl].tuple_type;
+        },
+        ast.ExprFieldAccess(fa) => {
+            var oty: string = expr_struct_type(fa.obj, s);
+            if (oty == "") { return ""; }
+            return decl_field_type(s.structs, oty, fa.field);
+        },
+        ast.ExprIndex(ix) => {
+            match (ix.array) {
+                ast.ExprIdent(aid) => {
+                    var asl: i32 = s.slot_of(aid.name);
+                    if (asl >= 0 && s.is_arr_slot(asl)) { return s.arrarr_elem_of_slot(asl); }
+                },
+                _ => {}
+            }
+            return "";
         },
         _ => {}
     }
@@ -12587,7 +12670,8 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             tfs = lower_expr(fa.obj, tfs);
             if (!tfs.ok) { return tfs; }
             tfs = tfs.emit(ir.op_tuple_get(tfn));
-            return tfs.emit(ir.op_call_indirect_sig(c.args.len(), callee_fn_sig(c, false)));
+            return tfs.emit(ir.op_call_indirect_sig(c.args.len(),
+                callee_fn_sig_declared(tuple_elem_fn_sig(fa.obj, tfn, s), c, false)));
         }
         // A closure-BOX tuple element call ("clo" — a lambda /
         // wrapped fn the lift boxed, or a declared fn-typed
@@ -12605,14 +12689,19 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             var tcslot: i32 = tcs.slot_of(tctmp);
             tcs = tcs.emit(ir.op_store_local(tcslot));
             tcs = tcs.emit(ir.op_load_local(tcslot));   // __env (the box)
-            for arg in c.args {
-                tcs = lower_expr(arg, tcs);
+            // One signature drives the width each argument is lowered at and
+            // the funcref type the call names, as the fn-FIELD call does.
+            var tsig: string = tuple_elem_fn_sig(fa.obj, tfn, s);
+            var tai: i32 = 0;
+            while (tai < c.args.len()) {
+                tcs = lower_fn_value_arg_wc(c.args[tai], sig_arg_width_char(tsig, tai), tcs);
                 if (!tcs.ok) { return tcs; }
+                tai = tai + 1;
             }
             tcs = tcs.emit(ir.op_load_local(tcslot));
             tcs = tcs.emit(ir.op_const_i32(0));
             tcs = tcs.emit(ir.op_arr_get(32));
-            return tcs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig(c, true)));
+            return tcs.emit(ir.op_call_indirect_sig(c.args.len() + 1, callee_fn_sig_declared(tsig, c, true)));
         }
     }
     // A MapIter[K, V] receiver (`it.has_next()` / `.key()` /
@@ -19341,7 +19430,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // every binding that types itself today keeps its exact tags: this only
     // fills a hole, never overrides an inference.
     if (util.is_tuple_type_name(v.type_name) && sb.tuple_elem_tag(slot, 0).len() == 0) {
-        sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+        sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name)).mark_tuple_type(slot, v.type_name);
     }
     // Per-element rc kinds for a tuple built from bare idents (#7226). The
     // construction retain in lower_expr's ExprTuple arm incs an element naming an
@@ -19805,7 +19894,7 @@ match (v.init) {
         if (util.is_all_digits(ctfa.field)) {
             var ctet: string = expr_tuple_elem_tag(ctfa.obj, util.digits_to_i32(ctfa.field), sb);
             if (ctet == "clo") { sb = sb.mark_closure_local(v.name); }
-            else if (util.is_tuple_type_name(ctet)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctet)); }
+            else if (util.is_tuple_type_name(ctet)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctet)).mark_tuple_type(slot, ctet); }
         } else {
             // `var t = s.p` where struct field `p` is a TUPLE type: transfer the
             // field's tuple element tags onto t (the struct-field sibling of the
@@ -19815,7 +19904,7 @@ match (v.init) {
             var sfoty: string = expr_struct_type(ctfa.obj, sb);
             if (sfoty != "") {
                 var sfft: string = decl_field_type(sb.structs, sfoty, ctfa.field);
-                if (util.is_tuple_type_name(sfft)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(sfft)); }
+                if (util.is_tuple_type_name(sfft)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(sfft)).mark_tuple_type(slot, sfft); }
                 // `var g = h.f` where struct field `f` is fn-typed: the field
                 // holds a closure BOX, so g is a closure local and `g(args)`
                 // must dispatch env-first. Without this g looked like a bare
@@ -19836,7 +19925,7 @@ match (v.init) {
                 var ctasl: i32 = sb.slot_of(ctaid.name);
                 if (ctasl >= 0 && sb.is_arr_slot(ctasl)) {
                     var ctaet: string = sb.arrarr_elem_of_slot(ctasl);
-                    if (util.is_tuple_type_name(ctaet)) { return sb.mark_tuple_elems(slot, tuple_elem_tags(ctaet)); }
+                    if (util.is_tuple_type_name(ctaet)) { return sb.mark_tuple_elems(slot, tuple_elem_tags(ctaet)).mark_tuple_type(slot, ctaet); }
                 }
             },
             // `var p = r.pairs[0]` — indexing a tuple-ARRAY struct FIELD
@@ -19851,7 +19940,7 @@ match (v.init) {
                         var ctaft: string = decl_field_type(sb.structs, ctaoty, ctafa.field);
                         if (ctaft.len() >= 4 && slice_unchecked(ctaft, ctaft.len() - 2, ctaft.len()) == "[]") {
                             var ctael: str = slice_unchecked(ctaft, 0, ctaft.len() - 2);
-                            if (util.is_tuple_type_name(ctael)) { return sb.mark_tuple_elems(slot, tuple_elem_tags(ctael)); }
+                            if (util.is_tuple_type_name(ctael)) { return sb.mark_tuple_elems(slot, tuple_elem_tags(ctael)).mark_tuple_type(slot, ctael); }
                         }
                     }
                 }
@@ -19862,7 +19951,7 @@ match (v.init) {
         // neither walk case reaches. The third reader of the arrarr_elem
         // walk, and the one that never got the ix.ty fallback its two
         // siblings (expr_tuple_elem_tag, the destructure) did.
-        if (util.is_tuple_type_name(ctix.ty)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctix.ty)); }
+        if (util.is_tuple_type_name(ctix.ty)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(ctix.ty)).mark_tuple_type(slot, ctix.ty); }
     },
     _ => {}
 }
@@ -19905,7 +19994,7 @@ match (v.init) {
             // Result[T,E] element's E that a bare construction can't.
             ast.ExprLambda(mlam) => {
                 if (util.is_tuple_type_name(v.type_name)) {
-                    return sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+                    return sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name)).mark_tuple_type(slot, v.type_name);
                 }
                 var mltt: string = iife_lambda_composite_tuple_tags(mlam, sb);
                 if (mltt != "") { return sb.mark_tuple_elems(slot, mltt); }
@@ -19915,7 +20004,7 @@ match (v.init) {
         // typed-IR (#5986): a tuple-returning call no registry keys (a
         // fn-typed local, a method on an unresolvable receiver) answers
         // from the checker's stamped "(t0, t1, …)" spelling.
-        if (util.is_tuple_type_name(mc.ty)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(mc.ty)); }
+        if (util.is_tuple_type_name(mc.ty)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(mc.ty)).mark_tuple_type(slot, mc.ty); }
     },
     ast.ExprTuple(tlit) => {
         var enc: string = "";
@@ -19942,6 +20031,7 @@ match (v.init) {
             }
         }
         sb = sb.mark_tuple_elems(slot, enc);
+        if (util.is_tuple_type_name(v.type_name)) { sb = sb.mark_tuple_type(slot, v.type_name); }
     },
     // `var t: (i32, string) = f()?` — a try-operator init (parsed as a
     // `try_` unary). lower_try now admits a tuple success payload (read
@@ -19951,7 +20041,7 @@ match (v.init) {
     // including a Result[T,E] element's E) so a later `t.N` resolves.
     ast.ExprUnary(tuv) => {
         if (util.is_tuple_type_name(v.type_name)) {
-            sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name));
+            sb = sb.mark_tuple_elems(slot, tuple_elem_tags(v.type_name)).mark_tuple_type(slot, v.type_name);
         } else if (tuv.op == "try_") {
             // UNANNOTATED `var t = f()?` whose success payload is a tuple
             // (`f(): Option[(T, i32)]` / `Result[(T, i32), E]`): recover the
@@ -19964,7 +20054,7 @@ match (v.init) {
             var tupay: string = "";
             if (tuot.len() >= 8 && slice_unchecked(tuot, 0, 7) == "Option[") { tupay = opt_payload_type(tuot, "Some"); }
             else if (tuot.len() >= 8 && slice_unchecked(tuot, 0, 7) == "Result[") { tupay = opt_payload_type(tuot, "Ok"); }
-            if (util.is_tuple_type_name(tupay)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(tupay)); }
+            if (util.is_tuple_type_name(tupay)) { sb = sb.mark_tuple_elems(slot, tuple_elem_tags(tupay)).mark_tuple_type(slot, tupay); }
             // A STRUCT (or nominal ENUM) success payload: `var u = f()?` where
             // f returns `Result[User, E]` / `Option[User]`. Without the type
             // annotation the slot was left untyped, so `u.field` / `u.method()`
@@ -21581,7 +21671,7 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         // untyped and its STRING element read as an unmarked i32 — empty
         // (#5306 gap 1; the all-i32 shape only worked because the untyped
         // fallback happens to be i32).
-        else if (util.is_tuple_type_name(dtag)) { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)); }
+        else if (util.is_tuple_type_name(dtag)) { dt = dt.mark_tuple_elems(dkslot, tuple_elem_tags(dtag)).mark_tuple_type(dkslot, dtag); }
         // A 4-byte scalar-array element (i32[]/boolean[]/u32[]) binds the
         // slot as an array (the op_tuple_get above read its pointer) so
         // `arr[i]` rides the 4-byte arr_get; a u32[] also marks u32 so a
@@ -22685,7 +22775,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
             var fldvslot: i32 = lf.slot_of(fr.var_name);
             if (fld_elem_kind == 1) { lf = lf.mark_str(fldvslot, true); }
             else if (fld_elem_kind == 3) { lf = lf.mark_opt_type(fldvslot, fld_elem_ty); }
-            else if (fld_elem_kind == 4) { lf = lf.mark_tuple_elems(fldvslot, tuple_elem_tags(fld_elem_ty)); }
+            else if (fld_elem_kind == 4) { lf = lf.mark_tuple_elems(fldvslot, tuple_elem_tags(fld_elem_ty)).mark_tuple_type(fldvslot, fld_elem_ty); }
             else { lf = lf.mark_struct_type(fldvslot, fld_elem_ty); }
             // counted loop using explicit arr_len/arr_get on the borrow.
             lf = lf.emit(ir.op_block(0)).enter_loop();
@@ -22786,7 +22876,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
         else if (vty == "f64") { fm = fm.mark_f64(vslot, true); }
         // A tuple value carries its element tags so a `v.N` read — and the
         // nested destructure below — resolve the element types.
-        else if (util.is_tuple_type_name(vty)) { fm = fm.mark_tuple_elems(vslot, tuple_elem_tags(vty)); }
+        else if (util.is_tuple_type_name(vty)) { fm = fm.mark_tuple_elems(vslot, tuple_elem_tags(vty)).mark_tuple_type(vslot, vty); }
         // loop: idx++ (top) ; idx < keys.len() ; bind k/v ; body ; back-edge.
         // The increment is at the top so a `continue` (br-to-header)
         // re-runs it instead of skipping it (#2788).
@@ -22958,7 +23048,7 @@ function lower_stmt_for(fr: ast.StmtFor, s: LowerState): LowerState {
     // = p.1` typed it wrong and `s.len()` mis-read the string — a silent
     // miscompile (`p.1` printed fine, but its length came out wrong).
     var elem_tup: string = s.arrarr_elem_of_slot(aslot);
-    if (util.is_tuple_type_name(elem_tup)) { ff = ff.mark_tuple_elems(xslot, tuple_elem_tags(elem_tup)); }
+    if (util.is_tuple_type_name(elem_tup)) { ff = ff.mark_tuple_elems(xslot, tuple_elem_tags(elem_tup)).mark_tuple_type(xslot, elem_tup); }
     // `for m in <Map[K, V][]>`: each element is a map, so carry the element
     // Map[K, V] on the loop var (mark_map_type) or a map op in the body has no
     // receiver type and mis-dispatches as `i32.<op>`. It reads the array slot's
@@ -23422,7 +23512,7 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         else if (ptag.len() >= 8 && (slice_unchecked(ptag, 0, 7) == "Option[" || slice_unchecked(ptag, 0, 7) == "Result[")) { ms = ms.mark_opt_type(pbslot, ptag); }
                         // A tuple payload: tag the bound slot's element types
                         // so `p.0` / `p.1` read the right element width / type.
-                        else if (tuple_elems_lowerable(ptag, ms.structs)) { ms = ms.mark_tuple_elems(pbslot, tuple_elem_tags(ptag)); }
+                        else if (tuple_elems_lowerable(ptag, ms.structs)) { ms = ms.mark_tuple_elems(pbslot, tuple_elem_tags(ptag)).mark_tuple_type(pbslot, ptag); }
                         // An ARRAY payload (`Some(existing)` where the Option's
                         // V is an array — e.g. `m.get(k)` on a Map[K, V[]], the
                         // url_decode query-param shape). The array is BORROWED
@@ -52548,7 +52638,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, borrowed_arr: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, borrowed_arr: false });
         lzi = lzi + 1;
     }
     // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees
