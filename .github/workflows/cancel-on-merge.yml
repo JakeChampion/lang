@@ -7,13 +7,14 @@ name: Cancel superseded runs
 # queue burning a slot until a runner picks them up just to test a
 # branch nobody cares about anymore.
 #
-# This reaps them: on PR close, cancel every queued / in-progress run
-# for the PR's head branch — EXCEPT the ones a still-open PR is
-# relying on. A branch here routinely outlives the PR that first used
-# it (successive PRs get opened from the same `claude/…` branch), and
-# every PR's runs are filed under that one branch name, so a blind
-# branch-scoped cancel reaps the live PR's CI along with the dead
-# one's. Runs whose head SHA is the head of an open PR are kept.
+# This reaps them: on PR close, cancel every run for the PR's head
+# branch that has not reached a terminal state — EXCEPT the ones a
+# still-open PR is relying on. A branch here routinely outlives the PR
+# that first used it (successive PRs get opened from the same
+# `claude/…` branch), and every PR's runs are filed under that one
+# branch name, so a blind branch-scoped cancel reaps the live PR's CI
+# along with the dead one's. Runs whose head SHA is the head of an
+# open PR are kept.
 # `pull_request` (not `_target`) is safe here because the only
 # permissions needed are `actions: write` + `pull-requests: read` on
 # our own repo and we never check out / run untrusted code.
@@ -52,6 +53,23 @@ jobs:
             const { owner, repo } = context.repo;
             const self = process.env.GITHUB_RUN_ID;
 
+            // Collect the runs BEFORE the open PRs, so every candidate predates
+            // the PR snapshot. The other order loses a force-push that lands
+            // mid-job: the new runs are already listed while the PR still reads
+            // at its old head, and the live PR's fresh CI looks orphaned.
+            // A run created after this listing is simply not a candidate.
+            const candidates = new Map();
+            for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRunsForRepo,
+                { owner, repo, branch, status, per_page: 100 },
+              );
+              for (const run of runs) {
+                if (String(run.id) === String(self)) continue; // don't cancel ourselves
+                candidates.set(run.id, run);
+              }
+            }
+
             const openPRs = await github.paginate(github.rest.pulls.list, {
               owner, repo, state: "open", per_page: 100,
             });
@@ -65,26 +83,31 @@ jobs:
 
             let cancelled = 0;
             let kept = 0;
-            for (const status of ["queued", "in_progress"]) {
-              const runs = await github.paginate(
-                github.rest.actions.listWorkflowRunsForRepo,
-                { owner, repo, branch, status, per_page: 100 },
-              );
-              for (const run of runs) {
-                if (String(run.id) === String(self)) continue; // don't cancel ourselves
-                if (keep.has(run.head_sha)) {
-                  kept++;
+            let denied = false;
+            for (const run of candidates.values()) {
+              if (keep.has(run.head_sha)) {
+                kept++;
+                continue;
+              }
+              try {
+                await github.rest.actions.cancelWorkflowRun({
+                  owner, repo, run_id: run.id,
+                });
+                cancelled++;
+                core.info(`cancelled ${run.name} #${run.run_number} (${run.id}) [${run.status}]`);
+              } catch (e) {
+                if (e.status === 409) {
+                  core.info(`${run.id} reached a terminal state on its own`);
                   continue;
                 }
-                try {
-                  await github.rest.actions.cancelWorkflowRun({
-                    owner, repo, run_id: run.id,
-                  });
-                  cancelled++;
-                  core.info(`cancelled ${run.name} #${run.run_number} (${run.id}) [${status}]`);
-                } catch (e) {
-                  core.warning(`could not cancel ${run.id}: ${e.message}`);
-                }
+                if (e.status === 403) denied = true;
+                core.warning(`could not cancel ${run.id}: ${e.message}`);
               }
             }
             core.notice(`cancelled ${cancelled} run(s) for ${branch}, kept ${kept} belonging to a still-open PR`);
+            if (denied) {
+              core.setFailed(
+                "the token may not cancel runs — a fork pull request gets a read-only " +
+                "GITHUB_TOKEN, so nothing was reaped",
+              );
+            }
