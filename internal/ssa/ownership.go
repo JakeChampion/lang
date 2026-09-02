@@ -417,7 +417,7 @@ type ParamMode struct {
 	// bucket. __query_pair in std/url.fern is the worked example: it
 	// threads a Map parameter (`m = m.insert(...)`) and so takes the
 	// reassignment's overwrite dec. Map is deliberately outside
-	// computeConsumedParams' promotion — "consumedDropWired keeps Map /
+	// computeConsumedParams' promotion — "typeDeepDropWired keeps Map /
 	// slice / unwired shapes out (their deep drop is incomplete)" — so
 	// it gets no compensating entry retain, which is the shape
 	// rc_analysis.go's own comment calls an over-release. It is not one:

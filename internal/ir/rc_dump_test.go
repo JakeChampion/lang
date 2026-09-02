@@ -25,9 +25,12 @@ function thread(c: Ctx): i32 {
 	c = Ctx { name: "x", n: c.n + 1 };
 	return c.n;
 }
-function wrapper(e: Ex): Ex {
+function wrapper(e: Ex): i32 {
 	e = Node { kid: e };
-	return e;
+	match (e) {
+		Leaf(l) => { return l.v[0]; },
+		Node(n) => { return 2; },
+	}
 }
 function mover(): i32 {
 	var a: i32[] = [1, 2, 3];
@@ -51,10 +54,7 @@ function nester(n: i32): i32 {
 }
 function main(): i32 { return thread(Ctx { name: "a", n: 1 }) + mover() + dropper() + nester(3) + wrapped(); }
 function wrapped(): i32 {
-	match (wrapper(Leaf { v: [1] })) {
-		Leaf(l) => { return l.v[0]; },
-		Node(n) => { return 2; },
-	}
+	return wrapper(Leaf { v: [1] });
 }
 function aliaser(): i32 {
 	var a: i32[] = [1, 2, 3];
@@ -74,12 +74,13 @@ function aliaser(): i32 {
 	// thread: the string-bearing struct param is promoted consumed-threaded
 	// (and thereby freeEligible).
 	check("thread", "consumedParams: c", "freeEligible: c")
-	// A reassigned UNION-typed param is promoted the same way, so its entry inc
-	// balances the reassignment's overwrite dec. Without the promotion that dec
-	// releases a reference the borrow model never handed the callee — the
-	// parse_postfix `base = e_unary_at(op, base, …)` under-count (see
-	// TestX86_64UnionThreadedParam). It escapes into the returned node, so it is
-	// (correctly) not freeEligible: nothing is dec'd again at exit.
+	// A reassigned UNION-typed param that borrow inference demoted (it never
+	// escapes) is promoted the same way, so its entry inc balances the
+	// reassignment's overwrite dec. Without the promotion that dec releases a
+	// reference the borrow model never handed the callee — the parse_postfix
+	// `base = e_unary_at(op, base, …)` under-count (see
+	// TestX86_64UnionThreadedParam). An escaping one is owned by default
+	// instead (the caller's inc balances the dec) and has no line here.
 	check("wrapper", "consumedParams: e")
 	// mover: `var b = a` is a's last use — a moves into b.
 	check("mover", "movedLocals: a", "moveSites: ")
@@ -94,7 +95,7 @@ function aliaser(): i32 {
 	// nester: `row` is declared in the loop BODY, so it is not a top-level
 	// candidate at all — it lands in nestedDrops instead, keyed by the position
 	// of the statement to drop after (`s = s + row[0]`).
-	check("nester", "nestedDrops: 28:5=row")
+	check("nester", "nestedDrops: 31:5=row")
 
 	if len(dumps) == 0 {
 		t.Fatal("RcPlanHook never fired")

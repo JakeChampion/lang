@@ -296,9 +296,13 @@ analysis, which is independent, pure, and de-risks the design.
   Phase 1.
 
   **Sub-slice 2a — DONE (default on).** Enum parameters that are
-  rc-eligible (1b), transitively string/array/Map-free, UNIFORM-boxed, and
-  in a NON-TRMC function. That is the FBIP list/tree reader case (`sum`,
-  `len`, tree folds reclaim their argument). Key balance points found en
+  rc-eligible (1b) and in a NON-TRMC function. Landed first for the
+  string/array/Map-free, uniform-boxed FBIP list/tree reader case (`sum`,
+  `len`, tree folds reclaim their argument); #8056 widened it to every enum
+  whose deep drop is wired (`typeDeepDropWired` — arrays, strings and
+  non-uniform layouts included), with the call-site move for a dying
+  argument and the library shapes in `docs/PERSISTENT-COLLECTIONS.md`.
+  Key balance points found en
   route: the caller-side inc is **alias-only** (a fresh temp is moved, its
   rc=1 transferred to the callee — inc'ing it orphans the original ref);
   the stage-(b) caller temp-reclaim is suppressed for owned args (the
@@ -337,9 +341,10 @@ analysis, which is independent, pure, and de-risks the design.
   **Sub-slice 2c — structs + tuples — DONE (default on).**
   `isOwnedByDefaultType` now also admits `StructType` (backed by a real
   `StructDecl`, so runtime handles — Map/Reader/Writer/MapIter — are
-  excluded) and `TupleType` when `typeIsStringArrayFree` (which
-  transitively rejects string/array/slice/Map, the not-fully-wired
-  deep-drop fields). Fern struct fields are **immutable** after
+  excluded) and `TupleType` when `typeDeepDropWired` (which transitively
+  rejects slice/Map/closure and generic-erased fields; string and array
+  fields joined with #8056, whose #4873 grow bracket now also covers an
+  owned-by-default position). Fern struct fields are **immutable** after
   construction, so — like enums — there is no in-place mutation for the
   caller-side retain inc to disturb; no copy-on-write concern. Boxes are
   uniform by construction (no variants), and per-field/element rc counting

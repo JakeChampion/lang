@@ -106,17 +106,21 @@ function __pv_push_tail[T](node: VNode[T], shift: i32, len: i32, leaf: VNode[T])
         return Branch(kids.append(leaf));
       }
       if (sub < kids.len()) {
-        var grown: VNode[T] = __pv_push_tail(kids[sub], shift - 5, len, leaf);
-        return Branch(kids.with(sub, grown));
+        var e: VNode[T] = Empty;
+        var child: VNode[T] = kids[sub];
+        var rest: VNode[T][] = kids.with(sub, e);
+        child = __pv_push_tail(child, shift - 5, len, leaf);
+        return Branch(rest.with(sub, child));
       }
       var path: VNode[T] = __pv_path(shift - 5, leaf);
       return Branch(kids.append(path));
     },
     Leaf(xs) => {
-      return node;
+      return Leaf(xs);
     },
     Empty => {
-      return node;
+      var e: VNode[T] = Empty;
+      return e;
     }
   }
 }
@@ -145,21 +149,28 @@ function __pv_leaf_for[T](root: VNode[T], shift: i32, i: i32): T[] {
   return none;
 }
 
-// __pv_with_in returns the trie with element `i` replaced, copying the
-// path from `node` down to its leaf.
+// __pv_with_in returns the trie with element `i` replaced, rebuilding the
+// path from `node` down to its leaf — in place when nothing else holds it.
+// The child is taken OUT of its slot before the descent (`kids.with(sub,
+// Empty)`), so it reaches the recursive call at its own count rather than
+// shared with the array; see docs/PERSISTENT-COLLECTIONS.md.
 function __pv_with_in[T](node: VNode[T], shift: i32, i: i32, x: T): VNode[T] {
   match (node) {
     Branch(kids) => {
       var sub: i32 = i >> shift & 31;
-      var child: VNode[T] = __pv_with_in(kids[sub], shift - 5, i, x);
-      return Branch(kids.with(sub, child));
+      var e: VNode[T] = Empty;
+      var child: VNode[T] = kids[sub];
+      var rest: VNode[T][] = kids.with(sub, e);
+      child = __pv_with_in(child, shift - 5, i, x);
+      return Branch(rest.with(sub, child));
     },
     Leaf(xs) => {
       var nx: T[] = xs.with(i & 31, x);
       return Leaf(nx);
     },
     Empty => {
-      return node;
+      var e: VNode[T] = Empty;
+      return e;
     }
   }
 }
@@ -395,22 +406,25 @@ pub function (v: PVec[T]) append(x: T): PVec[T] {
   }
   var leaf: VNode[T] = Leaf(v.tail);
   var fresh: T[] = [x];
-  match (v.root) {
+  var e: VNode[T] = Empty;
+  var root: VNode[T] = v.root;
+  v = PVec { ...v, root: e };
+  match (root) {
     Empty => {
       return PVec { len: v.len + 1, shift: 0, root: leaf, tail: fresh };
     },
     Leaf(xs) => {
-      return PVec { len: v.len + 1, shift: 5, root: Branch([v.root, leaf]), tail: fresh };
+      return PVec { len: v.len + 1, shift: 5, root: Branch([root, leaf]), tail: fresh };
     },
     Branch(kids) => {
       // Full at this depth when the element count (minus the tail
       // being pushed) fills 32^(levels): grow a level.
       if (v.len >> 5 > 1 << v.shift) {
         var path: VNode[T] = __pv_path(v.shift, leaf);
-        return PVec { len: v.len + 1, shift: v.shift + 5, root: Branch([v.root, path]), tail: fresh };
+        return PVec { len: v.len + 1, shift: v.shift + 5, root: Branch([root, path]), tail: fresh };
       }
-      var grown: VNode[T] = __pv_push_tail(v.root, v.shift, v.len, leaf);
-      return PVec { len: v.len + 1, shift: v.shift, root: grown, tail: fresh };
+      root = __pv_push_tail(root, v.shift, v.len, leaf);
+      return PVec { len: v.len + 1, shift: v.shift, root: root, tail: fresh };
     }
   }
 }
@@ -423,10 +437,15 @@ pub function (v: PVec[T]) with(i: i32, x: T): PVec[T] {
   }
   var off: i32 = __pv_tail_off(v.len);
   if (i >= off) {
-    return PVec { len: v.len, shift: v.shift, root: v.root, tail: v.tail.with(i - off, x) };
+    var tail: T[] = v.tail;
+    v = PVec { ...v, tail: [] };
+    return PVec { ...v, tail: tail.with(i - off, x) };
   }
-  var root: VNode[T] = __pv_with_in(v.root, v.shift, i, x);
-  return PVec { len: v.len, shift: v.shift, root: root, tail: v.tail };
+  var e: VNode[T] = Empty;
+  var root: VNode[T] = v.root;
+  v = PVec { ...v, root: e };
+  root = __pv_with_in(root, v.shift, i, x);
+  return PVec { ...v, root: root };
 }
 
 // __pv_shrink_root drops root levels a pop left with a single child, and

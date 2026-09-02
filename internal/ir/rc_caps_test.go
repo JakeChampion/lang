@@ -89,6 +89,98 @@ func TestRcTransitiveClassifierVerdicts(t *testing.T) {
 	}
 }
 
+// The owned-by-default shape is gated on the deep drop being WIRED, not on
+// the value being string/array-free: an array- or string-carrying enum or
+// struct is owned like a box-only one, a non-uniform enum too, and Map /
+// unknown / generic-erased shapes stay borrowed.
+func TestOwnedByDefaultShapeAdmitsWiredDrops(t *testing.T) {
+	b := capsTestBuilder()
+	i32 := ast.NumberType{}
+	b.info.Enums["Bag"] = &ast.EnumDecl{Name: "Bag", Variants: []ast.EnumVariant{
+		{Name: "Keep", Payloads: []ast.Type{ast.ArrayType{Elem: i32}}},
+		{Name: "Drop"},
+	}}
+	b.info.Enums["Shape"] = &ast.EnumDecl{Name: "Shape", Variants: []ast.EnumVariant{
+		{Name: "Circle", Payloads: []ast.Type{i32}},
+		{Name: "Rect", Payloads: []ast.Type{i32, i32}},
+	}}
+	b.info.Enums["Tok"] = &ast.EnumDecl{Name: "Tok", Variants: []ast.EnumVariant{
+		{Name: "Ident", Payloads: []ast.Type{ast.StringType{}}},
+		{Name: "Num", Payloads: []ast.Type{i32}},
+	}}
+	b.info.Enums["Generic"] = &ast.EnumDecl{Name: "Generic", Variants: []ast.EnumVariant{
+		{Name: "Some", Payloads: []ast.Type{ast.ParamType{Name: "T"}}},
+	}}
+	cases := []struct {
+		name      string
+		t         ast.Type
+		wantWired bool // typeDeepDropWired
+		wantOwned bool // ownedByDefaultShape
+	}{
+		{"scalar struct", ast.StructType{Name: "Point"}, true, true},
+		{"string-bearing struct", ast.StructType{Name: "Named"}, true, true},
+		{"Map-bearing struct", ast.StructType{Name: "Holder"}, false, false},
+		{"unknown struct", ast.StructType{Name: "Reader"}, false, false},
+		{"scalar enum", ast.EnumType{Name: "Scalar"}, true, true},
+		{"array-payload enum", ast.EnumType{Name: "Bag"}, true, true},
+		{"non-uniform enum", ast.EnumType{Name: "Shape"}, true, true},
+		{"string-payload enum", ast.EnumType{Name: "Tok"}, true, true},
+		{"Map-bearing enum", ast.EnumType{Name: "WithMap"}, false, false},
+		{"generic-erased enum", ast.EnumType{Name: "Generic"}, false, false},
+		{"unknown enum", ast.EnumType{Name: "Ghost"}, false, false},
+		{"recursive list", ast.EnumType{Name: "List"}, true, true},
+		{"tuple with string", ast.TupleType{Elems: []ast.Type{i32, ast.StringType{}}}, true, true},
+		// Arrays and strings are wired but never owned-by-default as bare
+		// parameters: arrays carry the consumed-threaded flag protocol.
+		{"array of i32", ast.ArrayType{Elem: i32}, true, false},
+		{"string", ast.StringType{}, true, false},
+		{"slice", ast.SliceType{Elem: i32}, false, false},
+		{"closure", &ast.FuncType{}, false, false},
+	}
+	for _, tc := range cases {
+		wired := typeDeepDropWired(tc.t, b.info, map[string]bool{})
+		owned := b.ownedByDefaultShape(tc.t)
+		if wired != tc.wantWired || owned != tc.wantOwned {
+			t.Errorf("%s: (deepDropWired=%v, ownedByDefaultShape=%v), want (%v, %v)",
+				tc.name, wired, owned, tc.wantWired, tc.wantOwned)
+		}
+	}
+}
+
+// A consuming arm frees the box at ITS variant's size, so a non-uniform
+// enum's arms size independently; a payloadless variant answers with the
+// uniform size (the pair-form rebox's layout) or nothing at all.
+func TestEnumVariantBoxSize(t *testing.T) {
+	i32 := ast.NumberType{}
+	shape := &ast.EnumDecl{Name: "Shape", Variants: []ast.EnumVariant{
+		{Name: "Circle", Payloads: []ast.Type{i32}},
+		{Name: "Rect", Payloads: []ast.Type{i32, i32}},
+		{Name: "Dot"},
+	}}
+	if sz, ok := enumVariantBoxSize(shape, "Circle", 8); !ok || sz != 8 {
+		t.Errorf("Circle: (%d, %v), want (8, true)", sz, ok)
+	}
+	if sz, ok := enumVariantBoxSize(shape, "Rect", 8); !ok || sz != 12 {
+		t.Errorf("Rect: (%d, %v), want (12, true)", sz, ok)
+	}
+	if _, ok := enumVariantBoxSize(shape, "Dot", 8); ok {
+		t.Error("Dot: a payloadless variant of a non-uniform enum has no box size")
+	}
+	opt := &ast.EnumDecl{Name: "Opt", Variants: []ast.EnumVariant{
+		{Name: "A", Payloads: []ast.Type{i32}},
+		{Name: "B"},
+	}}
+	if sz, ok := enumVariantBoxSize(opt, "B", 8); !ok || sz != 8 {
+		t.Errorf("B: (%d, %v), want the uniform (8, true)", sz, ok)
+	}
+	generic := &ast.EnumDecl{Name: "G", Variants: []ast.EnumVariant{
+		{Name: "Some", Payloads: []ast.Type{ast.ParamType{Name: "T"}}},
+	}}
+	if _, ok := enumVariantBoxSize(generic, "Some", 8); ok {
+		t.Error("Some: a generic-erased payload has no static size")
+	}
+}
+
 // The tracked-set layering must stay distinct: strings join at the slot
 // layer (never the element layer), and `dyn Trait` joins only at the
 // sweep layer, only where the backend can reclaim it (b.dynReclaim) —

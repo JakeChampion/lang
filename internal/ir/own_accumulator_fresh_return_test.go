@@ -92,7 +92,10 @@ func TestOwnAccumulatorReturnsFreshBox(t *testing.T) {
 // The plan-level consequence: with the recursion's result credited, `acc`
 // stays freeEligible, and every `return acc` retain is paired with the exit
 // sweep's __fern_arr_dec — the dec whose absence was the leak. The
-// self-append's overwrite dec makes the arr_dec count strictly larger.
+// self-append's overwrite dec makes the arr_dec count strictly larger. Only
+// retains of acc's own slot count: `into`'s enum scrutinee takes the
+// consuming match, whose shared-branch dups of `l` / `r` are enum retains
+// balanced by the enum drops, not by an arr_dec.
 func TestOwnAccumulatorRecursionPlanAndSweep(t *testing.T) {
 	dumps := map[string]string{}
 	RcPlanHook = func(fn, dump string) { dumps[fn] = dump }
@@ -103,12 +106,29 @@ func TestOwnAccumulatorRecursionPlanAndSweep(t *testing.T) {
 			if !hasPlanName(dumps[fn], "freeEligible", "acc") {
 				t.Errorf("ptrW=%d: %s: acc is not freeEligible — the recursion's result taints the own accumulator; plan:\n%s", ptrW, fn, dumps[fn])
 			}
-			incs, decs := countRcIncs(prog, fn), countCalls(prog, fn, "__fern_arr_dec")
+			// acc is the second parameter of both functions: slot 1.
+			incs, decs := countRcIncsOfSlot(prog, fn, 1), countCalls(prog, fn, "__fern_arr_dec")
 			if incs > decs {
-				t.Errorf("ptrW=%d: %s: %d rc-incs but only %d __fern_arr_dec calls — a `return acc` retain with no sweep dec strands the frame's reference", ptrW, fn, incs, decs)
+				t.Errorf("ptrW=%d: %s: %d rc-incs of acc but only %d __fern_arr_dec calls — a `return acc` retain with no sweep dec strands the frame's reference", ptrW, fn, incs, decs)
 			}
 		}
 	}
+}
+
+// countRcIncsOfSlot counts the __fern_rc_inc ops applied to a value just
+// loaded from `slot`.
+func countRcIncsOfSlot(prog *Program, fn string, slot int32) int {
+	f := funcNamed(prog, fn)
+	if f == nil {
+		return 0
+	}
+	n := 0
+	for i := 1; i < len(f.Ops); i++ {
+		if f.Ops[i].Kind == OpRcInc && f.Ops[i-1].Kind == OpLoadLocal && f.Ops[i-1].I32 == slot {
+			n++
+		}
+	}
+	return n
 }
 
 // hasPlanName reports whether the rcPlan dump's `key:` line names `name`.

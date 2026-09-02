@@ -1293,14 +1293,19 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		}
 		// Phase 3 enum-box reclamation: an OWNED enum frees its box to
 		// the freelist on the last reference (rc==1) after dropping its
-		// payloads. The full tiered logic — uniform branchless path,
-		// non-uniform / scalar variant-plan tag switch, and the generic
-		// fallthrough flat-dec — lives in emitEnumSlotDrop so the loop-var
-		// reinit / reassign drop (emitStructEnumSlotDrop) and the
-		// fresh-match-scrutinee reclamation can free a scalar-payload box
-		// the same way instead of leaking it.
+		// payloads. A single-payload-variant enum (the list / tree cell)
+		// drops inline — one is_unique-gated arm on the hot path; anything
+		// wider goes through the generated __drop_enum_<Name>, because
+		// inline its tag switch lands at every exit of every function that
+		// owns one (the self-host checker's check_expr doubled and a
+		// 400-line ty_tag grew 25x once string-carrying enums were owned by
+		// default).
 		if et, ok := t.(ast.EnumType); ok {
-			b.emitEnumSlotDrop(slot, et, eligible)
+			if b.sweepDropInline(et) {
+				b.emitEnumSlotDrop(slot, et, eligible)
+			} else {
+				b.emitOwnedEnumDrop(slot, et, eligible)
+			}
 			return
 		}
 		// Closure reclamation: an OWNED FuncType local frees its env /
@@ -1396,15 +1401,6 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 	// Borrowed-view aliases (#4402 opt 1) were never inc'd — their dec is
 	// the other half of the cancelled pair.
 	for name := range b.rc.borrowedAlias {
-		seen[name] = true
-	}
-	// `.with` receivers consumed by __fern_arr_cow_inplace (#6013): no inc was
-	// emitted before the call, so the helper took the receiver's reference over
-	// — moved into the result on its rc==1 branch, dec'd by the helper itself on
-	// the copy branch. Dec-ing here releases it a second time, which with the
-	// freelist on frees the buffer the RESULT still points at. See
-	// arraySetConsumed for why a reassign-to-self is deliberately not in the set.
-	for name := range b.rc.arraySetConsumed {
 		seen[name] = true
 	}
 	// Borrowed `dyn Trait` views (#4787): a dyn local bound from an element /
@@ -1521,6 +1517,31 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			emitDec(slot, b.rc.consumingBindings[nm], true, nm)
 		}
 	}
+}
+
+// sweepInlineMaxArms bounds the tag switch the exit sweep inlines: an enum
+// with more payload-carrying variants is dropped through its generated
+// __drop_enum_<Name> instead, so a many-variant enum does not repeat its
+// whole switch at every exit of every function that owns one.
+const sweepInlineMaxArms = 3
+
+// sweepDropInline reports whether the exit sweep drops an enum slot inline
+// (emitEnumSlotDrop) rather than through its generated drop.
+func (b *builder) sweepDropInline(et ast.EnumType) bool {
+	ed, ok := b.info.Enums[et.Name]
+	if !ok {
+		return true
+	}
+	if len(et.Args) > 0 {
+		ed = substituteEnumDecl(ed, et.Args)
+	}
+	payloadful := 0
+	for _, v := range ed.Variants {
+		if len(v.Payloads) > 0 {
+			payloadful++
+		}
+	}
+	return payloadful <= sweepInlineMaxArms
 }
 
 // emitPreciseDrop deep-drops the owned local `name` at its last use and
@@ -1650,10 +1671,9 @@ func (b *builder) emitDynConcreteInc(dc checker.DynCoercion) {
 //     -construction / -destructure / -return) is excluded from the exit
 //     sweep; dec-ing its slot would over-release. Loop-body construction
 //     moves carry their own dominance rule, so the slot is empty on every
-//     path back round to this declaration.
-//   - !arraySetConsumedReinit: the same exclusion for a `.with` receiver
-//     __fern_arr_cow_inplace took the reference from, under the same
-//     dominance rule.
+//     path back round to this declaration. (A `.with` receiver
+//     __fern_arr_cow_inplace took the reference from needs no exclusion:
+//     that site zeroes the slot, so this drop meets a null.)
 func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 	if !ast.RcFreeEnabled {
 		return
@@ -1667,7 +1687,7 @@ func (b *builder) emitVarReinitDropOld(name string, idx int32) {
 	// only a CONSTRUCTION alias-inc (rc.ctorAliasInced) leaves the local
 	// holding a counted reference it must give back. That case gets the flat
 	// dec below; every other ineligible local is still skipped entirely.
-	if !b.localNameUnique(name) || b.rc.movedLocals[name] || b.rc.arraySetConsumedReinit[name] {
+	if !b.localNameUnique(name) || b.rc.movedLocals[name] {
 		return
 	}
 	if !b.rc.freeEligible[name] {
@@ -3646,6 +3666,31 @@ func uniformEnumBoxSize(ed *ast.EnumDecl, ptrW int) (int32, bool) {
 		return 0, false
 	}
 	return size, true
+}
+
+// enumVariantBoxSize is the box payload size a value of variant `name` was
+// allocated with: its own payload layout for a payload-carrying variant
+// (emitEnumNew allocates exactly that), the enum's uniform size for a
+// payloadless one (normally a static sentinel, but the pair-form rebox
+// materialises a real box at the uniform size — #7732), and (0, false) when
+// a payload is generic-erased or the payloadless case has no uniform size.
+func enumVariantBoxSize(ed *ast.EnumDecl, name string, ptrW int) (int32, bool) {
+	for _, v := range ed.Variants {
+		if v.Name != name {
+			continue
+		}
+		if len(v.Payloads) == 0 {
+			return uniformEnumBoxSize(ed, ptrW)
+		}
+		for _, pt := range v.Payloads {
+			if _, isParam := pt.(ast.ParamType); isParam {
+				return 0, false
+			}
+		}
+		_, sz := payloadLayout(v.Payloads, len(v.Payloads), ptrW)
+		return sz, true
+	}
+	return 0, false
 }
 
 // enumVariantDropPlan returns a per-variant drop plan for an enum whose

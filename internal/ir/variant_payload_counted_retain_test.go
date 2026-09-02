@@ -15,6 +15,11 @@ import (
 // the same for a heap string and an array temp. inferParamCountedRetain now
 // credits a `Ctor(.., p, ..)` payload under exactly emitEnumNew's inc gate
 // (variantCtorCountedIn), so a credit is never granted where no inc is emitted.
+//
+// `wrap` is also taken as a function value (`hold(wrap)`): a function reached
+// through a function value borrows unconditionally (#7307), which keeps its
+// params on the borrow model now that a string-carrying uniform enum is owned
+// by default — the temp release under test is the BORROWED-position one.
 const variantPayloadSrc = `enum T { Leaf, Node(T, string, T) }
 enum A { ALeaf, ANode(A, i32[], A) }
 enum M { MLeaf, MNode(M, Map[i32, i32]) }
@@ -42,7 +47,8 @@ function round(i: i32): i32 {
     var t: T = wrap(mk(i), "k", Leaf);
     match (t) { Node(l, k, r) => { return k.len(); }, Leaf => { return 0; } }
 }
-function main(): i32 { return round(1); }`
+function hold(f: (T, string, T) => T): i32 { return 0; }
+function main(): i32 { return round(1) + hold(wrap); }`
 
 func TestVariantPayloadStoreIsCountedRetain(t *testing.T) {
 	prog, err := parser.Parse(variantPayloadSrc)

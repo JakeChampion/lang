@@ -36,8 +36,9 @@ function build(n:i32):L{if(n==0){return N;}return C(n,build(n-1));}
 function f():i32{var x:L=build(3);return sum(x)+sum(x);}
 function main():i32{return 0;}`
 
-// Caller side: the two aliased `sum(x)` calls inc x under the owned model; under
-// borrow inference sum borrows, so those incs vanish.
+// Caller side: under the owned model the first `sum(x)` incs x (x is read
+// again), and the second — x's last use — MOVES it (computeOwnedArgMoves), so
+// exactly one inc; under borrow inference sum borrows, so even that vanishes.
 func TestBorrowInferElidesReaderCallerInc(t *testing.T) {
 	prev := ast.BorrowInferEnabled
 	defer func() { ast.BorrowInferEnabled = prev }()
@@ -47,8 +48,8 @@ func TestBorrowInferElidesReaderCallerInc(t *testing.T) {
 	ast.BorrowInferEnabled = true
 	on := rcOpCount(lowerForTest(t, borrowInferSrc), "f", "rc_inc")
 
-	if off < 2 {
-		t.Fatalf("expected the owned model to inc the aliased reader arg at both calls, got %d", off)
+	if off != 1 {
+		t.Fatalf("expected the owned model to inc the aliased reader arg at the first call and move it at the last, got %d incs", off)
 	}
 	if on != 0 {
 		t.Errorf("borrow inference should elide the reader-arg incs in f, got %d (off=%d)", on, off)
@@ -79,6 +80,9 @@ func TestBorrowInferElidesReaderCalleeDrop(t *testing.T) {
 // A param that ESCAPES (returned) must stay owned — borrow inference must not
 // touch it. `id` returns its parameter, so `p` escapes and keeps its reclamation
 // contract; the differential gate would catch a mis-borrow, this pins intent.
+// x is read again after `id(x)`, so the argument is retained rather than
+// moved; `dying` is the same call at x's last use, where the owned position
+// takes the reference itself (computeOwnedArgMoves) and no inc is emitted.
 func TestBorrowInferKeepsEscapingParamOwned(t *testing.T) {
 	prev := ast.BorrowInferEnabled
 	defer func() { ast.BorrowInferEnabled = prev }()
@@ -87,17 +91,22 @@ func TestBorrowInferKeepsEscapingParamOwned(t *testing.T) {
 function id(p:L):L{return p;}
 function len(l:L):i32{match(l){C(h,t)=>{return 1+len(t);},N=>{return 0;}}}
 function build(n:i32):L{if(n==0){return N;}return C(n,build(n-1));}
-function g():i32{var x:L=build(3);return len(id(x));}
+function g():i32{var x:L=build(3);return len(id(x))+len(x);}
+function dying():i32{var x:L=build(3);return len(id(x));}
 function main():i32{return 0;}`
 
 	ast.BorrowInferEnabled = false
 	off := rcOpCount(lowerForTest(t, src), "g", "rc_inc")
 	ast.BorrowInferEnabled = true
 	on := rcOpCount(lowerForTest(t, src), "g", "rc_inc")
+	moved := rcOpCount(lowerForTest(t, src), "dying", "rc_inc")
 
 	// `id` escapes p (returns it) so its arg stays owned (inc'd) under both
 	// models; `len` is a borrowable reader. The escaping-arg inc must survive.
 	if on < 1 {
 		t.Errorf("escaping-param call must keep its retain inc under borrow inference, got %d (off=%d)", on, off)
+	}
+	if moved != 0 {
+		t.Errorf("an escaping-position argument at its last use must be moved, not retained; got %d incs", moved)
 	}
 }

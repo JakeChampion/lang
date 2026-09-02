@@ -117,12 +117,28 @@ Locked by: `internal/ir/c2_consuming_reuse_test.go`.
 
 The non-`own` sibling (#4400): a match consuming an owned-by-
 default enum param emits per-arm drop-specialised release — on
-the unique branch the box is shallow-freed and the extracted
-bindings inherit the payload counts (the dup/dec pairs cancel
-statically); on the shared branch bindings are dup'd and the box
-flat-dec'd. Guarded/wildcard arms fall back to the exit sweep.
-Not an alloc-elision itself, but the enabler that makes R4 legal
-and keeps match-heavy code from paying dup/dec per arm.
+the unique branch the box is shallow-freed at the ARM's variant
+size and the extracted bindings inherit the payload counts (the
+dup/dec pairs cancel statically); on the shared branch bindings
+are dup'd and the box flat-dec'd. Guarded/wildcard arms fall back
+to the exit sweep. Not an alloc-elision itself, but the enabler
+that makes R4 legal and keeps match-heavy code from paying
+dup/dec per arm.
+
+Owned-by-default covers every enum, struct and tuple whose deep
+drop is wired (`typeDeepDropWired`: arrays and strings included,
+non-uniform layouts included; Map-bearing, slice, closure and
+generic-erased shapes stay borrowed), and an array or single-word
+string payload is a binding the release hands over like a box
+(#8056). The scrutinee must reach the callee unique for the
+unique branch to fire: an owned-by-default argument that DIES at
+the call — `x = f(.., x, ..)`, `return f(.., x, ..)`, a sole-use
+parameter outside any loop — is MOVED (no retain, slot nulled)
+rather than retained, the counted model's dup elision
+(`computeOwnedArgMoves`). A field read (`v.root`) or an element
+read (`kids[i]`) passed to the call is retained, so the callee
+sees it shared; the library takes such a value out of its
+container first (`docs/PERSISTENT-COLLECTIONS.md`, "Shapes").
 
 ### R6 — array in-place mutation (push / set)
 
@@ -130,7 +146,13 @@ and keeps match-heavy code from paying dup/dec per arm.
 COW runtime (`__fern_arr_cow_inplace`): rc==1 mutates in place,
 shared copies first. The analysis adds a receiver inc
 (`arraySetInc`) when the receiver is provably live after the
-call, forcing the copy path — the #2832 aliasing guard.
+call, forcing the copy path — the #2832 aliasing guard; a binding
+of a NON-consuming match is such a receiver for both `.with` and
+`.append` (`borrowedBindings` — the buffer is the scrutinee box's).
+A consumed `.with` receiver has its slot nulled at the call
+(`arraySetConsumedSites`), so every later release of the slot
+no-ops and a path that never reached the `.with` still releases
+what it holds.
 Locked by: `internal/ir/append_inplace_test.go`,
 `push_counted_store_test.go`.
 

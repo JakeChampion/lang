@@ -100,11 +100,15 @@ turns those rebuilds into in-place writes exactly when it can prove them safe.
 
 **The in-place path, measured directly.** Re-inserting every key of a
 2,000-entry map into a uniquely held map (`m = m.insert(k, v)` in a loop),
-fresh bytes over the whole loop: `std/ordmap` 48 B, `std/pmap` 21 KB (the
-forced path-array copies, recycled by the freelist), `std/pvec` 1.2 KB over
-5,000 `.with`. With a snapshot held first, the same loops allocate exactly
-the copied nodes and nothing else, and `-sanitize` reports zero leaked blocks
-for build / re-insert / remove / lookup / fold on every module.
+fresh bytes over the whole loop: `std/ordmap` 48 B, `std/pmap` 0 B,
+`std/pvec` 0 B over 5,000 `.with` (#8056 — before it, 224 B and 1.2 KB of
+forced path-array copies recycled by the freelist, and one allocation per
+level for the copies themselves: `examples/bench/pvec_with` went from
+1,118,676 allocations to 642,593, `pmap_insert` from 693,584 to 438,649,
+retired instructions −47% and −57%). With a snapshot held first, the same
+loops allocate exactly the copied nodes and nothing else, and `-sanitize`
+reports zero leaked blocks for build / re-insert / remove / lookup / fold on
+every module.
 
 ## What the compiler needed (fixed in this PR)
 
@@ -211,20 +215,12 @@ Each of these is a native rc precision gap the library works around by
 choosing a shape; none affects correctness, and the sanitizer census is the
 gate for closing them.
 
-- **Array-carrying and string-carrying enums are excluded from
-  owned-by-default** (`isOwnedByDefaultType`, `typeIsStringArrayFree`), so a
-  HAMT or vector node is always a borrow inside the update and its child
-  array is copied on every level even when the whole trie is unique. That is
-  the 28x on `pvec.with` and the 21 KB on `pmap`: the boxes are reused, the
-  32-slot arrays are not. Widening the gate (with the array-payload deep drop
-  it needs) turns the unique path of both into the zero-copy path the ordered
-  map already has.
-  It also carries the one residual `examples/tests/ordmap_test.fern` still
-  shows (5 of its 7 blocks): a string-valued or string-keyed node found by
-  `match (__om_find(m.root, k))` in `get` / `get_or` is never released —
-  `__om_find` returns it with the transfer inc, and `reclaimableMatchScrutinee`
-  refuses a scrutinee whose arms bind pointers. The i32-valued twin of the
-  same program is clean.
+- **A string-valued or string-keyed ordered-map node found by
+  `match (__om_find(m.root, k))` in `get` / `get_or` is never released** — 5
+  of the 7 blocks `examples/tests/ordmap_test.fern` still shows. `__om_find`
+  returns it with the transfer inc, and `reclaimableMatchScrutinee` refuses a
+  scrutinee whose arms bind pointers. The i32-valued twin of the same program
+  is clean.
 - **A fresh temp passed to a POINTER-returning method whose parameter reaches
   a self-recursive callee is not reclaimed** — `s.concat(v.slice(0, 2))`, 2
   of the 4 blocks in `examples/tests/pvec_test.fern`. The per-position admission asks
@@ -262,6 +258,23 @@ the alternative allocating or leaking.
   defining module cannot see (#6846).
 - **Recursive results bound to locals** before being passed on — the shape
   the counted-retain analysis credits most precisely.
+- **The path is rebuilt through a consuming match, and the child is taken
+  OUT of its slot before the descent** (#8056). A node parameter is owned by
+  default, so a `match` on it at its last use releases the box per arm and
+  hands the child array to the binding at the box's own count; `Empty =>`
+  arms return `Empty`, never the parameter (a parameter read inside an arm
+  makes the match non-consuming and every binding a borrow that copies).
+  The recursive call then takes the child as `var child = kids[sub]; var
+  rest = kids.with(sub, Empty); child = f(child, ..)` — the `.with` writes
+  in place at rc 1 and leaves the child at its own count, the self-reassign
+  moves it into the call — and `Branch(rest.with(sub, child))` writes it
+  back in place. Reading `kids[sub]` straight into the call instead keeps
+  the child shared with the array, and every level below copies. The wrapper
+  does the same for its root: `var root = v.root; v = PVec { ...v, root:
+  Empty }; root = __pv_with_in(root, ..)` — the struct-update self-overwrite
+  reuses the handle's box and releases the old root reference, so the trie
+  reaches the descent unique. `docs/REUSE-CONTRACT.md` R5 / R6 name the
+  compiler side of the contract.
 - **Bitmap arithmetic in i32, logical shifts through `u32`**, popcount via
   `count_ones()` — `u32 +` / `<<` are not truncated on every self-host
   backend.

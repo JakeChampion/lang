@@ -3458,6 +3458,11 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				fn = genStructDropFn(sn, sd, info, ptrW, genEnumDrops, genTupleDrops, lo.dynRcSupported)
 			}
 			generated[name] = true
+			// Release code is cold and called from every exit sweep that
+			// owns the type; inlined, a walk-drop's loop lands at each of
+			// those sites (an owned-array-payload function grew 7x in ops,
+			// the self-host driver 16% in text).
+			fn.InlineHint = ast.InlineHintNever
 			enqueueCalls(fn.Ops) // a generated body may call further drop fns
 			// Codegen walks prog.Funcs (AST) and looks the IR up by name;
 			// append a stub AST decl — emission reads the IR Func's ops,
@@ -3836,6 +3841,16 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 // escaping `own` position.
 func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, variantPayloads map[string][]ast.Type, escapes map[string][]bool) bool {
 	tainted := map[string]bool{pname: true}
+	// Declared types of the slots an assignment can write, for the same
+	// slot-typed reachability test a `var` initialiser gets: `x = f(p)`
+	// carries p's heap into x exactly as `var x = f(p)` does.
+	slotType := map[string]ast.Type{}
+	for _, p := range fn.Params {
+		slotType[p.Name] = p.Type
+	}
+	for _, v := range info.Locals[fn] {
+		slotType[v.Name] = v.Type
+	}
 	for {
 		grew := false
 		taintBindings := func(scrut ast.Expr, names []string) {
@@ -3856,6 +3871,17 @@ func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, varian
 					taintedReachesSlot(x.Init, x.Type, tainted, info, variantPayloads, escapes) {
 					tainted[x.Name] = true
 					grew = true
+				}
+			case *ast.Assign:
+				if id, ok := x.Target.(*ast.Ident); ok && !tainted[id.Name] {
+					st, known := slotType[id.Name]
+					if !known {
+						st = nil
+					}
+					if taintedReachesSlot(x.Value, st, tainted, info, variantPayloads, escapes) {
+						tainted[id.Name] = true
+						grew = true
+					}
 				}
 			case *ast.Match:
 				for _, arm := range x.Arms {
@@ -6162,8 +6188,8 @@ type paramVerdict uint8
 
 const (
 	// paramVerdictNotOwnedType: the parameter's TYPE is outside the
-	// owned-by-default set (scalar, or a string/array/Map-bearing composite —
-	// isOwnedByDefaultType). No inc/dec pair on either side.
+	// owned-by-default set (scalar, array, or a composite whose deep drop is
+	// not wired — isOwnedByDefaultType). No inc/dec pair on either side.
 	paramVerdictNotOwnedType paramVerdict = iota
 	// paramVerdictOwned: the callee reclaims the param at exit; the caller
 	// retains an aliased argument.
@@ -6235,7 +6261,7 @@ func (f paramVerdictFacts) ownedParam(fn *ast.FuncDecl, i int) bool {
 }
 
 func (f paramVerdictFacts) verdict(fnName string, t ast.Type, i int) paramVerdict {
-	if !ownedByDefaultTypeIn(f.info, f.ptrW, t) {
+	if !ownedByDefaultTypeIn(f.info, t) {
 		return paramVerdictNotOwnedType
 	}
 	if f.trmcConsumeSafe[fnName] {
@@ -9329,7 +9355,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 						dupSlots = append(dupSlots, slot)
 					}
 				}
-				b.emitOwnedConsumingArmDrop(ptrSlot, consumeEnum, dupSlots, consumeOwnedName)
+				b.emitOwnedConsumingArmDrop(ptrSlot, consumeEnum, arm.VariantName, dupSlots, consumeOwnedName)
 			}
 			// Optional guard: with bindings now in locals, run
 			// the guard expression. On false, branch out of the
@@ -13818,8 +13844,7 @@ func (b *builder) arrayFieldPaths(structName string, depth int, seen map[string]
 // (growFieldBufs). Skipped when the arg dies at this call (the strict
 // self-reassign shape — keeps the #4838 O(n) accumulator chains on the
 // in-place fast path), is a move site, is not an rc-tracked alias, or
-// flows into an `own` / owned-by-default position (those transfer or inc
-// already).
+// flows into an `own` position (a transfer).
 func (b *builder) growBracketArgs(n *ast.Call, calleeName string) []growBracketEntry {
 	gp := b.growParams[calleeName]
 	if len(gp) == 0 {
@@ -13833,15 +13858,11 @@ func (b *builder) growBracketArgs(n *ast.Call, calleeName string) []growBracketE
 		if ai >= len(gp) || gp[ai] == 0 {
 			continue
 		}
-		id, isIdent := a.(*ast.Ident)
-		if !isIdent {
+		slot, chain, root, ok := b.bracketArgPath(a)
+		if !ok {
 			continue
 		}
-		slot, hasSlot := b.locals[id.Name]
-		if !hasSlot {
-			continue
-		}
-		if b.callArgDies[n][id.Name] {
+		if b.callArgDies[n][root.Name] {
 			continue
 		}
 		if b.rc.moveSites[a] {
@@ -13853,21 +13874,65 @@ func (b *builder) growBracketArgs(n *ast.Call, calleeName string) []growBracketE
 		if ai < len(ownFlags) && ownFlags[ai] {
 			continue
 		}
-		if sig != nil && ai < len(sig.Params) && b.calleeParamOwnedByDefault(calleeName, sig.Params[ai], ai) {
-			continue
-		}
+		// An owned-by-default position is NOT exempt: the caller's retain is
+		// on the BOX, and a field buffer inside it stays at its own count, so
+		// the callee's rc==1 fast path would still grow the buffer this
+		// binding reads back through (`var c = a.push(3); a.size()`).
 		if gp[ai]&growArgBuffer != 0 {
-			out = append(out, growBracketEntry{slot: slot})
+			out = append(out, growBracketEntry{slot: slot, fieldPath: chain})
 		}
 		if gp[ai]&growFieldBufs != 0 && sig != nil && ai < len(sig.Params) {
 			if st, isStruct := sig.Params[ai].(ast.StructType); isStruct {
 				for _, path := range b.arrayFieldPaths(st.Name, 4, map[string]bool{}) {
-					out = append(out, growBracketEntry{slot: slot, fieldPath: path})
+					full := append(append([]int32{}, chain...), path...)
+					out = append(out, growBracketEntry{slot: slot, fieldPath: full})
 				}
 			}
 		}
 	}
 	return out
+}
+
+// bracketArgPath resolves a bracket argument to the local slot it is rooted
+// at, the field-offset path from that slot's value to the argument (one
+// pointer-width load per link, in emitGrowBracket's form), and the root
+// ident. A bare ident is its own slot with an empty path; a field chain
+// rooted at an ident (`h.b`, `s.cur.insts`) aliases its container's
+// sub-heap and stays readable through the container after the call, so it
+// needs the bracket exactly as a surviving ident does — `push(h.b)` grew
+// `h.b.xs` in place without it. Anything else (a call result, an index) is
+// not a place the caller reads back through.
+func (b *builder) bracketArgPath(a ast.Expr) (int32, []int32, *ast.Ident, bool) {
+	var chain []int32
+	e := a
+	for {
+		switch x := e.(type) {
+		case *ast.Ident:
+			slot, ok := b.locals[x.Name]
+			if !ok {
+				return 0, nil, nil, false
+			}
+			return slot, chain, x, true
+		case *ast.FieldAccess:
+			st, ok := b.exprType(x.Target).(ast.StructType)
+			if !ok || isMapType(st) {
+				return 0, nil, nil, false
+			}
+			sd, ok := b.info.Structs[st.Name]
+			if !ok {
+				return 0, nil, nil, false
+			}
+			offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+			off, ok := offs[x.Field]
+			if !ok {
+				return 0, nil, nil, false
+			}
+			chain = append([]int32{off}, chain...)
+			e = x.Target
+		default:
+			return 0, nil, nil, false
+		}
+	}
 }
 
 // emitGrowBracket emits one side of the #4873 containment bracket: for
@@ -14894,6 +14959,15 @@ func (b *builder) callBody(n *ast.Call) error {
 		// param is a separate move and is excluded.
 		if ownedByDefaultAt(ai) && needsRcIncOnAlias(a, b) && !b.rc.moveSites[a] {
 			b.emitAliasInc(a)
+		}
+		// A moved argument (computeOwnedArgMoves) leaves its slot null: the
+		// value on the stack is now the callee's, and every later release of
+		// the slot no-ops on the null.
+		if aid, isIdent := a.(*ast.Ident); isIdent && b.rc.ownedArgMoves[aid] {
+			if slot, ok := b.locals[aid.Name]; ok {
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
 		}
 		// An explicit `own` position whose argument is one of THIS function's
 		// `own` params, at an occurrence move-on-call did NOT claim, is a
@@ -16352,15 +16426,14 @@ func (b *builder) emitEnumDropViaGenFn(slot int32, et ast.EnumType) bool {
 	return true
 }
 
-// emitOwnedEnumDrop reclaims an OWNED enum box for a PER-ITERATION drop site
-// (loop-var reinit, match-scrutinee): it prefers the generated
-// __drop_enum_<Name> fn (emitEnumDropViaGenFn — whose box_free reuses the freed
-// box on wasm, unlike an inline box_free in a loop / match body) and falls back
-// to the inline emitEnumSlotDrop for shapes the gen-fn route declines (generic
-// instantiations, sentinel-only / un-planned enums). The exit sweep
-// deliberately does NOT use this — it calls emitEnumSlotDrop directly, since a
-// once-per-call inline drop neither leaks unboundedly nor needs the gen-fn
-// indirection (and keeps its golden-test codegen shape).
+// emitOwnedEnumDrop reclaims an OWNED enum box — at a per-iteration drop site
+// (loop-var reinit, match-scrutinee) and in the exit sweep alike: it prefers
+// the generated __drop_enum_<Name> fn (emitEnumDropViaGenFn — whose box_free
+// reuses the freed box on wasm, unlike an inline box_free in a loop / match
+// body, and which is one call where the inline tag switch is one arm per
+// variant) and falls back to the inline emitEnumSlotDrop for shapes the
+// gen-fn route declines (generic instantiations, sentinel-only / un-planned
+// enums).
 func (b *builder) emitOwnedEnumDrop(slot int32, et ast.EnumType, eligible bool) {
 	if eligible && b.emitEnumDropViaGenFn(slot, et) {
 		return
@@ -16618,12 +16691,13 @@ func (b *builder) tryPairReboxSize(inner ast.Expr) (int32, bool) {
 //
 // then the PARAM's slot is zeroed so the exit sweep's deep-drop no-ops (the
 // helpers' null / low-address guards make a zeroed slot inert). dupSlots holds
-// the slots of this arm's consumingBindings — single-word box pointers by
-// construction (enum / user struct / tuple; string / array payloads are
-// excluded by the isOwnedByDefaultType gate). Uniform-box enums only; anything
-// else keeps the box for the exit sweep (safe, and excluded by the analysis
-// gates anyway).
-func (b *builder) emitOwnedConsumingArmDrop(ptrSlot int32, et ast.EnumType, dupSlots []int32, paramName string) {
+// the slots of this arm's consumingBindings — single-word pointers by
+// construction (enum / user struct / tuple / array / native single-word
+// string; computeConsumingOwnedMatches' sweepable gate). The box is freed at
+// the ARM's variant size (enumVariantBoxSize — the arm knows which variant it
+// matched, so the layout need not be uniform); a payloadless arm of an enum
+// with no uniform size matches a static sentinel and only decs.
+func (b *builder) emitOwnedConsumingArmDrop(ptrSlot int32, et ast.EnumType, variant string, dupSlots []int32, paramName string) {
 	paramSlot, ok := b.locals[paramName]
 	if !ok {
 		return
@@ -16635,30 +16709,32 @@ func (b *builder) emitOwnedConsumingArmDrop(ptrSlot int32, et ast.EnumType, dupS
 	if len(et.Args) > 0 {
 		ed = substituteEnumDecl(ed, et.Args)
 	}
-	size, ok := uniformEnumBoxSize(ed, b.ptrW)
-	if !ok {
-		return
-	}
-	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
-	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-	// Unique: free the box BUFFER only — the bindings inherit the payload
-	// counts. Same shape as the `own`-param shallow free.
-	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-	b.emit(Op{Kind: OpConstI32, I32: size})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
-	b.emit(Op{Kind: OpDrop})
-	b.emit(Op{Kind: OpElse})
-	// Shared: dup the counted bindings, then release our box reference.
-	for _, slot := range dupSlots {
-		b.emit(Op{Kind: OpLoadLocal, I32: slot})
-		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	if size, sized := enumVariantBoxSize(ed, variant, b.ptrW); sized {
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
+		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		// Unique: free the box BUFFER only — the bindings inherit the payload
+		// counts. Same shape as the `own`-param shallow free.
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpConstI32, I32: size})
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_box_free", Width: ResAddr, I32: 2})
+		b.emit(Op{Kind: OpDrop})
+		b.emit(Op{Kind: OpElse})
+		// Shared: dup the counted bindings, then release our box reference.
+		for _, slot := range dupSlots {
+			b.emit(Op{Kind: OpLoadLocal, I32: slot})
+			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		}
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		b.emit(Op{Kind: OpEnd})
+	} else {
+		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
-	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-	b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
-	b.emit(Op{Kind: OpDrop})
-	b.emit(Op{Kind: OpEnd})
 	// Dead the param slot: the scrutinee is consumed on this path, so the
 	// exit sweep (which still visits the param) must see a null.
 	b.emit(Op{Kind: OpConstI32, I32: 0})
@@ -18587,66 +18663,6 @@ func typeSelfDropSafe(t ast.Type, info *checker.Info, seen map[string]bool) bool
 	return false
 }
 
-// consumedDropWired reports whether a value of type `t` is fully reclaimed by
-// the generated deep-drop machinery (__drop_struct_ / __drop_enum_ /
-// __drop_tuple_ / the array / string helpers) on EVERY backend — the
-// precondition for promoting a threaded param to callee-owned. It allows
-// scalars, strings (the native single-word drop gap in genStructDropFn is now
-// closed), and arrays / structs / enums / tuples of wired types; it rejects Map
-// (its deep drop is incomplete), slices, closures, and unknown / generic /
-// runtime-handle types whose drop is not statically wired.
-func consumedDropWired(t ast.Type, info *checker.Info, seen map[string]bool) bool {
-	switch ty := t.(type) {
-	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType, ast.StringType:
-		return true
-	case ast.ArrayType:
-		return consumedDropWired(ty.Elem, info, seen)
-	case ast.TupleType:
-		for _, e := range ty.Elems {
-			if !consumedDropWired(e, info, seen) {
-				return false
-			}
-		}
-		return true
-	case ast.StructType:
-		if ty.Name == "Map" {
-			return false
-		}
-		if seen["s:"+ty.Name] {
-			return true
-		}
-		seen["s:"+ty.Name] = true
-		sd, ok := info.Structs[ty.Name]
-		if !ok {
-			return false // runtime handle (Reader / Writer / MapIter) / unknown
-		}
-		for _, f := range sd.Fields {
-			if !consumedDropWired(f.Type, info, seen) {
-				return false
-			}
-		}
-		return true
-	case ast.EnumType:
-		if seen["e:"+ty.Name] {
-			return true
-		}
-		seen["e:"+ty.Name] = true
-		ed, ok := info.Enums[ty.Name]
-		if !ok {
-			return false
-		}
-		for _, v := range ed.Variants {
-			for _, pl := range v.Payloads {
-				if !consumedDropWired(pl, info, seen) {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	return false
-}
-
 func structOrEnumTypeOfLocal(name string, b *builder) (ast.Type, bool) {
 	t, ok := b.localDeclType(name)
 	if !ok {
@@ -19729,6 +19745,17 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	if b.rc.arraySetInc[n] {
 		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 	}
+	// A consumed receiver (arraySetConsumedSites): the helper takes the
+	// reference now on the stack over, so the slot no longer holds one —
+	// null it, and every later release of the slot no-ops.
+	if b.rc.arraySetConsumedSites[n] {
+		if rid, ok := n.Args[0].(*ast.Ident); ok {
+			if slot, ok := b.locals[rid.Name]; ok {
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+				b.emit(Op{Kind: OpStoreLocal, I32: slot})
+			}
+		}
+	}
 	b.emit(Op{Kind: OpConstI32, I32: stride})
 	// Element-retain on the CoW copy, keyed like emitArrayPush's grow-helper
 	// selection: a two-word (data, len) string element walks through
@@ -20137,12 +20164,13 @@ func appendRecvString(e ast.Expr) string {
 // appendDecision reports whether emitArrayPush takes the #4827 forced-copy
 // path for this `__method_Array_push` call — an append whose receiver
 // buffer is still readable after the grow, so the rc==1 in-place mutation
-// would be observable — and which rule decided. Two receiver shapes force
+// would be observable — and which rule decided. Three receiver shapes force
 // the copy: a non-self-reassign plain-IDENT operand that is reused after
 // (not its last occurrence) and outside the inPlacePushes exemptions
-// (#4849's return-position / borrowed-param self-reassign shapes), and a
-// FIELD place the container can still be read through (#6665,
-// fieldPlaceAppendCopies).
+// (#4849's return-position / borrowed-param self-reassign shapes), a
+// binding of a non-consuming match (rc.borrowedBindings — the buffer is
+// the scrutinee box's), and a FIELD place the container can still be read
+// through (#6665, fieldPlaceAppendCopies).
 //
 // The reason is what `fern -append-report` prints (#6992), from these
 // branches rather than a second walk, so the report cannot drift from what
@@ -20166,6 +20194,13 @@ func (b *builder) appendDecision(n *ast.Call) (bool, string) {
 	}
 	if !needsRcIncOnAlias(n.Args[0], b) {
 		return false, "unshareable receiver: aliasing it costs no reference"
+	}
+	// A binding of a NON-consuming match holds the scrutinee box's own
+	// reference to the buffer, uncounted, so rc==1 says nothing about the
+	// box's owners — the caller's value would grow. Same rule as
+	// computeArraySetIncs applies to `.with`.
+	if b.rc.borrowedBindings[id.Name] {
+		return true, "receiver \"" + id.Name + "\" is bound by a non-consuming match: the buffer belongs to the scrutinee's box"
 	}
 	if b.curAppendOrder().isLast(id) {
 		return false, "receiver's last occurrence: no later read can observe the grow"
