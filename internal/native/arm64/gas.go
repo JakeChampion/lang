@@ -2,6 +2,7 @@ package arm64
 
 import (
 	"fmt"
+	"github.com/jakechampion/lang/internal/native/arm64tbl"
 	"math"
 	"strconv"
 	"strings"
@@ -979,127 +980,119 @@ func parseVecArrN(mnem string, ops []string, n int) (regs []uint32, t vecArr, er
 	return regs, t, nil
 }
 
-// The per-mnemonic tables: U bit, opcode, and which element sizes the
-// encoding has. Every size set here — and every one deliberately absent
-// (mul/min/max have no .2d, the bitwise ops and cnt are byte-only, …) —
-// matches what GNU as accepts.
+// The per-mnemonic tables come from internal/native/arm64tbl, which the
+// self-host lookups are generated from; each is reshaped here into the
+// struct the encoders read. Every size set there — and every one
+// deliberately absent (mul/min/max have no .2d, the bitwise ops and cnt are
+// byte-only, …) — matches what GNU as accepts.
 
-var vecInt3Ops = map[string]struct {
+func vecTableUOS(t arm64tbl.VecTable) map[string]struct {
 	u      bool
 	opcode uint32
 	sizes  uint32
-}{
-	"add":   {false, 0x10, arrBHSD},
-	"sub":   {true, 0x10, arrBHSD},
-	"mul":   {false, 0x13, arrBHS},
-	"cmeq":  {true, 0x11, arrBHSD},
-	"cmtst": {false, 0x11, arrBHSD},
-	"cmgt":  {false, 0x06, arrBHSD},
-	"cmge":  {false, 0x07, arrBHSD},
-	"cmhi":  {true, 0x06, arrBHSD},
-	"cmhs":  {true, 0x07, arrBHSD},
-	"smax":  {false, 0x0C, arrBHS},
-	"smin":  {false, 0x0D, arrBHS},
-	"umax":  {true, 0x0C, arrBHS},
-	"umin":  {true, 0x0D, arrBHS},
-	"sshl":  {false, 0x08, arrBHSD},
-	"ushl":  {true, 0x08, arrBHSD},
+} {
+	m := make(map[string]struct {
+		u      bool
+		opcode uint32
+		sizes  uint32
+	}, len(t.Ops))
+	for _, o := range t.Ops {
+		m[o.Mnemonic] = struct {
+			u      bool
+			opcode uint32
+			sizes  uint32
+		}{o.U, o.Opcode, o.Aux}
+	}
+	return m
 }
 
+func vecTableUO(t arm64tbl.VecTable) map[string]struct {
+	u      bool
+	opcode uint32
+} {
+	m := make(map[string]struct {
+		u      bool
+		opcode uint32
+	}, len(t.Ops))
+	for _, o := range t.Ops {
+		m[o.Mnemonic] = struct {
+			u      bool
+			opcode uint32
+		}{o.U, o.Opcode}
+	}
+	return m
+}
+
+func vecTableUOFlag(t arm64tbl.VecTable) map[string]struct {
+	u      bool
+	opcode uint32
+	flag   bool
+} {
+	m := make(map[string]struct {
+		u      bool
+		opcode uint32
+		flag   bool
+	}, len(t.Ops))
+	for _, o := range t.Ops {
+		m[o.Mnemonic] = struct {
+			u      bool
+			opcode uint32
+			flag   bool
+		}{o.U, o.Opcode, o.Bool()}
+	}
+	return m
+}
+
+var vecInt3Ops = vecTableUOS(arm64tbl.VecInt3)
+
 // The bitwise three-register ops put the operation in the size field, so
-// they exist only in the byte arrangements.
-var vecLogical3Ops = map[string]struct {
+// they exist only in the byte arrangements; the table's opcode slot is that
+// operation selector.
+var vecLogical3Ops = func() map[string]struct {
 	u    bool
 	size uint32
-}{
-	"and": {false, 0}, "bic": {false, 1}, "orr": {false, 2}, "orn": {false, 3},
-	"eor": {true, 0},
-}
+} {
+	m := map[string]struct {
+		u    bool
+		size uint32
+	}{}
+	for _, o := range arm64tbl.VecLogical3.Ops {
+		m[o.Mnemonic] = struct {
+			u    bool
+			size uint32
+		}{o.U, o.Opcode}
+	}
+	return m
+}()
 
 // Compare against zero (two-register misc; #0 is part of the opcode, not an
 // immediate field — a non-zero immediate is no instruction at all).
-var vecCmpZeroOps = map[string]struct {
-	u      bool
-	opcode uint32
-}{
-	"cmeq": {false, 0x09}, "cmgt": {false, 0x08}, "cmge": {true, 0x08},
-	"cmle": {true, 0x09}, "cmlt": {false, 0x0A},
-}
+var vecCmpZeroOps = vecTableUO(arm64tbl.VecCmpZero)
 
-var vecInt2MiscOps = map[string]struct {
-	u      bool
-	opcode uint32
-	sizes  uint32
-}{
-	"neg":   {true, 0x0B, arrBHSD},
-	"abs":   {false, 0x0B, arrBHSD},
-	"not":   {true, 0x05, arrB},
-	"mvn":   {true, 0x05, arrB}, // alias of not
-	"cnt":   {false, 0x05, arrB},
-	"rev16": {false, 0x01, arrB},
-	"rev32": {true, 0x00, arrB | arrH},
-	"rev64": {false, 0x00, arrBHS},
-}
+var vecInt2MiscOps = vecTableUOS(arm64tbl.VecInt2Misc)
 
 // The lane-wise FP ops read the size field as (szHi<<1 | sz) where sz picks
 // S vs D lanes, so the tables carry szHi instead of a size mask; the
 // arrangements are 2s/4s/2d throughout.
-var vecFP3Ops = map[string]struct {
-	u      bool
-	opcode uint32
-	szHi   bool
-}{
-	"fadd":  {false, 0x1A, false},
-	"fsub":  {false, 0x1A, true},
-	"fmul":  {true, 0x1B, false},
-	"fdiv":  {true, 0x1F, false},
-	"fmax":  {false, 0x1E, false},
-	"fmin":  {false, 0x1E, true},
-	"fcmeq": {false, 0x1C, false},
-	"fcmge": {true, 0x1C, false},
-	"fcmgt": {true, 0x1C, true},
-}
+var vecFP3Ops = vecTableUOFlag(arm64tbl.VecFP3)
 
 // FP compare against zero (two-register misc; the operand is spelled #0.0).
 // fcmle/fcmlt exist only in this form — their register-operand spellings are
 // the swapped-operand fcmge/fcmgt.
-var vecFPCmpZeroOps = map[string]struct {
-	u      bool
-	opcode uint32
-}{
-	"fcmeq": {false, 0x0D}, "fcmgt": {false, 0x0C}, "fcmge": {true, 0x0C},
-	"fcmle": {true, 0x0D}, "fcmlt": {false, 0x0E},
-}
+var vecFPCmpZeroOps = vecTableUO(arm64tbl.VecFPCmpZero)
 
-var vecFP2MiscOps = map[string]struct {
-	u      bool
-	opcode uint32
-	szHi   bool
-}{
-	"fneg":   {true, 0x0F, true},
-	"fabs":   {false, 0x0F, true},
-	"fsqrt":  {true, 0x1F, true},
-	"scvtf":  {false, 0x1D, false},
-	"ucvtf":  {true, 0x1D, false},
-	"fcvtzs": {false, 0x1B, true},
-	"fcvtzu": {true, 0x1B, true},
-}
+var vecFP2MiscOps = vecTableUOFlag(arm64tbl.VecFP2Misc)
 
-var vecShiftImmOps = map[string]struct {
-	u      bool
-	opcode uint32
-	left   bool
-}{
-	"shl":  {false, 0x0A, true},
-	"sli":  {true, 0x0A, true},
-	"sshr": {false, 0x00, false},
-	"ushr": {true, 0x00, false},
-	"sri":  {true, 0x08, false},
-}
+// Shift by immediate; the flag is the direction (left).
+var vecShiftImmOps = vecTableUOFlag(arm64tbl.VecShiftImm)
 
-var vecPermuteOps = map[string]uint32{
-	"zip1": 3, "zip2": 7, "uzp1": 1, "uzp2": 5, "trn1": 2, "trn2": 6,
-}
+var vecPermuteOps = func() map[string]uint32 {
+	m := map[string]uint32{}
+	for _, o := range arm64tbl.VecPermute.Ops {
+		m[o.Mnemonic] = o.Opcode
+	}
+	return m
+}()
 
 // asmVecForm dispatches the mnemonics whose SIMD form was recognised from
 // the first operand. handled=false means the mnemonic has no such form and
@@ -1217,7 +1210,7 @@ func asmVecFP3Same(a *Assembler, mnem string, ops []string) error {
 	if err := checkArr(mnem, t, arrSD); err != nil {
 		return err
 	}
-	a.Emit(Vec3Same(r[0], r[1], r[2], e.opcode, fpSize(t, e.szHi), t.q, e.u))
+	a.Emit(Vec3Same(r[0], r[1], r[2], e.opcode, fpSize(t, e.flag), t.q, e.u))
 	return nil
 }
 
@@ -1291,7 +1284,7 @@ func asmVecFP2Misc(a *Assembler, mnem string, ops []string) error {
 	if err := checkArr(mnem, t, arrSD); err != nil {
 		return err
 	}
-	a.Emit(Vec2Misc(r[0], r[1], e.opcode, fpSize(t, e.szHi), t.q, e.u))
+	a.Emit(Vec2Misc(r[0], r[1], e.opcode, fpSize(t, e.flag), t.q, e.u))
 	return nil
 }
 
@@ -1316,7 +1309,7 @@ func asmVecShiftImm(a *Assembler, mnem string, ops []string) error {
 	// reinterpret the top bits as a different element size.
 	es := t.esize()
 	var immhb int64
-	if e.left {
+	if e.flag {
 		if sh < 0 || sh >= es {
 			return fmt.Errorf("%s .%s shift must be 0..%d, got %d", mnem, t, es-1, sh)
 		}
@@ -1628,19 +1621,8 @@ func asmSmov(a *Assembler, ops []string) error {
 	return nil
 }
 
-var vecAcrossOps = map[string]struct {
-	u      bool
-	opcode uint32
-	widen  bool
-}{
-	"addv":   {false, 0x1B, false},
-	"smaxv":  {false, 0x0A, false},
-	"sminv":  {false, 0x1A, false},
-	"umaxv":  {true, 0x0A, false},
-	"uminv":  {true, 0x1A, false},
-	"saddlv": {false, 0x03, true},
-	"uaddlv": {true, 0x03, true},
-}
+// The across-lanes reductions; the flag is widening (saddlv/uaddlv).
+var vecAcrossOps = vecTableUOFlag(arm64tbl.VecAcross)
 
 // asmVecAcross handles the across-lanes reductions (`addv Bd, Vn.16b`, the
 // min/max reductions, and the widening saddlv/uaddlv): the destination is a
@@ -1663,7 +1645,7 @@ func asmVecAcross(a *Assembler, mnem string, ops []string) error {
 		return fmt.Errorf("%s does not support the .%s arrangement", mnem, t)
 	}
 	want := t.size
-	if e.widen {
+	if e.flag {
 		want++
 	}
 	if class != want {
