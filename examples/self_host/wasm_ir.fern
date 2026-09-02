@@ -9239,7 +9239,7 @@ pub function emit_wasm_struct_drop_body(t: string, structs: parser.StructDecl[],
 // heap base (the low-address guard threshold).
 pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[], mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean, sarr_ok: boolean, strarr_ok: boolean, fnptr_fields: string[]): string {
     var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
-    o = o + "    (if (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (then\n";
+    o = o + "    (if (i32.and (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (i32.ne (local.get $old) (local.get $new))) (then\n";
     var si: i32 = 0;
     while (si < structs.len()) {
         if (structs[si].name == t) {

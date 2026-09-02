@@ -1,0 +1,40 @@
+// `h = bump(h, i)` where bump takes `own h` and updates it in place hands the
+// SAME box back, so the rebind's __field_reclaim_Holder sees old == new. Its
+// nested-struct arm (#6605) releases the carried `inner` without the
+// copy-on-write compare — right when a base copy retained it for the new
+// box, wrong when there was no copy: the field's only reference went, and
+// the next read of inner.xs was of freed memory. The helper now skips the
+// field walk when old and new are one box. Every inner element reads back
+// after churn.
+struct Inner { xs: i32[], n: i32 }
+struct Holder { code: i32[], inner: Inner, len: i32 }
+
+function bump(own h: Holder, v: i32): Holder {
+    return Holder { ...h, code: h.code.append(v), len: h.len + 1 };
+}
+
+function churn(): i32 {
+    var junk: i32[][] = [];
+    var i: i32 = 0;
+    while (i < 300) { junk = junk.append([i, i, i, i]); i = i + 1; }
+    return junk.len();
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    var r: i32 = 0;
+    while (r < 6) {
+        var h: Holder = Holder { code: [], inner: Inner { xs: [7, 11, 13, 17], n: 4 }, len: 0 };
+        var i: i32 = 0;
+        while (i < 40) {
+            h = bump(h, i);
+            i = i + 1;
+        }
+        churn();
+        var k: i32 = 0;
+        while (k < h.inner.xs.len()) { total = total + h.inner.xs[k]; k = k + 1; }
+        total = total + h.inner.n + h.len + h.code[39];
+        r = r + 1;
+    }
+    return total % 64;
+}
