@@ -113,11 +113,14 @@ function emit_binary(op: string, width: i32, out: string): string {
     if (op == "<=") { return out + "    cmp " + a + ", " + b + "\n    cset w9, le\n"; }
     if (op == ">") { return out + "    cmp " + a + ", " + b + "\n    cset w9, gt\n"; }
     if (op == ">=") { return out + "    cmp " + a + ", " + b + "\n    cset w9, ge\n"; }
+    // Conditional compare: for `&&` the second compare only runs when the
+    // first was non-zero, else the flags are set to Z (#4) so `ne` is false;
+    // for `||` it only runs when the first was zero, else to #0 so `ne` holds.
     if (op == "&&") {
-        return out + "    cmp " + a + ", #0\n    cset w9, ne\n    cmp " + b + ", #0\n    cset w10, ne\n    and w9, w9, w10\n";
+        return out + "    cmp " + a + ", #0\n    ccmp " + b + ", #0, #4, ne\n    cset w9, ne\n";
     }
     if (op == "||") {
-        return out + "    cmp " + a + ", #0\n    cset w9, ne\n    cmp " + b + ", #0\n    cset w10, ne\n    orr w9, w9, w10\n";
+        return out + "    cmp " + a + ", #0\n    ccmp " + b + ", #0, #0, eq\n    cset w9, ne\n";
     }
     return out;
 }

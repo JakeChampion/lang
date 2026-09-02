@@ -3601,8 +3601,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // plumbing is 64-bit throughout, as arm64-darwin's high heap already
     // exercises). Matches the native arm64 backend's heapBytes
     // (lockstep). The size (16 GiB = 1 << 34) is built in-asm via
-    // `mov #1; lsl #34` below, not a `ldr =N` literal — the in-process
-    // assembler's literal parser is 32-bit and would sign-extend.
+    // `mov #1; lsl #34` below rather than a `ldr =N` literal.
     s = s.write("    .bss\n");
     s = s.write("    .align 3\n");
     // .globl for the same reason as __fern_arr_push_shared below:
@@ -3681,7 +3680,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // x0..x3 like the bump path below.
     s = s.write("    add x0, x0, #7\n");
     s = s.write("    lsr x3, x0, #3\n");        // idx = roundup8(size)/8
-    s = s.write("    lsl x0, x3, #3\n");        // rounded size = idx*8 (avoids bic, unsupported by the in-process arm64-darwin assembler)
+    s = s.write("    lsl x0, x3, #3\n");        // rounded size = idx*8
     s = lc_bump_alloc(s);
     s = s.write("    mov x2, #0x10000\n");      // freelist class cap (65536); reg form (shifted cmp imm may be unsupported)
     s = s.write("    cmp x3, x2\n");
@@ -3700,7 +3699,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     // block in a class has one size), class = cap>>19, pop the large freelist;
     // empty falls through to the bump with x0 = cap. >1 GiB is bump-only. Only
     // x0..x3 used (alloc's clobber contract). 512 KiB is built as 1<<19 to avoid
-    // wide immediates; masking is lsr/lsl (bic is unsupported by the assembler).
+    // wide immediates.
     s = s.write(".Lalloc_large:\n");
     s = s.write("    mov x1, #1\n");
     s = s.write("    lsl x1, x1, #30\n");            // x1 = 1 GiB
@@ -5740,15 +5739,12 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         s = s.write("    add x4, x4, #1\n");
         s = s.write("    str x4, [x3]\n");
         // Weight the crossing by the len * 8 bytes the copy is about to move.
-        // x3/x4/x5 are the scratch this arm already owns (x2 holds the newcap
-        // .Larr_push_cap consumes, so it stays untouched); the shift is
-        // separate because the in-process assembler encodes no shifted-register
-        // add.
-        s = s.write("    lsl x5, x21, #3\n");
+        // x3/x4 are the scratch this arm already owns (x2 holds the newcap
+        // .Larr_push_cap consumes, so it stays untouched).
         s = s.write("    adrp x3, __fern_arr_push_copied\n");
         s = s.write("    add x3, x3, :lo12:__fern_arr_push_copied\n");
         s = s.write("    ldr x4, [x3]\n");
-        s = s.write("    add x4, x4, x5\n");
+        s = s.write("    add x4, x4, x21, lsl #3\n");
         s = s.write("    str x4, [x3]\n");
         s = s.write("    b .Larr_push_cap\n");
         s = s.write(".Larr_push_dbl:\n");
@@ -6409,9 +6405,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     s = fc_pio2_reduce(s, "sin");
-    s = s.write("    and x13, x10, #1\n");
-    s = s.write("    cmp x13, #0\n");
-    s = s.write("    b.ne .Lsin_usecos\n");
+    s = s.write("    tbnz x10, #0, .Lsin_usecos\n");
     s = s.write("    bl __fern_ksin\n");
     s = s.write("    b .Lsin_neg\n");
     s = s.write(".Lsin_usecos:\n");
@@ -6448,9 +6442,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    stp x29, x30, [sp, #-16]!\n");
     s = s.write("    mov x29, sp\n");
     s = fc_pio2_reduce(s, "cos");
-    s = s.write("    and x13, x10, #1\n");
-    s = s.write("    cmp x13, #0\n");
-    s = s.write("    b.ne .Lcos_usesin\n");
+    s = s.write("    tbnz x10, #0, .Lcos_usesin\n");
     s = s.write("    bl __fern_kcos\n");
     s = s.write("    b .Lcos_chk\n");
     s = s.write(".Lcos_usesin:\n");
@@ -6636,9 +6628,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = emit_ldc(s, "d3", ".Lfc_one");
     s = s.write("    fmov d4, d0\n");
     s = s.write(".Lpow_loop:\n");
-    s = s.write("    and x13, x11, #1\n");
-    s = s.write("    cmp x13, #0\n");
-    s = s.write("    b.eq .Lpow_skip\n");
+    s = s.write("    tbz x11, #0, .Lpow_skip\n");
     s = s.write("    fmul d3, d3, d4\n");
     s = s.write(".Lpow_skip:\n");
     s = s.write("    fmul d4, d4, d4\n");

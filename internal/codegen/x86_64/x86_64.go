@@ -4032,10 +4032,8 @@ func (g *generator) emitFloatToIntSat(isF64 bool, width int, unsigned bool) {
 	}
 	g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
 	// Add 2^63 back. The converted (x − 2^63) is in [0, 2^63) so
-	// bit 63 is clear; xor-ing it sets the bit (= +2^63) without
-	// needing `btc`, which the in-process assembler doesn't carry.
-	g.emit("mov rcx, 0x8000000000000000")
-	g.emit("xor rax, rcx")
+	// bit 63 is clear, and setting it is the addition.
+	g.emit("btc rax, 63")
 	g.label(lbl("sat"))
 	loadZeroXmm1()
 	g.emit(fmt.Sprintf("ucomi%s xmm2, xmm1", suf))
@@ -5785,9 +5783,8 @@ func (g *generator) emitAbortRuntime() {
 	g.line(".size __fern_report, .-__fern_report")
 
 	// __fern_print_hex(rsi = value) writes "  0x<16 hex>\n" to stderr. Uses
-	// only rax/rcx/rdx/rdi/rsi so the caller's rbx/r14/r15 survive. No rol
-	// (the native assembler lacks it) — nibbles come off the low end via
-	// shr, written right-to-left.
+	// only rax/rcx/rdx/rdi/rsi so the caller's rbx/r14/r15 survive. Nibbles
+	// come off the low end via shr, written right-to-left.
 	g.line("")
 	g.line(".globl __fern_print_hex")
 	g.line(".type __fern_print_hex, @function")
@@ -6408,11 +6405,9 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("jne .Larrdec_dec")
 	// rc == 1 → free the buffer.
 	g.quarantine("rdi")
-	g.emit("mov r8, rsi") // stride
-	g.emit("cmp r8, 16")
-	g.emit("jae .Larrdec_hdr")
-	g.emit("mov r8, 16")
-	g.label(".Larrdec_hdr")
+	g.emit("mov r8, 16") // headerBytes = max(16, stride)
+	g.emit("cmp rsi, 16")
+	g.emit("cmova r8, rsi")
 	g.emit("mov ecx, dword ptr [rdi - 12]") // cap (zero-extended)
 	g.emit("mov rax, rcx")
 	g.emit("imul rax, rsi") // cap * stride
@@ -7336,19 +7331,16 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("mov r13d, edx") // r13d = stride
 	g.emit("mov r14d, esi")
 	g.emit("add r14d, 1") // r14d = newLen = oldLen + 1
-	// newCap = max(2 * newLen, 4)
+	// newCap = max(2 * newLen, 4). ecx is scratch here and below.
 	g.emit("mov r15d, r14d")
 	g.emit("shl r15d, 1")
+	g.emit("mov ecx, 4")
 	g.emit("cmp r15d, 4")
-	g.emit("jge .Lpush_cap_ok")
-	g.emit("mov r15d, 4")
-	g.label(".Lpush_cap_ok")
-	// headerBytes = max(16, stride). Use ecx as scratch.
+	g.emit("cmovl r15d, ecx")
+	// headerBytes = max(16, stride).
 	g.emit("mov ecx, 16")
 	g.emit("cmp r13d, 16")
-	g.emit("jle .Lpush_hdr_set")
-	g.emit("mov ecx, r13d")
-	g.label(".Lpush_hdr_set")
+	g.emit("cmovg ecx, r13d")
 	g.emit("push rcx")   // stash headerBytes (rsp now off by 8 again)
 	g.emit("sub rsp, 8") // re-pad to 16 alignment (24 + 8 = 32, /16 = aligned)
 	// allocSize = headerBytes + newCap * stride. eax scratch.
@@ -7462,19 +7454,16 @@ func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
 	g.emit("mov r13d, edx") // r13d = stride
 	g.emit("mov r14d, esi")
 	g.emit("add r14d, 1") // r14d = newLen = oldLen + 1
-	// newCap = max(2 * newLen, 4)
+	// newCap = max(2 * newLen, 4). ecx is scratch here and below.
 	g.emit("mov r15d, r14d")
 	g.emit("shl r15d, 1")
+	g.emit("mov ecx, 4")
 	g.emit("cmp r15d, 4")
-	g.emit("jge " + lbl + "_cap_ok")
-	g.emit("mov r15d, 4")
-	g.label(lbl + "_cap_ok")
+	g.emit("cmovl r15d, ecx")
 	// headerBytes = max(16, stride).
 	g.emit("mov ecx, 16")
 	g.emit("cmp r13d, 16")
-	g.emit("jle " + lbl + "_hdr_set")
-	g.emit("mov ecx, r13d")
-	g.label(lbl + "_hdr_set")
+	g.emit("cmovg ecx, r13d")
 	g.emit("push rcx")   // stash headerBytes
 	g.emit("sub rsp, 8") // re-pad to 16 alignment
 	// allocSize = headerBytes + newCap * stride.
@@ -7582,9 +7571,7 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	// headerBytes = max(16, stride) in r15d.
 	g.emit("mov r15d, 16")
 	g.emit("cmp r12d, 16")
-	g.emit("jle .Lcow_hdr_set")
-	g.emit("mov r15d, r12d")
-	g.label(".Lcow_hdr_set")
+	g.emit("cmovg r15d, r12d")
 	// allocSize = headerBytes + cap * stride
 	g.emit("mov eax, r14d")
 	g.emit("imul eax, r12d")
@@ -7673,9 +7660,7 @@ func (g *generator) emitArrCowInPlacePtrRuntime() {
 	// headerBytes = max(16, stride) in r15d.
 	g.emit("mov r15d, 16")
 	g.emit("cmp r12d, 16")
-	g.emit("jle .Lcowp_hdr_set")
-	g.emit("mov r15d, r12d")
-	g.label(".Lcowp_hdr_set")
+	g.emit("cmovg r15d, r12d")
 	// allocSize = headerBytes + cap * stride
 	g.emit("mov eax, r14d")
 	g.emit("imul eax, r12d")
@@ -7797,11 +7782,9 @@ func (g *generator) emitDropArrPtrRuntime() {
 		g.emit("cmp ecx, 1")
 		g.emit("jne .Ldrop_plaindec")
 		g.quarantine("rbx")
-		g.emit("mov r8, r14") // stride
-		g.emit("cmp r8, 16")
-		g.emit("jae .Ldrop_hdr")
-		g.emit("mov r8, 16")
-		g.label(".Ldrop_hdr")
+		g.emit("mov r8, 16") // headerBytes = max(16, stride)
+		g.emit("cmp r14, 16")
+		g.emit("cmova r8, r14")
 		g.emit("mov ecx, dword ptr [rbx - 12]") // cap (zero-extended)
 		g.emit("mov rax, rcx")
 		g.emit("imul rax, r14") // cap * stride
@@ -7881,11 +7864,9 @@ func (g *generator) emitDropArrStrRuntime() {
 		g.emit("cmp ecx, 1")
 		g.emit("jne .Ldrops_plaindec")
 		g.quarantine("rbx")
-		g.emit("mov r8, r14")
-		g.emit("cmp r8, 16")
-		g.emit("jae .Ldrops_hdr")
-		g.emit("mov r8, 16")
-		g.label(".Ldrops_hdr")
+		g.emit("mov r8, 16") // headerBytes = max(16, stride)
+		g.emit("cmp r14, 16")
+		g.emit("cmova r8, r14")
 		g.emit("mov ecx, dword ptr [rbx - 12]") // cap
 		g.emit("mov rax, rcx")
 		g.emit("imul rax, r14")
@@ -7934,8 +7915,7 @@ func (g *generator) emitRcIsUniqueRuntime() {
 	g.emit("test ecx, ecx")
 	g.emit("js .Lisuniq_ret") // bit 31 set ⇒ static sentinel
 	g.emit("cmp ecx, 1")
-	g.emit("jne .Lisuniq_ret")
-	g.emit("mov eax, 1")
+	g.emit("sete al")
 	g.label(".Lisuniq_ret")
 	g.emit("ret")
 	g.line(".size __fern_rc_is_unique, .-__fern_rc_is_unique")
@@ -9056,9 +9036,7 @@ func (g *generator) emitRmemchrRuntime() {
 	g.emit("dec ecx") // ecx = len - 1
 	g.emit("js .Lrmemchr_miss")
 	g.emit("cmp edx, ecx")
-	g.emit("jle .Lrmemchr_from_ok")
-	g.emit("mov edx, ecx")
-	g.label(".Lrmemchr_from_ok")
+	g.emit("cmovg edx, ecx")
 	// Broadcast the needle byte across xmm1 — the SSE2 splat, as __memchr's.
 	g.emit("movd xmm1, esi")
 	g.emit("punpcklbw xmm1, xmm1")
@@ -9335,9 +9313,7 @@ func (g *generator) emitStrordRuntime() {
 	// r8d = min(la, lb)
 	g.emit("mov r8d, ecx")
 	g.emit("cmp edx, r8d")
-	g.emit("jae .Lsord_n")
-	g.emit("mov r8d, edx")
-	g.label(".Lsord_n")
+	g.emit("cmovb r8d, edx")
 	g.emit("xor r9d, r9d") // i = 0
 	g.label(".Lsord_loop")
 	g.emit("cmp r9d, r8d")
@@ -12445,14 +12421,10 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("and eax, 61440")      // S_IFMT
 	g.emit("xor r12d, r12d")
 	g.emit("cmp eax, 32768") // S_IFREG
-	g.emit("jne .L" + lp + "_nf")
-	g.emit("mov r12d, 1")
-	g.label(".L" + lp + "_nf")
+	g.emit("sete r12b")
 	g.emit("xor r14d, r14d")
 	g.emit("cmp eax, 16384") // S_IFDIR
-	g.emit("jne .L" + lp + "_nd")
-	g.emit("mov r14d, 1")
-	g.label(".L" + lp + "_nd")
+	g.emit("sete r14b")
 	g.emit("mov r15, [rsp + 48]") // st_size
 	// FileStat box: is_file @0, is_dir @4, size @8.
 	g.emit("mov edi, 16")

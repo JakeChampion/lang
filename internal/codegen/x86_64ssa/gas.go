@@ -288,9 +288,9 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int, restore func()) error {
 	for bi, blk := range p.Blocks {
 		w(".L_%s_b%d:", label, bi)
-		for ii, in := range blk.Insts {
+		for _, in := range blk.Insts {
 			if in.Op == Select {
-				for _, l := range selectLines(in, fmt.Sprintf("%s_b%d_i%d", label, bi, ii)) {
+				for _, l := range selectLines(in) {
 					w("\t%s", l)
 				}
 				continue
@@ -636,19 +636,16 @@ func callIndirectLines(in Inst, numAlloc, scratch int) ([]string, error) {
 	return out, nil
 }
 
-// selectLines renders `Dst = (Src != 0) ? Src2 : Src3` with a conditional branch
-// over a unique label. The assembler has no cmov, and a branch-free mask sequence
-// would need a second scratch — but materialize hands back the operands' own home
-// registers (not fresh copies), so no operand may be clobbered. Writing only Dst
-// (reading Src/Src2/Src3) sidesteps that. label must be unique per instruction.
-func selectLines(in Inst, label string) []string {
-	end := ".Lsel_end_" + label
+// selectLines renders `Dst = (Src != 0) ? Src2 : Src3` branch-free: the
+// else value moves in, then cmovne overwrites it with the then value. Only
+// Dst is written — materialize hands back the operands' own home registers,
+// not fresh copies, so no operand may be clobbered — which is also what
+// makes the arm64 backend's csel the same shape.
+func selectLines(in Inst) []string {
 	out := []string{
 		fmt.Sprintf("cmp %s, 0", reg(in.Src)),
-		fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(in.Src3)), // default: else
-		fmt.Sprintf("je %s", end),
-		fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(in.Src2)), // cond != 0: then
-		end + ":",
+		fmt.Sprintf("mov %s, %s", reg(in.Dst), reg(in.Src3)),
+		fmt.Sprintf("cmovne %s, %s", reg(in.Dst), reg(in.Src2)),
 	}
 	if fix := maskFix(in.Dst, in.W); fix != "" {
 		out = append(out, strings.TrimPrefix(fix, "\n\t"))

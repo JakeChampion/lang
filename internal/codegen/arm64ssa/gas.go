@@ -1286,9 +1286,7 @@ func emitPowF64Helper(w func(string, ...any)) {
 	ldc("d3", ".Lfc_one")
 	w("\tfmov d4, d0")
 	w(".Lssa_pow_loop:")
-	w("\tand x13, x11, #1")
-	w("\tcmp x13, #0")
-	w("\tb.eq .Lssa_pow_skip")
+	w("\ttbz x11, #0, .Lssa_pow_skip")
 	w("\tfmul d3, d3, d4")
 	w(".Lssa_pow_skip:")
 	w("\tfmul d4, d4, d4")
@@ -5087,9 +5085,8 @@ func emitDropArrElemHelper(name, elemDrop, tag string) func(w func(string, ...an
 		w("%s:", lbl("loop"))
 		w("\tcmp w22, w21")
 		w("\tb.ge %s", lbl("decarr"))
-		w("\tmul x0, x22, x20") // i*stride
-		w("\tadd x0, x19, x0")  // &elem[i]
-		w("\tldr x0, [x0]")     // elem
+		w("\tmadd x0, x22, x20, x19") // &elem[i]
+		w("\tldr x0, [x0]")           // elem
 		w("\tbl %s", fnLabel(elemDrop))
 		w("\tadd x22, x22, #1")
 		w("\tb %s", lbl("loop"))
@@ -5315,8 +5312,7 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tmov w6, #16")
 	w("\tcmp w2, w6")
 	w("\tcsel w6, w2, w6, ge") // w6 = headerBytes = max(stride, 16)
-	w("\tmul w7, w5, w2")
-	w("\tadd w7, w7, w6") // w7 = allocSize = headerBytes + newCap*stride
+	w("\tmadd w7, w5, w2, w6") // w7 = allocSize = headerBytes + newCap*stride
 	// Inline raw bump allocation of w7 bytes (no rc header — the array lays its
 	// own cap/rc/len header past the headerBytes prefix).
 	w("\tadrp x8, %s", heapPtrSym)
@@ -6034,8 +6030,7 @@ func emitArrCowInplaceHelper(w func(string, ...any)) {
 	w("\tmov w6, #16")
 	w("\tcmp w1, w6")
 	w("\tcsel w6, w1, w6, ge") // w6 = headerBytes
-	w("\tmul w7, w4, w1")
-	w("\tadd w7, w7, w6") // w7 = allocSize
+	w("\tmadd w7, w4, w1, w6") // w7 = allocSize
 	// Inline raw bump allocation of w7 bytes (8-aligned base).
 	w("\tadrp x8, %s", heapPtrSym)
 	w("\tadd x8, x8, #:lo12:%s", heapPtrSym) // x8 = &cursor
@@ -6089,9 +6084,8 @@ func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, 
 		w("%s:", lbl("loop"))
 		w("\tcmp w22, w21")
 		w("\tb.ge %s", lbl("done"))
-		w("\tmul x0, x22, x20") // i*stride
-		w("\tadd x0, x19, x0")  // &buf[i]
-		w("\tldr x0, [x0]")     // element
+		w("\tmadd x0, x22, x20, x19") // &buf[i]
+		w("\tldr x0, [x0]")           // element
 		w("\tbl %s", fnLabel(elemInc))
 		w("\tadd x22, x22, #1")
 		w("\tb %s", lbl("loop"))
