@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/native/elf"
+	"github.com/jakechampion/lang/internal/native/x86_64"
 )
 
 // These tests byte-check the #7893 port of the #7886 instruction surface
@@ -85,7 +88,17 @@ func refusalsForX86(t *testing.T, bin string, runner []string, snippet string) [
 // checkPinnedX86 assembles the cases as one program and walks the byte
 // stream case by case, naming the diverging source line. x86 instructions
 // are variable-length, so each case advances the cursor by its own length.
+// checkPinnedX86 compares the self-host assembler's bytes against `want`
+// sequences taken from GNU as.
 func checkPinnedX86(t *testing.T, bin string, runner []string, cases []pinnedX86) {
+	t.Helper()
+	checkPinnedX86Against(t, bin, runner, "GNU as", cases)
+}
+
+// checkPinnedX86Against is checkPinnedX86 with the oracle named, for rows
+// whose `want` came from somewhere else. A failure message that names the
+// wrong oracle sends the reader to the wrong tool to reproduce it.
+func checkPinnedX86Against(t *testing.T, bin string, runner []string, oracle string, cases []pinnedX86) {
 	t.Helper()
 	var b strings.Builder
 	b.WriteString(".text\n_start:\n")
@@ -102,8 +115,8 @@ func checkPinnedX86(t *testing.T, bin string, runner []string, cases []pinnedX86
 		}
 		for i, w := range c.want {
 			if got[cur+i] != w {
-				t.Errorf("%q: byte %d: self-host %02x, GNU as %02x (self-host % x, GNU as % x)",
-					c.asm, i, got[cur+i], w, got[cur:cur+len(c.want)], c.want)
+				t.Errorf("%q: byte %d: self-host %02x, %s %02x (self-host % x, %s % x)",
+					c.asm, i, got[cur+i], oracle, w, got[cur:cur+len(c.want)], oracle, c.want)
 				break
 			}
 		}
@@ -808,4 +821,58 @@ func TestSelfHostX86IndirectRip(t *testing.T) {
 			t.Fatalf("byte %d: got %02x, want %02x (% x)", i, got[i], want[i], got)
 		}
 	}
+}
+
+// TestSelfHostX86ConditionSpellingsGas pins the three condition families
+// against the native assembler, spelling by spelling.
+//
+// Both assemblers dispatch these by matching a prefix and looking the rest up
+// in a shared 28-entry table, so there is no per-mnemonic literal for the
+// coverage test's source scan to compare — and a family that is invisible to
+// that scan is a family where the two can drift silently. That is not
+// hypothetical: the self-host hand-listed 13 jCC and 14 setCC spellings while
+// the native assembler took all 28, and the coverage test excluded the whole
+// family from its reverse direction, so eleven jCC and twelve setCC spellings
+// were reachable natively and were RECORDED AS UNKNOWN by the self-host.
+//
+// `want` comes from the native assembler rather than from a hand-derived byte
+// sequence, which for these is the difference between checking the encoding
+// and checking that a typo round-trips: the condition code is four bits
+// inside the opcode, so a wrong one is a valid instruction that tests the
+// wrong flag.
+func TestSelfHostX86ConditionSpellingsGas(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildX86AsmBenchDriver(t, gcc)
+
+	native := func(intel string) []byte {
+		t.Helper()
+		text, _, err := x86_64.AssembleProgram(intel+"\n", elf.TextVAddr)
+		if err != nil {
+			t.Fatalf("the native assembler rejects %q, so it cannot be the oracle for it: %v", intel, err)
+		}
+		return text
+	}
+
+	var rows []pinnedX86
+	for _, cond := range x86ConditionSpellings {
+		// The jCC row is a BACKWARD branch to the label immediately above
+		// it. The two assemblers relax in opposite directions — native
+		// shrinks from rel32, the self-host grows from rel8 — so a jump
+		// whose width either could argue about would be pinning the
+		// relaxers rather than the condition table. A zero-distance
+		// backward branch is the one shape both must settle on rel8, which
+		// leaves the condition nibble as the only thing that can differ.
+		// The label is per-row: the rows are assembled as one program, so a
+		// shared name would make each jump's displacement depend on where
+		// its row landed instead of being -2 everywhere.
+		lbl := "lc_" + cond
+		rows = append(rows,
+			pinnedX86{lbl + ":\nj" + cond + " " + lbl, native(lbl + ":\nj" + cond + " " + lbl)},
+			pinnedX86{"set" + cond + " %cl", native("set" + cond + " cl")},
+			pinnedX86{"set" + cond + " %r10b", native("set" + cond + " r10b")},
+			pinnedX86{"cmov" + cond + " %rcx, %rdx", native("cmov" + cond + " rdx, rcx")},
+			pinnedX86{"cmov" + cond + " %ecx, %edx", native("cmov" + cond + " edx, ecx")},
+		)
+	}
+	checkPinnedX86Against(t, bin, runner, "internal/native/x86_64", rows)
 }

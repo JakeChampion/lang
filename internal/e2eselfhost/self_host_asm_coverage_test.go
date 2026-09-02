@@ -444,6 +444,17 @@ var x86KnownHelpers = []string{
 // dispatched by pattern (a condition table plus an optional width
 // suffix), so it is pinned by the explicit probe loop at the end rather
 // than by extraction.
+
+// x86ConditionSpellings is every condition suffix the x86-64 condition table
+// accepts, aliases included. Both assemblers dispatch jCC / setCC / cmovCC by
+// matching the prefix and looking the rest up here, so this one list is what
+// the parity gates enumerate.
+var x86ConditionSpellings = []string{
+	"o", "no", "b", "c", "nae", "ae", "nb", "nc", "e", "z", "ne", "nz",
+	"be", "na", "a", "nbe", "s", "ns", "p", "np",
+	"l", "nge", "ge", "nl", "le", "ng", "g", "nle",
+}
+
 func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 	const path = "../../examples/self_host/x86_native.fern"
 	b, err := os.ReadFile(path)
@@ -498,41 +509,8 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 		"cmpsw":     "cmpsw",
 		"cmpsl":     "cmpsd",
 		"cmpsq":     "cmpsq",
-		"sete":      "sete al",
-		"setz":      "setz al",
-		"setne":     "setne cl",
-		"setnz":     "setnz cl",
-		"setl":      "setl al",
-		"setle":     "setle al",
-		"setg":      "setg al",
-		"setge":     "setge al",
-		"setb":      "setb al",
-		"setbe":     "setbe al",
-		"seta":      "seta al",
-		"setae":     "setae al",
-		"sets":      "sets al",
-		"setp":      "setp al",
-		"setnp":     "setnp al",
-		"setns":     "setns al",
 		"call":      "call rax",
 		"jmp":       "jmp rdx",
-		"je":        "je l0\nl0:\nret",
-		"jz":        "jz l0\nl0:\nret",
-		"jne":       "jne l0\nl0:\nret",
-		"jnz":       "jnz l0\nl0:\nret",
-		"jge":       "jge l0\nl0:\nret",
-		"jl":        "jl l0\nl0:\nret",
-		"jle":       "jle l0\nl0:\nret",
-		"jg":        "jg l0\nl0:\nret",
-		"jb":        "jb l0\nl0:\nret",
-		"jc":        "jc l0\nl0:\nret",
-		"jae":       "jae l0\nl0:\nret",
-		"jnc":       "jnc l0\nl0:\nret",
-		"jbe":       "jbe l0\nl0:\nret",
-		"ja":        "ja l0\nl0:\nret",
-		"js":        "js l0\nl0:\nret",
-		"jns":       "jns l0\nl0:\nret",
-		"jp":        "jp l0\nl0:\nret",
 		"pushq":     "push rbp",
 		"popq":      "pop rbp",
 		"leaq":      "lea rax, [rbp-8]",
@@ -770,19 +748,24 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 	}
 	probeMnemonics(t, path, mnemonics, probes, assemble)
 
-	// The cmovcc aliases x86_gas_emit accepts by pattern: every condition
-	// spelling the shared table knows, at the register-inferred widths.
-	for _, cond := range []string{
-		"o", "no", "b", "c", "nae", "ae", "nb", "nc", "e", "z", "ne", "nz",
-		"be", "na", "a", "nbe", "s", "ns", "p", "np",
-		"l", "nge", "ge", "nl", "le", "ng", "g", "nle",
-	} {
+	// The three condition families x86_gas_emit dispatches by PATTERN, off
+	// the one shared table (x86_gas_cc_code). They have no literal for
+	// mnemonicCases to extract, so this loop is the only thing that names
+	// them — and it names every spelling the table knows, aliases included,
+	// which is what makes the reverse-direction exclusion below honest.
+	//
+	// Acceptance by the native assembler is all this proves. The bytes are
+	// pinned in TestSelfHostX86ConditionSpellingsGas, which assembles the
+	// same instructions through BOTH assemblers and compares.
+	for _, cond := range x86ConditionSpellings {
 		for _, probe := range []string{
+			"j" + cond + " l0\nl0:\nret",
+			"set" + cond + " cl",
 			"cmov" + cond + " rax, rcx",
 			"cmov" + cond + " eax, ecx",
 		} {
 			if err := assemble(probe); err != nil {
-				t.Errorf("cmov alias probe %q: native assembler rejects it: %v", probe, err)
+				t.Errorf("condition-family probe %q: native assembler rejects it: %v", probe, err)
 			}
 		}
 	}
@@ -807,10 +790,13 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 	//
 	// No exception list, for the same reason as arm64's: one would re-create
 	// the hole in a new shape. The condition-code families are excluded by
-	// PATTERN rather than by name because the self-host matches them that way
-	// and has no literal to compare — the probe loops above are what cover
-	// them.
-	condFamily := regexp.MustCompile(`^(cmov|j|set)(a|ae|b|be|c|e|g|ge|l|le|na|nae|nb|nbe|nc|ne|ng|nge|nl|nle|no|np|ns|nz|o|p|pe|po|s|z)$`)
+	// PATTERN rather than by name because both assemblers match them that way
+	// and have no literal to compare — the loop above walks every spelling
+	// the shared table knows, so nothing in these families goes unnamed.
+	//
+	// The pattern is built FROM that same list, so a spelling cannot be
+	// excluded here without also being probed there.
+	condFamily := regexp.MustCompile(`^(cmov|j|set)(` + strings.Join(x86ConditionSpellings, "|") + `)$`)
 	reached := map[string]bool{}
 	for _, probe := range probes {
 		if f := strings.Fields(probe); len(f) > 0 {
