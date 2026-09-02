@@ -57,39 +57,56 @@ func TestEhFramePlacementArm64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TextLen: %v", err)
 	}
-	textVAddr, ehVAddr, _ := elf.SegmentAddrsWXEhArm64(n, 1)
-	ehFrame, err := a.EhFrame(textVAddr, ehVAddr)
+	hdrLen := a.EhFrameHdrLen()
+	if hdrLen == 0 {
+		t.Fatal("no .eh_frame_hdr for a source carrying CFI")
+	}
+	m := elf.SegmentMapWXEhArm64(n, hdrLen, 1)
+	ehFrame, err := a.EhFrame(m.Text, m.EhFrame)
 	if err != nil {
 		t.Fatalf("EhFrame: %v", err)
 	}
-	if len(ehFrame) == 0 {
-		t.Fatal("no .eh_frame for a source carrying CFI")
+	hdr, err := a.EhFrameHdr(m.Text, m.EhFrame, m.EhHdr)
+	if err != nil {
+		t.Fatalf("EhFrameHdr: %v", err)
 	}
-	textVAddr, ehVAddr, dataVAddr := elf.SegmentAddrsWXEhArm64(n, len(ehFrame))
-	text, data, err := a.BytesProgramWX(textVAddr, dataVAddr)
+	u := elf.Unwind{Hdr: hdr, Frame: ehFrame}
+	m = elf.SegmentMapWXEhArm64(n, len(hdr), len(ehFrame))
+	text, data, err := a.BytesProgramWX(m.Text, m.Data)
 	if err != nil {
 		t.Fatalf("BytesProgramWX: %v", err)
 	}
-	img := elf.StaticExecutableDataWXEhFrame(text, ehFrame, data)
+	img := elf.StaticExecutableDataWXEhFrame(text, u, data)
+	textVAddr, dataVAddr := m.Text, m.Data
 
 	if textVAddr != elf.TextVAddrWX {
 		t.Errorf(".text at %#x, want %#x", textVAddr, uint64(elf.TextVAddrWX))
 	}
-	if ehVAddr%8 != 0 {
-		t.Errorf(".eh_frame at %#x is not 8-aligned", ehVAddr)
+	if m.EhHdr%4 != 0 {
+		t.Errorf(".eh_frame_hdr at %#x is not 4-aligned", m.EhHdr)
 	}
-	if gap := ehVAddr - (textVAddr + uint64(len(text))); gap >= 8 {
-		t.Errorf(".eh_frame is %d bytes past the end of .text, want under 8", gap)
+	if gap := m.EhHdr - (textVAddr + uint64(len(text))); gap >= 4 {
+		t.Errorf(".eh_frame_hdr is %d bytes past the end of .text, want under 4", gap)
+	}
+	if m.EhFrame%8 != 0 {
+		t.Errorf(".eh_frame at %#x is not 8-aligned", m.EhFrame)
+	}
+	if gap := m.EhFrame - (m.EhHdr + uint64(len(hdr))); gap >= 8 {
+		t.Errorf(".eh_frame is %d bytes past the end of .eh_frame_hdr, want under 8", gap)
 	}
 	// arm64 images align segments to the 64 KiB max page, so they load on
 	// 4/16/64 KiB-page kernels alike.
 	if dataVAddr%0x10000 != 0 {
 		t.Errorf("data segment at %#x is not 64 KiB-aligned", dataVAddr)
 	}
-	if dataVAddr < ehVAddr+uint64(len(ehFrame)) {
-		t.Errorf("data segment at %#x overlaps .eh_frame ending at %#x", dataVAddr, ehVAddr+uint64(len(ehFrame)))
+	if dataVAddr < m.EhFrame+uint64(len(ehFrame)) {
+		t.Errorf("data segment at %#x overlaps .eh_frame ending at %#x", dataVAddr, m.EhFrame+uint64(len(ehFrame)))
 	}
-	ehOff := ehVAddr - 0x400000
+	hdrOff := m.EhHdr - 0x400000
+	if got := img[hdrOff : hdrOff+uint64(len(hdr))]; !bytes.Equal(got, hdr) {
+		t.Errorf(".eh_frame_hdr is not at file offset %#x", hdrOff)
+	}
+	ehOff := m.EhFrame - 0x400000
 	if got := img[ehOff : ehOff+uint64(len(ehFrame))]; !bytes.Equal(got, ehFrame) {
 		t.Errorf(".eh_frame is not at file offset %#x", ehOff)
 	}
@@ -97,7 +114,7 @@ func TestEhFramePlacementArm64(t *testing.T) {
 	if len(ld) != 2 {
 		t.Fatalf("got %d PT_LOADs, want 2", len(ld))
 	}
-	if end := ehVAddr + uint64(len(ehFrame)); end > ld[0].vaddr+ld[0].filesz {
+	if end := m.EhFrame + uint64(len(ehFrame)); end > ld[0].vaddr+ld[0].filesz {
 		t.Errorf(".eh_frame ends at %#x, past the R+X segment's %#x", end, ld[0].vaddr+ld[0].filesz)
 	}
 	if got := arm64AdrpTarget(text, textVAddr); got != dataVAddr {

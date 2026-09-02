@@ -2181,7 +2181,7 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
-		text, rodata, ehFrame, err := layoutArm64WithEhFrame(a)
+		text, rodata, u, err := layoutArm64(a)
 		if err != nil {
 			return err
 		}
@@ -2194,7 +2194,7 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		for _, r := range locRows {
 			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
 		}
-		bin := nativeelf.StaticExecutableDataWXSymsRows(text, ehFrame, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
+		bin := nativeelf.StaticExecutableDataWXSymsRows(text, u, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -2204,11 +2204,11 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
-	text, rodata, ehFrame, err := layoutArm64WithEhFrame(a)
+	text, rodata, u, err := layoutArm64(a)
 	if err != nil {
 		return err
 	}
-	bin := nativeelf.StaticExecutableDataWXEhFrame(text, ehFrame, rodata)
+	bin := nativeelf.StaticExecutableDataWXEhFrame(text, u, rodata)
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}
@@ -2220,28 +2220,68 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 	return nil
 }
 
-// layoutArm64WithEhFrame runs the three steps an image carrying unwind data
-// takes: settle .text's size, render .eh_frame at the address that follows
-// from it, then resolve everything against the data address that follows from
-// ITS length. Each depends on the one before, and a CIE declaring pcrel FDE
-// pointers means the image is only correct at the address it was rendered for.
+// unwindLayout is the assembler surface the W^X-with-unwind layout needs.
+// Both native assemblers satisfy it, which is what lets one function serve
+// arm64 and x86-64 instead of four copies drifting apart.
+type unwindLayout interface {
+	TextLen() (int, error)
+	EhFrameHdrLen() int
+	EhFrame(textVAddr, ehVAddr uint64) ([]byte, error)
+	EhFrameHdr(textVAddr, ehVAddr, hdrVAddr uint64) ([]byte, error)
+	BytesProgramWX(textVAddr, rodataVAddr uint64) (text, rodata []byte, err error)
+}
+
+// layoutX86 and layoutArm64 pin the address map to the assembler that has to
+// agree with it. The two maps have the same type, so passing the wrong one
+// builds cleanly and then resolves every .rodata reference against the other
+// target's page size — a well-formed binary that reads the wrong bytes. Typed
+// wrappers make that a compile error instead of something a scan has to catch.
+func layoutX86(a *nativex86.Assembler) (text, rodata []byte, u nativeelf.Unwind, err error) {
+	return layoutWithUnwind(a, nativeelf.SegmentMapWXEhX86)
+}
+
+func layoutArm64(a *nativearm64.Assembler) (text, rodata []byte, u nativeelf.Unwind, err error) {
+	return layoutWithUnwind(a, nativeelf.SegmentMapWXEhArm64)
+}
+
+// layoutWithUnwind runs the steps an image carrying unwind data takes, each
+// depending on the one before: branch relaxation settles .text's size; the
+// FDE count fixes .eh_frame_hdr's size, which places .eh_frame; both unwind
+// images are rendered at the addresses they will load at, because a CIE
+// declaring pcrel FDE pointers and a datarel search table are only correct
+// there; and .eh_frame's length finally places the data segment.
 //
-// Asm with no `.cfi_*` renders an empty image and the addresses reduce to the
-// layout without one, byte for byte.
-func layoutArm64WithEhFrame(a *nativearm64.Assembler) (text, rodata, ehFrame []byte, err error) {
+// Call it through layoutX86 / layoutArm64 rather than passing segMap here:
+// those two are the only places the pairing can be got wrong, and their
+// signatures make getting it wrong not compile.
+//
+// Asm carrying no `.cfi_*` renders empty images and every address reduces to
+// the layout without unwind data, byte for byte.
+func layoutWithUnwind(a unwindLayout, segMap func(textLen, hdrLen, ehLen int) nativeelf.ImageMap) (text, rodata []byte, u nativeelf.Unwind, err error) {
+	fail := func(err error) ([]byte, []byte, nativeelf.Unwind, error) {
+		return nil, nil, nativeelf.Unwind{}, fmt.Errorf("native assembler: %w", err)
+	}
 	textLen, err := a.TextLen()
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("native assembler: %w", err)
+		return fail(err)
 	}
-	textVAddr, ehVAddr, _ := nativeelf.SegmentAddrsWXEhArm64(textLen, 1)
-	if ehFrame, err = a.EhFrame(textVAddr, ehVAddr); err != nil {
-		return nil, nil, nil, fmt.Errorf("native assembler: %w", err)
+	hdrLen := a.EhFrameHdrLen()
+	// ehLen 1 is a placeholder: neither unwind address depends on it, only
+	// the data segment past them does.
+	m := segMap(textLen, hdrLen, 1)
+	if hdrLen > 0 {
+		if u.Frame, err = a.EhFrame(m.Text, m.EhFrame); err != nil {
+			return fail(err)
+		}
+		if u.Hdr, err = a.EhFrameHdr(m.Text, m.EhFrame, m.EhHdr); err != nil {
+			return fail(err)
+		}
 	}
-	textVAddr, _, dataVAddr := nativeelf.SegmentAddrsWXEhArm64(textLen, len(ehFrame))
-	if text, rodata, err = a.BytesProgramWX(textVAddr, dataVAddr); err != nil {
-		return nil, nil, nil, fmt.Errorf("native assembler: %w", err)
+	m = segMap(textLen, len(u.Hdr), len(u.Frame))
+	if text, rodata, err = a.BytesProgramWX(m.Text, m.Data); err != nil {
+		return fail(err)
 	}
-	return text, rodata, ehFrame, nil
+	return text, rodata, u, nil
 }
 
 // linkNativePIE assembles arm64 assembly into a static position-independent
@@ -2493,21 +2533,11 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
-		textLen, err := a.TextLen()
+		text, rodata, u, err := layoutX86(a)
 		if err != nil {
-			return fmt.Errorf("native assembler: %w", err)
+			return err
 		}
-		textVAddr, ehVAddr, _ := nativeelf.SegmentAddrsWXEhX86(textLen, 1)
-		ehFrame, err := a.EhFrame(textVAddr, ehVAddr)
-		if err != nil {
-			return fmt.Errorf("native assembler: %w", err)
-		}
-		textVAddr, _, dataVAddr := nativeelf.SegmentAddrsWXEhX86(textLen, len(ehFrame))
-		text, rodata, err := a.BytesProgramWX(textVAddr, dataVAddr)
-		if err != nil {
-			return fmt.Errorf("native assembler: %w", err)
-		}
-		syms, locRows := a.TextLabelVAddrs(textVAddr), a.LocRows()
+		syms, locRows := a.TextLabelVAddrs(nativeelf.TextVAddrWX), a.LocRows()
 		textEnd := nativeelf.TextVAddrWX + uint64(len(text))
 		fs := nativeelf.FuncSyms(syms, textEnd)
 		// Per-statement DWARF .debug_line rows from the assembler's `.loc`
@@ -2516,7 +2546,7 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		for _, r := range locRows {
 			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
 		}
-		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, ehFrame, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
+		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, u, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -2526,30 +2556,11 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
-	// Three steps, because each address depends on the one before: branch
-	// relaxation settles .text's size, .eh_frame goes 8-aligned after it, and
-	// only then is the data segment's address known. The first call asks for
-	// the .eh_frame address alone — its length cannot matter to where it
-	// starts — so the image can be rendered at the address it will load at,
-	// which a CIE declaring pcrel FDE pointers requires.
-	//
-	// Asm carrying no `.cfi_*` renders an empty image, and both calls then
-	// reduce to the layout without one, byte for byte.
-	textLen, err := a.TextLen()
+	text, rodata, u, err := layoutX86(a)
 	if err != nil {
-		return fmt.Errorf("native assembler: %w", err)
+		return err
 	}
-	textVAddr, ehVAddr, _ := nativeelf.SegmentAddrsWXEhX86(textLen, 1)
-	ehFrame, err := a.EhFrame(textVAddr, ehVAddr)
-	if err != nil {
-		return fmt.Errorf("native assembler: %w", err)
-	}
-	textVAddr, _, dataVAddr := nativeelf.SegmentAddrsWXEhX86(textLen, len(ehFrame))
-	text, rodata, err := a.BytesProgramWX(textVAddr, dataVAddr)
-	if err != nil {
-		return fmt.Errorf("native assembler: %w", err)
-	}
-	bin := nativeelf.StaticExecutableDataX86WXEhFrame(text, ehFrame, rodata)
+	bin := nativeelf.StaticExecutableDataX86WXEhFrame(text, u, rodata)
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}

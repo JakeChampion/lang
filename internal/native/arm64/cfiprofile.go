@@ -60,3 +60,15 @@ func (a *Assembler) cfiDirective(d, line string) error {
 func (a *Assembler) EhFrame(textVAddr, ehVAddr uint64) ([]byte, error) {
 	return a.cfi.EhFrame(arm64CFI, textVAddr, ehVAddr)
 }
+
+// EhFrameHdrLen is the size of the .eh_frame_hdr this program needs, or 0 if
+// it carries no CFI. Known before either image is rendered, so the ELF writer
+// can place both.
+func (a *Assembler) EhFrameHdrLen() int { return a.cfi.EhFrameHdrLen() }
+
+// EhFrameHdr renders the .eh_frame_hdr search table PT_GNU_EH_FRAME points at,
+// for a binary whose .text, .eh_frame_hdr and .eh_frame land at the given
+// addresses.
+func (a *Assembler) EhFrameHdr(textVAddr, ehVAddr, hdrVAddr uint64) ([]byte, error) {
+	return a.cfi.EhFrameHdr(arm64CFI, textVAddr, ehVAddr, hdrVAddr)
+}

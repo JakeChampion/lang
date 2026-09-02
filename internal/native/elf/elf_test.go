@@ -103,18 +103,18 @@ func TestStaticExecutableHeader(t *testing.T) {
 }
 
 // TestStaticExecutableDataWXHeader checks the W^X two-segment layout:
-// two PT_LOAD program headers (R+X code, R+W data), an entry just past
-// the two headers, and a data segment whose file offset and load address
-// both land on the first 16 KiB page boundary past .text (so the segment
-// is never both writable and executable, and the offset is congruent to
-// the vaddr mod the page size).
+// two PT_LOAD program headers (R+X code, R+W data) plus the reserved third
+// slot, an entry just past all three headers, and a data segment whose file
+// offset and load address both land on the first 16 KiB page boundary past
+// .text (so the segment is never both writable and executable, and the offset
+// is congruent to the vaddr mod the page size).
 func TestStaticExecutableDataWXHeader(t *testing.T) {
 	text := []byte{0x00, 0x00, 0x80, 0xd2} // movz x0,#0
 	data := []byte{1, 2, 3, 4, 5, 6, 7, 8} // one 8-byte datum
 	bin := elf.StaticExecutableDataWX(text, data)
 
 	const base = 0x400000
-	const headers = 64 + 2*56 // ehdr + two phdrs = 176
+	const headers = 64 + 3*56 // ehdr + three phdrs = 232
 	const page = 0x10000
 	dataOff := (uint64(headers+len(text)) + page - 1) &^ (page - 1)
 
@@ -124,8 +124,8 @@ func TestStaticExecutableDataWXHeader(t *testing.T) {
 	if e_type := u16(bin, 16); e_type != 2 { // ET_EXEC
 		t.Errorf("e_type = %d, want 2 (ET_EXEC)", e_type)
 	}
-	if e_phnum := u16(bin, 56); e_phnum != 2 {
-		t.Errorf("e_phnum = %d, want 2", e_phnum)
+	if e_phnum := u16(bin, 56); e_phnum != 3 {
+		t.Errorf("e_phnum = %d, want 3", e_phnum)
 	}
 	if e_entry := u64(bin, 24); e_entry != base+headers {
 		t.Errorf("e_entry = %#x, want %#x", e_entry, base+headers)
@@ -161,6 +161,13 @@ func TestStaticExecutableDataWXHeader(t *testing.T) {
 	if p_filesz := u64(bin, 152); p_filesz != uint64(len(data)) {
 		t.Errorf("seg1 p_filesz = %d, want %d", p_filesz, len(data))
 	}
+	// Program header 2 (offset 176): the unwind slot. This image carries no
+	// unwind data, so it is a PT_NULL — an ignored entry, present so .text
+	// sits at the same address whether or not there is CFI.
+	if p_type := u32(bin, 176); p_type != 0 {
+		t.Errorf("seg2 p_type = %#x, want 0 (PT_NULL) for an image with no unwind data", p_type)
+	}
+
 	// The two segments must not share a page (else one protection wins).
 	codeEndPage := (uint64(headers+len(text)) - 1) / page
 	if dataStartPage := dataOff / page; dataStartPage <= codeEndPage {
@@ -1101,7 +1108,7 @@ func TestStaticExecutableDataWXSymsRows(t *testing.T) {
 		{Addr: base + 8, Line: 8},
 		{Addr: base + 16, Line: 9},
 	}
-	bin := elf.StaticExecutableDataX86WXSymsRows(text, nil, data, syms, rows, "prog.fern", "/tmp", base+uint64(len(text)), nil)
+	bin := elf.StaticExecutableDataX86WXSymsRows(text, elf.Unwind{}, data, syms, rows, "prog.fern", "/tmp", base+uint64(len(text)), nil)
 
 	f, err := goelf.NewFile(bytes.NewReader(bin))
 	if err != nil {
@@ -1152,7 +1159,7 @@ func TestDebugInfoLocalVars(t *testing.T) {
 			{Name: "sum", TypeKey: "i32", Offset: -24, IsParam: false},
 		},
 	}
-	bin := elf.StaticExecutableDataX86WXSymsRows(text, nil, nil, syms, nil, "prog.fern", "/tmp", base+16, funcVars)
+	bin := elf.StaticExecutableDataX86WXSymsRows(text, elf.Unwind{}, nil, syms, nil, "prog.fern", "/tmp", base+16, funcVars)
 
 	f, err := goelf.NewFile(bytes.NewReader(bin))
 	if err != nil {
