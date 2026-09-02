@@ -28,8 +28,16 @@ $ wasm-tools parse out.wat -o out.wasm && wasmtime run out.wasm; echo $?
 42
 ```
 
-2.34 MB of module, 1.9 s, 104 MiB peak. The playground's current bundle is
-28.5 MB.
+2.13 MB of module, 1.9 s, 104 MiB peak. The playground's current bundle is
+28.7 MB.
+
+The driver a PAGE would fetch goes further: `playground_run.fern`, which
+compiles, checks and interprets off one embedded stdlib, builds to a
+**4,126,904-byte** module (1,110,860 gzipped) that runs all three modes under
+wasmtime — `-check` silent on a good program and `1:24: error[E002]: …` on a
+bad one, `-interp` printing the program's output and exiting with its code,
+and the default writing WAT. Getting there needed two self-host codegen fixes,
+both in "The measurement" below.
 
 **That run used to write an internal error to stderr, which this page did not
 say.** The command redirects stdout and never looked at the other stream, which
@@ -87,25 +95,56 @@ Two facts worth having before costing anything:
 
 ## The measurement
 
-Sizes, gzip at -9 because that is what a static host serves:
+Re-measured 2026-09-02 on x86-64 Linux. Every module below was put through
+`wasm-tools validate`; gzip at -9, because that is what a static host serves.
+
+`playground_run` is the row that answers the question — it is the one driver
+that does all three panes, and it carries the stdlib as `-embed` assets, so it
+is the artifact a page would actually fetch:
 
 | artifact | built by | raw | gzipped |
 |---|---|---|---|
-| `web/fern.wasm` — the playground today | Go, `GOOS=js GOARCH=wasm`, `-s -w` | **28,521,433** | **6,334,648** |
-| `wasm_ir_run` — source → wasm core module | self-host, `-target wasm32-wasi -emit core-module` | **2,344,167** | **613,735** |
-| the whole 19-module compiler, sharded-linked | self-host, per-function-window emit | **2,258,458** | — |
-| `interp_run` — source → interpreted result | same | 787,729 | 221,321 |
-| `checker_run` — type-check only | same | 945,931 | 269,807 |
-| `asm_run` — source → x86-64 asm text | same | 2,100,728 | 570,241 |
+| `web/fern.wasm` — the playground today | Go, `GOOS=js GOARCH=wasm`, `-s -w` | **28,661,200** | **6,396,834** |
+| `playground_run` — compile + check + interpret, stdlib embedded | self-host | **4,126,904** | **1,110,860** |
+| `wasm_ir_run` — source → wasm core module | self-host | 2,129,864 | 540,544 |
+| `asm_run` — source → x86-64 asm text | self-host | 2,000,276 | 521,911 |
+| `checker_run` — type-check only | self-host | 470,388 | 132,368 |
+| `interp_run` — source → interpreted result | self-host | 357,111 | 92,960 |
+| the whole 19-module compiler, sharded-linked | self-host | 2,474,201 | — |
 
-The self-host wasm compiler is **12x smaller raw and 10x smaller gzipped** than
-the bundle it would replace. The comparison is not quite fair — `fern.wasm`
-carries compile, interpret, check and the LSP in one module where each row
-above is one driver — so take the sum of all four as a deliberate
-over-estimate: **6,178,555 raw / 1,675,104 gzipped**, still 4.6x and 3.8x
-under the single bundle shipping today. It is an over-estimate because the
-drivers overlap heavily (each carries lexer, parser and IR lowering), so a
-merged bundle lands well below their sum, not above it.
+**6.9x smaller raw and 5.8x smaller gzipped** than the bundle it replaces, for
+a module that compiles, checks and interprets. An earlier revision of this
+table quoted 12x from `wasm_ir_run` alone and then added the drivers up as a
+deliberate over-estimate (6,178,555 / 1,675,104), reasoning that a merged
+bundle would land below their sum because the drivers overlap. It does:
+`playground_run` is that merged bundle, and it comes in a third under the
+guess.
+
+### The compiler doing the emitting is worth 5x
+
+The same sources through the NATIVE compiler, same flags, also validated:
+
+| artifact | native raw | self-host raw | native ÷ self-host |
+|---|---|---|---|
+| `playground_run` | 13,217,895 | 4,126,904 | 3.2x |
+| `wasm_ir_run` | 10,774,121 | 2,129,864 | 5.1x |
+| `asm_run` | 10,723,290 | 2,000,276 | 5.4x |
+| `checker_run` | 1,705,076 | 470,388 | 3.6x |
+| `interp_run` | 1,370,831 | 357,111 | 3.8x |
+
+So "how big is the compiler as wasm" has no single answer: a native-built
+`playground_run` is 13 MB, which is not a page's artifact, and the self-host's
+4 MB is. Whatever ships has to be self-host-built. The gap is unexplained here
+— monomorphisation is the obvious suspect, since native monomorphises generics
+and the emitted function counts differ by roughly the same factor — and is
+worth its own measurement rather than a guess.
+
+Two bugs stood between this table and a running module, both found by building
+it: a `Cell[f64]` reached through a struct field indexed 4-byte (which made
+`interp_run` fail to validate outright), and the declared wasm memory being a
+hardcoded 16 pages (which made the `-embed` build validate and then trap at
+instantiation). Both are fixed; the `interp_run` row above is the first one
+that validates.
 
 Run cost, compiling `function main(): i32 { return 6 * 7; }` under wasmtime:
 
@@ -120,12 +159,12 @@ shims are already written to survive linear memory detaching under them
 (`web/wasi-shim.js:38-41`, `web/wasi-http-shim.js:21-24`).
 
 The whole 19-module compiler also links and runs as one wasm module today —
-`TestSelfHostWasmWholeCompilerShardedLink`, measured here at 241 s over 41
+`TestSelfHostWasmWholeCompilerShardedLink`, measured here at 304 s over 41
 units, validated, then run to compile a 2-module program. It comes to
-**2,258,458 bytes** as a core module, which is the number to quote: the same
-module is 15,679,514 bytes as WAT text, so the text length that test used to
-report on its own overstates the artifact by 6.9x. Even the entire compiler is
-12.6x under the playground bundle.
+**2,474,201 bytes** as a core module, which is the number to quote: the same
+module is 17,493,609 bytes as WAT text, so the text length that test used to
+report on its own overstates the artifact by 7.1x. Even the entire compiler is
+11.6x under the playground bundle.
 
 That path is sharded per 150-function window across processes because the
 *host-side* emit peaks ~10 GB, not because the result is too big. Nothing about
@@ -138,7 +177,18 @@ make build && make selfhost-cli
 ./bin/fern-selfhost -target wasm32-wasi -emit core-module \
     -o wasm_ir_run.wasm examples/self_host/wasm_ir_run.fern internal/stdlib
 echo 'function main(): i32 { return 6 * 7; }' | wasmtime run wasm_ir_run.wasm
+
+# The page's artifact. -embed names the stdlib it CARRIES; the trailing
+# positional is the one resolving this driver's own imports at build time.
+./bin/fern-selfhost -target wasm32-wasi -emit core-module -embed internal/stdlib \
+    -o playground_run.wasm examples/self_host/playground_run.fern internal/stdlib
+echo 'function main(): i32 { print("hi"); return 42; }' \
+    | wasmtime run playground_run.wasm -interp    # prints hi, exits 42
 ```
+
+Swap `./bin/fern-selfhost` for `./bin/fern` to reproduce the native column;
+`-emit command-module` there gives the `_start` shape a browser shim runs (the
+self-host's `-emit core-module` already emits one).
 
 The trailing `internal/stdlib` is the stdlib root: the self-host driver takes it
 as a second positional argument, where native serves stdlib from `go:embed`
@@ -383,9 +433,12 @@ What is left:
    `web/test/shim/` pins the contract by compiling real programs and running
    them through the real shim.
 
-   What remains is wiring, not capability: `web/index.html` still loads
-   `web/fern.wasm`, the Go compiler under `GOOS=js`, and would have to fetch
-   and drive the self-host driver instead.
+   What remains is wiring, not capability. Both halves exist and have been run
+   against each other's contract: a 4.1 MB self-host-built `playground_run.wasm`
+   that answers all three modes, and a shim that can hand it a source and a
+   mode. `web/index.html` still loads `web/fern.wasm`, the Go compiler under
+   `GOOS=js`, and would have to fetch and drive the driver instead — a page
+   change, not a compiler one.
 
    **As exports.** `@export("iface", "name")` emits canonical-ABI wrappers into
    a `-emit core-module` build in both compilers, and a module whose exports
