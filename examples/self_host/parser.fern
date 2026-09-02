@@ -8142,6 +8142,10 @@ pub struct MFns {
     // reason the index does: built from one array, it cannot disagree with the
     // decls it is read beside.
     structs: StructDecl[],
+    // The module's enum decls, so a `match` arm's payload bindings can be
+    // typed from the variant's declared fields with the enum's type params
+    // substituted from the scrutinee's spelling.
+    enums: EnumDecl[],
 }
 
 // mfns_buckets is the bucket count of the generic index. Prime, and far larger
@@ -8157,7 +8161,7 @@ function mfns_buckets(): i32 { return 257; }
 // monomorphise passes build it once from a field they never reassign — the
 // clones they produce accumulate in a separate list — so an entry position
 // means the same thing for the whole pass.
-pub function mfns_of(decls: FuncDecl[], structs: StructDecl[]): MFns {
+pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]): MFns {
     var ghead: i32[] = [];
     var b: i32 = 0;
     var nb: i32 = mfns_buckets();
@@ -8184,7 +8188,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[]): MFns {
         ghead = ghead.with(bk, k);
         k = k - 1;
     }
-    return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, structs: structs };
+    return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, structs: structs, enums: enums };
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -8544,6 +8548,10 @@ function sanitize_key(s: string): string {
 // (`Map[K, V]` vs `Map[i32, string]` ⊢ K=i32, V=string). First binding
 // for a variable wins (so a later opaque argument can't clobber it).
 function bind_unify(pattern: string, concrete: string, tparams: string[], binds: MEnv): MEnv {
+    // A spelling that still mentions a type variable (`K`, `OrdNode[K, V]`
+    // from an enclosing generic's own params) is not a usable concrete type:
+    // binding it would key a clone named after the variable (`f__K__V`).
+    if (mono_ty_mentions_var(concrete)) { return binds; }
     if (tp_index(pattern, tparams) >= 0) {
         if (binds.elook(pattern).len() == 0 && concrete.len() > 0) {
             return binds.ebind(pattern, concrete);
@@ -8800,7 +8808,10 @@ function type_str_vars(ty: string, acc: string[]): string[] {
             var start: i32 = i;
             while (i < n && tv_word_char((ty[i] as i32))) { i = i + 1; }
             var tok: string = slice_unchecked(ty, start, i) + "";
-            if (tok.len() == 1 && tok[0] >= b'A' && tok[0] <= b'Z' && !util.has_str(out, tok)) {
+            // A token applied to type arguments (`H[i32]`) is a type
+            // constructor, never a variable — Fern has no higher-kinded params.
+            var applied: boolean = i < n && ty[i] == b'[';
+            if (tok.len() == 1 && tok[0] >= b'A' && tok[0] <= b'Z' && !applied && !util.has_str(out, tok)) {
                 out = out.append(tok);
             }
         } else {
@@ -9187,6 +9198,17 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
             }
             return "";
         },
+        // `s.f` on a struct value: the field's declared type, instantiated
+        // from the value's type (`sp.lt` on `sp: Split[string, i32]` is
+        // `Tree[string, i32]`). A field that still mentions a type variable
+        // is unknown, for the same reason as the index arm's element guard.
+        ast.ExprFieldAccess(fa) => {
+            var ot: string = mono_infer(fa.obj, env, funcs);
+            if (ot.len() == 0 || mono_ty_mentions_var(ot)) { return ""; }
+            var ft: string = struct_field_ty_inst(ot, fa.field, funcs.structs);
+            if (mono_ty_mentions_var(ft)) { return ""; }
+            return ft;
+        },
         _ => { return ""; }
     }
     return "";
@@ -9517,10 +9539,12 @@ function mono_ty_mentions_var(t: string): boolean {
                 var p: i32 = t[i - 1] as i32;
                 prev_id = (p >= 65 && p <= 90) || (p >= 97 && p <= 122) || (p >= 48 && p <= 57) || p == 95;
             }
+            // A following `[` makes the letter an applied type constructor
+            // (`H[i32]`), never a variable — Fern has no higher-kinded params.
             var next_id: boolean = false;
             if (i + 1 < n) {
                 var q: i32 = t[i + 1] as i32;
-                next_id = (q >= 65 && q <= 90) || (q >= 97 && q <= 122) || (q >= 48 && q <= 57) || q == 95;
+                next_id = (q >= 65 && q <= 90) || (q >= 97 && q <= 122) || (q >= 48 && q <= 57) || q == 95 || q == 91;
             }
             if (!prev_id && !next_id) { return true; }
         }
@@ -9536,12 +9560,7 @@ function mono_ty_mentions_var(t: string): boolean {
 // (`Result.Ok`) is stripped to its bare variant name first.
 function mono_variant_payload_ty(sty: string, vname: string): string {
     if (mono_ty_mentions_var(sty)) { return ""; }
-    var bare: string = vname;
-    var di: i32 = 0;
-    while (di < vname.len()) {
-        if (vname[di] == b'.') { bare = slice_unchecked(vname, di + 1, vname.len()) + ""; }
-        di = di + 1;
-    }
+    var bare: string = pat_variant_bare(vname);
     var n: i32 = sty.len();
     if (n >= 8 && slice_unchecked(sty, 0, 7) == "Option[" && sty[n - 1] == b']') {
         if (bare == "Some") { return strip_ws(slice_unchecked(sty, 7, n - 1) + ""); }
@@ -9552,6 +9571,99 @@ function mono_variant_payload_ty(sty: string, vname: string): string {
         if (parts.len() != 2) { return ""; }
         if (bare == "Ok") { return strip_ws(parts[0]); }
         if (bare == "Err") { return strip_ws(parts[1]); }
+    }
+    return "";
+}
+
+// pat_variant_bare strips a qualified pattern name (`Result.Ok`, `m.Tree.Node`)
+// to its bare variant name.
+function pat_variant_bare(vname: string): string {
+    var bare: string = vname;
+    var di: i32 = 0;
+    while (di < vname.len()) {
+        if (vname[di] == b'.') { bare = slice_unchecked(vname, di + 1, vname.len()) + ""; }
+        di = di + 1;
+    }
+    return bare;
+}
+
+// type_args_of splits the top-level type arguments out of a `Base[a, b]`
+// spelling (whitespace stripped); empty for a spelling with no brackets.
+function type_args_of(ty: string): string[] {
+    var out: string[] = [];
+    var lb: i32 = first_bracket(ty);
+    if (lb <= 0 || slice_unchecked(ty, ty.len() - 1, ty.len()) != "]") { return out; }
+    var parts: string[] = split_top_commas(slice_unchecked(ty, lb + 1, ty.len() - 1));
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        out = out.append(strip_ws(parts[i]));
+        i = i + 1;
+    }
+    return out;
+}
+
+// mono_variant_field_tys: the payload types, in declaration order, that a
+// match arm's bindings carry when the scrutinee's inferred type `sty` names a
+// user enum — a generic instantiation (`Tree[string, i32]` binds `Node(l, k,
+// v, r, s)` as Tree[string, i32] / string / i32 / …) or a plain enum. Empty
+// when the scrutinee is unknown, still mentions a type variable, or is not an
+// enum that owns `vname`.
+function mono_variant_field_tys(sty: string, vname: string, fns: MFns): string[] {
+    var none: string[] = [];
+    if (sty.len() == 0 || mono_ty_mentions_var(sty)) { return none; }
+    var base: string = strip_struct_base(sty);
+    var ei: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < fns.enums.len()) {
+        if (fns.enums[i].name == base) { ei = i; i = fns.enums.len(); } else { i = i + 1; }
+    }
+    if (ei < 0) { return none; }
+    var ed: EnumDecl = fns.enums[ei];
+    var cts: string[] = type_args_of(sty);
+    if (cts.len() != ed.type_params.len()) { return none; }
+    var vi: i32 = variant_struct_index(fns.structs, pat_variant_bare(vname), ed.name);
+    if (vi < 0) { return none; }
+    var fields: StructFieldDecl[] = fns.structs[vi].fields;
+    var out: string[] = [];
+    var fi: i32 = 0;
+    while (fi < fields.len()) {
+        out = out.append(subst_ty(fields[fi].type_name, ed.type_params, cts));
+        fi = fi + 1;
+    }
+    return out;
+}
+
+// struct_field_ty_inst: the declared type of field `fname` on a value whose
+// inferred type `ot` names a struct, with a generic struct's params
+// substituted from the spelling (`Split[string, i32]`) or, once the struct
+// pass has renamed the value, from its mangled clone name
+// (`Split__string__i32`). "" when the struct or field is unknown.
+function struct_field_ty_inst(ot: string, fname: string, structs: StructDecl[]): string {
+    var base: string = strip_struct_base(ot);
+    var cts: string[] = type_args_of(ot);
+    var si: i32 = 0 - 1;
+    var i: i32 = 0;
+    while (i < structs.len() && si < 0) {
+        if (structs[i].enum_owner.len() == 0) {
+            if (structs[i].name == base) { si = i; }
+            else if (structs[i].type_params.len() > 0 && first_bracket(ot) < 0) {
+                var pfx: string = structs[i].name + "__";
+                if (ot.len() > pfx.len() && slice_unchecked(ot, 0, pfx.len()) == pfx) {
+                    var rest: string = slice_unchecked(ot, pfx.len(), ot.len()) + "";
+                    cts = [rest];
+                    if (structs[i].type_params.len() != 1) { cts = split_dunder(rest); }
+                    si = i;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    if (si < 0 || cts.len() != structs[si].type_params.len()) { return ""; }
+    var fs: StructFieldDecl[] = structs[si].fields;
+    var j: i32 = 0;
+    while (j < fs.len()) {
+        if (fs[j].name == fname) { return subst_ty(fs[j].type_name, structs[si].type_params, cts); }
+        j = j + 1;
     }
     return "";
 }
@@ -9592,7 +9704,16 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
         },
         ast.StmtFor(fr) => {
             var it: RExpr = mono_expr(fr.iter, env, funcs, ins);
-            var benv: MEnv = env.ebind(fr.var_name, "");
+            // The loop var carries the array's element type; anything else
+            // (a range, a map, an unknown) binds unknown, which still SHADOWS
+            // an outer local of the same name.
+            var ety: string = "";
+            var ity: string = mono_infer(fr.iter, env, funcs);
+            if (type_ends_arr(ity)) {
+                ety = slice_unchecked(ity, 0, ity.len() - 2) + "";
+                if (mono_ty_mentions_var(ety)) { ety = ""; }
+            }
+            var benv: MEnv = env.ebind(fr.var_name, ety);
             var fb: RStmts = mono_stmts(fr.body, benv, funcs, it.rins, ret_ty);
             return RStmtOne { rstmt: ast.StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line }, renv: env, rins2: fb.rins3 };
         },
@@ -9600,8 +9721,9 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
             var sv: RExpr = mono_expr(m.scrutinee, env, funcs, ins);
             // The arm-body env binds the pattern's payload names: an
             // Option/Result scrutinee's Some/Ok payload carries T, Err
-            // carries E; any other payload binds unknown so it still
-            // SHADOWS an outer local of the same name.
+            // carries E; a user enum's variant binds each payload from the
+            // variant's declared fields; any other payload binds unknown so
+            // it still SHADOWS an outer local of the same name.
             var sty: string = mono_infer(m.scrutinee, env, funcs);
             var arms: ast.MatchArm[] = [];
             var cur: Insts = sv.rins;
@@ -9610,12 +9732,19 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
                 var aenv: MEnv = env;
                 match (m.arms[i].pattern) {
                     ast.PatVariant(pv) => {
+                        var ftys: string[] = mono_variant_field_tys(sty, pv.type_name, funcs);
                         if (pv.binding.len() > 0 && pv.binding != "_") {
-                            aenv = aenv.ebind(pv.binding, mono_variant_payload_ty(sty, pv.type_name));
+                            var bty: string = mono_variant_payload_ty(sty, pv.type_name);
+                            if (bty.len() == 0 && ftys.len() > 0) { bty = ftys[0]; }
+                            aenv = aenv.ebind(pv.binding, bty);
                         }
                         var xbi: i32 = 0;
                         while (xbi < pv.extra_bindings.len()) {
-                            if (pv.extra_bindings[xbi].len() > 0 && pv.extra_bindings[xbi] != "_") { aenv = aenv.ebind(pv.extra_bindings[xbi], ""); }
+                            if (pv.extra_bindings[xbi].len() > 0 && pv.extra_bindings[xbi] != "_") {
+                                var xty: string = "";
+                                if (xbi + 1 < ftys.len()) { xty = ftys[xbi + 1]; }
+                                aenv = aenv.ebind(pv.extra_bindings[xbi], xty);
+                            }
                             xbi = xbi + 1;
                         }
                         if (pv.at_binding.len() > 0) {
@@ -10415,16 +10544,20 @@ pub function monomorphize_module(mod: Module): Module {
     if (!any_bg) { return mod; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-    var fns: MFns = mfns_of(funcs, mod.structs);
-    // Rewrite call sites in every NON-bounded function body. Bounded
-    // generics themselves are dropped (replaced by clones), so their
-    // bodies are rewritten later, per clone.
+    var fns: MFns = mfns_of(funcs, mod.structs, mod.enums);
+    // Rewrite call sites in every NON-generic function body. A bounded
+    // generic's body is rewritten per clone instead; the template itself is
+    // passed through so monomorphize_structs can still clone it from a
+    // generic-struct METHOD clone, and is dropped there. A generic struct's
+    // method is generic in the struct's params, so its body is likewise
+    // rewritten only per struct instantiation (env concrete), never here
+    // where `k: K` would key a clone on the variable.
     var rewritten: FuncDecl[] = [];
     var i: i32 = 0;
     while (i < funcs.len()) {
         var fd: FuncDecl = funcs[i];
-        if (fd.receiver_name.len() == 0 && fd.type_params.len() > 0) {
-            // skip — will be cloned
+        if (is_bg_template(fd) || is_gstruct_method(fd, mod.structs)) {
+            rewritten = rewritten.append(fd);
         } else {
             var env: MEnv = env_from_params(fd.params);
             var rb: RStmts = mono_stmts(fd.body, env, fns, ins, fd.ret_type);
@@ -10462,6 +10595,54 @@ pub function monomorphize_module(mod: Module): Module {
     }
 
     return Module { ...mod, funcs: rewritten, top_stmts: tr.rstmts };
+}
+
+// is_bg_template: a bounded-generic free function — the template the
+// monomorphiser clones per instantiation and never emits itself.
+function is_bg_template(fd: FuncDecl): boolean {
+    return fd.receiver_name.len() == 0 && fd.type_params.len() > 0;
+}
+
+// is_gstruct_method: a method (or receiver-less associated fn) of a generic
+// struct declared in `structs` — cloned per struct instantiation by
+// monomorphize_structs.
+function is_gstruct_method(fd: FuncDecl, structs: StructDecl[]): boolean {
+    if (fd.receiver_type.len() == 0) { return false; }
+    var base: string = strip_struct_base(fd.receiver_type);
+    var i: i32 = 0;
+    while (i < structs.len()) {
+        if (structs[i].name == base && structs[i].type_params.len() > 0) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// drop_bg_templates removes the bounded-generic templates once no pass can
+// instantiate them further.
+function drop_bg_templates(funcs: FuncDecl[]): FuncDecl[] {
+    var out: FuncDecl[] = [];
+    var i: i32 = 0;
+    while (i < funcs.len()) {
+        if (!is_bg_template(funcs[i])) { out = out.append(funcs[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// has_func_named reports whether either list already holds a function
+// called `name` — a clone monomorphize_module produced, or one this pass did.
+function has_func_named(a: FuncDecl[], b: FuncDecl[], name: string): boolean {
+    var i: i32 = 0;
+    while (i < a.len()) {
+        if (a[i].name == name) { return true; }
+        i = i + 1;
+    }
+    var j: i32 = 0;
+    while (j < b.len()) {
+        if (b[j].name == name) { return true; }
+        j = j + 1;
+    }
+    return false;
 }
 
 // ---- generic-struct monomorphisation --------------------------------
@@ -10963,10 +11144,10 @@ pub function monomorphize_structs(mod: Module): Module {
         if (mod.structs[gi].type_params.len() > 0) { gstructs = gstructs.append(mod.structs[gi]); }
         gi = gi + 1;
     }
-    if (gstructs.len() == 0) { return mod; }
+    if (gstructs.len() == 0) { return Module { ...mod, funcs: drop_bg_templates(mod.funcs) }; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-    var sfns: MFns = mfns_of(mod.funcs, mod.structs);
+    var sfns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums);
 
     // Phase 1: rewrite all references; drop the generic decls.
     var nstructs: StructDecl[] = [];
@@ -10995,6 +11176,8 @@ pub function monomorphize_structs(mod: Module): Module {
         if (fn.receiver_type.len() > 0 && gstruct_index(gstructs, rbase) >= 0) {
             // generic-struct method OR receiver-less associated fn (a derived
             // `default()`, receiver_name "") — dropped here, cloned in phase 2.
+        } else if (is_bg_template(fn)) {
+            // cloned on demand in phase 2; dropped.
         } else {
             var fr: FRes = ms_func(fn, gstructs, sfns, ins);
             ins = fr.fins;
@@ -11008,7 +11191,11 @@ pub function monomorphize_structs(mod: Module): Module {
     ins = tr.rins3;
 
     // Phase 2: generate clones; a worklist covers clones whose own field
-    // types / method bodies reference further instantiations.
+    // types / method bodies reference further instantiations. The same
+    // worklist carries the bounded-generic instantiations a method clone's
+    // body makes (`__om_insert(m.root, k, v)` under `OrdMap__i32__i32`):
+    // those are cloned here from the templates monomorphize_module passed
+    // through, and a clone's own annotations feed back struct instantiations.
     var done: Insts = Insts { inames: [], itypes: [], iargs: [] };
     var wi: i32 = 0;
     while (wi < ins.inames.len()) {
@@ -11017,6 +11204,17 @@ pub function monomorphize_structs(mod: Module): Module {
         if (done.ihas(base, key)) { wi = wi + 1; continue; }
         done = done.iadd(base, key);
         var idx: i32 = gstruct_index(gstructs, base);
+        if (idx < 0) {
+            var bgi: i32 = bg_find(sfns, base);
+            if (bgi >= 0 && !has_func_named(mod.funcs, nfuncs, base + "__" + sanitize_key(key))) {
+                var bcl: FuncDecl = clone_bg(sfns.decls[bgi], key);
+                var bcr: RStmts = mono_stmts(bcl.body, env_from_params(bcl.params), sfns, ins, bcl.ret_type);
+                ins = bcr.rins3;
+                var bfr: FRes = ms_func(FuncDecl { ...bcl, body: bcr.rstmts }, gstructs, sfns, ins);
+                ins = bfr.fins;
+                nfuncs = nfuncs.append(bfr.ffn);
+            }
+        }
         if (idx >= 0) {
             var gd: StructDecl = gstructs[idx];
             // A single-type-param struct's key IS the one concrete arg verbatim
@@ -11041,7 +11239,11 @@ pub function monomorphize_structs(mod: Module): Module {
                 var mm: FuncDecl = mod.funcs[mi];
                 if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
                     var clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
-                    var br2: RStmts = ms_stmts(clm.body, env_from_params(clm.params), gstructs, sfns, ins, clm.ret_type);
+                    var menv: MEnv = env_from_params(clm.params);
+                    if (clm.receiver_name.len() > 0) { menv = menv.ebind(clm.receiver_name, clm.receiver_type); }
+                    var mr: RStmts = mono_stmts(clm.body, menv, sfns, ins, clm.ret_type);
+                    ins = mr.rins3;
+                    var br2: RStmts = ms_stmts(mr.rstmts, menv, gstructs, sfns, ins, clm.ret_type);
                     ins = br2.rins3;
                     nfuncs = nfuncs.append(FuncDecl { ...clm, body: br2.rstmts });
                 }
@@ -11380,6 +11582,34 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], exp
     return key;
 }
 
+// me_variant_field_expectations: the expected type of each payload arg of a
+// resolved variant construction `V(args)` of enum `ed` — the variant's
+// declared field types with the enum's params substituted by the
+// instantiation's type arguments. Those come from the annotation's original
+// spelling when it names the enum, else from the single-param arg spelling
+// `carg`, else from the multi-param key's `__`-joined simple nominals. Empty
+// when the arguments cannot be recovered (the args then carry no expectation,
+// exactly as an unresolved construction).
+function me_variant_field_expectations(ed: EnumDecl, vname: string, expected: string, key: string, carg: string, structs: StructDecl[]): string[] {
+    var none: string[] = [];
+    var cts: string[] = type_args_of(expected);
+    if (cts.len() != ed.type_params.len() || strip_struct_base(expected) != ed.name) {
+        cts = [carg];
+        if (ed.type_params.len() != 1) { cts = split_dunder(key); }
+    }
+    if (cts.len() != ed.type_params.len()) { return none; }
+    var vidx: i32 = variant_struct_index(structs, vname, ed.name);
+    if (vidx < 0) { return none; }
+    var fields: StructFieldDecl[] = structs[vidx].fields;
+    var out: string[] = [];
+    var fi: i32 = 0;
+    while (fi < fields.len()) {
+        out = out.append(subst_ty(fields[fi].type_name, ed.type_params, cts));
+        fi = fi + 1;
+    }
+    return out;
+}
+
 // me_env_from_params seeds an MEnv with a function's parameter types (the
 // ORIGINAL spellings, so a `match` on a param recovers its `Opt[i32]`).
 function me_env_from_params(params: ast.ParamDecl[]): MEnv {
@@ -11433,18 +11663,32 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
                 },
                 _ => { }
             }
-            // For an annotation-pinned variant construction of a single-type-
-            // param enum, propagate the payload's expected type into the args so
-            // a NESTED unit-variant payload (`Sm(Nn)` under `Opt[Opt[i32]]`) gets
-            // pinned (the inner `Nn` has nothing to infer from). All fields of a
-            // single-param variant are `T`, so each arg expects the scrutinee's
-            // single original-spelling arg.
-            var argexp: string = "";
-            if (vname.len() > 0) {
-                var ownerA: i32 = genum_owner_of_variant(enums, funcs.decls, vname);
-                if (ownerA >= 0 && enums[ownerA].type_params.len() == 1
-                    && genum_key_from_anno(expected, enums[ownerA].name, enums, funcs.decls).len() > 0) {
-                    argexp = genum_single_arg(expected);
+            // A variant construction whose instantiation resolves (from the
+            // annotation or the payload args) flows each payload's DECLARED
+            // field type, instantiated, into the corresponding arg — so a
+            // nested payload-less variant (`Node(Leaf, k, v, Leaf, 1)` under
+            // `Tree[K, V]`, `Sm(Nn)` under `Opt[Opt[i32]]`) is pinned even
+            // though it has nothing of its own to infer from.
+            var owner: i32 = 0 - 1;
+            if (vname.len() > 0) { owner = genum_owner_of_variant(enums, funcs.decls, vname); }
+            var key: string = "";
+            var carg: string = "";
+            var fexps: string[] = [];
+            if (owner >= 0) {
+                key = me_infer_variant_key(enums[owner], vname, c.args, expected, env, enums, structs, funcs);
+                if (key.len() > 0) {
+                    // The original single-arg spelling (for a fn-keyed clone's
+                    // field type). From the annotation when present; else for
+                    // an INFERRED fn key the payload arg's full spelling
+                    // (phase-2 coarsens it to the "fn" + fn_ret field shape);
+                    // else the key IS the arg spelling (a nominal key).
+                    carg = genum_single_arg(expected);
+                    if (carg.len() == 0 && enums[owner].type_params.len() == 1 && c.args.len() > 0) {
+                        var raw0: string = mono_infer(c.args[0], env, funcs);
+                        if (pk_is_fn_spelling(raw0)) { carg = raw0; }
+                    }
+                    if (carg.len() == 0) { carg = key; }
+                    fexps = me_variant_field_expectations(enums[owner], vname, expected, key, carg, structs);
                 }
             }
             // A plain function call `f(args)` — a callee ident that is NOT a
@@ -11456,39 +11700,23 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
             // generic `Non` struct and the dangling reference bailed the module
             // (#5247).
             var calleeFn: string = "";
-            if (vname.len() > 0 && genum_owner_of_variant(enums, funcs.decls, vname) < 0) { calleeFn = vname; }
+            if (vname.len() > 0 && owner < 0) { calleeFn = vname; }
             var nargs: ast.Expr[] = [];
             var cur: Insts = ins;
             var i: i32 = 0;
             while (i < c.args.len()) {
-                var ae: string = argexp;
-                if (ae.len() == 0 && calleeFn.len() > 0) { ae = func_param_type_at(funcs.decls, calleeFn, i); }
+                var ae: string = "";
+                if (i < fexps.len()) { ae = fexps[i]; }
+                else if (calleeFn.len() > 0) { ae = func_param_type_at(funcs.decls, calleeFn, i); }
                 var ra: RExpr = me_expr(c.args[i], ae, env, enums, structs, funcs, cur);
                 cur = ra.rins;
                 nargs = nargs.append(ra.rexpr);
                 i = i + 1;
             }
-            if (vname.len() > 0) {
-                var owner: i32 = genum_owner_of_variant(enums, funcs.decls, vname);
-                if (owner >= 0) {
-                    var key: string = me_infer_variant_key(enums[owner], vname, c.args, expected, env, enums, structs, funcs);
-                    if (key.len() > 0) {
-                        // The original single-arg spelling (for a fn-keyed clone's
-                        // field type). From the annotation when present; else for
-                        // an INFERRED fn key the payload arg's full spelling
-                        // (phase-2 coarsens it to the "fn" + fn_ret field shape);
-                        // else the key IS the arg spelling (a nominal key).
-                        var carg: string = genum_single_arg(expected);
-                        if (carg.len() == 0 && enums[owner].type_params.len() == 1 && c.args.len() > 0) {
-                            var raw0: string = mono_infer(c.args[0], env, funcs);
-                            if (pk_is_fn_spelling(raw0)) { carg = raw0; }
-                        }
-                        if (carg.len() == 0) { carg = key; }
-                        cur = cur.iadd_arg(enums[owner].name, key, carg);
-                        var mv: string = vname + "__" + key;
-                        return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: mv, line: c.line, col: c.col, ty: "" }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
-                    }
-                }
+            if (key.len() > 0) {
+                cur = cur.iadd_arg(enums[owner].name, key, carg);
+                var mv: string = vname + "__" + key;
+                return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: mv, line: c.line, col: c.col, ty: "" }, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: cur };
             }
             var rc: RExpr = me_expr(c.callee, "", env, enums, structs, funcs, cur);
             return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_argc: c.type_argc, ty: c.ty }, rins: rc.rins };
@@ -11796,12 +12024,12 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
 
 // me_bind_pat_vars binds a match arm's payload variable(s) to their concrete
 // types in the arm-body env, so a nested match on a bound value recovers its
-// instantiation. For a single-type-param enum each binding takes the matched
-// variant's declared field type with the param substituted by the scrutinee's
-// one concrete arg (`arg0`): for `Opt[T] { Sm(T) }` the field is `T` → `arg0`,
-// but for `E[U] { A(Opt[U]) }` the field is `Opt[U]` → `Opt[arg0]`, so a nested
-// `match (o)` sees the real `Opt[i32]` rather than a bare `i32`.
-function me_bind_pat_vars(pat: ast.Pattern, ed: EnumDecl, arg0: string, structs: StructDecl[], env: MEnv): MEnv {
+// instantiation. Each binding takes the matched variant's declared field type
+// with the enum's params substituted by the scrutinee's concrete args (`cts`,
+// original spellings, one per param): for `Opt[T] { Sm(T) }` the field is `T`
+// → `cts[0]`, but for `E[U] { A(Opt[U]) }` the field is `Opt[U]` → `Opt[i32]`,
+// so a nested `match (o)` sees the real `Opt[i32]` rather than a bare `i32`.
+function me_bind_pat_vars(pat: ast.Pattern, ed: EnumDecl, cts: string[], structs: StructDecl[], env: MEnv): MEnv {
     match (pat) {
         ast.PatVariant(pv) => {
             var simple: string = pv.type_name;
@@ -11813,7 +12041,6 @@ function me_bind_pat_vars(pat: ast.Pattern, ed: EnumDecl, arg0: string, structs:
             var vidx: i32 = variant_struct_index(structs, simple, ed.name);
             if (vidx < 0) { return env; }
             var fs: StructFieldDecl[] = structs[vidx].fields;
-            var cts: string[] = [arg0];
             // Ordered payload variables: the primary binding, then extras.
             var names: string[] = [];
             if (pv.binding.len() > 0) { names = names.append(pv.binding); }
@@ -11940,20 +12167,19 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
             while (i < m.arms.len()) {
                 var npat: ast.Pattern = m.arms[i].pattern;
                 // armenv binds this arm's payload variable(s) so a NESTED match
-                // on the bound value recovers its instantiation. For a single-
-                // type-param enum every payload field is `T`, so each binding
-                // takes the scrutinee's single original-spelling type arg
-                // (`Sm(n)` over `Opt[Opt[i32]]` → n: `Opt[i32]`).
+                // on the bound value recovers its instantiation: each binding
+                // takes its declared field type under the scrutinee's
+                // original-spelling type args (`Sm(n)` over `Opt[Opt[i32]]` →
+                // n: `Opt[i32]`; `Bin(l, k, v, r, s)` over `OrdNode[i32,
+                // string]` → l: `OrdNode[i32, string]`, k: i32, v: string).
                 var armenv: MEnv = env;
                 if (gi.ok) {
                     var gidx: i32 = genum_index(enums, gi.base);
                     if (gidx >= 0) {
                         npat = me_rewrite_arm_pattern(m.arms[i].pattern, enums[gidx], gi.key);
                         cur = cur.iadd_arg(gi.base, gi.key, genum_single_arg(sty));
-                        if (enums[gidx].type_params.len() == 1) {
-                            var arg0: string = genum_single_arg(sty);
-                            if (arg0.len() > 0) { armenv = me_bind_pat_vars(m.arms[i].pattern, enums[gidx], arg0, structs, env); }
-                        }
+                        var cts: string[] = type_args_of(sty);
+                        if (cts.len() == enums[gidx].type_params.len()) { armenv = me_bind_pat_vars(m.arms[i].pattern, enums[gidx], cts, structs, env); }
                     }
                 }
                 var gv: RExpr = me_expr(m.arms[i].guard, "", armenv, enums, structs, funcs, cur);
@@ -12009,7 +12235,7 @@ pub function monomorphize_enums(mod: Module): Module {
     if (!any) { return mod; }
 
     var ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-    var efns: MFns = mfns_of(mod.funcs, mod.structs);
+    var efns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums);
 
     // Phase 1: rewrite references in every function (body + param/ret types)
     // and the top-level statements, accumulating instantiations.
@@ -12018,6 +12244,7 @@ pub function monomorphize_enums(mod: Module): Module {
     while (fi < mod.funcs.len()) {
         var fn: FuncDecl = mod.funcs[fi];
         var env: MEnv = me_env_from_params(fn.params);
+        if (fn.receiver_name.len() > 0) { env = env.ebind(fn.receiver_name, fn.receiver_type); }
         var rb: RStmts = me_stmts(fn.body, env, fn.ret_type, mod.enums, mod.structs, efns, ins);
         ins = rb.rins3;
         ins = me_collect_anno(fn.ret_type, mod.enums, mod.funcs, ins);
