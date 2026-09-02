@@ -1,0 +1,118 @@
+// A string element read out of a PARAMETER string[] and stored into another
+// container is a second owner of that string: the caller frees its array deep
+// at its own exit, so the store must be counted. The self-host lowering
+// retained a struct parameter stored this way (#7853) but not a string
+// element — the compiler's own reclaimable_credit copied a parameter's rows
+// into a second registry, and the caller's sweep freed them under it, which is
+// what stopped the self-built compiler compiling the compiler (#6644). Each
+// store form below shares the elements a different way; after the source
+// array is dead and the heap has been churned, every shared string must still
+// read back intact.
+import "std/i32";
+
+function rows(n: i32): string[] {
+  var out: string[] = [];
+  var i: i32 = 0;
+  while (i < n) {
+    out = out.append("ROW:" + i.to_string() + "|payload" + (i * 7).to_string());
+    i = i + 1;
+  }
+  return out;
+}
+
+// self-append of a direct index read
+function by_index(src: string[], out: string[]): string[] {
+  var i: i32 = 0;
+  while (i < src.len()) { out = out.append(src[i]); i = i + 1; }
+  return out;
+}
+
+// self-append through a local the read bound
+function by_local(src: string[], out: string[]): string[] {
+  var i: i32 = 0;
+  while (i < src.len()) { var e: string = src[i]; out = out.append(e); i = i + 1; }
+  return out;
+}
+
+// self-append of the loop variable
+function by_for(src: string[], out: string[]): string[] {
+  for e in src { out = out.append(e); }
+  return out;
+}
+
+// value-form append bound to a new local
+function by_value_append(src: string[], out: string[]): string[] {
+  var i: i32 = 0;
+  while (i < src.len()) { var grown: string[] = out.append(src[i]); out = grown; i = i + 1; }
+  return out;
+}
+
+// array literal of two index reads
+function by_literal(src: string[], out: string[]): string[] {
+  var i: i32 = 0;
+  while (i + 1 < src.len()) {
+    var pair: string[] = [src[i], src[i + 1]];
+    out = out.append(pair[0]);
+    out = out.append(pair[1]);
+    i = i + 2;
+  }
+  return out;
+}
+
+// the clone form: appending onto a struct field
+struct Bag { rows: string[] }
+function by_field(src: string[], out: string[]): string[] {
+  var b: Bag = Bag { rows: [] };
+  var i: i32 = 0;
+  while (i < src.len()) { b = Bag { rows: b.rows.append(src[i]) }; i = i + 1; }
+  var j: i32 = 0;
+  while (j < b.rows.len()) { out = out.append(b.rows[j]); j = j + 1; }
+  return out;
+}
+
+function share(n: i32, form: i32): string[] {
+  var src: string[] = rows(n);
+  var out: string[] = [];
+  if (form == 0) { out = by_index(src, out); }
+  if (form == 1) { out = by_local(src, out); }
+  if (form == 2) { out = by_for(src, out); }
+  if (form == 3) { out = by_value_append(src, out); }
+  if (form == 4) { out = by_literal(src, out); }
+  if (form == 5) { out = by_field(src, out); }
+  return out;
+}
+
+function churn(seed: i32): i32 {
+  var junk: string[] = [];
+  var j: i32 = 0;
+  while (j < 64) { junk = junk.append("junk" + (seed * 64 + j).to_string() + "|xxxxxxxxxxxxxxxx"); j = j + 1; }
+  return junk.len() - 64;
+}
+
+function intact(shared: string[], n: i32): boolean {
+  var i: i32 = 0;
+  while (i < n) {
+    if (shared[i] != "ROW:" + i.to_string() + "|payload" + (i * 7).to_string()) { return false; }
+    i = i + 1;
+  }
+  return true;
+}
+
+function main(): i32 {
+  var code: i32 = 0;
+  var bit: i32 = 1;
+  var form: i32 = 0;
+  while (form < 6) {
+    var shared: string[] = share(16, form);
+    var ok: boolean = true;
+    var r: i32 = 0;
+    while (r < 8) {
+      r = r + 1 + churn(r);
+      if (!intact(shared, 16)) { ok = false; }
+    }
+    if (ok) { code = code + bit; }
+    bit = bit * 2;
+    form = form + 1;
+  }
+  return code;
+}
