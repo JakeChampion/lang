@@ -565,6 +565,19 @@ function heap_align8(n: i32): i32 { return ((n + 7) / 8) * 8; }
 pub function heap_base_for_strs(sv: string[], cv: string[]): i32 {
     return heap_align8(large_fl_base_for_strs(sv, cv) + large_fl_cells() * 4);
 }
+// memory_min_pages sizes the declared linear memory to cover everything laid
+// out BELOW the heap: the data segments (string literals, `-embed` assets,
+// static aggregates) and then the two freelist arrays. Data is written at
+// instantiation and the freelists are written by __fern_free, and neither
+// grows memory — only __fern_alloc does, off $heap — so a minimum that does
+// not reach $heap traps before a single instruction of the program runs.
+//
+// The floor of 16 keeps every module that already fit byte-identical.
+pub function memory_min_pages(sv: string[], cv: string[]): i32 {
+    var need: i32 = (heap_base_for_strs(sv, cv) + 65535) / 65536;
+    if (need < 16) { return 16; }
+    return need;
+}
 pub function fl_base_for(cache: irlower.LowerResult[]): i32 {
     return fl_base_for_strs(str_values(cache), const_agg_values(cache));
 }
@@ -8480,11 +8493,15 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // without importing it fails at load with `unknown func`. This is half of
     // what the AST emitter did and the IR path did not.
     parts = parts.append(extern_imports(mod, xslot_ir()));
-    parts = parts.append("  (memory (export \"memory\") 16)\n");
+    // The literal + constant regions decide how much memory has to exist
+    // before anything runs, so they are gathered ahead of the memory section
+    // rather than at their first use below.
+    var sv: string[] = unit_strs(units);
+    var cv: string[] = unit_caggs(units);
+    parts = parts.append("  (memory (export \"memory\") " + util.i32_to_string(memory_min_pages(sv, cv)) + ")\n");
     // String literals -> data-section blocks `[len:i32 LE][bytes]`. Emitted
     // caller-side (wasm owns le32_escape/wat_escape); wasm_ir supplies the
     // distinct values + their offsets so the data + const_str ptrs agree.
-    var sv: string[] = unit_strs(units);
     // $__str_base: the base of this unit's string-literal region. const_str
     // emits `global.get $__str_base` + a RELATIVE offset rather than baking the
     // absolute one, so a unit's emitted code no longer depends on where its
@@ -8530,7 +8547,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // Static aggregate constants (#6149), the region above the string literals.
     // $__cagg_base<ns> is the sibling of $__str_base<ns>: one base per unit at
     // that unit's first block, with the unit's code emitting relative offsets.
-    var cv: string[] = unit_caggs(units);
     if (cv.len() > 0) {
         var kbi: i32 = 0;
         var kbstart: i32 = 0;
