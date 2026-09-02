@@ -43,6 +43,55 @@ var blocks = []block{
 		end:      "// END GENERATED FIXED-OP TABLE",
 		generate: genFixedTable,
 	},
+	{
+		begin:    "// BEGIN GENERATED GPR GROUP TABLES (cmd/x86tblgen) — do not edit by hand.",
+		end:      "// END GENERATED GPR GROUP TABLES",
+		generate: genGPRTables,
+	},
+}
+
+// genGPRTables renders the ModRM.reg-extension families — the base
+// mnemonic to /digit lookups the suffixed dispatch consults — and the
+// lock-prefix set derived from them.
+func genGPRTables() string {
+	var b strings.Builder
+	group := func(fn, doc string, g x86tbl.Group) {
+		b.WriteString(doc)
+		fmt.Fprintf(&b, "function %s(mnem: string): i32 {\n", fn)
+		for _, op := range g.Ops {
+			terms := make([]string, 0, len(op.Spellings))
+			for _, sp := range op.Spellings {
+				terms = append(terms, fmt.Sprintf("mnem == %q", sp))
+			}
+			fmt.Fprintf(&b, "    if (%s) { return %d; }\n", strings.Join(terms, " || "), op.Ext)
+		}
+		b.WriteString("    return 0 - 1;\n}\n\n")
+	}
+	group("x86_gas_alu_ext", `// x86_gas_alu_ext maps an ALU base mnemonic to its group-1 /digit; the
+// family's MR opcode row is ext*8 (add 00, or 08, adc 10, sbb 18, and 20,
+// sub 28, xor 30, cmp 38).
+`, x86tbl.ALU)
+	group("x86_gas_unary_ext", `// x86_gas_unary_ext maps an F6/F7-group base mnemonic to its /digit.
+`, x86tbl.Unary)
+	group("x86_gas_incdec_ext", `// x86_gas_incdec_ext maps inc/dec to their FE/FF-group /digit.
+`, x86tbl.IncDec)
+	group("x86_gas_shift_ext", `// x86_gas_shift_ext maps a shift/rotate base mnemonic to its C0..D3-group
+// /digit. sal is gas's alias for shl and takes shl's /4.
+`, x86tbl.Shift)
+	group("x86_gas_bt_idx", `// x86_gas_bt_idx maps the bit-test family to its index: the register-form
+// opcode is 0xA3 + idx*8 and the immediate-form /digit is 4 + idx.
+`, x86tbl.BitTest)
+	b.WriteString(`// x86_gas_lockable: the base mnemonics the F0 lock prefix may precede —
+// anything else is #UD at runtime, so it is refused at assembly.
+function x86_gas_lockable(mnem: string): boolean {
+`)
+	terms := make([]string, 0, 20)
+	for _, sp := range x86tbl.LockableSpellings() {
+		terms = append(terms, fmt.Sprintf("mnem == %q", sp))
+	}
+	// One condition per line, so the generated source diffs line by line.
+	fmt.Fprintf(&b, "    return %s;\n}\n", strings.Join(terms, "\n        || "))
+	return b.String()
 }
 
 // genFixedTable renders the no-operand vocabulary: the byte lookup the bare

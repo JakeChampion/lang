@@ -563,6 +563,7 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 		"rcl":       "rcl rax, 3",
 		"rcr":       "rcr rax, 3",
 		"shl":       "shl rax, 3",
+		"sal":       "sal rax, 3",
 		"shr":       "shr rax, cl",
 		"sar":       "sar rax, 63",
 		"shld":      "shld rsi, rdi, cl",

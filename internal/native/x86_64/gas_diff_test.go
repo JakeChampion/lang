@@ -67,7 +67,8 @@ func TestAssembleAgainstGNUAs(t *testing.T) {
 			"inc ax\nneg ax\nshl ax, 3\nmovzx ax, cl\nimul ax, cx, 20\nxchg cx, dx\n",
 		"shifts": "" +
 			"shl rax, 3\nshr r9, 1\nsar rcx, 63\nshl rdx, cl\nshr rdi, cl\nsar rsi, cl\n" +
-			"shr edi, 5\nshl eax, 1\nshl cl, 3\nshr dl, 1\nsar ah, 2\nshl bl, cl\n",
+			"shr edi, 5\nshl eax, 1\nshl cl, 3\nshr dl, 1\nsar ah, 2\nshl bl, cl\n" +
+			"sal rax, 3\nsal ecx, 1\nsal dl, cl\nsal qword ptr [rbx], 2\n",
 		"shld": "" +
 			"shld rsi, rdi, cl\nshld r11, rax, cl\nshld r11, r12, 7\nshld rdi, rsi, 17\n",
 		"bt": "" +
