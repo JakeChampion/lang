@@ -628,13 +628,13 @@ cross-block analysis to.
 - **Loop rotation** (tier C): the back edge is still an unconditional `jmp`
   rather than the conditional branch, and the dead `.LloopEnd` label is still
   emitted. This one lives in `internal/ir`'s `while` shape, not in a backend.
-- **Spill quality on the SSA path**, still the largest single item anywhere in
-  this document: 869,159 of the 1,655,366 instructions it emits for
-  `checker_run.fern` are frame-relative loads and stores — **52.5%** — because a
-  spilled value is reloaded at every use and the hole-free intervals over-spill.
-  It wants live-range splitting. Note `scripts/codegen-census` does *not* show
-  this: it counts a frame reload as useful work by design, so its `stack=0` for
-  this backend is a deliberate floor and not a contradiction.
+- **Frame traffic on the SSA path**, still the largest single item anywhere in
+  this document: 869,756 of the 1,657,173 instructions it emits for
+  `checker_run.fern` are frame-relative loads and stores — **52.5%**. Note
+  `scripts/codegen-census` does *not* show this: it counts a frame reload as
+  useful work by design, so its `stack=0` for this backend is a deliberate floor
+  and not a contradiction. **What this is NOT is a spill-selection problem** —
+  see §6.4, which is the measurement, not a guess.
 
 ### 6.3 A gate, so this cannot regress silently
 
@@ -645,6 +645,62 @@ lane checks bytes, which move for unrelated reasons. `scripts/codegen-census`
 is the natural thing to pin in CI once tier A starts landing — a ratchet on the
 overhead percentage, per backend, in the shape `internal/lint/repo_gate_test.go`
 already uses for complexity.
+
+### 6.4 Spill selection is not the lever — measured, and the fix rejected
+
+This document previously named spill quality the largest item and prescribed
+live-range splitting, on the reasoning that hole-free intervals over-spill and a
+spilled value reloads at every use. Both halves of that are true of the code —
+`Interval` is a single contiguous `{Start,End}` (`internal/ssa/regalloc.go`)
+extended across whole blocks for anything in `LiveIn`/`LiveOut`, and
+`allocateLinear` spills the furthest-ending interval and never re-registers it —
+and the conclusion drawn from them is still wrong.
+
+Instrumenting the allocator over `checker_run.fern`'s 1,049 functions:
+
+| | |
+|---|---:|
+| values | 389,100 |
+| given a register | 385,682 |
+| spilled | 3,418 (**0.9%**) |
+| operand reads of a spilled value | 196,049 |
+
+So the allocator does not over-spill: it spills one value in a hundred. But
+those values are read **~56× more often than the average value**, because
+"furthest-ending" selects exactly the long-lived, heavily-read ones — loop and
+parser state — and each of their ~57 reads then becomes a reload.
+
+That diagnosis is sound and the obvious fix still loses. Replacing the victim
+rule with a spill weight (reads per unit of register occupancy, cross-multiplied
+so the ordering stays exact, falling through to furthest-end when no use counts
+are supplied) does what it says:
+
+| | furthest-end | use-density |
+|---|---:|---:|
+| reloads | 196,049 | 26,926 (**−86.3%**) |
+| values spilled | 3,418 | 4,535 (+32.7%) |
+| **total emitted** | **1,657,173** | **1,902,179 (+14.8%)** |
+
+Reloads fall by six sevenths and the output gets *bigger*. The frame-relative
+share stays at 52.5% in both, unmoved to the digit — which is the tell: the
+traffic is structural to the emitter, not a function of how well the allocator
+chooses. Splitting the 869,756 by position:
+
+- **375,250 (43.1%)** sit contiguous with a `bl` — the caller-saved
+  save/restore around each of 173,693 calls, plus outgoing stack arguments, at
+  2.2 frame ops per call.
+- **494,506 (56.9%)** are elsewhere, and spill reloads can account for at most
+  196,049 of the total either way.
+
+The work this points at is therefore call-boundary traffic, not interval shape:
+getting call-crossing values into callee-saved registers so they need no save at
+all (`arm64ssa` allocates 22 registers of which only 10 are callee-saved, so an
+eleventh call-crossing value is saved and restored at every call it spans), and
+the out-arg path. Live-range splitting stays worth having for its own sake and
+is not the headline.
+
+The rejected patch is not in the tree; this section is what it bought.
+
 
 ---
 
@@ -670,9 +726,11 @@ Stated plainly so the gaps are not mistaken for clean bills of health.
   How much of a realistic program's instructions are retain/release traffic,
   how many of those are necessary, and how Fern compares to Koka, Lean 4, Roc
   and Swift, is its own audit. `docs/rc-log/` holds the live state.
-- **Register pressure and spill quality** on the SSA path under real
-  allocation-heavy code — the 99 367 `ldp` / 92 997 `stp` on `checker_run` are
-  a strong hint that spilling, not just coalescing, needs looking at.
+- ~~**Register pressure and spill quality** on the SSA path~~ — now measured,
+  in §6.4, and the hint in this bullet was wrong. The `ldp`/`stp` pairs it
+  pointed at (80 639 / 74 365 today, down from 99 367 / 92 997 before #7991
+  narrowed the per-call live sets) are call-boundary save/restore, not spill
+  traffic: only 0.9% of values spill at all.
 - **Cache and branch behaviour.** Every dynamic number here is retired
   instructions, which is deterministic and reproducible but blind to memory
   hierarchy. A 20% instruction reduction is not automatically a 20% speedup —
