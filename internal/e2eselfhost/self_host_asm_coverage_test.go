@@ -430,7 +430,7 @@ var x86KnownHelpers = []string{
 	"x86_gas_fixed_op", "x86_gas_string_op",
 	"x86_gas_sse_fp_op", "x86_gas_sse_int_op", "x86_gas_sse38_op",
 	"x86_gas_vshift_op", "x86_gas_imm3a_op", "x86_gas_shuf_op",
-	"x86_gas_cvt2si", "x86_gas_movsx_op",
+	"x86_gas_cvt2si", "x86_gas_extend_op",
 }
 
 // TestSelfHostAsmCoverageX86_64 pins the mnemonic set the self-host x86-64
@@ -516,6 +516,8 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 		"pushq":     "push rbp",
 		"popq":      "pop rbp",
 		"leaq":      "lea rax, [rbp-8]",
+		"leal":      "lea eax, [rbp-8]",
+		"leaw":      "lea ax, [rbp-8]",
 		"movq":      "mov rax, rcx",
 		"movabsq":   "movabs rax, 4294967296",
 		"movabs":    "movabs rax, 4294967296",
@@ -524,6 +526,8 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 		"movzbq":    "movzx rax, byte ptr [rdi]",
 		"movzbl":    "movzx eax, byte ptr [rdi]",
 		"movzwq":    "movzx rax, word ptr [rdi]",
+		"movzwl":    "movzx eax, word ptr [rdi]",
+		"movzbw":    "movzx ax, byte ptr [rdi]",
 		"movslq":    "movsxd rax, ecx",
 		"movsxd":    "movsxd rax, ecx",
 		"movd":      "movd xmm0, eax",
@@ -592,6 +596,7 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 		"movsbl":     "movsx ecx, al",
 		"movsbq":     "movsx rcx, al",
 		"movswl":     "movsx ecx, ax",
+		"movsbw":     "movsx cx, al",
 		"movswq":     "movsx rcx, ax",
 		"pushfq":     "pushfq",
 		"pushf":      "pushfq",
