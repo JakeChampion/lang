@@ -2775,8 +2775,11 @@ function x86_gas_bt_idx(mnem: string): i32 {
     return 0 - 1;
 }
 
+// BEGIN GENERATED CONDITION TABLE (cmd/x86tblgen) — do not edit by hand.
 // x86_gas_cc_code maps a condition-suffix spelling to its 4-bit condition
-// code (shared by jcc 0F 80+cc, setcc 0F 90+cc, cmovcc 0F 40+cc).
+// code, shared by jcc 0F 80+cc, setcc 0F 90+cc and cmovcc 0F 40+cc. Returns
+// -1 for a spelling that is not a condition, which is what lets the three
+// families dispatch by matching their prefix and looking the rest up here.
 function x86_gas_cc_code(cond: string): i32 {
     if (cond == "o") { return 0; }
     if (cond == "no") { return 1; }
@@ -2796,6 +2799,7 @@ function x86_gas_cc_code(cond: string): i32 {
     if (cond == "g" || cond == "nle") { return 15; }
     return 0 - 1;
 }
+// END GENERATED CONDITION TABLE
 
 // x86_gas_lockable: the base mnemonics the F0 lock prefix may precede —
 // anything else is #UD at runtime, so it is refused at assembly.

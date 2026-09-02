@@ -2,6 +2,7 @@ package x86_64
 
 import (
 	"fmt"
+	"github.com/jakechampion/lang/internal/native/x86tbl"
 	"strconv"
 	"strings"
 )
@@ -263,14 +264,11 @@ func splitOperands(rest string) []string {
 // condCodes maps a condition suffix ("e", "nz", "ge", …) to its 4-bit
 // condition code, shared by jcc (0F 80+cc), setcc (0F 90+cc) and cmovcc
 // (0F 40+cc).
-var condCodes = map[string]byte{
-	"o": 0, "no": 1, "b": 2, "c": 2, "nae": 2,
-	"ae": 3, "nb": 3, "nc": 3, "e": 4, "z": 4,
-	"ne": 5, "nz": 5, "be": 6, "na": 6, "a": 7, "nbe": 7,
-	"s": 8, "ns": 9, "p": 10, "np": 11,
-	"l": 12, "nge": 12, "ge": 13, "nl": 13,
-	"le": 14, "ng": 14, "g": 15, "nle": 15,
-}
+// condCodes is the spelling-to-code map, from the shared table the self-host
+// assembler is generated from (#7903). Keeping the two in one place is what
+// stops a spelling existing on one side and not the other, which is how 23 of
+// them went missing from the self-host (#8071).
+var condCodes = x86tbl.CondCodes()
 
 func ccCode(mnem, prefix string) (byte, bool) {
 	if !strings.HasPrefix(mnem, prefix) {
