@@ -3518,12 +3518,30 @@ function arm64_gas_bad_regext(mnem: string, ops: string[]): string {
     return "";
 }
 // Access size (log2) of a plain load/store; ldr/str follow the data
-// register's width.
+// register's width. The sign-extending loads take their size from the
+// mnemonic, NOT the destination: `ldrsb x1, ...` still reads one byte.
 function arm64_gas_ldst_size(mnem: string, rt: string): i32 {
-    if (mnem == "ldrb" || mnem == "strb") { return 0; }
-    if (mnem == "ldrh" || mnem == "strh") { return 1; }
+    if (mnem == "ldrb" || mnem == "strb" || mnem == "ldrsb") { return 0; }
+    if (mnem == "ldrh" || mnem == "strh" || mnem == "ldrsh") { return 1; }
+    if (mnem == "ldrsw") { return 2; }
     if (arm64_gas_is_w(rt)) { return 2; }
     return 3;
+}
+
+// arm64_ldst_scalable reports whether an immediate offset fits the UNSIGNED
+// SCALED imm12 form. When it does not, the signed unscaled imm9 (the ldur
+// family) is the only single-instruction encoding, and gas selects between
+// them from the offset alone: `ldrb w1, [x2, #-1]` assembles as LDURB, and
+// `ldrh w1, [x2, #3]` as LDURH because 3 is not a multiple of 2.
+//
+// Both spellings are the same source text and both encode to a valid
+// instruction, so picking the wrong one does not fail — it addresses a
+// different byte. Scaling a negative offset lands it 4096 bytes away.
+function arm64_ldst_scalable(off: i32, size: i32): boolean {
+    if (off < 0) { return false; }
+    var scale: i32 = arm64_gas_pow2(size);
+    if ((off & (scale - 1)) != 0) { return false; }
+    return (off / scale) <= 4095;
 }
 
 // The scalar FP families refuse a precision mix or a non-FP register —
@@ -4272,6 +4290,15 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         // (arm64_gas_regoff_unsupported refuses its register form).
         if (bm.off_reg >= 0 && mnem != "ldrsw" && mnem != "ldrsb" && mnem != "ldrsh") {
             return arm64_gas_emit_ldst_regext(a, mnem == "ldrb" || mnem == "ldrh", arm64_gas_ldst_size(mnem, ops[0]), arm64_gas_reg(ops[0]), bm);
+        }
+        // An offset the scaled imm12 cannot carry takes the unscaled imm9
+        // form, exactly as gas chooses it.
+        var lsz: i32 = arm64_gas_ldst_size(mnem, ops[0]);
+        if (!arm64_ldst_scalable(bm.off, lsz)) {
+            if (mnem == "ldrsb" || mnem == "ldrsh" || mnem == "ldrsw") {
+                return Arm64Asm { ...a, code: arm64_ldst_sun(a.code, lsz, !arm64_gas_is_w(ops[0]), arm64_gas_reg(ops[0]), bm.base, bm.off) };
+            }
+            return Arm64Asm { ...a, code: arm64_ldst_unscaled(a.code, lsz, mnem == "ldrb" || mnem == "ldrh", arm64_gas_reg(ops[0]), bm.base, bm.off) };
         }
         if (mnem == "ldrsb") { return Arm64Asm { ...a, code: arm64_ldrsb(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off, arm64_gas_is_w(ops[0])) }; }
         if (mnem == "ldrsh") { return Arm64Asm { ...a, code: arm64_ldrsh(a.code, arm64_gas_reg(ops[0]), bm.base, bm.off, arm64_gas_is_w(ops[0])) }; }
