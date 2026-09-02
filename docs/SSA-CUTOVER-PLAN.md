@@ -155,17 +155,64 @@ Two concrete blockers, and only two:
 
    | | |
    |---|---|
-   | 247 | a runtime helper with no entry in `runtimeHelperEmitters` — `__fern_drop_arr_str` alone is 195, then `__arr_idx_8` (18), `__alloc_u8` (8), `__ptr_width` (7), `__str_idx` and `__fern_arr_push_grow` (4 each), a nine-name tail |
+   | 247 | one or more runtime helpers with no entry in `runtimeHelperEmitters` — 84 distinct symbols, a median of 13 per program; see the unlock curve below rather than reading a per-name count as a work item |
    | 34 | float reinterprets (`reinterpret_f64_to_i64` and siblings) |
    | 15 | library files with no `main` — not a backend refusal |
    | 7 | more than 6 params — no stack-argument ABI |
    | 5 | E066 / checker errors — not a backend refusal either |
 
-   Each of those labels is a `call` the emitter writes with nothing behind it,
-   so it is caught by the assembler rather than by a diagnostic naming the
-   backend. arm64ssa has `checkNoDanglingCalls` for exactly this — it fails at
-   emit time, naming the helper, so a coverage gap reads as one. x86-64 has no
-   equivalent, which is why the 242 arrive as `undefined label`.
+   Each of those labels is a `call` the emitter writes with nothing behind it.
+   `checkNoDanglingCalls` (ported from arm64ssa 2026-09-02) refuses them at emit
+   time, naming every missing helper at once, so a coverage gap reads as one
+   instead of arriving from the assembler as `undefined label`.
+
+   **The helper gap is 84 symbols, not a handful — and it does not unlock
+   incrementally.** Reporting every missing name per program rather than the
+   first makes the shape visible, measured 2026-09-02 over the 247 programs
+   blocked on helpers:
+
+   - `x86_64ssa` has **13** helper emitters; `arm64ssa` has **~120**.
+   - The median blocked program is missing **13** helpers at once, not one.
+     Only 22 programs are missing fewer than 11; 48 are missing exactly 11.
+   - So the per-program FIRST-error histogram above is not a work order.
+     `__fern_drop_arr_str` heads it at 195 programs and implementing it alone
+     unlocks **zero**, because every one of those programs is missing a dozen
+     others too. Sizing this work by which name appears most is the same
+     co-occurrence error that has bitten this area before: size it by removal.
+
+   The unlock curve is a step function with two cliffs and a long flat tail:
+
+   | helpers implemented (most-needed first) | programs unlocked |
+   |---|---|
+   | 10 | 7 |
+   | 11 | 54 |
+   | 14 | 91 |
+   | 16 | 140 |
+   | 19 | 152 |
+   | 36 | 163 |
+   | 50 | 210 |
+   | 84 | 247 (all) |
+
+   Nothing moves until the eleventh, and 19 helpers gets 62% of the way. The
+   flat stretch from 19 to 36 is the `Map` method family and the `Reader`/host
+   builtins, which arrive as a block or not at all.
+
+   **`examples/bench` is the cheap corner**, and the one with checked-in
+   baselines (`.github/perf-baseline-selfhost.txt`). Nine of its programs need
+   only one or two helpers each — `__fern_arr_push_grow`, `__str_idx`,
+   `__str_slice`, `__fern_memchr`, `__fern_ascii_run`, `__fern_count_byte`,
+   `__fern_arr_cow_inplace` — and eleven of twenty-two fall to a set of eleven.
+
+   **What porting one costs.** The kernels are not translations of the arm64
+   bodies: the native x86-64 backend already has SSE2 versions of every one
+   (`internal/codegen/x86_64/x86_64.go`, `emitMemchrRuntime` and siblings), but
+   it boxes strings as two words with SSO where this backend uses one word with
+   the length at `[ptr-4]`, and it allocates against a different heap. So each
+   port is the native kernel with its argument unboxing and allocation replaced
+   — mechanical, but hand-written assembly, and this path still has **no corpus
+   differential**. arm64's first differential run found four wrong answers and
+   56 SIGSEGVs; #8044 found a wrong-answer bug in the rc helpers from compiling
+   a single enum program. The net should exist before the helpers land on it.
 
    `dyn` is separately excluded (`ir.DynSupported()` is not passed): the ops are
    implemented but `EmitAsmModule` takes no vtable declarations, so the tables
