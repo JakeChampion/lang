@@ -464,22 +464,44 @@ the annotate suites were all green on the reverted work; the two suites that
 caught it are the two with `FnptrArrayField` and `CloArrayFieldBind` in their
 names, and running them was not part of the plan until CI failed.
 
-The sidecar route stands recommended for whoever picks this up: additive, so no
-existing consumer sees a changed spelling, at the cost of the literal count.
+The sidecar route was then taken, and it is what landed — see below.
 
-**Still open for an ARRAY element:**
+### The ARRAY element: the sidecar route, taken
 
-```fern
-var fs: ((f64) => f64)[] = [scale];        fs[0](4.5)    // oracle 45
-```
+`var fs: ((f64) => f64)[] = [scale]; fs[0](4.5)` is the one shape whose declared
+spelling does not survive to a consumer. A tuple keeps its spelling, a field
+records its two sidecars; an array is coarsened whole to `"fn[]"`, and `fn_ret`
+alone names half a signature.
 
-This one does need a new sidecar. `((f64) => f64)[]` reaches the checker and
-irlower as the flat `"fn[]"` tag: the parenthesised grouping branch has the
-`TypeRef` in hand and now keeps the element's RESULT on `StmtVar.fn_ret`, but
-there is no field for its parameters. Giving `StmtVar` a `fn_param_types`
-sidecar is the direct route and is mechanical — 55 construction literals, plus
-the monomorphiser / lift / flatten rebuild sites, where a dropped copy silently
-costs precision rather than failing to compile.
+So `StmtVar` gained `fn_param_types` beside its `fn_ret` — the additive route,
+57 construction literals plus the monomorphiser / lift / flatten rebuild sites.
+`peek_fn_array_param_types` is `peek_fn_param_types` asked one grouping paren
+in, and `fn_param_types_for` keeps whichever of the two peeks the resulting tag
+makes meaningful, so a binding, a parameter and a struct field all record the
+spellings through the same lookahead.
+
+irlower rebuilds the ELEMENT spelling from the pair and keeps it on the slot as
+`LocalInfo.fnarr_elem` — the array member of the declared-spelling family
+`tuple_type` joined. `array_elem_fn_sig` reads it (or a struct field's own two
+sidecars) and hands it to `fn_sig_of_ref`, and `sig_arg_width_char` reads the
+argument widths back out of the same tag, so the closure-element arm and the
+fn-pointer-element arm each lower arguments and name their funcref from ONE
+string. A whole-array alias (`var xs = fs`, `var xs = r.hs`) inherits the
+spelling at the rebind, because otherwise `xs[0]` reaches the call with nothing
+to name.
+
+**The checker had the matching hole one level down**, and the field shape is
+what exposed it: `collect_struct_sigs` resolved a `"fn"` field to a `TypeFunc`
+but had no arm for `"fn[]"`, so `r.hs[0](4.5)` typed unknown, `expr_is_f64`
+answered false, and the `as i32` emitted an integer mask instead of a truncate —
+a silent wrong answer (0 against an oracle of 45) on the register backends,
+present before this work and independent of any signature. The array arm is the
+field sibling of `var_declared_type`'s, and both stay `t_func_opaque` on
+purpose: the parameter spellings exist to name a funcref, and checking arguments
+against them would start rejecting calls that type-check today.
+
+**Still open:** `mk()()`, where `parse_func_decl` computes the returned fn
+type's `fn_ret` and discards it — `parser.FuncDecl` has no field for it.
 
 The larger alternative remains what this file argues for: **stop coarsening.**
 #7961 made a fn-typed tuple ELEMENT keep its arrow spelling; doing the same for

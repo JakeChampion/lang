@@ -3874,10 +3874,11 @@ function var_declared_type(v: ast.StmtVar, s: Scope): Type {
   }
   // A "fn"-coarsened annotation records its RESULT in the fn_ret sidecar, and
   // the declared return is what types a call through the binding (#5986). The
-  // local sibling of fn_param_decl_type; a StmtVar carries no parameter
-  // spellings, so the fn type stays opaque and the call takes no argument
-  // check. Also for an ARRAY of them (`(() => f64)[]`, spelled "fn[]"), whose
-  // element is that same fn type.
+  // local sibling of fn_param_decl_type. Also for an ARRAY of them
+  // (`(() => f64)[]`, spelled "fn[]"), whose element is that same fn type.
+  // Opaque on purpose: the parameter spellings the binding records are there to
+  // name a funcref signature in irlower, and checking arguments against them
+  // here would reject calls that type-check today.
   if (v.fn_ret.len() > 0) {
     if (v.type_name == "fn") {
       return t_func_opaque(s.resolve_type(v.fn_ret));
@@ -3972,11 +3973,19 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
       // A fn-typed field ("fn"-coarsened spelling) resolves to a TypeFunc
       // from its fn_ret sidecar (#5986), so a closure-field call `h.f()`
       // types to the declared return instead of unknown (which also E038'd
-      // as "calling non-function value"). A StructFieldDecl carries no param
-      // spellings, hence t_func_opaque: the empty param list is unrecorded,
-      // not arity 0. type_assignable's fn arm is coarse for the same reason.
+      // as "calling non-function value"). An ARRAY of them ("fn[]") resolves
+      // to an array of that same fn type, so `r.hs[0](x)` types too — the
+      // field sibling of var_declared_type's array arm.
+      //
+      // t_func_opaque, not t_func: the parameter spellings the field records
+      // exist to name a funcref signature in irlower, and reading them here
+      // would start argument-checking calls that type-check today. The empty
+      // param list stays unrecorded, not arity 0; type_assignable's fn arm is
+      // coarse for the same reason.
       if (elem.type_name == "fn" && elem.fn_ret.len() > 0) {
         ftypes = ftypes.append(t_func_opaque(type_from_name_with_names_and_unions(elem.fn_ret, names, union_names)));
+      } else if (elem.type_name == "fn[]" && elem.fn_ret.len() > 0) {
+        ftypes = ftypes.append(t_array(t_func_opaque(type_from_name_with_names_and_unions(elem.fn_ret, names, union_names))));
       } else {
         ftypes = ftypes.append(type_from_name_with_names_and_unions(elem.type_name, names, union_names));
       }
@@ -14117,7 +14126,7 @@ function annotate_arm_scope(arm: ast.MatchArm, s: Scope): Scope {
 function annotate_stmt(st: ast.Stmt, s: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      return ast.StmtVar { name: v.name, type_name: v.type_name, init: annotate_expr(v.init, s), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret };
+      return ast.StmtVar { name: v.name, type_name: v.type_name, init: annotate_expr(v.init, s), line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: annotate_expr(r.value, s), line: r.line, col: r.col };

@@ -42,9 +42,14 @@ import (
 // list of tags: the element tags are the coarse "clo"/"fn" dispatch markers by
 // design, and a signature cannot be recovered from those.
 //
-// An ARRAY ELEMENT call with arguments still emits an arity-keyed funcref and
-// still fails to load on wasm, as does `mk()()`. Those residuals and their
-// causes are recorded in docs/TYPED-IR-REWRITE.md.
+// The fnarray_arg_* rows are the same half for an ARRAY ELEMENT. An array is
+// the one shape whose declared spelling does NOT survive — parse_type_name
+// coarsens `((f64) => f64)[]` to the flat "fn[]" tag — so the element signature
+// is rebuilt from the binding's own two sidecars and carried on the slot, and
+// travels with a whole-array alias rebind.
+//
+// `mk()()` still emits an arity-keyed funcref. That residual and its cause are
+// recorded in docs/TYPED-IR-REWRITE.md.
 var fnValueCallCases = []struct {
 	name string
 	src  string
@@ -222,6 +227,68 @@ function main(): i32 {
 function main(): i32 {
     var t: ((string) => i32, i32) = (slen, 1);
     return t.0("x") + 44;
+}`},
+
+	// A call through a fn-typed ARRAY ELEMENT carrying ARGUMENTS. The whole
+	// annotation coarsens to the flat "fn[]" tag, so — unlike the tuple, whose
+	// spelling survives — the element signature has to be rebuilt from the two
+	// sidecars the binding records (`fn_ret` and the new `fn_param_types`) and
+	// carried on the slot as its declared element spelling.
+	{"fnarray_arg_f64", `function scale(x: f64): f64 { return x * 10.0; }
+function main(): i32 {
+    var fs: ((f64) => f64)[] = [scale];
+    return fs[0](4.5) as i32;
+}`},
+	{"fnarray_arg_mixed", `function comb(a: i64, x: f64): f64 { return x * (a as f64); }
+function main(): i32 {
+    var fs: ((i64, f64) => f64)[] = [comb];
+    return fs[0](10i64, 4.5) as i32;
+}`},
+	{"fnarray_arg_i64_ret", `function id64(x: i64): i64 { return x; }
+function main(): i32 {
+    var fs: ((i64) => i64)[] = [id64];
+    return fs[0](45i64) as i32;
+}`},
+	{"fnarray_arg_f64_to_i32", `function pick(x: f64): i32 { return (x as i32) + 1; }
+function main(): i32 {
+    var fs: ((f64) => i32)[] = [pick];
+    return fs[0](44.5);
+}`},
+	// The all-i32 control: `$fn<N>` already names this signature, so the tag
+	// declines and the emitted bytes are the ones this shape had before.
+	{"fnarray_arg_i32", `function add5(x: i32): i32 { return x + 5; }
+function main(): i32 {
+    var fs: ((i32) => i32)[] = [add5];
+    return fs[0](40);
+}`},
+	{"fnarray_arg_string", `function slen(s: string): i32 { return s.len(); }
+function main(): i32 {
+    var fs: ((string) => i32)[] = [slen];
+    return fs[0]("x") + 44;
+}`},
+	// The whole-array ALIAS: the element spelling has to travel with the
+	// rebind, or `xs[0]` reaches the call with nothing to name its funcref.
+	{"fnarray_arg_alias", `function scale(x: f64): f64 { return x * 10.0; }
+function main(): i32 {
+    var fs: ((f64) => f64)[] = [scale];
+    var xs = fs;
+    return xs[0](4.5) as i32;
+}`},
+	// A CLOSURE element (capturing lambda), which dispatches env-first: the
+	// same declared signature must drive that arm's argument widths and its
+	// funcref tag, with the leading 'w' for the env box.
+	{"fnarray_arg_closure_f64", `function main(): i32 {
+    var k: f64 = 10.0;
+    var fs: ((f64) => f64)[] = [(x: f64) => x * k];
+    return fs[0](4.5) as i32;
+}`},
+	// A fn-pointer ARRAY struct FIELD with arguments — the field's own two
+	// sidecars, which the parser now records for an array-of-fn field too.
+	{"fnarrayfield_arg_f64", `struct Reg { hs: ((f64) => f64)[] }
+function scale(x: f64): f64 { return x * 10.0; }
+function main(): i32 {
+    var r: Reg = Reg { hs: [scale] };
+    return r.hs[0](4.5) as i32;
 }`},
 
 	// A GENERIC struct's fn field. Annotation runs on the erased form, so a

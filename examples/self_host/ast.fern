@@ -206,7 +206,15 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool
 // return is simply lost — which is what leaves cap_param_for with nothing exact
 // to rebuild a fn-typed capture's signature from (#6256). "" on every other
 // binding.
-pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, fn_ret: string }
+// fn_param_types: for a binding annotated with a fn type or an ARRAY of one
+// (`var f: (i64) => boolean`, `var fs: ((f64) => f64)[]`), the comma-separated
+// SPELLINGS of that fn's own parameter types — the StmtVar-level sibling of
+// ParamDecl.fn_param_types, recorded for the same reason. parse_type_name
+// coarsens both annotations to the flat "fn" / "fn[]" tags, and `fn_ret` alone
+// only names half the signature; wasm needs the whole of it, because a funcref
+// type is structural and dispatching a `(f64) => f64` element through an
+// all-i32 `$fn1` is a runtime `indirect call type mismatch`.
+pub struct StmtVar { name: string, type_name: string, init: Expr, line: i32, col: i32, is_str: boolean, fn_ret: string, fn_param_types: string }
 
 pub struct StmtReturn { value: Expr, line: i32, col: i32 }
 
