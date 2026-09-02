@@ -76,10 +76,11 @@ func buildPlaygroundDriver(t *testing.T) string {
 }
 
 // runPlayground pipes `src` into the driver with the working directory set to
-// `cwd`, and returns stdout, stderr and the exit code.
-func runPlayground(t *testing.T, bin, cwd, src string) (string, string, int) {
+// `cwd`, and returns stdout, stderr and the exit code. `args` are the driver's
+// own argv, which is how its mode is selected.
+func runPlayground(t *testing.T, bin, cwd, src string, args ...string) (string, string, int) {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin, args...)
 	cmd.Dir = cwd
 	cmd.Stdin = strings.NewReader(src)
 	var out, errb strings.Builder
@@ -98,6 +99,48 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 	t.Run("resolves-stdlib-from-the-overlay", func(t *testing.T) { playgroundResolves(t, bin) })
 	t.Run("does-not-reach-the-disk", func(t *testing.T) { playgroundIgnoresDecoy(t, bin) })
 	t.Run("reports-an-unresolvable-import", func(t *testing.T) { playgroundReportsMissing(t, bin) })
+	t.Run("check-accepts-a-valid-program", func(t *testing.T) { playgroundCheckAccepts(t, bin) })
+	t.Run("check-names-a-type-error", func(t *testing.T) { playgroundCheckRejects(t, bin) })
+}
+
+// `-check` reports diagnostics and emits nothing. A playground wants the errors
+// as the user types, long before anything is worth compiling.
+//
+// The valid program is the same one the compile path uses, imports and all:
+// the verdict has to survive a program that reaches the stdlib, because the
+// checker port is partial (#4346) and ModuleTypes.all_well_typed goes false for
+// a program it merely cannot model. Checking on that flag would fail this case
+// with nothing printed, so the driver's verdict is the diagnostics — and this
+// is the test that pins it.
+func playgroundCheckAccepts(t *testing.T, bin string) {
+	out, stderr, code := runPlayground(t, bin, t.TempDir(), playgroundProgram, "-check")
+	if code != 0 {
+		t.Fatalf("-check rejected a valid program: exit %d\n%s", code, stderr)
+	}
+	if out != "" {
+		t.Errorf("-check wrote %d bytes to stdout; it must emit nothing:\n%s", len(out), out)
+	}
+	if stderr != "" {
+		t.Errorf("-check reported a diagnostic on a valid program:\n%s", stderr)
+	}
+}
+
+func playgroundCheckRejects(t *testing.T, bin string) {
+	out, stderr, code := runPlayground(t, bin, t.TempDir(),
+		"function main(): i32 { return nosuchthing; }\n", "-check")
+	if code == 0 {
+		t.Fatal("-check accepted a program with an undefined name")
+	}
+	if out != "" {
+		t.Errorf("-check wrote %d bytes to stdout on a failing program:\n%s", len(out), out)
+	}
+	// The position and the code, not just the name: a diagnostic an editor
+	// cannot place is one it cannot show against a line.
+	for _, want := range []string{"1:31", "E001", "nosuchthing"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the diagnostic does not carry %q:\n%s", want, stderr)
+		}
+	}
 }
 
 func playgroundResolves(t *testing.T, bin string) {
@@ -212,6 +255,33 @@ func TestSelfHostPlaygroundHostedInWasm(t *testing.T) {
 	}
 	if wat != nativeWat {
 		t.Errorf("wasm-hosted and natively-hosted output differ: %d vs %d bytes", len(wat), len(nativeWat))
+	}
+
+	// `-check` through argv, hosted in wasm. This is the mode that could not
+	// ship until #7969: `args()` handed Fern an array with no rc header, so
+	// every driver that read argv printed an internal error on a run that was
+	// otherwise correct. Reading argv here is the point of the case — a mode
+	// selected any other way would not exercise it.
+	chk := exec.Command("wasmtime", "run", "--invoke", "main", mod, "-check")
+	chk.Dir = t.TempDir()
+	chk.Stdin = strings.NewReader("function main(): i32 { return nosuchthing; }\n")
+	var chkOut, chkErr strings.Builder
+	chk.Stdout = &chkOut
+	chk.Stderr = &chkErr
+	if err := chk.Run(); err != nil {
+		t.Fatalf("wasm-hosted -check failed: %v\n%s", err, chkErr.String())
+	}
+	// main's return value, printed by --invoke: 1, the failing verdict.
+	if got := strings.TrimSpace(chkOut.String()); got != "1" {
+		t.Errorf("wasm-hosted -check returned %q, want \"1\" on a program with an undefined name", got)
+	}
+	if !strings.Contains(chkErr.String(), "E001") {
+		t.Errorf("wasm-hosted -check did not name the error:\n%s", chkErr.String())
+	}
+	// wasmtime's own --invoke notice is the only thing that belongs on stderr
+	// besides the diagnostic; an rc complaint is the #7969 regression.
+	if strings.Contains(chkErr.String(), "over-release") {
+		t.Errorf("wasm-hosted -check reported an rc over-release (#7969):\n%s", chkErr.String())
 	}
 }
 

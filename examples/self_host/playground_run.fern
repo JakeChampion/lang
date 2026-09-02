@@ -108,7 +108,57 @@ function unresolved_imports(entry: parser.Module, loaded: flatten.LoadedModule[]
     return missing;
 }
 
+// CHECK_FLAG selects the diagnostics-only mode. A playground wants the errors
+// as the user types, long before anything is worth compiling, and running the
+// whole emit path to get them means paying for a module nobody will run.
+const CHECK_FLAG: string = "-check";
+
+// report_diags prints `line:col: error[E0XX]: message` for each diagnostic and
+// reports whether any were printed. An empty code renders without the
+// `error[…]` segment — some diagnostics are uncoded, and parity is on the text
+// native actually prints — and a zero line drops the position prefix, which the
+// checker still leaves on some paths.
+function report_diags(diags: util.Diag[]): boolean {
+    var out: string = "";
+    for d in diags {
+        var tag: string = "";
+        if (d.code.len() > 0) { tag = "error[" + d.code + "]: "; }
+        if (d.line > 0) {
+            out = out + util.i32_to_string(d.line) + ":" + util.i32_to_string(d.col) + ": " + tag + d.message + "\n";
+        } else {
+            out = out + tag + d.message + "\n";
+        }
+    }
+    if (out.len() == 0) { return false; }
+    eprint(out);
+    return true;
+}
+
+// check reports type errors and emits nothing. The nameless-declaration gate
+// runs first and alone: the permissive parser leaves an empty name where a
+// keyword was written and then parses the body as top-level statements, so the
+// checker downstream of it reports a cascade that all points away from the
+// cause.
+//
+// The verdict is the DIAGNOSTICS, not ModuleTypes.all_well_typed. While the
+// checker port is partial (#4346) that flag goes false for a program it merely
+// cannot model — measured on `import "std/string"; function main(): i32 {
+// return 12; }`, which yields all_well_typed = false and an empty diag list.
+// Gating on it would fail almost every program that touches the stdlib, with
+// nothing printed to act on. Reporting what the checker can actually name means
+// this under-reports where the port is incomplete rather than rejecting valid
+// programs, which is the right side to err on for an editor-facing check.
+function check(merged: parser.Module): i32 {
+    if (report_diags(asmcore.check_decl_names(merged))) { return 1; }
+    if (report_diags(checker.check_module(merged).diags)) { return 1; }
+    return 0;
+}
+
 function run(): i32 {
+    var mode_check: boolean = false;
+    for a in args() {
+        if (a == CHECK_FLAG) { mode_check = true; }
+    }
     var src: string = io.read_all_stdin();
     var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
 
@@ -127,6 +177,8 @@ function run(): i32 {
     var merged: parser.Module = flatten.bundle(entry, loaded);
     merged = parser.fill_default_args_module(merged);
     merged = parser.resolve_variant_fields_module(merged);
+
+    if (mode_check) { return check(merged); }
 
     // The same gates the CLI and wasm_ir_run put ahead of emit: each rejects a
     // shape the emitter would otherwise miscompile rather than refuse.
