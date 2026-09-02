@@ -78,6 +78,19 @@ function churn(m: i32): i32 { var s: i32[] = [1, 2, 3]; var acc: i32 = 0; var i:
 function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"arr-return-transfer-mixed-paths", 0)
 
+	// A MATCH-ARM BINDING of an array payload returned bare: the binding
+	// borrows the enum box's buffer (never swept), so the escaping return
+	// takes the same transfer retain as the borrowed param above. Pre-fix
+	// the caller's binding slot dec'd the box's own buffer to 0 on the first
+	// call and every later read touched freed memory (the persistent
+	// vector's `get_or` leaf descent, #6794).
+	run(t, `enum N { E, L(i32[]), B(N[]) }
+function leaf(root: N): i32[] { var cur: N = root; var d: boolean = true; while (d) { match (cur) { B(kids) => { cur = kids[0]; }, L(xs) => { return xs; }, E => { d = false; } } } var none: i32[] = []; return none; }
+function f(root: N): i32 { var t: i32[] = leaf(root); return t[1]; }
+function churn(m: i32): i32 { var root: N = B([L([1, 2, 3])]); var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + f(root)) % 251; i = i + 1; } return acc; }
+function main(): i32 { var w: i32 = churn(2000); var x: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } if (w != x || w != (2 * 2000) % 251) { return 97; } return 0; }`,
+		"arr-return-transfer-match-binding", 0)
+
 	// A `string[]` STRUCT FIELD returned by a method (#7232). The buffer-pointer
 	// Perceus dup on the return path was a chain of per-element-type
 	// classifiers (scalar / array-of-struct / array-of-enum) where native's

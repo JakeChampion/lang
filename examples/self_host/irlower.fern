@@ -18372,6 +18372,17 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                     rpl = emit_dec_sweep_except(rpl, 0 - 1);
                     return rpl.emit(ir.op_return());
                 }
+                // A match-arm binding of an ARRAY payload borrows the enum
+                // box's buffer (mark_borrowed_arr): the box keeps its
+                // reference and the binding is never swept, so the escaping
+                // return takes the same transfer retain as a borrowed param.
+                if (rps >= s.n_params && s.is_borrowed_arr_slot(rps)) {
+                    var rbl: LowerState = lower_expr(r.value, s);
+                    if (!rbl.ok) { return rbl; }
+                    rbl = rbl.retain_tos("ret-borrowed-binding");
+                    rbl = emit_dec_sweep_except(rbl, 0 - 1);
+                    return rbl.emit(ir.op_return());
+                }
             }
             var se: LowerState = lower_expr(r.value, s);
             if (!se.ok) { return se; }

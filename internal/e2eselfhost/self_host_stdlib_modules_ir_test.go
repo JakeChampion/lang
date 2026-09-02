@@ -71,6 +71,84 @@ function main(): i32 {
     }
     return r; // 127
 }`},
+	// The persistent collections (#6794) through the self-host loader: generic
+	// enums / structs with receiver methods whose bodies call bounded free
+	// generics on the struct's own type vars (`__om_insert(m.root, k, v)` under
+	// `OrdMap[K, V]`). Those calls are instantiated per STRUCT clone, with the
+	// receiver typed in the env — pre-fix the method body was rewritten once
+	// with `k: K`, keying an erased clone (`__om_insert__K__V`) whose own
+	// generic calls then dangled. Each row inserts, snapshots, removes and reads
+	// both the live value and the snapshot.
+	{"ordmap", `import "std/ordmap";
+function main(): i32 {
+    var m: ordmap.OrdMap[i32, string] = ordmap.ordmap_new();
+    var i: i32 = 0;
+    while (i < 50) { m = m.insert((i * 7) % 50, "v"); i = i + 1; }
+    var snap: ordmap.OrdMap[i32, string] = m;
+    m = m.remove(7);
+    m = m.insert(100, "w");
+    if (!m.is_valid() || !snap.is_valid()) { return 1; }
+    if (m.len() != 50 || snap.len() != 50) { return 2; }
+    if (m.contains(7) || !snap.contains(7) || !m.contains(100) || snap.contains(100)) { return 3; }
+    if (m.get_or(100, "") != "w" || snap.get_or(3, "") != "v") { return 4; }
+    return 42;
+}`},
+	{"pmap", `import "std/pmap";
+function main(): i32 {
+    var m: pmap.PMap[string, i32] = pmap.pmap_new();
+    m = m.insert("a", 1);
+    m = m.insert("b", 2);
+    m = m.insert("c", 3);
+    var snap: pmap.PMap[string, i32] = m;
+    m = m.remove("b");
+    m = m.insert("d", 4);
+    if (!m.is_valid() || !snap.is_valid()) { return 1; }
+    if (m.len() != 3 || snap.len() != 3) { return 2; }
+    if (m.contains("b") || !snap.contains("b") || !m.contains("d") || snap.contains("d")) { return 3; }
+    if (m.get_or("d", 0) != 4 || snap.get_or("a", 0) != 1) { return 4; }
+    return 42;
+}`},
+	// pvec's `get_or` descends the trie in a loop that returns the leaf's
+	// array straight out of a match binding — the borrowed-payload return that
+	// must retain, or the snapshot's leaf is freed under it.
+	{"pvec", `import "std/pvec";
+function main(): i32 {
+    var v: pvec.PVec[i32] = pvec.pvec_new();
+    var i: i32 = 0;
+    while (i < 100) { v = v.append(i); i = i + 1; }
+    var snap: pvec.PVec[i32] = v;
+    v = v.with(5, 500);
+    v = v.pop();
+    if (!v.is_valid() || !snap.is_valid()) { return 1; }
+    if (v.len() != 99 || snap.len() != 100) { return 2; }
+    if (v.get_or(5, -1) != 500 || snap.get_or(5, -1) != 5 || snap.get_or(99, -1) != 99) { return 3; }
+    return 42;
+}`},
+	{"ordset", `import "std/ordset";
+function main(): i32 {
+    var s: ordset.OrdSet[i32] = ordset.ordset_of([5, 3, 9, 3, 1]);
+    var snap: ordset.OrdSet[i32] = s;
+    s = s.remove(3);
+    s = s.add(7);
+    if (!s.is_valid() || !snap.is_valid()) { return 1; }
+    if (s.len() != 4 || snap.len() != 4) { return 2; }
+    if (s.contains(3) || !snap.contains(3) || !s.contains(7) || snap.contains(7)) { return 3; }
+    var xs: i32[] = s.to_array();
+    if (xs.len() != 4 || xs[0] != 1 || xs[3] != 9) { return 4; }
+    return 42;
+}`},
+	{"pset", `import "std/pset";
+function main(): i32 {
+    var s: pset.PSet[string] = pset.pset_of(["a", "b", "a", "c"]);
+    var snap: pset.PSet[string] = s;
+    s = s.remove("a");
+    s = s.add("d");
+    if (!s.is_valid() || !snap.is_valid()) { return 1; }
+    if (s.len() != 3 || snap.len() != 3) { return 2; }
+    if (s.contains("a") || !snap.contains("a") || !s.contains("d") || snap.contains("d")) { return 3; }
+    if (!s.union(snap).contains("a") || s.union(snap).len() != 4) { return 4; }
+    return 42;
+}`},
 }
 
 func TestSelfHostStdlibModulesIR(t *testing.T) {
