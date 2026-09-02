@@ -574,14 +574,7 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	// Normalize path → path_buf(3), path_byte_len(4).
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
 
-	// get-directories(rb): list header (base @ rb+0, count @ rb+4).
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstCall(body, getDirs)
-	// preopen = mem[mem[rb+0] + 0]  (first tuple's descriptor handle)
-	body = inst.InstLocalGet(body, 2)
-	body = memory.InstI32Load(body, 2, 0)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalSet(body, 5)
+	body = emitPreopenCachedP2(body, getDirs, 2, 5)
 
 	// open-at(preopen, path-flags=1 symlink-follow, path_buf,
 	//   path_byte_len, open-flags=0, descriptor-flags=1 read, rb)
@@ -1146,13 +1139,7 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = emitStrNormalize(body, idxs, 0, 1, 5, 6, 14)
 	body = emitStrNormalize(body, idxs, 2, 3, 7, 8, 14)
 
-	// get-directories(rb); preopen = mem[mem[rb+0]+0]
-	body = inst.InstLocalGet(body, 4)
-	body = inst.InstCall(body, getDirs)
-	body = inst.InstLocalGet(body, 4)
-	body = memory.InstI32Load(body, 2, 0)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalSet(body, 9)
+	body = emitPreopenCachedP2(body, getDirs, 4, 9)
 
 	// open-at(preopen, 1, path_buf, path_byte_len, create|truncate, write, rb)
 	body = inst.InstLocalGet(body, 9)
@@ -1471,13 +1458,7 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, 2)
 	// Normalize path → path_buf(3), path_byte_len(4).
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
-	// get-directories(rb); preopen = mem[mem[rb+0]].
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstCall(body, getDirs)
-	body = inst.InstLocalGet(body, 2)
-	body = memory.InstI32Load(body, 2, 0)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalSet(body, 5)
+	body = emitPreopenCachedP2(body, getDirs, 2, 5)
 	// open-at(preopen, path-flags=1, path_buf, path_byte_len,
 	//   open-flags=0, descriptor-flags=1 read, rb).
 	body = inst.InstLocalGet(body, 5)
@@ -1595,13 +1576,7 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 2)
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
-	// get-directories(rb); preopen = mem[mem[rb+0]].
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstCall(body, getDirs)
-	body = inst.InstLocalGet(body, 2)
-	body = memory.InstI32Load(body, 2, 0)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalSet(body, 5)
+	body = emitPreopenCachedP2(body, getDirs, 2, 5)
 	// open-at(preopen, 1, path_buf, path_byte_len, create|trunc, write, rb).
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 1)
@@ -1702,13 +1677,7 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalSet(body, 2)
 	body = emitStrNormalize(body, idxs, 0, 1, 3, 4, 14)
-	// get-directories(rb); preopen = mem[mem[rb+0]].
-	body = inst.InstLocalGet(body, 2)
-	body = inst.InstCall(body, getDirs)
-	body = inst.InstLocalGet(body, 2)
-	body = memory.InstI32Load(body, 2, 0)
-	body = memory.InstI32Load(body, 2, 0)
-	body = inst.InstLocalSet(body, 5)
+	body = emitPreopenCachedP2(body, getDirs, 2, 5)
 	// open-at(preopen, 1, path_buf, path_byte_len, create, write, rb).
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstI32Const(body, 1)

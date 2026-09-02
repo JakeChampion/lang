@@ -136,8 +136,21 @@ const (
 	strbufLenAddr = strbufPtrAddr + 4
 	strbufCapAddr = strbufLenAddr + 4
 
+	// preopenInitAddr / preopenHandleAddr cache the first
+	// wasi:filesystem/preopens::get-directories() own<descriptor> — the
+	// directory every path-based preview-2 body resolves its path against.
+	// get-directories MINTS a fresh handle per call, and no body drops it,
+	// so calling it per filesystem operation grew the host's resource table
+	// without bound: a program doing a million `stat`s died with "resource
+	// table has no free keys" rather than merely running slower. The set of
+	// preopens is fixed at instantiation, so one lookup serves the process.
+	// Same shape as the stdout / stderr pair above, and an init flag for the
+	// same reason as networkHandleAddr's: 0 is a valid handle.
+	preopenInitAddr   = strbufCapAddr + 4
+	preopenHandleAddr = preopenInitAddr + 4
+
 	// scratchEnd is the first address past the named scratch.
-	scratchEnd = strbufCapAddr + 4
+	scratchEnd = preopenHandleAddr + 4
 )
 
 // allocMinStart is the floor for the bump cursor: past every reserved slot
