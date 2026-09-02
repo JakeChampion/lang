@@ -134,10 +134,27 @@ The same sources through the NATIVE compiler, same flags, also validated:
 
 So "how big is the compiler as wasm" has no single answer: a native-built
 `playground_run` is 13 MB, which is not a page's artifact, and the self-host's
-4 MB is. Whatever ships has to be self-host-built. The gap is unexplained here
-— monomorphisation is the obvious suspect, since native monomorphises generics
-and the emitted function counts differ by roughly the same factor — and is
-worth its own measurement rather than a guess.
+4 MB is. Whatever ships has to be self-host-built.
+
+The gap is **not** monomorphisation, which is the first guess and is wrong. The
+two modules hold the same functions:
+
+| `wasm_ir_run` | functions | code section | bytes per function |
+|---|---|---|---|
+| native | 3,944 | 10,442,809 | 2,647 |
+| self-host | 3,854 | 1,860,754 | 482 |
+
+Within 2% on the count, 5.5x on the bytes each one costs. Nor is it a flat
+per-function overhead: on a small array-building program with reference
+counting in it, native emits the SMALLER module (1,253 bytes against 2,144),
+so whatever native spends the bytes on is something these sources do a lot of.
+Naming it wants a per-function diff on a function both compilers emit, which
+is awkward while the self-host emits no name section — worth its own issue
+rather than more guessing here.
+
+(One incidental find from the same measurement: the self-host emits a distinct
+function type per function — 3,865 types for 3,854 functions, where native
+dedups to 33. It costs almost nothing in bytes and is not the gap.)
 
 Two bugs stood between this table and a running module, both found by building
 it: a `Cell[f64]` reached through a struct field indexed 4-byte (which made
