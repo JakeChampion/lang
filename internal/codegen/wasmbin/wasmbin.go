@@ -289,6 +289,15 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		importNeeds.add("async_task_return")
 	}
 
+	// Helpers written in Fern (internal/fernrt) are functions of this module
+	// rather than entries in runtimeHelperSpecs: they join prog.Funcs, so
+	// emitBody lowers them and funcIdx resolves their names for the
+	// hand-built bodies that call them.
+	prog, fernFuncs, err := injectFernHelpers(prog, &helpers, opts)
+	if err != nil {
+		return nil, err
+	}
+
 	funcIdx := make(map[string]uint32, len(prog.Funcs)+len(helpers.order)+len(importNeeds.order))
 	nextFuncIdx := uint32(0)
 	for _, name := range importNeeds.order {
@@ -641,7 +650,7 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// transitively __str_eq emit i32.load8_u even in branches
 	// that don't execute at runtime — wasm validation still
 	// requires memory 0 to exist).
-	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__fern_alloc"] || helpers.set["__fern_str_byte"] || helpers.set["__load_i32"] || helpers.set["__store_i32"] || helpers.set["__load_i64"] || helpers.set["__store_i64"] || helpers.set["__load_ptr"] || helpers.set["__store_ptr"] || helpers.set["__memcpy"] || helpers.set["__memset"] || len(importNeeds.order) > 0 {
+	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__fern_alloc"] || helpers.set["__fern_str_byte"] || helpers.set["__load_i32"] || helpers.set["__load_u8"] || helpers.set["__store_i32"] || helpers.set["__load_i64"] || helpers.set["__store_i64"] || helpers.set["__load_ptr"] || helpers.set["__store_ptr"] || helpers.set["__memcpy"] || helpers.set["__memset"] || len(importNeeds.order) > 0 {
 		enableMemory()
 	}
 
@@ -678,11 +687,15 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 
 		tIdx := addType(params, results)
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, tIdx)
-		m.ExportNames = append(m.ExportNames, fn.Name)
-		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
-		// Export funcidx must match the post-import shift —
-		// funcIdx[fn.Name] already encodes it.
-		m.ExportIdxs = append(m.ExportIdxs, funcIdx[fn.Name])
+		if !fernFuncs[fn.Name] {
+			// Runtime helpers stay private to the module, whichever
+			// language they are written in.
+			m.ExportNames = append(m.ExportNames, fn.Name)
+			m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
+			// Export funcidx must match the post-import shift —
+			// funcIdx[fn.Name] already encodes it.
+			m.ExportIdxs = append(m.ExportIdxs, funcIdx[fn.Name])
+		}
 		_ = fnIdx
 
 		body, locals, err := emitBody(fn, ctx)

@@ -54,6 +54,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/symname"
@@ -496,36 +497,10 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.funcs[fn.Name] = fn
 	}
 	for _, fn := range ip.Funcs {
-		for _, op := range fn.Ops {
-			if op.Kind == ir.OpCallDirect ||
-				op.Kind == ir.OpRcInc || op.Kind == ir.OpRcDec || op.Kind == ir.OpRcIsUnique {
-				g.recordUse(op.Str)
-			}
-			if op.Kind == ir.OpAlloc {
-				g.usesAlloc = true
-			}
-			if op.Kind == ir.OpStrEq {
-				g.usesStrcmp = true
-			}
-			if op.Kind == ir.OpStrCmp {
-				g.usesStrord = true
-			}
-			if op.Kind == ir.OpStrConcat {
-				g.usesStrcat = true
-				g.usesAlloc = true
-				g.usesMemcpy = true
-			}
-			if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
-				// Closure env block + (optional) pair both
-				// come from __fern_alloc.
-				g.usesAlloc = true
-			}
-			if op.Kind == ir.OpBoxDyn {
-				// The boxed `dyn Trait` cell is a normal heap object
-				// allocated via __fern_alloc (docs/DYN-TRAITS.md §4.2.2).
-				g.usesAlloc = true
-			}
-		}
+		g.scanUses(fn.Ops)
+	}
+	if err := g.resolveFernHelpers(); err != nil {
+		return "", nil, err
 	}
 	g.line(".intel_syntax noprefix")
 	g.line(".text")
@@ -573,6 +548,17 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// names itself instead of exiting silently. Emitted unconditionally —
 	// the abort sites jmp here, and label resolution is order-independent.
 	g.emitAbortRuntime()
+	// The helpers written in Fern (internal/fernrt) go through emitFunc like
+	// any other function.
+	for _, name := range g.fernHelpers {
+		decl, irFn, err := fernrt.Func(name, 8)
+		if err != nil {
+			return "", nil, err
+		}
+		if err := g.emitFunc(decl, irFn); err != nil {
+			return "", nil, err
+		}
+	}
 	// Runtime helpers — gated on use-flags so unused programs
 	// pay nothing extra in binary size.
 	if g.usesAlloc {
@@ -834,9 +820,6 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesReadFileBytes {
 		g.emitReadFileBytesRuntime()
-	}
-	if g.usesUtf8Valid {
-		g.emitUtf8ValidRuntime()
 	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
@@ -1243,9 +1226,11 @@ type generator struct {
 	usesReadFile      bool
 	usesReadFileBytes bool
 	usesWriteFile     bool
-	// usesUtf8Valid pulls in `__fern_utf8_valid(data, len) → 1/0`,
-	// read_file's strict D9 well-formedness scan (#5714).
-	usesUtf8Valid bool
+	// fernHelpers are the runtime helpers written in Fern (internal/fernrt)
+	// this program needs, in discovery order; fernSeen dedupes them. They
+	// are emitted through emitFunc ahead of the hand-written runtime.
+	fernHelpers []string
+	fernSeen    map[string]bool
 	// usesWriteFileExec is write_file_exec — write_file with the
 	// executable bit. Its own flag so a program that never asks for
 	// one does not carry the second helper body (#6133).
@@ -1287,7 +1272,74 @@ type generator struct {
 // IR mentions. PR 3 covered print/strings/alloc; PR 5 adds
 // the TCP family + env() + the arena helpers used by the
 // auto-`main()`-from-`handle()` synthesis.
+// scanUses sets the use-flags one function's ops imply.
+func (g *generator) scanUses(ops []ir.Op) {
+	for _, op := range ops {
+		if op.Kind == ir.OpCallDirect ||
+			op.Kind == ir.OpRcInc || op.Kind == ir.OpRcDec || op.Kind == ir.OpRcIsUnique {
+			g.recordUse(op.Str)
+		}
+		if op.Kind == ir.OpAlloc {
+			g.usesAlloc = true
+		}
+		if op.Kind == ir.OpStrEq {
+			g.usesStrcmp = true
+		}
+		if op.Kind == ir.OpStrCmp {
+			g.usesStrord = true
+		}
+		if op.Kind == ir.OpStrConcat {
+			g.usesStrcat = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		}
+		if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
+			// Closure env block + (optional) pair both
+			// come from __fern_alloc.
+			g.usesAlloc = true
+		}
+		if op.Kind == ir.OpBoxDyn {
+			// The boxed `dyn Trait` cell is a normal heap object
+			// allocated via __fern_alloc (docs/DYN-TRAITS.md §4.2.2).
+			g.usesAlloc = true
+		}
+	}
+}
+
+// needFern records that the program needs a runtime helper written in Fern
+// (internal/fernrt). A hand-written runtime body that calls one declares it
+// here, next to its other use-flags, the way `read_file` does.
+func (g *generator) needFern(name string) {
+	if g.fernSeen[name] {
+		return
+	}
+	if g.fernSeen == nil {
+		g.fernSeen = map[string]bool{}
+	}
+	g.fernSeen[name] = true
+	g.fernHelpers = append(g.fernHelpers, name)
+}
+
+// resolveFernHelpers scans each needed Fern helper's IR for the use-flags it
+// sets, as the pre-scan does for the program's own functions. A helper may
+// need another, so the list can grow while it is walked.
+func (g *generator) resolveFernHelpers() error {
+	for i := 0; i < len(g.fernHelpers); i++ {
+		decl, irFn, err := fernrt.Func(g.fernHelpers[i], 8)
+		if err != nil {
+			return err
+		}
+		g.funcs[decl.Name] = decl
+		g.scanUses(irFn.Ops)
+	}
+	return nil
+}
+
 func (g *generator) recordUse(target string) {
+	if fernrt.Has(target) {
+		g.needFern(target)
+		return
+	}
 	switch target {
 	case "__c_call0":
 		g.usesCCall[0] = true
@@ -1572,7 +1624,7 @@ func (g *generator) recordUse(target string) {
 		g.usesReadFile = true
 		g.usesAlloc = true
 		g.usesIoError = true
-		g.usesUtf8Valid = true
+		g.needFern("__fern_utf8_valid")
 	case "read_file_bytes":
 		g.usesReadFileBytes = true
 		g.usesAlloc = true
@@ -11291,7 +11343,7 @@ func (g *generator) emitReadFileRuntime() {
 	// EILSEQ errno. Raw reads go through __fern_read_file_bytes.
 	g.emit("mov rdi, r13")
 	g.emit("mov rsi, r14")
-	g.emit("call __fern_utf8_valid")
+	g.emit("call " + AsmFnName("__fern_utf8_valid"))
 	g.emit("test eax, eax")
 	g.emit("jnz .Lrf_ok")
 	g.emit("mov r13d, 84") // EILSEQ
@@ -11337,127 +11389,6 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_read_file, .-__fern_read_file")
-}
-
-// emitUtf8ValidRuntime emits `__fern_utf8_valid(data, len) → 1/0` —
-// the strict well-formedness scan behind read_file's D9 validation
-// (#5714). Accepts exactly what std/utf8.is_valid_utf8 accepts:
-// stray continuations, overlong 2/3/4-byte forms, surrogates
-// U+D800–DFFF, truncation at the end, and leads above 0xF4 all
-// reject. Byte-range formulation (no codepoint assembly), with an
-// 8-byte word skip over ASCII runs. Leaf — no calls, no frame.
-func (g *generator) emitUtf8ValidRuntime() {
-	g.line("")
-	g.line(".globl __fern_utf8_valid")
-	g.line(".type __fern_utf8_valid, @function")
-	g.label("__fern_utf8_valid")
-	// rdi = data cursor, rsi = len.
-	g.emit("lea r8, [rdi + rsi]") // r8 = end
-	g.emit("mov r9, 0x8080808080808080")
-	g.label(".Luv_loop")
-	g.emit("cmp rdi, r8")
-	g.emit("jae .Luv_ok")
-	// ASCII word skip: 8 bytes at a time while every top bit is clear.
-	g.emit("mov rax, r8")
-	g.emit("sub rax, rdi")
-	g.emit("cmp rax, 8")
-	g.emit("jb .Luv_byte")
-	g.emit("mov rax, [rdi]")
-	g.emit("test rax, r9")
-	g.emit("jnz .Luv_byte")
-	g.emit("add rdi, 8")
-	g.emit("jmp .Luv_loop")
-	g.label(".Luv_byte")
-	g.emit("movzx eax, byte ptr [rdi]")
-	g.emit("cmp eax, 0x80")
-	g.emit("jae .Luv_multi")
-	g.emit("inc rdi")
-	g.emit("jmp .Luv_loop")
-	g.label(".Luv_multi")
-	// 0x80–0xBF stray continuation; 0xC0/0xC1 overlong 2-byte.
-	g.emit("cmp eax, 0xC2")
-	g.emit("jb .Luv_bad")
-	g.emit("cmp eax, 0xE0")
-	g.emit("jae .Luv_3plus")
-	// 2-byte lead C2..DF: one continuation.
-	g.emit("lea rcx, [rdi + 2]")
-	g.emit("cmp rcx, r8")
-	g.emit("ja .Luv_bad")
-	g.emit("movzx edx, byte ptr [rdi + 1]")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("add rdi, 2")
-	g.emit("jmp .Luv_loop")
-	g.label(".Luv_3plus")
-	g.emit("cmp eax, 0xF0")
-	g.emit("jae .Luv_4")
-	// 3-byte lead E0..EF: two continuations; E0 overlong / ED surrogate
-	// carried by the first continuation's range.
-	g.emit("lea rcx, [rdi + 3]")
-	g.emit("cmp rcx, r8")
-	g.emit("ja .Luv_bad")
-	g.emit("movzx ecx, byte ptr [rdi + 1]") // c1
-	g.emit("movzx edx, byte ptr [rdi + 2]")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("mov edx, ecx")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("cmp eax, 0xE0")
-	g.emit("jne .Luv_3_not_e0")
-	g.emit("cmp ecx, 0xA0") // E0 A0.. only (overlong below)
-	g.emit("jb .Luv_bad")
-	g.label(".Luv_3_not_e0")
-	g.emit("cmp eax, 0xED")
-	g.emit("jne .Luv_3_done")
-	g.emit("cmp ecx, 0xA0") // ED ..9F only (surrogates above)
-	g.emit("jae .Luv_bad")
-	g.label(".Luv_3_done")
-	g.emit("add rdi, 3")
-	g.emit("jmp .Luv_loop")
-	g.label(".Luv_4")
-	// 4-byte lead F0..F4: three continuations; F0 overlong / F4
-	// >U+10FFFF carried by the first continuation's range.
-	g.emit("cmp eax, 0xF4")
-	g.emit("ja .Luv_bad")
-	g.emit("lea rcx, [rdi + 4]")
-	g.emit("cmp rcx, r8")
-	g.emit("ja .Luv_bad")
-	g.emit("movzx ecx, byte ptr [rdi + 1]") // c1
-	g.emit("movzx edx, byte ptr [rdi + 2]")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("movzx edx, byte ptr [rdi + 3]")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("mov edx, ecx")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("cmp eax, 0xF0")
-	g.emit("jne .Luv_4_not_f0")
-	g.emit("cmp ecx, 0x90") // F0 90.. only
-	g.emit("jb .Luv_bad")
-	g.label(".Luv_4_not_f0")
-	g.emit("cmp eax, 0xF4")
-	g.emit("jne .Luv_4_done")
-	g.emit("cmp ecx, 0x90") // F4 ..8F only
-	g.emit("jae .Luv_bad")
-	g.label(".Luv_4_done")
-	g.emit("add rdi, 4")
-	g.emit("jmp .Luv_loop")
-	g.label(".Luv_ok")
-	g.emit("mov eax, 1")
-	g.emit("ret")
-	g.label(".Luv_bad")
-	g.emit("xor eax, eax")
-	g.emit("ret")
-	g.line(".size __fern_utf8_valid, .-__fern_utf8_valid")
 }
 
 // emitReadFileBytesRuntime emits `__fern_read_file_bytes(path) →

@@ -194,6 +194,7 @@ var providedSigs = map[string]providedSig{
 	"__http_entry":                  {2, rVoid},
 	"__load_i32":                    {1, rWord},
 	"__load_i64":                    {1, rWord},
+	"__load_u8":                     {1, rWord},
 	"__load_ptr":                    {1, rWord},
 	"__log_f64":                     {-1, rFloat},
 	"__map_hash_seed":               {-1, rWord},

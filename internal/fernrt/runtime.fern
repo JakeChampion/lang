@@ -1,0 +1,66 @@
+// The native runtime helpers that are written in Fern (#8038). Each function
+// here is emitted under its own name as a runtime symbol by every native
+// backend, so a helper is one source lowered per target rather than a
+// hand-written twin per backend. Bodies bottom out in the provided-callee
+// floor (`__load_u8`, `__load_i64`, ...) and never in an operation that would
+// lower to a call of the helper being defined.
+
+// __fern_utf8_valid(data, len) is 1 when the `len` bytes at `data` are
+// well-formed UTF-8 and 0 otherwise. It accepts exactly what
+// std/utf8.is_valid_utf8 accepts: a stray continuation, an overlong 2-, 3- or
+// 4-byte form, a surrogate (U+D800..U+DFFF), a lead above 0xF4 and a
+// sequence truncated by the end of the buffer all reject. Byte-range
+// formulation, no codepoint assembly; a run of ASCII is skipped eight bytes at
+// a time.
+function __fern_utf8_valid(data: usize, len: usize): i32 {
+    var p: usize = data;
+    var end: usize = data + len;
+    // Every byte's top bit: a word with no bit of this set is all ASCII.
+    var mask: u64 = 9259542123273814144 as u64;
+    while (p < end) {
+        if (end - p >= 8) {
+            if (((__load_i64(p) as u64) & mask) == (0 as u64)) {
+                p = p + 8;
+                continue;
+            }
+        }
+        var b: i32 = __load_u8(p);
+        if (b < 128) {
+            p = p + 1;
+            continue;
+        }
+        // 0x80..0xBF is a continuation with no lead; 0xC0 / 0xC1 are overlong.
+        if (b < 194) { return 0; }
+        if (b < 224) {
+            // 0xC2..0xDF: one continuation.
+            if (p + 2 > end) { return 0; }
+            if ((__load_u8(p + 1) & 192) != 128) { return 0; }
+            p = p + 2;
+            continue;
+        }
+        if (b < 240) {
+            // 0xE0..0xEF: two continuations. The first one's range carries
+            // the E0 overlong floor and the ED surrogate ceiling.
+            if (p + 3 > end) { return 0; }
+            var c1: i32 = __load_u8(p + 1);
+            if ((c1 & 192) != 128) { return 0; }
+            if ((__load_u8(p + 2) & 192) != 128) { return 0; }
+            if (b == 224 && c1 < 160) { return 0; }
+            if (b == 237 && c1 >= 160) { return 0; }
+            p = p + 3;
+            continue;
+        }
+        // 0xF0..0xF4: three continuations. The first one's range carries the
+        // F0 overlong floor and the F4 ceiling at U+10FFFF.
+        if (b > 244) { return 0; }
+        if (p + 4 > end) { return 0; }
+        var d1: i32 = __load_u8(p + 1);
+        if ((d1 & 192) != 128) { return 0; }
+        if ((__load_u8(p + 2) & 192) != 128) { return 0; }
+        if ((__load_u8(p + 3) & 192) != 128) { return 0; }
+        if (b == 240 && d1 < 144) { return 0; }
+        if (b == 244 && d1 >= 144) { return 0; }
+        p = p + 4;
+    }
+    return 1;
+}

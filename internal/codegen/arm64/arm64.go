@@ -32,6 +32,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
 	"github.com/jakechampion/lang/internal/platforms"
@@ -396,38 +397,10 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// in the regular emit walk runs AFTER the prelude / prologue
 	// — too late to fail cleanly.
 	for _, fn := range ip.Funcs {
-		for _, op := range fn.Ops {
-			if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
-				// Closure env block (+ optional pair) come
-				// from __fern_alloc.
-				g.usesAlloc = true
-				continue
-			}
-			if op.Kind == ir.OpBoxDyn {
-				// The boxed `dyn Trait` cell is a normal heap object
-				// allocated via __fern_alloc (docs/DYN-TRAITS.md §4.2.2).
-				g.usesAlloc = true
-				continue
-			}
-			if op.Kind != ir.OpCallDirect &&
-				op.Kind != ir.OpRcInc && op.Kind != ir.OpRcDec && op.Kind != ir.OpRcIsUnique {
-				continue
-			}
-			switch op.Str {
-			case "args":
-				g.usesArgs = true
-			case "env":
-				g.usesEnv = true
-			case "now_unix_ms":
-				g.usesNowUnixMs = true
-			case "monotonic_ns":
-				g.usesMonotonicNs = true
-			case "now_ns":
-				g.usesNowNs = true
-			case "sleep_ms":
-				g.usesSleepMs = true
-			}
-		}
+		g.prescanOps(fn.Ops)
+	}
+	if err := g.resolveFernHelpers(); err != nil {
+		return "", err
 	}
 	g.line(`.arch armv8-a`)
 	g.line(`.text`)
@@ -456,6 +429,18 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		// incrementally instead of holding all of them until the output
 		// buffer peaks. Output is unaffected (forward-only walk).
 		ip.Funcs[i] = nil
+	}
+	// The helpers written in Fern (internal/fernrt) go through emitFunc like
+	// any other function, and before the gates below: emitting one sets the
+	// use-flags for what it calls, exactly as a user function does.
+	for _, name := range g.fernHelpers {
+		decl, irFn, err := fernrt.Func(name, 8)
+		if err != nil {
+			return "", err
+		}
+		if err := g.emitFunc(decl, irFn); err != nil {
+			return "", err
+		}
 	}
 	// The Reader/Writer runtime is emitted as a single bundle:
 	// every helper (open_*, read_line, read_chunk, close,
@@ -752,9 +737,6 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	}
 	if g.usesReadFileBytes {
 		g.emitReadFileBytesRuntime()
-	}
-	if g.usesUtf8Valid {
-		g.emitUtf8ValidRuntime()
 	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
@@ -7962,7 +7944,7 @@ func (g *generator) emitReadFileRuntime() {
 	// EILSEQ errno. Raw reads go through __fern_read_file_bytes.
 	g.emit("mov x0, x21")
 	g.emit("mov x1, x22")
-	g.emit("bl __fern_utf8_valid")
+	g.emit("bl %s", AsmFnName("__fern_utf8_valid"))
 	g.emit("cbnz w0, .Lrf_ok")
 	g.emit("mov x21, #%d", g.eilseq()) // EILSEQ
 	g.emit("b .Lrf_err_dispatch")
@@ -8094,7 +8076,7 @@ func (g *generator) emitReadFileRuntime2W() {
 	// errno. Raw reads go through __fern_read_file_bytes.
 	g.emit("mov x0, x22")
 	g.emit("mov x1, x23")
-	g.emit("bl __fern_utf8_valid")
+	g.emit("bl %s", AsmFnName("__fern_utf8_valid"))
 	g.emit("cbnz w0, .Lrf2w_ok")
 	g.emit("mov x22, #%d", g.eilseq()) // EILSEQ
 	g.emit("b .Lrf2w_err_dispatch")
@@ -8136,129 +8118,6 @@ func (g *generator) emitReadFileRuntime2W() {
 	g.emit("ret")
 	g.sizeDirective("__fern_read_file")
 	g.line(".ltorg")
-}
-
-// emitUtf8ValidRuntime emits `__fern_utf8_valid(data, len) → 1/0` —
-// the strict well-formedness scan behind read_file's D9 validation
-// (#5714). Accepts exactly what std/utf8.is_valid_utf8 accepts:
-// stray continuations, overlong 2/3/4-byte forms, surrogates
-// U+D800–DFFF, truncation at the end, and leads above 0xF4 all
-// reject. Byte-range formulation (no codepoint assembly), with an
-// 8-byte word skip over ASCII runs. Leaf — no calls, no frame.
-// Takes a raw (x0=data, x1=len) pair, so one body serves both
-// string ABIs.
-func (g *generator) emitUtf8ValidRuntime() {
-	g.line("")
-	g.line(".global __fern_utf8_valid")
-	g.typeDirective("__fern_utf8_valid")
-	g.label("__fern_utf8_valid")
-	// x0 = cursor, x2 = end, x9 = 0x8080..80 top-bit mask.
-	g.emit("add x2, x0, x1")
-	g.emit("movz x9, #0x8080")
-	g.emit("movk x9, #0x8080, lsl #16")
-	g.emit("movk x9, #0x8080, lsl #32")
-	g.emit("movk x9, #0x8080, lsl #48")
-	g.label(".Luv_loop")
-	g.emit("cmp x0, x2")
-	g.emit("b.hs .Luv_ok")
-	// ASCII word skip: 8 bytes at a time while every top bit is clear.
-	g.emit("sub x3, x2, x0")
-	g.emit("cmp x3, #8")
-	g.emit("b.lo .Luv_byte")
-	g.emit("ldr x3, [x0]")
-	g.emit("and x3, x3, x9")
-	g.emit("cbnz x3, .Luv_byte")
-	g.emit("add x0, x0, #8")
-	g.emit("b .Luv_loop")
-	g.label(".Luv_byte")
-	g.emit("ldrb w3, [x0]")
-	g.emit("cmp w3, #0x80")
-	g.emit("b.hs .Luv_multi")
-	g.emit("add x0, x0, #1")
-	g.emit("b .Luv_loop")
-	g.label(".Luv_multi")
-	// 0x80–0xBF stray continuation; 0xC0/0xC1 overlong 2-byte.
-	g.emit("cmp w3, #0xC2")
-	g.emit("b.lo .Luv_bad")
-	g.emit("cmp w3, #0xE0")
-	g.emit("b.hs .Luv_3plus")
-	// 2-byte lead C2..DF: one continuation.
-	g.emit("add x4, x0, #2")
-	g.emit("cmp x4, x2")
-	g.emit("b.hi .Luv_bad")
-	g.emit("ldrb w5, [x0, #1]")
-	g.emit("and w6, w5, #0xC0")
-	g.emit("cmp w6, #0x80")
-	g.emit("b.ne .Luv_bad")
-	g.emit("add x0, x0, #2")
-	g.emit("b .Luv_loop")
-	g.label(".Luv_3plus")
-	g.emit("cmp w3, #0xF0")
-	g.emit("b.hs .Luv_4")
-	// 3-byte lead E0..EF: two continuations; E0 overlong / ED
-	// surrogate carried by the first continuation's range.
-	g.emit("add x4, x0, #3")
-	g.emit("cmp x4, x2")
-	g.emit("b.hi .Luv_bad")
-	g.emit("ldrb w5, [x0, #1]") // c1
-	g.emit("ldrb w6, [x0, #2]")
-	g.emit("and w7, w6, #0xC0")
-	g.emit("cmp w7, #0x80")
-	g.emit("b.ne .Luv_bad")
-	g.emit("and w7, w5, #0xC0")
-	g.emit("cmp w7, #0x80")
-	g.emit("b.ne .Luv_bad")
-	g.emit("cmp w3, #0xE0")
-	g.emit("b.ne .Luv_3_not_e0")
-	g.emit("cmp w5, #0xA0") // E0 A0.. only (overlong below)
-	g.emit("b.lo .Luv_bad")
-	g.label(".Luv_3_not_e0")
-	g.emit("cmp w3, #0xED")
-	g.emit("b.ne .Luv_3_done")
-	g.emit("cmp w5, #0xA0") // ED ..9F only (surrogates above)
-	g.emit("b.hs .Luv_bad")
-	g.label(".Luv_3_done")
-	g.emit("add x0, x0, #3")
-	g.emit("b .Luv_loop")
-	g.label(".Luv_4")
-	// 4-byte lead F0..F4: three continuations; F0 overlong / F4
-	// >U+10FFFF carried by the first continuation's range.
-	g.emit("cmp w3, #0xF4")
-	g.emit("b.hi .Luv_bad")
-	g.emit("add x4, x0, #4")
-	g.emit("cmp x4, x2")
-	g.emit("b.hi .Luv_bad")
-	g.emit("ldrb w5, [x0, #1]") // c1
-	g.emit("ldrb w6, [x0, #2]")
-	g.emit("and w7, w6, #0xC0")
-	g.emit("cmp w7, #0x80")
-	g.emit("b.ne .Luv_bad")
-	g.emit("ldrb w6, [x0, #3]")
-	g.emit("and w7, w6, #0xC0")
-	g.emit("cmp w7, #0x80")
-	g.emit("b.ne .Luv_bad")
-	g.emit("and w7, w5, #0xC0")
-	g.emit("cmp w7, #0x80")
-	g.emit("b.ne .Luv_bad")
-	g.emit("cmp w3, #0xF0")
-	g.emit("b.ne .Luv_4_not_f0")
-	g.emit("cmp w5, #0x90") // F0 90.. only
-	g.emit("b.lo .Luv_bad")
-	g.label(".Luv_4_not_f0")
-	g.emit("cmp w3, #0xF4")
-	g.emit("b.ne .Luv_4_done")
-	g.emit("cmp w5, #0x90") // F4 ..8F only
-	g.emit("b.hs .Luv_bad")
-	g.label(".Luv_4_done")
-	g.emit("add x0, x0, #4")
-	g.emit("b .Luv_loop")
-	g.label(".Luv_ok")
-	g.emit("mov w0, #1")
-	g.emit("ret")
-	g.label(".Luv_bad")
-	g.emit("mov w0, #0")
-	g.emit("ret")
-	g.sizeDirective("__fern_utf8_valid")
 }
 
 // emitReadFileBytesRuntime emits
@@ -10606,9 +10465,11 @@ type generator struct {
 	usesReadFile      bool
 	usesReadFileBytes bool
 	usesWriteFile     bool
-	// usesUtf8Valid pulls in `__fern_utf8_valid(data, len) → 1/0`,
-	// read_file's strict D9 well-formedness scan (#5714).
-	usesUtf8Valid bool
+	// fernHelpers are the runtime helpers written in Fern (internal/fernrt)
+	// this program needs, in discovery order; fernSeen dedupes them. They
+	// are emitted through emitFunc ahead of the hand-written runtime.
+	fernHelpers []string
+	fernSeen    map[string]bool
 	// usesWriteFileExec is write_file_exec — write_file with the
 	// executable bit. Its own flag so a program that never asks for
 	// one does not carry the second helper body (#6133).
@@ -11272,6 +11133,78 @@ func (g *generator) callSym(op ir.Op, target string) string {
 		return op.Str
 	}
 	return g.sym(target)
+}
+
+// prescanOps sets the use-flags the prologue reads from one function's ops,
+// and records the runtime helpers written in Fern (internal/fernrt) that the
+// hand-written bodies it calls depend on.
+func (g *generator) prescanOps(ops []ir.Op) {
+	for _, op := range ops {
+		if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
+			// Closure env block (+ optional pair) come
+			// from __fern_alloc.
+			g.usesAlloc = true
+			continue
+		}
+		if op.Kind == ir.OpBoxDyn {
+			// The boxed `dyn Trait` cell is a normal heap object
+			// allocated via __fern_alloc (docs/DYN-TRAITS.md §4.2.2).
+			g.usesAlloc = true
+			continue
+		}
+		if op.Kind != ir.OpCallDirect &&
+			op.Kind != ir.OpRcInc && op.Kind != ir.OpRcDec && op.Kind != ir.OpRcIsUnique {
+			continue
+		}
+		if fernrt.Has(op.Str) {
+			g.needFern(op.Str)
+			continue
+		}
+		switch op.Str {
+		case "args":
+			g.usesArgs = true
+		case "env":
+			g.usesEnv = true
+		case "now_unix_ms":
+			g.usesNowUnixMs = true
+		case "monotonic_ns":
+			g.usesMonotonicNs = true
+		case "now_ns":
+			g.usesNowNs = true
+		case "sleep_ms":
+			g.usesSleepMs = true
+		case "read_file":
+			g.needFern("__fern_utf8_valid")
+		}
+	}
+}
+
+// needFern records that the program needs a runtime helper written in Fern
+// (internal/fernrt).
+func (g *generator) needFern(name string) {
+	if g.fernSeen[name] {
+		return
+	}
+	if g.fernSeen == nil {
+		g.fernSeen = map[string]bool{}
+	}
+	g.fernSeen[name] = true
+	g.fernHelpers = append(g.fernHelpers, name)
+}
+
+// resolveFernHelpers pre-scans each needed Fern helper as it does the
+// program's own functions. A helper may need another, so the list can grow
+// while it is walked.
+func (g *generator) resolveFernHelpers() error {
+	for i := 0; i < len(g.fernHelpers); i++ {
+		decl, irFn, err := fernrt.Func(g.fernHelpers[i], 8)
+		if err != nil {
+			return err
+		}
+		g.funcs[decl.Name] = decl
+		g.prescanOps(irFn.Ops)
+	}
+	return nil
 }
 
 // emitRawPokeIntrinsic lowers the raw-memory pokes the stdlib and
@@ -14563,7 +14496,6 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			g.usesReadFile = true
 			g.usesAlloc = true
 			g.usesIoError = true
-			g.usesUtf8Valid = true
 		case "read_file_bytes":
 			// read_file_bytes(path): Result[u8[], IoError] —
 			// read_file's raw sibling; the contents land in a
