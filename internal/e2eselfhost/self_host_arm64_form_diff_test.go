@@ -110,6 +110,21 @@ func arm64FormCases() []string {
 		add("orr x1, x2, #%s", imm)
 		add("eor x1, x2, #%s", imm)
 	}
+	// ands and its tst alias take the same immediate through a different emit
+	// path, so they need their own rows: covering only and/orr/eor left the
+	// flag-setting sibling parsing at 32 bits and encoding a truncated mask
+	// while the shared vet accepted the full-width value.
+	for _, imm := range []string{"0xff", "0xfffe", "0xf0f0f0f0"} {
+		add("ands w1, w2, #%s", imm)
+		add("tst w1, #%s", imm)
+	}
+	for _, imm := range []string{"0xff", "0x5555555555555555", "0xfffffffffffffffe"} {
+		add("ands x1, x2, #%s", imm)
+		add("tst x1, #%s", imm)
+	}
+	add("ands x1, x2, x3")
+	add("ands w1, w2, w3")
+	add("tst x1, x2")
 
 	// --- the move-wide family and the immediate selection above it.
 	for _, sh := range []int{0, 16, 32, 48} {
