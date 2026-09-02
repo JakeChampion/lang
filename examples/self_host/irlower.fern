@@ -254,11 +254,21 @@ pub struct LocalInfo {
     // A CONSUMING match still reclaims the payload — it reads it back out of the
     // box's own slot (emit_enum_variant_drops_gated), never through this binding.
     borrowed_arr: boolean,
+    // moved_claim: a borrowed_arr binding that IS the box's counted reference
+    // rather than a borrow of it, because the box is one this frame built and
+    // nothing outside the frame owns the buffer (scrutinee_is_frame_constructed).
+    // borrowed_arr still holds — the slot stays out of the exit sweep — but the
+    // premise it is usually read with, "the box keeps its reference", does not:
+    // whether by the consuming match's moved-payload skip or by there being no
+    // release at all, no dec of that field survives this frame. A return of such
+    // a binding therefore takes NO transfer retain; retaining it leaves a second
+    // claim with nothing to release it (#8070).
+    moved_claim: boolean,
 }
 
 // li_new(name) — a fresh local slot (defaults: every flag false, every type "").
 pub function li_new(name: string): LocalInfo {
-    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false };
+    return LocalInfo { slot_name: name, is_arr: false, is_str: false, is_strarr: false, strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: "", opt_type: "", tuple_elems: "", tuple_type: "", fnarr_elem: "", map_type: "", is_i64: false, is_f64: false, is_f32: false, is_f64arr: false, is_f32arr: false, is_i64arr: false, is_bool: false, is_boolarr: false, is_closurearr: false, is_fnarr: false, is_arrarr: false, arrarr_elem: "", is_u32: false, is_u64: false, subword: "", is_cell: false, cell_elem: "", fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, moved_claim: false };
 }
 
 pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
@@ -267,6 +277,10 @@ pub function li_set_str_caller_elem(li: LocalInfo, v: boolean): LocalInfo {
 
 pub function li_set_borrowed_arr(li: LocalInfo, v: boolean): LocalInfo {
     return LocalInfo { ...li, borrowed_arr: v };
+}
+
+pub function li_set_moved_claim(li: LocalInfo, v: boolean): LocalInfo {
+    return LocalInfo { ...li, moved_claim: v };
 }
 
 pub function li_set_names(li: LocalInfo, v: string): LocalInfo {
@@ -1475,6 +1489,18 @@ pub function (s: LowerState) is_borrowed_arr_slot(i: i32): boolean {
 
 pub function (s: LowerState) mark_borrowed_arr(i: i32, v: boolean): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_borrowed_arr(s.locals[i], v)) };
+}
+
+// is_moved_claim_slot / mark_moved_claim query and set LocalInfo.moved_claim —
+// whether a borrowed_arr binding was handed the box's own counted reference by
+// the consuming match's moved-payload skip.
+pub function (s: LowerState) is_moved_claim_slot(i: i32): boolean {
+    if (i < 0 || i >= s.locals.len()) { return false; }
+    return s.locals[i].moved_claim;
+}
+
+pub function (s: LowerState) mark_moved_claim(i: i32, v: boolean): LowerState {
+    return LowerState { ...s, locals: s.locals.with(i, li_set_moved_claim(s.locals[i], v)) };
 }
 
 // is_u32_slot / mark_u32 query and set the u32-ness of slot i (a u32 scalar or
@@ -18471,7 +18497,17 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                 // box's buffer (mark_borrowed_arr): the box keeps its
                 // reference and the binding is never swept, so the escaping
                 // return takes the same transfer retain as a borrowed param.
-                if (rps >= s.n_params && s.is_borrowed_arr_slot(rps)) {
+                //
+                // EXCEPT when the binding already IS that reference (moved_claim,
+                // #8070): the box is one this frame built, so there is no claim
+                // left to count against — the consuming match's moved-payload
+                // skip hands this field over and the pending deep drop
+                // emit_dec_sweep_except runs omits its dec. The skip and this
+                // retain are one pairing, alternatives and never both; retaining
+                // on top strands the buffer, since the caller's dec then lands on
+                // the extra claim instead of on zero. Such a return falls through
+                // to the move-on-return path below.
+                if (rps >= s.n_params && s.is_borrowed_arr_slot(rps) && !s.is_moved_claim_slot(rps)) {
                     var rbl: LowerState = lower_expr(r.value, s);
                     if (!rbl.ok) { return rbl; }
                     rbl = rbl.retain_tos("ret-borrowed-binding");
@@ -23998,6 +24034,14 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                         // (#6049; see LocalInfo.borrowed_arr). Applied after the
                         // branch chain so every array-payload spelling is covered.
                         if (ms.is_arr_slot(bslot)) { ms = ms.mark_borrowed_arr(bslot, true); }
+                        // …and when the box is one THIS FRAME built, the binding
+                        // additionally carries the box's own claim (#8070): no
+                        // other owner survives the call, so an escaping return
+                        // hands that single reference on rather than counting a
+                        // second one. See LocalInfo.moved_claim.
+                        if (ms.is_arr_slot(bslot) && scrutinee_is_frame_constructed(m.scrutinee, ms)) {
+                            ms = ms.mark_moved_claim(bslot, true);
+                        }
                     }
                     bidx = bidx + 1;
                 }
@@ -27922,6 +27966,26 @@ function split_semi(s: string): string[] {
         i = i + 1;
     }
     return out.append(slice_unchecked(s, start, s.len()) + "");
+}
+
+// scrutinee_is_frame_constructed reports whether a match scrutinee names an enum
+// local THIS FRAME built — the "FRESHBOX:" credit frame_constructed_enum_names_of
+// leaves. Anything else (a parameter, a field read, an unresolved shape) answers
+// false, which is the conservative side: the box may be someone else's.
+function scrutinee_is_frame_constructed(scrut: ast.Expr, s: LowerState): boolean {
+    match (scrut) {
+        ast.ExprIdent(id) => {
+            var sl: i32 = s.slot_of(id.name);
+            if (sl < s.n_params) { return false; }
+            // A box the EXIT SWEEP will deep-free (credited "RCENUMS:", the
+            // no-consuming-match half) is the one frame-constructed shape that
+            // still owes the retain: that sweep runs on the return path too and
+            // decs the payload, so the escaping value needs a count of its own.
+            if (slot_is_reclaimable_rcenum_sweep(s, sl)) { return false; }
+            return reclaim_has(s.reclaimable_names, "FRESHBOX:", s.reclaim_site_key(sl));
+        },
+        _ => { return false; }
+    }
 }
 
 // slot_list_has reports whether slot index `v` is in `xs` — the keep-set
@@ -37141,6 +37205,53 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // (enum_only_wildcard_used_rec + array-payload-only) so b's payload is never aliased;
     // DISJOINT from the consume-by-match enum frees (those require b NOT reassigned).
     out = enum_reassign_reclaim_names(body, structs, out);
+    // Enum locals this frame CONSTRUCTED, credited "FRESHBOX:<name>" — the
+    // ownership question a match-arm payload return has to answer (#8070). See
+    // frame_constructed_enum_names_of.
+    out = frame_constructed_enum_names_of(body, structs, opt_fresh_ret, str_fresh_ret, msites, out);
+    return out;
+}
+
+// frame_constructed_enum_names_of credits "FRESHBOX:<name>" for every enum local
+// whose value THIS FRAME built — a direct variant construction, a call to a
+// proven fresh rc-enum ctor, or a bare-ident bind of a name already credited.
+// Declaration order makes one pass a fixpoint: an alias's source is declared
+// before it.
+//
+// It answers one question, for the return of a match-arm array-payload binding:
+// does an owner of that buffer survive the call? A frame-constructed box is the
+// buffer's only owner and this frame is on its way out, so the escaping return
+// carries the box's own reference and must take NO transfer retain — the value
+// leaves at the rc it already has. A box reached through a PARAMETER is the
+// caller's, which keeps its claim, so that return does owe the retain.
+//
+// Deliberately conservative: only top-level `var`s are read and anything
+// unresolved goes uncredited, which leaves the retain in place. That is the
+// safe default — a needless retain leaks, a missing one is a use-after-free.
+function frame_constructed_enum_names_of(body: ast.Stmt[], structs: parser.StructDecl[], opt_fresh_ret: SigReg, str_fresh: string[], msites: string[], acc: string[]): string[] {
+    var out: string[] = acc;
+    var owned: string[] = [];
+    var vi: i32 = 0;
+    while (vi < body.len()) {
+        match (body[vi]) {
+            ast.StmtVar(v) => {
+                var built: boolean = fresh_rcpayload_enum_init(v.init, structs, str_fresh, msites, true) != ""
+                    || rcenum_call_init_owner(v.init, opt_fresh_ret) != "";
+                if (!built) {
+                    match (v.init) {
+                        ast.ExprIdent(src) => { built = util.index_of_str(owned, src.name) >= 0; },
+                        _ => {}
+                    }
+                }
+                if (built && util.index_of_str(owned, v.name) < 0) {
+                    owned = owned.append(v.name);
+                    out = out.append("FRESHBOX:" + reclaim_site_key_of(v.name, v.line, v.col));
+                }
+            },
+            _ => {}
+        }
+        vi = vi + 1;
+    }
     return out;
 }
 
@@ -52863,7 +52974,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     var locals0: LocalInfo[] = [];
     var lzi: i32 = 0;
     while (lzi < names.len()) {
-        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false });
+        locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, moved_claim: false });
         lzi = lzi + 1;
     }
     // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees

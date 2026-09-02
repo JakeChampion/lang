@@ -91,6 +91,24 @@ function churn(m: i32): i32 { var root: N = B([L([1, 2, 3])]); var acc: i32 = 0;
 function main(): i32 { var w: i32 = churn(2000); var x: i32 = churn(2000); if (__rc_underflow() != 0) { return 99; } if (w != x || w != (2 * 2000) % 251) { return 97; } return 0; }`,
 		"arr-return-transfer-match-binding", 0)
 
+	// The SAME return, over a box THIS FRAME BUILT — and it must take no
+	// retain (#8070). The row above and this one are the two sides of one
+	// ownership question and are deliberately adjacent: there the trie owns the
+	// buffer and survives the call, so the escaping return owes a counted
+	// reference; here the box is the buffer's only owner and the consuming
+	// match hands its claim to the binding (the moved-payload skip), so the
+	// value leaves at the rc it already has. Retaining anyway leaves a second
+	// claim nothing releases — the caller's dec lands on it instead of on zero
+	// and every round strands a buffer, which is 98 here rather than a
+	// detectable over-release. Widening the predicate to cover both rows breaks
+	// one of them whichever way it is widened.
+	run(t, `enum M { ME, ML(i32[]) }
+function mkm(i: i32): M { return ML([i, i + 1, i + 2]); }
+function take(i: i32): i32[] { var v: M = mkm(i); match (v) { ML(xs) => { return xs; }, ME => { return [0]; } } }
+function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { var t: i32[] = take(i); acc = (acc + t[1]) % 251; i = i + 1; } return acc; }
+function main(): i32 { var w: i32 = churn(2000); var b1: i32 = (__heap_bump_bytes() as i32); var x: i32 = churn(2000); var b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
+		"arr-return-transfer-match-binding-fresh-box", 0)
+
 	// A `string[]` STRUCT FIELD returned by a method (#7232). The buffer-pointer
 	// Perceus dup on the return path was a chain of per-element-type
 	// classifiers (scalar / array-of-struct / array-of-enum) where native's
