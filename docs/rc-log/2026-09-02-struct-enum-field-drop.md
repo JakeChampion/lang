@@ -70,9 +70,15 @@ ms = ms.emit(ir.op_store_local(scrut_slot));
 
 `$mscrut` is written in exactly one place and read in none: grep finds the
 construction above and one unrelated comment, and nothing releases the slot.
-For a bare-ident scrutinee that is right — the load is a borrow and there is
-nothing to release. For a field access of rc-tracked type it is not: the read
-takes a counted alias, and the count is never given back.
+For a bare-ident scrutinee that is right — the load is a borrow and nothing is
+owed. For a field access it is not, and the missing release is what the counts
+below show.
+
+WHICH SITE incurs the owed count is NOT established here. It could be the field
+read (a dup-at-extract alias) or the struct literal's own construction retain
+(`fav_alias_inc`); the closest pair emits the same number of incs either way, so
+the asm does not separate them. That distinction is exactly what the fix's gate
+turns on, so it has to be settled before the fix, not assumed.
 
 The emitted asm says the same thing, and says which helper is missing. The two
 programs differ only by the bind, and their `main` bodies differ by exactly one
@@ -84,8 +90,14 @@ $ diff <(calls in w_inlineenum) <(calls in r_bindthenmatch)
 >       9 call __fn___fern_arr_dec
 ```
 
-One `__fern_arr_dec`. Not a `__struct_drop` — that count is identical on both
-sides, which is the same thing the never-read control says.
+One `__fern_arr_dec`, and it is the ONLY differing call. Not a `__struct_drop`
+— that count is identical on both sides, which is the same thing the never-read
+control says.
+
+Only that pair is comparable. The counts are static call sites in `main`, and
+the other programs differ structurally — the never-read control emits no match
+at all and reads 12 — so a count is evidence only against a program that
+differs in one edit.
 
 ## Next lead
 
