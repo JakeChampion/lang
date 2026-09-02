@@ -50,6 +50,7 @@ array_generic_reductions                             0
 array_join                                           0
 array_methods                                        0
 array_of_structs                                     0
+array_param_threaded_reassign                        0
 array_reverse                                        0
 array_sort                                           0
 array_with_rc_elem_drop                              0
