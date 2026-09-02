@@ -53,17 +53,17 @@ pub function (s: PSet[T]) is_empty(): boolean {
 }
 
 // `add(x)` — the set with `x`; the receiver unchanged when present.
-pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) add(x: T): PSet[T] {
+pub function (s: PSet[T]) add[T: cmp.Hash + cmp.Eq](x: T): PSet[T] {
   return PSet { root: pmap.__hm_insert(s.root, pmap.__hm_mix(x.hash()), 0, x, 0) };
 }
 
 // `remove(x)` — the set without `x`; the receiver unchanged when absent.
-pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) remove(x: T): PSet[T] {
+pub function (s: PSet[T]) remove[T: cmp.Hash + cmp.Eq](x: T): PSet[T] {
   return PSet { root: pmap.__hm_remove(s.root, pmap.__hm_mix(x.hash()), 0, x) };
 }
 
 // `contains(x)` — is `x` a member?
-pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) contains(x: T): boolean {
+pub function (s: PSet[T]) contains[T: cmp.Hash + cmp.Eq](x: T): boolean {
   var hit: pmap.HNode[T, i32] = pmap.__hm_find(s.root, pmap.__hm_mix(x.hash()), x);
   return pmap.__hm_holds(hit);
 }
@@ -77,7 +77,7 @@ pub function (s: PSet[T]) to_array(): T[] {
 
 // `union(other)` — every element of both; the smaller set is folded
 // into the larger, O(m log32 n).
-pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) union(other: PSet[T]): PSet[T] {
+pub function (s: PSet[T]) union[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
   if (s.len() >= other.len()) {
     return __ps_add_all(s, other.to_array());
   }
@@ -95,7 +95,7 @@ function __ps_add_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
 }
 
 // `intersection(other)` — the elements in both.
-pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) intersection(other: PSet[T]): PSet[T] {
+pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
   var out: PSet[T] = pset_new();
   var xs: T[] = s.to_array();
   var i: i32 = 0;
@@ -109,7 +109,7 @@ pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) intersection(other: PSet[T]): P
 }
 
 // `difference(other)` — this set's elements that are NOT in `other`.
-pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) difference(other: PSet[T]): PSet[T] {
+pub function (s: PSet[T]) difference[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
   var out: PSet[T] = s;
   var xs: T[] = other.to_array();
   var i: i32 = 0;
@@ -121,7 +121,7 @@ pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) difference(other: PSet[T]): PSe
 }
 
 // `is_subset(other)` — is every element of this set in `other`?
-pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) is_subset(other: PSet[T]): boolean {
+pub function (s: PSet[T]) is_subset[T: cmp.Hash + cmp.Eq](other: PSet[T]): boolean {
   if (s.len() > other.len()) {
     return false;
   }
@@ -137,12 +137,12 @@ pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) is_subset(other: PSet[T]): bool
 }
 
 // `equals(other)` — the same elements?
-pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) equals(other: PSet[T]): boolean {
+pub function (s: PSet[T]) equals[T: cmp.Hash + cmp.Eq](other: PSet[T]): boolean {
   return s.len() == other.len() && s.is_subset(other);
 }
 
 // `filter(pred)` — the elements `pred` accepts.
-pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) filter(pred: (T) => boolean): PSet[T] {
+pub function (s: PSet[T]) filter[T: cmp.Hash + cmp.Eq](pred: (T) => boolean): PSet[T] {
   var out: PSet[T] = pset_new();
   var xs: T[] = s.to_array();
   var i: i32 = 0;
@@ -156,7 +156,7 @@ pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) filter(pred: (T) => boolean): P
 }
 
 // `fold(init, f)` — `f` over every element in hash order.
-pub function [T, A] (s: PSet[T]) fold(init: A, f: (A, T) => A): A {
+pub function (s: PSet[T]) fold[T, A](init: A, f: (A, T) => A): A {
   return pmap.__hm_fold(s.root, init, (a: A, k: T, v: i32) => f(a, k));
 }
 
