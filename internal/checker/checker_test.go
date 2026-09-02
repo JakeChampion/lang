@@ -3297,6 +3297,112 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 	}
 }
 
+// A value-returning `init` paired with a state-taking `handle` is the
+// two-phase lifecycle of docs/PLATFORM-RESEARCH.md Rec §3: the
+// synthesised main hands `init()`'s result to `tcp_serve_with`, which
+// owns it in the accept loop's frame and threads it through every
+// request. No `init();` statement of its own — the value IS the call.
+func TestSynthesisedHandleMainThreadsInitState(t *testing.T) {
+	prog, err := parser.Parse(`function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function __port_from_env(name: string, def: i32): i32 { return def; }
+function init(): i32 { return 7; }
+function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+    return (hits + 1, HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } });
+}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	var main *ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if fn.Name == "main" && fn.IsSynthesisedHandlerMain {
+			main = fn
+			break
+		}
+	}
+	if main == nil {
+		t.Fatal("no synthesised main found")
+	}
+	if len(main.Body.Stmts) != 1 {
+		t.Fatalf("synth main has %d stmts, want 1 (the tcp_serve_with return; init is an argument, not a statement)",
+			len(main.Body.Stmts))
+	}
+	ret, ok := main.Body.Stmts[0].(*ast.Return)
+	if !ok {
+		t.Fatalf("stmt = %T, want *ast.Return", main.Body.Stmts[0])
+	}
+	call, ok := ret.Value.(*ast.Call)
+	if !ok {
+		t.Fatalf("returned expression = %T, want *ast.Call", ret.Value)
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || id.Name != "tcp_serve_with" {
+		t.Fatalf("synth main calls %v, want tcp_serve_with", call.Callee)
+	}
+	if len(call.Args) != 3 {
+		t.Fatalf("tcp_serve_with call has %d args, want 3 (port, init(), handle)", len(call.Args))
+	}
+	initArg, ok := call.Args[1].(*ast.Call)
+	if !ok {
+		t.Fatalf("second argument = %T, want the *ast.Call to init", call.Args[1])
+	}
+	if id, ok := initArg.Callee.(*ast.Ident); !ok || id.Name != "init" {
+		t.Errorf("second argument calls %v, want init", initArg.Callee)
+	}
+}
+
+// The two halves have to agree about state. A handler that takes one
+// with nothing producing it, and an `init` that produces one with
+// nothing taking it, are both E075 — the second used to be accepted
+// with the value silently dropped.
+func TestHandlerInitStateMismatchIsRejected(t *testing.T) {
+	const decls = `function tcp_serve(port: i32, handler: (HttpRequest, Platform) => HttpResponse): i32 { return 0; }
+function tcp_serve_with[S](port: i32, init: S, handler: (S, HttpRequest, Platform) => (S, HttpResponse)): i32 { return 0; }
+function __port_from_env(name: string, def: i32): i32 { return def; }
+`
+	cases := map[string]string{
+		"handler takes state nobody produces": decls + `function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+    return (hits + 1, HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } });
+}`,
+		"void init produces no state": decls + `function init(): void { print("starting"); }
+function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+    return (hits + 1, HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } });
+}`,
+		"init produces state nobody takes": decls + `function init(): i32 { return 7; }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+}`,
+	}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, src)
+			if err == nil {
+				t.Fatal("want E075, got no error")
+			}
+			if !hasCode(err, "E075") {
+				t.Errorf("want E075, got: %v", err)
+			}
+		})
+	}
+}
+
+// A user-written `main` owns its own wiring: pairing init and handle
+// some other way there is that program's business, so the rule that
+// governs the synthesised main does not reach it.
+func TestHandlerInitStateMismatchAllowedUnderUserMain(t *testing.T) {
+	err := checkSource(t, `function init(): i32 { return 7; }
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    return HttpResponse { status: 200, body: "ok", headers: HeaderMap { names: [], values: [] } };
+}
+function main(): i32 { return init(); }`)
+	if err != nil {
+		t.Fatalf("a user-written main should be left alone, got: %v", err)
+	}
+}
+
 // TestUserDefinedMainSkipsSynthEvenWithInit — when the user
 // writes their own main(), the synth-main path is skipped
 // entirely. User's main has the freedom to call init() (or

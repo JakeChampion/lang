@@ -668,6 +668,33 @@ function main(): i32 {
 // (wasmbin.go) are all consistently registered. Pure compile
 // check; runtime exercise under `wasmtime serve` lives in the
 // e2e suite (TestWasmPreview2HttpHandler).
+// A state-taking handler has no caller in the proxy world: the wrapper
+// builds `(req, plat)` itself and the instance is per-request, so nothing
+// runs `init` or holds what it returns. Refusing by name is the point —
+// the two-argument call against a three-parameter function would
+// otherwise surface as a wasm validation error naming neither.
+func TestBuildHttpHandlerRefusesStatefulHandler(t *testing.T) {
+	src := `
+import "std/http";
+import "std/tcp";
+function init(): i32 { return 0; }
+function handle(hits: i32, req: HttpRequest, plat: Platform): (i32, HttpResponse) {
+    return (hits + 1, http.http_response_ok("ok"));
+}
+`
+	prog, info := loadAndCheckModule(t, src)
+	_, err := BuildWithOptions(prog, info, BuildOptions{
+		ForceMemorySection: true,
+		HttpHandler:        true,
+	})
+	if err == nil {
+		t.Fatal("expected a refusal for a state-taking handler on the proxy world; got nil")
+	}
+	if !strings.Contains(err.Error(), "process-lifetime state") {
+		t.Errorf("error should say what is unsupported and why, got: %v", err)
+	}
+}
+
 func TestBuildHttpHandlerCompiles(t *testing.T) {
 	src := `
 import "std/http";

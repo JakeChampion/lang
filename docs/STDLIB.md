@@ -838,20 +838,37 @@ serializer.
 ### `std/tcp`
 
 - `tcp_serve(port, handler)` — HTTP/1.1 accept loop. Calls
-  `handler(req: HttpRequest): HttpResponse` once per accepted
-  connection. Each connection's request read is bounded by a
-  10 s deadline (the slow-loris guard).
+  `handler(req: HttpRequest, plat: Platform): HttpResponse` once
+  per accepted connection, constructing the `Platform` bag it
+  passes. Each connection's request read is bounded by a 10 s
+  deadline (the slow-loris guard).
 - `tcp_serve_deadline(port, handler, recv_deadline_ms)` —
   `tcp_serve` with an explicit per-request read deadline; a
   client that hasn't delivered a complete request in time is
   disconnected without a response.
-- `tcp_recv_deadline(fd, max, deadline_ms): Option[string]` —
+- `tcp_serve_with(port, init, handler)` — the same loop with a
+  caller-owned state value threaded through it: the handler is
+  `(S, HttpRequest, Platform) => (S, HttpResponse)` and the state
+  it returns is what the next request receives. The loop's frame
+  owns it, so it lasts as long as the process — this is how a
+  handler keeps a cache or a counter, the language having no
+  module-level mutable state. `tcp_serve_with_deadline` adds the
+  explicit read deadline.
+- `tcp_serve_supervised(port, handler)` — crash-only serving: the
+  accept loop runs in a forked worker the parent reforks on
+  death (docs/CRASH-ONLY-SERVE.md). No threaded-state variant —
+  a refork resets the loop frame.
+- `tcp_recv_deadline(fd, max, deadline_ms): Option[u8[]]` —
   recv bounded by a readability deadline: `Some(chunk)` in time
   (empty chunk = EOF), `None` at the deadline. On interp (where
   `poll` is a stub) it degrades to a blocking recv.
 - `__port_from_env(name, fallback)` — env-var port lookup used
   by the auto-`main`-from-`handle()` synthesis so handler-shaped
-  programs can be tuned via `PORT=N ./bin`.
+  programs can be tuned via `PORT=N ./bin`. That synthesis picks
+  `tcp_serve_with` over `tcp_serve` when the program defines
+  `init(): S` alongside a state-taking `handle`
+  (docs/PLATFORM-RESEARCH.md Rec §3); mismatching the two is
+  E075.
 
 The raw socket primitives `tcp_listen` / `tcp_accept` / `tcp_recv`
 / `tcp_send` / `tcp_close` are runtime-provided, emitted by

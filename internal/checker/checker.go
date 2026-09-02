@@ -2918,7 +2918,12 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	// user-defined — don't surprise users who want their
 	// own main alongside the wasi-http handler.
 	if hasHandleDecl(prog) && !hasMainDecl(prog) {
-		prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog))
+		// A mispaired init/handle has already been reported against the
+		// declaration that is wrong; synthesising main on top of it adds
+		// a second, positionless error about a call nobody wrote.
+		if c.checkHandlerStatePairing(prog) {
+			prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog))
+		}
 	}
 
 	// Validate `dyn Trait` type usage (trait exists + object-safe) now
@@ -16441,29 +16446,94 @@ func hasMainDecl(prog *ast.Program) bool {
 	return false
 }
 
+// checkHandlerStatePairing rejects the two ways `init` and `handle`
+// can disagree about process-lifetime state (docs/PLATFORM-RESEARCH.md
+// Rec §3). Either the handler takes a state nothing produces, or `init`
+// produces one nothing takes — the second silently dropped the value
+// before this check existed, which is the worse of the two.
+//
+// Only reached when the synthesised main is what wires the two
+// together: a user-written `main` owns its own wiring, and pairing them
+// some other way is that program's business.
+// It reports whether the pair is coherent enough to synthesise a main
+// for.
+func (c *checker) checkHandlerStatePairing(prog *ast.Program) bool {
+	init := findDecl(prog, "init")
+	handle := findDecl(prog, "handle")
+	if handle == nil {
+		return true
+	}
+	initReturnsState := init != nil && !isVoidReturn(init.ReturnType)
+	handleTakesState := len(handle.Params) == 3
+	switch {
+	case handleTakesState && !initReturnsState:
+		c.errfCode(handle.P, "E075",
+			"handler takes a state parameter, but no `init` produces the state to thread through it")
+		return false
+	case initReturnsState && !handleTakesState:
+		c.errfCode(init.P, "E075",
+			"`init` returns a value, but the handler takes no state parameter to thread it through")
+		return false
+	}
+	return true
+}
+
+// findDecl returns the top-level function named `name`, or nil.
+func findDecl(prog *ast.Program, name string) *ast.FuncDecl {
+	for _, fn := range prog.Funcs {
+		if fn.Name == name && fn.Receiver == nil {
+			return fn
+		}
+	}
+	return nil
+}
+
 // hasInitDecl reports whether the program defines a top-level
 // `init` function — recognised by the auto-`main`-from-`handle`
 // synthesis as a one-shot startup entry that runs before the
 // per-request loop (docs/PLATFORM-RESEARCH.md Rec §3).
-//
-// `init()` returns are currently dropped — Phase 1 plumbing
-// only runs the function for its side effects (logging
-// "starting", pre-warming caches via state-block writes,
-// env-var reads). Phase 2 will thread the return value as a
-// `state: InitState` third argument to `handle`.
 func hasInitDecl(prog *ast.Program) bool {
-	for _, fn := range prog.Funcs {
-		if fn.Name == "init" {
-			return true
-		}
+	return findDecl(prog, "init") != nil
+}
+
+// initProvidesState reports whether `init` returns a value for the
+// handler to carry, and `handle` is the shape that takes one:
+//
+//	function init(): S
+//	function handle(state: S, req: HttpRequest, plat: Platform): (S, HttpResponse)
+//
+// That pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
+// Rec §3 — build once at startup, thread through every request — and
+// the sanctioned answer to process-lifetime mutable state (#2679): the
+// value lives in the accept loop's frame, not in a module-level `var`
+// the language does not have.
+//
+// A void `init` stays the Phase-1 shape: run for its side effects, then
+// serve with a 2-parameter handler. The two mismatched pairings (a
+// state-taking handler with nothing producing the state, a
+// value-returning init with nothing consuming it) are rejected at the
+// synthesis site rather than lowered into a call that would not
+// type-check against a synthesised main nobody wrote.
+func initProvidesState(prog *ast.Program) bool {
+	init := findDecl(prog, "init")
+	handle := findDecl(prog, "handle")
+	if init == nil || handle == nil {
+		return false
 	}
-	return false
+	return !isVoidReturn(init.ReturnType) && len(handle.Params) == 3
 }
 
 // synthesiseHandleMain builds:
 //
 //	function main(): i32 {
 //	    return tcp_serve(__port_from_env("PORT", 8080), handle);
+//	}
+//
+// or, when `init` returns a value the handler takes
+// (initProvidesState):
+//
+//	function main(): i32 {
+//	    return tcp_serve_with(__port_from_env("PORT", 8080), init(), handle);
 //	}
 //
 // — the canonical entry point for handler-shaped programs on
@@ -16505,31 +16575,44 @@ func synthesiseHandleMain(prog *ast.Program) *ast.FuncDecl {
 			&ast.NumberLit{P: pos, Value: 8080},
 		},
 	}
-	tcpServeCall := &ast.Call{
-		P:      pos,
-		Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve", "tcp__tcp_serve")},
-		Args: []ast.Expr{
-			portCall,
-			&ast.Ident{P: pos, Name: "handle"},
-		},
-	}
-	// Prepend an `init();` call when the user defined one
-	// (docs/PLATFORM-RESEARCH.md Rec §3). The return value is
-	// dropped: init() is side-effect-only, and nothing threads its
-	// result to handle. `init` is the BARE name; if a module import
-	// qualifies it, modload rewrites the call separately.
+	// `init` is the BARE name; if a module import qualifies it, modload
+	// rewrites the call separately.
+	initCall := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "init"}, Args: nil}
+
 	var stmts []ast.Stmt
-	if hasInitDecl(prog) {
-		stmts = append(stmts, &ast.ExprStmt{
-			P: pos,
-			Expr: &ast.Call{
-				P:      pos,
-				Callee: &ast.Ident{P: pos, Name: "init"},
-				Args:   nil,
+	var serveCall *ast.Call
+	if initProvidesState(prog) {
+		// `init(): S` + `handle(state: S, req, plat): (S, HttpResponse)`
+		// — the two-phase lifecycle: build the state once, thread it
+		// through the request chain (docs/PLATFORM-RESEARCH.md Rec §3).
+		// tcp_serve_with owns the state in the accept loop's frame, so
+		// it lives as long as the process.
+		serveCall = &ast.Call{
+			P:      pos,
+			Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve_with", "tcp__tcp_serve_with")},
+			Args: []ast.Expr{
+				portCall,
+				initCall,
+				&ast.Ident{P: pos, Name: "handle"},
 			},
-		})
+		}
+	} else {
+		serveCall = &ast.Call{
+			P:      pos,
+			Callee: &ast.Ident{P: pos, Name: resolve("tcp_serve", "tcp__tcp_serve")},
+			Args: []ast.Expr{
+				portCall,
+				&ast.Ident{P: pos, Name: "handle"},
+			},
+		}
+		// A void `init` runs for its side effects before the loop —
+		// logging "starting", reading env vars, warming a cache the
+		// handler reaches some other way.
+		if hasInitDecl(prog) {
+			stmts = append(stmts, &ast.ExprStmt{P: pos, Expr: initCall})
+		}
 	}
-	stmts = append(stmts, &ast.Return{P: pos, Value: tcpServeCall})
+	stmts = append(stmts, &ast.Return{P: pos, Value: serveCall})
 	body := &ast.Block{Stmts: stmts}
 	return &ast.FuncDecl{
 		P:                        pos,
