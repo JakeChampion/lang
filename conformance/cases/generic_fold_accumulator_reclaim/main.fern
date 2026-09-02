@@ -1,0 +1,48 @@
+// A threaded accumulator behind an unbounded generic: `fold[T](xs, acc: T, f)`
+// rebinds `acc = f(acc, x)` in a frame that, erased, has no idea whether the
+// value it replaces is an array it now owns or a scalar it must leave alone —
+// so the self-host lowering could not release the generation each grow of a
+// string[] accumulator superseded, and the walker frames the compiler threads
+// every AST scan through leaked one buffer per grow. The parser now clones a
+// generic whose bare-typed parameter the body reassigns (promotion clause d),
+// so the clone's accumulator has a type and the ownership flag applies. The
+// same fold is instantiated at string[], i32[] and i32, and every result is
+// read back after churn.
+function fold[T](xs: string[], acc: T, f: (T, string) => T): T {
+  for x in xs { acc = f(acc, x); }
+  return acc;
+}
+
+function push_name(acc: string[], x: string): string[] { return acc.append(x); }
+function push_len(acc: i32[], x: string): i32[] { return acc.append(x.len()); }
+function add_len(acc: i32, x: string): i32 { return acc + x.len(); }
+
+function churn(): i32 {
+  var junk: string[] = [];
+  var i: i32 = 0;
+  while (i < 300) { junk = junk.append("junk"); i = i + 1; }
+  return junk.len();
+}
+
+function main(): i32 {
+  var names: string[] = [];
+  var i: i32 = 0;
+  while (i < 45) { names = names.append("name"); i = i + 1; }
+  var total: i32 = 0;
+  var round: i32 = 0;
+  while (round < 20) {
+    var seed: string[] = [];
+    var got: string[] = fold(names, seed, push_name);
+    var iseed: i32[] = [];
+    var lens: i32[] = fold(names, iseed, push_len);
+    var n: i32 = fold(names, 0, add_len);
+    churn();
+    var k: i32 = 0;
+    while (k < got.len()) { total = total + got[k].len(); k = k + 1; }
+    k = 0;
+    while (k < lens.len()) { total = total + lens[k]; k = k + 1; }
+    total = total + n + seed.len() + iseed.len();
+    round = round + 1;
+  }
+  return total % 64;
+}

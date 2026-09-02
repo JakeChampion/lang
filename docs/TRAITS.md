@@ -811,7 +811,10 @@ regressing the self-host gates. It needs traits in two slices:
   rewrites call sites; a worklist covers clones that call other bounded
   generics. The clone's concrete receiver then routes through the
   emitter's static-primitive dispatch — no emitter change. Unbounded
-  generics keep their erasure. Tested on x86-64 + arm64
+  generics keep their erasure, except where `parse_func_decl`'s targeted
+  promotion clauses pull one into the monomorphised set (clause (d): a
+  body that binds or reassigns a bare-var-typed value, so the ownership
+  lowering has a type to work with). Tested on x86-64 + arm64
   (`internal/e2e/self_host_traits_test.go`): primitive, struct,
   multi-type, and mixed-primitive-and-struct instantiations.
 
