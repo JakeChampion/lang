@@ -86,13 +86,20 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"map_value_escapes_return":                       16,
 	"matchexpr_alias_array_no_free":                  1600,
 	"option_of_array":                                32,
-	"pair_form_enum_temp_as_argument":                1312,
+	"pair_form_enum_temp_as_argument":                288,
 	"pair_form_payload_borrowing_call":               144,
 	"stdlib_json_cursor_idiom":                       1488,
 	"stdlib_json_roundtrip":                          640,
 	"string_closure_capture_aliased":                 16,
-	"string_closure_capture_churn_free":              3200,
-	"tuple_return_scalar_cursor_recursion":           320,
+	// A closure LOCAL handed to a callee keeps its pair, and the exit
+	// sweep's per-closure thunk is downgraded to the pair-only release
+	// (ElideClosurePair). Routing it through the pair's drop-fn pointer
+	// instead freed a Scope's closure field under the self-host checker
+	// (docs/rc-log/2026-09-02-persistent-collections-residual-leaks.md),
+	// so the shape is pinned rather than fixed: pair + env per call.
+	"closure_local_passed_to_callee_released": 384,
+	"string_closure_capture_churn_free":       3200,
+	"tuple_return_scalar_cursor_recursion":    320,
 	// The hand-back half of the guarded arg-temp release: the callee
 	// returned the temp unchanged, so the guard declined the drop and the
 	// result's own reference keeps rhsTainted's conservative call-result
@@ -144,14 +151,16 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"map_value_escapes_return":                       16,
 	"matchexpr_alias_array_no_free":                  1600,
 	"option_of_array":                                32,
-	"pair_form_enum_temp_as_argument":                1312,
+	"pair_form_enum_temp_as_argument":                288,
 	"pair_form_payload_borrowing_call":               144,
 	"stdlib_json_cursor_idiom":                       1792,
 	"stdlib_json_roundtrip":                          768,
 	"stdlib_query_parse_roundtrip":                   128,
 	"string_closure_capture_aliased":                 48,
-	"string_closure_capture_churn_free":              6400,
-	"tuple_return_scalar_cursor_recursion":           320,
+	// See the x86-64 twin.
+	"closure_local_passed_to_callee_released": 384,
+	"string_closure_capture_churn_free":       6400,
+	"tuple_return_scalar_cursor_recursion":    320,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
 	"consumed_array_arg_temp_released_and_guarded": 128,
 	// Another pre-existing arm64 gap the x86-64 twin does not have (0

@@ -6645,6 +6645,250 @@ function main(): i32 {
 }
 `,
 	},
+	{
+		// A lambda in argument position is a fresh pair plus env that the
+		// callee only borrows (a function value is never owned-by-default),
+		// so the caller is its only owner. freshOwnedRcTempType declined the
+		// MakeClosure shape outright and both blocks leaked per call —
+		// `m.update(k, (v: i32) => v + i)` in a loop, one pair and one env
+		// per iteration (#8057). The scalar-returning `apply` takes the
+		// call-level admission; the Box-returning `update` needs the
+		// per-position one, which credits a function-typed parameter that
+		// is only ever CALLED.
+		name: "closure_argument_temp_released",
+		src: `
+enum Node { Tip, Bin(Node, i32, i32, Node, i32) }
+struct Box { root: Node }
+
+@noinline
+function find(t: Node, k: i32): Node {
+    match (t) {
+        Tip => { return t; },
+        Bin(l, nk, nv, r, s) => {
+            if (k < nk) { return find(l, k); }
+            if (k > nk) { return find(r, k); }
+            return t;
+        }
+    }
+}
+
+@noinline
+function ins(t: Node, k: i32, v: i32): Node {
+    match (t) {
+        Tip => { return Bin(Tip, k, v, Tip, 1); },
+        Bin(l, nk, nv, r, s) => {
+            if (k < nk) { var nl: Node = ins(l, k, v); return Bin(nl, nk, nv, r, s + 1); }
+            if (k > nk) { var nr: Node = ins(r, k, v); return Bin(l, nk, nv, nr, s + 1); }
+            return Bin(l, k, v, r, s);
+        }
+    }
+}
+
+@noinline
+function (b: Box) update(k: i32, f: (i32) => i32): Box {
+    match (find(b.root, k)) {
+        Tip => { return b; },
+        Bin(l, nk, nv, r, s) => { return Box { root: ins(b.root, k, f(nv)) }; }
+    }
+}
+
+@noinline
+function apply(x: i32, f: (i32) => i32): i32 { return f(x); }
+
+function main(): i32 {
+    var b: Box = Box { root: Tip };
+    var i: i32 = 0;
+    while (i < 16) { b = Box { root: ins(b.root, i, i) }; i = i + 1; }
+    var t: i32 = 0;
+    i = 0;
+    while (i < 16) {
+        b = b.update(i, (v: i32) => v + i);
+        t = t + apply(i, (v: i32) => v * 2);
+        i = i + 1;
+    }
+    match (find(b.root, 5)) {
+        Tip => { return 1; },
+        Bin(l, k, v, r, s) => { t = t + v; }
+    }
+    return (t - 250) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// A closure LOCAL handed to a callee keeps its pair: the slot has a
+		// reader ElideClosurePair cannot elide, and the exit sweep's
+		// per-closure thunk — which reads a bare env — is downgraded to
+		// the generic pair release, which frees neither env nor captures.
+		// Both the named nested function and the lambda bound to a local
+		// leak pair + env per call; the leak gates pin it (#8057). Routing
+		// that release through the pair's drop-fn pointer freed a closure a
+		// Scope field still held in the self-host checker, so the pin
+		// stands until the second owner is found.
+		name: "closure_local_passed_to_callee_released",
+		src: `
+@noinline
+function each(n: i32, f: (i32) => i32): void {
+    var i: i32 = 0;
+    while (i < n) { f(i); i = i + 1; }
+}
+
+@noinline
+function run_named(): i32 {
+    var seen: i32 = 0;
+    function visit(x: i32): i32 {
+        seen = seen * 10 + x;
+        return seen;
+    }
+    each(3, visit);
+    return seen;
+}
+
+@noinline
+function run_lambda_local(): i32 {
+    var seen: i32 = 0;
+    var visit: (i32) => i32 = (x: i32) => { seen = seen * 10 + x; seen };
+    each(3, visit);
+    return seen;
+}
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { t = t + run_named() + run_lambda_local(); i = i + 1; }
+    return (t - 96) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// A tree walk's `Tip => return t` arm returns its OWNED-BY-DEFAULT
+		// parameter bare: the caller retained the argument on the way in
+		// and the callee's sweep releases it, so the return-transfer inc is
+		// the caller's own. returnsOwnBox refused every bare parameter, so
+		// `filter` never counted as fresh and each caller's `fl` / `fr`
+		// binding kept the conservative call taint — the nodes `join`
+		// rebuilt around them were never released (std/ordmap union /
+		// filter: 960 and 1,368 blocks on 1,000-entry maps, #8057).
+		name: "tree_rebuild_returning_owned_param_reclaimed",
+		src: `
+enum Node { Tip, Bin(Node, i32, i32, Node, i32) }
+
+@noinline
+function size(t: Node): i32 {
+    match (t) {
+        Tip => { return 0; },
+        Bin(l, k, v, r, s) => { return s; }
+    }
+}
+
+@noinline
+function mk(l: Node, k: i32, v: i32, r: Node): Node {
+    return Bin(l, k, v, r, size(l) + size(r) + 1);
+}
+
+@noinline
+function ins(t: Node, k: i32, v: i32): Node {
+    match (t) {
+        Tip => { return Bin(Tip, k, v, Tip, 1); },
+        Bin(l, nk, nv, r, s) => {
+            if (k < nk) { var nl: Node = ins(l, k, v); return mk(nl, nk, nv, r); }
+            if (k > nk) { var nr: Node = ins(r, k, v); return mk(l, nk, nv, nr); }
+            return Bin(l, k, v, r, s);
+        }
+    }
+}
+
+@noinline
+function insert_min(k: i32, v: i32, t: Node): Node {
+    match (t) {
+        Tip => { return Bin(Tip, k, v, Tip, 1); },
+        Bin(l, nk, nv, r, s) => {
+            var nl: Node = insert_min(k, v, l);
+            return mk(nl, nk, nv, r);
+        }
+    }
+}
+
+@noinline
+function join(l: Node, k: i32, v: i32, r: Node): Node {
+    match (l) {
+        Tip => { return insert_min(k, v, r); },
+        Bin(ll, lk, lv, lr, ls) => { return mk(l, k, v, r); }
+    }
+}
+
+@noinline
+function filter(t: Node, keep_even: boolean): Node {
+    match (t) {
+        Tip => { return t; },
+        Bin(l, k, v, r, s) => {
+            var fl: Node = filter(l, keep_even);
+            var fr: Node = filter(r, keep_even);
+            if (k % 2 == 0) {
+                return join(fl, k, v, fr);
+            }
+            return join(fr, k, v, fl);
+        }
+    }
+}
+
+function main(): i32 {
+    var t: Node = Tip;
+    var i: i32 = 0;
+    while (i < 64) { t = ins(t, (i * 37) % 64, i); i = i + 1; }
+    var f: Node = filter(t, true);
+    return (size(f) - 64) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// A fresh struct temp passed to a POINTER-returning method —
+		// `s.concat(mk(2))` — has only the per-position admission to
+		// release it, which asks whether the callee retains that parameter
+		// counted. `other.tail[0]` and `other.get_or(i, …)` were refused:
+		// a scalar element read out of an array field, and the receiver of
+		// a method whose own reads are the same shape. Two blocks per call
+		// (the struct box and its array) until both reads counted as the
+		// value copies they are (#8057).
+		name: "fresh_temp_argument_to_pointer_returning_method_released",
+		src: `
+struct Vec { len: i32, tail: i32[] }
+
+@noinline
+function mk(n: i32): Vec {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { xs = xs.append(i); i = i + 1; }
+    return Vec { len: n, tail: xs };
+}
+
+@noinline
+function (v: Vec) get_or(i: i32, fallback: i32): i32 {
+    if (i < 0 || i >= v.len) { return fallback; }
+    return v.tail[i];
+}
+
+@noinline
+function (v: Vec) append(x: i32): Vec {
+    return Vec { len: v.len + 1, tail: v.tail.append(x) };
+}
+
+@noinline
+function (v: Vec) concat(other: Vec): Vec {
+    var out: Vec = v;
+    var i: i32 = 0;
+    while (i < other.len) { out = out.append(other.get_or(i, other.tail[0])); i = i + 1; }
+    return out;
+}
+
+function main(): i32 {
+    var s: Vec = mk(3);
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) { var c: Vec = s.concat(mk(2)); t = t + c.len; i = i + 1; }
+    return (t - 20) + __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

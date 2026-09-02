@@ -3081,11 +3081,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// whatever it points at. See findReturnsFreshPairPayload for why the
 	// pair-form payload release needs this one and not the above.
 	returnsFreshPairPayload := findReturnsFreshPairPayload(prog, info)
-	// Per-function "every value return is a box this callee constructed" —
-	// what rhsTainted's Call case needs to stop inheriting an argument's
-	// borrow taint into a freshly built result (findReturnsFreshBox).
 	trmcFuncs, trmcConsumeSafe := findTrmcFuncs(prog, info, ptrW, pairForm)
-	returnsFreshBox := findReturnsFreshBox(prog, info, pairForm, trmcFuncs)
 	// Borrow inference (BorrowInferEnabled): per-function per-param escape facts.
 	// Both the definition side (paramOwnedByDefault) and the call site
 	// (calleeParamOwnedByDefault) consult this so they agree on which
@@ -3103,6 +3099,23 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// ownership model, since a call_indirect / call-through-pointer has no
 	// callee name to hang a caller-side retain on (paramVerdict).
 	vtableDispatched := vtableDispatchedMethods(info, out.Vtables)
+	// Per-function "every value return is a box this callee constructed" —
+	// what rhsTainted's Call case needs to stop inheriting an argument's
+	// borrow taint into a freshly built result (findReturnsFreshBox). Runs
+	// once the ownership ladder's inputs are all in, because a bare
+	// parameter return earns the credit only where the parameter is
+	// owned-by-default.
+	verdictFacts := paramVerdictFacts{
+		info:                info,
+		ptrW:                ptrW,
+		trmcFuncs:           trmcFuncs,
+		trmcConsumeSafe:     trmcConsumeSafe,
+		vtableDispatched:    vtableDispatched,
+		addressTaken:        addressTaken,
+		paramEscapes:        paramEscapes,
+		readOnlyComparators: readOnlyComparators,
+	}
+	returnsFreshBox := findReturnsFreshBox(prog, info, pairForm, trmcFuncs, verdictFacts.ownedParam)
 	// #4873: per-function param positions whose buffers the callee may grow
 	// in place — drives the caller-side containment bracket in callBody.
 	growParams := computeGrowParams(prog, info)
@@ -6185,13 +6198,50 @@ const (
 // call-site ownership overrides the escape facts), then the indirect-dispatch
 // rungs (a vtable slot, a function value), then the borrow facts.
 func (b *builder) paramVerdict(fnName string, t ast.Type, i int) paramVerdict {
-	if !b.isOwnedByDefaultType(t) {
+	return b.paramVerdictFacts().verdict(fnName, t, i)
+}
+
+// paramVerdictFacts is the whole-program input the ownership ladder reads,
+// gathered so a pass that runs before any builder exists (findReturnsFreshBox)
+// asks the same ladder the lowering does.
+type paramVerdictFacts struct {
+	info                *checker.Info
+	ptrW                int
+	trmcFuncs           map[string]bool
+	trmcConsumeSafe     map[string]bool
+	vtableDispatched    map[string]bool
+	addressTaken        map[string]bool
+	paramEscapes        map[string][]bool
+	readOnlyComparators map[string]bool
+}
+
+func (b *builder) paramVerdictFacts() paramVerdictFacts {
+	return paramVerdictFacts{
+		info:                b.info,
+		ptrW:                b.ptrW,
+		trmcFuncs:           b.trmcFuncs,
+		trmcConsumeSafe:     b.trmcConsumeSafe,
+		vtableDispatched:    b.vtableDispatched,
+		addressTaken:        b.addressTaken,
+		paramEscapes:        b.paramEscapes,
+		readOnlyComparators: b.readOnlyComparators,
+	}
+}
+
+// ownedParam reports whether parameter i of fn is owned-by-default on the
+// definition side: fn's exit sweep releases the reference it was handed.
+func (f paramVerdictFacts) ownedParam(fn *ast.FuncDecl, i int) bool {
+	return f.verdict(fn.Name, fn.Params[i].Type, i) == paramVerdictOwned
+}
+
+func (f paramVerdictFacts) verdict(fnName string, t ast.Type, i int) paramVerdict {
+	if !ownedByDefaultTypeIn(f.info, f.ptrW, t) {
 		return paramVerdictNotOwnedType
 	}
-	if b.trmcConsumeSafe[fnName] {
+	if f.trmcConsumeSafe[fnName] {
 		return paramVerdictTrmcConsume
 	}
-	if b.trmcFuncs[fnName] {
+	if f.trmcFuncs[fnName] {
 		return paramVerdictTrmcExcluded
 	}
 	// A method a `dyn Trait` vtable slot can reach borrows unconditionally,
@@ -6203,7 +6253,7 @@ func (b *builder) paramVerdict(fnName string, t ast.Type, i int) paramVerdict {
 	// ran an is_unique-gated `__fern_box_free(self, …)` on a receiver
 	// nobody had retained, freeing the caller's object out from under it.
 	// #6465.
-	if b.vtableDispatched[fnName] {
+	if f.vtableDispatched[fnName] {
 		return paramVerdictBorrowed
 	}
 	// The same reasoning for a function reached through a function VALUE
@@ -6213,14 +6263,14 @@ func (b *builder) paramVerdict(fnName string, t ast.Type, i int) paramVerdict {
 	// definition side would otherwise classify the param Owned and dec it at
 	// exit, over-releasing the caller's value. Borrow inference hid this by
 	// reaching paramVerdictBorrowed on the escape facts first. #7307.
-	if b.addressTaken[fnName] {
+	if f.addressTaken[fnName] {
 		return paramVerdictBorrowed
 	}
-	if esc, ok := b.paramEscapes[fnName]; ok && i < len(esc) && !esc[i] {
+	if esc, ok := f.paramEscapes[fnName]; ok && i < len(esc) && !esc[i] {
 		if ast.BorrowInferEnabled {
 			return paramVerdictBorrowed
 		}
-		if b.readOnlyComparators[fnName] {
+		if f.readOnlyComparators[fnName] {
 			return paramVerdictReadOnlyComparator
 		}
 	}
@@ -15053,8 +15103,24 @@ func (b *builder) stashOwnedArgTemp(a ast.Expr) (int32, ast.Type, bool, error) {
 // on the operand stack, so the call's result sitting underneath is untouched.
 func (b *builder) emitArgTempDrops(slots []int32, types []ast.Type) {
 	for i, slot := range slots {
-		b.emitOwnedSlotDrop(slot, types[i])
+		b.emitArgTempDrop(slot, types[i])
 	}
+}
+
+// emitArgTempDrop releases one stashed argument temp. A closure temp has no
+// local name to route a per-closure thunk through, so it releases through the
+// drop-fn pointer its pair carries (__drop_closure_value) — the same
+// pointer-dispatched release a container slot uses. That reader also keeps
+// the slot out of ElideClosurePair, so the pair the drop dereferences is a
+// real one. Every other type takes the slot drop the loop-reinit path uses.
+func (b *builder) emitArgTempDrop(slot int32, t ast.Type) {
+	if _, isFunc := t.(*ast.FuncType); isFunc {
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		b.emit(Op{Kind: OpCallDirect, Str: "__drop_closure_value", I32: 1})
+		b.emit(Op{Kind: OpDrop})
+		return
+	}
+	b.emitOwnedSlotDrop(slot, t)
 }
 
 // emitArgTempDropsGuarded is emitArgTempDrops plus the identity guard a
@@ -15089,11 +15155,11 @@ func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guard
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emit(Op{Kind: OpNe})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-			b.emitOwnedSlotDrop(slot, types[i])
+			b.emitArgTempDrop(slot, types[i])
 			b.emit(Op{Kind: OpEnd})
 			continue
 		}
-		b.emitOwnedSlotDrop(slot, types[i])
+		b.emitArgTempDrop(slot, types[i])
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
 }

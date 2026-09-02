@@ -96,6 +96,12 @@ func isMapType(t ast.Type) bool {
 // back-edge is assumed free, and any string/array on a real payload is caught on
 // its own first visit before the back-edge is taken).
 func (b *builder) typeIsStringArrayFree(t ast.Type, seen map[string]bool) bool {
+	return typeIsStringArrayFreeIn(b.info, t, seen)
+}
+
+// typeIsStringArrayFreeIn is typeIsStringArrayFree for a pass that runs
+// before any builder exists (paramVerdictFacts).
+func typeIsStringArrayFreeIn(info *checker.Info, t ast.Type, seen map[string]bool) bool {
 	switch ty := t.(type) {
 	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType:
 		return true
@@ -103,7 +109,7 @@ func (b *builder) typeIsStringArrayFree(t ast.Type, seen map[string]bool) bool {
 		return false
 	case ast.TupleType:
 		for _, e := range ty.Elems {
-			if !b.typeIsStringArrayFree(e, seen) {
+			if !typeIsStringArrayFreeIn(info, e, seen) {
 				return false
 			}
 		}
@@ -116,12 +122,12 @@ func (b *builder) typeIsStringArrayFree(t ast.Type, seen map[string]bool) bool {
 			return true
 		}
 		seen[ty.Name] = true
-		sd, ok := b.info.Structs[ty.Name]
+		sd, ok := info.Structs[ty.Name]
 		if !ok {
 			return false
 		}
 		for _, f := range sd.Fields {
-			if !b.typeIsStringArrayFree(f.Type, seen) {
+			if !typeIsStringArrayFreeIn(info, f.Type, seen) {
 				return false
 			}
 		}
@@ -131,13 +137,13 @@ func (b *builder) typeIsStringArrayFree(t ast.Type, seen map[string]bool) bool {
 			return true
 		}
 		seen[ty.Name] = true
-		ed, ok := b.info.Enums[ty.Name]
+		ed, ok := info.Enums[ty.Name]
 		if !ok {
 			return false
 		}
 		for _, v := range ed.Variants {
 			for _, pl := range v.Payloads {
-				if !b.typeIsStringArrayFree(pl, seen) {
+				if !typeIsStringArrayFreeIn(info, pl, seen) {
 					return false
 				}
 			}
@@ -210,6 +216,12 @@ func enumTransitivelyContainsMap(info *checker.Info, enumName string, seen map[s
 // and deep-droppable. The callee reclaims such a parameter at exit; the caller
 // retains it with an inc at the call site.
 func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
+	return ownedByDefaultTypeIn(b.info, b.ptrW, t)
+}
+
+// ownedByDefaultTypeIn is isOwnedByDefaultType for a pass that runs before
+// any builder exists (paramVerdictFacts).
+func ownedByDefaultTypeIn(info *checker.Info, ptrW int, t ast.Type) bool {
 	if !ast.OwnedByDefault {
 		return false
 	}
@@ -223,14 +235,14 @@ func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
 		// one like `Shape { Circle(i32), Rect(i32,i32) }` flat-decs without
 		// freeing, so owned-by-default would mis-reclaim it). That is the FBIP
 		// list/tree case; other enums keep the borrow model for now.
-		if !b.enumRcPayloadsEligible(ty.Name) || !b.typeIsStringArrayFree(t, map[string]bool{}) {
+		if !enumRcPayloadsEligibleIn(info, ty.Name) || !typeIsStringArrayFreeIn(info, t, map[string]bool{}) {
 			return false
 		}
-		ed, ok := b.info.Enums[ty.Name]
+		ed, ok := info.Enums[ty.Name]
 		if !ok {
 			return false
 		}
-		_, uniform := uniformEnumBoxSize(ed, b.ptrW)
+		_, uniform := uniformEnumBoxSize(ed, ptrW)
 		return uniform
 	case ast.StructType:
 		// Structs (sub-slice 2c): Fern struct fields are immutable after
@@ -245,16 +257,16 @@ func (b *builder) isOwnedByDefaultType(t ast.Type) bool {
 		// anyway; the box is uniform by construction (no variants), so no
 		// uniformity check is needed. Per-field rc counting (Phase 1e-struct-ii)
 		// balances the drop.
-		if _, ok := b.info.Structs[ty.Name]; !ok {
+		if _, ok := info.Structs[ty.Name]; !ok {
 			return false
 		}
-		return b.typeIsStringArrayFree(t, map[string]bool{})
+		return typeIsStringArrayFreeIn(info, t, map[string]bool{})
 	case ast.TupleType:
 		// Tuples (sub-slice 2c): immutable, uniform headered boxes whose elements
 		// are rc-counted (the projection-site dup balances the per-element drop
 		// in emitDec's tuple branch). Same string/array/slice/Map-free gate as
 		// structs keeps the deep drop on the fully-wired path.
-		return b.typeIsStringArrayFree(t, map[string]bool{})
+		return typeIsStringArrayFreeIn(info, t, map[string]bool{})
 	}
 	return false
 }

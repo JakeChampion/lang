@@ -66,7 +66,7 @@ func TestOwnAccumulatorReturnsFreshBox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check: %v", err)
 	}
-	got := findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{})
+	got := findReturnsFreshBox(prog, info, map[string]bool{}, map[string]bool{}, noOwnedParams)
 	want := map[string]bool{
 		// The box returned is the one moved in, rebound only through owned
 		// values: a recursive call to itself (fixpoint) and the cow mutators.
