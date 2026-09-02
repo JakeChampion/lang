@@ -7955,10 +7955,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     // std/tcp's __serve_loop bail — and the AST emitter it then fell to could
     // not emit tcp_listen / poll, so the failure surfaced as a link error
     // (#5686).
-    // Phase 1 carries the single `version: i32` placeholder native registers.
+    // Fields mirror internal/checker/checker.go: `version` is the bag's ABI
+    // version, `mode` + `sink` the mock seam (Rec §6) — a recording bag is
+    // mode 1 over a cell std/platform's capability methods append to.
     if (!struct_declared(structs, "Platform")) {
         var pltf: StructFieldDecl[] = [];
         pltf = pltf.append(StructFieldDecl { name: "version", type_name: "i32", fn_ret: "", fn_param_types: "" });
+        pltf = pltf.append(StructFieldDecl { name: "mode", type_name: "i32", fn_ret: "", fn_param_types: "" });
+        pltf = pltf.append(StructFieldDecl { name: "sink", type_name: "Cell[string]", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "Platform", fields: pltf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
     // std/time's seven date/time types are compiler built-ins (registered in
@@ -8006,11 +8010,12 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     //   Stream       { data: u8[], pos: i32 }       — byte cursor reader
     //   BytesWriter  { data: u8[] }                 — in-memory write buffer
     //   MockCall     { name: string, args: string } — recorded call entry
-    //   MockPlatform { calls: MockCall[] }           — call-recording mock
+    //   MockPlatform { sink: Cell[string] }          — call-recording mock
     // Stream / BytesWriter carry a sub-word (u8[]) array field, now leak-safe
     // (is_leaksafe_array_field), so their constructors / methods lower on the
-    // IR path. MockPlatform's `calls: MockCall[]` is an array-of-leaf-struct
-    // field (leak mode). MockCall is two strings (leaf-safe).
+    // IR path. MockPlatform's `sink` is the same cell the bag from
+    // `as_platform()` carries — one effect log, two views. MockCall is two
+    // strings (leaf-safe).
     structs = add_builtin_struct2(structs, "MockCall", "name", "string", "args", "string");
     structs = add_builtin_struct2(structs, "Stream", "data", "u8[]", "pos", "i32");
     if (!struct_declared(structs, "BytesWriter")) {
@@ -8020,7 +8025,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     }
     if (!struct_declared(structs, "MockPlatform")) {
         var mpf: StructFieldDecl[] = [];
-        mpf = mpf.append(StructFieldDecl { name: "calls", type_name: "MockCall[]", fn_ret: "", fn_param_types: "" });
+        mpf = mpf.append(StructFieldDecl { name: "sink", type_name: "Cell[string]", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "MockPlatform", fields: mpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
     // std/url's Url is a compiler built-in (registered in the Go checker, not

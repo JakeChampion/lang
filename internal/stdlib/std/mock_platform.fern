@@ -1,92 +1,107 @@
-// std/mock_platform — test-ergonomics helpers for Tier-C
-// Rec §11 (docs/PLATFORM-RESEARCH.md §6).
+// std/mock_platform — a Platform that records instead of acting
+// (docs/PLATFORM-RESEARCH.md Rec §6).
 //
-// Today's `Platform` is a one-field placeholder. Once Phase 2
-// adds capability fields (log / fetch / kv / now), MockPlatform
-// grows matching methods that intercept calls + return canned
-// responses. Phase 1 (this PR) ships the call-recording
-// infrastructure so tests can manually drive an effect log and
-// inspect it.
+// A handler can only reach the effects its bag carries, so substituting the
+// bag is the whole test seam: hand `handle` a mock, run it, and read back
+// what it tried to do.
 //
-// Intended use (Phase 1):
+//     var m: MockPlatform = mock_platform_new();
+//     var resp: HttpResponse = handle(req, m.as_platform());
 //
-//   var m: MockPlatform = mock_platform_new();
-//   m = m.record("fetch", "GET /users/42");
-//   m = m.record("kv_set", "user:42=Alice");
+//     assert_eq(resp.status, 200);
+//     assert_eq(m.call_count(), 2);
+//     assert_eq(m.calls()[0].name, "log");
 //
-//   // Drive the handler manually:
-//   var req: HttpRequest = ...;
-//   var resp: HttpResponse = handle(req, Platform { version: 1 });
+// The recorded calls live in a `Cell[string]` the mock and the bag share —
+// one cell, two views — because a cell is the language's shared-mutable box
+// and its element must be a scalar or a string (E057). `calls()` parses that
+// log back into `MockCall` values; the mock itself stays a value you can
+// pass around.
 //
-//   // Inspect the recorded call log:
-//   assert_eq(m.call_count(), 2);
-//   assert_eq(m.calls[0].name, "fetch");
-//
-// Intended use (Phase 2 — once Platform grows capability
-// fields):
-//
-//   var m: MockPlatform = mock_platform_new();
-//   var plat: Platform = m.as_platform();
-//   plat.kv_set("user:42", "{ \"name\": \"Alice\" }");
-//   var resp: HttpResponse = handle(req, plat);
-//   assert_eq(m.calls[0].name, "kv_set");
+// What a mocked capability RETURNS is fixed today: `now_ms` and
+// `elapsed_ns` answer 0, `env` answers None, `random_i32` answers 0, `log`
+// swallows the line, and `fetch` answers -1 — the value a real fetch gives
+// for a host it could not reach, so a handler that already handles a failed
+// fetch handles a mocked one. Canned per-call responses are the next slice;
+// they want a second cell and a lookup, not a different shape.
 
-// `mock_platform_new()` — fresh MockPlatform with an empty
-// call log.
+import "std/string";
+import "std/platform";
+
+// `mock_platform_new()` — a fresh mock with an empty log.
 pub function mock_platform_new(): MockPlatform {
-    var empty: MockCall[] = [];
-    return MockPlatform { calls: empty };
+    return MockPlatform { sink: cell_new("") };
 }
 
-// `(m: MockPlatform).record(name, args): MockPlatform` —
-// return a MockPlatform whose log has `name`/`args` appended.
-// `args` is a free-form string; tests typically stuff a
-// comma-separated argument summary or a JSON-shaped payload
-// representation in there for assertion. Functional update
-// (immutable data structures): rebind the result —
-// `m = m.record(...)`.
-pub function (m: MockPlatform) record(name: string, args: string): MockPlatform {
-    return MockPlatform { ...m, calls: m.calls.append(MockCall { name: name, args: args }) };
+// `(m: MockPlatform).as_platform()` — the bag to hand a handler. It carries
+// the mock's own sink, so every capability call the handler makes lands in
+// `m`'s log rather than on the host.
+pub function (m: MockPlatform) as_platform(): Platform {
+    return platform.platform_mock(m.sink);
 }
 
-// `(m: MockPlatform).call_count()` — number of calls
-// recorded so far. Convenience for the common
-// `assert_eq(m.call_count(), N)` shape.
-pub function (m: MockPlatform) call_count(): i32 {
-    return m.calls.len();
+// `(m: MockPlatform).record(name, args)` — append an entry by hand, for a
+// test that wants to drive the log directly rather than through a handler.
+// Mutates through the shared cell: the mock is a value, its log is not.
+pub function (m: MockPlatform) record(name: string, args: string): void {
+    m.as_platform().record(name, args);
 }
 
-// `(m: MockPlatform).reset(): MockPlatform` — return a
-// MockPlatform with an empty call log. Functional update
-// (immutable data structures): rebind the result —
-// `m = m.reset()`.
-pub function (m: MockPlatform) reset(): MockPlatform {
-    var empty: MockCall[] = [];
-    return MockPlatform { ...m, calls: empty };
-}
-
-// `(m: MockPlatform).has_call(name)` — true iff any
-// recorded call matches `name`. Less precise than
-// inspecting `m.calls[N].name` directly but handy when the
-// test cares "did this side effect happen at all?"
-// regardless of position.
-pub function (m: MockPlatform) has_call(name: string): boolean {
+// `(m: MockPlatform).calls()` — the recorded calls, in order.
+pub function (m: MockPlatform) calls(): MockCall[] {
+    var out: MockCall[] = [];
+    var log: string = m.sink.get();
+    var lines: string[] = log.split("\n");
     var i: i32 = 0;
-    while (i < m.calls.len()) {
-        if (m.calls[i].name == name) { return true; }
+    while (i < lines.len()) {
+        var line: string = lines[i];
+        i = i + 1;
+        if (line.len() == 0) { continue; }
+        var tab: i32 = line.index_of("\t");
+        if (tab < 0) {
+            out = out.append(MockCall { name: line, args: "" });
+            continue;
+        }
+        out = out.append(MockCall {
+            name: slice_unchecked(line, 0, tab) + "",
+            args: slice_unchecked(line, tab + 1, line.len()) + ""
+        });
+    }
+    return out;
+}
+
+// `(m: MockPlatform).call_count()` — how many calls were recorded.
+pub function (m: MockPlatform) call_count(): i32 {
+    return m.calls().len();
+}
+
+// `(m: MockPlatform).reset()` — drop the log. Mutates through the shared
+// cell, so a bag already handed to a handler keeps recording into the
+// now-empty log rather than into a stale one.
+pub function (m: MockPlatform) reset(): void {
+    m.sink.set("");
+}
+
+// `(m: MockPlatform).has_call(name)` — did this effect happen at all?
+// Less precise than indexing `calls()`, and the right question when the
+// test cares that something was reached, not when.
+pub function (m: MockPlatform) has_call(name: string): boolean {
+    var cs: MockCall[] = m.calls();
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        if (cs[i].name == name) { return true; }
         i = i + 1;
     }
     return false;
 }
 
-// `(m: MockPlatform).find_call(name): Option[MockCall]` —
-// return the first call with the given name, or None.
-// Useful when the test wants to inspect the args of a
-// specific call without pinning its position in the log.
+// `(m: MockPlatform).find_call(name)` — the first call with this name, for
+// a test that wants its arguments without pinning its position.
 pub function (m: MockPlatform) find_call(name: string): Option[MockCall] {
+    var cs: MockCall[] = m.calls();
     var i: i32 = 0;
-    while (i < m.calls.len()) {
-        if (m.calls[i].name == name) { return Some(m.calls[i]); }
+    while (i < cs.len()) {
+        if (cs[i].name == name) { return Some(cs[i]); }
         i = i + 1;
     }
     return None;

@@ -398,18 +398,31 @@ func builtinStructDecls() []*ast.StructDecl {
 		},
 		// Platform — the capability bag threaded as the second
 		// parameter of every handler (docs/PLATFORM-RESEARCH.md
-		// Rec §1). Phase 1 carries a single `version: i32`
-		// placeholder so the struct has a well-defined ABI
-		// without zero-sized-struct edge cases; future phases
-		// will add capability fields (fetch / kv / secrets /
-		// log / now). The auto-`main`-from-`handle` synthesis
-		// and the wasi-http wrapper construct one per request
-		// and pass it through; handler code receives it as
-		// `plat: Platform` and (for now) ignores the fields.
+		// Rec §1). `version` is the bag's ABI version, bumped
+		// when a capability lands, so a handler can tell what it
+		// was handed.
+		//
+		// `mode` and `sink` are what make the bag substitutable
+		// (Rec §6). On the host platform mode is 0 and the sink
+		// is an empty cell nothing writes; a MockPlatform hands
+		// over mode 1 and its own cell, and `std/platform`'s
+		// capability methods then append to that cell instead of
+		// performing the effect. The sink is a `Cell[string]`
+		// because a cell is the language's one shared-mutable
+		// box and E057 restricts its element to a scalar or a
+		// string — which is why the effect log is a string the
+		// mock parses back, rather than an array.
+		//
+		// Every construction goes through the synthesised
+		// `__fern_platform_new`, std/tcp's `__host_platform`, or
+		// std/platform; nothing builds this struct out of raw
+		// memory.
 		{
 			Name: "Platform",
 			Fields: []ast.Param{
 				{Name: "version", Type: ast.NumberType{}},
+				{Name: "mode", Type: ast.NumberType{}},
+				{Name: "sink", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.StringType{}}}},
 			},
 		},
 		// HeaderMap — case-insensitive, multi-valued, insertion-
@@ -484,10 +497,17 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "args", Type: ast.StringType{}},
 			},
 		},
+		// MockPlatform — the recording half of the test seam
+		// (docs/PLATFORM-RESEARCH.md Rec §6). One field, and it is
+		// the SAME cell the bag from `as_platform()` carries: the
+		// mock and the handler write one log through two views.
+		// The calls are a string rather than a MockCall[] because
+		// a cell's element must be a scalar or a string (E057);
+		// `std/mock_platform`'s `calls()` parses it back.
 		{
 			Name: "MockPlatform",
 			Fields: []ast.Param{
-				{Name: "calls", Type: ast.ArrayType{Elem: ast.StructType{Name: "MockCall"}}},
+				{Name: "sink", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.StringType{}}}},
 			},
 		},
 		// Date/time types (docs/STDLIB-DESIGN-RESEARCH.md
@@ -16598,7 +16618,7 @@ const platformCtorName = "__fern_platform_new"
 // synthesisePlatformCtor builds:
 //
 //	function __fern_platform_new(): Platform {
-//	    return Platform { version: 1 };
+//	    return Platform { version: 1, mode: 0, sink: cell_new("") };
 //	}
 //
 // The capability bag built in Fern, where the struct's layout is the
@@ -16608,15 +16628,23 @@ const platformCtorName = "__fern_platform_new"
 // field itself, which is a copy of the layout that goes stale the day the bag
 // grows a capability. std/tcp's accept loop still writes the literal — it is
 // Fern source the checker re-checks, so it cannot drift silently.
+//
+// The `mode`/`sink` fields carry the mock seam (Rec §6): this is the host
+// bag, so mode 0 and a sink nothing writes.
 func synthesisePlatformCtor() *ast.FuncDecl {
 	pos := ast.Position{}
 	lit := &ast.StructLit{
 		P:        pos,
 		TypeName: "Platform",
-		Fields: []ast.FieldInit{{
-			Name:  "version",
-			Value: &ast.NumberLit{P: pos, Value: 1},
-		}},
+		Fields: []ast.FieldInit{
+			{Name: "version", Value: &ast.NumberLit{P: pos, Value: 1}},
+			{Name: "mode", Value: &ast.NumberLit{P: pos, Value: 0}},
+			{Name: "sink", Value: &ast.Call{
+				P:      pos,
+				Callee: &ast.Ident{P: pos, Name: "cell_new"},
+				Args:   []ast.Expr{&ast.StringLit{P: pos, Value: ""}},
+			}},
+		},
 	}
 	return &ast.FuncDecl{
 		P:          pos,

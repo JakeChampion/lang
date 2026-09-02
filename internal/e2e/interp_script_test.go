@@ -1856,12 +1856,11 @@ function main(): i32 {
 	}
 }
 
-// TestInterpScriptMockPlatform pins the Tier-C Rec §11
-// test-ergonomics surface (docs/PLATFORM-RESEARCH.md §6).
-// Phase 1 mocks are manually driven (tests call .record()
-// themselves); Phase 2 will integrate with Platform's
-// capability fields so the mock intercepts calls
-// automatically.
+// TestInterpScriptMockPlatform pins std/mock_platform's recording surface
+// (docs/PLATFORM-RESEARCH.md Rec §6). The log lives in a cell the mock and
+// the bag from `as_platform()` share, so `record` mutates through a value
+// rather than returning a new one — which is what lets a handler holding
+// only the bag write into the mock the test still holds.
 func TestInterpScriptMockPlatform(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cases := []struct {
@@ -1874,11 +1873,11 @@ import "std/i32";
 import "std/mock_platform";
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    m = m.record("fetch", "GET /users/42");
-    m = m.record("kv_set", "user:42=Alice");
+    m.record("fetch", "GET /users/42");
+    m.record("kv_set", "user:42=Alice");
     print(m.call_count().to_string());
-    print(m.calls[0].name);
-    print(m.calls[1].args);
+    print(m.calls()[0].name);
+    print(m.calls()[1].args);
     return 0;
 }`,
 			wantStdout: "2\nfetch\nuser:42=Alice\n",
@@ -1888,7 +1887,7 @@ function main(): i32 {
 			source: `import "std/mock_platform";
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    m = m.record("fetch", "x");
+    m.record("fetch", "x");
     if (m.has_call("fetch")) { print("yes-fetch"); } else { print("no-fetch"); }
     if (m.has_call("write_file")) { print("yes-wf"); } else { print("no-wf"); }
     return 0;
@@ -1900,9 +1899,9 @@ function main(): i32 {
 			source: `import "std/mock_platform";
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    m = m.record("fetch", "first");
-    m = m.record("kv_set", "second");
-    m = m.record("fetch", "third");
+    m.record("fetch", "first");
+    m.record("kv_set", "second");
+    m.record("fetch", "third");
     // find_call returns the FIRST match.
     match (m.find_call("fetch")) {
         Some(c) => { print(c.args); },
@@ -1921,16 +1920,49 @@ function main(): i32 {
 			source: `import "std/mock_platform";
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    m = m.record("a", "1");
-    m = m.record("b", "2");
+    m.record("a", "1");
+    m.record("b", "2");
     if (m.call_count() != 2) { return 1; }
-    m = m.reset();
+    m.reset();
     if (m.call_count() != 0) { return 2; }
     if (m.has_call("a")) { return 3; }
     print("ok");
     return 0;
 }`,
 			wantStdout: "ok\n",
+		},
+		{
+			// The seam itself: the handler is handed the mock's bag and
+			// only ever touches THAT, so nothing reaches the host — the
+			// asserted stdout would carry the eprint'd log line if
+			// `.log` had fallen through to the host path.
+			name: "handler driven through as_platform records its effects",
+			source: `import "std/mock_platform";
+import "std/platform";
+import "std/http";
+import "std/headers";
+function handle(req: HttpRequest, plat: Platform): HttpResponse {
+    plat.log("serving " + req.path);
+    match (plat.env("REGION")) {
+        Some(v) => { plat.log("region=" + v); },
+        None => { plat.log("no-region"); }
+    }
+    return http.http_response_ok("ok");
+}
+function main(): i32 {
+    var m: MockPlatform = mock_platform.mock_platform_new();
+    var req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: "", headers: headers.header_map_new() };
+    var resp: HttpResponse = handle(req, m.as_platform());
+    print(resp.body);
+    var cs: MockCall[] = m.calls();
+    var i: i32 = 0;
+    while (i < cs.len()) {
+        print(cs[i].name + "=" + cs[i].args);
+        i = i + 1;
+    }
+    return 0;
+}`,
+			wantStdout: "ok\nlog=serving /a\nenv=REGION\nlog=no-region\n",
 		},
 	}
 	for _, tc := range cases {

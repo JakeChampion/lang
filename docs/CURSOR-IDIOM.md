@@ -16,8 +16,8 @@ field in place.
   `read_line` return a value and bump `s.pos`.
 
 Under immutable data structures a void/in-place mutator can't exist, and
-— unlike the receiver-builder files (headers, io_buffered,
-mock_platform) where the method returns *only* the new receiver — these
+— unlike the receiver-builder files (headers, io_buffered) where the
+method returns *only* the new receiver — these
 must return **both** a result and the advanced cursor. So the
 `m = m.method(...)` rebind contract isn't enough on its own.
 

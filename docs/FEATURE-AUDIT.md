@@ -231,7 +231,7 @@ per-function bugs in the audit log.
 | `std/stream` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | in-memory byte `Stream` (`data: u8[]` + `pos` cursor) — the value-threaded CURSOR IDIOM: `len`/`remaining`/`read_byte`/`read_n`/`read_all_string`/`read_line` (CRLF/LF + unterminated tail) — native via the `stream_reader` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostStreamIR` — struct with a `u8[]` field + i32 cursor, struct-spread update, tuple-returning methods with pointer + `Option` elements, tuple destructuring in `let`, `u8[].append` with `as u8` casts, `string_from_bytes_unchecked`, `Option` `Some`/`None` + payload-binding `match` (inlined as `Buf`, since `Stream` is a reserved builtin type + the importless driver has no imports) |
 | `std/time` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | is_leap_year/days_in_month/date_make/format_iso — `audit_std_time`; self-host via the IR path: pure-i32 helpers (`TestSelfHostTimeIR`) + the **Date civil-date methods** (Hinnant days_from_civil/civil_from_days, is_valid/add_days/days_since/weekday/day_of_year/format_iso — `TestSelfHostTimeDateIR`, oracle-checked, struct ctor + field access + struct-returning fn + receiver methods) + `date_parse_iso` `Option[Date]` parse (`TestSelfHostTimeParseIR`, `Some`/`None` ctor + payload-binding `match`) + `format_rfc3339` / `instant_parse_rfc3339` (`TestSelfHostTimeRfc3339IR`, **i64 `sec` struct field** — i64 arithmetic/casts + `Some(Instant{ sec: <i64> })`) + `add_span` / `add_duration` / `duration_since` / `days_until` (`TestSelfHostTimeSpanIR`, **8-field Span by-value param** + i64+nsec carry/borrow) + the Zoned / TimeZone surface (`in_zone` / `to_datetime` / `timezone_iana` — `TestSelfHostTimeZonedIR`, **nested structs** `Zoned{instant,zone}` / `DateTime{date,time}` + `Option[TimeZone]`) |
 | `std/task` | | | | | | ⬜ | |
-| `std/mock_platform` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | call-recording log (`MockPlatform` holds a `MockCall[]`) — `record` / `call_count` / `reset` / `has_call` / `find_call` — native via the `mock_platform_log` fixture (interp / x86-64 / arm64 / wasm); self-host via the IR path (x86-64 + wasm): `TestSelfHostMockPlatformIR` — struct with an array-of-struct field, functional struct-spread append, indexed array-of-struct field reads (`m.calls[i].name`), membership scan, and `find_call`'s `Option[MockCall]` (Option of a struct) + payload-binding `match` (inlined as `MPlat`/`MCall`, since both are reserved builtin type names) |
+| `std/mock_platform` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | a recording `Platform`: `as_platform()` hands a handler a bag whose capability methods append to the mock's own `Cell[string]` instead of reaching the host, and `calls()` parses that log back into `MockCall[]` (`record` / `call_count` / `reset` / `has_call` / `find_call` inspect it) — native via the `mock_platform_log` fixture, which drives a real `handle(req, plat)` on interp / x86-64 / arm64 / wasm; self-host via the IR path (x86-64 + wasm): `TestSelfHostMockPlatformIR` — struct with a `Cell[string]` field, accumulating into that cell, byte indexing + `slice_unchecked` over the log, building an array-of-struct from the parse, indexed array-of-struct reads, membership scan, and `find_call`'s `Option[MockCall]` (Option of a struct) + payload-binding `match` (inlined as `MPlat`/`MCall`, since both are reserved builtin type names) |
 | `std/test` (~150 assertions) | | | | | | ⬜ | |
 | `std/fuzz` | | | | | | ⬜ | |
 
@@ -253,6 +253,29 @@ Reverse-chronological. Each entry: what was checked, what was found, what
 changed (fixture / fix / commit).
 
 <!-- newest first -->
+
+### 2026-09-02 — std/mock_platform became a recording Platform (#4414 Rec §6)
+
+The mock was Phase-1 manual: a `MockPlatform` holding a `MockCall[]` that a
+test appended to by hand, with `Platform` a one-field placeholder it could not
+substitute for. It now IS the bag — `Platform` carries `mode` + a
+`Cell[string]` sink, `std/platform`'s capability methods (and `std/fetch`'s
+`.fetch`) ask `is_mock()` before performing their effect, and
+`m.as_platform()` hands a handler a bag over the mock's own cell. One log,
+two views: `handle(req, m.as_platform())` records what the handler tried to do
+and reaches nothing.
+
+`record` / `reset` therefore mutate through the cell instead of returning a
+new mock, and `calls` became a method that parses the log rather than a field.
+The `mock_platform_log` fixture now drives a real handler on all four native
+backends, and the self-host prelude was rewritten to mirror the new
+constructs — a `Cell[string]` struct field and accumulation into it, which the
+self-host lowers on the IR path unchanged.
+
+Two derived rows moved with it (`internal/platforms`): `std/mock_platform`
+and `std/fetch` now reach what `std/platform` reaches, because both import it
+for the seam. Neither calls a capability — module-granular reach, and E066 is
+post-tree-shake.
 
 ### 2026-09-01 — `lstat(path)` added on every backend of both compilers (#7982)
 
