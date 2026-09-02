@@ -77,7 +77,30 @@ func pageUpFor(v uint64, machine uint16) uint64 {
 // and the data segment without both sides seeing it. The Mach-O path has
 // worked this way since it landed (macho.SegmentAddrs).
 func segmentAddrsWX(textLen int, machine uint16) (textVAddr, dataVAddr uint64) {
-	return TextVAddrWX, pageUpFor(TextVAddrWX+uint64(textLen), machine)
+	t, _, d := segmentAddrsWXEh(textLen, 0, machine)
+	return t, d
+}
+
+// segmentAddrsWXEh is segmentAddrsWX for an image that also carries unwind
+// data. .eh_frame sits 8-aligned inside the R+X segment, immediately after
+// .text, so .text's address — and every PC-relative fixup already resolved
+// against it — is unchanged by adding it. The data segment then starts on
+// the first page boundary past the END of .eh_frame rather than past .text.
+//
+// That placement is only expressible because the writer owns the map: the
+// assembler is told where the data segment landed instead of deriving it
+// from .text's size, so bytes can be inserted between the two (#8034).
+//
+// ehLen 0 is exactly segmentAddrsWX — no bytes, no 8-alignment, and the
+// data segment where it has always been.
+func segmentAddrsWXEh(textLen, ehLen int, machine uint16) (textVAddr, ehVAddr, dataVAddr uint64) {
+	textVAddr = TextVAddrWX
+	textEnd := textVAddr + uint64(textLen)
+	if ehLen == 0 {
+		return textVAddr, 0, pageUpFor(textEnd, machine)
+	}
+	ehVAddr = align8(textEnd)
+	return textVAddr, ehVAddr, pageUpFor(ehVAddr+uint64(ehLen), machine)
 }
 
 // segmentAddrsPIE is segmentAddrsWX for the base-0 images — the static PIE
@@ -108,6 +131,20 @@ func SegmentAddrsPIEArm64(textLen int) (textVAddr, dataVAddr uint64) {
 // SegmentAddrsPIEX86 is the x86-64 static-PIE / shared-object segment map.
 func SegmentAddrsPIEX86(textLen int) (textVAddr, dataVAddr uint64) {
 	return segmentAddrsPIE(textLen, emX86_64)
+}
+
+// SegmentAddrsWXEhArm64 is the arm64 W^X segment map for an image carrying
+// unwind data: .eh_frame 8-aligned after .text inside the R+X segment, the
+// data segment on the first page boundary past it. Render the .eh_frame at
+// the ehVAddr it returns — the CIE declares pcrel FDE pointers, so the
+// image is only correct at the address it was rendered for.
+func SegmentAddrsWXEhArm64(textLen, ehLen int) (textVAddr, ehVAddr, dataVAddr uint64) {
+	return segmentAddrsWXEh(textLen, ehLen, emAArch64)
+}
+
+// SegmentAddrsWXEhX86 is the x86-64 counterpart of SegmentAddrsWXEhArm64.
+func SegmentAddrsWXEhX86(textLen, ehLen int) (textVAddr, ehVAddr, dataVAddr uint64) {
+	return segmentAddrsWXEh(textLen, ehLen, emX86_64)
 }
 
 // TextVAddr is the virtual address at which .text begins in the
@@ -244,7 +281,26 @@ func StaticExecutableDataX86WX(text, data []byte) []byte {
 }
 
 func staticExecutableDataWX(text, data []byte, machine uint16) []byte {
-	return imageWX(text, data, machine, 0)
+	return imageWX(text, nil, data, machine, 0)
+}
+
+// StaticExecutableDataWXEhFrame is StaticExecutableDataWX with unwind data:
+// ehFrame is placed 8-aligned inside the R+X segment, right after .text, and
+// the data segment moves to the first page boundary past it. .text's address
+// is unchanged, so nothing the assembler already resolved shifts — but the
+// data segment does, which is why the assembler must have been given the
+// dataVAddr from SegmentAddrsWXEhArm64 rather than deriving one.
+//
+// A nil or empty ehFrame produces byte-identical output to
+// StaticExecutableDataWX. arm64 (EM_AARCH64).
+func StaticExecutableDataWXEhFrame(text, ehFrame, data []byte) []byte {
+	return imageWX(text, ehFrame, data, emAArch64, 0)
+}
+
+// StaticExecutableDataX86WXEhFrame is the x86-64 counterpart. Pair it with
+// SegmentAddrsWXEhX86.
+func StaticExecutableDataX86WXEhFrame(text, ehFrame, data []byte) []byte {
+	return imageWX(text, ehFrame, data, emX86_64, 0)
 }
 
 // StaticExecutableDataWXEntry is StaticExecutableDataWX with an explicit
@@ -256,7 +312,7 @@ func staticExecutableDataWX(text, data []byte, machine uint16) []byte {
 // and crashes. arm64 (EM_AARCH64); an x86-64 sibling can pass emX86_64 to
 // imageWX the day the self-host x86 dialect becomes natively parseable.
 func StaticExecutableDataWXEntry(text, data []byte, entryOff uint64) []byte {
-	return imageWX(text, data, emAArch64, entryOff)
+	return imageWX(text, nil, data, emAArch64, entryOff)
 }
 
 // imageWX emits an ELF header (e_phnum = 2) + two PT_LOAD program headers
@@ -265,15 +321,23 @@ func StaticExecutableDataWXEntry(text, data []byte, entryOff uint64) []byte {
 // R+W. File offsets equal virtual-address offsets (both measured from
 // baseVAddr) so the page-aligned data offset is congruent to its load
 // address mod the page size — what mmap requires.
-func imageWX(text, data []byte, machine uint16, entryOff uint64) []byte {
+func imageWX(text, ehFrame, data []byte, machine uint16, entryOff uint64) []byte {
 	const headers = ehSize + 2*phSize      // 64 + 112 = 176
-	textEnd := uint64(headers + len(text)) // end of the R+X segment
-	_, dataVAddr := segmentAddrsWX(len(text), machine)
+	textEnd := uint64(headers + len(text)) // end of .text
+	_, ehVAddr, dataVAddr := segmentAddrsWXEh(len(text), len(ehFrame), machine)
 	dataOff := dataVAddr - baseVAddr        // file offset == vaddr offset of data
-	codeVAddr := uint64(baseVAddr)          // headers + .text
+	codeVAddr := uint64(baseVAddr)          // headers + .text (+ .eh_frame)
 	entry := uint64(TextVAddrWX) + entryOff // entry instruction within .text
-	codeSz := textEnd                       // headers + .text live in one segment
-	dataSz := uint64(len(data))             // p_memsz: the full segment (incl. .bss)
+	// The R+X segment runs to the end of .eh_frame when there is one — it is
+	// alloc, like every other toolchain's, because unwinding happens at
+	// runtime.
+	codeSz := textEnd
+	ehOff := uint64(0)
+	if len(ehFrame) > 0 {
+		ehOff = ehVAddr - baseVAddr
+		codeSz = ehOff + uint64(len(ehFrame))
+	}
+	dataSz := uint64(len(data)) // p_memsz: the full segment (incl. .bss)
 	// .bss is materialised as trailing zero bytes in `data`, and a PT_LOAD with
 	// p_filesz < p_memsz has the kernel zero-fill [filesz, memsz). So store only up
 	// to the last non-zero byte in the file and let the loader supply the rest —
@@ -327,6 +391,12 @@ func imageWX(text, data []byte, machine uint16, entryOff uint64) []byte {
 	// ---- body: .text, then page padding, then the data blob's initialised
 	// prefix (the trailing .bss zeros are supplied by the loader via memsz). ----
 	buf = append(buf, text...)
+	if len(ehFrame) > 0 {
+		for uint64(len(buf)) < ehOff {
+			buf = append(buf, 0)
+		}
+		buf = append(buf, ehFrame...)
+	}
 	for uint64(len(buf)) < dataOff {
 		buf = append(buf, 0)
 	}
@@ -806,7 +876,7 @@ func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym)
 // emitted and the CU carries no DW_AT_stmt_list — identical to the plain
 // symtab+DIE image.
 func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms []Sym, debugLine []byte, srcName, compDir string, funcVars map[string][]LocalVar) []byte {
-	buf := imageWX(text, data, machine, entryOff)
+	buf := imageWX(text, nil, data, machine, entryOff)
 
 	// .strtab: NUL, then each symbol name NUL-terminated.
 	strtab := []byte{0}
