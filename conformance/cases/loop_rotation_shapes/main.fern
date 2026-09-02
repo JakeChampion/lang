@@ -12,7 +12,11 @@
 //
 // The hash is multiplicative and folds the loop variable in order, so a body
 // that runs the wrong number of times cannot land on the same answer by
-// cancellation.
+// cancellation. It overflows i32 on the way, which is fine and deterministic,
+// but leaves h negative — so the result is folded back into 0..250 before it
+// is returned. A fixture that returns a negative value reads as its low byte
+// through a process exit status and as the raw i32 through the wasm harness,
+// which is a disagreement in the fixture rather than in any backend.
 function main(): i32 {
   var h: i32 = 1;
 
@@ -56,7 +60,7 @@ function main(): i32 {
   var n: i32 = 0;
   while (n < five()) { h = h * 11 + n; n = n + 1; }
 
-  return h % 251;
+  return ((h % 251) + 251) % 251;
 }
 
 @noinline function five(): i32 { return 5; }
