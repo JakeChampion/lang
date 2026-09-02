@@ -13,20 +13,9 @@ import (
 // the insn dispatch switch, extracted from the source, so a mnemonic added to
 // one but not the other fails here instead of silently degrading suggestions.
 func TestSuggestListMatchesDispatch(t *testing.T) {
-	src, err := os.ReadFile("asm.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(src)
-	start := strings.Index(body, "func (a *Assembler) insn(")
-	if start < 0 {
-		t.Fatal("insn dispatch not found in asm.go")
-	}
-	end := strings.Index(body[start:], "\n}\n")
-	if end < 0 {
-		t.Fatal("insn dispatch end not found")
-	}
-	body = body[start : start+end]
+	// The prefix mnemonics are cases in ParseInst (inst.go); everything
+	// else is a case in the dispatch (asm.go).
+	body := funcBody(t, "inst.go", "func ParseInst(") + funcBody(t, "asm.go", "func (a *Assembler) dispatch(")
 
 	// A case list may span lines, and movdqu/movdqa are dispatched by a
 	// `mnem == "..."` comparison rather than a case — collect the string
@@ -71,6 +60,25 @@ func TestSuggestListMatchesDispatch(t *testing.T) {
 			t.Errorf("switchMnemonics lists %q but the dispatch has no such case — remove the stale entry", m)
 		}
 	}
+}
+
+// funcBody returns the source of the function starting with sig in file.
+func funcBody(t *testing.T, file, sig string) string {
+	t.Helper()
+	src, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	start := strings.Index(body, sig)
+	if start < 0 {
+		t.Fatalf("%s not found in %s", sig, file)
+	}
+	end := strings.Index(body[start:], "\n}\n")
+	if end < 0 {
+		t.Fatalf("%s end not found in %s", sig, file)
+	}
+	return body[start : start+end]
 }
 
 // clauseEnd returns the offset of the first colon outside a string literal —
