@@ -113,8 +113,12 @@ func TestBackendSSAKeepsCapabilityEnforcement(t *testing.T) {
 func TestBackendRejectsBadCombinations(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 	cases := map[string]struct{ target, backend, want string }{
-		"no ssa for x86-64": {"x86-64-linux", "ssa", "not available for -target x86-64"},
-		"unknown backend":   {"wasm32-wasi", "nope", `unknown -backend "nope"`},
+		// arm64-darwin, not x86-64: `-backend ssa` became an available
+		// combination for x86-64-linux when the SSA emitter was wired to the
+		// CLI (#4112 phase 2), so this row has to name a target that still
+		// has no SSA emitter or it stops testing the refusal at all.
+		"no ssa for arm64-darwin": {"arm64-darwin", "ssa", "not available for -target arm64-darwin"},
+		"unknown backend":         {"wasm32-wasi", "nope", `unknown -backend "nope"`},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
