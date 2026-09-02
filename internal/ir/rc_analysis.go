@@ -524,23 +524,25 @@ func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFu
 // `__om_glue`, `__om_union` — keep every caller's binding of its result
 // reclaimable.
 //
-// A BORROWED parameter is refused, and the refusal is empirical: crediting
-// it loses three of the five frees in `url.query_parse("a=1")`, 256 B on the
-// smallest form that shows it. The accounting behind that is NOT established.
-// `__query_pair` — the callee whose verdict flips — reassigns its `Map`
-// parameter and returns it, but it is not a consumed param (typeDeepDropWired
-// excludes Map), so the ownership-flag protocol is not what withholds the
-// balancing dec. Three probes reproducing the shape outside the stdlib (a
-// threaded map param, the same with `string[]` values through
-// get/append/insert, and the same behind a map-returning wrapper) all read
-// identically credited and refused, so the trigger is narrower than the shape
-// and is still unidentified.
+// A BORROWED parameter is refused, and the refusal now rests on nothing. It
+// was recorded as empirical — crediting one was said to lose three of the five
+// frees in `url.query_parse("a=1")`, 256 B — and that does not reproduce. Two
+// compilers built from the commit that landed the refusal, differing only in
+// this arm, leak identically in every spelling of that call: 0 B bound to a
+// local, 256 B as `query_parse(..).len()`, both ways. The 256 B is a
+// pre-existing leak in the second spelling and was misattributed; the same
+// table comes back from current main. Evidence on #7914.
 //
-// Refusing only the borrowed parameters a callee REASSIGNS is also enough to
-// keep query_parse clean and measures 21,104 B better on the self-host driver
-// (276,496 against 297,600). It is not taken: with no mechanism established,
-// that boundary is only known to exclude the one case that could be measured,
-// which is the wrong basis for widening a credit that has already leaked once.
+// Removing the refusal measures 11,024 B off self-host driver retention with
+// 219 more frees, takes `pair_form_payload_borrowing_call` from 144 B to 128 B
+// on both backends, and leaves the rc corpus, its leak gates and the
+// conformance census otherwise unmoved. It is still not taken, for the reason
+// the disproof does not supply: five probe shapes — a bare identity function
+// on `string[]` and on `string[][]`, a struct-array return, and a Map with
+// scalar and with `string[]` values, each bound and as a temp — read
+// IDENTICALLY under both compilers. Nothing smaller than the whole driver
+// distinguishes them, so there is no test that would pin the removal, and a
+// credit here has leaked once already.
 //
 // A PROJECTION of a parameter keeps the credit — a different object the callee
 // never owned — and no probe has found a shape where that is unsafe.
