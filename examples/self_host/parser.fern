@@ -7442,6 +7442,49 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     var (blk_body, blk_p) = parse_block(p);
     p = blk_p;
     var fbody: ast.Stmt[] = prepend_param_destrs(blk_body, pd);
+    // (d) threaded-accumulator promotion, the one clause that needs the BODY: a
+    // bare-var param (`acc: T`) the body REASSIGNS (`acc = visit(st, acc)`) is a
+    // value the frame rebinds without knowing its type, so the lowering cannot
+    // tell an array it must release from a scalar it must not — the walker
+    // frames every accumulator threads through (`fold_stmt_nodes[T]`) orphaned
+    // one buffer per grow that way. Cloning per instantiation gives the rebind
+    // a concrete type; the bare param binds T from the call argument. Free
+    // functions only, for the same no-stranded-sibling reason as clause (c).
+    //
+    // A `var a: T` local is the same blindness one binding over, and the two
+    // travel together through mutually recursive walkers (`map_stmt_acc` binds
+    // `var a: T`, `map_stmts_acc` reassigns `acc`): a promoted callee's template
+    // is dropped, so an erased caller of it would dangle. Hence the clause fires
+    // on either binding, and promotes EVERY still-erased var of the function at
+    // once — only when each is bindable from a param (the clause-(b) test), so
+    // the clone is fully concrete and the call site can resolve it.
+    if (receiver_type.len() == 0 && body_binds_bare_var(fbody, params, unbounded_tps, bounded_tps)) {
+        var all_bindable: boolean = true;
+        var di: i32 = 0;
+        while (di < unbounded_tps.len()) {
+            var dn: string = unbounded_tps[di];
+            if (util.index_of_str(bounded_tps, dn) < 0) {
+                var dbind: boolean = false;
+                var dpj: i32 = 0;
+                while (dpj < params.len()) {
+                    if (token_at_paren_depth0(params[dpj].type_name, dn) || token_in_tuple_param(params[dpj].type_name, dn)) { dbind = true; }
+                    dpj = dpj + 1;
+                }
+                if (!dbind) { all_bindable = false; }
+            }
+            di = di + 1;
+        }
+        if (all_bindable) {
+            var dk: i32 = 0;
+            while (dk < unbounded_tps.len()) {
+                if (util.index_of_str(bounded_tps, unbounded_tps[dk]) < 0) {
+                    bounded_tps = bounded_tps.append(unbounded_tps[dk]);
+                    bound_names = bound_names.append("");
+                }
+                dk = dk + 1;
+            }
+        }
+    }
     return (FuncDecl { name: name, receiver_name: receiver_name, receiver_type: receiver_type, type_params: bounded_tps, params: params, ret_type: ret_type, body: fbody, line: fline, col: fcol, import_iface: "", import_wit: "", type_param_count: all_tp_count, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, ret_str: fn_ret_str, ret_slice: fn_ret_slice, async: false, is_const: false, is_pub: false, ret_fn_ret: fn_ret_fn_ret, ret_fn_param_types: fn_ret_fn_ptys }, p);
 }
 
@@ -9694,13 +9737,42 @@ function struct_field_ty_inst(ot: string, fname: string, structs: StructDecl[]):
     return "";
 }
 
+// menv_bind_destructure binds each binder of a comma-joined destructure spelling
+// to the matching element of tuple type `ty` — nested groups `(b, c)` recurse
+// into the element's own tuple type. A single name, or a shape mismatch, binds
+// nothing beyond what the caller already did.
+function menv_bind_destructure(env: MEnv, names: string, ty: string): MEnv {
+    var parts: string[] = split_top_commas(names);
+    if (parts.len() <= 1) { return env; }
+    if (ty.len() < 2 || slice_unchecked(ty, 0, 1) != "(" || slice_unchecked(ty, ty.len() - 1, ty.len()) != ")") { return env; }
+    var tys: string[] = split_top_commas(slice_unchecked(ty, 1, ty.len() - 1));
+    if (tys.len() != parts.len()) { return env; }
+    var e: MEnv = env;
+    var i: i32 = 0;
+    while (i < parts.len()) {
+        var nm: string = strip_ws(parts[i]);
+        var et: string = strip_ws(tys[i]);
+        if (nm.len() > 1 && slice_unchecked(nm, 0, 1) == "(") {
+            e = menv_bind_destructure(e, slice_unchecked(nm, 1, nm.len() - 1) + "", et);
+        } else if (nm.len() > 0) {
+            e = e.ebind(nm, et);
+        }
+        i = i + 1;
+    }
+    return e;
+}
+
 function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: string): RStmtOne {
     match (st) {
         ast.StmtVar(v) => {
             var iv: RExpr = mono_call_expected(v.init, v.type_name, env, funcs, ins);
             var ty: string = v.type_name;
             if (ty.len() == 0) { ty = mono_infer(v.init, env, funcs); }
-            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, renv: env.ebind(v.name, ty), rins2: iv.rins };
+            // A tuple destructure (`var (ns, na, nh) = f(…)`) carries its
+            // binders comma-joined in the name; type each from the matching
+            // element of the init's tuple type, so a later call taking one of
+            // them (`map_stmts_acc(body, na, …)`) can still bind its instantiation.
+            return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, is_str: v.is_str, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }, renv: menv_bind_destructure(env.ebind(v.name, ty), v.name, ty), rins2: iv.rins };
         },
         ast.StmtReturn(r) => {
             // A `return mk()` binds a bounded-generic constructor's type params
@@ -9974,7 +10046,16 @@ function subst_expr(e: ast.Expr, tparams: string[], cts: string[]): ast.Expr {
             while (ti < tp.elements.len()) { nt = nt.append(subst_expr(tp.elements[ti], tparams, cts)); ti = ti + 1; }
             return ast.ExprTuple { ...tp, elements: nt };
         },
-        ast.ExprLambda(lm) => { return ast.ExprLambda { ...lm, body: subst_stmts(lm.body, tparams, cts) }; },
+        // A lambda's own parameter and return annotations name the type var too
+        // (`(s: ast.Stmt, a: T) => a`): left as `T`, its lifted body would have
+        // an untyped `a` and return it without the array retain a typed
+        // parameter gets, so the clone's caller would release a count that was
+        // never added.
+        ast.ExprLambda(lm) => {
+            var lps: ast.ParamDecl[] = [];
+            for lpd in lm.params { lps = lps.append(ast.ParamDecl { ...lpd, type_name: subst_ty(lpd.type_name, tparams, cts) }); }
+            return ast.ExprLambda { ...lm, params: lps, ret_type: subst_ty(lm.ret_type, tparams, cts), body: subst_stmts(lm.body, tparams, cts) };
+        },
         _ => { return e; }
     }
     return e;
@@ -10566,8 +10647,110 @@ pub function register_struct_method_generics(mod: Module): Module {
 // bodies + top stmts get their bounded-generic call sites rewritten to
 // mangled clone names; the clones are then generated per instantiation
 // (a worklist covers clones that call other bounded generics).
+// promote_erased_forwarders closes the promotion loop's clause (d) across
+// functions. An erased generic that only hands a bare-var-typed parameter on to
+// a bounded generic (`fold_stmt_own[T](st, acc: T, v)` calling the promoted
+// `fold_stmt_nodes`) would otherwise instantiate the callee at the type
+// VARIABLE — a clone keyed `T`, erased inside, with the ownership blindness the
+// clause exists to remove. Promote the forwarder instead, to a fixpoint (a newly
+// promoted function is a bounded callee for its own callers), whenever every
+// erased var is bindable from its params.
+function promote_erased_forwarders(funcs: FuncDecl[]): FuncDecl[] {
+    var out: FuncDecl[] = funcs;
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        var gnames: string[] = [];
+        var gi: i32 = 0;
+        while (gi < out.len()) {
+            if (out[gi].receiver_name.len() == 0 && out[gi].type_params.len() > 0) { gnames = gnames.append(out[gi].name); }
+            gi = gi + 1;
+        }
+        var i: i32 = 0;
+        while (i < out.len()) {
+            var fd: FuncDecl = out[i];
+            if (fd.receiver_type.len() == 0 && fd.receiver_name.len() == 0 && fd.type_param_count > fd.type_params.len()) {
+                var evars: string[] = erased_vars_of(fd);
+                if (evars.len() > 0 && erased_vars_bindable(fd.params, evars)) {
+                    var scan: FwdScan = FwdScan { params: fd.params, evars: evars, gnames: gnames, hit: false };
+                    for st in fd.body { scan = astwalk.fold_stmt_nodes(st, scan, fwd_scan_stmt, fwd_scan_expr, astwalk.descend_all); }
+                    if (scan.hit) {
+                        var tps: string[] = fd.type_params;
+                        var bts: string[] = fd.bound_traits;
+                        for ev in evars { tps = tps.append(ev); bts = bts.append(""); }
+                        out = out.with(i, FuncDecl { ...fd, type_params: tps, bound_traits: bts });
+                        changed = true;
+                    }
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+struct FwdScan { params: ast.ParamDecl[], evars: string[], gnames: string[], hit: boolean }
+
+function fwd_scan_stmt(st: ast.Stmt, acc: FwdScan): FwdScan { return acc; }
+
+// fwd_scan_expr marks the scan when a call to a bounded generic passes a bare
+// identifier naming one of the function's own erased-var-typed parameters.
+function fwd_scan_expr(e: ast.Expr, acc: FwdScan): FwdScan {
+    if (acc.hit) { return acc; }
+    match (e) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => {
+                    if (!util.has_str(acc.gnames, cid.name)) { return acc; }
+                    for arg in c.args {
+                        match (arg) {
+                            ast.ExprIdent(aid) => {
+                                var pi: i32 = 0;
+                                while (pi < acc.params.len()) {
+                                    if (acc.params[pi].name == aid.name && util.has_str(acc.evars, acc.params[pi].type_name)) {
+                                        return FwdScan { ...acc, hit: true };
+                                    }
+                                    pi = pi + 1;
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                    return acc;
+                },
+                _ => { return acc; }
+            }
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// erased_vars_of lists the type variables of `fd`'s signature that are not in
+// its bounded set — the ones the parser left erased.
+function erased_vars_of(fd: FuncDecl): string[] {
+    var vs: string[] = type_str_vars(fd.ret_type, []);
+    for pd in fd.params { vs = type_str_vars(pd.type_name, vs); }
+    var out: string[] = [];
+    for v in vs { if (!util.has_str(fd.type_params, v)) { out = out.append(v); } }
+    return out;
+}
+
+// erased_vars_bindable: every var is bindable from some param — the same test
+// as clause (b) of the promotion loop, so the clone's key is complete.
+function erased_vars_bindable(params: ast.ParamDecl[], vars: string[]): boolean {
+    for v in vars {
+        var ok: boolean = false;
+        for pd in params {
+            if (token_at_paren_depth0(pd.type_name, v) || token_in_tuple_param(pd.type_name, v)) { ok = true; }
+        }
+        if (!ok) { return false; }
+    }
+    return true;
+}
+
 pub function monomorphize_module(mod: Module): Module {
-    var funcs: FuncDecl[] = mod.funcs;
+    var funcs: FuncDecl[] = promote_erased_forwarders(mod.funcs);
     // Nothing to do if there are no bounded generics.
     var any_bg: boolean = false;
     var bi: i32 = 0;
@@ -17174,6 +17357,44 @@ function has_bare_array_param(params: ast.ParamDecl[], name: string): boolean {
     }
     return false;
 }
+// body_binds_bare_var reports whether `stmts` declares a local whose type is a
+// still-erased type variable, or assigns to a parameter typed as one — the two
+// bindings clause (d) of the promotion loop fires on.
+function body_binds_bare_var(stmts: ast.Stmt[], params: ast.ParamDecl[], tps: string[], bounded: string[]): boolean {
+    for st in stmts {
+        match (st) {
+            ast.StmtVar(v) => {
+                if (util.index_of_str(tps, v.type_name) >= 0 && util.index_of_str(bounded, v.type_name) < 0) { return true; }
+            },
+            ast.StmtAssign(a) => {
+                var pi: i32 = 0;
+                while (pi < params.len()) {
+                    if (params[pi].name == a.target && util.index_of_str(tps, params[pi].type_name) >= 0
+                        && util.index_of_str(bounded, params[pi].type_name) < 0) { return true; }
+                    pi = pi + 1;
+                }
+            },
+            ast.StmtIf(f) => {
+                if (body_binds_bare_var(f.then_body, params, tps, bounded)) { return true; }
+                if (body_binds_bare_var(f.else_body, params, tps, bounded)) { return true; }
+            },
+            ast.StmtWhile(w) => { if (body_binds_bare_var(w.body, params, tps, bounded)) { return true; } },
+            ast.StmtFor(fr) => { if (body_binds_bare_var(fr.body, params, tps, bounded)) { return true; } },
+            ast.StmtMatch(m) => {
+                for arm in m.arms {
+                    if (body_binds_bare_var(arm.body, params, tps, bounded)) { return true; }
+                }
+            },
+            ast.StmtDefer(d) => {
+                var one: ast.Stmt[] = [d.action];
+                if (body_binds_bare_var(one, params, tps, bounded)) { return true; }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
 function has_bare_scalar_param(params: ast.ParamDecl[], name: string): boolean {
     var i: i32 = 0;
     while (i < params.len()) {

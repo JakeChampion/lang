@@ -181,6 +181,7 @@ generic_call_in_struct_field                         0
 generic_float_literal_arg                            0
 generic_fn_arg_capturing_lambda                      2
 generic_fnarg_typevar                                0
+generic_fold_accumulator_reclaim                     0
 generic_id                                           0
 generic_method_typeparams                            0
 generic_pair                                         0
