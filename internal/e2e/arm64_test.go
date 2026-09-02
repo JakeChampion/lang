@@ -6335,17 +6335,17 @@ function main(): i32 {
 
     // index_of / contains — happy paths
     var kws: string[] = ["if", "else", "while", "function", "return"];
-    if (kws.index_of("if") != 0) { return 7; }
-    if (kws.index_of("return") != 4) { return 8; }
+    match (kws.index_of("if")) { Some(i) => { if (i != 0) { return 7; } }, None => { return 7; } }
+    match (kws.index_of("return")) { Some(i) => { if (i != 4) { return 8; } }, None => { return 8; } }
     if (kws.contains("else") == false) { return 9; }
 
-    // index_of — not found returns -1; contains returns false.
-    if (kws.index_of("for") != (0 - 1)) { return 10; }
+    // index_of — not found is None; contains returns false.
+    match (kws.index_of("for")) { Some(_) => { return 10; }, None => {} }
     if (kws.contains("for")) { return 11; }
 
-    // Empty array — index_of(any) = -1, contains(any) = false.
+    // Empty array — index_of(any) = None, contains(any) = false.
     var none: string[] = [];
-    if (none.index_of("x") != (0 - 1)) { return 12; }
+    match (none.index_of("x")) { Some(_) => { return 12; }, None => {} }
     if (none.contains("x")) { return 13; }
 
     // reverse — fresh array, original untouched.
@@ -6521,7 +6521,7 @@ function main(): i32 {
 
 // Thirtieth stdlib bundle: string replace_first /
 // is_kebab_case / is_snake_case / shift_byte, i32[]
-// first_index_of / pairwise_diffs, i32 factorial / is_prime.
+// index_of / pairwise_diffs, i32 factorial / is_prime.
 // 8 helpers.
 //
 // `factorial` caps at 12! (largest factorial that fits in
@@ -6557,13 +6557,13 @@ function main(): i32 {
     if ("a-b".is_snake_case()) { return 27; }
     if ("".is_snake_case()) { return 28; }
 
-    match ([3, 1, 4, 1, 5].first_index_of(1)) {
+    match ([3, 1, 4, 1, 5].index_of(1)) {
         Some(i) => { if (i != 1) { return 30; } },
         None => { return 31; },
     }
-    match ([3, 1, 4].first_index_of(99)) { Some(_) => { return 32; }, None => { } }
+    match ([3, 1, 4].index_of(99)) { Some(_) => { return 32; }, None => { } }
     var empty: i32[] = [];
-    match (empty.first_index_of(0)) { Some(_) => { return 33; }, None => { } }
+    match (empty.index_of(0)) { Some(_) => { return 33; }, None => { } }
 
     var d: i32[] = [10, 12, 15, 20].pairwise_diffs();
     if (d.len() != 3) { return 40; }

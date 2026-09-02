@@ -992,19 +992,19 @@ func TestSelfHostAsmArm64Bootstrap(t *testing.T) {
 		},
 		{
 			"arr-i32-index-of-found-first",
-			"function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; return xs.index_of(10); }",
+			"function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; match (xs.index_of(10)) { Some(i) => { return i; }, None => { return 99; } } }",
 			0,
 			"",
 		},
 		{
 			"arr-i32-index-of-found-middle",
-			"function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; return xs.index_of(30); }",
+			"function main(): i32 { var xs: i32[] = [10, 20, 30, 40]; match (xs.index_of(30)) { Some(i) => { return i; }, None => { return 99; } } }",
 			2,
 			"",
 		},
 		{
 			"arr-i32-index-of-not-found",
-			"function main(): i32 { var xs: i32[] = [10, 20, 30]; var r = xs.index_of(99); if (r < 0) { return 1; } return 0; }",
+			"function main(): i32 { var xs: i32[] = [10, 20, 30]; match (xs.index_of(99)) { Some(_) => { return 0; }, None => { return 1; } } }",
 			1,
 			"",
 		},

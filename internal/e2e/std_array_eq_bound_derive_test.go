@@ -125,7 +125,7 @@ var eqBoundDeriveCases = []struct {
 		body: `    var a: Point[] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
     if (!a.equal([Point { x: 1, y: 2 }, Point { x: 3, y: 4 }])) { return 1; }
     if (a.equal([Point { x: 1, y: 2 }])) { return 2; }
-    if (a.index_of(Point { x: 3, y: 4 }) != 1) { return 3; }
+    match (a.index_of(Point { x: 3, y: 4 })) { Some(i) => { if (i != 1) { return 3; } }, None => { return 3; } }
     if (!a.contains(Point { x: 1, y: 2 })) { return 4; }`,
 	},
 }

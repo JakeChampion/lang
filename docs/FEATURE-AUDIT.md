@@ -254,6 +254,47 @@ changed (fixture / fix / commit).
 
 <!-- newest first -->
 
+### 2026-09-02 — the last two `#4387` duplicates: array `index_of` → `Option[i32]`, and one FNV-1a ([#4387](https://github.com/JakeChampion/lang/issues/4387))
+
+The two twins #5348 left standing.
+
+**`.index_of` return shape.** `std/array`'s receiver method returned `i32`/`-1`
+while `core/cmp`'s free verb returned `Option[i32]` — the same-name-different-
+contract pair the issue opened on, resolved in the free verb only. The method
+now delegates to `cmp.index_of` and returns `Option[i32]`; `first_index_of`,
+which existed solely as its Option-returning twin, is deleted and its callers
+renamed. Nothing in the tree read the `-1`: the whole corpus type-checks with
+the sentinel gone, so the documented "compiler-style call sites read it with a
+`< 0` test" had no users left.
+
+The self-host half is the real work. `xs.index_of(x)` on an `i32[]` rides a
+lowering intercept to a runtime helper, with a fixed return type in asmcore's
+builtin table — so the stdlib signature alone would have left native and
+self-host disagreeing on the shape. Followed the `.min()`/`.max()` precedent
+(#3457): a new Option-returning Fern helper `__fern_arr_i32_index_of_opt`
+carrying its own box, registered in `builtin_arr_opt_ret_type` so an inline
+`match (h.xs.index_of(x))` recovers its scrutinee type. The raw `-1` scan stays
+— `.contains(x)` still reads it as `>= 0`. Deleting the intercept instead was
+tried first and rejected: a field receiver (`h.xs.index_of(x)`) then bails,
+because `arr_method_opt_ret_type`'s receiver gate is `expr_is_arr_src`, which
+has no field-access arm. That gap is real and pre-existing — `h.xs.gcd_all()`
+bails today for the same reason — but it is a separate bug, not this one.
+
+**FNV-1a twice.** `impl Hash for string` in `core/cmp` open-coded the same
+FNV-1a as `std/string`'s `hash_fnv32()`. The justification on record was that
+`core` cannot import `std`; `cmp.fern` has imported `std/string` since before
+the issue was filed. It now delegates — `self.hash_fnv32() as i32`, a bit
+reinterpretation, since two's-complement multiply agrees with the unsigned one
+on the low 32 bits. Verified value-identical against an independent FNV-1a
+reference before and after. The section comment also claimed this was "the same
+function the Map runtime hashes string keys with", which has not been true since
+#6194: `core/map` seeds the offset basis per process and finishes with an fmix32
+avalanche.
+
+Verified on all seven legs — native interp / x86-64 / wasm / arm64 and self-host
+IR x86-64 / wasm / arm64 — with one probe covering local, struct-field and
+`string[]` receivers, `.contains`, `.min`/`.max` and `.sum` alongside.
+
 ### 2026-09-02 — std/mock_platform became a recording Platform (#4414 Rec §6)
 
 The mock was Phase-1 manual: a `MockPlatform` holding a `MockCall[]` that a
@@ -552,8 +593,9 @@ delegates to `std/sort`'s `sort_by`, and `xs.equal` delegates to
 `cmp.fern` (`std/array` already imports `core/cmp`, so the cited
 `std/array → core/cmp → std/string → std/array` cycle no longer exists). The
 `std/array`-specific string[]/i32[] receiver *methods* (`.contains`/`.index_of`/
-`.distinct`, returning `i32`/`-1`) are a separate name-keyed surface and are
-unchanged. Tests: `cmp.index_of` callers migrated to the `Option[i32]` shape
+`.distinct`) were left on the `i32`/`-1` shape here; `.index_of` was brought
+onto `Option[i32]` in the 2026-09-02 entry below, which is what finished the
+consolidation. Tests: `cmp.index_of` callers migrated to the `Option[i32]` shape
 (`TestNativeCmpModule`, `TestNativeEqVerbsModule`, `cmp_helpers_test.fern`);
 `TestNativeOrdSortModule` and the self-host stdlib-modules IR case repointed to
 `cmp.sort`/`cmp.*`; the redundant `std_array_eq_verbs_test.go` was deleted and
