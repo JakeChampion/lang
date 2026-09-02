@@ -1,8 +1,12 @@
 name: Playground E2E
 
-# Headless-browser tests for the Fern playground. Two suites with
-# complementary roles:
+# Tests for the Fern playground. Three suites with complementary
+# roles:
 #
+#   shim       (unit)  — web/wasi-shim.js against real compiled
+#                        modules, no browser. Failing here means the
+#                        page's preview-1 host and the wasm backend
+#                        disagree on a syscall.
 #   playwright (gate)  — scripted golden-path tests; deterministic,
 #                        fast, per-PR. Failing here means a feature
 #                        the playground promises to support is
@@ -12,7 +16,7 @@ name: Playground E2E
 #                        Bombadil found a counter-example to one of
 #                        our always-true invariants.
 #
-# Both jobs share the same path filter so unrelated edits don't
+# All three jobs share the same path filter so unrelated edits don't
 # burn CI minutes. Daily schedule runs Bombadil with fresh random
 # seeds to catch drift Playwright wouldn't.
 
@@ -78,6 +82,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The shim is the page's half of running a compiled program, and the
+  # browser suites reach it only through whatever the page happens to do.
+  # This drives it directly against modules the real compiler emitted, so a
+  # syscall the shim gets wrong fails here by name instead of surfacing as a
+  # blank output pane two suites later. No browser, so it is the fast one.
+  shim:
+    name: shim
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      # No dependencies: node:test is built in, and the fixtures are compiled
+      # by the fern the test builds from this checkout.
+      - name: Run the shim suite
+        run: node --test web/test/shim/*.test.mjs
+
   playwright:
     name: playwright
     runs-on: ubuntu-latest

@@ -26,13 +26,27 @@ class ExitSignal {
 }
 
 // runCoreWasm instantiates a preview-1 core module and runs its
-// `_start`, returning the captured stdout / stderr and the exit code
-// (0 unless the guest called exit(), which lowers to proc_exit).
-export async function runCoreWasm(bytes) {
+// `_start`, returning the captured stdout / stderr and the exit code.
+//
+// `opts.stdin` is the guest's standard input, read once and then at
+// EOF; `opts.args` is its full argv, argv[0] included, the way a
+// process receives one. Both default to empty. A guest that wants
+// neither never calls fd_read or args_get, so passing nothing keeps
+// the old behaviour exactly.
+//
+// The exit code is the guest's own: the emitted `_start` ends in
+// proc_exit(main()), so a program that returns 20 reports 20 without
+// having to call exit() itself.
+export async function runCoreWasm(bytes, opts = {}) {
   const stdoutChunks = [];
   const stderrChunks = [];
   let exitCode = 0;
   let memory = null;
+
+  const encoder = new TextEncoder();
+  const stdin = encoder.encode(opts.stdin ?? "");
+  let stdinPos = 0;
+  const argv = opts.args ?? [];
 
   const decoder = new TextDecoder();
   // memory.buffer detaches whenever the guest grows linear memory, so
@@ -57,8 +71,34 @@ export async function runCoreWasm(bytes) {
     return 0;
   }
 
+  // fd_read: fill the iovec array from the remaining stdin, write the
+  // byte count to nreadPtr and report success. A short read is a
+  // legitimate answer under preview-1, and 0 bytes is how EOF is
+  // spelled — a reader loops until it sees one — so the guest gets the
+  // whole buffer on the first call and 0 on every call after.
+  //
+  // Only fd 0 exists here. Anything else is EBADF (8) rather than an
+  // empty read, which a guest would take for a valid empty file.
+  function fdRead(fd, iovsPtr, iovsCount, nreadPtr) {
+    if (fd !== 0) return 8;
+    const dv = view();
+    let read = 0;
+    for (let i = 0; i < iovsCount; i++) {
+      const base = dv.getUint32(iovsPtr + i * 8, true);
+      const len = dv.getUint32(iovsPtr + i * 8 + 4, true);
+      const n = Math.min(len, stdin.length - stdinPos);
+      if (n <= 0) break;
+      bytesAt(base, n).set(stdin.subarray(stdinPos, stdinPos + n));
+      stdinPos += n;
+      read += n;
+    }
+    dv.setUint32(nreadPtr, read, true);
+    return 0;
+  }
+
   const preview1 = {
     fd_write: fdWrite,
+    fd_read: fdRead,
     proc_exit(code) {
       throw new ExitSignal(code >>> 0);
     },
@@ -75,14 +115,29 @@ export async function runCoreWasm(bytes) {
       view().setBigUint64(timePtr, ns, true);
       return 0;
     },
-    // The playground gives the guest no argv / environ.
+    // argv comes from the caller; the guest sees exactly what it passed,
+    // argv[0] included. The two calls must agree: args_sizes_get is how
+    // the guest sizes the buffers args_get then writes into, so both
+    // count the same NUL terminators.
     args_sizes_get(argcPtr, argvBufSizePtr) {
       const dv = view();
-      dv.setUint32(argcPtr, 0, true);
-      dv.setUint32(argvBufSizePtr, 0, true);
+      dv.setUint32(argcPtr, argv.length, true);
+      let bufSize = 0;
+      for (const a of argv) bufSize += encoder.encode(a).length + 1;
+      dv.setUint32(argvBufSizePtr, bufSize, true);
       return 0;
     },
-    args_get() {
+    args_get(argvPtr, argvBufPtr) {
+      const dv = view();
+      let at = argvBufPtr;
+      for (let i = 0; i < argv.length; i++) {
+        dv.setUint32(argvPtr + i * 4, at, true);
+        const b = encoder.encode(argv[i]);
+        bytesAt(at, b.length).set(b);
+        at += b.length;
+        dv.setUint8(at, 0);
+        at += 1;
+      }
       return 0;
     },
     environ_sizes_get(countPtr, bufSizePtr) {

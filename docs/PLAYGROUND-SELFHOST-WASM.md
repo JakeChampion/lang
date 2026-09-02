@@ -375,10 +375,17 @@ What is left:
    like a program that ran and succeeded. Both were dead ends for a driver whose
    whole verdict is its exit code.
 
-   What the page still needs is on the JS side: `web/wasi-shim.js` implements no
-   `fd_read` and reports `argc = 0`, so it can supply neither the source nor the
-   mode. The driver imports 11 preview-1 functions and the shim answers 9 of
-   them; the two gaps are that stdin and that argv.
+   The JS half is in place too: `web/wasi-shim.js` implements `fd_read` over a
+   caller-supplied stdin and answers `args_sizes_get` / `args_get` from a
+   caller-supplied argv, so `runCoreWasm(bytes, { stdin, args })` supplies both
+   the source and the mode. It had neither — no `fd_read` at all, `argc = 0` —
+   which is why the driver could not be hosted in a page however it was built.
+   `web/test/shim/` pins the contract by compiling real programs and running
+   them through the real shim.
+
+   What remains is wiring, not capability: `web/index.html` still loads
+   `web/fern.wasm`, the Go compiler under `GOOS=js`, and would have to fetch
+   and drive the self-host driver instead.
 
    **As exports.** `@export("iface", "name")` emits canonical-ABI wrappers into
    a `-emit core-module` build in both compilers, and a module whose exports
