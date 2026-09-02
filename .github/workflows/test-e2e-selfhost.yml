@@ -736,10 +736,7 @@ jobs:
     strategy:
       fail-fast: false
       # Per-leg time budget, measured rather than guessed: wasm and x86-64 each
-      # finish the corpus in ~11 minutes. The arm64 leg is NOT here — see the
-      # "missing third leg" section in internal/e2e/fixture_selfhost_test.go: it
-      # needs ~69 min (in-process assemble + link per fixture, ~13s each) and is
-      # blocked on #6044 / #6045 / #6047 regardless.
+      # finish the corpus in ~11 minutes, arm64 in ~5 once its driver is built.
       matrix:
         include:
           - { leg: wasm, test: TestFernFixturesSelfHostWasm, wasmtime: "true", job-minutes: 45, go-timeout: 43m }
