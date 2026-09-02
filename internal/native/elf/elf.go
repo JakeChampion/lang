@@ -846,37 +846,37 @@ func StaticExecutableDataWXSyms(text, data []byte, syms []Sym) []byte {
 // assembler's `.loc` markers). srcFile names the source (relative to compDir,
 // which the CU records so a debugger can locate it). Empty rows behave like
 // the plain symtab image. textEndVAddr bounds the line program's final range.
-func StaticExecutableDataX86WXSymsRows(text, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64, funcVars map[string][]LocalVar) []byte {
+func StaticExecutableDataX86WXSymsRows(text, ehFrame, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64, funcVars map[string][]LocalVar) []byte {
 	var dl []byte
 	if len(rows) > 0 {
 		dl = buildDebugLineRows(rows, uint64(TextVAddrWX), textEndVAddr, srcFile)
 	}
-	return imageWXSymsLines(text, data, emX86_64, 0, syms, dl, srcFile, compDir, funcVars)
+	return imageWXSymsLines(text, ehFrame, data, emX86_64, 0, syms, dl, srcFile, compDir, funcVars)
 }
 
 // StaticExecutableDataWXSymsRows is the arm64 counterpart of
 // StaticExecutableDataX86WXSymsRows.
-func StaticExecutableDataWXSymsRows(text, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64, funcVars map[string][]LocalVar) []byte {
+func StaticExecutableDataWXSymsRows(text, ehFrame, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64, funcVars map[string][]LocalVar) []byte {
 	var dl []byte
 	if len(rows) > 0 {
 		dl = buildDebugLineRows(rows, uint64(TextVAddrWX), textEndVAddr, srcFile)
 	}
-	return imageWXSymsLines(text, data, emAArch64, 0, syms, dl, srcFile, compDir, funcVars)
+	return imageWXSymsLines(text, ehFrame, data, emAArch64, 0, syms, dl, srcFile, compDir, funcVars)
 }
 
 // imageWXSyms builds the W^X image (imageWX) and appends a section table with
 // a .symtab. The sections are all non-alloc and live after the loadable
 // segments, so the running image is identical to imageWX's.
 func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym) []byte {
-	return imageWXSymsLines(text, data, machine, entryOff, syms, nil, "", "", nil)
+	return imageWXSymsLines(text, nil, data, machine, entryOff, syms, nil, "", "", nil)
 }
 
 // imageWXSymsLines is imageWXSyms plus an optional pre-encoded DWARF
 // .debug_line table (debugLine). When debugLine is empty no line section is
 // emitted and the CU carries no DW_AT_stmt_list — identical to the plain
 // symtab+DIE image.
-func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms []Sym, debugLine []byte, srcName, compDir string, funcVars map[string][]LocalVar) []byte {
-	buf := imageWX(text, nil, data, machine, entryOff)
+func imageWXSymsLines(text, ehFrame, data []byte, machine uint16, entryOff uint64, syms []Sym, debugLine []byte, srcName, compDir string, funcVars map[string][]LocalVar) []byte {
+	buf := imageWX(text, ehFrame, data, machine, entryOff)
 
 	// .strtab: NUL, then each symbol name NUL-terminated.
 	strtab := []byte{0}
@@ -899,6 +899,10 @@ func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms [
 	nStrtab := addShName(".strtab")
 	nShstrtab := addShName(".shstrtab")
 	nDebugAbbrev := addShName(".debug_abbrev")
+	var nEhFrame uint32
+	if len(ehFrame) > 0 {
+		nEhFrame = addShName(".eh_frame")
+	}
 	nDebugInfo := addShName(".debug_info")
 	hasLines := len(debugLine) > 0
 	var nDebugLine uint32
@@ -970,6 +974,17 @@ func imageWXSymsLines(text, data []byte, machine uint16, entryOff uint64, syms [
 	if hasLines {
 		buf = appendShdr(buf, nDebugLine, 1, 0, 0, debugLineOff, uint64(len(debugLine)), 0, 0, 1, 0)
 		shnum = 8
+	}
+	// .eh_frame: PROGBITS, SHF_ALLOC — it is inside the R+X segment, unlike
+	// the .debug_* sections above. Appended last so the fixed indices this
+	// function relies on (and e_shstrndx = 4) do not shift. Without a header
+	// the bytes are in the image but a debugger cannot find them, which is
+	// what makes this the difference between placing unwind data and having
+	// usable unwind data.
+	if len(ehFrame) > 0 {
+		_, ehVAddr, _ := segmentAddrsWXEh(len(text), len(ehFrame), machine)
+		buf = appendShdr(buf, nEhFrame, 1, 0x2, ehVAddr, ehVAddr-baseVAddr, uint64(len(ehFrame)), 0, 0, 8, 0)
+		shnum++
 	}
 
 	// Patch the ELF header's section-table fields (imageWX left them zero).

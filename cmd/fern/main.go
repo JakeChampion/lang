@@ -2189,7 +2189,10 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		for _, r := range locRows {
 			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
 		}
-		bin := nativeelf.StaticExecutableDataWXSymsRows(text, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
+		// nil: the arm64 emitter does not emit `.cfi_*` yet (#7901), so
+		// there is nothing to place. Wiring the three-step here before that
+		// lands would only ever render an empty image.
+		bin := nativeelf.StaticExecutableDataWXSymsRows(text, nil, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -2456,10 +2459,25 @@ func dwarfLocalVars(prog *ast.Program, info *checker.Info, target string) map[st
 
 func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]nativeelf.LocalVar) error {
 	if emitDebugSyms {
-		text, rodata, syms, locRows, err := nativex86.AssembleProgramWXSyms(asm, nativeelf.SegmentAddrsWXX86)
+		a, err := nativex86.ParseProgram(asm)
 		if err != nil {
 			return fmt.Errorf("native assembler: %w", err)
 		}
+		textLen, err := a.TextLen()
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
+		}
+		textVAddr, ehVAddr, _ := nativeelf.SegmentAddrsWXEhX86(textLen, 1)
+		ehFrame, err := a.EhFrame(textVAddr, ehVAddr)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
+		}
+		textVAddr, _, dataVAddr := nativeelf.SegmentAddrsWXEhX86(textLen, len(ehFrame))
+		text, rodata, err := a.BytesProgramWX(textVAddr, dataVAddr)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
+		}
+		syms, locRows := a.TextLabelVAddrs(textVAddr), a.LocRows()
 		textEnd := nativeelf.TextVAddrWX + uint64(len(text))
 		fs := nativeelf.FuncSyms(syms, textEnd)
 		// Per-statement DWARF .debug_line rows from the assembler's `.loc`
@@ -2468,7 +2486,7 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		for _, r := range locRows {
 			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
 		}
-		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
+		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, ehFrame, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}

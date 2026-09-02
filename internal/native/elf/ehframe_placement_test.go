@@ -2,6 +2,7 @@ package elf_test
 
 import (
 	"bytes"
+	goelf "debug/elf"
 	"encoding/binary"
 	"fmt"
 	"strings"
@@ -238,6 +239,69 @@ func TestEhFrameEmptyIsUnchanged(t *testing.T) {
 	for _, eh := range [][]byte{nil, {}} {
 		if got := elf.StaticExecutableDataX86WXEhFrame(text, eh, data); !bytes.Equal(got, want) {
 			t.Errorf("an image with a %v .eh_frame differs from one built without the parameter (%d vs %d bytes)", eh, len(got), len(want))
+		}
+	}
+}
+
+// TestDebugImageCarriesEhFrameSection is the discoverability half. Placing
+// .eh_frame in the R+X segment puts the bytes in the image; without a section
+// header nothing can FIND them, because a debugger locates .eh_frame through
+// the section table and the plain W^X image has none.
+//
+// The header is appended after the .debug_* ones so the fixed indices
+// imageWXSymsLines relies on — and e_shstrndx = 4 — do not shift. Parsing the
+// result with debug/elf checks that too: section names would come out wrong if
+// the string-table index had moved.
+func TestDebugImageCarriesEhFrameSection(t *testing.T) {
+	_, _, ehFrame, data, _, ehVAddr, _ := layoutWithEh(t, ehSrc(ehTestFDEs, 0))
+	a, err := x86_64.ParseProgram(ehSrc(ehTestFDEs, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := a.TextLen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tv, _, dv := elf.SegmentAddrsWXEhX86(n, len(ehFrame))
+	text, _, err := a.BytesProgramWX(tv, dv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	syms := []elf.Sym{{Name: "_start", Value: tv, Size: 4}}
+	img := elf.StaticExecutableDataX86WXSymsRows(text, ehFrame, data, syms, nil, "p.fern", "/tmp", tv+uint64(len(text)), nil)
+
+	f, err := goelf.NewFile(bytes.NewReader(img))
+	if err != nil {
+		t.Fatalf("the -g image is not a readable ELF: %v", err)
+	}
+	sec := f.Section(".eh_frame")
+	if sec == nil {
+		var names []string
+		for _, s := range f.Sections {
+			names = append(names, s.Name)
+		}
+		t.Fatalf("no .eh_frame section header — the bytes are in the image but nothing can find them; sections: %v", names)
+	}
+	if sec.Flags&goelf.SHF_ALLOC == 0 {
+		t.Error(".eh_frame is not SHF_ALLOC — unwinding happens at runtime, so it has to be mapped")
+	}
+	if sec.Addr != ehVAddr {
+		t.Errorf(".eh_frame section addr %#x, want the %#x the image map chose", sec.Addr, ehVAddr)
+	}
+	if sec.Size != uint64(len(ehFrame)) {
+		t.Errorf(".eh_frame section size %d, want %d", sec.Size, len(ehFrame))
+	}
+	got, err := sec.Data()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, ehFrame) {
+		t.Error(".eh_frame section content is not the rendered image")
+	}
+	// The sections the -g image already carried must survive the addition.
+	for _, want := range []string{".text", ".symtab", ".strtab", ".debug_info"} {
+		if f.Section(want) == nil {
+			t.Errorf("%s went missing when .eh_frame was added", want)
 		}
 	}
 }
