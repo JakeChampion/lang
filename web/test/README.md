@@ -1,5 +1,16 @@
 # Playground end-to-end tests (Bombadil)
 
+> Sibling suite: `web/test/shim/` unit-tests `web/wasi-shim.js` — the page's
+> preview-1 host — against modules the real compiler emits. No browser, no
+> dependencies:
+>
+> ```bash
+> node --test web/test/shim/*.test.mjs
+> ```
+>
+> It builds `cmd/fern` from the checkout, so it needs Go but nothing else.
+
+
 [Bombadil](https://github.com/antithesishq/bombadil) is a property-
 based browser tester from Antithesis. It opens the page in a real
 Chromium, autonomously fuzzes it (random clicks, typing, scrolling),
