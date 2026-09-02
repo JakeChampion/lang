@@ -56,6 +56,13 @@ type BuildOptions struct {
 	// call resolves. No-op when main returns void; non-i32
 	// returns fall back to the plain SynthStart drop path.
 	PrintMainResult bool
+	// ExitWithMainResult ends the synthesised `_start` with
+	// `proc_exit(main())` instead of dropping main's result, so
+	// a preview-1 host reports the program's own exit code —
+	// the wasi-libc `_start` convention. A void or non-i32 main
+	// exits 0. Implies SynthStart. Off for preview-2 wrapping,
+	// where `wasi:cli/run` carries only 0/1.
+	ExitWithMainResult bool
 	// HttpHandler emits the wasi:http/incoming-handler@0.2.0
 	// component-model export wrapping the user-defined
 	// `function handle(req: HttpRequest, plat: Platform):
@@ -300,6 +307,7 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 		ForceMemorySection: opts.ForceMemorySection,
 		SynthStart:         opts.SynthStart,
 		PrintMainResult:    opts.PrintMainResult,
+		ExitWithMainResult: opts.ExitWithMainResult,
 		HttpHandler:        opts.HttpHandler,
 		Preview2WASI:       opts.Preview2WASI,
 		SynthCliRun:        opts.SynthCliRun,

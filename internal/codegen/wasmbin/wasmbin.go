@@ -87,6 +87,16 @@ type EmitOptions struct {
 	// main's value over stdout (preview-2 hosts only surface 0/1
 	// through `wasi:cli/exit`). No-op for non-i32 / void returns.
 	PrintMainResult bool
+	// ExitWithMainResult ends the SynthStart wrapper with
+	// `call $__fern_exit` on main's i32 result instead of
+	// dropping it, so a preview-1 host reports the program's own
+	// exit code. This is the wasi-libc `_start` convention and
+	// the only channel a preview-1 command has for a value: a
+	// void or non-i32 main exits 0. Leave it off for preview-2
+	// wrapping, where the adapter's `wasi:cli/run` surfaces 0/1
+	// and nothing wider — that is what PrintMainResult works
+	// around. Implies SynthStart.
+	ExitWithMainResult bool
 	// HttpHandler emits the `wasi:http/incoming-handler@0.2.0#handle`
 	// export wrapping the user-defined `function handle(req:
 	// HttpRequest, plat: Platform): HttpResponse`. The synthetic
@@ -236,6 +246,12 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// always-export shape.
 	if opts.ForceMemorySection || exportsNeedGuestAlloc(prog) {
 		helpers.add("cabi_realloc")
+	}
+	// The ExitWithMainResult `_start` calls proc_exit through
+	// __fern_exit, which a program that never calls `exit` would
+	// otherwise not pull in.
+	if opts.ExitWithMainResult {
+		helpers.add("__fern_exit")
 	}
 	importNeeds := scanImports(prog, helpers, opts)
 
@@ -863,7 +879,12 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// main's i32 value lands on stdout. Mirrors the WAT path's
 	// PrintMainResult mode; same fallback shape (drop) when the
 	// program doesn't include an int_to_string variant.
-	if opts.SynthStart {
+	//
+	// ExitWithMainResult replaces the drop with `call $__fern_exit`
+	// (proc_exit) so a preview-1 host reports main's value as the
+	// process exit code, and stashes the result in a local first so
+	// PrintMainResult can still consume a copy.
+	if opts.SynthStart || opts.ExitWithMainResult {
 		mainIdx, ok := funcIdx["main"]
 		if !ok {
 			return nil, fmt.Errorf("wasmbin: SynthStart needs a `main` function")
@@ -880,6 +901,13 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		// FunctionTypeidxs[main_funcidx - len(imports)].
 		mainPosInFnSection := mainIdx - uint32(len(importNeeds.order))
 		mainResults := m.TypeResults[m.FunctionTypeidxs[mainPosInFnSection]]
+		// An i32 main under ExitWithMainResult goes to local 0 straight
+		// away: proc_exit needs it last, and PrintMainResult consumes a
+		// copy in between.
+		exitCode := opts.ExitWithMainResult && len(mainResults) == 1 && mainResults[0] == encode.ValtypeI32
+		if exitCode {
+			body = inst.InstLocalSet(body, 0)
+		}
 		printed := false
 		if opts.PrintMainResult && len(mainResults) == 1 && mainResults[0] == encode.ValtypeI32 {
 			// `int_to_string` resolves to the bare name (flat-load);
@@ -897,6 +925,9 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 				intToStrName = "int__int_to_string"
 			}
 			if intToStrName != "" {
+				if exitCode {
+					body = inst.InstLocalGet(body, 0)
+				}
 				body = inst.InstCall(body, funcIdx[intToStrName])
 				printIdx, ok := funcIdx["__fern_print"]
 				if !ok {
@@ -906,13 +937,31 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 				printed = true
 			}
 		}
-		if !printed {
+		if !printed && !exitCode {
 			for range mainResults {
 				body = inst.InstDrop(body)
 			}
 		}
+		// The stack is empty by here on every path above, so the exit
+		// call pushes its own argument: main's value when there is one,
+		// else 0 for a void or non-i32 main, which a preview-1 exit code
+		// cannot carry.
+		locals := inst.PutLocalsEmpty(nil)
+		if opts.ExitWithMainResult {
+			exitIdx, ok := funcIdx["__fern_exit"]
+			if !ok {
+				return nil, fmt.Errorf("wasmbin: ExitWithMainResult: __fern_exit helper not registered (scanRuntimeHelpers gap)")
+			}
+			if exitCode {
+				body = inst.InstLocalGet(body, 0)
+				locals = inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+			} else {
+				body = inst.InstI32Const(body, 0)
+			}
+			body = inst.InstCall(body, exitIdx)
+		}
 		m.FunctionTypeidxs = append(m.FunctionTypeidxs, startTIdx)
-		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body))
+		m.CodeBodies = append(m.CodeBodies, inst.PutFunctionBody(nil, locals, body))
 		m.ExportNames = append(m.ExportNames, "_start")
 		m.ExportKinds = append(m.ExportKinds, sections.ExportFunc)
 		m.ExportIdxs = append(m.ExportIdxs, startFuncIdx)

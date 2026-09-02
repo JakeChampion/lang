@@ -63,13 +63,18 @@ func CompileComponent(src, world string) ([]byte, error) {
 // wasi_snapshot_preview1 import names (fd_write, proc_exit,
 // random_get, clock_time_get, args_*) are what the JS shim
 // implements.
+//
+// ExitWithMainResult is what makes the page's exit line agree with
+// the interpreter's: preview-1 proc_exit carries the whole status,
+// so `main` returning 20 reports 20 rather than the 0 a dropped
+// result leaves behind.
 func CompileCoreWasm(src string) ([]byte, error) {
 	prog, info, err := frontEnd(src)
 	if err != nil {
 		return nil, err
 	}
 	return wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
-		SynthStart:         true,
+		ExitWithMainResult: true,
 		ForceMemorySection: true,
 	})
 }
