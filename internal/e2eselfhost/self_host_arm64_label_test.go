@@ -118,7 +118,7 @@ function main(): i32 {
     a.code = arm64_ret(a.code, arm64_lr());             // return to caller
     a = arm64_asm_resolve(a);
     var none: i32[] = [];
-    var bin: i32[] = macho_executable(a.code, none, "fern", macho_entry_off(a), 0, none);
+    var bin: i32[] = macho_executable(a.code, none, none, "fern", macho_entry_off(a), 0, none);
     write(string_from_bytes_unchecked(bin));
     return 0;
 }

@@ -90,11 +90,17 @@ func asmToMachoDriver(asm string) string {
 	// poisoning the freelist and crashing macho_code_signature's sha256.
 	b.WriteString("    if (p.unknown.len() > 0) { write(\"UNKNOWN:\"); var ui: i32 = 0; while (ui < p.unknown.len()) { if (ui > 0) { write(\",\"); } write(p.unknown[ui]); ui = ui + 1; } return 0; }\n")
 	b.WriteString("    var pa: Arm64Asm = p.asm;\n")
-	b.WriteString("    var tv: i64 = macho_text_vaddr(pa.code.len(), p.data.len(), p.bss_size);\n")
-	b.WriteString("    var dv: i64 = macho_data_vaddr(pa.code.len(), p.data.len(), p.bss_size);\n")
+	// The unwind image is rendered and placed exactly as fern.fern's
+	// arm64-darwin path does it, so this covers that orchestration on real
+	// emitter output — the emitter writes `.cfi_*`, so eh is not empty.
+	b.WriteString("    var ehlen: i32 = arm64_eh_frame_darwin_len(p);\n")
+	b.WriteString("    var tv: i64 = macho_text_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+	b.WriteString("    var ev: i64 = macho_eh_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+	b.WriteString("    var dv: i64 = macho_data_vaddr(pa.code.len(), ehlen, p.data.len(), p.bss_size);\n")
+	b.WriteString("    var eh: i32[] = arm64_eh_frame_darwin(p, tv, ev);\n")
 	b.WriteString("    p = arm64_gas_link(p, tv, dv);\n")
 	b.WriteString("    var pa2: Arm64Asm = p.asm;\n")
-	b.WriteString("    var bin: i32[] = macho_executable(pa2.code, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
+	b.WriteString("    var bin: i32[] = macho_executable(pa2.code, eh, p.data, \"fern\", macho_entry_off(pa2), p.bss_size, arm64_gas_rebase_offs(p));\n")
 	b.WriteString("    write(string_from_bytes_unchecked(bin));\n")
 	b.WriteString("    return 0;\n}\n")
 	return b.String()

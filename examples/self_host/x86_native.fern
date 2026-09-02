@@ -1325,7 +1325,7 @@ function x86_cfi_directive(own a: X86Asm, line: string): X86Asm {
 // .text is at text_vaddr and whose .eh_frame is at eh_vaddr; empty when
 // the program carried none.
 pub function x86_eh_frame(a: X86Asm, text_vaddr: i64, eh_vaddr: i64): i32[] {
-    return cfi_eh_frame(a.cfi, text_vaddr, eh_vaddr);
+    return cfi_eh_frame(a.cfi, cfi_profile_x86(), text_vaddr, eh_vaddr);
 }
 
 // x86_eh_frame_hdr_len is the size of the .eh_frame_hdr the program needs,
@@ -1336,7 +1336,7 @@ pub function x86_eh_frame_hdr_len(a: X86Asm): i32 {
 
 // x86_eh_frame_hdr renders the search table PT_GNU_EH_FRAME points at.
 pub function x86_eh_frame_hdr(a: X86Asm, text_vaddr: i64, eh_vaddr: i64, hdr_vaddr: i64): i32[] {
-    return cfi_eh_frame_hdr(a.cfi, text_vaddr, eh_vaddr, hdr_vaddr);
+    return cfi_eh_frame_hdr(a.cfi, cfi_profile_x86(), text_vaddr, eh_vaddr, hdr_vaddr);
 }
 
 // x86_align8 rounds `n` up to the next multiple of 8 — the .text/.rodata
@@ -1629,7 +1629,7 @@ function x86_rodata_quad_sym(own a: X86Asm, name: string): X86Asm {
 function x86_unwind_hdr_len(a: X86Asm): i32 { return cfi_eh_frame_hdr_len(a.cfi); }
 function x86_unwind_eh_len(a: X86Asm): i32 {
     if (cfi_empty(a.cfi)) { return 0; }
-    return cfi_eh_frame(a.cfi, 0 as i64, 0 as i64).len();
+    return cfi_eh_frame(a.cfi, cfi_profile_x86(), 0 as i64, 0 as i64).len();
 }
 
 // x86_data_base is the text-relative offset the data blob starts at: past
@@ -4299,6 +4299,14 @@ pub struct CfiProfile {
     code_align: i32,   // advances are encoded in units of it (1 on x86-64, 4 on arm64)
     data_align: i32,   // a saved-register offset is stored divided by it (-8)
     ra_column: i32,    // the return address's column (16 = rip, 30 = lr)
+    // ptr_enc is the FDE pointer encoding the CIE's augmentation data
+    // declares and ptr_size the width of initial_location and address_range
+    // under it: 0x1b (pcrel|sdata4) at 4 bytes for ELF, 0x10 (pcrel|absptr)
+    // at 8 for Mach-O. fde_align is the boundary each FDE's END is padded
+    // to, which is 4 for the first and 8 for the second.
+    ptr_enc: i32,
+    ptr_size: i32,
+    fde_align: i32,
     initial: i32[],    // the CIE's initial CFA program, as gas emits it
     reg_names: string[], // the register spellings a directive may name ...
     reg_nums: i32[],     // ... and the DWARF column each one is
@@ -4310,7 +4318,12 @@ pub struct CfiProfile {
 // effect at. Rule bodies are kept in one flat byte array, indexed by
 // rule_pos/rule_len, since the self-host has no arrays of arrays.
 pub struct CfiState {
-    profile: CfiProfile, // the target's CIE shape and register vocabulary
+    // The profile the directives were RECORDED under: it fixes the register
+    // vocabulary a directive may name and the data alignment its offsets are
+    // divided by. The profile a recording is RENDERED under belongs to the
+    // container instead, and is passed to cfi_eh_frame -- the same arm64
+    // recording renders as ELF or as Mach-O.
+    profile: CfiProfile,
     open: boolean,
     fde_start: i32[],
     fde_end: i32[],
@@ -4452,6 +4465,14 @@ function cfi_le32_i64(b: i32[], v: i64): i32[] {
     return cfi_le32(b, (v & (4294967295 as i64)) as i32);
 }
 
+// cfi_le64_i64 writes the eight-byte little-endian form the Mach-O pointer
+// encoding uses. A negative pcrel distance must keep its sign through the
+// upper word, so the shift is arithmetic and the mask comes after it.
+function cfi_le64_i64(b: i32[], v: i64): i32[] {
+    b = cfi_le32_i64(b, v);
+    return cfi_le32_i64(b, v >> (32 as i64));
+}
+
 // ---- recording ---------------------------------------------------------
 
 function cfi_add_rule(s: CfiState, off: i32, body: i32[]): CfiState {
@@ -4576,6 +4597,14 @@ function cfi_pad4(b: i32[]): i32[] {
     return b;
 }
 
+// cfi_pad_entry pads one entry's payload so the entry ENDS on `align` — the
+// four-byte length field at `at` counts toward that boundary, which is why it
+// is not the payload's own length that is rounded.
+function cfi_pad_entry(b: i32[], at: i32, align: i32): i32[] {
+    while ((at + 4 + b.len()) % align != 0) { b = b.append(cfi_op_nop()); }
+    return b;
+}
+
 // cfi_cie renders the single CIE every FDE points at, length field included.
 function cfi_cie(p: CfiProfile): i32[] {
     var b: i32[] = [];
@@ -4588,7 +4617,7 @@ function cfi_cie(p: CfiProfile): i32[] {
     b = cfi_sleb(b, p.data_align);
     b = cfi_uleb(b, p.ra_column);
     b = cfi_uleb(b, 1);         // augmentation data length
-    b = b.append(27);           // DW_EH_PE_pcrel | DW_EH_PE_sdata4
+    b = b.append(p.ptr_enc);
     var i: i32 = 0;
     while (i < p.initial.len()) { b = b.append(p.initial[i]); i = i + 1; }
     b = cfi_pad4(b);
@@ -4603,25 +4632,31 @@ function cfi_cat(a: i32[], b: i32[]): i32[] {
 
 // cfi_fde_payload renders one FDE's payload (everything after its length
 // field) for the FDE at section offset `at`, not yet padded.
-function cfi_fde_payload(s: CfiState, k: i32, at: i32, text_vaddr: i64, eh_vaddr: i64): i32[] {
+function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr: i64, eh_vaddr: i64): i32[] {
     var b: i32[] = [];
     b = cfi_le32(b, at + 4);   // CIE pointer: the distance BACK to the CIE
     var field_va: i64 = eh_vaddr + ((at + 8) as i64);
-    b = cfi_le32_i64(b, (text_vaddr + (s.fde_start[k] as i64)) - field_va);
-    b = cfi_le32(b, s.fde_end[k] - s.fde_start[k]);
+    var loc: i64 = (text_vaddr + (s.fde_start[k] as i64)) - field_va;
+    if (p.ptr_size == 8) {
+        b = cfi_le64_i64(b, loc);
+        b = cfi_le64_i64(b, (s.fde_end[k] - s.fde_start[k]) as i64);
+    } else {
+        b = cfi_le32_i64(b, loc);
+        b = cfi_le32(b, s.fde_end[k] - s.fde_start[k]);
+    }
     b = cfi_uleb(b, 0);        // augmentation data length
     var pc: i32 = s.fde_start[k];
     var r: i32 = 0;
     while (r < s.rule_fde.len()) {
         if (s.rule_fde[r] == k) {
-            b = cfi_advance(b, s.profile, s.rule_off[r] - pc);
+            b = cfi_advance(b, p, s.rule_off[r] - pc);
             pc = s.rule_off[r];
             var q: i32 = 0;
             while (q < s.rule_len[r]) { b = b.append(s.rule_bytes[s.rule_pos[r] + q]); q = q + 1; }
         }
         r = r + 1;
     }
-    return cfi_pad4(b);
+    return cfi_pad_entry(b, at, p.fde_align);
 }
 
 // cfi_eh_frame renders the recorded CFI as the .eh_frame of a final image
@@ -4629,16 +4664,16 @@ function cfi_fde_payload(s: CfiState, k: i32, at: i32, text_vaddr: i64, eh_vaddr
 // one FDE per span, a zero-length terminator. Empty when nothing was
 // recorded. Every entry's payload is padded to 4 and the last one further
 // so the section is a multiple of 8, which is gas's rule for both targets.
-pub function cfi_eh_frame(s: CfiState, text_vaddr: i64, eh_vaddr: i64): i32[] {
+pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr: i64): i32[] {
     if (cfi_empty(s) || s.open) { return []; }
-    var out: i32[] = cfi_cie(s.profile);
+    var out: i32[] = cfi_cie(p);
     var at: i32 = out.len();
     var n: i32 = s.fde_start.len();
     var payloads: i32[] = [];     // every payload, concatenated
     var lens: i32[] = [];
     var k: i32 = 0;
     while (k < n) {
-        var pl: i32[] = cfi_fde_payload(s, k, at, text_vaddr, eh_vaddr);
+        var pl: i32[] = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
         if (k == n - 1 && (at + 4 + pl.len()) % 8 != 0) {
             pl = cfi_cat(pl, [0, 0, 0, 0]);
         }
@@ -4673,17 +4708,17 @@ pub function cfi_eh_frame_hdr_len(s: CfiState): i32 {
 // eh_frame_ptr is pcrel from its own field; every table row is datarel from
 // the start of this section — the two bases a swapped implementation gets
 // wrong while still decoding.
-pub function cfi_eh_frame_hdr(s: CfiState, text_vaddr: i64, eh_vaddr: i64, hdr_vaddr: i64): i32[] {
+pub function cfi_eh_frame_hdr(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr: i64, hdr_vaddr: i64): i32[] {
     if (cfi_empty(s) || s.open) { return []; }
     // FDE offsets within .eh_frame: the CIE first, then each padded FDE.
-    var cie_len: i32 = cfi_cie(s.profile).len();
+    var cie_len: i32 = cfi_cie(p).len();
     var at: i32 = cie_len;
     var n: i32 = s.fde_start.len();
     var fns: i64[] = [];
     var fdes: i64[] = [];
     var k: i32 = 0;
     while (k < n) {
-        var pl: i32[] = cfi_fde_payload(s, k, at, text_vaddr, eh_vaddr);
+        var pl: i32[] = cfi_fde_payload(s, p, k, at, text_vaddr, eh_vaddr);
         var plen: i32 = pl.len();
         if (k == n - 1 && (at + 4 + plen) % 8 != 0) { plen = plen + 4; }
         fns = fns.append(text_vaddr + (s.fde_start[k] as i64));
@@ -4720,7 +4755,9 @@ pub function cfi_eh_frame_hdr(s: CfiState, text_vaddr: i64, eh_vaddr: i64, hdr_v
 // return address at CFA-8.
 pub function cfi_profile_x86(): CfiProfile {
     return CfiProfile {
-        code_align: 1, data_align: 0 - 8, ra_column: 16, initial: [12, 7, 8, 144, 1],
+        code_align: 1, data_align: 0 - 8, ra_column: 16,
+        ptr_enc: 27, ptr_size: 4, fde_align: 4,
+        initial: [12, 7, 8, 144, 1],
         // DWARF's x86-64 column order, which is not the encoding order.
         reg_names: ["rax", "rdx", "rcx", "rbx", "rsi", "rdi", "rbp", "rsp",
             "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "rip"],
