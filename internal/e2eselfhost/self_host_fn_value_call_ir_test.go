@@ -146,8 +146,9 @@ function main(): i32 {
 	// A fn-typed local was the FIRST shape to carry a full funcref tag with
 	// arguments, because a ParamDecl records parameter spellings. It failed on
 	// both legs before, because the declared return never reached the binding.
-	// A struct field carries its own spellings now (the fnfield_arg_* rows
-	// below); a tuple element and an array element still do not.
+	// A struct field carries its own spellings now, and a tuple slot keeps the
+	// declared spelling its elements come from; an ARRAY element still has
+	// nowhere to hold its parameters.
 	{"fnlocal_annotated_arg_f64", `function scale(x: f64): f64 { return x * 10.0; }
 function main(): i32 {
     var f: (f64) => f64 = scale;
