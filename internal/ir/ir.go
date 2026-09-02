@@ -19863,28 +19863,30 @@ func (b *builder) emitCellDropOnStack(elem ast.Type, eligible bool) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
-	stride := int32(ast.ElemSizeBytesFor(elem, b.ptrW))
-	if stride == 0 {
-		stride = 4
-	}
-	helper := "__fern_arr_dec"
-	if _, isStr := elem.(ast.StringType); isStr {
-		if ast.UseTwoWordStrings(b.ptrW) {
-			// Two-word string element (wasm + arm64-TwoWordOverride): walk +
-			// __fern_str_dec each (data, len), then free the box.
-			helper = "__fern_drop_arr_str"
-		} else if b.ptrW == 8 {
-			// Native single-word string element (x86-64, arm64): each element
-			// is a single pointer, reclaimed with __fern_str_dec — the same
-			// helper the exit sweep's string[] arm picks. __fern_drop_arr_ptr
-			// walks with __fern_rc_dec, which never frees, so the element
-			// buffer would be stranded while the box is recycled.
-			helper = "__fern_drop_arr_str"
-		}
-	}
+	helper, stride := cellDropHelper(elem, b.ptrW)
 	b.emit(Op{Kind: OpConstI32, I32: stride})
 	b.emit(Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpDrop})
+}
+
+// cellDropHelper names the array-drop runtime helper that reclaims a cell of
+// this element type, and the stride to call it with. Shared with the child
+// drop a Cell-typed struct field / enum payload takes (appendChildDrop), so
+// the two cannot pick different helpers for the same cell.
+func cellDropHelper(elem ast.Type, ptrW int) (string, int32) {
+	stride := int32(ast.ElemSizeBytesFor(elem, ptrW))
+	if stride == 0 {
+		stride = 4
+	}
+	if _, isStr := elem.(ast.StringType); isStr && (ast.UseTwoWordStrings(ptrW) || ptrW == 8) {
+		// A string element is reclaimed with __fern_str_dec per element —
+		// two-word (data, len) on wasm + arm64-TwoWordOverride, a single
+		// pointer on native x86-64. __fern_drop_arr_ptr walks with
+		// __fern_rc_dec, which never frees, so the element buffer would be
+		// stranded while the box is recycled.
+		return "__fern_drop_arr_str", stride
+	}
+	return "__fern_arr_dec", stride
 }
 
 // emitCellNew lowers `cell_new(v)` to a one-element heap box (the same
