@@ -108,6 +108,39 @@ leak gates and the fixtures were green. `CaptureRef` is now an alias like
 the other three; `closure_capture_passed_to_owned_param` pins it in the
 corpus.
 
+## The ownership solver counted retains and releases over the whole body
+
+`ssa.SolveOwnership` calls a parameter consumed when the body "releases
+it without a matching retain", and it read both as booleans over the whole
+function. A retain on one arm and a release on another was balanced. Under
+the borrow model that shape was rare on a parameter; under the owned model
+it is the ordinary one: `return a` on an owned parameter is a transfer inc
+beside the exit sweep's drop, and the arm that rebuilds instead just drops
+(`__rx_count`), or `var cur = it` retains the parameter and the exit sweep
+drops both (`iter.filter`). The solver called each Borrowed, so every
+caller that had MOVED its argument into the owned position — the slot
+nulled, the exit drop landing on a constant 0 — read as still holding it,
+and `TestX86_64CertifyAgreesWithTheLeakCensus` flagged eleven functions in
+fixtures the runtime proves clean.
+
+`demandsUnit` is now a per-path balance: retains against releases, moves,
+hand-offs to a consuming callee, stores and closure captures, met by
+minimum at joins, clamped so a net-release loop settles, worklist-driven
+(a full sweep per pass was quadratic on the parser's largest functions:
+the self-host differential went from 140 s to over 25 minutes before the
+worklist, 75 s after). A path that ends below zero is a demand. Two
+things are deliberately outside the count. The return: the typed lowering
+pairs it with an inc either way, and the untyped `usize` helpers under
+`core/map` return raw words, so counting it called `__map_get_or_impl`'s
+fallback consumed and then held on the hit path. And a phi's non-carrier
+edge: a phi the parameter's alias feeds on one edge and a reassigned
+accumulator on another is released once at exit, and on the rebuilt path
+that release spends the fresh value's unit, so the edge is credited with
+it (any origin but a borrow — the `__fern_arr_push_grow` family is
+unmodelled and every threaded array accumulator flows through it). The
+self-host differential reads 95.10% agreement against main's 95.22%, with
+the `i32[]` solver-only bucket unchanged.
+
 ## What it measures
 
 Unique-path re-inserts (2,000 keys / 5,000 `.with`), fresh bytes over the
