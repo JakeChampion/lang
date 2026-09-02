@@ -75,6 +75,21 @@ var cellWasmIRCases = []struct {
 	// without it `c.get()` bailed the module exactly as the tuple element did.
 	{"enum-payload", `enum H { Has(Cell[i32]), No } function main(): i32 { var h: H = Has(cell_new(4)); match (h) { Has(c) => { c.set(c.get() + 3); return c.get(); }, No => { return 0; } } }`, 7},
 	{"enum-payload-f64", `enum H { Has(Cell[f64]), No } function main(): i32 { var h: H = Has(cell_new(2.5)); match (h) { Has(c) => { return (c.get() * 2.0) as i32; }, No => { return 0; } } }`, 5},
+	// `f32` is the OTHER float spelling, and it rides the same 8-byte column: a
+	// scalar f32 lowers to a wasm f64 (is_float_array_type_name, #6175). The
+	// sites that learn a cell's element each spelled the ladder themselves and
+	// had drifted on that pair; they share mark_cell_elem now.
+	//
+	// enum-payload-f32 is the row that PINS it — it returns 1 without the fix,
+	// the low half of 2.5. The two beside it pass either way and are the
+	// controls that say why the drift stayed invisible: a tuple element reaches
+	// the width through `f32[]` and is_float_array_type_name, and
+	// cell_new_elem_tag never answers "f32", so only the payload route was
+	// both drifted and reachable. An f64 case cannot cover any of this, since
+	// f64 was the one spelling every copy of the ladder agreed on.
+	{"tuple-elem-f32", `function main(): i32 { var t: (i32, Cell[f32]) = (1, cell_new(2.5 as f32)); return (t.1.get() * 2.0) as i32; }`, 5},
+	{"enum-payload-f32", `enum H { Has(Cell[f32]), No } function main(): i32 { var h: H = Has(cell_new(2.5 as f32)); match (h) { Has(c) => { return (c.get() * 2.0) as i32; }, No => { return 0; } } }`, 5},
+	{"unannotated-cell-f32", `function main(): i32 { var c = cell_new(2.5 as f32); return (c.get() * 2.0) as i32; }`, 5},
 }
 
 // TestSelfHostCellWasmIR runs each case through the self-hosted wasm IR driver

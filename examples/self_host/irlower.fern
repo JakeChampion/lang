@@ -3328,21 +3328,39 @@ pub function (s: LowerState) mark_cell(i: i32, t: string): LowerState {
     return LowerState { ...s, locals: s.locals.with(i, li_set_cell(s.locals[i], t)) };
 }
 
-// mark_cell_slot_from_type marks a slot bound to a `Cell[T]` value whose type is
-// known only as a SPELLING — an enum variant payload, an Option/Result payload.
-// mark_cell records is_cell (+is_arr) and the element kind; the element-typed
-// array columns beside it are what make the 1-element index read at the right
-// width. Without this the bound name stayed plain and `c.get()` dispatched as a
-// method on the ELEMENT type ("call to unknown symbol i32.get"), bailing the
-// module — the payload sibling of the unannotated `var c = cell_new(0)` binding.
-pub function (s: LowerState) mark_cell_slot_from_type(slot: i32, ty: string): LowerState {
-    var elem: string = cell_elem_of_type_name(ty);
-    if (elem == "") { return s; }
+// mark_cell_elem marks a slot as a `Cell[elem]`: mark_cell records is_cell
+// (+is_arr) and the element kind, and the element-typed array column beside it
+// is what makes the 1-element index read at the right WIDTH. Without is_strarr
+// a `Cell[string]` element loads as an i32; without is_f64arr a wide element
+// reads its low half.
+//
+// Every site that learns a cell's element — an annotation, a `cell_new(x)`
+// initialiser, an enum / Option / Result payload — routes here rather than
+// repeating the ladder. Three copies had already drifted on the float
+// spellings, and the payload one was reachable: a `Cell[f32]` payload read its
+// low half. Spelling it once is what is_float_array_type_name (#6175) does for
+// the array-name form, for the same reason.
+pub function (s: LowerState) mark_cell_elem(slot: i32, elem: string): LowerState {
     var out: LowerState = s.mark_cell(slot, elem);
     if (elem == "string") { return out.mark_strarr(slot, true); }
     if (elem == "i64" || elem == "u64") { return out.mark_i64arr(slot, true); }
-    if (elem == "f64") { return out.mark_f64arr(slot, true); }
+    // A scalar `f32` lowers to a wasm f64, so both float spellings ride the
+    // 8-byte-stride column. is_f64arr is the WIDTH driver; is_f32arr is a
+    // dispatch-only overlay no cell path sets.
+    if (elem == "f64" || elem == "f32" || elem == "float") { return out.mark_f64arr(slot, true); }
     return out;
+}
+
+// mark_cell_slot_from_type marks a slot bound to a `Cell[T]` value whose type is
+// known only as a SPELLING — a tuple element, an enum variant payload, an
+// Option/Result payload. Without this the bound name stayed plain and `c.get()`
+// dispatched as a method on the ELEMENT type ("call to unknown symbol i32.get"),
+// bailing the module — the payload sibling of the unannotated
+// `var c = cell_new(0)` binding.
+pub function (s: LowerState) mark_cell_slot_from_type(slot: i32, ty: string): LowerState {
+    var elem: string = cell_elem_of_type_name(ty);
+    if (elem == "") { return s; }
+    return s.mark_cell_elem(slot, elem);
 }
 
 pub function (s: LowerState) map_type_of(i: i32): string {
@@ -19864,15 +19882,11 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
         sb = sb.mark_map_type(slot, mapiter_type_of_iter_call(v.init, sb));
     }
     else if (v.type_name.len() > 5 && slice_unchecked(v.type_name, 0, 5) == "Cell[") {
-        // Cell[T] is a 1-element array of T. mark_cell records is_cell (+is_arr);
-        // ALSO mark the element-KIND array flag so c[0] (the get desugar) reads
-        // the right type — without is_strarr a Cell[string] element loads as an
-        // i32, breaking `c.get()[0]` / `.len()`.
+        // Cell[T] is a 1-element array of T; mark_cell_elem records is_cell
+        // (+is_arr) and the element-KIND array column that gives c[0] (the get
+        // desugar) its width.
         var celt: string = slice_unchecked(v.type_name, 5, v.type_name.len() - 1) + "";
-        sb = sb.mark_cell(slot, celt);
-        if (celt == "string") { sb = sb.mark_strarr(slot, true); }
-        else if (celt == "i64" || celt == "u64") { sb = sb.mark_i64arr(slot, true); }
-        else if (celt == "f64" || celt == "f32" || celt == "float") { sb = sb.mark_f64arr(slot, true); }
+        sb = sb.mark_cell_elem(slot, celt);
     }
     else {
         // UNANNOTATED map binding — `var m = Map { k: v, … }` (no
@@ -19933,10 +19947,7 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     if (!sb.is_cell_slot(slot)) {
         var ucelt: string = cell_new_elem_tag(v.init, sb);
         if (ucelt.len() > 0) {
-            sb = sb.mark_cell(slot, ucelt);
-            if (ucelt == "string") { sb = sb.mark_strarr(slot, true); }
-            else if (ucelt == "i64" || ucelt == "u64") { sb = sb.mark_i64arr(slot, true); }
-            else if (ucelt == "f64") { sb = sb.mark_f64arr(slot, true); }
+            sb = sb.mark_cell_elem(slot, ucelt);
         }
     }
     // UNANNOTATED binding from a map-RETURNING call (`var m = build()`,
