@@ -133,11 +133,56 @@ evidence of soundness.
 `TestSelfHostLeakMatrixX86_64` runs both legs per cell and says so itself: *"a
 latent defect the census could not see; fix it, never pin it."*
 
+## Leak 2 localised: the read is irrelevant and `H` gets no drop at all
+
+Ten probes through the `asm_ir_run` driver, x86-64, `allocs`/`frees`:
+
+| callee                                            | struct `H`        | result  |
+|---------------------------------------------------|-------------------|---------|
+| `wrap(e: E, i) -> H { e: e, n: i }`, `match (h.e)` | `{ e: E, n }`     | 200/0   |
+| the same with the field **never read**             | `{ e: E, n }`     | 200/0   |
+| the same, no enum local (`wrap(A(i), i)`)          | `{ e: E, n }`     | 200/0   |
+| the same with `own e: E`                           | `{ e: E, n }`     | 200/0   |
+| the same, `H` also carrying a string field         | `{ e: E, s, n }`  | 200/0   |
+| enum param present but **not stored**              | `{ e: E, n }`     | 300/300 |
+| the enum built INSIDE the callee (`mk(i)`)         | `{ e: E, n }`     | 200/200 |
+| a **string** param stored the same way             | `{ s: string, n }`| 200/200 |
+| enum param, scalar result                          | —                 | 100/100 |
+| no callee at all, struct built inline              | `{ e: E, n }`     | 200/200 |
+
+Two things follow, and both correct the account this entry first carried.
+
+**The match read is not part of leak 2.** The never-read row leaks identically,
+so the scrutinee has nothing to do with it — that was leak 1, and leak 1 is
+fixed. Nor is it the argument: removing the enum local, marking the parameter
+`own`, and giving `H` a second field that independently routes field reclaim all
+leak the same 200/0. The discriminator is exactly *an enum PARAMETER stored into
+the returned struct literal*, which is the `ECNT:` tier's shape — and the
+`SCNT:` string analogue of that identical shape is clean.
+
+**The refusal is whole-program, not at the call site.** In every leaking variant
+`__struct_drop_H` and `__field_reclaim_H` are not merely uncalled — they are
+never emitted:
+
+| variant                       | `__struct_drop_H` | `__field_reclaim_H` |
+|-------------------------------|-------------------|---------------------|
+| enum param stored             | absent            | absent              |
+| enum param not stored         | present           | present             |
+| string param stored           | present           | present             |
+
+So whatever refuses this shape does so when deciding which struct types get a
+drop, upstream of anything the caller's free-eligibility verdict could reach.
+`freshbox_ret_fns_of` closed it from the far end, which is consistent with its
+being both effective and unsound.
+
 ## What is still not explained
 
-Why the any-tainted-arg rule is the binding constraint for the returned STRUCT
-rather than for the enum inside it. Leak 2 is closed by observation, not by an
-account of the taint's path.
+Which gate drops `H` from the drop-emission set when an enum parameter is stored
+into it. The `ECNT:` tier looked like the answer and is not: its own admission
+(`struct_routes_field_reclaim_at`) is satisfied here, via the direct-enum-field
+arm of `struct_has_reclaim_array_field`, and the string-field variant that
+satisfies it by a different arm is clean. Leak 2 is now localised by
+measurement, but not yet attributed.
 
 The four arm64 rows reading `leak clean` are native-arm64 #7446 gaps where the
 self-host is AHEAD, and are untouched.
