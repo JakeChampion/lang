@@ -54,6 +54,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/symname"
@@ -289,6 +290,10 @@ type Options struct {
 	// DWARF `.loc` directives, so the assembler can build a .debug_line
 	// source-line table (#5537 slice 2). Set under `fern -g`.
 	DebugLines bool
+	// DebugSource is the program's main source path — the `.file` a
+	// position with no recorded file is attributed to, and file 1 of the
+	// line table. Required with DebugLines.
+	DebugSource string
 
 	// Entry is the target's entry shape (#6510). The zero value means
 	// platforms.EntryProcess: emit `_start` plus the argc/argv/envp
@@ -496,36 +501,10 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.funcs[fn.Name] = fn
 	}
 	for _, fn := range ip.Funcs {
-		for _, op := range fn.Ops {
-			if op.Kind == ir.OpCallDirect ||
-				op.Kind == ir.OpRcInc || op.Kind == ir.OpRcDec || op.Kind == ir.OpRcIsUnique {
-				g.recordUse(op.Str)
-			}
-			if op.Kind == ir.OpAlloc {
-				g.usesAlloc = true
-			}
-			if op.Kind == ir.OpStrEq {
-				g.usesStrcmp = true
-			}
-			if op.Kind == ir.OpStrCmp {
-				g.usesStrord = true
-			}
-			if op.Kind == ir.OpStrConcat {
-				g.usesStrcat = true
-				g.usesAlloc = true
-				g.usesMemcpy = true
-			}
-			if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
-				// Closure env block + (optional) pair both
-				// come from __fern_alloc.
-				g.usesAlloc = true
-			}
-			if op.Kind == ir.OpBoxDyn {
-				// The boxed `dyn Trait` cell is a normal heap object
-				// allocated via __fern_alloc (docs/DYN-TRAITS.md §4.2.2).
-				g.usesAlloc = true
-			}
-		}
+		g.scanUses(fn.Ops)
+	}
+	if err := g.resolveFernHelpers(); err != nil {
+		return "", nil, err
 	}
 	g.line(".intel_syntax noprefix")
 	g.line(".text")
@@ -535,6 +514,11 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// AST↔IR pairing is BY NAME, not by index: the dead-function cull above
 	// removes entries from ip.Funcs, which an index walk would mispair silently
 	// (#4377).
+	if opts.DebugLines {
+		if err := g.emitFileTable(ip, opts.DebugSource); err != nil {
+			return "", nil, err
+		}
+	}
 	irIdx := make(map[string]int, len(ip.Funcs))
 	for i, f := range ip.Funcs {
 		irIdx[f.Name] = i
@@ -573,6 +557,17 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// names itself instead of exiting silently. Emitted unconditionally —
 	// the abort sites jmp here, and label resolution is order-independent.
 	g.emitAbortRuntime()
+	// The helpers written in Fern (internal/fernrt) go through emitFunc like
+	// any other function.
+	for _, name := range g.fernHelpers {
+		decl, irFn, err := fernrt.Func(name, 8)
+		if err != nil {
+			return "", nil, err
+		}
+		if err := g.emitFunc(decl, irFn); err != nil {
+			return "", nil, err
+		}
+	}
 	// Runtime helpers — gated on use-flags so unused programs
 	// pay nothing extra in binary size.
 	if g.usesAlloc {
@@ -823,9 +818,6 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	if g.usesStrSlice {
 		g.emitStrSliceRuntime()
 	}
-	if g.usesRawIntPokes {
-		g.emitRawIntPokesRuntime()
-	}
 	if g.usesMemset {
 		g.emitMemsetRuntime()
 	}
@@ -837,9 +829,6 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	}
 	if g.usesReadFileBytes {
 		g.emitReadFileBytesRuntime()
-	}
-	if g.usesUtf8Valid {
-		g.emitUtf8ValidRuntime()
 	}
 	if g.usesWriteFile {
 		g.emitWriteFileRuntime()
@@ -900,7 +889,16 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 // program state.
 type generator struct {
 	info *checker.Info
-	out  strings.Builder
+	// dw is the DWARF `.file` table under DebugLines: the index each source
+	// path was assigned, in the order they were first seen; and whether the
+	// next `.loc` in the current function is the first past its prologue.
+	dw struct {
+		files           map[string]int
+		order           []string
+		src             string
+		prologuePending bool
+	}
+	out strings.Builder
 	// pie emits the static-PIE self-relocation prologue at `_start`
 	// (see Options.PIE).
 	pie bool
@@ -1085,11 +1083,6 @@ type generator struct {
 	// Mirrors the .LStr_Empty pattern for the array seam.
 	usesArrEmpty bool
 	usesStdin    bool
-	// usesRawIntPokes pulls in `__store_i32` / `__load_i32` /
-	// `__store_ptr` / `__load_ptr` / `__ptr_width` — primitives
-	// the lang Map runtime uses for its mixed bucket-index +
-	// entries buffer. Single mov + ret each.
-	usesRawIntPokes bool
 	// usesMemset gates emission of the byte-grain
 	// `__memset(dst, byte, n)` helper the Map clear path uses.
 	usesMemset bool
@@ -1251,9 +1244,11 @@ type generator struct {
 	usesReadFile      bool
 	usesReadFileBytes bool
 	usesWriteFile     bool
-	// usesUtf8Valid pulls in `__fern_utf8_valid(data, len) → 1/0`,
-	// read_file's strict D9 well-formedness scan (#5714).
-	usesUtf8Valid bool
+	// fernHelpers are the runtime helpers written in Fern (internal/fernrt)
+	// this program needs, in discovery order; fernSeen dedupes them. They
+	// are emitted through emitFunc ahead of the hand-written runtime.
+	fernHelpers []string
+	fernSeen    map[string]bool
 	// usesWriteFileExec is write_file_exec — write_file with the
 	// executable bit. Its own flag so a program that never asks for
 	// one does not carry the second helper body (#6133).
@@ -1295,7 +1290,74 @@ type generator struct {
 // IR mentions. PR 3 covered print/strings/alloc; PR 5 adds
 // the TCP family + env() + the arena helpers used by the
 // auto-`main()`-from-`handle()` synthesis.
+// scanUses sets the use-flags one function's ops imply.
+func (g *generator) scanUses(ops []ir.Op) {
+	for _, op := range ops {
+		if op.Kind == ir.OpCallDirect ||
+			op.Kind == ir.OpRcInc || op.Kind == ir.OpRcDec || op.Kind == ir.OpRcIsUnique {
+			g.recordUse(op.Str)
+		}
+		if op.Kind == ir.OpAlloc {
+			g.usesAlloc = true
+		}
+		if op.Kind == ir.OpStrEq {
+			g.usesStrcmp = true
+		}
+		if op.Kind == ir.OpStrCmp {
+			g.usesStrord = true
+		}
+		if op.Kind == ir.OpStrConcat {
+			g.usesStrcat = true
+			g.usesAlloc = true
+			g.usesMemcpy = true
+		}
+		if op.Kind == ir.OpMakeClosure || op.Kind == ir.OpMakeEnv {
+			// Closure env block + (optional) pair both
+			// come from __fern_alloc.
+			g.usesAlloc = true
+		}
+		if op.Kind == ir.OpBoxDyn {
+			// The boxed `dyn Trait` cell is a normal heap object
+			// allocated via __fern_alloc (docs/DYN-TRAITS.md §4.2.2).
+			g.usesAlloc = true
+		}
+	}
+}
+
+// needFern records that the program needs a runtime helper written in Fern
+// (internal/fernrt). A hand-written runtime body that calls one declares it
+// here, next to its other use-flags, the way `read_file` does.
+func (g *generator) needFern(name string) {
+	if g.fernSeen[name] {
+		return
+	}
+	if g.fernSeen == nil {
+		g.fernSeen = map[string]bool{}
+	}
+	g.fernSeen[name] = true
+	g.fernHelpers = append(g.fernHelpers, name)
+}
+
+// resolveFernHelpers scans each needed Fern helper's IR for the use-flags it
+// sets, as the pre-scan does for the program's own functions. A helper may
+// need another, so the list can grow while it is walked.
+func (g *generator) resolveFernHelpers() error {
+	for i := 0; i < len(g.fernHelpers); i++ {
+		decl, irFn, err := fernrt.Func(g.fernHelpers[i], 8)
+		if err != nil {
+			return err
+		}
+		g.funcs[decl.Name] = decl
+		g.scanUses(irFn.Ops)
+	}
+	return nil
+}
+
 func (g *generator) recordUse(target string) {
+	if fernrt.Has(target) {
+		g.needFern(target)
+		return
+	}
 	switch target {
 	case "__c_call0":
 		g.usesCCall[0] = true
@@ -1573,10 +1635,6 @@ func (g *generator) recordUse(target string) {
 		"open_reader", "open_writer", "open_appender",
 		"stdin", "stdout", "stderr":
 		g.usesReaderWriter = true
-	case "__store_i32", "__load_i32", "__store_ptr", "__load_ptr", "__ptr_width", "__load_i64", "__store_i64":
-		// Map runtime's raw int/pointer pokes — each lowers
-		// to a single mov + ret.
-		g.usesRawIntPokes = true
 	case "__memset":
 		// Byte-grain fill used by the Map clear path.
 		g.usesMemset = true
@@ -1584,7 +1642,7 @@ func (g *generator) recordUse(target string) {
 		g.usesReadFile = true
 		g.usesAlloc = true
 		g.usesIoError = true
-		g.usesUtf8Valid = true
+		g.needFern("__fern_utf8_valid")
 	case "read_file_bytes":
 		g.usesReadFileBytes = true
 		g.usesAlloc = true
@@ -1830,6 +1888,7 @@ func (g *generator) callSym(op ir.Op, target string) string {
 // scope-tracking state lives in `scope` (currently unused —
 // PR 1 has no block / loop / if ops to dispatch).
 func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
+	g.dw.prologuePending = true
 	// #4402 opt 2b: inline rc ops only when the function is small enough that
 	// the ~10-instruction-per-op expansion doesn't balloon the emitted `.s`
 	// (and the assembler's peak RSS). Only the self-host compiler's largest
@@ -1981,12 +2040,12 @@ type irScope struct {
 func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 	switch op.Kind {
 	case ir.OpLine:
-		// Source-line marker → DWARF `.loc` directive (file 1). Emits no
-		// machine code; the assembler records the current text offset as a
+		// Source-position marker → DWARF `.loc` directive. Emits no machine
+		// code; the assembler records the current text offset as a
 		// .debug_line row. `.loc` never matches a peephole instruction
 		// pattern, so it only ever prevents a fusion at a line boundary —
 		// never corrupts one.
-		g.line(fmt.Sprintf("\t.loc 1 %d %d", op.Pos.Line, op.Pos.Col))
+		g.line(g.locDirective(op))
 	case ir.OpCoverPoint:
 		// Line-coverage counter bump (#5548, -cover). One read-modify-write
 		// against a fixed .bss slot: no register is touched, and the flags
@@ -3006,6 +3065,9 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 			g.push()
 			return nil
 		}
+		if g.emitRawPokeIntrinsic(target) {
+			return nil
+		}
 		if target == "__pow_f64" {
 			g.emitF64Pow()
 			g.push()
@@ -3260,6 +3322,41 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 // exact fractional part frac = x − r (exact by construction, so no
 // x+0.5 representability hazard), and bump r by copysign(1, x) when
 // |frac| ≥ 0.5. That reproduces ties-away for every input.
+// emitRawPokeIntrinsic lowers the raw-memory pokes the stdlib and
+// internal/fernrt are written on — a load or store at an address, and the
+// pointer width — to the one instruction each is, with the operands taken
+// from the operand stack and a result pushed back. Reports false for any
+// other callee.
+func (g *generator) emitRawPokeIntrinsic(name string) bool {
+	switch name {
+	case "__load_u8", "__load_i32", "__load_i64", "__load_ptr":
+		g.pop() // addr → rax
+		switch name {
+		case "__load_u8":
+			g.emit("movzx eax, byte ptr [rax]")
+		case "__load_i32":
+			g.emit("mov eax, [rax]")
+		default:
+			g.emit("mov rax, [rax]")
+		}
+		g.push()
+	case "__store_i32", "__store_i64", "__store_ptr":
+		g.popReg("rcx") // value (on top)
+		g.pop()         // addr
+		if name == "__store_i32" {
+			g.emit("mov [rax], ecx")
+		} else {
+			g.emit("mov [rax], rcx")
+		}
+	case "__ptr_width":
+		g.emit("mov eax, 8")
+		g.push()
+	default:
+		return false
+	}
+	return true
+}
+
 func (g *generator) emitF64UnaryIntrinsic(name string) bool {
 	switch name {
 	case "__abs_f64", "__sqrt_f64", "__floor_f64", "__ceil_f64", "__trunc_f64", "__round_f64",
@@ -3935,10 +4032,8 @@ func (g *generator) emitFloatToIntSat(isF64 bool, width int, unsigned bool) {
 	}
 	g.emit(fmt.Sprintf("cvtt%s2si rax, xmm0", suf))
 	// Add 2^63 back. The converted (x − 2^63) is in [0, 2^63) so
-	// bit 63 is clear; xor-ing it sets the bit (= +2^63) without
-	// needing `btc`, which the in-process assembler doesn't carry.
-	g.emit("mov rcx, 0x8000000000000000")
-	g.emit("xor rax, rcx")
+	// bit 63 is clear, and setting it is the addition.
+	g.emit("btc rax, 63")
 	g.label(lbl("sat"))
 	loadZeroXmm1()
 	g.emit(fmt.Sprintf("ucomi%s xmm2, xmm1", suf))
@@ -5688,9 +5783,8 @@ func (g *generator) emitAbortRuntime() {
 	g.line(".size __fern_report, .-__fern_report")
 
 	// __fern_print_hex(rsi = value) writes "  0x<16 hex>\n" to stderr. Uses
-	// only rax/rcx/rdx/rdi/rsi so the caller's rbx/r14/r15 survive. No rol
-	// (the native assembler lacks it) — nibbles come off the low end via
-	// shr, written right-to-left.
+	// only rax/rcx/rdx/rdi/rsi so the caller's rbx/r14/r15 survive. Nibbles
+	// come off the low end via shr, written right-to-left.
 	g.line("")
 	g.line(".globl __fern_print_hex")
 	g.line(".type __fern_print_hex, @function")
@@ -6311,11 +6405,9 @@ func (g *generator) emitArrDecRuntime() {
 	g.emit("jne .Larrdec_dec")
 	// rc == 1 → free the buffer.
 	g.quarantine("rdi")
-	g.emit("mov r8, rsi") // stride
-	g.emit("cmp r8, 16")
-	g.emit("jae .Larrdec_hdr")
-	g.emit("mov r8, 16")
-	g.label(".Larrdec_hdr")
+	g.emit("mov r8, 16") // headerBytes = max(16, stride)
+	g.emit("cmp rsi, 16")
+	g.emit("cmova r8, rsi")
 	g.emit("mov ecx, dword ptr [rdi - 12]") // cap (zero-extended)
 	g.emit("mov rax, rcx")
 	g.emit("imul rax, rsi") // cap * stride
@@ -7239,19 +7331,16 @@ func (g *generator) emitArrPushGrowRuntime() {
 	g.emit("mov r13d, edx") // r13d = stride
 	g.emit("mov r14d, esi")
 	g.emit("add r14d, 1") // r14d = newLen = oldLen + 1
-	// newCap = max(2 * newLen, 4)
+	// newCap = max(2 * newLen, 4). ecx is scratch here and below.
 	g.emit("mov r15d, r14d")
 	g.emit("shl r15d, 1")
+	g.emit("mov ecx, 4")
 	g.emit("cmp r15d, 4")
-	g.emit("jge .Lpush_cap_ok")
-	g.emit("mov r15d, 4")
-	g.label(".Lpush_cap_ok")
-	// headerBytes = max(16, stride). Use ecx as scratch.
+	g.emit("cmovl r15d, ecx")
+	// headerBytes = max(16, stride).
 	g.emit("mov ecx, 16")
 	g.emit("cmp r13d, 16")
-	g.emit("jle .Lpush_hdr_set")
-	g.emit("mov ecx, r13d")
-	g.label(".Lpush_hdr_set")
+	g.emit("cmovg ecx, r13d")
 	g.emit("push rcx")   // stash headerBytes (rsp now off by 8 again)
 	g.emit("sub rsp, 8") // re-pad to 16 alignment (24 + 8 = 32, /16 = aligned)
 	// allocSize = headerBytes + newCap * stride. eax scratch.
@@ -7365,19 +7454,16 @@ func (g *generator) emitArrPushGrowPtrRuntime(moveForm bool) {
 	g.emit("mov r13d, edx") // r13d = stride
 	g.emit("mov r14d, esi")
 	g.emit("add r14d, 1") // r14d = newLen = oldLen + 1
-	// newCap = max(2 * newLen, 4)
+	// newCap = max(2 * newLen, 4). ecx is scratch here and below.
 	g.emit("mov r15d, r14d")
 	g.emit("shl r15d, 1")
+	g.emit("mov ecx, 4")
 	g.emit("cmp r15d, 4")
-	g.emit("jge " + lbl + "_cap_ok")
-	g.emit("mov r15d, 4")
-	g.label(lbl + "_cap_ok")
+	g.emit("cmovl r15d, ecx")
 	// headerBytes = max(16, stride).
 	g.emit("mov ecx, 16")
 	g.emit("cmp r13d, 16")
-	g.emit("jle " + lbl + "_hdr_set")
-	g.emit("mov ecx, r13d")
-	g.label(lbl + "_hdr_set")
+	g.emit("cmovg ecx, r13d")
 	g.emit("push rcx")   // stash headerBytes
 	g.emit("sub rsp, 8") // re-pad to 16 alignment
 	// allocSize = headerBytes + newCap * stride.
@@ -7485,9 +7571,7 @@ func (g *generator) emitArrCowInPlaceRuntime() {
 	// headerBytes = max(16, stride) in r15d.
 	g.emit("mov r15d, 16")
 	g.emit("cmp r12d, 16")
-	g.emit("jle .Lcow_hdr_set")
-	g.emit("mov r15d, r12d")
-	g.label(".Lcow_hdr_set")
+	g.emit("cmovg r15d, r12d")
 	// allocSize = headerBytes + cap * stride
 	g.emit("mov eax, r14d")
 	g.emit("imul eax, r12d")
@@ -7576,9 +7660,7 @@ func (g *generator) emitArrCowInPlacePtrRuntime() {
 	// headerBytes = max(16, stride) in r15d.
 	g.emit("mov r15d, 16")
 	g.emit("cmp r12d, 16")
-	g.emit("jle .Lcowp_hdr_set")
-	g.emit("mov r15d, r12d")
-	g.label(".Lcowp_hdr_set")
+	g.emit("cmovg r15d, r12d")
 	// allocSize = headerBytes + cap * stride
 	g.emit("mov eax, r14d")
 	g.emit("imul eax, r12d")
@@ -7700,11 +7782,9 @@ func (g *generator) emitDropArrPtrRuntime() {
 		g.emit("cmp ecx, 1")
 		g.emit("jne .Ldrop_plaindec")
 		g.quarantine("rbx")
-		g.emit("mov r8, r14") // stride
-		g.emit("cmp r8, 16")
-		g.emit("jae .Ldrop_hdr")
-		g.emit("mov r8, 16")
-		g.label(".Ldrop_hdr")
+		g.emit("mov r8, 16") // headerBytes = max(16, stride)
+		g.emit("cmp r14, 16")
+		g.emit("cmova r8, r14")
 		g.emit("mov ecx, dword ptr [rbx - 12]") // cap (zero-extended)
 		g.emit("mov rax, rcx")
 		g.emit("imul rax, r14") // cap * stride
@@ -7784,11 +7864,9 @@ func (g *generator) emitDropArrStrRuntime() {
 		g.emit("cmp ecx, 1")
 		g.emit("jne .Ldrops_plaindec")
 		g.quarantine("rbx")
-		g.emit("mov r8, r14")
-		g.emit("cmp r8, 16")
-		g.emit("jae .Ldrops_hdr")
-		g.emit("mov r8, 16")
-		g.label(".Ldrops_hdr")
+		g.emit("mov r8, 16") // headerBytes = max(16, stride)
+		g.emit("cmp r14, 16")
+		g.emit("cmova r8, r14")
 		g.emit("mov ecx, dword ptr [rbx - 12]") // cap
 		g.emit("mov rax, rcx")
 		g.emit("imul rax, r14")
@@ -7837,8 +7915,7 @@ func (g *generator) emitRcIsUniqueRuntime() {
 	g.emit("test ecx, ecx")
 	g.emit("js .Lisuniq_ret") // bit 31 set ⇒ static sentinel
 	g.emit("cmp ecx, 1")
-	g.emit("jne .Lisuniq_ret")
-	g.emit("mov eax, 1")
+	g.emit("sete al")
 	g.label(".Lisuniq_ret")
 	g.emit("ret")
 	g.line(".size __fern_rc_is_unique, .-__fern_rc_is_unique")
@@ -8959,9 +9036,7 @@ func (g *generator) emitRmemchrRuntime() {
 	g.emit("dec ecx") // ecx = len - 1
 	g.emit("js .Lrmemchr_miss")
 	g.emit("cmp edx, ecx")
-	g.emit("jle .Lrmemchr_from_ok")
-	g.emit("mov edx, ecx")
-	g.label(".Lrmemchr_from_ok")
+	g.emit("cmovg edx, ecx")
 	// Broadcast the needle byte across xmm1 — the SSE2 splat, as __memchr's.
 	g.emit("movd xmm1, esi")
 	g.emit("punpcklbw xmm1, xmm1")
@@ -9238,9 +9313,7 @@ func (g *generator) emitStrordRuntime() {
 	// r8d = min(la, lb)
 	g.emit("mov r8d, ecx")
 	g.emit("cmp edx, r8d")
-	g.emit("jae .Lsord_n")
-	g.emit("mov r8d, edx")
-	g.label(".Lsord_n")
+	g.emit("cmovb r8d, edx")
 	g.emit("xor r9d, r9d") // i = 0
 	g.label(".Lsord_loop")
 	g.emit("cmp r9d, r8d")
@@ -11041,82 +11114,6 @@ func (g *generator) emitStrSliceRuntime() {
 	g.line(".size __str_slice, .-__str_slice")
 }
 
-// emitRawIntPokesRuntime emits `__store_i32(addr, val)` /
-// `__load_i32(addr) -> i32` / `__store_ptr(addr, val)` /
-// `__load_ptr(addr) -> i64` / `__ptr_width() -> i32 (=8)`.
-// The lang Map runtime calls these for its mixed bucket-index
-// + entries buffer where the caller owns the layout (no
-// length prefix). Mirrors arm64's `emitRawIntPokesRuntime`;
-// single mov + ret each.
-func (g *generator) emitRawIntPokesRuntime() {
-	g.line("")
-	g.line(".globl __load_i32")
-	g.line(".type __load_i32, @function")
-	g.label("__load_i32")
-	g.emit("mov eax, [rdi]")
-	g.emit("ret")
-	g.line(".size __load_i32, .-__load_i32")
-
-	g.line("")
-	g.line(".globl __store_i32")
-	g.line(".type __store_i32, @function")
-	g.label("__store_i32")
-	g.emit("mov [rdi], esi")
-	g.emit("ret")
-	g.line(".size __store_i32, .-__store_i32")
-
-	g.line("")
-	g.line(".globl __load_ptr")
-	g.line(".type __load_ptr, @function")
-	g.label("__load_ptr")
-	g.emit("mov rax, [rdi]")
-	g.emit("ret")
-	g.line(".size __load_ptr, .-__load_ptr")
-
-	g.line("")
-	g.line(".globl __store_ptr")
-	g.line(".type __store_ptr, @function")
-	g.label("__store_ptr")
-	g.emit("mov [rdi], rsi")
-	g.emit("ret")
-	g.line(".size __store_ptr, .-__store_ptr")
-
-	// `__load_i64` / `__store_i64` — 8-byte load / store.
-	// Used by the Map runtime's wide-scalar-boxed key path
-	// (keyKind=2) to dereference an i64 / u64 / f64 key
-	// from a heap cell. On x86-64 a usize is already 8 bytes
-	// so the lang-level Map[i64, _] path stays on keyKind=0
-	// without these — the symbols still need linkable
-	// bodies because the stdlib references them by name
-	// regardless of target.
-	g.line("")
-	g.line(".globl __load_i64")
-	g.line(".type __load_i64, @function")
-	g.label("__load_i64")
-	g.emit("mov rax, [rdi]")
-	g.emit("ret")
-	g.line(".size __load_i64, .-__load_i64")
-
-	g.line("")
-	g.line(".globl __store_i64")
-	g.line(".type __store_i64, @function")
-	g.label("__store_i64")
-	g.emit("mov [rdi], rsi")
-	g.emit("ret")
-	g.line(".size __store_i64, .-__store_i64")
-
-	// `__ptr_width()` returns 8 on x86-64. The Map runtime
-	// uses this to size per-entry key/value slots; pairs with
-	// the wasm backend's `i32.const 4`.
-	g.line("")
-	g.line(".globl __ptr_width")
-	g.line(".type __ptr_width, @function")
-	g.label("__ptr_width")
-	g.emit("mov eax, 8")
-	g.emit("ret")
-	g.line(".size __ptr_width, .-__ptr_width")
-}
-
 // emitMemsetRuntime emits `__memset(dst, byte, n)` — byte-
 // grain fill matching the wasm bulk-memory shim and arm64's
 // helper. 8-byte word loop with the byte replicated across
@@ -11341,7 +11338,7 @@ func (g *generator) emitReadFileRuntime() {
 	// EILSEQ errno. Raw reads go through __fern_read_file_bytes.
 	g.emit("mov rdi, r13")
 	g.emit("mov rsi, r14")
-	g.emit("call __fern_utf8_valid")
+	g.emit("call " + AsmFnName("__fern_utf8_valid"))
 	g.emit("test eax, eax")
 	g.emit("jnz .Lrf_ok")
 	g.emit("mov r13d, 84") // EILSEQ
@@ -11387,127 +11384,6 @@ func (g *generator) emitReadFileRuntime() {
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_read_file, .-__fern_read_file")
-}
-
-// emitUtf8ValidRuntime emits `__fern_utf8_valid(data, len) → 1/0` —
-// the strict well-formedness scan behind read_file's D9 validation
-// (#5714). Accepts exactly what std/utf8.is_valid_utf8 accepts:
-// stray continuations, overlong 2/3/4-byte forms, surrogates
-// U+D800–DFFF, truncation at the end, and leads above 0xF4 all
-// reject. Byte-range formulation (no codepoint assembly), with an
-// 8-byte word skip over ASCII runs. Leaf — no calls, no frame.
-func (g *generator) emitUtf8ValidRuntime() {
-	g.line("")
-	g.line(".globl __fern_utf8_valid")
-	g.line(".type __fern_utf8_valid, @function")
-	g.label("__fern_utf8_valid")
-	// rdi = data cursor, rsi = len.
-	g.emit("lea r8, [rdi + rsi]") // r8 = end
-	g.emit("mov r9, 0x8080808080808080")
-	g.label(".Luv_loop")
-	g.emit("cmp rdi, r8")
-	g.emit("jae .Luv_ok")
-	// ASCII word skip: 8 bytes at a time while every top bit is clear.
-	g.emit("mov rax, r8")
-	g.emit("sub rax, rdi")
-	g.emit("cmp rax, 8")
-	g.emit("jb .Luv_byte")
-	g.emit("mov rax, [rdi]")
-	g.emit("test rax, r9")
-	g.emit("jnz .Luv_byte")
-	g.emit("add rdi, 8")
-	g.emit("jmp .Luv_loop")
-	g.label(".Luv_byte")
-	g.emit("movzx eax, byte ptr [rdi]")
-	g.emit("cmp eax, 0x80")
-	g.emit("jae .Luv_multi")
-	g.emit("inc rdi")
-	g.emit("jmp .Luv_loop")
-	g.label(".Luv_multi")
-	// 0x80–0xBF stray continuation; 0xC0/0xC1 overlong 2-byte.
-	g.emit("cmp eax, 0xC2")
-	g.emit("jb .Luv_bad")
-	g.emit("cmp eax, 0xE0")
-	g.emit("jae .Luv_3plus")
-	// 2-byte lead C2..DF: one continuation.
-	g.emit("lea rcx, [rdi + 2]")
-	g.emit("cmp rcx, r8")
-	g.emit("ja .Luv_bad")
-	g.emit("movzx edx, byte ptr [rdi + 1]")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("add rdi, 2")
-	g.emit("jmp .Luv_loop")
-	g.label(".Luv_3plus")
-	g.emit("cmp eax, 0xF0")
-	g.emit("jae .Luv_4")
-	// 3-byte lead E0..EF: two continuations; E0 overlong / ED surrogate
-	// carried by the first continuation's range.
-	g.emit("lea rcx, [rdi + 3]")
-	g.emit("cmp rcx, r8")
-	g.emit("ja .Luv_bad")
-	g.emit("movzx ecx, byte ptr [rdi + 1]") // c1
-	g.emit("movzx edx, byte ptr [rdi + 2]")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("mov edx, ecx")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("cmp eax, 0xE0")
-	g.emit("jne .Luv_3_not_e0")
-	g.emit("cmp ecx, 0xA0") // E0 A0.. only (overlong below)
-	g.emit("jb .Luv_bad")
-	g.label(".Luv_3_not_e0")
-	g.emit("cmp eax, 0xED")
-	g.emit("jne .Luv_3_done")
-	g.emit("cmp ecx, 0xA0") // ED ..9F only (surrogates above)
-	g.emit("jae .Luv_bad")
-	g.label(".Luv_3_done")
-	g.emit("add rdi, 3")
-	g.emit("jmp .Luv_loop")
-	g.label(".Luv_4")
-	// 4-byte lead F0..F4: three continuations; F0 overlong / F4
-	// >U+10FFFF carried by the first continuation's range.
-	g.emit("cmp eax, 0xF4")
-	g.emit("ja .Luv_bad")
-	g.emit("lea rcx, [rdi + 4]")
-	g.emit("cmp rcx, r8")
-	g.emit("ja .Luv_bad")
-	g.emit("movzx ecx, byte ptr [rdi + 1]") // c1
-	g.emit("movzx edx, byte ptr [rdi + 2]")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("movzx edx, byte ptr [rdi + 3]")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("mov edx, ecx")
-	g.emit("and edx, 0xC0")
-	g.emit("cmp edx, 0x80")
-	g.emit("jne .Luv_bad")
-	g.emit("cmp eax, 0xF0")
-	g.emit("jne .Luv_4_not_f0")
-	g.emit("cmp ecx, 0x90") // F0 90.. only
-	g.emit("jb .Luv_bad")
-	g.label(".Luv_4_not_f0")
-	g.emit("cmp eax, 0xF4")
-	g.emit("jne .Luv_4_done")
-	g.emit("cmp ecx, 0x90") // F4 ..8F only
-	g.emit("jae .Luv_bad")
-	g.label(".Luv_4_done")
-	g.emit("add rdi, 4")
-	g.emit("jmp .Luv_loop")
-	g.label(".Luv_ok")
-	g.emit("mov eax, 1")
-	g.emit("ret")
-	g.label(".Luv_bad")
-	g.emit("xor eax, eax")
-	g.emit("ret")
-	g.line(".size __fern_utf8_valid, .-__fern_utf8_valid")
 }
 
 // emitReadFileBytesRuntime emits `__fern_read_file_bytes(path) →
@@ -12545,14 +12421,10 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("and eax, 61440")      // S_IFMT
 	g.emit("xor r12d, r12d")
 	g.emit("cmp eax, 32768") // S_IFREG
-	g.emit("jne .L" + lp + "_nf")
-	g.emit("mov r12d, 1")
-	g.label(".L" + lp + "_nf")
+	g.emit("sete r12b")
 	g.emit("xor r14d, r14d")
 	g.emit("cmp eax, 16384") // S_IFDIR
-	g.emit("jne .L" + lp + "_nd")
-	g.emit("mov r14d, 1")
-	g.label(".L" + lp + "_nd")
+	g.emit("sete r14b")
 	g.emit("mov r15, [rsp + 48]") // st_size
 	// FileStat box: is_file @0, is_dir @4, size @8.
 	g.emit("mov edi, 16")
@@ -13036,4 +12908,56 @@ func (g *generator) emitCovReportRuntime() {
 	g.emit("add rsp, 40")
 	g.emit("ret")
 	g.line(".size __fern_cov_report, .-__fern_cov_report")
+}
+
+// emitFileTable writes the `.file N "path"` table the `.loc` rows index,
+// covering every file an OpLine in the program names. Inlining copies markers
+// across files, so the table is built from the ops rather than from the
+// functions that survived the cull; a marker with no recorded file belongs to
+// the main source.
+func (g *generator) emitFileTable(ip *ir.Program, src string) error {
+	if src == "" {
+		return fmt.Errorf("DebugLines needs DebugSource, the file a position without one belongs to")
+	}
+	g.dw.files = map[string]int{}
+	g.dw.src = src
+	g.dwFile(src)
+	for _, f := range ip.Funcs {
+		for _, op := range f.Ops {
+			if op.Kind == ir.OpLine {
+				g.dwFile(op.Str)
+			}
+		}
+	}
+	for i, path := range g.dw.order {
+		g.line(fmt.Sprintf("\t.file %d %s", i+1, escapeForGAS(path)))
+	}
+	return nil
+}
+
+// dwFile returns the `.file` index for path, assigning the next one on
+// first use. The empty path is the main source.
+func (g *generator) dwFile(path string) int {
+	if path == "" {
+		path = g.dw.src
+	}
+	if n, ok := g.dw.files[path]; ok {
+		return n
+	}
+	g.dw.order = append(g.dw.order, path)
+	g.dw.files[path] = len(g.dw.order)
+	return len(g.dw.order)
+}
+
+// locDirective renders an OpLine as `.loc file line column`, marking the
+// first row of each function `prologue_end`: it is the address of the first
+// statement, past the frame setup, which is where a breakpoint on the
+// function belongs.
+func (g *generator) locDirective(op ir.Op) string {
+	s := fmt.Sprintf("\t.loc %d %d %d", g.dwFile(op.Str), op.Pos.Line, op.Pos.Col)
+	if g.dw.prologuePending {
+		s += " prologue_end"
+		g.dw.prologuePending = false
+	}
+	return s
 }

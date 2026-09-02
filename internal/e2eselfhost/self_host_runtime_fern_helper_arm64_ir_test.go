@@ -542,7 +542,8 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	if !strings.Contains(asm, "__fn___fern_proc_fork:") {
 		t.Error("__fn___fern_proc_fork not defined for Darwin")
 	}
-	if !strings.Contains(asm, "    cbz x1, .Lpf_done\n") {
+	// `Lpf_done`, not `.Lpf_done`: Mach-O's assembler-local prefix is a bare L.
+	if !strings.Contains(asm, "    cbz x1, Lpf_done\n") {
 		t.Error("Darwin proc_fork lost the x1 child/parent discrimination — the reason it is not Fern")
 	}
 	if !strings.Contains(asm, "    mov x16, #2\n    svc #0x80\n") {

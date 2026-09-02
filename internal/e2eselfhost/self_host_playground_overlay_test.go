@@ -101,6 +101,70 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 	t.Run("reports-an-unresolvable-import", func(t *testing.T) { playgroundReportsMissing(t, bin) })
 	t.Run("check-accepts-a-valid-program", func(t *testing.T) { playgroundCheckAccepts(t, bin) })
 	t.Run("check-names-a-type-error", func(t *testing.T) { playgroundCheckRejects(t, bin) })
+	t.Run("interp-runs-and-prints", func(t *testing.T) { playgroundInterpRuns(t, bin) })
+	t.Run("interp-reaches-the-stdlib", func(t *testing.T) { playgroundInterpStdlib(t, bin) })
+	t.Run("interp-maps-the-exit-code", func(t *testing.T) { playgroundInterpExit(t, bin) })
+}
+
+// `-interp` evaluates instead of emitting: the playground's output pane wants a
+// program's OUTPUT, and a wasm module does not hand the page one.
+func playgroundInterpRuns(t *testing.T, bin string) {
+	out, stderr, code := runPlayground(t, bin, t.TempDir(),
+		"function main(): i32 {\n  print(\"hi\");\n  return 7;\n}\n", "-interp")
+	if code != 7 {
+		t.Fatalf("-interp exited %d, want the program's own 7\n%s", code, stderr)
+	}
+	if out != "hi\n" {
+		t.Errorf("stdout = %q, want %q — the program's output, not a module", out, "hi\n")
+	}
+}
+
+// The reason interpret belongs in THIS driver and not interp_run.fern.
+//
+// Turning a number into a string needs `std/i32`, so the moment a program
+// prints anything but a literal it depends on the module loader. interp_run has
+// none: it warns "no module loader; UNRESOLVED imports" and exits 254 on this
+// exact program. Here the same sealed overlay that serves the compile path
+// serves the evaluator, so it resolves — with the cwd empty, as everywhere else
+// in this file, so the modules cannot have come from disk.
+func playgroundInterpStdlib(t *testing.T, bin string) {
+	const src = `import "std/i32";
+function main(): i32 {
+  var n: i32 = 42;
+  print("n=" + n.to_string());
+  print(f"fstring {n}");
+  return 0;
+}
+`
+	out, stderr, code := runPlayground(t, bin, t.TempDir(), src, "-interp")
+	if code != 0 {
+		t.Fatalf("-interp exited %d on a std/i32 program, want 0\n%s", code, stderr)
+	}
+	if want := "n=42\nfstring 42\n"; out != want {
+		t.Errorf("stdout = %q, want %q", out, want)
+	}
+}
+
+// The exit code is the program's own, mapped the way interp_run maps it: an i32
+// result is the code, a boolean is 1/0. 254 is the "not a value main can
+// return" sentinel, so a real answer can never be mistaken for a failure.
+func playgroundInterpExit(t *testing.T, bin string) {
+	for _, tc := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"i32-result", "function main(): i32 { return 12; }\n", 12},
+		{"boolean-true", "function main(): boolean { return true; }\n", 1},
+		{"boolean-false", "function main(): boolean { return false; }\n", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, code := runPlayground(t, bin, t.TempDir(), tc.src, "-interp")
+			if code != tc.want {
+				t.Errorf("-interp exited %d, want %d\n%s", code, tc.want, stderr)
+			}
+		})
+	}
 }
 
 // `-check` reports diagnostics and emits nothing. A playground wants the errors

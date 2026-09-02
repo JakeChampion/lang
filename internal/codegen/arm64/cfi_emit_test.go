@@ -152,28 +152,18 @@ func TestEmittedCFIDecodesAsUnwindData(t *testing.T) {
 	}
 }
 
-// TestDarwinEmitsNoCFI pins the Darwin exclusion and, more usefully, checks
-// the emitted Mach-O asm is one the platform assembler accepts.
-//
-// Two independent reasons the directives stay off there. The Mach-O writer
-// has no __eh_frame, so they would describe an image that cannot carry them.
-// And this emitter names local labels with ELF's `.L` prefix — on Mach-O the
-// temporary-symbol prefix is `L`, so each `.L…` is a REAL symbol, which
-// atomizes the section and makes the distance across it non-constant:
-// llvm-mc rejects the epilogue rule with "invalid CFI advance_loc
-// expression". That label bug is pre-existing and independent (#8065); CFI is
-// simply the first thing that needed distances to be computable.
-func TestDarwinEmitsNoCFI(t *testing.T) {
+// TestDarwinEmitsCFI: the Mach-O path carries the same directives as the
+// ELF one, and the platform assembler accepts the emitted asm. The second
+// half is the gate #8065 needed: an ELF-style `.L` local label is a real
+// symbol on Mach-O, which atomizes the section and makes the distance a
+// CFI advance measures non-constant — llvm-mc then rejects the epilogue rule
+// with "invalid CFI advance_loc expression".
+func TestDarwinEmitsCFI(t *testing.T) {
 	asm := compile(t, cfiSrc, Options{Darwin: true})
-	for _, d := range []string{".cfi_startproc", ".cfi_def_cfa", ".cfi_offset", ".cfi_endproc"} {
-		if strings.Contains(asm, d) {
-			t.Errorf("Darwin asm contains %s — the Mach-O writer has no __eh_frame, and the .L-prefixed labels make the assembler reject it (#8065)", d)
+	for _, d := range []string{".cfi_startproc", ".cfi_def_cfa_offset 16", ".cfi_offset x29, -16", ".cfi_offset x30, -8", ".cfi_def_cfa_register x29", ".cfi_def_cfa sp, 0", ".cfi_endproc"} {
+		if strings.Count(asm, d) != 3 {
+			t.Errorf("Darwin asm has %d of %q, want one per user function (3)", strings.Count(asm, d), d)
 		}
-	}
-	// The Linux path must still have them, or this test would pass by the
-	// emitter having stopped emitting CFI everywhere.
-	if !strings.Contains(compile(t, cfiSrc, Options{}), ".cfi_startproc") {
-		t.Fatal("the non-Darwin path lost its CFI, so this exclusion proves nothing")
 	}
 
 	mc, err := exec.LookPath("llvm-mc")
@@ -185,9 +175,21 @@ func TestDarwinEmitsNoCFI(t *testing.T) {
 	if err := os.WriteFile(p, []byte(asm), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command(mc, "-triple=arm64-apple-darwin", "-filetype=obj", "-o", filepath.Join(dir, "d.o"), p).CombinedOutput()
+	obj := filepath.Join(dir, "d.o")
+	out, err := exec.Command(mc, "-triple=arm64-apple-darwin", "-filetype=obj", "-o", obj, p).CombinedOutput()
 	if err != nil {
-		t.Errorf("the Darwin assembler rejects the emitted asm: %v\n%s", err, out)
+		t.Fatalf("the Darwin assembler rejects the emitted asm: %v\n%s", err, out)
+	}
+	dump, err := exec.LookPath("llvm-dwarfdump")
+	if err != nil {
+		t.Skip("llvm-dwarfdump not on PATH")
+	}
+	out, err = exec.Command(dump, "--eh-frame", obj).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(out), " FDE "); n != 3 {
+		t.Errorf("llvm-mc decoded %d FDEs from the emitted CFI, want 3\n%s", n, out)
 	}
 }
 
@@ -215,4 +217,44 @@ func findArm64Gcc(t *testing.T) string {
 	}
 	t.Skip("no gcc/clang on PATH that assembles aarch64")
 	return ""
+}
+
+// adoptSrc reaches the runtime helpers the adoption checks look at: array
+// append and drop (string elements, so the element walk is emitted), an
+// aliased element store (the copy-on-write clone), string ordering and
+// float→u64.
+const adoptSrc = `function main(): i32 {
+  var xs: string[] = [];
+  xs = xs.append("a" + "b");
+  xs = xs.append("c");
+  var ys: string[] = xs;
+  ys = ys.append("d");
+  ys = ys.with(0, "z");
+  var lt: boolean = xs[0] < ys[1];
+  var f: f64 = 3.5;
+  var u: u64 = f as u64;
+  if (lt && u == 3u64) { return xs.len(); }
+  return 1;
+}`
+
+// TestRuntimeUsesFusedForms pins the arm64 runtime shapes that use the
+// instructions the assembler gained (#7887): madd for the element-address
+// and allocation-size arithmetic, tbnz/tbz/cbnz for the low-bit tests in the
+// trig and pow kernels, csel/cset/cneg for the clamps and flags. A
+// regression to the two-instruction forms would still be correct, which is
+// why nothing else notices it.
+func TestRuntimeUsesFusedForms(t *testing.T) {
+	asm := compile(t, adoptSrc, Options{})
+	for _, want := range []string{
+		"madd x0, x22, x20, x19", // &elem[i] in the array walks
+		"madd x5, x4, x1, x3",    // __fern_arr_box: size = cap*stride + headerBytes
+		"madd w0, w23, w21, w24", // arr_push allocSize
+	} {
+		if !strings.Contains(asm, want) {
+			t.Errorf("runtime asm no longer contains %q", want)
+		}
+	}
+	if strings.Contains(asm, "\tmul x0, x22, x20\n\tadd x0, x19, x0") {
+		t.Error("runtime asm still computes &elem[i] as mul + add")
+	}
 }

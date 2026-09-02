@@ -5,7 +5,14 @@ compiler bugs shipped past three heavyweight green gates in a row.
 
 This document is about *which* lanes carry signal for *which* kind of
 change, and — more usefully — which ones look authoritative and are not.
-Every lane now runs on every push; there is no way to skip one.
+
+Every lane runs on the pull request AND on the merge to main, with the same
+path filter on both, pinned by `TestGateLanesRunOnMain` (`internal/sourcelint`).
+The second half matters because PRs here are rebase-merged: each commit lands on
+a main its own CI never saw, so a coupling between two individually-green PRs
+exists only in the combination. Main runs key their concurrency group on the SHA
+rather than the ref, so back-to-back merges each keep their own run and a failure
+names the merge that caused it.
 
 ## The lane that runs when Actions does not
 
@@ -100,6 +107,8 @@ rather than the IR path.
 | Driver rc guard (`util.rc_underflow_guard`) | The compiler's OWN heap accounting stayed balanced while compiling | Leaks (an over-*retain* is silent), and anything outside the drivers |
 | `FERN_NATIVE_ASM=1` fixtures | The in-process assembler encodes what the backend emits | The gcc path, which the fallback silently hides behind |
 | `TestSelfHostX86WholeProgramMatchesGNUAs` | That `x86_native.fern` assembles a WHOLE PROGRAM — the x86 emitter's own output, runtime and all — into the same instruction stream GNU as does: same count, same mnemonics, same operands, and every direct branch landing on the same instruction. This is the x86 twin of `TestSelfHostArm64WholeProgramMatchesNative` and the gate the #6544 testl/testq bug needed; it found `movzbl` encoded as the 64-bit form on its first run | Encoding LENGTH, which it logs rather than asserts while #7949 (self-host rel8 relaxation) is open — the self-host emits every branch as rel32, so its `.text` runs ~9% longer than gas's on the same input. Operands of rip-relative forms, whose addresses the two lay out differently. And it is one program: what the emitter does not emit is not covered |
+| Self-host unwind data (`internal/e2eselfhost` `TestSelfHostCfiMatchesNative{X86_64,Arm64}`, `TestSelfHostUnwindData`) | That the `.cfi_*` stream the self-host emitters write renders, through the recorder each self-host assembler carries, to the SAME `.eh_frame` and `.eh_frame_hdr` bytes native renders for the same program at the same addresses — and native is pinned to gas, so this is gas's unwind data by transitivity. `TestSelfHostUnwindData` then builds a real program with the self-host CLI for both Linux targets and both backends and checks PT_GNU_EH_FRAME, the header's eh_frame_ptr, and one FDE per user function starting at its `-g` symbol | Whether an unwinder walks the frames: nothing here runs a runtime unwinder against a self-host binary, the same gap the native side has. The Darwin self-host path, which carries no `__eh_frame` yet |
+| Structured instruction entry (`internal/native/x86_64` `TestInstRoundTrip`; `internal/e2eharness` `TestX86StructuredMatchesText`) | That the Inst value a code generator can hand the x86-64 assembler directly (#7993) encodes to the bytes the text line does, over the fuzz form inventory and over the asm the Go backend emits for a real program — and that `Inst.String` is the parser's inverse over both, so a generator that builds Inst values writes the same text it used to | A generator actually building Inst values: until one does, both sides of the comparison are read from text |
 | Assembler encoding fuzz (`internal/native/{x86_64,arm64}` `TestFuzzEncodingsAgainstGNUAs`; second oracle `TestEncodingsAgainstLLVMMC`) | Byte-for-byte agreement of the Go in-process assemblers with GNU as across a seeded form inventory — register-number quirks, imm/disp width boundaries, bitmask/imm7/imm9/imm12 edges, rel8 relaxation — plus llvm-mc as an independent second opinion (a gas-vs-llvm disagreement fails with both encodings printed). The smoke tier (8 cases/form) runs in every normal `go test`; `FERN_ASM_FUZZ=1` runs the deep tier (2000 cases/form), `FERN_ASM_FUZZ_SEED` reseeds. Found on first deep runs: two-fixpoint x86 branch relaxation around alignment pads, the rep/lock-vs-0x66 prefix order, cvtsi2sd memory-width REX.W, arm64 `sxtb w,w` / w-form extended add/sub missing sf clears, signed-load unscaled routing, shifted neg/negs | The self-host assemblers (`x86_native.fern`, `arm64_native.fern`); instruction forms outside the inventory; semantics — an encoding both oracles agree on can still be the wrong instruction for the IR. Both oracle lanes skip when their external assembler is absent, and the arm64-gas lane needs the cross binutils |
 | `RUN_SECCOMP_CORPUS=1` (`TestSeccompFixtureCorpus`) | The seccomp filter is not too TIGHT: every runnable fixture behaves identically sandboxed and not | Whether the filter DENIES anything — that is `TestSeccompFilterDenies`. A permit-all filter passes this gate trivially |
 | `RUN_SHRINK_PROPERTY=1` (`TestGenBytesShrinkIsMonotonicAndValid`) | fernsmith's minimisation contract: chopping a byte off a corpus yields a program that still type-checks and is never LARGER, so a failing fuzz input reduces to a small repro. Runs over all three byte-driven entry points — `GenBytes`, `GenMainBytes`, `GenPrintableMainBytes` — at 2 seeds each unguarded; the env var widens it to 24. Checking only `GenBytes` left the two corpora the differential oracles actually shrink unproven, and adding the other two immediately found two fall-throughs that were not the smallest branch | Whether the generated programs are interesting. A generator that emitted `function main(): i32 { return 0i32; }` for every input satisfies it perfectly |
@@ -889,8 +898,12 @@ answer, these are the tools, in the order they are usually reached for:
 
   The self-host driver has no `-g`, so resolve its sites against the linked
   binary's symtab (`nm -n`) rather than addr2line.
-- **`-g`** — emits a `.symtab`, without which a gdb backtrace through a Fern
-  binary is addresses only. It is also what resolves the abort backtrace the
+- **`-g`** — emits a `.symtab` and DWARF (`.debug_info` subprogram DIEs, a
+  `.debug_line` table with per-statement rows carrying file, column and
+  `prologue_end` across every module, and `.debug_frame`), without which a
+  gdb backtrace through a Fern binary is addresses only. Unwind data itself
+  (`.eh_frame` + `PT_GNU_EH_FRAME`) is in every native image, `-g` or not.
+  `-g` is also what resolves the abort backtrace the
   natives print under a fatal abort (#5538); `-backtrace=false` /
   `FERN_BACKTRACE=0` suppresses that walk at compile time, so leave it alone
   while debugging.

@@ -30,31 +30,31 @@ var regTable = func() map[string]struct{ num, size int } {
 	return m
 }()
 
-func parseOperand(s string) (operand, error) {
+func parseOperand(s string) (Operand, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return operand{}, fmt.Errorf("empty operand")
+		return Operand{}, fmt.Errorf("empty operand")
 	}
 	low := strings.ToLower(s)
 	if r, ok := regTable[low]; ok {
-		return operand{kind: opReg, reg: r.num, size: r.size}, nil
+		return Operand{kind: opReg, reg: r.num, size: r.size}, nil
 	}
 	// High-byte registers ah/ch/dh/bh share numbers 4..7 with spl/bpl/sil/dil
 	// but mean the high byte and cannot be encoded with a REX prefix.
 	switch low {
 	case "ah":
-		return operand{kind: opReg, reg: 4, size: 8, highByte: true}, nil
+		return Operand{kind: opReg, reg: 4, size: 8, highByte: true}, nil
 	case "ch":
-		return operand{kind: opReg, reg: 5, size: 8, highByte: true}, nil
+		return Operand{kind: opReg, reg: 5, size: 8, highByte: true}, nil
 	case "dh":
-		return operand{kind: opReg, reg: 6, size: 8, highByte: true}, nil
+		return Operand{kind: opReg, reg: 6, size: 8, highByte: true}, nil
 	case "bh":
-		return operand{kind: opReg, reg: 7, size: 8, highByte: true}, nil
+		return Operand{kind: opReg, reg: 7, size: 8, highByte: true}, nil
 	}
 	if strings.HasPrefix(low, "xmm") {
 		if n, err := strconv.Atoi(low[3:]); err == nil && n >= 0 && n < 16 {
 			// SSE register; size 128 marks it as an xmm operand.
-			return operand{kind: opReg, reg: n, size: 128}, nil
+			return Operand{kind: opReg, reg: n, size: 128}, nil
 		}
 	}
 	if strings.Contains(s, "[") {
@@ -64,19 +64,19 @@ func parseOperand(s string) (operand, error) {
 		return parseMem(s)
 	}
 	if v, err := strconv.ParseInt(s, 0, 64); err == nil {
-		return operand{kind: opImm, imm: v}, nil
+		return Operand{kind: opImm, imm: v}, nil
 	}
 	if u, err := strconv.ParseUint(s, 0, 64); err == nil {
-		return operand{kind: opImm, imm: int64(u)}, nil
+		return Operand{kind: opImm, imm: int64(u)}, nil
 	}
 	if isLabelName(s) {
-		return operand{kind: opLabel, sym: s}, nil
+		return Operand{kind: opLabel, sym: s}, nil
 	}
-	return operand{}, fmt.Errorf("cannot parse operand %q", s)
+	return Operand{}, fmt.Errorf("cannot parse operand %q", s)
 }
 
-func parseMem(s string) (operand, error) {
-	o := operand{kind: opMem, base: -1, index: -1, scale: 1}
+func parseMem(s string) (Operand, error) {
+	o := Operand{kind: opMem, base: -1, index: -1, scale: 1}
 	// A size keyword ("qword ptr") only appears before the '['. Scoping the
 	// search there avoids matching a "ptr" substring inside a symbol name
 	// like __fern_heap_ptr.
@@ -99,16 +99,16 @@ func parseMem(s string) (operand, error) {
 		case "":
 			// bare "ptr" — leave size unspecified
 		default:
-			return operand{}, fmt.Errorf("bad size prefix in %q", s)
+			return Operand{}, fmt.Errorf("bad size prefix in %q", s)
 		}
 		s = strings.TrimSpace(s[i+3:])
 	}
 	if !strings.HasPrefix(s, "[") || !strings.HasSuffix(s, "]") {
-		return operand{}, fmt.Errorf("bad memory operand %q", s)
+		return Operand{}, fmt.Errorf("bad memory operand %q", s)
 	}
 	inner := strings.ReplaceAll(s[1:len(s)-1], " ", "")
 	if inner == "" {
-		return operand{}, fmt.Errorf("empty memory operand")
+		return Operand{}, fmt.Errorf("empty memory operand")
 	}
 	// Parse [ term (+|-) term ... ] where a term is a register,
 	// register*scale, displacement, or (for rip) a symbol.
@@ -121,11 +121,11 @@ func parseMem(s string) (operand, error) {
 			parts := strings.SplitN(tok, "*", 2)
 			r, ok := regTable[strings.ToLower(parts[0])]
 			if !ok {
-				return operand{}, fmt.Errorf("bad index register %q", parts[0])
+				return Operand{}, fmt.Errorf("bad index register %q", parts[0])
 			}
 			sc, err := strconv.Atoi(parts[1])
 			if err != nil || (sc != 1 && sc != 2 && sc != 4 && sc != 8) {
-				return operand{}, fmt.Errorf("bad scale %q", parts[1])
+				return Operand{}, fmt.Errorf("bad scale %q", parts[1])
 			}
 			o.index, o.scale = r.num, sc
 			continue
@@ -137,7 +137,7 @@ func parseMem(s string) (operand, error) {
 			} else if o.index < 0 {
 				o.index = r.num
 			} else {
-				return operand{}, fmt.Errorf("too many registers in memory operand %q", inner)
+				return Operand{}, fmt.Errorf("too many registers in memory operand %q", inner)
 			}
 			continue
 		}
@@ -150,7 +150,7 @@ func parseMem(s string) (operand, error) {
 			o.sym = tok // rip-relative symbol
 			continue
 		}
-		return operand{}, fmt.Errorf("bad term %q in memory operand", tok)
+		return Operand{}, fmt.Errorf("bad term %q in memory operand", tok)
 	}
 	return o, nil
 }

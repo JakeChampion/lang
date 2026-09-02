@@ -21,6 +21,27 @@ var arm64CFI = &cfi.Profile{
 	CodeAlign:    4,
 	DataAlign:    -8,
 	RAColumn:     30,
+	PtrEnc:       0x1b, // DW_EH_PE_pcrel | DW_EH_PE_sdata4
+	PtrSize:      4,
+	FDEAlign:     4,
+	InitialRules: []byte{0x0c, 0x1f, 0x00}, // DW_CFA_def_cfa sp, 0
+	Regs:         arm64CFIRegs(),
+}
+
+// arm64DarwinCFI is the same rules as llvm-mc renders them for
+// arm64-apple-darwin (`llvm-mc -triple=arm64-apple-darwin -filetype=obj`, read
+// back with `llvm-dwarfdump --eh-frame`), which is what every Mach-O consumer
+// — libunwind's DWARF fallback, lldb — is written against. Two fields differ
+// from the ELF profile: the code alignment factor is 1, so advances are in
+// BYTES and `stp; mov` is `advance_loc 4`, and FDE pointers are 8-byte pcrel
+// absolute (0x10) rather than sdata4 — with each FDE padded to end on 8.
+var arm64DarwinCFI = &cfi.Profile{
+	CodeAlign:    1,
+	DataAlign:    -8,
+	RAColumn:     30,
+	PtrEnc:       0x10, // DW_EH_PE_pcrel | DW_EH_PE_absptr
+	PtrSize:      8,
+	FDEAlign:     8,
 	InitialRules: []byte{0x0c, 0x1f, 0x00}, // DW_CFA_def_cfa sp, 0
 	Regs:         arm64CFIRegs(),
 }
@@ -53,6 +74,15 @@ func itoa(v uint64) string {
 // offset the rule takes effect at.
 func (a *Assembler) cfiDirective(d, line string) error {
 	return a.cfi.Directive(arm64CFI, d, strings.TrimSpace(strings.TrimPrefix(line, d)), len(a.insns)*4)
+}
+
+// DebugFrame renders the recorded CFI as the `.debug_frame` section of a
+// final binary whose .text is at textVAddr.
+func (a *Assembler) DebugFrame(textVAddr uint64) ([]byte, error) {
+	if _, err := a.TextLen(); err != nil {
+		return nil, err
+	}
+	return a.cfi.DebugFrame(arm64CFI, textVAddr)
 }
 
 // EhFrame renders the recorded CFI as a .eh_frame image for a final binary

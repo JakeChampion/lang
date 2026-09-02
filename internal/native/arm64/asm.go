@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/jakechampion/lang/internal/native/cfi"
+	"github.com/jakechampion/lang/internal/native/gasstr"
 )
 
 // Assembler collects a stream of instructions plus named labels and
@@ -44,9 +45,11 @@ type Assembler struct {
 	pendingLits []litRef
 	litFixups   []litResolve
 
-	// DWARF .debug_line rows: the source line active at a .text byte offset,
-	// recorded when the code generator emits a `.loc` directive under -g.
+	// DWARF .debug_line rows: the source position active at a .text byte
+	// offset, recorded when the code generator emits a `.loc` directive under
+	// -g, and the `.file N "path"` table they index.
 	locRows []LineRow
+	files   map[int]string
 
 	// Call-frame information from `.cfi_*` directives, rendered as .eh_frame
 	// by EhFrame. Offsets are pre-veneer and remapped alongside locRows.
@@ -146,15 +149,11 @@ func (a *Assembler) resolveLabelRef(label string) string {
 	return numericLabelName(n, k)
 }
 
-// LineRow is one DWARF .debug_line row: the source line active at a .text
+// LineRow is one DWARF .debug_line row, recorded when the code generator
+// emits a `.loc` directive under -g: the source position active at a .text
 // byte offset (the next instruction's, since `.loc` emits no bytes). arm64
-// instructions are fixed 4 bytes, so the offset is the instruction index × 4.
-// The linker converts Offset to an absolute vaddr. Mirror of the x86-64
-// assembler's LineRow.
-type LineRow struct {
-	Offset int
-	Line   int
-}
+// keeps instruction indices internally, so Offset is index*4.
+type LineRow = gasstr.LineRow
 
 type litRef struct {
 	at   int    // index of the ldr-literal instruction
@@ -464,6 +463,9 @@ func (a *Assembler) Bytes() ([]byte, error) {
 // LocRows are the per-statement `.loc` markers the parse collected, for the
 // DWARF line table. Mirrors x86_64.LocRows.
 func (a *Assembler) LocRows() []LineRow { return a.locRows }
+
+// Files is the `.file N "path"` table the `.loc` rows index into.
+func (a *Assembler) Files() map[int]string { return a.files }
 
 // BytesProgram resolves branches AND symbol references (adrp / add
 // #:lo12:), laying .text at textVAddr and .rodata immediately after

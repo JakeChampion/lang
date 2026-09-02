@@ -39,7 +39,7 @@ var sse38Ops = map[string]byte{
 	"pmaxsb": 0x3C, "pmaxsd": 0x3D, "pmaxuw": 0x3E, "pmaxud": 0x3F,
 }
 
-func (a *Assembler) sse38Op(op byte, ops []operand) error {
+func (a *Assembler) sse38Op(op byte, ops []Operand) error {
 	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size != 128 {
 		return fmt.Errorf("SSE 0F38 op expects xmm, xmm/mem")
 	}
@@ -63,7 +63,7 @@ var vecShiftImmOps = map[string]struct {
 	"psrldq": {0x73, 3}, "pslldq": {0x73, 7},
 }
 
-func (a *Assembler) vecShiftImm(mnem string, ops []operand) error {
+func (a *Assembler) vecShiftImm(mnem string, ops []Operand) error {
 	if ops[0].kind != opReg || ops[0].size != 128 {
 		return fmt.Errorf("%s expects xmm, imm8", mnem)
 	}
@@ -85,7 +85,7 @@ func (a *Assembler) vecShiftImm(mnem string, ops []operand) error {
 // float op is that shape. A vector kernel needs the other direction too, and
 // getting it wrong is silent: 0x6F with the operands written backwards
 // assembles cleanly and reads from the wrong address.
-func (a *Assembler) movdqStore(prefix byte, ops []operand) error {
+func (a *Assembler) movdqStore(prefix byte, ops []Operand) error {
 	if len(ops) != 2 || ops[1].kind != opReg || ops[1].size != 128 {
 		return fmt.Errorf("movdqu/movdqa store expects mem, xmm")
 	}
@@ -104,7 +104,7 @@ func (a *Assembler) movdqStore(prefix byte, ops []operand) error {
 // a compare mask into something `bsf` can scan — so the destination is a
 // GENERAL-PURPOSE register while ModRM.reg still names it. That inversion is
 // why they cannot be sseOps entries: the table assumes reg is an xmm.
-func (a *Assembler) xmmToGpr(prefix, op byte, ops []operand, name string) error {
+func (a *Assembler) xmmToGpr(prefix, op byte, ops []Operand, name string) error {
 	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size == 128 || ops[0].size < 32 ||
 		ops[1].kind != opReg || ops[1].size != 128 {
 		return fmt.Errorf("%s expects r32/r64, xmm", name)
@@ -125,7 +125,7 @@ func (a *Assembler) xmmToGpr(prefix, op byte, ops []operand, name string) error 
 // imm8` ([prefix] 0F <op> /r ib): pshufd (66 0F 70), shufps (0F C6),
 // shufpd (66 0F C6). `pshufd x, x, 0` broadcasts lane 0 to all four, which
 // is the last step of the byte splat.
-func (a *Assembler) sseImm8(prefix, op byte, ops []operand, name string) error {
+func (a *Assembler) sseImm8(prefix, op byte, ops []Operand, name string) error {
 	if len(ops) != 3 || ops[0].kind != opReg || ops[0].size != 128 || ops[2].kind != opImm {
 		return fmt.Errorf("%s expects xmm, xmm/mem, imm8", name)
 	}
@@ -142,7 +142,7 @@ func (a *Assembler) sseImm8(prefix, op byte, ops []operand, name string) error {
 
 // sseOp encodes a symmetric two-operand SSE instruction (dst is an xmm
 // register; src is xmm or memory).
-func (a *Assembler) sseOp(prefix, op byte, ops []operand) error {
+func (a *Assembler) sseOp(prefix, op byte, ops []Operand) error {
 	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size != 128 {
 		return fmt.Errorf("SSE op expects xmm, xmm/mem")
 	}
@@ -158,7 +158,7 @@ func (a *Assembler) sseOp(prefix, op byte, ops []operand) error {
 
 // cvtsi2s encodes cvtsi2sd/cvtsi2ss: xmm <- r/m32|64. REX.W follows the
 // integer source width.
-func (a *Assembler) cvtsi2s(prefix byte, ops []operand) error {
+func (a *Assembler) cvtsi2s(prefix byte, ops []Operand) error {
 	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size != 128 {
 		return fmt.Errorf("cvtsi2sd/ss expects xmm, r/m")
 	}
@@ -182,7 +182,7 @@ func (a *Assembler) cvtsi2s(prefix byte, ops []operand) error {
 
 // cvtt2si encodes cvttsd2si/cvttss2si (truncating): r32|64 <- xmm/mem.
 // REX.W follows the integer destination width.
-func (a *Assembler) cvtt2si(prefix, op byte, ops []operand) error {
+func (a *Assembler) cvtt2si(prefix, op byte, ops []Operand) error {
 	if len(ops) != 2 || ops[0].kind != opReg || (ops[0].size != 32 && ops[0].size != 64) {
 		return fmt.Errorf("cvttsd2si/ss expects an r32/r64 destination")
 	}
@@ -196,14 +196,14 @@ func (a *Assembler) cvtt2si(prefix, op byte, ops []operand) error {
 
 // movqd encodes movq (64-bit) / movd (32-bit) transfers between an xmm
 // register and a GPR or memory. isMovd selects the 32-bit form (no REX.W).
-func (a *Assembler) movqd(ops []operand, isMovd bool) error {
+func (a *Assembler) movqd(ops []Operand, isMovd bool) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("movq/movd expects two operands")
 	}
 	dst, src := ops[0], ops[1]
 	dstX := dst.kind == opReg && dst.size == 128
 	srcX := src.kind == opReg && src.size == 128
-	for _, o := range []operand{dst, src} {
+	for _, o := range []Operand{dst, src} {
 		if o.kind == opReg && o.size != 128 && o.size != 32 && o.size != 64 {
 			return fmt.Errorf("movq/movd GPR operand must be 32- or 64-bit")
 		}
@@ -238,7 +238,7 @@ func (a *Assembler) movqd(ops []operand, isMovd bool) error {
 // (F3) and unaligned-packed movups (no prefix) / movupd (66) — between xmm
 // registers or xmm<->memory (load form 0x10 when the destination is an xmm;
 // store form 0x11 when the source is the xmm and the destination is memory).
-func (a *Assembler) movsdss(prefix byte, ops []operand) error {
+func (a *Assembler) movsdss(prefix byte, ops []Operand) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("movsd/movss/movups/movupd expects two operands")
 	}
@@ -272,7 +272,7 @@ func (a *Assembler) movsdss(prefix byte, ops []operand) error {
 
 // sse3AImm8 encodes the 66 0F 3A <op> /r ib forms with an xmm destination:
 // roundsd (0B), roundss (0A), pcmpistri (63), pcmpestri (61).
-func (a *Assembler) sse3AImm8(op byte, ops []operand, name string) error {
+func (a *Assembler) sse3AImm8(op byte, ops []Operand, name string) error {
 	if len(ops) != 3 || ops[0].kind != opReg || ops[0].size != 128 || ops[2].kind != opImm {
 		return fmt.Errorf("%s expects xmm, xmm/mem, imm8", name)
 	}
@@ -292,7 +292,7 @@ func (a *Assembler) sse3AImm8(op byte, ops []operand, name string) error {
 // uses the short legacy form 66 0F C5 /r ib instead, whose operands run the
 // usual way round (reg = GPR destination, rm = xmm) — that is what GNU as
 // picks, and the 3A 15 form is reserved for memory destinations.
-func (a *Assembler) pextr(mnem string, ops []operand) error {
+func (a *Assembler) pextr(mnem string, ops []Operand) error {
 	if len(ops) != 3 || ops[1].kind != opReg || ops[1].size != 128 || ops[2].kind != opImm {
 		return fmt.Errorf("%s expects r/m, xmm, imm8", mnem)
 	}
@@ -347,7 +347,7 @@ func (a *Assembler) pextr(mnem string, ops []operand) error {
 // of an xmm. pinsrb/d/q are 66 0F 3A 20/22 /r ib (REX.W selects q);
 // pinsrw is the legacy two-byte form 66 0F C4 /r ib. ModRM.reg is the xmm
 // destination throughout.
-func (a *Assembler) pinsr(mnem string, ops []operand) error {
+func (a *Assembler) pinsr(mnem string, ops []Operand) error {
 	if len(ops) != 3 || ops[0].kind != opReg || ops[0].size != 128 || ops[2].kind != opImm {
 		return fmt.Errorf("%s expects xmm, r/m, imm8", mnem)
 	}
@@ -383,7 +383,7 @@ func (a *Assembler) pinsr(mnem string, ops []operand) error {
 // 32- or 64-bit GPR. The opcode keys on the SOURCE width — F0 for a byte,
 // F1 otherwise, with 66 (before the mandatory F2) for a word source and
 // REX.W for a 64-bit one.
-func (a *Assembler) crc32(ops []operand) error {
+func (a *Assembler) crc32(ops []Operand) error {
 	if len(ops) != 2 || ops[0].kind != opReg || (ops[0].size != 32 && ops[0].size != 64) {
 		return fmt.Errorf("crc32 expects an r32/r64 destination")
 	}
@@ -429,7 +429,7 @@ func (a *Assembler) crc32(ops []operand) error {
 
 // emitRexRM emits the REX prefix for an instruction whose ModRM.reg is the
 // given register and whose rm operand is `rm` (a register or memory).
-func (a *Assembler) emitRexRM(w bool, reg int, rm operand) {
+func (a *Assembler) emitRexRM(w bool, reg int, rm Operand) {
 	var rex byte
 	if rm.kind == opMem {
 		rex = memRex(w, reg, rm, false)
@@ -442,7 +442,7 @@ func (a *Assembler) emitRexRM(w bool, reg int, rm operand) {
 }
 
 // emitModRM emits ModRM (+SIB/disp) for a register or memory rm operand.
-func (a *Assembler) emitModRM(reg int, rm operand) {
+func (a *Assembler) emitModRM(reg int, rm Operand) {
 	if rm.kind == opMem {
 		a.encodeMem(reg, rm)
 	} else {

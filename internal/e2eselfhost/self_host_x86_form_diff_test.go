@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/native/x86_64"
+	"github.com/jakechampion/lang/internal/native/x86tbl"
 )
 
 // The operand-form differential (#8083).
@@ -33,10 +34,12 @@ import (
 type formCase struct{ att, intel string }
 
 // aluFormCases is every ALU mnemonic at every width in every operand form:
-// reg-reg, mem-reg, reg-mem, reg-imm, mem-imm.
+// reg-reg, mem-reg, reg-mem, reg-imm, mem-imm. The mnemonic lists here and
+// below come from x86tbl, the table both assemblers dispatch from, so a
+// spelling added there is probed here without anyone remembering to.
 func aluFormCases() []formCase {
 	var out []formCase
-	for _, m := range []string{"add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"} {
+	for _, m := range x86tbl.ALU.Spellings() {
 		for _, w := range []struct{ sfx, att, intel, size string }{
 			{"b", "%dl", "dl", "byte ptr"},
 			{"w", "%dx", "dx", "word ptr"},
@@ -61,7 +64,7 @@ func aluFormCases() []formCase {
 // short form, an imm8, and %cl — at every width, register and memory.
 func shiftFormCases() []formCase {
 	var out []formCase
-	for _, m := range []string{"shl", "shr", "sar", "rol", "ror", "rcl", "rcr"} {
+	for _, m := range x86tbl.Shift.Spellings() {
 		for _, w := range []struct{ sfx, att, intel, size string }{
 			{"b", "%dl", "dl", "byte ptr"}, {"w", "%dx", "dx", "word ptr"},
 			{"l", "%edx", "edx", "dword ptr"}, {"q", "%rdx", "rdx", "qword ptr"},
@@ -134,7 +137,7 @@ func miscFormCases() []formCase {
 			formCase{fmt.Sprintf("mov%s (%%rbx), %s", w.sfx, w.b), fmt.Sprintf("mov %s, %s [rbx]", w.ib, w.size)},
 			formCase{fmt.Sprintf("mov%s %s, (%%rbx)", w.sfx, w.b), fmt.Sprintf("mov %s [rbx], %s", w.size, w.ib)},
 		)
-		for _, m := range []string{"bt", "bts", "btr", "btc"} {
+		for _, m := range x86tbl.BitTest.Spellings() {
 			out = append(out,
 				formCase{fmt.Sprintf("%s%s %s, %s", m, w.sfx, w.a, w.b), fmt.Sprintf("%s %s, %s", m, w.ib, w.ia)},
 				formCase{fmt.Sprintf("%s%s $3, %s", m, w.sfx, w.b), fmt.Sprintf("%s %s, 3", m, w.ib)},
@@ -144,7 +147,7 @@ func miscFormCases() []formCase {
 			out = append(out, formCase{fmt.Sprintf("%s%s %s, %s", m, w.sfx, w.a, w.b), fmt.Sprintf("%s %s, %s", m, w.ib, w.ia)})
 		}
 	}
-	for _, m := range []string{"not", "neg", "mul", "imul", "div", "idiv", "inc", "dec"} {
+	for _, m := range append(x86tbl.Unary.Spellings(), x86tbl.IncDec.Spellings()...) {
 		for _, w := range []struct{ sfx, att, intel, size string }{
 			{"b", "%cl", "cl", "byte ptr"}, {"l", "%ecx", "ecx", "dword ptr"}, {"q", "%rcx", "rcx", "qword ptr"},
 		} {

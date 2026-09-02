@@ -4,22 +4,21 @@ import (
 	"sort"
 
 	"github.com/jakechampion/lang/internal/native/suggest"
+	"github.com/jakechampion/lang/internal/native/x86tbl"
 )
 
 // switchMnemonics lists every mnemonic the insn dispatch switch handles by
-// name. The cc-suffixed families, the sseOps/sse38Ops tables and the
-// no-operand vocabulary (x86tbl.FixedOps, reached by lookup rather than by a
-// case) are appended by knownMnemonics.
+// name. The cc-suffixed families, the sseOps/sse38Ops tables, the GPR groups
+// (x86tbl.Groups) and the no-operand vocabulary (x86tbl.FixedOps) are reached
+// by lookup rather than by a case and are appended by knownMnemonics.
 // TestSuggestListMatchesDispatch extracts the case strings from the source
 // and fails when the two drift.
 var switchMnemonics = []string{
 	"rep", "repe", "repz", "repne", "repnz", "lock",
 	"push", "pop", "mov", "movabs",
-	"add", "or", "adc", "sbb", "and", "sub", "xor", "cmp",
 	"test", "imul", "bsf", "bsr", "lzcnt", "tzcnt", "popcnt",
-	"idiv", "div", "mul", "neg", "not", "inc", "dec",
-	"sar", "shl", "shr", "rol", "ror", "rcl", "rcr", "shld", "shrd",
-	"bt", "bts", "btr", "btc", "bswap", "xchg", "xadd", "cmpxchg",
+	"shld", "shrd",
+	"bswap", "xchg", "xadd", "cmpxchg",
 	"lea", "movzx", "movsx", "movsxd", "jmp", "call",
 	"movq", "movd", "movss", "movups", "movupd",
 	"cvtsi2sd", "cvtsi2ss", "cvttsd2si", "cvttss2si", "cvtsd2si", "cvtss2si",
@@ -50,6 +49,11 @@ var knownMnemonics = func() []string {
 	}
 	for m := range fixedOps {
 		add(m)
+	}
+	for _, g := range x86tbl.Groups {
+		for _, m := range g.Spellings() {
+			add(m)
+		}
 	}
 	for m := range sseOps {
 		add(m)

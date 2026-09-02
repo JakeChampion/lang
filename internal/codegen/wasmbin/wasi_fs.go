@@ -562,6 +562,8 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	openAt := idxs["wasi_descriptor_open_at_p2"]
 	readVia := idxs["wasi_descriptor_read_via_stream_p2"]
 	blockingRead := idxs["wasi_io_blocking_read"]
+	streamDrop := idxs["wasi_io_input_stream_drop"]
+	descDrop := idxs["wasi_descriptor_drop_p2"]
 
 	var body []byte
 	// rb = alloc(16) — reused retbuf for the sequential host calls.
@@ -614,6 +616,8 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstCall(body, descDrop)
 		body = appendErrnoFromErrorCode(body, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
@@ -702,6 +706,13 @@ func buildReadFileBodyP2Common(idxs map[string]uint32, asBytes bool) []byte {
 	// end $read loop, end $end block
 	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
+
+	// Everything is in the accumulator: release the stream, then the
+	// descriptor it was opened on.
+	body = inst.InstLocalGet(body, 7)
+	body = inst.InstCall(body, streamDrop)
+	body = inst.InstLocalGet(body, 6)
+	body = inst.InstCall(body, descDrop)
 
 	if !asBytes {
 		// read_file validates UTF-8 (D9, #5714); read_file_bytes is
@@ -1120,6 +1131,8 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	openAt := idxs["wasi_descriptor_open_at_p2"]
 	writeVia := idxs["wasi_descriptor_write_via_stream_p2"]
 	blockingWrite := idxs["wasi_blocking_write_and_flush_p2"]
+	streamDrop := idxs["wasi_io_output_stream_drop"]
+	descDrop := idxs["wasi_descriptor_drop_p2"]
 
 	// open-flags: create(bit0) | truncate(bit3) = 1 | 8 = 9.
 	const openFlagsCreateTrunc = 9
@@ -1172,6 +1185,8 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = inst.InstLocalGet(body, 10)
+		body = inst.InstCall(body, descDrop)
 		body = appendErrnoFromErrorCode(body, 4, 17)
 		body = buildWriteFileErr(body, buildIoErr, allocBox, 17)
 	}
@@ -1223,6 +1238,10 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 		body = memory.InstI32Load8U(body, 0, 0)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
+			body = inst.InstLocalGet(body, 11)
+			body = inst.InstCall(body, streamDrop)
+			body = inst.InstLocalGet(body, 10)
+			body = inst.InstCall(body, descDrop)
 			body = inst.InstI32Const(body, 0)
 			body = inst.InstLocalSet(body, 17)
 			body = buildWriteFileErr(body, buildIoErr, allocBox, 17)
@@ -1238,6 +1257,12 @@ func buildWriteFileBodyP2(idxs map[string]uint32) []byte {
 	// end $write loop, end $end block
 	body = inst.InstEnd(body)
 	body = inst.InstEnd(body)
+
+	// Flushed: release the stream, then the descriptor it was opened on.
+	body = inst.InstLocalGet(body, 11)
+	body = inst.InstCall(body, streamDrop)
+	body = inst.InstLocalGet(body, 10)
+	body = inst.InstCall(body, descDrop)
 
 	// Success → Ok(()): box(8), tag=0 @ +0, unit payload @ +4.
 	body = inst.InstI32Const(body, 8)
@@ -1437,6 +1462,7 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	getDirs := idxs["wasi_get_directories_p2"]
 	openAt := idxs["wasi_descriptor_open_at_p2"]
 	readVia := idxs["wasi_descriptor_read_via_stream_p2"]
+	descDrop := idxs["wasi_descriptor_drop_p2"]
 
 	var body []byte
 	// rb = alloc(16) — shared retbuf for the host calls.
@@ -1483,6 +1509,8 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstCall(body, descDrop)
 		body = appendErrnoFromErrorCode(body, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
@@ -1492,8 +1520,9 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 7)
 
-	// Reader struct: 12 bytes (rc sentinel @ +0, {handle} @ +8).
-	body = inst.InstI32Const(body, 12)
+	// Reader struct: 16 bytes (rc sentinel @ +0, {stream handle} @ +8,
+	// descriptor @ +12) — close drops both.
+	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 8)
 	body = inst.InstI32Const(body, -0x80000000) // static rc sentinel
@@ -1505,6 +1534,9 @@ func buildOpenReaderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 7) // stream handle
 	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 6)
+	body = memory.InstI32Store(body, 2, 4)
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Reader ptr @ +4.
 	body = inst.InstI32Const(body, 8)
@@ -1552,6 +1584,7 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	getDirs := idxs["wasi_get_directories_p2"]
 	openAt := idxs["wasi_descriptor_open_at_p2"]
 	writeVia := idxs["wasi_descriptor_write_via_stream_p2"]
+	descDrop := idxs["wasi_descriptor_drop_p2"]
 
 	// open-flags: create(bit0)|truncate(bit3) = 9; descriptor-flags: write = 2.
 	const openFlagsCreateTrunc = 9
@@ -1599,6 +1632,8 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstCall(body, descDrop)
 		body = appendErrnoFromErrorCode(body, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
@@ -1608,8 +1643,9 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 7)
 
-	// Writer struct: 12 bytes (rc sentinel @ +0, {handle} @ +8).
-	body = inst.InstI32Const(body, 12)
+	// Writer struct: 16 bytes (rc sentinel @ +0, {stream handle} @ +8,
+	// descriptor @ +12) — close drops both.
+	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 8)
 	body = inst.InstI32Const(body, -0x80000000)
@@ -1621,6 +1657,9 @@ func buildOpenWriterBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 7)
 	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 6)
+	body = memory.InstI32Store(body, 2, 4)
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Writer ptr @ +4.
 	body = inst.InstI32Const(body, 8)
@@ -1652,6 +1691,7 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	getDirs := idxs["wasi_get_directories_p2"]
 	openAt := idxs["wasi_descriptor_open_at_p2"]
 	appendVia := idxs["wasi_descriptor_append_via_stream_p2"]
+	descDrop := idxs["wasi_descriptor_drop_p2"]
 
 	// open-flags: create(bit0) only = 1; descriptor-flags: write = 2.
 	const openFlagsCreate = 1
@@ -1698,6 +1738,8 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load8U(body, 0, 0)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	{
+		body = inst.InstLocalGet(body, 6)
+		body = inst.InstCall(body, descDrop)
 		body = appendErrnoFromErrorCode(body, 2, 16)
 		body = buildReadFileErr(body, idxs, buildIoErr, allocBox, 16)
 	}
@@ -1707,8 +1749,9 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = memory.InstI32Load(body, 2, 4)
 	body = inst.InstLocalSet(body, 7)
 
-	// Writer struct: 12 bytes (rc sentinel @ +0, {handle} @ +8).
-	body = inst.InstI32Const(body, 12)
+	// Writer struct: 16 bytes (rc sentinel @ +0, {stream handle} @ +8,
+	// descriptor @ +12) — close drops both.
+	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
 	body = inst.InstLocalTee(body, 8)
 	body = inst.InstI32Const(body, -0x80000000)
@@ -1720,6 +1763,9 @@ func buildOpenAppenderBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 8)
 	body = inst.InstLocalGet(body, 7)
 	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 6)
+	body = memory.InstI32Store(body, 2, 4)
 
 	// Result.Ok: 8 bytes, tag=0 @ +0, Writer ptr @ +4.
 	body = inst.InstI32Const(body, 8)
@@ -1827,6 +1873,11 @@ func buildCloseBody(idxs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
+// noDescriptor marks a preview-2 Reader / Writer whose stream was not
+// opened on a descriptor of its own (stdin / stdout / stderr), so close
+// has nothing to drop beside the stream.
+const noDescriptor = -1
+
 // buildReaderCloseFdBodyP2 / buildWriterCloseBodyP2 are the preview-2
 // close paths. The Reader / Writer holds an own<input-stream> /
 // own<output-stream> handle at offset 0 (not a preview-1 fd), so close
@@ -1842,9 +1893,11 @@ func buildWriterCloseBodyP2(idxs map[string]uint32) []byte {
 }
 
 // buildStreamCloseBodyP2 drops the stream handle stored at the Reader /
-// Writer's offset 0 and returns None ((4-byte alloc, tag=1) — the
-// Option[IoError] success form). `drop` is the canon resource.drop
-// import for the relevant stream resource.
+// Writer's offset 0, then the descriptor at offset 4 it was opened on,
+// and returns None ((4-byte alloc, tag=1) — the Option[IoError] success
+// form). `drop` is the canon resource.drop import for the relevant
+// stream resource. A stdio handle owns no descriptor and carries
+// noDescriptor there.
 func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 	allocBox := idxs["__fern_alloc_box"]
 
@@ -1853,6 +1906,20 @@ func buildStreamCloseBodyP2(idxs map[string]uint32, drop uint32) []byte {
 	body = inst.InstLocalGet(body, 0)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstCall(body, drop)
+	// if mem[$self+4] != noDescriptor: resource.drop(mem[$self+4]). The
+	// import is declared only when an opener is in the module; without
+	// one every handle is stdio's and the slot is always noDescriptor.
+	if descDrop, ok := idxs["wasi_descriptor_drop_p2"]; ok {
+		body = inst.InstLocalGet(body, 0)
+		body = memory.InstI32Load(body, 2, 4)
+		body = inst.InstLocalTee(body, 2)
+		body = inst.InstI32Const(body, noDescriptor)
+		body = numeric.InstI32Ne(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstCall(body, descDrop)
+		body = inst.InstEnd(body)
+	}
 
 	// Return None (4-byte alloc, tag=1).
 	body = inst.InstI32Const(body, 4)

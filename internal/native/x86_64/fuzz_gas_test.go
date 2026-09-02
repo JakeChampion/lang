@@ -29,6 +29,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/native/elf"
 	"github.com/jakechampion/lang/internal/native/x86_64"
+	"github.com/jakechampion/lang/internal/native/x86tbl"
 )
 
 // compareMode says how a form's encodings are checked against the oracle.
@@ -225,8 +226,8 @@ var ccNames = []string{"o", "no", "b", "c", "nae", "ae", "nb", "nc", "e", "z",
 // ---------------------------------------------------------------------------
 // Form inventory.
 
-var aluMnems = []string{"add", "or", "adc", "sbb", "and", "sub", "xor", "cmp"}
-var shiftMnems = []string{"rol", "ror", "rcl", "rcr", "shl", "shr", "sar"}
+var aluMnems = x86tbl.ALU.Spellings()
+var shiftMnems = x86tbl.Shift.Spellings()
 var unaryMnems = []string{"neg", "not", "mul", "imul", "div", "idiv"}
 var btMnems = []string{"bt", "bts", "btr", "btc"}
 var bitcntMnems = []string{"bsf", "bsr", "lzcnt", "tzcnt", "popcnt"}

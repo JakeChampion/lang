@@ -1,0 +1,70 @@
+// A state local consumed into another at its last use — `var sl: Buf =
+// emit(s, a); var sr: Buf = emit(sl, b);` with sl never read again — is how
+// every binary-expression lowering in the compiler threads its state. Nothing
+// rebinds sl, so no rebind release ever runs on it, and the generation it
+// holds (its box, and the code buffer sr's append superseded) was leaked at
+// every statement of the kind. The consume site now releases sl the way a
+// rebind would, with sr standing in for the new value: a field sr carries on
+// is kept, the replaced ones and the box go, and sr's own reclaim compares
+// against the box sl was derived from rather than the freed one.
+struct Buf { code: i32[], names: string[], n: i32 }
+
+function emit(s: Buf, v: i32): Buf {
+    return Buf { ...s, code: s.code.append(v), n: s.n + 1 };
+}
+
+function name(s: Buf, nm: string): Buf {
+    return Buf { ...s, names: s.names.append(nm) };
+}
+
+function lower_pair(s: Buf, a: i32, b: i32): Buf {
+    var sl: Buf = emit(s, a);
+    var sr: Buf = emit(sl, b);
+    return sr;
+}
+
+function lower_chain(s: Buf, k: i32): Buf {
+    var s1: Buf = emit(s, k);
+    var s2: Buf = name(s1, "k");
+    var s3: Buf = emit(s2, k + 2);
+    var s4: Buf = emit(s3, k + 3);
+    return s4;
+}
+
+// the consumed local is itself rebound first
+function lower_rebound(s: Buf, k: i32): Buf {
+    var st: Buf = emit(s, k);
+    st = emit(st, k + 1);
+    var out: Buf = emit(st, k + 2);
+    return out;
+}
+
+function churn(): i32 {
+    var junk: string[] = [];
+    var i: i32 = 0;
+    while (i < 300) { junk = junk.append("junk"); i = i + 1; }
+    return junk.len();
+}
+
+function main(): i32 {
+    var total: i32 = 0;
+    var r: i32 = 0;
+    while (r < 8) {
+        var b: Buf = Buf { code: [], names: [], n: 0 };
+        var i: i32 = 0;
+        while (i < 30) {
+            b = lower_pair(b, i, i * 2);
+            b = lower_chain(b, i);
+            b = lower_rebound(b, i);
+            i = i + 1;
+        }
+        churn();
+        var k: i32 = 0;
+        while (k < b.code.len()) { total = total + b.code[k]; k = k + 1; }
+        k = 0;
+        while (k < b.names.len()) { total = total + b.names[k].len(); k = k + 1; }
+        total = total + b.n;
+        r = r + 1;
+    }
+    return total % 64;
+}

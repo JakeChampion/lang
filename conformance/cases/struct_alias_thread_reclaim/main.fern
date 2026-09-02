@@ -1,0 +1,67 @@
+// Every lowering function in the compiler threads its state the same way: the
+// borrowed parameter is aliased into a local (`var sb: Builder = b`), the local
+// is rebound from its own functional-update methods and from consume-safe
+// callees, and the last generation is returned. The self-host had no credit for
+// such a local — its first value is the caller's box, which no sweep may touch
+// — so every generation between the first and the last leaked, with the buffer
+// each update replaced: one box and one copied ops buffer per emitted op, at
+// every frame of the lowering. The local now records the box it was bound from
+// as a snapshot, and each rebind releases the superseded generation under that
+// guard, as a snapshot parameter does. Every result is read back after churn.
+struct Builder { ops: i32[], names: string[], depth: i32 }
+
+function (b: Builder) emit(op: i32): Builder { return Builder { ...b, ops: b.ops.append(op) }; }
+function (b: Builder) name(n: string): Builder { return Builder { ...b, names: b.names.append(n) }; }
+function (b: Builder) enter(): Builder { return Builder { ...b, depth: b.depth + 1 }; }
+
+// aliased, rebound through methods and a consume-safe callee, returned bare
+function lower_block(b: Builder, n: i32): Builder {
+  var sb: Builder = b;
+  sb = sb.enter();
+  var i: i32 = 0;
+  while (i < n) { sb = lower_one(sb, i); i = i + 1; }
+  sb = sb.name("blk");
+  return sb;
+}
+
+// the consume-safe callee: aliased, rebound, the last generation returned from a
+// method call (the tail every emitter ends in) and an early path handing back
+// the first
+function lower_one(b: Builder, v: i32): Builder {
+  var sb: Builder = b;
+  if (v % 5 == 4) { return sb; }
+  if (v % 3 == 0) { return sb.emit(v); }
+  sb = sb.emit(v);
+  sb = sb.emit(v * 2);
+  return sb.emit(v * 3);
+}
+
+// a forwarding callee: the alias goes on to another consume-safe position
+function lower_two(b: Builder, v: i32): Builder {
+  var sb: Builder = b;
+  sb = sb.emit(v);
+  return lower_one(sb, v + 1);
+}
+
+function churn(): i32 {
+  var junk: string[] = [];
+  var i: i32 = 0;
+  while (i < 300) { junk = junk.append("junk"); i = i + 1; }
+  return junk.len();
+}
+
+function main(): i32 {
+  var total: i32 = 0;
+  var r: i32 = 0;
+  while (r < 8) {
+    var b: Builder = Builder { ops: [], names: [], depth: 0 };
+    b = lower_block(b, 30);
+    b = lower_two(b, 7);
+    churn();
+    var k: i32 = 0;
+    while (k < b.ops.len()) { total = total + b.ops[k]; k = k + 1; }
+    total = total + b.names.len() + b.depth;
+    r = r + 1;
+  }
+  return total % 64;
+}

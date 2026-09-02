@@ -35,6 +35,28 @@ on:
       - "internal/treeshake/**"
       - "go.mod"
       - ".github/workflows/playground-e2e.yml"
+  # Also on main: a rebase-merge replays commits onto a main their PR's CI never
+  # saw, so a coupling between two individually-green PRs exists only in the
+  # merge. Filter mirrors the pull_request one; pinned by TestGateLanesRunOnMain.
+  push:
+    branches: [main]
+    paths:
+      - "cmd/fern-wasm/**"
+      - "web/**"
+      - "internal/ast/**"
+      - "internal/checker/**"
+      - "internal/constfold/**"
+      - "internal/diag/**"
+      - "internal/interp/**"
+      - "internal/lexer/**"
+      - "internal/lsp/**"
+      - "internal/modload/**"
+      - "internal/monomorph/**"
+      - "internal/parser/**"
+      - "internal/prelude/**"
+      - "internal/treeshake/**"
+      - "go.mod"
+      - ".github/workflows/playground-e2e.yml"
   workflow_dispatch:
   schedule:
     # Daily at 06:17 UTC. Off-the-hour timing avoids the noisy
@@ -47,9 +69,12 @@ env:
 # Supersede an in-flight run for the same ref: a new push to the
 # branch / PR (or a new dispatch) cancels the older run instead of
 # letting both sit in the queue. Keyed per-workflow + per-ref so
-# distinct PRs and the main branch never cancel each other.
+# distinct PRs and the main branch never cancel each other. Main runs
+# key on the SHA instead: back-to-back merges each keep their own run,
+# so a failure names the merge that caused it rather than the newest
+# of several — the same attribution choice check-sources.yml makes.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:

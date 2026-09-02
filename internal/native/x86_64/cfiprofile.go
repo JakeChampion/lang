@@ -18,6 +18,9 @@ var x86CFI = &cfi.Profile{
 	CodeAlign: 1,
 	DataAlign: -8,
 	RAColumn:  16,
+	PtrEnc:    0x1b, // DW_EH_PE_pcrel | DW_EH_PE_sdata4
+	PtrSize:   4,
+	FDEAlign:  4,
 	InitialRules: []byte{
 		0x0c, 0x07, 0x08, // DW_CFA_def_cfa rsp, 8
 		0x90, 0x01, // DW_CFA_offset r16 (rip) at CFA-8
@@ -34,6 +37,15 @@ var x86CFI = &cfi.Profile{
 // cfiDirective routes one `.cfi_*` line into the shared recorder.
 func (a *Assembler) cfiDirective(d, line string, off int) error {
 	return a.cfi.Directive(x86CFI, d, strings.TrimSpace(strings.TrimPrefix(line, d)), off)
+}
+
+// DebugFrame renders the recorded CFI as the `.debug_frame` section of a
+// final binary whose .text is at textVAddr.
+func (a *Assembler) DebugFrame(textVAddr uint64) ([]byte, error) {
+	if err := a.relax(); err != nil {
+		return nil, err
+	}
+	return a.cfi.DebugFrame(x86CFI, textVAddr)
 }
 
 // EhFrame renders the recorded CFI as a .eh_frame image for a final binary

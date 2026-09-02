@@ -905,42 +905,65 @@ func StaticExecutableDataWXSyms(text, data []byte, syms []Sym) []byte {
 	return imageWXSyms(text, data, emAArch64, 0, syms)
 }
 
-// StaticExecutableDataX86WXSymsRows is StaticExecutableDataX86WXSyms plus a
-// per-statement DWARF .debug_line table built from (address, line) rows (the
-// x86-64 -g path, #5537 slice 2 — one row per source statement, from the
-// assembler's `.loc` markers). srcFile names the source (relative to compDir,
-// which the CU records so a debugger can locate it). Empty rows behave like
-// the plain symtab image. textEndVAddr bounds the line program's final range.
-func StaticExecutableDataX86WXSymsRows(text []byte, u Unwind, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64, funcVars map[string][]LocalVar) []byte {
-	var dl []byte
-	if len(rows) > 0 {
-		dl = buildDebugLineRows(rows, uint64(TextVAddrWX), textEndVAddr, srcFile)
-	}
-	return imageWXSymsLines(text, u, data, emX86_64, 0, syms, dl, srcFile, compDir, funcVars)
+// Debug is what a `-g` image carries beyond its loadable segments: the
+// symbol table, the DWARF line table's files and rows, the compilation unit's
+// identity, the per-function variables, and the `.debug_frame` twin of the
+// unwind data. Rows and Frame may be empty; Files must cover every row.
+type Debug struct {
+	Syms []Sym
+	// Files is the `.file N "path"` table the rows index. SrcFile names the
+	// compilation unit and is file 1 when Files is nil.
+	Files   map[int]string
+	Rows    []LineRow
+	SrcFile string
+	CompDir string
+	// TextEnd bounds the line program's final row.
+	TextEnd uint64
+	Vars    map[string][]LocalVar
+	Frame   []byte
 }
 
-// StaticExecutableDataWXSymsRows is the arm64 counterpart of
-// StaticExecutableDataX86WXSymsRows.
-func StaticExecutableDataWXSymsRows(text []byte, u Unwind, data []byte, syms []Sym, rows []LineRow, srcFile, compDir string, textEndVAddr uint64, funcVars map[string][]LocalVar) []byte {
-	var dl []byte
-	if len(rows) > 0 {
-		dl = buildDebugLineRows(rows, uint64(TextVAddrWX), textEndVAddr, srcFile)
-	}
-	return imageWXSymsLines(text, u, data, emAArch64, 0, syms, dl, srcFile, compDir, funcVars)
+// StaticExecutableDataX86WXDebug is StaticExecutableDataX86WXEhFrame plus the
+// non-alloc section table a debugger reads: .symtab, .debug_abbrev,
+// .debug_info, and when the assembler recorded them .debug_line and
+// .debug_frame. The loaded image is identical to the plain one.
+func StaticExecutableDataX86WXDebug(text []byte, u Unwind, data []byte, d Debug) ([]byte, error) {
+	return imageWXDebug(text, u, data, emX86_64, 0, d)
+}
+
+// StaticExecutableDataWXDebug is the arm64 counterpart of
+// StaticExecutableDataX86WXDebug.
+func StaticExecutableDataWXDebug(text []byte, u Unwind, data []byte, d Debug) ([]byte, error) {
+	return imageWXDebug(text, u, data, emAArch64, 0, d)
 }
 
 // imageWXSyms builds the W^X image (imageWX) and appends a section table with
 // a .symtab. The sections are all non-alloc and live after the loadable
 // segments, so the running image is identical to imageWX's.
 func imageWXSyms(text, data []byte, machine uint16, entryOff uint64, syms []Sym) []byte {
-	return imageWXSymsLines(text, Unwind{}, data, machine, entryOff, syms, nil, "", "", nil)
+	buf, err := imageWXDebug(text, Unwind{}, data, machine, entryOff, Debug{Syms: syms})
+	if err != nil {
+		panic(err) // no rows, no files: nothing to reject
+	}
+	return buf
 }
 
-// imageWXSymsLines is imageWXSyms plus an optional pre-encoded DWARF
-// .debug_line table (debugLine). When debugLine is empty no line section is
-// emitted and the CU carries no DW_AT_stmt_list — identical to the plain
-// symtab+DIE image.
-func imageWXSymsLines(text []byte, u Unwind, data []byte, machine uint16, entryOff uint64, syms []Sym, debugLine []byte, srcName, compDir string, funcVars map[string][]LocalVar) []byte {
+// imageWXDebug is imageWXSyms plus the DWARF sections d describes. With no
+// rows there is no .debug_line and the CU carries no DW_AT_stmt_list; with
+// no Frame there is no .debug_frame.
+func imageWXDebug(text []byte, u Unwind, data []byte, machine uint16, entryOff uint64, d Debug) ([]byte, error) {
+	syms, srcName, compDir, funcVars := d.Syms, d.SrcFile, d.CompDir, d.Vars
+	var debugLine []byte
+	if len(d.Rows) > 0 {
+		files := d.Files
+		if files == nil {
+			files = map[int]string{1: d.SrcFile}
+		}
+		var err error
+		if debugLine, err = buildDebugLine(d.Rows, d.TextEnd, files); err != nil {
+			return nil, err
+		}
+	}
 	buf := imageWX(text, u, data, machine, entryOff)
 
 	// .strtab: NUL, then each symbol name NUL-terminated.
@@ -971,9 +994,12 @@ func imageWXSymsLines(text []byte, u Unwind, data []byte, machine uint16, entryO
 	}
 	nDebugInfo := addShName(".debug_info")
 	hasLines := len(debugLine) > 0
-	var nDebugLine uint32
+	var nDebugLine, nDebugFrame uint32
 	if hasLines {
 		nDebugLine = addShName(".debug_line")
+	}
+	if len(d.Frame) > 0 {
+		nDebugFrame = addShName(".debug_frame")
 	}
 
 	// .symtab: index 0 is STN_UNDEF (all zero), then one STT_FUNC per symbol.
@@ -1020,6 +1046,9 @@ func imageWXSymsLines(text []byte, u Unwind, data []byte, machine uint16, entryO
 	debugLineOff := uint64(len(buf))
 	buf = append(buf, debugLine...)
 	pad8()
+	debugFrameOff := uint64(len(buf))
+	buf = append(buf, d.Frame...)
+	pad8()
 	shoff := uint64(len(buf))
 
 	textOff := uint64(ehSize + phNumWX*phSize) // .text file offset in the WX image
@@ -1033,13 +1062,20 @@ func imageWXSymsLines(text []byte, u Unwind, data []byte, machine uint16, entryO
 	buf = appendShdr(buf, nStrtab, 3, 0, 0, strtabOff, uint64(len(strtab)), 0, 0, 1, 0)
 	// [4] .shstrtab
 	buf = appendShdr(buf, nShstrtab, 3, 0, 0, shstrtabOff, uint64(len(shstrtab)), 0, 0, 1, 0)
-	// [5] .debug_abbrev  [6] .debug_info  [7] .debug_line — PROGBITS, non-alloc.
+	// [5] .debug_abbrev  [6] .debug_info  then .debug_line / .debug_frame —
+	// PROGBITS, non-alloc.
 	buf = appendShdr(buf, nDebugAbbrev, 1, 0, 0, debugAbbrevOff, uint64(len(debugAbbrev)), 0, 0, 1, 0)
 	buf = appendShdr(buf, nDebugInfo, 1, 0, 0, debugInfoOff, uint64(len(debugInfo)), 0, 0, 1, 0)
 	shnum := uint16(7)
 	if hasLines {
 		buf = appendShdr(buf, nDebugLine, 1, 0, 0, debugLineOff, uint64(len(debugLine)), 0, 0, 1, 0)
-		shnum = 8
+		shnum++
+	}
+	// .debug_frame: the same rules as .eh_frame in the container gdb reads
+	// first; non-alloc, 8-aligned like its entries.
+	if len(d.Frame) > 0 {
+		buf = appendShdr(buf, nDebugFrame, 1, 0, 0, debugFrameOff, uint64(len(d.Frame)), 0, 0, 8, 0)
+		shnum++
 	}
 	// The unwind sections: PROGBITS, SHF_ALLOC — they are inside the R+X
 	// segment, unlike the .debug_* sections above. Appended last so the fixed
@@ -1058,7 +1094,7 @@ func imageWXSymsLines(text []byte, u Unwind, data []byte, machine uint16, entryO
 	putLE16s(buf[58:], 64)    // e_shentsize
 	putLE16s(buf[60:], shnum) // e_shnum
 	putLE16s(buf[62:], 4)     // e_shstrndx (.shstrtab)
-	return buf
+	return buf, nil
 }
 
 // appendShdr appends one 64-byte Elf64_Shdr.

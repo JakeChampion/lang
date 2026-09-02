@@ -95,11 +95,13 @@ const (
 )
 
 // layout fixes the file/virtual-address layout of a Mach-O image given
-// the code and data sizes. The assembler and the container must agree on
-// it, so both go through layoutFor.
+// the code, unwind and data sizes. The assembler and the container must
+// agree on it, so both go through layoutFor.
 type layout struct {
 	textOff         int // file offset of code within __TEXT (after header+loadcmds)
 	textLen         int
+	ehOff           int // file offset of __eh_frame within __TEXT (0 when none)
+	ehLen           int
 	dataLen         int
 	textVMSize      int // page-aligned __TEXT segment size
 	dataFileLen     int // page-aligned __DATA segment size (0 if no data)
@@ -107,6 +109,7 @@ type layout struct {
 	rebaseOff       int // file offset of the LC_DYLD_INFO_ONLY rebase stream
 	rebaseLen       int
 	textVAddr       uint64 // address of the first code byte (== entry)
+	ehVAddr         uint64 // address of __eh_frame (0 when none)
 	dataVAddr       uint64 // __DATA segment base
 	// Symtab placement inside __LINKEDIT (zero-valued when no syms).
 	symOff int // file offset of the nlist_64 array
@@ -114,15 +117,26 @@ type layout struct {
 	sigOff int // file offset where the code signature begins (== codeLimit)
 }
 
-// layoutFor computes the layout for the given code/data sizes and, when
-// hasSyms, an LC_SYMTAB whose nlist array (symtabLen bytes) + string table
-// (strtabLen bytes) sit at the front of __LINKEDIT, before the code signature.
-// The extra load command shifts textOff (hence every address), so the assembler
-// must lay out against a layout with the SAME hasSyms — see SegmentAddrsSyms.
-func layoutFor(textLen, dataLen, symtabLen, strtabLen, rebaseLen int, hasSyms bool) layout {
+// layoutFor computes the layout for the given code/unwind/data sizes and,
+// when hasSyms, an LC_SYMTAB whose nlist array (symtabLen bytes) + string
+// table (strtabLen bytes) sit at the front of __LINKEDIT, before the code
+// signature. The extra load command shifts textOff (hence every address), and
+// so does the __eh_frame section header, so the assembler must lay out against
+// a layout with the SAME hasSyms and the same has-unwind answer — see
+// SegmentMap.
+func layoutFor(textLen, ehLen, dataLen, symtabLen, strtabLen, rebaseLen int, hasSyms bool) layout {
 	hasData := dataLen > 0
-	textOff := machHeaderLen + loadCommandsLen(hasData, hasSyms)
-	textVMSize := alignUp(textOff+textLen, pageSize)
+	textOff := machHeaderLen + loadCommandsLen(hasData, ehLen > 0, hasSyms)
+	textEnd := textOff + textLen
+	ehOff := 0
+	if ehLen > 0 {
+		// __eh_frame follows the code inside __TEXT, 8-aligned: its FDEs
+		// carry 8-byte pcrel pointers, and being in the same segment keeps
+		// the R+X mapping libunwind reads it through.
+		ehOff = alignUp(textEnd, 8)
+		textEnd = ehOff + ehLen
+	}
+	textVMSize := alignUp(textEnd, pageSize)
 	dataFileLen := 0
 	if hasData {
 		dataFileLen = alignUp(dataLen, pageSize)
@@ -132,11 +146,13 @@ func layoutFor(textLen, dataLen, symtabLen, strtabLen, rebaseLen int, hasSyms bo
 	symOff := alignUp(rebaseOff+rebaseLen, 8)
 	strOff := symOff + symtabLen
 	sigOff := alignUp(strOff+strtabLen, 16)
-	return layout{
+	lo := layout{
 		rebaseOff:       rebaseOff,
 		rebaseLen:       rebaseLen,
 		textOff:         textOff,
 		textLen:         textLen,
+		ehOff:           ehOff,
+		ehLen:           ehLen,
 		dataLen:         dataLen,
 		textVMSize:      textVMSize,
 		dataFileLen:     dataFileLen,
@@ -147,35 +163,48 @@ func layoutFor(textLen, dataLen, symtabLen, strtabLen, rebaseLen int, hasSyms bo
 		strOff:          strOff,
 		sigOff:          sigOff,
 	}
+	if ehLen > 0 {
+		lo.ehVAddr = baseVAddr + uint64(ehOff)
+	}
+	return lo
 }
 
-// SegmentAddrs returns the code (== entry) address and the __DATA segment
-// base for the given code/data sizes. The assembler resolves adrp @PAGE /
-// @PAGEOFF references against these before StaticExecutable lays the same
-// blobs out at the same addresses.
-func SegmentAddrs(textLen, dataLen int) (textVAddr, dataVAddr uint64) {
-	lo := layoutFor(textLen, dataLen, 0, 0, 0, false)
-	return lo.textVAddr, lo.dataVAddr
+// ImageMap is where the container will put the three things the assembler
+// resolves addresses against: the code, the __eh_frame it describes, and the
+// __DATA segment. EhFrame is 0 when the image carries no unwind data.
+type ImageMap struct {
+	Text    uint64
+	EhFrame uint64
+	Data    uint64
 }
 
-// SegmentAddrsSyms is SegmentAddrs for the `-g` path: the LC_SYMTAB load
-// command shifts textOff by its 24 bytes, so a symbol-table build must resolve
-// adrp against these (shifted) addresses. The symtab/strtab sizes don't affect
-// the code/data addresses (they live at the end, in __LINKEDIT), so zero
-// suffices here.
-func SegmentAddrsSyms(textLen, dataLen int) (textVAddr, dataVAddr uint64) {
-	lo := layoutFor(textLen, dataLen, 0, 0, 0, true)
-	return lo.textVAddr, lo.dataVAddr
+// SegmentMap is the single authority on the Mach-O address map, for an image
+// whose code is textLen bytes, which carries ehLen bytes of __eh_frame (0 for
+// none), whose data blob is dataLen bytes, and which does or does not carry
+// the `-g` LC_SYMTAB. Both the __eh_frame section header and the LC_SYMTAB
+// command shift textOff, hence every address, so the assembler must resolve
+// adrp @PAGE / @PAGEOFF against the map of the SAME answers to both — the
+// symtab/strtab sizes themselves live at the end, in __LINKEDIT, and move
+// nothing.
+//
+// The __eh_frame image is itself rendered against Text and EhFrame (pcrel
+// FDE pointers), and neither depends on ehLen — only Data does — so a caller
+// asks once with a placeholder length to render it and again with the real
+// one to place the data.
+func SegmentMap(textLen, ehLen, dataLen int, syms bool) ImageMap {
+	lo := layoutFor(textLen, ehLen, dataLen, 0, 0, 0, syms)
+	return ImageMap{Text: lo.textVAddr, EhFrame: lo.ehVAddr, Data: lo.dataVAddr}
 }
 
-// StaticExecutable wraps machine code and a data blob into a runnable,
-// ad-hoc-signed static arm64 Mach-O executable. Code occupies the r-x
-// __TEXT segment; data (read-only constants + writable globals, merged by
-// the assembler) occupies a r/w __DATA segment. Execution begins at the
-// first code byte (the code generator's `_main`). The text/data sizes
-// must match those passed to SegmentAddrs so addresses line up.
-func StaticExecutable(text, data []byte, identifier string, rebases []int) []byte {
-	return staticExecutable(text, data, identifier, nil, rebases)
+// StaticExecutable wraps machine code, an optional __eh_frame image and a
+// data blob into a runnable, ad-hoc-signed static arm64 Mach-O executable.
+// Code and unwind data occupy the r-x __TEXT segment; data (read-only
+// constants + writable globals, merged by the assembler) occupies a r/w
+// __DATA segment. Execution begins at the first code byte (the code
+// generator's `_main`). The sizes must match those passed to SegmentMap so
+// addresses line up.
+func StaticExecutable(text, eh, data []byte, identifier string, rebases []int) []byte {
+	return staticExecutable(text, eh, data, identifier, nil, rebases)
 }
 
 // StaticExecutableSyms is StaticExecutable plus a static symbol table
@@ -183,12 +212,13 @@ func StaticExecutable(text, data []byte, identifier string, rebases []int) []byt
 // the front of __LINKEDIT, ahead of the code signature (which hashes them, so
 // they stay covered). Emitted under `fern -g` so lldb / nm / a backtrace can
 // symbolicate arm64-darwin binaries. The text/data must have been laid out
-// against SegmentAddrsSyms (the LC_SYMTAB command shifts every address).
-func StaticExecutableSyms(text, data []byte, identifier string, syms []Sym, rebases []int) []byte {
-	return staticExecutable(text, data, identifier, syms, rebases)
+// against SegmentMap with syms set (the LC_SYMTAB command shifts every
+// address).
+func StaticExecutableSyms(text, eh, data []byte, identifier string, syms []Sym, rebases []int) []byte {
+	return staticExecutable(text, eh, data, identifier, syms, rebases)
 }
 
-func staticExecutable(text, data []byte, identifier string, syms []Sym, rebases []int) []byte {
+func staticExecutable(text, eh, data []byte, identifier string, syms []Sym, rebases []int) []byte {
 	hasSyms := len(syms) > 0
 	var nlists, strtab []byte
 	if hasSyms {
@@ -200,7 +230,7 @@ func staticExecutable(text, data []byte, identifier string, syms []Sym, rebases 
 	if len(data) > 0 {
 		rebase = rebaseOpcodes(2, rebases)
 	}
-	lo := layoutFor(len(text), len(data), len(nlists), len(strtab), len(rebase), hasSyms)
+	lo := layoutFor(len(text), len(eh), len(data), len(nlists), len(strtab), len(rebase), hasSyms)
 	codeLimit := lo.sigOff
 
 	sig := codeSignature(nil, identifier, codeLimit, lo.textVMSize) // size probe
@@ -212,7 +242,7 @@ func staticExecutable(text, data []byte, identifier string, syms []Sym, rebases 
 	buf := make([]byte, lo.sigOff)
 	mh := newImage(buf)
 	mh.machHeader()
-	mh.segmentText(uint64(lo.textOff), len(text))
+	mh.segmentText(uint64(lo.textOff), len(text), uint64(lo.ehOff), len(eh))
 	if len(data) > 0 {
 		mh.segmentData(lo.dataVAddr, uint64(lo.dataFileLen), uint64(lo.textVMSize), len(data))
 	}
@@ -229,6 +259,9 @@ func staticExecutable(text, data []byte, identifier string, syms []Sym, rebases 
 
 	copy(buf[lo.rebaseOff:], rebase)
 	copy(buf[lo.textOff:], text)
+	if len(eh) > 0 {
+		copy(buf[lo.ehOff:], eh)
+	}
 	if len(data) > 0 {
 		copy(buf[lo.textVMSize:], data)
 	}
@@ -271,11 +304,15 @@ func lcStrCmdLen(cmd uint32, path string) int {
 }
 
 // loadCommandsLen returns the total size of all load commands:
-// __PAGEZERO + __TEXT (1 section: __text) + optional __DATA (1 section) +
-// __LINKEDIT + optional LC_SYMTAB + LC_BUILD_VERSION + LC_LOAD_DYLINKER +
-// LC_LOAD_DYLIB + LC_MAIN + LC_CODE_SIGNATURE.
-func loadCommandsLen(hasData, hasSyms bool) int {
+// __PAGEZERO + __TEXT (__text, plus __eh_frame when the image carries unwind
+// data) + optional __DATA (1 section) + __LINKEDIT + LC_SYMTAB +
+// LC_BUILD_VERSION + LC_LOAD_DYLINKER + LC_LOAD_DYLIB + LC_MAIN +
+// LC_CODE_SIGNATURE.
+func loadCommandsLen(hasData, hasEh, hasSyms bool) int {
 	n := segCmdLen + (segCmdLen + sectLen) + segCmdLen
+	if hasEh {
+		n += sectLen
+	}
 	if hasData {
 		n += segCmdLen + sectLen
 	}

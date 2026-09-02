@@ -71,6 +71,7 @@ import (
 	"github.com/jakechampion/lang/internal/monomorph"
 	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
 	nativeelf "github.com/jakechampion/lang/internal/native/elf"
+	"github.com/jakechampion/lang/internal/native/gasstr"
 	nativemacho "github.com/jakechampion/lang/internal/native/macho"
 	nativex86 "github.com/jakechampion/lang/internal/native/x86_64"
 	"github.com/jakechampion/lang/internal/parser"
@@ -1807,6 +1808,13 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	// source path and displays the source, not just addresses.
 	dbgSrc := srcPath
 	dbgCompDir, _ := os.Getwd()
+	// The `.file` table is keyed by the path modload stamps on every
+	// declaration, which is absolute; naming the main file by the path as
+	// typed would list it twice.
+	dbgMainFile, err := filepath.Abs(srcPath)
+	if err != nil {
+		dbgMainFile = srcPath
+	}
 	// DWARF variable DIEs (#5537 slice 3 locals/params): map each function to
 	// its scalar parameters + locals with frame offsets, so gdb/lldb can
 	// `info args` / `print <var>`. x86-64 and arm64 (Linux ELF); gated on -g.
@@ -1818,9 +1826,9 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	var asm string
 	switch target {
 	case "x86-64-linux":
-		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{Exports: exportNames, DebugLines: emitDebugSyms})
+		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{Exports: exportNames, DebugLines: emitDebugSyms, DebugSource: dbgMainFile})
 	default:
-		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames, DebugLines: emitDebugSyms && !darwin && !android})
+		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames, DebugLines: emitDebugSyms && !darwin && !android, DebugSource: dbgMainFile})
 	}
 	if err != nil {
 		return 1, err
@@ -2204,11 +2212,17 @@ func linkNative(asm, outPath, srcFile, compDir string, funcVars map[string][]nat
 		fs := nativeelf.FuncSyms(syms, textEnd)
 		// Per-statement DWARF .debug_line rows from the assembler's `.loc`
 		// markers (#5537 slice 2); Offset is text-relative → absolute vaddr.
-		rows := make([]nativeelf.LineRow, 0, len(locRows))
-		for _, r := range locRows {
-			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
+		frame, err := a.DebugFrame(nativeelf.TextVAddrWX)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
 		}
-		bin := nativeelf.StaticExecutableDataWXSymsRows(text, u, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
+		bin, err := nativeelf.StaticExecutableDataWXDebug(text, u, rodata, nativeelf.Debug{
+			Syms: fs, Files: a.Files(), Rows: absoluteRows(locRows), SrcFile: srcFile, CompDir: compDir,
+			TextEnd: textEnd, Vars: funcVars, Frame: frame,
+		})
+		if err != nil {
+			return fmt.Errorf("native linker: %w", err)
+		}
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -2368,6 +2382,19 @@ func sharedExports(names, asmNames []string, vaddr map[string]uint64) []nativeel
 		out[i] = nativeelf.Export{Name: n, Value: vaddr[asmNames[i]]}
 	}
 	return out
+}
+
+// absoluteRows turns the assembler's text-relative `.loc` rows into the
+// absolute-address rows the DWARF line table is written from.
+func absoluteRows(locRows []gasstr.LineRow) []nativeelf.LineRow {
+	rows := make([]nativeelf.LineRow, 0, len(locRows))
+	for _, r := range locRows {
+		rows = append(rows, nativeelf.LineRow{
+			Addr: nativeelf.TextVAddrWX + uint64(r.Offset), File: r.File, Line: r.Line, Col: r.Col,
+			PrologueEnd: r.PrologueEnd, EpilogueBegin: r.EpilogueBegin, IsStmt: r.IsStmt,
+		})
+	}
+	return rows
 }
 
 // linkNativeX86 is the x86-64 counterpart of linkNative: it assembles and
@@ -2554,13 +2581,17 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 		syms, locRows := a.TextLabelVAddrs(nativeelf.TextVAddrWX), a.LocRows()
 		textEnd := nativeelf.TextVAddrWX + uint64(len(text))
 		fs := nativeelf.FuncSyms(syms, textEnd)
-		// Per-statement DWARF .debug_line rows from the assembler's `.loc`
-		// markers (#5537 slice 2); Offset is text-relative → absolute vaddr.
-		rows := make([]nativeelf.LineRow, 0, len(locRows))
-		for _, r := range locRows {
-			rows = append(rows, nativeelf.LineRow{Addr: nativeelf.TextVAddrWX + uint64(r.Offset), Line: r.Line})
+		frame, err := a.DebugFrame(nativeelf.TextVAddrWX)
+		if err != nil {
+			return fmt.Errorf("native assembler: %w", err)
 		}
-		bin := nativeelf.StaticExecutableDataX86WXSymsRows(text, u, rodata, fs, rows, srcFile, compDir, textEnd, funcVars)
+		bin, err := nativeelf.StaticExecutableDataX86WXDebug(text, u, rodata, nativeelf.Debug{
+			Syms: fs, Files: a.Files(), Rows: absoluteRows(locRows), SrcFile: srcFile, CompDir: compDir,
+			TextEnd: textEnd, Vars: funcVars, Frame: frame,
+		})
+		if err != nil {
+			return fmt.Errorf("native linker: %w", err)
+		}
 		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 			return err
 		}
@@ -2586,47 +2617,57 @@ func linkNativeX86(asm, outPath, srcFile, compDir string, funcVars map[string][]
 
 // linkNativeDarwin assembles arm64 asm and wraps it in a static, ad-hoc-
 // signed Mach-O executable entirely in-process (internal/native/macho) —
-// no clang/ld64. Experimental: covers the integer/control-flow surface
-// the assembler handles; @PAGE/@PAGEOFF data addressing (strings, heap)
-// is not yet supported and surfaces as a clear assembler error.
+// no clang/ld64. Code, the __eh_frame its `.cfi_*` directives describe, and
+// the data blob are laid out against one address map, so the assembler's
+// adrp @PAGE / @PAGEOFF and the FDEs' pcrel pointers agree with where the
+// container puts things.
 func linkNativeDarwin(asm, outPath string) error {
 	a, err := nativearm64.ParseProgram(asm)
 	if err != nil {
 		return fmt.Errorf("native assembler: %w", err)
 	}
-	// Code lives in __TEXT, data (string constants + globals) in a separate
-	// __DATA segment; the assembler resolves adrp @PAGE / @PAGEOFF against
-	// the addresses the Mach-O layout will place them at.
-	textLen, dataLen := a.MachOTextLen(), a.MachODataLen()
 	// Under -g, an LC_SYMTAB naming every function is emitted into __LINKEDIT
 	// (#5537 slice 1 for arm64-darwin). Its 24-byte load command shifts every
-	// address, so the assembler must resolve against the syms-inclusive layout.
-	if emitDebugSyms {
-		textVAddr, dataVAddr := nativemacho.SegmentAddrsSyms(textLen, dataLen)
-		text, data, err := a.LinkMachO(textVAddr, dataVAddr)
-		if err != nil {
-			return fmt.Errorf("native assembler: %w", err)
-		}
-		syms := nativemacho.FuncSyms(a.TextLabelVAddrs(textVAddr), textVAddr+uint64(len(text)))
-		bin := nativemacho.StaticExecutableSyms(text, data, filepath.Base(outPath), syms, a.MachODataRebaseOffsets())
-		if err := os.WriteFile(outPath, bin, 0o755); err != nil {
-			return err
-		}
-		return os.Chmod(outPath, 0o755)
-	}
-	textVAddr, dataVAddr := nativemacho.SegmentAddrs(textLen, dataLen)
-	text, data, err := a.LinkMachO(textVAddr, dataVAddr)
+	// address, so the layout is asked for with the same answer.
+	text, eh, data, m, err := layoutMachO(a, emitDebugSyms)
 	if err != nil {
-		return fmt.Errorf("native assembler: %w", err)
+		return err
 	}
-	bin := nativemacho.StaticExecutable(text, data, filepath.Base(outPath), a.MachODataRebaseOffsets())
+	var bin []byte
+	if emitDebugSyms {
+		syms := nativemacho.FuncSyms(a.TextLabelVAddrs(m.Text), m.Text+uint64(len(text)))
+		bin = nativemacho.StaticExecutableSyms(text, eh, data, filepath.Base(outPath), syms, a.MachODataRebaseOffsets())
+	} else {
+		bin = nativemacho.StaticExecutable(text, eh, data, filepath.Base(outPath), a.MachODataRebaseOffsets())
+	}
 	if err := os.WriteFile(outPath, bin, 0o755); err != nil {
 		return err
 	}
-	if err := os.Chmod(outPath, 0o755); err != nil {
-		return err
+	return os.Chmod(outPath, 0o755)
+}
+
+// layoutMachO is the Mach-O counterpart of layoutWithUnwind: the code size
+// settles first (literal pool, veneers), a map with a placeholder unwind
+// length fixes the code and __eh_frame addresses — neither depends on the
+// unwind image's own size — the image is rendered there, and the real length
+// then places __DATA. Asm carrying no `.cfi_*` renders no image and gets the
+// map without a __eh_frame section.
+func layoutMachO(a *nativearm64.Assembler, syms bool) (text, eh, data []byte, m nativemacho.ImageMap, err error) {
+	fail := func(err error) ([]byte, []byte, []byte, nativemacho.ImageMap, error) {
+		return nil, nil, nil, nativemacho.ImageMap{}, fmt.Errorf("native assembler: %w", err)
 	}
-	return nil
+	textLen, dataLen := a.MachOTextLen(), a.MachODataLen()
+	if a.HasCFI() {
+		m = nativemacho.SegmentMap(textLen, 1, dataLen, syms)
+		if eh, err = a.MachOEhFrame(m.Text, m.EhFrame); err != nil {
+			return fail(err)
+		}
+	}
+	m = nativemacho.SegmentMap(textLen, len(eh), dataLen, syms)
+	if text, data, err = a.LinkMachO(m.Text, m.Data); err != nil {
+		return fail(err)
+	}
+	return text, eh, data, m, nil
 }
 
 func link(asm, outPath, cc string) error {

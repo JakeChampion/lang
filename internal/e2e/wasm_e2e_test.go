@@ -113,6 +113,7 @@ type runOpts struct {
 	stdin   string
 	envs    []string // KEY=VAL strings forwarded as `--env`
 	workDir string   // when non-empty, mount as `--dir=<workDir>`
+	fdLimit int      // when > 0, run wasmtime under `ulimit -n <fdLimit>`
 }
 
 // buildComponent runs the in-process parse → check → wasm.Emit
@@ -252,6 +253,11 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 	cmdArgs = append(cmdArgs, componentPath)
 	cmdArgs = append(cmdArgs, opts.args...)
 	cmd := exec.Command("wasmtime", cmdArgs...)
+	if opts.fdLimit > 0 {
+		// A descriptor limit is inherited, so lower it in a shell that
+		// then execs wasmtime under it.
+		cmd = exec.Command("sh", append([]string{"-c", `ulimit -n "$0" && exec wasmtime "$@"`, strconv.Itoa(opts.fdLimit)}, cmdArgs...)...)
+	}
 	cmd.Stdin = strings.NewReader(opts.stdin)
 	var so, se bytes.Buffer
 	cmd.Stdout = &so
@@ -6054,6 +6060,14 @@ func TestWASMResultFloatOk(t *testing.T) {
 // back files the program created.
 func runWasmInDir(t *testing.T, src string, seed map[string]string) (stdout, stderr string, exitCode int, dir string) {
 	t.Helper()
+	return runWasmInDirOpts(t, src, seed, runOpts{})
+}
+
+// runWasmInDirOpts is runWasmInDir with the remaining run options
+// (stdin, env, a descriptor limit) supplied by the caller; the seeded
+// temp dir is always the work dir.
+func runWasmInDirOpts(t *testing.T, src string, seed map[string]string, opts runOpts) (stdout, stderr string, exitCode int, dir string) {
+	t.Helper()
 	p := buildComponent(t, src)
 	dir = t.TempDir()
 	for name, content := range seed {
@@ -6061,7 +6075,8 @@ func runWasmInDir(t *testing.T, src string, seed map[string]string) (stdout, std
 			t.Fatalf("seed %s: %v", name, err)
 		}
 	}
-	s, e, ec := runComponent(t, p, runOpts{workDir: dir})
+	opts.workDir = dir
+	s, e, ec := runComponent(t, p, opts)
 	return s, e, ec, dir
 }
 

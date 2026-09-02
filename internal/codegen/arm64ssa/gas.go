@@ -25,6 +25,7 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/codegen/arm64"
 	x86 "github.com/jakechampion/lang/internal/codegen/x86_64ssa"
+	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/ssa"
 )
@@ -145,7 +146,39 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 		fmt.Fprintf(&b, format, args...)
 		b.WriteByte('\n')
 	}
-	helpers := referencedRuntimeHelpers(progs)
+	helpers, fern := referencedRuntimeHelpers(progs)
+	// A helper written in Fern (internal/fernrt) is lifted and emitted as a
+	// function of this module, under the label its callers already use. Its
+	// own calls may reach further helpers, so the reference scan repeats
+	// until nothing new is reached.
+	for len(fern) > 0 {
+		for _, name := range fern {
+			_, irFn, err := fernrt.Func(name, 8)
+			if err != nil {
+				return "", err
+			}
+			f, err := ssa.LiftFromIRWith(irFn, ir.NewCallShapes(&ir.Program{Funcs: []*ir.Func{irFn}}))
+			if err != nil {
+				return "", fmt.Errorf("arm64ssa: lift %q: %w", name, err)
+			}
+			ssa.Optimize(f)
+			if err := ssa.Verify(f); err != nil {
+				return "", fmt.Errorf("arm64ssa: verify %q: %w", name, err)
+			}
+			ssa.ResolveWidths(map[string]*ssa.Func{name: f})
+			p, err := x86.EmitWithCalleeSaved(f, numAlloc, armCalleeSavedMask(numAlloc))
+			if err != nil {
+				return "", fmt.Errorf("arm64ssa: emit %q: %w", name, err)
+			}
+			if p.NumRegFile > len(armX) {
+				return "", fmt.Errorf("arm64ssa: %q needs %d registers but only %d are wired", name, p.NumRegFile, len(armX))
+			}
+			progs[name] = p
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		helpers, fern = referencedRuntimeHelpers(progs)
+	}
 	heap := usesHeap(progs)
 	for _, h := range helpers {
 		if heapUsingHelpers[h] {
@@ -808,6 +841,7 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"__str_len":                 emitStrLenHelper,
 	"__ptr_width":               emitPtrWidthHelper,
 	"__load_i32":                emitLoadI32Helper,
+	"__load_u8":                 emitLoadU8Helper,
 	"__store_i32":               emitStoreI32Helper,
 	"__load_ptr":                emitLoadPtrHelper,
 	"__store_ptr":               emitStorePtrHelper,
@@ -875,7 +909,6 @@ var runtimeHelperEmitters = map[string]func(w func(string, ...any)){
 	"temp_dir":                      emitTempDirHelper,
 	"read_dir":                      emitReadDirHelper,
 	"__fern_io_error":               emitIoErrorHelper,
-	"__fern_utf8_valid":             emitUtf8ValidHelper,
 	"tcp_listen":                    emitTcpListenHelper,
 	"tcp_accept":                    emitTcpAcceptHelper,
 	"tcp_recv":                      emitTcpRecvHelper,
@@ -1253,9 +1286,7 @@ func emitPowF64Helper(w func(string, ...any)) {
 	ldc("d3", ".Lfc_one")
 	w("\tfmov d4, d0")
 	w(".Lssa_pow_loop:")
-	w("\tand x13, x11, #1")
-	w("\tcmp x13, #0")
-	w("\tb.eq .Lssa_pow_skip")
+	w("\ttbz x11, #0, .Lssa_pow_skip")
 	w("\tfmul d3, d3, d4")
 	w(".Lssa_pow_skip:")
 	w("\tfmul d4, d4, d4")
@@ -2535,11 +2566,25 @@ func checkNoDanglingCalls(asm string) error {
 	return fmt.Errorf("arm64ssa: %d call target(s) the module never defines — a runtime helper this backend does not emit: %s", len(missing), strings.Join(missing, ", "))
 }
 
-func referencedRuntimeHelpers(progs map[string]*x86.Program) []string {
+// referencedRuntimeHelpers returns the hand-written helpers the module calls,
+// closed over runtimeHelperDeps, and separately the helpers written in Fern
+// (internal/fernrt) it reaches the same way and has not yet lifted into
+// progs.
+func referencedRuntimeHelpers(progs map[string]*x86.Program) (asm, fern []string) {
 	seen := map[string]bool{}
+	fernSeen := map[string]bool{}
 	var add func(name string)
 	add = func(name string) {
-		if seen[name] || runtimeHelperEmitters[name] == nil {
+		if seen[name] || fernSeen[name] {
+			return
+		}
+		if fernrt.Has(name) {
+			if progs[name] == nil {
+				fernSeen[name] = true
+			}
+			return
+		}
+		if runtimeHelperEmitters[name] == nil {
 			return
 		}
 		seen[name] = true
@@ -2561,7 +2606,11 @@ func referencedRuntimeHelpers(progs map[string]*x86.Program) []string {
 		out = append(out, n)
 	}
 	sort.Strings(out)
-	return out
+	for n := range fernSeen {
+		fern = append(fern, n)
+	}
+	sort.Strings(fern)
+	return out, fern
 }
 
 // The RC helpers read a 4-byte reference count at [data-8] (the header the bump
@@ -2899,6 +2948,14 @@ func emitLoadI32Helper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__load_i32"))
 	w("\tldr w0, [x0]")
+	w("\tret")
+}
+
+// emitLoadU8Helper writes __load_u8(addr) -> i32: one byte, zero-extended.
+func emitLoadU8Helper(w func(string, ...any)) {
+	w("")
+	w("%s:", fnLabel("__load_u8"))
+	w("\tldrb w0, [x0]")
 	w("\tret")
 }
 
@@ -4017,123 +4074,6 @@ func emitReadFileHelper(w func(string, ...any)) {
 	w("\tret")
 }
 
-// emitUtf8ValidHelper writes __fern_utf8_valid(data, len) -> 1/0 — the strict
-// well-formedness scan behind read_file's D9 validation (#5714). Accepts exactly
-// what std/utf8.is_valid_utf8 accepts: stray continuations, overlong 2/3/4-byte
-// forms, surrogates U+D800–DFFF, truncation at the end, and leads above 0xF4 all
-// reject. Byte-range formulation (no codepoint assembly), with an 8-byte word
-// skip over ASCII runs. Leaf; x0=data, x1=len.
-func emitUtf8ValidHelper(w func(string, ...any)) {
-	w("")
-	w("%s:", fnLabel("__fern_utf8_valid"))
-	// x0 = cursor, x2 = end, x9 = 0x8080..80 top-bit mask.
-	w("\tadd x2, x0, x1")
-	w("\tmovz x9, #0x8080")
-	w("\tmovk x9, #0x8080, lsl #16")
-	w("\tmovk x9, #0x8080, lsl #32")
-	w("\tmovk x9, #0x8080, lsl #48")
-	w(".Lssa_uv_loop:")
-	w("\tcmp x0, x2")
-	w("\tb.hs .Lssa_uv_ok")
-	// ASCII word skip: 8 bytes at a time while every top bit is clear.
-	w("\tsub x3, x2, x0")
-	w("\tcmp x3, #8")
-	w("\tb.lo .Lssa_uv_byte")
-	w("\tldr x3, [x0]")
-	w("\tand x3, x3, x9")
-	w("\tcbnz x3, .Lssa_uv_byte")
-	w("\tadd x0, x0, #8")
-	w("\tb .Lssa_uv_loop")
-	w(".Lssa_uv_byte:")
-	w("\tldrb w3, [x0]")
-	w("\tcmp w3, #0x80")
-	w("\tb.hs .Lssa_uv_multi")
-	w("\tadd x0, x0, #1")
-	w("\tb .Lssa_uv_loop")
-	w(".Lssa_uv_multi:")
-	// 0x80–0xBF stray continuation; 0xC0/0xC1 overlong 2-byte.
-	w("\tcmp w3, #0xC2")
-	w("\tb.lo .Lssa_uv_bad")
-	w("\tcmp w3, #0xE0")
-	w("\tb.hs .Lssa_uv_3plus")
-	// 2-byte lead C2..DF: one continuation.
-	w("\tadd x4, x0, #2")
-	w("\tcmp x4, x2")
-	w("\tb.hi .Lssa_uv_bad")
-	w("\tldrb w5, [x0, #1]")
-	w("\tand w6, w5, #0xC0")
-	w("\tcmp w6, #0x80")
-	w("\tb.ne .Lssa_uv_bad")
-	w("\tadd x0, x0, #2")
-	w("\tb .Lssa_uv_loop")
-	w(".Lssa_uv_3plus:")
-	w("\tcmp w3, #0xF0")
-	w("\tb.hs .Lssa_uv_4")
-	// 3-byte lead E0..EF: two continuations; E0 overlong / ED
-	// surrogate carried by the first continuation's range.
-	w("\tadd x4, x0, #3")
-	w("\tcmp x4, x2")
-	w("\tb.hi .Lssa_uv_bad")
-	w("\tldrb w5, [x0, #1]") // c1
-	w("\tldrb w6, [x0, #2]")
-	w("\tand w7, w6, #0xC0")
-	w("\tcmp w7, #0x80")
-	w("\tb.ne .Lssa_uv_bad")
-	w("\tand w7, w5, #0xC0")
-	w("\tcmp w7, #0x80")
-	w("\tb.ne .Lssa_uv_bad")
-	w("\tcmp w3, #0xE0")
-	w("\tb.ne .Lssa_uv_3_not_e0")
-	w("\tcmp w5, #0xA0") // E0 A0.. only (overlong below)
-	w("\tb.lo .Lssa_uv_bad")
-	w(".Lssa_uv_3_not_e0:")
-	w("\tcmp w3, #0xED")
-	w("\tb.ne .Lssa_uv_3_done")
-	w("\tcmp w5, #0xA0") // ED ..9F only (surrogates above)
-	w("\tb.hs .Lssa_uv_bad")
-	w(".Lssa_uv_3_done:")
-	w("\tadd x0, x0, #3")
-	w("\tb .Lssa_uv_loop")
-	w(".Lssa_uv_4:")
-	// 4-byte lead F0..F4: three continuations; F0 overlong / F4
-	// >U+10FFFF carried by the first continuation's range.
-	w("\tcmp w3, #0xF4")
-	w("\tb.hi .Lssa_uv_bad")
-	w("\tadd x4, x0, #4")
-	w("\tcmp x4, x2")
-	w("\tb.hi .Lssa_uv_bad")
-	w("\tldrb w5, [x0, #1]") // c1
-	w("\tldrb w6, [x0, #2]")
-	w("\tand w7, w6, #0xC0")
-	w("\tcmp w7, #0x80")
-	w("\tb.ne .Lssa_uv_bad")
-	w("\tldrb w6, [x0, #3]")
-	w("\tand w7, w6, #0xC0")
-	w("\tcmp w7, #0x80")
-	w("\tb.ne .Lssa_uv_bad")
-	w("\tand w7, w5, #0xC0")
-	w("\tcmp w7, #0x80")
-	w("\tb.ne .Lssa_uv_bad")
-	w("\tcmp w3, #0xF0")
-	w("\tb.ne .Lssa_uv_4_not_f0")
-	w("\tcmp w5, #0x90") // F0 90.. only
-	w("\tb.lo .Lssa_uv_bad")
-	w(".Lssa_uv_4_not_f0:")
-	w("\tcmp w3, #0xF4")
-	w("\tb.ne .Lssa_uv_4_done")
-	w("\tcmp w5, #0x90") // F4 ..8F only
-	w("\tb.hs .Lssa_uv_bad")
-	w(".Lssa_uv_4_done:")
-	w("\tadd x0, x0, #4")
-	w("\tb .Lssa_uv_loop")
-	w(".Lssa_uv_ok:")
-	w("\tmov w0, #1")
-	w("\tret")
-	w(".Lssa_uv_bad:")
-	w("\tmov w0, #0")
-	w("\tret")
-}
-
 // emitReadFileBytesHelper writes read_file_bytes(path) -> Result[u8[], IoError]:
 // read_file's raw sibling — the same openat/fstat/read-loop/close pipeline, but
 // the contents land in a fresh u8[] from __alloc_u8 (16-byte header; cap@-12,
@@ -5145,9 +5085,8 @@ func emitDropArrElemHelper(name, elemDrop, tag string) func(w func(string, ...an
 		w("%s:", lbl("loop"))
 		w("\tcmp w22, w21")
 		w("\tb.ge %s", lbl("decarr"))
-		w("\tmul x0, x22, x20") // i*stride
-		w("\tadd x0, x19, x0")  // &elem[i]
-		w("\tldr x0, [x0]")     // elem
+		w("\tmadd x0, x22, x20, x19") // &elem[i]
+		w("\tldr x0, [x0]")           // elem
 		w("\tbl %s", fnLabel(elemDrop))
 		w("\tadd x22, x22, #1")
 		w("\tb %s", lbl("loop"))
@@ -5373,8 +5312,7 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 	w("\tmov w6, #16")
 	w("\tcmp w2, w6")
 	w("\tcsel w6, w2, w6, ge") // w6 = headerBytes = max(stride, 16)
-	w("\tmul w7, w5, w2")
-	w("\tadd w7, w7, w6") // w7 = allocSize = headerBytes + newCap*stride
+	w("\tmadd w7, w5, w2, w6") // w7 = allocSize = headerBytes + newCap*stride
 	// Inline raw bump allocation of w7 bytes (no rc header — the array lays its
 	// own cap/rc/len header past the headerBytes prefix).
 	w("\tadrp x8, %s", heapPtrSym)
@@ -6092,8 +6030,7 @@ func emitArrCowInplaceHelper(w func(string, ...any)) {
 	w("\tmov w6, #16")
 	w("\tcmp w1, w6")
 	w("\tcsel w6, w1, w6, ge") // w6 = headerBytes
-	w("\tmul w7, w4, w1")
-	w("\tadd w7, w7, w6") // w7 = allocSize
+	w("\tmadd w7, w4, w1, w6") // w7 = allocSize
 	// Inline raw bump allocation of w7 bytes (8-aligned base).
 	w("\tadrp x8, %s", heapPtrSym)
 	w("\tadd x8, x8, #:lo12:%s", heapPtrSym) // x8 = &cursor
@@ -6147,9 +6084,8 @@ func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, 
 		w("%s:", lbl("loop"))
 		w("\tcmp w22, w21")
 		w("\tb.ge %s", lbl("done"))
-		w("\tmul x0, x22, x20") // i*stride
-		w("\tadd x0, x19, x0")  // &buf[i]
-		w("\tldr x0, [x0]")     // element
+		w("\tmadd x0, x22, x20, x19") // &buf[i]
+		w("\tldr x0, [x0]")           // element
 		w("\tbl %s", fnLabel(elemInc))
 		w("\tadd x22, x22, #1")
 		w("\tb %s", lbl("loop"))

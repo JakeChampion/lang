@@ -193,3 +193,49 @@ func findX86Gcc(t *testing.T) string {
 	t.Skip("no gcc/clang on PATH that assembles x86-64 Intel syntax")
 	return ""
 }
+
+// adoptSrc reaches the runtime helpers the adoption checks look at: array
+// append and drop (string elements, so the element walk is emitted), an
+// aliased element store (the copy-on-write clone), string ordering and
+// float→u64.
+const adoptSrc = `function main(): i32 {
+  var xs: string[] = [];
+  xs = xs.append("a" + "b");
+  xs = xs.append("c");
+  var ys: string[] = xs;
+  ys = ys.append("d");
+  ys = ys.with(0, "z");
+  var lt: boolean = xs[0] < ys[1];
+  var f: f64 = 3.5;
+  var u: u64 = f as u64;
+  if (lt && u == 3u64) { return xs.len(); }
+  return 1;
+}`
+
+// TestRuntimeUsesConditionalMoves pins the branch-free shapes the runtime
+// helpers took once the assembler carried cmov/setcc/btc (#7887): the
+// header-size clamp in the array free paths, the min/max in push and the
+// clone, the string-order length clamp, the stat flags and the unsigned
+// float saturation. A regression to the branchy form would still be correct,
+// which is why nothing else notices it.
+func TestRuntimeUsesConditionalMoves(t *testing.T) {
+	asm := compile(t, adoptSrc)
+	for _, want := range []string{
+		"cmova r8, rsi",    // __fern_arr_dec: headerBytes = max(16, stride)
+		"cmovg ecx, r13d",  // arr_push: headerBytes
+		"cmovl r15d, ecx",  // arr_push: newCap = max(2n, 4)
+		"cmovg r15d, r12d", // copy-on-write clone
+		"cmovb r8d, edx",   // __fern_str_order: min(la, lb)
+		"btc rax, 63",      // f64 → u64 saturation
+		"sete al",          // __fern_rc_is_unique
+	} {
+		if !strings.Contains(asm, want) {
+			t.Errorf("runtime asm no longer contains %q", want)
+		}
+	}
+	for _, gone := range []string{".Larrdec_hdr", ".Lpush_cap_ok", ".Lpush_hdr_set", ".Lcow_hdr_set", ".Lsord_n"} {
+		if strings.Contains(asm, gone) {
+			t.Errorf("runtime asm still carries the branch label %q", gone)
+		}
+	}
+}

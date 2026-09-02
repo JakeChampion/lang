@@ -381,6 +381,7 @@ slice_unchecked_bytes                                0
 slice_unchecked_oob                                  0
 slice_views                                          6
 smallest_int_literal                                 0
+snapshot_local_shared_field                          0
 some_branch                                          0
 sort_strings_delegation_wasm                         0
 split_once                                           0
@@ -424,10 +425,13 @@ string_replace                                       0
 string_slice                                         1
 string_slice_option                                  7
 string_split                                         0
+struct_alias_thread_reclaim                          0
 struct_field_subpattern                              0
 struct_field_wide_array_append                       0
 struct_nested                                        0
 struct_producer_returns_local                        0
+struct_state_handback                                0
+struct_state_last_use                                0
 struct_tuple_field_reclaim                           0
 struct_tuple_field_shared                            0
 sum_10_args                                          0
@@ -484,6 +488,7 @@ value_block_generic_call_arm                         0
 value_block_shadows_module_fn                        0
 value_block_width_call_arm                           1
 var_inference                                        0
+variant_payload_from_array_field                     0
 while_sum                                            0
 wide_shift_by_variable                               0
 wrap_drops_high_half                                 0

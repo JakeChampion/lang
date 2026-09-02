@@ -1995,6 +1995,7 @@ func buildReadDirBodyP2(idxs map[string]uint32) []byte {
 	openDir := idxs["__fern_open_dir"]
 	readRaw := idxs["__fern_read_dir_raw"]
 	strCopy := idxs["__fern_str_copy"]
+	descDrop := idxs["wasi_descriptor_drop_p2"]
 
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
@@ -2002,7 +2003,11 @@ func buildReadDirBodyP2(idxs map[string]uint32) []byte {
 
 	body = inst.InstLocalGet(body, 5)
 	body = inst.InstCall(body, readRaw)
-	body = inst.InstLocalTee(body, 6)
+	body = inst.InstLocalSet(body, 6)
+	// The listing is drained: drop the directory descriptor.
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstCall(body, descDrop)
+	body = inst.InstLocalGet(body, 6)
 	body = inst.InstI32Const(body, 0)
 	body = numeric.InstI32LtS(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
@@ -2116,6 +2121,7 @@ func buildRmdirRecBodyP2(idxs map[string]uint32) []byte {
 	unlink := idxs["wasi_descriptor_unlink_file_at_p2"]
 	rmdir := idxs["wasi_descriptor_remove_directory_at_p2"]
 	self := idxs["__fern_rmdir_rec"]
+	descDrop := idxs["wasi_descriptor_drop_p2"]
 
 	// Both mutators fail the same way: a non-zero discriminant, with
 	// the error-code at emptyOkErrorCodeOff, returned to the caller as
@@ -2156,7 +2162,11 @@ func buildRmdirRecBodyP2(idxs map[string]uint32) []byte {
 
 	body = inst.InstLocalGet(body, 2)
 	body = inst.InstCall(body, readRaw)
-	body = inst.InstLocalTee(body, 3)
+	body = inst.InstLocalSet(body, 3)
+	// The listing is drained: drop the directory descriptor.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, descDrop)
+	body = inst.InstLocalGet(body, 3)
 	body = inst.InstI32Const(body, 0)
 	body = numeric.InstI32LtS(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)

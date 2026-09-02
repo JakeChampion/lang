@@ -32,6 +32,7 @@ import "./asmcore";
 import "./checker";
 import "./constfold";
 import "./flatten";
+import "./interp";
 import "./irlower";
 import "./lexer";
 import "./modloader";
@@ -113,6 +114,14 @@ function unresolved_imports(entry: parser.Module, loaded: flatten.LoadedModule[]
 // whole emit path to get them means paying for a module nobody will run.
 const CHECK_FLAG: string = "-check";
 
+// INTERP_FLAG selects the evaluator. The playground's output pane needs a
+// program's OUTPUT, which compiling to wasm does not give the page directly —
+// and interp_run.fern cannot serve it, because it has no module loader: a
+// program that prints a number imports std/i32 for `to_string`, and that
+// import is exactly what interp_run drops. The overlay this driver already
+// carries is the answer, so interpret lives here.
+const INTERP_FLAG: string = "-interp";
+
 // report_diags prints `line:col: error[E0XX]: message` for each diagnostic and
 // reports whether any were printed. An empty code renders without the
 // `error[…]` segment — some diagnostics are uncoded, and parity is on the text
@@ -154,10 +163,31 @@ function check(merged: parser.Module): i32 {
     return 0;
 }
 
+// interpret evaluates the bundle and reports the program's own exit code, the
+// same mapping interp_run.fern uses: an i32 result is the code, a boolean is
+// 1/0, and anything else — including a VErr from an unsupported construct — is
+// 254, which is outside the range a Fern `main` can return and so cannot be
+// confused with one.
+//
+// The program's output has already gone to stdout/stderr by the time this
+// returns: interp.eval_module runs the builtins as it goes.
+function interpret(merged: parser.Module): i32 {
+    match (interp.eval_module(merged)) {
+        interp.VInt(i) => { return i.v; },
+        interp.VBool(b) => {
+            if (b.v) { return 1; }
+            return 0;
+        },
+        _ => { return 254; }
+    }
+}
+
 function run(): i32 {
     var mode_check: boolean = false;
+    var mode_interp: boolean = false;
     for a in args() {
         if (a == CHECK_FLAG) { mode_check = true; }
+        if (a == INTERP_FLAG) { mode_interp = true; }
     }
     var src: string = io.read_all_stdin();
     var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
@@ -179,6 +209,11 @@ function run(): i32 {
     merged = parser.resolve_variant_fields_module(merged);
 
     if (mode_check) { return check(merged); }
+    // Ahead of the emit gates below: those reject shapes the wasm EMITTER
+    // would miscompile, and the evaluator does not emit. A program the
+    // interpreter can run is worth running even where the backend would
+    // decline it.
+    if (mode_interp) { return interpret(merged); }
 
     // The same gates the CLI and wasm_ir_run put ahead of emit: each rejects a
     // shape the emitter would otherwise miscompile rather than refuse.

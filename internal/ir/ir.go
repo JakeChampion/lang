@@ -5913,6 +5913,18 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			}
 			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturn})
+		case isWideInt(fn.ReturnType):
+			// The integer sibling of the float case above, and the
+			// same failure: an i64/u64-returning function whose body
+			// falls off the end was handed an `i32.const 0` against an
+			// i64 result, so the module was rejected — "expected i64,
+			// found i32". Every i64-returning function ending in a
+			// match hit it, `vint_as_i64` in examples/self_host's
+			// interpreter among them, which is why interp.fern had
+			// never produced a valid wasm module.
+			b.emit(Op{Kind: OpConstI64, I64: 0})
+			b.emitRcDecLocalsAtExit()
+			b.emit(Op{Kind: OpReturn})
 		default:
 			// String-typed return on wasm32 fans to two i32
 			// slots `(data, len)`; emit zeros for both so the
@@ -8285,9 +8297,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 	// Under native -g, mark each new source line so the backend can build a
 	// DWARF .debug_line row. OpLine consumes/produces nothing and emits no
 	// machine code; it just carries the Pos.
+	// Str names the file the position is in: inlining copies these ops into
+	// callers in other files, and a marker that only knew its line would
+	// then be attributed to the caller's file.
 	if b.emitLineMarkers && b.curPos.Line > 0 && b.curPos.Line != b.lastLineMark {
 		b.lastLineMark = b.curPos.Line
-		b.emit(Op{Kind: OpLine, Pos: b.curPos})
+		b.emit(Op{Kind: OpLine, Pos: b.curPos, Str: b.fn.SourceFile})
 	}
 	// Under -cover, bump the counter for this statement's line. Placed at
 	// the statement boundary, where the operand stack is empty and no
@@ -13868,6 +13883,11 @@ func (b *builder) growBracketArgs(n *ast.Call, calleeName string) []growBracketE
 		if b.callArgDies[n][root.Name] {
 			continue
 		}
+		// A single-hop field the enclosing self-update overwrites
+		// (markSupersededFields) dies here too.
+		if fa, isField := a.(*ast.FieldAccess); isField && len(chain) == 1 && b.callArgDies[n][root.Name+"."+fa.Field] {
+			continue
+		}
 		if b.rc.moveSites[a] {
 			continue
 		}
@@ -18821,6 +18841,13 @@ func isVoid(t ast.Type) bool {
 func isFloat(t ast.Type) bool {
 	_, ok := t.(ast.FloatType)
 	return ok
+}
+
+// isWideInt reports whether t occupies an i64 on the typed wasm stack. A
+// pointer-width type is i32 on wasm32, so NormalWidth alone is not the test.
+func isWideInt(t ast.Type) bool {
+	n, ok := t.(ast.NumberType)
+	return ok && !n.IsPointerWidth() && n.NormalWidth() == 64
 }
 
 // payloadSlotSize returns how many bytes a variant payload of

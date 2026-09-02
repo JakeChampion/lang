@@ -227,6 +227,16 @@ var importSpecs = map[string]importSpec{
 		},
 		results: nil,
 	},
+	"wasi_descriptor_drop_p2": {
+		// (handle) → (). Drops a descriptor resource — the own<descriptor>
+		// open-at returned — which is what releases the host's file
+		// descriptor. A stream opened on it is dropped first
+		// (canonical-ABI resource-with-children rule).
+		module:  "wasi:filesystem/types@0.2.0",
+		name:    "[resource-drop]descriptor",
+		params:  []byte{encode.ValtypeI32},
+		results: nil,
+	},
 	"wasi_descriptor_read_via_stream_p2": {
 		// Preview-2: wasi:filesystem/types@0.2.0::
 		//   [method]descriptor.read-via-stream lowered to
@@ -1717,6 +1727,8 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_descriptor_open_at_p2")
 			in.add("wasi_descriptor_read_via_stream_p2")
 			in.add("wasi_io_blocking_read")
+			in.add("wasi_io_input_stream_drop")
+			in.add("wasi_descriptor_drop_p2")
 		} else {
 			in.add("wasi_path_open")
 			in.add("wasi_fd_read")
@@ -1729,6 +1741,8 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_descriptor_open_at_p2")
 			in.add("wasi_descriptor_write_via_stream_p2")
 			in.add("wasi_blocking_write_and_flush_p2")
+			in.add("wasi_io_output_stream_drop")
+			in.add("wasi_descriptor_drop_p2")
 		} else {
 			in.add("wasi_path_open")
 			in.add("wasi_fd_write")
@@ -1770,16 +1784,21 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_fd_readdir")
 		}
 	}
-	if helpers.set["__fern_read_dir"] && !opts.Preview2WASI {
-		// preview-1 closes the listing fd itself; the preview-2 body
-		// drops the entry stream inside __fern_read_dir_raw instead.
-		in.add("wasi_fd_close")
+	if helpers.set["__fern_read_dir"] {
+		// Both close the directory they listed; the preview-2 body also
+		// drops the entry stream inside __fern_read_dir_raw.
+		if opts.Preview2WASI {
+			in.add("wasi_descriptor_drop_p2")
+		} else {
+			in.add("wasi_fd_close")
+		}
 	}
 	if helpers.set["__fern_rmdir_rec"] {
 		if opts.Preview2WASI {
 			in.add("wasi_get_directories_p2")
 			in.add("wasi_descriptor_unlink_file_at_p2")
 			in.add("wasi_descriptor_remove_directory_at_p2")
+			in.add("wasi_descriptor_drop_p2")
 		} else {
 			in.add("wasi_path_unlink_file")
 			in.add("wasi_path_remove_directory")
@@ -1802,6 +1821,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_get_directories_p2")
 			in.add("wasi_descriptor_open_at_p2")
 			in.add("wasi_descriptor_read_via_stream_p2")
+			in.add("wasi_descriptor_drop_p2")
 		} else {
 			in.add("wasi_path_open")
 		}
@@ -1815,6 +1835,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_get_directories_p2")
 			in.add("wasi_descriptor_open_at_p2")
 			in.add("wasi_descriptor_write_via_stream_p2")
+			in.add("wasi_descriptor_drop_p2")
 		} else {
 			in.add("wasi_path_open")
 		}
@@ -1828,6 +1849,7 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_get_directories_p2")
 			in.add("wasi_descriptor_open_at_p2")
 			in.add("wasi_descriptor_append_via_stream_p2")
+			in.add("wasi_descriptor_drop_p2")
 		} else {
 			in.add("wasi_path_open")
 		}
@@ -1868,6 +1890,12 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_reader_close_fd"] {
 		if opts.Preview2WASI {
+			// A Reader owns a descriptor only when open_reader made it;
+			// stdin's carries noDescriptor, and a module without an
+			// opener has no chain for the drop to sit in.
+			if helpers.set["__fern_open_reader"] {
+				in.add("wasi_descriptor_drop_p2")
+			}
 			// The Reader holds an own<input-stream> handle; close drops it
 			// via canon resource.drop (the composer satisfies the import).
 			in.add("wasi_io_input_stream_drop")
@@ -1877,6 +1905,11 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	}
 	if helpers.set["__fern_writer_close"] {
 		if opts.Preview2WASI {
+			// Same as the Reader: only open_writer / open_appender make a
+			// Writer that owns a descriptor.
+			if helpers.set["__fern_open_writer"] || helpers.set["__fern_open_appender"] {
+				in.add("wasi_descriptor_drop_p2")
+			}
 			// The Writer holds an own<output-stream> handle; close drops it.
 			in.add("wasi_io_output_stream_drop")
 		} else {

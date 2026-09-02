@@ -168,12 +168,18 @@ function main(): i32 {
             // the pipeline this mirrors, including the order: the unknown
             // check comes AFTER, because an unresolvable data symbol is
             // recorded here rather than by the assembler.
-            a = x86_resolve_data(a, elf_text_vaddr());
+            a = x86_resolve_data(a, elf_text_vaddr_x86());
             if (a.unknown.len() > 0) {
                 return 2;
             }
             var entry: i32 = x86_label_off(a, "_start");
-            write(string_from_bytes_unchecked(elf_static_executable_bss_x86_at(a.code, a.rodata, a.bss_size, entry)));
+            var tv: i64 = elf_text_vaddr_x86() as i64;
+            var hdr_len: i32 = x86_eh_frame_hdr_len(a);
+            var hv: i64 = elf_eh_hdr_vaddr_x86(a.code.len()) as i64;
+            var ev: i64 = elf_eh_frame_vaddr_x86(a.code.len(), hdr_len) as i64;
+            var eh: i32[] = x86_eh_frame(a, tv, ev);
+            var hdr: i32[] = x86_eh_frame_hdr(a, tv, ev, hv);
+            write(string_from_bytes_unchecked(elf_program_x86(a.code, hdr, eh, a.rodata, a.bss_size, entry)));
             return 0;
         }
     }

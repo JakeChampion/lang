@@ -13,7 +13,13 @@ package elf
 // section is needed. Addresses use DW_FORM_addr (absolute), valid for the
 // ET_EXEC images the WX writers produce.
 
-import "github.com/jakechampion/lang/internal/symname"
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/jakechampion/lang/internal/symname"
+)
 
 // DWARF tag / attribute / form constants used below (DWARF v4, section 7).
 const (
@@ -144,78 +150,171 @@ func appendSLEB(b []byte, v int64) []byte {
 	}
 }
 
-// LineRow is one (absolute address → source line) row for a per-statement
-// .debug_line table (#5537 slice 2 finer path). Rows must be sorted by Addr.
+// LineRow is one row of the per-statement .debug_line table: the source
+// position that begins at an absolute address. File indexes the `.file N`
+// table (1-based); IsStmt is the row's is_stmt flag, which `.loc` rows carry
+// as true unless the directive said otherwise. Rows must be sorted by Addr.
 type LineRow struct {
-	Addr uint64
-	Line int
+	Addr          uint64
+	File          int
+	Line          int
+	Col           int
+	PrologueEnd   bool
+	EpilogueBegin bool
+	IsStmt        bool
 }
 
-// buildDebugLineRows encodes a DWARF v4 .debug_line section as ONE sequence
-// over per-statement rows (sorted by Addr): set_address to the first row,
-// then advance_pc + advance_line + copy for each, and a final advance to
-// textHi + end_sequence. Each row's line holds until the next row's address,
-// so gaps inherit the preceding statement's line. srcFile names file 1.
-func buildDebugLineRows(rows []LineRow, textLo, textHi uint64, srcFile string) []byte {
+// DWARF v4 line-number program opcodes (section 6.2.5.2).
+const (
+	lnsCopy             = 0x01
+	lnsAdvancePC        = 0x02
+	lnsAdvanceLine      = 0x03
+	lnsSetFile          = 0x04
+	lnsSetColumn        = 0x05
+	lnsNegateStmt       = 0x06
+	lnsSetPrologueEnd   = 0x0a
+	lnsSetEpilogueBegin = 0x0b
+	lneEndSequence      = 0x01
+	lneSetAddress       = 0x02
+
+	// The header constants gas uses, and which the special-opcode arithmetic
+	// below is written against: a special opcode covers a line delta in
+	// [lineBase, lineBase+lineRange) and an address advance of up to
+	// (255-opcodeBase)/lineRange.
+	lineBase   = -5
+	lineRange  = 14
+	opcodeBase = 13
+)
+
+// buildDebugLine encodes a DWARF v4 .debug_line section as ONE sequence over
+// the rows (sorted by Addr): set_address to the first, then for each row the
+// state changes it needs — file, column, is_stmt, prologue_end,
+// epilogue_begin — and the address/line advance as a special opcode where
+// one fits, else advance_pc + advance_line + copy; finally an advance to
+// textHi and end_sequence. Each row's position holds until the next row's
+// address, so gaps inherit the preceding statement's. files is the `.file N`
+// table, whose entries 1..N must all be present.
+func buildDebugLine(rows []LineRow, textHi uint64, files map[int]string) ([]byte, error) {
+	hdr, err := dwarfLineHeader(files)
+	if err != nil {
+		return nil, err
+	}
 	var prog []byte
 	if len(rows) > 0 {
-		curAddr := rows[0].Addr
-		curLine := 1
-		prog = append(prog, 0x00, 9, 0x02) // ext: DW_LNE_set_address
-		prog = le64(prog, curAddr)
+		addr := rows[0].Addr
+		file, line, col, isStmt := 1, 1, 0, true
+		prog = append(prog, 0x00, 9, lneSetAddress)
+		prog = le64(prog, addr)
 		for _, r := range rows {
-			if r.Addr > curAddr {
-				prog = append(prog, 0x02) // DW_LNS_advance_pc
-				prog = appendULEB(prog, r.Addr-curAddr)
-				curAddr = r.Addr
+			if r.Addr < addr {
+				return nil, fmt.Errorf("line row at %#x precedes the previous row at %#x", r.Addr, addr)
 			}
-			if r.Line != curLine {
-				prog = append(prog, 0x03) // DW_LNS_advance_line
-				prog = appendSLEB(prog, int64(r.Line)-int64(curLine))
-				curLine = r.Line
+			if _, ok := files[r.File]; !ok {
+				return nil, fmt.Errorf("line row at %#x names file %d, which no .file directive defined", r.Addr, r.File)
 			}
-			prog = append(prog, 0x01) // DW_LNS_copy
+			if r.File != file {
+				prog = appendULEB(append(prog, lnsSetFile), uint64(r.File))
+				file = r.File
+			}
+			if r.Col != col {
+				prog = appendULEB(append(prog, lnsSetColumn), uint64(r.Col))
+				col = r.Col
+			}
+			if r.IsStmt != isStmt {
+				prog = append(prog, lnsNegateStmt)
+				isStmt = r.IsStmt
+			}
+			if r.PrologueEnd {
+				prog = append(prog, lnsSetPrologueEnd)
+			}
+			if r.EpilogueBegin {
+				prog = append(prog, lnsSetEpilogueBegin)
+			}
+			addrAdv := r.Addr - addr
+			lineAdv := r.Line - line
+			if special := int64(lineAdv-lineBase) + int64(lineRange*addrAdv) + opcodeBase; lineAdv >= lineBase && lineAdv < lineBase+lineRange && special <= 255 {
+				prog = append(prog, byte(special))
+			} else {
+				if addrAdv > 0 {
+					prog = appendULEB(append(prog, lnsAdvancePC), addrAdv)
+				}
+				if lineAdv != 0 {
+					prog = appendSLEB(append(prog, lnsAdvanceLine), int64(lineAdv))
+				}
+				prog = append(prog, lnsCopy)
+			}
+			addr, line = r.Addr, r.Line
 		}
-		if textHi > curAddr {
-			prog = append(prog, 0x02) // DW_LNS_advance_pc
-			prog = appendULEB(prog, textHi-curAddr)
+		if textHi > addr {
+			prog = appendULEB(append(prog, lnsAdvancePC), textHi-addr)
 		}
-		prog = append(prog, 0x00, 1, 0x01) // ext: DW_LNE_end_sequence
+		prog = append(prog, 0x00, 1, lneEndSequence)
 	}
-	return dwarfLineSection(prog, srcFile)
-}
-
-// dwarfLineSection wraps a line-number program `prog` in the DWARF v4
-// .debug_line unit header (version, standard opcode lengths, a single source
-// file named srcFile).
-func dwarfLineSection(prog []byte, srcFile string) []byte {
-	var hdr []byte
-	hdr = append(hdr, 1) // minimum_instruction_length
-	hdr = append(hdr, 1) // maximum_operations_per_instruction (v4)
-	hdr = append(hdr, 1) // default_is_stmt
-	lineBase := int8(-5)
-	hdr = append(hdr, byte(lineBase)) // line_base (0xFB)
-	hdr = append(hdr, 14)             // line_range
-	hdr = append(hdr, 13)             // opcode_base
-	// standard_opcode_lengths for opcodes 1..12.
-	hdr = append(hdr, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1)
-	hdr = append(hdr, 0) // include_directories: none (terminator)
-	// file_names: one entry {name, dir=0, mtime=0, size=0}, then terminator.
-	hdr = append(hdr, srcFile...)
-	hdr = append(hdr, 0)
-	hdr = appendULEB(hdr, 0) // dir index
-	hdr = appendULEB(hdr, 0) // mtime
-	hdr = appendULEB(hdr, 0) // size
-	hdr = append(hdr, 0)     // end of file_names
 
 	var body []byte
 	body = le16(body, 4)                // version
 	body = le32(body, uint32(len(hdr))) // header_length (to start of program)
 	body = append(body, hdr...)
 	body = append(body, prog...)
-
 	out := le32(nil, uint32(len(body))) // unit_length
-	return append(out, body...)
+	return append(out, body...), nil
+}
+
+// dwarfLineHeader is the DWARF v4 .debug_line unit header after
+// header_length: the program parameters, then the directory and file tables
+// laid out as gas does — each file's directory in include_directories (the
+// compilation directory itself is index 0 and never listed) and its base
+// name in file_names, in file-number order.
+func dwarfLineHeader(files map[int]string) ([]byte, error) {
+	var hdr []byte
+	hdr = append(hdr, 1) // minimum_instruction_length
+	hdr = append(hdr, 1) // maximum_operations_per_instruction (v4)
+	hdr = append(hdr, 1) // default_is_stmt
+	lb := int8(lineBase)
+	hdr = append(hdr, byte(lb)) // line_base (0xFB)
+	hdr = append(hdr, lineRange)
+	hdr = append(hdr, opcodeBase)
+	// standard_opcode_lengths for opcodes 1..12.
+	hdr = append(hdr, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1)
+
+	dirIndex := map[string]int{}
+	var dirs []string
+	type fileEntry struct {
+		name string
+		dir  int
+	}
+	entries := make([]fileEntry, 0, len(files))
+	for n := 1; n <= len(files); n++ {
+		path, ok := files[n]
+		if !ok {
+			return nil, fmt.Errorf(".file table has %d entries but no file %d", len(files), n)
+		}
+		dir, name := filepath.Split(path)
+		dir = strings.TrimSuffix(dir, "/")
+		idx := 0
+		if dir != "" && dir != "." {
+			if idx, ok = dirIndex[dir]; !ok {
+				dirs = append(dirs, dir)
+				idx = len(dirs)
+				dirIndex[dir] = idx
+			}
+		}
+		entries = append(entries, fileEntry{name, idx})
+	}
+	for _, d := range dirs {
+		hdr = append(hdr, d...)
+		hdr = append(hdr, 0)
+	}
+	hdr = append(hdr, 0) // end of include_directories
+	for _, e := range entries {
+		hdr = append(hdr, e.name...)
+		hdr = append(hdr, 0)
+		hdr = appendULEB(hdr, uint64(e.dir))
+		hdr = appendULEB(hdr, 0) // mtime
+		hdr = appendULEB(hdr, 0) // size
+	}
+	hdr = append(hdr, 0) // end of file_names
+	return hdr, nil
 }
 
 // appendULEB appends v as unsigned LEB128.

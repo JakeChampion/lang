@@ -6165,6 +6165,10 @@ func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
 			if !ok {
 				return true
 			}
+			if sl, isLit := st.Value.(*ast.StructLit); isLit {
+				markSupersededFields(out, sl, t.Name)
+				return true
+			}
 			c, ok := st.Value.(*ast.Call)
 			if !ok {
 				return true
@@ -6242,6 +6246,61 @@ func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
 		return true
 	})
 	return out
+}
+
+// markSupersededFields handles the struct self-update `x = S { ...x, f:
+// g(.., x.f, ..) }`: the field value's call receives `x.f` exactly once in
+// the whole statement, and the statement's own store overwrites that field
+// of x, so the old buffer cannot be observed through x afterwards — the
+// field-level twin of the `x = f(x)` shape. The key is "x.f"; the bracket
+// looks a single-hop field argument up under it. The callee's own in-place
+// push retains what it grew, so the update's release of the old field value
+// only decs — which is what kept this shape correct before field chains
+// were bracketed at all, and what made every byte the x86 assembler emits a
+// copy of the whole code buffer once they were.
+func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, target string) {
+	if sl.Base == nil {
+		return
+	}
+	if bid, ok := sl.Base.(*ast.Ident); !ok || bid.Name != target {
+		return
+	}
+	for _, f := range sl.Fields {
+		c, ok := f.Value.(*ast.Call)
+		if !ok {
+			continue
+		}
+		if _, named := c.Callee.(*ast.Ident); !named {
+			continue
+		}
+		direct := 0
+		for _, a := range c.Args {
+			if fa, ok := a.(*ast.FieldAccess); ok && fa.Field == f.Name {
+				if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
+					direct++
+				}
+			}
+		}
+		if direct != 1 {
+			continue
+		}
+		total := 0
+		ast.Walk(sl, func(m ast.Node) bool {
+			if fa, ok := m.(*ast.FieldAccess); ok && fa.Field == f.Name {
+				if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
+					total++
+				}
+			}
+			return true
+		})
+		if total != 1 {
+			continue
+		}
+		if out[c] == nil {
+			out[c] = map[string]bool{}
+		}
+		out[c][target+"."+f.Name] = true
+	}
 }
 
 // fieldChainRoot chases a field-access chain (`s.cur.insts`) to its root

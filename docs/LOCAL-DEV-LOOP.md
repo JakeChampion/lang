@@ -74,6 +74,18 @@ every function value resolved into .data and `blr`'d into it (23 SEGVs); and the
 (`ldr x0, =1234567890123` loaded 1912767691). All three now REFUSE rather than
 emit garbage when they cannot resolve something.
 
+## Where a whole native build spends its time
+
+Profile of `bin/fern -target x86-64-linux` on `examples/self_host/fern.fern`
+(4-core container, 2026-09-02, 34.9 s wall): codegen 72% — `ir.LowerWith`
+32%, `ir.OptimizeCleanup` 22%, rendering the asm text 10% — the in-process
+assembler 18.5% (of which parsing that text back is 14.5% and layout 3.8%),
+front end 8%, and GC 28% of CPU across all of it. The codegen-to-assembler
+text round trip is the largest inefficiency in the pipeline (#7993); the IR
+passes are the largest cost. To re-measure, wrap `run()` in
+`pprof.StartCPUProfile` from a throwaway `cmd/fern` test and read
+`go tool pprof -top -cum`.
+
 ## Suite timings and sharding
 
 The e2e suite is split (#4398 part 3) into `internal/e2eselfhost` (the

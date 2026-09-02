@@ -83,6 +83,8 @@ func ClassifyCore(bin []byte) (ComposeRequest, []string) {
 			getDirs = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.open-at":
 			req.File.OpenAt = true
+		case m == "wasi:filesystem/types@0.2.0" && n == "[resource-drop]descriptor":
+			req.File.DropDesc = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.read-via-stream":
 			req.File.Read = true
 		case m == "wasi:filesystem/types@0.2.0" && n == "[method]descriptor.write-via-stream":
