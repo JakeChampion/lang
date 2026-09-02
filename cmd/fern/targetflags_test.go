@@ -113,8 +113,10 @@ func TestBackendSSAKeepsCapabilityEnforcement(t *testing.T) {
 func TestBackendRejectsBadCombinations(t *testing.T) {
 	entry := writeFern(t, "function main(): i32 {\n  return 0;\n}\n")
 	cases := map[string]struct{ target, backend, want string }{
-		"no ssa for x86-64": {"x86-64-linux", "ssa", "not available for -target x86-64"},
-		"unknown backend":   {"wasm32-wasi", "nope", `unknown -backend "nope"`},
+		// arm64-darwin has no SSA emitter of its own — arm64-linux,
+		// x86-64-linux and wasm32-wasi are the three that do.
+		"no ssa for arm64-darwin": {"arm64-darwin", "ssa", "not available for -target arm64-darwin"},
+		"unknown backend":         {"wasm32-wasi", "nope", `unknown -backend "nope"`},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
