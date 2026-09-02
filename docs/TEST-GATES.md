@@ -5,7 +5,14 @@ compiler bugs shipped past three heavyweight green gates in a row.
 
 This document is about *which* lanes carry signal for *which* kind of
 change, and — more usefully — which ones look authoritative and are not.
-Every lane now runs on every push; there is no way to skip one.
+
+Every lane runs on the pull request AND on the merge to main, with the same
+path filter on both, pinned by `TestGateLanesRunOnMain` (`internal/sourcelint`).
+The second half matters because PRs here are rebase-merged: each commit lands on
+a main its own CI never saw, so a coupling between two individually-green PRs
+exists only in the combination. Main runs key their concurrency group on the SHA
+rather than the ref, so back-to-back merges each keep their own run and a failure
+names the merge that caused it.
 
 ## The lane that runs when Actions does not
 
