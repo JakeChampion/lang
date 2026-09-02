@@ -165,9 +165,6 @@ func miscFormCases() []formCase {
 // because a refused line is an instruction that would have left the byte
 // stream.
 func TestSelfHostX86FormsMatchNative(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	bin := buildX86AsmBenchDriver(t, gcc)
-
 	var cases []formCase
 	cases = append(cases, aluFormCases()...)
 	cases = append(cases, shiftFormCases()...)
@@ -179,6 +176,17 @@ func TestSelfHostX86FormsMatchNative(t *testing.T) {
 	if len(cases) < 300 {
 		t.Fatalf("the matrix produced only %d cases; it is meant to be a product of mnemonics, forms and widths", len(cases))
 	}
+
+	compareFormCases(t, cases)
+}
+
+// compareFormCases assembles every case with both assemblers and byte-compares
+// the results. internal/native/x86_64 is the oracle, so a case it rejects is a
+// failure of the case rather than of the self-host.
+func compareFormCases(t *testing.T, cases []formCase) {
+	t.Helper()
+	gcc, runner := x86_64Tooling(t)
+	bin := buildX86AsmBenchDriver(t, gcc)
 
 	for _, c := range cases {
 		want, _, err := x86_64.AssembleProgram(c.intel+"\n", 0x400000)

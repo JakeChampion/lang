@@ -295,9 +295,9 @@ function main(): i32 {
     if (a.unknown.len() != 0) { return 14; }
     var u1: X86Asm = x86_gas_assemble("\tfrobnicate %rax\n");
     if (u1.unknown.len() != 1) { return 15; }
-    // movw is deliberately unimplemented: it must land on the unknown list,
-    // never encode at the wrong width (the silent-widening audit, #7893).
-    var u2: X86Asm = x86_gas_assemble("\tmovw %ax, %bx\n");
+    // A width mismatch must land on the unknown list, never encode at the
+    // wrong width (the silent-widening audit, #7893).
+    var u2: X86Asm = x86_gas_assemble("\tmovw %eax, %bx\n");
     if (u2.unknown.len() != 1) { return 16; }
     var u3: X86Asm = x86_gas_assemble("\tfnord %xmm0, %xmm1\n");
     if (u3.unknown.len() != 1) { return 17; }

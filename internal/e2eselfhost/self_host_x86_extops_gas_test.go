@@ -276,6 +276,12 @@ func TestSelfHostX86CarryAluGas(t *testing.T) {
 		{"orq $4096, %r8", []byte{0x49, 0x81, 0xc8, 0x00, 0x10, 0x00, 0x00}},
 		{"andl $15, (%rdx)", []byte{0x83, 0x22, 0x0f}},
 		{"xorw %r9w, %r10w", []byte{0x66, 0x45, 0x31, 0xca}},
+		{"movw %ax, %bx", []byte{0x66, 0x89, 0xc3}},
+		{"movw %r9w, %r10w", []byte{0x66, 0x45, 0x89, 0xca}},
+		{"movw $7, %dx", []byte{0x66, 0xba, 0x07, 0x00}},
+		{"movw (%rbx), %dx", []byte{0x66, 0x8b, 0x13}},
+		{"movw %dx, (%rbx)", []byte{0x66, 0x89, 0x13}},
+		{"movw $7, (%rbx)", []byte{0x66, 0xc7, 0x03, 0x07, 0x00}},
 	})
 	// Width mismatches must refuse, not encode at the wrong width.
 	checkRefusedX86(t, bin, runner, []string{
@@ -283,7 +289,7 @@ func TestSelfHostX86CarryAluGas(t *testing.T) {
 		"adcq $1, %ecx",
 		"addw %eax, %ax",
 		"adcb $1, %ax",
-		"movw %ax, %bx",
+		"movw %eax, %bx",
 	})
 }
 

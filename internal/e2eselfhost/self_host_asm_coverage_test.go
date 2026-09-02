@@ -532,6 +532,7 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 		"movabsq":   "movabs rax, 4294967296",
 		"movabs":    "movabs rax, 4294967296",
 		"movl":      "mov eax, ecx",
+		"movw":      "mov ax, cx",
 		"movb":      "mov byte ptr [rax], cl",
 		"movzbq":    "movzx rax, byte ptr [rdi]",
 		"movzbl":    "movzx eax, byte ptr [rdi]",
