@@ -110,6 +110,7 @@ func TestOwnershipSolverAgreesWithTheLoweringsOwnVerdict(t *testing.T) {
 		}
 	}
 	t.Logf("phase B: %d address-returning functions, %d owned, %d borrowed", addrRet, owned, borrowed)
+	logCallModes(t, funcs, sol)
 	if owned < 500 {
 		t.Errorf("only %d of %d address-returning functions were proved to return an owned "+
 			"unit, under the floor of 500 — the positive half of phase B has collapsed",
@@ -298,4 +299,47 @@ func reachesPhi(f *ssa.Func, p ssa.Value) bool {
 		}
 	}
 	return false
+}
+
+// logCallModes is #7792's census over the self-host compiler — the
+// workload the issue names — reported here for the same reason phase B
+// is: this test already lowers the program. Pre-battery, which rule 14
+// of docs/TEST-GATES.md says to note; the post-battery corpus figure is
+// TestX86_64CallModeCensus in internal/e2e.
+func logCallModes(t *testing.T, funcs map[string]*ssa.Func, sol ssa.Solution) {
+	t.Helper()
+	sites := ssa.CallModeSites(funcs, sol)
+	byClass := map[string]int{}
+	pairCallees := map[string]int{}
+	borrowedCallees := map[string]int{}
+	unmapped, carrying := 0, 0
+	for _, s := range sites {
+		if !s.Mapped {
+			unmapped++
+		}
+		if s.Origin != ssa.UnitNone {
+			carrying++
+		}
+		class := s.Class()
+		byClass[class]++
+		switch class {
+		case ssa.ClassOwnedVariantPair:
+			pairCallees[s.Callee]++
+		case ssa.ClassBorrowedVariantPair:
+			borrowedCallees[s.Callee]++
+		}
+	}
+	t.Logf("call modes (#7792): %d pointer arguments at solved call sites, %d carrying a unit, %d unmapped",
+		len(sites), carrying, unmapped)
+	logTop(t, "by class", byClass)
+	t.Logf("  owned variant, pair removable: %d callees", len(pairCallees))
+	logTop(t, "owned variant, pair removable", pairCallees)
+	logTop(t, "borrowed variant, pair removable", borrowedCallees)
+	if len(sites) < 10000 {
+		t.Errorf("only %d call-site arguments over the self-host compiler — the census "+
+			"is no longer measuring the population", len(sites))
+	}
+	if unmapped != 0 {
+		t.Errorf("%d call-mode sites carry no source op — provenance is meant to be total", unmapped)
+	}
 }
