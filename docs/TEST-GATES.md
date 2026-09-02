@@ -53,7 +53,9 @@ the emitted bytes are unchanged, gen0 == gen1.
 So for a change to self-host lowering or to the RC/Perceus machinery:
 
 - **`internal/e2eselfhost` is primary.** It runs *programs the compiler does
-  not contain* through the self-host compiler and checks their behaviour.
+  not contain* through the self-host compiler and checks their behaviour. Give it
+  `-timeout` even for a single `-run` leg — at the default it panics mid-run, and
+  the dump names compiler code rather than a test (`docs/LOCAL-DEV-LOOP.md`).
 - **The fixpoint is secondary.** It catches nondeterminism and
   self-compilation breakage — real failure modes, different ones.
 

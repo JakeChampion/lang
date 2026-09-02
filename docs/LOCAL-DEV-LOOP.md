@@ -86,6 +86,16 @@ in `internal/e2eharness` (each package re-binds the harness names via its
 16 s in). Shard it with `scripts/selfhost-shard-tests SHARD NSHARD < test-list`,
 the same duration-weighted LPT partition CI uses.
 
+**A `-run` filter does not save you from the DEFAULT 10 m timeout**, so pass
+`-timeout` even for one leg: `-run TestSelfHostWasm` takes **887 s** (measured
+2026-09-02, 4-core container) and at the default panics before it finishes. The
+`--- FAIL` rule below applies with a twist that makes this one read even more
+like a breakage — the panic can land while the suite is still BUILDING a driver
+binary, so the goroutine dump bottoms out in `e2eharness.emitDriverAsm` →
+`codegen/x86_64.Emit`, in compiler code the change under test often touches,
+with no test body having run at all. The `running tests:` header naming a single
+test seconds in is the tell.
+
 **Measured 4-way, shard 0: 48 min (green).** So sharding pays only if you run
 ONE shard — four in sequence is ~3.2 h, worse than the unsharded run it
 replaces. Run them in parallel only if RAM allows: each heavy driver build
