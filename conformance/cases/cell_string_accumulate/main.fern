@@ -1,0 +1,42 @@
+// Accumulating into a Cell[string] — the shape a cell exists for, since a
+// cell is the language's one shared-mutable box and E057 restricts its
+// element to a scalar or a string.
+//
+// Three appends, not two: `c.set(c.get() + piece)` lowers the concat to the
+// in-place-when-unique __fern_str_append, which CONSUMES the slot's buffer,
+// while the overwrite also released it — two claims on one buffer. The first
+// set hid it (its old value is a literal, not a heap buffer) and the second
+// left the count wrong; the third read what the release had already handed
+// back to the freelist, which on x86-64 printed an empty string and then
+// segfaulted (#8067).
+//
+// Both shapes the fix distinguishes are here: a bare local cell, and one
+// reached through a struct field, each with the leading get() directly under
+// the concat and nested one level down (`get() + a + b`).
+struct Bag { sink: Cell[string] }
+
+function main(): i32 {
+    var c: Cell[string] = cell_new("");
+    c.set(c.get() + "one;");
+    c.set(c.get() + "two;");
+    c.set(c.get() + "three;");
+    if (c.get() != "one;two;three;") { return 1; }
+
+    var b: Bag = Bag { sink: cell_new("") };
+    b.sink.set(b.sink.get() + "one;");
+    b.sink.set(b.sink.get() + "two;");
+    b.sink.set(b.sink.get() + "three;");
+    if (b.sink.get() != "one;two;three;") { return 2; }
+
+    // The leading get() one level down the left spine: `get() + a + b`
+    // parses as `((get() + a) + b)`, and it is still the cell's buffer the
+    // innermost append grows.
+    var d: Cell[string] = cell_new("");
+    var piece: string = "x";
+    d.set(d.get() + piece + ";");
+    d.set(d.get() + piece + ";");
+    d.set(d.get() + piece + ";");
+    if (d.get() != "x;x;x;") { return 3; }
+
+    return 42;
+}
