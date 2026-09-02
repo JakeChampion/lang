@@ -19,7 +19,7 @@ func buildExit(t *testing.T, data []byte) []byte {
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
-	return StaticExecutable(text, data, "fern-test", nil)
+	return StaticExecutable(text, nil, data, "fern-test", nil)
 }
 
 // buildWithSyms assembles a two-function program and wraps it in a Mach-O with
@@ -27,7 +27,10 @@ func buildExit(t *testing.T, data []byte) []byte {
 // against the syms-inclusive addresses, then emit the symbol table.
 func buildWithSyms(t *testing.T, data []byte) ([]byte, []Sym) {
 	t.Helper()
-	asm := ".text\n_main:\n\tmov x0, #42\n\tbl helper\n\tmov x16, #1\n\tsvc #0x80\nhelper:\n\tret\n"
+	// Lskip is a Mach-O temporary label — the emitters' local-label prefix on
+	// this target — and must not become a symbol: under -g every one of them
+	// would otherwise read as a function to lldb, nm, and the FDE checks.
+	asm := ".text\n_main:\n\tmov x0, #42\n\tbl helper\n\tb Lskip\nLskip:\n\tmov x16, #1\n\tsvc #0x80\nhelper:\n\tret\n"
 	a, err := nativearm64.ParseProgram(asm)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -36,16 +39,16 @@ func buildWithSyms(t *testing.T, data []byte) ([]byte, []Sym) {
 	if len(data) > 0 {
 		dataLen = len(data)
 	}
-	textVAddr, dataVAddr := SegmentAddrsSyms(textLen, dataLen)
-	text, rodata, err := a.LinkMachO(textVAddr, dataVAddr)
+	m := SegmentMap(textLen, 0, dataLen, true)
+	text, rodata, err := a.LinkMachO(m.Text, m.Data)
 	if err != nil {
 		t.Fatalf("link: %v", err)
 	}
 	if len(data) > 0 {
 		rodata = data
 	}
-	syms := FuncSyms(a.TextLabelVAddrs(textVAddr), textVAddr+uint64(len(text)))
-	return StaticExecutableSyms(text, rodata, "fern-test", syms, nil), syms
+	syms := FuncSyms(a.TextLabelVAddrs(m.Text), m.Text+uint64(len(text)))
+	return StaticExecutableSyms(text, nil, rodata, "fern-test", syms, nil), syms
 }
 
 // TestMachOSymtab guards the -g static symbol table (#5537 slice 1 for
@@ -76,6 +79,9 @@ func TestMachOSymtab(t *testing.T) {
 	// helper sits after _main.
 	if got["helper"] <= got["_main"] {
 		t.Errorf("helper %#x should follow _main %#x", got["helper"], got["_main"])
+	}
+	if _, leaked := got["Lskip"]; leaked || len(got) != 2 {
+		t.Errorf("symbol table is %v, want exactly _main and helper — an L-prefixed label is Mach-O's temporary symbol, not a function", got)
 	}
 }
 
@@ -247,7 +253,13 @@ func TestMachODyldCommandSet(t *testing.T) {
 // match. A mismatch is precisely what would make the kernel kill the
 // process at launch.
 func TestMachOCodeSignatureSelfConsistent(t *testing.T) {
-	bin := buildExit(t, nil)
+	checkSignature(t, buildExit(t, nil))
+}
+
+// checkSignature re-hashes every page under the code directory's codeLimit
+// and compares with the slots the signature carries.
+func checkSignature(t *testing.T, bin []byte) {
+	t.Helper()
 	cmd := findLoad(t, bin, lcCodeSignature)
 	dataoff := binary.LittleEndian.Uint32(cmd[0:])
 	datasize := binary.LittleEndian.Uint32(cmd[4:])
@@ -290,3 +302,139 @@ func TestMachOCodeSignatureSelfConsistent(t *testing.T) {
 		}
 	}
 }
+
+// cfiAsm is a two-function program carrying the frame-pointer rules the
+// arm64 emitter produces, with the literal pool `.ltorg` puts between the
+// `.cfi_endproc` and the next function.
+const cfiAsm = ".text\n_main:\n\t.cfi_startproc\n" +
+	"\tstp x29, x30, [sp, #-16]!\n\t.cfi_def_cfa_offset 16\n" +
+	"\t.cfi_offset x29, -16\n\t.cfi_offset x30, -8\n" +
+	"\tmov x29, sp\n\t.cfi_def_cfa_register x29\n" +
+	"\tbl helper\n\tmov x16, #1\n\tsvc #0x80\n" +
+	"\tldp x29, x30, [sp], #16\n\t.cfi_def_cfa sp, 0\n\tret\n\t.cfi_endproc\n" +
+	"\t.ltorg\n" +
+	"helper:\n\t.cfi_startproc\n\tmov x0, #42\n\tret\n\t.cfi_endproc\n"
+
+// buildWithCFI runs the three-step layout cmd/fern's linkNativeDarwin runs:
+// the map with a placeholder unwind length fixes the code and __eh_frame
+// addresses, the image is rendered there, and the real length places __DATA.
+func buildWithCFI(t *testing.T, data []byte, syms bool) (bin []byte, eh []byte, m ImageMap) {
+	t.Helper()
+	a, err := nativearm64.ParseProgram(cfiAsm)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !a.HasCFI() {
+		t.Fatal("the fixture recorded no CFI")
+	}
+	textLen, dataLen := a.MachOTextLen(), a.MachODataLen()
+	if len(data) > 0 {
+		dataLen = len(data)
+	}
+	m = SegmentMap(textLen, 1, dataLen, syms)
+	if eh, err = a.MachOEhFrame(m.Text, m.EhFrame); err != nil {
+		t.Fatalf("eh_frame: %v", err)
+	}
+	m = SegmentMap(textLen, len(eh), dataLen, syms)
+	text, rodata, err := a.LinkMachO(m.Text, m.Data)
+	if err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if len(data) > 0 {
+		rodata = data
+	}
+	if syms {
+		fs := FuncSyms(a.TextLabelVAddrs(m.Text), m.Text+uint64(len(text)))
+		return StaticExecutableSyms(text, eh, rodata, "fern-test", fs, nil), eh, m
+	}
+	return StaticExecutable(text, eh, rodata, "fern-test", nil), eh, m
+}
+
+// TestMachOEhFrame is the container half of #7901 on Darwin: the __eh_frame
+// the assembler rendered lands in __TEXT at the address it was rendered for,
+// so its pcrel FDE pointers name the functions, and nothing else in the image
+// moved off the map the assembler resolved against.
+func TestMachOEhFrame(t *testing.T) {
+	for _, syms := range []bool{false, true} {
+		t.Run(map[bool]string{false: "plain", true: "syms"}[syms], func(t *testing.T) {
+			bin, eh, m := buildWithCFI(t, bytes.Repeat([]byte{0xAA}, 64), syms)
+			f, err := macho.NewFile(bytes.NewReader(bin))
+			if err != nil {
+				t.Fatalf("debug/macho cannot parse output: %v", err)
+			}
+			sec := f.Section("__eh_frame")
+			if sec == nil {
+				t.Fatal("no __eh_frame section — the unwind data was rendered and then dropped")
+			}
+			if sec.Seg != "__TEXT" {
+				t.Errorf("__eh_frame is in %s, want __TEXT: _dyld_find_unwind_sections looks for it there", sec.Seg)
+			}
+			if sec.Addr != m.EhFrame || sec.Addr%8 != 0 {
+				t.Errorf("__eh_frame at %#x, want the %#x it was rendered for (8-aligned)", sec.Addr, m.EhFrame)
+			}
+			got, err := sec.Data()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, eh) {
+				t.Error("__eh_frame bytes differ from the rendered image")
+			}
+			text := f.Section("__text")
+			if text == nil || text.Addr != m.Text {
+				t.Fatalf("__text at %#x, want %#x", text.Addr, m.Text)
+			}
+			if sec.Addr < text.Addr+text.Size {
+				t.Errorf("__eh_frame at %#x overlaps __text ending at %#x", sec.Addr, text.Addr+text.Size)
+			}
+			if d := f.Segment("__DATA"); d == nil || d.Addr != m.Data {
+				t.Errorf("__DATA is not at the %#x the assembler resolved against", m.Data)
+			}
+			// Each FDE's 8-byte pcrel initial_location resolves to a function
+			// start: _main at the first code byte, helper after main's seven
+			// instructions and the (empty) pool.
+			starts := map[uint64]bool{}
+			for off := 0; off+4 <= len(got); {
+				n := int(binary.LittleEndian.Uint32(got[off:]))
+				if n == 0 {
+					break
+				}
+				body := got[off+4 : off+4+n]
+				if binary.LittleEndian.Uint32(body) != 0 {
+					field := sec.Addr + uint64(off) + 8
+					starts[uint64(int64(field)+int64(binary.LittleEndian.Uint64(body[4:])))] = true
+				}
+				off += 4 + n
+			}
+			if !starts[m.Text] || !starts[m.Text+7*4] || len(starts) != 2 {
+				t.Errorf("FDEs describe functions at %v, want _main at %#x and helper at %#x", starts, m.Text, m.Text+28)
+			}
+			// The signature covers __eh_frame too, or the kernel refuses the
+			// image at exec time with nothing to say about why.
+			checkSignature(t, bin)
+		})
+	}
+}
+
+// TestMachOEhFrameShiftsTheMap pins the reason SegmentMap takes the unwind
+// length at all: the extra section header moves the first code byte, so a
+// layout computed without it resolves every adrp against the wrong page.
+func TestMachOEhFrameShiftsTheMap(t *testing.T) {
+	without := SegmentMap(64, 0, 0, false)
+	with := SegmentMap(64, 32, 0, false)
+	if with.Text != without.Text+sectLen {
+		t.Errorf("code moved from %#x to %#x, want exactly one section header (%d bytes) later", without.Text, with.Text, sectLen)
+	}
+	if with.EhFrame != alignUp8(with.Text+64) {
+		t.Errorf("__eh_frame at %#x, want 8-aligned right after the 64 bytes of code at %#x", with.EhFrame, with.Text)
+	}
+	if without.EhFrame != 0 {
+		t.Errorf("an image with no unwind data reports an __eh_frame address %#x", without.EhFrame)
+	}
+	// The code and __eh_frame addresses do not depend on the unwind length,
+	// which is what lets the image be rendered before its size is known.
+	if again := SegmentMap(64, 4000, 0, false); again.Text != with.Text || again.EhFrame != with.EhFrame {
+		t.Errorf("code/__eh_frame moved with the unwind length: %#x/%#x vs %#x/%#x", again.Text, again.EhFrame, with.Text, with.EhFrame)
+	}
+}
+
+func alignUp8(v uint64) uint64 { return (v + 7) &^ 7 }
