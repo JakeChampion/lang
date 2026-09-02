@@ -16341,6 +16341,22 @@ func (b *builder) dropStructField(t ast.Type) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
+	// Cell child (tuple element / enum variant payload / struct field): a cell
+	// is a one-element array box, so it reclaims through the ARRAY machinery
+	// keyed on its instantiation element type — the same call the array arm
+	// below makes for a plain array child, and the same one appendChildDrop
+	// makes in the generated drop fns. Reaching the fall-through instead left
+	// `decValueOnStack(t, false)`, whose Cell arm is gated on `mayFree` and so
+	// emitted a plain `__fern_rc_dec`: that decrements and returns, stranding
+	// the box (#8070-adjacent; measured at one unpaired allocation per cell in
+	// a tuple, an enum payload or a struct field). Passing eligible=true is
+	// what the array arm does too, and is safe for the same reason: both
+	// helpers walk and free only at the CELL's own rc==1, so a cell anything
+	// else still holds is only decremented here.
+	if st, isCell := t.(ast.StructType); isCell && st.Name == "Cell" {
+		b.emitCellDropOnStack(cellElemOf(t), true)
+		return
+	}
 	// `dyn Trait` payload (enum variant-plan / inline struct field): the caller
 	// loaded the boxed one-word cell ptr via payloadLoadOpFor. __drop_dyn_<set>
 	// returns VOID, so argc is 1 and there is NO trailing OpDrop (unlike the
