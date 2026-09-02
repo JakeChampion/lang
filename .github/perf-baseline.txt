@@ -7,10 +7,11 @@
 #
 # WHAT IS EXACT AND WHAT IS NOT. Every figure here repeats to the digit on a
 # given commit EXCEPT `map_string.ir`: core/map draws a per-process
-# string-hash seed (#6194), which moves probe lengths. Measured spread over
-# seven runs: 156,124,457 .. 156,922,358, i.e. 0.51%. That one line therefore
-# carries an explicit 2% tolerance and is baselined at the middle of the
-# range rather than at a sample. `map_int.ir` is exact — the seed is consulted
+# string-hash seed (#6194), which moves probe lengths. Its spread over seven
+# runs was 0.51% of the mean, so that one line carries an explicit 2%
+# tolerance. Absolute endpoints are deliberately NOT quoted here: they go
+# stale the next time the line is re-banked for an unrelated reason, and a
+# stale range reads as a real one. `map_int.ir` is exact — the seed is consulted
 # for string keys only — and is deliberately left on the default so the two
 # together show which half of a map regression moved.
 #
@@ -31,8 +32,8 @@ x86_64/array_append.text	509
 x86_64/array_append.ir	59449723
 x86_64/array_index.text	490
 x86_64/array_index.ir	57448039
-x86_64/ascii_scan.text	1042
-x86_64/ascii_scan.ir	73719742
+x86_64/ascii_scan.text	1048
+x86_64/ascii_scan.ir	73719748
 x86_64/call_overhead.text	607
 x86_64/call_overhead.ir	19999835
 x86_64/closure_call.text	429
@@ -45,32 +46,32 @@ x86_64/map_int.text	3950
 x86_64/map_int.ir	76023372
 x86_64/map_probe_chain.text	3979
 x86_64/map_probe_chain.ir	694675424
-x86_64/map_string.text	5016
-x86_64/map_string.ir	155682308	2
-x86_64/sort_inplace.text	760
-x86_64/sort_inplace.ir	122738126
-x86_64/sort_ints.text	2372
-x86_64/sort_ints.ir	89343038
-x86_64/string_build.text	1146
-x86_64/string_build.ir	128658424
-x86_64/string_count_byte.text	595
-x86_64/string_count_byte.ir	270822753
-x86_64/string_find_byte.text	1855
-x86_64/string_find_byte.ir	135903150
-x86_64/string_rfind_byte.text	2392
-x86_64/string_rfind_byte.ir	111423146
-x86_64/string_scan.text	1441
-x86_64/string_scan.ir	105081498
+x86_64/map_string.text	5022
+x86_64/map_string.ir	155667427	2
+x86_64/sort_inplace.text	766
+x86_64/sort_inplace.ir	123458126
+x86_64/sort_ints.text	2378
+x86_64/sort_ints.ir	89631038
+x86_64/string_build.text	1152
+x86_64/string_build.ir	129198424
+x86_64/string_count_byte.text	601
+x86_64/string_count_byte.ir	270822759
+x86_64/string_find_byte.text	1861
+x86_64/string_find_byte.ir	135903156
+x86_64/string_rfind_byte.text	2398
+x86_64/string_rfind_byte.ir	111423152
+x86_64/string_scan.text	1447
+x86_64/string_scan.ir	105116898
 x86_64/string_slice.text	484
 x86_64/string_slice.ir	163800076
-x86_64/struct_drop.text	2449
-x86_64/struct_drop.ir	531380148
+x86_64/struct_drop.text	2460
+x86_64/struct_drop.ir	531980148
 x86_64/tokenize.text	922
 x86_64/tokenize.ir	121580068
 x86_64/utf8_ingest_unchecked.text	39106
-x86_64/utf8_ingest_unchecked.ir	17482780
+x86_64/utf8_ingest_unchecked.ir	17555180
 x86_64/utf8_ingest_validated.text	39596
-x86_64/utf8_ingest_validated.ir	23571580
+x86_64/utf8_ingest_validated.ir	23535380
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to

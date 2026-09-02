@@ -3689,10 +3689,65 @@ func (g *generator) emitConstDivRem(op ir.Op, isRem bool, k int64) {
 		if neg {
 			g.emit(fmt.Sprintf("neg %s", a))
 		}
+	case !w64:
+		// Everything else at i32 width: the multiply-high reciprocal.
+		g.emitConstDivRemMagic(op, isRem, int32(k))
 	default:
 		g.emitConstDivRemGeneric(op, isRem, k, a, c, d, w64)
 	}
 	g.push()
+}
+
+// emitConstDivRemMagic is i32 division or remainder by a divisor that is
+// neither 0, ±1, nor a power of two: the reciprocal from ir.DeriveMagic*32.
+// A divide is 20-40 cycles here where the multiply and shift are about five.
+//
+// The one-operand `imul` / `mul` multiply eax by their operand and leave the
+// high half in edx, so the DIVIDEND goes in ecx and the MAGIC in eax — the
+// product is the same either way, and that ordering leaves the dividend
+// intact in ecx for the fixup and for a remainder's multiply-back.
+func (g *generator) emitConstDivRemMagic(op ir.Op, isRem bool, d int32) {
+	g.emit("mov ecx, eax") // ecx = dividend, live to the end
+	if op.Unsigned {
+		mg := ir.DeriveMagicU32(uint32(d))
+		g.emit(fmt.Sprintf("mov eax, %d", int32(mg.M)))
+		g.emit("mul ecx")
+		if !mg.Add {
+			g.emit(fmt.Sprintf("shr edx, %d", mg.S))
+			g.emit("mov eax, edx")
+		} else {
+			// A 33-bit magic. Averaging the dividend and the high half by
+			// shifting keeps the carry a plain add would drop off the top.
+			g.emit("mov eax, ecx")
+			g.emit("sub eax, edx")
+			g.emit("shr eax, 1")
+			g.emit("add eax, edx")
+			g.emit(fmt.Sprintf("shr eax, %d", mg.S-1))
+		}
+	} else {
+		mg := ir.DeriveMagicS32(d)
+		g.emit(fmt.Sprintf("mov eax, %d", mg.M))
+		g.emit("imul ecx")
+		switch {
+		case mg.Add:
+			g.emit("add edx, ecx")
+		case mg.Sub:
+			g.emit("sub edx, ecx")
+		}
+		if mg.S != 0 {
+			g.emit(fmt.Sprintf("sar edx, %d", mg.S))
+		}
+		// The shift floors, so a negative quotient is one too low.
+		g.emit("mov eax, edx")
+		g.emit("shr edx, 31")
+		g.emit("add eax, edx")
+	}
+	if isRem {
+		// r = x - (x / d) * d, with the dividend still in ecx.
+		g.emit(fmt.Sprintf("imul eax, eax, %d", d))
+		g.emit("sub ecx, eax")
+		g.emit("mov eax, ecx")
+	}
 }
 
 // emitConstDivRemGeneric is the divide itself for a literal divisor that is

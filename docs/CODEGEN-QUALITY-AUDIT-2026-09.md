@@ -28,8 +28,10 @@ registers, or padded `rsp` for a call.
 > and its overhead **12.5% against 42.6%**, and on call-heavy code Fern is now
 > *faster than* `gcc -O0` rather than 1.5× it. Every figure below is marked
 > with which side of that work it was measured on. What remains open is listed
-> in §6; the largest item by a wide margin is spill quality on the SSA path,
-> then loop rotation and a general magic-number reciprocal.
+> in §6; the largest item by a wide margin is spill quality on the SSA path.
+> Loop rotation has since landed, and the magic-number reciprocal with it for
+> x86-64's i32 — see §6.2 for what remains of it and for why `internal/ir` is
+> the wrong layer.
 
 The thing that prompted this audit — the last day's batch of assembler work —
 turns out to be the sharpest way to see it. **The assemblers can encode far more
@@ -609,25 +611,46 @@ cross-block analysis to.
 
 ### 6.2 What tier A did NOT close
 
-- **A6's reciprocal half.** The guards and the power-of-two cases landed: a
-  literal divisor makes both the zero-divisor and the `INT_MIN/-1` branch dead,
-  a power of two becomes a shift — biased by `2^k−1` when signed, because
-  `sar` rounds toward −∞ and the language rounds toward zero — and a power-of-two
-  remainder becomes a mask. Semantics are pinned by
-  `conformance/cases/const_divisor_lowering`, which runs 19 signed i32 divisors
-  × 17 dividends plus the i64 and unsigned families through an order-sensitive
-  hash on all four backends. What is still open is the **general magic-number
-  reciprocal** for a non-power-of-two divisor: the divide is 20–40 cycles where
-  a reciprocal is ~5. It is its own correctness problem — rounding, `INT_MIN`,
-  signedness — and it moves no static figure, since the whole compiler has 12
-  `idiv` sites.
+- **A6's reciprocal, beyond x86-64's i32.** The magic-number reciprocal
+  (`internal/ir/magic.go`, Granlund–Montgomery via Hacker's Delight 10-1 and
+  10-3) lands for i32 in x86-64's `emitConstDivRemMagic`. Two gaps remain, and
+  both are their own change: **i64**, which needs the derivation at 64-bit
+  width and `imul r64`, and **arm64, which has no constant-divisor lowering at
+  all** — every `x / K` there is a full `sdiv`, power of two included. arm64
+  also has `smulh` / `umulh`, so unlike x86-64 it can take i64 without
+  widening. Do not port the reciprocal to arm64 on the strength of the x86-64
+  result: `sdiv` there is 5–12 cycles against x86-64's 20–40, so the margin
+  the reciprocal has to beat is a third of the size and the answer may well
+  be no. The power-of-two half needs no such argument and is a clear win.
+- **What the reciprocal is worth, and why `.ir` says otherwise.** A `div` by
+  a literal is 3 instructions; the reciprocal is 8, or 11 for a remainder. So
+  the corpus's retired-instruction count goes **UP** — +0.067%, static
+  +0.059% — and it is right to: `scripts/perf-bench`'s own header says `.ir`
+  weights every instruction equally, and this is exactly the case it warns
+  about. Wall time is the measurement that decides. Where a constant division
+  sits on the loop's dependency chain, so the divider's latency is exposed,
+  it is worth **−17.5%** (171 ms → 141 ms over 20M iterations, reproducible to
+  ±0.4pp). Where the divisions are independent of each other the out-of-order
+  engine already hides that latency and it is a wash (+0.7%). `examples/bench`
+  contains only the second kind, so the corpus shows **no wall-time change at
+  all** — `sort_ints` scaled 25× is 248 ms either way. The win is real and it
+  is simply not a workload this corpus has; hashing, base conversion and date
+  arithmetic are where it shows up.
+- **The `internal/ir` route is closed, and it was measured, not assumed.**
+  `CLAUDE.md` says an optimisation that can live in `internal/ir` should, so
+  the reciprocal was built there first, as an op-stream expansion using a
+  scratch slot for the dividend. Every benchmark got **worse**: `enum_match.ir`
+  **+11.6%**, `sort_inplace.ir` +2.0%, `sort_ints.ir` +1.1%, the corpus
+  **+0.72%** overall, with nothing improving. The reason is structural rather
+  than incidental — the stack-machine backends materialise each IR op through
+  memory, so turning two ops into sixteen costs far more than the register-level
+  sequence a backend writes for itself. Constant-divisor lowering is
+  instruction selection, and belongs where the other instruction selection is.
+  Only the derivation is shared.
 - **A8's remainder.** `movabs` for small and zero constants, `imm8` shifts,
   `lea` folding, and `cmov` are all still unemitted.
 - **Memory-destination ALU**, which is what still separates the `int_loop`
   body from `gcc -O0`'s.
-- **Loop rotation** (tier C): the back edge is still an unconditional `jmp`
-  rather than the conditional branch, and the dead `.LloopEnd` label is still
-  emitted. This one lives in `internal/ir`'s `while` shape, not in a backend.
 - **Frame traffic on the SSA path**, still the largest single item anywhere in
   this document: 869,756 of the 1,657,173 instructions it emits for
   `checker_run.fern` are frame-relative loads and stores — **52.5%**. Note
