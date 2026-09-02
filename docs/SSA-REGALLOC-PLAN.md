@@ -1108,21 +1108,31 @@ and live across an inc, a dec or an is_unique stops being stored and reloaded at
 each of them; `__fern_box_free` names nothing at all, so those 165-202 sites now
 cost the `bl` alone.
 
-Both directions move, which is what distinguishes this from inlining:
+Both directions move, which is what distinguishes this from inlining. Ratio to
+the flat backend, best of 7 under qemu-aarch64 on an idle container:
 
 | bench | before | after | `.text` |
 |---|---|---|---|
-| `pvec_with` | 2.10x | **1.83x** | 92.99% |
-| `map_probe_chain` | 1.88x | **1.64x** | 99.35% |
-| `map_int` | 1.94x | **1.68x** | 99.34% |
-| `map_string` | 1.45x | **1.38x** | 99.35% |
-| `ordmap_insert` | 2.34x | 2.29x | 92.58% |
-| `pmap_insert` | 1.90x | 1.93x | 93.28% |
+| `map_probe_chain` | 1.91x | **1.56x** | 99.35% |
+| `map_int` | 1.94x | **1.65x** | 99.34% |
+| `pvec_with` | 2.09x | **1.87x** | 92.99% |
+| `map_string` | 1.45x | **1.40x** | 99.35% |
+| `enum_match` | 1.15x | 1.10x | 100.00% |
+| `sort_ints` | 1.08x | 1.03x | 96.93% |
+| `ordmap_insert` | 2.34x | 2.28x | 92.58% |
+| `pmap_insert` | 1.90x | **2.02x** | 93.28% |
 
-`.text` over those fifteen benchmarks is 95.79% of what it was, and the emitted
-stack traffic in `ordmap_insert`'s module falls 25% (1539 sp-relative
-loads/stores to 1157). `pmap_insert`'s row is within the noise of this
-container; `enum_match` is unchanged and byte-identical.
+`.text` over fifteen benchmarks is 95.79% of what it was, and the emitted stack
+traffic in `ordmap_insert`'s module falls 25% (1539 sp-relative loads/stores to
+1157).
+
+`pmap_insert` is the one row that goes the wrong way, and it is not noise:
+best-of-15 puts it at 0.588s before and 0.627s after, +4% to +7% depending on
+the statistic, in a program whose `.text` is 6.7% SMALLER and whose exit code is
+unchanged. Bisected to the narrowing itself rather than the frame-slot half of
+it. No mechanism is established — fewer instructions running slower points at
+code layout under emulation rather than at the work done — and it is reported
+rather than explained. Everything else in the corpus improves or holds.
 
 The narrowing does less than the call counts suggest because the allocator
 already steers call-crossing values into the callee-saved half (#7550) — where
