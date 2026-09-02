@@ -158,6 +158,11 @@ library shapes that reach the path are in `docs/PERSISTENT-COLLECTIONS.md`
 
 ## Still open
 
+- `closure_capture_passed_to_owned_param` is value-correct and both leak
+  gates pin it at 64 B (x86-64) / 80 B (arm64): the pair and env of the
+  closure local `run` its `main` calls in a loop, the shape
+  `closure_local_passed_to_callee_released` records
+  (`docs/rc-log/2026-09-02-persistent-collections-residual-leaks.md`).
 - A consuming-match binding passed at its last use to an owned position
   (`var nl = __om_insert(l, ..)`) is retained, not moved — `callArgDeaths`
   admits only params and call-initialised locals for the sole-use shape, so
