@@ -57,12 +57,7 @@ func decodeLineRows(t *testing.T, d *dwarf.Data, textLo uint64) []lineRow {
 // that is where a wrong dir index, a dropped column, or a misplaced
 // prologue_end would show.
 func TestDebugLineMatchesGNUAs(t *testing.T) {
-	as, err := exec.LookPath("x86_64-linux-gnu-as")
-	if err != nil {
-		if as, err = exec.LookPath("as"); err != nil {
-			t.Skip("no GNU as on PATH")
-		}
-	}
+	as := findX86As(t)
 	src := "\t.intel_syntax noprefix\n\t.text\n" +
 		"\t.file 1 \"main.fern\"\n\t.file 2 \"lib/util.fern\"\n\t.file 3 \"/abs/dir/deep.fern\"\n\t.file 4 \"lib/other.fern\"\n" +
 		"\t.globl f\nf:\n" +
@@ -148,4 +143,27 @@ func pad(n int) string {
 		s += "\tnop\n"
 	}
 	return s
+}
+
+// findX86As returns a GNU as that assembles x86-64, or skips. The source
+// below is x86-64 Intel syntax, so the aarch64 lane's native `as` cannot
+// build it — it rejects `--64` outright — and the probe uses the exact
+// invocation the test does rather than assuming the name implies the target.
+func findX86As(t *testing.T) string {
+	t.Helper()
+	as, err := exec.LookPath("x86_64-linux-gnu-as")
+	if err != nil {
+		if as, err = exec.LookPath("as"); err != nil {
+			t.Skip("no GNU as on PATH")
+		}
+	}
+	dir := t.TempDir()
+	sPath := filepath.Join(dir, "probe.s")
+	if err := os.WriteFile(sPath, []byte(".intel_syntax noprefix\n.text\nret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(as, "--64", "-o", filepath.Join(dir, "probe.o"), sPath).Run(); err != nil {
+		t.Skipf("%s does not assemble x86-64: %v", as, err)
+	}
+	return as
 }
