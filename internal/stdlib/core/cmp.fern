@@ -201,8 +201,11 @@ impl Ord for string {
 // Primitive hashes. Integers mix their bits (Wang's 32-bit mix) so
 // low-entropy values (small ints, flags) spread across buckets rather
 // than clustering; wide integers fold both halves first. `string`
-// uses FNV-1a over the bytes — the same function the Map runtime hashes
-// string keys with. `boolean` is 0 / 1.
+// defers to `std/string`'s FNV-1a. `boolean` is 0 / 1.
+//
+// Not the function core/map hashes string keys with: that one seeds the
+// offset basis per process and finishes with an fmix32 avalanche, because
+// its callers read only the low bits after masking.
 
 function __hash_mix_i32(x: i32): i32 {
     var h: i32 = x ^ 61;
@@ -244,17 +247,11 @@ impl Hash for boolean {
     }
 }
 impl Hash for string {
-    function hash(self: Self): i32 {
-        var h: i32 = 0 - 2128831035;            // 0x811c9dc5 sign-flipped
-        var n: i32 = self.len();
-        var i: i32 = 0;
-        while (i < n) {
-            h = h ^ (self[i] as i32);
-            h = h * 16777619;                   // 0x01000193
-            i = i + 1;
-        }
-        return h;
-    }
+    // The u32 result reinterpreted, not re-derived: two's-complement
+    // multiply agrees with the unsigned one on the low 32 bits, so the
+    // cast is a bit reinterpretation and the two spellings of FNV-1a
+    // cannot drift apart.
+    function hash(self: Self): i32 { return self.hash_fnv32() as i32; }
 }
 
 // ---- Default ---------------------------------------------------

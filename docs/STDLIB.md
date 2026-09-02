@@ -266,8 +266,8 @@ forms cannot both claim one name.
   `sum` (`Add + Zero`) / `product` (`Mul + One`),
   `max` / `min` (`Ord` → `Option[T]`, `None`
   when empty), `sorted_asc` / `sorted_desc` (`Ord`, fresh array, input
-  untouched), `count(target)` / `first_index_of(target)` (`Eq`; the latter
-  is the `Option[i32]` companion to `index_of`'s `-1` sentinel),
+  untouched), `count(target)` / `index_of(target)` (`Eq`; the latter
+  → `Option[i32]`, `None` when absent),
   `distinct` (`Eq`), and the structural `reverse` / `take(n)` / `drop(n)`.
 
   These used to exist twice — once for `i32[]`, once for `string[]` under a
@@ -319,7 +319,7 @@ forms cannot both claim one name.
   `Option[T]`, negative index → `None`), `map`, `filter`, `fold`, `reduce`,
   `any`, `all`, `none` (complement of `any`), `find`, `find_last`,
   `position` (index of the first element satisfying a PREDICATE — the
-  value-driven form is `first_index_of`), `rposition`, `count_where` (tally
+  value-driven form is `index_of`), `rposition`, `count_where` (tally
   matching a predicate), `sum_by` (sum of an i32 projection over any element
   type), `enumerate`, `concat`, `chunks`, `chunks_exact`, `windows`, `zip`,
   `flat_map`, `partition` (→ `(kept, rejected)`), `scan` (running left fold,

@@ -71,6 +71,38 @@ function main(): i32 {
     }
     return r; // 127
 }`},
+	// std/array's `xs.index_of(target)` → Option[i32] (#4387). On this path an
+	// i32[] receiver does NOT run the stdlib body: it rides a lowering intercept
+	// to __fern_arr_i32_index_of_opt, with its scrutinee type coming from
+	// builtin_arr_opt_ret_type — so native and self-host can disagree on the
+	// return SHAPE while agreeing on every value, which is what this oracles.
+	// Three receivers, three lowerings: a local and a struct FIELD (both
+	// intercepted, the field one being the #6784 shape) and a string[] (not
+	// intercepted — the stdlib generic). `.contains` rides the raw -1 scan that
+	// the intercept kept, so it is checked on the same receivers.
+	{"array-index-of", `import "std/array";
+struct H { xs: i32[] }
+function main(): i32 {
+    var xs: i32[] = [7, 8, 9];
+    var ss: string[] = ["a", "b", "c"];
+    var h: H = H { xs: [7, 8, 9] };
+    match (xs.index_of(9))  { Some(i) => { if (i != 2) { return 1; } }, None => { return 2; } }
+    match (xs.index_of(99)) { Some(_) => { return 3; },                 None => {} }
+    match (h.xs.index_of(9))  { Some(i) => { if (i != 2) { return 4; } }, None => { return 5; } }
+    match (h.xs.index_of(99)) { Some(_) => { return 6; },                 None => {} }
+    match (ss.index_of("c")) { Some(i) => { if (i != 2) { return 7; } }, None => { return 8; } }
+    match (ss.index_of("z")) { Some(_) => { return 9; },                 None => {} }
+    var dup: i32[] = [5, 3, 5];
+    match (dup.index_of(5)) { Some(i) => { if (i != 0) { return 10; } }, None => { return 11; } }
+    var empty: i32[] = [];
+    match (empty.index_of(0)) { Some(_) => { return 12; }, None => {} }
+    var o: Option[i32] = xs.index_of(8);
+    match (o) { Some(i) => { if (i != 1) { return 13; } }, None => { return 14; } }
+    if (!xs.contains(8))   { return 15; }
+    if (xs.contains(88))   { return 16; }
+    if (!h.xs.contains(8)) { return 17; }
+    return 42;
+}`},
 	// The persistent collections (#6794) through the self-host loader: generic
 	// enums / structs with receiver methods whose bodies call bounded free
 	// generics on the struct's own type vars (`__om_insert(m.root, k, v)` under

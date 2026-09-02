@@ -1469,6 +1469,10 @@ pub function (s: EmitState) mark_arr_i32_index_of(): EmitState {
     return s.need("arr_i32_index_of");
 }
 
+pub function (s: EmitState) mark_arr_i32_index_of_opt(): EmitState {
+    return s.need("heap").need("arr_i32_index_of_opt");
+}
+
 // mark_str_from_bytes gates the Fern __fern_string_from_bytes runtime function
 // (#2649) on its own str_from_bytes need. The AST call sites previously only
 // marked heap (the hand-asm body rode the always-emitted heap block); the Fern
@@ -1686,8 +1690,19 @@ pub function rt_src_arr_i32_product(): string {
     return "function __fern_arr_i32_product(xs: i32[]): i32 { var p: i32 = 1; var i: i32 = 0; while (i < xs.len()) { p = p * xs[i]; i = i + 1; } return p; }";
 }
 
+// rt_src_arr_i32_index_of is the RAW scan: first index or -1. It still backs
+// `xs.contains(x)`, which reads the sentinel as `>= 0` and never sees an Option.
 pub function rt_src_arr_i32_index_of(): string {
     return "function __fern_arr_i32_index_of(xs: i32[], target: i32): i32 { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return i; } i = i + 1; } return 0 - 1; }";
+}
+
+// rt_src_arr_i32_index_of_opt backs `xs.index_of(x)`, which returns Option[i32].
+// Same shape as the min/max pair below: the Option box lives INSIDE the Fern
+// helper, so the call site is an unconditional call and no Option construction
+// is hand-emitted as IR ops. It allocates, so its need pulls in the heap
+// runtime — unlike the raw sentinel scan above, which does not.
+pub function rt_src_arr_i32_index_of_opt(): string {
+    return "function __fern_arr_i32_index_of_opt(xs: i32[], target: i32): Option[i32] { var i: i32 = 0; while (i < xs.len()) { if (xs[i] == target) { return Some(i); } i = i + 1; } return None; }";
 }
 
 // rt_src_arr_i32_min / _max backed `xs.min()` / `.max()` on the AST path. The
@@ -2925,9 +2940,10 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
         if (ty_is_array_i64(rt)) { return ty_i64(); }
         return ty_string();
     }
-    // i32/string-array search methods.
+    // i32/string-array search methods. `.index_of` returns Option[i32] (the
+    // out-of-band "absent"); `.contains` is the boolean read of the same scan.
     if (ty_is_array_i32(rt) || ty_is_array_string(rt)) {
-        if (fa.field == "index_of") { return ty_i32(); }
+        if (fa.field == "index_of") { return ty_option(ty_i32()); }
         if (fa.field == "contains") { return ty_bool(); }
     }
     if (ty_is_array_i32(rt)
@@ -3650,6 +3666,11 @@ pub function runtime_need_deps(name: string): string[] {
         || name == "arr_push" || name == "arr_slice"
         || name == "str_case" || name == "str_repeat"
         || name == "str_reverse" || name == "str_replace"
+        // The Option-returning array helpers box their result via
+        // __fern_arr_box. Their call sites mark heap too, so this edge is
+        // byte-neutral through that door; it is what makes the closure right
+        // when the need is seeded from all_runtime_need_roots instead.
+        || name == "arr_i32_index_of_opt" || name == "arr_i32_min_max_opt"
         || name == "poll") {
         // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc.
         return heap;

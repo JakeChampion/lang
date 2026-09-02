@@ -33,8 +33,11 @@ var arrFieldBuiltinRecvCases = []struct {
 }{
 	{"field-sum", `struct H { xs: i32[] } function main(): i32 { var h: H = H { xs: [1, 2, 3] }; return h.xs.sum(); }`, 6},
 	{"field-product", `struct H { xs: i32[] } function main(): i32 { var h: H = H { xs: [2, 3, 4] }; return h.xs.product(); }`, 24},
-	{"field-index-of", `struct H { xs: i32[] } function main(): i32 { var h: H = H { xs: [7, 8, 9] }; return h.xs.index_of(9); }`, 2},
-	{"field-index-of-missing", `struct H { xs: i32[] } function main(): i32 { var h: H = H { xs: [7, 8, 9] }; return h.xs.index_of(99) + 5; }`, 4},
+	// index_of returns Option[i32] (#4387), so the field-receiver shape is an
+	// inline `match` on the call — which also exercises builtin_arr_opt_ret_type
+	// recovering the scrutinee type for a FIELD receiver, not just a local.
+	{"field-index-of", `struct H { xs: i32[] } function main(): i32 { var h: H = H { xs: [7, 8, 9] }; match (h.xs.index_of(9)) { Some(i) => { return i; }, None => { return 90; } } }`, 2},
+	{"field-index-of-missing", `struct H { xs: i32[] } function main(): i32 { var h: H = H { xs: [7, 8, 9] }; match (h.xs.index_of(99)) { Some(i) => { return i; }, None => { return 4; } } }`, 4},
 	{"field-contains", `struct H { xs: i32[] } function main(): i32 { var h: H = H { xs: [7, 8, 9] }; if (h.xs.contains(8)) { return 11; } return 22; }`, 11},
 	// min/max return Option[i32] from a runtime helper the module's own
 	// side-tables cannot see, so the scrutinee type comes from

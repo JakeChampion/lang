@@ -1991,6 +1991,7 @@ function emit_arm64_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmco
     if (o.str == "__fern_i32_gcd") { s = s.mark_i32_gcd(); }
     if (o.str == "__fern_i32_lcm") { s = s.mark_i32_lcm(); }
     if (o.str == "__fern_arr_i32_index_of") { s = s.mark_arr_i32_index_of(); }
+    if (o.str == "__fern_arr_i32_index_of_opt") { s = s.mark_arr_i32_index_of_opt(); }
     // min/max return a freshly allocated Option box, so unlike the fold
     // helpers they need the heap runtime as well as their own bodies.
     if (o.str == "__fern_arr_i32_min_opt" || o.str == "__fern_arr_i32_max_opt") {
@@ -6119,6 +6120,13 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // where arr[i] == target, or -1; called via the stack convention.
     if (s.has_need("arr_i32_index_of")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of(), s.struct_decls, s);
+    }
+    // __fern_arr_i32_index_of_opt backs xs.index_of(x) (#4387): the raw scan
+    // above returns the -1 sentinel and still backs .contains(x); this one
+    // carries the Option box in its Fern body, so the IR call site is a plain
+    // call. It allocates, so the need also pulls in the heap runtime.
+    if (s.has_need("arr_i32_index_of_opt")) {
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_i32_index_of_opt(), s.struct_decls, s);
     }
     // __fern_arr_i32_min_opt / _max_opt back xs.min() / .max() on the IR path
     // (#3457): unlike the raw-extremum __fern_arr_i32_min / _max above (whose

@@ -409,7 +409,7 @@ pub function (s: string) last_index_of(needle: string): i32 {
 // companions to `index_of` / `last_index_of`. They report
 // "not found" as `None` instead of the `-1` sentinel, which is
 // the convention the rest of the stdlib settled on (split_once,
-// strip_prefix, the i32[] first_index_of family). Prefer these
+// strip_prefix, the array `index_of` family). Prefer these
 // in new code so a forgotten `< 0` check can't silently read a
 // bogus index; `index_of` / `last_index_of` stay as the
 // low-level i32 form (and the self-host compiler's own builtin).

@@ -1770,22 +1770,10 @@ pub function (xs: T[]) all_equal[T: cmp.Eq](): boolean { return all_equal(xs); }
 pub function (xs: T[]) starts_with[T: cmp.Eq](prefix: T[]): boolean { return starts_with(xs, prefix); }
 pub function (xs: T[]) ends_with[T: cmp.Eq](suffix: T[]): boolean { return ends_with(xs, suffix); }
 
-// `xs.index_of(target)` — first index equal to `target`, or -1 when absent.
-// Linear scan; the `-1` sentinel (rather than `Option`) is what the
-// compiler-style call sites (keyword tables, type lists, diagnostic tags)
-// read with a `< 0` test. `xs.position(target)` is the Option-returning
-// form.
-// Compares with the `Eq` bound's `eq` method rather than `==`: the operator
-// desugars through a `Type.eq` lookup that is not visible from this module, so
-// `==` here would reject a caller's `@derive(Eq)` element type.
-pub function (xs: T[]) index_of[T: cmp.Eq](target: T): i32 {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i].eq(target)) { return i; }
-        i = i + 1;
-    }
-    return 0 - 1;
-}
+// `xs.index_of(target)` — `Some(i)` for the first index equal to `target`,
+// `None` when absent. The reverse-scan companion is `.index_of_last`;
+// `.position(pred)` is the predicate-driven form.
+pub function (xs: T[]) index_of[T: cmp.Eq](target: T): Option[i32] { return cmp.index_of(xs, target); }
 
 // `xs.contains(target)` — boolean membership test; delegates to core/cmp's
 // `contains`.
@@ -1822,7 +1810,7 @@ pub function (xs: T[]) windows[T](size: i32): T[][] { return windows(xs, size); 
 
 // ---- Element-polymorphic method forms of the reductions ------------
 //
-// `sum` / `product` / `max` / `min` / `count` / `first_index_of` /
+// `sum` / `product` / `max` / `min` / `count` / `index_of` /
 // `sorted_asc` / `sorted_desc` / `reverse` / `take` / `drop` / `distinct`
 // used to exist twice, once for an `i32[]` receiver and once for a
 // `string[]` one, under names invented to dodge a namespace that keyed on
@@ -1846,18 +1834,6 @@ pub function (xs: T[]) min[T: cmp.Ord](): Option[T] { return cmp.min_of(xs); }
 // `xs.count(target)` — how many elements equal `target`.
 pub function (xs: T[]) count[T: cmp.Eq](target: T): i32 { return count(xs, target); }
 
-// `xs.first_index_of(target)` — `Some(i)` for the first element equal to
-// `target`, `None` if absent. The Option-returning companion to
-// `index_of`, which reports a `-1` sentinel instead.
-pub function (xs: T[]) first_index_of[T: cmp.Eq](target: T): Option[i32] {
-    var i: i32 = 0;
-    while (i < xs.len()) {
-        if (xs[i].eq(target)) { return Some(i); }
-        i = i + 1;
-    }
-    return None;
-}
-
 // `xs.sorted_asc()` / `xs.sorted_desc()` — a fresh array in `Ord` order;
 // the input is untouched.
 pub function (xs: T[]) sorted_asc[T: cmp.Ord](): T[] { return cmp.sort(xs); }
@@ -1876,5 +1852,5 @@ pub function (xs: T[]) distinct[T: cmp.Eq](): T[] { return cmp.distinct(xs); }
 
 // `xs.position(pred)` — index of the first element satisfying `pred`, or
 // `None`. Predicate-driven, matching the free `position(xs, pred)`; the
-// value-driven form that used to hold this name is `first_index_of`.
+// value-driven form is `index_of`.
 pub function (xs: T[]) position(pred: (T) => boolean): Option[i32] { return position(xs, pred); }

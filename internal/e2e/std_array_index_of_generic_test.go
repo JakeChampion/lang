@@ -21,6 +21,9 @@ import (
 // operator desugars through a `Type.eq` lookup that is not visible from
 // `std/array`, so a caller's `@derive(Eq)` element type would be rejected.
 // The struct case below is what pins that.
+//
+// `.index_of` returns `Option[i32]` since #4387 — "absent" is `None`, not a
+// `-1` sentinel — so each assertion below matches rather than compares.
 func TestStdArrayIndexOfContainsGeneric(t *testing.T) {
 	// The reported repro: `std/i32` transitively imports `std/array`, so the
 	// Array method namespace is populated and the call resolves through it.
@@ -28,8 +31,8 @@ func TestStdArrayIndexOfContainsGeneric(t *testing.T) {
 		src := `import "std/i32";
 function main(): i32 {
     var xs: i32[] = [1, 2, 3];
-    var i: i32 = xs.index_of(2);
-    if (xs.contains(3)) { return i; }
+    var i: Option[i32] = xs.index_of(2);
+    if (xs.contains(3)) { match (i) { Some(v) => { return v; }, None => { return 0 - 1; } } }
     return 0 - 1;
 }`
 		prog, _, err := modload.LoadSource(src)
@@ -59,7 +62,9 @@ function main(): i32 {
 				src := `import "std/i32";
 function main(): i32 {
     var xs: ` + recv.ty + ` = ` + recv.lit + `;
-    if (xs.contains(` + recv.target + `)) { return xs.index_of(` + recv.target + `); }
+    if (xs.contains(` + recv.target + `)) {
+        match (xs.index_of(` + recv.target + `)) { Some(v) => { return v; }, None => { return 0 - 1; } }
+    }
     return 0 - 1;
 }`
 				prog, _, err := modload.LoadSource(src)
@@ -81,17 +86,17 @@ function main(): i32 {
 		{
 			// Each `return` is a distinct failure code so a red run names the
 			// assertion; 42 is the all-pass value.
-			name: "i32[] hit / miss / sentinel",
+			name: "i32[] hit / miss / absent",
 			src: `import "std/i32";
 function main(): i32 {
     var xs: i32[] = [1, 2, 3];
-    if (xs.index_of(2) != 1) { return 1; }
-    if (xs.index_of(1) != 0) { return 2; }
-    if (xs.index_of(9) != 0 - 1) { return 3; }
+    match (xs.index_of(2)) { Some(v) => { if (v != 1) { return 1; } }, None => { return 1; } }
+    match (xs.index_of(1)) { Some(v) => { if (v != 0) { return 2; } }, None => { return 2; } }
+    match (xs.index_of(9)) { Some(_) => { return 3; }, None => {} }
     if (!xs.contains(3)) { return 4; }
     if (xs.contains(9)) { return 5; }
     var empty: i32[] = [];
-    if (empty.index_of(1) != 0 - 1) { return 6; }
+    match (empty.index_of(1)) { Some(_) => { return 6; }, None => {} }
     if (empty.contains(1)) { return 7; }
     return 42;
 }`,
@@ -102,8 +107,8 @@ function main(): i32 {
 			src: `import "std/array";
 function main(): i32 {
     var xs: i64[] = [10, 20, 30];
-    if (xs.index_of(30) != 2) { return 1; }
-    if (xs.index_of(11) != 0 - 1) { return 2; }
+    match (xs.index_of(30)) { Some(v) => { if (v != 2) { return 1; } }, None => { return 1; } }
+    match (xs.index_of(11)) { Some(_) => { return 2; }, None => {} }
     if (!xs.contains(20)) { return 3; }
     if (xs.contains(21)) { return 4; }
     return 42;
@@ -115,8 +120,8 @@ function main(): i32 {
 			src: `import "std/array";
 function main(): i32 {
     var xs: u8[] = [7, 8, 9];
-    if (xs.index_of(9) != 2) { return 1; }
-    if (xs.index_of(6) != 0 - 1) { return 2; }
+    match (xs.index_of(9)) { Some(v) => { if (v != 2) { return 1; } }, None => { return 1; } }
+    match (xs.index_of(6)) { Some(_) => { return 2; }, None => {} }
     if (!xs.contains(8)) { return 3; }
     if (xs.contains(6)) { return 4; }
     return 42;
@@ -131,12 +136,12 @@ function main(): i32 {
 			src: `import "std/array";
 function main(): i32 {
     var xs: string[] = ["a", "bb", "ccc"];
-    if (xs.index_of("bb") != 1) { return 1; }
-    if (xs.index_of("zz") != 0 - 1) { return 2; }
+    match (xs.index_of("bb")) { Some(v) => { if (v != 1) { return 1; } }, None => { return 1; } }
+    match (xs.index_of("zz")) { Some(_) => { return 2; }, None => {} }
     if (!xs.contains("ccc")) { return 3; }
     if (xs.contains("dddd")) { return 4; }
     if (!xs.contains("c" + "cc")) { return 5; }
-    if (xs.index_of("b" + "b") != 1) { return 6; }
+    match (xs.index_of("b" + "b")) { Some(v) => { if (v != 1) { return 6; } }, None => { return 6; } }
     return 42;
 }`,
 			want: 42,
@@ -151,9 +156,9 @@ import "core/cmp" as cmp;
 struct Point { x: i32, y: i32 }
 function main(): i32 {
     var ps: Point[] = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }];
-    if (ps.index_of(Point { x: 3, y: 4 }) != 1) { return 1; }
-    if (ps.index_of(Point { x: 1, y: 2 }) != 0) { return 2; }
-    if (ps.index_of(Point { x: 3, y: 9 }) != 0 - 1) { return 3; }
+    match (ps.index_of(Point { x: 3, y: 4 })) { Some(v) => { if (v != 1) { return 1; } }, None => { return 1; } }
+    match (ps.index_of(Point { x: 1, y: 2 })) { Some(v) => { if (v != 0) { return 2; } }, None => { return 2; } }
+    match (ps.index_of(Point { x: 3, y: 9 })) { Some(_) => { return 3; }, None => {} }
     if (!ps.contains(Point { x: 1, y: 2 })) { return 4; }
     if (ps.contains(Point { x: 9, y: 9 })) { return 5; }
     return 42;
@@ -168,8 +173,8 @@ function main(): i32 {
 function main(): i32 {
     var xs: i32[] = [1, 2, 3];
     var ss: string[] = ["a", "b"];
-    if (xs.index_of(3) != 2) { return 1; }
-    if (ss.index_of("b") != 1) { return 2; }
+    match (xs.index_of(3)) { Some(v) => { if (v != 2) { return 1; } }, None => { return 1; } }
+    match (ss.index_of("b")) { Some(v) => { if (v != 1) { return 2; } }, None => { return 2; } }
     if (!xs.contains(1)) { return 3; }
     if (!ss.contains("a")) { return 4; }
     if (xs.contains(0)) { return 5; }
