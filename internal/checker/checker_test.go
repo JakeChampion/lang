@@ -2286,22 +2286,66 @@ func TestMethodTypechecksAndRewritesCall(t *testing.T) {
 	}
 }
 
-func TestMethodRejectsNonStructReceiver(t *testing.T) {
+func TestMethodAcceptsBuiltinReceivers(t *testing.T) {
 	// `i32` (a built-in numeric receiver) is permitted — it's how the
 	// prelude declares `i32.to_string()` etc. An array receiver is
-	// permitted only when it's element-polymorphic (`(xs: T[])`); a
-	// CONCRETE element type is rejected, because the "Array" method
-	// namespace can't distinguish element types — a `(xs: i32[]) sum()`
-	// would wrongly apply to `string[]` too.
-	src := `function (xs: i32[]) sum(): i32 { return 0; }`
-	if err := checkSource(t, src); err == nil {
-		t.Error("expected error for concrete-element array receiver")
+	// permitted both element-polymorphic and pinned to one element type;
+	// the latter is what std/array's `avg` / `join` need, and declaring
+	// one is not a power the stdlib holds alone.
+	if err := checkSource(t, `function (xs: i32[]) total(): i32 { return 0; }
+function main(): i32 { var a: i32[] = [1]; return a.total(); }`); err != nil {
+		t.Errorf("concrete-element array receiver should be accepted, got: %v", err)
+	}
+	if err := checkSource(t, `function (xs: [u8]) first_byte(): i32 { return 0; }
+function main(): i32 { return 0; }`); err != nil {
+		t.Errorf("concrete-element slice receiver should be accepted, got: %v", err)
 	}
 	// The element-polymorphic form is accepted (see
 	// TestGenericReceiverMethods for the positive cases).
 	if err := checkSource(t, `function (xs: T[]) first(): T { return xs[0]; }
 function main(): i32 { var a: i32[] = [1]; return a.first(); }`); err != nil {
 		t.Errorf("element-polymorphic array receiver should be accepted, got: %v", err)
+	}
+}
+
+func TestNestedArrayReceiverRejected(t *testing.T) {
+	// Dispatch binds the receiver's element in one step, so a `T[][]`
+	// receiver would bind T to the inner array and resolve one level too
+	// deep. Refused at the declaration, and the body still walks — the
+	// receiver is hoisted anyway, so there is no `undefined identifier`
+	// cascade under the real diagnostic.
+	err := checkSource(t, `function (xs: T[][]) flat(): i32 { return xs.len(); }`)
+	if err == nil {
+		t.Fatal("expected error for nested-array receiver")
+	}
+	if !strings.Contains(err.Error(), "nested array/slice element") {
+		t.Errorf("want the nested-element reason, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "undefined identifier") {
+		t.Errorf("rejected receiver must still be hoisted for the body walk, got: %v", err)
+	}
+}
+
+func TestConcreteArrayReceiverRejectsOtherElementType(t *testing.T) {
+	// The "Array" namespace is keyed on the method NAME, so a
+	// concrete-element method claims `Array.total` for every array and a
+	// `string[]` receiver reaches it. That is an unresolved method on the
+	// receiver, not a bad "argument 1" — the receiver was hoisted into the
+	// argument list by the dispatch rewrite, a slot the caller never wrote.
+	err := checkSource(t, `function (xs: i32[]) total(): i32 { return 0; }
+function main(): i32 { var s: string[] = ["a"]; return s.total(); }`)
+	if err == nil {
+		t.Fatal("expected error calling an i32[] method on string[]")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `no method "total" on string[]`) {
+		t.Errorf("want an unresolved-method message, got: %v", msg)
+	}
+	if strings.Contains(msg, "argument 1") {
+		t.Errorf("receiver mismatch must not be reported as an argument slot, got: %v", msg)
+	}
+	if !strings.Contains(msg, "declared for i32[]") {
+		t.Errorf("want the declared receiver type named, got: %v", msg)
 	}
 }
 
@@ -2728,28 +2772,14 @@ function main(): i32 {
 	}
 }
 
-// Auto-discovery: every prelude function named
-// `__method_Array_<name>` gets a corresponding
-// `Array.<name>` entry in `Info.Methods` without any
-// hand-written registration in `checker.go`. Phase 2 of
-// the prelude-to-modules migration relies on this so
-// later phases can drop new `__method_Array_*` functions
-// into a `std/array` module and have dispatch Just Work.
-//
-// The probe checks for representative methods drawn from
-// the existing prelude (one synthetic + one IR-discovered)
-// plus the canonical hand-registered `Array.append` which
-// must continue to work despite being skipped by the
-// auto-discovery loop.
-func TestArrayMethodDispatchAutoDiscovers(t *testing.T) {
-	// Post-flip there's no auto-prelude, so the discoverable
-	// `__method_Array_*` functions are supplied inline here — the
-	// same shape std/array ships. Auto-discovery should register
-	// each as an `Array.<name>` method without a hand-written
-	// entry in checker.go, while the synthetic `Array.append`
-	// (registered by hand, IR-intercepted) keeps working.
-	prog, err := parser.Parse(`function __method_Array_join(xs: i32[], sep: string): string { return ""; }
-function __method_Array_sum(xs: i32[]): i32 { return 0; }
+// Array-method dispatch: a receiver method on an array, whether it pins one
+// element type (`(xs: i32[]) sum()`) or is element-polymorphic, registers as
+// an `Array.<name>` entry in `Info.Methods` under the `__method_Array_<name>`
+// mangling the IR and every backend already resolve. std/array declares its
+// whole surface this way; nothing is discovered from a name pattern.
+func TestArrayMethodDispatchRegistersReceiverMethods(t *testing.T) {
+	prog, err := parser.Parse(`function (xs: string[]) join2(sep: string): string { return ""; }
+function (xs: T[]) sum2(): i32 { return 0; }
 function main(): i32 { return 0; }`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -2766,22 +2796,41 @@ function main(): i32 { return 0; }`)
 		// mutable-looking `push` name was withdrawn (the mangled
 		// lowering __method_Array_push is unchanged).
 		{"Array.append", "__method_Array_push"},
-		// Discovered from naming convention — these are
-		// implemented as ordinary prelude functions whose
-		// declarations would otherwise be invisible to the
-		// method-dispatch map.
-		{"Array.join", "__method_Array_join"},
-		{"Array.sum", "__method_Array_sum"},
+		// Declared with a receiver — concrete element type and
+		// element-polymorphic reach the same namespace and the same
+		// mangling.
+		{"Array.join2", "__method_Array_join2"},
+		{"Array.sum2", "__method_Array_sum2"},
 	}
 	for _, c := range cases {
 		got, ok := info.Methods[c.key]
 		if !ok {
-			t.Errorf("Methods[%q] missing; auto-discovery didn't pick up the prelude function", c.key)
+			t.Errorf("Methods[%q] missing; receiver method did not register", c.key)
 			continue
 		}
 		if got != c.mangled {
 			t.Errorf("Methods[%q] = %q, want %q", c.key, got, c.mangled)
 		}
+	}
+}
+
+// The `__method_Array_<name>` naming convention still registers a method:
+// std/array's concrete-element verbs reach dispatch through it, and they
+// cannot move onto receivers until the self-hosted compiler lowers that form.
+// A receiver method and a convention-named function claim the same
+// `Array.<name>` key, so this asserts the route rather than blessing it.
+func TestArrayMethodNamePatternStillDispatches(t *testing.T) {
+	prog, err := parser.Parse(`function __method_Array_ghost(xs: i32[]): i32 { return 0; }
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if got := info.Methods["Array.ghost"]; got != "__method_Array_ghost" {
+		t.Errorf("Methods[\"Array.ghost\"] = %q, want %q", got, "__method_Array_ghost")
 	}
 }
 

@@ -260,6 +260,15 @@ convention, pins a concrete element type and is reserved for verbs that are
 genuinely specific to it. The namespace keys on the method NAME, so the two
 forms cannot both claim one name.
 
+A concrete element type is legal on a receiver as well — `pub function
+(arr: i32[]) gcd_all(…)`, the form that would retire the naming convention
+entirely — and any program can declare one. std/array cannot use it yet: the
+self-hosted compiler resolves such a method but does not lower it, and a single
+declaration costs an unrelated generic its type-parameter substitution, so the
+convention stays until that is fixed. A receiver whose element is itself an
+array or slice (`T[][]`) is rejected by E021 on both forms — dispatch binds the
+element in one step and would resolve a level too deep.
+
 - **Element-polymorphic reductions** (one bounded generic each, so the same
   call works for i32 / i64 / u32 / u64 / f32 / f64 / string and
   `@derive(Ord)` / `@derive(Eq)` element types alike):
@@ -341,9 +350,8 @@ forms cannot both claim one name.
   `take_last`/`drop_last`, `slice`, `max_by_i32_key`/`min_by_i32_key`
   (extremum by an i32 projection), `running_max`/`running_min`, and the
   Eq-bounded set algebra `union`/`intersection`/`difference`. `flatten`
-  (`T[][]` → `T[]`) is free-only structurally: an array-receiver method must
-  be element-polymorphic `(xs: T[])`, and a nested-array receiver is
-  rejected by E021.
+  (`T[][]` → `T[]`) is free-only structurally: a nested-array receiver is
+  rejected by E021, so it cannot be spelled as a method.
 
 ### `std/unicode`
 

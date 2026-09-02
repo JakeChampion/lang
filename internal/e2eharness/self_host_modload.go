@@ -5,6 +5,7 @@
 package e2eharness
 
 import (
+	"os/exec"
 	"testing"
 )
 
@@ -28,7 +29,14 @@ func RunDriverFile(t *testing.T, runner []string, bin, entry string, extraArgs .
 	cmd := RunX86_64Bin(runner, bin, append([]string{entry}, extraArgs...)...)
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("run driver on %s: %v", entry, err)
+		// The driver reports a refusal or a diagnostic on stderr, which
+		// Output() captures but does not put in the error. Without it a
+		// compile failure reads only as "exit status 1".
+		var stderr []byte
+		if ee, ok := err.(*exec.ExitError); ok {
+			stderr = ee.Stderr
+		}
+		t.Fatalf("run driver on %s: %v\n%s", entry, err, stderr)
 	}
 	return out
 }
