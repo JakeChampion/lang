@@ -47,12 +47,13 @@ const (
 	// regression that widened the SSA bail set would otherwise turn the lane
 	// green by comparing almost nothing.
 	//
-	// 28 as measured 2026-09-02, the day the array and string runtime helpers
-	// landed. It is far below the arm64 leg's floor because this backend is
-	// still missing most of its helper table (docs/SSA-CUTOVER-PLAN.md: 84
-	// symbols, of which this covers a corner). RAISE IT with each helper slice
-	// — that is the point of the number.
-	x86SSADiffMinCompared = 28
+	// 30 as measured 2026-09-02, after the stack-argument path (#8087) let this
+	// backend build the functions with more than six parameters it used to
+	// refuse outright. It is far below the arm64 leg's floor because this
+	// backend is still missing most of its helper table
+	// (docs/SSA-CUTOVER-PLAN.md: 84 symbols, of which this covers a corner).
+	// RAISE IT with each helper slice — that is the point of the number.
+	x86SSADiffMinCompared = 30
 )
 
 func TestX86_64SSABackendDifferential(t *testing.T) {

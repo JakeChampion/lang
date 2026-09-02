@@ -2,6 +2,7 @@ package x86_64ssa
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -315,15 +316,91 @@ func TestAsmRunParamSixth(t *testing.T) {
 	}
 }
 
-// More than six parameters (stack args) are rejected with a clear error.
-func TestAsmRejectsTooManyParams(t *testing.T) {
-	f := ssa.NewFunc("p7")
-	for i := 0; i < 7; i++ {
-		f.AddParam()
+// weightedSum builds a function of n parameters returning
+// p0 + 2*p1 + 3*p2 + … — a result that changes if ANY argument is dropped,
+// duplicated, or transposed. A function that ignored its later parameters
+// would pass a stack-argument test while they were being lost (#8087).
+func weightedSum(name string, n int) *ssa.Func {
+	f := ssa.NewFunc(name)
+	ps := make([]ssa.Value, n)
+	for i := range ps {
+		ps[i] = f.AddParam()
 	}
 	e := f.NewBlock()
-	f.SetRet(e, constOp(f, e, 0))
-	if _, err := EmitAsm(f, 8); err == nil {
-		t.Error("expected EmitAsm to reject >6 params (stack args not yet supported)")
+	acc := ps[0]
+	for i := 1; i < n; i++ {
+		term := f.AddOp(e, ssa.OpMul, ps[i], constOp(f, e, int64(i+1)))
+		acc = f.AddOp(e, ssa.OpAdd, acc, term)
+	}
+	f.SetRet(e, acc)
+	return f
+}
+
+// countUp is the argument list 1..n.
+func countUp(n int) []int64 {
+	args := make([]int64, n)
+	for i := range args {
+		args[i] = int64(i + 1)
+	}
+	return args
+}
+
+// Arguments past the sixth arrive on the stack, at [rbp+16] and up (#8087).
+// Seven crosses the boundary, eight is the aligned case, twelve is well past
+// it — and the odd counts are the ones that would show a lost 16-byte
+// alignment at the call.
+func TestAsmRunStackParams(t *testing.T) {
+	for _, n := range []int{7, 8, 9, 12} {
+		for _, nAlloc := range []int{1, 2, 8} {
+			runMatchesEvalArgs(t, weightedSum(fmt.Sprintf("p%d", n), n), nAlloc, countUp(n))
+		}
+	}
+}
+
+// The caller side: a direct call passing more than six arguments pushes the
+// rest, and must leave rsp where it found it.
+func TestAsmRunStackArgsDirectCall(t *testing.T) {
+	for _, n := range []int{7, 8, 9, 12} {
+		callee := weightedSum("callee", n)
+		main := ssa.NewFunc("main")
+		me := main.NewBlock()
+		var args []ssa.Value
+		for _, v := range countUp(n) {
+			args = append(args, constOp(main, me, v))
+		}
+		// Call twice and add: a call that mismanaged rsp would land the second
+		// one on a shifted stack rather than merely returning the wrong number.
+		t1 := callOp(main, me, "callee", args...)
+		t2 := callOp(main, me, "callee", args...)
+		main.SetRet(me, main.AddOp(me, ssa.OpAdd, t1, t2))
+
+		funcs := map[string]*ssa.Func{"callee": callee, "main": main}
+		for _, nAlloc := range []int{1, 2, 8} {
+			runModuleMatchesEval(t, funcs, "main", nAlloc, nil)
+		}
+	}
+}
+
+// The indirect (closure) path: the env pointer rides as the final argument, so
+// a six-argument call through a closure already needs a stack slot for it.
+func TestAsmRunStackArgsIndirectCall(t *testing.T) {
+	for _, n := range []int{6, 7, 10} {
+		// target takes n call arguments plus the env pointer as its last param.
+		target := weightedSum("target", n+1)
+
+		apply := ssa.NewFunc("apply")
+		ae := apply.NewBlock()
+		c := makeClosureOp(apply, ae, "target")
+		var args []ssa.Value
+		for _, v := range countUp(n) {
+			args = append(args, constOp(apply, ae, v))
+		}
+		apply.SetRet(ae, callIndirectOp(apply, ae, c, args...))
+
+		funcs := map[string]*ssa.Func{"apply": apply, "target": target}
+		table := sortedNames(funcs)
+		for _, nAlloc := range []int{1, 2, 8} {
+			runModuleTableMatchesEval(t, funcs, table, "apply", nAlloc, nil)
+		}
 	}
 }

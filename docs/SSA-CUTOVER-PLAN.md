@@ -158,8 +158,13 @@ Two concrete blockers, and only two:
    | 247 | one or more runtime helpers with no entry in `runtimeHelperEmitters` — 84 distinct symbols, a median of 13 per program; see the unlock curve below rather than reading a per-name count as a work item |
    | 34 | float reinterprets (`reinterpret_f64_to_i64` and siblings) |
    | 15 | library files with no `main` — not a backend refusal |
-   | 7 | more than 6 params — no stack-argument ABI |
    | 5 | E066 / checker errors — not a backend refusal either |
+
+   A sixth row, `7 | more than 6 params — no stack-argument ABI`, is gone as of
+   #8087: arguments past the six SysV registers are pushed by the caller and
+   read from `[rbp+16]` up by the callee, as the AArch64 side has always done.
+   Those seven programs now block on whatever they need next, and the
+   end-to-end compared count moved 28 → 30.
 
    Each of those labels is a `call` the emitter writes with nothing behind it.
    `checkNoDanglingCalls` (ported from arm64ssa 2026-09-02) refuses them at emit
