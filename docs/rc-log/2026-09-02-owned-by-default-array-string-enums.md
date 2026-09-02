@@ -73,26 +73,42 @@ argument (`push(h.b)`) was never bracketed at all. `bracketArgPath` resolves
 a field chain to the root slot plus the field offsets; the owned-by-default
 exemption is gone.
 
-## Release code is cold: call it, never inline it
+## A walk-drop is never inlined; a flat drop follows the size caps
 
 Two text regressions, one cause. With the sweep reaching every owned-array
 function, `ir.Inline` copied `__drop_arr_enum_*`'s element walk into each
 of its call sites — a 491-op function became 3,442 ops, and the three
-collection benches' text went 2-3x. Generated drop helpers now carry
-`InlineHintNever`, which also took the benches far BELOW their old
-baselines (`ordmap_insert` 61,338 → 5,061 lines): the baseline had been
-paying the same duplication for box-only enums. The self-host driver was
-untouched by that fix — it exceeds `inlineMaxUnitOps`, so `ir.Inline`
-never runs on it — and still grew 16% (5,659,727 → 6,572,602 lines): the
-exit sweep inlined a many-variant enum's tag-switch drop at every exit of
-every function owning one (`checker.check_expr` 2x, `asmcore.ty_tag`
-25x). The sweep now inlines only a switch of at most `sweepInlineMaxArms`
-(3) payload-carrying variants and otherwise calls the generated
-`__drop_enum_<Name>` like the per-iteration sites always did. Calling it
-for EVERY enum cost the benches 3-14% retired instructions (`ordmap_insert`
-607M → 694M), which is what the bound is for: the driver's text ends at
-4,370,342 lines, 23% BELOW the baseline, and the benches keep their
-inline drop.
+collection benches' text went 2-3x. A generated drop helper whose body
+loops over elements (`dropWalksElements`) now carries `InlineHintNever`;
+a flat struct / enum / tuple drop stays under the inliner's ordinary caps.
+Marking EVERY generated drop never-inline (the first cut) took the benches
+far below their old text (`ordmap_insert` 61,378 → 5,061 lines) but turned
+the hot-loop drop into a call: `enum_match` +6.5%, `struct_drop` +3.0%,
+`utf8_ingest_*` +7-10% retired instructions on x86-64, and the same
+shape on aarch64. Under the walk-only rule those three read +0%, +0% and
++1%, the collection benches improve a further 0.5-3%, and their text sits
+at 5-9k lines against 30-77k with no hint at all.
+
+The walk-only rule needed one inliner fix to hold. A flat drop of a
+RECURSIVE type calls itself (`__drop_enum_RNode`: 135 ops, three
+self-calls through `RStar` / `RPlus` / `ROpt`), and the inliner refused a
+recursive callee only at its own sites: inlined into anyone else, every
+copy carried the three sites into the host and the next pass inlined them
+again — `regex_basic` went from 6,666 to 277,871 lowered ops, and the
+certify oracle's walk over it was OOM-killed at 14 GB. A body that calls
+itself is now never a candidate at all.
+
+The self-host driver is untouched by either rule — it exceeds
+`inlineMaxUnitOps`, so `ir.Inline` never runs on it — and still grew 16%
+(5,659,727 → 6,572,602 lines): the exit sweep inlined a many-variant
+enum's tag-switch drop at every exit of every function owning one
+(`checker.check_expr` 2x, `asmcore.ty_tag` 25x). The sweep now inlines
+only a switch of at most `sweepInlineMaxArms` (3) payload-carrying
+variants and otherwise calls the generated `__drop_enum_<Name>` like the
+per-iteration sites always did. Calling it for EVERY enum cost the benches
+3-14% retired instructions (`ordmap_insert` 607M → 694M), which is what
+the bound is for: the driver's text ends at 4,370,342 lines, 23% BELOW
+the baseline, and the benches keep their inline drop.
 
 ## A captured value is an alias too
 

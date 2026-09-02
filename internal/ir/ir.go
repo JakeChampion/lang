@@ -3458,11 +3458,14 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				fn = genStructDropFn(sn, sd, info, ptrW, genEnumDrops, genTupleDrops, lo.dynRcSupported)
 			}
 			generated[name] = true
-			// Release code is cold and called from every exit sweep that
-			// owns the type; inlined, a walk-drop's loop lands at each of
-			// those sites (an owned-array-payload function grew 7x in ops,
-			// the self-host driver 16% in text).
-			fn.InlineHint = ast.InlineHintNever
+			// A walk-drop's element loop is called from every exit sweep
+			// that owns the type; inlined, it lands at each of those sites
+			// (an owned-array-payload function grew 7x in ops). A flat drop
+			// stays under the inliner's size caps: in a hot loop the call
+			// alone costs 3-10% of retired instructions.
+			if dropWalksElements(fn) {
+				fn.InlineHint = ast.InlineHintNever
+			}
 			enqueueCalls(fn.Ops) // a generated body may call further drop fns
 			// Codegen walks prog.Funcs (AST) and looks the IR up by name;
 			// append a stub AST decl — emission reads the IR Func's ops,

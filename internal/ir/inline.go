@@ -273,6 +273,18 @@ func slotsHaveDynTrait(slots []ast.Type) bool {
 // Internal control flow (block / loop / if / br / brif) and direct
 // calls to other functions are allowed; OpCallIndirect /
 // OpMakeClosure / oversized bodies disqualify.
+// dropWalksElements reports whether a generated drop helper loops over
+// elements — an array, map or closure-capture walk — rather than releasing
+// a fixed set of fields.
+func dropWalksElements(fn *Func) bool {
+	for _, op := range fn.Ops {
+		if op.Kind == OpLoop {
+			return true
+		}
+	}
+	return false
+}
+
 func isInlineable(fn *Func) bool {
 	// Source-level hints (#4412 Rec §14): @noinline is absolute;
 	// @inline lifts only the SIZE cap — every shape-safety exclusion
@@ -285,6 +297,16 @@ func isInlineable(fn *Func) bool {
 	}
 	if len(fn.Ops) == 0 {
 		return false
+	}
+	// A body that calls itself is never a candidate: every copy carries
+	// the recursive sites into its host, and each pass inlines those
+	// again — a 135-op recursive enum drop with three self-calls turned
+	// a 400-op function into 51,000 ops in three passes. Its own sites
+	// were already refused (cand.fn == fn); this refuses everyone else's.
+	for _, op := range fn.Ops {
+		if (op.Kind == OpCallDirect || op.Kind == OpCallClosureDirect) && !op.Runtime && op.Str == fn.Name {
+			return false
+		}
 	}
 	// Candidacy admits up to the LOOP cap — the flat cap is applied
 	// per call site by siteAllows, so an 81..160-op helper can inline

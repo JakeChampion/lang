@@ -575,3 +575,23 @@ func TestInlineRunsUnderUnitCeiling(t *testing.T) {
 		}
 	}
 }
+
+// A recursive callee is refused everywhere, not only at its own sites:
+// inlined into `main`, every copy of `fact` carries its recursive call into
+// the host and the next pass inlines that again, so `main` grows by a body
+// per pass and the call never goes away. `main` keeps the one call it had.
+func TestInlineRefusesARecursiveCalleeInOtherCallers(t *testing.T) {
+	src := `function fact(n: i32): i32 {
+		if (n == 0) { return 1; }
+		return n * fact(n - 1);
+	}
+	function main(): i32 { return fact(5); }`
+	plain := findFunc(lowerSource(t, src), "main")
+	inlined := findFunc(loweredAndInlined(t, src), "main")
+	if plain == nil || inlined == nil {
+		t.Fatal("main not found")
+	}
+	if len(inlined.Ops) != len(plain.Ops) {
+		t.Errorf("main grew from %d to %d ops: a recursive callee was inlined into it", len(plain.Ops), len(inlined.Ops))
+	}
+}
