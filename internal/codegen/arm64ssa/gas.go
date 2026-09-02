@@ -6267,6 +6267,12 @@ func emitFuncBody(w func(string, ...any), name string, p *x86.Program, numAlloc 
 				// An array index is address arithmetic, not a call: inline it
 				// rather than making the allocator spill around it. The seed
 				// keeps the bounds-check label unique per site.
+				if lines, ok := inlineNoOpCallLines(in, fr); ok {
+					for _, l := range lines {
+						w("\t%s", l)
+					}
+					continue
+				}
 				if lines, ok := inlinePokeLines(in, fr, numAlloc); ok {
 					for _, l := range lines {
 						w("\t%s", l)
@@ -6448,6 +6454,9 @@ func maxCallSaveSlots(p *x86.Program, numAlloc int) int {
 		for _, in := range blk.Insts {
 			switch in.Op {
 			case x86.Call, x86.CallPair:
+				if _, elided := inlineNoOpCallLines(in, frameLayout{}); elided {
+					continue // never emitted, so it reserves nothing
+				}
 				// The same narrowing callLines applies, so a frame reserves the
 				// slots its calls will use rather than the ones they would have.
 				saved := liveAcrossToSave(callSavedSet(in, numAlloc), ir.CodegenAlias(in.Callee), len(in.ArgLocs))
@@ -6754,6 +6763,65 @@ func computeHelperClobbers() map[string][]bool {
 // else. Word-bounded, so the `x1` inside an immediate like #0x10000 is not one.
 func mentionsReg(asm, reg string) bool {
 	return regexp.MustCompile(`\b` + reg + `\b`).MatchString(asm)
+}
+
+// noOpHelpers is the set of runtime helpers whose emitted body is exactly a
+// `ret`. They compute nothing, and under the PCS they hand back the first
+// argument they were given, so a call to one is the identity on that argument.
+//
+// Derived from the body rather than listed: `__fern_box_free` and `__free` are
+// bare returns only because this heap does not reclaim yet, and when the
+// freelist slice gives them work to do (docs/SSA-RC-RUNTIME.md, RC-4+) their
+// call sites come back on their own.
+//
+// The elision is worth having because releasing a box is what a drop does:
+// `ordmap_insert` carries 165 calls into that bare `ret`, each with its
+// argument setup, on paths that run per tree node.
+//
+// x86_64ssa spells the same no-op as `mov rax, rdi` + `ret` — the identity
+// written out, because SysV returns in a different register than it passes
+// arg0 in. Mirroring this there wants the test generalised from "the body is
+// empty" to "the body is the identity on arg0"; nothing here assumes the
+// narrower form beyond the AArch64 PCS making it the same thing.
+var noOpHelpers = sync.OnceValue(computeNoOpHelpers)
+
+func computeNoOpHelpers() map[string]bool {
+	out := map[string]bool{}
+	for name, emit := range runtimeHelperEmitters {
+		var body []string
+		for _, l := range strings.Split(renderHelper(emit), "\n") {
+			l = strings.TrimSpace(l)
+			if l == "" || strings.HasSuffix(l, ":") {
+				continue
+			}
+			body = append(body, l)
+		}
+		if len(body) == 1 && body[0] == "ret" {
+			out[fnLabel(name)] = true
+		}
+	}
+	return out
+}
+
+// inlineNoOpCallLines renders a call to a do-nothing helper as the identity it
+// computes, or reports false for anything else. Helper bodies are untouched:
+// __fern_closure_drop still tail-branches to __fern_box_free, so the body has
+// to stay even where no compiled function calls it.
+func inlineNoOpCallLines(in x86.Inst, fr frameLayout) ([]string, bool) {
+	if in.Op != x86.Call || len(in.ArgLocs) == 0 || !noOpHelpers()[fnLabel(ir.CodegenAlias(in.Callee))] {
+		return nil, false
+	}
+	var out []string
+	src := in.ArgLocs[0].Reg
+	if !in.ArgLocs[0].IsReg {
+		out = append(out, fmt.Sprintf("ldr %s, [sp, #%d]", xreg(in.Dst), fr.slot(in.ArgLocs[0].Slot)))
+		src = in.Dst
+	}
+	if src != in.Dst {
+		out = append(out, fmt.Sprintf("mov %s, %s", xreg(in.Dst), xreg(src)))
+	}
+	// The same width fix the call sequence applied to the result it placed.
+	return append(out, maskFix(in.Dst, in.W)...), true
 }
 
 // liveAcrossToSave narrows the allocator's live-across set to the registers this
