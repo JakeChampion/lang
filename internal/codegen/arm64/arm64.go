@@ -10753,11 +10753,6 @@ func (g *generator) label(name string) {
 // spike RAM. (Mirror of the x86-64 backend's peephole.)
 const peepWindow = 4
 
-// put appends one logical output line (without its trailing newline) to the
-// peephole window, applies the safe local rewrites at the tail, then flushes
-// any line that has aged out of the window to `out`. All emission funnels
-// through here (line / emit / label), so the peephole sees every line in
-// emission order regardless of which helper produced it.
 // retargetLocals rewrites ELF's ".L" temporary-symbol prefix to Mach-O's
 // bare "L". Only the leading "." is dropped, so ".Lret_3" becomes "Lret_3"
 // and every reference to it changes with the definition.
@@ -10824,6 +10819,11 @@ func isSymByte(b byte) bool {
 		(b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
+// put appends one logical output line (without its trailing newline) to the
+// peephole window, applies the safe local rewrites at the tail, then flushes
+// any line that has aged out of the window to `out`. All emission funnels
+// through here (line / emit / label), so the peephole sees every line in
+// emission order regardless of which helper produced it.
 func (g *generator) put(s string) {
 	if g.darwin {
 		s = retargetLocals(s)
