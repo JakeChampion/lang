@@ -3795,6 +3795,37 @@ function main(): i32 {
 }`,
 	},
 	{
+		// `.with` on an array MATCH-BOUND from a borrowed enum: the arm binds
+		// the payload with no retain, so the array sits at the box's rc==1 and
+		// an in-place cow rewrote the payload of the enum `snap` still held,
+		// then the old box's drop released the stored leaf (use-after-free).
+		// The persistent-HAMT node update shape. Correct: snap keeps 39 at
+		// slot 0 and t reads 100 → 39 + 100 - 139 = 0.
+		name: "with_on_match_binding_of_borrowed_enum",
+		src: `
+enum N { L(i32), B(i32, N[]) }
+function bump(n: N, idx: i32, v: i32): N {
+    match (n) {
+        L(x) => { return n; },
+        B(c, kids) => { return B(c + 1, kids.with(idx, L(v))); },
+    }
+}
+function leaf(n: N, idx: i32): i32 {
+    match (n) {
+        L(x) => { return x; },
+        B(c, kids) => { match (kids[idx]) { L(x) => { return x; }, B(q, r) => { return -1; } } },
+    }
+}
+function main(): i32 {
+    var t: N = B(0, [L(1), L(2), L(3)]);
+    var i: i32 = 0;
+    while (i < 40) { t = bump(t, i % 3, i); i = i + 1; }
+    var snap: N = t;
+    t = bump(t, 0, 100);
+    return (leaf(snap, 0) + leaf(t, 0) - 139) + __rc_underflow_count();
+}`,
+	},
+	{
 		// The same `.with` self-reassign reached through a LOCAL ALIAS of the
 		// borrowed param rather than the param itself, threaded recursively —
 		// the shape the self-host checker's e060_collect_dyn_locals is built
