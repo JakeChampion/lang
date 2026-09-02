@@ -178,6 +178,23 @@ function main(): i32 { var v2: i32 = 5i32; return (if (g([((x: i32) => (x + v2))
 	// kept so a regression cannot be mistaken for the IIFE case alone.
 	{"stmt-cond-closure-arg", `function g(fs: ((i32) => i32)[], n: i64): boolean { return fs[0i32](1i32) > n as i32; }
 function main(): i32 { var v2: i32 = 5i32; if (g([((x: i32) => (x + v2))], 1i64)) { return 9i32; } return 1i32; }`, 9},
+	// #8090 — a MIXED literal the uniformity rule could not see. The lift
+	// hoists a no-capture lambda element to a bare `__lam_N` fn POINTER, which
+	// is right only while the whole literal stays pointers. Element 0 here is a
+	// value-position `if` behind a generic PASSTHROUGH (`id(<iife>)`), and both
+	// of those yield a box — so the array is on the env-first ABI while its
+	// sibling stayed a code address, which the exit sweep then rc-decremented
+	// through. Boxing every element is the fix; 40 + 2 = 42.
+	{"passthrough-iife-elem-mixed", `function id[T](x: T): T { return x; }
+function main(): i32 { var fs: ((i32) => i32)[] = [id((if (false) { ((x: i32) => 1i32) } else { ((x: i32) => 2i32) })), ((x: i32) => 40i32)]; return fs[1i32](0i32) + fs[0i32](0i32); }`, 42},
+	// The same disagreement one container out: the literal is all-no-capture,
+	// so it stays a POINTER array — but its element binding is handed to a
+	// fn-typed PARAMETER, and every fn-value argument is an env box, so the
+	// callee dispatches env-first through a bare code address. The literal has
+	// to box for that use, like the `return` and `.with` siblings already do.
+	{"elem-bound-passed-to-fn-param", `function apply(f: (i32) => i32, n: i32): i32 { return f(n); }
+function main(): i32 { var fs: ((i32) => i32)[] = [((x: i32) => (x + 2i32))]; var f: (i32) => i32 = fs[0i32]; return apply(f, 40i32); }`, 42},
+
 	// The match SCRUTINEE sibling: same blind spot, the other selector.
 	{"iife-scrutinee-closure-arg", `function g(fs: ((i32) => i32)[], n: i64): boolean { return fs[0i32](1i32) > n as i32; }
 function main(): i32 { var v2: i32 = 5i32; return (match (g([((x: i32) => (x + v2))], 1i64)) { true => 7i32, _ => 1i32 }); }`, 7},
