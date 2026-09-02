@@ -658,8 +658,18 @@ func TestSelfHostArm64CondCmpSelGas(t *testing.T) {
 		"csinc x0, x1, x2",     // missing condition
 		"cinc x0, x1",          // missing condition
 		"csetm x0",             // missing condition
-		"csetm x0, al",         // AL cannot be inverted
-		"ccmp x0, x1, #0, al",
+		// AL and NV are refused only where the encoder INVERTS the written
+		// condition. GNU as assembles `ccmp x0, x1, #0, al` (fa41e000) and
+		// every other direct form; these five aliases are the ones it
+		// refuses, and it says why: "must be one of the standard conditions,
+		// excluding AL and NV". #8075.
+		"cset x0, al",
+		"cset x0, nv",
+		"csetm x0, al",
+		"csetm x0, nv",
+		"cinc x0, x1, al",
+		"cinv x0, x1, nv",
+		"cneg x0, x1, al",
 	})
 }
 

@@ -1950,9 +1950,9 @@ func asmCsel(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
-	cond, ok := condCodes[ops[3]]
-	if !ok {
-		return fmt.Errorf("bad condition %q", ops[3])
+	cond, err := condOperand(ops[3], false)
+	if err != nil {
+		return err
 	}
 	a.Emit(clearSF(CSEL(rd, rn, rm, cond), is32(ops[0])))
 	return nil
@@ -1967,9 +1967,9 @@ func asmCset(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
-	cond, ok := condCodes[ops[1]]
-	if !ok {
-		return fmt.Errorf("bad condition %q", ops[1])
+	cond, err := condOperand(ops[1], true)
+	if err != nil {
+		return err
 	}
 	a.Emit(clearSF(CSET(rd, cond), is32(ops[0])))
 	return nil
@@ -2281,9 +2281,9 @@ func asmCondCmp(a *Assembler, mnem string, ops []string) error {
 	if nzcv < 0 || nzcv > 15 {
 		return fmt.Errorf("%s nzcv %d out of range 0..15", mnem, nzcv)
 	}
-	cond, ok := condCodes[ops[3]]
-	if !ok {
-		return fmt.Errorf("bad condition %q", ops[3])
+	cond, err := condOperand(ops[3], false)
+	if err != nil {
+		return err
 	}
 	w := is32(ops[0])
 	if strings.HasPrefix(ops[1], "#") {
@@ -2334,9 +2334,9 @@ func asmCondSel(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
-	cond, ok := condCodes[ops[3]]
-	if !ok {
-		return fmt.Errorf("bad condition %q", ops[3])
+	cond, err := condOperand(ops[3], false)
+	if err != nil {
+		return err
 	}
 	a.Emit(clearSF(condSelEnc[mnem](rd, rn, rm, cond), is32(ops[0])))
 	return nil
@@ -2357,9 +2357,9 @@ func asmCondAlias(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
-	cond, ok := condCodes[ops[2]]
-	if !ok {
-		return fmt.Errorf("bad condition %q", ops[2])
+	cond, err := condOperand(ops[2], true)
+	if err != nil {
+		return err
 	}
 	enc := condSelEnc["cs"+mnem[1:]]
 	a.Emit(clearSF(enc(rd, rn, rn, cond^1), is32(ops[0])))
@@ -2376,9 +2376,9 @@ func asmCsetm(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
-	cond, ok := condCodes[ops[1]]
-	if !ok {
-		return fmt.Errorf("bad condition %q", ops[1])
+	cond, err := condOperand(ops[1], true)
+	if err != nil {
+		return err
 	}
 	a.Emit(clearSF(CSINV(rd, 31, 31, cond^1), is32(ops[0])))
 	return nil
@@ -3294,9 +3294,9 @@ func asmFcsel(a *Assembler, ops []string) error {
 	if err != nil {
 		return err
 	}
-	cond, ok := condCodes[ops[3]]
-	if !ok {
-		return fmt.Errorf("bad condition %q", ops[3])
+	cond, err := condOperand(ops[3], false)
+	if err != nil {
+		return err
 	}
 	a.Emit(fpSingle(FCSEL(r[0], r[1], r[2], cond), single))
 	return nil
@@ -3318,9 +3318,9 @@ func asmFccmp(a *Assembler, ops []string) error {
 	if nzcv < 0 || nzcv > 15 {
 		return fmt.Errorf("fccmp nzcv %d out of range 0..15", nzcv)
 	}
-	cond, ok := condCodes[ops[3]]
-	if !ok {
-		return fmt.Errorf("bad condition %q", ops[3])
+	cond, err := condOperand(ops[3], false)
+	if err != nil {
+		return err
 	}
 	a.Emit(fpSingle(FCCMP(r[0], r[1], uint32(nzcv), cond), single))
 	return nil
@@ -3999,6 +3999,23 @@ var condCodes = map[string]uint32{
 	"lo": CondLO, "cc": CondLO, "mi": CondMI, "pl": CondPL,
 	"vs": CondVS, "vc": CondVC, "hi": CondHI, "ls": CondLS,
 	"ge": CondGE, "lt": CondLT, "gt": CondGT, "le": CondLE,
+	"al": CondAL, "nv": CondNV,
+}
+
+// condOperand decodes a condition operand. inverts marks the aliases whose
+// encoder uses the INVERSE of the written condition — cset is CSINC with the
+// condition flipped, and csetm / cinc / cinv / cneg follow. GNU as refuses AL
+// and NV on exactly those, because inverting "always" or "never" names no
+// useful instruction, and it says so rather than encoding something.
+func condOperand(tok string, inverts bool) (uint32, error) {
+	c, ok := condCodes[tok]
+	if !ok {
+		return 0, fmt.Errorf("bad condition %q", tok)
+	}
+	if inverts && (tok == "al" || tok == "nv") {
+		return 0, fmt.Errorf("condition %q is not allowed here: this form encodes the inverse of the written condition, so %q would name no instruction (GNU as refuses it too)", tok, tok)
+	}
+	return c, nil
 }
 
 // vfpImm8 computes the AArch64 8-bit VFP immediate for a float literal:

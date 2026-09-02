@@ -260,8 +260,18 @@ func TestCondCmpSelReject(t *testing.T) {
 		"\tcsinc x0, x1, x2\n",     // missing condition
 		"\tcinc x0, x1\n",          // missing condition
 		"\tcsetm x0\n",             // missing condition
-		"\tcsetm x0, al\n",         // AL cannot be inverted
-		"\tccmp x0, x1, #0, al\n",  // (also no al entry)
+		// AL and NV are refused only where the encoder INVERTS the written
+		// condition. GNU as assembles `ccmp x0, x1, #0, al` (fa41e000) and
+		// every other direct form; it is these five aliases it refuses, and
+		// it says why: "must be one of the standard conditions, excluding AL
+		// and NV". #8075.
+		"\tcset x0, al\n",
+		"\tcset x0, nv\n",
+		"\tcsetm x0, al\n",
+		"\tcsetm x0, nv\n",
+		"\tcinc x0, x1, al\n",
+		"\tcinv x0, x1, nv\n",
+		"\tcneg x0, x1, al\n",
 	})
 }
 
