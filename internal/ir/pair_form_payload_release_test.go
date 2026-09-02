@@ -224,6 +224,11 @@ function main(): i32 {
 // is not a borrow, so the occurrence stays unexcused. `resultCannotAliasArg`
 // is what rules it out, and it is the gate whose loosening segfaulted the
 // differential oracle when the stage-(b) arg reclaim tried the same move.
+//
+// The binding escapes into `kept`, so this needs releasesBoundPayload for the
+// reason spelled out on that helper: `kept` is an owner and reclaims its own
+// prior value, and a release of the DESTINATION is not the arm dropping the
+// binding.
 func TestPairFormPayloadKeptWhenCallReturnsTheArgument(t *testing.T) {
 	ip := lowerForTest(t, pairPayloadSrc+`
 function ident(a: i32[]): i32[] { return a; }
@@ -236,7 +241,7 @@ function main(): i32 {
     return kept[0];
 }
 `)
-	if releasesAfterMatch(funcByName(ip, "main"), "__fern_arr_dec") {
+	if releasesBoundPayload(funcByName(ip, "main"), "__fern_arr_dec") {
 		t.Error("main: ident hands the payload back into `kept`, but the arm releases it anyway — a use-after-free")
 	}
 }

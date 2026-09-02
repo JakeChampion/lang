@@ -154,6 +154,12 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"tuple_return_scalar_cursor_recursion":           320,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
 	"consumed_array_arg_temp_released_and_guarded": 128,
+	// Another pre-existing arm64 gap the x86-64 twin does not have (0
+	// there): the mixed-return case's fresh-path strings are not reclaimed
+	// under the two-word ABI. The shape leaks 1264 B here without the
+	// returned-alias credit and 880 with it, so this pins what the credit
+	// leaves rather than anything it introduced.
+	"mixed_return_param_projection_is_owned": 880,
 }
 
 // checkCorpusLeaks runs every corpus case under the leak detector and

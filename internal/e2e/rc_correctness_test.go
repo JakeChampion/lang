@@ -6518,6 +6518,49 @@ function main(): i32 {
 }
 `,
 	},
+	{
+		// A MIXED-return function: fresh on one path, a bare projection of
+		// a borrowed parameter on the other. The projection return takes
+		// the Return lowering's transfer inc like any other alias, so the
+		// caller holds a reference of its own on BOTH paths — which is
+		// what lets `s` be reclaimed at all. The hazard the case watches
+		// is the other direction: if that credit were ever extended to a
+		// return the lowering does not inc, this drop would free a string
+		// the array still owns and __rc_underflow_count() would report it.
+		name: "mixed_return_param_projection_is_owned",
+		src: `
+struct Reg { names: string[] }
+
+@noinline
+function label(prefix: string, k: i32): string {
+    var s: string = prefix + "-";
+    var j: i32 = 0;
+    while (j < k) { s = s + "xyzw"; j = j + 1; }
+    return s;
+}
+
+@noinline
+function pick(r: Reg, i: i32): string {
+    if (i % 7 == 0) { return label("missing", i % 5); }
+    return r.names[i % 3];
+}
+
+function main(): i32 {
+    var ns: string[] = [];
+    var b: i32 = 0;
+    while (b < 3) { ns = ns.append(label("name", b + 4)); b = b + 1; }
+    var r: Reg = Reg { names: ns };
+    var i: i32 = 0;
+    var n: i32 = 0;
+    while (i < 60) {
+        var s: string = pick(r, i);
+        n = n + s.len();
+        i = i + 1;
+    }
+    return (n % 5) + __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
