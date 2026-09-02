@@ -1181,3 +1181,74 @@ function main(): i32 { print(one(1 + 2)); print(one(1.5 - 0.25)); return 0; }`,
 		})
 	}
 }
+
+// A generic enum whose variant carries an ARRAY of itself — `Br(H[T][])`, the
+// persistent-collection node shape — is clone-needed (#3693), and the clone's
+// body carries the enclosing substitution in every type slot substituteNode
+// fills, not only Var/Lambda/FuncDecl: the array-method call `kids.len()`
+// keeps `T = H[i32]` in its TypeArgs, and an array literal its ElemType. The
+// mangling pass has to rewrite those slots to the clone `H__i32` as well, or
+// the re-check rejects its own output ("expected H[i32][], got H__i32[]").
+func TestRunRewritesSubstitutedCallTypeArgsAgainstEnumClone(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"array-method-on-generic-enum-array-param", `
+enum H[T] { Leaf(T), Br(H[T][]) }
+function count[T](kids: H[T][]): i32 { return kids.len(); }
+function main(): i32 {
+  var a: H[i32] = Leaf(1);
+  var xs: H[i32][] = [a, Leaf(2)];
+  return count(xs);
+}`},
+		{"match-binding-array-indexed-and-recursed", `
+enum H[T] { Leaf(T), Br(H[T][]) }
+function depth[T](n: H[T]): i32 {
+  match (n) {
+    Leaf(x) => { return 1; },
+    Br(kids) => {
+      var d: i32 = 0;
+      var i: i32 = 0;
+      while (i < kids.len()) { var k: i32 = depth(kids[i]); if (k > d) { d = k; } i = i + 1; }
+      return d + 1;
+    },
+  }
+}
+function main(): i32 {
+  var a: H[i32] = Leaf(1);
+  var b: H[i32] = Br([a, Leaf(2)]);
+  return depth(Br([b]));
+}`},
+		{"for-in-over-match-binding-array", `
+enum H[T] { Leaf(T), Br(H[T][]) }
+function depth[T](n: H[T]): i32 {
+  match (n) {
+    Leaf(x) => { return 1; },
+    Br(kids) => { var d: i32 = 0; for k in kids { var q: i32 = depth(k); if (q > d) { d = q; } } return d + 1; },
+  }
+}
+function main(): i32 {
+  var b: H[i32] = Br([Leaf(1), Leaf(2)]);
+  return depth(Br([b]));
+}`},
+		{"array-literal-of-clone-inside-generic-body", `
+enum H[T] { Leaf(T), Br(H[T][]) }
+function wrap[T](x: H[T]): H[T] { var kids: H[T][] = [x]; return Br(kids); }
+function main(): i32 {
+  var w: H[i32] = wrap(Leaf(3));
+  match (w) { Br(kids) => { return kids.len(); }, Leaf(v) => { return 0; } }
+}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			info, err := checker.Check(prog)
+			if err != nil {
+				t.Fatalf("check: %v", err)
+			}
+			if err := monomorph.Run(prog, info); err != nil {
+				t.Fatalf("monomorph: %v", err)
+			}
+		})
+	}
+}

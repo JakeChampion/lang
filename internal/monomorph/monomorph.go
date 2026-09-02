@@ -1460,15 +1460,41 @@ func rewriteBlockTypes(b *ast.Block, info *checker.Info, into map[instKey][]ast.
 		}
 		return rewriteType(t, info, into)
 	}
+	// Every slot substituteNode fills is rewritten here too: a substituted
+	// `H[i32]` left in a Call's TypeArgs or an ArrayLit's ElemType re-checks
+	// against the clone `H__i32` and fails ("expected H[i32][], got
+	// H__i32[]").
 	ast.Walk(b, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Var:
+			x.Type = rewrite(x.Type)
+		case *ast.StructLit:
+			for i := range x.TypeArgs {
+				x.TypeArgs[i] = rewrite(x.TypeArgs[i])
+			}
+		case *ast.Call:
+			for i := range x.TypeArgs {
+				x.TypeArgs[i] = rewrite(x.TypeArgs[i])
+			}
+		case *ast.MapLit:
+			x.KeyType = rewrite(x.KeyType)
+			x.ValueType = rewrite(x.ValueType)
+		case *ast.ArrayLit:
+			x.ElemType = rewrite(x.ElemType)
+		case *ast.CastExpr:
+			x.Target = rewrite(x.Target)
+		case *ast.DowncastExpr:
+			x.Target = rewrite(x.Target)
+		case *ast.TryOp:
 			x.Type = rewrite(x.Type)
 		case *ast.Lambda:
 			for i := range x.Params {
 				x.Params[i].Type = rewrite(x.Params[i].Type)
 			}
 			x.ReturnType = rewrite(x.ReturnType)
+			for i := range x.Captures {
+				x.Captures[i].Type = rewrite(x.Captures[i].Type)
+			}
 		case *ast.FuncDecl:
 			for i := range x.Params {
 				x.Params[i].Type = rewrite(x.Params[i].Type)
