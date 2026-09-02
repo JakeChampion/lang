@@ -373,13 +373,18 @@ func TestSelfHostAsmCoverageArm64(t *testing.T) {
 	}
 	probeMnemonics(t, path, mnemonics, probes, assemble)
 
-	// The conditional-branch aliases arm64_gas_known accepts by pattern.
-	for _, probe := range []string{
-		"b.eq l0\nl0:\nret", "b.ne l0\nl0:\nret", "b.lt l0\nl0:\nret",
-		"beq l0\nl0:\nret", "bge l0\nl0:\nret", "bhi l0\nl0:\nret",
-	} {
-		if err := assemble(probe); err != nil {
-			t.Errorf("conditional-branch alias probe %q: native assembler rejects it: %v", probe, err)
+	// The conditional-branch aliases arm64_gas_known accepts by pattern, in
+	// both spellings, for every condition — not a hand-picked handful. Six of
+	// the eighteen were listed here before, which is exactly why `al` sat
+	// unprobed on both sides while GNU as assembled it (#8075).
+	for _, cond := range arm64Conditions {
+		for _, probe := range []string{
+			"b." + cond + " l0\nl0:\nret",
+			"b" + cond + " l0\nl0:\nret",
+		} {
+			if err := assemble(probe); err != nil {
+				t.Errorf("conditional-branch alias probe %q: native assembler rejects it: %v", probe, err)
+			}
 		}
 	}
 

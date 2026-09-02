@@ -2481,7 +2481,8 @@ function arm64_gas_cond(s: string): i32 {
     if (s == "gt") { return 12; }
     if (s == "le") { return 13; }
     if (s == "al") { return 14; }              // always
-    return 0;
+    if (s == "nv") { return 15; }              // never (encodes as 0b1111)
+    return 0 - 1;
 }
 
 // arm64_gas_is_cond reports whether a 2-letter suffix is a condition code
@@ -2489,7 +2490,7 @@ function arm64_gas_cond(s: string): i32 {
 function arm64_gas_is_cond(s: string): boolean {
     return s == "eq" || s == "ne" || s == "cs" || s == "hs" || s == "cc" || s == "lo"
         || s == "mi" || s == "pl" || s == "vs" || s == "vc" || s == "hi" || s == "ls"
-        || s == "ge" || s == "lt" || s == "gt" || s == "le" || s == "al";
+        || s == "ge" || s == "lt" || s == "gt" || s == "le" || s == "al" || s == "nv";
 }
 
 // arm64_gas_is_w reports whether a register token names a 32-bit w-register.
@@ -2605,6 +2606,44 @@ function arm64_gas_pow2(n: i32): i32 {
     return v;
 }
 
+
+// arm64_gas_cond_operand reports which operand of a condition-taking mnemonic
+// holds the condition, or -1 for a mnemonic that takes none.
+function arm64_gas_cond_operand(mnem: string): i32 {
+    if (mnem == "cset" || mnem == "csetm") { return 1; }
+    if (mnem == "cinc" || mnem == "cinv" || mnem == "cneg") { return 2; }
+    if (mnem == "csel" || mnem == "csinc" || mnem == "csinv" || mnem == "csneg"
+        || mnem == "ccmp" || mnem == "ccmn"
+        || mnem == "fcsel" || mnem == "fccmp") { return 3; }
+    return 0 - 1;
+}
+
+// arm64_gas_cond_inverts reports the aliases whose encoder uses the INVERSE of
+// the written condition — cset is csinc with the condition flipped, and the
+// rest follow. GNU as refuses AL and NV on exactly these, because inverting
+// "always" or "never" names no useful instruction.
+function arm64_gas_cond_inverts(mnem: string): boolean {
+    return mnem == "cset" || mnem == "csetm"
+        || mnem == "cinc" || mnem == "cinv" || mnem == "cneg";
+}
+
+// arm64_gas_bad_cond_token vets the condition operand, under the same
+// discipline as the register and SIMD vetting either side of it: a condition
+// the encoders cannot express is recorded, never folded into a wrong field.
+//
+// Without it, arm64_gas_cond's miss value went straight into the 4-bit
+// condition field, so an unrecognised suffix assembled as `eq` — a valid
+// instruction testing the wrong flag, with nothing reported.
+function arm64_gas_bad_cond_token(mnem: string, rest: string): string {
+    var idx: i32 = arm64_gas_cond_operand(mnem);
+    if (idx < 0) { return ""; }
+    var ops: string[] = arm64_gas_operands(rest);
+    if (ops.len() <= idx) { return mnem + ":arity"; }
+    var c: string = arm64_gas_trim(ops[idx]);
+    if (arm64_gas_cond(c) < 0) { return c; }
+    if (arm64_gas_cond_inverts(mnem) && (c == "al" || c == "nv")) { return c; }
+    return "";
+}
 
 // arm64_gas_bad_lane vets the lane-move and load-structure classes. A lane
 // operand carries its element size AND index in one field, so a size the
@@ -3262,7 +3301,7 @@ function arm64_gas_bad_ext_fp(mnem: string, ops: string[]): string {
         if (ops.len() != 4) { return "arity"; }
         var t: string = arm64_gas_bad_fp_mix(ops, 3);
         if (t.len() > 0) { return t; }
-        return arm64_gas_bad_cond_tok(ops[3]);
+        return "";
     }
     if (mnem == "fccmp") {
         if (ops.len() != 4) { return "arity"; }
@@ -3373,22 +3412,13 @@ function arm64_gas_bad_ror(ops: string[], size: i32): string {
     return "";
 }
 // ccmp/ccmn: nzcv is 4 bits, the imm5 form is UNSIGNED 0..31, and the
-// condition must be real and invertible (GNU as has no `al` here — the
-// aliases invert it, and an inverted `al` is a different condition).
 function arm64_gas_bad_condsel(mnem: string, ops: string[]): string {
     var want: i32 = 4;
     if (mnem == "cinc" || mnem == "cinv" || mnem == "cneg") { want = 3; }
     if (mnem == "csetm") { want = 2; }
     if (ops.len() != want) { return "arity"; }
-    var t: string = arm64_gas_bad_cond_tok(ops[want - 1]);
-    if (t.len() > 0) { return t; }
     if (mnem != "ccmp" && mnem != "ccmn") { return ""; }
     return arm64_gas_bad_nzcv_cond(ops);
-}
-function arm64_gas_bad_cond_tok(tok: string): string {
-    var c: string = arm64_gas_trim(tok);
-    if (!arm64_gas_is_cond(c) || c == "al") { return "cond"; }
-    return "";
 }
 function arm64_gas_bad_nzcv_cond(ops: string[]): string {
     var nzcv: i32 = arm64_gas_imm(ops[2]);
@@ -3397,7 +3427,7 @@ function arm64_gas_bad_nzcv_cond(ops: string[]): string {
         var imm5: i32 = arm64_gas_imm(ops[1]);
         if (imm5 < 0 || imm5 > 31) { return "imm5"; }
     }
-    return arm64_gas_bad_cond_tok(ops[3]);
+    return "";
 }
 
 function arm64_gas_bad_rev(mnem: string, ops: string[]): string {
@@ -5227,6 +5257,12 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         var badext: string = arm64_gas_bad_ext_token(mnem, rest);
         if (badext.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badext) };
+        }
+        // Same discipline for the condition operand of the select / conditional
+        // compare / cset families.
+        var badcond: string = arm64_gas_bad_cond_token(mnem, rest);
+        if (badcond.len() > 0) {
+            p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badcond) };
         }
         // Same discipline for a register in the OFFSET position of a form whose
         // only encoder takes an immediate: refuse the line instead of silently

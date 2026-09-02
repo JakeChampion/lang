@@ -1101,6 +1101,9 @@ const (
 	CondGT uint32 = 12 // signed >
 	CondLE uint32 = 13 // signed <=
 	CondAL uint32 = 14 // always
+	CondNV uint32 = 15 // never — encodes 0b1111 and behaves as always, but is
+	// a distinct encoding gas accepts and round-trips, so it must not be
+	// folded onto AL.
 )
 
 // ---- Add/subtract with carry ----
