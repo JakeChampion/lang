@@ -3657,6 +3657,12 @@ pub function runtime_need_deps(name: string): string[] {
     // "strbuf" need, and __fern_strbuf_take in it allocates the drained string's
     // box via __fern_alloc — so ANY strbuf use (even reset/append-only) needs the
     // heap, even though only take allocates.
+    //
+    // The array deep-free family allocates nothing; it is here because its
+    // callees (__fern_arr_dec, __fern_str_arr_free, __fern_large_push) are
+    // emitted INSIDE the heap bundle, and the bundle's own gate does not read
+    // these roots. A struct-drop site that marks arrarr_free alone would
+    // otherwise call a body no gate turned on.
     var heap: string[] = ["heap"];
     if (name == "str_concat" || name == "str_read_line" || name == "i32_to_string"
         || name == "u32_to_string" || name == "i64_to_string" || name == "u64_to_string"
@@ -3671,6 +3677,7 @@ pub function runtime_need_deps(name: string): string[] {
         // byte-neutral through that door; it is what makes the closure right
         // when the need is seeded from all_runtime_need_roots instead.
         || name == "arr_i32_index_of_opt" || name == "arr_i32_min_max_opt"
+        || name == "arrarr_free" || name == "strarrarr_free" || name == "optarrarr_free"
         || name == "poll") {
         // poll's __fern_poll allocates the transient pollfd[] via __fern_alloc.
         return heap;
@@ -5039,6 +5046,9 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fn___fern_str_arr_free",
         // arr-of-arr reclaim (#4355 slice 9): the exit sweep of a module with a
         // fresh arr-of-arr local references these; the entry owns the bodies.
+        // __fern_arrarr_free is reached from a second direction too — every
+        // __struct_drop_/__field_reclaim_ release of a struct/enum-array field
+        // calls it, and those bodies are emitted per-unit.
         "__fn___fern_arrarr_free", "__fn___fern_strarrarr_free", "__fn___fern_optarrarr_free",
         // compact base copy (#4650): a LIBRARY module doing `T { ...base, f: v }`
         // on a struct_copy_eligible T emits `call __fn___fern_struct_copy`; the

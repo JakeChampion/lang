@@ -106,6 +106,61 @@ mix, −1.6% on `map_struct_enum_keys`) and about +2% for a program using maps
 without deleting, which is the one shape that traded three tight loops for one
 general body.
 
+## The struct/enum-array field release — one symbol, four copies gone
+
+`__struct_drop_<T>` and `__field_reclaim_<T>` both release a struct- or
+enum-ARRAY field: sole-owner gate the buffer, `__fern_arr_dec` each element box,
+then the buffer. Each open-coded that as ~24 instructions, in each register
+backend — four copies of a body the same backends already export as
+`__fn___fern_arrarr_free`, whose arr-of-arr callers differ from these only in
+what the elements are. The four sites are now a call to it.
+
+Three things had to be established first, because this area fails as silent heap
+corruption rather than as a crash:
+
+- **The guard arms answer the same.** The walk asked `__fern_rc_is_unique` and
+  then let a trailing `__fern_arr_dec` do the decrement; the helper reads rc once
+  and branches. They agree on every arm: immortal (`rc<0`) is a no-op in both,
+  `rc>1` decrements without touching elements in both, `rc==0` reaches the same
+  `__fern_rc_underflow` counter (and, on x86-64, the same
+  `san_underflow_abort`), and the `rc==1` free is `arr_dec`'s own free path,
+  which the helper inlines verbatim.
+- **The register discipline fits.** `__fern_arrarr_free` touches
+  rax/rcx/rdx/rsi/rdi/r8 plus the callee-saved rbx/r12/r13 it restores
+  (x0..x3/x9 plus x19/x20/x21 and x30 on arm64), so it preserves the r9/r10/r11
+  — x10/x11/x12 — that both emitters hold their box/old/snap in. That is what
+  retires `__field_reclaim_`'s borrow-and-restore of two live registers, which
+  existed only because the inline walk needed scratch that survived its calls.
+- **The gating reaches.** Both sites seed the `arrarr_free` need, which they can
+  because the struct-drop and field-reclaim bodies are emitted before
+  `close_needs()` on both routes; `all_runtime_need_roots` and the exported-symbol
+  list already carried the name, so the per-module link needed nothing. The need
+  graph now declares the deep-free family's `heap` edge rather than leaving it to
+  the coincidence that anything with such a field also allocates.
+
+**Size is close to a wash, and that is not the reason to do it.** Each site
+drops from 24 instructions to 4, against a 48-instruction body a program without
+an arr-of-arr local newly carries: break-even is ~2.4 sites. The compiler's own
+compile has 20 of them, worth ~400 instructions; it shrinks 5,867 in total,
+because most of that difference is the emitter source itself losing ~110
+`s.write` lines. `checker.fern` alone shrinks 76 lines, and the
+`examples/bench` corpus is byte-identical on all three targets, because nothing
+in it has such a field. What the slice buys is one implementation instead of
+four, and it makes the eventual Fern migration of this body a one-site edit per
+backend rather than a five-way port.
+
+**The sweep that found it found nothing else.** Looking for another `map_find`
+across both backends' emitters — an 8+ instruction fragment repeated 3+ times —
+turns up no other candidate: the runtime's genuinely repeated pieces
+(`__fern_alloc`, `__fern_arr_box`, `__fern_oob_abort`, `__fern_large_push`,
+`__fern_rc_is_unique`, `__fern_arr_dec`) were factored into shared symbols long
+ago. The near-misses are recorded so nobody re-derives them: the freelist bin
+push is 10 copies per backend but 4-5 instructions against a 3-4 instruction
+stack-ABI call (net zero), the rc-dec tail is 6 copies of 3, the rc guard head is
+5 copies of 9 but is a PREFIX falling through into five different bodies rather
+than a callable unit, and the word-copy loop is 4 copies of 6 that differ in
+index base and bound register.
+
 ## The hot core needs better codegen first, not better expressiveness
 
 `__fern_arr_push` was attempted and **backed out** (#6446). It is worth reading
