@@ -554,6 +554,7 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 			return err
 		}
 		w := is32(ops[0])
+		imm, isAdd := addSubNegate(imm, isAdd)
 		var i12 uint16
 		var shift12 bool
 		if len(ops) > 3 {
@@ -564,6 +565,9 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 			}
 			if sh != 0 && sh != 12 {
 				return fmt.Errorf("%s immediate shift must be 0 or 12", mnem)
+			}
+			if imm > 0xfff {
+				return fmt.Errorf("%s immediate %s out of range", mnem, ops[2])
 			}
 			i12, shift12 = uint16(imm), sh == 12
 		} else {
@@ -684,6 +688,18 @@ func parseRegShift(op string) (shiftType, amount uint32, err error) {
 // the `lsl #12` form. GNU as performs this selection implicitly, so the
 // backend can emit a bare large immediate like `cmp x0, #0x10000`
 // (which must become #16, lsl #12 — not the truncated #0).
+// addSubNegate applies the rewrite GNU as performs for a negative add/sub
+// immediate: imm12 is unsigned, so the magnitude is encoded under the
+// opposite mnemonic of the pair (`add #-16` is `sub #16`, `cmp #-16` is
+// `cmn #16`), with the flag-setting bit carried across unchanged. It
+// returns the magnitude and whether the operand now names the add half.
+func addSubNegate(v int64, add bool) (int64, bool) {
+	if v < 0 {
+		return -v, !add
+	}
+	return v, add
+}
+
 func addSubImm12(v int64) (imm uint16, shift12 bool, ok bool) {
 	if v < 0 {
 		return 0, false, false
@@ -3585,9 +3601,14 @@ func asmCmn(a *Assembler, ops []string) error {
 		if err != nil {
 			return err
 		}
+		imm, add := addSubNegate(imm, true)
 		i12, sh12, ok := addSubImm12(imm)
 		if !ok {
 			return fmt.Errorf("cmn immediate %s out of range", ops[1])
+		}
+		if !add {
+			a.Emit(clearSF(CMPimm(rn, i12, sh12), w))
+			return nil
 		}
 		a.Emit(clearSF(CMNimm(rn, i12, sh12), w))
 		return nil
@@ -3614,9 +3635,14 @@ func asmCmp(a *Assembler, ops []string) error {
 		if err != nil {
 			return err
 		}
+		imm, add := addSubNegate(imm, false)
 		i12, sh12, ok := addSubImm12(imm)
 		if !ok {
 			return fmt.Errorf("cmp immediate %s out of range", ops[1])
+		}
+		if add {
+			a.Emit(clearSF(CMNimm(rn, i12, sh12), w))
+			return nil
 		}
 		a.Emit(clearSF(CMPimm(rn, i12, sh12), w))
 		return nil
