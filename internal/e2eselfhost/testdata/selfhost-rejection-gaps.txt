@@ -1,0 +1,32 @@
+# Conformance `expected.error` cases the SELF-HOST checker does not reject.
+#
+# Read by TestSelfHostRejectsConformanceErrorCasesX86_64, exactly in both
+# directions: a case listed here must still be accepted, and a case not listed
+# must be rejected. So closing a gap fails this gate until its line is deleted,
+# and a working rejection can never silently regress into one.
+#
+# Every bare line below is a program native REFUSES and the self-host compiles.
+# That is a gap, not a licence: `err_map_key_no_hash` reaches wasm as a module
+# that does not validate, calling a `$Has.hash` nothing defines.
+#
+# `parse:` lines are a scoping boundary, not a gap: the source does not parse,
+# so it never reaches a checker and this gate has nothing to read. They are
+# pinned rather than skipped so that a case which starts parsing is reported.
+
+diag_e010
+diag_e019
+diag_e033
+diag_e073
+diag_e074
+err_duplicate_field
+err_map_key_no_hash
+sat_const_rejected
+sat_usize_rejected
+tuple_match_err_nonexhaustive
+underscore_not_readable
+
+parse:diag_p001
+parse:diag_p002
+parse:diag_p003
+parse:diag_p004
+parse:diag_p005
