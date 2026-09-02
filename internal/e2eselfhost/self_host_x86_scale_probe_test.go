@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -90,6 +91,14 @@ func TestSelfHostX86ScaleProbe(t *testing.T) {
 			// Self-host assembler path.
 			bin, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", driverPath).Output()
 			if err != nil {
+				// cmd.Output puts the driver's stderr in ExitError.Stderr;
+				// without it the failure reads as a bare "exit status 2".
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
+					// Exit 2 is the shared driver's "the assembler refused
+					// these lines", named on stderr.
+					t.Fatalf("driver run: %v\n%s", err, ee.Stderr)
+				}
 				t.Fatalf("driver run: %v", err)
 			}
 			binPath := filepath.Join(dir, "scale.bin")

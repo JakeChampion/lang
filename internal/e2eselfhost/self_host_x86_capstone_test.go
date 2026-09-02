@@ -1,6 +1,7 @@
 package e2eselfhost
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -121,9 +122,10 @@ func TestSelfHostX86Capstone(t *testing.T) {
 			// Stage B: the driver reads in.s, assembles it, writes the ELF.
 			bin, err := exec.Command(wasmtime, "run", "--dir", dir+"::/", driverPath).Output()
 			if err != nil {
-				// The driver's stderr names WHICH line it refused; without it
-				// every refusal reads as a bare "exit status 2".
-				if ee, ok := err.(*exec.ExitError); ok {
+				// cmd.Output puts the driver's stderr in ExitError.Stderr;
+				// without it every refusal reads as a bare "exit status 2".
+				var ee *exec.ExitError
+				if errors.As(err, &ee) {
 					t.Fatalf("wasmtime run (driver): %v\n%s", err, ee.Stderr)
 				}
 				t.Fatalf("wasmtime run (driver): %v", err)
@@ -175,7 +177,17 @@ function main(): i32 {
             // recorded here rather than by the assembler.
             a = x86_resolve_data(a, elf_text_vaddr_x86());
             if (a.unknown.len() > 0) {
-                eprint("unencodable: " + a.unknown[0] + "\n");
+// Naming the lines is the whole point of this probe: a bare
+                // exit code says an instruction was refused but not which
+                // one. Several distinct causes can be live at once, so this
+                // reports the first few rather than only the first.
+                var i: i32 = 0;
+                var msg: string = "";
+                while (i < a.unknown.len() && i < 8) {
+                    msg = msg + "unencodable: " + a.unknown[i] + "\n";
+                    i = i + 1;
+                }
+                eprint(msg);
                 return 2;
             }
             var entry: i32 = x86_label_off(a, "_start");
