@@ -3184,12 +3184,45 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 		}
 		return true
 	})
+	// Match-arm bindings of a NON-consuming match are borrows too: the arm
+	// loads the payload pointer straight out of the scrutinee's box with no
+	// retain, so the array sits at the box's own rc==1 and an in-place cow
+	// would rewrite the box's payload — a snapshot of the enum would see
+	// the edit, and the box's later drop would release the element the cow
+	// stored (`B(n, kids) => B(n, kids.with(i, v))`). A consuming match
+	// (an `own` scrutinee, or an owned-by-default one the analysis
+	// promoted) moves or dups the payload into the binding, so its bindings
+	// own their reference and keep the in-place path.
+	borrowedBinding := map[string]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		m, ok := n.(*ast.Match)
+		if !ok {
+			return true
+		}
+		if _, consuming := b.rc.consumingOwnedMatches[m]; consuming {
+			return true
+		}
+		if _, ownScrut := b.ownParamEnumScrutinee(m.Tag); ownScrut {
+			return true
+		}
+		for _, arm := range m.Arms {
+			for _, name := range arm.Bindings {
+				if name != "" && name != "_" {
+					borrowedBinding[name] = true
+				}
+			}
+			if arm.AtBinding != "" {
+				borrowedBinding[arm.AtBinding] = true
+			}
+		}
+		return true
+	})
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		c, ok := n.(*ast.Call)
 		if !ok || !isArraySetCall(c) {
 			return true
 		}
-		if rid, rok := c.Args[0].(*ast.Ident); rok && borrowedParam[rid.Name] {
+		if rid, rok := c.Args[0].(*ast.Ident); rok && (borrowedParam[rid.Name] || borrowedBinding[rid.Name]) {
 			incs[c] = true
 			return true
 		}
