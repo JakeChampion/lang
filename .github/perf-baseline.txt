@@ -27,50 +27,50 @@
 # only its OWN namespace, so an x86_64 entry is not a missing measurement on the
 # aarch64 runner.
 
-x86_64/array_append.text	511
-x86_64/array_append.ir	60249926
-x86_64/array_index.text	492
-x86_64/array_index.ir	57468145
+x86_64/array_append.text	509
+x86_64/array_append.ir	59449723
+x86_64/array_index.text	490
+x86_64/array_index.ir	57448039
 x86_64/ascii_scan.text	1042
-x86_64/ascii_scan.ir	73817267
-x86_64/call_overhead.text	608
-x86_64/call_overhead.ir	20999838
-x86_64/closure_call.text	427
-x86_64/closure_call.ir	178728039
-x86_64/enum_match.text	537
-x86_64/enum_match.ir	140400055
-x86_64/int_loop.text	90
-x86_64/int_loop.ir	33000020
-x86_64/map_int.text	3902
-x86_64/map_int.ir	76215039
-x86_64/map_probe_chain.text	3927
-x86_64/map_probe_chain.ir	696857075
-x86_64/map_string.text	4967
-x86_64/map_string.ir	156523407	2
-x86_64/sort_inplace.text	759
-x86_64/sort_inplace.ir	122985629
-x86_64/sort_ints.text	2339
-x86_64/sort_ints.ir	92279091
-x86_64/string_build.text	1148
-x86_64/string_build.ir	128842927
-x86_64/string_count_byte.text	597
-x86_64/string_count_byte.ir	270828769
-x86_64/string_find_byte.text	1845
-x86_64/string_find_byte.ir	135909166
-x86_64/string_rfind_byte.text	2359
-x86_64/string_rfind_byte.ir	111429162
-x86_64/string_scan.text	1444
-x86_64/string_scan.ir	105091505
-x86_64/string_slice.text	485
-x86_64/string_slice.ir	163860079
-x86_64/struct_drop.text	2450
-x86_64/struct_drop.ir	531500151
-x86_64/tokenize.text	920
-x86_64/tokenize.ir	121810071
-x86_64/utf8_ingest_unchecked.text	39133
-x86_64/utf8_ingest_unchecked.ir	17637810
-x86_64/utf8_ingest_validated.text	39620
-x86_64/utf8_ingest_validated.ir	23599610
+x86_64/ascii_scan.ir	73719742
+x86_64/call_overhead.text	607
+x86_64/call_overhead.ir	19999835
+x86_64/closure_call.text	429
+x86_64/closure_call.ir	173922036
+x86_64/enum_match.text	536
+x86_64/enum_match.ir	139500052
+x86_64/int_loop.text	89
+x86_64/int_loop.ir	30000017
+x86_64/map_int.text	3950
+x86_64/map_int.ir	76023372
+x86_64/map_probe_chain.text	3979
+x86_64/map_probe_chain.ir	694675424
+x86_64/map_string.text	5016
+x86_64/map_string.ir	155682308	2
+x86_64/sort_inplace.text	760
+x86_64/sort_inplace.ir	122738126
+x86_64/sort_ints.text	2372
+x86_64/sort_ints.ir	89343038
+x86_64/string_build.text	1146
+x86_64/string_build.ir	128658424
+x86_64/string_count_byte.text	595
+x86_64/string_count_byte.ir	270822753
+x86_64/string_find_byte.text	1855
+x86_64/string_find_byte.ir	135903150
+x86_64/string_rfind_byte.text	2392
+x86_64/string_rfind_byte.ir	111423146
+x86_64/string_scan.text	1441
+x86_64/string_scan.ir	105081498
+x86_64/string_slice.text	484
+x86_64/string_slice.ir	163800076
+x86_64/struct_drop.text	2449
+x86_64/struct_drop.ir	531380148
+x86_64/tokenize.text	922
+x86_64/tokenize.ir	121580068
+x86_64/utf8_ingest_unchecked.text	39106
+x86_64/utf8_ingest_unchecked.ir	17482780
+x86_64/utf8_ingest_validated.text	39596
+x86_64/utf8_ingest_validated.ir	23571580
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
