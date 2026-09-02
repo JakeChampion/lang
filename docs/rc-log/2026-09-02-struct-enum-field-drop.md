@@ -146,14 +146,45 @@ clean/clean rows. That result is built on the unsound release, so it proves
 nothing about the credit on its own — measured alone, it still moves the matrix
 by zero rows. Do not read the 134 as a green light for either half.
 
+## What leaks is the ENUM box, not the struct
+
+Growing `H` from two fields to eight leaves the leak at **3,960 B exactly**, so
+it does not scale with the struct and the struct is not what survives. 3,960
+over 99 objects is 40 B each — the enum boxes.
+
+An earlier note in this file guessed the opposite. It was a guess.
+
+## The comparison that is fair, and one that is not
+
+`w_unused` (the never-read control) has an EXTRA rc local: its enum is a named
+`e`, where `w_inlineenum` builds the enum inline in the literal. So its higher
+dec count is its own `e` being released, not evidence about the field. Reading
+12-against-9-against-8 across those three, as an earlier revision of this entry
+invited, compares programs that differ by more than one edit.
+
+The fair pair is `w_inlineenum` (leaks) against `r_bindthenmatch` (clean): same
+two allocations, one `var t: E = h.e;` apart. Their drop sequences agree
+instruction for instruction through both `__struct_drop_H` calls, and the clean
+one then emits **one more `__fern_arr_dec` at scope exit** that the leaking one
+does not.
+
+So the bound local's own release is the difference, and the struct's deep drop
+is identical on both sides.
+
 ## Next lead
 
-The struct's deep drop IS emitted in the leaking form — `__struct_drop_H` is
-called the same number of times in all three variants — so the missing release
-is not a suppressed `emit_struct_field_drops`. What differs is the
-`__fern_arr_dec` count between the never-read control (12), the bound form (9)
-and the leaking one (8), and only the last pair differs by a single edit.
+Two readings fit and this entry does not separate them:
 
-Look for what the match-on-field does to `h`'s own eligibility, not for a
-release to add at the match. And validate under `FERN_SANITIZE` from the first
-build, not at the end.
+- the field read is treated as a MOVE out of `h`, so the struct's deep drop
+  skips the enum field and the bound local owns it — leaving the unbound form
+  with no owner at all; or
+- the read is the borrow the sanitizer proved it to be, and the bound form's
+  extra dec is balanced by an inc the asm does not distinguish.
+
+The first would make a release at the match correct, and the sanitizer says it
+is not — so the second is likelier and the missing release is somewhere other
+than the match. Settle it by finding whether the bind emits a retain, before
+writing any more lowering.
+
+Whatever comes next: validate under `FERN_SANITIZE` from the first build. A
+green census plus a zero underflow counter passed a use-after-free here.
