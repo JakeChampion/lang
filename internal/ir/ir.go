@@ -13868,6 +13868,11 @@ func (b *builder) growBracketArgs(n *ast.Call, calleeName string) []growBracketE
 		if b.callArgDies[n][root.Name] {
 			continue
 		}
+		// A single-hop field the enclosing self-update overwrites
+		// (markSupersededFields) dies here too.
+		if fa, isField := a.(*ast.FieldAccess); isField && len(chain) == 1 && b.callArgDies[n][root.Name+"."+fa.Field] {
+			continue
+		}
 		if b.rc.moveSites[a] {
 			continue
 		}
