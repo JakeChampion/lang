@@ -51,6 +51,14 @@ type rcPlan struct {
 	// through such params, and without the promotion none can deep-drop the
 	// old value.
 	consumedParams map[string]bool
+	// cowMapParams[name] is true for a Map param on the borrow baseline that
+	// the body threads through `m = m.insert(..)` / `m = m.clear()`. Its slot
+	// owns nothing on entry and a fresh copy after the first cow copy, so the
+	// overwrite dec and the exit release are gated on a runtime ownership bit
+	// (ownFlagName), as a consumed-threaded array param's are. Maps stay off
+	// consumedParams (consumedDropWired), and without the bit the overwrite
+	// dec on the copy path released the caller's handle.
+	cowMapParams map[string]bool
 	// freeEligible[name] is true for array-typed locals the
 	// borrow-aware analysis proved are OWNED — safe for the array
 	// dec sites to return to the freelist at rc==0. Borrowed /
@@ -270,6 +278,7 @@ func (b *builder) computeRcAnalyses() {
 	// (paired with the entry-inc emitted by lowerFunc). Computed before
 	// freeEligible, which consults it (a consumed param is not borrow-tainted).
 	b.rc.consumedParams = b.computeConsumedParams()
+	b.rc.cowMapParams = b.computeCowThreadedMapParams()
 	// Koka-style consuming matches on owned-by-default enum params (#4400).
 	// Computed before freeEligible, which consults consumingBindings (a
 	// qualifying binding becomes a counted owner instead of a tainted borrow).
@@ -1038,12 +1047,10 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 				// A parameter carrying no heap (i32 / bool / f64 / …) can never
 				// be retained at all — mark it so a scalar argument doesn't
 				// disqualify a call the way a pointer one would. Conditioned
-				// below on EVERY pointer param being counted too: a scalar can't
-				// alias, but the RESULT can still alias an unproven pointer
-				// param, and a tainted scalar argument is what was keeping such a
-				// call's result tainted (`grow(m, i + 2)` returning a Map that
-				// shares the caller's buffer — TestX86_64MapIntermediateReclaim's
-				// param-receiver negative).
+				// below on EVERY pointer param being counted too: a tainted
+				// scalar may carry a raw pointer, and only a callee whose every
+				// pointer position is proven counted is known not to hand an
+				// alias of anything back.
 				if !rcTrackedSlotType(p.Type) {
 					flags[i] = true
 					continue
@@ -1926,6 +1933,31 @@ func (b *builder) computeConsumedParams() map[string]bool {
 	return res
 }
 
+// computeCowThreadedMapParams finds the borrow-baseline Map params the body
+// self-mutates (`m = m.insert(..)`); see rcState.cowMapParams.
+func (b *builder) computeCowThreadedMapParams() map[string]bool {
+	res := map[string]bool{}
+	if !ast.RcFreeEnabled || b.fn.Body == nil {
+		return res
+	}
+	for i, p := range b.fn.Params {
+		st, isStruct := p.Type.(ast.StructType)
+		if !isStruct || st.Name != "Map" || p.Own || b.paramOwnedByDefault(p.Type, i) || b.rc.consumedParams[p.Name] {
+			continue
+		}
+		name := p.Name
+		ast.Walk(b.fn.Body, func(n ast.Node) bool {
+			if a, ok := n.(*ast.Assign); ok {
+				if id, ok := a.Target.(*ast.Ident); ok && id.Name == name && isSelfMapMutation(a.Value, name) {
+					res[name] = true
+				}
+			}
+			return true
+		})
+	}
+	return res
+}
+
 // emitRcDecLocalsAtExit emits __fern_rc_dec for every
 // array-typed parameter and local in the current function.
 // Phase 1d-v balances the inc emissions from Phase 1d-i
@@ -2760,22 +2792,27 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	case *ast.Binary:
 		// String concat (`a + b`) copies both operands into a fresh owned
 		// heap buffer regardless of operand provenance, so the result is
-		// always reclaimable. Non-concat binaries stay tainted (the original
-		// conservative default): untainting a scalar-binary SIZE arg
-		// (`__alloc_u8(out_len)`, out_len from `k + 1`) made buffers eligible
-		// that the escape/move analysis can't prove safe to reclaim — it
-		// over-released int_to_string_radix's result buffer (to_rgb_hex
-		// returned the wrong hex).
+		// always reclaimable.
 		//
-		// The dynamically-sized-BUFFER half of that motivation is gone: the
-		// `__alloc_u8` case above now untaints the ALLOCATOR instead, which
-		// reaches every `__alloc_u8(<computed>)` — int_to_string_radix
-		// included, reclaimed in full with the right hex (#5931,
-		// TestX86_64LeakCheckToStringReclaim/to_rgb_hex) — without untainting
-		// the size expression itself or anything else derived from it. What
-		// remains here is the general scalar-binary untaint, which is
-		// unexercised by any current shape and stays conservative.
-		return !x.IsStringConcat
+		// Any other binary yields a scalar, which can alias a borrowed value
+		// only by carrying a raw pointer (`(buf as usize) + 8`), and that
+		// provenance is already on the operand: the pointer→integer cast and
+		// a parameter both read as tainted. The result inherits exactly its
+		// operands' taint, so a literal-seeded counter stays untainted
+		// through `i = i + 1` and a call taking it as an argument keeps a
+		// reclaimable result — the blanket taint stranded `t = bump(t, i)`
+		// at exit while `t = bump(t, 1)` reclaimed it.
+		if x.IsStringConcat {
+			return false
+		}
+		return b.rhsTainted(x.Left, tainted) || b.rhsTainted(x.Right, tainted)
+	case *ast.Unary:
+		// `-x` on a composite is a method call (NegCall); its result takes
+		// the conservative default.
+		if x.NegCall != nil {
+			return true
+		}
+		return b.rhsTainted(x.Operand, tainted)
 	case *ast.Call:
 		// Slice 1b: under EnumRcPayloads a variant constructor is a FRESH
 		// rc=1 box that inc's its pointer payloads (like StructLit), so the

@@ -307,7 +307,7 @@ override_scalar                                      0
 own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_inplace_sort                                     0
-own_param_array_move                                 1
+own_param_array_move                                 0
 own_param_assign_target                              50
 own_param_branch_transfer                            0
 own_self_reassign_move                               0

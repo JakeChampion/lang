@@ -112,6 +112,32 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// The same shape with a LITERAL scalar argument. `i + 2` used to carry the
+// blanket scalar-binary taint, which kept `g` un-reclaimable and hid that
+// grow's overwrite dec released the caller's handle on the cow-copy path:
+// with the literal, `g` reclaims, `base` was freed under it, and the value
+// check failed (121). The cow-threaded Map param's ownership bit
+// (cowMapParams) is what keeps both spellings correct.
+const mapIntermediateParamReceiverLiteralSrc = `import "core/map";
+function grow(m: Map[i32, i32], k: i32): Map[i32, i32] {
+    m = m.insert(k, k * 7);
+    return m;
+}
+function main(): i32 {
+    var base: Map[i32, i32] = map_new(8);
+    base = base.insert(1, 11);
+    var i: i32 = 0;
+    var acc: i32 = 0;
+    while (i < 300) {
+        var g: Map[i32, i32] = grow(base, 2);
+        acc = acc + g.get_or(1, 0);
+        i = i + 1;
+    }
+    if (base.get_or(1, 0) != 11) { return 121; }
+    if (acc != 300 * 11) { return 120; }
+    return __rc_underflow_count();
+}`
+
 // SOUNDNESS NEGATIVE 2 — a builder storing a PARAM-DERIVED pointer value must
 // stay unproven: Map_set stores are uncounted and emitMapSlotDrop deep-frees
 // the value column, so crediting mk would free the caller's `keep` buffer.
@@ -165,6 +191,7 @@ func runMapIntermediateChecks(t *testing.T, run func(*testing.T, string) int) {
 	}{
 		{"credited-underflow", mapIntermediateUnderflowSrc},
 		{"param-receiver-negative", mapIntermediateParamReceiverSrc},
+		{"param-receiver-literal-negative", mapIntermediateParamReceiverLiteralSrc},
 		{"ptr-value-param-negative", mapIntermediatePtrValueParamSrc},
 	} {
 		if code := run(t, tc.src); code != 0 {

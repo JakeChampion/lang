@@ -1449,7 +1449,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// return-transfer inc unbalanced. One leaked reference per call
 		// makes the accumulator's buffer permanently shared, so every
 		// subsequent append copies it: correct, but O(n²) in bytes moved.
-		flagSlot, hasFlag := b.locals[consumedArrayFlagName(p.Name)]
+		flagSlot, hasFlag := b.locals[ownFlagName(p.Name)]
 		flagGated := hasFlag && b.isConsumedArrayParam(p.Name)
 		if !flagGated && !b.rc.freeEligible[p.Name] {
 			continue
@@ -1467,6 +1467,26 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			continue
 		}
 		emitDec(slot, p.Type, true, p.Name)
+	}
+	// A cow-threaded Map param (cowMapParams) owns its slot only once a copy
+	// replaced the caller's handle; its ownership bit says which. The release
+	// is the cow-copy one (emitMapOverwriteDrop): a handle returned on the way
+	// out was inc'd for the caller and only decs here.
+	for _, p := range b.fn.Params {
+		if !b.rc.cowMapParams[p.Name] || seen[p.Name] {
+			continue
+		}
+		flagSlot, hasFlag := b.locals[ownFlagName(p.Name)]
+		slot, hasSlot := b.locals[p.Name]
+		mst, isMap := p.Type.(ast.StructType)
+		if !hasFlag || !hasSlot || !isMap {
+			continue
+		}
+		seen[p.Name] = true
+		b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
+		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+		b.emitMapOverwriteDrop(slot, mst)
+		b.emit(Op{Kind: OpEnd})
 	}
 	// Consuming-owned-match bindings (#4400) are counted owners: the per-arm
 	// scrutinee release transferred (unique branch) or dup'd (shared branch)
