@@ -63,6 +63,21 @@ func TestDebugLineMatchesGNUAs(t *testing.T) {
 			t.Skip("no GNU as on PATH")
 		}
 	}
+	// The bare `as` fallback is an x86-64 assembler only when the host is
+	// one: on the aarch64 lane it is aarch64's, which rejects the `--64`
+	// below and could not assemble the Intel syntax either. Probe what it
+	// actually accepts rather than infer it from GOARCH, so a cross
+	// assembler installed under any name still gives real coverage —
+	// internal/native/x86_64's findX86Binutils resolves the same question
+	// the same way.
+	probeDir := t.TempDir()
+	probe := filepath.Join(probeDir, "probe.s")
+	if err := os.WriteFile(probe, []byte(".intel_syntax noprefix\n\t.text\n\tret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(as, "--64", "-o", filepath.Join(probeDir, "probe.o"), probe).CombinedOutput(); err != nil {
+		t.Skipf("%s does not assemble x86-64 Intel syntax: %v\n%s", as, err, out)
+	}
 	src := "\t.intel_syntax noprefix\n\t.text\n" +
 		"\t.file 1 \"main.fern\"\n\t.file 2 \"lib/util.fern\"\n\t.file 3 \"/abs/dir/deep.fern\"\n\t.file 4 \"lib/other.fern\"\n" +
 		"\t.globl f\nf:\n" +
