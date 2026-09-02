@@ -199,3 +199,29 @@ func TestFormat(t *testing.T) {
 		t.Fatalf("caps.Format:\ngot  %q\nwant %q", got, want)
 	}
 }
+
+// The call graph internal/effects builds records EVERY builtin call, not
+// just the capability-tagged ones, so one walk can be projected through
+// several vocabularies. This report must therefore skip the untagged
+// ones: reading BuiltinCaps with a bare map index yields "" for an
+// ungated builtin, which reported as a capability with an empty name.
+func TestUngatedBuiltinsAreNotCapabilities(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"main.fern": `function main(): i32 {
+  print("hello");
+  return 0;
+}`,
+	})
+	prog := loadChecked(t, filepath.Join(root, "main.fern"))
+	rows := caps.Analyze(prog, rootOnly)
+	for _, r := range rows {
+		for _, u := range r.Uses {
+			if u.Capability == "" {
+				t.Fatalf("package %q reported a capability with an empty name (chain %v)", r.Package, u.Chain)
+			}
+		}
+		if len(r.Uses) != 0 {
+			t.Errorf("package %q: print is ungated, want no capabilities, got %v", r.Package, r.Uses)
+		}
+	}
+}

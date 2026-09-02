@@ -322,3 +322,14 @@ func Reach(prog *ast.Program) map[string]string {
 	})
 	return out
 }
+
+// GatedBuiltins returns a copy of the builtin→capability table — the
+// HOST vocabulary, as opposed to internal/caps' package-authority one.
+// internal/effects projects a call graph through either.
+func GatedBuiltins() map[string]string {
+	out := make(map[string]string, len(gatedBuiltins))
+	for k, v := range gatedBuiltins {
+		out[k] = v
+	}
+	return out
+}
