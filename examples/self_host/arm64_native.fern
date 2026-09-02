@@ -149,14 +149,28 @@ function arm64_addsub_imm_ok(imm: i32): boolean {
     return (imm / 4096) <= 4095;
 }
 
-function arm64_addsub_imm_word(is_sub: boolean, s: boolean, w: boolean, rd: i32, rn: i32, imm: i32): i64 {
+// arm64_addsub_imm_mag is the magnitude of an add/sub immediate. imm12 is
+// unsigned, so a negative is spelled under the opposite mnemonic carrying
+// the magnitude -- `add #-16` is `sub #16` -- and it is the magnitude that
+// has to fit the field. The most negative i32 negates to itself and stays
+// negative, which arm64_addsub_imm_ok then refuses.
+function arm64_addsub_imm_mag(imm: i32): i32 {
+    if (imm < 0) { return 0 - imm; }
+    return imm;
+}
+
+// arm64_addsub_imm_word_sh places imm12 with the shift bit given rather than
+// derived, which is what an explicit `, lsl #12` needs: `#0, lsl #12` keeps
+// sh=1 even though the value is reachable unshifted.
+function arm64_addsub_imm_word_sh(is_sub: boolean, s: boolean, w: boolean, rd: i32, rn: i32, imm12: i32, sh12: boolean): i64 {
     var base: i64 = arm64_addsub_base(is_sub, s, w, true);
-    var v: i32 = imm;
-    if (v > 4095) {
-        base = base | 0x400000; // sh = 1: the field counts units of 4096
-        v = v / 4096;
-    }
-    return base | (((v & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+    if (sh12) { base = base | 0x400000; } // sh = 1: the field counts units of 4096
+    return base | (((imm12 & 0xfff) as i64) << 10) | (((rn & 31) as i64) << 5) | ((rd & 31) as i64);
+}
+
+function arm64_addsub_imm_word(is_sub: boolean, s: boolean, w: boolean, rd: i32, rn: i32, imm: i32): i64 {
+    if (imm > 4095) { return arm64_addsub_imm_word_sh(is_sub, s, w, rd, rn, imm / 4096, true); }
+    return arm64_addsub_imm_word_sh(is_sub, s, w, rd, rn, imm, false);
 }
 
 // arm64_addsub_reg_word is the shifted-register form. `st` is the shift type
@@ -3286,7 +3300,10 @@ function arm64_gas_extend_option(tok: string): i32 {
 // read element [0] for every index (#6849).
 // arm64_gas_addsub_imm_unsupported reports an add/sub/adds/subs (or a cmp/cmn
 // alias) whose immediate imm12 cannot hold. cmp and cmn name one fewer
-// operand, so the immediate sits one place earlier.
+// operand, so the immediate sits one place earlier. An explicit fourth
+// operand names the shift instead of leaving it to be derived, and then only
+// the bare 12-bit field is reachable -- and only `lsl #0` and `lsl #12` are
+// spellings of it at all.
 function arm64_gas_addsub_imm_unsupported(mnem: string, rest: string): boolean {
     var at: i32 = 2;
     if (mnem == "cmp" || mnem == "cmn") { at = 1; }
@@ -3294,7 +3311,14 @@ function arm64_gas_addsub_imm_unsupported(mnem: string, rest: string): boolean {
     var ops: string[] = arm64_gas_operands(rest);
     if (ops.len() <= at) { return false; }
     if (ops[at].len() == 0 || ops[at][0] != b'#') { return false; }
-    return !arm64_addsub_imm_ok(arm64_gas_imm(ops[at]));
+    var mag: i32 = arm64_addsub_imm_mag(arm64_gas_imm(ops[at]));
+    if (ops.len() > at + 1) {
+        if (arm64_gas_shift_type(ops[at + 1]) != 0) { return true; }
+        var sh: i32 = arm64_gas_lsl_amount(ops[at + 1]);
+        if (sh != 0 && sh != 12) { return true; }
+        return mag < 0 || mag > 4095;
+    }
+    return !arm64_addsub_imm_ok(mag);
 }
 
 function arm64_gas_addsub_operand_unsupported(mnem: string, rest: string): boolean {
@@ -4127,9 +4151,18 @@ function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
         if (src[2].len() > 0 && src[2][0] == b'#') {
             var iv: i32 = arm64_gas_imm(src[2]);
             // imm12 reaches 0..4095 and the multiples of 4096 up to 0xFFF000
-            // and nothing else. Masking the rest to twelve bits encodes a
-            // different number, silently, which is what this refuses.
-            return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_imm_word(is_sub, sets, w, ad, an, iv)) };
+            // and nothing else, and it is unsigned: a negative is the opposite
+            // mnemonic carrying the magnitude. Masking either instead encodes
+            // a different number, silently, which the vet above refuses.
+            var neg: boolean = iv < 0;
+            var isub: boolean = is_sub;
+            if (neg) { isub = !is_sub; }
+            var mag: i32 = arm64_addsub_imm_mag(iv);
+            if (src.len() >= 4) {
+                var sh12: boolean = arm64_gas_lsl_amount(src[3]) == 12;
+                return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_imm_word_sh(isub, sets, w, ad, an, mag, sh12)) };
+            }
+            return Arm64Asm { ...a, code: arm64_le32(a.code, arm64_addsub_imm_word(isub, sets, w, ad, an, mag)) };
         }
         var am: i32 = arm64_gas_reg(src[2]);
         // A fourth operand is a shift or an extend applied to Xm, and it is
