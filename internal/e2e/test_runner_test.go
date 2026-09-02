@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -3819,6 +3820,51 @@ func TestRunnerSetExamplePasses(t *testing.T) {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
 	for _, w := range []string{"# Suite: std/set", "ok 4 - add is pure", "1..14", "# pass 14", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
+// The five persistent-collection suites (#6794). Each pins the module's
+// structural-sharing contract — a snapshot taken before an update is
+// unchanged after it — alongside its structural invariants (`is_valid`
+// after every kind of update), so a compiled backend that rewrote a
+// shared node in place would fail here as well as in the per-backend
+// differential (persistent_collections_test.go).
+func TestRunnerOrdmapExamplePasses(t *testing.T) {
+	runPersistentSuite(t, "examples/tests/ordmap_test.fern", "std/ordmap", "ok 4 - insert is persistent", 13)
+}
+
+func TestRunnerPmapExamplePasses(t *testing.T) {
+	runPersistentSuite(t, "examples/tests/pmap_test.fern", "std/pmap", "ok 4 - insert is persistent", 11)
+}
+
+func TestRunnerPvecExamplePasses(t *testing.T) {
+	runPersistentSuite(t, "examples/tests/pvec_test.fern", "std/pvec", "ok 3 - with is persistent", 10)
+}
+
+func TestRunnerOrdsetExamplePasses(t *testing.T) {
+	runPersistentSuite(t, "examples/tests/ordset_test.fern", "std/ordset", "ok 2 - add is persistent", 6)
+}
+
+func TestRunnerPsetExamplePasses(t *testing.T) {
+	runPersistentSuite(t, "examples/tests/pset_test.fern", "std/pset", "ok 2 - add is persistent", 5)
+}
+
+// runPersistentSuite runs one suite through `fern -interp` and checks the
+// suite header, the named persistence case, and a full-pass plan of n.
+func runPersistentSuite(t *testing.T, path, suite, persistCase string, n int) {
+	t.Helper()
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, path)
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	plan := fmt.Sprintf("1..%d", n)
+	pass := fmt.Sprintf("# pass %d", n)
+	for _, w := range []string{"# Suite: " + suite, persistCase, plan, pass, "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

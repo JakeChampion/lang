@@ -1,0 +1,224 @@
+import "std/test";
+import "std/pvec" as pvec;
+import "std/option";
+import "std/i32";
+
+// examples/tests/pvec_test.fern — pure-Fern coverage of std/pvec, the
+// persistent vector (32-way trie + tail). The load-bearing contracts
+// exercised here are STRUCTURAL SHARING (a snapshot taken before a
+// write is unchanged after it), the trie / tail invariants across every
+// growth and shrink boundary (`is_valid` after each append and pop
+// through several trie levels), and index order everywhere.
+function test_new_is_empty(): test.TestOutcome {
+  var v: pvec.PVec[i32] = pvec.pvec_new();
+  if (!v.is_empty() || v.len() != 0) {
+    return test.fail("empty vector has elements");
+  }
+  return test.assert_true(v.get(0).is_none() && v.first().is_none() && v.last().is_none() && v.is_valid());
+}
+
+function test_append_get(): test.TestOutcome {
+  var v: pvec.PVec[i32] = pvec.pvec_new();
+  var i: i32 = 0;
+  while (i < 3000) {
+    v = v.append(i);
+    if (!v.is_valid()) {
+      return test.fail("invalid after append " + i.to_string());
+    }
+    i = i + 1;
+  }
+  if (v.len() != 3000) {
+    return test.fail("len");
+  }
+  i = 0;
+  while (i < 3000) {
+    if (v.get_or(i, -1) != i) {
+      return test.fail("get at " + i.to_string());
+    }
+    i = i + 1;
+  }
+  if (v.get(3000).is_some() || v.get(-1).is_some()) {
+    return test.fail("out of range");
+  }
+  return test.assert_true(v.first().unwrap_or(-1) == 0 && v.last().unwrap_or(-1) == 2999);
+}
+
+function test_with_is_persistent(): test.TestOutcome {
+  var v: pvec.PVec[i32] = pvec.pvec_new();
+  var i: i32 = 0;
+  while (i < 1500) {
+    v = v.append(i);
+    i = i + 1;
+  }
+  var snapshot: pvec.PVec[i32] = v;
+  i = 0;
+  while (i < 1500) {
+    v = v.with(i, i * 2);
+    i = i + 1;
+  }
+  if (!snapshot.is_valid() || !v.is_valid()) {
+    return test.fail("invalid after with");
+  }
+  i = 0;
+  while (i < 1500) {
+    if (snapshot.get_or(i, -1) != i) {
+      return test.fail("snapshot changed at " + i.to_string());
+    }
+    if (v.get_or(i, -1) != i * 2) {
+      return test.fail("write lost at " + i.to_string());
+    }
+    i = i + 1;
+  }
+  // Out-of-range writes are no-ops.
+  return test.assert_eq(v.with(5000, 1).len(), 1500);
+}
+
+function test_pop(): test.TestOutcome {
+  var v: pvec.PVec[i32] = pvec.pvec_new();
+  var i: i32 = 0;
+  while (i < 1100) {
+    v = v.append(i);
+    i = i + 1;
+  }
+  var full: pvec.PVec[i32] = v;
+  i = 0;
+  while (i < 1100) {
+    v = v.pop();
+    if (!v.is_valid()) {
+      return test.fail("invalid after pop " + i.to_string());
+    }
+    if (v.len() != 1099 - i) {
+      return test.fail("len after pop " + i.to_string());
+    }
+    if (v.len() > 0 && v.last().unwrap_or(-1) != 1098 - i) {
+      return test.fail("last after pop " + i.to_string());
+    }
+    i = i + 1;
+  }
+  if (!v.is_empty() || full.len() != 1100 || !full.is_valid()) {
+    return test.fail("snapshot after pops");
+  }
+  // Popping past empty is a no-op; appending again works.
+  v = v.pop();
+  v = v.append(7);
+  return test.assert_true(v.len() == 1 && v.get_or(0, -1) == 7 && v.is_valid());
+}
+
+function test_pop_then_append(): test.TestOutcome {
+  var v: pvec.PVec[i32] = pvec.from_array([1, 2, 3]);
+  var i: i32 = 0;
+  while (i < 1100) {
+    v = v.append(i);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < 1090) {
+    v = v.pop();
+    i = i + 1;
+  }
+  if (v.len() != 13 || !v.is_valid() || v.get_or(12, -1) != 9 || v.first().unwrap_or(-1) != 1) {
+    return test.fail("after pops");
+  }
+  i = 0;
+  while (i < 100) {
+    v = v.append(i);
+    i = i + 1;
+  }
+  return test.assert_true(v.len() == 113 && v.is_valid() && v.get_or(112, -1) == 99 && v.get_or(12, -1) == 9);
+}
+
+function test_to_array_fold(): test.TestOutcome {
+  var v: pvec.PVec[i32] = pvec.pvec_new();
+  var i: i32 = 0;
+  while (i < 2500) {
+    v = v.append(i);
+    i = i + 1;
+  }
+  var arr: i32[] = v.to_array();
+  if (arr.len() != 2500) {
+    return test.fail("to_array len");
+  }
+  i = 0;
+  while (i < 2500) {
+    if (arr[i] != i) {
+      return test.fail("to_array order at " + i.to_string());
+    }
+    i = i + 1;
+  }
+  var sum: i32 = v.fold(0, (a: i32, x: i32) => a + x);
+  return test.assert_eq(sum, 3123750);
+}
+
+function test_map_filter(): test.TestOutcome {
+  var v: pvec.PVec[i32] = pvec.from_array([1, 2, 3, 4, 5]);
+  var m: pvec.PVec[string] = v.map((x: i32) => "n" + x.to_string());
+  if (m.len() != 5 || m.get_or(2, "") != "n3") {
+    return test.fail("map");
+  }
+  var f: pvec.PVec[i32] = v.filter((x: i32) => x % 2 == 1);
+  if (f.len() != 3 || f.get_or(2, -1) != 5) {
+    return test.fail("filter");
+  }
+  return test.assert_eq(v.len(), 5);
+}
+
+function test_slice_concat(): test.TestOutcome {
+  var v: pvec.PVec[i32] = pvec.pvec_new();
+  var i: i32 = 0;
+  while (i < 100) {
+    v = v.append(i);
+    i = i + 1;
+  }
+  var s: pvec.PVec[i32] = v.slice(40, 45);
+  if (s.len() != 5 || s.get_or(0, -1) != 40 || s.last().unwrap_or(-1) != 44) {
+    return test.fail("slice");
+  }
+  if (v.slice(-5, 3).len() != 3 || v.slice(98, 500).len() != 2 || v.slice(50, 40).len() != 0) {
+    return test.fail("slice clamping");
+  }
+  var c: pvec.PVec[i32] = s.concat(v.slice(0, 2));
+  if (c.len() != 7 || c.get_or(5, -1) != 0 || c.get_or(6, -1) != 1 || !c.is_valid()) {
+    return test.fail("concat");
+  }
+  return test.assert_eq(v.len(), 100);
+}
+
+function test_strings(): test.TestOutcome {
+  var v: pvec.PVec[string] = pvec.pvec_new();
+  var i: i32 = 0;
+  while (i < 70) {
+    v = v.append("s" + i.to_string());
+    i = i + 1;
+  }
+  var snap: pvec.PVec[string] = v;
+  v = v.with(3, "changed");
+  if (snap.get_or(3, "") != "s3" || v.get_or(3, "") != "changed" || v.get_or(69, "") != "s69") {
+    return test.fail("string with");
+  }
+  return test.assert_true(v.is_valid() && snap.is_valid());
+}
+
+function test_for_each(): test.TestOutcome {
+  var v: pvec.PVec[i32] = pvec.from_array([3, 1, 2]);
+  var seen: i32 = 0;
+  function visit(x: i32): void {
+    seen = seen * 10 + x;
+  }
+  v.for_each(visit);
+  return test.assert_eq(seen, 312);
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("std/pvec");
+  r = r.it("new is empty", test_new_is_empty);
+  r = r.it("append + get", test_append_get);
+  r = r.it("with is persistent", test_with_is_persistent);
+  r = r.it("pop", test_pop);
+  r = r.it("pop then append", test_pop_then_append);
+  r = r.it("to_array + fold", test_to_array_fold);
+  r = r.it("map + filter", test_map_filter);
+  r = r.it("slice + concat", test_slice_concat);
+  r = r.it("strings", test_strings);
+  r = r.it("for_each", test_for_each);
+  return r.finish();
+}

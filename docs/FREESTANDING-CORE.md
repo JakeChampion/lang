@@ -234,7 +234,7 @@ test independently runs the core-safe modules through `Enforce` against `freesta
 so the partition means what the compiler enforces rather than only agreeing with it by
 construction.
 
-Today: **40 of 54 modules are core-safe.** Three results worth knowing:
+Today: **45 of 59 modules are core-safe.** Three results worth knowing:
 
 - **`std/math` is hosted, on `random`.** It reads like an obviously-core numerics module
   and is in fact the random-number module (`random_int` over the platform CSPRNG). A

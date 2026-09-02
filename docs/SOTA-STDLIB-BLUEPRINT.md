@@ -379,6 +379,18 @@ predict is above: the cost is the six assemblers, not the vector bodies.
 
 ## What landed in this pass
 
+**Persistent collections (#6794).** `std/ordmap` / `std/ordset` (weight-balanced
+tree with join-based set algebra and rank access), `std/pmap` / `std/pset`
+(32-way HAMT with cached hashes and canonical collapse), and `std/pvec` (32-way
+trie + tail). One value-returning API; the compiler's reuse pass gives the
+unique path in-place updates and the shared path structural sharing. Measured
+on x86-64 with 200,000 entries and a snapshot kept after every one of 2,000
+further updates: `T[]` 3.12 s / 3.67 GB against `std/pvec` 0.013 s / 4.2 MB;
+`core/map` OOM-killed against `std/pmap` 0.27 s / 14.8 MB. With nothing shared
+the mutable structures still win by 5x (maps) to 28x (vector). Rows 36, 163,
+177, 178. Design, the four compiler bugs it surfaced, and the rc gaps it still
+works around: `docs/PERSISTENT-COLLECTIONS.md`.
+
 **Substring search is now Two-Way (Crochemore–Perrin).** `std/string`'s search
 family was a naive `O(n·m)` scan that re-probed one byte at a time. It is now a
 single core, `__str_find_from`, dispatching on needle length: empty → the gap

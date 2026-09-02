@@ -1,0 +1,172 @@
+// std/pset — a persistent hash set with structural sharing.
+//
+// `PSet[T]` is `std/pmap`'s hash array mapped trie with unit values:
+// O(log32 n) membership / add / remove (at most seven levels), O(1)
+// snapshots, for any `core/cmp.Hash + core/cmp.Eq` element type. Every
+// operation is value-returning:
+//
+//   import "std/pset";
+//   var s: pset.PSet[string] = pset.pset_of(["a", "b", "a"]);
+//   var before: pset.PSet[string] = s;   // O(1) snapshot
+//   s = s.add("c");
+//   s.len();            // 3
+//   before.len();       // 2
+//
+// See `std/pmap` for the two-path (shared / unique) update story and
+// the hashing rules; both carry over unchanged. Iteration order is hash
+// order — for a sorted set use `std/ordset`; for the small, insertion-
+// ordered array-backed set use `std/set`.
+import "core/cmp";
+import "std/pmap";
+
+// The public handle: the trie root directly (not a `PMap` inside a
+// struct, which would cost a box per operation). Construct one only
+// through `pset_new` / `pset_of`; the field is an implementation detail.
+pub struct PSet[T] { root: pmap.HNode[T, i32] }
+
+// `pset_new()` — the empty set. The element type is fixed by the
+// annotation at the binding (`var s: PSet[string] = pset_new();`).
+pub function pset_new[T](): PSet[T] {
+  var e: pmap.HNode[T, i32] = pmap.__hm_empty();
+  return PSet { root: e };
+}
+
+// `pset_of(xs)` — the set of the distinct values in `xs`.
+pub function pset_of[T: cmp.Hash + cmp.Eq](xs: T[]): PSet[T] {
+  var s: PSet[T] = pset_new();
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    s = s.add(xs[i]);
+    i = i + 1;
+  }
+  return s;
+}
+
+// `len()` — the number of elements. O(1).
+pub function (s: PSet[T]) len(): i32 {
+  return pmap.__hm_size(s.root);
+}
+
+// `is_empty()` — true when there are no elements.
+pub function (s: PSet[T]) is_empty(): boolean {
+  return pmap.__hm_size(s.root) == 0;
+}
+
+// `add(x)` — the set with `x`; the receiver unchanged when present.
+pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) add(x: T): PSet[T] {
+  return PSet { root: pmap.__hm_insert(s.root, pmap.__hm_mix(x.hash()), 0, x, 0) };
+}
+
+// `remove(x)` — the set without `x`; the receiver unchanged when absent.
+pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) remove(x: T): PSet[T] {
+  return PSet { root: pmap.__hm_remove(s.root, pmap.__hm_mix(x.hash()), 0, x) };
+}
+
+// `contains(x)` — is `x` a member?
+pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) contains(x: T): boolean {
+  var hit: pmap.HNode[T, i32] = pmap.__hm_find(s.root, pmap.__hm_mix(x.hash()), x);
+  return pmap.__hm_holds(hit);
+}
+
+// `to_array()` — the elements, in hash order.
+pub function (s: PSet[T]) to_array(): T[] {
+  var acc: T[] = [];
+  acc = pmap.__hm_keys_into(s.root, acc);
+  return acc;
+}
+
+// `union(other)` — every element of both; the smaller set is folded
+// into the larger, O(m log32 n).
+pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) union(other: PSet[T]): PSet[T] {
+  if (s.len() >= other.len()) {
+    return __ps_add_all(s, other.to_array());
+  }
+  return __ps_add_all(other, s.to_array());
+}
+
+function __ps_add_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
+  var out: PSet[T] = s;
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    out = out.add(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// `intersection(other)` — the elements in both.
+pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) intersection(other: PSet[T]): PSet[T] {
+  var out: PSet[T] = pset_new();
+  var xs: T[] = s.to_array();
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (other.contains(xs[i])) {
+      out = out.add(xs[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// `difference(other)` — this set's elements that are NOT in `other`.
+pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) difference(other: PSet[T]): PSet[T] {
+  var out: PSet[T] = s;
+  var xs: T[] = other.to_array();
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    out = out.remove(xs[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// `is_subset(other)` — is every element of this set in `other`?
+pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) is_subset(other: PSet[T]): boolean {
+  if (s.len() > other.len()) {
+    return false;
+  }
+  var xs: T[] = s.to_array();
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (!other.contains(xs[i])) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// `equals(other)` — the same elements?
+pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) equals(other: PSet[T]): boolean {
+  return s.len() == other.len() && s.is_subset(other);
+}
+
+// `filter(pred)` — the elements `pred` accepts.
+pub function [T: cmp.Hash + cmp.Eq] (s: PSet[T]) filter(pred: (T) => boolean): PSet[T] {
+  var out: PSet[T] = pset_new();
+  var xs: T[] = s.to_array();
+  var i: i32 = 0;
+  while (i < xs.len()) {
+    if (pred(xs[i])) {
+      out = out.add(xs[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// `fold(init, f)` — `f` over every element in hash order.
+pub function [T, A] (s: PSet[T]) fold(init: A, f: (A, T) => A): A {
+  return pmap.__hm_fold(s.root, init, (a: A, k: T, v: i32) => f(a, k));
+}
+
+// `for_each(f)` — call `f` on every element in hash order.
+pub function (s: PSet[T]) for_each(f: (T) => void): void {
+  pmap.__hm_for_each(s.root, (k: T, v: i32) => f(k));
+}
+
+// `is_valid()` — do the trie invariants hold? Always true for a set
+// built through this module; exposed for tests.
+pub function (s: PSet[T]) is_valid(): boolean {
+  return pmap.__hm_valid(s.root, 0, 0);
+}

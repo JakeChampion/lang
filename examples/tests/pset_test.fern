@@ -1,0 +1,99 @@
+import "std/test";
+import "std/pset" as pset;
+import "std/option";
+import "std/i32";
+
+// examples/tests/pset_test.fern — pure-Fern coverage of std/pset, the
+// persistent hash set over std/pmap's trie: membership, add / remove
+// with structural sharing, iteration, and the set algebra.
+function test_of_dedup(): test.TestOutcome {
+  var s: pset.PSet[i32] = pset.pset_of([3, 1, 2, 3, 1]);
+  if (s.len() != 3 || !s.is_valid()) {
+    return test.fail("len " + s.len().to_string() + " != 3");
+  }
+  var arr: i32[] = s.to_array();
+  var total: i32 = 0;
+  var i: i32 = 0;
+  while (i < arr.len()) {
+    total = total + arr[i];
+    i = i + 1;
+  }
+  return test.assert_true(arr.len() == 3 && total == 6);
+}
+
+function test_add_is_persistent(): test.TestOutcome {
+  var a: pset.PSet[i32] = pset.pset_of([1, 2]);
+  var b: pset.PSet[i32] = a.add(3);
+  if (a.len() != 2 || b.len() != 3) {
+    return test.fail("add mutated receiver");
+  }
+  return test.assert_true(!a.contains(3) && b.contains(3) && b.add(3).len() == 3);
+}
+
+function test_remove(): test.TestOutcome {
+  var s: pset.PSet[i32] = pset.pset_new();
+  var i: i32 = 0;
+  while (i < 1000) {
+    s = s.add(i * 31 % 1000);
+    i = i + 1;
+  }
+  var keep: pset.PSet[i32] = s;
+  i = 0;
+  while (i < 1000) {
+    if (i % 2 == 0) {
+      s = s.remove(i);
+    }
+    i = i + 1;
+  }
+  if (s.len() != 500 || keep.len() != 1000 || !s.is_valid() || !keep.is_valid()) {
+    return test.fail("remove");
+  }
+  if (s.contains(4) || !s.contains(5) || !keep.contains(4)) {
+    return test.fail("membership");
+  }
+  return test.assert_eq(s.remove(4).len(), 500);
+}
+
+function test_algebra(): test.TestOutcome {
+  var a: pset.PSet[i32] = pset.pset_of([1, 2, 3, 4]);
+  var b: pset.PSet[i32] = pset.pset_of([3, 4, 5, 6]);
+  var u: pset.PSet[i32] = a.union(b);
+  var x: pset.PSet[i32] = a.intersection(b);
+  var d: pset.PSet[i32] = a.difference(b);
+  if (u.len() != 6 || x.len() != 2 || d.len() != 2) {
+    return test.fail("sizes");
+  }
+  if (!u.is_valid() || !x.is_valid() || !d.is_valid()) {
+    return test.fail("invalid");
+  }
+  if (!x.contains(3) || !x.contains(4) || !d.contains(1) || d.contains(3) || !u.contains(6)) {
+    return test.fail("members");
+  }
+  if (!pset.pset_of([3, 1]).is_subset(a) || a.is_subset(b) || !a.equals(pset.pset_of([4, 3, 2, 1]))) {
+    return test.fail("subset/equals");
+  }
+  return test.assert_true(a.len() == 4 && b.len() == 4);
+}
+
+function test_filter_fold_strings(): test.TestOutcome {
+  var s: pset.PSet[string] = pset.pset_of(["pear", "apple", "fig", "apple"]);
+  if (s.len() != 3 || !s.contains("fig") || s.contains("kiwi")) {
+    return test.fail("string members");
+  }
+  var short: pset.PSet[string] = s.filter((x: string) => x.len() <= 4);
+  if (short.len() != 2 || !short.contains("pear") || short.contains("apple")) {
+    return test.fail("filter");
+  }
+  var chars: i32 = s.fold(0, (a: i32, x: string) => a + x.len());
+  return test.assert_eq(chars, 12);
+}
+
+function main(): i32 {
+  var r: test.TestRunner = test.test_new("std/pset");
+  r = r.it("of dedups", test_of_dedup);
+  r = r.it("add is persistent", test_add_is_persistent);
+  r = r.it("remove", test_remove);
+  r = r.it("algebra", test_algebra);
+  r = r.it("filter/fold/strings", test_filter_fold_strings);
+  return r.finish();
+}

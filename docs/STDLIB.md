@@ -620,6 +620,90 @@ Backed by a linear-scan array, so `contains` / `add` are O(n)
 (an n-element build is O(n²)) — right-sized for CLI-scale working
 sets, not for large collections.
 
+### `std/ordmap`
+
+A persistent, ordered map with structural sharing: `OrdMap[K: cmp.Ord, V]`,
+a weight-balanced tree (Adams / Hirai–Yamamoto, delta 3, ratio 2 — the shape
+behind Haskell's `Data.Map`). Every operation returns a new map; a snapshot
+(`var old = m;`) costs one pointer and shares every node, and an update
+rebuilds only the O(log n) path to the key. When the input is not shared
+(`m = m.insert(k, v)`), the compiler's reuse pass writes the new path into the
+old nodes in place, so the same source line allocates nothing. Keys are
+ordered by the bound's `cmp` (a `@derive(cmp.Ord)` struct works), iteration
+is always in key order, and every node caches its subtree size, so rank
+queries are O(log n).
+
+- `ordmap_new()`, `from_arrays(keys, values)` (a repeated key keeps its
+  last value)
+- `(m).insert(k, v)`, `(m).remove(k)`, `(m).update(k, f)` — O(log n)
+- `(m).get(k): Option[V]`, `(m).get_or(k, fallback)`, `(m).contains(k)`,
+  `(m).len()`, `(m).is_empty()`
+- `(m).min_key()`, `(m).max_key()`, `(m).remove_min()`, `(m).remove_max()`
+- `(m).key_at(i)`, `(m).value_at(i)`, `(m).index_of(k)` — rank access
+- `(m).keys()`, `(m).values()`, `(m).fold(init, f)`, `(m).for_each(f)`,
+  `(m).map_values(f)`, `(m).filter(pred)` — key order
+- `(m).union(o)` (left-biased), `(m).intersection(o)`, `(m).difference(o)`
+  — split-and-join, O(m log(n/m + 1)); `(m).split_lt(k)`, `(m).split_gt(k)`
+- `(m).is_valid()` — the invariant checker, for tests
+
+### `std/ordset`
+
+`OrdSet[T: cmp.Ord]`: `std/ordmap`'s tree with unit values — sorted
+`to_array()`, `min` / `max` / `at(i)` / `index_of`, `add` / `remove` /
+`contains`, the join-based `union` / `intersection` / `difference`,
+`is_subset` / `equals`, `filter` / `fold` / `for_each`. `ordset_new()`,
+`ordset_of(xs)`.
+
+### `std/pmap`
+
+A persistent hash map with structural sharing: `PMap[K: cmp.Hash + cmp.Eq, V]`,
+a 32-way hash array mapped trie (Bagwell's HAMT, the shape behind Clojure's
+and Scala's immutable hash maps). The same two paths as `std/ordmap`: a
+shared input is path-copied (at most seven levels), a uniquely-held one is
+updated in place. Keys are hashed by the bound's `hash` (mixed once more
+here, so a weak derived hash still spreads over the trie) and compared by its
+`eq`; equal-hash keys share a collision node. Iteration is in hash order —
+stable for a given key set, neither insertion order nor sorted. Every branch
+caches its size, so `len()` is O(1).
+
+- `pmap_new()`, `from_arrays(keys, values)`
+- `(m).insert(k, v)`, `(m).remove(k)`, `(m).update(k, f)` — O(log32 n)
+- `(m).get(k): Option[V]`, `(m).get_or(k, fallback)`, `(m).contains(k)`,
+  `(m).len()`, `(m).is_empty()`
+- `(m).keys()`, `(m).values()`, `(m).fold(init, f)`, `(m).for_each(f)`,
+  `(m).map_values(f)`, `(m).filter(pred)`
+- `(m).union(o)` (left-biased; the smaller side is folded into the larger),
+  `(m).intersection(o)`, `(m).difference(o)`
+- `(m).is_valid()` — the invariant checker, for tests
+
+### `std/pset`
+
+`PSet[T: cmp.Hash + cmp.Eq]`: `std/pmap`'s trie with unit values — `add` /
+`remove` / `contains`, `to_array()` (hash order), `union` / `intersection` /
+`difference`, `is_subset` / `equals`, `filter` / `fold` / `for_each`.
+`pset_new()`, `pset_of(xs)`.
+
+### `std/pvec`
+
+A persistent vector with structural sharing: `PVec[T]`, a 32-way
+bit-partitioned trie plus a tail buffer (the shape behind Clojure's and
+Scala's persistent vectors). `get` / `with` are O(log32 n) (at most seven
+levels), `append` / `pop` amortised O(1) through the tail, snapshots O(1).
+Where a built-in `T[]` copies its whole buffer when a shared array is
+written, `PVec` copies a path of small nodes.
+
+- `pvec_new()`, `from_array(xs)`
+- `(v).append(x)`, `(v).pop()`, `(v).with(i, x)` (out of range: unchanged)
+- `(v).get(i): Option[T]`, `(v).get_or(i, fallback)`, `(v).first()`,
+  `(v).last()`, `(v).len()`, `(v).is_empty()`
+- `(v).to_array()`, `(v).fold(init, f)`, `(v).for_each(f)`, `(v).map(f)`,
+  `(v).filter(pred)`
+- `(v).concat(o)` — O(len(o)); `(v).slice(lo, hi)` — O(hi - lo), clamped
+- `(v).is_valid()` — the invariant checker, for tests
+
+Design, measurements, and the compiler work these rely on:
+[`docs/PERSISTENT-COLLECTIONS.md`](./PERSISTENT-COLLECTIONS.md).
+
 ### `std/format`
 
 - `format(fmt, args: string[])` — template substitution with `{}`
