@@ -1961,16 +1961,22 @@ function is_variant_of_alias_interp(struct_name: string, union_name: string, ali
     return false;
 }
 
-// is_array_recv_type reports an element-polymorphic array receiver spelling —
-// `T[]` for a single-uppercase-letter type variable, which is the ONLY array
-// receiver the language allows (a concrete `i32[]` receiver is E021). So one
-// untyped VArr can answer to all of them with nothing to disambiguate, which
-// is why the checker registers them under a single "Array" name too.
+// is_array_recv_type reports an array receiver spelling — `T[]` for a type
+// variable or a pinned element like `i32[]` / `string[]`. Both register under
+// the single "Array" name, so one untyped VArr answers to all of them with
+// nothing to disambiguate here; a receiver whose element does not fit is the
+// checker's E043, not the interpreter's problem.
+//
+// A leading `[` is a slice (`[T]`), a different namespace. A nested element
+// (`T[][]`) is E021 and never reaches this.
 function is_array_recv_type(t: string): boolean {
-    if (t.len() != 3) { return false; }
-    var c: i32 = t[0] as i32;
-    if (c < 65 || c > 90) { return false; }
-    return t[1] == b'[' && t[2] == b']';
+    if (t.len() < 3) { return false; }
+    if (t[0] == b'[') { return false; }
+    var n: i32 = t.len();
+    if (t[n - 2] != b'[' || t[n - 1] != b']') { return false; }
+    // Nested: the element itself ends in `[]`.
+    if (n >= 5 && t[n - 4] == b'[' && t[n - 3] == b']') { return false; }
+    return true;
 }
 
 // name_ends_with reports whether `nm` is `suffix` or ends with it, which is

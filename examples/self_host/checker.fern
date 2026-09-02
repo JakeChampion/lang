@@ -1796,11 +1796,20 @@ function e021_bound_call_diag(pbound: string, at: Type, s: Scope, ln: i32, cl: i
 // for its Eq/Ord verbs (`.index_of` / `.contains` / `.index_of_last` /
 // `.dedup` / `.is_sorted` / …). These are ordinary MethodSigs whose
 // receiver_type spelling ends in `[]`, not `__method_Array_*` free functions,
-// so has_array_method's name scan cannot see them. The element is always a
-// type VARIABLE (a concrete one is E021), so any array-receiver method in
-// scope applies to every array receiver — no element match to make. A slice
-// receiver (`[T]`) is a different namespace and must not match, hence the
-// leading-`[` exclusion.
+// so has_array_method's name scan cannot see them. The namespace is keyed on
+// the method NAME and cannot distinguish element types, so any array-receiver
+// method in scope applies to every array receiver — no element match to make,
+// whether the element is a type variable or a concrete `i32[]` / `string[]`.
+// A receiver whose element does not fit is caught against the method's own
+// signature. A slice receiver (`[T]`) is a different namespace and must not
+// match, hence the leading-`[` exclusion.
+//
+// Resolution accepts a concrete element; LOWERING does not yet. One
+// `(arr: i32[]) name()` declaration anywhere in a bundle costs an unrelated
+// generic its type-parameter substitution — `num.sum`'s `T.zero()` lowers to
+// a `const_func "T"` and the module is refused as not IR-eligible. That gap is
+// why std/array still declares its concrete-element verbs as
+// `__method_Array_<name>` free functions.
 function (s: Scope) array_recv_method(field: string): MethodSig {
   for method in s.methods {
     var rt: string = method.receiver_type;
@@ -7875,15 +7884,16 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // method comes from an imported module, in one of two
           // spellings has_array_method covers — an auto-discovered
           // `__method_Array_<name>` free function, or an
-          // element-polymorphic `function (xs: T[]) <name>(…)`
-          // receiver method. When the call is none of those it
-          // names a non-existent method. Mirrors the Go checker,
-          // which registers append/with/len unconditionally and
+          // `function (xs: T[]) <name>(…)` receiver method,
+          // element-polymorphic or pinned to one element type.
+          // When the call is none of those it names a
+          // non-existent method. Mirrors the Go checker, which
+          // registers append/with/len unconditionally and
           // resolves the rest from the imported module (so
           // `a.sum()` without `import "std/array"` is E043, but
-          // resolves with it). Only the ELEMENT-POLYMORPHIC
-          // receiver form exists — Go rejects a concrete element
-          // type (E021) — so there is no per-element match to make.
+          // resolves with it). The namespace is keyed on the
+          // method name, so there is no per-element match to
+          // make here either.
           if (mfa.field != "append" && mfa.field != "with" && mfa.field != "len" && !s.has_array_method(mfa.field)) {
             out = out.append(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col));
           }

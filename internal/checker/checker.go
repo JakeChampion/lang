@@ -2031,16 +2031,18 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 	}
 
 	// Auto-discover the remaining Array methods from the
-	// `__method_Array_<name>` naming convention. Every stdlib
-	// function (and, post-migration, every `std/array` module
-	// function) that follows the convention registers itself for
-	// the `arr.<name>(…)` dispatch path without a hand-written
-	// line per method. The receiver-element constraint stays
-	// inside the stdlib function signature (e.g.
-	// `function __method_Array_join(arr: string[], …)`); the
-	// checker's type unification surfaces a clean
-	// "cannot match i32[] to string[]" diagnostic when callers
-	// mismatch.
+	// `__method_Array_<name>` naming convention. std/array declares its
+	// concrete-element verbs (`join` over `string[]`, `gcd_all` over
+	// `i32[]`) this way and this loop is what makes `arr.<name>(…)` reach
+	// them.
+	//
+	// It is a compiler-known name pattern, and it exists only because the
+	// receiver form that would replace it — `pub function (arr: i32[])
+	// gcd_all()`, now accepted below — does not yet lower on the
+	// self-hosted compiler: one such declaration anywhere in the bundle
+	// costs an unrelated generic its type-parameter substitution
+	// (`num.sum`'s `T.zero()` lowers to a `const_func "T"`). Migrating
+	// std/array onto receivers and deleting this loop waits on that.
 	//
 	// FuncSigs for these functions get populated by the normal
 	// FuncDecl processing in `Check` — we only need to wire the
@@ -2457,36 +2459,47 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 			case ast.StructType:
 				if _, ok := c.info.Structs[rt.Name]; !ok {
 					c.errfCode(fn.P, "E021", "method receiver references unknown struct %q", rt.Name)
+					hoistReceiver(fn)
 					continue
 				}
 				typeName = rt.Name
 			case ast.EnumType:
 				if _, ok := c.info.Enums[rt.Name]; !ok {
 					c.errfCode(fn.P, "E021", "method receiver references unknown enum %q", rt.Name)
+					hoistReceiver(fn)
 					continue
 				}
 				typeName = rt.Name
 			case ast.ArrayType:
-				// Element-polymorphic method on an owned array,
-				// `function (xs: T[]) first(): T`. Registered under the
-				// same "Array" namespace the built-in array methods +
-				// the call-site dispatch use; `collectFreeTypeVars`
-				// already bound the element type-var, so it's a generic
-				// method inferred from the receiver's element type.
-				// The element MUST be a type variable: the "Array"
-				// namespace can't distinguish element types, so a
-				// concrete `(xs: i32[]) ...` would wrongly apply to every
-				// array — reject it.
-				if _, ok := rt.Elem.(ast.ParamType); !ok {
-					c.errfCode(fn.P, "E021", "array-receiver method must be element-polymorphic (e.g. `(xs: T[])`); a concrete element type like %s is not supported", fn.Receiver.Type)
+				// Method on an owned array, element-polymorphic
+				// (`function (xs: T[]) first(): T`) or pinned to one
+				// element type (`function (xs: i32[]) avg(): i32`).
+				// Registered under the "Array" namespace the built-in
+				// array methods + the call-site dispatch use; for the
+				// polymorphic form `collectFreeTypeVars` already bound
+				// the element type-var, making it a generic method
+				// inferred from the receiver's element type.
+				//
+				// The namespace is keyed on the method NAME and cannot
+				// distinguish element types, so a concrete-element method
+				// claims `Array.<name>` for every array and a receiver
+				// with the wrong element type fails against its signature
+				// (E043, via errArgMismatch) rather than never matching
+				// it. Two methods cannot share one name either way — the
+				// E006 guard below is what reports that.
+				if !elemDispatchable(rt.Elem) {
+					c.errfCode(fn.P, "E021", "array-receiver method cannot take a nested array/slice element (%s); make the receiver element-polymorphic (e.g. `(xs: T[])`) or take the array as a plain parameter", fn.Receiver.Type)
+					hoistReceiver(fn)
 					continue
 				}
 				typeName = "Array"
 			case ast.SliceType:
-				// Same for a slice view, `function (xs: [T]) head(): T`,
-				// under the "slice" namespace.
-				if _, ok := rt.Elem.(ast.ParamType); !ok {
-					c.errfCode(fn.P, "E021", "slice-receiver method must be element-polymorphic (e.g. `(xs: [T])`); a concrete element type like %s is not supported", fn.Receiver.Type)
+				// Same for a slice view, `function (xs: [T]) head(): T`
+				// or `function (xs: [u8]) crc32(): u32`, under the
+				// "slice" namespace.
+				if !elemDispatchable(rt.Elem) {
+					c.errfCode(fn.P, "E021", "slice-receiver method cannot take a nested array/slice element (%s); make the receiver element-polymorphic (e.g. `(xs: [T])`) or take the slice as a plain parameter", fn.Receiver.Type)
+					hoistReceiver(fn)
 					continue
 				}
 				typeName = "slice"
@@ -2503,6 +2516,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				n, ok := methodTypeName(fn.Receiver.Type)
 				if !ok {
 					c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, array, slice, or built-in type, got %s", fn.Receiver.Type)
+					hoistReceiver(fn)
 					continue
 				}
 				typeName = n
@@ -2521,8 +2535,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 				// stdlib impl is a file the program never imported and cannot
 				// act on. One error per mistake; the hoist costs nothing on a
 				// path that has already failed.
-				fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
-				fn.Receiver = nil
+				hoistReceiver(fn)
 				continue
 			}
 			// Stamp the method identity so a later Check pass can
@@ -8183,6 +8196,51 @@ func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) s
 		return fmt.Sprintf("%s (it has: %s)", msg, strings.Join(names, ", "))
 	}
 	return msg
+}
+
+// hoistReceiver moves a method's receiver onto Params[0], the shape the rest
+// of the pipeline expects, and clears it. Registration does this for a method
+// it accepts; a REJECTED one needs it too, or the body walk finds no binding
+// for the receiver name and reports an `undefined identifier` at every use —
+// a cascade under the real diagnostic, in a file (for a stdlib method) the
+// program never imported and cannot act on.
+func hoistReceiver(fn *ast.FuncDecl) {
+	if fn.Receiver == nil {
+		return
+	}
+	fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
+	fn.Receiver = nil
+}
+
+// elemDispatchable reports whether an array/slice receiver with this element
+// type can be dispatched to. Call-site dispatch binds the receiver's element
+// in one step, so a nested `T[][]` / `[T][]` element binds T to the INNER
+// array rather than to its element and the method resolves against a receiver
+// one level too deep. A type variable or any non-array element binds
+// correctly; nested receivers are refused at the declaration instead of
+// mis-resolving at every call.
+func elemDispatchable(elem ast.Type) bool {
+	switch elem.(type) {
+	case ast.ArrayType, ast.SliceType:
+		return false
+	}
+	return true
+}
+
+// errArgMismatch reports an argument that does not fit its parameter. Arg 0 of
+// a dispatch-rewritten method call is the RECEIVER, hoisted into the argument
+// list by the rewrite, so reporting it as "argument 1" describes a slot the
+// reader never wrote. It is an unresolved method on that receiver — the same
+// thing E043 reports when no method of the name exists at all — and the
+// declared receiver type is what says why, so name it.
+func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, at ast.Type) {
+	if recvIsArg0 && i == 0 && n.Method != nil {
+		c.errfCode(n.Method.FieldPos, "E043", "no method %q on %s — %q is declared for %s",
+			n.Method.Field, at, n.Method.Field, expected)
+		return
+	}
+	c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s",
+		i+1, expected, at, strCopyHint(expected, at))
 }
 
 // moduleAlreadyImports reports whether the module being checked names `mod`
@@ -13978,10 +14036,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				own := i < len(calleeOwnFlags) && calleeOwnFlags[i]
 				if sub != nil {
 					if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
-						c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s", i+1, expected, at, strCopyHint(expected, at))
+						c.errArgMismatch(n, i, recvIsArg0, expected, at)
 					}
 				} else if !c.argOK(&n.Args[i], expected, at, own) {
-					c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s", i+1, expected, at, strCopyHint(expected, at))
+					c.errArgMismatch(n, i, recvIsArg0, expected, at)
 				}
 			}
 		}
