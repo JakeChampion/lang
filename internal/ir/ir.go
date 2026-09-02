@@ -16293,7 +16293,7 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 	// Cell value (data ptr on the stack): reclaim through the array
 	// machinery keyed on the instantiation's element type — a cell is a
 	// one-element array box, not a record. mayFree gates the actual free.
-	if st, ok := t.(ast.StructType); ok && st.Name == "Cell" {
+	if isCellType(t) {
 		b.emitCellDropOnStack(cellElemOf(t), mayFree)
 		return
 	}
@@ -16390,7 +16390,7 @@ func (b *builder) dropStructField(t ast.Type) {
 	// what the array arm does too, and is safe for the same reason: both
 	// helpers walk and free only at the CELL's own rc==1, so a cell anything
 	// else still holds is only decremented here.
-	if st, isCell := t.(ast.StructType); isCell && st.Name == "Cell" {
+	if isCellType(t) {
 		b.emitCellDropOnStack(cellElemOf(t), true)
 		return
 	}
@@ -16443,7 +16443,7 @@ func (b *builder) emitStructEnumSlotDrop(idx int32, ty ast.Type) {
 	// A Cell slot reinit / reassign reclaims the old box through the array
 	// machinery (dropFnNameFor declines Cell). Owned here, so eligible=true;
 	// the helper's null / rc==1 guards are the safety net.
-	if st, ok := ty.(ast.StructType); ok && st.Name == "Cell" {
+	if isCellType(ty) {
 		b.emit(Op{Kind: OpLoadLocal, I32: idx})
 		b.emitCellDropOnStack(cellElemOf(ty), true)
 		return
@@ -17189,18 +17189,24 @@ func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
 // with a live alias (or carried over with an eval-inc) is only dec'd, never
 // freed.
 func (b *builder) emitFieldDropOnStack(t ast.Type) {
-	if at, ok := t.(ast.ArrayType); ok {
-		// Use `dropStructField`'s ladder, not the flat `__fern_arr_dec`:
-		// that helper frees the BUFFER and nothing else, so an array field
-		// with rc-tracked elements would leak every element on replacement.
-		//
-		// A struct-field read leaves the buffer at rc >= 2, forcing
-		// `cow_inplace`'s copy branch, which retains the elements — this
-		// release is what gives those retains back. A bare local array does
-		// not need the ladder: its receiver is a reassign-to-self move, so
-		// cow_inplace takes the in-place branch and the overwritten element's
-		// own drop is the sole release.
-		b.dropStructField(at)
+	// Use `dropStructField`'s ladder, not the flat `__fern_arr_dec`: that
+	// helper frees the BUFFER and nothing else, so an array field with
+	// rc-tracked elements would leak every element on replacement.
+	//
+	// A struct-field read leaves the buffer at rc >= 2, forcing
+	// `cow_inplace`'s copy branch, which retains the elements — this release
+	// is what gives those retains back. A bare local array does not need the
+	// ladder: its receiver is a reassign-to-self move, so cow_inplace takes
+	// the in-place branch and the overwritten element's own drop is the sole
+	// release.
+	//
+	// A `Cell` takes the same route because a cell IS a one-element array
+	// box: `dropFnNameFor` declines it (no generated drop fn), so without
+	// this it fell to the flat `__fern_rc_dec` below, which decrements
+	// without freeing and stranded the box every time a reused container
+	// replaced a cell field.
+	if _, isArr := t.(ast.ArrayType); isArr || isCellType(t) {
+		b.dropStructField(t)
 		return
 	}
 	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
@@ -19945,6 +19951,12 @@ func (b *builder) cellElemType(n *ast.Call) ast.Type {
 		return n.TypeArgs[0]
 	}
 	return ast.NumberType{}
+}
+
+// isCellType reports whether t is a `Cell[T]` instantiation.
+func isCellType(t ast.Type) bool {
+	st, ok := t.(ast.StructType)
+	return ok && st.Name == "Cell"
 }
 
 // cellElemOf returns the element type of a Cell-typed value (i32 fallback

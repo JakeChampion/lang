@@ -40,7 +40,7 @@ allocations:
 | `enum H { Has(Cell[string]) }`, via a binding   | 1      | 0     |
 | two scalar-cell tuples in one function          | 2      | 0     |
 | scalar-cell tuple + string-cell enum payload    | 2      | 0     |
-| two accumulating string-cell tuples             | 2      | 1     |
+| three containers in one function                | 3      | 2     |
 
 No existing census row moved, and no fixture crashed. The same container
 holding a plain `i32[]` was clean throughout, before and after — which is what
@@ -55,22 +55,11 @@ OWN rc == 1, so a cell anything else still holds is merely decremented.
 Witnessed rather than argued — the fixture builds one cell into two tuples and
 pairs to 0, and `TestSelfHostStage2FixpointArm64` passes.
 
-## Still leaking: the slot buffer when several string cells share a function
+## Still leaking: the second container onwards
 
 The last row above is the one thing this does not fix, and it is a different
-mechanism. N accumulating `Cell[string]` values held by CONTAINERS strand
-N − 1 slot buffers:
-
-| accumulating string cells, each in its own tuple | unpaired |
-|---------------------------------------------------|----------|
-| 1                                                  | 0        |
-| 2                                                  | 1        |
-| 3                                                  | 2        |
-
-The same cells as top-level LOCALS are clean at any count, and so are plain
-accumulating `string` locals — so it is neither the accumulate nor the cell on
-its own, but a container-held cell's slot. That is slot accounting rather than
-child-drop routing, so it wants its own narrowing.
+mechanism — Perceus REUSE, not the exit sweep. Narrowed and fixed the same
+day: `2026-09-02-cell-reuse-field-drop.md`.
 
 ## Also still open, from the earlier entry
 

@@ -1119,7 +1119,7 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 		// branch below, whose data-8 base would mis-free the cell's 16-byte
 		// header. A Cell[string] dec's its slot buffer; a Cell[scalar] frees
 		// the box. Ineligible cells leak-safe via the plain dec.
-		if st, ok := t.(ast.StructType); ok && st.Name == "Cell" {
+		if isCellType(t) {
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
 			b.emitCellDropOnStack(cellElemOf(t), eligible)
 			return
@@ -3842,7 +3842,7 @@ func genStructFlatDropFn(name string, sd *ast.StructDecl, ptrW int) (*Func, bool
 		if !arrElemIsRcTracked(f.Type) {
 			continue
 		}
-		if st, ok := f.Type.(ast.StructType); ok && st.Name == "Cell" {
+		if isCellType(f.Type) {
 			return nil, false
 		}
 		ptrFields = append(ptrFields, f)
