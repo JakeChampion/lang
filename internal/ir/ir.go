@@ -12329,8 +12329,18 @@ func (b *builder) binary(n *ast.Binary) error {
 		// intermediate created by evaluating Left, and the append runs after
 		// BOTH operands are evaluated, so no other expression can observe it
 		// between its creation and its consumption.
+		// A cell READ is not consumable, however owned it looks. `c.get()`
+		// retains a buffer the SLOT still holds a reference to, so growing
+		// it in place mutates a live value and, worse, leaves the two
+		// references disagreeing about who releases it: the append takes
+		// over the read's retain, the overwrite still owes the slot's. That
+		// is #8067 — silent loss on x86-64, and a live buffer freed on
+		// arm64 and wasm once the order was corrected. Copy instead; the
+		// stash below releases the read's retain exactly as for any other
+		// borrowed operand.
 		consumeLeftTemp := ast.RcFreeEnabled && b.strAppendAvailable() &&
-			b.isOwnedStringTemp(n.Left) && ast.Expr(n) != b.selfStrAppendBin
+			b.isOwnedStringTemp(n.Left) && !isCellStringGetExpr(n.Left) &&
+			ast.Expr(n) != b.selfStrAppendBin
 		stash := func(e ast.Expr, consumed bool) (int32, error) {
 			if consumed {
 				return -1, b.expr(e)
@@ -20013,15 +20023,35 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 		b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
 		return nil
 	}
-	// String element. Stash the cell pointer so args[0] is evaluated once,
-	// then pre-drop the old slot string before storing the new one.
+	// String element. Stash the cell pointer so args[0] is evaluated once.
 	ptrSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__cell_set_%d", ptrSlot)] = ptrSlot
 	if err := b.expr(n.Args[0]); err != nil { // cell data ptr = slot address
 		return err
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: ptrSlot})
-	// Pre-drop the existing slot string (gated like every other dec).
+	// Evaluate the new value FIRST, stashing it, and only then release the
+	// buffer it replaces. `c.set(c.get() + piece)` — a cell accumulating —
+	// reads the slot inside the value expression, so releasing first drops
+	// that buffer to rc 0 and the read lands on freed memory (#8067). A cell
+	// slot holds one stack word on every ptrW, so one local carries it.
+	valSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__cell_val_%d", valSlot)] = valSlot
+	// String-typed so the slot is wide enough for the two-word ABI — arm64
+	// sets ast.TwoWordOverride, where an untyped slot keeps only the data
+	// word and the value reads back empty.
+	b.scratchType[valSlot] = ast.StringType{}
+	if err := b.expr(n.Args[1]); err != nil { // value
+		return err
+	}
+	if needsRcIncOnAlias(n.Args[1], b) && !b.rc.moveSites[n.Args[1]] {
+		b.emitAliasInc(n.Args[1])
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: valSlot})
+	// Release the buffer being overwritten (gated like every other dec).
+	// The new value can never BE that buffer: a cell read is excluded from
+	// the in-place append (see the concat lowering), so the value is always
+	// a distinct allocation.
 	if ast.RcFreeEnabled {
 		b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
 		b.emit(payloadLoadOpFor(elemType, b.ptrW))
@@ -20032,16 +20062,19 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 	}
-	// Store the new value (addr, value), retaining an alias-shaped source.
+	// Store the new value (addr, value).
 	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
-	if err := b.expr(n.Args[1]); err != nil { // value
-		return err
-	}
-	if needsRcIncOnAlias(n.Args[1], b) && !b.rc.moveSites[n.Args[1]] {
-		b.emitAliasInc(n.Args[1])
-	}
+	b.emit(Op{Kind: OpLoadLocal, I32: valSlot})
 	b.emit(arrayElemStoreOpFor(elemType, b.ptrW))
 	return nil
+}
+
+// isCellStringGetExpr reports whether `e` is a `Cell[string]` read — the
+// operand shape the in-place string append must not consume, since the cell's
+// slot holds a reference the read only retains on top of.
+func isCellStringGetExpr(e ast.Expr) bool {
+	call, ok := e.(*ast.Call)
+	return ok && isCellStringGet(call)
 }
 
 // curAppendOrder returns the ident-occurrence order for the function
