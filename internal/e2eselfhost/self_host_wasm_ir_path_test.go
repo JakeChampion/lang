@@ -1183,10 +1183,13 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"arr-sum-empty", `function main(): i32 { var xs: i32[] = []; return xs.sum(); }`, 0},
 		{"arr-product", `function main(): i32 { var xs: i32[] = [2, 3, 5]; return xs.product(); }`, 30},
 		{"arr-product-empty", `function main(): i32 { var xs: i32[] = []; return xs.product(); }`, 1},
-		{"arr-index-of", `function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(9); }`, 2},
-		{"arr-index-of-first", `function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(7); }`, 0},
-		// Not found is -1, shifted by +10 to stay an exit code.
-		{"arr-index-of-missing", `function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(4) + 10; }`, 9},
+		// index_of returns Option[i32] (#4387), so the found cases match on Some
+		// and not-found is the None arm rather than a sentinel an exit code
+		// cannot carry. The asymmetric receiver above still does the work: a
+		// reversed argument order makes index_of(9) on [7,8,9] miss.
+		{"arr-index-of", `function main(): i32 { var xs: i32[] = [7, 8, 9]; match (xs.index_of(9)) { Some(i) => { return i; }, None => { return 99; } } }`, 2},
+		{"arr-index-of-first", `function main(): i32 { var xs: i32[] = [7, 8, 9]; match (xs.index_of(7)) { Some(i) => { return i; }, None => { return 99; } } }`, 0},
+		{"arr-index-of-missing", `function main(): i32 { var xs: i32[] = [7, 8, 9]; match (xs.index_of(4)) { Some(i) => { return i; }, None => { return 99; } } }`, 99},
 		{"arr-contains-true", `function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(8)) { return 1; } return 0; }`, 1},
 		{"arr-contains-false", `function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(3)) { return 1; } return 0; }`, 0},
 		{"i32-pow", `function main(): i32 { var n: i32 = 2; return n.pow(5); }`, 32},
