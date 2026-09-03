@@ -22360,16 +22360,10 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
     // closure-returning-call init is already owned at rc=1 and stores bare.
     // An `__env[i]` capture read is not a closure-array read — its slot is an
     // "ENVCAP:" borrow the sweep skips, so it takes no retain here either.
-    var clo_alias: boolean = false;
-    match (v.init) {
-        ast.ExprIdent(_) => { clo_alias = true; },
-        ast.ExprIndex(cix) => {
-            match (cix.array) {
-                ast.ExprIdent(cixid) => { if (s.is_closurearr_slot(s.slot_of(cixid.name))) { clo_alias = true; } },
-                _ => {}
-            }
-        },
-        _ => {}
+    var clo_alias: boolean = ident_name_or_empty(v.init).len() > 0;
+    if let ast.ExprIndex(cix) = v.init {
+        var cixn: string = ident_name_or_empty(cix.array);
+        if (cixn.len() > 0 && s.is_closurearr_slot(s.slot_of(cixn))) { clo_alias = true; }
     }
     if (clo_alias) { return emit_arr_store(cvb, cslot, true, true); }
     return cvb.emit(ir.op_store_local(cslot));
@@ -44898,33 +44892,18 @@ function slot_is_reclaimable_cloarr(s: LowerState, i: i32): boolean {
 // callee may hand back a param's or a field's box uncounted
 // (handback_params), and the walk would free it.
 function cloarr_elem_is_owned(e: ast.Expr, body: ast.Stmt[], closureset: string[]): boolean {
-    match (e) {
-        ast.ExprLambda(_) => { return true; },
-        ast.ExprIdent(id) => { return local_decl_count(body, id.name) == 1 && body_binds_closure_local(body, id.name, closureset); },
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIdent(cid) => { return cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$"; },
-                _ => { return false; }
-            }
-        },
-        _ => { return false; }
-    }
-    return false;
+    if let ast.ExprLambda(_) = e { return true; }
+    var idn: string = ident_name_or_empty(e);
+    if (idn.len() > 0) { return local_decl_count(body, idn) == 1 && body_binds_closure_local(body, idn, closureset); }
+    return clo_elem_is_box(e);
 }
 
 // cloarr_lit_is_fresh: an array literal of owned env boxes (empty included —
 // the caller decides whether an empty literal's type is known).
 function cloarr_lit_is_fresh(e: ast.Expr, body: ast.Stmt[], closureset: string[]): boolean {
-    match (e) {
-        ast.ExprArray(a) => {
-            var i: i32 = 0;
-            while (i < a.elements.len()) {
-                if (!cloarr_elem_is_owned(a.elements[i], body, closureset)) { return false; }
-                i = i + 1;
-            }
-            return true;
-        },
-        _ => { return false; }
+    if let ast.ExprArray(a) = e {
+        for el in a.elements { if (!cloarr_elem_is_owned(el, body, closureset)) { return false; } }
+        return true;
     }
     return false;
 }
@@ -44933,21 +44912,9 @@ function cloarr_lit_is_fresh(e: ast.Expr, body: ast.Stmt[], closureset: string[]
 // of a credited closure array the walker admits (as the arr-of-arr class
 // admits `g = g.append(<row literal>)`).
 function cloarr_self_append_fresh(e: ast.Expr, name: string, body: ast.Stmt[], closureset: string[]): boolean {
-    match (e) {
-        ast.ExprCall(c) => {
-            if (c.args.len() != 1 || !cloarr_elem_is_owned(c.args[0], body, closureset)) { return false; }
-            match (c.callee) {
-                ast.ExprFieldAccess(fa) => {
-                    if (fa.field != "append") { return false; }
-                    match (fa.obj) {
-                        ast.ExprIdent(rid) => { return rid.name == name; },
-                        _ => { return false; }
-                    }
-                },
-                _ => { return false; }
-            }
-        },
-        _ => { return false; }
+    if let ast.ExprCall(c) = e {
+        if (c.args.len() != 1 || !cloarr_elem_is_owned(c.args[0], body, closureset)) { return false; }
+        if let ast.ExprFieldAccess(fa) = c.callee { return fa.field == "append" && ident_named_is(fa.obj, name); }
     }
     return false;
 }
@@ -44958,21 +44925,18 @@ function cloarr_self_append_fresh(e: ast.Expr, name: string, body: ast.Stmt[], c
 // every method on `name` but `len` may clone the buffer. A bare `name` at a
 // free call is expr_unsafe_for's question — borrowable positions borrow.
 function cloarr_expr_unsafe(e: ast.Expr, name: string, borrowable: string[]): boolean {
-    match (e) {
-        ast.ExprIdent(id) => { return id.name == name; },
-        ast.ExprBinary(b) => { return cloarr_expr_unsafe(b.left, name, borrowable) || cloarr_expr_unsafe(b.right, name, borrowable); },
-        ast.ExprUnary(u) => { return cloarr_expr_unsafe(u.operand, name, borrowable); },
-        ast.ExprIndex(ix) => { return rc_ml_count_in_expr(ix.array, name) > 0 || cloarr_expr_unsafe(ix.index, name, borrowable); },
-        ast.ExprCall(c) => { return cloarr_call_unsafe(c, e, name, borrowable); },
-        ast.ExprFieldAccess(fa) => { return cloarr_expr_unsafe(fa.obj, name, borrowable); },
-        // A lambda mentioning the array captures it — the box outlives the
-        // slot. expr_mentions_name prunes lambda bodies, so this arm is not
-        // the default's.
-        ast.ExprLambda(lm) => { return rc_ml_count_in_stmts(lm.body, name) > 0; },
-        // Any mention inside a container literal or anything else is an escape.
-        _ => { return expr_mentions_name(e, name); }
-    }
-    return false;
+    var idn: string = ident_name_or_empty(e);
+    if (idn.len() > 0) { return idn == name; }
+    if let ast.ExprBinary(b) = e { return cloarr_expr_unsafe(b.left, name, borrowable) || cloarr_expr_unsafe(b.right, name, borrowable); }
+    if let ast.ExprUnary(u) = e { return cloarr_expr_unsafe(u.operand, name, borrowable); }
+    if let ast.ExprIndex(ix) = e { return rc_ml_count_in_expr(ix.array, name) > 0 || cloarr_expr_unsafe(ix.index, name, borrowable); }
+    if let ast.ExprCall(c) = e { return cloarr_call_unsafe(c, e, name, borrowable); }
+    if let ast.ExprFieldAccess(fa) = e { return cloarr_expr_unsafe(fa.obj, name, borrowable); }
+    // A lambda mentioning the array captures it — the box outlives the slot.
+    // expr_mentions_name prunes lambda bodies, so the fallback cannot see it.
+    if let ast.ExprLambda(lm) = e { return rc_ml_count_in_stmts(lm.body, name) > 0; }
+    // Any mention inside a container literal or anything else is an escape.
+    return expr_mentions_name(e, name);
 }
 
 // cloarr_call_unsafe is cloarr_expr_unsafe's call arm. The callee decides how
@@ -44980,48 +44944,38 @@ function cloarr_expr_unsafe(e: ast.Expr, name: string, borrowable: string[]): bo
 // admits a borrow position, every other callee has no such registry, so a
 // bare `name` argument there escapes.
 function cloarr_call_unsafe(c: ast.ExprCall, e: ast.Expr, name: string, borrowable: string[]): boolean {
-    var free_callee: boolean = false;
-    match (c.callee) {
-        // `name[i](args)`: the element is dispatched through, never stored.
-        ast.ExprIndex(cix) => {
-            var elem_call: boolean = false;
-            match (cix.array) {
-                ast.ExprIdent(cid) => { elem_call = cid.name == name; },
-                _ => {}
-            }
-            if (elem_call) { if (cloarr_expr_unsafe(cix.index, name, borrowable)) { return true; } }
-            else if (cloarr_expr_unsafe(c.callee, name, borrowable)) { return true; }
-        },
-        // `name.len()` borrows the header; every other method may clone the
-        // buffer into a binding that shares the boxes uncounted.
-        ast.ExprFieldAccess(fa) => {
-            var on_name: boolean = false;
-            match (fa.obj) {
-                ast.ExprIdent(fid) => { on_name = fid.name == name; },
-                _ => {}
-            }
-            if (on_name) { if (fa.field != "len" || c.args.len() != 0) { return true; } }
-            else if (cloarr_expr_unsafe(fa.obj, name, borrowable)) { return true; }
-        },
-        ast.ExprIdent(_) => {
-            free_callee = true;
-            if (expr_unsafe_for(e, name, borrowable, [])) { return true; }
-        },
-        _ => { if (cloarr_expr_unsafe(c.callee, name, borrowable)) { return true; } }
+    // A free-function call: expr_unsafe_for judges the bare-ident arguments.
+    if (ident_name_or_empty(c.callee).len() > 0) {
+        if (expr_unsafe_for(e, name, borrowable, [])) { return true; }
+        return cloarr_call_args_unsafe(c.args, name, borrowable, true);
     }
-    return cloarr_call_args_unsafe(c.args, name, borrowable, free_callee);
+    var callee_unsafe: boolean = false;
+    var judged: boolean = false;
+    // `name[i](args)`: the element is dispatched through, never stored.
+    if let ast.ExprIndex(cix) = c.callee {
+        judged = true;
+        if (ident_named_is(cix.array, name)) { callee_unsafe = cloarr_expr_unsafe(cix.index, name, borrowable); }
+        else { callee_unsafe = cloarr_expr_unsafe(c.callee, name, borrowable); }
+    }
+    // `name.len()` borrows the header; every other method may clone the
+    // buffer into a binding that shares the boxes uncounted.
+    if let ast.ExprFieldAccess(fa) = c.callee {
+        judged = true;
+        if (ident_named_is(fa.obj, name)) { callee_unsafe = fa.field != "len" || c.args.len() != 0; }
+        else { callee_unsafe = cloarr_expr_unsafe(fa.obj, name, borrowable); }
+    }
+    if (!judged) { callee_unsafe = cloarr_expr_unsafe(c.callee, name, borrowable); }
+    if (callee_unsafe) { return true; }
+    return cloarr_call_args_unsafe(c.args, name, borrowable, false);
 }
 
 // cloarr_call_args_unsafe: a bare `name` argument was judged with the callee
 // when it is a free function (`judged`); anything else recurses.
 function cloarr_call_args_unsafe(args: ast.Expr[], name: string, borrowable: string[], judged: boolean): boolean {
     for arg in args {
-        var bare: boolean = false;
-        match (arg) {
-            ast.ExprIdent(aid) => { bare = true; if (aid.name == name && !judged) { return true; } },
-            _ => {}
-        }
-        if (!bare && cloarr_expr_unsafe(arg, name, borrowable)) { return true; }
+        var an: string = ident_name_or_empty(arg);
+        if (an.len() > 0) { if (an == name && !judged) { return true; } }
+        else if (cloarr_expr_unsafe(arg, name, borrowable)) { return true; }
     }
     return false;
 }
@@ -45043,12 +44997,7 @@ function cloarr_stmt_unsafe(st: ast.Stmt, name: string, borrowable: string[], re
             return cloarr_expr_unsafe(a.value, name, borrowable);
         },
         ast.StmtReturn(r) => {
-            if (ret_ok) {
-                match (r.value) {
-                    ast.ExprIdent(rid) => { if (rid.name == name) { return false; } },
-                    _ => {}
-                }
-            }
+            if (ret_ok && ident_named_is(r.value, name)) { return false; }
             return cloarr_expr_unsafe(r.value, name, borrowable);
         },
         ast.StmtExpr(x) => { return cloarr_expr_unsafe(x.value, name, borrowable); },
@@ -45066,7 +45015,9 @@ function cloarr_stmt_unsafe(st: ast.Stmt, name: string, borrowable: string[], re
         },
         ast.StmtMatch(m) => { return cloarr_match_unsafe(m, name, borrowable, ret_ok, body, closureset); },
         ast.StmtDefer(d) => { return cloarr_stmt_unsafe(d.action, name, borrowable, ret_ok, body, closureset); },
-        _ => { return false; }
+        ast.StmtBreak(_) => { return false; },
+        ast.StmtContinue(_) => { return false; },
+        ast.StmtUnknown(_) => { return false; }
     }
     return false;
 }
@@ -45083,14 +45034,8 @@ function cloarr_match_unsafe(m: ast.StmtMatch, name: string, borrowable: string[
 // cloarr_var_unsafe: `var d = name[i]` is a counted bind (lower_stmt_var_closure
 // retains the element, so d owns a count); any other init is an expression read.
 function cloarr_var_unsafe(v: ast.StmtVar, name: string, borrowable: string[]): boolean {
-    match (v.init) {
-        ast.ExprIndex(ix) => {
-            match (ix.array) {
-                ast.ExprIdent(aid) => { if (aid.name == name) { return cloarr_expr_unsafe(ix.index, name, borrowable); } },
-                _ => {}
-            }
-        },
-        _ => {}
+    if (expr_is_bare_row_read(v.init, name)) {
+        if let ast.ExprIndex(ix) = v.init { return cloarr_expr_unsafe(ix.index, name, borrowable); }
     }
     return cloarr_expr_unsafe(v.init, name, borrowable);
 }
@@ -45099,54 +45044,41 @@ function cloarr_var_unsafe(v: ast.StmtVar, name: string, borrowable: string[]): 
 // box, so the body may only CALL it; a destructuring loop var is refused. Any
 // other iterable is an expression read.
 function cloarr_for_iter_unsafe(fo: ast.StmtFor, name: string, borrowable: string[]): boolean {
-    match (fo.iter) {
-        ast.ExprIdent(fid) => {
-            if (fid.name != name) { return false; }
-            var vi: i32 = 0;
-            while (vi < fo.var_name.len()) { if (fo.var_name[vi] == b',') { return true; } vi = vi + 1; }
-            return ident_used_as_value_stmts(fo.body, fo.var_name);
-        },
-        _ => { return cloarr_expr_unsafe(fo.iter, name, borrowable); }
-    }
-    return false;
+    var itn: string = ident_name_or_empty(fo.iter);
+    if (itn.len() == 0) { return cloarr_expr_unsafe(fo.iter, name, borrowable); }
+    if (itn != name) { return false; }
+    var vi: i32 = 0;
+    while (vi < fo.var_name.len()) { if (fo.var_name[vi] == b',') { return true; } vi = vi + 1; }
+    return ident_used_as_value_stmts(fo.body, fo.var_name);
 }
 
-// collect_fresh_cloarr_names: the binding sites that may take the credit — a
-// literal of owned boxes (an EMPTY literal only when annotated a fn array, or
-// the slot could be any array at all), or a call to a "CAC:" producer.
-function collect_fresh_cloarr_names(stmts: ast.Stmt[], body: ast.Stmt[], caset: string[], closureset: string[], acc: string[]): string[] {
-    var a: string[] = acc;
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => {
-                var cand: boolean = false;
-                match (v.init) {
-                    ast.ExprArray(arr) => { cand = cloarr_lit_is_fresh(v.init, body, closureset) && (arr.elements.len() > 0 || v.type_name == "fn[]"); },
-                    ast.ExprCall(c) => {
-                        match (c.callee) {
-                            ast.ExprIdent(cid) => { cand = util.index_of_str(caset, "CAC:" + cid.name) >= 0; },
-                            _ => {}
-                        }
-                    },
-                    _ => {}
-                }
-                if (cand) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
-            },
-            ast.StmtIf(f) => { a = collect_fresh_cloarr_names(f.then_body, body, caset, closureset, a); a = collect_fresh_cloarr_names(f.else_body, body, caset, closureset, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_cloarr_names(w.body, body, caset, closureset, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_cloarr_names(fo.body, body, caset, closureset, a); },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_cloarr_names(arm.body, body, caset, closureset, a); }
-            },
-            _ => {}
+// collect_fresh_cloarr_names: the binding sites (at any nesting depth) that may
+// take the credit — a literal of owned boxes (an EMPTY literal only when
+// annotated a fn array, or the slot could be any array at all), or a call to a
+// "CAC:" producer. A statement-only walk: a lambda body's bindings are its own.
+function collect_fresh_cloarr_names(body: ast.Stmt[], caset: string[], closureset: string[]): string[] {
+    function cand_site_of(st: ast.Stmt, acc: string[]): string[] {
+        if let ast.StmtVar(v) = st {
+            var cand: boolean = false;
+            if let ast.ExprArray(arr) = v.init { cand = cloarr_lit_is_fresh(v.init, body, closureset) && (arr.elements.len() > 0 || v.type_name == "fn[]"); }
+            if let ast.ExprCall(c) = v.init {
+                var cn: string = ident_name_or_empty(c.callee);
+                if (cn.len() > 0 && util.index_of_str(caset, "CAC:" + cn) >= 0) { cand = true; }
+            }
+            if (cand) { return push_str_unique(acc, reclaim_site_key_of(v.name, v.line, v.col)); }
         }
+        return acc;
     }
-    return a;
+    var out: string[] = [];
+    for st in body {
+        out = astwalk.fold_stmt_nodes(st, out, cand_site_of, no_expr_strs, astwalk.descend_none);
+    }
+    return out;
 }
 
 // reclaim_closure_arrays credits the function's closure-array locals "CLOARR:".
 function reclaim_closure_arrays(fn: parser.FuncDecl, sg: FnSigs, reclaim: string[]): string[] {
-    var cands: string[] = collect_fresh_cloarr_names(fn.body, fn.body, sg.closurearr_ret_fns, sg.closure_fns, []);
+    var cands: string[] = collect_fresh_cloarr_names(fn.body, sg.closurearr_ret_fns, sg.closure_fns);
     var ci: i32 = 0;
     while (ci < cands.len()) {
         if (!cloarr_unsafe_for(fn.body, reclaim_site_name(cands[ci]), sg.borrowable_params, false, fn.body, sg.closure_fns)) { reclaim = reclaim.append("CLOARR:" + cands[ci]); }
@@ -45158,18 +45090,16 @@ function reclaim_closure_arrays(fn: parser.FuncDecl, sg: FnSigs, reclaim: string
 // body_binds_fresh_cloarr: `name` is bound (anywhere in `stmts`) from a
 // closure-array literal of owned boxes. Paired with local_decl_count == 1 by
 // the "CAC:" scan.
-function body_binds_fresh_cloarr(stmts: ast.Stmt[], body: ast.Stmt[], name: string, closureset: string[]): boolean {
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtVar(v) => { if (v.name == name && cloarr_lit_is_fresh(v.init, body, closureset)) { return true; } },
-            ast.StmtIf(f) => { if (body_binds_fresh_cloarr(f.then_body, body, name, closureset) || body_binds_fresh_cloarr(f.else_body, body, name, closureset)) { return true; } },
-            ast.StmtWhile(w) => { if (body_binds_fresh_cloarr(w.body, body, name, closureset)) { return true; } },
-            ast.StmtFor(fo) => { if (body_binds_fresh_cloarr(fo.body, body, name, closureset)) { return true; } },
-            ast.StmtMatch(m) => {
-                for arm in m.arms { if (body_binds_fresh_cloarr(arm.body, body, name, closureset)) { return true; } }
-            },
-            _ => {}
-        }
+function body_binds_fresh_cloarr(body: ast.Stmt[], name: string, closureset: string[]): boolean {
+    function binds_fresh_at(st: ast.Stmt, acc: boolean): boolean {
+        if (acc) { return true; }
+        if let ast.StmtVar(v) = st { return v.name == name && cloarr_lit_is_fresh(v.init, body, closureset); }
+        return acc;
+    }
+    var found: boolean = false;
+    for st in body {
+        found = astwalk.fold_stmt_nodes(st, found, binds_fresh_at, no_expr_bool, astwalk.descend_none);
+        if (found) { return true; }
     }
     return false;
 }
@@ -45183,13 +45113,9 @@ function body_has_nonfresh_cloarr_return(body: ast.Stmt[], closureset: string[])
     var rets: ast.Expr[] = collect_returns(body, []);
     for r in rets {
         var fresh: boolean = cloarr_lit_is_fresh(r, body, closureset);
-        match (r) {
-            ast.ExprIdent(rid) => {
-                if (local_decl_count(body, rid.name) == 1 && body_binds_fresh_cloarr(body, body, rid.name, closureset)
-                    && !cloarr_unsafe_for(body, rid.name, [], true, body, closureset)) { fresh = true; }
-            },
-            _ => {}
-        }
+        var rn: string = ident_name_or_empty(r);
+        if (rn.len() > 0 && local_decl_count(body, rn) == 1 && body_binds_fresh_cloarr(body, rn, closureset)
+            && !cloarr_unsafe_for(body, rn, [], true, body, closureset)) { fresh = true; }
         if (!fresh) { return true; }
     }
     return false;
