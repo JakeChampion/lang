@@ -11885,7 +11885,6 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
     var laa_slots: i32[] = [];
     var lca_slots: i32[] = [];
     var lsl_slots: i32[] = [];
-    var lsl_types: string[] = [];
     while (ai < c.args.len()) {
         // A bare function-name argument at a "fn"-typed param
         // position is a function VALUE (a function pointer):
@@ -12080,10 +12079,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             // above; stash_fresh_struct_arg holds the reasoning.
             var sst: StructArgStash = stash_fresh_struct_arg(sc, c.args[ai], cid.name, ai);
             sc = sst.state;
-            if (sst.slot >= 0) {
-                lsl_slots = lsl_slots.append(sst.slot);
-                lsl_types = lsl_types.append(sst.type_name);
-            }
+            if (sst.slot >= 0) { lsl_slots = lsl_slots.append(sst.slot); }
         }
         if (!sc.ok) { return sc; }
         ai = ai + 1;
@@ -12166,7 +12162,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         lfa = lfa + 1;
     }
     scr = release_consumed_arg_temps(scr, lca_slots, cid.name);
-    scr = free_stashed_struct_args(scr, lsl_slots, lsl_types);
+    scr = free_stashed_struct_args(scr, lsl_slots);
     // #5464: a bare-typevar-RETURN pass-through fn (`id[T](x:T):T`,
     // str_ret_argref >= 0) returns i64 on wasm — the uniform 8-byte
     // slot the register backends give every value. Narrow the result
@@ -12229,7 +12225,6 @@ function lower_call_prim_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, pty: s
     if (!pm.ok) { return pm; }
     var pm_lat: i32[] = [];
     var pm_lsl: i32[] = [];
-    var pm_lslt: string[] = [];
     // A fresh anonymous RECEIVER at a SOURCE-DECLARED method, the twin of the
     // builtin-method release. The warrant is the callee-side proof
     // recv_borrow_fns_of already computes: the plain "<Type>.<method>" key
@@ -12285,17 +12280,14 @@ function lower_call_prim_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, pty: s
             if (pmst.slot >= 0) { pm_lat = pm_lat.append(pmst.slot); }
             var pmss: StructArgStash = stash_fresh_struct_arg(pm, c.args[pai], pty + "." + fa.field, pai);
             pm = pmss.state;
-            if (pmss.slot >= 0) {
-                pm_lsl = pm_lsl.append(pmss.slot);
-                pm_lslt = pm_lslt.append(pmss.type_name);
-            }
+            if (pmss.slot >= 0) { pm_lsl = pm_lsl.append(pmss.slot); }
         }
         if (!pm.ok) { return pm; }
         pai = pai + 1;
     }
     pm = pm.emit(ir.op_call_direct(pty + "." + fa.field, 1 + c.args.len()));
     pm = free_stashed_str_args(pm, pm_lat);
-    pm = free_stashed_struct_args(pm, pm_lsl, pm_lslt);
+    pm = free_stashed_struct_args(pm, pm_lsl);
     if (prslot >= 0) {
         pm = pm.emit(ir.op_load_local(prslot));
         pm = pm.emit(ir.op_load_local(prroot));
@@ -12331,7 +12323,6 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
     if (!sm.ok) { return sm; }
     var sm_lat: i32[] = [];
     var sm_lsl: i32[] = [];
-    var sm_lslt: string[] = [];
     var ai: i32 = 0;
     while (ai < c.args.len()) {
         // A bare fn-name arg at a "fn"-typed method param is a
@@ -12354,17 +12345,14 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
             if (smst.slot >= 0) { sm_lat = sm_lat.append(smst.slot); }
             var smss: StructArgStash = stash_fresh_struct_arg(sm, c.args[ai], disp_ty + "." + fa.field, ai);
             sm = smss.state;
-            if (smss.slot >= 0) {
-                sm_lsl = sm_lsl.append(smss.slot);
-                sm_lslt = sm_lslt.append(smss.type_name);
-            }
+            if (smss.slot >= 0) { sm_lsl = sm_lsl.append(smss.slot); }
         }
         if (!sm.ok) { return sm; }
         ai = ai + 1;
     }
     sm = sm.emit(ir.op_call_direct(disp_ty + "." + fa.field, 1 + c.args.len()));
     sm = free_stashed_str_args(sm, sm_lat);
-    return free_stashed_struct_args(sm, sm_lsl, sm_lslt);
+    return free_stashed_struct_args(sm, sm_lsl);
 }
 
 // lower_call_fn_field lowers a call through a CLOSURE-VALUED struct field —
@@ -28758,6 +28746,21 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     // A tuple holding a map-group box at an element releases it before the
     // array sweep below frees the tuple box it is read through (#7235).
     if (map_groups_present(st)) { st = emit_map_group_tuple_releases(st, keeps); }
+    // `own` struct params this frame still owns (own_struct_param_release_rows_of).
+    // A donating reuse site zeroed the slot, and both releases are null-safe.
+    var opi2: i32 = 0;
+    while (opi2 < st.n_params) {
+        if (!slot_list_has(keeps, opi2)) {
+            var opnm: string = st.locals[opi2].slot_name;
+            if (reclaim_has(st.reclaimable_names, "OWNREL:", opnm)) {
+                st = emit_struct_field_drops_gated(st, opi2, true);
+                st = st.release(opi2, "__fern_rc_dec", "own-param-exit");
+            } else if (reclaim_has(st.reclaimable_names, "OWNRELB:", opnm)) {
+                st = st.release(opi2, "__fern_rc_dec", "own-param-exit-box");
+            }
+        }
+        opi2 = opi2 + 1;
+    }
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
         if (!slot_list_has(keeps, i) && !slot_list_has(st.moved_elided, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && !reclaim_has(st.reclaimable_names, "ENVCAP:", st.reclaim_site_key(i))) {
@@ -32718,9 +32721,10 @@ function free_stashed_str_args(s: LowerState, slots: i32[]): LowerState {
 }
 
 // StructArgStash is stash_fresh_struct_arg's result: the state with the park
-// emitted, the scratch slot holding the box, and the struct type whose drop the
-// post-call release routes through. slot is -1 when the arg earned no stash.
-struct StructArgStash { state: LowerState, slot: i32, type_name: string }
+// emitted and the scratch slot holding the box (marked with the struct type,
+// so the post-call release routes like a swept local). slot is -1 when the arg
+// earned no stash.
+struct StructArgStash { state: LowerState, slot: i32 }
 
 // stash_fresh_struct_arg parks a fresh STRUCT argument in a scratch and reloads
 // it, so the caller can free the box after the call. The string sibling is
@@ -32742,11 +32746,11 @@ struct StructArgStash { state: LowerState, slot: i32, type_name: string }
 // call returns, and a counted-retain position admits the same temp because the
 // callee's store leaves it rc 2 on the escaping path and rc 1 otherwise.
 function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai: i32): StructArgStash {
-    if (!s.ok) { return StructArgStash { state: s, slot: 0 - 1, type_name: "" }; }
+    if (!s.ok) { return StructArgStash { state: s, slot: 0 - 1 }; }
     if (!call_arg_borrowable(s, callee, ai)
         && !arr_param_counted_at(s.sigs.param_counted, callee, ai)
         && !struct_param_counted_at(s.sigs.param_counted, callee, ai)) {
-        return StructArgStash { state: s, slot: 0 - 1, type_name: "" };
+        return StructArgStash { state: s, slot: 0 - 1 };
     }
     var ty: string = "";
     match (arg) {
@@ -32764,31 +32768,45 @@ function stash_fresh_struct_arg(s: LowerState, arg: ast.Expr, callee: string, ai
         },
         _ => {}
     }
-    if (ty.len() == 0) { return StructArgStash { state: s, slot: 0 - 1, type_name: "" }; }
+    if (ty.len() == 0) { return StructArgStash { state: s, slot: 0 - 1 }; }
+    // Scalar-only (a box dec) or the leak-safe-array / nested-struct set. NOT
+    // widened to every type that routes field reclaim, which is what a
+    // string-fielded argument temp would need: the borrowability flag proves
+    // the callee keeps no reference to the BOX, and says nothing about a
+    // FIELD it hands out — `get(x: P): string { return x.s; }` is refused
+    // here only because it is not borrowable at all, and a callee that
+    // returns a field while otherwise qualifying would have its string freed
+    // under the value it handed back. Admitting the wider set segfaults gen1
+    // of the per-module emit-all fixpoint while every small-program gate
+    // stays green (docs/rc-log/2026-09-03-own-param-donor-and-release.md has
+    // the bisect); closing it needs a callee-side "hands out no field" proof
+    // the self-host does not compute yet, so a string-fielded literal
+    // argument keeps its leak rather than trading it for a use-after-free.
     if (!struct_lit_all_scalar(s.structs, ty) && !struct_fields_reusable(s.structs, ty)) {
-        return StructArgStash { state: s, slot: 0 - 1, type_name: "" };
+        return StructArgStash { state: s, slot: 0 - 1 };
     }
     var lsln: string = "$lsl" + util.i32_to_string(s.locals.len());
     var st: LowerState = s.add_local(lsln);
     var lsls: i32 = st.slot_of(lsln);
+    st = st.mark_struct_type(lsls, ty);
     st = st.emit(ir.op_store_local(lsls));
     st = st.emit(ir.op_load_local(lsls));
-    return StructArgStash { state: st, slot: lsls, type_name: ty };
+    return StructArgStash { state: st, slot: lsls };
 }
 
 // free_stashed_struct_args drains stash_fresh_struct_arg's slots after the
-// call, in the discarded-statement arm's order: the deep field drop first,
-// while the box still OWNS its fields, then the box dec. A scalar-only struct
-// has no reclaim array field and takes the dec alone, which is exactly what
-// that arm emits for it. Net-zero on the operand stack, so the call's result —
-// live beneath — is untouched.
-function free_stashed_struct_args(s: LowerState, slots: i32[], types: string[]): LowerState {
+// call, the way the exit sweep releases a struct local: the field walk first,
+// while the box still OWNS its fields, then the box dec. The walk is gated on
+// the box being sole-owned (emit_struct_field_drops_gated): at a borrowable
+// position it is, and at a counted-retain position the callee's store left it
+// shared, so the fields stay with the owner that finds rc 1. A scalar-only
+// struct routes no walk and takes the dec alone. Net-zero on the operand stack,
+// so the call's result — live beneath — is untouched.
+function free_stashed_struct_args(s: LowerState, slots: i32[]): LowerState {
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < slots.len()) {
-        if (struct_has_reclaim_array_field(st.structs, types[i])) {
-            st = st.release(slots[i], "__struct_drop_" + types[i], "stashed-struct-arg-deep");
-        }
+        st = emit_struct_field_drops_gated(st, slots[i], true);
         st = st.release(slots[i], "__fern_rc_dec", "stashed-struct-arg");
         i = i + 1;
     }
@@ -36498,9 +36516,12 @@ function stmt_darr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]):
 //   - a bare call ARGUMENT `f(name)` — a credited struct only ever reaches a
 //     BORROWABLE param (a non-borrowable/own arg escapes, so body_unsafe_for
 //     would not credit it), and a borrowable param is read-only;
-//   - a struct-update BASE `T { ...name, .. }` — the base copy alias-incs each
-//     carried field (the #4355 construction discipline), so the deep drop is
-//     balanced (dec, not free);
+//   - a struct-update BASE `T { ...name, .. }` when `spread_counted` says every
+//     field of name's type copies COUNTED (a scalar, or a string / enum /
+//     nested-struct field the base copy retains — spread_copy_counted), so the
+//     deep drop is balanced (dec, not free). A type with an array, tuple, map,
+//     option or closure field copies that field uncounted, and such a base IS
+//     flagged: the caller passes false when it cannot vouch for the type;
 //   - a closure CAPTURE that merely READS `name`'s fields — a borrow;
 //   - a field / index READ (`name.f`, `name[i]`).
 // So a read-only / borrow-only local keeps its deep drop and its string field
@@ -36518,13 +36539,13 @@ function stmt_darr_unsafe_for(st: ast.Stmt, name: string, borrowable: string[]):
 //   - the METHOD names whose receiver recv_borrow_fns_of proved a pure borrow.
 //
 // Pass [] when the receiver's type is unknown (every method receiver marks).
-function moves_fields_expr(e: ast.Expr, name: string, nomove: string[]): boolean {
+function moves_fields_expr(e: ast.Expr, name: string, nomove: string[], spread_counted: boolean): boolean {
     match (e) {
-        ast.ExprBinary(b) => { return moves_fields_expr(b.left, name, nomove) || moves_fields_expr(b.right, name, nomove); },
-        ast.ExprUnary(u) => { return moves_fields_expr(u.operand, name, nomove); },
-        ast.ExprIndex(ix) => { return moves_fields_expr(ix.array, name, nomove) || moves_fields_expr(ix.index, name, nomove); },
-        ast.ExprSlice(sl) => { return moves_fields_expr(sl.array, name, nomove) || moves_fields_expr(sl.start, name, nomove) || moves_fields_expr(sl.end, name, nomove); },
-        ast.ExprFieldAccess(fa) => { return moves_fields_expr(fa.obj, name, nomove); },
+        ast.ExprBinary(b) => { return moves_fields_expr(b.left, name, nomove, spread_counted) || moves_fields_expr(b.right, name, nomove, spread_counted); },
+        ast.ExprUnary(u) => { return moves_fields_expr(u.operand, name, nomove, spread_counted); },
+        ast.ExprIndex(ix) => { return moves_fields_expr(ix.array, name, nomove, spread_counted) || moves_fields_expr(ix.index, name, nomove, spread_counted); },
+        ast.ExprSlice(sl) => { return moves_fields_expr(sl.array, name, nomove, spread_counted) || moves_fields_expr(sl.start, name, nomove, spread_counted) || moves_fields_expr(sl.end, name, nomove, spread_counted); },
+        ast.ExprFieldAccess(fa) => { return moves_fields_expr(fa.obj, name, nomove, spread_counted); },
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprFieldAccess(fa) => {
@@ -36533,51 +36554,54 @@ function moves_fields_expr(e: ast.Expr, name: string, nomove: string[]): boolean
                             // method receiver — the hazard (except a field-closure call)
                             if (rid.name == name && util.index_of_str(nomove, fa.field) < 0) { return true; }
                         },
-                        _ => { if (moves_fields_expr(fa.obj, name, nomove)) { return true; } }
+                        _ => { if (moves_fields_expr(fa.obj, name, nomove, spread_counted)) { return true; } }
                     }
                 },
-                _ => { if (moves_fields_expr(c.callee, name, nomove)) { return true; } }
+                _ => { if (moves_fields_expr(c.callee, name, nomove, spread_counted)) { return true; } }
             }
             for arg in c.args {
-                if (moves_fields_expr(arg, name, nomove)) { return true; }   // a receiver nested inside an arg
+                if (moves_fields_expr(arg, name, nomove, spread_counted)) { return true; }   // a receiver nested inside an arg
             }
             return false;
         },
         ast.ExprArray(a) => {
             var i: i32 = 0;
-            while (i < a.elements.len()) { if (moves_fields_expr(a.elements[i], name, nomove)) { return true; } i = i + 1; }
+            while (i < a.elements.len()) { if (moves_fields_expr(a.elements[i], name, nomove, spread_counted)) { return true; } i = i + 1; }
             return false;
         },
         ast.ExprTuple(t) => {
-            for el in t.elements { if (moves_fields_expr(el, name, nomove)) { return true; } }
+            for el in t.elements { if (moves_fields_expr(el, name, nomove, spread_counted)) { return true; } }
             return false;
         },
         ast.ExprStructLit(sl) => {
-            // A BARE-IDENT base copies name's fields into the new box with no
-            // inc (op_struct_copy, and the per-field path's array copy), so the
+            // A BARE-IDENT base copies name's fields into the new box, and an
+            // array / tuple / map / option / closure field goes with no inc
+            // (op_struct_copy, and the per-field path's array copy), so the
             // new value and name alias the same buffers. Deep-dropping name
             // would free them out from under it — the NODEEP hazard, in the
-            // same class as a method receiver. The SELF-update
+            // same class as a method receiver. `spread_counted` is the
+            // caller's word that every field of name's type copies counted,
+            // which makes the base a borrow. The SELF-update
             // `name = T { ...name, … }` is exempted by moves_fields_stmt: there
             // the two boxes are the same slot's before and after, so ownership
             // moves forward rather than being shared.
             if (sl.has_base) {
                 match (sl.base) {
-                    ast.ExprIdent(bid) => { if (bid.name == name) { return true; } },
-                    _ => { if (moves_fields_expr(sl.base, name, nomove)) { return true; } }
+                    ast.ExprIdent(bid) => { if (bid.name == name && !spread_counted) { return true; } },
+                    _ => { if (moves_fields_expr(sl.base, name, nomove, spread_counted)) { return true; } }
                 }
             }
-            for fv in sl.field_values { if (moves_fields_expr(fv, name, nomove)) { return true; } }
+            for fv in sl.field_values { if (moves_fields_expr(fv, name, nomove, spread_counted)) { return true; } }
             return false;
         },
-        ast.ExprLambda(lm) => { return moves_fields_stmts(lm.body, name, nomove); },   // a receiver used inside the closure body
+        ast.ExprLambda(lm) => { return moves_fields_stmts(lm.body, name, nomove, spread_counted); },   // a receiver used inside the closure body
         _ => { return false; }   // ExprIdent / ExprNumber / ExprString / ExprBool / ExprUnknown — leaves, no move
     }
     return false;
 }
 
-function moves_fields_stmts(stmts: ast.Stmt[], name: string, nomove: string[]): boolean {
-    for stmt in stmts { if (moves_fields_stmt(stmt, name, nomove)) { return true; } }
+function moves_fields_stmts(stmts: ast.Stmt[], name: string, nomove: string[], spread_counted: boolean): boolean {
+    for stmt in stmts { if (moves_fields_stmt(stmt, name, nomove, spread_counted)) { return true; } }
     return false;
 }
 
@@ -36997,11 +37021,11 @@ function struct_lit_unretained_borrow_field(stmts: ast.Stmt[], key: string, stru
     return false;
 }
 
-function moves_fields_stmt(st: ast.Stmt, name: string, nomove: string[]): boolean {
+function moves_fields_stmt(st: ast.Stmt, name: string, nomove: string[], spread_counted: boolean): boolean {
     match (st) {
-        ast.StmtVar(v) => { return moves_fields_expr(v.init, name, nomove); },
-        ast.StmtReturn(r) => { return moves_fields_expr(r.value, name, nomove); },
-        ast.StmtExpr(e) => { return moves_fields_expr(e.value, name, nomove); },
+        ast.StmtVar(v) => { return moves_fields_expr(v.init, name, nomove, spread_counted); },
+        ast.StmtReturn(r) => { return moves_fields_expr(r.value, name, nomove, spread_counted); },
+        ast.StmtExpr(e) => { return moves_fields_expr(e.value, name, nomove, spread_counted); },
         ast.StmtAssign(a) => {
             // SELF-rebind exemption: `name = name.emit(op)` / `name = f(name)`
             // (the #3456 builder chain) keeps its per-rebind reclaim — the cow
@@ -37018,16 +37042,16 @@ function moves_fields_stmt(st: ast.Stmt, name: string, nomove: string[]): boolea
                             ast.ExprFieldAccess(sfa) => {
                                 match (sfa.obj) {
                                     ast.ExprIdent(_) => {},
-                                    _ => { if (moves_fields_expr(sfa.obj, name, nomove)) { deep_move = true; } }
+                                    _ => { if (moves_fields_expr(sfa.obj, name, nomove, spread_counted)) { deep_move = true; } }
                                 }
                             },
-                            _ => { if (moves_fields_expr(sc.callee, name, nomove)) { deep_move = true; } }
+                            _ => { if (moves_fields_expr(sc.callee, name, nomove, spread_counted)) { deep_move = true; } }
                         }
                         var sai: i32 = 0;
                         while (sai < sc.args.len()) {
                             match (sc.args[sai]) {
                                 ast.ExprIdent(_) => {},
-                                _ => { if (moves_fields_expr(sc.args[sai], name, nomove)) { deep_move = true; } }
+                                _ => { if (moves_fields_expr(sc.args[sai], name, nomove, spread_counted)) { deep_move = true; } }
                             }
                             sai = sai + 1;
                         }
@@ -37048,40 +37072,40 @@ function moves_fields_stmt(st: ast.Stmt, name: string, nomove: string[]): boolea
                                 _ => {}
                             }
                         }
-                        if (!base_self) { return moves_fields_expr(a.value, name, nomove); }
+                        if (!base_self) { return moves_fields_expr(a.value, name, nomove, spread_counted); }
                         var sfi: i32 = 0;
                         while (sfi < ssl.field_values.len()) {
-                            if (moves_fields_expr(ssl.field_values[sfi], name, nomove)) { return true; }
+                            if (moves_fields_expr(ssl.field_values[sfi], name, nomove, spread_counted)) { return true; }
                             sfi = sfi + 1;
                         }
                         return false;
                     },
-                    _ => { return moves_fields_expr(a.value, name, nomove); }
+                    _ => { return moves_fields_expr(a.value, name, nomove, spread_counted); }
                 }
             }
-            return moves_fields_expr(a.value, name, nomove);
+            return moves_fields_expr(a.value, name, nomove, spread_counted);
         },
         ast.StmtIf(f) => {
-            if (moves_fields_expr(f.cond, name, nomove)) { return true; }
-            return moves_fields_stmts(f.then_body, name, nomove) || moves_fields_stmts(f.else_body, name, nomove);
+            if (moves_fields_expr(f.cond, name, nomove, spread_counted)) { return true; }
+            return moves_fields_stmts(f.then_body, name, nomove, spread_counted) || moves_fields_stmts(f.else_body, name, nomove, spread_counted);
         },
         ast.StmtWhile(w) => {
-            if (moves_fields_expr(w.cond, name, nomove)) { return true; }
-            return moves_fields_stmts(w.body, name, nomove);
+            if (moves_fields_expr(w.cond, name, nomove, spread_counted)) { return true; }
+            return moves_fields_stmts(w.body, name, nomove, spread_counted);
         },
         ast.StmtFor(fo) => {
-            if (moves_fields_expr(fo.iter, name, nomove)) { return true; }
-            return moves_fields_stmts(fo.body, name, nomove);
+            if (moves_fields_expr(fo.iter, name, nomove, spread_counted)) { return true; }
+            return moves_fields_stmts(fo.body, name, nomove, spread_counted);
         },
         ast.StmtMatch(m) => {
-            if (moves_fields_expr(m.scrutinee, name, nomove)) { return true; }
+            if (moves_fields_expr(m.scrutinee, name, nomove, spread_counted)) { return true; }
             for arm in m.arms {
-                if (arm.has_guard && moves_fields_expr(arm.guard, name, nomove)) { return true; }
-                if (moves_fields_stmts(arm.body, name, nomove)) { return true; }
+                if (arm.has_guard && moves_fields_expr(arm.guard, name, nomove, spread_counted)) { return true; }
+                if (moves_fields_stmts(arm.body, name, nomove, spread_counted)) { return true; }
             }
             return false;
         },
-        ast.StmtDefer(d) => { return moves_fields_stmt(d.action, name, nomove); },
+        ast.StmtDefer(d) => { return moves_fields_stmt(d.action, name, nomove, spread_counted); },
         _ => { return false; }
     }
     return false;
@@ -37148,7 +37172,7 @@ pub function recv_borrow_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                 if (body_returns_bare_ident(fn.body, fn.receiver_name)) {
                     out = out.append("RECVRET:" + rty + "." + fn.name);
                 }
-                if (!moves_fields_stmts(fn.body, fn.receiver_name, none)
+                if (!moves_fields_stmts(fn.body, fn.receiver_name, none, false)
                     && !optstruct_body_moves_field(fn.body, fn.receiver_name, rty, structs, borrowable)) {
                     if (!body_unsafe_for(fn.body, fn.receiver_name, borrowable, [])) {
                         out = out.append(rty + "." + fn.name);
@@ -37779,7 +37803,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
         var mvnm: string[] = recv_borrow_methods_of(recv_borrow, mvsty);
         mvnm = append_all(mvnm, recv_ident_methods_of(recv_borrow, mvsty, body, mvnmk, borrowable));
         if (mvty != "") { mvnm = append_all(mvnm, clo_field_names_of(structs, mvty)); }
-        var mv_moves: boolean = moves_fields_stmts(body, mvnmk, mvnm);
+        var mv_moves: boolean = moves_fields_stmts(body, mvnmk, mvnm, false);
         // A BARE NON-SCALAR FIELD READ moves the field out just as surely as a
         // receiver use does, and moves_fields_expr cannot see it: its
         // ExprFieldAccess arm only recurses into the object, and a bare ExprIdent
@@ -38542,11 +38566,82 @@ function stmt_unsafe_for_ret_ok(st: ast.Stmt, name: string, borrowable: string[]
     return false;
 }
 
+// spread_copy_field_counted: a field of type `t` of struct `sty`, CARRIED
+// through a `T { ...base, … }` spread, reaches the new box as a COUNTED
+// reference. The base-copy path of lower_expr_struct_lit retains a
+// nested-struct or enum field unconditionally and a STRING field only under
+// `slit_reclaim` — the routing verdict — so the string case asks the very same
+// predicate rather than assuming it. A scalar carries no reference at all.
+// Every other kind — arrays, tuples, maps, options, closures — is copied
+// uncounted.
+//
+// The string clause is not a detail: an unrouted string-fielded type spread as
+// a base mints an uncounted co-owner, and treating that as counted hands two
+// owners one buffer. Claiming it segfaulted gen1 of the per-module emit-all
+// fixpoint while every small-program gate stayed green.
+function spread_copy_field_counted(structs: parser.StructDecl[], sfok: string[], sty: string, t: string): boolean {
+    if (reuse_field_is_scalar(t) || decl_is_enum(structs, t) || decl_is_struct(structs, t)) { return true; }
+    return t == "string" && struct_routes_field_reclaim_at(structs, sfok, sty);
+}
+
+// spread_copy_counted: every field of struct `sty` is spread_copy_field_counted,
+// so a `T { ...base, … }` over it mints no uncounted co-owner of base's fields.
+function spread_copy_counted(structs: parser.StructDecl[], sfok: string[], sty: string): boolean {
+    var n: i32 = decl_field_count(structs, sty);
+    var fi: i32 = 0;
+    while (fi < n) {
+        if (!spread_copy_field_counted(structs, sfok, sty, decl_field_type_at(structs, sty, fi))) { return false; }
+        fi = fi + 1;
+    }
+    return n > 0;
+}
+
+// spread_carried_fields_counted: the fields `slit` CARRIES from its base — every
+// declared field it does not override — all copy counted, so the box it builds
+// sole-owns a reference to each, exactly as a no-base literal's fields do. The
+// overrides take the caller's per-field walk like any literal's.
+function spread_carried_fields_counted(structs: parser.StructDecl[], sfok: string[], slit: ast.ExprStructLit): boolean {
+    var n: i32 = decl_field_count(structs, slit.type_name);
+    var fi: i32 = 0;
+    while (fi < n) {
+        if (util.index_of_str(slit.field_names, decl_field_name_at(structs, slit.type_name, fi)) < 0
+            && !spread_copy_field_counted(structs, sfok, slit.type_name, decl_field_type_at(structs, slit.type_name, fi))) { return false; }
+        fi = fi + 1;
+    }
+    return true;
+}
+
+// own_param_ret_is_frame_fresh: `return name` where name is an `own` struct
+// PARAMETER hands the caller the box it moved in — sole-owned by the own
+// contract, its fields counted by the caller's construction — provided this
+// frame took no second reference to it: never redeclared, reassigned, aliased,
+// stored or passed on (body_unsafe_for_allow_bare_ret with an empty borrow
+// registry, so any call argument refuses), and no field copied out uncounted
+// (a spread over counted kinds is forgiven).
+function own_param_ret_is_frame_fresh(name: string, structs: parser.StructDecl[], sfok: string[], fnbody: ast.Stmt[], fnparams: ast.ParamDecl[]): boolean {
+    var ty: string = "";
+    var pi: i32 = 0;
+    while (pi < fnparams.len()) {
+        if (fnparams[pi].name == name && fnparams[pi].own) { ty = fnparams[pi].type_name; }
+        pi = pi + 1;
+    }
+    if (ty.len() == 0 || !decl_is_struct(structs, ty) || !decl_is_leaksafe(structs, ty)) { return false; }
+    if (local_decl_count(fnbody, name) != 0) { return false; }
+    if (util.index_of_str(body_assign_targets(fnbody), name) >= 0) { return false; }
+    var no_borrow: string[] = [];
+    if (body_unsafe_for_allow_bare_ret(fnbody, name, no_borrow)) { return false; }
+    var no_nomove: string[] = [];
+    if (moves_fields_stmts(fnbody, name, no_nomove, spread_copy_counted(structs, sfok, ty))) { return false; }
+    return !optstruct_body_moves_field(fnbody, name, ty, structs, no_borrow);
+}
+
 function return_value_is_strictfresh_struct(e: ast.Expr, structs: parser.StructDecl[], fnbody: ast.Stmt[], arr_fresh: string[], fwd: string[], fnparams: ast.ParamDecl[], sfok: string[]): boolean {
     match (e) {
         ast.ExprStructLit(slit) => {
             if (!(decl_is_struct(structs, slit.type_name) && decl_is_leaksafe(structs, slit.type_name))) { return false; }
-            if (slit.has_base) { return false; }
+            // A functional update `T { ...base, … }` qualifies when every
+            // CARRIED field copies counted; its overrides take the walk below.
+            if (slit.has_base && !spread_carried_fields_counted(structs, sfok, slit)) { return false; }
             var i: i32 = 0;
             while (i < slit.field_names.len()) {
                 var ft: string = decl_field_type(structs, slit.type_name, slit.field_names[i]);
@@ -38665,6 +38760,7 @@ function return_value_is_strictfresh_struct(e: ast.Expr, structs: parser.StructD
         // of the arr_field_ident_is_frame_built check this same function already
         // runs one level down for an ARRAY field.
         ast.ExprIdent(rid) => {
+            if (own_param_ret_is_frame_fresh(rid.name, structs, sfok, fnbody, fnparams)) { return true; }
             return struct_ret_local_is_frame_fresh(rid.name, structs, fnbody, arr_fresh, fwd, fnparams, sfok);
         },
         _ => { return false; }
@@ -38725,7 +38821,7 @@ function struct_ret_local_is_frame_fresh(name: string, structs: parser.StructDec
     // admitting it would rest on "no reader outlives the frame", which is a
     // liveness claim this predicate does not make and moves_fields_stmts does.
     var no_nomove: string[] = [];
-    if (moves_fields_stmts(fnbody, name, no_nomove)) { return false; }
+    if (moves_fields_stmts(fnbody, name, no_nomove, false)) { return false; }
     var mvsty: string = declared_struct_type_of(fnbody, name, structs);
     var no_mv_borrow: string[] = [];
     if (mvsty != "" && optstruct_body_moves_field(fnbody, name, mvsty, structs, no_mv_borrow)) { return false; }
@@ -49791,17 +49887,14 @@ function struct_fields_reusable(structs: parser.StructDecl[], struct_name: strin
 }
 
 // struct_fields_reusable_param widens struct_fields_reusable for the OWN-PARAM
-// reuse families only (own_param_reuse_sites / own_param_self_overwrite_sites):
-// Map / leak-safe tuple / leak-safe Option fields are additionally admitted.
-// All three are leak-only boxes on the IR path (never released anywhere), so
-// overwriting or carrying one in a reused param box leaks it exactly like the
-// normal drop path would have, and a copied pointer can never dangle — the
-// emitters' release / carried-copy walks are per-type allowlists that already
-// skip them (same reasoning as the _cross widening below). ENUM and STRING
-// fields stay EXCLUDED here, unlike _cross: their old-value release at the
-// reuse arm needs the donor's values proven fresh (donor_enum_fields_fresh /
-// the #4355 string rule), and that proof reads the donor's BIND LITERAL —
-// which a parameter does not have.
+// reuse families (own_param_reuse_sites / own_param_self_overwrite_sites, via
+// struct_fields_reusable_ownparam below): Map / leak-safe tuple / leak-safe
+// Option fields are additionally admitted. All three are leak-only boxes on
+// the IR path (never released anywhere), so overwriting or carrying one in a
+// reused param box leaks it exactly like the normal drop path would have, and
+// a copied pointer can never dangle — the emitters' release / carried-copy
+// walks are per-type allowlists that already skip them (same reasoning as the
+// _cross widening below).
 function struct_fields_reusable_param(structs: parser.StructDecl[], struct_name: string): boolean {
     if (struct_fields_reusable(structs, struct_name)) { return true; }
     for sd in structs {
@@ -49810,6 +49903,37 @@ function struct_fields_reusable_param(structs: parser.StructDecl[], struct_name:
             for fld in sd.fields {
                 var t: string = fld.type_name;
                 if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t) && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)) { return false; }
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+// struct_fields_reusable_ownparam is the OWN-PARAM families' predicate:
+// struct_fields_reusable_param plus ENUM and STRING fields. The donor is a
+// parameter, so the alias-free proof the local families read off the donor's
+// bind literal (donor_enum_fields_fresh) is unavailable — and unnecessary. An
+// `own` param's box is sole-owned (the caller moved it in; the runtime
+// __fern_rc_is_unique guard backstops), and its FIELD values carry whatever
+// count the caller's construction gave them: every non-fresh enum field store
+// and every base copy retains, so an old enum box's rc counts every live
+// holder and the reuse arm's flat rc-gated dec never frees under one. A
+// string field is retained on the same terms only for a type that ROUTES
+// field reclaim (slit_reclaim), so string-fielded types are admitted only when
+// routed — otherwise the caller's share is uncounted and the rc-aware
+// __fern_str_free at the override would free it under a live holder.
+function struct_fields_reusable_ownparam(structs: parser.StructDecl[], sfok: string[], struct_name: string): boolean {
+    if (struct_fields_reusable_param(structs, struct_name)) { return true; }
+    if (struct_has_string_field(structs, struct_name) && !struct_routes_field_reclaim_at(structs, sfok, struct_name)) { return false; }
+    for sd in structs {
+        if (sd.name == struct_name) {
+            if (sd.fields.len() == 0) { return false; }
+            for fld in sd.fields {
+                var t: string = fld.type_name;
+                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t)
+                    && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)
+                    && !decl_is_enum(structs, t) && t != "string") { return false; }
             }
             return true;
         }
@@ -50741,9 +50865,13 @@ function sa_param_named(params: ast.ParamDecl[], name: string): boolean {
 }
 
 // struct_fields_reusable_own widens struct_fields_reusable_param for the OWN-BASE
-// update: string, string[], struct[] and enum[] fields are admitted too, because
-// the emitter releases each of those override kinds (buffer-only here) and
-// retains each carried copy on its fresh arm.
+// update: string, string[], struct[], enum[] and enum fields are admitted too,
+// because the emitter releases each of those override kinds (rc-gated; the
+// arrays buffer-only here) and retains each carried copy on its fresh arm. An
+// enum field's old value is provably counted wherever it came from — the
+// ExprStructLit enum arm and the base copy both retain a non-fresh value — so
+// the flat rc-gated dec never frees under a live holder; a string field's is
+// counted only for a routed type, which own_update_params_of requires.
 function struct_fields_reusable_own(structs: parser.StructDecl[], struct_name: string): boolean {
     if (struct_fields_reusable_param(structs, struct_name)) { return true; }
     for sd in structs {
@@ -50752,7 +50880,7 @@ function struct_fields_reusable_own(structs: parser.StructDecl[], struct_name: s
             for fld in sd.fields {
                 var t: string = fld.type_name;
                 if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t)
-                    && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)
+                    && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t) && !decl_is_enum(structs, t)
                     && t != "string" && t != "string[]" && !is_struct_array_field_type(structs, t) && !is_enum_array_field_type(structs, t)) { return false; }
             }
             return true;
@@ -50809,11 +50937,16 @@ function own_field_append_arg(v: ast.Expr): ast.Expr {
 // convention) — never a bare local or another struct's field, which the box
 // would then share uncounted with the local's sweep; and p itself is only ever
 // read (`p.f`), passed on, or spread as a base.
-function own_update_params_of(fn: parser.FuncDecl, structs: parser.StructDecl[]): string[] {
+function own_update_params_of(fn: parser.FuncDecl, structs: parser.StructDecl[], sfok: string[]): string[] {
     var out: string[] = [];
     if (fn.receiver_name.len() > 0) { return out; }
     for pd in fn.params {
         if (!pd.own || !decl_is_struct(structs, pd.type_name) || !struct_fields_reusable_own(structs, pd.type_name)) { continue; }
+        // The reuse arm frees an overridden STRING field's old value rc-aware,
+        // and the caller's construction retained its share of that value only
+        // for a type that ROUTES field reclaim (slit_reclaim). Unrouted, the
+        // share is uncounted and the free lands under a live holder.
+        if (struct_has_string_field(structs, pd.type_name) && !struct_routes_field_reclaim_at(structs, sfok, pd.type_name)) { continue; }
         var sc: OwnUpdScan = OwnUpdScan { name: pd.name, tyname: pd.type_name, structs: structs, bare: 0, ok_uses: 0, updates: 0, bad: false };
         for st in fn.body { sc = astwalk.fold_stmt_nodes(st, sc, own_upd_scan_stmt, own_upd_scan_expr, astwalk.descend_all); }
         if (!sc.bad && sc.updates > 0 && sc.bare == sc.ok_uses) { out = out.append(pd.name); }
@@ -50889,10 +51022,12 @@ function own_upd_scan_expr(e: ast.Expr, acc: OwnUpdScan): OwnUpdScan {
 // own_override_owned: does override value `v` for a field of type `fty` hand the
 // box an owned reference? Scalars always; an array from a literal, a call, or an
 // `.append` / `.with` on the base's own field; a nested struct from a base-less
-// literal; a string from a literal or a concatenation. A bare identifier or a
-// field read of anything else is an uncounted alias and refuses the function.
+// literal; an enum from a fresh variant constructor; a string from a literal or
+// a concatenation. A bare identifier or a field read of anything else is an
+// uncounted alias and refuses the function.
 function own_override_owned(fty: string, v: ast.Expr, base: string, structs: parser.StructDecl[]): boolean {
     if (reuse_field_is_scalar(fty)) { return true; }
+    if (decl_is_enum(structs, fty)) { return variant_ctor_enum_owner(v, structs) == fty; }
     if (is_leaksafe_array_field(fty) || fty == "string[]" || is_struct_array_field_type(structs, fty) || is_enum_array_field_type(structs, fty)) {
         match (v) {
             ast.ExprArray(_) => { return true; },
@@ -51363,14 +51498,15 @@ function cross_construction_donor(body: ast.Stmt[], structs: parser.StructDecl[]
 // the call site), and a param is never exit-swept, so donating its box to a dead-
 // after construction is sound and the runtime __fern_rc_is_unique gate in
 // emit_cross_struct_reuse backstops it (a would-be-aliased box reads rc>=2 → fresh
-// alloc). Restricted to ALL-SCALAR donor + recipient boxes (struct_all_scalar_
-// fields), so the reuse arm releases nothing and needs no recipient freshness
-// gate. Pairing rules mirror cross_construction_donor: donor differs from the
+// alloc). Donor and recipient are struct_fields_reusable_ownparam types; the
+// recipient's field values are gated fresh (cross_recipient_fields_fresh) so
+// the reused box solely owns each new one once the reuse arm releases the
+// donor's old. Pairing rules mirror cross_construction_donor: donor differs from the
 // recipient, box-class compatible (structs_reuse_compatible), never reassigned,
 // never escaping, dead from the construction onward, each own param consumed at
 // most once. A construction already owned by a self-overwrite / cross-local /
 // enum-donor site is skipped (checked against `reuse`/`xreuse`/`edon`).
-function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[], reuse: ReuseSites, xreuse: CrossReuseSites, edon: EnumDonorSites): CrossReuseSites {
+function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[], sfok: string[], reuse: ReuseSites, xreuse: CrossReuseSites, edon: EnumDonorSites): CrossReuseSites {
     var idxs: i32[] = [];
     var donors: string[] = [];
     var dtypes: string[] = [];
@@ -51394,42 +51530,21 @@ function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[]
                 ast.StmtVar(v) => {
                     match (v.init) {
                         ast.ExprStructLit(slit) => {
-                            // Recipient must be a scalar / leak-safe-array / nested-
-                            // struct / Map / tuple / Option box
-                            // (struct_fields_reusable_param — NO enum/string, whose
-                            // old-value release needs a DONOR-side freshness gate a
-                            // param has no bind literal to satisfy; Map / tuple /
-                            // Option are leak-only, released nowhere, so they need
-                            // neither release nor gate). For the released kinds the
-                            // reuse arm's old-field release is rc-GUARDED
-                            // (__fern_rc_dec / __struct_drop free only at rc==1), so a
-                            // sole-owned `own` param's fields release soundly with no
-                            // donor-freshness gate — symmetric with the cross-LOCAL
-                            // donor path (cross_construction_donor adds a freshness
-                            // gate only when struct_has_enum_field).
-                            if (!slit.has_base && struct_fields_reusable_param(structs, slit.type_name)) {
-                                // RECIPIENT freshness (mirrors cross_reuse_sites' `ok`):
-                                // an array field VALUE must be a fresh array literal and
-                                // a nested-struct value a fresh no-base struct literal,
-                                // so the reused box solely owns each new inner box once
-                                // the donor's old one is full-freeing-dropped.
-                                var ok: boolean = true;
-                                var fk: i32 = 0;
-                                while (fk < slit.field_names.len()) {
-                                    var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
-                                    if (is_leaksafe_array_field(fkt)) {
-                                        match (slit.field_values[fk]) {
-                                            ast.ExprArray(_) => {},
-                                            _ => { ok = false; }
-                                        }
-                                    } else if (decl_is_struct(structs, fkt)) {
-                                        match (slit.field_values[fk]) {
-                                            ast.ExprStructLit(isl) => { if (isl.has_base) { ok = false; } },
-                                            _ => { ok = false; }
-                                        }
-                                    }
-                                    fk = fk + 1;
-                                }
+                            // Recipient must be a struct_fields_reusable_ownparam
+                            // box (Map / tuple / Option are leak-only, released
+                            // nowhere, so they need neither release nor gate). For
+                            // the released kinds the reuse arm's old-field release
+                            // is rc-GUARDED (__fern_rc_dec / __fern_str_free /
+                            // __struct_drop free only at rc==1), so a sole-owned
+                            // `own` param's counted fields release soundly with no
+                            // donor-freshness gate — the predicate's header holds
+                            // the argument.
+                            if (!slit.has_base && struct_fields_reusable_ownparam(structs, sfok, slit.type_name)) {
+                                // RECIPIENT freshness, the gate every cross family
+                                // shares: each new field value is a fresh literal /
+                                // variant ctor / fresh string producer, so the reused
+                                // box solely owns it once the donor's old is released.
+                                var ok: boolean = cross_recipient_fields_fresh(slit, structs);
                                 // Suffix ident set from k onward — the donor must be
                                 // dead here (covers c's own field values too).
                                 var sfx: string[] = [];
@@ -51441,7 +51556,7 @@ function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[]
                                     var p: ast.ParamDecl = fn.params[pi];
                                     if (p.own
                                         && p.name != v.name
-                                        && struct_fields_reusable_param(structs, p.type_name)
+                                        && struct_fields_reusable_ownparam(structs, sfok, p.type_name)
                                         && structs_reuse_compatible(structs, p.type_name, slit.type_name)
                                         && util.index_of_str(consumed, p.name) < 0
                                         && util.index_of_str(reassigned, p.name) < 0
@@ -51475,16 +51590,15 @@ function own_param_reuse_sites(fn: parser.FuncDecl, structs: parser.StructDecl[]
 // where own_d is a dead-after `own` param reuses own_d's box in place. Same
 // soundness basis as the cross own-param donor: an `own` param is moved in / sole-
 // owned and never exit-swept, and emit_self_overwrite_reuse's __fern_rc_is_unique
-// guard backstops. Restricted to struct_fields_reusable_param (scalar /
-// leak-safe array / nested struct / leak-only Map / tuple / Option — NO
-// enum/string, whose old-value release needs a donor bind literal a param has
-// none of), so no donor-side freshness gate is required. The
-// override / carried gates mirror self_overwrite_reuse_sites exactly: same-type
-// base, override values fresh (array literals / nested no-base struct lits), no
-// override value references d, d dead after the statement, never reassigned, and
-// escaping nowhere but the update base here. A statement already claimed by a
-// self-overwrite-local / cross-local / cross-own-param / enum-donor site is skipped.
-function own_param_self_overwrite_sites(fn: parser.FuncDecl, structs: parser.StructDecl[], reuse: ReuseSites, xreuse: CrossReuseSites, ownxr: CrossReuseSites, edon: EnumDonorSites): ReuseSites {
+// guard backstops. Restricted to struct_fields_reusable_ownparam (its header
+// holds the argument for the enum / string old-value releases), so no
+// donor-side freshness gate is required. The override / carried gates mirror
+// self_overwrite_reuse_sites exactly: same-type base, override values fresh
+// (cross_recipient_fields_fresh), no override value references d, d dead after
+// the statement, never reassigned, and escaping nowhere but the update base
+// here. A statement already claimed by a self-overwrite-local / cross-local /
+// cross-own-param / enum-donor site is skipped.
+function own_param_self_overwrite_sites(fn: parser.FuncDecl, structs: parser.StructDecl[], sfok: string[], reuse: ReuseSites, xreuse: CrossReuseSites, ownxr: CrossReuseSites, edon: EnumDonorSites): ReuseSites {
     var idxs: i32[] = [];
     var bases: string[] = [];
     var reassigned: string[] = body_assign_targets(fn.body);
@@ -51518,7 +51632,7 @@ function own_param_self_overwrite_sites(fn: parser.FuncDecl, structs: parser.Str
                                             pi = pi + 1;
                                         }
                                         var ok: boolean = is_own_p
-                                            && struct_fields_reusable_param(structs, slit.type_name)
+                                            && struct_fields_reusable_ownparam(structs, sfok, slit.type_name)
                                             && v.name != bid.name
                                             && util.index_of_str(reassigned, bid.name) < 0
                                             && !name_escapes_outside_stmt(fn.body, bid.name, i);
@@ -51531,28 +51645,10 @@ function own_param_self_overwrite_sites(fn: parser.FuncDecl, structs: parser.Str
                                                 fj = fj + 1;
                                             }
                                         }
-                                        // Every array override must be a FRESH array literal
-                                        // and every nested-struct override a FRESH no-base
-                                        // struct literal, so the reused box solely owns the
-                                        // new inner once the old one is dropped.
-                                        if (ok) {
-                                            var fk: i32 = 0;
-                                            while (fk < slit.field_names.len()) {
-                                                var fkt: string = decl_field_type(structs, slit.type_name, slit.field_names[fk]);
-                                                if (is_leaksafe_array_field(fkt)) {
-                                                    match (slit.field_values[fk]) {
-                                                        ast.ExprArray(_) => {},
-                                                        _ => { ok = false; }
-                                                    }
-                                                } else if (decl_is_struct(structs, fkt)) {
-                                                    match (slit.field_values[fk]) {
-                                                        ast.ExprStructLit(isl) => { if (isl.has_base) { ok = false; } },
-                                                        _ => { ok = false; }
-                                                    }
-                                                }
-                                                fk = fk + 1;
-                                            }
-                                        }
+                                        // Every override value must be fresh — the gate
+                                        // every cross family shares — so the reused box
+                                        // solely owns the new value once the old is released.
+                                        if (ok && !cross_recipient_fields_fresh(slit, structs)) { ok = false; }
                                         // d dead after this statement.
                                         if (ok) {
                                             var k: i32 = i + 1;
@@ -54903,6 +54999,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // the locals whose every `p = T { ...p, … }` reuses p's own box in place
     // (self_assign_update_names). Prefix-tagged like the other per-function
     // registries above; inert for every other reclaimable_names consumer.
+    var oup: string[] = [];
     if (!reuse_layer_disabled()) {
         var sar: string[] = self_assign_update_names(fn.body, fn.params, structs, sg.return_fresh_struct_ret_fns);
         var sari: i32 = 0;
@@ -54910,10 +55007,13 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // An `own` struct param updated in place (own_update_params_of) joins
         // the same set: its self-updates and its `return T { ...p, … }` reuse
         // p's box, releasing each overridden field's old value.
-        var oup: string[] = own_update_params_of(fn, structs);
+        oup = own_update_params_of(fn, structs, sg.strfld_ok_types);
         var oupi: i32 = 0;
         while (oupi < oup.len()) { reclaim = reclaim.append("SAREUSE:" + oup[oupi]); oupi = oupi + 1; }
     }
+    // An `own` struct param this frame still holds at exit is released by the
+    // sweep ("OWNREL:" deep / "OWNRELB:" box-only).
+    reclaim = append_all(reclaim, own_struct_param_release_rows_of(fn, structs, sg.strfld_ok_types, sg.borrowable_params, sg.recv_borrow_fns, sg.handback_params, oup));
     // #6713: seed the frame-allocated string VIEW set as "VIEWFRAME:<name>" —
     // the slice-bound locals whose every use borrows the view (view_frame_names_of).
     // Prefix-tagged like the registries above; inert for every other
@@ -55203,13 +55303,13 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // disjoint from every list above (its donor is a param, never a body local, and
     // its recipient index is skipped when already claimed by reuse/xreuse/edon).
     var ownxr: CrossReuseSites = CrossReuseSites { idxs: [], donors: [], dtypes: [] };
-    if (!no_reuse) { ownxr = own_param_reuse_sites(fn, structs, reuse, xreuse, edon); }
+    if (!no_reuse) { ownxr = own_param_reuse_sites(fn, structs, sg.strfld_ok_types, reuse, xreuse, edon); }
     // Own-param functional-update bases (#4356 slice 12): `var c = T { ...own_d, .. }`
     // reusing a dead `own` struct param's box in place. Lowered by the same
     // emit_self_overwrite_reuse as a fresh-literal base; disjoint from every list
     // above (its base is a param, and claimed indices are skipped inside).
     var ownso: ReuseSites = ReuseSites { idxs: [], bases: [] };
-    if (!no_reuse) { ownso = own_param_self_overwrite_sites(fn, structs, reuse, xreuse, ownxr, edon); }
+    if (!no_reuse) { ownso = own_param_self_overwrite_sites(fn, structs, sg.strfld_ok_types, reuse, xreuse, ownxr, edon); }
     // TRMC (#4352 slice 1): the canonical single-hole modulo-cons shape lowers
     // as a hole-passing loop instead of the recursive body — O(1) stack. The
     // emission is the complete body (its own return); everything below the
@@ -55628,6 +55728,15 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
         // only for those statement kinds; a plain `var` persists.
         if (stmt_scopes_bindings(fn.body[j])) { s = s.retire_locals_for_scope(stmt_sbase, [fn.body[j]]); }
         j = j + 1;
+    }
+    // A void body that falls off its end leaves through the backend's default
+    // epilogue, which sweeps nothing: every owned local — an `own` param
+    // included — leaked there, where the same body ending in `return;` was
+    // clean. Give the fallthrough the exit an explicit return takes.
+    if (fn.ret_type == "void" && !body_ends_with_return(fn.body)) {
+        s = emit_dec_sweep_except(s, 0 - 1);
+        s = s.emit(ir.op_const_i32(0));
+        s = s.emit(ir.op_return());
     }
     // Tail-call optimisation (#4328): rewrite self-tail recursion into a loop +
     // param-rebind so deep recursion is O(1) stack instead of a SIGSEGV. A no-op
@@ -60608,6 +60717,17 @@ function fnarr_param_all_closurearr(funcs: parser.FuncDecl[], fname: string, pid
     return nseen > 0 && nok == nseen && nident == nseen;
 }
 
+// body_ends_with_return: the last top-level statement is a `return`, so the
+// body never reaches the fallthrough epilogue.
+function body_ends_with_return(body: ast.Stmt[]): boolean {
+    if (body.len() == 0) { return false; }
+    match (body[body.len() - 1]) {
+        ast.StmtReturn(_) => { return true; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // own_param_names_of returns the names of `fn`'s `own` (consuming) parameters.
 function own_param_names_of(fn: parser.FuncDecl): string[] {
     var out: string[] = [];
@@ -60615,6 +60735,43 @@ function own_param_names_of(fn: parser.FuncDecl): string[] {
     while (i < fn.params.len()) {
         if (fn.params[i].own) { out = out.append(fn.params[i].name); }
         i = i + 1;
+    }
+    return out;
+}
+
+// own_struct_param_release_rows_of names the `own` struct parameters this frame
+// still OWNS at every exit, so the sweep releases them: the caller moved its
+// reference in, and a param that is never returned bare, aliased, stored, passed
+// to a non-borrowable position or handed back through a result has no other
+// owner when the frame ends. A donating reuse site (the own-param families, the
+// `$ownret` update) zeroes the slot it takes, so the release finds null there.
+//
+// "OWNREL:<name>" releases deep — the routed field walk under the box's rc==1
+// gate, then the box dec; "OWNRELB:<name>" is box-only, for a param whose
+// non-scalar fields may have been copied out uncounted: a method receiver, a
+// field moved out, or a `T { ...p, … }` spread over a kind the base copy does
+// not retain (spread_copy_counted). A reassigned param is admitted only when
+// every assignment is an admitted self-update (`upd`, own_update_params_of):
+// the slot then always holds a box this frame owns.
+function own_struct_param_release_rows_of(fn: parser.FuncDecl, structs: parser.StructDecl[], sfok: string[], borrowable: string[], recv_borrow: string[], handback: string[], upd: string[]): string[] {
+    var out: string[] = [];
+    var reassigned: string[] = body_assign_targets(fn.body);
+    for pd in fn.params {
+        var nm: string = pd.name;
+        var ty: string = pd.type_name;
+        if (!pd.own || !decl_is_struct(structs, ty) || !decl_is_leaksafe(structs, ty)) { continue; }
+        if (local_decl_count(fn.body, nm) != 0) { continue; }
+        if (util.index_of_str(reassigned, nm) >= 0 && util.index_of_str(upd, nm) < 0) { continue; }
+        if (body_unsafe_for(fn.body, nm, borrowable, recv_borrow)) { continue; }
+        if (struct_returned_bare(fn.body, nm)) { continue; }
+        if (struct_arg_to_handback(fn.body, nm, handback)) { continue; }
+        if (recv_borrow_escapes_via_result(recv_borrow, ty, fn.body, nm, borrowable)) { continue; }
+        var nomove: string[] = recv_borrow_methods_of(recv_borrow, ty);
+        nomove = append_all(nomove, clo_field_names_of(structs, ty));
+        var moved: boolean = moves_fields_stmts(fn.body, nm, nomove, spread_copy_counted(structs, sfok, ty))
+            || optstruct_body_moves_field(fn.body, nm, ty, structs, borrowable);
+        if (moved) { out = out.append("OWNRELB:" + nm); }
+        else { out = out.append("OWNREL:" + nm); }
     }
     return out;
 }
@@ -61595,7 +61752,12 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
             // therefore read as escaping, so `head(b)` refused every caller-side
             // release and a loop-local enum passed to a helper leaked unboundedly
             // (#6606) while the identical match written inline was flat.
-            if (!param_consumed_in_body(fn.body, pname, reasgn)
+            // An `own` position is a MOVE by declaration: the caller
+            // relinquishes its reference, so it must never stash-and-free a
+            // fresh argument or keep a local's credit across the call —
+            // whatever the body then does with the value.
+            if (!fn.params[pj].own
+                && !param_consumed_in_body(fn.body, pname, reasgn)
                 && !body_unsafe_for_match_borrow(fn.body, pname, none, [], [])
                 && !param_match_binding_escapes(fn.body, pname)) { flags = flags + "1"; any = true; }
             else { flags = flags + "0"; }
@@ -61966,7 +62128,8 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
                     var ip_borrow: boolean = !body_unsafe_for_match_borrow(fn.body, fn.params[pj].name, reg, [], [])
                         || (ip_psal.len() > 0
                             && !body_unsafe_for_alias(fn.body, fn.params[pj].name, reg, [], ip_psal));
-                    if (!param_consumed_in_body(fn.body, fn.params[pj].name, ip_reasgn)
+                    if (!fn.params[pj].own
+                        && !param_consumed_in_body(fn.body, fn.params[pj].name, ip_reasgn)
                         && ip_borrow
                         && !param_match_binding_escapes(fn.body, fn.params[pj].name)) { flags = flags + "1"; any = true; }
                     else { flags = flags + "0"; }
@@ -73164,7 +73327,7 @@ while (sli < snap_locals.len()) {
         // the local's fields (a spread copy retains none of its arrays), and
         // moves_fields_expr flags only a receiver. `return emit_arr_store(apf, …)`
         // left `apf` deep-swept under the very box it had just been copied into.
-        if (moves_fields_stmts(fn.body, reclaim_site_name(key), []) || derived_anywhere(fn, reclaim_site_name(key), structs)) { reclaim = reclaim.append("NODEEP:" + key); }
+        if (moves_fields_stmts(fn.body, reclaim_site_name(key), [], false) || derived_anywhere(fn, reclaim_site_name(key), structs)) { reclaim = reclaim.append("NODEEP:" + key); }
     }
     // "NOFLD:" keeps the REBIND release box-only where a value derived from the
     // local may outlive a later rebind and still share the fields that rebind
