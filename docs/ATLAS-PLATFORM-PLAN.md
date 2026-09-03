@@ -1027,11 +1027,11 @@ Still open, and still decisions rather than implementations:
   per-worker heaps is the candidate, forced by non-atomic Perceus refcounts.
   Until it is settled, new stdlib surface should stop accreting against an
   implicit single-thread assumption.
-- **The transcendental accuracy contract.** wasm polynomial approximations and
-  native libm disagree *today*, so `sin(x)` is already backend-dependent. Fern
-  should decide whether it promises correct rounding, a stated ULP bound, or
-  "whatever the platform does" — and if it promises anything, the wasm path is
-  where the promise breaks first (`SOTA-STDLIB-BLUEPRINT`).
+- **The transcendental accuracy contract.** The backends no longer disagree —
+  all five emit the same fdlibm kernels from one coefficient table, gated bit
+  for bit — but Fern still has not said whether it promises correct rounding, a
+  stated ULP bound, or only that every target answers alike
+  (`SOTA-STDLIB-BLUEPRINT`).
 
 ---
 

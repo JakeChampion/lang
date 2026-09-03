@@ -204,8 +204,8 @@ guard excludes this shape.
   `temp_dir`) lower with IR-side struct-box construction (module type-ids via
   `struct_type_id`; `TestSelfHostStatIRWasm` et al.).
 - **libm transcendentals** (`fexp` / `flog` / `fsin` / `fcos` / `fpow`) lower via
-  polynomial-approx WAT helpers (`wasm.exp_func` / `log_func` / `pow_func` / …,
-  the wasm siblings of the arm64 helpers, wired in `wasm_ir_run`).
+  fdlibm WAT helpers (`wasm_ir.exp_func` / `log_func` / `pow_func` / …, the wasm
+  siblings of the arm64 helpers, wired in `wasm_ir_run`).
 - **Streaming file I/O** — `open_reader` / `open_writer` / `open_appender` +
   `Writer.write`: `$__fern_open_file` does `path_open` under preopen fd 3,
   `$__fern_writer_write` `fd_write`s the bytes (#4372).

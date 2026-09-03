@@ -10323,11 +10323,10 @@ type generator struct {
 	// capability with fork / waitpid.
 	usesProcExec bool
 	// usesFloatTranscendentals pulls in the f64 transcendental
-	// runtime bundle — __fern_sin/cos/exp/log/pow_f64 plus their
-	// shared .rodata polynomial-coefficient table. arm64 has no
-	// hardware sin/cos/exp/log, so these are range-reduction +
-	// minimax-polynomial approximations (a few ulp), ported from
-	// the self-hosted compiler's asm_arm64_ir.fern.
+	// runtime bundle — __fern_sin/cos/exp/log/pow_f64 plus the
+	// .rodata coefficient table they share. arm64 has no hardware
+	// sin/cos/exp/log, so each is an argument reduction followed
+	// by an fdlibm kernel; the numbers are internal/codegen/fdlibm's.
 	usesFloatTranscendentals bool
 	// usesReadLine pulls in `__fern_read_line()` — stdin
 	// one-byte reader. Returns Option[string]: Some(line)
