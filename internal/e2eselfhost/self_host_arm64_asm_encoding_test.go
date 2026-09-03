@@ -521,6 +521,18 @@ Lend:
 
 	lines := snippetInsns(snippet)
 	if len(got) != len(want) {
+		// A dropped instruction shifts every word after it, so the first
+		// disagreement names the line that went missing.
+		for i := range want {
+			if i >= len(got) || got[i] != want[i] {
+				src := "?"
+				if i < len(lines) {
+					src = lines[i]
+				}
+				t.Fatalf("word count differs: self-host %d, native %d (snippet has %d instructions); first divergence at word %d (%s)",
+					len(got), len(want), len(lines), i, src)
+			}
+		}
 		t.Fatalf("word count differs: self-host %d, native %d (snippet has %d instructions)", len(got), len(want), len(lines))
 	}
 	for i := range want {

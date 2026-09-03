@@ -162,6 +162,12 @@ func assembleInsn(a *Assembler, line string) error {
 // without the parse. A code generator can build Inst values and hand
 // them over directly.
 //
+// The mnemonic vocabulary is internal/native/arm64tbl's: a conditional
+// branch by pattern, an Advanced SIMD class by table lookup on an arranged
+// first operand, and everything else by the family its row names. The
+// self-host assembler's dispatch is generated from the same table, so a
+// mnemonic one side reaches and the other does not cannot exist.
+//
 // The arms below still read operand TEXT. They are migrating onto the
 // typed accessors family by family (#7903); Operand.Text is what carries
 // the ones that have not moved yet, and it goes with the last of them.
@@ -181,197 +187,51 @@ func (a *Assembler) Inst(in Inst) error {
 		return nil
 	}
 
-	// SIMD forms are recognised by the first operand being a vN.<arr>
-	// register (or lane), so dual-form mnemonics — add, mvn, fadd, scvtf, … —
-	// keep their scalar path when the operands are scalar.
+	// SIMD classes are recognised by the first operand being a vN.<arr>
+	// register (or lane), so dual-form mnemonics — add, mvn, fadd, scvtf, …
+	// — keep their scalar path when the operands are scalar.
 	if len(ops) > 0 && isVecArrOperand(ops[0]) {
-		if handled, err := asmVecForm(a, mnem, ops); handled {
+		if handled, err := asmVecClass(a, mnem, ops); handled {
 			return err
 		}
 	}
 
-	switch mnem {
-	case "mov":
-		return asmMov(a, ops)
-	case "movz", "movk", "movn":
-		return asmMoveWide(a, mnem, ops)
-	case "adrp", "adr":
-		return asmSymAddress(a, mnem, ops)
-	case "add", "sub", "adds", "subs":
-		return asmAddSub(a, mnem, ops)
-	case "and", "orr", "eor", "mul", "udiv", "sdiv", "umulh", "adc", "sbc",
-		"adcs", "sbcs", "smulh", "ands", "bic", "bics", "orn", "eon":
-		return asm3Reg(a, mnem, ops)
-	case "ngc":
-		return asm2Reg(a, ops, NGC)
-	case "ngcs":
-		return asm2Reg(a, ops, NGCS)
-	case "madd":
-		return asm4Reg(a, mnem, ops, MADD)
-	case "smull", "umull", "smaddl", "umaddl", "smsubl", "umsubl":
-		return asmMulLong(a, mnem, ops)
-	case "tst":
-		return asmTst(a, ops)
-	case "mvn":
-		return asmMvn(a, ops)
-	case "negs":
-		return asmNeg(a, mnem, ops)
-	case "extr":
-		return asmExtr(a, ops)
-	case "ror":
-		return asmRor(a, ops)
-	case "bfi", "bfxil", "ubfiz", "sbfiz":
-		return asmBitfieldInsert(a, mnem, ops)
-	case "ccmp", "ccmn":
-		return asmCondCmp(a, mnem, ops)
-	case "csinc", "csinv", "csneg":
-		return asmCondSel(a, mnem, ops)
-	case "cinc", "cinv", "cneg":
-		return asmCondAlias(a, mnem, ops)
-	case "csetm":
-		return asmCsetm(a, ops)
-	case "csel":
-		return asmCsel(a, ops)
-	case "cset":
-		return asmCset(a, ops)
-	case "cmn":
-		return asmCmn(a, ops)
-	case "neg":
-		return asmNeg(a, mnem, ops)
-	case "clz":
-		return asm2Reg(a, ops, CLZ)
-	case "cls":
-		return asm2Reg(a, ops, CLS)
-	case "rbit":
-		return asm2Reg(a, ops, RBIT)
-	case "rev":
-		return asmRev(a, ops)
-	case "rev32":
-		return asmRev32(a, ops)
-	case "addv", "smaxv", "sminv", "umaxv", "uminv", "saddlv", "uaddlv":
+	// The across-lanes reductions write a scalar, so their first operand
+	// never selects the SIMD path above; they are their own class table.
+	if _, ok := vecAcrossOps[mnem]; ok {
 		return asmVecAcross(a, mnem, ops)
-	case "umov":
-		return asmUmov(a, ops)
-	case "smov":
-		return asmSmov(a, ops)
-	case "movi":
-		return asmMovi(a, ops)
-	case "ld1", "st1":
-		return asmLdSt1(a, mnem, ops)
-	case "ld1r":
-		return asmLd1r(a, ops)
-	case "msub":
-		return asm4Reg(a, mnem, ops, MSUB)
-	case "mrs":
-		return asmMrs(a, ops)
-	case "msr":
-		return asmMsrWrite(a, ops)
-	case "fadd", "fsub", "fmul", "fdiv", "fnmul", "fmin", "fmax", "fminnm", "fmaxnm":
-		return asmFloat3(a, mnem, ops)
-	case "fmadd", "fmsub", "fnmadd", "fnmsub":
-		return asmFMulAdd(a, mnem, ops)
-	case "fcsel":
-		return asmFcsel(a, ops)
-	case "fccmp":
-		return asmFccmp(a, ops)
-	case "fneg":
-		return asmFNeg(a, ops)
-	case "fabs":
-		return asmFUnary(a, "fabs", ops, FABS)
-	case "fsqrt":
-		return asmFUnary(a, "fsqrt", ops, FSQRT)
-	case "frintm":
-		return asmFUnary(a, "frintm", ops, FRINTM)
-	case "frintp":
-		return asmFUnary(a, "frintp", ops, FRINTP)
-	case "frintz":
-		return asmFUnary(a, "frintz", ops, FRINTZ)
-	case "frinta":
-		return asmFUnary(a, "frinta", ops, FRINTA)
-	case "frintn":
-		return asmFUnary(a, "frintn", ops, FRINTN)
-	case "fcmp":
-		return asmFcmp(a, ops, false)
-	case "fcmpe":
-		return asmFcmp(a, ops, true)
-	case "fmov":
-		return asmFmov(a, ops)
-	case "fcvt":
-		return asmFcvt(a, ops)
-	case "scvtf":
-		return asmScvtf(a, ops)
-	case "fcvtzs":
-		return asmFcvtToInt(a, ops, FCVTZS, FCVTZSS)
-	case "ucvtf":
-		return asmUcvtf(a, ops)
-	case "fcvtzu":
-		return asmFcvtToInt(a, ops, FCVTZU, FCVTZUS)
-	case "lsl", "lsr", "asr":
-		return asmShift(a, mnem, ops)
-	case "sxtb", "sxth", "sxtw", "uxtb", "uxth":
-		return asmExtend(a, mnem, ops)
-	case "rev16":
-		return asm2Reg(a, ops, REV16)
-	case "ubfx", "sbfx":
-		return asmBitfieldExtract(a, mnem, ops)
-	case "cmp":
-		return asmCmp(a, ops)
-	case "ldr", "str", "ldrb", "strb", "ldrh", "strh":
-		return asmLoadStore(a, mnem, ops)
-	case "ldur", "stur", "ldurb", "sturb", "ldurh", "sturh":
-		return asmUnscaled(a, mnem, ops)
-	case "ldrsb", "ldrsh", "ldrsw":
-		return asmLoadSigned(a, mnem, ops)
-	case "ldursb", "ldursh", "ldursw":
-		return asmLoadSignedUnscaled(a, mnem, ops)
-	case "stp", "ldp":
-		return asmPair(a, mnem, ops)
-	case "ldxr", "ldaxr", "ldxrb", "ldaxrb", "ldxrh", "ldaxrh":
-		return asmLoadExclusive(a, mnem, ops)
-	case "stxr", "stlxr", "stxrb", "stlxrb", "stxrh", "stlxrh":
-		return asmStoreExclusive(a, mnem, ops)
-	case "ldar", "ldarb", "ldarh":
-		return asmAcqRel(a, mnem, ops, LDAR)
-	case "stlr", "stlrb", "stlrh":
-		return asmAcqRel(a, mnem, ops, STLR)
-	case "dmb", "dsb":
-		return asmBarrier(a, mnem, ops)
-	case "isb":
-		// Only the full-system option exists for isb; `isb` and `isb sy`
-		// are the same instruction.
-		if len(ops) > 1 || (len(ops) == 1 && ops[0] != "sy") {
-			return fmt.Errorf("isb takes no operand (or sy)")
+	}
+
+	fam, op, ok := arm64tbl.FamilyOf(mnem)
+	if !ok {
+		if sug := suggestMnemonic(mnem); sug != "" {
+			return fmt.Errorf("unsupported instruction %q (did you mean %q?)", mnem, sug)
 		}
-		a.Emit(ISB())
-		return nil
-	case "b":
-		return one(ops, func(s string) { a.B(s) })
-	case "bl":
-		return one(ops, func(s string) { a.BL(s) })
-	case "cbz":
-		return regLabelWidth(a, ops, a.CBZ, a.CBZW)
-	case "cbnz":
-		return regLabelWidth(a, ops, a.CBNZ, a.CBNZW)
-	case "tbz":
-		return asmTestBranch(a, ops, a.TBZ)
-	case "tbnz":
-		return asmTestBranch(a, ops, a.TBNZ)
-	case "br":
-		return oneReg(ops, func(r uint32) { a.Emit(BR(r)) })
-	case "blr":
-		return oneReg(ops, func(r uint32) { a.Emit(BLR(r)) })
-	case "ret":
-		rn := uint32(30)
-		if len(ops) == 1 {
-			r, err := parseReg(ops[0])
-			if err != nil {
-				return err
+		return fmt.Errorf("unsupported instruction %q", mnem)
+	}
+	return a.family(fam, op, ops)
+}
+
+// family routes one table row to its encoder. Every family in
+// arm64tbl.Scalar has an arm here; TestGoAssemblerAcceptsEveryRow assembles
+// each row's probe, so a family added to the table without an arm fails
+// there rather than at a user's instruction.
+func (a *Assembler) family(fam *arm64tbl.Family, op *arm64tbl.ScalarOp, ops []string) error {
+	mnem := op.Mnemonic
+	switch fam.Name {
+	case "fixed":
+		if mnem == "ret" {
+			rn := uint32(30)
+			if len(ops) == 1 {
+				r, err := parseReg(ops[0])
+				if err != nil {
+					return err
+				}
+				rn = r
 			}
-			rn = r
+			a.Emit(RET(rn))
+			return nil
 		}
-		a.Emit(RET(rn))
-		return nil
-	case "nop":
 		// The assembler emits `nop` itself, padding a veneer island to an
 		// even instruction count, so it reads one back too.
 		if len(ops) != 0 {
@@ -379,32 +239,202 @@ func (a *Assembler) Inst(in Inst) error {
 		}
 		a.Emit(nopInsn)
 		return nil
-	case "svc":
+	case "sys":
 		if len(ops) != 1 {
-			return fmt.Errorf("svc expects 1 operand")
+			return fmt.Errorf("%s expects 1 operand", mnem)
 		}
 		imm, err := parseImm(ops[0])
 		if err != nil {
 			return err
 		}
-		a.Emit(SVC(uint16(imm)))
+		if mnem == "svc" {
+			a.Emit(SVC(uint16(imm)))
+		} else {
+			a.Emit(BRK(uint16(imm)))
+		}
 		return nil
-	case "brk":
-		if len(ops) != 1 {
-			return fmt.Errorf("brk expects 1 operand")
+	case "indirect":
+		return oneReg(ops, func(r uint32) {
+			if mnem == "br" {
+				a.Emit(BR(r))
+			} else {
+				a.Emit(BLR(r))
+			}
+		})
+	case "branch":
+		return one(ops, func(s string) {
+			if mnem == "b" {
+				a.B(s)
+			} else {
+				a.BL(s)
+			}
+		})
+	case "cbranch":
+		if mnem == "cbz" {
+			return regLabelWidth(a, ops, a.CBZ, a.CBZW)
 		}
-		imm, err := parseImm(ops[0])
-		if err != nil {
-			return err
+		return regLabelWidth(a, ops, a.CBNZ, a.CBNZW)
+	case "tbranch":
+		if mnem == "tbz" {
+			return asmTestBranch(a, ops, a.TBZ)
 		}
-		a.Emit(BRK(uint16(imm)))
-		return nil
-	default:
-		if sug := suggestMnemonic(mnem); sug != "" {
-			return fmt.Errorf("unsupported instruction %q (did you mean %q?)", mnem, sug)
+		return asmTestBranch(a, ops, a.TBNZ)
+	case "movwide":
+		if mnem == "mov" {
+			return asmMov(a, ops)
 		}
-		return fmt.Errorf("unsupported instruction %q", mnem)
+		return asmMoveWide(a, mnem, ops)
+	case "symaddr":
+		return asmSymAddress(a, mnem, ops)
+	case "addsub":
+		switch mnem {
+		case "cmp":
+			return asmCmp(a, ops)
+		case "cmn":
+			return asmCmn(a, ops)
+		}
+		return asmAddSub(a, mnem, ops)
+	case "neg":
+		return asmNeg(a, mnem, ops)
+	case "logical3", "muldiv":
+		if mnem == "msub" {
+			return asm4Reg(a, mnem, ops, MSUB)
+		}
+		return asm3Reg(a, mnem, ops)
+	case "logical2":
+		return asmLogical2(a, op, ops)
+	case "carry":
+		return asmCarry(a, op, ops)
+	case "mulwide":
+		return asmMulWide(a, op, ops)
+	case "bitfield":
+		return asmBitfieldInsert(a, mnem, ops)
+	case "bfx":
+		return asmBitfieldExtract(a, mnem, ops)
+	case "extr_ror":
+		if mnem == "extr" {
+			return asmExtr(a, ops)
+		}
+		return asmRor(a, ops)
+	case "condsel":
+		return asmCondSel(a, op, ops)
+	case "bitops":
+		switch mnem {
+		case "clz":
+			return asm2Reg(a, ops, CLZ)
+		case "cls":
+			return asm2Reg(a, ops, CLS)
+		case "rbit":
+			return asm2Reg(a, ops, RBIT)
+		case "rev16":
+			return asm2Reg(a, ops, REV16)
+		case "rev32":
+			return asmRev32(a, ops)
+		}
+		return asmRev(a, ops)
+	case "shift":
+		return asmShift(a, mnem, ops)
+	case "extend":
+		return asmExtend(a, mnem, ops)
+	case "ldst":
+		return asmLoadStore(a, mnem, ops)
+	case "ldst_narrow":
+		if strings.HasPrefix(mnem, "ldrs") {
+			return asmLoadSigned(a, mnem, ops)
+		}
+		return asmLoadStore(a, mnem, ops)
+	case "unscaled":
+		return asmUnscaled(a, mnem, ops)
+	case "unscaled2":
+		if strings.HasPrefix(mnem, "ldurs") {
+			return asmLoadSignedUnscaled(a, mnem, ops)
+		}
+		return asmUnscaled(a, mnem, ops)
+	case "pair":
+		return asmPair(a, mnem, ops)
+	case "excl_ld":
+		return asmLoadExclusive(a, mnem, ops)
+	case "excl_st":
+		return asmStoreExclusive(a, mnem, ops)
+	case "acqrel":
+		if strings.HasPrefix(mnem, "ld") {
+			return asmAcqRel(a, mnem, ops, LDAR)
+		}
+		return asmAcqRel(a, mnem, ops, STLR)
+	case "barrier":
+		if mnem == "isb" {
+			// Only the full-system option exists for isb; `isb` and `isb sy`
+			// are the same instruction.
+			if len(ops) > 1 || (len(ops) == 1 && ops[0] != "sy") {
+				return fmt.Errorf("isb takes no operand (or sy)")
+			}
+			a.Emit(ISB())
+			return nil
+		}
+		return asmBarrier(a, mnem, ops)
+	case "sysreg":
+		if mnem == "mrs" {
+			return asmMrs(a, ops)
+		}
+		return asmMsrWrite(a, ops)
+	case "fp3":
+		return asmFloat3(a, op, ops)
+	case "fp4":
+		return asmFMulAdd(a, op, ops)
+	case "fpcond":
+		if mnem == "fcsel" {
+			return asmFcsel(a, ops)
+		}
+		return asmFccmp(a, ops)
+	case "fcmp":
+		return asmFcmp(a, ops, mnem == "fcmpe")
+	case "funary":
+		return asmFUnary(a, op, ops)
+	case "fcvt":
+		return asmFcvt(a, ops)
+	case "fcvtz":
+		if mnem == "fcvtzs" {
+			return asmFcvtToInt(a, ops, FCVTZS, FCVTZSS)
+		}
+		return asmFcvtToInt(a, ops, FCVTZU, FCVTZUS)
+	case "cvtf":
+		if mnem == "scvtf" {
+			return asmScvtf(a, ops)
+		}
+		return asmUcvtf(a, ops)
+	case "fmov":
+		return asmFmov(a, ops)
+	case "vecmov":
+		switch mnem {
+		case "umov":
+			return asmUmov(a, ops)
+		case "smov":
+			return asmSmov(a, ops)
+		case "ins":
+			return asmVecIns(a, ops)
+		}
+		return asmVecDup(a, ops)
+	case "movi":
+		return asmMovi(a, ops)
+	case "vecldst":
+		if mnem == "ld1r" {
+			return asmLd1r(a, ops)
+		}
+		return asmLdSt1(a, mnem, ops)
+	case "vecext":
+		if mnem == "ext" {
+			return asmVecExt(a, ops)
+		}
+		return asmVecTbl(a, ops)
+	case "narrow":
+		if strings.HasPrefix(mnem, "xtn") {
+			return asmVecXtn(a, mnem, ops)
+		}
+		return asmVecShrn(a, mnem, ops)
+	case "shll":
+		return asmVecShll(a, mnem, ops)
 	}
+	return fmt.Errorf("unsupported instruction %q: family %q has no encoder", mnem, fam.Name)
 }
 
 func asmMov(a *Assembler, ops []string) error {
@@ -848,17 +878,8 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 	w := is32(ops[0])
-	// umulh/smulh produce the high half of the 128-bit product; there is
-	// no 32-bit form of the instruction at all.
-	if (mnem == "umulh" || mnem == "smulh") && (w || is32(ops[1]) || is32(ops[2])) {
-		return fmt.Errorf("%s takes only x registers", mnem)
-	}
-	// and/orr/eor/ands take a logical (bitmask) immediate as the third
-	// operand; the others are register-only. In particular bic/orn/eon
-	// have NO immediate encoding (the bitmask class has no invert bit) —
-	// GAS aliases `bic Rd, Rn, #v` to `and Rd, Rn, #~v`, but silently
-	// complementing here would hide which instruction was actually
-	// encoded, so the alias is refused.
+	// and/orr/eor take a logical (bitmask) immediate as the third operand;
+	// the multiplies and divides are register-only.
 	if strings.HasPrefix(ops[2], "#") {
 		var insn uint32
 		var ok bool
@@ -873,8 +894,6 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 			insn, ok = ORRimm(rd, rn, uint64(imm), !w)
 		case "eor":
 			insn, ok = EORimm(rd, rn, uint64(imm), !w)
-		case "ands":
-			insn, ok = ANDSimm(rd, rn, uint64(imm), !w)
 		default:
 			return fmt.Errorf("%s does not take an immediate operand", mnem)
 		}
@@ -889,8 +908,7 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		return err
 	}
 	// Optional shifted-register form for the logical ops, e.g.
-	// `orr w3, w1, w1, lsl #8`. The multiplies, divides, and carry ops
-	// take no shift.
+	// `orr w3, w1, w1, lsl #8`. The multiplies and divides take no shift.
 	if len(ops) > 4 {
 		return fmt.Errorf("%s: too many operands", mnem)
 	}
@@ -906,16 +924,6 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 			a.Emit(clearSF(ORRregShift(rd, rn, rm, st, amt), w))
 		case "eor":
 			a.Emit(clearSF(EORregShift(rd, rn, rm, st, amt), w))
-		case "ands":
-			a.Emit(clearSF(ANDSregShift(rd, rn, rm, st, amt), w))
-		case "bic":
-			a.Emit(clearSF(BICregShift(rd, rn, rm, st, amt), w))
-		case "bics":
-			a.Emit(clearSF(BICSregShift(rd, rn, rm, st, amt), w))
-		case "orn":
-			a.Emit(clearSF(ORNregShift(rd, rn, rm, st, amt), w))
-		case "eon":
-			a.Emit(clearSF(EONregShift(rd, rn, rm, st, amt), w))
 		default:
 			return fmt.Errorf("%s does not take a shifted register operand", mnem)
 		}
@@ -928,36 +936,168 @@ func asm3Reg(a *Assembler, mnem string, ops []string) error {
 		a.Emit(clearSF(ORRreg(rd, rn, rm), w))
 	case "eor":
 		a.Emit(clearSF(EORreg(rd, rn, rm), w))
-	case "ands":
-		a.Emit(clearSF(ANDSregShift(rd, rn, rm, 0, 0), w))
-	case "bic":
-		a.Emit(clearSF(BICregShift(rd, rn, rm, 0, 0), w))
-	case "bics":
-		a.Emit(clearSF(BICSregShift(rd, rn, rm, 0, 0), w))
-	case "orn":
-		a.Emit(clearSF(ORNregShift(rd, rn, rm, 0, 0), w))
-	case "eon":
-		a.Emit(clearSF(EONregShift(rd, rn, rm, 0, 0), w))
 	case "mul":
 		a.Emit(clearSF(MUL(rd, rn, rm), w))
 	case "udiv":
 		a.Emit(clearSF(UDIV(rd, rn, rm), w))
 	case "sdiv":
 		a.Emit(clearSF(SDIV(rd, rn, rm), w))
-	case "umulh":
-		// No 32-bit form exists, so this one keeps its SF bit.
-		a.Emit(UMULH(rd, rn, rm))
-	case "smulh":
-		a.Emit(SMULH(rd, rn, rm))
-	case "adc":
-		a.Emit(clearSF(ADC(rd, rn, rm), w))
-	case "adcs":
-		a.Emit(clearSF(ADCS(rd, rn, rm), w))
-	case "sbc":
-		a.Emit(clearSF(SBC(rd, rn, rm), w))
-	case "sbcs":
-		a.Emit(clearSF(SBCS(rd, rn, rm), w))
 	}
+	return nil
+}
+
+// rrr places three registers in the Rd/Rn/Rm fields of a table word.
+func rrr(word, rd, rn, rm uint32) uint32 {
+	return word | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
+}
+
+// asmCarry handles the carry chain from its table row: `adc/adcs/sbc/sbcs
+// Rd, Rn, Rm`, and the `ngc/ngcs Rd, Rm` aliases with Rn=XZR.
+func asmCarry(a *Assembler, op *arm64tbl.ScalarOp, ops []string) error {
+	alias := op.Mnemonic == "ngc" || op.Mnemonic == "ngcs"
+	want := 3
+	if alias {
+		want = 2
+	}
+	if len(ops) != want {
+		return fmt.Errorf("%s expects %d register operands", op.Mnemonic, want)
+	}
+	regs := make([]uint32, len(ops))
+	for i, o := range ops {
+		r, err := parseReg(o)
+		if err != nil {
+			return err
+		}
+		regs[i] = r
+	}
+	if alias {
+		regs = []uint32{regs[0], 31, regs[1]}
+	}
+	a.Emit(clearSF(rrr(op.Word, regs[0], regs[1], regs[2]), is32(ops[0])))
+	return nil
+}
+
+// asmMulWide handles the multiplies whose widths are fixed by the
+// instruction: `umulh/smulh Xd, Xn, Xm`, the widening `smaddl/umaddl/
+// smsubl/umsubl Xd, Wn, Wm, Xa` with their Ra=XZR aliases `smull/umull`,
+// and `madd`, the one member with an sf bit.
+func asmMulWide(a *Assembler, op *arm64tbl.ScalarOp, ops []string) error {
+	mnem := op.Mnemonic
+	if mnem == "madd" {
+		return asm4Reg(a, mnem, ops, func(rd, rn, rm, ra uint32) uint32 {
+			return rrr(op.Word, rd, rn, rm) | ((ra & regMask) << 10)
+		})
+	}
+	high := mnem == "umulh" || mnem == "smulh"
+	alias := high || mnem == "smull" || mnem == "umull"
+	want := 4
+	if alias {
+		want = 3
+	}
+	if len(ops) != want {
+		return fmt.Errorf("%s expects %d operands", mnem, want)
+	}
+	// umulh/smulh produce the high half of the 128-bit product; there is
+	// no 32-bit form of the instruction at all. The widening forms take
+	// Xd, Wn, Wm{, Xa}: a wrong register class is refused rather than
+	// reinterpreted.
+	if high && (is32(ops[0]) || is32(ops[1]) || is32(ops[2])) {
+		return fmt.Errorf("%s takes only x registers", mnem)
+	}
+	if !high && (is32(ops[0]) || !is32(ops[1]) || !is32(ops[2])) {
+		return fmt.Errorf("%s operands must be Xd, Wn, Wm", mnem)
+	}
+	regs := make([]uint32, len(ops))
+	for i, o := range ops {
+		r, err := parseReg(o)
+		if err != nil {
+			return err
+		}
+		regs[i] = r
+	}
+	insn := rrr(op.Word, regs[0], regs[1], regs[2])
+	if !high {
+		ra := uint32(31)
+		if !alias {
+			if is32(ops[3]) {
+				return fmt.Errorf("%s accumulator must be an x register, got %q", mnem, ops[3])
+			}
+			ra = regs[3]
+		}
+		insn |= (ra & regMask) << 10
+	}
+	a.Emit(insn)
+	return nil
+}
+
+// asmLogical2 handles the flag-setting and negated logical ops from their
+// table row — `ands/bic/bics/orn/eon Rd, Rn, Rm{, <shift> #amt}` — and
+// the aliases `tst Rn, Rm|#imm{, shift}` (ANDS with Rd=XZR) and `mvn Rd,
+// Rm{, shift}` (ORN with Rn=XZR). Only ands and tst have an immediate
+// form: the bitmask class has no invert bit, and GAS's `bic Rd, Rn, #v`
+// is an alias for `and Rd, Rn, #~v` that is refused here so what was
+// encoded is always what was written.
+func asmLogical2(a *Assembler, op *arm64tbl.ScalarOp, ops []string) error {
+	mnem := op.Mnemonic
+	alias := mnem == "tst" || mnem == "mvn"
+	want := 3
+	if alias {
+		want = 2
+	}
+	if len(ops) < want || len(ops) > want+1 {
+		return fmt.Errorf("%s expects %d register operands and an optional shift", mnem, want)
+	}
+	regs := make([]uint32, want)
+	for i := 0; i < want-1; i++ {
+		r, err := parseReg(ops[i])
+		if err != nil {
+			return err
+		}
+		regs[i] = r
+	}
+	w := is32(ops[0])
+	last := ops[want-1]
+	if strings.HasPrefix(last, "#") {
+		if mnem != "ands" && mnem != "tst" {
+			return fmt.Errorf("%s does not take an immediate operand", mnem)
+		}
+		if len(ops) != want {
+			return fmt.Errorf("%s immediate form takes no shift", mnem)
+		}
+		imm, err := parseImm(last)
+		if err != nil {
+			return err
+		}
+		rd, rn := regs[0], regs[1]
+		if mnem == "tst" {
+			rd, rn = 31, regs[0]
+		}
+		insn, ok := ANDSimm(rd, rn, uint64(imm), !w)
+		if !ok {
+			return fmt.Errorf("%s: %s is not an encodable bitmask immediate", mnem, last)
+		}
+		a.Emit(insn)
+		return nil
+	}
+	rm, err := parseReg(last)
+	if err != nil {
+		return err
+	}
+	var st, amt uint32
+	if len(ops) > want {
+		if st, amt, err = parseRegShift(ops[want]); err != nil {
+			return err
+		}
+	}
+	rd, rn := regs[0], regs[1]
+	switch mnem {
+	case "tst":
+		rd, rn = 31, regs[0]
+	case "mvn":
+		rd, rn = regs[0], 31
+	}
+	insn := rrr(op.Word, rd, rn, rm) | ((st & 3) << 22) | ((amt & 0x3f) << 10)
+	a.Emit(clearSF(insn, w))
 	return nil
 }
 
@@ -1192,10 +1332,10 @@ var vecPermuteOps = func() map[string]uint32 {
 	return m
 }()
 
-// asmVecForm dispatches the mnemonics whose SIMD form was recognised from
+// asmVecClass dispatches the mnemonics whose SIMD form was recognised from
 // the first operand. handled=false means the mnemonic has no such form and
 // the caller falls through to the scalar dispatch.
-func asmVecForm(a *Assembler, mnem string, ops []string) (handled bool, err error) {
+func asmVecClass(a *Assembler, mnem string, ops []string) (handled bool, err error) {
 	if _, ok := vecCmpZeroOps[mnem]; ok {
 		// cmlt/cmle exist only against zero; cmeq/cmgt/cmge also have the
 		// three-register form, told apart by the last operand.
@@ -1230,24 +1370,6 @@ func asmVecForm(a *Assembler, mnem string, ops []string) (handled bool, err erro
 	}
 	if _, ok := vecPermuteOps[mnem]; ok {
 		return true, asmVecPermute(a, mnem, ops)
-	}
-	switch mnem {
-	case "xtn", "xtn2":
-		return true, asmVecXtn(a, mnem, ops)
-	case "shrn", "shrn2":
-		return true, asmVecShrn(a, mnem, ops)
-	case "sshll", "ushll", "sshll2", "ushll2", "sxtl", "uxtl", "sxtl2", "uxtl2":
-		return true, asmVecShll(a, mnem, ops)
-	case "ext":
-		return true, asmVecExt(a, ops)
-	case "tbl":
-		return true, asmVecTbl(a, ops)
-	case "dup":
-		return true, asmVecDup(a, ops)
-	case "ins":
-		return true, asmVecIns(a, ops)
-	case "movi":
-		return true, asmMovi(a, ops)
 	}
 	return false, nil
 }
@@ -2018,47 +2140,6 @@ func parseBracketedBase(s string) (uint32, error) {
 }
 
 // asmCsel handles `csel Xd, Xn, Xm, <cond>`.
-func asmCsel(a *Assembler, ops []string) error {
-	if len(ops) != 4 {
-		return fmt.Errorf("csel expects Xd, Xn, Xm, cond")
-	}
-	rd, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
-	rn, err := parseReg(ops[1])
-	if err != nil {
-		return err
-	}
-	rm, err := parseReg(ops[2])
-	if err != nil {
-		return err
-	}
-	cond, err := condOperand(ops[3], false)
-	if err != nil {
-		return err
-	}
-	a.Emit(clearSF(CSEL(rd, rn, rm, cond), is32(ops[0])))
-	return nil
-}
-
-// asmCset handles `cset Xd, <cond>`.
-func asmCset(a *Assembler, ops []string) error {
-	if len(ops) != 2 {
-		return fmt.Errorf("cset expects Xd, cond")
-	}
-	rd, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
-	cond, err := condOperand(ops[1], true)
-	if err != nil {
-		return err
-	}
-	a.Emit(clearSF(CSET(rd, cond), is32(ops[0])))
-	return nil
-}
-
 // asm4Reg handles the four-register multiply-accumulates
 // `madd/msub Rd, Rn, Rm, Ra` (the destination width selects W vs X).
 func asm4Reg(a *Assembler, mnem string, ops []string, enc func(rd, rn, rm, ra uint32) uint32) error {
@@ -2074,96 +2155,6 @@ func asm4Reg(a *Assembler, mnem string, ops []string, enc func(rd, rn, rm, ra ui
 		r[i] = v
 	}
 	a.Emit(clearSF(enc(r[0], r[1], r[2], r[3]), is32(ops[0])))
-	return nil
-}
-
-// asmMulLong handles the widening multiplies: `smaddl/umaddl/smsubl/
-// umsubl Xd, Wn, Wm, Xa` and the Ra=XZR aliases `smull/umull Xd, Wn,
-// Wm`. The widths are part of the instruction (no sf bit), so a wrong
-// register class is refused rather than reinterpreted.
-func asmMulLong(a *Assembler, mnem string, ops []string) error {
-	alias := mnem == "smull" || mnem == "umull"
-	want := 4
-	if alias {
-		want = 3
-	}
-	if len(ops) != want {
-		return fmt.Errorf("%s expects %d operands", mnem, want)
-	}
-	if is32(ops[0]) || !is32(ops[1]) || !is32(ops[2]) {
-		return fmt.Errorf("%s operands must be Xd, Wn, Wm", mnem)
-	}
-	rd, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
-	rn, err := parseReg(ops[1])
-	if err != nil {
-		return err
-	}
-	rm, err := parseReg(ops[2])
-	if err != nil {
-		return err
-	}
-	ra := uint32(31)
-	if !alias {
-		if is32(ops[3]) {
-			return fmt.Errorf("%s accumulator must be an x register, got %q", mnem, ops[3])
-		}
-		if ra, err = parseReg(ops[3]); err != nil {
-			return err
-		}
-	}
-	switch mnem {
-	case "smull", "smaddl":
-		a.Emit(SMADDL(rd, rn, rm, ra))
-	case "umull", "umaddl":
-		a.Emit(UMADDL(rd, rn, rm, ra))
-	case "smsubl":
-		a.Emit(SMSUBL(rd, rn, rm, ra))
-	case "umsubl":
-		a.Emit(UMSUBL(rd, rn, rm, ra))
-	}
-	return nil
-}
-
-// asmTst handles `tst Rn, Rm{, <shift> #amt}` and `tst Rn, #bitmask` —
-// the ANDS aliases with Rd=XZR.
-func asmTst(a *Assembler, ops []string) error {
-	if len(ops) < 2 || len(ops) > 3 {
-		return fmt.Errorf("tst expects Rn, Rm|#imm{, shift}")
-	}
-	rn, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
-	w := is32(ops[0])
-	if strings.HasPrefix(ops[1], "#") {
-		if len(ops) != 2 {
-			return fmt.Errorf("tst immediate form takes no shift")
-		}
-		imm, err := parseImm(ops[1])
-		if err != nil {
-			return err
-		}
-		insn, ok := ANDSimm(31, rn, uint64(imm), !w)
-		if !ok {
-			return fmt.Errorf("tst: %s is not an encodable bitmask immediate", ops[1])
-		}
-		a.Emit(insn)
-		return nil
-	}
-	rm, err := parseReg(ops[1])
-	if err != nil {
-		return err
-	}
-	var st, amt uint32
-	if len(ops) > 2 {
-		if st, amt, err = parseRegShift(ops[2]); err != nil {
-			return err
-		}
-	}
-	a.Emit(clearSF(ANDSregShift(31, rn, rm, st, amt), w))
 	return nil
 }
 
@@ -2191,30 +2182,6 @@ func asmNeg(a *Assembler, mnem string, ops []string) error {
 		insn |= 1 << 29
 	}
 	a.Emit(clearSF(insn, is32(ops[0])))
-	return nil
-}
-
-// asmMvn handles `mvn Rd, Rm{, <shift> #amt}` — the ORN alias with
-// Rn=XZR.
-func asmMvn(a *Assembler, ops []string) error {
-	if len(ops) < 2 || len(ops) > 3 {
-		return fmt.Errorf("mvn expects Rd, Rm{, shift}")
-	}
-	rd, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
-	rm, err := parseReg(ops[1])
-	if err != nil {
-		return err
-	}
-	var st, amt uint32
-	if len(ops) > 2 {
-		if st, amt, err = parseRegShift(ops[2]); err != nil {
-			return err
-		}
-	}
-	a.Emit(clearSF(ORNregShift(rd, 31, rm, st, amt), is32(ops[0])))
 	return nil
 }
 
@@ -2350,7 +2317,8 @@ func asmBitfieldInsert(a *Assembler, mnem string, ops []string) error {
 // immediate operand is UNSIGNED 0..31 (it is a 5-bit field, not an
 // add/sub imm12), and nzcv is the 4-bit flag pattern used when cond
 // fails.
-func asmCondCmp(a *Assembler, mnem string, ops []string) error {
+func asmCondCmp(a *Assembler, op *arm64tbl.ScalarOp, ops []string) error {
+	mnem := op.Mnemonic
 	if len(ops) != 4 {
 		return fmt.Errorf("%s expects Rn, Rm|#imm5, #nzcv, cond", mnem)
 	}
@@ -2369,7 +2337,7 @@ func asmCondCmp(a *Assembler, mnem string, ops []string) error {
 	if err != nil {
 		return err
 	}
-	w := is32(ops[0])
+	insn := op.Word | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | uint32(nzcv)
 	if strings.HasPrefix(ops[1], "#") {
 		imm, err := parseImm(ops[1])
 		if err != nil {
@@ -2378,93 +2346,60 @@ func asmCondCmp(a *Assembler, mnem string, ops []string) error {
 		if imm < 0 || imm > 31 {
 			return fmt.Errorf("%s immediate %d out of range 0..31", mnem, imm)
 		}
-		if mnem == "ccmp" {
-			a.Emit(clearSF(CCMPimm(rn, uint32(imm), uint32(nzcv), cond), w))
-		} else {
-			a.Emit(clearSF(CCMNimm(rn, uint32(imm), uint32(nzcv), cond), w))
-		}
-		return nil
-	}
-	rm, err := parseReg(ops[1])
-	if err != nil {
-		return err
-	}
-	if mnem == "ccmp" {
-		a.Emit(clearSF(CCMPreg(rn, rm, uint32(nzcv), cond), w))
+		// The immediate form: imm5 rides in the Rm field, bit 11 set.
+		insn |= 0x800 | ((uint32(imm) & regMask) << 16)
 	} else {
-		a.Emit(clearSF(CCMNreg(rn, rm, uint32(nzcv), cond), w))
+		rm, err := parseReg(ops[1])
+		if err != nil {
+			return err
+		}
+		insn |= (rm & regMask) << 16
 	}
+	a.Emit(clearSF(insn, is32(ops[0])))
 	return nil
 }
 
-var condSelEnc = map[string]func(rd, rn, rm, cond uint32) uint32{
-	"csinc": CSINC, "csinv": CSINV, "csneg": CSNEG,
-}
-
-// asmCondSel handles `csinc/csinv/csneg Rd, Rn, Rm, <cond>`.
-func asmCondSel(a *Assembler, mnem string, ops []string) error {
-	if len(ops) != 4 {
-		return fmt.Errorf("%s expects Rd, Rn, Rm, cond", mnem)
+func asmCondSel(a *Assembler, op *arm64tbl.ScalarOp, ops []string) error {
+	mnem := op.Mnemonic
+	if mnem == "ccmp" || mnem == "ccmn" {
+		return asmCondCmp(a, op, ops)
 	}
-	rd, err := parseReg(ops[0])
+	var want int
+	var inverts bool
+	switch mnem {
+	case "cset", "csetm":
+		want, inverts = 2, true
+	case "cinc", "cinv", "cneg":
+		want, inverts = 3, true
+	default:
+		want = 4
+	}
+	if len(ops) != want {
+		return fmt.Errorf("%s expects %d operands", mnem, want)
+	}
+	regs := make([]uint32, want-1)
+	for i := range regs {
+		r, err := parseReg(ops[i])
+		if err != nil {
+			return err
+		}
+		regs[i] = r
+	}
+	cond, err := condOperand(ops[want-1], inverts)
 	if err != nil {
 		return err
 	}
-	rn, err := parseReg(ops[1])
-	if err != nil {
-		return err
+	rd, rn, rm := regs[0], uint32(31), uint32(31)
+	switch want {
+	case 3:
+		rn, rm = regs[1], regs[1]
+	case 4:
+		rn, rm = regs[1], regs[2]
 	}
-	rm, err := parseReg(ops[2])
-	if err != nil {
-		return err
+	if inverts {
+		cond ^= 1
 	}
-	cond, err := condOperand(ops[3], false)
-	if err != nil {
-		return err
-	}
-	a.Emit(clearSF(condSelEnc[mnem](rd, rn, rm, cond), is32(ops[0])))
-	return nil
-}
-
-// asmCondAlias handles `cinc/cinv/cneg Rd, Rn, <cond>` — the
-// csinc/csinv/csneg aliases with Rn=Rm and the condition INVERTED
-// (like cset), so the operation applies when cond holds.
-func asmCondAlias(a *Assembler, mnem string, ops []string) error {
-	if len(ops) != 3 {
-		return fmt.Errorf("%s expects Rd, Rn, cond", mnem)
-	}
-	rd, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
-	rn, err := parseReg(ops[1])
-	if err != nil {
-		return err
-	}
-	cond, err := condOperand(ops[2], true)
-	if err != nil {
-		return err
-	}
-	enc := condSelEnc["cs"+mnem[1:]]
-	a.Emit(clearSF(enc(rd, rn, rn, cond^1), is32(ops[0])))
-	return nil
-}
-
-// asmCsetm handles `csetm Rd, <cond>` — Rd = cond ? -1 : 0, the
-// CSINV Rd, XZR, XZR, invert(cond) alias.
-func asmCsetm(a *Assembler, ops []string) error {
-	if len(ops) != 2 {
-		return fmt.Errorf("csetm expects Rd, cond")
-	}
-	rd, err := parseReg(ops[0])
-	if err != nil {
-		return err
-	}
-	cond, err := condOperand(ops[1], true)
-	if err != nil {
-		return err
-	}
-	a.Emit(clearSF(CSINV(rd, 31, 31, cond^1), is32(ops[0])))
+	a.Emit(clearSF(rrr(op.Word, rd, rn, rm)|((cond&0xf)<<12), is32(ops[0])))
 	return nil
 }
 
@@ -3347,36 +3282,29 @@ func parseFPRegs(mnem string, ops []string, n int) (regs []uint32, single bool, 
 
 // asmFloat3 handles the three-register scalar FP ops in both
 // precisions; the registers' width (d vs s) selects double vs single.
-func asmFloat3(a *Assembler, mnem string, ops []string) error {
+func asmFloat3(a *Assembler, op *arm64tbl.ScalarOp, ops []string) error {
 	if len(ops) != 3 {
-		return fmt.Errorf("%s expects 3 fp registers", mnem)
+		return fmt.Errorf("%s expects 3 fp registers", op.Mnemonic)
 	}
-	r, single, err := parseFPRegs(mnem, ops, 3)
+	r, single, err := parseFPRegs(op.Mnemonic, ops, 3)
 	if err != nil {
 		return err
 	}
-	enc := map[string]func(a, b, c uint32) uint32{
-		"fadd": FADD, "fsub": FSUB, "fmul": FMUL, "fdiv": FDIV,
-		"fnmul": FNMUL, "fmin": FMIN, "fmax": FMAX, "fminnm": FMINNM, "fmaxnm": FMAXNM,
-	}
-	a.Emit(fpSingle(enc[mnem](r[0], r[1], r[2]), single))
+	a.Emit(fpSingle(rrr(op.Word, r[0], r[1], r[2]), single))
 	return nil
 }
 
 // asmFMulAdd handles the fused `fmadd/fmsub/fnmadd/fnmsub Dd, Dn, Dm,
 // Da` (and S) forms.
-func asmFMulAdd(a *Assembler, mnem string, ops []string) error {
+func asmFMulAdd(a *Assembler, op *arm64tbl.ScalarOp, ops []string) error {
 	if len(ops) != 4 {
-		return fmt.Errorf("%s expects 4 fp registers", mnem)
+		return fmt.Errorf("%s expects 4 fp registers", op.Mnemonic)
 	}
-	r, single, err := parseFPRegs(mnem, ops, 4)
+	r, single, err := parseFPRegs(op.Mnemonic, ops, 4)
 	if err != nil {
 		return err
 	}
-	enc := map[string]func(a, b, c, d uint32) uint32{
-		"fmadd": FMADD, "fmsub": FMSUB, "fnmadd": FNMADD, "fnmsub": FNMSUB,
-	}
-	a.Emit(fpSingle(enc[mnem](r[0], r[1], r[2], r[3]), single))
+	a.Emit(fpSingle(rrr(op.Word, r[0], r[1], r[2])|((r[3]&regMask)<<10), single))
 	return nil
 }
 
@@ -3422,38 +3350,17 @@ func asmFccmp(a *Assembler, ops []string) error {
 }
 
 // asmFUnary handles a unary scalar FP op `<op> Dd, Dn` / `Sd, Sn`
-// (fabs/fsqrt/frint*); enc is the double-precision encoder and the
-// single form is its ftype=00 twin.
-func asmFUnary(a *Assembler, mnem string, ops []string, enc func(rd, rn uint32) uint32) error {
+// (fneg/fabs/fsqrt/frint*); the row's word is the double-precision
+// encoding and the single form is its ftype=00 twin.
+func asmFUnary(a *Assembler, op *arm64tbl.ScalarOp, ops []string) error {
 	if len(ops) != 2 {
-		return fmt.Errorf("%s expects 2 fp registers", mnem)
+		return fmt.Errorf("%s expects 2 fp registers", op.Mnemonic)
 	}
-	r, single, err := parseFPRegs(mnem, ops, 2)
+	r, single, err := parseFPRegs(op.Mnemonic, ops, 2)
 	if err != nil {
 		return err
 	}
-	a.Emit(fpSingle(enc(r[0], r[1]), single))
-	return nil
-}
-
-// asmFNeg handles fneg Dd,Dn / Sd,Sn.
-func asmFNeg(a *Assembler, ops []string) error {
-	if len(ops) != 2 {
-		return fmt.Errorf("fneg expects 2 fp registers")
-	}
-	rd, single, err := parseVReg(ops[0])
-	if err != nil {
-		return err
-	}
-	rn, _, err := parseVReg(ops[1])
-	if err != nil {
-		return err
-	}
-	if single {
-		a.Emit(FNEGS(rd, rn))
-	} else {
-		a.Emit(FNEG(rd, rn))
-	}
+	a.Emit(fpSingle(rrr(op.Word, r[0], r[1], 0), single))
 	return nil
 }
 

@@ -35,11 +35,41 @@ func TestMarkersArePresent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var wanted []string
 	for _, tbl := range arm64tbl.VecTables {
 		begin, end := markers(tbl)
-		for _, m := range []string{begin, end} {
-			if !strings.Contains(string(src), m) {
-				t.Errorf("%s carries no %q — Rewrite would leave it alone and the staleness check would pass on any content", arm64NativeFern, m)
+		wanted = append(wanted, begin, end)
+	}
+	wanted = append(wanted, scalarBegin, scalarEnd)
+	for _, m := range wanted {
+		if !strings.Contains(string(src), m) {
+			t.Errorf("%s carries no %q — Rewrite would leave it alone and the staleness check would pass on any content", arm64NativeFern, m)
+		}
+	}
+}
+
+// TestGoAssemblerAcceptsEveryScalarRow is the same loop for the by-name
+// vocabulary: every row's probe assembles through the Go assembler, so a
+// family added to the table without a dispatch arm, or a probe that names
+// a shape the encoder refuses, fails here. The self-host side of the same
+// probes is internal/e2eselfhost's TestSelfHostArm64TableRowsMatchNative.
+func TestGoAssemblerAcceptsEveryScalarRow(t *testing.T) {
+	seen := map[string]bool{}
+	for _, fam := range arm64tbl.Scalar {
+		if len(fam.Ops) == 0 {
+			t.Errorf("family %q has no rows", fam.Name)
+		}
+		for _, o := range fam.Ops {
+			if seen[o.Mnemonic] {
+				t.Errorf("%q is listed twice", o.Mnemonic)
+			}
+			seen[o.Mnemonic] = true
+			probe := fam.ProbeFor(o)
+			if !strings.HasPrefix(probe, o.Mnemonic+" ") && probe != o.Mnemonic {
+				t.Errorf("%s: probe %q does not start with the mnemonic", o.Mnemonic, probe)
+			}
+			if _, _, err := arm64.AssembleProgram(".text\n"+probe+"\n", 0x400000); err != nil {
+				t.Errorf("%s (%s): %v", o.Mnemonic, fam.Name, err)
 			}
 		}
 	}

@@ -23,7 +23,33 @@ import (
 	"testing"
 
 	"github.com/jakechampion/lang/internal/native/arm64"
+	"github.com/jakechampion/lang/internal/native/arm64tbl"
 )
+
+// fam is a family's mnemonics from the shared vocabulary table, minus any
+// the form's operand shape does not fit. The inventory reads the table so it
+// widens with the vocabulary instead of lagging it.
+func fam(name string, drop ...string) []string {
+	for _, f := range arm64tbl.Scalar {
+		if f.Name != name {
+			continue
+		}
+		var out []string
+		for _, m := range f.Mnemonics() {
+			keep := true
+			for _, d := range drop {
+				if d == m {
+					keep = false
+				}
+			}
+			if keep {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	panic("no arm64tbl family " + name)
+}
 
 // a64Form is one row of the form inventory. multi marks label-bearing
 // snippet forms (skipped by the llvm-mc lane: show-encoding leaves label
@@ -377,7 +403,7 @@ func a64Forms() []a64Form {
 			if r.Intn(4) == 0 {
 				return line("%s %s, %s", a64pick(r, []string{"ngc", "ngcs"}), rd, rn)
 			}
-			return line("%s %s, %s, %s", a64pick(r, []string{"adc", "adcs", "sbc", "sbcs"}), rd, rn, rm)
+			return line("%s %s, %s, %s", a64pick(r, fam("carry", "ngc", "ngcs")), rd, rn, rm)
 		}},
 		{name: "condsel", gen: func(r *rand.Rand, _ int) string {
 			is64, rd, rn, rm := sfPair(r)
@@ -413,7 +439,7 @@ func a64Forms() []a64Form {
 			lsb := r.Intn(width)
 			w := 1 + r.Intn(width-lsb)
 			return line("%s %s, %s, #%d, #%d",
-				a64pick(r, []string{"ubfx", "sbfx", "bfi", "bfxil", "ubfiz", "sbfiz"}), rd, rn, lsb, w)
+				a64pick(r, append(fam("bfx"), fam("bitfield")...)), rd, rn, lsb, w)
 		}},
 		{name: "extr_ror", gen: func(r *rand.Rand, _ int) string {
 			is64, rd, rn, rm := sfPair(r)
@@ -432,7 +458,7 @@ func a64Forms() []a64Form {
 		}},
 		{name: "shift_reg_imm", gen: func(r *rand.Rand, _ int) string {
 			is64, rd, rn, rm := sfPair(r)
-			mnem := a64pick(r, []string{"lsl", "lsr", "asr"})
+			mnem := a64pick(r, fam("shift"))
 			width := 32
 			if is64 {
 				width = 64
@@ -686,16 +712,11 @@ func a64Forms() []a64Form {
 			}
 			switch r.Intn(4) {
 			case 0:
-				return line("%s %s, %s, %s",
-					a64pick(r, []string{"fadd", "fsub", "fmul", "fdiv", "fnmul", "fmin", "fmax", "fminnm", "fmaxnm"}),
-					f(r), f(r), f(r))
+				return line("%s %s, %s, %s", a64pick(r, fam("fp3")), f(r), f(r), f(r))
 			case 1:
-				return line("%s %s, %s, %s, %s",
-					a64pick(r, []string{"fmadd", "fmsub", "fnmadd", "fnmsub"}), f(r), f(r), f(r), f(r))
+				return line("%s %s, %s, %s, %s", a64pick(r, fam("fp4")), f(r), f(r), f(r), f(r))
 			case 2:
-				return line("%s %s, %s",
-					a64pick(r, []string{"fneg", "fabs", "fsqrt", "frintm", "frintp", "frintz", "frinta", "frintn"}),
-					f(r), f(r))
+				return line("%s %s, %s", a64pick(r, fam("funary")), f(r), f(r))
 			default:
 				return line("fcsel %s, %s, %s, %s", f(r), f(r), f(r), a64pick(r, a64Conds))
 			}

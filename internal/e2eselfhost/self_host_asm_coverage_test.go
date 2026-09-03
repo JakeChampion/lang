@@ -7,25 +7,28 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/native/arm64"
 	"github.com/jakechampion/lang/internal/native/elf"
 	"github.com/jakechampion/lang/internal/native/x86_64"
 	"github.com/jakechampion/lang/internal/native/x86tbl"
 )
 
-// Coverage parity between the self-host assemblers and the native (Go)
-// assemblers that serve as their oracles, at Go speed: the mnemonic set each
+// Coverage parity between the self-host x86-64 assembler and the native (Go)
+// assembler that serves as its oracle, at Go speed: the mnemonic set the
 // self-host dispatch accepts is read out of the Fern source as data (the
 // same pattern as internal/caps/selfhost_parity_test.go) and every entry is
 // probed against the native assembler with a representative instruction.
 //
-// The rule these tests enforce (#6075): teach the oracle first. A mnemonic
+// The rule this test enforces (#6075): teach the oracle first. A mnemonic
 // the self-host emits or accepts that the native assembler cannot encode is
 // a differential that can never run, and the two lists have already drifted
 // in both directions — movn was listed with no branch to assemble it
 // (#6060), and the unary FP family had encoders but was missing from the
-// list (#6044). Nothing here builds the self-host compiler; both tests are
+// list (#6044). Nothing here builds the self-host compiler; the test is
 // pure text extraction plus native-assembler probes.
+//
+// The arm64 side no longer needs this: its vocabulary is one table
+// (internal/native/arm64tbl) both assemblers are built from, and
+// TestSelfHostArm64TableRowsMatchNative assembles every row through both.
 
 // fernFnBody extracts the body of `function NAME(...)` from Fern source,
 // with // comments stripped so a mnemonic quoted in prose doesn't read as a
@@ -87,333 +90,6 @@ func probeMnemonics(t *testing.T, path string, mnemonics []string, probes map[st
 		if !listed[m] {
 			t.Errorf("probe table lists %q, which %s no longer dispatches — remove the stale probe", m, path)
 		}
-	}
-}
-
-// arm64KnownHelpers are the predicate / base-table helpers arm64_gas_known
-// consults instead of spelling those mnemonics as literals in its own body
-// (the #7886 families and the scalar-FP tables). Their bodies are extracted
-// alongside arm64_gas_known's so every mnemonic the assembler accepts is
-// enumerated; a helper that disappears fails loudly in fernFnBody rather
-// than silently shrinking the probed surface.
-var arm64KnownHelpers = []string{
-	"arm64_gas_is_carry", "arm64_gas_is_mulwide", "arm64_gas_is_widening",
-	"arm64_gas_is_logical2", "arm64_gas_is_bitfield", "arm64_gas_is_condsel",
-	"arm64_gas_is_excl_ld", "arm64_gas_is_excl_st", "arm64_gas_is_acqrel",
-	"arm64_gas_is_unscaled2",
-	"arm64_fp3_base", "arm64_fp4_base", "arm64_funary_d_base",
-	"arm64_v3int_entry", "arm64_vlogical_entry", "arm64_vcmpzero_entry",
-	"arm64_v2misc_entry", "arm64_vfp3_entry", "arm64_vfp2_entry",
-	"arm64_vfpcmpzero_entry", "arm64_vshift_entry", "arm64_vpermute_opc",
-	"arm64_across_entry", "arm64_gas_shll_kind", "arm64_gas_vecgen_handles",
-}
-
-// TestSelfHostAsmCoverageArm64 pins the self-host arm64 assembler's
-// mnemonic allow-list (arm64_gas_known in arm64_native.fern, plus the
-// family helpers it consults) to the native arm64 assembler: every
-// mnemonic the self-host claims to handle must assemble through
-// internal/native/arm64. The b.<cond> / b<cond> aliases are
-// pattern-matched in the .fern source, not listed, so they are pinned
-// here by explicit probes instead of extraction.
-func TestSelfHostAsmCoverageArm64(t *testing.T) {
-	const path = "../../examples/self_host/arm64_native.fern"
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
-	body := fernFnBody(t, string(b), path, "arm64_gas_known")
-	for _, helper := range arm64KnownHelpers {
-		body += "\n" + fernFnBody(t, string(b), path, helper)
-	}
-	mnemonics := mnemonicCases(body, "mnem")
-
-	// One representative, currently-valid instruction per mnemonic in the
-	// self-host's dialect. adrp is resolved at the program level (it needs a
-	// data symbol), so its probe carries a .rodata section; branches carry
-	// their label.
-	probes := map[string]string{
-		"mov":   "mov x0, #42",
-		"movz":  "movz x8, #93",
-		"movk":  "movk x3, #0xabcd",
-		"movn":  "movn x0, #1",
-		"add":   "add x0, x1, #1",
-		"sub":   "sub x4, x5, x6",
-		"cmp":   "cmp x1, #5",
-		"neg":   "neg x0, x1",
-		"mul":   "mul x0, x1, x2",
-		"ldr":   "ldr x0, [x1, #16]",
-		"str":   "str x2, [x3, #8]",
-		"ldur":  "ldur x0, [x1, #-8]",
-		"stur":  "stur x0, [x1, #-8]",
-		"stp":   "stp x29, x30, [sp, #-16]!",
-		"ldp":   "ldp x29, x30, [sp], #16",
-		"b":     "b l0\nl0:\nret",
-		"bl":    "bl l0\nl0:\nret",
-		"blr":   "blr x1",
-		"ret":   "ret",
-		"svc":   "svc #0",
-		"cbz":   "cbz x0, l0\nl0:\nret",
-		"cbnz":  "cbnz w1, l0\nl0:\nret",
-		"tbz":   "tbz x0, #0, l0\nl0:\nret",
-		"tbnz":  "tbnz x1, #63, l0\nl0:\nret",
-		"ubfx":  "ubfx x1, x1, #56, #4",
-		"cset":  "cset x0, ne",
-		"adrp":  "adrp x0, sym\n.section .rodata\nsym:\n.quad 0",
-		"sxtw":  "sxtw x0, w1",
-		"sbfiz": "sbfiz x1, x2, #3, #32",
-		"lsl":   "lsl x0, x1, #4",
-		"lsr":   "lsr x0, x1, x2",
-		"asr":   "asr x0, x1, #4",
-		"cmn":   "cmn x1, #5",
-		"csel":  "csel x0, x1, x2, eq",
-		"and":   "and x0, x1, x2",
-		"orr":   "orr x0, x1, x2",
-		"eor":   "eor x0, x1, x2",
-		"subs":  "subs x2, x2, #1",
-		"udiv":  "udiv x0, x1, x2",
-		"sdiv":  "sdiv x0, x1, x2",
-		"msub":  "msub x0, x1, x2, x3",
-		"rev16": "rev16 w0, w19",
-		"clz":   "clz x0, x1",
-		"rbit":  "rbit x0, x0",
-		"nop":   "nop",
-		"br":    "br x5",
-		"sbfx":  "sbfx x1, x2, #3, #8",
-		"sxtb":  "sxtb x0, w1",
-		"sxth":  "sxth w0, w1",
-		"uxtb":  "uxtb w0, w1",
-		"uxth":  "uxth w0, w1",
-		"ldrsb": "ldrsb x0, [x1, #4]",
-		"ldrsh": "ldrsh w3, [x2, #62]",
-		"cnt":   "cnt v0.8b, v0.8b",
-		// The general Advanced SIMD families (#8000 wave 2a). The mnemonics
-		// with a scalar twin — add, sub, mul, and, orr, eor, neg, mvn, bic,
-		// orn, cmeq, cmlt, rev16, rev32 — are already probed above in that
-		// form; these are the ones that exist only as vector ops.
-		"cmtst": "cmtst v0.8b, v1.8b, v2.8b",
-		"cmgt":  "cmgt v0.4h, v1.4h, v2.4h",
-		"cmge":  "cmge v0.16b, v1.16b, v2.16b",
-		"cmhi":  "cmhi v0.4s, v1.4s, v2.4s",
-		"cmhs":  "cmhs v0.2s, v1.2s, v2.2s",
-		"cmle":  "cmle v0.2d, v1.2d, #0",
-		"smax":  "smax v0.8h, v1.8h, v2.8h",
-		"smin":  "smin v0.4s, v1.4s, v2.4s",
-		"umax":  "umax v0.16b, v1.16b, v2.16b",
-		"umin":  "umin v0.4h, v1.4h, v2.4h",
-		"sshl":  "sshl v0.2d, v1.2d, v2.2d",
-		"ushl":  "ushl v0.8b, v1.8b, v2.8b",
-		"abs":   "abs v0.2d, v1.2d",
-		"not":   "not v0.8b, v1.8b",
-		"rev64": "rev64 v0.4s, v1.4s",
-		// Wave 2b. fadd/fsub/fmul/fdiv/fmax/fmin/fneg/fabs/fsqrt/scvtf/
-		// ucvtf/fcvtzs/fcvtzu are already probed above in their scalar form.
-		"fcmeq": "fcmeq v0.4s, v1.4s, v2.4s",
-		"fcmge": "fcmge v0.2d, v1.2d, v2.2d",
-		"fcmgt": "fcmgt v0.4s, v1.4s, v2.4s",
-		"fcmle": "fcmle v0.4s, v1.4s, #0.0",
-		"fcmlt": "fcmlt v0.2d, v1.2d, #0.0",
-		"shl":   "shl v0.4s, v1.4s, #7",
-		"sli":   "sli v0.2d, v1.2d, #40",
-		"sshr":  "sshr v0.8h, v1.8h, #5",
-		"ushr":  "ushr v0.4s, v1.4s, #17",
-		"sri":   "sri v0.16b, v1.16b, #6",
-		"zip1":  "zip1 v0.4s, v1.4s, v2.4s",
-		"zip2":  "zip2 v0.8h, v1.8h, v2.8h",
-		"uzp1":  "uzp1 v0.16b, v1.16b, v2.16b",
-		"uzp2":  "uzp2 v0.2d, v1.2d, v2.2d",
-		"trn1":  "trn1 v0.4h, v1.4h, v2.4h",
-		"trn2":  "trn2 v0.2s, v1.2s, v2.2s",
-		// Wave 2c: the narrowing/widening shifts, ext, tbl, and the
-		// across-lanes reductions.
-		"xtn":    "xtn v0.8b, v1.8h",
-		"xtn2":   "xtn2 v0.16b, v1.8h",
-		"shrn2":  "shrn2 v0.16b, v1.8h, #3",
-		"sshll":  "sshll v0.8h, v1.8b, #3",
-		"sshll2": "sshll2 v0.8h, v1.16b, #3",
-		"ushll":  "ushll v0.4s, v1.4h, #7",
-		"ushll2": "ushll2 v0.2d, v1.4s, #17",
-		"sxtl":   "sxtl v0.8h, v1.8b",
-		"sxtl2":  "sxtl2 v0.4s, v1.8h",
-		"uxtl":   "uxtl v0.2d, v1.2s",
-		"uxtl2":  "uxtl2 v0.8h, v1.16b",
-		"ext":    "ext v0.16b, v1.16b, v2.16b, #5",
-		"tbl":    "tbl v0.16b, {v1.16b}, v2.16b",
-		"smaxv":  "smaxv b0, v1.16b",
-		"sminv":  "sminv h0, v1.8h",
-		"umaxv":  "umaxv s0, v1.4s",
-		"uminv":  "uminv b0, v1.8b",
-		"saddlv": "saddlv h0, v1.16b",
-		"uaddlv": "uaddlv s0, v1.8h",
-		// Wave 2d: the lane moves, the modified immediate, and the
-		// single-register load/store-structure forms.
-		"umov":   "umov w0, v1.b[5]",
-		"smov":   "smov w0, v1.b[5]",
-		"ins":    "ins v0.b[5], w1",
-		"movi":   "movi v0.16b, #7",
-		"ld1r":   "ld1r {v0.16b}, [x1]",
-		"st1":    "st1 {v0.16b}, [x1]",
-		"addv":   "addv b0, v0.8b",
-		"ld1":    "ld1 {v1.16b}, [x0]",
-		"cmeq":   "cmeq v1.16b, v1.16b, v0.16b",
-		"cmlt":   "cmlt v0.16b, v0.16b, #0",
-		"shrn":   "shrn v1.8b, v1.8h, #4",
-		"dup":    "dup v0.16b, w1",
-		"ldrb":   "ldrb w4, [x5, #1]",
-		"strb":   "strb w6, [x7, #2]",
-		"ldrh":   "ldrh w0, [x1, #4]",
-		"strh":   "strh w2, [x3, #6]",
-		"ldrsw":  "ldrsw x0, [x1, #4]",
-		"mrs":    "mrs x9, cntvct_el0",
-		"msr":    "msr tpidr_el0, x9",
-		"adr":    "adr x0, l0\nl0:\nret",
-		"adc":    "adc x0, x1, x2",
-		"adcs":   "adcs x0, x1, x2",
-		"adds":   "adds x1, x2, x3",
-		"sbc":    "sbc x0, x1, x2",
-		"sbcs":   "sbcs w0, w1, w2",
-		"ngc":    "ngc x0, x1",
-		"ngcs":   "ngcs w0, w1",
-		"umulh":  "umulh x0, x1, x2",
-		"smulh":  "smulh x0, x1, x2",
-		"madd":   "madd x0, x1, x2, x3",
-		"smull":  "smull x0, w1, w2",
-		"umull":  "umull x0, w1, w2",
-		"smaddl": "smaddl x0, w1, w2, x3",
-		"umaddl": "umaddl x0, w1, w2, x3",
-		"smsubl": "smsubl x0, w1, w2, x3",
-		"umsubl": "umsubl x0, w1, w2, x3",
-		"tst":    "tst x0, x1",
-		"ands":   "ands x0, x1, x2",
-		"bic":    "bic x0, x1, x2",
-		"bics":   "bics x0, x1, x2",
-		"orn":    "orn x0, x1, x2",
-		"eon":    "eon x0, x1, x2",
-		"mvn":    "mvn x0, x1",
-		"negs":   "negs x0, x1",
-		"extr":   "extr x0, x1, x2, #12",
-		"ror":    "ror x0, x1, #7",
-		"bfi":    "bfi x0, x1, #4, #8",
-		"bfxil":  "bfxil x0, x1, #4, #8",
-		"ubfiz":  "ubfiz x0, x1, #3, #16",
-		"ccmp":   "ccmp x0, x1, #0, eq",
-		"ccmn":   "ccmn x0, #9, #15, lt",
-		"csinc":  "csinc x0, x1, x2, lt",
-		"csinv":  "csinv x0, x1, x2, lt",
-		"csneg":  "csneg x0, x1, x2, lt",
-		"cinc":   "cinc x0, x1, lt",
-		"cinv":   "cinv x0, x1, lt",
-		"cneg":   "cneg x0, x1, lt",
-		"csetm":  "csetm x0, lt",
-		"rev":    "rev x0, x1",
-		"rev32":  "rev32 x0, x1",
-		"cls":    "cls x0, x1",
-		"ldxr":   "ldxr x0, [x1]",
-		"ldxrb":  "ldxrb w0, [x1]",
-		"ldxrh":  "ldxrh w0, [x1]",
-		"ldaxr":  "ldaxr x0, [x1]",
-		"ldaxrb": "ldaxrb w0, [x1]",
-		"ldaxrh": "ldaxrh w0, [x1]",
-		"stxr":   "stxr w2, x0, [x1]",
-		"stxrb":  "stxrb w2, w0, [x1]",
-		"stxrh":  "stxrh w2, w0, [x1]",
-		"stlxr":  "stlxr w2, x0, [x1]",
-		"stlxrb": "stlxrb w2, w0, [x1]",
-		"stlxrh": "stlxrh w2, w0, [x1]",
-		"ldar":   "ldar x0, [x1]",
-		"ldarb":  "ldarb w0, [x1]",
-		"ldarh":  "ldarh w0, [x1]",
-		"stlr":   "stlr x0, [x1]",
-		"stlrb":  "stlrb w0, [x1]",
-		"stlrh":  "stlrh w0, [x1]",
-		"dmb":    "dmb ish",
-		"dsb":    "dsb sy",
-		"isb":    "isb",
-		"ldurb":  "ldurb w0, [x1, #-1]",
-		"sturb":  "sturb w0, [x1, #-1]",
-		"ldurh":  "ldurh w0, [x1, #-2]",
-		"sturh":  "sturh w0, [x1, #-2]",
-		"ldursb": "ldursb x0, [x1, #-1]",
-		"ldursh": "ldursh w0, [x1, #-2]",
-		"ldursw": "ldursw x0, [x1, #-4]",
-		"fadd":   "fadd d0, d1, d2",
-		"fsub":   "fsub d0, d1, d2",
-		"fmul":   "fmul d0, d1, d2",
-		"fdiv":   "fdiv d0, d1, d2",
-		"fnmul":  "fnmul d0, d1, d2",
-		"fmin":   "fmin d0, d1, d2",
-		"fmax":   "fmax d0, d1, d2",
-		"fminnm": "fminnm s0, s1, s2",
-		"fmaxnm": "fmaxnm s0, s1, s2",
-		"fmadd":  "fmadd d0, d1, d2, d3",
-		"fmsub":  "fmsub d0, d1, d2, d3",
-		"fnmadd": "fnmadd s0, s1, s2, s3",
-		"fnmsub": "fnmsub s0, s1, s2, s3",
-		"fcsel":  "fcsel d0, d1, d2, lt",
-		"fccmp":  "fccmp d0, d1, #15, lt",
-		"fcmp":   "fcmp d1, d2",
-		"fcmpe":  "fcmpe d1, #0.0",
-		"fmov":   "fmov d0, d1",
-		"fcvtzs": "fcvtzs x0, d1",
-		"fcvtzu": "fcvtzu w0, d1",
-		"scvtf":  "scvtf d0, x1",
-		"ucvtf":  "ucvtf d0, x1",
-		"fcvt":   "fcvt d0, s1",
-		"fneg":   "fneg d0, d1",
-		"fabs":   "fabs d0, d1",
-		"fsqrt":  "fsqrt d0, d1",
-		"frinta": "frinta d0, d1",
-		"frintm": "frintm d0, d1",
-		"frintp": "frintp d0, d1",
-		"frintz": "frintz d0, d1",
-		"frintn": "frintn d0, d1",
-	}
-	assemble := func(probe string) error {
-		_, _, err := arm64.AssembleProgram(".text\n"+probe+"\n", elf.TextVAddr)
-		return err
-	}
-	probeMnemonics(t, path, mnemonics, probes, assemble)
-
-	// The conditional-branch aliases arm64_gas_known accepts by pattern, in
-	// both spellings, for every condition — not a hand-picked handful. Six of
-	// the eighteen were listed here before, which is exactly why `al` sat
-	// unprobed on both sides while GNU as assembled it (#8075).
-	for _, cond := range arm64Conditions {
-		for _, probe := range []string{
-			"b." + cond + " l0\nl0:\nret",
-			"b" + cond + " l0\nl0:\nret",
-		} {
-			if err := assemble(probe); err != nil {
-				t.Errorf("conditional-branch alias probe %q: native assembler rejects it: %v", probe, err)
-			}
-		}
-	}
-
-	// The reverse direction (#8000). Everything above pins the self-host to
-	// the native assembler; this pins the native assembler to the self-host,
-	// which is the direction that had no gate at all — every mnemonic #7907
-	// added to internal/native/arm64 landed with nothing asking the Fern side
-	// for it, and the two drifted by 63 before anyone counted.
-	//
-	// There is no exception list, deliberately. One would re-create the hole
-	// in a new shape: a mnemonic could be added to native, listed as an
-	// exception, and never ported. If a native addition genuinely has no
-	// self-host counterpart, the honest move is to say so in the issue that
-	// adds it, not here.
-	//
-	// The b.cc / bcc spellings are the one thing not compared by name: the
-	// self-host matches them by PATTERN rather than listing them, so they
-	// have no literal to extract. The explicit probe loop above is what
-	// covers them.
-	known := map[string]bool{}
-	for _, m := range mnemonics {
-		known[m] = true
-	}
-	condAlias := regexp.MustCompile(`^b\.?[a-z]{2}$`)
-	for _, m := range arm64.KnownMnemonics() {
-		if condAlias.MatchString(m) || known[m] {
-			continue
-		}
-		t.Errorf("internal/native/arm64 assembles %q and the self-host assembler does not know it — port it to arm64_gas_known's families, or the two assemblers have silently drifted again", m)
 	}
 }
 
@@ -803,7 +479,7 @@ func TestSelfHostAsmCoverageX86_64(t *testing.T) {
 	}
 
 	// The reverse direction (#8020), the twin of the arm64 pin in
-	// TestSelfHostAsmCoverageArm64. Everything above pins the self-host to the
+	// TestSelfHostArm64TableRowsMatchNative. Everything above pins the self-host to the
 	// native assembler; this pins the native assembler to the self-host,
 	// which is the direction that had no gate.
 	//
