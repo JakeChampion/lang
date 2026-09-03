@@ -21361,16 +21361,21 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
             // census either side, because an unbalanced retain allocates nothing
             // and frees nothing.
             //
-            // Asking slot_is_reclaimable_tuple here is what keeps the two halves
+            // Asking slot_is_credited_tuple here is what keeps the two halves
             // exactly the same set: no credited source, no retain, status quo.
-            // BOTH tuple classes, because both grant the alias a credit: a scalar
-            // tuple is "TUP:" and an rc tuple "TUPRC:"/"TUPRCS:". Gating on only
-            // the first desynced the pair the other way — the rc-tuple alias kept
-            // its credit while the retain stopped firing, and swept a box that was
-            // never retained: exit 99 on `var t: (i32, i32[]) = (i, [i, i+1]);
-            // var v = t;`, with allocs == frees at live_bytes 0 as always.
-            else if (se.slot_is_tuple_box(aid_slot)
-                     && (slot_is_reclaimable_tuple(se, aid_slot) || slot_is_reclaimable_rctuple(se, aid_slot))) {
+            // ALL THREE tuple classes, because each is a state a credited source
+            // can be in: a scalar tuple is "TUP:", an rc tuple "TUPRC:"/"TUPRCS:",
+            // and an alias this very clause MOVED into holds "TUPRCS:" ALONE —
+            // the surgery below drops its "TUP:" row. Gating on fewer desynced
+            // the pair both ways: without "TUPRC:" the rc-tuple alias kept its
+            // credit while the retain stopped firing (exit 99 on `var t: (i32,
+            // i32[]) = (i, [i, i+1]); var v = t;`); without "TUPRCS:" the second
+            // link of a chain `var v = t; var u = v;` found its source
+            // uncredited, so `u` kept the "TUP:" row the credit pass granted
+            // while `v` was neither retained against nor elided — two exit decs
+            // on a box of rc 1 (#7750). Both with allocs == frees at
+            // live_bytes 0, as always for this family.
+            else if (slot_is_credited_tuple(se, aid_slot)) {
                 // Move-on-alias, tuple limb: at the source's last top-level
                 // mention the bind transfers the reference. A scalar tuple's
                 // "TUP:" alias copy already IS the whole release (a box dec);
@@ -27307,12 +27312,13 @@ function alias_bind_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[
 // that escapee. Only the LINKS are checked here; the source's own escape gate
 // belongs to the caller, which passes this result back in as its alias_ok.
 //
-// NOT wired to the tuple limbs. Both perform move-on-alias credit SURGERY on the
-// alias row — the "TUPRCS:" deep class migrates to the alias at a move — and a
-// two-link rc-tuple chain measures `__rc_underflow() != 0` under this credit
-// while its census balances at `200/200 live_bytes 0`. The interaction is not
-// established, so the tuple chain stays refused and is filed rather than guessed
-// at; `tuple_alias_chain_refused` pins it.
+// The tuple limbs are wired here too (#7750). Their move-on-alias credit
+// SURGERY — the "TUPRCS:" deep class migrates to the alias row at a move and
+// the alias's "TUP:" row is dropped — leaves a moved-into link holding
+// "TUPRCS:" alone, so the retain gate at the NEXT link has to recognise that
+// state as a credited source (slot_is_credited_tuple); it did not, which is
+// why this credit measured an over-release on the tuple pair before the gate
+// was completed.
 function alias_chain_sites_of(stmts: ast.Stmt[], src: string, borrowable: string[], recv_borrow: string[], body: ast.Stmt[], acc: string[]): string[] {
     var sites: string[] = [];
     var names: string[] = [src];
@@ -43192,6 +43198,19 @@ function slot_is_reclaimable_rctuple_sweep(s: LowerState, i: i32): boolean {
     if (i >= s.locals.len()) { return false; }
     if (s.locals[i].tuple_elems.len() == 0) { return false; }
     return reclaim_has(s.reclaimable_names, "TUPRCS:", s.reclaim_site_key(i));
+}
+
+// slot_is_credited_tuple: slot `i` holds ANY tuple credit — the question the
+// alias bind asks of its SOURCE, so the retain lands exactly when the credit
+// pass gave the alias a row to spend it on. The three classes are the three
+// states a credited tuple source can be in: "TUP:" (scalar), "TUPRC:" (rc,
+// possibly with "TUPRCS:"), and "TUPRCS:" alone, which is what a MOVE-alias
+// holds after lower_stmt_var's ExprIdent arm migrates the deep class onto it
+// and drops its "TUP:" row. A chain reaches the third state at its second
+// link; asking only the first two there produced a credited alias with no
+// retain behind it (#7750).
+function slot_is_credited_tuple(s: LowerState, i: i32): boolean {
+    return slot_is_reclaimable_tuple(s, i) || slot_is_reclaimable_rctuple(s, i) || slot_is_reclaimable_rctuple_sweep(s, i);
 }
 
 // emit_rctuple_deep_free frees a sweepable rc-tuple slot's fresh rc children
@@ -64530,8 +64549,7 @@ function tuple_dead_alias_bind(v: ast.StmtVar, se: LowerState): boolean {
         ast.ExprIdent(id) => {
             var src: i32 = se.slot_of(id.name);
             if (src < 0 || src < se.n_params) { return false; }
-            if (!se.slot_is_tuple_box(src)) { return false; }
-            if (!slot_is_reclaimable_tuple(se, src) && !slot_is_reclaimable_rctuple(se, src)) { return false; }
+            if (!slot_is_credited_tuple(se, src)) { return false; }
             if (se.moves_local_at(id.name, v.line, v.col)) { return false; }
             if (util.index_of_str(se.moved_names, id.name) >= 0 || util.index_of_str(se.moved_names, v.name) >= 0) { return false; }
             return util.index_of_str(se.dead_alias_ok, reclaim_site_key_of(v.name, v.line, v.col)) >= 0;
@@ -73377,7 +73395,7 @@ while (ti < tups.len()) {
     // credit. The bind retained it (lower_stmt_var's ExprIdent arm), both
     // slots sweep, and the refcount arbitrates.
     var tal: string[] = [];
-    tal = alias_bind_sites_of(body, tnm, borrowable, recv_borrow, body, tal);
+    tal = alias_chain_sites_of(body, tnm, borrowable, recv_borrow, body, tal);
     if (!body_unsafe_for_alias_ret_ok(body, tnm, borrowable, recv_borrow, tal, util.index_of_str(tretn, tnm) >= 0)) {
         out = out.append("TUP:" + tups[ti]);
         out = credit_alias_sites(out, "TUP:", tal);
@@ -73421,7 +73439,7 @@ while (rti < rctups.len()) {
     // Binding-SITE keys here too (#7272); the gates take the bare name.
     var rnm: string = reclaim_site_name(rctups[rti]);
     var ral: string[] = [];
-    ral = alias_bind_sites_of(body, rnm, borrowable, recv_borrow, body, ral);
+    ral = alias_chain_sites_of(body, rnm, borrowable, recv_borrow, body, ral);
     // Struct literals that took a COUNTED share of this tuple (the field retain
     // + emit_struct_tuple_field_drops pair). Not escapes: both owners release.
     var rcnt: string[] = rctuple_counted_store_sites(body, rnm, structs, msites, []);
