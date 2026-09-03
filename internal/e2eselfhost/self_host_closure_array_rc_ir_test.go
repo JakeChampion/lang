@@ -123,6 +123,24 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = (t 
     return fns[0]() + fns[1]() + c();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 3},
+	// An EMPTY `fn[]` literal whose element READ is lowered BEFORE the first
+	// append and reached at runtime from iteration 2. The is_closurearr flag
+	// used to arrive only at the append, so this read bound a plain scalar and
+	// called the box pointer as code: SIGSEGV, where native runs it. The
+	// declaration now carries the flag ("CLOAPPEND:"), which also leaves no
+	// state in which the CLOARR credit could forgive a bind the retain missed.
+	{"empty-append-read-before-append", `function go(n: i32): i32 {
+    var fns: (() => i32)[] = [];
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        if (i > 0) { var g = fns[0]; s = s + g(); }
+        fns = fns.append(() => n + i);
+        i = i + 1;
+    }
+    return s;
+}
+function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 6},
 }
 
 // closureArrayRcRefusals: shapes the credit must DECLINE — an element escaping
@@ -156,6 +174,17 @@ function main(): i32 {
 // 99 = the underflow detector ticked (an over-release), 98 = growth, 97 = the
 // two churns disagree (a value corrupted).
 const closureArrayRcFixpointSrc = `function mkfns(n: i32): (() => i32)[] { var a: (() => i32)[] = [() => n, () => n + 1]; return a; }
+function early(n: i32): i32 {
+    var fns: (() => i32)[] = [];
+    var s: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        if (i > 0) { var g = fns[0]; s = s + g(); }
+        fns = fns.append(() => n + i);
+        i = i + 1;
+    }
+    return s;
+}
 function go(n: i32): i32 {
     var fns: (() => i32)[] = [() => n, () => n + 1, () => n * 2];
     var s: i32 = 0;
@@ -166,7 +195,7 @@ function go(n: i32): i32 {
     more = more.append(() => n + 5);
     for f in more { s = s + f(); }
     var hs = mkfns(n);
-    return s + d() + hs[0]() + hs[1]() + more.len();
+    return s + d() + hs[0]() + hs[1]() + more.len() + early(n);
 }
 function churn(m: i32): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < m) { acc = (acc + go(i)) % 251; i = i + 1; } return acc; }
 function main(): i32 {
