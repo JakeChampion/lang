@@ -2,6 +2,7 @@ package e2eselfhost
 
 import (
 	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,14 +64,20 @@ func TestSelfHostELFSymtab(t *testing.T) {
 	}
 
 	// nm resolves both symbols, at the addresses the driver placed them.
-	// 0x4000b0 is elf_base_vaddr() + the W^X header block (64 + 2*56).
+	// .text begins at elf_base_vaddr() plus the header block, which is
+	// e_ehsize + e_phnum*e_phentsize — read off the image rather than named,
+	// so reserving another program header (elf_image_wx keeps a third slot
+	// for unwind) moves this with the writer instead of failing here. The
+	// driver places _start at text+0 and helper at text+5.
+	le16 := func(off int) uint64 { return uint64(raw[off]) | uint64(raw[off+1])<<8 }
+	textVA := 0x400000 + le16(52) + le16(56)*le16(54)
 	nmOut, err := exec.Command("nm", img).Output()
 	if err != nil {
 		t.Fatalf("nm on the emitted image: %v", err)
 	}
 	for _, want := range []string{
-		"00000000004000b0 T _start",
-		"00000000004000b5 T helper",
+		fmt.Sprintf("%016x T _start", textVA),
+		fmt.Sprintf("%016x T helper", textVA+5),
 	} {
 		if !strings.Contains(string(nmOut), want) {
 			t.Errorf("nm output missing %q\n--- got ---\n%s", want, nmOut)
