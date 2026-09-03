@@ -350,14 +350,28 @@ existing test scaffolding rather than gated off:
     own-param family remains (no bind literal to prove element freshness
     from).
   - **Own-param families** (`own_param_reuse_sites` /
-    `own_param_self_overwrite_sites`): now on `struct_fields_reusable_param`
-    (narrow ∪ Map / leak-safe tuple / leak-safe Option — the leak-only kinds,
-    which need no release arm or freshness gate; pinned by the
-    `own-param-donor-{map,tuple,opt}-field*` differential cases). Enum /
-    string fields remain BLOCKED there — the alias-free release proof
-    (`donor_enum_fields_fresh`) reads the donor's bind literal, which a
-    parameter doesn't have. (The map-returning-CALL-as-field-value crash
-    once noted here is fixed — the shape now fires reuse and is pinned by the
+    `own_param_self_overwrite_sites`, and the return-position / self-assign
+    update via `own_update_params_of`): now on
+    `struct_fields_reusable_ownparam` — narrow ∪ Map / leak-safe tuple /
+    leak-safe Option (the leak-only kinds, no release arm or freshness gate)
+    ∪ **enum** ∪ **string on a type that routes field reclaim** (#5342;
+    pinned by the `own-param-donor-{map,tuple,opt,string,enum}-field*`,
+    `own-param-self-overwrite-{string,enum}-field*` and
+    `own-param-return-update-enum-field` differential cases). The
+    alias-free proof the local families read off the donor's bind literal
+    (`donor_enum_fields_fresh`) is not needed for a parameter: the box is
+    sole-owned by the `own` contract (the `__fern_rc_is_unique` guard
+    backstops) and its field values carry whatever count the caller's
+    construction gave them — every non-fresh enum field store and every base
+    copy retains, so an old enum box's rc counts every live holder and the
+    reuse arm's rc-gated dec never frees under one. A string share is retained
+    on the same terms only when the type ROUTES field reclaim
+    (`slit_reclaim`), hence the routing condition: `own_update_params_of`
+    admitted unrouted string types before #5342 and freed a caller's field
+    under a live holder (`docs/rc-log/2026-09-03-own-param-donor-and-release.md`).
+    The recipient / override values take `cross_recipient_fields_fresh`.
+    (The map-returning-CALL-as-field-value crash once noted here is fixed —
+    the shape now fires reuse and is pinned by the
     `own-param-donor-map-field-call` differential case.)
   - **Enum-donor recipient** (`enum_donor_reuse_sites`): now on
     `struct_fields_reusable_cross` + the shared `cross_recipient_fields_fresh`
