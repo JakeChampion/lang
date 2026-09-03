@@ -388,7 +388,16 @@ pub function http_parse_request(buf: string): Option[HttpRequest] {
     // Content-Length from it. `first_crlf + 2` skips the CRLF that
     // terminates the request line; `headers_end` is the start of the
     // `\r\n\r\n` separator, so the slice excludes the empty line.
-    var hdr_block: str = slice_unchecked(buf, first_crlf + 2, headers_end);
+    //
+    // The two coincide exactly when the request carried no headers at
+    // all (`GET / HTTP/1.1\r\n\r\n`): the request line's own CRLF is
+    // the first two bytes of the separator. Clamping is what keeps the
+    // slice from running backwards there.
+    var hdr_start: i32 = first_crlf + 2;
+    if (hdr_start > headers_end) {
+        hdr_start = headers_end;
+    }
+    var hdr_block: str = slice_unchecked(buf, hdr_start, headers_end);
     var req_headers: HeaderMap = __parse_headers(hdr_block);
     var content_length: i32 = 0;
     match (__http_content_length(req_headers)) {
