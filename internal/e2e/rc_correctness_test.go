@@ -7473,6 +7473,8 @@ function main(): i32 {
     return (t - 136) + __rc_underflow_count();
 }
 `,
+	},
+	{
 		// #7914. `T { ...mk(), f: v }` releases its spread base only when
 		// structUpdateBaseIsOwned admits it, and its Call arm asked for
 		// whole-program escape freedom — which a registry builder never has,

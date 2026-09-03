@@ -1861,7 +1861,10 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 	case "x86-64-linux":
 		asm, err = x86_64codegen.EmitWithOptions(prog, info, x86_64codegen.Options{Exports: exportNames, DebugLines: emitDebugSyms, DebugSource: dbgMainFile})
 	default:
-		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames, DebugLines: emitDebugSyms && !darwin && !android, DebugSource: dbgMainFile})
+		// FERN_HIGH_HEAP=1 raises the arena's mmap hint above 4 GiB so a
+		// pointer-truncation bug that only shows on arm64-darwin's high
+		// heap reproduces under qemu-aarch64 (docs/BACKEND-PARITY.md).
+		asm, err = arm64codegen.EmitWithOptions(prog, info, arm64codegen.Options{Darwin: darwin, PIE: android, Exports: exportNames, DebugLines: emitDebugSyms && !darwin && !android, DebugSource: dbgMainFile, HighHeapProbe: os.Getenv("FERN_HIGH_HEAP") == "1"})
 	}
 	if err != nil {
 		return 1, err

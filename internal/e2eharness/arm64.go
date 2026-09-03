@@ -84,12 +84,37 @@ func CompileAndRunArm64(t *testing.T, src string) (stdout string, exitCode int) 
 	return finishArm64Run(t, cmd, out)
 }
 
+// CompileAndRunArm64HighHeap is CompileAndRunArm64 with the arena's mmap
+// address hint raised above 4 GiB (arm64codegen.Options.HighHeapProbe), so
+// every heap pointer the program produces has a non-zero high 32 bits.
+//
+// That is the address regime arm64-darwin runs in and Linux never reaches,
+// which is why a pointer truncated to 32 bits — a narrow load of a heap
+// handle, a 32-bit compare of two pointers — used to be findable only on
+// Apple hardware. qemu-aarch64 honours the raised hint, so the same class is
+// reproducible here: run any pointer-round-trip-sensitive program through
+// this and a truncation SIGSEGVs or reads the wrong value.
+func CompileAndRunArm64HighHeap(t *testing.T, src string) (stdout string, exitCode int) {
+	t.Helper()
+	binPath, qemu := compileArm64BinOpts(t, src, arm64codegen.Options{HighHeapProbe: true})
+	cmd := RunArm64Bin(qemu, binPath)
+	out, _ := cmd.CombinedOutput()
+	return finishArm64Run(t, cmd, out)
+}
+
 // CompileArm64Bin compiles src with the arm64 backend and links it
 // (gcc, or the native backend under FERN_NATIVE_ASM=1), returning the
 // binary path and the qemu runner ("" on native arm64 hosts). Callers
 // exec it via RunArm64Bin — with extra argv when the test needs it
 // (e.g. the args()-rc regression gate).
 func CompileArm64Bin(t *testing.T, src string) (binPath, qemu string) {
+	t.Helper()
+	return compileArm64BinOpts(t, src, arm64codegen.Options{})
+}
+
+// compileArm64BinOpts is CompileArm64Bin with the emit options spelled out —
+// the seam the high-heap gate uses.
+func compileArm64BinOpts(t *testing.T, src string, opts arm64codegen.Options) (binPath, qemu string) {
 	t.Helper()
 	gcc, qemu := Arm64Tooling(t)
 
@@ -124,7 +149,7 @@ func CompileArm64Bin(t *testing.T, src string) (binPath, qemu string) {
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
-	asm, err := arm64codegen.Emit(prog, info)
+	asm, err := arm64codegen.EmitWithOptions(prog, info, opts)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
