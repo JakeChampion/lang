@@ -797,133 +797,96 @@ func (a *Assembler) dispatch(mnem string, ops []Operand) error {
 	if idx, ok := x86tbl.BitTest.Ext(mnem); ok {
 		return a.btOp(ops, 0xA3+8*idx, 4+int(idx))
 	}
-	switch mnem {
-	case "push":
-		return a.pushPop(ops, 0x50)
-	case "pop":
-		return a.pushPop(ops, 0x58)
-	case "mov":
-		return a.mov(ops, false)
-	case "movabs":
-		return a.mov(ops, true)
-	case "test":
-		return a.test(ops)
-	case "bsf":
-		// The scan-forward sibling of bsr. tzcnt below is the same opcode
-		// with an F3 prefix; bsf itself was simply never needed until the
-		// vector kernels wanted to find the lowest set bit of a pmovmskb
-		// mask, and lzcnt/tzcnt cannot substitute — they are BMI1, and on a
-		// pre-BMI1 CPU the F3 is IGNORED and the instruction silently
-		// behaves as bsr/bsf instead of faulting.
-		return a.bitOp(ops, 0xBC)
-	case "bsr":
-		return a.bitOp(ops, 0xBD)
-	case "lzcnt":
-		return a.bitOp(ops, 0xBD, 0xF3)
-	case "tzcnt":
-		return a.bitOp(ops, 0xBC, 0xF3)
-	case "popcnt":
-		return a.bitOp(ops, 0xB8, 0xF3)
-	case "shld":
-		return a.shld(ops)
-	case "shrd":
-		return a.shrd(ops)
-	case "bswap":
-		return a.bswap(ops)
-	case "xadd":
-		return a.rmwOp(ops, 0xC0, "xadd")
-	case "cmpxchg":
-		return a.rmwOp(ops, 0xB0, "cmpxchg")
-	case "lea":
-		return a.lea(ops)
-	case "movzx":
-		return a.movzx(ops, false)
-	case "movsx", "movsxd":
-		return a.movzx(ops, true)
-	case "xchg":
-		return a.xchg(ops)
-	case "jmp":
-		return a.jmp(ops)
-	case "call":
-		return a.call(ops)
-	}
-	switch mnem {
-	case "movq":
-		return a.movqd(ops, false)
-	case "movd":
-		return a.movqd(ops, true)
-	case "movsd":
-		return a.movsdss(0xF2, ops)
-	case "movss":
-		return a.movsdss(0xF3, ops)
-	case "movups":
-		return a.movsdss(0x00, ops)
-	case "movupd":
-		return a.movsdss(0x66, ops)
-	case "cvtsi2sd":
-		return a.cvtsi2s(0xF2, ops)
-	case "cvtsi2ss":
-		return a.cvtsi2s(0xF3, ops)
-	case "cvttsd2si":
-		return a.cvtt2si(0xF2, 0x2C, ops)
-	case "cvttss2si":
-		return a.cvtt2si(0xF3, 0x2C, ops)
-	case "cvtsd2si":
-		return a.cvtt2si(0xF2, 0x2D, ops)
-	case "cvtss2si":
-		return a.cvtt2si(0xF3, 0x2D, ops)
-	case "roundsd":
-		return a.sse3AImm8(0x0B, ops, "roundsd")
-	case "roundss":
-		return a.sse3AImm8(0x0A, ops, "roundss")
-	case "pcmpistri":
-		return a.sse3AImm8(0x63, ops, "pcmpistri")
-	case "pcmpestri":
-		return a.sse3AImm8(0x61, ops, "pcmpestri")
-	case "pmovmskb":
-		return a.xmmToGpr(0x66, 0xD7, ops, "pmovmskb")
-	case "movmskps":
-		return a.xmmToGpr(0x00, 0x50, ops, "movmskps")
-	case "movmskpd":
-		return a.xmmToGpr(0x66, 0x50, ops, "movmskpd")
-	case "pshufd":
-		return a.sseImm8(0x66, 0x70, ops, "pshufd")
-	case "shufps":
-		return a.sseImm8(0x00, 0xC6, ops, "shufps")
-	case "shufpd":
-		return a.sseImm8(0x66, 0xC6, ops, "shufpd")
-	case "pextrb", "pextrw", "pextrd", "pextrq":
-		return a.pextr(mnem, ops)
-	case "pinsrb", "pinsrw", "pinsrd", "pinsrq":
-		return a.pinsr(mnem, ops)
-	case "crc32":
-		return a.crc32(ops)
-	case "psllw", "psrlw", "psraw", "pslld", "psrld", "psrad",
-		"psllq", "psrlq", "pslldq", "psrldq":
-		// The by-immediate forms (0F 71/72/73 groups) shift by a constant;
-		// the by-register forms fall through to the sseOps table. pslldq /
-		// psrldq exist only with an immediate, so a register count on those
-		// lands on the unsupported-instruction error below.
-		if len(ops) == 2 && ops[1].kind == opImm {
-			return a.vecShiftImm(mnem, ops)
-		}
-	}
-	if mnem == "movdqu" || mnem == "movdqa" {
-		// Direction is decided by which side is the xmm: `movdqu xmm, mem`
-		// is the 0x6F load, `movdqu mem, xmm` the 0x7F store.
-		if len(ops) == 2 && (ops[0].kind != opReg || ops[0].size != 128) {
-			prefix := byte(0xF3)
-			if mnem == "movdqa" {
-				prefix = 0x66
+	// Everything else dispatched by name comes from the same table, keyed
+	// on the Intel mnemonic; the self-host's AT&T spellings for each row
+	// are generated from it. The two exceptions to a straight route are
+	// the vector shifts, whose by-register forms are the SSE table's, and
+	// movdqu/movdqa, whose load direction is the SSE table's 0x6F — both
+	// fall through to it when their special shape does not apply.
+	if fam, op, ok := x86tbl.NamedByIntel(mnem); ok {
+		switch fam.Name {
+		case "pushpop":
+			return a.pushPop(ops, op.Op)
+		case "mov":
+			return a.mov(ops, false)
+		case "movabs":
+			return a.mov(ops, true)
+		case "test":
+			return a.test(ops)
+		case "bitscan":
+			// bsf/bsr have no prefix; lzcnt/tzcnt/popcnt are BMI1/POPCNT,
+			// and on a pre-baseline CPU their F3 is IGNORED, so the
+			// instruction silently behaves as bsr/bsf rather than faulting.
+			if op.Prefix != 0 {
+				return a.bitOp(ops, op.Op, op.Prefix)
 			}
-			return a.movdqStore(prefix, ops)
+			return a.bitOp(ops, op.Op)
+		case "shld":
+			return a.shldShrd(ops, op.Op, mnem)
+		case "bswap":
+			return a.bswap(ops)
+		case "rmw":
+			return a.rmwOp(ops, op.Op, mnem)
+		case "lea":
+			return a.lea(ops)
+		case "extend":
+			return a.movzx(ops, mnem == "movsx")
+		case "movsxd":
+			return a.movzx(ops, true)
+		case "xchg":
+			return a.xchg(ops)
+		case "branch":
+			if mnem == "jmp" {
+				return a.jmp(ops)
+			}
+			return a.call(ops)
+		case "movqd":
+			return a.movqd(ops, mnem == "movd")
+		case "mov10":
+			return a.movsdss(op.Prefix, ops)
+		case "cvt2s":
+			return a.cvtsi2s(op.Prefix, ops)
+		case "cvt2si":
+			return a.cvtt2si(op.Prefix, op.Op, ops)
+		case "imm3a":
+			return a.sse3AImm8(op.Op, ops, mnem)
+		case "movmsk":
+			return a.xmmToGpr(op.Prefix, op.Op, ops, mnem)
+		case "shuf":
+			return a.sseImm8(op.Prefix, op.Op, ops, mnem)
+		case "pextr":
+			return a.pextr(mnem, ops)
+		case "pinsr":
+			return a.pinsr(mnem, ops)
+		case "crc32":
+			return a.crc32(ops)
+		case "vshift":
+			// The by-immediate forms (0F 71/72/73 groups) shift by a
+			// constant; the by-register forms fall through to the sseOps
+			// table. pslldq / psrldq exist only with an immediate, so a
+			// register count on those lands on the unsupported-instruction
+			// error below.
+			if len(ops) == 2 && ops[1].kind == opImm {
+				return a.vecShiftImm(mnem, ops)
+			}
+		case "movdq":
+			// Direction is decided by which side is the xmm: `movdqu xmm,
+			// mem` is the 0x6F load, `movdqu mem, xmm` the 0x7F store.
+			if len(ops) == 2 && (ops[0].kind != opReg || ops[0].size != 128) {
+				return a.movdqStore(op.Prefix, ops)
+			}
+		case "sse38":
+			return a.sse38Op(op.Op, ops)
+		case "rep", "lock":
+			// A prefix mnemonic reaches the dispatch only when ParseInst was
+			// bypassed with an Inst naming it directly.
+			return fmt.Errorf("%q is a prefix, not an instruction", mnem)
+		default:
+			return fmt.Errorf("unsupported instruction %q: family %q has no encoder", mnem, fam.Name)
 		}
 	}
 	if s, ok := sseOps[mnem]; ok {
 		return a.sseOp(s.prefix, s.op, ops)
-	}
-	if op, ok := sse38Ops[mnem]; ok {
-		return a.sse38Op(op, ops)
 	}
 	if cc, ok := cmovccCode(mnem); ok {
 		return a.cmov(ops, cc)
@@ -1784,16 +1747,6 @@ func (a *Assembler) shift(ops []Operand, ext int) error {
 // The operand direction is reversed from the usual two-register encoding:
 // ModRM.reg holds the SOURCE and ModRM.rm the DESTINATION, so `shld rsi, rdi,
 // cl` is 48 0f a5 fe with reg=rdi and rm=rsi.
-func (a *Assembler) shld(ops []Operand) error {
-	return a.shldShrd(ops, 0xA4, "shld")
-}
-
-// shrd (0F AD /r, imm8 form 0F AC /r ib) is shld's right-shift mirror: the
-// destination's vacated HIGH bits fill from the LOW bits of the source.
-func (a *Assembler) shrd(ops []Operand) error {
-	return a.shldShrd(ops, 0xAC, "shrd")
-}
-
 func (a *Assembler) shldShrd(ops []Operand, opImmForm byte, name string) error {
 	if len(ops) != 3 || (ops[0].kind != opReg && ops[0].kind != opMem) ||
 		ops[0].size == 128 || ops[1].kind != opReg || ops[1].size == 128 {

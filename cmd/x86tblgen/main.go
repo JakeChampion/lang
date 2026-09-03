@@ -48,6 +48,60 @@ var blocks = []block{
 		end:      "// END GENERATED GPR GROUP TABLES",
 		generate: genGPRTables,
 	},
+	{
+		begin:    "// BEGIN GENERATED NAMED VOCABULARY (cmd/x86tblgen) — do not edit by hand.",
+		end:      "// END GENERATED NAMED VOCABULARY",
+		generate: genNamedTables,
+	},
+}
+
+// genNamedTables renders the by-name vocabulary: a predicate per family
+// over the AT&T spellings the self-host dispatches on, and for the families
+// whose encoder reads per-spelling data, the lookup that returns it.
+//
+// A family marked Suffixed is matched on the suffix-stripped base, so its
+// predicate and lookup take that base. A row with no AT&T spelling (the
+// SSE movq, which AT&T spells the same as the general-register move) is
+// reached through another family's arm and contributes nothing here.
+func genNamedTables() string {
+	var b strings.Builder
+	for _, f := range x86tbl.Named {
+		var spellings []string
+		for _, o := range f.Ops {
+			if o.ATT != "" {
+				spellings = append(spellings, fmt.Sprintf("mnem == %q", o.ATT))
+			}
+		}
+		if len(spellings) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "// %s: %s.\n", f.PredicateName(), f.Doc)
+		if f.FernFn != "" {
+			fmt.Fprintf(&b, "function %s(mnem: string): boolean { return %s(mnem) >= 0; }\n", f.PredicateName(), f.FernFn)
+			fmt.Fprintf(&b, "function %s(mnem: string): i32 {\n", f.FernFn)
+			for _, o := range f.Ops {
+				if o.ATT == "" {
+					continue
+				}
+				fmt.Fprintf(&b, "    if (mnem == %q) { return %d; }\n", o.ATT, f.Pack(o))
+			}
+			b.WriteString("    return 0 - 1;\n}\n")
+			continue
+		}
+		fmt.Fprintf(&b, "function %s(mnem: string): boolean {\n    return ", f.PredicateName())
+		for i, t := range spellings {
+			if i > 0 {
+				if i%4 == 0 {
+					b.WriteString("\n        || ")
+				} else {
+					b.WriteString(" || ")
+				}
+			}
+			b.WriteString(t)
+		}
+		b.WriteString(";\n}\n")
+	}
+	return b.String()
 }
 
 // genGPRTables renders the ModRM.reg-extension families — the base

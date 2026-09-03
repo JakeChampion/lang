@@ -754,8 +754,16 @@ function x86_movd_xmm_to_gpr(buf: i32[], xmm: i32, gpr: i32): i32[] {
 // (0xBC) and bsr (0xBD). Both set ZF when the source is zero and leave the
 // destination undefined, which is why callers branch on ZF first.
 function x86_bitscan_r32(buf: i32[], opcode: i32, dst: i32, src: i32): i32[] {
-    var rex: i32 = x86_rex(0, dst, 0, src);
-    if (rex != 64) {
+    return x86_bitscan_rr(buf, 0, opcode, 0, dst, src);
+}
+
+// x86_bitscan_rr is the shape every bit scan and count shares:
+// [pfx] [REX.W] 0F <op> /r, direct ModR/M. pfx is 0 for bsf/bsr and F3 for
+// the BMI1/POPCNT counts.
+function x86_bitscan_rr(buf: i32[], pfx: i32, opcode: i32, w: i32, dst: i32, src: i32): i32[] {
+    if (pfx != 0) { buf = buf.append(pfx); }
+    var rex: i32 = x86_rex(w, dst, 0, src);
+    if (w == 1 || rex != 64) {
         buf = buf.append(rex);
     }
     buf = buf.append(15); // 0x0F
@@ -785,14 +793,7 @@ function x86_bsr_r32(buf: i32[], dst: i32, src: i32): i32[] {
 // ModR/M. Below the baseline LZCNT/TZCNT decode as bsr/bsf and give wrong
 // answers silently, where POPCNT faults — see docs/BACKEND-PARITY.md.
 function x86_bitcnt_rr(buf: i32[], opcode: i32, w: i32, dst: i32, src: i32): i32[] {
-    buf = buf.append(243); // 0xF3
-    var rex: i32 = x86_rex(w, dst, 0, src);
-    if (w == 1 || rex != 64) {
-        buf = buf.append(rex);
-    }
-    buf = buf.append(15); // 0x0F
-    buf = buf.append(opcode);
-    return buf.append(x86_modrm(3, dst, src));
+    return x86_bitscan_rr(buf, 243, opcode, w, dst, src);
 }
 
 function x86_lzcnt_rr(buf: i32[], w: i32, dst: i32, src: i32): i32[] {
@@ -2490,27 +2491,230 @@ function x86_gas_top_comma(s: string): i32 {
     return 0 - 1;
 }
 
-// x86_gas_extend_op maps an AT&T extend spelling to its opcode and
-// DESTINATION SIZE, packed as op*256 + size/8; -1 = not one of them.
-//
-// B6/BE read a byte and B7/BF a word — that is the SOURCE. The suffix's
-// second letter names the destination, and all three destination sizes are
-// encodable: 16 takes a 0x66 operand-size prefix, 64 takes REX.W, 32 takes
-// neither. Sizing this by destination rather than by a REX.W flag is what
-// lets movzbw and movsbw exist at all.
-function x86_gas_extend_op(mnem: string): i32 {
-    if (mnem == "movzbw") { return 182 * 256 + 2; }
-    if (mnem == "movzbl") { return 182 * 256 + 4; }
-    if (mnem == "movzbq") { return 182 * 256 + 8; }
-    if (mnem == "movzwl") { return 183 * 256 + 4; }
-    if (mnem == "movzwq") { return 183 * 256 + 8; }
-    if (mnem == "movsbw") { return 190 * 256 + 2; }
-    if (mnem == "movsbl") { return 190 * 256 + 4; }
-    if (mnem == "movsbq") { return 190 * 256 + 8; }
-    if (mnem == "movswl") { return 191 * 256 + 4; }
-    if (mnem == "movswq") { return 191 * 256 + 8; }
+// BEGIN GENERATED NAMED VOCABULARY (cmd/x86tblgen) — do not edit by hand.
+// x86_gas_is_rep: the repeat prefixes; Prefix is the byte — rep/repe/repz are one F3, repne/repnz the F2, since the condition only means anything on cmps/scas.
+function x86_gas_is_rep(mnem: string): boolean { return x86_gas_rep_pfx(mnem) >= 0; }
+function x86_gas_rep_pfx(mnem: string): i32 {
+    if (mnem == "rep") { return 243; }
+    if (mnem == "repe") { return 243; }
+    if (mnem == "repz") { return 243; }
+    if (mnem == "repne") { return 242; }
+    if (mnem == "repnz") { return 242; }
     return 0 - 1;
 }
+// x86_gas_is_lock: the lock prefix, validated against Lockable.
+function x86_gas_is_lock(mnem: string): boolean {
+    return mnem == "lock";
+}
+// x86_gas_is_branch: call and jmp: a label, or `*` for an indirect target.
+function x86_gas_is_branch(mnem: string): boolean {
+    return mnem == "call" || mnem == "jmp";
+}
+// x86_gas_is_pushpop: push and pop: a register, memory, or (push) an immediate; Op is the register-form opcode base.
+function x86_gas_is_pushpop(mnem: string): boolean {
+    return mnem == "pushq" || mnem == "popq";
+}
+// x86_gas_is_lea: lea at every width AT&T spells; Ext is the destination size.
+function x86_gas_is_lea(mnem: string): boolean { return x86_gas_lea_size(mnem) >= 0; }
+function x86_gas_lea_size(mnem: string): i32 {
+    if (mnem == "leaq") { return 64; }
+    if (mnem == "leal") { return 32; }
+    if (mnem == "leaw") { return 16; }
+    return 0 - 1;
+}
+// x86_gas_is_mov: the general-register move at every width; Ext is the operand size. AT&T's movq is also the SSE movq, which x86_gas_movq tells apart by operand.
+function x86_gas_is_mov(mnem: string): boolean { return x86_gas_mov_size(mnem) >= 0; }
+function x86_gas_mov_size(mnem: string): i32 {
+    if (mnem == "movb") { return 8; }
+    if (mnem == "movw") { return 16; }
+    if (mnem == "movl") { return 32; }
+    if (mnem == "movq") { return 64; }
+    return 0 - 1;
+}
+// x86_gas_is_movabs: the 64-bit immediate move.
+function x86_gas_is_movabs(mnem: string): boolean {
+    return mnem == "movabsq" || mnem == "movabs";
+}
+// x86_gas_is_extend: the zero- and sign-extending loads. Op is B6/B7 (movzx) or BE/BF (movsx) — a byte or word SOURCE — and Ext the destination size AT&T names in the suffix's second letter; packed as op*256 + size/8.
+function x86_gas_is_extend(mnem: string): boolean { return x86_gas_extend_op(mnem) >= 0; }
+function x86_gas_extend_op(mnem: string): i32 {
+    if (mnem == "movzbw") { return 46594; }
+    if (mnem == "movzbl") { return 46596; }
+    if (mnem == "movzbq") { return 46600; }
+    if (mnem == "movzwl") { return 46852; }
+    if (mnem == "movzwq") { return 46856; }
+    if (mnem == "movsbw") { return 48642; }
+    if (mnem == "movsbl") { return 48644; }
+    if (mnem == "movsbq") { return 48648; }
+    if (mnem == "movswl") { return 48900; }
+    if (mnem == "movswq") { return 48904; }
+    return 0 - 1;
+}
+// x86_gas_is_movsxd: the sign-extending 32-to-64 load (REX.W 63 /r); gas takes both spellings in AT&T.
+function x86_gas_is_movsxd(mnem: string): boolean {
+    return mnem == "movslq" || mnem == "movsxd";
+}
+// x86_gas_is_test: test, at the suffix's width.
+function x86_gas_is_test(mnem: string): boolean {
+    return mnem == "test";
+}
+// x86_gas_is_imul: imul in its one-, two- and three-operand forms.
+function x86_gas_is_imul(mnem: string): boolean {
+    return mnem == "imul";
+}
+// x86_gas_is_bitscan: the bit scans and counts: [Prefix] [REX.W] 0F Op /r, Ext the REX.W bit; packed as pfx*65536 + op*256 + w.
+function x86_gas_is_bitscan(mnem: string): boolean { return x86_gas_bitscan_op(mnem) >= 0; }
+function x86_gas_bitscan_op(mnem: string): i32 {
+    if (mnem == "bsfl") { return 48128; }
+    if (mnem == "bsfq") { return 48129; }
+    if (mnem == "bsrl") { return 48384; }
+    if (mnem == "bsrq") { return 48385; }
+    if (mnem == "lzcntl") { return 15973632; }
+    if (mnem == "lzcntq") { return 15973633; }
+    if (mnem == "tzcntl") { return 15973376; }
+    if (mnem == "tzcntq") { return 15973377; }
+    if (mnem == "popcntl") { return 15972352; }
+    if (mnem == "popcntq") { return 15972353; }
+    return 0 - 1;
+}
+// x86_gas_is_shld: the double-precision shifts: 0F Op ib by immediate, 0F Op+1 by cl.
+function x86_gas_is_shld(mnem: string): boolean { return x86_gas_shld_op(mnem) >= 0; }
+function x86_gas_shld_op(mnem: string): i32 {
+    if (mnem == "shld") { return 164; }
+    if (mnem == "shrd") { return 172; }
+    return 0 - 1;
+}
+// x86_gas_is_bswap: byte swap, 32- and 64-bit registers only.
+function x86_gas_is_bswap(mnem: string): boolean {
+    return mnem == "bswap";
+}
+// x86_gas_is_rmw: the read-modify-write exchanges: 0F Op /r for the byte width, 0F Op+1 otherwise.
+function x86_gas_is_rmw(mnem: string): boolean { return x86_gas_rmw_op(mnem) >= 0; }
+function x86_gas_rmw_op(mnem: string): i32 {
+    if (mnem == "xadd") { return 192; }
+    if (mnem == "cmpxchg") { return 176; }
+    return 0 - 1;
+}
+// x86_gas_is_xchg: exchange, register or memory on either side.
+function x86_gas_is_xchg(mnem: string): boolean {
+    return mnem == "xchg";
+}
+// x86_gas_is_crc32: crc32 with the source width in the suffix.
+function x86_gas_is_crc32(mnem: string): boolean {
+    return mnem == "crc32";
+}
+// x86_gas_is_movqd: the GPR/xmm moves; direction from which operand is the xmm. AT&T's movq spelling is the mov family's, resolved there.
+function x86_gas_is_movqd(mnem: string): boolean {
+    return mnem == "movd";
+}
+// x86_gas_is_mov10: the 0F 10/11 move family; Prefix is the mandatory prefix, 0 for movups.
+function x86_gas_is_mov10(mnem: string): boolean { return x86_gas_mov10_pfx(mnem) >= 0; }
+function x86_gas_mov10_pfx(mnem: string): i32 {
+    if (mnem == "movsd") { return 242; }
+    if (mnem == "movss") { return 243; }
+    if (mnem == "movups") { return 0; }
+    if (mnem == "movupd") { return 102; }
+    return 0 - 1;
+}
+// x86_gas_is_movdq: the 16-byte moves: 0F 6F load, 0F 7F store, direction from which side is memory.
+function x86_gas_is_movdq(mnem: string): boolean { return x86_gas_movdq_pfx(mnem) >= 0; }
+function x86_gas_movdq_pfx(mnem: string): i32 {
+    if (mnem == "movdqu") { return 243; }
+    if (mnem == "movdqa") { return 102; }
+    return 0 - 1;
+}
+// x86_gas_is_cvt2s: integer to scalar float: Prefix 0F 2A, Ext the REX.W bit the AT&T suffix names; packed as pfx*256 + w.
+function x86_gas_is_cvt2s(mnem: string): boolean { return x86_gas_cvt2s_op(mnem) >= 0; }
+function x86_gas_cvt2s_op(mnem: string): i32 {
+    if (mnem == "cvtsi2sd") { return 61953; }
+    if (mnem == "cvtsi2sdq") { return 61953; }
+    if (mnem == "cvtsi2sdl") { return 61952; }
+    if (mnem == "cvtsi2ss") { return 62209; }
+    if (mnem == "cvtsi2ssq") { return 62209; }
+    if (mnem == "cvtsi2ssl") { return 62208; }
+    return 0 - 1;
+}
+// x86_gas_is_cvt2si: scalar float to integer: Prefix 0F Op, 2C truncating and 2D rounding; the AT&T l/q suffix names the width the destination register carries; packed as pfx*256 + op.
+function x86_gas_is_cvt2si(mnem: string): boolean { return x86_gas_cvt2si(mnem) >= 0; }
+function x86_gas_cvt2si(mnem: string): i32 {
+    if (mnem == "cvttsd2si") { return 61996; }
+    if (mnem == "cvttsd2sil") { return 61996; }
+    if (mnem == "cvttsd2siq") { return 61996; }
+    if (mnem == "cvtsd2si") { return 61997; }
+    if (mnem == "cvtsd2sil") { return 61997; }
+    if (mnem == "cvtsd2siq") { return 61997; }
+    if (mnem == "cvttss2si") { return 62252; }
+    if (mnem == "cvttss2sil") { return 62252; }
+    if (mnem == "cvttss2siq") { return 62252; }
+    if (mnem == "cvtss2si") { return 62253; }
+    if (mnem == "cvtss2sil") { return 62253; }
+    if (mnem == "cvtss2siq") { return 62253; }
+    return 0 - 1;
+}
+// x86_gas_is_imm3a: the 66 0F 3A Op /r ib three-operand forms with an xmm destination.
+function x86_gas_is_imm3a(mnem: string): boolean { return x86_gas_imm3a_op(mnem) >= 0; }
+function x86_gas_imm3a_op(mnem: string): i32 {
+    if (mnem == "roundss") { return 10; }
+    if (mnem == "roundsd") { return 11; }
+    if (mnem == "pcmpestri") { return 97; }
+    if (mnem == "pcmpistri") { return 99; }
+    return 0 - 1;
+}
+// x86_gas_is_shuf: the [Prefix] 0F Op /r ib shuffles; packed as pfx*256 + op.
+function x86_gas_is_shuf(mnem: string): boolean { return x86_gas_shuf_op(mnem) >= 0; }
+function x86_gas_shuf_op(mnem: string): i32 {
+    if (mnem == "pshufd") { return 26224; }
+    if (mnem == "shufps") { return 198; }
+    if (mnem == "shufpd") { return 26310; }
+    return 0 - 1;
+}
+// x86_gas_is_pextr: lane extract into a GPR or memory.
+function x86_gas_is_pextr(mnem: string): boolean {
+    return mnem == "pextrb" || mnem == "pextrw" || mnem == "pextrd" || mnem == "pextrq";
+}
+// x86_gas_is_pinsr: lane insert from a GPR or memory.
+function x86_gas_is_pinsr(mnem: string): boolean {
+    return mnem == "pinsrb" || mnem == "pinsrw" || mnem == "pinsrd" || mnem == "pinsrq";
+}
+// x86_gas_is_movmsk: the sign-bit gathers into a GPR: [Prefix] 0F Op /r; packed as pfx*256 + op.
+function x86_gas_is_movmsk(mnem: string): boolean { return x86_gas_movmsk_op(mnem) >= 0; }
+function x86_gas_movmsk_op(mnem: string): i32 {
+    if (mnem == "pmovmskb") { return 26327; }
+    if (mnem == "movmskps") { return 80; }
+    if (mnem == "movmskpd") { return 26192; }
+    return 0 - 1;
+}
+// x86_gas_is_vshift: the vector shifts BY IMMEDIATE, the 66 0F Op /Ext ib groups; the by-register spellings are the SSE table's. pslldq/psrldq exist only here; packed as ext*256 + op.
+function x86_gas_is_vshift(mnem: string): boolean { return x86_gas_vshift_op(mnem) >= 0; }
+function x86_gas_vshift_op(mnem: string): i32 {
+    if (mnem == "psrlw") { return 625; }
+    if (mnem == "psraw") { return 1137; }
+    if (mnem == "psllw") { return 1649; }
+    if (mnem == "psrld") { return 626; }
+    if (mnem == "psrad") { return 1138; }
+    if (mnem == "pslld") { return 1650; }
+    if (mnem == "psrlq") { return 627; }
+    if (mnem == "psllq") { return 1651; }
+    if (mnem == "psrldq") { return 883; }
+    if (mnem == "pslldq") { return 1907; }
+    return 0 - 1;
+}
+// x86_gas_is_sse38: the 66 0F 38 Op /r forms with an xmm destination (SSE4.1, inside the Haswell baseline).
+function x86_gas_is_sse38(mnem: string): boolean { return x86_gas_sse38_op(mnem) >= 0; }
+function x86_gas_sse38_op(mnem: string): i32 {
+    if (mnem == "ptest") { return 23; }
+    if (mnem == "pmulld") { return 64; }
+    if (mnem == "pminsb") { return 56; }
+    if (mnem == "pminsd") { return 57; }
+    if (mnem == "pminuw") { return 58; }
+    if (mnem == "pminud") { return 59; }
+    if (mnem == "pmaxsb") { return 60; }
+    if (mnem == "pmaxsd") { return 61; }
+    if (mnem == "pmaxuw") { return 62; }
+    if (mnem == "pmaxud") { return 63; }
+    return 0 - 1;
+}
+// END GENERATED NAMED VOCABULARY
 
 // x86_gas_movext assembles one extend, register or memory source. The source
 // register is parsed at the width the opcode reads — a byte for B6/BE, a word
@@ -3378,55 +3582,9 @@ function x86_gas_sse_op(mnem: string): i32 {
     return x86_gas_sse_int_op(mnem);
 }
 
-// x86_gas_sse38_op: the 66 0F 38 <op> /r forms (SSE4.1 packed min/max,
-// pmulld, ptest — inside the Haswell baseline); -1 when absent.
-function x86_gas_sse38_op(mnem: string): i32 {
-    if (mnem == "ptest") { return 23; }
-    if (mnem == "pmulld") { return 64; }
-    if (mnem == "pminsb") { return 56; }
-    if (mnem == "pminsd") { return 57; }
-    if (mnem == "pminuw") { return 58; }
-    if (mnem == "pminud") { return 59; }
-    if (mnem == "pmaxsb") { return 60; }
-    if (mnem == "pmaxsd") { return 61; }
-    if (mnem == "pmaxuw") { return 62; }
-    if (mnem == "pmaxud") { return 63; }
-    return 0 - 1;
-}
 
-// x86_gas_vshift_op: the shift-by-immediate 0F 71/72/73 groups, packed as
-// ext*256+op. pslldq/psrldq exist ONLY here — a register count on those
-// has no encoding and lands on `unknown`.
-function x86_gas_vshift_op(mnem: string): i32 {
-    if (mnem == "psrlw") { return 2 * 256 + 113; }
-    if (mnem == "psraw") { return 4 * 256 + 113; }
-    if (mnem == "psllw") { return 6 * 256 + 113; }
-    if (mnem == "psrld") { return 2 * 256 + 114; }
-    if (mnem == "psrad") { return 4 * 256 + 114; }
-    if (mnem == "pslld") { return 6 * 256 + 114; }
-    if (mnem == "psrlq") { return 2 * 256 + 115; }
-    if (mnem == "psllq") { return 6 * 256 + 115; }
-    if (mnem == "psrldq") { return 3 * 256 + 115; }
-    if (mnem == "pslldq") { return 7 * 256 + 115; }
-    return 0 - 1;
-}
 
-// x86_gas_imm3a_op: the 66 0F 3A <op> /r ib three-operand forms.
-function x86_gas_imm3a_op(mnem: string): i32 {
-    if (mnem == "roundss") { return 10; }
-    if (mnem == "roundsd") { return 11; }
-    if (mnem == "pcmpestri") { return 97; }
-    if (mnem == "pcmpistri") { return 99; }
-    return 0 - 1;
-}
 
-// x86_gas_shuf_op: the [pfx] 0F <op> /r ib shuffles, packed pfx*256+op.
-function x86_gas_shuf_op(mnem: string): i32 {
-    if (mnem == "pshufd") { return 102 * 256 + 112; }
-    if (mnem == "shufps") { return 198; }
-    if (mnem == "shufpd") { return 102 * 256 + 198; }
-    return 0 - 1;
-}
 
 // x86_gas_sse_mem: `[pfx] [REX] 0F <op>` + memory rm (rip included) — the
 // memory side of the SSE table ops and the movdq/mov10 directions.
@@ -3458,8 +3616,7 @@ function x86_gas_sse_table(own a: X86Asm, mnem: string, pfx: i32, op: i32, src: 
 // missing before this port — the operands written backwards through 6F
 // would have READ from the store address instead.
 function x86_gas_movdq(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
-    var pfx: i32 = 243;
-    if (mnem == "movdqa") { pfx = 102; }
+    var pfx: i32 = x86_gas_movdq_pfx(mnem);
     if (x86_str_contains(dst, "(")) {
         var m: GasMem = x86_gas_parse_mem(dst);
         var xs: i32 = x86_gas_xmm(src);
@@ -3469,17 +3626,6 @@ function x86_gas_movdq(own a: X86Asm, mnem: string, src: string, dst: string): X
     return x86_gas_sse_table(a, mnem, pfx, 111, src, dst);
 }
 
-// x86_gas_cvt2si maps a float->int convert to its prefix and opcode packed as
-// pfx*256 + op, or -1. The truncating pair is 2C and the rounding pair 2D;
-// F2 reads a double, F3 a single. The AT&T l/q suffixes name the destination
-// width, which the caller reads off the register instead.
-function x86_gas_cvt2si(mnem: string): i32 {
-    if (mnem == "cvttsd2si" || mnem == "cvttsd2sil" || mnem == "cvttsd2siq") { return 242 * 256 + 44; }
-    if (mnem == "cvtsd2si" || mnem == "cvtsd2sil" || mnem == "cvtsd2siq") { return 242 * 256 + 45; }
-    if (mnem == "cvttss2si" || mnem == "cvttss2sil" || mnem == "cvttss2siq") { return 243 * 256 + 44; }
-    if (mnem == "cvtss2si" || mnem == "cvtss2sil" || mnem == "cvtss2siq") { return 243 * 256 + 45; }
-    return 0 - 1;
-}
 
 // x86_gas_sse_mov10: the 0F 10/0F 11 move family — movsd (F2), movups (no
 // prefix), movupd (66): load into an xmm (10), store from one (11), or a
@@ -3647,12 +3793,10 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // condition is only meaningful on cmps/scas, where the prefix repeats
     // while ZF is set. repne/repnz repeat while it is clear, which is a
     // different byte and not an alias.
-    if (mnem == "rep" || mnem == "repe" || mnem == "repz"
-        || mnem == "repne" || mnem == "repnz") {
+    var rpfx: i32 = x86_gas_rep_pfx(mnem);
+    if (rpfx >= 0) {
         if (!x86_gas_rep_ok(rest)) { return x86_gas_bad(a, mnem + " " + rest); }
         var sop: i32 = x86_gas_fixed_op(rest);
-        var rpfx: i32 = 243; // 0xF3
-        if (mnem == "repne" || mnem == "repnz") { rpfx = 242; } // 0xF2
         // An operand-size prefix goes BEFORE the repeat prefix: gas assembles
         // `rep movsw` as 66 F3 A5, not F3 66 A5. A REX stays after it
         // (`rep movsq` is F3 48 A5), so only the 66 moves.
@@ -3666,7 +3810,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     }
     // lock prefix: F0, validated against the lockable set — a lock on
     // anything else is #UD at runtime, so it is refused at assembly.
-    if (mnem == "lock") {
+    if (x86_gas_is_lock(mnem)) {
         var lsp: i32 = x86_str_indexof(rest, " ");
         var lm: string = rest;
         var lr: string = "";
@@ -3693,7 +3837,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // branch / call: one operand = a label
     // A `*` operand means INDIRECT — through a register or stack slot — not
     // a branch to a label of that name.
-    if (mnem == "call" || mnem == "jmp") {
+    if (x86_gas_is_branch(mnem)) {
         if (rest.len() > 0 && rest[0] == b'*') {
             var ind: string = x86_gas_trim(slice_unchecked(rest, 1, rest.len()));
             var ext: i32 = 2; // call FF /2
@@ -3725,7 +3869,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         if (jcc >= 0) { return x86_jcc_label(a, jcc, rest); }
     }
     // one-operand: push/pop take a register or a memory operand
-    if (mnem == "pushq") {
+    if (x86_gas_is_pushpop(mnem) && mnem == "pushq") {
         if (rest.len() > 0 && rest[0] == b'$') { // $imm — 6A ib when it fits
             var pv: i32 = x86_gas_atoi(rest);
             if (x86_imm_fits8(pv)) {
@@ -3746,7 +3890,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         }
         return a;
     }
-    if (mnem == "popq") {
+    if (x86_gas_is_pushpop(mnem)) {
         if (x86_str_contains(rest, "(")) {
             var qm: GasMem = x86_gas_parse_mem(rest);
             if (qm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + rest) }; }
@@ -3763,20 +3907,20 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     var sfx: i32 = x86_gas_suffix_size(mnem);
     if (sfx > 0) {
         var bse: string = x86_gas_strip_suffix(mnem);
-        if (bse == "imul") { return x86_gas_imul_family(a, mnem, sfx, rest); }
+        if (x86_gas_is_imul(bse)) { return x86_gas_imul_family(a, mnem, sfx, rest); }
         var ue: i32 = x86_gas_unary_ext(bse);
         if (ue >= 0) { return x86_gas_unary_family(a, mnem, 246, ue, sfx, rest); }
         var ide: i32 = x86_gas_incdec_ext(bse);
         if (ide >= 0) { return x86_gas_unary_family(a, mnem, 254, ide, sfx, rest); }
-        if (bse == "bswap") { return x86_gas_bswap(a, mnem, sfx, rest); }
-        if (bse == "shld") { return x86_gas_shld_family(a, mnem, 164, sfx, rest); }
-        if (bse == "shrd") { return x86_gas_shld_family(a, mnem, 172, sfx, rest); }
+        if (x86_gas_is_bswap(bse)) { return x86_gas_bswap(a, mnem, sfx, rest); }
+        var sho: i32 = x86_gas_shld_op(bse);
+        if (sho >= 0) { return x86_gas_shld_family(a, mnem, sho, sfx, rest); }
     }
     // three-operand SSE ($imm first): rounds/pcmp*stri + the shuffles, and
     // the lane extract/insert group.
     if (x86_gas_imm3a_op(mnem) >= 0 || x86_gas_shuf_op(mnem) >= 0) { return x86_gas_sse_imm3(a, mnem, rest); }
-    if (mnem == "pextrb" || mnem == "pextrw" || mnem == "pextrd" || mnem == "pextrq") { return x86_gas_pextr(a, mnem, rest); }
-    if (mnem == "pinsrb" || mnem == "pinsrw" || mnem == "pinsrd" || mnem == "pinsrq") { return x86_gas_pinsr(a, mnem, rest); }
+    if (x86_gas_is_pextr(mnem)) { return x86_gas_pextr(a, mnem, rest); }
+    if (x86_gas_is_pinsr(mnem)) { return x86_gas_pinsr(a, mnem, rest); }
     // two-operand (split on the top-level comma, skipping (%b,%i,s) commas)
     var ci: i32 = x86_gas_top_comma(rest);
     if (ci < 0) {
@@ -3790,10 +3934,8 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     // lea at every width AT&T spells. Intel writes one `lea` and reads the
     // width off the destination register; AT&T names it in the suffix, so
     // each spelling needs an arm or the instruction is dropped.
-    if (mnem == "leaq" || mnem == "leal" || mnem == "leaw") {
-        var lsz: i32 = 64;
-        if (mnem == "leal") { lsz = 32; }
-        if (mnem == "leaw") { lsz = 16; }
+    var lsz: i32 = x86_gas_lea_size(mnem);
+    if (lsz >= 0) {
         var ld: i32 = x86_gas_reg_w(dst, lsz);
         if (ld < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
         var m: GasMem = x86_gas_parse_mem(src);
@@ -3819,31 +3961,35 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         a = X86Asm { ...a, code: x86_lea_load(a.code, lsz, ld, m.base, m.has_index, m.index, m.scale, m.disp) };
         return a;
     }
-    if (mnem == "movq") { return x86_gas_movq(a, src, dst); }
-    if (mnem == "movabsq" || mnem == "movabs") { a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)) }; return a; }
+    // The general-register move at the suffix's width. AT&T's movq is also
+    // the SSE movq, so that width goes through x86_gas_movq, which reads
+    // the operands to tell the two apart.
+    var msz: i32 = x86_gas_mov_size(mnem);
+    if (msz == 64) { return x86_gas_movq(a, src, dst); }
+    if (msz >= 0) { return x86_gas_mov_rm(a, mnem, msz, src, dst); }
+    if (x86_gas_is_movabs(mnem)) { a = X86Asm { ...a, code: x86_movabsq(a.code, x86_gas_reg(dst), x86_gas_atoi64(src)) }; return a; }
     // Packed 16-byte moves (both directions) and the 0F 10/11 move family.
-    if (mnem == "movdqu" || mnem == "movdqa") { return x86_gas_movdq(a, mnem, src, dst); }
-    if (mnem == "movsd") { return x86_gas_sse_mov10(a, mnem, 242, src, dst); }
-    if (mnem == "movss") { return x86_gas_sse_mov10(a, mnem, 243, src, dst); }
-    if (mnem == "movups") { return x86_gas_sse_mov10(a, mnem, 0, src, dst); }
-    if (mnem == "movupd") { return x86_gas_sse_mov10(a, mnem, 102, src, dst); }
+    if (x86_gas_movdq_pfx(mnem) >= 0) { return x86_gas_movdq(a, mnem, src, dst); }
+    var m10: i32 = x86_gas_mov10_pfx(mnem);
+    if (m10 >= 0) { return x86_gas_sse_mov10(a, mnem, m10, src, dst); }
     // Sign-bit gathers: the destination is a GPR, not an xmm.
-    if (mnem == "pmovmskb") { return x86_gas_movmsk(a, mnem, 102, 215, src, dst); }
-    if (mnem == "movmskps") { return x86_gas_movmsk(a, mnem, 0, 80, src, dst); }
-    if (mnem == "movmskpd") { return x86_gas_movmsk(a, mnem, 102, 80, src, dst); }
-    if (mnem == "bsfl") { a = X86Asm { ...a, code: x86_bsf_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
-    if (mnem == "bsrl") { a = X86Asm { ...a, code: x86_bsr_r32(a.code, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
-    // The `l` forms are not routed to the `q` ones the way testl is: the
-    // count differs by width (lzcntl counts from bit 31, lzcntq from 63).
-    if (mnem == "lzcntl") { a = X86Asm { ...a, code: x86_lzcnt_rr(a.code, 0, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
-    if (mnem == "lzcntq") { a = X86Asm { ...a, code: x86_lzcnt_rr(a.code, 1, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (mnem == "tzcntl") { a = X86Asm { ...a, code: x86_tzcnt_rr(a.code, 0, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
-    if (mnem == "tzcntq") { a = X86Asm { ...a, code: x86_tzcnt_rr(a.code, 1, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
-    if (mnem == "popcntl") { a = X86Asm { ...a, code: x86_popcnt_rr(a.code, 0, x86_gas_reg32(dst), x86_gas_reg32(src)) }; return a; }
-    if (mnem == "popcntq") { a = X86Asm { ...a, code: x86_popcnt_rr(a.code, 1, x86_gas_reg(dst), x86_gas_reg(src)) }; return a; }
+    var mmk: i32 = x86_gas_movmsk_op(mnem);
+    if (mmk >= 0) { return x86_gas_movmsk(a, mnem, mmk / 256, mmk % 256, src, dst); }
+    // The bit scans and counts. The `l` forms are not routed to the `q` ones
+    // the way testl is: the count differs by width (lzcntl counts from bit
+    // 31, lzcntq from 63), so the suffix picks REX.W.
+    var bsc: i32 = x86_gas_bitscan_op(mnem);
+    if (bsc >= 0) {
+        var bsw: i32 = bsc % 256;
+        var bsd: i32 = x86_gas_reg32(dst);
+        var bss: i32 = x86_gas_reg32(src);
+        if (bsw == 1) { bsd = x86_gas_reg64(dst); bss = x86_gas_reg64(src); }
+        if (bsd < 0 || bss < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
+        return X86Asm { ...a, code: x86_bitscan_rr(a.code, bsc / 65536, (bsc / 256) % 256, bsw, bsd, bss) };
+    }
     // movd moves f32 bits between a GPR and an xmm; which direction depends on
     // which operand is the xmm.
-    if (mnem == "movd") {
+    if (x86_gas_is_movqd(mnem)) {
         if (x86_gas_is_xmm(dst)) {
             a = X86Asm { ...a, code: x86_movd_gpr_to_xmm(a.code, x86_gas_xmm(dst), x86_gas_reg32(src)) };
         } else {
@@ -3851,8 +3997,6 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         }
         return a;
     }
-    if (mnem == "movb") { return x86_gas_mov_rm(a, "movb", 8, src, dst); }
-    if (mnem == "movw") { return x86_gas_mov_rm(a, "movw", 16, src, dst); }
     // The zero- and sign-extending loads. AT&T spells BOTH widths in the
     // mnemonic — movzbl is byte->32, movswq word->64 — where Intel writes one
     // movzx/movsx and reads the widths off the operands. So every spelling
@@ -3879,25 +4023,14 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         a = X86Asm { ...a, code: x86_cvt_to_gpr(a.code, f2i / 256, f2i % 256, cvw, cvd, cvx) };
         return a;
     }
-    // cvtsi2ss is cvtsi2sd's single-precision twin: same 2A opcode, F3 rather
-    // than F2. Register source only — the memory form goes through the
-    // cvtsi2sd branch's shape, which this does not share.
-    if (mnem == "cvtsi2ss" || mnem == "cvtsi2ssl" || mnem == "cvtsi2ssq") {
-        var ssw: i32 = 1;
-        if (mnem == "cvtsi2ssl") { ssw = 0; }
-        var ssd: i32 = x86_gas_xmm(dst);
-        var sss: i32 = x86_gas_reg64(src);
-        if (ssw == 0) { sss = x86_gas_reg32(src); }
-        if (ssd < 0 || sss < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
-        a = X86Asm { ...a, code: x86_cvt_to_xmm(a.code, 243, ssw, ssd, sss) };
-        return a;
-    }
-    // cvtsi2sd's unsuffixed spelling is the 64-bit form the emitter writes;
-    // the `l` suffix selects the 32-bit source (no REX.W). A memory source
-    // used to fall into the register parser and encode reg 7 silently.
-    if (mnem == "cvtsi2sd" || mnem == "cvtsi2sdq" || mnem == "cvtsi2sdl") {
-        var cw: i32 = 1;
-        if (mnem == "cvtsi2sdl") { cw = 0; }
+    // The integer to scalar-float converts: [F2|F3] [REX.W] 0F 2A, the
+    // unsuffixed spelling being the 64-bit form the emitter writes and the
+    // `l` suffix the 32-bit source. A memory source used to fall into the
+    // register parser and encode reg 7 silently.
+    var c2s: i32 = x86_gas_cvt2s_op(mnem);
+    if (c2s >= 0) {
+        var cpfx: i32 = c2s / 256;
+        var cw: i32 = c2s % 256;
         var cxd: i32 = x86_gas_xmm(dst);
         if (cxd < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
         if (x86_str_contains(src, "(")) {
@@ -3905,7 +4038,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
             if (!x86_gas_mem_ok(cm2)) { return x86_gas_bad(a, mnem + " " + src); }
             var csz: i32 = 32;
             if (cw == 1) { csz = 64; }
-            a = X86Asm { ...a, code: a.code.append(242) };
+            a = X86Asm { ...a, code: a.code.append(cpfx) };
             a = X86Asm { ...a, code: x86_gas_mem_rex(a.code, csz, cxd, cm2, false) };
             a = X86Asm { ...a, code: a.code.append(15) };
             a = X86Asm { ...a, code: a.code.append(42) };
@@ -3914,25 +4047,23 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
         var crs: i32 = x86_gas_reg64(src);
         if (cw == 0) { crs = x86_gas_reg32(src); }
         if (crs < 0) { return x86_gas_bad(a, mnem + " " + src + ", " + dst); }
-        a = X86Asm { ...a, code: x86_cvtsi2sd(a.code, cw, cxd, crs) };
-        return a;
+        return X86Asm { ...a, code: x86_cvt_to_xmm(a.code, cpfx, cw, cxd, crs) };
     }
-    if (mnem == "movl") { return x86_gas_mov_rm(a, "movl", 32, src, dst); }
     // Two-operand suffix families: the ALU rows, test, shifts/rotates, the
     // bit-test group, the RMW atomics, xchg, and crc32.
     if (sfx > 0) {
         var bse2: string = x86_gas_strip_suffix(mnem);
         var ae: i32 = x86_gas_alu_ext(bse2);
         if (ae >= 0) { return x86_gas_alu_family(a, mnem, ae, sfx, src, dst); }
-        if (bse2 == "test") { return x86_gas_test_family(a, sfx, src, dst); }
+        if (x86_gas_is_test(bse2)) { return x86_gas_test_family(a, sfx, src, dst); }
         var she: i32 = x86_gas_shift_ext(bse2);
         if (she >= 0) { return x86_gas_shift_family(a, mnem, she, sfx, src, dst); }
         var bti: i32 = x86_gas_bt_idx(bse2);
         if (bti >= 0) { return x86_gas_bt_family(a, mnem, bti, sfx, src, dst); }
-        if (bse2 == "xadd") { return x86_gas_rmw_family(a, mnem, 192, sfx, src, dst); }
-        if (bse2 == "cmpxchg") { return x86_gas_rmw_family(a, mnem, 176, sfx, src, dst); }
-        if (bse2 == "xchg") { return x86_gas_xchg_family(a, mnem, sfx, src, dst); }
-        if (bse2 == "crc32") { return x86_gas_crc32_family(a, sfx, src, dst); }
+        var rmw: i32 = x86_gas_rmw_op(bse2);
+        if (rmw >= 0) { return x86_gas_rmw_family(a, mnem, rmw, sfx, src, dst); }
+        if (x86_gas_is_xchg(bse2)) { return x86_gas_xchg_family(a, mnem, sfx, src, dst); }
+        if (x86_gas_is_crc32(bse2)) { return x86_gas_crc32_family(a, sfx, src, dst); }
     }
     // cmovcc: the full condition table, width from suffix or register.
     if (x86_str_starts_with(mnem, "cmov")) { return x86_gas_cmov_family(a, mnem, src, dst); }
@@ -3946,7 +4077,7 @@ function x86_gas_emit(own a: X86Asm, mnem: string, rest: string): X86Asm {
     if (s38 >= 0) { return x86_gas_sse38(a, mnem, s38, src, dst); }
     // movsxd is the AT&T spelling GNU as also accepts for movslq — same
     // sign-extending 32-to-64 load (REX.W 63 /r), so it shares the handler.
-    if (mnem == "movslq" || mnem == "movsxd") {
+    if (x86_gas_is_movsxd(mnem)) {
         if (x86_str_contains(src, "(")) {
             var sm: GasMem = x86_gas_parse_mem(src);
             if (sm.no_base) { return X86Asm { ...a, unknown: a.unknown.append("no-base SIB operand not encoded here: " + src) }; }

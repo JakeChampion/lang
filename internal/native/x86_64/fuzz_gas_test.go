@@ -228,9 +228,24 @@ var ccNames = []string{"o", "no", "b", "c", "nae", "ae", "nb", "nc", "e", "z",
 
 var aluMnems = x86tbl.ALU.Spellings()
 var shiftMnems = x86tbl.Shift.Spellings()
-var unaryMnems = []string{"neg", "not", "mul", "imul", "div", "idiv"}
-var btMnems = []string{"bt", "bts", "btr", "btc"}
-var bitcntMnems = []string{"bsf", "bsr", "lzcnt", "tzcnt", "popcnt"}
+var unaryMnems = x86tbl.Unary.Spellings()
+var btMnems = x86tbl.BitTest.Spellings()
+var bitcntMnems = namedIntel("bitscan")
+
+// namedIntel is a by-name family's Intel mnemonics from the shared table,
+// so the inventory widens with the vocabulary instead of lagging it.
+func namedIntel(family string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, o := range x86tbl.NamedRows(family) {
+		if !seen[o.Intel] {
+			seen[o.Intel] = true
+			out = append(out, o.Intel)
+		}
+	}
+	return out
+}
+
 var lockAluMnems = []string{"add", "or", "adc", "sbb", "and", "sub", "xor"}
 var stringUnits = []string{
 	"cld", "std", "movsb", "movsw", "movsd", "movsq", "stosb", "stosw", "stosd",
@@ -264,10 +279,8 @@ var sseTableMnems = []string{
 	"andnps", "orps", "unpcklpd", "unpckhpd", "cvtdq2ps", "cvtps2dq",
 	"cvttps2dq", "cvtdq2pd", "cvtpd2dq", "cvttpd2dq",
 }
-var sse38Mnems = []string{"ptest", "pmulld", "pminsb", "pminsd", "pminuw",
-	"pminud", "pmaxsb", "pmaxsd", "pmaxuw", "pmaxud"}
-var vecShiftMnems = []string{"psllw", "psraw", "psrlw", "pslld", "psrad",
-	"psrld", "psllq", "psrlq", "pslldq", "psrldq"}
+var sse38Mnems = namedIntel("sse38")
+var vecShiftMnems = namedIntel("vshift")
 
 // padPool is the branch-distance pool, in single-byte nops, straddling the
 // rel8 limit in both directions (backward crosses at ~126 because the branch
