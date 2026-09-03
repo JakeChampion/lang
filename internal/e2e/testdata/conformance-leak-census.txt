@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-03: 471 fixtures, 390 clean, 81 leaking, 8677
+# Measured 2026-09-03: 471 fixtures, 391 clean, 80 leaking, 8627
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
@@ -322,7 +322,7 @@ own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_inplace_sort                                     0
 own_param_array_move                                 0
-own_param_assign_target                              50
+own_param_assign_target                              0
 own_param_branch_transfer                            0
 own_self_reassign_move                               0
 own_struct_update_reuse                              0
