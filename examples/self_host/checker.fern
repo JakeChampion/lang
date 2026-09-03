@@ -8518,6 +8518,21 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, s: Scope, out: util.Diag[]
   if (sl.has_base) {
     out = util.append_diags(out, call_diags(sl.base, s));
   }
+  // E007: the same field initialised twice in one literal
+  // (`Point { x: 1, x: 2, y: 3 }`). The declaration sibling of this
+  // check already refuses a struct that DECLARES a name twice; a
+  // literal that SETS one twice reached lowering, which keeps the last
+  // write and silently drops the first. Reported at the literal, as
+  // native reports it at the literal's own position, and independent of
+  // whether the struct resolves — a repeat is a repeat.
+  var seen_fields: string[] = [];
+  for fname in sl.field_names {
+    if (util.index_of_str(seen_fields, fname) >= 0) {
+      out = out.append(dg_at("E007", "duplicate field \"" + fname + "\" in struct literal", sl.line, sl.col));
+    } else {
+      seen_fields = seen_fields.append(fname);
+    }
+  }
   // E043: a provided field's value must be assignable to the
   // declared field type. Only for a known struct; an unresolved
   // value type (`unknown`) is skipped, as is any field name not

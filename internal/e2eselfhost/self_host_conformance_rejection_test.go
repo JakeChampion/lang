@@ -21,7 +21,8 @@ import (
 // twice and the self-host zero times.
 //
 // What the blind spot was hiding: on 11 of the 69 the self-host checker reported
-// NO diagnostic at all (9 remain; diag_e010 and err_map_key_no_hash are closed).
+// NO diagnostic at all (8 remain; diag_e010, err_map_key_no_hash and
+// err_duplicate_field are closed).
 // `err_map_key_no_hash` showed what a missing rejection costs once it reaches a
 // backend — the wasm module it produced did not validate, calling a `$Has.hash`
 // nothing defines. It draws native's E045 now.
@@ -34,8 +35,8 @@ import (
 //
 // This gate pins the verdict per case, exactly in both directions:
 //
-//   - a case NOT in the gap file must be rejected — the 55 that work today
-//     (69 cases, less the 9 gaps and the 5 `parse:` rows) can never silently
+//   - a case NOT in the gap file must be rejected — the 56 that work today
+//     (69 cases, less the 8 gaps and the 5 `parse:` rows) can never silently
 //     regress to accepted;
 //   - a case IN the gap file must still be accepted — closing a gap fails here
 //     until its line is deleted, so the file cannot rot into a list of
