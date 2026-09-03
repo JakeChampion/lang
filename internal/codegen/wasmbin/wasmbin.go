@@ -200,10 +200,8 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		// lang-string round-trip, and emitStrNormalize for the
 		// outgoing body SSO normalize. Per-request memory is
 		// reclaimed by reference counting (RC), not a bump reset.
-		helpers.add("__fern_alloc")
-		helpers.add("__fern_str_len")
-		helpers.add("__fern_str_byte")
-		helpers.add("__bytes_to_lang_string")
+		// Its callees ride in on the unconditionalHelperCalls edge,
+		// not on a hand-kept list here.
 		helpers.add("__http_entry")
 	}
 	// P6: a string-result `@export` function's wrapper SSO-normalizes the Fern
@@ -269,6 +267,14 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// scanRuntimeHelpers closed its own set, but everything added since
+	// then — `_start`'s printer, __http_entry, the `@export` wrappers,
+	// the externs — arrived after that closure ran. Close again over
+	// what they pulled in, so a post-scan add gets its callees from the
+	// unconditionalHelperCalls edge instead of a hand-kept list beside
+	// it. Without this the missing callee is silent: an absent key
+	// reads 0 out of helperIdxs and the body emits `call 0`.
+	closeUnconditionalHelperCalls(&helpers)
 
 	// WASI Preview-3 async export: pull in the ("", "task-return")
 	// import (importSpecs["async_task_return"]) so the synthetic async
