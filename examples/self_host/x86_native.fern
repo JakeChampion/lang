@@ -4050,8 +4050,12 @@ pub function x86_gas_assemble(src: string): X86Asm {
     // Split ONCE, not per round. The source does not change between
     // relaxation rounds, so re-splitting it each time bought nothing and cost
     // one full copy of the line array per round — 3.4 million strings for the
-    // self-host compiler's own asm, which is what put the whole-compiler build
-    // into the arena wall (#8146).
+    // self-host compiler's own asm.
+    //
+    // A time saving, not a memory one, and NOT the fix for #8146: peak
+    // `__heap_bump_bytes()` moves by 16 bytes, because a round's allocation is
+    // reclaimed before the next one allocates. The arena wall that issue
+    // tracks is still open and its cause is still unidentified.
     var lines: string[] = x86_str_split(src, "\n");
     var longs: boolean[] = [];
     var pass: i32 = 0;
