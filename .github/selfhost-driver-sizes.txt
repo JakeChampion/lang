@@ -236,18 +236,18 @@
 #
 # Numbers pasted from driver-sizes' corrected-baseline block.
 
-fern.fern 15065196
-asm_load_run.fern 11892892
-asm_modload_run.fern 11208508
-asm_ir_run.fern 11072412
-asm_run.fern 10643436
-wasm_ir_run.fern 10738636
-wasm_run.fern 10725996
-wasm_runio_run.fern 10688204
-asm_pathprobe_run.fern 9997180
-ssa_lift_scan_run.fern 9786652
-asm_ir_elig_run.fern 9456156
-irlower_run.fern 9785532
-checker_modload_run.fern 2155404
-ssa_emit_run.fern 1924412
-ssa_run.fern 1742604
+fern.fern 14647852
+asm_load_run.fern 11488156
+asm_modload_run.fern 10807836
+asm_ir_run.fern 10671740
+asm_run.fern 10259484
+wasm_ir_run.fern 10355964
+wasm_run.fern 10343340
+wasm_runio_run.fern 10305532
+asm_pathprobe_run.fern 9612572
+ssa_lift_scan_run.fern 9406140
+asm_ir_elig_run.fern 9063292
+irlower_run.fern 9409148
+checker_modload_run.fern 2123116
+ssa_emit_run.fern 1867452
+ssa_run.fern 1689356
