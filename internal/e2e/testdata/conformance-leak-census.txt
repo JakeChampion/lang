@@ -14,19 +14,10 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-03: 471 fixtures, 391 clean, 80 leaking, 8427
+# Measured 2026-09-03: 471 fixtures, 391 clean, 80 leaking, 8626
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
-#
-# http_cookies moved 9 -> 10 when HttpRequest.body became a Stream: the
-# request it parses is already among the leaked (two boxes from
-# http_parse_request survive on both sides of the change), and a Stream
-# is one more box on that request than a string was. Paired traces put
-# the whole delta on a single new 48-byte allocation from
-# http_parse_request; every other survivor matches before and after,
-# site for site. The row comes back down when the request itself is
-# reclaimed, which is goal-2 work, not this fixture's.
 #
 # The counts are pinned; the alloc SITES are not. A site is a runtime
 # return address, so it moves with any codegen change and would churn
@@ -205,7 +196,7 @@ hex_literal                                          0
 hex_roundtrip                                        2
 higher_order                                         0
 http_content_type                                    5
-http_cookies                                         10
+http_cookies                                         9
 i32_methods                                          0
 i32_payload_rebind                                   0
 i32_to_i64_roundtrip                                 0

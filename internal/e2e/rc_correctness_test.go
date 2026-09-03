@@ -7473,6 +7473,76 @@ function main(): i32 {
     return (t - 136) + __rc_underflow_count();
 }
 `,
+		// #7914. `T { ...mk(), f: v }` releases its spread base only when
+		// structUpdateBaseIsOwned admits it, and its Call arm asked for
+		// whole-program escape freedom — which a registry builder never has,
+		// because one field holding a parameter refuses the whole function.
+		// `mkreg` is exactly that: `names: seed` puts a parameter in the
+		// result, so `returnsNoParamEscape` is false while the returned box is
+		// plainly fresh. Before the fresh-box arm the base box, its overridden
+		// `tag` string and its `names` retain all stranded — 256 B on x86-64
+		// and 304 on arm64 over three rounds, unbounded.
+		//
+		// `seed` stays live across every round and is read through the copy,
+		// so this pins the sharing hazard the release must not disturb: the
+		// non-overridden field is inc'd into the new box and the base's deep
+		// drop nets it back, rather than freeing the caller's array.
+		//
+		// @noinline on both is load-bearing — an inlined producer leaves no
+		// base temp and the shape reads clean either way.
+		name: "struct_update_base_fresh_call_result_released",
+		src: `
+struct Reg { names: string[], tag: string, n: i32 }
+
+@noinline
+function mkreg(seed: string[], pad: string): Reg {
+    return Reg { names: seed, tag: pad + "0123456789abcdef", n: seed.len() };
+}
+
+@noinline
+function widen(r: Reg): i32 { return r.names.len() + r.tag.len() + r.n; }
+
+function main(): i32 {
+    var pad: string = "xyzw";
+    var seed: string[] = [pad + "0123456789abcdef"];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var r: Reg = Reg { ...mkreg(seed, pad), tag: pad + "fedcba9876543210" };
+        t = t + widen(r);
+        i = i + 1;
+    }
+    return (t - 66) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The interlock for the case above: the base is the CALLER's live
+		// struct, handed straight back by a passthrough. `returnsOwnBox`
+		// credits the bare returned parameter because it is owned-by-default
+		// — the caller retained it on the way in — so the base is released
+		// here, and `base` must survive it. Every round reads through both
+		// the copy and `base`, and the post-loop read pins the string
+		// contents rather than just the shape.
+		name: "struct_update_base_passthrough_keeps_caller_box",
+		src: `
+struct Reg2 { names: string[], tag: string, n: i32 }
+
+@noinline
+function thread(r: Reg2): Reg2 { return r; }
+
+function main(): i32 {
+    var pad: string = "xyzw";
+    var base: Reg2 = Reg2 { names: [pad + "0123456789abcdef"], tag: pad + "0123456789abcdef", n: 1 };
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        var r: Reg2 = Reg2 { ...thread(base), tag: pad + "fedcba9876543210" };
+        t = t + r.names.len() + r.tag.len() + base.names.len() + base.tag.len();
+        i = i + 1;
+    }
+    var last: i32 = base.names[0].len() + base.tag.len();
+    return (t - 126) + (last - 40) + __rc_underflow_count();
+}`,
 	},
 }
 
