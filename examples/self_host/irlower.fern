@@ -3698,10 +3698,7 @@ function map_value_widekind(vt: string): i32 {
 // carrying literal would need the element walk, and a struct literal its
 // field drop, so both keep their leak here.
 function get_or_default_is_fresh_empty_arr(e: ast.Expr): boolean {
-    match (e) {
-        ast.ExprArray(al) => { return al.elements.len() == 0; },
-        _ => { return false; }
-    }
+    if let ast.ExprArray(al) = e { return al.elements.len() == 0; }
     return false;
 }
 
@@ -25891,7 +25888,7 @@ function emit_tuple_child_drops(st: LowerState, slot: i32, path: i32[], tup: ast
                 // the element-walking free; any other array position keeps the
                 // shallow buffer dec, which leaves an aliased element untouched.
                 var afree: string = "__fern_rc_dec";
-                if (tuple_strarr_elem_fresh(tup.elements[k])) { afree = "__fern_str_arr_free"; }
+                if (tuple_strarr_elem_fresh(tup.elements[k], [])) { afree = "__fern_str_arr_free"; }
                 s = emit_load_tuple_path(s, slot, path_child(path, k));   // array ptr
                 s = s.emit(ir.op_call_direct(afree, 1));
                 s = s.emit(ir.op_drop());
@@ -26162,7 +26159,7 @@ function tuple_bare_ident_sole_use(init: ast.Expr, name: string): boolean {
 function tuple_union_arg_freefn(arg: ast.Expr, s: LowerState): string {
     match (arg) {
         ast.ExprArray(_) => {
-            if (tuple_strarr_elem_fresh(arg)) { return "__fern_str_arr_free"; }
+            if (tuple_strarr_elem_fresh(arg, [])) { return "__fern_str_arr_free"; }
             return "__fern_rc_dec";
         },
         ast.ExprString(_) => { return "__fern_str_free"; },
@@ -26357,7 +26354,7 @@ function tuple_arg_payload_droppable(ttype: string, arg: ast.Expr, structs: pars
                     // A string-ARRAY position must be an array literal of fresh
                     // strings — the type-driven drop element-walks it blind, so an
                     // ident element would put a live local's box under str_free.
-                    if (!tuple_strarr_elem_fresh(tl.elements[k])) { return false; }
+                    if (!tuple_strarr_elem_fresh(tl.elements[k], str_fresh_ret)) { return false; }
                 } else if (tag == "string") {
                     // A string position must be a LITERAL (construction copies it
                     // fresh) or a fresh producer (concat / .to_string() / a
@@ -31416,7 +31413,7 @@ function tuple_str_elem_fresh_reg(e: ast.Expr, str_fresh_ret: string[]): boolean
 // tuple_str_elem_fresh producer). Such a position sole-owns the buffer AND every
 // element box, so __fern_str_arr_free releases it exactly; one bare-ident element
 // aliases a live local and keeps the position on the shallow buffer-only dec.
-function tuple_strarr_elem_fresh(e: ast.Expr): boolean {
+function tuple_strarr_elem_fresh(e: ast.Expr, str_fresh: string[]): boolean {
     match (e) {
         ast.ExprArray(al) => {
             if (al.elements.len() == 0) { return false; }
@@ -31425,7 +31422,7 @@ function tuple_strarr_elem_fresh(e: ast.Expr): boolean {
                 var ok: boolean = false;
                 match (al.elements[i]) {
                     ast.ExprString(_) => { ok = true; },
-                    _ => { ok = tuple_str_elem_fresh(al.elements[i]); }
+                    _ => { ok = tuple_str_elem_fresh_reg(al.elements[i], str_fresh); }
                 }
                 if (!ok) { return false; }
                 i = i + 1;
@@ -35090,36 +35087,11 @@ function map_decl_type(stmts: ast.Stmt[], name: string, want_key: boolean): stri
 // buffer AND every string in it. Every predicate here is purely syntactic.
 function map_arg_binding_is_fresh(e: ast.Expr, kind: string, str_fresh: string[]): boolean {
     if (kind == "s") { return str_local_binding_is_fresh(e); }
-    if (kind == "a") { return strarr_lit_elems_fresh(e, str_fresh); }
+    if (kind == "a") { return tuple_strarr_elem_fresh(e, str_fresh); }
     match (e) {
         ast.ExprArray(_) => { return true; },
         ast.ExprStructLit(sl) => { return !sl.has_base; },
         _ => { return false; },
-    }
-    return false;
-}
-
-// strarr_lit_elems_fresh: `e` is a non-empty string-array literal whose every
-// element is a string literal or a registered fresh producer
-// (tuple_str_elem_fresh_reg), so a release that walks the elements blind frees
-// only boxes the literal built.
-function strarr_lit_elems_fresh(e: ast.Expr, str_fresh: string[]): boolean {
-    match (e) {
-        ast.ExprArray(al) => {
-            if (al.elements.len() == 0) { return false; }
-            var i: i32 = 0;
-            while (i < al.elements.len()) {
-                var ok: boolean = false;
-                match (al.elements[i]) {
-                    ast.ExprString(_) => { ok = true; },
-                    _ => { ok = tuple_str_elem_fresh_reg(al.elements[i], str_fresh); }
-                }
-                if (!ok) { return false; }
-                i = i + 1;
-            }
-            return true;
-        },
-        _ => { return false; }
     }
     return false;
 }
@@ -35371,12 +35343,7 @@ function map_stmts_call_method(stmts: ast.Stmt[], name: string, methods: string[
 function map_stmt_calls_method(st: ast.Stmt, name: string, methods: string[], forin: boolean): boolean {
     match (st) {
         ast.StmtFor(f) => {
-            if (forin) {
-                match (f.iter) {
-                    ast.ExprIdent(fid) => { if (fid.name == name) { return true; } },
-                    _ => {}
-                }
-            }
+            if (forin && ident_name_or_empty(f.iter) == name) { return true; }
             if (expr_calls_map_method(f.iter, name, methods)) { return true; }
             return map_stmts_call_method(f.body, name, methods, forin);
         },
@@ -42327,7 +42294,9 @@ function nested_opt_payload_arm_escapes(st: ast.Stmt, variant: string): boolean 
                             if (pv.type_name[vc] == b'.') { vname = slice_unchecked(pv.type_name, vc + 1, pv.type_name.len()) + ""; }
                             vc = vc + 1;
                         }
-                        if (vname == variant && pv.binding != "" && pv.binding != "_") {
+                        var is_target: boolean = vname == variant;
+                        if (variant == "Ok|Some") { is_target = vname == "Ok" || vname == "Some"; }
+                        if (is_target && pv.binding != "" && pv.binding != "_") {
                             if (opt_body_binding_escapes(arm.body, pv.binding, "Some", false)) { return true; }
                         }
                     },
@@ -42999,8 +42968,7 @@ function rcpayload_option_call_ptype(v: ast.StmtVar, opt_fresh_reg: SigReg): str
     if (n >= 8 && slice_unchecked(ann, 0, 7) == "Option[") {
         // None carries no payload, so the success payload is the only one.
         var pt: string = opt_payload_type(ann, "Ok");
-        if (is_leaksafe_array_field(pt)) { return pt; }
-        if (pt == "string" && str_ok) { return pt; }
+        if (call_ptype_admitted(pt, str_ok)) { return pt; }
         return "";
     }
     if (n >= 8 && slice_unchecked(ann, 0, 7) == "Result[") {
@@ -43012,10 +42980,25 @@ function rcpayload_option_call_ptype(v: ast.StmtVar, opt_fresh_reg: SigReg): str
         // every count. Same reasoning #6416 used to drop this gate from
         // fresh_scalar_option_call_init.
         var okt: string = opt_payload_type(ann, "Ok");
-        if (!is_leaksafe_array_field(okt) && !(okt == "string" && str_ok)) { return ""; }
+        if (!call_ptype_admitted(okt, str_ok)) { return ""; }
         return okt;
     }
     return "";
+}
+
+// call_ptype_admitted: a call-bound success payload type the tagged drop can
+// release whole — a leak-safe array (one dec); a string or string[] when the
+// producer's payloads are proven fresh (`str_ok`, the OPTFRESH "f" flag); a
+// nested scalar Option (one dec frees the inner box); a nested Option over a
+// leak-safe array, or over a string / string[] under the same proof, which
+// the two-level guarded release reaches (nested_opt_inner_freefn).
+function call_ptype_admitted(pt: string, str_ok: boolean): boolean {
+    if (is_leaksafe_array_field(pt)) { return true; }
+    if ((pt == "string" || pt == "string[]") && str_ok) { return true; }
+    if (type_is_scalar_option(pt)) { return true; }
+    var nif: string = nested_opt_inner_freefn(pt);
+    if (nif == "__fern_rc_dec") { return true; }
+    return nif != "" && str_ok;
 }
 
 // call_init_callee_in: `e` is a direct call to a bare-ident callee listed in
@@ -43069,7 +43052,7 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: parser.Struc
                     call_pt = rcpayload_option_call_ptype(v, opt_fresh_reg);
                     if (call_pt != "") {
                         var cvar: string = "Ok";
-                        if (call_pt == "string") { cvar = "Ok|Some"; }
+                        if (call_pt == "string" || call_pt == "string[]" || nested_opt_inner_freefn(call_pt).len() > 0) { cvar = "Ok|Some"; }
                         cand = OptRcCand { variant: cvar, ptype: call_pt };
                     }
                 }
@@ -43142,11 +43125,11 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: parser.Struc
                             // payload blockable below puts real weight on it.
                             if (dsty.len() > 0 && opt_arm_field_moved(msv[0], cand.variant, dsty, structs)) { dsty = ""; }
                             stys = stys.append(dsty);
-                            // A TAG-GUARDED (call-bound) candidate never takes the
-                            // nested route: its variant is unknown at the drop, and
-                            // the two-level walk has no tag guard of its own.
-                            var innerf: string = "";
-                            if (call_pt == "") { innerf = nested_opt_inner_freefn(cand.ptype); }
+                            // A nested rc payload takes the two-level release for a
+                            // call-bound candidate too: emit_optopt_rc_deep_free
+                            // guards both levels' null and tag itself, so the
+                            // unknown variant costs it nothing.
+                            var innerf: string = nested_opt_inner_freefn(cand.ptype);
                             inners = inners.append(innerf);
                             // A struct payload IS blockable once the block-level emission
                             // performs the same deep field drop the fn-level one does —
@@ -43163,7 +43146,7 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: parser.Struc
                             blockable = blockable.append(cand.ptype == "string" || cand.ptype == "string[]"
                                 || is_leaksafe_array_field(cand.ptype) || type_is_scalar_union(cand.ptype)
                                 || innerf.len() > 0 || dsty.len() > 0);
-                            tagged = tagged.append(call_pt != "");
+                            tagged = tagged.append(call_pt != "" && innerf.len() == 0);
                             // #6360: the Err arm's string may be released too, but
                             // only for a call-bound candidate whose producer is
                             // ERRFRESH-proven. A direct ctor names one variant, so
@@ -47706,22 +47689,20 @@ function arrtup_elem_esc_at(x: ast.Expr, esc: boolean, name: string, ttype: stri
         // element of it ("ELB:") or to keep it only COUNTED ("CNT:") — the
         // arrstruct twin's rule; the box-only flag is not enough for a release
         // that walks the elements. Any other argument position escapes.
-        match (x) {
-            ast.ExprCall(c) => {
-                var callee: string = ident_name_or_empty(c.callee);
-                if (callee == name) { return true; }
-                var eai: i32 = 0;
-                while (eai < c.args.len()) {
-                    if (ident_name_or_empty(c.args[eai]) == name) {
-                        if (!(param_is_borrowable(borrowable, "ELB:" + callee, eai)
-                              || param_is_borrowable(borrowable, "CNT:" + callee, eai))) { return true; }
-                    } else if (arrtup_elem_esc_expr(c.args[eai], name, ttype, structs, borrowable)) { return true; }
-                    eai = eai + 1;
-                }
-                return false;
-            },
-            _ => { return true; }
+        if let ast.ExprCall(c) = x {
+            var callee: string = ident_name_or_empty(c.callee);
+            if (callee == name) { return true; }
+            var eai: i32 = 0;
+            while (eai < c.args.len()) {
+                if (ident_name_or_empty(c.args[eai]) == name) {
+                    if (!(param_is_borrowable(borrowable, "ELB:" + callee, eai)
+                          || param_is_borrowable(borrowable, "CNT:" + callee, eai))) { return true; }
+                } else if (arrtup_elem_esc_expr(c.args[eai], name, ttype, structs, borrowable)) { return true; }
+                eai = eai + 1;
+            }
+            return false;
         }
+        return true;
     }
     return false;
 }
@@ -54684,6 +54665,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // #4380 lever 3: mark in-bounds `arr[i]` reads (a `while (i < arr.len())`
     // guard proves them) so the ExprIndex lowering emits op_arr_get_nc. Runs
     // here — after every AST transform — so no later pass clobbers the flag.
+    fn = parser.FuncDecl { ...fn, body: hoist_call_scrutinees(fn.body, sg) };
     fn = parser.FuncDecl { ...fn, body: parser.elide_len_bounded_body(fn.body) };
     var empty: ir.Op[] = [];
     var noslots: i32[] = [];
@@ -56623,22 +56605,43 @@ function body_has_nonctor_opt_return(stmts: ast.Stmt[]): boolean {
 // payload (`Ok(pre)`) aliases a live local: the `?` binding must NOT take
 // string ownership of it. A literal payload is admitted — __fern_str_free's
 // heap-base guard no-ops on .rodata data, so crediting the binding is safe.
-function body_has_nonfresh_opt_success_payload(stmts: ast.Stmt[]): boolean {
-    return body_has_nonfresh_opt_payload(stmts, false);
+function body_has_nonfresh_opt_success_payload(stmts: ast.Stmt[], str_fresh: string[]): boolean {
+    return body_has_nonfresh_opt_payload(stmts, false, str_fresh);
 }
 
 // body_has_nonfresh_opt_err_payload: the Err-arm verdict (#6360). Needed because
 // the "f" flag above describes the SUCCESS payload only, so it cannot vouch for an
 // Err string — and a drop that releases one has to know.
-function body_has_nonfresh_opt_err_payload(stmts: ast.Stmt[]): boolean {
-    return body_has_nonfresh_opt_payload(stmts, true);
+function body_has_nonfresh_opt_err_payload(stmts: ast.Stmt[], str_fresh: string[]): boolean {
+    return body_has_nonfresh_opt_payload(stmts, true, str_fresh);
+}
+
+// opt_ctor_payload_fresh: the payload of a returned Ok / Some / Err is a box
+// nothing else names — a literal, a fresh string producer (syntactic, or a
+// registered `str_fresh` function), an array literal of such, or a nested
+// constructor of such. A scalar literal carries no box; a bare ident is an
+// alias and reads unfresh.
+function opt_ctor_payload_fresh(e: ast.Expr, str_fresh: string[]): boolean {
+    // A literal / concat / registered producer string, and an array literal of
+    // those, are each already answered by the tuple element predicates.
+    if (tuple_str_elem_fresh_reg(e, str_fresh)) { return true; }
+    if (tuple_strarr_elem_fresh(e, str_fresh)) { return true; }
+    if (ident_name_or_empty(e) == "None") { return true; }
+    // A NESTED constructor is fresh when its own payload is.
+    if let ast.ExprCall(c) = e {
+        var cn: string = ident_name_or_empty(c.callee);
+        if ((cn == "Some" || cn == "Ok" || cn == "Err") && c.args.len() == 1) {
+            return opt_ctor_payload_fresh(c.args[0], str_fresh);
+        }
+    }
+    return str_local_binding_is_fresh(e);
 }
 
 // body_has_nonfresh_opt_payload: does any `Ok(..)`/`Some(..)` return (or, with
 // `err`, any `Err(..)` return) carry a payload that is NOT a static literal or a
 // syntactically-fresh string producer? One walk, selected by which constructor it
 // inspects — the two verdicts differ only in that name.
-function body_has_nonfresh_opt_payload(stmts: ast.Stmt[], err: boolean): boolean {
+function body_has_nonfresh_opt_payload(stmts: ast.Stmt[], err: boolean, str_fresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
@@ -56649,9 +56652,7 @@ function body_has_nonfresh_opt_payload(stmts: ast.Stmt[], err: boolean): boolean
                                 var hit: boolean = cid.name == "Ok" || cid.name == "Some";
                                 if (err) { hit = cid.name == "Err"; }
                                 if (hit && c.args.len() == 1) {
-                                    var pfresh: boolean = str_local_binding_is_fresh(c.args[0]);
-                                    match (c.args[0]) { ast.ExprString(_) => { pfresh = true; }, _ => {} }
-                                    if (!pfresh) { return true; }
+                                    if (!opt_ctor_payload_fresh(c.args[0], str_fresh)) { return true; }
                                 }
                             },
                             _ => {}
@@ -56660,10 +56661,10 @@ function body_has_nonfresh_opt_payload(stmts: ast.Stmt[], err: boolean): boolean
                     _ => {}
                 }
             },
-            ast.StmtIf(f) => { if (body_has_nonfresh_opt_payload(f.then_body, err) || body_has_nonfresh_opt_payload(f.else_body, err)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonfresh_opt_payload(w.body, err)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonfresh_opt_payload(fo.body, err)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_opt_payload(m.arms[a].body, err)) { return true; } a = a + 1; } },
+            ast.StmtIf(f) => { if (body_has_nonfresh_opt_payload(f.then_body, err, str_fresh) || body_has_nonfresh_opt_payload(f.else_body, err, str_fresh)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonfresh_opt_payload(w.body, err, str_fresh)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonfresh_opt_payload(fo.body, err, str_fresh)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_opt_payload(m.arms[a].body, err, str_fresh)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
@@ -56680,7 +56681,71 @@ function body_has_nonfresh_opt_payload(stmts: ast.Stmt[], err: boolean): boolean
 // the opt-fresh registry, which lower_try's consume-edge box
 // free can check eligibility from LowerState (rides the existing opt-fresh
 // registry rather than a new field; the old 33-field pin is dead).
-pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): string[] {
+// hoist_call_scrutinees rewrites `match (f(args)) { … }` — `f` a registered
+// fresh Option / Result / rc-enum producer — into
+// `var $mscrut_L_C: T = f(args); match ($mscrut_L_C) { … }`, so the call-bound
+// release the BINDING form already has (consumed_rcpayload_option_frees,
+// consumed_rcpayload_enum_frees) covers the direct form too: a scrutinee is a
+// binding that happens to have no name. Runs before every analysis, so the
+// temp earns its credits like a written binding. A producer with a type
+// variable in its return keeps the direct form — the temp's annotation would
+// have to be resolved from the arguments.
+function hoist_call_scrutinees(stmts: ast.Stmt[], sg: FnSigs): ast.Stmt[] {
+    var out: ast.Stmt[] = [];
+    for stmt in stmts {
+        if let ast.StmtMatch(m) = stmt {
+            var arms: ast.MatchArm[] = [];
+            for arm in m.arms { arms = arms.append(ast.MatchArm { ...arm, body: hoist_call_scrutinees(arm.body, sg) }); }
+            var rt: string = call_scrutinee_fresh_type(m.scrutinee, sg);
+            if (rt == "") {
+                out = out.append(ast.StmtMatch { ...m, arms: arms });
+                continue;
+            }
+            var tn: string = "$mscrut_" + util.i32_to_string(m.line) + "_" + util.i32_to_string(m.col);
+            out = out.append(ast.StmtVar { name: tn, type_name: rt, init: m.scrutinee, line: m.line, col: m.col, is_str: false, fn_ret: "", fn_param_types: "" });
+            out = out.append(ast.StmtMatch { ...m, scrutinee: ast.ExprIdent { name: tn, line: m.line, col: m.col, ty: "" }, arms: arms });
+            continue;
+        }
+        if let ast.StmtIf(f) = stmt {
+            out = out.append(ast.StmtIf { ...f, then_body: hoist_call_scrutinees(f.then_body, sg), else_body: hoist_call_scrutinees(f.else_body, sg) });
+            continue;
+        }
+        if let ast.StmtWhile(w) = stmt {
+            out = out.append(ast.StmtWhile { ...w, body: hoist_call_scrutinees(w.body, sg) });
+            continue;
+        }
+        if let ast.StmtFor(fo) = stmt {
+            out = out.append(ast.StmtFor { ...fo, body: hoist_call_scrutinees(fo.body, sg) });
+            continue;
+        }
+        out = out.append(stmt);
+    }
+    return out;
+}
+
+// call_scrutinee_fresh_type: the declared return type of a direct call to a
+// registered fresh producer — an "RCE:" rc-enum constructor function or an
+// OPTFRESH Option / Result one — or "" for anything else, including a return
+// type carrying an erased type variable.
+function call_scrutinee_fresh_type(e: ast.Expr, sg: FnSigs): string {
+    var cn: string = direct_call_callee_name(e);
+    if (cn == "") { return ""; }
+    var rce: string = sig_reg_tagged_value_of(sg.opt_fresh_ret_fns, "RCE:", cn);
+    if (rce != "") { return rce; }
+    if (!sig_reg_has_name(sg.opt_fresh_ret_fns, cn)) { return ""; }
+    var rt: string = sig_reg_value_of(sg.opt_ret_fns, cn);
+    var k: i32 = 0;
+    while (k < rt.len()) { if (rt[k] == b'$') { return ""; } k = k + 1; }
+    return rt;
+}
+
+// direct_call_callee_name: the bare-ident callee of a direct call, or "".
+function direct_call_callee_name(e: ast.Expr): string {
+    if let ast.ExprCall(c) = e { return ident_name_or_empty(c.callee); }
+    return "";
+}
+
+pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.StructDecl[], str_fresh: string[]): string[] {
     var out: string[] = [];
     for fn in funcs {
         var rt: string = fn.ret_type;
@@ -56688,13 +56753,13 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Stru
                 && fn.receiver_type.len() == 0
                 && body_has_return(fn.body) && !body_has_nonctor_opt_return(fn.body)) {
             var flag: string = "a";
-            if (!body_has_nonfresh_opt_success_payload(fn.body)) { flag = "f"; }
+            if (!body_has_nonfresh_opt_success_payload(fn.body, str_fresh)) { flag = "f"; }
             out = out.append(fn.name + "|" + opt_payload_type(rt, "Ok") + "|" + flag);
             // #6360: a separate tagged row when every Err payload is a fresh string
             // too. The flag above is the SUCCESS verdict and cannot speak for Err,
             // so a drop that releases the Err payload needs its own proof.
             if (opt_payload_type(rt, "Err") == "string"
-                    && !body_has_nonfresh_opt_err_payload(fn.body)) {
+                    && !body_has_nonfresh_opt_err_payload(fn.body, str_fresh)) {
                 out = out.append("ERRFRESH:" + fn.name);
             }
         }
@@ -62903,7 +62968,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         return_fresh_struct_ret_fns: return_fresh_struct_ret_fns_of(funcs, structs, sfok),
         recv_borrow_fns: recv_borrow_fns_of(funcs, structs, bparams),
         str_fresh_ret_fns: str_fresh_ret_fns_of(funcs),
-        opt_fresh_ret_fns: sig_reg_of(opt_fresh_ret_fns_of(funcs, structs)),
+        opt_fresh_ret_fns: sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))),
         strfld_ok_types: sfok,
         tuple_fresh_ret_fns: tuple_fresh_ret_fns_of(funcs),
         own_positions: own_positions_of(funcs),
@@ -65854,7 +65919,7 @@ pub function rc_plan_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         }
     }
     var arr_ret: string[] = array_ret_fn_names(funcs);
-    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs)), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).srcs);
+    var pd: PreciseDrops = pd_filter_names(precise_drop_names(fn.body, structs, sig_reg_of(arr_ret), sig_reg_of(strarr_ret_fns_of(funcs)), borrowable_params_of(funcs), sig_reg_of(opt_fresh_ret_fns_of(funcs, structs, str_fresh_ret_fns_of(funcs))), str_fresh_ret_fns_of(funcs), move_sites_toplevel_of(fn, structs)), dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).srcs);
     // Dump fidelity: lower_func SUPPRESSES the precise drop of a local consumed
     // as a reuse donor (its box survives into the recipient); the dump must
     // mirror that or it over-reports drops the lowering never emits (native's
@@ -66555,20 +66620,15 @@ function map_owncols(mty: string): boolean {
 // reclaimable, and read only through len / has / get / get_or, so no
 // keys() / values() alias of a flag-1 column can outlive a grow.
 function map_site_owncols(recv: ast.Expr, s: LowerState): boolean {
-    match (recv) {
-        ast.ExprIdent(id) => {
-            var sl: i32 = s.slot_of(id.name);
-            if (sl < 0 || !slot_credit_at(s, sl, "MAPOWN:")) { return false; }
-            // Only a BOX value column the map free reclaims per element. A
-            // wide-scalar (i64 / f64) column keeps the type-level verdict: its
-            // cells are the map's and the owned grow buys nothing there, so the
-            // pinned flag contract for those columns stands
-            // (self_host_map_strcol_owncols_ir_test.go).
-            return map_val_box_column_ok(map_value_of(s.map_type_of(sl)), s.structs);
-        },
-        _ => { return false; }
-    }
-    return false;
+    var rn: string = ident_name_or_empty(recv);
+    if (rn == "") { return false; }
+    var sl: i32 = s.slot_of(rn);
+    if (sl < 0 || !slot_credit_at(s, sl, "MAPOWN:")) { return false; }
+    // Only a BOX value column the map free reclaims per element. A wide-scalar
+    // (i64 / f64) column keeps the type-level verdict: its cells are the map's
+    // and the owned grow buys nothing there, so the pinned flag contract for
+    // those columns stands (self_host_map_strcol_owncols_ir_test.go).
+    return map_val_box_column_ok(map_value_of(s.map_type_of(sl)), s.structs);
 }
 
 // map_kv_elem_flag derives op_map_keys / op_map_values' element-kind flag from
