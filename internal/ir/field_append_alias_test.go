@@ -132,7 +132,7 @@ function main(): i32 { return 0; }`
 			continue
 		}
 		seen[fn.Name] = true
-		if got := len(fieldPlaceAppendCopies(fn.Body)); got != n {
+		if got := len(fieldPlaceAppendCopies(fn.Body, nil)); got != n {
 			t.Errorf("%s: %d appends forced to copy, want %d", fn.Name, got, n)
 		}
 	}

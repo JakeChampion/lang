@@ -3087,6 +3087,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// (calleeParamOwnedByDefault) consult this so they agree on which
 	// owned-by-default params are kept borrowed.
 	paramEscapes := inferParamEscapes(prog, info, pairForm, trmcFuncs)
+	returnsParamProjection := findReturnsParamProjection(prog)
 	// Per-callee: string params retained only through counted constructions, so
 	// a caller may release its own reference (see inferParamCountedRetain).
 	paramCountedRetain := inferParamCountedRetain(prog, info)
@@ -3173,7 +3174,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams)
 		if err != nil {
 			return nil, err
 		}
@@ -5184,6 +5185,10 @@ type builder struct {
 	// NON-escaping owned-by-default param borrowed — no caller inc, no callee
 	// dec — read consistently on both the definition and call sides so they agree.
 	paramEscapes map[string][]bool
+	// returnsParamProjection[name] is true when `name` returns a field read or
+	// an element from somewhere — so its result may alias what was passed in,
+	// which the escape summary alone does not say (findReturnsParamProjection).
+	returnsParamProjection map[string]bool
 	// paramCountedRetain[fn][i] is true when string parameter i of `fn` is
 	// retained only by counted constructions, so an argument passed there needs
 	// no conservative escape taint (inferParamCountedRetain).
@@ -5694,7 +5699,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5725,6 +5730,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		trmcFuncs:               trmcFuncs,
 		trmcConsumeSafe:         trmcConsumeSafe,
 		paramEscapes:            paramEscapes,
+		returnsParamProjection:  returnsParamProjection,
 		paramCountedRetain:      paramCountedRetain,
 		consumedArrayArgPos:     consumedArrayArgPos,
 		readOnlyComparators:     readOnlyComparators,
@@ -17191,6 +17197,55 @@ func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
 	return false
 }
 
+// callArgNoEscape answers fieldPlaceAppendCopies' question for one call
+// argument: after this call returns, can anything still reachable name that
+// argument's buffer?
+//
+// It takes BOTH halves of the escape story, because neither is the question on
+// its own:
+//
+//   - inferParamEscapes says the argument is not stored into a caller-visible
+//     container. It folds in the retain sinks, so a callee that pushes the
+//     argument into another argument's container is already marked escaping.
+//     What it does NOT say is that the argument stays out of the RESULT: it
+//     excuses a returned counted projection as "not a flow-out" on the grounds
+//     that a different object leaves carrying its own unit
+//     (returnedCountedProjection). For `peel(s: S): i32[] { return s.xs; }`
+//     that different object is the very buffer a later `s.xs.append` would
+//     grow, so the summary alone would shield a read that does name it.
+//   - findReturnsParamProjection is exactly that missing half: it names the
+//     functions whose result is a projection at all.
+//
+// Requiring both is why `fresh(s: S): i32[] { return [s.n]; }` still shields
+// its argument while `peel` does not. findReturnsNoParamEscape would refuse
+// them alike — it is false for any function returning a struct built from a
+// parameter, which is most accumulator threading, and using it here cost 44 of
+// the 47 sites this change recovers.
+//
+// Only a direct call to a user-declared function qualifies. A closure call
+// (the name is a local) is not statically known; a builtin or a method is not
+// in either table, and an absent entry means "assume it escapes".
+func (b *builder) callArgNoEscape(c *ast.Call, argIdx int) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if _, isLocal := b.locals[id.Name]; isLocal {
+		return false
+	}
+	if _, isFunc := b.info.FuncSigs[id.Name]; !isFunc {
+		return false
+	}
+	if b.returnsParamProjection[id.Name] {
+		return false
+	}
+	esc, ok := b.paramEscapes[id.Name]
+	if !ok || argIdx >= len(esc) {
+		return false
+	}
+	return !esc[argIdx]
+}
+
 // emitFieldDropOnStack consumes a pointer-shaped field value already on
 // the operand stack and releases it per its static type — the
 // struct-reuse-overwrite sibling of the exit sweep's dropStructField, whose
@@ -20222,7 +20277,7 @@ func (b *builder) curAppendOrder() identOrder {
 	if b.appendOrderFn != b.fn {
 		b.appendOrder = identOrderOf(b.fn.Body)
 		b.appendInPlaceOK = inPlacePushes(b.fn.Body)
-		b.appendFieldCopy = fieldPlaceAppendCopies(b.fn.Body)
+		b.appendFieldCopy = fieldPlaceAppendCopies(b.fn.Body, b.callArgNoEscape)
 		b.callArgDies = callArgDeaths(b.fn)
 		b.appendOrderFn = b.fn
 	}

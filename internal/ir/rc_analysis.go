@@ -811,6 +811,45 @@ func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]
 // of the result, it does. Unknown / builtin callees are treated conservatively
 // (assume they escape a tainted argument) so the result is a sound
 // under-approximation of "borrowable".
+// findReturnsParamProjection reports, per user function, whether any of its
+// returns hands back a PROJECTION — a field read or an element — rather than a
+// whole value.
+//
+// It exists because inferParamEscapes deliberately does not count that as an
+// escape: returnedCountedProjection excuses it on the grounds that the Return
+// lowering inc's the alias on the way out, so a different object leaves
+// carrying its own unit. That reasoning is sound for ownership, and wrong for
+// aliasing — `peel(s: S): i32[] { return s.xs; }` hands back the very buffer
+// `s.xs` names. Anyone asking "can the result name this argument?" needs this
+// alongside the escape summary; anyone asking "must the callee free it?" does
+// not.
+//
+// Conservative by shape rather than by taint: any projection return disqualifies
+// the function, without tracking which parameter it came from. Taint would be
+// more precise, but returnedCountedProjection is itself the only consumer of
+// that precision and it reads the return expression directly, so matching its
+// two shapes keeps the two definitions legible side by side.
+func findReturnsParamProjection(prog *ast.Program) map[string]bool {
+	out := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			r, isRet := n.(*ast.Return)
+			if !isRet || r.Value == nil {
+				return true
+			}
+			switch r.Value.(type) {
+			case *ast.FieldAccess, *ast.Index:
+				out[fn.Name] = true
+			}
+			return true
+		})
+	}
+	return out
+}
+
 func inferParamEscapes(prog *ast.Program, info *checker.Info, pairForm, trmcFuncs map[string]bool) map[string][]bool {
 	variantPayloads := map[string][]ast.Type{}
 	for _, en := range info.Enums {
@@ -5663,7 +5702,43 @@ func isArrayPushCall(c *ast.Call) bool {
 // copies every field of `a` except `code`, so its copy never names the grown
 // buffer. This is the assembler's own emit shape; treating `...a` as a
 // whole-container read cost 75% of the self-host driver's compile time.
-func fieldPlaceAppendCopies(body ast.Node) map[*ast.Call]bool {
+// argNoEscape answers, for one call and one argument position, whether the
+// callee provably lets nothing of that argument outlive the call — neither
+// through the return value nor into a caller-visible container. nil means
+// "assume it can", which is what every caller but the lowering builder passes.
+type argNoEscape func(c *ast.Call, argIdx int) bool
+
+// shieldedPlaces collects the place nodes that sit inside a call argument
+// argNoEscape vouches for. Reading a container into such an argument hands it
+// to nobody: the callee cannot store it and cannot return it, so the binding
+// the call result flows into does not name it.
+//
+// Whole subtrees, because an argument the callee cannot leak shields whatever
+// is nested inside it too.
+func shieldedPlaces(root ast.Expr, noEsc argNoEscape) map[ast.Node]bool {
+	shielded := map[ast.Node]bool{}
+	if noEsc == nil {
+		return shielded
+	}
+	ast.Walk(root, func(n ast.Node) bool {
+		c, isCall := n.(*ast.Call)
+		if !isCall {
+			return true
+		}
+		for i, a := range c.Args {
+			if !noEsc(c, i) {
+				continue
+			}
+			for _, q := range placesIn(a) {
+				shielded[q.node] = true
+			}
+		}
+		return true
+	})
+	return shielded
+}
+
+func fieldPlaceAppendCopies(body ast.Node, noEsc argNoEscape) map[*ast.Call]bool {
 	// The container-replacing assignment, and the return expression, each
 	// field append sits under.
 	rebind := map[*ast.Call]*ast.Assign{}
@@ -5737,11 +5812,12 @@ func fieldPlaceAppendCopies(body ast.Node) map[*ast.Call]bool {
 			}
 		}
 		if bound != nil && !(boundTypeKnown && !bindingHoldsContainer(boundType)) {
+			shielded := shieldedPlaces(bound, noEsc)
 			for _, q := range placesIn(bound) {
 				// Reading a container to rebuild ITSELF (`a = A { ...a, … }`)
 				// hands the old value to its own replacement, not to a name
 				// that outlives it.
-				if len(q.path) == 0 && q.root != boundTo {
+				if len(q.path) == 0 && q.root != boundTo && !shielded[q.node] {
 					capturing[q.node] = true
 				}
 			}
