@@ -3004,8 +3004,8 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		done := fmt.Sprintf(".Lrcop_done_%d", g.labelCounter)
 		g.labelCounter++
 		g.pop()
-		g.emit("test rax, rax")
-		g.emit(fmt.Sprintf("jz %s", done))
+		// No null test: null is unsigned-below the heap base, so the
+		// below-heap compare rejects it (its low bit is clear too).
 		g.emit("test al, 1")
 		g.emit(fmt.Sprintf("jnz %s", done))
 		g.emit("cmp rax, 0x10000000")
@@ -3018,10 +3018,10 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		} else {
 			// Underflow detector: a healthy dec sees rc >= 1; rc <= 0
 			// here is an over-release — bump the counter, then still
-			// decrement (mirrors the helper).
+			// decrement (mirrors the helper). The flags are still the
+			// test's: SF clear here, so jg is rc > 0.
 			decLbl := fmt.Sprintf(".Lrcop_dec_%d", g.labelCounter)
 			g.labelCounter++
-			g.emit("cmp ecx, 0")
 			g.emit(fmt.Sprintf("jg %s", decLbl))
 			g.emit("add dword ptr [rip + __fern_rc_underflow], 1")
 			g.rcUnderflowTrap()
@@ -3051,8 +3051,6 @@ func (g *generator) emitOp(op ir.Op, retLabel string, scope *[]irScope) error {
 		g.labelCounter++
 		g.pop()
 		g.emit("xor ecx, ecx")
-		g.emit("test rax, rax")
-		g.emit(fmt.Sprintf("jz %s", uniqDone))
 		g.emit("cmp rax, 0x10000")
 		g.emit(fmt.Sprintf("jb %s", uniqDone))
 		g.emit("mov edx, dword ptr [rax - 8]")
@@ -7185,8 +7183,6 @@ func (g *generator) emitRcIncRuntime() {
 	g.line(".type __fern_rc_inc, @function")
 	g.label("__fern_rc_inc")
 	g.emit("mov rax, rdi") // return value = input ptr
-	g.emit("test rdi, rdi")
-	g.emit("jz .Lrcinc_ret")
 	// SSO inline-tag guard: native strings ≤7 bytes are packed inline
 	// with bit 0 set (tag). Treating them as pointers would mis-read
 	// [data-8] as an rc word and corrupt memory. Heap pointers from
@@ -7250,8 +7246,6 @@ func (g *generator) emitRcDecRuntime() {
 	g.line(".type __fern_rc_dec, @function")
 	g.label("__fern_rc_dec")
 	g.emit("mov rax, rdi") // return value = input ptr (matches arm64)
-	g.emit("test rdi, rdi")
-	g.emit("jz .Lrcdec_ret")
 	// SSO inline-tag guard — see __fern_rc_inc above. Heap pointers
 	// are always 8-byte aligned (low bit clear), so this is a no-op
 	// for every non-string caller; for native strings ≤7 bytes the
@@ -7278,8 +7272,8 @@ func (g *generator) emitRcDecRuntime() {
 	g.emit("test ecx, ecx")
 	g.emit("js .Lrcdec_ret") // bit 31 set ⇒ static sentinel
 	// Phase 3 underflow detector: a healthy dec operates on rc >= 1.
-	// If rc <= 0 here this dec over-releases — bump the counter.
-	g.emit("cmp ecx, 0")
+	// If rc <= 0 here this dec over-releases — bump the counter. The
+	// test's flags are still live, so jg is rc > 0.
 	g.emit("jg .Lrcdec_dec")
 	g.emit("add dword ptr [rip + __fern_rc_underflow], 1")
 	g.rcUnderflowTrap()
@@ -8247,8 +8241,6 @@ func (g *generator) emitRcIsUniqueRuntime() {
 	g.line(".type __fern_rc_is_unique, @function")
 	g.label("__fern_rc_is_unique")
 	g.emit("xor eax, eax")
-	g.emit("test rdi, rdi")
-	g.emit("jz .Lisuniq_ret")
 	g.emit("cmp rdi, 0x10000")
 	g.emit("jb .Lisuniq_ret")
 	g.emit("mov ecx, dword ptr [rdi - 8]")
