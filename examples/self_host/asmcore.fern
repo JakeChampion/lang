@@ -80,6 +80,12 @@ pub struct EmitState {
     local_names: string[],
     in_function: boolean,
     string_lits: string[],
+    // slit_head / slit_next: a chained index over string_lits by content, so
+    // add_string_lit's dedupe is a bucket walk rather than a scan of every
+    // literal interned so far (#8182). Chains are newest-first; a literal is
+    // interned once, so the first hit is its only index.
+    slit_head: i32[],
+    slit_next: i32[],
     // needed: the set of runtime-library helpers this module
     // requests, by name. Populated via need() / the mark_*
     // wrappers; emit_module consults has_need() to decide which
@@ -145,6 +151,8 @@ pub function new_state(): EmitState {
         local_names: ns,
         in_function: false,
         string_lits: sl,
+        slit_head: slit_empty_buckets(),
+        slit_next: [],
         needed: nd,
         struct_decls: [],
         loop_exit_labels: lex,
@@ -3649,19 +3657,28 @@ pub function const_agg_label(s: EmitState, idx: i32): string {
 
 pub struct StringLitOut { state: EmitState, idx: i32 }
 
+function slit_buckets(): i32 { return 1021; }
+
+function slit_empty_buckets(): i32[] {
+    var out: i32[] = [];
+    var i: i32 = 0;
+    while (i < slit_buckets()) { out = out.append(0 - 1); i = i + 1; }
+    return out;
+}
+
 pub function add_string_lit(s: EmitState, v: string): StringLitOut {
     // Dedup: load-bearing for shape-pointer dispatch in
     // ExprFieldAccess + StmtMatch. See asm.fern for rationale.
-    var i: i32 = 0;
-    while (i < s.string_lits.len()) {
+    var b: i32 = util.hash_bucket(v, s.slit_head.len());
+    var i: i32 = s.slit_head[b];
+    while (i >= 0) {
         if (s.string_lits[i] == v) {
             return StringLitOut { state: s, idx: i };
         }
-        i = i + 1;
+        i = s.slit_next[i];
     }
     var idx: i32 = s.string_lits.len();
-    var sl: string[] = s.string_lits.append(v);
-    var ns: EmitState = EmitState { ...s, string_lits: sl };
+    var ns: EmitState = EmitState { ...s, string_lits: s.string_lits.append(v), slit_next: s.slit_next.append(s.slit_head[b]), slit_head: s.slit_head.with(b, idx) };
     return StringLitOut { state: ns, idx: idx };
 }
 
