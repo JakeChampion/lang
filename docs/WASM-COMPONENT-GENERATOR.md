@@ -288,11 +288,26 @@ each `component_full_io_*` wrapper's whole-component byte-identity to
 `fern -target wasm32-wasi` is gated by its existing `TestSelfHostWasmComponentFullIO*`
 e2e (self-host compile → byte-compare → wasmtime run).
 
-**Remaining frontier:** the `gDrop` (resource-handle drop) path in
-`component_suffix` is implemented but unexercised in the self-host, because
-the TCP / UDP / HTTP component shapes (which drop handles) aren't emitted by
-the self-host backend yet. When they land they are thin drivers over this
-same engine — no new suffix machinery.
+**`gDrop` and the filesystem shapes.** The `gDrop` (resource-handle drop) path
+in `component_suffix` is exercised by every filesystem shape: a `descriptor`,
+an `input-stream` and an `output-stream` are all owned handles, so the composer
+emits a `[resource-drop]` import for each one the program opens. The drop
+closes its interface's group — after the last `descriptor.*` method for
+`wasi:filesystem/types`, after `blocking-read` / `blocking-write-and-flush` for
+`wasi:io/streams` — and its `imp_resourceT` is the surfaced type index, which
+differs per shape because the head blobs that surface those types differ.
+
+The eight `component_suffix_fs_*` / `component_suffix_random_write` framings
+carried no drop rows until the byte-identity gates caught it, on the reading
+that only the TCP / UDP / HTTP shapes drop handles. They do not: a shape that
+opens a file drops one too. A new framing states its drops, and the
+`TestSelfHostWasmComponentFullIO*` byte-compare is what proves it.
+
+Those shapes still hand the composer NATIVE's core module, so this is the
+framing half only. The self-host's own core emitter (`wasm_ir.fern`) emits
+`[resource-drop]` imports for the socket shapes and not for the filesystem
+ones, so a self-host-compiled `read_file` core does not yet close its
+descriptor.
 
 ## Risks / notes
 

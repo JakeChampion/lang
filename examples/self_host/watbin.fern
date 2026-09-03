@@ -2685,20 +2685,23 @@ function component_suffix_exit(): i32[] {
 // component_suffix_fs_read: read_file + stdout. Imports (in canonical order)
 // get-directories (mem+realloc, preopens=3), descriptor.open-at (mem,
 // fstypes=2), descriptor.read-via-stream (mem, fstypes=2),
+// [resource-drop]descriptor (drop, fstypes=2, resource type 6),
 // output-stream.blocking-write-and-flush (mem, streams=1),
-// input-stream.blocking-read (mem+realloc, streams=1), get-stdout (no-opt,
-// stdout=4). Exercises the engine's interface grouping (fstypes + streams each
-// carry two methods) and the realloc path. Phase A leaves component types=9,
-// instances=5.
+// input-stream.blocking-read (mem+realloc, streams=1),
+// [resource-drop]input-stream (drop, streams=1, resource type 4), get-stdout
+// (no-opt, stdout=4). Exercises the engine's interface grouping (fstypes +
+// streams each carry two methods and a drop) and the realloc path. A drop
+// closes its interface's group, which is where the composer puts it. Phase A
+// leaves component types=9, instances=5.
 function component_suffix_fs_read(): i32[] {
     var none: i32[] = [];
     return component_suffix(
-        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
-        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout"],
-        [2, 1, 1, 1, 2, 0],
-        [3, 2, 2, 1, 1, 4],
-        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none],
-        [0, 0, 0, 0, 0, 0],
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "get-stdout"],
+        [2, 1, 1, 3, 1, 2, 3, 0],
+        [3, 2, 2, 2, 1, 1, 1, 4],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none],
+        [0, 0, 0, 6, 0, 0, 4, 0],
         9, 5, 0, "_lang_run");
 }
 
@@ -2765,83 +2768,83 @@ function component_suffix_clock_mono(): i32[] {
 function component_suffix_random_write(): i32[] {
     var none: i32[] = [];
     return component_suffix(
-        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:random/random@0.2.0"],
-        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.write-via-stream", blocking_write_name(), "get-stdout", "get-random-u64"],
-        [2, 1, 1, 1, 0, 0],
-        [3, 2, 2, 1, 4, 5],
-        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 127, 127, 127], none, none],
-        [0, 0, 0, 0, 0, 0],
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:random/random@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[resource-drop]output-stream", "get-stdout", "get-random-u64"],
+        [2, 1, 1, 3, 1, 3, 0, 0],
+        [3, 2, 2, 2, 1, 1, 4, 5],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], none, [127, 127, 127, 127], none, none, none],
+        [0, 0, 0, 5, 0, 3, 0, 0],
         9, 6, 0, "_lang_run");
 }
 
 function component_suffix_fs_write(): i32[] {
     var none: i32[] = [];
     return component_suffix(
-        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
-        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.write-via-stream", blocking_write_name(), "get-stdout"],
-        [2, 1, 1, 1, 0],
-        [3, 2, 2, 1, 4],
-        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 127, 127, 127], none],
-        [0, 0, 0, 0, 0],
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[resource-drop]output-stream", "get-stdout"],
+        [2, 1, 1, 3, 1, 3, 0],
+        [3, 2, 2, 2, 1, 1, 4],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], none, [127, 127, 127, 127], none, none],
+        [0, 0, 0, 5, 0, 3, 0],
         8, 5, 0, "_lang_run");
 }
 
 function component_suffix_fs_rw(): i32[] {
     var none: i32[] = [];
     return component_suffix(
-        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
-        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout"],
-        [2, 1, 1, 1, 1, 2, 0],
-        [3, 2, 2, 2, 1, 1, 4],
-        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none],
-        [0, 0, 0, 0, 0, 0, 0],
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "[resource-drop]output-stream", "get-stdout"],
+        [2, 1, 1, 1, 3, 1, 2, 3, 3, 0],
+        [3, 2, 2, 2, 2, 1, 1, 1, 1, 4],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none, none],
+        [0, 0, 0, 0, 6, 0, 0, 4, 3, 0],
         9, 5, 0, "_lang_run");
 }
 
 function component_suffix_fs_read_env(): i32[] {
     var none: i32[] = [];
     return component_suffix(
-        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
-        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout", "get-environment"],
-        [2, 1, 1, 1, 2, 0, 2],
-        [3, 2, 2, 1, 1, 4, 5],
-        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none, [127]],
-        [0, 0, 0, 0, 0, 0, 0],
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "get-stdout", "get-environment"],
+        [2, 1, 1, 3, 1, 2, 3, 0, 2],
+        [3, 2, 2, 2, 1, 1, 1, 4, 5],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none, [127]],
+        [0, 0, 0, 6, 0, 0, 4, 0, 0],
         10, 6, 0, "_lang_run");
 }
 
 function component_suffix_fs_rw_env(): i32[] {
     var none: i32[] = [];
     return component_suffix(
-        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
-        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout", "get-environment"],
-        [2, 1, 1, 1, 1, 2, 0, 2],
-        [3, 2, 2, 2, 1, 1, 4, 5],
-        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none, [127]],
-        [0, 0, 0, 0, 0, 0, 0, 0],
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "[resource-drop]output-stream", "get-stdout", "get-environment"],
+        [2, 1, 1, 1, 3, 1, 2, 3, 3, 0, 2],
+        [3, 2, 2, 2, 2, 1, 1, 1, 1, 4, 5],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none, none, [127]],
+        [0, 0, 0, 0, 6, 0, 0, 4, 3, 0, 0],
         10, 6, 0, "_lang_run");
 }
 
 function component_suffix_fs_args_read(): i32[] {
     var none: i32[] = [];
     return component_suffix(
-        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
-        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout", "get-arguments"],
-        [2, 1, 1, 1, 2, 0, 2],
-        [3, 2, 2, 1, 1, 4, 5],
-        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none, [127]],
-        [0, 0, 0, 0, 0, 0, 0],
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "get-stdout", "get-arguments"],
+        [2, 1, 1, 3, 1, 2, 3, 0, 2],
+        [3, 2, 2, 2, 1, 1, 1, 4, 5],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none, [127]],
+        [0, 0, 0, 6, 0, 0, 4, 0, 0],
         10, 6, 0, "_lang_run");
 }
 
 function component_suffix_fs_rw_args(): i32[] {
     var none: i32[] = [];
     return component_suffix(
-        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
-        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", blocking_write_name(), "[method]input-stream.blocking-read", "get-stdout", "get-arguments"],
-        [2, 1, 1, 1, 1, 2, 0, 2],
-        [3, 2, 2, 2, 1, 1, 4, 5],
-        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], [127, 127, 127, 127], [127, 126, 127], none, [127]],
-        [0, 0, 0, 0, 0, 0, 0, 0],
+        ["wasi:filesystem/preopens@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:filesystem/types@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:io/streams@0.2.0", "wasi:cli/stdout@0.2.0", "wasi:cli/environment@0.2.0"],
+        ["get-directories", "[method]descriptor.open-at", "[method]descriptor.read-via-stream", "[method]descriptor.write-via-stream", "[resource-drop]descriptor", blocking_write_name(), "[method]input-stream.blocking-read", "[resource-drop]input-stream", "[resource-drop]output-stream", "get-stdout", "get-arguments"],
+        [2, 1, 1, 1, 3, 1, 2, 3, 3, 0, 2],
+        [3, 2, 2, 2, 2, 1, 1, 1, 1, 4, 5],
+        [[127], [127, 127, 127, 127, 127, 127, 127], [127, 126, 127], [127, 126, 127], none, [127, 127, 127, 127], [127, 126, 127], none, none, none, [127]],
+        [0, 0, 0, 0, 6, 0, 0, 4, 3, 0, 0],
         10, 6, 0, "_lang_run");
 }
