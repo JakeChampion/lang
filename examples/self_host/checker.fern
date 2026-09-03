@@ -5049,11 +5049,11 @@ function name_in(name: string, list: string[]): boolean {
 // across receiver types whose bodies view different things.
 
 pub struct ViewSum { key: string, flags: boolean[], fresh: boolean }
+
 // ViewIndex is a name index over a ViewSum table — the StructTable idiom.
-// It travels beside the table rather than inside it because the summary
-// fixpoints below rebind the table with `.with` once per function, and an
-// array read out of a struct field to do that would copy on every write.
-// Keys never change once a table is filled, so an index built then holds.
+// It travels beside the table rather than inside it: the summary fixpoints
+// below rebind the table with `.with` once per function, and keys never
+// change once a table is filled, so the index built then holds throughout.
 pub struct ViewIndex { head: i32[], next: i32[] }
 
 // view_index builds the index. Chains are laid down backward so each ends

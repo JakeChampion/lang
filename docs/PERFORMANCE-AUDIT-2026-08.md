@@ -20,7 +20,7 @@ The same source, the same target, two compilers:
 | `examples/self_host/checker_run.fern` → x86-64 asm | 3.9 s | 23.3 s | 6.0× |
 
 **Those are the numbers this audit started from and they are history — the gap
-is 3.25x as of §4e** (20.6 s against 66.9 s, measured at 536b3e4). The rest of
+is 3.1x as of §4g** (23.9 s against 74.6 s, measured at 6fec3ed). The rest of
 this section describes the compiler as it was at 64213fe; every later section
 re-measures against the tree it was written on.
 
@@ -390,8 +390,9 @@ measuring near its original attribution; 4 is the multi-PR track.
 worth more than ~4% on the current compiler: the profile's top entry is one
 function's own body at 7.1%, and the largest coherent cost — ~24% — is a SHAPE
 (a linear scan over a module-wide table, plus the sentinel its miss allocates)
-spread over eight sites in three files, none of which the table names. Pick from
-§4e, not from here; this list is now a record of what was fixed.
+spread over eight sites in three files, none of which the table names. §4g took
+that shape out of four more places for −35% and left a flat profile. Pick from
+§4g, not from here; this list is now a record of what was fixed.
 
 **Item 6's −9% was measured on the wrong subject**, and the resolution is that
 the subject decides the answer. Both halves are now on the natives: the IR
@@ -1525,12 +1526,15 @@ CO-OCCURRENCE — these are operator methods, so the operator roots must be what
 keeps them — over-counted the prize by more than 2x. Only removing the roots and
 re-measuring says what they hold.
 
-**What remains is `util.has_str`, and it should NOT be indexed.** Membership is
-a linear scan of the `refs` array — §4's shape once more, in a ninth file — and
-the obvious next step is the `head` / `next` index every other instance of that
-shape got. It was measured first, and the measurement says not to.
+**What remained was `util.has_str`, and this section first said not to index
+it.** Membership is a linear scan of the `refs` array — §4's shape once more, in
+a ninth file — and the obvious next step is the `head` / `next` index every
+other instance of that shape got. The bound that argued against it was wrong,
+and §4g records how; the index landed on 2026-09-03 and took 10% off the
+self-compile.
 
-Instrumenting the pass over a whole self-compile:
+The instrumentation is still worth keeping, because it says what the pass does
+over a whole self-compile:
 
 | | |
 |---|---|
@@ -1542,21 +1546,129 @@ Instrumenting the pass over a whole self-compile:
 
 A HIT stops at the name's position; a MISS scans all 12,200, and an unkept
 function is re-probed every round, so the arithmetic makes misses look like
-~1.1e9 string compares and 3–4 s of the run. **The arithmetic is wrong.**
-Doubling exactly the miss path — a treeshake-local `has_str` whose miss scans
-twice, hits untouched, which adds one whole miss cost — measures **+1.49 s and
-+0.48 s over two interleaved pairs on a ~96 s self-compile.** So the entire miss
-scan is at most ~1.5 s, i.e. **under 1.5% of the compile**, and an index can
-save no more than that.
+~1.1e9 string compares. The experiment meant to check that — a treeshake-local
+`has_str` whose miss scans twice, hits untouched — read **+1.49 s and +0.48 s
+over two interleaved pairs on a ~96 s self-compile**, and the paragraph this
+replaces concluded the whole miss scan was under 1.5 s. Removing the scan
+measured −8 s. Two pairs that disagree by 3x on a box whose clock drifts ~40%
+in an hour (§8) cannot resolve a one-second delta, so a doubling experiment
+can only bound a cost that is already large; the removal is the measurement.
 
-That is item 7's story recurring (#6909 indexed a registry and measured
-−0.18%), and the third time in this section that estimating a cost from its
-SHAPE rather than from removing it over-counted by 2–3x. The pass's remaining
-cost is the walk — `ts_func_names` folding every kept body — not the lookup.
+## 4g. Re-profiled at 6fec3ed (2026-09-03): the same shape in four more places, −35%
 
-Note the two pairs disagree by 3x, so ~1.5 s is a ceiling rather than a
-measurement; it is bounded well enough to decide against the work, and not
-well enough to quote as the scan's cost.
+Same method as §4e — a `-g` build, gdb-sampled, every sample charged to the
+first non-runtime frame — on the whole compiler compiling itself to x86-64
+asm. Measured on one commit, one box, one hour:
+
+| input | `bin/fern` (Go) | `bin/fern-selfhost` | ratio |
+|---|---|---|---|
+| `examples/self_host/fern.fern` to x86-64 asm | **26.6 s** | **104.7 s** | **3.9x** |
+
+The self-host side had drifted back up from §4e's 66.9 s. The box is slower
+today than it was then (native 26.6 s against 20.6 s) but not by that much, and
+the profile said where the rest went: **the §4e shape — a per-query linear scan
+of a module-wide table — in four places none of the earlier rounds had
+measured**, three of them inside fixpoints that re-walk every body per round.
+
+| first non-runtime frame | share | what it scanned, per query |
+|---|---|---|
+| `util.index_of_str` under `irlower.gfns_visible_in` | 11.6% | the module-fn list against every binder of the function, for every function on every round of `closure_ret_fns_of` — for a result read only at a lambda return |
+| `util.has_str` under `treeshake` | 8.0% | the reachable-name set §4f said not to index |
+| `checker.view_sum_fresh` + `view_sum_flags` | 6.0% | the E063 / E065 summaries, twice per call expression, per round |
+| `parser.settle_param_types` + `settle_method_param_types` | 5.6% | every decl, once per call expression |
+| `irlower.reclaim_lit_arg_callees` | 4.8% | every row of the borrow registry, per function lowered |
+| `irlower.decl_*` under `struct_routes_field_reclaim_at` | ~5% | the struct decls, per PARAMETER per round of `param_counted_of`, for a question about the function's return type |
+
+Three rounds, each timed on its own interleaved A/B with both binaries built
+from the same tree, each **byte-identical** on the whole-compiler emit and over
+the 1,644-row `scripts/selfhost-emit-hashes` sweep:
+
+| round | change | self-compile |
+|---|---|---|
+| — | 6fec3ed | 101.7 s |
+| 1 | `closure_ret_fns_of` filters the module-fn list at the two lambda-return sites that read it, not per function per round | **88.4 s** (−13%) |
+| 2 | `ViewIndex` beside the E063 / E065 tables; `SettleFns` over the decls; `struct_routes_field_reclaim_at` asked once per function | **76.3 s** (−14%) |
+| 3 | `RefSet` over the tree-shaker's reachable names | **68.4 s** (−10%) |
+
+Round 1 is the one to remember. It removed no scan and added no index: the
+value was computed eagerly for every function on every round and consumed on
+a path the compiler's own sources almost never take. Laziness was worth as
+much as the two indexing rounds together, and it is the cheapest of the three
+diffs.
+
+**The profile after round 3 is flat.** Nothing is above 7%, and the top rows
+are walkers' own bodies rather than lookups:
+
+| first non-runtime frame | share |
+|---|---|
+| `checker.check_expr` | 6.5% |
+| `irlower.reclaim_lit_arg_callees` | 5.9% |
+| `astwalk.fold_stmt_nodes` | 5.8% |
+| `checker.check_call_expr` | 4.3% |
+| `asmcore.add_string_lit` | 2.7% |
+| `irlower.param_is_borrowable` | 2.3% |
+| `irlower.decl_is_struct` | 2.2% |
+
+`__fern_strcmp` as a leaf fell from 16.9% to 8.8% across the three rounds — the
+compares were the scans, not the interning problem §4d.3 declined to scope.
+
+**The one shape site left is `reclaim_lit_arg_callees`.** For every function
+lowered it walks every row of the whole-program borrow registry and, for each
+method row, compares the bare name after the last `.` against the function's
+literal-argument callees. The registry is hashed by FULL key, and the census
+only knows the bare method name, so the existing index cannot answer it; it
+wants a second index keyed by bare method name, built with the registry in
+`fn_sigs_for_borrow`. `FnSigs` has twelve constructor sites, so that is a
+deliberate change rather than a drive-by, and at ~6% of samples (call it 2–3%
+of the clock by §4d.3's rule) it is the last item of its kind worth the trip.
+
+**The end-to-end gap, re-measured after round 3 on the same commit:**
+
+| input | `bin/fern` (Go) | `bin/fern-selfhost` | ratio |
+|---|---|---|---|
+| `examples/self_host/fern.fern` to x86-64 asm | **23.4 s / 24.3 s** | **71.3 s / 77.9 s** | **3.1x** |
+
+Two interleaved rounds. The self-host side's two rounds are 9% apart on an
+idle box, which is the drift §8 warns about, and why the rounds are shown
+rather than a mean; the 104.7 s at the top of this section was one cold run
+an hour earlier, when the interleaved pair read 101.7 s.
+
+**Also found on the way: the cliff gate is 20x over its baseline, and it is
+main's.** `scripts/cliff-bench` on this tree reads **5,177,184,636 bytes /
+568,878 crossings** against the 253,152,940 / 450,086 pinned on 2026-09-02.
+All four binaries of this section — 6fec3ed and each round — copy that exact
+byte count, so none of the three changes moved it in either direction.
+
+CI's own `cliff-report-x86_64` artifacts say how main got there, and the
+answer is not a drift:
+
+| main commit | time (UTC) | `cliff_bytes` |
+|---|---|---|
+| baseline (#7662) | 08-28 | 253,152,940 |
+| 00a36ff | 09-02 15:00 | **1,276,693,774,024** |
+| 5fcf79f … 5ff4b1a | 09-02 16:41 – 19:51 | ~225 G |
+| c9d3a5b … 165a941 | 09-02 20:28 – 23:52 | 704,786,542,300 |
+| 77c3819 … 6fec3ed | 09-03 00:16 – 08:47 | 5.08 – 5.14 G |
+
+The self-host compiler was copying **1.28 TB** on the first commit the
+main lane ever measured, and a 140x recovery landed in the five-commit
+window ending at 77c3819 — the rc change in it is 3f0cdb4. What remains is
+#8169, with the bisect windows and the reproduction. Two things it settles
+for this document: the lane's warning was advisory, so a four-order move
+surfaced only when someone ran the script by hand; and the figure is
+deterministic per HOST, not per commit — 5,177,184,636 here against CI's
+5,138,217,508 on the same tree, 0.76% apart against a 1% tolerance — so a
+local A/B has to be against a local baseline.
+
+**What the issue asked for that this does not add.** #6888 closed by naming a
+nightly whole-compiler compile-time number as the thing nothing gates. The
+`bootstrap` lane already prints stage1's wall time — the pinned self-host
+compiler compiling `fern.fern` to a native binary — on every PR and every
+push to main (`bootstrap/bootstrap.sh`, the `stage` function), so the number
+is recorded per merge; it is not compared against anything, and given §8's
+40%-in-an-hour drift on this box and the same order on a shared runner, a
+threshold on it would be the false-alarm generator the perf gate was built to
+avoid. The reproducible number is this section's, taken by hand.
 
 ## 8. Reproducing any of this
 
