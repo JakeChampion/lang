@@ -38038,6 +38038,49 @@ function arr_field_ident_is_frame_built(name: string, fnbody: ast.Stmt[], arr_fr
     return !body_unsafe_for_allow_structret(fnbody, name, no_borrow);
 }
 
+// strarr_share_read_holder_type: `fv` is the counted-share read `q.f` of a
+// `string[]` field off a bare-ident holder this frame can type — a parameter,
+// or a local declared exactly once by annotation or by a no-base literal — and
+// the answer is that holder's struct type; "" for any other shape. A name bound
+// both as a parameter and a local, or declared twice, is refused: every scan
+// here is name-keyed and would answer for the wrong binding.
+//
+// Why the returned literal may hold such a read and still be strict-fresh: the
+// ExprStructLit lowering retains the read (enum_arr_field_share_read's arm), so
+// the box leaves with a counted reference of its own. The source holder's drop
+// releases only the count the source held, and the caller's deep drop decs the
+// one the literal took; __fern_str_arr_free walks elements only at rc 1, so a
+// second reader that outlives this frame — a holder that was a parameter, a
+// second literal, a holder that escaped and was never dropped — leaves the
+// count above 1 and costs a leak, never a free. The same terms as the bare
+// ident the caller admits one branch up, whose retain is is_arr_slot's.
+function strarr_share_read_holder_type(fv: ast.Expr, fnbody: ast.Stmt[], fnparams: ast.ParamDecl[], structs: parser.StructDecl[]): string {
+    match (fv) {
+        ast.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                ast.ExprIdent(hid) => {
+                    var hty: string = "";
+                    var pi: i32 = 0;
+                    while (pi < fnparams.len()) {
+                        if (fnparams[pi].name == hid.name) { hty = fnparams[pi].type_name; }
+                        pi = pi + 1;
+                    }
+                    var decls: i32 = local_decl_count(fnbody, hid.name);
+                    if (decls > 1 || (decls > 0 && hty.len() > 0)) { return ""; }
+                    if (hty.len() == 0) { hty = declared_struct_type_of(fnbody, hid.name, structs); }
+                    if (hty.len() == 0) { hty = fresh_struct_lit_type_deep(fnbody, hid.name); }
+                    if (!decl_is_struct(structs, hty)) { return ""; }
+                    if (decl_field_type(structs, hty, fa.field) != "string[]") { return ""; }
+                    return hty;
+                },
+                _ => { return ""; }
+            }
+        },
+        _ => { return ""; }
+    }
+    return "";
+}
+
 // body_unsafe_for_allow_structret / stmt_unsafe_for_allow_structret: body_unsafe_for
 // with one use forgiven — `name` appearing as a bare field value of a
 // RETURN-POSITION struct literal, which is the move-out being proved. Every other
@@ -38199,6 +38242,13 @@ function return_value_is_strictfresh_struct(e: ast.Expr, structs: parser.StructD
                             _ => {}
                         }
                     }
+                    // `Q { f: q.f }` over a `string[]` field — the counted-share
+                    // READ (#5338), admitted on the same terms as the bare ident
+                    // above: the construction retains it, so the returned box
+                    // holds a count of its own that the caller's drop decs.
+                    if (!ok && ft == "string[]"
+                        && strarr_share_read_holder_type(v, fnbody, fnparams, structs).len() > 0
+                        && struct_routes_field_reclaim_at(structs, sfok, slit.type_name)) { ok = true; }
                     if (!ok) { return false; }
                 }
                 i = i + 1;
