@@ -6115,9 +6115,22 @@ func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
 		return true
 	})
 	isParam := map[string]bool{}
+	// frameOwns is the set of names whose value this frame reclaims: an
+	// `own` parameter and every local. A borrowed parameter is excluded —
+	// its box belongs to the caller.
+	frameOwns := map[string]bool{}
 	for _, p := range fn.Params {
 		isParam[p.Name] = true
+		if p.Own {
+			frameOwns[p.Name] = true
+		}
 	}
+	ast.Walk(body, func(n ast.Node) bool {
+		if v, isVar := n.(*ast.Var); isVar && !isParam[v.Name] {
+			frameOwns[v.Name] = true
+		}
+		return true
+	})
 	// Locals bound from a direct call to a named function — the only local
 	// binding form the last-occurrence shape admits (see above). A name
 	// declared more than once is dropped: the occurrence order cannot tell
@@ -6180,6 +6193,21 @@ func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
 			}
 			markOnce(c, t.Name)
 		case *ast.Return:
+			// `return S { ...x, f: g(.., x.f, ..) }` is the same superseded
+			// field as the assignment form: nothing runs after the return,
+			// so the old field value cannot be read back through x. It needs
+			// one condition the assignment does not, because there is no
+			// store to x here — the FRAME must own x. A borrowed parameter's
+			// box outlives the call, and its caller can still read the field
+			// the callee grew in place.
+			if sl, isLit := st.Value.(*ast.StructLit); isLit {
+				if sl.Base != nil {
+					if bid, ok := sl.Base.(*ast.Ident); ok && frameOwns[bid.Name] {
+						markSupersededFields(out, sl, bid.Name)
+					}
+				}
+				return true
+			}
 			c, ok := st.Value.(*ast.Call)
 			if !ok {
 				return true
