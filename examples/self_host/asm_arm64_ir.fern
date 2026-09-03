@@ -2023,6 +2023,11 @@ function emit_arm64_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmco
     if (o.str == "__fern_map_free_va" || o.str == "__fern_map_free_ksva") {
         s = s.need("arrarr_free"); s = s.need("map_free_va");
     }
+    // The string[]-VALUE-column pair frees that column through
+    // __fern_strarrarr_free, so they pull in its body as well as their own.
+    if (o.str == "__fern_map_free_vsa" || o.str == "__fern_map_free_ksvsa") {
+        s = s.need("strarrarr_free"); s = s.need("map_free_vsa");
+    }
     if (o.str == "__fern_strarrarr_free") { s = s.need("strarrarr_free"); }
     if (o.str == "__fern_optarrarr_free") { s = s.need("optarrarr_free"); }
     // __map_vals_struct_drop_<T>: the struct-VALUE column walk a reclaimable
@@ -4592,6 +4597,12 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("map_free_va")) {
     s = emit_arm64_map_free_variant(s, "_va",   "arr_dec",      "arrarr_free",  "mapfva");
     s = emit_arm64_map_free_variant(s, "_ksva", "str_arr_free", "arrarr_free",  "mapfksva");
+    }
+    // A string[] value column: each value released whole by __fern_str_arr_free,
+    // which is __fern_strarrarr_free's element walk. Need-gated like the pair above.
+    if (s.has_need("map_free_vsa")) {
+    s = emit_arm64_map_free_variant(s, "_vsa",   "arr_dec",      "strarrarr_free", "mapfvsa");
+    s = emit_arm64_map_free_variant(s, "_ksvsa", "str_arr_free", "strarrarr_free", "mapfksvsa");
     }
     s = s.write("__fn___fern_drop_arr_ptr:\n");
     s = s.write("    ret\n");

@@ -732,7 +732,12 @@ function main(): i32 {
 		leakCell{name: "arrtup_str__literal__len", src: arrTupStrLiteralLenSrc},
 		leakCell{name: "arrtup_str__callarg__erased_generic", src: arrTupStrErasedGenericSrc},
 		leakCell{name: "arrtup_arr__callarg__erased_generic", src: arrTupArrErasedGenericSrc},
-		leakCell{name: "arrtup_mixed__callarg__erased_generic", src: arrTupMixedErasedGenericSrc})
+		leakCell{name: "arrtup_mixed__callarg__erased_generic", src: arrTupMixedErasedGenericSrc},
+		// A map whose VALUES are string[] (#7910 (a)): the column takes the
+		// _vsa free, each value released whole. Native's own column walk and
+		// get_or ownership landed first, so the native column is the oracle.
+		leakCell{name: "map_strarr__insert__get_or", src: mapStrArrColumnInsertGetOrSrc},
+		leakCell{name: "map_strarr__literal__len", src: mapStrArrColumnLiteralLenSrc})
 	return cells
 }
 

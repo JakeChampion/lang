@@ -149,3 +149,5 @@ arrtup_str__literal__len                      clean  clean  #7910 (c): the ARRTU
 arrtup_str__callarg__erased_generic           clean  clean  the same array through count[T](xs: T[]): a bare-ident argument at an "ELB:" / "CNT:" param is a borrow, as the array-of-structs twin already read it
 arrtup_arr__callarg__erased_generic           clean  clean  the array-element tuple through the same erased generic — the argument position alone; its literal form was already clean
 arrtup_mixed__callarg__erased_generic         clean  clean  string and array elements together through the erased generic
+map_strarr__insert__get_or                    clean  clean  #7910 (a): the string[] value column takes the _vsa free (each value whole through __fern_str_arr_free) under the MAPVA: credit, whose element admission reads the fresh-string registry; native landed its own column walk and get_or ownership first (docs/rc-log/2026-09-03-map-strarr-column-selfhost.md)
+map_strarr__literal__len                      clean  clean  the column alone, literal-built

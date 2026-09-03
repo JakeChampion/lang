@@ -2140,6 +2140,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = emit_ir_map_free_variant(s, "_va",   "arr_dec",      "arrarr_free",  "mapfva");
     s = emit_ir_map_free_variant(s, "_ksva", "str_arr_free", "arrarr_free",  "mapfksva");
     }
+    // A string[] value column (MAPVA: on a `Map[K, string[]]`): each value is a
+    // string[] buffer released whole by __fern_str_arr_free (its strings, then
+    // the buffer, rc-guarded), which is __fern_strarrarr_free's element walk.
+    if (s.has_need("map_free_vsa")) {
+    s = emit_ir_map_free_variant(s, "_vsa",   "arr_dec",      "strarrarr_free", "mapfvsa");
+    s = emit_ir_map_free_variant(s, "_ksvsa", "str_arr_free", "strarrarr_free", "mapfksvsa");
+    }
     // __fern_rc_is_unique(ptr) -> i32 — 1 iff a live heap object with rc == 1.
     // Gates the struct/enum-array field-drop's element walk (walk + free the
     // element boxes only when THIS drop frees the buffer, i.e. the sole owner).
@@ -5094,6 +5101,11 @@ function emit_ir_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.
     // their own.
     if (o.str == "__fern_map_free_va" || o.str == "__fern_map_free_ksva") {
         s = s.need("heap"); s = s.need("arrarr_free"); s = s.need("map_free_va");
+    }
+    // The string[]-VALUE-column pair frees that column through
+    // __fern_strarrarr_free, so they pull in its body as well as their own.
+    if (o.str == "__fern_map_free_vsa" || o.str == "__fern_map_free_ksvsa") {
+        s = s.need("heap"); s = s.need("strarrarr_free"); s = s.need("map_free_vsa");
     }
     if (o.str == "__fern_strarrarr_free") { s = s.need("heap"); s = s.need("strarrarr_free"); }
     if (o.str == "__fern_optarrarr_free") { s = s.need("heap"); s = s.need("optarrarr_free"); }

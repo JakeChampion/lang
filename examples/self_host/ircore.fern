@@ -154,6 +154,8 @@ pub function is_fern_helper(name: string): boolean {
         // string-deep.
         || name == "__fern_map_free_va"
         || name == "__fern_map_free_ksva"
+        || name == "__fern_map_free_vsa"
+        || name == "__fern_map_free_ksvsa"
         || name == "__fern_rc_is_unique"
         // FBIP reuse-degrade primitive (#4350): hands a dead donor's block back
         // when its cap matches, else freelists it and allocs fresh — so a reuse
