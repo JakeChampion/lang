@@ -3125,6 +3125,18 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			switch id.Name {
 			case "map_new":
 				return false // fresh owned handle
+			case "__method_Map_get_or":
+				// A counted-read VALUE (array / struct / enum) comes back
+				// retained on both outcomes (__map_get_or_impl), so the
+				// binding owns a reference of its own and reclaims it —
+				// ownedCallResultType's admission, from the taint side. A
+				// string value keeps the conservative default: its inline
+				// retain is per-ABI (the get_or lowering).
+				if len(x.TypeArgs) >= 2 {
+					if _, isStr := x.TypeArgs[1].(ast.StringType); !isStr && b.mapGetHandsCountedValue(x.TypeArgs[1]) {
+						return false
+					}
+				}
 			case "cell_new":
 				// A fresh rc=1 cell box (emitCellNew) that RETAINS its element
 				// (string args are inc'd on construction), like map_new /

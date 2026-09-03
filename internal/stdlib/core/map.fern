@@ -672,9 +672,13 @@ pub function __map_get_impl(m: usize, k: usize): Option[usize] {
     return Some(__map_retain_val(__load_ptr(m), __map_val_at(m, idx)));
 }
 
+// get_or hands back a value the caller OWNS one reference to on both
+// outcomes: a hit retains the column's value, a miss retains the fallback
+// (a no-op for the scalar / non-reclaimed kinds __map_retain_val ignores), so
+// the IR can end a fresh fallback temp unconditionally after the call.
 pub function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
     var idx: i32 = __map_lookup(m, k);
-    if (idx == 0 - 1) { return fallback; }
+    if (idx == 0 - 1) { return __map_retain_val(__load_ptr(m), fallback); }
     return __map_retain_val(__load_ptr(m), __map_val_at(m, idx));
 }
 
@@ -1057,7 +1061,7 @@ pub function __map_get_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, e
 
 pub function __map_get_or_keyed_impl(m: usize, k: usize, fallback: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
     var idx: i32 = __map_lookup_keyed(m, k, hash_fn, eq_fn);
-    if (idx == 0 - 1) { return fallback; }
+    if (idx == 0 - 1) { return __map_retain_val(__load_ptr(m), fallback); }
     return __map_retain_val(__load_ptr(m), __map_val_at(m, idx));
 }
 
