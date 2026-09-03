@@ -1055,10 +1055,13 @@ function fc_pio2_reduce(prefix: string): string {
 // the ENTRY module only (like the heap runtime), so a per-module sibling's
 // `call` resolves against this one definition.
 //
-// These are fdlibm's kernels, kept in lockstep with internal/codegen/x86_64's
-// emitFloatTranscendentalsRuntime — same constants, same order, same
-// `roundsd $0` (ties-to-EVEN, matching arm64's `frintn`; the reductions pick a
-// different k otherwise). They replace the x87 sequences this backend inlined
+// These are fdlibm's kernels, over the same reduction and the same
+// `roundsd $0` as internal/codegen/x86_64's emitFloatTranscendentalsRuntime
+// (ties-to-EVEN, matching arm64's `frintn`; the reductions pick a different k
+// otherwise). The self-host cannot import Go, so the .Lfc_* table below is a
+// literal copy of internal/codegen/fdlibm's — whose selfhost_parity_test pins
+// it entry for entry, so editing one side alone fails a test rather than
+// diverging quietly. They replace the x87 sequences this backend inlined
 // (`fsin` / `fcos`, `fyl2x` for log, `f2xm1` + `fscale` for exp), which were
 // the last copy of the pre-#6270 math in the tree. x87 reduces against a 66-bit
 // pi, which is not enough near a zero of sine, where the reduced argument IS

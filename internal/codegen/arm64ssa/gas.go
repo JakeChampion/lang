@@ -25,6 +25,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/codegen/arm64"
+	"github.com/jakechampion/lang/internal/codegen/fdlibm"
 	x86 "github.com/jakechampion/lang/internal/codegen/x86_64ssa"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
@@ -988,10 +989,9 @@ func emitFloatUnaryHelper(name, mnem string) func(w func(string, ...any)) {
 	}
 }
 
-// transcendentalHelpers are the polynomial-approximation f64 math helpers
-// (exp/log/pow, plus sin/cos when ported). They share a single .rodata table of
-// minimax/Taylor coefficients (emitTranscendentalRodata), emitted once whenever
-// any of them is referenced.
+// transcendentalHelpers are the f64 math helpers that share the .rodata
+// coefficient table (emitTranscendentalRodata), emitted once whenever any of
+// them is referenced.
 var transcendentalHelpers = map[string]bool{
 	"__exp_f64": true,
 	"__log_f64": true,
@@ -1011,92 +1011,21 @@ func usesTranscendentals(helpers []string) bool {
 	return false
 }
 
-// emitTranscendentalRodata writes the shared coefficient table for the f64
-// transcendental helpers. These are fdlibm's kernels, kept in lockstep with
-// internal/codegen/arm64 (and the two self-host emitters) — same constants, in
-// the same order. They replace polynomials that measured 3.2e10 ulp for sin,
-// 4.5e7 for exp and 9844 for log.
-//
-// pi/2 is carried as THREE 33-bit chunks (~99 bits): two is not enough near a
-// zero of sine, where the reduced argument IS the answer, so the reduction's
-// absolute error becomes the result's relative error. expovf/expunf bound exp
-// BEFORE the 2^k reconstruction, which builds the exponent field as
-// (k+1023)<<52 and otherwise overflows into the SIGN bit — exp(1000) returned
-// -6.1e-183 rather than +Inf.
+// emitTranscendentalRodata writes the coefficient table for the f64
+// transcendental helpers, from internal/codegen/fdlibm — the same numbers
+// internal/codegen/arm64 emits, since the two are the same kernels.
 func emitTranscendentalRodata(w func(string, ...any)) {
 	w("")
 	w(".section .rodata")
 	w(".align 3")
-	for _, c := range []struct{ lbl, val string }{
-		{".Lfc_one", "1.0"},
-		{".Lfc_half", "0.5"},
-		{".Lfc_two", "2.0"},
-		{".Lfc_sqrt2", "1.4142135623730951"},
-		{".Lfc_invln2", "1.44269504088896338700e+00"},
-		{".Lfc_ln2hi", "6.93147180369123816490e-01"},
-		{".Lfc_ln2lo", "1.90821492927058770002e-10"},
-		{".Lfc_twoopi", "6.36619772367581382433e-01"},
-		{".Lfc_pio2h", "1.57079632673412561417e+00"},
-		{".Lfc_pio2m", "6.07710050630396597660e-11"},
-		{".Lfc_pio2l", "2.02226624879595063154e-21"},
-		// pi/2 as an unevaluated double-double, plus the two scales that turn
-		// __rem_pio2_large's 126-bit fraction into a double.
-		{".Lfc_pio2hi", "1.5707963267948966"},
-		{".Lfc_pio2lo", "6.123233995736766e-17"},
-		{".Lfc_twom62", "2.168404344971009e-19"},
-		{".Lfc_twom115", "2.407412430484045e-35"},
-		{".Lfc_s1", "-1.66666666666666324348e-01"},
-		{".Lfc_s2", "8.33333333332248946124e-03"},
-		{".Lfc_s3", "-1.98412698298579493134e-04"},
-		{".Lfc_s4", "2.75573137070700676789e-06"},
-		{".Lfc_s5", "-2.50507602534068634195e-08"},
-		{".Lfc_s6", "1.58969099521155010221e-10"},
-		{".Lfc_c1", "4.16666666666666019037e-02"},
-		{".Lfc_c2", "-1.38888888888741095749e-03"},
-		{".Lfc_c3", "2.48015872894767294178e-05"},
-		{".Lfc_c4", "-2.75573143513906633035e-07"},
-		{".Lfc_c5", "2.08757232129817482790e-09"},
-		{".Lfc_c6", "-1.13596475577881948265e-11"},
-		{".Lfc_p1", "1.66666666666666019037e-01"},
-		{".Lfc_p2", "-2.77777777770155933842e-03"},
-		{".Lfc_p3", "6.61375632143793436117e-05"},
-		{".Lfc_p4", "-1.65339022054652515390e-06"},
-		{".Lfc_p5", "4.13813679705723846039e-08"},
-		{".Lfc_lg1", "6.666666666666735130e-01"},
-		{".Lfc_lg2", "3.999999999940941908e-01"},
-		{".Lfc_lg3", "2.857142874366239149e-01"},
-		{".Lfc_lg4", "2.222219843214978396e-01"},
-		{".Lfc_lg5", "1.818357216161805012e-01"},
-		{".Lfc_lg6", "1.531383769920937332e-01"},
-		{".Lfc_lg7", "1.479819860511658591e-01"},
-		{".Lfc_expovf", "709.782712893383973096"},
-		{".Lfc_expunf", "-745.133219101941108420"},
-	} {
-		w("%s: .double %s", c.lbl, c.val)
+	for _, c := range fdlibm.Coeffs {
+		w(".Lfc_%s: .double %s", c.Name, c.Text)
 	}
-	// 2/pi in binary, MSB-first, one limb per 64 fraction bits starting at
-	// 2^-1 in limb 1 — the window Payne-Hanek indexes with the argument's own
-	// exponent. The leading zero limb lets that index start above 2^-1 without
-	// a bounds test; the length covers the largest finite double. Carried per
-	// backend, like the fdlibm coefficients beside it.
 	w(".Lfc_2opi_bits:")
-	for _, v := range twoOverPiBits {
+	for _, v := range fdlibm.TwoOverPiBits {
 		w("\t.quad 0x%016x", v)
 	}
 	w(".text")
-}
-
-// twoOverPiBits is 2/pi in binary, MSB-first, one limb per 64 fraction bits
-// starting at 2^-1 in limb 1. Same table as the native backends': the emit
-// layers are deliberately parallel.
-var twoOverPiBits = [...]uint64{
-	0x0000000000000000, 0xa2f9836e4e441529, 0xfc2757d1f534ddc0,
-	0xdb6295993c439041, 0xfe5163abdebbc561, 0xb7246e3a424dd2e0,
-	0x06492eea09d1921c, 0xfe1deb1cb129a73e, 0xe88235f52ebb4484,
-	0xe99c7026b45f7e41, 0x3991d639835339f4, 0x9c845f8bbdf9283b,
-	0x1ff897ffde05980f, 0xef2f118b5a0a6d1f, 0x6d367ecf27cb09b7,
-	0x4f463f669e5fea2d, 0x7527bac7ebe5f17b, 0x3d0739f78a5292ea,
-	0x6bfb5fb11f8d5d08, 0x56033046fc7b6bab, 0xf0cfbc209af4361d,
 }
 
 // emitExpF64Helper writes __exp_f64(x) -> e^x. x arrives as f64 bits in x0 (the
@@ -1413,7 +1342,7 @@ func emitSinCosReduction(w func(string, ...any), prefix string) {
 	w("\tldp x29, x30, [sp], #16")
 	w("\tb .Lssa_%s_red", prefix)
 	w(".Lssa_%s_cw:", prefix)
-	ldc("d1", ".Lfc_twoopi")
+	ldc("d1", ".Lfc_2opi")
 	w("\tfmul d1, d1, d0")
 	w("\tfrintn d1, d1")
 	w("\tfcvtzs x10, d1")
@@ -1605,10 +1534,10 @@ func emitRemPio2LargeHelper(w func(string, ...any)) {
 	// and matches the other backends bit for bit.
 	w("\tlsr x1, x1, #11")
 	w("\tscvtf d1, x7")
-	ldc("d3", ".Lfc_twom62")
+	ldc("d3", ".Lfc_2m62")
 	w("\tfmul d1, d1, d3")
 	w("\tscvtf d2, x1")
-	ldc("d3", ".Lfc_twom115")
+	ldc("d3", ".Lfc_2m115")
 	w("\tfmul d2, d2, d3")
 	w("\tfadd d1, d1, d2")
 	w("\tcmp x0, #0")
