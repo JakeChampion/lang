@@ -1,0 +1,122 @@
+import "std/test";
+import "std/http";
+import "std/stream";
+
+// examples/tests/http_request_body_stream_test.fern —
+// `HttpRequest.body` is a `Stream` (docs/PLATFORM-RESEARCH.md
+// Rec §4, the issue-#4414 item).
+//
+// The point of the migration is that a handler no longer has to
+// materialise a whole upload to look at it: it takes
+// `req.body_stream()` and drives std/stream's cursor readers,
+// rebinding the Stream each step. These pin that path against
+// bodies that came off the wire through http_parse_request.
+//
+// They also pin the property the whole-body readers claim: each
+// reads the backing buffer, not the cursor, so `body_string()`
+// answers the same thing however far a separate walk has
+// advanced. A reader that quietly consumed the stream would make
+// the second call in a handler return "" — the failure this
+// distinction exists to prevent.
+
+// `wire(body)` — a POST whose Content-Length frames `body`.
+function wire(body: string): string {
+    return "POST /upload HTTP/1.1\r\nContent-Length: " + body.len().to_string() + "\r\n\r\n" + body;
+}
+
+function parsed(body: string): HttpRequest {
+    match (http.http_parse_request(wire(body))) {
+        Some(req) => { return req; },
+        None => { return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder() }; }
+    }
+    return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder() };
+}
+
+function req_headers_placeholder(): HeaderMap {
+    return HeaderMap { names: [], values: [] };
+}
+
+function test_body_stream_carries_the_body(): test.TestOutcome {
+    var (all, rest) = parsed("hello").body_stream().read_all_string();
+    return test.assert_eq(all, "hello");
+}
+
+function test_body_stream_starts_at_the_beginning(): test.TestOutcome {
+    return test.assert_eq(parsed("hello").body_stream().remaining(), 5);
+}
+
+function test_empty_body_is_an_empty_stream(): test.TestOutcome {
+    var s: Stream = parsed("").body_stream();
+    return test.assert_eq(s.len(), 0);
+}
+
+// The upload shape the migration is for: read one line at a time
+// rather than the whole body.
+function test_read_line_walks_the_body(): test.TestOutcome {
+    var s: Stream = parsed("alpha\nbeta\ngamma").body_stream();
+    var seen: string = "";
+    var n: i32 = 0;
+    while (n < 4) {
+        var (line, next) = s.read_line();
+        s = next;
+        match (line) {
+            Some(l) => { seen = seen + "[" + l + "]"; },
+            None => { n = 4; }
+        }
+        n = n + 1;
+    }
+    return test.assert_eq(seen, "[alpha][beta][gamma]");
+}
+
+function test_read_n_takes_a_prefix(): test.TestOutcome {
+    var (head, rest) = parsed("hello world").body_stream().read_n(5);
+    return test.assert_eq(string_from_bytes_unchecked(head), "hello");
+}
+
+function test_read_n_leaves_the_remainder(): test.TestOutcome {
+    var (head, rest) = parsed("hello world").body_stream().read_n(5);
+    var (tail, done) = rest.read_all_string();
+    return test.assert_eq(tail, " world");
+}
+
+// The whole-body readers answer for the buffer, not the cursor.
+function test_body_string_ignores_a_partial_walk(): test.TestOutcome {
+    var req: HttpRequest = parsed("hello world");
+    var (head, rest) = req.body_stream().read_n(5);
+    return test.assert_eq(req.body_string(), "hello world");
+}
+
+function test_body_len_ignores_a_partial_walk(): test.TestOutcome {
+    var req: HttpRequest = parsed("hello world");
+    var (line, rest) = req.body_stream().read_line();
+    return test.assert_eq(req.body_len(), 11);
+}
+
+function test_body_bytes_matches_body_len(): test.TestOutcome {
+    var req: HttpRequest = parsed("hello");
+    return test.assert_eq(req.body_bytes().len(), req.body_len());
+}
+
+// A request with no body at all still answers every reader.
+function test_bodyless_request_reads_empty(): test.TestOutcome {
+    match (http.http_parse_request("GET / HTTP/1.1\r\n\r\n")) {
+        Some(req) => { return test.assert_eq(req.body_string() + "/" + req.body_len().to_string(), "/0"); },
+        None => { return test.fail("well-formed request wrongly rejected"); }
+    }
+    return test.fail("unreachable");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("HttpRequest.body as a Stream");
+    r = r.it("body_stream carries the body", test_body_stream_carries_the_body);
+    r = r.it("body_stream starts at the beginning", test_body_stream_starts_at_the_beginning);
+    r = r.it("an empty body is an empty stream", test_empty_body_is_an_empty_stream);
+    r = r.it("read_line walks the body", test_read_line_walks_the_body);
+    r = r.it("read_n takes a prefix", test_read_n_takes_a_prefix);
+    r = r.it("read_n leaves the remainder", test_read_n_leaves_the_remainder);
+    r = r.it("body_string ignores a partial walk", test_body_string_ignores_a_partial_walk);
+    r = r.it("body_len ignores a partial walk", test_body_len_ignores_a_partial_walk);
+    r = r.it("body_bytes matches body_len", test_body_bytes_matches_body_len);
+    r = r.it("a bodyless request reads empty", test_bodyless_request_reads_empty);
+    return r.finish();
+}

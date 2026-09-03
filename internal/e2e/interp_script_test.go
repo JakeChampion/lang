@@ -1941,6 +1941,7 @@ function main(): i32 {
 import "std/platform";
 import "std/http";
 import "std/headers";
+import "std/stream";
 function handle(req: HttpRequest, plat: Platform): HttpResponse {
     plat.log("serving " + req.path);
     match (plat.env("REGION")) {
@@ -1951,7 +1952,7 @@ function handle(req: HttpRequest, plat: Platform): HttpResponse {
 }
 function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
-    var req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: "", headers: headers.header_map_new() };
+    var req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new() };
     var resp: HttpResponse = handle(req, m.as_platform());
     print(resp.body);
     var cs: MockCall[] = m.calls();

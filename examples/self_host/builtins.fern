@@ -65,7 +65,10 @@ struct ProcessResult { stdout: string, stderr: string, exit_code: i32 }
 // field); the self-host shape dispatch needs the declaration to resolve
 // field offsets, so it lives here.
 struct HeaderMap { names: string[], values: string[] }
-struct HttpRequest { method: string, path: string, body: string, headers: HeaderMap }
+// Stream — std/stream's byte-stream value, and the type of
+// HttpRequest.body (docs/PLATFORM-RESEARCH.md Rec §4).
+struct Stream { data: u8[], pos: i32 }
+struct HttpRequest { method: string, path: string, body: Stream, headers: HeaderMap }
 struct HttpResponse { status: i32, body: string, headers: HeaderMap }
 
 // Platform — the capability bag threaded as the second parameter of every

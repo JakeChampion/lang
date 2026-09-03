@@ -3692,6 +3692,37 @@ func TestRunnerHttpResponseBodyShimExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/http_request_body_stream_test.fern` — the
+// request body as a `Stream` (docs/PLATFORM-RESEARCH.md Rec §4).
+// The cases that matter are the incremental ones: read_line and
+// read_n drive a cursor over a body that came off the wire, which
+// is what a handler does instead of materialising an upload. The
+// pair of "ignores a partial walk" cases pin the other half of the
+// contract — the whole-body readers answer for the buffer, so a
+// second call in a handler does not come back empty.
+func TestRunnerHttpRequestBodyStreamExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_request_body_stream_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: HttpRequest.body as a Stream",
+		"ok 1 - body_stream carries the body",
+		"ok 4 - read_line walks the body",
+		"ok 6 - read_n leaves the remainder",
+		"ok 7 - body_string ignores a partial walk",
+		"ok 10 - a bodyless request reads empty",
+		"# pass 10",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/http_response_headers_migrated_test.fern`
 // — Lang port of `TestInterpScriptHttpResponseHeaders`.
 // Fifth migration in the runner-adoption campaign.
