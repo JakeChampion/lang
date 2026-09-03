@@ -302,7 +302,7 @@ fbip function map_inc(own xs: List): List {
     }
 }
 function main(): i32 { return 0; }`,
-			want: "map_inc claim=fbip(0) fresh=2 paired=0",
+			want: "map_inc claim=fbip(0) fresh=2 paired=0 elided=0",
 			exit: 1,
 		},
 		{
@@ -314,7 +314,7 @@ fbip function bump(own p: P): P {
     return p;
 }
 function main(): i32 { var q: P = bump(P { x: 1, y: 2 }); return q.x; }`,
-			want: "bump claim=fbip(0) fresh=1 paired=0",
+			want: "bump claim=fbip(0) fresh=1 paired=0 elided=0",
 			exit: 1,
 		},
 		{
@@ -330,7 +330,7 @@ fbip(1) function churn(a0: i32): i32 {
     return b.x + b.y;
 }
 function main(): i32 { return churn(3); }`,
-			want: "churn claim=fbip(1) fresh=1 paired=1",
+			want: "churn claim=fbip(1) fresh=1 paired=1 elided=0",
 			exit: 0,
 		},
 		{
@@ -341,8 +341,41 @@ function main(): i32 { return churn(3); }`,
 			src: `struct P { x: i32, y: i32 }
 fbip function mk(a: i32): P { return P { x: a, y: a + 1 }; }
 function main(): i32 { var p: P = mk(3); return p.x; }`,
-			want: "mk claim=fbip(0) fresh=1 paired=0",
+			want: "mk claim=fbip(0) fresh=1 paired=0 elided=0",
 			exit: 1,
+		},
+		{
+			// R1 functional update on a LOCAL: `p = P { ...p, x: … }` pairs
+			// through emit_self_overwrite_reuse, and the two fields the spread
+			// carries are never re-stored on the reuse arm. `elided` is the
+			// structural pin for that (#7909): it counts the fresh arm's
+			// carried-field copies, which exist exactly where the reuse arm
+			// elided a store. The initial literal is the one fresh site.
+			name: "r1-local-spread-carried",
+			src: `struct P { x: i32, y: i32, z: i32 }
+fbip(1) function bump(a: i32): i32 {
+    var p: P = P { x: a, y: a + 1, z: a + 2 };
+    p = P { ...p, x: p.x + 1 };
+    return p.x + p.y + p.z;
+}
+function main(): i32 { return bump(1); }`,
+			want: "bump claim=fbip(1) fresh=1 paired=1 elided=2",
+			exit: 0,
+		},
+		{
+			// The same update with every field overridden carries nothing, so
+			// the site pairs with nothing to elide — the axis reads 0 rather
+			// than counting the override stores.
+			name: "r1-local-spread-all-overridden",
+			src: `struct P { x: i32, y: i32, z: i32 }
+fbip(1) function bump(a: i32): i32 {
+    var p: P = P { x: a, y: a + 1, z: a + 2 };
+    p = P { ...p, x: p.y, y: p.x, z: p.z + 1 };
+    return p.x + p.y + p.z;
+}
+function main(): i32 { return bump(1); }`,
+			want: "bump claim=fbip(1) fresh=1 paired=1 elided=0",
+			exit: 0,
 		},
 		{
 			// A bare `fip` body that allocates nothing verifies clean, and its
@@ -350,7 +383,7 @@ function main(): i32 { var p: P = mk(3); return p.x; }`,
 			name: "fip-clean",
 			src: `fip function add2(a: i32, b: i32): i32 { return a + b; }
 function main(): i32 { return add2(1, 2); }`,
-			want: "add2 claim=fip(0) fresh=0 paired=0",
+			want: "add2 claim=fip(0) fresh=0 paired=0 elided=0",
 			exit: 0,
 		},
 	}

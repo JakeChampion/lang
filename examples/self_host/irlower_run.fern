@@ -154,7 +154,8 @@ function verify_fip_all(funcs: parser.FuncDecl[], fns: ir.LoweredFn[]): FipSweep
             census = census + fns[i].name + " claim=" + kw
                 + "(" + util.i32_to_string(funcs[i].fip_allowance) + ")"
                 + " fresh=" + util.i32_to_string(r.fresh)
-                + " paired=" + util.i32_to_string(r.paired) + "\n";
+                + " paired=" + util.i32_to_string(r.paired)
+                + " elided=" + util.i32_to_string(r.elided) + "\n";
             var k: i32 = 0;
             while (k < r.problems.len()) { out = out.append(r.problems[k]); k = k + 1; }
         }

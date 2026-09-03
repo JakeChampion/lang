@@ -84,6 +84,11 @@ pub struct FipResult {
     problems: irverify.Problem[],
     fresh: i32,
     paired: i32,
+    // elided counts the carried fields a self-overwrite reuse site
+    // (`p = T { ...p, f: v }`) left untouched on its reuse arm — the fresh
+    // arm copies each one out of the donor, so the copies are what is
+    // counted (elided_carried_at).
+    elided: i32,
 }
 
 // ---- the op table ------------------------------------------------------
@@ -128,6 +133,55 @@ pub function is_paired_alloc(o: ir.Op): boolean {
     return o.kind_tag == ir.kind_id("call_direct") && o.str == "__fern_alloc_reuse";
 }
 
+// elided_carried_at counts the carried fields elided by the reuse site whose
+// `__fern_alloc_reuse` call sits at ops[at]. The self-overwrite lowering
+// (irlower's emit_self_overwrite_reuse) is the one family with carried
+// fields: after the call comes the uniqueness branch, and its FRESH arm opens
+// with the raw shape-word copy (`raw_store_ptr`) and then copies every
+// carried field out of the donor with one `struct_set` each — the stores the
+// reuse arm does without. The other families (cross-struct, tuple, enum)
+// write every field below the branch or re-shape through `struct_set_shape`,
+// so their fresh arm has no `struct_set` and no raw shape copy, and they
+// count 0 here.
+pub function elided_carried_at(ops: ir.Op[], at: i32): i32 {
+    var k_if: i32 = ir.kind_id("if");
+    var k_else: i32 = ir.kind_id("else");
+    var k_end: i32 = ir.kind_id("end");
+    var k_block: i32 = ir.kind_id("block");
+    var k_loop: i32 = ir.kind_id("loop");
+    var k_store: i32 = ir.kind_id("struct_set");
+    var k_shape_copy: i32 = ir.kind_id("raw_store_ptr");
+    var i: i32 = at + 1;
+    // The uniqueness branch: the first `if` after the call.
+    while (i < ops.len() && ops[i].kind_tag != k_if) {
+        if (ops[i].kind_tag == k_end || ops[i].kind_tag == k_else) { return 0; }
+        i = i + 1;
+    }
+    // Its fresh arm: the `else` at the branch's own depth.
+    var depth: i32 = 0;
+    i = i + 1;
+    while (i < ops.len()) {
+        var t: i32 = ops[i].kind_tag;
+        if (t == k_if || t == k_block || t == k_loop) { depth = depth + 1; }
+        else if (t == k_end) { if (depth == 0) { return 0; } depth = depth - 1; }
+        else if (t == k_else && depth == 0) { break; }
+        i = i + 1;
+    }
+    var stores: i32 = 0;
+    var shape_copied: boolean = false;
+    i = i + 1;
+    while (i < ops.len()) {
+        var t2: i32 = ops[i].kind_tag;
+        if (t2 == k_if || t2 == k_block || t2 == k_loop) { depth = depth + 1; }
+        else if (t2 == k_end) { if (depth == 0) { break; } depth = depth - 1; }
+        else if (t2 == k_shape_copy) { shape_copied = true; }
+        else if (t2 == k_store && depth == 0) { stores = stores + 1; }
+        i = i + 1;
+    }
+    if (!shape_copied) { return 0; }
+    return stores;
+}
+
 // ---- the pass ----------------------------------------------------------
 
 // verify_fip_fn checks one lowered function's ops against its claim. Returns
@@ -137,11 +191,13 @@ pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
     var out: irverify.Problem[] = [];
     var fresh: i32 = 0;
     var paired: i32 = 0;
+    var elided: i32 = 0;
     var sites: string = "";
     var i: i32 = 0;
     while (i < ops.len()) {
         if (is_paired_alloc(ops[i])) {
             paired = paired + 1;
+            elided = elided + elided_carried_at(ops, i);
         } else {
             var what: string = fresh_alloc_what(ops[i]);
             if (what.len() > 0) {
@@ -153,10 +209,10 @@ pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
         i = i + 1;
     }
     if (!claim.is_fip && !claim.is_fbip) {
-        return FipResult { problems: out, fresh: fresh, paired: paired };
+        return FipResult { problems: out, fresh: fresh, paired: paired, elided: elided };
     }
     if (fresh <= claim.allowance) {
-        return FipResult { problems: out, fresh: fresh, paired: paired };
+        return FipResult { problems: out, fresh: fresh, paired: paired, elided: elided };
     }
     var kw: string = "fip";
     if (claim.is_fbip) { kw = "fbip"; }
@@ -173,5 +229,5 @@ pub function verify_fip_fn(claim: FipClaim, ops: ir.Op[]): FipResult {
             + util.i32_to_string(fresh) + " un-reused allocation site(s) exceed the allowance of "
             + util.i32_to_string(claim.allowance) + ": " + sites + " — " + remedy
     });
-    return FipResult { problems: out, fresh: fresh, paired: paired };
+    return FipResult { problems: out, fresh: fresh, paired: paired, elided: elided };
 }
