@@ -10469,7 +10469,7 @@ pub function register_map_method_generics(mod: Module): Module {
 // fn-typed param is coarsened to the bare tag "fn" by the parser, so a var
 // that appears only in a closure's RETURN is collected from `fn_ret` by the
 // caller, not from here.
-pub function collect_tvars(name: string, acc: string[]): string[] {
+function collect_tvars(name: string, acc: string[]): string[] {
     if (looks_type_var(name)) {
         if (str_in(acc, name)) { return acc; }
         return acc.append(name);
@@ -10503,7 +10503,7 @@ pub function collect_tvars(name: string, acc: string[]): string[] {
 // `Base[T, …]` receiver whose args are ALL type vars, or []. The struct
 // sibling of map_receiver_typevars — a partially concrete `Box[i32]` receiver
 // is not a generic the worklist can key on.
-function struct_receiver_typevars(recv: string): string[] {
+pub function struct_receiver_typevars(recv: string): string[] {
     var none: string[] = [];
     var lb: i32 = first_bracket(recv);
     if (lb <= 0) { return none; }
