@@ -28,28 +28,54 @@ const optimizeCleanupMaxIterations = 8
 
 // OptimizeCleanup runs PropagateCopies + ConstPropagate + Fold +
 // ReduceStrength + PruneZeroSlotGuards to a fixed point on every
-// function in prog. Each
-// pass is idempotent on its own; the loop exists because they
-// interact — the output of one can expose new work for the others
-// (a strength-reduced `<expr> ; drop ; const 0` becomes a candidate
+// function in prog. Each pass is idempotent on its own; the loop exists
+// because they interact — the output of one can expose new work for the
+// others (a strength-reduced `<expr> ; drop ; const 0` becomes a candidate
 // for Fold's const + drop peephole when <expr> is itself a const).
 func OptimizeCleanup(prog *Program) {
+	ptrW := prog.PtrW
+	if ptrW == 0 {
+		ptrW = 4
+	}
+	for _, fn := range prog.Funcs {
+		optimizeCleanupFunc(fn, ptrW)
+	}
+}
+
+// optimizeCleanupFunc runs the five passes on one function until a round
+// rewrites nothing. The passes are intra-function, so converging each
+// function on its own is the same fixed point as converging the program;
+// the difference is that a converged function is never revisited, where a
+// whole-program round re-runs every pass over every function (copying its
+// op list five times) for as long as any function is still changing.
+func optimizeCleanupFunc(fn *Func, ptrW int) {
 	for i := 0; i < optimizeCleanupMaxIterations; i++ {
-		// Run all four every iteration (they interact — no short-circuit)
-		// and OR their changed verdicts. Converged once a full round
-		// rewrote nothing. This replaces the old snapshotPrograms +
-		// equalPrograms convergence check, which deep-COPIED the entire
-		// program's op lists every iteration — an up-to-8× whole-program
-		// duplication that dominated self-host driver build time and kept
-		// this fixpoint off the native backends (#4377 slice 1b). Each
-		// sub-pass now reports whether it changed anything (a per-function
-		// opsEqual, no copy), so the loop needs no snapshot at all.
-		c1 := PropagateCopies(prog)
-		c2 := ConstPropagate(prog)
-		c3 := Fold(prog)
-		c4 := ReduceStrength(prog)
-		c5 := PruneZeroSlotGuards(prog)
-		if !(c1 || c2 || c3 || c4 || c5) {
+		changed := false
+		if next := propagateCopiesOps(fn, fn.Ops, ptrW); !opsEqual(next, fn.Ops) {
+			fn.Ops = next
+			changed = true
+		}
+		if next := constPropOps(fn.Ops, fn); !opsEqual(next, fn.Ops) {
+			fn.Ops = next
+			changed = true
+		}
+		for {
+			next := foldOnce(fn.Ops)
+			if opsEqual(next, fn.Ops) {
+				break
+			}
+			fn.Ops = next
+			changed = true
+		}
+		if next := reduceStrengthOps(fn.Ops); !opsEqual(next, fn.Ops) {
+			fn.Ops = next
+			changed = true
+		}
+		if next, ok := pruneZeroSlotGuardsIn(fn); ok {
+			fn.Ops = next
+			changed = true
+		}
+		if !changed {
 			return
 		}
 	}
