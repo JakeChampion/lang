@@ -667,7 +667,11 @@ func TestSelfHostAsmIRArm64Path(t *testing.T) {
 		// also pin that the heap runtime is pulled in with them.
 		{"arr-sum-helper", `function main(): i32 { var xs: i32[] = [1, 2, 3, 4]; return xs.sum(); }`},
 		{"arr-product-helper", `function main(): i32 { var xs: i32[] = [2, 3, 5]; return xs.product(); }`},
-		{"arr-index-of-helper", `function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(9); }`},
+		// index_of returns Option[i32] (#4387), so this pins the Option-boxing
+		// helper's body; the raw sentinel scan it used to reach is what
+		// arr-contains-helper below pins, `contains` being the only expression
+		// that still calls it.
+		{"arr-index-of-helper", `function main(): i32 { var xs: i32[] = [7, 8, 9]; match (xs.index_of(9)) { Some(i) => { return i; }, None => { return 99; } } }`},
 		{"arr-contains-helper", `function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(8)) { return 1; } return 0; }`},
 		{"i32-pow-helper", `function main(): i32 { var n: i32 = 2; return n.pow(5); }`},
 		// gcd / lcm: helper-backed like pow, and the only pair whose helper body
