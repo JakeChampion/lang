@@ -1925,8 +1925,6 @@ func referencedRuntimeHelpers(progs map[string]*Program) []string {
 func emitRcIsUniqueHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_is_unique"))
-	w("\ttest rdi, rdi")
-	w("\tjz .Lssa_rcuniq_no")
 	w("\tcmp rdi, 0x10000")
 	w("\tjb .Lssa_rcuniq_no")
 	w("\tmov eax, %s", memRef("rdi", -8)) // rc word (4-byte) at data-8
@@ -1966,8 +1964,6 @@ func rcPassThroughRet(w func(string, ...any)) {
 func emitRcIncHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_inc"))
-	w("\ttest rdi, rdi")
-	w("\tjz .Lssa_rcinc_ret")
 	w("\tcmp rdi, 0x10000")
 	w("\tjb .Lssa_rcinc_ret")
 	w("\tmov eax, %s", memRef("rdi", -8))
@@ -1987,8 +1983,6 @@ func emitRcIncHelper(w func(string, ...any)) {
 func emitRcDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_dec"))
-	w("\ttest rdi, rdi")
-	w("\tjz .Lssa_rcdec_ret")
 	w("\tcmp rdi, 0x10000")
 	w("\tjb .Lssa_rcdec_ret")
 	w("\tmov eax, %s", memRef("rdi", -8))
@@ -2059,8 +2053,6 @@ func emitStrLenHelper(w func(string, ...any)) {
 func emitArrDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_arr_dec"))
-	w("\ttest rdi, rdi")
-	w("\tjz .Lssa_arrdec_ret")
 	w("\tcmp rdi, 0x10000")
 	w("\tjb .Lssa_arrdec_ret")
 	w("\tmov eax, %s", memRef("rdi", -8)) // rc
@@ -2763,8 +2755,6 @@ func emitStrConcatHelper(w func(string, ...any)) {
 func emitStrDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_str_dec"))
-	w("\ttest rdi, rdi")
-	w("\tjz .Lssa_strdec_ret")
 	w("\tcmp rdi, 0x10000")
 	w("\tjb .Lssa_strdec_ret")
 	w("\tmov eax, %s", memRef("rdi", -8)) // rc
