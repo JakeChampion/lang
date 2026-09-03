@@ -79,8 +79,15 @@ function main(): i32 { return 0; }`, 8)
 	// `stem` (literal-seeded) and `key` (a fresh concat) both free through
 	// __fern_str_dec at their reinit and sweep sites; the tainted baseline
 	// skipped `key` entirely, leaving only stem's two.
-	if got := countCallPrefix(p, "work", "__fern_str_dec"); got != 4 {
-		t.Errorf("want 4 string releases (stem + key, reinit + sweep each; tainted baseline 2), got %d:\n%s", got, p)
+	//
+	// The fifth site is #7911's discarded-key release, which this test was
+	// written before: on the single-word ABI the set stashes the incoming
+	// key and frees it only when the entry count did NOT grow, so a key an
+	// overwrite discarded is not stranded. It is guarded on that count, so
+	// it never fires for this program's fresh insert — but it is a call
+	// site, and counting it here is what ties the two changes together.
+	if got := countCallPrefix(p, "work", "__fern_str_dec"); got != 5 {
+		t.Errorf("want 5 string releases (stem + key, reinit + sweep each, plus the guarded discarded-key release; tainted baseline 2), got %d:\n%s", got, p)
 	}
 	// The store itself retains the aliased key and the aliased element, and
 	// the map's drop walks both columns it now co-owns.
