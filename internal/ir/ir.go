@@ -3285,6 +3285,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
 					op.Str == "__drop_arr_closure" ||
 					op.Str == "__drop_closure_value" ||
+					op.Str == "__drop_strarr" ||
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_enum_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_tuple_") ||
@@ -3395,6 +3396,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 					continue
 				}
 				fn = genArrTupleDropFn(mangled, ptrW)
+			} else if name == "__drop_strarr" {
+				fn = genStrArrDropFn(ptrW)
 			} else if name == "__drop_map_str_values" {
 				fn = genMapStrValDropFn(ptrW)
 			} else if name == "__drop_map_str_keys" {
@@ -13374,6 +13377,13 @@ func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 	// applies), so this changes the DROP, not the retain. Other arrays
 	// (plain / nested / enum-elem) keep __map_drop_values.
 	if at, ok := v.(ast.ArrayType); ok {
+		// A `string[]` value (Map[K, string[]]) is kind 2 to __map_drop_values,
+		// whose flat __fern_arr_dec frees the buffer and strands every string
+		// in it. __drop_strarr is the same one-argument shape the column walk
+		// calls for a struct or enum value, over __fern_drop_arr_str.
+		if _, isStr := at.Elem.(ast.StringType); isStr {
+			return "__drop_strarr", true
+		}
 		return arrElemStructDropName(at.Elem, info, genEnumDrops, genTupleDrops, ptrW, false)
 	}
 	// Every other value with a generated recursive drop — concrete user
@@ -14703,6 +14713,39 @@ func (b *builder) callBody(n *ast.Call) error {
 			}
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
 			b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+			b.emitArgTempDrops(tmpSlots, tmpTypes)
+			return nil
+		}
+	}
+	// get_or on a counted-read VALUE column (array / struct / enum values):
+	// the runtime retains the result on a hit and, since the same rule made
+	// the miss retain the fallback, on a miss too — so the result is owned
+	// (ownedCallResultType admits it) and a FRESH fallback temp is dead once
+	// the helper has read it, on both outcomes. Without this arm the generic
+	// call path kept the fallback (its result may alias the argument) and
+	// nothing owned the retained value: 48 B per `m.get_or(i, [])` on an
+	// i32[] column, the array and its strings on a string[] one.
+	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 && !keyKind3 && !needBoxK && !needBoxV {
+		if _, isStr := n.TypeArgs[1].(ast.StringType); !isStr && b.mapGetHandsCountedValue(n.TypeArgs[1]) {
+			var tmpSlots []int32
+			var tmpTypes []ast.Type
+			for ai, a := range n.Args {
+				if ai == 2 {
+					slot, tt, ok, err := b.stashOwnedArgTemp(a)
+					if err != nil {
+						return err
+					}
+					if ok {
+						tmpSlots = append(tmpSlots, slot)
+						tmpTypes = append(tmpTypes, tt)
+						continue
+					}
+				}
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
 			b.emitArgTempDrops(tmpSlots, tmpTypes)
 			return nil
 		}

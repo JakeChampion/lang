@@ -341,6 +341,16 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if _, ok := b.info.FuncSigs[id.Name]; !ok {
 		return nil, false // not a known function (excludes variant constructors)
 	}
+	// `m.get_or(k, d)` on a counted-read value column (mapGetHandsCountedValue:
+	// array / struct / enum values, kinds >= 2): the runtime retains what it
+	// hands back on BOTH outcomes (__map_get_or_impl), so the result is a
+	// reference the caller owns outright, exactly like a fresh user-fn result.
+	// A string value keeps its own inline retain in the get_or lowering.
+	if id.Name == "__method_Map_get_or" && len(call.TypeArgs) >= 2 {
+		if _, isStr := call.TypeArgs[1].(ast.StringType); !isStr && b.mapGetHandsCountedValue(call.TypeArgs[1]) {
+			return call.TypeArgs[1], true
+		}
+	}
 	// Only USER-DECLARED functions qualify (the oracle map keys every decl in
 	// prog.Funcs, true or false). Source-level BUILTINS live in FuncSigs too
 	// without a `__` prefix — e.g. `strbuf_take`, whose result may alias
@@ -2701,6 +2711,27 @@ func genArrArrDropFn(innerStride int32, ptrW int) *Func {
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
+	}
+}
+
+// genStrArrDropFn builds __drop_strarr(ptr) — a `string[]` released whole
+// through __fern_drop_arr_str (element walk at rc==1, else a dec), in the
+// one-argument shape the generated column and element walks call a per-value
+// drop with. Returns ptr so the caller's OpDrop pops a real value.
+func genStrArrDropFn(ptrW int) *Func {
+	strStride := int32(ast.ElemSizeBytesFor(ast.StringType{}, ptrW))
+	return &Func{
+		Name:       "__drop_strarr",
+		Params:     []ast.Param{{Name: "__sa", Type: dropThunkParamType}},
+		ReturnType: ast.NumberType{},
+		Ops: []Op{
+			{Kind: OpLoadLocal, I32: 0},
+			{Kind: OpConstI32, I32: strStride},
+			{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_str", Width: ResAddr, I32: 2},
+			{Kind: OpDrop},
+			{Kind: OpLoadLocal, I32: 0},
+			{Kind: OpReturn},
+		},
 	}
 }
 
