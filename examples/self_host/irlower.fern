@@ -20019,9 +20019,14 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     // A `.trim()`-style VIEW slot is recorded "." — no release — even though the
     // construction retained it. Its own sweep frees it with __fern_str_view_free,
     // which frees the view BOX rather than decrementing a shared buffer, so a
-    // second claim here would free a box the local still owns. The tuple's
-    // reference to a view leaks; that is the safe direction and it is the only
-    // string shape this does not close.
+    // second claim here would free a box the local still owns.
+    //
+    // "TUPSTRW:" is the other half of that guard, and it is about the OTHER
+    // writers: this list is recorded from the var site's literal but replayed
+    // against whatever box the slot holds, so an 's' is only sound when every
+    // assign-form rebind agrees the position holds a counted owned string too
+    // (assigns_str_pos_owned). Without the credit the position records "." and
+    // the tuple's reference to the string leaks — the safe direction.
     if (sb.tuple_elem_tag(slot, 0).len() > 0
         && reclaim_has(sb.reclaimable_names, "TUPELEMOK:", sb.reclaim_site_key(slot))) {
         match (v.init) {
@@ -20029,13 +20034,14 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
                 var tk: string = "";
                 var tki: i32 = 0;
                 var tkany: boolean = false;
+                var strw: boolean = reclaim_has(sb.reclaimable_names, "TUPSTRW:", sb.reclaim_site_key(slot));
                 while (tki < tinit.elements.len()) {
                     var kc: string = ".";
                     match (tinit.elements[tki]) {
                         ast.ExprIdent(kid) => {
                             var kslot: i32 = sb.slot_of(kid.name);
                             if (sb.is_str_slot(kslot)) {
-                                if (!sb.is_str_view_local_slot(kslot)) { kc = "s"; tkany = true; }
+                                if (strw && !sb.is_str_view_local_slot(kslot)) { kc = "s"; tkany = true; }
                             } else if (sb.slot_is_rc_container(kslot)) {
                                 kc = "a";
                                 tkany = true;
@@ -23083,17 +23089,13 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     if (slot_is_reclaimable_scenum(s, slot)) {
         return emit_arr_store(se, slot, reassign_inc, true);
     }
-    // A "TUP:" tuple rebind whose box RETAINED bare-ident ARRAY elements
-    // (#7226): give those retains back with the superseded box, via the same
-    // emit_tup_elem_reclaim_store the StmtVar re-declaration drives. Without
+    // A "TUP:" tuple rebind whose box RETAINED bare-ident ARRAY or STRING
+    // elements (#7226): give those retains back with the superseded box, via the
+    // same emit_tup_elem_reclaim_store the StmtVar re-declaration drives. Without
     // this branch the shallow store below freed the box and stranded every
-    // retained element buffer. Restricted to 'a' kinds: an array element's
-    // release is one type-fixed rc_dec whichever writer stored it, while a
-    // string position may hold a VIEW local from a different writer than the
-    // one the kinds were recorded from — a str_free there frees a box the
-    // view's own sweep still owns.
+    // retained element.
     var atek: string = s.tup_elem_kinds_of(slot);
-    if (atek.len() > 0 && !reassign_inc && tup_kinds_arr_only(atek)
+    if (atek.len() > 0 && !reassign_inc && tup_kinds_rebind_safe(atek)
         && slot_is_reclaimable_tuple_rebind(s, slot)) {
         return emit_tup_elem_reclaim_store(se, slot, atek);
     }
@@ -25149,13 +25151,21 @@ function emit_tup_struct_elem_release(se: LowerState, slot: i32, n: i32): LowerS
     return st.emit(ir.op_drop());
 }
 
-// tup_kinds_arr_only: every retained position in `kinds` is an array-family
-// element ('a'), with at least one.
-function tup_kinds_arr_only(kinds: string): boolean {
+// tup_kinds_rebind_safe: every retained position in `kinds` is one the
+// ASSIGN-form rebind may replay against a box a DIFFERENT writer filled, with at
+// least one such position.
+//
+// 'a' qualifies unconditionally — an array element's release is one type-fixed
+// rc_dec whichever writer stored it. 's' qualifies because it is only ever
+// recorded under the "TUPSTRW:" writer agreement (assigns_str_pos_owned), which
+// is exactly the proof that every writer left a counted owned string there. 't'
+// does not: a struct position's release is a deep field drop keyed on the var
+// site's MOVE of the source, which no rebind repeats.
+function tup_kinds_rebind_safe(kinds: string): boolean {
     var any: boolean = false;
     var i: i32 = 0;
     while (i < kinds.len()) {
-        if (kinds[i] == b'a') { any = true; }
+        if (kinds[i] == b'a' || kinds[i] == b's') { any = true; }
         else if (kinds[i] != b'.') { return false; }
         i = i + 1;
     }
@@ -27148,6 +27158,30 @@ function body_unsafe_for_tup_alias(stmts: ast.Stmt[], name: string, borrowable: 
                     _ => {}
                 }
             },
+            // The ASSIGN-form twin of the bare-ident interlock above (#7226):
+            // `t = (k, name)` supersedes a credited tuple's box, and the rebind
+            // store's element release gives the construction retain back exactly
+            // as the var form's scope-exit sweep does — so this mention is not an
+            // escape either. Without it the rebind's element local earned no
+            // "STR:" credit, its box was never swept, and the assign-path release
+            // gave back only half of what the round owed (80 B/round of 160).
+            //
+            // Both credits are required because between them they say every
+            // position of this tuple releases: "TUPE:" that the element walk is
+            // emitted at all, "TUPSW:" that no STRING position of it is left
+            // unproven (vacuously true of a tuple with no string position, whose
+            // array positions release whichever writer filled them).
+            //
+            // The credits are BINDING-SITE keyed and an assignment carries no
+            // binding site, so the target is matched on the NAME its key holds.
+            // A wrong match can only leave the element's reference outstanding —
+            // the construction retain is unconditional for a string element, so
+            // the local's own free decs a count the tuple's release owed anyway.
+            ast.StmtAssign(asg) => {
+                if (tup_ok_site_named(tup_ok, "TUPE:", asg.target)
+                    && tup_ok_site_named(tup_ok, "TUPSW:", asg.target)
+                    && tuple_bare_ident_sole_use(asg.value, name)) { skip = true; }
+            },
             ast.StmtIf(iff) => {
                 if (!expr_unsafe_for(iff.cond, name, borrowable, recv_borrow)
                     && !body_unsafe_for_tup_alias(iff.then_body, name, borrowable, tup_ok, recv_borrow, alias_ok)
@@ -27160,6 +27194,22 @@ function body_unsafe_for_tup_alias(stmts: ast.Stmt[], name: string, borrowable: 
             _ => {}
         }
         if (!skip && stmt_unsafe_for_alias(stmt, name, borrowable, recv_borrow, alias_ok)) { return true; }
+    }
+    return false;
+}
+
+// tup_ok_site_named: `tup_ok` holds an entry `<pfx><site>` whose site key names
+// the variable `name`. The site-keyed lookup every other consumer makes is not
+// open to an assignment, which carries no binding site of its own; this is the
+// name-keyed fallback the assign-form interlock uses instead, and it is sound
+// there only because a wrong match leaks rather than over-releases.
+function tup_ok_site_named(tup_ok: string[], pfx: string, name: string): boolean {
+    var i: i32 = 0;
+    while (i < tup_ok.len()) {
+        var e: string = tup_ok[i];
+        if (e.len() > pfx.len() && bytes_at(e, 0, pfx)
+            && reclaim_site_name(slice_unchecked(e, pfx.len(), e.len()) + "") == name) { return true; }
+        i = i + 1;
     }
     return false;
 }
@@ -31589,6 +31639,82 @@ function stmt_assigns_fresh_scalar_tuple(st: ast.Stmt, name: string, ann: string
         ast.StmtDefer(d) => { return stmt_assigns_fresh_scalar_tuple(d.action, name, ann); },
         _ => { return true; }
     }
+}
+
+// tup_str_writer_owned: the value a writer stores at a STRING position of a
+// "TUP:" tuple is one whose box the element release may claim — a counted owned
+// string, never a VIEW and never a borrowed alias. Either directly fresh
+// (strarr_value_is_fresh: a literal, a concat, a string-method producer, a
+// whole-program fresh-ret call), or a bare ident whose SOLE binding in the body
+// is one of those and which is never reassigned.
+//
+// A view is the shape that must not pass: its box is released by its own
+// __fern_str_view_free, so a __fern_str_free from the tuple would claim it a
+// second time. Views are refused rather than detected — this pass runs before
+// lowering, so it has no slot facts (is_str_view_local_slot) to ask, and the
+// positive proof is the one that survives that.
+function tup_str_writer_owned(e: ast.Expr, body: ast.Stmt[], str_fresh: string[], reassigned: string[]): boolean {
+    if (strarr_value_is_fresh(e, str_fresh)) { return true; }
+    if let ast.ExprIdent(sid) = e {
+        if (util.index_of_str(reassigned, sid.name) >= 0) { return false; }
+        if (grow_count_in(body_var_decl_names(body), sid.name) != 1) { return false; }
+        return strarr_value_is_fresh(cap_local_init(body, sid.name), str_fresh);
+    }
+    return false;
+}
+
+// assigns_str_pos_owned: EVERY assign-form rebind of `name` stores an owned
+// counted string (tup_str_writer_owned) at each STRING position of the
+// declaration's tuple annotation `ann` — the WRITER AGREEMENT the "TUPSTRW:"
+// credit carries (#7226).
+//
+// The element-kinds string is recorded ONCE, from the var site's literal, and
+// replayed by every site that frees the box: the rebind store, the scope-exit
+// sweep, the precise drop. Those sites therefore replay it against a box some
+// OTHER writer filled, so an 's' position is sound only when the writers agree
+// about what lives there. The array limb needs no such agreement — an array
+// element's release is one type-fixed rc_dec whichever writer stored it.
+//
+// A name with no assignment agrees vacuously, so a tuple that is never rebound
+// keeps exactly the kinds it had. An assignment whose value is not a tuple
+// literal disagrees: it leaves the slot holding a box this pass cannot describe.
+function assigns_str_pos_owned(stmts: ast.Stmt[], name: string, ann: string, body: ast.Stmt[], str_fresh: string[], reassigned: string[]): boolean {
+    for stmt in stmts {
+        if (!stmt_assigns_str_pos_owned(stmt, name, ann, body, str_fresh, reassigned)) { return false; }
+    }
+    return true;
+}
+
+function stmt_assigns_str_pos_owned(st: ast.Stmt, name: string, ann: string, body: ast.Stmt[], str_fresh: string[], reassigned: string[]): boolean {
+    if let ast.StmtAssign(a) = st {
+        if (a.target != name) { return true; }
+        if let ast.ExprTuple(tl) = a.value {
+            var n: i32 = 0;
+            while (n < tl.elements.len()) {
+                var tag: string = tuple_type_elem_tag(ann, n);
+                if (tag == "string" || tag == "str") {
+                    if (!tup_str_writer_owned(tl.elements[n], body, str_fresh, reassigned)) { return false; }
+                }
+                n = n + 1;
+            }
+            return true;
+        }
+        return false;
+    }
+    if let ast.StmtIf(f) = st {
+        return assigns_str_pos_owned(f.then_body, name, ann, body, str_fresh, reassigned)
+            && assigns_str_pos_owned(f.else_body, name, ann, body, str_fresh, reassigned);
+    }
+    if let ast.StmtWhile(w) = st { return assigns_str_pos_owned(w.body, name, ann, body, str_fresh, reassigned); }
+    if let ast.StmtFor(fo) = st { return assigns_str_pos_owned(fo.body, name, ann, body, str_fresh, reassigned); }
+    if let ast.StmtMatch(m) = st {
+        for arm in m.arms {
+            if (!assigns_str_pos_owned(arm.body, name, ann, body, str_fresh, reassigned)) { return false; }
+        }
+        return true;
+    }
+    if let ast.StmtDefer(d) = st { return stmt_assigns_str_pos_owned(d.action, name, ann, body, str_fresh, reassigned); }
+    return true;
 }
 
 // collect_fresh_rc_tuple_names gathers LOCAL names bound from a fresh tuple literal
@@ -37701,7 +37827,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // #4357 tuple-returning dead intermediate. Same "TUP:" class → the same
     // shallow box free (elements untouched), same escape gate below.
     tups = collect_fresh_tuple_ret_call_names(body, tup_fresh_ret, reassigned, tups);
-    out = reclaimable_scalar_tuple(body, borrowable, reassigned, recv_borrow, structs, tretn, tups, out);
+    out = reclaimable_scalar_tuple(body, borrowable, reassigned, recv_borrow, structs, tretn, str_fresh_ret, tups, out);
     // Fresh rc-tuple locals (`var t = (i, [i, i+1])`): a tuple literal carrying a
     // fresh ARRAY-literal element — credited "TUPRC:" so slot_is_reclaimable_rctuple
     // drives the DEEP loop-rebind reclaim (emit_tuple_deep_reinit_store: arr_dec each
@@ -73515,7 +73641,7 @@ function var_annot_in_stmts(stmts: ast.Stmt[], name: string): string {
     return "";
 }
 
-function reclaimable_scalar_tuple(body: ast.Stmt[], borrowable: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], tretn: string[], tups: string[], out: string[]): string[] {
+function reclaimable_scalar_tuple(body: ast.Stmt[], borrowable: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], tretn: string[], str_fresh_ret: string[], tups: string[], out: string[]): string[] {
 var ti: i32 = 0;
 while (ti < tups.len()) {
     // tups holds BINDING-SITE keys (#7272); every gate below asks about the
@@ -73555,6 +73681,18 @@ while (ti < tups.len()) {
         var tupelemty: string = rctuple_type_of_decl(body, tnm);
         if (tupelemty != "" && !rctuple_payload_escapes_alias(body, tnm, tupelemty, structs, borrowable, tal, [], true)) {
             out = out.append("TUPELEMOK:" + tups[ti]);
+        }
+        // The STRING limb of that release needs one fact the array limb does
+        // not: every writer of the slot must agree the position holds a counted
+        // owned string (assigns_str_pos_owned). The kinds are recorded from the
+        // var site alone but replayed against whatever box is in the slot, so
+        // without agreement a rebind could leave a VIEW there for the release to
+        // free out from under the view's own sweep. Vacuous for a tuple that is
+        // never rebound, which is why an un-reassigned string element keeps
+        // exactly the release it had.
+        if (tupelemty != ""
+                && assigns_str_pos_owned(body, tnm, tupelemty, body, str_fresh_ret, reassigned)) {
+            out = out.append("TUPSTRW:" + tups[ti]);
         }
     }
     ti = ti + 1;
@@ -74421,6 +74559,13 @@ while (tprc < out.len()) {
     // arm of body_unsafe_for_tup.
     if (out[tprc].len() > 10 && slice_unchecked(out[tprc], 0, 10) == "TUPELEMOK:") {
         tup_ok = tup_ok.append("TUPE:" + slice_unchecked(out[tprc], 10, out[tprc].len()));
+    }
+    // The writer agreement rides across too: it is what decides whether a
+    // STRING position's release is emitted at all, and the assign-form
+    // interlock in body_unsafe_for_tup_alias may only forgive an element whose
+    // release it can count on.
+    if (out[tprc].len() > 8 && slice_unchecked(out[tprc], 0, 8) == "TUPSTRW:") {
+        tup_ok = tup_ok.append("TUPSW:" + slice_unchecked(out[tprc], 8, out[tprc].len()));
     }
     tprc = tprc + 1;
 }
