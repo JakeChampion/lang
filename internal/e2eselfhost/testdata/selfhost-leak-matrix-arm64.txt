@@ -153,3 +153,5 @@ arrtup_str__literal__len                      clean  clean  #7910 (c): same admi
 arrtup_str__callarg__erased_generic           clean  clean  same borrow rule as the x86 row
 arrtup_arr__callarg__erased_generic           clean  clean  the argument position alone
 arrtup_mixed__callarg__erased_generic         clean  clean  string and array elements together through the erased generic
+map_strarr__insert__get_or                    clean  clean  #7910 (a): same _vsa column free as the x86 row
+map_strarr__literal__len                      clean  clean  the column alone, literal-built

@@ -3693,6 +3693,18 @@ function map_value_widekind(vt: string): i32 {
     return 0;
 }
 
+// get_or_default_is_fresh_empty_arr: the get_or default is the idiomatic `[]`
+// — a fresh empty buffer a plain __fern_rc_dec releases whole. An element-
+// carrying literal would need the element walk, and a struct literal its
+// field drop, so both keep their leak here.
+function get_or_default_is_fresh_empty_arr(e: ast.Expr): boolean {
+    match (e) {
+        ast.ExprArray(al) => { return al.elements.len() == 0; },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // get_or_recv_map_type (#5253 follow-up): resolve the Map[K, V] type of a
 // `.get_or(k, d)` RECEIVER for the width/sign predicates (infer_expr_width /
 // expr_is_u64 / lower_i64), mirroring the receiver shapes the map-op LOWERING
@@ -12916,13 +12928,41 @@ function lower_call_map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, mtype: 
         if (govw) { mgo = lower_i64(c.args[1], mgo); }
         else { mgo = lower_expr(c.args[1], mgo); }
         if (!mgo.ok) { return mgo; }
+        // A fresh `[]` default has no owner once the helper has read it: on
+        // a hit it is an orphan, on a miss it IS the result, which the
+        // consumer borrows. It lives in an is_arr scratch slot — released
+        // here when the result is not it, and by the slot's own sweep (the
+        // next get_or through this site, or the exit) when it is.
+        var godef: i32 = 0 - 1;
+        if (!govw && get_or_default_is_fresh_empty_arr(c.args[1])) {
+            var godn: string = "$godef" + util.i32_to_string(mgo.locals.len());
+            mgo = mgo.add_local(godn);
+            godef = mgo.slot_of(godn);
+            mgo = mgo.mark_arr(godef, true);
+            mgo = mgo.emit(ir.op_store_local(godef));
+            mgo = mgo.emit(ir.op_load_local(godef));
+        }
         // f64 column: widekind 2 (wasm defers); i64/u64 is
         // widekind 1 (wasm dereferences the boxed cell). The
         // default lowered via lower_i64/lower_expr above (#5253).
         var gowk: i32 = 0;
         if (govw) { gowk = 1; }
         else if (map_value_of(mtype) == "f64" || expr_is_f64(c.args[1], s)) { gowk = 2; }
-        return mgo.emit(ir.op_map_get_or(mkk2, meqfn, gowk));
+        mgo = mgo.emit(ir.op_map_get_or(mkk2, meqfn, gowk));
+        if (godef >= 0) {
+            var gorn: string = "$gores" + util.i32_to_string(mgo.locals.len());
+            mgo = mgo.add_local(gorn);
+            var gores: i32 = mgo.slot_of(gorn);
+            mgo = mgo.emit(ir.op_store_local(gores));
+            mgo = mgo.emit(ir.op_load_local(gores));
+            mgo = mgo.emit(ir.op_load_local(godef));
+            mgo = mgo.emit(ir.op_bin("ne", 0, false));       // a hit: the default is an orphan
+            mgo = mgo.emit(ir.op_if(0));
+            mgo = mgo.release_zero(godef, "__fern_rc_dec", "map-get-or-default-temp");
+            mgo = mgo.emit(ir.op_end());
+            mgo = mgo.emit(ir.op_load_local(gores));
+        }
+        return mgo;
     }
     if (fa.field == "without" && c.args.len() == 1) {
         // Functional delete: `m.without(k)` -> the map with k
@@ -35038,16 +35078,19 @@ function map_decl_type(stmts: ast.Stmt[], name: string, want_key: boolean): stri
 
 // map_insert_chain_arg_fresh: `e` is a `map_new[_i32]().insert(k,v)…` chain (the
 // Map{…} literal desugar); every insert's arg at `argidx` (0=key, 1=value) must be
-// a fresh string. The root map_new() carries no entry.
-// map_arg_binding_is_fresh: the freshness test for a map column's inserted arg.
-// `boxfresh` selects WHICH column kind is being proven. False asks the string
-// question (str_local_binding_is_fresh: a concat / a fresh-allocating method /
-// a registered producer). True asks the BOX question (#4353 item 3): an ARRAY
-// or STRUCT literal, the only value forms that allocate a box nothing else
-// names — a call result is refused because a callee may hand back a field or a
-// param alias, and this predicate is purely syntactic.
-function map_arg_binding_is_fresh(e: ast.Expr, boxfresh: boolean): boolean {
-    if (!boxfresh) { return str_local_binding_is_fresh(e); }
+// fresh for the column `kind`. The root map_new() carries no entry.
+// map_arg_binding_is_fresh: the freshness test for a map column's inserted arg,
+// by column KIND: "s" asks the string question (str_local_binding_is_fresh: a
+// concat / a fresh-allocating method / a registered producer); "b" the BOX
+// question (#4353 item 3) — an ARRAY or STRUCT literal, the only value forms
+// that allocate a box nothing else names, a call result refused because a
+// callee may hand back a field or a param alias; "a" the string-ARRAY
+// question — an array literal whose every element is a literal or a
+// registered fresh-string producer (`str_fresh`), so the column sole-owns the
+// buffer AND every string in it. Every predicate here is purely syntactic.
+function map_arg_binding_is_fresh(e: ast.Expr, kind: string, str_fresh: string[]): boolean {
+    if (kind == "s") { return str_local_binding_is_fresh(e); }
+    if (kind == "a") { return strarr_lit_elems_fresh(e, str_fresh); }
     match (e) {
         ast.ExprArray(_) => { return true; },
         ast.ExprStructLit(sl) => { return !sl.has_base; },
@@ -35056,7 +35099,32 @@ function map_arg_binding_is_fresh(e: ast.Expr, boxfresh: boolean): boolean {
     return false;
 }
 
-function map_insert_chain_arg_fresh(e: ast.Expr, argidx: i32, boxfresh: boolean): boolean {
+// strarr_lit_elems_fresh: `e` is a non-empty string-array literal whose every
+// element is a string literal or a registered fresh producer
+// (tuple_str_elem_fresh_reg), so a release that walks the elements blind frees
+// only boxes the literal built.
+function strarr_lit_elems_fresh(e: ast.Expr, str_fresh: string[]): boolean {
+    match (e) {
+        ast.ExprArray(al) => {
+            if (al.elements.len() == 0) { return false; }
+            var i: i32 = 0;
+            while (i < al.elements.len()) {
+                var ok: boolean = false;
+                match (al.elements[i]) {
+                    ast.ExprString(_) => { ok = true; },
+                    _ => { ok = tuple_str_elem_fresh_reg(al.elements[i], str_fresh); }
+                }
+                if (!ok) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function map_insert_chain_arg_fresh(e: ast.Expr, argidx: i32, kind: string, str_fresh: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
@@ -35064,8 +35132,8 @@ function map_insert_chain_arg_fresh(e: ast.Expr, argidx: i32, boxfresh: boolean)
                 ast.ExprFieldAccess(fa) => {
                     if (fa.field == "insert") {
                         if (c.args.len() < 2) { return false; }
-                        if (!map_arg_binding_is_fresh(c.args[argidx], boxfresh)) { return false; }
-                        return map_insert_chain_arg_fresh(fa.obj, argidx, boxfresh);
+                        if (!map_arg_binding_is_fresh(c.args[argidx], kind, str_fresh)) { return false; }
+                        return map_insert_chain_arg_fresh(fa.obj, argidx, kind, str_fresh);
                     }
                     return false;
                 },
@@ -35094,16 +35162,16 @@ function map_expr_root_ident(e: ast.Expr): string {
 }
 
 // map_expr_sets_unfresh_arg: does `e` contain a `name.set(k,v)` / `name.insert(k,v)`
-// (receiver-chain rooted at `name`) whose arg at `argidx` is NOT a fresh string?
-function map_expr_sets_unfresh_arg(e: ast.Expr, name: string, argidx: i32, boxfresh: boolean): boolean {
+// (receiver-chain rooted at `name`) whose arg at `argidx` is NOT fresh for `kind`?
+function map_expr_sets_unfresh_arg(e: ast.Expr, name: string, argidx: i32, kind: string, str_fresh: string[]): boolean {
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprFieldAccess(fa) => {
                     if ((fa.field == "set" || fa.field == "insert") && map_expr_root_ident(fa.obj) == name) {
-                        if (c.args.len() >= 2 && !map_arg_binding_is_fresh(c.args[argidx], boxfresh)) { return true; }
+                        if (c.args.len() >= 2 && !map_arg_binding_is_fresh(c.args[argidx], kind, str_fresh)) { return true; }
                     }
-                    return map_expr_sets_unfresh_arg(fa.obj, name, argidx, boxfresh);
+                    return map_expr_sets_unfresh_arg(fa.obj, name, argidx, kind, str_fresh);
                 },
                 _ => { return false; }
             }
@@ -35113,19 +35181,19 @@ function map_expr_sets_unfresh_arg(e: ast.Expr, name: string, argidx: i32, boxfr
     return false;
 }
 
-// map_no_unfresh_set_arg: no statement in `stmts` sets a non-fresh string at
+// map_no_unfresh_set_arg: no statement in `stmts` sets a non-fresh arg at
 // `argidx` on map `name` (recursing nested blocks). Reads (m.get/has/len) ignored.
-function map_no_unfresh_set_arg(stmts: ast.Stmt[], name: string, argidx: i32, boxfresh: boolean): boolean {
+function map_no_unfresh_set_arg(stmts: ast.Stmt[], name: string, argidx: i32, kind: string, str_fresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtExpr(e) => { if (map_expr_sets_unfresh_arg(e.value, name, argidx, boxfresh)) { return false; } },
-            ast.StmtVar(v) => { if (map_expr_sets_unfresh_arg(v.init, name, argidx, boxfresh)) { return false; } },
-            ast.StmtAssign(a) => { if (map_expr_sets_unfresh_arg(a.value, name, argidx, boxfresh)) { return false; } },
-            ast.StmtIf(f) => { if (!map_no_unfresh_set_arg(f.then_body, name, argidx, boxfresh) || !map_no_unfresh_set_arg(f.else_body, name, argidx, boxfresh)) { return false; } },
-            ast.StmtWhile(w) => { if (!map_no_unfresh_set_arg(w.body, name, argidx, boxfresh)) { return false; } },
-            ast.StmtFor(fo) => { if (!map_no_unfresh_set_arg(fo.body, name, argidx, boxfresh)) { return false; } },
+            ast.StmtExpr(e) => { if (map_expr_sets_unfresh_arg(e.value, name, argidx, kind, str_fresh)) { return false; } },
+            ast.StmtVar(v) => { if (map_expr_sets_unfresh_arg(v.init, name, argidx, kind, str_fresh)) { return false; } },
+            ast.StmtAssign(a) => { if (map_expr_sets_unfresh_arg(a.value, name, argidx, kind, str_fresh)) { return false; } },
+            ast.StmtIf(f) => { if (!map_no_unfresh_set_arg(f.then_body, name, argidx, kind, str_fresh) || !map_no_unfresh_set_arg(f.else_body, name, argidx, kind, str_fresh)) { return false; } },
+            ast.StmtWhile(w) => { if (!map_no_unfresh_set_arg(w.body, name, argidx, kind, str_fresh)) { return false; } },
+            ast.StmtFor(fo) => { if (!map_no_unfresh_set_arg(fo.body, name, argidx, kind, str_fresh)) { return false; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (!map_no_unfresh_set_arg(arm.body, name, argidx, boxfresh)) { return false; } }
+                for arm in m.arms { if (!map_no_unfresh_set_arg(arm.body, name, argidx, kind, str_fresh)) { return false; } }
             },
             _ => {}
         }
@@ -35140,13 +35208,17 @@ function map_no_unfresh_set_arg(stmts: ast.Stmt[], name: string, argidx: i32, bo
 // column can be deep-freed. argidx 1 = value column, 0 = key column.
 function map_str_value_reclaimable(stmts: ast.Stmt[], name: string): boolean {
     if (map_decl_type(stmts, name, false) != "string") { return false; }
-    if (!map_no_unfresh_set_arg(stmts, name, 1, false)) { return false; }
-    return map_init_chain_arg_ok(stmts, name, 1, false);
+    return map_column_args_fresh(stmts, name, 1, "s", []);
 }
 function map_str_key_reclaimable(stmts: ast.Stmt[], name: string): boolean {
     if (map_decl_type(stmts, name, true) != "string") { return false; }
-    if (!map_no_unfresh_set_arg(stmts, name, 0, false)) { return false; }
-    return map_init_chain_arg_ok(stmts, name, 0, false);
+    return map_column_args_fresh(stmts, name, 0, "s", []);
+}
+// map_column_args_fresh: every value the init chain and every later set /
+// insert put in column `argidx` of map `name` is fresh for `kind`.
+function map_column_args_fresh(stmts: ast.Stmt[], name: string, argidx: i32, kind: string, str_fresh: string[]): boolean {
+    if (!map_no_unfresh_set_arg(stmts, name, argidx, kind, str_fresh)) { return false; }
+    return map_init_chain_arg_ok(stmts, name, argidx, kind, str_fresh);
 }
 
 // --- #4353 item 3: BOX-VALUE column deep-release for a reclaimable map --------
@@ -35159,10 +35231,12 @@ function map_str_key_reclaimable(stmts: ast.Stmt[], name: string): boolean {
 // __fern_arr_dec per element releases a SCALAR-element array (`i32[]`, `f64[]`,
 // …) whose buffer is the whole allocation, or an all-scalar struct box; a struct
 // with rc fields first walks each box through __map_vals_struct_drop_<vt>
-// (map_val_struct_deep_type). A `string[]` / `Q[]` column (pointer elements)
-// needs a per-element-kind walk the map free does not have, so it stays on the
-// shallow free: what this credit claims, it reclaims in full.
+// (map_val_struct_deep_type); a `string[]` column takes the string-array walk
+// (__fern_map_free_vsa, each value through __fern_str_arr_free). A `Q[]` column
+// (pointer elements) needs a per-element-kind walk the map free does not have,
+// so it stays on the shallow free: what this credit claims, it reclaims in full.
 function map_val_box_column_ok(vt: string, structs: parser.StructDecl[]): boolean {
+    if (vt == "string[]") { return true; }
     if (map_value_type_is_arr(vt)) { return !map_value_is_ptr(slice_unchecked(vt, 0, vt.len() - 2)); }
     return struct_fields_all_scalar(structs, vt) || map_val_struct_deep_type(vt, structs) != "";
 }
@@ -35195,31 +35269,34 @@ function struct_fields_all_scalar(structs: parser.StructDecl[], sty: string): bo
     return false;
 }
 
-// map_box_value_reclaimable: `name` is declared with a one-dec box VALUE type and
-// its init insert-chain values — plus every later set/insert value — are FRESH
-// literals, so the map is the sole rc=1 owner of every value box and the column
+// map_box_value_reclaimable: `name` is declared with a box VALUE type the map
+// free reclaims in full and its init insert-chain values — plus every later
+// set/insert value — are FRESH literals (fresh-string elements for a string[]
+// column), so the map is the sole rc=1 owner of every value box and the column
 // can be element-freed. SOUNDNESS mirrors MAPVS: the register __fern_map_set
 // stores a value pointer with no rc-inc of its own, and map_insert_value_retains
 // only retains an ALIASED array, so a literal transfers its single ref to the map
 // and nothing else names the box. The declared-type gate is required because the
 // freshness predicate is purely syntactic.
-function map_box_value_reclaimable(stmts: ast.Stmt[], name: string, structs: parser.StructDecl[]): boolean {
-    if (!map_val_box_column_ok(map_decl_type(stmts, name, false), structs)) { return false; }
-    if (!map_no_unfresh_set_arg(stmts, name, 1, true)) { return false; }
-    return map_init_chain_arg_ok(stmts, name, 1, true);
+function map_box_value_reclaimable(stmts: ast.Stmt[], name: string, structs: parser.StructDecl[], str_fresh: string[]): boolean {
+    var vt: string = map_decl_type(stmts, name, false);
+    if (!map_val_box_column_ok(vt, structs)) { return false; }
+    var kind: string = "b";
+    if (vt == "string[]") { kind = "a"; }
+    return map_column_args_fresh(stmts, name, 1, kind, str_fresh);
 }
-function map_init_chain_arg_ok(stmts: ast.Stmt[], name: string, argidx: i32, boxfresh: boolean): boolean {
+function map_init_chain_arg_ok(stmts: ast.Stmt[], name: string, argidx: i32, kind: string, str_fresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtVar(v) => { if (v.name == name) { return map_insert_chain_arg_fresh(v.init, argidx, boxfresh); } },
+            ast.StmtVar(v) => { if (v.name == name) { return map_insert_chain_arg_fresh(v.init, argidx, kind, str_fresh); } },
             ast.StmtIf(f) => {
-                if (stmts_declare(f.then_body, name)) { return map_init_chain_arg_ok(f.then_body, name, argidx, boxfresh); }
-                if (stmts_declare(f.else_body, name)) { return map_init_chain_arg_ok(f.else_body, name, argidx, boxfresh); }
+                if (stmts_declare(f.then_body, name)) { return map_init_chain_arg_ok(f.then_body, name, argidx, kind, str_fresh); }
+                if (stmts_declare(f.else_body, name)) { return map_init_chain_arg_ok(f.else_body, name, argidx, kind, str_fresh); }
             },
-            ast.StmtWhile(w) => { if (stmts_declare(w.body, name)) { return map_init_chain_arg_ok(w.body, name, argidx, boxfresh); } },
-            ast.StmtFor(fo) => { if (stmts_declare(fo.body, name)) { return map_init_chain_arg_ok(fo.body, name, argidx, boxfresh); } },
+            ast.StmtWhile(w) => { if (stmts_declare(w.body, name)) { return map_init_chain_arg_ok(w.body, name, argidx, kind, str_fresh); } },
+            ast.StmtFor(fo) => { if (stmts_declare(fo.body, name)) { return map_init_chain_arg_ok(fo.body, name, argidx, kind, str_fresh); } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (stmts_declare(arm.body, name)) { return map_init_chain_arg_ok(arm.body, name, argidx, boxfresh); } }
+                for arm in m.arms { if (stmts_declare(arm.body, name)) { return map_init_chain_arg_ok(arm.body, name, argidx, kind, str_fresh); } }
             },
             _ => {}
         }
@@ -38039,7 +38116,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // reclaim; #4357.
     maps = collect_mapf_call_names(body, tup_fresh_ret, maps);
     var aliased_m: string[] = aliased_array_names_of(body);
-    out = reclaimable_map(aliased_m, body, borrowable, maps, reassigned, recv_borrow, structs, out);
+    out = reclaimable_map(aliased_m, body, borrowable, maps, reassigned, recv_borrow, structs, str_fresh_ret, out);
     // Fresh string[] locals with provably-fresh/static ELEMENTS (#4355): credited
     // under an "SARR:" prefix so only slot_is_reclaimable_strarr matches. The
     // strarr_unsafe_for gate proves non-escape of the array AND of every element
@@ -43813,14 +43890,22 @@ function emit_map_buffers_free(s: LowerState, slot: i32): LowerState {
     var mvs: boolean = slot_credit_at(s, slot, "MAPVS:");
     var mks: boolean = slot_credit_at(s, slot, "MAPKS:");
     var mva: boolean = slot_credit_at(s, slot, "MAPVA:");
-    // A struct column with rc fields walks each value box's own fields first;
-    // the one-dec free below then takes the boxes.
+    // A string[] column walks each value through __fern_str_arr_free (the
+    // _vsa variants); a struct column with rc fields walks each value box's
+    // own fields first and the one-dec free below then takes the boxes.
+    var vsa: boolean = false;
     if (mva) {
-        var vdt: string = map_val_struct_deep_type(map_value_of(s.map_type_of(slot)), s.structs);
+        var mvt: string = map_value_of(s.map_type_of(slot));
+        vsa = mvt == "string[]";
+        var vdt: string = map_val_struct_deep_type(mvt, s.structs);
         if (vdt != "") { st = st.emit(ir.op_call_direct("__map_vals_struct_drop_" + vdt, 1)); }
     }
     if (mks && mvs) {
         st = st.emit(ir.op_call_direct("__fern_map_free_kvs", 1));
+    } else if (mks && vsa) {
+        st = st.emit(ir.op_call_direct("__fern_map_free_ksvsa", 1));
+    } else if (vsa) {
+        st = st.emit(ir.op_call_direct("__fern_map_free_vsa", 1));
     } else if (mks && mva) {
         st = st.emit(ir.op_call_direct("__fern_map_free_ksva", 1));
     } else if (mks) {
@@ -74267,7 +74352,7 @@ while (tsi < tstrs.len()) {
     return out;
 }
 
-function reclaimable_map(aliased_m: string[], body: ast.Stmt[], borrowable: string[], maps: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], out: string[]): string[] {
+function reclaimable_map(aliased_m: string[], body: ast.Stmt[], borrowable: string[], maps: string[], reassigned: string[], recv_borrow: string[], structs: parser.StructDecl[], str_fresh: string[], out: string[]): string[] {
 var mi: i32 = 0;
 while (mi < maps.len()) {
     // `maps` holds BINDING-SITE keys (#7253); every gate below asks about the
@@ -74339,7 +74424,7 @@ while (mi < maps.len()) {
         // #4353 item 3: an ARRAY- or STRUCT-valued column whose every value is
         // a fresh literal — released per element via __fern_map_free_va / _ksva.
         // Mutually exclusive with MAPVS: by the declared value type.
-        if (map_box_value_reclaimable(body, mapnm, structs)) {
+        if (map_box_value_reclaimable(body, mapnm, structs, str_fresh)) {
             out = out.append("MAPVA:" + maps[mi]);
         }
     }
