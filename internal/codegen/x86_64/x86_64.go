@@ -4425,7 +4425,8 @@ func (g *generator) put(s string) {
 		return
 	}
 	g.peepWin = append(g.peepWin, s)
-	g.peepholeTail()
+	for g.peepholeTail() {
+	}
 	for len(g.peepWin) > peepWindow {
 		g.out.WriteString(g.peepWin[0])
 		g.out.WriteByte('\n')
@@ -4444,9 +4445,17 @@ func (g *generator) flushPeep() {
 }
 
 // peepholeTail applies the safe stack-machine rewrites at the tail of the
-// window. All are purely local (≤4 contiguous lines) so they never touch a
-// genuinely-live stack slot — those are left for the register allocator.
-func (g *generator) peepholeTail() {
+// window and reports whether it rewrote anything. All are purely local
+// (≤5 contiguous lines) so they never touch a genuinely-live stack slot —
+// those are left for the register allocator.
+//
+// The caller re-runs it until it reports no change, because one rule's
+// output is another's input: P5 collapses a shift count's push/pop pair
+// into the `mov ecx, K` that P9 then folds into the shift itself. That
+// terminates — every rule but P8's register form removes a line from a
+// window of at most peepWindow lines, and P8's register form rewrites a
+// load into a register move that no rule reproduces.
+func (g *generator) peepholeTail() bool {
 	w := g.peepWin
 	n := len(w)
 
@@ -4461,7 +4470,7 @@ func (g *generator) peepholeTail() {
 			} else {
 				g.peepWin = append(w[:n-2], "\tmov "+dst+", rax")
 			}
-			return
+			return true
 		}
 	}
 
@@ -4480,7 +4489,7 @@ func (g *generator) peepholeTail() {
 	if n >= 2 && w[n-2] == "\tpush rax" {
 		if k, ok := matchRspDelta(w[n-1], "add"); ok && k == fmt.Sprint(slotBytes) {
 			g.peepWin = w[:n-2]
-			return
+			return true
 		}
 	}
 
@@ -4500,7 +4509,7 @@ func (g *generator) peepholeTail() {
 	if n >= 5 {
 		if line, ok := foldConstAlu(w[n-5], w[n-4], w[n-3], w[n-2], w[n-1]); ok {
 			g.peepWin = append(w[:n-5], line)
-			return
+			return true
 		}
 	}
 
@@ -4534,7 +4543,7 @@ func (g *generator) peepholeTail() {
 		if lines, ok := foldStackedMaterialise(w[n-5], w[n-4], w[n-3], w[n-2], w[n-1]); ok {
 			tail := w[n-1] // read before append overwrites the matched slots
 			g.peepWin = append(append(w[:n-5], lines...), tail)
-			return
+			return true
 		}
 	}
 
@@ -4561,7 +4570,7 @@ func (g *generator) peepholeTail() {
 				if line, ok := renameAccDest(w[k-1], reg); ok {
 					rest := append([]string(nil), w[k+1:]...)
 					g.peepWin = append(append(w[:k-1], line), rest...)
-					return
+					return true
 				}
 			}
 		}
@@ -4582,8 +4591,82 @@ func (g *generator) peepholeTail() {
 	if n >= 2 {
 		if line, ok := foldAddIntoLoad(w[n-2], w[n-1]); ok {
 			g.peepWin = append(w[:n-2], line)
-			return
+			return true
 		}
+	}
+
+	// P8 — dead reload: a frame slot written from the accumulator and read
+	// straight back. rax already holds the value:
+	//
+	//   mov [rbp-N], rax / mov rax, [rbp-N]   =>  mov [rbp-N], rax
+	//   mov [rbp-N], rax / mov REG, [rbp-N]   =>  mov [rbp-N], rax / mov REG, rax
+	//
+	// The second form is the same instruction count and trades a load for a
+	// register move. Both leave every register and the flags as the pair
+	// did, so neither needs to know what follows.
+	if n >= 2 {
+		if slot, ok := matchStoreFromAcc(w[n-2]); ok {
+			if reg, ok := matchLoadFromSlot(w[n-1], slot); ok {
+				if reg == "rax" {
+					g.peepWin = w[:n-1]
+				} else {
+					w[n-1] = "\tmov " + reg + ", rax"
+				}
+				return true
+			}
+		}
+	}
+
+	// P9 — literal shift count. A shift's count travels in cl, so a
+	// constant count is materialised into the counter register first —
+	// P5 having already collapsed its own push/pop pair:
+	//
+	//   mov ecx, K / shl eax, cl   =>  shl eax, K
+	//
+	// The hardware masks an imm8 count exactly as it masks cl — five bits
+	// for a 32-bit operand, six for a 64-bit one — so the two forms shift
+	// by the same amount and leave the same flags for every count that
+	// fits the immediate. Dropping the write to rcx is sound for P4's
+	// reason: every consumer of rcx in this backend writes it before
+	// reading it.
+	if n >= 2 {
+		if line, ok := foldConstShift(w[n-2], w[n-1]); ok {
+			g.peepWin = append(w[:n-2], line)
+			return true
+		}
+	}
+
+	// P10 — memory-destination ALU. A frame slot read, biased by a
+	// constant and written straight back is one instruction against the
+	// slot:
+	//
+	//   mov rax, [rbp-N] / add rax, K / mov [rbp-N], rax
+	//     =>  add qword ptr [rbp-N], K / mov rax, [rbp-N]
+	//
+	// The memory form computes the same value into the same slot and
+	// leaves the same flags. What it does not do is leave the result in
+	// rax, which is why the reload stays — P11 is what removes it once the
+	// window has settled enough to show the accumulator is dead. Deciding
+	// that here instead would read a `push rax` that P3 is about to
+	// delete, and answer no on nearly every site.
+	if n >= 3 {
+		if lines, ok := foldMemDstAlu(w[n-3], w[n-2], w[n-1]); ok {
+			g.peepWin = append(w[:n-3], lines...)
+			return true
+		}
+	}
+
+	// P11 — dead accumulator load: a frame slot read into rax by a line
+	// whose successor overwrites rax without reading it.
+	//
+	//   mov rax, [rbp-N] / pop rax   =>  pop rax
+	//
+	// Restricted to a frame slot, which is mapped for the life of the
+	// frame, so dropping the load cannot drop a fault. `mov` leaves the
+	// flags alone, so removing one leaves them as they were.
+	if n >= 2 && isFrameLoadToAcc(w[n-2]) && writesAccBeforeReading(w[n-1]) {
+		g.peepWin = append(w[:n-2], w[n-1])
+		return true
 	}
 
 	// P2 — dead jump: `jmp L` immediately followed by the label `L:` is a
@@ -4594,9 +4677,11 @@ func (g *generator) peepholeTail() {
 			if w[n-2] == "\tjmp "+last[:len(last)-1] {
 				w[n-2] = last
 				g.peepWin = w[:n-1]
+				return true
 			}
 		}
 	}
+	return false
 }
 
 // matchRspDelta matches a `\t<op> rsp, <n>` line and returns the <n> token.
@@ -4655,6 +4740,142 @@ func memDisp(base string, k int64) string {
 		return fmt.Sprintf("[%s - %d]", base, -k)
 	}
 	return fmt.Sprintf("[%s + %d]", base, k)
+}
+
+// matchStoreFromAcc matches `mov [rbp-N], rax` — a frame slot written from
+// the accumulator — and returns the slot operand.
+func matchStoreFromAcc(line string) (string, bool) {
+	const pfx = "\tmov ["
+	const sfx = "], rax"
+	if !strings.HasPrefix(line, pfx) || !strings.HasSuffix(line, sfx) {
+		return "", false
+	}
+	slot := line[len("\tmov ") : len(line)-len(", rax")]
+	if !strings.HasPrefix(slot, "[rbp-") {
+		return "", false
+	}
+	return slot, true
+}
+
+// matchLoadFromSlot matches `mov <r64>, <slot>` for the given slot operand
+// and returns the destination register. A 32-bit destination is excluded:
+// its write zero-extends, so it does not reproduce what the slot holds.
+func matchLoadFromSlot(line, slot string) (string, bool) {
+	const pfx = "\tmov "
+	sfx := ", " + slot
+	if !strings.HasPrefix(line, pfx) || !strings.HasSuffix(line, sfx) {
+		return "", false
+	}
+	reg := line[len(pfx) : len(line)-len(sfx)]
+	if reg == "rax" {
+		return reg, true
+	}
+	if reg == "rsp" || reg == "" || strings.ContainsAny(reg, " [],") {
+		return "", false
+	}
+	if reg32(reg) == reg { // not a known 64-bit register name
+		return "", false
+	}
+	return reg, true
+}
+
+// foldConstShift recognises P9's pair and returns the shift with its count
+// as an immediate. The count must fit imm8 unsigned, which is the range over
+// which an immediate and cl are masked alike.
+func foldConstShift(mov, shift string) (string, bool) {
+	var lit string
+	switch {
+	case strings.HasPrefix(mov, "\tmov ecx, "):
+		lit = mov[len("\tmov ecx, "):]
+	case strings.HasPrefix(mov, "\tmov rcx, "):
+		lit = mov[len("\tmov rcx, "):]
+	default:
+		return "", false
+	}
+	k, err := strconv.ParseInt(lit, 10, 64)
+	if err != nil || k < 0 || k > math.MaxUint8 {
+		return "", false
+	}
+	for _, m := range [...]string{"shl", "shr", "sar"} {
+		pfx := "\t" + m + " "
+		if !strings.HasPrefix(shift, pfx) {
+			continue
+		}
+		dst, ok := strings.CutSuffix(shift[len(pfx):], ", cl")
+		// A destination naming the counter would read the literal the
+		// materialisation put there, not the value being shifted.
+		if !ok || dst == "rcx" || dst == "ecx" || strings.ContainsAny(dst, " [],") {
+			return "", false
+		}
+		return fmt.Sprintf("\t%s %s, %d", m, dst, k), true
+	}
+	return "", false
+}
+
+// foldMemDstAlu recognises P10's load / modify / store triple and returns
+// the memory-destination form plus the reload that keeps the accumulator
+// holding what the triple left there.
+func foldMemDstAlu(load, alu, store string) ([]string, bool) {
+	if !isFrameLoadToAcc(load) {
+		return nil, false
+	}
+	slot := load[len("\tmov rax, "):]
+	if store != "\tmov "+slot+", rax" {
+		return nil, false
+	}
+	op, k, ok := matchAluAccImm(alu)
+	if !ok {
+		return nil, false
+	}
+	return []string{fmt.Sprintf("\t%s qword ptr %s, %d", op, slot, k), load}, true
+}
+
+// isFrameLoadToAcc reports whether a line is `mov rax, [rbp-N]` — a
+// full-width read of a frame slot into the accumulator.
+func isFrameLoadToAcc(line string) bool {
+	const pfx = "\tmov rax, [rbp-"
+	return strings.HasPrefix(line, pfx) && strings.HasSuffix(line, "]") &&
+		!strings.ContainsAny(line[len(pfx):], " +-")
+}
+
+// matchAluAccImm matches a 64-bit ALU operation on the accumulator with a
+// literal operand and returns the mnemonic and the literal. Only operations
+// with an `r/m64, imm32` form qualify, and the literal must fit it.
+func matchAluAccImm(line string) (op string, k int64, ok bool) {
+	for _, m := range [...]string{"add", "sub", "and", "or", "xor"} {
+		pfx := "\t" + m + " rax, "
+		if !strings.HasPrefix(line, pfx) {
+			continue
+		}
+		v, err := strconv.ParseInt(line[len(pfx):], 10, 64)
+		if err != nil || v < math.MinInt32 || v > math.MaxInt32 {
+			return "", 0, false
+		}
+		return m, v, true
+	}
+	return "", 0, false
+}
+
+// writesAccBeforeReading reports whether a line is one this backend emits
+// that provably overwrites the accumulator without first reading it.
+//
+// A whitelist, and a deliberately narrow one. A label is not on it: control
+// can reach it from an edge that left something else in rax. Neither is a
+// jump — the accumulator is how this backend carries a return value, so the
+// epilogue a `jmp` lands on reads it.
+func writesAccBeforeReading(line string) bool {
+	if line == "\tpop rax" || line == "\txor eax, eax" {
+		return true
+	}
+	for _, m := range [...]string{"mov", "lea", "movzx", "movsx", "movsxd"} {
+		for _, acc := range [...]string{"rax", "eax"} {
+			pfx := "\t" + m + " " + acc + ", "
+			if strings.HasPrefix(line, pfx) {
+				return !namesAcc(line[len(pfx):])
+			}
+		}
+	}
+	return false
 }
 
 // foldConstAlu recognises P4's five-line tail and returns the single

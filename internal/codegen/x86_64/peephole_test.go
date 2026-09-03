@@ -2,14 +2,16 @@ package x86_64
 
 // Tests for the streaming output peephole (generator.put / peepholeTail).
 //
-// The peephole removes three safe, purely-local stack-machine redundancies:
+// These cover the operand-stack rules:
 //   P1  a `push rax` immediately followed by the matching `pop DST`,
 //   P3  a `push rax` whose slot is freed unread, and
 //   P2  a `jmp L` immediately followed by the label `L:`.
 // It must NOT collapse a non-adjacent push/pop, which is a genuinely live
 // stack slot (left for the register allocator). These tests assert the
 // collapse happens, that it is byte-for-byte the only change, and that live
-// slots are preserved — without an assembler or qemu.
+// slots are preserved — without an assembler or qemu. The constant-folding
+// rules P4-P6 have their own files; the memory-shape rules P7-P11 are in
+// mem_peephole_test.go.
 
 import (
 	"fmt"

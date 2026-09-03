@@ -16,7 +16,7 @@ package x86_64
 //     the materialised one, so it needs rax to be dead. The call is the proof.
 
 import (
-	"strings"
+	"regexp"
 	"testing"
 )
 
@@ -108,10 +108,11 @@ function main(): i32 {
 		t.Fatal("main not found in emitted asm")
 	}
 	// The whole argument setup is now three instructions with no stack
-	// traffic of its own. The accumulator `t` is still pushed around the
-	// call, and must be — the call writes rax.
-	want := "\tmov rdi, rax\n\tmov esi, 7\n\tcall __fn_pair\n"
-	if !strings.Contains(body, want) {
+	// traffic of its own: the loop counter's frame slot is read straight
+	// into its argument register. The accumulator `t` is still pushed
+	// around the call, and must be — the call writes rax.
+	want := regexp.MustCompile(`\tmov rdi, \[rbp-\d+\]\n\tmov esi, 7\n\tcall __fn_pair\n`)
+	if !want.MatchString(body) {
 		t.Errorf("argument setup is not the direct three-instruction form:\nwant:\n%s\ngot:\n%s", want, body)
 	}
 }
