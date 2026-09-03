@@ -58812,10 +58812,6 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
         for fn in funcs {
             if (util.index_of_str(out, fn.name) < 0) {
                 var b: ast.Stmt[] = fn.body;
-                // Same filter as the lift's (#7253): a module-fn name this
-                // function shadows is a local here, so a lambda reading it IS
-                // capturing and this function DOES return a closure.
-                var vgfns: string[] = gfns_visible_in(fn, gfns);
                 // With a declared fn return type, check EVERY return in the
                 // body (branch / loop / match-arm returns included — see
                 // collect_returns); without one, only the last-statement
@@ -58827,8 +58823,15 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                     var ri: i32 = 0;
                     while (ri < rets.len()) {
                         match (rets[ri]) {
+                            // Same filter as the lift's (#7253): a module-fn
+                            // name this function shadows is a local here, so a
+                            // lambda reading it IS capturing and this function
+                            // DOES return a closure. Filtered only at a lambda
+                            // return: the filter walks the body and the whole
+                            // module-fn list, and this loop visits every
+                            // function every round.
                             ast.ExprLambda(nlam) => {
-                                if (!lambda_has_no_captures(nlam, vgfns)) { hit = true; }
+                                if (!lambda_has_no_captures(nlam, gfns_visible_in(fn, gfns))) { hit = true; }
                             },
                             ast.ExprIdent(nrid) => {
                                 if (body_binds_closure_local(b, nrid.name, out)) { hit = true; }
@@ -58913,7 +58916,7 @@ pub function closure_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Struct
                         ast.StmtReturn(r) => {
                             match (r.value) {
                                 ast.ExprLambda(lam) => {
-                                    if (!lambda_has_no_captures(lam, vgfns)) { out = out.append(fn.name); changed = true; }
+                                    if (!lambda_has_no_captures(lam, gfns_visible_in(fn, gfns))) { out = out.append(fn.name); changed = true; }
                                 },
                                 _ => { }
                             }
