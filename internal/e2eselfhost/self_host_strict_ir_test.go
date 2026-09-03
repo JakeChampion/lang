@@ -757,19 +757,24 @@ function main(): i32 {
 	// rather than leaving a dangling symbol for the resolution pass — or, on a
 	// route with no such pass, for the linker (#7215).
 	//
-	// The branch lambdas must CAPTURE. A no-capture one hoists to a top-level
-	// `__lam_N` and the module lowers; a capturing one cannot, so nothing builds
-	// its `<fn>$clo`.
+	// What keeps the lambda unhoisted is its CAPTURE TYPE. The array-literal
+	// element position is lifted (`<fn>$cloN` + a `__mkclo$` marker), but the
+	// lift builds the hoisted body from the capture's resolved type, and a
+	// POINTER element of a tuple destructure resolves to nothing on purpose:
+	// materialising such a capture is a known-wrong IR path, so cap_type_in_stmts
+	// declines it rather than lifting a closure that would read garbage. The
+	// lambda therefore stays inline and asks for a `main$clo` nothing built.
 	//
-	// The arms must also DISAGREE in shape. When every arm is an array literal
-	// they are rewritten into uniform env boxes and the module lowers; one arm
-	// naming a local array instead leaves the capturing lambda in the other with
-	// no box to be part of.
+	// So the capture has to be a destructure binding (`var (a, b) = t`) AND
+	// pointer-shaped: the same program with an i32 element resolves, lifts, and
+	// lowers. #8153 replaced the previous if-arm-array fixture, whose shape
+	// stopped reaching the bail once value-position IIFE arms started boxing
+	// their array elements.
 	{"unhoisted-closure-value", `function main(): i32 {
-    var v1: i32 = 3i32;
-    var ys: ((i32) => i32)[] = [((z: i32) => z)];
-    var xs: ((i32) => i32)[] = (if (true) { [((x: i32) => (x + v1))] } else { ys });
-    return xs[0i32](1i32) & 63i32;
+    var t: (i32[], i32) = ([3i32], 4i32);
+    var (a, b) = t;
+    var fs: ((i32) => i32)[] = [((x: i32) => (x + a[0i32]))];
+    return (fs[0i32](1i32) + b) & 63i32;
 }
 `, "main", "did not lower: lambda: no lifted `main$clo` for the escaping closure"},
 }
