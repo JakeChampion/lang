@@ -974,12 +974,18 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 var unconditionalHelperCalls = map[string][]string{
 	"__fern_read_file": {"__fern_utf8_valid"},
 	"__fern_str_copy":  {"__fern_alloc_rc1"},
-	"__fern_str_dec":   {"__fern_box_free"},
-	"__fern_box_free":  {"__free"},
-	"__fern_alloc_box": {"__fern_alloc"},
-	"__fern_alloc_rc1": {"__fern_alloc"},
-	"strbuf_append":    {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
-	"strbuf_take":      {"__fern_alloc_rc1"},
+	"__http_entry": {
+		"__fern_alloc", "__bytes_to_lang_string",
+		// emitStrNormalize, for the outgoing body's SSO pair.
+		"__fern_str_len", "__fern_str_byte",
+	},
+	"__bytes_to_lang_string": {"__fern_alloc"},
+	"__fern_str_dec":         {"__fern_box_free"},
+	"__fern_box_free":        {"__free"},
+	"__fern_alloc_box":       {"__fern_alloc"},
+	"__fern_alloc_rc1":       {"__fern_alloc"},
+	"strbuf_append":          {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
+	"strbuf_take":            {"__fern_alloc_rc1"},
 }
 
 // helperAllocBoxCallers are the helpers that build an Option / Result
