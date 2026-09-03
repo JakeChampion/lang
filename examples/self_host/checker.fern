@@ -5049,6 +5049,52 @@ function name_in(name: string, list: string[]): boolean {
 // across receiver types whose bodies view different things.
 
 pub struct ViewSum { key: string, flags: boolean[], fresh: boolean }
+// ViewIndex is a name index over a ViewSum table — the StructTable idiom.
+// It travels beside the table rather than inside it because the summary
+// fixpoints below rebind the table with `.with` once per function, and an
+// array read out of a struct field to do that would copy on every write.
+// Keys never change once a table is filled, so an index built then holds.
+pub struct ViewIndex { head: i32[], next: i32[] }
+
+// view_index builds the index. Chains are laid down backward so each ends
+// up ascending, the order the scan it replaces visited: a duplicate key
+// still answers with the FIRST entry.
+function view_index(sums: ViewSum[]): ViewIndex {
+  var head: i32[] = [];
+  var b: i32 = 0;
+  var nb: i32 = sig_buckets();
+  while (b < nb) {
+    head = head.append(0 - 1);
+    b = b + 1;
+  }
+  var next: i32[] = [];
+  var j: i32 = 0;
+  while (j < sums.len()) {
+    next = next.append(0 - 1);
+    j = j + 1;
+  }
+  var k: i32 = sums.len() - 1;
+  while (k >= 0) {
+    var bk: i32 = sig_name_bucket(sums[k].key);
+    next = next.with(k, head[bk]);
+    head = head.with(bk, k);
+    k = k - 1;
+  }
+  return ViewIndex { head: head, next: next };
+}
+
+// view_sum_pos is the position of the summary recorded under key, or -1
+// when nothing is.
+function view_sum_pos(sums: ViewSum[], vix: ViewIndex, key: string): i32 {
+  var i: i32 = vix.head[sig_name_bucket(key)];
+  while (i >= 0) {
+    if (sums[i].key == key) {
+      return i;
+    }
+    i = vix.next[i];
+  }
+  return 0 - 1;
+}
 
 // ViewRoots is where a returned view bottoms out: `local` when it views
 // storage the enclosing function owns (what the rules reject), and
@@ -5086,11 +5132,10 @@ function view_positions(fn: parser.FuncDecl): string[] {
 
 // view_sum_flags is the summary recorded under key, or empty when nothing
 // is — an unsummarised callee views none of its arguments.
-function view_sum_flags(sums: ViewSum[], key: string): boolean[] {
-  for su in sums {
-    if (su.key == key) {
-      return su.flags;
-    }
+function view_sum_flags(sums: ViewSum[], vix: ViewIndex, key: string): boolean[] {
+  var at: i32 = view_sum_pos(sums, vix, key);
+  if (at >= 0) {
+    return sums[at].flags;
   }
   var none: boolean[] = [];
   return none;
@@ -5100,24 +5145,18 @@ function view_sum_flags(sums: ViewSum[], key: string): boolean[] {
 // all. A callee with no entry is a BUILTIN — the only string-returning
 // ones are `strbuf_take` and `string_from_bytes_unchecked`, and both
 // allocate fresh — so a miss means fresh rather than harmless.
-function view_sum_known(sums: ViewSum[], key: string): boolean {
-  for su in sums {
-    if (su.key == key) {
-      return true;
-    }
-  }
-  return false;
+function view_sum_known(sums: ViewSum[], vix: ViewIndex, key: string): boolean {
+  return view_sum_pos(sums, vix, key) >= 0;
 }
 
 // view_sum_fresh reports whether the callee recorded under key hands back
 // storage IT owns — an owned `T[]` or `string` return built in its own
 // frame. The CALLER's frame then owns that storage, so slicing the result
 // and returning the slice dangles exactly as slicing a local does.
-function view_sum_fresh(sums: ViewSum[], key: string): boolean {
-  for su in sums {
-    if (su.key == key) {
-      return su.fresh;
-    }
+function view_sum_fresh(sums: ViewSum[], vix: ViewIndex, key: string): boolean {
+  var at: i32 = view_sum_pos(sums, vix, key);
+  if (at >= 0) {
+    return sums[at].fresh;
   }
   return false;
 }
@@ -5189,17 +5228,17 @@ function merge_view_names(a: string[], b: string[]): string[] {
 // A CALL argument arrives here rather than at slc_expr_roots because an
 // owned array passed straight in IS the storage, not a slice of it —
 // `id_sl(a)[0:1]` needs this arm to see `a`.
-function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[]): ViewRoots {
+function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   match (e) {
     ast.ExprArray(_) => {
       var none: string[] = [];
       return ViewRoots { local: true, params: none };
     },
     ast.ExprSlice(s2) => {
-      return slc_src_roots(s2.array, cur, params, localarr, tainted, sums);
+      return slc_src_roots(s2.array, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprCall(c2) => {
-      return slc_call_roots(c2, cur, params, localarr, tainted, sums);
+      return slc_call_roots(c2, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprIdent(id) => {
       if (name_in(id.name, params)) {
@@ -5219,7 +5258,7 @@ function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: stri
 // slc_call_roots chases a call: the result views whatever the caller
 // handed to the parameters the callee's summary names, chased as STORAGE
 // (see slc_src_roots).
-function slc_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[]): ViewRoots {
+function slc_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   var out: ViewRoots = no_view_roots();
   var callee: ViewCallee = view_callee(c, cur);
   if (callee.key.len() == 0) {
@@ -5229,14 +5268,14 @@ function slc_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr:
   // owner, so slicing an unbound `mkarr()[0:1]` dangles exactly as
   // slicing a local array does — binding it first already reported, and
   // the temporary is the same storage without a name.
-  if (view_sum_fresh(sums, callee.key)) {
+  if (view_sum_fresh(sums, vix, callee.key)) {
     out = ViewRoots { local: true, params: out.params };
   }
-  var flags: boolean[] = view_sum_flags(sums, callee.key);
+  var flags: boolean[] = view_sum_flags(sums, vix, callee.key);
   var i: i32 = 0;
   while (i < flags.len() && i < callee.args.len()) {
     if (flags[i]) {
-      out = merge_view_roots(out, slc_src_roots(callee.args[i], cur, params, localarr, tainted, sums));
+      out = merge_view_roots(out, slc_src_roots(callee.args[i], cur, params, localarr, tainted, sums, vix));
     }
     i = i + 1;
   }
@@ -5246,7 +5285,7 @@ function slc_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr:
 // slc_expr_roots reports where the `[T]` slice `e` evaluates to bottoms
 // out. A string slice copies into a fresh owned string (`__str_slice`) so
 // it never dangles; a bare reference to a tainted local slice does.
-function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[]): ViewRoots {
+function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   match (e) {
     ast.ExprSlice(sl) => {
       match (check_expr(sl.array, cur)) {
@@ -5255,10 +5294,10 @@ function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: str
         },
         _ => {}
       }
-      return slc_src_roots(sl.array, cur, params, localarr, tainted, sums);
+      return slc_src_roots(sl.array, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprCall(c) => {
-      return slc_call_roots(c, cur, params, localarr, tainted, sums);
+      return slc_call_roots(c, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprIdent(id) => {
       if (name_in(id.name, params)) {
@@ -5289,7 +5328,7 @@ pub struct SlcWalk { diags: util.Diag[], viewed: string[], owns: boolean }
 // lands in neither set, so returning it (or a sub-slice of it) is not
 // flagged; `viewed` is what names that parameter for a CALLER's chase.
 // Mirrors the native checker's checkSliceEscapes.
-function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], ret_is_view: boolean): SlcWalk {
+function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex, ret_is_view: boolean): SlcWalk {
   var out: util.Diag[] = [];
   var viewed: string[] = [];
   var owns: boolean = false;
@@ -5302,7 +5341,7 @@ function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: strin
             localarr = localarr.append(v.name);
           },
           _ => {
-            if (slc_expr_roots(v.init, cur, params, localarr, tainted, sums).local) {
+            if (slc_expr_roots(v.init, cur, params, localarr, tainted, sums, vix).local) {
               tainted = tainted.append(v.name);
             }
           }
@@ -5310,7 +5349,7 @@ function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: strin
       },
       ast.StmtReturn(r) => {
         if (ret_is_view) {
-          var roots: ViewRoots = slc_expr_roots(r.value, cur, params, localarr, tainted, sums);
+          var roots: ViewRoots = slc_expr_roots(r.value, cur, params, localarr, tainted, sums, vix);
           viewed = merge_view_names(viewed, roots.params);
           if (roots.local) {
             out = out.append(dg_at("E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when the function returns, leaving a dangling view", r.line, r.col));
@@ -5319,7 +5358,7 @@ function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: strin
           // An owned `T[]` return hands its STORAGE to the caller, so the
           // question is where that storage came from — an argument the
           // caller still owns, or this frame.
-          var sroots: ViewRoots = slc_src_roots(r.value, cur, params, localarr, tainted, sums);
+          var sroots: ViewRoots = slc_src_roots(r.value, cur, params, localarr, tainted, sums, vix);
           viewed = merge_view_names(viewed, sroots.params);
           if (sroots.local) {
             owns = true;
@@ -5327,30 +5366,30 @@ function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: strin
         }
       },
       ast.StmtIf(f) => {
-        var wt: SlcWalk = slc_walk(f.then_body, cur, params, localarr, tainted, sums, ret_is_view);
+        var wt: SlcWalk = slc_walk(f.then_body, cur, params, localarr, tainted, sums, vix, ret_is_view);
         out = util.append_diags(out, wt.diags);
         viewed = merge_view_names(viewed, wt.viewed);
         owns = owns || wt.owns;
-        var we: SlcWalk = slc_walk(f.else_body, cur, params, localarr, tainted, sums, ret_is_view);
+        var we: SlcWalk = slc_walk(f.else_body, cur, params, localarr, tainted, sums, vix, ret_is_view);
         out = util.append_diags(out, we.diags);
         viewed = merge_view_names(viewed, we.viewed);
         owns = owns || we.owns;
       },
       ast.StmtWhile(w) => {
-        var ww: SlcWalk = slc_walk(w.body, cur, params, localarr, tainted, sums, ret_is_view);
+        var ww: SlcWalk = slc_walk(w.body, cur, params, localarr, tainted, sums, vix, ret_is_view);
         out = util.append_diags(out, ww.diags);
         viewed = merge_view_names(viewed, ww.viewed);
         owns = owns || ww.owns;
       },
       ast.StmtFor(fr) => {
-        var wf: SlcWalk = slc_walk(fr.body, cur, params, localarr, tainted, sums, ret_is_view);
+        var wf: SlcWalk = slc_walk(fr.body, cur, params, localarr, tainted, sums, vix, ret_is_view);
         out = util.append_diags(out, wf.diags);
         viewed = merge_view_names(viewed, wf.viewed);
         owns = owns || wf.owns;
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          var wa: SlcWalk = slc_walk(arm.body, cur, params, localarr, tainted, sums, ret_is_view);
+          var wa: SlcWalk = slc_walk(arm.body, cur, params, localarr, tainted, sums, vix, ret_is_view);
           out = util.append_diags(out, wa.diags);
           viewed = merge_view_names(viewed, wa.viewed);
         owns = owns || wa.owns;
@@ -5358,7 +5397,7 @@ function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: strin
       },
       ast.StmtDefer(d) => {
         var one: ast.Stmt[] = [d.action];
-        var wd: SlcWalk = slc_walk(one, cur, params, localarr, tainted, sums, ret_is_view);
+        var wd: SlcWalk = slc_walk(one, cur, params, localarr, tainted, sums, vix, ret_is_view);
         out = util.append_diags(out, wd.diags);
         viewed = merge_view_names(viewed, wd.viewed);
         owns = owns || wd.owns;
@@ -5372,10 +5411,10 @@ function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: strin
 
 // slice_escape_diags is the E063 entry point: seed empty name sets and
 // walk a function body. See slc_walk.
-function slice_escape_diags(fn: parser.FuncDecl, s: Scope, sums: ViewSum[]): SlcWalk {
+function slice_escape_diags(fn: parser.FuncDecl, s: Scope, sums: ViewSum[], vix: ViewIndex): SlcWalk {
   var localarr: string[] = [];
   var tainted: string[] = [];
-  return slc_walk(fn.body, s, view_positions(fn), localarr, tainted, sums, fn.ret_slice);
+  return slc_walk(fn.body, s, view_positions(fn), localarr, tainted, sums, vix, fn.ret_slice);
 }
 
 // ---------------------------------------------------------------------------
@@ -11506,7 +11545,7 @@ function e065_ident_in(name: string, xs: string[]): boolean {
 // parameter or local-backed storage, `slice_unchecked(src, a, b)` which
 // hands back a view of its source's bytes, and any other call, which
 // hands back a view of whatever its summary names.
-function e065_return_roots(e: ast.Expr, params: string[], sbacked: string[], sums: ViewSum[], s: Scope): ViewRoots {
+function e065_return_roots(e: ast.Expr, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
   match (e) {
     ast.ExprIdent(id) => {
       if (e065_ident_in(id.name, params)) {
@@ -11519,7 +11558,7 @@ function e065_return_roots(e: ast.Expr, params: string[], sbacked: string[], sum
       }
     },
     ast.ExprCall(c) => {
-      return e065_call_roots(c, params, sbacked, sums, s);
+      return e065_call_roots(c, params, sbacked, sums, vix, s);
     },
     _ => {}
   }
@@ -11537,7 +11576,7 @@ function e065_return_roots(e: ast.Expr, params: string[], sbacked: string[], sum
 // when mk returns a literal (native keys on the declared type for the same
 // reason). Anything that BUILDS a string — a concat, a format — is this
 // frame's, and so is a call the summary does not cover.
-function e065_string_src_roots(e: ast.Expr, params: string[], sbacked: string[], sums: ViewSum[], s: Scope): ViewRoots {
+function e065_string_src_roots(e: ast.Expr, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
   var none: string[] = [];
   match (e) {
     ast.ExprString(_) => {
@@ -11563,14 +11602,14 @@ function e065_string_src_roots(e: ast.Expr, params: string[], sbacked: string[],
         return ViewRoots { local: true, params: none };
       }
       var out: ViewRoots = no_view_roots();
-      if (!view_sum_known(sums, callee.key) || view_sum_fresh(sums, callee.key)) {
+      if (!view_sum_known(sums, vix, callee.key) || view_sum_fresh(sums, vix, callee.key)) {
         out = ViewRoots { local: true, params: out.params };
       }
-      var flags: boolean[] = view_sum_flags(sums, callee.key);
+      var flags: boolean[] = view_sum_flags(sums, vix, callee.key);
       var i: i32 = 0;
       while (i < flags.len() && i < callee.args.len()) {
         if (flags[i]) {
-          out = merge_view_roots(out, e065_string_src_roots(callee.args[i], params, sbacked, sums, s));
+          out = merge_view_roots(out, e065_string_src_roots(callee.args[i], params, sbacked, sums, vix, s));
         }
         i = i + 1;
       }
@@ -11584,7 +11623,7 @@ function e065_string_src_roots(e: ast.Expr, params: string[], sbacked: string[],
 // e065_call_roots chases a call: `slice_unchecked` hands back a view of
 // its source, and any other callee hands back a view of whichever
 // arguments its summary names.
-function e065_call_roots(c: ast.ExprCall, params: string[], sbacked: string[], sums: ViewSum[], s: Scope): ViewRoots {
+function e065_call_roots(c: ast.ExprCall, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
   var direct: string = "";
   match (c.callee) {
     ast.ExprIdent(cid) => { direct = cid.name; },
@@ -11593,18 +11632,18 @@ function e065_call_roots(c: ast.ExprCall, params: string[], sbacked: string[], s
   if (direct == "slice_unchecked" && c.args.len() == 3) {
     // Its source is a `string`, so who OWNS that string is the question —
     // a param outlives the call, storage this frame holds does not.
-    return e065_string_src_roots(c.args[0], params, sbacked, sums, s);
+    return e065_string_src_roots(c.args[0], params, sbacked, sums, vix, s);
   }
   var out: ViewRoots = no_view_roots();
   var callee: ViewCallee = view_callee(c, s);
   if (callee.key.len() == 0) {
     return out;
   }
-  var flags: boolean[] = view_sum_flags(sums, callee.key);
+  var flags: boolean[] = view_sum_flags(sums, vix, callee.key);
   var i: i32 = 0;
   while (i < flags.len() && i < callee.args.len()) {
     if (flags[i]) {
-      out = merge_view_roots(out, e065_return_roots(callee.args[i], params, sbacked, sums, s));
+      out = merge_view_roots(out, e065_return_roots(callee.args[i], params, sbacked, sums, vix, s));
     }
     i = i + 1;
   }
@@ -11665,7 +11704,7 @@ function e065_with_arm_bindings(sbacked: string[], arms: ast.MatchArm[]): string
   return out;
 }
 
-function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_names: string[], sbacked: string[], sums: ViewSum[], s: Scope, ret_is_view: boolean): E065Walk {
+function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_names: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope, ret_is_view: boolean): E065Walk {
   var out: util.Diag[] = [];
   var viewed: string[] = [];
   var owns: boolean = false;
@@ -11686,7 +11725,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
               }
             },
             ast.ExprCall(sc) => {
-              if (e065_call_roots(sc, params, sbacked, sums, cur).local) {
+              if (e065_call_roots(sc, params, sbacked, sums, vix, cur).local) {
                 sbacked = sbacked.append(v.name);
               }
             },
@@ -11732,7 +11771,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
               // slice_unchecked(s, 0, 1)); return t;` dangles exactly as
               // the direct return does. Plus the owned-`string`
               // inference the rest of this branch does.
-              if (e065_call_roots(c, params, sbacked, sums, cur).local) {
+              if (e065_call_roots(c, params, sbacked, sums, vix, cur).local) {
                 sbacked = sbacked.append(v.name);
               }
               var callee_name: string = "";
@@ -11762,36 +11801,36 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
         if (!ret_is_view) {
           // An owned `string` return hands its STORAGE to the caller, so
           // the question is who allocated it, not what it points at.
-          var sroots: ViewRoots = e065_string_src_roots(r.value, params, sbacked, sums, cur);
+          var sroots: ViewRoots = e065_string_src_roots(r.value, params, sbacked, sums, vix, cur);
           viewed = merge_view_names(viewed, sroots.params);
           if (sroots.local) {
             owns = true;
           }
         }
-        var roots: ViewRoots = e065_return_roots(r.value, params, sbacked, sums, cur);
+        var roots: ViewRoots = e065_return_roots(r.value, params, sbacked, sums, vix, cur);
         viewed = merge_view_names(viewed, roots.params);
         if (ret_is_view && roots.local) {
           out = out.append(dg_at("E065", "returning a `str` view of a function-local string: the backing string is reclaimed when \"" + fname + "\" returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", r.line, r.col));
         }
       },
       ast.StmtIf(f) => {
-        var wt: E065Walk = e065_stmts(f.then_body, fname, params, str_ret_names, sbacked, sums, cur, ret_is_view);
+        var wt: E065Walk = e065_stmts(f.then_body, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
         out = util.append_diags(out, wt.diags);
         viewed = merge_view_names(viewed, wt.viewed);
         owns = owns || wt.owns;
-        var we: E065Walk = e065_stmts(f.else_body, fname, params, str_ret_names, sbacked, sums, cur, ret_is_view);
+        var we: E065Walk = e065_stmts(f.else_body, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
         out = util.append_diags(out, we.diags);
         viewed = merge_view_names(viewed, we.viewed);
         owns = owns || we.owns;
       },
       ast.StmtWhile(w) => {
-        var ww: E065Walk = e065_stmts(w.body, fname, params, str_ret_names, sbacked, sums, cur, ret_is_view);
+        var ww: E065Walk = e065_stmts(w.body, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
         out = util.append_diags(out, ww.diags);
         viewed = merge_view_names(viewed, ww.viewed);
         owns = owns || ww.owns;
       },
       ast.StmtFor(fr) => {
-        var wf: E065Walk = e065_stmts(fr.body, fname, params, str_ret_names, sbacked, sums, cur, ret_is_view);
+        var wf: E065Walk = e065_stmts(fr.body, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
         out = util.append_diags(out, wf.diags);
         viewed = merge_view_names(viewed, wf.viewed);
         owns = owns || wf.owns;
@@ -11807,7 +11846,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
           arm_sb = e065_with_arm_bindings(arm_sb, m.arms);
         }
         for arm in m.arms {
-          var wa: E065Walk = e065_stmts(arm.body, fname, params, str_ret_names, arm_sb, sums, cur, ret_is_view);
+          var wa: E065Walk = e065_stmts(arm.body, fname, params, str_ret_names, arm_sb, sums, vix, cur, ret_is_view);
           out = util.append_diags(out, wa.diags);
           viewed = merge_view_names(viewed, wa.viewed);
         owns = owns || wa.owns;
@@ -11815,7 +11854,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
       },
       ast.StmtDefer(d) => {
         var one: ast.Stmt[] = [d.action];
-        var wd: E065Walk = e065_stmts(one, fname, params, str_ret_names, sbacked, sums, cur, ret_is_view);
+        var wd: E065Walk = e065_stmts(one, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
         out = util.append_diags(out, wd.diags);
         viewed = merge_view_names(viewed, wd.viewed);
         owns = owns || wd.owns;
@@ -11827,10 +11866,10 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
   return E065Walk { diags: out, viewed: viewed, owns: owns };
 }
 
-function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], sums: ViewSum[], s: Scope): E065Walk {
+function e065_diags(efn: parser.FuncDecl, str_ret_names: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): E065Walk {
   var params: string[] = view_positions(efn);
   var none: string[] = [];
-  return e065_stmts(efn.body, efn.name, params, str_ret_names, none, sums, s, efn.ret_str);
+  return e065_stmts(efn.body, efn.name, params, str_ret_names, none, sums, vix, s, efn.ret_str);
 }
 
 // ---- E032: `use` binding-type inference ------------------------------------
@@ -12850,12 +12889,13 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     }
     slc_sums = slc_sums.append(ViewSum { key: view_sum_key(cfn), flags: slc_initial, fresh: false });
   }
+  var slc_ix: ViewIndex = view_index(slc_sums);
   var slc_changed: boolean = true;
   while (slc_changed) {
     slc_changed = false;
     var sj: i32 = 0;
     while (sj < slc_fns.len()) {
-      var sjw: SlcWalk = slice_escape_diags(slc_fns[sj], slc_scopes[sj], slc_sums);
+      var sjw: SlcWalk = slice_escape_diags(slc_fns[sj], slc_scopes[sj], slc_sums, slc_ix);
       var slc_positions: string[] = view_positions(slc_fns[sj]);
       var slc_cur: ViewSum = slc_sums[sj];
       var slc_next: boolean[] = slc_cur.flags;
@@ -12933,7 +12973,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
     // parse_type_name erases `[T]` to `T[]`, exactly as it erases `str`
     // to `string` (hence ret_str beside it).
     if (mod.funcs[i].ret_slice) {
-      body_diags = util.append_diags(body_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums).diags);
+      body_diags = util.append_diags(body_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums, slc_ix).diags);
     }
     // E067: a value of a @must_consume struct/enum type must be consumed
     // on every path before its binding leaves scope (the native
@@ -13139,12 +13179,13 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       e065_sums = e065_sums.append(ViewSum { key: view_sum_key(sfn), flags: initial, fresh: false });
     }
   }
+  var e065_ix: ViewIndex = view_index(e065_sums);
   var e065_changed: boolean = true;
   while (e065_changed) {
     e065_changed = false;
     var si: i32 = 0;
     while (si < e065_fns.len()) {
-      var sw: E065Walk = e065_diags(e065_fns[si], str_ret_names, e065_sums, e065_scopes[si]);
+      var sw: E065Walk = e065_diags(e065_fns[si], str_ret_names, e065_sums, e065_ix, e065_scopes[si]);
       var positions: string[] = view_positions(e065_fns[si]);
       var cur_sum: ViewSum = e065_sums[si];
       var next_flags: boolean[] = cur_sum.flags;
@@ -13171,7 +13212,7 @@ pub function check_module(mod: parser.Module): ModuleTypes {
       body_diags = util.append_diags(body_diags, e053_diags(xfn, fip_names, fbip_names, e053_variants, xsc));
     }
     if (xfn.ret_str) {
-      body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, e065_sums, xsc).diags);
+      body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, e065_sums, e065_ix, xsc).diags);
     }
     body_diags = util.append_diags(body_diags, e032_stmts(xfn.body, e032_lastfn, xsc));
   }

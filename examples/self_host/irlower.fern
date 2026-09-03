@@ -60320,10 +60320,11 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
             var tany: boolean = false;
             var pflags: string = "";
             var pany: boolean = false;
+            var ret_routes: boolean = struct_routes_field_reclaim_at(structs, sfok, fn.ret_type);
             var pj: i32 = 0;
             while (pj < fn.params.len()) {
                 var aok: boolean = false;
-                if ((scalar_result || struct_routes_field_reclaim_at(structs, sfok, fn.ret_type))
+                if ((scalar_result || ret_routes)
                     && (is_leaksafe_array_field(fn.params[pj].type_name)
                         || fn.params[pj].type_name == "string[]")
                     && !fn.params[pj].own
@@ -60396,7 +60397,7 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: parser.StructDe
                 // vocabulary at all, so a callee that extracts an element never
                 // reaches this flag.
                 var tok: boolean = false;
-                if (struct_routes_field_reclaim_at(structs, sfok, fn.ret_type)
+                if (ret_routes
                     && tuple_field_deep_droppable(fn.params[pj].type_name, structs)
                     && !fn.params[pj].own
                     && arrparam_uses_ok_stmts(fn.body, fn.params[pj].name, reg, "TCNT:", structs, sfok)) { tok = true; }
