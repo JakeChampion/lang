@@ -2571,6 +2571,15 @@ func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, 
 
 // emitMemchrHelper writes __fern_memchr(s, byte, from) -> the index of the first
 // `byte` at or after `from`, or -1. Leaf.
+//
+// SSE2, 16 bytes an iteration, mirroring the shipping backend's kernel
+// (x86_64.emitMemchrRuntime). The scalar loop this replaces was five
+// instructions per byte, which read as a 20x flat-vs-ssa divergence on
+// examples/bench/string_find_byte and is what the #8069 ratio gate exists to
+// name. Indices rather than pointers throughout, so the whole thing fits in
+// the registers the scalar version already used plus xmm0/xmm1 — the SSA
+// backend shuttles floats through those per instruction and never holds one
+// live across a call, so clobbering them is free.
 func emitMemchrHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_memchr"))
@@ -2581,15 +2590,52 @@ func emitMemchrHelper(w func(string, ...any)) {
 	w("\tjns .Lssa_memchr_from_ok")
 	w("\txor edx, edx") // clamp `from` up to 0
 	w(".Lssa_memchr_from_ok:")
-	w(".Lssa_memchr_loop:")
+	w("\tcmp edx, r8d")
+	w("\tjae .Lssa_memchr_miss")
+	// The index is scaled into an address below, so its top half has to be
+	// clean; `from` arrives as an i32 and the caller owes nothing about rdx's
+	// upper bits. One instruction, once.
+	w("\tmov edx, edx")
+	// Broadcast the needle across xmm1. movd + punpcklbw + punpcklwd + pshufd
+	// is the SSE2 splat; pshufb would be one instruction but is SSSE3, outside
+	// the declared baseline.
+	w("\tmovd xmm1, esi")
+	w("\tpunpcklbw xmm1, xmm1")
+	w("\tpunpcklwd xmm1, xmm1")
+	w("\tpshufd xmm1, xmm1, 0")
+	w(".Lssa_memchr_vec:")
+	w("\tmov eax, r8d")
+	w("\tsub eax, edx") // bytes left at or after the cursor
+	w("\tcmp eax, 16")
+	w("\tjl .Lssa_memchr_tail")
+	// Unaligned load is deliberate: at least 16 bytes remain, so the read
+	// stays inside the string, and an aligning prologue costs more than movdqu
+	// does on anything in the baseline.
+	w("\tmovdqu xmm0, [rdi + rdx]")
+	w("\tpcmpeqb xmm0, xmm1")
+	w("\tpmovmskb eax, xmm0")
+	w("\ttest eax, eax")
+	w("\tjnz .Lssa_memchr_hit")
+	w("\tadd edx, 16")
+	w("\tjmp .Lssa_memchr_vec")
+	w(".Lssa_memchr_hit:")
+	// bsf gives the lowest set mask bit — the first match in the block. NOT
+	// tzcnt: that is BMI1, and below the baseline its F3 prefix is ignored, so
+	// it degrades silently to bsf rather than faulting.
+	w("\tbsf eax, eax")
+	w("\tadd eax, edx")
+	w("\tret")
+	// Scalar tail: under 16 bytes left, and the whole algorithm for the short
+	// strings that dominate a search family.
+	w(".Lssa_memchr_tail:")
 	w("\tcmp edx, r8d")
 	w("\tjae .Lssa_memchr_miss")
 	w("\tmovzx r9d, byte ptr [rdi + rdx]")
 	w("\tcmp r9d, esi")
-	w("\tje .Lssa_memchr_hit")
+	w("\tje .Lssa_memchr_tail_hit")
 	w("\tadd edx, 1")
-	w("\tjmp .Lssa_memchr_loop")
-	w(".Lssa_memchr_hit:")
+	w("\tjmp .Lssa_memchr_tail")
+	w(".Lssa_memchr_tail_hit:")
 	w("\tmov eax, edx")
 	w("\tret")
 	w(".Lssa_memchr_miss:")
@@ -2598,8 +2644,9 @@ func emitMemchrHelper(w func(string, ...any)) {
 }
 
 // emitRmemchrHelper writes __fern_rmemchr(s, byte, from) -> the index of the LAST
-// `byte` at or before `from`, or -1. __fern_memchr walked backwards, with the
-// clamp mirrored. Leaf.
+// `byte` at or before `from`, or -1. emitMemchrHelper walked backwards, with the
+// clamp mirrored and bsr for the highest lane instead of bsf for the lowest.
+// Leaf.
 func emitRmemchrHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rmemchr"))
@@ -2615,14 +2662,38 @@ func emitRmemchrHelper(w func(string, ...any)) {
 	w(".Lssa_rmemchr_start_ok:")
 	w("\ttest edx, edx")
 	w("\tjs .Lssa_rmemchr_miss") // the empty string clamped to -1
-	w(".Lssa_rmemchr_loop:")
+	w("\tmov edx, edx")          // clean top half, as in the forward kernel
+	w("\tmovd xmm1, esi")
+	w("\tpunpcklbw xmm1, xmm1")
+	w("\tpunpcklwd xmm1, xmm1")
+	w("\tpshufd xmm1, xmm1, 0")
+	// Each iteration covers the 16 bytes ENDING at the cursor, [edx-15, edx].
+	w(".Lssa_rmemchr_vec:")
+	w("\tcmp edx, 15")
+	w("\tjl .Lssa_rmemchr_tail")
+	w("\tlea r9d, [rdx - 15]")
+	w("\tmovdqu xmm0, [rdi + r9]")
+	w("\tpcmpeqb xmm0, xmm1")
+	w("\tpmovmskb eax, xmm0")
+	w("\ttest eax, eax")
+	w("\tjnz .Lssa_rmemchr_hit")
+	// The next cursor is one below the block's first byte, so nothing between
+	// the blocks is skipped; a negative one falls through the tail to the miss.
+	w("\tsub edx, 16")
+	w("\tjmp .Lssa_rmemchr_vec")
+	w(".Lssa_rmemchr_hit:")
+	w("\tbsr eax, eax") // highest set lane — the LAST match in the block
+	w("\tadd eax, r9d")
+	w("\tret")
+	w(".Lssa_rmemchr_tail:")
+	w("\ttest edx, edx")
+	w("\tjs .Lssa_rmemchr_miss")
 	w("\tmovzx r9d, byte ptr [rdi + rdx]")
 	w("\tcmp r9d, esi")
-	w("\tje .Lssa_rmemchr_hit")
+	w("\tje .Lssa_rmemchr_tail_hit")
 	w("\tsub edx, 1")
-	w("\tjns .Lssa_rmemchr_loop")
-	w("\tjmp .Lssa_rmemchr_miss")
-	w(".Lssa_rmemchr_hit:")
+	w("\tjmp .Lssa_rmemchr_tail")
+	w(".Lssa_rmemchr_tail_hit:")
 	w("\tmov eax, edx")
 	w("\tret")
 	w(".Lssa_rmemchr_miss:")
