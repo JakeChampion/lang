@@ -8314,7 +8314,7 @@ function type_ends_arr(s: string): boolean {
 function first_bracket(s: string): i32 {
     var i: i32 = 0;
     while (i < s.len()) {
-        if (slice_unchecked(s, i, i + 1) == "[") { return i; }
+        if (s[i] == b'[') { return i; }
         i = i + 1;
     }
     return 0 - 1;
@@ -8336,13 +8336,12 @@ pub function split_top_commas(s: string): string[] {
     var start: i32 = 0;
     var i: i32 = 0;
     while (i < s.len()) {
-        var c: str = slice_unchecked(s, i, i + 1);
-        if (c == "[" || c == "(") { depth = depth + 1; }
-        if (c == "]" || c == ")") { depth = depth - 1; }
-        if (depth == 0 && c == ",") {
+        if (s[i] == b'[' || s[i] == b'(') { depth = depth + 1; }
+        if (s[i] == b']' || s[i] == b')') { depth = depth - 1; }
+        if (depth == 0 && s[i] == b',') {
             out = out.append(slice_unchecked(s, start, i));
             i = i + 1;
-            if (i < s.len() && slice_unchecked(s, i, i + 1) == " ") { i = i + 1; }
+            if (i < s.len() && s[i] == b' ') { i = i + 1; }
             start = i;
             continue;
         }
@@ -8406,10 +8405,9 @@ function top_arrow_at(s: string): i32 {
     var depth: i32 = 0;
     var i: i32 = 0;
     while (i < s.len()) {
-        var c: str = slice_unchecked(s, i, i + 1);
-        if (c == "[" || c == "(") { depth = depth + 1; }
-        if (c == "]" || c == ")") { depth = depth - 1; }
-        if (depth == 0 && i + 1 < s.len() && slice_unchecked(s, i, i + 2) == "=>") { return i; }
+        if (s[i] == b'[' || s[i] == b'(') { depth = depth + 1; }
+        if (s[i] == b']' || s[i] == b')') { depth = depth - 1; }
+        if (depth == 0 && s[i] == b'=' && i + 1 < s.len() && s[i + 1] == b'>') { return i; }
         i = i + 1;
     }
     return 0 - 1;
