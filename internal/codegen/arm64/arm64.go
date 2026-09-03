@@ -2003,6 +2003,19 @@ func (g *generator) emitStrIncRuntime() {
 // strings: at rc==1 tail-call __fern_box_free(data, payload_size_at_data-4);
 // otherwise (rc>1 or static high-bit sentinel) tail-call __fern_rc_dec.
 // NULL / low-address guarded. arm64 port of the wasm helper.
+//
+// The size it frees with is the one __fern_alloc_rc1 recorded at data-4 —
+// the payload the producer REQUESTED, not the string's length. The two are
+// equal for most producers, but __fern_args / __fern_temp_dir /
+// __fern_read_dir / __fern_remove_dir_all ask for length + 1 (a trailing
+// NUL), and freeing those at `len` would push a block allocated from the
+// (len + 9)-byte class onto the (len + 8)-byte class's list whenever the
+// two differ (len ≡ 8 mod 16): the block is then stranded below its real
+// class and the leak census reads 16 phantom live bytes per such string.
+// So no arm64 string producer writes data-4; the len word carries the
+// length. x86-64's single-word __fern_str_dec has the same straddle and
+// solves it the other way (every producer there requests len + 1 and the
+// dec adds 1 back).
 func (g *generator) emitStrDecRuntime() {
 	g.line("")
 	g.line(".global __fern_str_dec")
@@ -2546,6 +2559,15 @@ func (g *generator) emitAllocBoxRuntime() {
 // (droppable at rc=0 in Phase 3). The caller passes the payload
 // size; the helper adds the 8-byte header and returns base+8, so
 // the caller's `[x0, #off]` stores stay at their offsets.
+//
+// The header's second word, `[data-4]`, is the requested payload size and
+// belongs to the allocator: every rc==1 free of an rc1 block
+// (__fern_str_dec, __fern_closure_drop) sizes the block from it, and the
+// block's freelist class is derived from that same request, so a producer
+// that overwrites it with a smaller number (a string's length where it
+// asked for length + NUL) frees the block into a class below the one it
+// was allocated from. Two-word strings carry their length in the len word
+// and leave this slot alone.
 func (g *generator) emitAllocRc1Runtime() {
 	g.line("")
 	g.line(".global __fern_alloc_rc1")
@@ -2558,13 +2580,9 @@ func (g *generator) emitAllocRc1Runtime() {
 	g.emit("mov w19, w0")          // x19 = size+8, survives the call
 	g.emit("bl __fern_alloc")
 	g.emit("mov w1, #1")
-	g.emit("str w1, [x0]") // live rc = 1 at base + 0 (= data-8)
-	// Stash payload size at base+4 (= data-4, the unused half of the
-	// rc1 header) so a drop site can free the block without a
-	// separate size header — the closure-env reclamation path reads
-	// it. Harmless for every other rc1 user.
+	g.emit("str w1, [x0]")       // live rc = 1 at base + 0 (= data-8)
 	g.emit("sub w19, w19, #8")   // recover payload size
-	g.emit("str w19, [x0, #4]")  // size at base+4 (= data-4)
+	g.emit("str w19, [x0, #4]")  // size at base+4 (= data-4); see the doc comment
 	g.emit("ldr x19, [sp], #16") // restore x19
 	g.emit("ldp x29, x30, [sp], #16")
 	g.emit("add x0, x0, #8") // return base + 8 (= data)
@@ -6315,7 +6333,7 @@ func (g *generator) emitArgsRuntime2W() {
 	// half carries the length for readers, but every rc consumer
 	// (__fern_str_inc / __fern_str_dec / the __fern_drop_arr_str element
 	// sweep) unconditionally read-modify-writes the rc word at data-8 and
-	// the box-free path sizes the block from the length prefix at data-4.
+	// the box-free path sizes the block from the payload size at data-4.
 	// A headerless plain-alloc string made those hit the PREVIOUS argv
 	// string's tail bytes: binding or dropping any args() element
 	// silently incremented/decremented a byte inside a neighbouring
@@ -6326,8 +6344,7 @@ func (g *generator) emitArgsRuntime2W() {
 	// consumers, same as the single-word variant.
 	g.emit("add x0, x0, #1")
 	g.emit("bl __fern_alloc_rc1")
-	g.emit("mov x25, x0")          // x25 = dst (callee-save, survives bl)
-	g.emit("stur w24, [x25, #-4]") // length prefix at data-4 (block sizing for box-free)
+	g.emit("mov x25, x0") // x25 = dst (callee-save, survives bl)
 	// memcpy(dst, src, strlen + 1) — include the NUL.
 	g.emit("mov x0, x25")
 	g.emit("mov x1, x23")
@@ -8680,11 +8697,10 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("mov x2, #448")
 	g.syscall("mkdirat")
 	g.emit("cbnz x0, .Ltd2w_err")
-	// Ok: copy the path into an exactly-sized rc=1 string.
+	// Ok: copy the path (plus its NUL) into a fresh rc=1 string.
 	g.emit("add x0, x22, #1")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("mov x24, x0") // final string data ptr (prefix len dead)
-	g.emit("stur w22, [x24, #-4]")
 	g.emit("mov x0, x24")
 	g.emit("mov x1, x21")
 	g.emit("mov x2, x22")
@@ -8854,7 +8870,6 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("add x0, x11, #1")
 	g.emit("bl __fern_alloc_rc1")
 	g.emit("ldr x11, [sp], #16")
-	g.emit("stur w11, [x0, #-4]") // length prefix (block sizing)
 	g.emit("mov x9, #0")
 	g.label(".Lrdd2w_nc")
 	g.emit("cmp x9, x11")
@@ -9139,8 +9154,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("ldp x9, x11, [sp], #32")
 	g.emit("mov x10, x0") // child data ptr
 	g.emit("add x13, x11, x12")
-	g.emit("add x13, x13, #1")     // childlen
-	g.emit("stur w13, [x10, #-4]") // length prefix
+	g.emit("add x13, x13, #1") // childlen
 	// copy pathz[0..plen]
 	g.emit("mov x14, #0")
 	g.label(".Lrda2w_c1")
