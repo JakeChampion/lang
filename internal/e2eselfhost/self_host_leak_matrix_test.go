@@ -737,7 +737,16 @@ function main(): i32 {
 		// _vsa free, each value released whole. Native's own column walk and
 		// get_or ownership landed first, so the native column is the oracle.
 		leakCell{name: "map_strarr__insert__get_or", src: mapStrArrColumnInsertGetOrSrc},
-		leakCell{name: "map_strarr__literal__len", src: mapStrArrColumnLiteralLenSrc})
+		leakCell{name: "map_strarr__literal__len", src: mapStrArrColumnLiteralLenSrc},
+		// Enum payload positions consumed straight off a producer call
+		// (#7910 (d)): the direct-call scrutinee becomes a binding before any
+		// analysis, and the call-bound release admits the string[], nested
+		// Option and registry-fresh payloads these carry.
+		leakCell{name: "res_strarr__callscrut__match", src: callScrutResultStrArrSrc},
+		leakCell{name: "optopt_strarr__callscrut__match", src: callScrutOptOptStrArrSrc},
+		leakCell{name: "opt_str__callscrut__match", src: callScrutOptStrSrc},
+		leakCell{name: "opt_strarr__callbound__match", src: callBoundOptStrArrSrc},
+		leakCell{name: "rcenum_mixed__callscrut__match", src: callScrutUserEnumSrc})
 	return cells
 }
 

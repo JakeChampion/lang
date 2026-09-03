@@ -1418,8 +1418,8 @@ pub function module_calls_optarrarr_free(cache: irlower.LowerResult[]): boolean 
 // module_calls_map_free_vsa: any function lowers a string[]-value-column map
 // free — gates the $__fern_map_release_vsa body.
 pub function module_calls_map_free_vsa(cache: irlower.LowerResult[]): boolean {
-    function is_vsa(o: ir.Op): boolean { return o.kind_tag == 149 && (o.str == "__fern_map_free_vsa" || o.str == "__fern_map_free_ksvsa"); }  // call_direct
-    return any_op(cache, is_vsa);
+    return module_calls_direct(cache, "__fern_map_free_vsa")
+        || module_calls_direct(cache, "__fern_map_free_ksvsa");
 }
 
 pub function module_calls_strarrarr_free(cache: irlower.LowerResult[]): boolean {
