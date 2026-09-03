@@ -687,7 +687,7 @@ pub struct LowerState {
     // struct-returning call (a sole-owner rc=1 value), is reclaim-safe: freeing
     // its box cannot dangle another reference. Drives the struct rc-dec.
     reclaimable_names: string[],
-    // aliased_names: the set of ARRAY/MAP local names that acquire a lasting
+    // aliased_names: the set of ARRAY local names that acquire a lasting
     // LOCAL alias inside this function — a name bound to a second local
     // (`var b = a` / `b = a`) or stored as a bare ident into a container literal
     // (`H { xs: a }`, `[a]`, `(a, …)`). Computed once per function
@@ -703,6 +703,10 @@ pub struct LowerState {
     // observable shared-buffer hazard — and counting it would wrongly disable the
     // hot VM `stack/heap/locals = …​.with(…)` in-place stores.
     aliased_names: string[],
+    // map_clone_sites: the site keys (target@line:col) of the map self-reassigns
+    // `m = m.insert(k, v)` at which an alias of m may be live, so the store
+    // clones instead of mutating in place (map_clone_insert_sites_of, #7235).
+    map_clone_sites: string[],
     // borrowed_names: the ARRAY/MAP names this function does not OWN — a
     // param that is neither `own`, inferred-moved, nor a `$cell$` capture cell,
     // or a local bound from a field read whose source is still live (#6158).
@@ -22736,11 +22740,11 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // (#3633): the builtin op_map_set mutates the map's keys[]/values[] in
     // place, which is unsound when `m` has a live alias (`var n = m`) — `n`
     // would observe the change. Clone-on-write: build a fresh copy of the
-    // map, mutate the sole-owned clone, then bind it back. Sole-owner
-    // (unaliased) map slots fall through to the in-place op_map_set on the
-    // generic insert path below. The array sibling is the .with handler
-    // above (#3599); the same aliased_names set covers map locals.
-    if (is_map_type_name(s.map_type_of(slot)) && s.is_aliased_name(a.target)) {
+    // map, mutate the sole-owned clone, then bind it back. A store no alias
+    // can be live at (map_clone_sites, #7235) falls through to the in-place
+    // op_map_set on the generic insert path below. The array sibling is the
+    // .with handler above (#3599).
+    if (is_map_type_name(s.map_type_of(slot)) && util.index_of_str(s.map_clone_sites, reclaim_site_key_of(a.target, a.line, a.col)) >= 0) {
         match (a.value) {
             ast.ExprCall(mic) => {
                 match (mic.callee) {
@@ -24571,7 +24575,7 @@ pub function lower_arr_with_value(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, s
 // `map_new`'s key kind comes from the annotation, not the callee). The fresh
 // clone local is never aliased, so its own copy-loop inserts (and the final
 // real insert) take the sound in-place path. Mirrors lower_arr_with_value
-// (the array `.with` sibling, #3599); the same `aliased_names` set drives both.
+// (the array `.with` sibling, #3599); map_clone_sites decides when this runs.
 function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, val: ast.Expr, maptype: string, s: LowerState): LowerState {
     var n: i32 = s.locals.len();
     var mc: string = "$mc" + util.i32_to_string(n);
@@ -24579,9 +24583,21 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
     var mcv: string = "$mcv" + util.i32_to_string(n);
     var mci: string = "$mci" + util.i32_to_string(n);
     var zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 };
+    // The receiver's box before the rebind: released at the end against the
+    // holders of m's alias group (#7235) when the group owns its releases.
+    var mslot: i32 = s.slot_of(target);
+    var moldslot: i32 = 0 - 1;
+    var st: LowerState = s;
+    if (mslot >= 0 && slot_is_reclaimable_map(s, mslot) && map_group_has_rows(s, s.reclaim_site_key(mslot))) {
+        var mold: string = "$mold" + util.i32_to_string(n);
+        st = st.add_local(mold);
+        moldslot = st.slot_of(mold);
+        st = st.emit(ir.op_load_local(mslot));
+        st = st.emit(ir.op_store_local(moldslot));
+    }
     // var $mc: <maptype> = map_new(0);  (key kind from the annotation)
     var newcall: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "map_new", line: 0, col: 0, ty: "" }, args: [zero], line: 0, col: 0, type_argc: 0, ty: "" };
-    var st: LowerState = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" }, s);
+    st = lower_stmt(ast.StmtVar { name: mc, type_name: maptype, init: newcall, line: 0, col: 0, is_str: false, fn_ret: "", fn_param_types: "" }, st);
     if (!st.ok) { return st; }
     // var $mck = recv.keys();  var $mcv = recv.values();
     var keyscall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: recv, field: "keys", line: 0, col: 0, ty: "" }, args: [], line: 0, col: 0, type_argc: 0, ty: "" };
@@ -24605,7 +24621,10 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
     // target = $mc.insert(key, val);  ($mc != target → generic assign; $mc is
     // unaliased so its in-place insert is sound, and the fresh clone binds to m).
     var finalins: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: mcref, field: "insert", line: 0, col: 0, ty: "" }, args: [key, val], line: 0, col: 0, type_argc: 0, ty: "" };
-    return lower_stmt(ast.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
+    st = lower_stmt(ast.StmtAssign { target: target, value: finalins, line: 0, col: 0, target_line: 0, target_col: 0 }, st);
+    if (!st.ok || moldslot < 0) { return st; }
+    var msite: string = st.reclaim_site_key(mslot);
+    return emit_map_release_unless_held(st, moldslot, map_group_alias_slots(st, msite), map_group_tuple_holders(st, msite));
 }
 
 // lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING
@@ -28685,6 +28704,9 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
         }
         opi = opi + 1;
     }
+    // A tuple holding a map-group box at an element releases it before the
+    // array sweep below frees the tuple box it is read through (#7235).
+    if (map_groups_present(st)) { st = emit_map_group_tuple_releases(st, keeps); }
     var i: i32 = st.n_params;
     while (i < st.locals.len()) {
         if (!slot_list_has(keeps, i) && !slot_list_has(st.moved_elided, i) && st.is_arr_slot(i) && !st.is_borrowed_arr_slot(i) && !slot_is_reclaimable_arrtup(st, i) && !slot_is_reclaimable_arrstruct(st, i) && !slot_is_reclaimable_arrenum(st, i) && !reclaim_has(st.reclaimable_names, "ENVCAP:", st.reclaim_site_key(i))) {
@@ -29141,7 +29163,7 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
     var mj: i32 = st.n_params;
     while (mj < st.locals.len()) {
         if (!slot_list_has(keeps, mj) && slot_is_reclaimable_map(st, mj)) {
-            st = emit_map_buffers_free(st, mj);
+            st = emit_map_group_release(st, mj);
         }
         mj = mj + 1;
     }
@@ -30559,6 +30581,234 @@ function aliased_array_names_of(body: ast.Stmt[]): string[] {
     return alias_names_in_stmts(body, []);
 }
 
+// --- map alias liveness at a self-reassign (#7235) ---------------------------
+//
+// map_clone_insert_sites_of returns the site keys (target@line:col) of every map
+// self-reassign `m = m.insert(k, v)` / `m = m.set(k, v)` at which an alias of
+// `m` may be LIVE, so the store must clone the map (lower_map_clone_insert)
+// rather than mutate the box the alias still reads. An alias is live at the
+// insert when it is created earlier in lowering order, anywhere inside a loop
+// enclosing the insert (the back edge carries an alias bound textually AFTER the
+// insert into the next iteration's insert), or inside a defer. An insert with no
+// alias live at it mutates in place; a `var q = m` bound afterwards shares the
+// mutated box, which is what the alias reads on native too.
+//
+// Alias positions are alias_idents_in_value's: a bare-ident bind or assignment
+// value, or a container-literal element. An alias inside an `if` arm counts for
+// everything after the `if`, whichever way the branch went.
+struct MapCloneScan { seen: string[], sites: string[] }
+
+function map_clone_insert_sites_of(body: ast.Stmt[]): string[] {
+    var none: string[] = [];
+    return mcis_stmts(body, none, MapCloneScan { seen: [], sites: [] }).sites;
+}
+
+function mcis_stmts(stmts: ast.Stmt[], loop_aliases: string[], sc: MapCloneScan): MapCloneScan {
+    var acc: MapCloneScan = sc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { acc = mcis_stmt(stmts[i], loop_aliases, acc); i = i + 1; }
+    return acc;
+}
+
+function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapCloneScan {
+    match (st) {
+        ast.StmtAssign(a) => {
+            var acc: MapCloneScan = sc;
+            var t: string = map_selfcow_insert_target(st);
+            if (t.len() > 0 && (util.index_of_str(sc.seen, t) >= 0 || util.index_of_str(loop_aliases, t) >= 0)) {
+                acc = MapCloneScan { ...acc, sites: acc.sites.append(reclaim_site_key_of(a.target, a.line, a.col)) };
+            }
+            return MapCloneScan { ...acc, seen: alias_idents_in_value(a.value, acc.seen) };
+        },
+        ast.StmtVar(v) => { return MapCloneScan { ...sc, seen: alias_idents_in_value(v.init, sc.seen) }; },
+        ast.StmtIf(iff) => {
+            var acc: MapCloneScan = mcis_stmts(iff.then_body, loop_aliases, sc);
+            return mcis_stmts(iff.else_body, loop_aliases, acc);
+        },
+        ast.StmtWhile(w) => { return mcis_stmts(w.body, alias_names_in_stmts(w.body, loop_aliases), sc); },
+        ast.StmtFor(f) => { return mcis_stmts(f.body, alias_names_in_stmts(f.body, loop_aliases), sc); },
+        ast.StmtMatch(m) => {
+            var acc: MapCloneScan = sc;
+            var k: i32 = 0;
+            while (k < m.arms.len()) { acc = mcis_stmts(m.arms[k].body, loop_aliases, acc); k = k + 1; }
+            return acc;
+        },
+        ast.StmtDefer(d) => {
+            var acc: MapCloneScan = MapCloneScan { ...sc, seen: alias_names_in_stmt(d.action, sc.seen) };
+            return mcis_stmt(d.action, loop_aliases, acc);
+        },
+        // Spelled out rather than wildcarded: a statement kind with a body this
+        // walk skipped would leave an insert inside it mutating in place.
+        ast.StmtReturn(_) => { return sc; },
+        ast.StmtExpr(_) => { return sc; },
+        ast.StmtBreak(_) => { return sc; },
+        ast.StmtContinue(_) => { return sc; },
+        ast.StmtUnknown(_) => { return sc; },
+    }
+}
+
+// map_selfcow_insert_target: the target of a `m = m.insert(k, v)` /
+// `m = m.set(k, v)` self-reassign — the shape the StmtAssign lowering routes to
+// the clone when an alias is live — or "".
+function map_selfcow_insert_target(st: ast.Stmt): string {
+    match (st) {
+        ast.StmtAssign(a) => {
+            match (a.value) {
+                ast.ExprCall(c) => {
+                    if (c.args.len() != 2) { return ""; }
+                    match (c.callee) {
+                        ast.ExprFieldAccess(fa) => {
+                            if (fa.field != "insert" && fa.field != "set") { return ""; }
+                            match (fa.obj) {
+                                ast.ExprIdent(id) => { if (id.name == a.target) { return a.target; } },
+                                _ => {}
+                            }
+                        },
+                        _ => {}
+                    }
+                },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return "";
+}
+
+// --- map alias groups (#7235) ------------------------------------------------
+//
+// A mapbox carries no rc word, so a second name for it is an UNCOUNTED share and
+// the ownership of every box a set of names reaches is decided here: the map
+// local `m`, its plain aliases `var q: Map[..] = m` and the local tuples holding
+// it at an element (#7212) form a GROUP, credited "MAPAL:<qsite>|<msite>" and
+// "MAPTUP:<tsite>|<k>|<msite>" beside m's "MAP:". The group holds one box until
+// a self-reassign clones (lower_map_clone_insert), after which the holders bound
+// before it keep the OLD box and m the clone. Which holder holds which box is a
+// runtime fact, so every release in the group is guarded by identity
+// (emit_map_release_unless_held): a holder frees its box only when no holder
+// released after it still holds it, and the clone site frees the superseded box
+// only when no holder at all does. That is what makes a conditional clone and a
+// clone inside a loop both exact.
+//
+// Two rules keep the guard complete. Every holder slot must EXIST when a release
+// is emitted, so neither m nor a plain alias may be declared inside a loop body:
+// its re-declaration would run a guard the holders declared after it are absent
+// from, and a stale holder still naming the box would free it a second time at
+// its own rebind. And a name bound at two sites makes the rows name-ambiguous,
+// so m must be bound exactly once. A tuple host keeps the override's own terms
+// (it may sit in a loop): a host bound after the insert holds either the current
+// box or a box only its superseded tuple names.
+//
+// A clone copies the column POINTERS uncounted, so the elements of a
+// superseded box are shared with the clone. Only m's own sweep takes the
+// column deep-releases ("MAPVS:" / "MAPKS:" / "MAPVA:"); a holder's release
+// and the clone site's are the shallow free, which is what frees a shared
+// element exactly once — by m, after every holder is dead. An element only a
+// superseded box still names (a value the clone overwrote) leaks one level.
+
+// map_alias_holder_sites: the binding sites of every plain alias `var q = m` in
+// `body` when ALL of them qualify as holders — each not reassigned, not
+// escaping, not explicitly iterated, carrying no identity use, and neither it
+// nor m declared inside a loop. Empty when any alias fails, since forgiving a
+// subset would leave m escaping through the rest.
+function map_alias_holder_sites(body: ast.Stmt[], name: string, borrowable: string[], recv_borrow: string[], reassigned: string[]): string[] {
+    var none: string[] = [];
+    if (var_decl_scan(body, name, false) != 1) { return none; }
+    var found: string[] = bare_alias_bind_sites_of(body, name, false, []);
+    var i: i32 = 0;
+    while (i < found.len()) {
+        var qn: string = reclaim_site_name(found[i]);
+        if (util.index_of_str(reassigned, qn) >= 0
+            || body_unsafe_for(body, qn, borrowable, recv_borrow)
+            || map_has_explicit_iter(body, qn)
+            || map_identity_escape(body, qn)
+            || var_decl_scan(body, qn, false) >= 1000) { return none; }
+        i = i + 1;
+    }
+    return found;
+}
+
+// map_tuple_holder_rows appends a "MAPTUP:<tsite>|<k>|<msite>" row for every bare
+// position at which a local tuple binding holds `name` — the hosts
+// map_tuple_elem_borrow_only admitted, one row per element. No rows when `name`
+// is bound more than once: the override still admits the map, and a group
+// without rows keeps the plain release pattern.
+function map_tuple_holder_rows(stmts: ast.Stmt[], name: string, msite: string, acc: string[]): string[] {
+    if (var_decl_scan(stmts, name, false) % 1000 != 1) { return acc; }
+    return maptup_rows_in(stmts, name, msite, acc);
+}
+
+function maptup_rows_in(stmts: ast.Stmt[], name: string, msite: string, acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            ast.StmtVar(v) => {
+                if (tuple_bare_elem_sole_use(v.init, name)) {
+                    match (v.init) {
+                        ast.ExprTuple(tl) => {
+                            var k: i32 = 0;
+                            while (k < tl.elements.len()) {
+                                match (tl.elements[k]) {
+                                    ast.ExprIdent(id) => {
+                                        if (id.name == name) {
+                                            a = a.append("MAPTUP:" + reclaim_site_key_of(v.name, v.line, v.col) + "|" + util.i32_to_string(k) + "|" + msite);
+                                        }
+                                    },
+                                    _ => {}
+                                }
+                                k = k + 1;
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            },
+            ast.StmtIf(f) => { a = maptup_rows_in(f.then_body, name, msite, a); a = maptup_rows_in(f.else_body, name, msite, a); },
+            ast.StmtWhile(w) => { a = maptup_rows_in(w.body, name, msite, a); },
+            ast.StmtFor(fo) => { a = maptup_rows_in(fo.body, name, msite, a); },
+            ast.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { a = maptup_rows_in(m.arms[mi].body, name, msite, a); mi = mi + 1; }
+            },
+            _ => {}
+        }
+        i = i + 1;
+    }
+    return a;
+}
+
+// var_decl_scan: how many `var name` bindings `stmts` holds, nested blocks and
+// defers included, plus 1000 for each of them inside a loop body — or a defer,
+// whose replay is as far from its lowering point as a back edge is. Exactly 1
+// therefore says "bound once, outside every loop". Every statement kind is
+// spelled out: one with a body this walk skipped would hide a binding.
+function var_decl_scan(stmts: ast.Stmt[], name: string, in_loop: boolean): i32 {
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < stmts.len()) {
+        match (stmts[i]) {
+            ast.StmtVar(v) => { if (v.name == name) { n = n + 1; if (in_loop) { n = n + 1000; } } },
+            ast.StmtIf(f) => { n = n + var_decl_scan(f.then_body, name, in_loop) + var_decl_scan(f.else_body, name, in_loop); },
+            ast.StmtWhile(w) => { n = n + var_decl_scan(w.body, name, true); },
+            ast.StmtFor(fo) => { n = n + var_decl_scan(fo.body, name, true); },
+            ast.StmtMatch(m) => {
+                var mi: i32 = 0;
+                while (mi < m.arms.len()) { n = n + var_decl_scan(m.arms[mi].body, name, in_loop); mi = mi + 1; }
+            },
+            ast.StmtDefer(d) => { n = n + var_decl_scan([d.action], name, true); },
+            ast.StmtAssign(_) => {},
+            ast.StmtReturn(_) => {},
+            ast.StmtExpr(_) => {},
+            ast.StmtBreak(_) => {},
+            ast.StmtContinue(_) => {},
+            ast.StmtUnknown(_) => {},
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
 // --- map locals borrowed by a tuple element (#7212) --------------------------
 //
 // `var t: (i32, Map[K, V]) = (i, m)` mentions `m` at a container-element
@@ -30905,8 +31155,8 @@ function borrowed_rebinds(stmts: ast.Stmt[], acc: string[], top: boolean): strin
 // from the aliasing set above. Only the `.with` self-reassign consults it.
 //
 // Merging the two looked tempting and is wrong: `aliased_names` also drives the
-// `.append` self-reassign's arr_push-vs-arr_push_owned choice and the map
-// clone-insert, and widening it there changed how closure ENV BOXES appended to
+// `.append` self-reassign's arr_push-vs-arr_push_owned choice, and widening it
+// there changed how closure ENV BOXES appended to
 // an array are retained — mutable captures then read a stale by-value snapshot
 // (#5301), which is a wrong ANSWER, not a leak. Ownership and aliasing are
 // different questions; they get different sets.
@@ -43085,6 +43335,206 @@ function slot_is_reclaimable_map(s: LowerState, i: i32): boolean {
     return slot_credit_at(s, i, "MAP:");
 }
 
+// --- map alias group releases (#7235; the group model is at map_alias_holder_sites)
+
+struct MapTupHolders { slots: i32[], idxs: i32[] }
+
+// map_groups_present: the registry holds an alias-group row at all — the cheap
+// gate in front of the per-slot scans, so a function without a group emits
+// byte-identical sweeps.
+function map_groups_present(s: LowerState): boolean {
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[i];
+        if (e.len() > 7 && (bytes_at(e, 0, "MAPAL:") || bytes_at(e, 0, "MAPTUP:"))) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// map_group_has_rows: the group keyed by m's site `msite` has holder rows, so
+// the clone site may release the superseded box against them. A group the
+// analysis admitted without rows (map_tuple_holder_rows' refusal) keeps the box.
+function map_group_has_rows(s: LowerState, msite: string): boolean {
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[i];
+        if (e.len() > msite.len() + 8 && (bytes_at(e, 0, "MAPAL:") || bytes_at(e, 0, "MAPTUP:"))
+            && bytes_at(e, e.len() - msite.len() - 1, "|" + msite)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// map_group_alias_slots: the slots of the plain aliases in the group keyed by
+// `msite`, in slot order.
+function map_group_alias_slots(s: LowerState, msite: string): i32[] {
+    var out: i32[] = [];
+    if (!map_groups_present(s)) { return out; }
+    var i: i32 = s.n_params;
+    while (i < s.locals.len()) {
+        var site: string = s.reclaim_site_key(i);
+        if (site.len() > 0 && reclaim_has(s.reclaimable_names, "MAPAL:", site + "|" + msite)) { out = out.append(i); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// map_group_tuple_holders: the (tuple slot, element index) holders of the group
+// keyed by `msite` whose tuple binding has been lowered. One not yet bound is
+// not in scope at the site asking, so nothing that site could read names the
+// box through it.
+function map_group_tuple_holders(s: LowerState, msite: string): MapTupHolders {
+    var slots: i32[] = [];
+    var idxs: i32[] = [];
+    var i: i32 = 0;
+    while (i < s.reclaimable_names.len()) {
+        var e: string = s.reclaimable_names[i];
+        if (e.len() > 7 && bytes_at(e, 0, "MAPTUP:")) {
+            var parts: string[] = split_bar(slice_unchecked(e, 7, e.len()) + "");
+            if (parts.len() == 3 && parts[2] == msite) {
+                var ts: i32 = s.slot_of_site(parts[0]);
+                if (ts >= 0) { slots = slots.append(ts); idxs = idxs.append(util.digits_to_i32(parts[1])); }
+            }
+        }
+        i = i + 1;
+    }
+    return MapTupHolders { slots: slots, idxs: idxs };
+}
+
+function maptup_holders_after(h: MapTupHolders, from: i32): MapTupHolders {
+    var slots: i32[] = [];
+    var idxs: i32[] = [];
+    var i: i32 = from + 1;
+    while (i < h.slots.len()) { slots = slots.append(h.slots[i]); idxs = idxs.append(h.idxs[i]); i = i + 1; }
+    return MapTupHolders { slots: slots, idxs: idxs };
+}
+
+function split_bar(s: string): string[] {
+    var out: string[] = [];
+    var start: i32 = 0;
+    var i: i32 = 0;
+    while (i < s.len()) {
+        if (s[i] == b'|') {
+            out = out.append(slice_unchecked(s, start, i) + "");
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return out.append(slice_unchecked(s, start, s.len()) + "");
+}
+
+// emit_map_release_unless_held frees the mapbox `slot` holds unless another
+// holder of its group still holds it: one of `others` (holder slots) or a tuple
+// element `tups.slots[i].tups.idxs[i]`. Null-safe on both sides: a zeroed slot
+// compares unequal and frees a null the helper ignores, and a zeroed tuple slot
+// is skipped before its element is read.
+function emit_map_release_unless_held(s: LowerState, slot: i32, others: i32[], tups: MapTupHolders): LowerState {
+    if (others.len() == 0 && tups.slots.len() == 0) { return emit_map_buffers_free(s, slot); }
+    var flag: string = "$mgf" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(flag);
+    var f: i32 = st.slot_of(flag);
+    st = st.emit(ir.op_const_i32(1));
+    st = st.emit(ir.op_store_local(f));
+    var i: i32 = 0;
+    while (i < others.len()) {
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_load_local(others[i]));
+        st = st.emit(ir.op_bin("eq", 0, false));
+        st = st.emit(ir.op_if(0));
+        st = st.emit(ir.op_const_i32(0));
+        st = st.emit(ir.op_store_local(f));
+        st = st.emit(ir.op_end());
+        i = i + 1;
+    }
+    var t: i32 = 0;
+    while (t < tups.slots.len()) {
+        st = st.emit(ir.op_load_local(tups.slots[t]));
+        st = st.emit(ir.op_const_i32(0));
+        st = st.emit(ir.op_bin("ne", 0, false));
+        st = st.emit(ir.op_if(0));
+        st = emit_load_tuple_path(st, tups.slots[t], [tups.idxs[t]]);
+        st = st.emit(ir.op_load_local(slot));
+        st = st.emit(ir.op_bin("eq", 0, false));
+        st = st.emit(ir.op_if(0));
+        st = st.emit(ir.op_const_i32(0));
+        st = st.emit(ir.op_store_local(f));
+        st = st.emit(ir.op_end());
+        st = st.emit(ir.op_end());
+        t = t + 1;
+    }
+    st = st.emit(ir.op_load_local(f));
+    st = st.emit(ir.op_if(0));
+    st = emit_map_buffers_free(st, slot);
+    return st.emit(ir.op_end());
+}
+
+// emit_map_group_release: the exit release of the map local in `mslot` and of
+// its plain aliases. The aliases go first, each guarded against the holders
+// after it and against m, so m — released last — frees its box unconditionally,
+// with whichever deep column credit it carries. A map with no aliases is the
+// plain free.
+function emit_map_group_release(s: LowerState, mslot: i32): LowerState {
+    var aliases: i32[] = map_group_alias_slots(s, s.reclaim_site_key(mslot));
+    if (aliases.len() == 0) { return emit_map_buffers_free(s, mslot); }
+    var st: LowerState = s;
+    var none: MapTupHolders = MapTupHolders { slots: [], idxs: [] };
+    var i: i32 = 0;
+    while (i < aliases.len()) {
+        var later: i32[] = [];
+        var j: i32 = i + 1;
+        while (j < aliases.len()) { later = later.append(aliases[j]); j = j + 1; }
+        later = later.append(mslot);
+        st = emit_map_release_unless_held(st, aliases[i], later, none);
+        i = i + 1;
+    }
+    return emit_map_buffers_free(st, mslot);
+}
+
+// emit_map_group_tuple_releases: for every credited map local with tuple
+// holders, release each tuple-held box unless a holder after it — the later
+// tuple holders, the plain aliases, or m — still holds it. Runs before the
+// array sweep frees the tuple boxes the elements are read through.
+function emit_map_group_tuple_releases(s: LowerState, keeps: i32[]): LowerState {
+    var st: LowerState = s;
+    var mj: i32 = st.n_params;
+    while (mj < st.locals.len()) {
+        if (!slot_list_has(keeps, mj) && slot_is_reclaimable_map(st, mj)) {
+            var msite: string = st.reclaim_site_key(mj);
+            var tups: MapTupHolders = map_group_tuple_holders(st, msite);
+            if (tups.slots.len() > 0) {
+                var later: i32[] = map_group_alias_slots(st, msite);
+                later = later.append(mj);
+                var t: i32 = 0;
+                while (t < tups.slots.len()) {
+                    st = emit_map_tuple_holder_release(st, tups.slots[t], tups.idxs[t], later, maptup_holders_after(tups, t));
+                    t = t + 1;
+                }
+            }
+        }
+        mj = mj + 1;
+    }
+    return st;
+}
+
+// emit_map_tuple_holder_release: the release of the group box held at element
+// `k` of the tuple in `tslot`, skipped whole when the tuple slot is zero (an
+// untaken branch). The element is copied into a scratch slot so the guarded
+// release reads it like any holder.
+function emit_map_tuple_holder_release(s: LowerState, tslot: i32, k: i32, others: i32[], tups: MapTupHolders): LowerState {
+    var scratch: string = "$mth" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(scratch);
+    var e: i32 = st.slot_of(scratch);
+    st = st.emit(ir.op_load_local(tslot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("ne", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = emit_load_tuple_path(st, tslot, [k]);
+    st = st.emit(ir.op_store_local(e));
+    st = emit_map_release_unless_held(st, e, others, tups);
+    return st.emit(ir.op_end());
+}
+
 // emit_map_buffers_free frees the map in `slot` via the per-backend
 // __fern_map_free helper: on the register backends it frees the keys + values
 // buffers (rc-headered __fern_arr_box arrays) AND returns the raw 16-byte mapbox
@@ -54249,7 +54699,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // the snapshot of the box the binding derived from; the moved-out final is
     // kept by the struct move-on-return in StmtReturn.
     reclaim = reclaim_snapshot_locals(fn, sg, structs, reclaim);
-    // Array/map locals that acquire a lasting local alias — the in-place
+    // Array locals that acquire a lasting local alias — the in-place
     // `a = a.with(i, v)` self-reassign must clone instead of mutating in place
     // when its target is here (#3599; see the aliased_names field doc).
     var aliased: string[] = aliased_array_names_of(fn.body);
@@ -54431,7 +54881,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -64975,7 +65425,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: parser.StructDecl[], fun
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -73333,7 +73783,22 @@ while (mi < maps.len()) {
     // again, and the maps it can rescue are the minority that reach it.
     var pos_ok: boolean = util.index_of_str(aliased_m, mapnm) < 0
         && !body_unsafe_for(body, mapnm, borrowable, recv_borrow);
-    if (!pos_ok) { pos_ok = map_tuple_elem_borrow_only(body, mapnm, borrowable, recv_borrow, reassigned); }
+    // The other HOLDERS of the map's alias group (#7235) — the tuple hosts the
+    // override admits, or the plain aliases map_alias_holder_sites vets.
+    var holders: string[] = [];
+    if (!pos_ok) {
+        if (map_tuple_elem_borrow_only(body, mapnm, borrowable, recv_borrow, reassigned)) {
+            pos_ok = true;
+            holders = map_tuple_holder_rows(body, mapnm, maps[mi], holders);
+        } else {
+            var asites: string[] = map_alias_holder_sites(body, mapnm, borrowable, recv_borrow, reassigned);
+            if (asites.len() > 0 && !body_unsafe_for_alias(body, mapnm, borrowable, recv_borrow, asites)) {
+                pos_ok = true;
+                var ai: i32 = 0;
+                while (ai < asites.len()) { holders = holders.append("MAPAL:" + asites[ai] + "|" + maps[mi]); ai = ai + 1; }
+            }
+        }
+    }
     // The reassigned gate admits the sanctioned COW self-reassign
     // (`m = m.insert(k, v)` — map_nonself_reassigned / #4357): insert at
     // rc==1 mutates in place and returns the SAME box, so the slot's
@@ -73349,11 +73814,15 @@ while (mi < maps.len()) {
         // excludes the map from reclaim.
         && !map_identity_escape(body, mapnm)) {
         out = out.append("MAP:" + maps[mi]);
+        var hi: i32 = 0;
+        while (hi < holders.len()) { out = out.append(holders[hi]); hi = hi + 1; }
         // #4353: a reclaimable map whose every VALUE (resp. KEY) is a fresh
         // string additionally deep-releases that column — via
         // __fern_map_free_vs / _ks / _kvs on the register backends (wasm
         // already deep-releases). Sound because the map is the sole rc=1 owner
-        // of each fresh value / key box.
+        // of each fresh value / key box. A clone shares those elements
+        // uncounted with the box it superseded, which is why every release in
+        // the group but m's own sweep is the shallow free (map_alias_holder_sites).
         if (map_str_value_reclaimable(body, mapnm)) {
             out = out.append("MAPVS:" + maps[mi]);
         }
