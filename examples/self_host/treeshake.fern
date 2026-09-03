@@ -226,24 +226,68 @@ function ts_interposed_method_name(name: string): string {
 // tag can name — monomorph instantiates it after this pass — so it is kept
 // rather than resolved. `base_type_name` strips the argument list, so
 // `impl Add for Box[T]` resolves on `Box`, which is the tag a struct carries.
-function ts_arith_kept(fd: parser.FuncDecl, refs: string[]): boolean {
+function ts_arith_kept(fd: parser.FuncDecl, refs: RefSet): boolean {
     if (fd.receiver_type.len() == 0) { return false; }
     var base: string = util.base_type_name(fd.receiver_type);
     if (base.len() == 0) { return false; }
     if (util.has_str(fd.type_params, base)) { return true; }
-    return util.has_str(refs, ts_qualified_root(base, fd.name));
+    return refset_has(refs, ts_qualified_root(base, fd.name));
+}
+
+// RefSet is the reachable-name set with a chained hash index over it — the
+// irlower.SigReg idiom. The set is probed once per name a kept body spells
+// and up to three times per pending function per round, against a set that
+// reaches ~12,000 names on the compiler compiling itself, so a miss scanning
+// the whole of it was most of this pass. Membership is the only question
+// asked, so a chain's order carries no meaning and a new name is pushed at
+// the front of its bucket.
+struct RefSet { names: string[], head: i32[], next: i32[] }
+
+function ts_buckets(): i32 { return 4093; }
+
+function refset_of(names: string[]): RefSet {
+    var head: i32[] = [];
+    var b: i32 = 0;
+    var nb: i32 = ts_buckets();
+    while (b < nb) { head = head.append(0 - 1); b = b + 1; }
+    var next: i32[] = [];
+    var k: i32 = 0;
+    while (k < names.len()) {
+        var bk: i32 = util.hash_bucket(names[k], nb);
+        next = next.append(head[bk]);
+        head = head.with(bk, k);
+        k = k + 1;
+    }
+    return RefSet { names: names, head: head, next: next };
+}
+
+function refset_has(rs: RefSet, name: string): boolean {
+    var i: i32 = rs.head[util.hash_bucket(name, rs.head.len())];
+    while (i >= 0) {
+        if (rs.names[i] == name) { return true; }
+        i = rs.next[i];
+    }
+    return false;
+}
+
+function refset_add(rs: RefSet, name: string): RefSet {
+    var bk: i32 = util.hash_bucket(name, rs.head.len());
+    var names: string[] = rs.names.append(name);
+    var next: i32[] = rs.next.append(rs.head[bk]);
+    var head: i32[] = rs.head.with(bk, names.len() - 1);
+    return RefSet { names: names, head: head, next: next };
 }
 
 // ts_kept_name reports whether `fd` is reachable: by exact name, by the method
 // name an array-method helper dispatches from, by the one an interposed method
 // was renamed away from — each a name the syntax spells where the FUNCTION does
 // not — or, for an arithmetic method only, by its receiver type.
-function ts_kept_name(fd: parser.FuncDecl, refs: string[]): boolean {
-    if (util.has_str(refs, fd.name)) { return true; }
+function ts_kept_name(fd: parser.FuncDecl, refs: RefSet): boolean {
+    if (refset_has(refs, fd.name)) { return true; }
     var m: string = ts_array_method_name(fd.name);
-    if (m.len() > 0 && util.has_str(refs, m)) { return true; }
+    if (m.len() > 0 && refset_has(refs, m)) { return true; }
     var im: string = ts_interposed_method_name(fd.name);
-    if (im.len() > 0 && util.has_str(refs, im)) { return true; }
+    if (im.len() > 0 && refset_has(refs, im)) { return true; }
     return ts_arith_method(fd.name) && ts_arith_kept(fd, refs);
 }
 
@@ -334,6 +378,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
     var pi0: i32 = 0;
     while (pi0 < mod.funcs.len()) { pending = pending.append(pi0); pi0 = pi0 + 1; }
 
+    var rs: RefSet = refset_of(refs);
     var changed: boolean = true;
     while (changed) {
         changed = false;
@@ -341,12 +386,12 @@ pub function treeshake(mod: parser.Module): parser.Module {
         var pi: i32 = 0;
         while (pi < pending.len()) {
             var fi: i32 = pending[pi];
-            if (ts_kept_name(mod.funcs[fi], refs)) {
+            if (ts_kept_name(mod.funcs[fi], rs)) {
                 var body_names: string[] = ts_func_names(mod.funcs[fi], []);
                 var bi: i32 = 0;
                 while (bi < body_names.len()) {
-                    if (!util.has_str(refs, body_names[bi])) {
-                        refs = refs.append(body_names[bi]);
+                    if (!refset_has(rs, body_names[bi])) {
+                        rs = refset_add(rs, body_names[bi]);
                         changed = true;
                     }
                     bi = bi + 1;
@@ -363,7 +408,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
     var kept: parser.FuncDecl[] = [];
     var ki: i32 = 0;
     while (ki < mod.funcs.len()) {
-        if (ts_kept_name(mod.funcs[ki], refs)) { kept = kept.append(mod.funcs[ki]); }
+        if (ts_kept_name(mod.funcs[ki], rs)) { kept = kept.append(mod.funcs[ki]); }
         ki = ki + 1;
     }
     return parser.Module { funcs: kept, structs: mod.structs, aliases: mod.aliases, imports: mod.imports, top_stmts: mod.top_stmts, enums: mod.enums, resources: mod.resources, exports: mod.exports, impls: mod.impls, trait_reqs: mod.trait_reqs, trait_decls: mod.trait_decls };
