@@ -206,15 +206,28 @@ type environment struct {
 	entry        EntryShape
 }
 
+// Every environment lists BOTH entry shapes because every target compiles
+// both: a `handle` program gets the synthesised main (tcp_serve on the
+// hosted natives and on WASI CLI, whose descriptor grants `tcp`; the
+// incoming-handler wrapper on the proxy world), and a program that writes
+// its own `main` keeps it. The lists said otherwise on all six targets --
+// one kind each, none of them the whole truth -- because nothing read the
+// field. TestHandlerKindsMatchWhatTheCompilerAccepts is what stops it
+// drifting back: it compiles both shapes for every emitting target and
+// fails if the descriptor and the compiler disagree in either direction.
+//
+// The canonical kind stays FIRST, which is what auto-`main` synthesis
+// targets and what a `scheduled` / `alarm` kind (Rec §5) would be added
+// after.
 var environments = map[string]environment{
-	"linux":   {profile: "hosted-native", handlerKinds: []string{"handle"}, entry: EntryProcess},
-	"darwin":  {profile: "hosted-native", handlerKinds: []string{"handle"}, entry: EntryProcess},
-	"android": {profile: "hosted-native", handlerKinds: []string{"handle"}, entry: EntryProcess},
-	"wasi":    {profile: "wasi-cli", handlerKinds: []string{"main"}, entry: EntryProcess},
+	"linux":   {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
+	"darwin":  {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
+	"android": {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
+	"wasi":    {profile: "wasi-cli", handlerKinds: []string{"main", "handle"}, entry: EntryProcess},
 
 	"wasi-http": {
 		profile:      "wasi-proxy",
-		handlerKinds: []string{"handle"},
+		handlerKinds: []string{"handle", "main"},
 		// The proxy world never enters the component; the host calls
 		// the exported `handle`.
 		entry: EntryExports,
