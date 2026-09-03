@@ -1384,6 +1384,7 @@ function main(): i32 { var keep: (i32, i32[]) = (5, [6, 7]); return get(keep).le
 					if nl != sl {
 						t.Errorf("%s: %s diverge — native %q vs self-host %q\n--- native dump ---\n%s--- self-host dump ---\n%s",
 							fn, table, nl, sl, native[fn], selfhost[fn])
+						continue
 					}
 					if want, ok := tc.anchor[fn][table]; ok && nl != want {
 						t.Errorf("%s: %s = %q on both sides, but the anchor expects %q", fn, table, nl, want)
