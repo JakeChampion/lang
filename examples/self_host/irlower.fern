@@ -541,6 +541,10 @@ pub struct FnSigs {
     // retain across the call. The emit paths pass an inter-procedural fixpoint
     // here rather than borrowable_params_of's single pass.
     borrowable_params: string[],
+    // borrow_bare: the same rows as borrowable_params, bucketed by the bare
+    // name after the key's last '.', for the one query that only knows a
+    // method's name (reclaim_lit_arg_callees).
+    borrow_bare: string[],
     // fn_names: every free function in the module. A bare-ident call whose name
     // is in here resolves to that user function and must NOT be intercepted as
     // a same-named builtin (`len` / `exit` / `chr` / …).
@@ -60005,6 +60009,46 @@ function borrow_reg_put(reg: string[], key: string, flags: string): string[] {
     return reg.with(b, reg[b] + key + "|" + flags + "\n");
 }
 
+// borrow_reg_bare_index re-buckets a registry's rows by the bare name after
+// the key's last '.' (the whole key when it has none), keeping each row
+// intact, so a lookup by method name reaches every "<Type>.<method>" row
+// without walking the registry. Sized from the row count, unlike the
+// registry itself.
+function borrow_reg_bare_index(reg: string[]): string[] {
+    var nrows: i32 = 0;
+    var bi: i32 = 0;
+    while (bi < reg.len()) {
+        var s: string = reg[bi];
+        var k: i32 = 0;
+        while (k < s.len()) { if (s[k] == b'\n') { nrows = nrows + 1; } k = k + 1; }
+        bi = bi + 1;
+    }
+    var nb: i32 = sig_bucket_count(nrows);
+    var out: string[] = [];
+    var j: i32 = 0;
+    while (j < nb) { out = out.append(""); j = j + 1; }
+    bi = 0;
+    while (bi < reg.len()) {
+        var buck: string = reg[bi];
+        var bl: i32 = 0;
+        while (bl < buck.len()) {
+            var ble: i32 = bl;
+            while (ble < buck.len() && buck[ble] != b'\n') { ble = ble + 1; }
+            var bar: i32 = bl;
+            while (bar < ble && buck[bar] != b'|') { bar = bar + 1; }
+            if (bar < ble) {
+                var dot: i32 = bar;
+                while (dot > bl && buck[dot - 1] != b'.') { dot = dot - 1; }
+                var hb: i32 = util.hash_bucket(slice_unchecked(buck, dot, bar) + "", nb);
+                out = out.with(hb, out[hb] + slice_unchecked(buck, bl, ble) + "\n");
+            }
+            bl = ble + 1;
+        }
+        bi = bi + 1;
+    }
+    return out;
+}
+
 // ── counted-retain array params (#6522, native's inferParamCountedRetain) ────
 //
 // The arg-temp stash releases a fresh argument only at a BORROWABLE position,
@@ -61035,7 +61079,7 @@ pub function fn_sigs_empty(): FnSigs {
     return FnSigs { arr_ret_fns: r, str_ret_fns: r, bool_ret_fns: r, strarr_ret_fns: r, arr_method_fns: e, ret_type_fns: r, ret_fn_sigs: r, noesc_ret_fns: r,
         opt_ret_fns: r, i64_ret_fns: r, tuple_ret_fns: r, arrtup_ret_fns: r, struct_ret_fns: r, map_ret_fns: r,
         f64_ret_fns: r, f64arr_ret_fns: r, i64arr_ret_fns: r, erased_elem_ret_fns: r, fn_param_sigs: r, closure_fns: e,
-        closurearr_ret_fns: e, const_fns: e, borrowable_params: e, fn_names: r,
+        closurearr_ret_fns: e, const_fns: e, borrowable_params: e, borrow_bare: e, fn_names: r,
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
         tuple_fresh_ret_fns: e, own_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e };
@@ -61445,6 +61489,8 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
     // borrowability registry the escape walker threads, so the two registries
     // cannot disagree about a position and the walker needs no extra parameter.
     var pcnt: string[] = param_counted_of(funcs, structs, sfok);
+    var breg: string[] = borrow_reg_with_counted(bparams, pcnt);
+    var bbare: string[] = borrow_reg_bare_index(breg);
     return FnSigs {
         arr_ret_fns: sig_reg_of(arr_ret_fns),
         ret_type_fns: sig_reg_of(ret_type_fns_of(funcs)),
@@ -61468,7 +61514,8 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: parser.Struct
         closure_fns: closure_and_fnptr_fns_of(funcs, structs),
         closurearr_ret_fns: closurearr_ret_fns_of(funcs, structs),
         const_fns: const_fns_of(funcs),
-        borrowable_params: borrow_reg_with_counted(bparams, pcnt),
+        borrowable_params: breg,
+        borrow_bare: bbare,
         fn_names: sig_reg_of(fn_names_of(funcs)),
         fresh_struct_ret_fns: fresh_struct_ret_fns_of(funcs, structs),
         consume_safe_params: [],
@@ -71947,43 +71994,29 @@ function reclaim_lit_arg_callees(fn: parser.FuncDecl, sg: FnSigs, reclaim: strin
 var lacs: string[] = [];
 var laci: i32 = 0;
 while (laci < fn.body.len()) { lacs = lit_arg_callees_stmt(fn.body[laci], lacs); laci = laci + 1; }
-if (lacs.len() > 0) {
-    var bpk: i32 = 0;
-    while (bpk < sg.borrowable_params.len()) {
-        // borrowable_params is a HASH TABLE: each element is a bucket
-        // holding zero or more "<key>|<flags>\n" lines, so a bucket is not
-        // itself a lookup entry. Seeding one wholesale registered only the
-        // key that happened to land first in it — and tagged_value_start
-        // anchors at position 0, so that was also the only key a lookup
-        // could ever resolve. Every callee sharing a bucket behind another
-        // was silently unborrowable, and its callers' fresh-argument temps
-        // went unreclaimed. Walk the lines and seed each match on its own.
-        var buck: string = sg.borrowable_params[bpk];
-        var bl: i32 = 0;
-        while (bl < buck.len()) {
-            var ble: i32 = bl;
-            while (ble < buck.len() && buck[ble] != b'\n') { ble = ble + 1; }
-            // Offsets into `buck`, not a copy of the line: this walk visits
-            // every row of the whole-program registry for every function
-            // lowered, and materialising each row cost an allocation and a
-            // copy per row per function. Only a row that MATCHES is built.
-            var bpbar: i32 = bl;
-            while (bpbar < ble && buck[bpbar] != b'|') { bpbar = bpbar + 1; }
-            if (bpbar < ble) {
-                // A METHOD key is "<Type>.<method>" and the census can only
-                // see the bare method name, so match on the part after the
-                // last '.'. A free function's key holds no '.' (module
-                // mangling uses '__'), so it still compares whole.
-                var bpdot: i32 = bpbar;
-                while (bpdot > bl && buck[bpdot - 1] != b'.') { bpdot = bpdot - 1; }
-                if (util.index_of_str(lacs, slice_unchecked(buck, bpdot, bpbar)) >= 0) {
-                    reclaim = reclaim.append("BORROW:" + slice_unchecked(buck, bl, ble));
-                }
+var li: i32 = 0;
+while (li < lacs.len()) {
+    // The census only knows the bare method name, so the rows come from the
+    // bare-name index rather than the registry: one bucket per callee, not
+    // every row of the whole program per function lowered (#8177).
+    var name: string = lacs[li];
+    var buck: string = sg.borrow_bare[util.hash_bucket(name, sg.borrow_bare.len())];
+    var bl: i32 = 0;
+    while (bl < buck.len()) {
+        var ble: i32 = bl;
+        while (ble < buck.len() && buck[ble] != b'\n') { ble = ble + 1; }
+        var bpbar: i32 = bl;
+        while (bpbar < ble && buck[bpbar] != b'|') { bpbar = bpbar + 1; }
+        if (bpbar < ble) {
+            var bpdot: i32 = bpbar;
+            while (bpdot > bl && buck[bpdot - 1] != b'.') { bpdot = bpdot - 1; }
+            if (slice_unchecked(buck, bpdot, bpbar) == name) {
+                reclaim = reclaim.append("BORROW:" + slice_unchecked(buck, bl, ble));
             }
-            bl = ble + 1;
         }
-        bpk = bpk + 1;
+        bl = ble + 1;
     }
+    li = li + 1;
 }
 
     return reclaim;
