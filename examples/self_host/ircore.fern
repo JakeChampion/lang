@@ -6,7 +6,8 @@
 //
 // Seven groups:
 //
-//   * the eligibility scan — ir_eligible / eligible_core* / all_eligible*, the
+//   * the eligibility scan — eligible_core* / all_eligible* / the -ir-probe
+//     report, the
 //     gate every `*_or_error` entry asks before it emits;
 //   * the refusals all three share — strict_ir_refuse, eprint_ir_ineligible and
 //     unsupported_op_refuse, each an eprint-then-exit(3) whose only per-backend
@@ -33,30 +34,6 @@ import "./util";
 import "./ir";
 import "./irlower";
 
-// ir_eligible reports whether a function is in the IR path's current subset:
-// i32 functions with params, direct calls, and arrays (heap alloc / index /
-// write / len + Perceus RC, including borrowed array params and array returns
-// via move-on-return) — but no methods. Cross-function arrays are sound here
-// because the IR path only fires when the WHOLE module is eligible
-// (all_eligible), so every function — caller and callee — uses irlower's
-// array layout; nothing crosses an IR/AST boundary.
-pub function ir_eligible(fd: parser.FuncDecl, mod: parser.Module): boolean {
-    // Methods (receiver functions) are lowered too — lower_func binds the
-    // receiver as slot 0 and bails for non-scalar-struct receivers.
-    //
-    // The eligibility probe lowers fd with the SAME registries
-    // emit_function_via_ir (and the wasm emit_function_ir) use, so "eligible"
-    // means exactly "lowers". Threading the array registries matters for ok/bail,
-    // not just op selection: `var a = mk()` (an array-returning call) is tracked
-    // as an array only when `mk` is in arr_ret_fns, and a later `for x in a`
-    // bails when its slot isn't array-typed; str_ret_fns likewise decides whether
-    // `for b in greet()` (a string-returning-call iterable) types as a string and
-    // lowers via the byte-foreach path (#2822). An empty registry here would
-    // under-approximate and refuse modules that do in fact lower.
-    var r: irlower.LowerResult = irlower.lower_func_for(fd, array_ret_fns(mod), mod.structs, mod.funcs);
-    if (!r.ok) { return false; }
-    return true;
-}
 
 // is_array_type reports whether a type string denotes an array (ends "[]").
 function is_array_type(t: string): boolean {
@@ -336,7 +313,7 @@ pub function ir_helper_symbol(name: string): string {
 // emitter behind this — a bail is a diagnostic, not a routing decision — so a
 // builtin reaching here is a gap to close in lowering.
 // eligible_core is the target-independent eligibility check: a non-empty module
-// with a `main` where every function is ir_eligible, every direct call targets a
+// with a `main` where every function lowers, every direct call targets a
 // known function, and every function-VALUE reference (const_func) names a real
 // module function. It ALLOWS plain function values (const_func / call_indirect) —
 // the wasm backend lowers them (a funcref table). all_eligible adds the
@@ -411,7 +388,7 @@ pub function eligible_core_known_impl(mod: parser.Module, known: string[]): bool
     // path, which is what the wasm AST emitter's retirement needs.
     // Per-function eligibility lowers fd ONCE and runs all three checks (body
     // lowers / calls-only-known / const-funcs-only-known) on that single
-    // LowerResult, rather than re-lowering it three times (ir_eligible +
+    // LowerResult, rather than re-lowering it three times (the body check +
     // calls_only_known + const_funcs_only_known each lowered independently). On a
     // large all-eligible module the per-function `LowerResult.ops` is retained
     // (the native catch-all dec only decrements, never frees — #3425), so three
@@ -533,7 +510,7 @@ pub function known_includes(known: string[], name: string): boolean {
 // the body must lower (r.ok), every direct call must target a module function or
 // an IR runtime helper (calls_only_known), and every function-value reference
 // must name a module function (const_funcs_only_known). Lowering once with the
-// real return-type registries (lower_func_for, as ir_eligible does) is at least
+// real return-type registries (lower_func_for) is at least
 // as accurate as the prior noret scan for call / const_func detection — those op
 // kinds carry the callee name regardless of return-type tagging — so the module
 // verdict is unchanged, at a third of the lowering cost. `arf` (array_ret_fns) is
@@ -679,6 +656,12 @@ pub function eligibility_report_known(mod: parser.Module, known: string[]): stri
 function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg, sga: irlower.FnSigs, sgn: irlower.FnSigs): string {
     var name: string = fd.name;
     if (fd.receiver_type.len() > 0) { name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
+    // Lowered with the SAME registries emit_function_via_ir (and the wasm
+    // emit_function_ir) use, so "eligible" means exactly "lowers". The array and
+    // string return registries matter for ok/bail, not just op selection: `var a
+    // = mk()` is tracked as an array only when `mk` is in arr_ret_fns, and a
+    // later `for x in a` bails when its slot is not array-typed. An empty
+    // registry here would under-approximate and refuse modules that do lower.
     var lower_ok: boolean = irlower.lower_func(fd, mod.structs, sga, false).ok;
     var calls_ok: boolean = calls_only_known(fd, mod, known, freg, sgn);
     var cfns_ok: boolean = const_funcs_only_known(fd, mod, known, freg, sgn);
