@@ -1365,7 +1365,11 @@ function bind_tuple_destr_names(out: Scope, names: string[], whole: Type): Scope
     if (i < elems.len()) { et = elems[i]; }
     if (util.is_tuple_type_name(nm)) {
       out = bind_tuple_destr_names(out, split_pattern_names(slice_unchecked(nm, 1, nm.len() - 1) + ""), et);
-    } else if (nm.len() > 0) {
+    } else if (nm.len() > 0 && nm != "_") {
+      // `_` is the discard: it introduces NO name, so reading it back is an
+      // undefined identifier rather than a way to recover the element the
+      // binding said to throw away. Binding it made `return _` compile and
+      // hand back the discarded value.
       out = out.bind(nm, et);
     }
     i = i + 1;
