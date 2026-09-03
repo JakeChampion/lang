@@ -137,6 +137,28 @@ function test_http_header_value_missing_is_none(): test.TestOutcome {
         http.http_header_value("Host: e\r\n", "X-Absent"));
 }
 
+// A request with NO header block at all: the request line's own
+// CRLF is the first two bytes of the `\r\n\r\n` separator, so the
+// header slice [first_crlf + 2, headers_end) runs backwards unless
+// the parser clamps it. It did not, and the parse aborted the
+// process with "string index out of range" rather than returning a
+// header-free request.
+function test_no_headers_at_all_parses(): test.TestOutcome {
+    match (http.http_parse_request("GET /bare HTTP/1.1\r\n\r\n")) {
+        Some(req) => { return test.assert_eq(req.path, "/bare"); },
+        None => { return test.fail("a header-free request is well-formed"); }
+    }
+    return test.fail("unreachable");
+}
+
+function test_no_headers_at_all_has_no_headers(): test.TestOutcome {
+    match (http.http_parse_request("GET /bare HTTP/1.1\r\n\r\n")) {
+        Some(req) => { return test.assert_eq(req.headers.len(), 0); },
+        None => { return test.fail("a header-free request is well-formed"); }
+    }
+    return test.fail("unreachable");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("HTTP request headers (migrated)");
     r = r.it("Content-Type reachable case-insensitively",
@@ -159,5 +181,9 @@ function main(): i32 {
              test_http_header_value_via_headermap);
     r = r.it("http_header_value missing returns None",
              test_http_header_value_missing_is_none);
+    r = r.it("a request with no headers parses",
+             test_no_headers_at_all_parses);
+    r = r.it("a request with no headers has none",
+             test_no_headers_at_all_has_no_headers);
     return r.finish();
 }
