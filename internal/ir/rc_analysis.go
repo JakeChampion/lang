@@ -3259,6 +3259,21 @@ func (b *builder) computeMovedLocals() map[string]bool {
 	// inc to elide (a call arg is passed without one), so only the exit-sweep /
 	// precise drop is suppressed via `moved`. Gated on the E051 guard, which is
 	// what guarantees an `own`-position arg is an owned, transferable value.
+	//
+	// The claim is whole-function, so the site must DOMINATE every exit —
+	// walkDominatingExprs is what establishes that. Textually-last is not
+	// enough: on
+	//
+	//	if (…) { a = S { …a, code: f(a.code) }; return a; }
+	//	return g(a);                       // last occurrence, but not on that path
+	//
+	// the claim silences the sweep on BOTH paths while only the second one
+	// hands the reference away, so the first leaks one box per call — and with
+	// it one reference to every rc-tracked field, which is what made the next
+	// append see the buffer at rc 2 and copy the whole thing (#8146). A
+	// transfer that does not dominate keeps ownArgNeedsRetain's compensating
+	// retain, and a return-position one is re-claimed per-site by
+	// computeReturnOwnMoves.
 	if len(b.info.OwnFuncs) > 0 {
 		ownParam := map[string]bool{}
 		for _, p := range b.fn.Params {
@@ -3277,7 +3292,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 					moved[id.Name] = true
 				}
 			}
-			ast.Walk(b.fn.Body, func(n ast.Node) bool {
+			walkDominatingExprs(b.fn.Body, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.Match:
 					markScrutinee(x.Tag)
@@ -3308,6 +3323,70 @@ func (b *builder) computeMovedLocals() map[string]bool {
 		}
 	}
 	return moved
+}
+
+// walkDominatingExprs visits the nodes of `body` that are evaluated exactly
+// once on every path from entry to every exit, so a whole-function claim made
+// at one of them holds on all of them.
+//
+// Scanning stops at the first statement that can return: everything after it is
+// skipped on the path leaving through that return. Within a statement only the
+// always-evaluated positions are offered — an `if` gives its condition, not its
+// arms; a `match` its scrutinee, not its bodies — and a LOOP gives nothing,
+// since a transfer under one runs once per iteration rather than once.
+func walkDominatingExprs(body *ast.Block, f func(ast.Node) bool) {
+	if body == nil {
+		return
+	}
+	for _, st := range body.Stmts {
+		switch s := st.(type) {
+		case *ast.Var:
+			walkAlwaysEvaluated(s.Init, f)
+		case *ast.ExprStmt:
+			walkAlwaysEvaluated(s.Expr, f)
+		case *ast.Return:
+			walkAlwaysEvaluated(s.Value, f)
+		case *ast.If:
+			walkAlwaysEvaluated(s.Cond, f)
+		case *ast.Match:
+			if f(s) {
+				walkAlwaysEvaluated(s.Tag, f)
+			}
+		}
+		if stmtContainsReturn(st) {
+			return
+		}
+	}
+}
+
+// walkAlwaysEvaluated visits `e` and the sub-expressions evaluated whenever `e`
+// is. It stops at the operands that are not: a lambda body, the right operand
+// of `&&` / `||`, and the arms of an if- or match-expression.
+func walkAlwaysEvaluated(e ast.Expr, f func(ast.Node) bool) {
+	if e == nil {
+		return
+	}
+	ast.Walk(e, func(n ast.Node) bool {
+		if !f(n) {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.Lambda:
+			return false
+		case *ast.Binary:
+			if x.Op == "&&" || x.Op == "||" {
+				walkAlwaysEvaluated(x.Left, f)
+				return false
+			}
+		case *ast.IfExpr:
+			walkAlwaysEvaluated(x.Cond, f)
+			return false
+		case *ast.MatchExpr:
+			walkAlwaysEvaluated(x.Tag, f)
+			return false
+		}
+		return true
+	})
 }
 
 // markConstructionMoves implements the move-on-construction slice of
