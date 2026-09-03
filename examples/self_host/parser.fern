@@ -5562,6 +5562,12 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
                 ill_arms = ill_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: ill_else, line: ill_line, col: ill_col, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false });
                 return (with_sugar_origin(build_literal_match(ill_scrut, ill_arms, ill_line, ill_col), "if_let"), p);
             }
+            // The head's line/col, captured where the three shaped paths above
+            // capture theirs. Without it the desugared statement carries 0 and
+            // `-fmt`'s stmt_line reads 0, so print_block skips its drain and a
+            // comment written above the `if let` reappears inside the body.
+            var il_line: i32 = p.peek_line();
+            var il_col: i32 = p.peek_col();
             var (ilpat_pattern, ilpat_p) = parse_pattern(p);
             p = ilpat_p;
             // Or-patterns: `if let A(x) | B(x) = e { … }` — one arm per
@@ -5616,12 +5622,12 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             // only the first slot. The origin tag keeps `-fmt` reprinting the
             // `if let` rather than the chain.
             if (arms_take_flag_chain(ilarms)) {
-                return (with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, 0, 0), "if_let"), p);
+                return (with_sugar_origin(build_nested_arm_match(ilscrut_expr, ilarms, ilwritten, il_line, il_col), "if_let"), p);
             }
             ilarms = desugar_nested_arms(ilarms, 0, "");
             var ilsugar: ast.MatchArm[] = [];
             if (arms_have_written_form(ilwritten)) { ilsugar = ilwritten; }
-            return (s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, 0, 0, "if_let"), p);
+            return (s_match_origin_sugared(ilscrut_expr, ilarms, ilsugar, il_line, il_col, "if_let"), p);
         }
         if (p.peek_punct() != "(") {
             return (s_unknown(p, "missing ( in if"), p);
