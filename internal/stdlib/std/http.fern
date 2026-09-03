@@ -461,10 +461,10 @@ pub function http_serialize_response(resp: HttpResponse): string {
         }
         i = i + 1;
     }
-    hdr_block = hdr_block + "Content-Length: " + int.int_to_string(resp.body.len()) + "\r\n"
+    hdr_block = hdr_block + "Content-Length: " + int.int_to_string(resp.body_len()) + "\r\n"
         + "Connection: close\r\n"
         + "\r\n";
-    return status_line + hdr_block + resp.body;
+    return status_line + hdr_block + resp.body_string();
 }
 
 // ============================================================
@@ -513,6 +513,33 @@ pub function (r: HttpRequest) body_bytes(): u8[] {
 // in-memory string's length.
 pub function (r: HttpRequest) body_len(): i32 {
     return r.body.len();
+}
+
+// `(r: HttpResponse).body_string()` — body as a UTF-8 string.
+// The response-side twin of the HttpRequest shims above, and
+// forward-compatible in the same way: when the field becomes
+// `Stream[bytes]` only this body changes, not its callers.
+pub function (r: HttpResponse) body_string(): string {
+    return r.body;
+}
+
+// `(r: HttpResponse).body_bytes()` — body as a u8 array.
+pub function (r: HttpResponse) body_bytes(): u8[] {
+    return r.body.bytes();
+}
+
+// `(r: HttpResponse).body_len()` — body length in bytes.
+pub function (r: HttpResponse) body_len(): i32 {
+    return r.body.len();
+}
+
+// `http_response_bytes(status, bs)` — a response whose body is
+// given as bytes rather than a string. The constructor the
+// Stream[bytes] migration wants callers to reach for: a byte
+// body needs no round-trip through `string` once the field
+// stops being one.
+pub function http_response_bytes(status: i32, bs: u8[]): HttpResponse {
+    return HttpResponse { status: status, body: string_from_bytes_unchecked(bs), headers: headers.header_map_new() };
 }
 
 // ============================================================

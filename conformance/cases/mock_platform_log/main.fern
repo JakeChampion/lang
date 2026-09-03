@@ -24,7 +24,7 @@ function main(): i32 {
     var m: MockPlatform = mock_platform.mock_platform_new();
     var req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: "", headers: headers.header_map_new() };
     var resp: HttpResponse = handle(req, m.as_platform());
-    print(resp.body);                            // body-/a
+    print(resp.body_string());                            // body-/a
     print(m.call_count().to_string());           // 4
     var cs: MockCall[] = m.calls();
     print(cs[0].name);                           // log

@@ -3659,6 +3659,38 @@ func TestRunnerHttpRequestHeadersMigratedExample(t *testing.T) {
 	}
 }
 
+// `examples/tests/http_response_body_shim_test.fern` — the
+// RESPONSE half of the body forward-compatibility shim
+// (#4414 Rec §4). HttpRequest has carried body_string() /
+// body_bytes() / body_len() since the Tier-A shim; the response
+// had none, so every response-body read was still spelled
+// `.body` — the one shape the Stream[bytes] migration has to
+// rewrite. Each case compares an accessor against the same value
+// reached through a constructor, so when the field type swaps and
+// only the method bodies change, a divergence surfaces here.
+func TestRunnerHttpResponseBodyShimExample(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/http_response_body_shim_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{
+		"# Suite: HTTP response body shim",
+		"ok 1 - body_string round-trips",
+		"ok 2 - body_len matches the string length",
+		"ok 5 - bytes constructor agrees with text",
+		"ok 7 - wire Content-Length matches the body",
+		"ok 8 - wire ends with the body",
+		"# pass 8",
+		"# fail 0",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 // `examples/tests/http_response_headers_migrated_test.fern`
 // — Lang port of `TestInterpScriptHttpResponseHeaders`.
 // Fifth migration in the runner-adoption campaign.
