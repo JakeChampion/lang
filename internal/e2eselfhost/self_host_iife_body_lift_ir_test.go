@@ -33,6 +33,29 @@ function main(): i32 {
     var fs: ((i32) => i32)[] = (if (false) { [((x0: i32) => 105i32)] } else { [(match (p1) { __E0_V0 => ((x4: i32) => x4), __E0_V1 => ((x5: i32) => 548i32) })] });
     return fs[0](3i32) & 63i32;
 }`, 36},
+	// The same mixed shape with the arms the other way round: the BOXED arm is
+	// the one taken, the raw-lambda arm is dead. The uniformity rule is about
+	// the binding's one ABI, so which arm runs must not matter.
+	{"boxed-arm-first-raw-arm-second", `enum E0 { __E0_V0, __E0_V1 }
+function main(): i32 {
+    var p1: E0 = __E0_V1;
+    var fs: ((i32) => i32)[] = (if (true) { [(match (p1) { __E0_V0 => ((x4: i32) => x4), __E0_V1 => ((x5: i32) => 548i32) })] } else { [((x0: i32) => 105i32)] });
+    return fs[0](3i32) & 63i32;
+}`, 36},
+	// Three arms, two of them plain lambda arrays and the third an array holding
+	// a nested value-position `if`. Two sibling arms answering "raw" is what
+	// makes this different from the two-arm shapes: the gate counts boxed
+	// elements across ALL arms, it does not compare a pair.
+	{"three-arms-one-nested-iife-array", `enum E0 { __E0_V0, __E0_V1, __E0_V2 }
+function main(): i32 {
+    var p1: E0 = __E0_V2;
+    var fs: ((i32) => i32)[] = (match (p1) {
+        __E0_V0 => [((x0: i32) => 105i32)],
+        __E0_V1 => [((x1: i32) => 7i32)],
+        __E0_V2 => [(if (true) { ((x2: i32) => 548i32) } else { ((x3: i32) => x3) })]
+    });
+    return fs[0](3i32) & 63i32;
+}`, 36},
 	// Control: the lambdas sit in an array the `if` YIELDS, not nested inside
 	// another expression in the branch. That already lowered — the branch value
 	// is the array itself, so the existing walk reached it.
