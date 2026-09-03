@@ -2601,7 +2601,6 @@ func referencedRuntimeHelpers(progs map[string]*x86.Program) (asm, fern []string
 func emitRcIsUniqueHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_is_unique"))
-	w("\tcbz x0, .Lssa_rcuniq_no")
 	w("\tcmp x0, #0x10000")
 	w("\tb.lo .Lssa_rcuniq_no")
 	w("\tldur w1, [x0, #-8]") // rc word at data-8
@@ -2620,7 +2619,6 @@ func emitRcIsUniqueHelper(w func(string, ...any)) {
 func emitRcIncHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_inc"))
-	w("\tcbz x0, .Lssa_rcinc_ret")
 	w("\tcmp x0, #0x10000")
 	w("\tb.lo .Lssa_rcinc_ret")
 	w("\tldur w1, [x0, #-8]")
@@ -2637,7 +2635,6 @@ func emitRcIncHelper(w func(string, ...any)) {
 func emitRcDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_rc_dec"))
-	w("\tcbz x0, .Lssa_rcdec_ret")
 	w("\tcmp x0, #0x10000")
 	w("\tb.lo .Lssa_rcdec_ret")
 	w("\tldur w1, [x0, #-8]")
@@ -3039,7 +3036,6 @@ func emitStrConcatHelper(w func(string, ...any)) {
 func emitStrDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_str_dec"))
-	w("\tcbz x0, .Lssa_strdec_ret")
 	w("\tcmp x0, #0x10000")
 	w("\tb.lo .Lssa_strdec_ret")
 	w("\tldur w1, [x0, #-8]")             // rc
@@ -3061,7 +3057,6 @@ func emitStrDecHelper(w func(string, ...any)) {
 func emitArrDecHelper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__fern_arr_dec"))
-	w("\tcbz x0, .Lssa_arrdec_ret")
 	w("\tcmp x0, #0x10000")
 	w("\tb.lo .Lssa_arrdec_ret")
 	w("\tldur w2, [x0, #-8]")             // rc (x1 holds stride)

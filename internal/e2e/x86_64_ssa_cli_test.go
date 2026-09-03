@@ -78,9 +78,11 @@ function main(): i32 {
 		// and a match brings calls with it, dropping its scrutinee through
 		// __fern_rc_inc / __fern_rc_dec. That traffic (34 push/pop against the
 		// stack machine's 6) used to swallow the whole win on this program and
-		// leave the allocated path larger. It no longer does — 199 instructions
-		// against 213 — so the smaller-than assertion below covers the shape
-		// that was hardest for it.
+		// leave the allocated path larger. It no longer does — 195 instructions
+		// against 199 — so the smaller-than assertion below covers the shape
+		// that was hardest for it. The margin is four instructions because both
+		// emitters inline or call the same rc guards; a guard improvement that
+		// reaches only one of them moves this case, which is what it is for.
 		{"call-heavy-loop-match", `enum Shape { Circle, Square, Triangle }
 function pick(n: i32): Shape {
     if (n == 0) { return Shape.Circle; }
