@@ -297,13 +297,13 @@ were reproduced independently of whoever first reported it. Costs are shares of
 | 9 | 64-bit immediates have no `movn` and no logical-bitmask-immediate path — `-1` costs 4 instructions where clang costs 1 | arm64 | 33 four-instruction chains; 0 `movn` in the binary | confirmed |
 | 10 | No branch-free selection (`csel` 17 in 7.9 M, `cinc`/`csinc`/`cneg` 0); the SSA backend never fuses compare into branch — always `cmp → cset → cbnz` | arm64 | 54 027 `cmp;cset;cbnz` triples on the SSA path | confirmed |
 | 11 | No bitfield selection — shift+mask is 8 instructions where `ubfx` is 1. `ubfx` reaches the output 7 062 times but only as two hardcoded idioms; `sbfx`/`bfi`/`bfxil`/`rev` are 0 | arm64 | — | confirmed |
-| 12 | Shift counts always route through `CL`, never the `imm8` form | x86-64 | — | confirmed |
-| 13 | Every i64 literal is a 10-byte `movabs`, including `0` (`xor eax,eax` is 2 bytes) and values that fit `imm32` (5 bytes) | x86-64 | size only | confirmed |
+| 12 | Shift counts always route through `CL`, never the `imm8` form | x86-64 | 5 125 sites | CLOSED by #8194's P9 |
+| 13 | Every i64 literal is a 10-byte `movabs`, including `0` (`xor eax,eax` is 2 bytes) and values that fit `imm32` (5 bytes) | x86-64 | size only | STALE — already done; 124 `movabs` remain, 264 bytes (§6.2) |
 | 14 | `base+index*scale` addresses computed into a register, then dereferenced, instead of folded into the load | x86-64 | — | confirmed |
 | 15 | Multiply by a constant always uses two-operand register `imul`; neither `lea` nor three-operand `imul r,r,imm` is emitted | x86-64 | — | confirmed |
-| 16 | `cmovcc` never emitted — 0 occurrences in 1.6 M instructions; every conditional value is a taken branch | x86-64 | — | confirmed |
+| 16 | `cmovcc` never emitted — 0 occurrences in 1.6 M instructions; every conditional value is a taken branch | x86-64 | ~200 convertible sites (§6.2) | confirmed, not a lever |
 | 17 | 72 of the 78 Advanced-SIMD mnemonics the assembler gained in `e129df5` are unreachable from any code path — ~1 133 lines of encoder, 12 of 19 SIMD dispatch functions, dead against codegen | arm64 | dead surface | confirmed |
-| 18 | A complete register-allocating x86-64 backend (`internal/codegen/x86_64ssa`, 114 passing tests) is not reachable from the CLI — `-backend ssa` rejects `x86-64-linux` | x86-64 | opportunity | confirmed |
+| 18 | A complete register-allocating x86-64 backend (`internal/codegen/x86_64ssa`, 114 passing tests) emits nothing a user reaches | x86-64 | opportunity | STALE — `-backend ssa` is wired; it refuses real programs (§5.2) |
 
 Findings 1–5 alone are **~56% of x86-64's emitted instructions and ~25% of
 arm64's**, and none of them require a register allocator.
@@ -505,15 +505,18 @@ that is single-function programs only, far narrower than the arm64 SSA path's
 whole-program coverage, and `-backend`'s help text lists the two targets
 together without the qualification.
 
-### 5.2 The unreachable x86-64 twin
+### 5.2 The x86-64 twin, wired but not a lever
 
 `internal/codegen/x86_64ssa` is a complete SSA emitter — `Emit`,
 `EmitAsmModule`, `EmitProgram`, callee-saved analysis, spilling, phi resolution
 with critical-edge splitting — with **114 tests, all passing**, including
-`TestCodeSizeSmallerThanStackMachine`. `cmd/fern/main.go:1327` rejects
-`-backend ssa` for `-target x86-64-linux`, so **no user can invoke it**. Parts
-of it are not dead — `arm64ssa/gas.go` imports its register model — but the
-emit path ships unreachable.
+`TestCodeSizeSmallerThanStackMachine`. It is reachable: `-backend ssa` with
+`-target x86-64-linux` routes through `buildX86SSA` (`cmd/fern/main.go`). What
+it does on a real program is refuse it — `checker_run.fern` names seven
+runtime helpers the module never defines (`__fern_drop_arr_str`,
+`Reader.close`, `Reader.read_chunk`, `env`, `eprint`, `exit`, `stdin`) — and
+arm64ssa, the mature twin, measured **+44%** at this scale, so widening it is
+not a performance lever this cycle.
 
 The honest caveat before anyone wires it up in an afternoon: its
 `TestCorpusEmitCoverage` covers **25 functions**, against arm64ssa's 286-program
@@ -647,10 +650,29 @@ cross-block analysis to.
   sequence a backend writes for itself. Constant-divisor lowering is
   instruction selection, and belongs where the other instruction selection is.
   Only the derivation is shared.
-- **A8's remainder.** `movabs` for small and zero constants, `imm8` shifts,
-  `lea` folding, and `cmov` are all still unemitted.
-- **Memory-destination ALU**, which is what still separates the `int_loop`
-  body from `gcc -O0`'s.
+- **A8's remainder is `lea` folding.** #8194 measured the rest of the list on
+  the whole-compiler emit and closed or killed each. `imm8` shifts and
+  memory-destination ALU landed as peephole rules P9 and P10, together with
+  the address-bias fold P7 (221,585 sites, the most common instruction pair
+  the backend emits), the dead reload P8, and the dead accumulator load P11:
+  −266,243 lines, −6.0%. What is left of A8, and why the rest is not worth
+  building:
+  - **`movabs` for small and zero constants is already done** —
+    `xor eax, eax` for 0 and `mov eax, imm32` for [1, 2^32). The 124 `movabs`
+    that remain are 88 negative imm32 values and 36 genuinely wide ones: 264
+    bytes, no instructions.
+  - **`cmov` is not a lever.** Strict diamonds on the compiler: 0. Loose ones
+    (one to three straight-line ops per arm, no call): 8,772, of which 7,539
+    are the SSO length unpack, whose taken arm dereferences memory and so
+    cannot go branch-free, and 933 are the rip-relative literal-pool shape.
+    That leaves ~200 genuine ternaries.
+  - **`test reg, reg` for `cmp reg, 0`** is ~57 KB of `.text` and zero
+    instructions, and the remaining `cmp` are the rc guard's, which #8193
+    deletes.
+  - **`call` + `ret` to `jmp`** is one site on the whole compiler: returns are
+    preceded by the locals' drops. (§6.1's tier C entry counts 75 sites on
+    `checker_run.fern`, a much smaller program with a much shallower drop
+    tail.)
 - **Frame traffic on the SSA path**, still the largest single item anywhere in
   this document: 869,756 of the 1,657,173 instructions it emits for
   `checker_run.fern` are frame-relative loads and stores — **52.5%**. Note
