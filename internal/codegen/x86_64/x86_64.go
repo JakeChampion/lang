@@ -4567,6 +4567,25 @@ func (g *generator) peepholeTail() {
 		}
 	}
 
+	// P7 — constant address bias folded into the load it feeds. A field
+	// access lowers as OpAdd(base, const) and then a zero-displacement
+	// load, so this is the most common instruction pair in the emit:
+	//
+	//   add rax, K / mov rax, [rax]   =>  mov rax, [rax + K]
+	//
+	// Only a destination that OVERWRITES the accumulator qualifies — rax,
+	// or eax, whose write zero-extends over the whole register. The fold
+	// leaves rax holding the unbiased base, which is unobservable exactly
+	// when the load kills it. The `add`'s flags die with it, which is sound
+	// because no IR op reads flags an earlier op set: every comparison
+	// emits the `cmp` or `test` its own branch reads.
+	if n >= 2 {
+		if line, ok := foldAddIntoLoad(w[n-2], w[n-1]); ok {
+			g.peepWin = append(w[:n-2], line)
+			return
+		}
+	}
+
 	// P2 — dead jump: `jmp L` immediately followed by the label `L:` is a
 	// no-op fall-through. Drop the jmp; the label stays for other jumps.
 	if n >= 2 {
@@ -4601,6 +4620,41 @@ func matchPopDst(line string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// foldAddIntoLoad recognises P7's pair and returns the load with the bias
+// carried as its displacement. See the rule for why the accumulator's
+// pre-bias value and the `add`'s flags are both dead.
+func foldAddIntoLoad(add, load string) (string, bool) {
+	const addPfx = "\tadd rax, "
+	if !strings.HasPrefix(add, addPfx) {
+		return "", false
+	}
+	k, err := strconv.ParseInt(add[len(addPfx):], 10, 64)
+	if err != nil || k == 0 || k < math.MinInt32 || k > math.MaxInt32 {
+		return "", false
+	}
+	const loadPfx = "\tmov "
+	const loadSfx = ", [rax]"
+	if !strings.HasPrefix(load, loadPfx) || !strings.HasSuffix(load, loadSfx) {
+		return "", false
+	}
+	switch load[len(loadPfx) : len(load)-len(loadSfx)] {
+	case "rax":
+		return "\tmov rax, " + memDisp("rax", k), true
+	case "eax":
+		return "\tmov eax, " + memDisp("rax", k), true
+	}
+	return "", false
+}
+
+// memDisp renders a base-plus-displacement memory operand in the spelling
+// the rest of the backend writes: a negative displacement as a subtraction.
+func memDisp(base string, k int64) string {
+	if k < 0 {
+		return fmt.Sprintf("[%s - %d]", base, -k)
+	}
+	return fmt.Sprintf("[%s + %d]", base, k)
 }
 
 // foldConstAlu recognises P4's five-line tail and returns the single
