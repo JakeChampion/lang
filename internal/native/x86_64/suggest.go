@@ -7,34 +7,12 @@ import (
 	"github.com/jakechampion/lang/internal/native/x86tbl"
 )
 
-// switchMnemonics lists every mnemonic the insn dispatch switch handles by
-// name. The cc-suffixed families, the sseOps/sse38Ops tables, the GPR groups
-// (x86tbl.Groups) and the no-operand vocabulary (x86tbl.FixedOps) are reached
-// by lookup rather than by a case and are appended by knownMnemonics.
-// TestSuggestListMatchesDispatch extracts the case strings from the source
-// and fails when the two drift.
-var switchMnemonics = []string{
-	"rep", "repe", "repz", "repne", "repnz", "lock",
-	"push", "pop", "mov", "movabs",
-	"test", "imul", "bsf", "bsr", "lzcnt", "tzcnt", "popcnt",
-	"shld", "shrd",
-	"bswap", "xchg", "xadd", "cmpxchg",
-	"lea", "movzx", "movsx", "movsxd", "jmp", "call",
-	"movq", "movd", "movss", "movups", "movupd",
-	"cvtsi2sd", "cvtsi2ss", "cvttsd2si", "cvttss2si", "cvtsd2si", "cvtss2si",
-	"roundsd", "roundss", "pcmpistri", "pcmpestri",
-	"pmovmskb", "movmskps", "movmskpd",
-	"pshufd", "shufps", "shufpd",
-	"pextrb", "pextrw", "pextrd", "pextrq",
-	"pinsrb", "pinsrw", "pinsrd", "pinsrq",
-	"crc32",
-	"psllw", "psrlw", "psraw", "pslld", "psrld", "psrad",
-	"psllq", "psrlq", "pslldq", "psrldq",
-	"movdqu", "movdqa",
-}
-
 // knownMnemonics is every spelling the assembler accepts, sorted, for the
-// did-you-mean suggestion on the unsupported-instruction error.
+// did-you-mean suggestion on the unsupported-instruction error. It is read
+// from internal/native/x86tbl — the by-name families, the no-operand
+// vocabulary, the groups, the SSE table and the condition families —
+// which is the same table the dispatch routes by, so the list cannot fall
+// behind it.
 var knownMnemonics = func() []string {
 	seen := map[string]bool{}
 	var out []string
@@ -44,7 +22,7 @@ var knownMnemonics = func() []string {
 			out = append(out, m)
 		}
 	}
-	for _, m := range switchMnemonics {
+	for _, m := range x86tbl.NamedIntelMnemonics() {
 		add(m)
 	}
 	for m := range fixedOps {
@@ -56,9 +34,6 @@ var knownMnemonics = func() []string {
 		}
 	}
 	for m := range sseOps {
-		add(m)
-	}
-	for m := range sse38Ops {
 		add(m)
 	}
 	for cc := range condCodes {
@@ -76,10 +51,7 @@ func suggestMnemonic(mnem string) string {
 	return suggest.Closest(mnem, knownMnemonics)
 }
 
-// KnownMnemonics is every spelling this assembler accepts, sorted. It backs
-// the did-you-mean suggestion, and the self-host coverage gate reads it as
-// the native vocabulary the Fern assembler is pinned against —
-// TestSuggestListMatchesDispatch keeps it honest against the dispatch.
+// KnownMnemonics is every spelling this assembler accepts, sorted.
 func KnownMnemonics() []string {
 	return append([]string(nil), knownMnemonics...)
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/native/elf"
 	"github.com/jakechampion/lang/internal/native/x86_64"
+	"github.com/jakechampion/lang/internal/native/x86tbl"
 )
 
 // These tests byte-check the #7893 port of the #7886 instruction surface
@@ -900,7 +901,7 @@ func TestSelfHostX86ConditionSpellingsGas(t *testing.T) {
 	}
 
 	var rows []pinnedX86
-	for _, cond := range x86ConditionSpellings {
+	for _, cond := range x86tbl.CondSpellings() {
 		// The jCC row is a BACKWARD branch to the label immediately above
 		// it. The two assemblers relax in opposite directions — native
 		// shrinks from rel32, the self-host grows from rel8 — so a jump

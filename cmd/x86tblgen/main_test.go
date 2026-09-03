@@ -180,3 +180,46 @@ func TestGoAssemblerAcceptsEveryGroupSpelling(t *testing.T) {
 		}
 	}
 }
+
+// TestGoAssemblerAcceptsEveryNamedRow: every row of the by-name vocabulary
+// assembles through the Go assembler in its own probe, so a family added
+// to the table without a dispatch arm, or a probe naming a shape the
+// encoder refuses, fails here. The self-host side of the same rows is
+// internal/e2eselfhost's TestSelfHostX86TableRowsMatchNative.
+func TestGoAssemblerAcceptsEveryNamedRow(t *testing.T) {
+	seenATT := map[string]bool{}
+	for _, fam := range x86tbl.Named {
+		if len(fam.Ops) == 0 {
+			t.Errorf("family %q has no rows", fam.Name)
+		}
+		if (fam.FernFn == "") != (fam.Pack == nil) {
+			t.Errorf("family %q: FernFn and Pack go together", fam.Name)
+		}
+		for _, o := range fam.Ops {
+			if o.ATT != "" {
+				if seenATT[o.ATT] {
+					t.Errorf("AT&T spelling %q is listed twice", o.ATT)
+				}
+				seenATT[o.ATT] = true
+			}
+			if o.Probe == "" || o.ATTProbe == "" {
+				t.Errorf("%s/%s: both probes are required", fam.Name, o.Intel)
+				continue
+			}
+			if !strings.HasPrefix(o.Probe, o.Intel+" ") && o.Probe != o.Intel {
+				t.Errorf("%s: probe %q does not start with the Intel mnemonic", o.Intel, o.Probe)
+			}
+			if o.ATT != "" && !strings.HasPrefix(o.ATTProbe, o.ATT) {
+				t.Errorf("%s: AT&T probe %q does not start with the spelling", o.ATT, o.ATTProbe)
+			}
+			if _, _, err := x86_64.AssembleProgram(o.Probe+"\n", 0x400000); err != nil {
+				t.Errorf("%s (%s): %v", o.Probe, fam.Name, err)
+			}
+		}
+	}
+	for _, g := range x86tbl.Groups {
+		if g.Probe == "" || g.ATTProbe == "" {
+			t.Errorf("group %q needs both probe templates", g.Name)
+		}
+	}
+}

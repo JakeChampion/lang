@@ -30,15 +30,6 @@ var sseOps = func() map[string]struct{ prefix, op byte } {
 	return m
 }()
 
-// sse38Ops are the three-byte-opcode forms 66 0F 38 <op> /r with an xmm
-// destination (SSE4.1's packed min/max/multiply and ptest — in the declared
-// Haswell baseline).
-var sse38Ops = map[string]byte{
-	"ptest": 0x17, "pmulld": 0x40,
-	"pminsb": 0x38, "pminsd": 0x39, "pminuw": 0x3A, "pminud": 0x3B,
-	"pmaxsb": 0x3C, "pmaxsd": 0x3D, "pmaxuw": 0x3E, "pmaxud": 0x3F,
-}
-
 func (a *Assembler) sse38Op(op byte, ops []Operand) error {
 	if len(ops) != 2 || ops[0].kind != opReg || ops[0].size != 128 {
 		return fmt.Errorf("SSE 0F38 op expects xmm, xmm/mem")
@@ -52,16 +43,24 @@ func (a *Assembler) sse38Op(op byte, ops []Operand) error {
 }
 
 // vecShiftImmOps maps a shift-by-immediate mnemonic to its 0F 71/72/73
-// group opcode and /digit; the shifted register is ModRM.rm.
-var vecShiftImmOps = map[string]struct {
+// group opcode and /digit, from the shared table; the shifted register is
+// ModRM.rm.
+var vecShiftImmOps = func() map[string]struct {
 	op  byte
 	ext int
-}{
-	"psrlw": {0x71, 2}, "psraw": {0x71, 4}, "psllw": {0x71, 6},
-	"psrld": {0x72, 2}, "psrad": {0x72, 4}, "pslld": {0x72, 6},
-	"psrlq": {0x73, 2}, "psllq": {0x73, 6},
-	"psrldq": {0x73, 3}, "pslldq": {0x73, 7},
-}
+} {
+	m := map[string]struct {
+		op  byte
+		ext int
+	}{}
+	for _, o := range x86tbl.NamedRows("vshift") {
+		m[o.Intel] = struct {
+			op  byte
+			ext int
+		}{o.Op, int(o.Ext)}
+	}
+	return m
+}()
 
 func (a *Assembler) vecShiftImm(mnem string, ops []Operand) error {
 	if ops[0].kind != opReg || ops[0].size != 128 {

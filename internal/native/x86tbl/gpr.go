@@ -15,7 +15,11 @@ type GroupOp struct {
 // part that drifted.
 type Group struct {
 	Name string
-	Ops  []GroupOp
+	// Probe and ATTProbe are one representative instruction of the family
+	// in each dialect, %s standing for the mnemonic: the test inventory the
+	// table-row differential assembles through both assemblers.
+	Probe, ATTProbe string
+	Ops             []GroupOp
 }
 
 // Ext returns the extension for a base mnemonic (no AT&T suffix).
@@ -41,7 +45,7 @@ func (g Group) Spellings() []string {
 
 // ALU is group 1 (80/81/83 /digit with an immediate, 00+8*digit /r
 // otherwise): the digit is also the opcode row.
-var ALU = Group{"alu", []GroupOp{
+var ALU = Group{"alu", "%s rax, rcx", "%sq %rcx, %rax", []GroupOp{
 	{[]string{"add"}, 0}, {[]string{"or"}, 1}, {[]string{"adc"}, 2}, {[]string{"sbb"}, 3},
 	{[]string{"and"}, 4}, {[]string{"sub"}, 5}, {[]string{"xor"}, 6}, {[]string{"cmp"}, 7},
 }}
@@ -49,7 +53,7 @@ var ALU = Group{"alu", []GroupOp{
 // Shift is group 2 (C0/C1 ib, D0/D1 by one, D2/D3 by cl). `sal` is gas's
 // alias for shl: the SDM lists /6 as a second SAL encoding, but gas emits
 // /4 for both spellings and so do we. /6 is deliberately absent.
-var Shift = Group{"shift", []GroupOp{
+var Shift = Group{"shift", "%s rax, 3", "%sq $3, %rax", []GroupOp{
 	{[]string{"rol"}, 0}, {[]string{"ror"}, 1}, {[]string{"rcl"}, 2}, {[]string{"rcr"}, 3},
 	{[]string{"shl", "sal"}, 4}, {[]string{"shr"}, 5}, {[]string{"sar"}, 7},
 }}
@@ -58,18 +62,18 @@ var Shift = Group{"shift", []GroupOp{
 // its /0 but takes two operands and has its own encoder, so it is not
 // listed; `imul` here is the one-operand form, the two- and three-operand
 // forms being 0F AF and 69/6B.
-var Unary = Group{"unary", []GroupOp{
+var Unary = Group{"unary", "%s rcx", "%sq %rcx", []GroupOp{
 	{[]string{"not"}, 2}, {[]string{"neg"}, 3}, {[]string{"mul"}, 4},
 	{[]string{"imul"}, 5}, {[]string{"div"}, 6}, {[]string{"idiv"}, 7},
 }}
 
 // IncDec is group 4/5's inc and dec (FE/FF /0 and /1).
-var IncDec = Group{"incdec", []GroupOp{{[]string{"inc"}, 0}, {[]string{"dec"}, 1}}}
+var IncDec = Group{"incdec", "%s rax", "%sq %rax", []GroupOp{{[]string{"inc"}, 0}, {[]string{"dec"}, 1}}}
 
 // BitTest is the bt family. The extension is an INDEX rather than a digit:
 // the register form is 0F A3 + 8*index and the immediate form is 0F BA
 // /(4+index).
-var BitTest = Group{"bittest", []GroupOp{
+var BitTest = Group{"bittest", "%s rax, rcx", "%sq %rcx, %rax", []GroupOp{
 	{[]string{"bt"}, 0}, {[]string{"bts"}, 1}, {[]string{"btr"}, 2}, {[]string{"btc"}, 3},
 }}
 
