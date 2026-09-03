@@ -257,9 +257,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 	}
 	// Runtime-helper bodies (hand-written leaf asm, AArch64 PCS: arg/result in
 	// x0), emitted only when the module calls them.
-	for _, h := range helpers {
-		runtimeHelperEmitters[h](w)
-	}
+	emitRuntimeHelpers(w, helpers)
 	if heap {
 		emitHeapGuard(w)
 	}
@@ -8013,6 +8011,19 @@ func maskFix(dst int, wdt int8) []string {
 }
 
 // fnLabel sanitises an SSA function name into an assembly label.
+// emitRuntimeHelpers writes the named helper bodies, each at a 16-byte
+// boundary, for the reason the x86-64 sibling does: a helper entry that falls
+// wherever the preceding code happens to end makes an unrelated change to that
+// code read as a large regression here. The measurement behind it is
+// x86-64's (#8193); this side is the same hazard, applied symmetrically
+// rather than measured.
+func emitRuntimeHelpers(w func(string, ...any), helpers []string) {
+	for _, h := range helpers {
+		w("\t.p2align 4")
+		runtimeHelperEmitters[h](w)
+	}
+}
+
 func fnLabel(name string) string {
 	var s strings.Builder
 	s.WriteString("fn_")
