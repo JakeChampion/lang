@@ -1120,7 +1120,7 @@ const (
 // ---- Add/subtract with carry ----
 //
 // `<op> Rd, Rn, Rm` — Rd = Rn ± Rm ± C. The 64-bit bases; clearSF gives
-// the W forms. NGC/NGCS are the Rn=XZR aliases.
+// the W forms. The ngc/ngcs aliases are the assembler's Rn=XZR forms.
 //
 // Encoding: sf op S 11010000 Rm 000000 Rn Rd
 // → ADC 0x9A000000, ADCS 0xBA000000, SBC 0xDA000000, SBCS 0xFA000000.
@@ -1136,8 +1136,6 @@ func SBC(rd, rn, rm uint32) uint32 {
 func SBCS(rd, rn, rm uint32) uint32 {
 	return 0xFA000000 | ((rm & regMask) << 16) | ((rn & regMask) << 5) | (rd & regMask)
 }
-func NGC(rd, rm uint32) uint32  { return SBC(rd, 31, rm) }
-func NGCS(rd, rm uint32) uint32 { return SBCS(rd, 31, rm) }
 
 // UMULH / SMULH encode `<op> Xd, Xn, Xm` — the high 64 bits of the
 // 128-bit product. 64-bit only: the instruction has no sf bit to clear
@@ -1245,25 +1243,19 @@ func bfmW(rd, rn, immr, imms uint32) uint32 {
 	return 0x33000000 | ((immr & 0x1f) << 16) | ((imms & 0x1f) << 10) | ((rn & regMask) << 5) | (rd & regMask)
 }
 
-// CCMPreg / CCMPimm / CCMNreg / CCMNimm encode the conditional compares
+// CCMPreg / CCMNreg encode the conditional compares
 // `ccmp/ccmn Rn, Rm|#imm5, #nzcv, <cond>`: if cond holds, compare
 // (setting flags exactly as cmp/cmn would); else set the flags to nzcv.
 // The immediate form's imm5 is UNSIGNED 0..31.
 //
 // Encoding: sf op 111010010 Rm|imm5 cond 0 ir 0 Rn 0 nzcv, ir=1 for the
-// immediate form → CCMP reg 0xFA400000 / imm 0xFA400800, CCMN reg
-// 0xBA400000 / imm 0xBA400800.
+// immediate form, which the assembler builds by setting bit 11 → CCMP reg
+// 0xFA400000, CCMN reg 0xBA400000.
 func CCMPreg(rn, rm, nzcv, cond uint32) uint32 {
 	return 0xFA400000 | ((rm & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (nzcv & 0xf)
 }
-func CCMPimm(rn, imm5, nzcv, cond uint32) uint32 {
-	return 0xFA400800 | ((imm5 & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (nzcv & 0xf)
-}
 func CCMNreg(rn, rm, nzcv, cond uint32) uint32 {
 	return 0xBA400000 | ((rm & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (nzcv & 0xf)
-}
-func CCMNimm(rn, imm5, nzcv, cond uint32) uint32 {
-	return 0xBA400800 | ((imm5 & regMask) << 16) | ((cond & 0xf) << 12) | ((rn & regMask) << 5) | (nzcv & 0xf)
 }
 
 // CSINC / CSINV / CSNEG encode `<op> Xd, Xn, Xm, <cond>` — Xd = cond ?

@@ -53,7 +53,6 @@ func opOnly(o NamedOp) int   { return int(o.Op) }
 func pfxOnly(o NamedOp) int  { return int(o.Prefix) }
 func extOp(o NamedOp) int    { return int(o.Ext)*256 + int(o.Op) }
 func extOnly(o NamedOp) int  { return int(o.Ext) }
-func opExt(o NamedOp) int    { return int(o.Op)*256 + int(o.Ext) }
 func pfxExt(o NamedOp) int   { return int(o.Prefix)*256 + int(o.Ext) }
 func pfxOpExt(o NamedOp) int { return int(o.Prefix)*65536 + int(o.Op)*256 + int(o.Ext) }
 
