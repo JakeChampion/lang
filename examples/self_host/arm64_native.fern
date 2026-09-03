@@ -1994,7 +1994,7 @@ function arm64_gas_vecgen_handles(mnem: string): boolean {
 // has already checked, so the encoders read only the one that names the
 // instruction's own element size: the NARROW side for xtn/shrn (the result),
 // the narrow SOURCE for sshll/uxtl (the input).
-function arm64_gas_emit_narrowwide(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_narrowwide(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (mnem == "xtn" || mnem == "xtn2") {
         if (ops.len() != 2) { return a; }
         var xc: i32 = arm64_gas_vreg_arrof(ops[0]);
@@ -2024,7 +2024,7 @@ function arm64_gas_emit_narrowwide(a: Arm64Asm, mnem: string, ops: string[]): Ar
 // could not express has already been recorded and refused; the arity guards
 // are the same belt-and-braces every emitter here carries, because the loop
 // still calls through after recording.
-function arm64_gas_emit_vecgen(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     var czero: i32 = arm64_vcmpzero_entry(mnem);
     var three: i32 = arm64_v3int_entry(mnem);
     if (czero >= 0 && (three < 0 || (ops.len() == 3 && ops[2].len() > 0 && ops[2][0] == b'#'))) {
@@ -3733,7 +3733,7 @@ function arm64_carry_base(mnem: string): i64 {
     if (mnem == "sbc" || mnem == "ngc") { return 0xda000000; }
     return 0xfa000000; // sbcs / ngcs
 }
-function arm64_gas_emit_carry(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_carry(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     var w: boolean = arm64_gas_is_w(ops[0]);
     if (mnem == "ngc" || mnem == "ngcs") {
         if (ops.len() < 2) { return a; }
@@ -3749,7 +3749,7 @@ function arm64_mulwide_base(mnem: string): i64 {
     if (mnem == "smsubl") { return 0x9b208000; }
     return 0x9ba08000; // umsubl
 }
-function arm64_gas_emit_mulwide(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_mulwide(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (ops.len() < 3) { return a; }
     if (mnem == "umulh" || mnem == "smulh") {
         var hb: i64 = 0x9bc07c00;
@@ -3772,7 +3772,7 @@ function arm64_logical2_base(mnem: string): i64 {
     if (mnem == "orn" || mnem == "mvn") { return 0xaa200000; }
     return 0xca200000; // eon
 }
-function arm64_gas_emit_logical2(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_logical2(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     var w: boolean = arm64_gas_is_w(ops[0]);
     if (mnem == "negs") {
         if (ops.len() < 2) { return a; }
@@ -3814,7 +3814,7 @@ function arm64_bfm_base(mnem: string, w: boolean): i64 {
 }
 // bfi/ubfiz/sbfiz place a field AT lsb: immr = (-lsb) mod size, imms =
 // width-1. bfxil extracts FROM lsb: immr = lsb, imms = lsb+width-1.
-function arm64_gas_emit_bitfield(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_bitfield(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (ops.len() < 4) { return a; }
     var w: boolean = arm64_gas_is_w(ops[0]);
     var size: i32 = 64;
@@ -3828,7 +3828,7 @@ function arm64_gas_emit_bitfield(a: Arm64Asm, mnem: string, ops: string[]): Arm6
     return Arm64Asm { ...a, code: arm64_bitfield(a.code, arm64_bfm_base(mnem, w), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), immr, imms) };
 }
 
-function arm64_gas_emit_extr_ror(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_extr_ror(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (mnem == "extr") {
         if (ops.len() < 4) { return a; }
         return Arm64Asm { ...a, code: arm64_extr(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_imm(ops[3]), arm64_gas_is_w(ops[0])) };
@@ -3847,7 +3847,7 @@ function arm64_condsel_base(mnem: string): i64 {
 }
 // The cinc/cinv/cneg/csetm aliases invert the condition (like cset), so
 // the operation applies when it holds.
-function arm64_gas_emit_condsel(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_condsel(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (mnem == "ccmp" || mnem == "ccmn") { return arm64_gas_emit_condcmp(a, mnem, ops); }
     var w: boolean = arm64_gas_is_w(ops[0]);
     var rd: i32 = arm64_gas_reg(ops[0]);
@@ -3863,7 +3863,7 @@ function arm64_gas_emit_condsel(a: Arm64Asm, mnem: string, ops: string[]): Arm64
     if (ops.len() < 4) { return a; }
     return Arm64Asm { ...a, code: arm64_condsel(a.code, arm64_condsel_base(mnem), rd, arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_cond(ops[3]), w) };
 }
-function arm64_gas_emit_condcmp(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_condcmp(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (ops.len() < 4) { return a; }
     var base: i64 = 0xfa400000;
     if (mnem == "ccmn") { base = 0xba400000; }
@@ -3877,7 +3877,7 @@ function arm64_gas_emit_condcmp(a: Arm64Asm, mnem: string, ops: string[]): Arm64
     return Arm64Asm { ...a, code: arm64_condcmp(a.code, base, arm64_gas_reg(ops[0]), rm5, arm64_gas_imm(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_w(ops[0])) };
 }
 
-function arm64_gas_emit_rev_cls(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_rev_cls(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (ops.len() < 2) { return a; }
     var rd: i32 = arm64_gas_reg(ops[0]);
     var rn: i32 = arm64_gas_reg(ops[1]);
@@ -3886,7 +3886,7 @@ function arm64_gas_emit_rev_cls(a: Arm64Asm, mnem: string, ops: string[]): Arm64
     return Arm64Asm { ...a, code: arm64_cls(a.code, rd, rn, arm64_gas_is_w(ops[0])) };
 }
 
-function arm64_gas_emit_excl(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_excl(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (arm64_gas_is_excl_st(mnem)) {
         if (ops.len() < 3) { return a; }
         return Arm64Asm { ...a, code: arm64_excl_store(a.code, arm64_gas_excl_size(mnem, ops[1]),
@@ -3902,13 +3902,13 @@ function arm64_gas_emit_excl(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm
     return Arm64Asm { ...a, code: arm64_excl_load(a.code, size, arm64_str_starts_with(mnem, "lda"), rt, rn) };
 }
 
-function arm64_gas_emit_barrier(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_barrier(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (mnem == "isb") { return Arm64Asm { ...a, code: arm64_le32(a.code, 0xd5033fdf) }; }
     if (ops.len() < 1) { return a; }
     return Arm64Asm { ...a, code: arm64_barrier(a.code, mnem == "dsb", arm64_barrier_opt(arm64_gas_trim(ops[0]))) };
 }
 
-function arm64_gas_emit_unscaled2(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_unscaled2(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (ops.len() < 2) { return a; }
     var rt: i32 = arm64_gas_reg(ops[0]);
     var m: Arm64Mem = arm64_gas_mem(ops[1]);
@@ -3926,7 +3926,7 @@ function arm64_gas_emit_unscaled2(a: Arm64Asm, mnem: string, ops: string[]): Arm
 // stp/ldp for X, W and D pairs in the three addressing modes (offset,
 // pre-index `!`, post-index fourth operand). The shape and range were
 // vetted by arm64_gas_bad_pair.
-function arm64_gas_emit_pair(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_pair(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (ops.len() < 3) { return a; }
     var base: i64 = 0xa8000000;
     var scale: i32 = 8;
@@ -3949,7 +3949,7 @@ function arm64_gas_emit_pair(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm
 // offset form. The S bit follows GNU as: a bare extend leaves it clear,
 // an explicit amount equal to log2(size) — including the byte access's
 // `#0` — sets it.
-function arm64_gas_emit_ldst_regext(a: Arm64Asm, load: boolean, size: i32, rt: i32, m: Arm64Mem): Arm64Asm {
+function arm64_gas_emit_ldst_regext(own a: Arm64Asm, load: boolean, size: i32, rt: i32, m: Arm64Mem): Arm64Asm {
     var scaled: boolean = m.ext_has_amt && m.ext_amt == size;
     return Arm64Asm { ...a, code: arm64_ldst_regext(a.code, size, load, rt, m.base, m.off_reg, m.ext_opt, scaled) };
 }
@@ -3957,7 +3957,7 @@ function arm64_gas_emit_ldst_regext(a: Arm64Asm, load: boolean, size: i32, rt: i
 // Scalar D/S ldr/str in all four addressing modes; a negative or
 // unaligned scaled offset falls back to the unscaled imm9 form exactly as
 // GNU as rewrites it.
-function arm64_gas_emit_ldst_fp(a: Arm64Asm, load: boolean, rt: i32, ops: string[], single: boolean): Arm64Asm {
+function arm64_gas_emit_ldst_fp(own a: Arm64Asm, load: boolean, rt: i32, ops: string[], single: boolean): Arm64Asm {
     if (ops.len() >= 3) {   // post-index `[Xn], #imm9`
         var pm: Arm64Mem = arm64_gas_mem(ops[1]);
         return Arm64Asm { ...a, code: arm64_ldst_fp_imm9(a.code, load, rt, pm.base, arm64_gas_imm(ops[2]), 0x400, single) };
@@ -3974,7 +3974,7 @@ function arm64_gas_emit_ldst_fp(a: Arm64Asm, load: boolean, rt: i32, ops: string
     return Arm64Asm { ...a, code: arm64_ldst_fp_scaled(a.code, load, rt, m.base, m.off, single) };
 }
 
-function arm64_gas_emit_fpx(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_fpx(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (ops.len() < 4) { return a; }
     if (arm64_fp4_base(mnem) >= 0) {
         return Arm64Asm { ...a, code: arm64_fp4(a.code, arm64_fp4_base(mnem), arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_reg(ops[2]), arm64_gas_reg(ops[3]), arm64_gas_is_sreg(ops[0])) };
@@ -3986,7 +3986,7 @@ function arm64_gas_emit_fpx(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm 
     return Arm64Asm { ...a, code: arm64_fccmp(a.code, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), arm64_gas_imm(ops[2]), arm64_gas_cond(ops[3]), arm64_gas_is_sreg(ops[0])) };
 }
 
-function arm64_gas_emit_fcmp(a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
+function arm64_gas_emit_fcmp(own a: Arm64Asm, mnem: string, ops: string[]): Arm64Asm {
     if (ops.len() < 2) { return a; }
     var opc: i32 = 0;
     if (mnem == "fcmpe") { opc = 0x10; }
@@ -4014,7 +4014,7 @@ function arm64_gas_bcond_suffix(mnem: string): str {
 
 // arm64_gas_emit assembles one mnemonic + operand string into a.code (or
 // queues a label fixup). Unknown mnemonics are ignored.
-function arm64_gas_emit(a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
+function arm64_gas_emit(own a: Arm64Asm, mnem: string, rest: string): Arm64Asm {
     if (mnem == "ret") {
         a = Arm64Asm { ...a, code: arm64_ret(a.code, arm64_lr()) };
         return a;
