@@ -661,9 +661,11 @@ pub function eligibility_report(mod: parser.Module): string {
 pub function eligibility_report_known(mod: parser.Module, known: string[]): string {
     var out: string = "";
     var freg: irlower.SigReg = module_func_reg(mod);
+    var sga: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, mod.structs, array_ret_fns(mod));
+    var sgn: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, mod.structs, irlower.array_ret_fn_names(mod.funcs));
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        out = out + eligibility_line(mod.funcs[i], mod, known, freg);
+        out = out + eligibility_line(mod.funcs[i], mod, known, freg, sga, sgn);
         i = i + 1;
     }
     var verdict: string = "module: AST";
@@ -674,12 +676,12 @@ pub function eligibility_report_known(mod: parser.Module, known: string[]): stri
 // eligibility_line is the single-function verdict line ("<name>: ir\n" or
 // "<name>: BAIL <reasons>\n") shared by eligibility_report and its sharded
 // twin. A receiver method is reported as "<Type>.<method>".
-function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg): string {
+function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg, sga: irlower.FnSigs, sgn: irlower.FnSigs): string {
     var name: string = fd.name;
     if (fd.receiver_type.len() > 0) { name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
-    var lower_ok: boolean = ir_eligible(fd, mod);
-    var calls_ok: boolean = calls_only_known(fd, mod, known, freg);
-    var cfns_ok: boolean = const_funcs_only_known(fd, mod, known, freg);
+    var lower_ok: boolean = irlower.lower_func(fd, mod.structs, sga, false).ok;
+    var calls_ok: boolean = calls_only_known(fd, mod, known, freg, sgn);
+    var cfns_ok: boolean = const_funcs_only_known(fd, mod, known, freg, sgn);
     if (lower_ok && calls_ok && cfns_ok) {
         return name + ": ir\n";
     }
@@ -711,8 +713,10 @@ pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32
     var i: i32 = lo;
     var none: string[] = [];
     var freg: irlower.SigReg = module_func_reg(mod);
+    var sga: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, mod.structs, array_ret_fns(mod));
+    var sgn: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, mod.structs, irlower.array_ret_fn_names(mod.funcs));
     while (i < hi) {
-        out = out + eligibility_line(mod.funcs[i], mod, none, freg);
+        out = out + eligibility_line(mod.funcs[i], mod, none, freg, sga, sgn);
         i = i + 1;
     }
     return out;
@@ -722,8 +726,8 @@ pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32
 // (const_func) in fd names a function defined in the module — the function-value
 // twin of calls_only_known. A const_func to an unknown name can't resolve to a
 // funcref table slot, so such modules bail.
-function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg): boolean {
-    var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
+function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg, sgn: irlower.FnSigs): boolean {
+    var r: irlower.LowerResult = irlower.lower_func(fd, mod.structs, sgn, false);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         if (r.ops[i].kind_tag == 6 && !module_has_func(freg, r.ops[i].str) && !known_includes(known, r.ops[i].str)) { return false; }  // const_func
@@ -759,8 +763,8 @@ pub function module_has_func(freg: irlower.SigReg, name: string): boolean {
 
 // calls_only_known reports whether every direct call in fd targets a module
 // function or an IR runtime helper (not a builtin).
-function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg): boolean {
-    var r: irlower.LowerResult = irlower.lower_func_for_noret(fd, mod.structs, mod.funcs);
+function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg, sgn: irlower.FnSigs): boolean {
+    var r: irlower.LowerResult = irlower.lower_func(fd, mod.structs, sgn, false);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
