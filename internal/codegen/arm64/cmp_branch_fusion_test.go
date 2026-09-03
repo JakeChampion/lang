@@ -96,3 +96,42 @@ function main(): i32 { return f(3); }`, Options{})
 		t.Errorf("while-loop guard did not fuse (`cset` present):\n%s", body)
 	}
 }
+
+// A boolean that is not a comparison's result reaches the branch through
+// OpNot, which tryFuseCmpBranch does not cover: the run of OpNots has no
+// comparison in front of it. tryFuseNotBranch folds that run into the
+// branch's own zero test, leaving `cmp w0, #0 / cset w0, eq` out entirely.
+// The answers that fold produces are pinned by TestNotBranchFusionMatrix in
+// internal/e2e, on both native backends.
+
+// notBranchProg puts a call result — not a comparison — behind the `!`.
+const notBranchProg = `@noinline function flag(x: i32): boolean { return x > 2; }
+@noinline function f(x: i32): i32 { var b: boolean = flag(x); if (!b) { return 10; } return 20; }
+@noinline function g(x: i32): i32 { var b: boolean = flag(x); var i: i32 = 0; while (!b) { i = i + 1; b = true; } return i; }
+@noinline function h(x: i32): i32 { var b: boolean = flag(x); if (!!b) { return 30; } return 40; }
+function main(): i32 { return f(1) + g(1) + h(1); }`
+
+func TestNotBranchFusionShape(t *testing.T) {
+	asm := compile(t, notBranchProg, Options{})
+
+	// `if (!b)` leaves for the else arm when !b is false, i.e. when b holds.
+	body := fnBody(t, asm, "f")
+	if !regexp.MustCompile(`(?m)^\s*cbnz w0, \.LifElse`).MatchString(body) {
+		t.Errorf("expected fused `cbnz` for `if (!b)`, got:\n%s", body)
+	}
+	if strings.Contains(body, "cset") {
+		t.Errorf("un-fused `cset` still present in `if (!b)`:\n%s", body)
+	}
+
+	// An even run of OpNots is the identity, so the polarity comes back.
+	body = fnBody(t, asm, "h")
+	if !regexp.MustCompile(`(?m)^\s*cbz w0, \.LifElse`).MatchString(body) {
+		t.Errorf("expected fused `cbz` for `if (!!b)`, got:\n%s", body)
+	}
+
+	// A `while (!b)` guard is the OpBrIf-shaped consumer.
+	body = fnBody(t, asm, "g")
+	if strings.Contains(body, "cset") {
+		t.Errorf("while-loop guard did not fuse (`cset` present):\n%s", body)
+	}
+}

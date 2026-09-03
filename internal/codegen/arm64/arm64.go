@@ -11309,6 +11309,13 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 			i += adv
 			continue
 		}
+		// The same fusion for a boolean that did not come from a
+		// comparison — a bool local, a call result, an `&&`. See
+		// tryFuseNotBranch.
+		if adv, ok := g.tryFuseNotBranch(irFn.Ops, i, &scope); ok {
+			i += adv
+			continue
+		}
 		// Constant-operand folds (#4378's sibling): a constant that feeds a
 		// load address, an ALU op, or a compare becomes that instruction's
 		// immediate operand instead of being materialised into a register.
@@ -12601,6 +12608,60 @@ func (g *generator) tryFuseCmpBranch(ops []ir.Op, i int, scope *[]irScope, imm i
 	case ir.OpBrIf:
 		target := (*scope)[len(*scope)-1-int(br.I32)].brTarget
 		g.emitFusedBranch(cmp, imm, hasImm, fireCC, skipCC, target)
+		return j - i, true
+	}
+	return 0, false
+}
+
+// tryFuseNotBranch fuses `(Not)+ {If|BrIf}` into the branch alone.
+//
+// A boolean that is not a comparison's result — a bool local, a call result,
+// an `&&` — reaches OpNot as a 0/1 value on the operand stack, and OpNot
+// materialises the inverse with `cmp w0, #0 / cset w0, eq` only for the
+// branch to test that against zero again. Flipping the branch's own
+// zero/non-zero sense computes the same thing and leaves both instructions
+// out.
+//
+// tryFuseCmpBranch covers the run that a comparison feeds; this is the same
+// fold for the run that has no comparison in front of it, and it is sound
+// for the same reason: the IR is single-use, so the branch is the only
+// consumer of what the OpNots pushed.
+func (g *generator) tryFuseNotBranch(ops []ir.Op, i int, scope *[]irScope) (int, bool) {
+	if ops[i].Kind != ir.OpNot {
+		return 0, false
+	}
+	j := i
+	nots := 0
+	for j < len(ops) && ops[j].Kind == ir.OpNot {
+		nots++
+		j++
+	}
+	if j >= len(ops) {
+		return 0, false
+	}
+	br := ops[j]
+	// OpBrIf branches when the effective condition is TRUE; OpIf branches
+	// to its else-label when it is FALSE. Each OpNot flips which of the
+	// popped boolean's two outcomes that is.
+	whenTrue := br.Kind == ir.OpBrIf
+	if nots%2 == 1 {
+		whenTrue = !whenTrue
+	}
+	take, skip := "cbz", "cbnz"
+	if whenTrue {
+		take, skip = "cbnz", "cbz"
+	}
+	switch br.Kind {
+	case ir.OpIf:
+		g.pop()
+		elseL := g.freshLabel("ifElse")
+		endL := g.freshLabel("ifEnd")
+		g.condBranchFar(take, skip, "w0", elseL)
+		*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL})
+		return j - i, true
+	case ir.OpBrIf:
+		g.pop()
+		g.condBranchFar(take, skip, "w0", (*scope)[len(*scope)-1-int(br.I32)].brTarget)
 		return j - i, true
 	}
 	return 0, false
