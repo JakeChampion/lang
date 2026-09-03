@@ -87,9 +87,16 @@ func TestSelfHostGenEnumOfGenStructIRX86_64(t *testing.T) {
 
 	for _, tc := range genEnumOfGenStructIRCases {
 		t.Run(tc.name, func(t *testing.T) {
-			asm := runCapture(t, gcc, runner, driverBin, []byte(tc.src))
-			if len(asm) == 0 || len(asm) > 18000 {
-				t.Fatalf("asm is %d bytes — expected small IR output; the module likely bailed to the AST runtime", len(asm))
+			// FERN_STRICT_IR=1 turns a bail into a refusal naming its site, so
+			// this asks the question directly rather than inferring it from an
+			// output size. The byte count was the old proxy and it had drifted
+			// into a knife edge: user_enum_string emits 18007 bytes — it pulls
+			// the string helpers its sibling does not — against a bound of
+			// 18000, so a module that lowers fine was read as a bail.
+			asm := runCaptureEnv(t, runner, driverBin, []byte(tc.src),
+				append(os.Environ(), "FERN_STRICT_IR=1"))
+			if len(asm) == 0 {
+				t.Fatalf("driver emitted no asm under FERN_STRICT_IR=1")
 			}
 			progBin := buildBin(t, gcc, dir, "genenum_of_genstruct_"+tc.name, string(asm))
 			var cmd *exec.Cmd
