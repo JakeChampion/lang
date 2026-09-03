@@ -38329,28 +38329,22 @@ function arr_field_ident_is_frame_built(name: string, fnbody: ast.Stmt[], arr_fr
 // count above 1 and costs a leak, never a free. The same terms as the bare
 // ident the caller admits one branch up, whose retain is is_arr_slot's.
 function strarr_share_read_holder_type(fv: ast.Expr, fnbody: ast.Stmt[], fnparams: ast.ParamDecl[], structs: parser.StructDecl[]): string {
-    match (fv) {
-        ast.ExprFieldAccess(fa) => {
-            match (fa.obj) {
-                ast.ExprIdent(hid) => {
-                    var hty: string = "";
-                    var pi: i32 = 0;
-                    while (pi < fnparams.len()) {
-                        if (fnparams[pi].name == hid.name) { hty = fnparams[pi].type_name; }
-                        pi = pi + 1;
-                    }
-                    var decls: i32 = local_decl_count(fnbody, hid.name);
-                    if (decls > 1 || (decls > 0 && hty.len() > 0)) { return ""; }
-                    if (hty.len() == 0) { hty = declared_struct_type_of(fnbody, hid.name, structs); }
-                    if (hty.len() == 0) { hty = fresh_struct_lit_type_deep(fnbody, hid.name); }
-                    if (!decl_is_struct(structs, hty)) { return ""; }
-                    if (decl_field_type(structs, hty, fa.field) != "string[]") { return ""; }
-                    return hty;
-                },
-                _ => { return ""; }
+    if let ast.ExprFieldAccess(fa) = fv {
+        if let ast.ExprIdent(hid) = fa.obj {
+            var hty: string = "";
+            var pi: i32 = 0;
+            while (pi < fnparams.len()) {
+                if (fnparams[pi].name == hid.name) { hty = fnparams[pi].type_name; }
+                pi = pi + 1;
             }
-        },
-        _ => { return ""; }
+            var decls: i32 = local_decl_count(fnbody, hid.name);
+            if (decls > 1 || (decls > 0 && hty.len() > 0)) { return ""; }
+            if (hty.len() == 0) { hty = declared_struct_type_of(fnbody, hid.name, structs); }
+            if (hty.len() == 0) { hty = fresh_struct_lit_type_deep(fnbody, hid.name); }
+            if (!decl_is_struct(structs, hty)) { return ""; }
+            if (decl_field_type(structs, hty, fa.field) != "string[]") { return ""; }
+            return hty;
+        }
     }
     return "";
 }
