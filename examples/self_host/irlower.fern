@@ -67341,50 +67341,6 @@ function iife_arms_all_marked(stmts: ast.Stmt[]): boolean {
     return true;
 }
 
-// iife_arm_lambda_captures reports whether any arm of a value-position if/match
-// yields a CAPTURING lambda, directly or through a nested one. The IIFE's own
-// bindings count as captures (iife_scope_fd) — the lambda needs a box either
-// way, and an arm-payload capture is the shape that reads as capture-free
-// against the enclosing function alone.
-function iife_arm_lambda_captures(stmts: ast.Stmt[], fd: parser.FuncDecl): boolean {
-    return iife_arm_lambda_captures_in(stmts, iife_scope_fd(fd, stmts));
-}
-
-function iife_arm_lambda_captures_in(stmts: ast.Stmt[], fd: parser.FuncDecl): boolean {
-    for stmt in stmts {
-        match (stmt) {
-            ast.StmtReturn(r) => {
-                match (r.value) {
-                    ast.ExprLambda(rl) => { if (lambda_captures(rl, fd).len() > 0) { return true; } },
-                    ast.ExprCall(rc) => {
-                        match (rc.callee) {
-                            ast.ExprLambda(ril) => {
-                                if (rc.args.len() == 0 && ril.params.len() == 0
-                                    && iife_arm_lambda_captures(ril.body, fd)) { return true; }
-                            },
-                            _ => {}
-                        }
-                    },
-                    _ => {}
-                }
-            },
-            ast.StmtIf(iff) => {
-                if (iife_arm_lambda_captures_in(iff.then_body, fd)) { return true; }
-                if (iife_arm_lambda_captures_in(iff.else_body, fd)) { return true; }
-            },
-            ast.StmtMatch(mm) => {
-                var a: i32 = 0;
-                while (a < mm.arms.len()) {
-                    if (iife_arm_lambda_captures_in(mm.arms[a].body, fd)) { return true; }
-                    a = a + 1;
-                }
-            },
-            _ => {}
-        }
-    }
-    return false;
-}
-
 // lift_iife_conditions walks what an IIFE's arms are SELECTED BY (#6571).
 //
 // A value-position `if`/`match` is an IIFE, and its body is STATEMENTS inside an
@@ -67590,33 +67546,6 @@ function passthrough_rebuilt_with(e: ast.Expr, repl: ast.Expr, mfuncs: MFuncs): 
     return e;
 }
 
-// arr_elem_forces_box reports whether an array element makes the whole literal an
-// env-box array: a capturing lambda, or a generic-passthrough call carrying a fn
-// value (the lift boxes that argument unconditionally, so the call yields a box).
-function arr_elem_forces_box(e: ast.Expr, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
-    match (e) {
-        ast.ExprLambda(el) => { return lambda_captures(el, fd).len() > 0; },
-        ast.ExprCall(ec) => {
-            match (ec.callee) {
-                ast.ExprIdent(ecid) => {
-                    var i: i32 = 0;
-                    while (i < ec.args.len()) {
-                        if (lift_callee_is_typevar_passthrough(mfuncs, ecid.name, i)
-                                && lift_arg_is_passthrough_fn_value(ec.args[i], mfuncs)) { return true; }
-                        i = i + 1;
-                    }
-                },
-                ast.ExprLambda(eil) => {
-                    if (ec.args.len() == 0 && eil.params.len() == 0) { return iife_arm_lambda_captures(eil.body, fd); }
-                },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
-    return false;
-}
-
 // fd_returns_boxed_fn_array reports whether ANY `return [ … ]` in `fd` yields an
 // array the lift boxes. Every such literal in the function then has to box,
 // including a sibling return whose own elements are all plain lambdas: the
@@ -67625,7 +67554,7 @@ function arr_elem_forces_box(e: ast.Expr, fd: parser.FuncDecl, mfuncs: MFuncs): 
 // else { [id(<lambda>)] })` handed back a bare fn-pointer array down one path
 // and an env-box array down the other, and the caller env-first-dispatched
 // whichever arm ran — compiled clean, SIGSEGV.
-function fd_returns_boxed_fn_array(fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+function fd_returns_boxed_fn_array(fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: MFuncs): boolean {
     var rets: ast.Expr[] = collect_returns(fd.body, []);
     var i: i32 = 0;
     while (i < rets.len()) {
@@ -67633,7 +67562,7 @@ function fd_returns_boxed_fn_array(fd: parser.FuncDecl, mfuncs: MFuncs): boolean
             ast.ExprArray(ra) => {
                 var e: i32 = 0;
                 while (e < ra.elements.len()) {
-                    if (arr_elem_forces_box(ra.elements[e], fd, mfuncs)) { return true; }
+                    if (array_elem_is_env_boxed(ra.elements[e], fd, structs, mfuncs)) { return true; }
                     e = e + 1;
                 }
             },
@@ -68621,27 +68550,33 @@ function iife_arms_hold_fn_value(stmts: ast.Stmt[], fd: parser.FuncDecl, structs
     return false;
 }
 
-// iife_arms_are_arrays_with_capturing_lambda reports whether EVERY arm of a
+// iife_arms_are_arrays_with_boxed_elem reports whether EVERY arm of a
 // value-position if/match returns an array LITERAL and at least one of those
-// arrays holds a capturing lambda. It is the gate on rewriting the arms into
+// arrays holds an env-boxed element. It is the gate on rewriting the arms into
 // uniform env boxes: below the "every arm" half the binding would carry two
-// dispatch ABIs, and without the "some capture" half there is nothing to fix.
+// dispatch ABIs, and without the "some box" half there is nothing to fix.
 //
-// Both halves read captures against iife_scope_fd, so a name the IIFE ITSELF
-// binds — a match arm's payload — counts. Against the enclosing function alone
-// an arm lambda reading `Ok(a) => [(x) => x + a]` looks capture-free, the gate
-// answers 0, and the lambda stays raw for a `<fd>$clo` nobody built. The
-// non-array twin (box_iife_arm_values) and iife_arm_lambda_captures already
-// widen this way; the array path did not.
-function iife_arms_are_arrays_with_capturing_lambda(stmts: ast.Stmt[], fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
-    var seen: i32 = iife_arm_arrays_capturing(stmts, iife_scope_fd(fd, stmts), 0, mfuncs);
+// The element question is array_elem_is_env_boxed — the SAME one #5071's
+// single-literal rule asks — so the two cannot disagree about whether the
+// binding is on the env-first ABI. Asking a narrower question here (only
+// whether an arm lambda CAPTURES) left `(if (c) { [<lambda>] } else {
+// [(match … => <lambda>)] })` with a raw fn-pointer array down one arm and a
+// box array down the other: the single-literal rule boxes an IIFE element for
+// either kind of arm lambda, so the sibling had to box too (#8151).
+//
+// Captures read against iife_scope_fd, so a name the IIFE ITSELF binds — a
+// match arm's payload — counts. Against the enclosing function alone an arm
+// lambda reading `Ok(a) => [(x) => x + a]` looks capture-free, the gate answers
+// 0, and the lambda stays raw for a `<fd>$clo` nobody built.
+function iife_arms_are_arrays_with_boxed_elem(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: parser.StructDecl[], mfuncs: MFuncs): boolean {
+    var seen: i32 = iife_arm_arrays_boxed_elems(stmts, iife_scope_fd(fd, stmts), 0, structs, mfuncs);
     return seen > 0;
 }
 
-// Returns the number of capturing lambda elements found, or -1 as soon as an arm
+// Returns the number of env-boxed elements found, or -1 as soon as an arm
 // returns something that is neither an array literal nor a nested value-position
 // if/match whose own arms satisfy the same test.
-function iife_arm_arrays_capturing(stmts: ast.Stmt[], fd: parser.FuncDecl, seen: i32, mfuncs: MFuncs): i32 {
+function iife_arm_arrays_boxed_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, seen: i32, structs: parser.StructDecl[], mfuncs: MFuncs): i32 {
     var n: i32 = seen;
     for stmt in stmts {
         match (stmt) {
@@ -68650,7 +68585,7 @@ function iife_arm_arrays_capturing(stmts: ast.Stmt[], fd: parser.FuncDecl, seen:
                     ast.ExprArray(arr) => {
                         var e: i32 = 0;
                         while (e < arr.elements.len()) {
-                            if (arr_elem_forces_box(arr.elements[e], fd, mfuncs)) { n = n + 1; }
+                            if (array_elem_is_env_boxed(arr.elements[e], fd, structs, mfuncs)) { n = n + 1; }
                             e = e + 1;
                         }
                     },
@@ -68662,7 +68597,7 @@ function iife_arm_arrays_capturing(stmts: ast.Stmt[], fd: parser.FuncDecl, seen:
                         match (rc.callee) {
                             ast.ExprLambda(ril) => {
                                 if (rc.args.len() != 0 || ril.params.len() != 0) { return 0 - 1; }
-                                n = iife_arm_arrays_capturing(ril.body, iife_scope_fd(fd, ril.body), n, mfuncs);
+                                n = iife_arm_arrays_boxed_elems(ril.body, iife_scope_fd(fd, ril.body), n, structs, mfuncs);
                                 if (n < 0) { return 0 - 1; }
                             },
                             // `id([<lambda>, …])` — a generic passthrough hands the
@@ -68675,7 +68610,7 @@ function iife_arm_arrays_capturing(stmts: ast.Stmt[], fd: parser.FuncDecl, seen:
                                     ast.ExprArray(parr) => {
                                         var pe: i32 = 0;
                                         while (pe < parr.elements.len()) {
-                                            if (arr_elem_forces_box(parr.elements[pe], fd, mfuncs)) { n = n + 1; }
+                                            if (array_elem_is_env_boxed(parr.elements[pe], fd, structs, mfuncs)) { n = n + 1; }
                                             pe = pe + 1;
                                         }
                                     },
@@ -68689,15 +68624,15 @@ function iife_arm_arrays_capturing(stmts: ast.Stmt[], fd: parser.FuncDecl, seen:
                 }
             },
             ast.StmtIf(iff) => {
-                n = iife_arm_arrays_capturing(iff.then_body, fd, n, mfuncs);
+                n = iife_arm_arrays_boxed_elems(iff.then_body, fd, n, structs, mfuncs);
                 if (n < 0) { return 0 - 1; }
-                n = iife_arm_arrays_capturing(iff.else_body, fd, n, mfuncs);
+                n = iife_arm_arrays_boxed_elems(iff.else_body, fd, n, structs, mfuncs);
                 if (n < 0) { return 0 - 1; }
             },
             ast.StmtMatch(mm) => {
                 var a: i32 = 0;
                 while (a < mm.arms.len()) {
-                    n = iife_arm_arrays_capturing(mm.arms[a].body, fd, n, mfuncs);
+                    n = iife_arm_arrays_boxed_elems(mm.arms[a].body, fd, n, structs, mfuncs);
                     if (n < 0) { return 0 - 1; }
                     a = a + 1;
                 }
@@ -68733,7 +68668,7 @@ function box_iife_arm_array_elems(stmts: ast.Stmt[], fd: parser.FuncDecl, funcs:
                     },
                     // A nested value-position if/match arm: box the arrays its own
                     // arms return, matching the gate's recursion through the same
-                    // shape (iife_arm_arrays_capturing).
+                    // shape (iife_arm_arrays_boxed_elems).
                     ast.ExprCall(rc) => {
                         match (rc.callee) {
                             ast.ExprLambda(ril) => {
@@ -69006,7 +68941,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
                     // which it only can when every arm answers the same way.
                     // Anything else is left to bail exactly as before.
                     if (call.args.len() == 0 && ielam.params.len() == 0
-                        && iife_arms_are_arrays_with_capturing_lambda(ielam.body, fd, mfuncs)) {
+                        && iife_arms_are_arrays_with_boxed_elem(ielam.body, fd, structs, mfuncs)) {
                         var (ibrs, ibra) = box_iife_arm_array_elems(ielam.body, iife_scope_fd(fd, ielam.body), fs, ct, gfns, structs, mfuncs);
                         if (ibra.counter > ct) {
                             fs = ibra.funcs; ct = ibra.counter;
@@ -69093,7 +69028,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, gfns: 
             // container further out again: the store boxes its value, and the
             // array it clones is this literal.
             if (!has_cap_lam && afnval
-                    && (fd_returns_boxed_fn_array(fd, mfuncs) || fd_stores_fn_value_array(fd, mfuncs, abound)
+                    && (fd_returns_boxed_fn_array(fd, structs, mfuncs) || fd_stores_fn_value_array(fd, mfuncs, abound)
                         || fd_passes_fn_array_elem(fd, mfuncs))) {
                 has_cap_lam = true;
             }

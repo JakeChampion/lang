@@ -77,9 +77,9 @@ function main(): i32 { return gen(3i32) & 63i32; }`}, // 4
 	// The ARRAY path's capture scope. A value-position if/match parses as an
 	// IIFE, and its arms can bind names of their own — a match arm's payload.
 	// The non-array twin already reads captures against `iife_scope_fd` so those
-	// count, and so does `iife_arm_lambda_captures`; the array gate did not, so
-	// `Ok(a) => [(x) => x + a]` looked capture-free, the gate answered 0, and the
-	// arm lambda stayed raw for a `<fd>$clo` nobody built. Reduced from fernsmith
+	// count; the array gate did not, so `Ok(a) => [(x) => x + a]` looked
+	// capture-free, the gate answered 0, and the arm lambda stayed raw for a
+	// `<fd>$clo` nobody built. Reduced from fernsmith
 	// seed 211, where the payload-capturing arm sits beside a nested if/match.
 	{"arm_array_payload_capture_scope", `function mk(r: Result[i32, i32]): ((i32) => i32)[] { return (match (r) { Ok(a) => [((x: i32) => (x + a))], Err(b) => (match (r) { Ok(c) => [((y: i32) => y)], Err(d) => [((z: i32) => (z + d))] }) }); }
 function main(): i32 { var fs: ((i32) => i32)[] = mk(Err(4i32)); return fs[0i32](3i32) & 63i32; }`}, // 7
