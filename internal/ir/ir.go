@@ -14852,6 +14852,19 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// Map[string, V] (native single-word) set: the boxed ABIs release the
+	// key cell of an OVERWRITE in freeDiscardedSetKeyCell; here the key is
+	// the bare data pointer, and the column keeps the equal key it already
+	// holds, so the incoming reference — moved in fresh at rc 1, or retained
+	// by emitMapSetKeyRetain when aliased — has to come back the same way
+	// when the entry count did not grow (#7911).
+	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 &&
+		ast.RcFreeEnabled && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) &&
+		!needBoxK && !needBoxV && !keyKind3 {
+		if _, isStr := n.TypeArgs[0].(ast.StringType); isStr {
+			return b.emitNativeStringKeyMapSet(n, n.TypeArgs[0])
+		}
+	}
 	// Stage (b) statement-temp reclamation: a FRESH owned rc temporary
 	// passed as a borrowed arg to a normal direct call (`foo(a + b)`) is
 	// never dec'd by anyone — the callee borrows it (no callee-side dec
@@ -20851,6 +20864,58 @@ func (b *builder) freeDiscardedSetKeyCell(cellSlot, preLen int32, kType ast.Type
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: cellSlot})
 	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", Width: ResAddr, I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpEnd})
+	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
+}
+
+// emitNativeStringKeyMapSet lowers `m.set(k, v)` for a non-boxed string key
+// on the single-word natives, stashing the key so freeDiscardedSetKey can
+// release it when the set was an overwrite. Same insert-vs-overwrite test as
+// emitWideMapSet: `len` grows by exactly one on the insert branch only.
+func (b *builder) emitNativeStringKeyMapSet(n *ast.Call, kType ast.Type) error {
+	if err := b.expr(n.Args[0]); err != nil {
+		return err
+	}
+	mapSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__map_set_m_%d", mapSlot)] = mapSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: mapSlot})
+	preLen := b.allocSlot()
+	b.locals[fmt.Sprintf("__map_set_prelen_%d", preLen)] = preLen
+	b.emitMapLenLoad(mapSlot)
+	b.emit(Op{Kind: OpStoreLocal, I32: preLen})
+	b.emit(Op{Kind: OpLoadLocal, I32: mapSlot})
+	if err := b.expr(n.Args[1]); err != nil {
+		return err
+	}
+	keySlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__map_set_k_%d", keySlot)] = keySlot
+	b.emit(Op{Kind: OpStoreLocal, I32: keySlot})
+	b.emit(Op{Kind: OpLoadLocal, I32: keySlot})
+	if err := b.expr(n.Args[2]); err != nil {
+		return err
+	}
+	b.emitMapCall("__method_Map_set", 3, kType)
+	b.freeDiscardedSetKey(keySlot, preLen)
+	return nil
+}
+
+// freeDiscardedSetKey is freeDiscardedSetKeyCell for the single-word natives,
+// where the key column holds the string data pointer itself: an unchanged
+// entry count means the runtime kept its existing key, so the incoming one is
+// __fern_str_dec'd — returning a fresh key's block, undoing an aliased key's
+// set retain, and a no-op on a literal's sentinel. Stack-neutral: the set's
+// result is consumed and pushed back.
+func (b *builder) freeDiscardedSetKey(keySlot, preLen int32) {
+	resSlot := b.allocSlot()
+	b.locals[fmt.Sprintf("__map_set_res_%d", resSlot)] = resSlot
+	b.emit(Op{Kind: OpStoreLocal, I32: resSlot})
+	b.emitMapLenLoad(resSlot)
+	b.emit(Op{Kind: OpLoadLocal, I32: preLen})
+	b.emit(Op{Kind: OpEq})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: keySlot})
+	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
 	b.emit(Op{Kind: OpDrop})
 	b.emit(Op{Kind: OpEnd})
 	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
