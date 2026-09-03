@@ -113,9 +113,12 @@ Two things that bear on the choice and are easy to lose:
 - **Fewer instructions is not faster.** `docs/SSA-REGALLOC-PLAN.md` records
   size and correctness as settled on arm64 and **speed as the open blocker**:
   seven of seventeen benchmarks run 1.11x-1.49x slower under SSA, geomean
-  ~0.92x. And on x86-64 the allocated path is already LARGER on call-heavy
-  loops, for want of call-clobber awareness
-  (`TestX86_64SSACallHeavyLoopIsLargerToday`).
+  ~0.92x. On x86-64 the allocated path is now smaller on call-heavy loops too
+  (199 instructions against 213 on the enum-match loop in
+  `TestX86_64SSABackendCLI`), but the reason it was ever larger is untouched:
+  with no call-clobber awareness it still saves every caller-saved allocatable
+  register around every call — 34 push/pop against the stack machine's 6 on
+  that program.
 - **The alternative route is further along than this document suggests.** SSA
   as an ANALYSIS representation rather than a codegen path is substantially
   built: `Op.SrcOp` provenance with a totality gate

@@ -350,7 +350,8 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, scratch int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int, restore func()) error {
 	for bi, blk := range p.Blocks {
 		w(".L_%s_b%d:", label, bi)
-		for _, in := range blk.Insts {
+		insts, cmpLine, jcc := fuseBranchCmp(blk)
+		for _, in := range insts {
 			if in.Op == Select {
 				for _, l := range selectLines(in) {
 					w("\t%s", l)
@@ -415,6 +416,9 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 			}
 			w("\t%s", line)
 		}
+		if cmpLine != "" {
+			w("\t%s", cmpLine)
+		}
 		switch blk.Term.Kind {
 		case TRet:
 			w("\tmov rax, %s", reg(blk.Term.RetReg))
@@ -436,14 +440,85 @@ func emitFuncBlocks(w func(string, ...any), label string, p *Program, numAlloc, 
 		case TJmp:
 			w("\tjmp .L_%s_b%d", label, blk.Term.Target)
 		case TBrIf:
-			w("\ttest %s, %s", reg(blk.Term.CondReg), reg(blk.Term.CondReg))
-			w("\tjnz .L_%s_b%d", label, blk.Term.True)
+			if jcc != "" {
+				w("\t%s .L_%s_b%d", jcc, label, blk.Term.True)
+			} else {
+				w("\ttest %s, %s", reg(blk.Term.CondReg), reg(blk.Term.CondReg))
+				w("\tjnz .L_%s_b%d", label, blk.Term.True)
+			}
 			w("\tjmp .L_%s_b%d", label, blk.Term.False)
 		default:
 			return fmt.Errorf("x86_64ssa: unsupported terminator %d in real asm", blk.Term.Kind)
 		}
 	}
 	return nil
+}
+
+// fuseBranchCmp decides how a block's conditional branch reads the comparison
+// that produced its condition, and returns the instructions still to render,
+// the bare `cmp` that replaces a dropped SetCmp, and the conditional jump to
+// branch with. jcc is "" when neither applies and the caller falls back to
+// testing the 0/1 in a register.
+//
+// Two independent savings, in increasing strength:
+//
+//   - `test`/`jnz` is always redundant when the block's last instruction is the
+//     SetCmp defining CondReg. Neither setcc nor movzx writes flags, so at the
+//     branch the flags still describe that cmp and a direct jcc reads them.
+//     This holds however many other sites read the 0/1.
+//   - When Term.CondFuse also says the terminator is the comparison's only
+//     reader, the 0/1 need not exist at all: the SetCmp is rendered as its
+//     leading `cmp` alone and the setcc/movzx pair goes away with it.
+//
+// Together this is the five-instruction sequence in #6979 item 3 (cmp, setcc,
+// movzx, test, jcc) reduced to the two the stack machine emits.
+//
+// SetCmp only: an FCmp's flags come from a ucomisd whose condition codes do not
+// match the predicate (see fCmpSeq), and the FEq/FNe sequences end in a
+// flag-writing `and`/`or` on the byte, so neither reduction is sound there.
+func fuseBranchCmp(blk MBlock) (insts []Inst, cmpLine, jcc string) {
+	insts = blk.Insts
+	if blk.Term.Kind != TBrIf || len(insts) == 0 {
+		return insts, "", ""
+	}
+	c := insts[len(insts)-1]
+	if c.Op != SetCmp || c.Dst != blk.Term.CondReg {
+		return insts, "", ""
+	}
+	cc, ok := jccMnemonic(c.K)
+	if !ok {
+		return insts, "", ""
+	}
+	if !blk.Term.CondFuse {
+		return insts, "", cc
+	}
+	insts = insts[:len(insts)-1]
+	// With the SetCmp gone, the copy that only existed to put its left operand
+	// in its destination register has no reader left either: `cmp` discards its
+	// result into the flags, so it can name the copy's source directly.
+	//
+	// c.Src != c.Dst is what makes that rewrite equivalent, not a nicety: a
+	// comparison reading its own destination on the right reads the value the
+	// copy put there, so dropping the copy would compare a stale register.
+	left := c.Dst
+	if n := len(insts); n > 0 && c.Src != c.Dst {
+		if m := insts[n-1]; m.Op == MovReg && m.Dst == c.Dst {
+			left = m.Src
+			insts = insts[:n-1]
+		}
+	}
+	return insts, fmt.Sprintf("cmp %s, %s", reg(left), reg(c.Src)), cc
+}
+
+// jccMnemonic is the conditional jump that branches on what setccMnemonic's
+// setcc would have stored. Every x86 condition spells its jcc and its setcc
+// with the same suffix, so that one table defines both.
+func jccMnemonic(k ssa.OpKind) (string, bool) {
+	cc, ok := setccMnemonic(k)
+	if !ok {
+		return "", false
+	}
+	return "j" + strings.TrimPrefix(cc, "set"), true
 }
 
 // fnLabel is the assembly label for an SSA function name (sanitised so

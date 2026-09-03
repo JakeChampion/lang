@@ -214,12 +214,11 @@ func TestCodeSizeMarginalPerFunction(t *testing.T) {
 	smPer := float64(smHi-smLo) / float64(hi-lo)
 
 	// Measured with the shipping pipeline — EmitProgram runs ssa.Optimize +
-	// ssa.Verify since #6979: SSA 243 B/fn, stack machine 178 B/fn on this
-	// shape. Two things moved it down from #6956's 250: Optimize is worth
-	// 4 B/fn here and dropping dead 64-bit self-moves another 3. The ceiling
-	// tightens with each, since a bound left above what the backend actually
-	// emits is slack by exactly the difference.
-	const wantSSAPer = 243.0
+	// ssa.Verify (#6979): SSA 165 B/fn, stack machine 153 B/fn on this shape.
+	// The ceiling tightens with every emit improvement (the last was branching
+	// on comparison flags directly, worth 14 B/fn here), since a bound left
+	// above what the backend actually emits is slack by exactly the difference.
+	const wantSSAPer = 165.0
 	if ssaPer > wantSSAPer+1 {
 		t.Errorf("SSA marginal cost %.0f B/fn is above the pinned %.0f — a per-function emit regression",
 			ssaPer, wantSSAPer)
