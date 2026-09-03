@@ -3,6 +3,8 @@ package interp
 import (
 	"math"
 	"math/bits"
+
+	"github.com/jakechampion/lang/internal/codegen/fdlibm"
 )
 
 // fdlibm sin/cos, the same algorithm the codegen backends emit, operation for
@@ -19,36 +21,11 @@ import (
 // (and gccgo/arm64 do), which would silently diverge from the backends'
 // separately-rounded mulsd/addsd. A conversion is the spec's sanctioned
 // rounding fence.
-
-// twoOverPiBits is 2/pi in binary, MSB-first, one limb per 64 fraction bits
-// starting at 2^-1 in limb 1 — the window Payne-Hanek indexes with the
-// argument's own exponent. The leading zero limb lets that index start above
-// 2^-1 without a bounds test; the length covers the largest finite double.
-// Same table as the backends': carried per implementation site, like the
-// fdlibm coefficients beside it.
-var twoOverPiBits = [21]uint64{
-	0x0000000000000000, 0xa2f9836e4e441529, 0xfc2757d1f534ddc0,
-	0xdb6295993c439041, 0xfe5163abdebbc561, 0xb7246e3a424dd2e0,
-	0x06492eea09d1921c, 0xfe1deb1cb129a73e, 0xe88235f52ebb4484,
-	0xe99c7026b45f7e41, 0x3991d639835339f4, 0x9c845f8bbdf9283b,
-	0x1ff897ffde05980f, 0xef2f118b5a0a6d1f, 0x6d367ecf27cb09b7,
-	0x4f463f669e5fea2d, 0x7527bac7ebe5f17b, 0x3d0739f78a5292ea,
-	0x6bfb5fb11f8d5d08, 0x56033046fc7b6bab, 0xf0cfbc209af4361d,
-}
-
-const (
-	trigTwoOPi = 6.36619772367581382433e-01
-	// pi/2 as three 33-bit chunks (~99 bits) for the Cody-Waite path.
-	trigPio2h = 1.57079632673412561417e+00
-	trigPio2m = 6.07710050630396597660e-11
-	trigPio2l = 2.02226624879595063154e-21
-	// pi/2 as an unevaluated double-double, plus the two scales that turn
-	// the Payne-Hanek 126-bit fraction into a double.
-	trigPio2Hi = 1.5707963267948966
-	trigPio2Lo = 6.123233995736766e-17
-	trigTwoM62 = 2.168404344971009e-19
-	trigTwoM11 = 2.407412430484045e-35
-)
+//
+// Agreeing bit for bit means agreeing on the numbers too, so the coefficients
+// and the 2/pi limbs come from internal/codegen/fdlibm — the table the
+// backends emit — rather than a copy beside it. An oracle that drifted from
+// what it is checking would be the worst place for this table to diverge.
 
 // trigRemPio2 reduces finite x to (quadrant, r) with |r| <= pi/4.
 func trigRemPio2(x float64) (int64, float64) {
@@ -58,9 +35,9 @@ func trigRemPio2(x float64) (int64, float64) {
 	if int(math.Float64bits(x)>>52)&0x7ff >= 1043 {
 		return trigRemPio2Large(x)
 	}
-	kf := math.RoundToEven(x * trigTwoOPi)
+	kf := math.RoundToEven(x * fdlibm.TwoOPi)
 	k := int64(kf)
-	r := float64(float64(x-float64(kf*trigPio2h))-float64(kf*trigPio2m)) - float64(kf*trigPio2l)
+	r := float64(float64(x-float64(kf*fdlibm.Pio2H))-float64(kf*fdlibm.Pio2M)) - float64(kf*fdlibm.Pio2L)
 	return k & 3, r
 }
 
@@ -78,8 +55,8 @@ func trigRemPio2Large(x float64) (int64, float64) {
 	idx := e - 1013
 	off := uint(idx & 63)
 	limb := idx >> 6
-	t0, t1 := twoOverPiBits[limb], twoOverPiBits[limb+1]
-	t2, t3 := twoOverPiBits[limb+2], twoOverPiBits[limb+3]
+	t0, t1 := fdlibm.TwoOverPiBits[limb], fdlibm.TwoOverPiBits[limb+1]
+	t2, t3 := fdlibm.TwoOverPiBits[limb+2], fdlibm.TwoOverPiBits[limb+3]
 	// Each 64-bit window is (T[i] << off) | (T[i+1] >> (64-off)), with the
 	// right half spelled as two shifts so off == 0 stays in range.
 	w0 := t0<<off | t1>>1>>(63-off)
@@ -110,7 +87,7 @@ func trigRemPio2Large(x float64) (int64, float64) {
 	// the end of the double anyway; dropping them keeps the signed
 	// conversion exact, matching the backends bit for bit.
 	lo >>= 11
-	fr := float64(float64(int64(hi))*trigTwoM62) + float64(float64(int64(lo))*trigTwoM11)
+	fr := float64(float64(int64(hi))*fdlibm.TwoM62) + float64(float64(int64(lo))*fdlibm.TwoM115)
 	if neg {
 		fr = -fr
 	}
@@ -118,19 +95,19 @@ func trigRemPio2Large(x float64) (int64, float64) {
 		fr = -fr
 		q = -q
 	}
-	return q & 3, float64(fr*trigPio2Hi) + float64(fr*trigPio2Lo)
+	return q & 3, float64(fr*fdlibm.Pio2Hi) + float64(fr*fdlibm.Pio2Lo)
 }
 
 // trigKsin — sin r for |r| <= pi/4.
 func trigKsin(r float64) float64 {
 	z := r * r
 	v := z * r
-	p := 1.58969099521155010221e-10
-	p = float64(p*z) - 2.50507602534068634195e-08
-	p = float64(p*z) + 2.75573137070700676789e-06
-	p = float64(p*z) - 1.98412698298579493134e-04
-	p = float64(p*z) + 8.33333333332248946124e-03
-	p = float64(p*z) - 1.66666666666666324348e-01
+	p := fdlibm.S6
+	p = float64(p*z) + fdlibm.S5
+	p = float64(p*z) + fdlibm.S4
+	p = float64(p*z) + fdlibm.S3
+	p = float64(p*z) + fdlibm.S2
+	p = float64(p*z) + fdlibm.S1
 	return r + float64(p*v)
 }
 
@@ -138,12 +115,12 @@ func trigKsin(r float64) float64 {
 // 1-hz discards; computing 1 - hz + z*z*p directly costs ~2 ulp.
 func trigKcos(r float64) float64 {
 	z := r * r
-	p := -1.13596475577881948265e-11
-	p = float64(p*z) + 2.08757232129817482790e-09
-	p = float64(p*z) - 2.75573143513906633035e-07
-	p = float64(p*z) + 2.48015872894767294178e-05
-	p = float64(p*z) - 1.38888888888741095749e-03
-	p = float64(p*z) + 4.16666666666666019037e-02
+	p := fdlibm.C6
+	p = float64(p*z) + fdlibm.C5
+	p = float64(p*z) + fdlibm.C4
+	p = float64(p*z) + fdlibm.C3
+	p = float64(p*z) + fdlibm.C2
+	p = float64(p*z) + fdlibm.C1
 	hz := 0.5 * z
 	w := 1 - hz
 	return w + (((1 - w) - hz) + float64(float64(z*p)*z))
