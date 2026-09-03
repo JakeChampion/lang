@@ -4826,15 +4826,6 @@ function arm64_gas_prog_new(): Arm64GasProg {
     };
 }
 
-// arm64_cfi_directive records one `.cfi_*` line for the code at .text byte
-// offset `off`; a directive the recorder cannot take is a refusal.
-function arm64_cfi_directive(own p: Arm64GasProg, line: string, off: i32): Arm64GasProg {
-    var before: i32 = p.cfi.bad.len();
-    var st: CfiState = cfi_directive(p.cfi, line, off);
-    p = Arm64GasProg { ...p, cfi: st };
-    if (st.bad.len() > before) { p = Arm64GasProg { ...p, unknown: p.unknown.append(st.bad[st.bad.len() - 1]) }; }
-    return p;
-}
 
 // arm64_eh_frame renders the recorded CFI as the .eh_frame of an ELF image
 // whose .text is at text_vaddr and whose .eh_frame is at eh_vaddr.
@@ -5604,6 +5595,10 @@ function arm64_gas_ltorg(p: Arm64GasProg, own aw: Arm64Asm): Arm64Asm {
 // macho.fern enters at the first text byte.
 pub function arm64_gas_program(src: string): Arm64GasProg {
     var p: Arm64GasProg = arm64_gas_prog_new();
+    // The CFI recorder is threaded as its own uniquely-held local and folded
+    // into `p` on return, for the same reason `a` is (below): recording through
+    // the field would append its rule arrays through a shared base (#8172).
+    var cfi: CfiState = cfi_new(cfi_profile_arm64());
     // The .text buffer is threaded through the loop as `a`, a UNIQUELY-owned
     // local, and only folded back into p on return. Reading it out of p.asm per
     // instruction — `arm64_gas_emit(p.asm, …)`, or the `var xas: Arm64Asm =
@@ -5661,7 +5656,12 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
                 if (section != 0) {
                     p = Arm64GasProg { ...p, unknown: p.unknown.append(line + " outside .text") };
                 } else {
-                    p = arm64_cfi_directive(p, line, a.code.len());
+                    // A directive the recorder cannot take is a refusal, since
+                    // a dropped rule unwinds at the wrong instruction with
+                    // well-formed bytes.
+                    var cfi_bad_before: i32 = cfi.bad.len();
+                    cfi = cfi_directive(cfi, line, a.code.len());
+                    if (cfi.bad.len() > cfi_bad_before) { p = Arm64GasProg { ...p, unknown: p.unknown.append(cfi.bad[cfi.bad.len() - 1]) }; }
                 }
             } else if (line == ".ltorg") {
                 if (arm64_lit_pool_far(p, a.code.len()) > arm64_lit_reach()) {
@@ -5959,7 +5959,7 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         p = Arm64GasProg { ...p, unknown: p.unknown.append("branch out of range: " + a.oor[oi]) };
         oi = oi + 1;
     }
-    return Arm64GasProg { ...p, asm: a };
+    return Arm64GasProg { ...p, asm: a, cfi: cfi };
 }
 
 // Arm64SymAddr / arm64_gas_sym_addr resolve a symbol to its final address at
@@ -7190,30 +7190,31 @@ function cfi_le64_i64(b: i32[], v: i64): i32[] {
 
 // ---- recording ---------------------------------------------------------
 
-function cfi_add_rule(s: CfiState, off: i32, body: i32[]): CfiState {
+// The recorder OWNS its state: the rule arrays hold one row per directive
+// for the whole program, and an append through a borrowed spread copies the
+// whole buffer, quadratically, on every relaxation pass (#8172).
+function cfi_add_rule(own s: CfiState, off: i32, body: i32[]): CfiState {
     var fde: i32 = s.fde_start.len() - 1;
     var pos: i32 = s.rule_bytes.len();
-    var bytes: i32[] = s.rule_bytes;
     var i: i32 = 0;
-    while (i < body.len()) { bytes = bytes.append(body[i]); i = i + 1; }
+    while (i < body.len()) { s = CfiState { ...s, rule_bytes: s.rule_bytes.append(body[i]) }; i = i + 1; }
     return CfiState {
         ...s,
         rule_fde: s.rule_fde.append(fde),
         rule_off: s.rule_off.append(off),
         rule_pos: s.rule_pos.append(pos),
         rule_len: s.rule_len.append(body.len()),
-        rule_bytes: bytes,
     };
 }
 
-function cfi_bad(s: CfiState, what: string): CfiState {
+function cfi_bad(own s: CfiState, what: string): CfiState {
     return CfiState { ...s, bad: s.bad.append(what) };
 }
 
 // cfi_directive records one `.cfi_*` line for the code at .text offset
 // `off`. `line` is the whole directive as written; anything this module
 // cannot express lands on s.bad rather than being dropped.
-pub function cfi_directive(s: CfiState, line: string, off: i32): CfiState {
+pub function cfi_directive(own s: CfiState, line: string, off: i32): CfiState {
     var t: string = cfi_trim(line);
     var sp: i32 = 0;
     while (sp < t.len() && t[sp] != b' ' && t[sp] != b'\t') { sp = sp + 1; }
@@ -7234,7 +7235,7 @@ pub function cfi_directive(s: CfiState, line: string, off: i32): CfiState {
 }
 
 // cfi_proc_directive opens or closes an FDE.
-function cfi_proc_directive(s: CfiState, d: string, ops: string[], off: i32): CfiState {
+function cfi_proc_directive(own s: CfiState, d: string, ops: string[], off: i32): CfiState {
     if (d == ".cfi_startproc") {
         if (s.open) { return cfi_bad(s, ".cfi_startproc inside an open .cfi_startproc"); }
         if (ops.len() > 0 && ops[0].len() > 0) { return cfi_bad(s, ".cfi_startproc " + ops[0] + " is not supported"); }
@@ -7245,7 +7246,7 @@ function cfi_proc_directive(s: CfiState, d: string, ops: string[], off: i32): Cf
 }
 
 // cfi_cfa_directive records a rule that moves the CFA.
-function cfi_cfa_directive(s: CfiState, d: string, ops: string[], rest: string, off: i32): CfiState {
+function cfi_cfa_directive(own s: CfiState, d: string, ops: string[], rest: string, off: i32): CfiState {
     if (d == ".cfi_def_cfa_offset") {
         if (ops.len() < 1 || !cfi_is_int(ops[0])) { return cfi_bad(s, d + " " + rest); }
         return cfi_add_rule(s, off, cfi_uleb([cfi_op_def_cfa_offset()], cfi_atoi(ops[0])));
@@ -7261,7 +7262,7 @@ function cfi_cfa_directive(s: CfiState, d: string, ops: string[], rest: string, 
 }
 
 // cfi_reg_directive records a rule about one register's saved location.
-function cfi_reg_directive(s: CfiState, d: string, ops: string[], rest: string, off: i32): CfiState {
+function cfi_reg_directive(own s: CfiState, d: string, ops: string[], rest: string, off: i32): CfiState {
     if (ops.len() < 1) { return cfi_bad(s, d + ": missing register operand"); }
     var r: i32 = cfi_reg_num(s.profile, ops[0]);
     if (r < 0) { return cfi_bad(s, d + " " + rest); }
