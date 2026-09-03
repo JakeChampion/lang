@@ -2390,6 +2390,36 @@ function main(): i32 {
 		if got, err := os.ReadFile(filepath.Join(rwDir, "out.txt")); err != nil || string(got) != "copy me" {
 			t.Errorf("rw: out.txt = %q (err %v), want %q", string(got), err, "copy me")
 		}
+
+		// The preview-2 file bodies must release the own<descriptor> open-at
+		// returned and the stream opened on it; a body that keeps either costs
+		// the process one host fd per call. 200 rounds under a 64-descriptor
+		// limit is far past what a leaking body survives — it reports the
+		// failing builtin instead of the marker. Native's counterpart is
+		// TestWASMFileBuiltinsReleaseDescriptors.
+		fdBin := build(t, "fdloop", `function round(): i32 {
+    var s: string = "line\n";
+    match (write_file("f.txt", s)) { Ok(_) => {}, Err(_) => { return 1; } }
+    match (read_file("f.txt")) { Ok(t) => { if (t.len() != s.len()) { return 2; } }, Err(_) => { return 2; } }
+    match (read_file_bytes("f.txt")) { Ok(b) => { if (b.len() != s.len()) { return 3; } }, Err(_) => { return 3; } }
+    return 0;
+}
+function main(): i32 {
+    var i: i32 = 0;
+    while (i < 200i32) {
+        var r: i32 = round();
+        if (r != 0i32) { write("FAIL"); return r; }
+        i = i + 1i32;
+    }
+    write("fds-released");
+    return 0;
+}
+`)
+		fdDir := t.TempDir()
+		fdOut, _ := exec.Command("sh", "-c", `ulimit -n 64 && exec "$0" run --dir "$1::/" "$2"`, wasmtime, fdDir, fdBin).Output()
+		if string(fdOut) != "fds-released" {
+			t.Errorf("fd-release: component stdout = %q, want %q — a file body kept its descriptor or stream", string(fdOut), "fds-released")
+		}
 	})
 
 	t.Run("emit-wasm-component-wasi", func(t *testing.T) {

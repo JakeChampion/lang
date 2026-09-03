@@ -303,11 +303,14 @@ that only the TCP / UDP / HTTP shapes drop handles. They do not: a shape that
 opens a file drops one too. A new framing states its drops, and the
 `TestSelfHostWasmComponentFullIO*` byte-compare is what proves it.
 
-Those shapes still hand the composer NATIVE's core module, so this is the
-framing half only. The self-host's own core emitter (`wasm_ir.fern`) emits
-`[resource-drop]` imports for the socket shapes and not for the filesystem
-ones, so a self-host-compiled `read_file` core does not yet close its
-descriptor.
+Those shapes hand the composer NATIVE's core module, so they gate the framing
+half only. The core half is `fs_imports_p2` in `wasm_ir.fern`, which imports
+the three drops alongside the methods, and the preview-2 `read_file` /
+`read_file_bytes` / `write_file` bodies, which drop the stream and then the
+descriptor once done with them and on each error path after the open. What
+gates that half is `TestSelfHostCLIX86_64/emit-wasm-component-fs`: 200 rounds
+of every file builtin under a 64-descriptor limit, which a body keeping either
+handle exhausts within the first few dozen (#8133).
 
 ## Risks / notes
 

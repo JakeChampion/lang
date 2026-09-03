@@ -1960,23 +1960,28 @@ pub function args_func_p2(): string {
 }
 
 // fs_imports_p2 emits the preview2 filesystem imports (component-io-fs mode).
-// get-directories (preopens) + descriptor.open-at are shared by read and
-// write; read adds read-via-stream + input-stream.blocking-read; write adds
-// write-via-stream (output-stream.blocking-write-and-flush is already imported
-// by the stdout shim). The import order — stdout pair, then get-directories,
-// open-at, then the read/write methods — matches what the corresponding
-// component framing (component_full_io_fs / _write) lowers, so the core's
-// imports line up with the framing's canon-lower trampolines.
+// get-directories (preopens) + descriptor.open-at + [resource-drop]descriptor
+// are shared by read and write; read adds read-via-stream +
+// input-stream.blocking-read + [resource-drop]input-stream; write adds
+// write-via-stream + [resource-drop]output-stream
+// (output-stream.blocking-write-and-flush is already imported by the stdout
+// shim). The import order — stdout pair, then get-directories, open-at, then
+// the read/write methods — matches what the corresponding component framing
+// (component_full_io_fs / _write) lowers, so the core's imports line up with
+// the framing's canon-lower trampolines.
 pub function fs_imports_p2(has_readfile: boolean, has_writefile: boolean): string {
     var o: string = "";
     o = o + "  (import \"wasi:filesystem/preopens@0.2.0\" \"get-directories\" (func $get_directories (param i32)))\n";
     o = o + "  (import \"wasi:filesystem/types@0.2.0\" \"[method]descriptor.open-at\" (func $open_at (param i32 i32 i32 i32 i32 i32 i32)))\n";
+    o = o + "  (import \"wasi:filesystem/types@0.2.0\" \"[resource-drop]descriptor\" (func $desc_drop (param i32)))\n";
     if (has_readfile) {
         o = o + "  (import \"wasi:filesystem/types@0.2.0\" \"[method]descriptor.read-via-stream\" (func $read_via_stream (param i32 i64 i32)))\n";
         o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]input-stream.blocking-read\" (func $blocking_read (param i32 i64 i32)))\n";
+        o = o + "  (import \"wasi:io/streams@0.2.0\" \"[resource-drop]input-stream\" (func $in_strm_drop (param i32)))\n";
     }
     if (has_writefile) {
         o = o + "  (import \"wasi:filesystem/types@0.2.0\" \"[method]descriptor.write-via-stream\" (func $write_via_stream (param i32 i64 i32)))\n";
+        o = o + "  (import \"wasi:io/streams@0.2.0\" \"[resource-drop]output-stream\" (func $out_strm_drop (param i32)))\n";
     }
     return o;
 }
@@ -2014,6 +2019,7 @@ pub function readfile_func_p2(): string {
     o = o + "    (local.set $fd (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
     o = o + "    (call $read_via_stream (local.get $fd) (i64.const 0) (local.get $ra))\n";
     o = o + "    (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
+    o = o + "      (call $desc_drop (local.get $fd))\n";
     o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
     o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
@@ -2035,6 +2041,10 @@ pub function readfile_func_p2(): string {
     o = o + "        (br $cc)))\n";
     o = o + "      (local.set $off (i32.add (local.get $off) (local.get $cl)))\n";
     o = o + "      (br $rc)))\n";
+    // Everything is in the accumulator: release the stream, then the
+    // descriptor it was opened on.
+    o = o + "    (call $in_strm_drop (local.get $strm))\n";
+    o = o + "    (call $desc_drop (local.get $fd))\n";
     o = o + "    (i32.store (local.get $buf) (local.get $off))\n";
     // D9 gate (#5714): errno 25 (ilseq) is synthetic — no wasi call produces it.
     o = o + "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $buf) (i32.const 4)) (local.get $off))) (then\n";
@@ -2069,6 +2079,7 @@ pub function readfile_bytes_func_p2(): string {
     o = o + "    (local.set $fd (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
     o = o + "    (call $read_via_stream (local.get $fd) (i64.const 0) (local.get $ra))\n";
     o = o + "    (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
+    o = o + "      (call $desc_drop (local.get $fd))\n";
     o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
     o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
@@ -2090,6 +2101,8 @@ pub function readfile_bytes_func_p2(): string {
     o = o + "        (br $cc)))\n";
     o = o + "      (local.set $off (i32.add (local.get $off) (local.get $cl)))\n";
     o = o + "      (br $rc)))\n";
+    o = o + "    (call $in_strm_drop (local.get $strm))\n";
+    o = o + "    (call $desc_drop (local.get $fd))\n";
     o = o + "    (local.set $arr (call $__fern_arr_box (i32.mul (local.get $off) (i32.const 4))))\n";
     o = o + "    (i32.store (local.get $arr) (local.get $off))\n";
     o = o + "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $off))\n";
@@ -2133,6 +2146,7 @@ pub function writefile_func_p2(): string {
     o = o + "    (local.set $fd (i32.load (i32.add (local.get $ra) (i32.const 4))))\n";
     o = o + "    (call $write_via_stream (local.get $fd) (i64.const 0) (local.get $ra))\n";
     o = o + "    (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
+    o = o + "      (call $desc_drop (local.get $fd))\n";
     o = o + "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "      (i32.store (local.get $tmp) (i32.const 1))\n";
     o = o + "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
@@ -2147,12 +2161,17 @@ pub function writefile_func_p2(): string {
     // blocking-write-and-flush(stream, content+4+cur, chunk, ra)
     o = o + "      (call $bwf (local.get $strm) (i32.add (i32.add (local.get $cp) (i32.const 4)) (local.get $cur)) (local.get $chunk) (local.get $ra))\n";
     o = o + "      (if (i32.ne (i32.load8_u (local.get $ra)) (i32.const 0)) (then\n";
+    o = o + "        (call $out_strm_drop (local.get $strm))\n";
+    o = o + "        (call $desc_drop (local.get $fd))\n";
     o = o + "        (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "        (i32.store (local.get $tmp) (i32.const 1))\n";
     o = o + "        (i32.store (i32.add (local.get $tmp) (i32.const 4)) " + err_payload_p2() + ")\n";
     o = o + "        (return (local.get $tmp))))\n";
     o = o + "      (local.set $cur (i32.add (local.get $cur) (local.get $chunk)))\n";
     o = o + "      (br $wc)))\n";
+    // Flushed: release the stream, then the descriptor it was opened on.
+    o = o + "    (call $out_strm_drop (local.get $strm))\n";
+    o = o + "    (call $desc_drop (local.get $fd))\n";
     // success -> Ok(()) (tag 0)
     o = o + "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
     o = o + "    (i32.store (local.get $tmp) (i32.const 0))\n";
