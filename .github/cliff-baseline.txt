@@ -77,6 +77,11 @@
 # Only x86_64 is measured today: cliff-bench runs on whichever host it is given,
 # and the aarch64 lane does not yet build a self-host compiler for it. An
 # unbaselined arch reports UNBASELINED rather than failing.
+#
+# Re-pinned 2026-09-03 (#8172) after the assembler's CFI recorder stopped
+# appending its rule arrays through a borrowed spread: 5,177,184,636 / 568,878
+# on the same tree the line before, 94.6% of it that one site. What is left is
+# the compiler's own accumulators (§4d.5) plus the recorder's linear residue.
 
-x86_64/checker.cliff_bytes	253152940
-x86_64/checker.cliff_count	450086
+x86_64/checker.cliff_bytes	272194668
+x86_64/checker.cliff_count	386487
