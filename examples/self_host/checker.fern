@@ -4722,20 +4722,28 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
 // func_scope_tparams is what the body may read as type VARIABLES: the declared
 // parameters plus the implicit ones a generic RECEIVER binds. `(m: Map[K, V])
 // merge(...)` declares no `[K, V]`, yet K and V are variables in its body —
-// never a reference to a user `struct K` in a module core/map cannot see.
-// Native binds the same set (checker.go's collectFreeTypeVars), and the
+// never a reference to a user `struct K` in a module core/map cannot see. The
 // declared half already erases (#6118); a receiver-only variable was the half
 // still open, so a single-letter user struct captured every stdlib receiver
 // spelling that named it.
+//
+// struct_receiver_typevars is the reader, so a name is a variable because it
+// stands in an ARGUMENT position of a receiver whose arguments are ALL
+// variables — the predicate the monomorphiser already keys a generic receiver
+// on. A receiver that is a bare name contributes nothing however single-letter
+// it is: `(a: V) add(b: V)` on `struct V` is V's own method, and erasing V
+// there would bind the receiver to unknown and cost check_func_body its strict
+// pass over a concrete body. Native separates the two by module visibility
+// (checker.go's collectFreeTypeVars); position is what this checker has, and
+// the two agree on every receiver the stdlib declares.
 //
 // The implicit ones are unbounded, so the caller pads tbounds to match.
 function func_scope_tparams(fd: parser.FuncDecl): string[] {
   if (fd.receiver_type.len() == 0) {
     return fd.type_params;
   }
-  var none: string[] = [];
   var out: string[] = fd.type_params;
-  for tv in parser.collect_tvars(fd.receiver_type, none) {
+  for tv in parser.struct_receiver_typevars(fd.receiver_type) {
     if (util.index_of_str(out, tv) < 0) {
       out = out.append(tv);
     }

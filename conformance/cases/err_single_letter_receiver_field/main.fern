@@ -1,0 +1,18 @@
+// A struct whose NAME reads like a type parameter is still a concrete type
+// when it is a method's WHOLE receiver: `(a: V) bad()` is V's own method,
+// however single-letter V is, so the body checks against `struct V` and
+// reading a field V does not have is E043.
+//
+// The pair to `type_param_name_collision`, which pins the other direction —
+// `core/map`'s `(m: Map[K, V])` methods must NOT read a user `struct K` as
+// their key. A receiver's variables come out of its ARGUMENTS, so a bare `V`
+// receiver stays concrete; reading them out of the spelling as a whole erases
+// this one to unknown and reports nothing at all.
+struct V { x: i32 }
+
+function (a: V) bad(): i32 { return a.nope; }
+
+function main(): i32 {
+    var v: V = V { x: 1 };
+    return v.bad();
+}
