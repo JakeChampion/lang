@@ -38171,7 +38171,7 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // the free would dangle), and no element-payload escape (arrtup_elem_payload_
     // escapes — a bare `keep = xs[i].1` array-field extraction; a scalar read
     // `xs[i].0`, indexed read `xs[i].1[j]` and `xs[i].1.len()` are borrows).
-    var ats: string[] = collect_fresh_arrtup_names(body, body, structs, fresh_ret, []);
+    var ats: string[] = collect_fresh_arrtup_names(body, body, structs, fresh_ret, str_fresh_ret, []);
     out = reclaimable_arrtup(ats, body, borrowable, reassigned, recv_borrow, structs, out);
     out = reclaimable_credit(asrows, out);
     // Fresh `MyEnum[]` locals (#5474): `var xs: E[] = [E.A(..), E.B, ..]` — the enum
@@ -39725,7 +39725,7 @@ pub function return_fresh_struct_ret_fns_of(funcs: parser.FuncDecl[], structs: p
         // ARRTUP: / ARRSTRUCT: credit an array literal earns, so the caller's
         // deep free reaches every element box; the callee's returned value
         // escapes its own frame and keeps the shallow dec.
-        if (fn_returns_fresh_arrtup(fn, structs)) {
+        if (fn_returns_fresh_arrtup(fn, structs, str_fresh)) {
             out = out.append("ARRTUPF:" + fn.name);
         }
         if (fn_returns_fresh_arrstruct(fn, structs)) {
@@ -47376,13 +47376,13 @@ function arrtup_ann_is(type_name: string, structs: parser.StructDecl[]): boolean
 // FRESH tuple literal for the element type `ttype` — every array position a direct
 // array literal (tuple_arg_payload_fresh), so each element tuple box AND its arrays
 // are sole-owned at the binding. A scalar position accepts any expression.
-function arrtup_lit_is_fresh(e: ast.Expr, ttype: string, structs: parser.StructDecl[]): boolean {
+function arrtup_lit_is_fresh(e: ast.Expr, ttype: string, structs: parser.StructDecl[], str_fresh: string[]): boolean {
     match (e) {
         ast.ExprArray(arr) => {
             if (arr.elements.len() == 0) { return false; }
             var i: i32 = 0;
             while (i < arr.elements.len()) {
-                if (!tuple_arg_payload_fresh(ttype, arr.elements[i], structs)) { return false; }
+                if (!tuple_arg_payload_droppable(ttype, arr.elements[i], structs, false, str_fresh)) { return false; }
                 i = i + 1;
             }
             return true;
@@ -47396,14 +47396,14 @@ function arrtup_lit_is_fresh(e: ast.Expr, ttype: string, structs: parser.StructD
 // `(<tuple-with-array>)[]` literal for element type `elem`. The array-of-tuples
 // sibling of body_has_nonfresh_arrlit_return, which needs no per-element proof
 // because its elements are scalars.
-function body_has_nonfresh_arrtup_return(stmts: ast.Stmt[], elem: string, structs: parser.StructDecl[]): boolean {
+function body_has_nonfresh_arrtup_return(stmts: ast.Stmt[], elem: string, structs: parser.StructDecl[], str_fresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
-            ast.StmtReturn(r) => { if (!arrtup_lit_is_fresh(r.value, elem, structs)) { return true; } },
-            ast.StmtIf(f) => { if (body_has_nonfresh_arrtup_return(f.then_body, elem, structs) || body_has_nonfresh_arrtup_return(f.else_body, elem, structs)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonfresh_arrtup_return(w.body, elem, structs)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonfresh_arrtup_return(fo.body, elem, structs)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrtup_return(m.arms[a].body, elem, structs)) { return true; } a = a + 1; } },
+            ast.StmtReturn(r) => { if (!arrtup_lit_is_fresh(r.value, elem, structs, str_fresh)) { return true; } },
+            ast.StmtIf(f) => { if (body_has_nonfresh_arrtup_return(f.then_body, elem, structs, str_fresh) || body_has_nonfresh_arrtup_return(f.else_body, elem, structs, str_fresh)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonfresh_arrtup_return(w.body, elem, structs, str_fresh)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonfresh_arrtup_return(fo.body, elem, structs, str_fresh)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonfresh_arrtup_return(m.arms[a].body, elem, structs, str_fresh)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
@@ -47415,23 +47415,23 @@ function body_has_nonfresh_arrtup_return(stmts: ast.Stmt[], elem: string, struct
 // fresh array literal of fresh tuple literals — so the caller's binding sole-owns
 // the buffer, every element tuple box and the arrays inside them. Registered
 // "ARRTUPF:<name>" so a call-bound local earns the ARRTUP credit.
-function fn_returns_fresh_arrtup(fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+function fn_returns_fresh_arrtup(fn: parser.FuncDecl, structs: parser.StructDecl[], str_fresh: string[]): boolean {
     if (fn.receiver_type.len() > 0) { return false; }
     var elem: string = arrtup_elem_tuple_type(fn.ret_type, structs);
     if (elem == "") { return false; }
     if (!body_has_return(fn.body)) { return false; }
-    return !body_has_nonfresh_arrtup_return(fn.body, elem, structs);
+    return !body_has_nonfresh_arrtup_return(fn.body, elem, structs, str_fresh);
 }
 
 // collect_fresh_arrtup_names: LOCAL names bound from a fresh `(<tuple-with-array>)[]`
 // literal (arrtup_ann_is + arrtup_lit_is_fresh), or from a call to an "ARRTUPF:"
 // producer, anywhere in the body. Escape gates applied by reclaimable_names_of.
-function collect_fresh_arrtup_names(stmts: ast.Stmt[], body: ast.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], acc: string[]): string[] {
+function collect_fresh_arrtup_names(stmts: ast.Stmt[], body: ast.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], str_fresh: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => {
-                if (arrtup_ann_is(v.type_name, structs) && arrtup_lit_is_fresh(v.init, arrtup_elem_tuple_type(v.type_name, structs), structs)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+                if (arrtup_ann_is(v.type_name, structs) && arrtup_lit_is_fresh(v.init, arrtup_elem_tuple_type(v.type_name, structs), structs, str_fresh)) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
                 // A producer CALL: the annotation supplies the element type the
                 // deep free walks, and the "ARRTUPF:" registry proves every
                 // returned buffer, element box and inner array is the callee's
@@ -47452,11 +47452,11 @@ function collect_fresh_arrtup_names(stmts: ast.Stmt[], body: ast.Stmt[], structs
                     }
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_arrtup_names(f.then_body, body, structs, fresh_ret, a); a = collect_fresh_arrtup_names(f.else_body, body, structs, fresh_ret, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_arrtup_names(w.body, body, structs, fresh_ret, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_arrtup_names(fo.body, body, structs, fresh_ret, a); },
+            ast.StmtIf(f) => { a = collect_fresh_arrtup_names(f.then_body, body, structs, fresh_ret, str_fresh, a); a = collect_fresh_arrtup_names(f.else_body, body, structs, fresh_ret, str_fresh, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_arrtup_names(w.body, body, structs, fresh_ret, str_fresh, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_arrtup_names(fo.body, body, structs, fresh_ret, str_fresh, a); },
             ast.StmtMatch(m) => {
-                for arm in m.arms { a = collect_fresh_arrtup_names(arm.body, body, structs, fresh_ret, a); }
+                for arm in m.arms { a = collect_fresh_arrtup_names(arm.body, body, structs, fresh_ret, str_fresh, a); }
             },
             _ => {}
         }
@@ -47552,6 +47552,7 @@ function arrtup_elem_esc_shape(e: ast.Expr, name: string, ttype: string, structs
         },
         ast.ExprCall(c) => {
             match (c.callee) {
+                ast.ExprIdent(_) => { return 4; },
                 ast.ExprFieldAccess(cfa) => {
                     if (cfa.field == "len") {
                         // `name.len()` on the ARRAY ITSELF — the tuple sibling of the
@@ -47590,17 +47591,17 @@ function arrtup_elem_esc_shape(e: ast.Expr, name: string, ttype: string, structs
 
 // arrtup_chain_esc: rctuple_chain_esc's array-of-tuples sibling — re-scans a
 // code-3 chain's index expressions and call arguments.
-function arrtup_chain_esc(x: ast.Expr, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+function arrtup_chain_esc(x: ast.Expr, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
     match (x) {
         ast.ExprCall(c) => {
-            if (arrtup_chain_esc(c.callee, name, ttype, structs)) { return true; }
-            for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs)) { return true; } }
+            if (arrtup_chain_esc(c.callee, name, ttype, structs, borrowable)) { return true; }
+            for arg in c.args { if (arrtup_elem_esc_expr(arg, name, ttype, structs, borrowable)) { return true; } }
             return false;
         },
-        ast.ExprFieldAccess(fa) => { return arrtup_chain_esc(fa.obj, name, ttype, structs); },
+        ast.ExprFieldAccess(fa) => { return arrtup_chain_esc(fa.obj, name, ttype, structs, borrowable); },
         ast.ExprIndex(ix) => {
-            if (arrtup_chain_esc(ix.array, name, ttype, structs)) { return true; }
-            return arrtup_elem_esc_expr(ix.index, name, ttype, structs);
+            if (arrtup_chain_esc(ix.array, name, ttype, structs, borrowable)) { return true; }
+            return arrtup_elem_esc_expr(ix.index, name, ttype, structs, borrowable);
         },
         ast.ExprIdent(_) => { return false; },
         _ => { return true; }
@@ -47610,11 +47611,33 @@ function arrtup_chain_esc(x: ast.Expr, name: string, ttype: string, structs: par
 
 // arrtup_elem_esc_at is the fold visitor: `esc` latches true, and each node
 // answers per its arrtup_elem_esc_shape code.
-function arrtup_elem_esc_at(x: ast.Expr, esc: boolean, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
+function arrtup_elem_esc_at(x: ast.Expr, esc: boolean, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
     if (esc) { return true; }
     var code: i32 = arrtup_elem_esc_shape(x, name, ttype, structs);
     if (code == 2) { return true; }
-    if (code == 3) { return arrtup_chain_esc(x, name, ttype, structs); }
+    if (code == 3) { return arrtup_chain_esc(x, name, ttype, structs, borrowable); }
+    if (code == 4) {
+        // A bare-ident ARGUMENT is a borrow at a param proven to touch no
+        // element of it ("ELB:") or to keep it only COUNTED ("CNT:") — the
+        // arrstruct twin's rule; the box-only flag is not enough for a release
+        // that walks the elements. Any other argument position escapes.
+        match (x) {
+            ast.ExprCall(c) => {
+                var callee: string = ident_name_or_empty(c.callee);
+                if (callee == name) { return true; }
+                var eai: i32 = 0;
+                while (eai < c.args.len()) {
+                    if (ident_name_or_empty(c.args[eai]) == name) {
+                        if (!(param_is_borrowable(borrowable, "ELB:" + callee, eai)
+                              || param_is_borrowable(borrowable, "CNT:" + callee, eai))) { return true; }
+                    } else if (arrtup_elem_esc_expr(c.args[eai], name, ttype, structs, borrowable)) { return true; }
+                    eai = eai + 1;
+                }
+                return false;
+            },
+            _ => { return true; }
+        }
+    }
     return false;
 }
 
@@ -47625,8 +47648,8 @@ function arrtup_elem_esc_at(x: ast.Expr, esc: boolean, name: string, ttype: stri
 // (indexed array-field read) and `name[i].N.len()` are borrows; a BARE `name[i]`
 // element (the tuple box) or a bare `name` escapes. Erring toward escape is a safe
 // leak, never an over-release.
-function arrtup_elem_esc_expr(e: ast.Expr, name: string, ttype: string, structs: parser.StructDecl[]): boolean {
-    function visit(x: ast.Expr, esc: boolean): boolean { return arrtup_elem_esc_at(x, esc, name, ttype, structs); }
+function arrtup_elem_esc_expr(e: ast.Expr, name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
+    function visit(x: ast.Expr, esc: boolean): boolean { return arrtup_elem_esc_at(x, esc, name, ttype, structs, borrowable); }
     function descend(x: ast.Expr): boolean { return arrtup_elem_esc_shape(x, name, ttype, structs) == 0; }
     return astwalk.fold_expr_pruned(e, false, visit, descend);
 }
@@ -47635,8 +47658,8 @@ function arrtup_elem_esc_expr(e: ast.Expr, name: string, ttype: string, structs:
 // type `ttype`) in an escaping way per the scan above. A struct tuple-element
 // SCALAR-field read / indexed array-field read / .len() is a borrow (reclaim proceeds);
 // a whole struct element or a bare struct array-field extraction escapes. #4365.
-function arrtup_elem_payload_escapes(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[]): boolean {
-    function visit(x: ast.Expr, esc: boolean): boolean { return arrtup_elem_esc_at(x, esc, name, ttype, structs); }
+function arrtup_elem_payload_escapes(stmts: ast.Stmt[], name: string, ttype: string, structs: parser.StructDecl[], borrowable: string[]): boolean {
+    function visit(x: ast.Expr, esc: boolean): boolean { return arrtup_elem_esc_at(x, esc, name, ttype, structs, borrowable); }
     function descend(x: ast.Expr): boolean { return arrtup_elem_esc_shape(x, name, ttype, structs) == 0; }
     for stmt in stmts {
         if (astwalk.fold_stmt_pruned(stmt, false, visit, descend)) { return true; }
@@ -74503,7 +74526,7 @@ while (ati < ats.len()) {
     if (!body_unsafe_for(body, atnm, borrowable, recv_borrow)
         && util.index_of_str(reassigned, atnm) < 0
         && !arrarr_row_escapes(body, atnm)
-        && !arrtup_elem_payload_escapes(body, atnm, arrtup_elem_type_of_decl(body, structs, atnm), structs)) {
+        && !arrtup_elem_payload_escapes(body, atnm, arrtup_elem_type_of_decl(body, structs, atnm), structs, borrowable)) {
         out = out.append("ARRTUP:" + ats[ati]);
     }
     ati = ati + 1;

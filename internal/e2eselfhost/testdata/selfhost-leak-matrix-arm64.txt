@@ -149,3 +149,7 @@ opt_arr__fnscope__alias_match                 clean  clean  alias bind read as a
 map_struct_strfield__insert__match            clean  clean  #7910 (b): same walk and MAPOWN: grow release as the x86 row; the arm64 __map_vals_struct_drop_<T> body is a transcription of the x86 one
 map_struct_strfield__literal__len             clean  clean  the column alone, no grow
 map_struct_arrfield__insert__len              clean  clean  the array-field arm of the same walk
+arrtup_str__literal__len                      clean  clean  #7910 (c): same admission as the x86 row
+arrtup_str__callarg__erased_generic           clean  clean  same borrow rule as the x86 row
+arrtup_arr__callarg__erased_generic           clean  clean  the argument position alone
+arrtup_mixed__callarg__erased_generic         clean  clean  string and array elements together through the erased generic
