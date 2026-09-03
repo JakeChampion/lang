@@ -657,6 +657,15 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string) bool {
 			if id, ok := x.Target.(*ast.Ident); ok && id.Name == name && !calleeField[x] {
 				excused[id] = true
 			}
+		case *ast.Match:
+			// A nested `match (name)` reads the payload in place. With no `@`
+			// binding and every pointer binding of its own arms confined to
+			// that arm, the box the join frees outlives every reference the
+			// inner match takes — the shape a nested Option's payload is
+			// consumed through.
+			if id, ok := x.Tag.(*ast.Ident); ok && id.Name == name && b.nestedMatchConfines(x) {
+				excused[id] = true
+			}
 		case *ast.Index:
 			if id, ok := x.Array.(*ast.Ident); ok && id.Name == name {
 				excused[id] = true
@@ -682,6 +691,36 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string) bool {
 		return true
 	})
 	return confined
+}
+
+// nestedMatchConfines reports whether a match over an ident scrutinee lets no
+// payload out: no arm binds the whole value (`@`) or destructures a
+// sub-pattern (whose bindings the arm's own list does not carry), and each
+// named pointer binding is confined to its arm's guard and body.
+func (b *builder) nestedMatchConfines(m *ast.Match) bool {
+	for _, arm := range m.Arms {
+		if arm.AtBinding != "" {
+			return false
+		}
+		for _, sub := range arm.Payloads {
+			if sub != nil {
+				return false
+			}
+		}
+		region := armConfinementRegion(arm.AtBinding, arm.Guard, arm.Body)
+		for i, bname := range arm.Bindings {
+			if bname == "" || bname == "_" || i >= len(arm.BindingTypes) {
+				continue
+			}
+			if bt := arm.BindingTypes[i]; bt == nil || !ast.IsPointerType(bt) {
+				continue
+			}
+			if !b.bindingConfinedInAll(region, bname) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // borrowingCallArg reports whether argument `i` of direct call `call` is a
