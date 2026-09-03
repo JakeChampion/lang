@@ -8019,7 +8019,11 @@ func maskFix(dst int, wdt int8) []string {
 // rather than measured.
 func emitRuntimeHelpers(w func(string, ...any), helpers []string) {
 	for _, h := range helpers {
-		w("\t.p2align 4")
+		// Column 0, like every other directive the backends emit: the
+		// instruction counters (scripts/perf-bench, the SSA CLI gate) count
+		// indented lines, so an indented directive would read as an
+		// instruction the program does not execute.
+		w(".p2align 4")
 		runtimeHelperEmitters[h](w)
 	}
 }
