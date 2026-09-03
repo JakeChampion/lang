@@ -7,8 +7,8 @@ import (
 )
 
 // OpKind names what an Operand holds. The set is closed: every operand
-// spelling assembleInsn's arms accept parses to exactly one of these, and
-// TestOperandKindsCoverTheDispatch holds that closed.
+// spelling the dispatch's arms accept parses to exactly one of these, and
+// TestInstRoundTripsThroughTheModel holds that over the gas-pinned corpus.
 type OpKind uint8
 
 const (

@@ -1,81 +1,9 @@
 package arm64
 
 import (
-	"os"
-	"regexp"
 	"strings"
 	"testing"
 )
-
-// dispatchedMnemonics extracts the case strings of the named `switch mnem`
-// dispatches from gas.go's source, so switchMnemonics can be checked against
-// what the assembler actually routes.
-//
-// A case list wraps across lines, so the scan runs to the first colon rather
-// than to the end of the line.
-func dispatchedMnemonics(t *testing.T) map[string]bool {
-	t.Helper()
-	src, err := os.ReadFile("gas.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(src)
-	out := map[string]bool{}
-	litRe := regexp.MustCompile(`"([a-z0-9.]+)"`)
-	caseRe := regexp.MustCompile(`\bcase\b`)
-	for _, fn := range []string{"func (a *Assembler) Inst(", "func asmVecForm("} {
-		start := strings.Index(body, fn)
-		if start < 0 {
-			t.Fatalf("%s not found in gas.go — the extraction pattern has gone stale, which would make this test vacuous", fn)
-		}
-		end := strings.Index(body[start:], "\n}\n")
-		if end < 0 {
-			t.Fatalf("end of %s not found", fn)
-		}
-		b := body[start : start+end]
-		for _, idx := range caseRe.FindAllStringIndex(b, -1) {
-			rest := b[idx[1]:]
-			colon := strings.Index(rest, ":")
-			if colon < 0 {
-				continue
-			}
-			for _, lit := range litRe.FindAllStringSubmatch(rest[:colon], -1) {
-				out[lit[1]] = true
-			}
-		}
-	}
-	if len(out) < 150 {
-		t.Fatalf("extracted only %d mnemonics from the dispatches — the pattern has gone stale", len(out))
-	}
-	return out
-}
-
-// TestSuggestListMatchesDispatch pins switchMnemonics to the case strings of
-// the dispatch, so a mnemonic added to one but not the other fails here instead
-// of silently degrading suggestions.
-//
-// The x86-64 side has carried this guard since its suggestions landed. It
-// matters more here: #6060 was `movn` present in the dispatch but missing from
-// a hand-kept list, and the symptom was a worse error message, which nothing
-// fails on.
-func TestSuggestListMatchesDispatch(t *testing.T) {
-	fromSwitch := dispatchedMnemonics(t)
-
-	listed := map[string]bool{}
-	for _, m := range switchMnemonics {
-		listed[m] = true
-	}
-	for m := range fromSwitch {
-		if !listed[m] {
-			t.Errorf("%q is dispatched but missing from switchMnemonics, so it is not offered as a suggestion", m)
-		}
-	}
-	for m := range listed {
-		if !fromSwitch[m] {
-			t.Errorf("%q is in switchMnemonics but no longer dispatched, so the suggestion points at nothing", m)
-		}
-	}
-}
 
 // TestSuggestKnownMnemonicsAccepted checks the vocabulary is real: every entry
 // must be something the assembler actually routes. A suggestion naming a
@@ -83,7 +11,7 @@ func TestSuggestListMatchesDispatch(t *testing.T) {
 //
 // A bare mnemonic reaches the scalar dispatch but never the SIMD one, which
 // only runs when the first operand is a vN.<arr> register, so the vector
-// vocabulary is checked through asmVecForm directly. Both paths are asked only
+// vocabulary is checked through asmVecClass directly. Both paths are asked only
 // whether they RECOGNISE the mnemonic; the operand errors that follow are the
 // right answer for an instruction with no operands.
 func TestSuggestKnownMnemonicsAccepted(t *testing.T) {
@@ -93,7 +21,7 @@ func TestSuggestKnownMnemonicsAccepted(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "unsupported instruction") {
 			continue
 		}
-		if handled, _ := asmVecForm(&Assembler{}, m, vecOps); handled {
+		if handled, _ := asmVecClass(&Assembler{}, m, vecOps); handled {
 			continue
 		}
 		t.Errorf("%q is offered as a suggestion but is not dispatched: %v", m, err)
