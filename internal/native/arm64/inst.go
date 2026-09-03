@@ -432,7 +432,7 @@ func modifierSpelling(name string, amt uint32, hasAmt bool) string {
 // gas forward/backward form), and any token carrying the `.`, `$` or `@`
 // a mangled symbol or a Mach-O `sym@PAGE` relocation suffix uses.
 func isLabelRef(s string) bool {
-	if isIdent(s) || strings.ContainsAny(s, ".$@") {
+	if isIdent(s) || strings.ContainsAny(s, ".$@:") {
 		return true
 	}
 	if len(s) >= 2 && (s[len(s)-1] == 'f' || s[len(s)-1] == 'b') {

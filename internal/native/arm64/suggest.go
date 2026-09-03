@@ -16,6 +16,7 @@ import (
 var switchMnemonics = []string{
 	"mov", "movz", "movk", "movn",
 	"add", "sub", "adds", "subs",
+	"adrp", "adr",
 	"and", "orr", "eor", "mul", "udiv", "sdiv", "umulh", "smulh", "adc", "sbc",
 	"adcs", "sbcs", "ands", "bic", "bics", "orn", "eon",
 	"ngc", "ngcs", "madd", "msub",
