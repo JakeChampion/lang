@@ -185,9 +185,7 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 			return "", err
 		}
 	}
-	for _, h := range helpers {
-		runtimeHelperEmitters[h](w)
-	}
+	emitRuntimeHelpers(w, helpers)
 	if usesBcopy(helpers) {
 		emitBcopy(w)
 	}
@@ -1883,6 +1881,21 @@ var runtimeHelperDeps = map[string][]string{
 	"__fern_arr_push_grow_move_str": {"__fern_arr_push_grow"},
 	"__fern_arr_cow_inplace_ptr":    {"__fern_arr_cow_inplace", "__fern_rc_inc"},
 	"__fern_arr_cow_inplace_str":    {"__fern_arr_cow_inplace"},
+}
+
+// emitRuntimeHelpers writes the named helper bodies, each at a 16-byte
+// boundary. The alignment is the point: these are the smallest and hottest
+// routines in an rc-carrying program — `__fern_rc_inc` / `_dec` run once per
+// rc op — so a helper's entry address decides whether its body shares one
+// 32-byte instruction-fetch window. Letting that fall out of wherever the
+// preceding helper happened to end is a landmine: removing two subsumed
+// instructions from an EARLIER helper doubled examples/bench/string_rfind_byte,
+// 61 ms to 122 ms, without changing one instruction that program runs (#8193).
+func emitRuntimeHelpers(w func(string, ...any), helpers []string) {
+	for _, h := range helpers {
+		w("\t.p2align 4")
+		runtimeHelperEmitters[h](w)
+	}
 }
 
 // referencedRuntimeHelpers returns, sorted, the runtime-helper names to append to
