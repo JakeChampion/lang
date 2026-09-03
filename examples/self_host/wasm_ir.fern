@@ -8984,20 +8984,16 @@ pub function array_field_elem_is_ptr(ft: string, structs: parser.StructDecl[], m
 }
 
 // emit_wasm_struct_drop_body returns the WAT for $__struct_drop_<t>(box) -> box —
-// the wasm sibling of asm_ir.emit_ir_struct_drop_one (Perceus slice 1c). For each
-// ARRAY field (struct_field_kind_char == "a") it releases the field BUFFER via
-// $__fern_arr_dec_ptr (pointer-element array — releases ITS elements too, the
-// deep walk encapsulated in the helper) or $__fern_arr_dec (scalar-element array
-// — flat free). Both rc-guard (only free at rc==1) and null-/literal-guard
-// internally, so no explicit uniqueness or null check is needed. Non-array rc
-// fields (string / nested struct) are skipped — a later slice, matching the
-// register backends' array-only struct_drop. The field offset is the IR
-// struct layout (`8 + i*8` — an 8-byte header then 8-byte slots, matching
-// wasm_ir's struct_make / struct_get / struct_set), NOT the AST `struct_field_off`
-// (`4 + i*4`): this body runs on the IR path, where the box is laid out by the IR
-// emitter. A pointer field is stored as i32 in the low 4 bytes of its 8-byte slot,
-// so an `i32.load` at the slot offset recovers the buffer pointer. Returns box
-// (the call site drops it).
+// the wasm sibling of asm_ir.emit_ir_struct_drop_one. The field walk is the
+// shared asmcore.struct_drop_field_ops directive list, so a field takes the
+// same arm under the same admission on every backend; only the helper each
+// directive selects is wasm's. The field offset is the IR struct layout
+// (`8 + idx*8` — an 8-byte header then 8-byte slots, matching wasm_ir's
+// struct_make / struct_get / struct_set), NOT the AST `struct_field_off`
+// (`4 + i*4`): this body runs on the IR path, where the box is laid out by the
+// IR emitter. A pointer field is stored as i32 in the low 4 bytes of its 8-byte
+// slot, so an `i32.load` at the slot offset recovers it. Every helper rc-,
+// null- and literal-guards internally. Returns box (the call site drops it).
 // emit_ir_rc_bodies returns the per-type $__field_reclaim_<T> + $__struct_drop_<T>
 // helper-function definitions for the IR path (#3457, Perceus slices 1c/1d):
 // field_reclaim frees a superseded rc-array field buffer on a consume-rebind and
@@ -9034,9 +9030,24 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
         parts = parts.append(emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, util.index_of_str(sfok, "arr:" + frt[frti]) >= 0, fpk));
         frti = frti + 1;
     }
+    // The struct-drop field walk reads its admissions off a need set, seeded
+    // here exactly as asm_ir.emit_module_ir_unit_flat seeds them: one
+    // "strfldok:<row>" per admission row and the FNPTR markers as-is.
+    var ds: asmcore.EmitState = asmcore.new_state();
+    ds = asmcore.EmitState { ...ds, struct_decls: mod.structs };
+    var sfi: i32 = 0;
+    while (sfi < sfok.len()) {
+        ds = ds.need("strfldok:" + sfok[sfi]);
+        sfi = sfi + 1;
+    }
+    var fpi: i32 = 0;
+    while (fpi < fpk.len()) {
+        ds = ds.need(fpk[fpi]);
+        fpi = fpi + 1;
+    }
     var sdti: i32 = 0;
     while (sdti < sdt.len()) {
-        parts = parts.append(emit_wasm_struct_drop_body(sdt[sdti], mod.structs, mr_types, util.index_of_str(sfok, sdt[sdti]) >= 0, util.index_of_str(sfok, "clo:" + sdt[sdti]) >= 0, fpk));
+        parts = parts.append(emit_wasm_struct_drop_body(sdt[sdti], ds));
         sdti = sdti + 1;
     }
     // Per-element-type array deep-drop helpers (#2649): $__struct_arr_elems_drop_<E>
@@ -9150,120 +9161,35 @@ pub function emit_wasm_struct_arr_elems_drop_body(e: string, structs: parser.Str
     return o;
 }
 
-pub function emit_wasm_struct_drop_body(t: string, structs: parser.StructDecl[], mr_types: string[], str_ok: boolean, clo_ok: boolean, fnptr_fields: string[]): string {
+pub function emit_wasm_struct_drop_body(t: string, s: asmcore.EmitState): string {
     var o: string = "  (func $__struct_drop_" + t + " (param $box i32) (result i32)\n";
-    var si: i32 = 0;
-    while (si < structs.len()) {
-        if (structs[si].name == t) {
-            var k: i32 = 0;
-            while (k < structs[si].fields.len()) {
-                var ft: string = structs[si].fields[k].type_name;
-                // #5235: a registered plain-fn-pointer array field — its elements
-                // are RAW code addresses, so it must NOT be walked as a pointer
-                // array ($__fern_arr_dec_ptr releases each element as a box →
-                // SIGSEGV). Free the BUFFER only (flat $__fern_arr_dec, no element
-                // walk); the buffer is a real rc box the struct owns at rc=1, so
-                // this frees it once (the wasm sibling of the register backends'
-                // k_fnptr arm).
-                var fnptr_here: boolean = util.has_str(fnptr_fields, "FNPTR:" + t + "." + structs[si].fields[k].name);
-                if (struct_field_kind_char(ft, structs, mr_types) == "a" && fnptr_here) {
-                    var fpload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    o = o + "    (drop (call $__fern_arr_dec " + fpload + "))\n";
-                } else if (struct_field_kind_char(ft, structs, mr_types) == "a") {
-                    var load: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    // MULTI-LEVEL array-element deep-drop (#2649): a struct-ARRAY field
-                    // `X[]` whose element struct X is deep-drop-ok releases each element's
-                    // OWN rc fields via $__struct_arr_elems_drop_X BEFORE arr_dec_ptr frees
-                    // the element boxes + buffer. An ENUM-array field whose every variant
-                    // payload is scalar-or-leaksafe-array walks each variant box's array
-                    // payloads via $__enum_arr_elems_drop_<E> the same way.
-                    if (irlower.is_struct_array_field_type(structs, ft)) {
-                        var elem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
-                        if (irlower.nested_field_deep_drop_ok(structs, elem_ty)) {
-                            o = o + "    (drop (call $__struct_arr_elems_drop_" + elem_ty + " " + load + "))\n";
-                        }
-                    } else if (irlower.is_enum_array_field_type(structs, ft)) {
-                        var eelem_ty: str = slice_unchecked(ft, 0, ft.len() - 2);
-                        if (irlower.enum_arr_elems_walk_ok(structs, eelem_ty)) {
-                            o = o + "    (drop (call $__enum_arr_elems_drop_" + eelem_ty + " " + load + "))\n";
-                        }
-                    }
-                    if (array_field_elem_is_ptr(ft, structs, mr_types)) {
-                        o = o + "    (drop (call $__fern_arr_dec_ptr " + load + "))\n";
-                    } else {
-                        o = o + "    (drop (call $__fern_arr_dec " + load + "))\n";
-                    }
-                } else if (is_struct_type(structs, ft)) {
-                    var sload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    if (irlower.nested_field_deep_drop_ok(structs, ft)) {
-                        // DEEP nested-struct field drop (Perceus slice 3 deep-drop):
-                        // when the inner box is UNIQUELY owned, first $__struct_drop_<ft>
-                        // releases the inner's OWN rc-array buffers, THEN $__fern_arr_dec
-                        // frees the inner box — mirroring the x86 / arm64 deep-drop arm.
-                        // ft is deep-drop-ok (its nested-struct closure is ACYCLIC per
-                        // nested_field_deep_drop_ok), so $__struct_drop_<ft> may itself
-                        // recurse into ft's own deep-drop-ok fields: the call graph is a
-                        // DAG (multi-level, no cycle). struct_drop_types' transitive
-                        // closure emits every reachable inner body. $__fern_rc_is_unique
-                        // null-/rc-guards internally; a shared inner (rc>1) skips the
-                        // field-release and only the box decs.
-                        o = o + "    (if (call $__fern_rc_is_unique " + sload + ") (then\n";
-                        o = o + "      (drop (call $__struct_drop_" + ft + " " + sload + "))))\n";
-                        o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
-                    } else {
-                        // A DIRECT nested-struct field (`inner: Inner`) that is NOT a
-                        // deep-drop-ok leaf (a self-referential / tree struct carries a
-                        // nested-struct field, so it stays here): freed SHALLOW via the
-                        // same $__fern_arr_dec as a scalar-array buffer — one level, like
-                        // a struct-array element box (arr_dec frees struct boxes too).
-                        // rc-guarded inside arr_dec; the construction alias-inc (shared
-                        // irlower) balances it. Mirrors the x86 / arm64 shallow k_struct
-                        // case (Perceus slice 3c). Tuple/Option fields (also kind "S")
-                        // stay leak-only — is_struct_type is false for them.
-                        o = o + "    (drop (call $__fern_arr_dec " + sload + "))\n";
-                    }
-                } else if (irlower.decl_is_enum(structs, ft)) {
-                    // A DIRECT enum field (`e: MyEnum`): the slot holds an rc-headered
-                    // variant box, shallow-freed via the rc-guarded $__fern_arr_dec —
-                    // the wasm sibling of the register backends' k_enum arm, which wasm
-                    // never had, so the box leaked once per construction even after the
-                    // sweep started releasing its variant payload. Balanced by the same
-                    // shared-irlower construction alias-inc as k_struct / k_str: a fresh
-                    // variant ctor is handed over sole-owned and frees here, an aliased
-                    // one was inc'd and only decs. The variant PAYLOAD is released by
-                    // the caller (emit_struct_enum_field_payload_drops) before this
-                    // call, so one level is all this arm owes.
-                    var eload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    o = o + "    (drop (call $__fern_arr_dec " + eload + "))\n";
-                } else if (ft == "fn" && clo_ok) {
-                    // An fn-typed (closure) field: the slot holds an rc-headered
-                    // `__mkclo$` env box, shallow-freed via the rc-guarded
-                    // $__fern_arr_dec — one level, captures leak. GATED on the
-                    // clofld admission ("clo:<T>" in strfld_reclaim_ok_types_of:
-                    // fresh-lambda-only values, no base copies, call-only reads),
-                    // the wasm sibling of the register backends' k_clo arm
-                    // (#5104). A non-admitted type keeps the sound leak.
-                    var cldload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    o = o + "    (drop (call $__fern_arr_dec " + cldload + "))\n";
-                } else if (ft == "string" && str_ok) {
-                    // A `string` field is an rc-headered INLINE block on wasm
-                    // ([rc][bsz][len][bytes]); reclaim it with $__fern_arr_dec — frees
-                    // at rc==1 by size class, guards a data-section literal (below
-                    // heap_base), decs a shared box, and the rc-underflow detector
-                    // catches a double free. Balanced by the shared-irlower
-                    // construction alias-inc. Mirrors the x86 / arm64 k_str arm
-                    // (#4297 A2). GATED on the STRFLDOK admission (str_ok, from the
-                    // whole-program read scan — the same verdict the field-reclaim
-                    // string arm and the construction retain use): a non-admitted
-                    // type's string fields are uncounted aliases this dec would
-                    // over-release (#3425, x86 twin note in emit_ir_struct_drop_one).
-                    var strload: string = "(i32.load offset=" + util.i32_to_string(8 + k * 8) + " (local.get $box))";
-                    o = o + "    (drop (call $__fern_arr_dec " + strload + "))\n";
-                }
-                k = k + 1;
-            }
+    // Which arm each field takes is asmcore.struct_drop_field_ops' call (#7736);
+    // this loop is only the wasm selection for each directive it hands back.
+    var ops: asmcore.RcOp[] = asmcore.struct_drop_field_ops(s, t);
+    var oi: i32 = 0;
+    while (oi < ops.len()) {
+        var op: asmcore.RcOp = ops[oi];
+        var load: string = "(i32.load offset=" + util.i32_to_string(8 + op.idx * 8) + " (local.get $box))";
+        if (op.kind == "elems_drop_struct") {
+            o = o + "    (drop (call $__struct_arr_elems_drop_" + op.ty + " " + load + "))\n";
+        } else if (op.kind == "elems_drop_enum") {
+            o = o + "    (drop (call $__enum_arr_elems_drop_" + op.ty + " " + load + "))\n";
+        } else if (op.kind == "box_walk_dec" || op.kind == "str_arr_free") {
+            // One helper serves both: at rc==1 $__fern_arr_dec_ptr decs each
+            // element — a string is an inline rc-headered block on wasm, so
+            // that dec is its free — then the buffer; a shared buffer just decs.
+            o = o + "    (drop (call $__fern_arr_dec_ptr " + load + "))\n";
+        } else if (op.kind == "deep_struct_drop") {
+            // $__fern_rc_is_unique null-/rc-guards internally; the arr_dec
+            // directive that follows frees the inner box.
+            o = o + "    (if (call $__fern_rc_is_unique " + load + ") (then\n";
+            o = o + "      (drop (call $__struct_drop_" + op.ty + " " + load + "))))\n";
+        } else if (op.kind == "str_free" || op.kind == "arr_dec") {
+            // A wasm string is one inline rc-headered block, so the rc-guarded
+            // $__fern_arr_dec is its free as well as the shallow box/buffer dec.
+            o = o + "    (drop (call $__fern_arr_dec " + load + "))\n";
         }
-        si = si + 1;
+        oi = oi + 1;
     }
     o = o + "    (local.get $box))\n";
     return o;
