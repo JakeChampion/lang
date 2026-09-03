@@ -309,7 +309,7 @@ func ownedByDefaultShapeIn(info *checker.Info, t ast.Type) bool {
 		// own size, and a consuming match knows its arm's variant
 		// statically (enumVariantBoxSize); only the TRMC cell free still
 		// wants one size and checks for it itself (trmcShapeConsumeSafe).
-		return enumRcPayloadsEligibleIn(info, ty.Name) && typeDeepDropWired(t, info, map[string]bool{})
+		return enumRcPayloadsEligibleIn(info, ty.Name) && deepDropWired(info, t)
 	case ast.StructType:
 		// A real StructDecl (runtime handles — Map / Reader / Writer / MapIter
 		// — have none and are rejected by typeDeepDropWired anyway); the box
@@ -318,14 +318,39 @@ func ownedByDefaultShapeIn(info *checker.Info, t ast.Type) bool {
 		if _, ok := info.Structs[ty.Name]; !ok {
 			return false
 		}
-		return typeDeepDropWired(t, info, map[string]bool{})
+		return deepDropWired(info, t)
 	case ast.TupleType:
 		// Uniform headered boxes whose elements are rc-counted (the
 		// projection-site dup balances the per-element drop in emitDec's
 		// tuple branch).
-		return typeDeepDropWired(t, info, map[string]bool{})
+		return deepDropWired(info, t)
 	}
 	return false
+}
+
+// deepDropWired is typeDeepDropWired from the top of the walk, memoised on
+// info by the type's spelling: the verdict is a pure function of (info,
+// type) and is asked once per call argument lowered, and the walk allocates
+// a seen-set and a key per node it visits.
+func deepDropWired(info *checker.Info, t ast.Type) bool {
+	return typeMemo(info, "ddw:"+t.String(), func() bool {
+		return typeDeepDropWired(t, info, map[string]bool{})
+	})
+}
+
+// typeMemo answers key from info.IRTypeMemo, computing and recording it on
+// a miss. One Info is lowered by one goroutine, so the map needs no lock;
+// a parallel lowering must fill it before fanning out or guard it.
+func typeMemo(info *checker.Info, key string, compute func() bool) bool {
+	if v, ok := info.IRTypeMemo[key]; ok {
+		return v
+	}
+	v := compute()
+	if info.IRTypeMemo == nil {
+		info.IRTypeMemo = map[string]bool{}
+	}
+	info.IRTypeMemo[key] = v
+	return v
 }
 
 // enumRcPayloadsEligible reports whether the Slice-1b EnumRcPayloads model
@@ -342,7 +367,12 @@ func (b *builder) enumRcPayloadsEligible(enumName string) bool {
 // enumRcPayloadsEligibleIn is enumRcPayloadsEligible for a pass that runs
 // before any builder exists (inferParamCountedRetain).
 func enumRcPayloadsEligibleIn(info *checker.Info, enumName string) bool {
-	return ast.EnumRcPayloads && !enumTransitivelyContainsMap(info, enumName, map[string]bool{})
+	if !ast.EnumRcPayloads {
+		return false
+	}
+	return !typeMemo(info, "emap:"+enumName, func() bool {
+		return enumTransitivelyContainsMap(info, enumName, map[string]bool{})
+	})
 }
 
 // enumRcPayloadsEligibleForValue is the expression form: true when `e` is a
