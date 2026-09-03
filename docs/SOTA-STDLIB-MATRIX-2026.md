@@ -192,11 +192,13 @@ obvious:
 2. Every `f32` transcendental computes in f64 and narrows. That is
    double rounding: a value that should round one way at f32 can round the
    other because it passed through f64 first.
-3. **The same expression can give different answers on different backends
-   today** — native calls libm, wasm runs a polynomial approximation
-   (`wasm.exp_func` and siblings). This is not a rounding subtlety; it is a
-   backend-observable difference in a language whose whole test strategy is
-   differential.
+3. **f64 transcendentals agree across backends and are gated on it.** Every
+   backend emits the same fdlibm kernels over the same reduction, from one
+   coefficient table (`internal/codegen/fdlibm`), and
+   `TestF64TranscendentalBackendsAgree` pins interp / x86-64 / arm64 / wasm
+   bit for bit. What is still open is the *contract*: Fern has not said
+   whether it promises correct rounding, a stated ULP bound, or agreement
+   alone. Agreement is not accuracy — five backends can be wrong together.
 
 So the prerequisite for this entire section is a **stated accuracy contract**,
 and it is the only DECIDE in the matrix that blocks a whole section. Three

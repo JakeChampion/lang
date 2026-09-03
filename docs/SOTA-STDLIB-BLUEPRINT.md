@@ -300,18 +300,18 @@ in-tree golden tests were, rather than relaxed.
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
 | Bigint multiply | No bigint type | Schoolbook → Karatsuba → Toom-Cook → NTT | N/A (no arbitrary-precision type) |
-| Transcendentals | libm on natives; polynomial approximations on wasm | RLIBM correctly-rounded | GAP, with an accuracy-contract decision attached |
+| Transcendentals | fdlibm kernels on every backend, ~1 ulp, agreement gated | RLIBM correctly-rounded | Narrowed; the accuracy-contract decision is still open |
 | Date/time | `std/time` | Howard Hinnant's civil-date algorithms | Worth an audit |
 | Compression | None | LZ4 / Zstd | N/A (not in the library) |
 | Crypto | `std/crypto` | BLAKE3, hardware AES/SHA | GAP (hardware acceleration needs an intrinsic surface) |
 | Parallel algorithms | None | Work stealing, parallel scan | N/A until a threading model exists |
 
 The transcendental row carries a design question, not just an implementation
-one: the wasm path uses polynomial approximations while the native paths call
-libm, so `sin(x)` can differ across backends **today**. Fern should decide
-whether it promises correctly-rounded results, a stated ULP bound, or merely
-"whatever the platform does" — and if it promises anything, the wasm path is
-where the promise breaks first. The `fast_sin` / `sin` API split the essay
+one. The divergence it was written about is closed — every backend emits the
+same fdlibm kernels from one coefficient table, and `TestF64TranscendentalBackendsAgree`
+pins them bit for bit — but agreement is not a promise about accuracy, and Fern
+still has not made one: correctly-rounded results, a stated ULP bound, or only
+that every target answers alike. The `fast_sin` / `sin` API split the essay
 suggests is one way to make that explicit.
 
 ## Recommended order
