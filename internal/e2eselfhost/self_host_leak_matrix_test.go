@@ -725,7 +725,14 @@ function main(): i32 {
 		leakCell{name: "map_struct_strfield__literal__len", src: mapStructColumnLiteralLenSrc},
 		// An ARRAY field in the value struct: the same walk, a different arm of
 		// __struct_drop_<T>.
-		leakCell{name: "map_struct_arrfield__insert__len", src: mapStructColumnArrFieldInsertSrc})
+		leakCell{name: "map_struct_arrfield__insert__len", src: mapStructColumnArrFieldInsertSrc},
+		// Arrays of tuples with a STRING element (#7910 (c)): the element
+		// admission reads the fresh-string registry, and an erased-generic
+		// callee reading `xs.len()` is a borrow of the array, not an escape.
+		leakCell{name: "arrtup_str__literal__len", src: arrTupStrLiteralLenSrc},
+		leakCell{name: "arrtup_str__callarg__erased_generic", src: arrTupStrErasedGenericSrc},
+		leakCell{name: "arrtup_arr__callarg__erased_generic", src: arrTupArrErasedGenericSrc},
+		leakCell{name: "arrtup_mixed__callarg__erased_generic", src: arrTupMixedErasedGenericSrc})
 	return cells
 }
 

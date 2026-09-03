@@ -145,3 +145,7 @@ opt_arr__fnscope__alias_match                 clean  clean  alias bind read as a
 map_struct_strfield__insert__match            clean  clean  #7910 (b): the struct value column walks each box through __map_vals_struct_drop_S before the one-dec free, and the insert-built map takes the reclaim-on-grow push under its MAPOWN: credit (no keys()/values()/for-in read), so the superseded empty buffers go too (docs/rc-log/2026-09-03-map-struct-column-deep-drop.md)
 map_struct_strfield__literal__len             clean  clean  the column alone: a literal map never grows, so this row isolates the per-box field walk from the grow release
 map_struct_arrfield__insert__len              clean  clean  the array-field arm of the same walk
+arrtup_str__literal__len                      clean  clean  #7910 (c): the ARRTUP element admission reads the fresh-string registry, so a tuple element produced by a registered fresh-string function is sole-owned and the array walks its tuples (docs/rc-log/2026-09-03-arrtup-str-elem-and-erased-generic.md)
+arrtup_str__callarg__erased_generic           clean  clean  the same array through count[T](xs: T[]): a bare-ident argument at an "ELB:" / "CNT:" param is a borrow, as the array-of-structs twin already read it
+arrtup_arr__callarg__erased_generic           clean  clean  the array-element tuple through the same erased generic — the argument position alone; its literal form was already clean
+arrtup_mixed__callarg__erased_generic         clean  clean  string and array elements together through the erased generic
