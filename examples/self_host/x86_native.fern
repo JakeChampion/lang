@@ -4047,19 +4047,25 @@ function x86_gas_comment_start(line: string): i32 {
 // A pass whose decisions match the one before it is final: nothing moved, so
 // every displacement it computed is the one the bytes will carry.
 pub function x86_gas_assemble(src: string): X86Asm {
+    // Split ONCE, not per round. The source does not change between
+    // relaxation rounds, so re-splitting it each time bought nothing and cost
+    // one full copy of the line array per round — 3.4 million strings for the
+    // self-host compiler's own asm, which is what put the whole-compiler build
+    // into the arena wall (#8146).
+    var lines: string[] = x86_str_split(src, "\n");
     var longs: boolean[] = [];
     var pass: i32 = 0;
     // Each round pins at least one more branch long, so the branch count
     // bounds the rounds; the cap is a backstop, and falling out of it keeps
     // every branch long, which is always correct if larger.
     while (pass < 24) {
-        var a: X86Asm = x86_gas_assemble_pass(src, longs);
+        var a: X86Asm = x86_gas_assemble_pass_lines(lines, longs);
         var next: boolean[] = x86_relax_grow(a, longs);
         if (!x86_bools_differ(next, longs)) { return a; }
         longs = next;
         pass = pass + 1;
     }
-    return x86_gas_assemble_pass(src, x86_bools_all_true(longs.len()));
+    return x86_gas_assemble_pass_lines(lines, x86_bools_all_true(longs.len()));
 }
 
 // x86_relax_grow returns the next round's decisions: every branch this pass
@@ -4113,10 +4119,12 @@ function x86_bools_all_true(n: i32): boolean[] {
     return out;
 }
 
-function x86_gas_assemble_pass(src: string, longs: boolean[]): X86Asm {
+// x86_gas_assemble_pass assembles one relaxation round from the already-split
+// source. Callers that hold the text rather than the lines go through
+// x86_gas_assemble, which splits once for every round.
+function x86_gas_assemble_pass_lines(lines: string[], longs: boolean[]): X86Asm {
     var a: X86Asm = x86_asm_new_for(true, longs);
     var section: i32 = 0; // 0 = .text, 1 = .rodata
-    var lines: string[] = x86_str_split(src, "\n");
     var li: i32 = 0;
     while (li < lines.len()) {
         var raw: string = lines[li];
