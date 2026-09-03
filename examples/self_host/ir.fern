@@ -599,10 +599,13 @@ pub function op_tcp_pollable(): Op { return op0("tcp_pollable"); }
 // (#4371); the client ops above are the outbound-fetch half.
 pub function op_tcp_listen(): Op { return op0("tcp_listen"); }
 pub function op_tcp_accept(): Op { return op0("tcp_accept"); }
-// `writer_write` [fd, str box] -> i32 bytes written (or -errno): write(2) of the
-// box's bytes to the fd. The write-half streaming primitive (#4372); a Writer is
-// a bare fd (like a Reader — see op_read_chunk). `stdout()`/`stderr()` lower to
-// the i32 constants 1/2 directly (no op); `Writer.close()` reuses op_reader_close.
+// `writer_write` [fd, str box] -> a fresh `Option[IoError]` box: write(2) of the
+// box's bytes to the fd, looping until they are all out — None once they are,
+// Some(io_error(errno, "")) on a failing write. The write-half streaming
+// primitive (#4372); a Writer is a bare fd (like a Reader — see op_read_chunk).
+// `stdout()`/`stderr()` lower to the i32 constants 1/2 directly (no op);
+// `Writer.close()` reuses op_reader_close. The byte count is not reported:
+// native's signature has no channel for it (#7926).
 pub function op_writer_write(): Op { return op0("writer_write"); }
 // `open_file` [path box] -> a fresh `Result[Reader|Writer, IoError]` box:
 // NUL-terminate the path, openat(AT_FDCWD, path, flags, 0644), then Ok(fd) or
@@ -3222,6 +3225,9 @@ pub function op_allocates(tag: i32): boolean {
     // open_file boxes its Result[Reader|Writer, IoError] result (and the IoError
     // its error path builds), so it needs the heap runtime (#7758).
     if (tag == 203) { return true; }
+    // writer_write boxes its Option[IoError] result (and, on a failing write,
+    // the IoError inside it), so it needs the heap runtime too (#7926).
+    if (tag == 202) { return true; }
     // read_file_bytes boxes the contents into a fresh u8[] + a Result wrapper.
     if (tag == 233) { return true; }
     // remove_dir_all boxes its Result[(), IoError] result and heap-builds child path

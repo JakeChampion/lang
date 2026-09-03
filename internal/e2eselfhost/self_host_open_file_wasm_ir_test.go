@@ -10,10 +10,11 @@ import (
 
 // TestSelfHostOpenFileWasmIR covers the streaming file-I/O intrinsics
 // open_writer / open_appender / open_reader (op_open_file) + Writer.write
-// (op_writer_write) on the self-host WASM IR path (#4372 file half, #7758).
+// (op_writer_write) on the self-host WASM IR path (#4372 file half, #7758, #7926).
 // wasm_ir emits $__fern_open_file (path_open under preopen fd 3, mapping the openat
 // flags to WASI oflags/rights/fdflags, then boxing Ok(fd) / Err($__fern_build_io_error))
-// and $__fern_writer_write (fd_write). Runs under wasmtime with `--dir=.::/` granting
+// and $__fern_writer_write (fd_write in a short-write loop, boxing None /
+// Some($__fern_build_io_error)). Runs under wasmtime with `--dir=.::/` granting
 // the run dir as fd 3, and verifies the host file.
 //
 // The programs use NATIVE's signature — `match (open_writer(p)) { Ok(w) => .., Err(e)
@@ -58,8 +59,10 @@ func TestSelfHostOpenFileWasmIR(t *testing.T) {
 	}
 
 	// open_writer + Writer.write + close: writes "hello world" to ow.txt, returns 0.
+	// The write's result is MATCHED, not discarded: $__fern_writer_write boxes an
+	// Option[IoError] like native's (#7926), so None is what a completed write says.
 	t.Run("writer", func(t *testing.T) {
-		src := `function main(): i32 { match (open_writer("ow.txt")) { Ok(w) => { w.write("hello world"); w.close(); }, Err(_) => { return 91; } } return 0; }`
+		src := `function main(): i32 { match (open_writer("ow.txt")) { Ok(w) => { match (w.write("hello world")) { Some(_) => { return 92; }, None => {} } w.close(); }, Err(_) => { return 91; } } return 0; }`
 		if code := run(t, src); code != 0 {
 			t.Fatalf("writer exit %d, want 0", code)
 		}

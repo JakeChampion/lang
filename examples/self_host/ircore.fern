@@ -882,7 +882,7 @@ pub function all_runtime_need_roots(): string[] {
         // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
         // Filesystem + process:
         "stat", "lstat", "read_dir", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
-        "temp_dir", "open_file", "reader", "subprocess",
+        "temp_dir", "open_file", "reader", "writer_write", "subprocess",
         // stdin / argv:
         "read_all_stdin", "arg_at",
         // sockets + readiness (the edge-handler serve loop):
