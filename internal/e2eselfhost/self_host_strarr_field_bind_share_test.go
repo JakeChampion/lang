@@ -41,9 +41,12 @@ import (
 // balances. Its exit never moved.
 //
 // `escaping_holder_now_clean` is the one row that moved further than the pin
-// predicted. The inline cell refuses it and stays leaking; through the bind it
-// is admitted and balances, because the walk can see that `tt` reaches only the
-// returned holder's field. Both answer 8 on all three engines.
+// predicted: through the bind the returned literal's field value is a bare
+// ident, which the strict-fresh return classifier already admitted, so the
+// caller's binding earned its reclaim. The inline spelling reached the same
+// classifier as a field read and was refused there until #5338 admitted it;
+// self_host_strarr_field_share_read_test.go pins both. Both answer 8 on all
+// three engines.
 //
 // The target was re-run under FERN_SANITIZE=1 with FERN_RC_UNDERFLOW_TRAP=1 and
 // FERN_RC_FREE_DEBUG=1: clean, no trap, no quarantine hit.
@@ -91,10 +94,9 @@ func strarrBindShareCases() []arrenumShareCase {
 			want: 72, balance: true,
 		},
 		{
-			// The holder escapes with the bind inside the callee. The INLINE
-			// cell refuses this shape and stays leaking; here the walk can see
-			// `tt` reaches only the returned holder's field, so it is admitted
-			// and balances. Reads every element back after churn.
+			// The holder escapes with the bind inside the callee. The walk can
+			// see `tt` reaches only the returned holder's field, so it is
+			// admitted and balances. Reads every element back after churn.
 			name: "escaping_holder_now_clean",
 			src: strarrBindShareDecl + `function make(i: i32): P {
     var q: P = P { f: mkv(i), n: i };

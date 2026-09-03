@@ -41,12 +41,25 @@ import (
 // second." So `escaping_holder` below is the load-bearing case rather than a
 // formality: it returns the target holder while the source dies inside the
 // callee, then reads every element back after 200 rounds of churn have recycled
-// the freelist. It answers correctly on all three engines and is pinned at its
-// LEAKING count — the conservative direction — because a holder that escapes is
-// a different admission question this share does not answer.
+// the freelist.
+//
+// THE ESCAPING HOLDER was pinned leaking when the share landed, and its block
+// was never the share: the callee's `make` emitted __struct_drop_P for the
+// source and returned the target with the buffer at rc 1 — the leak was the
+// CALLER'S `var p: P = make(i)`, which earned no reclaim because the
+// strict-fresh return classifier (return_value_is_strictfresh_struct) read a
+// `q.f` field value as an alias and refused `make` as a producer. The bind
+// spelling was admitted there through its bare ident and balanced. The read is
+// now admitted on the same terms as that ident: the construction retains it,
+// so the returned box carries a counted reference of its own, the source's
+// drop releases only the source's count, and the caller's deep drop decs the
+// literal's. __fern_str_arr_free walks elements only at rc 1, so every holder
+// that outlives the frame — a parameter source, a second literal, a source that
+// escaped and was never dropped — leaves the count above 1 and costs a leak,
+// never a free. The `escaping_holder_*` rows below pin each of those.
 //
 // Every want was confirmed against native x86-64 AND `bin/fern -interp`, which
-// agree on every exit, and the target was re-run under FERN_SANITIZE=1 with
+// agree on every exit, and every row was re-run under FERN_SANITIZE=1 with
 // FERN_RC_UNDERFLOW_TRAP=1 and FERN_RC_FREE_DEBUG=1: clean, no trap, no
 // quarantine hit.
 
@@ -104,31 +117,126 @@ function main(): i32 {
 			// THE SOUNDNESS CASE. The source holder dies inside `make` while the
 			// target is returned, and every element is read back after churn has
 			// recycled the freelist. An over-release here returns -1 or -2 (exit
-			// 100) or segfaults (139); native and interp both exit 8. Pinned at
-			// its LEAKING count: an escaping holder is a different admission
-			// question, so the conservative direction is kept.
+			// 100) or segfaults (139); native and interp both exit 8. Was pinned
+			// leaking (3000 allocs / 2200 frees against native's 3000/3000);
+			// balances now that `make` is a strict-fresh producer.
 			name: "escaping_holder",
-			src: strarrShareReadDecl + `function churn(i: i32): i32 { var a: string[] = mkv(i); var b: string[] = mkv(i + 1); return a[0].len() + b[1].len(); }
-function make(i: i32): P { var q: P = P { f: mkv(i), n: i }; var p: P = P { f: q.f, n: i }; return p; }
+			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P { var q: P = P { f: mkv(i), n: i }; var p: P = P { f: q.f, n: i }; return p; }
+` + strarrEscapingRound + strarrEscapingMain,
+			want: 8, balance: true,
+		},
+		{
+			// The field is read into TWO holders and one is returned. Three
+			// counts on the buffer; the source's drop and the second literal's
+			// drop each take one inside `make`, and the caller's deep drop is
+			// the last owner. Balances, and reads back after churn.
+			name: "escaping_holder_read_twice",
+			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P {
+    var q: P = P { f: mkv(i), n: i };
+    var p2: P = P { f: q.f, n: i + 1 };
+    var p: P = P { f: q.f, n: i + p2.f.len() - 2 };
+    return p;
+}
+` + strarrEscapingRound + strarrEscapingMain,
+			want: 8, balance: true,
+		},
+		{
+			// The SOURCE is returned on one path and the target on the other.
+			// Both holders escape, so neither is dropped inside `make` and
+			// `make` is no producer: the count never reaches 1 in the caller,
+			// which is the leak this pins. Exit 8 on every engine.
+			name: "escaping_holder_source_returned",
+			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P {
+    var q: P = P { f: mkv(i), n: i };
+    var p: P = P { f: q.f, n: i };
+    if (i % 2 == 0) { return q; }
+    return p;
+}
+` + strarrEscapingRound + strarrEscapingMain,
+			want: 8,
+		},
+		{
+			// The source is a PARAMETER the caller keeps reading after the
+			// returned holder has been dropped. The read is admitted — the
+			// literal retained it, so the caller's drop decs to the parameter's
+			// own count — and the leak pinned here is the caller's `q`, which
+			// is refused as a non-borrowable call argument. Exit 76 on every
+			// engine, and `q.f[1]` reads back intact.
+			name: "escaping_holder_param_source",
+			src: strarrShareReadDecl + strarrEscapingChurn + `function make(q: P, i: i32): P { return P { f: q.f, n: i }; }
 function round(i: i32): i32 {
+    var want: i32 = w("a").len();
+    var q: P = P { f: mkv(i), n: i };
+    var p: P = make(q, i);
+    var junk: i32 = churn(i * 3 + 1);
+    if (p.f.len() != 2) { return 0 - 1; }
+    if (p.f[0].len() != want) { return 0 - 2; }
+    if (q.f[1].len() != want) { return 0 - 3; }
+    return (p.f[1].len() + q.f.len() + junk) % 101;
+}` + strarrEscapingMain,
+			want: 76,
+		},
+		{
+			// A local holder SHADOWS a parameter of the same name. The holder
+			// type is refused as ambiguous, `make` earns no credit, and the
+			// returned box leaks — the conservative direction. Exit 76.
+			name: "escaping_holder_shadowed_holder",
+			src: strarrShareReadDecl + strarrEscapingChurn + `function make(q: P, i: i32): P {
+    var q: P = P { f: mkv(i), n: i };
+    var p: P = P { f: q.f, n: i };
+    return p;
+}
+function round(i: i32): i32 {
+    var want: i32 = w("a").len();
+    var q0: P = P { f: mkv(i + 7), n: i };
+    var p: P = make(q0, i);
+    var junk: i32 = churn(i * 3 + 1);
+    if (p.f.len() != 2) { return 0 - 1; }
+    if (p.f[0].len() != want) { return 0 - 2; }
+    return (p.f[1].len() + q0.f.len() + junk) % 101;
+}` + strarrEscapingMain,
+			want: 76,
+		},
+		{
+			// An ELEMENT is bound inside `make` before the share. strarrfld_scan
+			// marks P.f, the type loses its field reclaim program-wide, and
+			// nothing walks the elements anywhere — the leak this pins. The
+			// admission here does not override that scan.
+			name: "escaping_holder_element_bound",
+			src: strarrShareReadDecl + strarrEscapingChurn + `function make(i: i32): P {
+    var q: P = P { f: mkv(i), n: i };
+    var e: string = q.f[0];
+    var p: P = P { f: q.f, n: e.len() };
+    return p;
+}
+` + strarrEscapingRound + strarrEscapingMain,
+			want: 8,
+		},
+	}
+}
+
+// The escaping-holder rows share a caller that drops the returned holder only
+// after churn has recycled the freelist, then reads every element back.
+const strarrEscapingChurn = `function churn(i: i32): i32 { var a: string[] = mkv(i); var b: string[] = mkv(i + 1); return a[0].len() + b[1].len(); }
+`
+
+const strarrEscapingRound = `function round(i: i32): i32 {
     var want: i32 = w("a").len();
     var p: P = make(i);
     var junk: i32 = churn(i * 3 + 1);
     if (p.f.len() != 2) { return 0 - 1; }
     if (p.f[0].len() != want) { return 0 - 2; }
     return (p.f[1].len() + junk) % 101;
-}
+}`
+
+const strarrEscapingMain = `
 function main(): i32 {
     var t: i32 = 0; var i: i32 = 0; var bad: i32 = 0;
     while (i < 200) { var r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; }
     if (bad > 0) { return 100; }
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
-}`,
-			want: 8,
-		},
-	}
-}
+}`
 
 // TestSelfHostStrArrFieldShareReadX86_64 — a bare `q.f` string[] read handed into
 // a string[] field is a counted share, and both holders keep their reclaim.
