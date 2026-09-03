@@ -127,12 +127,14 @@ func TestSelfHostI32PredicatesIRX86_64(t *testing.T) {
 		{"lcm-multiple", "function main(): i32 { var n: i32 = 3; return n.lcm(9); }", 9},
 		{"lcm-expr-receiver", "function main(): i32 { var a: i32 = 2; var b: i32 = 2; return (a + b).lcm(6); }", 12},
 		// xs.index_of(x) / xs.contains(x): helper-backed WITH an argument, so both the
-		// need-mapping and the reverse operand order apply. The not-found cases shift
-		// by +10 because the helper returns -1, which is not an exit code.
-		{"index-of-found-mid", "function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(9); }", 2},
-		{"index-of-found-first", "function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(7); }", 0},
-		{"index-of-missing", "function main(): i32 { var xs: i32[] = [7, 8, 9]; return xs.index_of(4) + 10; }", 9},
-		{"index-of-empty", "function main(): i32 { var xs: i32[] = []; return xs.index_of(1) + 10; }", 9},
+		// need-mapping and the reverse operand order apply. index_of returns
+		// Option[i32] (#4387), so not-found is the None arm — the min/max shape
+		// below — rather than a sentinel an exit code cannot carry. contains reads
+		// the raw scan as a bool and stays a plain expression.
+		{"index-of-found-mid", "function main(): i32 { var xs: i32[] = [7, 8, 9]; match (xs.index_of(9)) { Some(i) => { return i; }, None => { return 99; } } }", 2},
+		{"index-of-found-first", "function main(): i32 { var xs: i32[] = [7, 8, 9]; match (xs.index_of(7)) { Some(i) => { return i; }, None => { return 99; } } }", 0},
+		{"index-of-missing", "function main(): i32 { var xs: i32[] = [7, 8, 9]; match (xs.index_of(4)) { Some(i) => { return i; }, None => { return 99; } } }", 99},
+		{"index-of-empty", "function main(): i32 { var xs: i32[] = []; match (xs.index_of(1)) { Some(i) => { return i; }, None => { return 99; } } }", 99},
 		{"contains-true", "function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(8)) { return 1; } return 0; }", 1},
 		{"contains-false", "function main(): i32 { var xs: i32[] = [7, 8, 9]; if (xs.contains(3)) { return 1; } return 0; }", 0},
 		{"contains-single", "function main(): i32 { var xs: i32[] = [5]; if (xs.contains(5)) { return 1; } return 0; }", 1},
