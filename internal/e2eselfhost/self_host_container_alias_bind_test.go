@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -301,21 +302,137 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x +
 			want: 38, allocs: 200, frees: 100,
 		},
 		{
-			// REFUSED DELIBERATELY, and this row is the reason the chain credit is
-			// wired per limb rather than into alias_bind_sites_of itself.
+			// The rc-TUPLE CHAIN, credited as one set (#7750). It was the last
+			// limb left refused after #7386, because the bare chain credit
+			// measured an OVER-RELEASE here that the census cannot see: exit 99
+			// at `200/200 live_bytes 0`.
 			//
 			// The tuple limbs perform move-on-alias credit SURGERY: at a move the
-			// deep "TUPRCS:" class migrates from the source to the alias row. Under
-			// a chain credit this shape measures `__rc_underflow() != 0` — an
-			// FERN_RC_TRACE run shows one retain for two links, so three decs land
-			// on an rc of two — while its census reads a clean `200/200
-			// live_bytes 0`. The interaction is not established, so the tuple chain
-			// stays refused rather than guessed at (#7386 follow-up), and this row
-			// is what says the exclusion is intentional.
-			name: "tuple_alias_chain_refused",
-			src: `function round(i: i32): i32 { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; return u.0 + i; }
+			// deep "TUPRCS:" class migrates from the source to the alias row and
+			// the alias's shallow "TUP:" row is dropped. After the first hop `v`
+			// therefore holds "TUPRCS:" ALONE, and the ladder's retain gate at the
+			// second hop asked only for "TUP:" / "TUPRC:" — so `var u = v` found
+			// its source uncredited: no retain, no move-elision of `v`, while the
+			// credit pass had already granted `u` its "TUP:" row. FERN_RC_TRACE
+			// on one round: two allocs, two frees, NO retain, and the exit sweep
+			// dec'd the box from `u` (shallow, freeing it) and again from `v`
+			// (deep, reading `.1` out of the freed box first — the sanitizer
+			// reports the use-after-free). The gate now asks
+			// slot_is_credited_tuple, which names all three states a credited
+			// source can be in. Base 200/0, 8000.
+			//
+			// The element is read through the LAST link on purpose: that is what
+			// puts the deep free's box read after the shallow dec in the failing
+			// order, so this row is a use-after-free under the sanitize leg and
+			// not only an underflow.
+			name: "tuple_alias_chain",
+			src: `function round(i: i32): i32 { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; return u.1.len() + u.0; }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 23, allocs: 200, frees: 0,
+			want: 4, allocs: 200, frees: 200,
+		},
+		{
+			// The chain reading the SOURCE, so the first hop is NOT a move: `t`
+			// keeps its deep class, `v` is retained against and takes the
+			// shallow row, and the second hop moves `v` into `u`. The struct
+			// limb's source-read row is the one that told a half fix from a
+			// whole one; this is the tuple pair's.
+			name: "tuple_alias_chain_source_read",
+			src: `function round(i: i32): i32 { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; return t.1.len() + u.0; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 4, allocs: 200, frees: 200,
+		},
+		{
+			// The chain reading the MIDDLE link after the last bind, so the
+			// second hop is a DUPLICATION whose source is a moved-into link: `v`
+			// holds "TUPRCS:" alone, and the retain against it is the one the
+			// old gate could not fire. `u` takes the shallow dec, `v` the deep
+			// free, and the box needs the rc of 2 that retain provides.
+			name: "tuple_alias_chain_middle_read",
+			src: `function round(i: i32): i32 { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; return u.1.len() + v.0; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 4, allocs: 200, frees: 200,
+		},
+		{
+			// THREE links: the deep class migrates twice, and every hop after
+			// the first reads a "TUPRCS:"-only source.
+			name: "tuple_alias_chain_three_links",
+			src: `function round(i: i32): i32 { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; var z: (i32, i32[]) = u; return z.1.len() + z.0; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 4, allocs: 200, frees: 200,
+		},
+		{
+			// The chain in an IF ARM. Moves are top-level only, so no surgery
+			// happens here: every link retains and takes the shallow dec on the
+			// taken path, and the source deep-frees unconditionally.
+			name: "tuple_alias_chain_conditional",
+			src: `function round(i: i32): i32 { var t: (i32, i32[]) = (i, [i, i + 1]); var n: i32 = 0; if (i % 2 == 0) { var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; n = u.1.len(); } return n + t.1.len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 21, allocs: 200, frees: 200,
+		},
+		{
+			// REFUSED: the LAST link is returned. All-or-nothing — the escape on
+			// `u` costs `t` and `v` their credit too, since all three name the
+			// box the caller now holds.
+			name: "tuple_alias_chain_link_returned_refused",
+			src: `function esc(i: i32): (i32, i32[]) { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; return u; }
+function round(i: i32): i32 { var r: (i32, i32[]) = esc(i); return r.1.len() + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 4, allocs: 200, frees: 0,
+		},
+		{
+			// REFUSED: a MIDDLE link is stored into a container that outlives
+			// it. The 100 frees are `held`'s own buffer; the tuple's box and
+			// element stay put.
+			name: "tuple_alias_chain_middle_link_held_refused",
+			src: `function sink(xs: (i32, i32[])[]): i32 { return xs.len(); }
+function round(i: i32): i32 { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; var u: (i32, i32[]) = v; var held: (i32, i32[])[] = [v]; return u.1.len() + sink(held) + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 21, allocs: 300, frees: 100,
+		},
+		{
+			// The SCALAR tuple chain: no deep class, so a move performs no
+			// surgery and each hop reads a "TUP:" source. This pair leaked
+			// under the per-site rule (100/0) and was never at risk of the
+			// over-release; it is here so the two limbs stand or fall together.
+			name: "tuple_alias_scalar_chain",
+			src: `function round(i: i32): i32 { var t: (i32, i32) = (i, i + 1); var v: (i32, i32) = t; var u: (i32, i32) = v; return u.0 + u.1; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 40, allocs: 100, frees: 100,
+		},
+		{
+			name: "tuple_alias_scalar_chain_middle_read",
+			src: `function round(i: i32): i32 { var t: (i32, i32) = (i, i + 1); var v: (i32, i32) = t; var u: (i32, i32) = v; return u.0 + v.1; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 40, allocs: 100, frees: 100,
+		},
+		{
+			name: "tuple_alias_scalar_chain_three_links",
+			src: `function round(i: i32): i32 { var t: (i32, i32) = (i, i + 1); var v: (i32, i32) = t; var u: (i32, i32) = v; var z: (i32, i32) = u; return z.0 + z.1; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 40, allocs: 100, frees: 100,
+		},
+		{
+			name: "tuple_alias_scalar_chain_conditional",
+			src: `function round(i: i32): i32 { var t: (i32, i32) = (i, i + 1); var n: i32 = 0; if (i % 2 == 0) { var v: (i32, i32) = t; var u: (i32, i32) = v; n = u.1; } return n + t.0 + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 33, allocs: 100, frees: 100,
+		},
+		{
+			// REFUSED: the last link returned, scalar limb.
+			name: "tuple_alias_scalar_chain_link_returned_refused",
+			src: `function esc(i: i32): (i32, i32) { var t: (i32, i32) = (i, i + 1); var v: (i32, i32) = t; var u: (i32, i32) = v; return u; }
+function round(i: i32): i32 { var r: (i32, i32) = esc(i); return r.0 + r.1; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 40, allocs: 100, frees: 0,
+		},
+		{
+			// REFUSED: a middle link held by a container, scalar limb. The 100
+			// frees are `held`'s buffer.
+			name: "tuple_alias_scalar_chain_middle_link_held_refused",
+			src: `function sink(xs: (i32, i32)[]): i32 { return xs.len(); }
+function round(i: i32): i32 { var t: (i32, i32) = (i, i + 1); var v: (i32, i32) = t; var u: (i32, i32) = v; var held: (i32, i32)[] = [v]; return u.0 + sink(held) + i; }
+function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 40, allocs: 200, frees: 100,
 		},
 		{
 			// AN ENUM with an rc payload, aliased. This row pins the #7368
@@ -930,6 +1047,22 @@ func TestSelfHostContainerAliasBindX86_64(t *testing.T) {
 					"stopped reaching this shape (a partial thread shows up as a "+
 					"scope-dependent result); MORE on a refused row means it reached "+
 					"one it must decline", tc.name, summary, tc.frees)
+			}
+
+			// Every over-release in this family balances the census, and the
+			// underflow counter only sees the SECOND dec of a box — a deep free
+			// that reads through a box the shallow dec already returned is a
+			// use-after-free the counter reports late or not at all (the tuple
+			// chain, #7750). The quarantining allocator reports both directly.
+			// A refused row's leak is reported here too and is not a failure.
+			sanAsm := hevCompile(t, runner, driverBin, tc.src, []string{"FERN_SANITIZE=1"})
+			sanBin := buildBin(t, gcc, dir, "alias_san_"+tc.name, sanAsm)
+			sanErr, sanExit := hevRun(t, runner, sanBin)
+			if sanExit != tc.want {
+				t.Fatalf("%s sanitize leg exited %d, want %d (124 = fatal sanitizer check)", tc.name, sanExit, tc.want)
+			}
+			if strings.Contains(sanErr, "rc over-release") || strings.Contains(sanErr, "use-after-free") {
+				t.Fatalf("%s sanitize leg reported:\n%s", tc.name, sanErr)
 			}
 		})
 	}
