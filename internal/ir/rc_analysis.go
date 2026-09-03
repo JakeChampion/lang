@@ -2193,10 +2193,13 @@ func (b *builder) countedBindingAlias(target string, e ast.Expr) bool {
 // `ops` threading). The analysis taints such values and excludes
 // them; only the owner frees (Perceus's rule).
 //
-// Taint sources: parameters; for-in / match / if-let / let-else /
-// destructure bindings; locals that ESCAPE into a container (stored
-// as a map/array element, struct/tuple/enum payload — retained
-// without an inc, so the owner must not free out from under them).
+// Taint sources: parameters; for-in / match / if-let / let-else
+// bindings; locals that ESCAPE into an UNCOUNTED sink (a capture cell,
+// a raw-pointer cast, a container store its lowering does not retain —
+// retained without an inc, so the owner must not free out from under
+// them). The container stores that DO retain — array push / .with,
+// struct / tuple / rc-enum construction, if- / match-expr yields, map
+// insert — are counted and taint nothing (#4399).
 // Taint propagates through assignment: a local becomes tainted if
 // it's ever assigned a tainted Ident, a field / index / slice access
 // (which alias their container), or a call that receives a tainted
@@ -2245,20 +2248,18 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			tainted[n] = true
 		}
 	}
-	// escape taints a local that flows into a retain sink: a value
-	// stored into a container (map/array element, struct/tuple/enum
-	// payload) is RETAINED without a caller-side inc (the Phase 2d
-	// borrow model — only the owner counts). Freeing the local at
-	// scope exit would then use-after-free the alias the container
-	// still holds (e.g. `var arr = [val]; m.set(k, arr)` in
-	// std/url's __query_pair).
+	// escape taints a local that flows into an UNCOUNTED retain sink: a
+	// value the sink holds without an inc (a capture cell, a struct /
+	// enum map key, a kind-1 map value, a non-rc enum payload). Freeing
+	// the local at scope exit would then use-after-free the alias the
+	// sink still holds.
 	//
 	// A pointer-shaped value read OUT of a container and retained into
-	// a sink — `def_body.push(body[k])`, `m.set(k, row[i])`,
-	// `Arr(grid[j])` — copies the pointer without an inc too, so the
-	// SOURCE container (`body` / `row` / `grid`) must not free it out
-	// from under the sink either. escape unwraps such projection chains
-	// (index / field / array-slice) to the root local and taints that.
+	// such a sink — `outer.insert(k, inner_maps[i])`, `Arr(grid[j])` —
+	// copies the pointer without an inc too, so the SOURCE container
+	// (`inner_maps` / `grid`) must not free it out from under the sink
+	// either. escape unwraps such projection chains (index / field /
+	// array-slice) to the root local and taints that.
 	// The unwrap is gated on the projected value being pointer-shaped:
 	// a scalar element (`i32[]`) can't alias, so its source stays
 	// reclaimable. A string slice copies into a fresh owned buffer
@@ -2331,6 +2332,19 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			}
 		}
 		escape(e)
+	}
+	// escapeMapEntry is the map-store variant (#4399 sink 5): a key or
+	// value the store retains (mapSetKeyCounted / mapSetValueCounted —
+	// the predicate emitMapSetRetains itself runs) is co-owned by the
+	// column and released by the map's drop, so its source keeps a
+	// reference of its own; any other entry side keeps the escape walk.
+	escapeMapEntry := func(key, val ast.Expr, kType, vType ast.Type) {
+		if !b.mapSetKeyCounted(key, kType) {
+			escape(key)
+		}
+		if !b.mapSetValueCounted(val, vType) {
+			escape(val)
+		}
 	}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		switch s := n.(type) {
@@ -2418,19 +2432,36 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				escapeCountedYield(arm.Body)
 			}
 		case *ast.Call:
-			// Retain sinks the checker lowers to Calls. None of
-			// these inc the stored rc value (unlike StructLit /
-			// TupleLit construction, which do — see
-			// needsRcIncOnAlias at the alias sites), so a local
-			// that flows in is retained uncounted and must not be
-			// freed at scope exit.
+			// Retain sinks the checker lowers to Calls. Each is a
+			// COUNTED store for the shapes its lowering retains and
+			// its container's drop releases; only the uncounted
+			// remainder of each keeps the escape taint.
 			if id, ok := s.Callee.(*ast.Ident); ok {
 				switch {
 				case id.Name == "__method_Map_set":
-					// Args[0] is the map (mutated in place), not a
-					// retained value — skip it; taint key + value.
-					for _, a := range s.Args[1:] {
-						escape(a)
+					// `m.insert(k, v)` — Args[0] is the map (threaded /
+					// reassigned), not retained. The key and value
+					// columns are COUNTED stores (#4399 sink 5) exactly
+					// where emitMapSetRetains retains — mapSetKeyCounted /
+					// mapSetValueCounted are the lowering's own predicate
+					// — and appendMapDropChain walks those columns at the
+					// map's drop, so the source is co-owned and stays
+					// reclaimable. The uncounted remainder (a struct /
+					// enum key, a kind-1 value such as a nested Map)
+					// keeps the escape walk.
+					if len(s.Args) == 3 {
+						var kType, vType ast.Type
+						if len(s.TypeArgs) >= 1 {
+							kType = s.TypeArgs[0]
+						}
+						if len(s.TypeArgs) >= 2 {
+							vType = s.TypeArgs[1]
+						}
+						escapeMapEntry(s.Args[1], s.Args[2], kType, vType)
+					} else {
+						for _, a := range s.Args[1:] {
+							escape(a)
+						}
 					}
 				case id.Name == "__method_Array_push":
 					// Args[0] is the receiver array (threaded /
@@ -2576,9 +2607,11 @@ func (b *builder) computeFreeEligible() map[string]bool {
 				escapeOwned(e)
 			}
 		case *ast.MapLit:
+			// `Map { k: v }` stores each entry through the same
+			// emitMapSetRetains the insert form takes, so it is the
+			// same counted store.
 			for _, ent := range s.Entries {
-				escape(ent.Key)
-				escape(ent.Value)
+				escapeMapEntry(ent.Key, ent.Value, s.KeyType, s.ValueType)
 			}
 		case *ast.EnumLit:
 			rc := b.enumRcPayloadsEligible(s.EnumName)
@@ -2807,8 +2840,8 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// `Map { … }` lowers to a fresh `map_new` plus one `__method_Map_set`
 		// per entry — the same construction `var m = map_new(n)` followed by
 		// inserts produces — so the local owns the handle and aliases nothing.
-		// The entries' own sources are escape-tainted by computeFreeEligible's
-		// MapLit arm, exactly as the insert form's `__method_Map_set` args are.
+		// The entries' own sources take computeFreeEligible's MapLit arm,
+		// exactly as the insert form's `__method_Map_set` args do.
 		return false
 	case *ast.MakeClosure:
 		// A freshly-built closure (rc=1), like an array literal — it
