@@ -83,5 +83,12 @@
 # on the same tree the line before, 94.6% of it that one site. What is left is
 # the compiler's own accumulators (§4d.5) plus the recorder's linear residue.
 
-x86_64/checker.cliff_bytes	272194668
-x86_64/checker.cliff_count	386487
+# Re-pinned 2026-09-03 (#8190) after fieldPlaceAppendCopies started consulting
+# the callee escape summary: a container read into a call argument the callee
+# provably cannot leak no longer counts as a binding that names it, so the
+# field append keeps its in-place grow. 271,315,168 / 379,810 on the same tree
+# the line before. The arm64 TARGET, which this was aimed at and which no
+# baseline covers, went 1,290,816,360 / 510,568 to 376,513,680 / 474,940.
+
+x86_64/checker.cliff_bytes	202714832
+x86_64/checker.cliff_count	376543
