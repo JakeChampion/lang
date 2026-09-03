@@ -6093,7 +6093,12 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     // Derive the emit-side side-tables ONCE (over im.funcs/im.structs — the whole-
     // program view, all_funcs == im.funcs here) exactly as emit_module_funcs does,
     // so the cached lowering is byte-identical to what emit would produce.
-    var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(ircore.wp_fn_sigs(im.funcs, im.structs), im.trait_reqs);
+    // The whole-program registry set is the most expensive thing this driver
+    // computes (both interprocedural fixpoints plus fn_sigs_for_borrow); it is
+    // built once here and handed to the unit emitter, which folds the
+    // per-module tails onto it itself (#8199).
+    var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, im.structs);
+    var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, im.trait_reqs);
     // Lower every function once into `cache`, checking eligibility on each result.
     // Bail on the first function whose body doesn't lower or whose
     // direct calls / function values reference an unknown symbol.
@@ -6126,7 +6131,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
         i = i + 1;
     }
     // Every function eligible — emit from the cache (no second lowering).
-    return emit_module_ir_unit(im, true, false, "", [], im.funcs, im.structs, 0, 0 - 1, cache);
+    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, im.structs, 0, 0 - 1, cache, base);
 }
 
 // pp_has_mem reports whether asm[lo:hi] is a memory operand, i.e. carries a
