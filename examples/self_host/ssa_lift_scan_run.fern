@@ -73,11 +73,13 @@ function main(): i32 {
             var lower_bail: i32 = 0;
             var hist: Hist = Hist { keys: [], counts: [] };
 
+            var no_arr_ret: string[] = [];
+            var sg: irlower.FnSigs = irlower.fn_sigs_of(merged.funcs, merged.structs, no_arr_ret);
             var i: i32 = 0;
             while (i < merged.funcs.len()) {
                 var fn: parser.FuncDecl = merged.funcs[i];
                 total = total + 1;
-                var lr: irlower.LowerResult = irlower.lower_func_for(fn, [], merged.structs, merged.funcs);
+                var lr: irlower.LowerResult = irlower.lower_func(fn, merged.structs, sg, false);
                 if (!lr.ok) {
                     lower_bail = lower_bail + 1;
                 } else {
