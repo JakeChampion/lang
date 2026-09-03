@@ -5231,11 +5231,10 @@ pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): b
 // `idx` is the field index; a backend derives its own slot offset from it,
 // since the register backends and wasm lay a box out differently.
 //
-// Scope: the register backends only. wasm's classifier agrees on every arm but
-// the `string[]` buffer one, where it decs ungated and the register backends
-// require `strfldok:arrbuf:<T>` — an open question (§9), not a spelling
-// difference, so converting wasm is a separate change that has to settle it
-// rather than inherit an answer from this one.
+// All three backends walk this list. The `string[]` admissions are load-bearing
+// on wasm too: a functional-update base copy hands the new box every array
+// field pointer with no retain, so an ungated dec there frees a buffer the base
+// still owns (#8119, the compiler's own FnSigs).
 pub struct RcOp { kind: string, idx: i32, ty: string }
 
 // struct_drop_field_ops returns the ordered field-release directives for

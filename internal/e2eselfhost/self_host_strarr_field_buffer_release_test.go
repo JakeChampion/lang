@@ -119,6 +119,43 @@ function mk(pre: string): string[] { var o: string[] = []; var i: i32 = 0; while
 function doc(title: string, lines: string[]): Doc { return Doc { title: title, lines: lines }; }
 function round(pre: string): i32 { var d: Doc = doc(w(pre), mk(pre)); var junk: string[] = mk(pre); if (junk.len() < 0) { return 0; } return d.lines.len() + d.lines[0].len() + d.lines[2].len() + d.title.len(); }
 function main(): i32 { var pre: string = "ab"; var i: i32 = 0; while (i < 2000) { if (round(pre) != 132) { return 97; } i = i + 1; } if (__rc_underflow() != 0) { return 99; } return 0; }`, 0},
+	// A functional-update BASE copy hands the new box every array field
+	// pointer with no retain, so `b` and the `sg` built from it hold one
+	// `ys` buffer between them at rc 1. `sg` is dropped at inner's exit; the
+	// deep arm would free the buffer and its element boxes while `b` still
+	// reads them. `Sigs` is refused on both halves of the string[] admission
+	// (the base copy is a refused store, the element read a refused read), so
+	// every backend must leave `ys` alone — which is the row the register
+	// backends' classifier already took and wasm's own did not (#8119: the
+	// compiler's FnSigs is this shape, and the self-host-built wasm compiler
+	// read a freed strfld_ok_types until linear memory ran out). The junk
+	// allocations recycle the freed blocks so a wrong answer, not luck, is
+	// what an over-release reports.
+	{"strarr-field-base-copy-co-owner", `struct Reg { rows: string[] }
+struct Sigs { a: Reg, xs: string[], ys: string[] }
+function reg_of(rows: string[]): Reg { return Reg { rows: rows }; }
+function with_dyn(sg: Sigs, extra: string): Sigs { return Sigs { ...sg, a: reg_of(sg.a.rows.append(extra)) }; }
+function inner(base: Sigs): i32 {
+    var sg: Sigs = Sigs { ...with_dyn(base, "q"), xs: ["z"] };
+    return sg.a.rows.len() + sg.ys.len();
+}
+function outer(b: Sigs): i32 {
+    var n: i32 = inner(b);
+    var junk: string[] = [];
+    var j: i32 = 0;
+    while (j < 8) { junk = junk.append("w" + "j"); j = j + 1; }
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < b.ys.len()) { t = t + ("k:" + b.ys[i]).len(); i = i + 1; }
+    return n + t + junk.len();
+}
+function main(): i32 {
+    var s: Sigs = Sigs { a: reg_of(["r1"]), xs: ["x1", "x2"], ys: ["y1", "y2", "y3"] };
+    var r: i32 = outer(s);
+    if (__rc_underflow() != 0) { return 99; }
+    if (r != 25) { return 97; }
+    return 0;
+}`, 0},
 }
 
 // TestSelfHostStrArrFieldBufferReleaseIRX86_64 drives the cases through the
@@ -177,9 +214,10 @@ func TestSelfHostStrArrFieldBufferReleaseIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrArrFieldBufferReleaseWasmIR is the wasm leg: it read 0 on every
-// case before the register backends were changed, and is here so that stays true
-// — the fix is the other two catching up to it, not a new behaviour to port.
+// TestSelfHostStrArrFieldBufferReleaseWasmIR is the wasm leg. It read 0 on the
+// first four cases before the register backends were changed; the base-copy
+// case is the one it failed on its own (#8119), with the register backends
+// already green, until its struct-drop walk moved onto the shared classifier.
 func TestSelfHostStrArrFieldBufferReleaseWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping string[]-field buffer-release wasm IR e2e")
