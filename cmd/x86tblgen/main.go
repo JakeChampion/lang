@@ -55,6 +55,18 @@ var blocks = []block{
 	},
 }
 
+// lookup renders a mnemonic-to-value function as a string match: one arm
+// per row and the wildcard returning -1, the shape a hand-written table
+// reads as. A string match lowers to the same str_eq chain an if-chain
+// would, so the form costs nothing at run time.
+func lookup(b *strings.Builder, fn, param string, rows []string) {
+	fmt.Fprintf(b, "function %s(%s: string): i32 {\n    match (%s) {\n", fn, param, param)
+	for _, r := range rows {
+		fmt.Fprintf(b, "        %s,\n", r)
+	}
+	b.WriteString("        _ => { return 0 - 1; }\n    }\n}\n")
+}
+
 // genNamedTables renders the by-name vocabulary: a predicate per family
 // over the AT&T spellings the self-host dispatches on, and for the families
 // whose encoder reads per-spelling data, the lookup that returns it.
@@ -78,14 +90,14 @@ func genNamedTables() string {
 		fmt.Fprintf(&b, "// %s: %s.\n", f.PredicateName(), f.Doc)
 		if f.FernFn != "" {
 			fmt.Fprintf(&b, "function %s(mnem: string): boolean { return %s(mnem) >= 0; }\n", f.PredicateName(), f.FernFn)
-			fmt.Fprintf(&b, "function %s(mnem: string): i32 {\n", f.FernFn)
+			var rows []string
 			for _, o := range f.Ops {
 				if o.ATT == "" {
 					continue
 				}
-				fmt.Fprintf(&b, "    if (mnem == %q) { return %d; }\n", o.ATT, f.Pack(o))
+				rows = append(rows, fmt.Sprintf("%q => { return %d; }", o.ATT, f.Pack(o)))
 			}
-			b.WriteString("    return 0 - 1;\n}\n")
+			lookup(&b, f.FernFn, "mnem", rows)
 			continue
 		}
 		fmt.Fprintf(&b, "function %s(mnem: string): boolean {\n    return ", f.PredicateName())
@@ -111,15 +123,14 @@ func genGPRTables() string {
 	var b strings.Builder
 	group := func(fn, doc string, g x86tbl.Group) {
 		b.WriteString(doc)
-		fmt.Fprintf(&b, "function %s(mnem: string): i32 {\n", fn)
+		var rows []string
 		for _, op := range g.Ops {
-			terms := make([]string, 0, len(op.Spellings))
 			for _, sp := range op.Spellings {
-				terms = append(terms, fmt.Sprintf("mnem == %q", sp))
+				rows = append(rows, fmt.Sprintf("%q => { return %d; }", sp, op.Ext))
 			}
-			fmt.Fprintf(&b, "    if (%s) { return %d; }\n", strings.Join(terms, " || "), op.Ext)
 		}
-		b.WriteString("    return 0 - 1;\n}\n\n")
+		lookup(&b, fn, "mnem", rows)
+		b.WriteString("\n")
 	}
 	group("x86_gas_alu_ext", `// x86_gas_alu_ext maps an ALU base mnemonic to its group-1 /digit; the
 // family's MR opcode row is ext*8 (add 00, or 08, adc 10, sbb 18, and 20,
@@ -169,21 +180,18 @@ func genFixedTable() string {
 // with the byte count in the top byte; -1 when not fixed. gas accepts both
 // dialects' spellings of the sign-extend group (cltq and cdqe are one
 // instruction), so both are here.
-function x86_gas_fixed_op(mnem: string): i32 {
 `)
+	var rows []string
 	for _, f := range x86tbl.FixedOps {
-		terms := make([]string, 0, 2)
-		for _, s := range f.ATTSpellings() {
-			terms = append(terms, fmt.Sprintf("mnem == %q", s))
-		}
 		args := make([]string, 0, 3)
 		for _, by := range f.Bytes {
 			args = append(args, fmt.Sprint(by))
 		}
-		fmt.Fprintf(&b, "    if (%s) { return x86_pack%d(%s); }\n",
-			strings.Join(terms, " || "), len(f.Bytes), strings.Join(args, ", "))
+		for _, s := range f.ATTSpellings() {
+			rows = append(rows, fmt.Sprintf("%q => { return x86_pack%d(%s); }", s, len(f.Bytes), strings.Join(args, ", ")))
+		}
 	}
-	b.WriteString("    return 0 - 1;\n}\n")
+	lookup(&b, "x86_gas_fixed_op", "mnem", rows)
 
 	b.WriteString(`
 // x86_gas_rep_ok reports whether a rep/repne prefix may precede the mnemonic.
@@ -230,15 +238,15 @@ func genSSETables() string {
 
 // writeSSEHalf renders one lookup function.
 func writeSSEHalf(b *strings.Builder, fn string, half x86tbl.SSEHalf) {
-	fmt.Fprintf(b, "function %s(mnem: string): i32 {\n", fn)
+	var rows []string
 	for _, o := range x86tbl.SSEHalfOps(half) {
 		if o.Prefix == 0 {
-			fmt.Fprintf(b, "    if (mnem == %q) { return %d; }\n", o.Mnemonic, o.Op)
+			rows = append(rows, fmt.Sprintf("%q => { return %d; }", o.Mnemonic, o.Op))
 			continue
 		}
-		fmt.Fprintf(b, "    if (mnem == %q) { return %d * 256 + %d; }\n", o.Mnemonic, o.Prefix, o.Op)
+		rows = append(rows, fmt.Sprintf("%q => { return %d * 256 + %d; }", o.Mnemonic, o.Prefix, o.Op))
 	}
-	b.WriteString("    return 0 - 1;\n}\n")
+	lookup(b, fn, "mnem", rows)
 }
 
 // genCondTable renders x86_gas_cc_code: the suffix-to-code lookup jCC, setCC
@@ -250,16 +258,14 @@ func genCondTable() string {
 // code, shared by jcc 0F 80+cc, setcc 0F 90+cc and cmovcc 0F 40+cc. Returns
 // -1 for a spelling that is not a condition, which is what lets the three
 // families dispatch by matching their prefix and looking the rest up here.
-function x86_gas_cc_code(cond: string): i32 {
 `)
+	var rows []string
 	for _, c := range x86tbl.Conds {
-		terms := make([]string, 0, len(c.Spellings))
 		for _, s := range c.Spellings {
-			terms = append(terms, fmt.Sprintf("cond == %q", s))
+			rows = append(rows, fmt.Sprintf("%q => { return %d; }", s, c.Code))
 		}
-		fmt.Fprintf(&b, "    if (%s) { return %d; }\n", strings.Join(terms, " || "), c.Code)
 	}
-	b.WriteString("    return 0 - 1;\n}\n")
+	lookup(&b, "x86_gas_cc_code", "cond", rows)
 	return b.String()
 }
 

@@ -2495,12 +2495,14 @@ function x86_gas_top_comma(s: string): i32 {
 // x86_gas_is_rep: the repeat prefixes; Prefix is the byte — rep/repe/repz are one F3, repne/repnz the F2, since the condition only means anything on cmps/scas.
 function x86_gas_is_rep(mnem: string): boolean { return x86_gas_rep_pfx(mnem) >= 0; }
 function x86_gas_rep_pfx(mnem: string): i32 {
-    if (mnem == "rep") { return 243; }
-    if (mnem == "repe") { return 243; }
-    if (mnem == "repz") { return 243; }
-    if (mnem == "repne") { return 242; }
-    if (mnem == "repnz") { return 242; }
-    return 0 - 1;
+    match (mnem) {
+        "rep" => { return 243; },
+        "repe" => { return 243; },
+        "repz" => { return 243; },
+        "repne" => { return 242; },
+        "repnz" => { return 242; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_lock: the lock prefix, validated against Lockable.
 function x86_gas_is_lock(mnem: string): boolean {
@@ -2517,19 +2519,23 @@ function x86_gas_is_pushpop(mnem: string): boolean {
 // x86_gas_is_lea: lea at every width AT&T spells; Ext is the destination size.
 function x86_gas_is_lea(mnem: string): boolean { return x86_gas_lea_size(mnem) >= 0; }
 function x86_gas_lea_size(mnem: string): i32 {
-    if (mnem == "leaq") { return 64; }
-    if (mnem == "leal") { return 32; }
-    if (mnem == "leaw") { return 16; }
-    return 0 - 1;
+    match (mnem) {
+        "leaq" => { return 64; },
+        "leal" => { return 32; },
+        "leaw" => { return 16; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_mov: the general-register move at every width; Ext is the operand size. AT&T's movq is also the SSE movq, which x86_gas_movq tells apart by operand.
 function x86_gas_is_mov(mnem: string): boolean { return x86_gas_mov_size(mnem) >= 0; }
 function x86_gas_mov_size(mnem: string): i32 {
-    if (mnem == "movb") { return 8; }
-    if (mnem == "movw") { return 16; }
-    if (mnem == "movl") { return 32; }
-    if (mnem == "movq") { return 64; }
-    return 0 - 1;
+    match (mnem) {
+        "movb" => { return 8; },
+        "movw" => { return 16; },
+        "movl" => { return 32; },
+        "movq" => { return 64; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_movabs: the 64-bit immediate move.
 function x86_gas_is_movabs(mnem: string): boolean {
@@ -2538,17 +2544,19 @@ function x86_gas_is_movabs(mnem: string): boolean {
 // x86_gas_is_extend: the zero- and sign-extending loads. Op is B6/B7 (movzx) or BE/BF (movsx) — a byte or word SOURCE — and Ext the destination size AT&T names in the suffix's second letter; packed as op*256 + size/8.
 function x86_gas_is_extend(mnem: string): boolean { return x86_gas_extend_op(mnem) >= 0; }
 function x86_gas_extend_op(mnem: string): i32 {
-    if (mnem == "movzbw") { return 46594; }
-    if (mnem == "movzbl") { return 46596; }
-    if (mnem == "movzbq") { return 46600; }
-    if (mnem == "movzwl") { return 46852; }
-    if (mnem == "movzwq") { return 46856; }
-    if (mnem == "movsbw") { return 48642; }
-    if (mnem == "movsbl") { return 48644; }
-    if (mnem == "movsbq") { return 48648; }
-    if (mnem == "movswl") { return 48900; }
-    if (mnem == "movswq") { return 48904; }
-    return 0 - 1;
+    match (mnem) {
+        "movzbw" => { return 46594; },
+        "movzbl" => { return 46596; },
+        "movzbq" => { return 46600; },
+        "movzwl" => { return 46852; },
+        "movzwq" => { return 46856; },
+        "movsbw" => { return 48642; },
+        "movsbl" => { return 48644; },
+        "movsbq" => { return 48648; },
+        "movswl" => { return 48900; },
+        "movswq" => { return 48904; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_movsxd: the sign-extending 32-to-64 load (REX.W 63 /r); gas takes both spellings in AT&T.
 function x86_gas_is_movsxd(mnem: string): boolean {
@@ -2565,24 +2573,28 @@ function x86_gas_is_imul(mnem: string): boolean {
 // x86_gas_is_bitscan: the bit scans and counts: [Prefix] [REX.W] 0F Op /r, Ext the REX.W bit; packed as pfx*65536 + op*256 + w.
 function x86_gas_is_bitscan(mnem: string): boolean { return x86_gas_bitscan_op(mnem) >= 0; }
 function x86_gas_bitscan_op(mnem: string): i32 {
-    if (mnem == "bsfl") { return 48128; }
-    if (mnem == "bsfq") { return 48129; }
-    if (mnem == "bsrl") { return 48384; }
-    if (mnem == "bsrq") { return 48385; }
-    if (mnem == "lzcntl") { return 15973632; }
-    if (mnem == "lzcntq") { return 15973633; }
-    if (mnem == "tzcntl") { return 15973376; }
-    if (mnem == "tzcntq") { return 15973377; }
-    if (mnem == "popcntl") { return 15972352; }
-    if (mnem == "popcntq") { return 15972353; }
-    return 0 - 1;
+    match (mnem) {
+        "bsfl" => { return 48128; },
+        "bsfq" => { return 48129; },
+        "bsrl" => { return 48384; },
+        "bsrq" => { return 48385; },
+        "lzcntl" => { return 15973632; },
+        "lzcntq" => { return 15973633; },
+        "tzcntl" => { return 15973376; },
+        "tzcntq" => { return 15973377; },
+        "popcntl" => { return 15972352; },
+        "popcntq" => { return 15972353; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_shld: the double-precision shifts: 0F Op ib by immediate, 0F Op+1 by cl.
 function x86_gas_is_shld(mnem: string): boolean { return x86_gas_shld_op(mnem) >= 0; }
 function x86_gas_shld_op(mnem: string): i32 {
-    if (mnem == "shld") { return 164; }
-    if (mnem == "shrd") { return 172; }
-    return 0 - 1;
+    match (mnem) {
+        "shld" => { return 164; },
+        "shrd" => { return 172; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_bswap: byte swap, 32- and 64-bit registers only.
 function x86_gas_is_bswap(mnem: string): boolean {
@@ -2591,9 +2603,11 @@ function x86_gas_is_bswap(mnem: string): boolean {
 // x86_gas_is_rmw: the read-modify-write exchanges: 0F Op /r for the byte width, 0F Op+1 otherwise.
 function x86_gas_is_rmw(mnem: string): boolean { return x86_gas_rmw_op(mnem) >= 0; }
 function x86_gas_rmw_op(mnem: string): i32 {
-    if (mnem == "xadd") { return 192; }
-    if (mnem == "cmpxchg") { return 176; }
-    return 0 - 1;
+    match (mnem) {
+        "xadd" => { return 192; },
+        "cmpxchg" => { return 176; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_xchg: exchange, register or memory on either side.
 function x86_gas_is_xchg(mnem: string): boolean {
@@ -2610,63 +2624,75 @@ function x86_gas_is_movqd(mnem: string): boolean {
 // x86_gas_is_mov10: the 0F 10/11 move family; Prefix is the mandatory prefix, 0 for movups.
 function x86_gas_is_mov10(mnem: string): boolean { return x86_gas_mov10_pfx(mnem) >= 0; }
 function x86_gas_mov10_pfx(mnem: string): i32 {
-    if (mnem == "movsd") { return 242; }
-    if (mnem == "movss") { return 243; }
-    if (mnem == "movups") { return 0; }
-    if (mnem == "movupd") { return 102; }
-    return 0 - 1;
+    match (mnem) {
+        "movsd" => { return 242; },
+        "movss" => { return 243; },
+        "movups" => { return 0; },
+        "movupd" => { return 102; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_movdq: the 16-byte moves: 0F 6F load, 0F 7F store, direction from which side is memory.
 function x86_gas_is_movdq(mnem: string): boolean { return x86_gas_movdq_pfx(mnem) >= 0; }
 function x86_gas_movdq_pfx(mnem: string): i32 {
-    if (mnem == "movdqu") { return 243; }
-    if (mnem == "movdqa") { return 102; }
-    return 0 - 1;
+    match (mnem) {
+        "movdqu" => { return 243; },
+        "movdqa" => { return 102; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_cvt2s: integer to scalar float: Prefix 0F 2A, Ext the REX.W bit the AT&T suffix names; packed as pfx*256 + w.
 function x86_gas_is_cvt2s(mnem: string): boolean { return x86_gas_cvt2s_op(mnem) >= 0; }
 function x86_gas_cvt2s_op(mnem: string): i32 {
-    if (mnem == "cvtsi2sd") { return 61953; }
-    if (mnem == "cvtsi2sdq") { return 61953; }
-    if (mnem == "cvtsi2sdl") { return 61952; }
-    if (mnem == "cvtsi2ss") { return 62209; }
-    if (mnem == "cvtsi2ssq") { return 62209; }
-    if (mnem == "cvtsi2ssl") { return 62208; }
-    return 0 - 1;
+    match (mnem) {
+        "cvtsi2sd" => { return 61953; },
+        "cvtsi2sdq" => { return 61953; },
+        "cvtsi2sdl" => { return 61952; },
+        "cvtsi2ss" => { return 62209; },
+        "cvtsi2ssq" => { return 62209; },
+        "cvtsi2ssl" => { return 62208; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_cvt2si: scalar float to integer: Prefix 0F Op, 2C truncating and 2D rounding; the AT&T l/q suffix names the width the destination register carries; packed as pfx*256 + op.
 function x86_gas_is_cvt2si(mnem: string): boolean { return x86_gas_cvt2si(mnem) >= 0; }
 function x86_gas_cvt2si(mnem: string): i32 {
-    if (mnem == "cvttsd2si") { return 61996; }
-    if (mnem == "cvttsd2sil") { return 61996; }
-    if (mnem == "cvttsd2siq") { return 61996; }
-    if (mnem == "cvtsd2si") { return 61997; }
-    if (mnem == "cvtsd2sil") { return 61997; }
-    if (mnem == "cvtsd2siq") { return 61997; }
-    if (mnem == "cvttss2si") { return 62252; }
-    if (mnem == "cvttss2sil") { return 62252; }
-    if (mnem == "cvttss2siq") { return 62252; }
-    if (mnem == "cvtss2si") { return 62253; }
-    if (mnem == "cvtss2sil") { return 62253; }
-    if (mnem == "cvtss2siq") { return 62253; }
-    return 0 - 1;
+    match (mnem) {
+        "cvttsd2si" => { return 61996; },
+        "cvttsd2sil" => { return 61996; },
+        "cvttsd2siq" => { return 61996; },
+        "cvtsd2si" => { return 61997; },
+        "cvtsd2sil" => { return 61997; },
+        "cvtsd2siq" => { return 61997; },
+        "cvttss2si" => { return 62252; },
+        "cvttss2sil" => { return 62252; },
+        "cvttss2siq" => { return 62252; },
+        "cvtss2si" => { return 62253; },
+        "cvtss2sil" => { return 62253; },
+        "cvtss2siq" => { return 62253; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_imm3a: the 66 0F 3A Op /r ib three-operand forms with an xmm destination.
 function x86_gas_is_imm3a(mnem: string): boolean { return x86_gas_imm3a_op(mnem) >= 0; }
 function x86_gas_imm3a_op(mnem: string): i32 {
-    if (mnem == "roundss") { return 10; }
-    if (mnem == "roundsd") { return 11; }
-    if (mnem == "pcmpestri") { return 97; }
-    if (mnem == "pcmpistri") { return 99; }
-    return 0 - 1;
+    match (mnem) {
+        "roundss" => { return 10; },
+        "roundsd" => { return 11; },
+        "pcmpestri" => { return 97; },
+        "pcmpistri" => { return 99; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_shuf: the [Prefix] 0F Op /r ib shuffles; packed as pfx*256 + op.
 function x86_gas_is_shuf(mnem: string): boolean { return x86_gas_shuf_op(mnem) >= 0; }
 function x86_gas_shuf_op(mnem: string): i32 {
-    if (mnem == "pshufd") { return 26224; }
-    if (mnem == "shufps") { return 198; }
-    if (mnem == "shufpd") { return 26310; }
-    return 0 - 1;
+    match (mnem) {
+        "pshufd" => { return 26224; },
+        "shufps" => { return 198; },
+        "shufpd" => { return 26310; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_pextr: lane extract into a GPR or memory.
 function x86_gas_is_pextr(mnem: string): boolean {
@@ -2679,40 +2705,46 @@ function x86_gas_is_pinsr(mnem: string): boolean {
 // x86_gas_is_movmsk: the sign-bit gathers into a GPR: [Prefix] 0F Op /r; packed as pfx*256 + op.
 function x86_gas_is_movmsk(mnem: string): boolean { return x86_gas_movmsk_op(mnem) >= 0; }
 function x86_gas_movmsk_op(mnem: string): i32 {
-    if (mnem == "pmovmskb") { return 26327; }
-    if (mnem == "movmskps") { return 80; }
-    if (mnem == "movmskpd") { return 26192; }
-    return 0 - 1;
+    match (mnem) {
+        "pmovmskb" => { return 26327; },
+        "movmskps" => { return 80; },
+        "movmskpd" => { return 26192; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_vshift: the vector shifts BY IMMEDIATE, the 66 0F Op /Ext ib groups; the by-register spellings are the SSE table's. pslldq/psrldq exist only here; packed as ext*256 + op.
 function x86_gas_is_vshift(mnem: string): boolean { return x86_gas_vshift_op(mnem) >= 0; }
 function x86_gas_vshift_op(mnem: string): i32 {
-    if (mnem == "psrlw") { return 625; }
-    if (mnem == "psraw") { return 1137; }
-    if (mnem == "psllw") { return 1649; }
-    if (mnem == "psrld") { return 626; }
-    if (mnem == "psrad") { return 1138; }
-    if (mnem == "pslld") { return 1650; }
-    if (mnem == "psrlq") { return 627; }
-    if (mnem == "psllq") { return 1651; }
-    if (mnem == "psrldq") { return 883; }
-    if (mnem == "pslldq") { return 1907; }
-    return 0 - 1;
+    match (mnem) {
+        "psrlw" => { return 625; },
+        "psraw" => { return 1137; },
+        "psllw" => { return 1649; },
+        "psrld" => { return 626; },
+        "psrad" => { return 1138; },
+        "pslld" => { return 1650; },
+        "psrlq" => { return 627; },
+        "psllq" => { return 1651; },
+        "psrldq" => { return 883; },
+        "pslldq" => { return 1907; },
+        _ => { return 0 - 1; }
+    }
 }
 // x86_gas_is_sse38: the 66 0F 38 Op /r forms with an xmm destination (SSE4.1, inside the Haswell baseline).
 function x86_gas_is_sse38(mnem: string): boolean { return x86_gas_sse38_op(mnem) >= 0; }
 function x86_gas_sse38_op(mnem: string): i32 {
-    if (mnem == "ptest") { return 23; }
-    if (mnem == "pmulld") { return 64; }
-    if (mnem == "pminsb") { return 56; }
-    if (mnem == "pminsd") { return 57; }
-    if (mnem == "pminuw") { return 58; }
-    if (mnem == "pminud") { return 59; }
-    if (mnem == "pmaxsb") { return 60; }
-    if (mnem == "pmaxsd") { return 61; }
-    if (mnem == "pmaxuw") { return 62; }
-    if (mnem == "pmaxud") { return 63; }
-    return 0 - 1;
+    match (mnem) {
+        "ptest" => { return 23; },
+        "pmulld" => { return 64; },
+        "pminsb" => { return 56; },
+        "pminsd" => { return 57; },
+        "pminuw" => { return 58; },
+        "pminud" => { return 59; },
+        "pmaxsb" => { return 60; },
+        "pmaxsd" => { return 61; },
+        "pmaxuw" => { return 62; },
+        "pmaxud" => { return 63; },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED NAMED VOCABULARY
 
@@ -2920,56 +2952,67 @@ function x86_gas_split_ops(rest: string): string[] {
 // family's MR opcode row is ext*8 (add 00, or 08, adc 10, sbb 18, and 20,
 // sub 28, xor 30, cmp 38).
 function x86_gas_alu_ext(mnem: string): i32 {
-    if (mnem == "add") { return 0; }
-    if (mnem == "or") { return 1; }
-    if (mnem == "adc") { return 2; }
-    if (mnem == "sbb") { return 3; }
-    if (mnem == "and") { return 4; }
-    if (mnem == "sub") { return 5; }
-    if (mnem == "xor") { return 6; }
-    if (mnem == "cmp") { return 7; }
-    return 0 - 1;
+    match (mnem) {
+        "add" => { return 0; },
+        "or" => { return 1; },
+        "adc" => { return 2; },
+        "sbb" => { return 3; },
+        "and" => { return 4; },
+        "sub" => { return 5; },
+        "xor" => { return 6; },
+        "cmp" => { return 7; },
+        _ => { return 0 - 1; }
+    }
 }
 
 // x86_gas_unary_ext maps an F6/F7-group base mnemonic to its /digit.
 function x86_gas_unary_ext(mnem: string): i32 {
-    if (mnem == "not") { return 2; }
-    if (mnem == "neg") { return 3; }
-    if (mnem == "mul") { return 4; }
-    if (mnem == "imul") { return 5; }
-    if (mnem == "div") { return 6; }
-    if (mnem == "idiv") { return 7; }
-    return 0 - 1;
+    match (mnem) {
+        "not" => { return 2; },
+        "neg" => { return 3; },
+        "mul" => { return 4; },
+        "imul" => { return 5; },
+        "div" => { return 6; },
+        "idiv" => { return 7; },
+        _ => { return 0 - 1; }
+    }
 }
 
 // x86_gas_incdec_ext maps inc/dec to their FE/FF-group /digit.
 function x86_gas_incdec_ext(mnem: string): i32 {
-    if (mnem == "inc") { return 0; }
-    if (mnem == "dec") { return 1; }
-    return 0 - 1;
+    match (mnem) {
+        "inc" => { return 0; },
+        "dec" => { return 1; },
+        _ => { return 0 - 1; }
+    }
 }
 
 // x86_gas_shift_ext maps a shift/rotate base mnemonic to its C0..D3-group
 // /digit. sal is gas's alias for shl and takes shl's /4.
 function x86_gas_shift_ext(mnem: string): i32 {
-    if (mnem == "rol") { return 0; }
-    if (mnem == "ror") { return 1; }
-    if (mnem == "rcl") { return 2; }
-    if (mnem == "rcr") { return 3; }
-    if (mnem == "shl" || mnem == "sal") { return 4; }
-    if (mnem == "shr") { return 5; }
-    if (mnem == "sar") { return 7; }
-    return 0 - 1;
+    match (mnem) {
+        "rol" => { return 0; },
+        "ror" => { return 1; },
+        "rcl" => { return 2; },
+        "rcr" => { return 3; },
+        "shl" => { return 4; },
+        "sal" => { return 4; },
+        "shr" => { return 5; },
+        "sar" => { return 7; },
+        _ => { return 0 - 1; }
+    }
 }
 
 // x86_gas_bt_idx maps the bit-test family to its index: the register-form
 // opcode is 0xA3 + idx*8 and the immediate-form /digit is 4 + idx.
 function x86_gas_bt_idx(mnem: string): i32 {
-    if (mnem == "bt") { return 0; }
-    if (mnem == "bts") { return 1; }
-    if (mnem == "btr") { return 2; }
-    if (mnem == "btc") { return 3; }
-    return 0 - 1;
+    match (mnem) {
+        "bt" => { return 0; },
+        "bts" => { return 1; },
+        "btr" => { return 2; },
+        "btc" => { return 3; },
+        _ => { return 0 - 1; }
+    }
 }
 
 // x86_gas_lockable: the base mnemonics the F0 lock prefix may precede —
@@ -3009,23 +3052,37 @@ function x86_gas_lockable(mnem: string): boolean {
 // -1 for a spelling that is not a condition, which is what lets the three
 // families dispatch by matching their prefix and looking the rest up here.
 function x86_gas_cc_code(cond: string): i32 {
-    if (cond == "o") { return 0; }
-    if (cond == "no") { return 1; }
-    if (cond == "b" || cond == "c" || cond == "nae") { return 2; }
-    if (cond == "ae" || cond == "nb" || cond == "nc") { return 3; }
-    if (cond == "e" || cond == "z") { return 4; }
-    if (cond == "ne" || cond == "nz") { return 5; }
-    if (cond == "be" || cond == "na") { return 6; }
-    if (cond == "a" || cond == "nbe") { return 7; }
-    if (cond == "s") { return 8; }
-    if (cond == "ns") { return 9; }
-    if (cond == "p") { return 10; }
-    if (cond == "np") { return 11; }
-    if (cond == "l" || cond == "nge") { return 12; }
-    if (cond == "ge" || cond == "nl") { return 13; }
-    if (cond == "le" || cond == "ng") { return 14; }
-    if (cond == "g" || cond == "nle") { return 15; }
-    return 0 - 1;
+    match (cond) {
+        "o" => { return 0; },
+        "no" => { return 1; },
+        "b" => { return 2; },
+        "c" => { return 2; },
+        "nae" => { return 2; },
+        "ae" => { return 3; },
+        "nb" => { return 3; },
+        "nc" => { return 3; },
+        "e" => { return 4; },
+        "z" => { return 4; },
+        "ne" => { return 5; },
+        "nz" => { return 5; },
+        "be" => { return 6; },
+        "na" => { return 6; },
+        "a" => { return 7; },
+        "nbe" => { return 7; },
+        "s" => { return 8; },
+        "ns" => { return 9; },
+        "p" => { return 10; },
+        "np" => { return 11; },
+        "l" => { return 12; },
+        "nge" => { return 12; },
+        "ge" => { return 13; },
+        "nl" => { return 13; },
+        "le" => { return 14; },
+        "ng" => { return 14; },
+        "g" => { return 15; },
+        "nle" => { return 15; },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED CONDITION TABLE
 
@@ -3041,47 +3098,59 @@ function x86_pack3(b0: i32, b1: i32, b2: i32): i32 { return 50331648 + (b2 * 655
 // dialects' spellings of the sign-extend group (cltq and cdqe are one
 // instruction), so both are here.
 function x86_gas_fixed_op(mnem: string): i32 {
-    if (mnem == "ret") { return x86_pack1(195); }
-    if (mnem == "syscall") { return x86_pack2(15, 5); }
-    if (mnem == "leave") { return x86_pack1(201); }
-    if (mnem == "cld") { return x86_pack1(252); }
-    if (mnem == "std") { return x86_pack1(253); }
-    if (mnem == "nop") { return x86_pack1(144); }
-    if (mnem == "int3") { return x86_pack1(204); }
-    if (mnem == "pause") { return x86_pack2(243, 144); }
-    if (mnem == "mfence") { return x86_pack3(15, 174, 240); }
-    if (mnem == "lfence") { return x86_pack3(15, 174, 232); }
-    if (mnem == "sfence") { return x86_pack3(15, 174, 248); }
-    if (mnem == "cbtw" || mnem == "cbw") { return x86_pack2(102, 152); }
-    if (mnem == "cwtl" || mnem == "cwde") { return x86_pack1(152); }
-    if (mnem == "cltq" || mnem == "cdqe") { return x86_pack2(72, 152); }
-    if (mnem == "cwtd" || mnem == "cwd") { return x86_pack2(102, 153); }
-    if (mnem == "cltd" || mnem == "cdq") { return x86_pack1(153); }
-    if (mnem == "cqto" || mnem == "cqo") { return x86_pack2(72, 153); }
-    if (mnem == "pushfq" || mnem == "pushf") { return x86_pack1(156); }
-    if (mnem == "popfq" || mnem == "popf") { return x86_pack1(157); }
-    if (mnem == "ud2") { return x86_pack2(15, 11); }
-    if (mnem == "movsb") { return x86_pack1(164); }
-    if (mnem == "movsw") { return x86_pack2(102, 165); }
-    if (mnem == "movsd" || mnem == "movsl") { return x86_pack1(165); }
-    if (mnem == "movsq") { return x86_pack2(72, 165); }
-    if (mnem == "stosb") { return x86_pack1(170); }
-    if (mnem == "stosw") { return x86_pack2(102, 171); }
-    if (mnem == "stosl") { return x86_pack1(171); }
-    if (mnem == "stosq") { return x86_pack2(72, 171); }
-    if (mnem == "lodsb") { return x86_pack1(172); }
-    if (mnem == "lodsw") { return x86_pack2(102, 173); }
-    if (mnem == "lodsl") { return x86_pack1(173); }
-    if (mnem == "lodsq") { return x86_pack2(72, 173); }
-    if (mnem == "scasb") { return x86_pack1(174); }
-    if (mnem == "scasw") { return x86_pack2(102, 175); }
-    if (mnem == "scasl") { return x86_pack1(175); }
-    if (mnem == "scasq") { return x86_pack2(72, 175); }
-    if (mnem == "cmpsb") { return x86_pack1(166); }
-    if (mnem == "cmpsw") { return x86_pack2(102, 167); }
-    if (mnem == "cmpsd" || mnem == "cmpsl") { return x86_pack1(167); }
-    if (mnem == "cmpsq") { return x86_pack2(72, 167); }
-    return 0 - 1;
+    match (mnem) {
+        "ret" => { return x86_pack1(195); },
+        "syscall" => { return x86_pack2(15, 5); },
+        "leave" => { return x86_pack1(201); },
+        "cld" => { return x86_pack1(252); },
+        "std" => { return x86_pack1(253); },
+        "nop" => { return x86_pack1(144); },
+        "int3" => { return x86_pack1(204); },
+        "pause" => { return x86_pack2(243, 144); },
+        "mfence" => { return x86_pack3(15, 174, 240); },
+        "lfence" => { return x86_pack3(15, 174, 232); },
+        "sfence" => { return x86_pack3(15, 174, 248); },
+        "cbtw" => { return x86_pack2(102, 152); },
+        "cbw" => { return x86_pack2(102, 152); },
+        "cwtl" => { return x86_pack1(152); },
+        "cwde" => { return x86_pack1(152); },
+        "cltq" => { return x86_pack2(72, 152); },
+        "cdqe" => { return x86_pack2(72, 152); },
+        "cwtd" => { return x86_pack2(102, 153); },
+        "cwd" => { return x86_pack2(102, 153); },
+        "cltd" => { return x86_pack1(153); },
+        "cdq" => { return x86_pack1(153); },
+        "cqto" => { return x86_pack2(72, 153); },
+        "cqo" => { return x86_pack2(72, 153); },
+        "pushfq" => { return x86_pack1(156); },
+        "pushf" => { return x86_pack1(156); },
+        "popfq" => { return x86_pack1(157); },
+        "popf" => { return x86_pack1(157); },
+        "ud2" => { return x86_pack2(15, 11); },
+        "movsb" => { return x86_pack1(164); },
+        "movsw" => { return x86_pack2(102, 165); },
+        "movsd" => { return x86_pack1(165); },
+        "movsl" => { return x86_pack1(165); },
+        "movsq" => { return x86_pack2(72, 165); },
+        "stosb" => { return x86_pack1(170); },
+        "stosw" => { return x86_pack2(102, 171); },
+        "stosl" => { return x86_pack1(171); },
+        "stosq" => { return x86_pack2(72, 171); },
+        "lodsb" => { return x86_pack1(172); },
+        "lodsw" => { return x86_pack2(102, 173); },
+        "lodsl" => { return x86_pack1(173); },
+        "lodsq" => { return x86_pack2(72, 173); },
+        "scasb" => { return x86_pack1(174); },
+        "scasw" => { return x86_pack2(102, 175); },
+        "scasl" => { return x86_pack1(175); },
+        "scasq" => { return x86_pack2(72, 175); },
+        "cmpsb" => { return x86_pack1(166); },
+        "cmpsw" => { return x86_pack2(102, 167); },
+        "cmpsd" => { return x86_pack1(167); },
+        "cmpsl" => { return x86_pack1(167); },
+        "cmpsq" => { return x86_pack2(72, 167); },
+        _ => { return 0 - 1; }
+    }
 }
 
 // x86_gas_rep_ok reports whether a rep/repne prefix may precede the mnemonic.
@@ -3460,59 +3529,61 @@ function x86_gas_crc32_family(own a: X86Asm, size: i32, src: string, dst: string
 // SSE table (`[pfx] 0F op /r`, xmm destination), packed as pfx*256+op;
 // -1 when absent. Mirrors internal/native/x86_64's sseOps.
 function x86_gas_sse_fp_op(mnem: string): i32 {
-    if (mnem == "addsd") { return 242 * 256 + 88; }
-    if (mnem == "subsd") { return 242 * 256 + 92; }
-    if (mnem == "mulsd") { return 242 * 256 + 89; }
-    if (mnem == "divsd") { return 242 * 256 + 94; }
-    if (mnem == "sqrtsd") { return 242 * 256 + 81; }
-    if (mnem == "minsd") { return 242 * 256 + 93; }
-    if (mnem == "maxsd") { return 242 * 256 + 95; }
-    if (mnem == "addss") { return 243 * 256 + 88; }
-    if (mnem == "subss") { return 243 * 256 + 92; }
-    if (mnem == "mulss") { return 243 * 256 + 89; }
-    if (mnem == "divss") { return 243 * 256 + 94; }
-    if (mnem == "sqrtss") { return 243 * 256 + 81; }
-    if (mnem == "minss") { return 243 * 256 + 93; }
-    if (mnem == "maxss") { return 243 * 256 + 95; }
-    if (mnem == "ucomisd") { return 102 * 256 + 46; }
-    if (mnem == "comisd") { return 102 * 256 + 47; }
-    if (mnem == "ucomiss") { return 46; }
-    if (mnem == "comiss") { return 47; }
-    if (mnem == "cvtss2sd") { return 243 * 256 + 90; }
-    if (mnem == "cvtsd2ss") { return 242 * 256 + 90; }
-    if (mnem == "movapd") { return 102 * 256 + 40; }
-    if (mnem == "movaps") { return 40; }
-    if (mnem == "xorpd") { return 102 * 256 + 87; }
-    if (mnem == "xorps") { return 87; }
-    if (mnem == "andpd") { return 102 * 256 + 84; }
-    if (mnem == "andps") { return 84; }
-    if (mnem == "andnpd") { return 102 * 256 + 85; }
-    if (mnem == "andnps") { return 85; }
-    if (mnem == "orpd") { return 102 * 256 + 86; }
-    if (mnem == "orps") { return 86; }
-    if (mnem == "addpd") { return 102 * 256 + 88; }
-    if (mnem == "subpd") { return 102 * 256 + 92; }
-    if (mnem == "mulpd") { return 102 * 256 + 89; }
-    if (mnem == "divpd") { return 102 * 256 + 94; }
-    if (mnem == "sqrtpd") { return 102 * 256 + 81; }
-    if (mnem == "minpd") { return 102 * 256 + 93; }
-    if (mnem == "maxpd") { return 102 * 256 + 95; }
-    if (mnem == "addps") { return 88; }
-    if (mnem == "subps") { return 92; }
-    if (mnem == "mulps") { return 89; }
-    if (mnem == "divps") { return 94; }
-    if (mnem == "sqrtps") { return 81; }
-    if (mnem == "minps") { return 93; }
-    if (mnem == "maxps") { return 95; }
-    if (mnem == "unpcklpd") { return 102 * 256 + 20; }
-    if (mnem == "unpckhpd") { return 102 * 256 + 21; }
-    if (mnem == "cvtdq2ps") { return 91; }
-    if (mnem == "cvtps2dq") { return 102 * 256 + 91; }
-    if (mnem == "cvttps2dq") { return 243 * 256 + 91; }
-    if (mnem == "cvtdq2pd") { return 243 * 256 + 230; }
-    if (mnem == "cvtpd2dq") { return 242 * 256 + 230; }
-    if (mnem == "cvttpd2dq") { return 102 * 256 + 230; }
-    return 0 - 1;
+    match (mnem) {
+        "addsd" => { return 242 * 256 + 88; },
+        "subsd" => { return 242 * 256 + 92; },
+        "mulsd" => { return 242 * 256 + 89; },
+        "divsd" => { return 242 * 256 + 94; },
+        "sqrtsd" => { return 242 * 256 + 81; },
+        "minsd" => { return 242 * 256 + 93; },
+        "maxsd" => { return 242 * 256 + 95; },
+        "addss" => { return 243 * 256 + 88; },
+        "subss" => { return 243 * 256 + 92; },
+        "mulss" => { return 243 * 256 + 89; },
+        "divss" => { return 243 * 256 + 94; },
+        "sqrtss" => { return 243 * 256 + 81; },
+        "minss" => { return 243 * 256 + 93; },
+        "maxss" => { return 243 * 256 + 95; },
+        "ucomisd" => { return 102 * 256 + 46; },
+        "comisd" => { return 102 * 256 + 47; },
+        "ucomiss" => { return 46; },
+        "comiss" => { return 47; },
+        "cvtss2sd" => { return 243 * 256 + 90; },
+        "cvtsd2ss" => { return 242 * 256 + 90; },
+        "movapd" => { return 102 * 256 + 40; },
+        "movaps" => { return 40; },
+        "xorpd" => { return 102 * 256 + 87; },
+        "xorps" => { return 87; },
+        "andpd" => { return 102 * 256 + 84; },
+        "andps" => { return 84; },
+        "andnpd" => { return 102 * 256 + 85; },
+        "andnps" => { return 85; },
+        "orpd" => { return 102 * 256 + 86; },
+        "orps" => { return 86; },
+        "addpd" => { return 102 * 256 + 88; },
+        "subpd" => { return 102 * 256 + 92; },
+        "mulpd" => { return 102 * 256 + 89; },
+        "divpd" => { return 102 * 256 + 94; },
+        "sqrtpd" => { return 102 * 256 + 81; },
+        "minpd" => { return 102 * 256 + 93; },
+        "maxpd" => { return 102 * 256 + 95; },
+        "addps" => { return 88; },
+        "subps" => { return 92; },
+        "mulps" => { return 89; },
+        "divps" => { return 94; },
+        "sqrtps" => { return 81; },
+        "minps" => { return 93; },
+        "maxps" => { return 95; },
+        "unpcklpd" => { return 102 * 256 + 20; },
+        "unpckhpd" => { return 102 * 256 + 21; },
+        "cvtdq2ps" => { return 91; },
+        "cvtps2dq" => { return 102 * 256 + 91; },
+        "cvttps2dq" => { return 243 * 256 + 91; },
+        "cvtdq2pd" => { return 243 * 256 + 230; },
+        "cvtpd2dq" => { return 242 * 256 + 230; },
+        "cvttpd2dq" => { return 102 * 256 + 230; },
+        _ => { return 0 - 1; }
+    }
 }
 
 // x86_gas_sse_int_op: the packed-INTEGER half of the SSE table (all
@@ -3520,58 +3591,60 @@ function x86_gas_sse_fp_op(mnem: string): i32 {
 // forms; the by-immediate forms are the 0F 71/72/73 groups
 // (x86_gas_vshift_op).
 function x86_gas_sse_int_op(mnem: string): i32 {
-    if (mnem == "pcmpeqb") { return 102 * 256 + 116; }
-    if (mnem == "pcmpeqw") { return 102 * 256 + 117; }
-    if (mnem == "pcmpeqd") { return 102 * 256 + 118; }
-    if (mnem == "pcmpgtb") { return 102 * 256 + 100; }
-    if (mnem == "pcmpgtw") { return 102 * 256 + 101; }
-    if (mnem == "pcmpgtd") { return 102 * 256 + 102; }
-    if (mnem == "punpcklbw") { return 102 * 256 + 96; }
-    if (mnem == "punpcklwd") { return 102 * 256 + 97; }
-    if (mnem == "punpckldq") { return 102 * 256 + 98; }
-    if (mnem == "punpcklqdq") { return 102 * 256 + 108; }
-    if (mnem == "punpckhbw") { return 102 * 256 + 104; }
-    if (mnem == "punpckhwd") { return 102 * 256 + 105; }
-    if (mnem == "punpckhdq") { return 102 * 256 + 106; }
-    if (mnem == "punpckhqdq") { return 102 * 256 + 109; }
-    if (mnem == "por") { return 102 * 256 + 235; }
-    if (mnem == "pand") { return 102 * 256 + 219; }
-    if (mnem == "pxor") { return 102 * 256 + 239; }
-    if (mnem == "pandn") { return 102 * 256 + 223; }
-    if (mnem == "paddb") { return 102 * 256 + 252; }
-    if (mnem == "paddw") { return 102 * 256 + 253; }
-    if (mnem == "paddd") { return 102 * 256 + 254; }
-    if (mnem == "paddq") { return 102 * 256 + 212; }
-    if (mnem == "psubb") { return 102 * 256 + 248; }
-    if (mnem == "psubw") { return 102 * 256 + 249; }
-    if (mnem == "psubd") { return 102 * 256 + 250; }
-    if (mnem == "psubq") { return 102 * 256 + 251; }
-    if (mnem == "paddusb") { return 102 * 256 + 220; }
-    if (mnem == "psubusb") { return 102 * 256 + 216; }
-    if (mnem == "paddsb") { return 102 * 256 + 236; }
-    if (mnem == "psubsb") { return 102 * 256 + 232; }
-    if (mnem == "pavgb") { return 102 * 256 + 224; }
-    if (mnem == "pminub") { return 102 * 256 + 218; }
-    if (mnem == "pmaxub") { return 102 * 256 + 222; }
-    if (mnem == "pminsw") { return 102 * 256 + 234; }
-    if (mnem == "pmaxsw") { return 102 * 256 + 238; }
-    if (mnem == "pmullw") { return 102 * 256 + 213; }
-    if (mnem == "pmulhw") { return 102 * 256 + 229; }
-    if (mnem == "pmulhuw") { return 102 * 256 + 228; }
-    if (mnem == "pmuludq") { return 102 * 256 + 244; }
-    if (mnem == "psadbw") { return 102 * 256 + 246; }
-    if (mnem == "packsswb") { return 102 * 256 + 99; }
-    if (mnem == "packuswb") { return 102 * 256 + 103; }
-    if (mnem == "packssdw") { return 102 * 256 + 107; }
-    if (mnem == "psllw") { return 102 * 256 + 241; }
-    if (mnem == "pslld") { return 102 * 256 + 242; }
-    if (mnem == "psllq") { return 102 * 256 + 243; }
-    if (mnem == "psrlw") { return 102 * 256 + 209; }
-    if (mnem == "psrld") { return 102 * 256 + 210; }
-    if (mnem == "psrlq") { return 102 * 256 + 211; }
-    if (mnem == "psraw") { return 102 * 256 + 225; }
-    if (mnem == "psrad") { return 102 * 256 + 226; }
-    return 0 - 1;
+    match (mnem) {
+        "pcmpeqb" => { return 102 * 256 + 116; },
+        "pcmpeqw" => { return 102 * 256 + 117; },
+        "pcmpeqd" => { return 102 * 256 + 118; },
+        "pcmpgtb" => { return 102 * 256 + 100; },
+        "pcmpgtw" => { return 102 * 256 + 101; },
+        "pcmpgtd" => { return 102 * 256 + 102; },
+        "punpcklbw" => { return 102 * 256 + 96; },
+        "punpcklwd" => { return 102 * 256 + 97; },
+        "punpckldq" => { return 102 * 256 + 98; },
+        "punpcklqdq" => { return 102 * 256 + 108; },
+        "punpckhbw" => { return 102 * 256 + 104; },
+        "punpckhwd" => { return 102 * 256 + 105; },
+        "punpckhdq" => { return 102 * 256 + 106; },
+        "punpckhqdq" => { return 102 * 256 + 109; },
+        "por" => { return 102 * 256 + 235; },
+        "pand" => { return 102 * 256 + 219; },
+        "pxor" => { return 102 * 256 + 239; },
+        "pandn" => { return 102 * 256 + 223; },
+        "paddb" => { return 102 * 256 + 252; },
+        "paddw" => { return 102 * 256 + 253; },
+        "paddd" => { return 102 * 256 + 254; },
+        "paddq" => { return 102 * 256 + 212; },
+        "psubb" => { return 102 * 256 + 248; },
+        "psubw" => { return 102 * 256 + 249; },
+        "psubd" => { return 102 * 256 + 250; },
+        "psubq" => { return 102 * 256 + 251; },
+        "paddusb" => { return 102 * 256 + 220; },
+        "psubusb" => { return 102 * 256 + 216; },
+        "paddsb" => { return 102 * 256 + 236; },
+        "psubsb" => { return 102 * 256 + 232; },
+        "pavgb" => { return 102 * 256 + 224; },
+        "pminub" => { return 102 * 256 + 218; },
+        "pmaxub" => { return 102 * 256 + 222; },
+        "pminsw" => { return 102 * 256 + 234; },
+        "pmaxsw" => { return 102 * 256 + 238; },
+        "pmullw" => { return 102 * 256 + 213; },
+        "pmulhw" => { return 102 * 256 + 229; },
+        "pmulhuw" => { return 102 * 256 + 228; },
+        "pmuludq" => { return 102 * 256 + 244; },
+        "psadbw" => { return 102 * 256 + 246; },
+        "packsswb" => { return 102 * 256 + 99; },
+        "packuswb" => { return 102 * 256 + 103; },
+        "packssdw" => { return 102 * 256 + 107; },
+        "psllw" => { return 102 * 256 + 241; },
+        "pslld" => { return 102 * 256 + 242; },
+        "psllq" => { return 102 * 256 + 243; },
+        "psrlw" => { return 102 * 256 + 209; },
+        "psrld" => { return 102 * 256 + 210; },
+        "psrlq" => { return 102 * 256 + 211; },
+        "psraw" => { return 102 * 256 + 225; },
+        "psrad" => { return 102 * 256 + 226; },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED SSE TABLES
 

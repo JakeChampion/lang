@@ -27,20 +27,32 @@ func markers(t arm64tbl.VecTable) (begin, end string) {
 		"// END GENERATED ARM64 " + name + " TABLE"
 }
 
+// lookup renders a mnemonic-to-value function as a string match: one arm
+// per row and the wildcard returning -1, the shape a hand-written table
+// reads as. A string match lowers to the same str_eq chain an if-chain
+// would, so the form costs nothing at run time.
+func lookup(b *strings.Builder, fn, ret string, rows []string) {
+	fmt.Fprintf(b, "function %s(mnem: string): %s {\n    match (mnem) {\n", fn, ret)
+	for _, r := range rows {
+		fmt.Fprintf(b, "        %s,\n", r)
+	}
+	b.WriteString("        _ => { return 0 - 1; }\n    }\n}\n")
+}
+
 // genTable renders one lookup: the packed arm64_vec_entry(u, opcode, aux)
 // form every class but the permute one uses, whose entry is a bare opc.
 func genTable(t arm64tbl.VecTable) string {
 	var b strings.Builder
 	b.WriteString(t.Doc)
-	fmt.Fprintf(&b, "function %s(mnem: string): i32 {\n", t.FernFn)
+	var rows []string
 	for _, o := range t.Ops {
 		if t.FernFn == "arm64_vpermute_opc" {
-			fmt.Fprintf(&b, "    if (mnem == %q) { return %d; }\n", o.Mnemonic, o.Opcode)
+			rows = append(rows, fmt.Sprintf("%q => { return %d; }", o.Mnemonic, o.Opcode))
 			continue
 		}
-		fmt.Fprintf(&b, "    if (mnem == %q) { return arm64_vec_entry(%v, %d, %d); }\n", o.Mnemonic, o.U, o.Opcode, o.Aux)
+		rows = append(rows, fmt.Sprintf("%q => { return arm64_vec_entry(%v, %d, %d); }", o.Mnemonic, o.U, o.Opcode, o.Aux))
 	}
-	b.WriteString("    return 0 - 1;\n}\n")
+	lookup(&b, t.FernFn, "i32", rows)
 	return b.String()
 }
 
@@ -84,20 +96,20 @@ func genScalar() string {
 		}
 		// The shll family's word is a packed kind, an i32 like the class
 		// selectors; every other base is an encoding word.
+		var rows []string
 		if f.Name == "shll" {
 			fmt.Fprintf(&b, "// %s maps a widening-shift mnemonic to its packed kind; -1 = not one.\n", f.Base)
-			fmt.Fprintf(&b, "function %s(mnem: string): i32 {\n", f.Base)
 			for _, o := range f.Ops {
-				fmt.Fprintf(&b, "    if (mnem == %q) { return %d; }\n", o.Mnemonic, o.Word)
+				rows = append(rows, fmt.Sprintf("%q => { return %d; }", o.Mnemonic, o.Word))
 			}
-		} else {
-			fmt.Fprintf(&b, "// %s maps a mnemonic to its base word (every register field zero); -1 = not one.\n", f.Base)
-			fmt.Fprintf(&b, "function %s(mnem: string): i64 {\n", f.Base)
-			for _, o := range f.Ops {
-				fmt.Fprintf(&b, "    if (mnem == %q) { return 0x%08x; }\n", o.Mnemonic, o.Word)
-			}
+			lookup(&b, f.Base, "i32", rows)
+			continue
 		}
-		b.WriteString("    return 0 - 1;\n}\n")
+		fmt.Fprintf(&b, "// %s maps a mnemonic to its base word (every register field zero); -1 = not one.\n", f.Base)
+		for _, o := range f.Ops {
+			rows = append(rows, fmt.Sprintf("%q => { return 0x%08x; }", o.Mnemonic, o.Word))
+		}
+		lookup(&b, f.Base, "i64", rows)
 	}
 	b.WriteString(`
 // arm64_gas_known reports whether a mnemonic is one the assembler handles,
