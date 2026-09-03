@@ -352,6 +352,13 @@ func compileX86_64FreeOn(t *testing.T, src string) (string, []string) {
 // ast.CodegenMu itself, so (as on x86) we must not hold it here.
 func compileAndRunArm64FreeOn(t *testing.T, src string) (string, int) {
 	t.Helper()
+	return compileAndRunArm64FreeOnArgs(t, src)
+}
+
+// compileAndRunArm64FreeOnArgs is compileAndRunArm64FreeOn with args handed
+// to the program as its argv[1..].
+func compileAndRunArm64FreeOnArgs(t *testing.T, src string, args ...string) (string, int) {
+	t.Helper()
 	gcc, qemu := arm64Tooling(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -387,7 +394,7 @@ func compileAndRunArm64FreeOn(t *testing.T, src string) (string, int) {
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s", err, out)
 	}
-	cmd := runArm64Bin(qemu, binPath)
+	cmd := runArm64Bin(qemu, binPath, args...)
 	out, _ := cmd.CombinedOutput()
 	_ = out
 	return "", cmd.ProcessState.ExitCode()

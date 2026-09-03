@@ -109,6 +109,13 @@ func runLeakCheckX86_64(t *testing.T, src string) (string, string, int) {
 // aarch64 toolchain — rides CI).
 func runLeakCheckArm64(t *testing.T, src string) (string, string, int) {
 	t.Helper()
+	return runLeakCheckArm64Args(t, src)
+}
+
+// runLeakCheckArm64Args is runLeakCheckArm64 with args handed to the program
+// as its argv[1..].
+func runLeakCheckArm64Args(t *testing.T, src string, args ...string) (string, string, int) {
+	t.Helper()
 	gcc, qemu := arm64Tooling(t)
 	asm := emitLeakCheck(t, "arm64-linux", src, true)
 	dir := t.TempDir()
@@ -120,7 +127,7 @@ func runLeakCheckArm64(t *testing.T, src string) (string, string, int) {
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s", err, out)
 	}
-	return runSplit(t, runArm64Bin(qemu, binPath))
+	return runSplit(t, runArm64Bin(qemu, binPath, args...))
 }
 
 func runSplit(t *testing.T, cmd *exec.Cmd) (string, string, int) {
