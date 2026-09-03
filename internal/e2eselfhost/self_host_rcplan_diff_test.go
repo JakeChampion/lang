@@ -1323,14 +1323,20 @@ function main(): i32 { return f(); }`,
 			},
 		},
 		{
-			// The dup-at-extract port, landed: the fe engine's FieldAccess
-			// arm now mirrors native rhsTainted's tuple-source case, so the
-			// extracted element is an OWNER on both sides — the two pins this
-			// case carried as divergences (freeEligible / lastUses empty on
-			// the self-host) are anchored agreements now, alongside the bind
-			// retain that always agreed. History and the coupled matrix
-			// instrument: docs/rc-log/2026-08-28-elemret-scoping-pin.md and
-			// the tuple_mixed__elemret__* rows.
+			// The dup-at-extract port, landed: the fe engine's FieldAccess arm
+			// mirrors native rhsTainted's tuple-source case, so the extracted
+			// element `e` is an OWNER on both sides — that is the agreement
+			// this case was added for, alongside the bind retain.
+			//
+			// The tuple PARAMETER stays a divergence. `src` is non-scalar and
+			// neither `own` nor consumed, so rc_fe_run seeds it tainted and it
+			// reaches neither table; native runs the owned-by-default
+			// paramVerdict ladder, credits it, and reads its last use at the
+			// extract. That ladder is the documented cut in the fe port
+			// (rc_fe_run's taint-seed comment), so the gap closes with it, not
+			// here. History and the coupled matrix instrument:
+			// docs/rc-log/2026-08-28-elemret-scoping-pin.md and the
+			// tuple_mixed__elemret__* rows.
 			name: "tuple-elem-extract-bind",
 			src: `function get(src: (i32, i32[])): i32[] {
 	var e: i32[] = src.1;
@@ -1339,9 +1345,13 @@ function main(): i32 { return f(); }`,
 function main(): i32 { var keep: (i32, i32[]) = (5, [6, 7]); return get(keep).len(); }`,
 			anchor: map[string]map[string]string{"get": {
 				"aliasBindIncs": "2:2=e",
-				"freeEligible":  "e",
-				"lastUses":      "e=1",
 			}},
+			diverge: map[string]map[string]divergence{
+				"get": {
+					"freeEligible": {native: "e,src", selfhost: "e"},
+					"lastUses":     {native: "e=1,src=0", selfhost: "e=1"},
+				},
+			},
 		},
 	}
 
