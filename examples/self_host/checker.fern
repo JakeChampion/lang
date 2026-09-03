@@ -4694,17 +4694,22 @@ function validate_union_sigs(unions: UnionSig[], struct_names: string[]): boolea
 // coded-diagnostic walks so they bind names identically.
 function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionSig[], methods: MethodSig[], imports: string[]): Scope {
   var s: Scope = new_scope_full(st, structs, unions, methods, imports);
-  s = s.with_tparams(fd.type_params, fd.bound_traits);
+  var tps: string[] = func_scope_tparams(fd);
+  var tbs: string[] = fd.bound_traits;
+  while (tbs.len() < tps.len()) {
+    tbs = tbs.append("");
+  }
+  s = s.with_tparams(tps, tbs);
   if (fd.ret_type.len() > 0) {
     s = s.with_ret_type(func_ret_type(fd, structs.structs, unions));
   }
   if (fd.receiver_name.len() > 0) {
-    s = s.bind(fd.receiver_name, type_from_name_erasing_tparams(fd.receiver_type, fd.type_params, structs.structs, unions));
+    s = s.bind(fd.receiver_name, type_from_name_erasing_tparams(fd.receiver_type, tps, structs.structs, unions));
   }
   for param in fd.params {
-    var pbt: Type = fn_param_decl_type(param, fd.type_params, structs.structs, unions);
+    var pbt: Type = fn_param_decl_type(param, tps, structs.structs, unions);
     if (is_unknown(pbt)) {
-      pbt = type_from_name_erasing_tparams(param.type_name, fd.type_params, structs.structs, unions);
+      pbt = type_from_name_erasing_tparams(param.type_name, tps, structs.structs, unions);
     }
     s = s.bind(param.name, pbt);
     if (util.index_of_str(fd.type_params, param.type_name) >= 0) {
@@ -4712,6 +4717,30 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
     }
   }
   return s;
+}
+
+// func_scope_tparams is what the body may read as type VARIABLES: the declared
+// parameters plus the implicit ones a generic RECEIVER binds. `(m: Map[K, V])
+// merge(...)` declares no `[K, V]`, yet K and V are variables in its body —
+// never a reference to a user `struct K` in a module core/map cannot see.
+// Native binds the same set (checker.go's collectFreeTypeVars), and the
+// declared half already erases (#6118); a receiver-only variable was the half
+// still open, so a single-letter user struct captured every stdlib receiver
+// spelling that named it.
+//
+// The implicit ones are unbounded, so the caller pads tbounds to match.
+function func_scope_tparams(fd: parser.FuncDecl): string[] {
+  if (fd.receiver_type.len() == 0) {
+    return fd.type_params;
+  }
+  var none: string[] = [];
+  var out: string[] = fd.type_params;
+  for tv in parser.collect_tvars(fd.receiver_type, none) {
+    if (util.index_of_str(out, tv) < 0) {
+      out = out.append(tv);
+    }
+  }
+  return out;
 }
 
 // split_fn_param_spellings splits ParamDecl.fn_param_types — the comma-encoded

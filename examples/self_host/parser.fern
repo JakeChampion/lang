@@ -10469,7 +10469,7 @@ pub function register_map_method_generics(mod: Module): Module {
 // fn-typed param is coarsened to the bare tag "fn" by the parser, so a var
 // that appears only in a closure's RETURN is collected from `fn_ret` by the
 // caller, not from here.
-function collect_tvars(name: string, acc: string[]): string[] {
+pub function collect_tvars(name: string, acc: string[]): string[] {
     if (looks_type_var(name)) {
         if (str_in(acc, name)) { return acc; }
         return acc.append(name);
