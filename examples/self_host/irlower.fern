@@ -30614,8 +30614,7 @@ function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapC
     match (st) {
         ast.StmtAssign(a) => {
             var acc: MapCloneScan = sc;
-            var t: string = map_selfcow_insert_target(st);
-            if (t.len() > 0 && (util.index_of_str(sc.seen, t) >= 0 || util.index_of_str(loop_aliases, t) >= 0)) {
+            if (assign_is_self_two_arg_method(a) && (util.index_of_str(sc.seen, a.target) >= 0 || util.index_of_str(loop_aliases, a.target) >= 0)) {
                 acc = MapCloneScan { ...acc, sites: acc.sites.append(reclaim_site_key_of(a.target, a.line, a.col)) };
             }
             return MapCloneScan { ...acc, seen: alias_idents_in_value(a.value, acc.seen) };
@@ -30647,32 +30646,13 @@ function mcis_stmt(st: ast.Stmt, loop_aliases: string[], sc: MapCloneScan): MapC
     }
 }
 
-// map_selfcow_insert_target: the target of a `m = m.insert(k, v)` /
-// `m = m.set(k, v)` self-reassign — the shape the StmtAssign lowering routes to
-// the clone when an alias is live — or "".
-function map_selfcow_insert_target(st: ast.Stmt): string {
-    match (st) {
-        ast.StmtAssign(a) => {
-            match (a.value) {
-                ast.ExprCall(c) => {
-                    if (c.args.len() != 2) { return ""; }
-                    match (c.callee) {
-                        ast.ExprFieldAccess(fa) => {
-                            if (fa.field != "insert" && fa.field != "set") { return ""; }
-                            match (fa.obj) {
-                                ast.ExprIdent(id) => { if (id.name == a.target) { return a.target; } },
-                                _ => {}
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => {}
-            }
-        },
-        _ => {}
-    }
-    return "";
+// assign_is_self_two_arg_method: `a` is `m = m.<method>(x, y)` — the shape
+// the StmtAssign lowering inspects for the map self-reassign (`insert` / `set`)
+// it routes to the clone when an alias is live. The method name is that site's
+// question: a site listed for another method falls through there unchanged.
+function assign_is_self_two_arg_method(a: ast.StmtAssign): boolean {
+    var ops: string[] = call_operand_idents(a.value);
+    return ops.len() == 3 && ops[0] == a.target;
 }
 
 // --- map alias groups (#7235) ------------------------------------------------
@@ -30735,47 +30715,44 @@ function map_alias_holder_sites(body: ast.Stmt[], name: string, borrowable: stri
 // without rows keeps the plain release pattern.
 function map_tuple_holder_rows(stmts: ast.Stmt[], name: string, msite: string, acc: string[]): string[] {
     if (var_decl_scan(stmts, name, false) % 1000 != 1) { return acc; }
-    return maptup_rows_in(stmts, name, msite, acc);
-}
-
-function maptup_rows_in(stmts: ast.Stmt[], name: string, msite: string, acc: string[]): string[] {
-    var a: string[] = acc;
+    // The fold's visitor captures nothing (#7215), so it reads `name` and
+    // `msite` from the head of the accumulator it threads.
+    var seeded: string[] = [name, msite];
     var i: i32 = 0;
     while (i < stmts.len()) {
-        match (stmts[i]) {
-            ast.StmtVar(v) => {
-                if (tuple_bare_elem_sole_use(v.init, name)) {
-                    match (v.init) {
-                        ast.ExprTuple(tl) => {
-                            var k: i32 = 0;
-                            while (k < tl.elements.len()) {
-                                match (tl.elements[k]) {
-                                    ast.ExprIdent(id) => {
-                                        if (id.name == name) {
-                                            a = a.append("MAPTUP:" + reclaim_site_key_of(v.name, v.line, v.col) + "|" + util.i32_to_string(k) + "|" + msite);
-                                        }
-                                    },
-                                    _ => {}
-                                }
-                                k = k + 1;
-                            }
-                        },
-                        _ => {}
-                    }
-                }
-            },
-            ast.StmtIf(f) => { a = maptup_rows_in(f.then_body, name, msite, a); a = maptup_rows_in(f.else_body, name, msite, a); },
-            ast.StmtWhile(w) => { a = maptup_rows_in(w.body, name, msite, a); },
-            ast.StmtFor(fo) => { a = maptup_rows_in(fo.body, name, msite, a); },
-            ast.StmtMatch(m) => {
-                var mi: i32 = 0;
-                while (mi < m.arms.len()) { a = maptup_rows_in(m.arms[mi].body, name, msite, a); mi = mi + 1; }
-            },
-            _ => {}
-        }
+        seeded = astwalk.fold_stmt_nodes(stmts[i], seeded, maptup_row_at, no_expr_strs, astwalk.descend_none);
         i = i + 1;
     }
-    return a;
+    var out: string[] = acc;
+    var r: i32 = 2;
+    while (r < seeded.len()) { out = out.append(seeded[r]); r = r + 1; }
+    return out;
+}
+
+function maptup_row_at(st: ast.Stmt, acc: string[]): string[] {
+    match (st) {
+        ast.StmtVar(v) => {
+            var pos: i32[] = tuple_bare_elem_positions(v.init, acc[0]);
+            var a: string[] = acc;
+            var k: i32 = 0;
+            while (k < pos.len()) {
+                a = a.append("MAPTUP:" + reclaim_site_key_of(v.name, v.line, v.col) + "|" + util.i32_to_string(pos[k]) + "|" + acc[1]);
+                k = k + 1;
+            }
+            return a;
+        },
+        ast.StmtReturn(_) => { return acc; },
+        ast.StmtExpr(_) => { return acc; },
+        ast.StmtIf(_) => { return acc; },
+        ast.StmtWhile(_) => { return acc; },
+        ast.StmtAssign(_) => { return acc; },
+        ast.StmtMatch(_) => { return acc; },
+        ast.StmtFor(_) => { return acc; },
+        ast.StmtBreak(_) => { return acc; },
+        ast.StmtContinue(_) => { return acc; },
+        ast.StmtUnknown(_) => { return acc; },
+        ast.StmtDefer(_) => { return acc; },
+    }
 }
 
 // var_decl_scan: how many `var name` bindings `stmts` holds, nested blocks and
@@ -30836,25 +30813,28 @@ function var_decl_scan(stmts: ast.Stmt[], name: string, in_loop: boolean): i32 {
 // answers false, so the borrow reading below cannot hide a second, genuinely
 // escaping use. The sibling of tuple_union_payload_sole_use, one position out.
 function tuple_bare_elem_sole_use(init: ast.Expr, name: string): boolean {
+    return tuple_bare_elem_positions(init, name).len() > 0;
+}
+
+// tuple_bare_elem_positions: the element positions at which the tuple literal
+// `init` holds `name` as a direct bare ident — empty when `init` is not a tuple
+// or mentions `name` anywhere else. The group's holder rows are one per position.
+function tuple_bare_elem_positions(init: ast.Expr, name: string): i32[] {
+    var none: i32[] = [];
     match (init) {
         ast.ExprTuple(tl) => {
-            var found: boolean = false;
+            var found: i32[] = [];
             var k: i32 = 0;
             while (k < tl.elements.len()) {
-                var bare: boolean = false;
-                match (tl.elements[k]) {
-                    ast.ExprIdent(id) => { bare = id.name == name; },
-                    _ => {}
-                }
-                if (bare) { found = true; }
-                else if (expr_mentions_name(tl.elements[k], name)) { return false; }
+                if (ident_name_or_empty(tl.elements[k]) == name) { found = found.append(k); }
+                else if (expr_mentions_name(tl.elements[k], name)) { return none; }
                 k = k + 1;
             }
             return found;
         },
-        _ => {}
+        _ => { return none; }
     }
-    return false;
+    return none;
 }
 
 // tuple_elem_host_names collects the LOCAL names bound by
