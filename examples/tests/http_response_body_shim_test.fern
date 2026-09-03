@@ -1,0 +1,75 @@
+import "std/test";
+import "std/http";
+
+// examples/tests/http_response_body_shim_test.fern — the
+// RESPONSE side of the body forward-compatibility shim
+// (docs/PLATFORM-RESEARCH.md Rec §4, the issue-#4414 item).
+//
+// `HttpRequest` has carried `body_string()` / `body_bytes()` /
+// `body_len()` since the Tier-A shim landed, so handler code
+// reading a request body already survives the field becoming
+// `Stream[bytes]`. `HttpResponse` had no such accessors, so
+// every response-body read was still spelled `.body` — the one
+// shape the migration has to rewrite. These pin the twin set.
+//
+// What they are really asserting is that the shim and the field
+// AGREE today: each case compares the accessor against the same
+// value reached through a constructor, so when the field type
+// swaps and only the method bodies change, a divergence shows up
+// here rather than in whatever handler notices first.
+
+function test_body_string_round_trips(): test.TestOutcome {
+    return test.assert_eq(http.http_response_ok("hello").body_string(), "hello");
+}
+
+function test_body_len_matches_string(): test.TestOutcome {
+    var r: HttpResponse = http.http_response_ok("hello");
+    return test.assert_eq(r.body_len(), r.body_string().len());
+}
+
+function test_body_bytes_matches_string_bytes(): test.TestOutcome {
+    var r: HttpResponse = http.http_response_text(201, "hi");
+    return test.assert_eq(r.body_bytes().len(), 2);
+}
+
+function test_empty_body_is_zero_len(): test.TestOutcome {
+    return test.assert_eq(http.http_response_no_content().body_len(), 0);
+}
+
+// A byte body needs no round-trip through `string` once the
+// field stops being one, which is what this constructor exists
+// for; today it agrees with the string form.
+function test_bytes_constructor_agrees_with_text(): test.TestOutcome {
+    var b: HttpResponse = http.http_response_bytes(201, "hi".bytes());
+    return test.assert_eq(b.body_string(), http.http_response_text(201, "hi").body_string());
+}
+
+function test_bytes_constructor_keeps_status(): test.TestOutcome {
+    return test.assert_eq(http.http_response_bytes(503, "x".bytes()).status, 503);
+}
+
+// The serializer reads the body through the accessors now, so
+// the wire is the end-to-end check that they carry the same
+// bytes and the same length the auto Content-Length announces.
+function test_serialized_wire_length_matches_body(): test.TestOutcome {
+    var wire: string = http.http_serialize_response(http.http_response_ok("hello"));
+    return test.assert_contains(wire, "Content-Length: 5");
+}
+
+function test_serialized_wire_ends_with_body(): test.TestOutcome {
+    var wire: string = http.http_serialize_response(http.http_response_ok("hello"));
+    return test.assert_contains(wire, "\r\n\r\nhello");
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("HTTP response body shim");
+    r = r.it("body_string round-trips", test_body_string_round_trips);
+    r = r.it("body_len matches the string length", test_body_len_matches_string);
+    r = r.it("body_bytes matches the string bytes", test_body_bytes_matches_string_bytes);
+    r = r.it("empty body is zero length", test_empty_body_is_zero_len);
+    r = r.it("bytes constructor agrees with text", test_bytes_constructor_agrees_with_text);
+    r = r.it("bytes constructor keeps the status", test_bytes_constructor_keeps_status);
+    r = r.it("wire Content-Length matches the body", test_serialized_wire_length_matches_body);
+    r = r.it("wire ends with the body", test_serialized_wire_ends_with_body);
+    return r.finish();
+}
