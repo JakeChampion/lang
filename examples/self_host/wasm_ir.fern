@@ -302,6 +302,9 @@ pub function needs_of(cache: irlower.LowerResult[]): string[] {
     if (module_allocates(cache)) { out = out.append("@allocates"); }
     if (module_calls_optarrarr_free(cache)) { out = out.append("@calls_optarrarr_free"); }
     if (module_calls_strarrarr_free(cache)) { out = out.append("@calls_strarrarr_free"); }
+    var mvsd: string[] = map_vals_struct_drop_types(cache);
+    var mvi: i32 = 0;
+    while (mvi < mvsd.len()) { out = out.append("@map_vals_struct_drop:" + mvsd[mvi]); mvi = mvi + 1; }
     if (module_uses_arr_slice(cache)) { out = out.append("@uses_arr_slice"); }
     if (module_uses_arr_slice8(cache)) { out = out.append("@uses_arr_slice8"); }
     if (module_calls_arr_str_join(cache)) { out = out.append("@uses_arr_str_join"); }
@@ -912,6 +915,54 @@ pub function field_reclaim_types(cache: irlower.LowerResult[]): string[] {
     return out;
 }
 
+// map_vals_struct_drop_types returns the distinct value struct types `T` for
+// which a __map_vals_struct_drop_<T> helper is called anywhere in the lowered
+// module; needs_of records each as "@map_vals_struct_drop:<T>" so the link
+// step emits the body without re-lowering.
+pub function map_vals_struct_drop_types(cache: irlower.LowerResult[]): string[] {
+    var out: string[] = [];
+    var fi: i32 = 0;
+    while (fi < cache.len()) {
+        var r: irlower.LowerResult = cache[fi];
+        var i: i32 = 0;
+        while (i < r.ops.len()) {
+            if (r.ops[i].kind_tag == 149 && ircore.is_map_vals_struct_drop_name(r.ops[i].str)) {  // call_direct
+                var t: string = ircore.map_vals_struct_drop_type(r.ops[i].str);
+                if (util.index_of_str(out, t) < 0) { out = out.append(t); }
+            }
+            i = i + 1;
+        }
+        fi = fi + 1;
+    }
+    return out;
+}
+
+// map_vals_struct_drop_func returns the WAT for $__map_vals_struct_drop_<T>(box)
+// -> box: on the map's last reference, each OCCUPIED slot's sole-owned value box
+// releases its own rc fields through $__struct_drop_<T>, ahead of
+// $__fern_map_release's flat per-value dec that frees the boxes. Same box
+// layout as that release: rc@-8, cap@4, vals@12, used@16.
+pub function map_vals_struct_drop_func(t: string): string {
+    var o: string = "  (func $__map_vals_struct_drop_" + t + " (param $box i32) (result i32)\n";
+    o = o + "    (local $i i32) (local $cap i32) (local $vals i32) (local $used i32) (local $v i32)\n";
+    o = o + "    (if (i32.eqz (local.get $box)) (then (return (local.get $box))))\n";
+    o = o + "    (if (i32.eq (i32.load (i32.sub (local.get $box) (i32.const 8))) (i32.const 1)) (then\n";
+    o = o + "      (local.set $cap (i32.load (i32.add (local.get $box) (i32.const 4))))\n";
+    o = o + "      (local.set $vals (i32.load (i32.add (local.get $box) (i32.const 12))))\n";
+    o = o + "      (local.set $used (i32.load (i32.add (local.get $box) (i32.const 16))))\n";
+    o = o + "      (local.set $i (i32.const 0))\n";
+    o = o + "      (block $mvd (loop $mvl\n";
+    o = o + "        (br_if $mvd (i32.ge_u (local.get $i) (local.get $cap)))\n";
+    o = o + "        (if (i32.eq (i32.load (i32.add (local.get $used) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 1)) (then\n";
+    o = o + "          (local.set $v (i32.load (i32.add (local.get $vals) (i32.mul (local.get $i) (i32.const 4)))))\n";
+    o = o + "          (if (call $__fern_rc_is_unique (local.get $v)) (then\n";
+    o = o + "            (drop (call $__struct_drop_" + t + " (local.get $v)))))))\n";
+    o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "        (br $mvl)))))\n";
+    o = o + "    (local.get $box))\n";
+    return o;
+}
+
 // struct_drop_types returns the distinct struct types `T` for which a
 // __struct_drop_<T> helper is called anywhere in the lowered module (#3457 — the
 // deep struct-drop, formerly inline). wasm emits a REAL per-type body for each
@@ -929,6 +980,11 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: parser.Str
             if (r.ops[i].kind_tag == 149 && ircore.is_struct_drop_name(r.ops[i].str)) {  // call_direct
                 var t: string = ircore.struct_drop_type(r.ops[i].str);
                 if (util.index_of_str(out, t) < 0) { out = out.append(t); }
+            }
+            // $__map_vals_struct_drop_<T> calls $__struct_drop_<T> per value box.
+            if (r.ops[i].kind_tag == 149 && ircore.is_map_vals_struct_drop_name(r.ops[i].str)) {
+                var mvt: string = ircore.map_vals_struct_drop_type(r.ops[i].str);
+                if (util.index_of_str(out, mvt) < 0) { out = out.append(mvt); }
             }
             i = i + 1;
         }
@@ -8643,6 +8699,16 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // (`unknown func $__struct_drop_<T>`). Returns "" for modules with no rc
     // fields, so non-struct programs are unchanged.
     parts = parts.append(rc_bodies);
+    // Per-type struct-VALUE column walks of reclaimable maps; the
+    // $__struct_drop_<T> each calls is in rc_bodies (struct_drop_types scans
+    // the same call).
+    var mvni: i32 = 0;
+    while (mvni < needs.len()) {
+        if (needs[mvni].len() > 22 && slice_unchecked(needs[mvni], 0, 22) == "@map_vals_struct_drop:") {
+            parts = parts.append(map_vals_struct_drop_func(slice_unchecked(needs[mvni], 22, needs[mvni].len()) + ""));
+        }
+        mvni = mvni + 1;
+    }
     // The canonical-ABI wrappers a string/list-returning `@import` resolves to
     // (return-area alloc, raw import call, lift). Gated the same way the AST
     // emitter gates them, so a module with no such extern is unchanged.

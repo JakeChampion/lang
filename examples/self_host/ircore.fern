@@ -225,7 +225,12 @@ pub function is_fern_helper(name: string): boolean {
         // body (x86 emit_ir_struct_drops, arm64 emit_arm64_struct_drop_one, wasm
         // emit_wasm_struct_drop_body). The per-type helper replaces the former inline
         // field-drop so the broad struct reclaim fits #3452.
-        || is_struct_drop_name(name);
+        || is_struct_drop_name(name)
+        // per-type struct-VALUE column walk of a reclaimable map:
+        // __map_vals_struct_drop_<T> releases each value box's own rc fields
+        // (through the backend's element walk over __struct_drop_<T>) before the
+        // map's one-dec column free takes the boxes.
+        || is_map_vals_struct_drop_name(name);
 }
 
 // is_struct_drop_name reports whether a call_direct callee is a per-type
@@ -237,6 +242,17 @@ pub function is_struct_drop_name(name: string): boolean {
 // struct_drop_type returns the struct type T from a "__struct_drop_<T>" name.
 pub function struct_drop_type(name: string): string {
     return slice_unchecked(name, 14, name.len()) + "";
+}
+
+// is_map_vals_struct_drop_name reports whether a call_direct callee is a
+// per-type __map_vals_struct_drop_<T> helper (the suffix is the value struct).
+pub function is_map_vals_struct_drop_name(name: string): boolean {
+    return name.len() > 23 && slice_unchecked(name, 0, 23) == "__map_vals_struct_drop_";
+}
+
+// map_vals_struct_drop_type returns T from a "__map_vals_struct_drop_<T>" name.
+pub function map_vals_struct_drop_type(name: string): string {
+    return slice_unchecked(name, 23, name.len()) + "";
 }
 
 // is_field_reclaim_name reports whether a call_direct callee is a per-type

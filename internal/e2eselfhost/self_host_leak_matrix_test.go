@@ -714,7 +714,18 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }
-`})
+`},
+		// A map whose STRUCT value column carries an rc field (#7910 (b)): the
+		// column's one-dec free takes the boxes, so each box must first release
+		// its own fields through __map_vals_struct_drop_<T>. The wide string
+		// keeps the payload past every inline threshold and comes through a
+		// call so nothing folds. Insert-built with a lookup read.
+		leakCell{name: "map_struct_strfield__insert__match", src: mapStructColumnInsertMatchSrc},
+		// The same column built by a literal, with no read — the column alone.
+		leakCell{name: "map_struct_strfield__literal__len", src: mapStructColumnLiteralLenSrc},
+		// An ARRAY field in the value struct: the same walk, a different arm of
+		// __struct_drop_<T>.
+		leakCell{name: "map_struct_arrfield__insert__len", src: mapStructColumnArrFieldInsertSrc})
 	return cells
 }
 
