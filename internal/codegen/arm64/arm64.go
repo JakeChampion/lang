@@ -2211,7 +2211,6 @@ func (g *generator) emitRcIncRuntime() {
 	g.line(".global __fern_rc_inc")
 	g.typeDirective("__fern_rc_inc")
 	g.label("__fern_rc_inc")
-	g.emit("cbz x0, .Lrcinc_ret")
 	// SSO inline-tag guard: native strings ≤7 bytes pack their bytes
 	// into the "pointer" word with bit 0 set. Treating them as pointers
 	// would mis-read [data-8] as an rc word and corrupt memory. Heap
@@ -2249,7 +2248,6 @@ func (g *generator) emitRcDecRuntime() {
 	g.line(".global __fern_rc_dec")
 	g.typeDirective("__fern_rc_dec")
 	g.label("__fern_rc_dec")
-	g.emit("cbz x0, .Lrcdec_ret")
 	// SSO inline-tag guard — see __fern_rc_inc above. Heap pointers are
 	// always 8-byte aligned (low bit clear); native strings ≤7 bytes
 	// are inline-tagged and must not be deref'd as pointers.
@@ -3311,8 +3309,7 @@ func (g *generator) emitRcIsUniqueRuntime() {
 	g.line(".global __fern_rc_is_unique")
 	g.typeDirective("__fern_rc_is_unique")
 	g.label("__fern_rc_is_unique")
-	g.emit("cbz x0, .Lisuniq_no")
-	g.emit("cmp x0, #0x10000")
+	g.emit("cmp x0, #0x10000") // null is below this too
 	g.emit("b.lo .Lisuniq_no")
 	g.emit("ldur w1, [x0, #-8]")
 	g.emit("tbnz w1, #31, .Lisuniq_no") // static sentinel
@@ -13887,9 +13884,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		}
 		done := g.freshLabel("rcopDone")
 		g.pop()                          // x0 = ptr
-		g.emit("cbz x0, %s", done)       // null
 		g.emit("tbnz x0, #0, %s", done)  // SSO inline-tag (bit 0 set)
-		g.emitBelowHeapGuard(done)       // below heap
+		g.emitBelowHeapGuard(done)       // below heap (null included)
 		g.emit("ldur w1, [x0, #-8]")     // rc
 		g.emit("tbnz w1, #31, %s", done) // static sentinel (negative)
 		if op.Kind == ir.OpRcInc {
@@ -13922,9 +13918,8 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 		}
 		uniqNo := g.freshLabel("rcopUniqNo")
 		uniqEnd := g.freshLabel("rcopUniqEnd")
-		g.pop() // x0 = ptr
-		g.emit("cbz x0, %s", uniqNo)
-		g.emit("cmp x0, #0x10000")
+		g.pop()                    // x0 = ptr
+		g.emit("cmp x0, #0x10000") // null is below this too
 		g.emit("b.lo %s", uniqNo)
 		g.emit("ldur w1, [x0, #-8]")
 		g.emit("tbnz w1, #31, %s", uniqNo) // static sentinel
