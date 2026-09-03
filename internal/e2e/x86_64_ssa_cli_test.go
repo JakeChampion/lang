@@ -72,6 +72,35 @@ function main(): i32 {
     match (s) { Shape.Circle => { return 1; }, Shape.Square => { return 0; } }
 }
 `},
+		// Calls inside a loop, which is where the allocator pays most: it has no
+		// call-clobber awareness, so it saves EVERY caller-saved allocatable
+		// register that could hold a live-across-call value, around every call —
+		// and a match brings calls with it, dropping its scrutinee through
+		// __fern_rc_inc / __fern_rc_dec. That traffic (34 push/pop against the
+		// stack machine's 6) used to swallow the whole win on this program and
+		// leave the allocated path larger. It no longer does — 199 instructions
+		// against 213 — so the smaller-than assertion below covers the shape
+		// that was hardest for it.
+		{"call-heavy-loop-match", `enum Shape { Circle, Square, Triangle }
+function pick(n: i32): Shape {
+    if (n == 0) { return Shape.Circle; }
+    if (n == 1) { return Shape.Square; }
+    return Shape.Triangle;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 3) {
+        match (pick(i)) {
+            Shape.Circle => { t = t + 1; },
+            Shape.Square => { t = t + 10; },
+            Shape.Triangle => { t = t + 100; }
+        }
+        i = i + 1;
+    }
+    return t - 111;
+}
+`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -154,57 +183,6 @@ function main(): i32 {
 				t.Errorf("an uncovered construct must REFUSE, not crash:\n%s", out)
 			}
 		})
-	}
-}
-
-// The register allocator has no call-clobber awareness: EmitAsmModule saves
-// EVERY caller-saved allocatable register that could hold a live-across-call
-// value, around every call. On straight-line code that costs nothing, and the
-// covered table above shows the allocated path 56-81% smaller. Put calls inside
-// a loop and the saves multiply — and enums bring calls with them, because a
-// match drops its scrutinee through __fern_rc_inc / __fern_rc_dec.
-//
-// Measured on the program below: 217 instructions against the stack machine's
-// 208, of which 34 are push/pop against its 6. So the allocator wins the body
-// and loses it back at the call boundary. This is the gate for fixing that —
-// when a real clobber set lands, the case flips and says so.
-func TestX86_64SSACallHeavyLoopIsLargerToday(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("x86-64 backends are not exercised on windows")
-	}
-	fern := buildFernCLI(t)
-	dir := t.TempDir()
-	src := mustWrite(t, dir, "prog.fern", `enum Shape { Circle, Square, Triangle }
-function pick(n: i32): Shape {
-    if (n == 0) { return Shape.Circle; }
-    if (n == 1) { return Shape.Square; }
-    return Shape.Triangle;
-}
-function main(): i32 {
-    var t: i32 = 0;
-    var i: i32 = 0;
-    while (i < 3) {
-        match (pick(i)) {
-            Shape.Circle => { t = t + 1; },
-            Shape.Square => { t = t + 10; },
-            Shape.Triangle => { t = t + 100; }
-        }
-        i = i + 1;
-    }
-    return t - 111;
-}
-`)
-	baseAsm := mustEmitAsm(t, fern, src, false)
-	ssaAsm := mustEmitAsm(t, fern, src, true)
-	baseN, ssaN := countAsmInstructions(baseAsm), countAsmInstructions(ssaAsm)
-	if ssaN < baseN {
-		t.Skipf("SSA now emits %d against the stack machine's %d — call-clobber awareness landed; "+
-			"move this program into TestX86_64SSABackendCLI's covered table and delete this test", ssaN, baseN)
-	}
-	saves := strings.Count(ssaAsm, "\tpush ") + strings.Count(ssaAsm, "\tpop ")
-	if saves <= strings.Count(baseAsm, "\tpush ")+strings.Count(baseAsm, "\tpop ") {
-		t.Errorf("SSA is larger (%d vs %d) but not from caller-save traffic (%d push/pop) — "+
-			"the cost has moved somewhere else and this test no longer measures what it says", ssaN, baseN, saves)
 	}
 }
 

@@ -87,14 +87,15 @@ func TestCodeSizeSmallerThanStackMachine(t *testing.T) {
 
 	// A large program of many varied functions — the shape a real codebase has.
 	//
-	// This number went UP when EmitProgram started running ssa.Optimize +
-	// ssa.Verify, the pipeline the shipping SSA backends run (#6979). That is
-	// not an emit regression: 17761 was what this path produced with no
-	// optimiser, which is a configuration no user can invoke. Optimize costs
-	// 2.4% on this program — LICM hoisting lengthening live ranges into more
-	// spills is the obvious suspect and is not yet verified — and the honest
-	// figure for the shipping pipeline is the larger one.
-	const ssaLargeText = 18179 // measured with Optimize+Verify (#6979); deterministic per commit
+	// Measured through the shipping pipeline: EmitProgram runs ssa.Optimize +
+	// ssa.Verify, as the shipping SSA backends do (#6979). Optimize is worth
+	// 1.3% here — 15245 bytes without it — most of it indirect: CmpFlip is what
+	// leaves a branch reading a comparison rather than a Not, which is the
+	// precondition for emitting the branch as a bare jcc.
+	//
+	// Re-measure it down whenever a deliberate emit change beats it: a pin left
+	// above what the backend emits is slack by exactly the difference.
+	const ssaLargeText = 15042 // deterministic per commit
 	ssaB, smB := textSizes(t, genMixedProgram(100))
 	if grew := float64(ssaB)/float64(ssaLargeText) - 1; grew > 0.02 {
 		t.Errorf("large program: SSA .text=%d is %.1f%% above the pinned %d — emit-quality regression?",
