@@ -20320,6 +20320,27 @@ func (b *builder) appendDecision(n *ast.Call) (bool, string) {
 	return true, "receiver \"" + id.Name + "\" is read again after this append"
 }
 
+// ownedAppendReceiver reports whether an append's receiver expression yields a
+// reference of its own that the append consumes: another append's result
+// (every __fern_arr_push_grow result is counted — rc 2 in place, a fresh rc 1
+// buffer otherwise), a literal, or a fresh user-call result. An ident, a field
+// or an index reads a reference some binding still owns and is not this.
+func (b *builder) ownedAppendReceiver(e ast.Expr) bool {
+	if !ast.RcFreeEnabled {
+		return false
+	}
+	if c, ok := e.(*ast.Call); ok {
+		if id, ok := c.Callee.(*ast.Ident); ok && id.Name == "__method_Array_push" {
+			return true
+		}
+	}
+	if _, ok := b.freshOwnedRcTempType(e); ok {
+		return true
+	}
+	_, ok := b.ownedCallResultType(e)
+	return ok
+}
+
 func (b *builder) emitArrayPush(n *ast.Call) error {
 	elemType := n.TypeArgs[0]
 	stride := int32(ast.ElemSizeBytesFor(elemType, b.ptrW))
@@ -20492,6 +20513,17 @@ func (b *builder) emitArrayPush(n *ast.Call) error {
 		b.emit(Op{Kind: OpLoadLocal, I32: arrSlot})
 		b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
 		b.emit(Op{Kind: OpDrop})
+	}
+
+	// A receiver that is itself an owned temp — an inner append's result in
+	// a chain, a literal, a fresh call result — holds a reference nothing
+	// else releases. The grow either counted the identity (in place: rc 2,
+	// the result is the same buffer) or left the temp at rc 1 beside a fresh
+	// copy whose elements the _ptr / _str helpers retained, so releasing it
+	// here nets the result to the sole owner either way. Without this every
+	// intermediate of `x.append(a).append(b)` was stranded at rc 2.
+	if b.ownedAppendReceiver(n.Args[0]) {
+		b.emitOwnedSlotDrop(arrSlot, ast.ArrayType{Elem: elemType})
 	}
 
 	// *(buf + oldLen * stride) = v   (width-correct store)

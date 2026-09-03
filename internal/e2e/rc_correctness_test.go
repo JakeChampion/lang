@@ -7354,6 +7354,126 @@ function main(): i32 {
     return (total - 22) + __rc_underflow_count();
 }`,
 	},
+	{
+		// #7867 class C: a fresh array temp handed to a callee that appends
+		// to its parameter and returns the result without reassigning the
+		// parameter. The receiver of an append is a counted occurrence —
+		// the grow bumps the buffer to rc 2 before handing it back in
+		// place, and leaves it at rc 1 beside a fresh copy otherwise — so
+		// the position is counted-retain: the caller releases the temp
+		// unconditionally after the call and credits the binding of the
+		// result. `seed()` is the identity path: its buffer has spare
+		// capacity, so the callee grows it in place and returns the very
+		// temp the caller then releases — at rc 2, down to the result's
+		// one. Nothing was released before (400 allocs / 0 frees on the
+		// i32 form), and a pointer-guarded release would have stranded the
+		// identity path.
+		name: "append_receiver_param_arg_temp_released",
+		src: `
+@noinline
+function acc_i(xs: i32[], s: i32): i32[] { return xs.append(s); }
+@noinline
+function acc_s(xs: string[], s: string): string[] { return xs.append(s); }
+@noinline
+function acc_chain(xs: i32[], s: i32): i32[] { return xs.append(s).append(s + 1); }
+@noinline
+function seed(): i32[] { var s: i32[] = []; s = s.append(1); return s; }
+
+function main(): i32 {
+    var pad: string = "wide-payload-";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 8) {
+        var ys: i32[] = acc_i([], i);
+        var zs: i32[] = acc_i([1, 2], i);
+        var ss: string[] = acc_s([], pad + "x");
+        var ws: string[] = acc_s([pad + "a", pad + "b"], pad + "y");
+        var ch: i32[] = acc_chain([], i);
+        var sd: i32[] = acc_i(seed(), i);
+        if (sd[0] != 1) { return 90; }
+        if (sd[1] != i) { return 91; }
+        if (ch[1] != i + 1) { return 92; }
+        t = t + ys.len() + zs.len() + ss.len() + ws.len() + ch.len() + sd.len();
+        i = i + 1;
+    }
+    return (t - 96) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// The same callee with a LIVE caller local at the position: the
+		// #4873 bracket holds the local at rc 2 across the call, so the
+		// callee's return-position append copies and the caller's buffer —
+		// which has spare capacity and would otherwise grow in place — is
+		// unchanged. The result is therefore fresh and its binding is
+		// credited; the local is not a temp and is not released at the
+		// call. Value semantics are the check: `g` stays at three elements
+		// after two appends through the callee.
+		name: "append_receiver_param_live_local_keeps_value",
+		src: `
+@noinline
+function acc_i(xs: i32[], s: i32): i32[] { return xs.append(s); }
+@noinline
+function acc_chain(xs: i32[], s: i32): i32[] { return xs.append(s).append(s + 1); }
+
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 8) {
+        var g: i32[] = [];
+        g = g.append(1);
+        g = g.append(2);
+        g = g.append(3);
+        var a: i32[] = acc_i(g, i);
+        var b: i32[] = acc_i(g, i + 1);
+        var c: i32[] = acc_chain(g, i);
+        if (g.len() != 3) { return 90; }
+        if (a[3] != i) { return 91; }
+        if (b[3] != i + 1) { return 92; }
+        if (c.len() != 5) { return 93; }
+        t = t + a.len() + b.len() + c.len();
+        i = i + 1;
+    }
+    return (t - 104) + __rc_underflow_count();
+}
+`,
+	},
+	{
+		// An append whose receiver is itself an owned temp — the inner
+		// result of a chain, a literal, a fresh call result — consumes that
+		// reference: released after the outer grow, where before it was
+		// stranded at rc 2 (the inner grew in place, so the outer copied
+		// at rc 2 and nothing released the original) or at rc 1 (the inner
+		// copied). `x = x.append(k).append(k + 1)` leaked eight of its nine
+		// buffers per round. The string chain exercises the deep drop: the
+		// outer grow's copy path retains the elements, so the superseded
+		// buffer still owns its own and the walk is right.
+		name: "append_chain_intermediate_released",
+		src: `
+@noinline
+function mk(p: string): string[] { return [p + "seed"]; }
+
+function main(): i32 {
+    var pad: string = "wide-payload-";
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 8) {
+        var x: i32[] = [];
+        var k: i32 = 0;
+        while (k < 6) { x = x.append(k).append(k + 1); k = k + 1; }
+        var a: i32[] = [7].append(i);
+        var b: string[] = mk(pad).append(pad + "lit").append(pad + "more");
+        if (x[11] != 6) { return 90; }
+        if (a[0] != 7) { return 91; }
+        if (a[1] != i) { return 92; }
+        if (b[2].len() != 17) { return 93; }
+        t = t + x.len() + a.len() + b.len();
+        i = i + 1;
+    }
+    return (t - 136) + __rc_underflow_count();
+}
+`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
