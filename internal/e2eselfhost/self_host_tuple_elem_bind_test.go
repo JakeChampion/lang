@@ -172,6 +172,33 @@ function round(i: i32): i32 {
 			want: 70, wantFrees: 100,
 		},
 		{
+			// The ALIAS side (#7466): the same element bind reached through a
+			// plain alias of the tuple. `alias_bind_sites_of` vets the alias with
+			// the coarse `body_unsafe_for`, which reads `v.1` as a borrow, so the
+			// credit stays with `t` and the bind balances — the element's own
+			// accounting is independent of the box pair. Pinned as CLEAN because
+			// the element-aware gate the string[] side grew (#7391) would deny
+			// this credit outright: porting it as specified trades a balanced
+			// shape for a leaking one, which is why it was not done.
+			name: "elem_bound_through_alias",
+			src: `function round(i: i32): i32 {
+    var t: (i32, i32[]) = (i, [i, i + 1]);
+    var v: (i32, i32[]) = t;
+    var e: i32[] = v.1;
+    return e.len() + i;
+}` + tupleElemBindMain("100"),
+			want: 4, balance: true,
+		},
+		{
+			// REFUSED through the alias too: the element escapes the frame by
+			// the alias's own return, so the box is freed and the buffer is
+			// correctly stranded — the same half-release as the direct form.
+			name: "refuses_elem_returned_through_alias",
+			src: `function esc(i: i32): i32[] { var t: (i32, i32[]) = (i, [i, i + 1]); var v: (i32, i32[]) = t; return v.1; }
+function round(i: i32): i32 { return esc(i).len() + i; }` + tupleElemBindMain("100"),
+			want: 4, wantFrees: 100,
+		},
+		{
 			// Controls that were already clean and must stay so: a BORROW of the
 			// element rather than a bind, and a SCALAR element bind, neither of
 			// which the gate ever refused.
