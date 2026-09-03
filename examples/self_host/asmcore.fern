@@ -708,13 +708,19 @@ pub function rt_src_open_res(t: string): string {
 // carries no path anyway. This mirrors native, whose error arm passes
 // .LStr_ioerr_empty.
 //
+// The data pointer is read ONCE into a local: __raw_addr's address argument has
+// to be a bare pointer name (internal/sourcelint's #6386 gate rejects a nested
+// call there, since it cannot see whether the inner expression narrowed the
+// address to 32 bits), and hoisting the load out of the loop is what the other
+// write loops do anyway.
+//
 // The short-write loop stops on a zero return rather than spinning: a
 // zero-byte write with bytes still outstanding makes no progress, so the
 // remaining bytes are silently dropped — the same choice write_file's loop and
 // native's wasm body make. The count IS lost either way; native's signature has
 // nowhere to put it.
 pub function rt_src_writer_write(t: string): string {
-    return "function __fern_writer_write(fd: i32, s: string): Option[IoError] { var n: i32 = s.len(); var off: i32 = 0; while (off < n) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd, __raw_addr(__raw_data(s), off), n - off); if (w < 0) { return Some(__fern_io_error(0 - w, \"\")); } if (w == 0) { off = n; } else { off = off + w; } } return None; }";
+    return "function __fern_writer_write(fd: i32, s: string): Option[IoError] { var n: i32 = s.len(); var data: i32 = __raw_data(s); var off: i32 = 0; while (off < n) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd, __raw_addr(data, off), n - off); if (w < 0) { return Some(__fern_io_error(0 - w, \"\")); } if (w == 0) { off = n; } else { off = off + w; } } return None; }";
 }
 
 // rt_src_tcp_close / rt_src_tcp_accept are the two socket leaves that take only
