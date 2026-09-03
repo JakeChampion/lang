@@ -1430,6 +1430,24 @@ function is_reserved_enum_name(name: string): boolean {
   return name == "Option" || name == "Result" || name == "IoError" || name == "JsonValue";
 }
 
+// is_reserved_struct_name reports whether `name` is one of the structs the
+// front end injects as built-ins (checker.go's builtinStructDecls). A user
+// `struct` declaration shadowing one of these is E010, the struct half of the
+// rule is_reserved_enum_name above carries for enums.
+//
+// A LIST rather than an `||` chain: 24 names is where the chain stops reading,
+// and it gives the parity test in internal/checker one thing to compare
+// against builtinStructDecls() so the two cannot drift.
+function is_reserved_struct_name(name: string): boolean {
+  var reserved: string[] = [
+    "BytesWriter", "Cell", "Date", "DateTime", "Duration", "FileStat",
+    "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map", "MapIter",
+    "MockCall", "MockPlatform", "Platform", "ProcessResult", "Reader", "Span",
+    "Stream", "Time", "TimeZone", "Url", "Writer", "Zoned"
+  ];
+  return util.index_of_str(reserved, name) >= 0;
+}
+
 // variant_in_unions reports whether `name` is a variant of ANY declared
 // enum/union in scope.
 function variant_in_unions(name: string, unions: UnionSig[]): boolean {
@@ -9628,6 +9646,13 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       }
       if (sdup) {
         out = out.append(dg_at("E006", "struct \"" + s2.name + "\" redeclared", s2.line, s2.col));
+      }
+      // E010: a user struct shadowing a reserved built-in struct name. The
+      // line guard is native's `existing.P == ast.Position{}` check: a
+      // synthetic re-entry carries no position and is the compiler's own
+      // injection, not a user redeclaration.
+      if (s2.line > 0 && is_reserved_struct_name(s2.name)) {
+        out = out.append(dg_at("E010", "struct \"" + s2.name + "\" is a reserved built-in name and cannot be redeclared", s2.line, s2.col));
       }
     }
     sn2 = sn2 + 1;

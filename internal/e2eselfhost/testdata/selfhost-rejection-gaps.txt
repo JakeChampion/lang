@@ -6,6 +6,8 @@
 # and a working rejection can never silently regress into one.
 #
 # Every bare line below is a program native REFUSES and the self-host compiles.
+# One is closed: diag_e010 (a user struct shadowing a reserved built-in name)
+# now draws the same E010 native gives, so its line is gone from here.
 # That is a gap, not a licence: `err_map_key_no_hash` reaches wasm as a module
 # that does not validate, calling a `$Has.hash` nothing defines.
 #
@@ -13,7 +15,6 @@
 # so it never reaches a checker and this gate has nothing to read. They are
 # pinned rather than skipped so that a case which starts parsing is reported.
 
-diag_e010
 diag_e019
 diag_e033
 diag_e073
