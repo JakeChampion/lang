@@ -1767,6 +1767,34 @@ function map_key_type_error(s: Scope, kt: Type): string {
   return "map key type " + type_label(kt) + " is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires `import \"core/cmp\";`";
 }
 
+// map_key_dest_diag emits E045 when a DESTINATION type is `Map[K, V]` whose
+// K is a struct or enum missing Eq + Hash. The map-literal path checks its own
+// (possibly inferred) key at the first `.insert`; this is the annotated half —
+// `var m: Map[Has, i32] = map_new(8)` names the key without a literal to infer
+// it from, so nothing else looks at it and the module reaches codegen calling a
+// `hash` method the derive never synthesised (#2671). Only struct / enum keys
+// are gated, matching native: a scalar, string or type-parameter key is either
+// already usable or resolved later.
+function map_key_dest_diag(declared: Type, line: i32, col: i32, s: Scope): util.Diag[] {
+  var out: util.Diag[] = [];
+  match (declared) {
+    TypeMap(mt) => {
+      var gated: boolean = false;
+      match (mt.key) {
+        TypeStruct(_) => { gated = true; },
+        TypeUnion(ku) => { gated = ku.name != "Option" && ku.name != "Result"; },
+        _ => {}
+      }
+      if (gated) {
+        var msg: string = map_key_type_error(s, mt.key);
+        if (msg != "") { out = out.append(dg_at("E045", msg, line, col)); }
+      }
+    },
+    _ => {}
+  }
+  return out;
+}
+
 // e021_bound_call_diag emits E021 for a generic-bound conformance failure
 // at a call site (#4842): parameter `x: T` with `T: Tr` (pbound is the
 // `+`-joined bound list) whose call-site argument has concrete type `at`
@@ -9174,6 +9202,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
           var declared: Type = var_declared_type(v, cur);
           var initt: Type = check_expr(v.init, cur);
+          out = util.append_diags(out, map_key_dest_diag(declared, expr_line(v.init), expr_col(v.init), cur));
           if (!is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !type_assignable(initt, declared, unions)) {
             out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared) + str_copy_hint(initt, declared), v.line, v.col));
           }
