@@ -45041,6 +45041,20 @@ function cloarr_match_unsafe(m: ast.StmtMatch, name: string, borrowable: string[
 
 // cloarr_var_unsafe: `var d = name[i]` is a counted bind (lower_stmt_var_closure
 // retains the element, so d owns a count); any other init is an expression read.
+//
+// The credit is a whole-function scan and the retain is decided per bind, so
+// the two agreeing is worth stating. They read ONE predicate: clo_init's
+// ExprIndex arm routes the bind into lower_stmt_var_closure only when
+// `s.is_closurearr_slot` holds, and the retain there re-asks it on the same
+// pre-bind state — a bind the flag refuses never reaches the retain site at
+// all, so "credited without a retain" is not a state that exists. With the
+// flag off the bind is a plain uncounted borrow that is never released, so the
+// walk's free stays the single release either way (measured: the shape below,
+// 600 allocs / 600 frees / 0 live bytes, sanitizer clean, underflow 0).
+// closurearr_append_decl_sites then removes the window that raised the
+// question — the flag now holds from an empty `fn[]` declaration the body
+// grows with boxes, which is also the fix for the SIGSEGV that shape used to
+// emit.
 function cloarr_var_unsafe(v: ast.StmtVar, name: string, borrowable: string[]): boolean {
     if (expr_is_bare_row_read(v.init, name)) {
         if let ast.ExprIndex(ix) = v.init { return cloarr_expr_unsafe(ix.index, name, borrowable); }
@@ -45080,6 +45094,48 @@ function collect_fresh_cloarr_names(body: ast.Stmt[], caset: string[], closurese
     var out: string[] = [];
     for st in body {
         out = astwalk.fold_stmt_nodes(st, out, cand_site_of, no_expr_strs, astwalk.descend_none);
+    }
+    return out;
+}
+
+// closurearr_append_decl_sites: the binding sites of EMPTY annotated `fn[]`
+// literals the body grows with a closure BOX (`fns = fns.append(() => n)`).
+// Stamped "CLOAPPEND:" so closurearr_of_init can mark the slot is_closurearr at
+// the DECLARATION rather than at the first append — see the comment there for
+// the SIGSEGV that motivates it.
+//
+// Independent of the "CLOARR:" credit and computed unconditionally: the
+// mis-dispatch it fixes happens whether or not the array earns the reclaim
+// walk (an aliased, uncredited array segfaults identically). Marking the flag
+// here is also what makes the credit's forgiveness of `var g = fns[i]`
+// co-extensive with the retain that pays for it by CONSTRUCTION rather than by
+// argument: with no window in which the flag is off, there is no state in which
+// the credit could forgive a bind the retain did not reach.
+function closurearr_append_decl_sites(body: ast.Stmt[], closureset: string[]): string[] {
+    function box_appended_names(st: ast.Stmt, acc: string[]): string[] {
+        if let ast.StmtAssign(a) = st {
+            if (cloarr_self_append_fresh(a.value, a.target, body, closureset)) { return push_str_unique(acc, a.target); }
+        }
+        return acc;
+    }
+    var grown: string[] = [];
+    for st in body {
+        grown = astwalk.fold_stmt_nodes(st, grown, box_appended_names, no_expr_strs, astwalk.descend_none);
+    }
+    if (grown.len() == 0) { return grown; }
+    function empty_fnarr_decl(st: ast.Stmt, acc: string[]): string[] {
+        if let ast.StmtVar(v) = st {
+            if (v.type_name == "fn[]" && util.index_of_str(grown, v.name) >= 0) {
+                if let ast.ExprArray(a) = v.init {
+                    if (a.elements.len() == 0) { return acc.append("CLOAPPEND:" + reclaim_site_key_of(v.name, v.line, v.col)); }
+                }
+            }
+        }
+        return acc;
+    }
+    var out: string[] = [];
+    for st in body {
+        out = astwalk.fold_stmt_nodes(st, out, empty_fnarr_decl, no_expr_strs, astwalk.descend_none);
     }
     return out;
 }
@@ -54608,6 +54664,12 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // Closure-array locals whose element boxes the exit sweep / loop-rebind may
     // free with the buffer (#4354) — "CLOARR:" keyed on the binding site.
     reclaim = reclaim_closure_arrays(fn, sg, reclaim);
+    // Empty `fn[]` declarations the body grows with closure boxes: the slot is
+    // is_closurearr from the declaration, so a read lowered before the first
+    // append still dispatches env-first (#4354).
+    var cloapp: string[] = closurearr_append_decl_sites(fn.body, sg.closure_fns);
+    var cai: i32 = 0;
+    while (cai < cloapp.len()) { reclaim = reclaim.append(cloapp[cai]); cai = cai + 1; }
     // Snapshot-param reclaim (#3456 slice 2): struct params/receiver threaded
     // through a consume-rebind (`s = s.write(x); return s`). Piggybacked as
     // "SNAP:<slot>" — they are NOT swept/deep-dropped (their final value shares
@@ -72583,6 +72645,16 @@ var is_closurearr: boolean = false;
 match (v.init) {
     ast.ExprArray(carr) => {
         if (carr.elements.len() > 0 && arr_elem_is_closure_box(carr.elements[0], se)) { is_closurearr = true; }
+        // An EMPTY annotated `fn[]` literal grown by `name = name.append(<box>)`
+        // (#4354). An empty literal has no element to classify, so the flag used
+        // to arrive only AT the first append — and every element read lowered
+        // before it (a nested `var g = fns[0]` guarded to run from iteration 2,
+        // say) bound a plain scalar and CALLED the box pointer as code: SIGSEGV,
+        // where native runs the same program. lower_func stamps "CLOAPPEND:" on
+        // the declarations a body proves grow by closure box, so the flag holds
+        // from the declaration and every read in the body dispatches env-first.
+        if (carr.elements.len() == 0 && v.type_name == "fn[]"
+            && reclaim_has(se.reclaimable_names, "CLOAPPEND:", reclaim_site_key_of(v.name, v.line, v.col))) { is_closurearr = true; }
     },
     // `var arr = mk()` where mk returns a closure-array (`((T) => R)[]`):
     // arr's elements are closure boxes, so mark it is_closurearr for the
