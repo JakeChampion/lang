@@ -71,6 +71,12 @@ type Info struct {
 	// Structs maps a struct name to its declaration (which carries the
 	// ordered field list — codegen looks up field offsets here).
 	Structs map[string]*ast.StructDecl
+	// IRTypeMemo caches the per-type verdicts the IR derives by walking the
+	// struct and enum field graph (whether a type's deep drop is fully wired,
+	// whether an enum transitively holds a Map). The answer depends only on
+	// this Info and the type's spelling, and the IR asks it once per call
+	// argument lowered. Filled lazily by internal/ir; nil until then.
+	IRTypeMemo map[string]bool
 	// Enums maps an enum name to its declaration. The variant list +
 	// payload types live there; codegen looks up the runtime tag
 	// (the variant's index in the variant slice) and the payload

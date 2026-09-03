@@ -1337,7 +1337,7 @@ func consumedArrayParamPositions(prog *ast.Program, info *checker.Info, trmcFunc
 		for _, p := range fn.Params {
 			ok := false
 			if _, isArr := p.Type.(ast.ArrayType); isArr && !p.Own && reassigned[p.Name] &&
-				typeDeepDropWired(p.Type, info, map[string]bool{}) {
+				deepDropWired(info, p.Type) {
 				ok = true
 				any = true
 			}
@@ -2085,7 +2085,7 @@ func (b *builder) computeConsumedParams() map[string]bool {
 			b.paramVerdict(b.fn.Name, p.Type, i) != paramVerdictBorrowed {
 			continue
 		}
-		if !typeDeepDropWired(p.Type, b.info, map[string]bool{}) {
+		if !deepDropWired(b.info, p.Type) {
 			continue
 		}
 		res[p.Name] = true
