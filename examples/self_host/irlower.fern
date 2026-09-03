@@ -37900,9 +37900,10 @@ function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], bo
     // (uniqueness-gated payload dec + rc-guarded option-box dec per element,
     // then the outer buffer). Same three gates as the arr-of-arr class: no
     // escape of xs itself, not reassigned, and no ELEMENT alias
-    // (arrarr_row_escapes — a bound `var o = xs[i]` / `for o in xs` holds an
-    // option box whose payload the free would dangle; a transient
-    // `match (xs[i])` payload borrow is fine).
+    // (arrarr_row_escapes_boxiter — a bound `var o = xs[i]` holds an option box
+    // whose payload the free would dangle; a transient `match (xs[i])` payload
+    // borrow is fine, and so is `for o in xs` whose loop var stays confined to
+    // the loop).
     var oaas: string[] = collect_fresh_optaarr_names(body, []);
     out = reclaimable_optaarr(body, borrowable, oaas, plan_fe, plan_on, reassigned, recv_borrow, out);
     // Fresh Option[<tuple-with-array>] locals (#4365): `var o: Option[(i32, i32[])]
@@ -44066,8 +44067,8 @@ function collect_fresh_opttup_names(stmts: ast.Stmt[], structs: parser.StructDec
 // collect_fresh_optaarr_names: `var xs: Option[i32[]][] = [Some([..]), None]`
 // bindings, recursing nested blocks. Escape gates applied by
 // reclaimable_names_of (body_unsafe_for + not-reassigned + no element alias
-// via arrarr_row_escapes — a bound `var o = xs[i]` element or `for o in xs`
-// holds an option box the free would dangle).
+// via arrarr_row_escapes_boxiter — a bound `var o = xs[i]` element holds an
+// option box the free would dangle).
 function collect_fresh_optaarr_names(stmts: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
@@ -44713,13 +44714,33 @@ function arrarr_lit_is_empty(e: ast.Expr): boolean {
 // `g[i].len()`) don't bind the element and stay admissible (they're inside
 // larger expressions, not a bare ExprIndex RHS).
 //
-// This is the STRICT form, for the classes whose element is an option or tuple
-// BOX (OPTAARR, ARRTUP): the is_arr retain in lower_stmt_var fires on ARRAY-typed
-// binds, so a box bind takes no counted retain and an index read really is a bare
-// borrow there. The arr-of-arr class, whose elements ARE array buffers, takes
-// arrarr_row_escapes_iter — see the pair below.
+// This is the STRICT form, for the class whose element is a tuple BOX (ARRTUP):
+// the is_arr retain in lower_stmt_var fires on ARRAY-typed binds, so a box bind
+// takes no counted retain and an index read really is a bare borrow there. The
+// arr-of-arr class, whose elements ARE array buffers, takes
+// arrarr_row_escapes_iter; the option-element class takes
+// arrarr_row_escapes_boxiter — see the two below.
 function arrarr_row_escapes(stmts: ast.Stmt[], name: string): boolean {
-    return arrarr_row_escapes_ex(stmts, name, false, []);
+    return arrarr_row_escapes_ex(stmts, name, false, [], false);
+}
+
+// arrarr_row_escapes_boxiter: the strict form with `for o in xs` readmitted on a
+// confinement proof (#7414). The element bind still takes no dup, so an index
+// bind `var o = xs[i]` is refused exactly as above; the ITERATION is separable
+// from it, because the loop var's borrow is transient — the loop completes
+// before the exit sweep frees the structure — and that is the same argument
+// arrarr_row_escapes_iter already makes for an arr-of-arr row. What differs is
+// the confinement proof an option BOX admits: it is consumed by `match (o)`,
+// which the ordinary escape walk reads as an escape, so the body check is
+// body_unsafe_for_match_borrow plus a vet of the arm bindings that reading hands
+// out (elem_box_iter_bind_escapes).
+//
+// Before this, `for e in keep { match (e) { Some(p) => …, None => {} } }` cost
+// the WHOLE credit for its array and leaked the option boxes and their payloads
+// — 160 B/round, unbounded, against native's 0 — while `match (keep[i])` next to
+// it balanced. Only the iteration was ever the difference.
+function arrarr_row_escapes_boxiter(stmts: ast.Stmt[], name: string): boolean {
+    return arrarr_row_escapes_ex(stmts, name, false, [], true);
 }
 
 // arrarr_row_escapes_iter: the ARR-OF-ARR form. A row read — `var row = g[i]` or
@@ -44737,46 +44758,103 @@ function arrarr_row_escapes(stmts: ast.Stmt[], name: string): boolean {
 // therefore admitted on the same terms structarr_elem_escapes admits its own
 // iteration, and refused only when the body lets the loop var escape.
 function arrarr_row_escapes_iter(stmts: ast.Stmt[], name: string, borrowable: string[]): boolean {
-    return arrarr_row_escapes_ex(stmts, name, true, borrowable);
+    return arrarr_row_escapes_ex(stmts, name, true, borrowable, false);
 }
 
-// One walker behind both, rather than a near-copy per class (the 08-22
-// struct-producer rule): `dup_at_index` says whether this class's element bind
+// One walker behind all three, rather than a near-copy per class (the 08-22
+// struct-producer rule). `dup_at_index` says whether this class's element bind
 // takes the counted retain that turns an index read from an escape into a
-// borrow the reclaim can outlive, and whether its iteration is transient enough
-// to admit on a body check rather than outright.
-function arrarr_row_escapes_ex(stmts: ast.Stmt[], name: string, dup_at_index: boolean, borrowable: string[]): boolean {
+// borrow the reclaim can outlive; `box_iter_ok` says whether its `for` iteration
+// — transient in every class, since the loop ends before the reclaim — has a
+// confinement proof for a BOX loop var, which is a separate question from the
+// index bind and answered by a different walk.
+function arrarr_row_escapes_ex(stmts: ast.Stmt[], name: string, dup_at_index: boolean, borrowable: string[], box_iter_ok: boolean): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtVar(v) => { if (!dup_at_index && expr_is_bare_row_read(v.init, name)) { return true; } },
             ast.StmtAssign(asg) => { if (!dup_at_index && expr_is_bare_row_read(asg.value, name)) { return true; } },
             ast.StmtFor(fo) => {
-                var iterates_name: boolean = false;
-                match (fo.iter) {
-                    ast.ExprIdent(fid) => { if (fid.name == name) { iterates_name = true; } },
-                    _ => {}
+                if (ident_named_is(fo.iter, name)) {
+                    // The loop var is an unretained borrow of each element, and
+                    // the bind is transient — the loop ends before the exit
+                    // reclaim. What differs per class is the confinement proof
+                    // the element kind admits: an arr-of-arr ROW is an array the
+                    // ordinary escape walk vets, an option BOX is consumed by a
+                    // `match` that walk reads as an escape and needs the
+                    // scrutinee reading plus an arm-binding vet, and a class with
+                    // neither proof refuses outright.
+                    if (dup_at_index) {
+                        if (body_unsafe_for(fo.body, fo.var_name, borrowable, [])) { return true; }
+                    } else if (box_iter_ok) {
+                        var none: string[] = [];
+                        if (body_unsafe_for_match_borrow(fo.body, fo.var_name, none, none, none)) { return true; }
+                        if (elem_box_iter_bind_escapes(fo.body, fo.var_name)) { return true; }
+                    } else {
+                        return true;
+                    }
                 }
-                if (iterates_name) {
-                    // The loop var is an unretained borrow of each row. For the
-                    // classes whose index bind takes no dup either, that is fatal
-                    // outright; for the arr-of-arr it is transient — the loop ends
-                    // before the exit reclaim — so it turns on whether the body
-                    // lets the row outlive the loop.
-                    if (!dup_at_index) { return true; }
-                    if (body_unsafe_for(fo.body, fo.var_name, borrowable, [])) { return true; }
-                }
-                if (arrarr_row_escapes_ex(fo.body, name, dup_at_index, borrowable)) { return true; }
+                if (arrarr_row_escapes_ex(fo.body, name, dup_at_index, borrowable, box_iter_ok)) { return true; }
             },
-            ast.StmtIf(f) => { if (arrarr_row_escapes_ex(f.then_body, name, dup_at_index, borrowable) || arrarr_row_escapes_ex(f.else_body, name, dup_at_index, borrowable)) { return true; } },
-            ast.StmtWhile(w) => { if (arrarr_row_escapes_ex(w.body, name, dup_at_index, borrowable)) { return true; } },
+            ast.StmtIf(f) => { if (arrarr_row_escapes_ex(f.then_body, name, dup_at_index, borrowable, box_iter_ok) || arrarr_row_escapes_ex(f.else_body, name, dup_at_index, borrowable, box_iter_ok)) { return true; } },
+            ast.StmtWhile(w) => { if (arrarr_row_escapes_ex(w.body, name, dup_at_index, borrowable, box_iter_ok)) { return true; } },
             ast.StmtMatch(m) => {
-                for arm in m.arms { if (arrarr_row_escapes_ex(arm.body, name, dup_at_index, borrowable)) { return true; } }
+                for arm in m.arms { if (arrarr_row_escapes_ex(arm.body, name, dup_at_index, borrowable, box_iter_ok)) { return true; } }
             },
             _ => {}
         }
     }
     return false;
 }
+
+// elem_box_iter_bind_escapes: the loop variable of `for o in xs` over an array of
+// option boxes, checked for anything that could outlive the loop.
+//
+// The box itself is handled by the caller's body_unsafe_for_match_borrow, which
+// admits `o` in exactly one position — the bare scrutinee of a `match (o)` — and
+// refuses every alias, call argument, store and return. This walk covers what
+// that reading opens up: the arm BINDINGS such a match hands out. Each one
+// (payload, extra payloads, and the at-binding, which is the element box itself)
+// must stay inside its arm, vetted by elem_arm_bindings_confined and so by the
+// STRICT binding_escapes_arm. binding_escapes_arm_scrut, which reads a nested
+// `match (binding)` as a borrow, is deliberately NOT used: it is sound only
+// where the inner payload is scalar, and this class's payload is an rc array.
+//
+// A GUARDED arm on the admitted match refuses outright. binding_escapes_arm does
+// check the guard, so this is a narrowing rather than a soundness requirement —
+// the same one consumed_rcpayload_enum_frees makes for the neighbouring consuming
+// match, and for the same reason: under a guard which arm ran is not syntactic,
+// and this admission's proof is per-arm.
+function elem_box_iter_bind_escapes(stmts: ast.Stmt[], bnd: string): boolean {
+    for stmt in stmts {
+        if (elem_box_iter_bind_escapes_stmt(stmt, bnd)) { return true; }
+    }
+    return false;
+}
+function elem_box_iter_bind_escapes_stmt(st: ast.Stmt, bnd: string): boolean {
+    match (st) {
+        ast.StmtMatch(m) => {
+            var scrut_is_bnd: boolean = ident_named_is(m.scrutinee, bnd);
+            for arm in m.arms {
+                if (scrut_is_bnd) {
+                    if (arm.has_guard) { return true; }
+                    if (!elem_arm_bindings_confined(arm)) { return true; }
+                }
+                if (elem_box_iter_bind_escapes(arm.body, bnd)) { return true; }
+            }
+            return false;
+        },
+        ast.StmtIf(f) => {
+            return elem_box_iter_bind_escapes(f.then_body, bnd)
+                || elem_box_iter_bind_escapes(f.else_body, bnd);
+        },
+        ast.StmtWhile(w) => { return elem_box_iter_bind_escapes(w.body, bnd); },
+        ast.StmtFor(fo) => { return elem_box_iter_bind_escapes(fo.body, bnd); },
+        ast.StmtDefer(d) => { return elem_box_iter_bind_escapes_stmt(d.action, bnd); },
+        _ => { return false; }
+    }
+    return false;
+}
+
 function expr_is_bare_row_read(e: ast.Expr, name: string): boolean {
     match (e) {
         ast.ExprIndex(ix) => {
@@ -48539,13 +48617,13 @@ function arrenum_elem_read_of(e: ast.Expr, name: string): boolean {
     return false;
 }
 
-// arrenum_param_arm_ok: every binding a match arm takes from an admitted
+// elem_arm_bindings_confined: every binding a match arm takes from an admitted
 // element read stays confined to its arm — vetted by binding_escapes_arm,
 // the strict form (a bare re-bind or bare assign of the binding refuses;
 // `.len()`, indexing, arithmetic over reads admit). The at-binding holds the
 // ELEMENT BOX itself and gets the same vet: confined-to-the-arm means it dies
 // before the caller's walk frees the box.
-function arrenum_param_arm_ok(arm: ast.MatchArm): boolean {
+function elem_arm_bindings_confined(arm: ast.MatchArm): boolean {
     var no_reg: string[] = [];
     match (arm.pattern) {
         ast.PatVariant(pv) => {
@@ -48598,7 +48676,7 @@ function arrenum_param_esc_expr(e: ast.Expr, name: string, body: ast.Stmt[]): bo
 // rows name. Two shapes of an element read `name[i]` are admitted:
 //
 //   - the exact scrutinee of a `match`, when every arm binding (payloads and
-//     the at-binding) is confined to its arm (arrenum_param_arm_ok);
+//     the at-binding) is confined to its arm (elem_arm_bindings_confined);
 //   - the whole init of `var e = name[i]`, when the local is confined by the
 //     same proof pair the box flag trusts for a param name —
 //     body_unsafe_for_match_borrow (a bare-ident `match (e)` is a borrow) and
@@ -48659,7 +48737,7 @@ function arrenum_param_escapes(stmts: ast.Stmt[], name: string, body: ast.Stmt[]
                 var m_esc: boolean = false;
                 if (arrenum_elem_read_of(m.scrutinee, name)) {
                     for arm in m.arms {
-                        if (!arrenum_param_arm_ok(arm)) { m_esc = true; }
+                        if (!elem_arm_bindings_confined(arm)) { m_esc = true; }
                         if (arm.has_guard && arrenum_esc_expr(arm.guard, name, no_reg)) { m_esc = true; }
                         if (arrenum_param_escapes(arm.body, name, body)) { m_esc = true; }
                     }
@@ -73973,7 +74051,7 @@ while (oai < oaas.len()) {
     }
     if (oa_esc_ok
         && util.index_of_str(reassigned, oanm) < 0
-        && !arrarr_row_escapes(body, oanm)
+        && !arrarr_row_escapes_boxiter(body, oanm)
         && !optaarr_elem_payload_escapes(body, oanm)) {
         out = out.append("OPTAARR:" + oaas[oai]);
     }
