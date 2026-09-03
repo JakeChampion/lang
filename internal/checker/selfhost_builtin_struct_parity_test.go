@@ -3,6 +3,7 @@ package checker
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -10,62 +11,111 @@ import (
 	"github.com/jakechampion/lang/internal/ast"
 )
 
-// The self-host mirrors part of the checker's builtin struct table.
+// The self-host mirrors part of the checker's builtin struct table — in
+// TWO places, and both have to agree with it.
 //
 // builtinStructDecls injects HttpRequest / HttpResponse / HeaderMap /
-// Stream / Platform and friends into every native program; the
-// self-host compiler cannot inject them the same way, so
-// examples/self_host/builtins.fern carries `struct` declarations for
-// the ones its own sources need, and that is where the self-host reads
-// its field OFFSETS from.
+// Stream / Platform and friends into every native program. The
+// self-host cannot inject them the same way, so it carries its own
+// copies, and that is where it reads field OFFSETS and the shapes for
+// chained access from:
 //
-// Nothing pinned the two together. A field added, removed or retyped
-// on the native side leaves the self-host resolving the old offsets
-// against a struct the native backend now lays out differently, which
-// is a wrong-address read, not a diagnostic — so this gate holds every
-// name the mirror does declare to the checker's spelling, field for
-// field and in order.
+//   - examples/self_host/builtins.fern, `struct` declarations for the
+//     import-driven driver;
+//   - examples/self_host/parser.fern, which appends StructDecl values
+//     to the table for the paths that never read builtins.fern (the
+//     asm_load_run driver, loading from a stdlib root).
 //
-// The mirror is deliberately a SUBSET: the self-host declares only what
-// its sources mention. A checker builtin absent from builtins.fern is
-// fine; one that disagrees is not.
+// Nothing pinned any of them together. A field added, removed or
+// retyped on the native side leaves the self-host resolving the old
+// offsets against a struct the native backend now lays out
+// differently, which is a wrong-address read rather than a diagnostic;
+// and a field whose STRUCT type is stale there stops chained access
+// (`req.body.data`) resolving at all, which bails the whole module out
+// of the IR path. Both happened when HttpRequest.body became a Stream:
+// builtins.fern was updated and parser.fern was not.
+//
+// Each mirror is deliberately a SUBSET: it declares only what its
+// sources need. A checker builtin absent from a mirror is fine; one
+// that disagrees is not.
 func TestSelfHostBuiltinStructsMatchChecker(t *testing.T) {
-	const mirrorPath = "../../examples/self_host/builtins.fern"
-	src, err := os.ReadFile(mirrorPath)
-	if err != nil {
-		t.Fatalf("read %s: %v", mirrorPath, err)
-	}
-
 	native := map[string]string{}
 	for _, sd := range builtinStructDecls() {
 		native[sd.Name] = fernStructBody(t, sd)
 	}
+	for _, m := range []struct {
+		path  string
+		parse func(*testing.T, string) map[string]string
+		min   int
+	}{
+		{"../../examples/self_host/builtins.fern", parseFernStructDecls, 4},
+		{"../../examples/self_host/parser.fern", parseInjectedStructDecls, 4},
+	} {
+		t.Run(filepath.Base(m.path), func(t *testing.T) {
+			src, err := os.ReadFile(m.path)
+			if err != nil {
+				t.Fatalf("read %s: %v", m.path, err)
+			}
+			mirror := m.parse(t, string(src))
+			checked := 0
+			for name, fields := range mirror {
+				want, isBuiltin := native[name]
+				if !isBuiltin {
+					continue // a self-host-only record; not this gate's business
+				}
+				checked++
+				if fields != want {
+					t.Errorf("%s: %s declares\n\t{ %s }\nbut the checker's builtin table says\n\t{ %s }\n"+
+						"the self-host reads field offsets and chained-access shapes off its own copy, "+
+						"so a disagreement is a wrong-address read or a whole-module IR bail",
+						name, filepath.Base(m.path), fields, want)
+				}
+			}
+			// Guard the gate itself: a rename or a reshaped injection site
+			// that made every name stop matching would otherwise pass silently.
+			if checked < m.min {
+				t.Errorf("only %d builtin structs were compared in %s; it should mirror at least "+
+					"HeaderMap, Stream, HttpRequest and HttpResponse", checked, filepath.Base(m.path))
+			}
+		})
+	}
+}
 
+// parseFernStructDecls reads plain `struct N { a: T, ... }` declarations.
+func parseFernStructDecls(t *testing.T, src string) map[string]string {
+	t.Helper()
 	decl := regexp.MustCompile(`(?m)^struct\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{([^}]*)\}`)
-	matches := decl.FindAllStringSubmatch(string(src), -1)
-	if len(matches) == 0 {
-		t.Fatalf("no struct declarations found in %s", mirrorPath)
+	out := map[string]string{}
+	for _, m := range decl.FindAllStringSubmatch(src, -1) {
+		out[m[1]] = normaliseFields(m[2])
 	}
+	if len(out) == 0 {
+		t.Fatal("no struct declarations found")
+	}
+	return out
+}
 
-	checked := 0
-	for _, m := range matches {
-		name, fields := m[1], normaliseFields(m[2])
-		want, isBuiltin := native[name]
-		if !isBuiltin {
-			continue // a self-host-only record; not this gate's business
+// parseInjectedStructDecls reads parser.fern's table injections: an
+// `if (!struct_declared(structs, "N"))` block whose body appends one
+// StructFieldDecl per field, in order.
+func parseInjectedStructDecls(t *testing.T, src string) map[string]string {
+	t.Helper()
+	block := regexp.MustCompile(`if \(!struct_declared\(structs, "([A-Za-z_][A-Za-z0-9_]*)"\)\) \{([\s\S]*?)\n    \}`)
+	field := regexp.MustCompile(`StructFieldDecl \{ name: "([^"]*)", type_name: "([^"]*)"`)
+	out := map[string]string{}
+	for _, m := range block.FindAllStringSubmatch(src, -1) {
+		var parts []string
+		for _, f := range field.FindAllStringSubmatch(m[2], -1) {
+			parts = append(parts, f[1]+": "+f[2])
 		}
-		checked++
-		if fields != want {
-			t.Errorf("%s: builtins.fern declares\n\t{ %s }\nbut the checker's builtin table says\n\t{ %s }\n"+
-				"the self-host reads field offsets off its own declaration, so a disagreement is a wrong-address read",
-				name, fields, want)
+		if len(parts) > 0 {
+			out[m[1]] = strings.Join(parts, ", ")
 		}
 	}
-	// Guard the gate itself: a rename on either side that made every
-	// name stop matching would otherwise pass silently.
-	if checked < 4 {
-		t.Errorf("only %d builtin structs were compared; builtins.fern should mirror at least HeaderMap, Stream, HttpRequest and HttpResponse", checked)
+	if len(out) == 0 {
+		t.Fatal("no injected struct declarations found — has the injection site been reshaped?")
 	}
+	return out
 }
 
 // fernStructBody spells a builtin's fields the way builtins.fern does.

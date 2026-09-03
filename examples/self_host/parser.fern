@@ -7975,11 +7975,20 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
         hmf = hmf.append(StructFieldDecl { name: "values", type_name: "string[]", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
+    // Stream backs HttpRequest.body, so it has to be in this table for
+    // `req.body.data` to resolve its inner field: without it `body` has no
+    // struct shape here and the chained access bails out of the IR path.
+    if (!struct_declared(structs, "Stream")) {
+        var stf: StructFieldDecl[] = [];
+        stf = stf.append(StructFieldDecl { name: "data", type_name: "u8[]", fn_ret: "", fn_param_types: "" });
+        stf = stf.append(StructFieldDecl { name: "pos", type_name: "i32", fn_ret: "", fn_param_types: "" });
+        structs = structs.append(StructDecl { name: "Stream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
+    }
     if (!struct_declared(structs, "HttpRequest")) {
         var hrf: StructFieldDecl[] = [];
         hrf = hrf.append(StructFieldDecl { name: "method", type_name: "string", fn_ret: "", fn_param_types: "" });
         hrf = hrf.append(StructFieldDecl { name: "path", type_name: "string", fn_ret: "", fn_param_types: "" });
-        hrf = hrf.append(StructFieldDecl { name: "body", type_name: "string", fn_ret: "", fn_param_types: "" });
+        hrf = hrf.append(StructFieldDecl { name: "body", type_name: "Stream", fn_ret: "", fn_param_types: "" });
         hrf = hrf.append(StructFieldDecl { name: "headers", type_name: "HeaderMap", fn_ret: "", fn_param_types: "" });
         structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [] , is_pub: true });
     }
