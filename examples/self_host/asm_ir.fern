@@ -5097,6 +5097,9 @@ function emit_ir_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.
     }
     if (o.str == "__fern_strarrarr_free") { s = s.need("heap"); s = s.need("strarrarr_free"); }
     if (o.str == "__fern_optarrarr_free") { s = s.need("heap"); s = s.need("optarrarr_free"); }
+    // __map_vals_struct_drop_<T>: the struct-VALUE column walk a reclaimable
+    // map takes before __fern_map_free_va; its body pulls in the element walk.
+    if (ircore.is_map_vals_struct_drop_name(o.str)) { s = s.need("heap"); s = s.need("map_vals_struct_drop:" + ircore.map_vals_struct_drop_type(o.str)); }
     // __field_reclaim_<T> (#3457): record the type so emit_ir_field_reclaims
     // emits exactly the per-type bodies actually called; needs the heap
     // runtime (the freelist + __fn___fern_arr_dec it frees through).
@@ -5608,11 +5611,37 @@ function emit_ir_struct_drops(s: asmcore.EmitState): asmcore.EmitState {
             s = emit_ir_struct_arr_elems_drop_one(s, slice_unchecked(nd, 22, nd.len()));
         } else if (nd.len() > 20 && slice_unchecked(nd, 0, 20) == "enum_arr_elems_drop:") {
             s = emit_ir_enum_arr_elems_drop_one(s, slice_unchecked(nd, 20, nd.len()));
+        } else if (nd.len() > 21 && slice_unchecked(nd, 0, 21) == "map_vals_struct_drop:") {
+            s = emit_ir_map_vals_struct_drop_one(s, slice_unchecked(nd, 21, nd.len()));
         } else if (nd.len() > 12 && slice_unchecked(nd, 0, 12) == "struct_drop:") {
             s = emit_ir_struct_drop_one(s, slice_unchecked(nd, 12, nd.len()));
         }
         ni = ni + 1;
     }
+    return s;
+}
+
+// emit_ir_map_vals_struct_drop_one emits __map_vals_struct_drop_<T>(box) -> box:
+// the VALUE column of a reclaimable struct-valued map walked through
+// __struct_arr_elems_drop_<T>, so every sole-owned value box releases its own rc
+// fields before __fern_map_free_va's one-dec walk frees the boxes. The asm map
+// box is the raw {keys@0, vals@8} pair; the element walk clobbers r11, so the
+// box comes back from the stack arg.
+function emit_ir_map_vals_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(sty);
+    s = s.need("struct_arr_elems_drop:" + sty);
+    s = s.write(".weak __fn___map_vals_struct_drop_" + san + "\n");
+    s = s.write("__fn___map_vals_struct_drop_" + san + ":\n");
+    s = s.write("    movq 8(%rsp), %rax\n");          // box
+    s = s.write("    cmpq $0x10000, %rax\n");         // null / low-addr -> nothing to walk
+    s = s.write("    jb .Lmvsd_" + san + "_ret\n");
+    s = s.write("    movq 8(%rax), %rdi\n");          // vals = box[8]
+    s = s.write("    pushq %rdi\n");
+    s = s.write("    call __fn___struct_arr_elems_drop_" + san + "\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    movq 8(%rsp), %rax\n");          // return box (caller drops)
+    s = s.write(".Lmvsd_" + san + "_ret:\n");
+    s = s.write("    ret\n");
     return s;
 }
 
