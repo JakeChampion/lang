@@ -100,9 +100,12 @@ function main(): i32 {
     if (le16_at(img, 60) != 5) { return 12; }        // e_shnum
     if (le16_at(img, 62) != 4) { return 13; }        // e_shstrndx
 
-    // The two program headers and their offset are untouched: adding
-    // sections must not disturb the loadable side.
-    if (le16_at(img, 56) != 2) { return 14; }
+    // The program headers and their offset are untouched: adding sections
+    // must not disturb the loadable side. Read the count off `plain` rather
+    // than naming one — elf_image_wx reserves a third slot for unwind, and
+    // what this pins is that the appender preserves whatever the base image
+    // had, not how many segments that image happens to carry.
+    if (le16_at(img, 56) != le16_at(plain, 56)) { return 14; }
     if (le32_at(img, 32) != 64) { return 15; }
 
     // The image grew — section data and headers are appended past the body.
