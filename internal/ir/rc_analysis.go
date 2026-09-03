@@ -899,15 +899,14 @@ func computeReadOnlyComparators(info *checker.Info) map[string]bool {
 // holds a reference of its own and the caller's release is balanced: the value
 // stays at rc>=1 for exactly as long as the constructed value does.
 //
-// Deliberately narrow. The parameter must appear ONLY in counted-construction
-// value positions: one bare `return name`, one `var s = name`, one
-// `xs.append(name)`, one call passing it on, even one `name.len()` — anything
-// else at all — and the summary is false and the caller keeps the conservative
-// taint. That is enough for the shape this targets: the lexer's eight `*_tok`
-// helpers and the parser's `e_*` node constructors, each of which does nothing
-// with its string parameter but store it in the node it returns. Widening it
-// (transitive calls, pure reads, locals that only flow into constructions)
-// needs its own fixpoint and is a follow-up.
+// Conservative by construction: a parameter qualifies only when EVERY
+// occurrence is positively classified by its tier — a counted store, a
+// non-retaining read (a pure-read builtin, a scalar projection, a concat
+// operand, an append receiver), a counted-seed binding, or an argument to a
+// position the summary has already credited (the fixpoint below). One
+// occurrence outside those — a bare `return name`, a reassignment, an
+// uncounted sink — and the summary is false and the caller keeps the
+// conservative taint.
 //
 // A variant-constructor payload is a counted store too — emitEnumNew inc's an
 // aliased payload under the same predicate a StructLit field takes — so
@@ -1537,8 +1536,9 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool, 
 // arrayParamCounted is the array sibling of stringParamCounted: an array
 // parameter `pn` qualifies when every appearance is a bare-ident value of a
 // StructLit / TupleLit / ArrayLit slot, the receiver of a pure-read builtin
-// (`p.len()`), or an argument to a callee whose parameter in that position is
-// itself counted-retain.
+// (`p.len()`), the RECEIVER of `p.append(v)` (the grow never hands p's own
+// count out — see the push arm), or an argument to a callee whose parameter
+// in that position is itself counted-retain.
 //
 // `p[i]` is credited only where the read provably retains nothing (#7867
 // slice 4, and the runtime shape behind #7914's projection leak):
@@ -1624,6 +1624,19 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 				mark(x.Args[0])
 			}
 			if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "__method_Array_push" && len(x.Args) == 2 {
+				// `p.append(v)` retains nothing of p uncounted on either of
+				// the grow's outcomes: the copy path leaves p's buffer at its
+				// incoming count and hands back a fresh rc 1 buffer, and the
+				// in-place path (rc == 1 with spare capacity) sets the
+				// buffer's count to 2 before returning it — every backend's
+				// __fern_arr_push_grow does — so the result is a counted
+				// reference either way and p's own count is untouched. That
+				// is exactly the "rc 2 on the escaping path, rc 1 on the
+				// non-escaping one" contract the caller's post-call dec
+				// relies on, so `return p.append(v)` credits. `.with` is not
+				// its sibling here: __fern_arr_cow_inplace returns the
+				// receiver at rc 1 unbumped, an uncounted identity.
+				mark(x.Args[0])
 				if eid := paramIndex(x.Args[1]); eid != nil {
 					safe[eid] = true
 				}
