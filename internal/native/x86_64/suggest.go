@@ -50,8 +50,3 @@ var knownMnemonics = func() []string {
 func suggestMnemonic(mnem string) string {
 	return suggest.Closest(mnem, knownMnemonics)
 }
-
-// KnownMnemonics is every spelling this assembler accepts, sorted.
-func KnownMnemonics() []string {
-	return append([]string(nil), knownMnemonics...)
-}
