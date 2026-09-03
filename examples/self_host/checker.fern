@@ -1370,6 +1370,13 @@ function bind_tuple_destr_names(out: Scope, names: string[], whole: Type): Scope
       // undefined identifier rather than a way to recover the element the
       // binding said to throw away. Binding it made `return _` compile and
       // hand back the discarded value.
+      //
+      // Guarded HERE and not in `bind` itself, which would cover every binder
+      // at once: a uniform refusal also unmasks a live bug in the nested
+      // for-loop pattern `for ((a, b), s) in xs`, which the self-host already
+      // mis-binds — it reports E001 for both `a` and `b` where native accepts
+      // the program. The remaining binders stay as they are until that is
+      // fixed.
       out = out.bind(nm, et);
     }
     i = i + 1;
@@ -1779,6 +1786,30 @@ function map_key_type_error(s: Scope, kt: Type): string {
 // `hash` method the derive never synthesised (#2671). Only struct / enum keys
 // are gated, matching native: a scalar, string or type-parameter key is either
 // already usable or resolved later.
+// mlit_is_desugared reports whether `e` is a map LITERAL as the parser leaves
+// it: an `.insert(k, v)` chain bottoming out at the `map_new` / `map_new_i32`
+// base. The literal's own key check (the first insert, above) reports E045 for
+// it already, so the destination check skips these and the two do not both
+// fire — native skips its MapLit destinations for the same reason. A bare
+// `map_new(n)` is NOT one: it is an ordinary call with no key to infer from,
+// which is exactly the case the destination check exists for.
+function mlit_is_desugared(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprCall(c) => {
+      match (c.callee) {
+        ast.ExprFieldAccess(fa) => {
+          if (fa.field != "insert") { return false; }
+          if (mlit_is_base(fa.obj)) { return true; }
+          return mlit_is_desugared(fa.obj);
+        },
+        _ => { return false; }
+      }
+    },
+    _ => { return false; }
+  }
+  return false;
+}
+
 function map_key_dest_diag(declared: Type, line: i32, col: i32, s: Scope): util.Diag[] {
   var out: util.Diag[] = [];
   match (declared) {
@@ -9221,7 +9252,9 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name)) {
           var declared: Type = var_declared_type(v, cur);
           var initt: Type = check_expr(v.init, cur);
-          out = util.append_diags(out, map_key_dest_diag(declared, expr_line(v.init), expr_col(v.init), cur));
+          if (!mlit_is_desugared(v.init)) {
+            out = util.append_diags(out, map_key_dest_diag(declared, expr_line(v.init), expr_col(v.init), cur));
+          }
           if (!is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !type_assignable(initt, declared, unions)) {
             out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared) + str_copy_hint(initt, declared), v.line, v.col));
           }
