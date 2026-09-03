@@ -23,8 +23,10 @@ import (
 //  2. The assign-form rebind `t = (k, ys)` freed the superseded box through
 //     emit_arr_store's SHALLOW dec, stranding the box's retained element
 //     buffer (40 B/round). The StmtVar re-declaration has driven
-//     emit_tup_elem_reclaim_store all along; the assign path now takes it
-//     too, restricted to 'a' kinds.
+//     emit_tup_elem_reclaim_store all along; the assign path now takes it too.
+//
+// The STRING position at that same rebind, and the writer agreement it needs,
+// are in self_host_tuple_str_rebind_test.go.
 //
 // Every want below was confirmed against BOTH oracles — bin/fern -interp and
 // the native x86-64 backend agreed on each — never read off the self-host run
@@ -207,24 +209,6 @@ function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { var k: 
 }
 function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
 			want: 53,
-		},
-		{
-			// A STRING position at the assign rebind: the element walk is
-			// restricted to 'a' kinds (a view local from a different writer than
-			// the kinds were recorded from would be str_free'd out from under its
-			// own sweep), so this shape keeps a bounded leak — the answer and a
-			// zero underflow count are what must hold.
-			name: "string_pos_rebind_refused",
-			src: `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
-function round(i: i32): i32 {
-    var s1: string = w("ab");
-    var s2: string = w("cd");
-    var t: (i32, string) = (i, s1);
-    t = (i + 1, s2);
-    return t.0 + t.1.len();
-}
-function main(): i32 { var x: i32 = 0; var r: i32 = 0; while (r < 200) { x = x + round(r); r = r + 1; } return (x % 89) + __rc_underflow_count(); }`,
-			want: 17,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
