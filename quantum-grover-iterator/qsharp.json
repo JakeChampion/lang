@@ -1,0 +1,8 @@
+{
+    "author": "quantum-grover",
+    "description": "Grover iterator with phase estimation",
+    "email": "",
+    "license": "MIT",
+    "name": "grover-phase-estimation",
+    "version": "1.0.0"
+}
