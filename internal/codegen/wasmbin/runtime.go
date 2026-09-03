@@ -975,7 +975,7 @@ var unconditionalHelperCalls = map[string][]string{
 	"__fern_read_file": {"__fern_utf8_valid"},
 	"__fern_str_copy":  {"__fern_alloc_rc1"},
 	"__http_entry": {
-		"__fern_alloc", "__bytes_to_lang_string",
+		"__fern_alloc", "__alloc_u8", "__bytes_to_lang_string",
 		// emitStrNormalize, for the outgoing body's SSO pair.
 		"__fern_str_len", "__fern_str_byte",
 	},

@@ -162,7 +162,7 @@ function serve(decls: ast.Decl[], port: i32): i32 {
   var handler: (HttpRequest, Platform) => HttpResponse = function(req: HttpRequest, plat: Platform): HttpResponse {
   var names: string[] = req.headers.names;
   var values: string[] = req.headers.values;
-  var o: machine.Outcome = machine.run_request(d, req.method, req.path, client_ip_of(req.headers), names, values, req.body, store.decode(cache.get()));
+  var o: machine.Outcome = machine.run_request(d, req.method, req.path, client_ip_of(req.headers), names, values, req.body_string(), store.decode(cache.get()));
   if (!o.ok) {
     eprint("vclproxy: " + o.err);
     return error_response(o);

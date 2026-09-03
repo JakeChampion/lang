@@ -15,11 +15,13 @@
 // the wrapper hardcodes must stay in lockstep with the checker's
 // `Param` ordering:
 //
-//	HttpRequest  (28 bytes): method@+0/+4, path@+8/+12,
-//	                          body@+16/+20, headers@+24 (HeaderMap ptr)
+//	HttpRequest  (24 bytes): method@+0/+4, path@+8/+12,
+//	                          body@+16 (Stream ptr),
+//	                          headers@+20 (HeaderMap ptr)
 //	HttpResponse (24 bytes): status@+0, body@+8/+12,
 //	                          headers@+16 (HeaderMap ptr)
 //	HeaderMap    (8 bytes):  names_ptr@+0, values_ptr@+4
+//	Stream       (8 bytes):  data_ptr@+0 (u8[]), pos@+4
 //
 // Platform is deliberately absent from that list: the wrapper never touches
 // its layout, calling the compiler-synthesised `__fern_platform_new` for the
@@ -229,6 +231,8 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 //	41: $write_off
 //	42: $write_chunk
 //	43: $write_buf
+//	44: $req_body_arr
+//	45: $req_body_stream
 //
 // TODO: emit a method-name br_table that pins the
 // common HTTP verbs to pre-interned inline-form string constants
@@ -239,6 +243,7 @@ func buildCabiReallocBody(idxs map[string]uint32) []byte {
 // in the wasi-http parity PR (next in the series).
 func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
+	allocU8 := idxs["__alloc_u8"]
 	bytesToStr := idxs["__bytes_to_lang_string"]
 	hmAppend, hasHMAppend := idxs["__method_HeaderMap_append"]
 	handleFn, hasHandle := idxs["handle"]
@@ -469,12 +474,9 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 			body = inst.InstEnd(body) // end loop
 			body = inst.InstEnd(body) // end block
 
-			// body_str = __bytes_to_lang_string(body_buf, body_cur)
-			body = inst.InstLocalGet(body, 13)
-			body = inst.InstLocalGet(body, 15)
-			body = inst.InstCall(body, bytesToStr)
-			body = inst.InstLocalSet(body, 8) // body_len
-			body = inst.InstLocalSet(body, 7) // body_data
+			// The accumulated bytes stay in $body_buf / $body_cur:
+			// the Stream built below copies them into a u8[] box,
+			// so there is no lang-string round-trip on this path.
 
 			// Drop input-stream.
 			body = inst.InstLocalGet(body, 10)
@@ -495,17 +497,52 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	// with "resource has children". See the matching reqDrop call
 	// below, just after fields_drop(req_fields).
 
-	// ================ Build HttpRequest (28 bytes + 8-byte rc header) ================
+	// ================ Build the body Stream (8 bytes + 8-byte rc header) ================
+	// HttpRequest.body is a `Stream`, so the accumulated bytes go
+	// into a u8[] box the stream owns rather than into a lang
+	// string. $body_buf / $body_cur are zero when the request
+	// carried no body at all, and __alloc_u8(0) plus a zero-length
+	// memory.copy is exactly the empty stream that wants.
+	body = inst.InstLocalGet(body, 15) // body_cur
+	body = inst.InstCall(body, allocU8)
+	body = inst.InstLocalSet(body, 44)
+	body = inst.InstLocalGet(body, 44)
+	body = inst.InstLocalGet(body, 13) // body_buf
+	body = inst.InstLocalGet(body, 15) // body_cur
+	body = memory.InstMemoryCopy(body)
+
+	// Stream struct: data_ptr@+0, pos@+4, behind the same
+	// static-sentinel rc header the other wrapper-built structs
+	// carry.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 45)
+	body = inst.InstI32Const(body, -0x80000000)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 45)
+	body = inst.InstI32Const(body, 8)
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, 45)
+	body = inst.InstLocalGet(body, 45)
+	body = inst.InstLocalGet(body, 44)
+	body = memory.InstI32Store(body, 2, 0)
+	body = inst.InstLocalGet(body, 45)
+	body = inst.InstI32Const(body, 4)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, 0)
+	body = memory.InstI32Store(body, 2, 0)
+
+	// ================ Build HttpRequest (24 bytes + 8-byte rc header) ================
 	// Phase 1e-runtime: HttpRequest carries a static-sentinel
 	// rc header at `[req - 8]` so user code that aliases the
 	// request via `var r = req;` or `req.body_string()` can
 	// safely run through __fern_rc_inc/dec (Phase 1e-struct-ii
 	// widened the inc predicate to include struct types). Alloc
-	// bumps 28 → 36; sentinel at base+0; data = base+8. All
+	// bumps 24 → 32; sentinel at base+0; data = base+8. All
 	// field offsets below are still relative to the slot-17
 	// pointer, which now holds base+8 — same offsets as before
 	// from the data pointer's perspective.
-	body = inst.InstI32Const(body, 36)
+	body = inst.InstI32Const(body, 32)
 	body = inst.InstCall(body, alloc)
 	// Static sentinel at base + 0.
 	body = inst.InstLocalTee(body, 17)
@@ -535,15 +572,11 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, 6)
 	body = memory.InstI32Store(body, 2, 0)
+	// body (Stream ptr) at data + 16.
 	body = inst.InstLocalGet(body, 17)
 	body = inst.InstI32Const(body, 16)
 	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 7)
-	body = memory.InstI32Store(body, 2, 0)
-	body = inst.InstLocalGet(body, 17)
-	body = inst.InstI32Const(body, 20)
-	body = numeric.InstI32Add(body)
-	body = inst.InstLocalGet(body, 8)
+	body = inst.InstLocalGet(body, 45)
 	body = memory.InstI32Store(body, 2, 0)
 
 	// ================ Build HeaderMap with empty parallel arrays ================
@@ -578,7 +611,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 29)
 	body = memory.InstI32Store(body, 2, 0)
 
-	// NOTE: HttpRequest.headers (offset +24) is stored AFTER the
+	// NOTE: HttpRequest.headers (offset +20) is stored AFTER the
 	// populate loop below — __method_HeaderMap_append is now a
 	// functional update (returns a new HeaderMap rather than
 	// mutating in place, per the immutable-data-structures
@@ -649,10 +682,10 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 		body = inst.InstEnd(body)
 	}
 
-	// HttpRequest.headers (offset +24) = the populated HeaderMap
+	// HttpRequest.headers (offset +20) = the populated HeaderMap
 	// (local 27, after the functional-append loop rebound it).
 	body = inst.InstLocalGet(body, 17)
-	body = inst.InstI32Const(body, 24)
+	body = inst.InstI32Const(body, 20)
 	body = numeric.InstI32Add(body)
 	body = inst.InstLocalGet(body, 27)
 	body = memory.InstI32Store(body, 2, 0)
@@ -929,7 +962,7 @@ func buildHttpEntryBody(idxs map[string]uint32) []byte {
 	// (formerly $arena_handle) is now unused: per-request memory
 	// is reclaimed by reference counting, not a bump-cursor reset.
 	// Kept allocated to avoid renumbering slots 25..43.
-	locals := inst.PutLocalsOneGroup(nil, 42, encode.ValtypeI32)
+	locals := inst.PutLocalsOneGroup(nil, 44, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

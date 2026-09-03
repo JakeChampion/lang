@@ -366,17 +366,25 @@ func builtinStructDecls() []*ast.StructDecl {
 			Fields: []ast.Param{
 				{Name: "method", Type: ast.StringType{}},
 				{Name: "path", Type: ast.StringType{}},
-				{Name: "body", Type: ast.StringType{}},
+				// `body` is a Stream, not a string: an upload is
+				// read incrementally through std/stream's cursor
+				// methods rather than materialised whole
+				// (docs/PLATFORM-RESEARCH.md Rec §4). Handler code
+				// reaches it through `req.body_stream()` or the
+				// whole-body shims `req.body_string()` /
+				// `body_bytes()` / `body_len()` in std/http.
+				{Name: "body", Type: ast.StructType{Name: "Stream"}},
 				// `headers` lands at the END of the layout so the
 				// pre-headers byte offsets the wasi-http wrapper
-				// hardcodes (method@+0/+4, path@+8/+12,
-				// body@+16/+20) stay stable. HeaderMap is a 4-byte
-				// pointer slot on wasm32, total HttpRequest size
-				// 28 bytes. Inbound population: http_parse_request
-				// on the tcp_serve path parses the header block
-				// into the map; the wasi-http wrapper inlines an
-				// empty HeaderMap (canonical-ABI fields-resource
-				// integration is the next follow-up PR).
+				// hardcodes (method@+0/+4, path@+8/+12, body@+16)
+				// stay stable. Stream and HeaderMap are each a
+				// 4-byte pointer slot on wasm32, total HttpRequest
+				// size 24 bytes. Inbound population:
+				// http_parse_request on the tcp_serve path parses
+				// the header block into the map; the wasi-http
+				// wrapper inlines an empty HeaderMap (canonical-ABI
+				// fields-resource integration is the next follow-up
+				// PR).
 				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
 			},
 		},
@@ -448,9 +456,8 @@ func builtinStructDecls() []*ast.StructDecl {
 			},
 		},
 		// Stream — byte-stream value (docs/STDLIB-DESIGN-RESEARCH.md
-		// Rec §1 Phase 2). The eventual home for
-		// `HttpRequest.body` (today: `string`; tomorrow:
-		// `Stream`). Phase 1 ships an in-memory buffer-backed
+		// Rec §1 Phase 2), and the type of `HttpRequest.body`.
+		// Phase 1 ships an in-memory buffer-backed
 		// Stream with `data: u8[]` + `pos: i32` cursor. Lazy /
 		// chunked reads land in Phase 2 once the underlying
 		// runtime grows a reader-shaped iteration protocol.

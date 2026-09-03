@@ -96,7 +96,7 @@ function test_get_all_on_missing_is_empty(): test.TestOutcome {
 function test_x_prefixed_cl_not_content_length(): test.TestOutcome {
     var wire: string = "GET / HTTP/1.1\r\nX-Custom-Content-Length: 5\r\n\r\nhello";
     match (http.http_parse_request(wire)) {
-        Some(req) => { return test.assert_eq(req.body, ""); },
+        Some(req) => { return test.assert_eq(req.body_string(), ""); },
         None => { return test.fail("well-formed request wrongly rejected"); }
     }
     return test.fail("unreachable");

@@ -25,6 +25,10 @@ import "std/string";
 // for the parse-request entry placeholder, append for populating
 // from the parsed header block.
 import "std/headers";
+// std/stream backs the HttpRequest.body field — stream_from_string
+// to wrap a parsed body, and the cursor readers the whole-body
+// shims below run over it.
+import "std/stream";
 
 // `http_status_text(code)` — IANA reason phrase for the
 // common HTTP status codes (RFC 9110). Returns "" for
@@ -243,11 +247,15 @@ pub function http_header_value(block: string, key: string): Option[string] {
     return __parse_headers(block).get(key);
 }
 
-// HTTP method + path string from a request line. Uses
-// fixed indices into the line so the caller doesn't have
-// to allocate two extra strings. Returns None on malformed
+// `(method, path)` from a request line. Returns None on malformed
 // input (no spaces, missing version).
-function __http_parse_request_line(line: string): Option[HttpRequest] {
+//
+// The pair, not an HttpRequest with the other two fields stubbed:
+// its one caller reads exactly these two and builds the real
+// request itself, so the stubbed shape cost a whole discarded
+// request per parse — a HeaderMap and its two arrays, and a body
+// Stream and its buffer.
+function __http_parse_request_line(line: string): Option[(string, string)] {
     var sp1: i32 = line.index_of(" ");
     if (sp1 < 0) {
         return None;
@@ -258,12 +266,7 @@ function __http_parse_request_line(line: string): Option[HttpRequest] {
     }
     var method: string = slice_unchecked(line, 0, sp1).to_owned();
     var path: string = slice_unchecked(line, sp1 + 1, sp1 + 1 + sp2).to_owned();
-    return Some(HttpRequest {
-        method: method,
-        path: path,
-        body: "",
-        headers: headers.header_map_new(),
-    });
+    return Some((method, path));
 }
 
 // `__parse_headers(block)` — turn the CRLF-terminated header
@@ -416,15 +419,15 @@ pub function http_parse_request(buf: string): Option[HttpRequest] {
         return None;
     }
     match (__http_parse_request_line(slice_unchecked(buf, 0, first_crlf))) {
-        Some(req) => {
+        Some(line) => {
             var body: string = "";
             if (content_length > 0) {
                 body = slice_unchecked(buf, headers_len, headers_len + content_length).to_owned();
             }
             return Some(HttpRequest {
-                method: req.method,
-                path: req.path,
-                body: body,
+                method: line.0,
+                path: line.1,
+                body: stream.stream_from_string(body),
                 headers: req_headers,
             });
         },
@@ -477,57 +480,53 @@ pub function http_serialize_response(resp: HttpResponse): string {
 }
 
 // ============================================================
-// HttpRequest.body forward-compatibility shim — Tier-A Rec §1
-// per docs/STDLIB-DESIGN-RESEARCH.md. Today's
-// `HttpRequest.body: string` will migrate to
-// `body: Stream[bytes]` once the Stream / bytes type
-// primitives land. These methods let handler code use the
-// future call shape today; when the field type swaps, only
-// the method bodies change — `req.body_string()` /
-// `req.body_bytes()` / `len(req.body_string())` call sites
-// stay stable.
+// HttpRequest.body whole-body readers.
 //
-// Rationale per the doc:
-// > Today's handler code `req.body` becomes
-// > `req.body_string()?`. One-line diff per handler.
-//
-// Today no Result wrapping is needed (body is already a
-// string in memory); when the field becomes Stream[bytes]
-// the methods will grow `Result[T, IoError]` returns to
-// surface read errors. Callers using `match` on the result
-// today get a no-op trip through Some; tomorrow they get
-// real error paths.
+// The field is a `Stream` (docs/PLATFORM-RESEARCH.md Rec §4):
+// a handler that wants the body incrementally takes
+// `req.body_stream()` and drives std/stream's cursor methods
+// (`read_n`, `read_line`, `read_all`), rebinding the returned
+// Stream each step. The three readers here are the
+// whole-body shortcuts for handlers that do not care —
+// each reads the backing buffer directly rather than the
+// cursor, so they answer the same thing however far a
+// separate `body_stream()` walk has advanced.
 // ============================================================
 
-// `(r: HttpRequest).body_string()` — body as a UTF-8 string.
-// Forward-compatibility shim for the eventual Stream[bytes]
-// body shape.
-pub function (r: HttpRequest) body_string(): string {
+// `(r: HttpRequest).body_stream()` — the body as a Stream,
+// positioned at the start. The entry point for incremental
+// reads: `var (line, s) = req.body_stream().read_line();`.
+pub function (r: HttpRequest) body_stream(): Stream {
     return r.body;
 }
 
-// `(r: HttpRequest).body_bytes()` — body as a u8 array.
-// Same shape forward-compat as body_string; converts the
-// current string body through `s.bytes()`.
-pub function (r: HttpRequest) body_bytes(): u8[] {
-    return r.body.bytes();
+// `(r: HttpRequest).body_string()` — the whole body as a
+// UTF-8 string, cursor position ignored.
+pub function (r: HttpRequest) body_string(): string {
+    return string_from_bytes_unchecked(r.body.data);
 }
 
-// `(r: HttpRequest).body_len()` — body length in bytes.
-// Common shape (`len(req.body)`) that should also be
-// forward-compatible — once the field becomes Stream[bytes],
-// reading the length requires the stream to either be
-// fully consumed or to carry a Content-Length-derived
-// pre-known length. This shim returns the current
-// in-memory string's length.
+// `(r: HttpRequest).body_bytes()` — the whole body as a u8
+// array, cursor position ignored.
+pub function (r: HttpRequest) body_bytes(): u8[] {
+    return r.body.data;
+}
+
+// `(r: HttpRequest).body_len()` — body length in bytes. The
+// whole buffer, not `remaining()`: a handler asking a request
+// how big its body is wants the Content-Length answer, not
+// what a partial read has left.
 pub function (r: HttpRequest) body_len(): i32 {
-    return r.body.len();
+    return r.body.data.len();
 }
 
 // `(r: HttpResponse).body_string()` — body as a UTF-8 string.
-// The response-side twin of the HttpRequest shims above, and
-// forward-compatible in the same way: when the field becomes
-// `Stream[bytes]` only this body changes, not its callers.
+// The response-side twin of the HttpRequest readers above.
+// A response body stays a `string`: the streaming half of
+// Rec §4 gives the response an explicit writer
+// (`resp.write` / `flush` / `finish`) rather than a Stream
+// field, so that `HttpResponse { status: 200, body: "ok" }`
+// keeps working as the sugar the recommendation preserves.
 pub function (r: HttpResponse) body_string(): string {
     return r.body;
 }
@@ -543,10 +542,9 @@ pub function (r: HttpResponse) body_len(): i32 {
 }
 
 // `http_response_bytes(status, bs)` — a response whose body is
-// given as bytes rather than a string. The constructor the
-// Stream[bytes] migration wants callers to reach for: a byte
-// body needs no round-trip through `string` once the field
-// stops being one.
+// given as bytes rather than a string, so a handler holding
+// `u8[]` (an image, a decoded frame, bytes read off a request
+// Stream) does not have to spell the conversion itself.
 pub function http_response_bytes(status: i32, bs: u8[]): HttpResponse {
     return HttpResponse { status: status, body: string_from_bytes_unchecked(bs), headers: headers.header_map_new() };
 }
