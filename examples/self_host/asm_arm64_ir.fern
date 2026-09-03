@@ -1159,9 +1159,14 @@ pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg:
             s = s.need("tcp_accept");
             s = s.write("    bl __fn___fern_tcp_accept\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 202) {  // writer_write (#4372)
-            // [fd, str box] -> write(2) the box's bytes to the fd -> i32 bytes /
-            // -errno. Inline (no helper): len=box[8], data=box[0]; write=64.
-            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    ldr x2, [x1, #8]\n    ldr x1, [x1]\n    mov x8, #64\n    svc #0\n    str x0, [sp, #-16]!\n");
+            // [fd, str box] -> the Fern-compiled __fn___fern_writer_write(fd, s),
+            // pushing a fresh Option[IoError] (#7926). The box is on top but
+            // param[0] is fd, so swap before the call — the same marshalling
+            // read_chunk does. Body emitted in the fs bundle below, gated on
+            // writer_write.
+            s = s.need("heap"); s = s.need("writer_write");
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_writer_write\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 203) {  // open_file (#4372)
             // [path box] -> __fern_open_res(x0=path, x1=flags(imm), x2=0644) -> a
             // fresh Result[Reader|Writer, IoError] box. Body emitted in the fs
@@ -5909,7 +5914,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     // dirent name offset is a direntoff row. open_res joined it once open_file
     // started returning a Result (#7758) — it calls io_error like every other
     // leaf, so it has to share the bundle's call graph rather than sit alone.
-    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file")) {
+    // writer_write joined for the same reason once its own result became an
+    // Option[IoError] (#7926).
+    if (s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("temp_dir") || s.has_need("stat") || s.has_need("lstat") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write")) {
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat(tgt); }
         if (s.has_need("lstat")) { fs_src = fs_src + " " + asmcore.rt_src_lstat(tgt); }
@@ -5923,6 +5930,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir(tgt); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all(tgt); }
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res(tgt); }
+        if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write(tgt); }
         s = emit_ir_runtime_fern_fn(fs_src, s.struct_decls, s);
     }
     // env is the odd one out: no syscall at all, so it needs none of `tgt` and

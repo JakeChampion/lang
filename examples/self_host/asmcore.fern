@@ -695,6 +695,28 @@ pub function rt_src_open_res(t: string): string {
     return "function __fern_open_res(path: string, flags: i32, mode: i32): Result[i32, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var f: i32 = flags; " + xlate + "var fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, f, mode); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } return Ok(fd); }";
 }
 
+// rt_src_writer_write backs `w.write(s)` (#4372, #2649 syscall-leaf) →
+// `Option[IoError]`: write(2) the string's own bytes to the Writer fd, looping
+// until every byte is out — None once it is, Some(io_error) on a failing write.
+// It joins the fs bundle because it calls the shared classifier (#7926).
+//
+// A write has no PATH to report, and __fern_io_error CONSUMES the one it is
+// given, so the argument has to be a string the callee may keep or drop. A
+// literal serves: a string literal is an IMMORTAL static box (rc = -1 at box-8
+// on both register backends), so being moved into `Other(path, "")` or dropped
+// on the Interrupted branch is a no-op — no allocation for an error path that
+// carries no path anyway. This mirrors native, whose error arm passes
+// .LStr_ioerr_empty.
+//
+// The short-write loop stops on a zero return rather than spinning: a
+// zero-byte write with bytes still outstanding makes no progress, so the
+// remaining bytes are silently dropped — the same choice write_file's loop and
+// native's wasm body make. The count IS lost either way; native's signature has
+// nowhere to put it.
+pub function rt_src_writer_write(t: string): string {
+    return "function __fern_writer_write(fd: i32, s: string): Option[IoError] { var n: i32 = s.len(); var off: i32 = 0; while (off < n) { var w: i32 = __syscall3(" + sysno(t, "write") + ", fd, __raw_addr(__raw_data(s), off), n - off); if (w < 0) { return Some(__fern_io_error(0 - w, \"\")); } if (w == 0) { off = n; } else { off = off + w; } } return None; }";
+}
+
 // rt_src_tcp_close / rt_src_tcp_accept are the two socket leaves that take only
 // an fd (#2649, syscall-leaf) — close(2) and accept(2) with a NULL addr/addrlen.
 pub function rt_src_tcp_close(t: string): string {
@@ -2861,10 +2883,10 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
     var rt: Ty = infer_expr_type(fa.obj, s);
     if (fa.field == "read_chunk") { return ty_option(ty_string()); }
     if (fa.field == "read_line") { return ty_option(ty_string()); }
-    // Writer.write(s) -> i32 bytes written / -errno (#4372). Like
-    // read_chunk above, the real non-struct-receiver gate is applied
-    // at lower time (irlower's resource-method dispatch).
-    if (fa.field == "write") { return ty_i32(); }
+    // Writer.write(s) -> Option[IoError] (#4372, #7926 — native's
+    // signature). Like read_chunk above, the real non-struct-receiver
+    // gate is applied at lower time (irlower's resource-method dispatch).
+    if (fa.field == "write") { return ty_option(ty_unknown()); }
     if (is_cell(rt) && fa.field == "get") { return cell_val(rt); }
     if (is_map(rt) && fa.field == "get") {
         return ty_option(map_val(rt));
@@ -5019,7 +5041,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
         "__fern_wasm_block", "__fern_wasm_poll",
         "__fn___fern_tcp_connect", "__fern_tcp_pollable", "__fn___fern_tcp_close",
         "__fn___fern_udp_send", "__fn___fern_tcp_recv", "__fn___fern_tcp_send", "__fn___fern_tcp_listen", "__fn___fern_tcp_accept",
-        "__fn___fern_open_res",
+        "__fn___fern_open_res", "__fn___fern_writer_write",
         "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fern_map_new",
         "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fn___fern_map_delete",
         // the shared key search all four of those reach (#2649); the entry owns

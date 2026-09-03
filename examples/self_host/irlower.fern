@@ -13044,7 +13044,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // intrinsics. A Reader is just its fd (an i32; see stdin()), so
     // the receiver lowers as a plain i32 and the result is a fresh
     // Option box: read_chunk → Option[string] (Some(chunk) / None at
-    // EOF), close → Option[IoError]. Mirrors the retired x86 AST
+    // EOF), close and write → Option[IoError]. Mirrors the retired x86 AST
     // emitter's emit_method_call, but gated to a non-struct / non-enum /
     // non-string / non-array receiver so a user `.close()` on a real
     // struct still routes to struct-method dispatch below (the AST
@@ -13077,8 +13077,8 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         }
         // Writer.write(s) (#4372): a Writer is a bare fd; lower the
         // receiver (fd) then the string arg (box), then write(2) the
-        // box's bytes to the fd -> i32 bytes / -errno. Same shape as
-        // tcp_send, just a plain fd. Gated to a non-struct/enum/str/
+        // box's bytes to the fd -> a fresh Option[IoError], None once
+        // every byte is out (#7926). Gated to a non-struct/enum/str/
         // array receiver so a user `.write(x)` on a real type still
         // routes to struct-method dispatch below.
         if (fa.field == "write" && c.args.len() == 1) {
@@ -16263,6 +16263,28 @@ function lower_try(inner: ast.Expr, s: LowerState): LowerState {
     return ts;
 }
 
+// resource_method_opt_ret_type returns the Option type of a built-in Reader /
+// Writer resource method — read_line / read_chunk / write / close — or "" when
+// the receiver is not one. The five methods lower to ops that push a fresh
+// Option box (op_read_line / op_read_chunk / op_writer_write / op_reader_close),
+// so no module signature carries their return type and every scrutinee-type
+// resolver would otherwise bail the module.
+//
+// The receiver gate is lower_call_method's, so the type reported here cannot
+// drift from the call that is actually emitted: a user `.close()` on a declared
+// struct, an enum, a string or an array is somebody else's method. The types
+// come from opt_ret_type, keyed as native keys its Methods table, so the two
+// halves of the signature live in one place.
+function resource_method_opt_ret_type(field: string, obj: ast.Expr, s: LowerState): string {
+    if (decl_is_struct(s.structs, expr_struct_type(obj, s)) || expr_enum_type(obj, s) != ""
+        || expr_is_str(obj, s) || expr_is_arr_src(obj, s)) { return ""; }
+    if (field == "read_line" || field == "read_chunk" || field == "close") {
+        return s.opt_ret_type("Reader." + field);
+    }
+    if (field == "write") { return s.opt_ret_type("Writer.write"); }
+    return "";
+}
+
 // builtin_arr_opt_ret_type returns the Option type of a built-in array method
 // whose result is an Option — `xs.min()` / `xs.max()` / `xs.index_of(x)` on an
 // i32 array, which lower to the Option-returning Fern helpers
@@ -16351,15 +16373,12 @@ function try_opt_type(inner: ast.Expr, s: LowerState): string {
                     // than the module's own funcs.
                     var bmt: string = builtin_arr_opt_ret_type(scfa.field, scfa.obj, s);
                     if (bmt != "") { return bmt; }
-                    // Reader.read_chunk(n) → Option[string] (the built-in resource
-                    // intrinsic; gated like lower_expr's interception to a non-struct
-                    // / non-enum / non-string / non-array receiver so the scrutinee
-                    // type agrees with what actually lowers to op_read_chunk).
-                    if ((scfa.field == "read_chunk" || scfa.field == "read_line") && !decl_is_struct(s.structs, expr_struct_type(scfa.obj, s))
-                        && expr_enum_type(scfa.obj, s) == "" && !expr_is_str(scfa.obj, s)
-                        && !expr_is_arr_src(scfa.obj, s)) {
-                        return "Option[string]";
-                    }
+                    // A built-in Reader/Writer resource method (read_line /
+                    // read_chunk / write / close) — gated like lower_expr's
+                    // interception, so the scrutinee type agrees with the op that
+                    // actually lowers.
+                    var rmt: string = resource_method_opt_ret_type(scfa.field, scfa.obj, s);
+                    if (rmt != "") { return rmt; }
                     if (scfa.field == "get") {
                         // `m.get(k)` on a map local OR a Map-typed struct field
                         // (`r.caps.get(k)`) — expr_map_type_tag covers both.
@@ -21874,6 +21893,10 @@ function lower_stmt_var(v: ast.StmtVar, s: LowerState): LowerState {
                     // — helper-backed, so its return type comes from the registry
                     // rather than the module's own funcs.
                     opt_ty = builtin_arr_opt_ret_type(ifa.field, ifa.obj, se);
+                    // A built-in Reader/Writer resource method (`var e = w.write(s)`)
+                    // — also helper-backed, so the same registry answers, under
+                    // lower_call_method's bare-fd receiver gate.
+                    if (opt_ty == "") { opt_ty = resource_method_opt_ret_type(ifa.field, ifa.obj, se); }
                     // Associated call `Type.method()` returning Option/Result
                     // — bare TYPE-name object (not a slot); key by
                     // "<Type>.<method>" so `var r = User.from_json(s)` records
@@ -23806,14 +23829,12 @@ function lower_stmt_match(m: ast.StmtMatch, s: LowerState): LowerState {
                                                 _ => {}
                                             }
                                         }
-                                        // Reader.read_chunk(n) → Option[string] (built-in resource
-                                        // intrinsic; gated like lower_expr's interception to a
-                                        // non-declared-struct / non-enum / non-string / non-array
-                                        // receiver). The Some payload binds as a string (mark_str).
-                                        if (srt == "" && (scfa.field == "read_chunk" || scfa.field == "read_line") && !decl_is_struct(ms.structs, expr_struct_type(scfa.obj, ms))
-                                            && expr_enum_type(scfa.obj, ms) == "" && !expr_is_str(scfa.obj, ms)
-                                            && !expr_is_arr_src(scfa.obj, ms)) {
-                                            srt = "Option[string]";
+                                        // A built-in Reader/Writer resource method
+                                        // (read_line / read_chunk / write / close), gated
+                                        // like lower_expr's interception. A read_line /
+                                        // read_chunk Some payload binds as a string (mark_str).
+                                        if (srt == "") {
+                                            srt = resource_method_opt_ret_type(scfa.field, scfa.obj, ms);
                                         }
                                         // `m.get(k)` evaluates to Option[V] (V = the map's value type)
                                         // — a map local OR a Map-typed struct field (`r.caps.get(k)`),
@@ -64905,6 +64926,15 @@ pub function (s: LowerState) opt_ret_type(name: string): string {
     // .., None => .. }` scrutinee (or a `var o = read_line()` binding) recovers the
     // payload type and str-tracks the Some binder `s` for `.len()` / write dispatch.
     if (name == "read_line") { return "Option[string]"; }
+    // The streaming-I/O METHODS, keyed as native keys its Methods table
+    // (registerStructMethod in internal/checker) so the two compilers cannot
+    // drift again: the Reader reads yield Option[string], and every close plus
+    // Writer.write yields Option[IoError] — write reports failure, NOT the byte
+    // count, which native's signature has nowhere to put (#7926).
+    // resource_method_opt_ret_type applies the bare-fd receiver gate and routes
+    // here; Writer.close shares Reader.close's op and answer.
+    if (name == "Reader.read_line" || name == "Reader.read_chunk") { return "Option[string]"; }
+    if (name == "Reader.close" || name == "Writer.close" || name == "Writer.write") { return "Option[IoError]"; }
     return "";
 }
 

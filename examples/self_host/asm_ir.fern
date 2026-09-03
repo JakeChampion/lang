@@ -194,6 +194,11 @@ function emit_ir_tcp_pollable(s: asmcore.EmitState): asmcore.EmitState {
 // NUL-terminates the path and openat(AT_FDCWD, pathz, flags, mode)s, wrapping
 // the outcome as Ok(fd) / Err(io_error) (#7758); it allocates the NUL-term
 // buffer and the Result box, so it needs the heap.
+// __fern_writer_write is a Fern runtime function (#2649):
+// asmcore.rt_src_writer_write, in the same bundle and gated on the writer_write
+// need. It write(2)s the string's own buffer via __raw_data until every byte is
+// out, wrapping the outcome as None / Some(io_error) (#7926); it allocates that
+// Option box, so it needs the heap.
 // __fern_sleep_ms is a Fern runtime function (#2649): asmcore.rt_src_sleep_ms.
 // It writes the timespec into __fern_scratch, so it joins the scratch gate.
 
@@ -4178,9 +4183,14 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
             s = s.write("    call __fn___fern_tcp_accept\n    addq $8, %rsp\n    pushq %rax\n");
             s = s.need("tcp_accept");
         } else if (o.kind_tag == 202) {  // writer_write (#4372)
-            // [fd, str box]; write(2) the box's bytes to the fd -> i32 bytes /
-            // -errno. Inline (no runtime helper): read data=box[0], len=box[8].
-            s = s.write("    popq %rsi\n    popq %rdi\n    movq 8(%rsi), %rdx\n    movq (%rsi), %rsi\n    movq $1, %rax\n    syscall\n    pushq %rax\n");
+            // [fd, str box]; the Fern __fn___fern_writer_write(fd, s) -> a fresh
+            // Option[IoError] box via the stack ABI (#7926). The box is on top but
+            // param[0] is fd, so swap before the call — the same marshalling
+            // read_chunk does. Allocates the Option box (and the IoError inside it
+            // on a failing write), so heap + writer_write needs.
+            s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
+            s = s.write("    call __fn___fern_writer_write\n    addq $16, %rsp\n    pushq %rax\n");
+            s = s.need("heap"); s = s.need("writer_write");
         } else if (o.kind_tag == 203) {  // open_file (#4372)
             // [path box]; the Fern __fn___fern_open_res(path, flags(imm), 0644)
             // -> a fresh Result[Reader|Writer, IoError] box via the stack ABI:
@@ -6848,12 +6858,14 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     // call to io_error as an ordinary call-graph edge (io_error consumes its fresh
     // path arg; the helpers hand it a fresh copy, never their borrowed `path`).
     // This is the #2649 "dependencies are the call graph" model in miniature.
-    // io_error is emitted once (bundled), gated on the union of the needs; the
-    // the arm64 backend keeps the register-ABI hand-asm __fern_io_error. temp_dir
+    // open_res and writer_write are in the bundle for the same reason: each one
+    // calls io_error, so each has to share the bundle's call graph (#7758, #7926).
+    // io_error is emitted once (bundled), gated on the union of the needs; arm64
+    // bundles the same Fern classifier from its own emitter. temp_dir
     // additionally calls the monotonic_ns builtin (op-mediated, so recognized in
     // the bundle like any builtin; its __fn___fern_monotonic_ns is emitted above,
     // need-marked by op_temp_dir). Heap-dependent (present above); x86-64-only.
-    if (s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file")) {
+    if (s.has_need("stat") || s.has_need("lstat") || s.has_need("read_file") || s.has_need("read_file_bytes") || s.has_need("remove_file") || s.has_need("create_dir_all") || s.has_need("write_file") || s.has_need("write_file_exec") || s.has_need("temp_dir") || s.has_need("read_dir") || s.has_need("remove_dir_all") || s.has_need("open_file") || s.has_need("writer_write")) {
         s = s.write("    .text\n");
         var fs_src: string = asmcore.rt_src_io_error();
         if (s.has_need("stat")) { fs_src = fs_src + " " + asmcore.rt_src_stat("x86_64"); }
@@ -6868,6 +6880,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         if (s.has_need("read_dir")) { fs_src = fs_src + " " + asmcore.rt_src_read_dir("x86_64"); }
         if (s.has_need("remove_dir_all")) { fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all("x86_64"); }
         if (s.has_need("open_file")) { fs_src = fs_src + " " + asmcore.rt_src_open_res("x86_64"); }
+        if (s.has_need("writer_write")) { fs_src = fs_src + " " + asmcore.rt_src_writer_write("x86_64"); }
         s = emit_ir_runtime_fern_fn(fs_src, all_structs, s);
     }
     // env — now a Fern runtime function (#2649): walks the envp array (via
