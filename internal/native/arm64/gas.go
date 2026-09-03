@@ -195,6 +195,8 @@ func (a *Assembler) Inst(in Inst) error {
 		return asmMov(a, ops)
 	case "movz", "movk", "movn":
 		return asmMoveWide(a, mnem, ops)
+	case "adrp", "adr":
+		return asmSymAddress(a, mnem, ops)
 	case "add", "sub", "adds", "subs":
 		return asmAddSub(a, mnem, ops)
 	case "and", "orr", "eor", "mul", "udiv", "sdiv", "umulh", "adc", "sbc",
@@ -544,6 +546,48 @@ func asmMoveWide(a *Assembler, mnem string, ops []string) error {
 	return nil
 }
 
+// asmSymAddress handles `adrp Xd, sym` and `adr Xd, sym`, the PC-relative
+// symbol-address forms. Both encoders have always been here — ADRPsym and
+// ADRsym, reached only through the direct API — but neither mnemonic was in
+// the text dispatch, so the assembler could not read back the adrp its own
+// arm64 code generator emits.
+//
+// The Mach-O `@PAGE` suffix names the same relocation as the bare ELF
+// spelling; Apple's assembler requires it and GNU as rejects it, so the
+// suffix is stripped rather than being a second fixup kind.
+func asmSymAddress(a *Assembler, mnem string, ops []string) error {
+	if len(ops) != 2 {
+		return fmt.Errorf("%s expects 2 operands", mnem)
+	}
+	rd, err := parseReg(ops[0])
+	if err != nil {
+		return err
+	}
+	sym := strings.TrimSuffix(strings.TrimSpace(ops[1]), "@PAGE")
+	if sym == "" {
+		return fmt.Errorf("%s needs a symbol", mnem)
+	}
+	if mnem == "adrp" {
+		a.ADRPsym(rd, sym)
+	} else {
+		a.ADRsym(rd, sym)
+	}
+	return nil
+}
+
+// lo12Symbol recognises the two spellings of an adrp's low-bits companion
+// operand and returns the symbol they name.
+func lo12Symbol(op string) (string, bool) {
+	op = strings.TrimSpace(op)
+	if sym := strings.TrimPrefix(op, ":lo12:"); sym != op {
+		return sym, sym != ""
+	}
+	if sym := strings.TrimSuffix(op, "@PAGEOFF"); sym != op {
+		return sym, sym != ""
+	}
+	return "", false
+}
+
 func asmAddSub(a *Assembler, mnem string, ops []string) error {
 	if len(ops) < 3 {
 		return fmt.Errorf("%s expects 3 operands", mnem)
@@ -553,6 +597,25 @@ func asmAddSub(a *Assembler, mnem string, ops []string) error {
 	// bit at bit 29, so they share the base encoders with S OR'd in.
 	isAdd := mnem == "add" || mnem == "adds"
 	setS := mnem == "adds" || mnem == "subs"
+	// The low-12-bits companion of an adrp: `add Xd, Xn, :lo12:sym` (ELF)
+	// or `add Xd, Xn, sym@PAGEOFF` (Mach-O). It is an add by shape only —
+	// the operand is a relocation, not an immediate — so it is claimed
+	// before the immediate parse, which would read it as a bad number.
+	if sym, ok := lo12Symbol(ops[2]); ok {
+		if mnem != "add" || len(ops) != 3 {
+			return fmt.Errorf("%s does not take a :lo12: operand", mnem)
+		}
+		rd, err := parseReg(ops[0])
+		if err != nil {
+			return err
+		}
+		rn, err := parseReg(ops[1])
+		if err != nil {
+			return err
+		}
+		a.AddLo12(rd, rn, sym)
+		return nil
+	}
 	emit := func(insn uint32) {
 		if setS {
 			insn |= 1 << 29

@@ -453,6 +453,16 @@ func (a *Assembler) Bytes() ([]byte, error) {
 			a.insns[f.at] |= (off & 0x3fff) << 5
 		}
 	}
+	// Symbol and literal-pool references resolve against a laid-out image,
+	// which only BytesProgram has. Emitting them here left the placeholder
+	// ZERO in the instruction and returned no error, so an `adrp Xd, sym`
+	// for a symbol that does not even exist came back as `adrp Xd, #0`.
+	if n := len(a.adrpFixups) + len(a.adrFixups) + len(a.lo12Fixups) + len(a.quadSymFixups); n > 0 {
+		return nil, fmt.Errorf("arm64: %d unresolved symbol reference(s): Bytes has no address map, use BytesProgram", n)
+	}
+	if n := len(a.litFixups) + len(a.pendingLits); n > 0 {
+		return nil, fmt.Errorf("arm64: %d unresolved literal-pool reference(s): Bytes has no address map, use BytesProgram", n)
+	}
 	var buf []byte
 	for _, insn := range a.insns {
 		buf = Put(buf, insn)
