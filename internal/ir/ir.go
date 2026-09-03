@@ -17171,16 +17171,28 @@ func (b *builder) emitRetainValueOnStack(t ast.Type) {
 	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 }
 
-// structUpdateBaseIsOwned reports whether a struct-update spread base is a
-// value this construction OWNS — one no local, parameter or container is
-// holding a reference to — so its box must be released once the copy is done.
+// structUpdateBaseIsOwned reports whether a struct-update spread base carries a
+// reference this construction OWNS — one no local, parameter or container will
+// release on its behalf — so the base must be released once the copy is done.
+// The release is is_unique-gated, so a base something else still holds is only
+// decremented; what this predicate has to establish is that the unit exists.
 //
-// Deliberately narrow: only a struct literal (unambiguously fresh) and a call
-// whose callee the borrow analysis proved never returns one of its own
-// parameters. An Ident, a field read, an index — anything that could name
-// storage somebody else owns — stays borrowed, which is the pre-existing
-// behaviour and the one this must not disturb. Over-declining costs a leak
-// that was already there; over-claiming would be a use-after-free.
+// A struct literal is unambiguously fresh. A call qualifies on either of two
+// facts: `returnsFreshBox` — every value return hands back a box the CALLER
+// owns a unit of — or the narrower `returnsNoParamEscape`, that nothing
+// reachable from a parameter is in the result at all. An Ident, a field read,
+// an index — anything that could name storage somebody else owns — stays
+// borrowed, which is the pre-existing behaviour and the one this must not
+// disturb. Over-declining costs a leak that was already there; over-claiming
+// would be a use-after-free.
+//
+// The fresh-box arm is what makes the temp spelling agree with the bound one:
+// `var b = mk(); T { ...b, f: v }` already reclaims mk's box at b's scope exit
+// through this same `dropStructField`, under the same is_unique gate, on the
+// same oracle. Escape freedom is a far stronger fact and out of reach for a
+// registry builder — every field of `irlower.fn_sigs_for_borrow`'s 40-field
+// result is a call whose own callee threads a parameter, which refuses the
+// whole function on all 32 pointer fields at once.
 func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
 	switch x := base.(type) {
 	case *ast.StructLit:
@@ -17193,7 +17205,7 @@ func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
 		if _, isLocal := b.locals[id.Name]; isLocal {
 			return false // a closure call — the callee is not statically known
 		}
-		return b.returnsNoParamEscape[id.Name]
+		return b.returnsFreshBox[id.Name] || b.returnsNoParamEscape[id.Name]
 	}
 	return false
 }
