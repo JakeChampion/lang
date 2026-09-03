@@ -333,176 +333,182 @@ func TestAssembleErrors(t *testing.T) {
 // assembled both by Assemble and by aarch64-linux-gnu-as, and the
 // .text bytes must match. This pins the whole parser+encoder stack to
 // an independent reference.
+// gasCorpus is the instruction corpus TestAssembleAgainstGNUAs pins byte for
+// byte against GNU as. It is a package-level var because a second gate reads
+// it: TestInstRoundTripsThroughTheModel parses and re-renders every line here,
+// so the typed operand model is held to the same vocabulary the differential
+// already covers rather than to a list of its own that could fall behind.
+var gasCorpus = map[string]string{
+	"moves": "" +
+		"\tmov x0, #42\n\tmov x1, x0\n\tmovz x8, #93\n\tmovk x3, #0xabcd\n",
+	"arith": "" +
+		"\tadd x0, x1, #1\n\tadd x2, x3, #1, lsl #12\n\tsub x4, x5, x6\n\tadd x0, x1, x2\n",
+	"logical_mul_shift": "" +
+		"\tand x0, x1, x2\n\torr x0, x1, x2\n\teor x0, x1, x2\n\tmul x0, x1, x2\n\tlsl x0, x1, x2\n\tlsr x0, x1, x2\n\tasr x0, x1, x2\n",
+	"bitfield_extract": "" +
+		"\tubfx x1, x1, #56, #4\n\tubfx x0, x2, #0, #8\n\tsbfx x3, x4, #8, #16\n",
+	"shift_imm_and_extend": "" +
+		"\tlsl x0, x1, #4\n\tlsr x0, x1, #4\n\tasr x0, x1, #4\n\tlsl x2, x3, #1\n\tsxtb x0, w1\n\tsxth x0, w1\n\tsxtw x0, w1\n",
+	"compare": "" +
+		"\tcmp x1, x2\n\tcmp x1, #5\n",
+	"w_register_alu": "" +
+		"\tmov w0, #42\n\tmov w1, w0\n\tmovz w8, #93\n\tadd w0, w1, #1\n\tadd w0, w1, w2\n\tsub w4, w5, w6\n" +
+		"\tand w0, w1, w2\n\tmul w0, w1, w2\n\tcmp w1, w2\n\tcmp w1, #5\n\tcsel w0, w1, w2, eq\n\tcset w0, ne\n" +
+		"\tudiv w0, w1, w2\n\tlsl w0, w1, w2\n\tneg w0, w1\n",
+	"float_double": "" +
+		"\tfadd d0, d1, d2\n\tfsub d0, d1, d2\n\tfmul d0, d1, d2\n\tfdiv d0, d1, d2\n\tfneg d0, d1\n\tfcmp d1, d2\n" +
+		"\tfmov d0, d1\n\tfmov d0, x1\n\tfmov x0, d1\n\tscvtf d0, x1\n\tfcvtzs x0, d1\n",
+	"float_single_converts": "" +
+		"\tfadd s0, s1, s2\n\tfsub s0, s1, s2\n\tfmul s0, s1, s2\n\tfdiv s0, s1, s2\n\tfneg s0, s1\n\tfcmp s1, s2\n\tfmov s0, s1\n" +
+		"\tfcvt d0, s1\n\tfcvt s0, d1\n\tscvtf s0, x1\n\tfcvtzs x0, s1\n\tucvtf d0, x1\n\tfcvtzu x0, d1\n\tfmov s0, w1\n\tfmov w0, s1\n",
+	"csel_div_extras": "" +
+		"\tcsel x0, x1, x2, eq\n\tcsel x3, x4, x5, lt\n\tcset x0, ne\n\tcset x7, ge\n" +
+		"\tcmn x1, x2\n\tneg x0, x1\n\tudiv x0, x1, x2\n\tsdiv x0, x1, x2\n\tmsub x0, x1, x2, x3\n",
+	"memory": "" +
+		"\tldr x0, [x1]\n\tldr x0, [x1, #16]\n\tstr x2, [x3, #8]\n" +
+		"\tldrb w4, [x5, #1]\n\tstrb w6, [x7, #2]\n\tldrh w0, [x1, #4]\n\tstrh w2, [x3, #6]\n",
+	"frame_pair": "" +
+		"\tstp x29, x30, [sp, #-16]!\n\tldp x29, x30, [sp], #16\n",
+	"indexed_and_mov_sp": "" +
+		"\tstr x0, [sp, #-16]!\n\tldr x0, [sp], #16\n\tstr x1, [x2, #8]!\n\tldr x3, [x4], #-8\n\tmov sp, x29\n\tmov x0, sp\n",
+	"signed_loads": "" +
+		"\tldrsb x0, [x1]\n\tldrsb w0, [x1, #1]\n\tldrsh x0, [x1, #2]\n\tldrsh w0, [x1, #2]\n\tldrsw x0, [x1, #4]\n",
+	"word32_ldst": "" +
+		"\tldr w0, [x1]\n\tldr w2, [x3, #8]\n\tstr w0, [x1, #4]\n\tldr w0, [x1, x2, lsl #2]\n\tldr w0, [x1, x2]\n" +
+		"\tstr w3, [x4], #4\n\tldr w5, [x6, #4]!\n\tldur w2, [x0, #-8]\n\tstur w1, [x0, #-8]\n",
+	"register_offset": "" +
+		"\tldr x3, [x2, x1, lsl #3]\n\tldr x0, [x1, x2]\n\tstr x3, [x2, x1, lsl #3]\n",
+	"cmn_imm": "" +
+		"\tcmn x0, #0\n\tcmn x1, #5\n\tcmn w2, #5\n",
+	"shift_imm_w": "" +
+		"\tlsl w1, w1, #31\n\tlsr w0, w1, #4\n\tasr w0, w1, #4\n\tlsl w2, w3, #1\n",
+	"ldst_indexed": "" +
+		"\tldrb w4, [x1], #1\n\tstrb w4, [x1], #1\n\tldrb w0, [x2, #1]!\n\tldrh w0, [x1], #2\n\tstrh w0, [x1, #2]!\n",
+	"pair_modes": "" +
+		"\tstp x19, x20, [sp, #16]\n\tldp x19, x20, [sp, #16]\n\tstp x29, x30, [sp]\n",
+	"mov_immediate": "" +
+		"\tmov x4, #-1\n\tmov x0, #-16\n\tmov x1, #-256\n\tmov w2, #-1\n\tmov x0, #65536\n",
+	"unscaled": "" +
+		"\tldur x0, [x1, #-8]\n\tstur x0, [x1, #-8]\n\tldur x2, [x3, #15]\n\tstur x4, [x5]\n\tldurb w0, [x1, #-1]\n\tsturb w0, [x1, #-1]\n",
+	"branch_regs": "" +
+		"\tbr x0\n\tblr x1\n\tret\n\tsvc #0\n",
+	"test_branches": "" +
+		"\tmov x0, #1\nlt0:\n\ttbz x0, #0, lt1\n\ttbnz x1, #63, lt0\n\ttbz w2, #5, lt1\nlt1:\n\tret\n",
+	"labels_and_branches": "" +
+		"loop:\n\tcmp x0, #0\n\tb.eq done\n\tsub x0, x0, #1\n\tcbnz x0, loop\n\tb loop\ndone:\n\tbeq loop\n\tret\n",
+	"expr_immediates": "" +
+		"\tldr x23, [x29, #96 + 48]\n\tstr x0, [x29, #16 + 8]\n\tadd x0, x1, #8 + 4\n\tsub x2, x3, #32 - 16\n\tmov x0, #16 + 16\n",
+	"logical_shifted_reg": "" +
+		"\torr w3, w1, w1, lsl #8\n\torr x3, x1, x2, lsl #16\n\tand w0, w1, w2, lsl #4\n\teor x0, x1, x2, lsr #1\n" +
+		"\tand x5, x6, x7, asr #2\n\teor w0, w1, w2, ror #3\n",
+	"rev16": "" +
+		"\trev16 w0, w19\n\trev16 w5, w6\n\trev16 x2, x3\n",
+	"narrow_reg_offset": "" +
+		"\tldrb w0, [x22, x20]\n\tstrb w1, [x2, x3]\n\tldrh w0, [x1, x2]\n\tldrh w0, [x1, x2, lsl #1]\n\tstrh w4, [x5, x6]\n",
+	"float_unary_intrinsics": "" +
+		"\tfabs d0, d1\n\tfsqrt d0, d1\n\tfrintm d0, d1\n\tfrintp d0, d1\n\tfrintz d0, d1\n\tfrinta d0, d1\n",
+	"fp_load_store": "" +
+		"\tldr d1, [x12]\n\tldr d0, [sp, #8]\n\tstr d0, [sp, #8]\n\tldr d8, [sp], #16\n\tstr d8, [sp, #-16]!\n",
+	"addsub_shifted_extended": "" +
+		"\tadd x0, x1, x0, lsl #3\n\tadd x5, x6, x7, lsl #2\n\tsub x0, x1, x2, lsl #1\n\tadd w0, w1, w2, lsl #2\n" +
+		"\tadd x2, x0, w1, uxtw\n\tadd x2, x0, w1, uxtw #2\n\tadd x5, x6, w7, sxtw\n\tsub x2, x0, w1, uxtw #3\n",
+	"addsub_cmp_large_imm": "" +
+		"\tcmp x0, #0x10000\n\tcmp x19, #0x10000\n\tcmn x1, #0x2000\n" +
+		"\tadd x0, x1, #0x10000\n\tsub x2, x3, #0x1000\n\tadd x0, x1, #1, lsl #12\n",
+	"scvtf_w_and_mov_zr": "" +
+		"\tscvtf d0, w0\n\tscvtf s0, w1\n\tscvtf d2, x3\n\tmov x0, xzr\n\tmov w1, wzr\n",
+	// w-form ALU ops not otherwise cross-checked, plus cbz/cbnz in
+	// both widths. The sf bit (bit 31) selects 32- vs 64-bit; a
+	// regression that ignores the register width (as cbz/cbnz once
+	// did — it always emitted the 64-bit form) is caught here against
+	// GNU as as the authority.
+	"w_register_alu_extras": "" +
+		"\torr w0, w1, w2\n\teor w0, w1, w2\n\tsdiv w0, w1, w2\n\tlsr w0, w1, w2\n\tasr w0, w1, w2\n" +
+		"\tmsub w0, w1, w2, w3\n\tlsr w0, w1, #3\n\tasr w0, w1, #3\n",
+	"sysreg_mrs": "" +
+		"\tmrs x9, cntvct_el0\n\tmrs x10, cntfrq_el0\n\tmrs x0, cntfrq_el0\n\tmrs x30, cntvct_el0\n",
+	"cbz_cbnz_widths": "" +
+		"\tcbz w0, l0\n\tcbz x0, l0\n\tcbnz w1, l0\n\tcbnz x1, l0\n\tcbz w3, l0\nl0:\n\tret\n",
+	"carry_chain": "" +
+		"\tadds x0, x1, x2\n\tadcs x3, x4, x5\n\tadc x6, x7, x8\n" +
+		"\tsubs w0, w1, w2\n\tsbcs w3, w4, w5\n\tsbc w6, w7, w8\n\tngc x9, x10\n\tngcs w11, w12\n",
+	"long_multiplies": "" +
+		"\tumulh x0, x1, x2\n\tsmulh x3, x4, x5\n\tmadd x6, x7, x8, x9\n\tmadd w6, w7, w8, w9\n" +
+		"\tsmull x0, w1, w2\n\tumull x3, w4, w5\n\tsmaddl x0, w1, w2, x3\n\tumaddl x4, w5, w6, x7\n" +
+		"\tsmsubl x8, w9, w10, x11\n\tumsubl x12, w13, w14, x15\n",
+	"ccmp_chain": "" +
+		"\tcmp x0, #1\n\tccmp x1, #2, #4, eq\n\tccmp x2, x3, #0, ne\n\tccmn w4, #5, #8, gt\n" +
+		"\tccmn x5, x6, #15, le\n\tcsinc x5, x6, x7, lt\n\tcsinv w8, w9, w10, ge\n\tcsneg x11, x12, x13, vs\n" +
+		"\tcinc w8, w9, gt\n\tcinv x10, x11, lo\n\tcneg x10, x11, mi\n\tcsetm x12, hs\n\tcsetm w13, ne\n",
+	"bitfield_ops": "" +
+		"\tbfi x0, x1, #8, #16\n\tbfxil w2, w3, #4, #12\n\tubfiz x4, x5, #12, #20\n\tsbfiz w6, w7, #3, #9\n" +
+		"\textr x8, x9, x10, #24\n\textr w11, w12, w13, #7\n\tror x11, x12, #8\n\tror w13, w14, #3\n\tror x15, x16, x17\n\tror w18, w19, w20\n",
+	"logical_negated": "" +
+		"\ttst x0, x1\n\ttst w2, #0xff\n\ttst x3, x4, lsl #7\n\tands x3, x4, x5, lsl #2\n\tands w6, w7, #0xf\n" +
+		"\tbic x6, x7, x8\n\tbics w9, w10, w11\n\torn x12, x13, x14, lsr #3\n\teon w15, w16, w17\n" +
+		"\tmvn x18, x19\n\tmvn w20, w21, lsl #2\n\tnegs w20, w21\n\tnegs x22, x23\n",
+	"rev_cls_sysregs": "" +
+		"\trev x0, x1\n\trev w2, w3\n\trev32 x4, x5\n\tcls x6, x7\n\tcls w8, w9\n" +
+		"\tmov x0, fp\n\tstr x1, [fp, #-16]\n\tmsr tpidr_el0, x2\n\tmrs x3, fpcr\n\tmsr fpsr, x4\n\tmrs x5, dczid_el0\n",
+	"extended_reg_addressing": "" +
+		"\tldr x0, [x1, w2, uxtw #3]\n\tldr w3, [x4, w5, sxtw #2]\n\tstr x6, [x7, x8, sxtx]\n" +
+		"\tstr w0, [x1, w2, uxtw]\n\tldrb w9, [x10, w11, uxtw]\n\tstrb w12, [x13, w14, sxtw]\n" +
+		"\tstrh w12, [x13, x14, lsl #1]\n\tldrh w15, [x16, w17, sxtw #1]\n\tldr x18, [x19, x20, sxtx #3]\n",
+	"pairs_w_d": "" +
+		"\tldp w0, w1, [x2]\n\tstp w3, w4, [sp, #-8]!\n\tldp w5, w6, [x7], #16\n\tstp w8, w9, [x10, #4]\n" +
+		"\tldp d8, d9, [sp], #32\n\tstp d10, d11, [x12, #-16]!\n\tstp d8, d9, [sp, #16]\n\tldp d0, d1, [x2]\n",
+	"fp_fused_minmax": "" +
+		"\tfmadd d0, d1, d2, d3\n\tfmsub s4, s5, s6, s7\n\tfnmadd d8, d9, d10, d11\n\tfnmsub s12, s13, s14, s15\n" +
+		"\tfnmul d16, d17, d18\n\tfmin s19, s20, s21\n\tfmax d22, d23, d24\n\tfminnm s25, s26, s27\n\tfmaxnm d28, d29, d30\n" +
+		"\tfcsel d25, d26, d27, gt\n\tfccmp s28, s29, #12, le\n\tfcmpe d30, #0.0\n\tfcmpe s1, s2\n\tfsqrt s0, s1\n\tfabs s3, s4\n",
+	"fp32_ldst_unscaled": "" +
+		"\tldr s0, [x1]\n\tstr s2, [x3, #12]\n\tldr s4, [x5], #4\n\tstr s6, [x7, #-4]!\n" +
+		"\tldur s8, [x9, #-4]\n\tstur s10, [x11, #-8]\n\tldurh w0, [x1, #-2]\n\tsturh w2, [x3, #-2]\n" +
+		"\tldursb x4, [x5, #-1]\n\tldursb w4, [x5, #-1]\n\tldursh w6, [x7, #-2]\n\tldursh x6, [x7, #-2]\n\tldursw x8, [x9, #-4]\n",
+	// SIMD kernel shapes: whole snippets of the code a vector kernel
+	// author actually writes, cross-checked byte-for-byte. The
+	// arrangement sweep itself is pinned in gas_simd_test.go; these
+	// exercise the forms in combination (writeback chains, labels,
+	// mixed arrangements).
+	"neon_horizontal_max_kernel": "" +
+		"\tld1 {v0.16b}, [x0], #16\n\tld1 {v1.16b}, [x0], #16\n\tumax v0.16b, v0.16b, v1.16b\n" +
+		"\tumaxv b2, v0.16b\n\tumov w1, v2.b[0]\n" +
+		"\tsmax v3.8h, v4.8h, v5.8h\n\tsmaxv h6, v3.8h\n\tsminv s7, v8.4s\n\tuminv b9, v10.8b\n",
+	"neon_widening_sum": "" +
+		"\tld1 {v0.16b}, [x1], x2\n\tuaddlv h1, v0.16b\n\tushll v2.8h, v0.8b, #0\n\tushll2 v3.8h, v0.16b, #0\n" +
+		"\tadd v2.8h, v2.8h, v3.8h\n\tuaddlv s4, v2.8h\n\tsaddlv d5, v6.4s\n\tumov w0, v4.s[0]\n" +
+		"\tsxtl v7.4s, v8.4h\n\tuxtl2 v9.2d, v10.4s\n\txtn v11.4h, v12.4s\n\txtn2 v11.8h, v13.4s\n",
+	"neon_zip_shuffle": "" +
+		"\tld1 {v0.16b, v1.16b}, [x0], #32\n\tzip1 v2.16b, v0.16b, v1.16b\n\tzip2 v3.16b, v0.16b, v1.16b\n" +
+		"\tuzp1 v4.8h, v2.8h, v3.8h\n\tuzp2 v5.8h, v2.8h, v3.8h\n\ttrn1 v6.4s, v4.4s, v5.4s\n\ttrn2 v7.2d, v6.2d, v6.2d\n" +
+		"\text v8.16b, v6.16b, v7.16b, #4\n\ttbl v9.16b, {v8.16b}, v1.16b\n\trev64 v10.4s, v9.4s\n" +
+		"\tst1 {v2.16b, v3.16b}, [x1], #32\n",
+	"neon_float_lane_loop": "" +
+		"floop:\n\tld1 {v0.4s}, [x0], #16\n\tld1 {v1.4s}, [x1], #16\n" +
+		"\tfmul v2.4s, v0.4s, v1.4s\n\tfadd v3.4s, v3.4s, v2.4s\n\tfcmgt v4.4s, v0.4s, v1.4s\n" +
+		"\tscvtf v5.4s, v6.4s\n\tfcvtzs v7.2d, v8.2d\n\tfdiv v9.2d, v10.2d, v11.2d\n" +
+		"\tfmin v12.2s, v13.2s, v14.2s\n\tfabs v15.4s, v16.4s\n\tfneg v17.2d, v18.2d\n\tfsqrt v19.4s, v20.4s\n" +
+		"\tfcmlt v21.4s, v22.4s, #0.0\n\tsub x2, x2, #1\n\tcbnz x2, floop\n\tst1 {v3.4s}, [x3]\n",
+	"neon_lane_and_imm_forms": "" +
+		"\tdup v0.16b, w1\nmloop:\n\tld1 {v1.16b}, [x0], #16\n\tcmeq v2.16b, v1.16b, v0.16b\n" +
+		"\tshrn v3.8b, v2.8h, #4\n\tfmov x2, d3\n\tcbz x2, mloop\n\trbit x2, x2\n\tclz x2, x2\n" +
+		"\tmovi v4.16b, #128\n\tmovi v5.2d, #0xff00ff00ff00ff00\n\tmovi d6, #0xffffffffffffffff\n" +
+		"\tins v7.d[1], x3\n\tins v8.s[2], v9.s[0]\n\tdup v10.4s, v11.s[3]\n\tld1r {v12.8h}, [x4], #2\n" +
+		"\tsmov x5, v13.h[2]\n\tsshr v14.4s, v15.4s, #31\n\tshl v16.2d, v17.2d, #3\n\tsli v18.8b, v19.8b, #2\n" +
+		"\tmvn v20.16b, v21.16b\n\tbic v22.8b, v23.8b, v24.8b\n\torn v25.16b, v26.16b, v27.16b\n" +
+		"\tneg v28.4h, v29.4h\n\tabs v30.2s, v31.2s\n\tcmtst v0.2d, v1.2d, v2.2d\n\tcmhi v3.8b, v4.8b, v5.8b\n" +
+		"\tcmle v6.8h, v7.8h, #0\n\tcmge v8.4s, v9.4s, #0\n\trev16 v10.16b, v11.16b\n\trev32 v12.8h, v13.8h\n",
+	"atomics_loop": "" +
+		"retry:\n\tldaxr x0, [x19]\n\tadd x0, x0, #1\n\tstlxr w1, x0, [x19]\n\tcbnz w1, retry\n\tdmb ish\n" +
+		"\tldar x2, [x19]\n\tstlr x3, [x19]\n\tldxr w4, [x20]\n\tstxr w5, w6, [x21]\n" +
+		"\tldxrb w4, [x20]\n\tldaxrh w5, [x21]\n\tstxrh w5, w6, [x21]\n\tstlxrb w7, w8, [x22]\n" +
+		"\tldarb w9, [x23]\n\tstlrh w10, [x24]\n\tdsb sy\n\tisb\n",
+}
+
 func TestAssembleAgainstGNUAs(t *testing.T) {
 	as, objcopy := findBinutils(t)
 
-	cases := map[string]string{
-		"moves": "" +
-			"\tmov x0, #42\n\tmov x1, x0\n\tmovz x8, #93\n\tmovk x3, #0xabcd\n",
-		"arith": "" +
-			"\tadd x0, x1, #1\n\tadd x2, x3, #1, lsl #12\n\tsub x4, x5, x6\n\tadd x0, x1, x2\n",
-		"logical_mul_shift": "" +
-			"\tand x0, x1, x2\n\torr x0, x1, x2\n\teor x0, x1, x2\n\tmul x0, x1, x2\n\tlsl x0, x1, x2\n\tlsr x0, x1, x2\n\tasr x0, x1, x2\n",
-		"bitfield_extract": "" +
-			"\tubfx x1, x1, #56, #4\n\tubfx x0, x2, #0, #8\n\tsbfx x3, x4, #8, #16\n",
-		"shift_imm_and_extend": "" +
-			"\tlsl x0, x1, #4\n\tlsr x0, x1, #4\n\tasr x0, x1, #4\n\tlsl x2, x3, #1\n\tsxtb x0, w1\n\tsxth x0, w1\n\tsxtw x0, w1\n",
-		"compare": "" +
-			"\tcmp x1, x2\n\tcmp x1, #5\n",
-		"w_register_alu": "" +
-			"\tmov w0, #42\n\tmov w1, w0\n\tmovz w8, #93\n\tadd w0, w1, #1\n\tadd w0, w1, w2\n\tsub w4, w5, w6\n" +
-			"\tand w0, w1, w2\n\tmul w0, w1, w2\n\tcmp w1, w2\n\tcmp w1, #5\n\tcsel w0, w1, w2, eq\n\tcset w0, ne\n" +
-			"\tudiv w0, w1, w2\n\tlsl w0, w1, w2\n\tneg w0, w1\n",
-		"float_double": "" +
-			"\tfadd d0, d1, d2\n\tfsub d0, d1, d2\n\tfmul d0, d1, d2\n\tfdiv d0, d1, d2\n\tfneg d0, d1\n\tfcmp d1, d2\n" +
-			"\tfmov d0, d1\n\tfmov d0, x1\n\tfmov x0, d1\n\tscvtf d0, x1\n\tfcvtzs x0, d1\n",
-		"float_single_converts": "" +
-			"\tfadd s0, s1, s2\n\tfsub s0, s1, s2\n\tfmul s0, s1, s2\n\tfdiv s0, s1, s2\n\tfneg s0, s1\n\tfcmp s1, s2\n\tfmov s0, s1\n" +
-			"\tfcvt d0, s1\n\tfcvt s0, d1\n\tscvtf s0, x1\n\tfcvtzs x0, s1\n\tucvtf d0, x1\n\tfcvtzu x0, d1\n\tfmov s0, w1\n\tfmov w0, s1\n",
-		"csel_div_extras": "" +
-			"\tcsel x0, x1, x2, eq\n\tcsel x3, x4, x5, lt\n\tcset x0, ne\n\tcset x7, ge\n" +
-			"\tcmn x1, x2\n\tneg x0, x1\n\tudiv x0, x1, x2\n\tsdiv x0, x1, x2\n\tmsub x0, x1, x2, x3\n",
-		"memory": "" +
-			"\tldr x0, [x1]\n\tldr x0, [x1, #16]\n\tstr x2, [x3, #8]\n" +
-			"\tldrb w4, [x5, #1]\n\tstrb w6, [x7, #2]\n\tldrh w0, [x1, #4]\n\tstrh w2, [x3, #6]\n",
-		"frame_pair": "" +
-			"\tstp x29, x30, [sp, #-16]!\n\tldp x29, x30, [sp], #16\n",
-		"indexed_and_mov_sp": "" +
-			"\tstr x0, [sp, #-16]!\n\tldr x0, [sp], #16\n\tstr x1, [x2, #8]!\n\tldr x3, [x4], #-8\n\tmov sp, x29\n\tmov x0, sp\n",
-		"signed_loads": "" +
-			"\tldrsb x0, [x1]\n\tldrsb w0, [x1, #1]\n\tldrsh x0, [x1, #2]\n\tldrsh w0, [x1, #2]\n\tldrsw x0, [x1, #4]\n",
-		"word32_ldst": "" +
-			"\tldr w0, [x1]\n\tldr w2, [x3, #8]\n\tstr w0, [x1, #4]\n\tldr w0, [x1, x2, lsl #2]\n\tldr w0, [x1, x2]\n" +
-			"\tstr w3, [x4], #4\n\tldr w5, [x6, #4]!\n\tldur w2, [x0, #-8]\n\tstur w1, [x0, #-8]\n",
-		"register_offset": "" +
-			"\tldr x3, [x2, x1, lsl #3]\n\tldr x0, [x1, x2]\n\tstr x3, [x2, x1, lsl #3]\n",
-		"cmn_imm": "" +
-			"\tcmn x0, #0\n\tcmn x1, #5\n\tcmn w2, #5\n",
-		"shift_imm_w": "" +
-			"\tlsl w1, w1, #31\n\tlsr w0, w1, #4\n\tasr w0, w1, #4\n\tlsl w2, w3, #1\n",
-		"ldst_indexed": "" +
-			"\tldrb w4, [x1], #1\n\tstrb w4, [x1], #1\n\tldrb w0, [x2, #1]!\n\tldrh w0, [x1], #2\n\tstrh w0, [x1, #2]!\n",
-		"pair_modes": "" +
-			"\tstp x19, x20, [sp, #16]\n\tldp x19, x20, [sp, #16]\n\tstp x29, x30, [sp]\n",
-		"mov_immediate": "" +
-			"\tmov x4, #-1\n\tmov x0, #-16\n\tmov x1, #-256\n\tmov w2, #-1\n\tmov x0, #65536\n",
-		"unscaled": "" +
-			"\tldur x0, [x1, #-8]\n\tstur x0, [x1, #-8]\n\tldur x2, [x3, #15]\n\tstur x4, [x5]\n\tldurb w0, [x1, #-1]\n\tsturb w0, [x1, #-1]\n",
-		"branch_regs": "" +
-			"\tbr x0\n\tblr x1\n\tret\n\tsvc #0\n",
-		"test_branches": "" +
-			"\tmov x0, #1\nlt0:\n\ttbz x0, #0, lt1\n\ttbnz x1, #63, lt0\n\ttbz w2, #5, lt1\nlt1:\n\tret\n",
-		"labels_and_branches": "" +
-			"loop:\n\tcmp x0, #0\n\tb.eq done\n\tsub x0, x0, #1\n\tcbnz x0, loop\n\tb loop\ndone:\n\tbeq loop\n\tret\n",
-		"expr_immediates": "" +
-			"\tldr x23, [x29, #96 + 48]\n\tstr x0, [x29, #16 + 8]\n\tadd x0, x1, #8 + 4\n\tsub x2, x3, #32 - 16\n\tmov x0, #16 + 16\n",
-		"logical_shifted_reg": "" +
-			"\torr w3, w1, w1, lsl #8\n\torr x3, x1, x2, lsl #16\n\tand w0, w1, w2, lsl #4\n\teor x0, x1, x2, lsr #1\n" +
-			"\tand x5, x6, x7, asr #2\n\teor w0, w1, w2, ror #3\n",
-		"rev16": "" +
-			"\trev16 w0, w19\n\trev16 w5, w6\n\trev16 x2, x3\n",
-		"narrow_reg_offset": "" +
-			"\tldrb w0, [x22, x20]\n\tstrb w1, [x2, x3]\n\tldrh w0, [x1, x2]\n\tldrh w0, [x1, x2, lsl #1]\n\tstrh w4, [x5, x6]\n",
-		"float_unary_intrinsics": "" +
-			"\tfabs d0, d1\n\tfsqrt d0, d1\n\tfrintm d0, d1\n\tfrintp d0, d1\n\tfrintz d0, d1\n\tfrinta d0, d1\n",
-		"fp_load_store": "" +
-			"\tldr d1, [x12]\n\tldr d0, [sp, #8]\n\tstr d0, [sp, #8]\n\tldr d8, [sp], #16\n\tstr d8, [sp, #-16]!\n",
-		"addsub_shifted_extended": "" +
-			"\tadd x0, x1, x0, lsl #3\n\tadd x5, x6, x7, lsl #2\n\tsub x0, x1, x2, lsl #1\n\tadd w0, w1, w2, lsl #2\n" +
-			"\tadd x2, x0, w1, uxtw\n\tadd x2, x0, w1, uxtw #2\n\tadd x5, x6, w7, sxtw\n\tsub x2, x0, w1, uxtw #3\n",
-		"addsub_cmp_large_imm": "" +
-			"\tcmp x0, #0x10000\n\tcmp x19, #0x10000\n\tcmn x1, #0x2000\n" +
-			"\tadd x0, x1, #0x10000\n\tsub x2, x3, #0x1000\n\tadd x0, x1, #1, lsl #12\n",
-		"scvtf_w_and_mov_zr": "" +
-			"\tscvtf d0, w0\n\tscvtf s0, w1\n\tscvtf d2, x3\n\tmov x0, xzr\n\tmov w1, wzr\n",
-		// w-form ALU ops not otherwise cross-checked, plus cbz/cbnz in
-		// both widths. The sf bit (bit 31) selects 32- vs 64-bit; a
-		// regression that ignores the register width (as cbz/cbnz once
-		// did — it always emitted the 64-bit form) is caught here against
-		// GNU as as the authority.
-		"w_register_alu_extras": "" +
-			"\torr w0, w1, w2\n\teor w0, w1, w2\n\tsdiv w0, w1, w2\n\tlsr w0, w1, w2\n\tasr w0, w1, w2\n" +
-			"\tmsub w0, w1, w2, w3\n\tlsr w0, w1, #3\n\tasr w0, w1, #3\n",
-		"sysreg_mrs": "" +
-			"\tmrs x9, cntvct_el0\n\tmrs x10, cntfrq_el0\n\tmrs x0, cntfrq_el0\n\tmrs x30, cntvct_el0\n",
-		"cbz_cbnz_widths": "" +
-			"\tcbz w0, l0\n\tcbz x0, l0\n\tcbnz w1, l0\n\tcbnz x1, l0\n\tcbz w3, l0\nl0:\n\tret\n",
-		"carry_chain": "" +
-			"\tadds x0, x1, x2\n\tadcs x3, x4, x5\n\tadc x6, x7, x8\n" +
-			"\tsubs w0, w1, w2\n\tsbcs w3, w4, w5\n\tsbc w6, w7, w8\n\tngc x9, x10\n\tngcs w11, w12\n",
-		"long_multiplies": "" +
-			"\tumulh x0, x1, x2\n\tsmulh x3, x4, x5\n\tmadd x6, x7, x8, x9\n\tmadd w6, w7, w8, w9\n" +
-			"\tsmull x0, w1, w2\n\tumull x3, w4, w5\n\tsmaddl x0, w1, w2, x3\n\tumaddl x4, w5, w6, x7\n" +
-			"\tsmsubl x8, w9, w10, x11\n\tumsubl x12, w13, w14, x15\n",
-		"ccmp_chain": "" +
-			"\tcmp x0, #1\n\tccmp x1, #2, #4, eq\n\tccmp x2, x3, #0, ne\n\tccmn w4, #5, #8, gt\n" +
-			"\tccmn x5, x6, #15, le\n\tcsinc x5, x6, x7, lt\n\tcsinv w8, w9, w10, ge\n\tcsneg x11, x12, x13, vs\n" +
-			"\tcinc w8, w9, gt\n\tcinv x10, x11, lo\n\tcneg x10, x11, mi\n\tcsetm x12, hs\n\tcsetm w13, ne\n",
-		"bitfield_ops": "" +
-			"\tbfi x0, x1, #8, #16\n\tbfxil w2, w3, #4, #12\n\tubfiz x4, x5, #12, #20\n\tsbfiz w6, w7, #3, #9\n" +
-			"\textr x8, x9, x10, #24\n\textr w11, w12, w13, #7\n\tror x11, x12, #8\n\tror w13, w14, #3\n\tror x15, x16, x17\n\tror w18, w19, w20\n",
-		"logical_negated": "" +
-			"\ttst x0, x1\n\ttst w2, #0xff\n\ttst x3, x4, lsl #7\n\tands x3, x4, x5, lsl #2\n\tands w6, w7, #0xf\n" +
-			"\tbic x6, x7, x8\n\tbics w9, w10, w11\n\torn x12, x13, x14, lsr #3\n\teon w15, w16, w17\n" +
-			"\tmvn x18, x19\n\tmvn w20, w21, lsl #2\n\tnegs w20, w21\n\tnegs x22, x23\n",
-		"rev_cls_sysregs": "" +
-			"\trev x0, x1\n\trev w2, w3\n\trev32 x4, x5\n\tcls x6, x7\n\tcls w8, w9\n" +
-			"\tmov x0, fp\n\tstr x1, [fp, #-16]\n\tmsr tpidr_el0, x2\n\tmrs x3, fpcr\n\tmsr fpsr, x4\n\tmrs x5, dczid_el0\n",
-		"extended_reg_addressing": "" +
-			"\tldr x0, [x1, w2, uxtw #3]\n\tldr w3, [x4, w5, sxtw #2]\n\tstr x6, [x7, x8, sxtx]\n" +
-			"\tstr w0, [x1, w2, uxtw]\n\tldrb w9, [x10, w11, uxtw]\n\tstrb w12, [x13, w14, sxtw]\n" +
-			"\tstrh w12, [x13, x14, lsl #1]\n\tldrh w15, [x16, w17, sxtw #1]\n\tldr x18, [x19, x20, sxtx #3]\n",
-		"pairs_w_d": "" +
-			"\tldp w0, w1, [x2]\n\tstp w3, w4, [sp, #-8]!\n\tldp w5, w6, [x7], #16\n\tstp w8, w9, [x10, #4]\n" +
-			"\tldp d8, d9, [sp], #32\n\tstp d10, d11, [x12, #-16]!\n\tstp d8, d9, [sp, #16]\n\tldp d0, d1, [x2]\n",
-		"fp_fused_minmax": "" +
-			"\tfmadd d0, d1, d2, d3\n\tfmsub s4, s5, s6, s7\n\tfnmadd d8, d9, d10, d11\n\tfnmsub s12, s13, s14, s15\n" +
-			"\tfnmul d16, d17, d18\n\tfmin s19, s20, s21\n\tfmax d22, d23, d24\n\tfminnm s25, s26, s27\n\tfmaxnm d28, d29, d30\n" +
-			"\tfcsel d25, d26, d27, gt\n\tfccmp s28, s29, #12, le\n\tfcmpe d30, #0.0\n\tfcmpe s1, s2\n\tfsqrt s0, s1\n\tfabs s3, s4\n",
-		"fp32_ldst_unscaled": "" +
-			"\tldr s0, [x1]\n\tstr s2, [x3, #12]\n\tldr s4, [x5], #4\n\tstr s6, [x7, #-4]!\n" +
-			"\tldur s8, [x9, #-4]\n\tstur s10, [x11, #-8]\n\tldurh w0, [x1, #-2]\n\tsturh w2, [x3, #-2]\n" +
-			"\tldursb x4, [x5, #-1]\n\tldursb w4, [x5, #-1]\n\tldursh w6, [x7, #-2]\n\tldursh x6, [x7, #-2]\n\tldursw x8, [x9, #-4]\n",
-		// SIMD kernel shapes: whole snippets of the code a vector kernel
-		// author actually writes, cross-checked byte-for-byte. The
-		// arrangement sweep itself is pinned in gas_simd_test.go; these
-		// exercise the forms in combination (writeback chains, labels,
-		// mixed arrangements).
-		"neon_horizontal_max_kernel": "" +
-			"\tld1 {v0.16b}, [x0], #16\n\tld1 {v1.16b}, [x0], #16\n\tumax v0.16b, v0.16b, v1.16b\n" +
-			"\tumaxv b2, v0.16b\n\tumov w1, v2.b[0]\n" +
-			"\tsmax v3.8h, v4.8h, v5.8h\n\tsmaxv h6, v3.8h\n\tsminv s7, v8.4s\n\tuminv b9, v10.8b\n",
-		"neon_widening_sum": "" +
-			"\tld1 {v0.16b}, [x1], x2\n\tuaddlv h1, v0.16b\n\tushll v2.8h, v0.8b, #0\n\tushll2 v3.8h, v0.16b, #0\n" +
-			"\tadd v2.8h, v2.8h, v3.8h\n\tuaddlv s4, v2.8h\n\tsaddlv d5, v6.4s\n\tumov w0, v4.s[0]\n" +
-			"\tsxtl v7.4s, v8.4h\n\tuxtl2 v9.2d, v10.4s\n\txtn v11.4h, v12.4s\n\txtn2 v11.8h, v13.4s\n",
-		"neon_zip_shuffle": "" +
-			"\tld1 {v0.16b, v1.16b}, [x0], #32\n\tzip1 v2.16b, v0.16b, v1.16b\n\tzip2 v3.16b, v0.16b, v1.16b\n" +
-			"\tuzp1 v4.8h, v2.8h, v3.8h\n\tuzp2 v5.8h, v2.8h, v3.8h\n\ttrn1 v6.4s, v4.4s, v5.4s\n\ttrn2 v7.2d, v6.2d, v6.2d\n" +
-			"\text v8.16b, v6.16b, v7.16b, #4\n\ttbl v9.16b, {v8.16b}, v1.16b\n\trev64 v10.4s, v9.4s\n" +
-			"\tst1 {v2.16b, v3.16b}, [x1], #32\n",
-		"neon_float_lane_loop": "" +
-			"floop:\n\tld1 {v0.4s}, [x0], #16\n\tld1 {v1.4s}, [x1], #16\n" +
-			"\tfmul v2.4s, v0.4s, v1.4s\n\tfadd v3.4s, v3.4s, v2.4s\n\tfcmgt v4.4s, v0.4s, v1.4s\n" +
-			"\tscvtf v5.4s, v6.4s\n\tfcvtzs v7.2d, v8.2d\n\tfdiv v9.2d, v10.2d, v11.2d\n" +
-			"\tfmin v12.2s, v13.2s, v14.2s\n\tfabs v15.4s, v16.4s\n\tfneg v17.2d, v18.2d\n\tfsqrt v19.4s, v20.4s\n" +
-			"\tfcmlt v21.4s, v22.4s, #0.0\n\tsub x2, x2, #1\n\tcbnz x2, floop\n\tst1 {v3.4s}, [x3]\n",
-		"neon_lane_and_imm_forms": "" +
-			"\tdup v0.16b, w1\nmloop:\n\tld1 {v1.16b}, [x0], #16\n\tcmeq v2.16b, v1.16b, v0.16b\n" +
-			"\tshrn v3.8b, v2.8h, #4\n\tfmov x2, d3\n\tcbz x2, mloop\n\trbit x2, x2\n\tclz x2, x2\n" +
-			"\tmovi v4.16b, #128\n\tmovi v5.2d, #0xff00ff00ff00ff00\n\tmovi d6, #0xffffffffffffffff\n" +
-			"\tins v7.d[1], x3\n\tins v8.s[2], v9.s[0]\n\tdup v10.4s, v11.s[3]\n\tld1r {v12.8h}, [x4], #2\n" +
-			"\tsmov x5, v13.h[2]\n\tsshr v14.4s, v15.4s, #31\n\tshl v16.2d, v17.2d, #3\n\tsli v18.8b, v19.8b, #2\n" +
-			"\tmvn v20.16b, v21.16b\n\tbic v22.8b, v23.8b, v24.8b\n\torn v25.16b, v26.16b, v27.16b\n" +
-			"\tneg v28.4h, v29.4h\n\tabs v30.2s, v31.2s\n\tcmtst v0.2d, v1.2d, v2.2d\n\tcmhi v3.8b, v4.8b, v5.8b\n" +
-			"\tcmle v6.8h, v7.8h, #0\n\tcmge v8.4s, v9.4s, #0\n\trev16 v10.16b, v11.16b\n\trev32 v12.8h, v13.8h\n",
-		"atomics_loop": "" +
-			"retry:\n\tldaxr x0, [x19]\n\tadd x0, x0, #1\n\tstlxr w1, x0, [x19]\n\tcbnz w1, retry\n\tdmb ish\n" +
-			"\tldar x2, [x19]\n\tstlr x3, [x19]\n\tldxr w4, [x20]\n\tstxr w5, w6, [x21]\n" +
-			"\tldxrb w4, [x20]\n\tldaxrh w5, [x21]\n\tstxrh w5, w6, [x21]\n\tstlxrb w7, w8, [x22]\n" +
-			"\tldarb w9, [x23]\n\tstlrh w10, [x24]\n\tdsb sy\n\tisb\n",
-	}
-	for name, src := range cases {
+	for name, src := range gasCorpus {
 		t.Run(name, func(t *testing.T) {
 			got, err := arm64.Assemble(src)
 			if err != nil {

@@ -150,8 +150,27 @@ func handleDirective(a *Assembler, line string) error {
 }
 
 func assembleInsn(a *Assembler, line string) error {
-	mnem, rest := splitMnemonic(line)
-	ops := splitOperands(rest)
+	in, err := ParseInst(line)
+	if err != nil {
+		return err
+	}
+	return a.Inst(in)
+}
+
+// Inst encodes one instruction into .text, the structured twin of the
+// text line assembleInsn reads: the same dispatch, the same encoders,
+// without the parse. A code generator can build Inst values and hand
+// them over directly.
+//
+// The arms below still read operand TEXT. They are migrating onto the
+// typed accessors family by family (#7903); Operand.Text is what carries
+// the ones that have not moved yet, and it goes with the last of them.
+func (a *Assembler) Inst(in Inst) error {
+	mnem := in.Mnem
+	ops := make([]string, len(in.Ops))
+	for i, o := range in.Ops {
+		ops[i] = o.Text()
+	}
 
 	// Conditional branches: b.<cond> or the b<cond> aliases.
 	if cond, ok := condOf(mnem); ok {
@@ -1734,11 +1753,15 @@ func emitMoviBytemask(a *Assembler, rd uint32, ops []string, q bool) error {
 	if len(ops) != 2 {
 		return fmt.Errorf("movi bytemask form takes no shift")
 	}
-	s := strings.TrimPrefix(strings.TrimSpace(ops[1]), "#")
-	v, err := strconv.ParseUint(s, 0, 64)
+	// parseImm rather than ParseUint: the operand is a 64-bit BIT PATTERN,
+	// and GNU as accepts either spelling of one — `#0xff00ff00ff00ff00` and
+	// its signed twin `#-71777214294589696` assemble to the same
+	// instruction. ParseUint refused the signed half outright.
+	n, err := parseImm(ops[1])
 	if err != nil {
 		return fmt.Errorf("bad movi immediate %q", ops[1])
 	}
+	v := uint64(n)
 	var imm8 uint32
 	for i := 0; i < 8; i++ {
 		switch b := v >> (8 * i) & 0xFF; b {

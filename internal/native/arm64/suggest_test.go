@@ -23,7 +23,7 @@ func dispatchedMnemonics(t *testing.T) map[string]bool {
 	out := map[string]bool{}
 	litRe := regexp.MustCompile(`"([a-z0-9.]+)"`)
 	caseRe := regexp.MustCompile(`\bcase\b`)
-	for _, fn := range []string{"func assembleInsn(", "func asmVecForm("} {
+	for _, fn := range []string{"func (a *Assembler) Inst(", "func asmVecForm("} {
 		start := strings.Index(body, fn)
 		if start < 0 {
 			t.Fatalf("%s not found in gas.go — the extraction pattern has gone stale, which would make this test vacuous", fn)

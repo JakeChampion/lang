@@ -132,3 +132,42 @@ func TestImmediateRefusalsMatchGNUAs(t *testing.T) {
 		}
 	}
 }
+
+// TestMoviBitPatternSpellingsMatchGNUAs pins the movi 64-bit bytemask form
+// against gas in both spellings of the same pattern. The operand is a bit
+// pattern, and gas takes either the unsigned hex or the signed decimal that
+// names it — `#0xff00ff00ff00ff00` and `#-71777214294589696` are one
+// instruction. The assembler read this operand with ParseUint, which
+// refuses a leading sign, so half of what gas accepts was rejected.
+//
+// Both the .2d vector form and the scalar D form go through the same
+// bytemask path, so both are pinned.
+func TestMoviBitPatternSpellingsMatchGNUAs(t *testing.T) {
+	assertMatchesGas(t, []string{
+		"movi v5.2d, #0xff00ff00ff00ff00",
+		"movi v5.2d, #-71777214294589696",
+		"movi v0.2d, #0xffffffffffffffff",
+		"movi v0.2d, #-1",
+		"movi v1.2d, #0xffff0000ffff0000",
+		"movi v1.2d, #-281470681808896",
+		"movi d6, #0xffffffffffffffff",
+		"movi d6, #-1",
+		"movi d7, #0xff",
+		"movi d8, #0",
+	})
+}
+
+// TestMoviRejectsNonBytemask holds the other direction: widening the
+// accepted spellings must not widen the accepted VALUES. Every byte of the
+// 64-bit form has to be 0x00 or 0xff, whichever spelling names it.
+func TestMoviRejectsNonBytemask(t *testing.T) {
+	for _, line := range []string{
+		"movi v0.2d, #0x0102030405060708",
+		"movi v0.2d, #-2",
+		"movi d0, #0x1234",
+	} {
+		if _, err := arm64.Assemble("\t" + line + "\n"); err == nil {
+			t.Errorf("%s assembled; want a refusal (not a bytemask)", line)
+		}
+	}
+}
