@@ -66,10 +66,24 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 			[]string{"\n__fern_arr_i32_product:", ".Lai32_prod_loop"},
 		},
 		{
+			// The RAW sentinel scan, which `xs.contains(x)` reads as `>= 0`.
+			// `xs.index_of(x)` no longer reaches it — that returns Option[i32]
+			// and calls the boxing helper below (#4387) — so `contains` is the
+			// only expression that still pulls this symbol in.
 			"arr_i32_index_of",
-			"function main(): i32 { var xs: i32[] = [5, 6, 7]; return xs.index_of(6); }",
+			"function main(): i32 { var xs: i32[] = [5, 6, 7]; if (xs.contains(6)) { return 1; } return 0; }",
 			"__fn___fern_arr_i32_index_of",
 			[]string{"\n__fern_arr_i32_index_of:", ".Lai32_idx_loop"},
+		},
+		{
+			// The Option-boxing scan behind `xs.index_of(x)`, the min/max shape:
+			// the box is built inside the Fern helper, not open-coded at the
+			// call site. Its own migration needs its own case — the raw scan
+			// above is a different symbol and a different program reaches it.
+			"arr_i32_index_of_opt",
+			"function main(): i32 { var xs: i32[] = [5, 6, 7]; match (xs.index_of(6)) { Some(v) => { return v; }, None => { return 0; } } }",
+			"__fn___fern_arr_i32_index_of_opt",
+			[]string{"\n__fern_arr_i32_index_of_opt:", ".Lai32_idx_loop"},
 		},
 		{
 			// AST path; the x86-64 IR path is covered by
