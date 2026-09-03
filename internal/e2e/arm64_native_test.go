@@ -110,8 +110,8 @@ func TestArm64NativeBackendRunsUnderQemu(t *testing.T) {
 		{"ceil_f64", "function main(): i32 { return __ceil_f64(41.1) as i32; }", 42},
 		{"trunc_f64", "function main(): i32 { return __trunc_f64(42.9) as i32; }", 42},
 		{"round_f64", "function main(): i32 { return __round_f64(41.5) as i32; }", 42},
-		// f64 transcendentals via polynomial-approximation runtime
-		// helpers (arm64 has no hardware sin/cos/exp/log). Tolerance
+		// f64 transcendentals via the fdlibm runtime helpers (arm64 has
+		// no hardware sin/cos/exp/log). Tolerance
 		// contract; exit codes pin the integer-truncated result.
 		{"exp_f64", "function main(): i32 { return __exp_f64(2.0) as i32; }", 7},
 		{"log_f64", "function main(): i32 { return __log_f64(10.0) as i32; }", 2},

@@ -1434,11 +1434,12 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // in by module_uses_strbuf, which also folds into the heap gate. The wasm AST
     // backend never had strbuf, so this is the only wasm strbuf path.
     // The libm transcendentals (sin / cos / exp / log / pow) lower through the IR
-    // on every backend: x86 (x87 FPU), arm64 (polynomial-approx runtime helpers),
-    // and wasm via the polynomial-approx WAT helpers (wasm.exp_func / log_func /
-    // pow_func / …) that wasm_ir_run pulls in when a module calls one — see the
-    // fexp/flog/fsin/fcos/fpow arms below (kind_tag 62+), which emit
-    // `call $__fern_<op>_f64`. They are NOT in the deferral list.
+    // on every backend, each into its own fdlibm runtime helpers: asm_ir and
+    // asm_arm64_ir emit theirs into .rodata + text, and wasm uses the WAT
+    // helpers (exp_func / log_func / pow_func / …) that wasm_ir_run pulls in
+    // when a module calls one — see the fexp/flog/fsin/fcos/fpow arms below
+    // (kind_tag 62+), which emit `call $__fern_<op>_f64`. They are NOT in the
+    // deferral list.
     if (!ircore.eligible_core(mod)) { return false; }
     return wasm_ir_deferrals_ok(lower_all_for(mod));
 }
@@ -4559,20 +4560,18 @@ pub function build_io_error_func(slot: i32): string {
 }
 
 // ---- moved verbatim from wasm.fern (#3457 slice 4 untangle) ----
-// The transcendental f64-math WAT helpers are IR-path-only (emitted only by
-// emit_ir_module_units) and self-contained (pure WAT, no imports/heap/AST), so
-// they live here in the IR emitter, not in the AST emitter wasm.fern that #3457
-// deletes. wasm_ir.fern already references them by name in comments.
-// The f64 transcendental WAT helpers. These are fdlibm's kernels, kept in
-// lockstep with internal/codegen/arm64 and examples/self_host/asm_arm64_ir.fern
-// — same constants, same order. They replace polynomials that measured 3.2e10
-// ulp for sin, 4.5e7 for exp and 9844 for log while their comments claimed
-// otherwise.
+// The f64 transcendental WAT helpers: fdlibm's kernels, IR-path-only (emitted
+// only by emit_ir_module_units) and self-contained (pure WAT, no
+// imports/heap/AST).
+//
+// The self-host cannot import Go, so the coefficients below are literals
+// rather than a shared table. internal/codegen/fdlibm's selfhost_parity_test
+// pins every one of them, and the 2/pi limbs in trig_limbs_func, to the table
+// the native backends emit — edit one side alone and that test fails.
 //
 // wasm needs no rounding-mode note: f64.nearest is ties-to-EVEN, which is
-// exactly what arm64's `frintn` and x86's `roundsd …, 0` now do, so all three
-// backends pick the same k. (This comment used to explain a mismatch against
-// arm64's `frinta`; that mismatch no longer exists.)
+// exactly what arm64's `frintn` and x86's `roundsd …, 0` do, so all three
+// backends pick the same k.
 //
 // Two corrections rather than refinements:
 //

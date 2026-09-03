@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/codegen/fdlibm"
 	"github.com/jakechampion/lang/internal/ir"
 )
 
@@ -180,4 +181,18 @@ func parseWasmFloat(t *testing.T, s string) float64 {
 		t.Fatalf("parse %q: %v", s, err)
 	}
 	return v
+}
+
+// twoOverPiLimbs reserves the memory region the 2/pi data segment fills, so a
+// table that outgrew it would write past its own region into the string pool.
+// The count cannot be derived with len() — that would type the address chain
+// below it as int, where every consumer wants an untyped constant — so it is
+// pinned here instead.
+func TestTwoOverPiSegmentCoversTheTable(t *testing.T) {
+	if got, want := twoOverPiLimbs, len(fdlibm.TwoOverPiBits); got != want {
+		t.Errorf("memlayout reserves %d 2/pi limbs, fdlibm.TwoOverPiBits has %d", got, want)
+	}
+	if got, want := len(twoOverPiSegment()), 8*len(fdlibm.TwoOverPiBits); got != want {
+		t.Errorf("the 2/pi data segment is %d bytes, want %d", got, want)
+	}
 }

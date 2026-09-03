@@ -221,8 +221,10 @@ const (
 	// twoOverPiBase is the Payne-Hanek 2/pi bit table __fern_sin_f64 /
 	// __fern_cos_f64 read for arguments at or above 2^20 — 21 8-byte LE
 	// limbs, written by their own data segment when either helper is
-	// present (see twoOverPiBits in runtime.go). Static and never
-	// rc-touched, like the vtables.
+	// present (fdlibm.TwoOverPiBits, rendered by twoOverPiSegment). Kept
+	// untyped rather than derived with len() so the chain below it stays
+	// untyped too; TestTwoOverPiSegmentCoversTheTable pins the count.
+	// Static and never rc-touched, like the vtables.
 	twoOverPiBase  = closurePoolEnd
 	twoOverPiLimbs = 21
 	twoOverPiEnd   = twoOverPiBase + 8*twoOverPiLimbs

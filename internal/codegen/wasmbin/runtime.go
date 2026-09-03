@@ -15,6 +15,7 @@ import (
 	"math"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/codegen/fdlibm"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/wasm/convert"
@@ -7244,10 +7245,10 @@ func buildRoundF64Body(_ map[string]uint32) []byte {
 
 // --- f64 transcendentals (#6404) --------------------------------------------
 //
-// fdlibm kernels, transliterated from the self-host wasm-IR path's WAT emitters
-// (wasm_ir.fern) so all four backends share constants and reduction order.
-// exp / log / sin / cos / pow are the only primitives; exp2, exp10, log2,
-// log10, tan, sinh, cosh, tanh and cbrt compose from them in float.fern.
+// fdlibm kernels over the same reduction order the native backends use, with
+// the coefficients themselves from internal/codegen/fdlibm. exp / log / sin /
+// cos / pow are the only primitives; exp2, exp10, log2, log10, tan, sinh,
+// cosh, tanh and cbrt compose from them in float.fern.
 //
 // Two things that are easy to get wrong here:
 //
@@ -7315,28 +7316,28 @@ func buildExpF64Body(_ map[string]uint32) []byte {
 	body = instGuardReturn(body, func(b []byte) []byte { return inst.InstLocalGet(b, lx) })
 	// Overflow / underflow, before 2^k can wrap into the sign bit.
 	body = inst.InstLocalGet(body, lx)
-	body = inst.InstF64Const(body, math.Float64bits(709.782712893383973096))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.ExpOvf))
 	body = numeric.InstF64Gt(body)
 	body = instGuardReturn(body, func(b []byte) []byte { return instF64Inf(b, false) })
 	body = inst.InstLocalGet(body, lx)
-	body = inst.InstF64Const(body, math.Float64bits(-745.133219101941108420))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.ExpUnf))
 	body = numeric.InstF64Lt(body)
 	body = instGuardReturn(body, func(b []byte) []byte { return inst.InstF64Const(b, math.Float64bits(0.0)) })
 	// kf = nearest(x * log2e)
 	body = inst.InstLocalGet(body, lx)
-	body = inst.InstF64Const(body, math.Float64bits(1.44269504088896338700))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.InvLn2))
 	body = numeric.InstF64Mul(body)
 	body = numeric.InstF64Nearest(body)
 	body = inst.InstLocalSet(body, kf)
 	// hi = x - kf*ln2hi ; lo = kf*ln2lo ; r = hi - lo
 	body = inst.InstLocalGet(body, lx)
 	body = inst.InstLocalGet(body, kf)
-	body = inst.InstF64Const(body, math.Float64bits(0.693147180369123816490))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Ln2Hi))
 	body = numeric.InstF64Mul(body)
 	body = numeric.InstF64Sub(body)
 	body = inst.InstLocalSet(body, hi)
 	body = inst.InstLocalGet(body, kf)
-	body = inst.InstF64Const(body, math.Float64bits(1.90821492927058770002e-10))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Ln2Lo))
 	body = numeric.InstF64Mul(body)
 	body = inst.InstLocalSet(body, lo)
 	body = inst.InstLocalGet(body, hi)
@@ -7349,12 +7350,12 @@ func buildExpF64Body(_ map[string]uint32) []byte {
 	body = numeric.InstF64Mul(body)
 	body = inst.InstLocalSet(body, t)
 	// p = P5..P1 by Horner in t
-	body = inst.InstF64Const(body, math.Float64bits(4.13813679705723846039e-08))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.P5))
 	body = inst.InstLocalSet(body, p)
-	body = instPolyStep(body, p, t, -1.65339022054652515390e-06)
-	body = instPolyStep(body, p, t, 6.61375632143793436117e-05)
-	body = instPolyStep(body, p, t, -2.77777777770155933842e-03)
-	body = instPolyStep(body, p, t, 1.66666666666666019037e-01)
+	body = instPolyStep(body, p, t, fdlibm.P4)
+	body = instPolyStep(body, p, t, fdlibm.P3)
+	body = instPolyStep(body, p, t, fdlibm.P2)
+	body = instPolyStep(body, p, t, fdlibm.P1)
 	// c = r - p*t
 	body = inst.InstLocalGet(body, r)
 	body = inst.InstLocalGet(body, p)
@@ -7472,7 +7473,7 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, m)
 	// if m >= sqrt2 { m *= 0.5; k += 1 }
 	body = inst.InstLocalGet(body, m)
-	body = inst.InstF64Const(body, math.Float64bits(1.4142135623730951))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Sqrt2))
 	body = numeric.InstF64Ge(body)
 	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 	body = inst.InstLocalGet(body, m)
@@ -7503,21 +7504,21 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, z)
 	body = numeric.InstF64Mul(body)
 	body = inst.InstLocalSet(body, w)
-	// t1 = ((Lg7*w + Lg5)*w + Lg3)*w
-	body = inst.InstF64Const(body, math.Float64bits(0.1531383769920937332))
+	// t1 = ((Lg6*w + Lg4)*w + Lg2)*w
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Lg6))
 	body = inst.InstLocalSet(body, t1)
-	body = instPolyStep(body, t1, w, 0.2222219843214978396)
-	body = instPolyStep(body, t1, w, 0.3999999999940941908)
+	body = instPolyStep(body, t1, w, fdlibm.Lg4)
+	body = instPolyStep(body, t1, w, fdlibm.Lg2)
 	body = inst.InstLocalGet(body, t1)
 	body = inst.InstLocalGet(body, w)
 	body = numeric.InstF64Mul(body)
 	body = inst.InstLocalSet(body, t1)
-	// t2 = (((Lg6*w + Lg4)*w + Lg2)*w + Lg1)*z
-	body = inst.InstF64Const(body, math.Float64bits(0.1479819860511658591))
+	// t2 = (((Lg7*w + Lg5)*w + Lg3)*w + Lg1)*z
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Lg7))
 	body = inst.InstLocalSet(body, t2)
-	body = instPolyStep(body, t2, w, 0.1818357216161805012)
-	body = instPolyStep(body, t2, w, 0.2857142874366239149)
-	body = instPolyStep(body, t2, w, 0.6666666666666735130)
+	body = instPolyStep(body, t2, w, fdlibm.Lg5)
+	body = instPolyStep(body, t2, w, fdlibm.Lg3)
+	body = instPolyStep(body, t2, w, fdlibm.Lg1)
 	body = inst.InstLocalGet(body, t2)
 	body = inst.InstLocalGet(body, z)
 	body = numeric.InstF64Mul(body)
@@ -7538,7 +7539,7 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 	body = inst.InstLocalSet(body, kf)
 	// kf*ln2hi - ((hfsq - (s*(hfsq+t1) + kf*ln2lo)) - f)
 	body = inst.InstLocalGet(body, kf)
-	body = inst.InstF64Const(body, math.Float64bits(0.693147180369123816490))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Ln2Hi))
 	body = numeric.InstF64Mul(body)
 	body = inst.InstLocalGet(body, hfsq)
 	body = inst.InstLocalGet(body, s)
@@ -7547,7 +7548,7 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 	body = numeric.InstF64Add(body)
 	body = numeric.InstF64Mul(body)
 	body = inst.InstLocalGet(body, kf)
-	body = inst.InstF64Const(body, math.Float64bits(1.90821492927058770002e-10))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.Ln2Lo))
 	body = numeric.InstF64Mul(body)
 	body = numeric.InstF64Add(body)
 	body = numeric.InstF64Sub(body)
@@ -7558,28 +7559,11 @@ func buildLogF64Body(_ map[string]uint32) []byte {
 		localGroup{9, encode.ValtypeF64}, localGroup{2, encode.ValtypeI64}), body)
 }
 
-// twoOverPiBits is 2/pi in binary, MSB-first, one limb per 64 fraction bits
-// starting at 2^-1 in limb 1 — the window Payne-Hanek indexes with the
-// argument's own exponent. The leading zero limb lets that index start above
-// 2^-1 without a bounds test; the length covers the largest finite double.
-// Same table as the native backends': the emit layers are deliberately
-// parallel, so the numeric tables are carried per backend like the fdlibm
-// coefficients beside them.
-var twoOverPiBits = [twoOverPiLimbs]uint64{
-	0x0000000000000000, 0xa2f9836e4e441529, 0xfc2757d1f534ddc0,
-	0xdb6295993c439041, 0xfe5163abdebbc561, 0xb7246e3a424dd2e0,
-	0x06492eea09d1921c, 0xfe1deb1cb129a73e, 0xe88235f52ebb4484,
-	0xe99c7026b45f7e41, 0x3991d639835339f4, 0x9c845f8bbdf9283b,
-	0x1ff897ffde05980f, 0xef2f118b5a0a6d1f, 0x6d367ecf27cb09b7,
-	0x4f463f669e5fea2d, 0x7527bac7ebe5f17b, 0x3d0739f78a5292ea,
-	0x6bfb5fb11f8d5d08, 0x56033046fc7b6bab, 0xf0cfbc209af4361d,
-}
-
 // twoOverPiSegment renders the table as the LE bytes its data segment at
 // twoOverPiBase carries.
 func twoOverPiSegment() []byte {
 	out := make([]byte, 0, 8*twoOverPiLimbs)
-	for _, w := range twoOverPiBits {
+	for _, w := range fdlibm.TwoOverPiBits {
 		out = append(out,
 			byte(w), byte(w>>8), byte(w>>16), byte(w>>24),
 			byte(w>>32), byte(w>>40), byte(w>>48), byte(w>>56))
@@ -7818,11 +7802,11 @@ func instTrigReduceAndPolys(body []byte) []byte {
 		// k = (f64)hi * 2^-62 + (f64)lo * 2^-115  (the fraction in [0, 1/2])
 		body = inst.InstLocalGet(body, hi)
 		body = convert.InstF64ConvertI64S(body)
-		body = inst.InstF64Const(body, math.Float64bits(2.168404344971009e-19))
+		body = inst.InstF64Const(body, math.Float64bits(fdlibm.TwoM62))
 		body = numeric.InstF64Mul(body)
 		body = inst.InstLocalGet(body, lo)
 		body = convert.InstF64ConvertI64S(body)
-		body = inst.InstF64Const(body, math.Float64bits(2.407412430484045e-35))
+		body = inst.InstF64Const(body, math.Float64bits(fdlibm.TwoM115))
 		body = numeric.InstF64Mul(body)
 		body = numeric.InstF64Add(body)
 		body = inst.InstLocalSet(body, k)
@@ -7853,10 +7837,10 @@ func instTrigReduceAndPolys(body []byte) []byte {
 		body = inst.InstLocalSet(body, q)
 		// r = k*pio2hi + k*pio2lo (pi/2 as an unevaluated double-double)
 		body = inst.InstLocalGet(body, k)
-		body = inst.InstF64Const(body, math.Float64bits(1.5707963267948966))
+		body = inst.InstF64Const(body, math.Float64bits(fdlibm.Pio2Hi))
 		body = numeric.InstF64Mul(body)
 		body = inst.InstLocalGet(body, k)
-		body = inst.InstF64Const(body, math.Float64bits(6.123233995736766e-17))
+		body = inst.InstF64Const(body, math.Float64bits(fdlibm.Pio2Lo))
 		body = numeric.InstF64Mul(body)
 		body = numeric.InstF64Add(body)
 		body = inst.InstLocalSet(body, r)
@@ -7865,7 +7849,7 @@ func instTrigReduceAndPolys(body []byte) []byte {
 	// k = nearest(x * 2/pi) ; q = (i64)k & 3. The truncation is safe here:
 	// |x| < 2^20, and the prologue already returned Inf/NaN.
 	body = inst.InstLocalGet(body, lx)
-	body = inst.InstF64Const(body, math.Float64bits(0.636619772367581382433))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.TwoOPi))
 	body = numeric.InstF64Mul(body)
 	body = numeric.InstF64Nearest(body)
 	body = inst.InstLocalSet(body, k)
@@ -7876,7 +7860,7 @@ func instTrigReduceAndPolys(body []byte) []byte {
 	body = inst.InstLocalSet(body, q)
 	// r = x - k*pio2_1 - k*pio2_2 - k*pio2_3
 	body = inst.InstLocalGet(body, lx)
-	for _, c := range []float64{1.57079632673412561417, 6.07710050630396597660e-11, 2.02226624879595063154e-21} {
+	for _, c := range []float64{fdlibm.Pio2H, fdlibm.Pio2M, fdlibm.Pio2L} {
 		body = inst.InstLocalGet(body, k)
 		body = inst.InstF64Const(body, math.Float64bits(c))
 		body = numeric.InstF64Mul(body)
@@ -7889,12 +7873,12 @@ func instTrigReduceAndPolys(body []byte) []byte {
 	body = numeric.InstF64Mul(body)
 	body = inst.InstLocalSet(body, r2)
 	// sinr = r + (S6..S1 Horner in r2)*r2*r
-	body = inst.InstF64Const(body, math.Float64bits(1.58969099521155010221e-10))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.S6))
 	body = inst.InstLocalSet(body, sinr)
 	for _, c := range []float64{
-		-2.50507602534068634195e-08, 2.75573137070700676789e-06,
-		-1.98412698298579493134e-04, 8.33333333332248946124e-03,
-		-1.66666666666666324348e-01,
+		fdlibm.S5, fdlibm.S4,
+		fdlibm.S3, fdlibm.S2,
+		fdlibm.S1,
 	} {
 		body = instPolyStep(body, sinr, r2, c)
 	}
@@ -7907,12 +7891,12 @@ func instTrigReduceAndPolys(body []byte) []byte {
 	body = numeric.InstF64Add(body)
 	body = inst.InstLocalSet(body, sinr)
 	// cosr from C6..C1, then the (1-w)-hz recovery step.
-	body = inst.InstF64Const(body, math.Float64bits(-1.13596475577881948265e-11))
+	body = inst.InstF64Const(body, math.Float64bits(fdlibm.C6))
 	body = inst.InstLocalSet(body, cosr)
 	for _, c := range []float64{
-		2.08757232129817482790e-09, -2.75573143513906633035e-07,
-		2.48015872894767294178e-05, -1.38888888888741095749e-03,
-		4.16666666666666019037e-02,
+		fdlibm.C5, fdlibm.C4,
+		fdlibm.C3, fdlibm.C2,
+		fdlibm.C1,
 	} {
 		body = instPolyStep(body, cosr, r2, c)
 	}

@@ -54,6 +54,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/codegen/fdlibm"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/platforms"
@@ -8150,47 +8151,16 @@ func (g *generator) emitStrAppendRuntime() {
 	g.line(".size __fern_str_append, .-__fern_str_append")
 }
 
-// emitStrcmpRuntime emits `__fern_strcmp(a, b)` — returns 0
-// if a and b have the same length AND the same bytes, else 1.
-// Pure equality comparator (no lex ordering), matching arm64.
-// twoOverPiBits is 2/pi in binary, MSB-first, one limb per 64 fraction bits
-// starting at 2^-1 in limb 1 — the table Payne-Hanek reduction indexes with
-// the argument's own exponent. The leading zero limb lets that index start
-// above 2^-1 without a bounds test, and the length covers the largest finite
-// double: reducing near 2^1024 consumes ~1024 bits before the 53 bits of
-// significand and the 64 bits of quotient the reduction actually reads.
-var twoOverPiBits = [...]uint64{
-	0x0000000000000000, 0xa2f9836e4e441529, 0xfc2757d1f534ddc0,
-	0xdb6295993c439041, 0xfe5163abdebbc561, 0xb7246e3a424dd2e0,
-	0x06492eea09d1921c, 0xfe1deb1cb129a73e, 0xe88235f52ebb4484,
-	0xe99c7026b45f7e41, 0x3991d639835339f4, 0x9c845f8bbdf9283b,
-	0x1ff897ffde05980f, 0xef2f118b5a0a6d1f, 0x6d367ecf27cb09b7,
-	0x4f463f669e5fea2d, 0x7527bac7ebe5f17b, 0x3d0739f78a5292ea,
-	0x6bfb5fb11f8d5d08, 0x56033046fc7b6bab, 0xf0cfbc209af4361d,
-}
-
 // emitFloatTranscendentalsRuntime emits the f64 transcendental bundle —
-// __fern_{exp,log,sin,cos,pow}_f64 — plus the shared .rodata table of
-// coefficients. x86-64 has no usable hardware transcendental (the x87
-// fsin / fyl2x / f2xm1 these replace are microcoded legacy from before
-// SSE), so each is an argument reduction followed by a polynomial.
+// __fern_{exp,log,sin,cos,pow}_f64 — plus the .rodata table of coefficients.
+// x86-64 has no usable hardware transcendental (the x87 fsin / fyl2x / f2xm1
+// these replace are microcoded legacy from before SSE), so each is an
+// argument reduction followed by a polynomial. The numbers, and why they are
+// shaped as they are, are in internal/codegen/fdlibm.
 //
-// The kernels are fdlibm's, and the accuracy that buys is the point:
-// measured against the correctly-rounded reference over 20k samples per
-// range, these are <= 1 ulp everywhere, where the Taylor kernels arm64
-// and wasm have carried are 3.2e10 ulp (sin), 4.5e7 (exp) and 9844
-// (log). "A few ulp" was never true of the old ones.
-//
-// Two choices worth recording:
-//
-//   - The reduction is Cody-Waite: the constant is split into a head
-//     with its low mantissa bits zeroed plus a tail, so `x - k*hi` is
-//     EXACT and only the much smaller `k*tail` rounds. Reducing against
-//     a single rounded pi/2 is what made the old sin lose ~7 digits by
-//     |x| ~ 10.
-//   - exp keeps fdlibm's division. The division-free alternative needs a
-//     degree-13 Taylor to reach 1 ulp (degree 11 lands at 55 ulp), whose
-//     dependent chain is longer than the divide it avoids.
+// exp keeps fdlibm's division: the division-free alternative needs a
+// degree-13 Taylor to reach 1 ulp (degree 11 lands at 55 ulp), whose
+// dependent chain is longer than the divide it avoids.
 //
 // Convention: argument and result in xmm0 (pow also takes y in xmm1),
 // mirroring arm64's d0/d1. All scratch is caller-saved under SysV.
@@ -8211,76 +8181,12 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.line("")
 	g.line(".section .rodata")
 	g.line(".align 8")
-	for _, c := range []struct{ lbl, val string }{
-		{".Lfc_one", "1.0"},
-		{".Lfc_half", "0.5"},
-		{".Lfc_two", "2.0"},
-		{".Lfc_sqrt2", "1.4142135623730951"},
-		// Cody-Waite splits. ln2_hi / pio2_1 carry zeroed low mantissa
-		// bits so the first subtraction is exact.
-		{".Lfc_invln2", "1.44269504088896338700e+00"},
-		{".Lfc_ln2hi", "6.93147180369123816490e-01"},
-		{".Lfc_ln2lo", "1.90821492927058770002e-10"},
-		{".Lfc_2opi", "6.36619772367581382433e-01"},
-		// pi/2 as THREE 33-bit chunks (~99 bits), for |x| < 2^20. Two chunks
-		// leave sin(pi) 285k ulp out: near a zero of sin the reduced argument
-		// IS the answer, so the reduction's absolute error becomes the
-		// result's relative error. A fourth chunk makes it worse, not better
-		// — it perturbs the cancellation the third one sets up.
-		//
-		// The head carries 22 trailing zero mantissa bits, so `x - k*pio2h`
-		// is exact only while k fits in 22 bits. Past that the reduction is
-		// __fern_rem_pio2_large's.
-		{".Lfc_pio2h", "1.57079632673412561417e+00"},
-		{".Lfc_pio2m", "6.07710050630396597660e-11"},
-		{".Lfc_pio2l", "2.02226624879595063154e-21"},
-		// pi/2 as an unevaluated double-double, plus the two scales that turn
-		// __fern_rem_pio2_large's 126-bit fraction into a double.
-		{".Lfc_pio2hi", "1.5707963267948966"},
-		{".Lfc_pio2lo", "6.123233995736766e-17"},
-		{".Lfc_2m62", "2.168404344971009e-19"},
-		{".Lfc_2m115", "2.407412430484045e-35"},
-		// sin kernel, |r| <= pi/4
-		{".Lfc_s1", "-1.66666666666666324348e-01"},
-		{".Lfc_s2", "8.33333333332248946124e-03"},
-		{".Lfc_s3", "-1.98412698298579493134e-04"},
-		{".Lfc_s4", "2.75573137070700676789e-06"},
-		{".Lfc_s5", "-2.50507602534068634195e-08"},
-		{".Lfc_s6", "1.58969099521155010221e-10"},
-		// cos kernel, |r| <= pi/4
-		{".Lfc_c1", "4.16666666666666019037e-02"},
-		{".Lfc_c2", "-1.38888888888741095749e-03"},
-		{".Lfc_c3", "2.48015872894767294178e-05"},
-		{".Lfc_c4", "-2.75573143513906633035e-07"},
-		{".Lfc_c5", "2.08757232129817482790e-09"},
-		{".Lfc_c6", "-1.13596475577881948265e-11"},
-		// exp kernel
-		{".Lfc_p1", "1.66666666666666019037e-01"},
-		{".Lfc_p2", "-2.77777777770155933842e-03"},
-		{".Lfc_p3", "6.61375632143793436117e-05"},
-		{".Lfc_p4", "-1.65339022054652515390e-06"},
-		{".Lfc_p5", "4.13813679705723846039e-08"},
-		// log kernel
-		{".Lfc_lg1", "6.666666666666735130e-01"},
-		{".Lfc_lg2", "3.999999999940941908e-01"},
-		{".Lfc_lg3", "2.857142874366239149e-01"},
-		{".Lfc_lg4", "2.222219843214978396e-01"},
-		{".Lfc_lg5", "1.818357216161805012e-01"},
-		{".Lfc_lg6", "1.531383769920937332e-01"},
-		{".Lfc_lg7", "1.479819860511658591e-01"},
-		// exp's finite range. Above the first, e^x is not representable;
-		// below the second it rounds to zero. Both are needed BEFORE the
-		// 2^k reconstruction, which builds the exponent field as
-		// (k+1023)<<52 and silently overflows into the SIGN bit otherwise
-		// — exp(1000) came out as -6.1e-183 rather than +Inf.
-		{".Lfc_expovf", "709.782712893383973096"},
-		{".Lfc_expunf", "-745.133219101941108420"},
-	} {
-		g.label(c.lbl)
-		g.line("\t.double " + c.val)
+	for _, c := range fdlibm.Coeffs {
+		g.label(".Lfc_" + c.Name)
+		g.line("\t.double " + c.Text)
 	}
 	g.label(".Lfc_2opi_bits")
-	for _, w := range twoOverPiBits {
+	for _, w := range fdlibm.TwoOverPiBits {
 		g.line(fmt.Sprintf("\t.quad 0x%016x", w))
 	}
 	g.line(".text")
@@ -9193,6 +9099,9 @@ func (g *generator) emitCountByteRuntime() {
 	g.line(".size __fern_count_byte, .-__fern_count_byte")
 }
 
+// emitStrcmpRuntime emits `__fern_strcmp(a, b)` — returns 0
+// if a and b have the same length AND the same bytes, else 1.
+// Pure equality comparator (no lex ordering), matching arm64.
 func (g *generator) emitStrcmpRuntime() {
 	g.line("")
 	g.line(".globl __fern_strcmp")
