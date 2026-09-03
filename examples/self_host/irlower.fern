@@ -20237,6 +20237,13 @@ function bind_var_slot(v: ast.StmtVar, s: LowerState, se: LowerState, vt: VarTyp
     if (slot_is_reclaimable_arrarr(sb, slot)) {
         return emit_arrarr_reclaim_store(sb, slot);
     }
+    // Reclaimable closure-ARRAY LOOP-LOCAL (#4354): free the prior iteration's
+    // element boxes with the buffer. The credit, not the is_closurearr flag,
+    // routes it: an annotated empty literal grown by `.append` earns the flag
+    // only at the append, which lowers after this bind.
+    if (slot_is_reclaimable_cloarr(sb, slot)) {
+        return emit_arrarr_reclaim_store(sb, slot);
+    }
     // Reclaimable Option[<arr>][] LOOP-LOCAL (#4365): same shape as the
     // arr-of-arr rebind above — free the prior iteration's payload buffers +
     // option boxes + outer buffer before the store, else all three levels
@@ -22335,17 +22342,28 @@ function lower_stmt_var_closure(v: ast.StmtVar, init_retclo: boolean, s: LowerSt
     // #5281: carry the RETCLO fact forward so `var h = g()` (g bound here from
     // a RETCLO2 factory call) recognises g()'s result as a closure.
     if (init_retclo) { cvb = cvb.mark_closure_local("RETCLO$" + v.name); }
-    cvb = cvb.emit(ir.op_store_local(cslot));
-    // #4557 alias retain: a bare-ident closure alias shares the
-    // env box; inc it so this slot's exit-sweep dec is balanced
-    // (fresh lambda / __mkclo$ / element inits are already owned).
+    // A bare-ident alias (#4557) or a closure-ARRAY element read (`var d =
+    // fns[i]`, #4354) shares a box another owner holds, so the slot takes a
+    // counted reference: retain the new value and release whatever the slot
+    // held before (a loop-local's previous iteration; null on the first
+    // bind). Without the element retain the slot's exit dec freed the box out
+    // of the array that still pointed at it. A fresh lambda / `__mkclo$` /
+    // closure-returning-call init is already owned at rc=1 and stores bare.
+    // An `__env[i]` capture read is not a closure-array read — its slot is an
+    // "ENVCAP:" borrow the sweep skips, so it takes no retain here either.
+    var clo_alias: boolean = false;
     match (v.init) {
-        ast.ExprIdent(_) => {
-            cvb = cvb.retain(cslot, reclaim_site_key_of(v.name, v.line, v.col));
+        ast.ExprIdent(_) => { clo_alias = true; },
+        ast.ExprIndex(cix) => {
+            match (cix.array) {
+                ast.ExprIdent(cixid) => { if (s.is_closurearr_slot(s.slot_of(cixid.name))) { clo_alias = true; } },
+                _ => {}
+            }
         },
         _ => {}
     }
-    return cvb;
+    if (clo_alias) { return emit_arr_store(cvb, cslot, true, true); }
+    return cvb.emit(ir.op_store_local(cslot));
 }
 
 // refine_map_struct_val upgrades a map slot's VALUE tag from the default "i32" to
@@ -28729,6 +28747,12 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
                 // inside the helper. Same one-slot-one-free placement rationale
                 // as the arrarr branch above.
                 st = st.emit(ir.op_call_direct("__fern_optarrarr_free", 1));
+            } else if (slot_is_reclaimable_cloarr(st, i)) {
+                // Closure-ARRAY element reclaim (#4354): each element is a
+                // lambda's own env box — an rc-headered array holding only
+                // borrowed captures — so the arr-of-arr helper's rc-guarded
+                // per-element arr_dec is exactly its drop, then the buffer.
+                st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1));
             } else if (slot_is_reclaimable_structarr(st, i) && st.struct_routes_field_reclaim(st.struct_type_of_slot(i))) {
                 // The element struct ROUTES FIELD RECLAIM (#6127) — since the
                 // structarr credit excludes rc-array-field structs, that means a
@@ -44385,6 +44409,349 @@ function arrarr_free_helper_of(s: LowerState, i: i32): string {
     return "__fern_arrarr_free";
 }
 
+// ── CLOARR: closure-array element reclaim (#4354) ───────────────────────────
+//
+// A closure ARRAY local (`var fns: (() => i32)[] = [() => n, …]`) is an is_arr
+// slot whose elements are env boxes — rc-headered arrays `[fn, caps…]` whose
+// captures are borrowed, never counted. The shallow buffer dec every other
+// array slot takes leaked every box (measured 40 B per element per round on
+// x86-64 against 0 on native). Credited "CLOARR:<site>", the slot is released
+// whole by __fern_arrarr_free: one rc-guarded arr_dec per element, then the
+// buffer — the arr-of-arr helper, because an env box IS an inner array to it.
+//
+// The credit is the whole safety argument, since the walk frees any box the
+// buffer holds at rc==1. Two conditions: every element that ever enters the
+// buffer is OWNED by it — a fresh box (a lambda or its `__mkclo$` marker) or a
+// closure local the literal / self-append retains as an is_arr ident — at the
+// literal, at a self-append, or in every return of a "CAC:" producer; and
+// every read of the array is one of: `fns[i](args)` (dispatched, never
+// stored), `var d = fns[i]` (lower_stmt_var_closure retains the element, so d
+// is a counted owner), `for f in fns` with f only ever called, `fns.len()`, or
+// a bare argument at a borrowable position. `.with` / `.append` bound
+// elsewhere clone the buffer and share its boxes uncounted, so any other
+// method refuses.
+
+// slot_is_reclaimable_cloarr: slot i holds a "CLOARR:"-credited closure-array
+// local. The credit rather than the is_closurearr flag: an annotated empty
+// literal grown by `.append` earns the flag at the append, which lowers after
+// the bind whose loop-rebind release needs the verdict. is_arrarr is not a
+// refusal — a literal whose first element is a closure LOCAL reads as an
+// array-of-arrays to arrarr_from_init_shape (the local's slot is is_arr) —
+// and the "ARRARR:" branches, which precede this one at both release sites,
+// never claim it: their credit needs array-literal rows.
+function slot_is_reclaimable_cloarr(s: LowerState, i: i32): boolean {
+    if (i < s.n_params) { return false; }
+    if (i >= s.locals.len()) { return false; }
+    if (!s.locals[i].is_arr || s.locals[i].is_strarr) { return false; }
+    return reclaim_has(s.reclaimable_names, "CLOARR:", s.reclaim_site_key(i));
+}
+
+// cloarr_elem_is_owned: storing `e` leaves the buffer holding a counted
+// reference to the box. A lambda literal or its `__mkclo$<name>(caps…)` marker
+// builds a fresh rc=1 box; a closure LOCAL (bound once, by a lambda / marker /
+// closure-returning call — every form lower_stmt_var_closure marks is_arr) is
+// retained by the literal and by the self-append, so the buffer owns a count
+// alongside the local's own. A closure-returning CALL is not admitted: the
+// callee may hand back a param's or a field's box uncounted
+// (handback_params), and the walk would free it.
+function cloarr_elem_is_owned(e: ast.Expr, body: ast.Stmt[], closureset: string[]): boolean {
+    match (e) {
+        ast.ExprLambda(_) => { return true; },
+        ast.ExprIdent(id) => { return local_decl_count(body, id.name) == 1 && body_binds_closure_local(body, id.name, closureset); },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => { return cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$"; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// cloarr_lit_is_fresh: an array literal of owned env boxes (empty included —
+// the caller decides whether an empty literal's type is known).
+function cloarr_lit_is_fresh(e: ast.Expr, body: ast.Stmt[], closureset: string[]): boolean {
+    match (e) {
+        ast.ExprArray(a) => {
+            var i: i32 = 0;
+            while (i < a.elements.len()) {
+                if (!cloarr_elem_is_owned(a.elements[i], body, closureset)) { return false; }
+                i = i + 1;
+            }
+            return true;
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// cloarr_self_append_fresh: `name.append(<owned box>)` — the one reassignment
+// of a credited closure array the walker admits (as the arr-of-arr class
+// admits `g = g.append(<row literal>)`).
+function cloarr_self_append_fresh(e: ast.Expr, name: string, body: ast.Stmt[], closureset: string[]): boolean {
+    match (e) {
+        ast.ExprCall(c) => {
+            if (c.args.len() != 1 || !cloarr_elem_is_owned(c.args[0], body, closureset)) { return false; }
+            match (c.callee) {
+                ast.ExprFieldAccess(fa) => {
+                    if (fa.field != "append") { return false; }
+                    match (fa.obj) {
+                        ast.ExprIdent(rid) => { return rid.name == name; },
+                        _ => { return false; }
+                    }
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// cloarr_expr_unsafe: does `e` let the array or one of its element boxes
+// outlive the slot uncounted? Every `name[i]` outside a callee position is an
+// uncounted element read (a container element, a return, an argument), and
+// every method on `name` but `len` may clone the buffer. A bare `name` at a
+// free call is expr_unsafe_for's question — borrowable positions borrow.
+function cloarr_expr_unsafe(e: ast.Expr, name: string, borrowable: string[]): boolean {
+    match (e) {
+        ast.ExprIdent(id) => { return id.name == name; },
+        ast.ExprBinary(b) => { return cloarr_expr_unsafe(b.left, name, borrowable) || cloarr_expr_unsafe(b.right, name, borrowable); },
+        ast.ExprUnary(u) => { return cloarr_expr_unsafe(u.operand, name, borrowable); },
+        ast.ExprIndex(ix) => { return rc_ml_count_in_expr(ix.array, name) > 0 || cloarr_expr_unsafe(ix.index, name, borrowable); },
+        ast.ExprCall(c) => { return cloarr_call_unsafe(c, e, name, borrowable); },
+        ast.ExprFieldAccess(fa) => { return cloarr_expr_unsafe(fa.obj, name, borrowable); },
+        // A lambda mentioning the array captures it — the box outlives the
+        // slot. expr_mentions_name prunes lambda bodies, so this arm is not
+        // the default's.
+        ast.ExprLambda(lm) => { return rc_ml_count_in_stmts(lm.body, name) > 0; },
+        // Any mention inside a container literal or anything else is an escape.
+        _ => { return expr_mentions_name(e, name); }
+    }
+    return false;
+}
+
+// cloarr_call_unsafe is cloarr_expr_unsafe's call arm. The callee decides how
+// a bare-ident argument is judged: a free function's borrowable registry
+// admits a borrow position, every other callee has no such registry, so a
+// bare `name` argument there escapes.
+function cloarr_call_unsafe(c: ast.ExprCall, e: ast.Expr, name: string, borrowable: string[]): boolean {
+    var free_callee: boolean = false;
+    match (c.callee) {
+        // `name[i](args)`: the element is dispatched through, never stored.
+        ast.ExprIndex(cix) => {
+            var elem_call: boolean = false;
+            match (cix.array) {
+                ast.ExprIdent(cid) => { elem_call = cid.name == name; },
+                _ => {}
+            }
+            if (elem_call) { if (cloarr_expr_unsafe(cix.index, name, borrowable)) { return true; } }
+            else if (cloarr_expr_unsafe(c.callee, name, borrowable)) { return true; }
+        },
+        // `name.len()` borrows the header; every other method may clone the
+        // buffer into a binding that shares the boxes uncounted.
+        ast.ExprFieldAccess(fa) => {
+            var on_name: boolean = false;
+            match (fa.obj) {
+                ast.ExprIdent(fid) => { on_name = fid.name == name; },
+                _ => {}
+            }
+            if (on_name) { if (fa.field != "len" || c.args.len() != 0) { return true; } }
+            else if (cloarr_expr_unsafe(fa.obj, name, borrowable)) { return true; }
+        },
+        ast.ExprIdent(_) => {
+            free_callee = true;
+            if (expr_unsafe_for(e, name, borrowable, [])) { return true; }
+        },
+        _ => { if (cloarr_expr_unsafe(c.callee, name, borrowable)) { return true; } }
+    }
+    return cloarr_call_args_unsafe(c.args, name, borrowable, free_callee);
+}
+
+// cloarr_call_args_unsafe: a bare `name` argument was judged with the callee
+// when it is a free function (`judged`); anything else recurses.
+function cloarr_call_args_unsafe(args: ast.Expr[], name: string, borrowable: string[], judged: boolean): boolean {
+    for arg in args {
+        var bare: boolean = false;
+        match (arg) {
+            ast.ExprIdent(aid) => { bare = true; if (aid.name == name && !judged) { return true; } },
+            _ => {}
+        }
+        if (!bare && cloarr_expr_unsafe(arg, name, borrowable)) { return true; }
+    }
+    return false;
+}
+
+// cloarr_unsafe_for: the statement walk behind the "CLOARR:" credit. `ret_ok`
+// forgives a bare `return name` — the move-out a "CAC:" producer's local
+// exists for — and is false for a consumer's own credit. `body` is the whole
+// function body, which the element-ownership test reads bindings from.
+function cloarr_unsafe_for(stmts: ast.Stmt[], name: string, borrowable: string[], ret_ok: boolean, body: ast.Stmt[], closureset: string[]): boolean {
+    for stmt in stmts { if (cloarr_stmt_unsafe(stmt, name, borrowable, ret_ok, body, closureset)) { return true; } }
+    return false;
+}
+
+function cloarr_stmt_unsafe(st: ast.Stmt, name: string, borrowable: string[], ret_ok: boolean, body: ast.Stmt[], closureset: string[]): boolean {
+    match (st) {
+        ast.StmtVar(v) => { return cloarr_var_unsafe(v, name, borrowable); },
+        ast.StmtAssign(a) => {
+            if (a.target == name) { return !cloarr_self_append_fresh(a.value, name, body, closureset); }
+            return cloarr_expr_unsafe(a.value, name, borrowable);
+        },
+        ast.StmtReturn(r) => {
+            if (ret_ok) {
+                match (r.value) {
+                    ast.ExprIdent(rid) => { if (rid.name == name) { return false; } },
+                    _ => {}
+                }
+            }
+            return cloarr_expr_unsafe(r.value, name, borrowable);
+        },
+        ast.StmtExpr(x) => { return cloarr_expr_unsafe(x.value, name, borrowable); },
+        ast.StmtIf(f) => {
+            if (cloarr_expr_unsafe(f.cond, name, borrowable)) { return true; }
+            return cloarr_unsafe_for(f.then_body, name, borrowable, ret_ok, body, closureset) || cloarr_unsafe_for(f.else_body, name, borrowable, ret_ok, body, closureset);
+        },
+        ast.StmtWhile(w) => {
+            if (cloarr_expr_unsafe(w.cond, name, borrowable)) { return true; }
+            return cloarr_unsafe_for(w.body, name, borrowable, ret_ok, body, closureset);
+        },
+        ast.StmtFor(fo) => {
+            if (cloarr_for_iter_unsafe(fo, name, borrowable)) { return true; }
+            return cloarr_unsafe_for(fo.body, name, borrowable, ret_ok, body, closureset);
+        },
+        ast.StmtMatch(m) => { return cloarr_match_unsafe(m, name, borrowable, ret_ok, body, closureset); },
+        ast.StmtDefer(d) => { return cloarr_stmt_unsafe(d.action, name, borrowable, ret_ok, body, closureset); },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function cloarr_match_unsafe(m: ast.StmtMatch, name: string, borrowable: string[], ret_ok: boolean, body: ast.Stmt[], closureset: string[]): boolean {
+    if (cloarr_expr_unsafe(m.scrutinee, name, borrowable)) { return true; }
+    for arm in m.arms {
+        if (arm.has_guard && cloarr_expr_unsafe(arm.guard, name, borrowable)) { return true; }
+        if (cloarr_unsafe_for(arm.body, name, borrowable, ret_ok, body, closureset)) { return true; }
+    }
+    return false;
+}
+
+// cloarr_var_unsafe: `var d = name[i]` is a counted bind (lower_stmt_var_closure
+// retains the element, so d owns a count); any other init is an expression read.
+function cloarr_var_unsafe(v: ast.StmtVar, name: string, borrowable: string[]): boolean {
+    match (v.init) {
+        ast.ExprIndex(ix) => {
+            match (ix.array) {
+                ast.ExprIdent(aid) => { if (aid.name == name) { return cloarr_expr_unsafe(ix.index, name, borrowable); } },
+                _ => {}
+            }
+        },
+        _ => {}
+    }
+    return cloarr_expr_unsafe(v.init, name, borrowable);
+}
+
+// cloarr_for_iter_unsafe: `for f in name` makes f an unretained borrow of each
+// box, so the body may only CALL it; a destructuring loop var is refused. Any
+// other iterable is an expression read.
+function cloarr_for_iter_unsafe(fo: ast.StmtFor, name: string, borrowable: string[]): boolean {
+    match (fo.iter) {
+        ast.ExprIdent(fid) => {
+            if (fid.name != name) { return false; }
+            var vi: i32 = 0;
+            while (vi < fo.var_name.len()) { if (fo.var_name[vi] == b',') { return true; } vi = vi + 1; }
+            return ident_used_as_value_stmts(fo.body, fo.var_name);
+        },
+        _ => { return cloarr_expr_unsafe(fo.iter, name, borrowable); }
+    }
+    return false;
+}
+
+// collect_fresh_cloarr_names: the binding sites that may take the credit — a
+// literal of owned boxes (an EMPTY literal only when annotated a fn array, or
+// the slot could be any array at all), or a call to a "CAC:" producer.
+function collect_fresh_cloarr_names(stmts: ast.Stmt[], body: ast.Stmt[], caset: string[], closureset: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                var cand: boolean = false;
+                match (v.init) {
+                    ast.ExprArray(arr) => { cand = cloarr_lit_is_fresh(v.init, body, closureset) && (arr.elements.len() > 0 || v.type_name == "fn[]"); },
+                    ast.ExprCall(c) => {
+                        match (c.callee) {
+                            ast.ExprIdent(cid) => { cand = util.index_of_str(caset, "CAC:" + cid.name) >= 0; },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+                if (cand) { a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col)); }
+            },
+            ast.StmtIf(f) => { a = collect_fresh_cloarr_names(f.then_body, body, caset, closureset, a); a = collect_fresh_cloarr_names(f.else_body, body, caset, closureset, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_cloarr_names(w.body, body, caset, closureset, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_cloarr_names(fo.body, body, caset, closureset, a); },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { a = collect_fresh_cloarr_names(arm.body, body, caset, closureset, a); }
+            },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// reclaim_closure_arrays credits the function's closure-array locals "CLOARR:".
+function reclaim_closure_arrays(fn: parser.FuncDecl, sg: FnSigs, reclaim: string[]): string[] {
+    var cands: string[] = collect_fresh_cloarr_names(fn.body, fn.body, sg.closurearr_ret_fns, sg.closure_fns, []);
+    var ci: i32 = 0;
+    while (ci < cands.len()) {
+        if (!cloarr_unsafe_for(fn.body, reclaim_site_name(cands[ci]), sg.borrowable_params, false, fn.body, sg.closure_fns)) { reclaim = reclaim.append("CLOARR:" + cands[ci]); }
+        ci = ci + 1;
+    }
+    return reclaim;
+}
+
+// body_binds_fresh_cloarr: `name` is bound (anywhere in `stmts`) from a
+// closure-array literal of owned boxes. Paired with local_decl_count == 1 by
+// the "CAC:" scan.
+function body_binds_fresh_cloarr(stmts: ast.Stmt[], body: ast.Stmt[], name: string, closureset: string[]): boolean {
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => { if (v.name == name && cloarr_lit_is_fresh(v.init, body, closureset)) { return true; } },
+            ast.StmtIf(f) => { if (body_binds_fresh_cloarr(f.then_body, body, name, closureset) || body_binds_fresh_cloarr(f.else_body, body, name, closureset)) { return true; } },
+            ast.StmtWhile(w) => { if (body_binds_fresh_cloarr(w.body, body, name, closureset)) { return true; } },
+            ast.StmtFor(fo) => { if (body_binds_fresh_cloarr(fo.body, body, name, closureset)) { return true; } },
+            ast.StmtMatch(m) => {
+                for arm in m.arms { if (body_binds_fresh_cloarr(arm.body, body, name, closureset)) { return true; } }
+            },
+            _ => {}
+        }
+    }
+    return false;
+}
+
+// body_has_nonfresh_cloarr_return: some return of the function hands back a
+// closure array that is not provably a fresh one — anything but a literal of
+// owned boxes or a once-bound local of one that the walk admits (the bare
+// return forgiven). No borrowable registry exists at the registry pass, so a
+// call-argument use of the local refuses the producer.
+function body_has_nonfresh_cloarr_return(body: ast.Stmt[], closureset: string[]): boolean {
+    var rets: ast.Expr[] = collect_returns(body, []);
+    for r in rets {
+        var fresh: boolean = cloarr_lit_is_fresh(r, body, closureset);
+        match (r) {
+            ast.ExprIdent(rid) => {
+                if (local_decl_count(body, rid.name) == 1 && body_binds_fresh_cloarr(body, body, rid.name, closureset)
+                    && !cloarr_unsafe_for(body, rid.name, [], true, body, closureset)) { fresh = true; }
+            },
+            _ => {}
+        }
+        if (!fresh) { return true; }
+    }
+    return false;
+}
+
 // slot_is_reclaimable_optaarr (#4365): slot i holds a fresh, non-escaping
 // Option[<scalar-arr>][] local (`var xs: Option[i32[]][] = [Some([..]), None]`)
 // credited "OPTAARR:" by reclaimable_names_of. Deliberately NOT is_arrarr —
@@ -53861,6 +54228,9 @@ pub function lower_func(fn: parser.FuncDecl, structs: parser.StructDecl[], sg: F
     // local can collide with it — where the bare name let a user local sharing a
     // capture's spelling inherit the exclusion and lose its own dec.
     reclaim = reclaim_env_capture_params(fn, reclaim);
+    // Closure-array locals whose element boxes the exit sweep / loop-rebind may
+    // free with the buffer (#4354) — "CLOARR:" keyed on the binding site.
+    reclaim = reclaim_closure_arrays(fn, sg, reclaim);
     // Snapshot-param reclaim (#3456 slice 2): struct params/receiver threaded
     // through a consume-rebind (`s = s.write(x); return s`). Piggybacked as
     // "SNAP:<slot>" — they are NOT swept/deep-dropped (their final value shares
@@ -59368,6 +59738,14 @@ pub function closurearr_ret_fns_of(funcs: parser.FuncDecl[], structs: parser.Str
                 if (hit) { out = out.append(fn.name); changed = true; }
             }
         }
+    }
+    // "CAC:<name>" rows (#4354), in the same list so no registry is threaded: a
+    // closurearr-returning fn whose EVERY return is a fresh closure array, so
+    // the caller's binding is the sole owner of each element box and may take
+    // the "CLOARR:" element walk. Exact-match consumers never see a fn named
+    // "CAC:…"; collect_fresh_cloarr_names is the one reader of the prefix.
+    for fn in funcs {
+        if (util.index_of_str(out, fn.name) >= 0 && !body_has_nonfresh_cloarr_return(fn.body, closureset)) { out = out.append("CAC:" + fn.name); }
     }
     return out;
 }
@@ -71879,7 +72257,11 @@ match (v.init) {
         // call/ident shapes, so nested reads m[i][j] took the 4-byte
         // default stride — a wrong-value miscompile for f64/string inner
         // elements (caught differentially vs the interp oracle).
-        if (aarr.elements.len() > 0 && expr_is_arr_src(aarr.elements[0], se)) { is_arrarr = true; }
+        // A closure LOCAL is an is_arr slot (its env box is an array), but
+        // `[c, …]` is a closure array, not an array of rows: marking it
+        // arr-of-arr made `for f in fns` bind f as an OWNED array, and its
+        // exit dec released a box the array still held (#4354).
+        if (aarr.elements.len() > 0 && expr_is_arr_src(aarr.elements[0], se) && !arr_elem_is_closure_box(aarr.elements[0], se)) { is_arrarr = true; }
     },
     ast.ExprIdent(aaid) => { if (se.is_arrarr_slot(se.slot_of(aaid.name))) { is_arrarr = true; } },
     // A `T[][]` struct FIELD read (`var rows = a.xs`): no slot records that
