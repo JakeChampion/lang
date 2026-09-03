@@ -7472,10 +7472,11 @@ function str_free_producer_ident(c: ast.ExprCall): boolean {
 //     string_from_bytes_unchecked / str_to_upper / str_to_lower / str_repeat /
 //     str_trim (copies since #7393) / i32_to_string / __raw_string;
 //   - an `a + b` CONCAT (fresh buffer + box when either side is a string);
-//   - a `.to_upper()` / `.to_lower()` / `.reverse()` / `.repeat(n)` / `.trim()`
-//     method (each copies into a fresh buffer on a string receiver; expr_is_str
-//     only marks the slot is_str for a STRING receiver, so an array
-//     `.reverse()`/`.repeat()` is never reclaimed).
+//   - a `.to_ascii_upper()` / `.to_ascii_lower()` / `.reverse()` / `.repeat(n)`
+//     method (str_fresh_alloc_method: each copies into a fresh buffer on a string
+//     receiver; expr_is_str only marks the slot is_str for a STRING receiver, so
+//     an array `.reverse()`/`.repeat()` is never reclaimed). The `.trim()` METHOD
+//     is not among them — only the `str_trim` free-function spelling is.
 // DELIBERATELY EXCLUDED (each may ALIAS a live box → freeing would over-release,
 // and each is is_str yet NOT fresh, so the type gate alone would not stop them):
 // a string LITERAL (static, not heap), a bare ident / field / index / slice
