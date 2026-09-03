@@ -1575,22 +1575,24 @@ function arm64_vec_entry_sizes(e: i32): i32 { return e % 16; }
 // BEGIN GENERATED ARM64 V3INT_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Three-register integer ops. 15 = BHSD, 7 = BHS.
 function arm64_v3int_entry(mnem: string): i32 {
-    if (mnem == "add") { return arm64_vec_entry(false, 16, 15); }
-    if (mnem == "sub") { return arm64_vec_entry(true, 16, 15); }
-    if (mnem == "mul") { return arm64_vec_entry(false, 19, 7); }
-    if (mnem == "cmeq") { return arm64_vec_entry(true, 17, 15); }
-    if (mnem == "cmtst") { return arm64_vec_entry(false, 17, 15); }
-    if (mnem == "cmgt") { return arm64_vec_entry(false, 6, 15); }
-    if (mnem == "cmge") { return arm64_vec_entry(false, 7, 15); }
-    if (mnem == "cmhi") { return arm64_vec_entry(true, 6, 15); }
-    if (mnem == "cmhs") { return arm64_vec_entry(true, 7, 15); }
-    if (mnem == "smax") { return arm64_vec_entry(false, 12, 7); }
-    if (mnem == "smin") { return arm64_vec_entry(false, 13, 7); }
-    if (mnem == "umax") { return arm64_vec_entry(true, 12, 7); }
-    if (mnem == "umin") { return arm64_vec_entry(true, 13, 7); }
-    if (mnem == "sshl") { return arm64_vec_entry(false, 8, 15); }
-    if (mnem == "ushl") { return arm64_vec_entry(true, 8, 15); }
-    return 0 - 1;
+    match (mnem) {
+        "add" => { return arm64_vec_entry(false, 16, 15); },
+        "sub" => { return arm64_vec_entry(true, 16, 15); },
+        "mul" => { return arm64_vec_entry(false, 19, 7); },
+        "cmeq" => { return arm64_vec_entry(true, 17, 15); },
+        "cmtst" => { return arm64_vec_entry(false, 17, 15); },
+        "cmgt" => { return arm64_vec_entry(false, 6, 15); },
+        "cmge" => { return arm64_vec_entry(false, 7, 15); },
+        "cmhi" => { return arm64_vec_entry(true, 6, 15); },
+        "cmhs" => { return arm64_vec_entry(true, 7, 15); },
+        "smax" => { return arm64_vec_entry(false, 12, 7); },
+        "smin" => { return arm64_vec_entry(false, 13, 7); },
+        "umax" => { return arm64_vec_entry(true, 12, 7); },
+        "umin" => { return arm64_vec_entry(true, 13, 7); },
+        "sshl" => { return arm64_vec_entry(false, 8, 15); },
+        "ushl" => { return arm64_vec_entry(true, 8, 15); },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED ARM64 V3INT_ENTRY TABLE
 
@@ -1599,12 +1601,14 @@ function arm64_v3int_entry(mnem: string): i32 {
 // exist only in the byte arrangements. The entry carries that operation
 // selector in the opcode slot; the real opcode is always 3.
 function arm64_vlogical_entry(mnem: string): i32 {
-    if (mnem == "and") { return arm64_vec_entry(false, 0, 1); }
-    if (mnem == "bic") { return arm64_vec_entry(false, 1, 1); }
-    if (mnem == "orr") { return arm64_vec_entry(false, 2, 1); }
-    if (mnem == "orn") { return arm64_vec_entry(false, 3, 1); }
-    if (mnem == "eor") { return arm64_vec_entry(true, 0, 1); }
-    return 0 - 1;
+    match (mnem) {
+        "and" => { return arm64_vec_entry(false, 0, 1); },
+        "bic" => { return arm64_vec_entry(false, 1, 1); },
+        "orr" => { return arm64_vec_entry(false, 2, 1); },
+        "orn" => { return arm64_vec_entry(false, 3, 1); },
+        "eor" => { return arm64_vec_entry(true, 0, 1); },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED ARM64 VLOGICAL_ENTRY TABLE
 
@@ -1612,27 +1616,31 @@ function arm64_vlogical_entry(mnem: string): i32 {
 // Compare against zero. cmle/cmlt exist ONLY in this form — their
 // register-operand spellings are the swapped-operand cmge/cmgt.
 function arm64_vcmpzero_entry(mnem: string): i32 {
-    if (mnem == "cmeq") { return arm64_vec_entry(false, 9, 15); }
-    if (mnem == "cmgt") { return arm64_vec_entry(false, 8, 15); }
-    if (mnem == "cmge") { return arm64_vec_entry(true, 8, 15); }
-    if (mnem == "cmle") { return arm64_vec_entry(true, 9, 15); }
-    if (mnem == "cmlt") { return arm64_vec_entry(false, 10, 15); }
-    return 0 - 1;
+    match (mnem) {
+        "cmeq" => { return arm64_vec_entry(false, 9, 15); },
+        "cmgt" => { return arm64_vec_entry(false, 8, 15); },
+        "cmge" => { return arm64_vec_entry(true, 8, 15); },
+        "cmle" => { return arm64_vec_entry(true, 9, 15); },
+        "cmlt" => { return arm64_vec_entry(false, 10, 15); },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED ARM64 VCMPZERO_ENTRY TABLE
 
 // BEGIN GENERATED ARM64 V2MISC_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Two-register unary integer ops. mvn is an alias of not.
 function arm64_v2misc_entry(mnem: string): i32 {
-    if (mnem == "neg") { return arm64_vec_entry(true, 11, 15); }
-    if (mnem == "abs") { return arm64_vec_entry(false, 11, 15); }
-    if (mnem == "not") { return arm64_vec_entry(true, 5, 1); }
-    if (mnem == "mvn") { return arm64_vec_entry(true, 5, 1); }
-    if (mnem == "cnt") { return arm64_vec_entry(false, 5, 1); }
-    if (mnem == "rev16") { return arm64_vec_entry(false, 1, 1); }
-    if (mnem == "rev32") { return arm64_vec_entry(true, 0, 3); }
-    if (mnem == "rev64") { return arm64_vec_entry(false, 0, 7); }
-    return 0 - 1;
+    match (mnem) {
+        "neg" => { return arm64_vec_entry(true, 11, 15); },
+        "abs" => { return arm64_vec_entry(false, 11, 15); },
+        "not" => { return arm64_vec_entry(true, 5, 1); },
+        "mvn" => { return arm64_vec_entry(true, 5, 1); },
+        "cnt" => { return arm64_vec_entry(false, 5, 1); },
+        "rev16" => { return arm64_vec_entry(false, 1, 1); },
+        "rev32" => { return arm64_vec_entry(true, 0, 3); },
+        "rev64" => { return arm64_vec_entry(false, 0, 7); },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED ARM64 V2MISC_ENTRY TABLE
 
@@ -1674,30 +1682,34 @@ function arm64_gas_fp_size(code: i32, szhi: boolean): i32 {
 // arm64_vfp3_entry: three-register lane-wise FP. The szHi bit rides in the
 // size-mask slot, which is free here because the arrangement set is fixed.
 function arm64_vfp3_entry(mnem: string): i32 {
-    if (mnem == "fadd") { return arm64_vec_entry(false, 26, 0); }
-    if (mnem == "fsub") { return arm64_vec_entry(false, 26, 1); }
-    if (mnem == "fmul") { return arm64_vec_entry(true, 27, 0); }
-    if (mnem == "fdiv") { return arm64_vec_entry(true, 31, 0); }
-    if (mnem == "fmax") { return arm64_vec_entry(false, 30, 0); }
-    if (mnem == "fmin") { return arm64_vec_entry(false, 30, 1); }
-    if (mnem == "fcmeq") { return arm64_vec_entry(false, 28, 0); }
-    if (mnem == "fcmge") { return arm64_vec_entry(true, 28, 0); }
-    if (mnem == "fcmgt") { return arm64_vec_entry(true, 28, 1); }
-    return 0 - 1;
+    match (mnem) {
+        "fadd" => { return arm64_vec_entry(false, 26, 0); },
+        "fsub" => { return arm64_vec_entry(false, 26, 1); },
+        "fmul" => { return arm64_vec_entry(true, 27, 0); },
+        "fdiv" => { return arm64_vec_entry(true, 31, 0); },
+        "fmax" => { return arm64_vec_entry(false, 30, 0); },
+        "fmin" => { return arm64_vec_entry(false, 30, 1); },
+        "fcmeq" => { return arm64_vec_entry(false, 28, 0); },
+        "fcmge" => { return arm64_vec_entry(true, 28, 0); },
+        "fcmgt" => { return arm64_vec_entry(true, 28, 1); },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED ARM64 VFP3_ENTRY TABLE
 
 // BEGIN GENERATED ARM64 VFP2_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // arm64_vfp2_entry: two-register lane-wise FP, same szHi convention.
 function arm64_vfp2_entry(mnem: string): i32 {
-    if (mnem == "fneg") { return arm64_vec_entry(true, 15, 1); }
-    if (mnem == "fabs") { return arm64_vec_entry(false, 15, 1); }
-    if (mnem == "fsqrt") { return arm64_vec_entry(true, 31, 1); }
-    if (mnem == "scvtf") { return arm64_vec_entry(false, 29, 0); }
-    if (mnem == "ucvtf") { return arm64_vec_entry(true, 29, 0); }
-    if (mnem == "fcvtzs") { return arm64_vec_entry(false, 27, 1); }
-    if (mnem == "fcvtzu") { return arm64_vec_entry(true, 27, 1); }
-    return 0 - 1;
+    match (mnem) {
+        "fneg" => { return arm64_vec_entry(true, 15, 1); },
+        "fabs" => { return arm64_vec_entry(false, 15, 1); },
+        "fsqrt" => { return arm64_vec_entry(true, 31, 1); },
+        "scvtf" => { return arm64_vec_entry(false, 29, 0); },
+        "ucvtf" => { return arm64_vec_entry(true, 29, 0); },
+        "fcvtzs" => { return arm64_vec_entry(false, 27, 1); },
+        "fcvtzu" => { return arm64_vec_entry(true, 27, 1); },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED ARM64 VFP2_ENTRY TABLE
 
@@ -1707,36 +1719,42 @@ function arm64_vfp2_entry(mnem: string): i32 {
 // here — their register-operand spellings are the swapped-operand
 // fcmge/fcmgt.
 function arm64_vfpcmpzero_entry(mnem: string): i32 {
-    if (mnem == "fcmeq") { return arm64_vec_entry(false, 13, 0); }
-    if (mnem == "fcmgt") { return arm64_vec_entry(false, 12, 0); }
-    if (mnem == "fcmge") { return arm64_vec_entry(true, 12, 0); }
-    if (mnem == "fcmle") { return arm64_vec_entry(true, 13, 0); }
-    if (mnem == "fcmlt") { return arm64_vec_entry(false, 14, 0); }
-    return 0 - 1;
+    match (mnem) {
+        "fcmeq" => { return arm64_vec_entry(false, 13, 0); },
+        "fcmgt" => { return arm64_vec_entry(false, 12, 0); },
+        "fcmge" => { return arm64_vec_entry(true, 12, 0); },
+        "fcmle" => { return arm64_vec_entry(true, 13, 0); },
+        "fcmlt" => { return arm64_vec_entry(false, 14, 0); },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED ARM64 VFPCMPZERO_ENTRY TABLE
 
 // BEGIN GENERATED ARM64 VSHIFT_ENTRY TABLE (cmd/arm64tblgen) — do not edit by hand.
 // Shift by immediate. The size-mask slot carries the direction: 1 = left.
 function arm64_vshift_entry(mnem: string): i32 {
-    if (mnem == "shl") { return arm64_vec_entry(false, 10, 1); }
-    if (mnem == "sli") { return arm64_vec_entry(true, 10, 1); }
-    if (mnem == "sshr") { return arm64_vec_entry(false, 0, 0); }
-    if (mnem == "ushr") { return arm64_vec_entry(true, 0, 0); }
-    if (mnem == "sri") { return arm64_vec_entry(true, 8, 0); }
-    return 0 - 1;
+    match (mnem) {
+        "shl" => { return arm64_vec_entry(false, 10, 1); },
+        "sli" => { return arm64_vec_entry(true, 10, 1); },
+        "sshr" => { return arm64_vec_entry(false, 0, 0); },
+        "ushr" => { return arm64_vec_entry(true, 0, 0); },
+        "sri" => { return arm64_vec_entry(true, 8, 0); },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED ARM64 VSHIFT_ENTRY TABLE
 
 // BEGIN GENERATED ARM64 VPERMUTE_OPC TABLE (cmd/arm64tblgen) — do not edit by hand.
 function arm64_vpermute_opc(mnem: string): i32 {
-    if (mnem == "zip1") { return 3; }
-    if (mnem == "zip2") { return 7; }
-    if (mnem == "uzp1") { return 1; }
-    if (mnem == "uzp2") { return 5; }
-    if (mnem == "trn1") { return 2; }
-    if (mnem == "trn2") { return 6; }
-    return 0 - 1;
+    match (mnem) {
+        "zip1" => { return 3; },
+        "zip2" => { return 7; },
+        "uzp1" => { return 1; },
+        "uzp2" => { return 5; },
+        "trn1" => { return 2; },
+        "trn2" => { return 6; },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED ARM64 VPERMUTE_OPC TABLE
 
@@ -1896,14 +1914,16 @@ function arm64_vecacross(buf: i32[], rd: i32, rn: i32, opcode: i32, size: i32, q
 // WIDENING flag — saddlv/uaddlv produce a result one element size up, so
 // their scalar destination is a class wider than the arrangement.
 function arm64_across_entry(mnem: string): i32 {
-    if (mnem == "addv") { return arm64_vec_entry(false, 27, 0); }
-    if (mnem == "smaxv") { return arm64_vec_entry(false, 10, 0); }
-    if (mnem == "sminv") { return arm64_vec_entry(false, 26, 0); }
-    if (mnem == "umaxv") { return arm64_vec_entry(true, 10, 0); }
-    if (mnem == "uminv") { return arm64_vec_entry(true, 26, 0); }
-    if (mnem == "saddlv") { return arm64_vec_entry(false, 3, 1); }
-    if (mnem == "uaddlv") { return arm64_vec_entry(true, 3, 1); }
-    return 0 - 1;
+    match (mnem) {
+        "addv" => { return arm64_vec_entry(false, 27, 0); },
+        "smaxv" => { return arm64_vec_entry(false, 10, 0); },
+        "sminv" => { return arm64_vec_entry(false, 26, 0); },
+        "umaxv" => { return arm64_vec_entry(true, 10, 0); },
+        "uminv" => { return arm64_vec_entry(true, 26, 0); },
+        "saddlv" => { return arm64_vec_entry(false, 3, 1); },
+        "uaddlv" => { return arm64_vec_entry(true, 3, 1); },
+        _ => { return 0 - 1; }
+    }
 }
 // END GENERATED ARM64 ACROSS_ENTRY TABLE
 
@@ -3341,14 +3361,16 @@ function arm64_gas_is_logical2(mnem: string): boolean {
 }
 // arm64_logical2_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_logical2_base(mnem: string): i64 {
-    if (mnem == "ands") { return 0xea000000; }
-    if (mnem == "bic") { return 0x8a200000; }
-    if (mnem == "bics") { return 0xea200000; }
-    if (mnem == "orn") { return 0xaa200000; }
-    if (mnem == "eon") { return 0xca200000; }
-    if (mnem == "tst") { return 0xea000000; }
-    if (mnem == "mvn") { return 0xaa200000; }
-    return 0 - 1;
+    match (mnem) {
+        "ands" => { return 0xea000000; },
+        "bic" => { return 0x8a200000; },
+        "bics" => { return 0xea200000; },
+        "orn" => { return 0xaa200000; },
+        "eon" => { return 0xca200000; },
+        "tst" => { return 0xea000000; },
+        "mvn" => { return 0xaa200000; },
+        _ => { return 0 - 1; }
+    }
 }
 // arm64_gas_is_carry: add/sub with carry; ngc/ngcs are the Rn=XZR aliases.
 function arm64_gas_is_carry(mnem: string): boolean {
@@ -3357,13 +3379,15 @@ function arm64_gas_is_carry(mnem: string): boolean {
 }
 // arm64_carry_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_carry_base(mnem: string): i64 {
-    if (mnem == "adc") { return 0x9a000000; }
-    if (mnem == "adcs") { return 0xba000000; }
-    if (mnem == "sbc") { return 0xda000000; }
-    if (mnem == "sbcs") { return 0xfa000000; }
-    if (mnem == "ngc") { return 0xda000000; }
-    if (mnem == "ngcs") { return 0xfa000000; }
-    return 0 - 1;
+    match (mnem) {
+        "adc" => { return 0x9a000000; },
+        "adcs" => { return 0xba000000; },
+        "sbc" => { return 0xda000000; },
+        "sbcs" => { return 0xfa000000; },
+        "ngc" => { return 0xda000000; },
+        "ngcs" => { return 0xfa000000; },
+        _ => { return 0 - 1; }
+    }
 }
 // arm64_gas_is_mulwide: the high-half and widening multiplies, and madd.
 function arm64_gas_is_mulwide(mnem: string): boolean {
@@ -3373,16 +3397,18 @@ function arm64_gas_is_mulwide(mnem: string): boolean {
 }
 // arm64_mulwide_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_mulwide_base(mnem: string): i64 {
-    if (mnem == "umulh") { return 0x9bc07c00; }
-    if (mnem == "smulh") { return 0x9b407c00; }
-    if (mnem == "madd") { return 0x9b000000; }
-    if (mnem == "smull") { return 0x9b200000; }
-    if (mnem == "umull") { return 0x9ba00000; }
-    if (mnem == "smaddl") { return 0x9b200000; }
-    if (mnem == "umaddl") { return 0x9ba00000; }
-    if (mnem == "smsubl") { return 0x9b208000; }
-    if (mnem == "umsubl") { return 0x9ba08000; }
-    return 0 - 1;
+    match (mnem) {
+        "umulh" => { return 0x9bc07c00; },
+        "smulh" => { return 0x9b407c00; },
+        "madd" => { return 0x9b000000; },
+        "smull" => { return 0x9b200000; },
+        "umull" => { return 0x9ba00000; },
+        "smaddl" => { return 0x9b200000; },
+        "umaddl" => { return 0x9ba00000; },
+        "smsubl" => { return 0x9b208000; },
+        "umsubl" => { return 0x9ba08000; },
+        _ => { return 0 - 1; }
+    }
 }
 // arm64_gas_is_muldiv: mul, the divides, and msub.
 function arm64_gas_is_muldiv(mnem: string): boolean {
@@ -3408,18 +3434,20 @@ function arm64_gas_is_condsel(mnem: string): boolean {
 }
 // arm64_condsel_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_condsel_base(mnem: string): i64 {
-    if (mnem == "csel") { return 0x9a800000; }
-    if (mnem == "csinc") { return 0x9a800400; }
-    if (mnem == "csinv") { return 0xda800000; }
-    if (mnem == "csneg") { return 0xda800400; }
-    if (mnem == "cset") { return 0x9a800400; }
-    if (mnem == "csetm") { return 0xda800000; }
-    if (mnem == "cinc") { return 0x9a800400; }
-    if (mnem == "cinv") { return 0xda800000; }
-    if (mnem == "cneg") { return 0xda800400; }
-    if (mnem == "ccmp") { return 0xfa400000; }
-    if (mnem == "ccmn") { return 0xba400000; }
-    return 0 - 1;
+    match (mnem) {
+        "csel" => { return 0x9a800000; },
+        "csinc" => { return 0x9a800400; },
+        "csinv" => { return 0xda800000; },
+        "csneg" => { return 0xda800400; },
+        "cset" => { return 0x9a800400; },
+        "csetm" => { return 0xda800000; },
+        "cinc" => { return 0x9a800400; },
+        "cinv" => { return 0xda800000; },
+        "cneg" => { return 0xda800400; },
+        "ccmp" => { return 0xfa400000; },
+        "ccmn" => { return 0xba400000; },
+        _ => { return 0 - 1; }
+    }
 }
 // arm64_gas_is_bitops: the one-source data-processing ops.
 function arm64_gas_is_bitops(mnem: string): boolean {
@@ -3488,16 +3516,18 @@ function arm64_gas_is_fp3(mnem: string): boolean {
 }
 // arm64_fp3_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_fp3_base(mnem: string): i64 {
-    if (mnem == "fadd") { return 0x1e602800; }
-    if (mnem == "fsub") { return 0x1e603800; }
-    if (mnem == "fmul") { return 0x1e600800; }
-    if (mnem == "fdiv") { return 0x1e601800; }
-    if (mnem == "fnmul") { return 0x1e608800; }
-    if (mnem == "fmin") { return 0x1e605800; }
-    if (mnem == "fmax") { return 0x1e604800; }
-    if (mnem == "fminnm") { return 0x1e607800; }
-    if (mnem == "fmaxnm") { return 0x1e606800; }
-    return 0 - 1;
+    match (mnem) {
+        "fadd" => { return 0x1e602800; },
+        "fsub" => { return 0x1e603800; },
+        "fmul" => { return 0x1e600800; },
+        "fdiv" => { return 0x1e601800; },
+        "fnmul" => { return 0x1e608800; },
+        "fmin" => { return 0x1e605800; },
+        "fmax" => { return 0x1e604800; },
+        "fminnm" => { return 0x1e607800; },
+        "fmaxnm" => { return 0x1e606800; },
+        _ => { return 0 - 1; }
+    }
 }
 // arm64_gas_is_fp4: the fused multiply-adds.
 function arm64_gas_is_fp4(mnem: string): boolean {
@@ -3505,11 +3535,13 @@ function arm64_gas_is_fp4(mnem: string): boolean {
 }
 // arm64_fp4_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_fp4_base(mnem: string): i64 {
-    if (mnem == "fmadd") { return 0x1f400000; }
-    if (mnem == "fmsub") { return 0x1f408000; }
-    if (mnem == "fnmadd") { return 0x1f600000; }
-    if (mnem == "fnmsub") { return 0x1f608000; }
-    return 0 - 1;
+    match (mnem) {
+        "fmadd" => { return 0x1f400000; },
+        "fmsub" => { return 0x1f408000; },
+        "fnmadd" => { return 0x1f600000; },
+        "fnmsub" => { return 0x1f608000; },
+        _ => { return 0 - 1; }
+    }
 }
 // arm64_gas_is_fpcond: conditional FP select and compare.
 function arm64_gas_is_fpcond(mnem: string): boolean {
@@ -3526,15 +3558,17 @@ function arm64_gas_is_funary(mnem: string): boolean {
 }
 // arm64_funary_d_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_funary_d_base(mnem: string): i64 {
-    if (mnem == "fneg") { return 0x1e614000; }
-    if (mnem == "fabs") { return 0x1e60c000; }
-    if (mnem == "fsqrt") { return 0x1e61c000; }
-    if (mnem == "frintm") { return 0x1e654000; }
-    if (mnem == "frintp") { return 0x1e64c000; }
-    if (mnem == "frintz") { return 0x1e65c000; }
-    if (mnem == "frinta") { return 0x1e664000; }
-    if (mnem == "frintn") { return 0x1e644000; }
-    return 0 - 1;
+    match (mnem) {
+        "fneg" => { return 0x1e614000; },
+        "fabs" => { return 0x1e60c000; },
+        "fsqrt" => { return 0x1e61c000; },
+        "frintm" => { return 0x1e654000; },
+        "frintp" => { return 0x1e64c000; },
+        "frintz" => { return 0x1e65c000; },
+        "frinta" => { return 0x1e664000; },
+        "frintn" => { return 0x1e644000; },
+        _ => { return 0 - 1; }
+    }
 }
 // arm64_gas_is_fcvt: precision conversion.
 function arm64_gas_is_fcvt(mnem: string): boolean {
@@ -3579,15 +3613,17 @@ function arm64_gas_is_shll(mnem: string): boolean {
 }
 // arm64_gas_shll_kind maps a widening-shift mnemonic to its packed kind; -1 = not one.
 function arm64_gas_shll_kind(mnem: string): i32 {
-    if (mnem == "sshll") { return 0; }
-    if (mnem == "sshll2") { return 2; }
-    if (mnem == "ushll") { return 1; }
-    if (mnem == "ushll2") { return 3; }
-    if (mnem == "sxtl") { return 4; }
-    if (mnem == "sxtl2") { return 6; }
-    if (mnem == "uxtl") { return 5; }
-    if (mnem == "uxtl2") { return 7; }
-    return 0 - 1;
+    match (mnem) {
+        "sshll" => { return 0; },
+        "sshll2" => { return 2; },
+        "ushll" => { return 1; },
+        "ushll2" => { return 3; },
+        "sxtl" => { return 4; },
+        "sxtl2" => { return 6; },
+        "uxtl" => { return 5; },
+        "uxtl2" => { return 7; },
+        _ => { return 0 - 1; }
+    }
 }
 
 // arm64_gas_known reports whether a mnemonic is one the assembler handles,
