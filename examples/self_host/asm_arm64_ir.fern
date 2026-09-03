@@ -6117,10 +6117,13 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
 // here claimed "<1e-5 against libm" while measuring 3.2e10 ulp for sin, 4.5e7
 // for exp and 9844 for log.
 //
-// Kept in lockstep with internal/codegen/arm64's emitFloatTranscendentalsRuntime
-// — same constants, same order, same `frintn` (ties-to-EVEN, matching x86's
+// Same reduction and same `frintn` as internal/codegen/arm64's
+// emitFloatTranscendentalsRuntime (ties-to-EVEN, matching x86's
 // `roundsd …, 0`; the more familiar `frinta` rounds ties away and would
-// disagree). internal/e2e/f64_ulp_test.go is the gate for the native pair.
+// disagree). The self-host cannot import Go, so the .Lfc_* table below is a
+// literal copy of internal/codegen/fdlibm's — whose selfhost_parity_test pins
+// it entry for entry. internal/e2e/f64_ulp_test.go is the gate for the native
+// pair.
 //
 // Two things that are corrections rather than refinements:
 //
@@ -6149,7 +6152,7 @@ function fc_pio2_reduce(s: asmcore.EmitState, prefix: string): asmcore.EmitState
     s = s.write("    bl __fern_rem_pio2_large\n");
     s = s.write("    b .L" + prefix + "_red\n");
     s = s.write(".L" + prefix + "_cw:\n");
-    s = emit_ldc(s, "d1", ".Lfc_twoopi");
+    s = emit_ldc(s, "d1", ".Lfc_2opi");
     s = s.write("    fmul d1, d1, d0\n");
     s = s.write("    frintn d1, d1\n");
     s = s.write("    fcvtzs x10, d1\n");
@@ -6178,7 +6181,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write(".Lfc_invln2: .double 1.44269504088896338700e+00\n");
     s = s.write(".Lfc_ln2hi: .double 6.93147180369123816490e-01\n");
     s = s.write(".Lfc_ln2lo: .double 1.90821492927058770002e-10\n");
-    s = s.write(".Lfc_twoopi: .double 6.36619772367581382433e-01\n");
+    s = s.write(".Lfc_2opi: .double 6.36619772367581382433e-01\n");
     s = s.write(".Lfc_pio2h: .double 1.57079632673412561417e+00\n");
     s = s.write(".Lfc_pio2m: .double 6.07710050630396597660e-11\n");
     s = s.write(".Lfc_pio2l: .double 2.02226624879595063154e-21\n");

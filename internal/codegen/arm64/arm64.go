@@ -32,6 +32,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/codegen/fdlibm"
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
@@ -6354,109 +6355,26 @@ func (g *generator) emitArgsRuntime2W() {
 	g.line(".ltorg")
 }
 
-// fcTab is the shared f64 coefficient table, in emission order. Kernels
-// index it off a single base pointer (see emitFloatTranscendentalsRuntime),
-// so a coefficient costs ONE ldr rather than the adrp+add+ldr a per-symbol
-// load needs — the polynomials below reference 30-odd of them.
-var fcTab = []struct{ name, val string }{
-	{"one", "1.0"},
-	{"half", "0.5"},
-	{"two", "2.0"},
-	{"sqrt2", "1.4142135623730951"},
-	// Cody-Waite splits: the head carries zeroed low mantissa bits so
-	// `x - k*head` is exact and only the far smaller `k*tail` rounds.
-	{"invln2", "1.44269504088896338700e+00"},
-	{"ln2hi", "6.93147180369123816490e-01"},
-	{"ln2lo", "1.90821492927058770002e-10"},
-	{"twoopi", "6.36619772367581382433e-01"},
-	// pi/2 as THREE 33-bit chunks (~99 bits). Two chunks leave sin(pi)
-	// 285k ulp out: near a zero of sin the reduced argument IS the answer,
-	// so the reduction's absolute error becomes the result's relative
-	// error. A fourth chunk makes it worse — it perturbs the cancellation.
-	// pi/2 as an unevaluated double-double, plus the two scales that turn
-	// __fern_rem_pio2_large's 126-bit fraction into a double.
-	{"pio2hi", "1.5707963267948966"},
-	{"pio2lo", "6.123233995736766e-17"},
-	{"twom62", "2.168404344971009e-19"},
-	{"twom115", "2.407412430484045e-35"},
-	{"pio2h", "1.57079632673412561417e+00"},
-	{"pio2m", "6.07710050630396597660e-11"},
-	{"pio2l", "2.02226624879595063154e-21"},
-	{"s1", "-1.66666666666666324348e-01"},
-	{"s2", "8.33333333332248946124e-03"},
-	{"s3", "-1.98412698298579493134e-04"},
-	{"s4", "2.75573137070700676789e-06"},
-	{"s5", "-2.50507602534068634195e-08"},
-	{"s6", "1.58969099521155010221e-10"},
-	{"c1", "4.16666666666666019037e-02"},
-	{"c2", "-1.38888888888741095749e-03"},
-	{"c3", "2.48015872894767294178e-05"},
-	{"c4", "-2.75573143513906633035e-07"},
-	{"c5", "2.08757232129817482790e-09"},
-	{"c6", "-1.13596475577881948265e-11"},
-	{"p1", "1.66666666666666019037e-01"},
-	{"p2", "-2.77777777770155933842e-03"},
-	{"p3", "6.61375632143793436117e-05"},
-	{"p4", "-1.65339022054652515390e-06"},
-	{"p5", "4.13813679705723846039e-08"},
-	{"lg1", "6.666666666666735130e-01"},
-	{"lg2", "3.999999999940941908e-01"},
-	{"lg3", "2.857142874366239149e-01"},
-	{"lg4", "2.222219843214978396e-01"},
-	{"lg5", "1.818357216161805012e-01"},
-	{"lg6", "1.531383769920937332e-01"},
-	{"lg7", "1.479819860511658591e-01"},
-	// exp's finite range. Needed BEFORE the 2^k reconstruction, which
-	// builds the exponent field as (k+1023)<<52 and silently overflows
-	// into the SIGN bit otherwise — exp(1000) came out as -6.1e-183.
-	{"expovf", "709.782712893383973096"},
-	{"expunf", "-745.133219101941108420"},
-}
-
-func fcOff(name string) int {
-	for i, c := range fcTab {
-		if c.name == name {
-			return i * 8
-		}
-	}
-	panic("unknown f64 coefficient " + name)
-}
-
 // emitFloatTranscendentalsRuntime emits the f64 transcendental bundle —
-// __fern_{exp,log,sin,cos,pow}_f64 — plus the shared coefficient table.
-// arm64 has no hardware transcendental, so each is an argument reduction
-// followed by a polynomial.
+// __fern_{exp,log,sin,cos,pow}_f64 — plus the coefficient table. arm64 has no
+// hardware transcendental, so each is an argument reduction followed by a
+// polynomial. The numbers come from internal/codegen/fdlibm, which is also
+// where the reasons behind them are.
 //
-// The kernels are fdlibm's, and the accuracy is the point. Measured
-// against the correctly-rounded reference over 20k samples per range,
-// these land at <= 1 ulp; Taylor kernels measure 3.2e10 ulp (sin), 4.5e7
-// (exp) and 9844 (log). Reducing against a single rounded pi/2 costs ~7
-// digits by |x| ~ 10, which is what the Cody-Waite split below fixes.
+// The table is emitted contiguously and indexed off a single base pointer, so
+// a coefficient costs ONE ldr rather than the adrp+add+ldr a per-symbol load
+// needs — the polynomials below reference 30-odd of them. That is why
+// fdlibm.Coeffs has a fixed order and fdlibm.Off addresses into it.
 //
-// x86-64's emitFloatTranscendentalsRuntime is the same algorithm with the
-// same constants in the same order, including `frintn` here against
-// `roundsd …, 0` there (both round-to-nearest-EVEN — arm64's more familiar
-// `frinta` rounds ties away and would disagree), so the two backends
-// produce bit-identical results.
+// x86-64's emitFloatTranscendentalsRuntime is the same algorithm over the same
+// table, including `frintn` here against `roundsd …, 0` there (both
+// round-to-nearest-EVEN — arm64's more familiar `frinta` rounds ties away and
+// would disagree), so the two backends produce bit-identical results.
 //
-// Convention: argument and result in d0 (pow also takes y in d1). x12
-// holds the table base for the duration of each function.
-// twoOverPiBits is 2/pi in binary, MSB-first, one limb per 64 fraction bits
-// starting at 2^-1 in limb 1. Same table as the x86-64 backend's: the two
-// emit layers are deliberately parallel, so the numeric tables are carried
-// per backend like the fdlibm coefficients beside them.
-var twoOverPiBits = [...]uint64{
-	0x0000000000000000, 0xa2f9836e4e441529, 0xfc2757d1f534ddc0,
-	0xdb6295993c439041, 0xfe5163abdebbc561, 0xb7246e3a424dd2e0,
-	0x06492eea09d1921c, 0xfe1deb1cb129a73e, 0xe88235f52ebb4484,
-	0xe99c7026b45f7e41, 0x3991d639835339f4, 0x9c845f8bbdf9283b,
-	0x1ff897ffde05980f, 0xef2f118b5a0a6d1f, 0x6d367ecf27cb09b7,
-	0x4f463f669e5fea2d, 0x7527bac7ebe5f17b, 0x3d0739f78a5292ea,
-	0x6bfb5fb11f8d5d08, 0x56033046fc7b6bab, 0xf0cfbc209af4361d,
-}
-
+// Convention: argument and result in d0 (pow also takes y in d1). x12 holds
+// the table base for the duration of each function.
 func (g *generator) emitFloatTranscendentalsRuntime() {
-	ldc := func(reg, name string) { g.emit("ldr %s, [x12, #%d]", reg, fcOff(name)) }
+	ldc := func(reg, name string) { g.emit("ldr %s, [x12, #%d]", reg, fdlibm.Off(name)) }
 	// One Horner step: acc = acc*x + coefficient.
 	horner := func(acc, x, name string) {
 		ldc("d20", name)
@@ -6479,15 +6397,11 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	}
 	g.line(".align 3")
 	g.label(".Lfc_tab")
-	for _, c := range fcTab {
-		g.line("\t.double " + c.val)
+	for _, c := range fdlibm.Coeffs {
+		g.line("\t.double " + c.Text)
 	}
-	// 2/pi in binary, MSB-first, one limb per 64 fraction bits starting at
-	// 2^-1 in limb 1 — the window Payne-Hanek indexes with the argument's
-	// own exponent. The leading zero limb lets that index start above 2^-1
-	// without a bounds test; the length covers the largest finite double.
 	g.label(".Lfc_2opi_bits")
-	for _, w := range twoOverPiBits {
+	for _, w := range fdlibm.TwoOverPiBits {
 		g.line(fmt.Sprintf("\t.quad 0x%016x", w))
 	}
 	g.line(".text")
@@ -6591,10 +6505,10 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	// bit for bit.
 	g.emit("lsr x1, x1, #11")
 	g.emit("scvtf d1, x7")
-	ldc("d3", "twom62")
+	ldc("d3", "2m62")
 	g.emit("fmul d1, d1, d3")
 	g.emit("scvtf d2, x1")
-	ldc("d3", "twom115")
+	ldc("d3", "2m115")
 	g.emit("fmul d2, d2, d3")
 	g.emit("fadd d1, d1, d2")
 	phNoNeg, phSigned := g.freshLabel("phNoNeg"), g.freshLabel("phSigned")
@@ -6672,7 +6586,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 		g.emit("bl __fern_rem_pio2_large")
 		g.emit("b %s", phDone)
 		g.label(phSmall)
-		ldc("d1", "twoopi")
+		ldc("d1", "2opi")
 		g.emit("fmul d1, d1, d0")
 		g.emit("frintn d1, d1") // ties-to-even, matching x86 roundsd 0
 		g.emit("fcvtzs x10, d1")
@@ -13973,7 +13887,7 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			return nil
 		}
 		// f64 transcendentals — arm64 has no hardware sin/cos/exp/log,
-		// so these call into polynomial-approximation runtime helpers
+		// so these call into the fdlibm runtime helpers
 		// (emitFloatTranscendentalsRuntime). The arg(s) ride the
 		// operand stack as bit patterns; move into d0 (and d1 for
 		// pow) per AAPCS64, call, read the result out of d0.

@@ -125,8 +125,8 @@ func TestArm64StringLiteralLen(t *testing.T) {
 
 // arm64 f64 transcendentals (gcc-linked path). sin/cos/exp/log/pow
 // have no hardware instruction on arm64, so they lower to calls into
-// polynomial-approximation runtime helpers (range reduction + Horner
-// minimax/Taylor), pulled in via the .rodata coefficient table.
+// runtime helpers (argument reduction + fdlibm kernels), pulled in via
+// the .rodata coefficient table.
 // Tolerance contract — a few ulp, not bit-exact with the interp's Go
 // math. Mirrors TestX86_64Transcendentals.
 func TestArm64Transcendentals(t *testing.T) {
