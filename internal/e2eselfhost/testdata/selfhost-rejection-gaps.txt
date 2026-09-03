@@ -6,12 +6,12 @@
 # and a working rejection can never silently regress into one.
 #
 # Every bare line below is a program native REFUSES and the self-host compiles.
-# Two are closed: diag_e010 (a user struct shadowing a reserved built-in name)
-# and err_map_key_no_hash (a Map annotated with a struct key that derives
-# neither Eq nor Hash) now draw the same E010 / E045 native gives, so their
-# lines are gone from here. The second was the one with teeth: it used to reach
-# wasm as a module that does not validate, calling a `$Has.hash` nothing
-# defines.
+# Three are closed and their lines are gone from here: diag_e010 (a user struct
+# shadowing a reserved built-in name), err_map_key_no_hash (a Map annotated with
+# a struct key deriving neither Eq nor Hash) and err_duplicate_field (one field
+# set twice in a struct literal) draw the E010 / E045 / E007 native gives.
+# err_map_key_no_hash was the one with teeth: it used to reach wasm as a module
+# that does not validate, calling a `$Has.hash` nothing defines.
 #
 # `parse:` lines are a scoping boundary, not a gap: the source does not parse,
 # so it never reaches a checker and this gate has nothing to read. They are
@@ -21,7 +21,6 @@ diag_e019
 diag_e033
 diag_e073
 diag_e074
-err_duplicate_field
 sat_const_rejected
 sat_usize_rejected
 tuple_match_err_nonexhaustive
