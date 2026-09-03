@@ -6588,7 +6588,7 @@ func (b *builder) emitDowncast(n *ast.DowncastExpr) error {
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: vtSlot})
 	b.emit(Op{Kind: OpConstVtable, Str: setKey, Ext: &OpExt{Str2: concrete}})
-	b.emit(Op{Kind: OpEq})
+	b.emit(Op{Kind: OpEq, Width: WidthPtr})
 	// Result Option[T] heap-box pointer, built in either arm into a
 	// shared scratch slot (a void if-block keeps the operand-stack model
 	// simple across backends; the result is loaded after OpEnd).
@@ -13775,7 +13775,10 @@ func (b *builder) callWithMapCowRetain(n *ast.Call, recv ast.Expr) error {
 // names what the call handed back. On the copy branch the result is a fresh
 // rc=1 the caller already solely owns, so retaining there would leak.
 func (b *builder) emitMapCowRetainTest(resSlot int32) {
-	b.emit(Op{Kind: OpEq})
+	// Handle identity, so a pointer-width compare: a 32-bit one reads two
+	// distinct handles as equal whenever they agree in their low half,
+	// which a >4 GiB arena makes reachable.
+	b.emit(Op{Kind: OpEq, Width: WidthPtr})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
 	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
@@ -15360,7 +15363,7 @@ func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guard
 		if i < len(guarded) && guarded[i] {
 			b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpNe})
+			b.emit(Op{Kind: OpNe, Width: WidthPtr})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			b.emitArgTempDrop(slot, types[i])
 			b.emit(Op{Kind: OpEnd})
@@ -17629,7 +17632,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
-				b.emit(Op{Kind: OpNe})
+				b.emit(Op{Kind: OpNe, Width: WidthPtr})
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 				b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
@@ -17660,7 +17663,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpStoreLocal, I32: newTmp}) // stash new (RHS result)
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})     // old handle
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp})  // new handle
-				b.emit(Op{Kind: OpNe})                      // cow copied?
+				b.emit(Op{Kind: OpNe, Width: WidthPtr})     // cow copied?
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 				flagSlot, hasFlag := b.locals[ownFlagName(t.Name)]
 				if mst, isMap := structOrEnumTypeOfLocal(t.Name, b); hasFlag && b.rc.cowMapParams[t.Name] && isMap {
@@ -17751,7 +17754,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
 					b.emit(Op{Kind: OpLoadLocal, I32: idx})
 					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
-					b.emit(Op{Kind: OpNe})
+					b.emit(Op{Kind: OpNe, Width: WidthPtr})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 					release()
 					b.emit(Op{Kind: OpElse})
@@ -17838,7 +17841,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
 					b.emit(Op{Kind: OpLoadLocal, I32: idx})
 					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
-					b.emit(Op{Kind: OpNe})
+					b.emit(Op{Kind: OpNe, Width: WidthPtr})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 					b.emitMapOverwriteDrop(idx, mst)
 					if aliasInced {
@@ -18672,7 +18675,7 @@ func (b *builder) emitConsumedArrayOverwriteDec(name string, emitDec func()) {
 	b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
 	b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
-	b.emit(Op{Kind: OpNe})
+	b.emit(Op{Kind: OpNe, Width: WidthPtr})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	// Replaced: dec only what this frame owns, then take ownership.
 	b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
@@ -19376,11 +19379,13 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: mSlot})
 
-	// buf = i32.load(m); cap = i32.load(buf); len = i32.load(buf + 4)
+	// buf = ptr.load(m); cap = i32.load(buf); len = i32.load(buf + 4).
+	// The handle deref is WidthPtr: `buf` is a heap address, and a
+	// bare (i32) OpLoad sheds its high half above 4 GiB.
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mv_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: mSlot})
-	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
 
 	capSlot := b.allocSlot()
@@ -19551,10 +19556,11 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: mSlot})
 
+	// Handle deref is WidthPtr — see emitWideMapValues.
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mk_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: mSlot})
-	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
 
 	capSlot := b.allocSlot()

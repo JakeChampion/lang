@@ -325,6 +325,21 @@ recursion.
 
 ### Pointer-width handling on arm64-darwin's high heap — how it works
 
+**The regime is testable without a Mac.** Linux honours the arena's mmap
+address hint, so `__fern_alloc` puts the heap at 0x1000_0000 (256 MiB) and
+every Linux lane runs with heap pointers that fit in 32 bits; macOS ignores
+the hint and relocates the mapping above 4 GiB. A pointer handled 32 bits
+wide is therefore correct on every cheap lane and wrong only on Apple
+hardware. `arm64codegen.Options.HighHeapProbe` raises the hint to
+0x2_0000_0000 (8 GiB) — the 0x1000_0000 value is a FLOOR, not a fixed point:
+the rc below-heap guards classify `ptr >= 0x10000000` as heap, so it may be
+raised but never lowered — and qemu-aarch64 honours the raised hint. The gate
+is `internal/e2e/arm64_high_heap_test.go` (`TestArm64HighHeap*`, picked up by
+the ordinary `-run TestArm64` selection); `FERN_HIGH_HEAP=1` gives the same
+build from the driver for reproducing one by hand. What it does NOT reproduce:
+only the arena moves, so a truncation of a `.rodata`, image or stack address
+still needs the `macos-15` lane.
+
 All pointer-shaped values (string / array / struct / enum / slice / tuple)
 round-trip through 8-byte slots on arm64-darwin's high heap. Two pieces drive
 that:
@@ -334,6 +349,12 @@ that:
 - **`ast.IsPointerType`**, the type-side classifier, which drives stride / offset
   / store-width selection in `payloadSlotSize`, `structFieldLayout`,
   `tupleElemLayout`, `arrayElemStoreOp`, and `ast.ElemSizeBytesFor`.
+
+- **`Op.Width`** on the IR ops that touch a heap pointer. The default is i32,
+  so a bare `OpLoad` / `OpEq` on a pointer is a truncation: `WidthPtr` is not
+  an optimisation there, it is the correctness case. The IR's inline map
+  builders and its pointer-IDENTITY tests (map CoW retain, array / map
+  overwrite dec, the consumed-arg guard, dyn-vtable comparison) all carry it.
 
 Map operations (`set` / `get_or` / `has` / `delete` / `iter` / `len` / `keys` /
 `values`) cover all combinations of i32 / string K/V. Closures with captures
@@ -352,6 +373,11 @@ local or parameter (`NumberType{Width: WidthPtr}`: 8 bytes native,
 high half. No `i32`-typed pointer locals remain anywhere in
 `internal/stdlib` (Map / string / slice runtimes). The `usize` type
 the fix plan below proposed now exists, and the migration landed with
+it. The `.fern` runtime is only half the surface, though: the IR
+lowers `keys()` / `values()` on a wide-scalar column inline
+(`emitWideMapKeys` / `emitWideMapValues`) rather than through
+`core/map`, and those builders deref the Map handle themselves — with
+a default-width (i32) `OpLoad` until the high-heap gate below caught
 it. Re-added regression guard: the `map_heap_string_values` case in
 `internal/e2e/arm64_darwin_native_test.go` builds a `Map[string,
 string]` with concat-built (heap, >4 GiB on macOS) keys + values and
