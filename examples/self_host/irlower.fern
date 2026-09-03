@@ -43461,6 +43461,11 @@ function emit_map_release_unless_held(s: LowerState, slot: i32, others: i32[], t
 // after it and against m, so m — released last — frees its box unconditionally,
 // with whichever deep column credit it carries. A map with no aliases is the
 // plain free.
+//
+// An alias guard names only the LATER aliases and m, never the group's tuple
+// holders: emit_map_group_tuple_releases has already run in this sweep and each
+// tuple release deferred TO these aliases, so deferring back would leave that
+// box unfreed. The two are ordered, not symmetric.
 function emit_map_group_release(s: LowerState, mslot: i32): LowerState {
     var aliases: i32[] = map_group_alias_slots(s, s.reclaim_site_key(mslot));
     if (aliases.len() == 0) { return emit_map_buffers_free(s, mslot); }
@@ -43481,7 +43486,10 @@ function emit_map_group_release(s: LowerState, mslot: i32): LowerState {
 // emit_map_group_tuple_releases: for every credited map local with tuple
 // holders, release each tuple-held box unless a holder after it — the later
 // tuple holders, the plain aliases, or m — still holds it. Runs before the
-// array sweep frees the tuple boxes the elements are read through.
+// array sweep frees the tuple boxes the elements are read through, and before
+// the map sweep's emit_map_group_release, whose alias guards are written for a
+// tuple release that has already deferred to them. Moving this after that sweep
+// turns an alias free into a use-after-free of a box a live tuple still reads.
 function emit_map_group_tuple_releases(s: LowerState, keeps: i32[]): LowerState {
     var st: LowerState = s;
     var mj: i32 = st.n_params;
