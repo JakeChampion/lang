@@ -1013,6 +1013,11 @@ jobs:
         env:
           SHARD: "${{ matrix.shard }}"
           NSHARD: "${{ matrix.nshard }}"
+          # The x86 shards are the ONLY lane running the arm64 cross-emit tests
+          # (#8184 removed the duplicate cross-host leg), so a toolchain install
+          # that quietly failed must fail the shard rather than skip 15 tests
+          # green. Set only where the step above installs the toolchain.
+          FERN_REQUIRE_ARM64_TOOLING: "${{ matrix.host == 'x86_64' && '1' || '' }}"
         run: |
           set -euo pipefail
           chmod +x e2eselfhost.test e2e.test
