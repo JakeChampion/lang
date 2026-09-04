@@ -221,13 +221,17 @@ so a cell cannot close a cycle) between them reject every route
 list for the verification.
 
 So Phase 1's successor is not a cycle collector. It is ownership, which Atlas
-does not address at all and which is where Fern's actual memory bugs are: the
-seven unbounded self-host-vs-native reclaim leaks measured under
-`FERN_LEAKCHECK=1` in **#6127** (~108 KB over four shapes remaining as of
-`f58ab5d`).
+does not address at all and which is where Fern's actual memory bugs are. #6127
+measured that case — seven unbounded self-host-vs-native reclaim leaks under
+`FERN_LEAKCHECK=1` — and is closed, as is its successor #6360; the
+self-host-versus-native grid
+(`internal/e2eselfhost/testdata/selfhost-leak-matrix.txt`) now reads clean on
+x86-64. What remains is shared with native and is pinned, not tracked in an
+issue: 80 non-zero rows in `internal/e2e/testdata/conformance-leak-census.txt`
+and 40 of 216 rc-corpus cases in `internal/e2e/rc_leak_gate_test.go`.
 
 **Verdict:** Phase 1 is closed as written, and so is the cycle question. The
-successor item is closing #6127 — *reclaim*, not *allocation*.
+successor item is emptying those pin files — *reclaim*, not *allocation*.
 
 The one Phase 1 idea that does survive intact is **small-object optimisation**
 ("every collection has inline storage"). Fern has it for strings

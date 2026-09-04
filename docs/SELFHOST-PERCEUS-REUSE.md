@@ -209,12 +209,32 @@ fixpoint is self-referential and blind to a stable leak; and the alloc
 differential compares per-churn growth the freelist can mask.
 
 Most are now closed (#6218 / #6225 / #6232 / #6240 / #6251 / #6252 / #6255 /
-#6263 / #6285 / #6291 / #6308). What remains is the nested-struct family (#6274)
-and the bare-name struct credit block-scoped, which needs a narrower gate rather
-than a flip — flipping it segfaults the gen1 self-compile. **#6127 is the live
-list — re-measure before quoting any figure, from here or from the issue.**
+#6263 / #6285 / #6291 / #6308), and so are #6127 itself (2026-08-06) and its
+successor #6360 (2026-08-09). What remains here is the bare-name struct credit
+block-scoped, which needs a narrower gate rather than a flip — flipping it
+segfaults the gen1 self-compile.
 
-Four of that issue's own attributions were wrong, and the two failure modes are
+**The live gap list is not an issue any more; it is three checked-in pin files,
+each regenerable.** An issue goes stale the moment it closes and no one notices;
+these fail a gate instead.
+
+| pin file | what it lists | measured |
+|---|---|---|
+| `internal/e2eselfhost/testdata/selfhost-leak-matrix.txt` | the goal-2 RECLAIM gap list for the generated kind × scope × consumption × origin grid | 134 rows, **all `clean clean`** — no self-host leak row left |
+| `internal/e2eselfhost/testdata/selfhost-leak-matrix-arm64.txt` | the same grid on arm64 | 130 `clean clean`, **4 `leak clean`** — the self-host is AHEAD; those four are native-arm64 leaks (#7446) |
+| `internal/e2e/testdata/conformance-leak-census.txt` | every runnable conformance fixture's unpaired allocations | **80 non-zero rows** — leaks the compiler has today, on both compilers |
+
+`internal/e2e/rc_leak_gate_test.go` carries the fourth: 40 of 216 rc-corpus
+cases leak on x86-64 and 47 on arm64, each pinned at its exact byte count.
+
+Regenerate rather than hand-edit: `FERN_LEAK_MATRIX_DUMP=1` for the matrices,
+`FERN_LEAK_CENSUS_DUMP=1` for the census. A pinned case that leaks LESS also
+fails, asking to be banked, so a fix cannot leave the table stale.
+
+Read the pin file, never the prose — including this doc's. The 2026-09-02
+rc-log entries quote census figures already superseded by later runs.
+
+Four of #6127's own attributions were wrong, and the two failure modes are
 worth separating because they call for different probes:
 
 - **Three named the wrong sub-shape.** Isolating **single bind /
@@ -527,16 +547,20 @@ ExprStructLit lowering alias-incs a NON-fresh enum field (a fresh variant ctor
 base-copy, enum-alongside-array). Both x86 fixpoint suites stay byte-identical.
 
 **wasm is deliberately NOT included and is UNCHANGED by this slice.** The wasm-IR
-path does not use irlower's op-based construction (`emit_expr` in `wasm.fern`
-emits struct literals directly) nor `emit_struct_field_drops` — it reclaims via a
-SEPARATE `$__fern_release_<T>` family (`struct_enum_drop_helpers` /
-`struct_release_field_inner`) with its own construction/release balance. So the
+path does not use irlower's op-based construction (`emit_expr`, now in
+`wasm_ir.fern`, emits struct literals directly) nor `emit_struct_field_drops` —
+it reclaims via a SEPARATE `$__fern_release_<T>` family, built from the field
+classifiers in `wasm_ir.fern`, with its own construction/release balance. So the
 irlower Sites above emit ZERO ops on the wasm path (verified: no `rc_inc` in the
 emitted WAT), leaving the pre-existing wasm enum-field leak exactly as-is (safe,
 no double-free). Closing it is a SEPARATE follow-up in the `$__fern_release`
-subsystem: `struct_release_field_inner` (wasm.fern:1378) already has enum-field
-handling but `is_enum_type_name` keys off `cx.mr_types` (method-having types), so a
-method-less enum field is misclassified as scalar; and the wasm construction side
+subsystem: the field classifier `struct_field_kind_char`
+(`wasm_ir.fern:8967` — relocated out of the deleted `wasm.fern` by #3457, and it
+now takes `structs` + `mr_types` directly rather than the AST emitter's `Ctx`)
+asks `is_enum_type_name` (`wasm_ir.fern:9401`), which keys off `mr_types`
+(method-having types), so a method-LESS enum field still falls through to `"i"`
+and is skipped — misclassified as scalar, which leaks rather than corrupts; and
+the wasm construction side
 would need a matching enum-field inc in `emit_expr` (both the override and
 base-copy paths) or the `$__fern_release` recursion double-frees a base-copied
 enum field. Do NOT reuse the register-backend irlower incs for it — they don't run

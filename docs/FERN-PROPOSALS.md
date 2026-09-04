@@ -41,8 +41,13 @@ lowered cleanly and then segfaulted. Widen a known-divergences file by
 counted (Perceus-style: inc/dec insertion, borrow inference, drop
 specialisation, constructor reuse). A leak here is unbounded — it scales with
 the round count and eventually walks into the 16 GiB arena wall (exit 125).
-#6127 is the live list of shapes the self-host runtime leaks and native does
-not. Related and less watched: over-*retains*, which are silent — an extra
+The live list is `internal/e2e/testdata/conformance-leak-census.txt` — 80 of its
+rows are non-zero today, each one a leak the compiler should not have — plus the
+per-case byte baselines in `internal/e2e/rc_leak_gate_test.go` (40 of 216 cases
+leak on x86-64, 47 on arm64). The self-host-versus-native grid
+(`internal/e2eselfhost/testdata/selfhost-leak-matrix.txt`) is clean on x86-64, so
+what is left is shared with native rather than a port gap. Related and less
+watched: over-*retains*, which are silent — an extra
 `inc` never crashes, it just makes an `rc == 1` in-place append into a copy,
 and turns a linear accumulator quadratic. Find a shape that allocates in the
 wrong complexity class and fix it. `docs/TEST-GATES.md` §"What nothing gates"
