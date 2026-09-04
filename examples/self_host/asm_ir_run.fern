@@ -187,8 +187,12 @@ function run(): i32 {
     // exported `.globl`; `_start`/runtime only for the entry). Separately-
     // emitted units of a multi-module program link into one binary. The entry
     // folds -ir-extra-need (the whole-program need union) into its runtime.
-    if (unit == "entry") { print(asm_ir.emit_module_ir_unit(lm_inf, true, true, ns, extra, all_funcs, all_structs, 0, 0 - 1, [])); return 0; }
-    if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm_inf, false, true, ns, [], all_funcs, all_structs, 0, 0 - 1, [])); return 0; }
+    //
+    // all_structs is settled by here, so the index is built once for the emit
+    // rather than per lookup inside it (#8178).
+    var all_stab: irlower.StructTab = irlower.struct_tab(all_structs);
+    if (unit == "entry") { print(asm_ir.emit_module_ir_unit(lm_inf, true, true, ns, extra, all_funcs, all_stab, 0, 0 - 1, [])); return 0; }
+    if (unit == "lib") { print(asm_ir.emit_module_ir_unit(lm_inf, false, true, ns, [], all_funcs, all_stab, 0, 0 - 1, [])); return 0; }
     var emitted: string = "";
     // #4394 lever 3: the fused gate+emit lowers each function once (was: gate
     // lowered all, then emit re-lowered all). "" means ineligible.

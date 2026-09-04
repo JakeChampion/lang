@@ -59,12 +59,15 @@ function main(): i32 {
     var funcs: ssa.SFunc[] = [];
     // The whole-program registry is built once; lowering each function
     // against a fresh one is quadratic in the module (#8203).
-    var sg: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, mod.structs, empty);
+    // One index for the whole module: lower_func consults it per function, and
+    // rebuilding it per call is the scan this replaces (#8178).
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    var sg: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, empty);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         var fn: parser.FuncDecl = mod.funcs[i];
         // Real per-function lowering: AST -> ir.Op[] (the asm_ir backend's input).
-        var lr: irlower.LowerResult = irlower.lower_func(fn, mod.structs, sg, false);
+        var lr: irlower.LowerResult = irlower.lower_func(fn, stab, sg, false);
         // Bails are LOUD (#5452): a silent exit 3/4 gave the harness nothing
         // to compare when a driver behaves differently across environments —
         // the failure message now names the function and the bail reason.

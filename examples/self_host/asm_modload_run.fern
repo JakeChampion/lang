@@ -52,7 +52,7 @@ function verify_provided_module(merged: parser.Module): i32 {
     // names it. `@import` externs are ordinary FuncDecls, so the host-supplied
     // half needs no separate arm.
     var ix: irverify.NameIndex = irlower.fn_sig_index(vmod.funcs);
-    var fns: ir.LoweredFn[] = irlower.lower_module(vmod.funcs, vmod.structs);
+    var fns: ir.LoweredFn[] = irlower.lower_module(vmod.funcs, irlower.struct_tab(vmod.structs));
     var probs: irverify.Problem[] = [];
     var calls: i32 = 0;
     var checked: i32 = 0;
@@ -306,6 +306,9 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         pi = pi + 1;
     }
     all_structs = builtin_view(dir, all_structs);
+    // Settled: the index is built once here and threaded, rather than rebuilt
+    // at every eligibility check and unit emit below (#8178).
+    var all_stab: irlower.StructTab = irlower.struct_tab(all_structs);
     // The entry unit emits the ONE shared runtime; seed it with every root so a
     // library unit's `call __fern_*` resolves (ircore.all_runtime_need_roots —
     // the same superset the batched per-module build feeds it).
@@ -320,8 +323,8 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
     var out: string = "";
     var idx: i32 = 0;
     while (idx < parts.len()) {
-        var elig: boolean = ircore.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_structs);
-        if (parts[idx].is_entry) { elig = ircore.all_eligible_known_view(infmods[idx], known, all_funcs, all_structs); }
+        var elig: boolean = ircore.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_stab);
+        if (parts[idx].is_entry) { elig = ircore.all_eligible_known_view(infmods[idx], known, all_funcs, all_stab); }
         if (!elig) {
             // Name the module that took the whole program off the per-module
             // route. Without this the decline is silent and the failure
@@ -333,9 +336,9 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
         var extra: string[] = [];
         if (parts[idx].is_entry) { extra = needs; }
         if (target == "arm64-linux") {
-            out = out + asm_arm64_ir.emit_module_ir_unit_arm64(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1);
+            out = out + asm_arm64_ir.emit_module_ir_unit_arm64(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1);
         } else {
-            out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1, []);
+            out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, []);
         }
         idx = idx + 1;
     }
@@ -345,9 +348,9 @@ function emit_per_module_concat(dir: string, entry_mod: parser.Module, loaded: f
 // module_ir_eligible reports whether one module lowers wholly on the IR path
 // under the whole-program view. The entry uses the stricter gate (it owns
 // `main` + the shared runtime).
-function module_ir_eligible(infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
-    if (parts[midx].is_entry) { return ircore.all_eligible_known_view(infmods[midx], known, all_funcs, all_structs); }
-    return ircore.all_eligible_lib_known_view(infmods[midx], known, all_funcs, all_structs);
+function module_ir_eligible(infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, known: string[], all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab): boolean {
+    if (parts[midx].is_entry) { return ircore.all_eligible_known_view(infmods[midx], known, all_funcs, all_stab); }
+    return ircore.all_eligible_lib_known_view(infmods[midx], known, all_funcs, all_stab);
 }
 
 // unit_cache_file returns the object path for ONE emitted unit, or "" when the
@@ -379,7 +382,7 @@ function unit_cache_file(cache_dir: string, parts: flatten.PerModule[], infmods:
 // goes to stderr (one shard-ns per line) so an orchestrator can see the reuse
 // set; the unit FILE is written either way, since that is what the caller reads
 // back.
-function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], wpb: irlower.FnSigs, target: string, cachefile: string): boolean {
+function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.Module[], parts: flatten.PerModule[], midx: i32, needs: string[], all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab, wpb: irlower.FnSigs, target: string, cachefile: string): boolean {
     var wlo: i32 = nth_field_i32(unit_spec, 1);
     var whi: i32 = nth_field_i32(unit_spec, 2);
     var is_entry: boolean = parts[midx].is_entry;
@@ -406,9 +409,9 @@ function emit_unit_to_file(out_dir: string, unit_spec: string, infmods: parser.M
     }
     var unit: string = "";
     if (target == "arm64-linux") {
-        unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_structs, wlo, whi);
+        unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_stab, wlo, whi);
     } else {
-        unit = asm_ir.emit_module_ir_unit_flat(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_structs, wlo, whi, [], wpb);
+        unit = asm_ir.emit_module_ir_unit_flat(infmods[midx], is_entry, true, shard_ns, extra, all_funcs, all_stab, wlo, whi, [], wpb);
     }
     match (write_file(outpath, unit)) {
         Err(werr) => {
@@ -712,6 +715,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     }
     // Extend the struct view with the built-in type layouts (see builtin_view).
     all_structs = builtin_view(dir, all_structs);
+    // Settled: the index is built once here and threaded, rather than rebuilt
+    // at every eligibility check and unit emit below (#8178).
+    var all_stab: irlower.StructTab = irlower.struct_tab(all_structs);
     if (pm_mode == "emit-all") {
         // Multi-unit-per-process whole-compiler per-module emit (#3457 slice 2).
         // The whole-program signature registry is derived ONCE per process
@@ -730,7 +736,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         // its batch. The entry gets the full runtime-need roots as its extra_needs.
         // x86 shares the bases; -target arm64-linux uses the arm64 emitter unchanged.
         var needs: string[] = ircore.all_runtime_need_roots();
-        var wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_structs);
+        var wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
         var units: string[] = flat_unit_list(dir, parts, infmods, func_budget);
         // Incremental object cache (#3451 step 6 / #3458). This is the mode the
         // DEFAULT build flow runs in — emit_per_module_spawned execs a child per
@@ -777,7 +783,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
                 }
             }
             if (!assume_eligible && !cached_here && idx != checked_idx) {
-                if (!module_ir_eligible(infmods, parts, idx, known, all_funcs, all_structs)) {
+                if (!module_ir_eligible(infmods, parts, idx, known, all_funcs, all_stab)) {
                     eprint("per-module: module not IR-eligible: ");
                     eprint(parts[idx].ns);
                     eprint("\n");
@@ -785,7 +791,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
                 }
                 checked_idx = idx;
             }
-            if (!emit_unit_to_file(out_dir, units[uidx], infmods, parts, idx, needs, all_funcs, all_structs, wpb, target, ucache)) { return 1; }
+            if (!emit_unit_to_file(out_dir, units[uidx], infmods, parts, idx, needs, all_funcs, all_stab, wpb, target, ucache)) { return 1; }
             uidx = uidx + 1;
         }
         return 0;
@@ -892,8 +898,8 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     }
     var elig: boolean = true;
     if (!assume_eligible) {
-        elig = ircore.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_structs);
-        if (parts[pm_index].is_entry) { elig = ircore.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_structs); }
+        elig = ircore.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_stab);
+        if (parts[pm_index].is_entry) { elig = ircore.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_stab); }
     }
     if (!elig) {
         eprint("per-module: module not IR-eligible: ");
@@ -919,9 +925,9 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     // fold doubled the whole-compiler per-module program (both backends in
     // one closure), pushing its biggest modules past the one-process ceiling.
     if (target == "arm64-linux") {
-        unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi);
+        unit = asm_arm64_ir.emit_module_ir_unit_arm64(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_stab, pm_lo, pm_hi);
     } else {
-        unit = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_structs, pm_lo, pm_hi, []);
+        unit = asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, shard_ns, extra, all_funcs, all_stab, pm_lo, pm_hi, []);
     }
     // Emit to stdout first, then populate the cache. Both consume `unit`; doing
     // the file write last keeps the ordering unambiguous and avoids relying on

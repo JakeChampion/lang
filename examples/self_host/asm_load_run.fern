@@ -21,6 +21,7 @@ import "./asm_arm64_ir";
 import "./asm_ir";
 import "./treeshake";
 import "./ircore";
+import "./irlower";
 
 // add_imports appends each of mod's loadable import paths to paths
 // (deduped by full path), returning the grown list.
@@ -97,18 +98,21 @@ function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.Loaded
         pi = pi + 1;
     }
     var needs: string[] = ircore.all_runtime_need_roots();
+    // all_structs is complete once the import walk above finishes, so the index
+    // is built once here rather than per module inside the loop (#8178).
+    var all_stab: irlower.StructTab = irlower.struct_tab(all_structs);
     var out: string = "";
     var idx: i32 = 0;
     while (idx < parts.len()) {
         // Per-module eligibility against the whole-program view, exactly as the
         // per-module emit lowers. Any ineligible REACHABLE module aborts the whole
         // concat so the caller falls through to the merged emit.
-        var elig: boolean = ircore.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_structs);
-        if (parts[idx].is_entry) { elig = ircore.all_eligible_known_view(infmods[idx], known, all_funcs, all_structs); }
+        var elig: boolean = ircore.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_stab);
+        if (parts[idx].is_entry) { elig = ircore.all_eligible_known_view(infmods[idx], known, all_funcs, all_stab); }
         if (!elig) { return ""; }
         var extra: string[] = [];
         if (parts[idx].is_entry) { extra = needs; }
-        out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_structs, 0, 0 - 1, []);
+        out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, []);
         idx = idx + 1;
     }
     return out;
@@ -319,8 +323,9 @@ function main(): i32 {
         // exactly as it does in emit_module_ir_unit (which already lowers against
         // all_structs) — without the view, every module importing another's
         // struct bails (#3451).
-        var elig: boolean = ircore.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, all_structs);
-        if (parts[pm_index].is_entry) { elig = ircore.all_eligible_known_view(infmods[pm_index], known, all_funcs, all_structs); }
+        var pm_stab: irlower.StructTab = irlower.struct_tab(all_structs);
+        var elig: boolean = ircore.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, pm_stab);
+        if (parts[pm_index].is_entry) { elig = ircore.all_eligible_known_view(infmods[pm_index], known, all_funcs, pm_stab); }
         if (!elig) {
             eprint("per-module: module not IR-eligible: ");
             eprint(parts[pm_index].ns);
@@ -331,7 +336,7 @@ function main(): i32 {
         // from the -per-module-needs invocation) into its single shared runtime.
         var extra: string[] = [];
         if (parts[pm_index].is_entry) { extra = pm_extra; }
-        write(asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, all_structs, 0, 0 - 1, []));
+        write(asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, pm_stab, 0, 0 - 1, []));
         return 0;
     }
 
