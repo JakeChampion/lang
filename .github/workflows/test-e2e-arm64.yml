@@ -12,16 +12,17 @@ name: Test e2e arm64
 # arm64 lane finish in ~90 seconds and surface as its own status
 # check.
 #
-# The `cross-host` job below covers the OTHER half of the arm64 story:
-# the fifteen cross-compiler-on-host tests (x86 host binary emitting arm64
-# asm, the emitted binaries running under qemu-aarch64) that need BOTH a
-# native x86 host AND the aarch64 cross toolchain — a combination no
-# other lane provides, so before this job they ran NOWHERE: the x86
-# self-host shards skip them (no cross tools installed) and the aarch64
-# runners skip them (the stage-1 driver must exec natively on x86).
-# That blind spot let the arm64 stage-2 self-compile regress past its
-# arena limit unnoticed (fixed alongside this lane: MAP_NORESERVE +
-# the 16 GiB arm64 arena).
+# The `cross-host` job below covers what needs BOTH a native x86 host AND the
+# aarch64 cross toolchain on one machine.
+#
+# It used to also run the fifteen cross-compiler-on-host self-host tests, from
+# a time when the x86 self-host shards installed no cross tools. They do now
+# ("aarch64 cross toolchain (x86 shards — arm64 cross-emit tests)"), so the
+# shards partition those names and run them, and this lane was running them a
+# second time for ~272 s per push (#8184). The shards are their only home now,
+# and FERN_REQUIRE_ARM64_TOOLING=1 there turns a failed toolchain install into
+# a failure rather than the fifteen silent skips that let the arm64 stage-2
+# self-compile regress past its arena limit unnoticed.
 
 on:
   pull_request:
@@ -142,20 +143,6 @@ jobs:
         uses: ./.github/actions/apt-cross-toolchain
         with:
           qemu-package: qemu-user
-      # The x86-driver-emits-arm64 + qemu-aarch64 tests (the native-mmc
-      # heavyweight and the lighter IR-path element tests like TupleFnIRArm64
-      # / CloArrayFieldCallIRArm64) skip on both the x86 selfhost shards (no
-      # aarch64 cross toolchain) and the aarch64 shards (no native-x86
-      # driver), so this lane is their only home. Extend the regex when a new
-      # such cross-host test lands — `make testnames` fails if a name here
-      # matches nothing, which is what stopped two dead entries from riding
-      # along unnoticed.
-      - name: go test (cross-host arm64)
-        run: >-
-          gotestsum --format pkgname-and-test-fails -- -timeout 18m
-          -run '^(TestSelfHostArm64NativeMmcMatchesCrossHost|TestSelfHostStdTestE2EArm64|TestSelfHostDeriveStdlibIRArm64|TestSelfHostArm64EnvpSaveIR|TestSelfHostArm64UnsignedDivAST|TestSelfHostTupleFnIRArm64|TestSelfHostCloArrayFieldCallIRArm64|TestSelfHostCloArrayFieldBindIRArm64|TestSelfHostTupleFnStructFieldArm64|TestSelfHostReturnClosureElemIRArm64|TestSelfHostReturnClosureContainerIRArm64|TestSelfHostReturnMatchPayloadIRArm64|TestSelfHostReturnLambdaDispatchIRArm64|TestSelfHostReturnClosureNestedIRArm64|TestSelfHostTryOptionPayloadIRArm64)$'
-          ./internal/e2eselfhost/
-
       # internal/e2e tests that compare the two REGISTER backends against each
       # other, so they need both toolchains on one host — the same reason this
       # job exists. TestF64TranscendentalBackendsAgree had never compared
