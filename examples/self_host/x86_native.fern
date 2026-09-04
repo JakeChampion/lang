@@ -1725,15 +1725,20 @@ function x86_str_indexof(s: string, sub: string): i32 {
     var m: i32 = sub.len();
     if (m == 0) { return 0; }
     if (m > n) { return 0 - 1; }
+    // The needle's first byte is hoisted out and tested before the inner loop
+    // is entered at all. The assembler's hot searches are single characters
+    // (`:`, ` `, `(`) over lines that mostly do not hold them, so nearly every
+    // position is a mismatch and has to cost a compare and a bump rather than
+    // a loop set-up.
+    var c0: u8 = sub[0];
+    var last: i32 = n - m;
     var i: i32 = 0;
-    while (i <= n - m) {
-        var j: i32 = 0;
-        var ok: boolean = true;
-        while (j < m) {
-            if (s[i + j] != sub[j]) { ok = false; j = m; }
-            else { j = j + 1; }
+    while (i <= last) {
+        if (s[i] == c0) {
+            var j: i32 = 1;
+            while (j < m && s[i + j] == sub[j]) { j = j + 1; }
+            if (j == m) { return i; }
         }
-        if (ok) { return i; }
         i = i + 1;
     }
     return 0 - 1;
@@ -1759,14 +1764,16 @@ function x86_str_split(s: string, sep: string): string[] {
     var m: i32 = sep.len();
     if (m == 0) { out = out.append(s); return out; }
     var n: i32 = s.len();
+    var c0: u8 = sep[0];
+    var last: i32 = n - m;
     var start: i32 = 0;
     var i: i32 = 0;
-    while (i <= n - m) {
-        var hit: boolean = true;
-        var j: i32 = 0;
-        while (j < m) {
-            if (s[i + j] != sep[j]) { hit = false; j = m; }
-            else { j = j + 1; }
+    while (i <= last) {
+        var hit: boolean = false;
+        if (s[i] == c0) {
+            var j: i32 = 1;
+            while (j < m && s[i + j] == sep[j]) { j = j + 1; }
+            hit = j == m;
         }
         if (hit) {
             out = out.append(slice_unchecked(s, start, i));
