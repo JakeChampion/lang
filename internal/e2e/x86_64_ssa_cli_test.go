@@ -72,17 +72,16 @@ function main(): i32 {
     match (s) { Shape.Circle => { return 1; }, Shape.Square => { return 0; } }
 }
 `},
-		// Calls inside a loop, which is where the allocator pays most: it has no
-		// call-clobber awareness, so it saves EVERY caller-saved allocatable
-		// register that could hold a live-across-call value, around every call —
-		// and a match brings calls with it, dropping its scrutinee through
-		// __fern_rc_inc / __fern_rc_dec. That traffic (34 push/pop against the
-		// stack machine's 6) used to swallow the whole win on this program and
-		// leave the allocated path larger. It no longer does — 195 instructions
-		// against 199 — so the smaller-than assertion below covers the shape
-		// that was hardest for it. The margin is four instructions because both
-		// emitters inline or call the same rc guards; a guard improvement that
-		// reaches only one of them moves this case, which is what it is for.
+		// Calls inside a loop, which is where the allocator pays most: a value
+		// live across a call is either homed in a callee-saved register, saved
+		// once by the function that owns it, or saved and reloaded at every call
+		// site — and a match brings calls with it, dropping its scrutinee through
+		// __fern_rc_inc / __fern_rc_dec. While the scratch registers held four of
+		// the five callee-saved registers there was one home to steer into, so
+		// six registers were pushed around each of four calls and the traffic
+		// swallowed the whole win. It no longer does — 182 instructions against
+		// the stack machine's 193 — so the smaller-than assertion below covers
+		// the shape that was hardest for it.
 		{"call-heavy-loop-match", `enum Shape { Circle, Square, Triangle }
 function pick(n: i32): Shape {
     if (n == 0) { return Shape.Circle; }
