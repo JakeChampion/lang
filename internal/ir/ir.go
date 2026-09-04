@@ -14777,7 +14777,32 @@ func (b *builder) callBody(n *ast.Call) error {
 			if needBoxV {
 				return b.emitWideMapGetOr(n, n.TypeArgs[0], n.TypeArgs[1])
 			}
-			for _, a := range n.Args {
+			_, isStr := n.TypeArgs[1].(ast.StringType)
+			// Both non-receiver arguments are stashed when they are FRESH
+			// owned temps, so the release below can end them once the
+			// helper has probed with them — the same reason the !keyKind3
+			// string arm above stashes its own. `get_or` only READS the
+			// key, so a `m.get_or(Point { .. }, d)` key temp is dead at the
+			// call; and a counted-read value column retains the fallback on
+			// a miss here exactly as on the !keyKind3 arm, the keyed runtime
+			// variant differing only in hash/eq dispatch, not in ownership.
+			// Emitting both inline stranded a struct key every round and,
+			// once the miss-retain landed, the fallback with it.
+			countedFallback := !isStr && b.mapGetHandsCountedValue(n.TypeArgs[1])
+			var tmpSlots []int32
+			var tmpTypes []ast.Type
+			for ai, a := range n.Args {
+				if ai == 1 || (ai == 2 && countedFallback) {
+					slot, tt, ok, err := b.stashOwnedArgTemp(a)
+					if err != nil {
+						return err
+					}
+					if ok {
+						tmpSlots = append(tmpSlots, slot)
+						tmpTypes = append(tmpTypes, tt)
+						continue
+					}
+				}
 				if err := b.expr(a); err != nil {
 					return err
 				}
@@ -14787,10 +14812,10 @@ func (b *builder) callBody(n *ast.Call) error {
 			// runtime hands back the string data pointer un-retained
 			// (see the !keyKind3 inline above) — co-own it so the map's
 			// drop doesn't free it from under the caller.
-			if _, isStr := n.TypeArgs[1].(ast.StringType); isStr &&
-				b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+			if isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			}
+			b.emitArgTempDrops(tmpSlots, tmpTypes)
 			return nil
 		}
 	}
