@@ -74,8 +74,15 @@ whose only leak is two 64-byte blocks, and reads 128 with the fix.
 `TestWASMRcCorpusLeakGate` — the third leg of #7790's rc-corpus leak gate, over
 the same 267 cases, same pinned-baseline discipline (a case absent from the
 table must read 0; leaking more fails; leaking LESS fails asking to be banked).
-Verified byte-identical across repeat runs. 42 cases leak, against 40 on x86-64
-and 47 on arm64, and the differences are findings:
+Verified byte-identical across repeat runs. 27 cases leak, against 40 on x86-64
+and 47 on arm64, and the differences are findings.
+
+The table was 42 when this was first measured. Rebasing onto the perceus
+wave-3 merge took fifteen `map_*` rows to 0 — that work gave a Map's value
+column its reclaim on every backend, and none of those reclaims were
+observable here until this leg existed. Every one of the fifteen failed in the
+DOWN direction and nothing failed in the other, so a row at 0 left the table
+as this file's header asks.
 
 - `cell_string_read_aliased` and `copying_builtin_own_param_not_double_freed`
   leak on x86-64 and reclaim here — both are single-word-string shapes, an ABI
