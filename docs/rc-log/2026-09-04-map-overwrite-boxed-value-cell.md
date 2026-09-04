@@ -70,12 +70,38 @@ pre-drop next door has shipped on.
 
 `map_string_keys_churn_free`, `map_string_values_churn_free` and
 `map_string_value_overwrite_pre_drop_churn` go to **0** on both arm64 and wasm
-and leave both baseline tables. `map_keys_values_header_churn_free` stays at
-16000 on both: the `keys()` / `values()` column snapshot is a different site.
+and leave both baseline tables.
+
+`map_keys_values_header_churn_free` stays, pinned at 16000 on wasm and absent
+from the other two tables. It is a different site, and not the one its name
+says: `keys()` / `values()` are clean everywhere. Its `Map[i64, i64]` is what
+leaks — wasm32 is the only ABI that boxes a WIDE key into a cell, and the key
+column's drop does not free those. Measured, one 16-byte cell per ENTRY, with
+no keys() / values() call in the probe at all:
+
+| map | inserts | wasm bytes | arm64 | x86-64 |
+|---|--:|--:|--:|--:|
+| `Map[i64, i64]` | 1 | 1600 | 0 | 0 |
+| `Map[i64, i64]` | 2 | 3200 | 0 | 0 |
+| `Map[i64, i64]` | 3 | 4800 | 0 | 0 |
+| `Map[i64, i32]` | 1 | 1600 | 0 | 0 |
+| `Map[i32, i64]` | 1 | 0 | 0 | 0 |
+
+The wide VALUE column is clean because `__map_dec_value` routes valKind 0 to
+`__map_free_val_cell`; the key column has no equivalent. `__drop_map_str_keys`
+is the string-key column's walk and frees each dead key cell, so what a wide key
+needs is its counterpart.
 
 ## Not done
 
-- `map_keys_values_header_churn_free` — the column-snapshot builders.
+- `map_keys_values_header_churn_free` — the wasm32 wide-KEY column cells,
+  characterised above. It wants the `__drop_map_str_keys` treatment for
+  keyKind 2, and that is two halves, not one: `__map_own_copied_cols` gates
+  its key claim on `__load_i32(buf + 8) == 1`, so a CoW copy of a wide-keyed
+  map shares its key cells. Adding the drop walk alone would double-free
+  them. The value side already shows the shape — its `cellBytes` branch
+  allocates a fresh cell per entry and memcpys — so the key side needs the
+  same, keyed on the KEY kind.
 - The native single-word pre-drop still carries `!needBoxK`, so a `Map[i64,
   string]` overwrite on x86-64 loses its old value. x86-64 has no
   `__fern_cell_free`, so its boxed cells are a separate gap first.

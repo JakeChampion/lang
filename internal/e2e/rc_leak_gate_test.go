@@ -132,11 +132,13 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 //     `copying_builtin_own_param_not_double_freed` leak on x86-64 and
 //     reclaim here. Both are single-word-string shapes, and this backend
 //     does not carry that ABI.
-//   - `map_keys_values_header_churn_free` leaks here and on arm64 and
-//     is clean on x86-64: the column snapshot `keys()` / `values()`
-//     build is not reclaimed under the boxed ABIs. Its three former
-//     neighbours were the same OVERWRITE hole and are gone from both
-//     tables — see the overwrite pre-drop in internal/ir/ir.go.
+//   - `map_keys_values_header_churn_free` leaks HERE ONLY, and not for
+//     the reason its name suggests: `keys()` / `values()` are clean on
+//     every backend. Its `Map[i64, i64]` is what leaks — wasm32 is the
+//     only ABI that boxes a WIDE key into a cell, and the key column's
+//     drop does not free those, so it strands one cell per entry. Its
+//     three former neighbours were the OVERWRITE hole and are gone from
+//     this table and arm64's — see the pre-drop in internal/ir/ir.go.
 //
 // Cases the correctness corpus skips on wasm (`skipWasm`) are skipped
 // here too — a case that cannot run cannot be weighed.
