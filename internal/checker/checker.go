@@ -7178,6 +7178,20 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 // conflict. Concrete-vs-concrete still goes through ast.Equal,
 // so existing strict-checking behaviour is preserved for
 // monomorphic enums.
+// namedTypeArity reports a named generic type's name and how many type
+// arguments it carries. Zero is the argless "resolve me from context"
+// form, which unifyType treats as less specific than any instantiation
+// of the same name.
+func namedTypeArity(t ast.Type) (string, int, bool) {
+	switch v := t.(type) {
+	case ast.EnumType:
+		return v.Name, len(v.Args), true
+	case ast.StructType:
+		return v.Name, len(v.Args), true
+	}
+	return "", 0, false
+}
+
 func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) bool {
 	if expected == nil || actual == nil {
 		return false
@@ -7187,27 +7201,33 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 			if ast.Equal(existing, actual) {
 				return true
 			}
-			// An ARGLESS enum is the deliberate "not yet resolved" form the
-			// variant-call path returns when the args can't be filled from
-			// the payload alone (`Ok(8)` leaves the error type free) — see
-			// the "Leave Args nil so `assignable` flows the type into
-			// whatever the surrounding context expects" case. It is strictly
-			// LESS specific than any instantiation of the same enum, so it
-			// conflicts with nothing; the existing, more specific binding
-			// stands.
+			// An ARGLESS named type is the deliberate "not yet resolved"
+			// form: the variant-call path returns it when the args can't be
+			// filled from the payload alone (`Ok(8)` leaves the error type
+			// free), and `map_new`'s registered result is a bare `Map` for
+			// the same reason. It is strictly LESS specific than any
+			// instantiation of the same name, so the two never conflict —
+			// the more specific side wins, whichever side it is on.
 			//
-			// This matters because re-checking an expression must be
-			// idempotent, and a generic call memoises its inferred TypeArgs
-			// on the AST node. A method-call receiver IS checked twice (the
-			// dispatch path types it, then falls through to the generic
-			// callee check), so on the second pass `sub` arrives already
-			// bound while the argument still reports its argless form:
-			// `(g(id(Ok(8i32)))).to_string()` bound T := Result[i32, i32] on
-			// the first pass and then rejected bare `Result` on the second,
-			// while the identical call in any other position — `var`, bare
-			// statement, operand, argument — checked once and passed.
-			if ae, ok := actual.(ast.EnumType); ok && len(ae.Args) == 0 {
-				if ee, ok := existing.(ast.EnumType); ok && ee.Name == ae.Name {
+			// Both directions occur. Argless ACTUAL against a bound
+			// instantiation is re-check idempotence: a generic call memoises
+			// its inferred TypeArgs, and a method-call receiver is checked
+			// twice (the dispatch path types it, then falls through to the
+			// generic callee check), so the second pass arrives with `sub`
+			// bound while the argument still reports its argless form.
+			// Argless EXISTING against a concrete actual is a later argument
+			// pinning what an earlier one left open: the argument loop is a
+			// single left-to-right pass, so `apply(map_new(8), bump)` bound
+			// T := bare `Map` from argument 1 and then rejected argument 2's
+			// `Map[string, i32]` (#8004).
+			en, ea, eok := namedTypeArity(existing)
+			an, aa, aok := namedTypeArity(actual)
+			if eok && aok && en == an {
+				if aa == 0 {
+					return true
+				}
+				if ea == 0 {
+					sub[p.Name] = actual
 					return true
 				}
 			}
