@@ -88,6 +88,17 @@ Every row above emits the **same** message text and the same exit status — a
 `fern-sanitizer:` line does not tell you which compiler produced the binary,
 which is the point: "build it with `-sanitize`" has to mean one thing.
 
+The two natives are at parity end-to-end, not just in the asm they emit: the
+same deliberate use-after-free program (`__fern_arr_dec` on an array's data
+pointer, then `__fern_rc_inc` on the retained address) trips the poisoned-read
+report with exit 124 and a backtrace on both, and the same clean program is
+silent with the same census on both
+(`internal/e2e/sanitizer_test.go`, the `TestX86_64Sanitize*` /
+`TestArm64Sanitize*` pairs). That probe is also the recipe for reaching the
+detector from Fern: the plain `__rc_dec` builtin never frees on native, so a
+double `__rc_dec` reads rc 0 and reports over-release instead - only the
+freeing dec quarantines.
+
 `-sanitize` on a target that is not fully covered **warns and names what the
 build does carry**, so a silent run is never mistaken for a checked one. On
 wasm that reads "the leak census only, not the rc over-release or
