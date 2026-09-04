@@ -20,29 +20,40 @@ func TestFeatureDifferential(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping cross-area differential in -short mode")
 	}
-	cases := []struct {
-		name, src string
-	}{
-		// ---- closures ----
-		// Regression: a closure capturing BOTH a string and an i32
-		// duplicated its capture list in the checker, which segfaulted
-		// on arm64 (mixed-width env layout) while the other backends
-		// silently over-allocated. Must be 105 everywhere.
-		{"closure_capture_string_and_i32", `import "std/i32";
+	for _, c := range featureDifferentialCases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			assertNumProgramAgrees(t, c.src)
+		})
+	}
+}
+
+// featureDifferentialCases is the corpus TestFeatureDifferential grades
+// the backends against, and TestFeatureDifferentialInterpArrayCOW replays
+// through the interpreter's array-write diagnostic modes.
+var featureDifferentialCases = []struct {
+	name, src string
+}{
+	// ---- closures ----
+	// Regression: a closure capturing BOTH a string and an i32
+	// duplicated its capture list in the checker, which segfaulted
+	// on arm64 (mixed-width env layout) while the other backends
+	// silently over-allocated. Must be 105 everywhere.
+	{"closure_capture_string_and_i32", `import "std/i32";
 function outer(s: string): i32 {
     var bonus: i32 = 100;
     function inner(): i32 { return s.len() + bonus; }
     return inner();
 }
 function main(): i32 { print(outer("hello").to_string()); return 0; }`},
-		{"closure_capture_i32_then_string", `import "std/i32";
+	{"closure_capture_i32_then_string", `import "std/i32";
 function outer(s: string): i32 {
     var a: i32 = 1;
     function inner(): i32 { return a + s.len(); }
     return inner();
 }
 function main(): i32 { print(outer("hi").to_string()); return 0; }`},
-		{"closure_adder", `import "std/i32";
+	{"closure_adder", `import "std/i32";
 function makeAdder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
     return add;
@@ -54,24 +65,24 @@ function main(): i32 {
     print((f(1) + g(1)).to_string());
     return 0;
 }`},
-		{"closure_capture_two_strings", `import "std/i32";
+	{"closure_capture_two_strings", `import "std/i32";
 function outer(s: string): i32 {
     var t: string = "world";
     function inner(): i32 { return s.len() + t.len(); }
     return inner();
 }
 function main(): i32 { print(outer("hello").to_string()); return 0; }`},
-		// Regression: a two-word string capture landing at a
-		// non-8-aligned env offset (here after a single i32) faulted
-		// arm64's env access until the capture layout was 8-aligned.
-		{"closure_capture_i32_string_unaligned", `import "std/i32";
+	// Regression: a two-word string capture landing at a
+	// non-8-aligned env offset (here after a single i32) faulted
+	// arm64's env access until the capture layout was 8-aligned.
+	{"closure_capture_i32_string_unaligned", `import "std/i32";
 function outer(s: string): i32 {
     var a: i32 = 1;
     function inner(): i32 { return a + s.len(); }
     return inner();
 }
 function main(): i32 { print(outer("hi").to_string()); return 0; }`},
-		{"closure_capture_struct_i32_string", `import "std/i32";
+	{"closure_capture_struct_i32_string", `import "std/i32";
 struct P { x: i32, y: i32 }
 function outer(): i32 {
     var p: P = P{x: 3, y: 4};
@@ -81,7 +92,7 @@ function outer(): i32 {
     return inner();
 }
 function main(): i32 { print(outer().to_string()); return 0; }`},
-		{"closure_capture_i64_i32_string", `import "std/i32";
+	{"closure_capture_i64_i32_string", `import "std/i32";
 import "std/i64";
 function outer(): i64 {
     var a: i64 = 5000000000;
@@ -92,8 +103,8 @@ function outer(): i64 {
 }
 function main(): i32 { print(outer().to_string()); return 0; }`},
 
-		// ---- strings ----
-		{"string_ops", `import "std/string";
+	// ---- strings ----
+	{"string_ops", `import "std/string";
 import "std/i32";
 function pb(x: boolean): string { if (x) { return "T"; } return "F"; }
 function main(): i32 {
@@ -113,8 +124,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- arrays ----
-		{"array_ops", `import "std/i32";
+	// ---- arrays ----
+	{"array_ops", `import "std/i32";
 function main(): i32 {
     var xs: i32[] = [10, 20, 30];
     xs = xs.append(40);
@@ -129,8 +140,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- maps ----
-		{"map_ops", `import "std/i32";
+	// ---- maps ----
+	{"map_ops", `import "std/i32";
 import "core/map";
 function pb(x: boolean): string { if (x) { return "T"; } return "F"; }
 function main(): i32 {
@@ -146,8 +157,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- structs ----
-		{"struct_nested", `import "std/i32";
+	// ---- structs ----
+	{"struct_nested", `import "std/i32";
 struct Point { x: i32, y: i32 }
 struct Line { a: Point, b: Point }
 function main(): i32 {
@@ -159,10 +170,10 @@ function main(): i32 {
     print((p2.x + p2.y).to_string());
     return 0;
 }`},
-		// `for x in b.items { … }` — iterating a struct's array field. The
-		// field-access iter must NOT be mis-parsed as a `b.items { … }`
-		// qualified struct literal (the trailing `{` opens the loop body).
-		{"struct_field_array_foreach", `import "std/i32";
+	// `for x in b.items { … }` — iterating a struct's array field. The
+	// field-access iter must NOT be mis-parsed as a `b.items { … }`
+	// qualified struct literal (the trailing `{` opens the loop body).
+	{"struct_field_array_foreach", `import "std/i32";
 struct Bag { items: i32[] }
 function main(): i32 {
     var b: Bag = Bag{ items: [10, 20, 30] };
@@ -172,8 +183,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- enums + match ----
-		{"enum_match", `import "std/i32";
+	// ---- enums + match ----
+	{"enum_match", `import "std/i32";
 enum Shape { Circle(i32), Rect(i32, i32), Dot }
 function area(s: Shape): i32 {
     match (s) {
@@ -189,8 +200,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- Option / Result ----
-		{"option_result", `import "std/i32";
+	// ---- Option / Result ----
+	{"option_result", `import "std/i32";
 function half(x: i32): Option[i32] { if (x % 2 == 0) { return Some(x / 2); } return None; }
 function check(x: i32): Result[i32, string] { if (x > 0) { return Ok(x); } return Err("neg"); }
 function main(): i32 {
@@ -201,8 +212,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- control flow returning values ----
-		{"control_flow", `import "std/i32";
+	// ---- control flow returning values ----
+	{"control_flow", `import "std/i32";
 function classify(n: i32): string {
     var label: string = if (n < 0) { "neg" } else if (n == 0) { "zero" } else { "pos" };
     return label;
@@ -222,8 +233,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- tuples ----
-		{"tuples", `import "std/i32";
+	// ---- tuples ----
+	{"tuples", `import "std/i32";
 function swap(p: (i32, string)): (string, i32) { return (p.1, p.0); }
 function main(): i32 {
     var t: (i32, string) = (42, "hi");
@@ -235,12 +246,12 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- generics / monomorphisation ----
-		// Includes a generic over a pointer-element array (struct[]):
-		// the array literal's ElemType used to keep the unsubstituted
-		// type parameter, building single-word stores into the
-		// pointer-width slots and corrupting the array.
-		{"generics", `import "std/i32";
+	// ---- generics / monomorphisation ----
+	// Includes a generic over a pointer-element array (struct[]):
+	// the array literal's ElemType used to keep the unsubstituted
+	// type parameter, building single-word stores into the
+	// pointer-width slots and corrupting the array.
+	{"generics", `import "std/i32";
 struct Box { v: i32 }
 function identity[T](x: T): T { return x; }
 function snd[A, B](a: A, b: B): B { return b; }
@@ -256,8 +267,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- transitive generics (generic body calls another generic) ----
-		{"transitive_generics", `import "std/i32";
+	// ---- transitive generics (generic body calls another generic) ----
+	{"transitive_generics", `import "std/i32";
 function id[T](x: T): T { return x; }
 function wrap[T](x: T): T { return id(x); }
 function twice[T](x: T): T[] { return [id(x), id(x)]; }
@@ -274,8 +285,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- recursive enum (binary tree) ----
-		{"recursive_enum_tree", `import "std/i32";
+	// ---- recursive enum (binary tree) ----
+	{"recursive_enum_tree", `import "std/i32";
 enum Tree { Leaf(i32), Node(Tree, Tree) }
 function sum(t: Tree): i32 {
     match (t) { Leaf(v) => { return v; }, Node(l, r) => { return sum(l) + sum(r); } }
@@ -293,8 +304,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- struct arrays with string fields ----
-		{"struct_array_string_field", `import "std/i32";
+	// ---- struct arrays with string fields ----
+	{"struct_array_string_field", `import "std/i32";
 struct P { x: i32, name: string }
 function main(): i32 {
     var ps: P[] = [P{x: 1, name: "a"}, P{x: 2, name: "b"}, P{x: 3, name: "c"}];
@@ -305,8 +316,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- nested closures (closure returning closure) ----
-		{"nested_closures", `import "std/i32";
+	// ---- nested closures (closure returning closure) ----
+	{"nested_closures", `import "std/i32";
 function adder(n: i32): (i32) => i32 {
     function add(x: i32): i32 { return x + n; }
     return add;
@@ -318,8 +329,8 @@ function compose(n: i32): (i32) => i32 {
 }
 function main(): i32 { var h = compose(5); print(h(10).to_string()); return 0; }`},
 
-		// ---- enum with string payloads, in an array ----
-		{"enum_string_payloads", `import "std/i32";
+	// ---- enum with string payloads, in an array ----
+	{"enum_string_payloads", `import "std/i32";
 enum Msg { Text(string), Num(i32), Pair(string, i32) }
 function show(m: Msg): string {
     match (m) {
@@ -335,8 +346,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- the ? propagation operator ----
-		{"try_operator", `import "std/i32";
+	// ---- the ? propagation operator ----
+	{"try_operator", `import "std/i32";
 function parse(s: string): Option[i32] { if (s == "42") { return Some(42); } return None; }
 function chain(s: string): Option[i32] { var v = parse(s)?; return Some(v * 2); }
 function main(): i32 {
@@ -345,8 +356,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- map keys()/values() iteration ----
-		{"map_iteration", `import "std/i32";
+	// ---- map keys()/values() iteration ----
+	{"map_iteration", `import "std/i32";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
@@ -360,12 +371,12 @@ function main(): i32 {
     return 0;
 }`},
 
-		// Map iteration order after a non-last delete must agree across
-		// the interpreter and every backend. The interp mirrors the
-		// runtime's swap-with-last removal; shifting down instead gives a
-		// different order. Regression for M3 in
-		// docs/ADVERSARIAL-REVIEW-2026-06.md.
-		{"map_delete_order", `import "std/i32";
+	// Map iteration order after a non-last delete must agree across
+	// the interpreter and every backend. The interp mirrors the
+	// runtime's swap-with-last removal; shifting down instead gives a
+	// different order. Regression for M3 in
+	// docs/ADVERSARIAL-REVIEW-2026-06.md.
+	{"map_delete_order", `import "std/i32";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
@@ -377,11 +388,11 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- Map copy-on-write (M1) ----
-		// Aliasing a map then mutating the alias must NOT bleed into the
-		// original — the interp now does rc-based COW like every backend.
-		// (Old interp aliased the shared *Map and printed 999/999.)
-		{"map_cow_alias_isolation", `import "std/i32";
+	// ---- Map copy-on-write (M1) ----
+	// Aliasing a map then mutating the alias must NOT bleed into the
+	// original — the interp now does rc-based COW like every backend.
+	// (Old interp aliased the shared *Map and printed 999/999.)
+	{"map_cow_alias_isolation", `import "std/i32";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
@@ -392,9 +403,9 @@ function main(): i32 {
     print(n.get_or(1, -1).to_string());
     return 0;
 }`},
-		// A map passed to a function and mutated there (via reassignment
-		// of the local param) leaves the caller's map untouched.
-		{"map_cow_func_arg", `import "std/i32";
+	// A map passed to a function and mutated there (via reassignment
+	// of the local param) leaves the caller's map untouched.
+	{"map_cow_func_arg", `import "std/i32";
 import "core/map";
 function bump(p: Map[i32, i32]): i32 {
     p = p.insert(1, 999);
@@ -407,9 +418,9 @@ function main(): i32 {
     print(m.get_or(1, -1).to_string());
     return 0;
 }`},
-		// A map built and returned by a function escapes correctly and is
-		// usable by the caller (rc transfers across the return).
-		{"map_cow_returned", `import "std/i32";
+	// A map built and returned by a function escapes correctly and is
+	// usable by the caller (rc transfers across the return).
+	{"map_cow_returned", `import "std/i32";
 import "core/map";
 function build(): Map[i32, i32] {
     var m: Map[i32, i32] = map_new(8);
@@ -426,9 +437,9 @@ function main(): i32 {
     print(a.get_or(2, -1).to_string());
     return 0;
 }`},
-		// An alias that dies in an inner scope must not leave the original
-		// permanently "shared": a bare mutation afterward still applies.
-		{"map_cow_alias_then_scope_exit", `import "std/i32";
+	// An alias that dies in an inner scope must not leave the original
+	// permanently "shared": a bare mutation afterward still applies.
+	{"map_cow_alias_then_scope_exit", `import "std/i32";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = map_new(8);
@@ -439,8 +450,121 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- floats in aggregates (struct / tuple / array / map) ----
-		{"float_aggregates", `import "std/float";
+	// ---- Array element-write copy-on-write (#7287) ----
+	// `arr.with(i, v)` writes into the receiver's buffer when nothing
+	// else covers it and copies otherwise, in the interpreter as in
+	// every backend. Each case below holds a second value over the
+	// buffer by a different route, so an interp that got the
+	// uniqueness signal wrong prints something no backend does.
+	{"array_with_alias_isolation", `import "std/i32";
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var b: i32[] = a;
+    a = a.with(0, 9);
+    print(b[0].to_string());
+    print(a[0].to_string());
+    return 0;
+}`},
+	// The receiver is read again after the call, so the write cannot
+	// land in its buffer even though one binding holds it.
+	{"array_with_live_receiver", `import "std/i32";
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var b: i32[] = a.with(0, 9);
+    print(a[0].to_string());
+    print(b[0].to_string());
+    return 0;
+}`},
+	{"array_with_alias_in_container", `import "std/i32";
+struct Box { items: i32[] }
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var rows: i32[][] = [a];
+    var b: Box = Box { items: a };
+    a = a.with(0, 9);
+    print(rows[0][0].to_string());
+    print(b.items[0].to_string());
+    print(a[0].to_string());
+    return 0;
+}`},
+	{"array_with_alias_in_map", `import "std/i32";
+import "core/map";
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var m: Map[i32, i32[]] = map_new(8);
+    m = m.insert(1, a);
+    a = a.with(0, 9);
+    var got: i32[] = m.get_or(1, []);
+    print(got[0].to_string());
+    print(a[0].to_string());
+    return 0;
+}`},
+	{"array_with_through_param", `import "std/i32";
+function bump(p: i32[]): i32 {
+    p = p.with(0, 9);
+    return p[0];
+}
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    print(bump(a).to_string());
+    print(a[0].to_string());
+    return 0;
+}`},
+	// The alias dies with the block, so the write after it is
+	// unshared again — the sticky-shared shape would print 1 here.
+	{"array_with_alias_then_scope_exit", `import "std/i32";
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    { var b: i32[] = a; a = a.with(0, 7); print(b[0].to_string()); }
+    a = a.with(1, 8);
+    print(a[0].to_string());
+    print(a[1].to_string());
+    return 0;
+}`},
+	// The self-reassign loop the in-place write exists for: writing
+	// every element then reading them all back.
+	{"array_with_self_reassign_loop", `import "std/i32";
+function main(): i32 {
+    var a: i32[] = [];
+    var i: i32 = 0;
+    while (i < 64) { a = a.append(0); i = i + 1; }
+    var j: i32 = 0;
+    while (j < 64) { a = a.with(j, j * 2); j = j + 1; }
+    var sum: i32 = 0;
+    var k: i32 = 0;
+    while (k < 64) { sum = sum + a[k]; k = k + 1; }
+    print(sum.to_string());
+    return 0;
+}`},
+	// The map an in-place element write stores takes over the array's
+	// own rc paths, so it is still shared afterwards.
+	{"array_with_stores_a_map", `import "std/i32";
+import "core/map";
+function main(): i32 {
+    var a: Map[i32, i32][] = [map_new(8), map_new(8)];
+    var m: Map[i32, i32] = map_new(8);
+    m = m.insert(1, 5);
+    a = a.with(0, m);
+    m = m.insert(1, 9);
+    print(a[0].get_or(1, -1).to_string());
+    print(m.get_or(1, -1).to_string());
+    return 0;
+}`},
+	// An append still covers the receiver's slots, so a write through
+	// the shorter view must not reach the longer one.
+	{"array_with_after_append", `import "std/i32";
+function main(): i32 {
+    var a: i32[] = [1, 2, 3];
+    var b: i32[] = a.append(4);
+    a = a.with(0, 9);
+    print(b[0].to_string());
+    print(b[3].to_string());
+    print(a[0].to_string());
+    return 0;
+}`},
+
+	// ---- floats in aggregates (struct / tuple / array / map) ----
+	{"float_aggregates", `import "std/float";
 import "std/i32";
 import "core/map";
 struct V3 { x: f64, y: f64, z: f64 }
@@ -460,11 +584,11 @@ function main(): i32 {
     return 0;
 }`},
 
-		// Nested arrays whose FIRST element is a call / ident rather than a
-		// literal (#5326): the self-host IR path classified arr-of-arr by
-		// literal shape only, so these stride-miscompiled there; native must
-		// stay the type-driven oracle on every backend.
-		{"nested_arr_call_first_elem", `import "std/i32";
+	// Nested arrays whose FIRST element is a call / ident rather than a
+	// literal (#5326): the self-host IR path classified arr-of-arr by
+	// literal shape only, so these stride-miscompiled there; native must
+	// stay the type-driven oracle on every backend.
+	{"nested_arr_call_first_elem", `import "std/i32";
 function mkf(): f64[] { return [1.5, 2.5]; }
 function mks(): string[] { return ["ab", "cde"]; }
 function main(): i32 {
@@ -477,11 +601,11 @@ function main(): i32 {
     print((ms[0][0].len() + ms[0][1].len() + ms[1][0].len()).to_string());
     return 0;
 }`},
-		// Unannotated array-returning functions (#5326, second cluster): the
-		// self-host ret-type inferencer had no ExprArray arm, so these never
-		// entered the element-kind registries and a[i] took the 4-byte
-		// default stride there. Native must agree everywhere.
-		{"arr_ret_fn", `import "std/i32";
+	// Unannotated array-returning functions (#5326, second cluster): the
+	// self-host ret-type inferencer had no ExprArray arm, so these never
+	// entered the element-kind registries and a[i] took the 4-byte
+	// default stride there. Native must agree everywhere.
+	{"arr_ret_fn", `import "std/i32";
 function mk2(): f64[] { return [1.5, 2.5]; }
 function mk3(): string[] { return ["ab", "cde"]; }
 function main(): i32 {
@@ -492,8 +616,8 @@ function main(): i32 {
     return 0;
 }`},
 
-		// ---- stdlib: json / hex / base64 / math / format ----
-		{"stdlib_json", `import "std/json";
+	// ---- stdlib: json / hex / base64 / math / format ----
+	{"stdlib_json", `import "std/json";
 import "std/i32";
 function main(): i32 {
     match (json.json_parse("{\"a\": 42, \"b\": \"hi\"}")) {
@@ -505,11 +629,11 @@ function main(): i32 {
     }
     return 0;
 }`},
-		// json_get_f64 routes through std/string's `s.parse_float()`
-		// receiver method — the cross-module method reference #5420
-		// tracked (std/json's private parser twin is deleted). Scaled
-		// i32 prints keep the comparison float-format independent.
-		{"stdlib_json_get_f64", `import "std/json";
+	// json_get_f64 routes through std/string's `s.parse_float()`
+	// receiver method — the cross-module method reference #5420
+	// tracked (std/json's private parser twin is deleted). Scaled
+	// i32 prints keep the comparison float-format independent.
+	{"stdlib_json_get_f64", `import "std/json";
 import "std/i32";
 function main(): i32 {
     match (json.json_parse("{\"pi\":3.5,\"big\":2.5e1,\"neg\":-0.5}")) {
@@ -522,7 +646,7 @@ function main(): i32 {
     }
     return 0;
 }`},
-		{"stdlib_hex_base64", `import "std/hex";
+	{"stdlib_hex_base64", `import "std/hex";
 import "std/base64";
 import "std/string";
 function main(): i32 {
@@ -532,7 +656,7 @@ function main(): i32 {
     print(string_from_bytes_unchecked(hex.hex_decode("4142")));
     return 0;
 }`},
-		{"stdlib_array_combinators", `import "std/i32";
+	{"stdlib_array_combinators", `import "std/i32";
 import "std/array";
 function main(): i32 {
     var xs: i32[] = [5, 2, 8, 1, 9, 3];
@@ -544,9 +668,9 @@ function main(): i32 {
     match (xs.min_max()) { Some(p) => { print(p.0.to_string() + ".." + p.1.to_string()); }, None => {} }
     return 0;
 }`},
-		// ---- Cell[T] (docs/CELL-TYPE-PLAN.md) ----
-		// get / set round-trip: (0+5)*2 = 10, identical on every backend.
-		{"cell_get_set", `import "std/i32";
+	// ---- Cell[T] (docs/CELL-TYPE-PLAN.md) ----
+	// get / set round-trip: (0+5)*2 = 10, identical on every backend.
+	{"cell_get_set", `import "std/i32";
 function main(): i32 {
     var c: Cell[i32] = cell_new(0);
     c.set(c.get() + 5);
@@ -554,10 +678,10 @@ function main(): i32 {
     print(c.get().to_string());
     return 0;
 }`},
-		// Shared mutation: passing the cell to a function and mutating it
-		// there is visible to the caller (the deliberate shared-mutable-state
-		// semantics) — 10 bumped three times → 13.
-		{"cell_shared_mutation", `import "std/i32";
+	// Shared mutation: passing the cell to a function and mutating it
+	// there is visible to the caller (the deliberate shared-mutable-state
+	// semantics) — 10 bumped three times → 13.
+	{"cell_shared_mutation", `import "std/i32";
 function bump(c: Cell[i32]): void { c.set(c.get() + 1); }
 function main(): i32 {
     var c: Cell[i32] = cell_new(10);
@@ -565,8 +689,8 @@ function main(): i32 {
     print(c.get().to_string());
     return 0;
 }`},
-		// A cell as a loop accumulator (the counter idiom) — sum 1..=5 = 15.
-		{"cell_accumulator", `import "std/i32";
+	// A cell as a loop accumulator (the counter idiom) — sum 1..=5 = 15.
+	{"cell_accumulator", `import "std/i32";
 function main(): i32 {
     var acc: Cell[i32] = cell_new(0);
     var i: i32 = 1;
@@ -574,10 +698,10 @@ function main(): i32 {
     print(acc.get().to_string());
     return 0;
 }`},
-		// Cell[string]: construct / get / overwrite-with-concat / read back.
-		// Both compilers represent the slot as a single string reference
-		// (the Go side rc-tracks it, self-host leaks it) — identical output.
-		{"cell_string", `import "std/i32";
+	// Cell[string]: construct / get / overwrite-with-concat / read back.
+	// Both compilers represent the slot as a single string reference
+	// (the Go side rc-tracks it, self-host leaks it) — identical output.
+	{"cell_string", `import "std/i32";
 import "std/string";
 function main(): i32 {
     var c: Cell[string] = cell_new("hi");
@@ -586,9 +710,9 @@ function main(): i32 {
     print(c.get().len().to_string());
     return 0;
 }`},
-		// Array.build (docs/ARRAY-BUILDER-PLAN.md): the parser desugar runs in
-		// both the Go and self-host parsers, so the built array is identical.
-		{"array_build", `import "std/i32";
+	// Array.build (docs/ARRAY-BUILDER-PLAN.md): the parser desugar runs in
+	// both the Go and self-host parsers, so the built array is identical.
+	{"array_build", `import "std/i32";
 function main(): i32 {
     var out: i32[] = Array.build(function(b: ArrayBuilder[i32]): void {
         var i: i32 = 0;
@@ -598,9 +722,9 @@ function main(): i32 {
     print(out[3].to_string());
     return 0;
 }`},
-		// Map.build (docs/ARRAY-BUILDER-PLAN.md): the parser desugar now runs in
-		// both the Go and self-host parsers, so the built map is identical.
-		{"map_build", `import "std/i32";
+	// Map.build (docs/ARRAY-BUILDER-PLAN.md): the parser desugar now runs in
+	// both the Go and self-host parsers, so the built map is identical.
+	{"map_build", `import "std/i32";
 import "core/map";
 function main(): i32 {
     var m: Map[i32, i32] = Map.build(function(b: MapBuilder[i32, i32]): void {
@@ -611,12 +735,12 @@ function main(): i32 {
     print(m.get_or(3, -1).to_string());
     return 0;
 }`},
-		// ---- Display spine (#2696): print/write/eprint take any T: Display ----
-		// `print(x)` auto-stringifies through Display instead of forcing
-		// `print(x.to_string())`. The desugared `.to_string()` call must
-		// lower identically on every backend, so the rendered scalars must
-		// agree with the interp oracle.
-		{"display_print_scalars", `import "std/i32";
+	// ---- Display spine (#2696): print/write/eprint take any T: Display ----
+	// `print(x)` auto-stringifies through Display instead of forcing
+	// `print(x.to_string())`. The desugared `.to_string()` call must
+	// lower identically on every backend, so the rendered scalars must
+	// agree with the interp oracle.
+	{"display_print_scalars", `import "std/i32";
 import "std/i64";
 import "core/cmp";
 function main(): i32 {
@@ -630,9 +754,9 @@ function main(): i32 {
     print(a);
     return 0;
 }`},
-		// A `@derive(Display)` struct passed straight to `print` renders via
-		// the synthesised `to_string`, same bytes on every backend.
-		{"display_print_struct", `import "std/i32";
+	// A `@derive(Display)` struct passed straight to `print` renders via
+	// the synthesised `to_string`, same bytes on every backend.
+	{"display_print_struct", `import "std/i32";
 import "core/cmp";
 @derive(cmp.Display)
 struct Point { x: i32, y: i32 }
@@ -641,12 +765,12 @@ function main(): i32 {
     print(p);
     return 0;
 }`},
-		// (Bounded-generic `T: Display` forwarded to `print` is covered by
-		// the checker test TestCheckPrintDisplayGeneric — this differential
-		// oracle doesn't run the monomorphiser, so a generic case is skipped
-		// here.)
-		// A derived enum routed through print renders its variant form.
-		{"display_print_enum", `import "std/i32";
+	// (Bounded-generic `T: Display` forwarded to `print` is covered by
+	// the checker test TestCheckPrintDisplayGeneric — this differential
+	// oracle doesn't run the monomorphiser, so a generic case is skipped
+	// here.)
+	// A derived enum routed through print renders its variant form.
+	{"display_print_enum", `import "std/i32";
 import "core/cmp";
 @derive(cmp.Display)
 enum Shape { Circle(i32), Empty }
@@ -657,11 +781,33 @@ function main(): i32 {
     print(e);
     return 0;
 }`},
+}
+
+// The oracle's answer must not depend on whether `arr.with(i, v)` wrote
+// into the receiver's buffer, so every program above runs through the
+// interpreter three times: with the counted in-place write, with it
+// disabled (`copy`), and with the live-scope check that refuses a write
+// to a buffer something else still covers (`verify`). A disagreement
+// between the first two is a miscount corrupting the oracle; a `verify`
+// failure names the program it happened in. See
+// docs/INTERP-ARRAY-INPLACE-WRITE.md (#7287).
+func TestFeatureDifferentialInterpArrayCOW(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping interp array-COW cross-check in -short mode")
 	}
-	for _, c := range cases {
+	for _, c := range featureDifferentialCases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
-			assertNumProgramAgrees(t, c.src)
+			t.Setenv("FERN_INTERP_ARRAY_COW", "")
+			counted := interpStdout(t, c.src)
+			t.Setenv("FERN_INTERP_ARRAY_COW", "copy")
+			if copied := interpStdout(t, c.src); copied != counted {
+				t.Fatalf("in-place write changed the answer:\n counted: %q\n copy:    %q", counted, copied)
+			}
+			t.Setenv("FERN_INTERP_ARRAY_COW", "verify")
+			if verified := interpStdout(t, c.src); verified != counted {
+				t.Fatalf("verify mode changed the answer:\n counted: %q\n verify:  %q", counted, verified)
+			}
 		})
 	}
 }

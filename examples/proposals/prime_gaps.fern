@@ -14,12 +14,11 @@
 // wrong number is possible; agreeing on a wrong number that matches the
 // literature is not.
 //
-// N stops at 10^4 because of the interpreter, not the sieve. `a = a.with(i,
-// v)` — the canonical in-place idiom, which the compiled backends turn into
-// an O(1) refcount-1 write — copies the whole array on every call in the
-// interpreter, so the marking loops are quadratic there and each doubling of
-// N quadruples their time (#7287). Building a sieve is not: `a = a.append(v)`
-// grows its buffer in place. Compiled, N=10^4 is 3 ms.
+// N stops at 10^4 to keep the interpreted run quick, not because of the
+// sieve. Both idioms the marking loops lean on are linear everywhere now:
+// `a = a.append(v)` grows its buffer in place, and `a = a.with(i, v)` writes
+// into it when nothing else covers it (#7287) — the same rule the compiled
+// backends' refcount-1 branch follows. Compiled, N=10^4 is 3 ms.
 //
 // The app writes its report to stderr; stdout carries TAP-13 from
 // std/test, so the file is its own test suite.

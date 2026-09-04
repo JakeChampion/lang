@@ -761,6 +761,16 @@ answer, these are the tools, in the order they are usually reached for:
   mode (a reused block would overwrite its own poison), so the heap only
   grows; the release is still *counted*, so `FERN_LEAKCHECK` stays accurate
   with both on.
+- **`FERN_INTERP_ARRAY_COW=copy|verify`** — the ORACLE's own version of the
+  question, for `fern -interp` rather than a compiled binary. `arr.with(i, v)`
+  writes into the receiver's buffer when the interpreter's owner count says
+  nothing else covers it; an under-count there is silent corruption in the
+  thing every differential lane is graded against. `copy` disables the write
+  (any answer that moves between it and the default is a miscount), `verify`
+  takes the write but first scans every live scope for a value over the same
+  buffer and errors instead. `TestFeatureDifferentialInterpArrayCOW` runs the
+  whole differential corpus through all three.
+  `docs/INTERP-ARRAY-INPLACE-WRITE.md`.
 - **`__arr_push_shared_count()`** — the rc==1 cliff counter, for the other
   failure mode: a compile that is CORRECT but quadratic. `__fern_arr_push_grow`
   mutates in place only at rc == 1; one stray retain upstream makes every

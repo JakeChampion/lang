@@ -751,7 +751,7 @@ func TestBuiltinReadFileInvalidUtf8(t *testing.T) {
 	if !ok || res.VariantName != "Ok" {
 		t.Fatalf("bytes: got %#v, want Ok", v)
 	}
-	if arr, ok := res.Payloads[0].(Array); !ok || len(arr) != 2 {
+	if arr, ok := res.Payloads[0].(Array); !ok || len(arr.E) != 2 {
 		t.Fatalf("bytes payload = %#v, want 2-byte array", res.Payloads[0])
 	}
 }
