@@ -2713,6 +2713,21 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    ldr x2, [x10, #" + off + "]\n");  // new.field_k
             s = s.write("    cmp x1, x2\n");                   // == new? (cow)
             s = s.write("    beq .Lafr_" + san + "_skip" + ks + "\n");
+        } else if (op.uniq) {
+            // Carried nested struct / enum: released, because the base copy's
+            // inc left it at rc>=2 and the old box's claim dies here. Unless it
+            // is UNIQUE — then no inc was taken and the pointers coincide for
+            // another reason (#8198: the callee reused the field's box in place
+            // and handed it back), so this dec would free the new binding's box.
+            s = s.write("    ldr x2, [x10, #" + off + "]\n");  // new.field_k
+            s = s.write("    cmp x1, x2\n");
+            s = s.write("    bne .Lafr_" + san + "_ne" + ks + "\n");
+            s = s.write("    str x1, [sp, #-16]!\n");
+            s = s.write("    bl __fn___fern_rc_is_unique\n");
+            s = s.write("    add sp, sp, #16\n");
+            s = s.write("    cbnz x0, .Lafr_" + san + "_skip" + ks + "\n");
+            s = s.write("    ldr x1, [x11, #" + off + "]\n");  // reload (the call clobbers x1)
+            s = s.write(".Lafr_" + san + "_ne" + ks + ":\n");
         }
         s = s.write("    cbz x12, .Lafr_" + san + "_dec" + ks + "\n");  // snap == 0 (local)?
         s = s.write("    ldr x2, [x12, #" + off + "]\n");      // snap.field_k

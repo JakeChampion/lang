@@ -9407,15 +9407,19 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                     // when snap == 0: dec if snap == 0, else dec iff
                     // old.field_k != snap.field_k.
                     //
-                    // A carried nested-struct / nested-enum field skips the cow
-                    // test and always releases — the wasm sibling of the x86
-                    // carried_release arm (#6605). The base copy inc'd it for
-                    // the NEW box's drop, so the OLD box's reference must be
-                    // given back or the inner block is stranded. The snap guard
-                    // still stands.
+                    // A carried nested-struct / nested-enum field releases even
+                    // when the cow test matches — the wasm sibling of the x86
+                    // uniq arm (#6605). The base copy inc'd it for the NEW box's
+                    // drop, so the OLD box's reference must be given back or the
+                    // inner block is stranded. UNLESS the field is uniquely
+                    // owned: no inc was taken then, and the two pointers agree
+                    // for another reason (#8198 — the callee reused the field's
+                    // box in place and handed it back), so releasing frees a box
+                    // the new binding names. The snap guard still stands.
                     if (frk_nest) {
-                        o = o + "      (if (i32.eqz (local.get $snap)) (then " + dec + ")\n";
-                        o = o + "        (else (if (i32.ne " + oldf + " " + snapf + ") (then " + dec + "))))\n";
+                        o = o + "      (if (i32.or (i32.ne " + oldf + " " + newf + ") (i32.eqz (call $__fern_rc_is_unique " + oldf + "))) (then\n";
+                        o = o + "        (if (i32.eqz (local.get $snap)) (then " + dec + ")\n";
+                        o = o + "          (else (if (i32.ne " + oldf + " " + snapf + ") (then " + dec + "))))))\n";
                     } else {
                     o = o + "      (if (i32.ne " + oldf + " " + newf + ") (then\n";
                     o = o + "        (if (i32.eqz (local.get $snap)) (then " + dec + ")\n";
