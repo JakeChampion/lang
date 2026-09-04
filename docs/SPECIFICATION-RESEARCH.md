@@ -47,7 +47,7 @@ across `docs/` and `internal/`, and no (c).
 | Normative prose, per topic | `INTEGER-SEMANTICS.md` (portable, never-trapping, wrapping at width), `FLOAT-SEMANTICS.md` (IEEE core, explicitly under-specified edges), `ARRAY-BOUNDS.md`, `CLOSURE-CAPTURE.md`, `MODE-LATTICE.md`, `REUSE-CONTRACT.md`, `MUST-CONSUME.md`, `ITERATOR-FUSION-CONTRACT.md` | These are spec chapters in all but name — `INTEGER-SEMANTICS.md` even does the hard part, enumerating the *deliberate freedoms*. They are unindexed as such, not cross-referenced from tests, and their status tag is "policy doc". |
 | Reference implementation | `internal/interp` (4.4k lines), the oracle for every differential suite | Being frozen (see below). |
 | Grammar | None. `internal/parser/parser.go` is 5.9k lines of hand-written recursive descent; `site/…/reference/syntax.md` is 146 lines of examples | The largest single hole. There is no artefact anywhere that says what Fern's syntax *is*. |
-| Dynamic semantics | None written. `internal/ir` + the backends | The rc/ownership half — when things are freed, when reuse fires, what `own` promises — is unspecified, and it is precisely where the live bugs are (#6127). |
+| Dynamic semantics | None written. `internal/ir` + the backends | The rc/ownership half — when things are freed, when reuse fires, what `own` promises — is unspecified, and it is precisely where the live bugs are — pinned in `internal/e2e/testdata/conformance-leak-census.txt` (80 non-zero rows) and `internal/e2e/rc_leak_gate_test.go`, not in an issue. |
 
 Rough call: **Fern has perhaps 60% of a specification already, in pieces
 that were built for other reasons.** That changes the economics a lot.
