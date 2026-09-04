@@ -111,6 +111,12 @@ in flight — that is the honest report, and it beats a 45-minute stall before
 anyone can see the diff. This does not weaken the engineering bar; it says the PR
 is the place to wait, not your terminal.
 
+**One red lane cancels the rest.** `cancel-on-failure.yml` reaps every other
+run at that commit the moment a lane concludes `failure`, to hand the queue back
+— so a red PR shows one `failure` among a wall of `cancelled`, and a `cancelled`
+check is not a second bug to chase. Push the fix and the next round starts
+clean. Label the PR `ci-full` when you need every failure of one round at once.
+
 **Check mergeability on every wake-up, not just CI.** A PR can be green and
 unmergeable, and webhooks do not reliably announce the transition — main moves
 under you. Read `mergeable_state` alongside the checks and resolve a conflict the
