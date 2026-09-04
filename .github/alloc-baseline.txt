@@ -1,0 +1,35 @@
+# Allocation baselines for the self-host compiler compiling one real module,
+# checked against every run by scripts/ci-check-perf.
+#
+# FORMAT: metric  value  [tolerance%]. The metric key is
+# <arch>/<subject>.<allocs|frees> — heap events the compiler performed while
+# compiling examples/self_host/checker.fern against internal/stdlib, counted by
+# a FERN_LEAKCHECK-instrumented build (scripts/selfhost-alloc-bench).
+#
+# EXACT. These count events the program performed, not time it took, so they
+# repeat to the digit: 14520981 / 11486541 over four consecutive runs on one
+# checkout. The 1% default tolerance is therefore a significance threshold and
+# not a noise floor, the same as the instruction-count lanes.
+#
+# WHY THE GAP. allocs exceeds frees by the ~3.03M objects live when the process
+# exits — a compiler that runs once and exits does not tear its world down. The
+# two are baselined separately so a change that stops freeing shows up as one
+# row moving rather than being netted away.
+#
+# PEAK RSS IS DELIBERATELY ABSENT. scripts/selfhost-alloc-bench can also read
+# peak RSS out of a scratch cgroup, and that figure is not comparable across
+# hosts — transparent_hugepage alone spreads the same allocation 12x — so it
+# cannot be baselined against whatever runner CI hands you. The lane sets
+# FERN_ALLOC_PEAK_RSS=0; peak RSS stays a local instrument, worked through in
+# docs/SELFHOST-SYMBOL-INTERNING.md.
+#
+# x86_64 ONLY, like the append-cliff lane: the aarch64 lane does not build a
+# self-host compiler. Keys stay arch-namespaced anyway, so adding that arch
+# later does not renumber this one.
+#
+# ADVISORY, IN BOTH DIRECTIONS — see scripts/ci-check-perf. When a number moves
+# on purpose, update it in the same PR; the job summary prints the corrected
+# lines ready to paste. Keep the reason in the PR, not here.
+
+x86_64/checker.allocs	14520981
+x86_64/checker.frees	11486541

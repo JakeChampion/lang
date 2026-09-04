@@ -52,6 +52,7 @@ REPORT="${1:-/dev/stdout}"
 # scripts/cliff-bench and docs/LOCAL-DEV-LOOP.md both quote, so keep it unless
 # the baseline is regenerated in the same commit.
 SUBJECT="${FERN_ALLOC_SUBJECT:-examples/self_host/checker.fern}"
+NAME="$(basename "$SUBJECT" .fern)"
 
 case "$(uname -m)" in
   x86_64)          ARCH=x86_64;  TARGET=x86-64-linux ;;
@@ -59,10 +60,10 @@ case "$(uname -m)" in
   *) echo "selfhost-alloc-bench: unsupported host $(uname -m)" >&2; exit 2 ;;
 esac
 
-if [ ! -x bin/fern ]; then
-  echo "selfhost-alloc-bench: building bin/fern" >&2
-  go build -o bin/fern ./cmd/fern
-fi
+# Unconditionally, not `[ ! -x ]`: go build is incremental so this is close to
+# free when it is current, and building only when MISSING means a local run
+# measures whatever binary is lying around.
+go build -o bin/fern ./cmd/fern
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -100,8 +101,6 @@ if [ -z "$allocs" ] || [ -z "$frees" ]; then
   exit 1
 fi
 
-# Peak RSS, if this host delegates cgroups. The uninstrumented compiler is the
-# one measured: the leakcheck counters themselves cost memory.
 # Peak RSS, if this host delegates cgroups. Two things make the difference
 # between a steady number and a drifting one, both learned by watching it
 # drift: the cgroup is FRESH per run (a v1 memory cgroup charges page cache to
@@ -109,33 +108,39 @@ fi
 # emitted asm goes to /dev/null (8 MB of it is otherwise charged as cache).
 # The uninstrumented compiler is the one measured — the leakcheck counters cost
 # memory themselves. Deterministic to a megabyte across runs on one host.
+#
+# OFF IN CI (FERN_ALLOC_PEAK_RSS=0). The figure is not comparable across hosts —
+# transparent_hugepage alone spreads the same allocation 12x — so it cannot go
+# in a checked-in baseline, and an unbaselined row is a finding on every run.
+# Turning it off also drops a second full self-host build from the lane.
 peak=""
-cgbase=""
-for base in /sys/fs/cgroup/memory /sys/fs/cgroup; do
-  [ -d "$base" ] && [ -w "$base" ] && cgbase="$base" && break
-done
-if [ -n "$cgbase" ]; then
-  cg="$cgbase/fern-alloc-bench.$$"
-  if mkdir -p "$cg" 2>/dev/null; then
+if [ "${FERN_ALLOC_PEAK_RSS:-1}" != "0" ]; then
+  cgbase=""
+  for base in /sys/fs/cgroup/memory /sys/fs/cgroup; do
+    if [ -d "$base" ] && [ -w "$base" ]; then cgbase="$base"; break; fi
+  done
+  if [ -n "$cgbase" ] && mkdir -p "$cgbase/fern-alloc-bench.$$" 2>/dev/null; then
+    cg="$cgbase/fern-alloc-bench.$$"
     ./bin/fern -target "$TARGET" -o "$work/fern-selfhost" examples/self_host/fern.fern
     chmod +x "$work/fern-selfhost"
     bash -c 'echo $$ > "$1/cgroup.procs"; shift; exec "$@"' _ "$cg" \
       "$work/fern-selfhost" -target "$TARGET" -emit asm "$PWD/$SUBJECT" \
       "$PWD/internal/stdlib" -o /dev/null > /dev/null 2>&1 || true
     for f in memory.peak memory.max_usage_in_bytes; do
-      [ -f "$cg/$f" ] && peak="$(cat "$cg/$f" 2>/dev/null || true)" && break
+      if [ -f "$cg/$f" ]; then peak="$(cat "$cg/$f" 2>/dev/null || true)"; break; fi
     done
     rmdir "$cg" 2>/dev/null || true
+  fi
+  if [ -z "$peak" ] || [ "$peak" = "0" ]; then
+    echo "selfhost-alloc-bench: no delegated cgroup — peak RSS not reported" >&2
   fi
 fi
 
 {
   echo "# scripts/selfhost-alloc-bench report — arch $ARCH, subject $SUBJECT"
-  printf '%s/checker.allocs\t%s\n' "$ARCH" "$allocs"
-  printf '%s/checker.frees\t%s\n' "$ARCH" "$frees"
+  printf '%s/%s.allocs\t%s\n' "$ARCH" "$NAME" "$allocs"
+  printf '%s/%s.frees\t%s\n' "$ARCH" "$NAME" "$frees"
   if [ -n "$peak" ] && [ "$peak" != "0" ]; then
-    printf '%s/checker.peak_rss_bytes\t%s\n' "$ARCH" "$peak"
-  else
-    echo "selfhost-alloc-bench: no delegated cgroup — peak RSS not reported" >&2
+    printf '%s/%s.peak_rss_bytes\t%s\n' "$ARCH" "$NAME" "$peak"
   fi
 } > "$REPORT"
