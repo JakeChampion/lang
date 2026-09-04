@@ -278,6 +278,12 @@ to whoever faulted it in, so a reused one climbs) and emitting to `/dev/null`
 (8 MB of asm is otherwise charged as cache). With both it repeats to the
 megabyte. `docs/SELFHOST-SYMBOL-INTERNING.md` is the worked example.
 
+**The alloc counts are gated; peak RSS is not.** `perf.yml`'s `alloc` lane runs
+the script against `.github/alloc-baseline.txt` on every PR, but with
+`FERN_ALLOC_PEAK_RSS=0`: the RSS figure is not comparable across hosts, so it
+cannot be baselined against whatever runner CI hands you. Read it locally, on
+one machine, A/B.
+
 **It returns i64.** Bind it to an `i64` (`var b: i64 = __heap_bump_bytes();`);
 narrowing to an exit code needs an explicit `as i32`, which is what the existing
 corpus does. It used to be declared i32 while every runtime helper computed the

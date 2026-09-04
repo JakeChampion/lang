@@ -1,12 +1,14 @@
 name: Perf
 
-# Three gates, one comparator (scripts/ci-check-perf):
+# Four gates, one comparator (scripts/ci-check-perf):
 #
 #   bench   instruction counts over examples/bench, vs .github/perf-baseline.txt
 #   cliff   how much the self-host compiler copies crossing the rc==1 append
 #           cliff, vs .github/cliff-baseline.txt
 #   selfhost-size  what the self-host compiler EMITS, all three targets from
 #           one build, vs .github/perf-baseline-selfhost.txt
+#   alloc   how much the self-host compiler ALLOCATES compiling one real
+#           module, vs .github/alloc-baseline.txt
 #
 # WHY INSTRUCTION COUNTS AND NOT WALL TIME. A shared CI runner's wall time
 # varies by tens of percent between runs, so a threshold loose enough to avoid
@@ -20,9 +22,11 @@ name: Perf
 # while and the corpus is trusted. This mirrors the size gate (#6826), which
 # took the same route.
 #
-# Cost: `bench` is ~8 seconds of measurement on top of a Go build. `cliff` and
-# `selfhost-size` both build the self-hosted compiler first, so they run in
-# minutes — `selfhost-size` measures for ~30 seconds once it has a binary.
+# Cost: `bench` is ~8 seconds of measurement on top of a Go build. `cliff`,
+# `selfhost-size` and `alloc` all build the self-hosted compiler first, so they
+# run in minutes — `selfhost-size` measures for ~30 seconds once it has a
+# binary, and `alloc` runs end to end in ~40 s on a 4-core box, nearly all of it
+# that build.
 
 on:
   pull_request:
@@ -170,4 +174,44 @@ jobs:
         with:
           name: selfhost-size-report-x86_64
           path: ${{ runner.temp }}/selfhost-size-report.txt
+          if-no-files-found: warn
+
+  # How much the SELF-HOST COMPILER ALLOCATES compiling one real module.
+  #
+  # docs/IR-SELFCOMPILE-OOM-FINDINGS.md pins the self-compile's binding
+  # constraint on allocation PERFORMED, and it is a number the other three lanes
+  # cannot see: `cliff` counts only what the append cliff copies, so a quadratic
+  # `.with` or a per-occurrence substring moves neither of its metrics, and the
+  # two size lanes measure emitted text and never run a compile at all. The
+  # harness has existed since #4394 was measured and retired; nothing ran it
+  # outside a human typing the command, which is the shape that let the cliff
+  # workload go from 812 bytes to 21.4 GB over twelve green days (#6911).
+  #
+  # x86_64 only, like `cliff` — the aarch64 lane does not build a self-host
+  # compiler. FERN_ALLOC_PEAK_RSS=0 drops the script's optional peak-RSS row:
+  # it is not comparable across hosts, so it cannot be baselined here, and
+  # skipping it also drops a second full self-host build from the lane.
+  alloc:
+    name: selfhost-alloc-x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+
+      - name: Measure the self-host compiler's allocation
+        env:
+          FERN_ALLOC_PEAK_RSS: "0"
+        run: scripts/selfhost-alloc-bench "${{ runner.temp }}/alloc-report.txt"
+
+      - name: Compare against the baseline
+        env:
+          FERN_PERF_GATE_LABEL: self-host allocation
+        run: scripts/ci-check-perf .github/alloc-baseline.txt "${{ runner.temp }}/alloc-report.txt"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: alloc-report-x86_64
+          path: ${{ runner.temp }}/alloc-report.txt
           if-no-files-found: warn
