@@ -113,90 +113,129 @@ therefore: same source, compiled once by the base compiler and once by the new
 one, and the two results timed on the same input.
 
 `checker.fern` through each stage-2 compiler (x86-64, 4-core container,
-`-emit asm -o /dev/null`, three interleaved rounds under load):
+`-emit asm -o /dev/null`, three interleaved rounds under load). Both stage-2
+binaries are the SAME source — this branch's `fern.fern` — so the only thing
+that differs is the lowering that built them:
 
-| | round 1 | round 2 | round 3 |
-|---|---|---|---|
-| base lowering | 10.09 s | 12.00 s | 12.57 s |
-| in-place | 8.13 s | 8.41 s | 8.37 s |
+| | round 1 | round 2 | round 3 | peak RSS |
+|---|---|---|---|---|
+| base lowering | 7.56 s | 9.59 s | 11.00 s | 1.79 GB |
+| in-place | 6.08 s | 6.17 s | 6.29 s | 1.42 GB |
 
-Best-of-three is -19%; the base leg's drift is host contention, and the in-place
-leg holds ±0.3 s under the same load, which is itself the point — the clone's
-cost scales with the op list and the in-place grow does not.
+Best-of-three is -19.6%; the base leg's drift is host contention, and the
+in-place leg holds ±0.2 s under the same load, which is itself the point — the
+clone's cost scales with the op list and the in-place grow does not.
 
 Callgrind over the same pair, which is host-independent (`-g`, symbols resolved
 through `nm`, since valgrind does not read the self-host `.symtab`):
 
 | | Ir | share |
 |---|---|---|
-| `__fn___fern_arr_slice`, base | 6,892,945,196 | 19.60% |
-| `__fn___fern_arr_slice`, in-place | 1,246,317,533 | 4.30% |
-| whole run, base | 35,167,222,117 | |
-| whole run, in-place | 28,988,683,165 | **-17.6%** |
+| `__fn___fern_arr_slice`, base | 6,951,407,812 | 25.31% |
+| `__fn___fern_arr_slice`, in-place | 1,296,723,478 | 6.03% |
+| whole run, base | 27,461,947,734 | |
+| whole run, in-place | 21,516,652,579 | **-21.6%** |
 
-The residual 4.30% is `.with` and the field appends the analysis refuses, both
-of which still clone. `__fern_arr_push` falls 984 M -> 387 M Ir alongside it:
+The residual 6.03% is `.with` and the field appends the analysis refuses, both
+of which still clone. `__fern_arr_push` falls 998 M -> 698 M Ir alongside it:
 the clone form fed it a fresh cap == len buffer that ALWAYS reallocated, and the
 field's own buffer usually has room.
 
-The rc==1 append-cliff counters barely move (376,969 -> 377,739 crossings on the
-native-built compiler): neither form was crossing the SHARED cliff, because the
-clone was a fresh rc==1 buffer at len == cap and took the grow path. What the
-change removes is the slice and one allocation per append, plus the
-geometric-growth amortisation the clone form could never have. The 770-crossing
-rise IS the caller-side bracket doing its job.
+**The one workload that goes the other way.** Emitting the WHOLE compiler as a
+single unit in one process — `-emit asm examples/self_host/fern.fern` — is
+slower and larger, not faster and smaller:
 
-`St.emit` in the probe drops `__fern_arr_slice` + `__fern_arr_push_owned` for one
-`__fern_arr_push`.
+| | wall | peak RSS |
+|---|---|---|
+| base lowering | 142.1 s | 10.91 GB |
+| in-place | 155.3 s | 12.98 GB |
 
-## BLOCKED: a self-host-EMITTED compiler segfaults on the whole compiler
+An earlier note here read "peak RSS 11.2 GB -> 5.4 GB" on this workload. That
+was not a like-for-like pair: the 5.4 GB leg SEGFAULTED about 50 s in and never
+finished, so it is the peak of a partial run. Against a completed run the memory
+goes UP. The mechanism is the identity-arm retain: it leaves the field's buffer
+at rc >= 2, so the next append through it takes `__fern_arr_push`'s un-share
+copy, which allocates a fresh buffer and abandons the old one (`arr_push` never
+frees). The clone form's intermediate was reclaimed by `arr_push_owned`; this
+one is not. The batched `-per-module-emit-all` shape the fixpoint gate uses is
+unaffected (gen1 peaks 5.73 GB against a 16 GiB ceiling), and a single module is
+smaller either way, so what this costs is the one-process whole-compiler emit.
+Reclaiming it means retiring the identity retain, which needs the release paths
+that are not identity-guarded audited first — the reuse-analysis slice of goal 2
+again, not this change.
 
-**This is not shippable as it stands.** `TestSelfHostPerModuleEmitAllFixpoint{,Batch4}X86_64`
-is red: gen0 (native-built) emits all 55 units fine, gen1 (linked from gen0's
-own units — a self-host-EMITTED compiler) takes SIGSEGV on the first batch. The
-cheap reproduction needs no fixpoint harness:
+## Two containment holes a self-host-EMITTED compiler found
+
+`TestSelfHostPerModuleEmitAllFixpointX86_64` is the gate that had both: gen0
+(native-built) emits every unit fine; gen1, linked from gen0's own units and so
+a self-host-EMITTED compiler, did not. Neither shape is visible to any rc
+detector — every free involved happens at rc 1, so the `rc == 0` underflow trap
+never fires. A whole-compiler run under `FERN_SANITIZE`, with the quarantine
+implication lifted out of `rc_free_debug_on` so the memory behaviour stays
+normal and only the over-release report is armed, reaches the same crash with no
+`fern-sanitizer:` line. These are uncounted-alias frees, not underflows.
+
+### 1. The bracket released a PLACE, not the value it retained
+
+`emit_grow_field_bracket` emitted both sides from one plan: load the slot, walk
+the field hops, call the helper. The release side is therefore a SECOND
+evaluation of a place, and a place is not stable across the call it brackets.
+
+The window is real and reachable. `var s2 = lower_block(iff.then_body, s1)` with
+an EMPTY then-body hands `s1`'s own box straight back at rc 1;
+`release_last_use_source`'s pass-through arm then decs it, freeing a box `s2`
+still names (that is #8240, pre-existing and identical on main — harmless there
+because the next `emit` allocates its result box, gets the block straight back,
+and writes field values it had already read onto the operand stack). With the
+bracket in play it stops being harmless: `emit`'s `arr_push` grows at rc 2 into a
+fresh buffer, `emit`'s struct literal is handed s2's own freed block, and the
+post-call re-read of `s2.ops` therefore yields the buffer the callee just grew.
+The dec lands on it at rc 1 and frees it. `__fern_arr_dec`'s free path writes the
+freelist link over the block's **cap** word, so the buffer the state still holds
+now reads cap 0 with len 114 — and the next append takes `.Larr_push_grow`,
+picks the `$4` floor, and copies 114 elements into a four-element buffer, through
+whatever came next in the arena.
+
+The fix is `emit_grow_field_bracket_inc` / `_dec`: the retain side captures each
+resolved buffer pointer in a scratch local and the release side loads it. Same
+discipline `emit_arr_share` already has for a bare array argument, where the
+value lives in a slot rather than being re-read.
+
+### 2. The dying exemption covered a local that names someone else's container
+
+With the bracket fixed, gen1 reached batch `[40:48]` and aborted 134 — an array
+bounds `exit(134)`, in `sig_reg_argref`, on a registry whose co-indexed arrays
+were one apart:
 
 ```
-./bin/fern-selfhost -g -target x86-64-linux -o /tmp/s2 examples/self_host/fern.fern $PWD/internal/stdlib
-/tmp/s2 -target x86-64-linux -emit asm examples/self_host/fern.fern $PWD/internal/stdlib -o /dev/null
+rows len=1341    next len=1342
 ```
 
-~90 s to build, ~50 s to the crash. The base compiler's stage 2 completes the
-same input.
+`sig_reg_append` appends to two fields of its parameter, which the analysis
+admits on the callee's own terms. Its caller is
 
-The crash surfaces in `irlower__LowerState__slot_of`, reading a `locals` entry
-whose `slot_name` is `0xffffffffffffffff` — a freed / never-written box, not the
-poison `quarantine_rc` writes. So a buffer or a box is released while the
-LowerState that was just built still holds it.
+```fern
+var struct_ret_fns_aug: SigReg = sg.struct_ret_fns;
+struct_ret_fns_aug = sig_reg_append(struct_ret_fns_aug, …);
+```
 
-What the bisection established, each a full stage-1 + stage-2 rebuild:
+The rebind is the dying self-reassign shape, so `grow_exempt_names_of_stmt`
+exempted it and no bracket was emitted — but the local was bound from a FIELD of
+the module-wide `FnSigs`, which stays live for the whole module emit. The
+exemption's premise is that `x = f(x)` kills x's binding; it does not establish
+that x is the only route to the buffers inside it. `next` had spare capacity and
+grew in place while `rows` was at `len == cap` and reallocated, so the registry
+kept the old `rows` and the grown `next`.
 
-| variant | outcome |
-|---|---|
-| callee half only, no caller-side bracket | whole-compiler emit OK (this is `fsh-8224-new-g`) |
-| both halves, no retain on the in-place result | SIGSEGV, peak 5.4 GB (base: OK, peak 11.2 GB) |
-| retain gated on result == source | SIGSEGV, same shape |
-| TWO retains on that same arm | SIGSEGV, same RSS — so the identity arm is not the one that crashes |
-| retain UNCONDITIONALLY, both arms | no SIGSEGV; OOM-killed instead (137), because every buffer then sits at rc >= 2 and every append copies |
-| admission restricted to SCALAR-element fields | SIGSEGV — so it is not the shared ELEMENT pointers a grow copies |
-
-Read together: the crashing path is the one where `__fern_arr_push` GREW
-(result != source, a fresh rc 1 buffer), and only a retain that also covers that
-arm suppresses it. That is the signature of a second release on a buffer with
-one owner — the enclosing struct literal's field override releasing the
-superseded field value on the assumption the new value is disjoint from it,
-which the clone form guaranteed and this form does not. Confirming that wants
-`-rc-plan` / `FERN_LEAKCHECK` on the crashing unit, which is where this stops.
-
-Note what did NOT catch it. Every targeted gate is green: the differential suite
-on all three backends, all 335 fixtures on all three self-host targets,
-`make check-sources`, the lint ratchet, the feature census, the rc corpus leak
-gates, and stage 1 compiling every self-host module individually. Only
-`fern.fern` — the whole compiler in one unit — fails, and only when the
-compiler doing the work was itself emitted by this lowering. The per-module
-emit-all fixpoint is the gate that has it, which is the one place
-docs/TEST-GATES.md says a fixpoint still carries signal: not "the compiler
-reproduces itself" but "a self-host-built compiler runs at all".
+The chain is `sg.struct_ret_fns.rows` — two levels, which the one-level
+`F:<field>` mask can neither express nor propagate. "Chains deeper than one field
+are refused outright" was being enforced on the callee side and not on the
+caller's. `grow_alias_names_of` closes it: the locals that name a container this
+frame does not own — bound anywhere in the body from a field / index / slice
+read, from a `for` element, or from a name already in the set — lose the
+exemption, so their calls take the bracket and the callee's grow copies. The hot
+threading names are bound from CALL results and from parameters, neither of
+which is an alias, so the win is untouched.
 
 ## The traps this sets
 
@@ -209,7 +248,18 @@ which is self-referential.
 **An answer cannot separate in-place from clone.** The clone form computes the
 same result, just quadratically, so the shape test
 (`TestSelfHostFieldAppendInPlaceShapeX86_64`) reads the decision off the emitted
-asm. Without it a regression that quietly refuses every site is green.
+asm. Without it a regression that quietly refuses every site is green. The same
+holds for the bracket's pairing: `TestSelfHostGrowFieldBracketReleasesRetainedX86_64`
+reads it off the asm, because a re-read only diverges from the capture once the
+freelist happens to line up.
+
+**Only a self-host-EMITTED compiler on the WHOLE compiler had either hole.**
+Both were green on the differential suite, all three self-host targets'
+fixtures, `make check-sources`, the lint ratchet, the feature census, and every
+rc corpus leak gate. The per-module emit-all fixpoint is what has them — not as
+"the compiler reproduces itself" but as "a self-host-built compiler runs at
+all". Reach for it on anything that changes what a callee may do to a caller's
+buffer.
 
 ## Not done
 
@@ -225,3 +275,14 @@ asm. Without it a regression that quietly refuses every site is green.
   native treats `o.m()` as the field place `(o, [m])` and excuses it when `m` is
   not the appended field. The conservative reading costs coverage, never
   soundness.
+- `grow_alias_names_of` does not cover a MATCH-ARM payload binding, which is a
+  view into a scrutinee that outlives the arm exactly as a `for` element is. It
+  would take reading the binding names out of `ast.Pattern`; the shape needed to
+  bite is `x = f(x)` on an arm binding whose struct fields a callee grows, which
+  nothing in this tree does.
+- The identity-arm retain leaves the field's buffer at rc >= 2, so the append
+  after an in-place grow takes the un-share copy and abandons a buffer nothing
+  reclaims. That is what the one-process whole-compiler emit's +2 GB is. Retiring
+  the retain needs the release paths that are NOT identity-guarded audited first
+  — `__field_reclaim_<T>` skips a field whose value is unchanged, but it is not
+  the only route a superseded box takes.
