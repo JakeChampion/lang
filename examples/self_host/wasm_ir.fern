@@ -3706,14 +3706,12 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irlower.StructTab, funcs: pars
                     && irlower.decl_is_enum(structs, dbn)
                     && !(irlower.decl_is_struct(structs, dbn) || dprim)) {
                 var denvn: i32 = 0;
-                var dvi: i32 = 0;
-                while (dvi < structs.decls.len()) {
-                    if (structs.decls[dvi].enum_owner == dbn) {
-                        parts = parts.append("    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(dvi) + "\n    i32.eq\n");
-                        if (denvn > 0) { parts = parts.append("    i32.or\n"); }
-                        denvn = denvn + 1;
-                    }
-                    dvi = dvi + 1;
+                var dvi: i32 = irlower.stab_enum_first(structs, dbn);
+                while (dvi >= 0) {
+                    parts = parts.append("    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(dvi) + "\n    i32.eq\n");
+                    if (denvn > 0) { parts = parts.append("    i32.or\n"); }
+                    denvn = denvn + 1;
+                    dvi = irlower.stab_enum_next(structs, dvi, dbn);
                 }
                 parts = parts.append("    if (result " + drt + ")\n");
                 var dek: i32 = 0;
@@ -9194,21 +9192,19 @@ pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: irlower.Stru
     o = o + "        (br_if $eaed_done (i32.ge_u (local.get $i) (local.get $n)))\n";
     o = o + "        (local.set $e (i32.load (i32.add (i32.add (local.get $buf) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
     o = o + "        (if (call $__fern_rc_is_unique (local.get $e)) (then\n";
-    var vi: i32 = 0;
-    while (vi < structs.decls.len()) {
-        if (structs.decls[vi].enum_owner == e) {
-            var offs: i32[] = irlower.enum_walk_payload_offsets(structs, structs.decls[vi].name);
-            if (offs.len() > 0) {
-                o = o + "          (if (i32.eq (i32.load (local.get $e)) (global.get " + tid_global(structs.decls[vi].name) + ")) (then\n";
-                var oi: i32 = 0;
-                while (oi < offs.len()) {
-                    o = o + "            (drop (call $__fern_arr_dec (i32.load offset=" + util.i32_to_string(offs[oi]) + " (local.get $e))))\n";
-                    oi = oi + 1;
-                }
-                o = o + "          ))\n";
+    var vi: i32 = irlower.stab_enum_first(structs, e);
+    while (vi >= 0) {
+        var offs: i32[] = irlower.enum_walk_payload_offsets(structs, structs.decls[vi].name);
+        if (offs.len() > 0) {
+            o = o + "          (if (i32.eq (i32.load (local.get $e)) (global.get " + tid_global(structs.decls[vi].name) + ")) (then\n";
+            var oi: i32 = 0;
+            while (oi < offs.len()) {
+                o = o + "            (drop (call $__fern_arr_dec (i32.load offset=" + util.i32_to_string(offs[oi]) + " (local.get $e))))\n";
+                oi = oi + 1;
             }
+            o = o + "          ))\n";
         }
-        vi = vi + 1;
+        vi = irlower.stab_enum_next(structs, vi, e);
     }
     o = o + "        ))\n";
     o = o + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
