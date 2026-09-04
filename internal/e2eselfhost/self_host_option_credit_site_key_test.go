@@ -37,9 +37,19 @@ import (
 // differ only in the exit code. Every row is therefore asserted on
 // `__rc_underflow_count()` AND on exact counts; neither alone is sufficient.
 //
-// No credit is widened. The six `credited_*` rows pin that every class still
-// fires where there is no collision — the silent half of a key migration, where
-// a site key that resolves to nothing denies the credit and no exit code moves.
+// The six `credited_*` rows pin that every class still fires where there is no
+// collision — the silent half of a key migration, where a site key that
+// resolves to nothing denies the credit and no exit code moves.
+//
+// One credit HAS since been widened: #7414 readmitted `for o in xs` to the
+// OPTAARR credit on a confinement proof, so the two `binder_forin_*` rows went
+// from 300 frees to 700 and now balance at live_bytes 0. That is the leak
+// closing, not the collision this file hunts, and three things say so
+// independently: OPTAARR is in the group above where a release of a
+// still-owned source surfaces as exit 99, and both rows still exit 25; the
+// silent fault's signature is the COLLIDING row freeing more than its rename
+// control, and here the two moved together to the same number; and `allocs` is
+// unchanged, so the probe still measures the shape it was written for.
 //
 // Every want was confirmed against BOTH oracles — bin/fern -interp and the
 // native x86-64 backend agreed on each — never read off the self-host run.
@@ -362,11 +372,12 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 25, allocs: 700, frees: 300,
+			want: 25, allocs: 700, frees: 700,
 		},
 		{
-			// Its pairwise control — the element binder named `e`. Unchanged by
-			// this change, and the number the colliding row converges to.
+			// Its pairwise control — the element binder named `e`. It and the
+			// colliding row move together, which is the property this pair
+			// exists to assert.
 			name: "binder_forin_renamed",
 			src: `function round(i: i32): i32 {
     var keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
@@ -376,7 +387,7 @@ function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t +
     return t + keep.len();
 }
 function main(): i32 { var t: i32 = 0; var i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 25, allocs: 700, frees: 300,
+			want: 25, allocs: 700, frees: 700,
 		}}
 }
 
