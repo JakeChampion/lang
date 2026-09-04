@@ -6494,6 +6494,47 @@ function main(): i32 { var t: Tree[i32, i32] = Node(Nil, 1, 2, Leaf); return 0; 
 	})
 }
 
+// The other direction of the same rule, and for a STRUCT: an argless
+// binding an earlier argument left open is upgraded by a later one that
+// pins it (#8004).
+//
+// `map_new`'s registered result is a bare `Map` on purpose — the
+// "resolve me from context" form. The generic argument loop is a single
+// left-to-right pass, so argument 1 bound T := argless `Map` and
+// argument 2's `(Map[string, i32]) => Map[string, i32]` was then
+// compared against it and rejected. Annotating a local first worked,
+// which is what made it look like an inference gap rather than an
+// ordering one.
+func TestArglessBindingIsUpgradedByALaterArgument(t *testing.T) {
+	const src = `import "core/map";
+function apply[T](x: T, f: (T) => T): T { return f(x); }
+function bump(m: Map[string, i32]): Map[string, i32] { return m; }
+function main(): i32 {
+    var r: Map[string, i32] = apply(map_new(8), bump);
+    return 0;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("argument 2 pins what argument 1 left argless:\n%v", err)
+	}
+
+	// Two genuinely different instantiations still conflict — the
+	// relaxation is about argless-vs-instantiated, not about any two
+	// spellings of the same name.
+	t.Run("mismatched instantiations still rejected", func(t *testing.T) {
+		err := checkSource(t, `import "core/map";
+function apply[T](x: T, f: (T) => T): T { return f(x); }
+function bump(m: Map[string, i32]): Map[string, i32] { return m; }
+function main(): i32 {
+    var a: Map[i32, i32] = map_new(8);
+    var r: Map[string, i32] = apply(a, bump);
+    return 0;
+}`)
+		if err == nil || !strings.Contains(err.Error(), "expected (T) => T") {
+			t.Fatalf("Map[i32, i32] and Map[string, i32] must still conflict, got %v", err)
+		}
+	})
+}
+
 // A cast around a generic call whose type parameter an ARGUMENT already
 // pins must not retarget the instantiation: `get_or(b, 0, 7i32) as i64`
 // with `b: Box[i32]` is a conversion of an i32 result, not a request for
