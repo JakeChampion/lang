@@ -3278,7 +3278,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 	if b.fn.Body == nil {
 		return moved
 	}
-	order := identOrderOf(b.fn.Body)
+	order := b.curIdentOrder()
 	sawReturn := false
 	for _, st := range b.fn.Body.Stmts {
 		if !sawReturn {
@@ -3664,7 +3664,7 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	if b.fn.Body == nil {
 		return incs
 	}
-	order := identOrderOf(b.fn.Body)
+	order := b.curIdentOrder()
 	// reassign-to-self: `A = A.with(...)` — the receiver's old value is
 	// overwritten by the result, so reuse is sound (no inc).
 	reassignSelf := map[*ast.Call]bool{}
@@ -5225,7 +5225,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 	if hasDefer {
 		return matches, bindings
 	}
-	order := identOrderOf(b.fn.Body)
+	order := b.curIdentOrder()
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		m, ok := n.(*ast.Match)
 		if !ok || inLoop[m] {
@@ -6901,7 +6901,7 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 	if b.fn.Body == nil {
 		return out
 	}
-	deaths := callArgDeaths(b.fn)
+	deaths := b.curCallArgDies()
 	esc := deferOrLambdaNames(b.fn.Body)
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.Call)

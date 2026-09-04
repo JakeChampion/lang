@@ -5170,10 +5170,17 @@ type builder struct {
 	appendOrderFn   *ast.FuncDecl
 	appendInPlaceOK map[*ast.Call]bool
 	appendFieldCopy map[*ast.Call]bool
-	// callArgDies (rebuilt in the same refresh) marks the ident args that
-	// die at each call via the strict self-reassign shape — see
-	// callArgDeaths. Read by the #4873 caller-side grow bracket.
-	callArgDies map[*ast.Call]map[string]bool
+	// identOrder is the same order under its own key, for the analyses that
+	// want only it. Separate from appendOrderFn so asking for the order does
+	// not also build inPlacePushes and fieldPlaceAppendCopies, which are far
+	// more expensive and which those analyses never read (#8175).
+	identOrderCache identOrder
+	identOrderFn    *ast.FuncDecl
+	// callArgDies marks the ident args that die at each call via the strict
+	// self-reassign shape — see callArgDeaths. Read by the #4873 caller-side
+	// grow bracket. Keyed on its own fn for the same reason.
+	callArgDies   map[*ast.Call]map[string]bool
+	callArgDiesFn *ast.FuncDecl
 	// growParams[name][i] is the growParamKind bitmask for parameter i of
 	// function `name` — the positions whose argument buffer(s) the callee
 	// may mutate in place through the rc==1 fast paths (computeGrowParams,
@@ -20276,13 +20283,36 @@ func isCellStringGetExpr(e ast.Expr) bool {
 // (#4827) without paying an O(body) rebuild at every push site.
 func (b *builder) curAppendOrder() identOrder {
 	if b.appendOrderFn != b.fn {
-		b.appendOrder = identOrderOf(b.fn.Body)
+		b.appendOrder = b.curIdentOrder()
 		b.appendInPlaceOK = inPlacePushes(b.fn.Body)
 		b.appendFieldCopy = fieldPlaceAppendCopies(b.fn.Body, b.callArgNoEscape)
-		b.callArgDies = callArgDeaths(b.fn)
 		b.appendOrderFn = b.fn
 	}
+	_ = b.curCallArgDies() // emitArrayPush's callers read b.callArgDies directly
 	return b.appendOrder
+}
+
+// curIdentOrder is identOrderOf for the function being lowered, built once.
+// Four analyses want it — computeMovedLocals, computeArraySetIncs,
+// computeConsumingOwnedMatches and the append order — and each was walking the
+// whole body for its own copy (#8175).
+func (b *builder) curIdentOrder() identOrder {
+	if b.identOrderFn != b.fn {
+		b.identOrderCache = identOrderOf(b.fn.Body)
+		b.identOrderFn = b.fn
+	}
+	return b.identOrderCache
+}
+
+// curCallArgDies is callArgDeaths for the function being lowered, built once —
+// computeOwnedArgMoves and the append refresh both want it, and it is a whole
+// body walk each time (#8175).
+func (b *builder) curCallArgDies() map[*ast.Call]map[string]bool {
+	if b.callArgDiesFn != b.fn {
+		b.callArgDies = callArgDeaths(b.fn)
+		b.callArgDiesFn = b.fn
+	}
+	return b.callArgDies
 }
 
 // AppendSite records the in-place-vs-copy decision emitArrayPush made at
