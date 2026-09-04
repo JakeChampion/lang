@@ -246,7 +246,7 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		{"bind-annotated-var-then-return", "function f(): string { var x: string = 5; return x; }\nfunction main(): i32 { return 0; }\n", "E003", false},
 		{"bind-annotated-var-then-assign", "function main(): i32 { var x: string = 5; x = 7; return 0; }\n", "E003,E003", false},
 		{"bind-annotated-var-then-call", "function g(a: string): i32 { return a.len(); }\nfunction main(): i32 { var x: string = 5; return g(x); }\n", "E003", false},
-		// A destructuring `var` binds through bind_destructure_names, one name
+		// A destructuring `let` binds through bind_destructure_names, one name
 		// per pattern element. Miss it and `a` is unresolved, so the E002 that
 		// says it is an i32 becomes an E001 that says it is nothing.
 		{"bind-destructured-name-then-return", "function f(): string { let (a, b) = (1, \"x\"); return a; }\nfunction main(): i32 { return 0; }\n", "E002", false},
