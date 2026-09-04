@@ -58,6 +58,17 @@ func TestSelfHostCfiMatchesNativeX86_64(t *testing.T) {
 				"__fn_b:\n.cfi_startproc\nsubq $8, %rsp\n.cfi_def_cfa_offset 16\naddq $8, %rsp\n.cfi_def_cfa_offset 8\nret\n.cfi_endproc\n",
 			".intel_syntax noprefix\n.text\n__fn_a:\n.cfi_startproc\npush rbp\n.cfi_def_cfa_offset 16\n.cfi_offset rbp, -16\nmov rbp, rsp\n.cfi_def_cfa_register rbp\n" + strings.Repeat("nop\n", 80) + "pop rbp\n.cfi_def_cfa rsp, 8\nret\n.cfi_endproc\n" +
 				"__fn_b:\n.cfi_startproc\nsub rsp, 8\n.cfi_def_cfa_offset 16\nadd rsp, 8\n.cfi_def_cfa_offset 8\nret\n.cfi_endproc\n"},
+		// A middle function that carries no rule at all. Its FDE is still
+		// rendered, with an empty rule range between its neighbours' — the
+		// boundary a per-FDE rule index gets wrong by pulling the next
+		// function's rules into it.
+		{"three_procs_middle_bare",
+			".text\n__fn_a:\n.cfi_startproc\npushq %rbp\n.cfi_def_cfa_offset 16\n.cfi_offset %rbp, -16\npopq %rbp\n.cfi_def_cfa_offset 8\nret\n.cfi_endproc\n" +
+				"__fn_b:\n.cfi_startproc\nret\n.cfi_endproc\n" +
+				"__fn_c:\n.cfi_startproc\nsubq $8, %rsp\n.cfi_def_cfa_offset 16\naddq $8, %rsp\n.cfi_def_cfa_offset 8\nret\n.cfi_endproc\n",
+			".intel_syntax noprefix\n.text\n__fn_a:\n.cfi_startproc\npush rbp\n.cfi_def_cfa_offset 16\n.cfi_offset rbp, -16\npop rbp\n.cfi_def_cfa_offset 8\nret\n.cfi_endproc\n" +
+				"__fn_b:\n.cfi_startproc\nret\n.cfi_endproc\n" +
+				"__fn_c:\n.cfi_startproc\nsub rsp, 8\n.cfi_def_cfa_offset 16\nadd rsp, 8\n.cfi_def_cfa_offset 8\nret\n.cfi_endproc\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -114,6 +125,12 @@ func TestSelfHostCfiMatchesNativeArm64(t *testing.T) {
 		{"two_procs_pool",
 			".text\n__fn_a:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x29, -16\n.cfi_offset x30, -8\nmov x29, sp\n.cfi_def_cfa_register x29\nldr x0, =0x123456789\n" + strings.Repeat("nop\n", 70) + "ldp x29, x30, [sp], #16\n.cfi_def_cfa sp, 0\nret\n.cfi_endproc\n.ltorg\n" +
 				"__fn_b:\n.cfi_startproc\nsub sp, sp, #32\n.cfi_def_cfa_offset 32\nadd sp, sp, #32\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n"},
+		// As above: a middle function with no rule, so its FDE's rule range
+		// is empty and sits between two non-empty ones.
+		{"three_procs_middle_bare",
+			".text\n__fn_a:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x29, -16\nldp x29, x30, [sp], #16\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n" +
+				"__fn_b:\n.cfi_startproc\nret\n.cfi_endproc\n" +
+				"__fn_c:\n.cfi_startproc\nsub sp, sp, #32\n.cfi_def_cfa_offset 32\nadd sp, sp, #32\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
