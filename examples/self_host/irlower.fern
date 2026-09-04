@@ -18704,8 +18704,36 @@ pub function lower_stmt(st: ast.Stmt, s: LowerState): LowerState {
     return r.note_fail(stmt_bail_tag(st));
 }
 
+// grow_return_local_filter withdraws a RETURN-position death from a name this
+// frame OWNS. `return f(a, v)` kills a's binding, but not this frame's claim on
+// the buffers inside it: the exit sweep still releases a's rc FIELDS, and it runs
+// after the call. So a callee that grew one of those fields in place hands the
+// result a buffer the sweep then frees — the value semantics hold right up to the
+// moment the freed block is handed out again (#8254). A PARAMETER keeps the
+// exemption: the sweep's struct loop starts at n_params, so no frame here
+// releases a parameter's fields. This is grow_alias_filter's rule read from the
+// other side — there the frame does not own the container, here it owns it too
+// well.
+function grow_return_local_filter(names: string[], st: ast.Stmt, s: LowerState): string[] {
+    if (names.len() == 0) { return names; }
+    var is_ret: boolean = false;
+    match (st) {
+        ast.StmtReturn(_) => { is_ret = true; },
+        _ => {}
+    }
+    if (!is_ret) { return names; }
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        var sl: i32 = s.slot_of(names[i]);
+        if (sl >= 0 && sl < s.n_params) { out = out.append(names[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
 function lower_stmt_grow_exempt(st: ast.Stmt, s: LowerState): LowerState {
-    var gex: string[] = grow_alias_filter(grow_exempt_names_of_stmt(st), s.grow_alias);
+    var gex: string[] = grow_return_local_filter(grow_alias_filter(grow_exempt_names_of_stmt(st), s.grow_alias), st, s);
     // #6048: fold in the per-function sole-occurrence deaths. Safe to add to every
     // statement — the name occurs exactly once in the whole body, so only the
     // statement holding that occurrence has a call bracket that can read it.
@@ -24823,47 +24851,32 @@ function field_append_inplace_at(c: ast.ExprCall, recv: ast.Expr, s: LowerState)
 // arr_push never frees its receiver, so the reallocating path leaves the
 // pre-grow buffer valid for the container that still names it.
 //
-// The IN-PLACE result is the SOURCE container's own buffer, so the literal this
-// value feeds becomes a second owner of it and owes the counted retain a
-// container field always owes. Without it the enclosing `s = s.add_local(n)`
-// releases the old box, whose deep field drop frees the buffer the new box is
-// holding — a self-host-emitted compiler then reads a null `locals` out of the
-// LowerState it just built. Guarded on IDENTITY: a grow, and a shared-receiver
-// copy, hand back a fresh rc 1 buffer that already is the one reference. This is
-// the shape lower_call_append uses for an in-place push on a borrowed param.
+// The result is UNCOUNTED where it is the source container's own buffer: the
+// value and the container's field then name one buffer at rc 1. Every release
+// that can reach that field is identity-guarded, box-only, withheld or
+// bracketed — docs/rc-log/2026-09-04-identity-arm-retain-retired.md walks one
+// row per route. A retain here would be decremented by none of them, since
+// __field_reclaim_<T>'s array arm cow-SKIPS a field pointer-equal in old and
+// new: the buffer would sit at rc >= 2 for the rest of its life, the next append
+// through the field would take __fern_arr_push's un-share copy, and the buffer
+// it abandoned would never be reclaimed (#8254).
 pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, s: LowerState): LowerState {
     var kind: string = arr_elem_kind(obj, s);
-    var srcname: string = "$fiab" + util.i32_to_string(s.locals.len());
-    var st: LowerState = s.add_local(srcname);
-    var srcslot: i32 = st.slot_of(srcname);
-    st = lower_expr(obj, st);
+    var st: LowerState = lower_expr(obj, s);
     if (!st.ok) { return st; }
-    st = st.emit(ir.op_store_local(srcslot));
-    st = st.emit(ir.op_load_local(srcslot));
     if (kind == "i64") {
         st = lower_i64(val, st);
         if (!st.ok) { return st; }
-        st = st.emit(ir.op_arr_push_i64());
-    } else if (kind == "f64") {
+        return st.emit(ir.op_arr_push_i64());
+    }
+    if (kind == "f64") {
         st = lower_expr(val, st);
         if (!st.ok) { return st; }
-        st = st.emit(ir.op_arr_push_f64());
-    } else {
-        st = lower_append_elem_value(val, st);
-        if (!st.ok) { return st; }
-        st = st.emit(ir.op_arr_push());
+        return st.emit(ir.op_arr_push_f64());
     }
-    var resname: string = "$fiar" + util.i32_to_string(st.locals.len());
-    st = st.add_local(resname);
-    var resslot: i32 = st.slot_of(resname);
-    st = st.emit(ir.op_store_local(resslot));
-    st = st.emit(ir.op_load_local(resslot));
-    st = st.emit(ir.op_load_local(srcslot));
-    st = st.emit(ir.op_bin("eq", 0, false));
-    st = st.emit(ir.op_if(0));
-    st = st.retain(resslot, "field-append-inplace-share");
-    st = st.emit(ir.op_end());
-    return st.emit(ir.op_load_local(resslot));
+    st = lower_append_elem_value(val, st);
+    if (!st.ok) { return st; }
+    return st.emit(ir.op_arr_push());
 }
 
 // lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING

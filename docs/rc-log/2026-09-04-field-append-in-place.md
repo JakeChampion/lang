@@ -162,7 +162,10 @@ unaffected (gen1 peaks 5.73 GB against a 16 GiB ceiling), and a single module is
 smaller either way, so what this costs is the one-process whole-compiler emit.
 Reclaiming it means retiring the identity retain, which needs the release paths
 that are not identity-guarded audited first — the reuse-analysis slice of goal 2
-again, not this change.
+again, not this change. **That audit is `2026-09-04-identity-arm-retain-retired.md`
+and the retain is gone**: nothing ever decremented it, and with the one release
+the audit found unguarded now bracketed, this workload runs 94.8 s / 8.32 GB
+(#8254).
 
 ## Two containment holes a self-host-EMITTED compiler found
 
@@ -280,9 +283,5 @@ buffer.
   would take reading the binding names out of `ast.Pattern`; the shape needed to
   bite is `x = f(x)` on an arm binding whose struct fields a callee grows, which
   nothing in this tree does.
-- The identity-arm retain leaves the field's buffer at rc >= 2, so the append
-  after an in-place grow takes the un-share copy and abandons a buffer nothing
-  reclaims. That is what the one-process whole-compiler emit's +2 GB is. Retiring
-  the retain needs the release paths that are NOT identity-guarded audited first
-  — `__field_reclaim_<T>` skips a field whose value is unchanged, but it is not
-  the only route a superseded box takes.
+- The identity-arm retain is retired, with the release-path audit it was waiting
+  on: `2026-09-04-identity-arm-retain-retired.md`.

@@ -229,6 +229,80 @@ function main(): i32 {
     var b: St = St { ops: a.ops.append(9), n: a.n };
     return keep.ops.len() * 10 + b.ops.len() + a.ops.len();
 }`},
+	// The RETURN-position death (#8254). `return f(a, v)` kills a's BINDING, so
+	// the caller-side grow bracket is withdrawn — but not this frame's claim on
+	// the buffers inside a: the exit sweep still deep-drops a's rc fields, and it
+	// runs after the call. With no bracket the callee grows a.ops in place and
+	// hands the result the very buffer that sweep frees. It stays invisible until
+	// the freed block is handed out again, which is what the appends after the
+	// call do here. `f` takes no spread, so its parameter reads as a pure borrow
+	// and stays borrowable — which is exactly what keeps a credited and its drop
+	// deep.
+	{"return-position-death-frees-the-grown-buffer", `
+struct St { ops: i32[], n: i32 }
+function f(s: St, v: i32): St { return St { ops: s.ops.append(v), n: 1 }; }
+function mk(n: i32): St {
+    var a: St = St { ops: [], n: 0 };
+    var i: i32 = 0;
+    while (i < n) { a = St { ops: a.ops.append(i + 1), n: 0 }; i = i + 1; }
+    return f(a, 999);
+}
+function main(): i32 {
+    var r: St = mk(9);
+    var junk: i32[] = [];
+    var k: i32 = 0;
+    while (k < 20) { junk = junk.append(0 - 5); k = k + 1; }
+    var t: i32 = 0;
+    for v in r.ops { t = t + v; }
+    return (t + junk.len()) % 251;
+}`},
+	// The same death with the container threaded through a spread literal, which
+	// keeps the whole shape reachable from the hot form.
+	{"return-position-death", `
+struct St { ops: i32[], ctrl: i32 }
+function bump(s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
+function make(n: i32): St {
+    var a: St = St { ops: [], ctrl: 0 };
+    var i: i32 = 0;
+    while (i < n) { a = bump(a, i); i = i + 1; }
+    return bump(a, 99);
+}
+function main(): i32 {
+    var r: St = make(6);
+    var t: i32 = 0;
+    for v in r.ops { t = t + v; }
+    return r.ops.len() * 10 + (t % 97) + r.ctrl;
+}`},
+	// An `own` container root: the callee, not the caller, holds the box. The
+	// exit sweep starts at the first NON-parameter slot, so no frame releases the
+	// fields of a parameter — which is what lets the grown buffer travel out of
+	// the callee uncounted (#8254).
+	{"own-param-container", `
+struct St { ops: i32[], ctrl: i32 }
+function bump(own s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
+function main(): i32 {
+    var a: St = St { ops: [], ctrl: 0 };
+    var i: i32 = 0;
+    while (i < 10) { a = bump(a, i); i = i + 1; }
+    var t: i32 = 0;
+    for v in a.ops { t = t + v; }
+    return a.ops.len() + a.ctrl + (t % 29);
+}`},
+	// A struct-ELEMENT field, whose reclaim walks each element box before the
+	// buffer (__field_reclaim_<T>'s arrarr_free arm). The cow compare that skips
+	// a pointer-equal field is what keeps that walk off the grown buffer.
+	{"struct-array-field", `
+struct Row { k: i32, v: i32 }
+struct Tab { rows: Row[], n: i32 }
+function (t: Tab) put(k: i32, v: i32): Tab { return Tab { ...t, rows: t.rows.append(Row { k: k, v: v }), n: t.n + 1 }; }
+function main(): i32 {
+    var t: Tab = Tab { rows: [], n: 0 };
+    var i: i32 = 0;
+    while (i < 12) { t = t.put(i, i * 2); i = i + 1; }
+    var s: i32 = 0;
+    for r in t.rows { s = s + r.k + r.v; }
+    return t.rows.len() + t.n + (s % 53);
+}`},
 	// An i64[] field takes the 8-byte-slot push helper, which wasm dispatches
 	// separately from the i32 one.
 	{"i64-field", `
@@ -463,4 +537,79 @@ function main(): i32 {
 		return
 	}
 	t.Fatalf("no bracket release in __fn_outer; body:\n%s", body)
+}
+
+// The in-place grow's result must be UNCOUNTED (#8254). The first cut retained
+// it on the identity arm — where arr_push handed the source container's own
+// buffer straight back — reasoning that the literal the value feeds becomes a
+// second owner. Nothing ever decremented that retain: `__field_reclaim_<T>`'s
+// array arm cow-SKIPS a field pointer-equal in old and new, which is exactly
+// the shape an in-place grow produces. So the buffer sat at rc >= 2 for the
+// rest of its life, the NEXT append through the field took `__fern_arr_push`'s
+// un-share copy, and the buffer that copy abandoned was reclaimed by nothing —
+// one leaked buffer per grow, which is quadratic over a threaded accumulator.
+// The whole-compiler emit paid 11.9 GB peak RSS for it against 8.0 GB without.
+//
+// Answers cannot see this: both forms compute the same array. `__heap_bump_bytes()`
+// can — it is the bump allocator's high-water mark, i.e. everything the freelist
+// could not recycle. The REFUSED shape beside it is the calibration: it clones
+// per append and so must stay high, which is what makes a passing admitted case
+// evidence about reclaim rather than about the instrument.
+func TestSelfHostFieldAppendInPlaceReclaimsX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	// Each program threads 2000 appends and exits with the bytes it could not
+	// recycle, in 64 KiB units, clamped to 200 so the reading cannot wrap
+	// through the 8-bit exit status.
+	const tail = `
+    var u: i64 = __heap_bump_bytes() / 65536i64;
+    if (u > 200i64) { u = 200i64; }
+    return u as i32;
+}`
+	admitted := `
+struct St { ops: i32[], ctrl: i32 }
+function (s: St) emit(v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
+function main(): i32 {
+    var s: St = St { ops: [], ctrl: 0 };
+    var i: i32 = 0;
+    while (i < 2000) { s = s.emit(i); i = i + 1; }` + tail
+	// `n: s.ops.len()` reads the appended field again, so the site is refused
+	// and the clone form stands — the control.
+	refused := `
+struct St { ops: i32[], n: i32 }
+function (s: St) emit(v: i32): St { return St { ...s, ops: s.ops.append(v), n: s.ops.len() }; }
+function main(): i32 {
+    var s: St = St { ops: [], n: 0 };
+    var i: i32 = 0;
+    while (i < 2000) { s = s.emit(i); i = i + 1; }` + tail
+
+	run := func(t *testing.T, src string) int {
+		t.Helper()
+		asm := runCaptureStrictIR(t, gcc, runner, driverBin, []byte(src), "-ir")
+		if len(asm) == 0 {
+			t.Fatal("self-host compiler emitted 0 bytes")
+		}
+		progBin := buildBin(t, gcc, dir, "faireclaim", string(asm))
+		var cmd *exec.Cmd
+		if len(runner) == 0 {
+			cmd = exec.Command(progBin)
+		} else {
+			cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+		}
+		_ = cmd.Run()
+		return cmd.ProcessState.ExitCode()
+	}
+
+	// Measured: 0 units here, 165 with the identity-arm retain in place.
+	if got := run(t, admitted); got > 4 {
+		t.Errorf("admitted in-place shape bumped %d x 64 KiB, want <= 4 — the grown buffer is not being reclaimed", got)
+	}
+	// Measured: 200 (clamped) either way. A low reading here would mean the
+	// instrument, not the reclaim, is what the case above is reporting.
+	if got := run(t, refused); got < 32 {
+		t.Errorf("refused clone shape bumped only %d x 64 KiB, want >= 32 — the calibration case is not allocating, so the admitted case proves nothing", got)
+	}
 }
