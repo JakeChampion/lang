@@ -126,7 +126,7 @@ aarch64/array_append.text	543
 aarch64/array_append.ir	61045407
 aarch64/array_index.text	520
 aarch64/array_index.ir	51467989
-aarch64/ascii_scan.text	1048
+aarch64/ascii_scan.text	1064
 aarch64/ascii_scan.ir	74108819
 aarch64/call_overhead.text	149
 aarch64/call_overhead.ir	25624934
@@ -153,8 +153,8 @@ aarch64/sort_inplace.ir	112891129
 aarch64/sort_ints.text	2768
 aarch64/sort_ints.ir	105084009
 aarch64/string_build.text	1140
-aarch64/string_build.ir	165944336
-aarch64/string_count_byte.text	555
+aarch64/string_build.ir	171325490
+aarch64/string_count_byte.text	563
 aarch64/string_count_byte.ir	295440050
 aarch64/string_find_byte.text	1933
 aarch64/string_find_byte.ir	123872451
@@ -163,7 +163,7 @@ aarch64/string_rfind_byte.ir	111734449
 aarch64/string_scan.text	1460
 aarch64/string_scan.ir	130819453
 aarch64/string_slice.text	523
-aarch64/string_slice.ir	156300111
+aarch64/string_slice.ir	150480104
 aarch64/struct_drop.text	2576
 aarch64/struct_drop.ir	606740287
 aarch64/tokenize.text	972
