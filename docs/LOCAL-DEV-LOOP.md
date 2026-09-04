@@ -38,6 +38,23 @@ bin/fern-selfhost -target wasm32-wasi -emit asm /ABS/prog.fern $PWD/internal/std
 wasmtime run p.wat; echo $?     # oracle: ./bin/fern -interp /ABS/prog.fern
 ```
 
+**`bin/fern-selfhost` is NATIVE-built, so A/B-ing it cannot see a lowering
+change.** The binary that target produces was compiled by `bin/fern`, which
+applies native's own lowering — so a self-host lowering improvement is absent
+from the code being timed, and the only difference an A/B measures is the cost
+of the new analysis. #8224's field-append change read as +0.2% Ir that way while
+being -17.6% where it lands. To measure a self-host lowering change, build
+STAGE 2 — the same source compiled once by each compiler — and time those:
+
+```
+./bin/fern-selfhost -g -target x86-64-linux -o /tmp/s2-new  examples/self_host/fern.fern $PWD/internal/stdlib
+/path/to/base-fern-selfhost -g -target x86-64-linux -o /tmp/s2-base examples/self_host/fern.fern $PWD/internal/stdlib
+```
+
+~90 s and ~1.3 GB RSS each (measured 2026-09-04). Under callgrind, valgrind does
+not read the `-g` `.symtab`, so resolve the hot addresses through `nm -n` on the
+binary rather than reading `???:0x…` rows.
+
 This is what made it practical to run all 335 fixtures through the self-host
 compiler:
 
