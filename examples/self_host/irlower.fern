@@ -18929,7 +18929,17 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                 // overwrite release is already pointer-guarded (`if old != new
                 // then arr_dec(old)`), so dropping the retain leaves the buffer
                 // freed exactly once on the grow path and untouched in place.
-                if (rps >= 0 && rps < s.n_params && s.is_arr_slot(rps)) {
+                // The same transfer inc is owed for a borrowed STRUCT param
+                // (#8240). The box the callee hands back is the caller's, so
+                // without it the caller holds two names for one uncounted
+                // reference: `var q2 = g(.., name, ..)` then releases name's
+                // (release_last_use_source's `old == q2` arm, whose contract is
+                // exactly "q2 holds its own count on it"), which takes rc 1 to 0
+                // and frees a box q2 still names. Nothing catches it — the free
+                // is at rc 1, so the underflow trap never fires, and the block
+                // usually comes back field-identical from the freelist.
+                var rp_struct: boolean = s.struct_type_of_slot(rps).len() > 0;
+                if (rps >= 0 && rps < s.n_params && (s.is_arr_slot(rps) || rp_struct)) {
                     var rpl: LowerState = lower_expr(r.value, s);
                     if (!rpl.ok) { return rpl; }
                     var rpfl: i32 = s.ownflag_slot_of(rps);
