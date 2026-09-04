@@ -127,23 +127,23 @@ aarch64/call_overhead.ir	25624934
 aarch64/closure_call.text	513
 aarch64/closure_call.ir	183492038
 aarch64/enum_match.text	561
-aarch64/enum_match.ir	135450067
+aarch64/enum_match.ir	132975060
 aarch64/int_loop.text	105
 aarch64/int_loop.ir	48000018
 aarch64/map_int.text	3850
-aarch64/map_int.ir	68094245
+aarch64/map_int.ir	61361301
 aarch64/map_probe_chain.text	3876
-aarch64/map_probe_chain.ir	657975402
+aarch64/map_probe_chain.ir	613549422
 aarch64/map_string.text	4947
-aarch64/map_string.ir	169434945	2
-aarch64/ordmap_insert.text	4862
-aarch64/ordmap_insert.ir	516933277
-aarch64/pmap_insert.text	8368
+aarch64/map_string.ir	161643245	2
+aarch64/ordmap_insert.text	4696
+aarch64/ordmap_insert.ir	507152976
+aarch64/pmap_insert.text	8264
 aarch64/pmap_insert.ir	232489686
-aarch64/pvec_with.text	9009
+aarch64/pvec_with.text	8901
 aarch64/pvec_with.ir	253752396
 aarch64/sort_inplace.text	783
-aarch64/sort_inplace.ir	116219454
+aarch64/sort_inplace.ir	112891129
 aarch64/sort_ints.text	2768
 aarch64/sort_ints.ir	105084009
 aarch64/string_build.text	1140
@@ -161,7 +161,7 @@ aarch64/string_slice.ir	156300111
 aarch64/struct_drop.text	2576
 aarch64/struct_drop.ir	606740287
 aarch64/tokenize.text	972
-aarch64/tokenize.ir	134280111
+aarch64/tokenize.ir	130770104
 aarch64/utf8_ingest_unchecked.text	40691
 aarch64/utf8_ingest_unchecked.ir	18250835
 aarch64/utf8_ingest_validated.text	41216
