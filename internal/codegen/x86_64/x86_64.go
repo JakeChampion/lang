@@ -3799,7 +3799,7 @@ func (g *generator) emitConstDivRem(op ir.Op, isRem bool, k int64) {
 		sh := pow2Shift(mag)
 		if op.Unsigned {
 			if isRem {
-				g.emit(fmt.Sprintf("and %s, %d", a, immAtWidth(int64(mag-1), bits)))
+				g.maskLowBits(a, sh, bits, true)
 			} else {
 				g.emit(fmt.Sprintf("shr %s, %d", a, sh))
 			}
@@ -3813,7 +3813,7 @@ func (g *generator) emitConstDivRem(op ir.Op, isRem bool, k int64) {
 		g.emit(fmt.Sprintf("add %s, %s", c, a))       // biased dividend
 		if isRem {
 			// r = x - (x/2^sh)*2^sh, and the multiply is a mask.
-			g.emit(fmt.Sprintf("and %s, %d", c, -(int64(1) << sh)))
+			g.maskLowBits(c, sh, bits, false)
 			g.emit(fmt.Sprintf("sub %s, %s", a, c))
 			break
 		}
@@ -3929,14 +3929,21 @@ func maxDivShift(bits int, unsigned bool) int {
 	return bits - 2
 }
 
-// immAtWidth renders a mask as the assembler wants it for the operand width:
-// a 32-bit operation takes imm32, so a mask with the top bit set has to be
-// written as its signed form rather than as a value beyond int32.
-func immAtWidth(v int64, bits int) int64 {
-	if bits == 32 {
-		return int64(int32(uint32(v)))
+// maskLowBits keeps (keep) or clears the low sh bits of reg. `and r64` has no
+// imm64 form, so a mask that reaches past bit 31 is a shift pair instead.
+func (g *generator) maskLowBits(reg string, sh, bits int, keep bool) {
+	switch {
+	case keep && sh <= 31:
+		g.emit(fmt.Sprintf("and %s, %d", reg, (int64(1)<<sh)-1))
+	case keep:
+		g.emit(fmt.Sprintf("shl %s, %d", reg, bits-sh))
+		g.emit(fmt.Sprintf("shr %s, %d", reg, bits-sh))
+	case sh <= 31:
+		g.emit(fmt.Sprintf("and %s, %d", reg, -(int64(1) << sh)))
+	default:
+		g.emit(fmt.Sprintf("shr %s, %d", reg, sh))
+		g.emit(fmt.Sprintf("shl %s, %d", reg, sh))
 	}
-	return v
 }
 
 // emitFloatToIntSat lowers a saturating float→int truncation (the

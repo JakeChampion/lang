@@ -127,12 +127,44 @@ func TestConstDivisorHelpers(t *testing.T) {
 	if maxDivShift(64, false) != 62 || maxDivShift(64, true) != 63 {
 		t.Error("maxDivShift is wrong for 64-bit")
 	}
-	// A 32-bit mask with the top bit set has to be written as imm32.
-	if got := immAtWidth(0xFFFFFFFE, 32); got != -2 {
-		t.Errorf("immAtWidth(0xFFFFFFFE, 32) = %d, want -2", got)
+}
+
+// A power-of-two remainder past bit 31 needs a mask `and r64` cannot take as
+// an immediate; gas refuses `and rcx, -1099511627776`. The low bits are
+// cleared with a shift pair instead.
+func TestWideRemainderMaskIsAShiftPair(t *testing.T) {
+	body := divBody(t, "x % 1099511627776i64")
+	if strings.Contains(body, "and rcx, -1099511627776") {
+		t.Errorf("a mask past bit 31 was written as an immediate:\n%s", body)
 	}
-	if got := immAtWidth(0xFFFFFFFE, 64); got != 0xFFFFFFFE {
-		t.Errorf("immAtWidth at 64-bit should pass through, got %d", got)
+	if !strings.Contains(body, "shr rcx, 40") || !strings.Contains(body, "shl rcx, 40") {
+		t.Errorf("expected the shift pair that clears the low 40 bits:\n%s", body)
+	}
+	// Up to bit 31 the immediate form stays, since it is one instruction.
+	if body := divBody(t, "x % 8i64"); !strings.Contains(body, "and rcx, -8") {
+		t.Errorf("a mask that fits imm32 should stay an `and`:\n%s", body)
+	}
+}
+
+// The dynamic-divisor sequence at i32 width uses the dword forms — `cdq` into
+// edx and `idiv ecx` — rather than widening the operands for `cqo` / `idiv rcx`.
+func TestI32DivisionUsesTheDwordForms(t *testing.T) {
+	asm := compileOpts(t, `
+@noinline function d(x: i32, y: i32): i32 { return x / y; }
+function main(): i32 { return d(7, 2); }`, Options{})
+	body, ok := fnBodyOf(asm, "d")
+	if !ok {
+		t.Fatal("d not found in emitted asm")
+	}
+	for _, want := range []string{"cdq", "idiv ecx"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected %q in the i32 division:\n%s", want, body)
+		}
+	}
+	for _, avoid := range []string{"cqo", "idiv rcx"} {
+		if strings.Contains(body, avoid) {
+			t.Errorf("i32 division used the qword form %q:\n%s", avoid, body)
+		}
 	}
 }
 
