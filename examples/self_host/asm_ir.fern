@@ -997,6 +997,70 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 
 // fc_negate flips %xmm0's sign bit through a mask in `scratch` — x86-64 has no
 // scalar fneg.
+// rt_x86_str_eq is __fn___fern_str_eq: 1 when two string boxes hold equal
+// bytes, else 0. A string box is [data ptr, length]; the caller pushes b then
+// a, so 16(%rbp) is a and 24(%rbp) is b, and the result goes in %rax.
+//
+// Hand-written rather than the Fern body it replaces because the cost here is
+// not per byte. Measured on a stage-2 compiler compiling lexer.fern: 5,296,736
+// calls retiring 227 M instructions, 21.4% of the whole compile, at 43
+// instructions per call — far too few for the byte loop to be what runs. Almost
+// every comparison exits on the length check; what it was paying for was the
+// frame the emitter builds around any Fern body, `rep stosq` to zero it and both
+// parameters spilled to it before the first compare. Rewriting the body to read
+// eight bytes at a time made it WORSE (47.6 instructions per call), because it
+// added setup to a function whose whole cost is setup. Only dropping the frame
+// removes it.
+//
+// The comparison itself is then the native runtime's __fern_strcmp shape:
+// identical box or identical buffer answers immediately, unequal lengths answer
+// immediately, and the bytes go eight at a time with a final load anchored at
+// the END of each string, overlapping whatever the loop already read. No read
+// runs past either operand — the loop stops at data + len - 8 — and the 4..7 and
+// 1..3 classes only ever read inside their own length.
+//
+// rbp is kept even though nothing else needs a frame: __fern_report walks the
+// rbp chain to print a backtrace, and a leaf that skipped it would break the
+// walk for every frame below.
+function rt_x86_str_eq(): string {
+    var s: string = ".globl __fn___fern_str_eq\n";
+    s = s + ".type __fn___fern_str_eq, @function\n";
+    s = s + "__fn___fern_str_eq:\n";
+    s = s + "    pushq %rbp\n    movq %rsp, %rbp\n";
+    s = s + "    movq 16(%rbp), %rdx\n    movq 24(%rbp), %rcx\n";
+    // Same box: interned literals, which is most of what a compiler compares.
+    s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
+    s = s + "    movq 8(%rdx), %rsi\n    cmpq 8(%rcx), %rsi\n    jnz .Lseq_no\n";
+    s = s + "    movq (%rdx), %rdx\n    movq (%rcx), %rcx\n";
+    // Same buffer, equal length: a slice and its source compare equal here.
+    s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
+    s = s + "    cmpq $8, %rsi\n    jb .Lseq_short\n";
+    s = s + "    leaq -8(%rdx,%rsi), %r8\n    leaq -8(%rcx,%rsi), %r9\n";
+    s = s + ".Lseq_word:\n";
+    s = s + "    movq (%rdx), %rax\n    cmpq (%rcx), %rax\n    jnz .Lseq_no\n";
+    s = s + "    addq $8, %rdx\n    addq $8, %rcx\n";
+    s = s + "    cmpq %r8, %rdx\n    jb .Lseq_word\n";
+    s = s + "    movq (%r8), %rax\n    cmpq (%r9), %rax\n    jnz .Lseq_no\n";
+    s = s + "    jmp .Lseq_yes\n";
+    // 0..7 bytes. Four-byte pairs overlap the same way; under four, byte 0, the
+    // last byte and (at length three) byte 1 are every byte there is.
+    s = s + ".Lseq_short:\n";
+    s = s + "    testq %rsi, %rsi\n    jz .Lseq_yes\n";
+    s = s + "    cmpq $4, %rsi\n    jb .Lseq_byte\n";
+    s = s + "    movl (%rdx), %eax\n    cmpl (%rcx), %eax\n    jnz .Lseq_no\n";
+    s = s + "    movl -4(%rdx,%rsi), %eax\n    cmpl -4(%rcx,%rsi), %eax\n    jnz .Lseq_no\n";
+    s = s + "    jmp .Lseq_yes\n";
+    s = s + ".Lseq_byte:\n";
+    s = s + "    movzbl (%rdx), %eax\n    cmpb (%rcx), %al\n    jnz .Lseq_no\n";
+    s = s + "    movzbl -1(%rdx,%rsi), %eax\n    cmpb -1(%rcx,%rsi), %al\n    jnz .Lseq_no\n";
+    s = s + "    cmpq $3, %rsi\n    jb .Lseq_yes\n";
+    s = s + "    movzbl 1(%rdx), %eax\n    cmpb 1(%rcx), %al\n    jnz .Lseq_no\n";
+    s = s + ".Lseq_yes:\n    movq $1, %rax\n    leave\n    ret\n";
+    s = s + ".Lseq_no:\n    xorq %rax, %rax\n    leave\n    ret\n";
+    s = s + ".size __fn___fern_str_eq, .-__fn___fern_str_eq\n";
+    return s;
+}
+
 function fc_negate(scratch: string): string {
     return "    movabsq $0x8000000000000000, %rdx\n    movq %rdx, " + scratch + "\n    xorpd " + scratch + ", %xmm0\n";
 }
@@ -6560,12 +6624,12 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_search(), all_structs, s);
     }
     // __fern_str_eq (#2649): string equality, also called by the map / arr_str
-    // helpers (the map_set→str_eq edge that motivated the issue). Self-contained,
-    // so same entry-only .text emission; gated on str_eq (maps pulls it in via
-    // close_needs).
+    // helpers (the map_set→str_eq edge that motivated the issue). Hand-written
+    // rather than a Fern body — see rt_x86_str_eq for why. Gated on str_eq
+    // (maps pulls it in via close_needs).
     if (s.has_need("str_eq")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_eq(), all_structs, s);
+        s = s.write(rt_x86_str_eq());
     }
     // __fern_map_find (#2649): the map runtime's shared key search. One Fern
     // body where map_set, map_get and map_has each carried a string, an i32 and
