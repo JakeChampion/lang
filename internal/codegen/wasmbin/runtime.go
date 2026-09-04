@@ -7345,8 +7345,8 @@ func instPolyStep(body []byte, p, t uint32, c float64) []byte {
 // buildExpF64Body — (f64) → f64, fdlibm __ieee754_exp. ln2 is carried as hi/lo
 // so the reduction keeps its low bits.
 //
-// Locals (all f64, param x is 0): kf=1 r=2 hi=3 lo=4 t=5 c=6 p=7. k is
-// recomputed from kf at the end so the locals vector stays a single group.
+// Locals (param x is 0): f64 kf=1 r=2 hi=3 lo=4 t=5 c=6 p=7, then i64 k1=8 —
+// two groups, so the vector goes through putLocalsGroups.
 func buildExpF64Body(_ map[string]uint32) []byte {
 	const (
 		lx = 0 // param x
