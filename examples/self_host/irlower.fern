@@ -5779,9 +5779,30 @@ function iife_lambda_composite_tuple_tags(lam: ast.ExprLambda, s: LowerState): s
 // exclusion list holds only the spellings declarations use, so a checker tag
 // like "u64" (which no declaration walk ever produced here) would read as
 // enum-like and type a cast/overload result as a struct (#5986).
+// is_dyn_value_name reports whether `t` is the coarse `dyn Trait` spelling of a
+// single boxed trait object — not an ARRAY of them, whose element is what a
+// consumer wants and which reads as a value here otherwise.
+function is_dyn_value_name(t: string): boolean {
+    if (t.len() <= 4 || slice_unchecked(t, 0, 4) != "dyn ") { return false; }
+    return !is_array_type_name(t);
+}
+
+// struct_tag_from_ty admits a checker tag or a declared spelling that names a
+// NOMINAL type irlower can dispatch a method on — a declared struct, a declared
+// enum, or a `dyn Trait` box — and rejects everything else.
+//
+// The enum test has to be decl_is_enum, NOT the loose is_enum_like_name: that
+// predicate answers "not a primitive, not an array, not bracketed", which an
+// ERASED generic struct name also satisfies. Annotation runs before
+// monomorphisation, so `OrdSet[K]` stamps the bare `OrdSet` — a name no decl
+// survives to carry, since only the concrete clones do — and admitting it keyed
+// every method on `ordset__OrdSet.<m>`, a symbol nothing defines, taking the
+// five persistent-collection stdlib modules off the IR path. Two precise
+// predicates also make the scalar exclusion list this carried redundant:
+// nothing declares a struct or an enum named `i32`.
 function struct_tag_from_ty(ty: string, s: LowerState): string {
-    if (ty == "" || is_int_irtag(ty) || ty == "char" || ty == "f64" || ty == "string") { return ""; }
-    if (decl_is_struct(s.structs, ty) || is_enum_like_name(ty, s.structs)) { return ty; }
+    if (ty.len() == 0) { return ""; }
+    if (decl_is_struct(s.structs, ty) || decl_is_enum(s.structs, ty) || is_dyn_value_name(ty)) { return ty; }
     return "";
 }
 
@@ -5902,24 +5923,24 @@ pub function expr_struct_type(e: ast.Expr, s: LowerState): string {
             return struct_tag_from_ty(ix.ty, s);
         },
         ast.ExprFieldAccess(fa) => {
-            // A struct-typed tuple element `t.N`, or a struct-typed field read
+            // A struct- or enum-typed tuple element `t.N`, or such a field read
             // `obj.f` (which is what enables nested access `b.p.x`). "" when
-            // neither names a known struct. typed-IR (#5986): fa_type_tag falls
-            // back to the checker-stamped tag when the declaration walk cannot
-            // recover obj's own struct type, so a field read off a call / map /
+            // neither names a known nominal type. typed-IR (#5986): fa_type_tag
+            // falls back to the checker-stamped tag when the declaration walk
+            // cannot recover obj's own type, so a field read off a call / map /
             // generic receiver resolves instead of silently yielding "".
-            var ft: string = fa_type_tag(fa, s);
-            if (decl_is_struct(s.structs, ft)) { return ft; }
-            return "";
+            return struct_tag_from_ty(fa_type_tag(fa, s), s);
         },
         ast.ExprCall(c) => {
             // typed-IR (#5531): the annotate pass stamps c.ty with the checker's
-            // inferred result type; for a struct-returning call that is the struct
-            // NAME. Trust it when it names a known struct, retiring the
-            // struct_ret_type re-derivation below for annotated calls. Guarded to a
-            // known struct so a scalar/"" tag (or an enum, not covered here) falls
-            // through to the structural walk unchanged.
-            if (c.ty != "" && decl_is_struct(s.structs, c.ty)) { return c.ty; }
+            // inferred result type; for a struct- or enum-returning call that is
+            // the nominal NAME. Trust it when it names one, retiring the
+            // struct_ret_type re-derivation below for annotated calls.
+            // struct_tag_from_ty is the admission helper, so a scalar tag (which
+            // is_enum_like_name would read as a nominal enum) falls through to
+            // the structural walk unchanged.
+            var cnom: string = struct_tag_from_ty(c.ty, s);
+            if (cnom != "") { return cnom; }
             // A call to a struct-returning function evaluates to that struct type
             // (so `var p = make()` / `var p = obj.make()` then `p.x` resolves).
             match (c.callee) {
@@ -59521,6 +59542,25 @@ function fn_has_param_typed(fd: parser.FuncDecl, ty: string): boolean {
     return false;
 }
 
+// enum_ret_recordable reports whether `name` — a function's return type, or the
+// ELEMENT of its array return — is a nominal enum worth recording as a call
+// site's result type. It exists so the scalar return and the two array returns
+// ask ONE rule: the array arms had no enum case at all, so an `E[]`-returning
+// function recorded nothing and `mk()[i].m()` keyed the symbol `i32.m`.
+//
+// The exclusion is is_enum_like_name's over-match on a bare type VARIABLE
+// (#6441): `T` rules out primitives, arrays, bracketed generics and tuples, so
+// it passes every one of that predicate's tests. Recording `id|T` stamps the
+// call site's slot "T" and a later `v.to_string()` keys `T.to_string`, which
+// nothing defines. The type-var TEST alone is not enough to tell this from a
+// real enum — an `enum E` is a single uppercase letter too — so it also
+// requires the erased-generic signature: a free function with a parameter
+// declared at exactly the return's spelling.
+function enum_ret_recordable(name: string, fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+    if (!is_enum_like_name(name, structs)) { return false; }
+    return !(irl_looks_type_var(name) && fn.receiver_type.len() == 0 && fn_has_param_typed(fn, fn.ret_type));
+}
+
 function irl_looks_type_var(s: string): boolean {
     if (s.len() != 1) { return false; }
     var c: i32 = s[0] as i32;
@@ -59736,26 +59776,12 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
         var elig: boolean = false;
         var elem_t: string = rt;
         if (decl_is_struct(structs, rt) && decl_is_leaksafe(structs, rt)) { elig = true; }
-        // A bare type VARIABLE return (`id[T](x: T): T`) is not an enum, but
-        // is_enum_like_name says it is — it rules out primitives, arrays,
-        // bracketed generics and tuples, and a lone uppercase letter passes all
-        // of those. Recording `id|T` then stamped the CALL SITE's slot "T", so a
-        // later `v.to_string()` keyed `T.to_string` — a symbol nothing defines —
-        // and bailed the module (#6441). Unrecorded, the slot falls through to
-        // the scalar path and dispatches on the real type. The `T[]` sibling
-        // below resolves its element against the actual argument instead; a bare
-        // `T` has no element to resolve, and an annotated binding already
+        // An ENUM return, excluding the bare type VARIABLE is_enum_like_name
+        // over-matches — see enum_ret_recordable, which the array arm below
+        // asks too. Unrecorded, a type-var slot falls through to the scalar
+        // path and dispatches on the real type; an annotated binding already
         // supplies the type.
-        //
-        // The type-var test alone is NOT enough to tell this from a real enum:
-        // an `enum E` is a single uppercase letter too, and skipping it sent the
-        // whole @derive(Default) enum family off the IR path. So require the
-        // ERASED-GENERIC signature the `T[]` sibling already keys on — a free
-        // function with a parameter declared at exactly that spelling. A derived
-        // `E_default(): E` takes no `E`, so it still records.
-        else if (is_enum_like_name(rt, structs)
-                && !(irl_looks_type_var(rt) && fn.receiver_type.len() == 0
-                     && fn_has_param_typed(fn, rt))) { elig = true; }
+        else if (enum_ret_recordable(rt, fn, structs)) { elig = true; }
         // A lifted if-/match-EXPRESSION (`__lam_N`) carries a default `i32`
         // ret_type from the desugar, not the struct it actually returns — so
         // trust the BODY, not the declaration. Infer a leaf-safe struct return
@@ -59773,6 +59799,11 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
                 // fixes.
                 var aelem: string = lam_leaf_array_elem(fn, funcs, 0);
                 if (aelem.len() > 0 && decl_is_struct(structs, aelem) && decl_is_leaksafe(structs, aelem)) { elig = true; elem_t = aelem; }
+                // The ENUM element sibling: `var cs = if (c) { [E.A] } else { … }`
+                // is lifted the same way, and `cs[i].m()` needs the element type
+                // for the same reason. A variant box is leak-only, so — as in the
+                // scalar enum arm — there is no leak-safety test to apply.
+                else if (aelem.len() > 0 && enum_ret_recordable(aelem, fn, structs)) { elig = true; elem_t = aelem; }
             }
         }
         // A struct-ARRAY return `P[]` (leaf-safe element): record the ELEMENT
@@ -59788,7 +59819,17 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
             // dyn-array PARAM do — the slot is already is_arr (arr_ret_fns
             // admits any `[]` return), but without this tag an unannotated
             // `var ys = mk()` lost the trait and `ys[i].m()` mis-dispatched.
-            else if (et.len() > 4 && slice_unchecked(et, 0, 4) == "dyn ") { elig = true; elem_t = et + ""; }
+            else if (is_dyn_value_name(et + "")) { elig = true; elem_t = et + ""; }
+            // An ENUM element `E[]`: the sibling the struct case above had and
+            // this one did not, so `function mk(): Color[]` recorded nothing and
+            // `mk()[i].m()` typed its receiver i32 and bailed on `i32.m`. A
+            // variant box is leak-only, so there is no leak-safety test to apply.
+            // BEFORE the erased-generic branch: a one-letter enum name satisfies
+            // irl_looks_type_var, so that branch would claim `E[]`, find no
+            // parameter spelled `E[]`, and record nothing — while
+            // enum_ret_recordable declines exactly the erased-generic signature
+            // and leaves the branch below to handle it.
+            else if (enum_ret_recordable(et + "", fn, structs)) { elig = true; elem_t = et + ""; }
             // An ERASED-generic `T[]` return (`idf[T](arr: T[]): T[]`, `sort_by_
             // i32_key[T](arr: T[], key: (T) => i32): T[]`): the element is the bare
             // typevar, so there is no declared struct to record and an UNANNOTATED
@@ -59819,7 +59860,7 @@ pub function struct_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab): st
         // expr_recv_prim_type sees a non-empty struct type and returns ""). A
         // `dyn Trait[]` return is recorded by the array arm above (#4780), with
         // the coarse "dyn <Trait>" as its ELEMENT type.
-        if (!elig && rt.len() > 4 && slice_unchecked(rt, 0, 4) == "dyn " && !(rt.len() >= 3 && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]")) { elig = true; elem_t = rt; }
+        if (!elig && is_dyn_value_name(rt)) { elig = true; elem_t = rt; }
         if (elig) {
             var key: string = fn.name;
             if (fn.receiver_type.len() > 0) { key = util.base_type_name(fn.receiver_type) + "." + fn.name; }
