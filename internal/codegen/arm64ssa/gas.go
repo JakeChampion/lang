@@ -5504,12 +5504,40 @@ func emitHeapBumpBytesHelper(w func(string, ...any)) {
 // `ldr reg, =v` literal-pool form here; this emitter has no pool to flush, so
 // materialise the constant in registers instead.
 func movImm64(w func(string, ...any), reg string, v uint64) {
-	w("\tmov %s, #%d", reg, v&0xffff)
+	for _, line := range movImmLines(reg, v) {
+		w("%s", line)
+	}
+}
+
+// movImmLines materialises `reg = v` as the shortest correct sequence: a single
+// `mov` where the assembler can encode one (a lone shifted halfword, or the
+// inverse of one — MOVZ and MOVN), otherwise movz + a movk per remaining
+// non-zero halfword. The single-instruction test has to be made here rather
+// than left to the assembler, because only one of the two assemblers this
+// backend feeds rejects what it cannot encode.
+func movImmLines(reg string, v uint64) []string {
+	if oneHalfword(v) || oneHalfword(^v) {
+		return []string{fmt.Sprintf("\tmov %s, #%d", reg, int64(v))}
+	}
+	out := []string{fmt.Sprintf("\tmov %s, #%d", reg, v&0xffff)}
 	for shift := 16; shift < 64; shift += 16 {
 		if half := (v >> uint(shift)) & 0xffff; half != 0 {
-			w("\tmovk %s, #%d, lsl #%d", reg, half, shift)
+			out = append(out, fmt.Sprintf("\tmovk %s, #%d, lsl #%d", reg, half, shift))
 		}
 	}
+	return out
+}
+
+// oneHalfword reports whether v has at most one non-zero 16-bit halfword, which
+// is exactly what MOVZ encodes.
+func oneHalfword(v uint64) bool {
+	n := 0
+	for shift := 0; shift < 64; shift += 16 {
+		if (v>>uint(shift))&0xffff != 0 {
+			n++
+		}
+	}
+	return n <= 1
 }
 
 // The asm-generic syscall numbers the time helpers issue, and the two clock ids
@@ -7351,10 +7379,15 @@ func align16(n int) int {
 func asmInst(in x86.Inst, left, scratch int, fr frameLayout) ([]string, error) {
 	switch in.Op {
 	case x86.MovImm:
-		// The immediate is the value in the model's slot (already sign-extended for
-		// i32), so a plain move materialises it; the assembler expands wide
-		// immediates to movz/movk.
-		return []string{fmt.Sprintf("mov %s, #%d", xreg(in.Dst), in.Imm)}, nil
+		// The immediate is the value in the model's slot, already sign-extended
+		// for i32. A plain `mov` materialises it only when the value is one
+		// shifted halfword (MOVZ) or the inverse of one (MOVN); anything else
+		// needs the movz + movk sequence spelled out. gas rejects the rest
+		// outright ("immediate cannot be moved by a single instruction"), and
+		// the in-process assembler took the low half and produced a wrong
+		// answer, so `mov x0, #100000` in int_to_string mis-numbered every
+		// value at or above 100000.
+		return movImmLines(xreg(in.Dst), uint64(in.Imm)), nil
 	case x86.MovReg:
 		if in.Dst == in.Src {
 			return nil, nil
