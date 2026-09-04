@@ -1,6 +1,7 @@
 package x86_64ssa
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -36,14 +37,20 @@ func rspDeltaAtCalls(t *testing.T, asm, label string) []int {
 		if strings.HasSuffix(ln, ":") && !strings.HasPrefix(ln, ".L") {
 			break
 		}
+		// The prologue shifts rsp by a multiple of 16 as a whole — the spill
+		// reservation is sized so it and the callee-saved pushes below it come
+		// to one aligned step — so none of its parts count towards the body's
+		// delta. It runs out at the first line that is not one of them. A
+		// callee-saved push can only be the prologue's: a call site's save set
+		// is filtered to caller-saved registers.
+		if inPrologue && !(ln == "push rbp" || ln == "mov rbp, rsp" ||
+			strings.HasPrefix(ln, "sub rsp,") || prologueSaveRe.MatchString(ln)) {
+			inPrologue = false
+		}
 		switch {
-		case inPrologue && ln == "push rbp":
-			// the entry-to-aligned step, not a body push
-		case inPrologue && strings.HasPrefix(ln, "sub rsp,"):
-			inPrologue = false // the frame is 16-aligned by construction
+		case inPrologue:
 		case ln == "mov rbp, rsp":
 		case strings.HasPrefix(ln, "push "):
-			inPrologue = false
 			delta -= 8
 		case strings.HasPrefix(ln, "pop "):
 			delta += 8
@@ -157,3 +164,7 @@ func TestEntryStackArgsKeepCallAligned(t *testing.T) {
 		}
 	}
 }
+
+// prologueSaveRe matches a callee-saved push, which only a function prologue
+// emits: a call site saves caller-saved registers only.
+var prologueSaveRe = regexp.MustCompile(`^push (rbx|r1[2-5])$`)

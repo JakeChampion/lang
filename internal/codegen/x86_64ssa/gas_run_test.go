@@ -359,8 +359,13 @@ func TestAsmRunStackParams(t *testing.T) {
 
 // The caller side: a direct call passing more than six arguments pushes the
 // rest, and must leave rsp where it found it.
+//
+// Five and six are here for a different reason than the stack counts: they are
+// the argument positions that land in r8 and r9, which are also the emitter's
+// s0 / s1 staging registers. A staged value still live when the argument shuffle
+// writes those registers would be silently overwritten.
 func TestAsmRunStackArgsDirectCall(t *testing.T) {
-	for _, n := range []int{7, 8, 9, 12} {
+	for _, n := range []int{5, 6, 7, 8, 9, 12} {
 		callee := weightedSum("callee", n)
 		main := ssa.NewFunc("main")
 		me := main.NewBlock()
