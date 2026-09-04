@@ -396,58 +396,10 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// policy in ir.Inline must not treat its sole in-program caller as its
 	// last reference (the cull below roots it and its definition survives).
 	ir.MarkExternallyReachable(ip, opts.Exports...)
-	// Tail-call optimisation. The pass rewrites
-	// `OpCallDirect <self> ; OpReturn` into a parameter
-	// rebind plus `OpBr` back to the function entry — turns
-	// self-recursive functions into loops, so the deepest
-	// "tail call" doesn't grow the stack. Wired in on all
-	// three backends (x86-64 + arm64 + wasm).
-	ir.TailCallOptimize(ip)
-	// Inline runs twice, around Defunctionalise, the ordering wasm has always
-	// used: the first pass exposes constants for OptimizeCleanup to fold, the
-	// second catches the direct calls defunctionalisation has just created out
-	// of indirect ones (which the first pass could not see). What makes it
-	// landable here is ir.inlineMaxUnitOps, the whole-program size ceiling
-	// above which the pass declines — see that constant for the measurement.
-	ir.Inline(ip)
-	// Defunctionalise + ElideClosurePair turn many indirect
-	// closure calls into direct ones (when the closure flow
-	// is monomorphic enough for the pass to prove the
-	// target statically). That collapses the closure-pair
-	// representation to a single env_ptr in the slot,
-	// letting us implement closures with only OpMakeEnv +
-	// OpCallClosureDirect — no closure-pair handling in
-	// OpCallIndirect needed for the cases these passes
-	// can rewrite. Cases that don't defunctionalise still
-	// fall back to the existing top-level fn-pointer
-	// OpConstFunc / OpCallIndirect path (those work today;
-	// see PR #273's TestX86_64IndirectCall).
-	// Native closure pair: 16 bytes total, env_ptr at offset 8
-	// (wasm uses 8 bytes / +4 — see Defunctionalise comment).
-	ir.Defunctionalise(ip, 8)
-	ir.ElideClosurePair(ip, 8)
-	// Zero-capture closures escaping past ElideClosurePair (e.g.
-	// passed as a function-typed argument — `tryThing(my_lambda)`)
-	// rewrite to OpConstFunc so the value materialises as a
-	// `lea rax, [rip + __closure_cell_<name>]` against a static
-	// `.rodata` cell instead of a 16-byte heap-allocated pair.
-	ir.InlineZeroCaptureClosures(ip)
-	ir.Inline(ip)
-	// IR pass battery (#4377) — per-function rewrites, in the order all three
-	// backends run. FuseTee fuses store+reload into OpTeeLocal (both natives
-	// already emit it); EliminateDeadCode trims ops after a terminator;
-	// FlattenBranches merges `if c { return X; } return Y` into one typed if;
-	// OptimizeCleanup is the copyprop/constprop/Fold/strength/zero-slot/DCE
-	// fixpoint.
-	//
-	// DCE precedes FlattenBranches because flattening requires the then-arm's
-	// last op before its OpEnd to BE the return: lowering's dead tail after
-	// that return disqualifies the shape, so sweeping first is what lets the
-	// arm flatten at all.
-	ir.FuseTee(ip)
-	ir.EliminateDeadCode(ip)
-	ir.FlattenBranches(ip)
-	ir.OptimizeCleanup(ip)
+	// The whole battery: TCO, Inline x2 around Defunctionalise +
+	// ElideClosurePair + InlineZeroCaptureClosures, then the per-function
+	// tail. Native closure pair: 16 bytes, env_ptr at +8.
+	ir.OptimizeProgram(ip, 8)
 	// IR-level dead-function elimination (#4377), the wasm backend's twin.
 	// Treeshake already dropped what no AST call site names; this catches what
 	// only the IR knows is dead — a helper whose sole caller the emitter

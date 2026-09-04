@@ -214,28 +214,9 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	// caller as its last reference — exportRoots already roots it in both
 	// the tree-shake and the cull below.
 	ir.MarkExternallyReachable(ip, exportRoots...)
-	// The IR optimisation pipeline, and every pass in it also runs on the
-	// native backends — TailCallOptimize, Inline, Defunctionalise,
-	// ElideClosurePair, InlineZeroCaptureClosures, FuseTee, EliminateDeadCode,
-	// FlattenBranches, OptimizeCleanup and the dead-function cull below — so a
-	// change to one of them lights up everywhere. What bounds Inline's growth on
-	// a program the size of a compiler is ir.inlineMaxUnitOps, not the choice of
-	// backend.
-	//
-	// If you add a pass here, either wire it into internal/codegen/{x86_64,arm64}
-	// too or say here why it cannot be. See each pass's doc comment in
-	// internal/ir for the ordering rationale.
-	ir.TailCallOptimize(ip)
-	ir.Inline(ip)
-	// Wasm closure pair: 8 bytes total, env_ptr at offset 4.
-	ir.Defunctionalise(ip, 4)
-	ir.ElideClosurePair(ip, 4)
-	ir.InlineZeroCaptureClosures(ip)
-	ir.Inline(ip)
-	ir.FuseTee(ip)
-	ir.EliminateDeadCode(ip)
-	ir.FlattenBranches(ip)
-	ir.OptimizeCleanup(ip)
+	// The whole battery, shared with every other backend — see
+	// ir.OptimizeProgram. Wasm closure pair: 8 bytes, env_ptr at +4.
+	ir.OptimizeProgram(ip, 4)
 	// IR-level dead-function elimination: drop top-level
 	// functions whose body the optimiser left without any
 	// remaining callers. Critical for the binary path since
