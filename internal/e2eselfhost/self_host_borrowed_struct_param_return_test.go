@@ -59,6 +59,14 @@ var selfHostBorrowedStructParamCases = []struct {
 	// out. A retain that fired here would strand the fresh box instead.
 	{"return-alias-rebound", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_alias(n: i32, s: St): St {\n    var st: St = s;\n    var i: i32 = 0;\n    while (i < n) { st = st.emit(i); i = i + 1; }\n    return st;\n}\nfunction main(): i32 {\n    var s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    var s1: St = s.emit(1);\n    var a: St = ret_alias(2, s1);\n    var junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
 
+	// Control on the GATE itself: a generic pass-through. A slot's struct-type
+	// column holds any bare nominal is_enum_like_name accepts, so a typevar
+	// param reads as struct-typed there; retaining it emits __fern_rc_inc into
+	// a program with no heap need, and the runtime block defining that symbol
+	// is emitted only when there is one. The failure is a LINK error, so this
+	// case fails in buildBin rather than on the exit code.
+	{"typevar-param-control", "function id[T](x: T): T { return x; }\nfunction main(): i32 { return id(7i32) + 4; }"},
+
 	// Control: an ARRAY param handed back the same way. Correct before the fix
 	// as well as after — no caller-side release fires for arrays — so this pins
 	// that widening the return-inc to structs did not disturb the array path.
