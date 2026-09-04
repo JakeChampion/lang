@@ -3119,7 +3119,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	returnsFreshBox := findReturnsFreshBox(prog, info, pairForm, trmcFuncs, verdictFacts.ownedParam)
 	// #4873: per-function param positions whose buffers the callee may grow
 	// in place — drives the caller-side containment bracket in callBody.
-	growParams := computeGrowParams(prog, info)
+	paramFieldObs := computeParamFieldObs(prog, vtableDispatched)
+	growParams := computeGrowParams(prog, info, paramFieldObs)
 	for _, fn := range prog.Funcs {
 		// Body-less `@import` functions are extern WASM-component imports, not
 		// defined functions: record their signature in out.Externs and skip
@@ -3174,7 +3175,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
 		if err != nil {
 			return nil, err
 		}
@@ -5184,12 +5185,17 @@ type builder struct {
 	// grow bracket. Keyed on its own fn for the same reason.
 	callArgDies   map[*ast.Call]map[string]bool
 	callArgDiesFn *ast.FuncDecl
-	// growParams[name][i] is the growParamKind bitmask for parameter i of
+	// growParams[name][i] is what parameter i of
 	// function `name` — the positions whose argument buffer(s) the callee
 	// may mutate in place through the rc==1 fast paths (computeGrowParams,
 	// #4873). callBody brackets surviving args at those positions with an
 	// rc inc/dec pair so the callee's uniqueness gate takes the copy path.
-	growParams map[string][]uint8
+	growParams map[string][]growParam
+	// paramFieldObs[name][i] is the fields of parameter i of function `name`
+	// that its body can reach (computeParamFieldObs) — what lets the #4873
+	// bracket skip a field buffer a surviving argument cannot be read back
+	// through.
+	paramFieldObs map[string][]fieldObs
 	// paramEscapes[name][i] is true when parameter i of function `name` can
 	// escape (inferParamEscapes). Borrow inference (BorrowInferEnabled) keeps a
 	// NON-escaping owned-by-default param borrowed — no caller inc, no callee
@@ -5709,7 +5715,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]uint8) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5747,6 +5753,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		vtableDispatched:        vtableDispatched,
 		addressTaken:            addressTaken,
 		growParams:              growParams,
+		paramFieldObs:           paramFieldObs,
 		thisIsPair:              pairForm[fn.Name],
 		dynCoerceDone:           map[ast.Expr]bool{},
 	}
@@ -13891,10 +13898,10 @@ type growBracketEntry struct {
 
 // arrayFieldPaths enumerates the offset paths from a struct type to every
 // (transitively nested, depth-limited) array field — the buffers a callee
-// marked growFieldBufs may grow in place. Struct-typed fields recurse;
+// with a growable field set may grow in place. Struct-typed fields recurse;
 // self-referential shapes are cycle-guarded; Map / enum / tuple / string
 // fields are skipped (arrays are the only push/set targets).
-func (b *builder) arrayFieldPaths(structName string, depth int, seen map[string]bool) [][]int32 {
+func (b *builder) arrayFieldPaths(structName string, depth int, seen map[string]bool) []arrayFieldPath {
 	if depth <= 0 || seen[structName] {
 		return nil
 	}
@@ -13905,25 +13912,36 @@ func (b *builder) arrayFieldPaths(structName string, depth int, seen map[string]
 	seen[structName] = true
 	defer delete(seen, structName)
 	offs, _ := structFieldLayout(sd.Fields, b.ptrW)
-	var out [][]int32
+	var out []arrayFieldPath
 	for _, fld := range sd.Fields {
 		switch ft := fld.Type.(type) {
 		case ast.ArrayType:
-			out = append(out, []int32{offs[fld.Name]})
+			out = append(out, arrayFieldPath{offs: []int32{offs[fld.Name]}, name: fld.Name})
 		case ast.StructType:
 			for _, sub := range b.arrayFieldPaths(ft.Name, depth-1, seen) {
-				out = append(out, append([]int32{offs[fld.Name]}, sub...))
+				out = append(out, arrayFieldPath{offs: append([]int32{offs[fld.Name]}, sub.offs...)})
 			}
 		}
 	}
 	return out
 }
 
+// arrayFieldPath is one buffer arrayFieldPaths found: the offset hops to it,
+// and — for a DIRECT field of the struct only — the field's name, which is the
+// key the field-granular death verdict (markUnobservedParamFields) is filed
+// under. A nested path has no single name and is never skipped.
+type arrayFieldPath struct {
+	offs []int32
+	name string
+}
+
 // growBracketArgs resolves the #4873 containment bracket for a direct call
 // to `calleeName`: for each argument position the callee may grow in place
-// (computeGrowParams), a surviving plain-ident argument contributes its
-// buffer (growArgBuffer) and/or its struct type's array-field buffers
-// (growFieldBufs). Skipped when the arg dies at this call (the strict
+// (computeGrowParams), a surviving plain-ident argument contributes its own
+// buffer and/or the named array fields of its struct type — only the fields
+// the callee can actually grow, since bracketing the other twenty of a
+// LowerState forces a copy on each of them too. Skipped when the arg dies at
+// this call (the strict
 // self-reassign shape — keeps the #4838 O(n) accumulator chains on the
 // in-place fast path), is a move site, is not an rc-tracked alias, or
 // flows into an `own` position (a transfer).
@@ -13937,7 +13955,7 @@ func (b *builder) growBracketArgs(n *ast.Call, calleeName string) []growBracketE
 	sig := b.info.FuncSigs[calleeName]
 	var out []growBracketEntry
 	for ai, a := range n.Args {
-		if ai >= len(gp) || gp[ai] == 0 {
+		if ai >= len(gp) || !gp[ai].any() {
 			continue
 		}
 		slot, chain, root, ok := b.bracketArgPath(a)
@@ -13965,13 +13983,19 @@ func (b *builder) growBracketArgs(n *ast.Call, calleeName string) []growBracketE
 		// on the BOX, and a field buffer inside it stays at its own count, so
 		// the callee's rc==1 fast path would still grow the buffer this
 		// binding reads back through (`var c = a.push(3); a.size()`).
-		if gp[ai]&growArgBuffer != 0 {
+		if gp[ai].buffer {
 			out = append(out, growBracketEntry{slot: slot, fieldPath: chain})
 		}
-		if gp[ai]&growFieldBufs != 0 && sig != nil && ai < len(sig.Params) {
+		if len(gp[ai].fields) > 0 && sig != nil && ai < len(sig.Params) {
 			if st, isStruct := sig.Params[ai].(ast.StructType); isStruct {
 				for _, path := range b.arrayFieldPaths(st.Name, 4, map[string]bool{}) {
-					full := append(append([]int32{}, chain...), path...)
+					if path.name != "" && !gp[ai].growsField(path.name) {
+						continue
+					}
+					if path.name != "" && b.callArgDies[n][root.Name+"."+path.name] {
+						continue
+					}
+					full := append(append([]int32{}, chain...), path.offs...)
 					out = append(out, growBracketEntry{slot: slot, fieldPath: full})
 				}
 			}
@@ -20395,7 +20419,7 @@ func (b *builder) curIdentOrder() identOrder {
 // body walk each time (#8175).
 func (b *builder) curCallArgDies() map[*ast.Call]map[string]bool {
 	if b.callArgDiesFn != b.fn {
-		b.callArgDies = callArgDeaths(b.fn)
+		b.callArgDies = callArgDeaths(b.fn, b.info, b.paramFieldObs)
 		b.callArgDiesFn = b.fn
 	}
 	return b.callArgDies

@@ -112,7 +112,7 @@ function main(): i32 { return chain(mk(), 1).ctrl + param_last(mk()) + read_afte
 		}
 		seen[fn.Name] = true
 		var got []string
-		for _, names := range callArgDeaths(fn) {
+		for _, names := range callArgDeaths(fn, nil, nil) {
 			for n := range names {
 				got = append(got, n)
 			}
