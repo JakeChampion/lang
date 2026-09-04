@@ -15151,6 +15151,18 @@ func (b *builder) callBody(n *ast.Call) error {
 				b.emit(Op{Kind: OpStoreLocal, I32: slot})
 			}
 		}
+		// A field read in an explicit `own` position is the superseded-field
+		// shape E051 admits (#8186): moved out of its box when the analysis
+		// claimed it, retained for the callee otherwise. Either way the
+		// callee's exit drop is paid for; passing it bare would not be.
+		if fa, isField := a.(*ast.FieldAccess); isField && ast.RcFreeEnabled &&
+			ai < len(ownArgFlags) && ownArgFlags[ai] {
+			if b.rc.fieldOwnMoves[fa] {
+				b.emitFieldOwnMove(fa)
+			} else if needsRcIncOnAlias(a, b) {
+				b.emitAliasInc(a)
+			}
+		}
 		// An explicit `own` position whose argument is one of THIS function's
 		// `own` params, at an occurrence move-on-call did NOT claim, is a
 		// transfer with nothing behind it: the callee consumes a reference and
