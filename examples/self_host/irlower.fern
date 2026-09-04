@@ -59556,7 +59556,7 @@ function fn_has_param_typed(fd: parser.FuncDecl, ty: string): boolean {
 // real enum — an `enum E` is a single uppercase letter too — so it also
 // requires the erased-generic signature: a free function with a parameter
 // declared at exactly the return's spelling.
-function enum_ret_recordable(name: string, fn: parser.FuncDecl, structs: parser.StructDecl[]): boolean {
+function enum_ret_recordable(name: string, fn: parser.FuncDecl, structs: StructTab): boolean {
     if (!is_enum_like_name(name, structs)) { return false; }
     return !(irl_looks_type_var(name) && fn.receiver_type.len() == 0 && fn_has_param_typed(fn, fn.ret_type));
 }
