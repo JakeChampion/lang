@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -101,6 +102,67 @@ function main(): i32 {
     while (i < 5) { a = a.emit(i); i = i + 1; }
     var e: St = bump3(a);
     return a.ops.len() * 10 + e.ops.len() + e.ops[5];
+}`},
+	// The bracket's release must name the buffer its retain named. A callee that
+	// hands back the caller's own box — an empty pass-through — leaves that box
+	// freed by the dying-donor release and handed straight back to the next
+	// call's result-box allocation, so a release that re-reads `b.ops` reads the
+	// buffer that call just grew (#8224).
+	{"passthrough-then-bracketed-grow", `
+struct St { ops: i32[], ctrl: i32 }
+function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 }; }
+function passthru(n: i32, s: St): St {
+    var t: St = s;
+    var i: i32 = 0;
+    while (i < n) { t = t.emit(i); i = i + 1; }
+    return t;
+}
+function outer(a: St): i32 {
+    var b: St = passthru(0, a);
+    var c: St = b.emit(9);
+    return b.ops.len() * 10 + c.ops.len() + c.ops[6];
+}
+function main(): i32 {
+    var a: St = St { ops: [], ctrl: 0 };
+    var i: i32 = 0;
+    while (i < 6) { a = a.emit(i); i = i + 1; }
+    return outer(a);
+}`},
+	// A struct local bound from a FIELD READ is not a container this frame owns,
+	// so the dying `aug = f(aug)` rebind must NOT be exempt from the bracket:
+	// growing one of aug's array fields in place reaches through it into `sg`,
+	// two levels deep, where the one-level may-grow-fields mask cannot follow.
+	// The `.with` on one of the two co-indexed arrays is what makes the damage
+	// visible rather than merely wrong — it re-clones `next` at cap == len, so
+	// the next append reallocs `next` while `rows` still has spare capacity and
+	// grows in place, and the container is left with two arrays one entry apart
+	// (#8224; the shape is irlower's own `var aug = sg.struct_ret_fns`).
+	{"field-read-alias-refuses-exemption", `
+struct Reg { rows: i32[], next: i32[] }
+struct Sigs { reg: Reg, tag: i32 }
+function append_row(r: Reg, v: i32): Reg {
+    var rows: i32[] = r.rows.append(v);
+    var next: i32[] = r.next.append(0 - 1);
+    next = next.with(0, v);
+    return Reg { rows: rows, next: next };
+}
+function grow_from_field(sg: Sigs): i32 {
+    var aug: Reg = sg.reg;
+    var i: i32 = 0;
+    while (i < 5) { aug = append_row(aug, i); i = i + 1; }
+    if (sg.reg.rows.len() != 3) { return 71; }
+    if (sg.reg.next.len() != 3) { return 72; }
+    if (aug.rows.len() != 8) { return 73; }
+    if (aug.next.len() != 8) { return 74; }
+    return 7;
+}
+function main(): i32 {
+    var rows: i32[] = [];
+    var next: i32[] = [];
+    var k: i32 = 0;
+    while (k < 3) { rows = rows.append(k); next = next.append(0 - 1); k = k + 1; }
+    var sg: Sigs = Sigs { reg: Reg { rows: rows, next: next }, tag: 0 };
+    return grow_from_field(sg);
 }`},
 	// A struct argument reached through a FIELD chain: the bracket has to walk
 	// the container's field hops to the inner struct's buffer.
@@ -334,4 +396,71 @@ function main(): i32 { return grow(3).ops.len(); }`,
 			}
 		})
 	}
+}
+
+// The grow bracket must RELEASE WHAT IT RETAINED. Its release side used to be a
+// second evaluation of the same PLACE — load the slot, walk the field hops, dec
+// — and a place is not stable across the call it brackets: a box the caller
+// still names can be freed by the dying-donor release of a pass-through call and
+// handed straight back to the next callee's own result-box allocation, so the
+// re-read yields the buffer that callee just grew. The dec then lands on a live
+// rc-1 buffer, whose freed block takes a freelist link over its cap word, and
+// the next append reads cap 0 with len N and copies N elements into a
+// four-element buffer (#8224). No answer separates the two forms until the
+// freelist happens to line up, so this reads the pairing off the asm.
+func TestSelfHostGrowFieldBracketReleasesRetainedX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irlower.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	const src = `
+struct St { ops: i32[], ctrl: i32 }
+function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl }; }
+function outer(a: St): i32 {
+    var b: St = a.emit(9);
+    return a.ops.len() * 10 + b.ops.len();
+}
+function main(): i32 {
+    var a: St = St { ops: [], ctrl: 0 };
+    var i: i32 = 0;
+    while (i < 5) { a = a.emit(i); i = i + 1; }
+    return outer(a);
+}`
+
+	body := asmFuncBody(t, string(runCaptureStrictIR(t, gcc, runner, driverBin, []byte(src), "-ir")), "__fn_outer")
+	lines := strings.Split(body, "\n")
+	slotRe := regexp.MustCompile(`^\s*movq %rax, (-\d+\(%rbp\))$`)
+	pushRe := regexp.MustCompile(`^\s*pushq (-\d+\(%rbp\))$`)
+
+	held := ""
+	for i, ln := range lines {
+		if !strings.Contains(ln, "call __fn___fern_rc_inc") {
+			continue
+		}
+		for j := i - 1; j >= 0 && j > i-6; j-- {
+			if m := slotRe.FindStringSubmatch(lines[j]); m != nil {
+				held = m[1]
+				break
+			}
+		}
+		break
+	}
+	if held == "" {
+		t.Fatalf("no bracket retain capturing a slot in __fn_outer; body:\n%s", body)
+	}
+	for i, ln := range lines {
+		if !strings.Contains(ln, "call __fn___fern_arr_dec") {
+			continue
+		}
+		m := pushRe.FindStringSubmatch(lines[i-1])
+		if m == nil {
+			t.Fatalf("bracket release is not a plain load of a captured slot (got %q); body:\n%s", strings.TrimSpace(lines[i-1]), body)
+		}
+		if m[1] != held {
+			t.Fatalf("bracket released %s but retained %s; body:\n%s", m[1], held, body)
+		}
+		return
+	}
+	t.Fatalf("no bracket release in __fn_outer; body:\n%s", body)
 }

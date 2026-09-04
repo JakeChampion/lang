@@ -779,6 +779,15 @@ pub struct LowerState {
     // statement carrying that occurrence is the only one a bracket can consult it
     // from — which is why lower_stmt_grow_exempt can union it in unconditionally.
     grow_sole: string[],
+    // grow_alias: the locals that name a container this frame does NOT own —
+    // bound anywhere in the body from a field / index / slice read, from a
+    // `for` element, or from a name already in the set. The dying exemption may
+    // not cover them: `x = f(x)` proves x's own binding dies, not that x is the
+    // only route to the buffers inside it, and a callee that grows one of x's
+    // array fields in place reaches through x into the container x was read out
+    // of — two levels deep, which the one-level may-grow-fields mask can
+    // neither express nor propagate (#8224).
+    grow_alias: string[],
     // own_params: the names of THIS function's `own` (consuming) parameters.
     // An `own` param was TRANSFERRED by the caller, so — unlike the borrowed
     // params the n_params boundary otherwise assumes — handing it back out of
@@ -12226,7 +12235,8 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         sc = emit_arr_share(sc, gbr_slots[gbi], "__fern_arr_share_inc");
         gbi = gbi + 1;
     }
-    sc = emit_grow_field_bracket(sc, gbf_rows, "__fern_arr_share_inc");
+    var gbf: GrowBracket = emit_grow_field_bracket_inc(sc, gbf_rows);
+    sc = gbf.state;
     // #5333: a consume-safe TRMC callee frees its scrutinee cell by cell. Retain
     // the argument when the caller still holds it — a bare IDENT is exactly that
     // case — so the callee's uniqueness check sees rc >= 2 on the first cell,
@@ -12259,7 +12269,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         scr = emit_arr_share(scr, gbr_slots[gbj], "__fern_arr_share_dec");
         gbj = gbj + 1;
     }
-    scr = emit_grow_field_bracket(scr, gbf_rows, "__fern_arr_share_dec");
+    scr = emit_grow_field_bracket_dec(scr, gbf.slots);
     // Free the stashed literal-arg boxes. Net-zero on the operand
     // stack (load → free → drop), so the call's result — live
     // beneath — is untouched; __fern_str_free is rc-aware and
@@ -12487,9 +12497,10 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
         if (!sm.ok) { return sm; }
         ai = ai + 1;
     }
-    sm = emit_grow_field_bracket(sm, sm_gbf, "__fern_arr_share_inc");
+    var smb: GrowBracket = emit_grow_field_bracket_inc(sm, sm_gbf);
+    sm = smb.state;
     sm = sm.emit(ir.op_call_direct(disp_ty + "." + fa.field, 1 + c.args.len()));
-    sm = emit_grow_field_bracket(sm, sm_gbf, "__fern_arr_share_dec");
+    sm = emit_grow_field_bracket_dec(sm, smb.slots);
     sm = free_stashed_str_args(sm, sm_lat);
     return free_stashed_struct_args(sm, sm_lsl);
 }
@@ -18694,7 +18705,7 @@ pub function lower_stmt(st: ast.Stmt, s: LowerState): LowerState {
 }
 
 function lower_stmt_grow_exempt(st: ast.Stmt, s: LowerState): LowerState {
-    var gex: string[] = grow_exempt_names_of_stmt(st);
+    var gex: string[] = grow_alias_filter(grow_exempt_names_of_stmt(st), s.grow_alias);
     // #6048: fold in the per-function sole-occurrence deaths. Safe to add to every
     // statement — the name occurs exactly once in the whole body, so only the
     // statement holding that occurrence has a call bracket that can read it.
@@ -56044,7 +56055,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -66784,7 +66795,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], field_append_inplace: [], grow_sole: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -74189,25 +74200,61 @@ pub function grow_field_bracket_rows(s: LowerState, callee: string, idx: i32, ar
                                slice_unchecked(row, b + 1, row.len()) + "", acc);
 }
 
-// emit_grow_field_bracket emits one side of the bracket for every planned
-// buffer: load the local, walk its field hops, inc / dec the array's rc. Each
-// entry is net-zero on the operand stack, so the plan composes anywhere between
-// the argument evaluation and the call — the shape emit_arr_share has for a bare
-// array argument.
-pub function emit_grow_field_bracket(se: LowerState, plan: i32[], helper: string): LowerState {
+// GrowBracket carries emit_grow_field_bracket_inc's result: the state after the
+// retains, and the scratch slot holding each buffer it retained.
+struct GrowBracket { state: LowerState, slots: i32[] }
+
+// emit_grow_field_bracket_inc retains every planned buffer and CAPTURES each
+// pointer in a scratch local, which emit_grow_field_bracket_dec releases after
+// the call. Each entry is net-zero on the operand stack, so the plan composes
+// anywhere between the argument evaluation and the call — the shape
+// emit_arr_share has for a bare array argument, which likewise releases a value
+// held in a slot.
+//
+// The capture is what makes the pair sound. Re-reading `<slot>.<field>` on the
+// release side is a second evaluation of a PLACE, and a place is not stable
+// across the call it brackets: a box the caller still names can be freed by a
+// dying-donor release and handed straight back to the callee's own result-box
+// allocation, so the field the release would re-read is the buffer the callee
+// just grew, while the retained one goes unreleased. That dec lands on a live
+// rc-1 buffer, whose freed block then takes a freelist link over its cap word —
+// and the next append reads cap 0 with len N and copies N elements into a
+// four-element buffer (#8224).
+pub function emit_grow_field_bracket_inc(se: LowerState, plan: i32[]): GrowBracket {
     var st: LowerState = se;
+    var slots: i32[] = [];
     var i: i32 = 0;
     while (i + 1 < plan.len()) {
         var nhops: i32 = plan[i + 1];
+        var held: string = "$gfb" + util.i32_to_string(st.locals.len());
+        st = st.add_local(held);
+        var hslot: i32 = st.slot_of(held);
         st = st.emit(ir.op_load_local(plan[i]));
         var h: i32 = 0;
         while (h < nhops) {
             st = st.emit(ir.op_struct_get(plan[i + 2 + h * 2], plan[i + 3 + h * 2]));
             h = h + 1;
         }
-        st = st.emit(ir.op_call_direct(helper, 1));
+        st = st.emit(ir.op_store_local(hslot));
+        st = st.emit(ir.op_load_local(hslot));
+        st = st.emit(ir.op_call_direct("__fern_arr_share_inc", 1));
         st = st.emit(ir.op_drop());
+        slots = slots.append(hslot);
         i = i + 2 + nhops * 2;
+    }
+    return GrowBracket { state: st, slots: slots };
+}
+
+// emit_grow_field_bracket_dec releases the buffers emit_grow_field_bracket_inc
+// captured, in the same order and by the captured pointer.
+pub function emit_grow_field_bracket_dec(se: LowerState, slots: i32[]): LowerState {
+    var st: LowerState = se;
+    var i: i32 = 0;
+    while (i < slots.len()) {
+        st = st.emit(ir.op_load_local(slots[i]));
+        st = st.emit(ir.op_call_direct("__fern_arr_share_dec", 1));
+        st = st.emit(ir.op_drop());
+        i = i + 1;
     }
     return st;
 }
@@ -74332,6 +74379,93 @@ pub function grow_sole_exempt_names_of(fn: parser.FuncDecl): string[] {
         p = p + 1;
     }
     return out;
+}
+
+// grow_alias_filter drops the names grow_alias holds from a statement's dying
+// exemption, so their calls take the bracket and the callee's grow copies.
+function grow_alias_filter(names: string[], alias: string[]): string[] {
+    if (alias.len() == 0 || names.len() == 0) { return names; }
+    var out: string[] = [];
+    var i: i32 = 0;
+    while (i < names.len()) {
+        if (util.index_of_str(alias, names[i]) < 0) { out = out.append(names[i]); }
+        i = i + 1;
+    }
+    return out;
+}
+
+// grow_alias_names_of lists the locals that name a container this frame does not
+// own. See LowerState.grow_alias. Iterated to a fixpoint so an alias of an alias
+// is caught: `var a = sg.reg; var b = a; b = append(b, r)` reaches sg's buffers
+// through b exactly as through a.
+//
+// The site this exists for is `var aug: SigReg = sg.struct_ret_fns;` followed by
+// `aug = sig_reg_append(aug, row)`. sig_reg_append's `r.rows.append(row)` and
+// `r.next.append(-1)` are both admitted in-place grows of a parameter's fields,
+// and the rebind looks like the dying self-reassign, so the bracket was skipped
+// — and the two co-indexed buffers of the module-wide registry then grew
+// INDEPENDENTLY, one in place and one by realloc, leaving `next` one entry
+// longer than `rows` and a bucket chain pointing past the end of `rows`.
+pub function grow_alias_names_of(fn: parser.FuncDecl): string[] {
+    var out: string[] = [];
+    var grew: boolean = true;
+    while (grew) {
+        var before: i32 = out.len();
+        out = grow_alias_scan(fn.body, out);
+        grew = out.len() > before;
+    }
+    return out;
+}
+
+function grow_alias_scan(stmts: ast.Stmt[], acc: string[]): string[] {
+    var a: string[] = acc;
+    var i: i32 = 0;
+    while (i < stmts.len()) { a = grow_alias_scan_stmt(stmts[i], a); i = i + 1; }
+    return a;
+}
+
+function grow_alias_scan_stmt(st: ast.Stmt, acc: string[]): string[] {
+    var a: string[] = acc;
+    match (st) {
+        ast.StmtVar(v) => { return grow_alias_bind(v.name, v.init, a); },
+        ast.StmtAssign(asg) => { return grow_alias_bind(asg.target, asg.value, a); },
+        ast.StmtIf(f) => {
+            a = grow_alias_scan(f.then_body, a);
+            return grow_alias_scan(f.else_body, a);
+        },
+        ast.StmtWhile(w) => { return grow_alias_scan(w.body, a); },
+        ast.StmtFor(fo) => {
+            // A `for` element names a slot inside the container being walked.
+            a = push_str_unique(a, fo.var_name);
+            return grow_alias_scan(fo.body, a);
+        },
+        ast.StmtMatch(m) => {
+            for arm in m.arms { a = grow_alias_scan(arm.body, a); }
+            return a;
+        },
+        ast.StmtDefer(d) => { return grow_alias_scan_stmt(d.action, a); },
+        _ => { return a; }
+    }
+    return a;
+}
+
+// grow_alias_bind: does binding `name` from `init` make it name a container the
+// frame does not own? A chain read does; so does a bare ident of a name that
+// already does. A call result, a literal, and a bare ident of anything else are
+// values this frame owns outright.
+function grow_alias_bind(name: string, init: ast.Expr, acc: string[]): string[] {
+    if (name.len() == 0) { return acc; }
+    match (init) {
+        ast.ExprFieldAccess(_) => { return push_str_unique(acc, name); },
+        ast.ExprIndex(_) => { return push_str_unique(acc, name); },
+        ast.ExprSlice(_) => { return push_str_unique(acc, name); },
+        ast.ExprIdent(id) => {
+            if (util.index_of_str(acc, id.name) >= 0) { return push_str_unique(acc, name); }
+            return acc;
+        },
+        _ => { return acc; }
+    }
+    return acc;
 }
 
 pub function grow_exempt_names_of_stmt(st: ast.Stmt): string[] {
