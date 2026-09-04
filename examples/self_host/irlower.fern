@@ -35298,7 +35298,7 @@ function map_val_box_column_ok(vt: string, structs: StructTab): boolean {
 // it walks each box through __map_vals_struct_drop_<vt> before the one-dec free.
 // "" for an all-scalar struct (one dec is its whole release) or a shape the deep
 // drop declines.
-function map_val_struct_deep_type(vt: string, structs: parser.StructDecl[]): string {
+function map_val_struct_deep_type(vt: string, structs: StructTab): string {
     if (!decl_is_struct(structs, vt)) { return ""; }
     if (struct_fields_all_scalar(structs, vt)) { return ""; }
     if (!nested_field_deep_drop_ok(structs, vt)) { return ""; }
@@ -50115,22 +50115,19 @@ function struct_fields_reusable_param(structs: StructTab, struct_name: string): 
 // field reclaim (slit_reclaim), so string-fielded types are admitted only when
 // routed — otherwise the caller's share is uncounted and the rc-aware
 // __fern_str_free at the override would free it under a live holder.
-function struct_fields_reusable_ownparam(structs: parser.StructDecl[], sfok: string[], struct_name: string): boolean {
+function struct_fields_reusable_ownparam(structs: StructTab, sfok: string[], struct_name: string): boolean {
     if (struct_fields_reusable_param(structs, struct_name)) { return true; }
     if (struct_has_string_field(structs, struct_name) && !struct_routes_field_reclaim_at(structs, sfok, struct_name)) { return false; }
-    for sd in structs {
-        if (sd.name == struct_name) {
-            if (sd.fields.len() == 0) { return false; }
-            for fld in sd.fields {
-                var t: string = fld.type_name;
-                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t)
-                    && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)
-                    && !decl_is_enum(structs, t) && t != "string") { return false; }
-            }
-            return true;
-        }
+    var si: i32 = stab_first(structs, struct_name);
+    if (si < 0) { return false; }
+    if (structs.decls[si].fields.len() == 0) { return false; }
+    for fld in structs.decls[si].fields {
+        var t: string = fld.type_name;
+        if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t)
+            && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t)
+            && !decl_is_enum(structs, t) && t != "string") { return false; }
     }
-    return false;
+    return true;
 }
 
 // struct_fields_reusable_cross widens struct_fields_reusable for the
@@ -51060,17 +51057,16 @@ function sa_param_named(params: ast.ParamDecl[], name: string): boolean {
 // counted only for a routed type, which own_update_params_of requires.
 function struct_fields_reusable_own(structs: StructTab, struct_name: string): boolean {
     if (struct_fields_reusable_param(structs, struct_name)) { return true; }
-    for sd in structs {
-        if (sd.name == struct_name) {
-            if (sd.fields.len() == 0) { return false; }
-            for fld in sd.fields {
-                var t: string = fld.type_name;
-                if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t)
-                    && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t) && !decl_is_enum(structs, t)
-                    && t != "string" && t != "string[]" && !is_struct_array_field_type(structs, t) && !is_enum_array_field_type(structs, t)) { return false; }
-            }
-            return true;
-        }
+    // No decl of this name answers true, as the scan this replaced did by
+    // falling out of its loop.
+    var si: i32 = stab_first(structs, struct_name);
+    if (si < 0) { return true; }
+    if (structs.decls[si].fields.len() == 0) { return false; }
+    for fld in structs.decls[si].fields {
+        var t: string = fld.type_name;
+        if (!reuse_field_is_scalar(t) && !is_leaksafe_array_field(t) && !decl_is_struct(structs, t) && !is_map_type_name(t)
+            && !is_leaksafe_tuple_field(t) && !is_leaksafe_opt_field_d(structs, t) && !decl_is_enum(structs, t)
+            && t != "string" && t != "string[]" && !is_struct_array_field_type(structs, t) && !is_enum_array_field_type(structs, t)) { return false; }
     }
     return true;
 }
