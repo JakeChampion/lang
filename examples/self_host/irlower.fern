@@ -22336,13 +22336,14 @@ function lower_stmt_var_destructure(v: ast.StmtVar, s: LowerState): LowerState {
         // census cannot see). The dup pairs them: rc 1 →inc 2 →this binding's
         // sweep 1 →the tuple's own drop 0.
         //
-        // is_leaksafe_array_field is exactly the set the sweep releases with a
-        // shallow `__fern_rc_dec`, and exactly the set measured to over-release.
-        // The deeper-release kinds are deliberately NOT here — a `string[]`
-        // (__fern_str_arr_free) and a struct / enum array (element walk) LEAK
-        // rather than over-release, so retaining one would deepen a leak instead
-        // of closing a double-dec; each is its own measured increment.
-        if (is_leaksafe_array_field(dtag)) {
+        // The scope is every element kind a tuple's own sweep can release, so
+        // is_leaksafe_array_field (shallow `__fern_rc_dec`) plus `string[]`,
+        // whose deep `__fern_str_arr_free` is rc-gated: the binding's shallow
+        // dec runs first and drops the extra reference, then the tuple's drop
+        // walks the element boxes at rc 1. A struct / enum array element stays
+        // out because no tuple position of that type is sweep-credited at all
+        // (tuple_arg_payload_droppable admits none), so it can only leak.
+        if (is_leaksafe_array_field(dtag) || dtag == "string[]") {
             dt = dt.emit(ir.op_load_local(dkslot));
             dt = dt.emit(ir.op_call_direct("__fern_rc_inc", 1));
             dt = dt.emit(ir.op_drop());
@@ -56622,8 +56623,12 @@ function body_has_nonfresh_opt_err_payload(stmts: ast.Stmt[], str_fresh: string[
 // constructor of such. A scalar literal carries no box; a bare ident is an
 // alias and reads unfresh.
 function opt_ctor_payload_fresh(e: ast.Expr, str_fresh: string[]): boolean {
-    // A literal / concat / registered producer string, and an array literal of
-    // those, are each already answered by the tuple element predicates.
+    // A bare string LITERAL has to be answered here: every predicate below
+    // takes a literal only as a concat / array ELEMENT, so none of them
+    // admits one standing alone.
+    if let ast.ExprString(_) = e { return true; }
+    // A concat or registered producer string, and an array literal of those,
+    // are each already answered by the tuple element predicates.
     if (tuple_str_elem_fresh_reg(e, str_fresh)) { return true; }
     if (tuple_strarr_elem_fresh(e, str_fresh)) { return true; }
     if (ident_name_or_empty(e) == "None") { return true; }
