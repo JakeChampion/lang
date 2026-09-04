@@ -44,8 +44,7 @@ tractable in an interpreter that has no ownership pass.
 
 Every site in `internal/interp` that stores a `Value`, and whether the
 retain/release discipline the map COW path already runs would be correct
-if arrays consulted it. Line numbers are from the commit that closed
-#7287.
+if arrays consulted it.
 
 Sites that already owned their store:
 
@@ -123,7 +122,9 @@ buffer unshared — and, because a parameter takes ownership of its
 argument, why `x = f(x)` does too, one call deep and inside the callee.
 Nothing can reach the old value uncounted in between: an alias made during
 the right-hand side binds (and so counts), and an argument already
-evaluated is held by `evalCall`.
+evaluated is held by `evalCall`. A right-hand side that fails — including
+a `?` unwind or a `return` out of a value-position block, both of which
+arrive as errors — puts the reference back.
 
 The buffer's header carries a second number, `paths`: how many times
 `adjustRC` has counted this array into the **Map** rc, which is how many
@@ -192,9 +193,6 @@ mode print 99 where every backend prints 19, `copy` still print 19, and
   reference and the scope gives its count back at exit, so an array read
   only through such a closure is undercounted. Reaching it requires
   binding it out of the closure, which counts it again.
-- **An error unwound between the move and the store.** `x = <rhs>`
-  restores the count if the right-hand side fails, but a `?` that unwinds
-  past the assignment from further out does not come back through it.
 - The three known interp/native divergences the audit's probe corpus
   found — the slice view above, and two block-expression evaluation-order
   shapes (`h(a, { a = a.with(0, 9); 1 })` and `a[{ a = a.with(0, 9); 0 }]`)
