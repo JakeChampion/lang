@@ -1724,12 +1724,23 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Result: ast.NumberType{},
 	}
 	// temp_dir(prefix): Result[string, IoError] — create a
-	// fresh empty directory and return its absolute path.
+	// fresh empty directory and return a path to it.
 	// `prefix` is appended to a random suffix so concurrent
 	// runs don't clash. Caller invokes `remove_dir_all`
 	// (or registers a cleanup hook on a TestRunner) to scrub
 	// when finished; system tmpfs scrub-on-reboot is the
 	// fallback safety net.
+	//
+	// The returned path is absolute under the temp root on
+	// interp and the natives, and preopen-relative on wasm,
+	// where a component has no absolute filesystem to name.
+	// Treat it as an opaque handle to hand back to `read_file`
+	// / `write_file` / `stat` / `remove_dir_all`, not as a
+	// string of known shape.
+	//
+	// `prefix` is a NAME, not a path: a `/` in it is rejected
+	// with `Other(prefix, "")` on every backend. Build a tree
+	// underneath the result with `create_dir_all` instead.
 	c.info.FuncSigs["temp_dir"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{

@@ -2259,14 +2259,13 @@ func builtinProcWaitpid(_ *Interp, args []Value) (Value, error) {
 }
 
 // builtinTempDir creates a fresh temporary directory and
-// returns its absolute path inside `Result[string, IoError]`.
+// returns its path inside `Result[string, IoError]`.
 // `prefix` is appended to a unique random suffix the OS picks
 // — `MkdirTemp` lays it out under `os.TempDir()` (`/tmp` on
 // Linux, the macOS equivalent on Darwin). No automatic
-// cleanup: callers are expected to either rely on OS-tier
-// scrubbing (CI runners, system tmpfs reboot purge) or to
-// build their own delete-on-finish flow once Lang grows a
-// `remove_dir` primitive.
+// cleanup: callers either rely on OS-tier scrubbing (CI
+// runners, system tmpfs reboot purge) or call `remove_dir_all`
+// when finished.
 func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("temp_dir: expected 1 arg, got %d", len(args))
@@ -2274,6 +2273,13 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	prefix, ok := args[0].(String)
 	if !ok {
 		return nil, fmt.Errorf("temp_dir: expected string prefix, got %T", args[0])
+	}
+	// A separator would let the prefix steer the directory out of the
+	// temp root. Rejected with the shape every backend's EINVAL takes,
+	// rather than laundering Go's own pattern error through
+	// classifyIoError, so the answer is identical on all of them.
+	if strings.ContainsRune(string(prefix), '/') {
+		return resultErr(ioErrorOther(string(prefix), "")), nil
 	}
 	dir, err := os.MkdirTemp("", string(prefix)+"-*")
 	if err != nil {
@@ -2495,8 +2501,15 @@ func classifyIoError(path string, err error) *Enum {
 		return &Enum{EnumName: "IoError", VariantName: "AlreadyExists", Index: 2,
 			Payloads: []Value{String(path)}}
 	}
+	return ioErrorOther(path, err.Error())
+}
+
+// ioErrorOther builds `IoError::Other(path, msg)` — where every
+// errno without a variant of its own lands, on this backend and
+// on the natives alike.
+func ioErrorOther(path, msg string) *Enum {
 	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
-		Payloads: []Value{String(path), String(err.Error())}}
+		Payloads: []Value{String(path), String(msg)}}
 }
 
 // resultOk / resultErr wrap a value into the canonical

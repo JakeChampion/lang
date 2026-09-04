@@ -8603,9 +8603,13 @@ func (g *generator) emitCreateDirAllRuntime() {
 // "/tmp/<prefix>-<ns>" (ns = __fern_monotonic_ns, decimal
 // digits) via mkdirat and returns Ok(path). The path is built in
 // a plain scratch buffer, then copied into an exactly-sized rc=1
-// string so the length prefix matches the allocation. Result
-// box: Ok = 24-byte {tag=0 @0, data @8, len @16}; Err = 16-byte
-// {tag=1 @0, IoError @8} (same shapes as read_file's 2W boxes).
+// string so the length prefix matches the allocation. A '/'
+// anywhere in the prefix is rejected as EINVAL before the
+// syscall — without that the concatenation places the directory
+// wherever the caller's bytes point, which is not what a temp
+// directory is. Result box: Ok = 24-byte {tag=0 @0, data @8,
+// len @16}; Err = 16-byte {tag=1 @0, IoError @8} (same shapes as
+// read_file's 2W boxes).
 func (g *generator) emitTempDirRuntime() {
 	g.line("")
 	g.line(".global __fern_temp_dir")
@@ -8624,6 +8628,19 @@ func (g *generator) emitTempDirRuntime() {
 	g.emitStrDataPtr2W("x25", "x19", "x20", 72) // x25 = prefix byte ptr
 	g.emit("mov x24, x20")
 	g.emitStrLen2W("w24", "x24") // w24 = prefix byte length
+	// The prefix names a directory, not a path: a '/' in it would
+	// steer the result out of the temp root, since the bytes are
+	// concatenated straight into "/tmp/<prefix>-<ns>".
+	g.emit("mov x9, #0")
+	g.label(".Ltd2w_sep")
+	g.emit("cmp x9, x24")
+	g.emit("b.ge .Ltd2w_sepd")
+	g.emit("ldrb w10, [x25, x9]")
+	g.emit("cmp w10, #47") // '/'
+	g.emit("b.eq .Ltd2w_einval")
+	g.emit("add x9, x9, #1")
+	g.emit("b .Ltd2w_sep")
+	g.label(".Ltd2w_sepd")
 	g.emit("bl __fern_monotonic_ns")
 	g.emit("mov x23, x0") // ns (unique suffix)
 	// Scratch: 5 ("/tmp/") + plen + 1 ('-') + 20 (max digits) + 1 NUL.
@@ -8701,9 +8718,14 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("str x22, [x0, #16]") // payload len (heap form)
 	g.emit("b .Ltd2w_return")
 
+	g.label(".Ltd2w_einval")
+	g.emit("mov x0, #22") // EINVAL
+	g.emit("b .Ltd2w_mkerr")
+
 	g.label(".Ltd2w_err")
 	g.emit("neg x22, x0") // errno (cursor dead on this path)
 	g.emit("mov x0, x22")
+	g.label(".Ltd2w_mkerr")
 	g.emit("mov x1, x19")
 	g.emit("mov x2, x20")
 	g.emit("bl __fern_io_error")

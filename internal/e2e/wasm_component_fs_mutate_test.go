@@ -277,9 +277,8 @@ func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "rd.fern")
-	// temp_dir's prefix is a preopen-relative PATH here, so passing one
-	// that already contains a directory puts the new level underneath
-	// it — that is what makes this a tree rather than siblings.
+	// create_dir_all builds the level under the temp directory — that is
+	// what makes this a tree rather than siblings.
 	src := []byte(`function main(): i32 {
     var d: string = "";
     match (temp_dir("rd")) { Err(e) => { return 1; }, Ok(p) => { d = p; } }
@@ -299,8 +298,8 @@ func TestCmdLangComponentReadDirRemoveDirAll(t *testing.T) {
             if (seen != 2) { return 1; }
         }
     }
-    var mid: string = "";
-    match (temp_dir(d + "/mid")) { Err(e) => { return 1; }, Ok(p) => { mid = p; } }
+    var mid: string = d + "/mid";
+    match (create_dir_all(mid)) { Err(e) => { return 1; }, Ok(_) => {} }
     match (write_file(mid + "/deep.txt", "d")) { Err(e) => { return 1; }, Ok(_) => {} }
     match (read_dir(mid)) {
         Err(e) => { return 1; },

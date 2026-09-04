@@ -56,6 +56,7 @@ const (
 	errnoAccess  int32 = 2  // EACCES → PermissionDenied
 	errnoExist   int32 = 20 // EEXIST → AlreadyExists
 	errnoIlseq   int32 = 25 // EILSEQ → InvalidUtf8 (synthetic — raised by __fern_utf8_valid, not the host)
+	errnoInval   int32 = 28 // EINVAL → Other (no variant of its own)
 	errnoIntr    int32 = 27 // EINTR  → Interrupted
 	errnoNoEnt   int32 = 44 // ENOENT → NotFound
 	errnoNoTsup  int32 = 58 // ENOTSUP → Unsupported

@@ -5407,8 +5407,11 @@ pub function sleep_ms_func(): string {
 // model every other wasm fs op (stat / read_dir / remove_file / remove_dir_all)
 // already uses, so the name round-trips through those ops within the sandbox. The
 // ns suffix is converted to decimal inline (count digits, then write right-to-
-// left). Needs the heap runtime ($__fern_str_box / $__fern_alloc), the clock
-// runtime ($__fern_monotonic_ns) and path_create_directory.
+// left). A '/' in the prefix is rejected as EINVAL (#6329) — it is a name on
+// every backend, and joining it as a path is what let wasm build a nested
+// directory the others refuse. Needs the heap runtime ($__fern_str_box /
+// $__fern_alloc), the clock runtime ($__fern_monotonic_ns) and
+// path_create_directory.
 pub function temp_dir_func(): string {
     var o: string = "";
     o = o + "  (func $__fern_temp_dir (param $prefix i32) (result i32)\n";
@@ -5416,6 +5419,27 @@ pub function temp_dir_func(): string {
     o = o + "    (local $blk i32) (local $base i32) (local $i i32) (local $err i32) (local $res i32)\n";
     o = o + "    (local.set $ns (call $__fern_monotonic_ns))\n";
     o = o + "    (local.set $plen (i32.load (local.get $prefix)))\n";
+    // A '/' makes the prefix a path rather than a name: reject it, with a
+    // fresh copy of the prefix as the IoError's path so the borrowed
+    // parameter is never stored.
+    o = o + "    (local.set $i (i32.const 0))\n";
+    o = o + "    (block $sd (loop $sl\n";
+    o = o + "      (br_if $sd (i32.ge_u (local.get $i) (local.get $plen)))\n";
+    o = o + "      (if (i32.eq (i32.load8_u (i32.add (i32.add (local.get $prefix) (i32.const 4)) (local.get $i))) (i32.const 47)) (then\n";
+    o = o + "        (local.set $blk (call $__fern_str_box (i32.add (i32.const 4) (local.get $plen))))\n";
+    o = o + "        (i32.store (local.get $blk) (local.get $plen))\n";
+    o = o + "        (local.set $i (i32.const 0))\n";
+    o = o + "        (block $qd (loop $ql\n";
+    o = o + "          (br_if $qd (i32.ge_u (local.get $i) (local.get $plen)))\n";
+    o = o + "          (i32.store8 (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $i)) (i32.load8_u (i32.add (i32.add (local.get $prefix) (i32.const 4)) (local.get $i))))\n";
+    o = o + "          (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "          (br $ql)))\n";
+    o = o + "        (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+    o = o + "        (i32.store (local.get $res) (i32.const 1))\n";
+    o = o + "        (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error (i32.const 28) (local.get $blk)))\n";
+    o = o + "        (return (local.get $res))))\n";
+    o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
+    o = o + "      (br $sl)))\n";
     // Count decimal digits of ns (>= 1).
     o = o + "    (local.set $tmp (local.get $ns))\n";
     o = o + "    (local.set $nd (i32.const 1))\n";
