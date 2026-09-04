@@ -2145,9 +2145,9 @@ function emit_arm64_op_dyn_dispatch(o: ir.Op, i: i32, lp: string, s: asmcore.Emi
             var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
             var denext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
             var dvi: i32 = 0;
-            while (dvi < s.struct_decls.len()) {
-                if (s.struct_decls[dvi].enum_owner == ddbn) {
-                    var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls[dvi].name);
+            while (dvi < s.struct_decls.decls.len()) {
+                if (s.struct_decls.decls[dvi].enum_owner == ddbn) {
+                    var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls.decls[dvi].name);
                     s = vlit.state;
                     s = s.write("    adrp x2, " + vlit.label + "\n");
                     s = s.write("    add x2, x2, :lo12:" + vlit.label + "\n");
@@ -2479,6 +2479,7 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
 }
 
 pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging matches what module_with_builtins supplies
     // (parity with the x86 IR path in asm_ir.emit_module_ir).
@@ -2490,7 +2491,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     // them per function is O(n^2) and OOMs the bump heap on a large module.
     var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
     var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(mod.funcs, mod.structs, ircore.array_ret_fns(mod), bparams), mod.trait_reqs),
+        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(mod.funcs, stab, ircore.array_ret_fns(mod), bparams), mod.trait_reqs),
         consume_safe_params: irlower.consume_safe_params_interproc(mod.funcs, bparams),
         // Struct returns resolve against the EmitState's struct view, which on
         // this path is wider than the module's own decls.
@@ -2581,7 +2582,7 @@ function rt_arm64_str_eq(): string {
     return s;
 }
 
-pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], s: asmcore.EmitState): asmcore.EmitState {
+pub function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
     var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
     var fns: parser.FuncDecl[] = m.funcs;
     var bparams: string[] = irlower.borrowable_params_interproc(fns);
@@ -3032,11 +3033,11 @@ function emit_arm64_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): 
     s = s.write("    cbz x0, .Leaed_" + san + "_next\n");
     var vi: i32 = 0;
     var vlabel: i32 = 0;
-    while (vi < s.struct_decls.len()) {
-        if (s.struct_decls[vi].enum_owner == ety) {
-            var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls[vi].name);
+    while (vi < s.struct_decls.decls.len()) {
+        if (s.struct_decls.decls[vi].enum_owner == ety) {
+            var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
             if (offs.len() > 0) {
-                var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls[vi].name);
+                var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls.decls[vi].name);
                 s = vlo.state;
                 var vls: string = util.i32_to_string(vlabel);
                 s = s.write("    ldr x0, [x21]\n");             // shape ptr @0
@@ -6847,7 +6848,7 @@ pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
         return "";
     }
     var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    s = asmcore.EmitState { ...s, struct_decls: irlower.struct_tab(mod.structs), funcs: mod.funcs };
     var check_errs: util.Diag[] = asmcore.check_module(mod, s);
     if (check_errs.len() > 0) {
         eprint(util.format_diags(check_errs));
@@ -6973,9 +6974,10 @@ function pp_arm64_marker_reg(asm: string, lo: i32, hi: i32): boolean {
 }
 
 pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    s = asmcore.EmitState { ...s, struct_decls: irlower.struct_tab(mod.structs), funcs: mod.funcs };
     // emit_body takes the runtime-dependency closure itself, ahead of the _start
     // it ends with. The seeds below are marker needs with no declared deps, so
     // they need no second pass.
@@ -6983,15 +6985,15 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
     // #4355: replaced-STRING-field admission — this driver route is
     // single-module whole-program, so mod.funcs IS the full read scope.
     var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
     var nfoi: i32 = 0;
     while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
     // #5235: plain-fn-pointer-array field registry (see the emit_module_funcs twin).
-    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
+    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, stab);
     var fpi: i32 = 0;
     while (fpi < fpk.len()) { s = s.need(fpk[fpi]); fpi = fpi + 1; }
     // Per-type __field_reclaim_<T> / __struct_drop_<T> bodies (#3457).
@@ -7013,7 +7015,8 @@ pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
 // layout; only mod.funcs are EMITTED. The _start is copied verbatim from
 // emit_body (the proven single-unit IR path). Caller must have established
 // asm_ir.all_eligible_*_known_view(mod) and seeded nothing (we reset here).
-pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32): string {
+pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     mod = parser.infer_ret_types_module(mod);
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
@@ -7035,7 +7038,7 @@ pub function emit_module_ir_unit_arm64(mod: parser.Module, is_entry: boolean, gl
         ...irlower.fn_sigs_for_borrow(all_funcs, all_structs, ircore.array_ret_fns_of(all_funcs), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(all_funcs, bparams),
         // These two stay scoped to THIS module rather than the whole program.
-        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
+        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, stab),
         fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
     };
     // [lo, hi) function-index window (function-sharding, #3425 — the arm64

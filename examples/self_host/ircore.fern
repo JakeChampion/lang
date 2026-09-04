@@ -375,7 +375,7 @@ pub function all_eligible_lib_known(mod: parser.Module, known: string[]): boolea
 // the imported struct is absent from `mod.structs`. Use this — not the bare
 // all_eligible_lib_known — to gate a per-module emit driven off
 // flatten.bundle_per_module.
-pub function all_eligible_lib_known_view(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
+pub function all_eligible_lib_known_view(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): boolean {
     return eligible_core_known_view_impl(mod, known, all_funcs, all_structs);
 }
 
@@ -386,6 +386,7 @@ pub function all_eligible_lib_known_view(mod: parser.Module, known: string[], al
 // callers want the same answer. The flag and its two `has_main` checks are
 // deleted rather than left inert (#3457 slice 5).
 pub function eligible_core_known_impl(mod: parser.Module, known: string[]): boolean {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     // A function-less module is eligible, as in eligible_core_known_view_impl:
     // emit_module_ir_unit's `_start` exits 0 when there is no main, so a
     // types-only unit lowers to the preamble and that stub.
@@ -418,14 +419,14 @@ pub function eligible_core_known_impl(mod: parser.Module, known: string[]): bool
     // hard enough to corrupt it, crashing the self-host-emitted compiler during
     // its OWN eligibility pass (#3425). Once is byte-identical, at O(n).
     var sg: irlower.FnSigs = irlower.fn_sigs_without_ownership(
-        irlower.fn_sigs_of(mod.funcs, mod.structs, array_ret_fns(mod)));
+        irlower.fn_sigs_of(mod.funcs, stab, array_ret_fns(mod)));
     var freg: irlower.SigReg = module_func_reg(mod);
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
-        if (!func_eligible(mod.funcs[i], mod, mod.structs, known, sg, freg)) {
+        if (!func_eligible(mod.funcs[i], mod, stab, known, sg, freg)) {
             if (strict_ir_on()) {
                 strict_ir_refuse(mod.funcs[i].name
-                    + func_ineligible_reason(mod.funcs[i], mod, mod.structs, known, sg, freg));
+                    + func_ineligible_reason(mod.funcs[i], mod, stab, known, sg, freg));
             }
             return false;
         }
@@ -476,7 +477,8 @@ pub function strict_ir_refuse(what: string): i32 {
 // eligible_core_known_main, modulo the merged path's historical use of
 // array_ret_fns / borrowable_params_of (vs the _of / _interproc forms emit
 // uses); this variant tracks emit, not that legacy gate, by design.
-pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
+pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): boolean {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     // A function-less module is eligible: a types-only module (ast.fern) has
     // nothing that could fail to lower, and its unit is the preamble alone.
     // No 512-function size budget here: a per-module unit is a SINGLE module
@@ -492,7 +494,7 @@ pub function eligible_core_known_view_impl(mod: parser.Module, known: string[], 
         ...irlower.fn_sigs_without_ownership(irlower.fn_sigs_for_borrow(all_funcs, all_structs, arf, bparams)),
         // These two stay scoped to THIS module rather than the whole program.
         fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
-        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
+        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, stab),
     };
     var freg: irlower.SigReg = module_func_reg(mod);
     var i: i32 = 0;
@@ -539,7 +541,7 @@ pub function known_includes(known: string[], name: string): boolean {
 // this gate as a separate pass rather than fusing it into emit like x86's
 // emit_module_ir_gated — needed 8.5 GB to compile an empty main importing
 // std/array, against x86's 1.5 GB.
-function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.StructDecl[], known: string[], sg: irlower.FnSigs, freg: irlower.SigReg): boolean {
+function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: irlower.StructTab, known: string[], sg: irlower.FnSigs, freg: irlower.SigReg): boolean {
     // lower_func with the hoisted side-tables (the same set lower_func_for would
     // derive, but computed once by eligible_core — see the hoist note there).
     // `sview` is the struct-decl view lowering resolves field layouts against:
@@ -581,7 +583,7 @@ function func_eligible(fd: parser.FuncDecl, mod: parser.Module, sview: parser.St
 // Only called under strict_ir_on(), so the extra lowering costs nothing on the
 // normal path — which is why func_eligible itself stays a plain boolean and
 // this duplicates its shape rather than the two sharing a richer return.
-function func_ineligible_reason(fd: parser.FuncDecl, mod: parser.Module, sview: parser.StructDecl[], known: string[], sg: irlower.FnSigs, freg: irlower.SigReg): string {
+function func_ineligible_reason(fd: parser.FuncDecl, mod: parser.Module, sview: irlower.StructTab, known: string[], sg: irlower.FnSigs, freg: irlower.SigReg): string {
     var r: irlower.LowerResult = irlower.lower_func(fd, sview, sg, false);
     if (!r.ok) { return " (did not lower: " + r.why + ")"; }
     var i: i32 = 0;
@@ -625,7 +627,7 @@ pub function all_eligible_known(mod: parser.Module, known: string[]): boolean {
 // all_eligible_lib_known_view (require_main=true — the entry emits `_start` →
 // `call __fn_main`). Gates a per-module ENTRY emit against the same all_funcs /
 // all_structs view emit_module_ir_unit lowers it with.
-pub function all_eligible_known_view(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): boolean {
+pub function all_eligible_known_view(mod: parser.Module, known: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): boolean {
     return eligible_core_known_view_impl(mod, known, all_funcs, all_structs);
 }
 
@@ -654,10 +656,11 @@ pub function eligibility_report(mod: parser.Module): string {
 // instead of `BAIL call` / `BAIL const_func`, and the module verdict reflects
 // all_eligible_known. An empty `known` reproduces eligibility_report exactly.
 pub function eligibility_report_known(mod: parser.Module, known: string[]): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var out: string = "";
     var freg: irlower.SigReg = module_func_reg(mod);
-    var sga: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, mod.structs, array_ret_fns(mod));
-    var sgn: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, mod.structs, irlower.array_ret_fn_names(mod.funcs));
+    var sga: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, array_ret_fns(mod));
+    var sgn: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, irlower.array_ret_fn_names(mod.funcs));
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
         out = out + eligibility_line(mod.funcs[i], mod, known, freg, sga, sgn);
@@ -672,6 +675,7 @@ pub function eligibility_report_known(mod: parser.Module, known: string[]): stri
 // "<name>: BAIL <reasons>\n") shared by eligibility_report and its sharded
 // twin. A receiver method is reported as "<Type>.<method>".
 function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg, sga: irlower.FnSigs, sgn: irlower.FnSigs): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var name: string = fd.name;
     if (fd.receiver_type.len() > 0) { name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
     // Lowered with the SAME registries emit_function_via_ir (and the wasm
@@ -680,7 +684,7 @@ function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string
     // = mk()` is tracked as an array only when `mk` is in arr_ret_fns, and a
     // later `for x in a` bails when its slot is not array-typed. An empty
     // registry here would under-approximate and refuse modules that do lower.
-    var lower_ok: boolean = irlower.lower_func(fd, mod.structs, sga, false).ok;
+    var lower_ok: boolean = irlower.lower_func(fd, stab, sga, false).ok;
     var calls_ok: boolean = calls_only_known(fd, mod, known, freg, sgn);
     var cfns_ok: boolean = const_funcs_only_known(fd, mod, known, freg, sgn);
     if (lower_ok && calls_ok && cfns_ok) {
@@ -705,6 +709,7 @@ function eligibility_line(fd: parser.FuncDecl, mod: parser.Module, known: string
 // past the end yields just that header (or nothing); count <= 0 reports to the
 // module end.
 pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var out: string = "";
     if (start <= 0) { out = "funcs: " + util.i32_to_string(mod.funcs.len()) + "\n"; }
     var lo: i32 = start;
@@ -714,8 +719,8 @@ pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32
     var i: i32 = lo;
     var none: string[] = [];
     var freg: irlower.SigReg = module_func_reg(mod);
-    var sga: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, mod.structs, array_ret_fns(mod));
-    var sgn: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, mod.structs, irlower.array_ret_fn_names(mod.funcs));
+    var sga: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, array_ret_fns(mod));
+    var sgn: irlower.FnSigs = irlower.fn_sigs_of(mod.funcs, stab, irlower.array_ret_fn_names(mod.funcs));
     while (i < hi) {
         out = out + eligibility_line(mod.funcs[i], mod, none, freg, sga, sgn);
         i = i + 1;
@@ -728,7 +733,8 @@ pub function eligibility_report_range(mod: parser.Module, start: i32, count: i32
 // twin of calls_only_known. A const_func to an unknown name can't resolve to a
 // funcref table slot, so such modules bail.
 function const_funcs_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg, sgn: irlower.FnSigs): boolean {
-    var r: irlower.LowerResult = irlower.lower_func(fd, mod.structs, sgn, false);
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    var r: irlower.LowerResult = irlower.lower_func(fd, stab, sgn, false);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         if (r.ops[i].kind_tag == 6 && !module_has_func(freg, r.ops[i].str) && !known_includes(known, r.ops[i].str)) { return false; }  // const_func
@@ -765,7 +771,8 @@ pub function module_has_func(freg: irlower.SigReg, name: string): boolean {
 // calls_only_known reports whether every direct call in fd targets a module
 // function or an IR runtime helper (not a builtin).
 function calls_only_known(fd: parser.FuncDecl, mod: parser.Module, known: string[], freg: irlower.SigReg, sgn: irlower.FnSigs): boolean {
-    var r: irlower.LowerResult = irlower.lower_func(fd, mod.structs, sgn, false);
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    var r: irlower.LowerResult = irlower.lower_func(fd, stab, sgn, false);
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
@@ -976,7 +983,7 @@ pub function unsupported_op_refuse(tag: i32, backend: string): string {
 // own (strfld_ok_types, structfld_reclaim_ok_types_of) builds the trio inline
 // instead: FnSigs.borrowable_params is the counted form, not `bparams`, so
 // routing through here would mean running borrowable_params_interproc twice.
-pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: parser.StructDecl[]): irlower.FnSigs {
+pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irlower.StructTab): irlower.FnSigs {
     var bparams: string[] = irlower.borrowable_params_interproc(funcs);
     return irlower.FnSigs {
         ...irlower.fn_sigs_for_borrow(funcs, structs, array_ret_fns_of(funcs), bparams),
