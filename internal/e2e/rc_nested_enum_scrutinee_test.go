@@ -152,3 +152,72 @@ func TestWASMNestedEnumScrutineeReclaim(t *testing.T) {
 		t.Errorf("nested enum scrutinee reclaim: code=%d (99=wrong value, >0=over-release)", got)
 	}
 }
+
+// The ALIASED-payload half of the same rule, which the table above cannot see
+// — every payload there is freshly built inside the producer.
+//
+// `Some(Some(pre))` over a live local stores `pre` uncounted unless the enum
+// is EnumRcPayloads-eligible, and the outer join's reclaim is a DEEP drop that
+// reaches the inner box through the generated __drop_enum_. Admitting the
+// nested scrutinee without checking that countedness freed the caller's array
+// under the move model: the post-loop read returned garbage (exit 226 on
+// x86-64) where the production model exited 0, which is what
+// TestX86_64EnumRcPayloadsMatchesMove caught on audit_std_json.
+//
+// Both models must exit 0. The in-arm `xs[0].len()` pins the payload still
+// readable through the copy, and the post-loop `pre[0].len()` pins the
+// caller's array surviving every round.
+const nestedEnumScrutineeAliasedPayloadSrc = `@noinline
+function mk(pre: string[]): Option[Option[string[]]] { return Some(Some(pre)); }
+
+function main(): i32 {
+    var pad: string = "wxyz";
+    var pre: string[] = [pad + "0123456789abcdef0123456789"];
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 50) {
+        match (mk(pre)) {
+            Some(o) => { match (o) { Some(xs) => { t = t + xs[0].len(); }, None => { t = t + 1000; } } },
+            None => { t = t + 1000; }
+        }
+        i = i + 1;
+    }
+    if (t != 1500) { return 99; }
+    if (pre[0].len() != 30) { return 98; }
+    return __rc_underflow_count();
+}`
+
+func TestX86_64NestedEnumScrutineeAliasedPayload(t *testing.T) {
+	prev := ast.EnumRcPayloads
+	defer func() { ast.EnumRcPayloads = prev }()
+	for _, on := range []bool{true, false} {
+		ast.EnumRcPayloads = on
+		if _, code := compileAndRunX86_64FreeOn(t, nestedEnumScrutineeAliasedPayloadSrc); code != 0 {
+			t.Errorf("EnumRcPayloads=%v: code=%d (99=wrong sum, 98=caller's array freed, >0=over-release)", on, code)
+		}
+	}
+}
+
+func TestArm64NestedEnumScrutineeAliasedPayload(t *testing.T) {
+	prev := ast.EnumRcPayloads
+	defer func() { ast.EnumRcPayloads = prev }()
+	for _, on := range []bool{true, false} {
+		ast.EnumRcPayloads = on
+		if _, code := compileAndRunArm64FreeOn(t, nestedEnumScrutineeAliasedPayloadSrc); code != 0 {
+			t.Errorf("EnumRcPayloads=%v: code=%d (99=wrong sum, 98=caller's array freed, >0=over-release)", on, code)
+		}
+	}
+}
+
+func TestWASMNestedEnumScrutineeAliasedPayload(t *testing.T) {
+	prevFree := ast.RcFreeEnabled
+	ast.RcFreeEnabled = true
+	prev := ast.EnumRcPayloads
+	defer func() { ast.RcFreeEnabled = prevFree; ast.EnumRcPayloads = prev }()
+	for _, on := range []bool{true, false} {
+		ast.EnumRcPayloads = on
+		if got := runWasm(t, nestedEnumScrutineeAliasedPayloadSrc); got != 0 {
+			t.Errorf("EnumRcPayloads=%v: code=%d (99=wrong sum, 98=caller's array freed, >0=over-release)", on, got)
+		}
+	}
+}
