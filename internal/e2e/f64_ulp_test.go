@@ -207,9 +207,20 @@ func f64UlpCases() []f64Case {
 	// The negative bases stay on that same path: off it, ln|x| is only
 	// approximate, so those go in f64SpecialCases where the answer is
 	// exactly representable whatever the kernel does.
+	//
+	// The large-|y| rows are the ones that gate the fast path's BOUND. Every
+	// row above answers correctly whatever the bound is — a small exponent is
+	// on the exact path either way, and the |x| == 1 and special rows are
+	// exactly representable however they are computed. So for as long as the
+	// corpus stopped at |y| <= 10, a bound sending representable results down
+	// exp(y*log|x|) was invisible here: #6405 measured 162 ulp on pow(2,280)
+	// while this suite was green at 2. These rows are inexact AND large, so
+	// they can only pass on the squaring path.
 	for _, p := range []struct{ x, y float64 }{
 		{3, 2}, {2, 10}, {10, 3}, {5, 4}, {2, -2}, {7, 0}, {2, 0.5}, {9, 0.5},
 		{-2, 3}, {-2, 4}, {-3, 3}, {-2, -2}, {-2, -3}, {-0.5, 3}, {-1, 2},
+		{2, 65}, {2, 280}, {2, 1023}, {10, 67}, {0.5, 1023}, {7, 300},
+		{-3, 100}, {-2, 65}, {-0.5, 67}, {2, -100}, {0.5, -200},
 	} {
 		cs = append(cs, f64Case{
 			fmt.Sprintf("__pow_f64(%s, %s)", lit(p.x), lit(p.y)),

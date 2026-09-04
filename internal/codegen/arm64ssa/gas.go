@@ -1225,7 +1225,7 @@ func emitPowF64Helper(w func(string, ...any)) {
 	w("\tb.ge .Lssa_pow_abs")
 	w("\tneg x11, x11")
 	w(".Lssa_pow_abs:")
-	w("\tcmp x11, #64")
+	w("\tcmp x11, #%d", fdlibm.PowIntMax)
 	w("\tb.gt .Lssa_pow_gen")
 	ldc("d3", ".Lfc_one")
 	w("\tfmov d4, d0")

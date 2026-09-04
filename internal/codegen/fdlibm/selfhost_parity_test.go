@@ -1,6 +1,7 @@
 package fdlibm
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"regexp"
@@ -199,6 +200,38 @@ func TestSelfHostWasmTwoOverPiMatches(t *testing.T) {
 		}
 		if uint64(got) != want {
 			t.Errorf("%s 2/pi limb %d = %d (0x%016x), the table's is 0x%016x", selfHostWasm, j, got, uint64(got), want)
+		}
+	}
+}
+
+// powIntMaxSpellings is the bound as each self-host emitter writes it —
+// three assembly/WAT dialects, so the number is the only shared part.
+var powIntMaxSpellings = map[string]func(int) string{
+	selfHostAsmX86:   func(n int) string { return fmt.Sprintf("cmpq $%d, %%rcx", n) },
+	selfHostAsmArm64: func(n int) string { return fmt.Sprintf("cmp x11, #%d", n) },
+	selfHostWasm:     func(n int) string { return fmt.Sprintf("(i64.const %d)", n) },
+}
+
+// TestSelfHostPowIntMaxMatches pins __fern_pow_f64's repeated-squaring bound
+// in the three self-host emitters to PowIntMax.
+//
+// The bound is not a coefficient, so the tests above cannot see it, and it is
+// the one number in this kernel where a stale copy is SILENT: too small only
+// sends exactly-representable results down exp(y*log|x|) for tens of ulp, with
+// every special case and every small exponent still answering correctly. That
+// is what #6405 was — a wrong answer no gate could distinguish from a rounding
+// difference, for three weeks.
+func TestSelfHostPowIntMaxMatches(t *testing.T) {
+	for path, spell := range powIntMaxSpellings {
+		src := readSelfHost(t, path)
+		if want := spell(PowIntMax); !strings.Contains(src, want) {
+			t.Errorf("%s does not emit %q — PowIntMax is %d; either this emitter's bound has drifted or its spelling has, and both are the drift this gate exists for",
+				path, want, PowIntMax)
+		}
+		// A leftover 64 in the same instruction shape is the specific
+		// regression: the old bound, still readable as deliberate.
+		if stale := spell(64); PowIntMax != 64 && strings.Contains(src, stale) {
+			t.Errorf("%s still emits %q, the pre-#6405 bound", path, stale)
 		}
 	}
 }

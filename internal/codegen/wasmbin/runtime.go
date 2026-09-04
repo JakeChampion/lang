@@ -8082,10 +8082,11 @@ func buildPowF64Body(funcs map[string]uint32) []byte {
 		body = numeric.InstI64Sub(body)
 		body = inst.InstLocalSet(body, an)
 		body = inst.InstEnd(body)
-		// |n| <= 64 caps accumulated rounding for a general x, not
-		// representability; it is why 2^280 takes the exp(y*log x) path (#6405).
+		// |n| <= PowIntMax is representability: past it no base outside
+		// (0.5, 2) has a finite non-zero result. See fdlibm.PowIntMax for
+		// why the bound is not a rounding budget (#6405).
 		body = inst.InstLocalGet(body, an)
-		body = inst.InstI64Const(body, 64)
+		body = inst.InstI64Const(body, fdlibm.PowIntMax)
 		body = numeric.InstI64LeS(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{

@@ -6655,7 +6655,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    b.ge .Lpow_abs\n");
     s = s.write("    neg x11, x11\n");
     s = s.write(".Lpow_abs:\n");
-    s = s.write("    cmp x11, #64\n");
+    s = s.write("    cmp x11, #1074\n");
     s = s.write("    b.gt .Lpow_general\n");
     s = emit_ldc(s, "d3", ".Lfc_one");
     s = s.write("    fmov d4, d0\n");
