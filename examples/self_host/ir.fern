@@ -2679,6 +2679,126 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
     return out;
 }
 
+// ---- zero-slot uniqueness guards (native internal/ir/zeroslot.go) -------
+//
+// Lowering emits an `__fern_rc_is_unique`-gated drop for every droppable local
+// at a scope exit, whether or not the slot was assigned on the path that
+// reaches it. On the paths where it was not, the slot still holds its entry
+// zero, the helper's null guard answers 0, and the whole drop body the guard
+// gates — the tag switch, the per-variant payload drops, the box free — is
+// unreachable.
+//
+// The argument const_propagate cannot make: the IR is structured, so outside a
+// loop every branch is FORWARD, and a write later in op order cannot execute
+// before an earlier read. A slot nothing writes before the guard therefore
+// holds 0 there however the control flow between them is shaped, where the
+// incremental slot table has already dropped the fact at the loop entry or the
+// conditional scope end it crossed.
+//
+// Where native scans for the `const.i32 0 ; store_local N` its prologue emits,
+// this needs no such evidence: body slots [n_params, n_locals) are zero at
+// entry by the BACKEND prologue (asm_ir's `rep stosq`, asm_arm64_ir's store
+// loop, wasm's spec-zeroed locals, irexec's zeroed frame), which is not an op
+// in this list. Params are excluded — they arrive with the caller's values.
+
+// zg_first_write gives, per slot, the op index of the first write that can
+// leave it NON-zero, or ops.len() when it has none. `const_i32 0 ; store/tee N`
+// is a re-zero, not such a write — the lowering emits one after a free — so it
+// leaves the slot's answer alone, exactly as native's firstZero/firstReal split
+// does. str_slice's frame form is the one op that writes locals without being a
+// store (three consecutive slots at `i32_imm - 1`), modelled here as
+// const_propagate models it, so this pass is sound on its own reasoning rather
+// than on irlower naming those slots `!view!`.
+function zg_first_write(ops: Op[], nslots: i32): i32[] {
+    var k_store: i32 = kind_id("store_local");
+    var k_tee: i32 = kind_id("tee_local");
+    var k_str_slice: i32 = kind_id("str_slice");
+    var first: i32[] = [];
+    var z: i32 = 0;
+    while (z < nslots) { first = first.append(ops.len()); z = z + 1; }
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        var t: i32 = ops[i].kind_tag;
+        if (t == k_store || t == k_tee) {
+            var sl: i32 = ops[i].i32_imm;
+            var rezero: boolean = i > 0 && const_i32_readable(ops[i - 1]) && const_i32_value(ops[i - 1]) == 0;
+            if (!rezero && sl >= 0 && sl < nslots && first[sl] > i) { first = first.with(sl, i); }
+        } else if (t == k_str_slice && ops[i].i32_imm > 0) {
+            var fb: i32 = ops[i].i32_imm - 1;
+            var fk: i32 = 0;
+            while (fk < 3) {
+                var fs: i32 = fb + fk;
+                if (fs >= 0 && fs < nslots && first[fs] > i) { first = first.with(fs, i); }
+                fk = fk + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return first;
+}
+
+// zg_zero_guard reports whether the `load_local` at `i` is the first half of a
+// uniqueness guard on a body slot that provably still holds its entry zero.
+function zg_zero_guard(ops: Op[], i: i32, n_params: i32, first: i32[], k_call: i32): boolean {
+    if (i + 1 >= ops.len()) { return false; }
+    if (ops[i + 1].kind_tag != k_call || ops[i + 1].str != "__fern_rc_is_unique") { return false; }
+    var sl: i32 = ops[i].i32_imm;
+    if (sl < n_params || sl >= first.len()) { return false; }
+    return first[sl] > i;
+}
+
+// prune_zero_slot_guards replaces `load_local N ; call_direct
+// __fern_rc_is_unique` with the `const_i32 0` it evaluates to, wherever slot N
+// provably still holds its entry zero and the guard is not inside a loop (a
+// back-edge is the one way a later write reaches an earlier read). It removes
+// nothing by itself — fold_const_binaries' decided-`if` rule deletes the drop
+// body the constant now conditions.
+//
+// The PAIR is replaced rather than just the load: the load pushes a pointer and
+// the call an i32, so rewriting the load alone would leave a pointer where an
+// i32 is expected.
+pub function prune_zero_slot_guards(ops: Op[], n_params: i32): Op[] {
+    var maxs: i32 = cp_max_slot(ops);
+    if (maxs < n_params) { return ops; }
+    var first: i32[] = zg_first_write(ops, maxs + 1);
+
+    var k_load: i32 = kind_id("load_local");
+    var k_call: i32 = kind_id("call_direct");
+    var k_block: i32 = kind_id("block");
+    var k_loop: i32 = kind_id("loop");
+    var k_if: i32 = kind_id("if");
+    var k_end: i32 = kind_id("end");
+
+    // The open-scope stack in the parallel-array form const_propagate uses (a
+    // pop is a decrement), carrying only whether each scope is a loop; `loops`
+    // is how many of the open ones are.
+    var fr_loop: boolean[] = [];
+    var depth: i32 = 0;
+    var loops: i32 = 0;
+
+    var out: Op[] = [];
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        var t: i32 = ops[i].kind_tag;
+        if (t == k_block || t == k_loop || t == k_if) {
+            if (depth < fr_loop.len()) { fr_loop = fr_loop.with(depth, t == k_loop); }
+            else { fr_loop = fr_loop.append(t == k_loop); }
+            depth = depth + 1;
+            if (t == k_loop) { loops = loops + 1; }
+        } else if (t == k_end && depth > 0) {
+            depth = depth - 1;
+            if (fr_loop[depth]) { loops = loops - 1; }
+        } else if (loops == 0 && t == k_load && zg_zero_guard(ops, i, n_params, first, k_call)) {
+            out = out.append(op_const_i32(0));
+            i = i + 2;
+            continue;
+        }
+        out = out.append(ops[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
 // finish_ops is the post-fixpoint tail, in one place because optimize_ops reaches
 // it from two: drop what cannot be reached, fuse the store/load round trips,
 // propagate constants and copies over the result, fold once more, then drop again.
@@ -2699,8 +2819,17 @@ function finish_ops(cur: Op[]): Op[] {
 // it, and a strength rewrite's `drop ; const_i32 0` puts a fresh constant next to
 // whatever constant follows. fold_const_binaries already self-iterates, so a
 // strength pass that rewrote nothing is the fixpoint; the round cap is defensive.
-pub function optimize_ops(ops: Op[]): Op[] {
-    var cur: Op[] = fold_const_binaries(ops);
+//
+// prune_zero_slot_guards runs FIRST, ahead of the leading fold, because it only
+// ever CREATES a constant: the fold's decided-`if` rule is what deletes the drop
+// body the constant now conditions, so a placement after any fold would leave
+// the guard's block standing until the next one. Doing it before the first fold
+// also puts the rest of the battery — strength, both dead-code sweeps, the tee
+// fusion and the two propagations — over the already-shrunken list. It reads
+// slots the lowering wrote, which no pass here introduces, so nothing later can
+// hand it work it has not already seen.
+pub function optimize_ops(ops: Op[], n_params: i32): Op[] {
+    var cur: Op[] = fold_const_binaries(prune_zero_slot_guards(ops, n_params));
     var rounds: i32 = 0;
     while (rounds < 8) {
         var r: StrengthResult = reduce_strength_ex(cur);

@@ -201,7 +201,33 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"wc_int_extend_refused: const_i32 9 ; int_extend\n" +
 		"wc_int_wrap_refused: const_i32 9 ; int_wrap\n" +
 		"wc_hex_refused: const_i32_text 0x10 ; int_cast\n" +
-		"wc_opaque_refused: load_local 0 ; int_cast\n"
+		"wc_opaque_refused: load_local 0 ; int_cast\n" +
+		// Zero-slot uniqueness guards (native internal/ir/zeroslot.go). Lowering
+		// gates every scope-exit drop on __fern_rc_is_unique, on the paths that
+		// assigned the local and the paths that did not; on the latter the slot
+		// still holds the entry zero the backend prologue wrote, so the guard is
+		// the constant 0 and the body it gates is unreachable. The refusals carry
+		// the weight — a param is not zero-initialised, a loop back-edge lets a
+		// later write reach an earlier read, and a real store (or str_slice's
+		// frame form, which writes three slots without being one) fills the slot.
+		// A wrong verdict skips a live decrement, so the failure direction is a
+		// leak rather than a use-after-free: the pass only ever rewrites a guard
+		// to 0, and 0 takes the arm that does NOT reclaim.
+		"zg_fires: const_i32 0 ; if ; load_local 1 ; call_direct __fern_arr_dec/1 ; drop ; end ; return\n" +
+		"zg_param_refused: load_local 1 ; call_direct __fern_rc_is_unique/1 ; if ; load_local 1 ; call_direct __fern_arr_dec/1 ; drop ; end ; return\n" +
+		"zg_in_loop_refused: loop ; load_local 1 ; call_direct __fern_rc_is_unique/1 ; if ; end ; br 0 ; end\n" +
+		"zg_past_loop_fires: loop ; br 0 ; end ; const_i32 0\n" +
+		// The write AFTER the guard is the case const_propagate cannot reach: its
+		// slot table is cleared by every conditional scope the guard sits behind,
+		// where the order argument holds regardless of the shape between them.
+		"zg_written_refused: call_direct mk/0 ; store_local 1 ; load_local 1 ; call_direct __fern_rc_is_unique/1\n" +
+		"zg_late_write_fires: const_i32 0 ; if ; end ; call_direct mk/0 ; store_local 1\n" +
+		"zg_rezero_fires: const_i32 0 ; store_local 1 ; const_i32 0\n" +
+		"zg_frame_write_refused: str_slice frame:1 ; drop ; load_local 1 ; call_direct __fern_rc_is_unique/1\n" +
+		// The payoff: the pass removes nothing itself, it hands the fold a decided
+		// `if` and the whole drop body goes with it.
+		"zg_in_optimize: return\n" +
+		"zg_idempotent=1\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
