@@ -5225,7 +5225,7 @@ pub function pp_eq_bytes(asm: string, a: i32, a_end: i32, b: i32, b_end: i32): b
 // on wasm too: a functional-update base copy hands the new box every array
 // field pointer with no retain, so an ungated dec there frees a buffer the base
 // still owns (#8119, the compiler's own FnSigs).
-pub struct RcOp { kind: string, idx: i32, ty: string }
+pub struct RcOp { kind: string, idx: i32, ty: string, cow: boolean }
 
 // struct_drop_field_ops returns the ordered field-release directives for
 // `__struct_drop_<sty>`. Read-only in `s`: it consults the need set for the
@@ -5260,24 +5260,83 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
             if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
                 var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
                 if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
-                    ops = ops.append(RcOp { kind: "elems_drop_struct", idx: k, ty: elem_ty + "" });
+                    ops = ops.append(RcOp { kind: "elems_drop_struct", idx: k, ty: elem_ty + "", cow: false });
                 }
             } else if (irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
                 var eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
                 if (irlower.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
-                    ops = ops.append(RcOp { kind: "elems_drop_enum", idx: k, ty: eaty + "" });
+                    ops = ops.append(RcOp { kind: "elems_drop_enum", idx: k, ty: eaty + "", cow: false });
                 }
             }
-            ops = ops.append(RcOp { kind: "box_walk_dec", idx: k, ty: "" });
+            ops = ops.append(RcOp { kind: "box_walk_dec", idx: k, ty: "", cow: false });
         } else if (k_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) {
-            ops = ops.append(RcOp { kind: "deep_struct_drop", idx: k, ty: fdt });
-            ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "" });
+            ops = ops.append(RcOp { kind: "deep_struct_drop", idx: k, ty: fdt, cow: false });
+            ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false });
         } else if (k_str) {
-            ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "" });
+            ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: false });
         } else if (k_str_arr) {
-            ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "" });
+            ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: false });
         } else if (k_scalar || k_struct || k_enum || k_clo || k_fnptr || k_str_arr_shallow) {
-            ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "" });
+            ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: false });
+        }
+        k = k + 1;
+    }
+    return ops;
+}
+
+// field_reclaim_field_ops returns the ordered per-field release directives for
+// `__field_reclaim_<sty>`, the rebind-side counterpart of struct_drop_field_ops.
+// One directive per PARTICIPATING field: `kind` is the terminal release, `ty` is
+// the element type of the pre-walk that precedes it (empty when there is none),
+// and `cow` says whether the new-vs-old compare guards the release.
+//
+// `cow` is false exactly for a carried nested struct / enum field. Those release
+// without the compare, so a field the callee reused in place would otherwise dec
+// the only reference to a nested box — which is why the caller emits the
+// same-box check before this list is walked at all.
+//
+// Read-only in `s`, like its sibling: the admission gates are consulted here and
+// the matching need() stays with the backend that emits the directive.
+pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
+    var ops: RcOp[] = [];
+    var n: i32 = irlower.decl_field_count(s.struct_decls, sty);
+    var k: i32 = 0;
+    while (k < n) {
+        var fdt: string = irlower.decl_field_type_at(s.struct_decls, sty, k);
+        var fr_str: boolean = fdt == "string" && s.has_need("strfldok:" + sty);
+        var fr_str_arr: boolean = fdt == "string[]" && s.has_need("strfldok:arr:" + sty);
+        var fr_clo: boolean = fdt == "fn" && s.has_need("strfldok:clo:" + sty);
+        var fr_struct: boolean = irlower.decl_is_struct(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+        var fr_enum: boolean = irlower.decl_is_enum(s.struct_decls, fdt) && s.has_need("structfldok:" + sty);
+        var fr_fnptr: boolean = irlower.is_enum_array_field_type(s.struct_decls, fdt)
+            && s.has_need("FNPTR:" + sty + "." + irlower.decl_field_name_at(s.struct_decls, sty, k));
+        var fr_box_arr: boolean = !fr_str && !fr_str_arr && !fr_clo && !fr_struct && !fr_enum && !fr_fnptr
+            && !irlower.is_leaksafe_array_field(fdt)
+            && (irlower.is_struct_array_field_type(s.struct_decls, fdt) || irlower.is_enum_array_field_type(s.struct_decls, fdt))
+            && s.has_need("strfldok:sarr:" + sty);
+        var participates: boolean = fr_str || fr_str_arr || fr_clo || fr_struct || fr_enum
+            || (fdt == "string[]" && s.has_need("strfldok:arrbuf:" + sty))
+            || irlower.is_leaksafe_array_field(fdt)
+            || irlower.is_struct_array_field_type(s.struct_decls, fdt)
+            || irlower.is_enum_array_field_type(s.struct_decls, fdt);
+        if (participates) {
+            var cow: boolean = !(fr_struct || fr_enum);
+            if (fr_box_arr) {
+                var pre: string = "";
+                if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
+                    var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
+                    if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
+                        pre = elem_ty + "";
+                    }
+                }
+                ops = ops.append(RcOp { kind: "arrarr_free", idx: k, ty: pre, cow: cow });
+            } else if (fr_str) {
+                ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: cow });
+            } else if (fr_str_arr) {
+                ops = ops.append(RcOp { kind: "str_arr_free", idx: k, ty: "", cow: cow });
+            } else {
+                ops = ops.append(RcOp { kind: "arr_dec", idx: k, ty: "", cow: cow });
+            }
         }
         k = k + 1;
     }
