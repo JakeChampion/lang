@@ -73559,18 +73559,17 @@ function collect_append_recvs_stmt(st: ast.Stmt, acc: string[]): string[] {
 // The SOLE-OCCURRENCE deaths (#6048, grow_sole_exempt_names_of) are dying here
 // too: lower_stmt unions them into grow_exempt for EVERY statement, so a name in
 // that set reaches every call unbracketed, at any nesting depth and in any
-// statement. grow_sole_passes_expr records those; the two occurs-once shapes
-// stay top-level, matching grow_exempt_names_of_stmt, which reads only a
-// statement's outermost call.
+// statement, while the two occurs-once shapes hold only at a statement's
+// OUTERMOST call — which is all grow_exempt_names_of_stmt reads.
 function grow_dying_passes_stmt(st: ast.Stmt, params: string[], sole: string[], acc: string[]): string[] {
     match (st) {
-        ast.StmtAssign(a) => { return grow_dying_call(a.value, a.target, params, grow_sole_passes_expr(a.value, sole, acc)); },
-        ast.StmtReturn(r) => { return grow_dying_call(r.value, "", params, grow_sole_passes_expr(r.value, sole, acc)); },
-        ast.StmtVar(v) => { return grow_sole_passes_expr(v.init, sole, acc); },
-        ast.StmtExpr(e) => { return grow_sole_passes_expr(e.value, sole, acc); },
+        ast.StmtAssign(a) => { return grow_dying_passes_expr(a.value, a.value, a.target, params, sole, true, acc); },
+        ast.StmtReturn(r) => { return grow_dying_passes_expr(r.value, r.value, "", params, sole, true, acc); },
+        ast.StmtVar(v) => { return grow_dying_passes_expr(v.init, v.init, "", params, sole, false, acc); },
+        ast.StmtExpr(e) => { return grow_dying_passes_expr(e.value, e.value, "", params, sole, false, acc); },
         ast.StmtDefer(d) => { return grow_dying_passes_stmt(d.action, params, sole, acc); },
         ast.StmtIf(f) => {
-            acc = grow_sole_passes_expr(f.cond, sole, acc);
+            acc = grow_dying_passes_expr(f.cond, f.cond, "", params, sole, false, acc);
             var ti: i32 = 0;
             while (ti < f.then_body.len()) { acc = grow_dying_passes_stmt(f.then_body[ti], params, sole, acc); ti = ti + 1; }
             var ei: i32 = 0;
@@ -73578,19 +73577,19 @@ function grow_dying_passes_stmt(st: ast.Stmt, params: string[], sole: string[], 
             return acc;
         },
         ast.StmtWhile(w) => {
-            acc = grow_sole_passes_expr(w.cond, sole, acc);
+            acc = grow_dying_passes_expr(w.cond, w.cond, "", params, sole, false, acc);
             var i: i32 = 0;
             while (i < w.body.len()) { acc = grow_dying_passes_stmt(w.body[i], params, sole, acc); i = i + 1; }
             return acc;
         },
         ast.StmtFor(f2) => {
-            acc = grow_sole_passes_expr(f2.iter, sole, acc);
+            acc = grow_dying_passes_expr(f2.iter, f2.iter, "", params, sole, false, acc);
             var i: i32 = 0;
             while (i < f2.body.len()) { acc = grow_dying_passes_stmt(f2.body[i], params, sole, acc); i = i + 1; }
             return acc;
         },
         ast.StmtMatch(m) => {
-            acc = grow_sole_passes_expr(m.scrutinee, sole, acc);
+            acc = grow_dying_passes_expr(m.scrutinee, m.scrutinee, "", params, sole, false, acc);
             for arm in m.arms {
                 var bi: i32 = 0;
                 while (bi < arm.body.len()) { acc = grow_dying_passes_stmt(arm.body[bi], params, sole, acc); bi = bi + 1; }
@@ -73602,12 +73601,12 @@ function grow_dying_passes_stmt(st: ast.Stmt, params: string[], sole: string[], 
     return acc;
 }
 
-// grow_sole_passes_expr records the pass-throughs of the SOLE-OCCURRENCE deaths:
-// a name read exactly once in the whole body, at a call no loop or lambda
-// encloses, is unbracketed wherever it appears, so every call in the expression
-// is an unprotected edge and not only the statement's outermost one.
-function grow_sole_passes_expr(e: ast.Expr, sole: string[], acc: string[]): string[] {
-    if (sole.len() == 0) { return acc; }
+// grow_dying_passes_expr records the pass-throughs of one statement's
+// expression. `top` marks the statement's OUTERMOST call, the only place the
+// occurs-once shapes apply — grow_exempt_names_of_stmt reads no deeper. The
+// SOLE-OCCURRENCE deaths apply at every call the walk reaches, because
+// lower_stmt unions grow_sole into grow_exempt for the whole statement.
+function grow_dying_passes_expr(e: ast.Expr, whole: ast.Expr, target: string, params: string[], sole: string[], top: boolean, acc: string[]): string[] {
     var a: string[] = acc;
     match (e) {
         ast.ExprCall(c) => {
@@ -73618,60 +73617,65 @@ function grow_sole_passes_expr(e: ast.Expr, sole: string[], acc: string[]): stri
                     callee = "@" + cfa.field;
                     match (cfa.obj) {
                         ast.ExprIdent(rid) => {
-                            if (util.index_of_str(sole, rid.name) >= 0) { a = a.append(callee + "|0|" + rid.name); }
+                            if (grow_dying_name(rid.name, target, whole, params, sole, top)) {
+                                a = a.append(callee + "|0|" + rid.name);
+                            }
                         },
                         _ => {}
                     }
-                    a = grow_sole_passes_expr(cfa.obj, sole, a);
+                    a = grow_dying_passes_expr(cfa.obj, whole, target, params, sole, false, a);
                 },
-                _ => { a = grow_sole_passes_expr(c.callee, sole, a); }
+                _ => { a = grow_dying_passes_expr(c.callee, whole, target, params, sole, false, a); }
             }
             var ai: i32 = 0;
             while (ai < c.args.len()) {
                 match (c.args[ai]) {
                     ast.ExprIdent(aid) => {
-                        if (callee.len() > 0 && util.index_of_str(sole, aid.name) >= 0) {
+                        if (callee.len() > 0 && grow_dying_name(aid.name, target, whole, params, sole, top)) {
                             a = a.append(callee + "|" + util.i32_to_string(ai + 1) + "|" + aid.name);
                         }
                     },
                     _ => {}
                 }
-                a = grow_sole_passes_expr(c.args[ai], sole, a);
+                a = grow_dying_passes_expr(c.args[ai], whole, target, params, sole, false, a);
                 ai = ai + 1;
             }
             return a;
         },
         ast.ExprBinary(b) => {
-            a = grow_sole_passes_expr(b.left, sole, a);
-            return grow_sole_passes_expr(b.right, sole, a);
+            a = grow_dying_passes_expr(b.left, whole, target, params, sole, false, a);
+            return grow_dying_passes_expr(b.right, whole, target, params, sole, false, a);
         },
-        ast.ExprUnary(u) => { return grow_sole_passes_expr(u.operand, sole, a); },
+        ast.ExprUnary(u) => { return grow_dying_passes_expr(u.operand, whole, target, params, sole, false, a); },
         ast.ExprArray(ar) => {
             var i: i32 = 0;
-            while (i < ar.elements.len()) { a = grow_sole_passes_expr(ar.elements[i], sole, a); i = i + 1; }
+            while (i < ar.elements.len()) { a = grow_dying_passes_expr(ar.elements[i], whole, target, params, sole, false, a); i = i + 1; }
             return a;
         },
-        ast.ExprTuple(tp) => { for el in tp.elements { a = grow_sole_passes_expr(el, sole, a); } return a; },
+        ast.ExprTuple(tp) => {
+            for el in tp.elements { a = grow_dying_passes_expr(el, whole, target, params, sole, false, a); }
+            return a;
+        },
         ast.ExprIndex(ix) => {
-            a = grow_sole_passes_expr(ix.array, sole, a);
-            return grow_sole_passes_expr(ix.index, sole, a);
+            a = grow_dying_passes_expr(ix.array, whole, target, params, sole, false, a);
+            return grow_dying_passes_expr(ix.index, whole, target, params, sole, false, a);
         },
         ast.ExprSlice(sx) => {
-            a = grow_sole_passes_expr(sx.array, sole, a);
-            a = grow_sole_passes_expr(sx.start, sole, a);
-            return grow_sole_passes_expr(sx.end, sole, a);
+            a = grow_dying_passes_expr(sx.array, whole, target, params, sole, false, a);
+            a = grow_dying_passes_expr(sx.start, whole, target, params, sole, false, a);
+            return grow_dying_passes_expr(sx.end, whole, target, params, sole, false, a);
         },
         ast.ExprStructLit(sl) => {
-            if (sl.has_base) { a = grow_sole_passes_expr(sl.base, sole, a); }
-            for fv in sl.field_values { a = grow_sole_passes_expr(fv, sole, a); }
+            if (sl.has_base) { a = grow_dying_passes_expr(sl.base, whole, target, params, sole, false, a); }
+            for fv in sl.field_values { a = grow_dying_passes_expr(fv, whole, target, params, sole, false, a); }
             return a;
         },
-        ast.ExprFieldAccess(fa) => { return grow_sole_passes_expr(fa.obj, sole, a); },
+        ast.ExprFieldAccess(fa) => { return grow_dying_passes_expr(fa.obj, whole, target, params, sole, false, a); },
         ast.ExprMapLit(ml) => {
             var mi: i32 = 0;
             while (mi < ml.keys.len()) {
-                a = grow_sole_passes_expr(ml.keys[mi], sole, a);
-                a = grow_sole_passes_expr(ml.vals[mi], sole, a);
+                a = grow_dying_passes_expr(ml.keys[mi], whole, target, params, sole, false, a);
+                a = grow_dying_passes_expr(ml.vals[mi], whole, target, params, sole, false, a);
                 mi = mi + 1;
             }
             return a;
@@ -73679,7 +73683,7 @@ function grow_sole_passes_expr(e: ast.Expr, sole: string[], acc: string[]): stri
         ast.ExprFString(fs) => {
             var fi: i32 = 0;
             while (fi < fs.exprs.len()) {
-                if (fs.is_expr[fi]) { a = grow_sole_passes_expr(fs.exprs[fi], sole, a); }
+                if (fs.is_expr[fi]) { a = grow_dying_passes_expr(fs.exprs[fi], whole, target, params, sole, false, a); }
                 fi = fi + 1;
             }
             return a;
@@ -73689,53 +73693,11 @@ function grow_sole_passes_expr(e: ast.Expr, sole: string[], acc: string[]): stri
     return a;
 }
 
-// grow_dying_call records the pass-throughs of one call expression. `target` is
-// the enclosing assignment's target, or "" in return position, where every
-// occurs-once ident dies rather than only the one being rebound.
-function grow_dying_call(value: ast.Expr, target: string, params: string[], acc: string[]): string[] {
-    var a: string[] = acc;
-    match (value) {
-        ast.ExprCall(c) => {
-            var callee: string = "";
-            match (c.callee) {
-                ast.ExprIdent(cid) => { callee = cid.name; },
-                ast.ExprFieldAccess(cfa) => {
-                    callee = "@" + cfa.field;
-                    match (cfa.obj) {
-                        ast.ExprIdent(rid) => {
-                            if (grow_dying_name(rid.name, target, value, params)) {
-                                a = a.append(callee + "|0|" + rid.name);
-                            }
-                        },
-                        _ => {}
-                    }
-                },
-                _ => { return a; }
-            }
-            if (callee.len() == 0) { return a; }
-            var ai: i32 = 0;
-            while (ai < c.args.len()) {
-                match (c.args[ai]) {
-                    ast.ExprIdent(aid) => {
-                        if (grow_dying_name(aid.name, target, value, params)) {
-                            a = a.append(callee + "|" + util.i32_to_string(ai + 1) + "|" + aid.name);
-                        }
-                    },
-                    _ => {}
-                }
-                ai = ai + 1;
-            }
-            return a;
-        },
-        _ => { return a; }
-    }
-    return a;
-}
-
-function grow_dying_name(name: string, target: string, value: ast.Expr, params: string[]): boolean {
-    if (util.index_of_str(params, name) < 0) { return false; }
+function grow_dying_name(name: string, target: string, whole: ast.Expr, params: string[], sole: string[], top: boolean): boolean {
+    if (util.index_of_str(sole, name) >= 0) { return true; }
+    if (!top || util.index_of_str(params, name) < 0) { return false; }
     if (target.len() > 0 && name != target) { return false; }
-    return grow_ident_count(value, name) == 1;
+    return grow_ident_count(whole, name) == 1;
 }
 
 // own_positions_of lists "fname|idx" for every declared `own` parameter of a
