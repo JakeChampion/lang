@@ -5179,7 +5179,7 @@ anchor. `rc-log/README.md` has the convention and the incident that prompted it.
   conservatively would withhold deep drops far beyond this class.
 
   **Reproduce in seconds, not the 211 s fixpoint**: grant the drop, build gen1 as
-  `runEmitAllFixpoint` does, and run it under gdb with `-per-module-emit-all
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` does, and run it under gdb with `-per-module-emit-all
   -assume-eligible -unit-range 0:8`.
 
   ### Traps, all paid for

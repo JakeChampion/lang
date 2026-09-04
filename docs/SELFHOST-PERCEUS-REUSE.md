@@ -399,7 +399,7 @@ staying green (the self-compile must remain byte-identical).
   differential e2e that stresses alloc/drop/reuse churn (the native
   `*reuse*/main.fern` cases) and compares self-host output to the interpreter
   **byte-for-byte**; (c) **the fixpoint suite must still converge** — reuse
-  changes the emitted asm, so `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64`
+  changes the emitted asm, so `TestSelfHostPerModuleEmitAllFixpointX86_64`
   proves the self-compiled compiler is still self-consistent. (It replaced the
   merged-bundle fixpoints `TestSelfHostLoadFixpointX86_64` /
   `TestSelfHostModloadFixpointX86_64`, which retired with the AST emitters in

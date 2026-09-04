@@ -28959,7 +28959,8 @@ pub function emit_dec_sweep_except_list(s: LowerState, keeps: i32[]): LowerState
             // the shape of the fix, and it is why it is not a one-liner.
             //
             // Reproduce in seconds rather than via the 211s fixpoint: grant the drop,
-            // `make selfhost-cli`, then build gen1 the way runEmitAllFixpoint does and
+            // `make selfhost-cli`, then build gen1 the way
+            // TestSelfHostPerModuleEmitAllFixpointX86_64 does and
             // run it under gdb —
             //   ./gen1 asm_modload_run.fern -per-module-emit-all -assume-eligible \
             //       -out-dir OUT -func-budget 100 -unit-range 0:8

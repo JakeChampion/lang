@@ -96,13 +96,13 @@ func TestSelfHostWasmWholeCompilerShardedLink(t *testing.T) {
 	// Emit each module in FUNCTION WINDOWS, each its own process (fresh arena).
 	// Windows run on a bounded worker pool so the per-process parse floors
 	// overlap — the whole-compiler emit is CI-runnable this way, not a ~40-min
-	// serial slog (mirrors the asm sibling's runPmEmitJobs). A window that still
+	// serial slog. A window that still
 	// OOMs (137) is halved by its own worker (rare; the static window already
 	// clears the arena). Each job records its own plan lines; the plan is
 	// assembled in job order so it is deterministic regardless of interleaving.
 	const window = 150
-	// 2 workers, not 3: each per-module wasm emit's peak RSS is ~2x the asm
-	// sibling's pmEmitWorkers=3 (heavier whole-program view + wasm emit), so 3
+	// 2 workers, not 3: each per-module wasm emit's peak RSS is ~2x an asm
+	// window's (heavier whole-program view + wasm emit), so 3
 	// concurrent window emits peaked at ~14.5 GB — over a 16 GB CI runner's
 	// headroom — OOM-killing the job (exit 143, no assertion failure)
 	// reproducibly at the irlower windows. 2 keeps the peak ~10 GB at ~1.5x
