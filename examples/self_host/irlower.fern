@@ -34709,18 +34709,30 @@ function collect_fresh_str_ret_call_names(stmts: ast.Stmt[], str_fresh_ret: stri
 }
 
 // collect_fresh_ret_call_names credits a struct LOCAL bound from a fresh-ret
-// CALL (`var r: T = f(..)` / `var r: T = obj.m(..)`, f/m in fresh_ret) that is
-// NOT reassigned — the DISCARDED fresh-ret-call local (#3457 follow-up). A
-// reassigned fresh-ret local is the snapshot-LOCAL path's job (it move-rebinds
-// + moves out via `return`); this is the orthogonal case where the result is
-// READ (a field copy, `r.ops`) and then goes dead without escaping. Sound for
-// the same reason the snapshot-LOCAL path is: an IR-lowered fresh-struct-return
-// has every rc-array field properly counted — each is either a fresh literal
-// (rc=1, owned) or an alias retained by the callee's struct-lit Perceus dup
-// (rc≥2) — so a scope-end deep-drop (__struct_drop) is balanced, never a UAF.
-// The escape gate (body_unsafe_for, applied by reclaimable_names_of) still
-// rejects any r that is returned / stored / passed to a non-borrowable param.
-function collect_fresh_ret_call_names(stmts: ast.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], reassigned: string[], acc: string[]): string[] {
+// CALL (`var r: T = f(..)` / `var r: T = obj.m(..)`, f/m in fresh_ret) — the
+// DISCARDED fresh-ret-call local (#3457 follow-up). Sound for the same reason
+// the snapshot-LOCAL path is: an IR-lowered fresh-struct-return has every
+// rc-array field properly counted — each is either a fresh literal (rc=1,
+// owned) or an alias retained by the callee's struct-lit Perceus dup (rc≥2) —
+// so a scope-end deep-drop (__struct_drop) is balanced, never a UAF.
+//
+// REBINDING is decided downstream, not here. This collector once excluded every
+// name in body_assign_targets, on the reading that a reassigned fresh-ret local
+// belongs to the snapshot-LOCAL path. That path only claims the ones threaded
+// and MOVED OUT (`var st = f(x); st = st.emit(..); return st`), so a rebound
+// local that simply goes dead fell between the two and earned no credit at all:
+// no dec anywhere, box and rc fields both leaked on every rebind. The
+// literal-bound sibling (collect_fresh_struct_names) never carried the
+// exclusion, which is why only the call-bound spelling leaked — and why no cell
+// of the generated leak matrix, whose every kind inits from a literal, could see
+// it. #6535 retired the same blunt exclusion for the ARRSTRUCT family.
+//
+// What makes that safe is that both collectors feed one gate:
+// reclaimable_fresh_struct already validates each rebind (reassigned_from_alias
+// refuses a rebind that leaves a BORROW in the slot, recv_borrow_escapes_via_result
+// the handed-back receiver), and body_unsafe_for still rejects any r that is
+// returned / stored / passed to a non-borrowable param.
+function collect_fresh_ret_call_names(stmts: ast.Stmt[], structs: parser.StructDecl[], fresh_ret: string[], acc: string[]): string[] {
     var a: string[] = acc;
     for stmt in stmts {
         match (stmt) {
@@ -34735,16 +34747,15 @@ function collect_fresh_ret_call_names(stmts: ast.Stmt[], structs: parser.StructD
                 // The body_unsafe_for escape gate (applied by reclaimable_names_of)
                 // still proves non-escape before any box is freed.
                 if (v.type_name.len() > 0
-                    && util.index_of_str(reassigned, v.name) < 0
                     && is_fresh_ret_binding(v.init, v.type_name, fresh_ret)
                     && decl_is_struct(structs, v.type_name) && decl_is_leaksafe(structs, v.type_name)) {
                     a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
                 }
             },
-            ast.StmtIf(f) => { a = collect_fresh_ret_call_names(f.then_body, structs, fresh_ret, reassigned, a); a = collect_fresh_ret_call_names(f.else_body, structs, fresh_ret, reassigned, a); },
-            ast.StmtWhile(w) => { a = collect_fresh_ret_call_names(w.body, structs, fresh_ret, reassigned, a); },
-            ast.StmtFor(fo) => { a = collect_fresh_ret_call_names(fo.body, structs, fresh_ret, reassigned, a); },
-            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_ret_call_names(m.arms[ai].body, structs, fresh_ret, reassigned, a); ai = ai + 1; } },
+            ast.StmtIf(f) => { a = collect_fresh_ret_call_names(f.then_body, structs, fresh_ret, a); a = collect_fresh_ret_call_names(f.else_body, structs, fresh_ret, a); },
+            ast.StmtWhile(w) => { a = collect_fresh_ret_call_names(w.body, structs, fresh_ret, a); },
+            ast.StmtFor(fo) => { a = collect_fresh_ret_call_names(fo.body, structs, fresh_ret, a); },
+            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_fresh_ret_call_names(m.arms[ai].body, structs, fresh_ret, a); ai = ai + 1; } },
             _ => {}
         }
     }
@@ -37594,11 +37605,10 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: parser.StructDecl[], b
 function reclaimable_names_of(body: ast.Stmt[], structs: parser.StructDecl[], borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
-    // `var r = f(..)` whose result is read-then-dead. Excludes reassigned names
-    // (the snapshot-LOCAL path handles those); the shared body_unsafe_for gate
-    // below still proves non-escape before any is freed.
+    // `var r = f(..)` whose result is read-then-dead, rebound or not. The shared
+    // body_unsafe_for gate below still proves non-escape before any is freed.
     var reassigned: string[] = body_assign_targets(body);
-    fresh = collect_fresh_ret_call_names(body, structs, fresh_ret, reassigned, fresh);
+    fresh = collect_fresh_ret_call_names(body, structs, fresh_ret, fresh);
     // The array-of-structs rows come FIRST: their "APOWNED:" stamps say which
     // self-appends are counted shares, which is what decides whether the struct
     // gate below reads an append as a sink.
