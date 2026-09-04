@@ -208,6 +208,22 @@ const sanRcHelpersSrc = `function main(): i32 {
     return 0;
 }`
 
+// sanUseAfterFreeSrc builds a real dangling reference. The plain
+// __rc_dec builtin never frees on native (it reads rc 0 and reports an
+// over-release instead), so the block has to go through the FREEING dec:
+// __fern_arr_dec on the data pointer takes the rc==1 buffer to zero,
+// poisons its rc word and hands the block to __fern_free, which under
+// the sanitizer accounts the release and declines to recycle it. The
+// retained raw address then reaches __fern_rc_inc, which reads the
+// poison. Perceus's own drop of `a` at scope exit is never reached.
+const sanUseAfterFreeSrc = `function main(): i32 {
+    var a: u8[] = __alloc_u8(16);
+    var p: usize = a as usize;
+    __fern_arr_dec(p, 1);
+    __fern_rc_inc(p);
+    return 0;
+}`
+
 var sanLeakVerdictRe = regexp.MustCompile(`fern-sanitizer: leak (\d+) bytes in (\d+) blocks\n`)
 
 // ApplySanitize is the fold-down every entry point shares: the backends
@@ -255,16 +271,11 @@ func TestSanitizeOffEmitsNoSymbols(t *testing.T) {
 	}
 }
 
-// The use-after-free detector is the one check with no deterministic
-// Fern-level trigger: producing a real dangling reference means
-// producing a compiler bug, and on this runtime the over-release guard
-// in __fern_rc_dec sits AHEAD of the free, so a miscount is reported as
-// a double free before it can become a stale pointer. (Two hand-built
-// miscount shapes were tried; both landed on the over-release path,
-// which is the better diagnosis anyway.) So pin the wiring instead:
-// under the sanitizer both rc helpers compare the rc word against
-// RcPoison and route a match to the named diagnostic through
-// __fern_report, and no bare trap is left as a silent death anywhere.
+// The runtime legs below prove the use-after-free report fires; this
+// pins the wiring the asm has to carry for that on both backends: each
+// rc helper compares the rc word against RcPoison and routes a match to
+// the named diagnostic through __fern_report, and no bare trap is left
+// as a silent death anywhere.
 func TestSanitizeWiresUseAfterFreeReport(t *testing.T) {
 	for _, tc := range []struct {
 		backend string
@@ -386,6 +397,38 @@ func TestX86_64DoubleFreeSilentWithoutSanitize(t *testing.T) {
 	}
 }
 
+func TestX86_64SanitizeUseAfterFreeReported(t *testing.T) {
+	_, stderr, code := runSanitizeX86_64(t, sanUseAfterFreeSrc)
+	if code != x86_64.ExitSanitizer {
+		t.Errorf("exit=%d, want %d", code, x86_64.ExitSanitizer)
+	}
+	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
+		t.Errorf("stderr does not name the finding: %q", stderr)
+	}
+	if strings.Contains(stderr, "rc over-release") {
+		t.Errorf("the stale touch was diagnosed as an over-release, not a use-after-free: %q", stderr)
+	}
+	if !strings.Contains(stderr, "backtrace:") {
+		t.Errorf("stderr carries no #5538 backtrace: %q", stderr)
+	}
+}
+
+// Flag off, the same stale touch recycles the block and bumps a
+// recycled rc word: silent corruption, exit 0, nothing on stderr. Pins
+// that the quarantine is opt-in rather than a change to the default
+// build.
+func TestX86_64UseAfterFreeSilentWithoutSanitize(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	asm := emitSanitize(t, "x86_64", sanUseAfterFreeSrc, false)
+	_, stderr, code := buildAndRunSanitized(t, gcc, runner, asm, false)
+	if code != 0 {
+		t.Errorf("exit=%d, want 0 (an unsanitized build must not abort)", code)
+	}
+	if stderr != "" {
+		t.Errorf("stderr=%q, want empty (an unsanitized build must not report)", stderr)
+	}
+}
+
 func TestX86_64SanitizeQuarantinesFreedBlocks(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	_, sanErr, sanKiB := buildAndRunSanitized(t, gcc, runner, emitSanitize(t, "x86_64", sanQuarantineSrc, true), false)
@@ -475,5 +518,36 @@ func TestArm64SanitizeDoubleFreeReported(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "fern-sanitizer: rc over-release (double free)") {
 		t.Errorf("stderr does not name the finding: %q", stderr)
+	}
+	if !strings.Contains(stderr, "backtrace:") {
+		t.Errorf("stderr carries no #5538 backtrace: %q", stderr)
+	}
+}
+
+func TestArm64SanitizeUseAfterFreeReported(t *testing.T) {
+	_, stderr, code := runSanitizeArm64(t, sanUseAfterFreeSrc)
+	if code != arm64codegen.ExitSanitizer {
+		t.Errorf("exit=%d, want %d", code, arm64codegen.ExitSanitizer)
+	}
+	if !strings.Contains(stderr, "fern-sanitizer: use-after-free (touched a quarantined block)") {
+		t.Errorf("stderr does not name the finding: %q", stderr)
+	}
+	if strings.Contains(stderr, "rc over-release") {
+		t.Errorf("the stale touch was diagnosed as an over-release, not a use-after-free: %q", stderr)
+	}
+	if !strings.Contains(stderr, "backtrace:") {
+		t.Errorf("stderr carries no #5538 backtrace: %q", stderr)
+	}
+}
+
+func TestArm64UseAfterFreeSilentWithoutSanitize(t *testing.T) {
+	gcc, qemu := arm64Tooling(t)
+	asm := emitSanitize(t, "arm64-linux", sanUseAfterFreeSrc, false)
+	_, stderr, code := buildAndRunSanitized(t, gcc, []string{qemu}, asm, true)
+	if code != 0 {
+		t.Errorf("exit=%d, want 0 (an unsanitized build must not abort)", code)
+	}
+	if stderr != "" {
+		t.Errorf("stderr=%q, want empty (an unsanitized build must not report)", stderr)
 	}
 }
