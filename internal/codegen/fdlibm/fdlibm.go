@@ -164,6 +164,28 @@ var (
 	ExpUnf  = at("expunf")
 )
 
+// PowIntMax bounds __fern_pow_f64's exact repeated-squaring path: an integral
+// exponent with |n| <= PowIntMax is computed by squaring, and anything larger
+// falls through to sign * exp(y*log|x|).
+//
+// 1074 is representability, not a rounding budget. |x| >= 2 overflows past
+// n = 1024 and |x| <= 0.5 underflows past n = 1074, so no |n| beyond it
+// produces a finite non-zero result from a base outside (0.5, 2); bases nearer
+// 1 reach further but only into the several-hundred-ulp regime the general
+// path is already in.
+//
+// It was 64, on the reasoning that squaring accumulates rounding and the cap
+// bounded it. Measured, that trade runs the other way: over 200k random
+// (x, n>0) with |n| <= 1024, naive repeated squaring matches Go's math.Pow —
+// which IS repeated squaring, and is what -interp answers with — bit for bit
+// in 199,993 cases, while the general path measures 90 to 162 ulp on the very
+// cases the old cap sent there (#6405). A wider fast path is therefore closer
+// to the oracle, not further from it.
+//
+// Like the coefficients, this lives here because seven emitters spell it and
+// nothing else compares their copies.
+const PowIntMax = 1074
+
 // at returns the named coefficient's value.
 func at(name string) float64 {
 	for _, c := range Coeffs {

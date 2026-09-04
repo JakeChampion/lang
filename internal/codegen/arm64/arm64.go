@@ -6828,7 +6828,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("b.ge %s", powAbs)
 	g.emit("neg x11, x11")
 	g.label(powAbs)
-	g.emit("cmp x11, #64")
+	g.emit("cmp x11, #%d", fdlibm.PowIntMax)
 	g.emit("b.gt %s", powGen)
 	ldc("d3", "one") // accumulator
 	g.emit("fmov d4, d0")

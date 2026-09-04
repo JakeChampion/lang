@@ -1459,7 +1459,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     // |n|, branch-free: (n ^ (n>>63)) - (n>>63).
     s = s.write("    movq %rax, %rcx\n    movq %rax, %rdx\n    sarq $63, %rdx\n");
     s = s.write("    xorq %rdx, %rcx\n    subq %rdx, %rcx\n");
-    s = s.write("    cmpq $64, %rcx\n    ja .Lfpow_general\n");
+    s = s.write("    cmpq $1074, %rcx\n    ja .Lfpow_general\n");
     s = s.write(fc_ld("%xmm3", ".Lfc_one") + "    movsd %xmm0, %xmm4\n");
     s = s.write(".Lfpow_loop:\n    testq $1, %rcx\n    jz .Lfpow_skip\n");
     s = s.write("    mulsd %xmm4, %xmm3\n");

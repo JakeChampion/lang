@@ -8896,7 +8896,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("sar rdx, 63")
 	g.emit("xor rcx, rdx")
 	g.emit("sub rcx, rdx")
-	g.emit("cmp rcx, 64")
+	g.emit("cmp rcx, " + strconv.Itoa(fdlibm.PowIntMax))
 	g.emit("ja " + powGen)
 	ldc("xmm3", ".Lfc_one") // accumulator
 	g.emit("movsd xmm4, xmm0")

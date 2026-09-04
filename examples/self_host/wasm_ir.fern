@@ -4742,7 +4742,7 @@ pub function pow_func(): string {
     o = o + "    (if (f64.eq (f64.convert_i64_s (local.get $n)) (local.get $y)) (then\n";
     o = o + "      (local.set $an (local.get $n))\n";
     o = o + "      (if (i64.lt_s (local.get $an) (i64.const 0)) (then (local.set $an (i64.sub (i64.const 0) (local.get $an)))))\n";
-    o = o + "      (if (i64.le_s (local.get $an) (i64.const 64)) (then\n";
+    o = o + "      (if (i64.le_s (local.get $an) (i64.const 1074)) (then\n";
     o = o + "        (local.set $acc (f64.const 1.0))\n";
     o = o + "        (local.set $base (local.get $x))\n";
     o = o + "        (block $done (loop $lp\n";
