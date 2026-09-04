@@ -5,41 +5,30 @@ import (
 	"testing"
 )
 
-// #8240: a self-host callee that hands back a BORROWED STRUCT parameter's box
-// gave its caller a second UNCOUNTED name for it, and the caller then freed the
-// box while a live binding still named it.
+// #8240: a self-host caller freed a struct box while a live binding still
+// named it.
 //
-// The caller's half is release_last_use_source: after `var q2 = g(.., name, ..)`
-// where `name` dies at that call, it decs on the `old == q2` arm — the arm whose
-// own comment states the contract "q2 holds its own count on it". The callee did
-// not give it one, so the box went rc 1 -> 0, was freed, and the next
-// __fern_arr_box handed the same block to the following literal.
+// `var q2: T = g(.., name, ..)` where `name` dies at that call routes through
+// release_last_use_source, whose `old == q2` arm dec'd name's box on the
+// grounds that "q2 holds its own count on it". It does not: a callee that
+// hands back a borrowed struct param returns an UNCOUNTED alias, so that count
+// was the only one. rc 1 -> 0, freed, and the next __fern_arr_box handed the
+// same block to the following literal.
 //
-// The two halves were never matched. last_use_release_slot bails on
-// is_arr_slot, so the caller-side release is STRUCT-only; the callee-side
-// return-inc (ret-borrowed-param) tested is_arr_slot, so it was ARRAY-only.
-// Arrays are safe because no release fires for them, not because the callee was
-// right — array-param-control below pins that, and it passed before the fix too.
+// The fix drops that dec — the slot's count transfers to q2, whose own sweep
+// frees the box — rather than adding the matching retain in the callee. The
+// retain is what native does and it is the wrong half to move here: a
+// materialised struct call result is released through an __fern_rc_is_unique
+// gate that a second count turns off, so retaining strands the box instead.
+// The conformance fixture alloc_flat_method_identity_return measures exactly
+// that and reports "grows".
 //
-// NOTHING ELSE CATCHES THIS. The free is at rc 1, so the underflow counter
+// NOTHING ELSE CAUGHT THIS. The free is at rc 1, so the underflow counter
 // never trips, and the recycled block normally comes back field-identical
 // because the next allocation is the same struct shape — which is why it
 // survived every rc gate. Reading a DIFFERENTLY-shaped literal out of the
 // recycled block is what exposes it, and that is what the `junk` bindings are
 // for: remove them and every case here passes against a broken compiler.
-//
-// STILL OPEN, deliberately not asserted here. Only the callee returning the
-// PARAMETER is fixed. Returning a LOCAL bound from it (`var st = s; return st`)
-// is the same defect and still reproduces on this commit — `ret_alias(0, s1)`
-// exits 42. Closing it needs the alias bind to be counted, and a retain there
-// has to be paired with a release: the bind sets alias_inc, but the alias slot
-// is not exit-swept, because slot_is_reclaimable_struct refuses a slot bound
-// from a parameter. Adding the retain alone moved
-// struct_arr_field__{fnscope,if_block}__alias_param from clean to LEAK in the
-// leak matrix, which is a regression the matrix names as such; granting the
-// slot the box-only release role that would balance it is credit surgery whose
-// failure mode is a double free. That half stays on #8240 with this analysis
-// rather than being half-landed or papered over with a rebanked row.
 //
 // Differential against `fern -interp`, not a written-down number: native and
 // the interpreter both answer correctly, so the oracle is real. Assertions are
@@ -50,31 +39,30 @@ var selfHostBorrowedStructParamCases = []struct {
 	name string
 	src  string
 }{
-	// The fixed shape: the callee returns the borrowed parameter itself, so the
-	// caller holds two names for one box and releases one of them.
+	// The callee returns the borrowed parameter itself.
 	{"return-param", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_param(s: St): St { return s; }\nfunction main(): i32 {\n    var s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    var s1: St = s.emit(1);\n    var a: St = ret_param(s1);\n    var junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
 
-	// Control on the other side of the retain: the local IS rebound before the
-	// return, so a fresh box comes back and the caller's box was never handed
-	// out. A retain that fired here would strand the fresh box instead.
+	// The same box handed back through a LOCAL bound from the parameter — the
+	// issue's own shape, and the half a callee-side retain could not close.
+	// The caller cannot tell the two apart, which is why the fix belongs on
+	// this side: the runtime `old == q2` compare answers both.
+	{"return-alias-passthrough", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_alias(n: i32, s: St): St {\n    var st: St = s;\n    var i: i32 = 0;\n    while (i < n) { st = st.emit(i); i = i + 1; }\n    return st;\n}\nfunction main(): i32 {\n    var s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    var s1: St = s.emit(1);\n    var a: St = ret_alias(0, s1);\n    var junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
+
+	// Control on the other side of the compare: the local IS rebound before
+	// the return, so a FRESH box comes back and the caller's box is genuinely
+	// dead. The release must still fire there — dropping it wholesale rather
+	// than only on the equal arm would leak here instead.
 	{"return-alias-rebound", "struct St { ops: i32[], names: string[], ctrl: i32 }\n@noinline\nfunction (s: St) emit(op: i32): St {\n    return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl + 1 };\n}\n@noinline\nfunction ret_alias(n: i32, s: St): St {\n    var st: St = s;\n    var i: i32 = 0;\n    while (i < n) { st = st.emit(i); i = i + 1; }\n    return st;\n}\nfunction main(): i32 {\n    var s: St = St { ops: [], names: [\"alpha\"], ctrl: 0 };\n    var s1: St = s.emit(1);\n    var a: St = ret_alias(2, s1);\n    var junk: St = St { ops: [7], names: [\"zzz\"], ctrl: 42 };\n    if (junk.ctrl != 42) { return 81; }\n    return a.ctrl + __rc_underflow_count();\n}"},
 
-	// Control on the GATE itself: a generic pass-through. A slot's struct-type
-	// column holds any bare nominal is_enum_like_name accepts, so a typevar
-	// param reads as struct-typed there; retaining it emits __fern_rc_inc into
-	// a program with no heap need, and the runtime block defining that symbol
-	// is emitted only when there is one. The failure is a LINK error, so this
-	// case fails in buildBin rather than on the exit code.
-	{"typevar-param-control", "function id[T](x: T): T { return x; }\nfunction main(): i32 { return id(7i32) + 4; }"},
-
-	// Control: an ARRAY param handed back the same way. Correct before the fix
-	// as well as after — no caller-side release fires for arrays — so this pins
-	// that widening the return-inc to structs did not disturb the array path.
+	// Control: an ARRAY param handed back the same way. Arrays keep the
+	// callee-side transfer retain (ret-borrowed-param) and no caller-side
+	// release fires for them, so this is the untouched path.
 	{"array-param-control", "@noinline\nfunction ret_alias(n: i32, a: i32[]): i32[] {\n    var t: i32[] = a;\n    var i: i32 = 0;\n    while (i < n) { t = t.append(i); i = i + 1; }\n    return t;\n}\nfunction main(): i32 {\n    var a: i32[] = [];\n    var a1: i32[] = a.append(1);\n    var a2: i32[] = ret_alias(0, a1);\n    var junk: i32[] = [7, 7, 7, 7, 7];\n    if (junk[0] != 7) { return 81; }\n    return a2.len() + __rc_underflow_count();\n}"},
 }
 
 // TestSelfHostBorrowedStructParamReturnX86_64 — the production x86-64 IR path
-// against the interpreter oracle. return-param exits 42 without the fix.
+// against the interpreter oracle. return-param and return-alias-passthrough
+// both exit 42 without the fix.
 func TestSelfHostBorrowedStructParamReturnX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -105,8 +93,8 @@ func TestSelfHostBorrowedStructParamReturnX86_64(t *testing.T) {
 }
 
 // TestSelfHostBorrowedStructParamReturnArm64 — the same cases through the arm64
-// emit. The retain is shared irlower analysis rather than per-backend emission,
-// so this leg is what would catch it landing on only one register backend.
+// emit. The release is shared irlower analysis rather than per-backend
+// emission, so this leg is what would catch it landing on one register backend.
 func TestSelfHostBorrowedStructParamReturnArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
