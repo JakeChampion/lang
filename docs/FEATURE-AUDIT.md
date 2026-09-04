@@ -166,7 +166,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | `remove_file` / `remove_dir_all` | | | | | | ⬜ | |
 | `temp_dir(prefix)` | | | | | | ⬜ | |
 | `subprocess(...)` | | | | | | ⬜ | |
-| `sleep_ms` | ✅ | ✅ | ✅ | 🐛 | ✅ | ⚠️ | interp + native x86-64/arm64 + self-host ✅ ([#2843](https://github.com/JakeChampion/lang/issues/2843)); self-host **IR path** lowers it on x86-64/arm64 (wasm routes via the AST path); **native wasm pending (WASI poll-based sleep)** |
+| `sleep_ms` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | all backends ([#2843](https://github.com/JakeChampion/lang/issues/2843)); self-host **IR path** lowers it on x86-64/arm64 (wasm routes via the AST path); native wasm landed in [#7947](https://github.com/JakeChampion/lang/issues/7947) — preview-1 `poll_oneoff` on one monotonic-clock subscription, preview-2 subscribe-duration + block + drop (`internal/codegen/wasmbin/wasi_sleep_test.go`) |
 | `now_unix_ms` / `monotonic_ns` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | both ✅ all backends; `monotonic_ns` native x86-64/arm64 runtimes added ([#2843](https://github.com/JakeChampion/lang/issues/2843)); self-host **IR path** lowers both on x86-64/arm64 (wasm routes via the AST path) |
 | `now_ns` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | wall-clock nanoseconds (i64); native interp + x86-64 + arm64 runtimes added (previously wasm-only); self-host x86-64/arm64 now emit it on both the AST and IR paths (wasm routes via the AST path) |
 | `random_bytes` / `random_i32` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | length + usable value; `random_bytes(n): u8[]` (#5714) |

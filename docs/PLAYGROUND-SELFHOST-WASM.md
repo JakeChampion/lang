@@ -269,12 +269,14 @@ refusals the self-host has made since #4317/#4375, moved into
 takes `poll_oneoff` with a single monotonic-clock subscription and preview-2
 takes subscribe-duration plus a wait. `providedMissingLowering` is now empty.
 
-That removes the builtin half of this precondition. The rest of it stands on
-its own: the playground's wasm artifact is still produced *by the self-host
-compiler compiling itself* rather than by the native toolchain, so there is no
-independent second witness to cross-check a wasm miscompile against — which is
-why #7948 had to be diagnosed by diffing the two TARGETS of one compiler
-instead.
+That removes the builtin half of this precondition, and the rest of it stands
+on a different footing than it did. The playground's wasm artifact is still
+produced *by the self-host compiler compiling itself* rather than by the native
+toolchain — but what refuses the native route now is `write_file_exec` needing
+`fsmode`, listed among the E066 refusals above, not a lowering anyone can add.
+So there is still no independent second witness to cross-check a wasm
+miscompile against — which is why #7948 had to be diagnosed by diffing the two
+TARGETS of one compiler instead — and it is no longer a witness to wait for.
 
 The IR driver is the exception, and it is a usable partial witness: the native
 toolchain compiles `examples/self_host/wasm_ir_run.fern` to a core module that

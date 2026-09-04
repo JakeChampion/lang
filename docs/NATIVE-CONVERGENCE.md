@@ -159,9 +159,13 @@ what it actually needs, because "goal 2 is nearly done" does not imply
    build. What remains is not compilation: the playground also interprets, and
    `examples/self_host/interp.fern` implements no I/O builtins at all, so its
    output pane has no self-host counterpart — a second missing consumer beside
-   the LSP. `sleep_ms` remains the one builtin with no wasm lowering (#7947),
-   which keeps the native toolchain from compiling `fern.fern` for wasm, so this
-   artifact still has only one witness.
+   the LSP. The native toolchain still cannot compile `fern.fern` for wasm,
+   so this artifact still has only one witness — but the blocker is no longer a
+   missing lowering. #7947 landed `sleep_ms` and emptied
+   `providedMissingLowering`; what refuses now is `write_file_exec`, which needs
+   `fsmode`, and E066 declines it because the component-model filesystem has no
+   permission bits (#6133). That is a target property rather than a gap, so this
+   witness is not one to wait for.
 
 ## Freeze preconditions (all must be green before native is frozen)
 
