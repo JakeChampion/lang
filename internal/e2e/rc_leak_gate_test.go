@@ -140,14 +140,87 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"mixed_return_param_projection_is_owned": 880,
 }
 
+// The wasm table (#7912). Same corpus, same families — the map and
+// closure drop paths — but its own numbers, and the differences are
+// findings rather than noise, exactly as the x86-64/arm64 split is. Two
+// of them are worth naming because they point in OPPOSITE directions:
+//
+//   - `cell_string_read_aliased` and
+//     `copying_builtin_own_param_not_double_freed` leak on x86-64 and
+//     reclaim here. Both are single-word-string shapes, and this backend
+//     does not carry that ABI.
+//   - four map cases with string KEYS or VALUES
+//     (`map_string_keys_churn_free`, `map_string_values_churn_free`,
+//     `map_string_value_overwrite_pre_drop_churn`,
+//     `map_keys_values_header_churn_free`) leak here and are clean on
+//     both natives. The string buffers a map column owns are not being
+//     reclaimed on this backend.
+//
+// Cases the correctness corpus skips on wasm (`skipWasm`) are skipped
+// here too — a case that cannot run cannot be weighed.
+var rcCorpusLeakBaselineWasm = map[string]int64{
+	"closure_array_capture_churn":                    4752,
+	"closure_call_arg_handed_back_is_not_reclaimed":  1920,
+	"closure_capture_passed_to_owned_param":          64,
+	"closure_captures_arr_of_struct_churn_free":      14256,
+	"closure_captures_struct_churn_free":             6336,
+	"closure_churn_free":                             1584,
+	"closure_escapes_return":                         16,
+	"closure_local_passed_to_callee_released":        384,
+	"consumed_array_arg_temp_released_and_guarded":   128,
+	"escape_array_into_map_value":                    16,
+	"map_aliased_array_value":                        16,
+	"map_arr_struct_values_churn_free":               28800,
+	"map_array_values":                               16,
+	"map_delete_tuple_churn_free":                    224000,
+	"map_enum_values_churn_free":                     25600,
+	"map_generic_enum_values_churn_free":             12800,
+	"map_get_push_overwrite":                         16,
+	"map_i32_array_values":                           32,
+	"map_iter_escape_churn_free":                     32000,
+	"map_iter_string_kv_retain_churn_free":           19200,
+	"map_keys_values_header_churn_free":              16000,
+	"map_nested_array_values":                        16,
+	"map_overwrite_churn_free":                       16,
+	"map_overwrite_struct_churn_free":                14400,
+	"map_overwrite_with_live_borrow":                 64,
+	"map_string_array_values":                        16,
+	"map_string_keys_churn_free":                     3200,
+	"map_string_value_overwrite_pre_drop_churn":      16000,
+	"map_string_values_churn_free":                   3200,
+	"map_struct_value_escapes":                       9600,
+	"map_struct_values_churn_free":                   19200,
+	"map_value_escapes_return":                       16,
+	"matchexpr_alias_array_no_free":                  1600,
+	"option_of_array":                                32,
+	"pair_form_enum_temp_as_argument":                160,
+	"pair_form_payload_borrowing_call":               144,
+	"stdlib_json_cursor_idiom":                       1264,
+	"stdlib_json_roundtrip":                          560,
+	"string_closure_capture_aliased":                 32,
+	"string_closure_capture_churn_free":              3200,
+	"string_pushed_then_returned_bare_stays_refused": 320,
+	"tuple_return_scalar_cursor_recursion":           320,
+}
+
 // checkCorpusLeaks runs every corpus case under the leak detector and
 // holds each one at its baseline.
 func checkCorpusLeaks(t *testing.T, backend string, baseline map[string]int64,
 	run func(*testing.T, string) (string, string, int)) {
 	for _, c := range rcCorpus {
 		t.Run(c.name, func(t *testing.T) {
+			if backend == "wasm" && c.skipWasm != "" {
+				t.Skip(c.skipWasm)
+			}
 			_, stderr, code := run(t, c.src)
-			m := leakCheckLineRe.FindStringSubmatch(stderr)
+			// The natives own their stderr, so the report is the whole
+			// of it and the anchored pattern says so. Under wasmtime it
+			// is not: the host is free to write there too.
+			re := leakCheckLineRe
+			if backend == "wasm" {
+				re = wasmLeakCheckLineRe
+			}
+			m := re.FindStringSubmatch(stderr)
 			if m == nil {
 				t.Fatalf("%s: no leakcheck report on stderr (exit %d): %q — "+
 					"the detector must print exactly one line at the exit seam", c.name, code, stderr)
@@ -183,6 +256,16 @@ func TestArm64RcCorpusLeakGate(t *testing.T) {
 	checkCorpusLeaks(t, "arm64", rcCorpusLeakBaselineArm64, runLeakCheckArm64)
 }
 
+// The wasm leg (#7912). Until the census reached this backend the corpus
+// ran here for its exit code only, so every leaking case on the list
+// above was invisible on the one target with no detector at all.
+func TestWASMRcCorpusLeakGate(t *testing.T) {
+	checkCorpusLeaks(t, "wasm", rcCorpusLeakBaselineWasm,
+		func(t *testing.T, src string) (string, string, int) {
+			return runLeakCheckWasm(t, src, false)
+		})
+}
+
 // TestRcCorpusLeakBaselinesNameRealCases keeps the two tables from
 // rotting: an entry naming a case the corpus no longer has would sit
 // there forever, unreachable and unfalsifiable.
@@ -197,6 +280,7 @@ func TestRcCorpusLeakBaselinesNameRealCases(t *testing.T) {
 	}{
 		{"rcCorpusLeakBaselineX86_64", rcCorpusLeakBaselineX86_64},
 		{"rcCorpusLeakBaselineArm64", rcCorpusLeakBaselineArm64},
+		{"rcCorpusLeakBaselineWasm", rcCorpusLeakBaselineWasm},
 	} {
 		var stale []string
 		for name := range tbl.m {
