@@ -30,8 +30,8 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	bin := buildSelfHostBin(t, gcc, dir, "ir_kind_run.fern", "ir_kind_run")
 
 	// Golden report — locks kind_count, the full-table bijection (all 196 ids
-	// round-trip), the extension-tag sweep (the 34 registered ids beyond
-	// kind_count(), struct_copy=198 … create_dir_all=231 — #5452's skew
+	// round-trip), the extension-tag sweep (the 37 registered ids beyond
+	// kind_count(), struct_copy=198 … lstat=236 — #5452's skew
 	// left them unrendered by kind_name), the KIND_INVALID sentinels, a few stable ids,
 	// and every classifier predicate's answer on representative kinds.
 	//
