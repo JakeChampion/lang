@@ -1,0 +1,171 @@
+name: Cancel siblings on failure
+
+# Every completed lane queues one of these, and all but the red ones skip at the
+# `if:` below — which is evaluated after the run is named, so the name has to
+# carry the conclusion or the Actions list reads as a wall of failures. A fork
+# pull request has a null `head_branch`, so the commit is what identifies the
+# round.
+run-name: >-
+  ${{ github.event.workflow_run.name }}
+  ${{ github.event.workflow_run.conclusion }} at
+  ${{ github.event.workflow_run.head_sha }}
+
+# 75% of a PR's CI time here is queue, not compute: 945 job-minutes waiting
+# against 317 running (docs/CI-SIGNOFF.md). A push opens ~85 jobs and the pool
+# is shared with every other SHA in flight, so once ONE lane has gone red the
+# remaining lanes are buying nothing — the PR is already not merging — while
+# still holding slots every other PR is queued behind.
+#
+# So: when a lane concludes `failure` on a pull request, cancel every other run
+# still in flight for that same commit. The saving is the queue, not the
+# minutes; the red signal itself arrives no sooner.
+#
+# The cost is that you see the FIRST failure, not all of them. That is the
+# opposite of the `fail-fast: false` every matrix here carries deliberately, so
+# the two are scoped differently on purpose: within a lane the whole matrix
+# still runs, and only sibling LANES get reaped. When a round genuinely needs
+# the full picture, label the PR `ci-full` and nothing is cancelled.
+#
+# Re-running just the failed lane does not revive its cancelled siblings — they
+# stay cancelled, and a required one among them keeps blocking. Push, or re-run
+# all jobs.
+#
+# `workflow_run` fires once a run is wholly finished, so a lane that fails in
+# its first minute but fans out to 30 reaps nothing until its last shard lands.
+# The lanes that fail first are the short ones (lint, units), which is exactly
+# where this pays. Job-level granularity is not available: `check_run` and
+# `check_suite` do not trigger workflows when the check was created by GitHub
+# Actions, and the only alternative is a job that sits on a runner polling the
+# jobs API — spending the slot this exists to hand back.
+
+on:
+  workflow_run:
+    # Every lane a pull request launches, by workflow `name:` rather than
+    # filename. A hand-maintained list of the thing it has to stay in step with
+    # is exactly the drift this repo keeps paying for, so
+    # TestCancelOnFailureWatchesEveryPRLane pins it to the directory: add a
+    # PR-triggered workflow without adding it here and that test says so. This
+    # workflow is deliberately absent from its own list — that is what stops it
+    # reaping in response to itself.
+    workflows:
+      - "Bootstrap"
+      - "Docs build"
+      - "Examples"
+      - "Fuzz differential execution"
+      - "Fuzz parse round-trip"
+      - "Lint"
+      - "Perf"
+      - "Playground E2E"
+      - "Test e2e arm64"
+      - "Test e2e differential"
+      - "Test e2e other"
+      - "Test e2e self-host"
+      - "Test e2e wasm"
+      - "Test e2e x86_64"
+      - "Test fernsmith"
+      - "Test units"
+      - "VS Code Extension"
+      - "macOS arm64"
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+# Two lanes going red within seconds of each other queue two reapers; the
+# second finds nothing left to cancel. Keyed per commit so unrelated PRs never
+# serialise against each other.
+concurrency:
+  group: cancel-on-failure-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    # `pull_request` only: a red main must run to completion so the failure is
+    # attributable, and a dispatch at the same commit is someone's deliberate
+    # run.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const trigger = context.payload.workflow_run;
+            const { owner, repo } = context.repo;
+            const sha = trigger.head_sha;
+
+            // Opt out for a round that needs every failure at once. Read from
+            // the commit rather than `trigger.pull_requests`, which comes back
+            // empty for a pull request opened from a fork.
+            const prs = await github.paginate(
+              github.rest.repos.listPullRequestsAssociatedWithCommit,
+              { owner, repo, commit_sha: sha, per_page: 100 },
+            );
+            const optedOut = prs.filter((pr) =>
+              pr.labels.some((l) => l.name === "ci-full"));
+            if (optedOut.length > 0) {
+              core.notice(
+                `ci-full on #${optedOut.map((pr) => pr.number).join(", #")} — ` +
+                `leaving the remaining lanes to finish`,
+              );
+              return;
+            }
+
+            const self = String(context.runId);
+            const candidates = new Map();
+            for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
+              const runs = await github.paginate(
+                github.rest.actions.listWorkflowRunsForRepo,
+                { owner, repo, head_sha: sha, status, per_page: 100 },
+              );
+              for (const run of runs) {
+                // Only the pull request's own lanes. A run at this commit from
+                // any other trigger — a dispatch, a release, a reaper — was
+                // started for a reason that has nothing to do with this PR
+                // being red.
+                if (run.event !== "pull_request") continue;
+                if (String(run.id) === self) continue;
+                if (String(run.id) === String(trigger.id)) continue;
+                candidates.set(run.id, run);
+              }
+            }
+
+            let cancelled = 0;
+            let denied = false;
+            const reaped = [];
+            for (const run of candidates.values()) {
+              try {
+                await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id });
+                cancelled++;
+                reaped.push(`${run.name} #${run.run_number} [${run.status}]`);
+                core.info(`cancelled ${run.name} #${run.run_number} (${run.id}) [${run.status}]`);
+              } catch (e) {
+                // 409: the run reached a terminal state between the listing and
+                // the cancel. Routine, not a failure.
+                if (e.status === 409) continue;
+                if (e.status === 403) denied = true;
+                core.warning(`could not cancel ${run.id}: ${e.message}`);
+              }
+            }
+
+            core.notice(
+              `${trigger.name} failed at ${sha.slice(0, 8)} — cancelled ${cancelled} sibling run(s)`,
+            );
+            await core.summary
+              .addHeading(`${trigger.name} failed`, 3)
+              .addRaw(`Commit \`${sha.slice(0, 8)}\`${trigger.head_branch ? ` on \`${trigger.head_branch}\`` : ""}. `)
+              .addRaw(`[Failing run](${trigger.html_url})\n\n`)
+              .addRaw(reaped.length
+                ? `Cancelled ${cancelled} sibling run(s):\n`
+                : "Nothing left in flight to cancel.\n")
+              .addList(reaped)
+              .write();
+
+            if (denied) {
+              core.setFailed(
+                "the token may not cancel runs — nothing was reaped",
+              );
+            }
