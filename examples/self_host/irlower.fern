@@ -18929,22 +18929,14 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                 // overwrite release is already pointer-guarded (`if old != new
                 // then arr_dec(old)`), so dropping the retain leaves the buffer
                 // freed exactly once on the grow path and untouched in place.
-                // The same transfer inc is owed for a borrowed STRUCT param
-                // (#8240). The box the callee hands back is the caller's, so
-                // without it the caller holds two names for one uncounted
-                // reference: `var q2 = g(.., name, ..)` then releases name's
-                // (release_last_use_source's `old == q2` arm, whose contract is
-                // exactly "q2 holds its own count on it"), which takes rc 1 to 0
-                // and frees a box q2 still names. Nothing catches it — the free
-                // is at rc 1, so the underflow trap never fires, and the block
-                // usually comes back field-identical from the freelist.
-                // decl_is_struct, not merely a non-empty type column: that
-                // column carries any bare nominal is_enum_like_name accepts, a
-                // generic typevar (`id[T](x: T): T`) included. Retaining one
-                // emits __fern_rc_inc into a module with no heap need, and the
-                // runtime block that defines it is gated on having one.
-                var rp_struct: boolean = decl_is_struct(s.structs, s.struct_type_of_slot(rps));
-                if (rps >= 0 && rps < s.n_params && (s.is_arr_slot(rps) || rp_struct)) {
+                // STRUCTS take no such inc: a returned borrowed struct param
+                // stays an UNCOUNTED alias, which is what every struct consumer
+                // reads it as — a materialised call result is dec'd through an
+                // __fern_rc_is_unique gate that a second count turns off, so
+                // retaining here strands the box instead (#8240,
+                // alloc_flat_method_identity_return). The caller-side pairing is
+                // release_last_use_source, which honours the same convention.
+                if (rps >= 0 && rps < s.n_params && s.is_arr_slot(rps)) {
                     var rpl: LowerState = lower_expr(r.value, s);
                     if (!rpl.ok) { return rpl; }
                     var rpfl: i32 = s.ownflag_slot_of(rps);
@@ -73809,8 +73801,11 @@ function last_use_release_slot(v: ast.StmtVar, s: LowerState): i32 {
 // derived from name, so name's box is dead. Release it the way a rebind would,
 // with q2 standing in for the new value: a field q2 carries on is kept, the
 // replaced ones and the box go, a shared box gives up this slot's count. When g
-// handed name's own box back, q2 holds its own count on it and name's is
-// released. At an `own` position the callee took the box — reused in place or
+// handed name's own box back there is nothing to release: a returned borrowed
+// param is an UNCOUNTED alias, so this slot's count is the only one and it
+// transfers to q2, whose own sweep frees the box (#8240 — decing it here took
+// rc 1 to 0 under a live q2, and the next allocation handed the same block
+// out again). At an `own` position the callee took the box — reused in place or
 // freed — and nothing here may read it. The slot is zeroed either way, so the
 // exit sweep of a credited local finds nothing.
 function release_last_use_source(v: ast.StmtVar, sv: LowerState): LowerState {
@@ -73822,11 +73817,6 @@ function release_last_use_source(v: ast.StmtVar, sv: LowerState): LowerState {
         var q2: i32 = st.slot_of(v.name);
         var sty: string = st.struct_type_of_slot(slot);
         var snls: i32 = st.slot_of(snapshot_slot_name(slot));
-        var scratch: string = "$lu" + util.i32_to_string(st.locals.len());
-        st = st.add_local(scratch);
-        var os: i32 = st.slot_of(scratch);
-        st = st.emit(ir.op_load_local(slot));
-        st = st.emit(ir.op_store_local(os));                      // old
         st = st.emit(ir.op_load_local(q2));                       // new
         if (!reclaim_has(st.reclaimable_names, "NOFLD:", st.reclaim_site_key(slot)) && st.struct_routes_field_reclaim(sty)) {
             st = emit_field_reclaim_store(st, slot, sty, snls);
@@ -73836,20 +73826,6 @@ function release_last_use_source(v: ast.StmtVar, sv: LowerState): LowerState {
             st = st.emit(ir.op_call_direct("__fern_snapshot_dec", 3));   // frees old unless new or snap; returns new
             st = st.emit(ir.op_store_local(slot));
         }
-        st = st.emit(ir.op_load_local(os));
-        st = st.emit(ir.op_load_local(q2));
-        st = st.emit(ir.op_bin("eq", 0, false));
-        if (snls >= 0) {
-            st = st.emit(ir.op_load_local(os));
-            st = st.emit(ir.op_load_local(snls));
-            st = st.emit(ir.op_bin("ne", 0, false));
-            st = st.emit(ir.op_bin("and", 0, false));
-        }
-        st = st.emit(ir.op_if(0));
-        st = st.emit(ir.op_load_local(os));
-        st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
-        st = st.emit(ir.op_drop());
-        st = st.emit(ir.op_end());
     }
     st = st.emit(ir.op_const_i32(0));
     return st.emit(ir.op_store_local(slot));
