@@ -363,6 +363,9 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					// CLOCK_MONOTONIC (1) variant of __fern_now_ns.
 					needs.add("__fern_alloc")
 					needs.add("__fern_monotonic_ns")
+				case "__fern_sleep_ms":
+					// Its subscription buffer is scratch, so no allocator.
+					needs.add("__fern_sleep_ms")
 				case "__fern_wasm_timer_pollable":
 					// wasm reactor timer: subscribe-duration → pollable.
 					needs.add("__fern_wasm_timer_pollable")
@@ -1364,6 +1367,16 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI64},
 		body:    buildMonotonicNsBody,
+	},
+	"__fern_sleep_ms": {
+		// (ms: i64) → () — block for `ms` milliseconds. i64 because
+		// that is the checker's declared parameter width, and void
+		// because emitOp pushes nothing for it; the self-host's twin
+		// returns a dummy i32 only because its own emitter drops one.
+		// ms <= 0 returns immediately.
+		params:  []byte{encode.ValtypeI64},
+		results: nil,
+		body:    buildSleepMsBody,
 	},
 	"__fern_wasm_timer_pollable": {
 		// (duration_ns: i64) → pollable handle (i32). The wasm
