@@ -90,5 +90,21 @@
 # the line before. The arm64 TARGET, which this was aimed at and which no
 # baseline covers, went 1,290,816,360 / 510,568 to 376,513,680 / 474,940.
 
-x86_64/checker.cliff_bytes	202714832
-x86_64/checker.cliff_count	376543
+# Re-pinned 2026-09-04 (#7397) after the #4873 containment bracket gained three
+# field- and path-granular deaths: it no longer retains a struct argument's
+# array field across a call the field cannot be read back through, no longer
+# treats a read whose enclosing block RETURNS before mentioning the name again
+# as non-final, and admits a local unpacked from a call result's field. On the
+# same tree the line before, 202,926,200 / 376,969; `irlower.LowerState.emit`
+# went 156,918,008 / 35,105 to 132,890,016 / 28,991 of that, and
+# `checker.Scope.bind` 22,383,696 / 244,028 to 21,381,760 / 277,542.
+#
+# THE COUNT ROSE 7% WHILE THE BYTES FELL 12%, and that is the expected shape,
+# not a regression to chase: an append that grows in place hands its buffer
+# back at rc 2 (the identity convention), so the NEXT append on it crosses —
+# where a forced copy would have handed back a fresh rc-1 buffer instead. The
+# trade is one whole-buffer copy for a later small one, which is why
+# `Scope.bind`'s mean copy fell from 92 to 77 bytes while it crossed more often.
+
+x86_64/checker.cliff_bytes	177651472
+x86_64/checker.cliff_count	403531

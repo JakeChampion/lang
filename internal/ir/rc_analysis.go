@@ -6259,11 +6259,54 @@ func (b *builder) computeBorrowedAliases() {
 // owned-by-default transfer, and explicit `own` requires the binding to
 // die — E051).
 
-// growParamKind bits for computeGrowParams entries.
-const (
-	growArgBuffer uint8 = 1 // the param IS an array whose buffer may grow in place
-	growFieldBufs uint8 = 2 // the param is a struct whose array-field buffers may grow in place
-)
+// growParam records what a callee may mutate in place through one parameter:
+// the parameter's own buffer when it IS an array, and the named DIRECT array
+// fields when it is a struct. `growAnyField` stands in for a nested or
+// unresolvable field path, and makes every field of the struct growable.
+//
+// The field set is what keeps the caller-side bracket proportionate: a
+// `LowerState` has twenty-odd array fields, and bracketing all of them because
+// the callee appends to ONE forces a copy on each of the others as well.
+type growParam struct {
+	buffer bool
+	fields map[string]bool
+}
+
+// growAnyField is the field-set entry for a path this analysis cannot name.
+const growAnyField = "*"
+
+func (g growParam) any() bool { return g.buffer || len(g.fields) > 0 }
+
+func (g growParam) growsField(name string) bool {
+	return g.fields[growAnyField] || g.fields[name]
+}
+
+// addField records one growable field, reporting whether it was new.
+func (g *growParam) addField(name string) bool {
+	if g.fields[growAnyField] || g.fields[name] {
+		return false
+	}
+	if g.fields == nil {
+		g.fields = map[string]bool{}
+	}
+	g.fields[name] = true
+	return true
+}
+
+// merge folds another parameter's growth into this one.
+func (g *growParam) merge(o growParam) bool {
+	changed := false
+	if o.buffer && !g.buffer {
+		g.buffer = true
+		changed = true
+	}
+	for f := range o.fields {
+		if g.addField(f) {
+			changed = true
+		}
+	}
+	return changed
+}
 
 // callArgDeaths marks, per call node, the ident arguments whose value can
 // no longer be observed through that binding in this function after the
@@ -6314,7 +6357,7 @@ const (
 // closure in computeGrowParams consults this map, so a buffer passed on
 // unbracketed propagates as a growable position of the enclosing
 // function's own parameter.
-func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
+func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldObs) map[*ast.Call]map[string]bool {
 	body := fn.Body
 	out := map[*ast.Call]map[string]bool{}
 	// Occurrence census over the whole body, for the sole-occurrence shape.
@@ -6368,6 +6411,53 @@ func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
 			delete(callInitLocal, name)
 		}
 	}
+	// A local UNPACKED from a call-init local's field — `var eqL = park(…);
+	// var sl = eqL.state;` — is admitted on the same footing. The alias
+	// exclusion asks whether another live name in this frame reads the same
+	// buffers, and the unpack is the only reader of that field: `h.f` occurs
+	// once in the body and every other mention of `h` selects a different
+	// field, so nothing survives the last use of `q` that names `h.f`. The
+	// self-host's `lower_expr_binary` threads its state through exactly this
+	// shape twice per string comparison, and each link was paying one copy of
+	// the whole op list.
+	unpackInitLocal := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		v, isVar := n.(*ast.Var)
+		if !isVar || declCount[v.Name] != 1 {
+			return true
+		}
+		fa, isField := v.Init.(*ast.FieldAccess)
+		if !isField {
+			return true
+		}
+		hid, isID := fa.Target.(*ast.Ident)
+		if !isID || !callInitLocal[hid.Name] {
+			return true
+		}
+		reads, selections, mentions := 0, 0, 0
+		ast.Walk(body, func(m ast.Node) bool {
+			switch x := m.(type) {
+			case *ast.FieldAccess:
+				if id, ok := x.Target.(*ast.Ident); ok && id.Name == hid.Name {
+					selections++
+					if x.Field == fa.Field {
+						reads++
+					}
+				}
+			case *ast.Ident:
+				if x.Name == hid.Name {
+					mentions++
+				}
+			}
+			return true
+		})
+		// Every field selection also walks its target Ident, so h is named
+		// only by selections exactly when the two counts agree.
+		if reads == 1 && selections == mentions {
+			unpackInitLocal[v.Name] = true
+		}
+		return true
+	})
 	markOnce := func(c *ast.Call, name string) {
 		direct := 0
 		for _, a := range c.Args {
@@ -6484,14 +6574,490 @@ func callArgDeaths(fn *ast.FuncDecl) map[*ast.Call]map[string]bool {
 			if !ok || escaping[aid.Name] || !order.isLast(aid) {
 				continue
 			}
-			if !isParam[aid.Name] && !callInitLocal[aid.Name] {
+			if !isParam[aid.Name] && !callInitLocal[aid.Name] && !unpackInitLocal[aid.Name] {
 				continue
 			}
 			markOnce(c, aid.Name)
 		}
 		return true
 	})
+	// Path-last-occurrence shape. `order.isLast` is a TEXTUAL test, and the
+	// self-host lowering is written as a chain of `if (…) { … return …; }`
+	// branches that each thread the state once: every one of them has a
+	// textually later read, on a path that cannot also have run. So a read is
+	// equally final when the statement list it sits in RETURNS before
+	// mentioning the name again — control leaves the function from inside this
+	// block, so no later statement of the body is reachable. The same no-loop
+	// / no-lambda / exactly-once gates as the textual shape apply; a `break` or
+	// `continue` that could leave the block before the return withdraws it,
+	// since control would then reach the code after it.
+	stmtIdx := callBlockPositions(body)
+	ast.Walk(body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || repeating[c] {
+			return true
+		}
+		for _, a := range c.Args {
+			aid, ok := a.(*ast.Ident)
+			if !ok || escaping[aid.Name] || order.isLast(aid) {
+				continue
+			}
+			if !isParam[aid.Name] && !callInitLocal[aid.Name] && !unpackInitLocal[aid.Name] {
+				continue
+			}
+			if !returnsBeforeReading(stmtIdx, c, aid.Name) {
+				continue
+			}
+			markOnce(c, aid.Name)
+		}
+		return true
+	})
+	markUnobservedParamFields(out, fn, info, obs, repeating, escaping, occurrences)
 	return out
+}
+
+// blockPos locates a call in the innermost statement list holding it.
+type blockPos struct {
+	blk *ast.Block
+	idx int
+}
+
+// callBlockPositions maps every call in `body` to its innermost enclosing
+// statement list and the index of the statement it appears in.
+func callBlockPositions(body ast.Node) map[*ast.Call]blockPos {
+	var blocks []*ast.Block
+	ast.Walk(body, func(n ast.Node) bool {
+		if b, ok := n.(*ast.Block); ok {
+			blocks = append(blocks, b)
+		}
+		return true
+	})
+	out := map[*ast.Call]blockPos{}
+	// Pre-order, so an inner block overwrites the outer one's verdict.
+	for _, b := range blocks {
+		for i, st := range b.Stmts {
+			ast.Walk(st, func(n ast.Node) bool {
+				if c, ok := n.(*ast.Call); ok {
+					out[c] = blockPos{blk: b, idx: i}
+				}
+				return true
+			})
+		}
+	}
+	return out
+}
+
+// returnsBeforeReading reports whether the statement list holding `c` returns
+// out of the function before mentioning `name` again — so this read is the
+// last one on every path that reaches it, whatever comes later in the body.
+func returnsBeforeReading(pos map[*ast.Call]blockPos, c *ast.Call, name string) bool {
+	bp, ok := pos[c]
+	if !ok {
+		return false
+	}
+	// Once in the whole statement, so nothing else in it reads the name after
+	// the call — the statement-level twin of markOnce's rule.
+	if mentions(bp.blk.Stmts[bp.idx], name) != 1 {
+		return false
+	}
+	for i := bp.idx + 1; i < len(bp.blk.Stmts); i++ {
+		if mentions(bp.blk.Stmts[i], name) != 0 || jumpEscapes(bp.blk.Stmts[i]) {
+			return false
+		}
+		if _, isRet := bp.blk.Stmts[i].(*ast.Return); isRet {
+			return true
+		}
+	}
+	return false
+}
+
+// mentions counts the occurrences of `name` in a statement subtree.
+func mentions(n ast.Node, name string) int {
+	k := 0
+	ast.Walk(n, func(m ast.Node) bool {
+		if id, ok := m.(*ast.Ident); ok && id.Name == name {
+			k++
+		}
+		return true
+	})
+	return k
+}
+
+// jumpEscapes reports whether a break / continue inside this statement can
+// transfer control out of the statement list holding it — an unlabelled jump
+// outside any loop the statement itself contains, or any labelled one.
+func jumpEscapes(st ast.Stmt) bool {
+	inLoop := map[ast.Node]bool{}
+	ast.Walk(st, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
+			ast.Walk(n, func(m ast.Node) bool { inLoop[m] = true; return true })
+		}
+		return true
+	})
+	out := false
+	ast.Walk(st, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Break:
+			if !inLoop[n] || x.Label != "" {
+				out = true
+			}
+		case *ast.Continue:
+			if !inLoop[n] || x.Label != "" {
+				out = true
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// fieldObs summarises which of a parameter's own fields a function can read
+// the value of, or hand to something that can. `all` is the give-up state:
+// some occurrence of the parameter is a shape this summary does not model —
+// bound to another name, spread into a literal, returned, captured, or passed
+// through an indirect call — so any field may be reached through it.
+type fieldObs struct {
+	all    bool
+	fields map[string]bool
+}
+
+func (o fieldObs) reads(field string) bool { return o.all || o.fields[field] }
+
+// paramOccKind classifies one occurrence of a parameter name.
+type paramOccKind struct {
+	// id is the occurrence itself, for the reachability comparison.
+	id *ast.Ident
+	// field is the field selected when the occurrence is `p.field`.
+	field string
+	// callee / argIdx name the direct-call position when the occurrence is
+	// a bare-ident argument.
+	callee string
+	argIdx int
+	// call is the call node an argument occurrence belongs to.
+	call *ast.Call
+	// modelled is false for every other shape.
+	modelled bool
+}
+
+// classifyParamOccurrences classifies every occurrence of `name` in `body`.
+// An occurrence that is neither a field selection on the name nor a bare-ident
+// argument of a direct call gets modelled=false, which forces the fieldObs
+// summary — and every caller-side use of it — to the conservative answer.
+func classifyParamOccurrences(body ast.Node, name string) []paramOccKind {
+	byIdent := map[*ast.Ident]paramOccKind{}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FieldAccess:
+			if id, ok := x.Target.(*ast.Ident); ok && id.Name == name {
+				byIdent[id] = paramOccKind{field: x.Field, modelled: true}
+			}
+		case *ast.Call:
+			cid, isID := x.Callee.(*ast.Ident)
+			if !isID {
+				return true
+			}
+			for i, a := range x.Args {
+				if aid, ok := a.(*ast.Ident); ok && aid.Name == name {
+					byIdent[aid] = paramOccKind{callee: cid.Name, argIdx: i, call: x, modelled: true}
+				}
+			}
+		}
+		return true
+	})
+	var out []paramOccKind
+	ast.Walk(body, func(n ast.Node) bool {
+		id, ok := n.(*ast.Ident)
+		if !ok || id.Name != name {
+			return true
+		}
+		k := byIdent[id]
+		k.id = id
+		out = append(out, k)
+		return true
+	})
+	return out
+}
+
+// blockChain is a node's position in the nested statement lists above it:
+// one step per enclosing block, outermost first.
+type chainStep struct {
+	blk *ast.Block
+	idx int
+}
+
+// reachability answers "can control reach B after passing A" for two
+// occurrences in one function body, structurally: a block every path out of
+// which RETURNS cannot be followed by a later statement of an enclosing list.
+type reachability struct {
+	chains    map[ast.Node][]chainStep
+	divergent map[*ast.Block]bool
+}
+
+func newReachability(body ast.Node) reachability {
+	var blocks []*ast.Block
+	ast.Walk(body, func(n ast.Node) bool {
+		if b, ok := n.(*ast.Block); ok {
+			blocks = append(blocks, b)
+		}
+		return true
+	})
+	r := reachability{chains: map[ast.Node][]chainStep{}, divergent: map[*ast.Block]bool{}}
+	// Pre-order, so each node's chain accumulates outermost-first.
+	for _, b := range blocks {
+		r.divergent[b] = blockDiverges(b)
+		for i, st := range b.Stmts {
+			ast.Walk(st, func(n ast.Node) bool {
+				r.chains[n] = append(r.chains[n], chainStep{blk: b, idx: i})
+				return true
+			})
+		}
+	}
+	return r
+}
+
+// precedesUnreachably reports whether `earlier` sits on a path that cannot
+// also reach `later`: they share an enclosing statement list, `earlier` is in
+// a statement before `later`'s, and some block between that statement and
+// `earlier` returns out of the function.
+func (r reachability) precedesUnreachably(earlier, later ast.Node) bool {
+	ce, cl := r.chains[earlier], r.chains[later]
+	k := 0
+	for k < len(ce) && k < len(cl) && ce[k].blk == cl[k].blk && ce[k].idx == cl[k].idx {
+		k++
+	}
+	if k >= len(ce) || k >= len(cl) || ce[k].blk != cl[k].blk || ce[k].idx >= cl[k].idx {
+		return false
+	}
+	for j := k + 1; j < len(ce); j++ {
+		if r.divergent[ce[j].blk] {
+			return true
+		}
+	}
+	return false
+}
+
+// blockDiverges reports whether reaching this statement list always leaves the
+// function. A `break` or `continue` that can escape the list withdraws the
+// verdict: control would resume after the enclosing loop instead.
+func blockDiverges(b *ast.Block) bool {
+	for _, st := range b.Stmts {
+		if jumpEscapes(st) {
+			return false
+		}
+		if stmtDiverges(st) {
+			return true
+		}
+	}
+	return false
+}
+
+func stmtDiverges(st ast.Stmt) bool {
+	switch x := st.(type) {
+	case *ast.Return:
+		return true
+	case *ast.Block:
+		return blockDiverges(x)
+	case *ast.If:
+		return x.Else != nil && stmtDiverges(x.Then) && stmtDiverges(x.Else)
+	}
+	return false
+}
+
+// computeParamFieldObs returns, per function name, one fieldObs per parameter:
+// the fields that function can observe through that parameter.
+//
+// It exists for the #4873 containment bracket. The bracket protects the value
+// a field buffer holds AT the call from a callee that grows it in place, and a
+// caller whose binding survives the call pays one full-buffer copy for it —
+// which is what puts `irlower.LowerState.emit` at the top of the append-cliff
+// baseline even though the append itself lowers in place. When every surviving
+// use of the argument is a call that provably cannot reach the field, there is
+// nothing to protect and the bracket is pure cost.
+//
+// A callee that is reachable through a vtable is `all` on every parameter: the
+// static name at the call site is not the body that runs.
+func computeParamFieldObs(prog *ast.Program, vtableDispatched map[string]bool) map[string][]fieldObs {
+	obs := map[string][]fieldObs{}
+	sites := map[string][][]paramOccKind{}
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		o := make([]fieldObs, len(fn.Params))
+		s := make([][]paramOccKind, len(fn.Params))
+		dyn := vtableDispatched[fn.Name]
+		for pi, p := range fn.Params {
+			o[pi].fields = map[string]bool{}
+			if dyn {
+				o[pi].all = true
+				continue
+			}
+			for _, k := range classifyParamOccurrences(fn.Body, p.Name) {
+				switch {
+				case !k.modelled:
+					o[pi].all = true
+				case k.field != "":
+					o[pi].fields[k.field] = true
+				default:
+					s[pi] = append(s[pi], k)
+				}
+			}
+		}
+		obs[fn.Name] = o
+		sites[fn.Name] = s
+	}
+	for changed := true; changed; {
+		changed = false
+		for name, ps := range sites {
+			for pi, ks := range ps {
+				o := obs[name][pi]
+				if o.all {
+					continue
+				}
+				for _, k := range ks {
+					co, has := obs[k.callee]
+					if !has || k.argIdx >= len(co) || vtableDispatched[k.callee] {
+						o.all = true
+						break
+					}
+					c := co[k.argIdx]
+					if c.all {
+						o.all = true
+						break
+					}
+					for f := range c.fields {
+						if !o.fields[f] {
+							o.fields[f] = true
+							changed = true
+						}
+					}
+				}
+				if o.all && !obs[name][pi].all {
+					changed = true
+				}
+				obs[name][pi] = o
+			}
+		}
+	}
+	return obs
+}
+
+// markUnobservedParamFields is the field-granular death the #4873 bracket
+// needs for a STRUCT argument whose binding survives the call: the buffer at
+// `p.f` cannot be read back through this frame, so the callee may grow it in
+// place even though `p` itself is still live.
+//
+// The bracket protects the value the field holds at the call. Every other
+// occurrence of `p` in the body therefore has to be unable to reach that
+// value — before the call as well as after it, since an occurrence before it
+// could bind an alias that outlives the call. Two shapes qualify: selecting a
+// DIFFERENT field, and passing `p` to a direct call whose fieldObs summary
+// excludes `f`. A summary that excludes `f` also excludes leaking it, because
+// the only ways out of the callee (returning it, storing it, spreading it into
+// a literal) are unmodelled occurrences, which the summary answers `all` for.
+//
+// The result of THIS call is not such an alias: it is the next generation of
+// the threaded value, and reading it is reading what the grow produced rather
+// than what the field held before.
+//
+// An occurrence that RETURNS out of the function before this call is reached
+// is not "before" it at all — the self-host lowering is a chain of
+// `if (…) { … return …; }` branches that each thread the state once, so every
+// one of them has textual company it can never run with.
+func markUnobservedParamFields(out map[*ast.Call]map[string]bool, fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldObs, repeating map[*ast.Call]bool, escaping map[string]bool, occurrences map[string]int) {
+	if obs == nil || info == nil {
+		return
+	}
+	paramNames := map[string]bool{}
+	for _, p := range fn.Params {
+		paramNames[p.Name] = true
+	}
+	occs := map[string][]paramOccKind{}
+	for name := range paramNames {
+		occs[name] = classifyParamOccurrences(fn.Body, name)
+	}
+	reach := newReachability(fn.Body)
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || repeating[c] {
+			return true
+		}
+		callee, isID := c.Callee.(*ast.Ident)
+		if !isID {
+			return true
+		}
+		sig := info.FuncSigs[callee.Name]
+		if sig == nil {
+			return true
+		}
+		for ai, a := range c.Args {
+			aid, ok := a.(*ast.Ident)
+			if !ok || !paramNames[aid.Name] || escaping[aid.Name] || ai >= len(sig.Params) {
+				continue
+			}
+			st, isStruct := sig.Params[ai].(ast.StructType)
+			if !isStruct || isMapType(st) {
+				continue
+			}
+			sd, has := info.Structs[st.Name]
+			if !has {
+				continue
+			}
+			// Exactly once in this call, so a second read here cannot see
+			// the first's growth.
+			inThisCall := 0
+			ast.Walk(c, func(m ast.Node) bool {
+				if id, ok := m.(*ast.Ident); ok && id.Name == aid.Name {
+					inThisCall++
+				}
+				return true
+			})
+			if inThisCall != 1 || occurrences[aid.Name] < 1 {
+				continue
+			}
+			for _, fld := range sd.Fields {
+				if _, isArr := fld.Type.(ast.ArrayType); !isArr {
+					continue
+				}
+				if !paramFieldUnreachable(occs[aid.Name], c, fld.Name, obs, reach) {
+					continue
+				}
+				if out[c] == nil {
+					out[c] = map[string]bool{}
+				}
+				out[c][aid.Name+"."+fld.Name] = true
+			}
+		}
+		return true
+	})
+}
+
+// paramFieldUnreachable reports whether every occurrence of the parameter
+// OTHER than the one at `c` is unable to reach the buffer at `p.field`.
+func paramFieldUnreachable(occs []paramOccKind, c *ast.Call, field string, obs map[string][]fieldObs, reach reachability) bool {
+	for _, k := range occs {
+		if k.call == c {
+			continue
+		}
+		if k.id != nil && reach.precedesUnreachably(k.id, c) {
+			continue
+		}
+		switch {
+		case !k.modelled:
+			return false
+		case k.field != "":
+			if k.field == field {
+				return false
+			}
+		default:
+			co, has := obs[k.callee]
+			if !has || k.argIdx >= len(co) || co[k.argIdx].reads(field) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // markSupersededFields handles the struct self-update `x = S { ...x, f:
@@ -6549,6 +7115,15 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 	}
 }
 
+// fieldNameOfDirect names the field a ONE-HOP access selects on `root`, or
+// growAnyField for a longer chain, whose intermediate hops are not tracked.
+func fieldNameOfDirect(fa *ast.FieldAccess, root *ast.Ident) string {
+	if id, ok := fa.Target.(*ast.Ident); ok && id == root {
+		return fa.Field
+	}
+	return growAnyField
+}
+
 // fieldChainRoot chases a field-access chain (`s.cur.insts`) to its root
 // ident, or reports false for a non-ident-rooted chain.
 func fieldChainRoot(fa *ast.FieldAccess) (*ast.Ident, bool) {
@@ -6574,15 +7149,15 @@ func fieldChainRoot(fa *ast.FieldAccess) (*ast.Ident, bool) {
 // pass a param onward in a position the CALLER-side bracket would not
 // protect (the callArgDeaths self-reassign shape for ident args, and any
 // param-field argument).
-func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8 {
-	grow := map[string][]uint8{}
+func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]fieldObs) map[string][]growParam {
+	grow := map[string][]growParam{}
 	decls := map[string]*ast.FuncDecl{}
 	for _, fn := range prog.Funcs {
 		if fn.Body == nil {
 			continue
 		}
 		decls[fn.Name] = fn
-		grow[fn.Name] = make([]uint8, len(fn.Params))
+		grow[fn.Name] = make([]growParam, len(fn.Params))
 	}
 	paramIdx := func(fn *ast.FuncDecl, name string) int {
 		for i, p := range fn.Params {
@@ -6608,15 +7183,16 @@ func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8
 				switch r := x.Args[0].(type) {
 				case *ast.Ident:
 					if pi := paramIdx(fn, r.Name); pi >= 0 {
-						g[pi] |= growArgBuffer
+						g[pi].buffer = true
 					}
 				case *ast.FieldAccess:
 					// Chase a field CHAIN to its root ident so a nested
 					// receiver (`s.cur.insts.append(x)`, the EmitState
-					// functional-update shape) seeds too.
+					// functional-update shape) seeds too — under growAnyField,
+					// since only a one-hop receiver names a field of the param.
 					if rid, ok := fieldChainRoot(r); ok {
 						if pi := paramIdx(fn, rid.Name); pi >= 0 {
-							g[pi] |= growFieldBufs
+							g[pi].addField(fieldNameOfDirect(r, rid))
 						}
 					}
 				}
@@ -6633,7 +7209,7 @@ func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8
 		changed = false
 		for name, fn := range decls {
 			g := grow[name]
-			deaths := callArgDeaths(fn)
+			deaths := callArgDeaths(fn, info, obs)
 			ast.Walk(fn.Body, func(n ast.Node) bool {
 				c, ok := n.(*ast.Call)
 				if !ok {
@@ -6648,7 +7224,7 @@ func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8
 					return true
 				}
 				for ai, a := range c.Args {
-					if ai >= len(cg) || cg[ai] == 0 {
+					if ai >= len(cg) || !cg[ai].any() {
 						continue
 					}
 					switch arg := a.(type) {
@@ -6661,8 +7237,20 @@ func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8
 						// (contained); only the dying self-reassign shape
 						// passes the buffer through unprotected.
 						if deaths[c][arg.Name] {
-							if g[pi]|cg[ai] != g[pi] {
-								g[pi] |= cg[ai]
+							if g[pi].merge(cg[ai]) {
+								changed = true
+							}
+							continue
+						}
+						// A field the bracket skips (markUnobservedParamFields)
+						// is equally unprotected, so it propagates the same
+						// way: the enclosing param grows at that field, and
+						// ITS caller brackets a surviving argument there.
+						for f := range cg[ai].fields {
+							if !deaths[c][arg.Name+"."+f] {
+								continue
+							}
+							if g[pi].addField(f) {
 								changed = true
 							}
 						}
@@ -6671,10 +7259,9 @@ func computeGrowParams(prog *ast.Program, info *checker.Info) map[string][]uint8
 						// param's field buffer and is never bracketed, so a
 						// growable position propagates as a field growth of
 						// the param (chain root for nested fields).
-						if rid, ok := fieldChainRoot(arg); ok && cg[ai] != 0 {
+						if rid, ok := fieldChainRoot(arg); ok {
 							if pi := paramIdx(fn, rid.Name); pi >= 0 {
-								if g[pi]|growFieldBufs != g[pi] {
-									g[pi] |= growFieldBufs
+								if g[pi].addField(fieldNameOfDirect(arg, rid)) {
 									changed = true
 								}
 							}
