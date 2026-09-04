@@ -149,6 +149,55 @@ rise IS the caller-side bracket doing its job.
 `St.emit` in the probe drops `__fern_arr_slice` + `__fern_arr_push_owned` for one
 `__fern_arr_push`.
 
+## BLOCKED: a self-host-EMITTED compiler segfaults on the whole compiler
+
+**This is not shippable as it stands.** `TestSelfHostPerModuleEmitAllFixpoint{,Batch4}X86_64`
+is red: gen0 (native-built) emits all 55 units fine, gen1 (linked from gen0's
+own units — a self-host-EMITTED compiler) takes SIGSEGV on the first batch. The
+cheap reproduction needs no fixpoint harness:
+
+```
+./bin/fern-selfhost -g -target x86-64-linux -o /tmp/s2 examples/self_host/fern.fern $PWD/internal/stdlib
+/tmp/s2 -target x86-64-linux -emit asm examples/self_host/fern.fern $PWD/internal/stdlib -o /dev/null
+```
+
+~90 s to build, ~50 s to the crash. The base compiler's stage 2 completes the
+same input.
+
+The crash surfaces in `irlower__LowerState__slot_of`, reading a `locals` entry
+whose `slot_name` is `0xffffffffffffffff` — a freed / never-written box, not the
+poison `quarantine_rc` writes. So a buffer or a box is released while the
+LowerState that was just built still holds it.
+
+What the bisection established, each a full stage-1 + stage-2 rebuild:
+
+| variant | outcome |
+|---|---|
+| callee half only, no caller-side bracket | whole-compiler emit OK (this is `fsh-8224-new-g`) |
+| both halves, no retain on the in-place result | SIGSEGV, peak 5.4 GB (base: OK, peak 11.2 GB) |
+| retain gated on result == source | SIGSEGV, same shape |
+| TWO retains on that same arm | SIGSEGV, same RSS — so the identity arm is not the one that crashes |
+| retain UNCONDITIONALLY, both arms | no SIGSEGV; OOM-killed instead (137), because every buffer then sits at rc >= 2 and every append copies |
+| admission restricted to SCALAR-element fields | SIGSEGV — so it is not the shared ELEMENT pointers a grow copies |
+
+Read together: the crashing path is the one where `__fern_arr_push` GREW
+(result != source, a fresh rc 1 buffer), and only a retain that also covers that
+arm suppresses it. That is the signature of a second release on a buffer with
+one owner — the enclosing struct literal's field override releasing the
+superseded field value on the assumption the new value is disjoint from it,
+which the clone form guaranteed and this form does not. Confirming that wants
+`-rc-plan` / `FERN_LEAKCHECK` on the crashing unit, which is where this stops.
+
+Note what did NOT catch it. Every targeted gate is green: the differential suite
+on all three backends, all 335 fixtures on all three self-host targets,
+`make check-sources`, the lint ratchet, the feature census, the rc corpus leak
+gates, and stage 1 compiling every self-host module individually. Only
+`fern.fern` — the whole compiler in one unit — fails, and only when the
+compiler doing the work was itself emitted by this lowering. The per-module
+emit-all fixpoint is the gate that has it, which is the one place
+docs/TEST-GATES.md says a fixpoint still carries signal: not "the compiler
+reproduces itself" but "a self-host-built compiler runs at all".
+
 ## The traps this sets
 
 **Both halves are needed and each is individually invisible.** Stubbing the
