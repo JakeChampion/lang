@@ -89,8 +89,9 @@ func TestCalleeSavedCoverage(t *testing.T) {
 		"strings":     `function f(a: string, b: string): i32 { var c: string = a + b; return c.len(); } function main(): i32 { return f("ab", "cd"); }`,
 	}
 
-	// Prologue saves look like `mov [rbp - 24], rbx` — a store INTO a frame slot
-	// whose source is a callee-saved register.
+	// A prologue save is a bare `push`. A call site's save set is filtered to
+	// caller-saved registers, so a push of rbx or of r12-r15 can only be the
+	// prologue's.
 	saveRe := regexp.MustCompile(`^\s*push (rbx|r1[2-5])$`)
 
 	for name, src := range srcs {
