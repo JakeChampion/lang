@@ -103,17 +103,17 @@ function main(): i32 {
     //    is then a power of two.
     var fold_then: ir.Op[] = [base(), ir.op_const_i32(2), ir.op_const_i32(2),
                               ir.op_bin("add", 0, false), ir.op_bin("mul", 0, false)];
-    out = out + "fold_then_strength: " + render(ir.optimize_ops(fold_then)) + "\n";
+    out = out + "fold_then_strength: " + render(ir.optimize_ops(fold_then, 0)) + "\n";
 
     // 9. optimize_ops — strength feeds folding: `* 0` leaves a `const_i32 0`
     //    next to the constant that followed, which the next fold round eats.
     var strength_then: ir.Op[] = [base(), ir.op_const_i32(0), ir.op_bin("mul", 0, false),
                                   ir.op_const_i32(5), ir.op_bin("add", 0, false)];
-    var once: ir.Op[] = ir.optimize_ops(strength_then);
+    var once: ir.Op[] = ir.optimize_ops(strength_then, 0);
     out = out + "strength_then_fold: " + render(once) + "\n";
 
     // 10. Idempotence: the fixpoint is a fixpoint.
-    var twice: ir.Op[] = ir.optimize_ops(once);
+    var twice: ir.Op[] = ir.optimize_ops(once, 0);
     var stable: i32 = 0;
     if (render(twice) == render(once)) { stable = 1; }
     out = out + "idempotent=" + util.i32_to_string(stable) + "\n";
@@ -171,7 +171,7 @@ function main(): i32 {
     //      constant and the dead tail after the return still goes.
     var both: ir.Op[] = [ir.op_const_i32(2), ir.op_const_i32(2), ir.op_bin("add", 0, false),
                          ir.op_return(), ir.op_const_i32(9), ir.op_drop()];
-    out = out + "dce_in_optimize: " + render(ir.optimize_ops(both)) + "\n";
+    out = out + "dce_in_optimize: " + render(ir.optimize_ops(both, 0)) + "\n";
 
     // 12. fuse_tee (#6638): `store_local X ; load_local X` becomes one
     //     `tee_local X`. wasm turns that into a single `local.tee`; the
@@ -208,7 +208,7 @@ function main(): i32 {
     // 12f. optimize_ops runs it LAST, after the dead-code walk — so a pair the
     //      DCE exposes is still fused.
     var tee_opt: ir.Op[] = [ir.op_const_i32(4), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()];
-    out = out + "tee_in_optimize: " + render(ir.optimize_ops(tee_opt)) + "\n";
+    out = out + "tee_in_optimize: " + render(ir.optimize_ops(tee_opt, 0)) + "\n";
 
     // 13. propagate_copies (#6638): a tee whose slot NOTHING else touches is
     //     identity — pop then push — so it goes.
@@ -242,7 +242,7 @@ function main(): i32 {
     //      adjacent const pair to collapse.
     var cp_pipeline: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_load_local(0),
                                 ir.op_const_i32(2), ir.op_bin("mul", 0, false), ir.op_return()];
-    out = out + "cp_pipeline: " + render(ir.optimize_ops(cp_pipeline)) + "\n";
+    out = out + "cp_pipeline: " + render(ir.optimize_ops(cp_pipeline, 0)) + "\n";
 
     // 14. const_propagate (#6638): a store and load that are NOT adjacent, which
     //     fuse_tee structurally cannot reach.
@@ -369,7 +369,7 @@ function main(): i32 {
     var kp_opt: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0),
                            ir.op_load_local(0), ir.op_const_i32(3), ir.op_bin("add", 0, false),
                            ir.op_drop(), ir.op_end(), ir.op_return()];
-    out = out + "kp_in_optimize: " + render(ir.optimize_ops(kp_opt)) + "\n";
+    out = out + "kp_in_optimize: " + render(ir.optimize_ops(kp_opt, 0)) + "\n";
 
     // 15. The unary fold (#6638, native fold.go's `OpConstI32 a ; OpNot` arm).
     //     `not` is LOGICAL in this IR — i32.eqz on wasm, setz on x86, cset eq on
@@ -474,7 +474,7 @@ function main(): i32 {
     var pw_loop: ir.Op[] = [ir.op_loop(0), ir.op_const_i32(1), ir.op_bin("not", 0, false),
                             ir.op_brif(1), ir.op_const_i32(7), ir.op_drop(), ir.op_br(0),
                             ir.op_end(), ir.op_return()];
-    out = out + "pw_while_true_in_optimize: " + render(ir.optimize_ops(pw_loop)) + "\n";
+    out = out + "pw_while_true_in_optimize: " + render(ir.optimize_ops(pw_loop, 0)) + "\n";
 
     // 17. Folding THROUGH a width normalise. The lowering wraps every i32 /
     //     u32 / sub-word arithmetic result back into its type's width, so a
@@ -523,6 +523,74 @@ function main(): i32 {
     //      delete width normalisation.
     var wc_opaque: ir.Op[] = [ir.op_load_local(0), ir.op_int_cast("i32")];
     out = out + "wc_opaque_refused: " + render(ir.fold_const_binaries(wc_opaque)) + "\n";
+
+    // 18. Zero-slot uniqueness guards (native internal/ir/zeroslot.go). Lowering
+    //     emits an `__fern_rc_is_unique`-gated drop for every droppable local at a
+    //     scope exit, on the paths that assigned it and the paths that did not; on
+    //     the latter the slot still holds the entry zero the backend prologue wrote,
+    //     the helper answers 0, and the whole drop body is unreachable. Each refusal
+    //     below is a slot where that argument does NOT hold, and every one of them
+    //     matters more than the hit: pruning a guard whose slot is live deletes a
+    //     drop, which is a use-after-free the moment the surviving owner reads it.
+    //     The drop body's own `load_local 1 ; call_direct __fern_arr_dec/1` is the
+    //     other half of the shape — only the rc_is_unique callee is a guard.
+    var zg_body: ir.Op[] = [ir.op_load_local(1), ir.op_call_direct("__fern_rc_is_unique", 1),
+                            ir.op_if(0), ir.op_load_local(1), ir.op_call_direct("__fern_arr_dec", 1),
+                            ir.op_drop(), ir.op_end(), ir.op_return()];
+    out = out + "zg_fires: " + render(ir.prune_zero_slot_guards(zg_body, 0)) + "\n";
+
+    // 18a. A PARAMETER is not zero-initialised — it arrives holding the caller's
+    //      value — so the identical list is refused when slot 1 is one.
+    out = out + "zg_param_refused: " + render(ir.prune_zero_slot_guards(zg_body, 2)) + "\n";
+
+    // 18b. Inside a loop the order argument fails: the back-edge is the one way a
+    //      write LATER in op order reaches an earlier read. The twin puts the same
+    //      guard after the loop closes, which is what proves the scope stack pops.
+    var zg_loop: ir.Op[] = [ir.op_loop(0), ir.op_load_local(1),
+                            ir.op_call_direct("__fern_rc_is_unique", 1), ir.op_if(0),
+                            ir.op_end(), ir.op_br(0), ir.op_end()];
+    out = out + "zg_in_loop_refused: " + render(ir.prune_zero_slot_guards(zg_loop, 0)) + "\n";
+    var zg_past_loop: ir.Op[] = [ir.op_loop(0), ir.op_br(0), ir.op_end(), ir.op_load_local(1),
+                                 ir.op_call_direct("__fern_rc_is_unique", 1)];
+    out = out + "zg_past_loop_fires: " + render(ir.prune_zero_slot_guards(zg_past_loop, 0)) + "\n";
+
+    // 18c. A real write before the guard leaves a pointer in the slot. A write
+    //      AFTER it does not — that is the whole point, and the case const_propagate
+    //      structurally cannot reach, since its slot table has been cleared by every
+    //      conditional scope the guard sits behind.
+    var zg_written: ir.Op[] = [ir.op_call_direct("mk", 0), ir.op_store_local(1),
+                               ir.op_load_local(1), ir.op_call_direct("__fern_rc_is_unique", 1)];
+    out = out + "zg_written_refused: " + render(ir.prune_zero_slot_guards(zg_written, 0)) + "\n";
+    var zg_late: ir.Op[] = [ir.op_load_local(1), ir.op_call_direct("__fern_rc_is_unique", 1),
+                            ir.op_if(0), ir.op_end(), ir.op_call_direct("mk", 0),
+                            ir.op_store_local(1)];
+    out = out + "zg_late_write_fires: " + render(ir.prune_zero_slot_guards(zg_late, 0)) + "\n";
+
+    // 18d. A store fed by `const_i32 0` re-zeroes the slot rather than filling it —
+    //      the lowering emits one after a free — so it is not a write that blocks.
+    var zg_rezero: ir.Op[] = [ir.op_const_i32(0), ir.op_store_local(1), ir.op_load_local(1),
+                              ir.op_call_direct("__fern_rc_is_unique", 1)];
+    out = out + "zg_rezero_fires: " + render(ir.prune_zero_slot_guards(zg_rezero, 0)) + "\n";
+
+    // 18e. str_slice's frame form writes three consecutive slots without being a
+    //      store, so a guard on one of them is refused — the same write model
+    //      const_propagate carries, kept here rather than inherited from irlower's
+    //      `!view!` naming convention.
+    var zg_frame: ir.Op[] = [ir.op_str_slice_frame(1), ir.op_drop(), ir.op_load_local(1),
+                             ir.op_call_direct("__fern_rc_is_unique", 1)];
+    out = out + "zg_frame_write_refused: " + render(ir.prune_zero_slot_guards(zg_frame, 0)) + "\n";
+
+    // 18f. The payoff, through optimize_ops: this pass removes nothing on its own,
+    //      it only produces the constant the fold's decided-`if` rule then deletes
+    //      the whole drop body with. Running it before the leading fold is what puts
+    //      that deletion in the same call.
+    out = out + "zg_in_optimize: " + render(ir.optimize_ops(zg_body, 0)) + "\n";
+
+    // 18g. Idempotent: the rewritten pair is a constant, which matches nothing.
+    var zg_once: ir.Op[] = ir.prune_zero_slot_guards(zg_body, 0);
+    var zg_stable: i32 = 0;
+    if (render(ir.prune_zero_slot_guards(zg_once, 0)) == render(zg_once)) { zg_stable = 1; }
+    out = out + "zg_idempotent=" + util.i32_to_string(zg_stable) + "\n";
 
     write(out);
 
