@@ -17967,13 +17967,16 @@ func (b *builder) assign(n *ast.Assign) error {
 			//     these locals (emitDec's StringType arm calls __fern_str_dec
 			//     on every ptrW) under the SAME freeEligible gate, so this is
 			//     the sweep's rule applied at the overwrite, not a new one.
+			//   native two-word arm64 (ptrW==8 + TwoWordOverride): load
+			//     (data, len), __fern_str_dec, drop — the wasm shape on a
+			//     64-bit slot. Excluded until #6554 / #7446 on the grounds
+			//     that it might over-release, which the reinit path above
+			//     had already disproved by making this same call under
+			//     ast.UseTwoWordStrings.
 			//
-			// Every ABI, arm64 included (#6554, #7446). OpLoadLocal fans a
-			// two-word slot into (data, len) and loads a single pointer on
-			// x86_64, and __fern_str_dec is_unique-gates on all three with
-			// null / inline-tag / literal-sentinel guards, so one body covers
-			// them. This is the same emission the reinit path above already
-			// makes under ast.UseTwoWordStrings.
+			// So one body covers all three: OpLoadLocal fans a two-word slot
+			// into (data, len) and loads a single pointer on x86_64, and
+			// __fern_str_dec is_unique-gates on every backend.
 			//
 			// Gated on freeEligible like the exit dec: an INELIGIBLE
 			// (borrowed param / escaped) string is skipped here AND at exit,
@@ -18500,12 +18503,18 @@ func isStringTypeOfLocal(name string, b *builder) bool {
 // TwoWordOverride) has no such helper yet, so it keeps plain OpStrConcat
 // and its codegen is byte-identical.
 //
-// These are also exactly the widths whose assign() string branch releases
-// the old buffer on overwrite (wasm __fern_str_dec, native __fern_rc_dec),
-// which is what makes suppressing that release for a marked self-append
-// balanced rather than a leak — see isSelfStrAppendLocal. arm64 does not
-// release there either (its heap-string reclamation is the deferred
-// RC-perceus slice 5g), so the two facts coincide by construction.
+// These USED to be exactly the widths whose assign() string branch releases
+// the old buffer on overwrite, so the two sets coincided by construction.
+// They no longer do: since #6554 / #7446 that branch releases on every
+// width, arm64 included. The sets must now be kept apart deliberately.
+//
+// What balances the release is the marked self-append short-circuit
+// (isSelfStrAppendLocal, the `strAppended` arm ahead of it), not the width:
+// __fern_str_append writes back into the same box, so releasing after it
+// would over-release. Widening this predicate to arm64 without a helper
+// that arm64 does not have would therefore be the one change that turns
+// that release into a use-after-free — which is why arm64 keeps plain
+// OpStrConcat here even though it now reclaims on overwrite.
 func (b *builder) strAppendAvailable() bool {
 	return b.ptrW == 4 || (b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW))
 }
