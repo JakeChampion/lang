@@ -945,6 +945,46 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("check-str-view-arg-is-a-borrow", func(t *testing.T) {
+		// #7086: a parameter is BORROWED, so lending a `str` view to a
+		// `string` parameter is fine — native's argAssignable accepts it.
+		// The self-host had the carve-out on its diagnostic pass but not on
+		// the four typing-side argument checks, so the call's type collapsed
+		// to unknown and the program was refused with the #4346 catch-all,
+		// i.e. the self-host rejecting what native accepts.
+		//
+		// The gate has to be an EXIT CODE, not a diagnostic code: the
+		// catch-all carries no E0XX, so a row in the codes differential
+		// passes identically before and after the fix and cannot see this.
+		for _, src := range []string{
+			// through a free call, with the view built inline
+			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
+			// through a `str`-typed local
+			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; var v: str = slice_unchecked(t, 0, 3); return g(v); }\n",
+			// and with the callee itself declared `str`, which erases to
+			// owned `string` in the signature
+			"function g(x: str): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
+		} {
+			srcPath := filepath.Join(dir, "strview_arg.fern")
+			if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			out, code := runDriver(t, "-check", srcPath)
+			if code != 0 {
+				t.Errorf("-check exited %d, want 0 — a view lent to a parameter is a borrow:\n%s\nsource:\n%s", code, out, src)
+			}
+		}
+		// The owning sinks must still refuse: this widens argument position
+		// only, and a view stored into an owned `string` is still E003.
+		srcPath := filepath.Join(dir, "strview_owned.fern")
+		if err := os.WriteFile(srcPath, []byte("function main(): i32 { var t: string = \"abcdef\"; var s: string = slice_unchecked(t, 0, 3); return s.len(); }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		if _, code := runDriver(t, "-check", srcPath); code != 1 {
+			t.Errorf("-check on a view stored into an owned string exited %d, want 1", code)
+		}
+	})
+
 	t.Run("check-bad", func(t *testing.T) {
 		// Arity mismatch — the self-host checker rejects it (mirrors
 		// checker.fern's own mt6 self-test).
