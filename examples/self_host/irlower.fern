@@ -18994,7 +18994,12 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                 // and frees a box q2 still names. Nothing catches it — the free
                 // is at rc 1, so the underflow trap never fires, and the block
                 // usually comes back field-identical from the freelist.
-                var rp_struct: boolean = s.struct_type_of_slot(rps).len() > 0;
+                // decl_is_struct, not merely a non-empty type column: that
+                // column carries any bare nominal is_enum_like_name accepts, a
+                // generic typevar (`id[T](x: T): T`) included. Retaining one
+                // emits __fern_rc_inc into a module with no heap need, and the
+                // runtime block that defines it is gated on having one.
+                var rp_struct: boolean = decl_is_struct(s.structs, s.struct_type_of_slot(rps));
                 if (rps >= 0 && rps < s.n_params && (s.is_arr_slot(rps) || rp_struct)) {
                     var rpl: LowerState = lower_expr(r.value, s);
                     if (!rpl.ok) { return rpl; }
