@@ -92,7 +92,7 @@ pub struct EmitState {
     // helper bodies to append. Replaces ~26 parallel needs_*
     // booleans — see asm.fern for the rationale.
     needed: string[],
-    struct_decls: parser.StructDecl[],
+    struct_decls: irlower.StructTab,
     // loop_exit_labels / loop_cont_labels: see asm.fern for
     // semantics. break / continue use the top of each stack.
     loop_exit_labels: string[],
@@ -154,7 +154,7 @@ pub function new_state(): EmitState {
         slit_head: slit_empty_buckets(),
         slit_next: [],
         needed: nd,
-        struct_decls: [],
+        struct_decls: irlower.struct_tab_empty(),
         loop_exit_labels: lex,
         loop_cont_labels: lcn,
         funcs: fns,
@@ -1949,9 +1949,9 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
 
 pub function is_enum_variant(name: string, s: EmitState): boolean {
     var di: i32 = 0;
-    while (di < s.struct_decls.len()) {
-        if (s.struct_decls[di].name == name) {
-            var sd: parser.StructDecl = s.struct_decls[di];
+    while (di < s.struct_decls.decls.len()) {
+        if (s.struct_decls.decls[di].name == name) {
+            var sd: parser.StructDecl = s.struct_decls.decls[di];
             var fi: i32 = 0;
             while (fi < sd.fields.len()) {
                 if (sd.fields[fi].name == "__ev") { return true; }
@@ -1966,9 +1966,9 @@ pub function is_enum_variant(name: string, s: EmitState): boolean {
 
 pub function is_unit_variant(name: string, s: EmitState): boolean {
     var di: i32 = 0;
-    while (di < s.struct_decls.len()) {
-        if (s.struct_decls[di].name == name) {
-            return s.struct_decls[di].fields.len() == 0;
+    while (di < s.struct_decls.decls.len()) {
+        if (s.struct_decls.decls[di].name == name) {
+            return s.struct_decls.decls[di].fields.len() == 0;
         }
         di = di + 1;
     }
@@ -1977,8 +1977,8 @@ pub function is_unit_variant(name: string, s: EmitState): boolean {
 
 pub function is_struct_decl_name(name: string, s: EmitState): boolean {
     var di: i32 = 0;
-    while (di < s.struct_decls.len()) {
-        if (s.struct_decls[di].name == name) { return true; }
+    while (di < s.struct_decls.decls.len()) {
+        if (s.struct_decls.decls[di].name == name) { return true; }
         di = di + 1;
     }
     return false;
@@ -2049,9 +2049,9 @@ pub function find_array_method_func(field: string, s: EmitState): string {
 
 pub function field_type_tag_in(struct_name: string, field: string, s: EmitState): Ty {
     var di: i32 = 0;
-    while (di < s.struct_decls.len()) {
-        if (s.struct_decls[di].name == struct_name) {
-            var sd: parser.StructDecl = s.struct_decls[di];
+    while (di < s.struct_decls.decls.len()) {
+        if (s.struct_decls.decls[di].name == struct_name) {
+            var sd: parser.StructDecl = s.struct_decls.decls[di];
             var fi: i32 = 0;
             while (fi < sd.fields.len()) {
                 if (sd.fields[fi].name == field) {
@@ -2068,8 +2068,8 @@ pub function field_type_tag_in(struct_name: string, field: string, s: EmitState)
 
 pub function field_type_tag(field: string, s: EmitState): Ty {
     var di: i32 = 0;
-    while (di < s.struct_decls.len()) {
-        var sd: parser.StructDecl = s.struct_decls[di];
+    while (di < s.struct_decls.decls.len()) {
+        var sd: parser.StructDecl = s.struct_decls.decls[di];
         var fi: i32 = 0;
         while (fi < sd.fields.len()) {
             if (sd.fields[fi].name == field) {
@@ -2089,8 +2089,8 @@ pub function struct_local_tag(type_name: string, s: EmitState): Ty {
         bi = bi + 1;
     }
     var di: i32 = 0;
-    while (di < s.struct_decls.len()) {
-        if (s.struct_decls[di].name == type_name) { return ty_named(type_name); }
+    while (di < s.struct_decls.decls.len()) {
+        if (s.struct_decls.decls[di].name == type_name) { return ty_named(type_name); }
         di = di + 1;
     }
     return ty_from_name(type_name);
@@ -3425,8 +3425,8 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
             // fall back to the first-match field scan. See asm.fern.
             var frt: Ty = infer_expr_type(fa.obj, s);
             var di: i32 = 0;
-            while (di < s.struct_decls.len()) {
-                if (s.struct_decls[di].name == ty_struct_name(frt)) {
+            while (di < s.struct_decls.decls.len()) {
+                if (s.struct_decls.decls[di].name == ty_struct_name(frt)) {
                     return field_type_tag_in(ty_struct_name(frt), fa.field, s);
                 }
                 di = di + 1;

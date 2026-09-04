@@ -94,7 +94,7 @@ pub function large_fl_cells(): i32 { return 2049; }
 // tables must see every function in the program (a call is lowered by its
 // CALLEE's shape, and a unit calls into its siblings), while the loop lowers
 // only this unit's functions.
-pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): irlower.LowerResult[] {
+pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): irlower.LowerResult[] {
     // The emit path (emit_functions_view) lowers each function with the
     // INTERPROCEDURAL borrowability + consume-safe fixpoint. RC drop/reclaim
     // insertion is gated on those, so the metadata this cache feeds
@@ -116,7 +116,8 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
 
 // lower_all_for is the single-unit case: the unit IS the whole program.
 pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
-    return lower_all_for_view(mod, mod.funcs, mod.structs);
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    return lower_all_for_view(mod, mod.funcs, stab);
 }
 
 // str_values collects the module's distinct string literals (first-seen order,
@@ -403,14 +404,14 @@ pub function tid_named(): string[] {
 // tid_globals_section declares one immutable global per type id: every struct in
 // the program, every primitive dyn-box shape (prim_type_id), and the literal
 // names above. Emitted once per module by wasm.emit_ir_module.
-pub function tid_globals_section(structs: parser.StructDecl[]): string {
+pub function tid_globals_section(structs: irlower.StructTab): string {
     var parts: string[] = [];
     var seen: string[] = [];
     var i: i32 = 0;
-    while (i < structs.len()) {
-        if (util.index_of_str(seen, structs[i].name) < 0) {
-            seen = seen.append(structs[i].name);
-            parts = parts.append("  (global " + tid_global(structs[i].name) + " i32 (i32.const " + util.i32_to_string(struct_type_id(structs, structs[i].name)) + "))\n");
+    while (i < structs.decls.len()) {
+        if (util.index_of_str(seen, structs.decls[i].name) < 0) {
+            seen = seen.append(structs.decls[i].name);
+            parts = parts.append("  (global " + tid_global(structs.decls[i].name) + " i32 (i32.const " + util.i32_to_string(struct_type_id(structs, structs.decls[i].name)) + "))\n");
         }
         i = i + 1;
     }
@@ -976,7 +977,7 @@ pub function map_vals_struct_drop_func(t: string): string {
 // deep-dropping rc-array + acyclic nested-struct fields); collected by scanning
 // lowered call_direct ops (the same gating field_reclaim_types uses) plus the
 // transitive nested-struct closure below.
-pub function struct_drop_types(cache: irlower.LowerResult[], structs: parser.StructDecl[]): string[] {
+pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.StructTab): string[] {
     var out: string[] = [];
     var fi: i32 = 0;
     while (fi < cache.len()) {
@@ -1059,7 +1060,7 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: parser.Str
 // struct_drop_types already includes each such E as a struct_drop type (so the
 // $__struct_drop_<E> the helper calls exists), so this walk over that closure finds
 // every needed helper.
-pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: parser.StructDecl[]): string[] {
+pub function struct_arr_elems_drop_types(cache: irlower.LowerResult[], structs: irlower.StructTab): string[] {
     var sdt: string[] = struct_drop_types(cache, structs);
     // The field-reclaim types need the same helpers: emit_wasm_field_reclaim_body
     // deep-drops a replaced `E[]` field through $__struct_arr_elems_drop_E, and a
@@ -3635,7 +3636,7 @@ function emit_host_op_wat(o: ir.Op): string {
 // decl tables as ordinary parameters rather than through a context: pulling it
 // out leaves nothing else in the op loop needing the function list at all.
 // None of the five scratch locals are touched here.
-function emit_dyn_dispatch_wat(o: ir.Op, structs: parser.StructDecl[], funcs: parser.FuncDecl[]): string {
+function emit_dyn_dispatch_wat(o: ir.Op, structs: irlower.StructTab, funcs: parser.FuncDecl[]): string {
     var parts: string[] = [];
         // `dyn Trait` method call. Receiver (arg0) + args are in argc
         // consecutive locals from base_slot. Read the receiver's type id
@@ -3706,8 +3707,8 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: parser.StructDecl[], funcs: pa
                     && !(irlower.decl_is_struct(structs, dbn) || dprim)) {
                 var denvn: i32 = 0;
                 var dvi: i32 = 0;
-                while (dvi < structs.len()) {
-                    if (structs[dvi].enum_owner == dbn) {
+                while (dvi < structs.decls.len()) {
+                    if (structs.decls[dvi].enum_owner == dbn) {
                         parts = parts.append("    local.get " + util.i32_to_string(dbase) + "\n    i32.load\n    i32.const " + util.i32_to_string(dvi) + "\n    i32.eq\n");
                         if (denvn > 0) { parts = parts.append("    i32.or\n"); }
                         denvn = denvn + 1;
@@ -3755,7 +3756,7 @@ struct WasmOpCtx {
     ns: string,
     str_vals: string[],
     cagg_vals: string[],
-    structs: parser.StructDecl[],
+    structs: irlower.StructTab,
     fn_table: string[],
     funcs: parser.FuncDecl[],
     base: i32,
@@ -3782,7 +3783,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     var ns: string = cx.ns;
     var str_vals: string[] = cx.str_vals;
     var cagg_vals: string[] = cx.cagg_vals;
-    var structs: parser.StructDecl[] = cx.structs;
+    var structs: irlower.StructTab = cx.structs;
     var fn_table: string[] = cx.fn_table;
     var funcs: parser.FuncDecl[] = cx.funcs;
     var arrtmp: i32 = cx.base;
@@ -4350,7 +4351,7 @@ function emit_str_op_wat(o: ir.Op): string {
 // the RC-consistency bug (#5509). Consuming the cached `r` makes it one lowering
 // by construction. `fd` supplies the func wrapper (name / receiver / ret); the
 // ~13 ret-fn / borrow side-tables that only fed lower_func are gone.
-function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: parser.StructDecl[], fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
+function emit_function_ir(ns: string, r: irlower.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irlower.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vsigs: irverify.NameIndex): string {
     var arrtmp: i32 = r.n_locals;
     var eltmp: i32 = r.n_locals + 1;
     // f64tmp: an f64-typed scratch local for reordering 64-bit struct field
@@ -4474,7 +4475,7 @@ function lower_failed_refuse(name: string, r: irlower.LowerResult): i32 {
 //
 // Whole-program emit passes all_funcs = mod.funcs and all_structs = mod.structs,
 // so it is unchanged.
-pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[]): string {
+pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging matches what module_with_builtins supplies
     // (parity with the x86 IR path in asm_ir.emit_module_ir).
@@ -4515,7 +4516,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irlower.
 // emit_functions_ns is the single-unit case: the unit IS the whole program.
 pub function emit_functions_ns(ns: string, mod: parser.Module, cache: irlower.LowerResult[]): string {
     var im: parser.Module = parser.infer_ret_types_module(mod);
-    return emit_functions_view(ns, im, cache, im.funcs, im.structs);
+    return emit_functions_view(ns, im, cache, im.funcs, irlower.struct_tab(im.structs));
 }
 
 // emit_functions is whole-program emit: one unit, so the bases are unnamespaced.
@@ -4526,10 +4527,10 @@ pub function emit_functions(mod: parser.Module, cache: irlower.LowerResult[]): s
 // struct_type_id returns a struct's runtime type id = its index in the module's
 // struct table. (For scalar-field structs with static field access it is never
 // read, but it occupies the 8-byte header slot so fields land at 8 + i*8.)
-function struct_type_id(structs: parser.StructDecl[], name: string): i32 {
+function struct_type_id(structs: irlower.StructTab, name: string): i32 {
     var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == name) { return i; }
+    while (i < structs.decls.len()) {
+        if (structs.decls[i].name == name) { return i; }
         i = i + 1;
     }
     return 0;
@@ -8278,7 +8279,7 @@ pub function le32_escape(n: i32): string {
 // eight bytes, and leaving the high half unwritten would be the one difference
 // between a constant and an allocated box that a future wide-field read could
 // see.
-function const_agg_data(sv: string[], cv: string[], structs: parser.StructDecl[]): string {
+function const_agg_data(sv: string[], cv: string[], structs: irlower.StructTab): string {
     var parts: string[] = [];
     var i: i32 = 0;
     while (i < cv.len()) {
@@ -8609,6 +8610,7 @@ pub function heap_base_for_units(units: WasmUnit[]): i32 {
 // rather than a second emitter (wasm.fern's AST component path is a full
 // parallel copy; this is not).
 pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: string[], fn_sigs: string[], rc_bodies: string, mode: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var parts: string[] = [];
     parts = parts.append("(module\n");
     if (mode == 0) { parts = parts.append(preview1_imports(needs)); }
@@ -8662,7 +8664,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // index. See tid_globals_section for why type ids, unlike string
     // offsets and funcref indices, must stay globally agreed rather than
     // unit-relative.
-    parts = parts.append(tid_globals_section(mod.structs));
+    parts = parts.append(tid_globals_section(stab));
     var di: i32 = 0;
     while (di < sv.len()) {
         parts = parts.append("  (data (i32.const " + util.i32_to_string(str_offset(sv, di)) + ") \""
@@ -8682,7 +8684,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
             kbi = kbi + 1;
         }
     }
-    parts = parts.append(const_agg_data(sv, cv, mod.structs));
+    parts = parts.append(const_agg_data(sv, cv, stab));
     // Census counters (#5362): outside the heap gate — the mode-0 report and
     // any mode's bump sites reference them, and a heap-free mode-0 program
     // still reports zeros. Empty when FERN_LEAKCHECK is off.
@@ -9053,7 +9055,7 @@ pub function ty_spelling_is_array(t: string): boolean {
 // (corruption for a large even value above heap_base), so the classifier is
 // EXACT for the pointer cases and defaults everything else to 'i' (a missed
 // pointer field just leaks, never corrupts).
-pub function struct_field_kind_char(ft: string, structs: parser.StructDecl[], mr_types: string[]): string {
+pub function struct_field_kind_char(ft: string, structs: irlower.StructTab, mr_types: string[]): string {
     if (ty_spelling_is_array(ft)) { return "a"; }
     if (ft == "string") { return "s"; }
     if (ft.len() > 0 && ft[0] == 40) { return "S"; }
@@ -9067,7 +9069,7 @@ pub function struct_field_kind_char(ft: string, structs: parser.StructDecl[], mr
 // whether a struct's array field is deep-released ($__fern_arr_dec_ptr, which
 // releases the elements) or freed flat ($__fern_arr_dec — for i32/i64/f64
 // scalar elements, which must NOT be dec'd as pointers).
-pub function array_field_elem_is_ptr(ft: string, structs: parser.StructDecl[], mr_types: string[]): boolean {
+pub function array_field_elem_is_ptr(ft: string, structs: irlower.StructTab, mr_types: string[]): boolean {
     if (!ty_spelling_is_array(ft)) { return false; }
     return struct_field_kind_char(slice_unchecked(ft, 0, ft.len() - 2), structs, mr_types) != "i";
 }
@@ -9102,28 +9104,29 @@ pub function array_field_elem_is_ptr(ft: string, structs: parser.StructDecl[], m
 // The lists are merged across units at link; the struct world they resolve
 // against is shared, so a type appearing in two units yields one body.
 pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: string[], aet: string[], heap_base: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var parts: string[] = [];
     var mr_types: string[] = collect_method_types(mod);
     // #4355: replaced-STRING-field admission — the wasm IR driver is
     // single-module whole-program, so mod.funcs is the full read scope
     // (see irlower.strfld_reclaim_ok_types_of).
     var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
+    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, mod.structs, bparams);
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
     var frti: i32 = 0;
     // #5235: plain-fn-pointer-array field markers ("FNPTR:<sty>.<field>") — a
     // registered field is buffer-only-freed (its elements are raw code addresses).
-    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, mod.structs);
+    var fpk: string[] = irlower.fnptr_arr_fields_of(mod.funcs, stab);
     while (frti < frt.len()) {
-        parts = parts.append(emit_wasm_field_reclaim_body(frt[frti], mod.structs, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, util.index_of_str(sfok, "arr:" + frt[frti]) >= 0, fpk));
+        parts = parts.append(emit_wasm_field_reclaim_body(frt[frti], stab, mr_types, heap_base, util.index_of_str(sfok, frt[frti]) >= 0, util.index_of_str(sfok, "clo:" + frt[frti]) >= 0, util.index_of_str(nfok, frt[frti]) >= 0, util.index_of_str(sfok, "sarr:" + frt[frti]) >= 0, util.index_of_str(sfok, "arr:" + frt[frti]) >= 0, fpk));
         frti = frti + 1;
     }
     // The struct-drop field walk reads its admissions off a need set, seeded
     // here exactly as asm_ir.emit_module_ir_unit_flat seeds them: one
     // "strfldok:<row>" per admission row and the FNPTR markers as-is.
     var ds: asmcore.EmitState = asmcore.new_state();
-    ds = asmcore.EmitState { ...ds, struct_decls: mod.structs };
+    ds = asmcore.EmitState { ...ds, struct_decls: irlower.struct_tab(mod.structs) };
     var sfi: i32 = 0;
     while (sfi < sfok.len()) {
         ds = ds.need("strfldok:" + sfok[sfi]);
@@ -9145,7 +9148,7 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
     // struct_drop_types already added each E so $__struct_drop_<E> exists).
     var aeti: i32 = 0;
     while (aeti < aet.len()) {
-        parts = parts.append(emit_wasm_struct_arr_elems_drop_body(aet[aeti], mod.structs, mr_types));
+        parts = parts.append(emit_wasm_struct_arr_elems_drop_body(aet[aeti], stab, mr_types));
         aeti = aeti + 1;
     }
     // Per-element-type ENUM-array walk helpers ($__enum_arr_elems_drop_<E>):
@@ -9155,15 +9158,15 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
     var eadone: string[] = [];
     var easdti: i32 = 0;
     while (easdti < sdt.len()) {
-        var eafc: i32 = irlower.decl_field_count(mod.structs, sdt[easdti]);
+        var eafc: i32 = irlower.decl_field_count(stab, sdt[easdti]);
         var eak: i32 = 0;
         while (eak < eafc) {
-            var eaft: string = irlower.decl_field_type_at(mod.structs, sdt[easdti], eak);
-            if (irlower.is_enum_array_field_type(mod.structs, eaft)) {
+            var eaft: string = irlower.decl_field_type_at(stab, sdt[easdti], eak);
+            if (irlower.is_enum_array_field_type(stab, eaft)) {
                 var eae: str = slice_unchecked(eaft, 0, eaft.len() - 2);
-                if (irlower.enum_arr_elems_walk_ok(mod.structs, eae) && util.index_of_str(eadone, eae) < 0) {
+                if (irlower.enum_arr_elems_walk_ok(stab, eae) && util.index_of_str(eadone, eae) < 0) {
                     eadone = eadone.append(eae + "");
-                    parts = parts.append(emit_wasm_enum_arr_elems_drop_body(eae + "", mod.structs));
+                    parts = parts.append(emit_wasm_enum_arr_elems_drop_body(eae + "", stab));
                 }
             }
             eak = eak + 1;
@@ -9181,7 +9184,7 @@ pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: stri
 // rc-guarded $__fern_arr_dec. Admission (enum_arr_elems_walk_ok, at the type
 // derivation) keeps every other payload kind out. Frees neither the element
 // boxes nor the buffer — the caller's arr_dec_ptr still does that.
-pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: parser.StructDecl[]): string {
+pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: irlower.StructTab): string {
     var o: string = "  (func $__enum_arr_elems_drop_" + e + " (param $buf i32) (result i32)\n";
     o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
     o = o + "    (if (call $__fern_rc_is_unique (local.get $buf)) (then\n";
@@ -9192,11 +9195,11 @@ pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: parser.Struc
     o = o + "        (local.set $e (i32.load (i32.add (i32.add (local.get $buf) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
     o = o + "        (if (call $__fern_rc_is_unique (local.get $e)) (then\n";
     var vi: i32 = 0;
-    while (vi < structs.len()) {
-        if (structs[vi].enum_owner == e) {
-            var offs: i32[] = irlower.enum_walk_payload_offsets(structs, structs[vi].name);
+    while (vi < structs.decls.len()) {
+        if (structs.decls[vi].enum_owner == e) {
+            var offs: i32[] = irlower.enum_walk_payload_offsets(structs, structs.decls[vi].name);
             if (offs.len() > 0) {
-                o = o + "          (if (i32.eq (i32.load (local.get $e)) (global.get " + tid_global(structs[vi].name) + ")) (then\n";
+                o = o + "          (if (i32.eq (i32.load (local.get $e)) (global.get " + tid_global(structs.decls[vi].name) + ")) (then\n";
                 var oi: i32 = 0;
                 while (oi < offs.len()) {
                     o = o + "            (drop (call $__fern_arr_dec (i32.load offset=" + util.i32_to_string(offs[oi]) + " (local.get $e))))\n";
@@ -9217,10 +9220,11 @@ pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: parser.Struc
 // emit_ir_rc_bodies is the single-unit case: derive the three type lists from
 // the module's own cache.
 pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[]): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     return emit_ir_rc_bodies_from(mod,
         field_reclaim_types(cache),
-        struct_drop_types(cache, mod.structs),
-        struct_arr_elems_drop_types(cache, mod.structs),
+        struct_drop_types(cache, stab),
+        struct_arr_elems_drop_types(cache, stab),
         heap_base_for(cache));
 }
 
@@ -9233,7 +9237,7 @@ pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[])
 // buffer; the caller's arr_dec_ptr (emitted right after) still does that. $__fern_rc_is_unique
 // null-/low-/sentinel-guards internally, so a shared buffer or element is skipped.
 // wasm32 array layout: len at buf[0], element i at buf+8+i*4 (4-byte pointers), rc at buf-8.
-pub function emit_wasm_struct_arr_elems_drop_body(e: string, structs: parser.StructDecl[], mr_types: string[]): string {
+pub function emit_wasm_struct_arr_elems_drop_body(e: string, structs: irlower.StructTab, mr_types: string[]): string {
     var o: string = "  (func $__struct_arr_elems_drop_" + e + " (param $buf i32) (result i32)\n";
     o = o + "    (local $i i32) (local $n i32) (local $e i32)\n";
     o = o + "    (if (call $__fern_rc_is_unique (local.get $buf)) (then\n";
@@ -9299,15 +9303,15 @@ pub function emit_wasm_struct_drop_body(t: string, s: asmcore.EmitState): string
 // emit_wasm_struct_drop_body. `old` null / below heap_base skips the field loop
 // (snapshot_dec null-guards the box free). Returns `new`. `hb` is the module's
 // heap base (the low-address guard threshold).
-pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[], mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean, sarr_ok: boolean, strarr_ok: boolean, fnptr_fields: string[]): string {
+pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab, mr_types: string[], hb: i32, str_ok: boolean, clo_ok: boolean, nest_ok: boolean, sarr_ok: boolean, strarr_ok: boolean, fnptr_fields: string[]): string {
     var o: string = "  (func $__field_reclaim_" + t + " (param $new i32) (param $old i32) (param $snap i32) (result i32)\n";
     o = o + "    (if (i32.and (i32.ge_u (local.get $old) (i32.const " + util.i32_to_string(hb) + ")) (i32.ne (local.get $old) (local.get $new))) (then\n";
     var si: i32 = 0;
-    while (si < structs.len()) {
-        if (structs[si].name == t) {
+    while (si < structs.decls.len()) {
+        if (structs.decls[si].name == t) {
             var k: i32 = 0;
-            while (k < structs[si].fields.len()) {
-                var ft: string = structs[si].fields[k].type_name;
+            while (k < structs.decls[si].fields.len()) {
+                var ft: string = structs.decls[si].fields[k].type_name;
                 // A replaced STRING field (#4355) rides the same guarded dec:
                 // a wasm heap string is a single inline rc-headered block, so
                 // $__fern_arr_dec IS the wasm string free (it null-/low-/
@@ -9363,7 +9367,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[
                     if (sarr_ok
                         && (irlower.is_struct_array_field_type(structs, ft) || irlower.is_enum_array_field_type(structs, ft))
                         && array_field_elem_is_ptr(ft, structs, mr_types)
-                        && !util.has_str(fnptr_fields, "FNPTR:" + t + "." + structs[si].fields[k].name)) {
+                        && !util.has_str(fnptr_fields, "FNPTR:" + t + "." + structs.decls[si].fields[k].name)) {
                         dec = "(drop (call $__fern_arr_dec_ptr " + oldf + "))";
                         // MULTI-LEVEL element deep-drop (#2649), the same helper
                         // $__struct_drop_<T>'s array arm calls first: release each
@@ -9413,7 +9417,7 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: parser.StructDecl[
 // Enum names aren't in the struct table (only their variants are), so a
 // var typed `Shape` must record `Shape` (not the variant from its
 // initializer) for its methods to dispatch.
-pub function is_enum_type_name(structs: parser.StructDecl[], mr_types: string[], name: string): boolean {
+pub function is_enum_type_name(structs: irlower.StructTab, mr_types: string[], name: string): boolean {
     if (name.len() == 0) { return false; }
     // A primitive scalar OR `string` receiver type (`impl Eq for i32`,
     // `impl Show for string`, `function (n: i32) twice()`) lands in mr_types too,
@@ -9450,10 +9454,10 @@ pub function is_primitive_type_name(name: string): boolean {
 }
 
 // is_struct_type is true when `t` names a declared struct.
-pub function is_struct_type(structs: parser.StructDecl[], t: string): boolean {
+pub function is_struct_type(structs: irlower.StructTab, t: string): boolean {
     var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == t) { return true; }
+    while (i < structs.decls.len()) {
+        if (structs.decls[i].name == t) { return true; }
         i = i + 1;
     }
     return false;
@@ -9694,6 +9698,7 @@ pub function extern_record_result_supported(mod: parser.Module, t: string): bool
 // pointer to a `[struct_id@0]` box, but struct_id is a *global* id, not the
 // variant index, so the wrapper maps it (extern_plain_enum_disc).
 pub function extern_plain_enum_param(mod: parser.Module, t: string): boolean {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var i: i32 = 0;
     while (i < mod.enums.len()) {
         if (mod.enums[i].name == t) {
@@ -9702,7 +9707,7 @@ pub function extern_plain_enum_param(mod: parser.Module, t: string): boolean {
             var j: i32 = 0;
             while (j < n) {
                 var vn: string = mod.enums[i].variant_names[j];
-                if (!is_struct_type(mod.structs, vn) || struct_field_count(mod.structs, vn) != 0) { return false; }
+                if (!is_struct_type(stab, vn) || struct_field_count(stab, vn) != 0) { return false; }
                 j = j + 1;
             }
             return true;
@@ -9721,6 +9726,7 @@ pub function extern_plain_enum_param(mod: parser.Module, t: string): boolean {
 // disc and reads the payload at struct_field_off(0); for a payloadless-case
 // value the payload read yields ignored garbage (the host drops it).
 pub function extern_variant_param_supported(mod: parser.Module, t: string): boolean {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var i: i32 = 0;
     while (i < mod.enums.len()) {
         if (mod.enums[i].name == t) {
@@ -9731,8 +9737,8 @@ pub function extern_variant_param_supported(mod: parser.Module, t: string): bool
             var j: i32 = 0;
             while (j < n) {
                 var vn: string = mod.enums[i].variant_names[j];
-                if (!is_struct_type(mod.structs, vn)) { return false; }
-                var fc: i32 = struct_field_count(mod.structs, vn);
+                if (!is_struct_type(stab, vn)) { return false; }
+                var fc: i32 = struct_field_count(stab, vn);
                 if (fc > maxf) { maxf = fc; }
                 if (fc >= 1) { anyp = true; }
                 j = j + 1;
@@ -9744,10 +9750,10 @@ pub function extern_variant_param_supported(mod: parser.Module, t: string): bool
                 var k: i32 = 0;
                 while (k < n) {
                     var vn2: string = mod.enums[i].variant_names[k];
-                    var fcc: i32 = struct_field_count(mod.structs, vn2);
+                    var fcc: i32 = struct_field_count(stab, vn2);
                     var fj: i32 = 0;
                     while (fj < fcc) {
-                        var ft2: string = struct_field_type_at(mod.structs, vn2, fj);
+                        var ft2: string = struct_field_type_at(stab, vn2, fj);
                         if (ft2 != "i32" && ft2 != "u32") { return false; }
                         fj = fj + 1;
                     }
@@ -9767,8 +9773,8 @@ pub function extern_variant_param_supported(mod: parser.Module, t: string): bool
             var k2: i32 = 0;
             while (k2 < n) {
                 var vn3: string = mod.enums[i].variant_names[k2];
-                if (struct_field_count(mod.structs, vn3) == 1) {
-                    var ft3: string = struct_field_type_at(mod.structs, vn3, 0);
+                if (struct_field_count(stab, vn3) == 1) {
+                    var ft3: string = struct_field_type_at(stab, vn3, 0);
                     if (ft3 != "i32" && ft3 != "u32" && ft3 != "i64" && ft3 != "u64" && ft3 != "f64" && ft3 != "f32") { return false; }
                     if (ft3 == "f32") { any_f32 = true; }
                     if (ft3 == "i32" || ft3 == "u32") { any_i32 = true; }
@@ -9800,6 +9806,7 @@ pub function extern_variant_param_supported(mod: parser.Module, t: string): bool
 // supported variant's arms (the multi-field SlotCount); 1 (or 0) for a
 // single-field variant.
 pub function extern_variant_max_fields(mod: parser.Module, t: string): i32 {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var i: i32 = 0;
     while (i < mod.enums.len()) {
         if (mod.enums[i].name == t) {
@@ -9807,7 +9814,7 @@ pub function extern_variant_max_fields(mod: parser.Module, t: string): i32 {
             var maxf: i32 = 0;
             var j: i32 = 0;
             while (j < n) {
-                var fc: i32 = struct_field_count(mod.structs, mod.enums[i].variant_names[j]);
+                var fc: i32 = struct_field_count(stab, mod.enums[i].variant_names[j]);
                 if (fc > maxf) { maxf = fc; }
                 j = j + 1;
             }
@@ -9831,6 +9838,7 @@ pub function extern_variant_is_multifield(mod: parser.Module, t: string): boolea
 // (padding a shorter arm). Lazy (not select): a shorter arm's box has no slot j,
 // so the non-matched branches must not read it.
 pub function extern_variant_multifield_slot(mod: parser.Module, t: string, j: i32, boxloc: string, slot: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var ei: i32 = 0;
     while (ei < mod.enums.len()) {
         if (mod.enums[ei].name == t) {
@@ -9838,7 +9846,7 @@ pub function extern_variant_multifield_slot(mod: parser.Module, t: string, j: i3
             var acc: string = extern_variant_arm_slot(mod, mod.enums[ei].variant_names[n - 1], j, boxloc, slot);
             var k: i32 = n - 2;
             while (k >= 0) {
-                var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
+                var sid: i32 = struct_id(stab, mod.enums[ei].variant_names[k]);
                 acc = "(if (result i32) (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_slot(mod, mod.enums[ei].variant_names[k], j, boxloc, slot) + ") (else " + acc + "))";
                 k = k - 1;
             }
@@ -9852,7 +9860,8 @@ pub function extern_variant_multifield_slot(mod: parser.Module, t: string, j: i3
 // extern_variant_arm_slot emits one arm's slot-j value: i32.load at
 // xbox_field_off(slot, j) if the arm has a field j, else i32.const 0 (padding).
 pub function extern_variant_arm_slot(mod: parser.Module, vn: string, j: i32, boxloc: string, slot: i32): string {
-    if (j < struct_field_count(mod.structs, vn)) {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    if (j < struct_field_count(stab, vn)) {
         return "(i32.load (i32.add (local.get " + boxloc + ") (i32.const " + util.i32_to_string(xbox_field_off(slot, j)) + ")))";
     }
     return "(i32.const 0)";
@@ -9863,6 +9872,7 @@ pub function extern_variant_arm_slot(mod: parser.Module, vn: string, j: i32, box
 // field. A uniform i32 variant joins to i32 (the original single-slot path); a
 // set with any 64-bit arm joins to i64 (mixed-width: per-arm extend/load).
 pub function extern_variant_join_is64(mod: parser.Module, t: string): boolean {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var i: i32 = 0;
     while (i < mod.enums.len()) {
         if (mod.enums[i].name == t) {
@@ -9870,8 +9880,8 @@ pub function extern_variant_join_is64(mod: parser.Module, t: string): boolean {
             var j: i32 = 0;
             while (j < n) {
                 var vn: string = mod.enums[i].variant_names[j];
-                if (struct_field_count(mod.structs, vn) == 1) {
-                    var ft: string = struct_field_type_at(mod.structs, vn, 0);
+                if (struct_field_count(stab, vn) == 1) {
+                    var ft: string = struct_field_type_at(stab, vn, 0);
                     if (ft == "i64" || ft == "u64" || ft == "f64") { return true; }
                 }
                 j = j + 1;
@@ -9889,6 +9899,7 @@ pub function extern_variant_join_is64(mod: parser.Module, t: string): boolean {
 // rather than the i64 bit-container the mixed-width path emits. Checked BEFORE
 // extern_variant_join_is64 (which also fires for an f64 arm).
 pub function extern_variant_is_uniform_f64(mod: parser.Module, t: string): boolean {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var i: i32 = 0;
     while (i < mod.enums.len()) {
         if (mod.enums[i].name == t) {
@@ -9897,8 +9908,8 @@ pub function extern_variant_is_uniform_f64(mod: parser.Module, t: string): boole
             var j: i32 = 0;
             while (j < n) {
                 var vn: string = mod.enums[i].variant_names[j];
-                if (struct_field_count(mod.structs, vn) == 1) {
-                    if (struct_field_type_at(mod.structs, vn, 0) != "f64") { return false; }
+                if (struct_field_count(stab, vn) == 1) {
+                    if (struct_field_type_at(stab, vn, 0) != "f64") { return false; }
                     anyp = true;
                 }
                 j = j + 1;
@@ -9918,6 +9929,7 @@ pub function extern_variant_is_uniform_f64(mod: parser.Module, t: string): boole
 // demote+reinterpret bridge (extern_variant_payload_join_i32_f32 on the param
 // side, extern_variant_result_store_f32 on the result side).
 pub function extern_variant_has_f32_arm(mod: parser.Module, t: string): boolean {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var i: i32 = 0;
     while (i < mod.enums.len()) {
         if (mod.enums[i].name == t) {
@@ -9925,7 +9937,7 @@ pub function extern_variant_has_f32_arm(mod: parser.Module, t: string): boolean 
             var j: i32 = 0;
             while (j < n) {
                 var vn: string = mod.enums[i].variant_names[j];
-                if (struct_field_count(mod.structs, vn) == 1 && struct_field_type_at(mod.structs, vn, 0) == "f32") { return true; }
+                if (struct_field_count(stab, vn) == 1 && struct_field_type_at(stab, vn, 0) == "f32") { return true; }
                 j = j + 1;
             }
             return false;
@@ -9943,6 +9955,7 @@ pub function extern_variant_has_f32_arm(mod: parser.Module, t: string): boolean 
 // MUST be if/else (not select): the arms read the box at different widths, and
 // only the matched arm's box is wide enough, so non-taken branches must not run.
 pub function extern_variant_payload_join_i64(mod: parser.Module, t: string, boxloc: string, slot: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var ei: i32 = 0;
     while (ei < mod.enums.len()) {
         if (mod.enums[ei].name == t) {
@@ -9950,7 +9963,7 @@ pub function extern_variant_payload_join_i64(mod: parser.Module, t: string, boxl
             var acc: string = extern_variant_arm_join_i64(mod, mod.enums[ei].variant_names[n - 1], boxloc, slot);
             var k: i32 = n - 2;
             while (k >= 0) {
-                var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
+                var sid: i32 = struct_id(stab, mod.enums[ei].variant_names[k]);
                 acc = "(if (result i64) (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_join_i64(mod, mod.enums[ei].variant_names[k], boxloc, slot) + ") (else " + acc + "))";
                 k = k - 1;
             }
@@ -9965,8 +9978,9 @@ pub function extern_variant_payload_join_i64(mod: parser.Module, t: string, boxl
 // i64.load for a 64-bit field, i64.extend_i32_u(i32.load) for a 32-bit field,
 // i64.const 0 for a payloadless arm. Payload sits at xbox_field_off(slot, 0).
 pub function extern_variant_arm_join_i64(mod: parser.Module, vn: string, boxloc: string, slot: i32): string {
-    if (struct_field_count(mod.structs, vn) == 1) {
-        var ft: string = struct_field_type_at(mod.structs, vn, 0);
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    if (struct_field_count(stab, vn) == 1) {
+        var ft: string = struct_field_type_at(stab, vn, 0);
         var poff: string = util.i32_to_string(xbox_field_off(slot, 0));
         // A 64-bit arm (i64/u64, or an f64 read as its raw bits) loads i64
         // directly; a 32-bit arm zero-extends. The box holds an f64 payload's
@@ -9993,6 +10007,7 @@ pub function extern_variant_arm_join_i64(mod: parser.Module, vn: string, boxloc:
 // extern_variant_has_f32_arm — an f32-free variant keeps the single
 // unconditional i32.load (byte-identical output).
 pub function extern_variant_payload_join_i32_f32(mod: parser.Module, t: string, boxloc: string, slot: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var ei: i32 = 0;
     while (ei < mod.enums.len()) {
         if (mod.enums[ei].name == t) {
@@ -10000,7 +10015,7 @@ pub function extern_variant_payload_join_i32_f32(mod: parser.Module, t: string, 
             var acc: string = extern_variant_arm_join_i32_f32(mod, mod.enums[ei].variant_names[n - 1], boxloc, slot);
             var k: i32 = n - 2;
             while (k >= 0) {
-                var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
+                var sid: i32 = struct_id(stab, mod.enums[ei].variant_names[k]);
                 acc = "(if (result i32) (i32.eq (i32.load (local.get " + boxloc + ")) (i32.const " + util.i32_to_string(sid) + ")) (then " + extern_variant_arm_join_i32_f32(mod, mod.enums[ei].variant_names[k], boxloc, slot) + ") (else " + acc + "))";
                 k = k - 1;
             }
@@ -10016,9 +10031,10 @@ pub function extern_variant_payload_join_i32_f32(mod: parser.Module, t: string, 
 // 8-byte f64 at xbox_field_off(slot, 0)), a plain i32.load for a 32-bit field,
 // i32.const 0 for a payloadless arm.
 pub function extern_variant_arm_join_i32_f32(mod: parser.Module, vn: string, boxloc: string, slot: i32): string {
-    if (struct_field_count(mod.structs, vn) == 1) {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    if (struct_field_count(stab, vn) == 1) {
         var poff: string = util.i32_to_string(xbox_field_off(slot, 0));
-        if (struct_field_type_at(mod.structs, vn, 0) == "f32") {
+        if (struct_field_type_at(stab, vn, 0) == "f32") {
             return "(i32.reinterpret_f32 (f32.demote_f64 (f64.load offset=" + poff + " (local.get " + boxloc + "))))";
         }
         return "(i32.load offset=" + poff + " (local.get " + boxloc + "))";
@@ -10056,8 +10072,9 @@ pub function extern_variant_result_store_f32(mod: parser.Module, t: string, slot
 // extern_variant_result_store_f32_arm emits one arm's result payload store:
 // the promote bridge for an f32 field, the plain i32 copy otherwise.
 pub function extern_variant_result_store_f32_arm(mod: parser.Module, vn: string, slot: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var poff: string = util.i32_to_string(xbox_field_off(slot, 0));
-    if (struct_field_count(mod.structs, vn) == 1 && struct_field_type_at(mod.structs, vn, 0) == "f32") {
+    if (struct_field_count(stab, vn) == 1 && struct_field_type_at(stab, vn, 0) == "f32") {
         return "(f64.store offset=" + poff + " (local.get $s) (f64.promote_f32 (f32.reinterpret_i32 (i32.load offset=4 (local.get $rb)))))";
     }
     return "(i32.store offset=" + poff + " (local.get $s) (i32.load offset=4 (local.get $rb)))";
@@ -10082,6 +10099,7 @@ pub function extern_variant_result_supported(mod: parser.Module, t: string): boo
 // each variant's struct_id. The Fern variant order must match the WIT case
 // order (the index is the disc).
 pub function extern_plain_enum_disc(mod: parser.Module, t: string, eploc: string): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var ei: i32 = 0;
     while (ei < mod.enums.len()) {
         if (mod.enums[ei].name == t) {
@@ -10090,7 +10108,7 @@ pub function extern_plain_enum_disc(mod: parser.Module, t: string, eploc: string
             var acc: string = "(i32.const " + util.i32_to_string(n - 1) + ")";
             var k: i32 = n - 2;
             while (k >= 0) {
-                var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
+                var sid: i32 = struct_id(stab, mod.enums[ei].variant_names[k]);
                 acc = "(select (i32.const " + util.i32_to_string(k) + ") " + acc + " (i32.eq (i32.load (local.get " + eploc + ")) (i32.const " + util.i32_to_string(sid) + ")))";
                 k = k - 1;
             }
@@ -10107,14 +10125,15 @@ pub function extern_plain_enum_disc(mod: parser.Module, t: string, eploc: string
 // payloadless enum value `[struct_id@0]` from an enum *result*. A select-chain
 // `disc==k ? sid_k : acc`.
 pub function extern_plain_enum_sid(mod: parser.Module, t: string, dloc: string): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var ei: i32 = 0;
     while (ei < mod.enums.len()) {
         if (mod.enums[ei].name == t) {
             var n: i32 = mod.enums[ei].variant_names.len();
-            var acc: string = "(i32.const " + util.i32_to_string(struct_id(mod.structs, mod.enums[ei].variant_names[n - 1])) + ")";
+            var acc: string = "(i32.const " + util.i32_to_string(struct_id(stab, mod.enums[ei].variant_names[n - 1])) + ")";
             var k: i32 = n - 2;
             while (k >= 0) {
-                var sid: i32 = struct_id(mod.structs, mod.enums[ei].variant_names[k]);
+                var sid: i32 = struct_id(stab, mod.enums[ei].variant_names[k]);
                 acc = "(select (i32.const " + util.i32_to_string(sid) + ") " + acc + " (i32.eq (local.get " + dloc + ") (i32.const " + util.i32_to_string(k) + ")))";
                 k = k - 1;
             }
@@ -10145,12 +10164,13 @@ pub function extern_canon_field_size(ft: string): i32 {
 // canonical ABI) the max alignment of the nested record's fields, recursing to
 // arbitrary depth.
 pub function extern_canon_field_align(mod: parser.Module, ft: string): i32 {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     if (extern_field_is_scalar(ft)) { return extern_canon_field_size(ft); }
-    var n: i32 = struct_field_count(mod.structs, ft);
+    var n: i32 = struct_field_count(stab, ft);
     var maxa: i32 = 1;
     var i: i32 = 0;
     while (i < n) {
-        var a: i32 = extern_canon_field_align(mod, struct_field_type_at(mod.structs, ft, i));
+        var a: i32 = extern_canon_field_align(mod, struct_field_type_at(stab, ft, i));
         if (a > maxa) { maxa = a; }
         i = i + 1;
     }
@@ -10169,17 +10189,18 @@ pub function extern_canon_field_csize(mod: parser.Module, ft: string): i32 {
 // in result struct `tn`, placing each field (scalar or inlined nested record) at
 // its alignment + size — the layout the host writes the indirect result into.
 pub function extern_canon_top_off(mod: parser.Module, tn: string, idx: i32): i32 {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var pos: i32 = 0;
     var i: i32 = 0;
     while (i < idx) {
-        var ft: string = struct_field_type_at(mod.structs, tn, i);
+        var ft: string = struct_field_type_at(stab, tn, i);
         var a: i32 = extern_canon_field_align(mod, ft);
         var rem: i32 = pos % a;
         if (rem != 0) { pos = pos + (a - rem); }
         pos = pos + extern_canon_field_csize(mod, ft);
         i = i + 1;
     }
-    var fa: i32 = extern_canon_field_align(mod, struct_field_type_at(mod.structs, tn, idx));
+    var fa: i32 = extern_canon_field_align(mod, struct_field_type_at(stab, tn, idx));
     var frem: i32 = pos % fa;
     if (frem != 0) { pos = pos + (fa - frem); }
     return pos;
@@ -10189,15 +10210,16 @@ pub function extern_canon_top_off(mod: parser.Module, tn: string, idx: i32): i32
 // struct `tn`, accounting for inlined nested record fields (the end of the last
 // field rounded up to the record's max field alignment).
 pub function extern_canon_record_size_nested(mod: parser.Module, tn: string): i32 {
-    var n: i32 = struct_field_count(mod.structs, tn);
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    var n: i32 = struct_field_count(stab, tn);
     if (n == 0) { return 0; }
     var last: i32 = n - 1;
-    var lsz: i32 = extern_canon_field_csize(mod, struct_field_type_at(mod.structs, tn, last));
+    var lsz: i32 = extern_canon_field_csize(mod, struct_field_type_at(stab, tn, last));
     var size: i32 = extern_canon_top_off(mod, tn, last) + lsz;
     var maxa: i32 = 1;
     var i: i32 = 0;
     while (i < n) {
-        var a: i32 = extern_canon_field_align(mod, struct_field_type_at(mod.structs, tn, i));
+        var a: i32 = extern_canon_field_align(mod, struct_field_type_at(stab, tn, i));
         if (a > maxa) { maxa = a; }
         i = i + 1;
     }
@@ -10216,20 +10238,21 @@ pub function extern_canon_record_size_nested(mod: parser.Module, tn: string): i3
 // The single local per depth is safe across siblings: a child's pointer is stored
 // into its parent before the next sibling at that depth overwrites the local.
 pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string, canon_base: i32, depth: i32, slot: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var parts: string[] = [];
-    var nf: i32 = struct_field_count(mod.structs, tn);
+    var nf: i32 = struct_field_count(stab, tn);
     var rc: i32 = 0;
     while (rc < nf) {
-        var rcft: string = struct_field_type_at(mod.structs, tn, rc);
+        var rcft: string = struct_field_type_at(stab, tn, rc);
         var coff: i32 = canon_base + extern_canon_top_off(mod, tn, rc);
         var foff: string = util.i32_to_string(xbox_field_off(slot, rc));
         if (extern_field_is_scalar(rcft)) {
             parts = parts.append("    (i32.store (i32.add (local.get " + dst + ") (i32.const " + foff + ")) (" + extern_field_load_op(rcft) + " (i32.add (local.get $rb) (i32.const " + util.i32_to_string(coff) + "))))\n");
         } else {
             var inner_local: string = "$inner" + util.i32_to_string(depth);
-            var inf: i32 = struct_field_count(mod.structs, rcft);
+            var inf: i32 = struct_field_count(stab, rcft);
             parts = parts.append("    (local.set " + inner_local + " (call $__fern_str_box (i32.const " + util.i32_to_string(xbox_bytes(slot, inf, false)) + ")))\n");
-            parts = parts.append("    (i32.store (local.get " + inner_local + ") (i32.const " + util.i32_to_string(struct_id(mod.structs, rcft)) + "))\n");
+            parts = parts.append("    (i32.store (local.get " + inner_local + ") (i32.const " + util.i32_to_string(struct_id(stab, rcft)) + "))\n");
             parts = parts.append(extern_emit_record_fill(mod, inner_local, rcft, coff, depth + 1, slot));
             parts = parts.append("    (i32.store (i32.add (local.get " + dst + ") (i32.const " + foff + ")) (local.get " + inner_local + "))\n");
         }
@@ -10247,11 +10270,12 @@ pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string
 // depth. (The base sub-expression is re-evaluated per leaf, matching the one-level
 // shape this generalizes; the redundant inner-pointer loads are cheap.)
 pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: string, tn: string, slot: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var parts: string[] = [];
-    var n: i32 = struct_field_count(mod.structs, tn);
+    var n: i32 = struct_field_count(stab, tn);
     var fi: i32 = 0;
     while (fi < n) {
-        var ft: string = struct_field_type_at(mod.structs, tn, fi);
+        var ft: string = struct_field_type_at(stab, tn, fi);
         var field_expr: string = "(i32.add " + base_expr + " (i32.const " + util.i32_to_string(xbox_field_off(slot, fi)) + "))";
         if (extern_field_is_scalar(ft)) {
             parts = parts.append(" (" + extern_field_load_op(ft) + " " + field_expr + ")");
@@ -10265,11 +10289,11 @@ pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: stri
 
 // struct_field_type_at returns the declared type of field `idx` in struct `tn`
 // ("" if out of range / unknown).
-pub function struct_field_type_at(structs: parser.StructDecl[], tn: string, idx: i32): string {
+pub function struct_field_type_at(structs: irlower.StructTab, tn: string, idx: i32): string {
     var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == tn) {
-            if (idx >= 0 && idx < structs[i].fields.len()) { return structs[i].fields[idx].type_name; }
+    while (i < structs.decls.len()) {
+        if (structs.decls[i].name == tn) {
+            if (idx >= 0 && idx < structs.decls[i].fields.len()) { return structs.decls[i].fields[idx].type_name; }
             return "";
         }
         i = i + 1;
@@ -10284,9 +10308,10 @@ pub function struct_field_type_at(structs: parser.StructDecl[], tn: string, idx:
 // the wrapper materializes the one-field struct from that value (mirrors the Go
 // ExternRecordResult.Direct path). Multi-field records return indirectly.
 pub function extern_record_ret_direct(mod: parser.Module, t: string): boolean {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     return extern_record_result_supported(mod, t)
-        && struct_field_count(mod.structs, t) == 1
-        && extern_field_is_scalar(struct_field_type_at(mod.structs, t, 0));
+        && struct_field_count(stab, t) == 1
+        && extern_field_is_scalar(struct_field_type_at(stab, t, 0));
 }
 // parameter (P4c): a sum type whose arm payload(s) are i32/u32. A self-host
 // Option/Result is a heap box `[tag:i32 @0][payload:i32 @4]`; the canonical
@@ -10842,6 +10867,7 @@ pub function module_needs_extern_wrappers(mod: parser.Module, slot: i32): boolea
 // the host (data_ptr, len) bytes into a self-host string (`[len][bytes]`) or a
 // u8[] (`[len@0]` header, elements at +8 with 4-byte slots).
 pub function extern_wrappers(mod: parser.Module, slot: i32): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var parts: string[] = [];
     var i: i32 = 0;
     while (i < mod.funcs.len()) {
@@ -11015,7 +11041,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
             parts = parts.append(" (result i32)\n");
             parts = parts.append("    (local $s i32)\n");
             parts = parts.append("    (local.set $s " + xbox_new(slot, xbox_bytes(slot, 1, false)) + ")\n");
-            parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n");
+            parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(stab, f.ret_type)) + "))\n");
             // field @ xbox_field_off(slot, 0) = the import's by-value i32 result.
             parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(xbox_field_off(slot, 0)) + ")) (call $" + f.name + "__import");
             var da: i32 = 0;
@@ -11035,7 +11061,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
             // xbox_field_off). A nested record field gets its own inner struct,
             // filled from the inlined area and pointed to by the outer slot,
             // returning the outer pointer.
-            var nf: i32 = struct_field_count(mod.structs, f.ret_type);
+            var nf: i32 = struct_field_count(stab, f.ret_type);
             var canonsz: i32 = extern_canon_record_size_nested(mod, f.ret_type);
             var maxdepth: i32 = extern_record_depth(mod, f.ret_type);
             parts = parts.append("  (func $" + f.name);
@@ -11067,7 +11093,7 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
             // Materialize the struct: type id at slot 0, then fill each field
             // (scalar or nested) recursively from the inlined canonical area.
             parts = parts.append("    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(xbox_bytes(slot, nf, false)) + ")))\n");
-            parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(mod.structs, f.ret_type)) + "))\n");
+            parts = parts.append("    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(stab, f.ret_type)) + "))\n");
             parts = parts.append(extern_emit_record_fill(mod, "$s", f.ret_type, 0, 0, slot));
             parts = parts.append("    (local.get $s))\n");
         } else if (f.import_iface.len() > 0 && extern_sum_param_supported(f.ret_type)) {
@@ -11295,10 +11321,10 @@ pub function extern_wrappers(mod: parser.Module, slot: i32): string {
 
 // struct_field_count returns the number of fields in struct `tn` (0 if
 // unknown).
-pub function struct_field_count(structs: parser.StructDecl[], tn: string): i32 {
+pub function struct_field_count(structs: irlower.StructTab, tn: string): i32 {
     var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == tn) { return structs[i].fields.len(); }
+    while (i < structs.decls.len()) {
+        if (structs.decls[i].name == tn) { return structs.decls[i].fields.len(); }
         i = i + 1;
     }
     return 0;
@@ -11307,10 +11333,10 @@ pub function struct_field_count(structs: parser.StructDecl[], tn: string): i32 {
 // struct_id returns a stable runtime type id for a struct (its index in
 // the module's struct table), stored at offset 0 of every struct value so
 // a union `match` can dispatch on it. -1 if unknown.
-pub function struct_id(structs: parser.StructDecl[], name: string): i32 {
+pub function struct_id(structs: irlower.StructTab, name: string): i32 {
     var i: i32 = 0;
-    while (i < structs.len()) {
-        if (structs[i].name == name) { return i; }
+    while (i < structs.decls.len()) {
+        if (structs.decls[i].name == name) { return i; }
         i = i + 1;
     }
     return 0 - 1;
@@ -11886,7 +11912,7 @@ function emit_wasm_map_set(o: ir.Op, parts: string[]): string[] {
     return parts;
 }
 
-function emit_wasm_struct_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o: ir.Op, structs: parser.StructDecl[], parts: string[]): string[] {
+function emit_wasm_struct_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32, o: ir.Op, structs: irlower.StructTab, parts: string[]): string[] {
     // nf field values on the stack (field nf-1 on top, decl order). Box =
     // [type_id@0, f0@8, f1@16, …] via $__fern_str_box (rc-headered), an
     // 8-byte stride so an f64 field fits — header 8 + nf*8 bytes, field i

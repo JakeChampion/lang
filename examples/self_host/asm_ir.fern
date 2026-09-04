@@ -5284,9 +5284,9 @@ function emit_ir_op_dyn_dispatch(o: ir.Op, i: i32, lp: string, s: asmcore.EmitSt
             var dehit: string = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
             var denext: string = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
             var dvi: i32 = 0;
-            while (dvi < s.struct_decls.len()) {
-                if (s.struct_decls[dvi].enum_owner == ddbn) {
-                    var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls[dvi].name);
+            while (dvi < s.struct_decls.decls.len()) {
+                if (s.struct_decls.decls[dvi].enum_owner == ddbn) {
+                    var vlit: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls.decls[dvi].name);
                     s = vlit.state;
                     s = s.write("    leaq " + vlit.label + "(%rip), %rdx\n");
                     s = s.write("    cmpq %rdx, %rcx\n");
@@ -5937,11 +5937,11 @@ function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asm
     s = s.write("    jz .Leaed_" + san + "_next\n");
     var vi: i32 = 0;
     var vlabel: i32 = 0;
-    while (vi < s.struct_decls.len()) {
-        if (s.struct_decls[vi].enum_owner == ety) {
-            var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls[vi].name);
+    while (vi < s.struct_decls.decls.len()) {
+        if (s.struct_decls.decls[vi].enum_owner == ety) {
+            var offs: i32[] = irlower.enum_walk_payload_offsets(s.struct_decls, s.struct_decls.decls[vi].name);
             if (offs.len() > 0) {
-                var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls[vi].name);
+                var vlo: asmcore.ShapeRefOut = asmcore.shape_ref(s, s.struct_decls.decls[vi].name);
                 s = vlo.state;
                 var vls: string = util.i32_to_string(vlabel);
                 s = s.write("    movq (%r13), %rax\n");          // shape ptr @0
@@ -5988,7 +5988,7 @@ function emit_ir_enum_arr_elems_drop_one(s: asmcore.EmitState, ety: string): asm
 // inserts no RC dec that would free the caller's borrowed value. Emitted
 // entry-only and gated on the helper's need by the caller; emit_runtime_globls
 // already `.globl`s the symbol so the per-module link resolves it.
-function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], s: asmcore.EmitState): asmcore.EmitState {
+function emit_ir_runtime_fern_fn(src: string, all_structs: irlower.StructTab, s: asmcore.EmitState): asmcore.EmitState {
     var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
     var fns: parser.FuncDecl[] = m.funcs;
     var bparams: string[] = irlower.borrowable_params_interproc(fns);
@@ -6044,7 +6044,8 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
 // under the leak-mode ceiling. The side-table bases (b_*) are ALWAYS computed
 // over the WHOLE all_funcs (never windowed) so cross-window call tagging is
 // identical to the unsharded emit; only the emit loop is windowed.
-function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], base: irlower.FnSigs): asmcore.EmitState {
+function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irlower.LowerResult[], base: irlower.FnSigs): asmcore.EmitState {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     // #4394 lever 3: when `cache` is non-empty the caller (emit_module_ir_gated)
     // has ALREADY lowered every function — into cache[i], indexed by mod.funcs
     // position — during its fused eligibility scan, so emit reuses that lowering
@@ -6055,7 +6056,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
     // module-scoped registries — are applied here, and they are cheap.
     var sg: irlower.FnSigs = irlower.FnSigs {
         ...irlower.fn_sigs_with_dyn(base, mod.trait_reqs),
-        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, mod.structs),
+        closurearr_ret_fns: irlower.closurearr_ret_fns_of(mod.funcs, stab),
         fn_names: irlower.sig_reg_of(irlower.fn_names_of(mod.funcs)),
     };
     // The IR verify gate's callee-arity index, derived ONCE over the
@@ -6098,15 +6099,16 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], all
 // per-function emit as the real path (so the need-set is exact) but discards
 // the asm (strbuf_reset) and reads `needed`.
 pub function module_runtime_needs(mod: parser.Module): string[] {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     mod = parser.infer_ret_types_module(mod);
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: mod.structs, funcs: mod.funcs };
+    s = asmcore.EmitState { ...s, struct_decls: irlower.struct_tab(mod.structs), funcs: mod.funcs };
     // Needs depend only on this module's own ops, so the single-module
     // signature view suffices (a cross-module call's NEED set is the callee's,
     // aggregated separately via module_runtime_needs over each module). Extract
     // the bases into locals here (once) and pass them as individual params.
-    s = emit_module_funcs(mod, mod.funcs, mod.structs, s, false, 0, 0 - 1, [], ircore.wp_fn_sigs(mod.funcs, mod.structs));
+    s = emit_module_funcs(mod, mod.funcs, stab, s, false, 0, 0 - 1, [], ircore.wp_fn_sigs(mod.funcs, stab));
     s = s.close_needs();
     strbuf_reset();
     return s.needed;
@@ -6120,7 +6122,7 @@ pub function emit_module_ir(mod: parser.Module): string {
     // emit_module_ir_unit re-infers `mod` (idempotent), keeping the emitted
     // module and the analysis set consistent.
     var im: parser.Module = parser.infer_ret_types_module(mod);
-    return emit_module_ir_unit(im, true, false, "", [], im.funcs, im.structs, 0, 0 - 1, []);
+    return emit_module_ir_unit(im, true, false, "", [], im.funcs, irlower.struct_tab(im.structs), 0, 0 - 1, []);
 }
 
 // emit_module_ir_gated is the FUSED eligibility-gate + whole-program emit (#4394
@@ -6160,7 +6162,7 @@ pub function emit_module_or_error(mod: parser.Module): string {
         return "";
     }
     var chk: asmcore.EmitState = asmcore.new_state();
-    chk = asmcore.EmitState { ...chk, struct_decls: mod.structs, funcs: mod.funcs };
+    chk = asmcore.EmitState { ...chk, struct_decls: irlower.struct_tab(mod.structs), funcs: mod.funcs };
     var check_errs: util.Diag[] = asmcore.check_module(mod, chk);
     if (check_errs.len() > 0) {
         eprint(util.format_diags(check_errs));
@@ -6199,7 +6201,8 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     // computes (both interprocedural fixpoints plus fn_sigs_for_borrow); it is
     // built once here and handed to the unit emitter, which folds the
     // per-module tails onto it itself (#8199).
-    var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, im.structs);
+    var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
+        var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
     var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, im.trait_reqs);
     // Lower every function once into `cache`, checking eligibility on each result.
     // Bail on the first function whose body doesn't lower or whose
@@ -6208,7 +6211,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     var freg: irlower.SigReg = ircore.module_func_reg(im);
     var i: i32 = 0;
     while (i < im.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], im.structs, sg, false);
+        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], imtab, sg, false);
         if (!r.ok) {
             if (ircore.strict_ir_on()) { ircore.strict_ir_refuse(im.funcs[i].name + " (did not lower: " + r.why + ")"); }
             return "";
@@ -6233,7 +6236,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
         i = i + 1;
     }
     // Every function eligible — emit from the cache (no second lowering).
-    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, im.structs, 0, 0 - 1, cache, base);
+    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, cache, base);
 }
 
 // pp_has_mem reports whether asm[lo:hi] is a memory operand, i.e. carries a
@@ -6373,11 +6376,11 @@ function peephole_push_pop(asm: string): string {
     return strbuf_take();
 }
 
-pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[]): string {
+pub function emit_module_ir_unit(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[]): string {
     return emit_module_ir_unit_flat(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, ircore.wp_fn_sigs(all_funcs, all_structs));
 }
 
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab, lo: i32, hi: i32, cache: irlower.LowerResult[], b: irlower.FnSigs): string {
     // Infer return types for unannotated functions so the IR path's
     // ret-type-keyed call tagging (str_ret_fns_of / opt_ret_fns_of / …)
     // matches what module_with_builtins supplies.
