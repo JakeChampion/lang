@@ -1332,9 +1332,19 @@ function main(): i32 { return f(); }`,
 			// neither `own` nor consumed, so rc_fe_run seeds it tainted and it
 			// reaches neither table; native runs the owned-by-default
 			// paramVerdict ladder, credits it, and reads its last use at the
-			// extract. That ladder is the documented cut in the fe port
-			// (rc_fe_run's taint-seed comment), so the gap closes with it, not
-			// here. History and the coupled matrix instrument:
+			// extract.
+			//
+			// What closes this is NOT a change to the seed. Native reaches
+			// paramVerdictOwned for `src` only by falling past the borrow rung
+			// — under BorrowInferEnabled a non-escaping param is demoted, so
+			// `src` qualifies BECAUSE it escapes — and the credit is spent by
+			// an exit deep drop that is paid for on the CALLER's side by
+			// calleeParamOwnedByDefault's retain (internal/ir/ir.go:6363).
+			// This compiler has no caller-side retain and its emitter asserts
+			// the opposite invariant (the n_params borrow boundary), so
+			// crediting `src` here alone would free a box the caller still
+			// owns. The prerequisite chain is listed at the fe port header in
+			// irlower.fern. History and the coupled matrix instrument:
 			// docs/rc-log/2026-08-28-elemret-scoping-pin.md and the
 			// tuple_mixed__elemret__* rows.
 			name: "tuple-elem-extract-bind",
@@ -1350,6 +1360,57 @@ function main(): i32 { var keep: (i32, i32[]) = (5, [6, 7]); return get(keep).le
 				"get": {
 					"freeEligible": {native: "e,src", selfhost: "e"},
 					"lastUses":     {native: "e=1,src=0", selfhost: "e=1"},
+				},
+			},
+		},
+		{
+			// The STRING-param taint seed, which no other case reaches.
+			//
+			// rc_fe_run exempts a string param from its taint seed and says
+			// native does the same because a string param is
+			// owned-by-default. That is false: ownedByDefaultShapeIn
+			// (internal/ir/rc_caps.go:304) switches on EnumType / StructType
+			// / TupleType and returns false for everything else, so native's
+			// seed (rc_analysis.go:2228) taints a string param like any other
+			// borrowed one.
+			//
+			// The freeEligible OUTPUT for the PARAM agrees, which is why this
+			// stayed invisible: the self-host's eligibility loop admits
+			// `string` only when `!is_param`, so the param itself is excluded
+			// on both sides whatever its taint. What differs is what the
+			// taint PROPAGATES to — the local that aliases it, and in turn
+			// the caller's own local.
+			//
+			// The divergence below is the self-host AHEAD, not a gap. It is
+			// the same shape as the leak matrix's `str__fnscope__alias_param`
+			// cell (#7553: the callee only aliases its param, so the param
+			// stays borrowable and the caller keeps its own release), which
+			// is `clean clean` on x86-64 and `leak clean` on arm64 — native
+			// leaks it there (#7446). Both legs of that cell pass, including
+			// the FERN_SANITIZE re-run that is what would report an
+			// over-release, so the self-host's extra credits here are
+			// reclaims native does not make rather than frees it must not.
+			//
+			// So the string exemption in rc_fe_run's seed is load-bearing and
+			// must NOT be "fixed" into native parity: seeding a string param
+			// tainted would propagate through this alias and take #7553's
+			// reclaim back out. What was wrong was only the REASON the seed
+			// gave for it, corrected there.
+			name: "fe-string-param-alias",
+			src: `function f(s: string): i32 {
+	var L: string = s;
+	return L.len();
+}
+function main(): i32 { var k: string = "abcdefghij"; return f(k); }`,
+			diverge: map[string]map[string]divergence{
+				"f": {
+					"aliasBindIncs": {native: "2:2=L", selfhost: ""},
+					"freeEligible":  {native: "", selfhost: "L"},
+					"lastUses":      {native: "", selfhost: "L=1"},
+				},
+				"main": {
+					"freeEligible": {native: "", selfhost: "k"},
+					"lastUses":     {native: "", selfhost: "k=1"},
 				},
 			},
 		},

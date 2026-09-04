@@ -62755,11 +62755,35 @@ pub function consumed_params_of(fn: parser.FuncDecl, structs: parser.StructDecl[
 // The borrow-aware free analysis: the set of locals (and own/consumed params)
 // whose every written value is freshly OWNED, so their dec sites may reclaim
 // at rc==0. Ported from internal/ir/rc_analysis.go:392 (post-#4399 shape) with
-// ONE scoping cut: native's param owned-by-default ladder (paramVerdict —
-// interprocedural escape summaries, TRMC sets, borrow inference) is NOT
-// ported; a param here is non-tainted only when `own` or consumed-threaded
-// (consumed_params_of). Divergences that cut produces are PINNED per-case in
-// TestSelfHostRcPlanDiff's diverge maps — the harness documents the gap.
+// ONE scoping cut: native's param owned-by-default ladder (paramVerdict) is
+// NOT ported; a param here is non-tainted only when `own` or consumed-threaded
+// (consumed_params_of), plus the string exemption the seed documents.
+// Divergences that cut produces are PINNED per-case in TestSelfHostRcPlanDiff's
+// diverge maps — the harness documents the gap.
+//
+// The cut is an ABI prerequisite, not analysis fidelity, and the pieces have to
+// land together because each rung alone is a widening. What is missing, by
+// native symbol:
+//
+//   - the caller-side retain that pairs with an owned param
+//     (calleeParamOwnedByDefault, ir.go:6363) — without it, un-seeding a param
+//     grants releases on a box the caller still owns, across this compiler's
+//     n_params borrow boundary;
+//   - a whole-program param-escape fixpoint (inferParamEscapes,
+//     rc_analysis.go:794). Under BorrowInferEnabled every NON-escaping param is
+//     demoted to borrowed, so a param reaches Owned by ESCAPING — the rung the
+//     tuple-elem-extract-bind pin turns on. borrowable_params_of's header
+//     records that this compiler has no such fixpoint, and the interproc cost
+//     note downstream measures the budget one would have to fit;
+//   - the vtable-dispatched and address-taken rungs (ir.go:6325) — not vacuous
+//     here: `dyn Trait` and function values both lower through call_indirect,
+//     and skipping them reproduces native's #6465 / #7307 crashes;
+//   - an `escaped` set distinct from `tainted` (rc_analysis.go:2216), which
+//     FeState does not have; native's owned-param credit reads `escaped`.
+//
+// The reachable prize is smaller than it looks: ownedByDefaultShapeIn
+// (rc_caps.go:304) covers enum / struct / tuple only, so array, Map and string
+// params already agree with this seed.
 
 // rc_fe_taint adds name to the taint set if absent.
 function rc_fe_taint(tainted: string[], name: string): string[] {
@@ -63464,14 +63488,36 @@ function rc_fe_run(fn: parser.FuncDecl, structs: parser.StructDecl[], retreg: Si
         // bare name for anything the env does not hold.
         st = FeState { ...st, types_n: st.types_n.append(p.name), types_t: st.types_t.append(p.type_name), decl_s: st.decl_s.append(p.name) };
         // taint seed: every NON-SCALAR, NON-STRING param that is neither `own`
-        // nor consumed-threaded. A scalar param cannot alias heap; native
-        // leaves a STRING param untainted too (owned-by-default), and seeding
-        // it poisoned every call through the any-tainted-arg rule — a scalar
-        // arg (`nodeB(s, n)`, the alloc_flat shape) and then a bare string
-        // arg (`node(pre, mk(), n)`, the StrArrFieldBufferRelease shape) each
-        // refused an entire fixture's credits. The rest of the
-        // owned-by-default paramVerdict ladder is still not ported (the
-        // documented cut); array and container params stay seeded.
+        // nor consumed-threaded. A scalar param cannot alias heap. The STRING
+        // exemption is ours, not native's: seeding it poisoned every call
+        // through the any-tainted-arg rule — a scalar arg (`nodeB(s, n)`, the
+        // alloc_flat shape) and then a bare string arg (`node(pre, mk(), n)`,
+        // the StrArrFieldBufferRelease shape) each refused an entire fixture's
+        // credits — and it is what lets #7553's aliased-param borrow reclaim
+        // the caller's local. It is load-bearing: pinned by the rc-plan case
+        // `fe-string-param-alias` and by the leak matrix's
+        // `str__fnscope__alias_param` cell, which is `leak clean` on arm64
+        // (native leaks it, #7446) and passes its FERN_SANITIZE leg.
+        //
+        // Native does NOT exempt a string param — ownedByDefaultShapeIn
+        // (internal/ir/rc_caps.go:304) switches on EnumType / StructType /
+        // TupleType and returns false for everything else, so native's seed
+        // (rc_analysis.go:2228) taints it like any other borrowed param. An
+        // earlier version of this comment claimed the opposite and used it as
+        // the justification; the exemption is right, the reason was not.
+        //
+        // What is NOT ported is the enum/struct/tuple rung, and the blocker is
+        // an ABI half rather than analysis fidelity: native's owned-by-default
+        // param is two-sided — the CALLER retains the argument
+        // (calleeParamOwnedByDefault, internal/ir/ir.go:6363) and the callee's
+        // exit sweep spends that count. This compiler has no caller-side
+        // retain, and `emit_dec_sweep_except`'s n_params borrow boundary is
+        // the opposite invariant. Un-seeding a container param here without
+        // that retain does not credit the param (no slot predicate accepts a
+        // param slot); it only lets taint stop flowing to locals derived from
+        // it, which grants releases on a box the caller still owns. Array and
+        // Map params are not part of that rung at all — native has no arm for
+        // them either, so they already agree.
         if (!p.own && util.index_of_str(consumed, p.name) < 0 && !rc_scalar_type_name(p.type_name) && p.type_name != "string") {
             st = FeState { ...st, tainted: rc_fe_taint(st.tainted, p.name) };
         }
