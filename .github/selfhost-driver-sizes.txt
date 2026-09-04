@@ -236,6 +236,28 @@
 #
 # Numbers pasted from driver-sizes' corrected-baseline block.
 
+# 2026-09-04 (later) — twelve rows shrank again, 13.4-21.5%, and this file is
+# the only thing that had not caught up. The cause is #8178, which replaced 420
+# linear scans of the struct-decl table with an index: it removes emitted code
+# from every driver, which is why the whole table moves together rather than
+# one backend's rows.
+#
+# It is #8178 alone, not #8178 plus #8192. Two PRs bracket the merge and say
+# so: PR #8230 sits on e5939fb8, which already carries all four of #8192's
+# commits, and its driver-sizes job is GREEN; PR #8228 sits on a5cea3cd, which
+# adds only #8178's four commits, and its driver-sizes job reports the twelve
+# rows below. #8192's hand-written str_eq is a large instruction win that
+# happens not to move the linked size past the 5% band.
+#
+# Main's own runs since have all been cancelled by the next push, so nothing
+# re-measured it there and every open PR inherits the failure. Numbers pasted
+# from the driver-sizes job's corrected-baseline block, not derived — a local
+# cross-compile does not reproduce the runner's link, which is the same trap
+# `.github/perf-baseline.txt` records for its aarch64 half.
+#
+# checker_modload_run, ssa_emit_run and ssa_run are unchanged: they were inside
+# the 5% band and the job did not list them.
+#
 # 2026-09-04 — every row shrank 5.8-8.5%, the whole table at once: the inline
 # rc guards stopped testing what the below-heap compare already rejects (#8193).
 # Both natives emit that guard at every inc and dec site, so removing two
@@ -247,18 +269,18 @@
 # check exists to catch, doing its job. Numbers pasted from that job's own
 # corrected-baseline block, on the head that carried the change.
 
-fern.fern 13607468
-asm_load_run.fern 10623900
-asm_modload_run.fern 9976348
-asm_ir_run.fern 9844348
-asm_run.fern 9436188
-wasm_ir_run.fern 9532668
-wasm_run.fern 9520044
-wasm_runio_run.fern 9482236
-asm_pathprobe_run.fern 8813852
-ssa_lift_scan_run.fern 8623804
-asm_ir_elig_run.fern 8297340
-irlower_run.fern 8626812
+fern.fern 11780988
+asm_load_run.fern 8812812
+asm_modload_run.fern 8148876
+asm_ir_run.fern 8016876
+asm_run.fern 7635916
+wasm_ir_run.fern 7744476
+wasm_run.fern 7731836
+wasm_runio_run.fern 7694044
+asm_pathprobe_run.fern 7016172
+ssa_lift_scan_run.fern 6822028
+asm_ir_elig_run.fern 6516108
+irlower_run.fern 6825036
 checker_modload_run.fern 2000236
 ssa_emit_run.fern 1752764
 ssa_run.fern 1578764
