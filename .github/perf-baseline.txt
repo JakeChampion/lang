@@ -152,23 +152,23 @@ aarch64/sort_inplace.text	783
 aarch64/sort_inplace.ir	112891129
 aarch64/sort_ints.text	2768
 aarch64/sort_ints.ir	105084009
-aarch64/string_build.text	1140
+aarch64/string_build.text	1146
 aarch64/string_build.ir	171325490
 aarch64/string_count_byte.text	563
 aarch64/string_count_byte.ir	295440050
-aarch64/string_find_byte.text	1933
+aarch64/string_find_byte.text	1941
 aarch64/string_find_byte.ir	123872451
-aarch64/string_rfind_byte.text	2566
+aarch64/string_rfind_byte.text	2574
 aarch64/string_rfind_byte.ir	111734449
 aarch64/string_scan.text	1460
 aarch64/string_scan.ir	130819453
-aarch64/string_slice.text	523
+aarch64/string_slice.text	525
 aarch64/string_slice.ir	150480104
 aarch64/struct_drop.text	2576
 aarch64/struct_drop.ir	606740287
 aarch64/tokenize.text	972
 aarch64/tokenize.ir	130770104
-aarch64/utf8_ingest_unchecked.text	40691
+aarch64/utf8_ingest_unchecked.text	40699
 aarch64/utf8_ingest_unchecked.ir	18250835	3
-aarch64/utf8_ingest_validated.text	41216
+aarch64/utf8_ingest_validated.text	41224
 aarch64/utf8_ingest_validated.ir	24108639	3
