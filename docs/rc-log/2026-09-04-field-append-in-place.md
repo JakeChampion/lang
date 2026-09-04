@@ -56,42 +56,80 @@ struct case:
 > shape.
 
 Removing that assumption is the whole change, so the containment lands with it.
-`grow_param_flags_of` gains native's `growFieldBufs` bit (`rc_analysis.go:6251`),
-its mask position 0 is now the RECEIVER, and the dying pass-through fixpoint
-carries method receivers as well as free-call arguments. Two registries —
-`grow_recv_fns` and `grow_field_positions` — drive an inc-before / dec-after
-bracket over the array-field buffers of a surviving struct receiver or argument.
-`__fern_arr_push` copies at rc != 1, so the bracket is the whole containment.
+`grow_param_flags_of` gains the field half of native's `growFieldBufs`
+(`rc_analysis.go:6251`), its mask position 0 is now the RECEIVER, and the dying
+pass-through fixpoint carries method receivers as well as free-call arguments.
+Two registries — `grow_recv_fns` and `grow_field_positions` — drive an
+inc-before / dec-after bracket over the named field buffers of a surviving
+struct receiver or argument. `__fern_arr_push` copies at rc != 1, so the bracket
+is the whole containment.
 
-Three details are load-bearing:
+**The mask names FIELDS, where native carries a bit.** Native's `growFieldBufs`
+says only "some array field of this parameter", so `growBracketArgs` has to
+bracket every array buffer `arrayFieldPaths` can reach — depth 4, cycle-guarded.
+The first cut here did the same and it does not survive contact with this
+compiler: `LowerState` reaches **212** array-field buffers through `FnSigs` and
+its `SigReg`s, so one threading call emitted 212 rc pairs, **97,084** over a
+single self-compile, ~15,000 ops into `lower_stmt_var` alone — and the emit
+segfaulted. A mask position is therefore `"0"`, `"1"` (the array param's own
+buffer) or `"F:xs,ys"`, seeded from the admitted sites and merged by union
+across the fixpoint. `LowerState.emit` brackets one buffer, `ops`.
+
+Naming the fields also removes the reason the plan was ever encoded as strings:
+with no paths to serialise, the bracket is a flat `i32[]` of `[slot, nhops,
+(field index, width) × nhops]` that nothing has to parse back.
+
+Three more details are load-bearing:
 
 - **An owned-by-default position is not exempt.** The caller's retain is on the
   BOX; a field buffer inside it stays at its own count. Only a declared `own`
   position is skipped (the binding is dead, E051).
-- **The bracket walks field CHAINS**, on both sides: an argument written
-  `push(o.inner, v)` aliases the container's sub-heap, and the buffers reachable
-  from a struct field are enumerated to depth 3 with a cycle guard
-  (`grow_field_paths_of`, native's `arrayFieldPaths`).
+- **The bracket resolves field CHAINS**, so an argument written
+  `push(o.inner, v)`, which aliases the container's sub-heap, is protected
+  through `o`'s slot — and the dying-argument exemption applies only to a BARE
+  ident, never to a chain read off one.
 - **`grow_exempt_names_of_stmt` had to learn the method receiver.** `s = s.emit(op)`
   and `return s.emit(op)` are the dying shapes; without them every threaded
   receiver is bracketed at its call and the copy lands once per link — strictly
   worse than the clone this replaces.
+- **The SOLE-OCCURRENCE death had to start propagating.** `lower_stmt` unions
+  grow_sole (#6048) into `grow_exempt` for every statement, so such a name
+  reaches every call unbracketed — but `grow_dying_passes_stmt` recorded no edge
+  for it, so `function f(p: S): S { var t = g(p); return t; }` grew p's field in
+  place AND left f's own position unflagged. That gap predates this change (it
+  is equally true of the #4873 array bit); the field half would have inherited
+  it. The dying-pass walk now reaches every call in every statement, with the
+  occurs-once shapes still restricted to a statement's outermost call, which is
+  all `grow_exempt_names_of_stmt` reads.
 
 ## Measured
 
-Self-host compiler emitting `checker.fern` (x86-64, 4-core container, `-o /dev/null`):
+**Measure STAGE 2, not the compiler you just built.** `make selfhost-cli`
+produces a NATIVE-built self-host compiler, and native's `emitArrayPush` already
+grows this shape in place — so the binary that loop hands you never had the
+clone, and an A/B of it moves nothing but the cost of the new analysis (+0.2% Ir
+under callgrind). The clone is in the SELF-HOST-built compiler. The number is
+therefore: same source, compiled once by the base compiler and once by the new
+one, and the two results timed on the same input.
 
-| | wall | `__arr_push_shared_count` | bytes |
+`checker.fern` through each stage-2 compiler (x86-64, 4-core container,
+`-emit asm -o /dev/null`, three interleaved rounds under load):
+
+| | round 1 | round 2 | round 3 |
 |---|---|---|---|
-| before | 5.78 s | 376,969 | 202,926,200 |
-| callee half only | 5.29 s | 376,971 | 202,922,936 |
-| both halves | 5.40 s | 377,739 | 207,159,480 |
+| base lowering | 10.09 s | 12.00 s | 12.57 s |
+| in-place | 8.13 s | 8.41 s | 8.37 s |
 
-The cliff counters barely move because neither form was crossing the SHARED
-cliff: the clone was a fresh rc==1 buffer at len == cap, so it took the grow
-path. What the change removes is the slice and one allocation per append, plus
-the geometric-growth amortisation the clone form could never have. The 770-crossing
-/ 4.2 MB rise between the last two rows is the caller-side bracket doing its job.
+Best-of-three is -19%; the base leg's drift is host contention, and the in-place
+leg holds ±0.3 s under the same load, which is itself the point — the clone's
+cost scales with the op list and the in-place grow does not.
+
+The rc==1 append-cliff counters barely move (376,969 -> 377,739 crossings on the
+native-built compiler): neither form was crossing the SHARED cliff, because the
+clone was a fresh rc==1 buffer at len == cap and took the grow path. What the
+change removes is the slice and one allocation per append, plus the
+geometric-growth amortisation the clone form could never have. The 770-crossing
+rise IS the caller-side bracket doing its job.
 
 `St.emit` in the probe drops `__fern_arr_slice` + `__fern_arr_push_owned` for one
 `__fern_arr_push`.
@@ -112,8 +150,9 @@ asm. Without it a regression that quietly refuses every site is green.
 ## Not done
 
 - Chains deeper than one field (`o.a.b.append(v)`) are refused outright, so the
-  caller-side bracket and the callee-side admission describe the same buffer by
-  construction. Native admits them.
+  callee-side admission names a FIELD of the position's declared type and the
+  caller-side bracket resolves exactly that field. Native admits them, at the
+  cost of the bit-and-enumerate bracket this entry's first cut measured.
 - A struct handed to a may-grow position through anything but an ident-rooted
   place — a call result, an index — is not bracketed, and neither is an indirect
   or `dyn`-dispatched call. Native's `growBracketArgs` has the same residual;
