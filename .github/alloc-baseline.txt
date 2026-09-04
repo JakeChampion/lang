@@ -7,8 +7,8 @@
 # a FERN_LEAKCHECK-instrumented build (scripts/selfhost-alloc-bench).
 #
 # EXACT. These count events the program performed, not time it took, so they
-# repeat to the digit: 14520981 / 11486541 over four consecutive runs on one
-# checkout. The 1% default tolerance is therefore a significance threshold and
+# repeat to the digit: identical over every run on a given checkout, five at the
+# value this lane was written against and two at the one banked here. The 1% default tolerance is therefore a significance threshold and
 # not a noise floor, the same as the instruction-count lanes.
 #
 # WHY THE GAP. allocs exceeds frees by the ~3.03M objects live when the process
@@ -31,5 +31,5 @@
 # on purpose, update it in the same PR; the job summary prints the corrected
 # lines ready to paste. Keep the reason in the PR, not here.
 
-x86_64/checker.allocs	14520981
-x86_64/checker.frees	11486541
+x86_64/checker.allocs	14520755
+x86_64/checker.frees	11486355
