@@ -68945,6 +68945,7 @@ function assign_target_into(st: ast.Stmt, acc: string[]): string[] {
 }
 
 function no_expr_strs(e: ast.Expr, acc: string[]): string[] { return acc; }
+function no_stmt_strs(st: ast.Stmt, acc: string[]): string[] { return acc; }
 
 function append_all(dst: string[], src: string[]): string[] {
     var i: i32 = 0;
@@ -76328,17 +76329,17 @@ function field_move_owned_value(e: ast.Expr, name: string, sg: FnSigs, bound: st
     return false;
 }
 
-function body_has_defer(stmts: ast.Stmt[]): boolean {
-    function see(st: ast.Stmt, acc: boolean): boolean {
-        match (st) {
-            ast.StmtDefer(_) => { return true; },
-            _ => { return acc; }
-        }
-        return acc;
+function defer_at(st: ast.Stmt, acc: boolean): boolean {
+    match (st) {
+        ast.StmtDefer(_) => { return true; },
+        _ => { return acc; }
     }
-    function keep(e: ast.Expr, acc: boolean): boolean { return acc; }
+    return acc;
+}
+
+function body_has_defer(stmts: ast.Stmt[]): boolean {
     var found: boolean = false;
-    for st in stmts { found = astwalk.fold_stmt_nodes(st, found, see, keep, astwalk.descend_all); }
+    for st in stmts { found = astwalk.fold_stmt_nodes(st, found, defer_at, no_expr_bool, astwalk.descend_all); }
     return found;
 }
 
@@ -76348,21 +76349,37 @@ function body_has_defer(stmts: ast.Stmt[]): boolean {
 // mentions the name (a capture could read the emptied slot), the name is not
 // bound by a `for` or a match arm, and the function has no defer (a defer
 // runs after a return value is built, while the base is still in its slot).
+// field_move_decl_of: the binder names `st` declares, with a `for` or match-arm
+// binder appended twice so the declared-exactly-once test below excludes it.
+function field_move_decl_of(st: ast.Stmt, acc: string[]): string[] {
+    match (st) {
+        ast.StmtVar(v) => { return acc.append(v.name); },
+        ast.StmtFor(f) => { return acc.append(f.var_name).append(f.var_name); },
+        ast.StmtMatch(_) => { return astwalk.collect_bound_stmt(st, astwalk.collect_bound_stmt(st, acc)); },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
+// lambda_body_reads: every ident a lambda body reads, appended to `acc`.
+function lambda_body_reads(e: ast.Expr, acc: string[]): string[] {
+    match (e) {
+        ast.ExprLambda(lm) => {
+            var a: string[] = acc;
+            for bst in lm.body { a = astwalk.collect_idents_stmt(bst, a); }
+            return a;
+        },
+        _ => { return acc; }
+    }
+    return acc;
+}
+
 function field_move_bases_of(fn: parser.FuncDecl, sg: FnSigs): string[] {
     var none: string[] = [];
     if (fn.body.len() == 0 || body_has_defer(fn.body)) { return none; }
     var bound: string[] = [];
     for p in fn.params { bound = bound.append(p.name); }
     bound = astwalk.collect_bound_stmts(fn.body, bound);
-    function decl_of(st: ast.Stmt, acc: string[]): string[] {
-        match (st) {
-            ast.StmtVar(v) => { return acc.append(v.name); },
-            ast.StmtFor(f) => { return acc.append(f.var_name).append(f.var_name); },
-            ast.StmtMatch(_) => { return astwalk.collect_bound_stmt(st, astwalk.collect_bound_stmt(st, acc)); },
-            _ => { return acc; }
-        }
-        return acc;
-    }
     function bad_of(st: ast.Stmt, acc: string[]): string[] {
         match (st) {
             ast.StmtVar(v) => {
@@ -76377,26 +76394,13 @@ function field_move_bases_of(fn: parser.FuncDecl, sg: FnSigs): string[] {
         }
         return acc;
     }
-    function keep(e: ast.Expr, acc: string[]): string[] { return acc; }
-    function lambda_reads(e: ast.Expr, acc: string[]): string[] {
-        match (e) {
-            ast.ExprLambda(lm) => {
-                var a: string[] = acc;
-                for bst in lm.body { a = astwalk.collect_idents_stmt(bst, a); }
-                return a;
-            },
-            _ => { return acc; }
-        }
-        return acc;
-    }
-    function keep_stmt(st: ast.Stmt, acc: string[]): string[] { return acc; }
     var decls: string[] = [];
     var bad: string[] = [];
     var lam: string[] = [];
     for st in fn.body {
-        decls = astwalk.fold_stmt_nodes(st, decls, decl_of, keep, astwalk.descend_all);
-        bad = astwalk.fold_stmt_nodes(st, bad, bad_of, keep, astwalk.descend_all);
-        lam = astwalk.fold_stmt_nodes(st, lam, keep_stmt, lambda_reads, astwalk.descend_all);
+        decls = astwalk.fold_stmt_nodes(st, decls, field_move_decl_of, no_expr_strs, astwalk.descend_all);
+        bad = astwalk.fold_stmt_nodes(st, bad, bad_of, no_expr_strs, astwalk.descend_all);
+        lam = astwalk.fold_stmt_nodes(st, lam, no_stmt_strs, lambda_body_reads, astwalk.descend_all);
     }
     var out: string[] = [];
     for p in fn.params {
