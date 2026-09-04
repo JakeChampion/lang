@@ -450,7 +450,7 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 			// was refused, so `match (mk()) { Ok(s) => { … } }` over a fresh
 			// call leaked the box AND its payload every iteration; the reclaim
 			// is a deep drop, so admitting the arm releases both.
-			if name != "" && a < len(armRegions) && b.bindingConfinedInAll(armRegions[a], name) {
+			if name != "" && a < len(armRegions) && b.bindingConfinedInAll(armRegions[a], name, bt) {
 				continue
 			}
 			return ast.EnumType{}, false
@@ -459,14 +459,14 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 	return et, true
 }
 
-// bindingConfinedInAll reports whether `name` is confined in EVERY node of an
-// arm's region — its guard as well as its body, since a guard runs before the
-// body and can let the pointer out just as easily.
+// bindingConfinedInAll reports whether `name`, of type `bt`, is confined in
+// EVERY node of an arm's region — its guard as well as its body, since a guard
+// runs before the body and can let the pointer out just as easily.
 //
 // An empty region is NOT confined. That is what refuses an `@`-binding arm:
 // the call sites hand those an empty region because the at-name binds the box
 // POINTER itself, which the join is about to free.
-func (b *builder) bindingConfinedInAll(region []ast.Node, name string) bool {
+func (b *builder) bindingConfinedInAll(region []ast.Node, name string, bt ast.Type) bool {
 	if len(region) == 0 {
 		return false
 	}
@@ -474,7 +474,7 @@ func (b *builder) bindingConfinedInAll(region []ast.Node, name string) bool {
 		if n == nil {
 			continue
 		}
-		if !b.bindingConfinedToArm(n, name) {
+		if !b.bindingConfinedToArm(n, name, bt) {
 			return false
 		}
 	}
@@ -562,7 +562,7 @@ func (b *builder) reclaimablePairFormPayload(tag ast.Expr, bt ast.Type, body ast
 	if _, ok := b.freshPairFormEnumResultType(tag); !ok {
 		return false
 	}
-	return b.bindingConfinedToArm(body, name)
+	return b.bindingConfinedToArm(body, name, bt)
 }
 
 // freshPairFormEnumResultType reports the enum type of a call whose PAIR-FORM
@@ -633,7 +633,7 @@ func (b *builder) freshPairFormEnumResultType(e ast.Expr) (ast.Type, bool) {
 // have, while a missed escape is a use-after-free. A shadowing declaration
 // inside the arm errs the same safe way: its uses are attributed to the
 // binding, so anything the shadow does with the name suppresses the release.
-func (b *builder) bindingConfinedToArm(body ast.Node, name string) bool {
+func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) bool {
 	if body == nil {
 		return false
 	}
@@ -663,7 +663,7 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string) bool {
 			// that arm, the box the join frees outlives every reference the
 			// inner match takes — the shape a nested Option's payload is
 			// consumed through.
-			if id, ok := x.Tag.(*ast.Ident); ok && id.Name == name && b.nestedMatchConfines(x) {
+			if id, ok := x.Tag.(*ast.Ident); ok && id.Name == name && b.nestedMatchConfines(x, bt) {
 				excused[id] = true
 			}
 		case *ast.Index:
@@ -693,11 +693,26 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string) bool {
 	return confined
 }
 
-// nestedMatchConfines reports whether a match over an ident scrutinee lets no
-// payload out: no arm binds the whole value (`@`) or destructures a
-// sub-pattern (whose bindings the arm's own list does not carry), and each
-// named pointer binding is confined to its arm's guard and body.
-func (b *builder) nestedMatchConfines(m *ast.Match) bool {
+// nestedMatchConfines reports whether a match over an ident scrutinee of type
+// `scrutType` lets no payload out: the inner enum owns its payloads, no arm
+// binds the whole value (`@`) or destructures a sub-pattern (whose bindings the
+// arm's own list does not carry), and each named pointer binding is confined to
+// its arm's guard and body.
+//
+// The countedness condition is what keeps the outer join's DEEP drop honest:
+// that drop reaches the inner box through the instantiation's generated
+// __drop_enum_, which releases the inner payloads, so the inner enum must have
+// taken a reference to them. Only an EnumRcPayloads-eligible construction does
+// — outside that model an aliased payload (`Some(pre)` over a live local) is
+// stored uncounted, and dropping it frees storage the caller still holds.
+// reclaimableTryScrutinee requires the same fact for the same reason, and an
+// ineligible enum keeping flag-off behaviour at every site is the documented
+// contract on enumRcPayloadsEligible.
+func (b *builder) nestedMatchConfines(m *ast.Match, scrutType ast.Type) bool {
+	et, isEnum := scrutType.(ast.EnumType)
+	if !isEnum || !b.enumRcPayloadsEligible(et.Name) {
+		return false
+	}
 	for _, arm := range m.Arms {
 		if arm.AtBinding != "" {
 			return false
@@ -712,10 +727,11 @@ func (b *builder) nestedMatchConfines(m *ast.Match) bool {
 			if bname == "" || bname == "_" || i >= len(arm.BindingTypes) {
 				continue
 			}
-			if bt := arm.BindingTypes[i]; bt == nil || !ast.IsPointerType(bt) {
+			bt := arm.BindingTypes[i]
+			if bt == nil || !ast.IsPointerType(bt) {
 				continue
 			}
-			if !b.bindingConfinedInAll(region, bname) {
+			if !b.bindingConfinedInAll(region, bname, bt) {
 				return false
 			}
 		}

@@ -6214,7 +6214,7 @@ func (b *builder) computeBorrowedAliases() {
 		if !needsRcIncOnAlias(v.Init, b) || b.isOwnedContainerRead(v.Init) {
 			return true
 		}
-		if !b.bindingConfinedToArm(b.fn.Body, y) {
+		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) {
 			return true
 		}
 		b.rc.borrowedAlias[y] = true
