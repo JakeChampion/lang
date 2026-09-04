@@ -88,8 +88,8 @@ malloc.** Section H of the published list — mimalloc/jemalloc/snmalloc class
 allocators, size classes, thread-local heaps — is mostly answered already, by
 a different design: a 16 GiB `MAP_NORESERVE` bump arena, a large-tier freelist,
 and RC with constructor reuse. The live questions here are **over-retention and
-reuse** (`docs/SELFHOST-PERCEUS-REUSE.md`, issue #6127), not allocator
-selection. A row that says "adopt mimalloc" is answering a question Fern does
+reuse** (`docs/SELFHOST-PERCEUS-REUSE.md`, and the pin files it names), not
+allocator selection. A row that says "adopt mimalloc" is answering a question Fern does
 not have.
 
 **3. There are no threads.** `std/async` is single-threaded cooperative
@@ -412,9 +412,13 @@ damage. Eight of twelve rows are N/A or already shipped **because Fern made a
 different, deliberate choice**, and the two open questions in this area are not
 in the list at all:
 
-- **Over-retention**: seven unbounded leaks measured in the self-host runtime
-  that native does not have (`FERN_LEAKCHECK=1`, issue #6127). Most are closed;
-  ~108 KB over four shapes remained at the last measurement.
+- **Over-retention**: measured under `FERN_LEAKCHECK=1` and pinned per case.
+  The self-host-versus-native gap #6127 opened is closed — that grid
+  (`internal/e2eselfhost/testdata/selfhost-leak-matrix.txt`) reads clean on
+  x86-64, and on arm64 the four divergent rows have the self-host ahead. What
+  remains is shared with native: 80 non-zero rows in
+  `internal/e2e/testdata/conformance-leak-census.txt`, and 40 of 216 rc-corpus
+  cases in `internal/e2e/rc_leak_gate_test.go`.
 - **The rc==1 append cliff**: `__arr_push_shared_count()` /
   `__arr_push_shared_bytes()`. And the lesson attached to it — **rank by the
   weighted figure, never the count**. A whole-module compile crosses the cliff

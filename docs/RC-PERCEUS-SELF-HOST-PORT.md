@@ -242,12 +242,13 @@ NON-array rc field kinds are **not** equal-difficulty, and string is blocked:
    read-back on every form).
 2. **Recursive drop (per-backend, 3×).** In `emit_ir_struct_drop_one`
    (`asm_ir.fern`), `emit_arm64_struct_drop_one` (`asm_arm64.fern`),
-   `emit_wasm_struct_drop_body` (`wasm.fern`): for each nested-struct field, load
-   the field pointer (IR offset `8 + i*8` on wasm; `(i+1)*8` register) and call
-   `__struct_drop_<Inner>` (rc-guarded, null-guarded — the body is itself
-   rc==1-gated, so an aliased rc>1 inner just decs). Mirror the AST path's
-   `struct_release_field_inner` recursion (`wasm.fern:1252`,
-   `$__fern_release_<ft>`).
+   `emit_wasm_struct_drop_body` (`wasm_ir.fern`): for each nested-struct field,
+   load the field pointer (IR offset `8 + i*8` on wasm; `(i+1)*8` register) and
+   call `__struct_drop_<Inner>` (rc-guarded, null-guarded — the body is itself
+   rc==1-gated, so an aliased rc>1 inner just decs). The AST path this once said
+   to mirror is gone: `wasm.fern` and `struct_release_field_inner` went with
+   #3457. Its surviving analogue is the `$__fern_release_<T>` family, whose
+   per-field recursion is driven by `struct_field_kind_char` in `wasm_ir.fern`.
 3. **Transitive emission (per-backend need-set).** `__struct_drop_<Outer>` now
    CALLS `__struct_drop_<Inner>` from its hand-emitted body — not a lowered op —
    so `struct_drop_types` (`wasm_ir.fern`) / the `struct_drop:<T>` need-set
