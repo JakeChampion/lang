@@ -70,4 +70,7 @@ func OptimizeFunctions(prog *Program) {
 	// that profits from every rewrite above, and it sweeps the dead code
 	// its own folding creates.
 	OptimizeCleanup(prog)
+	// LICM runs last: it reads the shape the cleanup settles on, and the
+	// slot it introduces is a plain store the backends already handle.
+	HoistLoopInvariants(prog)
 }
