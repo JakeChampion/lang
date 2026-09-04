@@ -820,9 +820,17 @@ func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 	// AND deep-drops the element boxes — the walk is gated on __fern_rc_is_unique
 	// (free the elements only when this drop frees the buffer, i.e. the sole
 	// owner), then rc_dec's each element before the buffer dec.
+	//
+	// The binding is REASSIGNED, and that is load-bearing rather than
+	// incidental. With a single `var h = ...`, the reclaim this asserts on is
+	// the rebind over h's slot while that slot still holds its prologue zero —
+	// `is_unique(null)` is 0 on every path, so ir.fern's prune_zero_slot_guards
+	// resolves the gate to a constant and the fold deletes the arm it gated,
+	// correctly. A second assignment gives the reclaim a slot with a real
+	// previous value, which is the case the gate exists for.
 	t.Run("emits-struct-array-field-drop", func(t *testing.T) {
 		asm := string(runCapture(t, gcc, runner, driverBin,
-			[]byte("struct E { v: i32 } struct H { es: E[] } function main(): i32 { var h = H { es: [E { v: 1 }] }; return h.es[0].v; }")))
+			[]byte("struct E { v: i32 } struct H { es: E[] } function main(): i32 { var h = H { es: [E { v: 1 }] }; h = H { es: [E { v: 2 }] }; return h.es[0].v; }")))
 		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
 			t.Errorf("expected a struct-array field buffer drop (__fern_arr_dec) at struct reclamation; not found")
 		}
