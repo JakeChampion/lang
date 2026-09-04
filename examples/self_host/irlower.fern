@@ -25064,8 +25064,8 @@ function append_inplace_recvs(stmts: ast.Stmt[], esc: string[], acc: string[]): 
 // the CLONE lowering (lower_arr_append_value) is the sound default: rc == 1 says
 // the container holds the only reference to the buffer, not that nobody reads
 // the field again. That default copies the whole array per append, which makes
-// building one O(n^2) — `__fern_arr_slice` under `LowerState.emit` alone is 15%
-// of a stage-2 self-compile.
+// building one O(n^2): `__fern_arr_slice` measures 15-20% of a stage-2
+// self-compile, with `LowerState.emit` its top caller.
 //
 // field_append_inplace_sites_of is native's fieldPlaceAppendCopies
 // (internal/ir/rc_analysis.go), inverted: it names the sites that may take the
