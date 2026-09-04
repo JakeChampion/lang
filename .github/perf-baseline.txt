@@ -82,10 +82,13 @@ x86_64/utf8_ingest_validated.ir	22390953
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
 # the dev container — paste its block in verbatim. The `.text` half is a line
-# count over `fern -target arm64-linux` output and so is host-independent: a
-# cross-compile here reproduces the runner's figure exactly, which is how these
-# are kept current. map_string.ir carries the same 2% the x86_64 twin does, for
-# the same per-process hash seed.
+# count over `fern -target arm64-linux` output, so a cross-compile here
+# reproduces the runner's figure on most rows and that is how they are kept
+# current — but NOT on ordmap_insert, pmap_insert and pvec_with, where
+# cross-emitting overstates the count (measured 4862/8368/9009 against the
+# runner's 4696/8264/8901). Those three come from the runner, like the `.ir`
+# half. map_string.ir carries the same 2% the x86_64 twin does, for the same
+# per-process hash seed.
 #
 # Re-pinned 2026-09-04 (#7397) on the x86_64 `.text` half only, after the #4873
 # containment bracket gained three field- and path-granular deaths: the three
