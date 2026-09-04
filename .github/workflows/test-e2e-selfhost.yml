@@ -889,20 +889,26 @@ jobs:
       #
       # Cutting x86 costs almost nothing at the long end, because the long end
       # is not set by the partition. Running the LPT greedy over
-      # .github/selfhost-test-weights.txt (85 tests, 76.5 min of weighted mass)
-      # the longest bucket goes 12.3 min at 16 buckets, 12.3 at 8, 12.3 at 7,
-      # 12.8 at 6, then breaks upward: 15.3 at 5 and 19.1 at 4. Up to 7 that
-      # number is just the single heaviest test,
-      # TestSelfHostAssumeEligibleByteIdenticalX86_64 at 738 s, which no split
-      # can divide — so at 8 buckets six of the eight carried 8.9 min while one
-      # test pinned the first at 12.3, which is capacity bought and not used.
-      # 6 is where the mean meets that floor.
+      # .github/selfhost-test-weights.txt (84 tests, 67.0 min of weighted mass)
+      # the longest bucket is 12.3 min at 16, 8, 7 and 6 buckets, then breaks
+      # upward: 13.4 at 5 and 16.8 at 4. Down to 6 that number is just the
+      # single heaviest test, TestSelfHostAssumeEligibleByteIdenticalX86_64 at
+      # 738 s, which no split can divide.
       #
       # Adding the unweighted remainder (the gap between this model and the
       # 6.8-min mean actually measured at 16 buckets — about 32 min of mass the
-      # weights file does not name) the real longest shard is ~16 min at 8 and
-      # ~18 min at 6. The 30-minute budget holds either way, and the model is
-      # calibrated: it reproduces the ~16 min that was measured at 8.
+      # weights file does not name) the real longest shard is ~17 min at 6.
+      # The 30-minute budget holds, and the model is calibrated: it reproduced
+      # the ~16 min that was measured at 8 on the pre-#8183 mass.
+      #
+      # 6 IS NOW ONE ABOVE THE CROSSOVER, DELIBERATELY. #8183 took 9.5 min of
+      # weighted mass out, which moves the point where the mean meets the
+      # 12.3-min floor from 6 to 5 — the rule below would pick 5. Going there
+      # needs a measured longest shard from a run at this mass, not a model:
+      # the remainder above is the pre-#8183 measurement, and at 5 buckets the
+      # projection is ~20 min against a 30-min timeout on the lane that gets
+      # preempted. #8226 holds the reduction, to be made once a run at 6 has
+      # supplied the number.
       #
       # So the rule is that a shard should do more work than it spends queueing.
       # aarch64 goes to 1 for the same reason from the other side — 2 was

@@ -31,8 +31,10 @@ import (
 // "~12 min" this comment used to claim predates the param_is_borrowable no-alloc
 // fix, which cut the per-unit emit peak ~3x and the wall with it.
 //
-// This test's batch=8 is load-bearing — it IS the pre-`-assume-eligible` OOM
-// config — and it now runs UNGATED, in its own CI job (emitall-fixpoint-x86_64).
+// batch=8 is load-bearing — it IS the pre-`-assume-eligible` OOM config, and it
+// is the batch `emit_per_module_spawned` uses for the driver's own default build
+// — so it is the only batch size worth a standing gate. It runs UNGATED, in its
+// own CI job (emitall-fixpoint-x86_64).
 //
 // Not env-gated: the gen1 emit peaks ~7909 MB, and the arena is **16 GiB**
 // (x86_64.go's heapBytes and arm64.go's, both 0x400000000), so that reasoning
@@ -41,59 +43,26 @@ import (
 // **~45% of the ceiling**, with 8.7 GB of headroom rather than 0.2 GB. The
 // config that was supposedly one commit away from exit-137 has room for the
 // compiler sources to nearly double.
+//
+// WHAT THIS DOES NOT COVER. This is the emit-ALL fixpoint: one process emits a
+// batch of units. It does not run the one-unit-per-process shape, which
+// TestSelfHostAssumeEligibleByteIdenticalX86_64 drives on every push; that the
+// two routes emit the same bytes is TestSelfHostPerModuleEmitAllX86_64's proof.
+// gen0 == gen1 byte identity is what is covered HERE.
 func TestSelfHostPerModuleEmitAllFixpointX86_64(t *testing.T) {
-	runEmitAllFixpoint(t, 8, "eafix8")
-}
-
-// TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 is the same proof at the batch
-// size that has headroom, and it runs UNGATED — the standing guard that the
-// whole-compiler per-module emit still reproduces itself byte-for-byte.
-//
-// That guard is what slices 3 and 5 rest on: repointing the driver at the
-// per-module path and then DELETING the legacy AST emitters is only safe while
-// something proves a self-host-built compiler emits the same units the Go-built
-// one does. Gated, that proof only existed when someone remembered to run it.
-//
-// batch=4 rather than the sibling's 8 was chosen when the arena was 8 GiB and
-// 7909 MB looked like the edge of it. Against today's 16 GiB ceiling both fit
-// comfortably (batch=8 re-measured at 7.27 GB, ~45%), so the sibling is no
-// longer gated — this one stays at batch=4 as the in-shard guard, and batch=8
-// runs in its own job where its ~5 min does not lengthen a shard.
-//
-// WHAT THIS DOES NOT COVER. This is the emit-ALL fixpoint: one process emits
-// a batch of units. It does not run the one-unit-per-process shape.
-//
-// A separate TestSelfHostPerModuleFixpointX86_64 used to, at 28 minutes and its
-// own CI job — the longest job in the repo. It was deleted because what it
-// uniquely added was batch size ONE, the LEAST memory-stressful configuration,
-// while batch 4 (here) and batch 8 (the sibling above) — the sizes that
-// actually hit exit-137 before `-assume-eligible` — already run ungated in a
-// fraction of the time. Its own comment described it as a transitional
-// de-risking proof for #3457, which has shipped.
-//
-// gen0 == gen1 byte identity is covered here; emit-all == per-process byte
-// identity is covered by TestSelfHostPerModuleEmitAllX86_64. The residual gap
-// is that the latter establishes the two emit paths agree only for a GO-built
-// driver, not a self-host-built one — narrow, and recorded rather than hidden.
-func TestSelfHostPerModuleEmitAllFixpointBatch4X86_64(t *testing.T) {
-	runEmitAllFixpoint(t, 4, "eafix4")
-}
-
-// runEmitAllFixpoint drives one gen0 → link → gen1 → gen1-emit-all byte-identity
-// round at the given per-process batch size. Both generations use the same batch
-// so the comparison isolates the COMPILER, not the windowing.
-func runEmitAllFixpoint(t *testing.T, batchUnits int, label string) {
-	t.Helper()
+	// Both generations use the same batch so the comparison isolates the
+	// COMPILER, not the windowing.
+	const batchUnits = 8
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 	entry := filepath.Join(dir, "asm_modload_run.fern")
 
-	gen0Bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", label+"_gen0")
+	gen0Bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "eafix8_gen0")
 
 	t.Logf("gen0: emit-all of the whole compiler (-assume-eligible, batch=%d)", batchUnits)
-	unitsG0 := emitAllWholeCompiler(t, runner, gen0Bin, entry, dir, label+"_g0", batchUnits)
-	gen1Bin := filepath.Join(dir, label+"_gen1")
-	objsG0 := unitObjPaths(t, dir, label+"_g0", unitsG0)
+	unitsG0 := emitAllWholeCompiler(t, runner, gen0Bin, entry, dir, "eafix8_g0", "x86-64-linux", batchUnits)
+	gen1Bin := filepath.Join(dir, "eafix8_gen1")
+	objsG0 := unitObjPaths(t, dir, "eafix8_g0", unitsG0)
 	linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objsG0, "-o", gen1Bin)...)
 	if lout, err := exec.Command(gcc, linkArgs...).CombinedOutput(); err != nil {
 		t.Fatalf("link gen1 from gen0's emit-all units failed: %v\n%s", err, lout)
@@ -101,9 +70,9 @@ func runEmitAllFixpoint(t *testing.T, batchUnits int, label string) {
 
 	// gen1 (self-host-built) emit-all of the SAME source. With -assume-eligible
 	// each unit's peak is ~halved, so the per-process batch accumulation stays
-	// under the 8 GiB arena.
+	// under the arena ceiling.
 	t.Logf("gen1: emit-all of the whole compiler (-assume-eligible, batch=%d)", batchUnits)
-	unitsG1 := emitAllWholeCompiler(t, runner, gen1Bin, entry, dir, label+"_g1", batchUnits)
+	unitsG1 := emitAllWholeCompiler(t, runner, gen1Bin, entry, dir, "eafix8_g1", "x86-64-linux", batchUnits)
 
 	if len(unitsG1) != len(unitsG0) {
 		t.Fatalf("unit count diverged: gen0 emitted %d units, gen1 emitted %d", len(unitsG0), len(unitsG1))
@@ -140,10 +109,12 @@ func runEmitAllFixpoint(t *testing.T, batchUnits int, label string) {
 // batch), returning a map of "<modIdx>[_s<lo>]" → unit asm read back from the
 // batch output dir. The plan (planPmEmitWindows) sizes the flat unit range only;
 // the driver windows internally so -unit-range [b,hi) emits exactly jobs[b:hi].
-func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir, label string, batchUnits int) map[string]string {
+// `target` selects the backend the units are emitted for ("x86-64-linux" or
+// "arm64-linux"); the analysis queries ignore it.
+func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir, label, target string, batchUnits int) map[string]string {
 	t.Helper()
 	build := func(args ...string) *exec.Cmd {
-		full := append([]string{entry}, args...)
+		full := append([]string{entry, "-target", target}, args...)
 		if len(runner) == 0 {
 			return exec.Command(compilerBin, full...)
 		}
@@ -154,9 +125,8 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 		return string(out), err
 	}
 	// driveRSS runs a batch and returns the child's peak RSS (ru_maxrss, KB on
-	// Linux). batch=4's gen1 peak sits ~1.4 GB under the fixed 8 GiB arena, so
-	// logging it turns a future arena-growth regression into a visible creep in
-	// the CI output instead of a silent jump to exit-137.
+	// Linux). Logging it turns a future arena-growth regression into a visible
+	// creep in the CI output instead of a silent jump to exit-125.
 	driveRSS := func(args ...string) (int64, error) {
 		cmd := build(args...)
 		_, err := cmd.Output()
@@ -169,33 +139,7 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 		return rss, err
 	}
 
-	countOut, err := drive("-per-module-count")
-	if err != nil {
-		t.Fatalf("[%s] -per-module-count: %v", label, err)
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(countOut))
-	if err != nil || n < 10 {
-		t.Fatalf("[%s] -per-module-count = %q (n=%d), want >= 10", label, countOut, n)
-	}
-
-	fcOut, err := drive("-per-module-func-counts")
-	if err != nil {
-		t.Fatalf("[%s] -per-module-func-counts: %v", label, err)
-	}
-	var funcCounts []int
-	for _, ln := range strings.Split(strings.TrimSpace(fcOut), "\n") {
-		if s := strings.TrimSpace(ln); s != "" {
-			c, cerr := strconv.Atoi(s)
-			if cerr != nil {
-				t.Fatalf("[%s] -per-module-func-counts non-int %q: %v", label, s, cerr)
-			}
-			funcCounts = append(funcCounts, c)
-		}
-	}
-
-	const shardThreshold = 100
-	modBytes := perModuleSourceBytes(t, func(_ *testing.T, args ...string) (string, error) { return drive(args...) }, dir, n)
-	jobs := planPmEmitWindows(funcCounts, modBytes, shardThreshold)
+	jobs := planWholeCompilerUnits(t, drive, dir, label)
 	totalUnits := len(jobs)
 
 	outDir := filepath.Join(dir, label+"_out")
@@ -215,7 +159,7 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 			hi = totalUnits
 		}
 		rss, derr := driveRSS("-per-module-emit-all", "-assume-eligible", "-out-dir", outDir,
-			"-func-budget", strconv.Itoa(shardThreshold),
+			"-func-budget", strconv.Itoa(pmFuncBudget),
 			"-unit-range", strconv.Itoa(b)+":"+strconv.Itoa(hi))
 		if rss > peakRSSKB {
 			peakRSSKB = rss
@@ -287,4 +231,24 @@ func unitObjPaths(t *testing.T, dir, label string, units map[string]string) []st
 		t.Fatalf("[%s] expected exactly one entry unit (_start), got %d", label, entryUnits)
 	}
 	return objs
+}
+
+// firstDiffLine returns the 1-based line number of the first difference between
+// a and b, or 0 if they are equal.
+func firstDiffLine(a, b string) int {
+	la := strings.Split(a, "\n")
+	lb := strings.Split(b, "\n")
+	n := len(la)
+	if len(lb) < n {
+		n = len(lb)
+	}
+	for i := 0; i < n; i++ {
+		if la[i] != lb[i] {
+			return i + 1
+		}
+	}
+	if len(la) != len(lb) {
+		return n + 1
+	}
+	return 0
 }
