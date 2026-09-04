@@ -816,9 +816,12 @@ C++/Zig parallel-development era hit.
 **Cost: 1 week.** **Impact: enables Rec §2, §4.**
 
 **Not adopted (2026-09-01).** Native cannot compile
-`fern.fern` to wasm while `sleep_ms` has no wasm lowering
-(#7947), and compiling the compiler peaks at 4.0 GB —
-wasm32's whole address space. `docs/BOOTSTRAP.md`.
+`fern.fern` to wasm — `write_file_exec` needs `fsmode`,
+refused by E066 since the component-model filesystem has no
+permission bits (#6133) — and compiling the compiler peaks
+at 4.0 GB, wasm32's whole address space. `docs/BOOTSTRAP.md`.
+(The first reason was `sleep_ms`'s missing lowering until
+#7947 landed it.)
 
 Reasons:
 

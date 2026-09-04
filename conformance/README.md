@@ -155,10 +155,15 @@ follow-up, and collapsing them is how a gap goes missing:
 
 ```
 waiver: implementation-gap
-issue: 2843
-reason: the native wasm backend has no sleep_ms (it needs a WASI
-  poll-based sleep). monotonic_ns already works there.
+issue: 1234
+reason: the wasm backend has no <builtin> yet (it needs <the missing
+  runtime piece>). <what does work there>.
 ```
+
+That shape is illustrative rather than quoted: the waiver it was taken
+from — `audit_monotonic_sleep`, opted out of wasm for a missing
+`sleep_ms` — was deleted when #7947 landed the lowering, which is the
+rule below working.
 
 The rule matters in both directions. An unjustified weakening hides a
 gap behind what looks like a passing case. A *stale* waiver is worse: it

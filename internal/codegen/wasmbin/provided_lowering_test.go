@@ -104,14 +104,9 @@ var providedNeverReachesCodegen = map[string]bool{
 
 // providedMissingLowering are callees wasmbin genuinely cannot emit. Each
 // fails the same way strbuf did — `unknown callee` out of emitOp, on a
-// program that type-checks and passes E066. Tracked in #7947; this list may
-// only shrink.
-var providedMissingLowering = map[string]bool{
-	// wasm can block — wasi:clocks/monotonic-clock's subscribe-duration
-	// pollable plus a wait is the sleep — so this is a real gap and not a
-	// target property. It stays gated on `now`, which wasm grants.
-	"sleep_ms": true,
-}
+// program that type-checks and passes E066. This list may only shrink, and
+// it is empty: sleep_ms was the last entry (#7947).
+var providedMissingLowering = map[string]bool{}
 
 // loweringTarget resolves one callee the way emitOp does — through
 // callDirectAlias — and reports where the emitter would find it.
