@@ -2528,6 +2528,62 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 // Byte-equivalence with the AST path is NOT expected (emit_function and
 // emit_function_via_ir select different instructions for the same source) — the
 // arm64 differential + fixpoint gate this, not the byte-identity gate.
+// rt_arm64_str_eq is __fn___fern_str_eq: 1 when two string boxes hold equal
+// bytes, else 0. The x86-64 twin (asm_ir.rt_x86_str_eq) carries the measurement
+// that made both hand-written rather than the shared Fern body they replaced —
+// the cost is a per-call frame, not per byte, and no Fern body avoids one.
+//
+// The __fn_ stack convention on arm64 uses 16-byte operand slots and the caller
+// pushes b then a, so after `stp x29, x30` the arguments are at [x29, #16] and
+// [x29, #32]. A string box is [data ptr, length]; the result goes in x0.
+//
+// x29/x30 are saved even though nothing else needs a frame: __fern_report walks
+// the frame chain to print a backtrace.
+function rt_arm64_str_eq(): string {
+    var s: string = ".globl __fn___fern_str_eq\n";
+    s = s + ".type __fn___fern_str_eq, @function\n";
+    s = s + "__fn___fern_str_eq:\n";
+    s = s + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
+    s = s + "    ldr x2, [x29, #16]\n    ldr x3, [x29, #32]\n";
+    // Same box: interned literals, which is most of what a compiler compares.
+    s = s + "    cmp x2, x3\n    b.eq .Lseq_yes\n";
+    s = s + "    ldr x4, [x2, #8]\n    ldr x5, [x3, #8]\n    cmp x4, x5\n    b.ne .Lseq_no\n";
+    s = s + "    ldr x2, [x2]\n    ldr x3, [x3]\n";
+    // Same buffer, equal length: a slice and its source compare equal here.
+    s = s + "    cmp x2, x3\n    b.eq .Lseq_yes\n";
+    s = s + "    add x6, x2, x4\n    add x7, x3, x4\n";
+    s = s + "    cmp x4, #8\n    b.lo .Lseq_short\n";
+    s = s + "    sub x6, x6, #8\n    sub x7, x7, #8\n";
+    s = s + ".Lseq_word:\n";
+    s = s + "    ldr x0, [x2]\n    ldr x1, [x3]\n    cmp x0, x1\n    b.ne .Lseq_no\n";
+    s = s + "    add x2, x2, #8\n    add x3, x3, #8\n";
+    s = s + "    cmp x2, x6\n    b.lo .Lseq_word\n";
+    // The final word is anchored at the END of each string and overlaps whatever
+    // the loop already read, so a length that is not a multiple of eight costs
+    // one load rather than a byte loop.
+    s = s + "    ldr x0, [x6]\n    ldr x1, [x7]\n    cmp x0, x1\n    b.ne .Lseq_no\n";
+    s = s + "    b .Lseq_yes\n";
+    // 0..7 bytes. Four-byte pairs overlap the same way; under four, byte 0, the
+    // last byte and (at length three) byte 1 are every byte there is.
+    s = s + ".Lseq_short:\n";
+    s = s + "    cbz x4, .Lseq_yes\n";
+    s = s + "    cmp x4, #4\n    b.lo .Lseq_byte\n";
+    s = s + "    ldr w0, [x2]\n    ldr w1, [x3]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
+    s = s + "    sub x6, x6, #4\n    sub x7, x7, #4\n";
+    s = s + "    ldr w0, [x6]\n    ldr w1, [x7]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
+    s = s + "    b .Lseq_yes\n";
+    s = s + ".Lseq_byte:\n";
+    s = s + "    ldrb w0, [x2]\n    ldrb w1, [x3]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
+    s = s + "    sub x6, x6, #1\n    sub x7, x7, #1\n";
+    s = s + "    ldrb w0, [x6]\n    ldrb w1, [x7]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
+    s = s + "    cmp x4, #3\n    b.lo .Lseq_yes\n";
+    s = s + "    ldrb w0, [x2, #1]\n    ldrb w1, [x3, #1]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
+    s = s + ".Lseq_yes:\n    mov x0, #1\n    ldp x29, x30, [sp], #16\n    ret\n";
+    s = s + ".Lseq_no:\n    mov x0, #0\n    ldp x29, x30, [sp], #16\n    ret\n";
+    s = s + ".size __fn___fern_str_eq, .-__fn___fern_str_eq\n";
+    return s;
+}
+
 pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], s: asmcore.EmitState): asmcore.EmitState {
     var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
     var fns: parser.FuncDecl[] = m.funcs;
@@ -3282,12 +3338,12 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("str_concat")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), s.struct_decls, s);
     }
-    // __fern_str_eq is now a Fern runtime function (#2649): see
-    // asmcore.rt_src_str_eq. One __fn___fern_str_eq body serves both the arm64
-    // AST and IR call sites (shared emit_runtime) and the hand-asm map/arr_str
-    // internals (all set x0=A/x1=B before the call).
+    // __fern_str_eq: hand-written, see rt_arm64_str_eq for why. One
+    // __fn___fern_str_eq body serves both the arm64 AST and IR call sites
+    // (shared emit_runtime) and the hand-asm map/arr_str internals (all set
+    // x0=A/x1=B before the call).
     if (s.has_need("str_eq")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_eq(), s.struct_decls, s);
+        s = s.write(rt_arm64_str_eq());
     }
     // __fern_map_find (#2649): the map runtime's shared key search — one Fern
     // body where map_set, map_get and map_has each carried a string, an i32 and
