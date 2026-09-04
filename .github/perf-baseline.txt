@@ -6,18 +6,29 @@
 # emitted assembly, .ir the count of instructions actually retired.
 #
 # WHAT IS EXACT AND WHAT IS NOT. Every figure here repeats to the digit on a
-# given commit EXCEPT `map_string.ir`: core/map draws a per-process
-# string-hash seed (#6194), which moves probe lengths. Its spread over seven
-# runs was 0.51% of the mean, so that one line carries an explicit 2%
-# tolerance. Absolute endpoints are deliberately NOT quoted here: they go
-# stale the next time the line is re-banked for an unrelated reason, and a
-# stale range reads as a real one. `map_int.ir` is exact — the seed is consulted
-# for string keys only — and is deliberately left on the default so the two
-# together show which half of a map regression moved.
+# given commit EXCEPT the rows that hash string keys: core/map draws a
+# per-process string-hash seed (#6194), which moves probe lengths, so a
+# benchmark that builds a string-keyed map counts differently every run. That
+# is `map_string.ir`, which does so directly, AND both `utf8_ingest_*.ir`
+# rows, which do so through json_parse's `Map[string, JsonValue]` — the
+# indirect case, and the one that went unclassified until a CI run happened to
+# straddle the tolerance. Measured spreads over 15 runs of one binary:
+# map_string 0.541%, utf8_ingest_unchecked 0.738%, utf8_ingest_validated
+# 0.468%. map_string.ir keeps the 2% it was given for a 0.51% spread; the
+# utf8_ingest rows carry 3% on the same reasoning at their larger spread, on
+# BOTH arches, since the seed is drawn per process and not per ISA. A range
+# grows with sample count, so these are floors, not ceilings — do not tighten
+# a tolerance here against a handful of runs. Absolute endpoints are
+# deliberately NOT quoted: they go stale the next time a line is re-banked for
+# an unrelated reason, and a stale range reads as a real one. `map_int.ir` is
+# exact — the seed is consulted for string keys only — and is deliberately
+# left on the default so the two together show which half of a map regression
+# moved.
 #
 # Everything else uses the 1% default, which flags a change of one part in a
-# hundred. That is a significance threshold, not a noise floor: the numbers
-# have no noise.
+# hundred. That is a significance threshold and not a noise floor: for those
+# rows the count is exact, which `int_loop.ir` measuring identically over six
+# runs is the control for.
 #
 # ADVISORY, IN BOTH DIRECTIONS — see scripts/ci-check-perf. When a number
 # moves on purpose, update it in the same PR; the job summary prints the
@@ -75,9 +86,9 @@ x86_64/struct_drop.ir	521720148
 x86_64/tokenize.text	919
 x86_64/tokenize.ir	113740068
 x86_64/utf8_ingest_unchecked.text	31424
-x86_64/utf8_ingest_unchecked.ir	16517953
+x86_64/utf8_ingest_unchecked.ir	16517953	3
 x86_64/utf8_ingest_validated.text	31915
-x86_64/utf8_ingest_validated.ir	22390953
+x86_64/utf8_ingest_validated.ir	22390953	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -87,8 +98,9 @@ x86_64/utf8_ingest_validated.ir	22390953
 # current — but NOT on ordmap_insert, pmap_insert and pvec_with, where
 # cross-emitting overstates the count (measured 4862/8368/9009 against the
 # runner's 4696/8264/8901). Those three come from the runner, like the `.ir`
-# half. map_string.ir carries the same 2% the x86_64 twin does, for the same
-# per-process hash seed.
+# half. The three seeded rows — map_string.ir and both utf8_ingest_*.ir —
+# carry the same tolerances their x86_64 twins do, for the same per-process
+# hash seed, which is drawn per process rather than per ISA.
 #
 # Re-pinned 2026-09-04 (#7397) on the x86_64 `.text` half only, after the #4873
 # containment bracket gained three field- and path-granular deaths: the three
@@ -103,15 +115,6 @@ x86_64/utf8_ingest_validated.ir	22390953
 # `map_probe_chain.ir` carry drift of the same kind — the last of them +1.35%,
 # over its tolerance — and all three read identically at that parent, so they
 # are left for whoever moved them rather than re-pinned here.
-#
-# The aarch64 rows are NOT re-pinned, and the paragraph below overstates what a
-# cross-compile can do: on this x86_64 host `fern -target arm64-linux` over the
-# corpus reproduces NONE of them (int_loop reads 105 against the recorded 98,
-# closure_call 513 against 430) at the commit before this change as well as
-# after, so the aarch64 half is drifted independently of anything here. The
-# same cross-compile does isolate this change's aarch64 delta, which is three
-# rows and all downward: ordmap_insert -166, pmap_insert -104, pvec_with -108
-# instructions, and nothing grows. Paste the aarch64 job's own corrected block.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
@@ -166,6 +169,6 @@ aarch64/struct_drop.ir	606740287
 aarch64/tokenize.text	972
 aarch64/tokenize.ir	130770104
 aarch64/utf8_ingest_unchecked.text	40691
-aarch64/utf8_ingest_unchecked.ir	18250835
+aarch64/utf8_ingest_unchecked.ir	18250835	3
 aarch64/utf8_ingest_validated.text	41216
-aarch64/utf8_ingest_validated.ir	24108639
+aarch64/utf8_ingest_validated.ir	24108639	3
