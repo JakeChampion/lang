@@ -152,20 +152,12 @@ slower and larger, not faster and smaller:
 
 An earlier note here read "peak RSS 11.2 GB -> 5.4 GB" on this workload. That
 was not a like-for-like pair: the 5.4 GB leg SEGFAULTED about 50 s in and never
-finished, so it is the peak of a partial run. Against a completed run the memory
-goes UP. The mechanism is the identity-arm retain: it leaves the field's buffer
-at rc >= 2, so the next append through it takes `__fern_arr_push`'s un-share
-copy, which allocates a fresh buffer and abandons the old one (`arr_push` never
-frees). The clone form's intermediate was reclaimed by `arr_push_owned`; this
-one is not. The batched `-per-module-emit-all` shape the fixpoint gate uses is
-unaffected (gen1 peaks 5.73 GB against a 16 GiB ceiling), and a single module is
-smaller either way, so what this costs is the one-process whole-compiler emit.
-Reclaiming it means retiring the identity retain, which needs the release paths
-that are not identity-guarded audited first — the reuse-analysis slice of goal 2
-again, not this change. **That audit is `2026-09-04-identity-arm-retain-retired.md`
-and the retain is gone**: nothing ever decremented it, and with the one release
-the audit found unguarded now bracketed, this workload runs 94.8 s / 8.32 GB
-(#8254).
+finished, so it is the peak of a partial run. The 155.3 s / 12.98 GB leg was
+measured with the identity-arm retain in place, and that retain is the whole of
+the regression — see the section below. It is gone; the numbers in this table
+describe a lowering that no longer exists. With the retain retired and the one
+release the audit found unguarded now bracketed, this workload runs
+94.8 s / 8.32 GB (#8254).
 
 ## Two containment holes a self-host-EMITTED compiler found
 
@@ -283,5 +275,43 @@ buffer.
   would take reading the binding names out of `ast.Pattern`; the shape needed to
   bite is `x = f(x)` on an arm binding whose struct fields a callee grows, which
   nothing in this tree does.
-- The identity-arm retain is retired, with the release-path audit it was waiting
-  on: `2026-09-04-identity-arm-retain-retired.md`.
+
+## The identity-arm retain was the leak, and it is retired
+
+The release-path audit this was waiting on is
+`2026-09-04-identity-arm-retain-retired.md`: one row per route that can reach
+the source field after an in-place grow. Seven are safe; the one that is not
+is a use-after-free the retain had been masking.
+
+The first cut had `lower_field_append_inplace` retain its result when the push
+did not reallocate, on the reading that the literal the value feeds becomes a
+second owner of the source container's buffer and owes the counted retain a
+container field owes.
+
+Nothing releases that retain. `__field_reclaim_<T>` frees a replaced array field
+only when it differs from BOTH the replacement's and the caller's snapshot — and
+the identity arm is exactly the case where it does not differ, so the superseded
+box hands the buffer over and decs nothing. The retain and the cow guard are two
+compensations for one hazard, and together they overcount by one per in-place
+grow:
+
+- The abandoned buffer is a straight leak, linear in the number of in-place
+  grows. `TestSelfHostAppendParamElemX86_64` measured `(n-1)/2` unfreed blocks
+  over an n-iteration threading loop, and `TestSelfHostFieldReclaimIRX86_64`
+  exhausted the 16 GiB arena (exit 125) on the 200M-iteration builder churn.
+- Leaving the field at rc >= 2 also sends the NEXT append down
+  `__fern_arr_push`'s un-share copy, which allocates a fresh buffer and abandons
+  the old one — the one-process whole-compiler emit's +2 GB above.
+
+No detector outside `FERN_LEAKCHECK` sees either: every free involved is at rc 1
+and every answer is correct, which is how it reached main.
+
+Without the retain the counting is the one the cow guard already assumes. The
+in-place arm hands the buffer over: source and replacement never both name it
+past the store, because the site is admitted only where no later read of the
+source's root can reach the field. The reallocating arm is unchanged — the
+pre-grow buffer stays the source's, differs from the replacement's, and
+`__field_reclaim_<T>` frees it.
+
+`TestSelfHostFieldAppendInPlaceReclaimsX86_64` is the gate that was missing: the
+feature's own cases are differential, and an answer cannot see a leak.
