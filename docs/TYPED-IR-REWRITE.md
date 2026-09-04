@@ -127,6 +127,11 @@ every emit path, so `-decide`, the eligibility judgement and the emit all see th
 same annotated tree. A driver that skips it (`asm_ir_run`, the native compiler)
 leaves every `ty` empty and gets the structural walk unchanged.
 
+The tag VOCABULARY is a separate axis from the carrier set: it names scalars,
+strings, structs, nominal enums, maps, tuples and the builtin Option/Result
+generics, and `""` for everything else. A node type can carry a stamp and still
+be told nothing, which is how the enum gap below survived a complete carrier set.
+
 | node | landed | consumers reading it |
 |---|---|---|
 | `ExprCall.ty` | #5531 | `expr_struct_type`, `expr_map_type_tag`, `expr_tuple_elem_tag`, `try_opt_type`, `expr_is_str` / `_f64` / `_u32` / `_u64`, `infer_expr_width` |
@@ -558,16 +563,6 @@ theirs.
 `infer_expr_width` and `lower_i64`'s load site together, so the next scalar kind
 is added in one place rather than missed in three.
 
-**Also open: `mk()()`, where the callee is a call returning a fn value.**
-`call_through_fn_value` reaches it, but `parse_func_decl` binds the return's
-`fn_ret` and throws it away — `parser.FuncDecl` has no sidecar to put it in,
-unlike `ParamDecl` and `StructFieldDecl` — so `mk` records the bare `"fn"` and
-the call types to a `TypeFunc` with an unknown result. Adding the field is ~70
-struct-literal sites across nine files; un-coarsening `FuncDecl.ret_type`
-instead has only three direct consumers of `== "fn"`, but `ret_type` feeds the
-width and registry machinery far more widely, so it is not the cheap option it
-looks like.
-
 Note how little of this the fixpoint reaches: the self-host's own sources carry
 one fn-typed parameter (`astwalk.fold_expr` / `fold_stmt`, #6993) at one arity
 and one signature, so `internal/e2eselfhost` and the fixture legs are still the
@@ -644,7 +639,10 @@ non-empty value, so teaching the shared namer to name arrays silently changes
 what they see on every array-valued call. The carrier instead gets its own
 `type_to_arrtag`, used at exactly one stamp site and read by one walk-first
 leaf. Widening the shared vocabulary is a separate decision from adding a
-carrier, and should be made on its own evidence.
+carrier, and should be made on its own evidence. It has been made once since,
+for nominal ENUM names — see "The shared vocabulary had no name for an enum"
+below for the evidence, and for why a nominal name is safe where an array
+spelling is not.
 
 A third ordering fact, learned wiring `ExprIndex.ty`: **a carrier must reach the
 LOAD site, not just the value predicates.** Wiring `expr_is_f64` alone made
@@ -805,6 +803,105 @@ session to rediscover:
   form: a field whose type is a bare type parameter stamps `""` and the clone
   inherits that. Measured across the fixture corpus, that is essentially the only
   place a field read goes unstamped.
+
+### The shared vocabulary had no name for an enum, and three layers agreed
+
+Widening `type_to_irtag` is a decision this file had already argued should be
+made "on its own evidence" (see the `ExprSlice.ty` note above). Here is that
+evidence: the namer had a `TypeStruct(st) => st.name` arm and **no union
+sibling**, so every enum-valued expression stamped `""` — while irlower's
+admission helper `struct_tag_from_ty` had admitted an enum name all along. The
+carrier and its consumer were built for each other and never met.
+
+Eight shapes were live BAILS on both backends, each one measured against the
+interp oracle, each `main` refused on the unknown symbol `i32.rank`:
+
+| shape | layer |
+|---|---|
+| `mk()[0].m()` where `mk(): Color[]` | carrier + walk |
+| `cs[1:2][0].m()` (sliced base) | carrier |
+| `r.c.m()` — a struct FIELD typed at an enum | carrier |
+| `t.0.m()` — the tuple-element sibling of it | carrier |
+| `mkf()().m()` — the callee is a call | carrier |
+| `[Color.Red, Color.Green][1].m()` | checker |
+| `(if (b) { [Color.Green] } else { … })[0].m()` | checker + carrier |
+| `h.sh.m()` — a `dyn Trait` struct FIELD | carrier |
+
+The widening is safe for the reason the `TypeStruct` arm already states, and it
+is worth repeating because it is what separates this from the array case that
+was rejected: the four tag-FIRST consumers (`expr_is_str` / `_f64` / `_u32` /
+`_u64`) compare the tag to their own keyword, so a nominal NAME reads false
+there — which is what the structural walk answered for an enum call too. An
+array spelling would have changed those answers; a nominal name cannot.
+
+Three layers were responsible, and the last one is the one worth reading:
+
+- **The carrier.** `type_to_irtag` names a bare nominal union now. A union
+  carrying ARGS is a generic instantiation with no irlower spelling, so only the
+  bare form names itself.
+- **The consumer.** `expr_struct_type`'s `ExprCall` and `ExprFieldAccess` arms
+  guarded their tag reads with `decl_is_struct` while the `ExprIndex` arm beside
+  them already used `struct_tag_from_ty`. `decl_is_struct` is not the question
+  those arms' callers ask — `method_recv_tyname` wants the receiver's NOMINAL
+  type, and the same function's other arms return enum names from the slot walk.
+  The `dyn Trait` field row in the table above fell out of that one substitution:
+  the ExprCall arm has returned the coarse `"dyn Trait"` spelling from
+  `struct_ret_fns_of` for a long time and the FIELD arm discarded the identical
+  spelling.
+- **The walk.** `struct_ret_fns_of`'s two ARRAY arms had no enum element
+  sibling, so `function mk(): Color[]` recorded nothing at all. That is the
+  answer the UNANNOTATED drivers (`asm_ir_run`, the native compiler) still
+  depend on, so it is fixed as a walk fix rather than left to the tag.
+  `enum_ret_recordable` is the one rule the scalar return and both array
+  returns ask, which is also where the `is_enum_like_name` type-VARIABLE
+  exclusion (#6441) now lives instead of being restated. Note its ORDERING
+  constraint: a one-letter enum name satisfies `irl_looks_type_var`, so the
+  enum arm has to run BEFORE the erased-generic branch that would otherwise
+  claim `E[]`, find no parameter spelled `E[]`, and record nothing.
+
+**And the checker had the hole under all of it.** A qualified UNIT variant
+`Color.Red` in VALUE position typed unknown: `check_call_expr` learned the
+qualified CONSTRUCTOR form in #6657 and `check_expr`'s field-access arm never
+learned the value sibling, so it read the enum NAME as an object and answered
+"can only field-access a struct or tuple". Two rows in the table are that bug,
+not a carrier gap — and a carrier added without it would have stamped `""` on
+exactly the expressions that needed one. `qual_variant_union` is the single rule
+both spellings ask now.
+
+This is the third time this file records the same instruction, so treat it as
+the rule rather than an anecdote: **probe the checker before adding a carrier.**
+The measurement that separated the two halves here was one debug print of
+`type_to_irtag(check_expr(e, s))` at the stamp site, comparing an enum program
+against its struct twin — the struct one printed `P`, the enum one printed
+nothing, and that single line said which of the three layers to open first.
+
+**And the admission helper had to get PRECISE before it could be widened.**
+`struct_tag_from_ty` admitted through `is_enum_like_name`, which answers "not a
+primitive, not an array, not bracketed" — and an ERASED generic struct name
+satisfies all three. Annotation runs before monomorphisation, so `OrdSet[K]`
+stamps the bare `OrdSet`, a name **no decl survives to carry** (only the
+concrete clones do). Routing two more arms through the helper therefore keyed
+every method on `ordset__OrdSet.<m>`, a symbol nothing defines, and took five
+persistent-collection stdlib modules off the IR path.
+
+`decl_is_enum` is the precise predicate — its own comment already said so —
+and with it plus `decl_is_struct` the helper's scalar exclusion list is
+redundant: nothing declares a struct or an enum named `i32`. The third
+admission, the coarse `dyn Trait` box, is what `is_dyn_value_name` now names
+once instead of three inline prefix tests.
+
+Two things to take from it. **A loose predicate is safe only as far as its
+current callers reach**; widening what asks it is what turns "occasionally
+over-matches" into a defect, so tighten before you widen. And the gate that
+caught it is the one `docs/TEST-GATES.md` names for exactly this: a self-host
+change that false-positives on real library code passes the checker-codes
+differential green, because every row there is a stdlib-free single-file
+program. `TestSelfHostStdTestE2E` compiles the stdlib, and it is what holds
+this — no synthetic case in the suite below reproduces it, because the shape
+needs a generic module whose clones replace the erased declaration.
+
+Pinned per shape, with its struct/scalar/bare-variant control, on x86-64 and
+wasm in `internal/e2eselfhost/self_host_annotate_enum_ir_test.go`.
 
 ## Sequencing and cost
 

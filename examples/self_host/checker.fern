@@ -2872,13 +2872,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
       // fell through to method dispatch, typed to unknown, and the
       // destination check silently under-reported.
       if (!qhandled) {
-        var cqe: string = qual_enum_name(fa.obj, s);
-        if (cqe.len() > 0 && qual_variant_exists(cqe, fa.field, s)) {
-          var cqu: string = union_of_variant(fa.field, s.unions);
-          if (cqu.len() > 0) {
-            return t_union(cqu);
-          }
-          return t_union(cqe);
+        var cqu: string = qual_variant_union(fa, s);
+        if (cqu.len() > 0) {
+          return t_union(cqu);
         }
       }
       // An ASSOCIATED (receiver-less) call on a TYPE — `i32.zero()`, or
@@ -3645,6 +3641,14 @@ function check_expr(e: ast.Expr, s: Scope): Type {
       return t_struct(sl.type_name);
     },
     ast.ExprFieldAccess(fa) => {
+      // A qualified UNIT variant `Color.Red` in VALUE position is not a field
+      // read at all — the object is a bare ENUM NAME, not a value — so it has
+      // to be resolved before the object is checked as one. Same rule as the
+      // constructor form above.
+      var vqu: string = qual_variant_union(fa, s);
+      if (vqu.len() > 0) {
+        return t_union(vqu);
+      }
       var ot: Type = check_expr(fa.obj, s);
       match (ot) {
         TypeStruct(sn) => {
@@ -7644,6 +7648,29 @@ function qual_variant_exists(en: string, field: string, s: Scope): boolean {
     return util.has_str(ou.variants, field);
   }
   return mx_builtin_enum_of(field) == en;
+}
+
+// qual_variant_union names the enum a qualified variant reference `Enum.Variant`
+// belongs to, or "" when `fa` is not one. Both spellings ask this ONE rule: the
+// CONSTRUCTOR form (`W.Wrap(1)`) learned it in #6657 and the VALUE form
+// (`Color.Red`) did not, so a unit variant written qualified typed unknown —
+// which left the typed-IR stamp empty on every expression built from it
+// (`[Color.Red, Color.Green][1]`) and took the lowering off the IR path (#5531).
+//
+// The variant's own owning union wins over the name the reference is written
+// through, so a `use`d or re-exported spelling still resolves to the declaring
+// enum; the written name is the fallback for a builtin enum, which has no
+// UnionSig to look the variant up in.
+function qual_variant_union(fa: ast.ExprFieldAccess, s: Scope): string {
+  var en: string = qual_enum_name(fa.obj, s);
+  if (en.len() == 0 || !qual_variant_exists(en, fa.field, s)) {
+    return "";
+  }
+  var owner: string = union_of_variant(fa.field, s.unions);
+  if (owner.len() > 0) {
+    return owner;
+  }
+  return en;
 }
 
 // AssocHit is an associated-call resolution: whether `Type.f(…)` names a
@@ -14152,9 +14179,7 @@ function type_to_irtag(t: Type): string {
     TypeUnion(u) => {
       // A builtin Option/Result-valued call: reconstruct the full "Option[T]" /
       // "Result[T, E]" tag irlower's try_opt_type keys on, from the union's
-      // captured args. Only Option/Result (the shapes try_opt_type resolves);
-      // other unions (enums / aliases / JsonValue / IoError) → "" (structural
-      // fallback). "" if any payload/error type isn't scalar/string/struct-
+      // captured args. "" if any payload/error type isn't scalar/string/struct-
       // serialisable, keeping the tag well-formed.
       if (u.name == "Option" && u.args.len() == 1) {
         var pt: string = type_to_irtag(u.args[0]);
@@ -14170,6 +14195,15 @@ function type_to_irtag(t: Type): string {
           return "";
         }
         return "Result[" + ot + ", " + et + "]";
+      }
+      // A NOMINAL enum-valued expression carries its enum NAME, the sibling of
+      // the TypeStruct arm above and read through the same admission helper
+      // (irlower's struct_tag_from_ty, which admits a struct or an enum and
+      // rejects the scalar vocabulary first). A union carrying ARGS is a
+      // generic instantiation whose spelling irlower has no vocabulary for, so
+      // only the bare form names itself.
+      if (u.args.len() == 0) {
+        return u.name;
       }
       return "";
     },
