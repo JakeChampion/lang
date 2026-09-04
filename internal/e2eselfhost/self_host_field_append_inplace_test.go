@@ -86,6 +86,22 @@ function main(): i32 {
     var d: St = bump2(a, 6);
     return a.ops.len() * 10 + d.ops.len() + d.ops[5];
 }`},
+	// The SOLE-OCCURRENCE death (#6048): `p` is read exactly once in bump3's
+	// whole body, so the caller-side bracket skips it there — and the growth
+	// escapes to bump3's OWN caller, which means the may-grow set has to
+	// propagate through that shape as well as through the self-reassign one.
+	{"sole-occurrence-pass-through", `
+struct St { ops: i32[], ctrl: i32 }
+function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl }; }
+function bump(s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl }; }
+function bump3(p: St): St { var t: St = bump(p, 4); return t; }
+function main(): i32 {
+    var a: St = St { ops: [], ctrl: 0 };
+    var i: i32 = 0;
+    while (i < 5) { a = a.emit(i); i = i + 1; }
+    var e: St = bump3(a);
+    return a.ops.len() * 10 + e.ops.len() + e.ops[5];
+}`},
 	// A struct argument reached through a FIELD chain: the bracket has to walk
 	// the container's field hops to the inner struct's buffer.
 	{"nested-field-argument", `
