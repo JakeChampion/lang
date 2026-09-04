@@ -4665,15 +4665,14 @@ pub function build_io_error_func(slot: i32): string {
 //   - pi/2 is carried as THREE 33-bit chunks (~99 bits). Two is not enough
 //     near a zero of sine, where the reduced argument IS the answer, so the
 //     reduction's absolute error becomes the result's relative error.
-//   - Every function guards its domain. Without that exp(1000) returned
-//     -6.1e-183 rather than +Inf — 2^k is built as (k+1023)<<52 and k=1443
-//     overflows the exponent field into the SIGN bit — and log(0) returned
-//     -709.09 rather than -Inf. Infinities are spelled via
-//     f64.reinterpret_i64 of their bit patterns, which is the idiom already
-//     used here for 2^k, rather than relying on an `inf` literal.
+//   - Every function guards its domain: log(0) returned -709.09 rather than
+//     -Inf without it. The domain guard is not what keeps 2^k in range — that
+//     is the two half-scales the reconstruction is built from. Infinities are
+//     spelled via f64.reinterpret_i64 of their bit patterns, which is the
+//     idiom already used here for 2^k, rather than an `inf` literal.
 pub function exp_func(): string {
     var o: string = "";    o = o + "  (func $__fern_exp_f64 (param $x f64) (result f64)\n";
-    o = o + "    (local $kf f64) (local $ki i64) (local $r f64) (local $hi f64) (local $lo f64) (local $t f64) (local $c f64) (local $p f64)\n";
+    o = o + "    (local $kf f64) (local $ki i64) (local $k1 i64) (local $r f64) (local $hi f64) (local $lo f64) (local $t f64) (local $c f64) (local $p f64)\n";
     o = o + "    (if (f64.ne (local.get $x) (local.get $x)) (then (return (local.get $x))))\n";
     o = o + "    (if (f64.gt (local.get $x) (f64.const 709.782712893383973096)) (then (return (f64.reinterpret_i64 (i64.const 9218868437227405312)))))\n";
     o = o + "    (if (f64.lt (local.get $x) (f64.const -745.133219101941108420)) (then (return (f64.const 0.0))))\n";
@@ -4690,7 +4689,10 @@ pub function exp_func(): string {
     o = o + "    (local.set $p (f64.add (f64.mul (local.get $p) (local.get $t)) (f64.const 1.66666666666666019037e-01)))\n";
     o = o + "    (local.set $c (f64.sub (local.get $r) (f64.mul (local.get $p) (local.get $t))))\n";
     o = o + "    (local.set $p (f64.sub (f64.const 1.0) (f64.sub (f64.sub (local.get $lo) (f64.div (f64.mul (local.get $r) (local.get $c)) (f64.sub (f64.const 2.0) (local.get $c)))) (local.get $hi))))\n";
-    o = o + "    (f64.mul (local.get $p) (f64.reinterpret_i64 (i64.shl (i64.add (local.get $ki) (i64.const 1023)) (i64.const 52)))))\n";
+    // 2^k as two half-scales; see asm_ir.fern's exp for why one field
+    // cannot hold the subnormal band.
+    o = o + "    (local.set $k1 (i64.shr_s (local.get $ki) (i64.const 1)))\n";
+    o = o + "    (f64.mul (f64.mul (local.get $p) (f64.reinterpret_i64 (i64.shl (i64.add (local.get $k1) (i64.const 1023)) (i64.const 52)))) (f64.reinterpret_i64 (i64.shl (i64.add (i64.sub (local.get $ki) (local.get $k1)) (i64.const 1023)) (i64.const 52)))))\n";
     return o;
 }
 
