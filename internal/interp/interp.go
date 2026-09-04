@@ -53,8 +53,42 @@ type Number int64
 type Bool bool
 type String string
 type Void struct{}
-type Array []Value
 type Func struct{ Decl *ast.FuncDecl }
+
+// Array is the interpreter's `T[]` value: a view (E) over a backing
+// buffer, plus that buffer's shared header. Every view of one allocation
+// — a `[lo:hi]` slice, the shorter array an in-place append grew from —
+// shares the header, because an element write through any of them is
+// visible through all of them. A nil header reads as permanently shared.
+// See docs/INTERP-ARRAY-INPLACE-WRITE.md.
+type Array struct {
+	E []Value
+	h *arrHeader
+}
+
+type arrHeader struct {
+	// owners is the number of live references to the buffer the
+	// interpreter can see: bindings, containers, parameters, argument
+	// temporaries. `arr.with(i, v)` writes in place only at zero, where
+	// nothing else covers the buffer.
+	owners int32
+	// paths is the number of times adjustRC has counted this array into
+	// the Map rc — that is, how many owning routes reach the elements
+	// through it. An in-place element write hands exactly that many
+	// paths from the element it replaces to the one it stores.
+	paths int32
+}
+
+func newArray(n int) Array { return Array{E: make([]Value, n), h: &arrHeader{}} }
+
+func arrayOf(vs ...Value) Array { return Array{E: vs, h: &arrHeader{}} }
+
+// view is a sub-range over the same allocation, sharing its header.
+func (a Array) view(lo, hi int) Array { return Array{E: a.E[lo:hi], h: a.h} }
+
+// exclusive reports whether nothing the interpreter counts covers this
+// buffer, so an element write through this view is unobservable.
+func (a Array) exclusive() bool { return a.h != nil && a.h.owners == 0 }
 
 // Cell is the runtime value of Cell[T] (docs/CELL-TYPE-PLAN.md): a
 // single-slot mutable box held by pointer, so `set` mutates the shared
@@ -169,12 +203,13 @@ func retainReplacing(v, old Value) {
 	release(old)
 }
 
-// appendedTail reports whether next is old plus zero or more elements
-// over old's own backing buffer, and returns those elements. A shared
-// base pointer is what makes the prefix identical: an array's covered
-// slots are never rewritten, so growth is the only way one array can
-// extend another.
-func appendedTail(old, next Value) (Array, bool) {
+// appendedTail reports whether next covers old's allocation plus zero or
+// more further elements, and returns those extra elements. The shared
+// allocation is what makes the prefix identical: an append grows into
+// spare capacity, and an in-place `with` does its own count bookkeeping
+// for the one element it replaces, so nothing else in the prefix can
+// differ.
+func appendedTail(old, next Value) ([]Value, bool) {
 	na, ok := next.(Array)
 	if !ok {
 		return nil, false
@@ -183,14 +218,39 @@ func appendedTail(old, next Value) (Array, bool) {
 	if !ok {
 		return nil, false
 	}
-	if len(na) < len(oa) {
+	if oa.h == nil || oa.h != na.h || len(na.E) < len(oa.E) {
 		return nil, false
 	}
-	if len(oa) > 0 && &oa[0] != &na[0] {
-		return nil, false
-	}
-	return na[len(oa):], true
+	return na.E[len(oa.E):], true
 }
+
+// arrOwn / arrDisown maintain the array owner count, which — unlike the
+// Map rc that adjustRC walks — is NOT recursive: a container's own count
+// says nothing about its elements, so every container that takes an
+// array element owns it directly (see storeArray). That keeps a store
+// O(1) instead of O(size of the value).
+//
+// Only an UNDER-count is dangerous. A `with` that copies when it could
+// have written in place is still correct, just slower, so every site
+// that is unsure counts.
+func arrOwn(v Value) {
+	if a, ok := v.(Array); ok && a.h != nil {
+		a.h.owners++
+	}
+}
+
+func arrDisown(v Value) {
+	if a, ok := v.(Array); ok && a.h != nil {
+		a.h.owners--
+	}
+}
+
+// storeArray records an array being placed inside a container (an array
+// or tuple element, a struct field, an enum payload, a map entry, a
+// cell). Containers are never torn down — the interpreter leaves that to
+// Go's GC — so the count is never given back: an array that has ever
+// been stored in one is copied by `with` from then on.
+func storeArray(v Value) { arrOwn(v) }
 
 func adjustRC(v Value, delta int) {
 	switch x := v.(type) {
@@ -205,7 +265,10 @@ func adjustRC(v Value, delta int) {
 			adjustRC(vv, delta)
 		}
 	case Array:
-		for _, e := range x {
+		if x.h != nil {
+			x.h.paths += int32(delta)
+		}
+		for _, e := range x.E {
 			adjustRC(e, delta)
 		}
 	case *Struct:
@@ -335,7 +398,7 @@ func (Void) String() string     { return "" }
 func (a Array) String() string {
 	var b strings.Builder
 	b.WriteByte('[')
-	for i, v := range a {
+	for i, v := range a.E {
 		if i > 0 {
 			b.WriteString(", ")
 		}
@@ -475,11 +538,48 @@ type Interp struct {
 	// than on wall-clock time, so the quadratic-append regression
 	// (#6395) is caught deterministically instead of flakily.
 	arrayGrowCopies int
+	// arraySetCopies is the same instrument for `with`: the elements
+	// copied because the receiver's buffer was not exclusively held.
+	// TestArrayWithIsLinear asserts on it (#7287).
+	arraySetCopies int
+	// arrayCOW selects the in-place-write mode FERN_INTERP_ARRAY_COW
+	// asked for, and envs holds the scopes verify mode scans.
+	arrayCOW arrayCOWMode
+	envs     []*env
+	// moving holds the values whose slot has released its array count
+	// for the assignment currently evaluating its right-hand side. Each
+	// such slot still physically holds the value until the assignment
+	// completes, which is what verify mode has to allow for.
+	moving []Value
+}
+
+// arrayCOWMode is what FERN_INTERP_ARRAY_COW selects: the default
+// counted in-place write, `copy` (never write in place — the baseline a
+// cross-check compares against), or `verify` (write in place, but first
+// scan every live scope for another value over the same buffer and abort
+// if one is found). See docs/INTERP-ARRAY-INPLACE-WRITE.md.
+type arrayCOWMode int
+
+const (
+	arrayCOWCounted arrayCOWMode = iota
+	arrayCOWCopy
+	arrayCOWVerify
+)
+
+func arrayCOWFromEnv() arrayCOWMode {
+	switch os.Getenv("FERN_INTERP_ARRAY_COW") {
+	case "copy":
+		return arrayCOWCopy
+	case "verify":
+		return arrayCOWVerify
+	}
+	return arrayCOWCounted
 }
 
 func New() *Interp {
 	i := &Interp{
 		Funcs:        map[string]*ast.FuncDecl{},
+		arrayCOW:     arrayCOWFromEnv(),
 		traitMethods: map[string]string{},
 		Enums:        map[string]*ast.EnumDecl{},
 		Builtins:     map[string]*Builtin{},
@@ -1007,16 +1107,16 @@ func builtinTcpRecv(i *Interp, args []Value) (Value, error) {
 	}
 	conn, ok := i.tcpConns[int64(id)]
 	if !ok {
-		return Array{}, nil
+		return arrayOf(), nil
 	}
 	buf := make([]byte, int(max))
 	n, err := conn.Read(buf)
 	if err != nil || n <= 0 {
-		return Array{}, nil
+		return arrayOf(), nil
 	}
-	out := make(Array, n)
+	out := newArray(n)
 	for j := 0; j < n; j++ {
-		out[j] = Number(buf[j])
+		out.E[j] = Number(buf[j])
 	}
 	return out, nil
 }
@@ -1154,9 +1254,9 @@ func builtinRandomBytes(_ *Interp, args []Value) (Value, error) {
 	if _, err := cryptorand.Read(buf); err != nil {
 		return nil, fmt.Errorf("random_bytes: %v", err)
 	}
-	out := make(Array, len(buf))
+	out := newArray(len(buf))
 	for i, b := range buf {
-		out[i] = Number(b)
+		out.E[i] = Number(b)
 	}
 	return out, nil
 }
@@ -1347,17 +1447,17 @@ var unclaimedSlot Value = unclaimed{}
 // O(n) rather than O(n²); the spare slots carry the unclaimed mark, so
 // exactly one later append can take each of them.
 func growArray(arr Array) Array {
-	want := len(arr) + 1
+	want := len(arr.E) + 1
 	capacity := 2 * want
 	if capacity < 8 {
 		capacity = 8
 	}
-	buf := make(Array, capacity)
-	n := copy(buf, arr)
+	buf := newArray(capacity)
+	n := copy(buf.E, arr.E)
 	for i := n; i < capacity; i++ {
-		buf[i] = unclaimedSlot
+		buf.E[i] = unclaimedSlot
 	}
-	return buf[:want]
+	return buf.view(0, want)
 }
 
 // `(arr: T[]) push(v: T): T[]` — functional append. The codegen path
@@ -1376,15 +1476,16 @@ func builtinArrayPush(ip *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("__method_Array_push: receiver must be array, got %T", args[0])
 	}
-	n := len(arr)
-	if n < cap(arr) {
-		if grown := arr[:n+1]; grown[n] == unclaimedSlot {
-			grown[n] = args[1]
+	storeArray(args[1])
+	n := len(arr.E)
+	if n < cap(arr.E) {
+		if grown := arr.view(0, n+1); grown.E[n] == unclaimedSlot {
+			grown.E[n] = args[1]
 			return grown, nil
 		}
 	}
 	out := growArray(arr)
-	out[n] = args[1]
+	out.E[n] = args[1]
 	ip.arrayGrowCopies += n
 	return out, nil
 }
@@ -1392,10 +1493,12 @@ func builtinArrayPush(ip *Interp, args []Value) (Value, error) {
 // builtinArraySet is the value-returning element set behind
 // `arr.set(i, v)` / `arr.with(i, v)` — codegen lowers it to the CoW
 // `__fern_arr_cow_inplace` shape (a possibly-fresh array with element
-// i replaced); the interpreter mirrors that with a fresh Go slice so
-// the source array stays untouched. Receiver-as-first-arg, matching
-// the codegen surface registered in checker.go.
-func builtinArraySet(_ *Interp, args []Value) (Value, error) {
+// i replaced), writing into the receiver's buffer when it holds the
+// only live reference and copying otherwise. The interpreter mirrors
+// that off the array's owner count: at zero nothing else covers the
+// buffer, so the write cannot be observed. Receiver-as-first-arg,
+// matching the codegen surface registered in checker.go.
+func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 	if len(args) != 3 {
 		return nil, fmt.Errorf("__method_Array_set: expected 3 args (arr, i, v), got %d", len(args))
 	}
@@ -1407,13 +1510,110 @@ func builtinArraySet(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("__method_Array_set: index must be number, got %T", args[1])
 	}
-	if idx < 0 || int(idx) >= len(arr) {
-		return nil, fmt.Errorf("__method_Array_set: index %d out of range [0, %d)", int(idx), len(arr))
+	if idx < 0 || int(idx) >= len(arr.E) {
+		return nil, fmt.Errorf("__method_Array_set: index %d out of range [0, %d)", int(idx), len(arr.E))
 	}
-	out := make(Array, len(arr))
-	copy(out, arr)
-	out[int(idx)] = args[2]
+	storeArray(args[2])
+	inPlace, err := ip.arrayWriteInPlace(arr)
+	if err != nil {
+		return nil, err
+	}
+	if inPlace {
+		// The element stored takes over the Map-rc paths the receiver
+		// gave the one it replaces. The assignment that follows cannot
+		// do this: it sees the same array going out as came in, so its
+		// retain and release cancel.
+		adjustRC(args[2], int(arr.h.paths))
+		adjustRC(arr.E[int(idx)], -int(arr.h.paths))
+		arr.E[int(idx)] = args[2]
+		return arr, nil
+	}
+	out := newArray(len(arr.E))
+	copy(out.E, arr.E)
+	out.E[int(idx)] = args[2]
+	ip.arraySetCopies += len(arr.E)
 	return out, nil
+}
+
+// arrayWriteInPlace decides whether `with` may write into the
+// receiver's own buffer, and enforces the two diagnostic modes
+// FERN_INTERP_ARRAY_COW selects. See docs/INTERP-ARRAY-INPLACE-WRITE.md.
+func (i *Interp) arrayWriteInPlace(arr Array) (bool, error) {
+	if i.arrayCOW == arrayCOWCopy || !arr.exclusive() {
+		return false, nil
+	}
+	if i.arrayCOW == arrayCOWVerify {
+		if err := i.verifyExclusive(arr); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// verifyExclusive is the safety net behind FERN_INTERP_ARRAY_COW=verify:
+// it walks every binding of every live scope looking for a value over the
+// buffer about to be written, and refuses the write if it finds one that
+// is not accounted for. The slots of the assignments in flight still hold
+// the value at this point — they have released their count but not yet
+// been overwritten — so those are expected; anything beyond them is an
+// under-count, the failure mode that would otherwise corrupt the oracle
+// silently.
+//
+// It sees what is reachable from scopes, which is where a missed retain
+// shows up; a value held only in a Go temporary of an enclosing
+// evaluation is out of its reach.
+func (i *Interp) verifyExclusive(arr Array) error {
+	allowed := 0
+	for _, m := range i.moving {
+		if ma, ok := m.(Array); ok && ma.h == arr.h {
+			allowed++
+		}
+	}
+	holders := 0
+	for _, e := range i.envs {
+		for _, v := range e.vars {
+			holders += coversBuffer(v, arr.h, 0)
+		}
+	}
+	if holders <= allowed {
+		return nil
+	}
+	return fmt.Errorf("FERN_INTERP_ARRAY_COW=verify: in-place write to a %d-element array covered by %d live bindings, %d of them moving",
+		len(arr.E), holders, allowed)
+}
+
+// coversBuffer counts the values inside v that view the allocation h
+// heads. depth bounds the walk so a value graph the interpreter has made
+// cyclic (a Cell holding its own container) cannot hang the check.
+func coversBuffer(v Value, h *arrHeader, depth int) int {
+	if depth > 12 {
+		return 0
+	}
+	n := 0
+	switch x := v.(type) {
+	case Array:
+		if x.h == h {
+			n++
+		}
+		for _, e := range x.E {
+			n += coversBuffer(e, h, depth+1)
+		}
+	case *Struct:
+		for _, f := range x.Fields {
+			n += coversBuffer(f, h, depth+1)
+		}
+	case *Enum:
+		for _, p := range x.Payloads {
+			n += coversBuffer(p, h, depth+1)
+		}
+	case *Map:
+		for _, mv := range x.vals {
+			n += coversBuffer(mv, h, depth+1)
+		}
+	case *Cell:
+		n += coversBuffer(x.V, h, depth+1)
+	}
+	return n
 }
 
 // Map builtins. `map_new(cap)` ignores the capacity hint (the
@@ -1438,6 +1638,7 @@ func builtinCellNew(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("cell_new: expected 1 arg, got %d", len(args))
 	}
+	storeArray(args[0])
 	return &Cell{V: args[0]}, nil
 }
 
@@ -1468,6 +1669,7 @@ func builtinCellSet(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 2 {
 		return nil, fmt.Errorf("Cell.set: expected 2 args, got %d", len(args))
 	}
+	storeArray(args[1])
 	c.V = args[1]
 	return Void{}, nil
 }
@@ -1528,9 +1730,19 @@ func builtinMapSet(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_Map_set: expected 3 args (m, k, v), got %d", len(args))
 	}
 	t := cowTarget(m)
+	// A map in-place set stores through the receiver, so the entry gains
+	// the paths the receiver has; the entry it displaces loses them. The
+	// assignment that follows cannot do this accounting — it sees the
+	// same *Map going out as came in, so its retain and release cancel.
+	storeArray(args[1])
+	storeArray(args[2])
 	if idx := t.findKey(args[1]); idx >= 0 {
+		adjustRC(args[2], t.rc)
+		adjustRC(t.vals[idx], -t.rc)
 		t.vals[idx] = args[2]
 	} else {
+		adjustRC(args[1], t.rc)
+		adjustRC(args[2], t.rc)
 		t.keys = append(t.keys, args[1])
 		t.vals = append(t.vals, args[2])
 	}
@@ -1558,7 +1770,7 @@ func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
 	}
 	idx := m.findKey(args[1])
 	if idx < 0 {
-		return Array{m, Bool(false)}, nil // unchanged; in-place receiver is fine
+		return arrayOf(m, Bool(false)), nil // unchanged; in-place receiver is fine
 	}
 	t := cowTarget(m)
 	if t != m {
@@ -1574,7 +1786,7 @@ func builtinMapDelete(_ *Interp, args []Value) (Value, error) {
 	t.vals[idx] = t.vals[last]
 	t.keys = t.keys[:last]
 	t.vals = t.vals[:last]
-	return Array{t, Bool(true)}, nil
+	return arrayOf(t, Bool(true)), nil
 }
 
 func builtinMapClear(_ *Interp, args []Value) (Value, error) {
@@ -1615,8 +1827,8 @@ func builtinMapKeys(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("__method_Map_keys: expected 1 arg (receiver), got %d", len(args))
 	}
-	out := make(Array, len(m.keys))
-	copy(out, m.keys)
+	out := newArray(len(m.keys))
+	copy(out.E, m.keys)
 	return out, nil
 }
 
@@ -1628,8 +1840,8 @@ func builtinMapValues(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("__method_Map_values: expected 1 arg (receiver), got %d", len(args))
 	}
-	out := make(Array, len(m.vals))
-	copy(out, m.vals)
+	out := newArray(len(m.vals))
+	copy(out.E, m.vals)
 	return out, nil
 }
 
@@ -1723,9 +1935,9 @@ func builtinAllocU8(_ *Interp, args []Value) (Value, error) {
 	if n < 0 {
 		return nil, fmt.Errorf("__alloc_u8: negative length %d", int64(n))
 	}
-	out := make(Array, int(n))
-	for i := range out {
-		out[i] = Number(0)
+	out := newArray(int(n))
+	for i := range out.E {
+		out.E[i] = Number(0)
 	}
 	return out, nil
 }
@@ -1745,8 +1957,8 @@ func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("string_from_bytes_unchecked: arg must be array, got %T", args[0])
 	}
-	buf := make([]byte, len(arr))
-	for i, v := range arr {
+	buf := make([]byte, len(arr.E))
+	for i, v := range arr.E {
 		n, ok := v.(Number)
 		if !ok {
 			return nil, fmt.Errorf("string_from_bytes_unchecked: element %d not a number (%T)", i, v)
@@ -1797,9 +2009,9 @@ func builtinStringBytes(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__method_string_bytes: receiver must be string, got %T", args[0])
 	}
 	raw := []byte(s)
-	out := make(Array, len(raw))
+	out := newArray(len(raw))
 	for i, b := range raw {
-		out[i] = Number(int64(b))
+		out.E[i] = Number(int64(b))
 	}
 	return out, nil
 }
@@ -1899,9 +2111,9 @@ func builtinReadFileBytes(_ *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
-	out := make(Array, len(data))
+	out := newArray(len(data))
 	for i, b := range data {
-		out[i] = Number(b)
+		out.E[i] = Number(b)
 	}
 	return resultOk(out), nil
 }
@@ -2086,9 +2298,9 @@ func builtinReadDir(_ *Interp, args []Value) (Value, error) {
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
-	out := make(Array, len(entries))
+	out := newArray(len(entries))
 	for i, e := range entries {
-		out[i] = String(e.Name())
+		out.E[i] = String(e.Name())
 	}
 	return resultOk(out), nil
 }
@@ -2223,8 +2435,8 @@ func builtinSubprocess(_ *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("subprocess: expected string stdin, got %T", args[2])
 	}
-	argv := make([]string, len(argsArr))
-	for i, a := range argsArr {
+	argv := make([]string, len(argsArr.E))
+	for i, a := range argsArr.E {
 		s, isStr := a.(String)
 		if !isStr {
 			return nil, fmt.Errorf("subprocess: args[%d] not a string (%T)", i, a)
@@ -2587,9 +2799,9 @@ func builtinArgs(i *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("args: expected 0 args, got %d", len(args))
 	}
-	out := make(Array, len(i.Args))
+	out := newArray(len(i.Args))
 	for k, a := range i.Args {
-		out[k] = String(a)
+		out.E[k] = String(a)
 	}
 	return out, nil
 }
@@ -2602,7 +2814,7 @@ func builtinLen(_ *Interp, args []Value) (Value, error) {
 	case String:
 		return Number(int64(len(string(v)))), nil
 	case Array:
-		return Number(int64(len(v))), nil
+		return Number(int64(len(v.E))), nil
 	}
 	return nil, fmt.Errorf(".len(): expected string, array, or slice receiver, got %T", args[0])
 }
@@ -2784,6 +2996,7 @@ func (e *env) set(name string, v Value) {
 func (e *env) declare(name string, v Value) {
 	e.vars[name] = v
 	retain(v)
+	arrOwn(v)
 }
 
 // releaseScope drops the COW references held by every binding in a scope
@@ -2794,6 +3007,7 @@ func (e *env) declare(name string, v Value) {
 func (e *env) releaseScope() {
 	for _, v := range e.vars {
 		release(v)
+		arrDisown(v)
 	}
 }
 
@@ -2844,13 +3058,23 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	}
 	e := newEnv(nil)
 	for k, p := range fn.Params {
-		// Parameters are BORROWED, not owned: the backends pass a map to
-		// a function without bumping its COW refcount, so a mutation
+		// A map parameter is BORROWED, not owned: the backends pass a map
+		// to a function without bumping its COW refcount, so a mutation
 		// through the param (e.g. `p = p.set(...)`) hits the caller's map
 		// in place (rc stays 1). Bind directly, bypassing declare's
 		// retain, so the interp matches. See docs/INTERP-MAP-COW-PLAN.md.
+		// An ARRAY parameter is owned — the backends dup an array whose
+		// caller still needs it, and copy the `with` that follows.
 		e.vars[p.Name] = args[k]
+		arrOwn(args[k])
 	}
+	defer func() {
+		for _, v := range e.vars {
+			arrDisown(v)
+		}
+	}()
+	i.envs = append(i.envs, e)
+	defer func() { i.envs = i.envs[:len(i.envs)-1] }()
 	i.deferStack = append(i.deferStack, nil)
 	r, err := i.execBlock(fn.Body, e)
 	defers := i.deferStack[len(i.deferStack)-1]
@@ -2979,6 +3203,8 @@ func isErrReturnValue(v Value) bool {
 func (i *Interp) execBlock(b *ast.Block, parent *env) (result, error) {
 	e := newEnv(parent)
 	defer e.releaseScope()
+	i.envs = append(i.envs, e)
+	defer func() { i.envs = i.envs[:len(i.envs)-1] }()
 	for _, s := range b.Stmts {
 		r, err := i.execStmt(s, e)
 		if err != nil {
@@ -3166,11 +3392,11 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if !ok {
 			return result{}, fmt.Errorf("destructure requires a tuple, got %T", v)
 		}
-		if len(arr) != len(x.Names) {
-			return result{}, fmt.Errorf("tuple has %d elements, but %d names given", len(arr), len(x.Names))
+		if len(arr.E) != len(x.Names) {
+			return result{}, fmt.Errorf("tuple has %d elements, but %d names given", len(arr.E), len(x.Names))
 		}
 		for i2, name := range x.Names {
-			e.declare(name, arr[i2])
+			e.declare(name, arr.E[i2])
 		}
 		// A nested element's binder is declared, so its own Destructure —
 		// reading that binder — runs as an ordinary one in the same env.
@@ -3314,7 +3540,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 						armEnv.declare(arm.AtBinding, arr)
 					}
 					for k, el := range arm.TupleElems {
-						bindTupleElem(armEnv, el, arr[k])
+						bindTupleElem(armEnv, el, arr.E[k])
 					}
 				}
 				if arm.Guard != nil {
@@ -3450,11 +3676,11 @@ func tupleElemVariantMatches(v Value, variantName string) bool {
 // and `_` always match. Mirrors the compiled backend's tupleMatchArmTest, and
 // is shared by the statement and expression match forms.
 func (i *Interp) tupleElemsMatch(elems []ast.TuplePatElem, arr Array, e *env) (bool, error) {
-	if len(elems) != len(arr) {
+	if len(elems) != len(arr.E) {
 		return false, nil
 	}
 	for k, el := range elems {
-		ok, err := i.tupleElemMatches(el, arr[k], e)
+		ok, err := i.tupleElemMatches(el, arr.E[k], e)
 		if err != nil || !ok {
 			return false, err
 		}
@@ -3616,8 +3842,8 @@ func bindTupleElem(armEnv *env, el ast.TuplePatElem, v Value) {
 			return
 		}
 		for k, nel := range el.Nested {
-			if k < len(sub) {
-				bindTupleElem(armEnv, nel, sub[k])
+			if k < len(sub.E) {
+				bindTupleElem(armEnv, nel, sub.E[k])
 			}
 		}
 		return
@@ -3725,11 +3951,11 @@ func valuesEqual(a, b Value) bool {
 		// (Fern forbids reference cycles via E048/E049/E057, so no infinite
 		// descent).
 		bx, ok := b.(Array)
-		if !ok || len(ax) != len(bx) {
+		if !ok || len(ax.E) != len(bx.E) {
 			return false
 		}
-		for i := range ax {
-			if !valuesEqual(ax[i], bx[i]) {
+		for i := range ax.E {
+			if !valuesEqual(ax.E[i], bx.E[i]) {
 				return false
 			}
 		}
@@ -3962,13 +4188,14 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		}
 		return nil, fmt.Errorf("undefined identifier %q", x.Name)
 	case *ast.ArrayLit:
-		out := make(Array, len(x.Elems))
+		out := newArray(len(x.Elems))
 		for k, el := range x.Elems {
 			v, err := i.evalExpr(el, env)
 			if err != nil {
 				return nil, err
 			}
-			out[k] = v
+			storeArray(v)
+			out.E[k] = v
 		}
 		return out, nil
 	case *ast.MapLit:
@@ -3983,10 +4210,12 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			storeArray(kv)
 			vv, err := i.evalExpr(ent.Value, env)
 			if err != nil {
 				return nil, err
 			}
+			storeArray(vv)
 			if idx := m.findKey(kv); idx >= 0 {
 				m.vals[idx] = vv
 			} else {
@@ -4000,7 +4229,9 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
+		arrOwn(arrV)
 		idxV, err := i.evalExpr(x.Idx, env)
+		arrDisown(arrV)
 		if err != nil {
 			return nil, err
 		}
@@ -4020,10 +4251,10 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("indexing non-array %T", arrV)
 		}
-		if idx < 0 || int(idx) >= len(arr) {
-			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr))
+		if idx < 0 || int(idx) >= len(arr.E) {
+			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr.E))
 		}
-		return arr[idx], nil
+		return arr.E[idx], nil
 	case *ast.SliceExpr:
 		// Slices on arrays are stored as `Array` at interp time
 		// — same type because the interpreter doesn't model
@@ -4038,10 +4269,12 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		if err != nil {
 			return nil, err
 		}
+		arrOwn(srcV)
+		defer arrDisown(srcV)
 		var slen int64
 		switch v := srcV.(type) {
 		case Array:
-			slen = int64(len(v))
+			slen = int64(len(v.E))
 		case String:
 			slen = int64(len(v))
 		default:
@@ -4076,7 +4309,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			if low < 0 || high > slen || low > high {
 				return nil, fmt.Errorf("slice [%d:%d] out of range for length %d", low, high, slen)
 			}
-			return Array(v[low:high]), nil
+			return v.view(int(low), int(high)), nil
 		case String:
 			// `s[a:b]` on a string is CHECKED (#5634): an out-of-range
 			// range or an end inside a multi-byte code point is `None`,
@@ -4273,7 +4506,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 						armEnv.declare(arm.AtBinding, arr)
 					}
 					for k, el := range arm.TupleElems {
-						bindTupleElem(armEnv, el, arr[k])
+						bindTupleElem(armEnv, el, arr.E[k])
 					}
 				}
 				if arm.Guard != nil {
@@ -4388,6 +4621,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 				return nil, fmt.Errorf("struct-update base is not a struct: %T", bv)
 			}
 			for k, v := range bs.Fields {
+				storeArray(v)
 				s.Fields[k] = v
 			}
 		}
@@ -4396,6 +4630,7 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			if err != nil {
 				return nil, err
 			}
+			storeArray(v)
 			s.Fields[f.Name] = v
 		}
 		return s, nil
@@ -4403,13 +4638,14 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 		// Reuse Array — tuples are positional by construction, so a
 		// flat slice of values is the right shape and avoids a new
 		// Value subtype just for tuples.
-		out := make(Array, len(x.Elems))
+		out := newArray(len(x.Elems))
 		for i2, e := range x.Elems {
 			v, err := i.evalExpr(e, env)
 			if err != nil {
 				return nil, err
 			}
-			out[i2] = v
+			storeArray(v)
+			out.E[i2] = v
 		}
 		return out, nil
 	case *ast.FieldAccess:
@@ -4437,10 +4673,10 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 			if err != nil {
 				return nil, fmt.Errorf("tuple access requires numeric index, got %q", x.Field)
 			}
-			if idx < 0 || idx >= len(arr) {
-				return nil, fmt.Errorf("tuple has %d elements; index %d out of range", len(arr), idx)
+			if idx < 0 || idx >= len(arr.E) {
+				return nil, fmt.Errorf("tuple has %d elements; index %d out of range", len(arr.E), idx)
 			}
-			return arr[idx], nil
+			return arr.E[idx], nil
 		}
 		s, ok := tv.(*Struct)
 		if !ok {
@@ -4456,14 +4692,28 @@ func (i *Interp) evalExpr(e ast.Expr, env *env) (Value, error) {
 }
 
 func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
+	// An argument already evaluated stays live while the remaining ones
+	// are evaluated, and one of those can run statements — a block
+	// expression, a call — that reassign the binding it came from.
+	// Counting it for that window stops the reassignment from seeing the
+	// buffer as unshared. The count is given back before the call, so a
+	// receiver whose only reference is the one being moved into the call
+	// still reaches zero.
 	args := make([]Value, len(c.Args))
+	held := 0
 	for k, a := range c.Args {
 		v, err := i.evalExpr(a, env)
 		if err != nil {
+			disownAll(args[:held])
 			return nil, err
 		}
 		args[k] = v
+		if k+1 < len(c.Args) {
+			arrOwn(v)
+			held = k + 1
+		}
 	}
+	disownAll(args[:held])
 	// Dynamic trait-object dispatch: the checker marked this call with
 	// the trait name and left the callee a FieldAccess (`d.area()`
 	// where `d: dyn Shape`). Resolve the concrete method from the
@@ -4512,6 +4762,9 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 						return nil, fmt.Errorf("interp: variant %s expects %d argument(s), got %d",
 							id.Name, want, got)
 					}
+					for _, p := range args {
+						storeArray(p)
+					}
 					return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
 				}
 			}
@@ -4546,6 +4799,12 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 	return nil, fmt.Errorf("interp: not a function: %T", cv)
 }
 
+func disownAll(vs []Value) {
+	for _, v := range vs {
+		arrDisown(v)
+	}
+}
+
 // callClosure dispatches a call through a Closure value. The
 // param environment chains off the captured env (not a fresh
 // nil parent), so reads of free variables hit the values
@@ -4562,6 +4821,13 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	for k, p := range c.Decl.Params {
 		e.declare(p.Name, args[k])
 	}
+	defer func() {
+		for _, v := range e.vars {
+			arrDisown(v)
+		}
+	}()
+	i.envs = append(i.envs, e)
+	defer func() { i.envs = i.envs[:len(i.envs)-1] }()
 	i.deferStack = append(i.deferStack, nil)
 	r, err := i.execBlock(c.Decl.Body, e)
 	defers := i.deferStack[len(i.deferStack)-1]
@@ -5036,20 +5302,14 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 }
 
 func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
+	if t, ok := a.Target.(*ast.Ident); ok {
+		return i.assignIdent(a, t.Name, env)
+	}
 	v, err := i.evalExpr(a.Value, env)
 	if err != nil {
 		return nil, err
 	}
 	switch t := a.Target.(type) {
-	case *ast.Ident:
-		// Reassignment: the slot drops its old value and acquires the
-		// new one. Retain before release so a self-assign (m = m.set(..)
-		// returning the same in-place map) nets zero without dipping to
-		// rc 0.
-		old, _ := env.get(t.Name)
-		retainReplacing(v, old)
-		env.set(t.Name, v)
-		return v, nil
 	case *ast.Index:
 		arrV, err := i.evalExpr(t.Array, env)
 		if err != nil {
@@ -5067,11 +5327,12 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("array index must be number, got %T", idxV)
 		}
-		if idx < 0 || int(idx) >= len(arr) {
-			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr))
+		if idx < 0 || int(idx) >= len(arr.E) {
+			return nil, fmt.Errorf("array index %d out of range [0, %d)", idx, len(arr.E))
 		}
-		retainReplacing(v, arr[idx])
-		arr[idx] = v
+		retainReplacing(v, arr.E[idx])
+		storeArray(v)
+		arr.E[idx] = v
 		return v, nil
 	case *ast.FieldAccess:
 		tv, err := i.evalExpr(t.Target, env)
@@ -5083,10 +5344,37 @@ func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 			return nil, fmt.Errorf("field assignment on non-struct %T", tv)
 		}
 		retainReplacing(v, s.Fields[t.Field])
+		storeArray(v)
 		s.Fields[t.Field] = v
 		return v, nil
 	}
 	return nil, fmt.Errorf("interp: invalid assignment target %T", a.Target)
+}
+
+// assignIdent runs `x = <rhs>`. The slot's array reference is dropped
+// BEFORE the right-hand side runs, because the slot is about to stop
+// holding it: that is the move Perceus performs at a last use, and it is
+// what lets `x = x.with(i, v)` — and `x = f(x)`, through the callee's
+// parameter — find the buffer unshared and write into it. Nothing else
+// can reach the old value uncounted in between: an alias made during the
+// right-hand side binds (and so counts), and an argument already
+// evaluated is held by evalCall.
+func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error) {
+	old, _ := env.get(name)
+	arrDisown(old)
+	i.moving = append(i.moving, old)
+	v, err := i.evalExpr(a.Value, env)
+	i.moving = i.moving[:len(i.moving)-1]
+	if err != nil {
+		arrOwn(old)
+		return nil, err
+	}
+	// Retain before release so a self-assign (m = m.set(..) returning
+	// the same in-place map) nets zero without dipping to rc 0.
+	retainReplacing(v, old)
+	arrOwn(v)
+	env.set(name, v)
+	return v, nil
 }
 
 func asBool(v Value) bool {

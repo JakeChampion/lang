@@ -33,6 +33,18 @@ capture** semantics, where the interpreter is already the correct oracle;
 the native compiled backend's by-value capture of that case is tracked
 separately as the in-progress **#2896**, not an interp-COW gap.
 
+One hole in the discipline above was closed by #7287's audit: an in-place
+`set` writes through the receiver and hands the SAME `*Map` back, so the
+assignment that follows sees the same value going out as came in and its
+retain and release cancel — the stored entry's new path through the map
+was never counted. `builtinMapSet` now adjusts the entry it stores and
+the one it displaces by the receiver's own rc, which is the count of
+paths the store creates. `delete` and `clear` drop entries without
+releasing them in the same way; harmless while nothing but a map consults
+a map's rc, and worth fixing with the next map-COW change.
+`docs/INTERP-ARRAY-INPLACE-WRITE.md` has the full audit and the parallel
+(deliberately different) discipline arrays use.
+
 The original design follows (retained for reference).
 
 ---
