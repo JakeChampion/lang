@@ -94,17 +94,32 @@ runs:
     # size — the source of intermittent self-host shard link TIMEOUTS (a cold
     # driver link hanging past the job deadline). The e2e link path
     # (driverLinkArgs / `-fuse-ld=lld`) uses ld.lld when present — seconds, low
-    # RSS — so make sure it is installed. Idempotent: `ubuntu-latest` already
-    # ships lld, so this is a no-op short-circuit on the hosted runners; it only
-    # fetches on an image that lacks it. If install fails, the Go side falls back
-    # to bfd (slow but correct), so this step never blocks a run.
+    # RSS — so make sure gcc can find it under that exact name.
+    #
+    # `ubuntu-latest` ships the VERSIONED linker (`ld.lld-18`) but not the `lld`
+    # package that provides the unversioned `ld.lld` gcc's `-fuse-ld=lld` looks
+    # for, so the apt branch below used to run in every job: measured 10.4 s on
+    # run 33888241907, across the ~39 jobs that use this action. Symlinking the
+    # versioned binary into PATH costs milliseconds and needs no network, and
+    # the install stays as the fallback for an image carrying neither.
     - name: Ensure lld (fast linker for the self-host driver links)
       shell: bash
       run: |
         if command -v ld.lld >/dev/null 2>&1; then
-          echo "ld.lld already present: $(ld.lld --version | head -1)"
+          echo "ld.lld already on PATH: $(ld.lld --version | head -1)"
           exit 0
         fi
+        # Newest by version sort, so a runner image carrying several LLVM
+        # toolchains picks the one its own `lld` package would have.
+        versioned=$(ls -1 /usr/bin/ld.lld-* 2>/dev/null | sort -V | tail -1 || true)
+        if [ -n "$versioned" ]; then
+          mkdir -p "$HOME/.local/bin"
+          ln -sf "$versioned" "$HOME/.local/bin/ld.lld"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "linked $versioned as ld.lld: $("$versioned" --version | head -1)"
+          exit 0
+        fi
+        echo "no ld.lld-* on this image; falling back to apt" >&2
         # A FAILED install is tolerable — the fallback below links with bfd. A
         # HUNG one was not: apt stalling on a mirror holds the step until the
         # JOB's timeout-minutes kills it, which reports every real step as

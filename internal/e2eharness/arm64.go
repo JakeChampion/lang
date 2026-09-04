@@ -28,10 +28,20 @@ import (
 // `qemu` comes back empty. On x86 hosts (the historical CI
 // shape) we need the aarch64 cross-toolchain and qemu-aarch64;
 // the test SKIPs cleanly if neither path is available.
+//
+// FERN_REQUIRE_ARM64_TOOLING=1 turns that skip into a failure, for a lane that
+// installs the toolchain and is the ONLY place a test runs: there a silent skip
+// reports green while covering nothing, which is how the cross-emit tests came
+// to run nowhere before #6849. The same guarantee FERN_REQUIRE_CROSS_BACKENDS
+// gives internal/e2e's two-backend comparison.
 func Arm64Tooling(t *testing.T) (gcc, qemu string) {
 	t.Helper()
 	gcc, qemu, ok := LookupArm64Tooling()
 	if !ok {
+		if os.Getenv("FERN_REQUIRE_ARM64_TOOLING") == "1" {
+			t.Fatalf("aarch64 cross toolchain not available (gcc=%q qemu=%q) and FERN_REQUIRE_ARM64_TOOLING=1: "+
+				"this lane installs it and is the only one running this test, so a skip here covers nothing", gcc, qemu)
+		}
 		t.Skipf("aarch64 cross toolchain not available (gcc=%q qemu=%q)", gcc, qemu)
 	}
 	return gcc, qemu

@@ -895,20 +895,33 @@ jobs:
       # single heaviest test, TestSelfHostAssumeEligibleByteIdenticalX86_64 at
       # 738 s, which no split can divide.
       #
-      # Adding the unweighted remainder (the gap between this model and the
-      # 6.8-min mean actually measured at 16 buckets — about 32 min of mass the
-      # weights file does not name) the real longest shard is ~17 min at 6.
-      # The 30-minute budget holds, and the model is calibrated: it reproduced
-      # the ~16 min that was measured at 8 on the pre-#8183 mass.
+      # THE REMAINDER IS MEASURED, AND IT IS 18.75 MIN. Two green runs at this
+      # mass (33858555395, 33866568910) put the shards' own test step at 85.62
+      # and 85.88 min of total mass — stable to 0.3% — against the 67.0 the
+      # weights file names, so the mass it does not name is 18.75 min. Per-shard
+      # mean 14.3 min, longest 15.95 and 18.60 min, on top of 0.85-2.72 min of
+      # per-job setup.
       #
-      # 6 IS NOW ONE ABOVE THE CROSSOVER, DELIBERATELY. #8183 took 9.5 min of
-      # weighted mass out, which moves the point where the mean meets the
-      # 12.3-min floor from 6 to 5 — the rule below would pick 5. Going there
-      # needs a measured longest shard from a run at this mass, not a model:
-      # the remainder above is the pre-#8183 measurement, and at 5 buckets the
-      # projection is ~20 min against a 30-min timeout on the lane that gets
-      # preempted. #8226 holds the reduction, to be made once a run at 6 has
-      # supplied the number.
+      # Setup is why the earlier estimate read ~32 min: it came from a job
+      # wall-clock mean at 16 buckets, which folds each of the 16 jobs' setup
+      # into what looks like divisible mass. Setup does not divide — cutting a
+      # bucket removes one job's worth of it outright — so counting it as mass
+      # overstates the remainder in proportion to the bucket count.
+      #
+      # 6 IS THE CROSSOVER ON THE MEASURED MASS, NOT ONE ABOVE IT. #8183 moved
+      # the model's crossover from 6 to 5 (mean 11.2 at 6, 13.4 at 5, against
+      # the 12.3-min floor), which is what #8226 held open. Re-running the rule
+      # on the 85.75 min actually measured rather than the 67.0 modelled: the
+      # mean is 12.25 min at 7 — a hair under the floor — and 14.29 at 6, so
+      # the rule picks 6 and 5 is over-cutting. The projection was right about
+      # the model and wrong about the mass.
+      #
+      # At 5 the mean would be 17.15 min, and the worst longest/mean ratio seen
+      # across the two runs (1.30) puts the longest shard at ~22 min of test
+      # plus setup, ~24 against a 30-min timeout — on the lane that already
+      # needs continue-on-error for preemption, and whose heaviest single test
+      # has itself been measured at 482 s and 738 s on consecutive runs. That
+      # is not the headroom #8226 asked for, so 6 stays. #8226 closed measured.
       #
       # So the rule is that a shard should do more work than it spends queueing.
       # aarch64 goes to 1 for the same reason from the other side — 2 was
@@ -1013,6 +1026,11 @@ jobs:
         env:
           SHARD: "${{ matrix.shard }}"
           NSHARD: "${{ matrix.nshard }}"
+          # The x86 shards are the ONLY lane running the arm64 cross-emit tests
+          # (#8184 removed the duplicate cross-host leg), so a toolchain install
+          # that quietly failed must fail the shard rather than skip 15 tests
+          # green. Set only where the step above installs the toolchain.
+          FERN_REQUIRE_ARM64_TOOLING: "${{ matrix.host == 'x86_64' && '1' || '' }}"
         run: |
           set -euo pipefail
           chmod +x e2eselfhost.test e2e.test

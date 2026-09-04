@@ -97,14 +97,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	// deliberate refusal class; the own-string case is clean here (the
 	// two-word ABI reclaims it).
 	"string_pushed_then_returned_bare_stays_refused": 448,
-	// Pre-existing arm64 gaps the x86-64 twin does not have (both 0
-	// there). The #7914 concat credit is inert on this backend — it lifts
-	// computeFreeEligible's single-word string taint, which the two-word
-	// ABI never applies — and the overwrite-depth fix took the second row
-	// from 3072 to this.
-	"concat_operand_param_frees_the_caller_array":    2688,
-	"concat_operand_param_rewrites_registry_buckets": 2688,
-	"accumulator_seeded_from_array_element":          12800,
 	"closure_array_capture_churn":                    4752,
 	"closure_call_arg_handed_back_is_not_reclaimed":  1920,
 	"closure_captures_arr_of_struct_churn_free":      14256,
@@ -132,12 +124,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"tuple_return_scalar_cursor_recursion":    320,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
 	"consumed_array_arg_temp_released_and_guarded": 128,
-	// Another pre-existing arm64 gap the x86-64 twin does not have (0
-	// there): the mixed-return case's fresh-path strings are not reclaimed
-	// under the two-word ABI. The shape leaks 1264 B here without the
-	// returned-alias credit and 880 with it, so this pins what the credit
-	// leaves rather than anything it introduced.
-	"mixed_return_param_projection_is_owned": 880,
 }
 
 // The wasm table (#7912). Same corpus, same families — the map and

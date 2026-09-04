@@ -1725,15 +1725,20 @@ function x86_str_indexof(s: string, sub: string): i32 {
     var m: i32 = sub.len();
     if (m == 0) { return 0; }
     if (m > n) { return 0 - 1; }
+    // The needle's first byte is hoisted out and tested before the inner loop
+    // is entered at all. The assembler's hot searches are single characters
+    // (`:`, ` `, `(`) over lines that mostly do not hold them, so nearly every
+    // position is a mismatch and has to cost a compare and a bump rather than
+    // a loop set-up.
+    var c0: u8 = sub[0];
+    var last: i32 = n - m;
     var i: i32 = 0;
-    while (i <= n - m) {
-        var j: i32 = 0;
-        var ok: boolean = true;
-        while (j < m) {
-            if (s[i + j] != sub[j]) { ok = false; j = m; }
-            else { j = j + 1; }
+    while (i <= last) {
+        if (s[i] == c0) {
+            var j: i32 = 1;
+            while (j < m && s[i + j] == sub[j]) { j = j + 1; }
+            if (j == m) { return i; }
         }
-        if (ok) { return i; }
         i = i + 1;
     }
     return 0 - 1;
@@ -1759,14 +1764,16 @@ function x86_str_split(s: string, sep: string): string[] {
     var m: i32 = sep.len();
     if (m == 0) { out = out.append(s); return out; }
     var n: i32 = s.len();
+    var c0: u8 = sep[0];
+    var last: i32 = n - m;
     var start: i32 = 0;
     var i: i32 = 0;
-    while (i <= n - m) {
-        var hit: boolean = true;
-        var j: i32 = 0;
-        while (j < m) {
-            if (s[i + j] != sep[j]) { hit = false; j = m; }
-            else { j = j + 1; }
+    while (i <= last) {
+        var hit: boolean = false;
+        if (s[i] == c0) {
+            var j: i32 = 1;
+            while (j < m && s[i + j] == sep[j]) { j = j + 1; }
+            hit = j == m;
         }
         if (hit) {
             out = out.append(slice_unchecked(s, start, i));
@@ -4545,7 +4552,11 @@ pub struct CfiState {
     open: boolean,
     fde_start: i32[],
     fde_end: i32[],
-    rule_fde: i32[],
+    // fde_rule_first[k] is where FDE k's rules start in the rule arrays. A
+    // rule is only ever recorded inside an open .cfi_startproc and always
+    // attaches to the FDE opened last, so one FDE's rules are contiguous and
+    // run to the next FDE's first — the last FDE's to the end of the arrays.
+    fde_rule_first: i32[],
     rule_off: i32[],
     rule_pos: i32[],
     rule_len: i32[],
@@ -4558,7 +4569,7 @@ pub struct CfiState {
 }
 
 pub function cfi_new(p: CfiProfile): CfiState {
-    return CfiState { profile: p, open: false, fde_start: [], fde_end: [], rule_fde: [], rule_off: [], rule_pos: [], rule_len: [], rule_bytes: [], bad: [] };
+    return CfiState { profile: p, open: false, fde_start: [], fde_end: [], fde_rule_first: [], rule_off: [], rule_pos: [], rule_len: [], rule_bytes: [], bad: [] };
 }
 
 // cfi_empty reports whether no span was recorded — the image is then empty.
@@ -4697,13 +4708,11 @@ function cfi_le64_i64(b: i32[], v: i64): i32[] {
 // for the whole program, and an append through a borrowed spread copies the
 // whole buffer, quadratically, on every relaxation pass (#8172).
 function cfi_add_rule(own s: CfiState, off: i32, body: i32[]): CfiState {
-    var fde: i32 = s.fde_start.len() - 1;
     var pos: i32 = s.rule_bytes.len();
     var i: i32 = 0;
     while (i < body.len()) { s = CfiState { ...s, rule_bytes: s.rule_bytes.append(body[i]) }; i = i + 1; }
     return CfiState {
         ...s,
-        rule_fde: s.rule_fde.append(fde),
         rule_off: s.rule_off.append(off),
         rule_pos: s.rule_pos.append(pos),
         rule_len: s.rule_len.append(body.len()),
@@ -4742,7 +4751,13 @@ function cfi_proc_directive(own s: CfiState, d: string, ops: string[], off: i32)
     if (d == ".cfi_startproc") {
         if (s.open) { return cfi_bad(s, ".cfi_startproc inside an open .cfi_startproc"); }
         if (ops.len() > 0 && ops[0].len() > 0) { return cfi_bad(s, ".cfi_startproc " + ops[0] + " is not supported"); }
-        return CfiState { ...s, fde_start: s.fde_start.append(off), fde_end: s.fde_end.append(off), open: true };
+        return CfiState {
+            ...s,
+            fde_start: s.fde_start.append(off),
+            fde_end: s.fde_end.append(off),
+            fde_rule_first: s.fde_rule_first.append(s.rule_off.len()),
+            open: true,
+        };
     }
     if (!s.open) { return cfi_bad(s, ".cfi_endproc without .cfi_startproc"); }
     return CfiState { ...s, fde_end: s.fde_end.with(s.fde_end.len() - 1, off), open: false };
@@ -4865,14 +4880,14 @@ function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr
     }
     b = cfi_uleb(b, 0);        // augmentation data length
     var pc: i32 = s.fde_start[k];
-    var r: i32 = 0;
-    while (r < s.rule_fde.len()) {
-        if (s.rule_fde[r] == k) {
-            b = cfi_advance(b, p, s.rule_off[r] - pc);
-            pc = s.rule_off[r];
-            var q: i32 = 0;
-            while (q < s.rule_len[r]) { b = b.append(s.rule_bytes[s.rule_pos[r] + q]); q = q + 1; }
-        }
+    var r: i32 = s.fde_rule_first[k];
+    var end: i32 = s.rule_off.len();
+    if (k + 1 < s.fde_rule_first.len()) { end = s.fde_rule_first[k + 1]; }
+    while (r < end) {
+        b = cfi_advance(b, p, s.rule_off[r] - pc);
+        pc = s.rule_off[r];
+        var q: i32 = 0;
+        while (q < s.rule_len[r]) { b = b.append(s.rule_bytes[s.rule_pos[r] + q]); q = q + 1; }
         r = r + 1;
     }
     return cfi_pad_entry(b, at, p.fde_align);
