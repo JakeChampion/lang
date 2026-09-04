@@ -2556,11 +2556,15 @@ func emitArrCowInplaceElemHelper(name, elemInc, tag string) func(w func(string, 
 // there is no unboxing step; the native x86-64 twins spend a frame pulling a
 // two-word SSO string apart before they can start.
 //
-// Scalar, a byte an iteration, matching __str_concat's copy loops rather than
-// the SSE2 kernels the native backend and arm64ssa run. This path has no corpus
-// differential yet, so the first version of each is the one whose correctness is
-// readable off the page; vectorising them is a later slice with a net under it,
-// and docs/ATLAS-PLATFORM-PLAN.md §3 has the block algorithms when it comes.
+// Three of the four are SSE2, 16 bytes an iteration, the same block algorithms
+// the native backend and arm64ssa run (docs/ATLAS-PLATFORM-PLAN.md §3). Only
+// __fern_ascii_run is still the scalar byte-an-iteration version these all
+// started as. What paid for the vectorising was a net rather than a decision to
+// go faster: the flat-vs-ssa ratio gate (#8069) named memchr as a 20x
+// divergence the moment the flat side got quicker, and the length sweep in
+// gas_scan_lengths_test.go is what makes a block kernel readable off the page —
+// it walks every length across two blocks with the needle at every position.
+// Vectorising ascii_run wants the same sweep first.
 //
 // Two conventions are shared and worth stating once. A byte operand outside
 // 0..255 can never occur in the haystack, and ONE unsigned compare covers both
