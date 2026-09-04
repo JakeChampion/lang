@@ -247,18 +247,35 @@
 # check exists to catch, doing its job. Numbers pasted from that job's own
 # corrected-baseline block, on the head that carried the change.
 
-fern.fern 13898620
-asm_load_run.fern 10918156
-asm_modload_run.fern 10262412
-asm_ir_run.fern 10134508
-asm_run.fern 9692108
-wasm_ir_run.fern 9784284
-wasm_run.fern 9767548
-wasm_runio_run.fern 9733852
-asm_pathprobe_run.fern 9051884
-ssa_lift_scan_run.fern 8861836
-asm_ir_elig_run.fern 8551820
-irlower_run.fern 8864844
+# 2026-09-04 — twelve rows shrink 13.4-21.5%, the whole table together: the
+# #4873 caller-side containment bracket stops retaining a struct field the
+# caller cannot read back (#7397). The bracket is emitted around every call
+# whose struct argument survives it, for every array field of that argument's
+# type, so removing the unobservable ones takes emitted code out of every
+# driver rather than one backend's rows. The tracked artifact fern.fern goes
+# 13898620 -> 11780988.
+#
+# These figures were pinned onto main a PR early, by #8233, which read them
+# off a head that carried this branch and credited them to #8178. They belong
+# here, where the change that produces them lives. driver-sizes on this branch
+# is green against them; main's, without this branch, measures the larger set
+# #8234 restored.
+#
+# checker_modload_run, ssa_emit_run and ssa_run are inside the 5% band and the
+# job did not list them.
+
+fern.fern 11780988
+asm_load_run.fern 8812812
+asm_modload_run.fern 8148876
+asm_ir_run.fern 8016876
+asm_run.fern 7635916
+wasm_ir_run.fern 7744476
+wasm_run.fern 7731836
+wasm_runio_run.fern 7694044
+asm_pathprobe_run.fern 7016172
+ssa_lift_scan_run.fern 6822028
+asm_ir_elig_run.fern 6516108
+irlower_run.fern 6825036
 checker_modload_run.fern 2000236
 ssa_emit_run.fern 1752764
 ssa_run.fern 1578764
