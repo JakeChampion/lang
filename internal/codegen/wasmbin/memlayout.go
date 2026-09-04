@@ -146,7 +146,22 @@ const (
 	// preopens is fixed at instantiation, so one lookup serves the process.
 	// Same shape as the stdout / stderr pair above, and an init flag for the
 	// same reason as networkHandleAddr's: 0 is a valid handle.
-	preopenInitAddr   = strbufCapAddr + 4
+	// sleepBufAddr is __fern_sleep_ms's 88-byte preview-1 poll_oneoff
+	// working area: the 48-byte `subscription` at +0, the 32-byte
+	// `event` the host writes back at +48, and the nevents slot at +80.
+	// Scratch rather than a per-call __fern_alloc (which is what the
+	// clock helpers do for their 8 bytes) because a sleep is the one
+	// builtin a program is likely to call in an unbounded loop, and
+	// nothing frees it.
+	//
+	// 8-ALIGNED, unlike its neighbours: the host reads the subscription's
+	// u64 fields directly out of guest memory and rejects a misaligned
+	// region rather than reading it unaligned — `Pointer not aligned to
+	// 8: Region { start: 156, len: 8 }` out of poll_oneoff, which is what
+	// the unaligned first cut of this slot produced.
+	sleepBufAddr = (strbufCapAddr + 4 + 7) &^ 7
+
+	preopenInitAddr   = sleepBufAddr + 88
 	preopenHandleAddr = preopenInitAddr + 4
 
 	// The leak census (#5362 / docs/SANITIZER.md): four i64 running totals
