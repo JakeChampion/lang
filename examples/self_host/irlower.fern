@@ -851,6 +851,14 @@ pub struct LowerState {
     // local moves; only this says WHERE, and the retain may be elided at that
     // one site alone.
     move_sites: string[],
+    // fld_bases: the locals and `own` params this frame provably holds one
+    // counted reference to (field_move_bases_of) — the only bases whose field
+    // the superseded-field move may empty (#8186). fld_moves: the "base.field"
+    // keys the statement being lowered moves into an `own` position
+    // (field_move_keys_of_stmt); set/cleared per statement by lower_stmt's
+    // wrapper, read at the call-argument site by emit_own_field_arg.
+    fld_bases: string[],
+    fld_moves: string[],
 }
 
 // moves_local_at: does the construction at THIS ident node take over `name`'s
@@ -12203,6 +12211,16 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             if (sst.slot >= 0) { lsl_slots = lsl_slots.append(sst.slot); }
         }
         if (!sc.ok) { return sc; }
+        // A field read at an explicit `own` position is the superseded-field
+        // shape E051 admits (#8186): moved out of its box when this statement
+        // claimed it, retained for the callee otherwise.
+        if (util.index_of_str(sc.sigs.own_positions, cid.name + "|" + util.i32_to_string(ai)) >= 0
+            && !sc.callee_param_is_typevar(cid.name, ai)) {
+            match (c.args[ai]) {
+                ast.ExprFieldAccess(ofa) => { sc = emit_own_field_arg(ofa, sc); },
+                _ => {}
+            }
+        }
         ai = ai + 1;
     }
     // #4873 containment: bracket each SURVIVING ident arg at a
@@ -18705,6 +18723,16 @@ pub function lower_stmt(st: ast.Stmt, s: LowerState): LowerState {
 }
 
 function lower_stmt_grow_exempt(st: ast.Stmt, s: LowerState): LowerState {
+    var fmk: string[] = field_move_keys_of_stmt(st, s);
+    if (fmk.len() > 0) {
+        var fr: LowerState = lower_stmt_grow_exempt_inner(st, s.with_fld_moves(fmk));
+        var fnone: string[] = [];
+        return fr.with_fld_moves(fnone);
+    }
+    return lower_stmt_grow_exempt_inner(st, s);
+}
+
+function lower_stmt_grow_exempt_inner(st: ast.Stmt, s: LowerState): LowerState {
     var gex: string[] = grow_alias_filter(grow_exempt_names_of_stmt(st), s.grow_alias);
     // #6048: fold in the per-function sole-occurrence deaths. Safe to add to every
     // statement — the name occurs exactly once in the whole body, so only the
@@ -56042,7 +56070,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // (erased_passthrough_safe), so its bare-typevar return lowers via the
     // uniform-i64 path in StmtReturn (#5464). Kept off the non-wasm path.
     if (for_wasm && erased_passthrough_safe(fn, structs)) { ret_arrdyn0 = ret_arrdyn0 + 8; }
-    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs) };
+    var s: LowerState = LowerState { ops: empty, locals: locals0, ctrl: 0, loop_blk: noloop, ret_is_i64: ret_i64, ret_arrdyn: ret_arrdyn0, sigs: FnSigs { ...sg, arr_ret_fns: arr_ret_fns_aug, struct_ret_fns: struct_ret_fns_aug }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: noclos, tup_elem_kinds: [], alias_incs: [], dead_alias_ok: dead_alias_of(fn.body, rc_ml_compute(fn, structs).names).sites, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: fnval_seed0, structs: structs, reclaimable_names: reclaim, aliased_names: aliased, map_clone_sites: map_clone_insert_sites_of(fn.body), borrowed_names: borrowed, xblock_pending: [], optret_pending: [], try_cleanup: tclean, defer_slots: [], defer_guard: "", grow_exempt: [], append_inplace: append_inplace_names_of(fn), field_append_inplace: field_append_inplace_sites_of(fn), grow_sole: grow_sole_exempt_names_of(fn), grow_alias: grow_alias_names_of(fn), own_params: own_names, n_params: names.len(), ok: true, fail_why: "", selfrebind: "", moved_names: moved_locals_toplevel_of(fn, structs), moved_elided: [], move_sites: move_sites_toplevel_of(fn, structs), fld_bases: field_move_bases_of(fn, sg), fld_moves: [] };
     // Consumed-threaded array params (ownflag_name): allocate and zero each flag
     // before any body op, in parameter order, so slot numbering is deterministic.
     // A declared `own` param is excluded — the caller moved its reference in.
@@ -66782,7 +66810,7 @@ pub function str_own_dump(fn: parser.FuncDecl, structs: StructTab, funcs: parser
         locals0 = locals0.append(li);
         pi = pi + 1;
     }
-    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [] };
+    var st: LowerState = LowerState { ops: no_ops, locals: locals0, ctrl: 0, loop_blk: no_blk, ret_is_i64: false, ret_arrdyn: 0, sigs: FnSigs { ...fn_sigs_empty(), str_ret_fns: sig_reg_of(str_ret_fns_of(funcs)) }, clo_base: clo_owner_name(fn), cur_fn: fn.name, cur_ret: fn.ret_type, closure_locals: no_strs, tup_elem_kinds: no_strs, alias_incs: no_strs, dead_alias_ok: no_strs, spread_sites: spread_sites_of(fn.body, structs, []), fnval_seed: no_strs, structs: structs, reclaimable_names: no_strs, aliased_names: no_strs, map_clone_sites: no_strs, borrowed_names: no_strs, xblock_pending: no_strs, optret_pending: [], try_cleanup: no_stmts, defer_slots: no_strs, defer_guard: "", grow_exempt: [], append_inplace: [], field_append_inplace: [], grow_sole: [], grow_alias: [], own_params: own_param_names_of(fn), n_params: fn.params.len(), ok: true, fail_why: "", selfrebind: "", moved_names: [], moved_elided: [], move_sites: [], fld_bases: [], fld_moves: [] };
     var out: string = "";
     var qi: i32 = 0;
     while (qi < fn.params.len()) {
@@ -74528,6 +74556,10 @@ pub function (s: LowerState) with_grow_exempt(names: string[]): LowerState {
     return LowerState { ...s, grow_exempt: names };
 }
 
+pub function (s: LowerState) with_fld_moves(keys: string[]): LowerState {
+    return LowerState { ...s, fld_moves: keys };
+}
+
 function struct_ty_from_arr_alias(se: LowerState, v: ast.StmtVar, struct_ty: string): string {
 if (struct_ty == "") {
     match (v.init) {
@@ -76253,4 +76285,289 @@ while (tprc < out.len()) {
 }
 
     return tup_ok;
+}
+
+// ===================== superseded-field own move (#8186) ===================
+// `a = S { ...a, f: g(.., a.f, ..) }` — or the literal returned — with g's
+// position `own`: the store supersedes the one field the call consumes, so the
+// caller hands its reference over instead of retaining into the callee. The
+// checker (ow_field_move_fields) admits exactly that shape; the lowering must
+// then pay for the callee's exit drop at EVERY admitted site — as a move when
+// this frame provably holds the base and the field is one word, as a plain
+// retain otherwise (emit_own_field_arg). Whether the base's box is shared is a
+// runtime fact (`var b = a` earlier, a capture, a producer's alias), so the
+// move tests __fern_rc_is_unique(a) and empties the slot only when it holds.
+// Mirrors native computeFieldOwnMoves / emitFieldOwnMove.
+
+// field_move_owned_value: is `e`, bound to `name`, a value this frame holds one
+// counted reference to — a struct literal, a strict-fresh producer call, or a
+// call that threads `name` itself through an `own` position (the reference
+// goes in and comes back)? The self-host has no return-transfer retain, so a
+// call outside the registry may hand back a borrowed field of its argument.
+function field_move_owned_value(e: ast.Expr, name: string, sg: FnSigs, bound: string[]): boolean {
+    match (e) {
+        ast.ExprStructLit(_) => { return true; },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => {
+                    if (util.index_of_str(bound, cid.name) >= 0) { return false; }
+                    if (util.index_of_str(sg.return_fresh_struct_ret_fns, cid.name) >= 0) { return true; }
+                    var i: i32 = 0;
+                    while (i < c.args.len()) {
+                        if (ident_name_or_empty(c.args[i]) == name
+                            && util.index_of_str(sg.own_positions, cid.name + "|" + util.i32_to_string(i)) >= 0) { return true; }
+                        i = i + 1;
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+function body_has_defer(stmts: ast.Stmt[]): boolean {
+    function see(st: ast.Stmt, acc: boolean): boolean {
+        match (st) {
+            ast.StmtDefer(_) => { return true; },
+            _ => { return acc; }
+        }
+        return acc;
+    }
+    function keep(e: ast.Expr, acc: boolean): boolean { return acc; }
+    var found: boolean = false;
+    for st in stmts { found = astwalk.fold_stmt_nodes(st, found, see, keep, astwalk.descend_all); }
+    return found;
+}
+
+// field_move_bases_of: the names whose field the move may empty — an `own`
+// param, or a local declared exactly once — where every binding is a value
+// the frame holds one reference to (field_move_owned_value), no lambda body
+// mentions the name (a capture could read the emptied slot), the name is not
+// bound by a `for` or a match arm, and the function has no defer (a defer
+// runs after a return value is built, while the base is still in its slot).
+function field_move_bases_of(fn: parser.FuncDecl, sg: FnSigs): string[] {
+    var none: string[] = [];
+    if (fn.body.len() == 0 || body_has_defer(fn.body)) { return none; }
+    var bound: string[] = [];
+    for p in fn.params { bound = bound.append(p.name); }
+    bound = astwalk.collect_bound_stmts(fn.body, bound);
+    function decl_of(st: ast.Stmt, acc: string[]): string[] {
+        match (st) {
+            ast.StmtVar(v) => { return acc.append(v.name); },
+            ast.StmtFor(f) => { return acc.append(f.var_name).append(f.var_name); },
+            ast.StmtMatch(_) => { return astwalk.collect_bound_stmt(st, astwalk.collect_bound_stmt(st, acc)); },
+            _ => { return acc; }
+        }
+        return acc;
+    }
+    function bad_of(st: ast.Stmt, acc: string[]): string[] {
+        match (st) {
+            ast.StmtVar(v) => {
+                if (!field_move_owned_value(v.init, v.name, sg, bound)) { return acc.append(v.name); }
+                return acc;
+            },
+            ast.StmtAssign(a) => {
+                if (!field_move_owned_value(a.value, a.target, sg, bound)) { return acc.append(a.target); }
+                return acc;
+            },
+            _ => { return acc; }
+        }
+        return acc;
+    }
+    function keep(e: ast.Expr, acc: string[]): string[] { return acc; }
+    function lambda_reads(e: ast.Expr, acc: string[]): string[] {
+        match (e) {
+            ast.ExprLambda(lm) => {
+                var a: string[] = acc;
+                for bst in lm.body { a = astwalk.collect_idents_stmt(bst, a); }
+                return a;
+            },
+            _ => { return acc; }
+        }
+        return acc;
+    }
+    function keep_stmt(st: ast.Stmt, acc: string[]): string[] { return acc; }
+    var decls: string[] = [];
+    var bad: string[] = [];
+    var lam: string[] = [];
+    for st in fn.body {
+        decls = astwalk.fold_stmt_nodes(st, decls, decl_of, keep, astwalk.descend_all);
+        bad = astwalk.fold_stmt_nodes(st, bad, bad_of, keep, astwalk.descend_all);
+        lam = astwalk.fold_stmt_nodes(st, lam, keep_stmt, lambda_reads, astwalk.descend_all);
+    }
+    var out: string[] = [];
+    for p in fn.params {
+        if (p.own && util.index_of_str(bad, p.name) < 0 && util.index_of_str(lam, p.name) < 0
+            && util.index_of_str(decls, p.name) < 0) { out = out.append(p.name); }
+    }
+    var di: i32 = 0;
+    while (di < decls.len()) {
+        var nm: string = decls[di];
+        var n: i32 = 0;
+        var dj: i32 = 0;
+        while (dj < decls.len()) { if (decls[dj] == nm) { n = n + 1; } dj = dj + 1; }
+        var is_param: boolean = false;
+        for p in fn.params { if (p.name == nm) { is_param = true; } }
+        if (n == 1 && !is_param && util.index_of_str(bad, nm) < 0 && util.index_of_str(lam, nm) < 0
+            && util.index_of_str(out, nm) < 0) { out = out.append(nm); }
+        di = di + 1;
+    }
+    return out;
+}
+
+function count_ident_reads(e: ast.Expr, name: string): i32 {
+    function tally(n: ast.Expr, acc: i32): i32 {
+        match (n) {
+            ast.ExprIdent(id) => {
+                if (id.name == name) { return acc + 1; }
+                return acc;
+            },
+            _ => { return acc; }
+        }
+        return acc;
+    }
+    return astwalk.fold_expr(e, 0, tally);
+}
+
+// count_field_reads tallies the `target.<field>` reads in `e` — every field of
+// `target` when `field` is "".
+function count_field_reads(e: ast.Expr, target: string, field: string): i32 {
+    function tally(n: ast.Expr, acc: i32): i32 {
+        match (n) {
+            ast.ExprFieldAccess(fa) => {
+                if (ident_name_or_empty(fa.obj) == target && (field.len() == 0 || fa.field == field)) { return acc + 1; }
+                return acc;
+            },
+            _ => { return acc; }
+        }
+        return acc;
+    }
+    return astwalk.fold_expr(e, 0, tally);
+}
+
+function is_field_read_of(e: ast.Expr, target: string, field: string): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => { return fa.field == field && ident_name_or_empty(fa.obj) == target; },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// field_move_keys: the "target.f" keys of the #8186 shape on `target = value`
+// (or `return value`): the literal's base is `target`; field f's value is a
+// call to a declared function holding `target.f` directly at an `own`
+// position; `target.f` is read exactly once in the literal; and `target`
+// occurs BARE exactly once, as the base — every other mention is a field
+// read, so the callee has no second route to the box whose field it
+// consumes. Byte-matches the checker's ow_field_move_fields, plus the
+// lowering's own condition that the base is in fld_bases.
+function field_move_keys(target: string, value: ast.Expr, s: LowerState): string[] {
+    var out: string[] = [];
+    if (target.len() == 0 || util.index_of_str(s.fld_bases, target) < 0) { return out; }
+    match (value) {
+        ast.ExprStructLit(sl) => {
+            if (!sl.has_base || ident_name_or_empty(sl.base) != target) { return out; }
+            if (count_ident_reads(value, target) - count_field_reads(value, target, "") != 1) { return out; }
+            var i: i32 = 0;
+            while (i < sl.field_values.len() && i < sl.field_names.len()) {
+                var fname: string = sl.field_names[i];
+                match (sl.field_values[i]) {
+                    ast.ExprCall(c) => {
+                        match (c.callee) {
+                            ast.ExprIdent(cid) => {
+                                if (s.slot_of(cid.name) < 0 && count_field_reads(value, target, fname) == 1) {
+                                    var j: i32 = 0;
+                                    while (j < c.args.len()) {
+                                        if (util.index_of_str(s.sigs.own_positions, cid.name + "|" + util.i32_to_string(j)) >= 0
+                                            && is_field_read_of(c.args[j], target, fname)) {
+                                            out = out.append(target + "." + fname);
+                                            j = c.args.len();
+                                        } else {
+                                            j = j + 1;
+                                        }
+                                    }
+                                }
+                            },
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+                i = i + 1;
+            }
+            return out;
+        },
+        _ => { return out; }
+    }
+    return out;
+}
+
+// field_move_keys_of_stmt: the keys the statement about to be lowered moves —
+// the rebind form `target = S { ...target, … }` and the return form.
+function field_move_keys_of_stmt(st: ast.Stmt, s: LowerState): string[] {
+    var none: string[] = [];
+    if (s.fld_bases.len() == 0) { return none; }
+    match (st) {
+        ast.StmtAssign(a) => { return field_move_keys(a.target, a.value, s); },
+        ast.StmtReturn(r) => {
+            match (r.value) {
+                ast.ExprStructLit(sl) => {
+                    if (sl.has_base) { return field_move_keys(ident_name_or_empty(sl.base), r.value, s); }
+                    return none;
+                },
+                _ => { return none; }
+            }
+            return none;
+        },
+        _ => { return none; }
+    }
+    return none;
+}
+
+// field_move_type: a field the flat helpers can empty and retain — one word,
+// rc-headed: a struct, an enum, or any array. Not `string` (its inline form
+// has no header to test) and not a scalar.
+function field_move_type(structs: StructTab, t: string): boolean {
+    if (t == "string" || t.len() == 0) { return false; }
+    if (decl_is_struct(structs, t) || decl_is_enum(structs, t)) { return true; }
+    return t.len() > 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']';
+}
+
+// emit_own_field_arg: the value of `base.f` is on the stack, bound for an
+// `own` position. Claimed by this statement (fld_moves) on a movable field:
+// park it, test is_unique(base), and on the unique branch store a null over
+// the slot — every later release of it (the overwrite drop, the exit sweep, a
+// reuse's old-field release) meets the null and no-ops under the helpers'
+// guards — else retain the value for the callee. Unclaimed: retain. Either
+// way the callee's exit drop is paid for; passing it bare would not be.
+function emit_own_field_arg(fa: ast.ExprFieldAccess, s: LowerState): LowerState {
+    var base: string = ident_name_or_empty(fa.obj);
+    var sty: string = expr_struct_type(fa.obj, s);
+    var idx: i32 = 0 - 1;
+    if (sty.len() > 0) { idx = s.field_index_in(sty, fa.field); }
+    var bslot: i32 = 0 - 1;
+    if (base.len() > 0) { bslot = s.slot_of(base); }
+    if (idx < 0 || bslot < 0 || util.index_of_str(s.fld_moves, base + "." + fa.field) < 0
+        || !field_move_type(s.structs, decl_field_type(s.structs, sty, fa.field))) {
+        return s.emit(ir.op_call_direct("__fern_rc_inc", 1));
+    }
+    var tn: string = "$fmove" + util.i32_to_string(s.locals.len());
+    var t: LowerState = s.add_local(tn);
+    var tslot: i32 = t.slot_of(tn);
+    t = t.emit(ir.op_store_local(tslot));
+    t = t.emit(ir.op_load_local(bslot));
+    t = t.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    t = t.emit(ir.op_if(0));
+    t = t.emit(ir.op_load_local(bslot));
+    t = t.emit(ir.op_const_i32(0));
+    t = t.emit(ir.op_struct_set(idx, struct_field_width(s.structs, sty, idx)));
+    t = t.emit(ir.op_else());
+    t = t.emit(ir.op_load_local(tslot));
+    t = t.emit(ir.op_call_direct("__fern_rc_inc", 1));
+    t = t.emit(ir.op_drop());
+    t = t.emit(ir.op_end());
+    return t.emit(ir.op_load_local(tslot));
 }
