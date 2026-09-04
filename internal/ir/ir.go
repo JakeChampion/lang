@@ -17968,29 +17968,19 @@ func (b *builder) assign(n *ast.Assign) error {
 			//     on every ptrW) under the SAME freeEligible gate, so this is
 			//     the sweep's rule applied at the overwrite, not a new one.
 			//
-			// arm64 (ptrW==8 + TwoWordOverride, two-word str_dec) is
-			// DELIBERATELY EXCLUDED for now: native-arm64 heap-string
-			// reclamation is the RC-perceus plan's deferred slice 5g
-			// ("heap-string rc — SSO-blocked", x86_64-only testing caveat).
-			// Enabling the overwrite str_dec there over-releases on real
-			// arm64 hardware (qemu user-mode masks it), so arm64 keeps its
-			// prior safe-leak behaviour — codegen here is byte-identical to
-			// main on arm64 — until the native str_dec / cell_free reclaim
-			// path is verified on hardware. Re-enable by widening the wasm
-			// branch back to ast.UseTwoWordStrings once 5g lands.
+			// Every ABI, arm64 included (#6554, #7446). OpLoadLocal fans a
+			// two-word slot into (data, len) and loads a single pointer on
+			// x86_64, and __fern_str_dec is_unique-gates on all three with
+			// null / inline-tag / literal-sentinel guards, so one body covers
+			// them. This is the same emission the reinit path above already
+			// makes under ast.UseTwoWordStrings.
 			//
 			// Gated on freeEligible like the exit dec: an INELIGIBLE
 			// (borrowed param / escaped) string is skipped here AND at exit,
 			// so the two stay balanced and a borrow is never over-released.
-			if b.ptrW == 4 {
-				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
-				b.emit(Op{Kind: OpDrop})
-			} else if b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
-				b.emit(Op{Kind: OpLoadLocal, I32: idx})
-				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
-				b.emit(Op{Kind: OpDrop})
-			}
+			b.emit(Op{Kind: OpLoadLocal, I32: idx})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
+			b.emit(Op{Kind: OpDrop})
 		} else if tt, isTup := tupleTypeOfLocal(t.Name, b); isTup && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
 			// Tuple reassignment-overwrite — `t = (a, b)` ends the old
 			// binding's ownership exactly like a scope exit would, so the
