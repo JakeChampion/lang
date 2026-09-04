@@ -236,18 +236,29 @@
 #
 # Numbers pasted from driver-sizes' corrected-baseline block.
 
-fern.fern 14647852
-asm_load_run.fern 11488156
-asm_modload_run.fern 10807836
-asm_ir_run.fern 10671740
-asm_run.fern 10259484
-wasm_ir_run.fern 10355964
-wasm_run.fern 10343340
-wasm_runio_run.fern 10305532
-asm_pathprobe_run.fern 9612572
-ssa_lift_scan_run.fern 9406140
-asm_ir_elig_run.fern 9063292
-irlower_run.fern 9409148
-checker_modload_run.fern 2123116
-ssa_emit_run.fern 1867452
-ssa_run.fern 1689356
+# 2026-09-04 — every row shrank 5.8-8.5%, the whole table at once: the inline
+# rc guards stopped testing what the below-heap compare already rejects (#8193).
+# Both natives emit that guard at every inc and dec site, so removing two
+# instructions from each is a whole-table effect rather than a per-driver one.
+# The tracked artifact fern.fern goes 14647852 -> 13607468, a 1.04 MB win.
+#
+# This baseline is one refresh late. #8202 landed the change without it, which
+# left driver-sizes red on main for the interval — the failure mode the SHRINK
+# check exists to catch, doing its job. Numbers pasted from that job's own
+# corrected-baseline block, on the head that carried the change.
+
+fern.fern 13607468
+asm_load_run.fern 10623900
+asm_modload_run.fern 9976348
+asm_ir_run.fern 9844348
+asm_run.fern 9436188
+wasm_ir_run.fern 9532668
+wasm_run.fern 9520044
+wasm_runio_run.fern 9482236
+asm_pathprobe_run.fern 8813852
+ssa_lift_scan_run.fern 8623804
+asm_ir_elig_run.fern 8297340
+irlower_run.fern 8626812
+checker_modload_run.fern 2000236
+ssa_emit_run.fern 1752764
+ssa_run.fern 1578764
