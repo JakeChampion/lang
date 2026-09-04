@@ -17,6 +17,10 @@ import (
 // are observed in a subprocess — the standard shape for testing a helper that
 // terminates its caller. PATH is emptied rather than the binaries moved, since
 // LookupArm64Tooling finds them with exec.LookPath.
+//
+// CI-DARK: FERN_ARM64_VERDICT_CHILD — this names the re-exec'd child of this
+// test, not a lane's coverage knob. The parent sets it when it spawns the
+// child, so a workflow setting it would only make the child run as the parent.
 func TestArm64ToolingMissingVerdict(t *testing.T) {
 	if os.Getenv("FERN_ARM64_VERDICT_CHILD") == "1" {
 		Arm64Tooling(t)
