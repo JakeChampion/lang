@@ -364,6 +364,10 @@ function main(): i32 {
     }
 
     var mod: parser.Module = rundriver.parse_stdin("irlower_run");
+    // One index over the module's structs, built once and handed to every
+    // lowering entry point below — rebuilding it per call is the scan #8178
+    // replaces. `mod` does not change after this point.
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
 
     // `-str-own` (#4297 CS4): print each function's slot-carried string-
     // ownership facts (irlower.str_own_dump) instead of evaluating — the
@@ -378,7 +382,7 @@ function main(): i32 {
                 skey = util.base_type_name(mod.funcs[sfi].receiver_type) + "." + mod.funcs[sfi].name;
             }
             sout = sout + "== " + skey + "\n";
-            sout = sout + irlower.str_own_dump(mod.funcs[sfi], mod.structs, mod.funcs);
+            sout = sout + irlower.str_own_dump(mod.funcs[sfi], stab, mod.funcs);
             sfi = sfi + 1;
         }
         write(sout);
@@ -390,7 +394,7 @@ function main(): i32 {
         // (aliasBindIncs) is an EMISSION-time record, so lower the module the
         // way the eval path does and read each function's alias_incs off its
         // LoweredFn. Same funcs order, so the two halves key together.
-        var pfns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
+        var pfns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, stab);
         var out: string = "";
         var fi: i32 = 0;
         while (fi < mod.funcs.len()) {
@@ -399,7 +403,7 @@ function main(): i32 {
                 key = util.base_type_name(mod.funcs[fi].receiver_type) + "." + mod.funcs[fi].name;
             }
             out = out + "== " + key + "\n";
-            out = out + irlower.rc_plan_dump(mod.funcs[fi], mod.structs, mod.funcs);
+            out = out + irlower.rc_plan_dump(mod.funcs[fi], stab, mod.funcs);
             if (fi < pfns.len() && pfns[fi].ok && pfns[fi].alias_incs.len() > 0) {
                 // Lexicographic sort, mirroring native sort.Strings.
                 var abi: string[] = [];
@@ -438,11 +442,11 @@ function main(): i32 {
     // closure sites that lambda lifting has not created yet.
     if (want_clocensus) {
         var cmod: parser.Module = irlower.lift_lambdas(mod);
-        write(clo_census(irlower.lower_module(cmod.funcs, parser.inject_builtin_enums(cmod.structs))));
+        write(clo_census(irlower.lower_module(cmod.funcs, irlower.struct_tab(parser.inject_builtin_enums(cmod.structs)))));
         return 0;
     }
 
-    var fns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, mod.structs);
+    var fns: ir.LoweredFn[] = irlower.lower_module(mod.funcs, stab);
 
     // `-slots` (#6639 slice 1.5): print each lowered function's per-slot value
     // kinds and declared return type — the facts LowerState knows and the op
@@ -478,7 +482,7 @@ function main(): i32 {
         // the corpus — a property of this driver's shortcut, not of the IR any
         // backend is handed.
         var vfilled: parser.Module = parser.fill_default_args_module(mod);
-        var vfns: ir.LoweredFn[] = irlower.lower_module(vfilled.funcs, mod.structs);
+        var vfns: ir.LoweredFn[] = irlower.lower_module(vfilled.funcs, stab);
         var probs: irverify.Problem[] = verify_all(vfilled.funcs, vfns);
         if (probs.len() == 0) {
             write("irverify: clean\n");
@@ -494,7 +498,7 @@ function main(): i32 {
         // production backends reach the IR through lift_lambdas, which runs
         // fill_default_args_module first, so a defaulted call arrives with its
         // arguments already pushed.
-        var sfns: ir.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, mod.structs);
+        var sfns: ir.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, stab);
         var sw: StackSweep = verify_stack_all(sfns);
         if (sw.problems.len() == 0) {
             write("irverifystack: clean (" + irverifystack.coverage_str(sw.cov) + ")\n");
@@ -510,7 +514,7 @@ function main(): i32 {
         // Same defaults-FILLED module as `-verify`, for the same reason: the
         // production backends reach the IR through lift_lambdas, which runs
         // fill_default_args_module first.
-        var rfns: ir.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, mod.structs);
+        var rfns: ir.LoweredFn[] = irlower.lower_module(parser.fill_default_args_module(mod).funcs, stab);
         var rw: RcSweep = verify_rc_all(rfns);
         if (rw.problems.len() == 0) {
             write("irverifyrc: clean (" + irverifyrc.rc_coverage_str(rw.cov) + ")\n");
@@ -527,7 +531,7 @@ function main(): i32 {
         // production backends reach the IR through lift_lambdas, which runs
         // fill_default_args_module first.
         var ffilled: parser.Module = parser.fill_default_args_module(mod);
-        var ffns: ir.LoweredFn[] = irlower.lower_module(ffilled.funcs, mod.structs);
+        var ffns: ir.LoweredFn[] = irlower.lower_module(ffilled.funcs, stab);
         var fw: FipSweep = verify_fip_all(ffilled.funcs, ffns);
         write(fw.census);
         if (fw.problems.len() == 0) {

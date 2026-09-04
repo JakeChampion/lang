@@ -6202,7 +6202,7 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     // built once here and handed to the unit emitter, which folds the
     // per-module tails onto it itself (#8199).
     var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
-        var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
+    var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
     var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, im.trait_reqs);
     // Lower every function once into `cache`, checking eligibility on each result.
     // Bail on the first function whose body doesn't lower or whose

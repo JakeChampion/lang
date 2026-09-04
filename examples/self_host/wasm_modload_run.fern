@@ -129,13 +129,13 @@ function whole_module_plan(nmods: i32): ShardRef[] {
 // build_unit lowers module `idx` and packages its bodies with the metadata link
 // needs. This is the only place lowering happens, which is what makes a cache
 // hit cheap: it skips this entirely.
-function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], idx: i32, lo: i32, hi: i32): wasm_objfile.UnitObj {
+function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab, idx: i32, lo: i32, hi: i32): wasm_objfile.UnitObj {
     var ns: string = unit_ns(idx, lo);
     // Lower ONLY this window's functions. lower_all_for_view sees the whole
     // program for its side tables, so a call into a function outside the window
     // (another shard, another module) still tags correctly.
     var sub: parser.Module = sub_module(infmods[idx], lo, hi);
-    var cache: irlower.LowerResult[] = wasm_ir.lower_all_for_view(sub, all_funcs, all_structs);
+    var cache: irlower.LowerResult[] = wasm_ir.lower_all_for_view(sub, all_funcs, all_stab);
     return wasm_objfile.UnitObj {
         strs: wasm_ir.str_values(cache),
         caggs: wasm_ir.const_agg_values(cache),
@@ -143,19 +143,19 @@ function build_unit(infmods: parser.Module[], all_funcs: parser.FuncDecl[], all_
         needs: wasm_ir.needs_of(cache),
         fn_sigs: wasm_ir.indirect_fn_sigs(cache),
         frt: wasm_ir.field_reclaim_types(cache),
-        sdt: wasm_ir.struct_drop_types(cache, all_structs),
-        aet: wasm_ir.struct_arr_elems_drop_types(cache, all_structs),
-        text: wasm_ir.emit_functions_view(ns, sub, cache, all_funcs, all_structs),
+        sdt: wasm_ir.struct_drop_types(cache, all_stab),
+        aet: wasm_ir.struct_arr_elems_drop_types(cache, all_stab),
+        text: wasm_ir.emit_functions_view(ns, sub, cache, all_funcs, all_stab),
     };
 }
 
 // load_unit returns module `idx`'s object, served from the cache when its key
 // still matches and built (lowered) only when it does not. hit/miss goes to
 // stderr so a build, or a test, can observe exactly which modules were reused.
-function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], all_funcs: parser.FuncDecl[], all_structs: parser.StructDecl[], idx: i32, lo: i32, hi: i32, cache_dir: string): wasm_objfile.UnitObj {
+function load_unit(dir: string, entry_path: string, parts: flatten.PerModule[], infmods: parser.Module[], sighashes: string[], all_funcs: parser.FuncDecl[], all_stab: irlower.StructTab, idx: i32, lo: i32, hi: i32, cache_dir: string): wasm_objfile.UnitObj {
     var lk: wasm_objfile.MaybeUnit = cache_lookup(dir, entry_path, parts, infmods, sighashes, idx, lo, hi, cache_dir);
     if (lk.found) { return lk.obj; }
-    var obj: wasm_objfile.UnitObj = build_unit(infmods, all_funcs, all_structs, idx, lo, hi);
+    var obj: wasm_objfile.UnitObj = build_unit(infmods, all_funcs, all_stab, idx, lo, hi);
     if (cache_dir.len() > 0 && sighashes.len() > 0) {
         var ck: string = cache_file_for(dir, entry_path, parts, infmods, sighashes, idx, lo, hi, cache_dir);
         if (ck.len() > 0) {
@@ -337,7 +337,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
         return 1;
     }
 
-    var obj: wasm_objfile.UnitObj = load_unit(dir, entry_path, parts, infmods, sighashes, all_funcs, all_structs, pm_index, pm_lo, pm_hi, cache_dir);
+    var obj: wasm_objfile.UnitObj = load_unit(dir, entry_path, parts, infmods, sighashes, all_funcs, irlower.struct_tab(all_structs), pm_index, pm_lo, pm_hi, cache_dir);
     write(wasm_objfile.encode(obj));
     return 0;
 }
