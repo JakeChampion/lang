@@ -289,16 +289,16 @@ func EmitAsmModule(funcs map[string]*ssa.Func, entry string, numAlloc int, entry
 func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int, strLabels map[string]string, sentLabels map[int64]string, fnIndex map[string]int) error {
 	label := fnLabel(name)
 	// s3 — the last register in the file — is the free scratch the div/shift and
-	// call sequences stage operands through. It is above the allocatable range
-	// (and above rax/rcx/rdx), so it never aliases the fixed registers those
-	// sequences pin, nor any caller-saved register saved across a call.
+	// call sequences stage operands through. It is above the allocatable range,
+	// so it never aliases the fixed registers those sequences pin (see gpRegs on
+	// why sharing r8/r9 with the argument registers is safe) nor any register in
+	// a call's save set, which holds allocatable homes only.
 	scratch := p.NumRegFile - 1
 
-	// Callee-saved registers this function actually clobbers (allocatable homes
-	// and the scratch registers can land on rbx / r12–r15). Per the System V ABI
-	// the function must preserve them for its caller, so they are saved into
-	// fresh slots above the allocator's spill slots and restored at every return.
-	// A leaf that touches none of them pays nothing.
+	// Callee-saved registers this function actually clobbers. Per the System V
+	// ABI the function must preserve them for its caller, so they are pushed
+	// below the spill area and popped at every return. A leaf that touches none
+	// of them pays nothing.
 	//
 	// The set is read back off the emitted text rather than predicted from the
 	// Program, because predicting it means keeping a list of every field and
@@ -316,22 +316,25 @@ func emitFuncBody(w func(string, ...any), name string, p *Program, numAlloc int,
 		return err
 	}
 	saved := calleeSavedIn(probe.String(), p.NumRegFile)
-	savedSlot := func(i int) string { return slotMem(p.NumSlots + i) }
 	restore := func() {
 		for i := len(saved) - 1; i >= 0; i-- {
-			w("\tmov %s, %s", reg(saved[i]), savedSlot(i))
+			w("\tpop %s", reg(saved[i]))
 		}
 	}
 
 	w("%s:", label)
 	w("\tpush rbp")
 	w("\tmov rbp, rsp")
-	frame := align16(8 * (p.NumSlots + len(saved)))
+	// The spill area is reserved first so a slot's [rbp - 8*(n+1)] never lands on
+	// a pushed register, and the reservation absorbs whatever padding the pushes
+	// need: the two together shift rsp by a multiple of 16, which is the
+	// alignment the call sequences' own padding assumes for the body.
+	frame := align16(8*(p.NumSlots+len(saved))) - 8*len(saved)
 	if frame > 0 {
 		w("\tsub rsp, %d", frame)
 	}
-	for i, r := range saved {
-		w("\tmov %s, %s", savedSlot(i), reg(r))
+	for _, r := range saved {
+		w("\tpush %s", reg(r))
 	}
 	for _, line := range paramMoveLines(p.ParamLocs, scratch) {
 		w("\t%s", line)
@@ -534,16 +537,26 @@ func fnLabel(name string) string {
 	return s.String()
 }
 
+// calleeSavedNames are the System V general-purpose registers a function must
+// preserve for its caller. Every other register in gpRegs is clobberable across
+// a call. Naming them rather than their gpRegs indices is what lets gpRegs be
+// reordered without three tables drifting apart.
+var calleeSavedNames = map[string]bool{"rbx": true, "r12": true, "r13": true, "r14": true, "r15": true}
+
 // isCallerSaved reports whether gpRegs index r is a System V caller-saved
-// register (clobberable across a call). rbx and r12–r15 are callee-saved.
-func isCallerSaved(r int) bool {
-	switch r {
-	case 1, 10, 11, 12, 13: // rbx, r12, r13, r14, r15
-		return false
-	default:
-		return true
+// register (clobberable across a call).
+func isCallerSaved(r int) bool { return !calleeSavedNames[gpRegs[r]] }
+
+// calleeSavedRegs are the gpRegs indices of calleeSavedNames, ascending.
+var calleeSavedRegs = func() []int {
+	var out []int
+	for r := range gpRegs {
+		if !isCallerSaved(r) {
+			out = append(out, r)
+		}
 	}
-}
+	return out
+}()
 
 // calleeSavedIn returns, in ascending order, the callee-saved gpRegs indices the
 // emitted text `asm` mentions — the registers the function must preserve for its
@@ -566,11 +579,11 @@ func calleeSavedIn(asm string, numRegFile int) []int {
 		seen[tok] = true
 	}
 	var out []int
-	for _, r := range []int{1, 10, 11, 12, 13} { // rbx, r12–r15
+	for _, r := range calleeSavedRegs {
 		if r >= numRegFile {
 			continue
 		}
-		for _, name := range regSpellings[r] {
+		for _, name := range regSpellings(r) {
 			if seen[name] {
 				out = append(out, r)
 				break
@@ -584,15 +597,9 @@ func calleeSavedIn(asm string, numRegFile int) []int {
 // word characters so label names cannot decompose into register names.
 var regTokenRe = regexp.MustCompile(`[A-Za-z_.][A-Za-z0-9_.]*`)
 
-// regSpellings maps a gpRegs index to every width spelling of that register, so
-// a 32-bit or byte-width use counts as a use.
-var regSpellings = map[int][]string{
-	1:  {"rbx", "ebx", "bx", "bl"},
-	10: {"r12", "r12d", "r12w", "r12b"},
-	11: {"r13", "r13d", "r13w", "r13b"},
-	12: {"r14", "r14d", "r14w", "r14b"},
-	13: {"r15", "r15d", "r15w", "r15b"},
-}
+// regSpellings returns every width spelling of gpRegs index r, so a 32-bit or
+// byte-width use counts as a use.
+func regSpellings(r int) [4]string { return [4]string{gpRegs[r], reg32[r], reg16[r], reg8[r]} }
 
 // callSavedSet returns the caller-saved allocatable registers to preserve across
 // a call. When the emitter computed a live-across set (SaveRegsSet), only those
@@ -666,16 +673,16 @@ func callLines(in Inst, numAlloc, scratch, s0 int) ([]string, error) {
 	// check is what keeps that an optimisation rather than a load-bearing
 	// assumption about a pass in another package.
 	if !inSaveSet(saved, in.Dst) && (in.Op != CallPair || !inSaveSet(saved, in.Dst2)) {
-		// System V returns in rax (tag) / rdx (payload) — gpRegs indices 0 and 3 —
-		// so delivering a pair into its destinations is a parallel copy over
-		// abstract indices. Self-moves are dropped rather than emitted as
-		// `mov rax, rax`, which is the whole point of coalescing here.
+		// System V returns in rax (tag) / rdx (payload), so delivering a pair into
+		// its destinations is a parallel copy over abstract indices. Self-moves
+		// are dropped rather than emitted as `mov rax, rax`, which is the whole
+		// point of coalescing here.
 		var moves [][2]int
-		if in.Dst != 0 {
-			moves = append(moves, [2]int{in.Dst, 0})
+		if in.Dst != raxReg {
+			moves = append(moves, [2]int{in.Dst, raxReg})
 		}
-		if in.Op == CallPair && in.Dst2 != 3 {
-			moves = append(moves, [2]int{in.Dst2, 3})
+		if in.Op == CallPair && in.Dst2 != rdxReg {
+			moves = append(moves, [2]int{in.Dst2, rdxReg})
 		}
 		out = append(out, resolveRegMoves(moves)...)
 		restore()
@@ -854,7 +861,19 @@ func isDeadSelfMove(line string) bool {
 	return false
 }
 
-var gpRegs = []string{"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"}
+// gpRegs maps an abstract register index to a physical register. The order is
+// load-bearing in one way: the last numScratch entries are the emitter's staging
+// registers, so they must be CALLER-saved, leaving every callee-saved register
+// (rbx, r12–r15) inside the allocatable file. Staging is dead across a call and
+// costs nothing to lose, while a value the allocator homes in a callee-saved
+// register crosses a call for free — with the split the other way round the
+// allocator had rbx and nothing else, and paid a push/pop per call site instead.
+//
+// r8 and r9 are System V argument registers as well as scratch. That is safe
+// because no staged value is live when a call's argument shuffle writes them;
+// TestAsmRunStackArgsDirectCall covers the five- and six-argument shapes that
+// would break if one ever were.
+var gpRegs = []string{"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r12", "r13", "r14", "r15", "r8", "r9", "r10", "r11"}
 
 // DefaultNumAlloc is the largest allocatable file EmitAsmModule accepts, and so
 // the size a caller with no reason to pick otherwise should ask for.
@@ -867,9 +886,9 @@ var gpRegs = []string{"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10
 // to allocate rather than a caller asking for an impossible file. Tests sweep
 // smaller files deliberately, to exercise spilling.
 var DefaultNumAlloc = len(gpRegs) - numScratch
-var reg8 = []string{"al", "bl", "cl", "dl", "sil", "dil", "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b"}
-var reg32 = []string{"eax", "ebx", "ecx", "edx", "esi", "edi", "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d"}
-var reg16 = []string{"ax", "bx", "cx", "dx", "si", "di", "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w"}
+var reg8 = []string{"al", "bl", "cl", "dl", "sil", "dil", "r12b", "r13b", "r14b", "r15b", "r8b", "r9b", "r10b", "r11b"}
+var reg32 = []string{"eax", "ebx", "ecx", "edx", "esi", "edi", "r12d", "r13d", "r14d", "r15d", "r8d", "r9d", "r10d", "r11d"}
+var reg16 = []string{"ax", "bx", "cx", "dx", "si", "di", "r12w", "r13w", "r14w", "r15w", "r8w", "r9w", "r10w", "r11w"}
 
 // gpIndex returns the gpRegs index of a physical register name.
 func gpIndex(name string) int {
@@ -2860,11 +2879,13 @@ func emitStrDecHelper(w func(string, ...any)) {
 	rcPassThroughRet(w)
 }
 
-// rcxReg/raxReg/rdxReg are the fixed registers the shift/div sequences pin.
-const (
-	rcxReg = 2 // gpRegs index of rcx
-	raxReg = 0 // gpRegs index of rax
-	rdxReg = 3 // gpRegs index of rdx
+// rcxReg/raxReg/rdxReg are the fixed registers the shift/div and call sequences
+// pin. Derived from gpRegs so a reordering cannot leave them naming something
+// else.
+var (
+	rcxReg = gpIndex("rcx")
+	raxReg = gpIndex("rax")
+	rdxReg = gpIndex("rdx")
 )
 
 // shiftSeq renders a variable shift (count in cl). dst holds the value, src the
