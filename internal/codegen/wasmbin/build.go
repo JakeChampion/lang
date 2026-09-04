@@ -216,8 +216,8 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	ir.MarkExternallyReachable(ip, exportRoots...)
 	// The IR optimisation pipeline, and every pass in it also runs on the
 	// native backends — TailCallOptimize, Inline, Defunctionalise,
-	// ElideClosurePair, InlineZeroCaptureClosures, FuseTee, FlattenBranches,
-	// OptimizeCleanup, EliminateDeadCode and the dead-function cull below — so a
+	// ElideClosurePair, InlineZeroCaptureClosures, FuseTee, EliminateDeadCode,
+	// FlattenBranches, OptimizeCleanup and the dead-function cull below — so a
 	// change to one of them lights up everywhere. What bounds Inline's growth on
 	// a program the size of a compiler is ir.inlineMaxUnitOps, not the choice of
 	// backend.
@@ -233,9 +233,9 @@ func BuildWithOptions(prog *ast.Program, info *checker.Info, opts BuildOptions) 
 	ir.InlineZeroCaptureClosures(ip)
 	ir.Inline(ip)
 	ir.FuseTee(ip)
+	ir.EliminateDeadCode(ip)
 	ir.FlattenBranches(ip)
 	ir.OptimizeCleanup(ip)
-	ir.EliminateDeadCode(ip)
 	// IR-level dead-function elimination: drop top-level
 	// functions whose body the optimiser left without any
 	// remaining callers. Critical for the binary path since

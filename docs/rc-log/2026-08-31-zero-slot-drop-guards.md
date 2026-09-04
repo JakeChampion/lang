@@ -52,8 +52,8 @@ stack.
 ## Measured over the self-host compiler
 
 After the x86-64 backend's full battery — `Defunctionalise`, `ElideClosurePair`,
-`InlineZeroCaptureClosures`, `Inline`, `FuseTee`, `FlattenBranches`,
-`EliminateDeadCode`, `OptimizeCleanup`:
+`InlineZeroCaptureClosures`, `Inline`, `FuseTee`, `EliminateDeadCode`,
+`FlattenBranches`, `OptimizeCleanup`:
 
 | | guards | total IR ops |
 |---|---|---|

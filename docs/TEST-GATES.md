@@ -610,7 +610,7 @@ Worth knowing so you do not assume coverage you do not have:
 14. **A measurement over `internal/ir` says nothing about emitted code unless
    the backend's pass battery has run first.** Every backend runs
    `Defunctionalise` → `ElideClosurePair` → `InlineZeroCaptureClosures` →
-   `Inline` → `FuseTee` → `FlattenBranches` → `EliminateDeadCode` →
+   `Inline` → `FuseTee` → `EliminateDeadCode` → `FlattenBranches` →
    `OptimizeCleanup` before emitting, and that battery is not a rounding
    error: the `rc_is_unique` guards on a never-assigned slot count 5,416
    after `LowerWith` alone and 2,680 after it, because `ConstPropagate` plus

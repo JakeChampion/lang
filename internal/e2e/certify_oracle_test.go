@@ -290,8 +290,8 @@ func nativePassBattery(ip *ir.Program) {
 	ir.InlineZeroCaptureClosures(ip)
 	ir.Inline(ip)
 	ir.FuseTee(ip)
-	ir.FlattenBranches(ip)
 	ir.EliminateDeadCode(ip)
+	ir.FlattenBranches(ip)
 	ir.OptimizeCleanup(ip)
 	cullDeadFuncs(ip)
 }

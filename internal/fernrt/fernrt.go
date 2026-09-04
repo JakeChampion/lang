@@ -92,7 +92,7 @@ func Names() []string {
 // target whose pointers are ptrW bytes wide. The string ABI follows
 // ast.UseTwoWordStrings(ptrW) at the time of the call, as it does for the
 // program the backend is emitting. The IR has been through the same cleanup
-// passes (FuseTee, FlattenBranches, EliminateDeadCode, OptimizeCleanup) every
+// passes (FuseTee, EliminateDeadCode, FlattenBranches, OptimizeCleanup) every
 // backend runs before emitting, so it arrives in the shape their emitters
 // expect.
 func Func(name string, ptrW int) (*ast.FuncDecl, *ir.Func, error) {
@@ -110,8 +110,8 @@ func Func(name string, ptrW int) (*ast.FuncDecl, *ir.Func, error) {
 			return nil, nil, fmt.Errorf("fernrt: lower runtime.fern: %w", err)
 		}
 		ir.FuseTee(ip)
-		ir.FlattenBranches(ip)
 		ir.EliminateDeadCode(ip)
+		ir.FlattenBranches(ip)
 		ir.OptimizeCleanup(ip)
 		l = &lowered{decls: map[string]*ast.FuncDecl{}, funcs: map[string]*ir.Func{}}
 		for _, fn := range prog.Funcs {
