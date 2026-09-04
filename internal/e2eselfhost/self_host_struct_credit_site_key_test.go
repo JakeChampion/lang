@@ -217,6 +217,11 @@ function round(i: i32): i32 {
 			// `want` carries it rather than the frees column.
 			//
 			// Confirmed against both oracles: interp and native x86-64 each exit 51.
+			//
+			// The counts fell 800 -> 600 with #8224: the two `s.ops.append(x)`
+			// per round grow the field's own buffer instead of cloning it, so
+			// the two clones a round used to allocate are gone. The balance is
+			// what this column pins, and the exit code still carries NODEEP.
 			name: "builder_nodeep",
 			src: `struct B { ops: i32[] }
 function (b: B) emit(x: i32): B { return B { ops: b.ops.append(x) }; }
@@ -226,7 +231,7 @@ function round(i: i32): i32 {
     s = s.emit(i + 1);
     return s.ops.len();
 }` + structKeyMain,
-			want: 51, allocs: 800, frees: 800,
+			want: 51, allocs: 600, frees: 600,
 		},
 	}
 }
