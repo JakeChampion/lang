@@ -2539,9 +2539,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 // x29/x30 are saved even though nothing else needs a frame: __fern_report walks
 // the frame chain to print a backtrace.
 function rt_arm64_str_eq(): string {
-    var s: string = ".globl __fn___fern_str_eq\n";
-    s = s + ".type __fn___fern_str_eq, @function\n";
-    s = s + "__fn___fern_str_eq:\n";
+    var s: string = "__fn___fern_str_eq:\n";
     s = s + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
     s = s + "    ldr x2, [x29, #16]\n    ldr x3, [x29, #32]\n";
     // Same box: interned literals, which is most of what a compiler compares.
