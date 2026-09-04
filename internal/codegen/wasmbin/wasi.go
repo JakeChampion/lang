@@ -155,6 +155,16 @@ var importSpecs = map[string]importSpec{
 		params:  nil,
 		results: []byte{encode.ValtypeI64},
 	},
+	"wasi_poll_oneoff": {
+		// (in i32, out i32, nsubscriptions i32, nevents_ptr i32) → errno i32.
+		// Blocks until one of the subscriptions at `in` fires. Only used
+		// with a single monotonic-clock subscription, which makes it a
+		// timed sleep — NOT the wasi:io/poll multiplexer the reactor needs.
+		module:  "wasi_snapshot_preview1",
+		name:    "poll_oneoff",
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32, encode.ValtypeI32},
+		results: []byte{encode.ValtypeI32},
+	},
 	"wasi_clock_time_get": {
 		// (clock_id i32, precision i64, time_ptr i32) → errno i32.
 		// Writes the current time as nanoseconds-since-epoch
@@ -1669,6 +1679,17 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 			in.add("wasi_clock_time_get")
 		}
 	}
+	if helpers.set["__fern_sleep_ms"] {
+		if opts.Preview2WASI {
+			// The preview-2 sleep is the reactor's own primitives:
+			// subscribe-duration → block → drop.
+			in.add("wasi_clocks_subscribe_duration")
+			in.add("wasi_io_pollable_block")
+			in.add("wasi_io_pollable_drop")
+		} else {
+			in.add("wasi_poll_oneoff")
+		}
+	}
 	if helpers.set["__fern_wasm_timer_pollable"] {
 		// Preview-2-only: the timer pollable comes from
 		// monotonic-clock.subscribe-duration.
@@ -2330,6 +2351,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"isatty":                     buildIsattyBodyP2,
 	"__fern_random_i32":          buildRandomI32BodyP2,
 	"__fern_monotonic_ns":        buildMonotonicNsBodyP2,
+	"__fern_sleep_ms":            buildSleepMsBodyP2,
 	"__fern_random_bytes":        buildRandomBytesBodyP2,
 	"__fern_print":               buildPrintBodyP2,
 	"__fern_write":               buildWriteBodyP2,
@@ -2601,6 +2623,92 @@ func buildWasmTimerPollableBody(idxs map[string]uint32) []byte {
 	body = inst.InstLocalGet(body, 0) // duration_ns
 	body = inst.InstCall(body, sub)   // → pollable handle (i32)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildSleepMsBody — body for __fern_sleep_ms, preview-1.
+//
+// Signature: (ms: i64) → ()
+//
+// Where the register backends nanosleep a timespec, preview-1 has no
+// sleep syscall — but a bare timed block needs only poll_oneoff with a
+// SINGLE monotonic-clock subscription, not the wasi:io/poll multiplexer
+// the reactor uses. Lays out the 48-byte `subscription` at sleepBufAddr:
+// userdata u64 @0, eventtype u8 @8 = 0 (clock), then the
+// subscription_clock — clockid u32 @16 = 1 (monotonic), timeout u64 @24
+// = ms·1e6 ns, precision u64 @32 = 0, subclockflags u16 @40 = 0
+// (RELATIVE) — with the 32-byte event-out at @48 and nevents at @80.
+//
+// ms <= 0 returns immediately: a relative timeout of 0 is a legal
+// subscription, but there is no reason to enter the host for it.
+func buildSleepMsBody(idxs map[string]uint32) []byte {
+	poll := idxs["wasi_poll_oneoff"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI64Const(body, 0)
+	body = numeric.InstI64GtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstI32Const(body, sleepBufAddr)
+		body = inst.InstI64Const(body, 0)
+		body = memory.InstI64Store(body, 3, 0) // userdata @0
+		body = inst.InstI32Const(body, sleepBufAddr)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store8(body, 0, 8) // eventtype = clock
+		body = inst.InstI32Const(body, sleepBufAddr)
+		body = inst.InstI32Const(body, 1)
+		body = memory.InstI32Store(body, 2, 16) // clockid = monotonic
+		body = inst.InstI32Const(body, sleepBufAddr)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI64Const(body, 1000000)
+		body = numeric.InstI64Mul(body)
+		body = memory.InstI64Store(body, 3, 24) // timeout = ms * 1e6 ns
+		body = inst.InstI32Const(body, sleepBufAddr)
+		body = inst.InstI64Const(body, 0)
+		body = memory.InstI64Store(body, 3, 32) // precision = 0
+		body = inst.InstI32Const(body, sleepBufAddr)
+		body = inst.InstI32Const(body, 0)
+		body = memory.InstI32Store16(body, 1, 40) // subclockflags = RELATIVE
+
+		body = inst.InstI32Const(body, sleepBufAddr)
+		body = inst.InstI32Const(body, sleepBufAddr+48)
+		body = inst.InstI32Const(body, 1)
+		body = inst.InstI32Const(body, sleepBufAddr+80)
+		body = inst.InstCall(body, poll)
+		body = inst.InstDrop(body) // ignore errno
+	}
+	body = inst.InstEnd(body)
+	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildSleepMsBodyP2 — body for __fern_sleep_ms under preview-2.
+//
+// A component has no poll_oneoff, but it has the reactor's own
+// primitives, and a sleep is exactly one of them held to completion:
+// subscribe-duration mints a timer pollable, block waits on it, and the
+// drop returns the handle — without which a program sleeping in a loop
+// grows the host's resource table until it runs out of keys.
+func buildSleepMsBodyP2(idxs map[string]uint32) []byte {
+	sub := idxs["wasi_clocks_subscribe_duration"]
+	block := idxs["wasi_io_pollable_block"]
+	drop := idxs["wasi_io_pollable_drop"]
+	var body []byte
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstI64Const(body, 0)
+	body = numeric.InstI64GtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI64Const(body, 1000000)
+		body = numeric.InstI64Mul(body)
+		body = inst.InstCall(body, sub)
+		body = inst.InstLocalTee(body, 1)
+		body = inst.InstCall(body, block)
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstCall(body, drop)
+	}
+	body = inst.InstEnd(body)
+	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	return inst.PutFunctionBody(nil, locals, body)
 }
 
 // buildWasmBlockBody — body for __fern_wasm_block.

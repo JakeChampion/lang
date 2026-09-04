@@ -11,11 +11,10 @@ the self-host compiler instead.
 an order of magnitude *better* than the bundle shipping today. It is bounded by
 a set of missing wasmbin builtins and the shape of the compiler's entry point,
 both named below and neither open-ended. The correctness bug that used to head
-this list (#7948) is fixed, and so is the strbuf third of the builtin gap. Of
-what the builtin gap turned out to be, only `sleep_ms` is still a missing
-lowering: `timer_fd`, `write_file_exec` and the `__c_call*` family are things
-wasm cannot express, and are now refused by E066 at check time rather than by
-the emitter mid-build.
+this list (#7948) is fixed, and so is the builtin gap in full: strbuf shipped in
+#7951 and `sleep_ms` in #7947, leaving no missing lowering at all. `timer_fd`,
+`write_file_exec` and the `__c_call*` family are things wasm cannot express, and
+are refused by E066 at check time rather than by the emitter mid-build.
 
 The self-host compiler compiled to wasm **already runs in wasm today**. A
 stdin-driven wasm-emitting driver, compiled to a core module by the self-host
@@ -266,16 +265,18 @@ the component-model filesystem has no permission bits, #6133), and the
 refusals the self-host has made since #4317/#4375, moved into
 `internal/platforms` where a target property belongs.
 
-`sleep_ms` is the one genuinely missing lowering left. It stays gated on `now`,
-which wasm grants, because wasm CAN block: subscribe-duration on
-`wasi:clocks/monotonic-clock` plus a wait is the sleep. It is listed alone in
-`providedMissingLowering`.
+`sleep_ms` was the last one, and #7947 landed it: wasm CAN block, so preview-1
+takes `poll_oneoff` with a single monotonic-clock subscription and preview-2
+takes subscribe-duration plus a wait. `providedMissingLowering` is now empty.
 
-The consequence for this precondition is unchanged while any of them is open:
-the playground's wasm artifact can only be produced *by the self-host compiler
-compiling itself*, never by the native toolchain — so there is no independent
-second witness to cross-check a wasm miscompile against, which is why #7948 had
-to be diagnosed by diffing the two TARGETS of one compiler instead.
+That removes the builtin half of this precondition, and the rest of it stands
+on a different footing than it did. The playground's wasm artifact is still
+produced *by the self-host compiler compiling itself* rather than by the native
+toolchain — but what refuses the native route now is `write_file_exec` needing
+`fsmode`, listed among the E066 refusals above, not a lowering anyone can add.
+So there is still no independent second witness to cross-check a wasm
+miscompile against — which is why #7948 had to be diagnosed by diffing the two
+TARGETS of one compiler instead — and it is no longer a witness to wait for.
 
 The IR driver is the exception, and it is a usable partial witness: the native
 toolchain compiles `examples/self_host/wasm_ir_run.fern` to a core module that
@@ -292,7 +293,7 @@ The gate that should have caught the whole class exists now.
 not: it checks arity only for helpers wasmbin already has, and `continue`s past
 names it does not know, so a builtin with no lowering at all passed it silently.
 `TestEveryProvidedCalleeHasAWasmLowering` asserts every callee in `providedSigs`
-has somewhere to land, and its known-missing list — `sleep_ms` alone now — is
+has somewhere to land, and its known-missing list — empty since #7947 — is
 exact in both directions, so a fix cannot leave the table stale. Its sibling
 `TestPlatformExemptionsAreReallyRefused` re-derives the refused list from
 `internal/platforms` rather than trusting it, so moving a name there has to be
@@ -347,8 +348,8 @@ size before it was root-caused; it is closed, and what remains is scoped.
 **strbuf in `wasmbin`** headed this list and shipped in #7951: three scratch
 slots on the `memlayout.go` chain plus `runtimeHelperSpecs` entries keyed by the
 source names, with `strbuf_append` reading through the two-word SSO tag rather
-than the self-host's one-word strings. `sleep_ms` is what is left of that
-blocker.
+than the self-host's one-word strings. `sleep_ms`, the remainder of that
+blocker, shipped the same way in #7947.
 
 **An embedded stdlib for the self-host compiler** was the second, and it has
 shipped too. A wasm-hosted compiler has no host filesystem to read

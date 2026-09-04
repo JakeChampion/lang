@@ -4,9 +4,10 @@ import "core/int";
 // native backends. Non-deterministic values are checked by invariant
 // (length, epoch lower-bound) so the fixture is stable across runs.
 //
-// NOTE: monotonic_ns + sleep_ms are NOT exercised here — they are
-// unimplemented on native x86-64/arm64 (and sleep_ms on wasm); see #2843.
-// They are covered on interp + self-host (self_host_audit_platform_test).
+// NOTE: monotonic_ns + sleep_ms are not exercised here — they have
+// their own fixture, audit_monotonic_sleep, which covers all four
+// backends. This note used to say they were unimplemented natively and
+// on wasm; both landed (#2843, #7947).
 
 function main(): i32 {
     // env: an unset variable reads as None

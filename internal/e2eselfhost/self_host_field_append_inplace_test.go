@@ -464,3 +464,66 @@ function main(): i32 {
 	}
 	t.Fatalf("no bracket release in __fn_outer; body:\n%s", body)
 }
+
+// TestSelfHostFieldAppendInPlaceReclaimsX86_64 — the threaded container gives
+// every buffer back.
+//
+// The differential cases above weigh ANSWERS, and an answer cannot see a leak:
+// the in-place grow shipped taking a counted retain on the identity arm, which
+// nothing released — __field_reclaim_<T> skips exactly the field whose value the
+// replacement still holds — so each in-place grow abandoned one buffer AND left
+// the field at rc >= 2, which sent the next append down arr_push's un-share copy
+// to abandon another. Every answer stayed correct throughout.
+//
+// The loop threads through both call shapes and re-seeds a fresh container each
+// round, so the run covers an in-place grow, a reallocating grow, and the
+// superseded box's own reclaim.
+func TestSelfHostFieldAppendInPlaceReclaimsX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	interpBin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	const src = `
+struct St { ops: i32[], ctrl: i32 }
+function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl }; }
+function bump(s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl }; }
+function round(n: i32): i32 {
+    var s: St = St { ops: [], ctrl: 0 };
+    var i: i32 = 0;
+    while (i < n) { s = s.emit(i); s = bump(s, i); i = i + 1; }
+    var sum: i32 = 0;
+    for v in s.ops { sum = sum + v; }
+    return s.ops.len() + sum;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 9) { t = t + round(k); k = k + 1; }
+    return t % 97;
+}`
+
+	want := interpExit(t, interpBin, src)
+	asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
+	progBin := buildBin(t, gcc, dir, "fai_reclaims", asm)
+	stderr, exit := hevRun(t, runner, progBin)
+	if exit != want {
+		t.Fatalf("exited %d, want %d (interp oracle)", exit, want)
+	}
+	summary := leakSummaryLine(stderr)
+	if summary == "" {
+		t.Fatalf("no leakcheck summary; stderr:\n%s", stderr)
+	}
+	var allocs, frees, live int64
+	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+		t.Fatalf("parse %q: %v", summary, err)
+	}
+	if allocs == 0 {
+		t.Fatalf("allocated nothing — the probe is not exercising the path: %s", summary)
+	}
+	if live != 0 || allocs != frees {
+		t.Errorf("%s — an in-place grow hands the field's buffer to the literal; "+
+			"nothing may claim a second counted reference to it", summary)
+	}
+}
