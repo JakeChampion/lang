@@ -119,3 +119,53 @@ function scan(s: string): i32 {
 		t.Errorf("second run changed the ops:\n%s", p)
 	}
 }
+
+// The multi-slot path: two distinct operands in one header take a slot each.
+// Also the pass's load-bearing structural property — the prologue it splices in
+// is stack-net-zero. The differential suite cannot see this, because the interp
+// oracle runs pre-battery IR and so never meets the hoisted shape.
+func TestHoistLoopInvariantsGivesEachOperandItsOwnSlot(t *testing.T) {
+	const src = `
+function f(s: string, t: string): i32 {
+	var i: i32 = 0;
+	while (i < s.len() + t.len()) { i = i + 1; }
+	return i;
+}`
+	p := lowerSource(t, src)
+	before := len(findFunc(p, "f").ScratchTypes)
+	HoistLoopInvariants(p)
+	fn := findFunc(p, "f")
+	if got := countKind(loopSpan(t, fn), OpStrLen); got != 0 {
+		t.Errorf("%d str.len left inside the loop; both operands are invariant:\n%s", got, p)
+	}
+	if got := countKind(fn.Ops, OpStrLen); got != 2 {
+		t.Errorf("each length should still be read once before the loop; read %d times:\n%s", got, p)
+	}
+	if got := len(fn.ScratchTypes) - before; got != 2 {
+		t.Errorf("two operands should take two slots, took %d:\n%s", got, p)
+	}
+	if probs := mustVerifyStack(t, p); len(probs) != 0 {
+		t.Errorf("the spliced prologue is not stack-neutral: %v\n%s", probs, p)
+	}
+}
+
+// `&&` lowers to control flow, so it opens a block that ends the header. The
+// right-hand length stays in the loop — it is guarded, and hoisting it would
+// evaluate it on a path the original never did.
+func TestHoistLoopInvariantsStopsAtAShortCircuit(t *testing.T) {
+	const src = `
+function f(a: string, b: string): i32 {
+	var i: i32 = 0;
+	while (i < a.len() && i < b.len()) { i = i + 1; }
+	return i;
+}`
+	p := lowerSource(t, src)
+	HoistLoopInvariants(p)
+	fn := findFunc(p, "f")
+	if got := countKind(loopSpan(t, fn), OpStrLen); got != 1 {
+		t.Errorf("the guarded length must stay in the loop, found %d inside:\n%s", got, p)
+	}
+	if probs := mustVerifyStack(t, p); len(probs) != 0 {
+		t.Errorf("stack problems after a partial hoist: %v\n%s", probs, p)
+	}
+}
