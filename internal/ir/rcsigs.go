@@ -335,7 +335,11 @@ var rcInert = map[string]bool{
 	"__fern_create_dir_all": true, "__fern_env": true, "__fern_env_at": true,
 	"__fern_env_count": true, "__fern_eprint": true, "__fern_exit": true,
 	"__fern_exp_f64": true, "__fern_floor_f64": true,
-	"__fern_heap_bump_bytes": true, "__fern_log_f64": true,
+	"__fern_heap_bump_bytes": true,
+	// The leak census: a counter readout and an itoa into static
+	// scratch, neither of which touches a counted reference.
+	"__fern_lc_report": true, "__fern_lc_wrnum": true,
+	"__fern_log_f64":       true,
 	"__fern_map_hash_seed": true, "__fern_memchr": true,
 	"__fern_monotonic_ns": true, "__fern_now_ns": true,
 	"__fern_now_unix_ms": true, "__fern_open_appender": true,

@@ -288,17 +288,26 @@ var emitDebugSyms bool
 // rather than a parameter because `run` already carries fifteen.
 var embeddedAssets *embed.Set
 
-// sanitizerTargets are the -target values whose backend emits the #5545 heap
-// detectors. The arm64 family shares one generator, so android / darwin ride
-// along with plain arm64 (with that backend's coverage: census + rc
-// over-release, no use-after-free quarantine). The SSA-direct and wasm
-// backends carry no instrumentation, so -sanitize on those is a warning, not
-// a silently unchecked build.
-var sanitizerTargets = map[string]bool{
-	"x86-64-linux":  true,
-	"arm64-linux":   true,
-	"arm64-android": true,
-	"arm64-darwin":  true,
+// sanitizerCoverage says what each -target's DEFAULT backend emits under
+// -sanitize: an empty note is the whole mode (census + rc over-release +
+// use-after-free quarantine), a non-empty one names the honest subset, and a
+// target absent from the map carries nothing at all. Both natives are
+// complete, and the arm64 family shares one generator so android / darwin
+// ride along with plain arm64.
+//
+// Neither extreme of the warning is safe on a partial target: claiming the
+// whole mode makes a silent run read as "no findings" when two of the three
+// checks were never emitted, and claiming nothing hides the census that is
+// really there.
+var sanitizerCoverage = map[string]string{
+	"x86-64-linux":  "",
+	"arm64-linux":   "",
+	"arm64-android": "",
+	"arm64-darwin":  "",
+	"wasm32-wasi":   "the leak census only, not the rc over-release or use-after-free detectors",
+	// A handler component has no exit seam to report at, so its census
+	// only lands if the program exits.
+	"wasm32-wasi-http": "the leak census only, not the rc over-release or use-after-free detectors — and it prints at process exit, which a request handler never reaches",
 }
 
 func definesMain(code string) bool { return mainFuncRe.MatchString(code) }
@@ -684,12 +693,22 @@ func main() {
 		// individually-set FERN_* flag all compose.
 		ast.SanitizeEnabled = true
 		ast.ApplySanitize()
-		// Only the two mainline native backends carry the detectors. Say
-		// so rather than accepting the flag and emitting nothing —
-		// silence here reads as "sanitizer ran, program is clean", which
-		// is the one wrong conclusion this mode must never support.
-		if !sanitizerTargets[*target] {
-			fmt.Fprintf(os.Stderr, "fern: warning: -sanitize has no effect on -target %s (native x86-64 and arm64 only); this build carries no checks\n", *target)
+		// Say what this build actually carries rather than accepting the
+		// flag and going quiet — silence reads as "sanitizer ran, program
+		// is clean", which is the one wrong conclusion this mode must
+		// never support. `-backend ssa` replaces the emitter on every
+		// target it covers and none of those is instrumented, so it drops
+		// to the no-checks case whatever the target says.
+		note, covered := sanitizerCoverage[*target]
+		what := "-target " + *target
+		if *backend == "ssa" {
+			what += " -backend ssa"
+		}
+		switch {
+		case *backend == "ssa" || !covered:
+			fmt.Fprintf(os.Stderr, "fern: warning: -sanitize has no effect on %s (the detectors are native x86-64 and arm64, the leak census also wasm); this build carries no checks\n", what)
+		case note != "":
+			fmt.Fprintf(os.Stderr, "fern: warning: -sanitize on -target %s carries %s\n", *target, note)
 		}
 	}
 	if *cover {

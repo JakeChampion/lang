@@ -1618,6 +1618,17 @@ func scanImports(prog *ir.Program, helpers runtimeNeeds, opts EmitOptions) impor
 	if helpers.set["__fern_exit"] {
 		in.add("wasi_proc_exit")
 	}
+	if helpers.set["__fern_lc_report"] {
+		// The census writes its line to stderr the same way __fern_eprint
+		// does; it just formats into static scratch rather than from a
+		// Fern string.
+		if opts.Preview2WASI {
+			in.add("wasi_get_stderr_p2")
+			in.add("wasi_blocking_write_and_flush_p2")
+		} else {
+			in.add("wasi_fd_write")
+		}
+	}
 	// Preview 2 has no fd table to interrogate, so its `isatty` is a
 	// constant and imports nothing (see buildIsattyBodyP2).
 	if helpers.set["isatty"] && !opts.Preview2WASI {
@@ -2058,6 +2069,7 @@ func buildPrintBodyFd(idxs map[string]uint32, fd int32, withNewline bool) []byte
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
 	alloc := idxs["__fern_alloc"]
+	free := idxs["__free"]
 	fdWrite := idxs["wasi_fd_write"]
 	var body []byte
 	// L = __fern_str_len(data, len)
@@ -2132,6 +2144,14 @@ func buildPrintBodyFd(idxs map[string]uint32, fd int32, withNewline bool) []byte
 	body = inst.InstI32Const(body, printRetAddr)
 	body = inst.InstCall(body, fdWrite)
 	body = inst.InstDrop(body)
+	// The copy is dead the moment fd_write returns — the call is
+	// synchronous, so the host has consumed the iovec. Releasing it here
+	// is what keeps a print LOOP from growing the heap by one buffer per
+	// call: nothing else ever frees it, and $L is the size that was
+	// allocated on both the newline and no-newline paths.
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, free)
 	// Three i32 locals: $L, $dst, $i.
 	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
@@ -2193,10 +2213,56 @@ func buildIsattyBodyP2(map[string]uint32) []byte {
 func buildExitBody(idxs map[string]uint32) []byte {
 	procExit := idxs["wasi_proc_exit"]
 	var body []byte
+	if ast.LeakCheckEnabled {
+		// The exit() builtin bypasses the synthesised wrappers, so the
+		// leak census reports here too (the natives' __fern_exit does
+		// the same). __fern_lc_report latches, so the wrappers' own
+		// call and this one cannot both print.
+		body = inst.InstCall(body, idxs["__fern_lc_report"])
+	}
 	body = inst.InstLocalGet(body, 0) // $code
 	body = inst.InstCall(body, procExit)
 	body = inst.InstUnreachable(body)
 	return inst.PutFunctionBody(nil, inst.PutLocalsEmpty(nil), body)
+}
+
+// buildLcReportBodyP2 assembles __fern_lc_report() for preview 2: the
+// same line, written through wasi:cli/stderr's output-stream instead of
+// fd 2. The handle is cached in the same slots __fern_eprint uses — it
+// is one host resource, and minting a second per process would be a
+// second claimant on the same stream.
+//
+// The result area is the reporter's own static scratch, never
+// __fern_alloc: the census is read before the line is written, and an
+// allocation in between would make the report describe a heap the
+// program never had.
+func buildLcReportBodyP2(idxs map[string]uint32) []byte {
+	getHandle := idxs["wasi_get_stderr_p2"]
+	write := idxs["wasi_blocking_write_and_flush_p2"]
+	emit := func(b []byte) []byte {
+		// if !init { mem[stderrHandleAddr] = get-stderr(); init = 1 }
+		b = inst.InstI32Const(b, stderrInitAddr)
+		b = memory.InstI32Load(b, 2, 0)
+		b = numeric.InstI32Eqz(b)
+		b = inst.InstIfStart(b, inst.BlocktypeEmpty)
+		b = inst.InstI32Const(b, stderrHandleAddr)
+		b = inst.InstCall(b, getHandle)
+		b = memory.InstI32Store(b, 2, 0)
+		b = inst.InstI32Const(b, stderrInitAddr)
+		b = inst.InstI32Const(b, 1)
+		b = memory.InstI32Store(b, 2, 0)
+		b = inst.InstEnd(b)
+		// blocking-write-and-flush(handle, line, cursor - line, retbuf)
+		b = inst.InstI32Const(b, stderrHandleAddr)
+		b = memory.InstI32Load(b, 2, 0)
+		b = inst.InstI32Const(b, lcLineBufAddr)
+		b = inst.InstLocalGet(b, 0)
+		b = inst.InstI32Const(b, lcLineBufAddr)
+		b = numeric.InstI32Sub(b)
+		b = inst.InstI32Const(b, lcRetBufAddr)
+		return inst.InstCall(b, write)
+	}
+	return inst.PutFunctionBody(nil, lcReportLocals(), emitLcSummary(idxs, emit))
 }
 
 // buildRandomI32Body assembles the wasm bytes for __fern_random_i32.
@@ -2268,6 +2334,7 @@ var preview2HelperBodyOverrides = map[string]func(map[string]uint32) []byte{
 	"__fern_print":               buildPrintBodyP2,
 	"__fern_write":               buildWriteBodyP2,
 	"__fern_eprint":              buildEprintBodyP2,
+	"__fern_lc_report":           buildLcReportBodyP2,
 	"__fern_putchar":             buildPutcharBodyP2,
 	"__fern_now_ns":              buildNowNsBodyP2,
 	"__fern_now_unix_ms":         buildNowUnixMsBodyP2,
@@ -2353,6 +2420,7 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 	strLen := idxs["__fern_str_len"]
 	strByte := idxs["__fern_str_byte"]
 	alloc := idxs["__fern_alloc"]
+	free := idxs["__free"]
 	getHandle := idxs[getHandleSym]
 	write := idxs["wasi_blocking_write_and_flush_p2"]
 	var body []byte
@@ -2420,17 +2488,30 @@ func buildPrintLikeBodyP2(idxs map[string]uint32, withNewline bool, getHandleSym
 		body = numeric.InstI32Add(body)
 		body = inst.InstLocalSet(body, 2)
 	}
+	// retBuf = __fern_alloc(16), in a local so it can be released with
+	// the copy below.
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalSet(body, 5)
 	// blocking-write-and-flush(handle, dst, $L, retBuf).
-	// handle = mem[handleAddr]; retBuf = __fern_alloc(16).
+	// handle = mem[handleAddr].
 	body = inst.InstI32Const(body, handleAddr)
 	body = memory.InstI32Load(body, 2, 0)
 	body = inst.InstLocalGet(body, 3)
 	body = inst.InstLocalGet(body, 2)
-	body = inst.InstI32Const(body, 16)
-	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalGet(body, 5)
 	body = inst.InstCall(body, write)
-	// Result is in retBuf; we ignore it (no error handling yet).
-	locals := inst.PutLocalsOneGroup(nil, 3, encode.ValtypeI32)
+	// Result is in retBuf; we ignore it (no error handling yet). Both
+	// blocks are dead once the blocking call returns, and nothing else
+	// frees them — a print loop would otherwise grow the heap by a
+	// buffer and a result area per call.
+	body = inst.InstLocalGet(body, 5)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, free)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstCall(body, free)
+	locals := inst.PutLocalsOneGroup(nil, 4, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 
@@ -3351,6 +3432,7 @@ func buildPutcharBody(idxs map[string]uint32) []byte {
 //	1: $buf  (1-byte content buffer)
 func buildPutcharBodyP2(idxs map[string]uint32) []byte {
 	alloc := idxs["__fern_alloc"]
+	free := idxs["__free"]
 	getStdout := idxs["wasi_get_stdout_p2"]
 	write := idxs["wasi_blocking_write_and_flush_p2"]
 	var body []byte
@@ -3380,8 +3462,17 @@ func buildPutcharBodyP2(idxs map[string]uint32) []byte {
 	body = inst.InstI32Const(body, 1)
 	body = inst.InstI32Const(body, 16)
 	body = inst.InstCall(body, alloc)
+	body = inst.InstLocalTee(body, 2)
 	body = inst.InstCall(body, write)
-	locals := inst.PutLocalsOneGroup(nil, 1, encode.ValtypeI32)
+	// Release the byte buffer and the result area — a putchar loop is
+	// the shape most likely to make a per-call leak visible.
+	body = inst.InstLocalGet(body, 2)
+	body = inst.InstI32Const(body, 16)
+	body = inst.InstCall(body, free)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI32Const(body, 1)
+	body = inst.InstCall(body, free)
+	locals := inst.PutLocalsOneGroup(nil, 2, encode.ValtypeI32)
 	return inst.PutFunctionBody(nil, locals, body)
 }
 

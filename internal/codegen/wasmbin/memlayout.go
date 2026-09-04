@@ -149,8 +149,44 @@ const (
 	preopenInitAddr   = strbufCapAddr + 4
 	preopenHandleAddr = preopenInitAddr + 4
 
+	// The leak census (#5362 / docs/SANITIZER.md): four i64 running totals
+	// bumped by __fern_alloc and __free, plus the reporter's working
+	// storage. Read back and printed by __fern_lc_report at every exit
+	// seam. Reserved unconditionally, like rcUnderflowAddr and the
+	// append-cliff counters above — nothing WRITES them unless
+	// ast.LeakCheckEnabled, so a flag-off module carries the addresses
+	// and none of the code.
+	lcAllocCountAddr = preopenHandleAddr + 4
+	lcAllocBytesAddr = lcAllocCountAddr + 8
+	lcFreeCountAddr  = lcAllocBytesAddr + 8
+	lcFreeBytesAddr  = lcFreeCountAddr + 8
+	// lcReportedAddr is the report-once latch. Wasm's exit seams NEST —
+	// the synthesised `_start` calls __fern_exit, which is also the
+	// exit() builtin's landing site — so the once-ness has to live in the
+	// reporter rather than in a choice of which seam calls it.
+	lcReportedAddr = lcFreeBytesAddr + 8
+	// lcNumBufAddr is where __fern_lc_wrnum builds a number's digits,
+	// backwards from its end. 24 bytes covers the widest i64 (20 digits
+	// including a sign) with room to spare.
+	lcNumBufAddr = lcReportedAddr + 4
+	lcNumBufEnd  = lcNumBufAddr + 24
+	// lcLineBufAddr is the one line the reporter assembles before writing
+	// it. 128 bytes covers the longest either line can reach: the summary
+	// is 37 bytes of fixed text plus three ≤20-digit numbers and a
+	// newline (98), the verdict 39 plus two (79). One buffered write per
+	// line, rather than a write per fragment, keeps the report from
+	// interleaving with anything else on stderr.
+	lcLineBufAddr = lcNumBufEnd
+	lcLineBufEnd  = lcLineBufAddr + 128
+	// lcRetBufAddr is the preview-2 reporter's 16-byte landing area for
+	// blocking-write-and-flush's result. It cannot come from
+	// __fern_alloc: the reporter runs after the counters have been read,
+	// and an allocation there would make the census describe a heap the
+	// program no longer had.
+	lcRetBufAddr = lcLineBufEnd
+
 	// scratchEnd is the first address past the named scratch.
-	scratchEnd = preopenHandleAddr + 4
+	scratchEnd = lcRetBufAddr + 16
 )
 
 // allocMinStart is the floor for the bump cursor: past every reserved slot
