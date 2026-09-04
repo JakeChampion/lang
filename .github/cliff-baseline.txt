@@ -94,10 +94,13 @@
 # field- and path-granular deaths: it no longer retains a struct argument's
 # array field across a call the field cannot be read back through, no longer
 # treats a read whose enclosing block RETURNS before mentioning the name again
-# as non-final, and admits a local unpacked from a call result's field. On the
-# same tree the line before, 202,926,200 / 376,969; `irlower.LowerState.emit`
-# went 156,918,008 / 35,105 to 132,890,016 / 28,991 of that, and
-# `checker.Scope.bind` 22,383,696 / 244,028 to 21,381,760 / 277,542.
+# as non-final (except at an ARRAY parameter position, where the withdrawn
+# bracket hands the superseded buffer to a dec that does not free — the
+# conformance leak census reads that as 115 extra live blocks), and admits a
+# local unpacked from a call result's field. The parent, a5cea3cd2, measures
+# 203,065,352 / 376,907; `irlower.LowerState.emit` went 156,918,008 / 35,105 to
+# 132,890,016 / 28,991 of that, and `checker.Scope.bind` 22,383,696 / 244,028 to
+# 21,381,760 / 277,542 (a gdb census at 9e2993249, 0.07% off these totals).
 #
 # THE COUNT ROSE 7% WHILE THE BYTES FELL 12%, and that is the expected shape,
 # not a regression to chase: an append that grows in place hands its buffer
@@ -106,5 +109,5 @@
 # trade is one whole-buffer copy for a later small one, which is why
 # `Scope.bind`'s mean copy fell from 92 to 77 bytes while it crossed more often.
 
-x86_64/checker.cliff_bytes	177651472
-x86_64/checker.cliff_count	403531
+x86_64/checker.cliff_bytes	177799608
+x86_64/checker.cliff_count	403754

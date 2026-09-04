@@ -144,6 +144,17 @@ function branch_falls_through(s: St, k: i32): i32 {
     var b: St = s.emit(0);
     return b.ctrl + t;
 }
+// An ARRAY argument is excluded from the path shape: the first read keeps its
+// bracket, and only the textually last one dies.
+function push(xs: i32[], v: i32): i32[] { return xs.append(v); }
+function branch_returns_arr(xs: i32[], k: i32): i32 {
+    if (k > 0) {
+        var a: i32[] = push(xs, k);
+        return a.len();
+    }
+    var b: i32[] = push(xs, 0);
+    return b.len();
+}
 // 'sl' is the only name for the buffer in p.state, and p is read only at its
 // other field afterwards.
 function unpack(s: St, k: i32): i32 {
@@ -160,7 +171,7 @@ function unpack_reread(s: St, k: i32): i32 {
     return r.ctrl + p.state.ops.len();
 }
 function main(): i32 { return branch_returns(mk(), 1) + branch_falls_through(mk(), 1) +
-    unpack(mk(), 1) + unpack_reread(mk(), 1); }`
+    unpack(mk(), 1) + unpack_reread(mk(), 1) + branch_returns_arr([], 1); }`
 
 	prog, err := parser.Parse(src)
 	if err != nil {
@@ -180,6 +191,9 @@ function main(): i32 { return branch_returns(mk(), 1) + branch_falls_through(mk(
 		// Only the second read: the first has a reachable later one, so
 		// neither the whole-name nor the field death is available to it.
 		"branch_falls_through": "k,s",
+		// The same divergent branch over an ARRAY argument: the path shape
+		// does not claim it, so only the textually last read dies.
+		"branch_returns_arr": "a,b,k,xs",
 		// `sl` is the unpack, at its last use.
 		"unpack": "s,s.ops,sl",
 		// p.state is read again, so `sl` keeps its bracket.

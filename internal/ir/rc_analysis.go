@@ -6605,6 +6605,19 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 			if !isParam[aid.Name] && !callInitLocal[aid.Name] && !unpackInitLocal[aid.Name] {
 				continue
 			}
+			// An ARRAY position is excluded. The death withdraws the bracket
+			// around the argument's OWN buffer there, so the callee grows the
+			// caller's buffer in place and the superseded generation is left to
+			// a bare __fern_rc_dec — which decrements to zero without freeing
+			// (the typed drop half of reclaim is not built), so that buffer and
+			// every element it holds stay live. The conformance leak census
+			// reads it as 115 extra unpaired allocations over five regex
+			// fixtures. The textual shape reaches the same gap where it already
+			// applies; this one is new, and the cliff gate puts the array half
+			// of it at 0.02% of the bytes, so it is not taken.
+			if arrayArgPosition(info, c, aid) {
+				continue
+			}
 			if !returnsBeforeReading(stmtIdx, c, aid.Name) {
 				continue
 			}
@@ -6614,6 +6627,34 @@ func callArgDeaths(fn *ast.FuncDecl, info *checker.Info, obs map[string][]fieldO
 	})
 	markUnobservedParamFields(out, fn, info, obs, repeating, escaping, occurrences)
 	return out
+}
+
+// arrayArgPosition reports whether `aid` is an argument of `c` at a parameter
+// position of ARRAY type. A call whose callee has no known signature answers
+// true: an unresolvable position is treated as the array case.
+func arrayArgPosition(info *checker.Info, c *ast.Call, aid *ast.Ident) bool {
+	if info == nil {
+		return true
+	}
+	callee, isID := c.Callee.(*ast.Ident)
+	if !isID {
+		return true
+	}
+	sig := info.FuncSigs[callee.Name]
+	if sig == nil {
+		return true
+	}
+	for i, a := range c.Args {
+		if id, ok := a.(*ast.Ident); !ok || id != aid {
+			continue
+		}
+		if i >= len(sig.Params) {
+			return true
+		}
+		_, isArr := sig.Params[i].(ast.ArrayType)
+		return isArr
+	}
+	return true
 }
 
 // blockPos locates a call in the innermost statement list holding it.

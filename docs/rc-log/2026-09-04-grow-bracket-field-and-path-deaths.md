@@ -59,7 +59,8 @@ Three deaths, all in `callArgDeaths`:
    site is not the body that runs.
 2. **The path-last-occurrence shape** — `order.isLast` is TEXTUAL, and a read
    whose enclosing statement list returns before mentioning the name again is
-   equally final. A `break` or `continue` that can escape the list withdraws it.
+   equally final. A `break` or `continue` that can escape the list withdraws it,
+   and so does an ARRAY parameter position (below).
 3. **`unpackInitLocal`** — `var q = h.f` where `h` is a call-init local, `h.f`
    occurs once in the body, and every other mention of `h` selects a different
    field. Nothing else in the frame names that buffer, which is the same
@@ -75,15 +76,18 @@ which is what lets the propagation name one field instead of all of them.
 
 ## Measured
 
-`scripts/cliff-bench`, `examples/self_host/checker.fern`, x86-64, at
-9e2993249 and with the change:
+`scripts/cliff-bench`, `examples/self_host/checker.fern`, x86-64, at the
+branch's own parent and with the change:
 
 | | bytes | crossings |
 | --- | --- | --- |
-| base (9e2993249) | 202,926,200 | 376,969 |
-| with the three deaths | **177,651,472** (−12.5%) | 403,531 (+7.0%) |
+| parent (a5cea3cd2) | 203,065,352 | 376,907 |
+| with the three deaths | **177,799,608** (−12.4%) | 403,754 (+7.1%) |
 
-Per site, from the gdb census over the same compile:
+Per site, from the gdb census over the same compile at 9e2993249, whose two
+totals (202,926,200 / 376,969 and 177,651,472 / 403,531) sit within 0.07% of
+the row above — that reading also predates the array exclusion, which is
+0.02% of the bytes:
 
 | site | base bytes / crossings | after |
 | --- | --- | --- |
@@ -98,12 +102,44 @@ where a forced copy would have handed back a fresh rc 1 buffer. The trade is
 one whole-buffer copy for a later small one, which is why `Scope.bind`'s mean
 copy fell from 92 to 77 bytes while it crossed 14% more often.
 
-`examples/bench` static instruction counts move five rows on x86-64: the three
-persistent-collection benchmarks lose bracket pairs (−3.6% / −1.3% / −1.2%) and
-the two `utf8_ingest` ones gain 417 instructions each (+1.3%), where the wider
-growable-field propagation brackets a call that was not bracketed before. Every
-`.ir` row moves less than its tolerance. On aarch64 the same corpus moves three
-rows and all downward (ordmap_insert −166, pmap_insert −104, pvec_with −108).
+`examples/bench` static instruction counts move three rows on x86-64: the
+persistent-collection benchmarks lose bracket pairs (−3.6% / −1.3% / −1.2%).
+Every `.ir` row moves less than its tolerance. On aarch64 the same corpus moves
+three rows and all downward (ordmap_insert −166, pmap_insert −104,
+pvec_with −108).
+
+The two `utf8_ingest` `.text` rows were re-pinned here as a +417 apiece and are
+not this work's: the parent measures 31,424 / 31,915 itself. `map_int.text`,
+`map_string.text` and `map_probe_chain.ir` (+1.35%, over tolerance) drift the
+same way and equally at the parent.
+
+## The path shape does not take an ARRAY argument
+
+`TestConformanceLeakCensusX86_64` was not in this branch's gate list, and the
+first slice of the path shape failed it: 8,406 unpaired allocations over the
+conformance corpus became 8,521, all of it five `regex` fixtures
+(`regex_captures_assert` alone +106). `origin/main` measures 8,406.
+
+The mover is the path death's BRACKET side, not the owned-arg move it also
+feeds — restoring the bracket for a path death alone returns the census to
+8,406, suppressing the move alone does not. Withdrawn for an ARRAY argument,
+the callee grows the caller's buffer in place and the superseded generation
+reaches a bare `__fern_rc_dec`, which decrements to zero WITHOUT freeing: the
+typed drop half of reclaim is not built (`emitRcDecRuntime`'s "Phase-1
+simplification"), so the buffer and every element pointer in it stay live.
+
+**The shape is not unsound, and the gap is not new.** A 12-line recursive
+`prog.append` program leaks five blocks this way at the parent too, and
+reordering the match arms of the 30-line `__rx_emit` reduction so the same read
+is TEXTUALLY last makes the parent leak exactly what the branch does (15 = 15).
+The textual rule reaches the same reclaim gap wherever it already applies; the
+path rule is the new one, so it is the one that gives way. Excluding array
+positions costs 0.02% of the cliff bytes, which is what makes that cheap: the
+win is the `LowerState` struct threading, not the array half.
+
+The array half becomes available once a superseded array buffer is released
+through a TYPED drop rather than a bare dec. That is the reclaim side, and it
+is what the leak census's other 8,406 blocks are.
 
 ## Traps
 
@@ -142,4 +178,5 @@ here moves it.
 
 Pins: `internal/ir/param_field_unobserved_test.go` (both new tests fail at the
 parent — the field death by verdict, the other two shapes with their rules
-stubbed out).
+stubbed out), including `branch_returns_arr`, which pins the array position
+KEEPING its bracket in the shape the struct one loses it in.
