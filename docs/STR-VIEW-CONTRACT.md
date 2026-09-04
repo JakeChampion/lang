@@ -24,8 +24,11 @@ Probed individually against native `fern -check`, all four pass:
 
 Fern has no borrow checker, so nothing ties a view to its backing buffer's
 lifetime. The one rule that exists — E003, `str` does not assign to `string`
-without `.to_owned()` — polices the *other* direction, and the self-host
-checker does not implement even that (#7293, #7086).
+without `.to_owned()` — polices the *other* direction. Both checkers
+implement it now: the self-host refuses a view at a var init, an assignment,
+a return and a struct field, with native's message text (#7293), and lets one
+through in argument position, where a parameter is borrowed rather than
+owning (#7086).
 
 ### Three toolchains implement three different `.trim()`s
 
@@ -118,8 +121,8 @@ Concretely, in order:
 1. Self-host `.trim()` / `.split()` (and audit `substring`) return owned
    copies — fixes #7230 and #7393 as parity bugs. The differential suites
    gate it; the leak-matrix's view rows flip with it.
-2. The self-host checker gains E003 and the `str`-where-`string` rule
-   (#7293, #7086 — already filed, now load-bearing).
+2. ~~The self-host checker gains E003 and the `str`-where-`string` rule~~
+   — done (#7293, #7086).
 3. A staged native+self-host checker refusal of `str` in return / field /
    element / capture position — warning first if churn demands, error once
    the corpus is clean. The probes in §1 become its tests.
