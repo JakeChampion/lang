@@ -22,6 +22,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -240,6 +241,50 @@ const createDirAllSrc = `function main(): i32 {
     match (create_dir_all("f.txt/inner")) { Ok(_) => { return 20; }, Err(e) => { } }
     return 0;
 }`
+
+// temp_dir's prefix is a NAME on every backend (#6329). The natives
+// concatenated it straight into "/tmp/<prefix>-<ns>", so a prefix
+// carrying a separator placed the directory wherever the caller's
+// bytes pointed — whenever that parent existed — while the
+// interpreter refused the same call.
+//
+// The parent has to be REAL for the escape to land, and it has to sit
+// under the actual temp root rather than the test's cwd, since that is
+// the only place the concatenation can reach. Without it the escaping
+// call fails with ENOENT and the test passes against the bug.
+func tempDirPrefixIsNameSrc(t *testing.T) string {
+	t.Helper()
+	parent, err := os.MkdirTemp("", "fern-esc")
+	if err != nil {
+		t.Fatalf("mkdir escape parent: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(parent) })
+	return fmt.Sprintf(`function main(): i32 {
+    var d: string = "";
+    match (temp_dir("plain")) { Err(e) => { return 1; }, Ok(p) => { d = p; } }
+    match (remove_dir_all(d)) { Err(e) => { return 2; }, Ok(_) => { } }
+    match (temp_dir("%s/inner")) { Ok(p) => { return 3; }, Err(e) => { } }
+    match (read_dir("%s")) {
+        Err(e) => { return 4; },
+        Ok(names) => { if (names.len() != 0) { return 5; } }
+    }
+    return 0;
+}`, filepath.Base(parent), parent)
+}
+
+func TestX86_64TempDirPrefixIsName(t *testing.T) {
+	code, _ := compileRunX86_64WithSetup(t, tempDirPrefixIsNameSrc(t), nil)
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 (1/2 setup, 3 escape accepted, 4/5 escape landed)", code)
+	}
+}
+
+func TestArm64TempDirPrefixIsName(t *testing.T) {
+	out, code := compileAndRunArm64(t, tempDirPrefixIsNameSrc(t))
+	if code != 0 {
+		t.Errorf("exit = %d, want 0 (1/2 setup, 3 escape accepted, 4/5 escape landed)\n%s", code, out)
+	}
+}
 
 func TestX86_64CreateDirAll(t *testing.T) {
 	code, _ := compileRunX86_64WithSetup(t, createDirAllSrc, nil)

@@ -145,6 +145,46 @@ func emitCopyBytes(body []byte, dstLocal, srcLocal, lenLocal, iLocal uint32) []b
 	return body
 }
 
+// emitRejectSeparator appends "if the prefix holds a '/', return
+// Err(Other(prefix, ""))" — temp_dir's prefix names a directory, not a
+// path. The bytes are joined onto the preopen, so without the scan the
+// caller picks where the directory lands, and a nested one survives
+// where the other backends refuse it. iLocal is scratch; errnoLocal,
+// errPtrLocal and boxLocal are emitResultErr's.
+func emitRejectSeparator(body []byte, buildIoErr, allocBox, bufLocal, lenLocal, iLocal, errnoLocal, errPtrLocal, boxLocal uint32) []byte {
+	body = inst.InstI32Const(body, 0)
+	body = inst.InstLocalSet(body, iLocal)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstLocalGet(body, lenLocal)
+		body = numeric.InstI32GeU(body)
+		body = inst.InstBrIf(body, 1)
+		body = inst.InstLocalGet(body, bufLocal)
+		body = inst.InstLocalGet(body, iLocal)
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Load8U(body, 0, 0)
+		body = inst.InstI32Const(body, '/')
+		body = numeric.InstI32Eq(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstI32Const(body, errnoInval)
+			body = inst.InstLocalSet(body, errnoLocal)
+			body = emitResultErr(body, buildIoErr, allocBox, errnoLocal, errPtrLocal, boxLocal)
+		}
+		body = inst.InstEnd(body)
+		body = inst.InstLocalGet(body, iLocal)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, iLocal)
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body)
+	body = inst.InstEnd(body)
+	return body
+}
+
 // emitHexSuffix appends "draw one random word and write its eight hex
 // digits at bufLocal + offLocal + 1" — temp_dir's per-attempt name
 // suffix, on both the preview-1 and preview-2 paths. iLocal, rndLocal
@@ -1146,6 +1186,10 @@ func buildRemoveDirAllBody(idxs map[string]uint32) []byte {
 // absolute /tmp path would be unusable by the read_file / write_file
 // the caller goes on to use.
 //
+// The prefix is a NAME on every backend, so a '/' in it is rejected
+// here too rather than joined onto the preopen as a path (#6329). Use
+// create_dir_all to build a tree under the result.
+//
 // Locals after the two params:
 //
 //	2: $pfx_buf  3: $pfx_len  4: $i     5: $buf
@@ -1161,6 +1205,7 @@ func buildTempDirBody(idxs map[string]uint32) []byte {
 
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
+	body = emitRejectSeparator(body, buildIoErr, allocBox, 2, 3, 4, 9, 10, 11)
 
 	// buf = alloc(pfx_len + 1 + 8); len = pfx_len + 9.
 	body = inst.InstLocalGet(body, 3)
@@ -1475,7 +1520,7 @@ func buildCreateDirAllBodyP2(idxs map[string]uint32) []byte {
 // Only the create call and its error test differ from the preview-1
 // body: create-directory-at against the preopen descriptor, and the
 // "name already taken" test reads the error-code `exist` discriminant
-// rather than EEXIST.
+// rather than EEXIST. The separator rejection (#6329) is shared.
 //
 // Locals after the two params:
 //
@@ -1494,6 +1539,7 @@ func buildTempDirBodyP2(idxs map[string]uint32) []byte {
 
 	var body []byte
 	body = emitStrNormalize(body, idxs, 0, 1, 2, 3, 4)
+	body = emitRejectSeparator(body, buildIoErr, allocBox, 2, 3, 4, 9, 10, 11)
 	body = emitPreopenP2(body, alloc, getDirs, 14, 15)
 
 	// buf = alloc(pfx_len + 1 + 8); len = pfx_len + 9.

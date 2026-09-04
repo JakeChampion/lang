@@ -199,20 +199,19 @@ func TestFsTempDirReadDirRemoveAll(t *testing.T) {
 // ENOTEMPTY, and must dispatch on the dirent's kind (unlink for files,
 // recurse-then-rmdir for directories).
 func TestFsRemoveDirAllNested(t *testing.T) {
-	// temp_dir's prefix is a PATH, so passing one that already contains
-	// a directory puts the new level underneath it — that is what makes
-	// this a tree rather than two siblings, and the single
+	// create_dir_all builds the levels under the temp directory — that
+	// is what makes this a tree rather than two siblings, and the single
 	// remove_dir_all(d) at the end has to descend two levels to clear
 	// it.
 	src := `function main(): i32 {
     var d: string = "";
     match (temp_dir("nest")) { Err(e) => { return 1; }, Ok(p) => { d = p; } }
     match (write_file(d + "/top.txt", "t")) { Err(e) => { return 2; }, Ok(_) => {} }
-    var mid: string = "";
-    match (temp_dir(d + "/mid")) { Err(e) => { return 3; }, Ok(p) => { mid = p; } }
+    var mid: string = d + "/mid";
+    match (create_dir_all(mid)) { Err(e) => { return 3; }, Ok(_) => {} }
     match (write_file(mid + "/deep.txt", "d")) { Err(e) => { return 4; }, Ok(_) => {} }
-    var leaf: string = "";
-    match (temp_dir(mid + "/leaf")) { Err(e) => { return 5; }, Ok(p) => { leaf = p; } }
+    var leaf: string = mid + "/leaf";
+    match (create_dir_all(leaf)) { Err(e) => { return 5; }, Ok(_) => {} }
     match (write_file(leaf + "/deepest.txt", "x")) { Err(e) => { return 6; }, Ok(_) => {} }
     // One call clears all three levels and the files at each.
     match (remove_dir_all(d)) { Err(e) => { return 7; }, Ok(_) => {} }
@@ -270,6 +269,27 @@ function main(): i32 {
 // as Err. WASI takes an explicit path length, so the per-component
 // walk is length arithmetic rather than the natives' NUL rewriting —
 // this is where that divergence gets pinned.
+// temp_dir's prefix is a NAME, not a path (#6329). This backend used
+// to join it onto the preopen, so `temp_dir(d + "/inner")` nested a
+// directory under `d` — a call the interpreter and the natives both
+// refuse. That divergence was the only way to build a tree in the
+// language; create_dir_all is now, so the prefix converges on a name.
+func TestFsTempDirPrefixIsName(t *testing.T) {
+	src := `function main(): i32 {
+    match (create_dir_all("esc")) { Err(e) => { return 1; }, Ok(_) => {} }
+    match (temp_dir("plain")) { Err(e) => { return 2; }, Ok(p) => {} }
+    match (temp_dir("esc/inner")) { Ok(p) => { return 3; }, Err(e) => {} }
+    match (read_dir("esc")) {
+        Err(e) => { return 4; },
+        Ok(names) => { if (names.len() != 0) { return 5; } }
+    }
+    return 42;
+}`
+	if got := runFsDirProgram(t, src); got != "42" {
+		t.Fatalf("got %q, want 42", got)
+	}
+}
+
 func TestFsCreateDirAll(t *testing.T) {
 	src := `function main(): i32 {
     match (create_dir_all("a/b/c")) { Err(e) => { return 1; }, Ok(_) => {} }

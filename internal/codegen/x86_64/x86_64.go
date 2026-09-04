@@ -12235,8 +12235,11 @@ func (g *generator) emitCreateDirAllRuntime() {
 // plain scratch buffer first, then copied into an exactly-sized
 // rc=1 string so the Ok payload's length prefix matches its
 // allocation (the box-free path sizes the block from data-4).
-// Result box: Ok = 16-byte tag=0 + string data ptr @+8; Err =
-// 16-byte tag=1 + IoError box @+8 (same as read_file).
+// A '/' anywhere in the prefix is rejected as EINVAL before the
+// syscall — without that the concatenation places the directory
+// wherever the caller's bytes point, which is not what a temp
+// directory is. Result box: Ok = 16-byte tag=0 + string data ptr
+// @+8; Err = 16-byte tag=1 + IoError box @+8 (same as read_file).
 // System V: rdi = prefix string value.
 func (g *generator) emitTempDirRuntime() {
 	g.line("")
@@ -12257,6 +12260,18 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("mov [rbp - 64], rdi")
 	g.emitStrLen("r12d", "rdi")
 	g.emitStrDataPtr("rbx", "rdi", "[rbp - 56]")
+	// The prefix names a directory, not a path: a '/' in it would
+	// steer the result out of the temp root, since the bytes are
+	// concatenated straight into "/tmp/<prefix>-<ns>".
+	g.emit("xor ecx, ecx")
+	g.label(".Ltd_sep")
+	g.emit("cmp rcx, r12")
+	g.emit("jae .Ltd_sepd")
+	g.emit("cmp byte ptr [rbx + rcx], 47") // '/'
+	g.emit("je .Ltd_einval")
+	g.emit("add rcx, 1")
+	g.emit("jmp .Ltd_sep")
+	g.label(".Ltd_sepd")
 	g.emit("call __fern_monotonic_ns")
 	g.emit("mov r15, rax")
 	// Scratch: 5 ("/tmp/") + plen + 1 ('-') + 20 (max digits) + 1 NUL.
@@ -12335,9 +12350,14 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("mov [rax + 8], rbx")
 	g.emit("jmp .Ltd_return")
 
+	g.label(".Ltd_einval")
+	g.emit("mov r12d, 22") // EINVAL
+	g.emit("jmp .Ltd_mkerr")
+
 	g.label(".Ltd_err")
 	g.emit("neg rax")
 	g.emit("mov r12, rax")
+	g.label(".Ltd_mkerr")
 	g.emit("mov edi, r12d")
 	g.emit("mov rsi, [rbp - 64]")
 	g.emit("call __fern_io_error")
