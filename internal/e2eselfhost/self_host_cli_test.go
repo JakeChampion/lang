@@ -983,6 +983,22 @@ function main(): i32 {
 		if _, code := runDriver(t, "-check", srcPath); code != 1 {
 			t.Errorf("-check on a view stored into an owned string exited %d, want 1", code)
 		}
+		// An `own` parameter is the boundary this widening runs closest to:
+		// it is spelled like a parameter but OWNS, so the borrow carve-out
+		// must not reach it. It does not — E051 is raised by the separate
+		// owned-argument walk, which the carve-out never consults.
+		ownPath := filepath.Join(dir, "strview_own_param.fern")
+		if err := os.WriteFile(ownPath, []byte("function g(own x: string): i32 { return x.len(); }\nfunction main(): i32 { var t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n"), 0o644); err != nil {
+			t.Fatalf("write src: %v", err)
+		}
+		out, code := runDriver(t, "-check", ownPath)
+		if code != 1 {
+			t.Errorf("-check on a view passed to an `own` parameter exited %d, want 1:\n%s", code, out)
+		}
+		combined, _ := exec.Command(fernBin, "-check", ownPath).CombinedOutput()
+		if !strings.Contains(string(combined), "error[E051]") {
+			t.Errorf("-check on a view passed to an `own` parameter = %q, want error[E051]", combined)
+		}
 	})
 
 	t.Run("check-bad", func(t *testing.T) {
