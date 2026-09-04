@@ -4641,6 +4641,22 @@ func (c *checker) moduleSees(from, decl string) bool {
 	return c.info.ModuleImports[from][decl]
 }
 
+// moduleSeesVariant is moduleSees without the stdlib-to-stdlib shortcut.
+//
+// That shortcut exists for the method graph's cycles, and a variant name
+// is not a method: applying it made two stdlib modules that never import
+// each other ambiguate one another, so importing both std/pmap and
+// std/pvec drew E036 on pmap's reference to its own `Empty` (#8189).
+func (c *checker) moduleSeesVariant(from, decl string) bool {
+	if from == "" || decl == "" || from == decl {
+		return true
+	}
+	if c.info.ModuleImports == nil {
+		return true
+	}
+	return c.info.ModuleImports[from][decl]
+}
+
 // bindDeriveTypeParams turns a synthesised derive method into a generic
 // method when the underlying type is generic: every type parameter is
 // bound by the trait being derived (`@derive(Display)` on `Box[T]`
@@ -6249,15 +6265,20 @@ type variantRef struct {
 // loaded module made every other module's bare `Text` ambiguous, and
 // the diagnostic landed on source its author could not edit (#6951).
 //
-// A built-in enum's SourceModule is "", which moduleSees treats as
-// universal, so Option / Result / IoError / JsonValue stay candidates
-// everywhere by construction.
+// The filter is the import closure alone — moduleSeesVariant, not
+// moduleSees, because the latter's stdlib-to-stdlib shortcut is for the
+// method graph and re-opened exactly the #6951 hole between two stdlib
+// modules (#8189).
+//
+// A built-in enum's SourceModule is "", treated as universal, so
+// Option / Result / IoError / JsonValue stay candidates everywhere by
+// construction.
 func (c *checker) visibleVariants(name string) []variantRef {
 	all := c.variantOf[name]
 	from := c.currentModule()
 	var out []variantRef
 	for _, vr := range all {
-		if c.moduleSees(from, vr.srcModule) {
+		if c.moduleSeesVariant(from, vr.srcModule) {
 			out = append(out, vr)
 		}
 	}
