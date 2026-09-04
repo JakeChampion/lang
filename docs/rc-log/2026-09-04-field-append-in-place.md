@@ -124,6 +124,21 @@ Best-of-three is -19%; the base leg's drift is host contention, and the in-place
 leg holds ±0.3 s under the same load, which is itself the point — the clone's
 cost scales with the op list and the in-place grow does not.
 
+Callgrind over the same pair, which is host-independent (`-g`, symbols resolved
+through `nm`, since valgrind does not read the self-host `.symtab`):
+
+| | Ir | share |
+|---|---|---|
+| `__fn___fern_arr_slice`, base | 6,892,945,196 | 19.60% |
+| `__fn___fern_arr_slice`, in-place | 1,246,317,533 | 4.30% |
+| whole run, base | 35,167,222,117 | |
+| whole run, in-place | 28,988,683,165 | **-17.6%** |
+
+The residual 4.30% is `.with` and the field appends the analysis refuses, both
+of which still clone. `__fern_arr_push` falls 984 M -> 387 M Ir alongside it:
+the clone form fed it a fresh cap == len buffer that ALWAYS reallocated, and the
+field's own buffer usually has room.
+
 The rc==1 append-cliff counters barely move (376,969 -> 377,739 crossings on the
 native-built compiler): neither form was crossing the SHARED cliff, because the
 clone was a fresh rc==1 buffer at len == cap and took the grow path. What the
