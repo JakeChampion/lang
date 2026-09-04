@@ -3744,7 +3744,7 @@ function check_expr(e: ast.Expr, s: Scope): Type {
 // the validation harness can assert per-statement.
 pub struct CheckResult { scope: Scope, ty: Type }
 
-function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
+pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
   match (st) {
     ast.StmtDefer(d) => {
       // StmtDefer is lowered away before emit; check its action.
@@ -4020,6 +4020,62 @@ function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
     }
   }
   return CheckResult { scope: s, ty: t_unknown("unhandled Stmt variant") };
+}
+
+// bind_stmt is check_stmt's SCOPE half: what a statement does to the name
+// environment, without the type inference that fills CheckResult.ty.
+//
+// The twelve diagnostic walkers that thread a scope through a body want only
+// that half — every one of them discards the type — so running full inference
+// to obtain it type-checked the program thirteen times over: 14.41% of a
+// `checker.fern` compile went into scope-only re-walks (#8181).
+//
+// Only ast.StmtVar rebinds, and only its unannotated form needs the
+// initialiser inferred: an annotation binds what the annotation resolves to
+// (check_stmt's three annotated returns differ only in the `ty` they report),
+// and a destructuring pattern binds through bind_destructure_names, which
+// takes the statement and the scope and nothing else.
+//
+// It must agree with check_stmt on every statement form — a form that binds
+// in one and not the other silently breaks name resolution in all twelve
+// passes, and the symptom is a spurious or missing diagnostic somewhere else
+// entirely. Two gates hold them together: bind_stmt_parity_run.fern walks both
+// over the same statements and reports every disagreement (driven by
+// TestSelfHostBindStmtScopeParity), and
+// TestCheckStmtAndBindStmtBindTheSameStatementForms (internal/sourcelint) pins
+// the set of arms that may rebind at all in each, so a NEW binding form cannot
+// be added to one alone.
+pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
+  match (st) {
+    ast.StmtDefer(d) => {
+      return bind_stmt(d.action, s);
+    },
+    ast.StmtVar(v) => {
+      if (name_has_comma(v.name) || parser.is_destr_marker(v.type_name)) {
+        return bind_destructure_names(s, v);
+      }
+      if (v.type_name.len() > 0) {
+        return s.bind(v.name, var_declared_type(v, s));
+      }
+      // The recursive-local self-binding: `var f = function(...) { ... }` must
+      // have `f` in scope while its own body is inferred, as check_stmt does.
+      var init_scope: Scope = s;
+      match (v.init) {
+        ast.ExprLambda(lm) => {
+          var lpts: Type[] = [];
+          for param in lm.params {
+            lpts = lpts.append(s.resolve_type(param.type_name));
+          }
+          var lrt: Type = s.resolve_type(lm.ret_type);
+          init_scope = s.bind(v.name, t_func(lpts, lrt));
+        },
+        _ => {}
+      }
+      return s.bind(v.name, check_expr(v.init, init_scope));
+    },
+    _ => {}
+  }
+  return s;
 }
 
 // check_block walks a body in a derived scope. The scope's
@@ -5069,7 +5125,7 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: Type, unions: UnionSig[]
       _ => {}
     }
     // Advance the scope so a later return sees bindings from a `var`.
-    cur = check_stmt(st, cur).scope;
+    cur = bind_stmt(st, cur);
   }
   return out;
 }
@@ -5122,7 +5178,7 @@ function void_ret_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.D
       },
       _ => {}
     }
-    cur = check_stmt(st, cur).scope;
+    cur = bind_stmt(st, cur);
   }
   return out;
 }
@@ -5515,7 +5571,7 @@ function slc_walk(stmts: ast.Stmt[], s: Scope, params: string[], localarr: strin
       },
       _ => {}
     }
-    cur = check_stmt(st, cur).scope;
+    cur = bind_stmt(st, cur);
   }
   return SlcWalk { diags: out, viewed: viewed, owns: owns };
 }
@@ -6052,7 +6108,7 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
       },
       _ => {}
     }
-    cur = check_stmt(st, cur).scope;
+    cur = bind_stmt(st, cur);
     i = i + 1;
   }
   return out;
@@ -6226,7 +6282,7 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
       },
       _ => {}
     }
-    cur = check_stmt(st, cur).scope;
+    cur = bind_stmt(st, cur);
   }
   return out;
 }
@@ -6629,7 +6685,7 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
       },
       _ => {}
     }
-    cur = check_stmt(st, cur).scope;
+    cur = bind_stmt(st, cur);
   }
   return out;
 }
@@ -9278,7 +9334,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       },
       _ => {}
     }
-    cur = check_stmt(st, cur).scope;
+    cur = bind_stmt(st, cur);
   }
   return out;
 }
@@ -9397,7 +9453,7 @@ function vref_stmts(stmts: ast.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
       },
       _ => {}
     }
-    cur = check_stmt(st, cur).scope;
+    cur = bind_stmt(st, cur);
   }
   return out;
 }
@@ -9556,7 +9612,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
       _ => {}
     }
     out = util.append_diags(out, assign_stmt_own_lambdas(st, cur, unions));
-    cur = check_stmt(st, cur).scope;
+    cur = bind_stmt(st, cur);
   }
   return out;
 }
@@ -11623,7 +11679,7 @@ function e053_stmts(stmts: ast.Stmt[], fx: E053Ctx, s: Scope): util.Diag[] {
       },
       _ => {}
     }
-    cur = check_stmt(stmt, cur).scope;
+    cur = bind_stmt(stmt, cur);
   }
   return out;
 }
@@ -11995,7 +12051,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
       },
       _ => {}
     }
-    cur = check_stmt(stmt, cur).scope;
+    cur = bind_stmt(stmt, cur);
   }
   return E065Walk { diags: out, viewed: viewed, owns: owns };
 }
@@ -12155,7 +12211,7 @@ function e032_stmts(stmts: ast.Stmt[], lastfn: string[], s: Scope): util.Diag[] 
       },
       _ => {}
     }
-    cur = check_stmt(stmt, cur).scope;
+    cur = bind_stmt(stmt, cur);
   }
   return out;
 }
@@ -13373,23 +13429,15 @@ pub function check_module(mod: parser.Module): ModuleTypes {
   return ModuleTypes { sigs: sigs, top_tys: top_tys, all_well_typed: well_typed, diags: dd };
 }
 
-// ill_typed_hint returns a best-effort fallback diagnostic for a module that
-// check_module marked ill-typed but produced NO coded diagnostic for — an
-// expression collapsed to TypeUnknown because the partial `Type` union can't
-// yet model an enum value, Option/Result, generic, or `dyn` type (#4346). The
-// `-check` driver calls this ONLY when `all_well_typed` is false and `diags`
-// is empty, so a rejection is never silent. Two deliberate properties keep it
-// safe: (1) it is a driver-only helper — check_module, checker_run, and the
-// differential codes gate (which drives check_module / checker_codes_run and
-// keys on E0NN codes) never invoke it, so parity is untouched; (2) the code is
-// the lowercase tag "type", never an E0NN, so even if some future path did run
-// it through a code scraper the tag would not be mistaken for a native code.
-// Rebuilds the same name environment check_module builds (kept in sync with
-// its head), then reports the first function whose body has an un-inferable
-// expression (at its declaration), else the first offending top-level
-// statement, else a module-level note.
-pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
-  var import_paths: string[] = import_paths_of(mod);
+// ModuleEnv is the module-level name environment: the four indexed tables a
+// Scope carries plus the module's own import paths — everything
+// build_func_scope and new_scope_full need to place a statement in the scope
+// check_module would check it in. Kept in sync with check_module's head, which
+// builds the same tables alongside the intermediate arrays its own diagnostic
+// passes go on to read.
+struct ModuleEnv { sigs: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: string[] }
+
+function module_env(mod: parser.Module): ModuleEnv {
   var alias_names: string[] = [];
   for alias in mod.aliases {
     alias_names = alias_names.append(alias.name);
@@ -13404,16 +13452,52 @@ pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
     unions = unions.append(UnionSig { name: ed.name, variants: ed.variant_names });
   }
   var sigs: FuncSig[] = collect_func_sigs(mod.funcs, structs, unions);
-  var st: SigTable = sig_table(sigs);
-  var stt: StructTable = struct_table(structs);
-  var ut: UnionTable = union_table(unions);
-  var methods: MethodTable = method_table(collect_method_sigs(mod.funcs, structs, unions));
+  return ModuleEnv {
+    sigs: sig_table(sigs),
+    structs: struct_table(structs),
+    unions: union_table(unions),
+    methods: method_table(collect_method_sigs(mod.funcs, structs, unions)),
+    imports: import_paths_of(mod)
+  };
+}
+
+// module_scopes returns the scope each function body is walked in, in
+// mod.funcs order, with the module-level scope for mod.top_stmts last. These
+// are the scopes check_module hands the diagnostic walkers that thread a
+// statement scope with bind_stmt, and the bind_stmt parity driver replays
+// them: comparing bind_stmt against check_stmt in an empty scope would
+// resolve every annotation to unknown on both sides and compare nothing.
+pub function module_scopes(mod: parser.Module): Scope[] {
+  var env: ModuleEnv = module_env(mod);
+  var out: Scope[] = [];
+  for fd in mod.funcs {
+    out = out.append(build_func_scope(fd, env.sigs, env.structs, env.unions, env.methods, env.imports));
+  }
+  return out.append(new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports));
+}
+
+// ill_typed_hint returns a best-effort fallback diagnostic for a module that
+// check_module marked ill-typed but produced NO coded diagnostic for — an
+// expression collapsed to TypeUnknown because the partial `Type` union can't
+// yet model an enum value, Option/Result, generic, or `dyn` type (#4346). The
+// `-check` driver calls this ONLY when `all_well_typed` is false and `diags`
+// is empty, so a rejection is never silent. Two deliberate properties keep it
+// safe: (1) it is a driver-only helper — check_module, checker_run, and the
+// differential codes gate (which drives check_module / checker_codes_run and
+// keys on E0NN codes) never invoke it, so parity is untouched; (2) the code is
+// the lowercase tag "type", never an E0NN, so even if some future path did run
+// it through a code scraper the tag would not be mistaken for a native code.
+// Reports the first function whose body has an un-inferable expression (at its
+// declaration), else the first offending top-level statement, else a
+// module-level note.
+pub function ill_typed_hint(mod: parser.Module): util.Diag[] {
+  var env: ModuleEnv = module_env(mod);
   for func in mod.funcs {
-    if (!check_func_body(func, build_func_scope(func, st, stt, ut, methods, import_paths).with_impls(mod.impls, mod.trait_reqs))) {
+    if (!check_func_body(func, build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports).with_impls(mod.impls, mod.trait_reqs))) {
       return [dg_at("type", "\"" + func.name + "\": an expression has a type the self-host checker cannot represent yet (enum value, Option/Result, generic, or dyn); it type-checks under the native `fern` — see issue #4346", func.line, func.col)];
     }
   }
-  var s: Scope = new_scope_full(st, stt, ut, methods, import_paths);
+  var s: Scope = new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports);
   for top_stmt in mod.top_stmts {
     var r: CheckResult = check_stmt(top_stmt, s);
     s = r.scope;

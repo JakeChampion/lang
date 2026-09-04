@@ -524,7 +524,7 @@ findings. Ranked by leverage.
     whether the conversion changes behaviour at all.
 
     **A collector's STATEMENT half can be blocked while its expression half
-    converts cleanly.** `e053_stmts` advances `cur = check_stmt(stmt, cur).scope`
+    converts cleanly.** `e053_stmts` advances `cur = bind_stmt(stmt, cur)`
     once per statement and enters each nested block with the scope as of the
     statement enclosing it — a whole-subtree `fold_stmt` has one accumulator and
     cannot carry that. But the level it DOES want exists: `fold_stmt_own` visits

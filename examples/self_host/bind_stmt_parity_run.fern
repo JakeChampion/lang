@@ -1,0 +1,159 @@
+// examples/self_host/bind_stmt_parity_run.fern — the anti-drift gate on
+// checker.fern's bind_stmt.
+//
+// bind_stmt is check_stmt's SCOPE half without the inference (#8181): twelve
+// diagnostic walkers thread a Scope through a body and throw the inferred type
+// away, and running the whole type checker to obtain that Scope was 14.41% of
+// a `checker.fern` compile. The two must agree on every statement form — one
+// that binds in check_stmt and not in bind_stmt silently breaks name
+// resolution in all twelve passes, and the symptom surfaces as a spurious or
+// missing diagnostic somewhere else entirely.
+//
+// This driver reads a program from stdin and replays check_module's statement
+// walk over it. For every statement of every function body — recursing into
+// nested blocks exactly as the walkers do — and of the top level, in the scope
+// check_module would walk it in, it compares the bindings check_stmt(st, cur)
+// leaves against the ones bind_stmt(st, cur) leaves. It prints one line per
+// disagreement and exits 1. Either way it ends with two `#` lines — how many
+// statements it compared, and which statement forms those were — so the Go
+// gate can tell a program that agreed from one that was never walked, and can
+// hold the corpus to covering every ast.Stmt form.
+//
+// The scope comes from checker.module_scopes rather than an empty one on
+// purpose: with no struct / union / signature tables every annotation resolves
+// to unknown on BOTH sides, so a divergence in what an annotation binds would
+// compare equal and the gate would pass vacuously.
+
+import "./ast";
+import "./checker";
+import "./parser";
+import "./rundriver";
+import "./util";
+
+// scope_diff describes the first way two scopes disagree, and "" when they
+// carry the same names, in the same order, at the same types.
+function scope_diff(want: checker.Scope, got: checker.Scope): string {
+    if (want.names.len() != got.names.len()) {
+        return "check_stmt bound " + util.i32_to_string(want.names.len()) + " name(s), bind_stmt " + util.i32_to_string(got.names.len());
+    }
+    if (want.types.len() != got.types.len()) {
+        return "check_stmt bound " + util.i32_to_string(want.types.len()) + " type(s), bind_stmt " + util.i32_to_string(got.types.len());
+    }
+    if (want.loop_depth != got.loop_depth) {
+        return "check_stmt left loop_depth " + util.i32_to_string(want.loop_depth) + ", bind_stmt " + util.i32_to_string(got.loop_depth);
+    }
+    var i: i32 = 0;
+    while (i < want.names.len()) {
+        if (want.names[i] != got.names[i]) {
+            return "binding " + util.i32_to_string(i) + " is `" + want.names[i] + "` under check_stmt and `" + got.names[i] + "` under bind_stmt";
+        }
+        if (checker.type_debug(want.types[i]) != checker.type_debug(got.types[i])) {
+            return "binding `" + want.names[i] + "` is " + checker.type_debug(want.types[i]) + " under check_stmt and " + checker.type_debug(got.types[i]) + " under bind_stmt";
+        }
+        i = i + 1;
+    }
+    return "";
+}
+
+// form_of names a statement's form for the coverage line. Enumerated rather
+// than wildcarded: a new ast.Stmt variant should land here as a missing arm,
+// which is the same news the two steppers need to hear.
+function form_of(st: ast.Stmt): string {
+    match (st) {
+        ast.StmtVar(_) => { return "StmtVar"; },
+        ast.StmtReturn(_) => { return "StmtReturn"; },
+        ast.StmtExpr(_) => { return "StmtExpr"; },
+        ast.StmtIf(_) => { return "StmtIf"; },
+        ast.StmtWhile(_) => { return "StmtWhile"; },
+        ast.StmtAssign(_) => { return "StmtAssign"; },
+        ast.StmtMatch(_) => { return "StmtMatch"; },
+        ast.StmtFor(_) => { return "StmtFor"; },
+        ast.StmtBreak(_) => { return "StmtBreak"; },
+        ast.StmtContinue(_) => { return "StmtContinue"; },
+        ast.StmtUnknown(_) => { return "StmtUnknown"; },
+        ast.StmtDefer(_) => { return "StmtDefer"; }
+    }
+    return "StmtUnrecognised";
+}
+
+// Walked is the running state of the walk: the disagreements found so far,
+// how many statements were compared, and which forms were among them.
+struct Walked { diffs: string[], compared: i32, forms: string[] }
+
+// walk threads the scope through a body the way the twelve diagnostic walkers
+// do, comparing the two steppers at every statement. The scope threaded
+// forward is check_stmt's, so each statement is compared from the same
+// starting scope on both sides and one divergence cannot cascade into the
+// rest of the body.
+function walk(body: ast.Stmt[], s: checker.Scope, where: string, acc: Walked): Walked {
+    var out: Walked = acc;
+    var cur: checker.Scope = s;
+    for st in body {
+        match (st) {
+            ast.StmtIf(f) => {
+                out = walk(f.then_body, cur, where, out);
+                out = walk(f.else_body, cur, where, out);
+            },
+            ast.StmtWhile(w) => {
+                out = walk(w.body, cur, where, out);
+            },
+            ast.StmtFor(fr) => {
+                out = walk(fr.body, cur, where, out);
+            },
+            ast.StmtMatch(m) => {
+                for arm in m.arms {
+                    out = walk(arm.body, cur, where, out);
+                }
+            },
+            ast.StmtDefer(d) => {
+                var one: ast.Stmt[] = [d.action];
+                out = walk(one, cur, where, out);
+            },
+            _ => {}
+        }
+        var want: checker.Scope = checker.check_stmt(st, cur).scope;
+        var diff: string = scope_diff(want, checker.bind_stmt(st, cur));
+        var found: string[] = out.diffs;
+        if (diff.len() > 0) {
+            found = found.append(where + ": " + diff);
+        }
+        var seen: string[] = out.forms;
+        var form: string = form_of(st);
+        if (!util.has_str(seen, form)) {
+            seen = seen.append(form);
+        }
+        out = Walked { diffs: found, compared: out.compared + 1, forms: seen };
+        cur = want;
+    }
+    return out;
+}
+
+function main(): i32 {
+    var mod: parser.Module = rundriver.parse_stdin("bind_stmt_parity_run");
+    var scopes: checker.Scope[] = checker.module_scopes(mod);
+    var acc: Walked = Walked { diffs: [], compared: 0, forms: [] };
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        acc = walk(mod.funcs[i].body, scopes[i], "function " + mod.funcs[i].name, acc);
+        i = i + 1;
+    }
+    acc = walk(mod.top_stmts, scopes[mod.funcs.len()], "top level", acc);
+    var j: i32 = 0;
+    while (j < acc.diffs.len()) {
+        print(acc.diffs[j]);
+        j = j + 1;
+    }
+    print("# compared " + util.i32_to_string(acc.compared));
+    var forms: string = "";
+    var k: i32 = 0;
+    while (k < acc.forms.len()) {
+        if (k > 0) { forms = forms + ","; }
+        forms = forms + acc.forms[k];
+        k = k + 1;
+    }
+    print("# forms " + forms);
+    if (acc.diffs.len() > 0) {
+        return 1;
+    }
+    return 0;
+}
