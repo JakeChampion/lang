@@ -7657,18 +7657,18 @@ function qual_variant_exists(en: string, field: string, s: Scope): boolean {
 // which left the typed-IR stamp empty on every expression built from it
 // (`[Color.Red, Color.Green][1]`) and took the lowering off the IR path (#5531).
 //
-// The variant's own owning union wins over the name the reference is written
-// through, so a `use`d or re-exported spelling still resolves to the declaring
-// enum; the written name is the fallback for a builtin enum, which has no
-// UnionSig to look the variant up in.
+// The WRITTEN enum is the answer, and deliberately not `union_of_variant`: two
+// enums may declare the same variant name (`enum A { Zed, … }` /
+// `enum B { …, Zed }`), and that scan returns the first union declaring it —
+// a real-but-wrong owner, which is the resolution bug the conformance case
+// `shared_variant_name` exists for one layer down. There is nothing to recover
+// by scanning anyway: `qual_enum_name` only answers for a name `lookup_union`
+// matched exactly (or a reserved builtin enum), and `qual_variant_exists` has
+// already confirmed that enum declares this variant.
 function qual_variant_union(fa: ast.ExprFieldAccess, s: Scope): string {
   var en: string = qual_enum_name(fa.obj, s);
   if (en.len() == 0 || !qual_variant_exists(en, fa.field, s)) {
     return "";
-  }
-  var owner: string = union_of_variant(fa.field, s.unions);
-  if (owner.len() > 0) {
-    return owner;
   }
   return en;
 }

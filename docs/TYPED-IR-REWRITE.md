@@ -875,6 +875,20 @@ The measurement that separated the two halves here was one debug print of
 against its struct twin — the struct one printed `P`, the enum one printed
 nothing, and that single line said which of the three layers to open first.
 
+**Factoring a rule is not the same as factoring the RIGHT rule.** The value
+form was written by lifting the constructor arm's body into
+`qual_variant_union` verbatim, and that body resolved the owner with
+`union_of_variant` — a first-match scan over every union. The constructor arm
+had inherited it from the BARE form (`Wrap(1)`), where a scan is the only
+option because nothing names the enum. In the qualified spelling the enum IS
+named, and the scan is strictly worse: two enums may declare the same variant
+name, so `B.Zed` typed as `A` and keyed the lowering on the wrong enum. There
+was nothing to recover by scanning either — `qual_enum_name` only answers for a
+name `lookup_union` matched exactly. Caught by the conformance case
+`shared_variant_name`, which exists for the same resolution bug one layer down;
+the shared rule now returns the written enum, which fixes the constructor arm's
+latent copy of it too.
+
 **And the admission helper had to get PRECISE before it could be widened.**
 `struct_tag_from_ty` admitted through `is_enum_like_name`, which answers "not a
 primitive, not an array, not bracketed" — and an ERASED generic struct name

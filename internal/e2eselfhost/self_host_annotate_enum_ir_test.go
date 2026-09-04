@@ -152,6 +152,26 @@ function main(): i32 { var h: Holder = Holder { sh: Sq { s: 6 } }; return h.sh.a
 	// changed from decl_is_struct to struct_tag_from_ty.
 	{"scalar_struct_field_method", `struct B { v: f64 }
 function main(): i32 { var b: B = B { v: 4.2 }; return (b.v * 10.0) as i32; }`},
+	// Two enums declaring the SAME variant name, in value position. The first
+	// draft of qual_variant_union resolved the owner with union_of_variant — a
+	// first-match scan over every union — which typed `B.Zed` as A and keyed the
+	// lowering on the wrong enum. The written enum is the answer, and there is
+	// nothing to recover by scanning: qual_enum_name only answers for a name
+	// lookup_union matched exactly. `Zed` sits at a different ordinal in each
+	// enum, so a cross-enum resolution picks a real-but-wrong slot rather than
+	// failing to find one. Conformance's `shared_variant_name` is the sibling
+	// that caught it; this is the pin next to the rule that can regress it.
+	{"shared_variant_name_value", `enum A { Zed, Xx(i32) }
+enum B { Yy(i32), Zed }
+function (a: A) rank(): i32 {
+    match (a) { A.Zed => { return 40; }, A.Xx(n) => { return n; } }
+    return 0;
+}
+function (b: B) rank(): i32 {
+    match (b) { B.Zed => { return 42; }, B.Yy(n) => { return n; } }
+    return 0;
+}
+function main(): i32 { var v: B = B.Zed; return v.rank(); }`},
 	// Bare (unqualified) variant spellings, the form that always typed: the
 	// value-position rule must not change what they resolve to.
 	{"bare_variant_payload_method", `enum Color { Red, Green(i32), Blue }
