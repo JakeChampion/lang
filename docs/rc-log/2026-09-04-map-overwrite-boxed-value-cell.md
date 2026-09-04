@@ -1,0 +1,86 @@
+# 2026-09-04 — the boxed-value map OVERWRITE stranded both halves of the old value
+
+Three of the four map cases the wasm leak census pinned (#7912) are one shape:
+`m.insert(k, v)` replacing an existing STRING value under a two-word string ABI.
+They were pinned on arm64 too, so this was never a wasm-only gap — the census
+header said "clean on both natives", and only x86-64 was.
+
+## What it costs, measured
+
+`FERN_LEAKCHECK=1` (read at COMPILE time by `internal/ast`), 100 rounds of
+build-map / insert / overwrite / drop, blocks and bytes per round:
+
+| K | V | overwrite | blocks | bytes |
+|---|---|---|--:|--:|
+| string | string | no | 0 | 0 |
+| string | string | no, two distinct keys | 0 | 0 |
+| string | i32 | yes | 0 | 0 |
+| i32 | string | yes | 1 | 16 |
+| string(65) | string(1) | yes | 1 | 16 |
+| string | string | yes | 2 | 48 |
+
+Sweeping the two lengths separates them: the bytes track the VALUE length and
+are flat in the key length.
+
+| key len | value len | bytes/round |
+|--:|--:|--:|
+| 1 | 1 | 32 |
+| 40 | 1 | 32 |
+| 100 | 1 | 32 |
+| 1 | 40 | 80 |
+| 1 | 100 | 128 |
+
+A fixed 16-byte cell, plus the superseded value's buffer when one is reachable.
+x86-64 is clean throughout: it stores the string data pointer in the value slot
+and has its own pre-drop.
+
+## Two gaps, both stated in the source they were in
+
+Both are in the two-word overwrite pre-drop in `internal/ir/ir.go`.
+
+**The old CELL was never freed.** The pre-drop `__fern_str_dec`'d the (data,len)
+the cell holds and said so: *"The old cell itself leaks (as on map drop)."* That
+parenthesis had gone stale — `__drop_map_str_values` frees each dead cell when
+the whole map dies (`TestLowerMapStringColDropFreesCell`), so the overwrite
+was the only site left. It now runs the same pair, `__fern_str_dec` then
+`__fern_cell_free`.
+
+**A boxed KEY skipped the pre-drop entirely.** All three pre-drop gates carried
+`!needBoxK`, because `__map_lookup_val` takes a raw key. On the two-word ABI a
+string key IS boxed, so `Map[string, string]` never reached the pre-drop at all
+and lost the value's buffer as well — that is the second block, and why an i32
+key leaked only the cell. `__map_lookup_val` dispatches on the map's own stored
+key kind and the column holds cell pointers, so boxing the key for the lookup is
+all it needs. That cell is transient and BORROWS the key: `exprSafeToReevaluate`
+has already excluded a concat from this gate, so the key is an alias the caller
+still owns and only the cell is ours to free — `freeLookupBoxCell`'s rule, for
+the same reason.
+
+## Why freeing the cell before the set is sound
+
+`__map_dec_value` is the set's own overwrite-dec and is a no-op for valKind 1
+(non-array pointer, which is what a boxed string value is): it reads the kind
+off the buffer and returns without touching `v`. Only valKind 0 — a wide scalar
+boxed into a cell — routes to `__map_free_val_cell`, and that column is not this
+one, so there is no double free. The set does not dereference the old value
+either; it probes keys and overwrites the slot, the same basis the kind-4
+pre-drop next door has shipped on.
+
+## Banked
+
+`map_string_keys_churn_free`, `map_string_values_churn_free` and
+`map_string_value_overwrite_pre_drop_churn` go to **0** on both arm64 and wasm
+and leave both baseline tables. `map_keys_values_header_churn_free` stays at
+16000 on both: the `keys()` / `values()` column snapshot is a different site.
+
+## Not done
+
+- `map_keys_values_header_churn_free` — the column-snapshot builders.
+- The native single-word pre-drop still carries `!needBoxK`, so a `Map[i64,
+  string]` overwrite on x86-64 loses its old value. x86-64 has no
+  `__fern_cell_free`, so its boxed cells are a separate gap first.
+- `Map[K, string].get_or` on x86-64 leaks the retained result when the key is an
+  ALIAS and the fallback a literal: `allocs=400 frees=300 live_bytes=6400` over
+  100 rounds with a 41-char value, one 64-byte block a call, unchanged by this
+  work. `TestX86_64MapStringColumnReclaim`'s own probe misses it because its key
+  is a fresh concat and its fallback a concat.

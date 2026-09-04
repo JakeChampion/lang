@@ -2881,3 +2881,76 @@ func countOp(p *Program, fn string, kind OpKind) int {
 	}
 	return n
 }
+
+// callOrderIn returns the index in fnName's op stream of the first named
+// call to callee at or after `from`, or -1. The overwrite pre-drop and the
+// discarded-key free both call __fern_cell_free, on opposite sides of the
+// set, so a plain "does it call it" question cannot separate them.
+func callOrderIn(p *Program, fnName, callee string, from int) int {
+	for _, fn := range p.Funcs {
+		if fn.Name != fnName {
+			continue
+		}
+		for i := from; i < len(fn.Ops); i++ {
+			if isNamedCallKind(fn.Ops[i].Kind) && fn.Ops[i].Str == callee {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// TestLowerMapStringValueOverwriteFreesOldCell verifies the two-word ABI's
+// overwrite pre-drop reclaims BOTH halves of the superseded value: the
+// string buffer the cell points at, and the cell. Freeing only the buffer
+// strands a 16-byte cell per overwrite, which no answer and no underflow
+// counter can see.
+func TestLowerMapStringValueOverwriteFreesOldCell(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.insert(1, "hello" + "world");
+    m = m.insert(1, "hello" + "there");
+    return 0;
+}`, 4)
+	lookup := callOrderIn(p, "build", "__map_lookup_val", 0)
+	if lookup < 0 {
+		t.Fatalf("expected the overwrite pre-drop lookup via __map_lookup_val:\n%s", p)
+	}
+	dec := callOrderIn(p, "build", "__fern_str_dec", lookup)
+	if dec < 0 {
+		t.Fatalf("expected the pre-drop to release the old value buffer via __fern_str_dec:\n%s", p)
+	}
+	if free := callOrderIn(p, "build", "__fern_cell_free", dec); free < 0 {
+		t.Errorf("expected the pre-drop to free the superseded value cell after the str_dec:\n%s", p)
+	}
+}
+
+// TestLowerMapBoxedKeyReachesOverwritePreDrop verifies a BOXED key does not
+// skip the pre-drop. __map_lookup_val dispatches on the map's stored key
+// kind and the column holds cell pointers, so the key is boxed for the
+// lookup like any other read — and that transient cell is freed before the
+// set, which is what separates it from the discarded-key cell the set's own
+// tail releases.
+func TestLowerMapBoxedKeyReachesOverwritePreDrop(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var k: string = "he" + "llo";
+    var m: Map[string, string] = map_new(8);
+    m = m.insert(k, "wor" + "ld");
+    m = m.insert(k, "the" + "re");
+    return 0;
+}`, 4)
+	lookup := callOrderIn(p, "build", "__map_lookup_val", 0)
+	if lookup < 0 {
+		t.Fatalf("a boxed key must still reach the overwrite pre-drop:\n%s", p)
+	}
+	set := callOrderIn(p, "build", "__method_Map_set", 0)
+	if set < 0 {
+		t.Fatalf("expected a __method_Map_set call:\n%s", p)
+	}
+	if lookup > set {
+		t.Errorf("the pre-drop lookup must run BEFORE the set it precedes (lookup %d, set %d):\n%s", lookup, set, p)
+	}
+	if free := callOrderIn(p, "build", "__fern_cell_free", lookup); free < 0 || free > set {
+		t.Errorf("expected the transient lookup key cell to be freed before the set (got %d, set %d):\n%s", free, set, p)
+	}
+}

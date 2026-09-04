@@ -108,9 +108,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"map_iter_escape_churn_free":                     32000,
 	"map_iter_string_kv_retain_churn_free":           19200,
 	"map_string_array_values":                        16,
-	"map_string_keys_churn_free":                     3200,
-	"map_string_value_overwrite_pre_drop_churn":      16000,
-	"map_string_values_churn_free":                   3200,
 	"matchexpr_alias_array_no_free":                  1600,
 	"option_of_array":                                32,
 	"pair_form_enum_temp_as_argument":                288,
@@ -135,12 +132,11 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 //     `copying_builtin_own_param_not_double_freed` leak on x86-64 and
 //     reclaim here. Both are single-word-string shapes, and this backend
 //     does not carry that ABI.
-//   - four map cases with string KEYS or VALUES
-//     (`map_string_keys_churn_free`, `map_string_values_churn_free`,
-//     `map_string_value_overwrite_pre_drop_churn`,
-//     `map_keys_values_header_churn_free`) leak here and are clean on
-//     both natives. The string buffers a map column owns are not being
-//     reclaimed on this backend.
+//   - `map_keys_values_header_churn_free` leaks here and on arm64 and
+//     is clean on x86-64: the column snapshot `keys()` / `values()`
+//     build is not reclaimed under the boxed ABIs. Its three former
+//     neighbours were the same OVERWRITE hole and are gone from both
+//     tables — see the overwrite pre-drop in internal/ir/ir.go.
 //
 // Cases the correctness corpus skips on wasm (`skipWasm`) are skipped
 // here too — a case that cannot run cannot be weighed.
@@ -159,9 +155,6 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	"map_iter_string_kv_retain_churn_free":           19200,
 	"map_keys_values_header_churn_free":              16000,
 	"map_string_array_values":                        16,
-	"map_string_keys_churn_free":                     3200,
-	"map_string_value_overwrite_pre_drop_churn":      16000,
-	"map_string_values_churn_free":                   3200,
 	"matchexpr_alias_array_no_free":                  1600,
 	"option_of_array":                                32,
 	"pair_form_enum_temp_as_argument":                160,

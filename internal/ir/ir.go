@@ -14632,33 +14632,55 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	// Map[K, string] (two-word ABI — wasm + arm64-TwoWordOverride)
 	// overwrite pre-drop: m.set(k, v) replacing an existing string
-	// value must reclaim the old buffer (the runtime's type-erased
-	// overwrite-dec is a no-op for valKind 1). Look up the old
-	// value cell (non-retaining) and, if present, __fern_str_dec the
-	// (data, len) it holds. The old cell itself leaks (as on map
-	// drop). Scoped to the non-boxed-key fast path; m / k must be
-	// call-free (the set below re-evaluates them — same idempotence
-	// as the kind-4 path).
+	// value must reclaim the old CELL and the buffer it points at (the
+	// runtime's type-erased overwrite-dec is a no-op for valKind 1).
+	// Look up the old value cell (non-retaining) and, if present,
+	// __fern_str_dec the (data, len) it holds, then free the cell —
+	// the same pair __drop_map_str_values runs when the whole map dies.
+	// m / k must be call-free (the set below re-evaluates them — same
+	// idempotence as the kind-4 path).
+	//
+	// A BOXED key reaches the lookup through a cell of its own, because
+	// __map_lookup_val dispatches on the map's stored key kind and the
+	// column holds cell pointers. That cell is transient and borrows the
+	// key — exprSafeToReevaluate has already excluded a concat, so the
+	// key is an alias the caller still owns and only the cell is ours to
+	// free (freeLookupBoxCell's rule, for the same reason).
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
-		ast.RcFreeEnabled && ast.UseTwoWordStrings(b.ptrW) && !needBoxK && !keyKind3 &&
+		ast.RcFreeEnabled && ast.UseTwoWordStrings(b.ptrW) && !keyKind3 &&
 		exprSafeToReevaluate(n.Args[0]) && exprSafeToReevaluate(n.Args[1]) {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); isStr {
 			if err := b.expr(n.Args[0]); err != nil { // m
 				return err
 			}
-			if err := b.expr(n.Args[1]); err != nil { // k (non-boxed)
+			lookupKeyCell := int32(-1)
+			if needBoxK {
+				var err error
+				if lookupKeyCell, err = b.boxIntoCellSlot(n.Args[1], n.TypeArgs[0], "__map_predrop_kbox"); err != nil {
+					return err
+				}
+			} else if err := b.expr(n.Args[1]); err != nil { // k
 				return err
 			}
 			b.emit(Op{Kind: OpCallDirect, Str: "__map_lookup_val", I32: 2})
 			oldSlot := b.allocSlot()
 			b.locals[fmt.Sprintf("__map_overwrite_oldstr_%d", oldSlot)] = oldSlot
 			b.emit(Op{Kind: OpStoreLocal, I32: oldSlot})
-			// if oldCell != 0: __fern_str_dec the (data, len) in the cell.
+			if lookupKeyCell >= 0 {
+				b.emit(Op{Kind: OpLoadLocal, I32: lookupKeyCell})
+				b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", Width: ResAddr, I32: 1})
+				b.emit(Op{Kind: OpDrop})
+			}
+			// if oldCell != 0: __fern_str_dec the (data, len) in the cell,
+			// then return the cell.
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
 			b.emit(Op{Kind: OpLoad, Width: WidthString})
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+			b.emit(Op{Kind: OpLoadLocal, I32: oldSlot})
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_cell_free", Width: ResAddr, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
 		}
