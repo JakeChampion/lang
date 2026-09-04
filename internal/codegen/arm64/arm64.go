@@ -337,36 +337,9 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// policy in ir.Inline must not treat its sole in-program caller as its
 	// last reference (the cull below roots it and its definition survives).
 	ir.MarkExternallyReachable(ip, opts.Exports...)
-	// Tail-call optimisation. Rewrites self-tail calls into
-	// a parameter rebind + backward branch to a wrapped
-	// outer loop — self-recursive functions run in O(1)
-	// stack depth. Backported from the x86-64 backend (the
-	// pass's first consumer); shape is target-agnostic so
-	// the wire-up is the same one-liner.
-	ir.TailCallOptimize(ip)
-	// Inline runs twice, around Defunctionalise — the x86-64 backend's twin,
-	// and see its comment for why the ordering is wasm's and what bounds the
-	// growth.
-	ir.Inline(ip)
-	// Defunctionalise + ElideClosurePair turn many indirect
-	// closure calls into direct calls (with env_ptr passed
-	// explicitly). Native closure pair: 16 bytes, env_ptr
-	// at offset 8 — see Defunctionalise's pairEnvOffset doc.
-	ir.Defunctionalise(ip, 8)
-	ir.ElideClosurePair(ip, 8)
-	// Zero-capture closures escaping past ElideClosurePair (e.g.
-	// passed as a function-typed argument — `tryThing(my_lambda)`)
-	// rewrite to OpConstFunc so the value materialises as an
-	// `adrp + add` of a static `.rodata` cell instead of a
-	// 16-byte heap-allocated pair.
-	ir.InlineZeroCaptureClosures(ip)
-	ir.Inline(ip)
-	// IR pass battery (#4377) — mirrors the x86-64 backend, including why DCE
-	// precedes FlattenBranches.
-	ir.FuseTee(ip)
-	ir.EliminateDeadCode(ip)
-	ir.FlattenBranches(ip)
-	ir.OptimizeCleanup(ip)
+	// The whole battery, the x86-64 backend's twin — same passes, same
+	// order, same 16-byte closure pair with env_ptr at +8.
+	ir.OptimizeProgram(ip, 8)
 	// IR-level dead-function elimination — the x86-64 backend's twin, and see
 	// its comment for the root set and why ir.CodegenAliases has to be passed.
 	// MUST run before the use-flag pre-scan below, which walks ip.Funcs to

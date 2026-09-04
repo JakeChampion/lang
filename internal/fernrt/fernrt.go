@@ -91,10 +91,11 @@ func Names() []string {
 // Func returns the declaration and lowered IR of the named helper for a
 // target whose pointers are ptrW bytes wide. The string ABI follows
 // ast.UseTwoWordStrings(ptrW) at the time of the call, as it does for the
-// program the backend is emitting. The IR has been through the same cleanup
-// passes (FuseTee, EliminateDeadCode, FlattenBranches, OptimizeCleanup) every
-// backend runs before emitting, so it arrives in the shape their emitters
-// expect.
+// program the backend is emitting. The IR has been through
+// ir.OptimizeFunctions — the per-function half of the battery every backend
+// runs — so it arrives in the shape their emitters expect. Only that half:
+// helpers here are looked up BY NAME, so a pass that inlined one into its sole
+// caller and culled the original would delete what a later lookup asks for.
 func Func(name string, ptrW int) (*ast.FuncDecl, *ir.Func, error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -109,10 +110,7 @@ func Func(name string, ptrW int) (*ast.FuncDecl, *ir.Func, error) {
 		if err != nil {
 			return nil, nil, fmt.Errorf("fernrt: lower runtime.fern: %w", err)
 		}
-		ir.FuseTee(ip)
-		ir.EliminateDeadCode(ip)
-		ir.FlattenBranches(ip)
-		ir.OptimizeCleanup(ip)
+		ir.OptimizeFunctions(ip)
 		l = &lowered{decls: map[string]*ast.FuncDecl{}, funcs: map[string]*ir.Func{}}
 		for _, fn := range prog.Funcs {
 			l.decls[fn.Name] = fn
