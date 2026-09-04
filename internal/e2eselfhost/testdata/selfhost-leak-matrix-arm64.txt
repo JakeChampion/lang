@@ -2,15 +2,18 @@
 # verdict, note. Same loader rules as selfhost-leak-matrix.txt (the x86 file);
 # regenerate with FERN_LEAK_MATRIX_DUMP=1 on TestSelfHostLeakMatrixIRArm64.
 #
-# Four rows differ from the x86 file on the NATIVE side only: native-x86 reads
-# clean because SSO keeps these <=7-byte strings inline (allocs=0), while
-# native-arm64 heap-allocates them (no SSO on its concat path) and its own
-# reclaim then leaks the shape - measured 200/100, 16 B/round on the rebind
-# probe. A native-arm64 backend gap surfaced by the cross-ISA census; the
-# self-host columns agree with the x86 file on every cell. Filed as #7446.
-# The two str_arr rows left that set when the array overwrite dec started
-# walking the superseded buffer's elements: what leaked there was the string
-# ELEMENTS, not the SSO gap the other four are about.
+# Two rows still differ from the x86 file on the NATIVE side only, both
+# alias_param shapes: native-x86 reads clean because SSO keeps these <=7-byte
+# strings inline (allocs=0), while native-arm64 heap-allocates them (no SSO on
+# its concat path) and a borrowed param is not free-eligible, so nothing
+# releases them. That SSO gap is #7446's remaining limb; the self-host columns
+# agree with the x86 file on every cell.
+#
+# The two rebind rows left that set when the string overwrite dec was widened
+# to arm64 (#7446 / #6554) - what leaked there was the superseded string
+# itself, which the two-word ABI now releases like every other. The two
+# str_arr rows left earlier, when the array overwrite dec started walking the
+# superseded buffer's elements: string ELEMENTS, not the SSO gap.
 
 arr_i32__fnscope__read                        clean  clean  clean on both sides
 arr_i32__fnscope__unused                      clean  clean  clean on both sides
@@ -28,8 +31,8 @@ str__if_block__read                           clean  clean  clean on both sides
 str__if_block__unused                         clean  clean  clean on both sides
 str__loop_local__read                         clean  clean  clean on both sides
 str__loop_local__unused                       clean  clean  clean on both sides
-str__rebind__read                             leak   clean  self-host ahead of native here: the registry widening credits the producer-call rebind, while #7446 still leaks native-arm64
-str__rebind__unused                           leak   clean  same as str__rebind__read: self-host clean, native-arm64 still #7446
+str__rebind__read                             clean  clean  #7446 / #6554: the string overwrite dec covers arm64 now, so the superseded string is released on both sides
+str__rebind__unused                           clean  clean  same as str__rebind__read
 str__shadow_siblings__read                    clean  clean  clean on both sides
 str__shadow_siblings__unused                  clean  clean  clean on both sides
 str_arr__fnscope__read                        clean  clean  clean on both sides
