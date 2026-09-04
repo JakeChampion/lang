@@ -4,6 +4,9 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/parser"
 )
 
 // sleep_ms was the last entry in providedMissingLowering: it type-checked
@@ -37,5 +40,53 @@ func TestFsSleepMsBlocks(t *testing.T) {
 	}
 	if elapsed < 100*time.Millisecond {
 		t.Errorf("the run took %v, so nothing actually blocked", elapsed)
+	}
+	// The other direction, which the lower bound cannot see: a timeout
+	// scaled by 1e9 instead of 1e6 sleeps for two minutes and still
+	// passes every assertion above. The bound is generous enough that
+	// only an order-of-magnitude error trips it.
+	if elapsed > 30*time.Second {
+		t.Errorf("the run took %v, so sleep_ms overslept by an order of magnitude", elapsed)
+	}
+}
+
+// The preview-2 sleep is a different body: subscribe-duration mints a
+// timer pollable, block waits on it, and the drop returns the handle.
+// A preview-2 core module imports component-model functions, so it is
+// not runnable standalone here — what is checkable is the composition,
+// and the hazard worth a gate is losing the DROP, which leaves a module
+// that sleeps correctly and exhausts the host's resource table in a
+// loop. The preopen cache in wasi_fs_dir.go exists because that already
+// happened once.
+func TestBuildPreview2WASISleepComposesAndDrops(t *testing.T) {
+	src := `
+function main(): i32 {
+    sleep_ms(1);
+    return 0;
+}
+`
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	bin, err := BuildWithOptions(prog, info, BuildOptions{Preview2WASI: true})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, want := range []struct{ module, name string }{
+		{"wasi:clocks/monotonic-clock@0.2.0", "subscribe-duration"},
+		{"wasi:io/poll@0.2.0", "[method]pollable.block"},
+		{"wasi:io/poll@0.2.0", "[resource-drop]pollable"},
+	} {
+		if !importExists(t, bin, want.module, want.name) {
+			t.Errorf("preview-2 sleep_ms module missing %s::%s", want.module, want.name)
+		}
+	}
+	if importExists(t, bin, "wasi_snapshot_preview1", "poll_oneoff") {
+		t.Errorf("preview-2 module still imports preview-1 poll_oneoff")
 	}
 }
