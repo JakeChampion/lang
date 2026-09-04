@@ -62629,6 +62629,10 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: StructTab, sfok
     var round: i32 = 0;
     while (round < 16) {
         var next: string[] = [];
+        // Entries are appended in funcs order every round and credits are
+        // only ever added, so the previous round's list lines up
+        // positionally: the round changed the registry iff some entry
+        // differs from the one at its position or the count grew.
         var changed: boolean = false;
         for fn in funcs {
             // ARRAY tier. The result must not BE the argument: the release
@@ -62765,35 +62769,36 @@ pub function param_counted_of(funcs: parser.FuncDecl[], structs: StructTab, sfok
             }
             if (aany) {
                 var aent: string = "ACNT:" + borrowable_key(fn) + "|" + aflags;
+                if (next.len() >= reg.len() || reg[next.len()] != aent) { changed = true; }
                 next = next.append(aent);
-                if (util.index_of_str(reg, aent) < 0) { changed = true; }
             }
             if (eany) {
                 var eent: string = "ECNT:" + borrowable_key(fn) + "|" + eflags;
+                if (next.len() >= reg.len() || reg[next.len()] != eent) { changed = true; }
                 next = next.append(eent);
-                if (util.index_of_str(reg, eent) < 0) { changed = true; }
             }
             if (eaany) {
                 var eaent: string = "DCNT:" + borrowable_key(fn) + "|" + eaflags;
+                if (next.len() >= reg.len() || reg[next.len()] != eaent) { changed = true; }
                 next = next.append(eaent);
-                if (util.index_of_str(reg, eaent) < 0) { changed = true; }
             }
             if (sany) {
                 var sent: string = "SCNT:" + borrowable_key(fn) + "|" + sflags;
+                if (next.len() >= reg.len() || reg[next.len()] != sent) { changed = true; }
                 next = next.append(sent);
-                if (util.index_of_str(reg, sent) < 0) { changed = true; }
             }
             if (tany) {
                 var tent: string = "TCNT:" + borrowable_key(fn) + "|" + tflags;
+                if (next.len() >= reg.len() || reg[next.len()] != tent) { changed = true; }
                 next = next.append(tent);
-                if (util.index_of_str(reg, tent) < 0) { changed = true; }
             }
             if (pany) {
                 var pent: string = "PCNT:" + borrowable_key(fn) + "|" + pflags;
+                if (next.len() >= reg.len() || reg[next.len()] != pent) { changed = true; }
                 next = next.append(pent);
-                if (util.index_of_str(reg, pent) < 0) { changed = true; }
             }
         }
+        if (next.len() != reg.len()) { changed = true; }
         reg = next;
         if (!changed) { return reg; }
         round = round + 1;
