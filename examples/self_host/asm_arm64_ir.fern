@@ -549,10 +549,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_concat\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n"); return s;
     }
     if (o.kind_tag == 99) {  // str_eq
-        // operand stack [A, B] (B top); __fern_str_eq is now a Fern runtime
-        // function (#2649) called via the __fn_ stack convention — re-push so
-        // A=a is param[0] at [x29,#16] and B=b is param[1] at [x29,#32]. Body
-        // from asm_arm64.emit_runtime's (now Fern) str_eq.
+        // operand stack [A, B] (B top); __fern_str_eq is hand-written
+        // (rt_arm64_str_eq) and called via the __fn_ stack convention — re-push
+        // so A=a is param[0] at [x29,#16] and B=b is param[1] at [x29,#32].
         s = s.mark_str_eq();
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n"); return s;
     }

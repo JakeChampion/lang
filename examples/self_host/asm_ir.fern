@@ -2632,10 +2632,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // __fn___fern_str_concat, using the raw-memory intrinsics), not a hand-written
     // register-ABI body here. See the emit_ir_runtime_fern_fn call in
     // emit_module_ir_unit's entry block.
-    // __fern_str_eq is now a Fern runtime function (#2649): emitted entry-only
-    // via emit_ir_runtime_fern_fn (as __fn___fern_str_eq), not a hand-written
-    // register-ABI body here. See the emit_ir_runtime_fern_fn call in
-    // emit_module_ir_unit's entry block.
+    // __fern_str_eq is hand-written (#8192) but not here: it takes the __fn_
+    // stack convention rather than this section's register ABI, so its body is
+    // rt_x86_str_eq, emitted entry-only from emit_module_ir_unit's entry block.
     // __fern_str_cmp is now a Fern runtime function (#2649): emitted entry-only
     // via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
     // __fn___fern_str_cmp), not a hand-written register-ABI body here. See the
@@ -3772,9 +3771,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.mark_str_concat(); return s;
     }
     if (o.kind_tag == 99) {  // str_eq
-        // operand stack: [box A, box B] (B on top); __fern_str_eq is now a Fern
-        // runtime function (#2649) called via the __fn_ stack convention —
-        // re-push so A=a is param[0] at +16 and B=b is param[1] at +24.
+        // operand stack: [box A, box B] (B on top); __fern_str_eq is hand-written
+        // (rt_x86_str_eq) and called via the __fn_ stack convention — re-push so
+        // A=a is param[0] at +16 and B=b is param[1] at +24.
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n    pushq %rax\n");
         s = s.mark_str_eq(); return s;
     }
