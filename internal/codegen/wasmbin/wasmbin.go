@@ -251,6 +251,13 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	if opts.ExitWithMainResult {
 		helpers.add("__fern_exit")
 	}
+	if ast.LeakCheckEnabled {
+		// The leak census reports at every exit seam — the synthesised
+		// `_start` / `_lang_run` below and __fern_exit — so the reporter
+		// has to be in the set whether or not the program itself reaches
+		// any helper that would pull it in.
+		helpers.add("__fern_lc_report")
+	}
 	importNeeds := scanImports(prog, helpers, opts)
 
 	// Extern WIT imports (`@import` functions — bring-your-own WIT, P4,
@@ -900,6 +907,10 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		nextFuncIdx++
 		var body []byte
 		body = inst.InstCall(body, mainIdx)
+		body, err := emitLcReportCall(body, funcIdx)
+		if err != nil {
+			return nil, err
+		}
 		// If main returns anything, drop it. Look up its result
 		// shape via the typeidx; safer than re-inferring from
 		// ip.PairForm / ReturnType here. The TypeResults slice
@@ -1134,6 +1145,10 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		nextFuncIdx++
 		var body []byte
 		body = inst.InstCall(body, mainIdx)
+		body, err := emitLcReportCall(body, funcIdx)
+		if err != nil {
+			return nil, err
+		}
 		switch {
 		case len(mainResults) == 0:
 			body = inst.InstI32Const(body, 0)
@@ -1262,6 +1277,29 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	}
 
 	return module.Build(m), nil
+}
+
+// emitLcReportCall appends the leak census's exit-time report to a
+// synthesised entry wrapper, and nothing when the census is off.
+//
+// It goes immediately after `call main`, BEFORE the wrapper's own
+// epilogue: PrintMainResult stringifies main's result and prints it,
+// which allocates, and a census taken after that would charge the
+// harness's own bytes to the program it is measuring.
+//
+// Wasm's stack discipline allows this — a `() -> ()` call leaves main's
+// result untouched on the operand stack underneath it.
+func emitLcReportCall(body []byte, funcIdx map[string]uint32) ([]byte, error) {
+	if !ast.LeakCheckEnabled {
+		return body, nil
+	}
+	idx, ok := funcIdx["__fern_lc_report"]
+	if !ok {
+		// An absent key reads back as funcidx 0, so the wrapper would
+		// call whatever occupies it rather than fail.
+		return nil, fmt.Errorf("wasmbin: leak census: __fern_lc_report helper not registered (scanRuntimeHelpers gap)")
+	}
+	return inst.InstCall(body, idx), nil
 }
 
 // le32 returns the 4-byte little-endian representation of v —

@@ -227,6 +227,10 @@ var rcResultBorrow = map[string]bool{
 
 	// A view straight into argv_buf, with no per-string rc header.
 	"__fern_arg_at": true,
+
+	// The census itoa hands back the caller's own write cursor,
+	// advanced past the digits it wrote.
+	"__fern_lc_wrnum": true,
 }
 
 // rcResultOperand: the argument, renamed. See RcResultOperand.
@@ -283,7 +287,8 @@ var rcResultNonPointer = map[string]bool{
 	// Void.
 	"__fern_print": true, "__fern_eprint": true, "__fern_write": true,
 	"__fern_putchar": true, "__fern_exit": true, "__free": true,
-	"__memcpy": true, "__memset": true, "__store_i32": true,
+	"__fern_lc_report": true,
+	"__memcpy":         true, "__memset": true, "__store_i32": true,
 	"__store_i64": true, "__store_ptr": true, "__http_entry": true,
 	"__fern_reader_close": true,
 	"strbuf_reset":        true, "strbuf_append": true,

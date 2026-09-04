@@ -319,11 +319,14 @@ func scanRuntimeHelpers(prog *ir.Program, opts EmitOptions) runtimeNeeds {
 					needs.add("__fern_write")
 				case "__fern_putchar":
 					// (b) → () — single-byte write to stdout. The
-					// preview-2 body heap-allocates a 1-byte buffer
-					// (the preview-1 body uses fixed scratch), so it
-					// pulls in __fern_alloc under Preview2WASI.
+					// preview-2 body heap-allocates a 1-byte buffer and
+					// a result area, and releases both (the preview-1
+					// body uses fixed scratch and allocates nothing), so
+					// the pair rides on Preview2WASI rather than on an
+					// unconditional edge.
 					if opts.Preview2WASI {
 						needs.add("__fern_alloc")
+						needs.add("__free")
 					}
 					needs.add("__fern_putchar")
 				case "__fern_exit":
@@ -986,6 +989,12 @@ var unconditionalHelperCalls = map[string][]string{
 	"__fern_alloc_rc1":       {"__fern_alloc"},
 	"strbuf_append":          {"__fern_str_len", "__fern_str_byte", "__fern_alloc"},
 	"strbuf_take":            {"__fern_alloc_rc1"},
+	"__fern_lc_report":       {"__fern_lc_wrnum"},
+	// The print family copies its argument into a fresh buffer and
+	// releases it once the (synchronous) write returns.
+	"__fern_print":  {"__free"},
+	"__fern_write":  {"__free"},
+	"__fern_eprint": {"__free"},
 }
 
 // helperAllocBoxCallers are the helpers that build an Option / Result
@@ -1292,6 +1301,20 @@ var runtimeHelperSpecs = map[string]runtimeHelperSpec{
 		params:  []byte{encode.ValtypeI32},
 		results: nil,
 		body:    buildPutcharBody,
+	},
+	"__fern_lc_wrnum": {
+		// (ptr, v) → end — decimal itoa into memory, for the
+		// leak census report. See buildLcWrnumBody.
+		params:  []byte{encode.ValtypeI32, encode.ValtypeI64},
+		results: []byte{encode.ValtypeI32},
+		body:    buildLcWrnumBody,
+	},
+	"__fern_lc_report": {
+		// () → () — the leak census's exit-time summary on
+		// stderr. See buildLcReportBody.
+		params:  nil,
+		results: nil,
+		body:    buildLcReportBody,
 	},
 	"__fern_exit": {
 		// (code) → () — never returns, but the wasm signature
@@ -2482,6 +2505,10 @@ func buildAllocBody(_ map[string]uint32) []byte {
 	}
 	body = numeric.InstI32And(body)
 	body = inst.InstLocalSet(body, 0)
+	// Leak census: count the request here, ahead of the freelist pop's
+	// early return, so a recycled block is counted exactly like a bumped
+	// one — the census is of blocks handed out, not of memory bought.
+	body = emitLcAccount(body, lcAllocCountAddr, lcAllocBytesAddr, 0)
 	if ast.RcFreeEnabled {
 		// Phase 3 step-4: reuse a freed block of the same class before
 		// bumping. emitFreelistBin turns the 16-rounded request (local
@@ -2591,6 +2618,10 @@ func buildAllocBody(_ map[string]uint32) []byte {
 // ($headAddr) after the two params.
 func buildFreeBody(_ map[string]uint32) []byte {
 	var body []byte
+	// Leak census: every reclamation site funnels through this helper, so
+	// counting here covers them all — and it happens whether or not the
+	// freelist is compiled in, since a release is a release either way.
+	body = emitLcAccount(body, lcFreeCountAddr, lcFreeBytesAddr, 1)
 	if ast.RcFreeEnabled {
 		// size = (size + 15) & -16
 		body = inst.InstLocalGet(body, 1)
@@ -8186,4 +8217,296 @@ func buildPowF64Body(funcs map[string]uint32) []byte {
 	return inst.PutFunctionBody(nil, putLocalsGroups(nil,
 		localGroup{2, encode.ValtypeF64}, localGroup{2, encode.ValtypeI64},
 		localGroup{1, encode.ValtypeF64}), body)
+}
+
+// --- Leak census (#5362 / docs/SANITIZER.md) -----------------------
+//
+// The wasm mirror of the natives' __fern_lc_* counters. Two chokepoints
+// carry the whole account: every allocation in this runtime reaches
+// __fern_alloc (the box / rc1 / u8-array wrappers all forward to it) and
+// every reclamation reaches __free (the freelist push is the only other
+// writer of a freed block, and it lives inside that helper). So a
+// counter in each is a census of the whole heap, with no per-site list
+// to keep in step.
+//
+// The fixed text must stay byte-identical to the two natives' — a
+// `leakcheck:` or `fern-sanitizer:` line has to read the same whichever
+// backend produced the program, which is the whole point of naming one
+// mode. Duplicated rather than shared for the reason ExitArenaExhausted
+// is: the codegen packages are deliberately independent.
+const (
+	lcAllocsPrefix = "leakcheck: allocs="
+	lcFreesPrefix  = " frees="
+	lcLivePrefix   = " live_bytes="
+	sanLeakPrefix  = "fern-sanitizer: leak "
+	sanLeakMiddle  = " bytes in "
+	sanLeakSuffix  = " blocks"
+)
+
+// emitLcAccount appends the census bump one alloc or free site makes:
+// the block counted, and its size added at the SAME (size+15)&-16
+// rounding both sides use, so a block's allocation and its eventual
+// release cancel exactly. Reading the rounded size out of `sizeLocal`
+// rather than the freelist's binned capacity is deliberate and matches
+// the natives: __free is called with the logical size and never sees the
+// large tier's round-up, so charging the capacity would drift live_bytes
+// by the internal waste.
+//
+// Uses no locals, so a caller's local numbering is untouched.
+func emitLcAccount(body []byte, countAddr, bytesAddr int32, sizeLocal uint32) []byte {
+	if !ast.LeakCheckEnabled {
+		return body
+	}
+	// mem[countAddr] += 1
+	body = inst.InstI32Const(body, countAddr)
+	body = inst.InstI32Const(body, countAddr)
+	body = memory.InstI64Load(body, 3, 0)
+	body = inst.InstI64Const(body, 1)
+	body = numeric.InstI64Add(body)
+	body = memory.InstI64Store(body, 3, 0)
+	// mem[bytesAddr] += (size + 15) & -16
+	body = inst.InstI32Const(body, bytesAddr)
+	body = inst.InstI32Const(body, bytesAddr)
+	body = memory.InstI64Load(body, 3, 0)
+	body = inst.InstLocalGet(body, sizeLocal)
+	body = inst.InstI32Const(body, 15)
+	body = numeric.InstI32Add(body)
+	body = inst.InstI32Const(body, -16)
+	body = numeric.InstI32And(body)
+	body = convert.InstI64ExtendI32U(body)
+	body = numeric.InstI64Add(body)
+	body = memory.InstI64Store(body, 3, 0)
+	return body
+}
+
+// emitLcLiteral appends `s` to the report line at the cursor held in
+// local `cur`, then advances the cursor past it. Written as immediate
+// stores rather than a copy out of a data segment so the reporter needs
+// no static data of its own: a segment would have to be placed in the
+// same address space the string pool and the bump cursor's seed are
+// derived from, for text only a debug build ever emits.
+func emitLcLiteral(body []byte, cur uint32, s string) []byte {
+	for i := 0; i < len(s); i++ {
+		body = inst.InstLocalGet(body, cur)
+		body = inst.InstI32Const(body, int32(s[i]))
+		body = memory.InstI32Store8(body, 0, uint32(i))
+	}
+	body = inst.InstLocalGet(body, cur)
+	body = inst.InstI32Const(body, int32(len(s)))
+	body = numeric.InstI32Add(body)
+	body = inst.InstLocalSet(body, cur)
+	return body
+}
+
+// buildLcWrnumBody assembles __fern_lc_wrnum(ptr, v) -> end: writes v's
+// decimal digits at ptr and returns the address one past the last. The
+// language's i64-to-string paths are Fern-level, so the reporter cannot
+// assume one survived tree-shake into the module — this is the wasm
+// sibling of the natives' .Llc_wrnum stack-buffer loop.
+//
+// Digits come out least-significant-first, so they land backwards from
+// the end of the lcNumBuf scratch and are copied forward in one
+// memory.copy. The magnitude is divided UNSIGNED once the sign is taken,
+// matching the natives.
+//
+// Locals: 0=ptr, 1=v (params); 2=n (i64 magnitude), 3=p, 4=len.
+func buildLcWrnumBody(_ map[string]uint32) []byte {
+	var body []byte
+	// if v < 0 { *ptr++ = '-'; n = -v } else { n = v }
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstI64Const(body, 0)
+	body = numeric.InstI64LtS(body)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, '-')
+		body = memory.InstI32Store8(body, 0, 0)
+		body = inst.InstLocalGet(body, 0)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Add(body)
+		body = inst.InstLocalSet(body, 0)
+		body = inst.InstI64Const(body, 0)
+		body = inst.InstLocalGet(body, 1)
+		body = numeric.InstI64Sub(body)
+		body = inst.InstLocalSet(body, 2)
+	}
+	body = inst.InstElse(body)
+	{
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstLocalSet(body, 2)
+	}
+	body = inst.InstEnd(body)
+	// p = lcNumBufEnd
+	body = inst.InstI32Const(body, lcNumBufEnd)
+	body = inst.InstLocalSet(body, 3)
+	// do { *--p = '0' + n % 10; n /= 10 } while (n != 0)
+	body = inst.InstBlockStart(body, inst.BlocktypeEmpty)
+	body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+	{
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstI32Const(body, 1)
+		body = numeric.InstI32Sub(body)
+		body = inst.InstLocalSet(body, 3)
+		body = inst.InstLocalGet(body, 3)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI64Const(body, 10)
+		body = numeric.InstI64RemU(body)
+		body = convert.InstI32WrapI64(body)
+		body = inst.InstI32Const(body, '0')
+		body = numeric.InstI32Add(body)
+		body = memory.InstI32Store8(body, 0, 0)
+		body = inst.InstLocalGet(body, 2)
+		body = inst.InstI64Const(body, 10)
+		body = numeric.InstI64DivU(body)
+		body = inst.InstLocalSet(body, 2)
+		body = inst.InstLocalGet(body, 2)
+		body = numeric.InstI64Eqz(body)
+		body = inst.InstBrIf(body, 1) // done once the magnitude is spent
+		body = inst.InstBr(body, 0)
+	}
+	body = inst.InstEnd(body) // end loop
+	body = inst.InstEnd(body) // end block
+	// len = lcNumBufEnd - p; memory.copy(ptr, p, len); return ptr + len
+	body = inst.InstI32Const(body, lcNumBufEnd)
+	body = inst.InstLocalGet(body, 3)
+	body = numeric.InstI32Sub(body)
+	body = inst.InstLocalSet(body, 4)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 3)
+	body = inst.InstLocalGet(body, 4)
+	body = memory.InstMemoryCopy(body)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 4)
+	body = numeric.InstI32Add(body)
+	locals := putLocalsGroups(nil,
+		localGroup{1, encode.ValtypeI64}, // $n
+		localGroup{2, encode.ValtypeI32}) // $p, $len
+	return inst.PutFunctionBody(nil, locals, body)
+}
+
+// emitLcSummary appends everything __fern_lc_report does except the
+// writes themselves: the report-once latch, the summary line, and —
+// under ast.SanitizeEnabled — the leak verdict. `emitWrite` is called
+// with the line assembled at lcLineBufAddr and the cursor local holding
+// its end, and emits the preview's own write; that is the only
+// difference between the two bodies.
+//
+// Locals: 0=cursor, 1=live (i64), 2=blocks (i64).
+func emitLcSummary(idxs map[string]uint32, emitWrite func([]byte) []byte) []byte {
+	wrnum := idxs["__fern_lc_wrnum"]
+	var body []byte
+	// Report once. Wasm's exit seams NEST — the synthesised `_start`
+	// calls __fern_exit, which is also where the exit() builtin lands —
+	// so without the latch a program that leaves through both prints the
+	// census twice.
+	body = inst.InstI32Const(body, lcReportedAddr)
+	body = memory.InstI32Load(body, 2, 0)
+	body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+	body = inst.InstReturn(body)
+	body = inst.InstEnd(body)
+	body = inst.InstI32Const(body, lcReportedAddr)
+	body = inst.InstI32Const(body, 1)
+	body = memory.InstI32Store(body, 2, 0)
+
+	// num appends `cursor = __fern_lc_wrnum(cursor, mem[addr])`.
+	num := func(b []byte, addr int32) []byte {
+		b = inst.InstLocalGet(b, 0)
+		b = inst.InstI32Const(b, addr)
+		b = memory.InstI64Load(b, 3, 0)
+		b = inst.InstCall(b, wrnum)
+		return inst.InstLocalSet(b, 0)
+	}
+	// live = alloc_bytes - free_bytes, signed: an over-free shows
+	// negative rather than wrapping.
+	body = inst.InstI32Const(body, lcAllocBytesAddr)
+	body = memory.InstI64Load(body, 3, 0)
+	body = inst.InstI32Const(body, lcFreeBytesAddr)
+	body = memory.InstI64Load(body, 3, 0)
+	body = numeric.InstI64Sub(body)
+	body = inst.InstLocalSet(body, 1)
+
+	body = inst.InstI32Const(body, lcLineBufAddr)
+	body = inst.InstLocalSet(body, 0)
+	body = emitLcLiteral(body, 0, lcAllocsPrefix)
+	body = num(body, lcAllocCountAddr)
+	body = emitLcLiteral(body, 0, lcFreesPrefix)
+	body = num(body, lcFreeCountAddr)
+	body = emitLcLiteral(body, 0, lcLivePrefix)
+	body = inst.InstLocalGet(body, 0)
+	body = inst.InstLocalGet(body, 1)
+	body = inst.InstCall(body, wrnum)
+	body = inst.InstLocalSet(body, 0)
+	body = emitLcLiteral(body, 0, "\n")
+	body = emitWrite(body)
+
+	if ast.SanitizeEnabled {
+		// The sanitizer's leak VERDICT (#5545). Only a POSITIVE balance
+		// is a leak: zero is clean, and a negative one is an over-free,
+		// which is a different finding named at the offending dec.
+		body = inst.InstLocalGet(body, 1)
+		body = inst.InstI64Const(body, 0)
+		body = numeric.InstI64GtS(body)
+		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+		{
+			body = inst.InstI32Const(body, lcAllocCountAddr)
+			body = memory.InstI64Load(body, 3, 0)
+			body = inst.InstI32Const(body, lcFreeCountAddr)
+			body = memory.InstI64Load(body, 3, 0)
+			body = numeric.InstI64Sub(body)
+			body = inst.InstLocalSet(body, 2)
+			body = inst.InstI32Const(body, lcLineBufAddr)
+			body = inst.InstLocalSet(body, 0)
+			body = emitLcLiteral(body, 0, sanLeakPrefix)
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 1)
+			body = inst.InstCall(body, wrnum)
+			body = inst.InstLocalSet(body, 0)
+			body = emitLcLiteral(body, 0, sanLeakMiddle)
+			body = inst.InstLocalGet(body, 0)
+			body = inst.InstLocalGet(body, 2)
+			body = inst.InstCall(body, wrnum)
+			body = inst.InstLocalSet(body, 0)
+			body = emitLcLiteral(body, 0, sanLeakSuffix+"\n")
+			body = emitWrite(body)
+		}
+		body = inst.InstEnd(body)
+	}
+	return body
+}
+
+// lcReportLocals is the locals vector both __fern_lc_report bodies
+// declare: one i32 cursor and two i64 readings.
+func lcReportLocals() []byte {
+	return putLocalsGroups(nil,
+		localGroup{1, encode.ValtypeI32}, // $cursor
+		localGroup{2, encode.ValtypeI64}) // $live, $blocks
+}
+
+// buildLcReportBody assembles __fern_lc_report() for preview 1: one
+// fd_write of the assembled line to fd 2. The iovec and the nwritten
+// result live in the reporter's own scratch rather than __fern_print's,
+// so the census can neither corrupt nor be corrupted by a print whose
+// iovec is still in flight.
+func buildLcReportBody(idxs map[string]uint32) []byte {
+	fdWrite := idxs["wasi_fd_write"]
+	write := func(b []byte) []byte {
+		// mem[lcRetBufAddr] = lcLineBufAddr (iov_base)
+		b = inst.InstI32Const(b, lcRetBufAddr)
+		b = inst.InstI32Const(b, lcLineBufAddr)
+		b = memory.InstI32Store(b, 2, 0)
+		// mem[lcRetBufAddr + 4] = cursor - lcLineBufAddr (iov_len)
+		b = inst.InstI32Const(b, lcRetBufAddr+4)
+		b = inst.InstLocalGet(b, 0)
+		b = inst.InstI32Const(b, lcLineBufAddr)
+		b = numeric.InstI32Sub(b)
+		b = memory.InstI32Store(b, 2, 0)
+		// fd_write(2, iovec, 1, nwritten); drop the errno.
+		b = inst.InstI32Const(b, 2)
+		b = inst.InstI32Const(b, lcRetBufAddr)
+		b = inst.InstI32Const(b, 1)
+		b = inst.InstI32Const(b, lcRetBufAddr+8)
+		b = inst.InstCall(b, fdWrite)
+		return inst.InstDrop(b)
+	}
+	return inst.PutFunctionBody(nil, lcReportLocals(), emitLcSummary(idxs, write))
 }
