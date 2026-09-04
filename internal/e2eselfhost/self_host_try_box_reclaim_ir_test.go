@@ -16,16 +16,14 @@ import (
 // `var s: string = ...?` binding, credited "STR:" so the exit sweep frees it
 // (collect_try_str_binding_names).
 //
-// The self-host does NOT yet reclaim a call-result Option/Result box consumed
-// by the CALLER's match (the outer `inner(pre)` box leaks — a pre-existing
-// class), so absolute flatness can't isolate the `?` edge. Each churn case
-// instead compares a hand-desugared BASELINE (innerB — the same consume via
-// match, which leaks the source box) against the `?` version (innerT) in one
-// program, baseline FIRST so freelist reuse can't flatter it: with the fix
-// the try churn's growth is at most HALF the baseline's (the source box —
-// and, for the string case, the payload — recycle); without it the two are
-// equal and the assertion fails. Values cross-checked, over-release by the
-// __rc_underflow detector.
+// Since #7910 (d) a match on a producer call reclaims its scrutinee box too,
+// so the hand-desugared baseline (innerB) frees what innerT frees and a
+// growth ratio between them measures nothing. Each churn case instead PINS
+// the try path's per-round residual: 40 bytes, the outer `var r = innerT(pre)`
+// box that the caller's own match still leaks, where without the `?` reclaim
+// it would be two boxes. The pin fails in EITHER direction, so an improvement
+// is rebanked rather than absorbed. innerB stays as the value cross-check
+// (w != x); over-release is caught by the __rc_underflow detector.
 func TestSelfHostTryBoxReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -53,52 +51,50 @@ func TestSelfHostTryBoxReclaimIRX86_64(t *testing.T) {
 		}
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != want {
-			t.Errorf("%s exited %d, want %d (98 = try churn leaked as much as baseline → box not reclaimed; 99 = over-release; 97 = value corrupted; 88 = aliased payload freed under caller)", name, code, want)
+			t.Errorf("%s exited %d, want %d (98 = above the pinned residual → box not reclaimed; 96 = below it → rebank the pin; 99 = over-release; 97 = value corrupted; 88 = aliased payload freed under caller)", name, code, want)
 		}
 	}
 
-	// SCALAR Result payload: the try churn leaks only the outer box; the
-	// baseline additionally leaks mk's source box.
+	// SCALAR Result payload: the residual is the outer box alone — mk's
+	// source box dies at the `?` success consume edge.
 	run(t, `function mk(pre: string): Result[i32, i32] { return Ok(pre.len()); }
 function innerT(pre: string): Result[i32, i32] { var v: i32 = mk(pre)?; return Ok(v + 1); }
 function innerB(pre: string): Result[i32, i32] { var t: i32 = 0; match (mk(pre)) { Ok(v) => { t = v + 1; }, Err(e) => { t = e; }, } return Ok(t); }
 function churnT(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerT(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
 function churnB(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerB(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
 function main(): i32 {
-    var b0: i32 = (__heap_bump_bytes() as i32);
     var w: i32 = churnB(3000);
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churnT(3000);
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (w != x) { return 97; }
-    var gb: i32 = b1 - b0;
     var gt: i32 = b2 - b1;
-    if (gt + gt > gb + 256) { return 98; }
+    if (gt > 120000 + 256) { return 98; }
+    if (gt + 256 < 120000) { return 96; }
     return 0;
-}`, "try-box-scalar-ratio", 0)
+}`, "try-box-scalar-pin", 0)
 
 	// STRING success payload: the `?` edge frees the box AND the binding
-	// frees the moved concat payload — the try churn recycles both, so its
-	// growth is well under half the baseline's (box + string leak there).
+	// frees the moved concat payload, so the residual is the same outer box
+	// as the scalar leg's.
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre + "abc"); }
 function innerT(pre: string): Result[i32, i32] { var s: string = mk(pre)?; return Ok(s.len()); }
 function innerB(pre: string): Result[i32, i32] { var t: i32 = 0; match (mk(pre)) { Ok(s) => { t = s.len(); }, Err(e) => { t = e; }, } return Ok(t); }
 function churnT(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerT(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
 function churnB(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerB(pre); match (r) { Ok(k) => { acc = (acc + k) % 251; }, Err(e) => { acc = e; }, } i = i + 1; } return acc; }
 function main(): i32 {
-    var b0: i32 = (__heap_bump_bytes() as i32);
     var w: i32 = churnB(3000);
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churnT(3000);
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (w != x) { return 97; }
-    var gb: i32 = b1 - b0;
     var gt: i32 = b2 - b1;
-    if (gt + gt > gb + 256) { return 98; }
+    if (gt > 120000 + 256) { return 98; }
+    if (gt + 256 < 120000) { return 96; }
     return 0;
-}`, "try-box-string-ratio", 0)
+}`, "try-box-string-pin", 0)
 
 	// OPTION with failure alternation: the failure edge frees the fresh None
 	// source box before propagating a new None.
@@ -108,18 +104,17 @@ function innerB(pre: string, k: i32): Option[i32] { var t: i32 = 0; var got: i32
 function churnT(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerT(pre, i % 2); match (r) { Some(k) => { acc = (acc + k) % 251; }, None => { acc = (acc + 1) % 251; }, } i = i + 1; } return acc; }
 function churnB(n: i32): i32 { var pre: string = "ab"; var acc: i32 = 0; var i: i32 = 0; while (i < n) { var r = innerB(pre, i % 2); match (r) { Some(k) => { acc = (acc + k) % 251; }, None => { acc = (acc + 1) % 251; }, } i = i + 1; } return acc; }
 function main(): i32 {
-    var b0: i32 = (__heap_bump_bytes() as i32);
     var w: i32 = churnB(3000);
     var b1: i32 = (__heap_bump_bytes() as i32);
     var x: i32 = churnT(3000);
     var b2: i32 = (__heap_bump_bytes() as i32);
     if (__rc_underflow() != 0) { return 99; }
     if (w != x) { return 97; }
-    var gb: i32 = b1 - b0;
     var gt: i32 = b2 - b1;
-    if (gt + gt > gb + 256) { return 98; }
+    if (gt > 120000 + 256) { return 98; }
+    if (gt + 256 < 120000) { return 96; }
     return 0;
-}`, "try-box-option-failure-ratio", 0)
+}`, "try-box-option-failure-pin", 0)
 
 	// ALIASED payload excluded: mk forwards its param (`Ok(pre)`) — a
 	// non-fresh payload, so the producer is flagged "a": the box still frees

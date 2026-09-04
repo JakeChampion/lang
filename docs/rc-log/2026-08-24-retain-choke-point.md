@@ -48,7 +48,7 @@ compiler). The proof used here: build the driver from the pre-change
 sources and from the post-change sources, run both drivers' per-module
 emit-all over the SAME pre-change snapshot project, byte-compare every
 unit — the old-vs-new discipline `TYPED-IR-REWRITE.md` prescribes, on the
-`runEmitAllFixpoint` machinery. All units identical.
+`TestSelfHostPerModuleEmitAllFixpointX86_64` machinery. All units identical.
 
 ## The release side (same day, next slice)
 

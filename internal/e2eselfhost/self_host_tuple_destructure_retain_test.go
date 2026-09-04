@@ -23,11 +23,14 @@ import (
 //
 // Every `want` is the answer native AND interp produce for that program.
 //
-// The scope is `is_leaksafe_array_field` — exactly the set the sweep releases
-// with a shallow `__fern_rc_dec`, and exactly the set measured to over-release.
-// The deeper-release kinds are pinned unchanged by the last row: a `string[]`
-// element LEAKS rather than over-releases, so retaining one would deepen a leak
-// instead of closing a double-dec.
+// The scope is every element kind a tuple's own sweep can release:
+// `is_leaksafe_array_field` (shallow `__fern_rc_dec`) and `string[]`, whose
+// deep `__fern_str_arr_free` is rc-gated so the binding's shallow dec runs
+// first and the element walk happens at rc 1. The `string[]` rows below all
+// over-released before the retain reached them, including on element forms the
+// admission has taken since long before it learned the fresh-string registry.
+// A struct / enum array element stays out: no tuple position of that type is
+// sweep-credited at all, so it can only leak.
 
 func tupleDestructureRetainCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
@@ -118,14 +121,13 @@ function main(): i32 {
 			want: 8, balance: true,
 		},
 		{
-			// UNCHANGED, and the guard on the scope: a `string[]` element is
-			// released by the element-walking __fern_str_arr_free, not the
-			// shallow dec, so it LEAKS rather than over-releasing and is
-			// deliberately outside is_leaksafe_array_field. Retaining it would
-			// deepen the leak. Its frees are pinned so a widening into the
-			// deeper-release kinds moves a number here rather than passing
-			// silently.
-			name: "strarr_elem_unchanged_leak",
+			// A `string[]` element: the tuple's sweep releases this position
+			// with the element-walking __fern_str_arr_free, so the extract owes
+			// it a retain exactly as the shallow-dec kinds do. The element
+			// sources are registered fresh-string producers, the form the
+			// sweep credit reaches only once its admission consults that
+			// registry — this row is where the widening surfaced.
+			name: "strarr_elem_bind_read",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { var p: (i32, string[]) = (i, [w("x"), w("y")]); var (a, b) = p; return a + b.len(); }
 function main(): i32 {
@@ -134,7 +136,74 @@ function main(): i32 {
     if (__rc_underflow() != 0) { return 99; }
     return t % 97;
 }`,
-			want: 9, balance: false, wantFrees: 100,
+			want: 9, balance: true,
+		},
+		{
+			// STRING-LITERAL elements: the syntactic admission the sweep credit
+			// has always had, so this shape over-released long before the
+			// registry widened it. Held separately for that reason — a fix
+			// scoped to the registry form would leave this one corrupting.
+			name: "strarr_literal_elems",
+			src: `function round(i: i32): i32 { var p: (i32, string[]) = (i, ["x", "y"]); var (a, b) = p; return a + b.len(); }
+function main(): i32 {
+    var t: i32 = 0; var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    return t % 97;
+}`,
+			want: 9, balance: true,
+		},
+		{
+			// A BARE-IDENT string[] source — the string[] twin of the row
+			// above it: the construction alias-incs the buffer, and the
+			// extract took no reference of its own, so this over-released on
+			// its own account.
+			name: "strarr_bare_ident_elem_source",
+			src: `function round(i: i32): i32 { var xs: string[] = ["x", "y"]; var p: (i32, string[]) = (i, xs); var (a, b) = p; return a + b.len(); }
+function main(): i32 {
+    var t: i32 = 0; var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    return t % 97;
+}`,
+			want: 9, balance: true,
+		},
+		{
+			// Handed to a borrowing callee, the string[] twin of
+			// passed_to_callee: the callee borrows, so the binding still
+			// spends the reference the extract took.
+			name: "strarr_passed_to_callee",
+			src: `function w(a: string): string { return a + "!"; }
+function consume(xs: string[]): i32 { return xs.len(); }
+function round(i: i32): i32 { var p: (i32, string[]) = (i, [w("x"), w("y")]); var (a, b) = p; return consume(b) + a % 3; }
+function main(): i32 {
+    var t: i32 = 0; var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    return t % 97;
+}`,
+			want: 8, balance: true,
+		},
+		{
+			// The MOVE path is where the string[] retain is deliberately NOT
+			// matched, and the residual leak this whole fix accepts. `b` is
+			// returned, so its slot sweep is elided and the retain is never
+			// given back: the tuple's drop finds rc 2, decs without walking,
+			// and the caller's shallow dec frees the buffer with the element
+			// boxes still on it — 2 boxes/round. Sound, and strictly better
+			// than the alternative, which freed the buffer under a live
+			// caller binding. Pinned so closing it moves a number here.
+			name: "strarr_moved_out_by_return",
+			src: `function w(a: string): string { return a + "!"; }
+function get(i: i32): string[] { var p: (i32, string[]) = (i, [w("x"), w("y")]); var (a, b) = p; return b; }
+function round(i: i32): i32 { var r: string[] = get(i); return r.len(); }
+function main(): i32 {
+    var t: i32 = 0; var r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    if (__rc_underflow() != 0) { return 99; }
+    return t % 97;
+}`,
+			want: 6, balance: false, wantFrees: 200,
 		},
 	}
 }
@@ -173,8 +242,8 @@ func TestSelfHostTupleDestructureRetainX86_64(t *testing.T) {
 				}
 			} else {
 				if live == 0 {
-					t.Errorf("%s: %s — a deeper-release element kind came back clean; if the retain was widened to "+
-						"cover it, that is its own measured increment and this pin needs re-measuring", tc.name, summary)
+					t.Errorf("%s: %s — a row pinned to a residual leak came back clean; closing it is its own "+
+						"measured increment and this pin needs re-measuring", tc.name, summary)
 				}
 				if frees != tc.wantFrees {
 					t.Errorf("%s: frees=%d, want %d — a moved count on an unchanged row is a silent widening", tc.name, frees, tc.wantFrees)

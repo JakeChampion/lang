@@ -3285,6 +3285,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
 					op.Str == "__drop_arr_closure" ||
 					op.Str == "__drop_closure_value" ||
+					op.Str == "__drop_strarr" ||
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_enum_") ||
 					strings.HasPrefix(op.Str, "__drop_arr_tuple_") ||
@@ -3395,6 +3396,8 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 					continue
 				}
 				fn = genArrTupleDropFn(mangled, ptrW)
+			} else if name == "__drop_strarr" {
+				fn = genStrArrDropFn(ptrW)
 			} else if name == "__drop_map_str_values" {
 				fn = genMapStrValDropFn(ptrW)
 			} else if name == "__drop_map_str_keys" {
@@ -5170,10 +5173,17 @@ type builder struct {
 	appendOrderFn   *ast.FuncDecl
 	appendInPlaceOK map[*ast.Call]bool
 	appendFieldCopy map[*ast.Call]bool
-	// callArgDies (rebuilt in the same refresh) marks the ident args that
-	// die at each call via the strict self-reassign shape — see
-	// callArgDeaths. Read by the #4873 caller-side grow bracket.
-	callArgDies map[*ast.Call]map[string]bool
+	// identOrder is the same order under its own key, for the analyses that
+	// want only it. Separate from appendOrderFn so asking for the order does
+	// not also build inPlacePushes and fieldPlaceAppendCopies, which are far
+	// more expensive and which those analyses never read (#8175).
+	identOrderCache identOrder
+	identOrderFn    *ast.FuncDecl
+	// callArgDies marks the ident args that die at each call via the strict
+	// self-reassign shape — see callArgDeaths. Read by the #4873 caller-side
+	// grow bracket. Keyed on its own fn for the same reason.
+	callArgDies   map[*ast.Call]map[string]bool
+	callArgDiesFn *ast.FuncDecl
 	// growParams[name][i] is the growParamKind bitmask for parameter i of
 	// function `name` — the positions whose argument buffer(s) the callee
 	// may mutate in place through the rc==1 fast paths (computeGrowParams,
@@ -6585,7 +6595,7 @@ func (b *builder) emitDowncast(n *ast.DowncastExpr) error {
 	}
 	b.emit(Op{Kind: OpLoadLocal, I32: vtSlot})
 	b.emit(Op{Kind: OpConstVtable, Str: setKey, Ext: &OpExt{Str2: concrete}})
-	b.emit(Op{Kind: OpEq})
+	b.emit(Op{Kind: OpEq, Width: WidthPtr})
 	// Result Option[T] heap-box pointer, built in either arm into a
 	// shared scratch slot (a void if-block keeps the operand-stack model
 	// simple across backends; the result is loaded after OpEnd).
@@ -13374,6 +13384,13 @@ func mapValHasDrop(v ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 	// applies), so this changes the DROP, not the retain. Other arrays
 	// (plain / nested / enum-elem) keep __map_drop_values.
 	if at, ok := v.(ast.ArrayType); ok {
+		// A `string[]` value (Map[K, string[]]) is kind 2 to __map_drop_values,
+		// whose flat __fern_arr_dec frees the buffer and strands every string
+		// in it. __drop_strarr is the same one-argument shape the column walk
+		// calls for a struct or enum value, over __fern_drop_arr_str.
+		if _, isStr := at.Elem.(ast.StringType); isStr {
+			return "__drop_strarr", true
+		}
 		return arrElemStructDropName(at.Elem, info, genEnumDrops, genTupleDrops, ptrW, false)
 	}
 	// Every other value with a generated recursive drop — concrete user
@@ -13765,7 +13782,10 @@ func (b *builder) callWithMapCowRetain(n *ast.Call, recv ast.Expr) error {
 // names what the call handed back. On the copy branch the result is a fresh
 // rc=1 the caller already solely owns, so retaining there would leak.
 func (b *builder) emitMapCowRetainTest(resSlot int32) {
-	b.emit(Op{Kind: OpEq})
+	// Handle identity, so a pointer-width compare: a 32-bit one reads two
+	// distinct handles as equal whenever they agree in their low half,
+	// which a >4 GiB arena makes reachable.
+	b.emit(Op{Kind: OpEq, Width: WidthPtr})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
 	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
@@ -14707,6 +14727,39 @@ func (b *builder) callBody(n *ast.Call) error {
 			return nil
 		}
 	}
+	// get_or on a counted-read VALUE column (array / struct / enum values):
+	// the runtime retains the result on a hit and, since the same rule made
+	// the miss retain the fallback, on a miss too — so the result is owned
+	// (ownedCallResultType admits it) and a FRESH fallback temp is dead once
+	// the helper has read it, on both outcomes. Without this arm the generic
+	// call path kept the fallback (its result may alias the argument) and
+	// nothing owned the retained value: 48 B per `m.get_or(i, [])` on an
+	// i32[] column, the array and its strings on a string[] one.
+	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 && !keyKind3 && !needBoxK && !needBoxV {
+		if _, isStr := n.TypeArgs[1].(ast.StringType); !isStr && b.mapGetHandsCountedValue(n.TypeArgs[1]) {
+			var tmpSlots []int32
+			var tmpTypes []ast.Type
+			for ai, a := range n.Args {
+				if ai == 2 {
+					slot, tt, ok, err := b.stashOwnedArgTemp(a)
+					if err != nil {
+						return err
+					}
+					if ok {
+						tmpSlots = append(tmpSlots, slot)
+						tmpTypes = append(tmpTypes, tt)
+						continue
+					}
+				}
+				if err := b.expr(a); err != nil {
+					return err
+				}
+			}
+			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__method_Map_get_or", I32: int32(len(n.Args))})
+			b.emitArgTempDrops(tmpSlots, tmpTypes)
+			return nil
+		}
+	}
 	// Struct/enum (keyKind-3) key: the tail-bound ops (set, has, and
 	// non-boxed get_or — get / delete already routed through their
 	// keyed-aware helpers above) dispatch through the `_keyed` runtime
@@ -14731,7 +14784,32 @@ func (b *builder) callBody(n *ast.Call) error {
 			if needBoxV {
 				return b.emitWideMapGetOr(n, n.TypeArgs[0], n.TypeArgs[1])
 			}
-			for _, a := range n.Args {
+			_, isStr := n.TypeArgs[1].(ast.StringType)
+			// Both non-receiver arguments are stashed when they are FRESH
+			// owned temps, so the release below can end them once the
+			// helper has probed with them — the same reason the !keyKind3
+			// string arm above stashes its own. `get_or` only READS the
+			// key, so a `m.get_or(Point { .. }, d)` key temp is dead at the
+			// call; and a counted-read value column retains the fallback on
+			// a miss here exactly as on the !keyKind3 arm, the keyed runtime
+			// variant differing only in hash/eq dispatch, not in ownership.
+			// Emitting both inline stranded a struct key every round and,
+			// once the miss-retain landed, the fallback with it.
+			countedFallback := !isStr && b.mapGetHandsCountedValue(n.TypeArgs[1])
+			var tmpSlots []int32
+			var tmpTypes []ast.Type
+			for ai, a := range n.Args {
+				if ai == 1 || (ai == 2 && countedFallback) {
+					slot, tt, ok, err := b.stashOwnedArgTemp(a)
+					if err != nil {
+						return err
+					}
+					if ok {
+						tmpSlots = append(tmpSlots, slot)
+						tmpTypes = append(tmpTypes, tt)
+						continue
+					}
+				}
 				if err := b.expr(a); err != nil {
 					return err
 				}
@@ -14741,10 +14819,10 @@ func (b *builder) callBody(n *ast.Call) error {
 			// runtime hands back the string data pointer un-retained
 			// (see the !keyKind3 inline above) — co-own it so the map's
 			// drop doesn't free it from under the caller.
-			if _, isStr := n.TypeArgs[1].(ast.StringType); isStr &&
-				b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
+			if isStr && b.ptrW == 8 && !ast.UseTwoWordStrings(b.ptrW) {
 				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 			}
+			b.emitArgTempDrops(tmpSlots, tmpTypes)
 			return nil
 		}
 	}
@@ -15317,7 +15395,7 @@ func (b *builder) emitArgTempDropsGuarded(slots []int32, types []ast.Type, guard
 		if i < len(guarded) && guarded[i] {
 			b.emit(Op{Kind: OpLoadLocal, I32: resSlot})
 			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpNe})
+			b.emit(Op{Kind: OpNe, Width: WidthPtr})
 			b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 			b.emitArgTempDrop(slot, types[i])
 			b.emit(Op{Kind: OpEnd})
@@ -17171,16 +17249,28 @@ func (b *builder) emitRetainValueOnStack(t ast.Type) {
 	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 }
 
-// structUpdateBaseIsOwned reports whether a struct-update spread base is a
-// value this construction OWNS — one no local, parameter or container is
-// holding a reference to — so its box must be released once the copy is done.
+// structUpdateBaseIsOwned reports whether a struct-update spread base carries a
+// reference this construction OWNS — one no local, parameter or container will
+// release on its behalf — so the base must be released once the copy is done.
+// The release is is_unique-gated, so a base something else still holds is only
+// decremented; what this predicate has to establish is that the unit exists.
 //
-// Deliberately narrow: only a struct literal (unambiguously fresh) and a call
-// whose callee the borrow analysis proved never returns one of its own
-// parameters. An Ident, a field read, an index — anything that could name
-// storage somebody else owns — stays borrowed, which is the pre-existing
-// behaviour and the one this must not disturb. Over-declining costs a leak
-// that was already there; over-claiming would be a use-after-free.
+// A struct literal is unambiguously fresh. A call qualifies on either of two
+// facts: `returnsFreshBox` — every value return hands back a box the CALLER
+// owns a unit of — or the narrower `returnsNoParamEscape`, that nothing
+// reachable from a parameter is in the result at all. An Ident, a field read,
+// an index — anything that could name storage somebody else owns — stays
+// borrowed, which is the pre-existing behaviour and the one this must not
+// disturb. Over-declining costs a leak that was already there; over-claiming
+// would be a use-after-free.
+//
+// The fresh-box arm is what makes the temp spelling agree with the bound one:
+// `var b = mk(); T { ...b, f: v }` already reclaims mk's box at b's scope exit
+// through this same `dropStructField`, under the same is_unique gate, on the
+// same oracle. Escape freedom is a far stronger fact and out of reach for a
+// registry builder — every field of `irlower.fn_sigs_for_borrow`'s 40-field
+// result is a call whose own callee threads a parameter, which refuses the
+// whole function on all 32 pointer fields at once.
 func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
 	switch x := base.(type) {
 	case *ast.StructLit:
@@ -17193,7 +17283,7 @@ func (b *builder) structUpdateBaseIsOwned(base ast.Expr) bool {
 		if _, isLocal := b.locals[id.Name]; isLocal {
 			return false // a closure call — the callee is not statically known
 		}
-		return b.returnsNoParamEscape[id.Name]
+		return b.returnsFreshBox[id.Name] || b.returnsNoParamEscape[id.Name]
 	}
 	return false
 }
@@ -17574,7 +17664,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
-				b.emit(Op{Kind: OpNe})
+				b.emit(Op{Kind: OpNe, Width: WidthPtr})
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 				b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
@@ -17605,7 +17695,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				b.emit(Op{Kind: OpStoreLocal, I32: newTmp}) // stash new (RHS result)
 				b.emit(Op{Kind: OpLoadLocal, I32: idx})     // old handle
 				b.emit(Op{Kind: OpLoadLocal, I32: newTmp})  // new handle
-				b.emit(Op{Kind: OpNe})                      // cow copied?
+				b.emit(Op{Kind: OpNe, Width: WidthPtr})     // cow copied?
 				b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 				flagSlot, hasFlag := b.locals[ownFlagName(t.Name)]
 				if mst, isMap := structOrEnumTypeOfLocal(t.Name, b); hasFlag && b.rc.cowMapParams[t.Name] && isMap {
@@ -17696,7 +17786,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
 					b.emit(Op{Kind: OpLoadLocal, I32: idx})
 					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
-					b.emit(Op{Kind: OpNe})
+					b.emit(Op{Kind: OpNe, Width: WidthPtr})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 					release()
 					b.emit(Op{Kind: OpElse})
@@ -17783,7 +17873,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
 					b.emit(Op{Kind: OpLoadLocal, I32: idx})
 					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
-					b.emit(Op{Kind: OpNe})
+					b.emit(Op{Kind: OpNe, Width: WidthPtr})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 					b.emitMapOverwriteDrop(idx, mst)
 					if aliasInced {
@@ -18617,7 +18707,7 @@ func (b *builder) emitConsumedArrayOverwriteDec(name string, emitDec func()) {
 	b.emit(Op{Kind: OpStoreLocal, I32: newTmp})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
 	b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
-	b.emit(Op{Kind: OpNe})
+	b.emit(Op{Kind: OpNe, Width: WidthPtr})
 	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 	// Replaced: dec only what this frame owns, then take ownership.
 	b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
@@ -19321,11 +19411,13 @@ func (b *builder) emitWideMapValues(n *ast.Call, vType ast.Type) error {
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: mSlot})
 
-	// buf = i32.load(m); cap = i32.load(buf); len = i32.load(buf + 4)
+	// buf = ptr.load(m); cap = i32.load(buf); len = i32.load(buf + 4).
+	// The handle deref is WidthPtr: `buf` is a heap address, and a
+	// bare (i32) OpLoad sheds its high half above 4 GiB.
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mv_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: mSlot})
-	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
 
 	capSlot := b.allocSlot()
@@ -19496,10 +19588,11 @@ func (b *builder) emitWideMapKeys(n *ast.Call, kType ast.Type) error {
 	}
 	b.emit(Op{Kind: OpStoreLocal, I32: mSlot})
 
+	// Handle deref is WidthPtr — see emitWideMapValues.
 	bufSlot := b.allocSlot()
 	b.locals[fmt.Sprintf("__mk_buf_%d", bufSlot)] = bufSlot
 	b.emit(Op{Kind: OpLoadLocal, I32: mSlot})
-	b.emit(Op{Kind: OpLoad})
+	b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 	b.emit(Op{Kind: OpStoreLocal, I32: bufSlot})
 
 	capSlot := b.allocSlot()
@@ -20276,13 +20369,36 @@ func isCellStringGetExpr(e ast.Expr) bool {
 // (#4827) without paying an O(body) rebuild at every push site.
 func (b *builder) curAppendOrder() identOrder {
 	if b.appendOrderFn != b.fn {
-		b.appendOrder = identOrderOf(b.fn.Body)
+		b.appendOrder = b.curIdentOrder()
 		b.appendInPlaceOK = inPlacePushes(b.fn.Body)
 		b.appendFieldCopy = fieldPlaceAppendCopies(b.fn.Body, b.callArgNoEscape)
-		b.callArgDies = callArgDeaths(b.fn)
 		b.appendOrderFn = b.fn
 	}
+	_ = b.curCallArgDies() // emitArrayPush's callers read b.callArgDies directly
 	return b.appendOrder
+}
+
+// curIdentOrder is identOrderOf for the function being lowered, built once.
+// Four analyses want it — computeMovedLocals, computeArraySetIncs,
+// computeConsumingOwnedMatches and the append order — and each was walking the
+// whole body for its own copy (#8175).
+func (b *builder) curIdentOrder() identOrder {
+	if b.identOrderFn != b.fn {
+		b.identOrderCache = identOrderOf(b.fn.Body)
+		b.identOrderFn = b.fn
+	}
+	return b.identOrderCache
+}
+
+// curCallArgDies is callArgDeaths for the function being lowered, built once —
+// computeOwnedArgMoves and the append refresh both want it, and it is a whole
+// body walk each time (#8175).
+func (b *builder) curCallArgDies() map[*ast.Call]map[string]bool {
+	if b.callArgDiesFn != b.fn {
+		b.callArgDies = callArgDeaths(b.fn)
+		b.callArgDiesFn = b.fn
+	}
+	return b.callArgDies
 }
 
 // AppendSite records the in-place-vs-copy decision emitArrayPush made at

@@ -1964,7 +1964,7 @@ tier → leak.
   byte-identical), confirming the accumulation is not those leaks. Making gen1
   emit-all CI-cheap would need arena checkpoint/reset between windows — deferred.
   **The gen1 self-reproduction proof is now the ungated emit-all fixpoint**
-  (`TestSelfHostPerModuleEmitAllFixpointBatch4X86_64` / `…X86_64` at batch 8).
+  (`TestSelfHostPerModuleEmitAllFixpointX86_64`, batch 8).
   The serial `TestSelfHostPerModuleFixpointX86_64` named here served that role
   during the migration and was deleted afterwards — at 28 minutes it was the
   longest job in the repo, and what it uniquely covered was batch size ONE, the
@@ -2162,10 +2162,10 @@ tier → leak.
   advance halved the per-batch accumulation, so batch=8 fits. Bonus: skipping the
   redundant eligibility lowering also makes it **~3.3× faster** (gen0 emit-all
   ~80 s vs ~270 s pre-fix; whole test ~9 min vs the ~16.6 min serial fixpoint).
-  Env-gated (`RUN_EMITALL_FIXPOINT=1`), because its batch=8 is the A/B it exists
-  to hold. The gen1 self-reproduction proof itself now runs on every lane as the
-  ungated `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64` — same fixpoint,
-  batch=4 for the arena headroom.
+  Its batch=8 is the A/B it exists to hold, and it is also the batch
+  `emit_per_module_spawned` uses for the driver's own default build, so the gen1
+  self-reproduction proof runs on every push, ungated, as
+  `TestSelfHostPerModuleEmitAllFixpointX86_64` in a CI job of its own.
 
   **So the slice-3 memory blocker is resolved for the per-module path.** The
   remaining work to retire the AST emitters is the mechanical part: repoint the
@@ -2726,7 +2726,7 @@ tier → leak.
           merged whole-compiler compile, which only ever worked because the AST
           emitter took it; there is nothing to repoint them at. Their contract
           (the self-host is a fixed point of its own emit) is already carried by
-          the UNGATED `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64`, whose
+          the UNGATED `TestSelfHostPerModuleEmitAllFixpointX86_64`, whose
           own header names itself the guard "slices 3 and 5 rest on".
         - `TestSelfHostAsmArm64Bootstrap` was **not** a budget failure at all,
           despite looking like one: every subtest failed, including `return 42;`.
@@ -3113,10 +3113,11 @@ configuration that OOM'd without it*, and re-tuning the batch deletes the
 regression it guards. If the fixpoint is de-gated for routine CI, add a batch=4
 run for that and leave the batch=8 A/B env-gated as the backstop.
 
-**DONE.** `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64` is that batch=4 run
-and it is UNGATED; the batch=8 sibling keeps `RUN_EMITALL_FIXPOINT`. Both drive
-the shared `runEmitAllFixpoint`, so the batch size is the only difference between
-them. This is the guard slices 3 and 5 rest on: repointing the driver at the
+**DONE**, and then simplified: against the 16 GiB arena batch=8 measures ~45% of
+the ceiling, so the de-gating happened at batch=8 itself —
+`TestSelfHostPerModuleEmitAllFixpointX86_64` runs UNGATED in its own CI job, and
+the batch=4 duplicate that briefly stood beside it is gone (#8183). This is the
+guard slices 3 and 5 rest on: repointing the driver at the
 per-module path and then DELETING the AST emitters is only safe while something
 proves a self-host-BUILT compiler emits the same units the Go-built one does, and
 while that proof was gated it only ran when someone remembered it.
@@ -3286,7 +3287,7 @@ general FBIP off is not, `tryEnumReuseOverwrite` off is).
 
 `TestSelfHostLoadFixpointX86_64` is gone (#5971 deleted the merged bundle
 fixpoints); its successor is
-`TestSelfHostPerModuleEmitAllFixpointBatch4X86_64`, and the reproducer that
+`TestSelfHostPerModuleEmitAllFixpointX86_64`, and the reproducer that
 actually catches this class is `TestSelfHostSSAEmitArm64` — ~10 s, and the
 symptom is a segfault rather than a subtle answer. Keep the shape table and the
 refuted hypotheses below — they are still the map of this area.
@@ -4581,7 +4582,7 @@ accept a small-program test as evidence for a change to these fixpoints.
    8 GiB arena**; de-gate at batch=4 (154 s, 6754 MB) rather than at batch=8.
 3. **Slice 3 driver repoint + Slice 5 deletion** — mechanical once (2) lands.
    The safety net it needs is now standing: the gen1 self-reproduction fixpoint
-   runs UNGATED as `TestSelfHostPerModuleEmitAllFixpointBatch4X86_64`, so a
+   runs UNGATED as `TestSelfHostPerModuleEmitAllFixpointX86_64`, so a
    repoint that breaks byte-identity fails CI instead of waiting for someone to
    remember `RUN_EMITALL_FIXPOINT=1`.
 4. **Slice 4a/4b** (arm64/wasm runtime untangle) alongside/after — a ~5k-line,

@@ -549,10 +549,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_concat\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n"); return s;
     }
     if (o.kind_tag == 99) {  // str_eq
-        // operand stack [A, B] (B top); __fern_str_eq is now a Fern runtime
-        // function (#2649) called via the __fn_ stack convention — re-push so
-        // A=a is param[0] at [x29,#16] and B=b is param[1] at [x29,#32]. Body
-        // from asm_arm64.emit_runtime's (now Fern) str_eq.
+        // operand stack [A, B] (B top); __fern_str_eq is hand-written
+        // (rt_arm64_str_eq) and called via the __fn_ stack convention — re-push
+        // so A=a is param[0] at [x29,#16] and B=b is param[1] at [x29,#32].
         s = s.mark_str_eq();
         s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_str_eq\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n"); return s;
     }
@@ -2023,8 +2022,16 @@ function emit_arm64_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmco
     if (o.str == "__fern_map_free_va" || o.str == "__fern_map_free_ksva") {
         s = s.need("arrarr_free"); s = s.need("map_free_va");
     }
+    // The string[]-VALUE-column pair frees that column through
+    // __fern_strarrarr_free, so they pull in its body as well as their own.
+    if (o.str == "__fern_map_free_vsa" || o.str == "__fern_map_free_ksvsa") {
+        s = s.need("strarrarr_free"); s = s.need("map_free_vsa");
+    }
     if (o.str == "__fern_strarrarr_free") { s = s.need("strarrarr_free"); }
     if (o.str == "__fern_optarrarr_free") { s = s.need("optarrarr_free"); }
+    // __map_vals_struct_drop_<T>: the struct-VALUE column walk a reclaimable
+    // map takes before __fern_map_free_va; its body pulls in the element walk.
+    if (ircore.is_map_vals_struct_drop_name(o.str)) { s = s.mark_heap(); s = s.need("map_vals_struct_drop:" + ircore.map_vals_struct_drop_type(o.str)); }
     // __field_reclaim_<T> (#3457): record the type so emit_module_ir_unit_arm64
     // emits a per-type pass-through body. arm64 does NOT deep-drop struct
     // fields yet (leak-safe pass-through); still needs the heap runtime.
@@ -2520,6 +2527,60 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 // Byte-equivalence with the AST path is NOT expected (emit_function and
 // emit_function_via_ir select different instructions for the same source) — the
 // arm64 differential + fixpoint gate this, not the byte-identity gate.
+// rt_arm64_str_eq is __fn___fern_str_eq: 1 when two string boxes hold equal
+// bytes, else 0. The x86-64 twin (asm_ir.rt_x86_str_eq) carries the measurement
+// that made both hand-written rather than the shared Fern body they replaced —
+// the cost is a per-call frame, not per byte, and no Fern body avoids one.
+//
+// The __fn_ stack convention on arm64 uses 16-byte operand slots and the caller
+// pushes b then a, so after `stp x29, x30` the arguments are at [x29, #16] and
+// [x29, #32]. A string box is [data ptr, length]; the result goes in x0.
+//
+// x29/x30 are saved even though nothing else needs a frame: __fern_report walks
+// the frame chain to print a backtrace.
+function rt_arm64_str_eq(): string {
+    var s: string = "__fn___fern_str_eq:\n";
+    s = s + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
+    s = s + "    ldr x2, [x29, #16]\n    ldr x3, [x29, #32]\n";
+    // Same box: interned literals, which is most of what a compiler compares.
+    s = s + "    cmp x2, x3\n    b.eq .Lseq_yes\n";
+    s = s + "    ldr x4, [x2, #8]\n    ldr x5, [x3, #8]\n    cmp x4, x5\n    b.ne .Lseq_no\n";
+    s = s + "    ldr x2, [x2]\n    ldr x3, [x3]\n";
+    // Same buffer, equal length: a slice and its source compare equal here.
+    s = s + "    cmp x2, x3\n    b.eq .Lseq_yes\n";
+    s = s + "    add x6, x2, x4\n    add x7, x3, x4\n";
+    s = s + "    cmp x4, #8\n    b.lo .Lseq_short\n";
+    s = s + "    sub x6, x6, #8\n    sub x7, x7, #8\n";
+    s = s + ".Lseq_word:\n";
+    s = s + "    ldr x0, [x2]\n    ldr x1, [x3]\n    cmp x0, x1\n    b.ne .Lseq_no\n";
+    s = s + "    add x2, x2, #8\n    add x3, x3, #8\n";
+    s = s + "    cmp x2, x6\n    b.lo .Lseq_word\n";
+    // The final word is anchored at the END of each string and overlaps whatever
+    // the loop already read, so a length that is not a multiple of eight costs
+    // one load rather than a byte loop.
+    s = s + "    ldr x0, [x6]\n    ldr x1, [x7]\n    cmp x0, x1\n    b.ne .Lseq_no\n";
+    s = s + "    b .Lseq_yes\n";
+    // 0..7 bytes. Four-byte pairs overlap the same way; under four, byte 0, the
+    // last byte and (at length three) byte 1 are every byte there is.
+    s = s + ".Lseq_short:\n";
+    s = s + "    cbz x4, .Lseq_yes\n";
+    s = s + "    cmp x4, #4\n    b.lo .Lseq_byte\n";
+    s = s + "    ldr w0, [x2]\n    ldr w1, [x3]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
+    s = s + "    sub x6, x6, #4\n    sub x7, x7, #4\n";
+    s = s + "    ldr w0, [x6]\n    ldr w1, [x7]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
+    s = s + "    b .Lseq_yes\n";
+    s = s + ".Lseq_byte:\n";
+    s = s + "    ldrb w0, [x2]\n    ldrb w1, [x3]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
+    s = s + "    sub x6, x6, #1\n    sub x7, x7, #1\n";
+    s = s + "    ldrb w0, [x6]\n    ldrb w1, [x7]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
+    s = s + "    cmp x4, #3\n    b.lo .Lseq_yes\n";
+    s = s + "    ldrb w0, [x2, #1]\n    ldrb w1, [x3, #1]\n    cmp w0, w1\n    b.ne .Lseq_no\n";
+    s = s + ".Lseq_yes:\n    mov x0, #1\n    ldp x29, x30, [sp], #16\n    ret\n";
+    s = s + ".Lseq_no:\n    mov x0, #0\n    ldp x29, x30, [sp], #16\n    ret\n";
+    s = s + ".size __fn___fern_str_eq, .-__fn___fern_str_eq\n";
+    return s;
+}
+
 pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], s: asmcore.EmitState): asmcore.EmitState {
     var m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
     var fns: parser.FuncDecl[] = m.funcs;
@@ -2528,7 +2589,7 @@ pub function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl
         ...irlower.fn_sigs_for_borrow(fns, all_structs, ircore.array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
         // These two resolve against the EmitState's struct view, not all_structs.
-        opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls)),
+        opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls, irlower.str_fresh_ret_fns_of(fns))),
         strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
     };
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(fns);
@@ -2582,11 +2643,39 @@ pub function emit_arm64_reclaim_drop_bodies(s: asmcore.EmitState): asmcore.EmitS
             s = emit_arm64_struct_arr_elems_drop_one(s, slice_unchecked(sdnd, 22, sdnd.len()));
         } else if (sdnd.len() > 20 && slice_unchecked(sdnd, 0, 20) == "enum_arr_elems_drop:") {
             s = emit_arm64_enum_arr_elems_drop_one(s, slice_unchecked(sdnd, 20, sdnd.len()));
+        } else if (sdnd.len() > 21 && slice_unchecked(sdnd, 0, 21) == "map_vals_struct_drop:") {
+            s = emit_arm64_map_vals_struct_drop_one(s, slice_unchecked(sdnd, 21, sdnd.len()));
         } else if (sdnd.len() > 12 && slice_unchecked(sdnd, 0, 12) == "struct_drop:") {
             s = emit_arm64_struct_drop_one(s, slice_unchecked(sdnd, 12, sdnd.len()));
         }
         sdi = sdi + 1;
     }
+    return s;
+}
+
+// emit_arm64_map_vals_struct_drop_one is the arm64 transcription of
+// asm_ir.emit_ir_map_vals_struct_drop_one: __map_vals_struct_drop_<T>(box) -> box
+// walks the VALUE column of a reclaimable struct-valued map through
+// __struct_arr_elems_drop_<T> so each sole-owned value box releases its own rc
+// fields before __fern_map_free_va's one-dec walk frees the boxes.
+function emit_arm64_map_vals_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(sty);
+    s = s.need("struct_arr_elems_drop:" + sty);
+    s = s.write(".weak __fn___map_vals_struct_drop_" + san + "\n");
+    s = s.write("__fn___map_vals_struct_drop_" + san + ":\n");
+    s = s.write("    ldr x0, [sp]\n");                     // box
+    s = s.write("    cmp x0, #16, lsl #12\n");             // null / low-addr -> nothing to walk
+    s = s.write("    blo .Lmvsd_" + san + "_ret\n");
+    s = s.write("    stp x19, x30, [sp, #-16]!\n");
+    s = s.write("    mov x19, x0\n");
+    s = s.write("    ldr x0, [x19, #8]\n");                // vals = box[8]
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___struct_arr_elems_drop_" + san + "\n");
+    s = s.write("    add sp, sp, #16\n");
+    s = s.write("    mov x0, x19\n");                      // return box (caller drops)
+    s = s.write("    ldp x19, x30, [sp], #16\n");
+    s = s.write(".Lmvsd_" + san + "_ret:\n");
+    s = s.write("    ret\n");
     return s;
 }
 
@@ -3246,12 +3335,12 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("str_concat")) {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), s.struct_decls, s);
     }
-    // __fern_str_eq is now a Fern runtime function (#2649): see
-    // asmcore.rt_src_str_eq. One __fn___fern_str_eq body serves both the arm64
-    // AST and IR call sites (shared emit_runtime) and the hand-asm map/arr_str
-    // internals (all set x0=A/x1=B before the call).
+    // __fern_str_eq: hand-written, see rt_arm64_str_eq for why. One
+    // __fn___fern_str_eq body serves both the arm64 AST and IR call sites
+    // (shared emit_runtime) and the hand-asm map/arr_str internals (all set
+    // x0=A/x1=B before the call).
     if (s.has_need("str_eq")) {
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_eq(), s.struct_decls, s);
+        s = s.write(rt_arm64_str_eq());
     }
     // __fern_map_find (#2649): the map runtime's shared key search — one Fern
     // body where map_set, map_get and map_has each carried a string, an i32 and
@@ -4561,6 +4650,12 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("map_free_va")) {
     s = emit_arm64_map_free_variant(s, "_va",   "arr_dec",      "arrarr_free",  "mapfva");
     s = emit_arm64_map_free_variant(s, "_ksva", "str_arr_free", "arrarr_free",  "mapfksva");
+    }
+    // A string[] value column: each value released whole by __fern_str_arr_free,
+    // which is __fern_strarrarr_free's element walk. Need-gated like the pair above.
+    if (s.has_need("map_free_vsa")) {
+    s = emit_arm64_map_free_variant(s, "_vsa",   "arr_dec",      "strarrarr_free", "mapfvsa");
+    s = emit_arm64_map_free_variant(s, "_ksvsa", "str_arr_free", "strarrarr_free", "mapfksvsa");
     }
     s = s.write("__fn___fern_drop_arr_ptr:\n");
     s = s.write("    ret\n");

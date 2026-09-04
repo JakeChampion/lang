@@ -714,7 +714,39 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 97;
 }
-`})
+`},
+		// A map whose STRUCT value column carries an rc field (#7910 (b)): the
+		// column's one-dec free takes the boxes, so each box must first release
+		// its own fields through __map_vals_struct_drop_<T>. The wide string
+		// keeps the payload past every inline threshold and comes through a
+		// call so nothing folds. Insert-built with a lookup read.
+		leakCell{name: "map_struct_strfield__insert__match", src: mapStructColumnInsertMatchSrc},
+		// The same column built by a literal, with no read — the column alone.
+		leakCell{name: "map_struct_strfield__literal__len", src: mapStructColumnLiteralLenSrc},
+		// An ARRAY field in the value struct: the same walk, a different arm of
+		// __struct_drop_<T>.
+		leakCell{name: "map_struct_arrfield__insert__len", src: mapStructColumnArrFieldInsertSrc},
+		// Arrays of tuples with a STRING element (#7910 (c)): the element
+		// admission reads the fresh-string registry, and an erased-generic
+		// callee reading `xs.len()` is a borrow of the array, not an escape.
+		leakCell{name: "arrtup_str__literal__len", src: arrTupStrLiteralLenSrc},
+		leakCell{name: "arrtup_str__callarg__erased_generic", src: arrTupStrErasedGenericSrc},
+		leakCell{name: "arrtup_arr__callarg__erased_generic", src: arrTupArrErasedGenericSrc},
+		leakCell{name: "arrtup_mixed__callarg__erased_generic", src: arrTupMixedErasedGenericSrc},
+		// A map whose VALUES are string[] (#7910 (a)): the column takes the
+		// _vsa free, each value released whole. Native's own column walk and
+		// get_or ownership landed first, so the native column is the oracle.
+		leakCell{name: "map_strarr__insert__get_or", src: mapStrArrColumnInsertGetOrSrc},
+		leakCell{name: "map_strarr__literal__len", src: mapStrArrColumnLiteralLenSrc},
+		// Enum payload positions consumed straight off a producer call
+		// (#7910 (d)): the direct-call scrutinee becomes a binding before any
+		// analysis, and the call-bound release admits the string[], nested
+		// Option and registry-fresh payloads these carry.
+		leakCell{name: "res_strarr__callscrut__match", src: callScrutResultStrArrSrc},
+		leakCell{name: "optopt_strarr__callscrut__match", src: callScrutOptOptStrArrSrc},
+		leakCell{name: "opt_str__callscrut__match", src: callScrutOptStrSrc},
+		leakCell{name: "opt_strarr__callbound__match", src: callBoundOptStrArrSrc},
+		leakCell{name: "rcenum_mixed__callscrut__match", src: callScrutUserEnumSrc})
 	return cells
 }
 

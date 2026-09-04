@@ -63,6 +63,12 @@ rather than a guess:
 Retaining one of those would deepen a leak instead of closing a double-dec.
 Each is its own measured increment.
 
+**The `string[]` row is superseded** — see
+2026-09-04-tuple-destructure-strarr-retain.md. That element form leaks only
+where the tuple earns no sweep credit; the literal and bare-ident forms the
+credit has always admitted over-release here exactly as `i32[]` did, and
+`__fern_str_arr_free`'s rc gate makes the retain balance rather than deepen.
+
 ## Probes
 
 `self_host_tuple_destructure_retain_test.go`. Every row gates on the **exit
@@ -78,7 +84,7 @@ failing case; each re-runs under `FERN_SANITIZE=1`, where the parent reports
 | bare-ident element source | 9 | 99 |
 | moved out by `return b` | 6 | 99 |
 | passed to a borrowing callee | 8 | 99 |
-| `string[]` element | 9, frees pinned 100 | unchanged leak |
+| `string[]` element | 9, frees pinned 100 | unchanged leak (superseded, above) |
 
 The two disposal rows matter beyond their verdict: `return b` elides the slot
 from the sweep, so an unmatched retain would LEAK there rather than balance —

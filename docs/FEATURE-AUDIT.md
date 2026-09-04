@@ -640,7 +640,7 @@ radius: the self-host compiler's own sources use no free generic with a tuple-
 array / `Map[...]` param, so the byte-identical fixpoint is preserved.
 
 Verified: `TestSelfHostStdTestE2E{,Arm64}/map_verbs` (differential vs interp),
-`TestSelfHostPerModuleEmitAllFixpointBatch4X86_64` (byte-identical; it replaced
+`TestSelfHostPerModuleEmitAllFixpointX86_64` (byte-identical; it replaced
 the merged-bundle `TestSelfHostStage2FixedPoint` in #3457 slice 5), full x86-64
 differential gate,
 `TestSelfHostMapVerbsIR` (the #4016 dedicated test still green).

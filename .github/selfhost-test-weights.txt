@@ -58,19 +58,21 @@
 # CI against an entry of 80 — 87% of the shards' wall for one test.
 
 # Whole-compiler self-builds / fixpoints — the genuine multi-minute tail.
-TestSelfHostModloadPerModuleWholeCompilerX86_64 460
-# 18 whole-compiler modules emitted twice (with and without -assume-eligible)
-# and compared byte-for-byte. It carried NO entry — so LPT ranked ~10 minutes of
-# work as 1 s — and the shard holding it ran 13 min on run 31758666459 (482 s)
-# and blew the 18-minute timeout on run 31759653118 (738 s), where the partition
-# happened to pair it with a heavier complement. Weighted at the slower of the
-# two: it varies by ~50% run to run, so give it the pessimistic bucket.
+# Emit + link + run + self-compile of the whole compiler. Its emit phase moved
+# from one process per unit to `-per-module-emit-all` in batches of 8 (#8183):
+# MEASURED 805.7 s on run 33735246535 (of which 558.9 s was the 54-process emit)
+# against the 101.8 s the same run's emit-all took for the same 54 units, so the
+# new shape is ~349 s. Entry is that with the audit's own 1.5x pessimism band —
+# and note the old 460 was already UNDER the 805.7 s it was carrying.
+TestSelfHostModloadPerModuleWholeCompilerX86_64 525
+# The whole compiler's 21 modules emitted twice, one process each (with and
+# without -assume-eligible), and compared byte-for-byte. It carried NO entry —
+# so LPT ranked ~10 minutes of work as 1 s — and the shard holding it ran 13 min
+# on run 31758666459 (482 s) and blew the 18-minute timeout on run 31759653118
+# (738 s), where the partition happened to pair it with a heavier complement.
+# Weighted at the slower of the two: it varies by ~50% run to run, so give it
+# the pessimistic bucket.
 TestSelfHostAssumeEligibleByteIdenticalX86_64 738
-# Two whole-compiler emit-all passes at batch=4. MEASURED 424 s by the audit on
-# run 31782687541, against an entry of 130 — the same shape as the two incidents
-# above, caught this time before it failed anything. Still under the entry above,
-# so it does not set the max-shard wall.
-TestSelfHostPerModuleEmitAllFixpointBatch4X86_64 638
 # Two warm drivers (asm_ir_run + wasm_ir_run), 14 subtests that are ~0.01s each —
 # the cost is almost entirely the driver restore.
 TestSelfHostFnArrayFieldGateX86_64 12

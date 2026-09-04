@@ -3125,6 +3125,18 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 			switch id.Name {
 			case "map_new":
 				return false // fresh owned handle
+			case "__method_Map_get_or":
+				// A counted-read VALUE (array / struct / enum) comes back
+				// retained on both outcomes (__map_get_or_impl), so the
+				// binding owns a reference of its own and reclaims it —
+				// ownedCallResultType's admission, from the taint side. A
+				// string value keeps the conservative default: its inline
+				// retain is per-ABI (the get_or lowering).
+				if len(x.TypeArgs) >= 2 {
+					if _, isStr := x.TypeArgs[1].(ast.StringType); !isStr && b.mapGetHandsCountedValue(x.TypeArgs[1]) {
+						return false
+					}
+				}
 			case "cell_new":
 				// A fresh rc=1 cell box (emitCellNew) that RETAINS its element
 				// (string args are inc'd on construction), like map_new /
@@ -3278,7 +3290,7 @@ func (b *builder) computeMovedLocals() map[string]bool {
 	if b.fn.Body == nil {
 		return moved
 	}
-	order := identOrderOf(b.fn.Body)
+	order := b.curIdentOrder()
 	sawReturn := false
 	for _, st := range b.fn.Body.Stmts {
 		if !sawReturn {
@@ -3664,7 +3676,7 @@ func (b *builder) computeArraySetIncs() map[*ast.Call]bool {
 	if b.fn.Body == nil {
 		return incs
 	}
-	order := identOrderOf(b.fn.Body)
+	order := b.curIdentOrder()
 	// reassign-to-self: `A = A.with(...)` — the receiver's old value is
 	// overwritten by the result, so reuse is sound (no inc).
 	reassignSelf := map[*ast.Call]bool{}
@@ -5225,7 +5237,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 	if hasDefer {
 		return matches, bindings
 	}
-	order := identOrderOf(b.fn.Body)
+	order := b.curIdentOrder()
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		m, ok := n.(*ast.Match)
 		if !ok || inLoop[m] {
@@ -6202,7 +6214,7 @@ func (b *builder) computeBorrowedAliases() {
 		if !needsRcIncOnAlias(v.Init, b) || b.isOwnedContainerRead(v.Init) {
 			return true
 		}
-		if !b.bindingConfinedToArm(b.fn.Body, y) {
+		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) {
 			return true
 		}
 		b.rc.borrowedAlias[y] = true
@@ -6901,7 +6913,7 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 	if b.fn.Body == nil {
 		return out
 	}
-	deaths := callArgDeaths(b.fn)
+	deaths := b.curCallArgDies()
 	esc := deferOrLambdaNames(b.fn.Body)
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		call, ok := n.(*ast.Call)

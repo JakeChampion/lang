@@ -341,6 +341,16 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	if _, ok := b.info.FuncSigs[id.Name]; !ok {
 		return nil, false // not a known function (excludes variant constructors)
 	}
+	// `m.get_or(k, d)` on a counted-read value column (mapGetHandsCountedValue:
+	// array / struct / enum values, kinds >= 2): the runtime retains what it
+	// hands back on BOTH outcomes (__map_get_or_impl), so the result is a
+	// reference the caller owns outright, exactly like a fresh user-fn result.
+	// A string value keeps its own inline retain in the get_or lowering.
+	if id.Name == "__method_Map_get_or" && len(call.TypeArgs) >= 2 {
+		if _, isStr := call.TypeArgs[1].(ast.StringType); !isStr && b.mapGetHandsCountedValue(call.TypeArgs[1]) {
+			return call.TypeArgs[1], true
+		}
+	}
 	// Only USER-DECLARED functions qualify (the oracle map keys every decl in
 	// prog.Funcs, true or false). Source-level BUILTINS live in FuncSigs too
 	// without a `__` prefix — e.g. `strbuf_take`, whose result may alias
@@ -440,7 +450,7 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 			// was refused, so `match (mk()) { Ok(s) => { … } }` over a fresh
 			// call leaked the box AND its payload every iteration; the reclaim
 			// is a deep drop, so admitting the arm releases both.
-			if name != "" && a < len(armRegions) && b.bindingConfinedInAll(armRegions[a], name) {
+			if name != "" && a < len(armRegions) && b.bindingConfinedInAll(armRegions[a], name, bt) {
 				continue
 			}
 			return ast.EnumType{}, false
@@ -449,14 +459,14 @@ func (b *builder) reclaimableMatchScrutinee(tag ast.Expr, bindingNames [][]strin
 	return et, true
 }
 
-// bindingConfinedInAll reports whether `name` is confined in EVERY node of an
-// arm's region — its guard as well as its body, since a guard runs before the
-// body and can let the pointer out just as easily.
+// bindingConfinedInAll reports whether `name`, of type `bt`, is confined in
+// EVERY node of an arm's region — its guard as well as its body, since a guard
+// runs before the body and can let the pointer out just as easily.
 //
 // An empty region is NOT confined. That is what refuses an `@`-binding arm:
 // the call sites hand those an empty region because the at-name binds the box
 // POINTER itself, which the join is about to free.
-func (b *builder) bindingConfinedInAll(region []ast.Node, name string) bool {
+func (b *builder) bindingConfinedInAll(region []ast.Node, name string, bt ast.Type) bool {
 	if len(region) == 0 {
 		return false
 	}
@@ -464,7 +474,7 @@ func (b *builder) bindingConfinedInAll(region []ast.Node, name string) bool {
 		if n == nil {
 			continue
 		}
-		if !b.bindingConfinedToArm(n, name) {
+		if !b.bindingConfinedToArm(n, name, bt) {
 			return false
 		}
 	}
@@ -552,7 +562,7 @@ func (b *builder) reclaimablePairFormPayload(tag ast.Expr, bt ast.Type, body ast
 	if _, ok := b.freshPairFormEnumResultType(tag); !ok {
 		return false
 	}
-	return b.bindingConfinedToArm(body, name)
+	return b.bindingConfinedToArm(body, name, bt)
 }
 
 // freshPairFormEnumResultType reports the enum type of a call whose PAIR-FORM
@@ -623,7 +633,7 @@ func (b *builder) freshPairFormEnumResultType(e ast.Expr) (ast.Type, bool) {
 // have, while a missed escape is a use-after-free. A shadowing declaration
 // inside the arm errs the same safe way: its uses are attributed to the
 // binding, so anything the shadow does with the name suppresses the release.
-func (b *builder) bindingConfinedToArm(body ast.Node, name string) bool {
+func (b *builder) bindingConfinedToArm(body ast.Node, name string, bt ast.Type) bool {
 	if body == nil {
 		return false
 	}
@@ -645,6 +655,15 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string) bool {
 		switch x := n.(type) {
 		case *ast.FieldAccess:
 			if id, ok := x.Target.(*ast.Ident); ok && id.Name == name && !calleeField[x] {
+				excused[id] = true
+			}
+		case *ast.Match:
+			// A nested `match (name)` reads the payload in place. With no `@`
+			// binding and every pointer binding of its own arms confined to
+			// that arm, the box the join frees outlives every reference the
+			// inner match takes — the shape a nested Option's payload is
+			// consumed through.
+			if id, ok := x.Tag.(*ast.Ident); ok && id.Name == name && b.nestedMatchConfines(x, bt) {
 				excused[id] = true
 			}
 		case *ast.Index:
@@ -672,6 +691,52 @@ func (b *builder) bindingConfinedToArm(body ast.Node, name string) bool {
 		return true
 	})
 	return confined
+}
+
+// nestedMatchConfines reports whether a match over an ident scrutinee of type
+// `scrutType` lets no payload out: the inner enum owns its payloads, no arm
+// binds the whole value (`@`) or destructures a sub-pattern (whose bindings the
+// arm's own list does not carry), and each named pointer binding is confined to
+// its arm's guard and body.
+//
+// The countedness condition is what keeps the outer join's DEEP drop honest:
+// that drop reaches the inner box through the instantiation's generated
+// __drop_enum_, which releases the inner payloads, so the inner enum must have
+// taken a reference to them. Only an EnumRcPayloads-eligible construction does
+// — outside that model an aliased payload (`Some(pre)` over a live local) is
+// stored uncounted, and dropping it frees storage the caller still holds.
+// reclaimableTryScrutinee requires the same fact for the same reason, and an
+// ineligible enum keeping flag-off behaviour at every site is the documented
+// contract on enumRcPayloadsEligible.
+func (b *builder) nestedMatchConfines(m *ast.Match, scrutType ast.Type) bool {
+	et, isEnum := scrutType.(ast.EnumType)
+	if !isEnum || !b.enumRcPayloadsEligible(et.Name) {
+		return false
+	}
+	for _, arm := range m.Arms {
+		if arm.AtBinding != "" {
+			return false
+		}
+		for _, sub := range arm.Payloads {
+			if sub != nil {
+				return false
+			}
+		}
+		region := armConfinementRegion(arm.AtBinding, arm.Guard, arm.Body)
+		for i, bname := range arm.Bindings {
+			if bname == "" || bname == "_" || i >= len(arm.BindingTypes) {
+				continue
+			}
+			bt := arm.BindingTypes[i]
+			if bt == nil || !ast.IsPointerType(bt) {
+				continue
+			}
+			if !b.bindingConfinedInAll(region, bname, bt) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // borrowingCallArg reports whether argument `i` of direct call `call` is a
@@ -2701,6 +2766,27 @@ func genArrArrDropFn(innerStride int32, ptrW int) *Func {
 		ScratchTypes: []ast.Type{ast.NumberType{}, ast.NumberType{}},
 		ReturnType:   ast.NumberType{},
 		Ops:          ops,
+	}
+}
+
+// genStrArrDropFn builds __drop_strarr(ptr) — a `string[]` released whole
+// through __fern_drop_arr_str (element walk at rc==1, else a dec), in the
+// one-argument shape the generated column and element walks call a per-value
+// drop with. Returns ptr so the caller's OpDrop pops a real value.
+func genStrArrDropFn(ptrW int) *Func {
+	strStride := int32(ast.ElemSizeBytesFor(ast.StringType{}, ptrW))
+	return &Func{
+		Name:       "__drop_strarr",
+		Params:     []ast.Param{{Name: "__sa", Type: dropThunkParamType}},
+		ReturnType: ast.NumberType{},
+		Ops: []Op{
+			{Kind: OpLoadLocal, I32: 0},
+			{Kind: OpConstI32, I32: strStride},
+			{Kind: OpCallDirect, Runtime: true, Str: "__fern_drop_arr_str", Width: ResAddr, I32: 2},
+			{Kind: OpDrop},
+			{Kind: OpLoadLocal, I32: 0},
+			{Kind: OpReturn},
+		},
 	}
 }
 

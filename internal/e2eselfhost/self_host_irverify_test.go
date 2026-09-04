@@ -334,6 +334,45 @@ function main(): i32 { return churn(3); }`,
 			exit: 0,
 		},
 		{
+			// R1 self-overwrite on an `own` param with a STRING field (#5342):
+			// the return-position update pairs into the param's box.
+			name: "r1-own-string-return-update",
+			src: `struct P { s: string, n: i32 }
+fbip function bump(own p: P): P {
+    return P { ...p, n: p.n + 1 };
+}
+function main(): i32 { var q: P = bump(P { s: "abcdefghij-longer", n: 3 }); return q.n + q.s.len(); }`,
+			want: "bump claim=fbip(0) fresh=0 paired=1",
+			exit: 0,
+		},
+		{
+			// The same with an ENUM field, which the own-update family refused
+			// before #5342 (it read the missing bind literal as a missing proof).
+			name: "r1-own-enum-return-update",
+			src: `enum E { A(i32), B(i32) }
+struct Q { e: E, n: i32 }
+fbip function bumpq(own p: Q): Q {
+    return Q { ...p, n: p.n + 1 };
+}
+function main(): i32 { var q: Q = bumpq(Q { e: A(4), n: 3 }); return q.n; }`,
+			want: "bumpq claim=fbip(0) fresh=0 paired=1",
+			exit: 0,
+		},
+		{
+			// R3 pairing with an `own` STRING-fielded donor: the full
+			// construction takes over the dead param's box.
+			name: "r3-own-string-donor",
+			src: `struct P { s: string, n: i32 }
+fbip function f(own d: P): i32 {
+    var u: i32 = d.n + d.s.len();
+    var c: P = P { s: "fresh-literal-payload", n: u + 20 };
+    return c.n + c.s.len();
+}
+function main(): i32 { return f(P { s: "abcdefghij-longer", n: 3 }); }`,
+			want: "f claim=fbip(0) fresh=0 paired=1",
+			exit: 0,
+		},
+		{
 			// An un-paired construction under a bare claim: the shape native's
 			// TestFbipVerifyUnpairedConstructionRejected pins, and the one both
 			// compilers reject.

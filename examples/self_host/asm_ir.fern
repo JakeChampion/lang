@@ -997,6 +997,68 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 
 // fc_negate flips %xmm0's sign bit through a mask in `scratch` — x86-64 has no
 // scalar fneg.
+// rt_x86_str_eq is __fn___fern_str_eq: 1 when two string boxes hold equal
+// bytes, else 0. A string box is [data ptr, length]; the caller pushes b then
+// a, so 16(%rbp) is a and 24(%rbp) is b, and the result goes in %rax.
+//
+// Hand-written rather than the Fern body it replaces because the cost here is
+// not per byte. Measured on a stage-2 compiler compiling lexer.fern: 5,296,736
+// calls retiring 227 M instructions, 21.4% of the whole compile, at 43
+// instructions per call — far too few for the byte loop to be what runs. Almost
+// every comparison exits on the length check; what it was paying for was the
+// frame the emitter builds around any Fern body, `rep stosq` to zero it and both
+// parameters spilled to it before the first compare. Rewriting the body to read
+// eight bytes at a time made it WORSE (47.6 instructions per call), because it
+// added setup to a function whose whole cost is setup. Only dropping the frame
+// removes it.
+//
+// The comparison itself is then the native runtime's __fern_strcmp shape:
+// identical box or identical buffer answers immediately, unequal lengths answer
+// immediately, and the bytes go eight at a time with a final load anchored at
+// the END of each string, overlapping whatever the loop already read. No read
+// runs past either operand — the loop stops at data + len - 8 — and the 4..7 and
+// 1..3 classes only ever read inside their own length.
+//
+// rbp is kept even though nothing else needs a frame: __fern_report walks the
+// rbp chain to print a backtrace, and a leaf that skipped it would break the
+// walk for every frame below.
+function rt_x86_str_eq(): string {
+    var s: string = "__fn___fern_str_eq:\n";
+    s = s + "    pushq %rbp\n    movq %rsp, %rbp\n";
+    s = s + "    movq 16(%rbp), %rdx\n    movq 24(%rbp), %rcx\n";
+    // Same box: interned literals, which is most of what a compiler compares.
+    s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
+    s = s + "    movq 8(%rdx), %rsi\n    cmpq 8(%rcx), %rsi\n    jnz .Lseq_no\n";
+    s = s + "    movq (%rdx), %rdx\n    movq (%rcx), %rcx\n";
+    // Same buffer, equal length: a slice and its source compare equal here.
+    s = s + "    cmpq %rcx, %rdx\n    jz .Lseq_yes\n";
+    s = s + "    cmpq $8, %rsi\n    jb .Lseq_short\n";
+    s = s + "    leaq -8(%rdx,%rsi), %r8\n    leaq -8(%rcx,%rsi), %r9\n";
+    s = s + ".Lseq_word:\n";
+    s = s + "    movq (%rdx), %rax\n    cmpq (%rcx), %rax\n    jnz .Lseq_no\n";
+    s = s + "    addq $8, %rdx\n    addq $8, %rcx\n";
+    s = s + "    cmpq %r8, %rdx\n    jb .Lseq_word\n";
+    s = s + "    movq (%r8), %rax\n    cmpq (%r9), %rax\n    jnz .Lseq_no\n";
+    s = s + "    jmp .Lseq_yes\n";
+    // 0..7 bytes. Four-byte pairs overlap the same way; under four, byte 0, the
+    // last byte and (at length three) byte 1 are every byte there is.
+    s = s + ".Lseq_short:\n";
+    s = s + "    testq %rsi, %rsi\n    jz .Lseq_yes\n";
+    s = s + "    cmpq $4, %rsi\n    jb .Lseq_byte\n";
+    s = s + "    movl (%rdx), %eax\n    cmpl (%rcx), %eax\n    jnz .Lseq_no\n";
+    s = s + "    movl -4(%rdx,%rsi), %eax\n    cmpl -4(%rcx,%rsi), %eax\n    jnz .Lseq_no\n";
+    s = s + "    jmp .Lseq_yes\n";
+    s = s + ".Lseq_byte:\n";
+    s = s + "    movzbl (%rdx), %eax\n    cmpb (%rcx), %al\n    jnz .Lseq_no\n";
+    s = s + "    movzbl -1(%rdx,%rsi), %eax\n    cmpb -1(%rcx,%rsi), %al\n    jnz .Lseq_no\n";
+    s = s + "    cmpq $3, %rsi\n    jb .Lseq_yes\n";
+    s = s + "    movzbl 1(%rdx), %eax\n    cmpb 1(%rcx), %al\n    jnz .Lseq_no\n";
+    s = s + ".Lseq_yes:\n    movq $1, %rax\n    leave\n    ret\n";
+    s = s + ".Lseq_no:\n    xorq %rax, %rax\n    leave\n    ret\n";
+    s = s + ".size __fn___fern_str_eq, .-__fn___fern_str_eq\n";
+    return s;
+}
+
 function fc_negate(scratch: string): string {
     return "    movabsq $0x8000000000000000, %rdx\n    movq %rdx, " + scratch + "\n    xorpd " + scratch + ", %xmm0\n";
 }
@@ -2140,6 +2202,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = emit_ir_map_free_variant(s, "_va",   "arr_dec",      "arrarr_free",  "mapfva");
     s = emit_ir_map_free_variant(s, "_ksva", "str_arr_free", "arrarr_free",  "mapfksva");
     }
+    // A string[] value column (MAPVA: on a `Map[K, string[]]`): each value is a
+    // string[] buffer released whole by __fern_str_arr_free (its strings, then
+    // the buffer, rc-guarded), which is __fern_strarrarr_free's element walk.
+    if (s.has_need("map_free_vsa")) {
+    s = emit_ir_map_free_variant(s, "_vsa",   "arr_dec",      "strarrarr_free", "mapfvsa");
+    s = emit_ir_map_free_variant(s, "_ksvsa", "str_arr_free", "strarrarr_free", "mapfksvsa");
+    }
     // __fern_rc_is_unique(ptr) -> i32 — 1 iff a live heap object with rc == 1.
     // Gates the struct/enum-array field-drop's element walk (walk + free the
     // element boxes only when THIS drop frees the buffer, i.e. the sole owner).
@@ -2561,10 +2630,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // __fn___fern_str_concat, using the raw-memory intrinsics), not a hand-written
     // register-ABI body here. See the emit_ir_runtime_fern_fn call in
     // emit_module_ir_unit's entry block.
-    // __fern_str_eq is now a Fern runtime function (#2649): emitted entry-only
-    // via emit_ir_runtime_fern_fn (as __fn___fern_str_eq), not a hand-written
-    // register-ABI body here. See the emit_ir_runtime_fern_fn call in
-    // emit_module_ir_unit's entry block.
+    // __fern_str_eq is hand-written (#8192) but not here: it takes the __fn_
+    // stack convention rather than this section's register ABI, so its body is
+    // rt_x86_str_eq, emitted entry-only from emit_module_ir_unit's entry block.
     // __fern_str_cmp is now a Fern runtime function (#2649): emitted entry-only
     // via emit_ir_runtime_fern_fn (lowered through the IR pipeline as
     // __fn___fern_str_cmp), not a hand-written register-ABI body here. See the
@@ -3701,9 +3769,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
         s = s.mark_str_concat(); return s;
     }
     if (o.kind_tag == 99) {  // str_eq
-        // operand stack: [box A, box B] (B on top); __fern_str_eq is now a Fern
-        // runtime function (#2649) called via the __fn_ stack convention —
-        // re-push so A=a is param[0] at +16 and B=b is param[1] at +24.
+        // operand stack: [box A, box B] (B on top); __fern_str_eq is hand-written
+        // (rt_x86_str_eq) and called via the __fn_ stack convention — re-push so
+        // A=a is param[0] at +16 and B=b is param[1] at +24.
         s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq\n    addq $16, %rsp\n    pushq %rax\n");
         s = s.mark_str_eq(); return s;
     }
@@ -5095,8 +5163,16 @@ function emit_ir_op_call_direct_helper(o: ir.Op, s: asmcore.EmitState): asmcore.
     if (o.str == "__fern_map_free_va" || o.str == "__fern_map_free_ksva") {
         s = s.need("heap"); s = s.need("arrarr_free"); s = s.need("map_free_va");
     }
+    // The string[]-VALUE-column pair frees that column through
+    // __fern_strarrarr_free, so they pull in its body as well as their own.
+    if (o.str == "__fern_map_free_vsa" || o.str == "__fern_map_free_ksvsa") {
+        s = s.need("heap"); s = s.need("strarrarr_free"); s = s.need("map_free_vsa");
+    }
     if (o.str == "__fern_strarrarr_free") { s = s.need("heap"); s = s.need("strarrarr_free"); }
     if (o.str == "__fern_optarrarr_free") { s = s.need("heap"); s = s.need("optarrarr_free"); }
+    // __map_vals_struct_drop_<T>: the struct-VALUE column walk a reclaimable
+    // map takes before __fern_map_free_va; its body pulls in the element walk.
+    if (ircore.is_map_vals_struct_drop_name(o.str)) { s = s.need("heap"); s = s.need("map_vals_struct_drop:" + ircore.map_vals_struct_drop_type(o.str)); }
     // __field_reclaim_<T> (#3457): record the type so emit_ir_field_reclaims
     // emits exactly the per-type bodies actually called; needs the heap
     // runtime (the freelist + __fn___fern_arr_dec it frees through).
@@ -5608,11 +5684,37 @@ function emit_ir_struct_drops(s: asmcore.EmitState): asmcore.EmitState {
             s = emit_ir_struct_arr_elems_drop_one(s, slice_unchecked(nd, 22, nd.len()));
         } else if (nd.len() > 20 && slice_unchecked(nd, 0, 20) == "enum_arr_elems_drop:") {
             s = emit_ir_enum_arr_elems_drop_one(s, slice_unchecked(nd, 20, nd.len()));
+        } else if (nd.len() > 21 && slice_unchecked(nd, 0, 21) == "map_vals_struct_drop:") {
+            s = emit_ir_map_vals_struct_drop_one(s, slice_unchecked(nd, 21, nd.len()));
         } else if (nd.len() > 12 && slice_unchecked(nd, 0, 12) == "struct_drop:") {
             s = emit_ir_struct_drop_one(s, slice_unchecked(nd, 12, nd.len()));
         }
         ni = ni + 1;
     }
+    return s;
+}
+
+// emit_ir_map_vals_struct_drop_one emits __map_vals_struct_drop_<T>(box) -> box:
+// the VALUE column of a reclaimable struct-valued map walked through
+// __struct_arr_elems_drop_<T>, so every sole-owned value box releases its own rc
+// fields before __fern_map_free_va's one-dec walk frees the boxes. The asm map
+// box is the raw {keys@0, vals@8} pair; the element walk clobbers r11, so the
+// box comes back from the stack arg.
+function emit_ir_map_vals_struct_drop_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
+    var san: string = asmcore.sanitize_label(sty);
+    s = s.need("struct_arr_elems_drop:" + sty);
+    s = s.write(".weak __fn___map_vals_struct_drop_" + san + "\n");
+    s = s.write("__fn___map_vals_struct_drop_" + san + ":\n");
+    s = s.write("    movq 8(%rsp), %rax\n");          // box
+    s = s.write("    cmpq $0x10000, %rax\n");         // null / low-addr -> nothing to walk
+    s = s.write("    jb .Lmvsd_" + san + "_ret\n");
+    s = s.write("    movq 8(%rax), %rdi\n");          // vals = box[8]
+    s = s.write("    pushq %rdi\n");
+    s = s.write("    call __fn___struct_arr_elems_drop_" + san + "\n");
+    s = s.write("    addq $8, %rsp\n");
+    s = s.write("    movq 8(%rsp), %rax\n");          // return box (caller drops)
+    s = s.write(".Lmvsd_" + san + "_ret:\n");
+    s = s.write("    ret\n");
     return s;
 }
 
@@ -5894,7 +5996,7 @@ function emit_ir_runtime_fern_fn(src: string, all_structs: parser.StructDecl[], 
         ...irlower.fn_sigs_for_borrow(fns, all_structs, ircore.array_ret_fns_of(fns), bparams),
         consume_safe_params: irlower.consume_safe_params_interproc(fns, bparams),
         // These two resolve against the EmitState's struct view, not all_structs.
-        opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls)),
+        opt_fresh_ret_fns: irlower.sig_reg_of(irlower.opt_fresh_ret_fns_of(fns, s.struct_decls, irlower.str_fresh_ret_fns_of(fns))),
         strfld_ok_types: irlower.strfld_reclaim_ok_types_of(fns, s.struct_decls, bparams),
     };
     // String literals the helper body interns (e.g. "\n" in str_lines's
@@ -6560,12 +6662,12 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_search(), all_structs, s);
     }
     // __fern_str_eq (#2649): string equality, also called by the map / arr_str
-    // helpers (the map_set→str_eq edge that motivated the issue). Self-contained,
-    // so same entry-only .text emission; gated on str_eq (maps pulls it in via
-    // close_needs).
+    // helpers (the map_set→str_eq edge that motivated the issue). Hand-written
+    // rather than a Fern body — see rt_x86_str_eq for why. Gated on str_eq
+    // (maps pulls it in via close_needs).
     if (s.has_need("str_eq")) {
         s = s.write("    .text\n");
-        s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_eq(), all_structs, s);
+        s = s.write(rt_x86_str_eq());
     }
     // __fern_map_find (#2649): the map runtime's shared key search. One Fern
     // body where map_set, map_get and map_has each carried a string, an i32 and

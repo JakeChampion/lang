@@ -1,7 +1,7 @@
 package e2e
 
 // The byte-identical self-hosting fixpoint is proven by
-// TestSelfHostPerModuleEmitAllFixpointBatch4X86_64, which compiles the whole
+// TestSelfHostPerModuleEmitAllFixpointX86_64, which compiles the whole
 // compiler PER MODULE and asserts gen0 == gen1. Every merged-bundle fixpoint
 // that came before it — the marker-bundle TestSelfHostFixpoint over the retired
 // bundle_run.fern, then the file-based TestSelfHostModloadFixpointX86_64 — is

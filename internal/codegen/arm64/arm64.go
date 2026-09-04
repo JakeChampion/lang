@@ -251,6 +251,20 @@ type Options struct {
 	// argc/argv/envp capture off the process stack. Any other shape emits
 	// neither — there is no kernel to have populated that stack.
 	Entry platforms.EntryShape
+
+	// HighHeapProbe raises the lazy arena's mmap address hint from
+	// 0x1000_0000 (256 MiB) to 0x2_0000_0000 (8 GiB), so every heap pointer
+	// the program produces has a non-zero high 32 bits. That is the address
+	// regime arm64-darwin runs in by default — macOS relocates the mapping
+	// above 4 GiB and ignores the hint — while Linux honours the hint and
+	// therefore never reaches it. Set by the high-heap e2e gate so a
+	// pointer-truncating load / store / compare fails under qemu-aarch64
+	// instead of only on Apple hardware; also reachable from the driver as
+	// `FERN_HIGH_HEAP=1` for reproducing one by hand.
+	//
+	// Test-and-repro only: it costs address space no production build needs,
+	// and no shipped target sets it.
+	HighHeapProbe bool
 }
 
 // Emit produces the assembly text for prog.
@@ -383,7 +397,7 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		}
 		ip.Funcs = kept
 	}
-	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, coverSites: ip.CoverSites, noPeephole: opts.NoPeephole, entry: opts.Entry.OrDefault()}
+	g := &generator{info: info, stringLabel: map[string]string{}, funcs: map[string]*ast.FuncDecl{}, darwin: opts.Darwin, pie: opts.PIE, vtables: ip.Vtables, coverSites: ip.CoverSites, noPeephole: opts.NoPeephole, entry: opts.Entry.OrDefault(), highHeap: opts.HighHeapProbe}
 	for _, fn := range prog.Funcs {
 		g.funcs[fn.Name] = fn
 	}
@@ -1564,7 +1578,14 @@ func (g *generator) emitAllocRuntime() {
 	// Single bump region: x11/x12 = heap cursor/end.
 	g.adrpAdd("x11", "__fern_heap_ptr")
 	g.adrpAdd("x12", "__fern_heap_end")
-	g.emit("mov x13, #1") // mmap hint base = 0x1000_0000 (lsl #28 below)
+	// Address-hint base, shifted left 28 below. 1 → 0x1000_0000 (256 MiB) is
+	// the shipped value; the high-heap probe (Options.HighHeapProbe) uses
+	// 32 → 0x2_0000_0000 (8 GiB) so pointers carry a non-zero high half.
+	if g.highHeap {
+		g.emit("mov x13, #32")
+	} else {
+		g.emit("mov x13, #1")
+	}
 	g.emit("ldr x2, [x11]")
 	g.emit("cbnz x2, .Lalloc_have_heap")
 	if g.entry != platforms.EntryProcess {
@@ -1579,7 +1600,7 @@ func (g *generator) emitAllocRuntime() {
 	}
 	// Lazy mmap. x13 carries the address-hint base (1 or 2).
 	g.emit("mov x9, x0")
-	g.emit("lsl x0, x13, #28") // x0 = hint << 28 = 0x1000_0000 — MUST stay 0x10000000: the below-heap guards (emitRcInc/RcDec/rcop) classify `ptr >= 0x10000000` as heap-allocated, so a lower arena base silently no-ops every rc inc/dec (learned the hard way: an 0x04000000 hint corrupted COW/alias semantics across the whole native arm64 fixture suite)
+	g.emit("lsl x0, x13, #28") // x0 = hint << 28 = 0x1000_0000 — a FLOOR, never to be lowered: the below-heap guards (emitRcInc/RcDec/rcop) classify `ptr >= 0x10000000` as heap-allocated, so a lower arena base silently no-ops every rc inc/dec (learned the hard way: an 0x04000000 hint corrupted COW/alias semantics across the whole native arm64 fixture suite). Raising it is safe, and HighHeapProbe does exactly that.
 	g.emit("ldr x1, =%d", heapBytes)
 	g.emit("mov x2, #3")
 	if g.darwin {
@@ -9999,6 +10020,9 @@ type generator struct {
 
 	// entry is the resolved entry shape (Options.Entry, never empty).
 	entry platforms.EntryShape
+
+	// highHeap raises the arena's mmap hint above 4 GiB (Options.HighHeapProbe).
+	highHeap bool
 
 	// stringLabel / stringOrder hold the string-pool scheme:
 	// each unique string literal in the program gets a single
