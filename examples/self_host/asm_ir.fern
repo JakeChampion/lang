@@ -1023,9 +1023,7 @@ function fc_horner(acc: string, x: string, scratch: string, lbl: string): string
 // rbp chain to print a backtrace, and a leaf that skipped it would break the
 // walk for every frame below.
 function rt_x86_str_eq(): string {
-    var s: string = ".globl __fn___fern_str_eq\n";
-    s = s + ".type __fn___fern_str_eq, @function\n";
-    s = s + "__fn___fern_str_eq:\n";
+    var s: string = "__fn___fern_str_eq:\n";
     s = s + "    pushq %rbp\n    movq %rsp, %rbp\n";
     s = s + "    movq 16(%rbp), %rdx\n    movq 24(%rbp), %rcx\n";
     // Same box: interned literals, which is most of what a compiler compares.
