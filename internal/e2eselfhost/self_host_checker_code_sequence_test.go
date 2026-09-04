@@ -230,6 +230,33 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// Mixed codes in one program: pins the relative order of two DIFFERENT
 		// diagnostics, which is what a reordered traversal disturbs.
 		{"mixed-capture-and-leak", "@must_consume\nstruct Ticket { id: i32 }\nfunction sink(t: Ticket): Ticket { return t; }\nfunction main(): i32 { var s: string = \"x\"; var f = function(): i32 { s = \"y\"; return 0; }; var tk: Ticket = Ticket { id: 1 }; return f(); }\n", "E067,E049", false},
+		// The twelve scope-threaded walkers take their scope from bind_stmt
+		// rather than from check_stmt (#8181), so what an earlier `var` bound
+		// is now decided by a second function. These rows are the diagnostics
+		// that DEPEND on that binding: each was measured against a checker
+		// whose bind_stmt had one of its three binding rules broken, and each
+		// row moves under at least one of them. A row that reports the same
+		// thing however the name was bound would gate nothing here.
+		//
+		// An annotated `var` binds what the ANNOTATION resolves to, never the
+		// init type — the mismatch goes in the `ty` these walkers discard.
+		// ret_diags reads it (bind the init type instead and this gains an
+		// E002), stmts_assign_diags reads it (which loses its E003), and
+		// stmts_call_diags reads it (which gains an E038).
+		{"bind-annotated-var-then-return", "function f(): string { var x: string = 5; return x; }\nfunction main(): i32 { return 0; }\n", "E003", false},
+		{"bind-annotated-var-then-assign", "function main(): i32 { var x: string = 5; x = 7; return 0; }\n", "E003,E003", false},
+		{"bind-annotated-var-then-call", "function g(a: string): i32 { return a.len(); }\nfunction main(): i32 { var x: string = 5; return g(x); }\n", "E003", false},
+		// A destructuring `var` binds through bind_destructure_names, one name
+		// per pattern element. Miss it and `a` is unresolved, so the E002 that
+		// says it is an i32 becomes an E001 that says it is nothing.
+		{"bind-destructured-name-then-return", "function f(): string { let (a, b) = (1, \"x\"); return a; }\nfunction main(): i32 { return 0; }\n", "E002", false},
+		// An unannotated `var` is the one shape that still needs its
+		// initialiser inferred. vref_stmts is clean here only because the local
+		// `Red` shadows both enums' variant; drop the binding and E036 returns.
+		{"bind-inferred-var-shadows-variant", "enum A { Red, Blue }\nenum B { Red, Green }\nfunction main(): i32 { var Red = 1; var y = Red; return 0; }\n", "", false},
+		// slc_walk's own scope: the E063 is reported against `s`, and without
+		// the binding the return also draws an E001 for an unresolved name.
+		{"bind-inferred-slice-var-then-return", "function f(): [i32] { var xs: i32[] = [1, 2, 3]; var s = xs[0:2]; return s; }\nfunction main(): i32 { return 0; }\n", "E063", false},
 	}
 
 	for _, tc := range cases {
