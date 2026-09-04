@@ -1269,18 +1269,19 @@ pub struct X86Asm {
 // labels a whole-compiler module places: a few names per bucket.
 function x86_label_buckets(): i32 { return 4093; }
 
-// x86_name_bucket hashes a label name to a bucket. Folded by the modulus at
-// every step rather than at the end, so the accumulator stays under 2^20 and
-// the hash needs no wrapping arithmetic.
+// x86_name_bucket hashes a label name to a bucket. The accumulator is masked
+// to 23 bits each step and reduced once at the end: `h * 131` then stays under
+// 2^31, so the hash still needs no wrapping arithmetic, without paying an
+// integer division per character.
 function x86_name_bucket(name: string): i32 {
     var h: i32 = 0;
     var i: i32 = 0;
     var n: i32 = name.len();
     while (i < n) {
-        h = ((h * 131) + (name[i] as i32)) % 4093;
+        h = ((h * 131) + (name[i] as i32)) & 8388607;
         i = i + 1;
     }
-    return h;
+    return h % 4093;
 }
 
 // x86_empty_buckets is a bucket array of `x86_label_buckets()` empty slots.

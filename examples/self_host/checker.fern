@@ -1103,9 +1103,10 @@ function am_key_at(name: string): i32 {
 // ~4,600 signatures, which this keeps at roughly one per bucket.
 function sig_buckets(): i32 { return 4093; }
 
-// sig_name_bucket hashes a signature name to a bucket. Folded by the modulus
-// at every step rather than at the end, so the accumulator stays small and the
-// hash needs no wrapping arithmetic.
+// sig_name_bucket hashes a signature name to a bucket. The accumulator is
+// masked to 23 bits each step and reduced once at the end: `h * 131` then
+// stays under 2^31, so the hash still needs no wrapping arithmetic, without
+// paying an integer division per character.
 function sig_name_bucket(name: string): i32 {
   return sig_bucket_from(name, 0);
 }
@@ -1118,10 +1119,10 @@ function sig_bucket_from(name: string, from: i32): i32 {
   var i: i32 = from;
   var n: i32 = name.len();
   while (i < n) {
-    h = ((h * 131) + (name[i] as i32)) % 4093;
+    h = ((h * 131) + (name[i] as i32)) & 8388607;
     i = i + 1;
   }
-  return h;
+  return h % 4093;
 }
 
 // sig_table indexes `sigs` by name. The chain is built by walking BACKWARD and
