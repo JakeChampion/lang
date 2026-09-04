@@ -361,14 +361,11 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 	// 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
 	ir.Inline(ip)
-	// IR pass battery (#4377) — mirrors the x86-64 backend: FuseTee fuses
-	// store+reload into OpTeeLocal, FlattenBranches drops `if (false) { … }`
-	// bodies before they reach asm, EliminateDeadCode trims ops after a
-	// terminator, OptimizeCleanup is the copyprop/constprop/Fold/strength
-	// fixpoint.
+	// IR pass battery (#4377) — mirrors the x86-64 backend, including why DCE
+	// precedes FlattenBranches.
 	ir.FuseTee(ip)
-	ir.FlattenBranches(ip)
 	ir.EliminateDeadCode(ip)
+	ir.FlattenBranches(ip)
 	ir.OptimizeCleanup(ip)
 	// IR-level dead-function elimination — the x86-64 backend's twin, and see
 	// its comment for the root set and why ir.CodegenAliases has to be passed.

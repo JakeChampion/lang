@@ -27,11 +27,20 @@ package ir
 const optimizeCleanupMaxIterations = 8
 
 // OptimizeCleanup runs PropagateCopies + ConstPropagate + Fold +
-// ReduceStrength + PruneZeroSlotGuards to a fixed point on every
-// function in prog. Each pass is idempotent on its own; the loop exists
-// because they interact — the output of one can expose new work for the
-// others (a strength-reduced `<expr> ; drop ; const 0` becomes a candidate
-// for Fold's const + drop peephole when <expr> is itself a const).
+// ReduceStrength + PruneZeroSlotGuards + EliminateDeadCode to a fixed
+// point on every function in prog. Each pass is idempotent on its own;
+// the loop exists because they interact — the output of one can expose
+// new work for the others (a strength-reduced `<expr> ; drop ; const 0`
+// becomes a candidate for Fold's const + drop peephole when <expr> is
+// itself a const).
+//
+// Dead-code elimination is inside the fixpoint rather than ordered
+// around it because the dependency runs both ways: Fold's pruneConstIf
+// collapses a constant-conditioned if and leaves the ops after the
+// surviving arm's terminator unreachable, and dropping those in turn
+// exposes stores whose only reader was in the region just removed. A
+// backend that runs the pass before this one sweeps the lowering's dead
+// code and none of the cleanup's own.
 func OptimizeCleanup(prog *Program) {
 	ptrW := prog.PtrW
 	if ptrW == 0 {
@@ -42,7 +51,7 @@ func OptimizeCleanup(prog *Program) {
 	}
 }
 
-// optimizeCleanupFunc runs the five passes on one function until a round
+// optimizeCleanupFunc runs the six passes on one function until a round
 // rewrites nothing. The passes are intra-function, so converging each
 // function on its own is the same fixed point as converging the program;
 // the difference is that a converged function is never revisited, where a
@@ -72,6 +81,10 @@ func optimizeCleanupFunc(fn *Func, ptrW int) {
 			changed = true
 		}
 		if next, ok := pruneZeroSlotGuardsIn(fn); ok {
+			fn.Ops = next
+			changed = true
+		}
+		if next := dceOnce(fn.Ops); !opsEqual(next, fn.Ops) {
 			fn.Ops = next
 			changed = true
 		}

@@ -433,14 +433,20 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 	// `.rodata` cell instead of a 16-byte heap-allocated pair.
 	ir.InlineZeroCaptureClosures(ip)
 	ir.Inline(ip)
-	// IR pass battery (#4377) — per-function rewrites shared with the wasm
-	// backend. FuseTee fuses store+reload into OpTeeLocal (both natives already
-	// emit it); FlattenBranches drops `if (false) { … }` bodies before they
-	// reach asm; EliminateDeadCode trims ops after a terminator; OptimizeCleanup
-	// is the copyprop/constprop/Fold/strength fixpoint.
+	// IR pass battery (#4377) — per-function rewrites, in the order all three
+	// backends run. FuseTee fuses store+reload into OpTeeLocal (both natives
+	// already emit it); EliminateDeadCode trims ops after a terminator;
+	// FlattenBranches merges `if c { return X; } return Y` into one typed if;
+	// OptimizeCleanup is the copyprop/constprop/Fold/strength/zero-slot/DCE
+	// fixpoint.
+	//
+	// DCE precedes FlattenBranches because flattening requires the then-arm's
+	// last op before its OpEnd to BE the return: lowering's dead tail after
+	// that return disqualifies the shape, so sweeping first is what lets the
+	// arm flatten at all.
 	ir.FuseTee(ip)
-	ir.FlattenBranches(ip)
 	ir.EliminateDeadCode(ip)
+	ir.FlattenBranches(ip)
 	ir.OptimizeCleanup(ip)
 	// IR-level dead-function elimination (#4377), the wasm backend's twin.
 	// Treeshake already dropped what no AST call site names; this catches what
