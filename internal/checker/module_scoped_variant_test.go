@@ -139,3 +139,23 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		}
 	})
 }
+
+// #6951's rule was applied through moduleSees, whose stdlib-to-stdlib
+// shortcut then re-opened the same hole between two stdlib modules: the
+// shortcut exists so the method graph's cycles load (std/string's bodies
+// call std/i32 methods and back), and a variant name is not a method.
+//
+// std/pmap and std/pvec each declare an `Empty` variant and neither
+// imports the other, so importing both drew 47 E036s — every one of them
+// on stdlib source, blaming a module for a collision with a module it
+// cannot name. The program is valid and the self-host compiled it.
+func TestTwoStdlibModulesDoNotAmbiguateEachOther(t *testing.T) {
+	err, _ := checkFiles(t, map[string]string{
+		"main.fern": "import \"std/pmap\";\nimport \"std/pvec\";\n" +
+			"function main(): void { }\n",
+	}, "main.fern")
+	if err != nil {
+		t.Fatalf("std/pmap and std/pvec do not import each other, so neither "+
+			"module's bare Empty is ambiguous where it stands:\n%v", err)
+	}
+}
