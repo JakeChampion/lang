@@ -27762,7 +27762,12 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
                 },
                 ast.ExprFieldAccess(fa) => {
                     match (fa.obj) {
-                        ast.ExprIdent(_) => { callee_unsafe = false; },   // name.method(): receiver is a borrow
+                        ast.ExprIdent(_) => {
+                            callee_unsafe = false;   // name.method(): receiver is a borrow
+                            // `w.write(s)`: the registry carries "Writer.write" only
+                            // while the name can mean nothing else (copying_builtin_keys).
+                            if (fa.field == "write") { callee_name = "Writer.write"; }
+                        },
                         // `name[a:b].len()`: a view receiver at a method that
                         // cannot retain it borrows the source, exactly as the
                         // bare-ident receiver above does.
@@ -27771,8 +27776,8 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
                             else { callee_unsafe = expr_unsafe_for_vb(fa.obj, name, borrowable, recv_borrow, vb_borrow); }
                         }
                     }
-                    // method args stay escapes: method-param borrowability isn't in
-                    // the (free-function-keyed) registry (callee_name left "").
+                    // every other method's args stay escapes: method-param
+                    // borrowability isn't in the registry (callee_name left "").
                 },
                 _ => { callee_unsafe = expr_unsafe_for_vb(c.callee, name, borrowable, recv_borrow, vb_borrow); }
             }
@@ -62355,6 +62360,21 @@ function borrow_reg_record(key: string, flags: string): string {
     return key + "|" + flags + "\n";
 }
 
+// copying_builtin_keys: the registry keys whose position 0 is a string the
+// callee COPIES rather than retains — native's copyingBuiltinArgs
+// (rc_analysis.go), read off the same runtime bodies: strbuf_append memcpys the
+// bytes, print / write / eprint / Writer.write write(2) them, the byte scanners
+// return a scalar. A string local passed there keeps its reclaim; without the
+// rows every `print(out)` cost `out` its release. The checker rejects a user
+// function redeclaring a builtin name, so the free keys can never name one.
+// The method key is seeded only while no user receiver method is named `write`:
+// the escape walks see no receiver type, so the name alone must settle it.
+function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte"];
+    for fn in funcs { if (fn.receiver_type.len() > 0 && fn.name == "write") { return keys; } }
+    return keys.append("Writer.write");
+}
+
 // borrow_reg_bare_index re-buckets a registry's rows by the bare name after
 // the key's last '.' (the whole key when it has none), keeping each row
 // intact, so a lookup by method name reaches every "<Type>.<method>" row
@@ -62917,6 +62937,7 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
             if (elb.len() > 0) { out = borrow_reg_put(out, "ELB:" + borrowable_key(fn), elb); }
         }
     }
+    for ck in copying_builtin_keys(funcs) { out = borrow_reg_put(out, ck, "1"); }
     return out;
 }
 // tuple_payload_borrow_flags: the "TUPB:" tier for one function — per-param
@@ -63421,6 +63442,12 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
         row_bucket = row_bucket.append(util.hash_bucket("TUPB:" + key, nb));
         row_bucket = row_bucket.append(util.hash_bucket("ELB:" + key, nb));
         fi = fi + 1;
+    }
+    // The copying builtins ride the same rows so a rebuild keeps them; nothing
+    // below rewrites an index past the function triples.
+    for ck in copying_builtin_keys(funcs) {
+        rows = rows.append(borrow_reg_record(ck, "1"));
+        row_bucket = row_bucket.append(util.hash_bucket(ck, nb));
     }
     var reg: string[] = borrow_reg_rebuild(borrow_reg_new(), i32_filled(nb, 1), rows, row_bucket);
     var deps: CallDeps = call_deps_of(funcs, false, false);

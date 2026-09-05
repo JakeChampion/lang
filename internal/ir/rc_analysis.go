@@ -1344,14 +1344,15 @@ func pureReadReceiverBuiltin(name string) bool {
 // The checker rejects a user function redeclaring a builtin name, so
 // the table can never answer for a defined function.
 var copyingBuiltinArgs = map[string]int{
-	"strbuf_append": 0,
-	"print":         0,
-	"write":         0,
-	"eprint":        0,
-	"__memchr":      0,
-	"__rmemchr":     0,
-	"__ascii_run":   0,
-	"__count_byte":  0,
+	"strbuf_append":         0,
+	"__method_Writer_write": 1,
+	"print":                 0,
+	"write":                 0,
+	"eprint":                0,
+	"__memchr":              0,
+	"__rmemchr":             0,
+	"__ascii_run":           0,
+	"__count_byte":          0,
 }
 
 func copyingBuiltinArg(name string, i int) bool {
