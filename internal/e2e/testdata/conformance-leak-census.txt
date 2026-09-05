@@ -14,10 +14,19 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-04: 471 fixtures, 392 clean, 79 leaking, 8406
+# Measured 2026-09-05: 473 fixtures, 396 clean, 77 leaking, 7725
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
+#
+# Ten rows went DOWN and two arrived at once with #8396 / #8399 / #8403: a
+# match over read_chunk / read_line / env / read_file now owns the payload
+# it binds, read_chunk gives back its buffer on EOF, and the bytes() /
+# string_from_bytes_unchecked copies release. prop_string_involution (580)
+# and prop_url_roundtrip (293) fell to 0 on the second; read_all_stdin_chunks
+# lost its chunks on the first. What the two new alloc_flat rows still
+# carry is the per-call immortal Option box (#8405) and the as_bytes slice
+# header (#8406).
 #
 # The four json rows went back UP to the numbers main carries. A
 # Map-carrying enum is EnumRcPayloads-INELIGIBLE even with the flag on,
@@ -40,6 +49,7 @@ ackermann                                            0
 add_sub_pair                                         0
 aliased_and_used_twice                               0
 alloc_flat_array_push_bound_elem                     0
+alloc_flat_bytes_roundtrip                           204
 alloc_flat_closure_env                               0
 alloc_flat_consumed_append                           0
 alloc_flat_fresh_array_arg                           0
@@ -48,6 +58,7 @@ alloc_flat_map_get                                   0
 alloc_flat_method_identity_return                    0
 alloc_flat_method_result_field_read                  0
 alloc_flat_nested_string_array                       0
+alloc_flat_read_chunk                                5
 alloc_flat_struct_self_update                        0
 alloc_flat_struct_string_field                       0
 alloc_flat_under_reclaim                             0
@@ -89,7 +100,7 @@ audit_std_time                                       0
 audit_std_uuid                                       0
 audit_strings_arrays_maps                            1
 audit_types_match                                    0
-base64_roundtrip                                     2
+base64_roundtrip                                     1
 binding_site_pattern_grammar                         0
 bool_in_tuple_with_i64                               0
 bool_to_string                                       0
@@ -139,7 +150,7 @@ defer_in_loop                                        0
 derive_debug                                         0
 derive_default                                       0
 derive_default_generic_primitive                     0
-derive_from_json                                     35
+derive_from_json                                     34
 derive_from_json_i64                                 14
 derive_json                                          0
 derive_multi_payload                                 0
@@ -209,7 +220,7 @@ hash_struct_enum                                     0
 headers_map                                          0
 hello_world                                          0
 hex_literal                                          0
-hex_roundtrip                                        2
+hex_roundtrip                                        1
 higher_order                                         0
 http_content_type                                    5
 http_cookies                                         9
@@ -250,7 +261,7 @@ io_error_other_is_a_directory                        3
 io_error_other_not_a_directory                       2
 iter_build_consume                                   0
 json_array_field                                     0
-json_error_location                                  55
+json_error_location                                  51
 json_object                                          9
 labeled_loops                                        0
 len_on_empty_u8                                      0
@@ -338,7 +349,7 @@ own_self_reassign_move                               0
 own_struct_update_reuse                              0
 own_transfer                                         0
 own_tree_match                                       0
-pad_multibyte_fill                                   6
+pad_multibyte_fill                                   0
 param_destructure                                    0
 param_destructure_struct                             0
 param_strarr_elem_shared                             0
@@ -348,8 +359,8 @@ print                                                0
 prop_codec_roundtrip                                 0
 prop_sort_i32                                        0
 prop_sort_strings                                    1
-prop_string_involution                               580
-prop_url_roundtrip                                   293
+prop_string_involution                               0
+prop_url_roundtrip                                   0
 pub_use_reexport                                     0
 pure_collection_aliases                              0
 pure_copy                                            0
@@ -359,7 +370,7 @@ range_for                                            0
 range_value                                          0
 rc_borrowed_box_field                                0
 rc_borrowed_payload_array                            0
-read_all_stdin_chunks                                4
+read_all_stdin_chunks                                3
 read_line                                            2
 recursive_tree                                       0
 regex_basic                                          0
@@ -507,7 +518,7 @@ user_enum_mixed                                      0
 user_enum_payloaded_then_payloadless                 0
 user_enum_payloadless                                0
 user_fn_shadows_stdlib_param                         3
-utf8_codepoints                                      3
+utf8_codepoints                                      0
 value_block_branch_tail                              4
 value_block_generic_call_arm                         0
 value_block_shadows_module_fn                        0

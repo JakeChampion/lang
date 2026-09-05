@@ -1,0 +1,5 @@
+Reports the SHAPE of the allocator's fresh-byte curve over the
+bytes() / string_from_bytes_unchecked round trip: "constant" (independent of
+the string size) with reclamation on, "scales" with it off. The
+*FixturesFreeMatchesNoFree gates therefore require the two runs to DIFFER;
+see alloc_flat_under_reclaim/reclaim-observable for the contract.

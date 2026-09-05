@@ -45,6 +45,12 @@ func TestStringParamByteReadIsCounted(t *testing.T) {
              return n;`},
 		{"slice source", `return slice_unchecked(p, 0, 2).len();`},
 		{"len only, the case that already worked", `return p.len();`},
+		// std/string.bytes: the address of p's bytes dies with the
+		// __memcpy, so nothing retains p (#8403).
+		{"memcpy source", `var n: i32 = p.len(); var out: u8[] = __alloc_u8(n);
+             __memcpy(out as usize, p.as_bytes() as usize, n); return out.len();`},
+		{"memcpy destination", `var n: i32 = p.len(); var out: u8[] = __alloc_u8(n);
+             __memcpy(p as usize, out as usize, n); return n;`},
 	}
 	for _, c := range cases {
 		src := "function reads(p: string): i32 { " + c.body + " }\nfunction main(): i32 { return 0; }"
