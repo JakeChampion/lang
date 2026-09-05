@@ -14,19 +14,21 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-05: 483 fixtures, 402 clean, 81 leaking, 7734
+# Measured 2026-09-05: 483 fixtures, 403 clean, 80 leaking, 7731
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
 #
-# arrow_lambda_block_body went 0 -> 3 (#8550). Its verdict predates its
-# content: #2673 extended the fixture with capturing void lambdas, and the
-# three allocations are the closure ENV boxes that capture leaks — the same
-# boxes the rc corpus already pins non-zero for closure_churn_free and its
-# neighbours, and that #8545 / #8546 own. The anonymous `function` spelling
-# of the same lambda leaks identically, so nothing about the new parse is
-# implicated. generic_array_methods (1 -> 0) and open_slice_evaluates_base_once
-# (6 -> 4) went DOWN with #8527 / #8535.
+# arrow_lambda_block_body is back to 0, and its diagnosis in #8550 was
+# right: #2673 extended the fixture with capturing void lambdas, and the
+# three allocations were the closure env boxes plus the cell the mutable
+# capture is boxed into. #8557 banked the row at 3 while the leak stood;
+# #8545 removed the leak — a closure LOCAL handed to a callee releases its
+# env and captures through the drop-fn pointer its pair already carries —
+# so the row returns to the verdict it was pinned at rather than keeping
+# the banked one. generic_array_methods (1) and
+# open_slice_evaluates_base_once (6 -> 4) fell to the view header a local
+# owns (#8535).
 #
 # Ten rows went DOWN and two arrived at once with #8396 / #8399 / #8403: a
 # match over read_chunk / read_line / env / read_file now owns the payload
@@ -90,7 +92,7 @@ array_param_threaded_reassign                        0
 array_reverse                                        0
 array_sort                                           0
 array_with_rc_elem_drop                              0
-arrow_lambda_block_body                              3
+arrow_lambda_block_body                              0
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0

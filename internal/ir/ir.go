@@ -3354,6 +3354,29 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		for _, fn := range out.Funcs {
 			enqueueCalls(fn.Ops)
 		}
+		// A closure local whose slot does not elide keeps its {fn, env}
+		// pair, and ElideClosurePair rewrites that slot's
+		// __closure_drop_<name> to __drop_closure_value — but it runs
+		// AFTER this worklist, so the rewrite would name a function
+		// nothing generated. Seed it from the rewrite's two
+		// preconditions: a pair exists, and some slot's drop is a
+		// per-closure thunk. The per-backend dead-function cull removes
+		// it again when every such slot turned out to elide.
+		var sawPair, sawThunkDrop bool
+		for _, fn := range out.Funcs {
+			for _, op := range fn.Ops {
+				if op.Kind == OpMakeClosure {
+					sawPair = true
+				}
+				if op.Kind == OpCallDirect && strings.HasPrefix(op.Str, "__closure_drop_") {
+					sawThunkDrop = true
+				}
+			}
+		}
+		if sawPair && sawThunkDrop && !queued["__drop_closure_value"] {
+			queued["__drop_closure_value"] = true
+			work = append(work, "__drop_closure_value")
+		}
 		// Seed the worklist with the concrete-destructor drop fns named in
 		// the `dyn` vtable drop slots (docs/DYN-TRAITS.md §4.4). The
 		// __drop_dyn_<set> helper reaches these by an indirect call through
