@@ -55,3 +55,7 @@ x86_64/utf8_ingest_validated.ir	22999684
 # lane: selfhost-alloc-x86_64
 x86_64/checker.allocs	17672401
 x86_64/checker.frees	14471865
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	171538224
+x86_64/checker.cliff_count	270652
