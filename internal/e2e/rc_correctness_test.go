@@ -1699,6 +1699,35 @@ function main(): i32 {
 }`,
 	},
 	{
+		// The projection in a CALL-ARGUMENT position — the delete tuple is a
+		// temporary in the one place that looked most like the shapes the seam
+		// retain must NOT reach. It gets the retain because the field read
+		// deep-drops the box; `sizeof(m.insert(..))` next door still does not,
+		// because nothing drops that one. Guards the boundary from the leaking
+		// side, which the ir-level count cannot (#8434).
+		// Per iter: the surviving entry 1; 500x -> 500.
+		name: "map_delete_projected_call_arg_churn_free",
+		src: `
+import "core/int";
+import "core/map";
+import "std/string";
+function sizeof(m: Map[string, i32]): i32 { return m.len(); }
+function mk(): i32 {
+    var acc: i32 = 0;
+    var sm: Map[string, i32] = map_new(8);
+    sm = sm.insert("ke" + "y", 7);
+    sm = sm.insert("ot" + "her", 3);
+    acc = acc + sizeof(sm.without("ke" + "y").0);
+    return acc;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 500) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Delete MISS. Worth its own case because it leaks identically to a
 		// hit — nothing about what the delete did to the table matters, which
 		// is what ruled the deleted entry out as the cause (#8434).

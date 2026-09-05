@@ -17719,6 +17719,11 @@ func (b *builder) freshOwnedFieldContainerType(target ast.Expr) (ast.Type, bool)
 	if !ok && b.isOwnedContainerRead(target) {
 		ct, ok = b.exprType(target), true
 	}
+	if !ok {
+		if c, isCall := target.(*ast.Call); isCall && isMapDeleteCall(c) && b.rc.mapCowBindSites[c] {
+			ct, ok = b.exprType(target), true
+		}
+	}
 	return ct, ok
 }
 
@@ -18120,8 +18125,12 @@ func (b *builder) assign(n *ast.Assign) error {
 		// same alias-bump as the Var-binding path —
 		// `y = x;` shares an existing array reference, so the
 		// new binding needs its own rc. Move-on-alias skips the inc
-		// at a move site (see the Var path).
-		if needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n] {
+		// at a move site (see the Var path), and so does a read out of a
+		// fresh owned container: that lowering already retained what it
+		// loaded before deep-dropping the container, so this would be a
+		// second retain nothing balances (isOwnedContainerRead).
+		if needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n] &&
+			!b.isOwnedContainerRead(n.Value) {
 			b.emitAliasInc(n.Value)
 		}
 		// dec the old value of `y` before
