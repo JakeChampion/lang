@@ -64341,6 +64341,16 @@ pub function handback_params_of(funcs: parser.FuncDecl[]): string[] {
 // bare, so raw RECVRET (bare-return only) would miss it. The method arm keys on
 // the string method name alone: a same-named struct method cannot match because
 // its receiver would not trace back to a string receiver.
+//
+// Coverage boundary (shared with expr_may_be_str_param): detection is by the
+// BARE name. An aliasing rebind — `var t = s; return t;` / `return
+// t.replace(needle, "")` — is not traced, so a callee written that way stays
+// out of the registry and its caller keeps the pre-existing unconditional
+// post-call free (the #8409 over-release survives for exactly that shape).
+// This NARROWS the UAF class rather than regressing it: the guard is only ever
+// stricter than freeing unconditionally, and a false positive is harmless — a
+// live temp cannot be recycled, so `result == temp` is reachable only on a
+// true hand-back. The struct side tracks the identical rebind-then-return hole.
 function str_recv_may_be(e: ast.Expr, rname: string, recvhb: string[]): boolean {
     match (e) {
         ast.ExprIdent(id) => { return id.name == rname; },
