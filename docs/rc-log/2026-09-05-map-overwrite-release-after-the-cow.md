@@ -113,9 +113,19 @@ native single-word path, and an `m` or `k` that `exprSafeToReevaluate` refused.
   type-erased and cannot call the generated per-value drop; closing it means
   threading a drop function into the set, which is a bigger change than this.
 - **`emitMapOverwriteDrop`** still skips the kind-4 and kind-5 value walks.
-  With #8421 out of the way the measurement that was blocked on it is now
-  possible — the chain shape's remaining leak can be attributed — but it has
-  not been made.
+  The measurement that was blocked on this leak HAS now been made, since
+  #8277 landed the same day and took the last confounder out of the program:
+  100 rounds of the COW chain, `live_bytes`, x86-64 / arm64 / wasm —
+
+  | chain | walked today? | | | |
+  |---|---|--:|--:|--:|
+  | `arr_chain` (kind 2) | yes | 0 | 3200 | 3200 |
+  | `str_chain` (kind 5) | no | 3168 | 83648 | 83968 |
+  | `struct_chain` (kind 4) | no | 6368 | 6400 | 9568 |
+
+  The walked column is clean; the un-walked ones are the whole leak, and a
+  boxing ABI's string chain is quadratic in its length for the same reason
+  #6828 fixed on the key column. It should widen — #8431.
 - **`__map_delete_keyed_impl`** frees only a kind-0 cell (`__map_free_val_cell`),
   so a delete strands an array or string value; it also mutates without a COW.
   Neither is touched here, and neither is new.
