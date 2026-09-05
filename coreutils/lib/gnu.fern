@@ -393,6 +393,7 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
         if (found < 0) {
           found = k;
         } else if (o.arg != g.opts[found].arg || o.id != g.opts[found].id) {
+          // glibc also compares the option's flag pointer; nothing here has one.
           ambiguous = true;
         }
         list = list + " '--" + o.long + "'";
