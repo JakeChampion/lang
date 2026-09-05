@@ -1,0 +1,18 @@
+// Pins E077: an invalid named argument.
+//
+// Named arguments are matched against the callee's declared parameters
+// before type-checking. Here the call names a parameter that does not
+// exist — `backlogg` for `backlog` — which is the typo the code is most
+// often reached by.
+//
+// These errors used to be reported as E060, which the catalogue documents
+// as "invalid `as?` downcast target", so `fern -explain` answered with an
+// unrelated page. A genuinely missing or surplus argument stays an arity
+// error (E004), and an unusable default value is E076.
+function listen(port: i32, backlog: i32 = 128): i32 {
+    return port + backlog;
+}
+
+function main(): i32 {
+    return listen(port = 80, backlogg = 5);
+}

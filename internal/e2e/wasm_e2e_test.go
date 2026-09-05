@@ -17746,3 +17746,91 @@ function main(): i32 {
 		t.Errorf("wide-key map dispatch: exit = %d, want 0", code)
 	}
 }
+
+// A call through a function VALUE that returns void pushes nothing on wasm,
+// but the IR emitted an OpDrop after it because exprLeavesValue defaulted to
+// "leaves a value" for any callee it could not find in FuncSigs. The trailing
+// `drop` underflowed the typed stack and the module failed to VALIDATE — it
+// never loaded, so this was not a wrong answer but a dead artifact (#8455).
+//
+// Each shape below reaches the call through a different route, and the last
+// one is why it mattered: every `for_each` on the persistent collections
+// takes its callback as a function value, so `pvec` / `ordmap` / `pmap` were
+// unusable on wasm.
+//
+// The callbacks write to a captured scalar rather than printing, because
+// runWasm reads the program's result from the last number on stdout.
+func TestWASMVoidCallThroughFunctionValue(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"fn-typed-parameter", `
+function apply(f: (i32) => void, x: i32): void { f(x); }
+function main(): i32 {
+    var seen: i32 = 0;
+    apply(function (n: i32): void { seen = n; }, 7);
+    if (seen != 7) { return 1; }
+    return 0;
+}
+`},
+		{"local-lambda", `
+function main(): i32 {
+    var seen: i32 = 0;
+    var lam: (i32) => void = function (n: i32): void { seen = n; };
+    lam(7);
+    if (seen != 7) { return 1; }
+    return 0;
+}
+`},
+		{"capturing-closure", `
+function main(): i32 {
+    var base: i32 = 10;
+    var seen: i32 = 0;
+    var cap: (i32) => void = function (n: i32): void { seen = n + base; };
+    cap(7);
+    if (seen != 17) { return 1; }
+    return 0;
+}
+`},
+		{"array-element", `
+function main(): i32 {
+    var seen: i32 = 0;
+    var arr: ((i32) => void)[] = [function (n: i32): void { seen = n; }];
+    arr[0](7);
+    if (seen != 7) { return 1; }
+    return 0;
+}
+`},
+		{"higher-order-result", `
+function main(): i32 {
+    var seen: i32 = 0;
+    var pick: () => (i32) => void = function (): (i32) => void {
+        return function (n: i32): void { seen = n; };
+    };
+    pick()(7);
+    if (seen != 7) { return 1; }
+    return 0;
+}
+`},
+		{"pvec-for-each", `
+import "std/pvec";
+function main(): i32 {
+    var v: pvec.PVec[i32] = pvec.pvec_new();
+    v = v.append(1);
+    v = v.append(2);
+    var total: i32 = 0;
+    v.for_each(function (x: i32): void { total = total + x; });
+    if (total != 3) { return 1; }
+    return 0;
+}
+`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if code := runWasm(t, c.src); code != 0 {
+				t.Errorf("%s: exit = %d, want 0 (a validation failure shows as a non-zero exit here)", c.name, code)
+			}
+		})
+	}
+}

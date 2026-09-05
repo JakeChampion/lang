@@ -77539,8 +77539,13 @@ function own_lift_retain_sites_of(fn: parser.FuncDecl, sg: FnSigs, structs: Stru
             _ => {}
         }
         var bty: string = rc_ml_local_type(base, fs.types_n, fs.types_t);
+        // STRUCT fields only. An array field's bind already takes a Perceus dup
+        // (lower_stmt_var's array arms), and an enum field's is balanced by its
+        // alias marking, so both own their claim before the `own` position sees
+        // them — a second retain there strands the box. A nested struct field
+        // gets neither, which is the whole of #8267.
         if (base.len() > 0 && decl_is_struct(structs, bty)
-            && field_move_type(structs, decl_field_type(structs, bty, fld))
+            && decl_is_struct(structs, decl_field_type(structs, bty, fld))
             && own_lift_scan_uses(fn.body, k + 1, lifted, sg.own_positions) == 1) {
             out = push_str_unique(out, key);
         }

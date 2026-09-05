@@ -11,6 +11,12 @@
 // one is an error). For a purely positional call, only trailing defaults are
 // filled — a genuinely missing required argument is left for the checker's
 // arity error (E004), preserving prior behaviour.
+//
+// A default value must be a CONSTANT EXPRESSION (E076). Filling copies the
+// expression into the call site, so a name inside it would resolve in the
+// caller's scope rather than the callee's; requiring the expression to carry
+// no free names is what makes the copy sound. Top-level consts are folded to
+// literals before this pass, so `= SOME_CONST` still works.
 package defaultargs
 
 import (
@@ -26,10 +32,68 @@ type Error struct {
 	Msg  string
 }
 
+// freeIdents reports the identifiers a default-value expression reads from
+// its surroundings. A default is pasted into the CALL SITE, so any name it
+// carries is resolved in the caller's scope rather than the callee's: a
+// default of `a * 2` read the CALLER's `a`, and one naming a module
+// function silently picked up a caller local of the same name instead
+// (#8445). Requiring defaults to be self-contained removes the question —
+// there is nothing left to resolve in the wrong place.
+//
+// Top-level consts are folded to literals before this pass runs, so
+// `= SOME_CONST` is unaffected.
+func freeIdents(e ast.Expr) []*ast.Ident {
+	var out []*ast.Ident
+	switch x := e.(type) {
+	case nil:
+		return nil
+	case *ast.Ident:
+		out = append(out, x)
+	case *ast.Unary:
+		out = append(out, freeIdents(x.Operand)...)
+	case *ast.Binary:
+		out = append(out, freeIdents(x.Left)...)
+		out = append(out, freeIdents(x.Right)...)
+	case *ast.Call:
+		out = append(out, freeIdents(x.Callee)...)
+		for _, a := range x.Args {
+			out = append(out, freeIdents(a)...)
+		}
+	}
+	return out
+}
+
+// checkDefaults rejects a default expression that is not self-contained.
+// Reported at the declaration, which is where the author can act on it —
+// the call site that triggers the fill may be in another module and did
+// nothing wrong.
+func checkDefaults(p *ast.Program) []Error {
+	var errs []Error
+	for _, f := range p.Funcs {
+		for _, pa := range f.Params {
+			if pa.Default == nil {
+				continue
+			}
+			for _, id := range freeIdents(pa.Default) {
+				errs = append(errs, Error{id.P, "E076", fmt.Sprintf(
+					"default value for parameter %q reads %q: a default must be a constant expression, because it is evaluated at each call site rather than inside %s",
+					pa.Name, id.Name, f.Name)})
+			}
+		}
+	}
+	return errs
+}
+
 // Fill rewrites p in place and returns any resolution errors.
 func Fill(p *ast.Program) []Error {
 	if p == nil {
 		return nil
+	}
+	// Validate before filling: a default carrying a free name must not be
+	// pasted anywhere, since the paste is what resolves it in the wrong
+	// scope.
+	if errs := checkDefaults(p); len(errs) > 0 {
+		return errs
 	}
 	// name -> declared params (with defaults). Methods are excluded: their
 	// call sites are field-access callees, not bare identifiers.
@@ -76,12 +140,12 @@ func Fill(p *ast.Program) []Error {
 
 		// Named arguments are present.
 		if !isIdent {
-			errs = append(errs, Error{call.P, "E060", "named arguments are only supported on direct calls to named functions"})
+			errs = append(errs, Error{call.P, "E077", "named arguments are only supported on direct calls to named functions"})
 			return e
 		}
 		params, known := funcs[id.Name]
 		if !known {
-			errs = append(errs, Error{call.P, "E060", fmt.Sprintf("named arguments are not supported for call to %q", id.Name)})
+			errs = append(errs, Error{call.P, "E077", fmt.Sprintf("named arguments are not supported for call to %q", id.Name)})
 			return e
 		}
 		result := make([]ast.Expr, len(params))
@@ -95,7 +159,7 @@ func Fill(p *ast.Program) []Error {
 			}
 			if name == "" {
 				if seenNamed {
-					errs = append(errs, Error{call.P, "E060", "positional argument after named argument"})
+					errs = append(errs, Error{call.P, "E077", "positional argument after named argument"})
 					return e
 				}
 				if pos >= len(params) {
@@ -109,11 +173,11 @@ func Fill(p *ast.Program) []Error {
 				seenNamed = true
 				idx := paramIndex(params, name)
 				if idx < 0 {
-					errs = append(errs, Error{call.P, "E060", fmt.Sprintf("%q has no parameter named %q", id.Name, name)})
+					errs = append(errs, Error{call.P, "E077", fmt.Sprintf("%q has no parameter named %q", id.Name, name)})
 					return e
 				}
 				if filled[idx] {
-					errs = append(errs, Error{call.P, "E060", fmt.Sprintf("duplicate argument for parameter %q", name)})
+					errs = append(errs, Error{call.P, "E077", fmt.Sprintf("duplicate argument for parameter %q", name)})
 					return e
 				}
 				result[idx] = a

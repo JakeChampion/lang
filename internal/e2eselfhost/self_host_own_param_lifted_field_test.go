@@ -62,6 +62,18 @@ var selfHostOwnParamLiftedFieldCases = []struct {
 	// the `own` position takes it as it stands. A retain here would leak.
 	{"no-lift-control", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction directive(own s: CfiState, v: i32): CfiState {\n    return CfiState { ...s, bad: s.bad.append(v), open: true };\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: CfiState = CfiState { bad: [v], open: true };\n    st = directive(st, v);\n    return Asm { cfi: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
+	// Control: the lifted field is an ARRAY, not a nested struct. Its bind
+	// already takes a Perceus dup, so it owns its claim before the `own`
+	// position sees it and a second retain there would strand the box — which
+	// is exactly what the first gate did (it admitted every field_move_type
+	// kind, and this row went clean to leak).
+	{"array-field-lift-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction directive(own s: i32[], v: i32): i32[] {\n    return s.append(v);\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: i32[] = a.bad;\n    st = directive(st, v);\n    return Asm { bad: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.bad.len() + __rc_underflow_count();\n}"},
+
+	// Control: an ENUM field, balanced by its own alias marking before the fix
+	// and after it. The array row's sibling — together they say the gate admits
+	// the nested-struct field and nothing else.
+	{"enum-field-lift-control", "enum Color { Red, Green(i32) }\nstruct Asm { c: Color, n: i32 }\n@noinline\nfunction directive(own s: Color, v: i32): Color {\n    return Color.Green(v);\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    var st: Color = a.c;\n    st = directive(st, v);\n    return Asm { c: st, n: a.n };\n}\nfunction main(): i32 {\n    var a: Asm = Asm { c: Color.Red, n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    var r: i32 = 2;\n    match (a.c) { Color.Red => { r = 0; }, Color.Green(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}"},
+
 	// Control: the local IS lifted, but is rebound to a fresh box before the
 	// `own` call, so by then it owns its value and the alias is gone. This is
 	// what the forward scan's stop-on-rebind is for; without it the retain lands
