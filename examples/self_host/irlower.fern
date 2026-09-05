@@ -52703,7 +52703,7 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                     // box only.
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_struct_get(fidxs[rj], struct_field_width(st.frame.structs, slit.type_name, fidxs[rj])));
-                    if (!shallow && struct_has_reclaim_array_field(st.frame.structs, rfty)) {
+                    if (struct_has_reclaim_array_field(st.frame.structs, rfty)) {
                         st = st.emit(ir.op_call_direct("__struct_drop_" + rfty, 1));
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
