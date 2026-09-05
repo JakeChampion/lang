@@ -2864,9 +2864,26 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	body := &ast.Block{P: open.Pos, Stmts: []ast.Stmt{&ast.Return{P: open.Pos, Value: bodyExpr}}}
+	body := arrowLambdaBody(open.Pos, bodyExpr)
 	prependParamDestructures(body, paramDestrs)
 	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Arrow: true, Body: body}, nil
+}
+
+// arrowLambdaBody turns what follows `=>` into the lambda's body block. A
+// braced body is spliced in as the body's own statements, so a lambda whose
+// body only runs statements is void rather than a value-less block in value
+// position (E061); a trailing value, written without a `;`, becomes the
+// returned value. Any other expression is returned directly.
+func arrowLambdaBody(pos ast.Position, e ast.Expr) *ast.Block {
+	be, ok := e.(*ast.BlockExpr)
+	if !ok {
+		return &ast.Block{P: pos, Stmts: []ast.Stmt{&ast.Return{P: pos, Value: e}}}
+	}
+	stmts := append([]ast.Stmt(nil), be.Stmts...)
+	if be.Tail != nil {
+		stmts = append(stmts, &ast.Return{P: be.Tail.Pos(), Value: be.Tail})
+	}
+	return &ast.Block{P: be.P, Stmts: stmts}
 }
 
 func (p *parser) parseLambda() (ast.Expr, error) {
