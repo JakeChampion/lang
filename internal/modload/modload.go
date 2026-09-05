@@ -253,6 +253,9 @@ func LoadStdlibFlatSkipping(paths []string, skipPaths map[string]bool) (*ast.Pro
 		for _, fn := range mod.prog.Funcs {
 			fn.SourceModule = ""
 		}
+		for _, cd := range mod.prog.Consts {
+			cd.SourceModule = ""
+		}
 		combined.Funcs = append(combined.Funcs, mod.prog.Funcs...)
 		combined.Structs = append(combined.Structs, mod.prog.Structs...)
 		combined.Enums = append(combined.Enums, mod.prog.Enums...)
@@ -528,6 +531,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		}
 	}
 	for _, cd := range prog.Consts {
+		cd.SourceModule = path
 		mod.allConsts[cd.Name] = true
 		if cd.Public {
 			mod.publicConsts[cd.Name] = true

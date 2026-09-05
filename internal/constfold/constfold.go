@@ -32,9 +32,9 @@ package constfold
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/embed"
 )
 
@@ -101,6 +101,10 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 			errs = append(errs, fmt.Errorf("%s: const %q redeclared", cd.P, cd.Name))
 			continue
 		}
+		if rangeErrs := checkLiteralRange(cd); len(rangeErrs) > 0 {
+			errs = append(errs, rangeErrs...)
+			continue
+		}
 		val, err := evalConst(cd.Value, declaredWidth(cd.Type), values, types, in.Assets)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: const %s: %w", cd.P, cd.Name, err))
@@ -121,7 +125,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	}
 
 	if len(errs) > 0 {
-		return joinErrs(errs)
+		return diag.Errors(errs)
 	}
 
 	// Substitute every Ident reference matching a const name with
@@ -149,7 +153,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	}
 	prog.Consts = nil
 	if len(sub.errs) > 0 {
-		return joinErrs(sub.errs)
+		return diag.Errors(sub.errs)
 	}
 	return nil
 }
@@ -448,39 +452,81 @@ func foldFloatBinary(n *ast.Binary, l, r float64) (ast.Expr, error) {
 	return nil, fmt.Errorf("operator `%s` not allowed in float constant expressions", n.Op)
 }
 
-// litType returns the ast.Type that matches a folded literal. Only
-// the scalar literal kinds appear here — everything else would
-// have been rejected as non-constant in evalConst.
+// checkLiteralRange judges every integer literal written in a const's
+// initialiser against the declared type before anything folds. Folding wraps
+// at the declared width, as `+`, `-` and `*` do at run time, so a literal that
+// is itself too wide for the type has already wrapped by the time the result
+// could be inspected. The walk mirrors the checker's settleIntSigned — the
+// sign lives on the enclosing unary, and arithmetic operands take the const's
+// type — so a `var` and a `const` refuse the same spellings with the same
+// E047.
+func checkLiteralRange(cd *ast.ConstDecl) []error {
+	declared, hasType := cd.Type.(ast.NumberType)
+	var errs []error
+	walkIntLits(cd.Value, false, true, func(lit *ast.NumberLit, negated, typed bool) {
+		t := declared
+		switch {
+		case typed && hasType && lit.Width == 0:
+		case lit.ExceedsU64:
+			// Nothing holds it; name the type it would otherwise fold at.
+			t = ast.NumberType{Width: 64, Signed: true}
+			if lit.Width != 0 {
+				t = ast.NumberType{Width: lit.Width, Signed: !lit.IsUnsigned}
+			}
+		default:
+			return
+		}
+		if msg := ast.IntLitOutOfRange(lit, negated, t); msg != "" {
+			errs = append(errs, &Error{Pos: lit.P, Msg: msg, Path: cd.SourceModule, ErrCode: "E047"})
+		}
+	})
+	return errs
+}
+
+// walkIntLits visits the integer literals of a constant expression the way
+// settleIntSigned reaches them: `negated` is whether the literal sits under
+// an odd number of unary minuses, `typed` whether the const's declared type
+// still applies to it — an operand of a comparison or a `!` does not take
+// the const's type, an operand of an arithmetic operator does.
+func walkIntLits(e ast.Expr, negated, typed bool, visit func(lit *ast.NumberLit, negated, typed bool)) {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		visit(x, negated, typed)
+	case *ast.Unary:
+		switch x.Op {
+		case "-":
+			walkIntLits(x.Operand, !negated, typed, visit)
+		case "+":
+			walkIntLits(x.Operand, negated, typed, visit)
+		default:
+			walkIntLits(x.Operand, false, false, visit)
+		}
+	case *ast.Binary:
+		switch x.Op {
+		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>":
+		default:
+			typed = false
+		}
+		walkIntLits(x.Left, false, typed, visit)
+		walkIntLits(x.Right, false, typed, visit)
+	}
+}
+
 // settleConstLit checks a const's resolved literal against its declared type
 // and, when they agree, stamps the declared width onto the literal node.
 //
-// It replaces a bare `ast.Equal(declared, litType(val))` comparison, which was
-// wrong for every numeric const whose declared width was not the literal's
-// default reading: litType reports `NumberType{}` (i32) for ANY integer literal
-// and `FloatType{}` (f32) for any float one, so `const B: i64 = 5000000000` was
-// rejected as "declared type i64 does not match initialiser type i32" — as was
-// the perfectly ordinary `const B: i64 = 5` — and `const H: f64 = 3.5` as
-// "does not match initialiser type f32". (ast.Equal claims in its NumberType
-// doc comment to treat Polymorphic as a match-anything wildcard, but it does
-// not; it compares NormalWidth and signedness.)
-//
-// Stamping matters as much as accepting: the substituter inlines this literal
-// node at every reference, so without a width the i64 const would reach the IR
-// as an `i32.const` and the f64 one as an f32. Fixes #5477.
+// litType reports the DEFAULT reading of a literal (i32, f32), not the width
+// the declared type asks for, so a numeric const settles to its declaration
+// the way a `var` initialiser does rather than being compared against that
+// default. Stamping matters as much as accepting: the substituter inlines this
+// literal node at every reference, so without a width an i64 const would reach
+// the IR as an `i32.const` and an f64 one as an f32 (#5477).
 func settleConstLit(want ast.Type, val ast.Expr) error {
 	switch w := want.(type) {
 	case ast.NumberType:
-		// usize (WidthPtr) has no fixed width here — leave it to the old
-		// exact-match path rather than range-check against an unknown width.
-		if w.IsPointerWidth() {
-			break
-		}
 		lit, ok := val.(*ast.NumberLit)
 		if !ok {
 			break
-		}
-		if !intFits(lit.Value, w.NormalWidth(), w.IsSigned()) {
-			return fmt.Errorf("initialiser %d is out of range for %s", lit.Value, want)
 		}
 		lit.Width = w.NormalWidth()
 		lit.IsUnsigned = !w.IsSigned()
@@ -499,34 +545,9 @@ func settleConstLit(want ast.Type, val ast.Expr) error {
 	return nil
 }
 
-// intFits reports whether v is representable in a `width`-bit integer of the
-// given signedness. A u64's upper half is unrepresentable in the int64 the
-// literal is parsed into, so an unsigned 64-bit type accepts any non-negative
-// value.
-func intFits(v int64, width int, signed bool) bool {
-	if !signed && v < 0 {
-		return false
-	}
-	switch width {
-	case 8:
-		if signed {
-			return v >= -128 && v <= 127
-		}
-		return v <= 255
-	case 16:
-		if signed {
-			return v >= -32768 && v <= 32767
-		}
-		return v <= 65535
-	case 32:
-		if signed {
-			return v >= -2147483648 && v <= 2147483647
-		}
-		return v <= 4294967295
-	}
-	return true // 64-bit: any int64 value fits (u64's high half is unreachable here)
-}
-
+// litType returns the ast.Type that matches a folded literal. Only
+// the scalar literal kinds appear here — everything else would
+// have been rejected as non-constant in evalConst.
 func litType(e ast.Expr) ast.Type {
 	switch e.(type) {
 	case *ast.NumberLit:
@@ -957,10 +978,9 @@ func cloneLit(src ast.Expr, pos ast.Position) ast.Expr {
 	switch v := src.(type) {
 	case *ast.NumberLit:
 		// Width / IsUnsigned carry the declared type settleConstLit stamped on
-		// the const's literal; dropping them here put every substitution site
-		// back at the i32 default, so `const B: i64 = 5000000000` reached the
-		// checker as an i32 literal and failed E047 "does not fit in i32".
-		return &ast.NumberLit{P: pos, Value: v.Value, Width: v.Width, IsUnsigned: v.IsUnsigned}
+		// the const's literal; ExceedsI64 says how to read a Value past i64
+		// max. Each is part of the value, not of the site.
+		return &ast.NumberLit{P: pos, Value: v.Value, Raw: v.Raw, Width: v.Width, IsUnsigned: v.IsUnsigned, ExceedsI64: v.ExceedsI64}
 	case *ast.FloatLit:
 		return &ast.FloatLit{P: pos, Value: v.Value, Width: v.Width}
 	case *ast.BoolLit:
@@ -971,19 +991,4 @@ func cloneLit(src ast.Expr, pos ast.Position) ast.Expr {
 		return &ast.CharLit{P: pos, Value: v.Value, Raw: v.Raw, IsByte: v.IsByte}
 	}
 	return src
-}
-
-// joinErrs collapses multiple folding errors into a single error
-// whose message lists every problem on its own line. The shape
-// mirrors checker.diag.Errors so the driver can format it the same
-// way.
-func joinErrs(errs []error) error {
-	if len(errs) == 1 {
-		return errs[0]
-	}
-	parts := make([]string, len(errs))
-	for i, e := range errs {
-		parts[i] = e.Error()
-	}
-	return fmt.Errorf("%s", strings.Join(parts, "\n"))
 }

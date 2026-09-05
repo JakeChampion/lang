@@ -3070,6 +3070,7 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 
 	c.checkEscapes(prog)
 	c.checkFipFunctions(prog)
+	c.checkUnsettledWideLiterals()
 
 	if len(c.errors) > 0 {
 		return c.info, diag.Errors(c.errors)
@@ -5599,6 +5600,10 @@ type checker struct {
 	// seenDiags drops a diagnostic identical to one already recorded at
 	// the same position — see errfCode.
 	seenDiags map[diagKey]bool
+	// wideLits are the integer literals past i64 max seen so far, each once
+	// — see checkUnsettledWideLiterals.
+	wideLits  []wideLit
+	wideSeen  map[*ast.NumberLit]bool
 	current   *ast.FuncDecl
 	loopDepth int
 	// tryConvN uniquifies the temp-var name in the error-converting `?`
@@ -8222,8 +8227,11 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 // fields, wrong-arity calls). Future PRs expand coverage —
 // each stamping is mechanical, just touches the errf call.
 func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
-	path := c.currentModule()
+	c.report(c.currentModule(), pos, code, fmt.Sprintf(format, args...))
+}
+
+// report records one diagnostic against the module at path.
+func (c *checker) report(path string, pos ast.Position, code, msg string) {
 	// Identical diagnostics at the same position are dropped. Several
 	// checks reach the same expression by different routes — a string
 	// `a < b` produced the same E009 twice, byte for byte — and a reader
@@ -13202,6 +13210,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// via `c.settleNumeric`. If the literal already has a
 		// resolved Width (set by a previous settling pass — e.g.
 		// from a re-check during monomorphisation), report that.
+		if (n.ExceedsI64 || n.ExceedsU64) && !c.wideSeen[n] {
+			if c.wideSeen == nil {
+				c.wideSeen = map[*ast.NumberLit]bool{}
+			}
+			c.wideSeen[n] = true
+			c.wideLits = append(c.wideLits, wideLit{lit: n, path: c.currentModule(), suffixed: n.Width != 0})
+		}
 		if n.IsFloat {
 			return ast.FloatType{Width: n.FloatWidth}
 		}
@@ -16539,6 +16554,11 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 		// integer type (typed-suffix `42i64` or a previous
 		// settle pass).
 		if x.Width == 0 && !x.IsFloat {
+			if x.ExceedsU64 {
+				// Value holds nothing for a literal this wide, so there is
+				// no number to promote.
+				c.errfCode(x.P, "E047", "literal %s does not fit in any integer type; write it as a float for %s", x.Raw, hf)
+			}
 			x.IsFloat = true
 			x.FloatWidth = width
 		}
@@ -16828,11 +16848,6 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 	return prior
 }
 
-// checkLiteralFits reports an error if the literal's value is
-// outside the range representable by the resolved integer type.
-// Run once the width has been decided. For unsigned types the
-// value must be in [0, 2^width); for signed it must be in
-// [-2^(width-1), 2^(width-1)).
 // intLitExceedsI32 reports whether `e` is a bare integer literal (or a
 // unary-negated one) whose value lies outside the signed i32 range. It drives
 // the i64-widening default for an unannotated binding (#3676): a written-out
@@ -16840,93 +16855,53 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 // instead of being silently truncated. A typed-suffix literal (`42i64`) already
 // carries a Width and isn't a default case; a float literal is excluded.
 func intLitExceedsI32(e ast.Expr) bool {
-	switch x := e.(type) {
-	case *ast.NumberLit:
-		if x.IsFloat || x.Width != 0 {
-			return false
-		}
-		return x.Value < -1<<31 || x.Value > 1<<31-1
-	case *ast.Unary:
-		if x.Op == "-" {
-			if nl, ok := x.Operand.(*ast.NumberLit); ok && !nl.IsFloat && nl.Width == 0 {
-				v := -nl.Value
-				return v < -1<<31 || v > 1<<31-1
-			}
-		}
+	negated := false
+	if u, ok := e.(*ast.Unary); ok && u.Op == "-" {
+		e, negated = u.Operand, true
 	}
-	return false
+	lit, ok := e.(*ast.NumberLit)
+	if !ok || lit.IsFloat || lit.Width != 0 {
+		return false
+	}
+	return ast.IntLitOutOfRange(lit, negated, ast.NumberType{Width: 32, Signed: true}) != ""
 }
 
-// litText renders the literal the way the source wrote it, sign included.
-// Past i64 max the Value field holds a wrapped bit pattern, so the
-// magnitude has to be read back as unsigned — otherwise the diagnostic
-// quotes a number the author never typed.
-func litText(lit *ast.NumberLit, negated bool) string {
-	sign := ""
-	if negated {
-		sign = "-"
-	}
-	if lit.ExceedsI64 {
-		return sign + strconv.FormatUint(uint64(lit.Value), 10)
-	}
-	return sign + strconv.FormatInt(lit.Value, 10)
-}
-
+// checkLiteralFits reports E047 when the literal, as the source wrote it, is
+// outside the range of the integer type it has settled to.
 func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated bool) {
-	w := t.NormalWidth()
-	if t.IsSigned() {
-		// Judge — and report — the value the source wrote, sign included. A
-		// literal is only ever the magnitude; `-2147483648` is in range and
-		// `2147483648` is not, and they share a NumberLit.
-		if w == 64 {
-			// Only i64 MIN is reachable past i64 max, and only negated:
-			// `-9223372036854775808` is in range, `9223372036854775808`
-			// is not, and both carry the same wrapped Value.
-			if lit.ExceedsI64 && !(negated && uint64(lit.Value) == 1<<63) {
-				c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
+	if msg := ast.IntLitOutOfRange(lit, negated, t); msg != "" {
+		c.errfCode(lit.P, "E047", "%s", msg)
+	}
+}
+
+// wideLit is an integer literal past i64 max the first time checkExpr saw it,
+// with the module it sits in. Only u64 (or i64, as its minimum) can hold one,
+// so it is valid only once some context has settled it: one still unsettled
+// after every body is checked would lower as the i32 default and has to be
+// refused instead — a tuple element, an array element or a comparison operand
+// gets no settling hint. A literal typed by its suffix never settles, so it is
+// judged against that type; only one past u64 can fail there.
+type wideLit struct {
+	lit      *ast.NumberLit
+	path     string
+	suffixed bool
+}
+
+func (c *checker) checkUnsettledWideLiterals() {
+	for _, w := range c.wideLits {
+		lit := w.lit
+		t := ast.NumberType{Width: 32, Signed: true}
+		switch {
+		case w.suffixed:
+			if !lit.ExceedsU64 {
+				continue
 			}
-			return
+			t = ast.NumberType{Width: lit.Width, Signed: !lit.IsUnsigned}
+		case lit.Width != 0 || lit.IsFloat:
+			continue
 		}
-		var min, max int64
-		switch w {
-		case 32:
-			min, max = -1<<31, 1<<31-1
-		default:
-			return
-		}
-		if lit.ExceedsI64 {
-			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
-			return
-		}
-		v := lit.Value
-		if negated {
-			v = -v
-		}
-		if v < min || v > max {
-			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
-		}
-	} else {
-		// A negative literal has no unsigned reading. The sign lives on the
-		// enclosing unary, so testing lit.Value alone (which is only ever
-		// the magnitude) let `var a: u8 = -1` through, and the natives then
-		// stored 0xFFFFFFFF into a u8 slot while interp said 255.
-		if negated && !(lit.Value == 0 && !lit.ExceedsI64) {
-			c.errfCode(lit.P, "E047", "literal %s does not fit in %s: unsigned types have no negative values", litText(lit, negated), t)
-			return
-		}
-		var max uint64
-		switch w {
-		case 8:
-			max = 1<<8 - 1
-		case 32:
-			max = 1<<32 - 1
-		case 64:
-			return // every u64 bit pattern is representable
-		default:
-			return
-		}
-		if uint64(lit.Value) > max || lit.ExceedsI64 {
-			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
+		if msg := ast.IntLitOutOfRange(lit, false, t); msg != "" {
+			c.report(w.path, lit.P, "E047", msg)
 		}
 	}
 }
