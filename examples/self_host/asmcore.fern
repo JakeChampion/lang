@@ -5394,9 +5394,11 @@ pub function struct_drop_field_ops(s: EmitState, sty: string): RcOp[] {
 
 // field_reclaim_field_ops returns the ordered per-field release directives for
 // `__field_reclaim_<sty>`, the rebind-side counterpart of struct_drop_field_ops.
-// One directive per PARTICIPATING field: `kind` is the terminal release, `ty` is
-// the element type of the pre-walk that precedes it (empty when there is none),
-// and `cow` says whether the new-vs-old compare guards the release.
+// One directive per PARTICIPATING field: `kind` is the terminal release and says
+// which pre-walk precedes it (`arrarr_free` walks struct elements,
+// `arrarr_free_enum` enum ones), `ty` is that pre-walk's element type (empty
+// when there is none), and `cow` says whether the new-vs-old compare guards the
+// release.
 //
 // `cow` is false exactly for a carried nested struct / enum field. Those release
 // without the compare, so a field the callee reused in place would otherwise dec
@@ -5441,13 +5443,22 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
             if (fr_struct && irlower.nested_field_deep_drop_ok(s.struct_decls, fdt)) { deep = fdt; }
             if (fr_box_arr) {
                 var pre: string = "";
+                var pre_kind: string = "arrarr_free";
                 if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
                     var elem_ty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
                     if (irlower.nested_field_deep_drop_ok(s.struct_decls, elem_ty)) {
                         pre = elem_ty + "";
                     }
+                } else if (irlower.is_enum_array_field_type(s.struct_decls, fdt)) {
+                    // The enum-array sibling, under the gate struct_drop_field_ops'
+                    // elems_drop_enum arm uses so the two helpers agree (#8604).
+                    var eaty: str = slice_unchecked(fdt, 0, fdt.len() - 2);
+                    if (irlower.enum_arr_elems_walk_ok(s.struct_decls, eaty)) {
+                        pre = eaty + "";
+                        pre_kind = "arrarr_free_enum";
+                    }
                 }
-                ops = ops.append(RcOp { kind: "arrarr_free", idx: k, ty: pre, cow: cow, uniq: uniq });
+                ops = ops.append(RcOp { kind: pre_kind, idx: k, ty: pre, cow: cow, uniq: uniq });
             } else if (fr_str) {
                 ops = ops.append(RcOp { kind: "str_free", idx: k, ty: "", cow: cow, uniq: uniq });
             } else if (fr_str_arr) {
