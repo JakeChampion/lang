@@ -5857,61 +5857,65 @@ func letElseDivergentArm(m *ast.Match, i int) bool {
 // loopCanBreak reports whether `body` contains a `break` that targets THIS
 // loop — an unlabelled break not enclosed in a nested loop, or a labelled
 // break naming `label`. A loop that can break does not diverge, which is
-// what the reachability analyses below need to know.
+// what the reachability analyses below need to know. Treating a breakable
+// loop as divergent is not conservative: it ACCEPTS programs that fall
+// through, so a value fell off the end of a function (E052), a
+// `never`-typed block initialised a string from garbage, and a `let … else`
+// whose else arm broke out of a loop left the pattern's bindings
+// uninitialised (#8447).
 //
-// Both of them used to answer "a `loop` always diverges" outright, on the
-// stated grounds that it was conservative. It was the opposite: treating a
-// breakable loop as divergent ACCEPTS programs that fall through, so a
-// value fell off the end of a function (E052), a `never`-typed block
-// initialised a string from garbage, and a `let … else` whose else arm
-// broke out of a loop left the pattern's bindings uninitialised (#8447).
-//
-// It walks statements only. A `break` can appear nowhere else, except
-// inside a block-expression in expression position — not descending there
-// keeps the old answer for that shape rather than making it worse, and
-// deliberately does NOT descend into a lambda body, whose `break` belongs
-// to a loop inside the lambda.
+// The walk covers expression position too: a block-, `if`- or
+// `match`-expression carries statements, and a `break` in one belongs to
+// this loop like any other (#8562). What it skips is decided per node: a
+// lambda or nested function body, whose `break` belongs to a loop of its
+// own; and a `defer` body, which runs at scope exit and cannot carry this
+// loop's control flow. A nested loop's header expressions (`while`
+// condition, `for` init / cond / step, `for … in` iterable) are evaluated
+// in this loop's context, so only the nested BODY counts as nested.
 func loopCanBreak(body ast.Stmt, label string) bool {
 	found := false
-	var walk func(s ast.Stmt, nested bool)
-	walk = func(s ast.Stmt, nested bool) {
-		if s == nil || found {
-			return
-		}
-		switch x := s.(type) {
-		case *ast.Break:
-			// An unlabelled break belongs to the innermost enclosing
-			// loop; a labelled one names its target outright.
-			if x.Label == "" {
-				if !nested {
-					found = true
+	var walk func(n ast.Node, nested bool)
+	walk = func(n ast.Node, nested bool) {
+		ast.Walk(n, func(n ast.Node) bool {
+			if found {
+				return false
+			}
+			switch x := n.(type) {
+			case *ast.Break:
+				if x.Label == "" {
+					found = !nested
+				} else {
+					found = x.Label == label
 				}
-			} else if x.Label == label {
-				found = true
+				return false
+			case *ast.Lambda, *ast.FuncDecl, *ast.Defer:
+				return false
+			case *ast.Loop:
+				walk(x.Body, true)
+				return false
+			case *ast.While:
+				walk(x.Cond, nested)
+				walk(x.Body, true)
+				return false
+			case *ast.For:
+				if x.Init != nil {
+					walk(x.Init, nested)
+				}
+				if x.Cond != nil {
+					walk(x.Cond, nested)
+				}
+				if x.Step != nil {
+					walk(x.Step, nested)
+				}
+				walk(x.Body, true)
+				return false
+			case *ast.ForEach:
+				walk(x.Iter, nested)
+				walk(x.Body, true)
+				return false
 			}
-		case *ast.Block:
-			for _, st := range x.Stmts {
-				walk(st, nested)
-			}
-		case *ast.If:
-			walk(x.Then, nested)
-			walk(x.Else, nested)
-		case *ast.Match:
-			for _, arm := range x.Arms {
-				walk(arm.Body, nested)
-			}
-		case *ast.Defer:
-			// A defer's body runs at scope exit, so a break inside it
-			// cannot carry this loop's control flow.
-		case *ast.While:
-			walk(x.Body, true)
-		case *ast.Loop:
-			walk(x.Body, true)
-		case *ast.For:
-			walk(x.Body, true)
-		case *ast.ForEach:
-			walk(x.Body, true)
-		}
+			return true
+		})
 	}
 	walk(body, false)
 	return found
@@ -5962,12 +5966,10 @@ func stmtDiverges(s ast.Stmt) bool {
 }
 
 // funcBodyExits reports whether every path through a function body either
-// returns or never falls off the end (an infinite loop). It is the
-// missing-return analysis behind E052 and is deliberately CONSERVATIVE:
+// returns or never falls off the end (a loop nothing breaks out of). It is
+// the missing-return analysis behind E052 and is deliberately CONSERVATIVE:
 // it only returns false when the body can demonstrably fall through, so
-// it never rejects a valid function. (It therefore accepts some functions
-// that could in principle fall through — e.g. an infinite loop with a
-// break — rather than risk a false positive.) See
+// it never rejects a valid function. See
 // docs/ADVERSARIAL-REVIEW-2026-06.md (F4).
 func funcBodyExits(b *ast.Block) bool {
 	if b == nil || len(b.Stmts) == 0 {

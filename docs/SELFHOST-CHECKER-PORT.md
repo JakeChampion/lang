@@ -645,9 +645,9 @@ same code(s) the Go checker does — restricted to
   and a pure checker-side control-flow analysis (no AST change). A new
   `block_exits(stmts)` mirrors the Go checker's `funcBodyExits`: only the
   LAST statement matters — `return` exits; an `if` exits iff both arms do
-  (a one-armed `if` falls through); a `while (true)` is divergent (breaks
-  ignored — a breakable loop needing a value keeps a trailing return the
-  surrounding block catches); a `match` exits iff every arm body does.
+  (a one-armed `if` falls through); a `while (true)` / `loop` is divergent
+  unless a `break` targets it (`loop_can_break`, #8447 / #8562); a `match`
+  exits iff every arm body does.
   `switch` / `if let` are already desugared to if/else by the parser, so
   no special case is needed. A non-void function whose body doesn't
   `block_exits` is E052 at the function declaration. Validated by probe
