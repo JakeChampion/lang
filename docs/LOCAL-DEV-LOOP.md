@@ -472,12 +472,13 @@ code when the emitted text passed it. The buffer grows now and the build
 completes. `asm_load_run.fern` is no longer needed as a stand-in for
 `fern.fern`.
 
-What does not yet hold on darwin is the fixpoint: `fern-s2` runs and compiles
-small programs, but its output diverges from `fern-s1`'s from the first `:lo12:`
-operand it emits (byte 534 of a hello-world `-target arm64-linux -emit asm`, a
-6-byte displacement that repeats through the text), and a program whose output
-carries the heap runtime is refused by the in-process assembler. That is #8400,
-an arm64-darwin-specific self-host miscompile surfacing at generation 2. The
-same chain for `-target arm64-linux` in the linux/arm64 container IS a
-fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits byte-identical asm to
-stage 1, and compiles and runs a strbuf program correctly.
+The darwin stage 2 is a fixpoint at the emit level: `fern-s2` and `fern-s1`
+produce byte-identical `-target arm64-darwin -emit asm` listings for all 471
+runnable conformance cases (#8400 was `darwinize` rewriting the `:lo12:`
+inside the compiler's own string literals). What does not yet hold is stage 3:
+`fern-s2` building `fern.fern` exits 125 (arena exhausted) after 20 s at
+3.9-5.1 GB RSS (two runs), where `fern-s1` finishes the same build in 36 s at
+1.4 GB. The same chain for `-target arm64-linux` in the linux/arm64 container
+is a full fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits
+byte-identical asm to stage 1, and compiles and runs a strbuf program
+correctly.
