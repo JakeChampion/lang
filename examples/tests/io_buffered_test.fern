@@ -80,6 +80,82 @@ function test_reset_then_reuse(): test.TestOutcome {
     return test.assert_eq(w.into_string(), "new");
 }
 
+// BufWriter: written to stderr so the TAP stream on stdout stays clean.
+function test_buf_writer_holds_below_cap(): test.TestOutcome {
+    var b: io.BufWriter = io.buf_writer_new(stderr(), 16);
+    b = b.write_string("abc");
+    b = b.write_byte(100);
+    return test.assert_true(b.buffered() == 4);
+}
+
+function test_buf_writer_flushes_at_cap(): test.TestOutcome {
+    var b: io.BufWriter = io.buf_writer_new(stderr(), 8);
+    b = b.write_string("abcd");
+    b = b.write_string("efgh");
+    var after_cap: i32 = b.buffered();
+    b = b.write_string("ijklmnopqrstuvwxyz");
+    var after_big: i32 = b.buffered();
+    b = b.write_string("z");
+    b = b.flush();
+    var ok: boolean = after_cap == 0 && after_big == 0 && b.buffered() == 0;
+    match (b.error()) {
+        Some(_) => { return test.fail("write error on stderr"); },
+        None => { return test.assert_true(ok); }
+    }
+}
+
+function lines_of(path: string, term: i32, chunk: i32): string[] {
+    var out: string[] = [];
+    match (open_reader(path)) {
+        Ok(r) => {
+            var lr: io.LineReader = io.line_reader_new(r, term, chunk);
+            while (true) {
+                var (line, next) = lr.next_line();
+                lr = next;
+                match (line) {
+                    Some(l) => { out = out.append(l); },
+                    None => { return out; }
+                }
+            }
+        },
+        Err(_) => { return out; }
+    }
+    return out;
+}
+
+function with_file(content: string, term: i32, chunk: i32): string[] {
+    match (temp_dir("io_buffered_test")) {
+        Ok(dir) => {
+            var path: string = dir + "/input";
+            match (write_file(path, content)) {
+                Ok(_) => {},
+                Err(_) => { return []; }
+            }
+            var got: string[] = lines_of(path, term, chunk);
+            remove_file(path);
+            return got;
+        },
+        Err(_) => { return []; }
+    }
+}
+
+function test_line_reader_keeps_terminators(): test.TestOutcome {
+    var got: string[] = with_file("a\nbb\n\nccc", 10, 4096);
+    return test.assert_true(got.len() == 4 && got[0] == "a\n" && got[1] == "bb\n" && got[2] == "\n" && got[3] == "ccc");
+}
+
+function test_line_reader_spans_chunks(): test.TestOutcome {
+    // A 3-byte chunk splits every line; the lines come back whole.
+    var got: string[] = with_file("alpha\nbeta\ngamma\n", 10, 3);
+    return test.assert_true(got.len() == 3 && got[0] == "alpha\n" && got[1] == "beta\n" && got[2] == "gamma\n");
+}
+
+function test_line_reader_empty_and_nul(): test.TestOutcome {
+    var empty: string[] = with_file("", 10, 4096);
+    var nul: string[] = with_file("x\x00yy\x00", 0, 4096);
+    return test.assert_true(empty.len() == 0 && nul.len() == 2 && nul[0] == "x\x00" && nul[1] == "yy\x00");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/io_buffered BytesWriter");
     r = r.it("empty",            test_empty);
@@ -91,5 +167,10 @@ function main(): i32 {
     r = r.it("into_bytes",       test_into_bytes);
     r = r.it("reset",            test_reset);
     r = r.it("reset then reuse", test_reset_then_reuse);
+    r = r.it("BufWriter holds below cap", test_buf_writer_holds_below_cap);
+    r = r.it("BufWriter flushes at cap", test_buf_writer_flushes_at_cap);
+    r = r.it("LineReader keeps terminators", test_line_reader_keeps_terminators);
+    r = r.it("LineReader spans chunks", test_line_reader_spans_chunks);
+    r = r.it("LineReader empty and NUL", test_line_reader_empty_and_nul);
     return r.finish();
 }
