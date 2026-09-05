@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#
+# ci-run-example NAME BINARY
+# --------------------------
+# Run one compiled example and compare its exit status against the row for
+# NAME in .github/examples-expected-exits.txt. Exits non-zero on a mismatch.
+#
+# examples.yml and macos.yml both ran their binaries as `"$bin" || echo
+# "(exited $?)"`, which discarded the status: every crash mode the project
+# defines — 134 abort, 125 arena exhaustion, 124 sanitizer, 139 SIGSEGV —
+# kept the job green, so the lanes gated compile-and-link only while reading
+# as though they gated execution (#8473). macos.yml is the one that matters
+# most: it is the only lane that executes an arm64-darwin binary at all.
+#
+# A table rather than a signal-range rule because several examples return a
+# computed value at or above 128 (factorial is 6! mod 256), so the range rule
+# would fail correct programs. Comparing against the expected value also
+# catches a wrong answer, not just a crash.
+set -uo pipefail
+
+name="${1:?usage: ci-run-example NAME BINARY}"
+bin="${2:?usage: ci-run-example NAME BINARY}"
+table="$(dirname "$0")/../.github/examples-expected-exits.txt"
+
+want="$(awk -v n="$name" '!/^#/ && $1 == n { print $2; found=1 } END { if (!found) exit 1 }' "$table")" || {
+  echo "ci-run-example: $name has no row in ${table#*/../}; add one (its exit status is unchecked otherwise)" >&2
+  exit 1
+}
+
+"$bin"
+got=$?
+
+if [ "$got" -eq "$want" ]; then
+  echo "$name: exit $got"
+  exit 0
+fi
+
+case "$got" in
+  124) why=" (sanitizer finding)" ;;
+  125) why=" (heap arena exhausted)" ;;
+  134) why=" (fatal abort — bounds, slice, or allocation size)" ;;
+  137) why=" (OOM-killed)" ;;
+  *) if [ "$got" -ge 128 ]; then why=" (killed by signal $((got - 128)))"; else why=""; fi ;;
+esac
+echo "$name: FAILED — exit $got$why, expected $want" >&2
+exit 1
