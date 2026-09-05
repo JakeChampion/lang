@@ -812,7 +812,7 @@ func TestFoldRcIncDecOnNull(t *testing.T) {
 			{Kind: OpReturn},
 		}}
 		p := &Program{Funcs: []*Func{fn}}
-		Fold(p)
+		foldProgram(p)
 		for _, o := range fn.Ops {
 			if o.Kind == kind {
 				t.Errorf("%s on null survived the fold:\n%s", kind, p)
@@ -842,7 +842,7 @@ func TestFoldLeavesRcOpsOnANonNullConstant(t *testing.T) {
 			{Kind: OpReturn},
 		}}
 		p := &Program{Funcs: []*Func{fn}}
-		Fold(p)
+		foldProgram(p)
 		found := false
 		for _, o := range fn.Ops {
 			if o.Kind == kind {
