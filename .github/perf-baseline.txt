@@ -67,8 +67,10 @@ x86_64/pvec_with.text	7273
 x86_64/pvec_with.ir	259348734
 x86_64/sort_inplace.text	752
 x86_64/sort_inplace.ir	116858981
-x86_64/sort_ints.text	2286
-x86_64/sort_ints.ir	86743177
+x86_64/sort_ints.text	2253
+x86_64/sort_ints.ir	83484817
+x86_64/sort_strings.text	3517
+x86_64/sort_strings.ir	166244147
 x86_64/string_build.text	1142
 x86_64/string_build.ir	127235524
 x86_64/string_count_byte.text	600
@@ -149,8 +151,9 @@ aarch64/pvec_with.text	8901
 aarch64/pvec_with.ir	253752396
 aarch64/sort_inplace.text	783
 aarch64/sort_inplace.ir	112891129
-aarch64/sort_ints.text	2768
+aarch64/sort_ints.text	2728
 aarch64/sort_ints.ir	105084009
+aarch64/sort_strings.text	4310
 aarch64/string_build.text	1146
 aarch64/string_build.ir	171325490
 aarch64/string_count_byte.text	563

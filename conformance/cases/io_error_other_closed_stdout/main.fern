@@ -1,0 +1,29 @@
+// A write to a closed stdout fails in write(2) with EBADF, and the
+// Writer reports it as IoError.Other("", strerror text) — no path, since a
+// write has none, and glibc's wording for the errno (#8265). This is the
+// shape every C program prints for `prog >&-`, and coreutils parity
+// depends on it (`yes: standard output: Bad file descriptor`).
+//
+// Nothing can reach stdout once it is closed, so the verdict is the exit
+// status: 0 when both fields carry exactly what the contract says.
+function main(): i32 {
+  var w: Writer = stdout();
+  match (w.close()) {
+    Some(_) => { return 2; },
+    None => {}
+  }
+  var again: Writer = stdout();
+  match (again.write("x")) {
+    Some(e) => {
+      match (e) {
+        Other(p, m) => {
+          if (p == "" && m == "Bad file descriptor") { return 0; }
+          eprint("Other(" + p + ", " + m + ")");
+          return 3;
+        },
+        _ => { return 4; }
+      }
+    },
+    None => { return 5; }
+  }
+}

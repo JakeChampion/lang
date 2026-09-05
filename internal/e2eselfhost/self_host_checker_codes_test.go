@@ -300,6 +300,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"print-arity-e004", "function main(): i32 { print(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
 		{"eprint-arity-e004", "function main(): i32 { eprint(\"a\", \"b\"); return 0; }\n", []string{"E004"}},
 		{"slice-unchecked-arity-e004", "function main(): i32 { var s: string = \"abcdef\"; var t: str = slice_unchecked(s, 1); return t.len(); }\n", []string{"E004"}},
+		// target_os() is a string under -check, where nothing folds it: a
+		// clean use types, a mismatch is E003, and an argument is E004 — the
+		// three answers native gives.
+		{"target-os-clean", "function main(): i32 { var os: string = target_os(); if (os == \"linux\" || target_os() != \"wasi\") { return 1; } return 0; }\n", nil},
+		{"target-os-mismatch-e003", "function main(): i32 { var n: i32 = target_os(); return n; }\n", []string{"E003"}},
+		{"target-os-arity-e004", "function main(): i32 { var os: string = target_os(1); return 0; }\n", []string{"E004"}},
 		{"builtins-correct-arity-clean", "function main(): i32 { print(\"a\"); var s: string = \"abc\"; return s.len() + s.as_bytes().len(); }\n", nil},
 		// User generic-struct instantiation (#4346 piece 2): a `Box[i32]`
 		// annotation resolves to the name-only struct `Box`, and constructing

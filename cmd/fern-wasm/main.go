@@ -113,6 +113,7 @@ import (
 	"github.com/jakechampion/lang/internal/lsp"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/wasm/playground"
 )
 
@@ -249,7 +250,11 @@ func compile(src, target string) map[string]any {
 		result["error"] = diag.Format("<playground>", src, err)
 		return result
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
+	targetOS := ""
+	if d := platforms.ForTarget(target); d != nil {
+		targetOS = d.Environment
+	}
+	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: targetOS}); err != nil {
 		result["error"] = diag.Format("<playground>", src, err)
 		return result
 	}

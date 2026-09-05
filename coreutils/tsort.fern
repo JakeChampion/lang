@@ -1,0 +1,318 @@
+// tsort.fern — GNU-compatible `tsort`.
+//
+//   [FILE]   whitespace-separated pairs of names; `-` or nothing is stdin
+//
+// Each pair `a b` says a comes before b; a pair naming one thing twice
+// only declares it. The order written is GNU's exactly, which is a
+// particular algorithm rather than "a topological order":
+//
+//   - the names nothing precedes come out in byte order, and each name
+//     written frees the names it precedes, most recently declared
+//     first, onto the back of that queue (Knuth's algorithm T);
+//   - when the queue drains with names left, the input has a loop. It
+//     is found by walking PREDECESSORS in byte order: the smallest
+//     unresolved name seeds a chain, each pass over the names pushes
+//     every one that precedes the chain's head, and a name pushed a
+//     second time closes the loop, which is reported from the head
+//     down to it. The edge closing it is dropped and the queue resumes.
+//     The seed is not marked when it seeds, so it too can be pushed a
+//     second time — that is why `a b b c c a` reports `a b c` and not
+//     `b c a`.
+//
+// Tokens are separated by space, tab and newline only, and are cut at
+// a NUL the way a C string is. An odd token count is an error before
+// anything is written; a loop is reported on stderr while the order is
+// still written, and the exit status is then 1.
+import "std/string";
+import "std/array";
+import "std/io";
+import "std/io_buffered";
+import "core/cmp";
+import "core/map";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION] [FILE]\n";
+  out = out + "Write totally ordered list consistent with the partial ordering in FILE.\n";
+  out = out + "\n";
+  out = out + "With no FILE, or when FILE is -, read standard input.\n";
+  out = out + "\n";
+  out = out + "      --help     display this help and exit\n";
+  out = out + "      --version  output version information and exit\n";
+  return out;
+}
+
+function is_separator(b: i32): boolean {
+  return b == 32 || b == 9 || b == 10;
+}
+
+// The index of the next `b` at or after `from`, or `n` when there is none.
+function next_at(text: string, b: i32, from: i32, n: i32): i32 {
+  var at: i32 = __memchr(text, b, from);
+  if (at < 0) {
+    return n;
+  }
+  return at;
+}
+
+// Every distinct token in first-appearance order, each token's index
+// into that list, and the index itself. One pass over the text: a token
+// is looked up as a view into it and copied out only when it is new.
+// The three separators are found by memchr, each position cached until
+// the scan passes it, so a byte is examined by the Fern loop only when
+// it is a separator.
+function intern(text: string): (string[], i32[], Map[string, i32]) {
+  var names: string[] = [];
+  var ids: i32[] = [];
+  var index: Map[string, i32] = map_new(1024);
+  var n: i32 = text.len();
+  var next_sp: i32 = next_at(text, 32, 0, n);
+  var next_nl: i32 = next_at(text, 10, 0, n);
+  var next_tab: i32 = next_at(text, 9, 0, n);
+  var i: i32 = 0;
+  while (i < n) {
+    if (is_separator(text[i] as i32)) {
+      i = i + 1;
+      continue;
+    }
+    if (next_sp < i) {
+      next_sp = next_at(text, 32, i, n);
+    }
+    if (next_nl < i) {
+      next_nl = next_at(text, 10, i, n);
+    }
+    if (next_tab < i) {
+      next_tab = next_at(text, 9, i, n);
+    }
+    var j: i32 = next_sp;
+    if (next_nl < j) {
+      j = next_nl;
+    }
+    if (next_tab < j) {
+      j = next_tab;
+    }
+    var view: str = slice_unchecked(text, i, j);
+    var nul: i32 = __memchr(view, 0, 0);
+    if (nul >= 0) {
+      view = slice_unchecked(text, i, i + nul);
+    }
+    match (index.get(view)) {
+      Some(id) => {
+        ids = ids.append(id);
+      },
+      None => {
+        var tok: string = view + "";
+        index = index.insert(tok, names.len());
+        ids = ids.append(names.len());
+        names = names.append(tok);
+      }
+    }
+    i = j;
+  }
+  return (names, ids, index);
+}
+
+// The indices of `names` in byte order.
+function byte_order(names: string[], index: Map[string, i32]): i32[] {
+  var order: i32[] = [];
+  var sorted: string[] = cmp.sort(names);
+  var s: i32 = 0;
+  while (s < sorted.len()) {
+    order = order.append(index.get_or(sorted[s], 0));
+    s = s + 1;
+  }
+  return order;
+}
+
+// The graph and both phases live in one function so every array is a
+// local the `.with` updates can take in place.
+function run(text: string, fname: string): i32 {
+  var interned: (string[], i32[], Map[string, i32]) = intern(text);
+  var names: string[] = interned.0;
+  var ids: i32[] = interned.1;
+  var index: Map[string, i32] = interned.2;
+  if (ids.len() % 2 == 1) {
+    gnu.error(fname + ": input contains an odd number of tokens");
+    return 1;
+  }
+  var n: i32 = names.len();
+
+  // Successor lists: `head[v]` is v's most recent edge, `edge_next`
+  // threads back through the earlier ones.
+  var count: i32[] = [];
+  var head: i32[] = [];
+  var chain_next: i32[] = [];
+  var inchain: i32[] = [];
+  var v: i32 = 0;
+  while (v < n) {
+    count = count.append(0);
+    head = head.append(0 - 1);
+    chain_next = chain_next.append(0 - 1);
+    inchain = inchain.append(0);
+    v = v + 1;
+  }
+  var edge_to: i32[] = [];
+  var edge_next: i32[] = [];
+  var t: i32 = 0;
+  while (t < ids.len()) {
+    var a: i32 = ids[t];
+    var b: i32 = ids[t + 1];
+    if (a != b) {
+      edge_to = edge_to.append(b);
+      edge_next = edge_next.append(head[a]);
+      head = head.with(a, edge_to.len() - 1);
+      count = count.with(b, count[b] + 1);
+    }
+    t = t + 2;
+  }
+
+  // Only the seeds need sorting for the queue; the byte order of every
+  // name is built the first time a loop has to be found.
+  var seeds: string[] = [];
+  v = 0;
+  while (v < n) {
+    if (count[v] == 0) {
+      seeds = seeds.append(names[v]);
+    }
+    v = v + 1;
+  }
+  var sorted_seeds: string[] = cmp.sort(seeds);
+  var queue: i32[] = [];
+  var qh: i32 = 0;
+  var s: i32 = 0;
+  while (s < sorted_seeds.len()) {
+    queue = queue.append(index.get_or(sorted_seeds[s], 0));
+    s = s + 1;
+  }
+  var order: i32[] = [];
+
+  var remaining: i32 = n;
+  var status: i32 = 0;
+  var o: io_buffered.BufWriter = gnu.out_new();
+  while (remaining > 0) {
+    while (qh < queue.len()) {
+      var w: i32 = queue[qh];
+      qh = qh + 1;
+      o = gnu.put(o, names[w] + "\n");
+      remaining = remaining - 1;
+      var e: i32 = head[w];
+      while (e >= 0) {
+        var to: i32 = edge_to[e];
+        count = count.with(to, count[to] - 1);
+        if (count[to] == 0) {
+          queue = queue.append(to);
+        }
+        e = edge_next[e];
+      }
+    }
+    if (remaining == 0) {
+      break;
+    }
+
+    status = 1;
+    gnu.error(fname + ": input contains a loop:");
+    if (order.len() == 0) {
+      order = byte_order(names, index);
+    }
+    var chain_head: i32 = 0 - 1;
+    var found: boolean = false;
+    while (!found) {
+      var k: i32 = 0;
+      while (k < n && !found) {
+        var node: i32 = order[k];
+        k = k + 1;
+        if (count[node] == 0) {
+          continue;
+        }
+        if (chain_head < 0) {
+          chain_head = node;
+          continue;
+        }
+        var e2: i32 = head[node];
+        var prev: i32 = 0 - 1;
+        while (e2 >= 0 && edge_to[e2] != chain_head) {
+          prev = e2;
+          e2 = edge_next[e2];
+        }
+        if (e2 < 0) {
+          continue;
+        }
+        if (inchain[node] == 0) {
+          chain_next = chain_next.with(node, chain_head);
+          inchain = inchain.with(node, 1);
+          chain_head = node;
+          continue;
+        }
+        var c: i32 = chain_head;
+        while (true) {
+          gnu.error(names[c]);
+          if (c == node) {
+            break;
+          }
+          c = chain_next[c];
+        }
+        if (prev < 0) {
+          head = head.with(node, edge_next[e2]);
+        } else {
+          edge_next = edge_next.with(prev, edge_next[e2]);
+        }
+        count = count.with(chain_head, count[chain_head] - 1);
+        if (count[chain_head] == 0) {
+          queue = queue.append(chain_head);
+        }
+        found = true;
+      }
+    }
+    // The chain's links may form a cycle once the seed is pushed
+    // twice; clearing each link as it is followed ends the walk.
+    var c2: i32 = chain_head;
+    while (c2 >= 0) {
+      var nx: i32 = chain_next[c2];
+      chain_next = chain_next.with(c2, 0 - 1);
+      inchain = inchain.with(c2, 0);
+      c2 = nx;
+    }
+  }
+  gnu.finish(o);
+  return status;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var operands: string[] = gnu.parse_standard_options_only(argv, "tsort", help_text(), 1);
+  if (operands.len() > 1) {
+    gnu.die_usage("extra operand " + gnu.quote(operands[1]), 1);
+  }
+  var path: string = "-";
+  if (operands.len() == 1) {
+    path = operands[0];
+  }
+  var text: string = "";
+  if (path == "-") {
+    text = io.read_all_stdin();
+  } else {
+    // GNU words an open failure and a read failure differently
+    // (`tsort: d: read error: Is a directory` for a directory, whose
+    // read-only open succeeds), so open first to tell them apart.
+    match (open_reader(path)) {
+      Ok(r) => {
+        r.close();
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(path) + ": " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+    match (read_file(path)) {
+      Ok(t) => {
+        text = t;
+      },
+      Err(e) => {
+        gnu.error(gnu.quotef(path) + ": read error: " + gnu.io_error_text(e));
+        exit(1);
+      }
+    }
+  }
+  return run(text, gnu.quotef(path));
+}

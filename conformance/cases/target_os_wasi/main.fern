@@ -1,0 +1,18 @@
+// target_os() on the wasm leg is "wasi": the CLI world's environment, the
+// half of `wasm32-wasi` after the ISA. The value is a literal before the
+// check, so the native arm below is pruned from the component. The native
+// legs' answer is target_os_linux.
+import "core/int";
+
+function main(): i32 {
+    if (target_os() == "linux" || target_os() == "darwin" || target_os() == "android") {
+        print("native build");
+    } else {
+        print("not a native build");
+    }
+    if (target_os() != "wasi") {
+        print("not wasi");
+    }
+    print(target_os());
+    return 0;
+}

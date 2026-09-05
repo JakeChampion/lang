@@ -1627,6 +1627,29 @@ func TestLargeU64DecimalLiteralParses(t *testing.T) {
 	}
 }
 
+// A sixteen-digit hex literal with the top bit set is the same u64 bit
+// pattern spelled in base 16 (a SHA-512 round constant, `0xffffffffffffffff`),
+// and takes the same unsigned fallback; seventeen digits is still an error.
+func TestLargeU64HexLiteralParses(t *testing.T) {
+	prog, err := Parse(`function main(): u64 { return 0xd807aa98a3030242 as u64; }`)
+	if err != nil {
+		t.Fatalf("u64 hex literal should parse: %v", err)
+	}
+	var lit *ast.NumberLit
+	ast.Walk(prog.Funcs[0].Body, func(n ast.Node) bool {
+		if l, ok := n.(*ast.NumberLit); ok {
+			lit = l
+		}
+		return true
+	})
+	if lit == nil || uint64(lit.Value) != 0xd807aa98a3030242 {
+		t.Fatalf("hex literal value = %v, want the 0xd807aa98a3030242 bit pattern", lit)
+	}
+	if _, err := Parse(`function main(): u64 { return 0x1ffffffffffffffff as u64; }`); err == nil || !strings.Contains(err.Error(), "hex literal") {
+		t.Fatalf("17-digit hex literal should be rejected as an invalid hex literal; got %v", err)
+	}
+}
+
 // Top-level `const NAME[: T] = expr;` parses into a ConstDecl on
 // the program. Type annotations and the `pub` prefix are both
 // optional.

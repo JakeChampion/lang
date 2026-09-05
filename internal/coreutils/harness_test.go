@@ -49,7 +49,25 @@ type invocation struct {
 	// read end, and then compares how each side reacted to the closed
 	// pipe as well as the bytes it got. Zero reads to EOF.
 	limit int
+	// stdout is where the child's fd 1 goes; the default captures it.
+	// The other two make the first write fail, which is how the
+	// write-error paths (`prog: standard output: <strerror>`) are
+	// reached, and both sides meet the same one.
+	stdout stdoutMode
 }
+
+type stdoutMode int
+
+const (
+	// stdoutCaptured is the default: a pipe the harness reads and compares.
+	stdoutCaptured stdoutMode = iota
+	// stdoutClosed leaves fd 1 unopened in the child, as `prog >&-`
+	// does: the first write fails with EBADF.
+	stdoutClosed
+	// stdoutFull is /dev/full, as `prog > /dev/full` does: the first
+	// write fails with ENOSPC. Linux only.
+	stdoutFull
+)
 
 // outcome is everything observable about one run.
 type outcome struct {
@@ -253,7 +271,29 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	cmd.Stderr = &errBuf
 
 	var out []byte
-	if inv.limit > 0 {
+	switch inv.stdout {
+	case stdoutClosed:
+		// A typed nil *os.File reaches os.StartProcess as a nil entry
+		// in its Files, which closes that descriptor in the child —
+		// the one way through os/exec to hand a child a closed fd 1.
+		cmd.Stdout = (*os.File)(nil)
+		_ = cmd.Run()
+	case stdoutFull:
+		if runtime.GOOS != "linux" {
+			t.Skip("/dev/full is a Linux device")
+		}
+		f, err := os.OpenFile("/dev/full", os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatalf("open /dev/full: %v", err)
+		}
+		defer f.Close()
+		cmd.Stdout = f
+		_ = cmd.Run()
+	}
+	if inv.stdout != stdoutCaptured {
+		// Nothing to read back: the point is the reaction on stderr and
+		// in the exit status.
+	} else if inv.limit > 0 {
 		// A utility that never stops: read a bounded prefix, then close
 		// the read end so the process meets a closed pipe. How it reacts
 		// to that is part of the comparison — GNU dies of SIGPIPE, and a

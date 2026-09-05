@@ -1,0 +1,5 @@
+waiver: harness-limit
+reason: the wasm leg runs the component with no preopened directory and
+  WASI has no absolute paths, so neither /dev/null nor any other path is
+  openable there. The wasm runtime's ENOTDIR text is covered by
+  TestWasmIoErrorOtherText in internal/e2e, which mounts a directory.

@@ -1376,7 +1376,14 @@ func run(srcPath, outPath, target, backend, emit, cc string, runIt, native bool,
 		return 1, err
 	}
 	prog := e.prog
-	if err := constfold.Fold(prog, embeddedAssets); err != nil {
+	// target_os() folds to the -target's environment here, ahead of the
+	// check, so every backend and the E066 pass see a string literal. An
+	// unknown target resolves to no descriptor and is refused below.
+	targetOS := ""
+	if d := platforms.ForTarget(target); d != nil {
+		targetOS = d.Environment
+	}
+	if err := constfold.FoldWith(prog, constfold.Inputs{Assets: embeddedAssets, TargetOS: targetOS}); err != nil {
 		return 1, e.format(err)
 	}
 	info, err := checker.Check(prog)

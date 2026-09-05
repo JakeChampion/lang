@@ -13,6 +13,10 @@ func TestEchoParity(t *testing.T) {
 		{name: "no operands at all after -n", args: []string{"-n"}},
 		{name: "no operands at all after -e", args: []string{"-e"}},
 
+		// Write failures: `echo: write error: <strerror>`, exit 1 (#8265).
+		{name: "stdout closed", args: []string{"hi"}, stdout: stdoutClosed},
+		{name: "stdout full", args: []string{"hi"}, stdout: stdoutFull},
+
 		// The option scan: a run of e/E/n after the dash is an option
 		// token, anything else is an operand, and the last flag wins.
 		{name: "bundled flags", args: []string{"-en", `x\ny`}},

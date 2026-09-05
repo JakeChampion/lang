@@ -56,7 +56,7 @@ func TestDocsPlaygroundEmbedsCompile(t *testing.T) {
 			src := deescape.Replace(m[1])
 			seen++
 			t.Run(rel+"#"+itoa(i), func(t *testing.T) {
-				if _, _, err := frontEnd(src); err != nil {
+				if _, _, err := frontEnd(src, ""); err != nil {
 					t.Errorf("FernPlayground embed in %s no longer type-checks:\n%v\n--- source ---\n%s", rel, err, src)
 				}
 			})

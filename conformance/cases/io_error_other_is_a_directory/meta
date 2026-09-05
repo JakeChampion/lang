@@ -1,0 +1,5 @@
+waiver: harness-limit
+reason: the wasm leg runs the component with no preopened directory, so
+  no path is openable there — not even the working directory. The wasm
+  runtime's message text is covered by TestWasmIoErrorOtherText in
+  internal/e2e, which mounts one.
