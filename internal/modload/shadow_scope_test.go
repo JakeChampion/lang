@@ -86,3 +86,89 @@ func TestShadowedLocalsInDeferAndAtBinding(t *testing.T) {
 		t.Errorf("expected mangled shadowlib__at_binding in merged program; got %v", funcNames(prog))
 	}
 }
+
+const shadowScopePatternLib = `enum Box { Wrap(i32), Empty }
+enum Holder { Has(Option[i32]), Nothing }
+
+function helper(): i32 { return 100; }
+
+pub function tuple_binder(): i32 {
+    var t: (i32, i32) = (3, 4);
+    match (t) {
+        (helper, b) => { return helper + b; }
+    }
+    return 0;
+}
+
+pub function nested_tuple_binder(): i32 {
+    var t: (i32, (i32, i32)) = (1, (2, 4));
+    match (t) {
+        (a, (helper, c)) => { return a + helper + c; }
+    }
+    return 0;
+}
+
+pub function variant_in_tuple_binder(): i32 {
+    var t: (Box, i32) = (Wrap(3), 4);
+    match (t) {
+        (Wrap(helper), b) => { return helper + b; },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+pub function payload_subpattern_binder(): i32 {
+    var h: Holder = Has(Some(7));
+    match (h) {
+        Has(Some(helper)) => { return helper; },
+        _ => { return 0; }
+    }
+    return 0;
+}
+
+pub function match_expr_binder(): i32 {
+    var t: (i32, i32) = (3, 4);
+    return match (t) { (helper, b) => helper + b };
+}
+
+pub function variant_binder(): i32 {
+    var b: Box = Wrap(3);
+    match (b) {
+        Wrap(helper) => { return helper + 4; },
+        Empty => { return 0; }
+    }
+    return 0;
+}
+`
+
+const shadowScopePatternMain = `import "./shadowlib";
+function main(): i32 { return shadowlib.tuple_binder(); }
+`
+
+// TestShadowedLocalsInPatternBinders pins that every binder position of a
+// match arm's pattern suppresses the import rewrite — a tuple element, a
+// nested tuple element, a variant sub-pattern inside a tuple, a payload
+// sub-pattern, and the expression form of match — beside the plain payload
+// binder that always did. The shadowed decl is a `() => i32` function and
+// every binder an `i32`, so a mangled reference cannot merely read the wrong
+// value: `helper + b` fails the checker (#8607).
+func TestShadowedLocalsInPatternBinders(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"shadowlib.fern": shadowScopePatternLib,
+		"main.fern":      shadowScopePatternMain,
+	})
+	entry := filepath.Join(dir, "main.fern")
+	prog, _, err := modload.Load(entry)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatalf("constfold: %v", err)
+	}
+	if _, err := checker.Check(prog); err != nil {
+		t.Fatalf("checker rejected a pattern binder shadowing a module function: %v", err)
+	}
+	if findFunc(prog, "shadowlib__helper") == nil {
+		t.Errorf("expected mangled shadowlib__helper in merged program; got %v", funcNames(prog))
+	}
+}

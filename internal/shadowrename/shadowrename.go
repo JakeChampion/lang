@@ -303,9 +303,7 @@ func (r *renamer) walkMatchArm(arm *ast.MatchArm) {
 		return
 	}
 	r.pushFrame()
-	for i, name := range arm.Bindings {
-		arm.Bindings[i] = r.bindShadow(name)
-	}
+	r.bindArmPattern(arm.Bindings, &arm.AtBinding, arm.TupleElems, arm.Payloads)
 	if arm.Guard != nil {
 		r.walkExpr(arm.Guard)
 	}
@@ -313,6 +311,55 @@ func (r *renamer) walkMatchArm(arm *ast.MatchArm) {
 		r.walkBlock(arm.Body)
 	}
 	r.popFrame()
+}
+
+// bindArmPattern declares every binder of one arm's pattern in the current
+// frame, renaming each shadowing one in place — the payload binders, the `@`
+// binder, and the binders inside a tuple pattern or a payload sub-pattern at
+// any depth. The IR binds each of them by the name left on the node, so a
+// binder skipped here keeps the outer declaration's slot and the arm's value
+// leaks into it after the match.
+func (r *renamer) bindArmPattern(bindings []string, atBinding *string, tupleElems []ast.TuplePatElem, payloads []*ast.TuplePatElem) {
+	for i, name := range bindings {
+		if name != "" {
+			bindings[i] = r.bindShadow(name)
+		}
+	}
+	if *atBinding != "" {
+		*atBinding = r.bindShadow(*atBinding)
+	}
+	r.bindTuplePat(tupleElems)
+	for _, p := range payloads {
+		if p != nil {
+			r.bindTuplePatElem(p)
+		}
+	}
+}
+
+func (r *renamer) bindTuplePat(elems []ast.TuplePatElem) {
+	for i := range elems {
+		r.bindTuplePatElem(&elems[i])
+	}
+}
+
+func (r *renamer) bindTuplePatElem(el *ast.TuplePatElem) {
+	if el.Name != "" {
+		el.Name = r.bindShadow(el.Name)
+	}
+	if el.AtBinding != "" {
+		el.AtBinding = r.bindShadow(el.AtBinding)
+	}
+	for i, name := range el.VariantBindings {
+		if name != "" {
+			el.VariantBindings[i] = r.bindShadow(name)
+		}
+	}
+	r.bindTuplePat(el.Nested)
+	for _, p := range el.VariantPayloads {
+		if p != nil {
+			r.bindTuplePatElem(p)
+		}
+	}
 }
 
 func (r *renamer) walkExpr(e ast.Expr) {
@@ -369,9 +416,7 @@ func (r *renamer) walkExpr(e ast.Expr) {
 		r.walkExpr(n.Tag)
 		for _, arm := range n.Arms {
 			r.pushFrame()
-			for i, name := range arm.Bindings {
-				arm.Bindings[i] = r.bindShadow(name)
-			}
+			r.bindArmPattern(arm.Bindings, &arm.AtBinding, arm.TupleElems, arm.Payloads)
 			if arm.Guard != nil {
 				r.walkExpr(arm.Guard)
 			}

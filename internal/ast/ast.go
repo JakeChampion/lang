@@ -3333,6 +3333,56 @@ type MatchExprArm struct {
 	Body    Expr
 }
 
+// Binders lists every name the arm's pattern binds: the payload binders,
+// the `@` whole-value binder, and every binder inside a tuple pattern or a
+// payload sub-pattern, at any depth. Empty slots (a payload position held
+// by a sub-pattern, a wildcard or literal tuple element) are skipped.
+func (a *MatchArm) Binders() []string {
+	return armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads)
+}
+
+// Binders mirrors MatchArm.Binders for the expression form.
+func (a *MatchExprArm) Binders() []string {
+	return armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads)
+}
+
+func armBinders(bindings []string, atBinding string, tupleElems []TuplePatElem, payloads []*TuplePatElem) []string {
+	out := appendNonEmpty(nil, bindings...)
+	out = appendNonEmpty(out, atBinding)
+	out = tuplePatBinders(out, tupleElems)
+	for _, p := range payloads {
+		if p != nil {
+			out = tuplePatBinders(out, []TuplePatElem{*p})
+		}
+	}
+	return out
+}
+
+// tuplePatBinders appends every name a tuple pattern binds, recursing into
+// nested tuples and variant / struct sub-patterns.
+func tuplePatBinders(acc []string, elems []TuplePatElem) []string {
+	for _, el := range elems {
+		acc = appendNonEmpty(acc, el.Name, el.AtBinding)
+		acc = appendNonEmpty(acc, el.VariantBindings...)
+		acc = tuplePatBinders(acc, el.Nested)
+		for _, vp := range el.VariantPayloads {
+			if vp != nil {
+				acc = tuplePatBinders(acc, []TuplePatElem{*vp})
+			}
+		}
+	}
+	return acc
+}
+
+func appendNonEmpty(acc []string, names ...string) []string {
+	for _, n := range names {
+		if n != "" {
+			acc = append(acc, n)
+		}
+	}
+	return acc
+}
+
 func (s *Block) Pos() Position                  { return s.P }
 func (s *If) Pos() Position                     { return s.P }
 func (s *While) Pos() Position                  { return s.P }

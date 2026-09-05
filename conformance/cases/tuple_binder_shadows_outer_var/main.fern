@@ -1,0 +1,85 @@
+// A match arm's pattern binder that shadows an OUTER local of the same
+// function. The IR keys a function's locals by name, so the shadow renamer
+// must give the binder a fresh name; a binder it does not rename shares the
+// outer variable's slot, and the arm's value is what the outer name reads
+// after the match (#8607: 61 where 21 was expected). Each shape contributes
+// one bit: 1 + 2 + 4 + 8 + 16 = 31.
+
+enum Box { Wrap(i32), Empty }
+enum Holder { Has(Option[i32]), Nothing }
+
+function tag(b: Box): i32 {
+    match (b) {
+        Wrap(_) => { return 1; },
+        Empty => { return 0; }
+    }
+    return 0;
+}
+
+// A tuple element binder shadows an i32.
+function flat_tuple(): i32 {
+    var x: i32 = 1;
+    var t: (i32, i32) = (5, 6);
+    var inner: i32 = 0;
+    match (t) {
+        (x, y) => { inner = x + y; }
+    }
+    return x * 10 + inner;
+}
+
+// A tuple element binder shadows a string, whose slot holds a pointer.
+function string_elem(): i32 {
+    var s: string = "ab";
+    var t: (i32, string) = (5, "xyz");
+    var n: i32 = 0;
+    match (t) {
+        (v, s) => { n = v + s.len(); }
+    }
+    return n + s.len();
+}
+
+// A binder one level down in a nested tuple pattern.
+function nested_tuple(): i32 {
+    var x: i32 = 1;
+    var t: (i32, (i32, i32)) = (2, (5, 6));
+    var inner: i32 = 0;
+    match (t) {
+        (a, (x, c)) => { inner = a + x + c; }
+    }
+    return x * 100 + inner;
+}
+
+// A payload sub-pattern's binder.
+function payload_subpattern(): i32 {
+    var x: i32 = 1;
+    var h: Holder = Has(Some(5));
+    var inner: i32 = 0;
+    match (h) {
+        Has(Some(x)) => { inner = x; },
+        _ => { inner = 0; }
+    }
+    return x * 10 + inner;
+}
+
+// The `@` whole-value binder, same type as the outer local so only the
+// slot sharing can tell them apart.
+function at_binding(): i32 {
+    var n: Box = Empty;
+    var b: Box = Wrap(5);
+    var inner: i32 = 0;
+    match (b) {
+        n @ Wrap(v) => { inner = v + tag(n); },
+        _ => { inner = 0; }
+    }
+    return inner * 10 + tag(n);
+}
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (flat_tuple() == 21) { r = r + 1; }
+    if (string_elem() == 10) { r = r + 2; }
+    if (nested_tuple() == 113) { r = r + 4; }
+    if (payload_subpattern() == 15) { r = r + 8; }
+    if (at_binding() == 60) { r = r + 16; }
+    return r;
+}

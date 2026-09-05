@@ -760,23 +760,6 @@ func freshLocalsIn(fn *ast.FuncDecl, q *summaryTable[bool], ctorFresh func(*ast.
 	return fresh
 }
 
-// tuplePatBinders lists every name a tuple pattern binds, nested elements
-// and `@` binders included.
-func tuplePatBinders(elems []ast.TuplePatElem) []string {
-	var out []string
-	for _, el := range elems {
-		out = append(out, el.Name, el.AtBinding)
-		out = append(out, el.VariantBindings...)
-		out = append(out, tuplePatBinders(el.Nested)...)
-		for _, vp := range el.VariantPayloads {
-			if vp != nil {
-				out = append(out, tuplePatBinders([]ast.TuplePatElem{*vp})...)
-			}
-		}
-	}
-	return out
-}
-
 // findReturnsFreshPairPayload reports, per function, whether every value
 // return hands back a variant whose payload box is NEWLY ALLOCATED rather
 // than a pointer the function received.
@@ -1178,15 +1161,11 @@ func shadowingNames(fn *ast.FuncDecl, info *checker.Info) map[string]bool {
 			bind(x.Name)
 		case *ast.Match:
 			for _, arm := range x.Arms {
-				bind(arm.Bindings...)
-				bind(arm.AtBinding)
-				bind(tuplePatBinders(arm.TupleElems)...)
+				bind(arm.Binders()...)
 			}
 		case *ast.MatchExpr:
 			for _, arm := range x.Arms {
-				bind(arm.Bindings...)
-				bind(arm.AtBinding)
-				bind(tuplePatBinders(arm.TupleElems)...)
+				bind(arm.Binders()...)
 			}
 		case *ast.ForEach:
 			bind(x.Var)
