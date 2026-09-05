@@ -23,10 +23,11 @@
 // compile-time constant, and a `const PAGE: string = __fern_asset(...)`
 // has to resolve during const evaluation, not after it.
 //
-// It also resolves `target_os()` to the compile target's environment
-// (Inputs.TargetOS) when the caller has one — a compile does, a bare
-// `-check` does not. The call becomes a plain string literal, so a branch
-// on it is a branch on a constant by the time the IR folds.
+// It also resolves `target_os()` and `target_arch()` to the two halves of
+// the compile target's name (Inputs.TargetOS / Inputs.TargetArch) when the
+// caller has them — a compile does, a bare `-check` does not. Each call
+// becomes a plain string literal, so a branch on one is a branch on a
+// constant by the time the IR folds.
 package constfold
 
 import (
@@ -57,6 +58,13 @@ const assetsBuiltin = "__fern_assets"
 // on; every compiled path resolves it here.
 const targetOSBuiltin = "target_os"
 
+// targetArchBuiltin is the compile target's ISA as a constant:
+// `target_arch()` reads "arm64", "x86-64" or "wasm32" — the ISA half of
+// the `-target` name, never the compiler's host. Same three answerers as
+// target_os above: the checker declares it, the interpreter answers with
+// its host, and every compiled path resolves it here.
+const targetArchBuiltin = "target_arch"
+
 // Inputs are the compile-time facts the fold substitutes into the program.
 type Inputs struct {
 	// Assets is the `-embed` bundle; nil when nothing was embedded, in which
@@ -65,6 +73,9 @@ type Inputs struct {
 	// TargetOS is the compile target's environment, what `target_os()`
 	// folds to. Empty leaves the calls alone for the checker to type.
 	TargetOS string
+	// TargetArch is the compile target's ISA, what `target_arch()` folds
+	// to. Empty leaves the calls alone, as TargetOS does.
+	TargetArch string
 }
 
 // Fold evaluates every top-level const declaration in prog, then
@@ -116,7 +127,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	// Substitute every Ident reference matching a const name with
 	// the resolved literal. Const decls are then dropped — the rest
 	// of the pipeline runs against a const-free program.
-	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS}
+	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS, targetArch: in.TargetArch}
 	for _, fn := range prog.Funcs {
 		sub.walkBlock(fn.Body)
 	}
@@ -448,18 +459,19 @@ func litType(e ast.Expr) ast.Type {
 // Unary nodes with downstream metadata; cloning the literal keeps
 // each substitution position independent.
 type substituter struct {
-	values   map[string]ast.Expr
-	assets   *embed.Set
-	targetOS string
-	errs     []error
+	values     map[string]ast.Expr
+	assets     *embed.Set
+	targetOS   string
+	targetArch string
+	errs       []error
 }
 
-// isTargetOSCall reports whether c is the zero-argument `target_os()`. A
-// call with arguments is left for the checker, whose arity error names
-// the declared signature.
-func isTargetOSCall(c *ast.Call) bool {
+// isTargetCall reports whether c is a zero-argument call of the named
+// target builtin. A call with arguments is left for the checker, whose
+// arity error names the declared signature.
+func isTargetCall(c *ast.Call, name string) bool {
 	id, ok := c.Callee.(*ast.Ident)
-	return ok && id.Name == targetOSBuiltin && len(c.Args) == 0
+	return ok && id.Name == name && len(c.Args) == 0
 }
 
 // isAssetCall reports whether c is a call of the __fern_asset builtin. It
@@ -625,8 +637,12 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 			*slot = cloneLit(v, x.P)
 		}
 	case *ast.Call:
-		if s.targetOS != "" && isTargetOSCall(x) {
+		if s.targetOS != "" && isTargetCall(x, targetOSBuiltin) {
 			*slot = &ast.StringLit{P: x.P, Value: s.targetOS}
+			return
+		}
+		if s.targetArch != "" && isTargetCall(x, targetArchBuiltin) {
+			*slot = &ast.StringLit{P: x.P, Value: s.targetArch}
 			return
 		}
 		if isAssetCall(x) {

@@ -2899,6 +2899,9 @@ type lowerOpts struct {
 	// reaches the lowering unfolded. Empty selects the pointer width's
 	// default environment (wasi for 4, linux for 8).
 	targetOS string
+	// targetArch is the ISA `target_arch()` answers with on the same
+	// terms. Empty selects the pointer width's default ISA.
+	targetArch string
 }
 
 // WithTargetOS names the environment the lowering compiles for, so an
@@ -2906,6 +2909,9 @@ type lowerOpts struct {
 // before the checker (constfold.Inputs.TargetOS) and never needs this; a
 // harness that lowers a checked program directly does.
 func WithTargetOS(os string) LowerOption { return func(o *lowerOpts) { o.targetOS = os } }
+
+// WithTargetArch is WithTargetOS for the ISA half.
+func WithTargetArch(arch string) LowerOption { return func(o *lowerOpts) { o.targetArch = arch } }
 
 // DynSupported marks the calling backend as able to lower `dyn Trait`
 // DISPATCH (boxed one-word on natives, §4.2.2). Both x86-64 and arm64
@@ -2931,18 +2937,29 @@ func EmitLineMarkers() LowerOption { return func(o *lowerOpts) { o.emitLineMarke
 // Program.CoverSites (#5548, `fern -cover`). Off by default.
 func CoverPoints() LowerOption { return func(o *lowerOpts) { o.coverPoints = true } }
 
-// targetOSFor is the environment an unfolded `target_os()` lowers to:
-// the one the caller named, else the pointer width's only default —
-// wasm32 is wasi, and a native lowering that did not say otherwise is
-// linux.
-func targetOSFor(named string, ptrW int) string {
-	if named != "" {
-		return named
+// targetName is the two halves of the compile target's name that source
+// can ask for: `target_os()` and `target_arch()`.
+type targetName struct{ os, arch string }
+
+// targetNameFor is what an unfolded `target_os()` / `target_arch()` lower
+// to: the halves the caller named, else the pointer width's only default
+// — wasm32 is wasm32-wasi, and a native lowering that did not say
+// otherwise is arm64-linux, the project's default target.
+func targetNameFor(os, arch string, ptrW int) targetName {
+	t := targetName{os: os, arch: arch}
+	if t.os == "" {
+		t.os = "linux"
+		if ptrW == 4 {
+			t.os = "wasi"
+		}
 	}
-	if ptrW == 4 {
-		return "wasi"
+	if t.arch == "" {
+		t.arch = "arm64"
+		if ptrW == 4 {
+			t.arch = "wasm32"
+		}
 	}
-	return "linux"
+	return t
 }
 
 // LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
@@ -3157,13 +3174,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		jobs = 1
 	}
 	lowered := make([]*Func, len(prog.Funcs))
-	targetOS := targetOSFor(lo.targetOS, ptrW)
+	target := targetNameFor(lo.targetOS, lo.targetArch, ptrW)
 	err := forEach(len(prog.Funcs), jobs, func(i int) error {
 		fn := prog.Funcs[i]
 		if fn.ImportIface != "" {
 			return nil
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, targetOS, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, target, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
 		if err != nil {
 			return err
 		}
@@ -5403,8 +5420,8 @@ type builder struct {
 	// statements sharing a line.
 	emitLineMarkers bool
 	lastLineMark    int
-	// targetOS is what an unfolded `target_os()` lowers to.
-	targetOS string
+	// target is what an unfolded `target_os()` / `target_arch()` lower to.
+	target targetName
 	// cover is the program-wide coverage counter table under
 	// `fern -cover`, nil otherwise; lastCoverLine dedups statements that
 	// share a line WITHIN one basic block. emit() clears it at every
@@ -5796,7 +5813,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, targetOS string, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, target targetName, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5815,7 +5832,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		ptrW:                    ptrW,
 		dynRcSupported:          dynRcSupported,
 		emitLineMarkers:         emitLineMarkers,
-		targetOS:                targetOS,
+		target:                  target,
 		cover:                   cover,
 		coverFile:               fn.SourceFile,
 		pairForm:                pairForm,
@@ -14271,13 +14288,17 @@ func (b *builder) callBody(n *ast.Call) error {
 			return b.emitCellNew(n)
 		}
 	}
-	// target_os() is a compile-time constant. The driver folds it before
-	// the check (constfold.Inputs.TargetOS); a call that still reaches the
-	// lowering becomes the literal here, so the const-if prune that
-	// follows sees the same thing either way.
-	if id.Name == "target_os" && len(n.Args) == 0 {
+	// target_os() / target_arch() are compile-time constants. The driver
+	// folds them before the check (constfold.Inputs); a call that still
+	// reaches the lowering becomes the literal here, so the const-if prune
+	// that follows sees the same thing either way.
+	if (id.Name == "target_os" || id.Name == "target_arch") && len(n.Args) == 0 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpConstStr, Str: b.targetOS})
+			lit := b.target.os
+			if id.Name == "target_arch" {
+				lit = b.target.arch
+			}
+			b.emit(Op{Kind: OpConstStr, Str: lit})
 			return nil
 		}
 	}
