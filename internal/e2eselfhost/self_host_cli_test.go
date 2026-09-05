@@ -2065,8 +2065,9 @@ function main(): i32 {
 	t.Run("emit-target-arm64", func(t *testing.T) {
 		// The driver (x86-64 host binary) emits a runnable arm64 Linux ELF
 		// directly under -target arm64-linux (in-process via arm64_native + elf.fern,
-		// no `.s` + gcc/ld); run it under qemu and check the exit code.
-		_, qemu := arm64Tooling(t) // skips if qemu absent
+		// no `.s` + gcc/ld); run it, natively or under qemu-aarch64, and check
+		// the exit code.
+		_, qemu := arm64Tooling(t) // skips only when the cross toolchain is missing
 		srcPath := filepath.Join(dir, "arm_prog.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { return 6 * 7; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -2090,7 +2091,7 @@ function main(): i32 {
 		if err := os.Chmod(progBin, 0o755); err != nil {
 			t.Fatalf("chmod: %v", err)
 		}
-		cmd := exec.Command(qemu, progBin)
+		cmd := runArm64Bin(qemu, progBin)
 		_ = cmd.Run()
 		if c := cmd.ProcessState.ExitCode(); c != 42 {
 			t.Errorf("arm64-emitted program exited %d, want 42", c)
@@ -2100,9 +2101,9 @@ function main(): i32 {
 	t.Run("emit-target-arm64-android", func(t *testing.T) {
 		// -target arm64-android emits a static position-independent (ET_DYN)
 		// arm64 ELF (in-process via arm64_native + elf.fern). The mmap'd low
-		// heap lets it run at the kernel-chosen base; check ET_DYN + exit code
-		// under qemu.
-		_, qemu := arm64Tooling(t) // skips if qemu absent
+		// heap lets it run at the kernel-chosen base; check ET_DYN + exit code,
+		// natively or under qemu-aarch64.
+		_, qemu := arm64Tooling(t) // skips only when the cross toolchain is missing
 		srcPath := filepath.Join(dir, "android_prog.fern")
 		if err := os.WriteFile(srcPath, []byte("function main(): i32 { print(\"droid\"); return 6 * 7; }\n"), 0o644); err != nil {
 			t.Fatalf("write src: %v", err)
@@ -2126,7 +2127,7 @@ function main(): i32 {
 		if err := os.Chmod(progBin, 0o755); err != nil {
 			t.Fatalf("chmod: %v", err)
 		}
-		cmd := exec.Command(qemu, progBin)
+		cmd := runArm64Bin(qemu, progBin)
 		out, _ := cmd.CombinedOutput()
 		if c := cmd.ProcessState.ExitCode(); c != 42 {
 			t.Errorf("arm64-android program exited %d, want 42 (out=%q)", c, out)

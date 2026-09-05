@@ -179,7 +179,7 @@ func TestSelfHostPerModuleCounterBSSLinkArm64(t *testing.T) {
 	if lout, err := exec.Command(armgcc, linkArgs...).CombinedOutput(); err != nil {
 		t.Fatalf("per-module arm64 link failed — a counter's .bss word is not .globl (#6058 class):\n%v\n%s", err, lout)
 	}
-	rcmd := exec.Command(qemu, bin)
+	rcmd := runArm64Bin(qemu, bin)
 	_ = rcmd.Run()
 	if code := rcmd.ProcessState.ExitCode(); code != 42 {
 		t.Errorf("cross-unit counter program exited %d, want 42 (arm64)", code)

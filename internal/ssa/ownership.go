@@ -97,7 +97,7 @@ type RCSite struct {
 	// It is a question about SSA uses, and that is NOT the same question
 	// as "is this reference count balanced". A retain can hand its count
 	// to a data structure rather than to a later use, and then the value
-	// is legitimately dead afterwards. `__map_own_key` in core/map.fern
+	// is legitimately dead afterwards. `__map_own_str_slot` in core/map.fern
 	// is the worked example:
 	//
 	//	__fern_rc_inc(__load_ptr(boxed));   // result discarded

@@ -34,6 +34,7 @@ import (
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/codegen/fdlibm"
 	"github.com/jakechampion/lang/internal/fernrt"
+	"github.com/jakechampion/lang/internal/fernstring"
 	"github.com/jakechampion/lang/internal/ir"
 	nativearm64 "github.com/jakechampion/lang/internal/native/arm64"
 	"github.com/jakechampion/lang/internal/platforms"
@@ -3503,85 +3504,84 @@ func (g *generator) emitStrcatRuntime() {
 // emitStrcatRuntime2W is the two-word-ABI variant of
 // emitStrcatRuntime. Signature: `__fern_strcat(a_data, a_len,
 // b_data, b_len)` in (x0, x1, x2, x3). Returns (data, len) in
-// (x0, x1).
-//
-// Always uses heap-form output (no inline-form
-// optimisation yet — that's a follow-up commit). Trade-off:
-// short concats allocate; in exchange the body is simple +
-// the inline-form encoding can be added incrementally.
-//
-// Empty-result short-circuit: when both byte lengths are 0,
-// return the canonical empty-string pair (data=0, len=`1<<63`)
-// without allocating.
+// (x0, x1): the canonical empty pair (data=0, len=`1<<63`) when
+// both operands are empty, the inline form when the result fits
+// the 15-byte cap (`fernstring.PackInlineNative`'s layout), and
+// otherwise a fresh rc-headered heap buffer.
 func (g *generator) emitStrcatRuntime2W() {
-	// Frame: fp/lr (16) + 4× callee-saves (x19..x22) for the
-	// (data, len) pair of each operand across __fern_alloc /
-	// __fern_memcpy (32) + 2× callee-saves (x23..x24) for
-	// byte lengths + dst (16) + 2× 16-byte scratch slots for
-	// emitStrDataPtr2W inline spill (32) + 16 align = 112.
-	g.emit("stp x29, x30, [sp, #-112]!")
+	// Frame layout, as offsets from x29:
+	//   [0..15]    fp / lr
+	//   [16..63]   x19..x24
+	//   [64..79]   emitStrDataPtr2W spill slot for a
+	//   [80..95]   emitStrDataPtr2W spill slot for b
+	//   [96..103]  heap dst across the __fern_memcpy calls
+	//   [104..119] inline output buffer
+	//   [120..127] padding
+	g.emit("stp x29, x30, [sp, #-128]!")
 	g.emit("mov x29, sp")
 	g.emit("stp x19, x20, [sp, #16]")
 	g.emit("stp x21, x22, [sp, #32]")
 	g.emit("stp x23, x24, [sp, #48]")
-	// Spill the (data, len) pairs into callee-save regs so
-	// they survive the bl calls below.
-	g.emit("mov x19, x0") // a_data
-	g.emit("mov x20, x1") // a_len
-	g.emit("mov x21, x2") // b_data
-	g.emit("mov x22, x3") // b_len
-	// Extract byte lengths.
+	g.emit("mov x19, x0")        // a_data
+	g.emit("mov x20, x1")        // a_len
+	g.emit("mov x21, x2")        // b_data
+	g.emit("mov x22, x3")        // b_len
 	g.emitStrLen2W("w23", "x20") // x23 = a byte length
 	g.emitStrLen2W("w24", "x22") // x24 = b byte length
-	// Total byte length in w0.
 	g.emit("add w0, w23, w24")
-	// Short-circuit on combined length 0.
-	g.emit("cbnz w0, .Lstrcat2w_alloc")
+	g.emit("cbnz w0, .Lstrcat2w_nonempty")
 	g.emit("mov x0, xzr")
-	g.emit("movz x1, #0x8000, lsl #48") // inline-flag, length 0
+	g.emit("movz x1, #0x8000, lsl #48")
 	g.emit("b .Lstrcat2w_ret")
-	g.label(".Lstrcat2w_alloc")
-	// Allocate the destination buffer via the rc-headered allocator
-	// so the result carries a live rc=1 at data-8 and its payload
-	// size at data-4. Under Slice 2 these heap strings are rc-tracked
-	// (str_inc on aliases, str_dec on drops) and both helpers read
-	// [data-8] / [data-4]; a raw __fern_alloc buffer has no such
-	// header, so retaining a fresh concat (e.g. id(("a" + localStr)))
-	// read the word before the allocation and SIGSEGV'd. alloc_rc1
-	// adds the 8-byte header itself and returns data = base+8, so the
-	// memcpy offsets below are unchanged.
+	g.label(".Lstrcat2w_nonempty")
+	g.emit("cmp w0, #%d", fernstring.InlineCap(8))
+	g.emit("b.gt .Lstrcat2w_heap")
+	// Inline form: memcpy both operands into the zeroed 16-byte
+	// buffer, load it as the (data, len) pair, and stamp the length
+	// nibble and flag into len's top byte. At most 15 bytes are
+	// written, so that byte is still clear.
+	g.emit("stp xzr, xzr, [x29, #104]")
+	g.emitStrDataPtr2W("x4", "x19", "x20", 64)
+	g.emit("add x0, x29, #104")
+	g.emit("mov x1, x4")
+	g.emit("mov x2, x23")
+	g.emit("bl __fern_memcpy")
+	g.emitStrDataPtr2W("x4", "x21", "x22", 80)
+	g.emit("add x0, x29, #104")
+	g.emit("add x0, x0, x23")
+	g.emit("mov x1, x4")
+	g.emit("mov x2, x24")
+	g.emit("bl __fern_memcpy")
+	g.emit("ldp x0, x1, [x29, #104]")
+	g.emit("add w2, w23, w24")
+	g.emit("orr w2, w2, #0x80")
+	g.emit("lsl x2, x2, #56")
+	g.emit("orr x1, x1, x2")
+	g.emit("b .Lstrcat2w_ret")
+	g.label(".Lstrcat2w_heap")
+	// x0 still holds the total. The rc-headered allocator gives the
+	// result the rc at data-8 and payload size at data-4 that
+	// __fern_str_inc / __fern_str_dec read.
 	g.emit("bl __fern_alloc_rc1")
-	g.emit("mov x2, x0") // x2 = dst (temporary; clobbered by next call's args)
-	// Reserve dst in a stable callee-save by reusing x19 (we
-	// no longer need a_data as a single register since we'll
-	// re-extract via emitStrDataPtr2W). But we DO need a_data
-	// for the inline-spill path. Plan B: stash dst at
-	// [x29+96], use scratch slots at [x29+64..+79] (a) and
-	// [x29+80..+95] (b).
-	g.emit("str x2, [x29, #96]")
-	// Materialise a's byte pointer.
-	g.emitStrDataPtr2W("x4", "x19", "x20", 64) // x4 = a byte ptr; spill at [x29+64]
-	// memcpy(dst, a_data, a_byteLen).
-	g.emit("ldr x0, [x29, #96]") // x0 = dst
-	g.emit("mov x1, x4")         // src = a byte ptr
-	g.emit("mov x2, x23")        // n = a_byteLen
-	g.emit("bl __fern_memcpy")
-	// Materialise b's byte pointer.
-	g.emitStrDataPtr2W("x4", "x21", "x22", 80) // x4 = b byte ptr; spill at [x29+80]
-	// memcpy(dst + a_byteLen, b_data, b_byteLen).
+	g.emit("str x0, [x29, #96]")
+	g.emitStrDataPtr2W("x4", "x19", "x20", 64)
 	g.emit("ldr x0, [x29, #96]")
-	g.emit("add x0, x0, x23") // dst + a_byteLen
-	g.emit("mov x1, x4")      // src = b byte ptr
-	g.emit("mov x2, x24")     // n = b_byteLen
+	g.emit("mov x1, x4")
+	g.emit("mov x2, x23")
 	g.emit("bl __fern_memcpy")
-	// Return (dst, total_byteLen) in (x0, x1).
+	g.emitStrDataPtr2W("x4", "x21", "x22", 80)
+	g.emit("ldr x0, [x29, #96]")
+	g.emit("add x0, x0, x23")
+	g.emit("mov x1, x4")
+	g.emit("mov x2, x24")
+	g.emit("bl __fern_memcpy")
 	g.emit("ldr x0, [x29, #96]")
 	g.emit("add w1, w23, w24")
 	g.label(".Lstrcat2w_ret")
 	g.emit("ldp x23, x24, [sp, #48]")
 	g.emit("ldp x21, x22, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
-	g.emit("ldp x29, x30, [sp], #112")
+	g.emit("ldp x29, x30, [sp], #128")
 	g.emit("ret")
 	g.sizeDirective("__fern_strcat")
 	g.line(".ltorg")
@@ -3788,11 +3788,8 @@ func (g *generator) emitMemchrRuntime() {
 	// + 16 alignment padding = 48.
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
-	g.emit("mov x4, x0") // data word
-	g.emit("mov x5, x1") // length word
-	// Order matters: emitStrLen2W OVERWRITES its source register on the
-	// inline path (ubfx lenX, lenX, ...), so the data pointer has to be
-	// materialised while the length word is still intact.
+	g.emit("mov x4, x0")                     // data word
+	g.emit("mov x5, x1")                     // length word
 	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
 	g.emitStrLen2W("w6", "x5")               // w6 = byte length
 	// Clamp `from` into [0, len]; at or past the end finds nothing.
@@ -3880,10 +3877,8 @@ func (g *generator) emitRmemchrRuntime() {
 	g.label("__fern_rmemchr")
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
-	g.emit("mov x4, x0") // data word
-	g.emit("mov x5, x1") // length word
-	// Order matters as in __memchr: emitStrLen2W overwrites its source on
-	// the inline path, so materialise the pointer first.
+	g.emit("mov x4, x0")                     // data word
+	g.emit("mov x5, x1")                     // length word
 	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
 	g.emitStrLen2W("w6", "x5")               // w6 = byte length
 	// A byte outside 0..255 can never occur; one unsigned compare covers
@@ -3988,10 +3983,8 @@ func (g *generator) emitCountByteRuntime() {
 	g.label("__fern_count_byte")
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
-	g.emit("mov x4, x0") // data word
-	g.emit("mov x5, x1") // length word
-	// Order matters as in __memchr: emitStrLen2W overwrites its source on
-	// the inline path, so materialise the pointer first.
+	g.emit("mov x4, x0")                     // data word
+	g.emit("mov x5, x1")                     // length word
 	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
 	g.emitStrLen2W("w6", "x5")               // w6 = byte length
 	g.emit("mov w0, #0")                     // running count
@@ -4070,11 +4063,8 @@ func (g *generator) emitAsciiRunRuntime() {
 	// [x29+16] + alignment padding.
 	g.emit("stp x29, x30, [sp, #-48]!")
 	g.emit("mov x29, sp")
-	g.emit("mov x4, x0") // data word
-	g.emit("mov x5, x1") // length word
-	// Order matters, as in __memchr: emitStrLen2W overwrites its source on
-	// the inline path, so materialise the pointer while the length word is
-	// still intact.
+	g.emit("mov x4, x0")                     // data word
+	g.emit("mov x5, x1")                     // length word
 	g.emitStrDataPtr2W("x7", "x4", "x5", 16) // x7 = byte pointer
 	g.emitStrLen2W("w6", "x5")               // w6 = byte length
 	// Clamp `from` into [0, len]; at or past the end the answer is len.
@@ -4166,10 +4156,8 @@ func (g *generator) emitStrordRuntime2W() {
 	// inline-spill scratch slots + alignment.
 	g.emit("stp x29, x30, [sp, #-64]!")
 	g.emit("mov x29, sp")
-	g.emit("mov x4, x1") // save a_len word
-	g.emit("mov x5, x3") // save b_len word
-	g.emitStrLen2W("w6", "x4")
-	g.emitStrLen2W("w7", "x5")
+	g.emitStrLen2W("w6", "x1")
+	g.emitStrLen2W("w7", "x3")
 	// x2 / x3 still hold b_data / b_len here, so the byte lengths
 	// stay in w6 / w7 until both pointers are materialised.
 	g.emitStrDataPtr2W("x0", "x0", "x1", 16)
@@ -4301,10 +4289,8 @@ func (g *generator) emitStrcmpRuntime2W() {
 	g.emit("beq .Lscmp2w_eq")
 	g.label(".Lscmp2w_check_len")
 	// Extract byte lengths.
-	g.emit("mov x4, x1")       // save a_len
-	g.emit("mov x5, x3")       // save b_len
-	g.emitStrLen2W("w6", "x4") // w6 = a byte length
-	g.emitStrLen2W("w7", "x5") // w7 = b byte length
+	g.emitStrLen2W("w6", "x1") // w6 = a byte length
+	g.emitStrLen2W("w7", "x3") // w7 = b byte length
 	g.emit("cmp w6, w7")
 	g.emit("bne .Lscmp2w_neq")
 	// Same length → materialise both byte pointers.
@@ -5529,8 +5515,8 @@ func (g *generator) emitStrBufRuntime() {
 		g.emit("stp x19, x20, [sp, #16]")
 		g.emit("mov x19, x0")                       // a_data
 		g.emit("mov x20, x1")                       // a_len-with-tag
-		g.emitStrLen2W("w20", "x20")                // w20 = byte length (untagged)
 		g.emitStrDataPtr2W("x19", "x19", "x20", 32) // x19 = byte ptr (after SSO spill if needed)
+		g.emitStrLen2W("w20", "x20")                // w20 = byte length (untagged)
 		// dst = strbuf_data + strbuf_len
 		g.adrpAdd("x2", "__fern_strbuf_len")
 		g.emit("ldr x3, [x2]")
@@ -7562,14 +7548,12 @@ func (g *generator) emitRandomI32Runtime() {
 // `(data_ptr, len)` aliasing the receiver string's bytes.
 //
 // arm64 always runs the two-word string ABI (arm64.Emit forces
-// `TwoWordOverride`), so the receiver already arrives as
-// (x0=data, x1=len) — exactly __fern_slice_make's argument shape.
-// The header aliases the source bytes (heap or .rodata for
-// literals); no copy is needed, so we tail-call slice_make. This is
-// genuinely zero-copy even for a .rodata literal in a PIE shared
-// object, because __fern_slice_make now stores the full 8-byte data
-// pointer (the earlier 32-bit slice field truncated high addresses;
-// superseded by the 64-bit slice header).
+// `TwoWordOverride`), so the receiver arrives as (x0=data, x1=len),
+// which is __fern_slice_make's argument shape. A heap-form string
+// (heap or .rodata literal) is aliased zero-copy: __fern_slice_make
+// stores the full 8-byte data pointer. An inline-form string has no
+// address, so its bytes are first copied into a fresh __fern_alloc
+// buffer, as the x86-64 and wasm helpers do.
 func (g *generator) emitStringAsBytesRuntime() {
 	g.line("")
 	g.line(".global __method_string_as_bytes")
@@ -7582,7 +7566,25 @@ func (g *generator) emitStringAsBytesRuntime() {
 		// rather than emit silently-wrong asm (mirrors syscall()).
 		panic("arm64 __method_string_as_bytes: single-word string ABI unsupported")
 	}
-	// (x0=data, x1=len) → __fern_slice_make(data, len) → header.
+	g.emit("tbnz x1, #63, .Lasbytes2w_inline")
+	g.emit("b __fern_slice_make")
+	g.label(".Lasbytes2w_inline")
+	// Frame: fp/lr (16) + x19/x20 (16) + the 16 spilled inline bytes.
+	g.emit("stp x29, x30, [sp, #-48]!")
+	g.emit("mov x29, sp")
+	g.emit("stp x19, x20, [sp, #16]")
+	g.emit("stp x0, x1, [x29, #32]")
+	g.emitStrLen2W("w19", "x1") // x19 = byte length
+	g.emit("mov w0, w19")
+	g.emit("bl __fern_alloc")
+	g.emit("mov x20, x0") // x20 = promoted buffer
+	g.emit("add x1, x29, #32")
+	g.emit("mov x2, x19")
+	g.emit("bl __fern_memcpy")
+	g.emit("mov x0, x20")
+	g.emit("mov w1, w19")
+	g.emit("ldp x19, x20, [sp, #16]")
+	g.emit("ldp x29, x30, [sp], #48")
 	g.emit("b __fern_slice_make")
 	g.sizeDirective("__method_string_as_bytes")
 	g.line(".ltorg")
@@ -8571,8 +8573,7 @@ func (g *generator) emitRemoveFileRuntime() {
 	g.emit("mov x19, x0") // path_data (original, for io_error)
 	g.emit("mov x20, x1") // path_len (original, for io_error)
 	g.emitStrDataPtr2W("x21", "x19", "x20", 48)
-	g.emit("mov x22, x20")
-	g.emitStrLen2W("w22", "x22") // w22 = byte length
+	g.emitStrLen2W("w22", "x20") // w22 = byte length
 	g.emitNulTermPath2W("x21", "x21", "x22")
 	// unlinkat(AT_FDCWD, pathz, 0)
 	g.atFdcwd("x0")
@@ -8643,8 +8644,7 @@ func (g *generator) emitCreateDirAllRuntime() {
 	g.emit("mov x19, x0") // path_data (original, for io_error)
 	g.emit("mov x20, x1") // path_len (original, for io_error)
 	g.emitStrDataPtr2W("x21", "x19", "x20", 64)
-	g.emit("mov x22, x20")
-	g.emitStrLen2W("w22", "x22") // w22 = byte length
+	g.emitStrLen2W("w22", "x20") // w22 = byte length
 	g.emitNulTermPath2W("x21", "x21", "x22")
 	// Parents: every '/' at index 1..len-1 that is not itself
 	// preceded by one. Index 0 is skipped so a leading '/' does not
@@ -8739,8 +8739,7 @@ func (g *generator) emitTempDirRuntime() {
 	g.emit("mov x19, x0")                       // prefix_data (original, for io_error)
 	g.emit("mov x20, x1")                       // prefix_len (original, for io_error)
 	g.emitStrDataPtr2W("x25", "x19", "x20", 72) // x25 = prefix byte ptr
-	g.emit("mov x24, x20")
-	g.emitStrLen2W("w24", "x24") // w24 = prefix byte length
+	g.emitStrLen2W("w24", "x20")                // w24 = prefix byte length
 	// The prefix names a directory, not a path: a '/' in it would
 	// steer the result out of the temp root, since the bytes are
 	// concatenated straight into "/tmp/<prefix>-<ns>".
@@ -8886,8 +8885,7 @@ func (g *generator) emitReadDirRuntime() {
 	g.emit("mov x19, x0") // path_data (original, for io_error)
 	g.emit("mov x20, x1") // path_len (original, for io_error)
 	g.emitStrDataPtr2W("x21", "x19", "x20", 80)
-	g.emit("mov x22, x20")
-	g.emitStrLen2W("w22", "x22") // w22 = path byte length
+	g.emitStrLen2W("w22", "x20") // w22 = path byte length
 	g.emitNulTermPath2W("x21", "x21", "x22")
 	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)
 	g.atFdcwd("x0")
@@ -9090,8 +9088,7 @@ func (g *generator) emitStatLikeRuntime(sym string, atFlags int, lp string) {
 	g.emit("mov x19, x0") // path_data (original, for io_error)
 	g.emit("mov x20, x1") // path_len (original, for io_error)
 	g.emitStrDataPtr2W("x21", "x19", "x20", 72)
-	g.emit("mov x22, x20")
-	g.emitStrLen2W("w22", "x22")
+	g.emitStrLen2W("w22", "x20")
 	g.emitNulTermPath2W("x21", "x21", "x22")
 	// fstatat(AT_FDCWD, pathz, statbuf, atFlags)
 	g.atFdcwd("x0")
@@ -9181,8 +9178,7 @@ func (g *generator) emitRemoveDirAllRuntime() {
 	g.emit("mov x20, x0") // path_data (original, for io_error)
 	g.emit("mov x21, x1") // path_len (original, for io_error)
 	g.emitStrDataPtr2W("x19", "x20", "x21", 80)
-	g.emit("mov x22, x21")
-	g.emitStrLen2W("w22", "x22")
+	g.emitStrLen2W("w22", "x21")
 	g.emitNulTermPath2W("x19", "x19", "x22") // x19 = pathz
 	// openat(AT_FDCWD, pathz, O_RDONLY|O_DIRECTORY, 0)
 	g.atFdcwd("x0")
@@ -11770,6 +11766,19 @@ func ccallFloatRetWidth(name string) int {
 	return 0
 }
 
+// regX maps a 32-bit register name to its 64-bit alias:
+// `w0` → `x0`; `wzr` → `xzr`. Inverse of regW.
+func regX(rW string) string {
+	switch rW {
+	case "wzr":
+		return "xzr"
+	}
+	if len(rW) >= 2 && rW[0] == 'w' {
+		return "x" + rW[1:]
+	}
+	return rW
+}
+
 // regW maps a 64-bit register name to its 32-bit counterpart.
 // `x0` → `w0`; `xzr` → `wzr`. Used by emitStrLen for the
 // `ubfx wD, wS, #1, #3` length-extraction operand-size match
@@ -11886,13 +11895,11 @@ func (g *generator) emitStrEmpty(dstX string) {
 //     hold the byte length verbatim. `mov dstW, wN` puts them
 //     in dstW.
 //   - inline form (bit 63 set): `lenX` bits 56..59 hold the
-//     length nibble (0..15, matching the 15-byte cap for
-//     wasm32-incompatible inline strings on natives). `ubfx`
+//     length nibble (0..15, the native inline cap). `ubfx`
 //     extracts the nibble.
 //
-// Matches `fernstring.LengthNative` exactly. Dead today (no
-// IR site emits two-word strings for natives yet); will become
-// the live helper when the arm64 flip activates.
+// Matches `fernstring.LengthNative` exactly. lenX is preserved,
+// so a caller can still hand it to emitStrDataPtr2W afterwards.
 //
 // The "2W" suffix marks this as the two-word variant; the
 // legacy single-register `emitStrLen` lives alongside until
@@ -11907,24 +11914,23 @@ func (g *generator) emitStrLen2W(dstW, lenX string) {
 	g.emit("mov %s, %s", dstW, regW(lenX))
 	g.emit("b %s", doneLbl)
 	g.label(inlineLbl)
-	// Inline form: length nibble at bits 56..59 of lenX. Result
-	// fits in 4 bits → 32-bit reg holds it; use w-form ubfx via
-	// the x-source-with-w-dst encoding (`ubfx wD, xN<31:0>, ...`
-	// is invalid — the source must match destination width).
-	// Compute in xtmp first, then alias as wD.
-	g.emit("ubfx %s, %s, #56, #4", lenX, lenX) // overwrites lenX with the nibble
-	g.emit("mov %s, %s", dstW, regW(lenX))
+	// A bit-field op needs both operands the same width, so extract
+	// into dstW's 64-bit alias; the nibble leaves its upper bits zero.
+	g.emit("ubfx %s, %s, #56, #4", regX(dstW), lenX)
 	g.label(doneLbl)
 }
 
-// emitNulTermPath2W allocates `lenX + 1` bytes on the bump heap,
-// memcpys `lenX` bytes from `dataX`, and writes a trailing NUL —
+// emitNulTermPath2W allocates `len + 1` bytes on the bump heap,
+// memcpys `len` bytes from `dataX`, and writes a trailing NUL,
 // producing a NUL-terminated C string in `dstX` suitable for
-// passing as the path argument to openat / etc.
+// passing as the path argument to openat / etc. `lenX` is the
+// string's len word: either form is accepted, so a caller may pass
+// the raw word straight from the ABI or a byte length it already
+// extracted (a byte length IS a heap-form len word).
 //
 // The two-word string ABI carries (data, len) with no trailing
 // NUL, and the bump heap leaves no zero pad between adjacent
-// same-16-byte-aligned allocations — so if `lenX` is 0 mod 16
+// same-16-byte-aligned allocations, so if `len` is 0 mod 16
 // (e.g. "examples/tests/strings_test.fern" is 32 bytes) the
 // byte after the path data is the first byte of the next
 // allocation. The kernel happily reads past the intended end
@@ -11945,16 +11951,16 @@ func (g *generator) emitNulTermPath2W(dstX, dataX, lenX string) {
 	// register; the `mov dstX, x0` after alloc would otherwise
 	// clobber the byte pointer before the memcpy load).
 	g.emit("str %s, [sp, #-16]!", dataX)
-	g.emit("mov x0, %s", lenX)
+	g.emitStrLen2W("w0", lenX)
 	g.emit("add x0, x0, #1")
 	g.emit("bl __fern_alloc")
 	g.emit("mov %s, x0", dstX)
 	g.emit("mov x0, %s", dstX)
 	g.emit("ldr x1, [sp], #16") // restore src into x1 for memcpy
-	g.emit("mov x2, %s", lenX)
+	g.emitStrLen2W("w2", lenX)
 	g.emit("bl __fern_memcpy")
-	g.emit("mov w9, #0")
-	g.emit("strb w9, [%s, %s]", dstX, lenX)
+	g.emitStrLen2W("w9", lenX)
+	g.emit("strb wzr, [%s, x9]", dstX)
 }
 
 // emitStrDataPtr2W is the two-word-ABI counterpart of
@@ -11972,8 +11978,6 @@ func (g *generator) emitNulTermPath2W(dstX, dataX, lenX string) {
 // `scratchOff` must point at a 16-byte caller-reserved slot;
 // 16 vs 8 is the only layout difference from the single-
 // register `emitStrDataPtr`.
-//
-// Dead today; live after the arm64 flip.
 func (g *generator) emitStrDataPtr2W(dstX, dataX, lenX string, scratchOff int) {
 	id := g.labelN
 	g.labelN++
@@ -14651,14 +14655,13 @@ func (g *generator) emitOp(op ir.Op, frameSize int, retLabel string, scope *[]ir
 			target = "__fern_random_i32"
 			g.usesRandomI32 = true
 		case "__method_string_as_bytes":
-			// s.as_bytes(): non-copying (data, len) → slice<u8>
-			// header. Under the two-word ABI the receiver already
-			// arrives as (data, len); the helper just builds a
-			// slice header aliasing those bytes.
+			// s.as_bytes(): (data, len) → slice<u8> header aliasing
+			// the bytes; an inline-form receiver is copied out first.
 			target = "__method_string_as_bytes"
 			g.usesAsBytes = true
 			g.usesSliceMake = true
 			g.usesAlloc = true
+			g.usesMemcpy = true
 		}
 		// Compute the effective operand-stack slot count for
 		// the call: under the two-word ABI, each string arg

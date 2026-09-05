@@ -231,12 +231,7 @@ func TestSelfHostArrayElemTypeStrideArm64(t *testing.T) {
 			if out, cerr := runX86_64Bin(runner, fernBin, "-target", "arm64-linux", mainPath, stdlibRoot, "-o", binPath).CombinedOutput(); cerr != nil {
 				t.Fatalf("compile: %v (%s)", cerr, out)
 			}
-			var rcmd *exec.Cmd
-			if qemu == "" {
-				rcmd = exec.Command(binPath)
-			} else {
-				rcmd = exec.Command(qemu, binPath)
-			}
+			rcmd := runArm64Bin(qemu, binPath)
 			_ = rcmd.Run()
 			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
 				t.Fatalf("program did not exit normally for %q", tc.name)

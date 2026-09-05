@@ -34,8 +34,15 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	// Golden report — locks kind_count, the full-table bijection (all 196 ids
 	// round-trip), the extension-tag sweep (the 37 registered ids beyond
 	// kind_count(), struct_copy=198 … lstat=236 — #5452's skew
-	// left them unrendered by kind_name), the KIND_INVALID sentinels, a few stable ids,
-	// and every classifier predicate's answer on representative kinds.
+	// left them unrendered by kind_name), the negative sweep (14 near-miss tags
+	// that must all be KIND_INVALID, probing kind_id's (length, first byte)
+	// narrowing from the other side), the KIND_INVALID sentinels, a few stable
+	// ids, and every classifier predicate's answer on representative kinds.
+	//
+	// The two sweeps together name EVERY tag kind_id knows — the 196 dense ids
+	// via kind_name, the 37 extension tags by name — so the round trip this
+	// pins is exhaustive. An id that moved would fail here whatever else went
+	// green.
 	//
 	// ext_ok and tag_consistency move together whenever an extension op is
 	// added: both count entries in ir_kind_run.fern's sweep lists, and the
@@ -46,6 +53,8 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"bijection_failures=0\n" +
 		"ext_ok=37\n" +
 		"ext_failures=0\n" +
+		"neg_ok=14\n" +
+		"neg_failures=0\n" +
 		"unknown_id=0\n" +
 		"id0=invalid\n" +
 		"oob=invalid\n" +
@@ -75,9 +84,11 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	if got := string(out); got != want+string(table) {
 		t.Errorf("kind registry report mismatch:\n--- got ---\n%s\n--- want ---\n%s%s", got, want, table)
 	}
-	// Exit code is the bijection-failure count — 0 proves the whole 196-entry
-	// table round-tripped, an independent check of the report's bijection_ok.
+	// Exit code totals the failures of all four sweeps — bijection over the
+	// dense ids, over the ext ids, the negative sweep, and the tag census. 0
+	// proves every one of the 233 tags round-tripped AND that no near miss
+	// resolved, an independent check of the report's own _ok flags.
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("ir_kind_run exit code = %d, want 0 (bijection failures)", code)
+		t.Errorf("ir_kind_run exit code = %d, want 0 (total failures across the four sweeps)", code)
 	}
 }

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# pre-push — the cheap lint gates, before a slip costs a CI round trip.
+#
+# Installed per clone by `make hooks` (core.hooksPath). Runs the part of
+# `make lint-all` that finishes in seconds and fails CI most often;
+# check-sources, deadcode and freeze stay in CI's lint lane. Keeps going after
+# a failure and reports the set, like lint-all. `git push --no-verify` skips it.
+set -uo pipefail
+
+# A push that only deletes refs has nothing to lint.
+deleting_only=yes
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  case "$local_sha" in
+    0000000000000000000000000000000000000000) ;;
+    *) deleting_only=no ;;
+  esac
+done
+[ "$deleting_only" = no ] || exit 0
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+status=0
+for gate in "go build ./..." "go vet ./..." "make gofmt-check" "make fmt-check" \
+            "make actionlint" "make testnames"; do
+  echo "pre-push ==> $gate"
+  if ! sh -c "$gate"; then echo "pre-push FAILED: $gate"; status=1; fi
+done
+if [ "$status" -ne 0 ]; then
+  echo "pre-push: fix the failures above, or 'git push --no-verify' to push anyway" >&2
+fi
+exit $status

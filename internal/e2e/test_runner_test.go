@@ -959,8 +959,9 @@ func TestRunnerCryptoExamplePasses(t *testing.T) {
 // parser (#4385 item 1): valued options in --long V / --long=V / -short V
 // forms, boolean flags, positional operands, the `--` terminator, the
 // value_or default, the error paths (unknown option / missing value /
-// value on a bool), and auto-usage. This is the interp oracle; std/cli
-// also rides the self-host IR differential (selfHostStdTestCases).
+// value on a bool), auto-usage, subcommands, and the completion generators.
+// This is the interp oracle; std/cli also rides the self-host IR differential
+// (selfHostStdTestCases).
 func TestRunnerCliExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "examples/tests/cli_test.fern")
@@ -968,7 +969,7 @@ func TestRunnerCliExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/cli", "# pass 19", "# fail 0", "1..19"} {
+	for _, w := range []string{"# Suite: std/cli", "# pass 29", "# fail 0", "1..29"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

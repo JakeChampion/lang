@@ -87,7 +87,16 @@ Design a real comptime only when at least one of:
   (format strings, route patterns) badly enough that runtime
   checking is a measured cost;
 - the self-host compiler itself would delete significant code by
-  computing tables at compile time.
+  computing tables at compile time;
+- a declarative spec that is fully known at compile time is measured
+  to cost at startup. `std/cli` is the concrete case: a `CliSpec` is
+  built by a chain of calls on every run and then walked to parse
+  argv or generate completions, when the whole thing could fold to a
+  static table — jdx's `usage` makes exactly
+  that argument for its parsers. Startup-bound tools (`true`, `echo`
+  in `coreutils/`) are where the cost would show; measure it against
+  their budget before reaching for comptime, and treat it as a data
+  point, not a trigger on its own.
 
 Until then: `@derive` for API synthesis, monomorphisation for
 type-level genericity, `internal/constfold` for value folding,
