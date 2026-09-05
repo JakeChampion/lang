@@ -4076,6 +4076,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
         // does not depend on where its literals land program-wide (#5331).
         parts = parts.append("    global.get " + str_base_global(ns) + "\n    i32.const "
             + util.i32_to_string(offset_of_value(str_vals, o.str) - str_region_base()) + "\n    i32.add\n");
+    } else if (o.kind_tag == 101) {  // str_index
+        parts = emit_wasm_str_index(arrtmp, bctmp, parts);
     } else if (ir.is_str_op_kind(o.kind_tag)) {
         parts = parts.append(emit_str_op_wat(o));
     } else if (o.kind_tag == 96) {  // arr_slice
@@ -4246,10 +4248,6 @@ function emit_str_op_wat(o: ir.Op): string {
     if (o.kind_tag == 97) {  // str_len
         // stack: block ptr -> i32.load(ptr)  (len @ +0)
         return "    i32.load\n";
-    }
-    if (o.kind_tag == 101) {  // str_index
-        // stack: block ptr, idx -> i32.load8_u(ptr + 4 + idx)  (bytes @ +4)
-        return "    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n";
     }
     if (o.kind_tag == 102) {  // str_slice
         // stack: src, start, end -> $__fern_substr(src, start, end) copies the
@@ -12028,6 +12026,24 @@ function emit_wasm_arr_get(arrtmp: i32, bctmp: i32, o: ir.Op, parts: string[]): 
         parts = parts.append("    i32.const 4\n    i32.mul\n    i32.const 8\n    i32.add\n    i32.add\n    i32.load\n");
     }
 
+    return parts;
+}
+
+// emit_wasm_str_index emits `s[i]` as a bounds-checked byte read.
+//
+// stack: block ptr, idx -> i32.load8_u(ptr + 4 + idx), with the index checked
+// against the length first. A wasm string block is `[len@0][bytes@4]`, the same
+// length prefix an array carries, so wasm_arr_bounds_check applies unchanged —
+// one unsigned `len <= idx` catches both a negative index and one past the end,
+// and traps (exit 134) as the other two tiers do (#8483).
+//
+// It lives here rather than in emit_str_op_wat because the check needs a
+// scratch local to hold the index across the compare, and that emitter is a
+// plain Op-to-string with none. arr_get reads the same two locals.
+function emit_wasm_str_index(arrtmp: i32, bctmp: i32, parts: string[]): string[] {
+    parts = parts.append("    local.set " + util.i32_to_string(bctmp) + "\n");
+    parts = parts.append(wasm_arr_bounds_check(arrtmp, bctmp));
+    parts = parts.append("    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n");
     return parts;
 }
 
