@@ -1,0 +1,246 @@
+// coreutils/lib/gnu.fern — the conventions every utility in this
+// directory shares with GNU coreutils.
+//
+// The utilities here are held to byte-for-byte parity with GNU
+// coreutils on stdout, stderr and exit status (docs/COREUTILS.md), so
+// the shapes below are not house style — each one is a GNU behaviour
+// measured against the reference binary and then reproduced:
+//
+//   - Diagnostics are prefixed with argv[0] EXACTLY as invoked,
+//     directories included: `/usr/bin/yes: invalid option -- 'x'`.
+//     gnulib's set_program_name keeps the whole string, so a utility
+//     that prints a basename diverges the moment it is run by path.
+//   - A usage error prints one line naming the fault, then the
+//     `Try '<argv[0]> --help' for more information.` line, and exits
+//     with the utility's usage status (1 for most, 2 for sort/expr/…).
+//     The full help text is NEVER printed on the error path.
+//   - The two long options every utility answers are matched by
+//     UNIQUE PREFIX, so `--vers` is `--version` and `--h` is `--help`.
+//
+// Error TEXT is glibc's, not ours: the strings in `io_error_text`
+// below are what `strerror` returns, because that is what GNU prints.
+//
+// Nothing here was copied from GNU sources; the behaviours were
+// measured from the reference binaries and reimplemented.
+import "std/string";
+import "std/array";
+
+// `prog()` — the program name diagnostics are prefixed with: argv[0]
+// verbatim (see the header). Empty when argv is empty, which only
+// happens under an exec that passes no argv at all.
+pub function prog(): string {
+  var argv: string[] = args();
+  if (argv.len() == 0) {
+    return "";
+  }
+  return argv[0];
+}
+
+// `version()` — the version this build of the utilities reports.
+//
+// Deliberately NOT a GNU coreutils version: these are a different
+// implementation, and claiming GNU's number would make the one output
+// that identifies the program lie about which program it is.
+pub function version(): string {
+  return "0.1";
+}
+
+// `error(msg)` — one diagnostic line on stderr, GNU-prefixed.
+pub function error(msg: string): void {
+  eprint(prog() + ": " + msg);
+}
+
+// `try_help(status)` — the trailing line of every usage error, then
+// exit. Split out because a few utilities emit it with no preceding
+// message of their own.
+pub function try_help(status: i32): void {
+  eprint("Try '" + prog() + " --help' for more information.");
+  exit(status);
+}
+
+// `die_usage(msg, status)` — the whole usage-error path: the fault,
+// the `Try …` line, exit.
+pub function die_usage(msg: string, status: i32): void {
+  error(msg);
+  try_help(status);
+}
+
+// `die_bad_option(token, status)` — reject an option token the way
+// glibc's getopt does, which is two different messages:
+//
+//   -x        -> `invalid option -- 'x'`        (the offending byte)
+//   --foo=1   -> `unrecognized option '--foo=1'` (the whole token)
+//
+// A short cluster names only its first byte, because getopt reports
+// per character and the caller exits on the first refusal.
+pub function die_bad_option(token: string, status: i32): void {
+  if (token.starts_with("--")) {
+    die_usage("unrecognized option '" + token + "'", status);
+    return;
+  }
+  die_usage("invalid option -- '" + slice_unchecked(token, 1, 2) + "'", status);
+}
+
+// `is_option(a)` — whether getopt would treat `a` as an option token.
+// A lone `-` is an operand (it names stdin); `--` is the terminator
+// and is handled by the caller before this is asked.
+pub function is_option(a: string): boolean {
+  return a.len() >= 2 && a[0] as i32 == 45;
+}
+
+// `io_error_text(e)` — the strerror text GNU prints for an IoError.
+//
+// The kinds the runtime names carry no message of their own, so the
+// mapping is by errno text; `Other` carries the runtime's own string.
+// That string is EMPTY today for every errno outside the named set
+// (#8265), which is the one gap between these utilities and GNU
+// on the write-failure paths — docs/COREUTILS.md records it.
+pub function io_error_text(e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return "No such file or directory";
+    },
+    PermissionDenied(_) => {
+      return "Permission denied";
+    },
+    AlreadyExists(_) => {
+      return "File exists";
+    },
+    InvalidUtf8(_) => {
+      return "Invalid or incomplete multibyte or wide character";
+    },
+    Interrupted => {
+      return "Interrupted system call";
+    },
+    Unsupported => {
+      return "Operation not supported";
+    },
+    Other(_, msg) => {
+      return msg;
+    }
+  }
+}
+
+// `write_out(s)` — write `s` to stdout, reporting a failure the way
+// GNU's close_stdout does (`prog: write error: <strerror>`) and
+// exiting 1. For the paths where the utility has its own wording —
+// yes(1) says `standard output:` — hold a Writer and check it there.
+pub function write_out(s: string): void {
+  var w: Writer = stdout();
+  match (w.write(s)) {
+    Some(e) => {
+      error("write error: " + io_error_text(e));
+      exit(1);
+    },
+    None => {}
+  }
+}
+
+// Whether `typed` is a prefix of `full` — the rule getopt_long matches
+// long options by. The empty string is a prefix of everything, which
+// is why `--=x` is reported as AMBIGUOUS between every declared option
+// rather than as unrecognized.
+function is_prefix_of(typed: string, full: string): boolean {
+  return full.starts_with(typed);
+}
+
+// The long-option name in `a` (`--name` or `--name=value`), plus
+// whether a value was glued on.
+function long_parts(a: string): (string, boolean) {
+  var body: str = slice_unchecked(a, 2, a.len());
+  var eq: i32 = body.index_of("=");
+  if (eq >= 0) {
+    return (slice_unchecked(body, 0, eq) + "", true);
+  }
+  return (body + "", false);
+}
+
+// `print_help_version(name, help_text, status)` — the two outputs
+// every utility shares. `status` is the exit code: 0 for most, but
+// true(1) and false(1) exit with THEIR status even from `--help`.
+function print_help(help_text: string, status: i32): void {
+  write_out(help_text);
+  exit(status);
+}
+
+function print_version(name: string, status: i32): void {
+  write_out(name + " (Fern coreutils) " + version() + "\n");
+  exit(status);
+}
+
+// `parse_standard_options_only(argv, name, help_text, status)` —
+// gnulib's parse_gnu_standard_options_only, for a utility whose ONLY
+// options are `--help` and `--version`: a permuting getopt over the
+// whole argv, so an option is found wherever it stands until `--`.
+//
+//   --help / --version   (unique prefix) answered, exit 0
+//   --help=x             `option '--help' doesn't allow an argument`
+//   --=x                 `option '--=x' is ambiguous; possibilities: …`
+//   --anything-else      `unrecognized option '--anything-else'`
+//   -x                   `invalid option -- 'x'`
+//
+// Tokens are taken left to right, so the first fault wins over a later
+// `--help`, and a `--help` before the fault wins instead. Returns the
+// operands: every non-option token in its original order, then all of
+// what follows `--`. `status` is the utility's usage-error exit code.
+pub function parse_standard_options_only(argv: string[], name: string, help_text: string, status: i32): string[] {
+  var operands: string[] = [];
+  var i: i32 = 1;
+  while (i < argv.len()) {
+    var a: string = argv[i];
+    i = i + 1;
+    if (a == "--") {
+      break;
+    }
+    if (!is_option(a)) {
+      operands = operands.append(a);
+      continue;
+    }
+    if (!a.starts_with("--")) {
+      die_bad_option(a, status);
+    }
+    var parts: (string, boolean) = long_parts(a);
+    var opt: string = parts.0;
+    var glued: boolean = parts.1;
+    if (is_prefix_of(opt, "help") && is_prefix_of(opt, "version")) {
+      // glibc names the whole token here, `=value` included.
+      die_usage("option '" + a + "' is ambiguous; possibilities: '--help' '--version'", status);
+    }
+    if (is_prefix_of(opt, "help")) {
+      if (glued) {
+        die_usage("option '--help' doesn't allow an argument", status);
+      }
+      print_help(help_text, 0);
+    }
+    if (is_prefix_of(opt, "version")) {
+      if (glued) {
+        die_usage("option '--version' doesn't allow an argument", status);
+      }
+      print_version(name, 0);
+    }
+    die_bad_option(a, status);
+  }
+  while (i < argv.len()) {
+    operands = operands.append(argv[i]);
+    i = i + 1;
+  }
+  return operands;
+}
+
+// `sole_help_version(argv, name, help_text, status)` — the narrower
+// rule true(1), false(1) and echo(1) use: `--help` and `--version`
+// are honoured only as the SOLE argument, spelled in full, and are
+// ordinary operands otherwise. `true --help x` therefore exits 0 in
+// silence, and `echo --help x` prints `--help x`.
+pub function sole_help_version(argv: string[], name: string, help_text: string, status: i32): void {
+  if (argv.len() != 2) {
+    return;
+  }
+  if (argv[1] == "--help") {
+    print_help(help_text, status);
+    return;
+  }
+  if (argv[1] == "--version") {
+    print_version(name, status);
+  }
+}
