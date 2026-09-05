@@ -193,7 +193,10 @@ pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
     var c: i32 = 0;
     while (c < n) { a = a.append(arr[c]); c = c + 1; }
 
-    if (n <= 32) { return __sort_insertion_by(a, 0, n, cmp); }
+    if (n <= 32) {
+        a = __sort_insertion_by(a, 0, n, cmp);
+        return a;
+    }
 
     // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
     var bounds: i32[] = [];
@@ -288,26 +291,29 @@ pub function sort_by[T](arr: T[], cmp: (T, T) => i32): T[] {
 //
 // The shift loop stops on a NON-positive compare, so equal elements never move
 // past each other: insertion is stable, and therefore so is `sort_by`.
-function __sort_insertion_by[T](a: T[], lo: i32, hi: i32, cmp: (T, T) => i32): T[] {
-    var out: T[] = a;
+//
+// The array is `own` so the writes land in the caller's buffer, which the
+// caller moves in as `a = __sort_insertion_by(a, ...)`; a borrowed array
+// would be copied whole on the first `.with`, once per call.
+function __sort_insertion_by[T](own a: T[], lo: i32, hi: i32, cmp: (T, T) => i32): T[] {
     var i: i32 = lo + 1;
     while (i < hi) {
-        var v: T = out[i];
+        var v: T = a[i];
         var j: i32 = i - 1;
         var moving: boolean = j >= lo;
         while (moving) {
-            if (cmp(out[j], v) > 0) {
-                out = out.with(j + 1, out[j]);
+            if (cmp(a[j], v) > 0) {
+                a = a.with(j + 1, a[j]);
                 j = j - 1;
                 moving = j >= lo;
             } else {
                 moving = false;
             }
         }
-        out = out.with(j + 1, v);
+        a = a.with(j + 1, v);
         i = i + 1;
     }
-    return out;
+    return a;
 }
 
 // `is_sorted_by[T](arr, cmp)` — true iff `arr` is in non-decreasing order

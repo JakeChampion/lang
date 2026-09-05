@@ -20,7 +20,10 @@ func runAppendReport(srcPath string, w io.Writer) error {
 		return err
 	}
 	prog := e.prog
-	if err := constfold.Fold(prog, nil); err != nil {
+	// The report lowers as the default -target (arm64-linux) would, so
+	// target_os() folds to its environment and a program branching on it
+	// still lowers.
+	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: "linux"}); err != nil {
 		return e.format(err)
 	}
 	info, err := checker.Check(prog)

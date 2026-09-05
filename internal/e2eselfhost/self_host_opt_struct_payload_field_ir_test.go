@@ -18,8 +18,8 @@ import (
 // eligibility predicate is_leaksafe_opt_field rejected any non-scalar payload, so
 // such a field bailed the whole module to the legacy AST emitter. #2691 adds the
 // structs-aware is_leaksafe_opt_field_d so an Option[Struct]/Result[Struct,…] field
-// is admitted. ENUM payloads stay excluded (the pin's rationale cited the legacy
-// AST backend miscompiling an Option[enum] field — see the negative pin below).
+// is admitted, and so is an Option[enum] / Result[enum, …] field: the box holds
+// one variant pointer, leak-only, like a bare enum field.
 // Each case is oracle-checked
 // against the interpreter and returns <= 126. Mirrors self_host_nested_array_ir_test.go.
 var optStructPayloadFieldIRCases = []struct {
@@ -36,12 +36,20 @@ var optStructPayloadFieldIRCases = []struct {
 	{"opt-struct-fn-param", `struct Inner { a: i32 } struct Outer { v: i32, opt: Option[Inner] } function total(o: Outer): i32 { match (o.opt) { Some(n) => { return o.v + n.a; }, None => { return o.v; } } } function main(): i32 { return total(Outer { v: 100, opt: Some(Inner { a: 23 }) }); }`},
 	// The Option[Struct] field read into a typed local, then matched. 42.
 	{"opt-struct-field-to-local", `struct Inner { a: i32 } struct Outer { opt: Option[Inner] } function main(): i32 { var o = Outer { opt: Some(Inner { a: 42 }) }; var x: Option[Inner] = o.opt; match (x) { Some(n) => { return n.a; }, None => { return 0; } } }`},
+	// Option[enum] field, Some arm matches the payload's variant. 2.
+	{"opt-enum-some", `enum Color { Red, Blue } struct Box { c: Option[Color] } function main(): i32 { var b = Box { c: Some(Blue) }; match (b.c) { Some(x) => { match (x) { Red => { return 1; }, Blue => { return 2; } } }, None => { return 0; } } }`},
+	// Option[enum] field = None. 0.
+	{"opt-enum-none", `enum Color { Red, Blue } struct Box { c: Option[Color] } function main(): i32 { var b = Box { c: None }; match (b.c) { Some(x) => { return 2; }, None => { return 0; } } }`},
+	// Option[enum] field whose variant carries a string payload (the IoError
+	// shape a buffered writer holds), read through the payload. 7.
+	{"opt-enum-string-payload", `enum E { Msg(string), Quiet } struct Box { e: Option[E] } function main(): i32 { var b = Box { e: Some(Msg("seven!!")) }; match (b.e) { Some(x) => { match (x) { Msg(m) => { return m.len(); }, Quiet => { return 1; } } }, None => { return 0; } } }`},
+	// The Option[enum] field read into a typed local, then matched, after the
+	// struct was rebuilt with a spread. 2.
+	{"opt-enum-field-to-local", `enum Color { Red, Blue } struct Box { n: i32, c: Option[Color] } function main(): i32 { var b = Box { n: 1, c: None }; b = Box { ...b, c: Some(Blue) }; var x: Option[Color] = b.c; match (x) { Some(v) => { match (v) { Red => { return 1; }, Blue => { return 2; } } }, None => { return 0; } } }`},
 }
 
 // TestSelfHostOptStructPayloadFieldIRX86_64 routes each case through the self-hosted
-// x86-64 IR driver, oracle-checked, with routing pinned to "ir". It also asserts an
-// Option[enum] struct field STILL routes "ast" — the legacy AST backend miscompiles
-// that shape, so the struct-payload widening must not pull it onto the IR path.
+// x86-64 IR driver, oracle-checked, with routing pinned to "ir".
 func TestSelfHostOptStructPayloadFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
@@ -76,17 +84,6 @@ func TestSelfHostOptStructPayloadFieldIRX86_64(t *testing.T) {
 		})
 	}
 
-	// Negative pin: an Option[enum] struct field must NOT be admitted to the IR
-	// path — the widening is struct-only. The probe's "ast" verdict means
-	// "ineligible"; nothing is behind it any more, so this pins a refusal.
-	// irlower's opt_payload_ok_dv records why the pin itself is unresolved.
-	t.Run("opt-enum-field-stays-ast", func(t *testing.T) {
-		src := []byte(`enum Color { Red, Blue } struct Box { c: Option[Color] } function main(): i32 { var b = Box { c: Some(Blue) }; match (b.c) { Some(x) => { return 2; }, None => { return 0; } } }` + "\n")
-		path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src)))
-		if path != "ast" {
-			t.Fatalf("Option[enum] struct field routed through %q path, want \"ast\" (must stay off the IR path)", path)
-		}
-	})
 }
 
 // TestSelfHostOptStructPayloadFieldIRWasm runs the same cases through the wasm IR backend.

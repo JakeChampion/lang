@@ -134,6 +134,7 @@ var providedSigs = map[string]providedSig{
 	"__fern_rc_dec":                 {1, rWord},
 	"__fern_rc_inc":                 {1, rWord},
 	"__fern_rc_is_unique":           {1, rWord},
+	"__wasi_errno_of_code":          {1, rWord},
 	"__fern_rc_underflow_count":     {0, rWord},
 	"__fern_read_byte":              {0, rWord},
 	"__fern_read_dir":               {2, rWord},

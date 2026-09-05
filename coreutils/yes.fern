@@ -34,10 +34,12 @@ import "./lib/gnu";
 //   Linux arm64:  1K 549 ms   2K 164   4K 138   8K 162 (GNU)   64K 229
 //   macOS arm64:  1K 482 (GNU)   2K 674   4K 674   64K 613
 //
-// 4 KiB is the Linux optimum and Linux is the default target; macOS
-// wants 1 KiB, and selecting per target needs a way for Fern source to
-// know its target OS, which is #8338.
+// 4 KiB is the Linux optimum and 1 KiB the macOS one. target_os() is a
+// compile-time constant, so the other size never reaches the binary.
 function block_bytes(): i32 {
+  if (target_os() == "darwin") {
+    return 1024;
+  }
   return 4096;
 }
 

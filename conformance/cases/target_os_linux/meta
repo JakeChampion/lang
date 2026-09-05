@@ -1,0 +1,10 @@
+waiver: harness-limit
+reason: target_os() is defined per target and a case carries one
+  expected.stdout, so it can only be asserted on the legs that compile for
+  the same environment. Both native legs compile for Linux and answer
+  "linux"; the wasm leg answers "wasi", which target_os_wasi pins. The
+  interpreter answers with its host — the machine running the corpus, which
+  is not fixed — and its rule is pinned by internal/interp's own test
+  instead. target_os_named asserts on all four backends what every one must
+  agree on: the value is one of the documented names and a branch on it
+  takes the expected arm.

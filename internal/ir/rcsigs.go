@@ -321,6 +321,7 @@ var rcInert = map[string]bool{
 	"__fern_idiv_u64": true, "__fern_irem_s32": true, "__fern_irem_s64": true,
 	"__fern_irem_u32": true, "__fern_irem_u64": true,
 	"cabi_realloc": true, "isatty": true, "poll": true,
+	"__wasi_errno_of_code": true,
 
 	"__alloc": true, "__alloc_u8": true, "__arr_idx": true,
 	"__arr_idx_1": true, "__arr_idx_1_nc": true, "__arr_idx_8": true,

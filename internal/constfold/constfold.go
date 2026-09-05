@@ -22,6 +22,11 @@
 // rather than a pass of their own for two reasons: an asset IS a
 // compile-time constant, and a `const PAGE: string = __fern_asset(...)`
 // has to resolve during const evaluation, not after it.
+//
+// It also resolves `target_os()` to the compile target's environment
+// (Inputs.TargetOS) when the caller has one — a compile does, a bare
+// `-check` does not. The call becomes a plain string literal, so a branch
+// on it is a branch on a constant by the time the IR folds.
 package constfold
 
 import (
@@ -44,6 +49,24 @@ const assetBuiltin = "__fern_asset"
 // unaware of it too.
 const assetsBuiltin = "__fern_assets"
 
+// targetOSBuiltin is the compile target's environment as a constant:
+// `target_os()` reads "linux", "darwin", "android", "wasi", "wasi-http" or
+// "freestanding" — the environment half of the `-target` name, never the
+// compiler's host. The checker declares it (so `-check` types it with no
+// target in hand) and the interpreter answers it with the host it runs
+// on; every compiled path resolves it here.
+const targetOSBuiltin = "target_os"
+
+// Inputs are the compile-time facts the fold substitutes into the program.
+type Inputs struct {
+	// Assets is the `-embed` bundle; nil when nothing was embedded, in which
+	// case any use of __fern_asset is itself the error.
+	Assets *embed.Set
+	// TargetOS is the compile target's environment, what `target_os()`
+	// folds to. Empty leaves the calls alone for the checker to type.
+	TargetOS string
+}
+
 // Fold evaluates every top-level const declaration in prog, then
 // substitutes references with the resolved literal and clears
 // prog.Consts. Errors aggregate; the first diagnostic surfaced
@@ -53,6 +76,11 @@ const assetsBuiltin = "__fern_assets"
 // assets carries the `-embed` bundle and may be nil, in which case any use
 // of __fern_asset is itself the error.
 func Fold(prog *ast.Program, assets *embed.Set) error {
+	return FoldWith(prog, Inputs{Assets: assets})
+}
+
+// FoldWith is Fold with every compile-time input, not only the asset bundle.
+func FoldWith(prog *ast.Program, in Inputs) error {
 	values := map[string]ast.Expr{}
 	types := map[string]ast.Type{}
 	var errs []error
@@ -62,7 +90,7 @@ func Fold(prog *ast.Program, assets *embed.Set) error {
 			errs = append(errs, fmt.Errorf("%s: const %q redeclared", cd.P, cd.Name))
 			continue
 		}
-		val, err := evalConst(cd.Value, values, types, assets)
+		val, err := evalConst(cd.Value, values, types, in.Assets)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: const %s: %w", cd.P, cd.Name, err))
 			continue
@@ -88,7 +116,7 @@ func Fold(prog *ast.Program, assets *embed.Set) error {
 	// Substitute every Ident reference matching a const name with
 	// the resolved literal. Const decls are then dropped — the rest
 	// of the pipeline runs against a const-free program.
-	sub := substituter{values: values, assets: assets}
+	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS}
 	for _, fn := range prog.Funcs {
 		sub.walkBlock(fn.Body)
 	}
@@ -420,9 +448,18 @@ func litType(e ast.Expr) ast.Type {
 // Unary nodes with downstream metadata; cloning the literal keeps
 // each substitution position independent.
 type substituter struct {
-	values map[string]ast.Expr
-	assets *embed.Set
-	errs   []error
+	values   map[string]ast.Expr
+	assets   *embed.Set
+	targetOS string
+	errs     []error
+}
+
+// isTargetOSCall reports whether c is the zero-argument `target_os()`. A
+// call with arguments is left for the checker, whose arity error names
+// the declared signature.
+func isTargetOSCall(c *ast.Call) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	return ok && id.Name == targetOSBuiltin && len(c.Args) == 0
 }
 
 // isAssetCall reports whether c is a call of the __fern_asset builtin. It
@@ -588,6 +625,10 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 			*slot = cloneLit(v, x.P)
 		}
 	case *ast.Call:
+		if s.targetOS != "" && isTargetOSCall(x) {
+			*slot = &ast.StringLit{P: x.P, Value: s.targetOS}
+			return
+		}
 		if isAssetCall(x) {
 			lit, err := resolveAsset(x, s.assets)
 			if err != nil {

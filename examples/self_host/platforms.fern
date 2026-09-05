@@ -304,9 +304,10 @@ pub function gated_builtins(): Gate[] {
 // `exit` and `isatty` are the judgement calls: every target can define "stop",
 // and every target can define "is this fd a terminal" — a target with no
 // terminal answers no. Both are core with a target-specific lowering rather
-// than a capability an artifact could be refused for.
+// than a capability an artifact could be refused for. `target_os` is a string
+// literal by the time anything runs, folded from the target's own name.
 pub function core_builtins(): string[] {
-    return ["exit", "isatty",
+    return ["exit", "isatty", "target_os",
             "map_new", "cell_new", "string_from_bytes_unchecked",
             "slice_unchecked",
             "strbuf_reset", "strbuf_append", "strbuf_take",

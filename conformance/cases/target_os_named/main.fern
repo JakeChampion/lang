@@ -1,0 +1,29 @@
+// What every implementation must agree on about target_os(): the value is
+// one of the documented environment names, and a branch on it takes the
+// arm that name selects — on the interpreter, where the host is the target,
+// as much as on a compile, where the value is a literal and the other arm
+// is pruned. The per-target values are target_os_linux / target_os_wasi.
+import "core/int";
+import "std/i32";
+
+function main(): i32 {
+    var os: string = target_os();
+    var named: boolean = os == "linux" || os == "darwin" || os == "android"
+        || os == "wasi" || os == "wasi-http";
+    if (named) {
+        print("named");
+    } else {
+        print("unnamed: " + os);
+    }
+    if (target_os() != "freestanding") {
+        print("hosted");
+    }
+    var hosted: i32 = 0;
+    if (target_os() == "wasi") {
+        hosted = 1;
+    } else if (target_os() == "linux" || target_os() == "darwin" || target_os() == "android") {
+        hosted = 1;
+    }
+    print(hosted.to_string());
+    return 0;
+}
