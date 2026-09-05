@@ -10,10 +10,10 @@ import (
 	"testing"
 )
 
-// The emitter-shape gates for asm_ir.fern's P4, P5 and P6 peepholes — the
-// self-host mirror of native's const_alu_fold_test.go,
-// stacked_materialise_test.go and arg_materialise_test.go
-// (internal/codegen/x86_64).
+// The emitter-shape gates for asm_ir.fern's P4, P5 and P6 peepholes and the
+// 32-bit constant form — the self-host mirror of native's
+// const_alu_fold_test.go, stacked_materialise_test.go, arg_materialise_test.go
+// and const_zero_xor_test.go (internal/codegen/x86_64).
 //
 // Each case asserts two things that have to travel together: the folded form
 // is present in the function that produces it and the round trip it replaces
@@ -178,8 +178,11 @@ function main(): i32 { return (shifted(5i64) + shifted_wide(12i64)) as i32; }`,
 			},
 		},
 		{
-			// A literal past a sign-extended imm32 has no immediate form, so
-			// the round trip survives it.
+			// A literal past 32 bits has no immediate form at all, and the
+			// movabsq that carries it is not a rename P5 takes either, so the
+			// round trip survives. 2^31 fits the narrow constant form but not a
+			// sign-extended imm32: P4 must refuse it, and P5 then materialises
+			// it straight into %ecx.
 			name: "refused-widths",
 			src: `function wide(x: i64): i64 { return x + 4294967296i64; }
 function narrow_big(x: i64): i64 { return x + 2147483648i64; }
@@ -187,11 +190,11 @@ function main(): i32 { return ((wide(1i64) + narrow_big(1i64)) % 100i64) as i32;
 			want: (4294967297 + 2147483649) % 100,
 			has: map[string][]string{
 				"wide":       {"movabsq $4294967296, %rax", "movq %rax, %rcx", "addq %rcx, %rax"},
-				"narrow_big": {"movabsq $2147483648, %rax", "movq %rax, %rcx", "addq %rcx, %rax"},
+				"narrow_big": {"movl $2147483648, %ecx", "addq %rcx, %rax"},
 			},
 			lacks: map[string][]string{
 				"wide":       {"addq $4294967296"},
-				"narrow_big": {"addq $2147483648"},
+				"narrow_big": {"addq $2147483648", "movq %rax, %rcx"},
 			},
 		},
 	})
@@ -211,7 +214,7 @@ func TestSelfHostTwoArgumentCallNeedsNoOperandStackX86_64(t *testing.T) {
 function main(): i32 { var xs: i32[] = []; xs = grow(xs); xs = grow(xs); return xs[0] + xs[1] + xs.len(); }`,
 			want: 16,
 			has: map[string][]string{
-				"grow": {"movq -8(%rbp), %rdi\n    movq $7, %rsi\n    call __fern_arr_push"},
+				"grow": {"movq -8(%rbp), %rdi\n    movl $7, %esi\n    call __fern_arr_push"},
 			},
 			lacks: map[string][]string{
 				"grow": {"movq %rax, %rsi", "popq %rdi"},
@@ -249,6 +252,51 @@ function main(): i32 { strbuf_reset(); var r: Rec = Rec { name: "abc" }; var n: 
 			},
 			lacks: map[string][]string{
 				"say": {"movq %rax, %rdi"},
+			},
+		},
+	})
+}
+
+// TestSelfHostConstZeroExtendedFormX86_64 pins the constant forms: a
+// non-negative i32 literal is `movl $K, %eax` (five bytes, zero-extending),
+// zero is the self-xor, a negative one keeps `movq` (whose imm32
+// sign-extends), and an i64 literal only pays movabsq's ten bytes when it
+// needs more than 32 bits. Each form is read back through a
+// consumer that would expose the wrong extension.
+func TestSelfHostConstZeroExtendedFormX86_64(t *testing.T) {
+	runPeepholeFoldCases(t, []peepholeFoldCase{
+		{
+			name: "forms",
+			src: `function pos(): i32 { return 7; }
+function zero(): i32 { return 0; }
+function neg(): i32 { return 0 - 3; }
+function hex(): u32 { return 0xffffffff; }
+function small64(): i64 { return 4294967295i64; }
+function wide64(): i64 { return 4294967296i64; }
+function main(): i32 {
+    var h: u32 = hex();
+    var w: i64 = wide64();
+    var r: i32 = pos() + zero() + neg();
+    if (h == 4294967295) { r = r + 10; }
+    if (w == small64() + 1i64) { r = r + 100; }
+    return r;
+}`,
+			want: 114,
+			has: map[string][]string{
+				"pos":     {"movl $7, %eax"},
+				"zero":    {"xorl %eax, %eax"},
+				"neg":     {"movq $-3, %rax"},
+				"hex":     {"movl $0xffffffff, %eax"},
+				"small64": {"movl $4294967295, %eax"},
+				"wide64":  {"movabsq $4294967296, %rax"},
+			},
+			lacks: map[string][]string{
+				"pos":     {"movq $7, %rax"},
+				"zero":    {"movl $0, %eax", "movq $0, %rax"},
+				"neg":     {"movl $-3, %eax"},
+				"hex":     {"movq $0xffffffff"},
+				"small64": {"movabsq"},
+				"wide64":  {"movl"},
 			},
 		},
 	})

@@ -4121,14 +4121,17 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
         } else if (o.kind_tag == 1) {  // const_i32
             s = emit_ir_op_const_i32(o, s);
         } else if (o.kind_tag == 2) {  // const_i32_text
-            // Integer literal source text spliced into a 32-bit immediate (hex /
-            // full u32 range) — byte-identical to asm.fern's ExprNumber.
-            s = s.write("    movq $" + o.str + ", %rax\n    pushq %rax\n");
+            // Integer literal source text spliced into the immediate (hex /
+            // full u32 range): the assembler handles the base and the
+            // unsigned range, so a value past imm32 rides `movq`'s promotion
+            // to movabsq.
+            s = emit_const_text_push(s, o.str, "movq");
         } else if (o.kind_tag == 3) {  // const_i64
-            // 64-bit immediate (source text): movabsq handles the full range.
+            // 64-bit immediate (source text): movabsq handles the full range,
+            // and only the values that need all 64 bits pay its ten bytes.
             // i64 add/sub/mul/cmp/bitwise then reuse the existing 64-bit-register
             // bin ops unchanged — only the load differs from i32.
-            s = s.write("    movabsq $" + o.str + ", %rax\n    pushq %rax\n");
+            s = emit_const_text_push(s, o.str, "movabsq");
         } else if (o.kind_tag == 7 || o.kind_tag == 8) {  // int_extend, int_wrap
             // i32<->i64 in 64-bit slots: signed -> sign-extend low 32 (movslq),
             // unsigned -> zero-extend low 32 (movl). Same sequence either way.
@@ -4997,24 +5000,52 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
 }
 
 function emit_ir_op_const_i32(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
-    // Zero materialises as `xorl %eax, %eax` (2 bytes) rather than
-    // `movq $0, %rax` (7: REX.W + C7 /0 + imm32). Literal zero is
-    // everywhere — every source `0`, zero-init and implicit `return 0`
-    // — so the 5 bytes compound. Mirrors the native x86-64 backend's
-    // OpConstI32 zero case (#4380 lever 2).
+    // A non-negative value takes `movl $K, %eax` (5 bytes): the write to
+    // %eax zero-extends into %rax, which for K >= 0 is the sign extension
+    // the 64-bit slot wants. A negative one keeps `movq $K, %rax` (7: REX.W
+    // + C7 /0 + imm32), whose imm32 sign-extends. Mirrors the native x86-64
+    // backend's OpConstI32 (#4380 lever 2).
     //
-    // `xor` clobbers FLAGS where `mov` does not, which is only safe
-    // because FLAGS are never live across an IR-op boundary here: each
-    // comparison op emits its own cmp + setcc together, so a const
-    // materialisation can never sit between a flag-setter and its
-    // reader. Do not weaken that invariant without revisiting this.
+    // Zero is `xorl %eax, %eax` (2 bytes). Literal zero is everywhere —
+    // every source `0`, zero-init and implicit `return 0` — so the bytes
+    // compound. `xor` clobbers FLAGS where `mov` does not, which is only
+    // safe because FLAGS are never live across an IR-op boundary here:
+    // each comparison op emits its own cmp + setcc together, so a const
+    // materialisation can never sit between a flag-setter and its reader.
+    // Do not weaken that invariant without revisiting this.
     if (o.i32_imm == 0) {
         s = s.write("    xorl %eax, %eax\n    pushq %rax\n");
+    } else if (o.i32_imm > 0) {
+        s = s.write("    movl $" + util.i32_to_string(o.i32_imm) + ", %eax\n    pushq %rax\n");
     } else {
         s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", %rax\n    pushq %rax\n");
     }
 
     return s;
+}
+
+// const_text_u32 reports whether an integer literal's SOURCE TEXT spells a
+// value in [0, 2^32) that `movl $TEXT, %eax` loads exactly as `movq` (or
+// `movabsq`) would: a plain decimal of at most ten digits within the range,
+// or `0x` and at most eight hex digits. Anything else — a leading `-`, a
+// binary literal, a wider value — keeps the 64-bit form, whose sign
+// extension or full width the narrow write could not reproduce.
+function const_text_u32(t: string): boolean {
+    if (t.len() > 2 && t[0] == 48 && (t[1] == 120 || t[1] == 88)) {
+        return pp_digits_ok(t, 2, t.len(), 8, true);
+    }
+    if (!util.is_all_digits(t) || t.len() > 10) { return false; }
+    return util.digits_to_i64(t) <= 4294967295i64;
+}
+
+// emit_const_text_push materialises an integer literal given as source text
+// and pushes it: the narrow form where const_text_u32 admits it (zero as the
+// self-xor, like const_i32), and `wide` — the caller's 64-bit spelling —
+// otherwise.
+function emit_const_text_push(s: asmcore.EmitState, t: string, wide: string): asmcore.EmitState {
+    if (!const_text_u32(t)) { return s.write("    " + wide + " $" + t + ", %rax\n    pushq %rax\n"); }
+    if (util.lit_to_i64(t) == 0i64) { return s.write("    xorl %eax, %eax\n    pushq %rax\n"); }
+    return s.write("    movl $" + t + ", %eax\n    pushq %rax\n");
 }
 
 function emit_ir_op_arr_make(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
