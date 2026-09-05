@@ -7546,6 +7546,60 @@ function main(): i32 {
     return (t - 126) + (last - 40) + __rc_underflow_count();
 }`,
 	},
+	{
+		// #8186: `a = Asm { ...a, cfi: record(a.cfi, v) }` with
+		// `record(own s: Cfi, …)` MOVES the field out of a's box into the
+		// callee — the store supersedes it — instead of E051 refusing the
+		// shape. The call site tests is_unique(a): a unique box has its slot
+		// emptied (every later release meets a null), a shared one keeps
+		// its field and retains the value for the callee. Rebind and return
+		// forms, an own-param base and a local base, an alias that must
+		// keep reading its field, and the loop the shape is written for.
+		name: "struct_update_field_move_into_own_param",
+		src: `
+struct Cfi { rules: i32[], n: i32 }
+struct Asm { code: i32[], cfi: Cfi }
+function record(own s: Cfi, v: i32): Cfi { return Cfi { rules: s.rules.append(v), n: s.n + 1 }; }
+function step(own a: Asm, v: i32): Asm {
+    a = Asm { ...a, cfi: record(a.cfi, v) };
+    a = Asm { ...a, code: a.code.append(v) };
+    return a;
+}
+function step_ret(own a: Asm, v: i32): Asm { return Asm { ...a, cfi: record(a.cfi, v) }; }
+function shared(v: i32): i32 {
+    var a: Asm = Asm { code: [], cfi: Cfi { rules: [1, 2], n: 2 } };
+    var keep: Asm = a;
+    a = Asm { ...a, cfi: record(a.cfi, v) };
+    return keep.cfi.n * 100 + a.cfi.n + keep.cfi.rules.len() * 1000;
+}
+function local_form(n: i32): i32 {
+    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    var i: i32 = 0;
+    while (i < n) {
+        a = Asm { ...a, cfi: record(a.cfi, i) };
+        i = i + 1;
+    }
+    return a.cfi.n + a.cfi.rules[n - 1];
+}
+function main(): i32 {
+    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    var i: i32 = 0;
+    while (i < 200) {
+        a = step(a, i);
+        a = step_ret(a, i);
+        i = i + 1;
+    }
+    var bad: i32 = 0;
+    if (a.cfi.n != 400) { bad = bad + 1; }
+    if (a.cfi.rules.len() != 400) { bad = bad + 2; }
+    if (a.code.len() != 200) { bad = bad + 4; }
+    if (a.cfi.rules[399] != 199) { bad = bad + 8; }
+    if (a.code[199] != 199) { bad = bad + 16; }
+    if (shared(7) != 2203) { bad = bad + 32; }
+    if (local_form(50) != 99) { bad = bad + 64; }
+    return bad + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {

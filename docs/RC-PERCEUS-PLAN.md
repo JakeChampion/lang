@@ -1915,6 +1915,11 @@ reuse the argument. Sliced for risk:
     tuple / array / map literal, string concat, variant-constructor call) or
     another `own` parameter of the calling function. A borrowed value (borrowed
     param, field / index read, plain local, non-fresh call result) is E051.
+    Two later admissions transfer a value the frame already holds where nothing
+    can read the old binding afterwards: the self-reassign `x = f(.., x, ..)`
+    (#4873 step 0) and the superseded field `x = S { ...x, f: g(.., x.f, ..) }`
+    / `return S { ...x, f: g(.., x.f, ..) }` on an `own`-param or local base
+    (#8186, `SupersededFieldOwnMoveArgs`, moved by `computeFieldOwnMoves`).
     `checkOwnedParams` now also runs for callers that have no `own` params of
     their own (gated on the program declaring ANY owned-param function, via
     `c.ownFuncs` — a name→per-param-`own`-flags map built before body checking);

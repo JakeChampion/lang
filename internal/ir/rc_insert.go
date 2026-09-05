@@ -3990,3 +3990,42 @@ func armConfinementRegion(atBinding string, guard ast.Expr, body ast.Node) []ast
 	}
 	return region
 }
+
+// emitFieldOwnMove hands the `x.f` value on the operand stack to an `own`
+// parameter as a move out of x's box (computeFieldOwnMoves, #8186). The
+// enclosing statement supersedes the field, so the only question is whether
+// anyone else reaches the box: is_unique(x) decides at runtime. A unique box
+// has its slot emptied — every later release of it (the overwrite drop, the
+// exit sweep, a reuse's old-field release) meets a null and no-ops under the
+// helpers' guards — and the callee takes the frame's one reference. A shared
+// box keeps its field and the callee is retained into, exactly the
+// compensating inc a plain own-position transfer would pay.
+//
+// Net-zero on the operand stack: the value is left in place for the call.
+func (b *builder) emitFieldOwnMove(fa *ast.FieldAccess) {
+	base := fa.Target.(*ast.Ident)
+	baseSlot := b.locals[base.Name]
+	sd := b.info.Structs[b.fieldOwner(fa.Target)]
+	offs, _ := structFieldLayout(sd.Fields, b.ptrW)
+	ft := fieldType(sd.Fields, fa.Field)
+	tmp := b.allocSlot()
+	b.locals[fmt.Sprintf("__fmove_%d", tmp)] = tmp
+	b.scratchType[tmp] = ft
+	b.emit(Op{Kind: OpStoreLocal, I32: tmp})
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	b.emit(Op{Kind: OpRcIsUnique, Str: "__fern_rc_is_unique", I32: 1})
+	b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
+	b.emit(Op{Kind: OpLoadLocal, I32: baseSlot})
+	if off := offs[fa.Field]; off != 0 {
+		b.emit(Op{Kind: OpConstI32, I32: off})
+		b.emit(Op{Kind: OpAdd})
+	}
+	b.emit(Op{Kind: OpConstI32, I32: 0})
+	b.emit(payloadStoreOpFor(ft, b.ptrW))
+	b.emit(Op{Kind: OpElse})
+	b.emit(Op{Kind: OpLoadLocal, I32: tmp})
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	b.emit(Op{Kind: OpDrop})
+	b.emit(Op{Kind: OpEnd})
+	b.emit(Op{Kind: OpLoadLocal, I32: tmp})
+}
