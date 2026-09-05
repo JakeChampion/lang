@@ -3603,6 +3603,32 @@ func (g *generator) emitArrBoundsCheck() {
 	g.label(ok)
 }
 
+// emitStrBoundsCheck is emitArrBoundsCheck for a legacy
+// single-register string: the value in x1 carries the length
+// SSO-encoded, so emitStrLen owns the heap/inline branch. Index in
+// w0, x2 is scratch.
+func (g *generator) emitStrBoundsCheck() {
+	ok := g.freshLabel("str_ok")
+	g.emitStrLen("w2", "x1")
+	g.emit("cmp w0, w2")
+	g.emit("b.lo %s", ok) // unsigned idx < len → in bounds
+	g.emitAbort("__fern_msg_str_slice")
+	g.label(ok)
+}
+
+// emitStrBoundsCheck2W is emitStrBoundsCheck for the two-word ABI,
+// where the len word is already in x1 and only needs the inline-form
+// extraction emitStrLen2W does. Index in w0, x3 is scratch (x2 holds
+// the data word the caller still needs).
+func (g *generator) emitStrBoundsCheck2W() {
+	ok := g.freshLabel("str2w_ok")
+	g.emitStrLen2W("w3", "x1")
+	g.emit("cmp w0, w3")
+	g.emit("b.lo %s", ok)
+	g.emitAbort("__fern_msg_str_slice")
+	g.label(ok)
+}
+
 // emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the
 // length lives in the slice header at [slice+8] (the 8-byte
 // data_ptr is at [slice+0]), so it must be read before the helper
@@ -3651,6 +3677,9 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		g.emit("mov w0, w0")                   // zero-extend i32 index (see below, #4377)
 		g.emit("ldr x1, [sp], #%d", slotBytes) // len
 		g.emit("ldr x2, [sp], #%d", slotBytes) // data
+		if checked {
+			g.emitStrBoundsCheck2W()
+		}
 		g.emit("tbnz x1, #63, %s", inlineLbl)
 		// Heap form: byte address = data + idx.
 		g.emit("add x0, x2, x0")
@@ -3684,6 +3713,9 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// `&scratch[1 + idx]`. Single shared scratch slot, OK
 		// because the immediate OpLoadByte that follows
 		// consumes the address before the next __str_idx fires.
+		if checked {
+			g.emitStrBoundsCheck()
+		}
 		g.usesStrIdx = true
 		id := g.labelN
 		g.labelN++

@@ -5415,6 +5415,20 @@ func (g *generator) emitArrBoundsCheck() {
 	g.label(ok)
 }
 
+// emitStrBoundsCheck is emitArrBoundsCheck for a string: with the
+// string value in rax and the byte index in rcx, an out-of-range
+// index aborts with exit code 134. The length is SSO-encoded, so
+// emitStrLen owns the heap/inline branch rather than this site
+// open-coding a prefix load. rdx is scratch.
+func (g *generator) emitStrBoundsCheck() {
+	ok := g.freshLabel(".Lstr_ok")
+	g.emitStrLen("edx", "rax")
+	g.emit("cmp ecx, edx")
+	g.emit(fmt.Sprintf("jb %s", ok)) // unsigned idx < len → in bounds
+	g.emitAbort("__fern_msg_str_slice")
+	g.label(ok)
+}
+
 // emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the len
 // is in the slice header at [rax+8] (8-byte data_ptr at [rax+0]),
 // read before the helper overwrites rax with the data pointer. rdx
@@ -5432,11 +5446,10 @@ func (g *generator) emitSliceBoundsCheck() {
 // `__slice_idx_*` bounds-check call as a plain address
 // compute (`base + index * stride`). The IR walker emits
 // these as OpCallDirect with the stride encoded in the
-// helper name; the actual runtime helper would do a bounds
-// check first, but in-range accesses produce the same
-// address either way and the IR's static type checker
-// rejects statically-OOB indexes. Subsequent OpLoad /
-// OpStore consumes the address in rax.
+// helper name, and each variant keeps the runtime helper's
+// bounds check ahead of the address compute (elided only by
+// the `_nc` suffix). Subsequent OpLoad / OpStore consumes
+// the address in rax.
 //
 // x86-64 has a `lea base + idx*scale` addressing form
 // directly for scale 1/2/4/8 — strictly faster than
@@ -5453,6 +5466,11 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 	arrBounds := func() {
 		if checked {
 			g.emitArrBoundsCheck()
+		}
+	}
+	strBounds := func() {
+		if checked {
+			g.emitStrBoundsCheck()
 		}
 	}
 	// Pop in the order the OpCallDirect dispatch would
@@ -5480,6 +5498,7 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// but the immediate OpLoadByte that follows in the IR
 		// consumes the address before the next call, so there
 		// is no observable race even in `a[i] + b[j]` shapes.
+		strBounds()
 		g.usesStrIdx = true
 		id := g.labelCounter
 		g.labelCounter++

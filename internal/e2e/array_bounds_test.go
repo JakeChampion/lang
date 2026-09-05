@@ -1,11 +1,17 @@
-// Bounds-checking contract: an out-of-bounds array or slice index
-// aborts the process on every backend instead of returning garbage.
-// Before this, the natives (x86-64 / arm64) silently read past the
-// end and returned 0 while the interpreter errored and wasm trapped
-// — a three-way divergence the cross-area differential sweep found.
-// The codegen backends now abort with exit code 134 (the same trap
-// the string-slice helper uses and what wasm's `unreachable`
+// Bounds-checking contract: an out-of-bounds array, slice or string
+// index aborts the process on every backend instead of returning
+// garbage. Before this, the natives (x86-64 / arm64) silently read
+// past the end and returned 0 while the interpreter errored and wasm
+// trapped — a three-way divergence the cross-area differential sweep
+// found. The codegen backends now abort with exit code 134 (the same
+// trap the string-slice helper uses and what wasm's `unreachable`
 // produces); the interpreter reports a diagnostic and exits non-zero.
+//
+// The string half arrived later (#8454) and is the reason these
+// cases index all three string forms: the SSO-inline form carries
+// its length in the value's tag byte rather than a heap prefix, so
+// a check that only understood the heap layout would pass the
+// inline case through.
 package e2e
 
 import (
@@ -148,6 +154,102 @@ function main(): i32 {
 	}
 	for _, c := range oob {
 		t.Run(c.name, func(t *testing.T) { assertAborts(t, c.src) })
+	}
+}
+
+// TestStringIndexBoundsCheck covers `s[i]` for each string form.
+// The index comes from a function call so nothing can fold it to a
+// static value — the runtime check is what is under test.
+func TestStringIndexBoundsCheck(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping bounds-check e2e in -short mode")
+	}
+	// prog indexes one of the three string forms at a dynamic index.
+	prog := func(bind string, idx string) string {
+		return `import "std/i32";
+import "std/string";
+function idx(): i32 { return ` + idx + `; }
+function main(): i32 {
+    ` + bind + `
+    var b: u8 = s[idx()];
+    print((b as i32).to_string());
+    return 0;
+}`
+	}
+	// "abc" is 3 bytes, so it is SSO-inline; the 24-byte literal is
+	// heap-allocated. Both forms and a view over the heap one.
+	inline := `var s: string = "abc";`
+	heap := `var s: string = "0123456789abcdefghijklmn";`
+	view := `var h: string = "0123456789abcdefghijklmn";
+    var s: str = h.trim();`
+
+	oob := []struct {
+		name, src string
+	}{
+		{"inline_past_end", prog(inline, "3")},
+		{"inline_far_past_end", prog(inline, "99")},
+		{"inline_negative", prog(inline, "0 - 1")},
+		{"heap_past_end", prog(heap, "24")},
+		{"heap_far_past_end", prog(heap, "9999")},
+		{"heap_negative", prog(heap, "0 - 1")},
+		{"view_past_end", prog(view, "24")},
+		{"view_negative", prog(view, "0 - 1")},
+	}
+	for _, c := range oob {
+		t.Run(c.name, func(t *testing.T) { assertAborts(t, c.src) })
+	}
+}
+
+// TestStringIndexInBoundsStillWorks is the other half of #8454: the
+// check must not reject a legal index in any string form, including
+// the last byte of each.
+func TestStringIndexInBoundsStillWorks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in -short mode")
+	}
+	cases := []struct {
+		name, src string
+	}{
+		{"inline_first_and_last", `import "std/i32";
+function idx(i: i32): i32 { return i; }
+function main(): i32 {
+    var s: string = "abc";
+    print((s[idx(0)] as i32).to_string());
+    print((s[idx(2)] as i32).to_string());
+    return 0;
+}`},
+		{"heap_first_and_last", `import "std/i32";
+function idx(i: i32): i32 { return i; }
+function main(): i32 {
+    var s: string = "0123456789abcdefghijklmn";
+    print((s[idx(0)] as i32).to_string());
+    print((s[idx(23)] as i32).to_string());
+    return 0;
+}`},
+		{"view_first_and_last", `import "std/i32";
+import "std/string";
+function idx(i: i32): i32 { return i; }
+function main(): i32 {
+    var h: string = "0123456789abcdefghijklmn";
+    var s: str = h.trim();
+    print((s[idx(0)] as i32).to_string());
+    print((s[idx(23)] as i32).to_string());
+    return 0;
+}`},
+		{"scan_every_byte", `import "std/i32";
+import "std/string";
+function main(): i32 {
+    var s: string = "0123456789abcdefghijklmn";
+    var sum: i32 = 0;
+    for (var i: i32 = 0; i < s.len(); i = i + 1) { sum = sum + (s[i] as i32); }
+    print(sum.to_string());
+    return 0;
+}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assertNumProgramAgrees(t, c.src)
+		})
 	}
 }
 
