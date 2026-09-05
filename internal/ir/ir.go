@@ -3380,18 +3380,36 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		// preconditions: a pair exists, and some slot's drop is a
 		// per-closure thunk. The per-backend dead-function cull removes
 		// it again when every such slot turned out to elide.
-		var sawPair, sawThunkDrop bool
+		// The seed is deliberately COARSE: any function value at all. The
+		// rewrite that needs this helper runs in ElideClosurePair, after
+		// Inline and Defunctionalise, so the drop sites it rewrites are not
+		// all present here — inlining moves a callee's closure drop into a
+		// caller that had none, and a zero-capture value arrives as
+		// OpConstFunc rather than OpMakeClosure. A seed keyed on the drop
+		// sites this pass can see linked with `undefined reference to
+		// __drop_closure_value` on nine conformance fixtures. The
+		// per-backend dead-function cull removes it when no rewrite
+		// happened, so the cost of over-seeding is nothing and the cost of
+		// under-seeding is a link failure.
+		var sawFuncValue bool
 		for _, fn := range out.Funcs {
 			for _, op := range fn.Ops {
-				if op.Kind == OpMakeClosure {
-					sawPair = true
+				switch {
+				case op.Kind == OpMakeClosure, op.Kind == OpMakeEnv, op.Kind == OpConstFunc:
+					sawFuncValue = true
+				case op.Kind == OpCallDirect &&
+					(op.Str == "__fern_closure_drop" || strings.HasPrefix(op.Str, "__closure_drop_")):
+					sawFuncValue = true
 				}
-				if op.Kind == OpCallDirect && strings.HasPrefix(op.Str, "__closure_drop_") {
-					sawThunkDrop = true
+				if sawFuncValue {
+					break
 				}
 			}
+			if sawFuncValue {
+				break
+			}
 		}
-		if sawPair && sawThunkDrop && !queued["__drop_closure_value"] {
+		if sawFuncValue && !queued["__drop_closure_value"] {
 			queued["__drop_closure_value"] = true
 			work = append(work, "__drop_closure_value")
 		}

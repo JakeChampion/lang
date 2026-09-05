@@ -1231,12 +1231,15 @@ func TestLowerNestedFunctionHoists(t *testing.T) {
 		return inner();
 	}`)
 	// Two user-facing functions in the IR: the outer and the hoisted
-	// inner. A MakeClosure'd closure also gets a generated
-	// `__closure_drop_<name>` thunk (its pair carries a drop-fn
-	// pointer for generic env reclamation), so filter those out.
+	// inner. A MakeClosure'd closure also gets generated reclamation
+	// helpers — the per-closure `__closure_drop_<name>` thunk its pair's
+	// drop-fn pointer names, and `__drop_closure_value`, which Lower seeds
+	// for the pair release ElideClosurePair may rewrite to later. Both are
+	// culled per backend when nothing calls them; neither is user-facing,
+	// so filter them out.
 	var userFuncs []*Func
 	for _, fn := range prog.Funcs {
-		if !strings.HasPrefix(fn.Name, "__closure_drop_") {
+		if !strings.HasPrefix(fn.Name, "__closure_drop_") && !strings.HasPrefix(fn.Name, "__drop_") {
 			userFuncs = append(userFuncs, fn)
 		}
 	}
