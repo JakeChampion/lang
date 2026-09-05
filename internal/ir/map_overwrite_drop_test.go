@@ -3,15 +3,19 @@ package ir
 import "testing"
 
 // The Map reassignment-overwrite releases the columns the COW copy claimed
-// (#6828), and only those.
+// (#6828) — all of them.
 //
 // `__map_own_copied_cols` gives each COW copy its own claim on the key column
-// and the array-value column (#6242). The overwrite that ends the OLD handle's
-// ownership therefore owes their release — with the buf-and-handle free alone it
-// leaks the whole claim per copy, which in a chain is quadratic. The string
-// (kind 5) and struct (kind 4) VALUE walks stay out of this site — not
-// because those columns are shared, since both are claimed, but because
-// whether the release should widen to them is an open measurement (#8421).
+// and on every value column (#6242, then #7114 / #8390 / #8420). The overwrite
+// that ends the OLD handle's ownership therefore owes their release — with the
+// buf-and-handle free alone it leaks the whole claim per copy, which in a chain
+// is quadratic.
+//
+// The string (kind 5) and struct (kind 4) value walks used to stay out of this
+// site, which is what #8431 closed: the release is now the shared map-drop
+// chain, so the columns it walks are exactly the ones the copy claims, by
+// construction rather than by a list kept in step here.
+// TestMapOverwriteDropWalksTheValueColumn below pins the two that were missing.
 //
 // Both ptrW legs run. The two-word ABI is where the claim allocates a cell per
 // entry per copy and the leak is immediate, but the release is emitted the same

@@ -122,18 +122,26 @@ native single-word path, and an `m` or `k` that `exprSafeToReevaluate` refused.
   #8277 landed the same day and took the last confounder out of the program:
   100 rounds of the COW chain, `live_bytes`, x86-64 / arm64 / wasm —
 
-  | chain | walked today? | | | |
+  | chain | walked THEN? | | | |
   |---|---|--:|--:|--:|
   | `arr_chain` (kind 2) | yes | 0 | 3200 | 3200 |
   | `str_chain` (kind 5) | no | 3168 | 83648 | 83968 |
   | `struct_chain` (kind 4) | no | 6368 | 6400 | 9568 |
 
-  The walked column is clean; the un-walked ones are the whole leak, and a
-  boxing ABI's string chain is quadratic in its length for the same reason
-  #6828 fixed on the key column. It should widen — #8431.
+  The walked column was clean; the un-walked ones were the whole leak, and a
+  boxing ABI's string chain was quadratic in its length for the same reason
+  #6828 fixed on the key column. That is what said it should widen, and #8431
+  widened it: str_chain now reads 0 / 0 / 0, struct_chain 0 / 3200 / 3200, and
+  what is left on the two-word ABIs is #8432's, not a column.
 - **`__map_delete_keyed_impl`** frees only a kind-0 cell (`__map_free_val_cell`),
-  so a delete strands an array or string value; it also mutates without a COW.
-  Neither is touched here, and neither is new.
+  so a delete strands an array or string value. Not touched here, and not new.
+
+  This entry also said the delete "mutates without a COW". That is **wrong** —
+  the runtime function has no COW because its caller already did:
+  `emitMapDeleteReturningTuple` routes the receiver through
+  `__map_cow_inplace` before the delete, so an aliased map keeps the deleted
+  key. Read from the runtime body without reading the lowering. What a delete
+  DOES cost is #8434, which is a different thing entirely.
 - The **self-host** lowers `__fern_str_dec` as a no-op, joining its
   `__fern_arr_dec` / `__fern_drop_arr_ptr` siblings in the map runtime's
   documented safe-leak mode. Its backends have no rc-guarded string dec —
