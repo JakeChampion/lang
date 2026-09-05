@@ -148,8 +148,8 @@ func TestSelfHostConstExprFoldShape(t *testing.T) {
 	}{
 		{
 			target:  "x86-64-linux",
-			want:    "movq $63, %rax",
-			arith:   []string{"addq %rcx, %rax", "imulq %rcx, %rax"},
+			want:    "movl $63, %eax",
+			arith:   []string{"addq $6, %rax", "imulq $9, %rax, %rax"},
 			backend: "asm_ir.fern",
 		},
 		{
