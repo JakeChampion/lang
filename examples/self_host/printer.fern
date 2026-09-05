@@ -3448,10 +3448,13 @@ function func_index(funcs: parser.FuncDecl[], name: string): i32 {
     return 0 - 1;
 }
 
-// Unified-diff half of `-fmt -d`, mirroring internal/printer/diff.go op for op:
-// the two drivers' `-d` output is compared byte-for-byte, so the LCS tie-breaks
-// and the three-line context window here are the Go implementation's rather than
-// a re-derivation.
+// Unified-diff half of `-fmt -d`. The two drivers' `-d` output is compared
+// byte-for-byte, so the tie-breaks and the three-line context window here are
+// internal/printer/diff.go's rather than a re-derivation.
+//
+// The alignment underneath them is not: native computes it with Myers' O(ND)
+// diff in linear space, while this still builds the O(m*n) LCS table and so
+// cannot diff a source the size of irlower.fern. Porting it is #8611.
 
 // diff_split_lines breaks s on '\n' with the newline kept on each line, so the
 // hunk emitter reproduces a "no newline at end of file" tail verbatim. The
@@ -3476,9 +3479,9 @@ function diff_split_lines(s: string): string[] {
 // line both sides share, 1 for one only `a` has, 2 for one only `b` has.
 struct DiffScript { kinds: i32[], lines: string[] }
 
-// diff_edit_script runs the same LCS as internal/printer/diff.go's editScript,
-// including its tie-break (prefer the deletion when the two suffix scores are
-// equal), and merges the two sides into one script.
+// diff_edit_script runs an LCS over the two line lists, preferring the deletion
+// when the two suffix scores are equal, and merges the two sides into one
+// script.
 function diff_edit_script(a: string[], b: string[]): DiffScript {
     var m: i32 = a.len();
     var n: i32 = b.len();
