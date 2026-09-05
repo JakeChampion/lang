@@ -118,6 +118,32 @@ adopters, in order:
 3. `std/io` Writers ("close or flush before drop") — opt-in
    migration once the shape has soaked.
 
+### Not `std/test`'s `TestRunner` — the shape slice 1 cannot see
+
+`std/test` was the obvious fourth candidate: #8466 lost a recorded
+test outcome to `r.it("case", body);` with the result dropped.
+Slice 1 cannot express that rule, for two independent reasons.
+
+- **The attribute is declaration-level.** `@must_consume` marks a
+  `struct` / `enum`; putting it on a value-returning function is
+  rejected outright ("@must_consume only applies to a `struct` or
+  `enum` declaration"). "Mark the method, not the type" is not a
+  surface that exists.
+- **Marking the type does not catch the bug and breaks everything
+  else.** The violation in the repro is a DISCARDED CALL RESULT,
+  which the Rules section above explicitly leaves untracked —
+  only bindings are walked. Meanwhile every receiver method
+  `(r: TestRunner) it(...)` would take a marked parameter that it
+  reads but never consumes, so the annotation reports E067 on the
+  runner's own definitions before any caller is checked.
+
+Adopting it here therefore needs the follow-up the Rules section
+already names — E055-style checking of a discarded result whose
+type is marked — plus a way for a receiver to be a non-consuming
+borrow. Until both exist, the runner's guarantee comes from
+`finish()` reading a shared tally rather than a threaded value
+(`docs/TEST-RUNNER-MIGRATION.md`).
+
 ## Deliberately deferred
 
 - Exactly-once (move) checking — needs use-after-move tracking;

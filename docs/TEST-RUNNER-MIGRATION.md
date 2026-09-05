@@ -10,7 +10,7 @@ every `*_test.go` in the repo and classifies each by
 The runner side is essentially feature-complete: every
 assertion shape the Go suite uses has a Fern equivalent,
 plus `--filter` / `--fail-fast` / `--quiet` CLI flags,
-fuzz harness, bench harness, subsuites + skip + merge,
+fuzz harness, bench harness, subsuites + skip,
 golden files, file/timing/JSON assertion families,
 Option/Result helpers, and so on.
 What's left is **which Go tests can flip to Fern now**
@@ -136,8 +136,8 @@ backends.
 
 **Unblock:** same as C — once a Fern-driven multi-
 backend runner exists, these become trivial Fern
-`r.it("lexer (arm64)", run_backend("arm64", lexer_src))`
-calls.
+`r.it("lexer (arm64)", () => run_backend("arm64", lexer_src))`
+calls (`it` takes the body unevaluated).
 
 ## E) Compiler-internal Go API tests
 
@@ -311,8 +311,30 @@ analogue and the migration playbook in
   (+ value-compare variants)
 - Process / file / env / JSON (with deep-eq and field-
   extraction) / golden files / timing / bench / fuzz
-- Subsuites + skip / skip_if / merge / log / log_kv /
+- Subsuites + skip / skip_if / log / log_kv /
   defer_cleanup
 - CLI: `--filter` / `--fail-fast` / `--quiet`
+
+## The tally is shared, not threaded
+
+A `TestRunner` value is a **handle**, not an accumulator. The
+counts, the failure/skip summary text and the deferred-cleanup
+list live in `Cell`s created by `test_new` and shared by every
+handle derived from it, subsuites included. `__tap_result` is the
+only place an `ok` / `not ok` line is printed, and it bumps the
+counter for that line in the same step, so `finish()`'s plan,
+counts and exit code are read back from exactly what reached
+stdout.
+
+Two consequences for anyone migrating a suite:
+
+- `r = r.it(...)` remains the house style and every example
+  writes it that way, but forgetting the assignment no longer
+  loses the case. Before #8466 it printed `not ok`, then reported
+  `1..0` / `# fail 0` / exit 0.
+- **There is no `merge`.** A subsuite writes its parent's tally,
+  so `r.subsuite(name)` is complete on its own; the old
+  `parent.merge(child)` fold has been removed rather than left as
+  a no-op.
 
 See `docs/STDLIB.md` for the canonical reference.
