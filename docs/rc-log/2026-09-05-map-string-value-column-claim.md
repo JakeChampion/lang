@@ -104,10 +104,27 @@ rc-tracked array and a nested struct with its own string:
 Balanced on x86-64 and arm64, clean on wasm. #8420 was filed on the false
 reading and closed on these numbers.
 
+**And those numbers were not evidence.** Reported by pullfrog on #8422 after
+it merged, and confirmed here: the shape above never fired a COW. A copy comes
+from `__map_cow_inplace`, which runs only when a handle at rc>1 is MUTATED,
+and `var snap = m` is not a mutation — nothing touched a handle afterwards, so
+`__map_own_copied_cols` never ran. With `valKind != 4` added to its
+`retainVals` guard, all six subtests still passed: the census balanced because
+nothing had to be claimed.
+
+The conclusion survives — kind 4 IS claimed by one inc per entry — but it was
+reached by reading the claim path rather than by watching the test fail
+without it, which is the same failure mode as the comment this entry was
+correcting. A NEW-key insert after the alias is the mutation that reaches the
+copy while displacing no value, so the census stays assertable. With it the
+same six subtests fail without the claim: `code=-1` (killed by signal) on both
+natives, `exit 134` on wasm — the copy-time double free the probe exists for.
+
 ## Gates
 
 `mapAliasedTwoEntrySrc` on all three backends (fails on each without the
-claim: x86-64 97, arm64 signal, wasm trap). Full `internal/e2e` Map suite
+claim: x86-64 97, arm64 signal, wasm trap) — this one always did fire the
+copy, since its overwrite mutates the aliased handle. Full `internal/e2e` Map suite
 (354 tests, 0 skips), the rc correctness corpora, leak gates, conformance leak
 census and the arm64 high-heap corpus, full `internal/ir`, the lint
 complexity ratchet, and `make check-sources`.
