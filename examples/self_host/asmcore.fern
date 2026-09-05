@@ -5331,13 +5331,8 @@ pub function field_reclaim_field_ops(s: EmitState, sty: string): RcOp[] {
             || irlower.is_struct_array_field_type(s.struct_decls, fdt)
             || irlower.is_enum_array_field_type(s.struct_decls, fdt);
         if (participates) {
-            // One rule for every field kind: a carried field (old.f == new.f)
-            // is released iff it is NOT uniquely owned. A second claim exists
-            // to give back — the nested-struct base copy's inc (#6605), or the
-            // in-place field append's retain — and a sole reference is the
-            // replacement's only one (#8198, #8271).
-            var uniq: boolean = true;
-            var cow: boolean = false;
+            var uniq: boolean = fr_struct || fr_enum;
+            var cow: boolean = !uniq;
             if (fr_box_arr) {
                 var pre: string = "";
                 if (irlower.is_struct_array_field_type(s.struct_decls, fdt)) {
