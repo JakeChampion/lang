@@ -120,6 +120,8 @@ type rcPlan struct {
 	// reassign-to-self), so emitArraySet must rc-inc the receiver buffer
 	// before __fern_arr_cow_inplace to force the copy path — otherwise the
 	// rc==1 in-place reuse aliases/mutates the still-live receiver (#2832).
+	// A field receiver computeFieldOwnMoves claims is cleared back to false:
+	// the move out of the box replaces the inc.
 	arraySetInc map[*ast.Call]bool
 	// arraySetConsumed holds the names of bare-ident `.with` receivers whose
 	// reference __fern_arr_cow_inplace CONSUMES, and arraySetConsumedSites
@@ -215,13 +217,14 @@ type rcPlan struct {
 	// argument's slot once the value is on the operand stack. Filled by
 	// computeOwnedArgMoves, which also records each in moveSites.
 	ownedArgMoves map[*ast.Ident]bool
-	// fieldOwnMoves marks the `x.f` argument nodes this frame hands to an
-	// explicit `own` parameter as a MOVE out of x's box: the enclosing
-	// statement is `x = S { ...x, f: g(.., x.f, ..) }` or the return of that
-	// literal (checker.SupersededFieldOwnMoveArgs), so the store supersedes
-	// the field the callee consumes. The call site empties the slot when the
-	// box is unique at runtime and retains the value otherwise — see
-	// emitFieldOwnMove. Filled by computeFieldOwnMoves.
+	// fieldOwnMoves marks the `x.f` nodes this frame hands to an explicit
+	// `own` parameter or to `.with` as a MOVE out of x's box: the enclosing
+	// statement is `x = S { ...x, f: g(.., x.f, ..) }` / `x = S { ...x, f:
+	// x.f.with(i, v) }` or the return of that literal
+	// (checker.SupersededFieldMoves), so the store supersedes the field the
+	// consumer takes. The site empties the slot when the box is unique at
+	// runtime and retains the value otherwise — see emitFieldOwnMove. Filled
+	// by computeFieldOwnMoves.
 	fieldOwnMoves map[*ast.FieldAccess]bool
 	// preciseDrops[stmtIdx] lists the owned locals to deep-drop + zero right
 	// after lowering that top-level statement (Perceus garbage-free precise
@@ -7795,21 +7798,29 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 	return out
 }
 
-// computeFieldOwnMoves claims the `x.f` arguments of the superseded-field
-// shape — `x = S { ...x, f: g(.., x.f, ..) }` and `return S { ...x, f: g(..,
-// x.f, ..) }` — as moves out of x's box into g's `own` parameter (#8186).
-// The recognition is the checker's (SupersededFieldOwnMoveArgs): E051 admits
-// exactly these nodes, so an admitted argument the analysis does NOT claim
-// still reaches the call and must be retained there instead (the call site's
-// fallback); the two verdicts are each sound on their own.
+// computeFieldOwnMoves claims the `x.f` reads of the superseded-field shape —
+// `x = S { ...x, f: g(.., x.f, ..) }` and `return S { ...x, f: g(.., x.f,
+// ..) }` — as moves out of x's box into a position that consumes them
+// (#8186). Two consumers qualify: g's `own` parameter, and the receiver of
+// `.with` (`x = S { ...x, f: x.f.with(i, v) }`), whose helper takes the
+// reference over on both of its branches (see rc.arraySetConsumed). For the
+// `own` half the recognition is the checker's (SupersededFieldOwnMoveArgs):
+// E051 admits exactly these nodes, so an admitted argument the analysis does
+// NOT claim still reaches the call and must be retained there instead (the
+// call site's fallback); the two verdicts are each sound on their own. The
+// `.with` half needs no admission — the receiver is a projection the
+// computeArraySetIncs rule would otherwise inc into the copy path, and a
+// claim here clears that inc so __fern_arr_cow_inplace sees the box's own
+// count. Without it every `.with` on a field of a struct being rebuilt copied
+// the whole buffer: a streaming hasher's pending block, a writer's buffer.
 //
 // A claim needs the frame to hold x's reference (frameOwnsIdent — a borrowed
 // param's box belongs to the caller, who reads the field back), a field the
 // flat helpers can null and retain (arrElemIsRcTracked: one word, not the
-// two-word string), a callee that is a direct function, and no defer or
-// lambda that could read x after the slot is emptied. The return form also
-// needs a function without defers: a defer runs after the return value is
-// built, while x is still in its slot.
+// two-word string), for the `own` half a callee that is a direct function,
+// and no defer or lambda that could read x after the slot is emptied. The
+// return form also needs a function without defers: a defer runs after the
+// return value is built, while x is still in its slot.
 //
 // Uniqueness is decided at RUNTIME, not here. The box may be shared — `var
 // b = x` earlier, a capture, a global — and every such route would read the
@@ -7818,13 +7829,14 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 // free of an alias analysis the way tryStructReuseOverwrite's reuse is.
 func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 	out := map[*ast.FieldAccess]bool{}
-	if b.fn.Body == nil || !ast.RcFreeEnabled || len(b.info.OwnFuncs) == 0 {
+	if b.fn.Body == nil || !ast.RcFreeEnabled {
 		return out
 	}
 	var defers []*ast.Defer
 	collectDefers(b.fn.Body, &defers)
 	hasDefer := len(defers) > 0
 	esc := deferOrLambdaNames(b.fn.Body)
+	ownArg := map[*ast.FieldAccess]bool{}
 	claim := func(sl *ast.StructLit, base *ast.Ident, isReturn bool) {
 		if esc[base.Name] || (isReturn && hasDefer) || !b.frameOwnsIdent(base.Name) {
 			return
@@ -7838,6 +7850,13 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 			return
 		}
 		for _, fa := range checker.SupersededFieldOwnMoveArgs(sl, base.Name, b.info.OwnFuncs) {
+			if !arrElemIsRcTracked(fieldType(sd.Fields, fa.Field)) {
+				continue
+			}
+			out[fa] = true
+			ownArg[fa] = true
+		}
+		for _, fa := range supersededFieldSetReceivers(sl, base.Name) {
 			if !arrElemIsRcTracked(fieldType(sd.Fields, fa.Field)) {
 				continue
 			}
@@ -7865,10 +7884,10 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 		}
 		return true
 	})
-	// The recognizer needs the callee to be a direct function; a local of
-	// the same name shadows it, and the checker's own-flag table is keyed by
-	// bare name.
-	for fa := range out {
+	// The `own` recognizer needs the callee to be a direct function; a local
+	// of the same name shadows it, and the checker's own-flag table is keyed
+	// by bare name.
+	for fa := range ownArg {
 		ast.Walk(b.fn.Body, func(n ast.Node) bool {
 			c, ok := n.(*ast.Call)
 			if !ok {
@@ -7888,7 +7907,41 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 			return true
 		})
 	}
+	// A claimed `.with` receiver is handed to __fern_arr_cow_inplace at the
+	// box's own count, so the projection inc computeArraySetIncs recorded for
+	// it (a field read is a borrow of its container) must not fire.
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || !isArraySetCall(c) {
+			return true
+		}
+		if fa, isField := c.Args[0].(*ast.FieldAccess); isField && out[fa] {
+			b.rc.arraySetInc[c] = false
+		}
+		return true
+	})
 	return out
+}
+
+// supersededFieldSetReceivers is the `.with` half of the superseded-field
+// recognition: every `target.f` that is the innermost receiver of the `.with`
+// chain initialising field f of a `S { ...target, f: target.f.with(i, v) }`
+// literal. The chain's outer calls take the inner result, a fresh owned
+// buffer, so only the innermost receiver reads the box.
+func supersededFieldSetReceivers(sl *ast.StructLit, target string) []*ast.FieldAccess {
+	return checker.SupersededFieldMoves(sl, target, func(field string, value ast.Expr) *ast.FieldAccess {
+		recv := value
+		for {
+			c, ok := recv.(*ast.Call)
+			if !ok || !isArraySetCall(c) {
+				return nil
+			}
+			recv = c.Args[0]
+			if fa, isField := recv.(*ast.FieldAccess); isField {
+				return fa
+			}
+		}
+	})
 }
 
 // frameOwnsIdent reports whether `name` holds a reference this frame may hand

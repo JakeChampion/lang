@@ -7686,6 +7686,54 @@ function main(): i32 {
     return bad + __rc_underflow_count();
 }`,
 	},
+	{
+		// The `.with` half of the superseded-field move: `x = S { ...x, f:
+		// x.f.with(i, v) }` (and the return form, and a method receiver)
+		// hands the field to __fern_arr_cow_inplace at the box's own count,
+		// so a unique box rewrites its buffer in place and its emptied slot
+		// no-ops at the overwrite drop; a shared box retains, and the copy
+		// leaves the alias's view intact. Value-checked through an alias, a
+		// borrowed caller-side box, and the rebuild loop a streaming hasher's
+		// pending block is written as.
+		name: "struct_update_field_with_move",
+		src: `
+struct H { buf: u8[], n: i32, tag: i32 }
+function push(own h: H, b: u8): H {
+    return H { ...h, buf: h.buf.with(h.n, b), n: h.n + 1 };
+}
+function (h: H) push_m(b: u8): H {
+    h = H { ...h, buf: h.buf.with(h.n, b), n: h.n + 1 };
+    return h;
+}
+function shared(): i32 {
+    var h: H = H { buf: __alloc_u8(4), n: 0, tag: 1 };
+    h = H { ...h, buf: h.buf.with(0, 5 as u8) };
+    var keep: H = h;
+    h = H { ...h, buf: h.buf.with(0, 9 as u8), n: 1 };
+    var callee_keep: H = keep.push_m(7 as u8);
+    return (keep.buf[0] as i32) * 100 + (h.buf[0] as i32) * 10 + (callee_keep.buf[0] as i32) + callee_keep.n * 1000 + keep.n * 10000;
+}
+function chain(): i32 {
+    var h: H = H { buf: __alloc_u8(4), n: 0, tag: 2 };
+    h = H { ...h, buf: h.buf.with(0, 1 as u8).with(1, 2 as u8), n: 2 };
+    return (h.buf[0] as i32) + (h.buf[1] as i32) * 10;
+}
+function main(): i32 {
+    var h: H = H { buf: __alloc_u8(64), n: 0, tag: 0 };
+    var i: i32 = 0;
+    while (i < 64) {
+        if (i % 2 == 0) { h = push(h, (i * 3) as u8); } else { h = h.push_m((i * 3) as u8); }
+        i = i + 1;
+    }
+    var bad: i32 = 0;
+    if (h.n != 64) { bad = bad + 1; }
+    if ((h.buf[63] as i32) != 189) { bad = bad + 2; }
+    if ((h.buf[10] as i32) != 30) { bad = bad + 4; }
+    if (shared() != 1597) { bad = bad + 8; }
+    if (chain() != 21) { bad = bad + 16; }
+    return bad + __rc_underflow_count();
+}`,
+	},
 }
 
 func TestX86_64RcCorrectnessCorpus(t *testing.T) {
