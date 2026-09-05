@@ -24851,11 +24851,21 @@ function field_append_inplace_at(c: ast.ExprCall, recv: ast.Expr, s: LowerState)
 // arr_push never frees its receiver, so the reallocating path leaves the
 // pre-grow buffer valid for the container that still names it.
 //
-// The IN-PLACE result IS the source container's own buffer, and it takes no
-// retain: the superseded box hands the buffer over rather than freeing it,
-// because __field_reclaim_<T> skips a field whose value the replacement still
-// holds. A second counted reference here would have nothing to release it.
+// The IN-PLACE result IS the source container's own buffer, and which side owes
+// the count depends on how that container is released, so the two roots the
+// admission allows split here:
+//
+//   BORROWED root — the frame never releases it, and the caller's rebind goes
+//   through __field_reclaim_<T>, which skips a field whose value the
+//   replacement still holds. The buffer is handed over; a second counted
+//   reference would have nothing to release it.
+//
+//   `own` root — this frame owns the box and ends with __struct_drop_<T>, which
+//   has no `new` to compare against and so frees the field outright. The result
+//   must carry its own count, guarded on IDENTITY: a reallocating grow leaves
+//   the pre-grow buffer to the source and hands back a fresh rc 1 one.
 pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, s: LowerState): LowerState {
+    if (fai_root_is_own(obj, s)) { return lower_field_append_inplace_owned(obj, val, s); }
     var kind: string = arr_elem_kind(obj, s);
     var st: LowerState = lower_expr(obj, s);
     if (!st.ok) { return st; }
@@ -24872,6 +24882,56 @@ pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, s: LowerSt
     st = lower_append_elem_value(val, st);
     if (!st.ok) { return st; }
     return st.emit(ir.op_arr_push());
+}
+
+// fai_root_is_own reports whether an admitted `<root>.<field>.append(v)` is
+// rooted at an `own` parameter. The root is read back out of the site key
+// fai_recv_key builds, which is the same shape-check the admission ran. A
+// receiver is never own: the self-host lowers every receiver as a borrow, so
+// `function (own s: T)` records no flag to read.
+function fai_root_is_own(obj: ast.Expr, s: LowerState): boolean {
+    var k: string = fai_recv_key(obj, 0, 0);
+    if (k.len() == 0) { return false; }
+    return s.is_own_param(fai_key_part(k, 1));
+}
+
+// lower_field_append_inplace_owned is the `own`-rooted arm: it captures the
+// source buffer and the push result and retains the result when they are the
+// same pointer, so this frame's deep drop of the box decrements to the one
+// reference the value the append feeds is left holding.
+function lower_field_append_inplace_owned(obj: ast.Expr, val: ast.Expr, s: LowerState): LowerState {
+    var kind: string = arr_elem_kind(obj, s);
+    var srcname: string = "$fiab" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(srcname);
+    var srcslot: i32 = st.slot_of(srcname);
+    st = lower_expr(obj, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(srcslot));
+    st = st.emit(ir.op_load_local(srcslot));
+    if (kind == "i64") {
+        st = lower_i64(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_push_i64());
+    } else if (kind == "f64") {
+        st = lower_expr(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_push_f64());
+    } else {
+        st = lower_append_elem_value(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_push());
+    }
+    var resname: string = "$fiar" + util.i32_to_string(st.locals.len());
+    st = st.add_local(resname);
+    var resslot: i32 = st.slot_of(resname);
+    st = st.emit(ir.op_store_local(resslot));
+    st = st.emit(ir.op_load_local(resslot));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.retain(resslot, "field-append-inplace-own-share");
+    st = st.emit(ir.op_end());
+    return st.emit(ir.op_load_local(resslot));
 }
 
 // lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING
