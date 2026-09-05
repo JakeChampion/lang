@@ -10164,6 +10164,16 @@ pub function sfrrecv_chain_root_slot(e: ast.Expr, s: LowerState, depth: i32): i3
 // the non-comparison arithmetic + bitwise ops recurse on i64 operands. Anything
 // that isn't a pure-i64 value here — an i32 variable (mixed width), a call, a
 // comparison, i64 division/remainder — fails, bailing the module.
+// lower_neg_i64 lowers `-operand` at 64-bit width: an i64 zero, the operand
+// through lower_i64, and a 64-bit sub. Both unary-minus sites reach it, so the
+// 32-bit and 64-bit forms cannot drift apart again.
+function lower_neg_i64(operand: ast.Expr, s: LowerState): LowerState {
+    var nz: LowerState = s.emit(ir.op_const_i64_text("0"));
+    var nx: LowerState = lower_i64(operand, nz);
+    if (!nx.ok) { return nx; }
+    return nx.emit(ir.op_bin("sub", 64, false));
+}
+
 pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
     // c.get() on a Cell[i64/u64] -> c[0], lowered as an 8-byte i64 load (#5510).
     // Without this, c.get() in an i64 context (e.g. `c.get() + 1i64`) reaches
@@ -10230,10 +10240,7 @@ pub function lower_i64(e: ast.Expr, s: LowerState): LowerState {
                 if ((u.ty == "i64" || u.ty == "u64") && decl_is_struct(s.frame.structs, expr_struct_type(u.operand, s))) {
                     return lower_expr(e, s);
                 }
-                var sz: LowerState = s.emit(ir.op_const_i64_text("0"));
-                var sx: LowerState = lower_i64(u.operand, sz);
-                if (!sx.ok) { return sx; }
-                return sx.emit(ir.op_bin("sub", 64, false));
+                return lower_neg_i64(u.operand, s);
             }
             // `n as i64` / `n as u64`. Three operand cases:
             //  - an f64 operand: truncate toward zero to i64 (f64_to_i64);
@@ -15245,17 +15252,13 @@ function lower_expr_unary(u: ast.ExprUnary, s: LowerState): LowerState {
             var negcall: ast.Expr = ast.ExprCall { callee: ast.ExprFieldAccess { obj: u.operand, field: "neg", line: u.line, col: u.col, ty: "" }, args: [], line: u.line, col: u.col, type_argc: 0, ty: u.ty };
             return lower_expr(negcall, s);
         }
-        // -x  ==  0 - x  : push 0, push x, sub — at the OPERAND's width. A
-        // 64-bit operand needs an i64 zero and a width-64 sub: the register
-        // backends compute the right answer either way (the value occupies a
-        // whole 64-bit register), but wasm's stack is typed and refuses the
-        // module outright.
-        if (infer_expr_width(u.operand, s) == 64) {
-            var wz: LowerState = s.emit(ir.op_const_i64_text("0"));
-            var wx: LowerState = lower_i64(u.operand, wz);
-            if (!wx.ok) { return wx; }
-            return wx.emit(ir.op_bin("sub", 64, false));
-        }
+        // -x  ==  0 - x  : push 0, push x, sub — at the OPERAND's width.
+        // A 64-bit operand reaches here whenever the negation is not itself
+        // in an i64 context, a method receiver being the way it happens
+        // (`(-b).to_string()`). The register backends tolerated the 32-bit
+        // form because the value lands in a 64-bit register either way; wasm
+        // is typed and rejects the module outright (#8460).
+        if (infer_expr_width(u.operand, s) == 64) { return lower_neg_i64(u.operand, s); }
         var sz: LowerState = s.emit(ir.op_const_i32(0));
         var sx: LowerState = lower_expr(u.operand, sz);
         if (!sx.ok) { return sx; }
