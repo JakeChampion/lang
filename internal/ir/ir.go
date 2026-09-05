@@ -5575,7 +5575,7 @@ func (b *builder) emitDeferCleanupKind(onError bool) error {
 		if err := b.expr(b.defers[i].Expr); err != nil {
 			return err
 		}
-		if exprLeavesValue(b.defers[i].Expr, b.info) {
+		if b.exprLeavesValue(b.defers[i].Expr) {
 			b.emit(Op{Kind: OpDrop})
 		}
 		b.closeScope()
@@ -5622,7 +5622,7 @@ func (b *builder) emitIterDeferCleanup(idxs []int) error {
 			if err := b.expr(b.defers[i].Expr); err != nil {
 				return err
 			}
-			if exprLeavesValue(b.defers[i].Expr, b.info) {
+			if b.exprLeavesValue(b.defers[i].Expr) {
 				b.emit(Op{Kind: OpDrop})
 			}
 		}
@@ -9106,7 +9106,7 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// Without this a bare `a + b;` / `[x, y];` leaks its box every time.
 		// Gated inside freshOwnedRcTempType on RcFreeEnabled, so free-off
 		// stays byte-identical to the plain-drop baseline below.
-		if exprLeavesValue(n.Expr, b.info) {
+		if b.exprLeavesValue(n.Expr) {
 			if t, ok := b.freshOwnedRcTempType(n.Expr); ok {
 				b.emitOwnedTempStackDrop(t)
 				break
@@ -11212,6 +11212,18 @@ func (b *builder) expr(e ast.Expr) error {
 		// the SSA-lift's slot accounting.
 		offs, size := structFieldLayout(sd.Fields, b.ptrW)
 		const rcHeaderBytes = 8
+		// Return-position struct update `return T { ...p, f: v }`: p's box is
+		// this frame's to hand out (computeReturnSpreadReuse), so the update
+		// writes it in place — carried fields keep the references they already
+		// hold — instead of filling a fresh box and deep-dropping p.
+		if dName, admitted := b.rc.returnSpreadReuse[n]; admitted {
+			base := n.Base.(*ast.Ident)
+			reuseDecl, ok := b.structUpdateReuseDecl(n, base)
+			if !ok {
+				return fmt.Errorf("ir: return-spread reuse admitted %q at a shape it cannot lower (compiler bug)", dName)
+			}
+			return b.emitStructUpdateReuse(n, reuseDecl, base, b.locals[dName], true)
+		}
 		// Struct-update `Foo { ...base, field: v }`: evaluate the base
 		// once into a scratch slot. The base is *borrowed* for the
 		// copy — evaluating it (typically an Ident local) just loads
@@ -11291,20 +11303,7 @@ func (b *builder) expr(e ast.Expr) error {
 					b.emit(Op{Kind: OpAdd})
 				}
 				b.emit(payloadLoadOpFor(ft, b.ptrW))
-				// The new struct co-owns a copied pointer field — inc
-				// it (mirrors emitAliasInc, keyed on the field type
-				// since there's no source expr). Two-word strings go
-				// through __fern_str_inc so the inline-bit tag check
-				// applies; everything else pointer-shaped uses
-				// __fern_rc_inc. Both inc-and-passthrough (leave the
-				// value on the stack for the store).
-				if ast.IsPointerType(ft) {
-					if _, isStr := ft.(ast.StringType); isStr && b.twoWordStrings() {
-						b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 1})
-					} else {
-						b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
-					}
-				}
+				b.emitCopiedFieldInc(ft)
 				b.emit(payloadStoreOpFor(ft, b.ptrW))
 			}
 			// A base nobody else owns has to be released here. The "borrowed,
@@ -13973,6 +13972,140 @@ func resultCannotAliasArg(t ast.Type) bool {
 	return false
 }
 
+// typeCannotCarrySlice reports whether a value of type t provably cannot BE or
+// CONTAIN a `[T]` view header. An allow-list: only shapes whose contents are
+// fully known answer true, so a type variable, a trait object, a closure or a
+// handle blocks the answer rather than passing it.
+//
+// A different question from resultCannotAliasArg, and deliberately wider. That
+// one asks whether the result can alias the ARGUMENT, which a `u8[]` result can
+// — the callee may hand the caller's array straight back. The header a lend
+// materialises is a separate two-word object that nothing but the call site can
+// name, so an array result cannot be it (#8502).
+func (b *builder) typeCannotCarrySlice(t ast.Type) bool {
+	return b.sliceFreeType(t, map[string]bool{})
+}
+
+func (b *builder) sliceFreeType(t ast.Type, seen map[string]bool) bool {
+	switch x := t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.VoidType,
+		ast.StringType, ast.CharType, ast.NeverType:
+		return true
+	case ast.ArrayType:
+		return x.Elem != nil && b.sliceFreeType(x.Elem, seen)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if !b.sliceFreeType(e, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		if seen[x.Name] {
+			return true // a cycle reaches nothing new
+		}
+		seen[x.Name] = true
+		d := b.info.Structs[x.Name]
+		if d == nil {
+			return false
+		}
+		for _, f := range d.Fields {
+			if !b.sliceFreeType(f.Type, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		if seen[x.Name] {
+			return true
+		}
+		seen[x.Name] = true
+		d := b.info.Enums[x.Name]
+		if d == nil {
+			return false
+		}
+		for _, v := range d.Variants {
+			for _, pt := range v.Payloads {
+				if !b.sliceFreeType(pt, seen) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// stashLentViewTemp evaluates a LENT view argument — the full-range slice the
+// checker synthesises for a `T[]` argument at a `[T]` parameter — into a
+// scratch slot, leaving it on the operand stack for the call. Reports the slot
+// so the caller can free the header once the call has returned.
+//
+// The header is 2 pointer-widths of raw `__fern_alloc` memory with no rc
+// header, so nothing in the rc machinery owns it and it leaked once per call on
+// every backend. Three things together make the caller-side free sound, and the
+// first two are the language's rather than this analysis's:
+//
+//   - the coercion fires only at ARGUMENT positions, so a header cannot be born
+//     anywhere else (E043 rejects the same coercion in a struct literal);
+//   - fields are immutable after construction (E048), so the callee cannot
+//     write the view into storage the caller still reads;
+//   - which leaves the callee's RETURN as the only way out, and resultType is
+//     admitted only when it provably cannot carry a slice.
+func (b *builder) stashLentViewTempIf(admitted bool, a ast.Expr, resultType ast.Type) (int32, bool, error) {
+	if !admitted {
+		return 0, false, nil
+	}
+	return b.stashLentViewTemp(a, resultType)
+}
+
+func (b *builder) stashLentViewTemp(a ast.Expr, resultType ast.Type) (int32, bool, error) {
+	if !ast.RcFreeEnabled || !makesFreshViewHeader(a) || !b.typeCannotCarrySlice(resultType) {
+		return 0, false, nil
+	}
+	slot := b.allocSlot()
+	b.locals[fmt.Sprintf("__lentview_%d", slot)] = slot
+	if err := b.expr(a); err != nil {
+		return 0, false, err
+	}
+	b.emit(Op{Kind: OpStoreLocal, I32: slot})
+	b.emit(Op{Kind: OpLoadLocal, I32: slot})
+	return slot, true, nil
+}
+
+// makesFreshViewHeader reports whether evaluating e MATERIALISES a `[T]`
+// header — as opposed to naming one someone else owns. A bare ident holding a
+// view is the shape this must exclude: its owner keeps it past the call.
+//
+// Both producers allocate the same two-word `__fern_alloc` block with no rc
+// header: the slice lowering's `__slice_make` (whether the author wrote
+// `xs[a:b]` or the checker synthesised the full-range lend), and
+// `as_bytes`, which rcresults.go already classifies as raw for the same
+// reason. A string slice is not one of them — `IsString` lowers to
+// `__str_slice`, a copy into a fresh owned string, which the rc machinery
+// already reclaims.
+func makesFreshViewHeader(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.SliceExpr:
+		return !x.IsString
+	case *ast.Call:
+		id, ok := x.Callee.(*ast.Ident)
+		return ok && id.Name == "__method_string_as_bytes"
+	}
+	return false
+}
+
+// emitLentViewDrops frees the headers stashLentViewTemp stashed. Net-zero on
+// the operand stack, so the call's result sitting underneath is untouched.
+func (b *builder) emitLentViewDrops(slots []int32) {
+	for _, slot := range slots {
+		b.emit(Op{Kind: OpLoadLocal, I32: slot})
+		b.emit(Op{Kind: OpConstI32, I32: int32(2 * b.ptrW)})
+		// __free is (base, size) and returns nothing, so nothing follows it.
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__free", Width: ResNarrow, I32: 2})
+	}
+}
+
 // resultIsCountedStringAlias admits the stage-(b) arg-temp reclaim for a
 // STRING-returning user callee, where resultCannotAliasArg says no. The result
 // really can be the argument — `pad_start`'s `if (sl >= n) { return s; }` is the
@@ -15197,6 +15330,10 @@ func (b *builder) callBody(n *ast.Call) error {
 		resultCannotAliasArg(b.exprType(n))
 	var argTempSlots []int32
 	var argTempTypes []ast.Type
+	// The lend headers this call materialises, freed after it returns (#8502).
+	// Kept separate from argTempSlots because the admission is a different
+	// question — typeCannotCarrySlice, not resultCannotAliasArg.
+	var lentViewSlots []int32
 	// Parallel to argTempSlots: true where the drop must be gated on the
 	// call's result not BEING this temp (consumedArrayArgTemp).
 	var argTempGuarded []bool
@@ -15221,6 +15358,17 @@ func (b *builder) callBody(n *ast.Call) error {
 	}
 	for ai, a := range n.Args {
 		toOwnParam := ownedByCalleeAt(ai)
+		// A view is a borrow, so the checker refuses it at an `own` position
+		// and ownedByDefaultTypeIn does not admit one — but both would want
+		// the retain/move handling below rather than this free, so fall
+		// through rather than assume.
+		lentOK := !toOwnParam && !ownedByDefaultAt(ai)
+		if slot, ok, err := b.stashLentViewTempIf(lentOK, a, b.exprType(n)); err != nil {
+			return err
+		} else if ok {
+			lentViewSlots = append(lentViewSlots, slot)
+			continue
+		}
 		guardArgTemp := !toOwnParam && !reclaimArgTemps && !reclaimIndirectArgTemps &&
 			!countedArgTemp(ai) && consumedArrayArgTemp(ai)
 		if (reclaimArgTemps || reclaimIndirectArgTemps || countedArgTemp(ai) ||
@@ -15390,6 +15538,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			// incoming count (the inc preceded it; never frees).
 			b.emitGrowBracket(growBracket, OpRcDec, "__fern_rc_dec")
 			b.emitArgTempDropsGuarded(argTempSlots, argTempTypes, argTempGuarded, b.exprType(n))
+			b.emitLentViewDrops(lentViewSlots)
 			return nil
 		}
 	}
@@ -15408,6 +15557,7 @@ func (b *builder) callBody(n *ast.Call) error {
 	b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: sig}})
 	// Release the fresh owned temps stashed for this call (#6460).
 	b.emitArgTempDrops(argTempSlots, argTempTypes)
+	b.emitLentViewDrops(lentViewSlots)
 	return nil
 }
 
@@ -15598,17 +15748,6 @@ func (b *builder) localFuncType(name string) (*ast.FuncType, error) {
 	return nil, fmt.Errorf("ir: indirect call through unknown local %q", name)
 }
 
-// structReuseEligible reports whether every field of the struct is a
-// shape the Phase 5b/5c drop-reuse path handles: an i32-class integer
-// scalar (≤ 32 bits) OR a single-word rc-tracked pointer
-// (array / struct / Map / enum / closure / tuple — `arrElemIsRcTracked`).
-// Excluded, falling back to the normal dec-on-overwrite + fresh alloc:
-//   - strings (two-word on wasm / boxed on arm64 — the reuse temps are
-//     single-word; their rc release also diverges per backend),
-//   - wide / float scalars (i64 / f64 / f32 — would need width-correct
-//     temp slots; the temps here are i32/pointer-width),
-//   - bool and anything else not in the two categories above.
-//
 // fieldCarriedFrom reports whether the struct-literal field value `val` is
 // exactly `<targetName>.<fieldName>` — the field is carried over unchanged
 // from the struct being self-overwritten. Drives field-store elision in
@@ -15653,25 +15792,71 @@ func structUpdateFieldInits(sl *ast.StructLit, sd *ast.StructDecl, t *ast.Ident)
 	return out
 }
 
+// emitCopiedFieldInc retains a struct field COPIED out of another box, for the
+// copy's own reference — the struct-update spread's un-overridden fields and
+// the reuse path's carried ones. Keyed on the field type rather than on a
+// source expression (there is none): a two-word string goes through
+// __fern_str_inc so the inline-bit tag check applies, everything else
+// pointer-shaped through __fern_rc_inc, and a scalar takes nothing. Every
+// branch inc's-and-passes-through, leaving the value on the stack for the
+// store.
+func (b *builder) emitCopiedFieldInc(t ast.Type) {
+	if !ast.IsPointerType(t) {
+		return
+	}
+	if _, isStr := t.(ast.StringType); isStr && b.twoWordStrings() {
+		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_inc", Width: ResAddr, I32: 1})
+		return
+	}
+	b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+}
+
+// reusePlaceableField reports whether a field of this type is one the reuse
+// paths can PLACE into a repurposed box: a scalar of any width — i32-class,
+// wide i64/u64, f32/f64 (#4356 divergence 1), bool — which rides a
+// width-correct temp slot (the scratchType stamp sizes the slot and
+// payloadStoreOpFor picks the store), or a single-word rc-tracked pointer
+// (array / struct / Map / enum / closure / tuple), whose displaced value the
+// reuse branch releases through emitFieldDropOnStack.
+//
+// The two-word string shape stays out: its slot fans into two words and its
+// retain / release is per-ABI. A string a struct UPDATE carries is admitted at
+// the site instead (structUpdateReusePlaceable) — a carried field is neither
+// loaded nor stored on the reuse branch.
+func reusePlaceableField(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.FloatType, ast.BoolType:
+		return true
+	}
+	return arrElemIsRcTracked(t)
+}
+
+// structReuseEligible reports whether every field of the struct is
+// reusePlaceableField — the gate on the general FBIP pairing, where the
+// construction replaces every field of the box it takes over.
 func structReuseEligible(sd *ast.StructDecl) bool {
 	for _, f := range sd.Fields {
-		// Scalars of EVERY width are admitted (#4356 divergence 1): wide
-		// i64/u64 and f32/f64 fields ride width-correct temp slots in the
-		// self-overwrite path (the scratchType stamp sizes the slot and
-		// payloadStoreOpFor picks the 8-byte store), and the general reuse
-		// path stores fields width-correctly with no temps at all. Only the
-		// two-word string shape stays out (its retain/release is per-ABI and
-		// its slot fans into two words — a separate slice).
-		if _, ok := f.Type.(ast.NumberType); ok {
+		if !reusePlaceableField(f.Type) {
+			return false
+		}
+	}
+	return true
+}
+
+// structUpdateReusePlaceable is the per-SITE gate for the struct-update reuse
+// paths, which is weaker than structReuseEligible in exactly one way: a
+// CARRIED field keeps the reference the box already holds, so the reuse branch
+// never touches it and the fresh branch copies it straight out of the base box
+// — any type will do there, the two-word string included. Only a REPLACED
+// field rides a temp, and so must be placeable.
+func (b *builder) structUpdateReusePlaceable(sl *ast.StructLit, sd *ast.StructDecl, base *ast.Ident) bool {
+	for _, f := range structUpdateFieldInits(sl, sd, base) {
+		if b.fieldCarriedFrom(f.Value, base.Name, f.Name) {
 			continue
 		}
-		if _, ok := f.Type.(ast.FloatType); ok {
-			continue
+		if !reusePlaceableField(fieldType(sd.Fields, f.Name)) {
+			return false
 		}
-		if arrElemIsRcTracked(f.Type) {
-			continue
-		}
-		return false
 	}
 	return true
 }
@@ -15826,50 +16011,44 @@ func (b *builder) emitReuseToken(dName string, dAlloc, cAlloc int32, declineDups
 	return reusedSlot
 }
 
-// tryStructReuseOverwrite lowers a self-overwrite `p = T{ ... }` (where
-// p is an owned, uniquely-droppable struct local of the same type T,
-// every field of which is structReuseEligible) so the new value reuses
-// p's old box in place when it's the sole owner — the Phase 5b/5c
-// constructor-reuse (FBIP) win. Returns (true, err) when it took the
-// reuse path (the caller returns immediately), (false, nil) when the
-// shape isn't eligible and normal lowering should proceed.
+// structUpdateReuseDecl runs the shape gates both struct-update reuse hooks
+// share — the self-overwrite `p = T{ ...p, f: v }` and the return-position
+// spread `return T{ ...p, f: v }` — and returns T's declaration when `base`
+// names a value whose box this frame may repurpose.
 //
-// Soundness:
-//   - Gated on b.rc.freeEligible[p] (OWNED, not a borrowed param / alias):
+//   - Gated on b.rc.freeEligible[base] (OWNED, not a borrowed param / alias):
 //     a borrowed value can be rc==1 while the caller still holds it, so
-//     static ownership — not just the runtime rc check — is required
-//     before reusing storage in place.
-//   - The runtime is_unique check is the second gate: reuse fires only
-//     at rc==1. An aliased p (rc>1) is dec'd and a fresh box allocated,
-//     so the alias keeps the old value intact.
-//   - All field expressions are evaluated into temps BEFORE the box is
-//     reused, so a field that reads p (`x: p.x + 1`) sees the old value
-//     even though the box it lives in is about to be overwritten — no
-//     read-after-overwrite hazard, including field swaps.
-//   - Pointer fields: each new value is retained on eval (emitAliasInc
-//     for an alias-shaped RHS, same as normal StructLit construction).
-//     On the REUSE branch only, the box's OLD pointer-field values are
-//     deep-dropped (emitFieldDropOnStack, a FREEING drop) before the new
-//     ones overwrite them. For a carried-over field (`name: p.name`) the
-//     eval-inc and this drop balance, so its rc is unchanged; for a
-//     REPLACED field the old reference reaches rc 0 and its buffer/box is
-//     freed (5f). Freeing here is SOUND rather than a deferred-alias
-//     hazard precisely because construction inc's the new field: any live
-//     alias of the old
-//     buffer (including one read in the self-overwrite RHS,
-//     `items: ident(p.items)`) holds a counted reference, so the freeing
-//     drop only reclaims the genuine last one (the field's own is_unique
-//     gate dec's a shared buffer instead of freeing it). The drop is gated
-//     on the i32 is_unique result (not the raw token pointer) so the branch
-//     condition is backend-safe truthiness. (Contrast tryEnumReuseOverwrite,
-//     where construction does NOT count payloads, so its old payload still
-//     flat-leaks — a separate open item.)
-//   - tokenSize == size (same type T), so __alloc_reuse's class check
-//     always matches on the reuse path and never frees.
-func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) (bool, error) {
+//     static ownership — not just the runtime rc check — is required before
+//     reusing storage in place.
+//   - A `Drop` implementor never reuses: the reused box keeps its identity, so
+//     the displaced value's drop glue — and with it the user finalizer —
+//     never runs (#2705).
+func (b *builder) structUpdateReuseDecl(sl *ast.StructLit, base *ast.Ident) (*ast.StructDecl, bool) {
 	if !ast.RcFreeEnabled || !ast.RcReuseEnabled {
-		return false, nil
+		return nil, false
 	}
+	st, ok := b.exprStaticType(base).(ast.StructType)
+	if !ok || st.Name != sl.TypeName {
+		return nil, false
+	}
+	sd, ok := b.info.Structs[st.Name]
+	if !ok || !b.structUpdateReusePlaceable(sl, sd, base) {
+		return nil, false
+	}
+	if _, hasDrop := userDropFnName(b.info, st.Name); hasDrop {
+		return nil, false
+	}
+	return sd, b.rc.freeEligible[base.Name]
+}
+
+// tryStructReuseOverwrite lowers a self-overwrite `p = T{ ... }` (where p is
+// an owned, uniquely-droppable struct local of the same type T, placeable
+// field by field — structUpdateReuseDecl) so the new value reuses p's old box
+// in place when it's the sole owner — the Phase 5b/5c constructor-reuse (FBIP)
+// win. Returns (true, err) when it took the reuse path (the caller returns
+// immediately), (false, nil) when the shape isn't eligible and normal lowering
+// should proceed.
+func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) (bool, error) {
 	sl, ok := n.Value.(*ast.StructLit)
 	if !ok {
 		return false, nil
@@ -15888,56 +16067,90 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 			return false, nil
 		}
 	}
-	st, ok := b.exprStaticType(t).(ast.StructType)
-	if !ok || st.Name != sl.TypeName {
+	sd, ok := b.structUpdateReuseDecl(sl, t)
+	if !ok {
 		return false, nil
 	}
-	sd, ok := b.info.Structs[st.Name]
-	if !ok || !structReuseEligible(sd) {
-		return false, nil
+	if err := b.emitStructUpdateReuse(sl, sd, t, idx, false); err != nil {
+		return true, err
 	}
-	// A `Drop` implementor never reuses: the self-overwrite keeps the OLD
-	// box and overwrites its fields, so the displaced value's drop glue —
-	// and with it the user finalizer — never runs (#2705).
-	if _, hasDrop := userDropFnName(b.info, st.Name); hasDrop {
-		return false, nil
-	}
-	if !b.rc.freeEligible[t.Name] {
-		return false, nil
-	}
+	return true, nil
+}
 
+// emitStructUpdateReuse emits the struct-update reuse body for `T{ ...p, … }`
+// over p's own box, leaving the new value on the operand stack. `consume` says
+// what becomes of p's slot: false rebinds it to the result (the self-overwrite,
+// where p IS the target), true zeroes it because the box has been handed out
+// (the return-position spread, where every later release of the slot — the
+// exit sweep, a precise drop — must meet a null and no-op).
+//
+// Soundness:
+//   - The runtime is_unique check is the second gate (structUpdateReuseDecl is
+//     the first): reuse fires only at rc==1. An aliased p (rc>1) is dec'd and
+//     a fresh box allocated, so the alias keeps the old value intact.
+//   - All field expressions are evaluated into temps BEFORE the box is
+//     reused, so a field that reads p (`x: p.x + 1`) sees the old value
+//     even though the box it lives in is about to be overwritten — no
+//     read-after-overwrite hazard, including field swaps.
+//   - Pointer fields: each new value is retained on eval (emitAliasInc
+//     for an alias-shaped RHS, same as normal StructLit construction).
+//     On the REUSE branch only, the box's OLD pointer-field values are
+//     deep-dropped (emitFieldDropOnStack, a FREEING drop) before the new
+//     ones overwrite them. Only REPLACED fields are walked — a carried one
+//     keeps the box's own reference, untouched on both sides — and a
+//     replaced field's old reference reaches rc 0, so its buffer/box is
+//     freed (5f). Freeing here is SOUND rather than a deferred-alias
+//     hazard precisely because construction inc's the new field: any live
+//     alias of the old
+//     buffer (including one read in the RHS,
+//     `items: ident(p.items)`) holds a counted reference, so the freeing
+//     drop only reclaims the genuine last one (the field's own is_unique
+//     gate dec's a shared buffer instead of freeing it). An in-place
+//     `p.items.append(v)` is the same story from the other side: the grow
+//     leaves the buffer at rc 2, so this drop hands back exactly the count
+//     the box was holding. The drop is gated
+//     on the i32 is_unique result (not the raw token pointer) so the branch
+//     condition is backend-safe truthiness. (Contrast tryEnumReuseOverwrite,
+//     where construction does NOT count payloads, so its old payload still
+//     flat-leaks — a separate open item.)
+//   - tokenSize == size (same type T), so __alloc_reuse's class check
+//     always matches on the reuse path and never frees.
+func (b *builder) emitStructUpdateReuse(sl *ast.StructLit, sd *ast.StructDecl, t *ast.Ident, idx int32, consume bool) error {
 	offs, size := structFieldLayout(sd.Fields, b.ptrW)
 	const rcHeaderBytes = 8
 
-	// 1. Evaluate every field value into a single-word temp. These reads
-	//    of the OLD p (still live in slot idx) all complete before the
-	//    box is reused below. Pointer fields are retained here exactly
-	//    as normal StructLit construction does.
+	// 1. Evaluate every REPLACED field value into a temp. These reads of the
+	//    OLD p (still live in slot idx) all complete before the box is reused
+	//    below. Pointer fields are retained here exactly as normal StructLit
+	//    construction does.
+	//
+	//    Field-store elision (Perceus reuse specialization): a field whose
+	//    value is literally `p.<sameName>` is CARRIED over unchanged, so the
+	//    reuse branch leaves the reference the box already holds — no read,
+	//    no retain, no store, no release of a displaced value. This is the
+	//    dominant case of Fern's record-update idiom: E048 forbids field
+	//    assignment, so an update is written `p = T{ changed: …, rest: p.rest,
+	//    … }`. Step 6b copies the carried fields on the FRESH-alloc path,
+	//    where a new box does need its own copy + reference.
 	type fieldTemp struct {
-		name    string
-		slot    int32
-		ptr     bool
-		carried bool // value is exactly `p.<name>` — unchanged, kept on reuse
+		name string
+		slot int32
+		ptr  bool
 	}
 	temps := make([]fieldTemp, 0, len(sl.Fields))
+	var carriedFields []ast.Param
 	hasPtr := false
-	hasCarried := false
 	for _, f := range structUpdateFieldInits(sl, sd, t) {
-		isPtr := arrElemIsRcTracked(fieldType(sd.Fields, f.Name))
-		// Field-store elision (Perceus reuse specialization): a field whose
-		// value is literally `p.<sameName>` is carried over UNCHANGED. On the
-		// reuse branch the same box already holds it, so its retain + store +
-		// old-value release are all redundant and elided — the box keeps its
-		// existing reference (rc unchanged). This is the dominant case of
-		// Fern's record-update idiom: E048 forbids field assignment, so an
-		// update is written `p = T{ changed: ..., rest: p.rest, ... }`. The
-		// retain + store are still emitted on the FRESH-alloc path below
-		// (a new box needs its own copy + reference).
-		carried := b.fieldCarriedFrom(f.Value, t.Name, f.Name)
-		if err := b.expr(f.Value); err != nil {
-			return true, err
+		ft := fieldType(sd.Fields, f.Name)
+		if b.fieldCarriedFrom(f.Value, t.Name, f.Name) {
+			carriedFields = append(carriedFields, ast.Param{Name: f.Name, Type: ft})
+			continue
 		}
-		if isPtr && !carried && needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
+		isPtr := arrElemIsRcTracked(ft)
+		if err := b.expr(f.Value); err != nil {
+			return err
+		}
+		if isPtr && needsRcIncOnAlias(f.Value, b) && !b.rc.moveSites[f.Value] {
 			b.emitAliasInc(f.Value)
 		}
 		ts := b.allocSlot()
@@ -15947,11 +16160,10 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 		// needs an 8-byte slot and width-matched load/store; the default
 		// un-stamped slot is i32 and would truncate (natives) or fail
 		// validation (wasm).
-		b.scratchType[ts] = fieldType(sd.Fields, f.Name)
+		b.scratchType[ts] = ft
 		b.emit(Op{Kind: OpStoreLocal, I32: ts})
-		temps = append(temps, fieldTemp{f.Name, ts, isPtr, carried})
+		temps = append(temps, fieldTemp{f.Name, ts, isPtr})
 		hasPtr = hasPtr || isPtr
-		hasCarried = hasCarried || carried
 	}
 
 	// 2. reused = is_unique(old) (an i32 0/1, captured so both the token
@@ -15993,22 +16205,17 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	// 4. REUSE branch only: release the box's OLD pointer-field values
 	//    before the new ones overwrite them. On a fresh box (reused==0)
 	//    the slots are uninitialised, so this is gated on the is_unique
-	//    result. Per-field deep drop (emitFieldDropOnStack): the field's
-	//    own is_unique gate means a carried-over field (its eval-inc above
-	//    bumped it to rc>1) is only dec'd, while a REPLACED field's old
-	//    reference reaches rc 0 and its buffer/box is freed — fixing the
-	//    leak the prior flat __fern_rc_dec left (rc_dec has no free path,
-	//    so a replaced array field's buffer was orphaned every iteration).
-	//    The rc arithmetic is unchanged (still one dec per field); only the
-	//    rc-0 free is added, so there's zero over-release surface.
+	//    result. Per-field deep drop (emitFieldDropOnStack): the displaced
+	//    reference reaches rc 0 and its buffer/box is freed — a flat
+	//    __fern_rc_dec has no free path, so a replaced array field's buffer
+	//    was orphaned every iteration. Whatever the new value retained on eval
+	//    (including an in-place `p.f.append(v)`, whose grow leaves the buffer
+	//    at rc 2) survives this drop.
 	if hasPtr {
 		b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
 		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 		for _, tp := range temps {
-			if !tp.ptr || tp.carried {
-				// A carried-over field keeps its old value (no replacement),
-				// so it must NOT be released — and its step-1 retain was
-				// elided to match.
+			if !tp.ptr {
 				continue
 			}
 			b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
@@ -16026,13 +16233,8 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 	b.emit(Op{Kind: OpConstI32, I32: 1})
 	b.emit(Op{Kind: OpStore})
 
-	// 6. Store the CHANGED field temps at [base + hdr + off]. Carried-over
-	//    fields are skipped here — on the reuse branch the box already holds
-	//    them; on the fresh-alloc branch they're stored in step 6b.
+	// 6. Store the CHANGED field temps at [base + hdr + off].
 	for _, tp := range temps {
-		if tp.carried {
-			continue
-		}
 		b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
 		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[tp.name]})
 		b.emit(Op{Kind: OpAdd})
@@ -16040,40 +16242,48 @@ func (b *builder) tryStructReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32
 		b.emit(payloadStoreOpFor(fieldType(sd.Fields, tp.name), b.ptrW))
 	}
 
-	// 6b. FRESH-alloc branch only (reused==0): a fresh box has no field
-	//     values, so the carried-over fields must be stored + (pointer
-	//     fields) retained here — exactly what the reuse branch elides.
-	if hasCarried {
+	// 6b. FRESH-alloc branch only (reused==0): a fresh box has no field values,
+	//     so each carried field is copied out of p's box and retained for the
+	//     new box's own reference — the plain struct-update copy, and exactly
+	//     what the reuse branch elides. p's slot still holds its box here: the
+	//     decline arm of step 2 only dec'd a reference someone else also holds.
+	if len(carriedFields) > 0 {
 		b.emit(Op{Kind: OpLoadLocal, I32: reusedSlot})
 		b.emit(Op{Kind: OpNot}) // reused == 0 → fresh
 		b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-		for _, tp := range temps {
-			if !tp.carried {
-				continue
-			}
-			if tp.ptr {
-				// Retain the carried pointer for the fresh box's own
-				// reference (the reuse branch keeps the box's existing one).
-				b.emit(Op{Kind: OpLoadLocal, I32: tp.slot})
-				b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
-				b.emit(Op{Kind: OpDrop})
-			}
+		for _, cf := range carriedFields {
 			b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
-			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[tp.name]})
+			b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes + offs[cf.Name]})
 			b.emit(Op{Kind: OpAdd})
-			b.emit(Op{Kind: OpLoadLocal, I32: tp.slot})
-			b.emit(payloadStoreOpFor(fieldType(sd.Fields, tp.name), b.ptrW))
+			b.emit(Op{Kind: OpLoadLocal, I32: idx})
+			if offs[cf.Name] != 0 {
+				b.emit(Op{Kind: OpConstI32, I32: offs[cf.Name]})
+				b.emit(Op{Kind: OpAdd})
+			}
+			b.emit(payloadLoadOpFor(cf.Type, b.ptrW))
+			b.emitCopiedFieldInc(cf.Type)
+			b.emit(payloadStoreOpFor(cf.Type, b.ptrW))
 		}
 		b.emit(Op{Kind: OpEnd})
 	}
 
-	// 7. p = data (= base + hdr); leave the tee for expression position.
+	// 7. The result is base + hdr. The self-overwrite rebinds p to it (and
+	//    leaves the tee for expression position); a consuming site hands the
+	//    box out instead, so p's slot is emptied.
+	if consume {
+		b.emit(Op{Kind: OpConstI32, I32: 0})
+		b.emit(Op{Kind: OpStoreLocal, I32: idx})
+		b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
+		b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
+		b.emit(Op{Kind: OpAdd})
+		return nil
+	}
 	b.emit(Op{Kind: OpLoadLocal, I32: boxSlot})
 	b.emit(Op{Kind: OpConstI32, I32: rcHeaderBytes})
 	b.emit(Op{Kind: OpAdd})
 	b.emit(Op{Kind: OpStoreLocal, I32: idx})
 	b.emit(Op{Kind: OpLoadLocal, I32: idx})
-	return true, nil
+	return nil
 }
 
 // tryEnumReuseOverwrite is the enum analogue of tryStructReuseOverwrite
@@ -16337,6 +16547,29 @@ func (b *builder) tryEnumReuseOverwrite(n *ast.Assign, t *ast.Ident, idx int32) 
 // NULL-guard its first dec, so it fires only for unique names.
 func (b *builder) localNameUnique(name string) bool {
 	n := 0
+	for _, v := range b.info.Locals[b.fn] {
+		if v.Name == name {
+			n++
+			if n > 1 {
+				return false
+			}
+		}
+	}
+	return n == 1
+}
+
+// bindingNameUnique reports whether `name` names exactly one slot in this
+// frame: a parameter no `var` shadows, or a single unshadowed local.
+// localNameUnique answers the narrower question about declared locals only, so
+// a parameter — which has no declaration among them — reads as non-unique
+// there.
+func (b *builder) bindingNameUnique(name string) bool {
+	n := 0
+	for _, p := range b.fn.Params {
+		if p.Name == name {
+			n++
+		}
+	}
 	for _, v := range b.info.Locals[b.fn] {
 		if v.Name == name {
 			n++
@@ -19153,7 +19386,8 @@ func exprSafeToReevaluate(e ast.Expr) bool {
 	return false
 }
 
-func exprLeavesValue(e ast.Expr, info *checker.Info) bool {
+func (b *builder) exprLeavesValue(e ast.Expr) bool {
+	info := b.info
 	if a, ok := e.(*ast.Assign); ok {
 		// Ident assignment leaves the assigned value on the stack
 		// (tee semantics). Index and FieldAccess assignments don't —
@@ -19169,6 +19403,14 @@ func exprLeavesValue(e ast.Expr, info *checker.Info) bool {
 			if sig, ok := info.FuncSigs[id.Name]; ok {
 				return !ast.Equal(sig.Result, ast.VoidType{})
 			}
+		}
+		// A call through a function VALUE — a closure-typed parameter, local
+		// or field — has no FuncSigs entry, so the result type has to come
+		// from the callee's own type. Assuming a value was left put a `drop`
+		// after a void call_indirect, which underflows the wasm stack and
+		// fails module validation (#8504).
+		if ft, ok := b.exprType(c.Callee).(*ast.FuncType); ok && ft.Result != nil {
+			return !isVoid(ft.Result)
 		}
 		return true
 	}

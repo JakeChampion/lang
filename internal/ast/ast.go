@@ -2103,6 +2103,12 @@ type SliceExpr struct {
 	// `low * stride` byte offset on slice creation. Unused for
 	// IsString slices.
 	ElemType Type
+	// Lent marks the full-range slice the checker synthesises when an
+	// owned `T[]` argument is coerced to a `[T]` parameter. The header it
+	// materialises is not written by the author and cannot be named, so
+	// nothing but the call it was built for can reach it — which is what
+	// lets the IR release it once the call returns (#8502).
+	Lent bool
 }
 type Call struct {
 	P      Position

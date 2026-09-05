@@ -69,6 +69,11 @@ type hevEvent struct {
 	ptr  uint64
 	size uint64
 	site uint64
+	// caller is the return address one frame above site — native's 5th
+	// number. It is what separates two call sites that share a runtime
+	// helper: every append allocates at one address inside
+	// __fern_arr_push, so site cannot tell them apart and caller can.
+	caller uint64
 }
 
 // runCaptureEnv is RunCapture with environment overrides — the self-host
@@ -138,8 +143,8 @@ func parseHev(t *testing.T, stderr string) ([]hevEvent, string) {
 			continue
 		}
 		f := strings.Fields(line)
-		if len(f) != 5 {
-			t.Fatalf("malformed trace line %q: want 5 fields, got %d", line, len(f))
+		if len(f) != 6 {
+			t.Fatalf("malformed trace line %q: want 6 fields, got %d", line, len(f))
 		}
 		for _, n := range f[2:] {
 			if len(n) != 16 {
@@ -158,10 +163,14 @@ func parseHev(t *testing.T, stderr string) ([]hevEvent, string) {
 		if err != nil {
 			t.Fatalf("site %q: %v", f[4], err)
 		}
+		caller, err := strconv.ParseUint(f[5], 16, 64)
+		if err != nil {
+			t.Fatalf("caller %q: %v", f[5], err)
+		}
 		if f[1] != "a" && f[1] != "f" {
 			t.Fatalf("trace kind %q in %q, want a or f", f[1], line)
 		}
-		evs = append(evs, hevEvent{kind: f[1], ptr: ptr, size: size, site: site})
+		evs = append(evs, hevEvent{kind: f[1], ptr: ptr, size: size, site: site, caller: caller})
 	}
 	return evs, summary
 }
@@ -422,3 +431,90 @@ var errShortSummary = errSummary("leakcheck summary did not carry allocs/frees/l
 type errSummary string
 
 func (e errSummary) Error() string { return string(e) }
+
+// hevTwoAppendSrc: two appends that grow an array and share one allocation
+// address inside __fern_arr_push, so `site` is identical for both and only
+// `caller` separates them — the property the field exists for.
+//
+// One appends a LOCAL and one a PARAMETER on purpose. The two take different
+// pushes (the sole-owner local reclaims through __fern_arr_push_owned, the
+// parameter cannot and takes the plain one), which puts a different number of
+// frames between the allocation and user code. That asymmetry is the point:
+// with both appending a local, both callers are __fern_arr_push_owned and the
+// field looks useless — a walk of fixed depth cannot reach user code through
+// every path, and this pins the depth that the leaking path needs.
+const hevTwoAppendSrc = `function grow_local(n: i32): i32[] {
+    var xs: i32[] = [];
+    var i: i32 = 0;
+    while (i < n) { xs = xs.append(i); i = i + 1; }
+    return xs;
+}
+function grow_param(ys: i32[], n: i32): i32[] {
+    var j: i32 = 0;
+    while (j < n) { ys = ys.append(j * 2); j = j + 1; }
+    return ys;
+}
+function main(): i32 {
+    var a: i32[] = grow_local(40);
+    var b: i32[] = grow_param(a, 40);
+    exit(b.len());
+    return 0;
+}`
+
+// TestSelfHostRcTraceCallerX86_64 — `caller` names a frame ABOVE `site`, so two
+// call sites sharing a runtime helper are told apart.
+//
+// The regression this pins is specific and was live during development: reading
+// the frame pointer one link short (`8(%rbp)`) yields the box shim's own return
+// address, which IS the claimed site. Every line then carries caller == site —
+// a field that looks like attribution, parses fine, and answers nothing. So the
+// assertion is not "a caller field exists" but "it disagrees with site, and
+// takes more than one value across two appending functions".
+func TestSelfHostRcTraceCallerX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	asm := hevCompile(t, runner, driverBin, hevTwoAppendSrc, []string{"FERN_RC_TRACE=1"})
+	progBin := buildBin(t, gcc, dir, "hev_caller", asm)
+	stderr, _ := hevRun(t, runner, progBin)
+
+	evs, _ := parseHev(t, stderr)
+	if len(evs) == 0 {
+		t.Fatal("FERN_RC_TRACE=1 produced no rctrace lines")
+	}
+
+	// Group the callers seen per site, over allocations only: a free's site is
+	// a shared drop helper and carries no attribution either way.
+	perSite := map[uint64]map[uint64]bool{}
+	differ := 0
+	for _, e := range evs {
+		if e.kind != "a" {
+			continue
+		}
+		if perSite[e.site] == nil {
+			perSite[e.site] = map[uint64]bool{}
+		}
+		perSite[e.site][e.caller] = true
+		if e.caller != e.site && e.caller != 0 {
+			differ++
+		}
+	}
+	if differ == 0 {
+		t.Fatal("every allocation reported caller == site: the frame walk is one link short, " +
+			"so the field duplicates site instead of attributing past the helper")
+	}
+
+	// The point of the field: one site, several callers.
+	best := 0
+	for _, callers := range perSite {
+		if len(callers) > best {
+			best = len(callers)
+		}
+	}
+	if best < 2 {
+		t.Errorf("no site reported more than one caller (max %d); two appending functions "+
+			"share the __fern_arr_push allocation site, so caller must separate them", best)
+	}
+}

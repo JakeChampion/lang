@@ -820,6 +820,24 @@ answer, these are the tools, in the order they are usually reached for:
   upstream retain at run time is invisible here and is exactly what
   `__arr_push_shared_count()` is for.
 
+- **`FERN_APPEND_REPORT=1`** — the SELF-HOST compiler's counterpart, and a
+  different axis from `-append-report` above: it reports whether the grow
+  RECLAIMS the superseded buffer (`__fern_arr_push_owned`) or abandons it
+  (`__fern_arr_push`), one line per `a = a.append(v)` self-reassign with the
+  function, position, receiver, verdict and the rule that decided. Reach for it
+  when the question is where the self-built compiler's retention comes from:
+  the plain push is 40% of the leaked bytes in a stage1 built by stage0
+  (#7954), and an `rctrace` line cannot answer it — the alloc site is inside
+  `__fern_arr_push`, so every append in the program aggregates to one address
+  and only the lowering knows which source site chose which push. Compiling
+  `fern.fern` reports 4,117 sites, 671 of them leaking: 533 because the target
+  is a PARAMETER (the `slot < n_params` gate, which guards a real double-free —
+  #3457 — and so is not one to widen casually) and 138 because it is aliased.
+  Env-gated and print-only: a run without it is byte-identical, the contract
+  `util.arr_push_cliff_report` keeps. A library module compiled alone reports
+  almost nothing — tree-shaking means little is lowered — so point it at an
+  entry.
+
   **The two populations are disjoint at the top of the cost curve, so do not
   read one as a proxy for the other.** `.github/cliff-baseline.txt` puts 267 MB
   of its 268 MB on `irlower.LowerState.emit` and `checker.Scope.bind` — and
@@ -868,7 +886,15 @@ answer, these are the tools, in the order they are usually reached for:
   operand that stays live across the loop.
 - **`FERN_RC_TRACE=1`** — one stderr line per heap event:
   `rctrace <a|f> <ptr> <size> <site> <caller>`, all four numbers fixed-width
-  16-hex, `site` being the *caller's* return address. Stands to `FERN_LEAKCHECK` as
+  16-hex, `site` being the *caller's* return address and `caller` one frame
+  above it. **Both compilers emit all five fields**; the self-host omitted
+  `caller` until #7954 needed it, and without it a leak through a shared
+  runtime helper cannot be attributed at all — every append in a program
+  allocates at one address inside `__fern_arr_push`, so `site` is the same for
+  all of them. On the self-host the walk is tuned for the LEAKING path: a plain
+  `__fern_arr_push` reports the Fern function that called append, while a
+  sole-owner append reclaims through `__fern_arr_push_owned` and reports that
+  wrapper, one frame short of user code. Stands to `FERN_LEAKCHECK` as
   `FERN_RC_UNDERFLOW_TRAP` stands to the underflow counter: leakcheck says a
   leak happened, this says which alloc site it came from. Pair the `a` lines
   against the `f` lines by pointer and what is left never came back; resolve

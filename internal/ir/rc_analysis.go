@@ -160,6 +160,12 @@ type rcPlan struct {
 	// computeReuseSources.
 	reuseSources  map[ast.Expr]string
 	reuseConsumed map[string]bool
+	// returnSpreadReuse marks a RETURN-position struct update
+	// `return T { ...p, f: v }` whose base p this frame owns and never reads
+	// again, so the update writes p's own box in place instead of filling a
+	// fresh one and deep-dropping p. Maps the literal to p's name; the names
+	// are also in reuseConsumed. See computeReturnSpreadReuse.
+	returnSpreadReuse map[*ast.StructLit]string
 	// consumingMatchReuse marks a construction C (an arm's variant constructor)
 	// that reuses a CONSUMING match's scrutinee box in place (C2 — true
 	// zero-alloc FBIP): instead of freeing the consumed `own` box and allocating
@@ -290,10 +296,11 @@ type rcPlan struct {
 	// owns an independent buffer. Filled by computeBorrowedMapFieldResults.
 	borrowedMapFieldResults map[string]bool
 	// mapCowBindSites holds the Map COW-mutator CALL nodes whose result is
-	// bound straight to a new local — `var m2 = m.insert(k, v)` and
-	// `var (m2, ok) = m.without(k)`. Those are the sites that owe the COW-seam
-	// retain (#6227): the binding co-exists with the receiver's binding, so on
-	// the in-place branch two names share one refcount and both release it.
+	// bound straight to a new local — `var m2 = m.insert(k, v)`,
+	// `var (m2, ok) = m.without(k)`, and `var t = m.without(k)` binding the
+	// tuple WHOLE. Those are the sites that owe the COW-seam retain (#6227):
+	// the binding co-exists with the receiver's binding, so on the in-place
+	// branch two names share one refcount and both release it.
 	// Every OTHER position a mutator result can appear in is deliberately
 	// excluded, because there the result is a temporary nobody binds and a
 	// retain would leak it instead: a chained receiver
@@ -347,6 +354,7 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.ownedArgMoves = b.computeOwnedArgMoves()
 	b.rc.fieldOwnMoves = b.computeFieldOwnMoves()
 	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
+	b.rc.returnSpreadReuse = b.computeReturnSpreadReuse()
 	b.rc.consumingMatchReuse = b.computeConsumingMatchReuse()
 }
 
@@ -3153,14 +3161,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// tuple's. `(value, state)` threading is where this shows up, and
 		// reading the field straight through — `p.1.a` — was flat all along.
 		//
-		// A MAP element is excluded, and it is not a hypothetical: crediting
-		// one segfaulted map_delete_tuple_churn_free on both natives. The
-		// counted-alias argument above rests on the destination's drop being
-		// is_unique-gated and shallow, which holds for a struct / array /
-		// enum element and NOT for a map — emitMapSlotDrop deep-frees the
-		// value column, so `var m = t.0` on a `(Map, boolean)` freed a map
-		// the tuple still referenced. ownedCallResultType singles maps out
-		// for the same reason; this is that caution, one site over.
+		// A MAP element is credited too, but only because the tuple now holds
+		// a reference of its own. It did not: the delete tuple stored the
+		// receiver's handle uncounted, so crediting the projection gave the
+		// destination a deep drop of a map the tuple still referenced, and
+		// segfaulted map_delete_tuple_churn_free on both natives. The
+		// COW-seam retain above is what supplies that count (#8276), and the
+		// two are a pair — crediting here without it is the segfault, and
+		// retaining there without this is a count nobody returns. The rest of
+		// the counted-alias argument carries over unchanged.
 		if id, ok := b.projectionChainRoot(x.Target).(*ast.Ident); ok {
 			_, isLocal := b.locals[id.Name]
 			// A MATCH-ARM BINDING is the same case and was invisible to
@@ -3190,9 +3199,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				case ast.StructType:
 					return false
 				case ast.TupleType:
-					if !isMapType(b.exprType(x)) {
-						return false
-					}
+					return false
 				}
 			}
 		}
@@ -4641,6 +4648,73 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		b.dropGuidedArmPass(hooks)
 	}
 	return sources, consumed
+}
+
+// computeReturnSpreadReuse admits the RETURN-position struct update
+// `return T { ...p, f: v }` for in-place reuse of p's box, and records each
+// admitted p in reuseConsumed. It is the state-threading shape — every
+// `s = s.emit(op)` in the self-host emitters is one call of a method built
+// this way — where the general reuse pairing (computeReuseSources) cannot
+// help: there D must be dead AT C, and here C reads D's every field.
+//
+// What makes it sound is that the frame owns p and cannot read it again:
+//
+//   - freeEligible[p] and frameOwnsIdent(p) (via structUpdateReuseDecl at the
+//     lowering site, plus the runtime is_unique gate there): p's reference
+//     belongs to this frame. For an owned-by-default PARAMETER that is the
+//     whole point — the caller retained an argument it keeps
+//     (calleeParamOwnedByDefault) and moved one it does not
+//     (computeOwnedArgMoves), so a surviving caller-side alias shows up as
+//     rc>1 and the reuse declines to a fresh box.
+//   - Nothing runs between the construction and the return, so p is dead: the
+//     reuse zeroes p's slot and the exit sweep meets a null. A `defer` DOES
+//     run there (and can name p), and a lambda can hold p past the frame, so
+//     both refuse — deferOrLambdaNames, and a body-wide defer check because a
+//     defer anywhere reaches this return.
+//   - A moved p (computeMovedLocals) has already handed its reference on, and
+//     a shadowed name (bindingNameUnique) cannot be tracked by name at all.
+//   - A superseded-field own-move (computeFieldOwnMoves) claims this same
+//     literal to empty one of p's fields into an `own` argument; it nulls the
+//     field under its own is_unique test, so the two claims must not overlap.
+func (b *builder) computeReturnSpreadReuse() map[*ast.StructLit]string {
+	out := map[*ast.StructLit]string{}
+	if !ast.RcFreeEnabled || !ast.RcReuseEnabled || b.fn.Body == nil {
+		return out
+	}
+	var defers []*ast.Defer
+	collectDefers(b.fn.Body, &defers)
+	if len(defers) > 0 {
+		return out
+	}
+	esc := deferOrLambdaNames(b.fn.Body)
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl, *ast.Lambda:
+			return false // a nested body's `return` is not this frame's
+		case *ast.Return:
+			sl, isLit := x.Value.(*ast.StructLit)
+			if !isLit || sl.Base == nil {
+				return true
+			}
+			id, isID := sl.Base.(*ast.Ident)
+			if !isID || esc[id.Name] || b.rc.movedLocals[id.Name] || !b.bindingNameUnique(id.Name) {
+				return true
+			}
+			if !b.frameOwnsIdent(id.Name) {
+				return true
+			}
+			if _, ok := b.structUpdateReuseDecl(sl, id); !ok {
+				return true
+			}
+			if len(checker.SupersededFieldOwnMoveArgs(sl, id.Name, b.info.OwnFuncs)) > 0 {
+				return true
+			}
+			out[sl] = id.Name
+			b.rc.reuseConsumed[id.Name] = true
+		}
+		return true
+	})
+	return out
 }
 
 // computePreciseDrops implements the Perceus "garbage-free" precise-drop
@@ -6295,15 +6369,20 @@ func (b *builder) computeBorrowedMapFieldResults() map[string]bool {
 // computeMapCowBindSites finds the Map COW-mutator calls bound directly to a
 // new local — see the mapCowBindSites field doc (#6227). `insert` / `cleared`
 // return the map and bind through `var`; `without` returns a (Map, boolean)
-// tuple and can ONLY be consumed by destructuring, which is why it was the
-// spelling that surfaced the bug. Purely syntactic: the walk runs on the
-// already-mangled AST, the same form isMapMutatorCall matches at the call site.
+// tuple, which destructuring and a plain `var t = m.without(k)` both bind, and
+// BOTH owe the retain. Reading the tuple whole and projecting `t.0` / `t.1` is
+// the spelling the rc corpus itself uses, and excluding it left the tuple's
+// map element aliasing the receiver's handle at rc 1: two names, one count,
+// both releasing — an rc underflow everywhere and a SIGSEGV on arm64 / a trap
+// on wasm32 once the freed key cell was recycled (#8276).
+// Purely syntactic: the walk runs on the already-mangled AST, the same form
+// isMapMutatorCall matches at the call site.
 func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
 	out := map[ast.Node]bool{}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		switch s := n.(type) {
 		case *ast.Var:
-			if c, ok := s.Init.(*ast.Call); ok && isMapMutatorCall(c) && !isMapDeleteCall(c) {
+			if c, ok := s.Init.(*ast.Call); ok && isMapMutatorCall(c) {
 				out[c] = true
 			}
 		case *ast.Destructure:

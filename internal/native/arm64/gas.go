@@ -168,9 +168,9 @@ func assembleInsn(a *Assembler, line string) error {
 // self-host assembler's dispatch is generated from the same table, so a
 // mnemonic one side reaches and the other does not cannot exist.
 //
-// The arms below still read operand TEXT. They are migrating onto the
-// typed accessors family by family (#7903); Operand.Text is what carries
-// the ones that have not moved yet, and it goes with the last of them.
+// The arms below still read operand TEXT. They migrate onto the typed
+// accessors family by family (#8510); Operand.Text is what carries the
+// ones that have not moved yet, and it goes with the last of them.
 func (a *Assembler) Inst(in Inst) error {
 	mnem := in.Mnem
 	ops := make([]string, len(in.Ops))
