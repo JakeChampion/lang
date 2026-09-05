@@ -1071,6 +1071,16 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"missing-return-one-armed-if", "function f(c: boolean): i32 { if (c) { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
 		{"return-while-true-ok", "function f(): i32 { while (true) { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-loop-ok", "function f(): i32 { loop { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
+		// A loop that can break does not diverge (#8447), and a break inside
+		// a block-, if- or match-expression counts like any other (#8562);
+		// one that belongs to a nested loop or to a lambda's own loop does not.
+		{"missing-return-loop-breaks", "function f(): i32 { loop { break; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"missing-return-while-true-breaks", "function f(): i32 { while (true) { break; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"missing-return-loop-breaks-in-block-expr", "function f(): i32 { loop { var z: i32 = { break; 1 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"missing-return-loop-breaks-in-if-expr", "function f(n: i32): i32 { loop { var z: i32 = if (n > 0) { break; 1 } else { 2 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"missing-return-loop-breaks-in-match-expr", "function f(n: i32): i32 { loop { var z: i32 = match (n) { 0 => { break; 1 }, _ => 2 }; } }\nfunction main(): i32 { return 0; }\n", []string{"E052"}},
+		{"loop-inner-break-ok", "function f(): i32 { loop { while (true) { break; } } }\nfunction main(): i32 { return 0; }\n", nil},
+		{"loop-lambda-break-ok", "function f(): i32 { loop { var g: () => i32 = function (): i32 { while (true) { break; } return 1; }; var x: i32 = g(); } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"return-if-else-ok", "function f(c: boolean): i32 { if (c) { return 1; } else { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
 		// void return type: an empty body is fine (no E052 — falling off the
 		// end is the normal exit), a bare `return;` is fine, and returning a

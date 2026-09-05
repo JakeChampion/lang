@@ -6708,11 +6708,10 @@ function stmts_slit_diags(stmts: ast.Stmt[], structs: StructSig[]): util.Diag[] 
 // block_exits reports whether a statement block is guaranteed to leave
 // its function (return) on every path — an under-approximation mirroring
 // the Go checker's funcBodyExits, used by E052. Only the LAST statement
-// matters: a `return`, an `if` whose both arms exit, a `while (true)`
-// (divergent — breaks are ignored, a breakable loop that needs a value
-// keeps a trailing return the surrounding block catches), or a `match`
-// whose every arm body exits. `if let` is already desugared
-// to an if/else chain by the parser, so it needs no special case here.
+// matters: a `return`, an `if` whose both arms exit, a `while (true)` /
+// `loop` no `break` targets (loop_can_break), or a `match` whose every arm
+// body exits. `if let` is already desugared to an if/else chain by the
+// parser, so it needs no special case here.
 function block_exits(stmts: ast.Stmt[]): boolean {
   if (stmts.len() == 0) {
     return false;
@@ -6728,7 +6727,7 @@ function block_exits(stmts: ast.Stmt[]): boolean {
     ast.StmtWhile(w) => {
       match (w.cond) {
         ast.ExprBool(b) => {
-          return b.value;
+          return b.value && !loop_can_break(w.body, w.label, false);
         },
         _ => {
           return false;
@@ -6754,6 +6753,88 @@ function block_exits(stmts: ast.Stmt[]): boolean {
         }
       }
       return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// loop_can_break reports whether `stmts`, the body of a loop, holds a
+// `break` that targets that loop — an unlabelled break not inside a nested
+// loop, or a labelled one naming `label`. Mirrors the Go checker's
+// loopCanBreak: a loop that can break does not diverge, and treating it as
+// divergent accepts a function that falls off its end (#8447). A value
+// block — the desugar of a block-, if- or match-expression — is walked
+// because irlower inlines it, so its `break` targets this loop (#8562); a
+// lambda body is not, since its `break` belongs to a loop of its own. A
+// nested loop's header expression runs in this loop's context, so only the
+// nested BODY counts as nested.
+function loop_can_break(stmts: ast.Stmt[], label: string, nested: boolean): boolean {
+  for stmt in stmts {
+    match (stmt) {
+      ast.StmtBreak(bk) => {
+        if (bk.label.len() == 0) {
+          if (!nested) {
+            return true;
+          }
+        } else if (bk.label == label) {
+          return true;
+        }
+      },
+      ast.StmtWhile(w) => {
+        if (expr_can_break(w.cond, label, nested) || loop_can_break(w.body, label, true)) {
+          return true;
+        }
+      },
+      ast.StmtFor(fr) => {
+        if (expr_can_break(fr.iter, label, nested) || loop_can_break(fr.body, label, true)) {
+          return true;
+        }
+      },
+      ast.StmtIf(f) => {
+        if (expr_can_break(f.cond, label, nested) || loop_can_break(f.then_body, label, nested) || loop_can_break(f.else_body, label, nested)) {
+          return true;
+        }
+      },
+      ast.StmtMatch(m) => {
+        if (expr_can_break(m.scrutinee, label, nested)) {
+          return true;
+        }
+        for arm in m.arms {
+          if ((arm.has_guard && expr_can_break(arm.guard, label, nested)) || loop_can_break(arm.body, label, nested)) {
+            return true;
+          }
+        }
+      },
+      ast.StmtDefer(_) => {},
+      _ => {
+        if (astwalk.fold_stmt_pruned(stmt, false, function (e: ast.Expr, a: boolean): boolean {
+          return a || value_block_can_break(e, label, nested);
+        }, not_a_scope_root)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// expr_can_break is loop_can_break over the value blocks one expression holds.
+function expr_can_break(e: ast.Expr, label: string, nested: boolean): boolean {
+  return astwalk.fold_expr_pruned(e, false, function (x: ast.Expr, a: boolean): boolean {
+    return a || value_block_can_break(x, label, nested);
+  }, not_a_scope_root);
+}
+
+function value_block_can_break(e: ast.Expr, label: string, nested: boolean): boolean {
+  match (e) {
+    ast.ExprCall(c) => {
+      if (parser.is_value_block(c)) {
+        return loop_can_break(parser.vb_body(c), label, nested);
+      }
+      return false;
     },
     _ => {
       return false;
