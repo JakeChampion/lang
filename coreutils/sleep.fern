@@ -20,7 +20,7 @@
 import "std/string";
 import "std/array";
 import "./lib/gnu";
-import "./lib/ldbl";
+import "./lib/ld";
 
 function help_text(): string {
   var out: string = "";
@@ -53,11 +53,11 @@ function suffix_seconds(b: i32): i64 {
   return 0 as i64;
 }
 
-// `interval(s)` — the seconds `s` asks for, or None when it is not an
+// `interval(f, s)` — the seconds `s` asks for, or None when it is not an
 // interval: unparsable, trailing bytes that are not a single suffix, a
 // NaN, or a negative value.
-function interval(s: string): Option[ldbl.LD] {
-  var r: ldbl.FloatParse = ldbl.strtold(s);
+function interval(f: ld.Format, s: string): Option[ld.LD] {
+  var r: ld.Parse = f.strtold(s);
   if (r.end == 0) {
     return None;
   }
@@ -79,18 +79,17 @@ function interval(s: string): Option[ldbl.LD] {
   if (scale == 1 as i64) {
     return Some(r.v);
   }
-  return Some(ldbl.mul(r.v, ldbl.from_i64(scale)));
+  return Some(f.mul(r.v, f.from_i64(scale)));
 }
 
 // Milliseconds covering `seconds`, rounded up so the sleep is never
 // short. Infinity has no count; the caller loops instead.
-function millis_ceil(seconds: ldbl.LD): Option[i64] {
+function millis_ceil(f: ld.Format, seconds: ld.LD): Option[i64] {
   if (!seconds.is_finite()) {
     return None;
   }
-  var ms: ldbl.LD = ldbl.mul(seconds, ldbl.from_i64(1000 as i64));
-  var whole: ldbl.LD = ceil_ld(ms);
-  match (whole.as_i64()) {
+  var ms: ld.LD = f.mul(seconds, f.from_i64(1000 as i64));
+  match (f.round_to_int(ms, ld.round_up()).as_i64()) {
     Some(v) => {
       return Some(v);
     },
@@ -101,26 +100,6 @@ function millis_ceil(seconds: ldbl.LD): Option[i64] {
       return None;
     }
   }
-}
-
-// The smallest integer at least `v`, for a non-negative value.
-function ceil_ld(v: ldbl.LD): ldbl.LD {
-  if (v.is_zero() || v.neg) {
-    return ldbl.from_i64(0 as i64);
-  }
-  var d: ldbl.Dec = ldbl.dec(v);
-  if (d.dp <= 0) {
-    return ldbl.from_i64(1 as i64);
-  }
-  var whole: string = slice_unchecked(d.digits, 0, d.dp) + "";
-  if (d.dp > d.digits.len()) {
-    whole = d.digits + "0".repeat(d.dp - d.digits.len());
-  }
-  var r: ldbl.FloatParse = ldbl.strtold(whole);
-  if (d.dp < d.digits.len()) {
-    return ldbl.add(r.v, ldbl.from_i64(1 as i64));
-  }
-  return r.v;
 }
 
 // Sleep until killed: the interval is infinite, or longer than a count of
@@ -139,13 +118,14 @@ function main(): i32 {
     gnu.die_usage("missing operand", 1);
   }
   var operands: string[] = gnu.parse_standard_options_only(argv, "sleep", help_text(), 1);
-  var total: ldbl.LD = ldbl.from_i64(0 as i64);
+  var f: ld.Format = ld.format();
+  var total: ld.LD = f.from_i64(0 as i64);
   var bad: boolean = false;
   var i: i32 = 0;
   while (i < operands.len()) {
-    match (interval(operands[i])) {
+    match (interval(f, operands[i])) {
       Some(v) => {
-        total = ldbl.add(total, v);
+        total = f.add(total, v);
       },
       None => {
         gnu.error("invalid time interval " + gnu.quote(operands[i]));
@@ -157,7 +137,7 @@ function main(): i32 {
   if (bad) {
     gnu.try_help(1);
   }
-  match (millis_ceil(total)) {
+  match (millis_ceil(f, total)) {
     Some(ms) => {
       if (ms > 0 as i64) {
         sleep_ms(ms);

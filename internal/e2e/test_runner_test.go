@@ -4347,7 +4347,8 @@ function main(): i32 {
 // one this host has: `%a` digits and leading bit, the subnormal and
 // overflow edges, the exact decimal expansion, strtold, the arithmetic
 // including the division seq and numfmt need, numfmt's --round modes,
-// and LDBL_DIG. Which format a target selects is pinned separately by
+// LDBL_DIG, and the whole-number conversion sleep reads a millisecond
+// count out of. Which format a target selects is pinned separately by
 // internal/coreutils/longdouble_test.go. Passing suite -> exit 0.
 func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
@@ -4356,7 +4357,7 @@ func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..16", "# pass 16", "# fail 0"} {
+	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..17", "# pass 17", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

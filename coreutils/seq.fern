@@ -18,38 +18,46 @@
 //    of digits, the increment is at most 200, the separator is one byte,
 //    and neither -w nor -f is in play (`use_fast`).
 //
-// 2. LONG DOUBLE (`print_numbers`, lib/ldbl.fern). Terms are `first +
+// 2. LONG DOUBLE (`print_numbers`, lib/ld.fern). Terms are `first +
 //    i*step`, never accumulated, and the comparison against LAST is exact
-//    — with one documented exception, `prints_as_in_range`: a term that
-//    lands past LAST is still printed when what the conversion prints
-//    reads back inside the range, which is why `seq 0 0.3 0.9` ends on
-//    0.9 though 3 x 0.3 is an ulp beyond it. Numbers are printed with a
-//    format derived from how the operands were WRITTEN, not from their
-//    values: `1.0` asks for one decimal, `1e-3` for three, `10e-1` for
-//    one, and a hex operand asks for none of it (`%Lg`, which is why -w
+//    — with one documented exception, `prints_as_last`: a term that lands
+//    past LAST is still printed when what the conversion prints reads
+//    back AS LAST, which is why `seq 0 0.3 0.9` ends on 0.9 though 3 x
+//    0.3 is an ulp beyond it. Numbers are printed with a format derived
+//    from how the operands were WRITTEN, not from their values: `1.0`
+//    asks for one decimal, `1e-3` for three, `10e-1` for one, and a hex
+//    operand anywhere asks for none of it (`%Lg`, which is why -w
 //    silently stops padding for `seq -w 0x1p4 1000`). `scan_arg` is that
 //    derivation.
 //
 // 3. SCALED DECIMAL (`dec_seq`). Not a behaviour of its own: when every
-//    operand is a fixed-point decimal exact at the printed precision P
-//    and every value fits a 64-bit integer once scaled by 10^P, the whole
-//    sequence is integer arithmetic and the terms are the same bytes
-//    engine 2 would print, so `seq 1 1000000` runs without touching a
-//    float or allocating per number.
+//    operand is a fixed-point decimal exact at the printed precision P,
+//    every value fits a 64-bit integer once scaled by 10^P, and the long
+//    double holds those integers exactly, the whole sequence is integer
+//    arithmetic and the terms are the same bytes engine 2 would print, so
+//    `seq 1 1000000` runs without touching a float or allocating per
+//    number.
 //
 // Engines 1 and 3 emit digits straight into the output block.
+//
+// The long double is the TARGET's, and it is not one format: x87 80-bit
+// extended on x86-64, IEEE binary128 on arm64 and wasm32, binary64 on
+// Darwin. `lib/ld.fern` picks it, and everything sized off it — how many
+// decimal digits round trip, which whole numbers are exact, where the
+// subnormals begin — is read off that `Format` rather than written down
+// here.
 import "std/string";
 import "std/array";
 import "std/i64";
 import "std/io_buffered";
 import "./lib/gnu";
-import "./lib/ldbl";
+import "./lib/ld";
 
 // `Operand` — one scanned FIRST / INCREMENT / LAST: its value, and the
 // width and precision its SPELLING asks the default format for.
 // `precision` is `auto_prec()` when the spelling asks for nothing, which
 // is what sends the whole sequence to `%Lg`.
-struct Operand { v: ldbl.LD, width: i32, prec: i32 }
+struct Operand { v: ld.LD, width: i32, prec: i32 }
 
 // The `INT_MAX` GNU stores in `precision` for "no precision of its own":
 // a hex operand, or a non-finite one.
@@ -135,13 +143,14 @@ function contains(s: string, byte: i32): boolean {
 // same way — a point that survives is counted, one that does not is
 // dropped, and a leading `.` counts the `0` that will be printed before it.
 // A hex spelling asks for nothing: `0x1f` is an integer (precision 0),
-// anything with a `.` or a lowercase `p` is `auto_prec`. So is a spelling
-// whose value is not finite.
-function scan_arg(s: string): Operand {
-  var r: ldbl.FloatParse = ldbl.strtold(s);
+// anything with a `.` or a lowercase `p` is `auto_prec`. `inf` is neither
+// — it is measured like any other run of bytes, and asks for precision 0.
+function scan_arg(f: ld.Format, s: string): Operand {
+  var r: ld.Parse = f.strtold(s);
   // A value out of the format's range is rejected, but underflow all the
-  // way to zero is not: `seq 1e-4951 1` counts from 0, where the slightly
-  // larger `4e-4951` — a subnormal, and inexact — is refused.
+  // way to zero is not: an operand below the least subnormal counts from
+  // 0, where a slightly larger one — a subnormal, and inexact — is
+  // refused.
   if (r.end == 0 || r.end < s.len() || r.erange && !r.v.is_zero()) {
     gnu.die_usage("invalid floating point argument: " + gnu.quote(s), 1);
   }
@@ -275,10 +284,28 @@ function digit_run(s: string, from: i32, limit: i32): i32 {
 
 // ---- the output format -----------------------------------------------------
 //
-// `Fmt` is the literal text around one conversion. The default format has
-// none; a -f format keeps whatever the user wrote, with `%%` already
-// reduced to `%`.
-struct Fmt { pre: string, spec: ldbl.Spec, post: string }
+// `Spec` — one parsed `%` directive; `width` and `prec` are -1 when
+// absent. printf(1) parses the same thing from a much larger grammar and
+// writes its field straight to the stream; seq needs the field as a
+// STRING, because `prints_as_last` reads a term back through strtold and
+// compares it with the one before to decide where the sequence ends. So
+// the two carry their own conversion plumbing and share the bodies
+// lib/ld builds.
+struct Spec { minus: boolean, plus: boolean, space: boolean, hash: boolean, zero: boolean, width: i64, prec: i64, conv: i32 }
+
+function spec(conv: i32): Spec {
+  return Spec { minus: false, plus: false, space: false, hash: false, zero: false, width: none(), prec: none(), conv: conv };
+}
+
+function none(): i64 {
+  return 0 as i64 - 1 as i64;
+}
+
+// `Fmt` is that spec, the literal text around it, and the target's long
+// double, which every term is computed in and printed from. The default
+// format has no literal text; a -f format keeps whatever the user wrote,
+// with `%%` already reduced to `%`.
+struct Fmt { pre: string, spec: Spec, post: string, ldbl: ld.Format }
 
 // glibc parses a width or precision as an `int`; one that does not fit is
 // EOVERFLOW before a byte is written.
@@ -290,41 +317,41 @@ function fmt_overflows(f: Fmt): boolean {
   return f.spec.width > int_max() || f.spec.prec > int_max();
 }
 
-// `default_format(first, step, last, equal_width)` — gnulib's
+// `default_format(ldbl, first, step, last, equal_width)` — gnulib's
 // get_default_format. The precision is the widest FIRST or INCREMENT asks
 // for — LAST's is deliberately not in that maximum, so `seq 1 1 1.5`
-// counts in whole numbers — and either being `auto_prec` sends everything
-// to `%Lg`. Only then does -w get a width, and LAST contributes one only
-// if it asked for a precision at all.
-function default_format(first: Operand, step: Operand, last: Operand, equal_width: boolean): Fmt {
+// counts in whole numbers. Any of the THREE asking for `auto_prec` sends
+// everything to `%Lg` though, LAST included: `seq 1 0.5 0x1p2` counts
+// 1 1.5 2 rather than 1.0 1.5 2.0. Only then does -w get a width.
+function default_format(ldbl: ld.Format, first: Operand, step: Operand, last: Operand, equal_width: boolean): Fmt {
   var prec: i32 = first.prec;
   if (step.prec > prec) {
     prec = step.prec;
   }
-  if (prec == auto_prec()) {
-    return Fmt { pre: "", spec: ldbl.spec(103), post: "" };
+  if (prec == auto_prec() || last.prec == auto_prec()) {
+    return Fmt { pre: "", spec: spec(103), post: "", ldbl: ldbl };
   }
   // A width needs a LAST to measure: an endless sequence has none, so
   // `seq -w 5 1 inf` counts unpadded where `seq -w 1 inf 100` — whose
   // LAST is finite and whose infinite INCREMENT never reaches it — pads
   // to that LAST's three columns.
-  if (equal_width && last.prec != auto_prec() && last.v.is_finite()) {
+  if (equal_width && last.v.is_finite()) {
     var first_width: i32 = rewidth(first, prec);
     var last_width: i32 = rewidth(last, prec);
     var width: i32 = first_width;
     if (last_width > width) {
       width = last_width;
     }
-    var s: ldbl.Spec = ldbl.spec(102);
-    return Fmt { pre: "", spec: ldbl.Spec { ...s, zero: true, width: width as i64, prec: prec as i64 }, post: "" };
+    var s: Spec = spec(102);
+    return Fmt { pre: "", spec: Spec { ...s, zero: true, width: width as i64, prec: prec as i64 }, post: "", ldbl: ldbl };
   }
-  var f: ldbl.Spec = ldbl.spec(102);
-  return Fmt { pre: "", spec: ldbl.Spec { ...f, prec: prec as i64 }, post: "" };
+  var f: Spec = spec(102);
+  return Fmt { pre: "", spec: Spec { ...f, prec: prec as i64 }, post: "", ldbl: ldbl };
 }
 
-// `parse_format(f)` — gnulib's long_double_format: the one conversion the
-// format is allowed, with `%%` literals either side of it. Every fault is
-// fatal and, unlike a usage error, prints no `Try …` line.
+// `parse_format(ldbl, f)` — gnulib's long_double_format: the one
+// conversion the format is allowed, with `%%` literals either side of it.
+// Every fault is fatal and, unlike a usage error, prints no `Try …` line.
 // An operand's width once the sequence prints at precision `prec`: its
 // integer digits, plus a point and `prec` digits when there are any. The
 // operand's own fraction is dropped or extended to match, so `1.5` in a
@@ -344,26 +371,26 @@ function rewidth(op: Operand, prec: i32): i32 {
   return int_digits;
 }
 
-function parse_format(f: string): Fmt {
+function parse_format(ldbl: ld.Format, f: string): Fmt {
   var start: i32 = find_directive(f, 0);
   if (start < 0) {
     format_die(f, "has no % directive");
   }
   var i: i32 = start + 1;
-  var spec: ldbl.Spec = ldbl.spec(0);
+  var sp: Spec = spec(0);
   while (i < f.len() && is_flag(f[i] as i32)) {
-    spec = apply_flag(spec, f[i] as i32);
+    sp = apply_flag(sp, f[i] as i32);
     i = i + 1;
   }
   var w: (i64, i32) = read_number(f, i);
   if (w.1 > i) {
-    spec = ldbl.Spec { ...spec, width: w.0 };
+    sp = Spec { ...sp, width: w.0 };
     i = w.1;
   }
   if (i < f.len() && f[i] as i32 == 46) {
     i = i + 1;
     var p: (i64, i32) = read_number(f, i);
-    spec = ldbl.Spec { ...spec, prec: p.0 };
+    sp = Spec { ...sp, prec: p.0 };
     i = p.1;
   }
   if (i < f.len() && f[i] as i32 == 76) {
@@ -379,7 +406,7 @@ function parse_format(f: string): Fmt {
   if (find_directive(f, i + 1) >= 0) {
     format_die(f, "has too many % directives");
   }
-  return Fmt { pre: literal(slice_unchecked(f, 0, start) + ""), spec: ldbl.Spec { ...spec, conv: conv }, post: literal(slice_unchecked(f, i + 1, f.len()) + "") };
+  return Fmt { pre: literal(slice_unchecked(f, 0, start) + ""), spec: Spec { ...sp, conv: conv }, post: literal(slice_unchecked(f, i + 1, f.len()) + ""), ldbl: ldbl };
 }
 
 // The next `%` that is not `%%`, from `from`; -1 when there is none.
@@ -424,21 +451,21 @@ function is_flag(b: i32): boolean {
   return b == 45 || b == 43 || b == 35 || b == 48 || b == 32 || b == 39;
 }
 
-function apply_flag(s: ldbl.Spec, b: i32): ldbl.Spec {
+function apply_flag(s: Spec, b: i32): Spec {
   if (b == 45) {
-    return ldbl.Spec { ...s, minus: true };
+    return Spec { ...s, minus: true };
   }
   if (b == 43) {
-    return ldbl.Spec { ...s, plus: true };
+    return Spec { ...s, plus: true };
   }
   if (b == 35) {
-    return ldbl.Spec { ...s, hash: true };
+    return Spec { ...s, hash: true };
   }
   if (b == 48) {
-    return ldbl.Spec { ...s, zero: true };
+    return Spec { ...s, zero: true };
   }
   if (b == 32) {
-    return ldbl.Spec { ...s, space: true };
+    return Spec { ...s, space: true };
   }
   return s;
 }
@@ -474,8 +501,8 @@ function read_number(s: string, i: i32): (i64, i32) {
 //
 // `n` is how much of `buf` is used. A term is reserved before it is
 // written, so it lands whole and the block is drained afterwards rather
-// than split; a term longer than the whole buffer — `seq 1e-4951 1`
-// prints one with 4951 decimals — grows it.
+// than split; a term longer than the whole buffer — the least subnormal
+// in `%f` runs to thousands of decimals — grows it.
 struct Block { buf: u8[], n: i32 }
 
 // Room past the block threshold for the term that crosses it.
@@ -485,8 +512,8 @@ function slack_bytes(): i32 {
 
 // `reserve(b, k)` — room for a term of `k` bytes. The block is drained
 // between terms, so the only case left here is a term longer than the
-// buffer itself — `seq 1e-4951 1` prints one with 4951 decimals — which
-// widens it.
+// buffer itself — the least subnormal in `%f` runs to thousands of
+// decimals — which widens it.
 function reserve(b: Block, k: i32): Block {
   if (b.n + k <= b.buf.len()) {
     return b;
@@ -763,9 +790,115 @@ function push_digits(b: Block, d: u8[]): Block {
 
 // ---- the long double engine ------------------------------------------------
 //
+// `render(ldbl, spec, v)` — the conversion `spec` names as glibc writes
+// it, or None for a field glibc refuses outright (see `write_overflow`).
+// lib/ld builds the body; the sign, the radix and the padding around it
+// are printf's rules rather than the format's, so they are here.
+function render(ldbl: ld.Format, spec: Spec, v: ld.LD): Option[string] {
+  var conv: i32 = spec.conv;
+  var upper: boolean = conv == 70 || conv == 69 || conv == 71 || conv == 65;
+  var prefix: string = sign_prefix(spec, v.neg);
+  if (!v.is_finite()) {
+    var word: string = "inf";
+    if (v.is_nan()) {
+      word = "nan";
+    }
+    if (upper) {
+      word = word.to_upper();
+    }
+    return pad(spec, prefix, word, false);
+  }
+  var lc: i32 = lower(conv);
+  if (lc == 97) {
+    return hex_field(ldbl, spec, v, prefix, upper);
+  }
+  var prec: i64 = spec.prec;
+  if (prec < 0 as i64) {
+    prec = 6 as i64;
+  }
+  var extra: i64 = prefix.len() as i64;
+  var d: ld.Dec = v.dec();
+  if (lc == 102) {
+    return field(spec, prefix, ld.fixed(d, prec, spec.hash, extra));
+  }
+  if (lc == 101) {
+    return field(spec, prefix, ld.sci(d, prec, spec.hash, upper, extra));
+  }
+  return field(spec, prefix, ld.general(d, prec, spec.hash, upper, extra));
+}
+
+function field(spec: Spec, prefix: string, b: ld.Body): Option[string] {
+  if (b.refused) {
+    return None;
+  }
+  return pad(spec, prefix, b.s, true);
+}
+
+// %a: the significand in hex from lib/ld's model of the target's long
+// double. The refusal check is here because the length it bounds counts
+// the sign and the `0x` this function adds.
+function hex_field(ldbl: ld.Format, spec: Spec, v: ld.LD, prefix: string, upper: boolean): Option[string] {
+  if (spec.prec >= 0 as i64 && spec.prec + 10 as i64 + prefix.len() as i64 >= ld.overflow_len()) {
+    return None;
+  }
+  var radix: string = "0x";
+  var body: string = ldbl.hex(v, spec.prec, spec.hash);
+  if (upper) {
+    radix = "0X";
+    body = body.to_upper();
+  }
+  return pad(spec, prefix + radix, body, true);
+}
+
+// `pad(spec, prefix, body, zero_ok)` — one conversion's text: the
+// sign/radix prefix, zero padding between prefix and body when the `0`
+// flag applies, else space padding on the side `-` selects. None is a
+// field glibc could not produce.
+function pad(spec: Spec, prefix: string, body: string, zero_ok: boolean): Option[string] {
+  var len: i64 = (prefix.len() + body.len()) as i64;
+  var total: i64 = len;
+  if (spec.width > total) {
+    total = spec.width;
+  }
+  if (total >= ld.overflow_len()) {
+    return None;
+  }
+  var fill: i32 = (total - len) as i32;
+  if (fill <= 0) {
+    return Some(prefix + body);
+  }
+  if (spec.minus) {
+    return Some(prefix + body + " ".repeat(fill));
+  }
+  if (spec.zero && zero_ok) {
+    return Some(prefix + "0".repeat(fill) + body);
+  }
+  return Some(" ".repeat(fill) + prefix + body);
+}
+
+function sign_prefix(spec: Spec, neg: boolean): string {
+  if (neg) {
+    return "-";
+  }
+  if (spec.plus) {
+    return "+";
+  }
+  if (spec.space) {
+    return " ";
+  }
+  return "";
+}
+
+function lower(b: i32): i32 {
+  if (b >= 65 && b <= 90) {
+    return b + 32;
+  }
+  return b;
+}
+
 // `first + i*step` per term, exactly as GNU computes it, so the last term
 // is GNU's last term. `i` counts in long double there and here.
-function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ldbl.LD, step: ldbl.LD, last: ldbl.LD, sep: string): (io_buffered.BufWriter, Block) {
+function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ld.LD, step: ld.LD, last: ld.LD, sep: string): (io_buffered.BufWriter, Block) {
   if (out_of_range(first, step, last)) {
     return (o, b);
   }
@@ -773,10 +906,16 @@ function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ldbl.L
   var out: Block = emit_term(w, b, f, first);
   var i: i64 = 1 as i64;
   while (true) {
-    var x: ldbl.LD = ldbl.add(first, ldbl.mul(ldbl.from_i64(i), step));
+    var x: ld.LD = f.ldbl.add(first, f.ldbl.mul(f.ldbl.from_i64(i), step));
     if (out_of_range(x, step, last)) {
-      var prev: ldbl.LD = ldbl.add(first, ldbl.mul(ldbl.from_i64(i - 1 as i64), step));
-      if (prints_as_in_range(f, x, prev, step, last)) {
+      // The term just printed, which for the very first one is FIRST
+      // itself: `first + 0*step` is a plain zero and would lose the sign
+      // of a negative one.
+      var prev: ld.LD = first;
+      if (i > 1 as i64) {
+        prev = f.ldbl.add(first, f.ldbl.mul(f.ldbl.from_i64(i - 1 as i64), step));
+      }
+      if (prints_as_last(f, x, prev, last)) {
         out = push_str(out, sep);
         out = emit_term(w, out, f, x);
       }
@@ -794,29 +933,32 @@ function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ldbl.L
 
 // The last term of `seq 0 0.3 0.9` is 0.9 even though 3 x 0.3 lands one
 // ulp beyond it: a term past LAST is still printed when what the
-// conversion PRINTS reads back inside the range, and past the term
-// before it. Three ways to fail that, all measured:
-//   - the field is not read back whole, so a left-justified format loses
-//     the term on its trailing blanks: `seq -f %-8.1f 0 0.3 0.9` stops
-//     at 0.6 where `seq -f %5.1f 0 0.3 0.9` does not;
-//   - what it reads back is still past LAST (`-f %.0f` rounds 0.9 to 1);
-//   - what it reads back does not advance, which is what a format too
-//     coarse to separate the terms does: `seq -f %g 1000000 1 1000002`
-//     prints every term as 1e+06 and stops at the third.
-function prints_as_in_range(f: Fmt, x: ldbl.LD, prev: ldbl.LD, step: ldbl.LD, last: ldbl.LD): boolean {
-  match (ldbl.format(f.spec, x)) {
+// conversion PRINTS is LAST's own value written differently from the
+// term before it. Both halves are exact, and neither is "inside the
+// range":
+//
+//   - the field has to READ BACK AS LAST, not merely into the range.
+//     `seq -f %.1f 0 0.36 0.71` stops at 0.4 though its 0.72 prints as
+//     `0.7`, which is well short of 0.71. It also has to read back
+//     whole, so a left-justified field loses the term on its trailing
+//     blanks: `seq -f %-8.1f 0 0.3 0.9` stops at 0.6 where
+//     `seq -f %5.1f 0 0.3 0.9` does not. No hex conversion ever prints
+//     this term — at full precision it reads back as the out-of-range
+//     value itself, and cut short it lands under LAST.
+//
+//   - the field has to DIFFER FROM the one just printed, as text rather
+//     than as a value: `seq -f %.0f 0.71 0.35000005 5` prints its last
+//     two terms as `5` and `5` and stops rather than printing a third,
+//     while `seq -f %.1f 0 -1e-18 0` follows `0.0` with `-0.0`, whose
+//     value is the same zero.
+function prints_as_last(f: Fmt, x: ld.LD, prev: ld.LD, last: ld.LD): boolean {
+  match (render(f.ldbl, f.spec, x)) {
     Some(s) => {
-      if (s.len() == 0) {
+      if (s.len() == 0 || s == printed(f, prev)) {
         return false;
       }
-      var r: ldbl.FloatParse = ldbl.strtold(s);
-      if (r.end != s.len() || out_of_range(r.v, step, last)) {
-        return false;
-      }
-      if (step.neg) {
-        return ldbl.cmp(r.v, prev) < 0;
-      }
-      return ldbl.cmp(r.v, prev) > 0;
+      var r: ld.Parse = f.ldbl.strtold(s);
+      return r.end == s.len() && r.v.eq(last);
     },
     None => {
       return false;
@@ -824,16 +966,29 @@ function prints_as_in_range(f: Fmt, x: ldbl.LD, prev: ldbl.LD, step: ldbl.LD, la
   }
 }
 
-function out_of_range(x: ldbl.LD, step: ldbl.LD, last: ldbl.LD): boolean {
-  if (step.neg) {
-    return ldbl.cmp(x, last) < 0;
+// The field a term printed, empty for one the conversion refused — which
+// cannot be the term just printed, since the program exits on that.
+function printed(f: Fmt, v: ld.LD): string {
+  match (render(f.ldbl, f.spec, v)) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return "";
+    }
   }
-  return ldbl.cmp(last, x) < 0;
 }
 
-function emit_term(o: io_buffered.BufWriter, b: Block, f: Fmt, v: ldbl.LD): Block {
+function out_of_range(x: ld.LD, step: ld.LD, last: ld.LD): boolean {
+  if (step.neg) {
+    return x.cmp(last) < 0;
+  }
+  return last.cmp(x) < 0;
+}
+
+function emit_term(o: io_buffered.BufWriter, b: Block, f: Fmt, v: ld.LD): Block {
   var out: Block = push_str(b, f.pre);
-  match (ldbl.format(f.spec, v)) {
+  match (render(f.ldbl, f.spec, v)) {
     Some(s) => {
       out = push_str(out, s);
     },
@@ -858,11 +1013,14 @@ function write_overflow(o: io_buffered.BufWriter, b: Block): void {
 // sequence ends where the decimals say it ends rather than where the
 // binary approximation does, and each term is emitted as digits with a
 // point pushed in — no formatting, no allocation.
-// `scaled(arg, p)` — `arg`'s value times 10^p as an integer, or None when
-// the spelling needs more than `p` fraction digits, is not a plain
-// decimal (hex, inf, nan), or does not fit. Signed: `-0` keeps nothing,
-// so the caller carries that sign itself.
-function scaled(arg: string, p: i32): Option[i64] {
+// `scaled(arg, p, limit)` — `arg`'s value times 10^p as an integer, or
+// None when the spelling needs more than `p` fraction digits, is not a
+// plain decimal (hex, inf, nan), does not fit an i64, or lands past
+// `limit`, the largest whole number the target's long double holds
+// exactly: past that the terms are no longer the ones engine 2 would
+// print, because GNU's are rounded to the format at every step. Signed:
+// `-0` keeps nothing, so the caller carries that sign itself.
+function scaled(arg: string, p: i32, limit: u64): Option[i64] {
   var s: string = skip_blanks_and_plus(arg);
   var i: i32 = 0;
   var neg: boolean = false;
@@ -914,7 +1072,7 @@ function scaled(arg: string, p: i32): Option[i64] {
     v = v * (10 as i64);
     n = n + 1;
   }
-  if (v < 0 as i64) {
+  if (v < 0 as i64 || v as u64 > limit) {
     return None;
   }
   if (neg) {
@@ -931,8 +1089,12 @@ function scaled(arg: string, p: i32): Option[i64] {
 //
 // The zero flag is the exception, because that IS the derived
 // equal-width format, whose padding `push_fixed` writes.
+//
+// The precision cap is the format's LDBL_DIG — 18 in x87, 33 in
+// binary128, 15 in binary64 — because a decimal wider than that does not
+// survive the round trip through the long double GNU prints it from.
 function is_fixed_point(f: Fmt, has_format: boolean): boolean {
-  if (f.spec.conv != 102 || f.spec.prec < 0 as i64 || f.spec.prec > 18 as i64) {
+  if (f.spec.conv != 102 || f.spec.prec < 0 as i64 || f.spec.prec > f.ldbl.dig() as i64) {
     return false;
   }
   if (f.pre.len() > 0 || f.post.len() > 0) {
@@ -947,9 +1109,31 @@ function is_fixed_point(f: Fmt, has_format: boolean): boolean {
   return true;
 }
 
-// `neg_zero` is the sign the first term carries when it is a negative
-// zero, which scaling cannot hold: `seq -w -0 1` opens with `-0`.
-function dec_seq(o: io_buffered.BufWriter, b: Block, first: i64, step: i64, last: i64, prec: i32, width: i32, sep: string, neg_zero: boolean): (io_buffered.BufWriter, Block) {
+// Whether the term whose scaled value is zero is a NEGATIVE zero. Exact
+// decimal arithmetic cannot answer that: `seq -w -0 1` opens with `-0`
+// because FIRST was written that way, and `seq -f %.1f 0.9 -0.3 0` ends
+// with `-0.0` because 3 x 0.3 rounds to a hair above 0.9 and the term is
+// a hair below zero. Both are the long double's sign, so it is the long
+// double that is asked — once, for the one index where the scaled value
+// is zero. Term 0 is FIRST itself rather than `first + 0*step`, which
+// would lose the sign of a negative zero.
+function zero_term_neg(f: ld.Format, first: ld.LD, step: ld.LD, fi: i64, si: i64): boolean {
+  if (fi % si != 0 as i64) {
+    return false;
+  }
+  var k: i64 = (0 as i64 - fi) / si;
+  if (k < 0 as i64) {
+    return false;
+  }
+  if (k == 0 as i64) {
+    return first.neg;
+  }
+  return f.add(first, f.mul(f.from_i64(k), step)).neg;
+}
+
+// `zero_neg` is the sign a term of zero carries, which the scaling
+// cannot hold: it is the long double's sign, not the decimal's.
+function dec_seq(o: io_buffered.BufWriter, b: Block, first: i64, step: i64, last: i64, prec: i32, width: i32, sep: string, zero_neg: boolean): (io_buffered.BufWriter, Block) {
   if (step > 0 as i64 && first > last || step < 0 as i64 && first < last) {
     return (o, b);
   }
@@ -962,7 +1146,7 @@ function dec_seq(o: io_buffered.BufWriter, b: Block, first: i64, step: i64, last
     if (i > 0 as i64) {
       out = push_str(out, sep);
     }
-    out = push_fixed(out, x, prec, width, neg_zero && i == 0 as i64);
+    out = push_fixed(out, x, prec, width, zero_neg && x == 0 as i64);
     if (out.n >= block_bytes()) {
       var d: (io_buffered.BufWriter, Block) = flush_block(w, out);
       w = d.0;
@@ -1094,9 +1278,9 @@ function parse_args(argv: string[]): Args {
 struct Fast { first: u8[], step: u64, bound: Option[u8[]] }
 
 // FIRST as `%.0Lf` would print it, when that is a run of digits.
-function whole_digits(v: ldbl.LD): Option[u8[]] {
-  var s0: ldbl.Spec = ldbl.spec(102);
-  match (ldbl.format(ldbl.Spec { ...s0, prec: 0 as i64 }, v)) {
+function whole_digits(ldbl: ld.Format, v: ld.LD): Option[u8[]] {
+  var s0: Spec = spec(102);
+  match (render(ldbl, Spec { ...s0, prec: 0 as i64 }, v)) {
     Some(s) => {
       if (!all_digits(s)) {
         return None;
@@ -1111,7 +1295,7 @@ function whole_digits(v: ldbl.LD): Option[u8[]] {
 
 // LAST's integer part, which is the real bound on a whole-number
 // sequence: `seq 1 1 3.5` ends at 3.
-function bound_digits(v: ldbl.LD): Option[Option[u8[]]] {
+function bound_digits(v: ld.LD): Option[Option[u8[]]] {
   if (v.is_inf()) {
     if (v.neg) {
       return None;
@@ -1124,7 +1308,7 @@ function bound_digits(v: ldbl.LD): Option[Option[u8[]]] {
   if (v.is_zero()) {
     return Some(Some(trim_zeros("0")));
   }
-  var d: ldbl.Dec = ldbl.dec(v);
+  var d: ld.Dec = v.dec();
   if (d.dp <= 0) {
     return Some(Some(trim_zeros("0")));
   }
@@ -1164,18 +1348,18 @@ function use_fast(a: Args, f: Fmt, first: Operand, step: Operand, last: Operand,
       }
     }
   }
-  return use_fast_rendered(first.v, step.v, last.v);
+  return use_fast_rendered(f.ldbl, first.v, step.v, last.v);
 }
 
-function use_fast_rendered(first: ldbl.LD, step: ldbl.LD, last: ldbl.LD): Option[Fast] {
-  match (whole_digits(step)) {
+function use_fast_rendered(ldbl: ld.Format, first: ld.LD, step: ld.LD, last: ld.LD): Option[Fast] {
+  match (whole_digits(ldbl, step)) {
     Some(sd) => {
       match (digits_to_u64(sd)) {
         Some(sv) => {
           if (sv > fast_step_limit()) {
             return None;
           }
-          match (whole_digits(first)) {
+          match (whole_digits(ldbl, first)) {
             Some(fd) => {
               match (bound_digits(last)) {
                 Some(bound) => {
@@ -1211,9 +1395,10 @@ function main(): i32 {
   if (ops.len() > 3) {
     gnu.die_usage("extra operand " + gnu.quote(ops[3]), 1);
   }
-  var f: Fmt = Fmt { pre: "", spec: ldbl.spec(102), post: "" };
+  var ldbl: ld.Format = ld.format();
+  var f: Fmt = Fmt { pre: "", spec: spec(102), post: "", ldbl: ldbl };
   if (a.has_format) {
-    f = parse_format(a.format);
+    f = parse_format(ldbl, a.format);
     if (a.equal_width) {
       gnu.die_usage("format string may not be specified when printing equal width strings", 1);
     }
@@ -1225,20 +1410,20 @@ function main(): i32 {
   var step: Operand = first;
   if (ops.len() >= 2) {
     first_str = ops[0];
-    first = scan_arg(first_str);
+    first = scan_arg(ldbl, first_str);
   }
   if (ops.len() == 3) {
     step_str = ops[1];
-    step = scan_arg(step_str);
+    step = scan_arg(ldbl, step_str);
     if (step.v.is_zero()) {
       gnu.die_usage("invalid Zero increment value: " + gnu.quote(step_str), 1);
     }
   }
-  var last: Operand = scan_arg(last_str);
+  var last: Operand = scan_arg(ldbl, last_str);
   var o: io_buffered.BufWriter = gnu.out_with(block_bytes());
   var b: Block = block_new();
   if (!a.has_format) {
-    f = default_format(first, step, last, a.equal_width);
+    f = default_format(ldbl, first, step, last, a.equal_width);
   } else if (fmt_overflows(f)) {
     write_overflow(o, b);
   }
@@ -1252,13 +1437,14 @@ function main(): i32 {
   }
   if (is_fixed_point(f, a.has_format)) {
     var p: i32 = f.spec.prec as i32;
-    match (scaled(first_str, p)) {
+    var exact: u64 = ldbl.max_exact_u64();
+    match (scaled(first_str, p, exact)) {
       Some(fi) => {
-        match (scaled(step_str, p)) {
+        match (scaled(step_str, p, exact)) {
           Some(si) => {
-            match (scaled(last_str, p)) {
+            match (scaled(last_str, p, exact)) {
               Some(li) => {
-                var nz: boolean = first.v.is_zero() && first.v.neg;
+                var nz: boolean = zero_term_neg(ldbl, first.v, step.v, fi, si);
                 var r: (io_buffered.BufWriter, Block) = dec_seq(o, b, fi, si, li, p, f.spec.width as i32, a.sep, nz);
                 block_finish(r.0, r.1);
                 return 0;
