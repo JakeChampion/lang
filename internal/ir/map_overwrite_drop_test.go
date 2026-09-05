@@ -64,7 +64,7 @@ function main(): i32 { return chain(3); }`
 // The string VALUE column stays SHARED with the copy, so the overwrite must not
 // reclaim it — releasing it there frees what the handle being stored reads.
 // (The loop-reinit and exit-sweep drops do walk it; that is the pre-existing
-// Map[K, string] hazard #6242 recorded, and not this site.)
+// Map[K, string] hazard #8354 records, and not this site.)
 func TestMapOverwriteDropLeavesSharedValueColumn(t *testing.T) {
 	src := `function strvals(n: i32): i32 {
     var a: Map[string, string] = map_new(16);

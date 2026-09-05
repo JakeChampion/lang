@@ -155,7 +155,10 @@ was not a like-for-like pair: the 5.4 GB leg SEGFAULTED about 50 s in and never
 finished, so it is the peak of a partial run. The 155.3 s / 12.98 GB leg was
 measured with the identity-arm retain in place, and that retain is the whole of
 the regression — see the section below. It is gone; the numbers in this table
-describe a lowering that no longer exists.
+describe a lowering that no longer exists. With the retain retired and the
+unguarded release bracketed by an interim filter, this workload ran
+94.8 s / 8.32 GB — a figure taken before #8274 and before that filter was
+dropped in `9403d61`, so it is history rather than the shipped number (#8254).
 
 ## Two containment holes a self-host-EMITTED compiler found
 
@@ -276,6 +279,11 @@ buffer.
 
 ## The identity-arm retain was the leak, and it is retired
 
+The release-path audit this was waiting on is
+`2026-09-04-identity-arm-retain-retired.md`: one row per route that can reach
+the source field after an in-place grow. Seven are safe; the one that is not
+is a use-after-free the retain had been masking.
+
 The first cut had `lower_field_append_inplace` retain its result when the push
 did not reallocate, on the reading that the literal the value feeds becomes a
 second owner of the source container's buffer and owes the counted retain a
@@ -393,10 +401,10 @@ name — a container element, another struct's field, a counted alias — is a
 runtime fact. `aliased-root-box-copies` in `selfHostFieldAppendCases` pins the
 shape, and the arm64 stage-2 fixpoint is the gate that found it.
 
-**#8259's `grow_return_local_filter` is the first row's bracket-side fix**:
-withdrawing the return-position death forces the callee's copy, so the identity
-arm is never reached. With the move it is no longer needed for this hazard —
-the deep drop finds a null field — and it costs a whole-buffer copy per
-return-position death of a local (measured there at +5 s / +0.33 GB on the
-one-process whole-compiler emit). The two compose: with both in, the bracketed
-sites copy and the rest move.
+**#8259's `grow_return_local_filter` was the first row's bracket-side fix**:
+withdrawing the return-position death forced the callee's copy, so the identity
+arm was never reached. With the move the deep drop finds a null field, so the
+filter bought nothing and cost a whole-buffer copy per return-position death of
+a local (+5 s / +0.33 GB on the one-process whole-compiler emit, and the
+pinned K row of `TestSelfHostGrowSoleOccurrenceX86_64` moving 44 -> 50). It was
+dropped when #8259 took this change in.

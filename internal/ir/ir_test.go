@@ -2881,3 +2881,153 @@ func countOp(p *Program, fn string, kind OpKind) int {
 	}
 	return n
 }
+
+// callOrderIn returns the index in fnName's op stream of the first named
+// call to callee at or after `from`, or -1. The overwrite pre-drop and the
+// discarded-key free both call __fern_cell_free, on opposite sides of the
+// set, so a plain "does it call it" question cannot separate them.
+func callOrderIn(p *Program, fnName, callee string, from int) int {
+	for _, fn := range p.Funcs {
+		if fn.Name != fnName {
+			continue
+		}
+		for i := from; i < len(fn.Ops); i++ {
+			if isNamedCallKind(fn.Ops[i].Kind) && fn.Ops[i].Str == callee {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// TestLowerMapStringValueOverwriteFreesOldCell verifies the two-word ABI's
+// overwrite pre-drop reclaims BOTH halves of the superseded value: the
+// string buffer the cell points at, and the cell. Freeing only the buffer
+// strands a 16-byte cell per overwrite, which no answer and no underflow
+// counter can see.
+func TestLowerMapStringValueOverwriteFreesOldCell(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.insert(1, "hello" + "world");
+    m = m.insert(1, "hello" + "there");
+    return 0;
+}`, 4)
+	lookup := callOrderIn(p, "build", "__map_lookup_val", 0)
+	if lookup < 0 {
+		t.Fatalf("expected the overwrite pre-drop lookup via __map_lookup_val:\n%s", p)
+	}
+	dec := callOrderIn(p, "build", "__fern_str_dec", lookup)
+	if dec < 0 {
+		t.Fatalf("expected the pre-drop to release the old value buffer via __fern_str_dec:\n%s", p)
+	}
+	if free := callOrderIn(p, "build", "__fern_cell_free", dec); free < 0 {
+		t.Errorf("expected the pre-drop to free the superseded value cell after the str_dec:\n%s", p)
+	}
+}
+
+// TestLowerMapBoxedKeyReachesOverwritePreDrop verifies a BOXED key does not
+// skip the pre-drop. __map_lookup_val dispatches on the map's stored key
+// kind and the column holds cell pointers, so the key is boxed for the
+// lookup like any other read — and that transient cell is freed before the
+// set, which is what separates it from the discarded-key cell the set's own
+// tail releases.
+func TestLowerMapBoxedKeyReachesOverwritePreDrop(t *testing.T) {
+	p := lowerSourceWith(t, `function build(): i32 {
+    var k: string = "he" + "llo";
+    var m: Map[string, string] = map_new(8);
+    m = m.insert(k, "wor" + "ld");
+    m = m.insert(k, "the" + "re");
+    return 0;
+}`, 4)
+	lookup := callOrderIn(p, "build", "__map_lookup_val", 0)
+	if lookup < 0 {
+		t.Fatalf("a boxed key must still reach the overwrite pre-drop:\n%s", p)
+	}
+	set := callOrderIn(p, "build", "__method_Map_set", 0)
+	if set < 0 {
+		t.Fatalf("expected a __method_Map_set call:\n%s", p)
+	}
+	if lookup > set {
+		t.Errorf("the pre-drop lookup must run BEFORE the set it precedes (lookup %d, set %d):\n%s", lookup, set, p)
+	}
+	if free := callOrderIn(p, "build", "__fern_cell_free", lookup); free < 0 || free > set {
+		t.Errorf("expected the transient lookup key cell to be freed before the set (got %d, set %d):\n%s", free, set, p)
+	}
+}
+
+// lastRcIsUniqueBefore returns the index of the nearest OpRcIsUnique before
+// `at` in fnName, or -1 when a __method_Map_set call intervenes (or none is
+// found). A pre-drop whose lookup is separated from its gate by a set is not
+// gated by it.
+func lastRcIsUniqueBefore(p *Program, fnName string, at int) int {
+	for _, fn := range p.Funcs {
+		if fn.Name != fnName {
+			continue
+		}
+		for i := at - 1; i >= 0; i-- {
+			if isNamedCallKind(fn.Ops[i].Kind) && fn.Ops[i].Str == "__method_Map_set" {
+				return -1
+			}
+			if fn.Ops[i].Kind == OpRcIsUnique {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// TestLowerMapOverwritePreDropsAreSoleOwnerGated pins the invariant across
+// EVERY overwrite pre-drop, not one shape of it: each releases the value the
+// set is about to replace and runs BEFORE the set's own __map_cow_inplace, so
+// a second handle over the same buffer still names that value. #8354 leaves
+// both the string and the struct value column shared on a COW copy, so an
+// ungated pre-drop frees what the other handle reads.
+//
+// The struct (kind-4) leg is the one that shipped ungated. Its damage is
+// invisible to every counter: `var snap = m; m = m.insert(k, s)` over 200
+// rounds returns the WRONG value on all three backends while FERN_LEAKCHECK
+// reports allocs=2400 frees=2400 live_bytes=0 — the box is recycled under the
+// reader, so the heap balances exactly.
+func TestLowerMapOverwritePreDropsAreSoleOwnerGated(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"struct value, i32 key (kind 4)", `struct Box { name: string }
+function build(): i32 {
+    var m: Map[i32, Box] = map_new(8);
+    m = m.insert(1, Box { name: "he" + "llo" });
+    m = m.insert(1, Box { name: "th" + "ere" });
+    return 0;
+}`},
+		{"string value, i32 key", `function build(): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.insert(1, "hello" + "world");
+    m = m.insert(1, "hello" + "there");
+    return 0;
+}`},
+		{"string value, string key", `function build(): i32 {
+    var k: string = "he" + "llo";
+    var m: Map[string, string] = map_new(8);
+    m = m.insert(k, "wor" + "ld");
+    m = m.insert(k, "the" + "re");
+    return 0;
+}`},
+	}
+	for _, tc := range cases {
+		for _, ptrW := range []int{4, 8} {
+			p := lowerSourceWith(t, tc.src, ptrW)
+			lookup := callOrderIn(p, "build", "__map_lookup_val", 0)
+			if lookup < 0 {
+				continue // this shape emits no pre-drop on this ABI
+			}
+			for lookup >= 0 {
+				if lastRcIsUniqueBefore(p, "build", lookup) < 0 {
+					t.Errorf("%s, ptrW=%d: the overwrite pre-drop at op %d is not opened by __fern_rc_is_unique — it frees a value a COW copy still names (#8354):\n%s", tc.name, ptrW, lookup, p)
+					break
+				}
+				lookup = callOrderIn(p, "build", "__map_lookup_val", lookup+1)
+			}
+		}
+	}
+}
