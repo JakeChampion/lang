@@ -359,6 +359,18 @@ func compileAndRunArm64FreeOn(t *testing.T, src string) (string, int) {
 // to the program as its argv[1..].
 func compileAndRunArm64FreeOnArgs(t *testing.T, src string, args ...string) (string, int) {
 	t.Helper()
+	binPath, qemu := compileArm64FreeOn(t, src)
+	cmd := runArm64Bin(qemu, binPath, args...)
+	out, _ := cmd.CombinedOutput()
+	_ = out
+	return "", cmd.ProcessState.ExitCode()
+}
+
+// compileArm64FreeOn is the compile half of compileAndRunArm64FreeOnArgs —
+// the arm64 sibling of compileX86_64FreeOn, for tests that need to control
+// how the binary is launched. Returns the binary's path and the qemu runner.
+func compileArm64FreeOn(t *testing.T, src string) (string, string) {
+	t.Helper()
 	gcc, qemu := arm64Tooling(t)
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "main.fern")
@@ -394,10 +406,7 @@ func compileAndRunArm64FreeOnArgs(t *testing.T, src string, args ...string) (str
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", asmPath, "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("gcc: %v\n%s", err, out)
 	}
-	cmd := runArm64Bin(qemu, binPath, args...)
-	out, _ := cmd.CombinedOutput()
-	_ = out
-	return "", cmd.ProcessState.ExitCode()
+	return binPath, qemu
 }
 
 // Phase 3 step-4: the freelist allocator, in isolation. A freed

@@ -449,6 +449,8 @@ func EmitWithOptions(prog *ast.Program, info *checker.Info, opts Options) (strin
 		g.usesIoError = true
 		g.usesMemcpy = true
 		g.usesAlloc = true
+		g.usesBoxFree = true // read_chunk gives back an EOF'd buffer
+		g.usesFree = true    // box_free → __fern_free
 	}
 	// The file-I/O + filesystem-op helpers all NUL-terminate the
 	// path with an alloc + memcpy before their path syscall (see
@@ -9531,8 +9533,11 @@ func (g *generator) emitReaderWriterRuntime() {
 	// __fern_reader_read_chunk(reader_ptr, n) →
 	// Option[string]. Single read of up to n bytes; None if
 	// the read returns 0 (EOF). Allocates the n-byte string
-	// buffer first; if the read is short, the length prefix
-	// records the actual byte count.
+	// buffer first; the Some box's len field records the
+	// actual byte count, and the block frees at the size word
+	// __fern_alloc_rc1 wrote, so a short read keeps its class.
+	// Two-word string ABI (ast.TwoWordOverride is set for the
+	// whole arm64 emit).
 	g.line("")
 	g.line(".global __fern_reader_read_chunk")
 	g.typeDirective("__fern_reader_read_chunk")
@@ -9543,63 +9548,33 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emit("str x21, [sp, #32]")
 	g.emit("ldr w19, [x0]") // fd
 	g.emit("mov x20, x1")   // n
-	if twoWord {
-		// Two-word heap form: alloc exactly n bytes (no
-		// prefix). Actual bytes read tracked in the Some
-		// box's len field. rc-headered alloc (rc=1 @data-8, size @data-4) so
-		// the owned Some(string) is reclaimed correctly by __fern_str_dec;
-		// plain __fern_alloc corrupts the heap (#2817 class).
-		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x21, x0") // = base+8
-		g.emit("mov w0, w19")
-		g.emit("mov x1, x21")
-		g.emit("mov x2, x20")
-		g.syscall("read")
-		g.emit("cmp x0, #0")
-		g.emit("ble .Lrrc2w_none")
-		g.emit("mov x20, x0") // x20 = bytes read
-		// Some(string) 24-byte box.
-		g.emit("mov x0, #24")
-		g.emit("bl __fern_alloc_box")
-		g.emit("str wzr, [x0]")
-		g.emit("str x21, [x0, #8]")
-		g.emit("str x20, [x0, #16]")
-		g.emit("b .Lrrc2w_ret")
-		g.label(".Lrrc2w_none")
-		g.emit("mov x0, #4")
-		g.emit("bl __fern_alloc_box")
-		g.emit("mov w1, #1")
-		g.emit("str w1, [x0]")
-		g.label(".Lrrc2w_ret")
-	} else {
-		// L2 rc-header layout — see __fern_strcat. Payload = n data only.
-		g.emit("mov x0, x20")
-		g.emit("bl __fern_alloc_rc1")
-		g.emit("mov x21, x0") // x21 = data ptr (= base+8)
-		g.emit("mov w0, w19")
-		g.emit("mov x1, x21")
-		g.emit("mov x2, x20")
-		g.syscall("read")
-		g.emit("cmp x0, #0")
-		g.emit("ble .Lrrc_none")
-		g.emit("stur w0, [x21, #-4]") // length at data-4
-		g.emit("mov x20, x0")
-		g.emit("mov x19, x21") // x19 = data ptr
-		g.emit("add x0, x19, x20")
-		g.emit("strb wzr, [x0]")
-		g.emit("mov x0, #16")
-		g.emit("bl __fern_alloc_box")
-		g.emit("str wzr, [x0]")
-		g.emit("str x19, [x0, #8]")
-		g.emit("b .Lrrc_ret")
-		g.label(".Lrrc_none")
-		g.emit("mov x0, #4")
-		g.emit("bl __fern_alloc_box")
-		g.emit("mov w1, #1")
-		g.emit("str w1, [x0]")
-		g.label(".Lrrc_ret")
-	}
+	g.emit("mov x0, x20")
+	g.emit("bl __fern_alloc_rc1")
+	g.emit("mov x21, x0") // = base+8
+	g.emit("mov w0, w19")
+	g.emit("mov x1, x21")
+	g.emit("mov x2, x20")
+	g.syscall("read")
+	g.emit("cmp x0, #0")
+	g.emit("ble .Lrrc2w_none")
+	g.emit("mov x20, x0") // x20 = bytes read
+	// Some(string) 24-byte box.
+	g.emit("mov x0, #24")
+	g.emit("bl __fern_alloc_box")
+	g.emit("str wzr, [x0]")
+	g.emit("str x21, [x0, #8]")
+	g.emit("str x20, [x0, #16]")
+	g.emit("b .Lrrc2w_ret")
+	g.label(".Lrrc2w_none")
+	// EOF / error: nothing owns the buffer, so give it back.
+	g.emit("mov x0, x21")
+	g.emit("mov x1, x20")
+	g.emit("bl __fern_box_free")
+	g.emit("mov x0, #4")
+	g.emit("bl __fern_alloc_box")
+	g.emit("mov w1, #1")
+	g.emit("str w1, [x0]")
+	g.label(".Lrrc2w_ret")
 	g.emit("ldr x21, [sp, #32]")
 	g.emit("ldp x19, x20, [sp, #16]")
 	g.emit("ldp x29, x30, [sp], #48")
