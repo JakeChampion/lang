@@ -66,18 +66,20 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"closure_churn_free":                             1584,
 	"closure_escapes_return":                         16,
 	"closure_capture_passed_to_owned_param":          64,
-	// The five `m.without(k)` shapes, split out of one case so a fix to one
+	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
 	// so the totals are not comparable with the one body that shared a map
 	// across all of them. What IS comparable is shape against shape, which is
 	// the point — the two bound forms and the miss reclaim completely under the
-	// #8276 seam retain + projection credit, while the self-assignment does not.
-	"map_delete_bound_reassign_churn_free":        128000,
+	// #8276 seam retain + projection credit — which they now do, so only the
+	// two that resist are still pinned here. The i32-key and delete-miss cases
+	// are gone from these tables entirely (absent means zero); the bound
+	// reassign holds 16 B per delete HIT on the two boxing ABIs, which is the
+	// deleted entry's key cell that __map_delete_keyed_impl never releases,
+	// not this bug — the miss row proves it, at a flat 0.
 	"map_delete_projected_self_assign_churn_free": 128000,
-	"map_delete_bound_miss_churn_free":            128000,
 	"map_delete_destructure_churn_free":           112000,
-	"map_delete_i32_key_churn_free":               144000,
 	"map_iter_escape_churn_free":                  32000,
 	"map_iter_string_kv_retain_churn_free":        19200,
 	"matchexpr_alias_array_no_free":               1600,
@@ -115,18 +117,21 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"closure_churn_free":                             1584,
 	"closure_escapes_return":                         16,
 	"closure_capture_passed_to_owned_param":          80,
-	// The five `m.without(k)` shapes, split out of one case so a fix to one
+	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
 	// so the totals are not comparable with the one body that shared a map
 	// across all of them. What IS comparable is shape against shape, which is
 	// the point — the two bound forms and the miss reclaim completely under the
-	// #8276 seam retain + projection credit, while the self-assignment does not.
-	"map_delete_bound_reassign_churn_free":        152000,
+	// #8276 seam retain + projection credit — which they now do, so only the
+	// two that resist are still pinned here. The i32-key and delete-miss cases
+	// are gone from these tables entirely (absent means zero); the bound
+	// reassign holds 16 B per delete HIT on the two boxing ABIs, which is the
+	// deleted entry's key cell that __map_delete_keyed_impl never releases,
+	// not this bug — the miss row proves it, at a flat 0.
+	"map_delete_bound_reassign_churn_free":        8000,
 	"map_delete_projected_self_assign_churn_free": 152000,
-	"map_delete_bound_miss_churn_free":            152000,
 	"map_delete_destructure_churn_free":           136000,
-	"map_delete_i32_key_churn_free":               144000,
 	"map_iter_escape_churn_free":                  32000,
 	"map_iter_string_kv_retain_churn_free":        19200,
 	"matchexpr_alias_array_no_free":               1600,
@@ -173,18 +178,21 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	"closure_escapes_return":                        16,
 	"closure_local_passed_to_callee_released":       384,
 	"consumed_array_arg_temp_released_and_guarded":  128,
-	// The five `m.without(k)` shapes, split out of one case so a fix to one
+	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
 	// so the totals are not comparable with the one body that shared a map
 	// across all of them. What IS comparable is shape against shape, which is
 	// the point — the two bound forms and the miss reclaim completely under the
-	// #8276 seam retain + projection credit, while the self-assignment does not.
-	"map_delete_bound_reassign_churn_free":           112000,
+	// #8276 seam retain + projection credit — which they now do, so only the
+	// two that resist are still pinned here. The i32-key and delete-miss cases
+	// are gone from these tables entirely (absent means zero); the bound
+	// reassign holds 16 B per delete HIT on the two boxing ABIs, which is the
+	// deleted entry's key cell that __map_delete_keyed_impl never releases,
+	// not this bug — the miss row proves it, at a flat 0.
+	"map_delete_bound_reassign_churn_free":           8000,
 	"map_delete_projected_self_assign_churn_free":    112000,
-	"map_delete_bound_miss_churn_free":               112000,
 	"map_delete_destructure_churn_free":              104000,
-	"map_delete_i32_key_churn_free":                  96000,
 	"map_iter_escape_churn_free":                     32000,
 	"map_iter_string_kv_retain_churn_free":           19200,
 	"map_keys_values_header_churn_free":              16000,
