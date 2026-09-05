@@ -168,14 +168,38 @@ calls, which is how the census caught a standing gap (#8534).
 reads after the call. It is pure waste, so the "views are safe because their
 targets leak" trade does not apply to it and nothing is lost by removing it.
 
-Two facts make the fix cheap. `[u8]` appears 34 times across the stdlib and the
-self-host, from 14 producers — and it appears **only in parameter position**:
-never a return type, never a struct field, never an array element. Slices are
-already, in practice, the non-escaping call-boundary value O2 blesses. And the
-language already ships the representation: the SSO two-word ABI carries a
-string as `(data, len)` unboxed on wasm32 and both native backends
-(`SSO-TWOWORD-EXEC.md`, `SSO-NATIVE-FLIP-STATUS.md`). A slice is that shape.
-The boxed header is the outlier, not the baseline.
+The corpus makes the fix cheap. `[u8]` matches 34 times as literal text across
+`internal/stdlib` and `examples/self_host`, but 24 of those are outside
+comments, and the self-host's single non-comment match is `[u8]` inside an E033
+diagnostic *string*, so the self-host carries no `[u8]` annotation at all. The
+real corpus is 22 occurrences across 15 distinct stdlib functions, every one of
+them taking `[u8]` as a **parameter**.
+
+It is almost only parameter position: never a return type, never a struct
+field, never an array element, and one local binding
+(`internal/stdlib/std/io_buffered.fern:47`, `var bs: [u8] = s.as_bytes()`).
+A local is still non-escaping, so the argument holds — but "only in parameter
+position" overstated it.
+
+The representation is **not** already shipped everywhere. The SSO two-word ABI
+carries a string as `(data, len)` unboxed on **wasm32 and arm64**; x86-64 is
+still single-word LSB-tagged and never sets `ast.TwoWordOverride`
+(`SSO-NATIVE-FLIP-STATUS.md`, whose title says so, and
+`internal/codegen/x86_64/x86_64.go:2168`). x86-64 is the backend the leak
+measurement above ran on, so there the two-word shape is precisely the un-done
+flip, not a baseline a slice can inherit: plan that half as new ABI work.
+
+Two things follow that this section originally missed. A two-word string's
+`data` word is a tagged value, not always a loadable byte address, so "a slice
+is that shape" holds for heap-form strings and needs an answer for inline ones.
+And `as_bytes()` on an inline-packed string today "first copies the bytes into
+a bare `__fern_alloc` block the header points at; that copy has no owner"
+(`internal/ir/rcresults.go:145`, the backends' helpers at e.g.
+`internal/codegen/x86_64/x86_64.go:11134`) — an ownerless copy whose only
+holder is the header that is being retired. **Open:** does the two-word slice forbid the
+inline-materialising path, forcing a heap-form promotion inside the string, or
+carry an inline tag of its own? The decision does not turn on the answer; the
+implementation does.
 
 ### Why not rc-track slices
 
@@ -191,9 +215,15 @@ it points into. Deleting the allocation dominates reclaiming it.
   today because it cannot escape today; §3's step 3 (a staged checker refusal
   of escaping positions) is what keeps that true, and it now covers `[u8]`
   alongside `str` rather than only `str`.
-- `__slice_make` and the `rcResultRaw` / `rcsigs` entries for it retire with
-  the box. A "slice header" allocation surviving anywhere afterwards is a bug,
-  which makes the change self-checking.
+- **The doing is tracked in #8635** — the representation change and the checker
+  rule both. This section is a decision, not an owner, and the decision it
+  replaced sat unowned for two weeks.
+- `__slice_make` and its `rcResultRaw` / `rcsigs` entries retire with the box,
+  and so do the other slice-producing classifications an implementer will grep
+  for: `__method_string_as_bytes` (`internal/ir/rcresults.go:150`),
+  `__slice_range` (`internal/ir/rcsigs.go:377`), and `__slice_make`'s row in
+  `internal/ir/verifyprovided.go:248`. A "slice header" allocation surviving
+  anywhere afterwards is a bug, which makes the change self-checking.
 - #8534's crypto half closes as a consequence rather than as a stdlib rewrite:
   `sha256_hex` was never the defect, and rewriting the wrappers to dodge `[u8]`
   would have hidden a general gap behind one call site.
