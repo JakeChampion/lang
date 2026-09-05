@@ -9,9 +9,9 @@ import (
 
 // TestInterpStrbuf pins the AST interpreter's `strbuf_reset()` /
 // `strbuf_append(s)` / `strbuf_take()` builtins — the global string-builder
-// primitive (the compiled backends back it with a 64 MiB BSS scratch buffer;
-// reset zeroes the length, append adds a string's bytes, take returns the
-// accumulated string and resets). Without an interpreter implementation
+// primitive (the compiled backends back it with a heap buffer that doubles on
+// demand; reset zeroes the length, append adds a string's bytes, take returns
+// the accumulated string and resets). Without an interpreter implementation
 // (`undefined function "strbuf_reset"`, exit 1) a program using strbuf
 // cannot run through the reference oracle even though
 // the checker knows the signatures and native / self-host IR implement them.

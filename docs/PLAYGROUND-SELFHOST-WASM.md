@@ -252,8 +252,8 @@ The `strbuf_*` third of this is **fixed**: `strbuf_reset` / `strbuf_append` /
 `strbuf_take` are core builtins (`internal/platforms/enforce.go:151-153`), so
 E066 never refuses them and they reach codegen on every target, and wasmbin was
 the one backend with no lowering for them at all. It has one now — a growable
-heap buffer over three scratch words, rather than the natives' fixed 64 MiB
-`.bss` reservation, which in linear memory would push `stringStart` and the
+heap buffer over three scratch words, the shape the natives use as well since
+#8212; a fixed 64 MiB region in linear memory would push `stringStart` and the
 whole heap up by that much.
 
 Three of the rest were never lowerings wasmbin was missing — they are things

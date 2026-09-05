@@ -3962,19 +3962,19 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
 
     // Global string-builder primitive — the amortised-O(1) output
     // accumulator (strbuf_reset / strbuf_append / strbuf_take), gated on the
-    // strbuf need its op sites mark. x86-64 has gated it on the same need all
-    // along; arm64 sat inside the bare heap gate, so every allocating program
-    // reserved the 64 MiB .bss buffer and carried three bodies nothing branched
-    // to. A string is a 16-byte view {data@0, len@8} over the 24-byte
-    // rc-headered block __fern_str_box builds.
+    // strbuf need its op sites mark. The buffer is a heap block that doubles
+    // (from 64 KiB) when an append would not fit, so the accumulated output
+    // has no fixed ceiling. Three .bss words: len, data ptr, cap. A string is a 16-byte
+    // view {data@0, len@8} over the 24-byte rc-headered block __fern_str_box
+    // builds.
     if (s.has_need("strbuf")) {
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
         s = s.write("__fern_strbuf_len: .quad 0\n");
-        s = s.write("    .align 3\n");
-        s = s.write("__fern_strbuf_data: .skip 67108864\n");   // 64 MiB (was 16 MiB — the self-host self-compile output is ~16.7 MB and was overflowing it)
+        s = s.write("__fern_strbuf_ptr: .quad 0\n");
+        s = s.write("__fern_strbuf_cap: .quad 0\n");
         s = s.write("    .text\n");
-        // reset: len = 0
+        // reset: len = 0. The buffer stays allocated for the next build.
         s = s.write(".globl __fern_strbuf_reset\n");
         s = s.write(".type __fern_strbuf_reset, %function\n");
         s = s.write("__fern_strbuf_reset:\n");
@@ -3983,44 +3983,116 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    str xzr, [x1]\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_strbuf_reset, .-__fern_strbuf_reset\n");
-        // append(box in x0): copy box.len bytes from box.data to
-        // strbuf_data + strbuf_len, then bump len. Leaf (no frame);
-        // clobbers x1..x6, all caller-saved temporaries.
+        // grow(need in x0): replace the buffer with one of at least `need`
+        // bytes and copy the live bytes across. The old buffer is left to the
+        // arena, like the wasm runtime's strbuf. x19 = need / new buffer,
+        // x20 = new cap, across the __fern_alloc call.
+        s = s.write(".globl __fern_strbuf_grow\n");
+        s = s.write(".type __fern_strbuf_grow, %function\n");
+        s = s.write("__fern_strbuf_grow:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    adrp x1, __fern_strbuf_cap\n");
+        s = s.write("    add x1, x1, :lo12:__fern_strbuf_cap\n");
+        s = s.write("    ldr x20, [x1]\n");
+        s = s.write("    cbnz x20, .Lsbgrow_dbl\n");
+        s = s.write("    mov x20, #0x10000\n");
+        s = s.write(".Lsbgrow_dbl:\n");
+        s = s.write("    cmp x20, x19\n");
+        s = s.write("    b.hs .Lsbgrow_alloc\n");
+        s = s.write("    lsl x20, x20, #1\n");
+        s = s.write("    b .Lsbgrow_dbl\n");
+        s = s.write(".Lsbgrow_alloc:\n");
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    bl __fern_alloc\n");
+        if (leak_check_on()) {
+            // The builder's buffer is runtime state the program never holds,
+            // so the census leaves it out as it left out the .bss reservation
+            // it replaced. x20 is a power of two >= 64 KiB, already 16-rounded.
+            s = s.write("    adrp x1, __fern_lc_alloc_count\n");
+            s = s.write("    add x1, x1, :lo12:__fern_lc_alloc_count\n");
+            s = s.write("    ldr x2, [x1]\n");
+            s = s.write("    sub x2, x2, #1\n");
+            s = s.write("    str x2, [x1]\n");
+            s = s.write("    adrp x1, __fern_lc_alloc_bytes\n");
+            s = s.write("    add x1, x1, :lo12:__fern_lc_alloc_bytes\n");
+            s = s.write("    ldr x2, [x1]\n");
+            s = s.write("    sub x2, x2, x20\n");
+            s = s.write("    str x2, [x1]\n");
+        }
+        s = s.write("    mov x19, x0\n");                       // new buffer
+        s = s.write("    adrp x1, __fern_strbuf_ptr\n");
+        s = s.write("    add x1, x1, :lo12:__fern_strbuf_ptr\n");
+        s = s.write("    ldr x1, [x1]\n");                      // old buffer (0 on the first grow)
+        s = s.write("    adrp x2, __fern_strbuf_len\n");
+        s = s.write("    add x2, x2, :lo12:__fern_strbuf_len\n");
+        s = s.write("    ldr x2, [x2]\n");                      // live bytes (0 while old is null)
+        s = s.write("    mov x3, x19\n");
+        s = s.write("    cbz x2, .Lsbgrow_copied\n");
+        s = s.write(".Lsbgrow_copy:\n");
+        s = s.write("    ldrb w4, [x1], #1\n");
+        s = s.write("    strb w4, [x3], #1\n");
+        s = s.write("    sub x2, x2, #1\n");
+        s = s.write("    cbnz x2, .Lsbgrow_copy\n");
+        s = s.write(".Lsbgrow_copied:\n");
+        s = s.write("    adrp x1, __fern_strbuf_ptr\n");
+        s = s.write("    add x1, x1, :lo12:__fern_strbuf_ptr\n");
+        s = s.write("    str x19, [x1]\n");
+        s = s.write("    adrp x1, __fern_strbuf_cap\n");
+        s = s.write("    add x1, x1, :lo12:__fern_strbuf_cap\n");
+        s = s.write("    str x20, [x1]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_strbuf_grow, .-__fern_strbuf_grow\n");
+        // append(box in x0): grow if box.len more bytes do not fit, copy them
+        // from box.data to strbuf_ptr + strbuf_len, then bump len. x19 holds
+        // the box across the grow call.
         s = s.write(".globl __fern_strbuf_append\n");
         s = s.write(".type __fern_strbuf_append, %function\n");
         s = s.write("__fern_strbuf_append:\n");
-        s = s.write("    ldr x1, [x0]\n");                      // src data ptr
-        s = s.write("    ldr x2, [x0, #8]\n");                  // src len
-        s = s.write("    cbz x2, .Lsbapp_done\n");
-        s = s.write("    adrp x3, __fern_strbuf_data\n");
-        s = s.write("    add x3, x3, :lo12:__fern_strbuf_data\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    ldr x2, [x19, #8]\n");                 // src len
         s = s.write("    adrp x4, __fern_strbuf_len\n");
         s = s.write("    add x4, x4, :lo12:__fern_strbuf_len\n");
         s = s.write("    ldr x5, [x4]\n");
-        s = s.write("    add x3, x3, x5\n");                    // dst = data + len
-        // Bounds check: trap (exit 125, like __fern_alloc) if this append would
-        // run past the 64 MiB buffer, rather than silently corrupting adjacent
-        // .bss and segfaulting later. x5 = strbuf_len, x2 = src len.
-        s = s.write("    add x6, x5, x2\n");                    // new total len
-        s = s.write("    movz x5, #0x400, lsl #16\n");          // 0x4000000 = 64 MiB
-        s = s.write("    cmp x6, x5\n");
-        s = s.write("    b.ls .Lsbapp_inbounds\n");
-        s = s.write("    mov x0, #125\n");
-        s = s.write("    mov x8, #93\n");                       // exit
-        s = s.write("    svc #0\n");
-        s = s.write(".Lsbapp_inbounds:\n");
+        s = s.write("    add x0, x5, x2\n");                    // bytes needed after this append
+        s = s.write("    adrp x6, __fern_strbuf_cap\n");
+        s = s.write("    add x6, x6, :lo12:__fern_strbuf_cap\n");
+        s = s.write("    ldr x6, [x6]\n");
+        s = s.write("    cmp x0, x6\n");
+        s = s.write("    b.ls .Lsbapp_fits\n");
+        s = s.write("    bl __fern_strbuf_grow\n");
+        s = s.write(".Lsbapp_fits:\n");
+        s = s.write("    ldr x1, [x19]\n");                     // src data ptr
+        s = s.write("    ldr x2, [x19, #8]\n");                 // src len
+        s = s.write("    cbz x2, .Lsbapp_done\n");
+        s = s.write("    adrp x3, __fern_strbuf_ptr\n");
+        s = s.write("    add x3, x3, :lo12:__fern_strbuf_ptr\n");
+        s = s.write("    ldr x3, [x3]\n");
+        s = s.write("    adrp x4, __fern_strbuf_len\n");
+        s = s.write("    add x4, x4, :lo12:__fern_strbuf_len\n");
+        s = s.write("    ldr x5, [x4]\n");
+        s = s.write("    add x3, x3, x5\n");                    // dst = ptr + len
         s = s.write(".Lsbapp_loop:\n");
         s = s.write("    ldrb w6, [x1], #1\n");
         s = s.write("    strb w6, [x3], #1\n");
         s = s.write("    sub x2, x2, #1\n");
         s = s.write("    cbnz x2, .Lsbapp_loop\n");
         s = s.write(".Lsbapp_done:\n");
-        s = s.write("    ldr x2, [x0, #8]\n");                  // reload src len
+        s = s.write("    ldr x2, [x19, #8]\n");                 // reload src len
         s = s.write("    adrp x4, __fern_strbuf_len\n");
         s = s.write("    add x4, x4, :lo12:__fern_strbuf_len\n");
         s = s.write("    ldr x5, [x4]\n");
         s = s.write("    add x5, x5, x2\n");
         s = s.write("    str x5, [x4]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_strbuf_append, .-__fern_strbuf_append\n");
         // take(): alloc data + 16-byte box, copy bytes, reset, return
@@ -4038,8 +4110,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    mov x0, x19\n");
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x20, x0\n");                       // x20 = data ptr
-        s = s.write("    adrp x1, __fern_strbuf_data\n");
-        s = s.write("    add x1, x1, :lo12:__fern_strbuf_data\n");
+        s = s.write("    adrp x1, __fern_strbuf_ptr\n");
+        s = s.write("    add x1, x1, :lo12:__fern_strbuf_ptr\n");
+        s = s.write("    ldr x1, [x1]\n");
         s = s.write("    mov x2, x20\n");                       // dst
         s = s.write("    mov x3, x19\n");                       // count
         s = s.write("    cbz x3, .Lsbtake_box\n");

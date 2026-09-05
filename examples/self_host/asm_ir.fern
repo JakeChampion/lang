@@ -2553,35 +2553,95 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     // byte — the newline, the character — into the static __fern_scratch, which is
     // why they join its gate; a Fern helper has no way to name a stack slot.
     // Global string-builder primitive — the amortised-O(1) output accumulator
-    // (strbuf_reset / strbuf_append / strbuf_take). A 64 MiB .bss buffer + len;
-    // take allocates a fresh box via __fern_alloc (so this is heap-gated too).
-    // Transcribed verbatim from asm.fern's emit_runtime so the IR path's strbuf
-    // ops call byte-identical bodies. Gated on the strbuf need the op handlers marked.
+    // (strbuf_reset / strbuf_append / strbuf_take). The buffer is a heap block
+    // that doubles (from 64 KiB) when an append would not fit, so the
+    // accumulated output has no fixed ceiling (#8212). Three .bss words: len,
+    // data ptr, cap. take allocates a fresh box via __fern_alloc (so this is
+    // heap-gated too). Gated on the strbuf need the op handlers marked.
     if (s.has_need("strbuf")) {
         s = s.write("    .section .bss\n");
         s = s.write("    .align 8\n");
         s = s.write("__fern_strbuf_len: .quad 0\n");
-        s = s.write("    .align 8\n");
-        s = s.write("__fern_strbuf_data: .skip 67108864\n");   // 64 MiB
+        s = s.write("__fern_strbuf_ptr: .quad 0\n");
+        s = s.write("__fern_strbuf_cap: .quad 0\n");
         s = s.write("    .section .text\n");
         s = s.write("__fern_strbuf_reset:\n");
         s = s.write("    movq $0, __fern_strbuf_len(%rip)\n");
         s = s.write("    ret\n");
+        // grow(need in %rdi): replace the buffer with one of at least `need`
+        // bytes and copy the live bytes across. The old buffer is left to the
+        // arena, like the wasm runtime's strbuf. %rbx = need / new buffer,
+        // %r12 = new cap, across the __fern_alloc call.
+        s = s.write("__fern_strbuf_grow:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    movq __fern_strbuf_cap(%rip), %r12\n");
+        s = s.write("    testq %r12, %r12\n");
+        s = s.write("    jne .Lsbgrow_dbl\n");
+        s = s.write("    movq $65536, %r12\n");
+        s = s.write(".Lsbgrow_dbl:\n");
+        s = s.write("    cmpq %rbx, %r12\n");
+        s = s.write("    jae .Lsbgrow_alloc\n");
+        s = s.write("    addq %r12, %r12\n");
+        s = s.write("    jmp .Lsbgrow_dbl\n");
+        s = s.write(".Lsbgrow_alloc:\n");
+        s = s.write("    movq %r12, %rdi\n");
+        s = s.write("    call __fern_alloc\n");
+        if (leak_check_on()) {
+            // The builder's buffer is runtime state the program never holds,
+            // so the census leaves it out as it left out the .bss reservation
+            // it replaced. %r12 is a power of two >= 64 KiB, already 16-rounded.
+            s = s.write("    movq __fern_lc_alloc_count(%rip), %rcx\n");
+            s = s.write("    subq $1, %rcx\n");
+            s = s.write("    movq %rcx, __fern_lc_alloc_count(%rip)\n");
+            s = s.write("    movq __fern_lc_alloc_bytes(%rip), %rcx\n");
+            s = s.write("    subq %r12, %rcx\n");
+            s = s.write("    movq %rcx, __fern_lc_alloc_bytes(%rip)\n");
+        }
+        s = s.write("    movq %rax, %rbx\n");                  // new buffer
+        s = s.write("    movq __fern_strbuf_ptr(%rip), %rsi\n");// old buffer (0 on the first grow)
+        s = s.write("    movq __fern_strbuf_len(%rip), %rcx\n");// live bytes (0 while old is null)
+        s = s.write("    movq %rbx, %rdx\n");
+        s = s.write("    cmpq $0, %rcx\n");
+        s = s.write("    je .Lsbgrow_copied\n");
+        s = s.write(".Lsbgrow_copy:\n");
+        s = s.write("    movzbq (%rsi), %rax\n");
+        s = s.write("    movb %al, (%rdx)\n");
+        s = s.write("    incq %rsi\n");
+        s = s.write("    incq %rdx\n");
+        s = s.write("    decq %rcx\n");
+        s = s.write("    jne .Lsbgrow_copy\n");
+        s = s.write(".Lsbgrow_copied:\n");
+        s = s.write("    movq %rbx, __fern_strbuf_ptr(%rip)\n");
+        s = s.write("    movq %r12, __fern_strbuf_cap(%rip)\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
+        s = s.write("    ret\n");
+        // append(box in %rdi): grow if box.len more bytes do not fit, copy them
+        // from box.data to strbuf_ptr + strbuf_len, then bump len. %rbx holds
+        // the box across the grow call.
         s = s.write("__fern_strbuf_append:\n");
-        s = s.write("    movq (%rdi), %rsi\n");                // src data ptr
-        s = s.write("    movq 8(%rdi), %rcx\n");               // src len
-        s = s.write("    leaq __fern_strbuf_data(%rip), %rdx\n");
-        s = s.write("    addq __fern_strbuf_len(%rip), %rdx\n");// dst = data + len
-        // Bounds check: trap (exit 125, ExitArenaExhausted) if this append would
-        // run past the buffer.
-        s = s.write("    movq __fern_strbuf_len(%rip), %rax\n");
-        s = s.write("    addq %rcx, %rax\n");
-        s = s.write("    cmpq $67108864, %rax\n");
-        s = s.write("    jbe .Lsbapp_inbounds\n");
-        s = s.write("    movq $60, %rax\n");
-        s = s.write("    movq $125, %rdi\n");
-        s = s.write("    syscall\n");
-        s = s.write(".Lsbapp_inbounds:\n");
+        s = s.write("    pushq %rbp\n");
+        s = s.write("    movq %rsp, %rbp\n");
+        s = s.write("    pushq %rbx\n");
+        s = s.write("    pushq %r12\n");
+        s = s.write("    movq %rdi, %rbx\n");
+        s = s.write("    movq 8(%rbx), %rcx\n");               // src len
+        s = s.write("    movq __fern_strbuf_len(%rip), %rdi\n");
+        s = s.write("    addq %rcx, %rdi\n");                  // bytes needed after this append
+        s = s.write("    movq __fern_strbuf_cap(%rip), %rax\n");
+        s = s.write("    cmpq %rax, %rdi\n");
+        s = s.write("    jbe .Lsbapp_fits\n");
+        s = s.write("    call __fern_strbuf_grow\n");
+        s = s.write(".Lsbapp_fits:\n");
+        s = s.write("    movq (%rbx), %rsi\n");                // src data ptr
+        s = s.write("    movq 8(%rbx), %rcx\n");               // src len
+        s = s.write("    movq __fern_strbuf_ptr(%rip), %rdx\n");
+        s = s.write("    addq __fern_strbuf_len(%rip), %rdx\n");// dst = ptr + len
         s = s.write("    cmpq $0, %rcx\n");
         s = s.write("    je .Lsbapp_done\n");
         s = s.write(".Lsbapp_loop:\n");
@@ -2592,8 +2652,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    decq %rcx\n");
         s = s.write("    jne .Lsbapp_loop\n");
         s = s.write(".Lsbapp_done:\n");
-        s = s.write("    movq 8(%rdi), %rcx\n");               // reload src len
+        s = s.write("    movq 8(%rbx), %rcx\n");               // reload src len
         s = s.write("    addq %rcx, __fern_strbuf_len(%rip)\n");
+        s = s.write("    popq %r12\n");
+        s = s.write("    popq %rbx\n");
+        s = s.write("    popq %rbp\n");
         s = s.write("    ret\n");
         s = s.write("__fern_strbuf_take:\n");
         s = s.write("    pushq %rbp\n");
@@ -2606,7 +2669,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq %r12, %rdi\n");
         s = s.write("    call __fern_alloc\n");
         s = s.write("    movq %rax, %r13\n");                  // data ptr
-        s = s.write("    leaq __fern_strbuf_data(%rip), %rsi\n");
+        s = s.write("    movq __fern_strbuf_ptr(%rip), %rsi\n");
         s = s.write("    movq %r13, %rdi\n");
         s = s.write("    movq %r12, %rcx\n");
         s = s.write("    cmpq $0, %rcx\n");
