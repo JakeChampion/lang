@@ -1627,19 +1627,26 @@ function main(): i32 {
     return (total - 16500) + __rc_underflow_count();
 }`,
 	},
+	// `m.without(k)` shapes, ONE PER CASE.
+	//
+	// These were a single `map_delete_tuple_churn_free` running all of them
+	// in one body. That case's rc-corpus exit code covered the #4388 tuple
+	// header (a box without the 8-byte rc header has its scope-exit drop
+	// read allocator metadata at [data-8] as the rc — underflow on wasm, a
+	// segfault on native), and it still does, in every case below.
+	//
+	// What one body could NOT do is attribute a leak. Its single leak-gate
+	// number covered four independent bugs at once, so a fix to one of them
+	// could not bank a zero and a regression in another could hide inside
+	// somebody else's fix. Measuring them apart is what showed the shapes
+	// differ: the two bound forms and the miss reclaim completely under the
+	// #8276 seam retain + projection credit, while `m = m.without(k).0` is a
+	// SELF-ASSIGNMENT whose RHS aliases the LHS and needs a different fix
+	// entirely (docs/rc-log/ and #8276). Same coverage, four verdicts.
 	{
-		// Map.delete returns a (Map, bool) tuple. The tuple box must
-		// carry the 8-byte rc header every heap box gets (rc=1 at
-		// [base+0], data = base+8) — without it the scope-exit tuple
-		// drop reads heap-allocator metadata at [data-8] as the rc and
-		// underflows (wasm) / corrupts the heap and segfaults (native).
-		// Exercises every shape that hit the bug: bound result, the
-		// `m = t.0` reassign idiom, delete-hit + delete-miss, and a
-		// discarded delete — over both string and i32 keys. Per iter
-		// the surviving "other"/2 entries stay readable: string side
-		// +5 (hit 2 + survivor 3), i32 side +8 (hit 2 + survivor 6) →
-		// 13; 500x → 6500.
-		name: "map_delete_tuple_churn_free",
+		// Bound whole-tuple result, then the `m = t.0` reassign idiom.
+		// Per iter: hit 2 + surviving "other" 3 = 5; 500x → 2500.
+		name: "map_delete_bound_reassign_churn_free",
 		src: `
 import "core/int";
 import "core/map";
@@ -1650,31 +1657,134 @@ function mk(): i32 {
     sm = sm.insert("ke" + "y", 7);
     sm = sm.insert("ot" + "her", 3);
     sm = sm.insert("th" + "ird", 10);
-    var st = sm.without("ke" + "y");   // bound delete-hit
-    sm = st.0;                        // reassign idiom
+    var st = sm.without("ke" + "y");
+    sm = st.0;
     if (st.1) { acc = acc + 2; }
-    sm = sm.without("th" + "ird").0;          // discarded delete (hit)
-    var sm2 = sm.without("zz" + "zz"); // bound delete-miss
-    sm = sm2.0;
-    if (sm2.1) { acc = acc + 100; }
-    acc = acc + sm.get_or("ot" + "her", 0); // surviving entry: +3
-    var im: Map[i32, i32] = map_new(8);
-    im = im.insert(1, 4);
-    im = im.insert(2, 6);
-    var it = im.without(1);            // i32 delete-hit
-    im = it.0;
-    if (it.1) { acc = acc + 2; }
-    var im2 = im.without(9);           // i32 delete-miss
-    im = im2.0;
-    if (im2.1) { acc = acc + 100; }
-    acc = acc + im.get_or(2, 0);      // surviving entry: +6
+    acc = acc + sm.get_or("ot" + "her", 0);
     return acc;
 }
 function main(): i32 {
     var total: i32 = 0;
     var k: i32 = 0;
     while (k < 500) { total = total + mk(); k = k + 1; }
-    return (total - 6500) + __rc_underflow_count();
+    return (total - 2500) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The SELF-ASSIGNMENT: the projected result is stored back into the
+		// receiver's own binding, and on the in-place COW branch that is the
+		// same handle the assignment is about to overwrite-dec. The distinct
+		// shape of the four, and the one the #8276 retain does not fix.
+		// Per iter: surviving "other" 3; 500x → 1500.
+		name: "map_delete_projected_self_assign_churn_free",
+		src: `
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var acc: i32 = 0;
+    var sm: Map[string, i32] = map_new(8);
+    sm = sm.insert("ke" + "y", 7);
+    sm = sm.insert("ot" + "her", 3);
+    sm = sm.insert("th" + "ird", 10);
+    sm = sm.without("th" + "ird").0;
+    acc = acc + sm.get_or("ot" + "her", 0);
+    return acc;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 1500) + __rc_underflow_count();
+}`,
+	},
+	{
+		// Delete MISS. Worth its own case because it leaks identically to a
+		// hit — nothing about what the delete did to the table matters, which
+		// is what ruled the deleted entry out as the cause (#8434).
+		// Per iter: surviving "other" 3; 500x → 1500.
+		name: "map_delete_bound_miss_churn_free",
+		src: `
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var acc: i32 = 0;
+    var sm: Map[string, i32] = map_new(8);
+    sm = sm.insert("ke" + "y", 7);
+    sm = sm.insert("ot" + "her", 3);
+    sm = sm.insert("th" + "ird", 10);
+    var sm2 = sm.without("zz" + "zz");
+    sm = sm2.0;
+    if (sm2.1) { acc = acc + 100; }
+    acc = acc + sm.get_or("ot" + "her", 0);
+    return acc;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 1500) + __rc_underflow_count();
+}`,
+	},
+	{
+		// DESTRUCTURING the tuple — the spelling computeMapCowBindSites'
+		// `*ast.Destructure` arm was written for, and which nothing covered.
+		// It is the one shape the seam retain already reaches, so it isolates
+		// what that retain does and does not buy.
+		// Per iter: hit 2 + surviving "other" 3 = 5; 500x → 2500.
+		name: "map_delete_destructure_churn_free",
+		src: `
+import "core/int";
+import "core/map";
+import "std/string";
+function mk(): i32 {
+    var acc: i32 = 0;
+    var sm: Map[string, i32] = map_new(8);
+    sm = sm.insert("ke" + "y", 7);
+    sm = sm.insert("ot" + "her", 3);
+    sm = sm.insert("th" + "ird", 10);
+    var (m2, ok) = sm.without("ke" + "y");
+    sm = m2;
+    if (ok) { acc = acc + 2; }
+    acc = acc + sm.get_or("ot" + "her", 0);
+    return acc;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 2500) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The i32-KEY half, hit and miss. No key column to walk, so it
+		// separates what the delete shapes cost from what the string key
+		// column costs — the split that showed the leak is ABI-independent.
+		// Per iter: hit 2 + surviving 2-entry 6 = 8; 500x → 4000.
+		name: "map_delete_i32_key_churn_free",
+		src: `
+import "core/int";
+import "core/map";
+function mk(): i32 {
+    var acc: i32 = 0;
+    var im: Map[i32, i32] = map_new(8);
+    im = im.insert(1, 4);
+    im = im.insert(2, 6);
+    var it = im.without(1);
+    im = it.0;
+    if (it.1) { acc = acc + 2; }
+    var im2 = im.without(9);
+    im = im2.0;
+    if (im2.1) { acc = acc + 100; }
+    acc = acc + im.get_or(2, 0);
+    return acc;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 500) { total = total + mk(); k = k + 1; }
+    return (total - 4000) + __rc_underflow_count();
 }`,
 	},
 	{
