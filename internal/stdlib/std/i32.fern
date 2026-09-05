@@ -369,7 +369,11 @@ pub function (n: i32) is_prime(): boolean {
     if (n == 2 || n == 3) { return true; }
     if (n % 2 == 0 || n % 3 == 0) { return false; }
     var i: i32 = 5;
-    while (i * i <= n) {
+    // `i <= n / i` rather than `i * i <= n`: the square overflows for
+    // i >= 46341, and the wrapped value stays below n, so the loop ran
+    // past the square root until i itself wrapped negative and `n % -1`
+    // reported a prime as composite.
+    while (i <= n / i) {
         if (n % i == 0 || n % (i + 2) == 0) { return false; }
         i = i + 6;
     }
@@ -720,10 +724,13 @@ pub function (n: i32) is_power_of_2(): boolean {
 
 // `(n: i32) next_power_of_2()` — smallest power of 2 that
 // is >= n. Returns 1 for n <= 1 (consistent with Rust's
-// next_power_of_two). For n > 2^30 wraps to 0 — overflow
-// equivalent to "no representable power".
+// next_power_of_two). The largest power of two representable
+// in an i32 is 2^30, so n above that returns 0 (the "no
+// representable power" sentinel) — which also keeps the
+// doubling loop from wrapping past 0 and spinning forever.
 pub function (n: i32) next_power_of_2(): i32 {
     if (n <= 1) { return 1; }
+    if (n > 1073741824) { return 0; }
     var p: i32 = 1;
     while (p < n) { p = p * 2; }
     return p;

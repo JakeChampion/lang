@@ -50,6 +50,33 @@ function test_is_prime(): test.TestOutcome {
     return test.assert_true((7).is_prime() && !(8).is_prime() && !(1).is_prime());
 }
 
+// The top of the range, where both of these used to come apart. `is_prime`
+// squared its trial divisor, which overflows for i >= 46341: the loop ran
+// past the square root until `i` itself wrapped negative, and `n % -1 == 0`
+// reported the Mersenne prime 2147483647 as composite. `next_power_of_2`
+// doubled without the guard its i64 / u32 / u64 twins carry, so past 2^30
+// `p` wrapped to 0 and `0 < n` held forever.
+function test_is_prime_i32_max(): test.TestOutcome {
+    // 2147483647 is the Mersenne prime M31; 2147483629 is also prime.
+    return test.assert_true((2147483647).is_prime() && (2147483629).is_prime());
+}
+
+function test_is_prime_large_composite(): test.TestOutcome {
+    return test.assert_true(!(2147483646).is_prime() && !(2147483645).is_prime());
+}
+
+function test_next_power_of_2_basic(): test.TestOutcome {
+    return test.assert_true((1).next_power_of_2() == 1 && (5).next_power_of_2() == 8
+        && (1073741824).next_power_of_2() == 1073741824);
+}
+
+function test_next_power_of_2_past_max(): test.TestOutcome {
+    // Above 2^30 there is no representable power of two, so the documented
+    // sentinel is 0 — and the call has to terminate to say so.
+    return test.assert_true((1073741825).next_power_of_2() == 0
+        && (2147483647).next_power_of_2() == 0);
+}
+
 function test_perfect_square(): test.TestOutcome {
     return test.assert_true((16).is_perfect_square() && !(15).is_perfect_square());
 }
@@ -148,6 +175,10 @@ function main(): i32 {
     r = r.it("sum_of_digits",       test_sum_of_digits);
     r = r.it("factorial",           test_factorial);
     r = r.it("is_prime",            test_is_prime);
+    r = r.it("is_prime i32::MAX",   test_is_prime_i32_max);
+    r = r.it("is_prime large comp", test_is_prime_large_composite);
+    r = r.it("next_power_of_2",     test_next_power_of_2_basic);
+    r = r.it("next_power_of_2 max", test_next_power_of_2_past_max);
     r = r.it("is_perfect_square",   test_perfect_square);
     r = r.it("is_multiple_of",      test_is_multiple_of);
     r = r.it("is_in_range",         test_is_in_range);
