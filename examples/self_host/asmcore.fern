@@ -3147,6 +3147,10 @@ function builtin_i32_names(): string[] {
 function builtin_string_names(): string[] {
     return [
         "read_all_stdin",
+        // target_os() is a literal by emit time on the compile path
+        // (constfold.fold_target_os); the type is for -check, which keeps
+        // the call.
+        "target_os",
         "i32_to_string",
         "int__int_to_string",
         "str_trim",

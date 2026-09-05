@@ -704,3 +704,29 @@ func TestFoldIsUniqueOnNullKeepsTheStackBalanced(t *testing.T) {
 		t.Fatalf("want `const 0; return`, got:\n%s", p)
 	}
 }
+
+// `"linux" == "darwin"` over two literals folds to a constant, and the branch
+// on it is then pruned — the shape a `target_os()` branch takes once constfold
+// has resolved the call. `!=` is the same op followed by OpNot, so it folds
+// through the unary rule; the true case splices the arm in.
+func TestFoldStringLiteralEqualityPrunesBranch(t *testing.T) {
+	p := loweredAndFolded(t, `function f(): i32 {
+    if ("linux" == "darwin") { return 1; }
+    if ("wasi" != "wasi") { return 2; }
+    if ("android" == "android") { return 3; }
+    return 4;
+}`)
+	fn := findFunc(p, "f")
+	if fn == nil {
+		t.Fatal("f not found")
+	}
+	for _, op := range fn.Ops {
+		switch op.Kind {
+		case OpStrEq, OpConstStr, OpIf, OpNot:
+			t.Fatalf("%s survived the fold:\n%s", op.Kind, p)
+		}
+	}
+	if len(fn.Ops) < 2 || fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 3 || fn.Ops[1].Kind != OpReturn {
+		t.Fatalf("expected the spliced `return 3` first, got:\n%s", p)
+	}
+}

@@ -339,7 +339,7 @@ func (f *fixtureSpec) check(t *testing.T, backend, stdout string, exit int) {
 func runFixtureArm64(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
 	gcc, qemu := arm64Tooling(t)
-	info, prog := loadCheckMono(t, mainPath)
+	info, prog := loadCheckMonoFor(t, mainPath, "linux")
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
@@ -355,7 +355,7 @@ func runFixtureArm64(t *testing.T, mainPath, stdin string) (string, int) {
 func runFixtureX86_64(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
-	info, prog := loadCheckMono(t, mainPath)
+	info, prog := loadCheckMonoFor(t, mainPath, "linux")
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v", err)
 	}
@@ -391,7 +391,7 @@ func runFixtureX86_64(t *testing.T, mainPath, stdin string) (string, int) {
 func runFixtureWasm(t *testing.T, mainPath, stdin string) (string, int) {
 	t.Helper()
 	skipIfPreview2Missing(t)
-	info, prog := loadCheckMono(t, mainPath)
+	info, prog := loadCheckMonoFor(t, mainPath, "wasi")
 	core, err := wasmbin.BuildWithOptions(prog, info, wasmbin.BuildOptions{
 		ForceMemorySection: true,
 		Preview2WASI:       true,

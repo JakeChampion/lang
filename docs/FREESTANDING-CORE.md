@@ -64,6 +64,8 @@ costs a silent failure on the first target that lacks it.
   `strbuf_reset` / `strbuf_append` / `strbuf_take`.
 - **Pure computation** — `f32_bits`, `f32_from_bits`, `f64_bits`, `f64_from_bits`, and
   the whole math / string / array runtime that was never in either table.
+  `target_os` is purer still: it is a string literal by the time anything runs,
+  folded from the target's own name (`docs/STDLIB.md`).
 - **Readiness** — `poll`, `wasm_block`, `wasm_poll`, `wasm_pollable_drop`.
 - **`exit`** and **`isatty`** — see below.
 

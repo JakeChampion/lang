@@ -260,6 +260,64 @@ pub function fold_module(mod: parser.Module): parser.Module {
     return parser.Module { ...mod, funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
 }
 
+// =================== TARGET OS ====================
+
+// TARGET_OS_BUILTIN is `target_os()`: the compile target's environment as a
+// string literal — "linux", "darwin", "android" or "wasi", the environment
+// half of the -target name and never this compiler's host. Native folds it
+// in internal/constfold ahead of the check; here it folds on the compile
+// path, where the driver knows the target, and asmcore's builtin table types
+// the call for a bare -check.
+const TARGET_OS_BUILTIN: string = "target_os";
+
+// TargetAcc carries the environment through astwalk's accumulator spine. The
+// accumulator is pointer-shaped, which is what an erased slot can carry.
+struct TargetAcc { env: string }
+
+// fold_target_os replaces every zero-argument `target_os()` call in `mod`
+// with the string literal `env`. A call with arguments is left alone: the
+// checker's arity error names the declared signature.
+pub function fold_target_os(mod: parser.Module, env: string): parser.Module {
+    // No environment (a target the descriptor table does not know) leaves the
+    // calls alone, as native does; the driver's own -target check reports it.
+    if (env.len() == 0) { return mod; }
+    var acc: TargetAcc = TargetAcc { env: env };
+    var funcs: parser.FuncDecl[] = [];
+    for fd in mod.funcs {
+        var (body, a2) = astwalk.map_stmts_acc(fd.body, acc, to_keep_stmt, to_expr);
+        acc = a2;
+        funcs = funcs.append(parser.FuncDecl { ...fd, body: body });
+    }
+    var (tops, a3) = astwalk.map_stmts_acc(mod.top_stmts, acc, to_keep_stmt, to_expr);
+    return parser.Module { ...mod, funcs: funcs, top_stmts: tops };
+}
+
+// to_keep_stmt declines every statement, which is how a caller with nothing
+// to say about statements asks the spine to descend into their expressions.
+function to_keep_stmt(s: ast.Stmt, a: TargetAcc): (ast.Stmt, TargetAcc, boolean) {
+    return (s, a, false);
+}
+
+// to_expr claims a `target_os()` call, so the spine never walks it again.
+function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
+    match (e) {
+        ast.ExprCall(c) => {
+            if (c.args.len() != 0) { return (e, a, false); }
+            match (c.callee) {
+                ast.ExprIdent(id) => {
+                    if (id.name == TARGET_OS_BUILTIN) {
+                        return (ast.ExprString { value: a.env, line: c.line, col: c.col }, a, true);
+                    }
+                },
+                _ => {}
+            }
+            return (e, a, false);
+        },
+        _ => { return (e, a, false); }
+    }
+    return (e, a, false);
+}
+
 // =================== ASSERT ELISION ====================
 
 // elide_asserts drops every `assert(...)` check from the program — the `-O`

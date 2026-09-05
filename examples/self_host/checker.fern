@@ -2988,6 +2988,12 @@ function check_call_expr(c: ast.ExprCall, s: Scope): Type {
   if (!is_method && (name == "print" || name == "eprint") && c.args.len() == 1) {
     return t_void();
   }
+  // target_os(): the compile target's environment, a string. The compile
+  // path folds the call to a literal before emit (constfold.fold_target_os);
+  // -check keeps it, so it is typed here as native's FuncSigs types it.
+  if (!is_method && name == "target_os" && c.args.len() == 0) {
+    return t_string();
+  }
   // slice_unchecked(s, a, b) builtin — the byte slice s[a:b] under its
   // honest name (#5634). Returns the borrowed `str` view, as native does
   // (#7293), so an owning sink refuses it without .to_owned().
@@ -8137,6 +8143,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           var bexp: i32 = 0 - 1;
           if (id.name == "print" || id.name == "eprint") { bexp = 1; }
           if (id.name == "slice_unchecked") { bexp = 3; }
+          if (id.name == "target_os") { bexp = 0; }
           if (bexp >= 0 && c.args.len() != bexp) {
             out = out.append(dg_at("E004", "function expects " + util.i32_to_string(bexp) + " arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
           }

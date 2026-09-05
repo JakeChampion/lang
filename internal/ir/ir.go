@@ -14140,6 +14140,15 @@ func (b *builder) callBody(n *ast.Call) error {
 			return b.emitCellNew(n)
 		}
 	}
+	// target_os() is a compile-time constant: constfold.FoldWith replaces
+	// the call with the target's environment before the check, so one
+	// reaching the lowering means a driver compiled without saying what
+	// it was compiling for. No backend has a runtime answer to offer.
+	if id.Name == "target_os" && len(n.Args) == 0 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			return fmt.Errorf("%s: target_os() was not resolved for a target — the driver must fold it (constfold.Inputs.TargetOS) before lowering", n.P)
+		}
+	}
 	if id.Name == "__method_Cell_get" && len(n.Args) == 1 {
 		return b.emitCellGet(n)
 	}
