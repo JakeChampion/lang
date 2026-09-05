@@ -1649,7 +1649,14 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 				case '}':
 					f.b.WriteString(`}}`)
 				default:
-					f.b.WriteByte(c)
+					// Same control-byte rule as a plain string
+					// literal above: a raw NUL here makes the file
+					// binary just as readily.
+					if c < 0x20 || c == 0x7f {
+						fmt.Fprintf(&f.b, `\x%02x`, c)
+					} else {
+						f.b.WriteByte(c)
+					}
 				}
 			}
 		}
