@@ -314,19 +314,22 @@ on the need `strfldok:sarr:<T>`, whose rule reads:
 So the leak is the conservative side of a real trade. Releasing the displaced
 element without clearing (a) frees a box a live binding still points at.
 
-The two probes separate the clauses. For the minimal `W`, (a) holds — nothing
-reads an element — and only (b) fails, because a `.with` clone shares every
-element with the old buffer by construction and can never be "an array literal
-of fresh elements". For `Peep`, (a) fails as well: `peep_flush` binds
-`var l: PLine = p.w[i]` and `var m: PLine = p.w[j]`, exactly the element reads
-the clause refuses on.
+`Peep` is refused by clause (a), and that much is visible in the source:
+`peep_flush` binds `var l: PLine = p.w[i]` and `var m: PLine = p.w[j]`, exactly
+the element reads the clause names. So recovering the ~20% needs liveness on
+element bindings — those values die almost immediately but the scan is
+syntactic — which is the same shape of work as #8644's gap 1, where a
+syntactically-aliased but dead `var prev = s` forces a copy.
 
-That leaves two pieces of work, only the first small: a `.with`-shaped
-admission for types where (a) already holds, which fixes `W` and not `Peep`;
-and narrowing clause (a) with liveness on element bindings, which is what
-actually recovers the ~20% — the same shape of work as #8644's gap 1, where a
-syntactically-aliased but dead `var prev = s` forces a copy. Both tracked in
-#8628.
+WHICH clause refuses the minimal `W` is NOT established, and an attempt to
+settle it failed instructively. Changing the override to an array literal of
+fresh elements — satisfying (b) outright — still leaks (self-host 60,002 /
+20,000 / 2,560,088 against native's 60,002 / 59,998 / 128), but in that build
+`__field_reclaim_W` is never emitted or called at all: the literal-store rebind
+takes a different path with no field reclaim, so the probe tested nothing about
+the admission rule and surfaced a third leaking shape instead. Treat "a
+`.with`-shaped admission would fix `W`" as an unverified inference, not a
+finding. Tracked in #8628.
 
 ## The accumulator cluster reproduces too, and it is quadratic: #8644
 
