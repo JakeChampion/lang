@@ -45655,9 +45655,20 @@ function structarr_lit_is_fresh(e: ast.Expr): boolean {
 // fresh_struct_ret_fns is NOT enough — it admits alias-inc'd field buffers. A
 // METHOD call declines: the receiver type is not known here, so `<Base>.<m>`
 // keys cannot be looked up (conservative, no admission).
+//
+// An INDEX read is admitted on counted-store grounds rather than freshness, the
+// same argument arrarr_row_escapes_iter makes for a row bind: the append retains
+// a struct element read by index (indexed_box_elem_escapes), so the box arrives
+// at rc 2 and the walk's rc-guarded dec lands on 2, not 1 — it frees nothing the
+// source still names, and reclaims once that source dies. A bare IDENT element
+// stays refused: nothing retains it, so it really would dangle. The kind is not
+// re-derived here because it cannot differ — a candidate of this class has a
+// struct element type, so an element expression the checker accepted is a struct
+// and takes the retain.
 function structarr_elem_store_ok(e: ast.Expr, fresh_ret: string[]): boolean {
     match (e) {
         ast.ExprStructLit(sl) => { return !sl.has_base; },
+        ast.ExprIndex(_) => { return true; },
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => { return util.index_of_str(fresh_ret, cid.name) >= 0; },
