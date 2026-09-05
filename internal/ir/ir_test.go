@@ -2954,3 +2954,80 @@ func TestLowerMapBoxedKeyReachesOverwritePreDrop(t *testing.T) {
 		t.Errorf("expected the transient lookup key cell to be freed before the set (got %d, set %d):\n%s", free, set, p)
 	}
 }
+
+// lastRcIsUniqueBefore returns the index of the nearest OpRcIsUnique before
+// `at` in fnName, or -1 when a __method_Map_set call intervenes (or none is
+// found). A pre-drop whose lookup is separated from its gate by a set is not
+// gated by it.
+func lastRcIsUniqueBefore(p *Program, fnName string, at int) int {
+	for _, fn := range p.Funcs {
+		if fn.Name != fnName {
+			continue
+		}
+		for i := at - 1; i >= 0; i-- {
+			if isNamedCallKind(fn.Ops[i].Kind) && fn.Ops[i].Str == "__method_Map_set" {
+				return -1
+			}
+			if fn.Ops[i].Kind == OpRcIsUnique {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// TestLowerMapOverwritePreDropsAreSoleOwnerGated pins the invariant across
+// EVERY overwrite pre-drop, not one shape of it: each releases the value the
+// set is about to replace and runs BEFORE the set's own __map_cow_inplace, so
+// a second handle over the same buffer still names that value. #8354 leaves
+// both the string and the struct value column shared on a COW copy, so an
+// ungated pre-drop frees what the other handle reads.
+//
+// The struct (kind-4) leg is the one that shipped ungated. Its damage is
+// invisible to every counter: `var snap = m; m = m.insert(k, s)` over 200
+// rounds returns the WRONG value on all three backends while FERN_LEAKCHECK
+// reports allocs=2400 frees=2400 live_bytes=0 — the box is recycled under the
+// reader, so the heap balances exactly.
+func TestLowerMapOverwritePreDropsAreSoleOwnerGated(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"struct value, i32 key (kind 4)", `struct Box { name: string }
+function build(): i32 {
+    var m: Map[i32, Box] = map_new(8);
+    m = m.insert(1, Box { name: "he" + "llo" });
+    m = m.insert(1, Box { name: "th" + "ere" });
+    return 0;
+}`},
+		{"string value, i32 key", `function build(): i32 {
+    var m: Map[i32, string] = map_new(8);
+    m = m.insert(1, "hello" + "world");
+    m = m.insert(1, "hello" + "there");
+    return 0;
+}`},
+		{"string value, string key", `function build(): i32 {
+    var k: string = "he" + "llo";
+    var m: Map[string, string] = map_new(8);
+    m = m.insert(k, "wor" + "ld");
+    m = m.insert(k, "the" + "re");
+    return 0;
+}`},
+	}
+	for _, tc := range cases {
+		for _, ptrW := range []int{4, 8} {
+			p := lowerSourceWith(t, tc.src, ptrW)
+			lookup := callOrderIn(p, "build", "__map_lookup_val", 0)
+			if lookup < 0 {
+				continue // this shape emits no pre-drop on this ABI
+			}
+			for lookup >= 0 {
+				if lastRcIsUniqueBefore(p, "build", lookup) < 0 {
+					t.Errorf("%s, ptrW=%d: the overwrite pre-drop at op %d is not opened by __fern_rc_is_unique — it frees a value a COW copy still names (#8354):\n%s", tc.name, ptrW, lookup, p)
+					break
+				}
+				lookup = callOrderIn(p, "build", "__map_lookup_val", lookup+1)
+			}
+		}
+	}
+}

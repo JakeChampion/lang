@@ -14605,12 +14605,17 @@ func (b *builder) callBody(n *ast.Call) error {
 	// re-evaluates them (same idempotence requirement as the inc-on-set
 	// above). The set's own overwrite-dec stays a no-op for kind 4, so
 	// there's no double free; the freed box isn't dereferenced by the set
-	// (it only probes keys, then overwrites the slot).
+	// (it only probes keys, then overwrites the slot). Sole-owner gated
+	// like the string pre-drops below, and for the same reason: a copy
+	// shares this column too (#8354).
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 2 &&
 		ast.RcFreeEnabled && !needBoxK && !keyKind3 &&
 		mapValKindTag(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) == 4 &&
 		exprSafeToReevaluate(n.Args[0]) && exprSafeToReevaluate(n.Args[1]) {
 		if perVal, ok := mapValHasDrop(n.TypeArgs[1], b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW); ok {
+			if err := b.emitMapPredropSoleOwnerGate(n.Args[0]); err != nil {
+				return err
+			}
 			if err := b.expr(n.Args[0]); err != nil { // m
 				return err
 			}
@@ -14628,6 +14633,7 @@ func (b *builder) callBody(n *ast.Call) error {
 			b.emit(Op{Kind: OpCallDirect, Str: perVal, I32: 1})
 			b.emit(Op{Kind: OpDrop})
 			b.emit(Op{Kind: OpEnd})
+			b.emit(Op{Kind: OpEnd}) // the sole-owner gate
 		}
 	}
 	// Map[K, string] (two-word ABI — wasm + arm64-TwoWordOverride)

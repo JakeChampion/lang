@@ -413,7 +413,7 @@ pub function __map_cow_inplace(m: usize): usize {
 // drop free the cell it displaces instead of leaking it.
 //
 // Two value columns are left shared, both for want of a way to recognise them
-// HERE (#6242): a struct value (valKind 4), whose deep drop is the IR-generated
+// HERE (#8354): a struct value (valKind 4), whose deep drop is the IR-generated
 // __drop_map_struct_<T> and needs the same per-field walk in the inc direction;
 // and a STRING value, which __drop_map_str_values releases exactly like a key
 // but which shares valKind 1 with every other unreclaimed pointer (tuple,

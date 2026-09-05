@@ -84,8 +84,27 @@ m = m.insert(k, v2);                 // the pre-drop releases v1 under snap
 The x86-64 crash predates all of this: its own pre-drop never carried the gate
 either, and the `!needBoxK` condition is what kept the two-word ABIs out of the
 same shape. So the gate is not a concession to the widening — it is the
-condition every overwrite pre-drop was missing, and all three string pre-drops
-now open with `__fern_rc_is_unique(m)`.
+condition every overwrite pre-drop was missing, and all three now open with
+`__fern_rc_is_unique(m)`.
+
+The third is not a string pre-drop at all, and it is the one that had gone
+unnoticed longest: the kind-4 boxed struct / enum pre-drop, which deep-drops
+the superseded value inline before the set. `#8354` leaves the struct value
+column shared on a copy for the same reason it leaves the string one, so
+`var snap = m; m = m.insert(k, s)` over `Map[i32, Box]` freed what `snap`
+named. What made it invisible is that nothing about it looks like a bug:
+
+| 200 rounds, `Map[i32, Box]` | answer | `FERN_LEAKCHECK` |
+|---|---|---|
+| ungated (wasm32 / arm64 / x86-64 alike) | **wrong on all three** | allocs=2400 frees=2400 **live_bytes=0** |
+| with the gate | correct on all three | allocs=2400 frees=2000, 2 blocks a round |
+
+Every free is at rc 1 and the box is recycled under the reader, so the heap
+balances *exactly* and no detector fires. The answer is the only instrument
+that sees it — which is what `map_struct_value_predrop_test.go` reads, on all
+three backends, and what `TestLowerMapOverwritePreDropsAreSoleOwnerGated` pins
+at the IR layer as an invariant over every pre-drop rather than one shape of
+one.
 
 What it costs is a leak in the aliased case, which is where the release belongs
 to whoever owns the column: the two-word ABIs reclaim it at map drop and read 0,
