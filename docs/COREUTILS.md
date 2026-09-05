@@ -160,7 +160,7 @@ coreutils/
                     strerror text, checked stdout writes
   lib/ld.fern       C's `long double` as the TARGET has it, for the
                     utilities that convert and compute in one
-                    (printf, numfmt, and the rest that follow)
+                    (printf, numfmt, seq, sleep)
   <util>.fern       one program per utility
 internal/coreutils/
   harness_test.go   the oracle harness (this file's "How parity is enforced")
@@ -200,12 +200,45 @@ x86-64 host to show it. Two gates cover what the corpus cannot see:
 `internal/coreutils/longdouble_test.go` checks every target's selection
 and FAILS rather than guess when a target it does not know appears, and
 `examples/tests/coreutils_ld_test.fern` drives all three formats
-explicitly on whatever host runs it.
+explicitly on whatever host runs it. A utility that converts in one also
+gets a block of cases holding the invocations whose bytes DIFFER between
+the three formats — printf's and seq's are marked as such — so the leg
+that does run proves something about the choice rather than only about
+the arithmetic.
+
+CI runs the corpus on both formats because the unit lane's matrix has an
+`ubuntu-24.04-arm` runner. **From an x86-64 desk the other leg is a
+cross run**: compile the utilities for aarch64 and put both sides under
+qemu, against a real aarch64 GNU build.
+
+```
+apt-get download coreutils:arm64 && dpkg-deb -x coreutils_*_arm64.deb /tmp/gnu-arm64
+FERN_COREUTILS_TARGET=arm64-linux \
+FERN_COREUTILS_QEMU="qemu-aarch64 -L /usr/aarch64-linux-gnu" \
+FERN_GNU_COREUTILS=/tmp/gnu-arm64/usr/bin \
+  go test ./internal/coreutils/ -run TestSeq -p 1
+```
+
+The sysroot is for the dynamically linked GNU binaries; the Fern ones are
+static, and a GNU binary whose libraries are missing dies with exit 127
+rather than diverging quietly (`expr` and `factor` want `libgmp10:arm64`
+in that sysroot too). This is a debug affordance for the #8513 class of
+bug and not a gate — under qemu the corpus runs an order of magnitude
+slower, and CI runs the same cases natively. Select the utility you are
+working on: printf's two cases that make GNU build a two-gigabyte field
+cost seconds natively and many minutes emulated.
 
 **Anything a utility reads off `long double` belongs in this module**,
 not just arithmetic. `MAX_UNSCALED_DIGITS` in numfmt is GNU's `LDBL_DIG`
 — 18, 33 or 15 — so a value GNU prints on one machine it refuses on
 another; a literal 18 there was the same bug wearing different clothes.
+seq carried the same 18 as the precision its scaled-decimal engine would
+run, and the assumption underneath its i64 scaling — that the format
+holds every 64-bit integer exactly — is true of x87 and binary128 and
+false of binary64. Both come off the `Format` now (`dig()`,
+`max_exact_u64()`). Note what that costs to find: the binary64 half of it
+is invisible to every gate here, because no lane runs the corpus on
+Darwin.
 
 ## Adding a utility
 

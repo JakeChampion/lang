@@ -222,6 +222,40 @@ pub function (f: Format) from_u64(v: u64): LD {
   return r.0;
 }
 
+// `(v).as_i64()` — the value when it is a whole number an i64 holds.
+pub function (v: LD) as_i64(): Option[i64] {
+  if (v.kind != 0) {
+    return None;
+  }
+  if (v.m.is_zero()) {
+    return Some(0 as i64);
+  }
+  if (v.m.bit_length() + v.e > 64) {
+    return None;
+  }
+  var mag: bigint.BigInt = v.m;
+  if (v.e >= 0) {
+    mag = v.m.shl(v.e);
+  } else {
+    var drop: i32 = 0 - v.e;
+    mag = v.m.shr(drop);
+    if (!mag.shl(drop).eq(v.m)) {
+      return None;
+    }
+  }
+  var u: u64 = mag.low_u64();
+  if (v.neg) {
+    if (u > 9223372036854775808 as u64) {
+      return None;
+    }
+    return Some((0 as u64 - u) as i64);
+  }
+  if (u > 9223372036854775807 as u64) {
+    return None;
+  }
+  return Some(u as i64);
+}
+
 // The largest whole number the format holds exactly, capped at what a
 // u64 carries. A digit fold that stays under this is exact, so it can
 // run in plain integer arithmetic and convert once; past it, every step

@@ -79,6 +79,6 @@ they are not on PATH. Wall time, so compare within one run only.
 | `sleep` | done — `s` `m` `h` `d`, floats and hex floats, `inf`, the sum of the operands, every operand validated before it pauses (intervals are rounded up to the millisecond until #8528) |
 | `lib/gnu.fern` | the GNU conventions every utility shares |
 | `lib/bre.fern` | POSIX basic regular expressions as glibc compiles them |
-| `lib/ld.fern` | C's `long double` at the TARGET's format — strtold, arithmetic, rounding and the `%f` `%e` `%g` `%a` conversions — shared by `printf`, `numfmt` and `seq` |
+| `lib/ld.fern` | C's `long double` at the TARGET's format — strtold, arithmetic, rounding and the `%f` `%e` `%g` `%a` conversions — shared by `printf`, `numfmt`, `seq` and `sleep` |
 
 The tracking epic (#8278) lists every other utility and its status.

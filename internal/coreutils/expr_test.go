@@ -10,8 +10,11 @@ import "testing"
 // expressions `:` compiles — which are the bulk of it, because the
 // regexp dialect is where an implementation written from the manual
 // diverges from glibc's.
-func TestExprParity(t *testing.T) {
-	requireParity(t, "expr", []invocation{
+// exprCases is the corpus, shared by the GNU parity gate and the
+// self-host leg so neither can test something narrower than the other.
+func exprCases(t *testing.T) []invocation {
+	t.Helper()
+	return []invocation{
 		// --help and --version are options only as the SOLE argument,
 		// and only spelled as a unique prefix: everywhere else they are
 		// ordinary tokens of the expression.
@@ -574,7 +577,11 @@ func TestExprParity(t *testing.T) {
 		{name: "full stdout with a zero value", args: []string{"0"}, stdout: stdoutFull},
 		{name: "full stdout with a syntax error", args: []string{"1", "+"}, stdout: stdoutFull},
 		{name: "full stdout with a bad regexp", args: []string{"abc", ":", `\(`}, stdout: stdoutFull},
-	})
+	}
+}
+
+func TestExprParity(t *testing.T) {
+	requireParity(t, "expr", exprCases(t))
 }
 
 func TestExprHelp(t *testing.T) {

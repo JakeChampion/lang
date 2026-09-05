@@ -8,8 +8,11 @@ import "testing"
 // successful infinite sleep — `sleep inf` never returns, and the harness
 // has nothing to bound a process that writes nothing — so `inf` appears
 // here only in the spellings that are refused.
-func TestSleepParity(t *testing.T) {
-	requireParity(t, "sleep", []invocation{
+// sleepCases is the corpus, shared by the GNU parity gate and the
+// self-host leg so neither can test something narrower than the other.
+func sleepCases(t *testing.T) []invocation {
+	t.Helper()
+	return []invocation{
 		// Intervals that are accepted, and the suffixes.
 		{name: "zero", args: []string{"0"}},
 		{name: "zero seconds", args: []string{"0s"}},
@@ -115,7 +118,11 @@ func TestSleepParity(t *testing.T) {
 		{name: "stdout full on an invalid interval", args: []string{"x"}, stdout: stdoutFull},
 		{name: "stdout closed with no operands", stdout: stdoutClosed},
 		{name: "stdout full with no operands", stdout: stdoutFull},
-	})
+	}
+}
+
+func TestSleepParity(t *testing.T) {
+	requireParity(t, "sleep", sleepCases(t))
 }
 
 func TestSleepHelpVersion(t *testing.T) {
