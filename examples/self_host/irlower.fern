@@ -36789,11 +36789,18 @@ function fn_field_value_is_fresh(e: ast.Expr): boolean {
 // builds a sole-owned buffer of sole-owned element boxes, so the reuse-arm
 // __fern_str_arr_free of the OLD value can never free a live alias.
 function strarr_lit_all_elems_fresh(e: ast.Expr): boolean {
+    return strarr_lit_all_elems_fresh_reg(e, []);
+}
+
+// strarr_lit_all_elems_fresh_reg: the same proof against a fresh-string registry,
+// so an element may be a call to a str_fresh_ret_fns_of producer and not only a
+// syntactic literal or concat.
+function strarr_lit_all_elems_fresh_reg(e: ast.Expr, str_fresh: string[]): boolean {
     match (e) {
         ast.ExprArray(al) => {
             var i: i32 = 0;
             while (i < al.elements.len()) {
-                if (!strarr_elem_store_ok(al.elements[i])) { return false; }
+                if (!strarr_value_is_fresh(al.elements[i], str_fresh)) { return false; }
                 i = i + 1;
             }
             return true;
@@ -42038,7 +42045,11 @@ function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
     // Admitting it is what unblocks the whole enum: enum_all_variants_rc_droppable
     // bails on the first non-droppable variant, so `Seq(N[])` was taking the
     // scalar `Leaf(i32)` variant down with it and neither was reclaimed.
-    return is_enum_array_field_type(structs, t) || is_leaksafe_array_field(t) || t == "string"
+    // A string[] payload: __fern_str_arr_free decs each element string and then
+    // frees the buffer — the deep free the struct-field k_str_arr arm already
+    // uses. Fresh-gated at admission (variant_struct_payloads_fresh requires an
+    // array literal of fresh elements), so the enum is the sole owner.
+    return is_enum_array_field_type(structs, t) || is_leaksafe_array_field(t) || t == "string" || t == "string[]"
         || (decl_is_struct(structs, t) && nested_field_deep_drop_ok(structs, t))
         // #4355 slice 8: a SCALAR-ONLY struct payload (`S { m: i32, n: i32 }`)
         // is one flat rc-headered box with no inner rc fields — released by a
@@ -42216,6 +42227,11 @@ function variant_struct_payloads_fresh(args: ast.Expr[], variant_name: string, s
             }
             if (!sfresh) { return false; }
         }
+        // A string[] payload must be an array literal of fresh elements, for the
+        // reason the string arm states: the match-site __fern_str_arr_free frees
+        // each element, so a bare ident / field read would alias boxes a live
+        // local still owns.
+        if (ft == "string[]" && !strarr_lit_all_elems_fresh_reg(args[i], str_fresh)) { return false; }
         i = i + 1;
     }
     return true;
@@ -42707,6 +42723,15 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.frame.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1));
+                    st = st.emit(ir.op_drop());
+                } else if (eft == "string[]") {
+                    // string[] payload: the elements are rc-headered string boxes, so
+                    // a single dec of the buffer would strand every one. The sibling
+                    // of the enum-array arm above, and the same deep free the
+                    // struct-field k_str_arr arm uses.
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.frame.structs, vname, fk)));
+                    st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
                     st = st.emit(ir.op_drop());
                 } else if (is_leaksafe_array_field(eft)) {
                     // scalar-element array payload: one dec frees the buffer (scalar
@@ -57939,7 +57964,7 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, 
         else if (fn.receiver_type.len() == 0 && rc_enum_has_variants(structs, rt)
                 && enum_all_variants_rc_droppable(structs, rt)
                 && body_has_return(fn.body)
-                && !body_has_nonqualifying_rcenum_return(fn.body, structs, rt)) {
+                && !body_has_nonqualifying_rcenum_return(fn.body, structs, rt, str_fresh)) {
             out = out.append("RCE:" + fn.name + "|" + rt);
         }
         // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>"
@@ -58378,20 +58403,22 @@ function rcenum_ctor_payload_strings_fresh(e: ast.Expr, structs: StructTab): boo
 // Statement coverage mirrors body_has_nonctor_opt_return — a return hiding in
 // any covered nested block disqualifies; uncovered statement kinds cannot
 // contain returns that reach this function's exit.
-function body_has_nonqualifying_rcenum_return(stmts: ast.Stmt[], structs: StructTab, owner: string): boolean {
+//
+// `str_fresh` is str_fresh_ret_fns_of's registry, so a variant's string payload
+// may be a call to a proven fresh-string producer, not only a syntactic literal
+// or concat. It is built from FuncDecls alone and passed into
+// opt_fresh_ret_fns_of, so it is complete before this proof runs.
+function body_has_nonqualifying_rcenum_return(stmts: ast.Stmt[], structs: StructTab, owner: string, str_fresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
-                // Strict set only ([]): this proof registers "RCE:" rows while
-                // str_fresh_ret_fns is built independently; keeping it syntactic
-                // avoids ordering the two registries against each other.
-                if (fresh_rcpayload_enum_init(r.value, structs, [], [], false) != owner) { return true; }
+                if (fresh_rcpayload_enum_init(r.value, structs, str_fresh, [], false) != owner) { return true; }
                 if (!rcenum_ctor_payload_strings_fresh(r.value, structs)) { return true; }
             },
-            ast.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, structs, owner)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, structs, owner)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, structs, owner)) { return true; } a = a + 1; } },
+            ast.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner, str_fresh) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner, str_fresh)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, structs, owner, str_fresh)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, structs, owner, str_fresh)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, structs, owner, str_fresh)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
