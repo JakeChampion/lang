@@ -178,3 +178,28 @@ function main(): i32 {
 		},
 	})
 }
+
+// TestSelfHostI64ConstantTakesMovzFormArm64 pins the i64 constant form: a
+// literal in 0..65535 is one `mov`, anything wider keeps the literal pool,
+// and a negated one is the subtraction P4 then folds to an immediate.
+func TestSelfHostI64ConstantTakesMovzFormArm64(t *testing.T) {
+	runArm64PeepholeFoldCases(t, []peepholeFoldCase{
+		{
+			name: "forms",
+			src: `function small(): i64 { return 65535i64; }
+function wide(): i64 { return 65536i64; }
+function neg(): i64 { return 0i64 - 5i64; }
+function main(): i32 { return ((small() + wide() + neg()) % 1000i64) as i32; }`,
+			want: (65535 + 65536 - 5) % 1000,
+			has: map[string][]string{
+				"small": {"mov x0, #65535"},
+				"wide":  {"ldr x0, =65536"},
+				"neg":   {"mov x0, #0\n    sub x0, x0, #5"},
+			},
+			lacks: map[string][]string{
+				"small": {"ldr x0, ="},
+				"wide":  {"mov x0, #65536"},
+			},
+		},
+	})
+}
