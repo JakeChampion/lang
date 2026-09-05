@@ -77,7 +77,7 @@ on:
 # one ~1-minute job can afford a slot per merge; this lane cannot.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
