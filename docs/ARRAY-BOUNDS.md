@@ -43,12 +43,28 @@ both a negative index and `index >= len`.
 All four agree on the observable contract: an out-of-bounds index
 aborts before producing a value.
 
+## Allocation size (#8457)
+
+`fern: allocation size out of range`, exit 134. A byte count computed in
+i32 that overflows reaches the allocator NEGATIVE — `s.repeat(n)` sizes
+its buffer `sl * n`, and `__fern_strcat` adds the two operand lengths —
+and everything downstream reads the count as unsigned, so the natives
+allocated against the zero-extended value and then walked off it.
+`__alloc_u8` and `__fern_strcat` reject a negative count on both native
+backends. The interpreter has always rejected it (`__alloc_u8: negative
+length`, non-zero exit) and wasm traps.
+
+A size that wraps to a small NON-negative value is a different outcome
+and stays one: the allocation succeeds at the wrapped size and the copy
+is stopped by the element bounds check above, so it aborts with `array
+index out of range` rather than this cause.
+
 ## What an abort prints (#5538)
 
 The natives do not exit silently. Every abort site — bounds, slice
-range, string index, arena exhaustion, and the sanitizer's two fatal
-findings — routes through `__fern_report`, which writes a fixed cause
-line to stderr and then exits with the code above:
+range, string index, allocation size, arena exhaustion, and the
+sanitizer's two fatal findings — routes through `__fern_report`, which
+writes a fixed cause line to stderr and then exits with the code above:
 
 ```
 fern: array index out of range

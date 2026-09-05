@@ -107,6 +107,13 @@ function main(): i32 {
   whose type `impl`s `Trait` is implicitly boxed where a `dyn Trait` is
   expected (var init, assignment, argument, array element, `return`).
   No explicit cast syntax in v1.
+- Coercion fires at a **direct** site only. A container is INVARIANT in a
+  `dyn` argument: `Option[Square]` does not assign to `Option[dyn Shape]`,
+  nor `(Square, i32)` to `(dyn Shape, i32)`. Boxing is a representation
+  change, and nothing rebuilds a container's payload, so allowing it
+  produced a raw concrete pointer in a slot every backend then read as
+  [data, vtable] (#8446). Rebuild explicitly instead — match the
+  container, coerce each payload, re-wrap.
 
 ### 2.1 Generic trait objects — `dyn Container[i32]`
 

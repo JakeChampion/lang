@@ -15,7 +15,7 @@ import (
 func loweredAndFolded(t *testing.T, src string) *Program {
 	t.Helper()
 	p := lowerSource(t, src)
-	Fold(p)
+	foldProgram(p)
 	return p
 }
 
@@ -209,7 +209,7 @@ func TestFoldPreservesSignedDivOverflow(t *testing.T) {
 			{Kind: OpReturn},
 		}}
 		p := &Program{Funcs: []*Func{fn}}
-		Fold(p)
+		foldProgram(p)
 		kept := false
 		for _, op := range fn.Ops {
 			if op.Kind == OpDivS {
@@ -229,7 +229,7 @@ func TestFoldPreservesSignedDivOverflow(t *testing.T) {
 			{Kind: OpReturn},
 		}}
 		p := &Program{Funcs: []*Func{fn}}
-		Fold(p)
+		foldProgram(p)
 		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 0 || fn.Ops[1].Kind != OpReturn {
 			t.Errorf("INT_MIN %% -1 should fold to const 0:\n%s", p)
 		}
@@ -248,7 +248,7 @@ func TestFoldUnsignedDivRem(t *testing.T) {
 			{Kind: OpReturn},
 		}}
 		p := &Program{Funcs: []*Func{fn}}
-		Fold(p)
+		foldProgram(p)
 		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 0x7FFFFFFF {
 			t.Errorf("0xFFFFFFFF /u 2 should fold to 0x7FFFFFFF, got %d:\n%s", fn.Ops[0].I32, p)
 		}
@@ -262,7 +262,7 @@ func TestFoldUnsignedDivRem(t *testing.T) {
 			{Kind: OpReturn},
 		}}
 		p := &Program{Funcs: []*Func{fn}}
-		Fold(p)
+		foldProgram(p)
 		if fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 15 { // 0xFFFFFFFF % 16 = 15
 			t.Errorf("0xFFFFFFFF %%u 16 should fold to 15, got %d:\n%s", fn.Ops[0].I32, p)
 		}
@@ -281,7 +281,7 @@ func TestFoldI64DivRem(t *testing.T) {
 			{Kind: OpReturn},
 		}}
 		p := &Program{Funcs: []*Func{fn}}
-		Fold(p)
+		foldProgram(p)
 		if fn.Ops[0].Kind != OpConstI64 || fn.Ops[0].I64 != 14 {
 			t.Errorf("100 / 7 (i64) should fold to 14, got %d:\n%s", fn.Ops[0].I64, p)
 		}
@@ -295,7 +295,7 @@ func TestFoldI64DivRem(t *testing.T) {
 			{Kind: OpReturn},
 		}}
 		p := &Program{Funcs: []*Func{fn}}
-		Fold(p)
+		foldProgram(p)
 		kept := false
 		for _, op := range fn.Ops {
 			if op.Kind == OpDivS {
@@ -493,7 +493,7 @@ func assertScopesBalanced(t *testing.T, p *Program) {
 func TestFoldIsIdempotent(t *testing.T) {
 	p := loweredAndFolded(t, `function f(): i32 { return 1 + 2 * 3 + 4; }`)
 	before := p.String()
-	Fold(p)
+	foldProgram(p)
 	after := p.String()
 	if !strings.EqualFold(before, after) {
 		t.Errorf("Fold not idempotent:\nbefore:\n%s\nafter:\n%s", before, after)
@@ -650,7 +650,7 @@ func TestFoldIsUniqueOnNull(t *testing.T) {
 		{Kind: OpReturn},
 	}}
 	p := &Program{Funcs: []*Func{fn}}
-	Fold(p)
+	foldProgram(p)
 
 	for _, o := range fn.Ops {
 		if o.Kind == OpRcIsUnique {
@@ -682,7 +682,7 @@ func TestFoldLeavesIsUniqueOnANonNullConstant(t *testing.T) {
 		{Kind: OpReturn},
 	}}
 	p := &Program{Funcs: []*Func{fn}}
-	Fold(p)
+	foldProgram(p)
 
 	found := false
 	for _, o := range fn.Ops {
@@ -704,7 +704,7 @@ func TestFoldIsUniqueOnNullKeepsTheStackBalanced(t *testing.T) {
 		{Kind: OpReturn},
 	}}
 	p := &Program{Funcs: []*Func{fn}}
-	Fold(p)
+	foldProgram(p)
 
 	if len(fn.Ops) != 2 || fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 0 {
 		t.Fatalf("want `const 0; return`, got:\n%s", p)
@@ -752,7 +752,7 @@ func loweredAndFoldedWith(t *testing.T, src string, ptrW int, opts ...LowerOptio
 	if err != nil {
 		t.Fatalf("lower: %v", err)
 	}
-	Fold(p)
+	foldProgram(p)
 	return p
 }
 

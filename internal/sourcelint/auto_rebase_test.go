@@ -11,9 +11,15 @@ const autoRebaseFile = "auto-rebase-prs.yml"
 
 func autoRebaseSource(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", autoRebaseFile))
+	return workflowSource(t, autoRebaseFile)
+}
+
+// workflowSource reads one workflow from .github/workflows.
+func workflowSource(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", name))
 	if err != nil {
-		t.Fatalf("read %s: %v", autoRebaseFile, err)
+		t.Fatalf("read %s: %v", name, err)
 	}
 	return string(b)
 }
@@ -170,6 +176,57 @@ func TestAutoRebaseAsksForARebaseWhenItCannotPush(t *testing.T) {
 	}
 }
 
+// The lane shares a runner pool with ~85 jobs per open PR, so it routinely sits
+// queued for longer than the gap between merges here. `cancel-in-progress: true`
+// therefore kills it on the next push every time — its first eleven runs were
+// all cancelled without one of them ever being allocated a runner, so not a
+// single step executed. Nothing else reports that: the lane is green-by-absence,
+// and the PRs it should have spoken about simply stay silent.
+func TestAutoRebaseSurvivesTheNextMerge(t *testing.T) {
+	src := autoRebaseSource(t)
+
+	// The top-level `concurrency:` mapping, not the file: the header explains
+	// why the setting is what it is, and matching that prose would pass on the
+	// very config it warns about.
+	block, ok := topLevelBlock(src, "concurrency")
+	if !ok {
+		t.Fatalf("%s has no top-level `concurrency:` block", autoRebaseFile)
+	}
+	if !strings.Contains(block, "cancel-in-progress: false") {
+		t.Errorf("%s no longer waits for the run in flight: on a busy default "+
+			"branch it is cancelled in the queue before it runs a step, every time",
+			autoRebaseFile)
+	}
+	// GitHub keeps one pending run per group, so waiting collapses a burst of
+	// merges into a single follow-up rather than queueing one run per push.
+	if !strings.Contains(block, "group: auto-rebase-prs") {
+		t.Errorf("%s dropped its concurrency group: concurrent runs would push "+
+			"the same branches against each other", autoRebaseFile)
+	}
+}
+
+// A run that waited in the queue starts against a default branch that has
+// already moved. Rebasing onto the commit that TRIGGERED it would leave every
+// branch behind again the moment it landed, and the notice would name a commit
+// that is no longer the head.
+func TestAutoRebaseUsesTheLiveBase(t *testing.T) {
+	src := autoRebaseSource(t)
+
+	if strings.Contains(src, "BASE_SHA: ${{ github.sha }}") {
+		t.Errorf("%s replays onto the triggering commit: by the time a queued run "+
+			"gets a runner that is stale, and every branch it pushes is behind "+
+			"again immediately", autoRebaseFile)
+	}
+	if !strings.Contains(src, `BASE_SHA="$(git rev-parse FETCH_HEAD)"`) {
+		t.Errorf("%s no longer derives the base from a fresh fetch of the default "+
+			"branch", autoRebaseFile)
+	}
+	if !strings.Contains(src, "process.env.BASE_SHA || context.sha") {
+		t.Errorf("%s: the notices no longer name the base the replay actually "+
+			"used, so they cite a commit nothing was checked against", autoRebaseFile)
+	}
+}
+
 // The workflow must not run on pull_request. It force-pushes branches and
 // comments on PRs with `contents: write` + `pull-requests: write`; a
 // pull_request trigger would hand that to any fork PR, and it would rebase
@@ -188,4 +245,30 @@ func TestAutoRebaseRunsOnlyOnTheDefaultBranch(t *testing.T) {
 		t.Errorf("%s is not scoped to main — every branch push would rebase "+
 			"every open pull request onto that branch", autoRebaseFile)
 	}
+}
+
+// topLevelBlock returns a top-level mapping's body: everything under `key:` up
+// to the next line starting in column zero. Same shape as onBlock next door,
+// which is that function specialised to `on:`.
+func topLevelBlock(src, key string) (string, bool) {
+	lines := strings.Split(src, "\n")
+	start := -1
+	for i, l := range lines {
+		if l == key+":" || strings.HasPrefix(l, key+": ") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	var b strings.Builder
+	for _, l := range lines[start+1:] {
+		if l != "" && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "\t") {
+			break
+		}
+		b.WriteString(l)
+		b.WriteString("\n")
+	}
+	return b.String(), true
 }

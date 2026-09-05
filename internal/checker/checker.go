@@ -5833,18 +5833,85 @@ func letElseDivergentArm(m *ast.Match, i int) bool {
 	return m.Origin == ast.OriginLetElse && i == len(m.Arms)-1 && m.Arms[i].IsWildcard
 }
 
+// loopCanBreak reports whether `body` contains a `break` that targets THIS
+// loop — an unlabelled break not enclosed in a nested loop, or a labelled
+// break naming `label`. A loop that can break does not diverge, which is
+// what the reachability analyses below need to know.
+//
+// Both of them used to answer "a `loop` always diverges" outright, on the
+// stated grounds that it was conservative. It was the opposite: treating a
+// breakable loop as divergent ACCEPTS programs that fall through, so a
+// value fell off the end of a function (E052), a `never`-typed block
+// initialised a string from garbage, and a `let … else` whose else arm
+// broke out of a loop left the pattern's bindings uninitialised (#8447).
+//
+// It walks statements only. A `break` can appear nowhere else, except
+// inside a block-expression in expression position — not descending there
+// keeps the old answer for that shape rather than making it worse, and
+// deliberately does NOT descend into a lambda body, whose `break` belongs
+// to a loop inside the lambda.
+func loopCanBreak(body ast.Stmt, label string) bool {
+	found := false
+	var walk func(s ast.Stmt, nested bool)
+	walk = func(s ast.Stmt, nested bool) {
+		if s == nil || found {
+			return
+		}
+		switch x := s.(type) {
+		case *ast.Break:
+			// An unlabelled break belongs to the innermost enclosing
+			// loop; a labelled one names its target outright.
+			if x.Label == "" {
+				if !nested {
+					found = true
+				}
+			} else if x.Label == label {
+				found = true
+			}
+		case *ast.Block:
+			for _, st := range x.Stmts {
+				walk(st, nested)
+			}
+		case *ast.If:
+			walk(x.Then, nested)
+			walk(x.Else, nested)
+		case *ast.Match:
+			for _, arm := range x.Arms {
+				walk(arm.Body, nested)
+			}
+		case *ast.Defer:
+			// A defer's body runs at scope exit, so a break inside it
+			// cannot carry this loop's control flow.
+		case *ast.While:
+			walk(x.Body, true)
+		case *ast.Loop:
+			walk(x.Body, true)
+		case *ast.For:
+			walk(x.Body, true)
+		case *ast.ForEach:
+			walk(x.Body, true)
+		}
+	}
+	walk(body, false)
+	return found
+}
+
 func stmtDiverges(s ast.Stmt) bool {
 	switch x := s.(type) {
 	case *ast.Return, *ast.Break, *ast.Continue:
 		return true
 	case *ast.Loop:
-		// `loop { … }` is unconditional by construction, so treat it
-		// as diverging — same conservative "ignore breaks" stance as
-		// stmtExits below: a `loop` containing a `break` could in
-		// principle fall through to here, but requiring every escape
-		// to be spelled as an explicit trailing return/break/continue
-		// is what this analysis already asks of every other construct.
-		return true
+		// `loop { … }` is unconditional by construction, so it diverges
+		// unless something breaks out of it.
+		return !loopCanBreak(x.Body, x.Label)
+	case *ast.While:
+		// A literal-true condition is the same shape as `loop`. Handled
+		// here as well as in stmtExits so the two predicates agree on
+		// it — they disagreed before, which is how the gap survived.
+		if lit, ok := x.Cond.(*ast.BoolLit); ok && lit.Value {
+			return !loopCanBreak(x.Body, x.Label)
+		}
+		return false
 	case *ast.Block:
 		return blockDiverges(x)
 	case *ast.If:
@@ -5913,19 +5980,15 @@ func stmtExits(s ast.Stmt) bool {
 		}
 		return true
 	case *ast.While:
-		// `while (true) { … }` never falls through. Conservatively treat
-		// any literal-true loop as divergent (ignoring breaks): a loop
-		// that can actually break and needs a following value will still
-		// have a trailing return, which the surrounding block catches.
+		// `while (true) { … }` never falls through — unless it breaks.
 		if lit, ok := x.Cond.(*ast.BoolLit); ok && lit.Value {
-			return true
+			return !loopCanBreak(x.Body, x.Label)
 		}
 		return false
 	case *ast.Loop:
-		// `loop { … }` is unconditional by construction — same
-		// conservative treatment as literal-true While above, without
-		// needing to pattern-match a BoolLit condition.
-		return true
+		// `loop { … }` is unconditional by construction, so the same
+		// rule applies without pattern-matching a BoolLit condition.
+		return !loopCanBreak(x.Body, x.Label)
 	}
 	return false
 }
@@ -7830,18 +7893,25 @@ var freshOwnedProducers = map[string]bool{
 	"__method_string_to_owned": true,
 }
 
-// strCopyHint names the remedy when a borrowed `str` view reaches an owning
-// sink. Refusing the promotion is deliberate — see `assignable` — but the
-// diagnostic only restated the two type names, and the way out was written
-// down in a checker comment and nowhere the reader could see it. That dead-
-// ends the most ordinary string expression there is:
+// assignHint names the remedy for an assignment the checker deliberately
+// refuses, appended to the E002 / E003 / E043 message that reports it. Empty
+// when no remedy applies.
+//
+// The `str` case: a borrowed `str` view reaching an owning sink. Refusing the
+// promotion is deliberate — see `assignable` — but the diagnostic only
+// restated the two type names, and the way out was written down in a checker
+// comment and nowhere the reader could see it. That dead-ends the most
+// ordinary string expression there is:
 //
 //	var t: string = s.trim();
 //	error[E003]: cannot assign str to variable of type string
 //
 // `.to_owned()` is the materialiser, and the stdlib already uses it at every
 // such site. Empty for any other pair, so it only fires where it applies.
-func strCopyHint(want, got ast.Type) string {
+func assignHint(want, got ast.Type) string {
+	if h := dynElemHint(want, got); h != "" {
+		return h
+	}
 	if _, gotStr := got.(ast.StrType); !gotStr {
 		return ""
 	}
@@ -7851,7 +7921,80 @@ func strCopyHint(want, got ast.Type) string {
 	return " — `str` is a borrowed view of a string; add `.to_owned()` to copy it into an owned string"
 }
 
+// dynElemHint names the remedy when the only thing separating two container
+// types is a `dyn Trait` element the compiler would have to box. Boxing is a
+// representation change and it happens only at a direct coercion site, so the
+// conversion has to be written out — otherwise the checker accepts an
+// assignment no backend lowers (#8446). Empty for any other pair.
+func dynElemHint(want, got ast.Type) string {
+	pos, ok := dynElemMismatch(want, got)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(" — %s is a trait object, and boxing one is a representation change that only happens at a direct coercion site, "+
+		"never inside a container; rebuild it element by element (match / map the %s and coerce each payload)", pos, containerNoun(want))
+}
+
+// dynElemMismatch reports the first `dyn Trait` element position that stops
+// two same-shaped containers from assigning, and whether there was one.
+func dynElemMismatch(want, got ast.Type) (string, bool) {
+	switch w := want.(type) {
+	case ast.DynTraitType:
+		if _, gotDyn := got.(ast.DynTraitType); !gotDyn && got != nil {
+			return w.String(), true
+		}
+	case ast.EnumType:
+		g, ok := got.(ast.EnumType)
+		if !ok || g.Name != w.Name || len(g.Args) != len(w.Args) {
+			return "", false
+		}
+		for i := range w.Args {
+			if p, found := dynElemMismatch(w.Args[i], g.Args[i]); found {
+				return p, true
+			}
+		}
+	case ast.TupleType:
+		g, ok := got.(ast.TupleType)
+		if !ok || len(g.Elems) != len(w.Elems) {
+			return "", false
+		}
+		for i := range w.Elems {
+			if p, found := dynElemMismatch(w.Elems[i], g.Elems[i]); found {
+				return p, true
+			}
+		}
+	}
+	return "", false
+}
+
+// containerNoun names the shape the rebuild has to walk.
+func containerNoun(t ast.Type) string {
+	if _, ok := t.(ast.TupleType); ok {
+		return "tuple"
+	}
+	return "enum"
+}
+
 func (c *checker) assignable(dst, src ast.Type) bool {
+	return c.assignableWith(dst, src, true)
+}
+
+// assignableWith is assignable with control over whether a `dyn Trait`
+// COERCION may fire.
+//
+// Boxing is a representation change — a `dyn` value is [data, vtable] — and
+// it is materialised only at a direct coercion site. Inside a container it
+// never is: `Option[Square]` reaching an `Option[dyn Shape]` destination
+// leaves a raw Square pointer in the payload slot, and the method call then
+// dispatches through whatever the second word happens to be (SIGSEGV on the
+// natives, `indirect call type mismatch` on wasm, correct on interp). So the
+// three container hops below recurse with dynBox=false: a container assigns
+// element-wise only when no element needs boxing, which is the invariance
+// structs have always had (their branch requires an argument-free source).
+//
+// Rebuilding explicitly — match the container, coerce the payload, re-wrap —
+// still works, and is what the diagnostic's hint says to do. #8446.
+func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 	if ast.Equal(dst, src) {
 		return true
 	}
@@ -7884,6 +8027,11 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 	// downcast) and two different `dyn` types do not inter-assign. See
 	// docs/DYN-TRAITS.md §5.
 	if dt, ok := dst.(ast.DynTraitType); ok {
+		if !dynBox {
+			// Element position — nothing here will box it. See
+			// assignableWith's comment.
+			return false
+		}
 		if _, isDyn := src.(ast.DynTraitType); isDyn {
 			return false // distinct dyn types: only Equal (handled above) assigns
 		}
@@ -7953,7 +8101,7 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 		if se, sok := src.(ast.EnumType); sok && de.Name == se.Name && len(de.Args) == len(se.Args) {
 			allOk := true
 			for i := range de.Args {
-				if !c.assignable(de.Args[i], se.Args[i]) {
+				if !c.assignableWith(de.Args[i], se.Args[i], false) {
 					allOk = false
 					break
 				}
@@ -7984,7 +8132,7 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 	// like `Option[Option[i64]] = Some(Some(1))` also work.
 	if dok && sok && d.Name == s.Name && len(d.Args) == len(s.Args) && len(d.Args) > 0 {
 		for i := range d.Args {
-			if !c.assignable(d.Args[i], s.Args[i]) {
+			if !c.assignableWith(d.Args[i], s.Args[i], false) {
 				return false
 			}
 		}
@@ -8003,7 +8151,7 @@ func (c *checker) assignable(dst, src ast.Type) bool {
 	if dt, dok := dst.(ast.TupleType); dok {
 		if st, sok := src.(ast.TupleType); sok && len(dt.Elems) == len(st.Elems) {
 			for i := range dt.Elems {
-				if !c.assignable(dt.Elems[i], st.Elems[i]) {
+				if !c.assignableWith(dt.Elems[i], st.Elems[i], false) {
 					return false
 				}
 			}
@@ -8333,7 +8481,7 @@ func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, 
 		return
 	}
 	c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s",
-		i+1, expected, at, strCopyHint(expected, at))
+		i+1, expected, at, assignHint(expected, at))
 }
 
 // moduleAlreadyImports reports whether the module being checked names `mod`
@@ -10791,7 +10939,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// concrete before monomorph runs.
 		c.refineCallTypeArgsFromDest(n.Value, want)
 		if got != nil && !c.assignable(want, got) {
-			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s%s", want, got, strCopyHint(want, got))
+			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s%s", want, got, assignHint(want, got))
 		}
 	case *ast.Defer:
 		// Just type-check the action; its result is discarded (defer is
@@ -10879,7 +11027,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		} else if got != nil {
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
 			if !c.assignable(n.Type, got) {
-				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s%s", got, n.Type, strCopyHint(n.Type, got))
+				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s%s", got, n.Type, assignHint(n.Type, got))
 			}
 		}
 		s.names[n.Name] = n.Type
@@ -12063,6 +12211,14 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 			continue
 		}
 		armScope := newScope(s)
+		// A struct pattern reads fields by name, so it is the same access
+		// `s.field` is — the rule was enforced on field access, construction
+		// and var-destructure but not here, leaving two doors open (#8451).
+		// A bare `S { .. }` binds nothing and stays legal as an existence
+		// test.
+		if len(arm.Bindings) > 0 {
+			c.checkOpaqueAccess(sd, arm.P, "destructure")
+		}
 		// `@` binding: the whole matched struct, bound at the scrutinee type.
 		if arm.AtBinding != "" {
 			armScope.names[arm.AtBinding] = st
@@ -12398,6 +12554,14 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 			continue
 		}
 		armScope := newScope(s)
+		// A struct pattern reads fields by name, so it is the same access
+		// `s.field` is — the rule was enforced on field access, construction
+		// and var-destructure but not here, leaving two doors open (#8451).
+		// A bare `S { .. }` binds nothing and stays legal as an existence
+		// test.
+		if len(arm.Bindings) > 0 {
+			c.checkOpaqueAccess(sd, arm.P, "destructure")
+		}
 		// `@` binding: the whole matched struct, bound at the scrutinee type.
 		if arm.AtBinding != "" {
 			armScope.names[arm.AtBinding] = st
@@ -13134,6 +13298,28 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// an arithmetic intent, and it is the case the widening rule above
 			// (`4611686018427387904 as u64`) was written for.
 			c.settleNumeric(n.Inner, ast.NumberType{Width: 32})
+		} else if innerNum, innerIsInt := inner.(ast.NumberType); innerIsInt &&
+			isFloatTarget(n.Target) && !isBareNumericLiteral(n.Inner) {
+			// An INT→FLOAT cast converts the RESULT, not the operands.
+			// settleFloat stamps a FloatWidth on a `+ - * /` binary and
+			// recurses into both sides, so `(7 / 2) as f64` became float
+			// division — 3.5 on interp, 0 on both natives, and a module wasm
+			// refused to validate (#8456). The same expression through
+			// variables was right all along, because its operands had already
+			// committed and settleFloat left them alone.
+			//
+			// A BARE literal still settles at the target, for the same reason
+			// the narrowing rule above keeps `300 as u8` an E047: `1 as f64`
+			// is a float literal, and a wide one (`4611686018427387904 as f64`)
+			// needs the target to escape the i32 default.
+			// The hint is i32, and it has to be spelled with Signed: the
+			// bare `NumberType{Width: 32}` the branches above use is
+			// UNSIGNED, which turns `(3 - 4) as f64` into 4294967295.
+			intHint := ast.NumberType{Width: 32, Signed: true}
+			if !innerNum.Polymorphic {
+				intHint = innerNum
+			}
+			c.settleNumeric(n.Inner, intHint)
 		} else {
 			c.settleNumeric(n.Inner, n.Target)
 		}
@@ -14885,7 +15071,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
 		}
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !c.assignable(lt, rt) {
-			c.errfCode(n.P, "E003", "cannot assign %s to %s%s", rt, lt, strCopyHint(lt, rt))
+			c.errfCode(n.P, "E003", "cannot assign %s to %s%s", rt, lt, assignHint(lt, rt))
 		}
 		// Fields are immutable after construction: a struct value
 		// can't have a field reassigned in place. This is the
@@ -15284,7 +15470,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// Show the substituted field type (`i32`) rather than the
 					// bare parameter (`T`) when the instantiation is known —
 					// e.g. seeded from a `Box[i32]` destination.
-					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, strCopyHint(substituteType(expected, sub), vt))
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, assignHint(substituteType(expected, sub), vt))
 				}
 			} else if !ast.Equal(vt, expected) && !dynFieldOK {
 				// Allow the polymorphic / argless-enum vs
@@ -15294,7 +15480,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// to `Option` with empty Args). Same shape as
 				// the array-element widening from #541.
 				if unifyIfArms(expected, vt) == nil {
-					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, strCopyHint(expected, vt))
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, assignHint(expected, vt))
 				}
 			}
 		}
@@ -16634,29 +16820,63 @@ func intLitExceedsI32(e ast.Expr) bool {
 	return false
 }
 
+// litText renders the literal the way the source wrote it, sign included.
+// Past i64 max the Value field holds a wrapped bit pattern, so the
+// magnitude has to be read back as unsigned — otherwise the diagnostic
+// quotes a number the author never typed.
+func litText(lit *ast.NumberLit, negated bool) string {
+	sign := ""
+	if negated {
+		sign = "-"
+	}
+	if lit.ExceedsI64 {
+		return sign + strconv.FormatUint(uint64(lit.Value), 10)
+	}
+	return sign + strconv.FormatInt(lit.Value, 10)
+}
+
 func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated bool) {
 	w := t.NormalWidth()
 	if t.IsSigned() {
+		// Judge — and report — the value the source wrote, sign included. A
+		// literal is only ever the magnitude; `-2147483648` is in range and
+		// `2147483648` is not, and they share a NumberLit.
+		if w == 64 {
+			// Only i64 MIN is reachable past i64 max, and only negated:
+			// `-9223372036854775808` is in range, `9223372036854775808`
+			// is not, and both carry the same wrapped Value.
+			if lit.ExceedsI64 && !(negated && uint64(lit.Value) == 1<<63) {
+				c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
+			}
+			return
+		}
 		var min, max int64
 		switch w {
 		case 32:
 			min, max = -1<<31, 1<<31-1
-		case 64:
-			return
 		default:
 			return
 		}
-		// Judge — and report — the value the source wrote, sign included. A
-		// literal is only ever the magnitude; `-2147483648` is in range and
-		// `2147483648` is not, and they share a NumberLit.
+		if lit.ExceedsI64 {
+			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
+			return
+		}
 		v := lit.Value
 		if negated {
 			v = -v
 		}
 		if v < min || v > max {
-			c.errfCode(lit.P, "E047", "literal %d does not fit in %s", v, t)
+			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
 		}
 	} else {
+		// A negative literal has no unsigned reading. The sign lives on the
+		// enclosing unary, so testing lit.Value alone (which is only ever
+		// the magnitude) let `var a: u8 = -1` through, and the natives then
+		// stored 0xFFFFFFFF into a u8 slot while interp said 255.
+		if negated && !(lit.Value == 0 && !lit.ExceedsI64) {
+			c.errfCode(lit.P, "E047", "literal %s does not fit in %s: unsigned types have no negative values", litText(lit, negated), t)
+			return
+		}
 		var max uint64
 		switch w {
 		case 8:
@@ -16664,12 +16884,12 @@ func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated
 		case 32:
 			max = 1<<32 - 1
 		case 64:
-			return
+			return // every u64 bit pattern is representable
 		default:
 			return
 		}
-		if lit.Value < 0 || uint64(lit.Value) > max {
-			c.errfCode(lit.P, "E047", "literal %d does not fit in %s", lit.Value, t)
+		if uint64(lit.Value) > max || lit.ExceedsI64 {
+			c.errfCode(lit.P, "E047", "literal %s does not fit in %s", litText(lit, negated), t)
 		}
 	}
 }
@@ -17076,6 +17296,12 @@ func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
 // isBareNumericLiteral reports whether `e` is a numeric literal, optionally
 // negated — the shape a narrowing cast still settles at its target so an
 // out-of-range constant stays an E047 rather than silently wrapping.
+// isFloatTarget reports whether a cast target is a float type.
+func isFloatTarget(t ast.Type) bool {
+	_, ok := t.(ast.FloatType)
+	return ok
+}
+
 func isBareNumericLiteral(e ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.NumberLit:

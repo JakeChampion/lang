@@ -11,6 +11,12 @@
 // one is an error). For a purely positional call, only trailing defaults are
 // filled — a genuinely missing required argument is left for the checker's
 // arity error (E004), preserving prior behaviour.
+//
+// A default value must be a CONSTANT EXPRESSION (E076). Filling copies the
+// expression into the call site, so a name inside it would resolve in the
+// caller's scope rather than the callee's; requiring the expression to carry
+// no free names is what makes the copy sound. Top-level consts are folded to
+// literals before this pass, so `= SOME_CONST` still works.
 package defaultargs
 
 import (
@@ -26,10 +32,109 @@ type Error struct {
 	Msg  string
 }
 
+// nonConstReason describes the first sub-expression that stops a default from
+// being a constant expression, and reports whether one was found.
+//
+// A default is pasted into the CALL SITE, so anything it reads resolves in the
+// caller's scope rather than the callee's: a default of `a * 2` read the
+// CALLER's `a`, and one naming a module function silently picked up a caller
+// local of the same name instead (#8445).
+//
+// This is a WHITELIST — a literal, or a unary / binary combination of them —
+// rather than a hunt for free identifiers, because the hunt was open by
+// construction. It descended into Ident / Unary / Binary / Call and nothing
+// else, so a default spelled `config.timeout`, `xs[0]` or `n as i32` carried a
+// caller-scope name past the check untouched, which is the exact class the
+// check exists to stop. Whitelisting closes it for every shape at once,
+// including the ones the AST does not have yet: a node nobody taught this
+// function about is refused, not waved through.
+//
+// Top-level consts are folded to literals before this pass runs, so
+// `= SOME_CONST` is unaffected.
+func nonConstReason(e ast.Expr) (string, bool) {
+	switch x := e.(type) {
+	case nil:
+		return "", false
+	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.CharLit, *ast.BoolLit, *ast.UnitLit:
+		return "", false
+	case *ast.Ident:
+		return fmt.Sprintf("reads %q", x.Name), true
+	case *ast.Unary:
+		return nonConstReason(x.Operand)
+	case *ast.Binary:
+		if why, bad := nonConstReason(x.Left); bad {
+			return why, true
+		}
+		return nonConstReason(x.Right)
+	case *ast.Call:
+		// Name the callee when there is one to name: "calls \"size\"" points
+		// at the thing to remove, where "is a call" only says it was refused.
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			return fmt.Sprintf("calls %q", id.Name), true
+		}
+		return "is a call", true
+	default:
+		return "is " + describeExpr(e), true
+	}
+}
+
+// describeExpr names an expression form for the E076 message, so the
+// diagnostic says what was written rather than only that it was refused.
+func describeExpr(e ast.Expr) string {
+	switch e.(type) {
+	case *ast.FieldAccess:
+		return "a field access"
+	case *ast.Index:
+		return "an index"
+	case *ast.CastExpr:
+		return "a cast"
+	case *ast.Lambda:
+		return "a lambda"
+	case *ast.StructLit:
+		return "a struct literal"
+	case *ast.ArrayLit:
+		return "an array literal"
+	case *ast.TupleLit:
+		return "a tuple literal"
+	case *ast.IfExpr:
+		return "an `if` expression"
+	case *ast.MatchExpr:
+		return "a `match` expression"
+	}
+	return "not a constant expression"
+}
+
+// checkDefaults rejects a default expression that is not self-contained.
+// Reported at the declaration, which is where the author can act on it —
+// the call site that triggers the fill may be in another module and did
+// nothing wrong.
+func checkDefaults(p *ast.Program) []Error {
+	var errs []Error
+	for _, f := range p.Funcs {
+		for _, pa := range f.Params {
+			if pa.Default == nil {
+				continue
+			}
+			if why, bad := nonConstReason(pa.Default); bad {
+				errs = append(errs, Error{pa.Default.Pos(), "E076", fmt.Sprintf(
+					"default value for parameter %q %s: a default must be a constant expression, because it is evaluated at each call site rather than inside %s",
+					pa.Name, why, f.Name)})
+			}
+		}
+	}
+	return errs
+}
+
 // Fill rewrites p in place and returns any resolution errors.
 func Fill(p *ast.Program) []Error {
 	if p == nil {
 		return nil
+	}
+	// Validate before filling: a default carrying a free name must not be
+	// pasted anywhere, since the paste is what resolves it in the wrong
+	// scope.
+	if errs := checkDefaults(p); len(errs) > 0 {
+		return errs
 	}
 	// name -> declared params (with defaults). Methods are excluded: their
 	// call sites are field-access callees, not bare identifiers.
@@ -76,12 +181,12 @@ func Fill(p *ast.Program) []Error {
 
 		// Named arguments are present.
 		if !isIdent {
-			errs = append(errs, Error{call.P, "E060", "named arguments are only supported on direct calls to named functions"})
+			errs = append(errs, Error{call.P, "E077", "named arguments are only supported on direct calls to named functions"})
 			return e
 		}
 		params, known := funcs[id.Name]
 		if !known {
-			errs = append(errs, Error{call.P, "E060", fmt.Sprintf("named arguments are not supported for call to %q", id.Name)})
+			errs = append(errs, Error{call.P, "E077", fmt.Sprintf("named arguments are not supported for call to %q", id.Name)})
 			return e
 		}
 		result := make([]ast.Expr, len(params))
@@ -95,7 +200,7 @@ func Fill(p *ast.Program) []Error {
 			}
 			if name == "" {
 				if seenNamed {
-					errs = append(errs, Error{call.P, "E060", "positional argument after named argument"})
+					errs = append(errs, Error{call.P, "E077", "positional argument after named argument"})
 					return e
 				}
 				if pos >= len(params) {
@@ -109,11 +214,11 @@ func Fill(p *ast.Program) []Error {
 				seenNamed = true
 				idx := paramIndex(params, name)
 				if idx < 0 {
-					errs = append(errs, Error{call.P, "E060", fmt.Sprintf("%q has no parameter named %q", id.Name, name)})
+					errs = append(errs, Error{call.P, "E077", fmt.Sprintf("%q has no parameter named %q", id.Name, name)})
 					return e
 				}
 				if filled[idx] {
-					errs = append(errs, Error{call.P, "E060", fmt.Sprintf("duplicate argument for parameter %q", name)})
+					errs = append(errs, Error{call.P, "E077", fmt.Sprintf("duplicate argument for parameter %q", name)})
 					return e
 				}
 				result[idx] = a

@@ -104,7 +104,19 @@ pub struct TestRunner {
     skip_reasons: string[],
     verbose: boolean,
     prefix: string,
-    base_idx: i32,
+    // `emitted` / `emitted_failed` count the TAP lines actually
+    // PRINTED, in cells rather than plain fields. A TestRunner is a
+    // value: `it()` returns a new one and a caller that forgets to
+    // assign it back loses the count — after the line has already been
+    // printed. That produced a suite that printed `not ok` twice and
+    // then reported `1..0`, `# fail 0`, exit 0 (#8466). A Cell is a
+    // reference, so every copy — a spread, a subsuite, a dropped handle
+    // — shares one counter, and finish() can compare what was printed
+    // against what was accounted for. They also give TAP numbering a
+    // single monotonic source across parent and subsuites, which is
+    // what the old `base_idx` field was reconstructing by hand.
+    emitted: Cell[i32],
+    emitted_failed: Cell[i32],
     // `cleanup_paths` is the list of paths to `remove_dir_all`
     // when `finish()` runs. Registered via
     // `(r) defer_cleanup(path)` — typically a tempdir from
@@ -173,7 +185,8 @@ pub function test_new(suite: string): TestRunner {
         skip_reasons: [],
         verbose: false,
         prefix: "",
-        base_idx: 0,
+        emitted: cell_new(0),
+        emitted_failed: cell_new(0),
         cleanup_paths: [],
         filter: "",
         fail_fast: false,
@@ -355,7 +368,8 @@ pub function (r: TestRunner) it(name: string, body: () => TestOutcome): TestRunn
     if (r.fail_fast && r.failed > 0) {
         return r.skip(name, "fail-fast: prior case failed");
     }
-    var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
+    var idx: i32 = r.emitted.get() + 1;
+    r.emitted.set(idx);
     // Everything that could skip this case has been decided, so
     // now the test actually runs.
     match (body()) {
@@ -369,6 +383,7 @@ pub function (r: TestRunner) it(name: string, body: () => TestOutcome): TestRunn
             return TestRunner { ...r, passed: r.passed + 1 };
         },
         Fail(msg) => {
+            r.emitted_failed.set(r.emitted_failed.get() + 1);
             print("not ok " + idx.to_string() + " - " + display);
             print("  ---");
             print("  message: " + msg);
@@ -395,7 +410,8 @@ pub function (r: TestRunner) it(name: string, body: () => TestOutcome): TestRunn
 //       r = r.it("wasm e2e", run_wasm_test);
 //   }
 pub function (r: TestRunner) skip(name: string, reason: string): TestRunner {
-    var idx: i32 = r.base_idx + r.passed + r.failed + r.skipped + 1;
+    var idx: i32 = r.emitted.get() + 1;
+    r.emitted.set(idx);
     var display: string = r.prefix + name;
     if (!r.quiet) {
         print("ok " + idx.to_string() + " - " + display + " # SKIP " + reason);
@@ -439,8 +455,10 @@ pub function (r: TestRunner) skip_if(cond: boolean, name: string, reason: string
 // (`arm.subsuite("regress")`) by chaining the prefixes.
 pub function (r: TestRunner) subsuite(name: string): TestRunner {
     // Spread `...r` carries the config fields (verbose / filter /
-    // fail_fast / quiet) forward; the overrides below reset the
-    // counters + accumulators and re-root the prefix / base_idx.
+    // fail_fast / quiet) forward and — being a value copy of a
+    // reference — the SHARED emitted counters, so numbering stays
+    // monotonic across the whole stream. The overrides below reset the
+    // child's own counters + accumulators and re-root the prefix.
     return TestRunner {
         ...r,
         passed: 0,
@@ -449,11 +467,6 @@ pub function (r: TestRunner) subsuite(name: string): TestRunner {
         failures: [],
         skip_reasons: [],
         prefix: r.prefix + name + " / ",
-        // Inherit the parent's running count so the subsuite's
-        // first case prints `ok N+1` rather than restarting at
-        // `ok 1`. TAP's plan line at the bottom assumes
-        // monotonic case numbering across the whole stream.
-        base_idx: r.base_idx + r.passed + r.failed + r.skipped,
         // Cleanup hooks registered on the child get returned
         // to the parent via `merge` so finish() always runs
         // them. Empty here — the child accumulates its own as
@@ -581,11 +594,27 @@ pub function (r: TestRunner) log_kv_i64(key: string, value: i64): TestRunner {
 // Bottom-plan is permitted by TAP-13 and most consumers
 // (`prove`, `tape`) handle it.
 pub function (r: TestRunner) finish(): i32 {
-    var total: i32 = r.passed + r.failed + r.skipped;
+    // The counters on `r` are only as good as the caller's discipline:
+    // `it()` returns a new runner, so a result that was not assigned
+    // back is lost even though its TAP line was printed. The shared
+    // cells record what actually reached stdout, so the plan and the
+    // fail count are taken from the stream and can never claim fewer
+    // than were printed (#8466).
+    var accounted: i32 = r.passed + r.failed + r.skipped;
+    var total: i32 = r.emitted.get();
+    if (accounted > total) { total = accounted; }
+    var failed: i32 = r.failed;
+    if (r.emitted_failed.get() > failed) { failed = r.emitted_failed.get(); }
+    var dropped: i32 = total - accounted;
     print("1.." + total.to_string());
     print("# tests " + total.to_string());
-    print("# pass " + r.passed.to_string());
-    print("# fail " + r.failed.to_string());
+    print("# pass " + (total - failed - r.skipped).to_string());
+    print("# fail " + failed.to_string());
+    if (dropped > 0) {
+        // Naming the cause matters: the symptom is a plan that does not
+        // match the stream, and the cause is always the same mistake.
+        print("# WARNING: " + dropped.to_string() + " result(s) were discarded — a TestRunner returned by it() / skip() / merge() was not assigned back to the runner variable");
+    }
     if (r.skipped > 0) {
         print("# skip " + r.skipped.to_string());
     }
@@ -615,13 +644,20 @@ pub function (r: TestRunner) finish(): i32 {
         }
         k = k + 1;
     }
-    if (r.failed > 0) {
+    if (failed > 0) {
         print("# failures:");
         var i: i32 = 0;
         while (i < r.failures.len()) {
             print("#   " + r.failures[i]);
             i = i + 1;
         }
+        return 1;
+    }
+    if (dropped > 0) {
+        // Nothing reported Fail, but the stream and the counters
+        // disagree, so the run cannot be called clean: some case's
+        // outcome never reached the runner. Same exit code as a
+        // failure — a suite that silently loses results is not passing.
         return 1;
     }
     if (cleanup_errored) {

@@ -150,6 +150,9 @@ func parseSource(val string) (Source, error) {
 		case "url":
 			s.URL = v
 		case "hash":
+			if !validHashShape(v) {
+				return Source{}, fmt.Errorf("hash must be `sha256:` + 64 hex digits, got %q", v)
+			}
 			s.Hash = v
 		default:
 			return Source{}, fmt.Errorf("unknown key %q (supported: path, url, hash)", k)

@@ -1,0 +1,24 @@
+# Expected exit status of each examples/*.fern binary, checked by
+# scripts/ci-run-example from examples.yml and macos.yml.
+#
+# Both lanes used to run every example as `"./build/$name" || echo "(exited
+# $?)"`, which swallowed the status entirely: a SIGSEGV, an abort, an arena
+# exhaustion or a sanitizer finding printed one line and left the job green,
+# so only compile-and-link was gated (#8473).
+#
+# A signal-range rule alone does not work here. Three of these examples
+# legitimately return a computed value at or above 128 — factorial is 6! mod
+# 256 — so "128+ means crashed" would fail the lane on correct programs. The
+# table is what makes the check exact, and it is strictly stronger: it catches
+# a wrong answer as well as a crash.
+#
+# Values are the program's own `main` result truncated to 8 bits, and are
+# identical on x86-64 and arm64. To add an example, add its row; the gate in
+# internal/sourcelint fails when one is missing rather than skipping it.
+array 100
+factorial 208
+fizzbuzz 0
+hello 0
+iter_pipeline 148
+regex_captures 219
+sum_for 55

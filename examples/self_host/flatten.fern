@@ -61,7 +61,66 @@ import "./astwalk";
 // occurrence. This reduces the allocation the mangle pass performs at its dominant
 // churn site (#4394 lever 1 names mangle_bare as such a site — see
 // docs/SELFHOST-SYMBOL-INTERNING.md); the emitted bytes are unchanged.
-pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], locals: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
+pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[] }
+
+// declname_buckets sizes the own-decl index. A module's decl count is in the
+// hundreds, so a prime a few times that keeps the chains at one or two.
+function declname_buckets(n: i32): i32 {
+    if (n < 8) { return 8; }
+    return n * 2 + 1;
+}
+
+// build_declname_head / _next index `names` by hash, as the head/next columns
+// the same shape treeshake.RefSet and irlower.CallDeps use. mangle_bare is the
+// only reader and it ran a full scan per bare name — 305 string compares a
+// call, 6.7 M over a checker.fern compile.
+function build_declname_head(names: string[]): i32[] {
+    var nb: i32 = declname_buckets(names.len());
+    var head: i32[] = [];
+    var b: i32 = 0;
+    while (b < nb) { head = head.append(0 - 1); b = b + 1; }
+    // Backwards, so the bucket ends up holding its LOWEST index: the scan this
+    // replaces returned the first match, and build_declname_next chains upward
+    // from here.
+    var i: i32 = names.len() - 1;
+    while (i >= 0) {
+        var k: i32 = util.hash_bucket(names[i], nb);
+        head = head.with(k, i);
+        i = i - 1;
+    }
+    return head;
+}
+
+// next[i] is the next-higher index sharing i's bucket, so walking from the head
+// visits a bucket in ascending index order and stops at the first match.
+function build_declname_next(names: string[]): i32[] {
+    var nb: i32 = declname_buckets(names.len());
+    var seen: i32[] = [];
+    var b: i32 = 0;
+    while (b < nb) { seen = seen.append(0 - 1); b = b + 1; }
+    var next: i32[] = [];
+    var z: i32 = 0;
+    while (z < names.len()) { next = next.append(0 - 1); z = z + 1; }
+    var i: i32 = names.len() - 1;
+    while (i >= 0) {
+        var k: i32 = util.hash_bucket(names[i], nb);
+        next = next.with(i, seen[k]);
+        seen = seen.with(k, i);
+        i = i - 1;
+    }
+    return next;
+}
+
+// declname_index_of is the indexed form of "the first i with declnames[i] == name".
+function declname_index_of(name: string, ctx: RewriteCtx): i32 {
+    if (ctx.dn_head.len() == 0) { return 0 - 1; }
+    var i: i32 = ctx.dn_head[util.hash_bucket(name, ctx.dn_head.len())];
+    while (i >= 0) {
+        if (ctx.declnames[i] == name) { return i; }
+        i = ctx.dn_next[i];
+    }
+    return 0 - 1;
+}
 
 // build_mangled_names precomputes `prefix + "__" + names[i]` for each name — the
 // shared mangled instances a bare own-decl reference resolves to.
@@ -204,11 +263,8 @@ pub function mod_prefixes(mod: parser.Module): string[] {
 function mangle_bare(name: string, ctx: RewriteCtx): string {
     // Own decl → its precomputed shared mangled instance (declnames_mangled is
     // `prefix + "__" + declnames[i]`), avoiding a fresh concat per occurrence.
-    var di: i32 = 0;
-    while (di < ctx.declnames.len()) {
-        if (ctx.declnames[di] == name) { return ctx.declnames_mangled[di]; }
-        di = di + 1;
-    }
+    var di: i32 = declname_index_of(name, ctx);
+    if (di >= 0 && di < ctx.declnames_mangled.len()) { return ctx.declnames_mangled[di]; }
     // A bare reference to one of this module's imported enum variants
     // resolves to its bundled (prefix-mangled) struct name. Checked
     // after own decls so a same-named local decl still wins.
@@ -487,7 +543,7 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
                 inner = astwalk.collect_bound_stmts(lm.body, inner);
                 lctx = RewriteCtx {
                     modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
-                    declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, locals: inner,
+                    declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: inner,
                     ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
                     reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
                 };
@@ -655,7 +711,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         // bindings, so a local shadowing a module decl is left unmangled.
         var bctx: RewriteCtx = RewriteCtx {
             modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
-            declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, locals: collect_local_names(fd),
+            declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: collect_local_names(fd),
             ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled,
             reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets
         };
@@ -697,7 +753,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
         });
         k = k + 1;
     }
-    return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx) };
+    return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: astwalk.collect_bound_stmts(mod.top_stmts, []), ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx) };
 }
 
 // mangle_impls rewrites an impl block's TARGET type the same way every other
@@ -768,7 +824,7 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
 // the entry module (whose own decls keep their bare names).
 pub function flatten_qualified(mod: parser.Module, ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[]): parser.Module {
     var empty: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: mod_prefixes(mod), prefix: "", declnames: empty, declnames_mangled: empty, locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mod_names(mod), modprefixes: mod_prefixes(mod), prefix: "", declnames: empty, declnames_mangled: empty, dn_head: [], dn_next: [], locals: empty, ivar_names: ivar_names, ivar_mangled: ivar_mangled, reexport_keys: reexport_keys, reexport_targets: reexport_targets };
     return rewrite_module_bodies(mod, ctx);
 }
 
@@ -823,6 +879,8 @@ pub function mangle_module(mod: parser.Module, prefix: string, ivar_names: strin
         prefix: prefix,
         declnames: decls,
         declnames_mangled: build_mangled_names(prefix, decls),
+        dn_head: build_declname_head(decls),
+        dn_next: build_declname_next(decls),
         locals: [],
         ivar_names: ivar_names,
         ivar_mangled: ivar_mangled,
@@ -1244,7 +1302,7 @@ function main(): i32 {
     ivm = ivm.append("test__Fail");
     var rxk: string[] = [];
     var rxt: string[] = [];
-    var ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
+    var ctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk, reexport_targets: rxt };
     if (rewrite_type_name("lexer.Token[]", ctx) != "lexer__Token[]") { return 90; }
     if (rewrite_type_name("Token[]", ctx) != "lx__Token[]") { return 91; }
     if (rewrite_type_name("Token", ctx) != "lx__Token") { return 92; }
@@ -1293,7 +1351,7 @@ function main(): i32 {
     rxk2 = rxk2.append("lexer__Token");
     var rxt2: string[] = [];
     rxt2 = rxt2.append("orig__Token");
-    var rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
+    var rctx: RewriteCtx = RewriteCtx { modnames: mn, modprefixes: mn, prefix: "lx", declnames: dn, declnames_mangled: build_mangled_names("lx", dn), dn_head: build_declname_head(dn), dn_next: build_declname_next(dn), locals: [], ivar_names: ivn, ivar_mangled: ivm, reexport_keys: rxk2, reexport_targets: rxt2 };
     if (rewrite_type_name("lexer.Token", rctx) != "orig__Token") { return 97; }
     if (rewrite_type_name("lexer.Token[]", rctx) != "orig__Token[]") { return 98; }
     // A non-re-exported qualified type still mangles normally.
