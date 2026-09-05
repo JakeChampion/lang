@@ -349,6 +349,50 @@ a fresh call result at an `own` position: a LOCAL receiver is bracketed by its
 caller (rc 2, copy), which is what made the first cut of that case pass with
 the refusal stubbed out.
 
+## A second name for the root's box: the move is gated on the box's count
+
+The move made a fifth route visible that the shared-buffer form only bent: the
+self-compiled compiler segfaulted in `checker.Scope.lookup`, on x86-64 as much
+as on arm64 (the arm64 stage-2 fixpoint was the lane that caught it, but the
+self-built x86-64 compiler dies the same way on `lexer.fern`).
+
+`slc_walk` is the shape:
+
+```fern
+var cur: Scope = s;            // a second name for the caller's box
+for st in stmts {
+    …slc_walk(body, cur, …)…   // recurses with cur; the callee does the same
+    cur = bind_stmt(st, cur);  // Scope.bind grows cur.names in place
+}
+```
+
+The self-reassign is a dying binding, so the bracket is exempt; the alias scan
+(`grow_alias_names_of`) treats a bare ident as an alias only when its source
+already is one, and a parameter is not. So `Scope.bind`'s admitted grow moved
+`names` out of a box that `s`, the outer frame's `cur`, and every enclosing
+walk still read. With the retained or the uncounted share this was a silent
+length leak between scopes; with the move it is a null field.
+
+Two halves close it, because neither sees the whole shape.
+
+The static half: `grow_alias_bind` now treats a bare ident of a PARAMETER or
+the receiver as an alias, so `cur` loses the dying exemption and the call is
+bracketed — the caller owns that box, which is what `grow_alias_names_of`'s
+own definition ("a container this frame does not own") already said. It has
+to be static, because the bind takes no count: `s` is never read again after
+`var cur = s`, so the dead-alias cancellation (#4402) makes it a plain store,
+and at runtime the box looks uniquely held.
+
+The runtime half: the site loads the root box, asks `__fern_rc_is_unique`, and
+on a shared box brackets the push with the #4873 `__fern_arr_share_inc` /
+`__fern_arr_share_dec` pair, so `arr_push` takes its copy path and the field
+stays in place; the move is reserved for a box this frame holds alone. That is
+the test #8186's superseded-field move uses, for the same reason: the
+exemptions reason about a BINDING dying, and a holder the analysis cannot
+name — a container element, another struct's field, a counted alias — is a
+runtime fact. `aliased-root-box-copies` in `selfHostFieldAppendCases` pins the
+shape, and the arm64 stage-2 fixpoint is the gate that found it.
+
 **#8259's `grow_return_local_filter` is the first row's bracket-side fix**:
 withdrawing the return-position death forces the callee's copy, so the identity
 arm is never reached. With the move it is no longer needed for this hazard —

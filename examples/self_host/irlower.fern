@@ -1272,9 +1272,11 @@ function rebind_call_same_dec(value: ast.Expr, target: string, s: LowerState): b
 
 // call_owns_arg: `value` is a direct call holding `target` at a declared `own`
 // position — the E051 transfer `x = f(…, x, …)`. The callee took the box, and
-// for a struct that means it also RELEASES it (own_struct_param_release_rows_of),
-// so the rebind must not read the old value at all. A callee reached through a
-// function value or a method cannot declare `own`.
+// for a struct it either releases it at exit (own_struct_param_release_rows_of)
+// or hands it onward — returned bare, forwarded to a handback position, or
+// escaping through a receiver borrow — so the rebind must not read the old
+// value in either case. A callee reached through a function value or a method
+// cannot declare `own`.
 function call_owns_arg(value: ast.Expr, target: string, s: LowerState): boolean {
     var cname: string = direct_call_callee_name(value);
     if (cname.len() == 0) { return false; }
@@ -24846,7 +24848,9 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
 
 // field_append_inplace_key returns the site key of THIS `<root>.<field>.append(v)`
 // call when the per-function analysis admitted it (field_append_inplace_sites_of)
-// and the root's box type resolves here, which the move-out store needs; else "".
+// and the root's box type resolves here, which the move-out store needs; else "",
+// and the site takes the clone form. The second gate is defence in depth: the
+// admitted receivers are depth-1 ident-rooted chains, whose root type resolves.
 function field_append_inplace_key(c: ast.ExprCall, recv: ast.Expr, s: LowerState): string {
     if (s.field_append_inplace.len() == 0) { return ""; }
     var k: string = fai_recv_key(recv, c.line, c.col);
@@ -24874,6 +24878,13 @@ function field_append_inplace_key(c: ast.ExprCall, recv: ast.Expr, s: LowerState
 // Every rc helper skips a null field. Without the move, the box and the value
 // both name the buffer at rc 1, and the first of those releases frees it out
 // from under the other.
+//
+// The move is only sound for a box this frame holds alone. A second name the
+// CALLER binds (`var cur = s`, the checker's scope walks) is grow_alias_bind's
+// to see, since a dead-alias bind takes no count; a holder no analysis names —
+// a container element, another box's field — is the root's own count to see.
+// So a shared root brackets the push with the #4873 share pair, which sends
+// arr_push down its copy path and leaves the field in place.
 pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, key: string, s: LowerState): LowerState {
     var kind: string = arr_elem_kind(obj, s);
     var root: i32 = s.slot_of(fai_key_part(key, 1));
@@ -24882,9 +24893,16 @@ pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, key: strin
     var srcname: string = "$fiab" + util.i32_to_string(s.locals.len());
     var st: LowerState = s.add_local(srcname);
     var srcslot: i32 = st.slot_of(srcname);
+    var uniqname: string = "$fiau" + util.i32_to_string(st.locals.len());
+    st = st.add_local(uniqname);
+    var uniqslot: i32 = st.slot_of(uniqname);
     st = lower_expr(obj, st);
     if (!st.ok) { return st; }
     st = st.emit(ir.op_store_local(srcslot));
+    st = st.emit(ir.op_load_local(root));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_store_local(uniqslot));
+    st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_inc");
     st = st.emit(ir.op_load_local(srcslot));
     if (kind == "i64") {
         st = lower_i64(val, st);
@@ -24903,6 +24921,7 @@ pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, key: strin
     st = st.add_local(resname);
     var resslot: i32 = st.slot_of(resname);
     st = st.emit(ir.op_store_local(resslot));
+    st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_dec");
     st = st.emit(ir.op_load_local(resslot));
     st = st.emit(ir.op_load_local(srcslot));
     st = st.emit(ir.op_bin("eq", 0, false));
@@ -24912,6 +24931,23 @@ pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, key: strin
     st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, sty, fidx)));
     st = st.emit(ir.op_end());
     return st.emit(ir.op_load_local(resslot));
+}
+
+// fai_bracket_shared_root emits `if (!unique) { fn(src) }` — one half of the
+// share bracket around an admitted in-place push whose root box has a second
+// holder. The caller-side exemptions reason about this frame's BINDING dying,
+// and a bare `var cur = s` gives the same box a second name they do not see;
+// the box's own count does, so a shared root takes the copy path here and the
+// move is reserved for a box this frame holds alone.
+function fai_bracket_shared_root(s: LowerState, uniqslot: i32, srcslot: i32, fn: string): LowerState {
+    var st: LowerState = s.emit(ir.op_load_local(uniqslot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_call_direct(fn, 1));
+    st = st.emit(ir.op_drop());
+    return st.emit(ir.op_end());
 }
 
 // lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING
@@ -74470,60 +74506,66 @@ function grow_alias_filter(names: string[], alias: string[]): string[] {
 // INDEPENDENTLY, one in place and one by realloc, leaving `next` one entry
 // longer than `rows` and a bucket chain pointing past the end of `rows`.
 pub function grow_alias_names_of(fn: parser.FuncDecl): string[] {
+    var srcs: string[] = [];
+    if (fn.receiver_name.len() > 0) { srcs = srcs.append(fn.receiver_name); }
+    for p in fn.params { srcs = srcs.append(p.name); }
     var out: string[] = [];
     var grew: boolean = true;
     while (grew) {
         var before: i32 = out.len();
-        out = grow_alias_scan(fn.body, out);
+        out = grow_alias_scan(fn.body, srcs, out);
         grew = out.len() > before;
     }
     return out;
 }
 
-function grow_alias_scan(stmts: ast.Stmt[], acc: string[]): string[] {
+function grow_alias_scan(stmts: ast.Stmt[], srcs: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
-    while (i < stmts.len()) { a = grow_alias_scan_stmt(stmts[i], a); i = i + 1; }
+    while (i < stmts.len()) { a = grow_alias_scan_stmt(stmts[i], srcs, a); i = i + 1; }
     return a;
 }
 
-function grow_alias_scan_stmt(st: ast.Stmt, acc: string[]): string[] {
+function grow_alias_scan_stmt(st: ast.Stmt, srcs: string[], acc: string[]): string[] {
     var a: string[] = acc;
     match (st) {
-        ast.StmtVar(v) => { return grow_alias_bind(v.name, v.init, a); },
-        ast.StmtAssign(asg) => { return grow_alias_bind(asg.target, asg.value, a); },
+        ast.StmtVar(v) => { return grow_alias_bind(v.name, v.init, srcs, a); },
+        ast.StmtAssign(asg) => { return grow_alias_bind(asg.target, asg.value, srcs, a); },
         ast.StmtIf(f) => {
-            a = grow_alias_scan(f.then_body, a);
-            return grow_alias_scan(f.else_body, a);
+            a = grow_alias_scan(f.then_body, srcs, a);
+            return grow_alias_scan(f.else_body, srcs, a);
         },
-        ast.StmtWhile(w) => { return grow_alias_scan(w.body, a); },
+        ast.StmtWhile(w) => { return grow_alias_scan(w.body, srcs, a); },
         ast.StmtFor(fo) => {
             // A `for` element names a slot inside the container being walked.
             a = push_str_unique(a, fo.var_name);
-            return grow_alias_scan(fo.body, a);
+            return grow_alias_scan(fo.body, srcs, a);
         },
         ast.StmtMatch(m) => {
-            for arm in m.arms { a = grow_alias_scan(arm.body, a); }
+            for arm in m.arms { a = grow_alias_scan(arm.body, srcs, a); }
             return a;
         },
-        ast.StmtDefer(d) => { return grow_alias_scan_stmt(d.action, a); },
+        ast.StmtDefer(d) => { return grow_alias_scan_stmt(d.action, srcs, a); },
         _ => { return a; }
     }
     return a;
 }
 
 // grow_alias_bind: does binding `name` from `init` make it name a container the
-// frame does not own? A chain read does; so does a bare ident of a name that
-// already does. A call result, a literal, and a bare ident of anything else are
-// values this frame owns outright.
-function grow_alias_bind(name: string, init: ast.Expr, acc: string[]): string[] {
+// frame does not own? A chain read does; so does a bare ident of a PARAMETER or
+// the receiver (`srcs`) — the caller owns that box, and a bind whose source is
+// never read again takes no count for it (#4402), so nothing at runtime says
+// the box has a second name — and of a name that already does. A call result,
+// a literal, and a bare ident of anything else are values this frame owns
+// outright.
+function grow_alias_bind(name: string, init: ast.Expr, srcs: string[], acc: string[]): string[] {
     if (name.len() == 0) { return acc; }
     match (init) {
         ast.ExprFieldAccess(_) => { return push_str_unique(acc, name); },
         ast.ExprIndex(_) => { return push_str_unique(acc, name); },
         ast.ExprSlice(_) => { return push_str_unique(acc, name); },
         ast.ExprIdent(id) => {
-            if (util.index_of_str(acc, id.name) >= 0) { return push_str_unique(acc, name); }
+            if (util.index_of_str(srcs, id.name) >= 0 || util.index_of_str(acc, id.name) >= 0) { return push_str_unique(acc, name); }
             return acc;
         },
         _ => { return acc; }
