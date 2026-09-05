@@ -290,10 +290,11 @@ type rcPlan struct {
 	// owns an independent buffer. Filled by computeBorrowedMapFieldResults.
 	borrowedMapFieldResults map[string]bool
 	// mapCowBindSites holds the Map COW-mutator CALL nodes whose result is
-	// bound straight to a new local — `var m2 = m.insert(k, v)` and
-	// `var (m2, ok) = m.without(k)`. Those are the sites that owe the COW-seam
-	// retain (#6227): the binding co-exists with the receiver's binding, so on
-	// the in-place branch two names share one refcount and both release it.
+	// bound straight to a new local — `var m2 = m.insert(k, v)`,
+	// `var (m2, ok) = m.without(k)`, and `var t = m.without(k)` binding the
+	// tuple WHOLE. Those are the sites that owe the COW-seam retain (#6227):
+	// the binding co-exists with the receiver's binding, so on the in-place
+	// branch two names share one refcount and both release it.
 	// Every OTHER position a mutator result can appear in is deliberately
 	// excluded, because there the result is a temporary nobody binds and a
 	// retain would leak it instead: a chained receiver
@@ -3178,14 +3179,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// tuple's. `(value, state)` threading is where this shows up, and
 		// reading the field straight through — `p.1.a` — was flat all along.
 		//
-		// A MAP element is excluded, and it is not a hypothetical: crediting
-		// one segfaulted map_delete_tuple_churn_free on both natives. The
-		// counted-alias argument above rests on the destination's drop being
-		// is_unique-gated and shallow, which holds for a struct / array /
-		// enum element and NOT for a map — emitMapSlotDrop deep-frees the
-		// value column, so `var m = t.0` on a `(Map, boolean)` freed a map
-		// the tuple still referenced. ownedCallResultType singles maps out
-		// for the same reason; this is that caution, one site over.
+		// A MAP element is credited too, but only because the tuple now holds
+		// a reference of its own. It did not: the delete tuple stored the
+		// receiver's handle uncounted, so crediting the projection gave the
+		// destination a deep drop of a map the tuple still referenced, and
+		// segfaulted map_delete_tuple_churn_free on both natives. The
+		// COW-seam retain above is what supplies that count (#8276), and the
+		// two are a pair — crediting here without it is the segfault, and
+		// retaining there without this is a count nobody returns. The rest of
+		// the counted-alias argument carries over unchanged.
 		if id, ok := b.projectionChainRoot(x.Target).(*ast.Ident); ok {
 			_, isLocal := b.locals[id.Name]
 			// A MATCH-ARM BINDING is the same case and was invisible to
@@ -3215,9 +3217,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				case ast.StructType:
 					return false
 				case ast.TupleType:
-					if !isMapType(b.exprType(x)) {
-						return false
-					}
+					return false
 				}
 			}
 		}
@@ -6342,15 +6342,20 @@ func (b *builder) computeBorrowedMapFieldResults() map[string]bool {
 // computeMapCowBindSites finds the Map COW-mutator calls bound directly to a
 // new local — see the mapCowBindSites field doc (#6227). `insert` / `cleared`
 // return the map and bind through `var`; `without` returns a (Map, boolean)
-// tuple and can ONLY be consumed by destructuring, which is why it was the
-// spelling that surfaced the bug. Purely syntactic: the walk runs on the
-// already-mangled AST, the same form isMapMutatorCall matches at the call site.
+// tuple, which destructuring and a plain `var t = m.without(k)` both bind, and
+// BOTH owe the retain. Reading the tuple whole and projecting `t.0` / `t.1` is
+// the spelling the rc corpus itself uses, and excluding it left the tuple's
+// map element aliasing the receiver's handle at rc 1: two names, one count,
+// both releasing — an rc underflow everywhere and a SIGSEGV on arm64 / a trap
+// on wasm32 once the freed key cell was recycled (#8276).
+// Purely syntactic: the walk runs on the already-mangled AST, the same form
+// isMapMutatorCall matches at the call site.
 func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
 	out := map[ast.Node]bool{}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		switch s := n.(type) {
 		case *ast.Var:
-			if c, ok := s.Init.(*ast.Call); ok && isMapMutatorCall(c) && !isMapDeleteCall(c) {
+			if c, ok := s.Init.(*ast.Call); ok && isMapMutatorCall(c) {
 				out[c] = true
 			}
 		case *ast.Destructure:
