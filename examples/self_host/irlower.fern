@@ -1267,22 +1267,26 @@ function borrowed_arr_param_slot(e: ast.Expr, s: LowerState): i32 {
 // holding x — the caller moved its reference in and gets it back uncounted. A
 // callee reached through a function value cannot declare `own`.
 function rebind_call_same_dec(value: ast.Expr, target: string, s: LowerState): boolean {
-    match (value) {
-        ast.ExprCall(c) => {
-            match (c.callee) {
-                ast.ExprIdent(cid) => {
-                    var i: i32 = 0;
-                    while (i < c.args.len()) {
-                        if (ident_name_or_empty(c.args[i]) == target
-                            && util.index_of_str(s.sigs.own_positions, cid.name + "|" + util.i32_to_string(i)) >= 0) { return false; }
-                        i = i + 1;
-                    }
-                    return true;
-                },
-                _ => { return false; }
-            }
-        },
-        _ => { return false; }
+    return direct_call_callee_name(value).len() > 0 && !call_owns_arg(value, target, s);
+}
+
+// call_owns_arg: `value` is a direct call holding `target` at a declared `own`
+// position — the E051 transfer `x = f(…, x, …)`. The callee took the box, and
+// for a struct it either releases it at exit (own_struct_param_release_rows_of)
+// or hands it onward — returned bare, forwarded to a handback position, or
+// escaping through a receiver borrow — so the rebind must not read the old
+// value in either case. A callee reached through a function value or a method
+// cannot declare `own`.
+function call_owns_arg(value: ast.Expr, target: string, s: LowerState): boolean {
+    var cname: string = direct_call_callee_name(value);
+    if (cname.len() == 0) { return false; }
+    if let ast.ExprCall(c) = value {
+        var i: i32 = 0;
+        while (i < c.args.len()) {
+            if (ident_name_or_empty(c.args[i]) == target
+                && util.index_of_str(s.sigs.own_positions, cname + "|" + util.i32_to_string(i)) >= 0) { return true; }
+            i = i + 1;
+        }
     }
     return false;
 }
@@ -13719,8 +13723,9 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
             || struct_arr_field_read_type(fa.obj, s) != ""
             || enum_arr_field_read_type(fa.obj, s) != ""
             || nested_arr_field_read_type(fa.obj, s) != "")) {
-        if (field_append_inplace_at(c, fa.obj, s)) {
-            return lower_field_append_inplace(fa.obj, c.args[0], s);
+        var faik: string = field_append_inplace_key(c, fa.obj, s);
+        if (faik.len() > 0) {
+            return lower_field_append_inplace(fa.obj, c.args[0], faik, s);
         }
         return lower_arr_append_value(fa.obj, c.args[0], s);
     }
@@ -23231,6 +23236,13 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
     // there names a struct the slot does NOT hold: __field_reclaim_<T> would
     // read a BUFFER at struct-field offsets and release whatever lies past its
     // end. A struct-array param's buffer is released by emit_snapshot_store.
+    //
+    // A struct box the call CONSUMED (`a = f(a)` into an `own` position) was
+    // released by the callee's own exit sweep; the reclaims below would read a
+    // freed block. Bare store.
+    if (!target_is_arr && decl_is_struct(s.structs, s.struct_type_of_slot(slot)) && call_owns_arg(a.value, a.target, s)) {
+        return se.emit(ir.op_store_local(slot));
+    }
     if (slot_is_snapshot_param(s, slot)) {
         var snsl: i32 = s.slot_of(snapshot_slot_name(slot));
         var snty: string = s.struct_type_of_slot(slot);
@@ -24834,12 +24846,18 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
     return emit_map_release_unless_held(st, moldslot, map_group_alias_slots(st, msite), map_group_tuple_holders(st, msite));
 }
 
-// field_append_inplace_at reports whether THIS `<root>.<field>.append(v)` call is
-// one the per-function analysis admitted (field_append_inplace_sites_of).
-function field_append_inplace_at(c: ast.ExprCall, recv: ast.Expr, s: LowerState): boolean {
-    if (s.field_append_inplace.len() == 0) { return false; }
+// field_append_inplace_key returns the site key of THIS `<root>.<field>.append(v)`
+// call when the per-function analysis admitted it (field_append_inplace_sites_of)
+// and the root's box type resolves here, which the move-out store needs; else "",
+// and the site takes the clone form. The second gate is defence in depth: the
+// admitted receivers are depth-1 ident-rooted chains, whose root type resolves.
+function field_append_inplace_key(c: ast.ExprCall, recv: ast.Expr, s: LowerState): string {
+    if (s.field_append_inplace.len() == 0) { return ""; }
     var k: string = fai_recv_key(recv, c.line, c.col);
-    return k.len() > 0 && util.index_of_str(s.field_append_inplace, k) >= 0;
+    if (k.len() == 0 || util.index_of_str(s.field_append_inplace, k) < 0) { return ""; }
+    var sty: string = s.struct_type_of_slot(s.slot_of(fai_key_part(k, 1)));
+    if (sty.len() == 0 || s.field_index_in(sty, fai_key_part(k, 2)) < 0) { return ""; }
+    return k;
 }
 
 // lower_field_append_inplace is lower_arr_append_value without the clone: the
@@ -24851,27 +24869,85 @@ function field_append_inplace_at(c: ast.ExprCall, recv: ast.Expr, s: LowerState)
 // arr_push never frees its receiver, so the reallocating path leaves the
 // pre-grow buffer valid for the container that still names it.
 //
-// The IN-PLACE result IS the source container's own buffer, and it takes no
-// retain: the superseded box hands the buffer over rather than freeing it,
-// because __field_reclaim_<T> skips a field whose value the replacement still
-// holds. A second counted reference here would have nothing to release it.
-pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, s: LowerState): LowerState {
+// The IN-PLACE result IS the source container's own buffer, so the identity arm
+// MOVES it: the field is nulled, and the value is the buffer's only name. The
+// result is uncounted either way — a fresh rc 1 buffer, or the field's own with
+// the field no longer claiming it — so whoever releases the box afterwards
+// (the rebind's __field_reclaim_<T>, a sweep's __struct_drop_<T>, an `own`
+// param's exit release, the value's own holder) finds nothing there to free.
+// Every rc helper skips a null field. Without the move, the box and the value
+// both name the buffer at rc 1, and the first of those releases frees it out
+// from under the other.
+//
+// The move is only sound for a box this frame holds alone. A second name the
+// CALLER binds (`var cur = s`, the checker's scope walks) is grow_alias_bind's
+// to see, since a dead-alias bind takes no count; a holder no analysis names —
+// a container element, another box's field — is the root's own count to see.
+// So a shared root brackets the push with the #4873 share pair, which sends
+// arr_push down its copy path and leaves the field in place.
+pub function lower_field_append_inplace(obj: ast.Expr, val: ast.Expr, key: string, s: LowerState): LowerState {
     var kind: string = arr_elem_kind(obj, s);
-    var st: LowerState = lower_expr(obj, s);
+    var root: i32 = s.slot_of(fai_key_part(key, 1));
+    var sty: string = s.struct_type_of_slot(root);
+    var fidx: i32 = s.field_index_in(sty, fai_key_part(key, 2));
+    var srcname: string = "$fiab" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(srcname);
+    var srcslot: i32 = st.slot_of(srcname);
+    var uniqname: string = "$fiau" + util.i32_to_string(st.locals.len());
+    st = st.add_local(uniqname);
+    var uniqslot: i32 = st.slot_of(uniqname);
+    st = lower_expr(obj, st);
     if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(srcslot));
+    st = st.emit(ir.op_load_local(root));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_store_local(uniqslot));
+    st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_inc");
+    st = st.emit(ir.op_load_local(srcslot));
     if (kind == "i64") {
         st = lower_i64(val, st);
         if (!st.ok) { return st; }
-        return st.emit(ir.op_arr_push_i64());
-    }
-    if (kind == "f64") {
+        st = st.emit(ir.op_arr_push_i64());
+    } else if (kind == "f64") {
         st = lower_expr(val, st);
         if (!st.ok) { return st; }
-        return st.emit(ir.op_arr_push_f64());
+        st = st.emit(ir.op_arr_push_f64());
+    } else {
+        st = lower_append_elem_value(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_push());
     }
-    st = lower_append_elem_value(val, st);
-    if (!st.ok) { return st; }
-    return st.emit(ir.op_arr_push());
+    var resname: string = "$fiar" + util.i32_to_string(st.locals.len());
+    st = st.add_local(resname);
+    var resslot: i32 = st.slot_of(resname);
+    st = st.emit(ir.op_store_local(resslot));
+    st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_dec");
+    st = st.emit(ir.op_load_local(resslot));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(root));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.structs, sty, fidx)));
+    st = st.emit(ir.op_end());
+    return st.emit(ir.op_load_local(resslot));
+}
+
+// fai_bracket_shared_root emits `if (!unique) { fn(src) }` — one half of the
+// share bracket around an admitted in-place push whose root box has a second
+// holder. The caller-side exemptions reason about this frame's BINDING dying,
+// and a bare `var cur = s` gives the same box a second name they do not see;
+// the box's own count does, so a shared root takes the copy path here and the
+// move is reserved for a box this frame holds alone.
+function fai_bracket_shared_root(s: LowerState, uniqslot: i32, srcslot: i32, fn: string): LowerState {
+    var st: LowerState = s.emit(ir.op_load_local(uniqslot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_call_direct(fn, 1));
+    st = st.emit(ir.op_drop());
+    return st.emit(ir.op_end());
 }
 
 // lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING
@@ -25139,11 +25215,15 @@ function append_inplace_recvs(stmts: ast.Stmt[], esc: string[], acc: string[]): 
 // (those run after the return), and a root bound to a second name anywhere
 // (`var t = s`), which keeps the old container reachable under that name.
 //
-// The root must be the RECEIVER or a PARAMETER. A struct LOCAL's box belongs to
-// this frame, so growing a buffer it names and handing the result out would let
-// the frame's own reclaim free what the result holds. What the CALLER can still
-// see through the borrowed box is the #4873 grow bracket's job — the
-// growFieldBufs half of grow_param_flags_of, below.
+// An admitted grow MOVES the field out of the root (lower_field_append_inplace
+// nulls it on the identity arm), so a host that RUNS AGAIN with the same root
+// — any host inside a loop other than a return or a rebind of the root — is
+// refused: the next iteration would read the moved-out field.
+//
+// The root must be the RECEIVER or a PARAMETER; a struct LOCAL's field keeps the
+// clone form. What the CALLER can still see through the borrowed box is the
+// #4873 grow bracket's job — the growFieldBufs half of grow_param_flags_of,
+// below.
 //
 // COUNTING is the safety net. The total occurrences of the root come from
 // astwalk.collect_idents_*, which walks everything; the excused-read walk here
@@ -25544,7 +25624,7 @@ pub function field_append_inplace_sites_of(fn: parser.FuncDecl): string[] {
     var esc: string[] = fai_esc_idents(fn.body, []);
     var cap: string[] = fai_captured_roots(fn.body, roots, []);
     var out: string[] = [];
-    return fai_admit_stmts(fn.body, fn.body, roots, esc, cap, out);
+    return fai_admit_stmts(fn.body, fn.body, roots, esc, cap, false, out);
 }
 
 // fai_cands_stmt collects the candidate sites of one statement, for the
@@ -25593,31 +25673,33 @@ function fai_cands_stmt(st: ast.Stmt, roots: string[], acc: string[]): string[] 
 // fai_admit_stmts walks the body deciding each statement's own candidates:
 // a return and a self-rebinding assignment carry a SCOPE (their value
 // expression) whose outside is out of reach; every other host has to hold over
-// the whole body.
-function fai_admit_stmts(stmts: ast.Stmt[], body: ast.Stmt[], roots: string[], esc: string[], cap: string[], acc: string[]): string[] {
+// the whole body, and INSIDE A LOOP it cannot: the grow moves the field out of
+// the root, and the next iteration would read the moved-out field. A return
+// exits the loop and a rebind of the root replaces it, so those two stay.
+function fai_admit_stmts(stmts: ast.Stmt[], body: ast.Stmt[], roots: string[], esc: string[], cap: string[], in_loop: boolean, acc: string[]): string[] {
     var out: string[] = acc;
     for st in stmts {
         match (st) {
-            ast.StmtReturn(r) => { out = fai_admit_scope(fai_cands_expr(r.value, roots, []), r.value, "", body, esc, cap, out); },
-            ast.StmtAssign(asg) => { out = fai_admit_scope(fai_cands_expr(asg.value, roots, []), asg.value, asg.target, body, esc, cap, out); },
-            ast.StmtVar(v) => { out = fai_admit_body(fai_cands_expr(v.init, roots, []), body, esc, cap, out); },
-            ast.StmtExpr(e) => { out = fai_admit_body(fai_cands_expr(e.value, roots, []), body, esc, cap, out); },
+            ast.StmtReturn(r) => { out = fai_admit_scope(fai_cands_expr(r.value, roots, []), r.value, "", body, esc, cap, in_loop, out); },
+            ast.StmtAssign(asg) => { out = fai_admit_scope(fai_cands_expr(asg.value, roots, []), asg.value, asg.target, body, esc, cap, in_loop, out); },
+            ast.StmtVar(v) => { out = fai_admit_body(fai_cands_expr(v.init, roots, []), body, esc, cap, in_loop, out); },
+            ast.StmtExpr(e) => { out = fai_admit_body(fai_cands_expr(e.value, roots, []), body, esc, cap, in_loop, out); },
             ast.StmtIf(f) => {
-                out = fai_admit_body(fai_cands_expr(f.cond, roots, []), body, esc, cap, out);
-                out = fai_admit_stmts(f.then_body, body, roots, esc, cap, out);
-                out = fai_admit_stmts(f.else_body, body, roots, esc, cap, out);
+                out = fai_admit_body(fai_cands_expr(f.cond, roots, []), body, esc, cap, in_loop, out);
+                out = fai_admit_stmts(f.then_body, body, roots, esc, cap, in_loop, out);
+                out = fai_admit_stmts(f.else_body, body, roots, esc, cap, in_loop, out);
             },
             ast.StmtWhile(w) => {
-                out = fai_admit_body(fai_cands_expr(w.cond, roots, []), body, esc, cap, out);
-                out = fai_admit_stmts(w.body, body, roots, esc, cap, out);
+                out = fai_admit_body(fai_cands_expr(w.cond, roots, []), body, esc, cap, true, out);
+                out = fai_admit_stmts(w.body, body, roots, esc, cap, true, out);
             },
             ast.StmtFor(f2) => {
-                out = fai_admit_body(fai_cands_expr(f2.iter, roots, []), body, esc, cap, out);
-                out = fai_admit_stmts(f2.body, body, roots, esc, cap, out);
+                out = fai_admit_body(fai_cands_expr(f2.iter, roots, []), body, esc, cap, true, out);
+                out = fai_admit_stmts(f2.body, body, roots, esc, cap, true, out);
             },
             ast.StmtMatch(m) => {
-                out = fai_admit_body(fai_cands_expr(m.scrutinee, roots, []), body, esc, cap, out);
-                for arm in m.arms { out = fai_admit_stmts(arm.body, body, roots, esc, cap, out); }
+                out = fai_admit_body(fai_cands_expr(m.scrutinee, roots, []), body, esc, cap, in_loop, out);
+                for arm in m.arms { out = fai_admit_stmts(arm.body, body, roots, esc, cap, in_loop, out); }
             },
             _ => {}
         }
@@ -25628,7 +25710,7 @@ function fai_admit_stmts(stmts: ast.Stmt[], body: ast.Stmt[], roots: string[], e
 // fai_admit_scope decides the candidates of a scoped host. `rebind_target` is
 // the assignment's target, or "" for a return: a rebind only excuses the reads
 // outside it when the container being replaced is the append's own root.
-function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string, body: ast.Stmt[], esc: string[], cap: string[], acc: string[]): string[] {
+function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string, body: ast.Stmt[], esc: string[], cap: string[], in_loop: boolean, acc: string[]): string[] {
     var out: string[] = acc;
     var i: i32 = 0;
     while (i < cands.len()) {
@@ -25640,7 +25722,7 @@ function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string
             && scoped
             && fai_count_ident_expr(scope, root) == fai_excused_expr(scope, root, field, k, 0)) {
             out = push_str_unique(out, k);
-        } else if (fai_admits_over_body(k, root, field, body, esc, cap)) {
+        } else if (!in_loop && fai_admits_over_body(k, root, field, body, esc, cap)) {
             out = push_str_unique(out, k);
         }
         i = i + 1;
@@ -25648,7 +25730,8 @@ function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string
     return out;
 }
 
-function fai_admit_body(cands: string[], body: ast.Stmt[], esc: string[], cap: string[], acc: string[]): string[] {
+function fai_admit_body(cands: string[], body: ast.Stmt[], esc: string[], cap: string[], in_loop: boolean, acc: string[]): string[] {
+    if (in_loop) { return acc; }
     var out: string[] = acc;
     var i: i32 = 0;
     while (i < cands.len()) {
@@ -74423,60 +74506,66 @@ function grow_alias_filter(names: string[], alias: string[]): string[] {
 // INDEPENDENTLY, one in place and one by realloc, leaving `next` one entry
 // longer than `rows` and a bucket chain pointing past the end of `rows`.
 pub function grow_alias_names_of(fn: parser.FuncDecl): string[] {
+    var srcs: string[] = [];
+    if (fn.receiver_name.len() > 0) { srcs = srcs.append(fn.receiver_name); }
+    for p in fn.params { srcs = srcs.append(p.name); }
     var out: string[] = [];
     var grew: boolean = true;
     while (grew) {
         var before: i32 = out.len();
-        out = grow_alias_scan(fn.body, out);
+        out = grow_alias_scan(fn.body, srcs, out);
         grew = out.len() > before;
     }
     return out;
 }
 
-function grow_alias_scan(stmts: ast.Stmt[], acc: string[]): string[] {
+function grow_alias_scan(stmts: ast.Stmt[], srcs: string[], acc: string[]): string[] {
     var a: string[] = acc;
     var i: i32 = 0;
-    while (i < stmts.len()) { a = grow_alias_scan_stmt(stmts[i], a); i = i + 1; }
+    while (i < stmts.len()) { a = grow_alias_scan_stmt(stmts[i], srcs, a); i = i + 1; }
     return a;
 }
 
-function grow_alias_scan_stmt(st: ast.Stmt, acc: string[]): string[] {
+function grow_alias_scan_stmt(st: ast.Stmt, srcs: string[], acc: string[]): string[] {
     var a: string[] = acc;
     match (st) {
-        ast.StmtVar(v) => { return grow_alias_bind(v.name, v.init, a); },
-        ast.StmtAssign(asg) => { return grow_alias_bind(asg.target, asg.value, a); },
+        ast.StmtVar(v) => { return grow_alias_bind(v.name, v.init, srcs, a); },
+        ast.StmtAssign(asg) => { return grow_alias_bind(asg.target, asg.value, srcs, a); },
         ast.StmtIf(f) => {
-            a = grow_alias_scan(f.then_body, a);
-            return grow_alias_scan(f.else_body, a);
+            a = grow_alias_scan(f.then_body, srcs, a);
+            return grow_alias_scan(f.else_body, srcs, a);
         },
-        ast.StmtWhile(w) => { return grow_alias_scan(w.body, a); },
+        ast.StmtWhile(w) => { return grow_alias_scan(w.body, srcs, a); },
         ast.StmtFor(fo) => {
             // A `for` element names a slot inside the container being walked.
             a = push_str_unique(a, fo.var_name);
-            return grow_alias_scan(fo.body, a);
+            return grow_alias_scan(fo.body, srcs, a);
         },
         ast.StmtMatch(m) => {
-            for arm in m.arms { a = grow_alias_scan(arm.body, a); }
+            for arm in m.arms { a = grow_alias_scan(arm.body, srcs, a); }
             return a;
         },
-        ast.StmtDefer(d) => { return grow_alias_scan_stmt(d.action, a); },
+        ast.StmtDefer(d) => { return grow_alias_scan_stmt(d.action, srcs, a); },
         _ => { return a; }
     }
     return a;
 }
 
 // grow_alias_bind: does binding `name` from `init` make it name a container the
-// frame does not own? A chain read does; so does a bare ident of a name that
-// already does. A call result, a literal, and a bare ident of anything else are
-// values this frame owns outright.
-function grow_alias_bind(name: string, init: ast.Expr, acc: string[]): string[] {
+// frame does not own? A chain read does; so does a bare ident of a PARAMETER or
+// the receiver (`srcs`) — the caller owns that box, and a bind whose source is
+// never read again takes no count for it (#4402), so nothing at runtime says
+// the box has a second name — and of a name that already does. A call result,
+// a literal, and a bare ident of anything else are values this frame owns
+// outright.
+function grow_alias_bind(name: string, init: ast.Expr, srcs: string[], acc: string[]): string[] {
     if (name.len() == 0) { return acc; }
     match (init) {
         ast.ExprFieldAccess(_) => { return push_str_unique(acc, name); },
         ast.ExprIndex(_) => { return push_str_unique(acc, name); },
         ast.ExprSlice(_) => { return push_str_unique(acc, name); },
         ast.ExprIdent(id) => {
-            if (util.index_of_str(acc, id.name) >= 0) { return push_str_unique(acc, name); }
+            if (util.index_of_str(srcs, id.name) >= 0 || util.index_of_str(acc, id.name) >= 0) { return push_str_unique(acc, name); }
             return acc;
         },
         _ => { return acc; }
