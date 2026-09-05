@@ -48,6 +48,11 @@ func TestConstDeclaredWidthAccepted(t *testing.T) {
 // TestConstOutOfRangeRejected pins that relaxing the type comparison did not
 // relax RANGE checking: a literal outside its declared type still fails, now
 // with a range diagnostic rather than the old (accidental) type mismatch.
+//
+// Every case is a bare LITERAL. An arithmetic expression cannot reach this
+// check any more: it folds at the declared width, so `const B: u32 = 0 - 1`
+// is the u32 wrap the same expression performs at runtime (#8444), not an
+// out-of-range error.
 func TestConstOutOfRangeRejected(t *testing.T) {
 	cases := []struct {
 		name string
@@ -55,7 +60,8 @@ func TestConstOutOfRangeRejected(t *testing.T) {
 		want string
 	}{
 		{"i32-overflow", `const B: i32 = 5000000000; function main(): i32 { return 0; }`, "out of range for i32"},
-		{"u32-negative", `const B: u32 = 0 - 1; function main(): i32 { return 0; }`, "out of range for u32"},
+		{"u32-overflow", `const B: u32 = 5000000000; function main(): i32 { return 0; }`, "out of range for u32"},
+		{"u8-overflow", `const B: u8 = 300; function main(): i32 { return 0; }`, "out of range for u8"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
