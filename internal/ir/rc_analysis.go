@@ -420,29 +420,102 @@ func (b *builder) computeDynBorrowedViews() map[string]bool {
 	return out
 }
 
-// findReturnsFreshPairPayload reports, per function, whether every value
-// return hands back a variant whose payload box is NEWLY ALLOCATED rather
-// than a pointer the function received.
+// summaryTable is a per-function summary under a worklist fixpoint. Every
+// read goes through get / at, which records that the function under analysis
+// consulted that entry, and fixpoint revisits a function only once an entry
+// it consulted has changed. The edges are the reads the analysis actually
+// performed — a callee reached through a helper's recursion or treated
+// conservatively as unknown is covered the same way — so there is no
+// separately maintained call graph to fall out of step with the pass.
 //
-// It is deliberately shallower than findReturnsNoParamEscape, and the two
-// answer different questions about the same value. That one asks whether
-// anything REACHABLE FROM the result aliases a parameter; this one asks only
-// whether the returned payload POINTER is the callee's own.
-//
-// The pair-form payload release frees that box and deep-drops its fields, so
-// the property it needs is the shallow one: a counted reference the box holds
-// to a parameter's heap is a reference the release is entitled to decrement,
-// because the construction that stored it retained it. Demanding the stronger
-// property refused every iterator's `next` — which returns
-// `Some((elem, Self { xs: self.xs, … }))` — and cost two stranded boxes per
-// element across the whole combinator library (sum, count, fold, map, filter,
-// take all share that shape).
-//
-// A payload that is not a literal construction is refused rather than chased:
-// a call could be proven fresh by a fixpoint like its sibling's, but nothing
-// in the iterator shape needs it and an unproven shape must stay refused —
-// releasing a pointer the callee merely passed through is a use-after-free,
-// where declining to release it is the leak that already exists.
+// The worklist reaches the same tables as a full sweep: an analysis is a
+// pure function of the body and the entries it read, so a function none of
+// whose consulted entries changed since its last visit would recompute the
+// same result. That rests on each pass writing only the entry of the
+// function it is analysing.
+type summaryTable[V any] struct {
+	vals    map[string]V
+	cur     *ast.FuncDecl
+	readers map[string]map[*ast.FuncDecl]bool
+}
+
+func newSummaryTable[V any](n int) *summaryTable[V] {
+	return &summaryTable[V]{vals: make(map[string]V, n), readers: map[string]map[*ast.FuncDecl]bool{}}
+}
+
+// get reads name's entry and reports whether the table has one (a builtin or
+// an unknown callee has none).
+func (s *summaryTable[V]) get(name string) (V, bool) {
+	if s.cur != nil {
+		rs := s.readers[name]
+		if rs == nil {
+			rs = map[*ast.FuncDecl]bool{}
+			s.readers[name] = rs
+		}
+		rs[s.cur] = true
+	}
+	v, ok := s.vals[name]
+	return v, ok
+}
+
+// at is get where the zero value is the answer for an unknown name.
+func (s *summaryTable[V]) at(name string) V {
+	v, _ := s.get(name)
+	return v
+}
+
+// fixpointExhaustive makes fixpoint revisit every function every round — the
+// full sweep the worklist replaces, kept as the oracle
+// TestFixpointWorklistMatchesFullSweep checks the worklist against.
+var fixpointExhaustive bool
+
+// fixpointTables, when non-nil, collects every finished fixpoint's table in
+// call order, for the same test.
+var fixpointTables *[]fixpointResult
+
+type fixpointResult struct {
+	vals   any
+	visits int
+}
+
+// fixpoint runs analyse over funcs until no entry changes. analyse examines
+// one function against the current table and reports whether it changed that
+// function's entry. Round one visits every function; afterwards a function
+// is revisited only once an entry it consulted has changed.
+func (s *summaryTable[V]) fixpoint(funcs []*ast.FuncDecl, analyse func(*ast.FuncDecl) bool) {
+	dirty := make(map[*ast.FuncDecl]bool, len(funcs))
+	for _, fn := range funcs {
+		dirty[fn] = true
+	}
+	visits := 0
+	for len(dirty) > 0 {
+		changed := false
+		for _, fn := range funcs {
+			if !dirty[fn] {
+				continue
+			}
+			delete(dirty, fn)
+			s.cur = fn
+			visits++
+			if analyse(fn) {
+				changed = true
+				for r := range s.readers[fn.Name] {
+					dirty[r] = true
+				}
+			}
+		}
+		if fixpointExhaustive && changed {
+			for _, fn := range funcs {
+				dirty[fn] = true
+			}
+		}
+	}
+	s.cur = nil
+	if fixpointTables != nil {
+		*fixpointTables = append(*fixpointTables, fixpointResult{s.vals, visits})
+	}
+}
+
 // findReturnsFreshBox reports, per function, whether every value return hands
 // back a box the function CONSTRUCTED — a struct, tuple or array literal —
 // rather than a value derived from what it was passed.
@@ -467,47 +540,42 @@ func findReturnsFreshBox(prog *ast.Program, info *checker.Info, pairForm, trmcFu
 	// eliminate the ones a return disproves. A call may be fresh because its
 	// callee is, so the answer for one function depends on the answers for
 	// others and a single pass would under-approximate mutual recursion.
-	q := map[string]bool{}
+	q := newSummaryTable[bool](len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		if fn.Body != nil {
-			q[fn.Name] = true
+			q.vals[fn.Name] = true
 		}
 	}
-	for {
-		changed := false
-		for _, fn := range prog.Funcs {
-			if fn.Body == nil || !q[fn.Name] {
-				continue
-			}
-			ctorFresh := variantCtorFreshIn(info, shadowingNames(fn, info))
-			fresh := freshLocalsIn(fn, q, ctorFresh)
-			retained := returnedAliasIsRetained(fn, pairForm, trmcFuncs)
-			refused := map[string]bool{}
-			for i, p := range fn.Params {
-				refused[p.Name] = !ownedParam(fn, i)
-			}
-			ok, saw := true, false
-			ast.Walk(fn.Body, func(n ast.Node) bool {
-				r, isRet := n.(*ast.Return)
-				if !isRet || r.Value == nil {
-					return true
-				}
-				saw = true
-				if !returnsOwnBox(r.Value, fresh, q, retained, refused, ctorFresh) {
-					ok = false
-				}
+	q.fixpoint(prog.Funcs, func(fn *ast.FuncDecl) bool {
+		if fn.Body == nil || !q.at(fn.Name) {
+			return false
+		}
+		ctorFresh := variantCtorFreshIn(info, shadowingNames(fn, info))
+		fresh := freshLocalsIn(fn, q, ctorFresh)
+		retained := returnedAliasIsRetained(fn, pairForm, trmcFuncs)
+		refused := map[string]bool{}
+		for i, p := range fn.Params {
+			refused[p.Name] = !ownedParam(fn, i)
+		}
+		ok, saw := true, false
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			r, isRet := n.(*ast.Return)
+			if !isRet || r.Value == nil {
 				return true
-			})
-			if !ok || !saw {
-				q[fn.Name] = false
-				changed = true
 			}
+			saw = true
+			if !returnsOwnBox(r.Value, fresh, q, retained, refused, ctorFresh) {
+				ok = false
+			}
+			return true
+		})
+		if ok && saw {
+			return false
 		}
-		if !changed {
-			break
-		}
-	}
-	return q
+		q.vals[fn.Name] = false
+		return true
+	})
+	return q.vals
 }
 
 // returnedAliasIsRetained reports whether returning an alias — a bare ident, a
@@ -571,7 +639,7 @@ func returnedAliasIsRetained(fn *ast.FuncDecl, pairForm, trmcFuncs map[string]bo
 // for a direct `Ctor(..)`, one call deeper — it is what lets a tree insert's
 // `__om_single` / `__om_bin` / `__om_balance` chain prove fresh, so the
 // intermediate node a caller binds is reclaimable.
-func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool, retained bool, refused map[string]bool, ctorFresh func(*ast.Call) bool) bool {
+func returnsOwnBox(e ast.Expr, fresh map[string]bool, q *summaryTable[bool], retained bool, refused map[string]bool, ctorFresh func(*ast.Call) bool) bool {
 	switch x := e.(type) {
 	case *ast.Ident:
 		// fresh: a local proven fresh below, or an `own` parameter threaded
@@ -597,7 +665,7 @@ func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool, retaine
 			// receiver, so a returned-alias receiver earns nothing from it.
 			return len(x.Args) > 0 && returnsOwnBox(x.Args[0], fresh, q, false, refused, ctorFresh)
 		}
-		return q[id.Name] || ctorFresh(x)
+		return q.at(id.Name) || ctorFresh(x)
 	case *ast.IfExpr:
 		return returnsOwnBox(x.Then, fresh, q, retained, refused, ctorFresh) &&
 			returnsOwnBox(x.Else, fresh, q, retained, refused, ctorFresh)
@@ -612,7 +680,7 @@ func returnsOwnBox(e ast.Expr, fresh map[string]bool, q map[string]bool, retaine
 // acc)` with walk itself in q). A local that shadows a parameter name is
 // excluded outright, and so is an `own` parameter that any binding shadows:
 // distinguishing the two costs more than the reclaim is worth.
-func freshLocalsIn(fn *ast.FuncDecl, q map[string]bool, ctorFresh func(*ast.Call) bool) map[string]bool {
+func freshLocalsIn(fn *ast.FuncDecl, q *summaryTable[bool], ctorFresh func(*ast.Call) bool) map[string]bool {
 	isParam := map[string]bool{}
 	ownParam := map[string]bool{}
 	for _, p := range fn.Params {
@@ -686,6 +754,29 @@ func tuplePatBinders(elems []ast.TuplePatElem) []string {
 	return out
 }
 
+// findReturnsFreshPairPayload reports, per function, whether every value
+// return hands back a variant whose payload box is NEWLY ALLOCATED rather
+// than a pointer the function received.
+//
+// It is deliberately shallower than findReturnsNoParamEscape, and the two
+// answer different questions about the same value. That one asks whether
+// anything REACHABLE FROM the result aliases a parameter; this one asks only
+// whether the returned payload POINTER is the callee's own.
+//
+// The pair-form payload release frees that box and deep-drops its fields, so
+// the property it needs is the shallow one: a counted reference the box holds
+// to a parameter's heap is a reference the release is entitled to decrement,
+// because the construction that stored it retained it. Demanding the stronger
+// property refused every iterator's `next` — which returns
+// `Some((elem, Self { xs: self.xs, … }))` — and cost two stranded boxes per
+// element across the whole combinator library (sum, count, fold, map, filter,
+// take all share that shape).
+//
+// A payload that is not a literal construction is refused rather than chased:
+// a call could be proven fresh by a fixpoint like its sibling's, but nothing
+// in the iterator shape needs it and an unproven shape must stay refused —
+// releasing a pointer the callee merely passed through is a use-after-free,
+// where declining to release it is the leak that already exists.
 func findReturnsFreshPairPayload(prog *ast.Program, info *checker.Info) map[string]bool {
 	nullaryVariant := map[string]bool{}
 	payloadCount := map[string]int{}
@@ -769,36 +860,31 @@ func findReturnsNoParamEscape(prog *ast.Program, info *checker.Info) map[string]
 			variantPayloads[v.Name] = v.Payloads
 		}
 	}
-	q := map[string]bool{}
+	q := newSummaryTable[bool](len(prog.Funcs))
 	for _, fn := range prog.Funcs {
-		q[fn.Name] = true
+		q.vals[fn.Name] = true
 	}
-	for {
-		changed := false
-		for _, fn := range prog.Funcs {
-			if !q[fn.Name] || fn.Body == nil {
-				continue
-			}
-			freshLocals := computeFreshLocals(fn, info, variantPayloads, q)
-			ok := true
-			ast.Walk(fn.Body, func(n ast.Node) bool {
-				if r, isRet := n.(*ast.Return); isRet && r.Value != nil {
-					if !exprNoParamEscape(r.Value, fn.ReturnType, info, variantPayloads, q, freshLocals) {
-						ok = false
-					}
+	q.fixpoint(prog.Funcs, func(fn *ast.FuncDecl) bool {
+		if !q.at(fn.Name) || fn.Body == nil {
+			return false
+		}
+		freshLocals := computeFreshLocals(fn, info, variantPayloads, q)
+		ok := true
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			if r, isRet := n.(*ast.Return); isRet && r.Value != nil {
+				if !exprNoParamEscape(r.Value, fn.ReturnType, info, variantPayloads, q, freshLocals) {
+					ok = false
 				}
-				return true
-			})
-			if !ok {
-				q[fn.Name] = false
-				changed = true
 			}
+			return true
+		})
+		if ok {
+			return false
 		}
-		if !changed {
-			break
-		}
-	}
-	return q
+		q.vals[fn.Name] = false
+		return true
+	})
+	return q.vals
 }
 
 // inferParamEscapes computes, per function and per POINTER parameter, whether
@@ -866,32 +952,29 @@ func inferParamEscapes(prog *ast.Program, info *checker.Info, pairForm, trmcFunc
 			variantPayloads[v.Name] = v.Payloads
 		}
 	}
-	escapes := map[string][]bool{}
+	escapes := newSummaryTable[[]bool](len(prog.Funcs))
 	for _, fn := range prog.Funcs {
-		escapes[fn.Name] = make([]bool, len(fn.Params))
+		escapes.vals[fn.Name] = make([]bool, len(fn.Params))
 	}
-	for {
+	escapes.fixpoint(prog.Funcs, func(fn *ast.FuncDecl) bool {
+		if fn.Body == nil {
+			return false
+		}
+		own := escapes.at(fn.Name)
 		changed := false
-		for _, fn := range prog.Funcs {
-			if fn.Body == nil {
+		for i, p := range fn.Params {
+			if own[i] || !ast.IsPointerType(p.Type) {
 				continue
 			}
-			for i, p := range fn.Params {
-				if escapes[fn.Name][i] || !ast.IsPointerType(p.Type) {
-					continue
-				}
-				if paramEscapesInFn(fn, p.Name, info, variantPayloads, escapes,
-					returnedAliasIsRetained(fn, pairForm, trmcFuncs)) {
-					escapes[fn.Name][i] = true
-					changed = true
-				}
+			if paramEscapesInFn(fn, p.Name, info, variantPayloads, escapes,
+				returnedAliasIsRetained(fn, pairForm, trmcFuncs)) {
+				own[i] = true
+				changed = true
 			}
 		}
-		if !changed {
-			break
-		}
-	}
-	return escapes
+		return changed
+	})
+	return escapes.vals
 }
 
 // computeReadOnlyComparators collects the mangled names of every `eq` /
@@ -1094,19 +1177,18 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 	// Precompute the shadowed-name set per function once (match / match-expr
 	// bindings that reuse a parameter name).
 	type fnCtx struct {
-		fn          *ast.FuncDecl
 		shadowed    map[string]bool
 		ctorCounted func(*ast.Call) bool
 	}
-	ctxs := make([]fnCtx, 0, len(prog.Funcs))
-	out := map[string][]bool{}
+	ctxs := make(map[*ast.FuncDecl]fnCtx, len(prog.Funcs))
+	out := newSummaryTable[[]bool](len(prog.Funcs))
 	for _, fn := range prog.Funcs {
 		if fn.Body == nil {
 			continue
 		}
 		sh := shadowingNames(fn, info)
-		ctxs = append(ctxs, fnCtx{fn, sh, variantCtorCountedIn(fn, info, sh)})
-		out[fn.Name] = make([]bool, len(fn.Params))
+		ctxs[fn] = fnCtx{sh, variantCtorCountedIn(fn, info, sh)}
+		out.vals[fn.Name] = make([]bool, len(fn.Params))
 	}
 	// Least-fixpoint: struct-param crediting consults the summary for the
 	// arg-position rule (a `p` passed as argument i to callee C is counted iff
@@ -1116,91 +1198,90 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 	// callee already proven counted — so the iteration is monotone and
 	// converges to the grounded fixpoint (a mutual-recursion cycle with no
 	// grounding stays uncredited, the conservative direction).
-	for {
-		changed := false
-		for _, c := range ctxs {
-			fn, sh, ctorCounted := c.fn, c.shadowed, c.ctorCounted
-			flags := make([]bool, len(fn.Params))
+	out.fixpoint(prog.Funcs, func(fn *ast.FuncDecl) bool {
+		c, ok := ctxs[fn]
+		if !ok {
+			return false
+		}
+		sh, ctorCounted := c.shadowed, c.ctorCounted
+		flags := make([]bool, len(fn.Params))
+		for i, p := range fn.Params {
+			// A parameter carrying no heap (i32 / bool / f64 / …) can never
+			// be retained at all — mark it so a scalar argument doesn't
+			// disqualify a call the way a pointer one would. Conditioned
+			// below on EVERY pointer param being counted too: a tainted
+			// scalar may carry a raw pointer, and only a callee whose every
+			// pointer position is proven counted is known not to hand an
+			// alias of anything back.
+			if !rcTrackedSlotType(p.Type) {
+				flags[i] = true
+				continue
+			}
+			if p.Own || sh[p.Name] {
+				continue
+			}
+			switch pt := p.Type.(type) {
+			case ast.StringType:
+				flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted)
+			case ast.ArrayType:
+				flags[i] = arrayParamCounted(fn, p.Name, pt, info, out, ctorCounted)
+			case ast.StructType:
+				// Credit `p` when every one of its appearances is a counted
+				// store, a non-retaining read, or a counted call argument —
+				// so a result built from it holds only counted references.
+				// This is what lets the scalar-arg exemption fire for a
+				// scanner threaded through field projections and pure-read
+				// methods (lexer.tokenize;
+				// docs/SELFHOST-AST-RETIREMENT.md).
+				flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
+			case ast.EnumType:
+				// The same rule, and sound for the same reason:
+				// `needsRcIncOnAlias` is true for an enum, so a bare `p` in
+				// a construction slot is inc'd into the new box exactly as
+				// a struct is. Without this arm the parser's node
+				// constructors — `e_binary(op, l, r)` and its siblings,
+				// whose payloads are `ast.Expr`, an enum — were refused,
+				// and every caller's fresh argument was stranded. Isolated
+				// with a control: `mknode(t, n) -> Node { ty: t, n: n }`
+				// leaks its argument when `t` is an enum and does not when
+				// `t` is a struct, same call shape either way (#7867).
+				flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
+			case ast.TupleType:
+				// A tuple has no nominal declaration to name, so the
+				// projection arms never fire and only the slot / argument /
+				// return rules can credit it. `needsRcIncOnAlias` is true
+				// for a tuple, so those carry the same argument.
+				flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
+			case *ast.FuncType:
+				// A function value is retained by the same counted slots
+				// (`needsRcIncOnAlias` is true for a closure) and read,
+				// without retaining, by being CALLED — the callee-position
+				// arm of paramProjectionsSafe. This is what lets a caller
+				// release the lambda it passes to `m.update(k, f)`.
+				flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
+			}
+		}
+		ptrAllCounted := true
+		for i, p := range fn.Params {
+			if rcTrackedSlotType(p.Type) && !flags[i] {
+				ptrAllCounted = false
+				break
+			}
+		}
+		if !ptrAllCounted {
 			for i, p := range fn.Params {
-				// A parameter carrying no heap (i32 / bool / f64 / …) can never
-				// be retained at all — mark it so a scalar argument doesn't
-				// disqualify a call the way a pointer one would. Conditioned
-				// below on EVERY pointer param being counted too: a tainted
-				// scalar may carry a raw pointer, and only a callee whose every
-				// pointer position is proven counted is known not to hand an
-				// alias of anything back.
 				if !rcTrackedSlotType(p.Type) {
-					flags[i] = true
-					continue
+					flags[i] = false
 				}
-				if p.Own || sh[p.Name] {
-					continue
-				}
-				switch pt := p.Type.(type) {
-				case ast.StringType:
-					flags[i] = stringParamCounted(fn, p.Name, out, ctorCounted)
-				case ast.ArrayType:
-					flags[i] = arrayParamCounted(fn, p.Name, pt, info, out, ctorCounted)
-				case ast.StructType:
-					// Credit `p` when every one of its appearances is a counted
-					// store, a non-retaining read, or a counted call argument —
-					// so a result built from it holds only counted references.
-					// This is what lets the scalar-arg exemption fire for a
-					// scanner threaded through field projections and pure-read
-					// methods (lexer.tokenize;
-					// docs/SELFHOST-AST-RETIREMENT.md).
-					flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
-				case ast.EnumType:
-					// The same rule, and sound for the same reason:
-					// `needsRcIncOnAlias` is true for an enum, so a bare `p` in
-					// a construction slot is inc'd into the new box exactly as
-					// a struct is. Without this arm the parser's node
-					// constructors — `e_binary(op, l, r)` and its siblings,
-					// whose payloads are `ast.Expr`, an enum — were refused,
-					// and every caller's fresh argument was stranded. Isolated
-					// with a control: `mknode(t, n) -> Node { ty: t, n: n }`
-					// leaks its argument when `t` is an enum and does not when
-					// `t` is a struct, same call shape either way (#7867).
-					flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
-				case ast.TupleType:
-					// A tuple has no nominal declaration to name, so the
-					// projection arms never fire and only the slot / argument /
-					// return rules can credit it. `needsRcIncOnAlias` is true
-					// for a tuple, so those carry the same argument.
-					flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
-				case *ast.FuncType:
-					// A function value is retained by the same counted slots
-					// (`needsRcIncOnAlias` is true for a closure) and read,
-					// without retaining, by being CALLED — the callee-position
-					// arm of paramProjectionsSafe. This is what lets a caller
-					// release the lambda it passes to `m.update(k, f)`.
-					flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
-				}
-			}
-			ptrAllCounted := true
-			for i, p := range fn.Params {
-				if rcTrackedSlotType(p.Type) && !flags[i] {
-					ptrAllCounted = false
-					break
-				}
-			}
-			if !ptrAllCounted {
-				for i, p := range fn.Params {
-					if !rcTrackedSlotType(p.Type) {
-						flags[i] = false
-					}
-				}
-			}
-			if !boolSliceEqual(out[fn.Name], flags) {
-				out[fn.Name] = flags
-				changed = true
 			}
 		}
-		if !changed {
-			break
+		if boolSliceEqual(out.vals[fn.Name], flags) {
+			return false
 		}
-	}
-	return out
+		out.vals[fn.Name] = flags
+		return true
+	})
+	return out.vals
 }
 
 func boolSliceEqual(a, b []bool) bool {
@@ -1427,7 +1508,7 @@ func countedSeedOccurrences(fn *ast.FuncDecl) map[*ast.Ident]bool {
 	return out
 }
 
-func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool, ctorCounted func(*ast.Call) bool) bool {
+func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool) bool {
 	safe := map[*ast.Ident]bool{}
 	seedOK := countedSeedOccurrences(fn)
 	mark := func(e ast.Expr) {
@@ -1567,7 +1648,7 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool, 
 			// summary starts all-false and only ever gains credits, so a
 			// mutual-recursion cycle with no grounding stays uncredited.
 			if id, ok := x.Callee.(*ast.Ident); ok {
-				if cs, known := summary[id.Name]; known {
+				if cs, known := summary.get(id.Name); known {
 					for ai, a := range x.Args {
 						if ai < len(cs) && cs[ai] {
 							mark(a)
@@ -1603,7 +1684,7 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary map[string][]bool, 
 // A bare `p[i]` of a POINTER element anywhere else still refuses — it
 // hands out a live reference nothing counts. Similarly no SliceExpr arm —
 // an array slice can share the buffer.
-func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *checker.Info, summary map[string][]bool, ctorCounted func(*ast.Call) bool) bool {
+func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *checker.Info, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool) bool {
 	safe := map[*ast.Ident]bool{}
 	seedOK := countedSeedOccurrences(fn)
 	mark := func(e ast.Expr) {
@@ -1721,7 +1802,7 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 				}
 			}
 			if id, ok := x.Callee.(*ast.Ident); ok {
-				if cs, known := summary[id.Name]; known {
+				if cs, known := summary.get(id.Name); known {
 					for ai, a := range x.Args {
 						if ai < len(cs) && cs[ai] {
 							mark(a)
@@ -1776,7 +1857,7 @@ func arrayParamCounted(fn *ast.FuncDecl, pn string, at ast.ArrayType, info *chec
 // keeps `grow(m, k): Map { m = m.insert(k, …); return m; }` out: `m` reaches a
 // builtin `__method_Map_set` argument (never in `summary`), so it is never
 // credited and its scalar `k` is never exempted.
-func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summary map[string][]bool, ctorCounted func(*ast.Call) bool) bool {
+func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool) bool {
 	// tracked holds `pn` and every binding a match over a tracked name
 	// introduces: a payload binding is an uncounted alias of the value's
 	// interior, so it is held to exactly the rules the parameter is, and the
@@ -2028,7 +2109,7 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 					len(x.TypeArgs) == 1 && rcTrackedSlotType(x.TypeArgs[0]) {
 					markSlotValue(x.Args[2])
 				}
-				if cs, ok := summary[id.Name]; ok {
+				if cs, ok := summary.get(id.Name); ok {
 					for i, a := range x.Args {
 						if i < len(cs) && cs[i] {
 							markSlotValue(a)
@@ -2949,12 +3030,17 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// a scanner returns `Res { lex, tok }`, the caller extracts `l = r.lex`
 		// to thread the cursor, and the conservative FieldAccess taint
 		// stranded `l` — and through it the whole result-struct cluster —
-		// every iteration. Gated to a struct LOCAL source: a container this
-		// function reasons about and that itself reclaims. A param, a
-		// projection chain (`r.a.b`, whose Target is a FieldAccess), or a
-		// non-struct source keeps the conservative taint. The escape sink
-		// walk is unchanged, so a projection flowing into an UNCOUNTED sink
-		// (`m.set(k, r.field)`) still taints its source there.
+		// every iteration. Gated to a struct source this function holds a
+		// slot for — a local, a parameter or a match binding — reached
+		// directly or through a chain of struct / tuple fields (`r.a.b`):
+		// every container on the chain deep-drops the next one, so the
+		// counted-alias argument holds at each level, and the two-level
+		// read taints nothing the one-level read does not (#8179, the
+		// self-host LowerState's nested per-function box). A non-struct
+		// source, or a Map anywhere on the chain, keeps the conservative
+		// taint. The escape sink walk is unchanged, so a projection flowing
+		// into an UNCOUNTED sink (`m.set(k, r.field)`) still taints its
+		// source there.
 		// A TUPLE local is the same argument, and was one type short of it.
 		// `var q: P = p.1` incs at the binding site exactly as the struct read
 		// does, and the tuple deep-drops its elements at scope exit
@@ -2973,7 +3059,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// value column, so `var m = t.0` on a `(Map, boolean)` freed a map
 		// the tuple still referenced. ownedCallResultType singles maps out
 		// for the same reason; this is that caution, one site over.
-		if id, ok := x.Target.(*ast.Ident); ok {
+		if id, ok := b.projectionChainRoot(x.Target).(*ast.Ident); ok {
 			_, isLocal := b.locals[id.Name]
 			// A MATCH-ARM BINDING is the same case and was invisible to
 			// it. `b.locals` is the lowering's slot map, which
@@ -3291,6 +3377,30 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		return true
 	default:
 		return true
+	}
+}
+
+// projectionChainRoot walks a field-read chain down to the expression it
+// projects out of, stepping only through struct / tuple fields that are not
+// maps: for `s.frame.alias` (Target `s.frame`) it returns `s`; for a direct
+// read (Target `s`) it returns `s` unchanged. A step through any other type
+// stops the walk there, so the caller's Ident test fails for it.
+func (b *builder) projectionChainRoot(e ast.Expr) ast.Expr {
+	for {
+		fa, ok := e.(*ast.FieldAccess)
+		if !ok {
+			return e
+		}
+		switch t := b.exprType(fa).(type) {
+		case ast.StructType:
+			if isMapType(t) {
+				return e
+			}
+		case ast.TupleType:
+		default:
+			return e
+		}
+		e = fa.Target
 	}
 }
 
@@ -6158,8 +6268,9 @@ func (b *builder) computeBorrowedAliases() {
 	// binding `var y = __foreach_iter_N[__foreach_idx_N]`
 	// (ast.DesugarForEachArray) reads an element the iterand array owns.
 	// When every use of y is a read THROUGH the value (bindingConfinedToArm
-	// over the whole body — a bind, return, store, capture, or unproven call
-	// all refuse), y needs no reference of its own: the element stays alive
+	// over the whole body — a bind, store, capture, or unproven call all
+	// refuse; a return is admitted only in the shapes forinElemReturnsConfined
+	// names), y needs no reference of its own: the element stays alive
 	// because the container's buffer does.
 	//
 	// The container here is the synthetic iter local, which user code cannot
@@ -6208,7 +6319,7 @@ func (b *builder) computeBorrowedAliases() {
 		if !b.isOwnedRcLocal(x) || !b.isOwnedRcLocal(y) {
 			return true
 		}
-		if reassigned[x] || reassigned[y] || returned[y] || scrutinee[x] || scrutinee[y] {
+		if reassigned[x] || reassigned[y] || scrutinee[x] || scrutinee[y] {
 			return true
 		}
 		if b.rc.movedLocals[x] || b.rc.movedLocals[y] {
@@ -6223,7 +6334,7 @@ func (b *builder) computeBorrowedAliases() {
 		if !needsRcIncOnAlias(v.Init, b) || b.isOwnedContainerRead(v.Init) {
 			return true
 		}
-		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) {
+		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) || !b.forinElemReturnsConfined(y) {
 			return true
 		}
 		b.rc.borrowedAlias[y] = true
@@ -6231,6 +6342,95 @@ func (b *builder) computeBorrowedAliases() {
 		b.rc.borrowSources[x] = true
 		return true
 	})
+}
+
+// forinElemReturnsConfined reports whether every `return` that mentions the
+// for-in element y hands out nothing that outlives the iterand (#8178).
+// bindingConfinedToArm reads a field or element projection of y as a borrow
+// wherever it stands; a return needs this second look because its value
+// leaves the frame, and the exit sweep on that path releases the iterand.
+//
+// y may appear only projected (the target of a field access or the base of
+// an index), and the returned value must then take one of two shapes:
+//
+//   - a plain projection chain rooted at y (`sd.f`, `sd.f.g`, `sd.xs[i]`) of
+//     an rc-tracked type, which the Return lowering retains on its own
+//     (needsRcIncOnAlias) — the credit returnedCountedProjection gives a
+//     borrowed parameter, under the same returnedAliasIsRetained refusals
+//     (pair-form and TRMC rewrite the return before that inc is reached);
+//   - a value of a non-pointer type (`sd.fields.len()`, `sd.a == k`): nothing
+//     pointer-shaped leaves, and each sub-expression is the transient read it
+//     would be in statement position.
+//
+// Everything else stays refused: y itself (move-on-return would hand the
+// caller an uncounted element) and any other pointer-typed value built around
+// a projection of y — a fresh aggregate, a variant construction, a call
+// result, a slice view — whose counting this rule has not shown.
+func (b *builder) forinElemReturnsConfined(y string) bool {
+	retained := returnedAliasIsRetained(b.fn, b.pairForm, b.trmcFuncs)
+	ok := true
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		r, isRet := n.(*ast.Return)
+		if !isRet || r.Value == nil || !ok || !exprMentionsIdent(r.Value, y) {
+			return ok
+		}
+		switch {
+		case !identOnlyProjected(r.Value, y):
+			ok = false
+		case needsRcIncOnAlias(r.Value, b):
+			ok = retained && projectionRoot(r.Value) == y
+		default:
+			t := b.exprType(r.Value)
+			ok = t != nil && !ast.IsPointerType(t)
+		}
+		return ok
+	})
+	return ok
+}
+
+// identOnlyProjected reports whether every mention of `name` in e is the
+// target of a field access or the base of an index — read through, never
+// handed on whole.
+func identOnlyProjected(e ast.Expr, name string) bool {
+	projected := map[*ast.Ident]bool{}
+	ast.Walk(e, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FieldAccess:
+			if id, ok := x.Target.(*ast.Ident); ok && id.Name == name {
+				projected[id] = true
+			}
+		case *ast.Index:
+			if id, ok := x.Array.(*ast.Ident); ok && id.Name == name {
+				projected[id] = true
+			}
+		}
+		return true
+	})
+	ok := true
+	ast.Walk(e, func(n ast.Node) bool {
+		if id, isID := n.(*ast.Ident); isID && id.Name == name && !projected[id] {
+			ok = false
+		}
+		return ok
+	})
+	return ok
+}
+
+// projectionRoot returns the ident a chain of field accesses and index reads
+// is rooted at, or "" when e is anything else.
+func projectionRoot(e ast.Expr) string {
+	for {
+		switch x := e.(type) {
+		case *ast.FieldAccess:
+			e = x.Target
+		case *ast.Index:
+			e = x.Array
+		case *ast.Ident:
+			return x.Name
+		default:
+			return ""
+		}
+	}
 }
 
 // -------- #4873: cross-function in-place array growth containment ---------
@@ -6290,12 +6490,16 @@ func (g growParam) growsField(name string) bool {
 	return g.fields[growAnyField] || g.fields[name]
 }
 
-// addField records one growable field, reporting whether it was new.
+// addField records one growable field, reporting whether it was new. The
+// set has one form: growAnyField alone, or named fields — the unnamed path
+// covers every name, and a name beside it would be read twice, by
+// growsField as redundant and by the propagation over dying fields as the
+// only entry that propagates.
 func (g *growParam) addField(name string) bool {
 	if g.fields[growAnyField] || g.fields[name] {
 		return false
 	}
-	if g.fields == nil {
+	if g.fields == nil || name == growAnyField {
 		g.fields = map[string]bool{}
 	}
 	g.fields[name] = true
@@ -7200,14 +7404,11 @@ func fieldChainRoot(fa *ast.FieldAccess) (*ast.Ident, bool) {
 // protect (the callArgDeaths self-reassign shape for ident args, and any
 // param-field argument).
 func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]fieldObs) map[string][]growParam {
-	grow := map[string][]growParam{}
-	decls := map[string]*ast.FuncDecl{}
+	grow := newSummaryTable[[]growParam](len(prog.Funcs))
 	for _, fn := range prog.Funcs {
-		if fn.Body == nil {
-			continue
+		if fn.Body != nil {
+			grow.vals[fn.Name] = make([]growParam, len(fn.Params))
 		}
-		decls[fn.Name] = fn
-		grow[fn.Name] = make([]growParam, len(fn.Params))
 	}
 	paramIdx := func(fn *ast.FuncDecl, name string) int {
 		for i, p := range fn.Params {
@@ -7221,8 +7422,11 @@ func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]f
 		return name == "__method_Array_push" || name == "__method_Array_set"
 	}
 	// Seed: direct in-place-capable mutations on params.
-	for name, fn := range decls {
-		g := grow[name]
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		g := grow.vals[fn.Name]
 		ast.Walk(fn.Body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Call:
@@ -7254,75 +7458,82 @@ func computeGrowParams(prog *ast.Program, info *checker.Info, obs map[string][]f
 	// subscript assignment — `.with` is the API — and both `.with` and
 	// `.set` carry their own receiver-live containment, #2832.)
 	// Transitive closure over unbracketed pass-throughs.
-	changed := true
-	for changed {
-		changed = false
-		for name, fn := range decls {
-			g := grow[name]
-			deaths := callArgDeaths(fn, info, obs)
-			ast.Walk(fn.Body, func(n ast.Node) bool {
-				c, ok := n.(*ast.Call)
-				if !ok {
-					return true
+	deathsOf := map[*ast.FuncDecl]map[*ast.Call]map[string]bool{}
+	grow.fixpoint(prog.Funcs, func(fn *ast.FuncDecl) bool {
+		if fn.Body == nil {
+			return false
+		}
+		g := grow.at(fn.Name)
+		deaths, ok := deathsOf[fn]
+		if !ok {
+			deaths = callArgDeaths(fn, info, obs)
+			deathsOf[fn] = deaths
+		}
+		changed := false
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			c, ok := n.(*ast.Call)
+			if !ok {
+				return true
+			}
+			cid, ok := c.Callee.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			cg, ok := grow.get(cid.Name)
+			if !ok {
+				return true
+			}
+			for ai, a := range c.Args {
+				if ai >= len(cg) || !cg[ai].any() {
+					continue
 				}
-				cid, ok := c.Callee.(*ast.Ident)
-				if !ok {
-					return true
-				}
-				cg, ok := grow[cid.Name]
-				if !ok {
-					return true
-				}
-				for ai, a := range c.Args {
-					if ai >= len(cg) || !cg[ai].any() {
+				switch arg := a.(type) {
+				case *ast.Ident:
+					pi := paramIdx(fn, arg.Name)
+					if pi < 0 {
 						continue
 					}
-					switch arg := a.(type) {
-					case *ast.Ident:
-						pi := paramIdx(fn, arg.Name)
-						if pi < 0 {
-							continue
+					// A surviving ident arg gets the caller-side bracket
+					// (contained); only the dying self-reassign shape
+					// passes the buffer through unprotected.
+					if deaths[c][arg.Name] {
+						if g[pi].merge(cg[ai]) {
+							changed = true
 						}
-						// A surviving ident arg gets the caller-side bracket
-						// (contained); only the dying self-reassign shape
-						// passes the buffer through unprotected.
-						if deaths[c][arg.Name] {
-							if g[pi].merge(cg[ai]) {
+						continue
+					}
+					// A field the bracket skips (markUnobservedParamFields)
+					// is equally unprotected, so it propagates the same
+					// way: the enclosing param grows at that field, and
+					// ITS caller brackets a surviving argument there.
+					// growsField reads the callee's set the way the
+					// bracket does, so an unnamed growth covers every
+					// dying field.
+					for key := range deaths[c] {
+						f, isField := strings.CutPrefix(key, arg.Name+".")
+						if isField && cg[ai].growsField(f) && g[pi].addField(f) {
+							changed = true
+						}
+					}
+				case *ast.FieldAccess:
+					// `g(p.f)` — a param-field argument aliases the
+					// param's field buffer and is never bracketed, so a
+					// growable position propagates as a field growth of
+					// the param (chain root for nested fields).
+					if rid, ok := fieldChainRoot(arg); ok {
+						if pi := paramIdx(fn, rid.Name); pi >= 0 {
+							if g[pi].addField(fieldNameOfDirect(arg, rid)) {
 								changed = true
-							}
-							continue
-						}
-						// A field the bracket skips (markUnobservedParamFields)
-						// is equally unprotected, so it propagates the same
-						// way: the enclosing param grows at that field, and
-						// ITS caller brackets a surviving argument there.
-						for f := range cg[ai].fields {
-							if !deaths[c][arg.Name+"."+f] {
-								continue
-							}
-							if g[pi].addField(f) {
-								changed = true
-							}
-						}
-					case *ast.FieldAccess:
-						// `g(p.f)` — a param-field argument aliases the
-						// param's field buffer and is never bracketed, so a
-						// growable position propagates as a field growth of
-						// the param (chain root for nested fields).
-						if rid, ok := fieldChainRoot(arg); ok {
-							if pi := paramIdx(fn, rid.Name); pi >= 0 {
-								if g[pi].addField(fieldNameOfDirect(arg, rid)) {
-									changed = true
-								}
 							}
 						}
 					}
 				}
-				return true
-			})
-		}
-	}
-	return grow
+			}
+			return true
+		})
+		return changed
+	})
+	return grow.vals
 }
 
 // computeReturnOwnMoves finds the `return f(…, p, …)` sites that hand THIS

@@ -1,7 +1,9 @@
 package e2eselfhost
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -66,13 +68,21 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
 		"tag_consistency ok=36 bad=0\n"
 
+	// The report ends with every registered tag's id in id order, pinned by
+	// testdata/ir-kind-ids.txt. The backends dispatch on literal ids, so this
+	// catches a renumbering the bijection sweep alone would pass.
+	table, err := os.ReadFile(filepath.Join("testdata", "ir-kind-ids.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
 	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
 		t.Fatalf("ir_kind_run did not exit normally")
 	}
-	if got := string(out); got != want {
-		t.Errorf("kind registry report mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	if got := string(out); got != want+string(table) {
+		t.Errorf("kind registry report mismatch:\n--- got ---\n%s\n--- want ---\n%s%s", got, want, table)
 	}
 	// Exit code is the bijection-failure count — 0 proves the whole 196-entry
 	// table round-tripped, an independent check of the report's bijection_ok.

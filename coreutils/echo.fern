@@ -1,0 +1,224 @@
+// echo.fern — GNU-compatible `echo`.
+//
+//   -n              do not write the trailing newline
+//   -e              interpret the backslash escapes below
+//   -E              do not interpret them (the default)
+//   --help/--version  answered only as the SOLE argument
+//
+// echo(1) does not use getopt, and the difference is observable: the
+// option scan takes leading tokens for as long as EVERY byte after the
+// `-` is one of `e`, `E`, `n`, and treats the first token that fails
+// that test as an operand. So `-ne` is two options, `-nex` is the
+// string `-nex`, and a lone `-` is an operand. Last flag wins: `-e -E`
+// leaves escapes off.
+//
+// POSIXLY_CORRECT reshapes both halves, and this is faithful to the
+// quirk rather than to the intent:
+//
+//   - escapes are ALWAYS interpreted, so `-E` cannot turn them off;
+//   - options are not recognised at all unless the first argument is
+//     exactly `-n`, so `echo -e 'a\tb'` writes `-e a<TAB>b` and
+//     `echo --help` writes `--help`.
+//
+// Escapes: \a \b \c \e \f \n \r \t \v \\, octal as \NNN (one to
+// three digits) or \0NNN (\0 plus up to three), and hex as \xHH (up
+// to two digits). `\c` ends the output there and then — no trailing
+// newline, remaining operands dropped. Anything else keeps its
+// backslash: `\z` is two bytes, and so is a trailing lone `\`.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+
+function is_octal_digit(b: i32): boolean {
+  return b >= 48 && b <= 55;
+}
+
+// The value of one hex digit, or -1 for a byte that is not one.
+function hex_digit(b: i32): i32 {
+  if (b >= 48 && b <= 57) {
+    return b - 48;
+  }
+  if (b >= 97 && b <= 102) {
+    return b - 87;
+  }
+  if (b >= 65 && b <= 70) {
+    return b - 55;
+  }
+  return 0 - 1;
+}
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [SHORT-OPTION]... [STRING]...\n";
+  out = out + "  or:  " + gnu.prog() + " LONG-OPTION\n";
+  out = out + "Write the STRINGs to standard output, separated by spaces.\n";
+  out = out + "\n";
+  out = out + "  -n         do not write the trailing newline\n";
+  out = out + "  -e         interpret backslash escapes\n";
+  out = out + "  -E         do not interpret backslash escapes (default)\n";
+  out = out + "      --help     display this help and exit\n";
+  out = out + "      --version  output version information and exit\n";
+  out = out + "\n";
+  out = out + "A long option is recognised only as the sole argument.\n";
+  return out;
+}
+
+// Append the bytes of `s` to `out` with escapes expanded. The boolean
+// is true when `\c` was reached, which ends the program's output.
+function expand_into(out: u8[], s: string): (u8[], boolean) {
+  var bs: u8[] = out;
+  var n: i32 = s.len();
+  var i: i32 = 0;
+  while (i < n) {
+    var b: i32 = s[i] as i32;
+    if (b != 92 || i + 1 >= n) {
+      bs = bs.append(b as u8);
+      i = i + 1;
+      continue;
+    }
+    var c: i32 = s[i + 1] as i32;
+    i = i + 2;
+    if (c == 97) {
+      bs = bs.append(7 as u8);
+    } else if (c == 98) {
+      bs = bs.append(8 as u8);
+    } else if (c == 99) {
+      return (bs, true);
+    } else if (c == 101) {
+      bs = bs.append(27 as u8);
+    } else if (c == 102) {
+      bs = bs.append(12 as u8);
+    } else if (c == 110) {
+      bs = bs.append(10 as u8);
+    } else if (c == 114) {
+      bs = bs.append(13 as u8);
+    } else if (c == 116) {
+      bs = bs.append(9 as u8);
+    } else if (c == 118) {
+      bs = bs.append(11 as u8);
+    } else if (c == 92) {
+      bs = bs.append(92 as u8);
+    } else if (c >= 48 && c <= 55) {
+      // Octal: `\0` takes up to three more digits, `\1`..`\7` is
+      // itself the first of at most three. Both wrap at a byte, so
+      // `\0777` is 255 and `\400` is 0.
+      var oct: i32 = c - 48;
+      var more: i32 = 2;
+      if (c == 48) {
+        more = 3;
+      }
+      var taken: i32 = 0;
+      while (taken < more && i < n && is_octal_digit(s[i] as i32)) {
+        oct = oct * 8 + (s[i] as i32 - 48);
+        i = i + 1;
+        taken = taken + 1;
+      }
+      bs = bs.append((oct % 256) as u8);
+    } else if (c == 120) {
+      var hex: i32 = 0;
+      var digits: i32 = 0;
+      while (digits < 2 && i < n && hex_digit(s[i] as i32) >= 0) {
+        hex = hex * 16 + hex_digit(s[i] as i32);
+        i = i + 1;
+        digits = digits + 1;
+      }
+      if (digits == 0) {
+        // `\x` with no digit after it is not an escape at all.
+        bs = bs.append(92 as u8);
+        bs = bs.append(120 as u8);
+      } else {
+        bs = bs.append(hex as u8);
+      }
+    } else {
+      bs = bs.append(92 as u8);
+      bs = bs.append(c as u8);
+    }
+  }
+  return (bs, false);
+}
+
+function append_raw(out: u8[], s: string): u8[] {
+  var bs: u8[] = out;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    bs = bs.append(s[i]);
+    i = i + 1;
+  }
+  return bs;
+}
+
+// Whether the token is a run of `e` / `E` / `n` after a leading `-`,
+// which is what makes it an option rather than an operand.
+function is_flag_token(a: string): boolean {
+  if (a.len() < 2 || a[0] as i32 != 45) {
+    return false;
+  }
+  var i: i32 = 1;
+  while (i < a.len()) {
+    var b: i32 = a[i] as i32;
+    if (b != 101 && b != 69 && b != 110) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var posix: boolean = false;
+  match (env("POSIXLY_CORRECT")) {
+    Some(_) => {
+      posix = true;
+    },
+    None => {}
+  }
+  var allow_options: boolean = !posix || argv.len() > 1 && argv[1] == "-n";
+  if (allow_options) {
+    gnu.sole_help_version(argv, "echo", help_text(), 0);
+  }
+
+  var i: i32 = 1;
+  var newline: boolean = true;
+  var do_v9: boolean = false;
+  if (allow_options) {
+    while (i < argv.len() && is_flag_token(argv[i])) {
+      var a: string = argv[i];
+      var j: i32 = 1;
+      while (j < a.len()) {
+        var b: i32 = a[j] as i32;
+        if (b == 101) {
+          do_v9 = true;
+        } else if (b == 69) {
+          do_v9 = false;
+        } else {
+          newline = false;
+        }
+        j = j + 1;
+      }
+      i = i + 1;
+    }
+  }
+
+  var escapes: boolean = do_v9 || posix;
+  var out: u8[] = [];
+  var stopped: boolean = false;
+  while (i < argv.len() && !stopped) {
+    if (escapes) {
+      var r: (u8[], boolean) = expand_into(out, argv[i]);
+      out = r.0;
+      stopped = r.1;
+    } else {
+      out = append_raw(out, argv[i]);
+    }
+    if (!stopped && i + 1 < argv.len()) {
+      out = out.append(32 as u8);
+    }
+    i = i + 1;
+  }
+  if (!stopped && newline) {
+    out = out.append(10 as u8);
+  }
+  gnu.write_out(string_from_bytes_unchecked(out));
+  return 0;
+}

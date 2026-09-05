@@ -65,3 +65,72 @@ function main(): i32 { var x: i32[] = [1, 2, 3]; var y: i32[] = g(x); return y[0
 		t.Errorf("runtime helper __fern_rc_inc must still be emitted")
 	}
 }
+
+// isUniqueBranchSrc drops a struct holding an array at scope exit, which
+// lowers to an `is_unique`-gated free: `OpRcIsUnique; OpIf`.
+const isUniqueBranchSrc = `struct Holder { n: i32, items: i32[] }
+function mk(k: i32): Holder { return Holder{ n: k, items: [k, k + 1] }; }
+function main(): i32 { var h: Holder = mk(3); return h.items[1]; }`
+
+// TestRcIsUniqueFusesWithBranch pins the fused form of an inline is_unique
+// whose result the next op branches on: the guard's two compares jump
+// straight to the else-label, with no 0/1 materialisation and no sentinel
+// sign test (a negative count is never 1).
+func TestRcIsUniqueFusesWithBranch(t *testing.T) {
+	asm := compile(t, isUniqueBranchSrc)
+	for _, want := range []string{"cmp rax, 0x10000", "cmp dword ptr [rax - 8], 1", "jne .LifElse_"} {
+		if !strings.Contains(asm, want) {
+			t.Errorf("fused is_unique branch missing %q:\n%s", want, asm)
+		}
+	}
+	for _, bad := range []string{"sete cl", "call __fern_rc_is_unique", "test edx, edx"} {
+		if strings.Contains(asm, bad) {
+			t.Errorf("fused is_unique branch must not emit %q:\n%s", bad, asm)
+		}
+	}
+	// The `jb` guard and the `jne` land on the same else-label: a
+	// below-bound pointer and a shared one take the same arm.
+	jb := strings.Index(asm, "jb .LifElse_")
+	if jb < 0 {
+		t.Fatalf("fused is_unique branch must jump below-bound to the else-label:\n%s", asm)
+	}
+	elseL := asm[jb+len("jb "):]
+	elseL = elseL[:strings.IndexByte(elseL, '\n')]
+	if !strings.Contains(asm, "jne "+elseL+"\n") {
+		t.Errorf("jb and jne must share the else-label %s:\n%s", elseL, asm)
+	}
+}
+
+// TestRcIsUniqueKeepsBoolFormWhenStored pins the fallback: an is_unique
+// whose result is stored (the reuse token, read again later to gate the
+// old-field release) still materialises the 0/1 value — the fusion fires
+// only when the very next op is the branch.
+func TestRcIsUniqueKeepsBoolFormWhenStored(t *testing.T) {
+	asm := compile(t, `struct Holder { n: i32, items: i32[] }
+function main(): i32 {
+  var h: Holder = Holder{ n: 0, items: [1, 2] };
+  var i: i32 = 0;
+  while (i < 3) { h = Holder{ n: h.n + 1, items: h.items }; i = i + 1; }
+  return h.n;
+}`)
+	for _, want := range []string{"sete cl", "test edx, edx", "cmp dword ptr [rax - 8], 1"} {
+		if !strings.Contains(asm, want) {
+			t.Errorf("stored is_unique must keep the bool form (and the exit drop its fused form); missing %q:\n%s", want, asm)
+		}
+	}
+}
+
+// TestRcIsUniqueFallsBackToCallInLargeFn: over the inline ceiling the
+// fusion must not fire either — the helper call is the whole guard.
+func TestRcIsUniqueFallsBackToCallInLargeFn(t *testing.T) {
+	saved := rcInlineMaxOps
+	rcInlineMaxOps = 0
+	defer func() { rcInlineMaxOps = saved }()
+	asm := compile(t, isUniqueBranchSrc)
+	if !strings.Contains(asm, "call __fern_rc_is_unique") {
+		t.Errorf("over-threshold function must call the is_unique helper:\n%s", asm)
+	}
+	if strings.Contains(asm, "cmp dword ptr [rax - 8], 1") {
+		t.Errorf("over-threshold function must not emit the fused guard:\n%s", asm)
+	}
+}

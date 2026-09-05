@@ -32,9 +32,9 @@ import (
 // the one-unit-per-process route itself is driven every push by
 // TestSelfHostAssumeEligibleByteIdenticalX86_64, and so is the per-module
 // IR-eligibility frontier — every module lowering with nothing bailing — which
-// that test's non-`-assume-eligible` half checks and `-assume-eligible` here
-// skips by design. That the two routes emit the same bytes is
-// TestSelfHostPerModuleEmitAllX86_64's proof.
+// that test's checked per-process half proves and `-assume-eligible` here
+// skips by design. That the two routes emit the same bytes is that test's
+// proof too.
 //
 // Step 5 carries it past the emit+link milestone to SELF-COMPILE correctness: the
 // per-module-built compiler compiles the whole compiler (the fixpoint gen2 input)

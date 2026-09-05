@@ -8085,6 +8085,7 @@ func buildPowF64Body(funcs map[string]uint32) []byte {
 		n    = 4
 		an   = 5
 		sign = 6
+		tmp  = 7
 		// The canonical quiet NaN, and the bit patterns of 2^53 (above
 		// which every f64 is an even integer) and +Inf.
 		nanBits = 0x7ff8000000000000
@@ -8122,6 +8123,22 @@ func buildPowF64Body(funcs map[string]uint32) []byte {
 		body = numeric.InstI64LeS(body)
 		body = inst.InstIfStart(body, inst.BlocktypeEmpty)
 		{
+			// Outer retry loop. The overflow path below re-enters it once
+			// with a reciprocated base and a negated n; structured control
+			// flow has no backward jump, so the retry is a br to this loop.
+			body = inst.InstLoopStart(body, inst.BlocktypeEmpty)
+			// an = |n| again: the squaring loop below consumes it.
+			body = inst.InstLocalGet(body, n)
+			body = inst.InstLocalSet(body, an)
+			body = inst.InstLocalGet(body, an)
+			body = inst.InstI64Const(body, 0)
+			body = numeric.InstI64LtS(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstI64Const(body, 0)
+			body = inst.InstLocalGet(body, an)
+			body = numeric.InstI64Sub(body)
+			body = inst.InstLocalSet(body, an)
+			body = inst.InstEnd(body)
 			body = inst.InstF64Const(body, math.Float64bits(1.0))
 			body = inst.InstLocalSet(body, acc)
 			body = inst.InstLocalGet(body, lx)
@@ -8163,10 +8180,33 @@ func buildPowF64Body(funcs map[string]uint32) []byte {
 			body = inst.InstF64Const(body, math.Float64bits(1.0))
 			body = inst.InstLocalGet(body, acc)
 			body = numeric.InstF64Div(body)
+			body = inst.InstLocalSet(body, tmp)
+			// 1/acc is zero only when acc reached an infinity, so the
+			// magnitude overflowed on the way to a result that may itself
+			// be representable: 2^-1074 accumulated 2^1074 and reciprocated
+			// it to 0. Redo on 1/x, which cannot overflow. Negating n makes
+			// the next pass return the accumulator directly, so the retry
+			// runs at most once and needs no flag.
+			body = inst.InstLocalGet(body, tmp)
+			body = inst.InstF64Const(body, math.Float64bits(0.0))
+			body = numeric.InstF64Eq(body)
+			body = inst.InstIfStart(body, inst.BlocktypeEmpty)
+			body = inst.InstF64Const(body, math.Float64bits(1.0))
+			body = inst.InstLocalGet(body, lx)
+			body = numeric.InstF64Div(body)
+			body = inst.InstLocalSet(body, lx)
+			body = inst.InstI64Const(body, 0)
+			body = inst.InstLocalGet(body, n)
+			body = numeric.InstI64Sub(body)
+			body = inst.InstLocalSet(body, n)
+			body = inst.InstBr(body, 2) // the retry loop
+			body = inst.InstEnd(body)
+			body = inst.InstLocalGet(body, tmp)
 			body = inst.InstLocalSet(body, acc)
 			body = inst.InstEnd(body)
 			body = inst.InstLocalGet(body, acc)
 			body = inst.InstReturn(body)
+			body = inst.InstEnd(body) // retry loop
 		}
 		body = inst.InstEnd(body)
 	}
@@ -8249,7 +8289,7 @@ func buildPowF64Body(funcs map[string]uint32) []byte {
 	body = numeric.InstF64Mul(body)
 	return inst.PutFunctionBody(nil, putLocalsGroups(nil,
 		localGroup{2, encode.ValtypeF64}, localGroup{2, encode.ValtypeI64},
-		localGroup{1, encode.ValtypeF64}), body)
+		localGroup{2, encode.ValtypeF64}), body)
 }
 
 // --- Leak census (#5362 / docs/SANITIZER.md) -----------------------

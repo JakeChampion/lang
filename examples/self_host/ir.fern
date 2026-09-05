@@ -1403,10 +1403,11 @@ pub function op_return(): Op { return op0("return"); }
 // The conversion this registry was staged for has LANDED: `Op` carries
 // `kind_tag: i32` and no string kind, and every backend dispatch ladder
 // compares ints. Two things still reach kind_id at run time — `op0`, which
-// takes a tag by name, and the ~190 sites that write `kind_id("call_direct")`
-// inline to obtain a constant they then compare a `kind_tag` against. The
-// latter is what makes this function hot (#8258); hoisting those literals to
-// named id constants is what is left of the conversion.
+// takes a tag by name, and the ~175 sites across this file and the IR
+// verifiers that write `kind_id("call_direct")` inline to obtain a constant
+// they then compare a `kind_tag` against. The latter is what makes this
+// function hot (#8258); hoisting those literals to named id constants is what
+// is left of the conversion.
 //
 // Ids are stable and 1-based; 0 is KIND_INVALID (an unknown / not-yet-
 // registered tag), mirroring native's `OpInvalid = iota`.
@@ -1415,12 +1416,11 @@ pub function op_return(): Op { return op0("return"); }
 // mutual inverses by construction; ir_kind_run.fern asserts the round-trip over
 // the whole table as a regression backstop (a new op kind must be added here).
 //
-// Both directions are split into chunks: a single ~233-branch dispatch is an
-// oversized function the self-host backend miscompiles (#2720), and ir.fern is
-// compiled by that backend under the arm64 fixpoint self-compile
-// (asm_arm64.fern imports ./ir). Each chunk stays near render_op's proven-safe
-// size. kind_name splits on ~40-id ranges; kind_id splits on the tag's LENGTH,
-// which makes the same split an index — see the comment above kind_id_l2.
+// kind_name is split into ~40-branch chunks: a single ~197-branch dispatch is
+// an oversized function the self-host backend miscompiles (#2720), and ir.fern
+// is compiled by that backend under the arm64 fixpoint self-compile. Each
+// chunk stays near render_op's proven-safe size. kind_id's length/first-byte
+// dispatch keeps every function far smaller than that.
 
 // kind_count is the number of registered op kinds (ids 1..kind_count()), which
 // must stay DENSE — ir_kind_run sweeps every id in that range and a hole reads
@@ -1429,504 +1429,518 @@ pub function op_return(): Op { return op0("return"); }
 // classifier below has to move with it, or it lands in the wrong emitter.
 pub function kind_count(): i32 { return 196; }
 
-// kind_id_l2 … kind_id_l15 and kind_id_l16p are kind_id's leaves, one per
-// tag LENGTH, each narrowing on the tag's first byte before it compares a
-// string. Splitting on the KEY rather than on the id range is what makes
-// the lookup cheap: 233 tags fall into 105 groups, so a tag meets 2.33 string
-// compares on the average and twelve in the worst one (the four-byte f-ops),
-// where the id-ordered chain this replaced averaged 117 and walked up to 233
-// (#8258).
+// kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
+// an unknown tag). The inverse of kind_name.
 //
-// Both guards are implied by the string compare they sit in front of —
-// `name.len() == 4` and `name[0] == b'f'` are facts about "fadd" — so the
-// index cannot change which arm matches, only how fast it is reached. Ids
-// are stable by contract; see kind_name_4 before allocating one.
+// Two-level dispatch: the tag's length picks a kind_id_lenN, and the first
+// byte picks the branch inside it — a kind_id_lenN_c leaf where three or more
+// tags of that length share the byte, a guarded compare inline otherwise. A
+// lookup is a few integer compares and then at most a dozen string compares
+// against the tags sharing both, rather than a walk of the whole vocabulary.
+// Every tag appears exactly once, under its own length and first byte, and
+// ir_kind_run's sweep catches one filed under the wrong pair
+// (kind_id(kind_name(id)) != id). kind_name stays the ordered vocabulary.
 //
-// ADDING A TAG: one line, in the function for its length, under its first
-// byte. Registering it in kind_name is the other half — ir_kind_run sweeps
-// the pair and the golden fails on a tag added to only one direction.
-function kind_id_l2(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'o' && name == "or") { return 29; }
-    if (c == b'e' && name == "eq") { return 35; }
-    if (c == b'n' && name == "ne") { return 36; }
-    if (c == b'i' && name == "if") { return 154; }
-    if (c == b'b' && name == "br") { return 157; }
-    return 0;
-}
-function kind_id_l3(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'a') {
-        if (name == "add") { return 21; }
-        if (name == "and") { return 28; }
-        return 0;
-    }
-    if (c == b's') {
-        if (name == "sub") { return 22; }
-        if (name == "shl") { return 31; }
-        return 0;
-    }
-    if (c == b'm' && name == "mul") { return 23; }
-    if (c == b'x' && name == "xor") { return 30; }
-    if (c == b'n' && name == "not") { return 34; }
-    if (c == b'f') {
-        if (name == "feq") { return 49; }
-        if (name == "fne") { return 50; }
-        if (name == "flt") { return 51; }
-        if (name == "fle") { return 52; }
-        if (name == "fgt") { return 53; }
-        if (name == "fge") { return 54; }
-        return 0;
-    }
-    if (c == b'e') {
-        if (name == "end") { return 156; }
-        if (name == "env") { return 176; }
-        return 0;
-    }
-    if (c == b'c') {
-        if (name == "clz") { return 219; }
-        if (name == "ctz") { return 220; }
-        return 0;
-    }
-    return 0;
-}
-function kind_id_l4(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'l') {
-        if (name == "lt_s") { return 37; }
-        if (name == "le_s") { return 38; }
-        if (name == "lt_u") { return 41; }
-        if (name == "le_u") { return 42; }
-        if (name == "load") { return 67; }
-        if (name == "loop") { return 153; }
-        return 0;
-    }
-    if (c == b'g') {
-        if (name == "gt_s") { return 39; }
-        if (name == "ge_s") { return 40; }
-        if (name == "gt_u") { return 43; }
-        if (name == "ge_u") { return 44; }
-        return 0;
-    }
-    if (c == b'f') {
-        if (name == "fadd") { return 45; }
-        if (name == "fsub") { return 46; }
-        if (name == "fmul") { return 47; }
-        if (name == "fdiv") { return 48; }
-        if (name == "fneg") { return 55; }
-        if (name == "fabs") { return 56; }
-        if (name == "fexp") { return 62; }
-        if (name == "flog") { return 63; }
-        if (name == "fsin") { return 64; }
-        if (name == "fcos") { return 65; }
-        if (name == "fpow") { return 66; }
-        if (name == "free") { return 78; }
-        return 0;
-    }
-    if (c == b'e') {
-        if (name == "else") { return 155; }
-        if (name == "exit") { return 166; }
-        return 0;
-    }
-    if (c == b'b' && name == "brif") { return 158; }
-    if (c == b'd' && name == "drop") { return 159; }
-    if (c == b's' && name == "stat") { return 175; }
-    if (c == b'a' && name == "args") { return 180; }
-    if (c == b'p' && name == "poll") { return 187; }
-    return 0;
-}
-function kind_id_l5(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'd') {
-        if (name == "div_s") { return 24; }
-        if (name == "div_u") { return 25; }
-        return 0;
-    }
-    if (c == b'r') {
-        if (name == "rem_s") { return 26; }
-        if (name == "rem_u") { return 27; }
-        return 0;
-    }
-    if (c == b's') {
-        if (name == "shr_s") { return 32; }
-        if (name == "shr_u") { return 33; }
-        if (name == "store") { return 68; }
-        return 0;
-    }
-    if (c == b'f') {
-        if (name == "fsqrt") { return 57; }
-        if (name == "fceil") { return 58; }
-        return 0;
-    }
-    if (c == b'a' && name == "alloc") { return 76; }
-    if (c == b'b' && name == "block") { return 152; }
-    if (c == b'l' && name == "lstat") { return 236; }
-    return 0;
-}
-function kind_id_l6(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'f') {
-        if (name == "ffloor") { return 59; }
-        if (name == "ftrunc") { return 60; }
-        if (name == "fround") { return 61; }
-        return 0;
-    }
-    if (c == b'm') {
-        if (name == "memcpy") { return 74; }
-        if (name == "memset") { return 75; }
-        if (name == "memchr") { return 225; }
-        return 0;
-    }
-    if (c == b'i' && name == "isatty") { return 232; }
-    if (c == b'a') {
-        if (name == "arr_rc") { return 91; }
-        if (name == "arg_at") { return 210; }
-        return 0;
-    }
-    if (c == b's' && name == "str_eq") { return 99; }
-    if (c == b'r' && name == "return") { return 160; }
-    if (c == b'n' && name == "now_ns") { return 183; }
-    return 0;
-}
-function kind_id_l7(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'a') {
-        if (name == "arr_get") { return 88; }
-        if (name == "arr_set") { return 89; }
-        if (name == "arr_len") { return 90; }
-        return 0;
-    }
-    if (c == b's') {
-        if (name == "str_len") { return 97; }
-        if (name == "str_cmp") { return 100; }
-        return 0;
-    }
-    if (c == b'o' && name == "opt_tag") { return 122; }
-    if (c == b'm') {
-        if (name == "map_new") { return 124; }
-        if (name == "map_set") { return 125; }
-        if (name == "map_len") { return 126; }
-        if (name == "map_get") { return 127; }
-        if (name == "map_has") { return 128; }
-        return 0;
-    }
-    if (c == b'd' && name == "dyn_box") { return 146; }
-    if (c == b'p' && name == "putchar") { return 165; }
-    if (c == b'r' && name == "rmemchr") { return 234; }
-    return 0;
-}
-function kind_id_l8(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'i') {
-        if (name == "int_wrap") { return 8; }
-        if (name == "int_cast") { return 9; }
-        return 0;
-    }
-    if (c == b'u') {
-        if (name == "u32_wrap") { return 10; }
-        if (name == "udp_send") { return 208; }
-        return 0;
-    }
-    if (c == b'f') {
-        if (name == "f32_bits") { return 14; }
-        if (name == "f64_bits") { return 16; }
-        return 0;
-    }
-    if (c == b'l') {
-        if (name == "load_i32") { return 69; }
-        if (name == "load_i64") { return 70; }
-        if (name == "load_ptr") { return 71; }
-        return 0;
-    }
-    if (c == b'a') {
-        if (name == "alloc_u8") { return 77; }
-        if (name == "arr_make") { return 87; }
-        if (name == "arr_push") { return 92; }
-        return 0;
-    }
-    if (c == b's') {
-        if (name == "str_trim") { return 109; }
-        if (name == "sleep_ms") { return 181; }
-        if (name == "syscall3") { return 204; }
-        if (name == "syscall4") { return 206; }
-        if (name == "syscall5") { return 228; }
-        return 0;
-    }
-    if (c == b'o') {
-        if (name == "opt_make") { return 120; }
-        if (name == "opt_none") { return 121; }
-        return 0;
-    }
-    if (c == b'm') {
-        if (name == "map_keys") { return 131; }
-        if (name == "map_iter") { return 133; }
-        return 0;
-    }
-    if (c == b'r') {
-        if (name == "read_int") { return 167; }
-        if (name == "read_dir") { return 171; }
-        if (name == "raw_addr") { return 223; }
-        return 0;
-    }
-    if (c == b't') {
-        if (name == "temp_dir") { return 174; }
-        if (name == "timer_fd") { return 188; }
-        if (name == "tcp_send") { return 194; }
-        if (name == "tcp_recv") { return 195; }
-        return 0;
-    }
-    if (c == b'p' && name == "popcount") { return 221; }
-    return 0;
-}
-function kind_id_l9(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'c') {
-        if (name == "const_i32") { return 1; }
-        if (name == "const_i64") { return 3; }
-        if (name == "const_f64") { return 4; }
-        if (name == "const_str") { return 5; }
-        return 0;
-    }
-    if (c == b't') {
-        if (name == "tee_local") { return 20; }
-        if (name == "tuple_get") { return 143; }
-        if (name == "tuple_set") { return 144; }
-        if (name == "tcp_close") { return 196; }
-        return 0;
-    }
-    if (c == b's') {
-        if (name == "store_i32") { return 72; }
-        if (name == "store_ptr") { return 73; }
-        if (name == "store_i64") { return 199; }
-        if (name == "str_index") { return 101; }
-        if (name == "str_slice") { return 102; }
-        if (name == "str_bytes") { return 104; }
-        if (name == "str_split") { return 105; }
-        if (name == "str_lines") { return 113; }
-        return 0;
-    }
-    if (c == b'p') {
-        if (name == "ptr_width") { return 79; }
-        if (name == "print_int") { return 161; }
-        if (name == "print_i64") { return 162; }
-        if (name == "print_str") { return 163; }
-        if (name == "proc_fork") { return 211; }
-        if (name == "proc_exec") { return 213; }
-        return 0;
-    }
-    if (c == b'h' && name == "heap_mark") { return 229; }
-    if (c == b'r') {
-        if (name == "raw_alloc") { return 81; }
-        if (name == "raw_load8") { return 83; }
-        if (name == "read_line") { return 168; }
-        if (name == "read_file") { return 169; }
-        return 0;
-    }
-    if (c == b'a') {
-        if (name == "arr_slice") { return 96; }
-        if (name == "ascii_run") { return 227; }
-        return 0;
-    }
-    if (c == b'w' && name == "wasm_poll") { return 192; }
-    if (c == b'o' && name == "open_file") { return 203; }
-    return 0;
-}
-function kind_id_l10(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'c') {
-        if (name == "const_func") { return 6; }
-        if (name == "count_byte") { return 235; }
-        return 0;
-    }
-    if (c == b'i') {
-        if (name == "int_extend") { return 7; }
-        if (name == "i32_to_f64") { return 11; }
-        return 0;
-    }
-    if (c == b'f') {
-        if (name == "f64_to_i32") { return 12; }
-        if (name == "f64_to_i64") { return 13; }
-        return 0;
-    }
-    if (c == b'l' && name == "load_local") { return 18; }
-    if (c == b'r') {
-        if (name == "raw_store8") { return 82; }
-        if (name == "raw_string") { return 86; }
-        if (name == "read_chunk") { return 178; }
-        if (name == "random_i32") { return 186; }
-        return 0;
-    }
-    if (c == b's') {
-        if (name == "str_concat") { return 98; }
-        if (name == "str_repeat") { return 108; }
-        if (name == "struct_get") { return 139; }
-        if (name == "struct_set") { return 140; }
-        if (name == "subprocess") { return 177; }
-        return 0;
-    }
-    if (c == b'm') {
-        if (name == "map_get_or") { return 129; }
-        if (name == "map_delete") { return 130; }
-        if (name == "map_values") { return 132; }
-        return 0;
-    }
-    if (c == b't') {
-        if (name == "tuple_make") { return 142; }
-        if (name == "tcp_listen") { return 200; }
-        if (name == "tcp_accept") { return 201; }
-        return 0;
-    }
-    if (c == b'v' && name == "variant_is") { return 145; }
-    if (c == b'e' && name == "eprint_str") { return 164; }
-    if (c == b'w') {
-        if (name == "write_file") { return 170; }
-        if (name == "wasm_block") { return 191; }
-        return 0;
-    }
-    return 0;
-}
-function kind_id_l11(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b's') {
-        if (name == "store_local") { return 19; }
-        if (name == "str_reverse") { return 110; }
-        if (name == "str_replace") { return 111; }
-        if (name == "strbuf_take") { return 119; }
-        if (name == "struct_make") { return 138; }
-        if (name == "struct_copy") { return 198; }
-        return 0;
-    }
-    if (c == b'o' && name == "opt_payload") { return 123; }
-    if (c == b'm' && name == "mapiter_key") { return 135; }
-    if (c == b'c' && name == "call_direct") { return 149; }
-    if (c == b'r') {
-        if (name == "remove_file") { return 173; }
-        if (name == "raw_scratch") { return 205; }
-        if (name == "raw_environ") { return 207; }
-        if (name == "raw_arr_box") { return 224; }
-        return 0;
-    }
-    if (c == b'n' && name == "now_unix_ms") { return 184; }
-    if (c == b't' && name == "tcp_connect") { return 193; }
-    return 0;
-}
-function kind_id_l12(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'r') {
-        if (name == "raw_load_ptr") { return 85; }
-        if (name == "reader_close") { return 179; }
-        if (name == "random_bytes") { return 185; }
-        return 0;
-    }
-    if (c == b'a') {
-        if (name == "arr_push_i64") { return 94; }
-        if (name == "arr_push_f64") { return 95; }
-        return 0;
-    }
-    if (c == b's') {
-        if (name == "str_to_upper") { return 106; }
-        if (name == "str_to_lower") { return 107; }
-        if (name == "str_index_of") { return 116; }
-        if (name == "strbuf_reset") { return 117; }
-        return 0;
-    }
-    if (c == b'd') {
-        if (name == "dyn_dispatch") { return 147; }
-        if (name == "dyn_downcast") { return 148; }
-        return 0;
-    }
-    if (c == b'm' && name == "monotonic_ns") { return 182; }
-    if (c == b't' && name == "tcp_pollable") { return 112; }
-    if (c == b'w' && name == "writer_write") { return 202; }
-    if (c == b'p' && name == "proc_waitpid") { return 212; }
-    if (c == b'c' && name == "const_struct") { return 218; }
-    return 0;
-}
-function kind_id_l13(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'f') {
-        if (name == "f32_from_bits") { return 15; }
-        if (name == "f64_from_bits") { return 17; }
-        return 0;
-    }
-    if (c == b'r' && name == "raw_store_ptr") { return 84; }
-    if (c == b's') {
-        if (name == "str_ends_with") { return 115; }
-        if (name == "strbuf_append") { return 118; }
-        return 0;
-    }
-    if (c == b'm') {
-        if (name == "mapiter_value") { return 136; }
-        if (name == "map_hash_seed") { return 222; }
-        return 0;
-    }
-    if (c == b'c' && name == "call_indirect") { return 150; }
-    return 0;
-}
-function kind_id_l14(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'c') {
-        if (name == "const_i32_text") { return 2; }
-        if (name == "create_dir_all") { return 231; }
-        return 0;
-    }
-    if (c == b'a' && name == "arr_push_owned") { return 93; }
-    if (c == b's' && name == "str_from_bytes") { return 103; }
-    if (c == b'r') {
-        if (name == "remove_dir_all") { return 172; }
-        if (name == "read_all_stdin") { return 209; }
-        return 0;
-    }
-    return 0;
-}
-function kind_id_l15(name: string): i32 {
-    var c: u8 = name[0];
-    if (c == b'h') {
-        if (name == "heap_bump_bytes") { return 80; }
-        if (name == "heap_release_to") { return 230; }
-        return 0;
-    }
-    if (c == b's' && name == "str_starts_with") { return 114; }
-    if (c == b'm' && name == "mapiter_advance") { return 137; }
-    if (c == b'r' && name == "read_file_bytes") { return 233; }
-    if (c == b'w' && name == "write_file_exec") { return 226; }
-    return 0;
-}
-// kind_id_l16p is the leaf for every tag of 16 bytes or more: seven of them,
-// too few to be worth a function each, so it compares them flat. Lengths
-// with no tag at all (17, 20, past 21) reach it and fall through to 0.
-function kind_id_l16p(name: string): i32 {
-    if (name == "mapiter_has_next") { return 134; }
-    if (name == "struct_set_shape") { return 141; }
-    if (name == "wasm_pollable_drop") { return 190; }
-    if (name == "call_closure_direct") { return 151; }
-    if (name == "wasm_timer_pollable") { return 189; }
-    if (name == "arr_push_shared_count") { return 216; }
-    if (name == "arr_push_shared_bytes") { return 217; }
+// tcp_pollable is 112, not 197: it took the slot str_chars freed (#7231). The
+// 1..kind_count() sweep requires the id space to stay dense, and moving the
+// last entry into the hole beats renumbering every id above it.
+//
+// Extension tags beyond kind_count() (struct_copy=198 … lstat=236): not in the
+// 1..kind_count() bijection sweep (ir_kind_run sweeps them separately by
+// name), but nameable so module_emits_op_cached / the backends see them.
+// NEXT FREE EXTENSION ID: 237 (lstat took 236 while this line still said 236
+// was free — that is the drift the paragraph below is about, so re-grep
+// rather than trusting it).
+// ADDING AN EXTENSION TAG: take the next id here AND register it in
+// kind_name + ir_kind_run's two sweep lists, then re-grep the whole tree
+// for the number you took. Two branches that each claim "the next free
+// id" MERGE CLEANLY — memchr and raw_arr_box both landed on 224, and the
+// merge conflicted only this file and the sweep lists. The three backends
+// auto-merged into two `kind_tag == 224` arms apiece, first-one-wins,
+// which builds and silently aliases the two ops. The registry golden is
+// the only gate that catches it, and only if BOTH names survive the
+// merge. It has now happened TWICE on the same pair of branches:
+// write_file_exec moved 224 -> 225 -> 226 as raw_arr_box then memchr
+// landed underneath it.
+pub function kind_id(name: string): i32 {
+    var n: i32 = name.len();
+    if (n == 2) { return kind_id_len2(name); }
+    if (n == 3) { return kind_id_len3(name); }
+    if (n == 4) { return kind_id_len4(name); }
+    if (n == 5) { return kind_id_len5(name); }
+    if (n == 6) { return kind_id_len6(name); }
+    if (n == 7) { return kind_id_len7(name); }
+    if (n == 8) { return kind_id_len8(name); }
+    if (n == 9) { return kind_id_len9(name); }
+    if (n == 10) { return kind_id_len10(name); }
+    if (n == 11) { return kind_id_len11(name); }
+    if (n == 12) { return kind_id_len12(name); }
+    if (n == 13) { return kind_id_len13(name); }
+    if (n == 14) { return kind_id_len14(name); }
+    if (n == 15) { return kind_id_len15(name); }
+    if (n == 16) { return kind_id_len16(name); }
+    if (n == 18) { return kind_id_len18(name); }
+    if (n == 19) { return kind_id_len19(name); }
+    if (n == 21) { return kind_id_len21(name); }
     return 0;
 }
 
-// kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
-// an unknown tag). The inverse of kind_name. It routes on the tag's length to
-// the leaf that owns it; a length no tag has returns 0.
-pub function kind_id(name: string): i32 {
-    var n: i32 = name.len();
-    if (n < 2) { return 0; }
-    if (n == 2) { return kind_id_l2(name); }
-    if (n == 3) { return kind_id_l3(name); }
-    if (n == 4) { return kind_id_l4(name); }
-    if (n == 5) { return kind_id_l5(name); }
-    if (n == 6) { return kind_id_l6(name); }
-    if (n == 7) { return kind_id_l7(name); }
-    if (n == 8) { return kind_id_l8(name); }
-    if (n == 9) { return kind_id_l9(name); }
-    if (n == 10) { return kind_id_l10(name); }
-    if (n == 11) { return kind_id_l11(name); }
-    if (n == 12) { return kind_id_l12(name); }
-    if (n == 13) { return kind_id_l13(name); }
-    if (n == 14) { return kind_id_l14(name); }
-    if (n == 15) { return kind_id_l15(name); }
-    return kind_id_l16p(name);
+function kind_id_len2(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'b' && name == "br") { return 157; }
+    if (c == b'e' && name == "eq") { return 35; }
+    if (c == b'i' && name == "if") { return 154; }
+    if (c == b'n' && name == "ne") { return 36; }
+    if (c == b'o' && name == "or") { return 29; }
+    return 0;
+}
+
+function kind_id_len3(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'a' && name == "add") { return 21; }
+    if (c == b'a' && name == "and") { return 28; }
+    if (c == b'c' && name == "clz") { return 219; }
+    if (c == b'c' && name == "ctz") { return 220; }
+    if (c == b'e' && name == "end") { return 156; }
+    if (c == b'e' && name == "env") { return 176; }
+    if (c == b'f') { return kind_id_len3_f(name); }
+    if (c == b'm' && name == "mul") { return 23; }
+    if (c == b'n' && name == "not") { return 34; }
+    if (c == b's' && name == "sub") { return 22; }
+    if (c == b's' && name == "shl") { return 31; }
+    if (c == b'x' && name == "xor") { return 30; }
+    return 0;
+}
+
+function kind_id_len3_f(name: string): i32 {
+    if (name == "feq") { return 49; }
+    if (name == "fne") { return 50; }
+    if (name == "flt") { return 51; }
+    if (name == "fle") { return 52; }
+    if (name == "fgt") { return 53; }
+    if (name == "fge") { return 54; }
+    return 0;
+}
+
+function kind_id_len4(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'a' && name == "args") { return 180; }
+    if (c == b'b' && name == "brif") { return 158; }
+    if (c == b'd' && name == "drop") { return 159; }
+    if (c == b'e' && name == "else") { return 155; }
+    if (c == b'e' && name == "exit") { return 166; }
+    if (c == b'f') { return kind_id_len4_f(name); }
+    if (c == b'g') { return kind_id_len4_g(name); }
+    if (c == b'l') { return kind_id_len4_l(name); }
+    if (c == b'p' && name == "poll") { return 187; }
+    if (c == b's' && name == "stat") { return 175; }
+    return 0;
+}
+
+function kind_id_len4_f(name: string): i32 {
+    if (name == "fadd") { return 45; }
+    if (name == "fsub") { return 46; }
+    if (name == "fmul") { return 47; }
+    if (name == "fdiv") { return 48; }
+    if (name == "fneg") { return 55; }
+    if (name == "fabs") { return 56; }
+    if (name == "fexp") { return 62; }
+    if (name == "flog") { return 63; }
+    if (name == "fsin") { return 64; }
+    if (name == "fcos") { return 65; }
+    if (name == "fpow") { return 66; }
+    if (name == "free") { return 78; }
+    return 0;
+}
+
+function kind_id_len4_g(name: string): i32 {
+    if (name == "gt_s") { return 39; }
+    if (name == "ge_s") { return 40; }
+    if (name == "gt_u") { return 43; }
+    if (name == "ge_u") { return 44; }
+    return 0;
+}
+
+function kind_id_len4_l(name: string): i32 {
+    if (name == "lt_s") { return 37; }
+    if (name == "le_s") { return 38; }
+    if (name == "lt_u") { return 41; }
+    if (name == "le_u") { return 42; }
+    if (name == "load") { return 67; }
+    if (name == "loop") { return 153; }
+    return 0;
+}
+
+function kind_id_len5(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'a' && name == "alloc") { return 76; }
+    if (c == b'b' && name == "block") { return 152; }
+    if (c == b'd' && name == "div_s") { return 24; }
+    if (c == b'd' && name == "div_u") { return 25; }
+    if (c == b'f' && name == "fsqrt") { return 57; }
+    if (c == b'f' && name == "fceil") { return 58; }
+    if (c == b'l' && name == "lstat") { return 236; }
+    if (c == b'r' && name == "rem_s") { return 26; }
+    if (c == b'r' && name == "rem_u") { return 27; }
+    if (c == b's') { return kind_id_len5_s(name); }
+    return 0;
+}
+
+function kind_id_len5_s(name: string): i32 {
+    if (name == "shr_s") { return 32; }
+    if (name == "shr_u") { return 33; }
+    if (name == "store") { return 68; }
+    return 0;
+}
+
+function kind_id_len6(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'a' && name == "arr_rc") { return 91; }
+    if (c == b'a' && name == "arg_at") { return 210; }
+    if (c == b'f') { return kind_id_len6_f(name); }
+    if (c == b'i' && name == "isatty") { return 232; }
+    if (c == b'm') { return kind_id_len6_m(name); }
+    if (c == b'n' && name == "now_ns") { return 183; }
+    if (c == b'r' && name == "return") { return 160; }
+    if (c == b's' && name == "str_eq") { return 99; }
+    return 0;
+}
+
+function kind_id_len6_f(name: string): i32 {
+    if (name == "ffloor") { return 59; }
+    if (name == "ftrunc") { return 60; }
+    if (name == "fround") { return 61; }
+    return 0;
+}
+
+function kind_id_len6_m(name: string): i32 {
+    if (name == "memcpy") { return 74; }
+    if (name == "memset") { return 75; }
+    if (name == "memchr") { return 225; }
+    return 0;
+}
+
+function kind_id_len7(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'a') { return kind_id_len7_a(name); }
+    if (c == b'd' && name == "dyn_box") { return 146; }
+    if (c == b'm') { return kind_id_len7_m(name); }
+    if (c == b'o' && name == "opt_tag") { return 122; }
+    if (c == b'p' && name == "putchar") { return 165; }
+    if (c == b'r' && name == "rmemchr") { return 234; }
+    if (c == b's' && name == "str_len") { return 97; }
+    if (c == b's' && name == "str_cmp") { return 100; }
+    return 0;
+}
+
+function kind_id_len7_a(name: string): i32 {
+    if (name == "arr_get") { return 88; }
+    if (name == "arr_set") { return 89; }
+    if (name == "arr_len") { return 90; }
+    return 0;
+}
+
+function kind_id_len7_m(name: string): i32 {
+    if (name == "map_new") { return 124; }
+    if (name == "map_set") { return 125; }
+    if (name == "map_len") { return 126; }
+    if (name == "map_get") { return 127; }
+    if (name == "map_has") { return 128; }
+    return 0;
+}
+
+function kind_id_len8(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'a') { return kind_id_len8_a(name); }
+    if (c == b'f' && name == "f32_bits") { return 14; }
+    if (c == b'f' && name == "f64_bits") { return 16; }
+    if (c == b'i' && name == "int_wrap") { return 8; }
+    if (c == b'i' && name == "int_cast") { return 9; }
+    if (c == b'l') { return kind_id_len8_l(name); }
+    if (c == b'm' && name == "map_keys") { return 131; }
+    if (c == b'm' && name == "map_iter") { return 133; }
+    if (c == b'o' && name == "opt_make") { return 120; }
+    if (c == b'o' && name == "opt_none") { return 121; }
+    if (c == b'p' && name == "popcount") { return 221; }
+    if (c == b'r') { return kind_id_len8_r(name); }
+    if (c == b's') { return kind_id_len8_s(name); }
+    if (c == b't') { return kind_id_len8_t(name); }
+    if (c == b'u' && name == "u32_wrap") { return 10; }
+    if (c == b'u' && name == "udp_send") { return 208; }
+    return 0;
+}
+
+function kind_id_len8_a(name: string): i32 {
+    if (name == "alloc_u8") { return 77; }
+    if (name == "arr_make") { return 87; }
+    if (name == "arr_push") { return 92; }
+    return 0;
+}
+
+function kind_id_len8_l(name: string): i32 {
+    if (name == "load_i32") { return 69; }
+    if (name == "load_i64") { return 70; }
+    if (name == "load_ptr") { return 71; }
+    return 0;
+}
+
+function kind_id_len8_r(name: string): i32 {
+    if (name == "read_int") { return 167; }
+    if (name == "read_dir") { return 171; }
+    if (name == "raw_addr") { return 223; }
+    return 0;
+}
+
+function kind_id_len8_s(name: string): i32 {
+    if (name == "str_trim") { return 109; }
+    if (name == "sleep_ms") { return 181; }
+    if (name == "syscall3") { return 204; }
+    if (name == "syscall4") { return 206; }
+    if (name == "syscall5") { return 228; }
+    return 0;
+}
+
+function kind_id_len8_t(name: string): i32 {
+    if (name == "temp_dir") { return 174; }
+    if (name == "timer_fd") { return 188; }
+    if (name == "tcp_send") { return 194; }
+    if (name == "tcp_recv") { return 195; }
+    return 0;
+}
+
+function kind_id_len9(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'a' && name == "arr_slice") { return 96; }
+    if (c == b'a' && name == "ascii_run") { return 227; }
+    if (c == b'c') { return kind_id_len9_c(name); }
+    if (c == b'h' && name == "heap_mark") { return 229; }
+    if (c == b'o' && name == "open_file") { return 203; }
+    if (c == b'p') { return kind_id_len9_p(name); }
+    if (c == b'r') { return kind_id_len9_r(name); }
+    if (c == b's') { return kind_id_len9_s(name); }
+    if (c == b't') { return kind_id_len9_t(name); }
+    if (c == b'w' && name == "wasm_poll") { return 192; }
+    return 0;
+}
+
+function kind_id_len9_c(name: string): i32 {
+    if (name == "const_i32") { return 1; }
+    if (name == "const_i64") { return 3; }
+    if (name == "const_f64") { return 4; }
+    if (name == "const_str") { return 5; }
+    return 0;
+}
+
+function kind_id_len9_p(name: string): i32 {
+    if (name == "ptr_width") { return 79; }
+    if (name == "print_int") { return 161; }
+    if (name == "print_i64") { return 162; }
+    if (name == "print_str") { return 163; }
+    if (name == "proc_fork") { return 211; }
+    if (name == "proc_exec") { return 213; }
+    return 0;
+}
+
+function kind_id_len9_r(name: string): i32 {
+    if (name == "raw_alloc") { return 81; }
+    if (name == "raw_load8") { return 83; }
+    if (name == "read_line") { return 168; }
+    if (name == "read_file") { return 169; }
+    return 0;
+}
+
+function kind_id_len9_s(name: string): i32 {
+    if (name == "store_i32") { return 72; }
+    if (name == "store_ptr") { return 73; }
+    if (name == "store_i64") { return 199; }
+    if (name == "str_index") { return 101; }
+    if (name == "str_slice") { return 102; }
+    if (name == "str_bytes") { return 104; }
+    if (name == "str_split") { return 105; }
+    if (name == "str_lines") { return 113; }
+    return 0;
+}
+
+function kind_id_len9_t(name: string): i32 {
+    if (name == "tee_local") { return 20; }
+    if (name == "tuple_get") { return 143; }
+    if (name == "tuple_set") { return 144; }
+    if (name == "tcp_close") { return 196; }
+    return 0;
+}
+
+function kind_id_len10(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'c' && name == "const_func") { return 6; }
+    if (c == b'c' && name == "count_byte") { return 235; }
+    if (c == b'e' && name == "eprint_str") { return 164; }
+    if (c == b'f' && name == "f64_to_i32") { return 12; }
+    if (c == b'f' && name == "f64_to_i64") { return 13; }
+    if (c == b'i' && name == "int_extend") { return 7; }
+    if (c == b'i' && name == "i32_to_f64") { return 11; }
+    if (c == b'l' && name == "load_local") { return 18; }
+    if (c == b'm') { return kind_id_len10_m(name); }
+    if (c == b'r') { return kind_id_len10_r(name); }
+    if (c == b's') { return kind_id_len10_s(name); }
+    if (c == b't') { return kind_id_len10_t(name); }
+    if (c == b'v' && name == "variant_is") { return 145; }
+    if (c == b'w' && name == "write_file") { return 170; }
+    if (c == b'w' && name == "wasm_block") { return 191; }
+    return 0;
+}
+
+function kind_id_len10_m(name: string): i32 {
+    if (name == "map_get_or") { return 129; }
+    if (name == "map_delete") { return 130; }
+    if (name == "map_values") { return 132; }
+    return 0;
+}
+
+function kind_id_len10_r(name: string): i32 {
+    if (name == "raw_store8") { return 82; }
+    if (name == "raw_string") { return 86; }
+    if (name == "read_chunk") { return 178; }
+    if (name == "random_i32") { return 186; }
+    return 0;
+}
+
+function kind_id_len10_s(name: string): i32 {
+    if (name == "str_concat") { return 98; }
+    if (name == "str_repeat") { return 108; }
+    if (name == "struct_get") { return 139; }
+    if (name == "struct_set") { return 140; }
+    if (name == "subprocess") { return 177; }
+    return 0;
+}
+
+function kind_id_len10_t(name: string): i32 {
+    if (name == "tuple_make") { return 142; }
+    if (name == "tcp_listen") { return 200; }
+    if (name == "tcp_accept") { return 201; }
+    return 0;
+}
+
+function kind_id_len11(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'c' && name == "call_direct") { return 149; }
+    if (c == b'm' && name == "mapiter_key") { return 135; }
+    if (c == b'n' && name == "now_unix_ms") { return 184; }
+    if (c == b'o' && name == "opt_payload") { return 123; }
+    if (c == b'r') { return kind_id_len11_r(name); }
+    if (c == b's') { return kind_id_len11_s(name); }
+    if (c == b't' && name == "tcp_connect") { return 193; }
+    return 0;
+}
+
+function kind_id_len11_r(name: string): i32 {
+    if (name == "remove_file") { return 173; }
+    if (name == "raw_scratch") { return 205; }
+    if (name == "raw_environ") { return 207; }
+    if (name == "raw_arr_box") { return 224; }
+    return 0;
+}
+
+function kind_id_len11_s(name: string): i32 {
+    if (name == "store_local") { return 19; }
+    if (name == "str_reverse") { return 110; }
+    if (name == "str_replace") { return 111; }
+    if (name == "strbuf_take") { return 119; }
+    if (name == "struct_make") { return 138; }
+    if (name == "struct_copy") { return 198; }
+    return 0;
+}
+
+function kind_id_len12(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'a' && name == "arr_push_i64") { return 94; }
+    if (c == b'a' && name == "arr_push_f64") { return 95; }
+    if (c == b'c' && name == "const_struct") { return 218; }
+    if (c == b'd' && name == "dyn_dispatch") { return 147; }
+    if (c == b'd' && name == "dyn_downcast") { return 148; }
+    if (c == b'm' && name == "monotonic_ns") { return 182; }
+    if (c == b'p' && name == "proc_waitpid") { return 212; }
+    if (c == b'r') { return kind_id_len12_r(name); }
+    if (c == b's') { return kind_id_len12_s(name); }
+    if (c == b't' && name == "tcp_pollable") { return 112; }
+    if (c == b'w' && name == "writer_write") { return 202; }
+    return 0;
+}
+
+function kind_id_len12_r(name: string): i32 {
+    if (name == "raw_load_ptr") { return 85; }
+    if (name == "reader_close") { return 179; }
+    if (name == "random_bytes") { return 185; }
+    return 0;
+}
+
+function kind_id_len12_s(name: string): i32 {
+    if (name == "str_to_upper") { return 106; }
+    if (name == "str_to_lower") { return 107; }
+    if (name == "str_index_of") { return 116; }
+    if (name == "strbuf_reset") { return 117; }
+    return 0;
+}
+
+function kind_id_len13(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'c' && name == "call_indirect") { return 150; }
+    if (c == b'f' && name == "f32_from_bits") { return 15; }
+    if (c == b'f' && name == "f64_from_bits") { return 17; }
+    if (c == b'm' && name == "mapiter_value") { return 136; }
+    if (c == b'm' && name == "map_hash_seed") { return 222; }
+    if (c == b'r' && name == "raw_store_ptr") { return 84; }
+    if (c == b's' && name == "str_ends_with") { return 115; }
+    if (c == b's' && name == "strbuf_append") { return 118; }
+    return 0;
+}
+
+function kind_id_len14(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'a' && name == "arr_push_owned") { return 93; }
+    if (c == b'c' && name == "const_i32_text") { return 2; }
+    if (c == b'c' && name == "create_dir_all") { return 231; }
+    if (c == b'r' && name == "remove_dir_all") { return 172; }
+    if (c == b'r' && name == "read_all_stdin") { return 209; }
+    if (c == b's' && name == "str_from_bytes") { return 103; }
+    return 0;
+}
+
+function kind_id_len15(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'h' && name == "heap_bump_bytes") { return 80; }
+    if (c == b'h' && name == "heap_release_to") { return 230; }
+    if (c == b'm' && name == "mapiter_advance") { return 137; }
+    if (c == b'r' && name == "read_file_bytes") { return 233; }
+    if (c == b's' && name == "str_starts_with") { return 114; }
+    if (c == b'w' && name == "write_file_exec") { return 226; }
+    return 0;
+}
+
+function kind_id_len16(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'm' && name == "mapiter_has_next") { return 134; }
+    if (c == b's' && name == "struct_set_shape") { return 141; }
+    return 0;
+}
+
+function kind_id_len18(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'w' && name == "wasm_pollable_drop") { return 190; }
+    return 0;
+}
+
+function kind_id_len19(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'c' && name == "call_closure_direct") { return 151; }
+    if (c == b'w' && name == "wasm_timer_pollable") { return 189; }
+    return 0;
+}
+
+function kind_id_len21(name: string): i32 {
+    var c: u8 = name[0];
+    if (c == b'a' && name == "arr_push_shared_count") { return 216; }
+    if (c == b'a' && name == "arr_push_shared_bytes") { return 217; }
+    return 0;
 }
 
 function kind_name_0(id: i32): string {
@@ -2047,9 +2061,6 @@ function kind_name_2(id: i32): string {
     if (id == 109) { return "str_trim"; }
     if (id == 110) { return "str_reverse"; }
     if (id == 111) { return "str_replace"; }
-    // 112, not 197: it took the slot str_chars freed (#7231). The
-    // 1..kind_count() sweep requires the id space to stay dense, and moving the
-    // last entry into the hole beats renumbering every id above it.
     if (id == 112) { return "tcp_pollable"; }
     if (id == 113) { return "str_lines"; }
     if (id == 114) { return "str_starts_with"; }
@@ -2143,10 +2154,6 @@ function kind_name_4(id: i32): string {
     if (id == 194) { return "tcp_send"; }
     if (id == 195) { return "tcp_recv"; }
     if (id == 196) { return "tcp_close"; }
-    // Extension tags beyond kind_count() (struct_copy=198 / store_i64=199 and
-    // the server-half tcp ops, #4371). Not in the 1..kind_count() bijection
-    // sweep (ir_kind_run sweeps them separately by name), but nameable so
-    // module_emits_op_cached / the backends see them.
     if (id == 198) { return "struct_copy"; }
     if (id == 199) { return "store_i64"; }
     if (id == 200) { return "tcp_listen"; }
@@ -2157,21 +2164,15 @@ function kind_name_4(id: i32): string {
     if (id == 205) { return "raw_scratch"; }
     if (id == 206) { return "syscall4"; }
     if (id == 207) { return "raw_environ"; }
-    // udp_send(host, port, data): one-shot fire-and-forget datagram (#4375).
     if (id == 208) { return "udp_send"; }
     if (id == 209) { return "read_all_stdin"; }
     if (id == 210) { return "arg_at"; }
-    // Crash-only supervision (#5686): fork / reap.
     if (id == 211) { return "proc_fork"; }
     if (id == 212) { return "proc_waitpid"; }
     if (id == 213) { return "proc_exec"; }
     if (id == 216) { return "arr_push_shared_count"; }
     if (id == 217) { return "arr_push_shared_bytes"; }
-    // Static aggregate constant (#6149) — struct_make with every field a
-    // compile-time scalar literal, placed in data rather than allocated.
     if (id == 218) { return "const_struct"; }
-    // Bit-counting intrinsics (#6197). One op each, `width` (32/64) picking
-    // the operand width; every one produces an i32 count.
     if (id == 219) { return "clz"; }
     if (id == 220) { return "ctz"; }
     if (id == 221) { return "popcount"; }
@@ -2188,21 +2189,6 @@ function kind_name_4(id: i32): string {
     if (id == 230) { return "heap_release_to"; }
     if (id == 231) { return "create_dir_all"; }
     if (id == 232) { return "isatty"; }
-    // NEXT FREE EXTENSION ID: 237 (197, 214 and 215 are free too, but the
-    // sweep reads a run, so take the top). This line said 236 while lstat
-    // already held it, and 233 while read_file_bytes held that — it is the
-    // drift the paragraph below is about, so re-grep rather than trusting it.
-    // ADDING AN EXTENSION TAG: take the next id here AND register it in
-    // kind_id + ir_kind_run's two sweep lists, then re-grep the whole tree
-    // for the number you took. Two branches that each claim "the next free
-    // id" MERGE CLEANLY — memchr and raw_arr_box both landed on 224, and git
-    // conflicted only this file and the sweep lists. The three backends
-    // auto-merged into two `kind_tag == 224` arms apiece, first-one-wins,
-    // which builds and silently aliases the two ops. The registry golden is
-    // the only gate that catches it, and only if BOTH names survive the
-    // merge. It has now happened TWICE on the same pair of branches:
-    // write_file_exec moved 224 -> 225 -> 226 as raw_arr_box then memchr
-    // landed underneath it.
     return "invalid";
 }
 
@@ -2776,6 +2762,117 @@ function log2_i32(n: i32): i32 {
     return r;
 }
 
+// ---- magic-number reciprocals (native internal/ir/magic.go) --------------
+//
+// The constants that turn a division by a compile-time constant into a
+// multiply-high plus a shift: Granlund–Montgomery as in Hacker's Delight
+// figures 10-1 (signed) and 10-3 (unsigned). Both search for the smallest p
+// at which the rounded-up 2^p/d reproduces `x / d` exactly for every dividend
+// at the operand width — a search, not an approximation with a tolerance.
+//
+// Only the 32-bit families exist, here and natively: a backend gets the high
+// half from a 32x32 multiply, and there is no cheap high half of a 64x64
+// product on x86-64. Which backend uses them is instruction selection
+// (asm_ir.fern's ir_div_const); only the derivation is shared.
+
+// MagicS32 is the signed 32-bit reciprocal for d. The quotient is
+//
+//     q  = mulhi_s(x, m)          // (i64)x * m >> 32
+//     q += x    if add            // m's sign disagrees with d's
+//     q -= x    if sub
+//     q >>= s                     // arithmetic
+//     q += (unsigned)q >> 31      // +1 for a negative quotient: round toward zero
+//
+// add and sub are never both set. d must not be 0, ±1, ±2^k or INT_MIN.
+pub struct MagicS32 {
+    m: i32,
+    s: i32,
+    add: boolean,
+    sub: boolean,
+}
+
+pub function derive_magic_s32(d: i32): MagicS32 {
+    var ad: u32 = d as u32;
+    if (d < 0) { ad = (0 - d) as u32; }
+    var two31: u32 = 2147483648u32;
+    // t = 2^31 + (sign bit of d): the bound on |nc| is one larger for a
+    // negative divisor, because the negative side of the range is one wider.
+    var t: u32 = two31 + ((d as u32) >> 31);
+    var anc: u32 = t - 1u32 - t % ad;   // |nc|, the largest |x| with x % d == d-1
+    var p: i32 = 31;
+    var q1: u32 = two31 / anc;
+    var r1: u32 = two31 - q1 * anc;
+    var q2: u32 = two31 / ad;
+    var r2: u32 = two31 - q2 * ad;
+    var searching: boolean = true;
+    while (searching) {
+        p = p + 1;
+        q1 = q1 * 2u32;
+        r1 = r1 * 2u32;
+        if (r1 >= anc) { q1 = q1 + 1u32; r1 = r1 - anc; }
+        q2 = q2 * 2u32;
+        r2 = r2 * 2u32;
+        if (r2 >= ad) { q2 = q2 + 1u32; r2 = r2 - ad; }
+        var delta: u32 = ad - r2;
+        if (q1 > delta || (q1 == delta && r1 != 0u32)) { searching = false; }
+    }
+    var m: i32 = (q2 + 1u32) as i32;
+    if (d < 0) { m = 0 - m; }
+    // A magic whose sign disagrees with the divisor's has wrapped past 2^31;
+    // adding (or subtracting) the dividend back recovers the product's true
+    // high half.
+    return MagicS32 { m: m, s: p - 32, add: d > 0 && m < 0, sub: d < 0 && m > 0 };
+}
+
+// MagicU32 is the unsigned 32-bit reciprocal for d. The quotient is
+//
+//     h = mulhi_u(x, m)                        // (u64)x * m >> 32
+//     q = h >> s                               if !add
+//     q = (((x - h) >>u 1) + h) >> (s - 1)     if add
+//
+// add marks a magic that needs 33 bits. Rather than widen m, the shift-average
+// form computes (x + h) / 2 without the carry out of bit 31 that a plain add
+// would lose. d must not be 0, 1 or a power of two.
+pub struct MagicU32 {
+    m: u32,
+    s: i32,
+    add: boolean,
+}
+
+pub function derive_magic_u32(d: u32): MagicU32 {
+    var two31: u32 = 2147483648u32;
+    var nc: u32 = 0u32 - 1u32 - (0u32 - d) % d;
+    var p: i32 = 31;
+    var q1: u32 = two31 / nc;
+    var r1: u32 = two31 - q1 * nc;
+    var q2: u32 = (two31 - 1u32) / d;
+    var r2: u32 = (two31 - 1u32) - q2 * d;
+    var add: boolean = false;
+    var searching: boolean = true;
+    while (searching) {
+        p = p + 1;
+        if (r1 >= nc - r1) {
+            q1 = q1 * 2u32 + 1u32;
+            r1 = r1 * 2u32 - nc;
+        } else {
+            q1 = q1 * 2u32;
+            r1 = r1 * 2u32;
+        }
+        if (r2 + 1u32 >= d - r2) {
+            if (q2 >= two31 - 1u32) { add = true; }
+            q2 = q2 * 2u32 + 1u32;
+            r2 = r2 * 2u32 + 1u32 - d;
+        } else {
+            if (q2 >= two31) { add = true; }
+            q2 = q2 * 2u32;
+            r2 = r2 * 2u32 + 1u32;
+        }
+        var delta: u32 = d - 1u32 - r2;
+        if (p >= 64 || q1 > delta || (q1 == delta && r1 != 0u32)) { searching = false; }
+    }
+    return MagicU32 { m: q2 + 1u32, s: p - 32, add: add };
+}
+
 // strength_rewrite decides what replaces `const k ; bop`.
 function strength_rewrite(k: i32, bop: Op): StrengthRewrite {
     var t: i32 = bop.kind_tag;
@@ -3055,6 +3152,16 @@ pub function prune_zero_slot_guards(ops: Op[], n_params: i32): Op[] {
     return out;
 }
 
+// OptimizedOps is optimize_ops' output: the rewritten op list and the slot count
+// the frame must be sized from. A pass that caches a value in a fresh local
+// grows the count past what the lowering declared, and the frame, the verifier
+// and the interpreter all have to see the grown one — native carries the same
+// growth in Func.ScratchTypes, which its backends read directly.
+pub struct OptimizedOps {
+    ops: Op[],
+    n_locals: i32,
+}
+
 // finish_ops is the post-fixpoint tail, in one place because optimize_ops reaches
 // it from two: drop what cannot be reached, fuse the store/load round trips,
 // propagate constants and copies over the result, fold once more, then drop again.
@@ -3066,8 +3173,13 @@ pub function prune_zero_slot_guards(ops: Op[], n_params: i32): Op[] {
 // than merely failing to remove it, and a sweep that ran before it cannot see
 // that. Both sweeps are the same idempotent pass; running it twice costs a linear
 // walk and removes the ordering trap.
-function finish_ops(cur: Op[]): Op[] {
-    return eliminate_dead_code(fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur))))));
+//
+// Loop-invariant code motion runs LAST, as native's battery orders it: it reads
+// the shape the cleanup settles on, and the slot it introduces is a plain store
+// the backends already handle.
+function finish_ops(cur: Op[], n_locals: i32): OptimizedOps {
+    var done: Op[] = eliminate_dead_code(fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur))))));
+    return hoist_loop_invariants(done, n_locals);
 }
 
 // optimize_ops runs the op-list peepholes to a fixpoint, then finishes. The first
@@ -3084,16 +3196,195 @@ function finish_ops(cur: Op[]): Op[] {
 // fusion and the two propagations — over the already-shrunken list. It reads
 // slots the lowering wrote, which no pass here introduces, so nothing later can
 // hand it work it has not already seen.
-pub function optimize_ops(ops: Op[], n_params: i32): Op[] {
+//
+// n_locals is the lowering's slot count (params included); the count returned
+// is the one the frame must be sized from, and only a slot-allocating pass moves
+// it.
+pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps {
     var cur: Op[] = fold_const_binaries(prune_zero_slot_guards(ops, n_params));
     var rounds: i32 = 0;
     while (rounds < 8) {
         var r: StrengthResult = reduce_strength_ex(cur);
-        if (!r.changed) { return finish_ops(cur); }
+        if (!r.changed) { return finish_ops(cur, n_locals); }
         cur = fold_const_binaries(r.ops);
         rounds = rounds + 1;
     }
-    return finish_ops(cur);
+    return finish_ops(cur, n_locals);
+}
+
+// ---- loop-invariant code motion (#8245, native internal/ir/licm.go) ------
+//
+// hoist_loop_invariants lifts a loop-invariant `str_len` out of a loop's
+// HEADER: the run of ops between `loop` and the first op that can branch or
+// open a scope. A `while` lowers its condition there, so `while (i < s.len())`
+// re-reads the length on every iteration.
+//
+// The header is the only region this pass hoists FROM, and that is what makes
+// the transform safe rather than speculative. `loop` falls through into its
+// header, so those ops run whenever the loop is reached, whether or not the
+// body ever executes; moving one out cannot introduce a read the original
+// program did not perform. Hoisting from deeper in the body would not have
+// that property: a loop whose body never runs would gain a read it never made.
+//
+// The hoisted ops are inserted immediately before the `loop`, so they are
+// reached under exactly the same condition it is. A `br` back to the loop
+// re-enters at the header and skips them, which is correct: invariance is
+// checked over the WHOLE body, so nothing in the loop can have stored to the
+// operand. The cached length lives in a fresh slot past n_locals, which is
+// why the pass returns the grown count (#8247) rather than an op list alone.
+pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
+    var k_loop: i32 = kind_id("loop");
+    var cur: OptimizedOps = OptimizedOps { ops: ops, n_locals: n_locals };
+    // Later loops first: rewriting one shifts every index after it, and
+    // walking backwards keeps the indices of the loops still to visit valid.
+    var i: i32 = ops.len() - 1;
+    while (i >= 0) {
+        if (cur.ops[i].kind_tag == k_loop) { cur = licm_hoist_from_loop(cur, i); }
+        i = i - 1;
+    }
+    return cur;
+}
+
+// licm_hoist_from_loop rewrites the one loop opening at loop_idx.
+function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32): OptimizedOps {
+    var ops: Op[] = cur.ops;
+    var end: i32 = licm_scope_end(ops, loop_idx);
+    if (end < 0) { return cur; }
+    var hdr_end: i32 = licm_header_end(ops, loop_idx);
+    var stored: boolean[] = licm_stored_locals(ops, loop_idx + 1, end);
+    var order: i32[] = licm_candidates(ops, loop_idx, hdr_end, stored);
+    if (order.len() == 0) { return cur; }
+    // slot_for[src] is the cache slot for an operand in `order`, -1 otherwise.
+    // Only an operand the body never stores to is in it, so a hit already says
+    // the read is invariant.
+    var slot_for: i32[] = [];
+    var s: i32 = 0;
+    while (s < stored.len()) { slot_for = slot_for.append(0 - 1); s = s + 1; }
+    var pre: Op[] = [];
+    var n: i32 = 0;
+    while (n < order.len()) {
+        slot_for = slot_for.with(order[n], cur.n_locals + n);
+        pre = pre.append(op_load_local(order[n]));
+        pre = pre.append(op_str_len());
+        pre = pre.append(op_store_local(cur.n_locals + n));
+        n = n + 1;
+    }
+    var out: Op[] = [];
+    var j: i32 = 0;
+    while (j < loop_idx) { out = out.append(ops[j]); j = j + 1; }
+    var p: i32 = 0;
+    while (p < pre.len()) { out = out.append(pre[p]); p = p + 1; }
+    out = out.append(ops[loop_idx]);
+    j = loop_idx + 1;
+    while (j < ops.len()) {
+        var slot: i32 = licm_cached_len(ops, j, hdr_end, slot_for);
+        if (slot >= 0) {
+            out = out.append(op_load_local(slot));
+            j = j + 2;  // the str_len is consumed with the load
+        } else {
+            out = out.append(ops[j]);
+            j = j + 1;
+        }
+    }
+    return OptimizedOps { ops: out, n_locals: cur.n_locals + order.len() };
+}
+
+// licm_candidates is every local the header takes a length of without the
+// body ever storing to it, in first-read order so the emitted prologue is
+// stable; an operand read twice is listed once.
+function licm_candidates(ops: Op[], loop_idx: i32, hdr_end: i32, stored: boolean[]): i32[] {
+    var k_load: i32 = kind_id("load_local");
+    var k_len: i32 = kind_id("str_len");
+    var order: i32[] = [];
+    var j: i32 = loop_idx + 1;
+    while (j + 1 < hdr_end) {
+        if (ops[j].kind_tag == k_load && ops[j + 1].kind_tag == k_len) {
+            var src: i32 = ops[j].i32_imm;
+            if (!stored[src] && !licm_listed(order, src)) { order = order.append(src); }
+        }
+        j = j + 1;
+    }
+    return order;
+}
+
+function licm_listed(order: i32[], src: i32): boolean {
+    var i: i32 = 0;
+    while (i < order.len()) {
+        if (order[i] == src) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// licm_cached_len is the cache slot when ops[j] ; ops[j + 1] is a header read
+// `load_local src ; str_len` of a hoisted operand, else -1.
+function licm_cached_len(ops: Op[], j: i32, hdr_end: i32, slot_for: i32[]): i32 {
+    if (j + 1 >= hdr_end) { return 0 - 1; }
+    if (ops[j].kind_tag != kind_id("load_local") || ops[j + 1].kind_tag != kind_id("str_len")) { return 0 - 1; }
+    return slot_for[ops[j].i32_imm];
+}
+
+// licm_header_end is one past the last op that runs unconditionally on
+// reaching the loop: the run after `loop` up to the first branch or nested
+// scope.
+function licm_header_end(ops: Op[], loop_idx: i32): i32 {
+    var k_br: i32 = kind_id("br");
+    var k_brif: i32 = kind_id("brif");
+    var k_if: i32 = kind_id("if");
+    var k_else: i32 = kind_id("else");
+    var k_block: i32 = kind_id("block");
+    var k_loop: i32 = kind_id("loop");
+    var k_end: i32 = kind_id("end");
+    var k_return: i32 = kind_id("return");
+    var j: i32 = loop_idx + 1;
+    while (j < ops.len()) {
+        var t: i32 = ops[j].kind_tag;
+        if (t == k_br || t == k_brif || t == k_if || t == k_else || t == k_block
+                || t == k_loop || t == k_end || t == k_return) { return j; }
+        j = j + 1;
+    }
+    return j;
+}
+
+// licm_scope_end is the index of the `end` closing the scope opened at
+// `open`, or -1 when nothing closes it.
+function licm_scope_end(ops: Op[], open: i32): i32 {
+    var k_block: i32 = kind_id("block");
+    var k_loop: i32 = kind_id("loop");
+    var k_if: i32 = kind_id("if");
+    var k_end: i32 = kind_id("end");
+    var depth: i32 = 0;
+    var j: i32 = open;
+    while (j < ops.len()) {
+        var t: i32 = ops[j].kind_tag;
+        if (t == k_block || t == k_loop || t == k_if) {
+            depth = depth + 1;
+        } else if (t == k_end) {
+            depth = depth - 1;
+            if (depth == 0) { return j; }
+        }
+        j = j + 1;
+    }
+    return 0 - 1;
+}
+
+// licm_stored_locals marks every slot ops[lo, hi) writes, indexed by slot over
+// the whole list's slot range. A slot written anywhere in the loop is not
+// invariant, wherever in the body the write sits.
+function licm_stored_locals(ops: Op[], lo: i32, hi: i32): boolean[] {
+    var k_store: i32 = kind_id("store_local");
+    var k_tee: i32 = kind_id("tee_local");
+    var stored: boolean[] = [];
+    var n: i32 = cp_max_slot(ops) + 1;
+    var s: i32 = 0;
+    while (s < n) { stored = stored.append(false); s = s + 1; }
+    var j: i32 = lo;
+    while (j < hi) {
+        var t: i32 = ops[j].kind_tag;
+        if (t == k_store || t == k_tee) { stored = stored.with(ops[j].i32_imm, true); }
+        j = j + 1;
+    }
+    return stored;
 }
 
 // ---- tee fusion --------------------------------------------------------

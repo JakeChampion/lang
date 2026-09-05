@@ -6816,6 +6816,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	fn("__fern_pow_f64")
 	powGen, powLoop, powSkip := g.freshLabel("powGeneral"), g.freshLabel("powLoop"), g.freshLabel("powSkip")
 	powAbs, powDone := g.freshLabel("powAbs"), g.freshLabel("powDone")
+	powRetry, powRecip := g.freshLabel("powRetry"), g.freshLabel("powRecip")
 	powMag, powParity, powSign, powNaN := g.freshLabel("powMag"), g.freshLabel("powParity"), g.freshLabel("powSign"), g.freshLabel("powNaN")
 	// Integer-exponent fast path. exp(y*ln x) CANNOT return exactly 9 for
 	// pow(3,2): a 1-ulp error in ln 3 is amplified by the exponential to
@@ -6831,6 +6832,9 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("scvtf d2, x10")
 	g.emit("fcmp d2, d1")
 	g.emit("b.ne %s", powGen)
+	// Re-entered once with a reciprocated base and a negated n; see the
+	// overflow retry below.
+	g.label(powRetry)
 	g.emit("mov x11, x10")
 	g.emit("cmp x11, #0")
 	g.emit("b.ge %s", powAbs)
@@ -6850,7 +6854,18 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("cmp x10, #0")
 	g.emit("b.ge %s", powDone)
 	ldc("d5", "one") // negative exponent: reciprocal
-	g.emit("fdiv d3, d5, d3")
+	g.emit("fdiv d5, d5, d3")
+	// 1/acc is zero only when acc reached an infinity; see the x86-64
+	// emitter for why the retry is entered at most once and cannot reach a
+	// finite accumulator.
+	g.emit("fcmp d5, #0.0")
+	g.emit("b.ne %s", powRecip)
+	ldc("d5", "one")
+	g.emit("fdiv d0, d5, d0")
+	g.emit("neg x10, x10")
+	g.emit("b %s", powRetry)
+	g.label(powRecip)
+	g.emit("fmov d3, d5")
 	g.label(powDone)
 	g.emit("fmov d0, d3")
 	g.emit("ret")

@@ -99,6 +99,12 @@ detector from Fern: the plain `__rc_dec` builtin never frees on native, so a
 double `__rc_dec` reads rc 0 and reports over-release instead - only the
 freeing dec quarantines.
 
+The arm64 family's Mach-O member is gated the same way:
+`arm64_darwin_sanitizer_test.go` (`TestArm64DarwinSanitize`, the macos lane)
+builds the same probes through the CLI's `-sanitize` and runs them natively on
+Apple Silicon, so `-target arm64-darwin` is covered by a test and not only by
+the coverage table in `cmd/fern`.
+
 `-sanitize` on a target that is not fully covered **warns and names what the
 build does carry**, so a silent run is never mistaken for a checked one. On
 wasm that reads "the leak census only, not the rc over-release or

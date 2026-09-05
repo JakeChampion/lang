@@ -28,6 +28,20 @@ function render(ops: ir.Op[]): string {
     return s;
 }
 
+// bool_word spells a flag the way Go's %v does, so the magic lines compare
+// directly against native's.
+function bool_word(b: boolean): string {
+    if (b) { return "true"; }
+    return "false";
+}
+
+// optimize runs the whole battery over a case's op list. The cases here name
+// slots 0..3 as body locals of a function with no params, so that is the frame
+// they are optimised against.
+function optimize(ops: ir.Op[]): ir.Op[] {
+    return ir.optimize_ops(ops, 0, 4).ops;
+}
+
 // base is the `<expr>` every case's `const K ; binop` pair sits after.
 function base(): ir.Op {
     return ir.op_load_local(0);
@@ -103,17 +117,17 @@ function main(): i32 {
     //    is then a power of two.
     var fold_then: ir.Op[] = [base(), ir.op_const_i32(2), ir.op_const_i32(2),
                               ir.op_bin("add", 0, false), ir.op_bin("mul", 0, false)];
-    out = out + "fold_then_strength: " + render(ir.optimize_ops(fold_then, 0)) + "\n";
+    out = out + "fold_then_strength: " + render(optimize(fold_then)) + "\n";
 
     // 9. optimize_ops — strength feeds folding: `* 0` leaves a `const_i32 0`
     //    next to the constant that followed, which the next fold round eats.
     var strength_then: ir.Op[] = [base(), ir.op_const_i32(0), ir.op_bin("mul", 0, false),
                                   ir.op_const_i32(5), ir.op_bin("add", 0, false)];
-    var once: ir.Op[] = ir.optimize_ops(strength_then, 0);
+    var once: ir.Op[] = optimize(strength_then);
     out = out + "strength_then_fold: " + render(once) + "\n";
 
     // 10. Idempotence: the fixpoint is a fixpoint.
-    var twice: ir.Op[] = ir.optimize_ops(once, 0);
+    var twice: ir.Op[] = optimize(once);
     var stable: i32 = 0;
     if (render(twice) == render(once)) { stable = 1; }
     out = out + "idempotent=" + util.i32_to_string(stable) + "\n";
@@ -171,7 +185,7 @@ function main(): i32 {
     //      constant and the dead tail after the return still goes.
     var both: ir.Op[] = [ir.op_const_i32(2), ir.op_const_i32(2), ir.op_bin("add", 0, false),
                          ir.op_return(), ir.op_const_i32(9), ir.op_drop()];
-    out = out + "dce_in_optimize: " + render(ir.optimize_ops(both, 0)) + "\n";
+    out = out + "dce_in_optimize: " + render(optimize(both)) + "\n";
 
     // 12. fuse_tee (#6638): `store_local X ; load_local X` becomes one
     //     `tee_local X`. wasm turns that into a single `local.tee`; the
@@ -208,7 +222,7 @@ function main(): i32 {
     // 12f. optimize_ops runs it LAST, after the dead-code walk — so a pair the
     //      DCE exposes is still fused.
     var tee_opt: ir.Op[] = [ir.op_const_i32(4), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()];
-    out = out + "tee_in_optimize: " + render(ir.optimize_ops(tee_opt, 0)) + "\n";
+    out = out + "tee_in_optimize: " + render(optimize(tee_opt)) + "\n";
 
     // 13. propagate_copies (#6638): a tee whose slot NOTHING else touches is
     //     identity — pop then push — so it goes.
@@ -242,7 +256,7 @@ function main(): i32 {
     //      adjacent const pair to collapse.
     var cp_pipeline: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_load_local(0),
                                 ir.op_const_i32(2), ir.op_bin("mul", 0, false), ir.op_return()];
-    out = out + "cp_pipeline: " + render(ir.optimize_ops(cp_pipeline, 0)) + "\n";
+    out = out + "cp_pipeline: " + render(optimize(cp_pipeline)) + "\n";
 
     // 14. const_propagate (#6638): a store and load that are NOT adjacent, which
     //     fuse_tee structurally cannot reach.
@@ -369,7 +383,7 @@ function main(): i32 {
     var kp_opt: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_const_i32(1), ir.op_if(0),
                            ir.op_load_local(0), ir.op_const_i32(3), ir.op_bin("add", 0, false),
                            ir.op_drop(), ir.op_end(), ir.op_return()];
-    out = out + "kp_in_optimize: " + render(ir.optimize_ops(kp_opt, 0)) + "\n";
+    out = out + "kp_in_optimize: " + render(optimize(kp_opt)) + "\n";
 
     // 15. The unary fold (#6638, native fold.go's `OpConstI32 a ; OpNot` arm).
     //     `not` is LOGICAL in this IR — i32.eqz on wasm, setz on x86, cset eq on
@@ -474,7 +488,7 @@ function main(): i32 {
     var pw_loop: ir.Op[] = [ir.op_loop(0), ir.op_const_i32(1), ir.op_bin("not", 0, false),
                             ir.op_brif(1), ir.op_const_i32(7), ir.op_drop(), ir.op_br(0),
                             ir.op_end(), ir.op_return()];
-    out = out + "pw_while_true_in_optimize: " + render(ir.optimize_ops(pw_loop, 0)) + "\n";
+    out = out + "pw_while_true_in_optimize: " + render(optimize(pw_loop)) + "\n";
 
     // 17. Folding THROUGH a width normalise. The lowering wraps every i32 /
     //     u32 / sub-word arithmetic result back into its type's width, so a
@@ -584,13 +598,33 @@ function main(): i32 {
     //      it only produces the constant the fold's decided-`if` rule then deletes
     //      the whole drop body with. Running it before the leading fold is what puts
     //      that deletion in the same call.
-    out = out + "zg_in_optimize: " + render(ir.optimize_ops(zg_body, 0)) + "\n";
+    out = out + "zg_in_optimize: " + render(optimize(zg_body)) + "\n";
 
     // 18g. Idempotent: the rewritten pair is a constant, which matches nothing.
     var zg_once: ir.Op[] = ir.prune_zero_slot_guards(zg_body, 0);
     var zg_stable: i32 = 0;
     if (render(ir.prune_zero_slot_guards(zg_once, 0)) == render(zg_once)) { zg_stable = 1; }
     out = out + "zg_idempotent=" + util.i32_to_string(zg_stable) + "\n";
+
+    // 19. Magic-number reciprocals (ir.derive_magic_s32 / derive_magic_u32,
+    //     native internal/ir/magic.go). The Go test renders the same divisors
+    //     through native's derivation, so this is a parity check, not a golden.
+    var mds: i32[] = [3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5];
+    var mi: i32 = 0;
+    while (mi < mds.len()) {
+        var ms: ir.MagicS32 = ir.derive_magic_s32(mds[mi]);
+        out = out + "magic_s " + util.i32_to_string(mds[mi]) + ": m=" + util.i32_to_string(ms.m)
+            + " s=" + util.i32_to_string(ms.s) + " add=" + bool_word(ms.add) + " sub=" + bool_word(ms.sub) + "\n";
+        mi = mi + 1;
+    }
+    var mus: u32[] = [3u32, 7u32, 97u32, 641u32, 1000000u32, 2147483649u32, 2863311531u32, 4294967291u32, 4294967295u32, 10u32, 100u32, 5u32, 4093u32];
+    mi = 0;
+    while (mi < mus.len()) {
+        var mu: ir.MagicU32 = ir.derive_magic_u32(mus[mi]);
+        out = out + "magic_u " + util.i64_to_string(mus[mi] as i64) + ": m=" + util.i64_to_string(mu.m as i64)
+            + " s=" + util.i32_to_string(mu.s) + " add=" + bool_word(mu.add) + "\n";
+        mi = mi + 1;
+    }
 
     write(out);
 
