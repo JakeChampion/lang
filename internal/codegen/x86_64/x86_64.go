@@ -5418,6 +5418,24 @@ func (g *generator) emitArrBoundsCheck() {
 	g.label(ok)
 }
 
+// emitStrBoundsCheckAgainst is emitArrBoundsCheck for a string, with
+// the length already in lenReg and the byte index in rcx. An
+// out-of-range index aborts with exit code 134; a single unsigned
+// compare catches a negative index (huge as unsigned) too.
+//
+// The caller supplies the length because the only place it is cheap to
+// know is inside the __str_idx tag dispatch, which has already decided
+// whether this is a heap or an inline string. Calling emitStrLen here
+// instead would repeat that tag test and emit a second SSO decode per
+// index — a redundant branch, and one the LICM parity gate counts.
+func (g *generator) emitStrBoundsCheckAgainst(lenReg string) {
+	ok := g.freshLabel(".Lstr_ok")
+	g.emit(fmt.Sprintf("cmp ecx, %s", lenReg))
+	g.emit(fmt.Sprintf("jb %s", ok)) // unsigned idx < len → in bounds
+	g.emitAbort("__fern_msg_str_slice")
+	g.label(ok)
+}
+
 // emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the len
 // is in the slice header at [rax+8] (8-byte data_ptr at [rax+0]),
 // read before the helper overwrites rax with the data pointer. rdx
@@ -5435,11 +5453,10 @@ func (g *generator) emitSliceBoundsCheck() {
 // `__slice_idx_*` bounds-check call as a plain address
 // compute (`base + index * stride`). The IR walker emits
 // these as OpCallDirect with the stride encoded in the
-// helper name; the actual runtime helper would do a bounds
-// check first, but in-range accesses produce the same
-// address either way and the IR's static type checker
-// rejects statically-OOB indexes. Subsequent OpLoad /
-// OpStore consumes the address in rax.
+// helper name, and each variant keeps the runtime helper's
+// bounds check ahead of the address compute (elided only by
+// the `_nc` suffix). Subsequent OpLoad / OpStore consumes
+// the address in rax.
 //
 // x86-64 has a `lea base + idx*scale` addressing form
 // directly for scale 1/2/4/8 — strictly faster than
@@ -5483,14 +5500,28 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// but the immediate OpLoadByte that follows in the IR
 		// consumes the address before the next call, so there
 		// is no observable race even in `a[i] + b[j]` shapes.
+		//
+		// The bounds check rides each arm of this dispatch: the heap
+		// length is the 4-byte prefix, the inline length is in the tag
+		// byte, and the tag test that tells them apart is already here.
 		g.usesStrIdx = true
 		id := g.labelCounter
 		g.labelCounter++
 		g.emit("test rax, 1")
 		g.emit(fmt.Sprintf("jnz .Lstridx_inline_%d", id))
+		if checked {
+			g.emit("mov edx, [rax - 4]")
+			g.emitStrBoundsCheckAgainst("edx")
+		}
 		g.emit("lea rax, [rax + rcx]")
 		g.emit(fmt.Sprintf("jmp .Lstridx_done_%d", id))
 		g.label(fmt.Sprintf(".Lstridx_inline_%d", id))
+		if checked {
+			g.emit("mov edx, eax")
+			g.emit("shr edx, 1")
+			g.emit("and edx, 7")
+			g.emitStrBoundsCheckAgainst("edx")
+		}
 		g.emit("mov [rip + __fern_str_idx_scratch], rax")
 		g.emit("lea rax, [rip + __fern_str_idx_scratch]")
 		g.emit("add rax, rcx")
