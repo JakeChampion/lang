@@ -4249,29 +4249,25 @@ function x86_gas_comment_start(line: string): i32 {
 // A pass whose decisions match the one before it is final: nothing moved, so
 // every displacement it computed is the one the bytes will carry.
 pub function x86_gas_assemble(src: string): X86Asm {
-    // Split ONCE, not per round. The source does not change between
-    // relaxation rounds, so re-splitting it each time bought nothing and cost
-    // one full copy of the line array per round — 3.4 million strings for the
-    // self-host compiler's own asm.
-    //
-    // A time saving, not a memory one, and NOT the fix for #8146: peak
-    // `__heap_bump_bytes()` moves by 16 bytes, because a round's allocation is
-    // reclaimed before the next one allocates. The arena wall that issue
-    // tracks is still open and its cause is still unidentified.
-    var lines: string[] = x86_str_split(src, "\n");
+    // Parsed ONCE, not per round. The source does not change between
+    // relaxation rounds, so splitting and re-parsing it each round bought
+    // nothing: what differs between rounds is the byte offsets, and those are
+    // what a round computes. Not the fix for #8146 — the arena wall that
+    // issue tracks is still open and its cause still unidentified.
+    var pl: GasLine[] = x86_gas_prepare(src);
     var longs: boolean[] = [];
     var pass: i32 = 0;
     // Each round pins at least one more branch long, so the branch count
     // bounds the rounds; the cap is a backstop, and falling out of it keeps
     // every branch long, which is always correct if larger.
     while (pass < 24) {
-        var a: X86Asm = x86_gas_assemble_pass_lines(lines, longs);
+        var a: X86Asm = x86_gas_assemble_pass_prepared(pl, longs);
         var next: boolean[] = x86_relax_grow(a, longs);
         if (!x86_bools_differ(next, longs)) { return a; }
         longs = next;
         pass = pass + 1;
     }
-    return x86_gas_assemble_pass_lines(lines, x86_bools_all_true(longs.len()));
+    return x86_gas_assemble_pass_prepared(pl, x86_bools_all_true(longs.len()));
 }
 
 // x86_relax_grow returns the next round's decisions: every branch this pass
@@ -4325,16 +4321,22 @@ function x86_bools_all_true(n: i32): boolean[] {
     return out;
 }
 
-// x86_gas_assemble_pass assembles one relaxation round from the already-split
-// source. Callers that hold the text rather than the lines go through
-// x86_gas_assemble, which splits once for every round.
-function x86_gas_assemble_pass_lines(lines: string[], longs: boolean[]): X86Asm {
-    var a: X86Asm = x86_asm_new_for(true, longs);
-    // The CFI recorder is threaded as its own uniquely-held local and folded
-    // into `a` once at the end: recording through the field would append its
-    // rule arrays through a shared base and copy them per directive (#8172).
-    var cfi: CfiState = cfi_new(cfi_profile_x86());
-    var section: i32 = 0; // 0 = .text, 1 = .rodata
+// One source line with everything the relaxation fixpoint cannot change
+// already worked out. Only the byte offsets a round computes vary between
+// rounds; the text does not, so this is derived once and every round reads it.
+struct GasLine {
+    label: string,   // the `name:` prefix, or "" when the line has none
+    body: string,    // what follows it, comment-stripped and trimmed
+    mnem: string,    // an instruction's mnemonic; "" on a directive
+    rest: string,    // an instruction's operand text
+}
+
+// x86_gas_prepare does every line's round-invariant parsing once: comment
+// strip, trim, the label prefix, and the mnemonic/operand split. Blank and
+// comment-only lines are dropped here, so no round ever sees one.
+function x86_gas_prepare(src: string): GasLine[] {
+    var out: GasLine[] = [];
+    var lines: string[] = x86_str_split(src, "\n");
     var li: i32 = 0;
     while (li < lines.len()) {
         var raw: string = lines[li];
@@ -4347,6 +4349,7 @@ function x86_gas_assemble_pass_lines(lines: string[], longs: boolean[]): X86Asm 
         if (line.len() == 0) {
             continue;
         }
+        var label: string = "";
         // label prefix: `name:` possibly followed by more on the same
         // line (asm.fern emits `.L0: .double 84.0`). A label is a single
         // token (no space / paren / comma) before the first ':'.
@@ -4354,18 +4357,55 @@ function x86_gas_assemble_pass_lines(lines: string[], longs: boolean[]): X86Asm 
         if (colon > 0) {
             var before: str = slice_unchecked(line, 0, colon);
             if (x86_str_indexof(before, " ") < 0 && x86_str_indexof(before, "(") < 0 && x86_gas_top_comma(before) < 0) {
-                if (section == 1) {
-                    a = x86_rodata_label(a, before);
-                } else if (section == 2) {
-                    a = x86_bss_label(a, before);
-                } else {
-                    a = x86_label(a, before);
-                }
+                label = before + "";
                 line = x86_gas_trim(slice_unchecked(line, colon + 1, line.len()));
-                if (line.len() == 0) {
-                    continue;
-                }
             }
+        }
+        if (label.len() == 0 && line.len() == 0) {
+            continue;
+        }
+        var mnem: string = "";
+        var rest: string = "";
+        if (line.len() > 0 && line[0] != b'.') {
+            mnem = line;
+            var sp: i32 = x86_str_indexof(line, " ");
+            if (sp >= 0) {
+                mnem = slice_unchecked(line, 0, sp) + "";
+                rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
+            }
+        }
+        out = out.append(GasLine { label: label, body: line, mnem: mnem, rest: rest });
+    }
+    return out;
+}
+
+// x86_gas_assemble_pass_prepared assembles one relaxation round from the
+// already-parsed lines.
+function x86_gas_assemble_pass_prepared(pl: GasLine[], longs: boolean[]): X86Asm {
+    var a: X86Asm = x86_asm_new_for(true, longs);
+    // The CFI recorder is threaded as its own uniquely-held local and folded
+    // into `a` once at the end: recording through the field would append its
+    // rule arrays through a shared base and copy them per directive (#8172).
+    var cfi: CfiState = cfi_new(cfi_profile_x86());
+    var section: i32 = 0; // 0 = .text, 1 = .rodata
+    var li: i32 = 0;
+    while (li < pl.len()) {
+        var lbl: string = pl[li].label;
+        var line: string = pl[li].body;
+        var mnem: string = pl[li].mnem;
+        var rest: string = pl[li].rest;
+        li = li + 1;
+        if (lbl.len() > 0) {
+            if (section == 1) {
+                a = x86_rodata_label(a, lbl);
+            } else if (section == 2) {
+                a = x86_bss_label(a, lbl);
+            } else {
+                a = x86_label(a, lbl);
+            }
+        }
+        if (line.len() == 0) {
+            continue;
         }
         // directive: `.…`
         if (line[0] == b'.') {
@@ -4465,14 +4505,6 @@ function x86_gas_assemble_pass_lines(lines: string[], longs: boolean[]): X86Asm 
                 a = X86Asm { ...a, unknown: a.unknown.append(line) };
             }
             continue;
-        }
-        // instruction: mnemonic + operand text
-        var sp: i32 = x86_str_indexof(line, " ");
-        var mnem: string = line;
-        var rest: string = "";
-        if (sp >= 0) {
-            mnem = slice_unchecked(line, 0, sp) + "";
-            rest = x86_gas_trim(slice_unchecked(line, sp + 1, line.len()));
         }
         a = x86_gas_emit(a, mnem, rest);
     }

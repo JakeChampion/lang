@@ -96,7 +96,7 @@ func TestFlattenComposesWithConstIfPruning(t *testing.T) {
 		return 2;
 	}`)
 	FlattenBranches(p)
-	Fold(p)
+	foldProgram(p)
 	fn := findFunc(p, "f")
 	// After both passes, only the surviving branch's value (const 1)
 	// plus a single return should remain.

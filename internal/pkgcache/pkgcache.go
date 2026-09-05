@@ -37,13 +37,37 @@ func Root() (string, error) {
 	return filepath.Join(base, "fern", "pkgs"), nil
 }
 
+// ValidateHash checks that a dependency hash is `sha256:` followed by
+// exactly 64 lowercase hex digits.
+//
+// This is the security boundary of the package store, not a formatting
+// nicety: the hex half is joined onto the store root to name a directory,
+// so an unvalidated value is a path. A lockfile carrying
+// `sha256:../../../elsewhere` made the loader compile and run code from
+// an arbitrary directory, and because Fetch treats "the directory exists"
+// as "the content is verified", it downloaded and checked nothing on the
+// way (#8464). The manifest parser already validated this shape; the
+// lockfile and index routes did not, and every route ends up here.
+func ValidateHash(hash string) error {
+	hexpart, ok := strings.CutPrefix(hash, "sha256:")
+	if !ok || len(hexpart) != 64 {
+		return fmt.Errorf("hash must be `sha256:` + 64 hex digits of the archive bytes, got %q", hash)
+	}
+	for _, r := range hexpart {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return fmt.Errorf("hash must be `sha256:` + 64 hex digits of the archive bytes, got %q", hash)
+		}
+	}
+	return nil
+}
+
 // Dir returns the unpacked directory for a `sha256:<hex>` hash, and
 // whether it is already present in the store.
 func Dir(hash string) (string, bool, error) {
-	hexpart, ok := strings.CutPrefix(hash, "sha256:")
-	if !ok {
-		return "", false, fmt.Errorf("unsupported hash %q (want sha256:…)", hash)
+	if err := ValidateHash(hash); err != nil {
+		return "", false, err
 	}
+	hexpart, _ := strings.CutPrefix(hash, "sha256:")
 	root, err := Root()
 	if err != nil {
 		return "", false, err

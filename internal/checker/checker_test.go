@@ -7652,3 +7652,89 @@ func TestTupleElemVariantPatternChecks(t *testing.T) {
 		})
 	}
 }
+
+// A `loop` / `while (true)` was treated as diverging whether or not it
+// could break. That is the opposite of conservative: treating a breakable
+// loop as divergent ACCEPTS programs that fall through (#8447). Three
+// rules read the predicate, and all three broke — E052 let a value fall
+// off the end, a `never`-typed block initialised a string from garbage,
+// and `let … else` left the pattern's bindings uninitialised, which is
+// memory-unsafe rather than merely wrong.
+//
+// The two predicates also disagreed with each other on `while (true) {
+// break; }`, which is how the gap survived; they share the rule now.
+func TestBreakableLoopDoesNotDiverge(t *testing.T) {
+	rejected := []struct{ name, src string }{
+		{"value-falls-off-the-end", `function f(n: i32): i32 {
+			var acc: i32 = 42;
+			loop {
+				acc = acc + n;
+				if (n > 100) { return acc; }
+				break;
+			}
+		}`},
+		{"while-true-with-break", `function f(n: i32): i32 {
+			while (true) { if (n > 0) { return n; } break; }
+		}`},
+		{"let-else-breaks-out", `enum Opt { Has(i32), Nil }
+		function f(o: Opt): i32 {
+			let Has(v) = o else { loop { break; } };
+			return v;
+		}`},
+		{"let-else-while-true-breaks", `enum Opt { Has(i32), Nil }
+		function f(o: Opt): i32 {
+			let Has(v) = o else { while (true) { break; } };
+			return v;
+		}`},
+		{"labelled-break-targets-this-loop", `function f(n: i32): i32 {
+			outer: loop { if (n > 0) { return n; } break outer; }
+		}`},
+	}
+	for _, c := range rejected {
+		t.Run(c.name, func(t *testing.T) {
+			if err := checkSource(t, c.src); err == nil {
+				t.Errorf("accepted a function whose loop can break, so control falls through:\n%s", c.src)
+			}
+		})
+	}
+}
+
+// The other half: a loop that genuinely cannot break still diverges, and
+// a break belonging to an INNER loop must not make the outer one
+// fall-through. `todo;` desugars to `loop { … }` and depends on this.
+func TestNonBreakingLoopStillDiverges(t *testing.T) {
+	accepted := []struct{ name, src string }{
+		{"bare-loop", `function f(): i32 { loop { var x = 1; } }`},
+		{"while-true", `function f(): i32 { while (true) { var x = 1; } }`},
+		{"todo-stub", `function f(): i32 { todo; }`},
+		{"inner-loop-breaks", `function f(n: i32): i32 {
+			loop {
+				var i: i32 = 0;
+				while (i < n) { if (i == 3) { break; } i = i + 1; }
+			}
+		}`},
+		{"labelled-break-targets-inner", `function f(n: i32): i32 {
+			loop {
+				inner: while (true) { break inner; }
+			}
+		}`},
+		{"let-else-non-breaking-loop", `enum Opt { Has(i32), Nil }
+		function f(o: Opt): i32 {
+			let Has(v) = o else { loop { } };
+			return v;
+		}`},
+		{"break-inside-a-lambda-body", `function f(n: i32): i32 {
+			loop {
+				var g: () => i32 = function (): i32 { while (true) { break; } return 1; };
+				var x: i32 = g();
+			}
+		}`},
+	}
+	for _, c := range accepted {
+		t.Run(c.name, func(t *testing.T) {
+			if err := checkSource(t, c.src); err != nil {
+				t.Errorf("rejected a function whose loop cannot break: %v\n%s", err, c.src)
+			}
+		})
+	}
+}

@@ -21,9 +21,9 @@ pub function fold_expr[T](e: ast.Expr, acc: T, visit: (ast.Expr, T) => T): T {
 }
 
 // fold_stmt is fold_expr's statement half: it visits every EXPRESSION `st`
-// reaches, in source order. The statement nodes themselves are visited only by
-// fold_stmt_nodes, which a consumer reaches for when what one contributes is
-// not an expression at all — a binder name, an assignment target.
+// reaches, in source order. The statement nodes themselves are visited by
+// fold_stmt_nodes, or by fold_stmt_spine when the consumer wants statements
+// alone — a binder name, an assignment target — and no expression at all.
 pub function fold_stmt[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T): T {
     return fold_stmt_pruned(st, acc, visit, descend_all);
 }
@@ -31,14 +31,6 @@ pub function fold_stmt[T](st: ast.Stmt, acc: T, visit: (ast.Expr, T) => T): T {
 // descend_all is the unpruned walk's descent rule: every node's children are
 // reachable.
 pub function descend_all(e: ast.Expr): boolean { return true; }
-
-// descend_none is the statement-shaped consumer's rule: no expression has
-// reachable children, so `visit_expr` sees the expression sitting in each
-// statement slot and nothing under it. collect_bound_stmt wants exactly that —
-// binders live on statements, never inside an initialiser — and it is also
-// what keeps a statement-only walk out of lambda bodies, which are reachable
-// only through expression descent.
-pub function descend_none(e: ast.Expr): boolean { return false; }
 
 // fold_expr_pruned is fold_expr with descent control. `visit` still sees every
 // node the walk reaches; `descend` then decides whether that node's CHILDREN
@@ -200,6 +192,51 @@ pub function fold_stmt_nodes[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) 
             }
             return acc;
         },
+        ast.StmtBreak(_) => { return acc; },
+        ast.StmtContinue(_) => { return acc; },
+        ast.StmtUnknown(_) => { return acc; }
+    }
+    return acc;
+}
+
+// fold_stmt_spine folds `visit` over the statement subtree rooted at `st` — the
+// statement itself and every statement its control flow encloses — entering no
+// expression, so a lambda body stays out of reach.
+//
+// This is what a statement-shaped consumer wants: an assignment TARGET and a
+// `var` / `for` / match-arm BINDER are names carried on the statement, so the
+// expression half of fold_stmt_nodes contributes nothing and costs two indirect
+// calls plus a match for every expression a statement owns.
+//
+// Every variant is spelled out rather than wildcarded: a new statement kind
+// carrying a block should fail to compile here, not silently drop its body.
+pub function fold_stmt_spine[T](st: ast.Stmt, acc: T, visit: (ast.Stmt, T) => T): T {
+    acc = visit(st, acc);
+    match (st) {
+        ast.StmtDefer(d) => { return fold_stmt_spine(d.action, acc, visit); },
+        ast.StmtIf(i) => {
+            for body_st in i.then_body { acc = fold_stmt_spine(body_st, acc, visit); }
+            for body_st in i.else_body { acc = fold_stmt_spine(body_st, acc, visit); }
+            return acc;
+        },
+        ast.StmtWhile(w) => {
+            for body_st in w.body { acc = fold_stmt_spine(body_st, acc, visit); }
+            return acc;
+        },
+        ast.StmtFor(f) => {
+            for body_st in f.body { acc = fold_stmt_spine(body_st, acc, visit); }
+            return acc;
+        },
+        ast.StmtMatch(m) => {
+            for arm in m.arms {
+                for body_st in arm.body { acc = fold_stmt_spine(body_st, acc, visit); }
+            }
+            return acc;
+        },
+        ast.StmtVar(_) => { return acc; },
+        ast.StmtReturn(_) => { return acc; },
+        ast.StmtExpr(_) => { return acc; },
+        ast.StmtAssign(_) => { return acc; },
         ast.StmtBreak(_) => { return acc; },
         ast.StmtContinue(_) => { return acc; },
         ast.StmtUnknown(_) => { return acc; }
@@ -907,18 +944,12 @@ function binders_of(st: ast.Stmt, acc: string[]): string[] {
     return acc;
 }
 
-// binds_nothing is the binder walk's expression visitor: no expression binds a
-// name in the scope that encloses it. Paired with descend_none it makes the
-// walk statement-only, which is also what keeps a nested lambda's own locals
-// out of the enclosing scope's binder set.
-function binds_nothing(e: ast.Expr, acc: string[]): string[] { return acc; }
-
 // collect_bound_stmt appends every name `st` binds in the scope it belongs to.
 // Consumers subtract it from collect_idents_stmt's reads to get free variables,
 // so a name missing here is read as a capture of an enclosing local that does
 // not exist.
 pub function collect_bound_stmt(st: ast.Stmt, acc: string[]): string[] {
-    return fold_stmt_nodes(st, acc, binders_of, binds_nothing, descend_none);
+    return fold_stmt_spine(st, acc, binders_of);
 }
 
 // collect_bound_stmts is collect_bound_stmt over a body. Callers that want a

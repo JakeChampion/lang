@@ -886,7 +886,15 @@ answer, these are the tools, in the order they are usually reached for:
   operand that stays live across the loop.
 - **`FERN_RC_TRACE=1`** — one stderr line per heap event:
   `rctrace <a|f> <ptr> <size> <site> <caller>`, all four numbers fixed-width
-  16-hex, `site` being the *caller's* return address. Stands to `FERN_LEAKCHECK` as
+  16-hex, `site` being the *caller's* return address and `caller` one frame
+  above it. **Both compilers emit all five fields**; the self-host omitted
+  `caller` until #7954 needed it, and without it a leak through a shared
+  runtime helper cannot be attributed at all — every append in a program
+  allocates at one address inside `__fern_arr_push`, so `site` is the same for
+  all of them. On the self-host the walk is tuned for the LEAKING path: a plain
+  `__fern_arr_push` reports the Fern function that called append, while a
+  sole-owner append reclaims through `__fern_arr_push_owned` and reports that
+  wrapper, one frame short of user code. Stands to `FERN_LEAKCHECK` as
   `FERN_RC_UNDERFLOW_TRAP` stands to the underflow counter: leakcheck says a
   leak happened, this says which alloc site it came from. Pair the `a` lines
   against the `f` lines by pointer and what is left never came back; resolve
