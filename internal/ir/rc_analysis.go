@@ -160,6 +160,12 @@ type rcPlan struct {
 	// computeReuseSources.
 	reuseSources  map[ast.Expr]string
 	reuseConsumed map[string]bool
+	// returnSpreadReuse marks a RETURN-position struct update
+	// `return T { ...p, f: v }` whose base p this frame owns and never reads
+	// again, so the update writes p's own box in place instead of filling a
+	// fresh one and deep-dropping p. Maps the literal to p's name; the names
+	// are also in reuseConsumed. See computeReturnSpreadReuse.
+	returnSpreadReuse map[*ast.StructLit]string
 	// consumingMatchReuse marks a construction C (an arm's variant constructor)
 	// that reuses a CONSUMING match's scrutinee box in place (C2 — true
 	// zero-alloc FBIP): instead of freeing the consumed `own` box and allocating
@@ -348,6 +354,7 @@ func (b *builder) computeRcAnalyses() {
 	b.rc.ownedArgMoves = b.computeOwnedArgMoves()
 	b.rc.fieldOwnMoves = b.computeFieldOwnMoves()
 	b.rc.reuseSources, b.rc.reuseConsumed = b.computeReuseSources()
+	b.rc.returnSpreadReuse = b.computeReturnSpreadReuse()
 	b.rc.consumingMatchReuse = b.computeConsumingMatchReuse()
 }
 
@@ -4641,6 +4648,73 @@ func (b *builder) computeReuseSources() (map[ast.Expr]string, map[string]bool) {
 		b.dropGuidedArmPass(hooks)
 	}
 	return sources, consumed
+}
+
+// computeReturnSpreadReuse admits the RETURN-position struct update
+// `return T { ...p, f: v }` for in-place reuse of p's box, and records each
+// admitted p in reuseConsumed. It is the state-threading shape — every
+// `s = s.emit(op)` in the self-host emitters is one call of a method built
+// this way — where the general reuse pairing (computeReuseSources) cannot
+// help: there D must be dead AT C, and here C reads D's every field.
+//
+// What makes it sound is that the frame owns p and cannot read it again:
+//
+//   - freeEligible[p] and frameOwnsIdent(p) (via structUpdateReuseDecl at the
+//     lowering site, plus the runtime is_unique gate there): p's reference
+//     belongs to this frame. For an owned-by-default PARAMETER that is the
+//     whole point — the caller retained an argument it keeps
+//     (calleeParamOwnedByDefault) and moved one it does not
+//     (computeOwnedArgMoves), so a surviving caller-side alias shows up as
+//     rc>1 and the reuse declines to a fresh box.
+//   - Nothing runs between the construction and the return, so p is dead: the
+//     reuse zeroes p's slot and the exit sweep meets a null. A `defer` DOES
+//     run there (and can name p), and a lambda can hold p past the frame, so
+//     both refuse — deferOrLambdaNames, and a body-wide defer check because a
+//     defer anywhere reaches this return.
+//   - A moved p (computeMovedLocals) has already handed its reference on, and
+//     a shadowed name (bindingNameUnique) cannot be tracked by name at all.
+//   - A superseded-field own-move (computeFieldOwnMoves) claims this same
+//     literal to empty one of p's fields into an `own` argument; it nulls the
+//     field under its own is_unique test, so the two claims must not overlap.
+func (b *builder) computeReturnSpreadReuse() map[*ast.StructLit]string {
+	out := map[*ast.StructLit]string{}
+	if !ast.RcFreeEnabled || !ast.RcReuseEnabled || b.fn.Body == nil {
+		return out
+	}
+	var defers []*ast.Defer
+	collectDefers(b.fn.Body, &defers)
+	if len(defers) > 0 {
+		return out
+	}
+	esc := deferOrLambdaNames(b.fn.Body)
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncDecl, *ast.Lambda:
+			return false // a nested body's `return` is not this frame's
+		case *ast.Return:
+			sl, isLit := x.Value.(*ast.StructLit)
+			if !isLit || sl.Base == nil {
+				return true
+			}
+			id, isID := sl.Base.(*ast.Ident)
+			if !isID || esc[id.Name] || b.rc.movedLocals[id.Name] || !b.bindingNameUnique(id.Name) {
+				return true
+			}
+			if !b.frameOwnsIdent(id.Name) {
+				return true
+			}
+			if _, ok := b.structUpdateReuseDecl(sl, id); !ok {
+				return true
+			}
+			if len(checker.SupersededFieldOwnMoveArgs(sl, id.Name, b.info.OwnFuncs)) > 0 {
+				return true
+			}
+			out[sl] = id.Name
+			b.rc.reuseConsumed[id.Name] = true
+		}
+		return true
+	})
+	return out
 }
 
 // computePreciseDrops implements the Perceus "garbage-free" precise-drop
