@@ -6672,9 +6672,9 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	fn("__fern_exp_f64")
 	expRet, expInf, expZero := g.freshLabel("expRet"), g.freshLabel("expInf"), g.freshLabel("expZero")
 	base()
-	// Domain guards. Without them exp(1000) overflowed the exponent field
-	// into the sign bit and returned -6.1e-183, and exp(±Inf) fell through
-	// the polynomial as NaN. +Inf trips the overflow branch and -Inf the
+	// Domain guards: above expovf e^x is not representable, below expunf it
+	// rounds to zero, and exp(±Inf) would otherwise fall through the
+	// polynomial as NaN. +Inf trips the overflow branch and -Inf the
 	// underflow one, so only NaN needs testing separately. Leaf, so the
 	// early returns need no frame teardown.
 	nanGuard(expRet)
@@ -6710,10 +6710,18 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("fsub d2, d2, d3") // - hi
 	ldc("d0", "one")
 	g.emit("fsub d0, d0, d2")
+	// 2^k as two half-scales; see the x86-64 emitter for why one field
+	// cannot hold the subnormal band.
+	g.emit("asr x11, x10, #1")  // k1
+	g.emit("sub x10, x10, x11") // k2 = k - k1
+	g.emit("add x11, x11, #1023")
+	g.emit("lsl x11, x11, #52")
+	g.emit("fmov d1, x11")
 	g.emit("add x10, x10, #1023")
 	g.emit("lsl x10, x10, #52")
-	g.emit("fmov d1, x10") // 2^k
+	g.emit("fmov d2, x10")
 	g.emit("fmul d0, d0, d1")
+	g.emit("fmul d0, d0, d2")
 	g.label(expRet)
 	g.emit("ret")
 	g.label(expInf)
