@@ -632,3 +632,67 @@ function main(): i32 {
 
     return 0;
 }
+
+// =================== TARGET-OS SUBSTITUTION (#8338) ====================
+
+// `__fern_target_os()` answers the environment half of the `-target` —
+// "linux", "darwin", "android", "wasi" or "freestanding". This is the
+// self-host half of native's constfold substitution: the call becomes a string
+// literal before anything reads the tree, so the checker, the interpreter and
+// every backend see a literal and never learn the builtin exists. The folder
+// above then reduces `__fern_target_os() == "darwin"` to a bool literal, so a
+// branch guarded by it never reaches codegen.
+//
+// Target-faithful, never host (docs/COMPTIME-BRIEF.md rule 1): the driver
+// passes the TARGET's environment, so `-target arm64-linux` answers linux
+// wherever the compiler itself is running.
+const TARGET_OS_BUILTIN: string = "__fern_target_os";
+
+// TargetOs carries the answer through the walk. An accumulator rather than a
+// captured closure because the feature census pins how many closures the
+// compiler's own sources hold, and this pass needs no state a parameter cannot
+// carry.
+struct TargetOs { os: string }
+
+// fold_target_os replaces every `__fern_target_os()` call in `mod` with the
+// string literal naming `os`.
+pub function fold_target_os(mod: parser.Module, os: string): parser.Module {
+    var acc: TargetOs = TargetOs { os: os };
+    var funcs: parser.FuncDecl[] = [];
+    for fd in mod.funcs {
+        var (body, a2) = astwalk.map_stmts_acc(fd.body, acc, tos_keep_stmt, tos_expr);
+        acc = a2;
+        funcs = funcs.append(parser.FuncDecl { ...fd, body: body });
+    }
+    var (tops, a4) = astwalk.map_stmts_acc(mod.top_stmts, acc, tos_keep_stmt, tos_expr);
+    acc = a4;
+    return parser.Module { ...mod, funcs: funcs, top_stmts: tops };
+}
+
+// tos_keep_stmt declines every statement, which is how a caller with nothing to
+// say about statements asks the spine to descend into their expressions.
+function tos_keep_stmt(s: ast.Stmt, a: TargetOs): (ast.Stmt, TargetOs, boolean) {
+    return (s, a, false);
+}
+
+// tos_expr CLAIMS the call, so the spine never walks arguments the builtin does
+// not take. A malformed use (`__fern_target_os(1)`) is claimed too and its
+// argument discarded, which matches native refusing the arity rather than
+// letting the name reach the checker as an undefined function.
+function tos_expr(e: ast.Expr, a: TargetOs): (ast.Expr, TargetOs, boolean) {
+    match (e) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(id) => {
+                    if (id.name == TARGET_OS_BUILTIN) {
+                        return (ast.ExprString { value: a.os, line: c.line, col: c.col }, a, true);
+                    }
+                },
+                _ => {}
+            }
+            return (e, a, false);
+        },
+        _ => { return (e, a, false); }
+    }
+    return (e, a, false);
+}

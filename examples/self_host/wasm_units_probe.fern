@@ -66,7 +66,7 @@ function with_funcs(m: parser.Module, fs: parser.FuncDecl[]): parser.Module {
 }
 
 function main(): i32 {
-    var mod: parser.Module = rundriver.parse_stdin("wasm_units_probe");
+    var mod: parser.Module = rundriver.parse_stdin_os("wasm_units_probe", "wasi");
 
     var arity_errs: util.Diag[] = asmcore.check_call_arity(parser.fill_default_args_module(mod));
     arity_errs = util.append_diags(arity_errs, asmcore.check_call_arity(mod));

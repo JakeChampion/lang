@@ -14,7 +14,7 @@ import "./ssa";
 import "./ssa_wasm";
 
 function main(): i32 {
-    var mod: parser.Module = rundriver.parse_stdin("ssa_wasm_emit_run");
+    var mod: parser.Module = rundriver.parse_stdin_os("ssa_wasm_emit_run", "wasi");
     mod = parser.fill_default_args_module(mod);
     // Pointer-returning functions get a 64-bit call result on the native
     // backends; on wasm32 every value is i32, but mark_ptr_calls still needs

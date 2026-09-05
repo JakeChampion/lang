@@ -1273,7 +1273,7 @@ struct Bundle {
 // them into one module (the import-driven scheme from asm_load_run). The
 // entry is parsed by the caller, which needs it for `-fmt` before any import
 // is resolved.
-function load_bundle(entry_path: string, entry_mod: parser.Module, root: string): Bundle {
+function load_bundle(entry_path: string, entry_mod: parser.Module, root: string, target_os: string): Bundle {
     var dir: string = util.dir_of(entry_path);
     // The entry's own manifest, when it has one: it names the dependency
     // packages, which are both a way to RESOLVE an import the sibling-file and
@@ -1345,7 +1345,11 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string)
     // settle against until the bundle exists; parse_module resolved the
     // same-module ones already, and the pass is idempotent.
     merged = parser.resolve_variant_fields_module(merged);
-    return Bundle { entry: entry_mod, loaded: loaded, merged: merged, pkgs: pkgs, ok: true };
+    // #8338: substitute `__fern_target_os()` for the target's environment on
+    // the way out, so every path that produces a bundle — `-check`, the
+    // compile path, and anything added beside them — sees string literals.
+    // Doing it in the two callers instead is how `-check` came to miss it.
+    return Bundle { entry: entry_mod, loaded: loaded, merged: constfold.fold_target_os(merged, target_os), pkgs: pkgs, ok: true };
 }
 
 // bundle_visibility_diags reports cross-module visibility errors (#6714): a
@@ -1410,6 +1414,16 @@ function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, i32) {
         return (b, 1);
     }
     return (Bundle { ...b, merged: folded.module }, 0);
+}
+
+// target_os_of names the OS `__fern_target_os()` answers with: the environment
+// half of the target being compiled for. An unknown target falls back to the
+// default target's own environment rather than an empty string — the target
+// itself is rejected elsewhere, and a program should never see "" for its OS.
+function target_os_of(target: string): string {
+    var env: string = platforms.for_target(target).environment;
+    if (env.len() == 0) { return "linux"; }
+    return env;
 }
 
 // check_bundle type-checks a loaded program and reports its diagnostics,
@@ -1866,7 +1880,7 @@ function check_file(entry_path: string, root: string, target: string, target_giv
         eprint("fern: cannot read entry file: " + entry_path);
         return 1;
     }
-    var b: Bundle = load_bundle(entry_path, parser.parse_module(lexer.tokenize(src)), root);
+    var b: Bundle = load_bundle(entry_path, parser.parse_module(lexer.tokenize(src)), root, target_os_of(target));
     if (!b.ok) { return 1; }
     if (bundle_visibility_diags(b)) { return 1; }
     return check_bundle(b, target, target_given);
@@ -2211,7 +2225,7 @@ function run(): i32 {
     }
     var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
 
-    var b: Bundle = load_bundle(entry_path, entry_mod, root);
+    var b: Bundle = load_bundle(entry_path, entry_mod, root, target_os_of(target));
     if (!b.ok) { return 1; }
     // -embed: resolve __fern_asset / __fern_assets into string literals before
     // anything else reads the tree, so the checker, the interpreter and every

@@ -36,7 +36,7 @@ function run(): i32 {
         if (av[ai] == "-ir") { use_ir = true; }
         ai = ai + 1;
     }
-    var mod: parser.Module = rundriver.parse_stdin("wasm_ir_run");
+    var mod: parser.Module = rundriver.parse_stdin_os("wasm_ir_run", "wasi");
     // Call-arity gate (#4360): shared with wasm_run — an arg-count mismatch
     // must reject before either the IR or the AST-fallback emit runs, not
     // miscompile. Checked on a default-filled COPY (the emit input is

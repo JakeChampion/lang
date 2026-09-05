@@ -30,7 +30,7 @@ function main(): i32 {
         if (av[ai] == "-decide") { decide = true; }
         ai = ai + 1;
     }
-    var mod: parser.Module = rundriver.parse_stdin("wasm_runio_run");
+    var mod: parser.Module = rundriver.parse_stdin_os("wasm_runio_run", "wasi");
     var mwb: parser.Module = parser.module_with_builtins(mod);
     if (decide) {
         // emit_module_run_io's own decision (component=true, io=true), reused

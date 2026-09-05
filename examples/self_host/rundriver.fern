@@ -11,16 +11,47 @@
 // than merely fixed.
 
 import "std/io";
+import "./constfold";
 import "./lexer";
 import "./parser";
+import "./platforms";
 
 // parse_stdin reads a program from stdin and parses it, warning when the
 // program has imports no driver here can resolve. `driver` names the caller in
 // that warning. It is a no-op for an import-free program, which is what the
 // fixture corpus is almost entirely made of.
 pub function parse_stdin(driver: string): parser.Module {
+    return parse_stdin_os(driver, driver_target_os());
+}
+
+// parse_stdin_os is parse_stdin for a driver whose target is NOT in its argv:
+// the wasm drivers always emit a component and take no -target, so they name
+// their environment here.
+pub function parse_stdin_os(driver: string, os: string): parser.Module {
     var src: string = io.read_all_stdin();
     var mod: parser.Module = parser.parse_module(lexer.tokenize(src));
     var _unresolved: boolean = parser.warn_unresolved_imports(mod, driver);
-    return mod;
+    // #8338: substitute `__fern_target_os()` for the target's environment
+    // here, in the one place every stdin driver funnels through, for the same
+    // reason this function exists at all — a driver that had to remember would
+    // eventually forget, and the symptom is a call to an unknown builtin
+    // reaching the IR rather than a wrong answer.
+    return constfold.fold_target_os(mod, os);
+}
+
+// driver_target_os reads the driver's own `-target` argument and names its
+// environment. Drivers parse that flag themselves to pick an emitter; reading
+// it here rather than taking it as a parameter is what keeps the substitution
+// in one place. No flag means the default target, as it does for the CLI.
+function driver_target_os(): string {
+    var av: string[] = args();
+    var i: i32 = 0;
+    while (i + 1 < av.len()) {
+        if (av[i] == "-target") {
+            var env: string = platforms.for_target(av[i + 1]).environment;
+            if (env.len() > 0) { return env; }
+        }
+        i = i + 1;
+    }
+    return "linux";
 }
