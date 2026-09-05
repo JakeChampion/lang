@@ -888,6 +888,30 @@ pub struct LowerState {
     fld_moves: string[],
 }
 
+// append_report_on reports whether FERN_APPEND_REPORT is set: print one line
+// per `a = a.append(v)` self-reassign naming the arr_push-vs-arr_push_owned
+// verdict and the rule that decided.
+//
+// The self-host counterpart of native's `fern -append-report`, and it answers a
+// different question than that flag does. Native reports copy-vs-in-place, the
+// O(n^2) hazard; this reports whether the grow RECLAIMS the superseded buffer,
+// because the plain push leaks it and that is where the self-built compiler's
+// retention comes from (#7954: two runtime primitives are 92% of the leaked
+// bytes, and this is one of them). A site's address in an rctrace line is
+// inside __fern_arr_push, so every append in the program aggregates to one
+// address; only the lowering knows which source site chose which push.
+//
+// Env-gated and print-only, like util.arr_push_cliff_report: a run without the
+// variable is byte-identical in behaviour and output. The verdict is computed
+// ONCE and shared with the emit below, so the report cannot drift from what
+// was actually emitted.
+function append_report_on(): boolean {
+    match (env("FERN_APPEND_REPORT")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
 // moves_local_at: does the construction at THIS ident node take over `name`'s
 // reference? The construction then owns it, so the retain is redundant with the
 // sweep dec that cancels it (#6726).
@@ -23014,7 +23038,19 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             // the plain push; the store below frees the superseded
                             // buffer once the param's ownership flag says this
                             // frame owns it (emit_consumed_param_store).
-                            if (s.is_aliased_name(a.target) || slot < s.frame.n_params) {
+                            var tgt_aliased: boolean = s.is_aliased_name(a.target);
+                            var tgt_param: boolean = slot < s.frame.n_params;
+                            if (append_report_on()) {
+                                var why: string = "sole owner: the grow reclaims the superseded buffer";
+                                if (tgt_aliased) { why = "aliased target: a surviving reference forbids the reclaim"; }
+                                else if (tgt_param) { why = "parameter target: the buffer is the caller's (#3457)"; }
+                                var verdict: string = "owned";
+                                if (tgt_aliased || tgt_param) { verdict = "LEAKS"; }
+                                eprint("append-report: " + s.frame.cur_fn + ":"
+                                    + util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)
+                                    + "  " + verdict + "  " + a.target + "  " + why + "\n");
+                            }
+                            if (tgt_aliased || tgt_param) {
                                 aps = aps.emit(ir.op_arr_push());
                             } else {
                                 aps = aps.emit(ir.op_arr_push_owned());
