@@ -340,6 +340,33 @@ behind #7954's thin arena margin: 3.26 GB requested for one module, and
 `LOCAL-DEV-LOOP.md`'s "the self-host-built compiler's live set grows with every
 compiler-source addition" is what a quadratic looks like from outside.
 
+Making the alias LIVE — reading `prev.n` — separates two gaps the first
+measurement conflated:
+
+| alias | emitter | allocs | frees | live_bytes |
+|---|---|--:|--:|--:|
+| dead | native | 900 | 900 | 0 |
+| live | native | 20,900 | 20,900 | 0 |
+| either | self-host | 40,200 | 20,200 | 23,763,200 |
+
+Native's numbers move by 23×; the self-host's do not move at all.
+
+**Gap 1, reuse side:** native drops a never-read alias and the copy never
+happens. The self-host treats `var prev = s` as an alias whether or not it is
+read, so the box is shared at the `emit` and the fast path cannot fire. This is
+what turns linear work into quadratic work, and it needs liveness rather than
+the syntactic `is_aliased_name` test.
+
+**Gap 2, RECLAIM side:** when the alias IS live the copy is semantically
+required — `prev` must keep the old array — and native makes exactly that copy
+and frees it, at `live_bytes` 0. The self-host makes about two allocations per
+iteration where native makes one and retains every copy. This is what turns
+quadratic work into quadratic MEMORY.
+
+Gap 2 is the narrower fix and the one to take first: on the shared path the
+superseded copy has no owner the moment the new copy exists, so it can be
+released there, which lands the self-host on native's live-alias behaviour.
+
 Both of the attribution's clusters now have a ten-line reproduction and an
 issue: #8628 for the peephole's displaced element, #8644 for this. Neither was
 reachable from a guessed shape — eight probes tried that and all eight came back
