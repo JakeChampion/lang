@@ -123,6 +123,73 @@ pub function write_out(s: string): void {
   }
 }
 
+// ---- quoting ---------------------------------------------------------------
+//
+// GNU quotes the strings it embeds in diagnostics; in the C locale
+// `quote` wraps an operand in single quotes with C escapes
+// (`extra operand 'c\nd'`).
+
+// `quote(s)` — `s` in single quotes; backslash and the quote itself
+// backslashed, the seven named control characters as C escapes, and
+// every other control or non-ASCII byte as three octal digits.
+pub function quote(s: string): string {
+  var bs: u8[] = [];
+  bs = bs.append(39 as u8);
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b == 92 || b == 39) {
+      bs = bs.append(92 as u8);
+      bs = bs.append(b as u8);
+    } else if (b >= 32 && b < 127) {
+      bs = bs.append(b as u8);
+    } else {
+      bs = append_c_escape(bs, b);
+    }
+    i = i + 1;
+  }
+  bs = bs.append(39 as u8);
+  return string_from_bytes_unchecked(bs);
+}
+
+// One control or non-ASCII byte as a C escape: `\a \b \f \n \r \t \v`
+// by name, anything else as `\NNN`.
+function append_c_escape(out: u8[], b: i32): u8[] {
+  var bs: u8[] = out.append(92 as u8);
+  var named: i32 = c_escape_letter(b);
+  if (named > 0) {
+    return bs.append(named as u8);
+  }
+  bs = bs.append((48 + b / 64) as u8);
+  bs = bs.append((48 + (b / 8) % 8) as u8);
+  return bs.append((48 + b % 8) as u8);
+}
+
+function c_escape_letter(b: i32): i32 {
+  if (b == 7) {
+    return 97;
+  }
+  if (b == 8) {
+    return 98;
+  }
+  if (b == 12) {
+    return 102;
+  }
+  if (b == 10) {
+    return 110;
+  }
+  if (b == 13) {
+    return 114;
+  }
+  if (b == 9) {
+    return 116;
+  }
+  if (b == 11) {
+    return 118;
+  }
+  return 0;
+}
+
 // ---- buffered stdout -------------------------------------------------------
 //
 // Output goes through a io_buffered.BufWriter, one write(2) per block, and a
