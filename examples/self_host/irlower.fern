@@ -25423,9 +25423,14 @@ function append_inplace_recvs(stmts: ast.Stmt[], esc: string[], acc: string[]): 
 //     function exits before anything here can look again;
 //   - in the rebind `s = S { ...s, xs: s.xs.append(v) }`, every read outside the
 //     assignment: later reads resolve through the replacing container.
+//   - a LENGTH or INDEX read of the same field from a top-level statement the
+//     site is sequenced after (`var bk = h(s.xs.len()); … s.xs.with(bk, v)`):
+//     it yields a scalar computed before the mutation, so it observes neither
+//     the store nor the field's move-out. Only those two positions — anything
+//     else can bind the buffer itself to a name that outlives the site.
 //
-// A bare read of the root, a read of the same field, or a method call on the
-// root forces the clone. So does a root read from a defer action or a lambda
+// A bare read of the root, any other read of the same field, or a method call
+// on the root forces the clone. So does a root read from a defer action or a lambda
 // (those run after the return), and a root bound to a second name anywhere
 // (`var t = s`), which keeps the old container reachable under that name.
 //
@@ -25559,10 +25564,24 @@ function fai_cands_expr(e: ast.Expr, roots: string[], acc: string[]): string[] {
     return a;
 }
 
+// fai_is_root_field reports whether `e` is exactly `<root>.<field>`.
+function fai_is_root_field(e: ast.Expr, root: string, field: string): boolean {
+    match (e) {
+        ast.ExprFieldAccess(fa) => {
+            match (fa.obj) {
+                ast.ExprIdent(id) => { return id.name == root && fa.field == field; },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
 // fai_excused_place classifies one ident-rooted field chain. Only the FIRST
 // segment out of the root decides: a chain that starts through another field
 // cannot reach `root.field`'s buffer.
-function fai_excused_place(x: ast.Expr, root: string, field: string, site: string, n: i32): i32 {
+function fai_excused_place(x: ast.Expr, root: string, field: string, site: string, pre: boolean, n: i32): i32 {
     match (x) {
         ast.ExprFieldAccess(fa) => {
             match (fa.obj) {
@@ -25570,11 +25589,11 @@ function fai_excused_place(x: ast.Expr, root: string, field: string, site: strin
                     if (id.name == root && fa.field != field) { return n + 1; }
                     return n;
                 },
-                ast.ExprFieldAccess(_) => { return fai_excused_place(fa.obj, root, field, site, n); },
-                _ => { return fai_excused_expr(fa.obj, root, field, site, n); }
+                ast.ExprFieldAccess(_) => { return fai_excused_place(fa.obj, root, field, site, pre, n); },
+                _ => { return fai_excused_expr(fa.obj, root, field, site, pre, n); }
             }
         },
-        _ => { return fai_excused_expr(x, root, field, site, n); }
+        _ => { return fai_excused_expr(x, root, field, site, pre, n); }
     }
     return n;
 }
@@ -25583,7 +25602,11 @@ function fai_excused_place(x: ast.Expr, root: string, field: string, site: strin
 // buffer `root.field` names. It mirrors astwalk.collect_idents_expr's traversal
 // so the two counts are comparable; a node kind it does not know contributes
 // nothing, which withholds the site.
-function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string, acc: i32): i32 {
+//
+// `pre` marks an expression the site is SEQUENCED AFTER, where `root.field` in
+// length or index position is excused too: both yield a scalar computed before
+// the store, so neither observes it nor the field's move-out.
+function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string, pre: boolean, acc: i32): i32 {
     var n: i32 = acc;
     match (e) {
         ast.ExprCall(c) => {
@@ -25591,14 +25614,16 @@ function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string
                 ast.ExprFieldAccess(cfa) => {
                     var rk: string = fai_call_site_key(c, cfa);
                     if (rk.len() > 0 && rk == site) { n = n + 1; }
-                    else { n = fai_excused_place(cfa.obj, root, field, site, n); }
+                    else if (pre && cfa.field == "len" && c.args.len() == 0
+                        && fai_is_root_field(cfa.obj, root, field)) { n = n + 1; }
+                    else { n = fai_excused_place(cfa.obj, root, field, site, pre, n); }
                 },
-                _ => { n = fai_excused_expr(c.callee, root, field, site, n); }
+                _ => { n = fai_excused_expr(c.callee, root, field, site, pre, n); }
             }
-            for arg in c.args { n = fai_excused_expr(arg, root, field, site, n); }
+            for arg in c.args { n = fai_excused_expr(arg, root, field, site, pre, n); }
             return n;
         },
-        ast.ExprFieldAccess(_) => { return fai_excused_place(e, root, field, site, n); },
+        ast.ExprFieldAccess(_) => { return fai_excused_place(e, root, field, site, pre, n); },
         ast.ExprStructLit(sl) => {
             if (sl.has_base) {
                 var base_is_root: boolean = false;
@@ -25608,36 +25633,37 @@ function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string
                 }
                 if (base_is_root) {
                     if (util.index_of_str(sl.field_names, field) >= 0) { n = n + 1; }
-                } else { n = fai_excused_expr(sl.base, root, field, site, n); }
+                } else { n = fai_excused_expr(sl.base, root, field, site, pre, n); }
             }
-            for fv in sl.field_values { n = fai_excused_expr(fv, root, field, site, n); }
+            for fv in sl.field_values { n = fai_excused_expr(fv, root, field, site, pre, n); }
             return n;
         },
         ast.ExprBinary(b) => {
-            n = fai_excused_expr(b.left, root, field, site, n);
-            return fai_excused_expr(b.right, root, field, site, n);
+            n = fai_excused_expr(b.left, root, field, site, pre, n);
+            return fai_excused_expr(b.right, root, field, site, pre, n);
         },
-        ast.ExprUnary(u) => { return fai_excused_expr(u.operand, root, field, site, n); },
+        ast.ExprUnary(u) => { return fai_excused_expr(u.operand, root, field, site, pre, n); },
         ast.ExprArray(ar) => {
             var i: i32 = 0;
-            while (i < ar.elements.len()) { n = fai_excused_expr(ar.elements[i], root, field, site, n); i = i + 1; }
+            while (i < ar.elements.len()) { n = fai_excused_expr(ar.elements[i], root, field, site, pre, n); i = i + 1; }
             return n;
         },
-        ast.ExprTuple(tp) => { for el in tp.elements { n = fai_excused_expr(el, root, field, site, n); } return n; },
+        ast.ExprTuple(tp) => { for el in tp.elements { n = fai_excused_expr(el, root, field, site, pre, n); } return n; },
         ast.ExprIndex(ix) => {
-            n = fai_excused_expr(ix.array, root, field, site, n);
-            return fai_excused_expr(ix.index, root, field, site, n);
+            if (pre && fai_is_root_field(ix.array, root, field)) { n = n + 1; }
+            else { n = fai_excused_expr(ix.array, root, field, site, pre, n); }
+            return fai_excused_expr(ix.index, root, field, site, pre, n);
         },
         ast.ExprSlice(sx) => {
-            n = fai_excused_expr(sx.array, root, field, site, n);
-            n = fai_excused_expr(sx.start, root, field, site, n);
-            return fai_excused_expr(sx.end, root, field, site, n);
+            n = fai_excused_expr(sx.array, root, field, site, pre, n);
+            n = fai_excused_expr(sx.start, root, field, site, pre, n);
+            return fai_excused_expr(sx.end, root, field, site, pre, n);
         },
         ast.ExprMapLit(ml) => {
             var mi: i32 = 0;
             while (mi < ml.keys.len()) {
-                n = fai_excused_expr(ml.keys[mi], root, field, site, n);
-                n = fai_excused_expr(ml.vals[mi], root, field, site, n);
+                n = fai_excused_expr(ml.keys[mi], root, field, site, pre, n);
+                n = fai_excused_expr(ml.vals[mi], root, field, site, pre, n);
                 mi = mi + 1;
             }
             return n;
@@ -25645,7 +25671,7 @@ function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string
         ast.ExprFString(fs) => {
             var fi: i32 = 0;
             while (fi < fs.exprs.len()) {
-                if (fs.is_expr[fi]) { n = fai_excused_expr(fs.exprs[fi], root, field, site, n); }
+                if (fs.is_expr[fi]) { n = fai_excused_expr(fs.exprs[fi], root, field, site, pre, n); }
                 fi = fi + 1;
             }
             return n;
@@ -25659,37 +25685,41 @@ function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string
 // no-overlap-anywhere arm. An assignment TARGET is one of the occurrences
 // collect_idents_stmt counts and none of the ones this excuses, so a reassigned
 // root refuses every site under it.
-function fai_excused_stmts(stmts: ast.Stmt[], root: string, field: string, site: string, acc: i32): i32 {
+function fai_excused_stmts(stmts: ast.Stmt[], root: string, field: string, site: string, pre: boolean, acc: i32): i32 {
     var n: i32 = acc;
-    for st in stmts {
-        match (st) {
-            ast.StmtVar(v) => { n = fai_excused_expr(v.init, root, field, site, n); },
-            ast.StmtReturn(r) => { n = fai_excused_expr(r.value, root, field, site, n); },
-            ast.StmtExpr(e) => { n = fai_excused_expr(e.value, root, field, site, n); },
-            ast.StmtAssign(a) => { n = fai_excused_expr(a.value, root, field, site, n); },
-            ast.StmtDefer(d) => { n = fai_excused_stmts([d.action], root, field, site, n); },
-            ast.StmtIf(f) => {
-                n = fai_excused_expr(f.cond, root, field, site, n);
-                n = fai_excused_stmts(f.then_body, root, field, site, n);
-                n = fai_excused_stmts(f.else_body, root, field, site, n);
-            },
-            ast.StmtWhile(w) => {
-                n = fai_excused_expr(w.cond, root, field, site, n);
-                n = fai_excused_stmts(w.body, root, field, site, n);
-            },
-            ast.StmtFor(f2) => {
-                n = fai_excused_expr(f2.iter, root, field, site, n);
-                n = fai_excused_stmts(f2.body, root, field, site, n);
-            },
-            ast.StmtMatch(m) => {
-                n = fai_excused_expr(m.scrutinee, root, field, site, n);
-                for arm in m.arms {
-                    if (arm.has_guard) { n = fai_excused_expr(arm.guard, root, field, site, n); }
-                    n = fai_excused_stmts(arm.body, root, field, site, n);
-                }
-            },
-            _ => {}
-        }
+    for st in stmts { n = fai_excused_stmt(st, root, field, site, pre, n); }
+    return n;
+}
+
+function fai_excused_stmt(st: ast.Stmt, root: string, field: string, site: string, pre: boolean, acc: i32): i32 {
+    var n: i32 = acc;
+    match (st) {
+        ast.StmtVar(v) => { n = fai_excused_expr(v.init, root, field, site, pre, n); },
+        ast.StmtReturn(r) => { n = fai_excused_expr(r.value, root, field, site, pre, n); },
+        ast.StmtExpr(e) => { n = fai_excused_expr(e.value, root, field, site, pre, n); },
+        ast.StmtAssign(a) => { n = fai_excused_expr(a.value, root, field, site, pre, n); },
+        ast.StmtDefer(d) => { n = fai_excused_stmt(d.action, root, field, site, pre, n); },
+        ast.StmtIf(f) => {
+            n = fai_excused_expr(f.cond, root, field, site, pre, n);
+            n = fai_excused_stmts(f.then_body, root, field, site, pre, n);
+            n = fai_excused_stmts(f.else_body, root, field, site, pre, n);
+        },
+        ast.StmtWhile(w) => {
+            n = fai_excused_expr(w.cond, root, field, site, pre, n);
+            n = fai_excused_stmts(w.body, root, field, site, pre, n);
+        },
+        ast.StmtFor(f2) => {
+            n = fai_excused_expr(f2.iter, root, field, site, pre, n);
+            n = fai_excused_stmts(f2.body, root, field, site, pre, n);
+        },
+        ast.StmtMatch(m) => {
+            n = fai_excused_expr(m.scrutinee, root, field, site, pre, n);
+            for arm in m.arms {
+                if (arm.has_guard) { n = fai_excused_expr(arm.guard, root, field, site, pre, n); }
+                n = fai_excused_stmts(arm.body, root, field, site, pre, n);
+            }
+        },
+        _ => {}
     }
     return n;
 }
@@ -25821,7 +25851,7 @@ function fai_capture_scan(bound: ast.Expr, target: string, roots: string[], acc:
         var r: string = roots[i];
         // Reading a container to rebuild ITSELF hands the old value to its own
         // replacement, not to a name that outlives it.
-        if (r != target && fai_count_ident_expr(bound, r) != fai_excused_expr(bound, r, "|", "", 0)) {
+        if (r != target && fai_count_ident_expr(bound, r) != fai_excused_expr(bound, r, "|", "", false, 0)) {
             a = push_str_unique(a, r);
         }
         i = i + 1;
@@ -25844,7 +25874,12 @@ pub function field_append_inplace_sites_of(fn: parser.FuncDecl): string[] {
     var esc: string[] = fai_esc_idents(fn.body, []);
     var cap: string[] = fai_captured_roots(fn.body, roots, []);
     var out: string[] = [];
-    return fai_admit_stmts(fn.body, fn.body, roots, esc, cap, false, out);
+    var ti: i32 = 0;
+    while (ti < fn.body.len()) {
+        out = fai_admit_stmt(fn.body[ti], fn.body, roots, esc, cap, false, ti, out);
+        ti = ti + 1;
+    }
+    return out;
 }
 
 // fai_cands_stmt collects the candidate sites of one statement, for the
@@ -25896,33 +25931,42 @@ function fai_cands_stmt(st: ast.Stmt, roots: string[], acc: string[]): string[] 
 // the whole body, and INSIDE A LOOP it cannot: the grow moves the field out of
 // the root, and the next iteration would read the moved-out field. A return
 // exits the loop and a rebind of the root replaces it, so those two stay.
-function fai_admit_stmts(stmts: ast.Stmt[], body: ast.Stmt[], roots: string[], esc: string[], cap: string[], in_loop: boolean, acc: string[]): string[] {
+//
+// `prefix` is the number of leading TOP-LEVEL statements of `body` the site is
+// sequenced after — the body-scope arm reads those under the relaxed rule.
+// It is inherited by every nested list, since a statement nested under
+// `body[prefix]` still runs after `body[0 .. prefix)`.
+function fai_admit_stmts(stmts: ast.Stmt[], body: ast.Stmt[], roots: string[], esc: string[], cap: string[], in_loop: boolean, prefix: i32, acc: string[]): string[] {
     var out: string[] = acc;
-    for st in stmts {
-        match (st) {
-            ast.StmtReturn(r) => { out = fai_admit_scope(fai_cands_expr(r.value, roots, []), r.value, "", body, esc, cap, in_loop, out); },
-            ast.StmtAssign(asg) => { out = fai_admit_scope(fai_cands_expr(asg.value, roots, []), asg.value, asg.target, body, esc, cap, in_loop, out); },
-            ast.StmtVar(v) => { out = fai_admit_body(fai_cands_expr(v.init, roots, []), body, esc, cap, in_loop, out); },
-            ast.StmtExpr(e) => { out = fai_admit_body(fai_cands_expr(e.value, roots, []), body, esc, cap, in_loop, out); },
-            ast.StmtIf(f) => {
-                out = fai_admit_body(fai_cands_expr(f.cond, roots, []), body, esc, cap, in_loop, out);
-                out = fai_admit_stmts(f.then_body, body, roots, esc, cap, in_loop, out);
-                out = fai_admit_stmts(f.else_body, body, roots, esc, cap, in_loop, out);
-            },
-            ast.StmtWhile(w) => {
-                out = fai_admit_body(fai_cands_expr(w.cond, roots, []), body, esc, cap, true, out);
-                out = fai_admit_stmts(w.body, body, roots, esc, cap, true, out);
-            },
-            ast.StmtFor(f2) => {
-                out = fai_admit_body(fai_cands_expr(f2.iter, roots, []), body, esc, cap, true, out);
-                out = fai_admit_stmts(f2.body, body, roots, esc, cap, true, out);
-            },
-            ast.StmtMatch(m) => {
-                out = fai_admit_body(fai_cands_expr(m.scrutinee, roots, []), body, esc, cap, in_loop, out);
-                for arm in m.arms { out = fai_admit_stmts(arm.body, body, roots, esc, cap, in_loop, out); }
-            },
-            _ => {}
-        }
+    for st in stmts { out = fai_admit_stmt(st, body, roots, esc, cap, in_loop, prefix, out); }
+    return out;
+}
+
+function fai_admit_stmt(st: ast.Stmt, body: ast.Stmt[], roots: string[], esc: string[], cap: string[], in_loop: boolean, prefix: i32, acc: string[]): string[] {
+    var out: string[] = acc;
+    match (st) {
+        ast.StmtReturn(r) => { out = fai_admit_scope(fai_cands_expr(r.value, roots, []), r.value, "", body, esc, cap, in_loop, prefix, out); },
+        ast.StmtAssign(asg) => { out = fai_admit_scope(fai_cands_expr(asg.value, roots, []), asg.value, asg.target, body, esc, cap, in_loop, prefix, out); },
+        ast.StmtVar(v) => { out = fai_admit_body(fai_cands_expr(v.init, roots, []), body, esc, cap, in_loop, prefix, out); },
+        ast.StmtExpr(e) => { out = fai_admit_body(fai_cands_expr(e.value, roots, []), body, esc, cap, in_loop, prefix, out); },
+        ast.StmtIf(f) => {
+            out = fai_admit_body(fai_cands_expr(f.cond, roots, []), body, esc, cap, in_loop, prefix, out);
+            out = fai_admit_stmts(f.then_body, body, roots, esc, cap, in_loop, prefix, out);
+            out = fai_admit_stmts(f.else_body, body, roots, esc, cap, in_loop, prefix, out);
+        },
+        ast.StmtWhile(w) => {
+            out = fai_admit_body(fai_cands_expr(w.cond, roots, []), body, esc, cap, true, prefix, out);
+            out = fai_admit_stmts(w.body, body, roots, esc, cap, true, prefix, out);
+        },
+        ast.StmtFor(f2) => {
+            out = fai_admit_body(fai_cands_expr(f2.iter, roots, []), body, esc, cap, true, prefix, out);
+            out = fai_admit_stmts(f2.body, body, roots, esc, cap, true, prefix, out);
+        },
+        ast.StmtMatch(m) => {
+            out = fai_admit_body(fai_cands_expr(m.scrutinee, roots, []), body, esc, cap, in_loop, prefix, out);
+            for arm in m.arms { out = fai_admit_stmts(arm.body, body, roots, esc, cap, in_loop, prefix, out); }
+        },
+        _ => {}
     }
     return out;
 }
@@ -25930,7 +25974,7 @@ function fai_admit_stmts(stmts: ast.Stmt[], body: ast.Stmt[], roots: string[], e
 // fai_admit_scope decides the candidates of a scoped host. `rebind_target` is
 // the assignment's target, or "" for a return: a rebind only excuses the reads
 // outside it when the container being replaced is the append's own root.
-function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string, body: ast.Stmt[], esc: string[], cap: string[], in_loop: boolean, acc: string[]): string[] {
+function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string, body: ast.Stmt[], esc: string[], cap: string[], in_loop: boolean, prefix: i32, acc: string[]): string[] {
     var out: string[] = acc;
     var i: i32 = 0;
     while (i < cands.len()) {
@@ -25940,9 +25984,9 @@ function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string
         var scoped: boolean = rebind_target.len() == 0 || rebind_target == root;
         if (!fai_root_refused(root, esc, cap)
             && scoped
-            && fai_count_ident_expr(scope, root) == fai_excused_expr(scope, root, field, k, 0)) {
+            && fai_count_ident_expr(scope, root) == fai_excused_expr(scope, root, field, k, false, 0)) {
             out = push_str_unique(out, k);
-        } else if (!in_loop && fai_admits_over_body(k, root, field, body, esc, cap)) {
+        } else if (!in_loop && fai_admits_over_body(k, root, field, body, esc, cap, prefix)) {
             out = push_str_unique(out, k);
         }
         i = i + 1;
@@ -25950,13 +25994,13 @@ function fai_admit_scope(cands: string[], scope: ast.Expr, rebind_target: string
     return out;
 }
 
-function fai_admit_body(cands: string[], body: ast.Stmt[], esc: string[], cap: string[], in_loop: boolean, acc: string[]): string[] {
+function fai_admit_body(cands: string[], body: ast.Stmt[], esc: string[], cap: string[], in_loop: boolean, prefix: i32, acc: string[]): string[] {
     if (in_loop) { return acc; }
     var out: string[] = acc;
     var i: i32 = 0;
     while (i < cands.len()) {
         var k: string = cands[i];
-        if (fai_admits_over_body(k, fai_key_part(k, 1), fai_key_part(k, 2), body, esc, cap)) {
+        if (fai_admits_over_body(k, fai_key_part(k, 1), fai_key_part(k, 2), body, esc, cap, prefix)) {
             out = push_str_unique(out, k);
         }
         i = i + 1;
@@ -25965,10 +26009,18 @@ function fai_admit_body(cands: string[], body: ast.Stmt[], esc: string[], cap: s
 }
 
 // fai_admits_over_body is native's third arm: no overlapping read anywhere in
-// the body, so the host statement does not matter.
-function fai_admits_over_body(k: string, root: string, field: string, body: ast.Stmt[], esc: string[], cap: string[]): boolean {
+// the body, so the host statement does not matter. The first `prefix` top-level
+// statements run before the site, so their length and index reads of the field
+// are excused too (fai_excused_expr's `pre`).
+function fai_admits_over_body(k: string, root: string, field: string, body: ast.Stmt[], esc: string[], cap: string[], prefix: i32): boolean {
     if (fai_root_refused(root, esc, cap)) { return false; }
-    return fai_count_ident_stmts(body, root) == fai_excused_stmts(body, root, field, k, 0);
+    var n: i32 = 0;
+    var i: i32 = 0;
+    while (i < body.len()) {
+        n = fai_excused_stmt(body[i], root, field, k, i < prefix, n);
+        i = i + 1;
+    }
+    return fai_count_ident_stmts(body, root) == n;
 }
 
 function fai_root_refused(root: string, esc: string[], cap: string[]): boolean {
