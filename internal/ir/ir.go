@@ -11706,6 +11706,33 @@ func (b *builder) expr(e ast.Expr) error {
 // back to nil when the expression's type can't be derived purely
 // from local / param / argument metadata. Used by `len()` so we
 // can pick the slice (`+4`) vs array / string (`-4`) offset.
+// closureLiteralType is the user-facing signature of a closure literal — a
+// Lambda closureconv has not yet rewritten, or the MakeClosure it becomes.
+// The hoisted FuncSigs entry carries a trailing __env param that
+// OpCallIndirect supplies from the closure pair itself, so it is stripped.
+// Nil when e is not a closure literal, or its hoisted signature is missing.
+func (b *builder) closureLiteralType(e ast.Expr) *ast.FuncType {
+	switch x := e.(type) {
+	case *ast.Lambda:
+		ft := &ast.FuncType{Result: x.ReturnType}
+		for _, p := range x.Params {
+			ft.Params = append(ft.Params, p.Type)
+		}
+		return ft
+	case *ast.MakeClosure:
+		sig, ok := b.info.FuncSigs[x.FuncName]
+		if !ok || sig == nil {
+			return nil
+		}
+		ft := &ast.FuncType{Result: sig.Result}
+		if len(sig.Params) > 0 {
+			ft.Params = append([]ast.Type(nil), sig.Params[:len(sig.Params)-1]...)
+		}
+		return ft
+	}
+	return nil
+}
+
 func (b *builder) exprType(e ast.Expr) ast.Type {
 	switch x := e.(type) {
 	case *ast.Ident:
@@ -11761,17 +11788,15 @@ func (b *builder) exprType(e ast.Expr) ast.Type {
 		// closure body asks "what struct/tuple is this?" for
 		// field-access offset resolution.
 		return x.Type
+	case *ast.Lambda:
+		return b.closureLiteralType(x)
 	case *ast.MakeClosure:
-		// A closureconv-rewritten lambda produces a closure value — a
-		// heap pointer to the closure pair — so it is pointer-shaped.
-		// Without this case an enclosing TupleLit / StructLit sized the
-		// element slot at the payloadSlotSize(nil) 4-byte default while
-		// the read/drop side used the DECLARED (fn, …) layout's 8-byte
-		// slot: the store packed the neighbouring element 4 bytes below
-		// where the load expects it, and the tuple drop rc_dec'd the two
-		// misaligned halves as one garbage pointer → segfault. The
-		// params/result don't matter for slot sizing; an empty FuncType
-		// classifies as IsPointerType.
+		if ft := b.closureLiteralType(x); ft != nil {
+			return ft
+		}
+		// A closure value is a heap pointer to its pair, so even without
+		// the hoisted signature it must classify as pointer-shaped or an
+		// enclosing tuple/struct sizes its slot at the 4-byte default.
 		return &ast.FuncType{}
 	case *ast.FString:
 		// f-strings always produce a string. The arms of a
@@ -13957,59 +13982,21 @@ func (b *builder) call(n *ast.Call) error {
 		}
 	}
 	// Immediate lambda call: `(function (x) { ... })(arg)`. The
-	// Lambda lowers to a closure pair pointer (via closureconv's
-	// MakeClosure rewrite); OpCallIndirect dispatches through it
-	// like any other function-typed value. Same shape as the
-	// chained-Call / CaptureRef / FieldAccess callee branches
-	// — Lambda just happens to be a literal closure value
-	// inlined right at the call site. closureconv has likely
-	// already rewritten Lambda → MakeClosure before the IR
-	// builder runs, so we handle both shapes.
-	if lam, ok := n.Callee.(*ast.Lambda); ok {
-		ft := &ast.FuncType{Result: lam.ReturnType}
-		for _, p := range lam.Params {
-			ft.Params = append(ft.Params, p.Type)
-		}
+	// A closure literal called right where it is written — a Lambda, or
+	// the MakeClosure closureconv rewrites it to — lowers to a closure
+	// pair pointer and dispatches through OpCallIndirect like any other
+	// function-typed value.
+	if ft := b.closureLiteralType(n.Callee); ft != nil {
 		slots, types, err := b.emitIndirectCallArgs(n.Args, ft.Result)
 		if err != nil {
 			return err
 		}
-		if err := b.expr(lam); err != nil {
+		if err := b.expr(n.Callee); err != nil {
 			return err
 		}
 		b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
 		b.emitArgTempDrops(slots, types)
 		return nil
-	}
-	if mc, ok := n.Callee.(*ast.MakeClosure); ok {
-		// closureconv-emitted MakeClosure callee — same path as
-		// the Lambda case above, but the function signature comes
-		// from info.FuncSigs[mc.FuncName] (closureconv stamped
-		// this for the hoisted target).
-		var ft *ast.FuncType
-		if sig, ok := b.info.FuncSigs[mc.FuncName]; ok && sig != nil {
-			// The hoisted sig includes the trailing __env param;
-			// drop it for the call-site signature, since the
-			// OpCallIndirect emit uses the pair's env_ptr to
-			// supply env automatically.
-			userSig := &ast.FuncType{Result: sig.Result}
-			if len(sig.Params) > 0 {
-				userSig.Params = append([]ast.Type(nil), sig.Params[:len(sig.Params)-1]...)
-			}
-			ft = userSig
-		}
-		if ft != nil {
-			slots, types, err := b.emitIndirectCallArgs(n.Args, ft.Result)
-			if err != nil {
-				return err
-			}
-			if err := b.expr(mc); err != nil {
-				return err
-			}
-			b.emit(Op{Kind: OpCallIndirect, I32: int32(len(n.Args)), Ext: &OpExt{Sig: ft}})
-			b.emitArgTempDrops(slots, types)
-			return nil
-		}
 	}
 	if _, ok := n.Callee.(*ast.Ident); !ok {
 		return fmt.Errorf("ir: indirect call from non-identifier expression")
@@ -19580,10 +19567,11 @@ func (b *builder) exprLeavesValue(e ast.Expr) bool {
 			}
 		}
 		// A call through a function VALUE — a closure-typed parameter, local
-		// or field — has no FuncSigs entry, so the result type has to come
-		// from the callee's own type. Assuming a value was left put a `drop`
-		// after a void call_indirect, which underflows the wasm stack and
-		// fails module validation (#8504).
+		// or field, or a closure literal called where it is written — has no
+		// FuncSigs entry, so the result type has to come from the callee's
+		// own type. Assuming a value was left put a `drop` after a void
+		// call_indirect, which underflows the wasm stack and fails module
+		// validation (#8504, #8551).
 		if ft, ok := b.exprType(c.Callee).(*ast.FuncType); ok && ft.Result != nil {
 			return !isVoid(ft.Result)
 		}
