@@ -9,7 +9,7 @@
 // (docs/RC-PERCEUS-SELF-HOST-IR-REBUILD.md §3), now a gated-vs-ungated one.
 //
 // `-target arm64-linux` selects the arm64 backends instead (#4398 part 1): the IR
-// path via asm_arm64_ir.emit_module_ir, and IR-or-error via
+// path via asm_arm64_ir.emit_module_ir_gated, and IR-or-error via
 // asm_arm64_ir.emit_module_or_error — replacing the retired asm_arm64_ir_run mirror
 // driver. The target-independent probe modes (`-ir-probe` / `-ir-needs`)
 // work for both targets; the per-module unit flags (`-ir-unit` / `-ir-ns` /
@@ -152,23 +152,24 @@ function run(): i32 {
         return 0;
     }
     // `-target arm64-linux`: the arm64 leg (replacing the retired asm_arm64_ir_run
-    // mirror). `-ir` + fully-eligible routes IR via asm_arm64_ir.emit_module_ir —
-    // the SAME orchestration emit_module's use_ir dispatch runs (the old
+    // mirror). `-ir` routes the fused gate+emit, asm_arm64_ir.emit_module_ir_gated
+    // — the SAME orchestration the CLI's emit_module_or_error runs (the old
     // mirror hand-copied that sequence and drifted: it missed the #3457
     // reclaim/drop bodies, so struct-with-array-field programs link-failed on
     // `__struct_drop_<T>`). Anything else is refused, not fallen back.
     // The unit/extern/sigs flags are x86-64-only and ignored here, matching
     // the old mirror driver (which ignored unknown flags).
     if (target == "arm64-linux") {
-        if (use_ir && ircore.all_eligible(lm)) {
-            print(asm_arm64_ir.emit_module_ir(lm, false));
-        } else {
+        var a64: string = "";
+        if (use_ir) { a64 = asm_arm64_ir.emit_module_ir_gated(lm, false); }
+        if (a64 == "") {
             // IR-or-error (#3457 slice 5): no AST fallback. With this the `-ir`-off
             // leg behaves exactly like the `-ir`-on one — route IR or refuse — which
             // is why the AST-vs-IR differential retires alongside (its two legs no
             // longer differ for any program).
-            print(asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(mod), false));
+            a64 = asm_arm64_ir.emit_module_or_error(parser.module_with_builtins(mod), false);
         }
+        print(a64);
         return 0;
     }
     // `-target arm64-darwin`: the arm64-apple-darwin GAS text (@PAGE/@PAGEOFF,

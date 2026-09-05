@@ -969,3 +969,59 @@ pub function wp_fn_sigs(funcs: parser.FuncDecl[], structs: irlower.StructTab): i
         consume_safe_params: irlower.consume_safe_params_interproc(funcs, bparams),
     };
 }
+
+// Lowered is lower_gated's result: `ok` is the module's IR-eligibility verdict,
+// and when it holds `cache[i]` is mod.funcs[i]'s LowerResult, ready to emit
+// from. A separate flag rather than an empty cache, because a function-less
+// module is eligible and its cache is legitimately empty.
+pub struct Lowered {
+    ok: boolean,
+    cache: irlower.LowerResult[],
+}
+
+// lower_gated is the FUSED eligibility gate + lowering pass every whole-program
+// emit path runs (#4394 lever 3, shared here for arm64 and wasm as well as x86,
+// #8199): each function is lowered ONCE with the emit-side registries `sg`, its
+// eligibility judged on that same LowerResult, and the result kept so the emit
+// never lowers it a second time. The verdict is the one all_eligible_known
+// gives: r.ok plus a call_direct / const_func scan whose only rejections are
+// USER function names (RC-inserted __struct_drop_ / __field_reclaim_ / __fern_*
+// helper calls all pass is_fern_helper), and those user calls come from the AST
+// — unaffected by the fuller emit-side RC side-tables this path lowers with. So
+// a module that routed IR before still routes IR (byte-identically), one that
+// was declined is still declined — at half the lowering cost.
+//
+// `for_wasm` selects the wasm lowering shape (the erased-param widening and
+// arg-stash forms); it changes instruction selection, never whether a body
+// lowers, so the wasm gate can sit on the same cache its emit consumes.
+pub function lower_gated(mod: parser.Module, structs: irlower.StructTab, sg: irlower.FnSigs, known: string[], for_wasm: boolean): Lowered {
+    var cache: irlower.LowerResult[] = [];
+    var freg: irlower.SigReg = module_func_reg(mod);
+    var i: i32 = 0;
+    while (i < mod.funcs.len()) {
+        var r: irlower.LowerResult = irlower.lower_func(mod.funcs[i], structs, sg, for_wasm);
+        if (!r.ok) {
+            if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (did not lower: " + r.why + ")"); }
+            return Lowered { ok: false, cache: [] };
+        }
+        var j: i32 = 0;
+        while (j < r.ops.len()) {
+            var o: ir.Op = r.ops[j];
+            if (o.kind_tag == 149) {  // call_direct
+                if (!is_fern_helper(o.str) && !is_c_call(o.str) && !module_has_func(freg, o.str) && !known_includes(known, o.str)) {
+                    if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")"); }
+                    return Lowered { ok: false, cache: [] };
+                }
+            } else if (o.kind_tag == 6) {  // const_func
+                if (!module_has_func(freg, o.str) && !known_includes(known, o.str)) {
+                    if (strict_ir_on()) { strict_ir_refuse(mod.funcs[i].name + " (function value " + o.str + " not defined)"); }
+                    return Lowered { ok: false, cache: [] };
+                }
+            }
+            j = j + 1;
+        }
+        cache = cache.append(r);
+        i = i + 1;
+    }
+    return Lowered { ok: true, cache: cache };
+}
