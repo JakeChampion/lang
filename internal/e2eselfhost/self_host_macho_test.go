@@ -101,6 +101,17 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// Stdout — print lowers to the write syscall (64 -> 4) and a
 		// .rodata (__TEXT,__const) string literal.
 		{"print", `function main(): i32 { print("hi"); return 0; }`, 0},
+		// A literal shaped like the emitter's own `:lo12:` operands: its bytes
+		// must survive darwinize (#8400). Under the rewrite the payload lost
+		// 6 bytes under an unchanged length, so s[16] read '.' not ':'.
+		{"lo12_literal", `function main(): i32 {
+    var s: string = "    add x9, x9, :lo12:.Lfern_relanchor";
+    if (s.len() != 38) { return 1; }
+    if ((s[16] as i32) != 58) { return 2; }
+    if ((s[21] as i32) != 58) { return 3; }
+    if ((s[37] as i32) != 114) { return 4; }
+    return 42;
+}`, 42},
 		// Struct + receiver method dispatch.
 		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }`, 12},
 		// Arrays — literal, index, length, loop.

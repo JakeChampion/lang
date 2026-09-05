@@ -82,6 +82,36 @@ func TestSelfHostArm64DarwinStringLiteralKeepsDotL(t *testing.T) {
 	}
 }
 
+// A program whose STRING contains a `:lo12:` operand. This is not contrived:
+// the self-host compiler's own emitter literals are exactly this shape, and
+// rewriting them is how the arm64-darwin stage-2 compiler came to emit a
+// listing 6 bytes out of step at every `:lo12:` (#8400). The `.ascii`
+// directive keeps its payload; no `@PAGEOFF` is appended to a data line.
+const darwinLo12StrSrc = `function main(): i32 {
+    print("    add x9, x9, :lo12:.Lfern_relanchor");
+    return 0;
+}`
+
+// TestSelfHostArm64DarwinStringLiteralKeepsLo12 is the `:lo12:` twin of
+// KeepsDotL: the operand rewrite must skip quoted regions too.
+func TestSelfHostArm64DarwinStringLiteralKeepsLo12(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	out := string(runCaptureEnv(t, runner, bin, []byte(darwinLo12StrSrc),
+		[]string{"PATH=/usr/bin:/bin"}, "-target", "arm64-darwin"))
+	if !strings.Contains(out, `:lo12:.Lfern_relanchor"`) {
+		t.Error(`the string literal's ":lo12:" was rewritten in the self-host Darwin listing - string data is not an operand`)
+	}
+	if n := countOutsideStrings(out, ":lo12:"); n != 0 {
+		t.Errorf("the self-host Darwin listing still has %d :lo12: operands outside string data", n)
+	}
+	if n := countOutsideStrings(out, `"@PAGEOFF`); n != 0 {
+		t.Errorf("%d .ascii data lines carry a @PAGEOFF suffix in the self-host Darwin listing", n)
+	}
+}
+
 // countOutsideStrings counts occurrences of sub that are not inside a
 // double-quoted region, line by line. The distinction is the whole point: a
 // ".L" inside a quoted operand is a program's string data, not a symbol.
