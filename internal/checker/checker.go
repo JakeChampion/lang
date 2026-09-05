@@ -3472,11 +3472,16 @@ func (c *checker) resolveMethod(typeName, name string, prefer []string) (mangled
 // modload). It is both the module identity visibility rules compare
 // against and the path errf stamps on every diagnostic, which the CLI
 // formatter and LSP workspace mode route per file by.
+//
+// It reads BodyModule, not SourceModule: a materialised trait default is
+// owned by the impl but its statements were written beside the trait, so
+// both the names it may reach and the file a diagnostic names are the
+// trait's.
 func (c *checker) currentModule() string {
 	if c.current == nil {
 		return ""
 	}
-	return c.current.SourceModule
+	return c.current.BodyModule()
 }
 
 // setElemHintFor stamps c.elemHint with the element type of `dst` when
@@ -4494,8 +4499,13 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 // in impl.MethodNames so the conformance pass sees the method as
 // present. Idempotent across the monomorph re-check: the synthesised
 // FuncDecl is a plain method (no trait default attached) and
-// MethodNames already lists it, so a second pass adds nothing. See
-// docs/TRAITS.md.
+// MethodNames already lists it, so a second pass adds nothing.
+//
+// The clone straddles two modules: the METHOD is the impl's, but its
+// BODY is the trait's source, already mangled there by modload. It
+// carries the trait method's position and DefiningModule so everything
+// reading the body — name resolution, the file a diagnostic names, the
+// capability walk — roots in the trait's module. See docs/TRAITS.md.
 func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 	for _, impl := range prog.Impls {
 		td, ok := c.info.Traits[impl.Trait]
@@ -4511,11 +4521,14 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				continue
 			}
 			method := &ast.FuncDecl{
-				Name:         m.Name,
-				ReturnType:   ast.SubstSelf(m.Result, impl.Type),
-				Body:         ast.CloneBlock(m.Body),
-				SourceModule: impl.SourceModule,
-				ImplTrait:    impl.Trait,
+				P:              m.P,
+				NamePos:        m.P,
+				Name:           m.Name,
+				ReturnType:     ast.SubstSelf(m.Result, impl.Type),
+				Body:           ast.CloneBlock(m.Body),
+				SourceModule:   impl.SourceModule,
+				DefiningModule: td.SourceModule,
+				ImplTrait:      impl.Trait,
 			}
 			if m.Assoc {
 				// Associated default (no `self`): hoists to
@@ -5363,7 +5376,7 @@ func (c *checker) checkOpaqueAccess(sd *ast.StructDecl, pos ast.Position, what s
 	}
 	cur := ""
 	if c.current != nil {
-		cur = c.current.SourceModule
+		cur = c.current.BodyModule()
 	}
 	if cur != sd.SourceModule {
 		c.errfCode(pos, "E021", "cannot %s opaque type %s outside the module that defines it", what, demangle(sd.Name))
@@ -5503,7 +5516,7 @@ func (c *checker) methodVisibleHere(mangled string) bool {
 	if c.current == nil {
 		return true
 	}
-	return c.moduleSees(c.current.SourceModule, c.info.MethodSources[mangled])
+	return c.moduleSees(c.current.BodyModule(), c.info.MethodSources[mangled])
 }
 
 // methodImplementsTrait reports whether calling `methodName` on receiver
@@ -7740,7 +7753,7 @@ func (c *checker) variantDynPayloadTypes(du ast.EnumType, variantName string) ([
 // non-stdlib module) must use an explicit `as` cast instead. See
 // docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
 func (c *checker) inStdlibContext() bool {
-	return c.current != nil && strings.HasPrefix(c.current.SourceModule, "stdlib://")
+	return c.current != nil && strings.HasPrefix(c.current.BodyModule(), "stdlib://")
 }
 
 // implementsAllDynTraits reports whether the concrete type named `tn`
@@ -13280,6 +13293,22 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			} else {
 				c.settleNumeric(n.Inner, n.Target)
 			}
+		} else if innerNum, innerIsNum := inner.(ast.NumberType); innerIsNum && isFloat(n.Target) && !isBareNumericLiteral(n.Inner) {
+			// The mirror of the float→int exception above. An int→float
+			// cast converts the RESULT, so the float target must not reach
+			// the operands: settling `(7 / 2) as f64` at f64 stamps IsFloat
+			// on both literals while the Binary keeps the integer stamp
+			// checkExpr gave it, and the IR then feeds f64 constants to an
+			// i32 divide — 3.5 on interp, 0 on the natives, an invalid
+			// module on wasm. Settle the inner at its own integer type and
+			// let the cast do the conversion. A BARE literal still settles
+			// at the target, so `4611686018427387904 as f64` keeps its
+			// width.
+			intHint := ast.NumberType{Width: 32}
+			if !innerNum.Polymorphic {
+				intHint = innerNum
+			}
+			c.settleNumeric(n.Inner, intHint)
 		} else if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar {
 			// `65 as char`: `char` is not a NumberType, so settle the
 			// inner at i32 (the slot a scalar rides) rather than handing

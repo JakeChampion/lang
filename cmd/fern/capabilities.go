@@ -56,7 +56,7 @@ func enforceCapabilities(srcPath string, prog *ast.Program, warnw io.Writer) err
 	resolve := packageInfoResolver(srcPath)
 	enforceable := false
 	for _, fn := range prog.Funcs {
-		if name, _, root := resolve(fn.SourceModule); name != "" && !root {
+		if name, _, root := resolve(fn.BodyModule()); name != "" && !root {
 			enforceable = true
 			break
 		}

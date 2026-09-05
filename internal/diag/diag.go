@@ -47,7 +47,7 @@ type Hinted interface {
 // file they were emitted against. modload stamps this on parser /
 // lexer errors after each module's parse so cross-file diagnostics
 // can be routed back to the right URI in workspace-mode LSP. The
-// checker fills it from `c.current.SourceModule` whenever the
+// checker fills it from `c.current.BodyModule()` whenever the
 // emitting context is a known FuncDecl. Empty string means
 // "unknown" — callers should fall back to the entry file.
 type Filed interface {
