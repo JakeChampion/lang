@@ -271,6 +271,48 @@ it if a `stash pop` ever conflicts unexpectedly).
 Report the count, not the verdict: "15 of 16 fail, the sixteenth is the
 deliberate control" is checkable; "verified non-vacuous" is not.
 
+## Selecting and running a measurement: four ways to get a confident wrong answer
+
+Every one of these produced a wrong answer that looked right, on the same day.
+
+**`-run` is an unanchored substring match, and nearly every test in
+`internal/e2eselfhost` is named `...X86_64`.** So `-run 'X86|Gas'` does not
+select the fifty assembler tests, it selects most of the package: 40 minutes
+instead of 2. Anchor on what follows the prefix — `-run 'TestSelfHostX86[A-Z]'`
+picks `TestSelfHostX86Gas` and friends while `X86_` fails the `[A-Z]`.
+
+**The 335-fixture corpus lives in `internal/e2e`, not `internal/e2eselfhost`,
+and is gated behind `FERN_SELFHOST_FIXTURES=1`.** Skipped, it reports
+`ok  github.com/jakechampion/lang/internal/e2e  0.006s` — a bare `ok` that
+passes every grep for `FAIL`. The real run is ~97 s.
+
+**`/tmp/selfhost-bincache-*` belongs to a running test process** — one per
+process, from `os.MkdirTemp` in `internal/e2eharness/self_host_buildcache.go`,
+held open for the whole run. Deleting one to reclaim disk while a suite is
+running turns *every* test in it into `open cached bin ...: no such file or
+directory`: 401 failures, none of them real. When several agents or sessions
+share a box, run long suites under a private cache with
+`TMPDIR=<your own dir> go test ...`, and reclaim disk from your own build
+artifacts rather than from `/tmp/selfhost-bincache-*` or `/tmp/go-build*`.
+
+**Serialize a byte-identity comparison.** Running one compile next to a heavy
+suite and then `cmp`-ing produced a 421 KB "difference" between two binaries
+that are in fact identical. One at a time, then compare.
+
+## callgrind: profile the `-g` binary itself
+
+valgrind does not read the self-host `-g` `.symtab`, so hot rows come back as
+`???:0x...` and want `nm -n` to resolve. **Resolve them against the binary that
+actually ran.** Building a second `-g` binary as a symbol donor and mapping the
+first binary's addresses through it does not work — the two do not share a
+layout, and the result is plausible-looking symbol names with offsets tens of
+thousands of bytes into the wrong function. Build with `-g` and profile that.
+
+`callgrind_annotate` is the tool for self cost; a hand-rolled parse of the
+`fn=(id)` lines will double-count, because callgrind's name compression means a
+bare `fn=(id)` refers back to an earlier definition and the cost lines under a
+caller are inclusive.
+
 ## Arena exhaustion is exit 125; a host OOM-kill is 137
 
 Distinguishable by status alone, which is the point — they used to share 137,
