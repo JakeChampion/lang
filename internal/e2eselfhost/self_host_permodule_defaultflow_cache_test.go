@@ -33,7 +33,7 @@ func pmCacheTree(t *testing.T, leaf string) (string, string) {
 	write("mid.fern", "import \"./leaf\";\n"+
 		"pub function mid_val(): i32 {\n"+
 		"    var x = leaf.leaf_val();\n"+
-		"    if (x > 0) { return 42; }\n"+
+		"    if (x + 2 > 0) { return 42; }\n"+
 		"    return 0;\n"+
 		"}\n")
 	write("main.fern", "import \"./mid\";\nfunction main(): i32 { return mid.mid_val(); }\n")
