@@ -296,12 +296,14 @@ differential fuzz and `__rc_underflow_count` guard.
    value (`__fern_str_inc` on wasm, `__fern_rc_inc` on x86_64), `m.get`
    /`m.get_or` / `m.iter().value()` all retain the returned string, and
    a key OVERWRITE pre-drops the replaced buffer via `__map_lookup_val`
-   + `__fern_str_dec` (wasm) or `__fern_rc_dec` (x86_64). The 8-byte
-   cell on wasm leaks — a string value's cell and the reference it
-   carries cannot be reclaimed independently, so it waits on #6242's
-   claim over the value column, where a WIDE-scalar value column is
-   already owned outright (#7114); the dominant string buffer is
-   reclaimed.
+   + `__fern_str_dec` on both, under an `__fern_rc_is_unique(m)` gate: a
+   pre-drop runs before the set's own `__map_cow_inplace`, so a copy of
+   the handle still names the value it releases. The cell the two-word
+   ABI boxes that value into is freed alongside the buffer (#2704).
+   What remains is the ALIASED case, where the release belongs to
+   whoever owns the column and a copy claims neither the string nor the
+   struct value column: #8354, a wide-scalar value column being already
+   owned outright (#7114).
 
    **arm64 is excluded.** arm64 IR-lowering forces `TwoWordOverride=true`
    (see `internal/codegen/arm64/arm64.go`), so strings are stored boxed
