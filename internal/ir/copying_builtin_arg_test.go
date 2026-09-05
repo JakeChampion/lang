@@ -79,19 +79,54 @@ func TestCopyingBuiltinArgsAreInertPerTheRegistry(t *testing.T) {
 	}
 }
 
-// The exclusions that would be unsound: inert builtins whose RESULT
-// aliases the receiver's interior, and the count-moving container
-// mutators. Their absence is the table's whole safety argument.
+// The exclusions that would be unsound: the POSITIONS whose value the call
+// can hand back, and the count-moving container mutators. Their absence is
+// the table's whole safety argument.
+//
+// A Map read is why this is stated per position rather than per callee: its
+// KEY is hashed and compared and nothing else, while its receiver and
+// get_or's fallback are exactly what the call returns. Listing the callee
+// wholesale would credit all three; leaving it out entirely cost the key's
+// own scope-exit release (#8277).
 func TestCopyingBuiltinArgsExcludeAliasingResults(t *testing.T) {
-	for _, name := range []string{
-		"__method_Map_get", "__method_Map_get_or", "__method_Map_keys",
-		"__method_Map_values", "__method_MapIter_key", "__method_MapIter_value",
-		"__method_Map_set", "__method_Array_push", "__method_Array_set",
-		"__heap_release_to",
+	for _, tc := range []struct {
+		name string
+		arg  int
+		why  string
+	}{
+		{"__method_Map_get", 0, "the receiver, whose interior the result aliases"},
+		{"__method_Map_get_or", 0, "the receiver, whose interior the result aliases"},
+		{"__method_Map_get_or", 2, "the fallback, which IS the result on a miss"},
+		{"__method_Map_has", 0, "the receiver"},
+		{"__method_Map_delete", 0, "the receiver"},
+		{"__method_Map_keys", 0, "the receiver, whose keys the result copies out"},
+		{"__method_Map_values", 0, "the receiver, whose interior the result aliases"},
+		{"__method_MapIter_key", 0, "the iterator, whose interior the result aliases"},
+		{"__method_MapIter_value", 0, "the iterator, whose interior the result aliases"},
+		{"__method_Map_set", 1, "the key, which the map retains"},
+		{"__method_Map_set", 2, "the value, which the map retains"},
+		{"__method_Array_push", 1, "the element, which the array retains"},
+		{"__method_Array_set", 2, "the element, which the array retains"},
+		{"__heap_release_to", 0, "the callee invalidates memory wholesale"},
 	} {
-		if _, ok := copyingBuiltinArgs[name]; ok {
-			t.Errorf("%s must not be in copyingBuiltinArgs — inert on its arguments is "+
-				"not enough when the result aliases the receiver (or the callee moves counts)", name)
+		if copyingBuiltinArg(tc.name, tc.arg) {
+			t.Errorf("copyingBuiltinArg(%s, %d) is true, but that argument is %s — "+
+				"inert on its arguments is not enough when the call can hand the value back",
+				tc.name, tc.arg, tc.why)
+		}
+	}
+}
+
+// The half the exclusions above do not state: a Map read's KEY is credited,
+// which is what keeps the caller's own release of an aliased key (#8277).
+func TestCopyingBuiltinArgsCreditTheMapReadKey(t *testing.T) {
+	for _, name := range []string{
+		"__method_Map_get", "__method_Map_get_or",
+		"__method_Map_has", "__method_Map_delete",
+	} {
+		if !copyingBuiltinArg(name, 1) {
+			t.Errorf("copyingBuiltinArg(%s, 1) is false — a Map read hashes and compares "+
+				"its key and retains nothing of it, so the caller must keep its release", name)
 		}
 	}
 }

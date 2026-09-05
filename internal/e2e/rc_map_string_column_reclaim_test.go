@@ -104,24 +104,23 @@ function main(): i32 {
     return 0;
 }`
 
-// An OVERWRITE under an alias. The overwrite pre-drop releases the value the
-// set is about to replace, and it runs before the set's own __map_cow_inplace —
-// so a second handle over the same buffer still names that value. The value
-// column is not claimed on a copy (#8354), and releasing it anyway is an
-// uncounted-alias free: no rc detector fires, and the fault lands wherever the
-// freelist next hands the block out. Unfixed, x86-64 SIGSEGVs here.
+// An OVERWRITE under an alias — the shape that says where the release of a
+// replaced value belongs. An IR-side pre-drop runs BEFORE the set's own
+// __map_cow_inplace, so a second handle over the same buffer still names the
+// value it would release: freeing it there is an uncounted-alias free (no rc
+// detector fires, and the fault lands wherever the freelist next hands the
+// block out, which on x86-64 was a SIGSEGV), and gating the pre-drop off
+// instead reclaims nothing. Since #8421 the release lives in __map_dec_value,
+// which the set reaches AFTER the COW, so it is sole-owner-correct by
+// construction and runs on the aliased path too.
 //
-// 0 iff both handles read back what they should AND nothing over-released. The
-// byte census is deliberately not asserted: the pre-drop is skipped when the
-// handle is shared, so the replaced value is reclaimed at map drop on the
-// two-word ABIs and leaks on the native single-word one — a residual of #8354,
-// not of this guard.
+// 0 iff both handles read back what they should AND nothing over-released;
+// the byte census is asserted separately, against the baseline below.
 //
-// ONE ENTRY, which is all this particular probe pins: the gate stops the
-// pre-drop releasing a value another handle names, and says nothing about DROP
-// time. The second, untouched entry — where both copies' drop walks used to
-// free the same cell and buffer — is mapAliasedTwoEntrySrc below, green since
-// the string value column gained its own claim.
+// ONE ENTRY, which is all this particular probe pins. The second, untouched
+// entry — where both copies' drop walks used to free the same cell and buffer
+// — is mapAliasedTwoEntrySrc below, green since the string value column gained
+// its own claim (#8354).
 const mapAliasedOverwriteSrc = `import "core/map";
 function mk(): i32 {
     var stem: string = "a";
@@ -153,10 +152,8 @@ function main(): i32 {
 // on a signal, x86-64 returns the wrong answer.
 //
 // 0 iff all four reads through both handles are right AND nothing
-// over-released. The byte census is deliberately not asserted: the aliased
-// overwrite still leaks the value it replaces, because the pre-drop is gated
-// off when the handle is shared and __map_dec_value is a no-op for a string
-// column. That is the overwrite-dec's placement, tracked separately.
+// over-released; the byte census is asserted separately, against the
+// two-key baseline below.
 const mapAliasedTwoEntrySrc = `import "core/map";
 function mk(): i32 {
     var stem: string = "a";
@@ -181,6 +178,65 @@ function main(): i32 {
     if (t != 200 * 15) { return 97; }
     return __rc_underflow_count();
 }`
+
+// #8277's own shape: a Map READ with an ALIASED key — a `var k` the caller
+// still owns, rather than a fresh concat at the call. On the native
+// single-word ABI the escape analysis used to treat every string argument of
+// a `__method_` call as possibly retained by the callee, which suppressed
+// k's own scope-exit release: the map's key column dec'd its reference to 1
+// and nothing took it to 0. One stranded buffer per MAP, sized by the key,
+// flat in the value length and in the number of reads — and invisible to a
+// probe whose key is a fresh concat, which is why the older probes here
+// never saw it.
+//
+// A Map read hashes and compares its key and retains nothing of it, so all
+// three verbs are the same defect; the probe runs each.
+func mapAliasedKeyReadSrc(verb string) string {
+	read := ""
+	switch verb {
+	case "get_or":
+		read = `    if (m.get_or(k, "") == "a-value-long-one") { ok = ok + 1; }`
+	case "get":
+		read = `    match (m.get(k)) { Some(v) => { if (v == "a-value-long-one") { ok = ok + 1; } }, None => {} }`
+	case "has":
+		read = `    if (m.has(k)) { ok = ok + 1; }`
+	}
+	return `import "core/map";
+function mk(): i32 {
+    var stem: string = "a";
+    var m: Map[string, string] = map_new(8);
+    var k: string = stem + "-key-long-one";
+    m = m.insert(k, stem + "-value-long-one");
+    var ok: i32 = 0;
+` + read + `
+    return ok;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + mk(); i = i + 1; }
+    if (t != 200) { return 97; }
+    return __rc_underflow_count();
+}`
+}
+
+// assertMapStringCensus runs `src` under FERN_LEAKCHECK and demands every
+// byte back. `a == 0` is checked too: a probe that stopped building the map
+// would balance trivially.
+func assertMapStringCensus(t *testing.T, name string, run func(string) (string, string, int), src string) {
+	t.Helper()
+	_, stderr, code := run(src)
+	if code != 0 {
+		t.Fatalf("%s: exit=%d, want 0 (97=wrong value, >0=over-release)", name, code)
+	}
+	a, f, live := parseLeakCheckLine(t, stderr)
+	if a == 0 {
+		t.Fatalf("%s: no allocations — the probe is not exercising heap strings", name)
+	}
+	if a != f || live != 0 {
+		t.Errorf("%s leaks: allocs=%d frees=%d live_bytes=%d, want balanced / 0", name, a, f, live)
+	}
+}
 
 func TestX86_64MapStringColumnReclaim(t *testing.T) {
 	_, stderr, code := runLeakCheckX86_64(t, mapStringColumnSrc)
@@ -210,6 +266,12 @@ func TestX86_64MapStringColumnReclaim(t *testing.T) {
 	}
 	if _, code := compileAndRunX86_64FreeOn(t, mapAliasedTwoEntrySrc); code != 0 {
 		t.Errorf("aliased two-entry: code=%d (97=wrong value, >0=over-release, signal=a shared value column was freed twice)", code)
+	}
+	x86 := func(src string) (string, string, int) { return runLeakCheckX86_64(t, src) }
+	assertMapStringCensus(t, "aliased overwrite", x86, mapAliasedOverwriteSrc)
+	assertMapStringCensus(t, "aliased two-entry", x86, mapAliasedTwoEntrySrc)
+	for _, verb := range []string{"get_or", "get", "has"} {
+		assertMapStringCensus(t, "aliased key read via "+verb, x86, mapAliasedKeyReadSrc(verb))
 	}
 }
 
@@ -242,6 +304,12 @@ func TestArm64MapStringColumnReclaim(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, mapAliasedTwoEntrySrc); code != 0 {
 		t.Errorf("aliased two-entry: code=%d (97=wrong value, >0=over-release, signal=a shared value column was freed twice)", code)
 	}
+	arm := func(src string) (string, string, int) { return runLeakCheckArm64(t, src) }
+	assertMapStringCensus(t, "aliased overwrite", arm, mapAliasedOverwriteSrc)
+	assertMapStringCensus(t, "aliased two-entry", arm, mapAliasedTwoEntrySrc)
+	for _, verb := range []string{"get_or", "get", "has"} {
+		assertMapStringCensus(t, "aliased key read via "+verb, arm, mapAliasedKeyReadSrc(verb))
+	}
 }
 
 func TestWASMMapStringColumnReclaim(t *testing.T) {
@@ -267,6 +335,12 @@ func TestWASMMapStringColumnReclaim(t *testing.T) {
 	}
 	if got := runWasm(t, mapAliasedTwoEntrySrc); got != 0 {
 		t.Errorf("aliased two-entry: code=%d (97=wrong value, >0=over-release)", got)
+	}
+	wasm := func(src string) (string, string, int) { return runLeakCheckWasm(t, src, false) }
+	assertMapStringCensus(t, "aliased overwrite", wasm, mapAliasedOverwriteSrc)
+	assertMapStringCensus(t, "aliased two-entry", wasm, mapAliasedTwoEntrySrc)
+	for _, verb := range []string{"get_or", "get", "has"} {
+		assertMapStringCensus(t, "aliased key read via "+verb, wasm, mapAliasedKeyReadSrc(verb))
 	}
 }
 

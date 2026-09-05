@@ -28,7 +28,14 @@ package e2e
 //
 // The release may only cover the columns the copy claims — every column is
 // claimed now, so the value cases below are what would keep a widened walk
-// from becoming a use-after-free if it ever widens (#8421).
+// from becoming a use-after-free if it ever widens.
+//
+// It should widen. With #8421 and #8277 out of the frame the chain leak is
+// attributable, and it is almost entirely the two un-walked value columns:
+// 100 rounds, live_bytes, arr_chain (walked) reads 0 / 3200 / 3200 across
+// x86-64 / arm64 / wasm, while str_chain reads 3168 / 83648 / 83968 and
+// struct_chain 6368 / 6400 / 9568. #8431 carries the numbers; closing it turns
+// the cases below into census assertions.
 
 import "testing"
 
@@ -56,8 +63,9 @@ function arr_chain(rounds: i32): i32 {
     return a.len();
 }
 
-// String values (valKind 1) — SHARED with the copy, so the release must leave
-// them alone. They leak instead; that is the conservative direction.
+// String values (valKind 5) — claimed by the copy since #8390, and NOT walked
+// by the release, so they leak. The claim is what makes widening the walk safe
+// rather than a use-after-free; the leak it would close is measured in #8431.
 function str_chain(rounds: i32): i32 {
     var a: Map[string, string] = map_new(16);
     a = a.insert("sv-seed-key-that-heap-allocates", "sv-seed-value-that-heap-allocates");
@@ -72,7 +80,8 @@ function str_chain(rounds: i32): i32 {
     return a.len();
 }
 
-// Struct values (valKind 4) — shared on the same terms.
+// Struct values (valKind 4) — claimed on the same terms, and un-walked on the
+// same terms (#8431).
 function struct_chain(rounds: i32): i32 {
     var a: Map[string, Rec] = map_new(16);
     a = a.insert("st-seed-key-that-heap-allocates", Rec { name: "st-seed-name-that-heap-allocates", n: 7 });

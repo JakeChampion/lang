@@ -2235,6 +2235,24 @@ func checkImpl(ctx context.Context, prog *ast.Program) (*Info, error) {
 		Params: []ast.Type{usizeT, ast.NumberType{}},
 		Result: usizeT,
 	}
+	// `__fern_str_dec(s)` decs a string's rc and, at its last reference,
+	// RETURNS the buffer to the freelist — a bare rc dec would only zero
+	// the count and strand it. It carries its own guards for the shapes
+	// that own no buffer (the SSO inline tag, the literal sentinel at
+	// data-8), so it is safe on any string a column can hold.
+	//
+	// Exposed to the Map runtime so __map_dec_value can release the string
+	// value an overwrite displaces. That release cannot live on the IR
+	// side: the lowering runs BEFORE the set's own __map_cow_inplace, where
+	// a shared buffer's value still belongs to the other handle, while
+	// __map_dec_value runs after it (#8421). The (data, len) cell a
+	// two-word target leaves behind goes back through the ordinary
+	// __free — a size the value tag carries, so no second builtin and
+	// nothing for a single-word target, which boxes no string at all.
+	c.info.FuncSigs["__fern_str_dec"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: usizeT,
+	}
 	// `__free(ptr, size)` returns the `size`-byte block at `ptr` to
 	// the allocator's freelist (Phase 3 step 4). A no-op unless the
 	// freelist is enabled (ast.RcFreeEnabled). `size` must be the
