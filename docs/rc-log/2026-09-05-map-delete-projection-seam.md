@@ -72,6 +72,10 @@ door still must not retain, because nothing drops that one.
 All five `m.without(k)` shapes now reclaim completely and none of them appears
 in the leak tables. #8434 is closed.
 
+The conformance census moved with them: `map_str_delete` goes 4 unpaired allocs
+to 0, taking the corpus-wide total from 7518 to 7514 and one more fixture into
+the clean column (415 of 487).
+
 ## The test that had to change
 
 `TestMapCowRetainOnlyAtBindingSites` failed, and correctly: it pinned
