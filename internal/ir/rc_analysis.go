@@ -295,18 +295,20 @@ type rcPlan struct {
 	// a Map field initialised by a direct mutator call, so the new container
 	// owns an independent buffer. Filled by computeBorrowedMapFieldResults.
 	borrowedMapFieldResults map[string]bool
-	// mapCowBindSites holds the Map COW-mutator CALL nodes whose result is
-	// bound straight to a new local — `var m2 = m.insert(k, v)`,
-	// `var (m2, ok) = m.without(k)`, and `var t = m.without(k)` binding the
-	// tuple WHOLE. Those are the sites that owe the COW-seam retain (#6227):
-	// the binding co-exists with the receiver's binding, so on the in-place
-	// branch two names share one refcount and both release it.
-	// Every OTHER position a mutator result can appear in is deliberately
-	// excluded, because there the result is a temporary nobody binds and a
-	// retain would leak it instead: a chained receiver
-	// (`m.insert(a, 1).insert(b, 2)`), a call argument (`f(m.insert(k, v))`),
-	// and a projected tuple (`m = m.without(k).0`) each measured ~1.8 kB an
-	// iteration — a whole copied table — when the retain fired there.
+	// mapCowBindSites holds the Map COW-mutator CALL nodes that owe the
+	// COW-seam retain (#6227) — the sites where something OTHER than the
+	// receiver's binding will release the handle the in-place branch hands
+	// back, so two names share one refcount unless the seam adds a second.
+	// That is every binding — `var m2 = m.insert(k, v)`,
+	// `var (m2, ok) = m.without(k)`, `var t = m.without(k)` binding the tuple
+	// whole — and a delete tuple PROJECTED without one (`m.without(k).0`),
+	// whose box the field read deep-drops (#8434).
+	// A position where the result is a temporary NOTHING drops is excluded,
+	// because there the extra count is returned by no one and a retain leaks
+	// instead: a chained receiver (`m.insert(a, 1).insert(b, 2)`) and a call
+	// argument (`f(m.insert(k, v))`) each measured ~1.8 kB an iteration — a
+	// whole copied table — when the retain fired there.
+	// freeEligible consults this, so computeRcAnalyses runs it first.
 	// Purely syntactic; filled by computeMapCowBindSites.
 	mapCowBindSites map[ast.Node]bool
 }
@@ -328,6 +330,10 @@ func (b *builder) computeRcAnalyses() {
 	// qualifying binding becomes a counted owner instead of a tainted borrow).
 	b.rc.consumingOwnedMatches, b.rc.ownedPayloadMatches, b.rc.consumingBindings = b.computeConsumingOwnedMatches()
 	b.rc.borrowedBindings = b.computeBorrowedBindings()
+	// The COW-seam retain sites. Purely syntactic, and freeEligible consults
+	// it: a delete tuple projected without a binding owns its map element only
+	// where the seam retained it, so the two must be computed in this order.
+	b.rc.mapCowBindSites = b.computeMapCowBindSites()
 	// Borrow-aware free analysis: which array locals are OWNED and
 	// thus safe to return to the freelist at rc==0. Borrowed /
 	// borrowed-derived locals are excluded (only the owner frees).
@@ -344,7 +350,6 @@ func (b *builder) computeRcAnalyses() {
 	b.computeSelfReassignOwnMoves()
 	b.rc.ctorAliasInced = b.computeCtorAliasInced()
 	b.rc.borrowedMapFieldResults = b.computeBorrowedMapFieldResults()
-	b.rc.mapCowBindSites = b.computeMapCowBindSites()
 	b.rc.arraySetInc = b.computeArraySetIncs()
 	b.computeBorrowedAliases()
 	b.rc.dynAliasElemArrays = map[string]bool{}
@@ -3240,11 +3245,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		//
 		// Gated on exactly the predicate that lowering uses, so the two
 		// cannot disagree: a struct/tuple temp the borrow analysis proved
-		// fresh. Maps stay out for the reason the local case gives above —
-		// their slot drop deep-frees the value column rather than being the
-		// shallow is_unique-gated release the counted-alias argument rests
-		// on.
-		if b.freshOwnedFieldContainer(x.Target) && !isMapType(b.exprType(x)) {
+		// fresh, or a delete tuple the COW seam retained. A MAP element out
+		// of one is credited on the same terms as out of a bound tuple — the
+		// seam supplies the count the container's drop spends — so it is the
+		// seam, not the element type, that decides.
+		if b.freshOwnedFieldContainer(x.Target) {
 			return false
 		}
 		return true
@@ -6422,6 +6427,15 @@ func (b *builder) computeBorrowedMapFieldResults() map[string]bool {
 // map element aliasing the receiver's handle at rc 1: two names, one count,
 // both releasing — an rc underflow everywhere and a SIGSEGV on arm64 / a trap
 // on wasm32 once the freed key cell was recycled (#8276).
+//
+// The FieldAccess arm is the same call with no binding at all —
+// `m = m.without(k).0`, `f(m.without(k).0)`. The tuple is a temporary, but the
+// field read deep-drops its box (freshOwnedFieldContainerType admits a
+// seam-retained delete tuple), and that drop releases the map element, so this
+// owes the retain for the same reason a binding does. Without the pair the box
+// was never freed AND the receiver stayed tainted out of freeEligible: 128000 /
+// 144000 / 104000 B over the corpus fixture (#8434).
+//
 // Purely syntactic: the walk runs on the already-mangled AST, the same form
 // isMapMutatorCall matches at the call site.
 func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
@@ -6434,6 +6448,10 @@ func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
 			}
 		case *ast.Destructure:
 			if c, ok := s.Init.(*ast.Call); ok && isMapDeleteCall(c) {
+				out[c] = true
+			}
+		case *ast.FieldAccess:
+			if c, ok := s.Target.(*ast.Call); ok && isMapDeleteCall(c) {
 				out[c] = true
 			}
 		}
