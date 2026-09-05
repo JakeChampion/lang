@@ -5728,13 +5728,20 @@ func isArraySetCall(c *ast.Call) bool {
 	return ok && id.Name == "__method_Array_set" && len(c.Args) == 3
 }
 
-// stmtContainsReturn reports whether a statement (or anything nested
-// in it) can `return` — used to stop move-on-alias once a path could
+// stmtCanLeaveFunction reports whether a statement (or anything nested in
+// it) can leave the function — used to stop move-on-alias once a path could
 // exit before a later top-level alias.
-func stmtContainsReturn(st ast.Stmt) bool {
+//
+// `?` counts. Its lowering runs the owned-local dec sweep exactly like the
+// `*ast.Return` lowering, and that sweep skips locals marked moved, so a
+// move claimed textually after a `?` is a leak on the error path (#8442).
+// This is the MAY question; stmtDiverges asks the MUST one, where `?` does
+// NOT belong — it leaves only on Err.
+func stmtCanLeaveFunction(st ast.Stmt) bool {
 	found := false
 	ast.Walk(st, func(n ast.Node) bool {
-		if _, ok := n.(*ast.Return); ok {
+		switch n.(type) {
+		case *ast.Return, *ast.TryOp:
 			found = true
 		}
 		return !found

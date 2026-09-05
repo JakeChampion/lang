@@ -3523,9 +3523,9 @@ func (b *builder) computeMovedLocals() map[string]bool {
 		return moved
 	}
 	order := b.curIdentOrder()
-	sawReturn := false
+	sawExit := false
 	for _, st := range b.fn.Body.Stmts {
-		if !sawReturn {
+		if !sawExit {
 			// The lowering checks b.rc.moveSites on the Var node or the
 			// inner Assign node (assignments are ExprStmt-wrapped), so
 			// key the site on whichever the lowering will see.
@@ -3569,8 +3569,8 @@ func (b *builder) computeMovedLocals() map[string]bool {
 				b.markConstructionMoves(val, order, moved, nil)
 			}
 		}
-		if stmtContainsReturn(st) {
-			sawReturn = true
+		if stmtCanLeaveFunction(st) {
+			sawExit = true
 		}
 	}
 
@@ -3682,7 +3682,7 @@ func walkDominatingExprs(body *ast.Block, f func(ast.Node) bool) {
 				walkAlwaysEvaluated(s.Tag, f)
 			}
 		}
-		if stmtContainsReturn(st) {
+		if stmtCanLeaveFunction(st) {
 			return
 		}
 	}
@@ -7495,6 +7495,9 @@ func blockDiverges(b *ast.Block) bool {
 	return false
 }
 
+// stmtDiverges is the MUST twin of stmtCanLeaveFunction: it asks whether
+// reaching this statement ALWAYS leaves the function. `?` is deliberately
+// absent — it leaves only on Err.
 func stmtDiverges(st ast.Stmt) bool {
 	switch x := st.(type) {
 	case *ast.Return:
