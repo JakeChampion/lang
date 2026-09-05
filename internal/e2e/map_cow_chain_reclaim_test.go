@@ -94,9 +94,10 @@ function str_chain(rounds: i32): i32 {
 }
 
 // Struct values (valKind 4) — claimed on the same terms, and walked on the same
-// terms, through the generated __drop_map_via_<perValueDrop>. The residual the
-// two-word ABIs still read here is #8432's get_or fallback, not this column:
-// arr_chain, walked since long before #8431, reads exactly the same.
+// terms, through the generated __drop_map_via_<perValueDrop>. This chain and
+// arr_chain both carried a further 32 B/round on the two-word ABIs until
+// #8432: their get_or fallback, not their column, which is why arr_chain
+// read the same despite having been walked all along.
 function struct_chain(rounds: i32): i32 {
     var a: Map[string, Rec] = map_new(16);
     a = a.insert("st-seed-key-that-heap-allocates", Rec { name: "st-seed-name-that-heap-allocates", n: 7 });
@@ -201,28 +202,24 @@ func TestMapCowChainReclaimArm64(t *testing.T) {
 // The byte census over the same six shapes. The answers above say nothing was
 // freed too early; this says nothing was left behind.
 //
-// x86-64 is ABSOLUTE — every byte back. It reads 6368 for the struct chain and
-// 3168 for the string one before #8431 routed this site through the shared
-// map-drop chain, so the zero is what that change bought.
+// ABSOLUTE on every backend — every byte back. Two changes bought that, and
+// the numbers before each are what the shapes below are sized to show:
+// #8431 routed this site through the shared map-drop chain (the struct chain
+// read 6368 on x86-64, the string one 3168, and 83648 / 83968 on the two-word
+// ABIs), and #8432 stopped a `get_or` with a fresh fallback stranding it under
+// a boxed key, which was the last 1280 on arm64 and wasm.
 //
-// arm64 and wasm carry a residual that is NOT this site's: #8432, one 32-byte
-// block per round whenever the value is an array or a struct, present in
-// arr_chain — whose column the release always walked — and absent for string
-// and scalar values. 1280 is exactly 40 blocks for the 20 rounds each of
-// arr_chain and struct_chain, with the other four shapes contributing nothing,
-// which is what attributes it. Pinned rather than asserted at 0 so closing
-// #8432 fails here and has to lower the number deliberately.
+// A rise here means a column the copy claims is going unreleased again.
 func TestMapCowChainReclaimCensus(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		run      func(*testing.T, string) (string, string, int)
-		wantLive int64
+		name string
+		run  func(*testing.T, string) (string, string, int)
 	}{
-		{"x86_64", runLeakCheckX86_64, 0},
-		{"arm64", runLeakCheckArm64, 1280},
+		{"x86_64", runLeakCheckX86_64},
+		{"arm64", runLeakCheckArm64},
 		{"wasm", func(t *testing.T, src string) (string, string, int) {
 			return runLeakCheckWasm(t, src, false)
-		}, 1280},
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, stderr, code := tc.run(t, mapCowChainReclaimProg)
@@ -233,8 +230,8 @@ func TestMapCowChainReclaimCensus(t *testing.T) {
 			if allocs == 0 {
 				t.Fatalf("no allocations — the chains are not running")
 			}
-			if live != tc.wantLive {
-				t.Errorf("live_bytes=%d, want %d (allocs=%d frees=%d). Higher: a column the copy claims is going unreleased. Lower: #8432 got better — bank the new number here", live, tc.wantLive, allocs, frees)
+			if allocs != frees || live != 0 {
+				t.Errorf("the COW chain leaks: allocs=%d frees=%d live_bytes=%d, want balanced / 0", allocs, frees, live)
 			}
 		})
 	}
