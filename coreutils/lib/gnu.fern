@@ -503,6 +503,30 @@ pub function (g: Getopt) operands(): string[] {
   return g.operands;
 }
 
+// `(g).at_negative_number()` — whether the next token is `-N` or
+// `-.N`. seq(1) ends its option scan there, so a negative first
+// operand needs no `--`; the check is made between tokens, as GNU's
+// is, so `-w5` is still the option `-w` followed by an invalid `5`.
+pub function (g: Getopt) at_negative_number(): boolean {
+  if (g.cluster.len() > 0 || g.i >= g.argv.len()) {
+    return false;
+  }
+  var a: string = g.argv[g.i];
+  if (a.len() < 2 || a[0] as i32 != 45) {
+    return false;
+  }
+  var b: i32 = a[1] as i32;
+  if (b >= 48 && b <= 57) {
+    return true;
+  }
+  return b == 46 && a.len() > 2 && a[2] as i32 >= 48 && a[2] as i32 <= 57;
+}
+
+// `(g).stop()` — end the scan: every remaining token is an operand.
+pub function (g: Getopt) stop(): Getopt {
+  return take_rest(g);
+}
+
 // Everything from the cursor on is an operand.
 function take_rest(g: Getopt): Getopt {
   var ops: string[] = g.operands;
