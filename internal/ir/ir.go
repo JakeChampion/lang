@@ -4190,9 +4190,31 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 		}
 		return true
 	})
+	// A `__memcpy(out as usize, …)` fills a SCALAR-element buffer with bytes
+	// during the call: no pointer can be embedded by it, so the write does
+	// not end `out`'s freshness — the `bytes()` shape (#8403). A
+	// pointer-element buffer is excluded because a byte copy into it could
+	// plant uncounted aliases of a parameter's elements.
+	syncCopyUse := map[*ast.Ident]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.Call)
+		if !ok || !syncByteCopyCall(call) {
+			return true
+		}
+		for _, id := range syncByteCopyRoots(call) {
+			decl, isDecl := decls[id.Name]
+			if !isDecl {
+				continue
+			}
+			if at, isArr := decl.Type.(ast.ArrayType); isArr && !ast.IsPointerType(at.Elem) {
+				syncCopyUse[id] = true
+			}
+		}
+		return true
+	})
 	tainted := map[string]bool{}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && !inReturn[id] && !cowUse[id] {
+		if id, ok := n.(*ast.Ident); ok && !inReturn[id] && !cowUse[id] && !syncCopyUse[id] {
 			tainted[id.Name] = true
 		}
 		return true
@@ -4367,6 +4389,15 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		// without it the builtin (absent from q) rejected the init and the
 		// local never entered freshLocals.
 		if id.Name == "map_new" {
+			return true
+		}
+		// `__alloc_u8(n)` and its siblings hand back a fresh rc=1 byte
+		// buffer from scalar arguments alone, so no parameter heap can flow
+		// through the result — the same verdict rhsTainted's arm gives them.
+		// Without it `bytes()` (`var out = __alloc_u8(n); …; return out;`)
+		// could not prove its return fresh, and every caller's binding of a
+		// byte copy stayed permanently taint-ineligible (#8403).
+		if id.Name == "__alloc_u8" || id.Name == "random_bytes" || id.Name == "tcp_recv" {
 			return true
 		}
 		// `string_from_bytes_unchecked(buf)` always COPIES — into an
@@ -15091,6 +15122,13 @@ func (b *builder) callBody(n *ast.Call) error {
 		if !ast.RcFreeEnabled || !calleeIsFunc || calleeIsLocal ||
 			b.pairForm[id.Name] || id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
 			return false
+		}
+		// A builtin that copies the argument out with a result that cannot
+		// alias it is the same fact stated for a helper with no Fern body:
+		// `w.write(string_from_bytes_unchecked(bs))` returns an Option box
+		// that names nothing, and the temp is dead once written (#8403).
+		if copyingBuiltinArg(id.Name, ai) {
+			return true
 		}
 		counted := b.paramCountedRetain[id.Name]
 		return ai < len(counted) && counted[ai]

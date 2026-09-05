@@ -74,14 +74,15 @@
 # identically on both register backends. docs/RC-PERCEUS-SELF-HOST-PORT.md §9.
 
 # --- ACTIVE -----------------------------------------------------------------
-# One AL-01 row, the shape fixed in `internal/ir` (the NATIVE compiler) by
-# #8396 while the self-host's own RC implementation has not caught up. Every
-# ANSWER line matches native; only the shape word differs. Measured with
+# Two AL-01 rows, both shapes fixed in `internal/ir` (the NATIVE compiler) by
+# #8396 / #8403 while the self-host's own RC implementation has not caught up.
+# Every ANSWER line matches native; only the shape word differs. Measured with
 # bin/fern-selfhost -target x86-64-linux on 424744d, identically on the arm64
-# leg. Before this the section was EMPTY: the last row,
+# and wasm legs. Before these the section was EMPTY: the last row,
 # `alloc_flat_method_identity_return`, went with the guarded chain-receiver
 # release (#6544).
 alloc_flat_read_chunk #8402 native prints constant, self-host prints scales: the read_chunk Some payload binds as a borrow and nothing releases it (FERN_LEAKCHECK on the loop: allocs=461 frees=0); answers 1040 / 640 / 40960 match
+alloc_flat_bytes_roundtrip #8412 native prints constant, self-host prints scales: the bytes() / string_from_bytes_unchecked copies are not released; answers 2080 / 1600 / 102400 match
 #
 # Keep the section and the file. An empty allowlist is what makes the NEXT
 # divergence fail the leg, and a listed case that comes back matching native

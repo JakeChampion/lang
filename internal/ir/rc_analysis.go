@@ -1350,20 +1350,29 @@ func pureReadReceiverBuiltin(name string) bool {
 //   - strbuf_append memcpys the string's bytes past the buffer tail
 //     and returns void (its runtime doc, all three implementations);
 //   - print / write / eprint write the bytes to an fd, void result;
+//   - `w.write(s)` (__fern_writer_write) writes the bytes to the
+//     Writer's fd and returns an immortal Option[IoError] box built
+//     by __build_io_error / the None sentinel, which cannot name the
+//     string;
+//   - string_from_bytes_unchecked memcpys the u8[] into a fresh string
+//     (inline-packed, the empty sentinel, or an rc1 heap copy — never
+//     the input buffer);
 //   - __memchr / __rmemchr / __ascii_run / __count_byte scan the
 //     bytes and return a scalar.
 //
 // The checker rejects a user function redeclaring a builtin name, so
 // the table can never answer for a defined function.
 var copyingBuiltinArgs = map[string]int{
-	"strbuf_append": 0,
-	"print":         0,
-	"write":         0,
-	"eprint":        0,
-	"__memchr":      0,
-	"__rmemchr":     0,
-	"__ascii_run":   0,
-	"__count_byte":  0,
+	"strbuf_append":               0,
+	"print":                       0,
+	"write":                       0,
+	"eprint":                      0,
+	"__method_Writer_write":       1,
+	"string_from_bytes_unchecked": 0,
+	"__memchr":                    0,
+	"__rmemchr":                   0,
+	"__ascii_run":                 0,
+	"__count_byte":                0,
 }
 
 func copyingBuiltinArg(name string, i int) bool {
@@ -1520,6 +1529,40 @@ func countedSeedOccurrences(fn *ast.FuncDecl) map[*ast.Ident]bool {
 	return out
 }
 
+// syncByteCopyCall reports whether `call` is `__memcpy` / `__memset`: a byte
+// copy through raw addresses that completes inside the call. The buffers
+// its arguments address are read or written and nothing about them
+// survives it — no reference is retained and no pointer is embedded — so an
+// occurrence there is a non-retaining use, unlike the `buf as usize` the
+// CastExpr escape taint exists for, whose raw address lives on.
+func syncByteCopyCall(call *ast.Call) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	return ok && (id.Name == "__memcpy" || id.Name == "__memset")
+}
+
+// syncByteCopyRoots names the idents whose bytes a __memcpy / __memset
+// argument addresses: `buf as usize` and `s.as_bytes() as usize` both
+// resolve to the buffer's own ident.
+func syncByteCopyRoots(call *ast.Call) []*ast.Ident {
+	var out []*ast.Ident
+	for _, a := range call.Args {
+		c, ok := a.(*ast.CastExpr)
+		if !ok {
+			continue
+		}
+		e := c.Inner
+		if view, ok := e.(*ast.Call); ok {
+			if vid, ok := view.Callee.(*ast.Ident); ok && vid.Name == "__method_string_as_bytes" && len(view.Args) == 1 {
+				e = view.Args[0]
+			}
+		}
+		if id, ok := e.(*ast.Ident); ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool) bool {
 	safe := map[*ast.Ident]bool{}
 	seedOK := countedSeedOccurrences(fn)
@@ -1598,6 +1641,13 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 			// scalar, retaining nothing, so the receiver occurrence is safe.
 			if id, ok := x.Callee.(*ast.Ident); ok && pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
 				mark(x.Args[0])
+			}
+			// `__memcpy(dst as usize, p.as_bytes() as usize, n)` reads p's
+			// bytes during the call and keeps nothing — the `bytes()` shape.
+			if syncByteCopyCall(x) {
+				for _, id := range syncByteCopyRoots(x) {
+					mark(id)
+				}
 			}
 			// A copying builtin — strbuf_append, print, the byte
 			// scanners — memcpys or writes the bytes out and retains
@@ -2418,6 +2468,21 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// a scalar element (`i32[]`) can't alias, so its source stays
 	// reclaimable. A string slice copies into a fresh owned buffer
 	// (not a view), so it isn't unwrapped.
+	//
+	// syncCast: the `buf as usize` arguments of a __memcpy / __memset.
+	// The raw address dies with the call, so these are exempt from the
+	// CastExpr escape taint below (#8403).
+	syncCast := map[*ast.CastExpr]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.Call); ok && syncByteCopyCall(call) {
+			for _, a := range call.Args {
+				if c, ok := a.(*ast.CastExpr); ok {
+					syncCast[c] = true
+				}
+			}
+		}
+		return true
+	})
 	var escape func(e ast.Expr)
 	escape = func(e ast.Expr) {
 		switch x := e.(type) {
@@ -2789,6 +2854,9 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// would make an `__alloc_u8(...) as usize` buffer eligible and
 			// over-release it. Pointer→pointer casts keep rc tracking and are
 			// left alone.
+			if syncCast[s] {
+				break
+			}
 			it := s.InnerType
 			if it == nil {
 				it = b.exprType(s.Inner)

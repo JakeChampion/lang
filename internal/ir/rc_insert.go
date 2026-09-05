@@ -234,7 +234,13 @@ func (b *builder) freshOwnedRcTempType(e ast.Expr) (ast.Type, bool) {
 		// stranded on every call: one rc1 buffer per call above the
 		// 7-byte inline threshold on native, and per call at ANY length
 		// on the two-word ABIs, which have no inline packing (#7876).
-		if cid, ok := x.Callee.(*ast.Ident); ok && cid.Name == "slice_unchecked" {
+		//
+		// `string_from_bytes_unchecked(bs)` is the same contract from the
+		// other direction: it always copies (exprNoParamEscape says so, and
+		// rcResultOwned records `__fern_string_from_bytes`), so the argument
+		// temp of `w.write(string_from_bytes_unchecked(bs))` is one owned
+		// buffer per call that nothing else releases (#8403).
+		if cid, ok := x.Callee.(*ast.Ident); ok && (cid.Name == "slice_unchecked" || cid.Name == "string_from_bytes_unchecked") {
 			if t, ok := b.exprType(x).(ast.StringType); ok {
 				return t, true
 			}
