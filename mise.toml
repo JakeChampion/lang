@@ -1,0 +1,28 @@
+# The pinned developer toolchain: the ONE place a tool version lives.
+#
+# Everything that installs a tool reads this file. CI does through
+# jdx/mise-action (.github/actions/setup-fern, plus the workflows that set Go
+# up directly); scripts/devbox, scripts/netlify-build and
+# .claude/hooks/session-start.sh run `mise install` against it; so does a
+# laptop (docs/LOCAL-DEV-LOOP.md). mise.lock pins every entry to an exact
+# release and checksum. To bump a version: edit it here, run `mise lock`,
+# commit both files.
+#
+# min_version is also the mise release CI installs (the `version:` input on
+# every jdx/mise-action step); internal/sourcelint pins the two equal.
+min_version = "2026.9.1"
+
+[settings]
+lockfile = true
+
+[tools]
+go = "1.26"
+# wasmtime and the WASI preview1 adapter ship from the same wasmtime release,
+# so these two versions must always be equal. The adapter is a data file the
+# wasm e2e tests read via FERN_WASI_ADAPTER, which every consumer derives from
+# `mise where http:wasi-adapter`.
+wasmtime = "46.0.1"
+"http:wasi-adapter" = { version = "46.0.1", url = "https://github.com/bytecodealliance/wasmtime/releases/download/v{{ version }}/wasi_snapshot_preview1.command.wasm" }
+wasm-tools = "1.253.0"
+actionlint = "1.7.10"
+gotestsum = "1.13.0"

@@ -86,8 +86,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       - name: go test (arm64 e2e)
         # `^TestArm64` covers internal/e2e/arm64_test.go +
         # cross_module_variant_test.go's Arm64 subset + arm64_ssa_test.go
@@ -137,8 +135,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-        with:
-          gotestsum: "true"
       - name: install aarch64 cross toolchain + qemu
         uses: ./.github/actions/apt-cross-toolchain
         with:

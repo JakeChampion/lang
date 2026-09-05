@@ -1,12 +1,11 @@
 name: Setup Fern toolchain
 description: >
-  Shared setup for the Fern CI workflows. Sets up Go (no module
-  cache — the repo has no external deps), caches the Go build
+  Shared setup for the Fern CI workflows. Installs the toolchain
+  mise.toml pins (Go, gotestsum, actionlint and, on demand, wasmtime +
+  wasm-tools + the WASI preview1 adapter) through jdx/mise-action, which
+  caches the installs on the lockfile hash, and restores the Go build
   cache so per-job `go test` / `go build` reuse compiled stdlib +
-  per-package object files across runs, and, on demand, the
-  wasmtime + wasm-tools + adapter triple and gotestsum. Each
-  optional dependency is cached on a (host arch, version) key so
-  the second-and-onward run skips the network fetch.
+  per-package object files across runs.
 
 inputs:
   wasmtime:
@@ -14,13 +13,6 @@ inputs:
       Install wasmtime + wasm-tools + the WASI preview1 adapter and
       wire FERN_WASI_ADAPTER. Set to 'true' for any workflow that
       runs the wasm e2e suite.
-    required: false
-    default: "false"
-  gotestsum:
-    description: >
-      Install gotestsum and put it on PATH. Set to 'true' for
-      workflows that want the compact `pkgname-and-test-fails`
-      formatter.
     required: false
     default: "false"
   build-cache-key:
@@ -34,20 +26,22 @@ inputs:
     required: false
     default: ""
 
-# Pinned versions — bump together with the corresponding entry in
-# any workflow that overrides them. Kept here so a single edit
-# updates every consumer.
 runs:
   using: composite
   steps:
-    - name: Set up Go
-      uses: actions/setup-go@v7
+    # Every version comes from mise.toml + mise.lock; nothing is pinned here.
+    # The mise release itself is mise.toml's min_version, and
+    # internal/sourcelint fails when the two disagree.
+    #
+    # Lanes that never run wasm install only the Go-side tools. The wasm e2e
+    # tests t.Skip() without wasmtime, so a shard that was measured without it
+    # (.github/selfhost-test-weights.txt) keeps the weight it was given.
+    - name: Install the pinned toolchain (mise.toml)
+      uses: jdx/mise-action@v4
       with:
-        go-version: "1.26"
-        # No go.sum (no external deps) → setup-go's default cache
-        # attempt complains. Disable it here; we run our own cache
-        # step below that covers the Go build cache directly.
-        cache: false
+        version: 2026.9.1
+        github_token: ${{ github.token }}
+        install_args: ${{ inputs.wasmtime == 'true' && '' || 'go gotestsum actionlint' }}
 
     # RESTORE the Go build cache (`~/.cache/go-build` on Linux). Each
     # `go test` / `go build` invocation compiles the package plus its
@@ -79,15 +73,18 @@ runs:
     # individual entries by per-file fingerprint, so a day-old cache
     # is still correct — only the packages that changed recompile.
     #
+    # The key carries the lockfile hash: a Go bump changes mise.lock,
+    # and a build cache from another Go release is dead weight.
+    #
     # No module cache step: the repo has no external module deps,
     # `~/go/pkg/mod` stays empty.
     - name: Restore Go build cache
       uses: actions/cache/restore@v6
       with:
         path: ~/.cache/go-build
-        key: gobuild-${{ runner.os }}-${{ runner.arch }}-go1.26-${{ inputs.build-cache-key }}
+        key: gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-${{ inputs.build-cache-key }}
         restore-keys: |
-          gobuild-${{ runner.os }}-${{ runner.arch }}-go1.26-
+          gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-
 
     # The self-host driver binaries link a ~371 MB freestanding `.s`. The GNU
     # bfd linker (gcc's default) is minutes-slow and memory-heavy on inputs that
@@ -133,74 +130,12 @@ runs:
         }
         command -v ld.lld >/dev/null 2>&1 && ld.lld --version | head -1 || true
 
-    - name: Detect host wasm-tools arch
-      if: inputs.wasmtime == 'true'
-      id: wasm-arch
-      shell: bash
-      run: |
-        case "$(uname -m)" in
-          x86_64)  echo "arch=x86_64-linux"  >> "$GITHUB_OUTPUT" ;;
-          aarch64) echo "arch=aarch64-linux" >> "$GITHUB_OUTPUT" ;;
-          *) echo "unsupported host arch: $(uname -m)" >&2; exit 1 ;;
-        esac
-
-    - name: Cache wasmtime + wasm-tools + adapter
-      if: inputs.wasmtime == 'true'
-      id: cache-wasm
-      uses: actions/cache@v6
-      with:
-        path: |
-          ~/.wasmtime
-          ~/wasm-tools-1.253.0-${{ steps.wasm-arch.outputs.arch }}
-          ~/wasi-adapter
-        key: wasm-${{ runner.arch }}-1.253.0-v46.0.1
-
-    - name: Install wasmtime + wasm-tools + adapter (cache miss)
-      if: inputs.wasmtime == 'true' && steps.cache-wasm.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        # wasmtime — pinned to v46.0.1 (matching the cache key + the WASI
-        # adapter below). `wasmtime.dev/install.sh` with no version installs
-        # *latest*, which drifts from the pinned toolchain and recently 504'd
-        # fetching a new release — failing every wasm job on a cache miss.
-        # Download the pinned archive directly, like wasm-tools below.
-        # v46 is the current release; the whole wasm suite passes under it,
-        # including the WASI Preview-3 async/stream/future surface. The
-        # component-model-async ABI changed vs the previous v37 pin (async
-        # functype tag 0x40->0x43; component instances are now non-reentrant,
-        # so the async-import composer emits a sibling-nested structure) — the
-        # composer was ported to match. See docs/WASI-PREVIEW3-ASYNC-PLAN.md.
-        #
-        # Every download RETRIES and lands in a FILE before it is unpacked.
-        # Neither is cosmetic. A bare `curl … | tar` cannot retry — curl has
-        # already written part of the stream into tar by the time the transfer
-        # dies — and a 5xx body reaches tar as an archive, so the release
-        # blipping reports `xz: File format not recognized` and a tar exit
-        # status, naming the wrong step entirely. Both halves of that were
-        # observed on one run: a 503 on x86-64 and a died-connection on
-        # aarch64, each failing a job that never ran a test.
-        dl() {
-          curl -sSfL --retry 5 --retry-delay 2 --retry-all-errors \
-            --connect-timeout 20 -o "$2" "$1"
-        }
-        mkdir -p "$HOME/.wasmtime/bin" "$HOME/wasi-adapter"
-        dl "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasmtime-v46.0.1-${{ steps.wasm-arch.outputs.arch }}.tar.xz" \
-          "$HOME/wasmtime.tar.xz"
-        tar -xJf "$HOME/wasmtime.tar.xz" -C "$HOME"
-        install -m 0755 "$HOME/wasmtime-v46.0.1-${{ steps.wasm-arch.outputs.arch }}/wasmtime" "$HOME/.wasmtime/bin/wasmtime"
-        dl "https://github.com/bytecodealliance/wasm-tools/releases/download/v1.253.0/wasm-tools-1.253.0-${{ steps.wasm-arch.outputs.arch }}.tar.gz" \
-          "$HOME/wasm-tools.tar.gz"
-        tar -xzf "$HOME/wasm-tools.tar.gz" -C "$HOME"
-        dl "https://github.com/bytecodealliance/wasmtime/releases/download/v46.0.1/wasi_snapshot_preview1.command.wasm" \
-          "$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm"
-
-    - name: Wire wasmtime PATH + adapter env
+    # The adapter is a data file, so unlike the binaries it does not arrive on
+    # PATH; the wasm e2e tests find it through this variable.
+    - name: Wire the WASI adapter
       if: inputs.wasmtime == 'true'
       shell: bash
-      run: |
-        echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
-        echo "$HOME/wasm-tools-1.253.0-${{ steps.wasm-arch.outputs.arch }}" >> "$GITHUB_PATH"
-        echo "FERN_WASI_ADAPTER=$HOME/wasi-adapter/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
+      run: echo "FERN_WASI_ADAPTER=$(mise where http:wasi-adapter)/wasi_snapshot_preview1.command.wasm" >> "$GITHUB_ENV"
 
     # PREFLIGHT: a missing wasm tool must fail the JOB, not the tests.
     #
@@ -245,21 +180,3 @@ runs:
         # visible in the log rather than surfacing as a mystery test failure.
         wasmtime --version
         wasm-tools --version
-
-    - name: Cache gotestsum binary
-      if: inputs.gotestsum == 'true'
-      id: cache-gotestsum
-      uses: actions/cache@v6
-      with:
-        path: ~/go/bin/gotestsum
-        key: gotestsum-${{ runner.os }}-${{ runner.arch }}-v1.13.0
-
-    - name: Install gotestsum (cache miss)
-      if: inputs.gotestsum == 'true' && steps.cache-gotestsum.outputs.cache-hit != 'true'
-      shell: bash
-      run: go install gotest.tools/gotestsum@v1.13.0
-
-    - name: Wire gotestsum PATH
-      if: inputs.gotestsum == 'true'
-      shell: bash
-      run: echo "$HOME/go/bin" >> "$GITHUB_PATH"

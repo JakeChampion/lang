@@ -122,7 +122,6 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
-          gotestsum: "true"
       - uses: actions/download-artifact@v8
         with:
           name: e2e-wasm-test-${{ matrix.host }}

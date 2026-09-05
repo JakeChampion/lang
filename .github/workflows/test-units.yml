@@ -95,7 +95,6 @@ jobs:
         run: echo "stamp=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
       - uses: ./.github/actions/setup-fern
         with:
-          gotestsum: "true"
           build-cache-key: ${{ steps.day.outputs.stamp }}
       # llvm-mc second oracle for the assembler differential lanes
       # (internal/native/{x86_64,arm64} TestEncodingsAgainstLLVMMC, #7895):
@@ -171,4 +170,4 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ~/.cache/go-build
-          key: gobuild-${{ runner.os }}-${{ runner.arch }}-go1.26-${{ steps.day.outputs.stamp }}
+          key: gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-${{ steps.day.outputs.stamp }}

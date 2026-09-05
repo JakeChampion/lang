@@ -28,12 +28,10 @@
   publish = "site/dist"
 
 [build.environment]
-  # Astro 6 requires Node >=22.12; go.mod requires Go 1.26. Both pins match
-  # what pages.yml is tested on — bump them together with that workflow.
-  # Go is pinned to a concrete release rather than "1.26" because the build
-  # image resolves this through gimme, which wants an exact version.
+  # Astro 6 requires Node >=22.12; the pin matches what pages.yml is tested
+  # on — bump them together. Go is NOT pinned here: scripts/netlify-build
+  # installs it from mise.toml, the same place every other host reads it.
   NODE_VERSION = "22"
-  GO_VERSION = "1.26.7"
   # The smoke lane's knobs (FERN_SMOKE, FERN_SMOKE_BUDGET_S,
   # FERN_SMOKE_STAGES, FERN_SMOKE_CACHE) are documented in
   # scripts/netlify-smoke-test and deliberately NOT restated here — a value

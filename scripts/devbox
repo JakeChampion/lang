@@ -29,17 +29,14 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 build() {
-  # Pins are READ from the repo, never restated here — see
-  # scripts/wasm-toolchain-pins for why a second copy is a bug.
-  eval "$("$ROOT/scripts/wasm-toolchain-pins")"
-  echo "devbox: building $IMAGE ($PLATFORM, wasmtime v$WASMTIME_VER, wasm-tools $WASMTOOLS_VER)" >&2
+  # The repo root is the context so the image can COPY mise.toml + mise.lock;
+  # .dockerignore keeps everything else out of the upload.
+  echo "devbox: building $IMAGE ($PLATFORM, toolchain from mise.toml)" >&2
   docker build \
     --platform "$PLATFORM" \
-    --build-arg "WASMTIME_VER=$WASMTIME_VER" \
-    --build-arg "WASMTOOLS_VER=$WASMTOOLS_VER" \
     -f "$ROOT/scripts/devbox.Dockerfile" \
     -t "$IMAGE" \
-    "$ROOT/scripts"
+    "$ROOT"
 }
 
 if [ "${1:-}" = "--build" ]; then

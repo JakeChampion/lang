@@ -80,5 +80,4 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
-          gotestsum: "true"
       - run: gotestsum --format testname -- -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -run=^$ ./internal/e2e

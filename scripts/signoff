@@ -102,10 +102,11 @@ fi
 # --- wasm lanes need the pinned toolchain, or they SKIP into a false pass ---
 case "$LANE" in
   wasm)
-    eval "$("$ROOT/scripts/wasm-toolchain-pins")"
+    want="$(cd "$ROOT" && mise current wasmtime 2>/dev/null)" ||
+      { echo "signoff: mise is needed to read the wasmtime pin from mise.toml (mise install)" >&2; exit 1; }
     have="$(wasmtime --version 2>/dev/null | awk '{print $2}' || true)"
-    if [ "$have" != "$WASMTIME_VER" ]; then
-      echo "signoff: wasmtime $WASMTIME_VER required, found '${have:-none}'" >&2
+    if [ "$have" != "$want" ]; then
+      echo "signoff: wasmtime $want required, found '${have:-none}'" >&2
       echo "         every wasm test skips on a failed lookup, so this would sign off nothing" >&2
       exit 1
     fi

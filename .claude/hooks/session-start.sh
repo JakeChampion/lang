@@ -31,49 +31,24 @@ if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] && [ "$(uname -s)" = "Linux" ] \
   fi
 fi
 
-# --- wasmtime + wasm-tools + WASI preview1 adapter (wasm e2e suite) ---
-# Versions READ from .github/actions/setup-fern, so they cannot fall behind it.
-# They used to be copied here, and the comment beside the copy still described
-# the v37 / 1.240 pins long after CI had moved to v46 / 1.253 — a pin that
-# drifts buys an opaque `invalid leading byte (0x43)` from the Preview-3 async
-# tests rather than anything naming a version. See scripts/wasm-toolchain-pins.
-WT_DIR="$HOME/.fern-wasm"
-eval "$("$(dirname "${BASH_SOURCE[0]}")/../../scripts/wasm-toolchain-pins")"
-WASMTIME_VER="v$WASMTIME_VER"
-# The wasm toolchain IS provisioned locally as well as remotely: wasm executes
-# host-independently, so a Mac runs those legs as faithfully as a runner does,
-# and without the pinned pair every wasm test SKIPs into a false `ok`.
-case "$(uname -s)/$(uname -m)" in
-  Linux/x86_64)   WT_ARCH="x86_64-linux" ;;
-  Linux/aarch64)  WT_ARCH="aarch64-linux" ;;
-  Darwin/arm64)   WT_ARCH="aarch64-macos" ;;
-  Darwin/x86_64)  WT_ARCH="x86_64-macos" ;;
-  *) echo "unsupported host $(uname -s)/$(uname -m)" >&2; exit 0 ;;
-esac
-mkdir -p "$WT_DIR"
-# Version-check the cached binaries, not just their existence — a container
-# provisioned under an older pin must refresh (the adapter ships per-wasmtime
-# release, so it is re-fetched whenever the wasmtime binary is).
-if [ ! -x "$WT_DIR/wasmtime" ] || ! "$WT_DIR/wasmtime" --version 2>/dev/null | grep -qF "${WASMTIME_VER#v}"; then
-  curl -sSfL "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VER}/wasmtime-${WASMTIME_VER}-${WT_ARCH}.tar.xz" \
-    | tar -xJ -C "$WT_DIR" --strip-components=1 --wildcards '*/wasmtime'
-  curl -sSfL -o "$WT_DIR/adapter.wasm" \
-    "https://github.com/bytecodealliance/wasmtime/releases/download/${WASMTIME_VER}/wasi_snapshot_preview1.command.wasm"
-fi
-if [ ! -x "$WT_DIR/wasm-tools" ] || ! "$WT_DIR/wasm-tools" --version 2>/dev/null | grep -qF "${WASMTOOLS_VER}"; then
-  curl -sSfL "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASMTOOLS_VER}/wasm-tools-${WASMTOOLS_VER}-${WT_ARCH}.tar.gz" \
-    | tar -xz -C "$WT_DIR" --strip-components=1 --wildcards '*/wasm-tools'
-fi
+# --- the pinned toolchain: Go, wasmtime, wasm-tools, the WASI adapter ---
+# All from mise.toml + mise.lock, the one place a version lives, through the
+# same bootstrap the Netlify build and scripts/devbox use. The wasm toolchain
+# IS provisioned locally as well as remotely: wasm executes host-independently,
+# so a Mac runs those legs as faithfully as a runner does, and without the
+# pinned pair every wasm test SKIPs into a false `ok`.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+exports="$("$ROOT/scripts/toolchain-env")"
 
-# Persist for the session: tools on PATH + the adapter the e2e tests read
-# via FERN_WASI_ADAPTER (so the wasm e2e cases RUN instead of SKIP).
-# CLAUDE_ENV_FILE is not always set outside the managed container; the install
-# above is still worth doing there, so this is a guard rather than a hard need.
+# The checked-in pre-push hook runs the cheap lint gates before a push
+# (docs/LOCAL-DEV-LOOP.md); core.hooksPath is per-clone config.
+git -C "$ROOT" config core.hooksPath .githooks
+
+# Persist for the session. CLAUDE_ENV_FILE is not always set outside the
+# managed container; the install above is still worth doing there, so this is
+# a guard rather than a hard need.
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
-  {
-    echo "export PATH=\"$WT_DIR:\$PATH\""
-    echo "export FERN_WASI_ADAPTER=\"$WT_DIR/adapter.wasm\""
-  } >> "$CLAUDE_ENV_FILE"
+  printf '%s\n' "$exports" >> "$CLAUDE_ENV_FILE"
 else
-  echo "session-start: wasm toolchain at $WT_DIR (add it to PATH and set FERN_WASI_ADAPTER=$WT_DIR/adapter.wasm)" >&2
+  echo "session-start: toolchain installed by mise; eval \"\$(scripts/toolchain-env)\" to use it" >&2
 fi

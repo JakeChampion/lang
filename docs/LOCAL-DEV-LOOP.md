@@ -10,6 +10,38 @@ these have been wrong by an order of magnitude in the direction that
 discourages using the tool at all, and a stale number costs an hour per
 attempt.
 
+## Toolchain: `mise install`
+
+Every pinned tool — Go, wasmtime, wasm-tools, the WASI preview1 adapter,
+actionlint, gotestsum — lives in `mise.toml`, locked to exact releases and
+checksums in `mise.lock`. Install [mise](https://mise.jdx.dev), then in the
+repo:
+
+```
+mise install                      # everything, ~6 s once the downloads are cached
+eval "$(scripts/toolchain-env)"   # the same, plus PATH / GOROOT / FERN_WASI_ADAPTER exports
+make hooks                        # route git hooks through .githooks/
+```
+
+`mise activate` in a shell profile makes the tools resolve on their own inside
+the repo; `FERN_WASI_ADAPTER` still needs the `toolchain-env` line (the adapter
+is a data file, not a program on PATH). To bump a version: edit `mise.toml`,
+run `mise lock`, commit both files. CI installs from the same pair through
+`jdx/mise-action`, the Netlify build and `scripts/devbox` through
+`scripts/toolchain-env`, so a version exists in exactly one place. qemu and the
+cross gcc are not mise tools: apt (the session hook, on Linux) or
+`scripts/devbox` (on a Mac) supply them.
+
+## Git hooks: `.githooks/pre-push`
+
+`make hooks` (the session hook runs it) points `core.hooksPath` at
+`.githooks/`. `pre-push` runs the part of `make lint-all` that finishes in
+seconds and fails CI most often — `go build`, `go vet`, `gofmt-check`,
+`fmt-check`, `actionlint`, `testnames` — about 15 s warm, 40 s with a cold
+`bin/fern` (measured 2026-09-05, 4-core x86-64). `check-sources`, `deadcode` and
+`freeze` stay in CI's lint lane. `git push --no-verify` skips it; it is a
+convenience, not a gate.
+
 ## `make bootstrap`: the Go-less build, and `make distcheck`
 
 `make bootstrap` (pinned stage0 compiling the whole compiler, then the smoke
@@ -361,11 +393,10 @@ also provide `asmcore.fern`.
 
 ## WASM toolchain
 
-Pinned: **wasmtime v46.0.1 + wasm-tools 1.253.0** (see
-`.github/actions/setup-fern/action.yml`; the `.claude/hooks/session-start.sh`
-hook installs them locally under `~/.fern-wasm/`). Export the binaries onto
-`PATH` and set `FERN_WASI_ADAPTER` to the preview1 adapter, or the e2e tests
-SKIP.
+Pinned in `mise.toml` (wasmtime, wasm-tools and the preview1 adapter — the
+adapter's version must equal wasmtime's). `eval "$(scripts/toolchain-env)"`
+installs them and exports `PATH` + `FERN_WASI_ADAPTER`; without both the e2e
+tests SKIP.
 
 **The WASI Preview-3 async/stream/future component tests are
 wasmtime-version-sensitive.** v46 changed the component-model-async ABI (async
@@ -387,7 +418,7 @@ package. Measured: `go test ./internal/e2e/ -run TestWasm` goes from 12 skips to
 0 once the pinned pair is installed.
 
 Everything else goes through **`scripts/devbox`**, a linux/arm64 container
-carrying qemu-user, both cross compilers and the pinned wasm tools:
+carrying qemu-user, both cross compilers and the `mise.toml` toolchain:
 
 ```
 scripts/devbox go test ./internal/e2e/ -run TestSelfHostX86_64

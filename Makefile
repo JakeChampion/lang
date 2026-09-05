@@ -1,14 +1,12 @@
 AARCH64_GCC ?= aarch64-linux-gnu-gcc
 QEMU        ?= qemu-aarch64
 
-ACTIONLINT_VERSION ?= v1.7.10
-
 EXAMPLES := $(basename $(notdir $(wildcard examples/*.fern)))
 ASMS     := $(addprefix build/,$(addsuffix .s,$(EXAMPLES)))
 BINS     := $(addprefix build/,$(EXAMPLES))
 LANG_SRCS := $(wildcard examples/*.fern) $(wildcard coreutils/*.fern) $(wildcard coreutils/lib/*.fern)
 
-.PHONY: all build test vet deadcode actionlint testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all
+.PHONY: all build test vet deadcode actionlint hooks testnames freeze check-sources selfhost-cli bootstrap distcheck clean examples run-% fmt fmt-check gofmt gofmt-check lint-all
 
 all: build test
 
@@ -35,13 +33,20 @@ deadcode:
 # Lint every .github/workflows/*.yml + composite action. Nothing checked
 # these files before, so a typo'd `runs-on`, an expression referencing a
 # context that doesn't exist in that trigger, or a missing `permissions:`
-# scope only surfaced as a red — or silently wrong — run. Version-pinned
-# via `go run` like the deadcode gate, so local and CI lint identically.
-# Picks up shellcheck for `run:` blocks when it's on PATH (it is on the
-# GitHub ubuntu runners), which is why the checked-in workflows quote
-# their shell expansions.
+# scope only surfaced as a red — or silently wrong — run. The binary is the
+# one mise.toml pins, so local and CI lint identically. Picks up shellcheck
+# for `run:` blocks when it's on PATH (it is on the GitHub ubuntu runners),
+# which is why the checked-in workflows quote their shell expansions.
 actionlint:
-	go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
+	@command -v actionlint >/dev/null 2>&1 || { \
+		echo "actionlint is not on PATH: run 'mise install' and activate mise (docs/LOCAL-DEV-LOOP.md)" >&2; exit 1; }
+	actionlint
+
+# Route git hooks through the checked-in .githooks/ (pre-push runs the cheap
+# lint gates). Per clone, since core.hooksPath is local config.
+hooks:
+	git config core.hooksPath .githooks
+	@echo "git hooks: .githooks/ (git push --no-verify skips them)"
 
 # Fail when a workflow selects a Go test by a name nothing answers to.
 # `go test -run` reports exit 0 for a name that matches nothing, so a lane

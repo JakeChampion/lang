@@ -66,11 +66,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Go
-        uses: actions/setup-go@v7
+      - name: Set up Go (pinned in mise.toml)
+        uses: jdx/mise-action@v4
         with:
-          go-version: "1.26"
-          cache: false
+          version: 2026.9.1
+          github_token: ${{ github.token }}
+          install_args: go
 
       - name: Set up Node
         uses: actions/setup-node@v7
