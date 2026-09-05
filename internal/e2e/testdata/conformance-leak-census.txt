@@ -98,7 +98,7 @@ array_param_threaded_reassign                        0
 array_reverse                                        0
 array_sort                                           0
 array_with_rc_elem_drop                              0
-arrow_lambda_block_body                              3
+arrow_lambda_block_body                              0
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0
