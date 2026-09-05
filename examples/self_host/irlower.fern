@@ -38992,6 +38992,37 @@ function struct_arg_to_handback_expr(e: ast.Expr, name: string, handback: string
     return false;
 }
 
+// handback_is_self_rebind_only: every mention of `name` at a handback position
+// is the RHS of `name = f(…, name, …)` — the self-rebind, where the box comes
+// straight back into the slot it left.
+//
+// struct_arg_to_handback refuses the reclaim credit for any name passed at such
+// a position, because the box flows back with no counted reference and a SECOND
+// name for it would then run a second release. A self-rebind makes no second
+// name: one slot, one claim across the call, so the exit sweep owes exactly one
+// release — and withholding it leaks the whole value (#8527, measured as zero
+// releases emitted in the caller).
+//
+// Answers false when the name is not passed at a handback position at all; the
+// caller asks that separately.
+function handback_is_self_rebind_only(stmts: ast.Stmt[], name: string, handback: string[]): boolean {
+    for stmt in stmts {
+        var rest: ast.Stmt[] = [];
+        match (stmt) {
+            ast.StmtAssign(a) => {
+                // The self-rebind itself is admitted; any other assignment
+                // carrying the handback is a second name for the box.
+                if (a.target != name && struct_arg_to_handback_expr(a.value, name, handback)) { return false; }
+            },
+            _ => {
+                rest = [stmt];
+                if (struct_arg_to_handback(rest, name, handback)) { return false; }
+            }
+        }
+    }
+    return true;
+}
+
 function struct_arg_to_handback(stmts: ast.Stmt[], name: string, handback: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
@@ -77106,7 +77137,8 @@ while (i < fresh.len()) {
     if (st_esc_ok && !reassigned_from_alias(body, fnm)
         && bas_ok
         && !struct_returned_bare(body, fnm)
-        && !struct_arg_to_handback(body, fnm, handback)
+        && (!struct_arg_to_handback(body, fnm, handback)
+            || handback_is_self_rebind_only(body, fnm, handback))
         && !recv_borrow_escapes_via_result(recv_borrow, declared_struct_type_of(body, fnm, structs), body, fnm, borrowable)
         && !recv_borrow_escapes_via_result(recv_borrow, fresh_struct_lit_type_deep(body, fnm), body, fnm, borrowable)) {
         out = out.append(fresh[i]);
