@@ -139,9 +139,11 @@ of values there share one type — the `FnSigs` registries are all `string[]`,
 the IR ops all `ir.Op` — so a crossed wire or a dropped argument type-checks
 cleanly and surfaces only as a miscompile. The fixpoint will not catch it
 (self-referential, see above) and the type checker cannot. Comparing emitted
-bytes over every (fixture, target) pair will — three per fixture, 1,521 of them
-at the 507 fixtures of 2026-08-25. **~28 minutes per side** (measured
-2026-08-22 over 1,491 pairs; this said ~8, from a smaller corpus again).
+bytes over every (fixture, target) pair will — three per fixture, 1,644 of them
+at the 548 fixtures of 2026-09-05. **~4 minutes per side** (measured 2026-09-05
+over those 1,644 rows, with both sides running concurrently on a 4-core
+container; the compiler got several times faster over 2026-09, so re-time it
+rather than budgeting an hour for a before/after pair).
 
 **What it does NOT catch: a change that is byte-identical on the corpus and
 expensive on the compiler.** The fixtures are small programs; the compiler is
