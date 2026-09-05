@@ -3154,6 +3154,16 @@ pub function prune_zero_slot_guards(ops: Op[], n_params: i32): Op[] {
     return out;
 }
 
+// OptimizedOps is optimize_ops' output: the rewritten op list and the slot count
+// the frame must be sized from. A pass that caches a value in a fresh local
+// grows the count past what the lowering declared, and the frame, the verifier
+// and the interpreter all have to see the grown one — native carries the same
+// growth in Func.ScratchTypes, which its backends read directly.
+pub struct OptimizedOps {
+    ops: Op[],
+    n_locals: i32,
+}
+
 // finish_ops is the post-fixpoint tail, in one place because optimize_ops reaches
 // it from two: drop what cannot be reached, fuse the store/load round trips,
 // propagate constants and copies over the result, fold once more, then drop again.
@@ -3165,8 +3175,9 @@ pub function prune_zero_slot_guards(ops: Op[], n_params: i32): Op[] {
 // than merely failing to remove it, and a sweep that ran before it cannot see
 // that. Both sweeps are the same idempotent pass; running it twice costs a linear
 // walk and removes the ordering trap.
-function finish_ops(cur: Op[]): Op[] {
-    return eliminate_dead_code(fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur))))));
+function finish_ops(cur: Op[], n_locals: i32): OptimizedOps {
+    var done: Op[] = eliminate_dead_code(fold_const_binaries(propagate_copies(const_propagate(fuse_tee(eliminate_dead_code(cur))))));
+    return OptimizedOps { ops: done, n_locals: n_locals };
 }
 
 // optimize_ops runs the op-list peepholes to a fixpoint, then finishes. The first
@@ -3183,16 +3194,20 @@ function finish_ops(cur: Op[]): Op[] {
 // fusion and the two propagations — over the already-shrunken list. It reads
 // slots the lowering wrote, which no pass here introduces, so nothing later can
 // hand it work it has not already seen.
-pub function optimize_ops(ops: Op[], n_params: i32): Op[] {
+//
+// n_locals is the lowering's slot count (params included); the count returned
+// is the one the frame must be sized from, and only a slot-allocating pass moves
+// it.
+pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps {
     var cur: Op[] = fold_const_binaries(prune_zero_slot_guards(ops, n_params));
     var rounds: i32 = 0;
     while (rounds < 8) {
         var r: StrengthResult = reduce_strength_ex(cur);
-        if (!r.changed) { return finish_ops(cur); }
+        if (!r.changed) { return finish_ops(cur, n_locals); }
         cur = fold_const_binaries(r.ops);
         rounds = rounds + 1;
     }
-    return finish_ops(cur);
+    return finish_ops(cur, n_locals);
 }
 
 // ---- tee fusion --------------------------------------------------------
