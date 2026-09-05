@@ -117,13 +117,15 @@ claim was false, so the filter left the `own`-param spelling uncovered — and
 `2ddc6cb0e` turned from a bounded leak into a double free. The filter was
 dropped in `9403d61` once the move-out superseded it.
 
-Placing it there also covers row 4's own soft spot without naming it. That row
-rests on `moves_fields_expr` marking a method receiver — except for a method the
-receiver-borrow registry cleared as a pure borrow (`nomove`), which is the same
-kind of proof that failed in row 5. The exemption filter does not care which
-analysis cleared the drop: the only shapes where a receiver reaches a growing
-callee unbracketed are the self-reassign (row 1, cow-guarded) and the
-return-position death (now withdrawn for a local).
+Row 4 has a soft spot of the same kind, and the move-out covers it too. That
+row rests on `moves_fields_expr` marking a method receiver — except for a method
+the receiver-borrow registry cleared as a pure borrow (`nomove`), which is the
+same kind of proof that failed in row 5. The only shapes where a receiver
+reaches a growing callee unbracketed are the self-reassign (row 1, cow-guarded)
+and the return-position death, which is a live unbracketed shape again now that
+the filter is gone. What makes it safe is the null-store, for locals and `own`
+params alike — not the withdrawal of the death, and not which analysis cleared
+the drop.
 
 Two alternatives were rejected. Marking the call argument `"NODEEP:"` would keep
 the exemption and downgrade the drop to box-only — trading a use-after-free for
