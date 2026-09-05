@@ -104,24 +104,23 @@ function main(): i32 {
     return 0;
 }`
 
-// An OVERWRITE under an alias. The overwrite pre-drop releases the value the
-// set is about to replace, and it runs before the set's own __map_cow_inplace —
-// so a second handle over the same buffer still names that value. The value
-// column is not claimed on a copy (#8354), and releasing it anyway is an
-// uncounted-alias free: no rc detector fires, and the fault lands wherever the
-// freelist next hands the block out. Unfixed, x86-64 SIGSEGVs here.
+// An OVERWRITE under an alias — the shape that says where the release of a
+// replaced value belongs. An IR-side pre-drop runs BEFORE the set's own
+// __map_cow_inplace, so a second handle over the same buffer still names the
+// value it would release: freeing it there is an uncounted-alias free (no rc
+// detector fires, and the fault lands wherever the freelist next hands the
+// block out, which on x86-64 was a SIGSEGV), and gating the pre-drop off
+// instead reclaims nothing. Since #8421 the release lives in __map_dec_value,
+// which the set reaches AFTER the COW, so it is sole-owner-correct by
+// construction and runs on the aliased path too.
 //
-// 0 iff both handles read back what they should AND nothing over-released. The
-// byte census is deliberately not asserted: the pre-drop is skipped when the
-// handle is shared, so the replaced value is reclaimed at map drop on the
-// two-word ABIs and leaks on the native single-word one — a residual of #8354,
-// not of this guard.
+// 0 iff both handles read back what they should AND nothing over-released;
+// the byte census is asserted separately, against the baseline below.
 //
-// ONE ENTRY, which is all this particular probe pins: the gate stops the
-// pre-drop releasing a value another handle names, and says nothing about DROP
-// time. The second, untouched entry — where both copies' drop walks used to
-// free the same cell and buffer — is mapAliasedTwoEntrySrc below, green since
-// the string value column gained its own claim.
+// ONE ENTRY, which is all this particular probe pins. The second, untouched
+// entry — where both copies' drop walks used to free the same cell and buffer
+// — is mapAliasedTwoEntrySrc below, green since the string value column gained
+// its own claim (#8354).
 const mapAliasedOverwriteSrc = `import "core/map";
 function mk(): i32 {
     var stem: string = "a";
@@ -153,10 +152,8 @@ function main(): i32 {
 // on a signal, x86-64 returns the wrong answer.
 //
 // 0 iff all four reads through both handles are right AND nothing
-// over-released. The byte census is deliberately not asserted: the aliased
-// overwrite still leaks the value it replaces, because the pre-drop is gated
-// off when the handle is shared and __map_dec_value is a no-op for a string
-// column. That is the overwrite-dec's placement, tracked separately.
+// over-released; the byte census is asserted separately, against the
+// two-key baseline below.
 const mapAliasedTwoEntrySrc = `import "core/map";
 function mk(): i32 {
     var stem: string = "a";
@@ -181,6 +178,77 @@ function main(): i32 {
     if (t != 200 * 15) { return 97; }
     return __rc_underflow_count();
 }`
+
+// The two probes above with the ALIAS and the OVERWRITE taken out, and
+// nothing else changed: same number of maps per round, same keys, same key
+// lengths, same reads. They are what the census is measured against.
+//
+// On arm64 and wasm32 both sides are 0 and the comparison is incidental. It
+// earns its keep on x86-64, where a third defect sits in the same program:
+// #8277 strands the map's KEY buffer once per map on any read with an aliased
+// key, which is present in the baseline too. Pinning an absolute number here
+// would bank that leak; pinning the DIFFERENCE says exactly what #8421 is
+// about — that aliasing an overwrite costs nothing — and starts failing the
+// moment it costs something again.
+const mapOverwriteCensusBaselineSrc = `import "core/map";
+function mk(): i32 {
+    var stem: string = "a";
+    var m: Map[string, string] = map_new(8);
+    var k: string = stem + "-key-long-one";
+    m = m.insert(k, stem + "-value-long-two");
+    var ok: i32 = 0;
+    if (m.get_or(k, "") == "a-value-long-two") { ok = ok + 3; }
+    if (m.len() == 1) { ok = ok + 12; }
+    return ok;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + mk(); i = i + 1; }
+    if (t != 200 * 15) { return 97; }
+    return __rc_underflow_count();
+}`
+
+const mapTwoEntryCensusBaselineSrc = `import "core/map";
+function mk(): i32 {
+    var stem: string = "a";
+    var m: Map[string, string] = map_new(8);
+    var k1: string = stem + "-key-long-one";
+    var k2: string = stem + "-key-long-two";
+    m = m.insert(k1, stem + "-value-long-two");
+    m = m.insert(k2, stem + "-value-long-untouched");
+    var ok: i32 = 0;
+    if (m.get_or(k1, "") == "a-value-long-two") { ok = ok + 3; }
+    if (m.get_or(k2, "") == "a-value-long-untouched") { ok = ok + 12; }
+    return ok;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) { t = t + mk(); i = i + 1; }
+    if (t != 200 * 15) { return 97; }
+    return __rc_underflow_count();
+}`
+
+// assertAliasedOverwriteCosts nothing: `probe` (which aliases and overwrites)
+// must strand no more bytes than `baseline` (which does neither), and must
+// allocate strictly more — without that second half a probe that stopped
+// building the map at all would pass.
+func assertAliasedOverwriteFreeOfCharge(t *testing.T, name string, run func(string) (int64, int64, int64), probe, baseline string) {
+	t.Helper()
+	pa, pf, pl := run(probe)
+	ba, _, bl := run(baseline)
+	if pl != bl {
+		t.Errorf("%s: aliasing the overwrite strands %d bytes, the same shape without it strands %d — the difference is #8421's", name, pl, bl)
+	}
+	if pa <= ba {
+		t.Errorf("%s: probe allocated %d, baseline %d — the probe must do strictly more work, or the census is vacuous", name, pa, ba)
+	}
+	if pa == 0 {
+		t.Errorf("%s: no allocations at all; the probe is not exercising heap strings", name)
+	}
+	_ = pf
+}
 
 func TestX86_64MapStringColumnReclaim(t *testing.T) {
 	_, stderr, code := runLeakCheckX86_64(t, mapStringColumnSrc)
@@ -211,6 +279,16 @@ func TestX86_64MapStringColumnReclaim(t *testing.T) {
 	if _, code := compileAndRunX86_64FreeOn(t, mapAliasedTwoEntrySrc); code != 0 {
 		t.Errorf("aliased two-entry: code=%d (97=wrong value, >0=over-release, signal=a shared value column was freed twice)", code)
 	}
+	x86Census := func(src string) (int64, int64, int64) {
+		t.Helper()
+		_, stderr, code := runLeakCheckX86_64(t, src)
+		if code != 0 {
+			t.Fatalf("census probe exit=%d, want 0", code)
+		}
+		return parseLeakCheckLine(t, stderr)
+	}
+	assertAliasedOverwriteFreeOfCharge(t, "aliased overwrite", x86Census, mapAliasedOverwriteSrc, mapOverwriteCensusBaselineSrc)
+	assertAliasedOverwriteFreeOfCharge(t, "aliased two-entry", x86Census, mapAliasedTwoEntrySrc, mapTwoEntryCensusBaselineSrc)
 }
 
 func TestArm64MapStringColumnReclaim(t *testing.T) {
@@ -242,6 +320,27 @@ func TestArm64MapStringColumnReclaim(t *testing.T) {
 	if _, code := compileAndRunArm64FreeOn(t, mapAliasedTwoEntrySrc); code != 0 {
 		t.Errorf("aliased two-entry: code=%d (97=wrong value, >0=over-release, signal=a shared value column was freed twice)", code)
 	}
+	// arm64 boxes its strings, so there is no #8277 residual underneath and
+	// the census is absolute: every byte back.
+	for _, probe := range []struct {
+		name string
+		src  string
+	}{
+		{"aliased overwrite", mapAliasedOverwriteSrc},
+		{"aliased two-entry", mapAliasedTwoEntrySrc},
+	} {
+		_, stderr, code := runLeakCheckArm64(t, probe.src)
+		if code != 0 {
+			t.Fatalf("%s census: exit=%d, want 0", probe.name, code)
+		}
+		a, f, live := parseLeakCheckLine(t, stderr)
+		if a == 0 {
+			t.Fatalf("%s census: no allocations, the probe is not exercising heap strings", probe.name)
+		}
+		if a != f || live != 0 {
+			t.Errorf("%s leaks: allocs=%d frees=%d live_bytes=%d, want balanced / 0", probe.name, a, f, live)
+		}
+	}
 }
 
 func TestWASMMapStringColumnReclaim(t *testing.T) {
@@ -267,6 +366,26 @@ func TestWASMMapStringColumnReclaim(t *testing.T) {
 	}
 	if got := runWasm(t, mapAliasedTwoEntrySrc); got != 0 {
 		t.Errorf("aliased two-entry: code=%d (97=wrong value, >0=over-release)", got)
+	}
+	// As on arm64: boxed strings, no #8277 underneath, absolute census.
+	for _, probe := range []struct {
+		name string
+		src  string
+	}{
+		{"aliased overwrite", mapAliasedOverwriteSrc},
+		{"aliased two-entry", mapAliasedTwoEntrySrc},
+	} {
+		_, stderr, code := runLeakCheckWasm(t, probe.src, false)
+		if code != 0 {
+			t.Fatalf("%s census: exit=%d, want 0", probe.name, code)
+		}
+		a, f, live := parseLeakCheckLine(t, stderr)
+		if a == 0 {
+			t.Fatalf("%s census: no allocations, the probe is not exercising heap strings", probe.name)
+		}
+		if a != f || live != 0 {
+			t.Errorf("%s leaks: allocs=%d frees=%d live_bytes=%d, want balanced / 0", probe.name, a, f, live)
+		}
 	}
 }
 

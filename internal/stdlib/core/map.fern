@@ -627,16 +627,59 @@ function __map_free_val_cell(buf: usize, v: usize): void {
     __free(v, cellBytes);
 }
 
+// __map_str_val_cell_bytes is __map_val_cell_bytes for the STRING value
+// column: the size of the (data, len) cell each slot points at, or 0 when the
+// slot holds the string's own data pointer and there is no cell. Whether a
+// target boxes is an ABI fact rather than a per-map one, but the runtime has
+// no way to ask, so map_new stores the size in the kind-5 tag's high bytes
+// (the IR's mapValTag) exactly as it does for a boxed wide scalar. The INC
+// direction answers the same question off the value itself, by reboxing and
+// testing for identity (__map_own_str_slot); that trick allocates, which is
+// the wrong direction for a release.
+//
+// Separate from __map_val_cell_bytes rather than folded into it: that one
+// answers "does this column own cells __map_drop_values must walk", and a
+// string column's cells are walked by __drop_map_str_values instead. Widening
+// it would free every string value twice.
+function __map_str_val_cell_bytes(buf: usize): i32 {
+    if (__map_val_kind(buf) != 5) { return 0; }
+    return __load_i32(buf + 12) >> 8;
+}
+
 // __map_dec_value releases one value the map is dropping: the boxed cell of
-// a wide-scalar column, or an array-typed value (valKind 2/3) at the value
+// a wide-scalar column, an array-typed value (valKind 2/3) at the value
 // element stride from the buf — arr_dec for plain-elem arrays, drop_arr_ptr
-// (recurse one level) for rc-elem arrays. The array release is rc-aware —
-// it frees only at the value's last reference, so an outstanding inc-on-get
-// borrow stays alive. No-op for an unboxed scalar / non-array value.
+// (recurse one level) for rc-elem arrays — or a string value (valKind 5).
+// The array release is rc-aware — it frees only at the value's last
+// reference, so an outstanding inc-on-get borrow stays alive. No-op for an
+// unboxed scalar / non-array value.
+//
+// The string arm is what makes an OVERWRITE reclaim what it replaces. Both
+// __map_set_keyed_impl callers reach it after `m = __map_cow_inplace(m)`, so
+// the buffer and — since #8390 — its string value cells are this handle's
+// alone: the release needs no ownership test of its own, which is exactly
+// what the IR-side pre-drop could not have (it ran before the COW, and so
+// had to be gated off on the aliased path and leak instead, #8421).
+//
+// It is NOT reached at map drop: __map_drop_values returns early for kind 5,
+// whose column is walked by the IR-generated __drop_map_str_values instead.
+// Widening that guard would free every value twice.
 function __map_dec_value(buf: usize, v: usize): void {
     var vk: i32 = __map_val_kind(buf);
     if (vk == 0) {
         __map_free_val_cell(buf, v);
+        return;
+    }
+    if (vk == 5) {
+        if (v == 0) { return; }
+        // `v as string` is the two-word load on a boxing target and a plain
+        // reinterpret on a single-word one, so one spelling covers both —
+        // the same release __drop_map_str_values runs per entry at map drop.
+        // The dead cell then goes back at the size boxIntoCell allocated it
+        // with; a single-word column reads 0 and has no cell to free.
+        __fern_str_dec(v as string);
+        var cellBytes: i32 = __map_str_val_cell_bytes(buf);
+        if (cellBytes != 0) { __free(v, cellBytes); }
         return;
     }
     if (vk != 2 && vk != 3) { return; }
@@ -922,6 +965,11 @@ pub function __map_drop_values(m: usize): usize {
     // reached as a field / capture routes through here and must NOT
     // misread its struct pointers as arrays — skip. An unboxed scalar (0)
     // / other-pointer (1) leaves the column.
+    //
+    // String values (kind 5) are skipped for the same reason as kind 4:
+    // __drop_map_str_values walks that column. __map_dec_value DOES release
+    // one — that is the overwrite path — so this guard is what keeps the
+    // two from both firing on the same value.
     if (vk0 != 2 && vk0 != 3 && __map_val_cell_bytes(buf) == 0) { return m; }
     var cap: i32 = __load_i32(buf);
     var len_: i32 = __load_i32(buf + 4);

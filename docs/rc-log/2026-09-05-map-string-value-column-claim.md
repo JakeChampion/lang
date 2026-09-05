@@ -77,6 +77,14 @@ for exactly this reason — plus a way to tell the two string ABIs apart in
 `map.fern` for the dec direction. Landing it would also retire the IR-side
 pre-drop widening and `emitMapPredropSoleOwnerGate` for strings.
 
+**Closed the next day** — `2026-09-05-map-overwrite-release-after-the-cow.md`.
+It went that way, with two changes to the shape guessed at above: only
+`__fern_str_dec` needed exposing (the dead cell goes back through the ordinary
+`__free`, at a size the kind-5 value tag now carries, which is also what tells
+the two ABIs apart), and both string pre-drops were deleted outright rather
+than narrowed. wasm32 and arm64 reach an absolute census; x86-64 halves, and
+what is left there is #8277 rather than this.
+
 **Correction, measured after this landed.** This entry first said the struct
 value column (kind 4) was still shared and needed a per-field inc walk. That
 was carried forward from the comment it replaced and is **false**: kind 4 is
