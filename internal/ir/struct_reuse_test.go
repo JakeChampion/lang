@@ -67,10 +67,35 @@ function main(): i32 { return churn(3); }`)
 	}
 }
 
-// A string field is still excluded — strings are two-word on wasm /
-// boxed on arm64, which the single-word reuse temps + flat-dec release
-// don't handle. Falls back to the normal fresh alloc.
-func TestStructReuseSkipsStringField(t *testing.T) {
+// A REPLACED string field is excluded — strings are two-word on wasm / boxed
+// on arm64, which the single-word reuse temps + flat-dec release don't handle.
+// Falls back to the normal fresh alloc.
+func TestStructReuseSkipsReplacedStringField(t *testing.T) {
+	ip := lowerForTest(t, `struct Named { id: i32, name: string }
+function churn(n: i32): i32 {
+    var p: Named = Named { id: 0, name: "a" };
+    var i: i32 = 0;
+    while (i < n) {
+        p = Named { id: p.id + 1, name: p.name + "x" };
+        i = i + 1;
+    }
+    return p.id;
+}
+function main(): i32 { return churn(3); }`)
+	f := funcByName(ip, "churn")
+	if f == nil {
+		t.Fatal("no func churn")
+	}
+	if got := allocReuseCount(f); got != 0 {
+		t.Errorf("a replaced string field must not reuse (single-word temps), got %d", got)
+	}
+}
+
+// A CARRIED string is a different question: the reuse branch neither reads nor
+// writes it (the box keeps the reference it holds), and the fresh branch copies
+// it out of p's box exactly as the plain struct-update spread does. So the
+// two-word shape never arises and the site reuses.
+func TestStructReuseAdmitsCarriedStringField(t *testing.T) {
 	ip := lowerForTest(t, `struct Named { id: i32, name: string }
 function churn(n: i32): i32 {
     var p: Named = Named { id: 0, name: "a" };
@@ -86,8 +111,8 @@ function main(): i32 { return churn(3); }`)
 	if f == nil {
 		t.Fatal("no func churn")
 	}
-	if got := allocReuseCount(f); got != 0 {
-		t.Errorf("string-field struct must not reuse (single-word temps), got %d", got)
+	if got := allocReuseCount(f); got != 1 {
+		t.Errorf("a carried string field should reuse, got %d __alloc_reuse", got)
 	}
 }
 

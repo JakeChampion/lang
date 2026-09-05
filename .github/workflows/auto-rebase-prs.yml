@@ -1,0 +1,308 @@
+name: Auto-rebase open PRs
+
+# Every merge into main leaves every other open PR testing a base nobody will
+# ever ship. This replays each of them onto the new main so what CI reports is
+# what merging would produce — and where the replay stops on a conflict, says so
+# on the PR instead of leaving the author to discover it at merge time.
+#
+# The replay is a real `git rebase` on the runner, not the update-branch API:
+# the API only offers a merge commit or a rebase we cannot inspect, and a local
+# rebase is the only way to get the conflicting PATHS into the comment. A branch
+# is only pushed when the rebase completes cleanly, with `--force-with-lease`
+# against the head the API reported, so a push landing between the listing and
+# the rebase is refused rather than overwritten.
+#
+# PUSHING IS OPT-IN, and this is the part to read before wondering why nothing
+# moved. A push made with the default `GITHUB_TOKEN` does not trigger workflow
+# runs — GitHub suppresses that to stop workflows recursing — so rebasing under
+# it would rewrite every open PR's head to a commit that never gets CI, in a
+# repo that merges on the checks list. Leaving a PR green-but-unchecked is worse
+# than leaving it behind, so the rebase half activates only when the repo has an
+# `AUTO_REBASE_TOKEN` secret (a PAT or App token with `contents: write` +
+# `pull-requests: write`). Without it the job still runs and still comments —
+# every branch it cannot push gets a notice asking its author to rebase, whether
+# the replay conflicted or would have been clean.
+#
+# Opt out per PR with the `no-auto-rebase` label. A PR based on something other
+# than the default branch (a stacked PR) is left alone: its base is not what
+# just moved. A PR from a fork is checked and commented on, but not pushed —
+# no token here can write to someone else's repository.
+#
+# Cost: a rebased head re-runs that PR's whole lane set, ~85 jobs, once per
+# merge into main. That is the price of testing against the base you will
+# actually merge into, and it is why the label exists.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Two merges in quick succession: the older target is superseded, and a run
+# cancelled mid-loop leaves each branch either rebased or untouched — the next
+# run picks up whatever it did not reach.
+concurrency:
+  group: auto-rebase-prs
+  cancel-in-progress: true
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The rebase needs the whole history: a shallow clone has no merge
+          # base with a branch that forked more than a few commits back.
+          fetch-depth: 0
+          token: ${{ secrets.AUTO_REBASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: List the open pull requests
+        id: list
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require("fs");
+            const { owner, repo } = context.repo;
+            const base = context.payload.repository?.default_branch || "main";
+
+            const prs = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: "open", per_page: 100,
+            });
+
+            const rows = [];
+            const skipped = [];
+            for (const pr of prs) {
+              if (pr.base.ref !== base) {
+                skipped.push(`#${pr.number} targets \`${pr.base.ref}\`, not \`${base}\``);
+                continue;
+              }
+              if (pr.labels.some((l) => l.name === "no-auto-rebase")) {
+                skipped.push(`#${pr.number} carries \`no-auto-rebase\``);
+                continue;
+              }
+              const sameRepo = pr.head.repo?.full_name === `${owner}/${repo}`;
+              rows.push([pr.number, pr.head.ref, pr.head.sha, sameRepo].join("\t"));
+            }
+
+            fs.writeFileSync("prs.tsv", rows.map((r) => r + "\n").join(""));
+            core.info(`${rows.length} pull request(s) to consider onto ${base}`);
+            for (const s of skipped) core.info(`skipping ${s}`);
+            core.setOutput("skipped", skipped.join("\n"));
+
+      - name: Replay each branch onto the new base
+        env:
+          # Empty unless the repo has the secret; see the header.
+          PUSH_ENABLED: ${{ secrets.AUTO_REBASE_TOKEN != '' && 'true' || '' }}
+          BASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Rebasing writes commits, and a runner has no identity configured.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          : > results.tsv
+          record() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "${4-}" >> results.tsv; }
+
+          while IFS=$'\t' read -r number branch head_sha same_repo; do
+            [ -n "$number" ] || continue
+            ref="refs/auto-rebase/$number"
+
+            # By pull ref rather than by branch: it resolves for a fork PR too,
+            # and it is the exact commit the listing reported.
+            if ! git fetch --quiet --force origin "refs/pull/$number/head:$ref"; then
+              record "$number" unreachable "$head_sha" "no refs/pull/$number/head"
+              continue
+            fi
+            fetched="$(git rev-parse "$ref")"
+            if [ "$fetched" != "$head_sha" ]; then
+              # Someone pushed between the listing and now. Their push starts
+              # its own CI; rebasing what we already know is stale would race it.
+              record "$number" moved "$head_sha" "now $fetched"
+              continue
+            fi
+            if git merge-base --is-ancestor "$BASE_SHA" "$fetched"; then
+              record "$number" current "$head_sha" ""
+              continue
+            fi
+
+            git checkout --quiet --detach "$fetched"
+            if ! git rebase --quiet "$BASE_SHA" >rebase.log 2>&1; then
+              # Unmerged paths are what the author has to resolve, so they are
+              # the whole point of the comment this feeds.
+              conflicts="$(git diff --name-only --diff-filter=U | paste -sd, -)"
+              git rebase --abort || git rebase --quit || true
+              record "$number" conflict "$head_sha" "$conflicts"
+              continue
+            fi
+            new_sha="$(git rev-parse HEAD)"
+
+            if [ "$new_sha" = "$BASE_SHA" ]; then
+              # Every commit was dropped as already-in-main (rebase-merges land
+              # the content under different SHAs). Pushing this empties the PR.
+              record "$number" merged-out "$head_sha" ""
+              continue
+            fi
+            if [ "$same_repo" != "true" ]; then
+              record "$number" fork "$head_sha" "would be $new_sha"
+              continue
+            fi
+            if [ -z "$PUSH_ENABLED" ]; then
+              record "$number" would-rebase "$head_sha" "would be $new_sha"
+              continue
+            fi
+            # The lease is against the head the listing reported: a push that
+            # landed while we were rebasing is refused, not overwritten.
+            if git push --force-with-lease="refs/heads/$branch:$head_sha" \
+                 origin "HEAD:refs/heads/$branch" >push.log 2>&1; then
+              record "$number" rebased "$new_sha" "was $head_sha"
+            else
+              record "$number" push-failed "$head_sha" "$(tr '\n' ' ' < push.log)"
+            fi
+          done < prs.tsv
+
+          git checkout --quiet --force "$BASE_SHA"
+          cat results.tsv
+
+      - name: Report on the pull requests that need their author
+        if: always()
+        uses: actions/github-script@v9
+        env:
+          SKIPPED: ${{ steps.list.outputs.skipped }}
+          PUSH_ENABLED: ${{ secrets.AUTO_REBASE_TOKEN != '' && 'true' || '' }}
+        with:
+          script: |
+            const fs = require("fs");
+            const { owner, repo } = context.repo;
+            const shortBase = context.sha.slice(0, 8);
+
+            let rows = [];
+            try {
+              rows = fs.readFileSync("results.tsv", "utf8")
+                .split("\n").filter(Boolean)
+                .map((l) => {
+                  const [number, status, head = "", detail = ""] = l.split("\t");
+                  return { number: Number(number), status, head, detail };
+                });
+            } catch {
+              core.warning("no results.tsv — the replay step never produced one");
+            }
+
+            // The dedupe key, and the last line of every notice. A branch stays
+            // behind (or conflicted) across every later push to main, so without
+            // it each merge posts the same notice again; keyed on the PR's own
+            // head, so main moving does not re-post and the author pushing does.
+            // Plain text, not an HTML comment: GitHub strips anything that reads
+            // as a tag out of a posted body, taking the rest of the span with it.
+            const marker = (kind, sha) =>
+              `Automated by \`.github/workflows/auto-rebase-prs.yml\` — ` +
+              `${kind} at \`${sha.slice(0, 8)}\`.`;
+
+            const resolve = (conflicted) => [
+              "```",
+              `git fetch origin main`,
+              `git rebase origin/main`,
+              ...(conflicted ? [`# resolve, git add, git rebase --continue`] : []),
+              `git push --force-with-lease`,
+              "```",
+              ``,
+            ];
+
+            // Why a branch that replays cleanly is still the author's to push.
+            const why = {
+              "would-rebase":
+                "this repository has no `AUTO_REBASE_TOKEN` secret, so nothing here " +
+                "will push the rebase",
+              fork: "the branch lives in a fork, which no token here can write to",
+            };
+
+            const commented = [];
+            for (const row of rows) {
+              let kind, lines;
+              if (row.status === "conflict") {
+                const paths = row.detail ? row.detail.split(",").filter(Boolean) : [];
+                kind = "conflict";
+                lines = [
+                  `**A rebase is required, and this branch conflicts with \`main\`.**`,
+                  ``,
+                  `\`main\` is now at \`${shortBase}\`, and replaying this branch onto it stops` +
+                    (paths.length ? ` in:` : ` with a conflict.`),
+                  ...(paths.length ? [``, ...paths.map((p) => `- \`${p}\``)] : []),
+                  ``,
+                  `Nothing here will push to this branch until it replays cleanly:`,
+                  ``,
+                  ...resolve(true),
+                ];
+              } else if (why[row.status]) {
+                kind = "behind";
+                lines = [
+                  `**A rebase is required: this branch is behind \`main\`.**`,
+                  ``,
+                  `\`main\` is now at \`${shortBase}\`. This branch replays onto it cleanly, ` +
+                    `but ${why[row.status]} — the rebase is yours to run:`,
+                  ``,
+                  ...resolve(false),
+                ];
+              } else {
+                continue;
+              }
+
+              const key = marker(kind, row.head);
+              const existing = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: row.number, per_page: 100,
+              });
+              if (existing.some((c) => c.body?.includes(key))) {
+                core.info(`#${row.number} was already told: ${key}`);
+                continue;
+              }
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: row.number, body: [...lines, key].join("\n"),
+              });
+              commented.push(`#${row.number} (${kind})`);
+              core.info(`commented on #${row.number}: ${kind}`);
+            }
+
+            const label = {
+              rebased: "rebased",
+              "would-rebase": "behind — rebase asked for (no AUTO_REBASE_TOKEN)",
+              conflict: "conflict — reported",
+              current: "already on this base",
+              moved: "head moved mid-run",
+              fork: "behind — fork, rebase asked for",
+              "merged-out": "content already in main",
+              "push-failed": "push refused",
+              unreachable: "head ref not found",
+            };
+            const summary = core.summary
+              .addHeading(`Auto-rebase onto ${shortBase}`, 3);
+            if (rows.length) {
+              summary.addTable([
+                [{ data: "PR", header: true }, { data: "Outcome", header: true }, { data: "Detail", header: true }],
+                ...rows.map((r) => [
+                  `#${r.number}`, label[r.status] || r.status, r.detail ? `<code>${r.detail}</code>` : "",
+                ]),
+              ]);
+            } else {
+              summary.addRaw("No open pull request needed anything.\n");
+            }
+            const skipped = (process.env.SKIPPED || "").split("\n").filter(Boolean);
+            if (skipped.length) summary.addRaw("Skipped:\n").addList(skipped);
+            if (commented.length) summary.addRaw("Commented on:\n").addList(commented);
+            if (!process.env.PUSH_ENABLED) {
+              summary.addRaw(
+                "\nPushing is off: set an `AUTO_REBASE_TOKEN` secret to let the rebases land. " +
+                "A push made with the default token gets no CI.\n",
+              );
+            }
+            await summary.write();
+
+            const failed = rows.filter((r) => r.status === "push-failed");
+            if (failed.length) {
+              core.warning(
+                `push refused for #${failed.map((r) => r.number).join(", #")} — ` +
+                `re-read the branch before retrying, the lease is doing its job`,
+              );
+            }

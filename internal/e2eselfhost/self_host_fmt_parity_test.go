@@ -1323,6 +1323,17 @@ function main(): i32 {
 return tup((1, 2)) + strct(P { x: 1, y: 2 }) + block_arm((0, 3)) + sub_pattern_stmt(W.Pr((1, 2))) + sub_pattern_expr(W.None);
 }
 `},
+
+	// A control byte in a string literal re-emits as `\xNN` rather than raw: a
+	// raw NUL makes git read the formatted file as binary, and the escape reads
+	// back the same byte. `\0` takes the hex form on both sides — neither
+	// printer has a `\0` arm — so this pins the two agreeing on which spelling
+	// wins as well as on escaping at all.
+	{"string-control-bytes", "function main(): i32 {\n" +
+		"var s: string = \"a\\x00b\\x1fc\\x7fd\\0e\";\n" +
+		"var f: string = f\"pre\\x01{s}\";\n" +
+		"return s.len() + f.len();\n" +
+		"}\n"},
 }
 
 // typeChecks reports whether src is a program the checker accepts, running the

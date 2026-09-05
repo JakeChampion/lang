@@ -1,0 +1,59 @@
+// The two binder sites a scope walk reaches only by recursing, and which the
+// checker cannot help with: it lowers a destructuring for-each away and
+// resolves nested destructure levels, and by then the const is gone.
+//
+// A destructuring header `for (N, v) in xs` carries its binders on the
+// loop's Pattern — Var is only the synthetic element holder — and a nested
+// destructure's binders live one level down, on Nested[i].Names. Binding
+// just the top level of each left both shapes reading the const's value 5
+// instead of their own binding (#8443), and made a legal assignment to a
+// pattern binder report `cannot assign to const N`.
+//
+// Sibling of const_shadowed_by_binder, which covers the seven flat shapes.
+// Each check contributes one bit, so a failure names which shape broke:
+// 1 + 2 + 4 = 7, plus unshadowed() reading the const = 12.
+
+const N: i32 = 5;
+
+// The loop variable is introduced by the header's PATTERN, not by Var.
+function shadow_for_each_pattern(): i32 {
+    var xs: (i32, i32)[] = [(7, 1), (8, 2)];
+    var t: i32 = 0;
+    for (N, v) in xs {
+        t = t + N;
+    }
+    return t;
+}
+
+// A binder one level down in the pattern.
+function shadow_nested_destructure(): i32 {
+    var t: ((i32, i32), i32) = ((7, 1), 2);
+    var ((a, N), c) = t;
+    return N + c;
+}
+
+// Assigning to a pattern binder is a legal assignment to a local. Reported
+// as `cannot assign to const N` while the binder was invisible.
+function assign_to_pattern_binder(): i32 {
+    var xs: (i32, i32)[] = [(7, 1)];
+    var t: i32 = 0;
+    for (N, v) in xs {
+        N = 9;
+        t = t + N;
+    }
+    return t;
+}
+
+// The positive control: a reference nothing shadows must still fold, or the
+// whole case would pass under "never substitute".
+function unshadowed(): i32 {
+    return N;
+}
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (shadow_for_each_pattern() == 15) { r = r + 1; }
+    if (shadow_nested_destructure() == 3) { r = r + 2; }
+    if (assign_to_pattern_binder() == 9) { r = r + 4; }
+    return r + unshadowed();
+}

@@ -701,6 +701,65 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return a.rows[2][0] * 10 + b.rows[2][0] + a.rows[0][0];
 }`},
+	// The hash-index shape (#8485): the bucket array's LENGTH and one of its
+	// ELEMENTS are read before the store that rewrites a third slot. Both reads
+	// are sequenced before it and yield scalars, so the store lands in the
+	// field's own buffer — and the answers must not move.
+	{"with-prior-scalar-field-reads", `
+struct RefSet { names: string[], head: i32[], next: i32[] }
+function bucket(name: string, n: i32): i32 { return name.len() % n; }
+function add(rs: RefSet, name: string): RefSet {
+    var bk: i32 = bucket(name, rs.head.len());
+    var names: string[] = rs.names.append(name);
+    var next: i32[] = rs.next.append(rs.head[bk]);
+    var head: i32[] = rs.head.with(bk, names.len() - 1);
+    return RefSet { names: names, head: head, next: next };
+}
+function has(rs: RefSet, name: string): boolean {
+    var i: i32 = rs.head[bucket(name, rs.head.len())];
+    while (i >= 0) {
+        if (rs.names[i] == name) { return true; }
+        i = rs.next[i];
+    }
+    return false;
+}
+function main(): i32 {
+    var rs: RefSet = RefSet { names: [], head: [0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1], next: [] };
+    rs = add(rs, "a");
+    rs = add(rs, "bb");
+    rs = add(rs, "ccc");
+    rs = add(rs, "dddd");
+    rs = add(rs, "eeeee");
+    rs = add(rs, "ffffff");
+    rs = add(rs, "a");
+    var hits: i32 = 0;
+    if (has(rs, "a")) { hits = hits + 1; }
+    if (has(rs, "eeeee")) { hits = hits + 10; }
+    if (has(rs, "zz")) { hits = hits + 100; }
+    if (rs.names.len() != 7) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return hits + rs.head[bucket("a", 5)];
+}`},
+	// The same shape with the root SURVIVING the call: the caller-side bracket
+	// is what must send the store down its copy path here.
+	{"with-prior-reads-root-survives", `
+struct RefSet { names: string[], head: i32[], next: i32[] }
+function bucket(name: string, n: i32): i32 { return name.len() % n; }
+function add(rs: RefSet, name: string): RefSet {
+    var bk: i32 = bucket(name, rs.head.len());
+    var names: string[] = rs.names.append(name);
+    var next: i32[] = rs.next.append(rs.head[bk]);
+    var head: i32[] = rs.head.with(bk, names.len() - 1);
+    return RefSet { names: names, head: head, next: next };
+}
+function main(): i32 {
+    var a: RefSet = RefSet { names: [], head: [0 - 1, 0 - 1, 0 - 1, 0 - 1], next: [] };
+    a = add(a, "p");
+    a = add(a, "qq");
+    var b: RefSet = add(a, "rrr");
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.names.len() * 10 + b.names.len() + a.head[3] + b.head[3];
+}`},
 	// A body-scope host INSIDE A LOOP runs again with the same root, and the
 	// grow has moved the field out of it — so the site keeps the clone form.
 	// The root arrives as a fresh call result at an `own` position: no caller
@@ -940,6 +999,56 @@ struct W { w: L[], n: i32 }
 function (p: W) put(l: L): W { return W { ...p, w: p.w.with(0, l), n: p.w[0].v }; }
 function main(): i32 { var p: W = W { w: [L { v: 0 }, L { v: 0 }], n: 0 }; p = p.put(L { v: 4 }); return p.n; }`,
 			label:     "__fn_W__put",
+			wantClone: true,
+			with:      true,
+		},
+		// #8485: a length and an index read of the SAME field, both sequenced
+		// before the body-scope store. Each yields a scalar computed before the
+		// store, so neither observes it — the site is admitted.
+		{
+			name: "prior-scalar-field-reads-store-in-place",
+			src: `
+struct St { head: i32[], n: i32 }
+function put(s: St, k: i32, v: i32): St {
+    var b: i32 = k % s.head.len();
+    var prev: i32 = s.head[b];
+    var head: i32[] = s.head.with(b, v);
+    return St { head: head, n: s.n + prev };
+}
+function main(): i32 { var s: St = St { head: [0, 0, 0], n: 0 }; s = put(s, 1, 4); return s.head[1] + s.n; }`,
+			label:     "__fn_put",
+			wantClone: false,
+			with:      true,
+		},
+		// The same read AFTER the store would see the new element, and the field
+		// the store moved out of the root.
+		{
+			name: "later-field-read-with-clones",
+			src: `
+struct St { head: i32[], n: i32 }
+function put(s: St, k: i32, v: i32): St {
+    var head: i32[] = s.head.with(k, v);
+    var m: i32 = s.head.len() + s.head[0];
+    return St { head: head, n: m };
+}
+function main(): i32 { var s: St = St { head: [0, 0, 0], n: 0 }; s = put(s, 1, 4); return s.head[1] + s.n; }`,
+			label:     "__fn_put",
+			wantClone: true,
+			with:      true,
+		},
+		// A prior read that BINDS the buffer is not excused by being early: the
+		// name outlives the store and would see it.
+		{
+			name: "prior-field-bind-with-clones",
+			src: `
+struct St { head: i32[], n: i32 }
+function put(s: St, k: i32, v: i32): St {
+    var alias: i32[] = s.head;
+    var head: i32[] = s.head.with(k, v);
+    return St { head: head, n: alias[0] };
+}
+function main(): i32 { var s: St = St { head: [7, 0, 0], n: 0 }; s = put(s, 0, 4); return s.head[0] + s.n; }`,
+			label:     "__fn_put",
 			wantClone: true,
 			with:      true,
 		},
