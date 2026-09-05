@@ -333,12 +333,19 @@ place — so confirm by fixing the site and re-measuring an unprobed build.
 
 ## 5. Multiplier 4 — repeated whole-program walks
 
-Not separately quantified, but visible in the profile's any-frame column:
-`irlower` runs interprocedural fixpoints (`borrowable_params_interproc`, the
-`lift_lambdas` / `lift_inline_closures` views, `expr_unsafe_for` /
-`stmt_unsafe_for` / `body_unsafe_for`) that re-walk every function body
-several times each, on top of ~15 `module_uses_*` inspection passes. Each
-walk is cheap; there are a lot of them, and each one pays §4's lookup costs.
+Measured in #8199 with round / visit / ms counters on the self-compile: the
+whole-program registry set (`borrowable_params_interproc`, 8 rounds;
+`consume_safe_params_interproc`, 7; `fn_sigs_for_borrow` incl.
+`param_counted_of`, 5) costs 7.9-8.6 s per derivation, and the x86 driver
+derived it twice, the arm64 driver three times (the eligibility pass, then
+emit twice) while also lowering every function twice. Each driver now derives
+it once and lowers once: x86 040f865f5 (-9 to -11% self-compile wall), the
+per-module emit-all drivers e370545e6 (an 8-unit arm64 batch 62-92 s to
+11-21 s), arm64 whole-program 49b803f5a (about -33%), wasm whole-program
+9a97bde6f. The rest of the list this section used to carry does not matter:
+the `module_uses_*` inspection passes no longer exist on the register
+backends, and the lift / closure / noesc / str_fresh / fresh_fwd fixpoints are
+each under 150 ms, ~0.35 s together.
 
 ## 6. What is *not* wrong
 
