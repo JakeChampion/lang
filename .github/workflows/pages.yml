@@ -56,9 +56,16 @@ permissions:
   pages: write
   id-token: write
 
+# One deployment at a time — Pages rejects concurrent ones — but never cancel
+# the one in flight. A cancelled deploy is a deploy that does not happen: main
+# runs have no successor to inherit the result, and when merges land faster than
+# the ~10 minute build, cancelling means the site simply stops updating. Five
+# consecutive deploys were lost that way between 18:47 and 20:32 on 2026-09-05.
+# Waiting costs nothing instead: GitHub keeps one pending run per group, so a
+# burst of merges collapses into a single follow-up deploy of the newest commit.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
