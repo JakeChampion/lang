@@ -9693,11 +9693,93 @@ func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Id
 	return nil
 }
 
+// SupersededFieldOwnMoveArgs recognizes the #8186 field-move shape on a
+// struct self-update whose base is `target` — `target = S { ...target, f:
+// g(.., target.f, ..) }`, or the same literal returned — and returns every
+// `target.f` argument node an `own` position of g receives. The field is
+// superseded by the very store that passes it, and nothing else can read it
+// in between, so the caller transfers it. The shape is exactly:
+//
+//   - the literal's base is the bare ident `target`;
+//   - an overridden field f's value is a direct call to a named `own`
+//     function whose `own` position holds `target.f` directly;
+//   - `target.f` occurs exactly once in the whole literal;
+//   - `target` occurs BARE exactly once in the whole literal, as the base.
+//     Every other mention is the target of a field read. A bare `target`
+//     anywhere else — an argument to g, another field's initialiser — is a
+//     second route to the box whose field slot the move empties.
+//
+// Exported because the checker's E051 admission and the IR's field move
+// (computeFieldOwnMoves) must key on the IDENTICAL recognition.
+func SupersededFieldOwnMoveArgs(sl *ast.StructLit, target string, ownFuncs map[string][]bool) []*ast.FieldAccess {
+	if sl.Base == nil || len(ownFuncs) == 0 {
+		return nil
+	}
+	if bid, ok := sl.Base.(*ast.Ident); !ok || bid.Name != target {
+		return nil
+	}
+	fieldTargets := map[*ast.Ident]bool{}
+	fieldReads := map[string]int{}
+	ast.Walk(sl, func(n ast.Node) bool {
+		if fa, ok := n.(*ast.FieldAccess); ok {
+			if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
+				fieldTargets[id] = true
+				fieldReads[fa.Field]++
+			}
+		}
+		return true
+	})
+	bare := 0
+	ast.Walk(sl, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == target && !fieldTargets[id] {
+			bare++
+		}
+		return true
+	})
+	if bare != 1 {
+		return nil
+	}
+	var out []*ast.FieldAccess
+	for _, f := range sl.Fields {
+		call, ok := f.Value.(*ast.Call)
+		if !ok || call.Method != nil {
+			continue
+		}
+		cid, ok := call.Callee.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		flags, isOwn := ownFuncs[cid.Name]
+		if !isOwn || fieldReads[f.Name] != 1 {
+			continue
+		}
+		for i, a := range call.Args {
+			if i >= len(flags) || !flags[i] {
+				continue
+			}
+			fa, ok := a.(*ast.FieldAccess)
+			if !ok || fa.Field != f.Name {
+				continue
+			}
+			if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
+				out = append(out, fa)
+				break
+			}
+		}
+	}
+	return out
+}
+
 func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	owned := map[string]bool{}
+	// borrowedParam names the parameters this frame does NOT own: a field
+	// moved out of one would be read back by the caller.
+	borrowedParam := map[string]bool{}
 	for _, p := range fn.Params {
 		if p.Own {
 			owned[p.Name] = true
+		} else {
+			borrowedParam[p.Name] = true
 		}
 	}
 	// Run when the current function has owned params (the affine move-check) OR
@@ -9726,6 +9808,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// move-on-call + overwrite-dec suppression key on the identical
 	// syntactic shape (SelfReassignOwnMoveArg, shared with the IR) so checker and rc
 	// agree bit-for-bit on what moved.
+	//
+	// The same map admits the `x.f` FieldAccess NODES of the superseded-field
+	// move (#8186, SupersededFieldOwnMoveArgs): the store of `x = S { ...x, f:
+	// g(.., x.f, ..) }` — or the return of that literal — supersedes the one
+	// field the call consumes.
 	selfMoveArgs := map[ast.Expr]bool{}
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
@@ -9736,6 +9823,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return x.IsStringConcat
 		case *ast.Ident:
 			return owned[x.Name] || selfMoveArgs[e]
+		case *ast.FieldAccess:
+			return selfMoveArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
@@ -9821,22 +9910,25 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return
 		}
 		type binding struct {
-			wasOwned bool
-			wasMoved ast.Position
-			hadMoved bool
+			wasOwned    bool
+			wasBorrowed bool
+			wasMoved    ast.Position
+			hadMoved    bool
 		}
 		shadowed := map[string]binding{}
 		for _, p := range params {
 			if _, dup := shadowed[p.Name]; dup {
 				continue
 			}
-			b := binding{wasOwned: owned[p.Name]}
+			b := binding{wasOwned: owned[p.Name], wasBorrowed: borrowedParam[p.Name]}
 			b.wasMoved, b.hadMoved = moved[p.Name]
 			shadowed[p.Name] = b
 			if p.Own {
 				owned[p.Name] = true
+				delete(borrowedParam, p.Name)
 			} else {
 				delete(owned, p.Name)
+				borrowedParam[p.Name] = true
 			}
 			delete(moved, p.Name)
 		}
@@ -9846,6 +9938,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				owned[name] = true
 			} else {
 				delete(owned, name)
+			}
+			if b.wasBorrowed {
+				borrowedParam[name] = true
+			} else {
+				delete(borrowedParam, name)
 			}
 			if b.hadMoved {
 				moved[name] = b.wasMoved
@@ -10080,6 +10177,16 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 						selfMoveArgs[arg] = true
 					}
 				}
+				// Superseded-field move admission (#8186): `x = S { ...x, f:
+				// g(..., x.f, ...) }` with x an `own` param or a local. The
+				// store supersedes the field the call consumes.
+				if id, ok := asn.Target.(*ast.Ident); ok && !borrowedParam[id.Name] {
+					if sl, isLit := asn.Value.(*ast.StructLit); isLit {
+						for _, arg := range SupersededFieldOwnMoveArgs(sl, id.Name, c.ownFuncs) {
+							selfMoveArgs[arg] = true
+						}
+					}
+				}
 				recordExprUses(asn.Value, moved)
 				if id, ok := asn.Target.(*ast.Ident); ok && owned[id.Name] {
 					delete(moved, id.Name)
@@ -10090,6 +10197,15 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			recordExprUses(x.Expr, moved)
 		case *ast.Return:
+			// The return form of the superseded-field move (#8186): nothing
+			// runs after the return, so the field cannot be read back.
+			if sl, isLit := x.Value.(*ast.StructLit); isLit && sl.Base != nil {
+				if bid, ok := sl.Base.(*ast.Ident); ok && !borrowedParam[bid.Name] {
+					for _, arg := range SupersededFieldOwnMoveArgs(sl, bid.Name, c.ownFuncs) {
+						selfMoveArgs[arg] = true
+					}
+				}
+			}
 			recordExprUses(x.Value, moved)
 		case *ast.If:
 			recordExprUses(x.Cond, moved)

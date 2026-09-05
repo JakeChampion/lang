@@ -441,3 +441,111 @@ function f(own xs: i32[]): i32 {
 		t.Errorf("shadowed-nested-param: the outer owned xs is untouched by the shadowing parameter, got: %v", err)
 	}
 }
+
+// --- E051 superseded-field move admission (#8186) ------------------------
+//
+// `a = S { ...a, f: g(.., a.f, ..) }` with `a` an `own` param or a local: the
+// store supersedes the one field the call consumes, and nothing can read it
+// in between, so the field transfers (SupersededFieldOwnMoveArgs — the IR's
+// computeFieldOwnMoves keys on the same shape).
+
+const fieldMovePrelude = `struct Cfi { rules: i32[], n: i32 }
+struct Asm { code: i32[], cfi: Cfi }
+function record(own s: Cfi, v: i32): Cfi { return Cfi { rules: s.rules.append(v), n: s.n + 1 }; }
+`
+
+func TestOwnGuardAllowsSupersededFieldMoveOnOwnBase(t *testing.T) {
+	wantOK(t, "field-move-own-base", fieldMovePrelude+`
+function step(own a: Asm, v: i32): Asm {
+    a = Asm { ...a, cfi: record(a.cfi, v) };
+    return a;
+}`)
+}
+
+func TestOwnGuardAllowsSupersededFieldMoveOnLocal(t *testing.T) {
+	wantOK(t, "field-move-local-base", fieldMovePrelude+`
+function build(): i32 {
+    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    a = Asm { ...a, cfi: record(a.cfi, 1) };
+    a = Asm { ...a, cfi: record(a.cfi, a.code.len()) };
+    return a.cfi.n;
+}`)
+}
+
+func TestOwnGuardAllowsSupersededFieldMoveOnReturn(t *testing.T) {
+	wantOK(t, "field-move-return-form", fieldMovePrelude+`
+function step(own a: Asm, v: i32): Asm {
+    return Asm { ...a, cfi: record(a.cfi, v) };
+}`)
+}
+
+// A BORROWED base keeps its field for the caller — still E051.
+func TestOwnGuardRejectsSupersededFieldMoveOnBorrowedBase(t *testing.T) {
+	wantE051(t, "field-move-borrowed-base", fieldMovePrelude+`
+function step(a: Asm, v: i32): Asm {
+    a = Asm { ...a, cfi: record(a.cfi, v) };
+    return a;
+}`)
+	wantE051(t, "field-move-borrowed-base-return", fieldMovePrelude+`
+function step(a: Asm, v: i32): Asm {
+    return Asm { ...a, cfi: record(a.cfi, v) };
+}`)
+}
+
+// The base passed to the callee by a SECOND route would read the emptied
+// field slot — still E051.
+func TestOwnGuardRejectsSupersededFieldMoveWithAliasedBase(t *testing.T) {
+	wantE051(t, "field-move-base-also-passed", fieldMovePrelude+`
+function record2(own s: Cfi, a: Asm): Cfi { return Cfi { rules: s.rules.append(a.code.len()), n: s.n + 1 }; }
+function step(own a: Asm): Asm {
+    a = Asm { ...a, cfi: record2(a.cfi, a) };
+    return a;
+}`)
+}
+
+// A second read of the field anywhere in the literal observes the moved
+// value — still E051.
+func TestOwnGuardRejectsSupersededFieldMoveSecondRead(t *testing.T) {
+	wantE051(t, "field-move-second-read", fieldMovePrelude+`
+function step(own a: Asm): Asm {
+    a = Asm { ...a, cfi: record(a.cfi, a.cfi.n) };
+    return a;
+}`)
+}
+
+// Storing the call's result into a DIFFERENT field leaves the moved field
+// carried by the spread — still E051.
+func TestOwnGuardRejectsSupersededFieldMoveIntoOtherField(t *testing.T) {
+	wantE051(t, "field-move-other-field", `struct Cfi { rules: i32[], n: i32 }
+struct Asm { code: i32[], cfi: Cfi, cfi2: Cfi }
+function record(own s: Cfi, v: i32): Cfi { return Cfi { rules: s.rules.append(v), n: s.n + 1 }; }
+function step(own a: Asm): Asm {
+    a = Asm { ...a, cfi2: record(a.cfi, 1) };
+    return a;
+}`)
+}
+
+// Binding the literal to a DIFFERENT name keeps the old base alive — still
+// E051.
+func TestOwnGuardRejectsSupersededFieldMoveKeptAliveBase(t *testing.T) {
+	wantE051(t, "field-move-kept-alive-base", fieldMovePrelude+`
+function build(): i32 {
+    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    var b: Asm = Asm { ...a, cfi: record(a.cfi, 1) };
+    return b.cfi.n + a.cfi.n;
+}`)
+}
+
+// A nested function's borrowed parameter shadows an outer local of the same
+// name for the body's extent — still E051 inside it.
+func TestOwnGuardRejectsSupersededFieldMoveOnShadowingBorrowedParam(t *testing.T) {
+	wantE051(t, "field-move-nested-borrowed-param", fieldMovePrelude+`
+function build(): i32 {
+    var a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };
+    function inner(a: Asm): Asm {
+        a = Asm { ...a, cfi: record(a.cfi, 1) };
+        return a;
+    }
+    return inner(a).cfi.n;
+}`)
+}
