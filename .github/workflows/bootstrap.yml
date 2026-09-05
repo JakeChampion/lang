@@ -74,9 +74,18 @@ on:
 # back-to-back rebase-merges holds an uncancellable run each and buries every
 # open PR's checks behind it (#8124). One group coalesces the burst to its
 # newest commit, at the cost of a red main naming a span of merges.
+#
+# A publish gets its OWN group rather than sharing the ref's. GitHub keeps one
+# PENDING run per group, so a publish waiting for a runner is displaced by the
+# next verify run the ref takes — and `cancel-in-progress: false` does not save
+# it, since that only protects a run already executing. The publish path is
+# where that hurts most: it is 40 minutes across three hosts and ends in a
+# release, and it is dispatched exactly when the ref is busy, because a pin
+# refresh is needed when the sources moved. Two publishes still serialise,
+# which is what we want — they would tag the same release.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' && 'publish') || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
