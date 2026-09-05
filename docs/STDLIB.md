@@ -1774,5 +1774,8 @@ same absence of a capability, same host answer under `-interp` (with Go's
 The two halves answer different questions and a program usually wants only one.
 Reach for `target_arch()` when the difference is the machine rather than the
 host — register widths, an instruction only one ISA has, or a C ABI detail like
-the width of `long double`, which is 80-bit x87 on x86-64 and IEEE binary128 on
-arm64. Reach for `target_os()` when it is the kernel or the loader.
+the format of `long double`, which is 80-bit x87 on x86-64 and IEEE binary128 on
+arm64 and wasm32. Reach for `target_os()` when it is the kernel or the loader.
+Some questions need both halves: `long double` is that same ISA question
+everywhere except Darwin, where the environment narrows the type to plain
+`double` — `coreutils/lib/ld.fern` is the worked example.
