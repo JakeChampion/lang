@@ -436,6 +436,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "write") { return "1"; }
         if (name == "close") { return "3"; }
         if (name == "lseek") { return "8"; }
+        if (name == "fstat") { return "5"; }
         if (name == "openat") { return "257"; }
         if (name == "fchmod") { return "91"; }
         if (name == "unlinkat") { return "263"; }
@@ -467,6 +468,7 @@ pub function sysno(t: string, name: string): string {
         if (name == "write") { return "4"; }
         if (name == "close") { return "6"; }
         if (name == "lseek") { return "199"; }
+        if (name == "fstat") { return "339"; }
         if (name == "openat") { return "463"; }
         if (name == "fchmod") { return "124"; }
         if (name == "unlinkat") { return "472"; }
@@ -507,6 +509,7 @@ pub function sysno(t: string, name: string): string {
     if (name == "write") { return "64"; }
     if (name == "close") { return "57"; }
     if (name == "lseek") { return "62"; }
+    if (name == "fstat") { return "80"; }
     if (name == "openat") { return "56"; }
     if (name == "fchmod") { return "52"; }
     if (name == "unlinkat") { return "35"; }
@@ -1290,8 +1293,10 @@ pub function rt_src_temp_dir(t: string): string {
 
 // rt_src_read_file backs `read_file(path)` (#2649, syscall-leaf) → Result[string,
 // IoError]. NUL-terminate the path, openat(AT_FDCWD, path, O_RDONLY=0) (mode is
-// ignored without O_CREAT, so __syscall3 suffices), lseek-size the file, read it
-// into a sized buffer that BECOMES the returned string (RC-managed), close,
+// ignored without O_CREAT, so __syscall3 suffices), size the file by fstat's
+// st_size (lseek lies on directories: EINVAL on tmpfs, the htree sentinel on
+// indexed ext4), read it into a sized buffer that BECOMES the returned string
+// (RC-managed), close,
 // then the D9 gate (#5714): content that is not well-formed UTF-8 returns
 // Err(InvalidUtf8(path)) via __fern_utf8_valid (bundled alongside). On
 // open/read failure the errno is classified by the shared __fern_io_error
@@ -1306,18 +1311,18 @@ pub function rt_src_temp_dir(t: string): string {
 // read_file did, so a short read (a signal, a pipe-backed fd) no longer silently
 // truncates the file. Still i32-sized, so > 2 GiB is out of scope either way.
 pub function rt_src_read_file(t: string): string {
-    return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, 0); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var size: i32 = __syscall3(" + sysno(t, "lseek") + ", fd, 0, 2); __syscall3(" + sysno(t, "lseek") + ", fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = 0; var bad: i32 = 0; var done: i32 = 0; while (done == 0) { if (got >= size) { done = 1; } else { var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, __raw_addr(buf, got), size - got); if (n < 0) { bad = n; done = 1; } else { if (n == 0) { done = 1; } else { got = got + n; } } } } __syscall3(" + sysno(t, "close") + ", fd, 0, 0); if (bad < 0) { return Err(__fern_io_error(0 - bad, __raw_string(pathz, plen))); } if (__fern_utf8_valid(buf, got) == 0) { return Err(InvalidUtf8(__raw_string(pathz, plen))); } return Ok(__raw_string(buf, got)); }";
+    return "function __fern_read_file(path: string): Result[string, IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, 0); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var st: i32 = __raw_scratch(160); var src: i32 = __syscall3(" + sysno(t, "fstat") + ", fd, st, 0); if (src < 0) { __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return Err(__fern_io_error(0 - src, __raw_string(pathz, plen))); } var size: i32 = __load_i64(__raw_addr(st, " + statoff(t, "size") + ")) as i32; var buf: i32 = __raw_alloc(size + 1); var got: i32 = 0; var bad: i32 = 0; var done: i32 = 0; while (done == 0) { if (got >= size) { done = 1; } else { var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, __raw_addr(buf, got), size - got); if (n < 0) { bad = n; done = 1; } else { if (n == 0) { done = 1; } else { got = got + n; } } } } __syscall3(" + sysno(t, "close") + ", fd, 0, 0); if (bad < 0) { return Err(__fern_io_error(0 - bad, __raw_string(pathz, plen))); } if (__fern_utf8_valid(buf, got) == 0) { return Err(InvalidUtf8(__raw_string(pathz, plen))); } return Ok(__raw_string(buf, got)); }";
 }
 
 // rt_src_read_file_bytes backs `read_file_bytes(path)` (read_file's raw sibling)
 // → Result[u8[], IoError]. Same syscall pipeline and error classification as
 // rt_src_read_file, but the success path spreads the raw buffer into a fresh
 // array box (__raw_arr_box, one byte per slot — the self-host u8[] model, like
-// random_bytes). The box is sized to the lseek size, so a file that shrinks
+// random_bytes). The box is sized to fstat's st_size, so a file that shrinks
 // between the size query and the read leaves trailing zero slots with len still
 // the queried size.
 pub function rt_src_read_file_bytes(t: string): string {
-    return "function __fern_read_file_bytes(path: string): Result[i32[], IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, 0); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var size: i32 = __syscall3(" + sysno(t, "lseek") + ", fd, 0, 2); __syscall3(" + sysno(t, "lseek") + ", fd, 0, 0); var buf: i32 = __raw_alloc(size + 1); var got: i32 = 0; var bad: i32 = 0; var done: i32 = 0; while (done == 0) { if (got >= size) { done = 1; } else { var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, __raw_addr(buf, got), size - got); if (n < 0) { bad = n; done = 1; } else { if (n == 0) { done = 1; } else { got = got + n; } } } } __syscall3(" + sysno(t, "close") + ", fd, 0, 0); if (bad < 0) { return Err(__fern_io_error(0 - bad, __raw_string(pathz, plen))); } var b: i32 = __raw_arr_box(size); var j: i32 = 0; while (j < got) { __raw_store_ptr(b, j + 1, __raw_load8(buf, j)); j = j + 1; } while (j < size) { __raw_store_ptr(b, j + 1, 0); j = j + 1; } return Ok(__raw_array(b)); }";
+    return "function __fern_read_file_bytes(path: string): Result[i32[], IoError] { var plen: i32 = path.len(); var pathz: i32 = __raw_alloc(plen + 1); var i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i]); i = i + 1; } __raw_store8(pathz, plen, 0); var fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz, 0); if (fd < 0) { return Err(__fern_io_error(0 - fd, __raw_string(pathz, plen))); } var st: i32 = __raw_scratch(160); var src: i32 = __syscall3(" + sysno(t, "fstat") + ", fd, st, 0); if (src < 0) { __syscall3(" + sysno(t, "close") + ", fd, 0, 0); return Err(__fern_io_error(0 - src, __raw_string(pathz, plen))); } var size: i32 = __load_i64(__raw_addr(st, " + statoff(t, "size") + ")) as i32; var buf: i32 = __raw_alloc(size + 1); var got: i32 = 0; var bad: i32 = 0; var done: i32 = 0; while (done == 0) { if (got >= size) { done = 1; } else { var n: i32 = __syscall3(" + sysno(t, "read") + ", fd, __raw_addr(buf, got), size - got); if (n < 0) { bad = n; done = 1; } else { if (n == 0) { done = 1; } else { got = got + n; } } } } __syscall3(" + sysno(t, "close") + ", fd, 0, 0); if (bad < 0) { return Err(__fern_io_error(0 - bad, __raw_string(pathz, plen))); } var b: i32 = __raw_arr_box(size); var j: i32 = 0; while (j < got) { __raw_store_ptr(b, j + 1, __raw_load8(buf, j)); j = j + 1; } while (j < size) { __raw_store_ptr(b, j + 1, 0); j = j + 1; } return Ok(__raw_array(b)); }";
 }
 
 // rt_src_read_dir backs `read_dir(path)` (#2649, syscall-leaf) → Result[string[],
