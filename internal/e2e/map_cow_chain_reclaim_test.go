@@ -74,9 +74,11 @@ function arr_chain(rounds: i32): i32 {
     return a.len();
 }
 
-// String values (valKind 5) — claimed by the copy since #8390, and NOT walked
-// by the release, so they leak. The claim is what makes widening the walk safe
-// rather than a use-after-free; the leak it would close is measured in #8431.
+// String values (valKind 5) — claimed by the copy since #8390, and walked by
+// the release since #8431, through __drop_map_str_values. The claim is what
+// makes that walk a balanced release rather than a use-after-free. This chain
+// is where the un-walked column cost the most: 83648 / 83968 bytes on arm64 /
+// wasm over 100 rounds, now 0.
 function str_chain(rounds: i32): i32 {
     var a: Map[string, string] = map_new(16);
     a = a.insert("sv-seed-key-that-heap-allocates", "sv-seed-value-that-heap-allocates");
@@ -91,8 +93,10 @@ function str_chain(rounds: i32): i32 {
     return a.len();
 }
 
-// Struct values (valKind 4) — claimed on the same terms, and un-walked on the
-// same terms (#8431).
+// Struct values (valKind 4) — claimed on the same terms, and walked on the same
+// terms, through the generated __drop_map_via_<perValueDrop>. The residual the
+// two-word ABIs still read here is #8432's get_or fallback, not this column:
+// arr_chain, walked since long before #8431, reads exactly the same.
 function struct_chain(rounds: i32): i32 {
     var a: Map[string, Rec] = map_new(16);
     a = a.insert("st-seed-key-that-heap-allocates", Rec { name: "st-seed-name-that-heap-allocates", n: 7 });
