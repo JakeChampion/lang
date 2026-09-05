@@ -29,80 +29,79 @@
 // interface types, Stream, BytesWriter, BufWriter and the fd-backed
 // Reader / Writer all `impl Reader` / `impl Writer` and generic code
 // accepts any of them via the interface.
-
 import "std/string";
 
 // `bytes_writer_new()` — fresh empty BytesWriter.
 pub function bytes_writer_new(): BytesWriter {
-    var empty: u8[] = [];
-    return BytesWriter { data: empty };
+  var empty: u8[] = [];
+  return BytesWriter { data: empty };
 }
 
 // `(w: BytesWriter).write_string(s)` — append a string's
 // bytes. Same call shape as the fd-backed Writer's write
 // method.
 pub function (w: BytesWriter) write_string(s: string): BytesWriter {
-    // A VIEW, not a copy: the loop below only reads bs, and the
-    // view never outlives s (a live parameter), so `bytes()` here
-    // would allocate and copy the whole string for nothing.
-    var bs: [u8] = s.as_bytes();
-    var data: u8[] = w.data;
-    var i: i32 = 0;
-    while (i < bs.len()) {
-        data = data.append(bs[i]);
-        i = i + 1;
-    }
-    return BytesWriter { ...w, data: data };
+  // A VIEW, not a copy: the loop below only reads bs, and the
+  // view never outlives s (a live parameter), so `bytes()` here
+  // would allocate and copy the whole string for nothing.
+  var bs: [u8] = s.as_bytes();
+  var data: u8[] = w.data;
+  var i: i32 = 0;
+  while (i < bs.len()) {
+    data = data.append(bs[i]);
+    i = i + 1;
+  }
+  return BytesWriter { ...w, data: data };
 }
 
 // `(w: BytesWriter).write_bytes(bs)` — append a byte slice
 // directly (no string round-trip).
 pub function (w: BytesWriter) write_bytes(bs: u8[]): BytesWriter {
-    var data: u8[] = w.data;
-    var i: i32 = 0;
-    while (i < bs.len()) {
-        data = data.append(bs[i]);
-        i = i + 1;
-    }
-    return BytesWriter { ...w, data: data };
+  var data: u8[] = w.data;
+  var i: i32 = 0;
+  while (i < bs.len()) {
+    data = data.append(bs[i]);
+    i = i + 1;
+  }
+  return BytesWriter { ...w, data: data };
 }
 
 // `(w: BytesWriter).write_byte(b)` — single-byte write.
 pub function (w: BytesWriter) write_byte(b: i32): BytesWriter {
-    return BytesWriter { ...w, data: w.data.append(b as u8) };
+  return BytesWriter { ...w, data: w.data.append(b as u8) };
 }
 
 // `(w: BytesWriter).len()` — total bytes written so far.
 pub function (w: BytesWriter) len(): i32 {
-    return w.data.len();
+  return w.data.len();
 }
 
 // `(w: BytesWriter).is_empty()` — convenience over
 // `.len() == 0`.
 pub function (w: BytesWriter) is_empty(): boolean {
-    return w.data.len() == 0;
+  return w.data.len() == 0;
 }
 
 // `(w: BytesWriter).into_bytes()` — return the accumulated
 // buffer as a `u8[]`. Consumer-side; the BytesWriter remains
 // usable but callers typically discard it after this.
 pub function (w: BytesWriter) into_bytes(): u8[] {
-    return w.data;
+  return w.data;
 }
 
 // `(w: BytesWriter).into_string()` — same as into_bytes
 // followed by `string_from_bytes_unchecked`. Convenience for the
 // common "build a string buffered" pattern.
 pub function (w: BytesWriter) into_string(): string {
-    return string_from_bytes_unchecked(w.data);
+  return string_from_bytes_unchecked(w.data);
 }
 
 // `(w: BytesWriter).reset(): BytesWriter` — return a writer with
 // an empty buffer. Functional (immutable data structures): rebind
 // the result — `w = w.reset()`.
 pub function (w: BytesWriter) reset(): BytesWriter {
-    var empty: u8[] = [];
-    return BytesWriter { ...w, data: empty };
+  var empty: u8[] = [];
+  return BytesWriter { ...w, data: empty };
 }
 
 // ---- BufWriter -------------------------------------------------------------
@@ -120,65 +119,66 @@ pub function (w: BytesWriter) reset(): BytesWriter {
 // writer is the sole owner. Reading the field into a local first
 // shares the buffer between the local and the field, and every append
 // then copies the whole buffer — quadratic.
-pub struct BufWriter {
-    w: Writer,
-    buf: string,
-    cap: i32,
-    err: Option[IoError],
-}
+pub struct BufWriter { w: Writer, buf: string, cap: i32, err: Option[IoError] }
 
 // `buf_writer_new(w, cap)` — buffer `w` with a `cap`-byte threshold.
 pub function buf_writer_new(w: Writer, cap: i32): BufWriter {
-    return BufWriter { w: w, buf: "", cap: cap, err: None };
+  return BufWriter { w: w, buf: "", cap: cap, err: None };
 }
 
 // `(b).write_string(s)` — append `s`, flushing when the threshold is
 // reached. Rebind: `b = b.write_string(s);`.
 pub function (b: BufWriter) write_string(s: string): BufWriter {
-    if (b.buf.len() + s.len() < b.cap) {
-        return BufWriter { ...b, buf: b.buf + s };
-    }
-    if (b.buf.len() == 0) {
-        return __buf_writer_put(b, s);
-    }
-    var flushed: BufWriter = __buf_writer_put(b, b.buf + s);
-    return BufWriter { ...flushed, buf: "" };
+  if (b.buf.len() + s.len() < b.cap) {
+    return BufWriter { ...b, buf: b.buf + s };
+  }
+  if (b.buf.len() == 0) {
+    return __buf_writer_put(b, s);
+  }
+  var flushed: BufWriter = __buf_writer_put(b, b.buf + s);
+  return BufWriter { ...flushed, buf: "" };
 }
 
 // `(b).write_byte(byte)` — append one byte.
 pub function (b: BufWriter) write_byte(byte: i32): BufWriter {
-    return b.write_string(string_from_bytes_unchecked([byte as u8]));
+  return b.write_string(string_from_bytes_unchecked([byte as u8]));
 }
 
 // `(b).flush()` — write whatever is buffered. Rebind the result.
 pub function (b: BufWriter) flush(): BufWriter {
-    if (b.buf.len() == 0) {
-        return b;
-    }
-    var flushed: BufWriter = __buf_writer_put(b, b.buf);
-    return BufWriter { ...flushed, buf: "" };
+  if (b.buf.len() == 0) {
+    return b;
+  }
+  var flushed: BufWriter = __buf_writer_put(b, b.buf);
+  return BufWriter { ...flushed, buf: "" };
 }
 
 // `(b).error()` — the first write failure, if any.
 pub function (b: BufWriter) error(): Option[IoError] {
-    return b.err;
+  return b.err;
 }
 
 // `(b).buffered()` — bytes held back so far.
 pub function (b: BufWriter) buffered(): i32 {
-    return b.buf.len();
+  return b.buf.len();
 }
 
 // One write(2) of `s`, recording the first failure.
 function __buf_writer_put(b: BufWriter, s: string): BufWriter {
-    match (b.err) {
-        Some(_) => { return b; },
-        None => {}
+  match (b.err) {
+    Some(_) => {
+      return b;
+    },
+    None => {}
+  }
+  match (b.w.write(s)) {
+    Some(e) => {
+      return BufWriter { ...b, err: Some(e) };
+    },
+    None => {
+      return b;
     }
-    match (b.w.write(s)) {
-        Some(e) => { return BufWriter { ...b, err: Some(e) }; },
-        None => { return b; }
-    }
+  }
 }
 
 // ---- LineReader ------------------------------------------------------------
@@ -191,51 +191,44 @@ function __buf_writer_put(b: BufWriter, s: string): BufWriter {
 // terminated lines) is common in coreutils.
 //
 // Cursor idiom (docs/CURSOR-IDIOM.md): `var (line, lr) = lr.next_line();`.
-pub struct LineReader {
-    r: Reader,
-    chunk: string,
-    pos: i32,
-    eof: boolean,
-    term: i32,
-    chunk_size: i32,
-}
+pub struct LineReader { r: Reader, chunk: string, pos: i32, eof: boolean, term: i32, chunk_size: i32 }
 
 // `line_reader_new(r, term, chunk_size)` — read lines from `r`
 // ending in byte `term`.
 pub function line_reader_new(r: Reader, term: i32, chunk_size: i32): LineReader {
-    return LineReader { r: r, chunk: "", pos: 0, eof: false, term: term, chunk_size: chunk_size };
+  return LineReader { r: r, chunk: "", pos: 0, eof: false, term: term, chunk_size: chunk_size };
 }
 
 // `(lr).next_line()` — the next line, or None at end of input.
 pub function (lr: LineReader) next_line(): (Option[string], LineReader) {
-    var s: LineReader = lr;
-    var tail: string = "";
-    while (true) {
-        var j: i32 = __memchr(s.chunk, s.term, s.pos);
-        if (j >= 0) {
-            var line: string = tail + slice_unchecked(s.chunk, s.pos, j + 1);
-            return (Some(line), LineReader { ...s, pos: j + 1 });
-        }
-        if (s.pos < s.chunk.len()) {
-            tail = tail + slice_unchecked(s.chunk, s.pos, s.chunk.len());
-        }
-        if (s.eof) {
-            s = LineReader { ...s, chunk: "", pos: 0 };
-            if (tail.len() == 0) {
-                return (None, s);
-            }
-            return (Some(tail), s);
-        }
-        match (s.r.read_chunk(s.chunk_size)) {
-            Some(c) => {
-                s = LineReader { ...s, chunk: c, pos: 0 };
-            },
-            None => {
-                s = LineReader { ...s, chunk: "", pos: 0, eof: true };
-            }
-        }
+  var s: LineReader = lr;
+  var tail: string = "";
+  while (true) {
+    var j: i32 = __memchr(s.chunk, s.term, s.pos);
+    if (j >= 0) {
+      var line: string = tail + slice_unchecked(s.chunk, s.pos, j + 1);
+      return (Some(line), LineReader { ...s, pos: j + 1 });
     }
-    return (None, s);
+    if (s.pos < s.chunk.len()) {
+      tail = tail + slice_unchecked(s.chunk, s.pos, s.chunk.len());
+    }
+    if (s.eof) {
+      s = LineReader { ...s, chunk: "", pos: 0 };
+      if (tail.len() == 0) {
+        return (None, s);
+      }
+      return (Some(tail), s);
+    }
+    match (s.r.read_chunk(s.chunk_size)) {
+      Some(c) => {
+        s = LineReader { ...s, chunk: c, pos: 0 };
+      },
+      None => {
+        s = LineReader { ...s, chunk: "", pos: 0, eof: true };
+      }
+    }
+  }
+  return (None, s);
 }
 
 // `(lr).next_chunk()` — the rest of the current chunk plus every
@@ -243,16 +236,20 @@ pub function (lr: LineReader) next_line(): (Option[string], LineReader) {
 // and wants the remaining bytes as fast as they arrive. None at end
 // of input.
 pub function (lr: LineReader) next_chunk(): (Option[string], LineReader) {
-    var s: LineReader = lr;
-    if (s.pos < s.chunk.len()) {
-        var rest: string = slice_unchecked(s.chunk, s.pos, s.chunk.len()) + "";
-        return (Some(rest), LineReader { ...s, chunk: "", pos: 0 });
+  var s: LineReader = lr;
+  if (s.pos < s.chunk.len()) {
+    var rest: string = slice_unchecked(s.chunk, s.pos, s.chunk.len()) + "";
+    return (Some(rest), LineReader { ...s, chunk: "", pos: 0 });
+  }
+  if (s.eof) {
+    return (None, s);
+  }
+  match (s.r.read_chunk(s.chunk_size)) {
+    Some(c) => {
+      return (Some(c), s);
+    },
+    None => {
+      return (None, LineReader { ...s, eof: true });
     }
-    if (s.eof) {
-        return (None, s);
-    }
-    match (s.r.read_chunk(s.chunk_size)) {
-        Some(c) => { return (Some(c), s); },
-        None => { return (None, LineReader { ...s, eof: true }); }
-    }
+  }
 }

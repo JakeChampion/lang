@@ -128,7 +128,6 @@ pub function write_out(s: string): void {
 // failure is reported the way gnulib's close_stdout reports it:
 // `prog: write error: <strerror>`, exit 1. A utility that words it
 // differently (yes: `standard output:`) holds its own Writer.
-
 // The block size, measured rather than chosen (yes.fern has the
 // sweep): the pipe optimum on Linux.
 pub function block_bytes(): i32 {
@@ -216,17 +215,11 @@ function print_version(name: string, status: i32): void {
 // cluster. Long options match by unique prefix with an exact match
 // winning; a glued `=value` is the value, or a fault for an option
 // that takes none.
-
 // `Opt` — one declared option. `short` is the option byte (0 for a
 // long-only option), `long` the name without dashes ("" for a
 // short-only one), `arg` 0 / 1 / 2 for none / required / optional,
 // `id` the tag `next()` reports it as.
-pub struct Opt {
-  short: i32,
-  long: string,
-  arg: i32,
-  id: i32,
-}
+pub struct Opt { short: i32, long: string, arg: i32, id: i32 }
 
 // `flag(short, long, id)` — an option taking no value; `valued` takes
 // a required one; `optional` takes one only when glued (`-cX`,
@@ -253,31 +246,22 @@ function short_byte(short: string): i32 {
 // `OptMatch` — one option occurrence: its `id`, and the value when
 // the option took one. `has_value` separates "no value" from an
 // empty one for the `optional` shape.
-pub struct OptMatch {
-  id: i32,
-  value: string,
-  has_value: boolean,
-}
+pub struct OptMatch { id: i32, value: string, has_value: boolean }
 
 // `Getopt` — the scan state. `cluster` is what is left of a short
 // cluster still being consumed (without its dash); `operands` are
 // the tokens permuted out so far.
-pub struct Getopt {
-  argv: string[],
-  opts: Opt[],
-  name: string,
-  help: string,
-  status: i32,
-  in_order: boolean,
-  i: i32,
-  cluster: string,
-  operands: string[],
-}
+pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, in_order: boolean, i: i32, cluster: string, operands: string[] }
 
 // The ids `next()` reserves for the two standard options; they never
 // reach the caller because `next()` answers them itself.
-function help_id(): i32 { return 0 - 1; }
-function version_id(): i32 { return 0 - 2; }
+function help_id(): i32 {
+  return 0 - 1;
+}
+
+function version_id(): i32 {
+  return 0 - 2;
+}
 
 // `getopt_new(argv, opts, name, help_text, status)` — start a scan.
 // `status` is the utility's usage-error exit code.
