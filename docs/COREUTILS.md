@@ -256,10 +256,11 @@ groups are the order of work. Each sub-issue names its group.
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`
   `sum` `md5sum` `sha1sum` `sha224sum` `sha256sum` `sha384sum` `sha512sum`
   `b2sum` `tee`. Needs a buffered stdout writer in `std/io_buffered` (its
-  own header already promises one) and a streaming stdin reader; the hash
-  utilities need the digests `std/crypto` lacks (MD5, SHA-1, SHA-224/384/512,
-  BLAKE2b) — each a stdlib addition with its own tests. `tail -f` waits for
-  group C.
+  own header already promises one) and a streaming stdin reader. The hash
+  utilities have their digests: `std/crypto` streams MD5, SHA-1,
+  SHA-224/256/384/512 and BLAKE2b (`h = h.update(chunk)` per `read_chunk`
+  piece), and `std/hash` has cksum's CRC-32 and both sum(1) checksums with
+  their block counts. `tail -f` waits for group C.
 - **C. needs a runtime primitive first** — everything that reads the process
   or the filesystem beyond `read_file` / `stat` / `read_dir`: `pwd`
   (getcwd), `tty` (ttyname), `nproc` (affinity), `uname` `arch` (uname),

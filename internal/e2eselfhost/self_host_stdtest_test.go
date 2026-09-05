@@ -400,6 +400,14 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		// truncate u32 arithmetic to 32 bits, miscompiling SHA-256 — #3457).
 		{"u32_arith", langSrcAbs(t, "examples/tests/u32_arith_test.fern"), ""},
 		{"crypto", langSrcAbs(t, "examples/tests/crypto_test.fern"), ""},
+		{"digest_md5", langSrcAbs(t, "examples/tests/digest_md5_test.fern"), ""},
+		{"digest_sha1", langSrcAbs(t, "examples/tests/digest_sha1_test.fern"), ""},
+		{"digest_sha224", langSrcAbs(t, "examples/tests/digest_sha224_test.fern"), ""},
+		{"digest_sha256", langSrcAbs(t, "examples/tests/digest_sha256_test.fern"), ""},
+		{"digest_sha384", langSrcAbs(t, "examples/tests/digest_sha384_test.fern"), ""},
+		{"digest_sha512", langSrcAbs(t, "examples/tests/digest_sha512_test.fern"), ""},
+		{"digest_blake2b", langSrcAbs(t, "examples/tests/digest_blake2b_test.fern"), ""},
+		{"hash_checksums", langSrcAbs(t, "examples/tests/hash_checksums_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}
 }
