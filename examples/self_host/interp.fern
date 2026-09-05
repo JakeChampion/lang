@@ -749,11 +749,11 @@ function lam_read_names(st: ast.Stmt): string[] {
 
 // body_assign_names: every name this body reassigns, at any depth. A name NOT
 // in here is captured by value, which is what keeps a loop-local `var` per
-// iteration — descend_none is that stop spelled once: statement lists at
+// iteration — the statement spine is that stop spelled once: statement lists at
 // every depth, lambda bodies never, since those hang off expressions.
 function body_assign_names(stmts: ast.Stmt[], acc: string[]): string[] {
     var a: string[] = acc;
-    for st in stmts { a = astwalk.fold_stmt_nodes(st, a, assign_target_of, reads_nothing, astwalk.descend_none); }
+    for st in stmts { a = astwalk.fold_stmt_spine(st, a, assign_target_of); }
     return a;
 }
 

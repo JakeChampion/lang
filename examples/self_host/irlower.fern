@@ -30817,7 +30817,8 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     // list), lower_block is called for nested bodies only (the fn body has
     // its own loop), and block-level reuse donors are struct/tuple boxes
     // (never Option locals) — so each box is freed at most once.
-    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
+    var reasg: string[] = body_assign_targets(stmts);
+    var rcopt: OptRcFrees = consumed_rcpayload_option_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
     // Consumed ALL-SCALAR enum free, per block (#6127). lower_func runs
     // consumed_scalar_enum_frees over the fn's TOP-LEVEL statements only, so a
     // scalar-payload enum declared inside a loop or an if — `while { var e =
@@ -30837,7 +30838,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     //   - enum_donor_reuse_sites takes the fn-level EnumFrees and scans fn.body
     //     flat, so a nested-block box can never have been donated to a reuse site
     //     (which is what the fn-level emission's edon check guards against).
-    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
+    var scenfrees: EnumFrees = consumed_scalar_enum_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, true);
     // Consumed RC-PAYLOAD enum free, per block (#6127) — the last member of this
     // family to get a block-level sibling. lower_func runs
     // consumed_rcpayload_enum_frees over fn.body only, so `while { var t =
@@ -30853,7 +30854,7 @@ pub function lower_block(stmts: ast.Stmt[], s: LowerState): LowerState {
     // computed over fn.body FLAT, exactly like edon, so a nested-block box can
     // never have been donated to a cross-reuse recipient — which is what the
     // fn-level emission's ecross.donors suppression guards against.
-    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, s.frame.sigs.str_fresh_ret_fns, s.frame.move_sites, s.frame.sigs.borrowable_params);
+    var rcenfrees: RcEnumFrees = consumed_rcpayload_enum_frees(stmts, reasg, s.frame.structs, s.frame.sigs.opt_fresh_ret_fns, s.frame.sigs.str_fresh_ret_fns, s.frame.move_sites, s.frame.sigs.borrowable_params);
     var st: LowerState = s;
     var i: i32 = 0;
     while (i < stmts.len()) {
@@ -31905,7 +31906,7 @@ function map_tuple_holder_rows(stmts: ast.Stmt[], name: string, msite: string, a
     var seeded: string[] = [name, msite];
     var i: i32 = 0;
     while (i < stmts.len()) {
-        seeded = astwalk.fold_stmt_nodes(stmts[i], seeded, maptup_row_at, no_expr_strs, astwalk.descend_none);
+        seeded = astwalk.fold_stmt_spine(stmts[i], seeded, maptup_row_at);
         i = i + 1;
     }
     var out: string[] = acc;
@@ -41952,12 +41953,11 @@ function expr_is_scalarish(e: ast.Expr): boolean {
 // second credit loads 0 and decs null. The boundary is kept because two analyses
 // silently claiming one local is how a real over-release gets built later, and
 // because the redundant credit buys nothing precise-drop has not already done.
-function consumed_scalar_enum_frees(body: ast.Stmt[], structs: StructTab, opt_fresh_reg: SigReg, nested_ok: boolean): EnumFrees {
+function consumed_scalar_enum_frees(body: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_reg: SigReg, nested_ok: boolean): EnumFrees {
     var idxs: i32[] = [];
     var vidxs: i32[] = [];
     var names: string[] = [];
     var sites: string[] = [];
-    var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
         match (body[vi]) {
@@ -42597,12 +42597,11 @@ struct RcEnumFrees { idxs: i32[], vidxs: i32[], names: string[], enums: string[]
 // exit sweep, and this pass emits the free the credit assumes. Admitting the
 // call form there and not here left `var v: E = mkv(i)` with a sole consuming
 // match reclaiming nothing at all.
-function consumed_rcpayload_enum_frees(body: ast.Stmt[], structs: StructTab, opt_fresh_ret: SigReg, str_fresh: string[], msites: string[], borrowable: string[]): RcEnumFrees {
+function consumed_rcpayload_enum_frees(body: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_ret: SigReg, str_fresh: string[], msites: string[], borrowable: string[]): RcEnumFrees {
     var idxs: i32[] = [];
     var vidxs: i32[] = [];
     var names: string[] = [];
     var enums: string[] = [];
-    var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
         match (body[vi]) {
@@ -44255,7 +44254,7 @@ function call_init_callee_err_fresh(e: ast.Expr, reg: SigReg): boolean {
 // `nested_ok` is TRUE only from lower_block, and it is what lets a DIRECT ctor
 // take the nested-match lookup. See the comment at the lookup itself for why that
 // is safe there and unsafe at function scope.
-function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: StructTab, opt_fresh_reg: SigReg, nested_ok: boolean): OptRcFrees {
+function consumed_rcpayload_option_frees(body: ast.Stmt[], reassigned: string[], structs: StructTab, opt_fresh_reg: SigReg, nested_ok: boolean): OptRcFrees {
     var idxs: i32[] = [];
     var vidxs: i32[] = [];
     var names: string[] = [];
@@ -44265,7 +44264,6 @@ function consumed_rcpayload_option_frees(body: ast.Stmt[], structs: StructTab, o
     var stys: string[] = [];
     var tagged: boolean[] = [];
     var errstrs: boolean[] = [];
-    var reassigned: string[] = body_assign_targets(body);
     var vi: i32 = 0;
     while (vi < body.len()) {
         match (body[vi]) {
@@ -46744,7 +46742,7 @@ function collect_fresh_cloarr_names(body: ast.Stmt[], caset: string[], closurese
     }
     var out: string[] = [];
     for st in body {
-        out = astwalk.fold_stmt_nodes(st, out, cand_site_of, no_expr_strs, astwalk.descend_none);
+        out = astwalk.fold_stmt_spine(st, out, cand_site_of);
     }
     return out;
 }
@@ -46771,7 +46769,7 @@ function closurearr_append_decl_sites(body: ast.Stmt[], closureset: string[]): s
     }
     var grown: string[] = [];
     for st in body {
-        grown = astwalk.fold_stmt_nodes(st, grown, box_appended_names, no_expr_strs, astwalk.descend_none);
+        grown = astwalk.fold_stmt_spine(st, grown, box_appended_names);
     }
     if (grown.len() == 0) { return grown; }
     function empty_fnarr_decl(st: ast.Stmt, acc: string[]): string[] {
@@ -46786,7 +46784,7 @@ function closurearr_append_decl_sites(body: ast.Stmt[], closureset: string[]): s
     }
     var out: string[] = [];
     for st in body {
-        out = astwalk.fold_stmt_nodes(st, out, empty_fnarr_decl, no_expr_strs, astwalk.descend_none);
+        out = astwalk.fold_stmt_spine(st, out, empty_fnarr_decl);
     }
     return out;
 }
@@ -46813,7 +46811,7 @@ function body_binds_fresh_cloarr(body: ast.Stmt[], name: string, closureset: str
     }
     var found: boolean = false;
     for st in body {
-        found = astwalk.fold_stmt_nodes(st, found, binds_fresh_at, no_expr_bool, astwalk.descend_none);
+        found = astwalk.fold_stmt_spine(st, found, binds_fresh_at);
         if (found) { return true; }
     }
     return false;
@@ -56389,6 +56387,13 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
         locals0 = locals0.append(LocalInfo { slot_name: names[lzi], is_arr: isarr[lzi], is_str: isstr[lzi], is_strarr: isstrarr[lzi], strarr_builtin: false, str_view_local: false, str_identity_src: 0 - 1, reclaim_site: "", struct_type: structty[lzi], opt_type: optty[lzi], tuple_elems: tupty[lzi], tuple_type: "", fnarr_elem: "", map_type: mapty[lzi], is_i64: isi64[lzi], is_f64: isf64[lzi], is_f32: isf32[lzi], is_f64arr: isf64arr[lzi], is_f32arr: isf32arr[lzi], is_i64arr: isi64arr[lzi], is_bool: isbool[lzi], is_boolarr: isboolarr[lzi], is_closurearr: isclosurearr[lzi], is_fnarr: isfnarr[lzi], is_arrarr: isarrarr[lzi], arrarr_elem: arrarr_elem[lzi], is_u32: isu32[lzi], is_u64: isu64[lzi], subword: subword[lzi], is_cell: cellty[lzi].len() > 0, cell_elem: cellty[lzi], fn_dyn: "", fn_sig: "", fn_ret: "", fn_opt_ret: "", str_own: 1, str_caller_elem: false, borrowed_arr: false, moved_claim: false });
         lzi = lzi + 1;
     }
+    // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
+    // consumed by exactly one `match (x)` where x is single-owner and dead after
+    // the match. The box is freed (dec + zero) right after its match statement —
+    // sound because the box now carries an rc header and the match read its scalar
+    // payloads as borrows before any free.
+    var asg_targets: string[] = body_assign_targets(fn.body);
+    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, false);
     // SCENRB: an all-scalar enum / scalar Option local that consumed_scalar_enum_frees
     // admits DESPITE being rebound (#6127). Each rebind orphans the previous box, so
     // lower_stmt_assign releases it before storing the new one; the final value is
@@ -56402,12 +56407,10 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // examined — and `a.target` resolves to whichever binding is innermost at the
     // assignment. A name key handed the inner slot the outer one's credit and
     // released a box the block-level pass claims at its own consuming match.
-    var scenrb: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
-    var asg_targets: string[] = body_assign_targets(fn.body);
     var scrb_i: i32 = 0;
-    while (scrb_i < scenrb.names.len()) {
-        if (util.index_of_str(asg_targets, scenrb.names[scrb_i]) >= 0) {
-            reclaim = reclaim.append("SCENRB:" + scenrb.sites[scrb_i]);
+    while (scrb_i < enumfrees.names.len()) {
+        if (util.index_of_str(asg_targets, enumfrees.names[scrb_i]) >= 0) {
+            reclaim = reclaim.append("SCENRB:" + enumfrees.sites[scrb_i]);
         }
         scrb_i = scrb_i + 1;
     }
@@ -56617,12 +56620,6 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // struct / enum reuse sites (a tuple init is never a struct-lit / enum-ctor).
     var xtuple: CrossTupleReuseSites = CrossTupleReuseSites { idxs: [], donors: [] };
     if (!no_reuse) { xtuple = cross_tuple_reuse_sites(fn.body); }
-    // Consumed scalar-payload enum frees: a function-local `var x = V(scalar...)`
-    // consumed by exactly one `match (x)` where x is single-owner and dead after
-    // the match. The box is freed (dec + zero) right after its match statement —
-    // sound because the box now carries an rc header and the match read its scalar
-    // payloads as borrows before any free.
-    var enumfrees: EnumFrees = consumed_scalar_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
     // Consumed RC-PAYLOAD enum frees: a function-local `var x = V(payload...)` of
     // an rc-droppable enum (variant payloads are scalar / string / leak-safe array)
     // consumed by exactly one `match (x)`, single-owner, dead-after, non-escaping,
@@ -56630,14 +56627,14 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     // variant_is guard releasing that variant's rc fields) then freed right after
     // its match (emit_enum_variant_drops). Kept DISJOINT from enumfrees and never
     // fed to the donor path, so an rc-payload box is freed exactly once here.
-    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, structs, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs), sg.borrowable_params);
+    var rcenumfrees: RcEnumFrees = consumed_rcpayload_enum_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, sg.str_fresh_ret_fns, move_sites_toplevel_of(fn, structs), sg.borrowable_params);
     // Consumed RC-PAYLOAD option/result frees: a function-local `var o = Some([..])`
     // / `Ok([..])` / `Err([..])` (leak-safe scalar-array payload) consumed by exactly
     // one `match (o)`, single-owner, dead-after, non-escaping, and whose constructed-
     // variant arm borrows (not escapes) the payload. The box's array payload is
     // deep-dropped then the box freed right after its match (emit_opt_payload_drop).
     // DISJOINT from enumfrees (that's scalar-payload options) — freed once here.
-    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, structs, sg.opt_fresh_ret_fns, false);
+    var rcoptfrees: OptRcFrees = consumed_rcpayload_option_frees(fn.body, asg_targets, structs, sg.opt_fresh_ret_fns, false);
     // Enum-donor cross-reuse (FBIP): a consumed-and-dead scalar-enum box donated to
     // a later same-size full struct construction instead of being freed (see
     // enum_donor_reuse_sites). The recipient is lowered by emit_enum_donor_reuse, and
@@ -69193,16 +69190,11 @@ function cap_local_init(body: ast.Stmt[], name: string): ast.Expr {
     }
     var found: ast.Expr = parser.e_unknown("");
     for st in body {
-        found = astwalk.fold_stmt_nodes(st, found, init_of, no_expr_expr, astwalk.descend_none);
+        found = astwalk.fold_stmt_spine(st, found, init_of);
         match (found) { ast.ExprUnknown(_) => {}, _ => { return found; } }
     }
     return found;
 }
-
-// The statement-shaped cap walks contribute nothing from an expression slot;
-// paired with astwalk.descend_none the spine never enters one.
-function no_expr_expr(e: ast.Expr, acc: ast.Expr): ast.Expr { return acc; }
-function no_expr_str(e: ast.Expr, acc: string): string { return acc; }
 
 // cap_local_fn_ret is the declared RETURN spelling of fn-typed local `name`'s
 // binding (`var f: (i32) => i32` -> "i32"), or "". Same walk as cap_local_init,
@@ -69219,7 +69211,7 @@ function cap_local_fn_ret(body: ast.Stmt[], name: string): string {
     }
     var found: string = "";
     for st in body {
-        found = astwalk.fold_stmt_nodes(st, found, fn_ret_of, no_expr_str, astwalk.descend_none);
+        found = astwalk.fold_stmt_spine(st, found, fn_ret_of);
         if (found.len() > 0) { return found; }
     }
     return "";
@@ -69409,9 +69401,9 @@ function tuple_tag_i32_only(t: string): boolean {
 
 // cap_type_in_stmts finds the binding of `name` anywhere in `body` — a `var`
 // (annotation or inferable init), a `for` binder, a match-arm pattern — and
-// resolves its type; astwalk's statement spine carries the recursion, with
-// descend_none keeping it out of expressions and lambda bodies. First match
-// wins — shadowing across sibling blocks is an accepted over-approximation,
+// resolves its type; astwalk's statement spine carries the recursion, which
+// keeps it out of expressions and lambda bodies. First match wins — shadowing
+// across sibling blocks is an accepted over-approximation,
 // same as the other lift-side body walkers (the fn-gates keep consequences to
 // a declined or extra lift, never a miscompile: the lifted capture param only
 // labels the hoisted function's parameter).
@@ -69667,7 +69659,7 @@ function cap_type_in_stmts(body: ast.Stmt[], name: string, fd: parser.FuncDecl, 
     }
     var found: string = "";
     for st in body {
-        found = astwalk.fold_stmt_nodes(st, found, cap_type_of, no_expr_str, astwalk.descend_none);
+        found = astwalk.fold_stmt_spine(st, found, cap_type_of);
         if (found.len() > 0) {
             if (found == "!") { return ""; }
             return found;
@@ -69796,13 +69788,13 @@ function body_assign_targets(stmts: ast.Stmt[]): string[] {
 }
 
 // assign_targets_into threads ONE accumulator through astwalk's statement
-// spine. It is a hot path: this runs at the head of consumed_scalar_enum_frees /
-// consumed_rcpayload_option_frees / consumed_rcpayload_enum_frees, which
-// lower_block runs on every nested block (#6911) — assign_target_into captures
-// nothing, so the fold allocates nothing per call.
+// spine. It is a hot path — lower_block classifies every nested block (#6911),
+// and a statement at depth d sits in the body of every block above it — so the
+// classifiers there take the set as a parameter and the block folds it once.
+// assign_target_into captures nothing, so the fold allocates nothing per call.
 function assign_targets_into(out: string[], stmts: ast.Stmt[]): string[] {
     for stmt in stmts {
-        out = astwalk.fold_stmt_nodes(stmt, out, assign_target_into, no_expr_strs, astwalk.descend_none);
+        out = astwalk.fold_stmt_spine(stmt, out, assign_target_into);
     }
     return out;
 }
@@ -70894,7 +70886,7 @@ function fd_passes_fn_array_elem(fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
 function fd_index_bound_names(body: ast.Stmt[]): string[] {
     var out: string[] = [];
     for st in body {
-        out = astwalk.fold_stmt_nodes(st, out, idx_bound_name_at, no_expr_strs, astwalk.descend_none);
+        out = astwalk.fold_stmt_spine(st, out, idx_bound_name_at);
     }
     return out;
 }
@@ -71026,7 +71018,7 @@ function body_binds_lambda(body: ast.Stmt[], name: string): boolean {
     }
     var found: boolean = false;
     for st in body {
-        found = astwalk.fold_stmt_nodes(st, found, binds_lambda_at, no_expr_bool, astwalk.descend_none);
+        found = astwalk.fold_stmt_spine(st, found, binds_lambda_at);
         if (found) { return true; }
     }
     return false;
@@ -73126,7 +73118,7 @@ function append_bound_binder(acc: string[], name: string): string[] {
 function body_var_decl_names(stmts: ast.Stmt[]): string[] {
     var out: string[] = [];
     for stmt in stmts {
-        out = astwalk.fold_stmt_nodes(stmt, out, var_decl_name_into, no_expr_strs, astwalk.descend_none);
+        out = astwalk.fold_stmt_spine(stmt, out, var_decl_name_into);
     }
     return out;
 }
