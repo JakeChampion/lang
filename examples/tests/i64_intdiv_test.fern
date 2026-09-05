@@ -26,7 +26,11 @@ function test_next_power_of_2_cap(): test.TestOutcome {
     if ((4611686018427387904 as i64).next_power_of_2() != (4611686018427387904 as i64)) {
         return test.fail("2^62 unchanged");
     }
-    return test.assert_true(((4611686018427387904 as i64) + 1).next_power_of_2() == (0 as i64));
+    if (((4611686018427387904 as i64) + 1).next_power_of_2() != (0 as i64)) {
+        return test.fail("2^62 + 1 -> 0");
+    }
+    // i64::MAX must reach the guard, not spin in the doubling loop.
+    return test.assert_true((9223372036854775807 as i64).next_power_of_2() == (0 as i64));
 }
 
 function test_ceil_div(): test.TestOutcome {

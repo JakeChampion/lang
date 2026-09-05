@@ -48,10 +48,10 @@ func TestSelfHostTomlCRLF(t *testing.T) {
 		"CRLF member b/c\n" +
 		"LF   entries=2\n" +
 		"LF   entry dbl version=1.0.0 path=../dbl hash=\n" +
-		"LF   entry shout version=1.2.3 path= hash=sha256:abc123\n" +
+		"LF   entry shout version=1.2.3 path= hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" +
 		"CRLF entries=2\n" +
 		"CRLF entry dbl version=1.0.0 path=../dbl hash=\n" +
-		"CRLF entry shout version=1.2.3 path= hash=sha256:abc123\n"
+		"CRLF entry shout version=1.2.3 path= hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()

@@ -3632,6 +3632,27 @@ type FuncDecl struct {
 	// needs a stamp with no second meaning attached to it. Empty on a
 	// program built straight from the parser and on synthesised decls.
 	SourceFile string
+	// DefiningModule is the module whose source WROTE this function's
+	// body, when that differs from SourceModule. Only a trait default
+	// materialised into an impl sets it: the body was written beside the
+	// trait, while the method itself belongs to the impl. Empty means
+	// the body came from SourceModule.
+	//
+	// SourceModule cannot serve: it says which module OWNS the method,
+	// which is what method visibility and the opaque-field rule need to
+	// stay keyed on. BodyModule is what everything reading the BODY —
+	// name resolution, diagnostics' file attribution, the capability and
+	// effect walks — must use instead.
+	DefiningModule string
+}
+
+// BodyModule names the module whose source wrote this function's body:
+// DefiningModule when set, else SourceModule. See DefiningModule.
+func (f *FuncDecl) BodyModule() string {
+	if f.DefiningModule != "" {
+		return f.DefiningModule
+	}
+	return f.SourceModule
 }
 
 // StructDecl is a top-level `struct` declaration. Fields are stored in

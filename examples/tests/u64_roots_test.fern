@@ -43,7 +43,9 @@ function test_next_power_of_2(): test.TestOutcome {
 function test_next_power_of_2_cap(): test.TestOutcome {
     // 2^63 is the largest representable power; above it returns 0.
     if (two63().next_power_of_2() != two63()) { return test.fail("2^63 unchanged"); }
-    return test.assert_true((two63() + (1 as u64)).next_power_of_2() == (0 as u64));
+    if ((two63() + (1 as u64)).next_power_of_2() != (0 as u64)) { return test.fail("2^63 + 1 -> 0"); }
+    // u64::MAX must reach the guard, not spin in the doubling loop.
+    return test.assert_true(((0 as u64) - (1 as u64)).next_power_of_2() == (0 as u64));
 }
 
 function test_log2_floor(): test.TestOutcome {

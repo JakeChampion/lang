@@ -185,6 +185,18 @@ inside* a default body is treated the same as inside a hand-written impl
 method. The self-hosted compiler has matching support (same-module) —
 see §7a, self-host slice 10.
 
+A default body's free names resolve in the module that **declares the
+trait**, not the one that writes the `impl`: modload mangles the body as
+part of the declaring module, so it reaches that module's helpers —
+including private ones — and an identically-named function in the
+implementing module cannot capture the call. The synthesized method
+therefore straddles two modules, and the distinction is recorded on the
+`FuncDecl`: `SourceModule` is the impl's (it owns the method, for
+registration, visibility of the method itself, and coherence) while
+`DefiningModule` is the trait's (it wrote the body, so it drives name
+resolution, diagnostic file attribution, and the capability walk).
+`BodyModule()` is the accessor for the latter.
+
 Once `impl Display for Point` exists, **`p.to_string()` works for a
 `Point` value through the ordinary method-dispatch path** — an impl
 method *is* a method. That is the whole of Phase 1's runtime story, and

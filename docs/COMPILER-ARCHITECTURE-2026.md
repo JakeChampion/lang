@@ -170,18 +170,18 @@ In order, and each item is already specified somewhere:
    checklist item #1, it's the only item with a 45k-line file as evidence of
    its cost, and every subsequent layering idea gets cheaper once lowering
    reads types instead of re-deriving them.
-2. **Land symbol interning, levers 1 and 2**
-   (`SELFHOST-SYMBOL-INTERNING.md`, #4394). Checklist #15/#16, and
-   independently justified as the fix for the dominant self-compile memory
-   consumer.
-3. **Unify the relocation + object-emission model** across
+2. **Unify the relocation + object-emission model** across
    `native/{arm64,x86_64,elf,macho}`. The contained, genuinely-portable
    slice of #20/#21. Leave instruction selection parallel.
-4. **Let the SSA re-evaluation happen on 2026-09-01 as scheduled**, on
-   tripwire evidence. #5/#6/#8/#9/#10 all resolve downstream of that one
-   decision; nothing on this list is a reason to move the date.
+3. **Close out the SSA re-evaluation.** The 2026-09-01 date has passed and
+   the fresh numbers are recorded (`SSA-DECISION.md`), but neither
+   "re-shelve and set the next date" nor "schedule the cutover" is chosen;
+   #5/#6/#8/#9/#10 all resolve downstream of that one decision.
 
-And the meta-point, which outranks all four: **build these in
+Symbol interning is NOT on this list: #15/#16 above records it as built,
+measured and declined.
+
+And the meta-point, which outranks all three: **build these in
 `examples/self_host/`, not `internal/`.** Under the convergence policy every
 native-only addition is a debt entry against the freeze preconditions
 (#4451), not a free win. The checklist's advice is sound; applying it to the

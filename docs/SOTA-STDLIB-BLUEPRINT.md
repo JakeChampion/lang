@@ -682,13 +682,16 @@ of hashing. Covered by sizes 0-12 straddling the threshold, each deleted back
 down to empty with survivors re-checked at every step — the case that would
 break if the no-tombstone assumption above were ever violated.
 
-**A native/self-host divergence in `split("")` was found and fixed.**
-`std/string.split` char-splits an empty separator, but the self-host compiler
-lowers `.split()` to its own runtime helper, and both copies of that helper —
-`rt_src_str_split` in `asmcore.fern` (native backends) and `str_split_helper`
-in `wasm_ir.fern` (hand-written WAT) — returned `[s]` instead. So
-`"abc".split("")` was `["a","b","c"]` natively and `["abc"]` self-host-compiled.
-The comment recorded it as deliberate: it matched the hand-written asm emitter,
-and no differential test covered empty separators. Both halves of that
-rationale had expired — the hand-asm emitters were deleted, and the differential
-test now exists on every backend.
+**A native/self-host divergence in `split("")` was found, and is closed on the
+register backends only.** `std/string.split` splits an empty separator by
+CODEPOINT, but the self-host compiler lowers `.split()` to its own runtime
+helper, and both copies of that helper — `rt_src_str_split` in `asmcore.fern`
+(x86-64 + arm64) and `str_split_helper` in `wasm_ir.fern` (hand-written WAT) —
+returned `[s]` instead. So `"abc".split("")` was `["a","b","c"]` natively and
+`["abc"]` self-host-compiled. The comment recorded it as deliberate: it matched
+the hand-written asm emitter, and no differential test covered empty separators.
+Both halves of that rationale had expired — the hand-asm emitters were deleted,
+and `internal/e2eselfhost/self_host_str_runtime_stdstring_parity_test.go` now
+compares the helpers against the interpreter running `std/string` itself. That
+test has NO wasm leg: `wasm_ir.fern`'s WAT copies of `split` / `lines` / `trim`
+are still byte-based and still disagree with `std/string` (#8509).

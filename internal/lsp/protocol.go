@@ -38,9 +38,9 @@ const (
 // ---- LSP-specific types (only what the MVP exchanges) ----
 
 // Position is 0-based line + 0-based UTF-16 character offset per the
-// LSP spec. lang's internal positions are 1-based UTF-8 byte columns;
-// the conversion lives in toLSPPosition (and is exact for ASCII —
-// good enough for an MVP since lang source is mostly ASCII).
+// LSP spec's default positionEncoding. Fern's internal positions are
+// 1-based UTF-8 byte columns; lineIndex (position.go) is the only
+// place that converts between the two.
 type Position struct {
 	Line      int `json:"line"`
 	Character int `json:"character"`

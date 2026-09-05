@@ -270,7 +270,7 @@ func Enforce(prog *ast.Program, target string) []Violation {
 			Target:     target,
 			Pos:        call.P,
 			FuncName:   fn.Name,
-			FuncModule: fn.SourceModule,
+			FuncModule: fn.BodyModule(),
 		})
 	})
 	return out

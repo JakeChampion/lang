@@ -61,10 +61,9 @@ outer variable (capture copies the *pointer*, not the pointee). So:
   observes the same heap value the outer scope sees, but
 - **reassigning the captured name inside the closure is `E049`** — it
   would not take effect in the enclosing scope (the outer variable still
-  points at the old value), and, more importantly, it is the last
-  reference-cycle vector the immutable-data design closes: a closure
-  whose environment holds a pointer could be made to point back at a
-  value that points at the closure, reconstructing a cycle that the
+  points at the old value), and it closes one reference-cycle vector: a
+  closure whose environment holds a pointer could be made to point back
+  at a value that points at the closure, reconstructing a cycle that the
   reference-counting runtime cannot collect.
 
 ```
@@ -77,6 +76,21 @@ function f(): i32 {
 
 The fix for a reference capture is to **return the new value from the
 closure** instead of writing it back.
+
+`E049` closes that vector only from **inside** the closure. The enclosing
+scope may still store into the same shared box, and nothing checks what it
+stores, so a cycle is three lines with no `Cell` and no diagnostic (#8440):
+
+```
+function main(): i32 {
+    var g: () => i32 = function (): i32 { return 1; };
+    var f: () => i32 = function (): i32 { return g(); };  // f's env holds g's box
+    g = f;                                                // accepted
+    return 0;
+}
+```
+
+Built with `-sanitize` that program reports `leak 48 bytes in 2 blocks`.
 
 ## The classification is `ast.IsPointerType`
 
@@ -118,9 +132,10 @@ forms.
 
 - `E048` (field immutability) and `E056` (array-element immutability)
   are the other two halves of the immutable-data-structures surface;
-  together with `E049` they make reference cycles unconstructible, which
-  is what lets the RC runtime stay collector-free
-  (`docs/IMMUTABILITY-MIGRATION-PLAN.md`).
+  together with `E049` they were meant to make reference cycles
+  unconstructible, which is what the collector-free RC runtime rests on
+  (`docs/IMMUTABILITY-MIGRATION-PLAN.md`). The outer-rebind hole above
+  means that invariant does not hold today.
 - `E057` is the sibling rule for `Cell[T]` payloads (a cell over a
   reference type could likewise reconstruct a cycle).
 - The write-only-scalar-capture *miscompile* is tracked separately as

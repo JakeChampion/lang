@@ -1,14 +1,14 @@
 import "std/test";
 // examples/tests/skip_and_subsuites_test.fern — exercise the
-// skip / skip_if / subsuite / merge surface added on top of
-// the std/test base.
+// skip / skip_if / subsuite surface added on top of the
+// std/test base.
 //
-// The runner is single-threaded and value-semantic, so a
-// subsuite is just a child test.TestRunner with the parent's
-// prefix + running count threaded through. The parent
-// `merge`s the child back when its cases are done. Skipped
-// cases print as `ok N - name # SKIP reason` per TAP-13 and
-// don't affect the exit code.
+// A subsuite is a second handle onto the same run carrying a
+// longer case-name prefix; the tally is shared, so TAP
+// numbering runs monotonically across the boundary and the
+// child's cases need no folding back. Skipped cases print as
+// `ok N - name # SKIP reason` per TAP-13 and don't affect the
+// exit code.
 
 function test_pass(): test.TestOutcome { return test.assert_eq(1, 1); }
 
@@ -45,14 +45,13 @@ function main(): i32 {
     arith = arith.it("addition", test_addition);
     arith = arith.it("subtraction", test_subtraction);
     arith = arith.skip("multiplication", "out of scope for this slice");
-    r = r.merge(arith);
 
-    // Two subsuites can be opened consecutively as long as
-    // each is merged back before the next sibling case runs.
+    // Two subsuites can be opened one after the other; the
+    // second picks the numbering up where the first left off
+    // because both write the same tally.
     var str: test.TestRunner = r.subsuite("strings");
     str = str.it("to_upper", test_to_upper);
     str = str.it("to_lower", test_to_lower);
-    r = r.merge(str);
 
     // Another top-level case after the subsuites — numbering
     // continues from where the last subsuite finished.

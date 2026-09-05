@@ -69,10 +69,10 @@ import (
 // what Emit produced before these knobs were added.
 type EmitOptions struct {
 	// ForceMemorySection unconditionally emits the linear memory
-	// + its export. Default behaviour gates memory on actual use
-	// (anyMemoryOp || alloc-helper-needed). Callers that intend
-	// to wrap the bytes in a preview-2 component set this true
-	// so the WASI adapter's env::memory import is satisfied.
+	// + its export. Default behaviour gates memory on whether any
+	// emitted instruction addresses it. Callers that intend to wrap
+	// the bytes in a preview-2 component set this true so the WASI
+	// adapter's env::memory import is satisfied.
 	ForceMemorySection bool
 	// SynthStart synthesises a `_start` wrapper that calls
 	// `main`, drops any i32 result, and is exported as
@@ -658,34 +658,6 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		m.ExportIdxs = append(m.ExportIdxs, 0)
 	}
 
-	// enableMemory turns on memory 0 and exports it under the canonical
-	// name so tests and host tooling can poke at it. No upper bound —
-	// __fern_alloc grows on demand. The INITIAL size is deliberately not
-	// set here: it follows from the static data, which is only complete
-	// once every data segment has been appended, so it is derived once
-	// just before the module is built.
-	enableMemory := func() {
-		if m.MemoryPresent {
-			return
-		}
-		m.MemoryPresent = true
-		m.MemoryMax = -1
-		m.ExportNames = append(m.ExportNames, "memory")
-		m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
-		m.ExportIdxs = append(m.ExportIdxs, 0)
-	}
-
-	// Memory section is emitted iff any function in the program
-	// touches memory (load / store / sub-width variants / fN load
-	// or store) OR if any runtime helper that touches memory is
-	// pulled in (__fern_alloc grows memory; __fern_str_byte and
-	// transitively __str_eq emit i32.load8_u even in branches
-	// that don't execute at runtime — wasm validation still
-	// requires memory 0 to exist).
-	if opts.ForceMemorySection || anyMemoryOp(prog) || helpers.set["__fern_alloc"] || helpers.set["__fern_str_byte"] || helpers.set["__load_i32"] || helpers.set["__load_u8"] || helpers.set["__store_i32"] || helpers.set["__load_i64"] || helpers.set["__store_i64"] || helpers.set["__load_ptr"] || helpers.set["__store_ptr"] || helpers.set["__memcpy"] || helpers.set["__memset"] || len(importNeeds.order) > 0 {
-		enableMemory()
-	}
-
 	for fnIdx, fn := range prog.Funcs {
 		params, err := paramValtypes(fn.Params)
 		if err != nil {
@@ -836,31 +808,23 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	}
 
 	// OpConstFunc closure-pair cells → data segment at closuresBase.
-	// When present, also force the memory section so the data segment
-	// has a target.
 	if len(closureBytes) > 0 {
-		enableMemory()
 		m.DataOffsets = append(m.DataOffsets, int32(closuresBase))
 		m.DataInits = append(m.DataInits, closureBytes)
 	}
 
 	// Payne-Hanek 2/pi bit table → data segment at twoOverPiBase, whenever
 	// either trig helper is present: their large-argument reduction reads
-	// it with i64.loads. Like every data segment it needs a memory behind
-	// it, even if nothing else in the module uses one.
+	// it with i64.loads.
 	if helpers.set["__fern_sin_f64"] || helpers.set["__fern_cos_f64"] {
-		enableMemory()
 		m.DataOffsets = append(m.DataOffsets, int32(twoOverPiBase))
 		m.DataInits = append(m.DataInits, twoOverPiSegment())
 	}
 
-	// Heap-form strings → data segment. Even if no other op used
-	// memory, the data segment requires a memory; force one in
-	// that case. The single segment lives at stringStart, above the
-	// closure-cell pool, so subsequent heap allocations land after
-	// the literals.
+	// Heap-form strings → data segment. The single segment lives at
+	// stringStart, above the closure-cell pool, so subsequent heap
+	// allocations land after the literals.
 	if len(dataBytes) > 0 {
-		enableMemory()
 		m.DataOffsets = append(m.DataOffsets, int32(stringStart))
 		m.DataInits = append(m.DataInits, dataBytes)
 	}
@@ -870,7 +834,6 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 	// rounded up to 8 bytes — matches the WAT path's choice so
 	// canonical-ABI alignment expectations stay satisfied.
 	if helpers.set["__fern_alloc"] {
-		enableMemory()
 		start := stringNextOff
 		if start < allocMinStart {
 			start = allocMinStart
@@ -1274,12 +1237,38 @@ func EmitWithOptions(prog *ir.Program, opts EmitOptions) ([]byte, error) {
 		m.ExportIdxs = append(m.ExportIdxs, startFuncIdx)
 	}
 
-	// Every data segment is in place by now, so the initial memory size can
-	// be derived from the extent they actually span. Deriving it here rather
-	// than at each enableMemory() call site is what keeps it correct: a
-	// segment appended after the memory was switched on still counts.
-	if m.MemoryPresent {
+	// Memory section. Every code body and data segment is in place by now,
+	// so the answer is read off the module that was actually assembled: the
+	// section goes in iff some emitted instruction addresses memory 0, or a
+	// data segment needs somewhere to land. Deriving it from the bytes is
+	// what keeps it correct — a predicate over the IR ops or the runtime
+	// helpers in play only knows about the constructs that existed when it
+	// was written, and a stale one emits a module the validator rejects with
+	// "unknown memory 0".
+	//
+	// Imports keep it on unconditionally: a WASI host reads iovecs through
+	// the guest's exported memory, and the preview-1 component adapter
+	// requires the export to be there whether or not the guest touches it.
+	needMemory := opts.ForceMemorySection || len(m.DataInits) > 0 || len(importNeeds.order) > 0
+	for i, code := range m.CodeBodies {
+		used, err := codeUsesMemory(code)
+		if err != nil {
+			return nil, fmt.Errorf("wasmbin: scanning code body %d for memory use: %w", i, err)
+		}
+		if used {
+			needMemory = true
+		}
+	}
+	if needMemory {
+		// No upper bound — __fern_alloc grows on demand. The initial size
+		// follows from the static data's extent. The export is what lets
+		// tests and host tooling reach the linear memory.
+		m.MemoryPresent = true
+		m.MemoryMax = -1
 		m.MemoryMin = memoryMinPages(m.DataOffsets, m.DataInits)
+		m.ExportNames = append(m.ExportNames, "memory")
+		m.ExportKinds = append(m.ExportKinds, sections.ExportMemory)
+		m.ExportIdxs = append(m.ExportIdxs, 0)
 	}
 
 	return module.Build(m), nil
@@ -3218,24 +3207,6 @@ func emitMakeClosure(body []byte, op ir.Op, ctx *emitCtx) ([]byte, error) {
 	body = memory.InstI32Store(body, 2, 12)
 	body = inst.InstLocalGet(body, pairSlot)
 	return body, nil
-}
-
-// anyMemoryOp reports whether prog needs a memory section. Any
-// load / store (including sub-width and float variants) qualifies;
-// pure arithmetic / control-flow programs stay memory-free so the
-// output binary is one fewer section.
-func anyMemoryOp(prog *ir.Program) bool {
-	for _, fn := range prog.Funcs {
-		for _, op := range fn.Ops {
-			switch op.Kind {
-			case ir.OpLoad, ir.OpStore,
-				ir.OpFLoad, ir.OpFStore,
-				ir.OpLoadByte, ir.OpStoreI8:
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // blocktypeEnc maps an ir.BlockType* constant to the encoded

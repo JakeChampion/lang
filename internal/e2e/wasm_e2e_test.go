@@ -1754,8 +1754,8 @@ function main(): i32 {
 }
 
 // String split: returns string[] of substrings between
-// occurrences of the separator. Empty separator splits into
-// single-char strings (matches JS String.split("")).
+// occurrences of the separator. An empty separator splits into
+// one string per codepoint.
 func TestWASMStringSplit(t *testing.T) {
 	src := `
 import "std/string";

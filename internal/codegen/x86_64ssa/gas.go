@@ -1433,6 +1433,40 @@ func emitHeapGuard(w func(string, ...any)) {
 	w(".text")
 }
 
+// emitLenOverflowAbort writes the tail a helper branches to when a length it
+// was asked to build does not fit the 4-byte prefix it has to live in (#8457):
+// the diagnostic on stderr, then exit 134 — the status and text the natives'
+// __fern_report gives the same failure. Self-contained per helper, like the
+// heap guard's exhaustion tail above.
+// The length/size refusal shares the flat emitters' wording so one
+// diagnostic covers every backend (#8457).
+const msgAllocSizeOutOfRange = "fern: allocation size out of range\n"
+
+func emitLenOverflowAbort(w func(string, ...any), label, msgSym, text string) {
+	w("%s:", label)
+	w("\tmov edi, 2") // stderr
+	w("\tlea rsi, [rip + %s]", msgSym)
+	w("\tmov edx, %d", len(text))
+	w("\tmov eax, 1") // write
+	w("\tsyscall")
+	w("\tmov edi, %d", lenOverflowExit)
+	w("\tmov eax, 231") // exit_group
+	w("\tsyscall")
+	w(".section .rodata")
+	w("%s:", msgSym)
+	bytes := make([]string, len(text))
+	for i := 0; i < len(text); i++ {
+		bytes[i] = strconv.Itoa(int(text[i]))
+	}
+	w("\t.byte %s", strings.Join(bytes, ", "))
+	w(".text")
+}
+
+// lenOverflowExit is the status a length-ceiling abort exits with — the same
+// 134 the natives' bounds and slice aborts use, since both are a program
+// asking for something outside what the representation can hold.
+const lenOverflowExit = 134
+
 // heapGuardCall is the instruction a bump site emits immediately after
 // publishing its new cursor. Every such site must carry it: one that does not
 // allocates past the end silently.
@@ -2303,9 +2337,13 @@ func usesBcopy(helpers []string) bool {
 func emitAllocU8Helper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__alloc_u8"))
-	w("\tmov esi, edi") // n, preserved across the bump
-	w("\tmov edx, esi")
-	w("\tadd edx, 16") // allocSize = n + header (a 32-bit write zero-extends)
+	// A negative n is a length computation that overflowed i32 (#8457): the
+	// header add wraps it small, the bump hands back an undersized block, and
+	// the zero-fill below then writes the unwrapped count past it.
+	w("\ttest edi, edi")
+	w("\tjs .Lssa_allocu8_len_overflow")
+	w("\tmov esi, edi")        // n, preserved across the bump
+	w("\tlea rdx, [rsi + 16]") // allocSize = n + header
 	w("\tmov r8, [rip + %s]", heapPtrSym)
 	w("\tadd r8, 7")
 	w("\tand r8, -8") // base, 8-aligned
@@ -2327,6 +2365,7 @@ func emitAllocU8Helper(w func(string, ...any)) {
 	w("\trep stosb")
 	w("\tmov rax, r10")
 	w("\tret")
+	emitLenOverflowAbort(w, ".Lssa_allocu8_len_overflow", "__ssa_msg_alloc_size", msgAllocSizeOutOfRange)
 }
 
 // emitStringFromBytesHelper writes string_from_bytes_unchecked(bs) -> data: copy
@@ -2831,8 +2870,12 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__str_concat"))
 	w("\tmov ecx, %s", memRef("rdi", -4)) // la
 	w("\tmov edx, %s", memRef("rsi", -4)) // lb
-	w("\tmov r8d, ecx")
-	w("\tadd r8d, edx") // total = la + lb (zero-extends into r8)
+	// total = la + lb summed in 64 bits (both 32-bit loads zero-extend). A
+	// total past the i32 ceiling cannot be stamped into the 4-byte length
+	// slot, so it aborts rather than storing a negative length (#8457).
+	w("\tlea r8, [rcx + rdx]")
+	w("\tcmp r8, 2147483647")
+	w("\tja .Lssa_strcat_len_overflow")
 	// Bump-allocate total+8 bytes: base = align8(cursor); rc=1 at base+0, len at
 	// base+4; cursor advances past header+total; data = base+8.
 	w("\tmov r9, [rip + %s]", heapPtrSym)
@@ -2868,6 +2911,7 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("\tjmp .Lssa_strcat_bl")
 	w(".Lssa_strcat_done:")
 	w("\tret")
+	emitLenOverflowAbort(w, ".Lssa_strcat_len_overflow", "__ssa_msg_alloc_size_str", msgAllocSizeOutOfRange)
 }
 
 // emitStrDecHelper writes __fern_str_dec(ptr): the scope-exit drop for a

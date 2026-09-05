@@ -93,9 +93,11 @@ marked type at its binding site (`mcCheckBinding`,
 **Why the lattice is this small** (vs OCaml's eight axes — §6):
 Fern's global laws collapse the rest. E048/E056 immutability
 freezes the heap after construction — no contention axis
-because there is no mutation to contend over, no cycle
-collector because cycles are unconstructible
-(checker.go:11045-11052). Views are the only uncounted
+because there is no mutation to contend over, and no cycle
+collector — although the cycle-freedom that one rests on does
+not hold: E049 (`checker.go:14908`) guards a reference capture
+only inside the closure, so an outer rebind of it closes a cycle
+undiagnosed (#8440). Views are the only uncounted
 references, so the only locality-like rule needed is "a view
 must not outlive its backing frame" (E063/E065) — one rule, not
 an axis; everything else is RC-counted and lifetime-free.
@@ -297,8 +299,8 @@ Derived placements (all existing spellings, no new ones):
 - **`[T]` / `str` view** = borrowed + frame fact; E063/E065 are
   the borrowed-escape rule.
 - **closure capture (pointer-shaped)** = borrowed, read-only;
-  E049 (checker.go:11082-11087; self-host `e049_*`
-  checker.fern:6412-6531) rejects writes through it — a write
+  E049 (checker.go:14908; self-host `e049_*`
+  checker.fern:10691-10980) rejects writes through it — a write
   needs ≥ owned, a capture is ≤ borrowed. E049 IS a lattice
   rule.
 - **`@must_consume` type** = axis 2 applied per-type; E067.

@@ -42,7 +42,11 @@ function test_next_power_of_2_cap(): test.TestOutcome {
     if ((2147483648 as u32).next_power_of_2() != (2147483648 as u32)) {
         return test.fail("2^31 unchanged");
     }
-    return test.assert_true(((2147483648 as u32) + (1 as u32)).next_power_of_2() == (0 as u32));
+    if (((2147483648 as u32) + (1 as u32)).next_power_of_2() != (0 as u32)) {
+        return test.fail("2^31 + 1 -> 0");
+    }
+    // u32::MAX must reach the guard, not spin in the doubling loop.
+    return test.assert_true((4294967295 as u32).next_power_of_2() == (0 as u32));
 }
 
 function test_log2_floor(): test.TestOutcome {

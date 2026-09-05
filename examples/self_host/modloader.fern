@@ -318,7 +318,9 @@ function member_name(memdir: string): string {
 function load_locked(dir: string, name: string): Resolved {
     match (read_file(dir + "fern.lock")) {
         Ok(src) => {
-            var entries: fern_toml.LockEntry[] = fern_toml.parse_lock(src);
+            var lr: fern_toml.LockResult = fern_toml.parse_lock(src);
+            if (lr.err.len() > 0) { return res_none(); }
+            var entries: fern_toml.LockEntry[] = lr.entries;
             match (fern_toml.lock_path_of(entries, name)) {
                 Some(p) => { return load_lib(p + "/"); },
                 None => { },
@@ -345,9 +347,14 @@ function load_locked(dir: string, name: string): Resolved {
 // store is populated + sha256-verified by native `fern -fetch`; the
 // loader trusts an already-populated store, exactly like the native
 // loader does at build time (#4949 — no build-time network).
+//
+// The hash is re-validated here even though every parse boundary already
+// does: the hex is joined onto the store root, so a later route reaching this
+// unchecked would be a directory traversal (#8464).
 function load_from_store(hash: string): Resolved {
-    if (hash.len() < 8 || slice_unchecked(hash, 0, 7) != "sha256:") { return res_none(); }
-    var hex: string = slice_unchecked(hash, 7, hash.len()) + "";
+    var hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
+    if (hr.err.len() > 0) { return res_none(); }
+    var hex: string = hr.hex;
     match (env("FERN_CACHE_DIR")) {
         Some(d) => { return load_lib(d + "/pkgs/" + hex + "/"); },
         None => { },

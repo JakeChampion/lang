@@ -52,7 +52,7 @@ func Report(g *Graph, table map[string]string) []Row {
 		fn := g.Funcs[name]
 		row := Row{
 			Function:    name,
-			Module:      fn.SourceModule,
+			Module:      fn.BodyModule(),
 			Reached:     sol.Vocab.Names(sol.Rows[name]),
 			ViaIndirect: sol.Vocab.Names(sol.Rows[name] &^ directSol.Rows[name]),
 			Witness:     Witness(g, sol, name, sol.Rows[name]),

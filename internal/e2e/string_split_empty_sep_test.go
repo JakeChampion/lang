@@ -1,6 +1,6 @@
 package e2e
 
-// `s.split("")` char-splits on every backend.
+// `s.split("")` splits into CODEPOINTS on every backend.
 //
 // This was a live native/self-host divergence: std/string's `split` (and hence
 // the interp and the native backends) char-splits an empty separator, while the
@@ -9,6 +9,10 @@ package e2e
 // recorded the gap as deliberate — it matched the hand-written self-host asm
 // emitter, and no differential test covered empty-sep. The hand-asm emitters
 // have since been deleted, so this is the test, and the helper now char-splits.
+//
+// The unit is a codepoint, not a byte (#8469): every piece is a whole
+// character, so no fragment is ever invalid UTF-8. `to_array()` is the
+// per-byte split for callers that want one.
 
 import "testing"
 
@@ -36,6 +40,25 @@ function main(): i32 {
 
     // A non-empty separator is unaffected.
     if ("a,b".split(",").len() != 2) { return 10; }
+
+    // Non-ASCII: one piece per codepoint, each piece its whole encoding.
+    // "héllo" is 6 bytes, 5 characters.
+    var h: string[] = "héllo".split("");
+    if ("héllo".len() != 6) { return 11; }
+    if (h.len() != 5) { return 12; }
+    if (h[1] != "é" || h[1].len() != 2) { return 13; }
+    if (h[4] != "o") { return 14; }
+
+    // A 4-byte codepoint stays one piece.
+    var e: string[] = "a😀b".split("");
+    if (e.len() != 3) { return 15; }
+    if (e[1] != "😀" || e[1].len() != 4) { return 16; }
+
+    // splitn's empty-sep branch steps in the same units: the tail keeps
+    // the rest of the bytes intact.
+    var sn: string[] = "héllo".splitn("", 2);
+    if (sn.len() != 2) { return 17; }
+    if (sn[0] != "h" || sn[1] != "éllo") { return 18; }
 
     return 42;
 }

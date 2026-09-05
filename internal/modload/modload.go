@@ -1592,6 +1592,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 				r.rewriteType(&td.Methods[i].Params[j].Type)
 			}
 			r.rewriteType(&td.Methods[i].Result)
+			r.rewriteTraitDefaultBody(&td.Methods[i])
 		}
 		// Supertrait references mangle the same way a `[T: mod.Trait]`
 		// bound or an `impl mod.Trait for …` does, so they line up with
@@ -1936,6 +1937,28 @@ func (r *rewriter) rewriteFuncBody(fn *ast.FuncDecl) {
 	}
 	collectLocals(fn.Body, r.localVars)
 	r.rewriteBlock(fn.Body)
+	r.localVars = prev
+}
+
+// rewriteTraitDefaultBody mangles a trait method's default body in the
+// module that DECLARES the trait. The checker later deep-clones that
+// body into every impl that omits the method, so a name left bare here
+// would be resolved in whichever module wrote the impl: the body could
+// not reach its own module's helpers, and an implementing module that
+// happened to declare the same name would capture the call (#8484).
+// Rewriting here means the clone carries already-resolved names and is
+// immune to where it is instantiated.
+func (r *rewriter) rewriteTraitDefaultBody(m *ast.TraitMethod) {
+	if m.Body == nil {
+		return
+	}
+	prev := r.localVars
+	r.localVars = map[string]bool{}
+	for _, p := range m.Params {
+		r.localVars[p.Name] = true
+	}
+	collectLocals(m.Body, r.localVars)
+	r.rewriteBlock(m.Body)
 	r.localVars = prev
 }
 

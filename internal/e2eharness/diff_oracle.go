@@ -82,17 +82,28 @@ func CompileAndRunWasmbinMain(t *testing.T, src string) int {
 	cmd.Stdout = &so
 	cmd.Stderr = &se
 	if err := cmd.Run(); err != nil {
-		// wasmtime translation errors (e.g. "type mismatch" at
-		// some byte offset) reflect a wasmbin codegen gap — the
-		// IR was lowered to wasm bytes the validator rejects.
-		// Treat as coverage signal (skip) rather than a strict
-		// failure: the binary backend isn't feature-complete yet
-		// and these surface as wasmbin grows. Strict miscompiles
-		// (wasm runs but returns the wrong byte) still FAIL.
+		// A module the validator rejects is always a bug, never a
+		// coverage gap. A gap is declared at Build time (above):
+		// the emitter knows it cannot lower a construct and says
+		// so. Reaching here means Build claimed success and
+		// produced bytes that are not a valid module — and the
+		// validator's "type mismatch at offset N" reads identically
+		// whether wasmbin emitted the wrong opcode or the front end
+		// handed it wrongly-typed IR. Since the two are
+		// indistinguishable from the error text, both fail: wasm's
+		// validator is the only checker in the project that reports
+		// the "lowering defaulted to i32" class at all, so skipping
+		// on it hides front-end miscompiles from every inline-source
+		// e2e test that runs this helper (#8456).
 		if strings.Contains(se.String(), "type mismatch") ||
 			strings.Contains(se.String(), "WebAssembly translation error") ||
 			strings.Contains(se.String(), "Invalid input WebAssembly code") {
-			t.Skipf("wasmbin emit gap: %v\nstderr:\n%s", err, se.String())
+			t.Fatalf("wasmbin emitted an invalid module — a front-end "+
+				"miscompile or a wasmbin emit bug, not a coverage gap. "+
+				"If wasmbin genuinely cannot lower this construct, make "+
+				"wasmbin.Build return an \"unsupported\" error for it so "+
+				"the gap is declared at emit time and this helper skips.\n"+
+				"%v\nstderr:\n%s\nsrc:\n%s", err, se.String(), src)
 		}
 		t.Fatalf("wasmtime: %v\nstderr:\n%s\nsrc:\n%s", err, se.String(), src)
 	}

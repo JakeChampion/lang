@@ -265,6 +265,70 @@ function test_boundary_snap_is_valid(): test.TestOutcome {
     return test.assert_true(!utf8.is_valid_utf8(slice_unchecked(s, 0, 2).to_owned()));
 }
 
+// ---- lossy substitution: one U+FFFD per maximal subpart (#8469) ----
+
+// `__lossy_len(b)` — codepoints in `b` if every walker agrees, or -1
+// when they do not. utf8.codepoint_count / utf8.codepoints /
+// string.codepoint_count / string.chars all had to fold ill-formed
+// input the same way; they used to disagree (ED A0 80 was 3 from this
+// module and 1 from the string methods).
+function __lossy_len(b: u8[]): i32 {
+    var s: string = string_from_bytes_unchecked(b);
+    var a: i32 = utf8.codepoint_count(s);
+    if (utf8.codepoints(s).len() != a) { return 0 - 1; }
+    if (s.codepoint_count() != a) { return 0 - 1; }
+    if (s.chars().len() != a) { return 0 - 1; }
+    return a;
+}
+
+// Unicode 15.0 §3.9's recommended practice: the bytes that could still
+// have begun a valid sequence are one unit, the byte that broke it
+// starts the next.
+function test_lossy_maximal_subpart(): test.TestOutcome {
+    // ED A0 80: A0 is not a legal continuation of ED (surrogate), so ED
+    // stands alone and the two orphaned bytes follow — three U+FFFDs.
+    if (__lossy_len([237 as u8, 160 as u8, 128 as u8]) != 3) { return test.fail("ED A0 80"); }
+    // C0 80: C0 can only ever be overlong, so it is never a lead.
+    if (__lossy_len([192 as u8, 128 as u8]) != 2) { return test.fail("C0 80"); }
+    // E0 80 80: E0 needs a continuation in A0..BF.
+    if (__lossy_len([224 as u8, 128 as u8, 128 as u8]) != 3) { return test.fail("E0 80 80"); }
+    // F4 90 80 80: F4 needs a continuation in 80..8F (U+10FFFF cap).
+    if (__lossy_len([244 as u8, 144 as u8, 128 as u8, 128 as u8]) != 4) { return test.fail("F4 90 80 80"); }
+    // F0 9F 98: a truncated emoji is ONE maximal subpart, not three bytes.
+    if (__lossy_len([240 as u8, 159 as u8, 152 as u8]) != 1) { return test.fail("F0 9F 98"); }
+    // 'a' F1 80 'b': F1 80 is the subpart; 'b' resumes the scan.
+    return test.assert_eq(__lossy_len([97 as u8, 241 as u8, 128 as u8, 98 as u8]), 3);
+}
+
+// The valid neighbours of those rows still count as themselves, and the
+// four walkers agree there too.
+function test_lossy_valid_neighbours(): test.TestOutcome {
+    // The complete emoji F0 9F 98 80 whose truncation is one U+FFFD above.
+    if (__lossy_len([240 as u8, 159 as u8, 152 as u8, 128 as u8]) != 1) { return test.fail("emoji"); }
+    // ED 9F BF is U+D7FF — the scalar just below the surrogate block.
+    if (__lossy_len([237 as u8, 159 as u8, 191 as u8]) != 1) { return test.fail("U+D7FF"); }
+    // F4 8F BF BF is U+10FFFF, the largest scalar.
+    if (__lossy_len([244 as u8, 143 as u8, 191 as u8, 191 as u8]) != 1) { return test.fail("U+10FFFF"); }
+    return test.assert_eq(__lossy_len([65 as u8, 195 as u8, 169 as u8]), 2);
+}
+
+// The lossy walk drives codepoint INDEXING too, so char_at / substring
+// step over an ill-formed run in the same units the count reports.
+function test_lossy_indexing(): test.TestOutcome {
+    // 'a' F1 80 'b' — three characters: "a", U+FFFD, "b".
+    var s: string = string_from_bytes_unchecked([97 as u8, 241 as u8, 128 as u8, 98 as u8]);
+    var fffd: string = utf8.utf8_encode(65533 as char);
+    match (utf8.char_at(s, 1)) {
+        Some(c) => { if (c != fffd) { return test.fail("char_at(1) is not U+FFFD"); } },
+        None => { return test.fail("char_at(1) expected Some"); }
+    }
+    match (utf8.char_at(s, 2)) {
+        Some(c) => { if (c != "b") { return test.fail("char_at(2)"); } },
+        None => { return test.fail("char_at(2) expected Some"); }
+    }
+    return test.assert_eq(utf8.substring(s, 2, 3).to_owned(), "b");
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("std/utf8");
     r = r.it("decode ascii",            test_decode_ascii);
@@ -293,5 +357,8 @@ function main(): i32 {
     r = r.it("floor_char_boundary",     test_floor_char_boundary);
     r = r.it("ceil_char_boundary",      test_ceil_char_boundary);
     r = r.it("boundary snap is valid",  test_boundary_snap_is_valid);
+    r = r.it("lossy maximal subpart",   test_lossy_maximal_subpart);
+    r = r.it("lossy valid neighbours",  test_lossy_valid_neighbours);
+    r = r.it("lossy codepoint indexing", test_lossy_indexing);
     return r.finish();
 }

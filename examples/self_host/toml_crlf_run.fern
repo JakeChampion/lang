@@ -36,7 +36,9 @@ function render_manifest(label: string, src: string): string {
 }
 
 function render_lock(label: string, src: string): string {
-    var es: fern_toml.LockEntry[] = fern_toml.parse_lock(src);
+    var lr: fern_toml.LockResult = fern_toml.parse_lock(src);
+    if (lr.err.len() > 0) { return label + " error " + lr.err + "\n"; }
+    var es: fern_toml.LockEntry[] = lr.entries;
     var out: string = label + " entries=" + util.i32_to_string(es.len()) + "\n";
     var i: i32 = 0;
     while (i < es.len()) {
@@ -77,7 +79,7 @@ function main(): i32 {
         "[[package]]\n" +
         "name = \"shout\"\n" +
         "version = \"1.2.3\"\n" +
-        "hash = \"sha256:abc123\"\n";
+        "hash = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n";
 
     var out: string = "";
     out = out + render_manifest("LF  ", manifest);

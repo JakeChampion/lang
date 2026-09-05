@@ -356,8 +356,9 @@ function __db_shorter32(be: i32): (i64, i32) {
 }
 
 // Format shortest significand `sig` with most-significant-digit decimal
-// exponent `msd` into Go %v / strconv 'g' style: scientific when msd < -4 or
-// msd >= 21, else fixed-point.
+// exponent `msd`: scientific when msd < -4 or msd >= 21, else fixed-point.
+// The low threshold is Go / C 'g'; the high one and the unpadded `e+`/`e-`
+// spelling are JavaScript's, so 1e20 prints in full where Go %v gives 1e+20.
 function __float_fmt_sci(sig: string, msd: i32): string {
     var nd: i32 = sig.len();
     if (msd < 0 - 4 || msd >= 21) {

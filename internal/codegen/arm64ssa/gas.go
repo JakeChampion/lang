@@ -623,6 +623,41 @@ func emitHeapGuard(w func(string, ...any)) {
 	w(".text")
 }
 
+// emitLenOverflowAbort writes the tail a helper branches to when a length it
+// was asked to build does not fit the 4-byte prefix it has to live in (#8457):
+// the diagnostic on stderr, then exit 134 — the status and text the natives'
+// __fern_report gives the same failure. Self-contained per helper, like the
+// heap guard's exhaustion tail above.
+// The length/size refusal shares the flat emitters' wording so one
+// diagnostic covers every backend (#8457).
+const msgAllocSizeOutOfRange = "fern: allocation size out of range\n"
+
+func emitLenOverflowAbort(w func(string, ...any), label, msgSym, text string) {
+	w("%s:", label)
+	w("\tmov x0, #2") // stderr
+	w("\tadrp x1, %s", msgSym)
+	w("\tadd x1, x1, #:lo12:%s", msgSym)
+	w("\tmov x2, #%d", len(text))
+	w("\tmov x8, #64") // write
+	w("\tsvc #0")
+	w("\tmov x0, #%d", lenOverflowExit)
+	w("\tmov x8, #94") // exit_group
+	w("\tsvc #0")
+	w(".section .rodata")
+	w("%s:", msgSym)
+	bytes := make([]string, len(text))
+	for i := 0; i < len(text); i++ {
+		bytes[i] = strconv.Itoa(int(text[i]))
+	}
+	w("\t.byte %s", strings.Join(bytes, ", "))
+	w(".text")
+}
+
+// lenOverflowExit is the status a length-ceiling abort exits with — the same
+// 134 the natives' bounds and slice aborts use, since both are a program
+// asking for something outside what the representation can hold.
+const lenOverflowExit = 134
+
 // emitBcopy emits __ssa_bcopy(dst, src, n): a forward byte copy of n bytes,
 // 16 bytes per iteration through the bulk, one 8-byte step, then a byte tail of
 // at most 7. Regions must not overlap.
@@ -3169,7 +3204,12 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	w("%s:", fnLabel("__str_concat"))
 	w("\tldur w2, [x0, #-4]") // la
 	w("\tldur w3, [x1, #-4]") // lb
-	w("\tadd w4, w2, w3")     // total = la + lb (zero-extends into x4)
+	// total = la + lb summed in 64 bits (both w-loads zero-extend). A total
+	// past the i32 ceiling cannot be stamped into the 4-byte length slot, so
+	// it aborts rather than storing a negative length (#8457).
+	w("\tadd x4, x2, x3")
+	w("\tlsr x5, x4, #31")
+	w("\tcbnz x5, .Lssa_strcat_len_overflow")
 	// Bump-allocate total+8 bytes: base = align8(cursor); rc=1 at base+0, len at
 	// base+4; cursor advances past header+total; data = base+8.
 	w("\tadrp x5, %s", heapPtrSym)
@@ -3193,6 +3233,7 @@ func emitStrConcatHelper(w func(string, ...any)) {
 	emitBcopyCall(w, "x10", "x11", "x12")
 	w("\tmov x0, x9") // return data
 	w("\tret")
+	emitLenOverflowAbort(w, ".Lssa_strcat_len_overflow", "__ssa_msg_alloc_size_str", msgAllocSizeOutOfRange)
 }
 
 // emitStrDecHelper writes __fern_str_dec(ptr): the scope-exit drop for a
@@ -5927,6 +5968,10 @@ func emitSleepMsHelper(w func(string, ...any)) {
 func emitAllocU8Helper(w func(string, ...any)) {
 	w("")
 	w("%s:", fnLabel("__alloc_u8"))
+	// A negative n is a length computation that overflowed i32 (#8457): the
+	// header add wraps it small, the bump hands back an undersized block, and
+	// the zero loop below then writes the unwrapped count past it.
+	w("\ttbnz w0, #31, .Lssa_allocu8_len_overflow")
 	w("\tmov w1, w0")       // w1 = n (preserve across the allocation)
 	w("\tadd w16, w1, #16") // allocSize = n + 16-byte header
 	emitAllocPresCall(w)
@@ -5945,6 +5990,7 @@ func emitAllocU8Helper(w func(string, ...any)) {
 	w("\tb .Lssa_allocu8_zero")
 	w(".Lssa_allocu8_ret:")
 	w("\tret")
+	emitLenOverflowAbort(w, ".Lssa_allocu8_len_overflow", "__ssa_msg_alloc_size", msgAllocSizeOutOfRange)
 }
 
 // emitPrintHelper writes print(s): write the string's bytes to stdout (fd 1)

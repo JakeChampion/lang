@@ -80,8 +80,10 @@ func wholeDocumentRange(src string) Range {
 	return Range{
 		Start: Position{Line: 0, Character: 0},
 		End: Position{
-			Line:      line,
-			Character: len(src) - lastLineStart,
+			Line: line,
+			// UTF-16 units, not bytes — the client replaces this range, and
+			// the last line may hold non-ASCII (#8468).
+			Character: utf16Len(src[lastLineStart:]),
 		},
 	}
 }

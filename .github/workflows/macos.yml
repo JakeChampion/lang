@@ -54,6 +54,11 @@ on:
       - "examples/**"
       # This workflow itself + go module declarations.
       - ".github/workflows/macos.yml"
+      # The lane runs composite actions and installs its toolchain from the
+      # pins, so both change what it actually executes.
+      - ".github/actions/**"
+      - "mise.toml"
+      - "mise.lock"
       - "go.mod"
   # Also on main: a rebase-merge replays commits onto a main their PR's CI never
   # saw, so a coupling between two individually-green PRs exists only in the
@@ -65,6 +70,11 @@ on:
       - "cmd/fern/**"
       - "examples/**"
       - ".github/workflows/macos.yml"
+      # The lane runs composite actions and installs its toolchain from the
+      # pins, so both change what it actually executes.
+      - ".github/actions/**"
+      - "mise.toml"
+      - "mise.lock"
       - "go.mod"
   workflow_dispatch:
 
