@@ -199,6 +199,24 @@ func f64UlpCases() []f64Case {
 			cs = append(cs, f64Case{fmt.Sprintf("__exp_f64(%s)", lit(x)), math.Exp(x)})
 		}
 	}
+	// The band whose true result is SUBNORMAL, between the smallest normal
+	// and expunf. Nothing above reaches it — the loop stops at |x| <= 700 and
+	// exp(-1000) is past expunf, so it tests the guard rather than the gap.
+	// A single (k+1023)<<52 field cannot hold k < -1022: exp(-720) returned
+	// -6.6e+303, finite, enormous and the WRONG SIGN, which no caller can
+	// detect (#8237). ulpDist orders across zero, so the sign flip shows up
+	// as a vast distance rather than being lost in a denormal ulp count.
+	// Stops at -740 rather than running to expunf. math.Exp is the oracle
+	// here and it is HOST-DEPENDENT at the very bottom: on an aarch64 runner
+	// it returns 0 for exp(-745), where amd64 and glibc return the correct
+	// 5e-324. checkF64Output treats a want of 0 as exact, so those rows
+	// demanded a flush that the fixed backends rightly no longer perform, and
+	// they failed on aarch64 while passing on x86-64. Above -745 the two
+	// agree. The band that remains still reports on the unfixed emitter (5 of
+	// these 6 rows), so nothing is lost but the unusable oracle.
+	for _, x := range []float64{-708.5, -709, -710, -720, -730, -740} {
+		cs = append(cs, f64Case{fmt.Sprintf("__exp_f64(%s)", lit(x)), math.Exp(x)})
+	}
 	for _, x := range f64UlpPosInputs {
 		cs = append(cs, f64Case{fmt.Sprintf("__log_f64(%s)", lit(x)), math.Log(x)})
 	}

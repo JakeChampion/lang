@@ -8738,9 +8738,9 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	//   e^r = 1 - ((lo - (r*c)/(2-c)) - hi);  e^x = e^r * 2^k
 	fn("__fern_exp_f64")
 	expRet, expInf, expZero := g.freshLabel("expRet"), g.freshLabel("expInf"), g.freshLabel("expZero")
-	// Domain guards. Without them exp(1000) overflowed the exponent field
-	// into the sign bit and returned -6.1e-183, and exp(±Inf) fell through
-	// the polynomial as NaN. +Inf trips the overflow branch and -Inf the
+	// Domain guards: above expovf e^x is not representable, below expunf it
+	// rounds to zero, and exp(±Inf) would otherwise fall through the
+	// polynomial as NaN. +Inf trips the overflow branch and -Inf the
 	// underflow one, so only NaN needs testing separately.
 	nanGuard(expRet)
 	g.emit("ucomisd xmm0, [rip+.Lfc_expovf]")
@@ -8778,11 +8778,23 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("subsd xmm2, xmm3") // - hi
 	ldc("xmm0", ".Lfc_one")
 	g.emit("subsd xmm0, xmm2")
-	// 2^k by assembling the exponent field directly.
+	// 2^k as two half-scales. Assembling one exponent field from k puts the
+	// subnormal band (k < -1022) outside the field's range, where the low
+	// bits land in the SIGN bit; halving keeps both fields normal. A
+	// multiply by a power of two is exact until the result itself is
+	// subnormal, so the normal band is unchanged and the subnormal one
+	// rounds once, in the hardware.
+	g.emit("mov rcx, rax")
+	g.emit("sar rcx, 1")   // k1
+	g.emit("sub rax, rcx") // k2 = k - k1
+	g.emit("add rcx, 1023")
+	g.emit("shl rcx, 52")
+	g.emit("movq xmm1, rcx")
 	g.emit("add rax, 1023")
 	g.emit("shl rax, 52")
-	g.emit("movq xmm1, rax")
+	g.emit("movq xmm2, rax")
 	g.emit("mulsd xmm0, xmm1")
+	g.emit("mulsd xmm0, xmm2")
 	g.label(expRet)
 	g.emit("ret")
 	g.label(expInf)
