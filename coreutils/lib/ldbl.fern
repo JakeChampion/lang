@@ -1,0 +1,1188 @@
+// coreutils/lib/ldbl.fern — C's `long double`, as GNU coreutils
+// computes and prints it.
+//
+// printf(1) and seq(1) both take floating-point operands with
+// strtold and print them with printf's `%Lf` / `%Le` / `%Lg` / `%La`,
+// and byte parity with the reference binaries means reproducing that
+// type, not approximating it with an f64. On the x86-64 reference it
+// is the x87 80-bit format — a 64-bit significand with the integer
+// bit explicit and a 15-bit exponent — so `1e400` is finite, `0.1`
+// prints twenty-one correct digits, and `%a` of 1 is `0x8p-3`. (GNU
+// built against a 128-bit or 64-bit long double prints differently
+// past the 53rd bit; those are not the reference this is held to.)
+//
+// `LD` is that format. Parsing rounds correctly from the exact
+// decimal, arithmetic (`add`, `mul`) rounds half to even at 64 bits
+// as the x87 does in its default extended-precision mode, and
+// printing goes from the exact binary value, which is the only way
+// to match glibc digit for digit.
+//
+// glibc refuses a single conversion whose output would reach INT_MAX-1
+// bytes — the directive prints nothing and the stream carries an
+// error. `format` reports that refusal as None; the two-gigabyte
+// successes below it are not something anyone can test.
+import "std/string";
+import "std/array";
+import "core/bigint";
+
+// ---- byte classes ----------------------------------------------------------
+function is_digit(b: i32): boolean {
+  return b >= 48 && b <= 57;
+}
+
+// The value of one hex digit, or -1 for a byte that is not one.
+pub function hex_digit(b: i32): i32 {
+  if (b >= 48 && b <= 57) {
+    return b - 48;
+  }
+  if (b >= 97 && b <= 102) {
+    return b - 87;
+  }
+  if (b >= 65 && b <= 70) {
+    return b - 55;
+  }
+  return 0 - 1;
+}
+
+pub function hex_char(v: i32, upper: boolean): i32 {
+  if (v < 10) {
+    return 48 + v;
+  }
+  if (upper) {
+    return 55 + v;
+  }
+  return 87 + v;
+}
+
+// isspace in the C locale.
+function is_space(b: i32): boolean {
+  return b == 32 || b >= 9 && b <= 13;
+}
+
+function lower(b: i32): i32 {
+  if (b >= 65 && b <= 90) {
+    return b + 32;
+  }
+  return b;
+}
+
+function is_alpha(b: i32): boolean {
+  var l: i32 = lower(b);
+  return l >= 97 && l <= 122;
+}
+
+function byte_str(b: i32): string {
+  return string_from_bytes_unchecked([b as u8]);
+}
+
+// ---- the format --------------------------------------------------------------
+// `LD` — an x87 extended-precision value: `m` the 64-bit significand
+// with its integer bit explicit, `e` the exponent of its lowest bit,
+// so the value is m × 2^e. Canonical form: a normal number has the top
+// bit of `m` set and e ≥ -16445; a subnormal has e = -16445 exactly;
+// zero has m = 0. `kind` is 0 for finite, 1 for infinity, 2 for NaN.
+pub struct LD { neg: boolean, kind: i32, m: u64, e: i32 }
+
+pub function zero(neg: boolean): LD {
+  return LD { neg: neg, kind: 0, m: 0 as u64, e: min_exp() };
+}
+
+pub function inf(neg: boolean): LD {
+  return LD { neg: neg, kind: 1, m: 0 as u64, e: 0 };
+}
+
+pub function nan(neg: boolean): LD {
+  return LD { neg: neg, kind: 2, m: 0 as u64, e: 0 };
+}
+
+pub function (v: LD) is_finite(): boolean {
+  return v.kind == 0;
+}
+
+pub function (v: LD) is_inf(): boolean {
+  return v.kind == 1;
+}
+
+pub function (v: LD) is_nan(): boolean {
+  return v.kind == 2;
+}
+
+pub function (v: LD) is_zero(): boolean {
+  return v.kind == 0 && v.m == 0 as u64;
+}
+
+pub function (v: LD) negate(): LD {
+  return LD { ...v, neg: !v.neg };
+}
+
+// The exponent of the lowest bit of the smallest subnormal.
+pub function min_exp(): i32 {
+  return 0 - 16445;
+}
+
+// The exponent of the lowest bit of the largest finite value.
+function max_exp(): i32 {
+  return 16320;
+}
+
+pub function top_bit(): u64 {
+  return 9223372036854775808 as u64;
+}
+
+// `from_i64(v)` — exact: every i64 fits the 64-bit significand.
+pub function from_i64(v: i64): LD {
+  var neg: boolean = v < 0 as i64;
+  var u: u64 = v as u64;
+  if (neg) {
+    u = 0 as u64 - u;
+  }
+  return from_u64(u, neg);
+}
+
+pub function from_u64(u: u64, neg: boolean): LD {
+  if (u == 0 as u64) {
+    return zero(neg);
+  }
+  var lz: i32 = __clz64(u);
+  return LD { neg: neg, kind: 0, m: u << lz as u64, e: 0 - lz };
+}
+
+// `(v).as_i64()` — the value when it is an integer an i64 can hold.
+pub function (v: LD) as_i64(): Option[i64] {
+  if (v.kind != 0) {
+    return None;
+  }
+  if (v.m == 0 as u64) {
+    return Some(0 as i64);
+  }
+  var mag: u64 = 0 as u64;
+  if (v.e >= 0) {
+    if (v.e > 63 || 64 - __clz64(v.m) + v.e > 63) {
+      return None;
+    }
+    mag = v.m << v.e as u64;
+  } else {
+    if (v.e <= 0 - 64 || v.m << (64 + v.e) as u64 != 0 as u64) {
+      return None;
+    }
+    mag = v.m >> (0 - v.e) as u64;
+  }
+  if (mag > top_bit() || mag == top_bit() && !v.neg) {
+    return None;
+  }
+  if (v.neg) {
+    return Some((0 as u64 - mag) as i64);
+  }
+  return Some(mag as i64);
+}
+
+// `(v).as_bigint()` — the value when it is an integer, however large.
+pub function (v: LD) as_bigint(): Option[bigint.BigInt] {
+  if (v.kind != 0) {
+    return None;
+  }
+  if (v.m == 0 as u64) {
+    return Some(bigint.zero());
+  }
+  var b: bigint.BigInt = bigint.from_u64(v.m);
+  if (v.e >= 0) {
+    b = b.shl(v.e);
+  } else {
+    // A canonical significand has its top bit set, so a value whose
+    // lowest bit sits 64 or more places below the point is below 1.
+    if (v.e <= 0 - 64 || v.m << (64 + v.e) as u64 != 0 as u64) {
+      return None;
+    }
+    b = bigint.from_u64(v.m >> (0 - v.e) as u64);
+  }
+  if (v.neg) {
+    b = b.negate();
+  }
+  return Some(b);
+}
+
+// ---- rounding ---------------------------------------------------------------
+// `Rounded` — a significand cut to 64 bits: `lsb` the exponent of its
+// lowest bit (one higher than asked when rounding carried out), and
+// whether anything was lost.
+struct Rounded { m: u64, lsb: i32, inexact: boolean }
+
+// `round_bits(q, e, lsb, sticky)` — q × 2^e (plus a little when
+// `sticky`) rounded to a multiple of 2^lsb, half to even.
+function round_bits(q: bigint.BigInt, e: i32, lsb: i32, sticky: boolean): Rounded {
+  var shift: i32 = lsb - e;
+  if (shift <= 0) {
+    return Rounded { m: q.shl(0 - shift).low_u64(), lsb: lsb, inexact: sticky };
+  }
+  var kept: bigint.BigInt = q.shr(shift);
+  var dropped: bigint.BigInt = q.sub(kept.shl(shift));
+  var half: bigint.BigInt = bigint.from_i64(1 as i64).shl(shift - 1);
+  var m: u64 = kept.low_u64();
+  var c: i32 = dropped.cmp(half);
+  var inexact: boolean = sticky || !dropped.is_zero();
+  var up: boolean = c > 0 || c == 0 && (sticky || (m & 1 as u64) == 1 as u64);
+  var out_lsb: i32 = lsb;
+  if (up) {
+    m = m + 1 as u64;
+    if (m == 0 as u64) {
+      m = top_bit();
+      out_lsb = lsb + 1;
+    }
+  }
+  return Rounded { m: m, lsb: out_lsb, inexact: inexact };
+}
+
+// `to_ld(q, e, sticky, neg)` — the long double nearest q × 2^e, and
+// whether strtold would set ERANGE: overflow to infinity, or a result
+// that is tiny AND inexact. Tininess is judged after rounding to the
+// normal precision, as the x87 does — a value just under the smallest
+// normal that rounds up to it is not tiny.
+pub function to_ld(q: bigint.BigInt, e: i32, sticky: boolean, neg: boolean): (LD, boolean) {
+  if (q.is_zero()) {
+    return (zero(neg), false);
+  }
+  var top: i32 = e + q.bit_length() - 1;
+  if (top > 16383) {
+    return (inf(neg), true);
+  }
+  if (top < min_exp() - 1) {
+    return (zero(neg), true);
+  }
+  var r: Rounded = round_bits(q, e, top - 63, sticky);
+  if (top < 0 - 16382) {
+    if (r.lsb + 63 < 0 - 16382) {
+      r = round_bits(q, e, min_exp(), sticky);
+      return (LD { neg: neg, kind: 0, m: r.m, e: min_exp() }, r.inexact);
+    }
+    return (LD { neg: neg, kind: 0, m: r.m, e: r.lsb }, false);
+  }
+  if (r.lsb + 63 > 16383) {
+    return (inf(neg), true);
+  }
+  return (LD { neg: neg, kind: 0, m: r.m, e: r.lsb }, false);
+}
+
+function pow5(k: i32): bigint.BigInt {
+  return bigint.from_i64(5 as i64).pow(k);
+}
+
+// `decimal_to_ld(digits, k, neg)` — digits × 10^k, correctly rounded.
+// `digits` has no leading or trailing zeros. Magnitudes far outside
+// the format are decided from the digit count alone; the rest go
+// through exact bignum arithmetic — a division for a negative k, wide
+// enough that the quotient carries the round and sticky bits.
+function decimal_to_ld(digits: string, k: i32, neg: boolean): (LD, boolean) {
+  if (digits.len() == 0) {
+    return (zero(neg), false);
+  }
+  var mag: i32 = digits.len() + k;
+  if (mag > 4940) {
+    return (inf(neg), true);
+  }
+  if (mag < 0 - 4960) {
+    return (zero(neg), true);
+  }
+  var d: bigint.BigInt = bigint.zero();
+  match (bigint.parse(digits)) {
+    Some(v) => {
+      d = v;
+    },
+    None => {}
+  }
+  if (k >= 0) {
+    return to_ld(d.mul_pow10(k), 0, false, neg);
+  }
+  var b: bigint.BigInt = bigint.from_i64(1 as i64).mul_pow10(0 - k);
+  var s: i32 = 66 + b.bit_length() - d.bit_length();
+  if (s < 0) {
+    s = 0;
+  }
+  var qr: (bigint.BigInt, bigint.BigInt) = d.shl(s).divmod(b);
+  return to_ld(qr.0, 0 - s, !qr.1.is_zero(), neg);
+}
+
+// ---- 128-bit helpers ----------------------------------------------------------
+// Fern has no 128-bit integer; a product or an aligned sum lives in a
+// (high, low) pair of u64 for the length of one operation.
+// `mul64(x, y)` — the full 128-bit product as (high, low).
+pub function mul64(x: u64, y: u64): (u64, u64) {
+  var mask: u64 = 4294967295 as u64;
+  var sh: u64 = 32 as u64;
+  var a: u64 = x >> sh;
+  var b: u64 = x & mask;
+  var c: u64 = y >> sh;
+  var d: u64 = y & mask;
+  var bd: u64 = b * d;
+  var ad: u64 = a * d;
+  var bc: u64 = b * c;
+  var mid: u64 = (bd >> sh) + (ad & mask) + (bc & mask);
+  var hi: u64 = a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
+  return (hi, (mid & mask) << sh | bd & mask);
+}
+
+// `from_u128(hi, lo, e, sticky, neg)` — the long double nearest
+// (hi:lo) × 2^e, plus a little when `sticky`. The fast path for
+// arithmetic: the value is normalised in the pair and rounded off its
+// low word; only a result in the subnormal range goes through the
+// bignum rounding, which knows the format's edge.
+function from_u128(hi0: u64, lo0: u64, e: i32, sticky: boolean, neg: boolean): LD {
+  var hi: u64 = hi0;
+  var lo: u64 = lo0;
+  if (hi == 0 as u64 && lo == 0 as u64) {
+    return zero(neg);
+  }
+  var lz: i32 = 0;
+  if (hi == 0 as u64) {
+    lz = 64 + __clz64(lo);
+    if (lz == 64) {
+      hi = lo;
+    } else {
+      hi = lo << (lz - 64) as u64;
+    }
+    lo = 0 as u64;
+  } else {
+    lz = __clz64(hi);
+    if (lz > 0) {
+      hi = hi << lz as u64 | lo >> (64 - lz) as u64;
+      lo = lo << lz as u64;
+    }
+  }
+  var lsb: i32 = e - lz + 64;
+  if (lsb > max_exp()) {
+    return inf(neg);
+  }
+  if (lsb < min_exp()) {
+    var q: bigint.BigInt = bigint.from_u64(hi0).shl(64).add(bigint.from_u64(lo0));
+    var r: (LD, boolean) = to_ld(q, e, sticky, neg);
+    return r.0;
+  }
+  var up: boolean = lo > top_bit() || lo == top_bit() && (sticky || (hi & 1 as u64) == 1 as u64);
+  if (up) {
+    hi = hi + 1 as u64;
+    if (hi == 0 as u64) {
+      hi = top_bit();
+      lsb = lsb + 1;
+      if (lsb > max_exp()) {
+        return inf(neg);
+      }
+    }
+  }
+  return LD { neg: neg, kind: 0, m: hi, e: lsb };
+}
+
+// ---- arithmetic ---------------------------------------------------------------
+// `mul(a, b)` — the product, rounded half to even.
+pub function mul(a: LD, b: LD): LD {
+  var neg: boolean = a.neg != b.neg;
+  if (a.kind == 2 || b.kind == 2) {
+    return nan(neg);
+  }
+  if (a.kind == 1 || b.kind == 1) {
+    if (a.is_zero() || b.is_zero()) {
+      return nan(neg);
+    }
+    return inf(neg);
+  }
+  if (a.m == 0 as u64 || b.m == 0 as u64) {
+    return zero(neg);
+  }
+  var p: (u64, u64) = mul64(a.m, b.m);
+  return from_u128(p.0, p.1, a.e + b.e, false, neg);
+}
+
+// `add(a, b)` — the sum, rounded half to even; `a - b` is
+// `add(a, b.negate())`.
+pub function add(a: LD, b: LD): LD {
+  if (a.kind == 2 || b.kind == 2) {
+    return nan(a.neg);
+  }
+  if (a.kind == 1) {
+    if (b.kind == 1 && a.neg != b.neg) {
+      return nan(true);
+    }
+    return a;
+  }
+  if (b.kind == 1) {
+    return b;
+  }
+  if (a.m == 0 as u64) {
+    if (b.m == 0 as u64) {
+      return zero(a.neg && b.neg);
+    }
+    return b;
+  }
+  if (b.m == 0 as u64) {
+    return a;
+  }
+  if (a.e < b.e) {
+    return add_aligned(b, a);
+  }
+  return add_aligned(a, b);
+}
+
+// The sum of two finite non-zero values with a.e ≥ b.e. Both are laid
+// out in a 128-bit pair scaled so `a` starts at bit 126 — one bit of
+// headroom for a carry — and `b` is shifted down to a's exponent,
+// anything that falls off the bottom becoming the sticky bit. A
+// subtraction with a sticky bit borrows one unit and keeps the bit,
+// so the true value stays on the right side of the half-way point.
+function add_aligned(a: LD, b: LD): LD {
+  var d: i32 = a.e - b.e;
+  var ahi: u64 = a.m >> 1 as u64;
+  var alo: u64 = a.m << 63 as u64;
+  var bhi: u64 = 0 as u64;
+  var blo: u64 = 0 as u64;
+  var sticky: boolean = false;
+  if (d == 0) {
+    bhi = b.m >> 1 as u64;
+    blo = b.m << 63 as u64;
+  } else if (d == 63) {
+    // `b.m >> 64` is not a shift the hardware performs — x86 and arm64
+    // both take the count modulo the width — so the one alignment that
+    // needs it is spelled out.
+    bhi = 0 as u64;
+    blo = b.m;
+  } else if (d < 63) {
+    bhi = b.m >> (d + 1) as u64;
+    blo = b.m << (63 - d) as u64;
+  } else if (d <= 127) {
+    bhi = 0 as u64;
+    var s: i32 = d - 63;
+    blo = b.m >> s as u64;
+    if (s == 64) {
+      blo = 0 as u64;
+      sticky = true;
+    } else {
+      sticky = b.m << (64 - s) as u64 != 0 as u64;
+    }
+  } else {
+    sticky = true;
+  }
+  var e: i32 = a.e - 63;
+  if (a.neg == b.neg) {
+    var lo: u64 = alo + blo;
+    var hi: u64 = ahi + bhi;
+    if (lo < alo) {
+      hi = hi + 1 as u64;
+    }
+    return from_u128(hi, lo, e, sticky, a.neg);
+  }
+  var a_bigger: boolean = ahi > bhi || ahi == bhi && alo >= blo;
+  if (!a_bigger) {
+    var lo2: u64 = blo - alo;
+    var hi2: u64 = bhi - ahi;
+    if (blo < alo) {
+      hi2 = hi2 - 1 as u64;
+    }
+    return from_u128(hi2, lo2, e, false, b.neg);
+  }
+  var lo3: u64 = alo - blo;
+  var hi3: u64 = ahi - bhi;
+  if (alo < blo) {
+    hi3 = hi3 - 1 as u64;
+  }
+  if (sticky) {
+    if (lo3 == 0 as u64) {
+      hi3 = hi3 - 1 as u64;
+    }
+    lo3 = lo3 - 1 as u64;
+  }
+  if (hi3 == 0 as u64 && lo3 == 0 as u64) {
+    return zero(false);
+  }
+  return from_u128(hi3, lo3, e, sticky, a.neg);
+}
+
+// `cmp(a, b)` — -1, 0 or 1 for two non-NaN values; ±0 are equal.
+pub function cmp(a: LD, b: LD): i32 {
+  if (a.is_zero() && b.is_zero()) {
+    return 0;
+  }
+  var an: boolean = a.neg && !a.is_zero();
+  var bn: boolean = b.neg && !b.is_zero();
+  if (an != bn) {
+    if (an) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  var c: i32 = cmp_mag(a, b);
+  if (an) {
+    return 0 - c;
+  }
+  return c;
+}
+
+function cmp_mag(a: LD, b: LD): i32 {
+  if (a.kind == 1 || b.kind == 1) {
+    if (a.kind == b.kind) {
+      return 0;
+    }
+    if (a.kind == 1) {
+      return 1;
+    }
+    return 0 - 1;
+  }
+  if (a.m == 0 as u64 || b.m == 0 as u64) {
+    if (a.m == b.m) {
+      return 0;
+    }
+    if (a.m == 0 as u64) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  if (a.e != b.e) {
+    if (a.e > b.e) {
+      return 1;
+    }
+    return 0 - 1;
+  }
+  if (a.m == b.m) {
+    return 0;
+  }
+  if (a.m > b.m) {
+    return 1;
+  }
+  return 0 - 1;
+}
+
+// ---- strtold ------------------------------------------------------------------
+// `FloatParse` — what strtold reports: the value, ERANGE, and where
+// parsing stopped (0 when no number was found).
+pub struct FloatParse { v: LD, erange: boolean, end: i32 }
+
+function no_float(): FloatParse {
+  return FloatParse { v: zero(false), erange: false, end: 0 };
+}
+
+// Whether `s[i..]` starts with `word` case-insensitively.
+function has_word(s: string, i: i32, word: string): boolean {
+  if (i + word.len() > s.len()) {
+    return false;
+  }
+  var k: i32 = 0;
+  while (k < word.len()) {
+    if (lower(s[i + k] as i32) != word[k] as i32) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return true;
+}
+
+// A decimal exponent, saturating far beyond any magnitude that matters.
+function read_exponent(s: string, i: i32): (i32, i32) {
+  var j: i32 = i;
+  var neg: boolean = false;
+  if (j < s.len() && (s[j] as i32 == 43 || s[j] as i32 == 45)) {
+    neg = s[j] as i32 == 45;
+    j = j + 1;
+  }
+  if (j >= s.len() || !is_digit(s[j] as i32)) {
+    return (0, i);
+  }
+  var v: i32 = 0;
+  while (j < s.len() && is_digit(s[j] as i32)) {
+    if (v < 100000000) {
+      v = v * 10 + (s[j] as i32 - 48);
+    }
+    j = j + 1;
+  }
+  if (neg) {
+    v = 0 - v;
+  }
+  return (v, j);
+}
+
+// `strtold(s)` — glibc's c_strtold: white space, sign, then inf /
+// infinity / nan / nan(chars), a hex float, or a decimal one.
+pub function strtold(s: string): FloatParse {
+  var n: i32 = s.len();
+  var i: i32 = 0;
+  while (i < n && is_space(s[i] as i32)) {
+    i = i + 1;
+  }
+  var neg: boolean = false;
+  if (i < n && (s[i] as i32 == 45 || s[i] as i32 == 43)) {
+    neg = s[i] as i32 == 45;
+    i = i + 1;
+  }
+  if (has_word(s, i, "inf")) {
+    i = i + 3;
+    if (has_word(s, i, "inity")) {
+      i = i + 5;
+    }
+    return FloatParse { v: inf(neg), erange: false, end: i };
+  }
+  if (has_word(s, i, "nan")) {
+    i = i + 3;
+    if (i < n && s[i] as i32 == 40) {
+      var k: i32 = i + 1;
+      while (k < n && (is_digit(s[k] as i32) || is_alpha(s[k] as i32) || s[k] as i32 == 95)) {
+        k = k + 1;
+      }
+      if (k < n && s[k] as i32 == 41) {
+        i = k + 1;
+      }
+    }
+    return FloatParse { v: nan(neg), erange: false, end: i };
+  }
+  if (i + 1 < n && s[i] as i32 == 48 && lower(s[i + 1] as i32) == 120) {
+    var j: i32 = i + 2;
+    var hex_start: boolean = j < n && hex_digit(s[j] as i32) >= 0;
+    if (!hex_start && j + 1 < n && s[j] as i32 == 46 && hex_digit(s[j + 1] as i32) >= 0) {
+      hex_start = true;
+    }
+    if (hex_start) {
+      return hex_float(s, j, neg);
+    }
+  }
+  return decimal_float(s, i, neg);
+}
+
+function hex_float(s: string, start: i32, neg: boolean): FloatParse {
+  var n: i32 = s.len();
+  var i: i32 = start;
+  var q: bigint.BigInt = bigint.zero();
+  var sixteen: bigint.BigInt = bigint.from_i64(16 as i64);
+  var frac: i32 = 0;
+  var in_frac: boolean = false;
+  var any: boolean = false;
+  while (i < n) {
+    var b: i32 = s[i] as i32;
+    if (b == 46 && !in_frac) {
+      in_frac = true;
+      i = i + 1;
+      continue;
+    }
+    var d: i32 = hex_digit(b);
+    if (d < 0) {
+      break;
+    }
+    if (any || d != 0) {
+      q = q.mul(sixteen).add(bigint.from_i64(d as i64));
+      any = true;
+    }
+    if (in_frac) {
+      frac = frac + 1;
+    }
+    i = i + 1;
+  }
+  var exp: i32 = 0;
+  if (i < n && lower(s[i] as i32) == 112) {
+    var r: (i32, i32) = read_exponent(s, i + 1);
+    if (r.1 > i + 1) {
+      exp = r.0;
+      i = r.1;
+    }
+  }
+  if (q.is_zero()) {
+    return FloatParse { v: zero(neg), erange: false, end: i };
+  }
+  var lr: (LD, boolean) = to_ld(q, exp - 4 * frac, false, neg);
+  return FloatParse { v: lr.0, erange: lr.1, end: i };
+}
+
+function decimal_float(s: string, start: i32, neg: boolean): FloatParse {
+  var n: i32 = s.len();
+  var i: i32 = start;
+  var digits: u8[] = [];
+  var frac: i32 = 0;
+  var in_frac: boolean = false;
+  var seen: boolean = false;
+  var lead_zero: boolean = true;
+  while (i < n) {
+    var b: i32 = s[i] as i32;
+    if (b == 46 && !in_frac) {
+      if (i + 1 >= n || !is_digit(s[i + 1] as i32)) {
+        if (!seen) {
+          return no_float();
+        }
+        i = i + 1;
+        break;
+      }
+      in_frac = true;
+      i = i + 1;
+      continue;
+    }
+    if (!is_digit(b)) {
+      break;
+    }
+    seen = true;
+    if (lead_zero && b == 48) {
+      if (in_frac) {
+        frac = frac + 1;
+      }
+    } else {
+      lead_zero = false;
+      digits = digits.append(b as u8);
+      if (in_frac) {
+        frac = frac + 1;
+      }
+    }
+    i = i + 1;
+  }
+  if (!seen) {
+    return no_float();
+  }
+  var exp: i32 = 0;
+  if (i < n && lower(s[i] as i32) == 101) {
+    var r: (i32, i32) = read_exponent(s, i + 1);
+    if (r.1 > i + 1) {
+      exp = r.0;
+      i = r.1;
+    }
+  }
+  var last: i32 = digits.len();
+  while (last > 0 && digits[last - 1] as i32 == 48) {
+    last = last - 1;
+  }
+  var k: i32 = exp - frac + (digits.len() - last);
+  var ds: string = "";
+  if (last > 0) {
+    var kept: u8[] = [];
+    var j: i32 = 0;
+    while (j < last) {
+      kept = kept.append(digits[j]);
+      j = j + 1;
+    }
+    ds = string_from_bytes_unchecked(kept);
+  }
+  var lr: (LD, boolean) = decimal_to_ld(ds, k, neg);
+  return FloatParse { v: lr.0, erange: lr.1, end: i };
+}
+
+// ---- exact decimal digits ----------------------------------------------------
+// `Dec` — a finite non-zero value as 0.digits × 10^dp with the
+// leading digit non-zero; the digit string is the EXACT expansion of
+// the binary value.
+pub struct Dec { digits: string, dp: i32 }
+
+pub function dec(v: LD): Dec {
+  var m: u64 = v.m;
+  var e: i32 = v.e;
+  while ((m & 1 as u64) == 0 as u64) {
+    m = m >> 1 as u64;
+    e = e + 1;
+  }
+  if (e >= 0) {
+    var s: string = bigint.from_u64(m).shl(e).to_string();
+    return Dec { digits: s, dp: s.len() };
+  }
+  var t: string = bigint.from_u64(m).mul(pow5(0 - e)).to_string();
+  return Dec { digits: t, dp: t.len() + e };
+}
+
+// `round_digits(d, n)` — the first `n` digits of `d`, rounded half to
+// even on the exact tail and zero-padded when `d` is shorter. When the
+// rounding carries out of the top digit the result is one digit longer
+// (a 1 and n zeros) and the boolean says so.
+pub function round_digits(d: string, n: i32): (string, boolean) {
+  if (n <= 0) {
+    if (n < 0) {
+      return ("", false);
+    }
+    var first: i32 = d[0] as i32;
+    if (first > 53 || first == 53 && has_nonzero(d, 1)) {
+      return ("1", true);
+    }
+    return ("", false);
+  }
+  if (n >= d.len()) {
+    return (d + "0".repeat(n - d.len()), false);
+  }
+  var c: i32 = d[n] as i32;
+  var up: boolean = false;
+  if (c > 53) {
+    up = true;
+  } else if (c == 53) {
+    if (has_nonzero(d, n + 1)) {
+      up = true;
+    } else {
+      up = (d[n - 1] as i32 - 48) % 2 == 1;
+    }
+  }
+  var kept: u8[] = __alloc_u8(n);
+  var i: i32 = 0;
+  while (i < n) {
+    kept = kept.with(i, d[i]);
+    i = i + 1;
+  }
+  if (!up) {
+    return (string_from_bytes_unchecked(kept), false);
+  }
+  i = n - 1;
+  while (i >= 0) {
+    if (kept[i] as i32 == 57) {
+      kept = kept.with(i, 48 as u8);
+      i = i - 1;
+    } else {
+      kept = kept.with(i, (kept[i] as i32 + 1) as u8);
+      return (string_from_bytes_unchecked(kept), false);
+    }
+  }
+  return ("1" + string_from_bytes_unchecked(kept), true);
+}
+
+function has_nonzero(d: string, from: i32): boolean {
+  var i: i32 = from;
+  while (i < d.len()) {
+    if (d[i] as i32 != 48) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// ---- conversion specifications -------------------------------------------
+// `Spec` — one parsed `%` directive. `width` and `prec` are -1 when
+// absent; a negative width from `*` has already become the `-` flag.
+// `conv` is the conversion byte.
+pub struct Spec { minus: boolean, plus: boolean, space: boolean, hash: boolean, zero: boolean, width: i64, prec: i64, conv: i32 }
+
+pub function spec(conv: i32): Spec {
+  return Spec { minus: false, plus: false, space: false, hash: false, zero: false, width: none(), prec: none(), conv: conv };
+}
+
+pub function none(): i64 {
+  return 0 as i64 - 1 as i64;
+}
+
+// glibc refuses a conversion whose output would reach this many bytes.
+pub function overflow_len(): i64 {
+  return 2147483646 as i64;
+}
+
+// `pad(spec, prefix, body, zero_ok)` — one conversion's text: the
+// sign/radix prefix, zero padding between prefix and body when the `0`
+// flag applies, else space padding on the side `-` selects. None is
+// a field glibc could not produce.
+pub function pad(spec: Spec, prefix: string, body: string, zero_ok: boolean): Option[string] {
+  var len: i64 = (prefix.len() + body.len()) as i64;
+  var total: i64 = len;
+  if (spec.width > total) {
+    total = spec.width;
+  }
+  if (total >= overflow_len()) {
+    return None;
+  }
+  var fill: i32 = (total - len) as i32;
+  if (fill <= 0) {
+    return Some(prefix + body);
+  }
+  if (spec.minus) {
+    return Some(prefix + body + " ".repeat(fill));
+  }
+  if (spec.zero && zero_ok) {
+    return Some(prefix + "0".repeat(fill) + body);
+  }
+  return Some(" ".repeat(fill) + prefix + body);
+}
+
+pub function sign_prefix(spec: Spec, neg: boolean): string {
+  if (neg) {
+    return "-";
+  }
+  if (spec.plus) {
+    return "+";
+  }
+  if (spec.space) {
+    return " ";
+  }
+  return "";
+}
+
+// `format(spec, v)` — %f %F %e %E %g %G %a %A of `v`, or None when
+// glibc would refuse the conversion.
+pub function format(spec: Spec, v: LD): Option[string] {
+  var conv: i32 = spec.conv;
+  var upper: boolean = conv == 70 || conv == 69 || conv == 71 || conv == 65;
+  var prefix: string = sign_prefix(spec, v.neg);
+  if (v.kind != 0) {
+    var word: string = "inf";
+    if (v.kind == 2) {
+      word = "nan";
+    }
+    if (upper) {
+      word = word.to_upper();
+    }
+    return pad(spec, prefix, word, false);
+  }
+  var lc: i32 = lower(conv);
+  var prec: i64 = spec.prec;
+  if (prec < 0 as i64) {
+    prec = 6 as i64;
+  }
+  if (lc == 97) {
+    return fmt_hex_float(spec, v, prefix, prec, upper);
+  }
+  if (v.m == 0 as u64) {
+    if (prec + 7 as i64 + prefix.len() as i64 >= overflow_len() && lc != 103) {
+      return None;
+    }
+    if (lc == 102) {
+      return fmt_fixed(spec, prefix, "", 0 - prec as i32, prec);
+    }
+    if (lc == 101) {
+      return fmt_exp(spec, prefix, "0".repeat(prec as i32 + 1), 0, prec, upper);
+    }
+    if (prec == 0 as i64) {
+      prec = 1 as i64;
+    }
+    return fmt_general(spec, prefix, "0".repeat(prec as i32), 0, prec, upper, false);
+  }
+  var d: Dec = dec(v);
+  if (lc == 102) {
+    var n: i64 = d.dp as i64 + prec;
+    if (n + 2 as i64 + prefix.len() as i64 >= overflow_len()) {
+      return None;
+    }
+    var rf: (string, boolean) = round_digits(d.digits, n as i32);
+    var dp: i32 = d.dp;
+    if (rf.1) {
+      dp = dp + 1;
+    }
+    if (n < 0 as i64) {
+      dp = 0 - prec as i32;
+    }
+    return fmt_fixed(spec, prefix, rf.0, dp, prec);
+  }
+  if (lc == 101) {
+    if (prec + 2 as i64 + prefix.len() as i64 + exp_suffix(d.dp - 1, false).len() as i64 >= overflow_len()) {
+      return None;
+    }
+    var re: (string, boolean) = round_digits(d.digits, prec as i32 + 1);
+    var xe: i32 = d.dp - 1;
+    var de: string = re.0;
+    if (re.1) {
+      xe = xe + 1;
+      de = slice_unchecked(de, 0, prec as i32 + 1) + "";
+    }
+    return fmt_exp(spec, prefix, de, xe, prec, upper);
+  }
+  if (prec == 0 as i64) {
+    prec = 1 as i64;
+  }
+  var sig: i32 = d.digits.len();
+  if (prec < sig as i64) {
+    sig = prec as i32;
+  }
+  var r: (string, boolean) = round_digits(d.digits, sig);
+  var x: i32 = d.dp - 1;
+  var digits: string = r.0;
+  if (r.1) {
+    x = x + 1;
+    digits = slice_unchecked(digits, 0, sig) + "";
+  }
+  return fmt_general(spec, prefix, digits, x, prec, upper, r.1);
+}
+
+// The %f shape: `digits` holds the rounded digits with the decimal
+// point `dp` digits in (dp ≤ 0 puts leading zeros after the point);
+// exactly `prec` digits follow the point.
+function fmt_fixed(spec: Spec, prefix: string, digits: string, dp: i32, prec: i64): Option[string] {
+  var body: string = "";
+  if (dp >= 1) {
+    body = slice_unchecked(digits, 0, dp) + "";
+    if (prec > 0 as i64 || spec.hash) {
+      body = body + ".";
+    }
+    body = body + slice_unchecked(digits, dp, digits.len());
+  } else {
+    body = "0";
+    if (prec > 0 as i64 || spec.hash) {
+      body = body + ".";
+    }
+    body = body + "0".repeat(0 - dp) + digits;
+  }
+  return pad(spec, prefix, body, true);
+}
+
+function exp_suffix(x: i32, upper: boolean): string {
+  var out: string = "e";
+  if (upper) {
+    out = "E";
+  }
+  var ax: i32 = x;
+  if (x < 0) {
+    out = out + "-";
+    ax = 0 - x;
+  } else {
+    out = out + "+";
+  }
+  var ds: string = (ax as i64).to_string();
+  if (ds.len() < 2) {
+    ds = "0" + ds;
+  }
+  return out + ds;
+}
+
+// The %e shape from `prec + 1` significant digits and exponent `x`.
+function fmt_exp(spec: Spec, prefix: string, digits: string, x: i32, prec: i64, upper: boolean): Option[string] {
+  var body: string = slice_unchecked(digits, 0, 1) + "";
+  if (prec > 0 as i64 || spec.hash) {
+    body = body + ".";
+  }
+  body = body + slice_unchecked(digits, 1, digits.len()) + exp_suffix(x, upper);
+  return pad(spec, prefix, body, true);
+}
+
+// The %g shape: `digits` are the value's leading significant digits
+// (at most `prec`, fewer only when the exact expansion ends sooner) and
+// `x` the exponent of the first. Style %e when x < -4 or x ≥ prec,
+// else %f; trailing zeros go unless `#` asks for them. glibc chooses
+// the style BEFORE rounding, so when `carried` lifted a fixed-style
+// value to exactly 10^prec the exponent style inherits the fixed
+// style's zero fraction digits: `%#.3g` of 999.5 is `1.e+03`.
+function fmt_general(spec: Spec, prefix: string, digits: string, x: i32, prec: i64, upper: boolean, carried: boolean): Option[string] {
+  var pr: i32 = prec as i32;
+  if (x < 0 - 4 || x as i64 >= prec) {
+    var mant: string = slice_unchecked(digits, 0, 1) + "";
+    var frac: string = slice_unchecked(digits, 1, digits.len()) + "";
+    if (carried && x as i64 == prec) {
+      frac = "";
+    } else if (spec.hash) {
+      if (prec - 1 as i64 >= overflow_len()) {
+        return None;
+      }
+      frac = frac + "0".repeat(pr - digits.len());
+    } else {
+      frac = strip_zeros(frac);
+    }
+    if (frac.len() > 0 || spec.hash) {
+      mant = mant + "." + frac;
+    }
+    return pad(spec, prefix, mant + exp_suffix(x, upper), true);
+  }
+  var dp: i32 = x + 1;
+  var ip: string = "0";
+  var frac: string = "";
+  if (dp >= 1) {
+    if (dp > digits.len()) {
+      ip = digits + "0".repeat(dp - digits.len());
+    } else {
+      ip = slice_unchecked(digits, 0, dp) + "";
+      frac = slice_unchecked(digits, dp, digits.len()) + "";
+    }
+  } else {
+    frac = "0".repeat(0 - dp) + digits;
+  }
+  if (spec.hash) {
+    var want: i32 = pr - 1 - x;
+    if (want as i64 >= overflow_len()) {
+      return None;
+    }
+    if (frac.len() < want) {
+      frac = frac + "0".repeat(want - frac.len());
+    }
+  } else {
+    frac = strip_zeros(frac);
+  }
+  var body: string = ip;
+  if (frac.len() > 0 || spec.hash) {
+    body = body + "." + frac;
+  }
+  return pad(spec, prefix, body, true);
+}
+
+function strip_zeros(s: string): string {
+  var n: i32 = s.len();
+  while (n > 0 && s[n - 1] as i32 == 48) {
+    n = n - 1;
+  }
+  return slice_unchecked(s, 0, n) + "";
+}
+
+// %a: the significand as one hex digit (the top four bits, so 1 is
+// `0x8p-3`) and up to fifteen more, trailing zeros dropped unless a
+// precision asks for them; rounding is half to even in hex, and a
+// carry out of the top digit renormalises to `0x1…` four binades up.
+function fmt_hex_float(spec: Spec, v: LD, prefix: string, prec: i64, upper: boolean): Option[string] {
+  var radix: string = "0x";
+  if (upper) {
+    radix = "0X";
+  }
+  var lead: i32 = 0;
+  var frac: u8[] = __alloc_u8(15);
+  var pe: i32 = 0;
+  if (v.m != 0 as u64) {
+    lead = (v.m >> 60 as u64) as i32;
+    var i: i32 = 0;
+    while (i < 15) {
+      frac = frac.with(i, hex_char((v.m >> (56 - 4 * i) as u64 & 15 as u64) as i32, upper) as u8);
+      i = i + 1;
+    }
+    pe = v.e + 60;
+  } else {
+    var z: i32 = 0;
+    while (z < 15) {
+      frac = frac.with(z, 48 as u8);
+      z = z + 1;
+    }
+  }
+  var keep: i32 = 15;
+  if (spec.prec >= 0 as i64 && spec.prec < 15 as i64) {
+    keep = spec.prec as i32;
+    var rd: i32 = hex_digit(frac[keep] as i32);
+    var rest: boolean = false;
+    var k: i32 = keep + 1;
+    while (k < 15) {
+      if (frac[k] as i32 != 48) {
+        rest = true;
+      }
+      k = k + 1;
+    }
+    var last_odd: boolean = lead % 2 == 1;
+    if (keep > 0) {
+      last_odd = hex_digit(frac[keep - 1] as i32) % 2 == 1;
+    }
+    if (rd > 8 || rd == 8 && (rest || last_odd)) {
+      var j: i32 = keep - 1;
+      var carry: boolean = true;
+      while (j >= 0 && carry) {
+        var dv: i32 = hex_digit(frac[j] as i32) + 1;
+        if (dv == 16) {
+          frac = frac.with(j, 48 as u8);
+        } else {
+          frac = frac.with(j, hex_char(dv, upper) as u8);
+          carry = false;
+        }
+        j = j - 1;
+      }
+      if (carry) {
+        lead = lead + 1;
+        if (lead == 16) {
+          lead = 1;
+          pe = pe + 4;
+        }
+      }
+    }
+  } else if (spec.prec < 0 as i64) {
+    while (keep > 0 && frac[keep - 1] as i32 == 48) {
+      keep = keep - 1;
+    }
+  }
+  var digits: string = slice_unchecked(string_from_bytes_unchecked(frac), 0, keep) + "";
+  if (spec.prec > 15 as i64) {
+    if (spec.prec + 10 as i64 + prefix.len() as i64 >= overflow_len()) {
+      return None;
+    }
+    digits = digits + "0".repeat(spec.prec as i32 - 15);
+  }
+  var body: string = byte_str(hex_char(lead, upper));
+  if (digits.len() > 0 || spec.hash) {
+    body = body + "." + digits;
+  }
+  var ps: string = "p";
+  if (upper) {
+    ps = "P";
+  }
+  if (pe < 0) {
+    ps = ps + "-" + ((0 - pe) as i64).to_string();
+  } else {
+    ps = ps + "+" + (pe as i64).to_string();
+  }
+  return pad(spec, prefix + radix, body + ps, true);
+}
