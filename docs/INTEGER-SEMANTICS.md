@@ -154,10 +154,16 @@ otherwise stays in a 32-bit lane.
 ### Known limitations
 
 `+|` / `-|` / `*|` / `<<|` are not allowed inside a `const` initializer. Const
-folding runs *before* the checker, so no operand width — and therefore
-no clamp bound — is known at that point; the compiler reports
-``operator `+|` not allowed in integer constant expressions`` rather
-than guessing one.
+folding runs *before* the checker, so the only width available is the one the
+declaration writes down — an UNDECLARED const's literal stays polymorphic and
+settles at its use site — and a clamp bound cannot be guessed. The compiler
+reports ``operator `+|` not allowed in integer constant expressions``.
+
+A declared const's width IS available, and the wrapping operators fold at it:
+`const W: i32 = (2147483647 + 1) / 2` is −1073741824, the same value the
+expression produces as code, and a shift count masks to the declared width
+(`& 31` for i32) rather than to 63. An undeclared const still folds in int64,
+so it can disagree with the same expression written at a narrower width.
 
 ## Checked arithmetic (opt-in)
 
