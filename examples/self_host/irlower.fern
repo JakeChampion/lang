@@ -603,10 +603,13 @@ pub struct FnSigs {
     // (native retains at the return instead — paramCountedRetain's channel).
     handback_params: string[],
     // str_handback_ret: "<callee>|<idx>" for a STRING parameter whose OWN box a
-    // return may hand back as the result — returned bare, or through a string
-    // identity method (RECVRET:string.<m>, whose no-op fast path returns its
-    // receiver: `replace` when the needle is absent), recursively through the
-    // receiver and transitively through a callee that hands its argument back.
+    // return may hand back as the result THROUGH A CALL — a string identity
+    // method (str_recv_handback_of, whose no-op fast path returns its receiver:
+    // `replace` when the needle is absent), recursively through the receiver, or
+    // transitively through a callee that hands its argument back. A bare `return
+    // s` is deliberately excluded: it makes the param non-borrowable, so its
+    // fresh argument is never stashed and there is no guarded release to
+    // complete (see expr_may_be_str_param's allow_bare).
     // A fresh string temp passed at such a position aliases the call's result on
     // the identity path, so free_stashed_str_args must guard its post-call
     // release on the result differing rather than free unconditionally (#8409).
@@ -64391,24 +64394,32 @@ pub function str_recv_handback_of(funcs: parser.FuncDecl[]): string[] {
 }
 
 // expr_may_be_str_param: `e`, evaluated where `pname` is a string parameter,
-// may yield the parameter's OWN box — it is the bare param, a receiver-handback
-// string method called on such an expression (`recvhb`), or a call to a
-// function that hands its argument back at a position holding such an
-// expression (`hb`, str_handback_ret_of's own accumulator).
-function expr_may_be_str_param(e: ast.Expr, pname: string, recvhb: string[], hb: string[]): boolean {
+// may yield the parameter's OWN box — the bare param, a receiver-handback string
+// method called on such an expression (`recvhb`), or a call to a function that
+// hands its argument back at a position holding such an expression (`hb`,
+// str_handback_ret_of's own accumulator).
+//
+// `allow_bare` is false only at the TOP level (str_handback_ret_of's return), so
+// a bare `return s` does NOT register the param as a call-handback: a bare
+// return makes the param non-borrowable, so its fresh argument is never stashed
+// and there is no guarded release to complete — that shape keeps its
+// pre-existing unconditional free / sound leak, unchanged. Recursion re-enables
+// bare matching, which is the base case a method receiver (`s.replace(...)`) or
+// a transitive argument (`wrap(s)`) traces back to.
+function expr_may_be_str_param(e: ast.Expr, pname: string, recvhb: string[], hb: string[], allow_bare: boolean): boolean {
     match (e) {
-        ast.ExprIdent(id) => { return id.name == pname; },
+        ast.ExprIdent(id) => { return allow_bare && id.name == pname; },
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprFieldAccess(fa) => {
                     return util.index_of_str(recvhb, "string." + fa.field) >= 0
-                        && expr_may_be_str_param(fa.obj, pname, recvhb, hb);
+                        && expr_may_be_str_param(fa.obj, pname, recvhb, hb, true);
                 },
                 ast.ExprIdent(cid) => {
                     var j: i32 = 0;
                     while (j < c.args.len()) {
                         if (util.index_of_str(hb, cid.name + "|" + util.i32_to_string(j)) >= 0
-                            && expr_may_be_str_param(c.args[j], pname, recvhb, hb)) { return true; }
+                            && expr_may_be_str_param(c.args[j], pname, recvhb, hb, true)) { return true; }
                         j = j + 1;
                     }
                     return false;
@@ -64439,7 +64450,7 @@ pub function str_handback_ret_of(funcs: parser.FuncDecl[]): string[] {
                 if (fn.params[pi].type_name == "string" && util.index_of_str(out, ent) < 0) {
                     var hit: boolean = false;
                     for r in rets {
-                        if (expr_may_be_str_param(r, fn.params[pi].name, recvhb, out)) { hit = true; }
+                        if (expr_may_be_str_param(r, fn.params[pi].name, recvhb, out, false)) { hit = true; }
                     }
                     if (hit) { out = out.append(ent); changed = true; }
                 }
