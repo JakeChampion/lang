@@ -9572,6 +9572,22 @@ func unifyReturnType(a, b ast.Type) (ast.Type, bool) {
 	if ast.Equal(a, b) {
 		return a, true
 	}
+	// `never` is the bottom type, and ast.NeverType's own contract is that it
+	// "unifies with any type": a return whose expression cannot yield a value
+	// leaves before returning one, so it constrains the result not at all.
+	// Assignability and if / match arm unification already read it that way;
+	// this site did not, and the gap showed up on block-bodied arrow lambdas.
+	// `(x) => { return e; }` desugars to `return <block that always returns>`,
+	// so inference saw e's type from the inner return and the block's own
+	// `never` from the outer one and called them a conflict — E002 on code
+	// that is plainly fine, and the reason the form needed an explicit return
+	// type while `function (x) { return e; }` did not (#2673).
+	if _, ok := a.(ast.NeverType); ok {
+		return b, true
+	}
+	if _, ok := b.(ast.NeverType); ok {
+		return a, true
+	}
 	ea, aok := a.(ast.EnumType)
 	eb, bok := b.(ast.EnumType)
 	if aok && bok && ea.Name == eb.Name {
