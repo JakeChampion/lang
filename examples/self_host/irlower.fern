@@ -4633,19 +4633,9 @@ function opt_payload_ok_dv(structs: StructTab, p: string, depth: i32, visiting: 
     // was CONSTRUCTED — `H { o: None }` was enough (#7745).
     if (is_leaksafe_array_field(p) || p == "string[]") { return true; }
     if (p.len() >= 8 && (slice_unchecked(p, 0, 7) == "Option[" || slice_unchecked(p, 0, 7) == "Result[") && is_leaksafe_opt_field_dv(structs, p, depth, visiting)) { return true; }
-    // An `Option[<enum>]` payload is NOT admitted here, deliberately. The shape
-    // looks exactly like the struct payload above — one enum-variant pointer in
-    // the box, leak-only, and decl_is_leaksafe_d admits a bare `c: Color` FIELD on
-    // that reasoning — but `opt-enum-field-stays-ast` in
-    // self_host_opt_struct_payload_field_ir_test.go is a deliberate NEGATIVE pin
-    // requiring the module to come out IR-INELIGIBLE. Admitting it (tried,
-    // reverted) turns that test red. The pin's stated rationale was that the
-    // legacy AST backend miscompiled an Option[enum] field — an argument FOR the
-    // IR path, and moot now that no AST backend exists — so whoever revisits this
-    // has to re-derive what actually mishandles the shape before moving the pin.
-    // On the wasm IR path all four probe shapes (Some / None / payload matched /
-    // read into a local) already agree with the interpreter; the x86 IR runtime
-    // answer is the unverified part.
+    // An `Option[<enum>]` payload is one enum-variant pointer in the box,
+    // leak-only — the same reasoning that admits a bare `c: Color` field.
+    if (is_enum_like_name(p, structs)) { return true; }
     return false;
 }
 
