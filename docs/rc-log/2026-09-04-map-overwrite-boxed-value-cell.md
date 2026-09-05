@@ -96,6 +96,22 @@ recognise and claim it.
 `TestX86_64MapStringColumnReclaim` and its arm64 / wasm siblings carry
 `mapAliasedOverwriteSrc`, which fails on main today (x86-64, killed by a signal).
 
+**The probe is single-entry, and that is the boundary of what the gate buys.**
+The gate stops the PRE-DROP releasing a value another handle names; it says
+nothing about DROP time, where a copy's value column is still shared. Add a
+second, untouched entry and both copies' drop walks free that entry's cell and
+buffer twice — 200 rounds, both handles read back:
+
+| | wasm32 | arm64 | x86-64 |
+|---|---|---|---|
+| main | 134 | 139 | 139 |
+| with the gate | 134 | 139 | 97, 16000 leaked |
+
+Pre-existing on every backend, and the gate moves only the x86-64 leg — from a
+crash to a wrong answer, which is the same corruption reported differently. It
+is #6242's residual by construction: `__map_own_copied_cols` cannot claim the
+column it would have to claim, so no pre-drop gate can reach it.
+
 ## Why freeing the cell before the set is sound
 
 `__map_dec_value` is the set's own overwrite-dec and is a no-op for valKind 1

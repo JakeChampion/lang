@@ -116,6 +116,15 @@ function main(): i32 {
 // handle is shared, so the replaced value is reclaimed at map drop on the
 // two-word ABIs and leaks on the native single-word one — a residual of #6242,
 // not of this guard.
+//
+// ONE ENTRY, and that is the boundary of what this pins. The gate stops the
+// pre-drop releasing a value another handle names; it says nothing about DROP
+// time, where a copy's value column is still shared (#6242 claims neither a
+// string nor a struct value). Add a second, untouched entry and both copies'
+// drop walks free that entry's cell and buffer twice — measured over 200
+// rounds, main crashes on every backend (wasm 134, arm64 139, x86-64 139) and
+// this gate moves only the x86-64 leg, from a crash to a wrong answer. That is
+// #6242's to close, and a test asserting it here could only be a red one.
 const mapAliasedOverwriteSrc = `import "core/map";
 function mk(): i32 {
     var stem: string = "a";
