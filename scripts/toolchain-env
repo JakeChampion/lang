@@ -5,14 +5,15 @@
 #   eval "$(scripts/toolchain-env)"    # PATH, GOROOT, GOBIN, FERN_WASI_ADAPTER
 #
 # The one bootstrap shared by every host that is not a GitHub runner (those
-# use jdx/mise-action): the Netlify build, scripts/devbox's image, and the
-# Claude session hook. mise itself is installed when absent, at the release
+# use jdx/mise-action) and not the Netlify deploy sandbox (which cannot
+# bootstrap mise, so netlify.toml provisions Go/Node and the smoke lane reads
+# the wasm pins from mise.toml directly): scripts/devbox's image and the Claude
+# session hook. mise itself is installed when absent, at the release
 # mise.toml's min_version names, so a stale mise cannot misread the file.
 #
-# FERN_MISE_HOME relocates the mise binary and its installs together; the
-# Netlify build points it at the persisted build cache so a deploy downloads
-# once. Unset, everything lands in mise's defaults (~/.local/bin,
-# ~/.local/share/mise), where a laptop's own `mise activate` finds it too.
+# FERN_MISE_HOME relocates the mise binary and its installs together. Unset,
+# everything lands in mise's defaults (~/.local/bin, ~/.local/share/mise),
+# where a laptop's own `mise activate` finds it too.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

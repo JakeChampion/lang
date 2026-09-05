@@ -33,7 +33,7 @@ fi
 
 # --- the pinned toolchain: Go, wasmtime, wasm-tools, the WASI adapter ---
 # All from mise.toml + mise.lock, the one place a version lives, through the
-# same bootstrap the Netlify build and scripts/devbox use. The wasm toolchain
+# same bootstrap scripts/devbox uses. The wasm toolchain
 # IS provisioned locally as well as remotely: wasm executes host-independently,
 # so a Mac runs those legs as faithfully as a runner does, and without the
 # pinned pair every wasm test SKIPs into a false `ok`.

@@ -31,16 +31,10 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
 stage=site/public/playground
 
-# Go comes from mise.toml, like everywhere else; only Node is Netlify's own
-# (netlify.toml pins it). FERN_MISE_HOME lands mise and its installs in the
-# build cache Netlify persists between deploys, so the download happens once.
-if [ "${NETLIFY:-}" = "true" ]; then
-  export FERN_MISE_HOME="${NETLIFY_BUILD_BASE:-/opt/build}/cache/mise"
-fi
-eval "$(scripts/toolchain-env)"
-
-# Echoed so a toolchain mismatch is one glance into the deploy log rather
-# than a puzzling compile error further down.
+# Go and Node are provisioned by the Netlify build image itself (GO_VERSION /
+# NODE_VERSION in netlify.toml), before this command runs — mise is not
+# bootstrapped in the deploy sandbox. Echoed so a toolchain mismatch is one
+# glance into the deploy log rather than a puzzling compile error further down.
 echo "==> $(go version)"
 echo "==> node $(node --version)"
 

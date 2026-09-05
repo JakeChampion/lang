@@ -213,17 +213,46 @@ assert_ok_packages() {
 # ---------------------------------------------------------------------------
 # The wasm toolchain.
 #
-# Installed by mise from mise.toml through scripts/toolchain-env, the same
-# bootstrap scripts/netlify-build runs; a third hand-copied pin is a third pin
-# that can fall behind, and a mismatched wasmtime fails as an opaque `invalid
-# leading byte (0x43)`. On Netlify the installs live in the persisted build
-# cache (FERN_MISE_HOME) so a deploy downloads once.
+# mise is not bootstrapped in the deploy sandbox (see scripts/netlify-build),
+# so the smoke lane downloads wasmtime + wasm-tools directly, reading their
+# pinned versions from mise.toml — the one place a version lives. A hand-copied
+# pin here is what buys an opaque `invalid leading byte (0x43)` when it falls
+# behind; a sed of the single source does not.
+mise_ver() {
+  sed -n "s/^$1 = \"\([^\"]*\)\"/\1/p" "$repo/mise.toml" | head -1
+}
 install_wasm_toolchain() {
-  if [ "${NETLIFY:-}" = "true" ]; then
-    export FERN_MISE_HOME="${FERN_MISE_HOME:-${NETLIFY_BUILD_BASE:-/opt/build}/cache/mise}"
+  local arch dir base wasmtime_ver wasmtools_ver
+  case "$(uname -m)" in
+    x86_64) arch=x86_64-linux ;;
+    aarch64) arch=aarch64-linux ;;
+    *)
+      echo "smoke: no wasm toolchain build for $(uname -m)" >&2
+      return 1
+      ;;
+  esac
+  wasmtime_ver=$(mise_ver wasmtime)
+  wasmtools_ver=$(mise_ver wasm-tools)
+  [ -n "$wasmtime_ver" ] && [ -n "$wasmtools_ver" ] || {
+    echo "smoke: could not read wasm pins from mise.toml" >&2; return 1; }
+  dir="$cache/wasm-$wasmtime_ver-$wasmtools_ver-$arch"
+  export PATH="$dir:$PATH"
+  export FERN_WASI_ADAPTER="$dir/wasi_snapshot_preview1.command.wasm"
+
+  if [ -x "$dir/wasmtime" ] && [ -x "$dir/wasm-tools" ] && [ -f "$FERN_WASI_ADAPTER" ]; then
+    echo "==> smoke: wasm toolchain cached ($("$dir/wasmtime" --version | head -1))"
+    return 0
   fi
-  eval "$("$repo/scripts/toolchain-env")" || return 1
-  [ -f "$FERN_WASI_ADAPTER" ] || return 1
+
+  echo "==> smoke: installing wasmtime v$wasmtime_ver + wasm-tools $wasmtools_ver"
+  mkdir -p "$dir"
+  base=https://github.com/bytecodealliance
+  curl -sSfL "$base/wasmtime/releases/download/v$wasmtime_ver/wasmtime-v$wasmtime_ver-$arch.tar.xz" |
+    tar -xJ -C "$dir" --strip-components=1 --wildcards '*/wasmtime' || return 1
+  curl -sSfL -o "$FERN_WASI_ADAPTER" \
+    "$base/wasmtime/releases/download/v$wasmtime_ver/wasi_snapshot_preview1.command.wasm" || return 1
+  curl -sSfL "$base/wasm-tools/releases/download/v$wasmtools_ver/wasm-tools-$wasmtools_ver-$arch.tar.gz" |
+    tar -xz -C "$dir" --strip-components=1 --wildcards '*/wasm-tools' || return 1
   wasmtime --version && wasm-tools --version
 }
 

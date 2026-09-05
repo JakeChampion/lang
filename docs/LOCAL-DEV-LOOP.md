@@ -27,10 +27,12 @@ make hooks                        # route git hooks through .githooks/
 the repo; `FERN_WASI_ADAPTER` still needs the `toolchain-env` line (the adapter
 is a data file, not a program on PATH). To bump a version: edit `mise.toml`,
 run `mise lock`, commit both files. CI installs from the same pair through
-`jdx/mise-action`, the Netlify build and `scripts/devbox` through
-`scripts/toolchain-env`, so a version exists in exactly one place. qemu and the
-cross gcc are not mise tools: apt (the session hook, on Linux) or
-`scripts/devbox` (on a Mac) supply them.
+`jdx/mise-action` and `scripts/devbox` through `scripts/toolchain-env`, so a
+version exists in exactly one place. The Netlify deploy sandbox cannot
+bootstrap mise, so it provisions Go/Node through netlify.toml and the smoke
+lane reads the wasm pins from mise.toml directly. qemu and the cross gcc are
+not mise tools: apt (the session hook, on Linux) or `scripts/devbox` (on a
+Mac) supply them.
 
 ## Git hooks: `.githooks/pre-push`
 
