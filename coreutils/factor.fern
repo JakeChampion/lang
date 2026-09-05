@@ -39,9 +39,56 @@ import "std/io_buffered";
 import "core/bigint";
 import "./lib/gnu";
 
-// The primes trial division sweeps before Pollard rho is worth starting.
+// The bound trial division sweeps to before Pollard rho is worth
+// starting.
 function trial_limit(): u64 {
   return 1000 as u64;
+}
+
+// One small prime, with what turns dividing by it into multiplying:
+// `inv` is p^-1 mod 2^64 and `lim` is (2^64-1)/p, so `n * inv <= lim`
+// holds exactly when p divides n, and that product IS the quotient.
+// Trial division by 168 primes then costs a multiply each rather than a
+// divide, which is most of what factoring a prime near 200000 spends.
+struct SmallPrime { p: u64, inv: u64, lim: u64 }
+
+// The odd primes below `trial_limit()`, sieved once per run. Two is left
+// out: it is divided off by shifting.
+function small_primes(): SmallPrime[] {
+  var limit: i32 = trial_limit() as i32;
+  var composite: u8[] = __alloc_u8(limit + 1);
+  var i: i32 = 0;
+  while (i <= limit) {
+    composite = composite.with(i, 0 as u8);
+    i = i + 1;
+  }
+  var out: SmallPrime[] = [];
+  var n: i32 = 3;
+  while (n <= limit) {
+    if (composite[n] as i32 == 0) {
+      var p: u64 = n as u64;
+      out = out.append(SmallPrime { p: p, inv: inverse_mod_2_64(p), lim: (0 as u64 - 1 as u64) / p });
+      var m: i32 = n * n;
+      while (m <= limit) {
+        composite = composite.with(m, 1 as u8);
+        m = m + n;
+      }
+    }
+    n = n + 2;
+  }
+  return out;
+}
+
+// p^-1 mod 2^64 for odd p, by Newton's iteration: each step doubles the
+// bits that are right, and the seed is right to three.
+function inverse_mod_2_64(p: u64): u64 {
+  var inv: u64 = p;
+  var i: i32 = 0;
+  while (i < 5) {
+    inv = inv * (2 as u64 - p * inv);
+    i = i + 1;
+  }
+  return inv;
 }
 
 function help_text(): string {
@@ -85,13 +132,7 @@ struct Mont { n: u64, n_prime: u64, r1: u64, r2: u64 }
 // Newton's iteration (each step doubles the correct bits, so five reach
 // 64), then 2^64 and 2^128 reduced.
 function mont_new(n: u64): Mont {
-  var inv: u64 = n;
-  var i: i32 = 0;
-  while (i < 5) {
-    inv = inv * (2 as u64 - n * inv);
-    i = i + 1;
-  }
-  var n_prime: u64 = 0 as u64 - inv;
+  var n_prime: u64 = 0 as u64 - inverse_mod_2_64(n);
   var r1: u64 = 0 as u64 - n;
   if (n == 1 as u64) {
     r1 = 0 as u64;
@@ -319,7 +360,7 @@ function factors_new(): Factors {
   return Factors { primes: p, big: b };
 }
 
-function factor_u64(f: Factors, n0: u64): Factors {
+function factor_u64(f: Factors, n0: u64, primes: SmallPrime[]): Factors {
   var out: Factors = f;
   var n: u64 = n0;
   if (n <= 1 as u64) {
@@ -329,13 +370,19 @@ function factor_u64(f: Factors, n0: u64): Factors {
     out = Factors { ...out, primes: out.primes.append(2 as u64) };
     n = n >> 1 as u64;
   }
-  var d: u64 = 3 as u64;
-  while (d <= trial_limit() && d * d <= n) {
-    while (n % d == 0 as u64) {
-      out = Factors { ...out, primes: out.primes.append(d) };
-      n = n / d;
+  var i: i32 = 0;
+  while (i < primes.len()) {
+    var d: u64 = primes[i].p;
+    if (d * d > n) {
+      break;
     }
-    d = d + 2 as u64;
+    var q: u64 = n * primes[i].inv;
+    while (q <= primes[i].lim) {
+      out = Factors { ...out, primes: out.primes.append(d) };
+      n = q;
+      q = n * primes[i].inv;
+    }
+    i = i + 1;
   }
   if (n == 1 as u64) {
     return out;
@@ -479,27 +526,26 @@ function rho_try_big(n: bigint.BigInt, c: bigint.BigInt): bigint.BigInt {
   return g;
 }
 
-function factor_big(f: Factors, n0: bigint.BigInt): Factors {
+function factor_big(f: Factors, n0: bigint.BigInt, primes: SmallPrime[]): Factors {
   var out: Factors = f;
   var n: bigint.BigInt = n0;
-  var two: bigint.BigInt = bigint.from_i64(2 as i64);
   while (!n.bit(0)) {
     out = Factors { ...out, primes: out.primes.append(2 as u64) };
     n = n.shr(1);
   }
-  var d: u64 = 3 as u64;
-  while (d <= trial_limit()) {
-    var bd: bigint.BigInt = bigint.from_u64(d);
+  var i: i32 = 0;
+  while (i < primes.len()) {
+    var bd: bigint.BigInt = bigint.from_u64(primes[i].p);
     while (bi_mod(n, bd).is_zero()) {
-      out = Factors { ...out, primes: out.primes.append(d) };
+      out = Factors { ...out, primes: out.primes.append(primes[i].p) };
       n = n.divmod(bd).0;
     }
-    d = d + 2 as u64;
+    i = i + 1;
   }
-  return split_big(out, n);
+  return split_big(out, n, primes);
 }
 
-function split_big(f: Factors, n: bigint.BigInt): Factors {
+function split_big(f: Factors, n: bigint.BigInt, primes: SmallPrime[]): Factors {
   var one: bigint.BigInt = bigint.from_i64(1 as i64);
   if (n.cmp(one) <= 0) {
     return f;
@@ -514,8 +560,8 @@ function split_big(f: Factors, n: bigint.BigInt): Factors {
     return Factors { ...f, big: f.big.append(n) };
   }
   var d: bigint.BigInt = rho_big(n);
-  var out: Factors = split_big(f, d);
-  return split_big(out, n.divmod(d).0);
+  var out: Factors = split_big(f, d, primes);
+  return split_big(out, n.divmod(d).0, primes);
 }
 
 // The value when 64 bits hold it.
@@ -680,7 +726,7 @@ function parse_number(s: string): Option[Number] {
 // `State` — the buffered stdout and whether any number was rejected.
 struct State { o: io_buffered.BufWriter, status: i32, failed: boolean }
 
-function handle(st: State, token: string, exponents: boolean): State {
+function handle(st: State, token: string, exponents: boolean, primes: SmallPrime[]): State {
   var s: string = cut_at_nul(token);
   match (parse_number(s)) {
     Some(num) => {
@@ -691,15 +737,15 @@ function handle(st: State, token: string, exponents: boolean): State {
           Some(b) => {
             unbuffered = b.bit_length() >= 128;
             if (b.bit_length() <= 64) {
-              f = factor_u64(f, b.low_u64());
+              f = factor_u64(f, b.low_u64(), primes);
             } else {
-              f = factor_big(f, b);
+              f = factor_big(f, b, primes);
             }
           },
           None => {}
         }
       } else {
-        f = factor_u64(f, num.small);
+        f = factor_u64(f, num.small, primes);
       }
       var r: (io_buffered.BufWriter, boolean) = report(st.o, num.digits, f, exponents, unbuffered);
       return State { ...st, o: r.0, failed: st.failed || r.1 };
@@ -727,7 +773,7 @@ function cut_at_nul(s: string): string {
 
 // Tokens from stdin: runs of anything that is not a space, tab or
 // newline.
-function handle_stdin(st: State, exponents: boolean): State {
+function handle_stdin(st: State, exponents: boolean, primes: SmallPrime[]): State {
   var text: string = io.read_all_stdin();
   var out: State = st;
   var i: i32 = 0;
@@ -740,7 +786,7 @@ function handle_stdin(st: State, exponents: boolean): State {
     while (i < text.len() && !is_blank(text[i] as i32)) {
       i = i + 1;
     }
-    out = handle(out, slice_unchecked(text, start, i) + "", exponents);
+    out = handle(out, slice_unchecked(text, start, i) + "", exponents, primes);
   }
   return out;
 }
@@ -770,12 +816,13 @@ function main(): i32 {
   }
   var operands: string[] = g.operands();
   var st: State = State { o: gnu.out_new(), status: 0, failed: false };
+  var primes: SmallPrime[] = small_primes();
   if (operands.len() == 0) {
-    st = handle_stdin(st, exponents);
+    st = handle_stdin(st, exponents, primes);
   } else {
     var i: i32 = 0;
     while (i < operands.len()) {
-      st = handle(st, operands[i], exponents);
+      st = handle(st, operands[i], exponents, primes);
       i = i + 1;
     }
   }

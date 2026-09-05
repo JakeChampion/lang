@@ -923,11 +923,28 @@ function scaled(arg: string, p: i32): Option[i64] {
   return Some(v);
 }
 
-// Whether `f` is the format `default_format` derived for a fixed-point
-// sequence — the only shape the scaled engine can print, and only when
-// the format is ours rather than one -f supplied.
-function is_derived_fixed(f: Fmt, has_format: boolean): boolean {
-  return !has_format && f.spec.conv == 102 && f.spec.prec >= 0 as i64;
+// Whether `f` prints a fixed-point number and nothing else, which is
+// what the scaled engine can produce: the format `default_format`
+// derives, and equally a `-f %.Nf` that asks for the same thing. Any
+// flag, any width, any text around it, and the long double engine takes
+// it instead — the scaled one has no way to pad or to sign.
+//
+// The zero flag is the exception, because that IS the derived
+// equal-width format, whose padding `push_fixed` writes.
+function is_fixed_point(f: Fmt, has_format: boolean): boolean {
+  if (f.spec.conv != 102 || f.spec.prec < 0 as i64 || f.spec.prec > 18 as i64) {
+    return false;
+  }
+  if (f.pre.len() > 0 || f.post.len() > 0) {
+    return false;
+  }
+  if (f.spec.minus || f.spec.plus || f.spec.space || f.spec.hash) {
+    return false;
+  }
+  if (has_format && (f.spec.zero || f.spec.width > 0 as i64)) {
+    return false;
+  }
+  return true;
 }
 
 // `neg_zero` is the sign the first term carries when it is a negative
@@ -1233,7 +1250,7 @@ function main(): i32 {
     },
     None => {}
   }
-  if (is_derived_fixed(f, a.has_format)) {
+  if (is_fixed_point(f, a.has_format)) {
     var p: i32 = f.spec.prec as i32;
     match (scaled(first_str, p)) {
       Some(fi) => {
