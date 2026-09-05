@@ -145,8 +145,12 @@ needs is its counterpart.
 - The native single-word pre-drop still carries `!needBoxK`, so a `Map[i64,
   string]` overwrite on x86-64 loses its old value. x86-64 has no
   `__fern_cell_free`, so its boxed cells are a separate gap first.
-- `Map[K, string].get_or` on x86-64 leaks the retained result when the key is an
-  ALIAS and the fallback a literal: `allocs=400 frees=300 live_bytes=6400` over
-  100 rounds with a 41-char value, one 64-byte block a call, unchanged by this
-  work. `TestX86_64MapStringColumnReclaim`'s own probe misses it because its key
-  is a fresh concat and its fallback a concat.
+- **#8277** — on x86-64 a Map read with an ALIASED string key strands the map's
+  KEY buffer: one block per MAP, sized by the key, flat in the value length and
+  in the number of reads. Not `get_or`-specific (`get` does it too) and the
+  fallback is irrelevant; a fresh-concat key reclaims.
+  `TestX86_64MapStringColumnReclaim`'s own probe misses it because its key is a
+  fresh concat. Unchanged by this work.
+- **#8276** — binding a callee's returned borrowed `Map` param double-frees its
+  string-key column (arm64 SIGSEGV, wasm32 abort). The Map twin of #8240's
+  struct convention; unchanged by this work.
