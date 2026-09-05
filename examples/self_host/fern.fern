@@ -95,6 +95,69 @@ function fmt_output_is_readable(formatted: string): boolean {
     var again: string = printer.format_module(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, flex.comments, blank_line_map(formatted));
     return again == formatted;
 }
+
+// fmt_file is `-fmt` for ONE file: the formatted source goes to stdout, back
+// over the file (-w), to out_path (-o), or out as a unified diff (-d, exit 1
+// when it is non-empty). Formatting never loads imports, so a file is read and
+// formatted on its own. Returns the exit code for this file.
+function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
+    var esrc: string = "";
+    match (read_file(path)) {
+        Ok(s) => { esrc = s; },
+        Err(e) => {
+            eprint("fern: cannot read entry file: ");
+            eprint(path);
+            eprint("\n");
+            return 1;
+        },
+    }
+    // Formatting is the one mode that needs the trivia the compile path
+    // discards: `tokenize_full` keeps the `//` comments beside the tokens,
+    // and the blank-line map is read straight off the source (#6769).
+    var flex: lexer.LexResult = lexer.tokenize_full(esrc);
+    var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
+    var formatted: string = printer.format_module(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, flex.comments, blank_line_map(esrc));
+    if (fmt_diff) {
+        var d: string = printer.unified_diff(esrc, formatted, path, path);
+        if (d.len() == 0) { return 0; }
+        write(d);
+        return 1;
+    }
+    if (fmt_write) {
+        // The only irreversible path, so it refuses to overwrite the input
+        // with output the parser cannot read back. A printer with no case
+        // for a node emits `/*unknown*/` rather than failing, and a file is
+        // not recoverable from a diagnostic printed after the write.
+        if (!fmt_output_is_readable(formatted)) {
+            eprint("fern: " + path + ": refusing to write back — the formatted output does not re-parse; this is a formatter bug, please report it\n");
+            return 1;
+        }
+        match (write_file(path, formatted)) {
+            Err(e) => {
+                eprint("fern: cannot write back: ");
+                eprint(path);
+                eprint("\n");
+                return 1;
+            },
+            Ok(_) => {},
+        }
+        return 0;
+    }
+    if (out_path.len() > 0) {
+        match (write_file(out_path, formatted)) {
+            Err(e) => {
+                eprint("fern: cannot write output: ");
+                eprint(out_path);
+                eprint("\n");
+                return 1;
+            },
+            Ok(_) => {},
+        }
+    } else {
+        write(formatted);
+    }
+    return 0;
+}
 import "./ssa";
 import "./ssa_x86";
 import "./ssa_arm64";
@@ -330,7 +393,7 @@ function is_flag(a: string): boolean {
 
 function usage(): i32 {
     eprint("usage: fern [-check | -interp | -fmt | -capabilities] [-ssa] [-target <isa>-<environment>] [-emit asm|core-module] [-embed DIR] [-o OUT] <entry.fern> [stdlib-root]\n");
-    eprint("       fern -fmt [-w | -d] <entry.fern>             (-w overwrites the file, -d prints a unified diff)\n");
+    eprint("       fern -fmt [-w | -d | -o OUT] FILE...          (-w overwrites each file, -d prints unified diffs; -o takes one FILE)\n");
     eprint("       fern -targets                                (list supported targets + capabilities)\n");
     eprint("       fern -resolve <ABS-DIR>                      (run MVS over the manifest's index; write fern.lock)\n");
     eprint("       fern -tangle <doc.fern.md>                   (literate: emit the tangled Fern source)\n");
@@ -2103,6 +2166,25 @@ function run(): i32 {
         return 2;
     }
 
+    // `-fmt FILE...` is per-file, gofmt-style: every positional is formatted in
+    // order (none of them is a stdlib root), a failing file does not stop the
+    // rest, and the exit code is the worst one seen — so `-d` over a list exits
+    // 1 when any file needs formatting.
+    if (mode_fmt) {
+        if (out_path.len() > 0 && pos.len() > 1) {
+            eprint("fern: -fmt -o takes a single input file (" + util.i32_to_string(pos.len()) + " given)\n");
+            return 2;
+        }
+        var code: i32 = 0;
+        var fi: i32 = 0;
+        while (fi < pos.len()) {
+            var fc: i32 = fmt_file(pos[fi], fmt_write, fmt_diff, out_path);
+            if (fc > code) { code = fc; }
+            fi = fi + 1;
+        }
+        return code;
+    }
+
     // Load the entry + its transitive imports off disk and flatten them
     // into one module (the import-driven scheme from asm_load_run).
     var dir: string = util.dir_of(entry_path);
@@ -2128,57 +2210,6 @@ function run(): i32 {
         return 1;
     }
     var entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
-
-    // -fmt is per-file: format the entry source and emit it, without
-    // loading transitive imports (formatting one file never needs them).
-    if (mode_fmt) {
-        // Formatting is the one mode that needs the trivia the compile path
-        // discards: `tokenize_full` keeps the `//` comments beside the tokens,
-        // and the blank-line map is read straight off the source (#6769).
-        var flex: lexer.LexResult = lexer.tokenize_full(esrc);
-        var pf: parser.ParsedFmt = parser.parse_module_verbatim(flex.tokens);
-        var formatted: string = printer.format_module(pf.pmod, pf.ptraits, pf.pimpls, pf.pflines, flex.comments, blank_line_map(esrc));
-        if (fmt_diff) {
-            var d: string = printer.unified_diff(esrc, formatted, entry_path, entry_path);
-            if (d.len() == 0) { return 0; }
-            write(d);
-            return 1;
-        }
-        if (fmt_write) {
-            // The only irreversible path, so it refuses to overwrite the input
-            // with output the parser cannot read back. A printer with no case
-            // for a node emits `/*unknown*/` rather than failing, and a file is
-            // not recoverable from a diagnostic printed after the write.
-            if (!fmt_output_is_readable(formatted)) {
-                eprint("fern: " + entry_path + ": refusing to write back — the formatted output does not re-parse; this is a formatter bug, please report it\n");
-                return 1;
-            }
-            match (write_file(entry_path, formatted)) {
-                Err(e) => {
-                    eprint("fern: cannot write back: ");
-                    eprint(entry_path);
-                    eprint("\n");
-                    return 1;
-                },
-                Ok(_) => {},
-            }
-            return 0;
-        }
-        if (out_path.len() > 0) {
-            match (write_file(out_path, formatted)) {
-                Err(e) => {
-                    eprint("fern: cannot write output: ");
-                    eprint(out_path);
-                    eprint("\n");
-                    return 1;
-                },
-                Ok(_) => {},
-            }
-        } else {
-            write(formatted);
-        }
-        return 0;
-    }
 
     var b: Bundle = load_bundle(entry_path, entry_mod, root);
     if (!b.ok) { return 1; }
