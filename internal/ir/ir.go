@@ -17470,7 +17470,7 @@ func (b *builder) emitMapSlotDrop(slot int32, st ast.StructType) {
 // It walks exactly the columns __map_own_copied_cols gives the copy a claim of
 // its own on: the string-KEY column, and the array-value and boxed-cell value
 // columns via the kind-guarded __map_drop_values. A string or struct VALUE
-// column is still SHARED with the copy (#6242 claims neither), so walking it
+// column is still SHARED with the copy (#8354 claims neither), so walking it
 // would free what the new handle reads — those values leak here instead, until
 // the claim widens. Then the buf and handle, which are exclusively the old
 // handle's.
@@ -21112,7 +21112,7 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 // A pre-drop RELEASES the value the set is about to replace, and it runs
 // BEFORE the set's own __map_cow_inplace. A second handle over the same buffer
 // still names that value — __map_own_copied_cols claims neither a string nor a
-// struct value column on a copy (#6242) — so releasing it without owning the
+// struct value column on a copy (#8354) — so releasing it without owning the
 // handle frees storage the other handle reads. `m` is re-evaluated here, which
 // the pre-drop gates already require of it.
 func (b *builder) emitMapPredropSoleOwnerGate(m ast.Expr) error {

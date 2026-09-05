@@ -62,7 +62,7 @@ Review caught the half this entry first missed. A pre-drop RELEASES the value
 the set is about to replace, and it runs BEFORE the set's own
 `__map_cow_inplace`. A second handle over the same buffer still names that
 value, and `__map_own_copied_cols` claims neither a string nor a struct value
-column on a copy (#6242) — so the release frees storage the other handle reads.
+column on a copy (#8354) — so the release frees storage the other handle reads.
 An uncounted-alias free: no rc detector fires, and the fault lands wherever the
 freelist next hands the block out.
 
@@ -89,7 +89,7 @@ now open with `__fern_rc_is_unique(m)`.
 
 What it costs is a leak in the aliased case, which is where the release belongs
 to whoever owns the column: the two-word ABIs reclaim it at map drop and read 0,
-the native single-word one strands it. Closing that is #6242 — a string value
+the native single-word one strands it. Closing that is #8354 — a string value
 needs a kind of its own in `mapValKindTag` before `__map_own_copied_cols` can
 recognise and claim it.
 
@@ -109,8 +109,13 @@ buffer twice — 200 rounds, both handles read back:
 
 Pre-existing on every backend, and the gate moves only the x86-64 leg — from a
 crash to a wrong answer, which is the same corruption reported differently. It
-is #6242's residual by construction: `__map_own_copied_cols` cannot claim the
-column it would have to claim, so no pre-drop gate can reach it.
+is #8354's by construction: `__map_own_copied_cols` cannot claim the column it
+would have to claim, so no pre-drop gate can reach it.
+
+The source comments around this all said "#6242", which **closed** in August —
+#6827 claimed the key column and the wide-scalar value cells and left the string
+and struct value columns, which is the half that still bites. #8354 is the
+residual, and the references now point at it.
 
 ## Why freeing the cell before the set is sound
 
