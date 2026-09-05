@@ -2688,8 +2688,10 @@ function emit_arm64_map_vals_struct_drop_one(s: asmcore.EmitState, sty: string):
 // original); then frees the old BOX via __fern_snapshot_dec(new, old, snap) and
 // returns `new` in x0. x10/x11/x12 hold new/old/snap across the field loop —
 // __fern_arr_dec clobbers only x0..x3,x9, so they survive (snapshot_dec is the
-// last call, after the loop). stp x29,x30 saves LR for the bls; the low-addr
-// guard uses `cmp #16, lsl #12` (= 0x10000).
+// last call, after the loop). The uniq arm's __fn___fern_rc_is_unique touches
+// only x0/x2/x9/w3, so it keeps x1 (the field value) across its own bl too.
+// stp x29,x30 saves LR for the bls; the low-addr guard uses
+// `cmp #16, lsl #12` (= 0x10000).
 function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
     var san: string = asmcore.sanitize_label(sty);
     s = s.write(".weak __fn___field_reclaim_" + san + "\n");
@@ -2726,7 +2728,6 @@ function emit_arm64_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcor
             s = s.write("    bl __fn___fern_rc_is_unique\n");
             s = s.write("    add sp, sp, #16\n");
             s = s.write("    cbnz x0, .Lafr_" + san + "_skip" + ks + "\n");
-            s = s.write("    ldr x1, [x11, #" + off + "]\n");  // reload (the call clobbers x1)
             s = s.write(".Lafr_" + san + "_ne" + ks + ":\n");
         }
         s = s.write("    cbz x12, .Lafr_" + san + "_dec" + ks + "\n");  // snap == 0 (local)?
