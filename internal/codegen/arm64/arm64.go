@@ -5525,6 +5525,19 @@ func (g *generator) emitStrBufRuntime() {
 	g.label(".Lsbgrow_alloc")
 	g.emit("mov x0, x20")
 	g.emit("bl __fern_alloc")
+	if ast.LeakCheckEnabled {
+		// The builder's buffer is runtime state the program never holds,
+		// so the census leaves it out as it left out the .bss reservation
+		// it replaced. x20 is a power of two >= 64 KiB, already 16-rounded.
+		g.adrpAdd("x9", "__fern_lc_alloc_count")
+		g.emit("ldr x10, [x9]")
+		g.emit("sub x10, x10, #1")
+		g.emit("str x10, [x9]")
+		g.adrpAdd("x9", "__fern_lc_alloc_bytes")
+		g.emit("ldr x10, [x9]")
+		g.emit("sub x10, x10, x20")
+		g.emit("str x10, [x9]")
+	}
 	g.emit("mov x19, x0") // new buffer
 	g.adrpAdd("x1", "__fern_strbuf_ptr")
 	g.emit("ldr x1, [x1]")

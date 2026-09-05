@@ -9777,6 +9777,13 @@ func (g *generator) emitStrBufRuntime() {
 	g.label(".Lsbgrow_alloc")
 	g.emit("mov rdi, r12")
 	g.emit("call __fern_alloc")
+	if ast.LeakCheckEnabled {
+		// The builder's buffer is runtime state the program never holds,
+		// so the census leaves it out as it left out the .bss reservation
+		// it replaced. r12 is a power of two >= 64 KiB, already 16-rounded.
+		g.emit("sub qword ptr [rip + __fern_lc_alloc_count], 1")
+		g.emit("sub qword ptr [rip + __fern_lc_alloc_bytes], r12")
+	}
 	g.emit("mov rbx, rax") // new buffer
 	// memcpy(new, old, len); len is 0 while old is null.
 	g.emit("mov rdi, rax")

@@ -2590,6 +2590,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write(".Lsbgrow_alloc:\n");
         s = s.write("    movq %r12, %rdi\n");
         s = s.write("    call __fern_alloc\n");
+        if (leak_check_on()) {
+            // The builder's buffer is runtime state the program never holds,
+            // so the census leaves it out as it left out the .bss reservation
+            // it replaced. %r12 is a power of two >= 64 KiB, already 16-rounded.
+            s = s.write("    movq __fern_lc_alloc_count(%rip), %rcx\n");
+            s = s.write("    subq $1, %rcx\n");
+            s = s.write("    movq %rcx, __fern_lc_alloc_count(%rip)\n");
+            s = s.write("    movq __fern_lc_alloc_bytes(%rip), %rcx\n");
+            s = s.write("    subq %r12, %rcx\n");
+            s = s.write("    movq %rcx, __fern_lc_alloc_bytes(%rip)\n");
+        }
         s = s.write("    movq %rax, %rbx\n");                  // new buffer
         s = s.write("    movq __fern_strbuf_ptr(%rip), %rsi\n");// old buffer (0 on the first grow)
         s = s.write("    movq __fern_strbuf_len(%rip), %rcx\n");// live bytes (0 while old is null)

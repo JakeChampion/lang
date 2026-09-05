@@ -4007,6 +4007,21 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write(".Lsbgrow_alloc:\n");
         s = s.write("    mov x0, x20\n");
         s = s.write("    bl __fern_alloc\n");
+        if (leak_check_on()) {
+            // The builder's buffer is runtime state the program never holds,
+            // so the census leaves it out as it left out the .bss reservation
+            // it replaced. x20 is a power of two >= 64 KiB, already 16-rounded.
+            s = s.write("    adrp x1, __fern_lc_alloc_count\n");
+            s = s.write("    add x1, x1, :lo12:__fern_lc_alloc_count\n");
+            s = s.write("    ldr x2, [x1]\n");
+            s = s.write("    sub x2, x2, #1\n");
+            s = s.write("    str x2, [x1]\n");
+            s = s.write("    adrp x1, __fern_lc_alloc_bytes\n");
+            s = s.write("    add x1, x1, :lo12:__fern_lc_alloc_bytes\n");
+            s = s.write("    ldr x2, [x1]\n");
+            s = s.write("    sub x2, x2, x20\n");
+            s = s.write("    str x2, [x1]\n");
+        }
         s = s.write("    mov x19, x0\n");                       // new buffer
         s = s.write("    adrp x1, __fern_strbuf_ptr\n");
         s = s.write("    add x1, x1, :lo12:__fern_strbuf_ptr\n");
