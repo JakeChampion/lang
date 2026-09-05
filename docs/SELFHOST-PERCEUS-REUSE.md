@@ -220,9 +220,9 @@ these fail a gate instead.
 
 | pin file | what it lists | measured |
 |---|---|---|
-| `internal/e2eselfhost/testdata/selfhost-leak-matrix.txt` | the goal-2 RECLAIM gap list for the generated kind × scope × consumption × origin grid | 134 rows, **all `clean clean`** — no self-host leak row left |
+| `internal/e2eselfhost/testdata/selfhost-leak-matrix.txt` | the goal-2 RECLAIM gap list for the generated kind × scope × consumption × origin grid | 150 rows, **all `clean clean`** — no self-host leak row left |
 | `internal/e2eselfhost/testdata/selfhost-leak-matrix-arm64.txt` | the same grid on arm64 | every row agrees with the x86 file; the last native-arm64 `leak clean` rows closed with #7446 |
-| `internal/e2e/testdata/conformance-leak-census.txt` | every runnable conformance fixture's unpaired allocations | **80 non-zero rows** — leaks the compiler has today, on both compilers |
+| `internal/e2e/testdata/conformance-leak-census.txt` | every runnable conformance fixture's unpaired allocations | **79 non-zero rows, 8,406 unpaired** — measured by `TestConformanceLeakCensusX86_64`, so these are NATIVE's leaks, not a self-host delta |
 
 `internal/e2e/rc_leak_gate_test.go` carries the fourth: 24 of 272 rc-corpus
 cases leak on x86-64 and 23 on arm64, each pinned at its exact byte count.

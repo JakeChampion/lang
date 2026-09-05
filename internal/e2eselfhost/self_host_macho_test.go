@@ -82,9 +82,35 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// String concat — exercises the heap (.bss bump allocator) +
 		// the @PAGE/@PAGEOFF addressing of a runtime-built string.
 		{"concat", `function main(): i32 { var s: string = "hello, " + "world!"; return s.len(); }`, 13},
+		// The string builder assembled IN-PROCESS: __fern_strbuf_grow's
+		// mov-with-hw-select / lsl / b.hs / cbnz must encode, and a 108,000-byte
+		// build grows the 64 KiB buffer twice before the take.
+		{"strbuf_grow", `function main(): i32 {
+    strbuf_reset();
+    var i: i32 = 0;
+    while (i < 3000) { strbuf_append("0123456789abcdefghijklmnopqrstuvwxyz"); i = i + 1; }
+    var s: string = strbuf_take();
+    if (s.len() != 108000) { return 1; }
+    if ((s[65536] as i32) != (s[16] as i32)) { return 2; }
+    if ((s[107999] as i32) != (s[35] as i32)) { return 3; }
+    strbuf_append("ok");
+    var t: string = strbuf_take();
+    if (t.len() != 2) { return 4; }
+    return 42;
+}`, 42},
 		// Stdout — print lowers to the write syscall (64 -> 4) and a
 		// .rodata (__TEXT,__const) string literal.
 		{"print", `function main(): i32 { print("hi"); return 0; }`, 0},
+		// A literal shaped like the emitter's own `:lo12:` operands: its bytes
+		// must survive darwinize (#8400).
+		{"lo12_literal", `function main(): i32 {
+    var s: string = "    add x9, x9, :lo12:.Lfern_relanchor";
+    if (s.len() != 38) { return 1; }
+    if ((s[16] as i32) != 58) { return 2; }
+    if ((s[21] as i32) != 58) { return 3; }
+    if ((s[37] as i32) != 114) { return 4; }
+    return 42;
+}`, 42},
 		// Struct + receiver method dispatch.
 		{"struct_method", `struct Box { v: i32 } function (b: Box) scale(n: i32): i32 { return b.v * n; } function main(): i32 { var x = Box { v: 4 }; return x.scale(3); }`, 12},
 		// Arrays — literal, index, length, loop.

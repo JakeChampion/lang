@@ -701,11 +701,11 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             // it can skip the pool, and leaves anything it cannot prove exact.
             s = emit_const_i32_push(s, o.str, movz_text_ok(o.str));
         } else if (o.kind_tag == 3) {  // const_i64
-            // 64-bit immediate, also source text, also the pool: a value this
-            // wide needs up to four movk to build in-register. i64
-            // add/sub/mul/cmp/bitwise reuse the 64-bit x-register bin ops
-            // unchanged.
-            s = s.write("    ldr x0, =" + o.str + "\n    str x0, [sp, #-16]!\n");
+            // 64-bit immediate, also source text: one MOVZ when it fits, else
+            // the pool, since a wide value needs up to four movk to build
+            // in-register. i64 add/sub/mul/cmp/bitwise reuse the 64-bit
+            // x-register bin ops unchanged.
+            s = emit_const_i32_push(s, o.str, movz_text_ok(o.str));
         } else if (o.kind_tag == 7 || o.kind_tag == 8) {  // int_extend, int_wrap
             // i32<->i64: signed -> sxtw (sign-extend low word); unsigned -> mov
             // w0,w0 (writing w0 zeroes x0's upper 32).
@@ -3962,19 +3962,19 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
 
     // Global string-builder primitive — the amortised-O(1) output
     // accumulator (strbuf_reset / strbuf_append / strbuf_take), gated on the
-    // strbuf need its op sites mark. x86-64 has gated it on the same need all
-    // along; arm64 sat inside the bare heap gate, so every allocating program
-    // reserved the 64 MiB .bss buffer and carried three bodies nothing branched
-    // to. A string is a 16-byte view {data@0, len@8} over the 24-byte
-    // rc-headered block __fern_str_box builds.
+    // strbuf need its op sites mark. The buffer is a heap block that doubles
+    // (from 64 KiB) when an append would not fit, so the accumulated output
+    // has no fixed ceiling. Three .bss words: len, data ptr, cap. A string is a 16-byte
+    // view {data@0, len@8} over the 24-byte rc-headered block __fern_str_box
+    // builds.
     if (s.has_need("strbuf")) {
         s = s.write("    .bss\n");
         s = s.write("    .align 3\n");
         s = s.write("__fern_strbuf_len: .quad 0\n");
-        s = s.write("    .align 3\n");
-        s = s.write("__fern_strbuf_data: .skip 67108864\n");   // 64 MiB (was 16 MiB — the self-host self-compile output is ~16.7 MB and was overflowing it)
+        s = s.write("__fern_strbuf_ptr: .quad 0\n");
+        s = s.write("__fern_strbuf_cap: .quad 0\n");
         s = s.write("    .text\n");
-        // reset: len = 0
+        // reset: len = 0. The buffer stays allocated for the next build.
         s = s.write(".globl __fern_strbuf_reset\n");
         s = s.write(".type __fern_strbuf_reset, %function\n");
         s = s.write("__fern_strbuf_reset:\n");
@@ -3983,44 +3983,116 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    str xzr, [x1]\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_strbuf_reset, .-__fern_strbuf_reset\n");
-        // append(box in x0): copy box.len bytes from box.data to
-        // strbuf_data + strbuf_len, then bump len. Leaf (no frame);
-        // clobbers x1..x6, all caller-saved temporaries.
+        // grow(need in x0): replace the buffer with one of at least `need`
+        // bytes and copy the live bytes across. The old buffer is left to the
+        // arena, like the wasm runtime's strbuf. x19 = need / new buffer,
+        // x20 = new cap, across the __fern_alloc call.
+        s = s.write(".globl __fern_strbuf_grow\n");
+        s = s.write(".type __fern_strbuf_grow, %function\n");
+        s = s.write("__fern_strbuf_grow:\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    adrp x1, __fern_strbuf_cap\n");
+        s = s.write("    add x1, x1, :lo12:__fern_strbuf_cap\n");
+        s = s.write("    ldr x20, [x1]\n");
+        s = s.write("    cbnz x20, .Lsbgrow_dbl\n");
+        s = s.write("    mov x20, #0x10000\n");
+        s = s.write(".Lsbgrow_dbl:\n");
+        s = s.write("    cmp x20, x19\n");
+        s = s.write("    b.hs .Lsbgrow_alloc\n");
+        s = s.write("    lsl x20, x20, #1\n");
+        s = s.write("    b .Lsbgrow_dbl\n");
+        s = s.write(".Lsbgrow_alloc:\n");
+        s = s.write("    mov x0, x20\n");
+        s = s.write("    bl __fern_alloc\n");
+        if (leak_check_on()) {
+            // The builder's buffer is runtime state the program never holds,
+            // so the census leaves it out as it left out the .bss reservation
+            // it replaced. x20 is a power of two >= 64 KiB, already 16-rounded.
+            s = s.write("    adrp x1, __fern_lc_alloc_count\n");
+            s = s.write("    add x1, x1, :lo12:__fern_lc_alloc_count\n");
+            s = s.write("    ldr x2, [x1]\n");
+            s = s.write("    sub x2, x2, #1\n");
+            s = s.write("    str x2, [x1]\n");
+            s = s.write("    adrp x1, __fern_lc_alloc_bytes\n");
+            s = s.write("    add x1, x1, :lo12:__fern_lc_alloc_bytes\n");
+            s = s.write("    ldr x2, [x1]\n");
+            s = s.write("    sub x2, x2, x20\n");
+            s = s.write("    str x2, [x1]\n");
+        }
+        s = s.write("    mov x19, x0\n");                       // new buffer
+        s = s.write("    adrp x1, __fern_strbuf_ptr\n");
+        s = s.write("    add x1, x1, :lo12:__fern_strbuf_ptr\n");
+        s = s.write("    ldr x1, [x1]\n");                      // old buffer (0 on the first grow)
+        s = s.write("    adrp x2, __fern_strbuf_len\n");
+        s = s.write("    add x2, x2, :lo12:__fern_strbuf_len\n");
+        s = s.write("    ldr x2, [x2]\n");                      // live bytes (0 while old is null)
+        s = s.write("    mov x3, x19\n");
+        s = s.write("    cbz x2, .Lsbgrow_copied\n");
+        s = s.write(".Lsbgrow_copy:\n");
+        s = s.write("    ldrb w4, [x1], #1\n");
+        s = s.write("    strb w4, [x3], #1\n");
+        s = s.write("    sub x2, x2, #1\n");
+        s = s.write("    cbnz x2, .Lsbgrow_copy\n");
+        s = s.write(".Lsbgrow_copied:\n");
+        s = s.write("    adrp x1, __fern_strbuf_ptr\n");
+        s = s.write("    add x1, x1, :lo12:__fern_strbuf_ptr\n");
+        s = s.write("    str x19, [x1]\n");
+        s = s.write("    adrp x1, __fern_strbuf_cap\n");
+        s = s.write("    add x1, x1, :lo12:__fern_strbuf_cap\n");
+        s = s.write("    str x20, [x1]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
+        s = s.write("    ret\n");
+        s = s.write(".size __fern_strbuf_grow, .-__fern_strbuf_grow\n");
+        // append(box in x0): grow if box.len more bytes do not fit, copy them
+        // from box.data to strbuf_ptr + strbuf_len, then bump len. x19 holds
+        // the box across the grow call.
         s = s.write(".globl __fern_strbuf_append\n");
         s = s.write(".type __fern_strbuf_append, %function\n");
         s = s.write("__fern_strbuf_append:\n");
-        s = s.write("    ldr x1, [x0]\n");                      // src data ptr
-        s = s.write("    ldr x2, [x0, #8]\n");                  // src len
-        s = s.write("    cbz x2, .Lsbapp_done\n");
-        s = s.write("    adrp x3, __fern_strbuf_data\n");
-        s = s.write("    add x3, x3, :lo12:__fern_strbuf_data\n");
+        s = s.write("    stp x29, x30, [sp, #-16]!\n");
+        s = s.write("    mov x29, sp\n");
+        s = s.write("    stp x19, x20, [sp, #-16]!\n");
+        s = s.write("    mov x19, x0\n");
+        s = s.write("    ldr x2, [x19, #8]\n");                 // src len
         s = s.write("    adrp x4, __fern_strbuf_len\n");
         s = s.write("    add x4, x4, :lo12:__fern_strbuf_len\n");
         s = s.write("    ldr x5, [x4]\n");
-        s = s.write("    add x3, x3, x5\n");                    // dst = data + len
-        // Bounds check: trap (exit 125, like __fern_alloc) if this append would
-        // run past the 64 MiB buffer, rather than silently corrupting adjacent
-        // .bss and segfaulting later. x5 = strbuf_len, x2 = src len.
-        s = s.write("    add x6, x5, x2\n");                    // new total len
-        s = s.write("    movz x5, #0x400, lsl #16\n");          // 0x4000000 = 64 MiB
-        s = s.write("    cmp x6, x5\n");
-        s = s.write("    b.ls .Lsbapp_inbounds\n");
-        s = s.write("    mov x0, #125\n");
-        s = s.write("    mov x8, #93\n");                       // exit
-        s = s.write("    svc #0\n");
-        s = s.write(".Lsbapp_inbounds:\n");
+        s = s.write("    add x0, x5, x2\n");                    // bytes needed after this append
+        s = s.write("    adrp x6, __fern_strbuf_cap\n");
+        s = s.write("    add x6, x6, :lo12:__fern_strbuf_cap\n");
+        s = s.write("    ldr x6, [x6]\n");
+        s = s.write("    cmp x0, x6\n");
+        s = s.write("    b.ls .Lsbapp_fits\n");
+        s = s.write("    bl __fern_strbuf_grow\n");
+        s = s.write(".Lsbapp_fits:\n");
+        s = s.write("    ldr x1, [x19]\n");                     // src data ptr
+        s = s.write("    ldr x2, [x19, #8]\n");                 // src len
+        s = s.write("    cbz x2, .Lsbapp_done\n");
+        s = s.write("    adrp x3, __fern_strbuf_ptr\n");
+        s = s.write("    add x3, x3, :lo12:__fern_strbuf_ptr\n");
+        s = s.write("    ldr x3, [x3]\n");
+        s = s.write("    adrp x4, __fern_strbuf_len\n");
+        s = s.write("    add x4, x4, :lo12:__fern_strbuf_len\n");
+        s = s.write("    ldr x5, [x4]\n");
+        s = s.write("    add x3, x3, x5\n");                    // dst = ptr + len
         s = s.write(".Lsbapp_loop:\n");
         s = s.write("    ldrb w6, [x1], #1\n");
         s = s.write("    strb w6, [x3], #1\n");
         s = s.write("    sub x2, x2, #1\n");
         s = s.write("    cbnz x2, .Lsbapp_loop\n");
         s = s.write(".Lsbapp_done:\n");
-        s = s.write("    ldr x2, [x0, #8]\n");                  // reload src len
+        s = s.write("    ldr x2, [x19, #8]\n");                 // reload src len
         s = s.write("    adrp x4, __fern_strbuf_len\n");
         s = s.write("    add x4, x4, :lo12:__fern_strbuf_len\n");
         s = s.write("    ldr x5, [x4]\n");
         s = s.write("    add x5, x5, x2\n");
         s = s.write("    str x5, [x4]\n");
+        s = s.write("    ldp x19, x20, [sp], #16\n");
+        s = s.write("    ldp x29, x30, [sp], #16\n");
         s = s.write("    ret\n");
         s = s.write(".size __fern_strbuf_append, .-__fern_strbuf_append\n");
         // take(): alloc data + 16-byte box, copy bytes, reset, return
@@ -4038,8 +4110,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
         s = s.write("    mov x0, x19\n");
         s = s.write("    bl __fern_alloc\n");
         s = s.write("    mov x20, x0\n");                       // x20 = data ptr
-        s = s.write("    adrp x1, __fern_strbuf_data\n");
-        s = s.write("    add x1, x1, :lo12:__fern_strbuf_data\n");
+        s = s.write("    adrp x1, __fern_strbuf_ptr\n");
+        s = s.write("    add x1, x1, :lo12:__fern_strbuf_ptr\n");
+        s = s.write("    ldr x1, [x1]\n");
         s = s.write("    mov x2, x20\n");                       // dst
         s = s.write("    mov x3, x19\n");                       // count
         s = s.write("    cbz x3, .Lsbtake_box\n");
@@ -6826,109 +6899,576 @@ pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
     return "";
 }
 
+// ---- The arm64 peephole ---------------------------------------------------
+//
 // peephole_push_pop_arm64 folds the stack machine's operand round-trips out of
-// the emitted text — the arm64 twin of asm_ir.peephole_push_pop, which had no
-// counterpart here even though this backend emits the same push/pop discipline
-// (232 `str x0, [sp, #-16]!` sites) and the NATIVE arm64 backend has the pass.
+// the emitted text — the arm64 twin of asm_ir.peephole_push_pop, numbered the
+// same way as native's. The op loop pushes every result and pops every
+// operand, so a value produced by one op and consumed by the next travels
+// through memory even when both ends are already in registers. Every rule is
+// local — a few contiguous lines — so none touches a genuinely live slot.
 //
-// `ldr DST, [sp], #16` reads back exactly what the line above pushed, which makes
-// the pair `DST := SRC` whatever either line was meant for — so no clobber
-// analysis is needed, same as on x86-64.
+// P1 — redundant store/reload. `ldr DST, [sp], #16` reads back exactly what
+// the line above pushed, so the adjacent pair is `DST := SRC` with sp
+// restored, whatever either line was meant for:
 //
-// The shapes are matched EXACTLY, which is what keeps the frame saves out of it:
-// `stp`/`ldp` push and pop register PAIRS through the same `[sp, #-16]!` /
-// `[sp], #16` addressing, and a prefix match on `str `/`ldr ` never sees them.
-// The `ldr x0, [sp]` peek (the tee_local idiom, 136 sites) is likewise a
-// different shape — no writeback — so it is never mistaken for a pop.
+//     str x0, [sp, #-16]!   ->  (both lines dropped)
+//     ldr x0, [sp], #16
 //
-// Removing an ADJACENT balanced pair leaves sp unchanged for every instruction
-// after it, so the sp-relative reads elsewhere (`ldr w0, [sp, #96]` and friends)
-// keep their offsets. That is the same argument the x86-64 pass rests on.
+//     str x0, [sp, #-16]!   ->  mov x1, x0
+//     ldr x1, [sp], #16
 //
-// x8 and x16 are excluded as destinations. `darwinize` keys the Mach-O syscall
-// rewrite off a literal `ldr x8, [sp], #16`, and folding that line away would
-// silently strip the marker — the number register would stay x8 and the trap
-// would stay `svc #0` in a Mach-O binary. Today the syscall ops always emit that
-// line after another pop, so it could not fold anyway; the guard is what keeps
-// that true if the emitter changes.
+// The shapes are matched EXACTLY, which keeps the frame saves out: `stp` /
+// `ldp` push and pop register PAIRS through the same addressing, and the
+// `ldr x0, [sp]` peek (tee_local) has no writeback.
+//
+// P3 — dead push: a push whose slot is freed without being read. Every
+// statement-position expression pushes a result nobody wants, and `drop`
+// lowers to the stack restore:
+//
+//     str x0, [sp, #-16]!   ->  (both lines dropped)
+//     add sp, sp, #16
+//
+// P4 — constant operand folded into the immediate form. Instruction
+// selection never inspects an operand for constness, so `x + 5` materialises
+// the 5 into x0, hands it to x1 and consumes it as a register. Once P1 has
+// collapsed the constant's own push/pop pair the tail reads:
+//
+//     str SRC, [sp, #-16]! / mov x0, #K / mov x1, x0 / ldr x0, [sp], #16 / add x0, x0, x1
+//       ->  [mov x0, SRC] / add x0, x0, #K
+//
+// for add, sub and cmp, whose imm12 takes 0..4095 or a multiple of 4096 up
+// to 0xFFF000 — the range arm64_native's encoder accepts. The dropped lines
+// leave x0 and sp exactly as the fold does; the only other state they wrote
+// is x1, and every consumer of x1 in this backend writes it before reading
+// it.
+//
+// P5 — the operand stack round trip around an undisturbed value. The push
+// protects x0 across a materialisation that never touches it, and the pop
+// puts it straight back:
+//
+//     str x0, [sp, #-16]! / ldr x0, [x29, #-8] / mov x1, x0 / ldr x0, [sp], #16
+//       ->  ldr x1, [x29, #-8]
+//
+// The materialisation may be a CHAIN of up to three lines that thread a
+// value through x0 — a far frame slot (`sub x16, x29, #N` then `ldr x0,
+// [x16]`), a field of a local (`ldr x0, [x29, #-8]` then `ldr x0, [x0, #8]`),
+// a string literal's `adrp` / `add :lo12:` pair. The rename writes x1 in
+// place of every x0 the chain writes or reads, except a read of x0 on the
+// chain's FIRST line, which is a read of the pushed value itself and is
+// sound only when the push was of x0. A push of some other register folds
+// too, and then owes the `mov x0, SRC` P1 would have made of the pair.
+//
+// P6 has no arm64 form: a helper call pops its arguments straight into the
+// argument registers, so there is no copy out of the accumulator to fold.
+//
+// x8 and x16 are excluded as pushed or popped registers: `darwinize` keys the
+// Mach-O syscall rewrite off a literal `ldr x8, [sp], #16`, and folding that
+// line away would silently strip the marker.
+//
+// Untouched bytes are copied in RUNS, not per line — line-at-a-time copying
+// cost 28% of total compile time on the x86-64 twin. Only a line that can
+// take part in a rule enters the window; anything else closes it.
+
+const PK_NONE: i32 = 0;
+const PK_PUSH: i32 = 1;    // str R, [sp, #-16]!        a..b = R
+const PK_POP: i32 = 2;     // ldr R, [sp], #16          a..b = R
+const PK_DROP: i32 = 3;    // add sp, sp, #16
+const PK_MAT: i32 = 4;     // a chain line: writes x0 (or only x16), reads at most x0 / x29 / x16
+const PK_COPY: i32 = 5;    // mov x1, x0
+const PK_ALU: i32 = 6;     // add|sub x0, x0, x1 | cmp x0, x1
+
+const PF_MARKER: i32 = 1;  // the register is x8 / x16, darwinize's marker
+const PF_X0: i32 = 2;      // the register is exactly x0
+const PF_READS0: i32 = 4;  // PK_MAT: the line reads x0 (or w0)
+const PF_DEST0: i32 = 8;   // PK_MAT: the line writes x0 (or w0)
+const PF_CONST: i32 = 16;  // PK_MAT: `mov x0, #K` or `ldr x0, =K`, with `val` holding K
+
+struct PLine {
+    s: string,   // the text the line lives in: `asm` itself, or a rewritten line
+    ln: i32,     // line start in s, indentation included; -1 for a rewritten line
+    bs: i32,     // first byte of the mnemonic
+    me: i32,     // end of the mnemonic
+    hi: i32,     // end of the line, exclusive of its newline
+    kind: i32,
+    a: i32,      // the register the kind names, as a range of s
+    b: i32,
+    val: i64,    // PF_CONST: the constant
+    flags: i32,
+}
+
+// The window holds at most PW_CAP lines; when it fills, the oldest PW_DRAIN
+// are flushed. The deepest shape, P5's with a three-line chain, is six lines.
+const PW_CAP: i32 = 16;
+const PW_DRAIN: i32 = 8;
+
+struct Peep {
+    asm: string,
+    w: PLine[],
+    n: i32,
+    run_start: i32,  // pending run of untouched bytes of asm, -1 when none
+    run_end: i32,
+    fired: boolean,
+}
+
+// ---- byte-range helpers over one line ----
+
+function pp_is(s: string, lo: i32, hi: i32, lit: string): boolean {
+    return hi - lo == lit.len() && asmcore.pp_at(s, lo, hi, lit);
+}
+
+function pp_find(s: string, lo: i32, hi: i32, c: i32): i32 {
+    var i: i32 = lo;
+    while (i < hi) {
+        if ((s[i] as i32) == c) { return i; }
+        i = i + 1;
+    }
+    return hi;
+}
+
+function pp_contains(s: string, lo: i32, hi: i32, lit: string): boolean {
+    var i: i32 = lo;
+    while (i + lit.len() <= hi) {
+        if (asmcore.pp_at(s, i, hi, lit)) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function pp_is_digit(c: i32): boolean {
+    return c >= 48 && c <= 57;
+}
+
+function pp_is_hex_digit(c: i32): boolean {
+    return pp_is_digit(c) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70);
+}
+
+// pp_reg0_at reports whether s[i:] starts the register x0 or w0 as a whole
+// token: the letter, the digit, and no further digit.
+function pp_reg0_at(s: string, i: i32, hi: i32): boolean {
+    if (i + 1 >= hi || (s[i] != 120 && s[i] != 119) || s[i + 1] != 48) { return false; }
+    return i + 2 >= hi || !pp_is_digit(s[i + 2] as i32);
+}
+
+// pp_mentions_reg0 reports whether s[lo:hi] names x0 or w0 anywhere.
+function pp_mentions_reg0(s: string, lo: i32, hi: i32): boolean {
+    var i: i32 = lo;
+    while (i < hi) {
+        if (pp_reg0_at(s, i, hi) && (i == lo || !pp_is_alnum(s[i - 1] as i32))) { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+function pp_is_alnum(c: i32): boolean {
+    return pp_is_digit(c) || (c >= 97 && c <= 122) || c == 95;
+}
+
+// pp_imm_ok reports whether the literal s[lo:hi] is one util.lit_to_i64 reads
+// exactly: an optional `-` and up to eighteen decimal digits, or `0x` and up
+// to sixteen hex digits.
+function pp_imm_ok(s: string, lo: i32, hi: i32): boolean {
+    var i: i32 = lo;
+    if (i < hi && s[i] == 45) { i = i + 1; }
+    if (i + 1 < hi && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) {
+        return pp_digits_ok(s, i + 2, hi, 16, true);
+    }
+    return pp_digits_ok(s, i, hi, 18, false);
+}
+
+function pp_digits_ok(s: string, lo: i32, hi: i32, max: i32, hex: boolean): boolean {
+    if (hi - lo < 1 || hi - lo > max) { return false; }
+    var i: i32 = lo;
+    while (i < hi) {
+        var c: i32 = s[i] as i32;
+        if (hex && !pp_is_hex_digit(c)) { return false; }
+        if (!hex && !pp_is_digit(c)) { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// pp_arm64_marker_reg reports whether the register is one darwinize keys on
+// (x8, its generic-syscall number marker, and x16, the same line after the
+// Mach-O rewrite).
+function pp_arm64_marker_reg(asm: string, lo: i32, hi: i32): boolean {
+    if (hi - lo == 2 && asm[lo] == 120 && asm[lo + 1] == 56) { return true; }
+    if (hi - lo == 3 && asm[lo] == 120 && asm[lo + 1] == 49 && asm[lo + 2] == 54) { return true; }
+    return false;
+}
+
+// ---- classification ----
+
+function pl_none(s: string, ln: i32, bs: i32, hi: i32): PLine {
+    return PLine { s: s, ln: ln, bs: bs, me: bs, hi: hi, kind: PK_NONE, a: 0, b: 0, val: 0i64, flags: 0 };
+}
+
+function pl_mnem_is(p: PLine, lit: string): boolean {
+    return pp_is(p.s, p.bs, p.me, lit);
+}
+
+function pl_reg_flags(s: string, lo: i32, hi: i32): i32 {
+    var f: i32 = 0;
+    if (pp_arm64_marker_reg(s, lo, hi)) { f = f | PF_MARKER; }
+    if (pp_is(s, lo, hi, "x0")) { f = f | PF_X0; }
+    return f;
+}
+
+// pl_stack classifies the operand-stack lines: the push, the pop, the drop.
+// o1 is the first operand's start, cm the end of it (its comma, or hi).
+function pl_stack(p: PLine, o1: i32, cm: i32): PLine {
+    if (pl_mnem_is(p, "str") && pp_is(p.s, cm, p.hi, ", [sp, #-16]!")) {
+        return PLine { ...p, kind: PK_PUSH, a: o1, b: cm, flags: pl_reg_flags(p.s, o1, cm) };
+    }
+    if (pl_mnem_is(p, "ldr") && pp_is(p.s, cm, p.hi, ", [sp], #16")) {
+        return PLine { ...p, kind: PK_POP, a: o1, b: cm, flags: pl_reg_flags(p.s, o1, cm) };
+    }
+    if (pl_mnem_is(p, "add") && pp_is(p.s, o1, p.hi, "sp, sp, #16")) { return PLine { ...p, kind: PK_DROP }; }
+    return p;
+}
+
+// pl_mat classifies a materialisation-chain line. The whole line past the
+// mnemonic is inspected: the destination must be x0 (w0), or x16 for the far
+// frame slot's address, and every other register named must be x0, x29 or
+// x16 — the chain's own temporaries and the frame pointer — so that renaming
+// x0 to x1 changes nothing else.
+function pl_mat(p: PLine, o1: i32, cm: i32): PLine {
+    var f: i32 = 0;
+    if (pp_reg0_at(p.s, o1, cm) && cm - o1 == 2) { f = PF_DEST0; }
+    else if (!pp_is(p.s, o1, cm, "x16") || !pl_mnem_is(p, "sub")) { return p; }
+    if (cm >= p.hi) { return p; }
+    var rest: i32 = cm + 2;
+    if (pp_mentions_reg0(p.s, rest, p.hi)) { f = f | PF_READS0; }
+    if (!pl_mat_operands_ok(p, rest)) { return p; }
+    var v: i64 = 0i64;
+    if (pl_mnem_is(p, "mov") && p.s[rest] == 35 && pp_imm_ok(p.s, rest + 1, p.hi)) {
+        f = f | PF_CONST;
+        v = util.lit_to_i64(slice_unchecked(p.s, rest + 1, p.hi) + "");
+    } else if (pl_mnem_is(p, "ldr") && p.s[rest] == 61 && pp_imm_ok(p.s, rest + 1, p.hi)) {
+        f = f | PF_CONST;
+        v = util.lit_to_i64(slice_unchecked(p.s, rest + 1, p.hi) + "");
+    }
+    return PLine { ...p, kind: PK_MAT, a: o1, b: cm, val: v, flags: f };
+}
+
+// pl_mat_operands_ok vets the source operands of a chain line: every
+// register token there must be x0 / w0, x29 or x16, and nothing may name
+// sp or a register list. Anything else — a shift by x1, an indexed load —
+// is not a chain line.
+function pl_mat_operands_ok(p: PLine, lo: i32): boolean {
+    var i: i32 = lo;
+    while (i < p.hi) {
+        var c: i32 = p.s[i] as i32;
+        if ((c == 120 || c == 119 || c == 115) && (i == lo || !pp_is_alnum(p.s[i - 1] as i32))) {
+            var e: i32 = i;
+            while (e < p.hi && pp_is_alnum(p.s[e] as i32)) { e = e + 1; }
+            if (c == 115) { if (pp_is(p.s, i, e, "sp")) { return false; } }
+            else if (!pp_is(p.s, i, e, "x0") && !pp_is(p.s, i, e, "w0") && !pp_is(p.s, i, e, "x29") && !pp_is(p.s, i, e, "x16")) { return false; }
+            i = e;
+        } else {
+            i = i + 1;
+        }
+    }
+    return true;
+}
+
+// pl_is_mat_mnem: the mnemonics a chain line may carry — pure register
+// writes and loads.
+function pl_is_mat_mnem(p: PLine): boolean {
+    return pl_mnem_is(p, "ldr") || pl_mnem_is(p, "mov") || pl_mnem_is(p, "adrp") || pl_mnem_is(p, "add")
+        || pl_mnem_is(p, "sub") || pl_mnem_is(p, "ldrsw") || pl_mnem_is(p, "ldrb") || pl_mnem_is(p, "sxtw");
+}
+
+function pl_is_alu_mnem(p: PLine): boolean {
+    return pl_mnem_is(p, "add") || pl_mnem_is(p, "sub") || pl_mnem_is(p, "cmp");
+}
+
+// pl_classify decodes one indented line of s. Anything it does not recognise
+// is PK_NONE, which closes the window.
+function pl_classify(s: string, ln: i32, bs: i32, hi: i32): PLine {
+    var me: i32 = pp_find(s, bs, hi, 32);
+    var p: PLine = PLine { s: s, ln: ln, bs: bs, me: me, hi: hi, kind: PK_NONE, a: 0, b: 0, val: 0i64, flags: 0 };
+    if (me + 1 >= hi) { return p; }
+    var o1: i32 = me + 1;
+    var cm: i32 = pp_find(s, o1, hi, 44);
+    var q: PLine = pl_stack(p, o1, cm);
+    if (q.kind != PK_NONE) { return q; }
+    if (pp_is(s, o1, hi, "x1, x0") && pl_mnem_is(p, "mov")) { return PLine { ...p, kind: PK_COPY }; }
+    if (pl_is_alu_mnem(p) && (pp_is(s, o1, hi, "x0, x0, x1") || (pl_mnem_is(p, "cmp") && pp_is(s, o1, hi, "x0, x1")))) {
+        return PLine { ...p, kind: PK_ALU };
+    }
+    if (pl_is_mat_mnem(p)) { return pl_mat(p, o1, cm); }
+    return p;
+}
+
+function pl_text(l: PLine, lo: i32, hi: i32): string {
+    return slice_unchecked(l.s, lo, hi) + "";
+}
+
+function pl_operand(l: PLine): string {
+    return slice_unchecked(l.s, l.a, l.b) + "";
+}
+
+// pl_rename renders chain line `m` with x1 (w1) in place of x0 (w0): the
+// destination always, and the reads unless `keep_reads` — the first line of
+// a chain, whose x0 is the pushed value the pop restores.
+function pl_rename(m: PLine, keep_reads: boolean): string {
+    var out: string = "    " + pl_text(m, m.bs, m.me) + " ";
+    var i: i32 = m.me + 1;
+    var first: boolean = true;
+    while (i < m.hi) {
+        if (pp_reg0_at(m.s, i, m.hi) && (i == m.me + 1 || !pp_is_alnum(m.s[i - 1] as i32)) && (first || !keep_reads)) {
+            if (m.s[i] == 120) { out = out + "x1"; } else { out = out + "w1"; }
+            i = i + 2;
+        } else {
+            out = out + slice_unchecked(m.s, i, i + 1);
+            i = i + 1;
+        }
+        if (m.s[i - 1] == 44) { first = false; }
+    }
+    return out + "\n";
+}
+
+// ---- the window ----
+
+function peep_set(own p: Peep, i: i32, l: PLine): Peep {
+    if (i < p.w.len()) { return Peep { ...p, w: p.w.with(i, l) }; }
+    return Peep { ...p, w: p.w.append(l) };
+}
+
+// peep_emit writes one line out. An original line extends the pending run
+// when it starts where the run ended, and otherwise starts a new one; a
+// rewritten line closes the run and is written as is.
+function peep_emit(own p: Peep, l: PLine): Peep {
+    if (l.ln >= 0) {
+        if (p.run_start >= 0 && p.run_end == l.ln) { return Peep { ...p, run_end: l.hi + 1 }; }
+        p = peep_close_run(p);
+        return Peep { ...p, run_start: l.ln, run_end: l.hi + 1 };
+    }
+    p = peep_close_run(p);
+    strbuf_append(l.s);
+    return p;
+}
+
+function peep_close_run(own p: Peep): Peep {
+    if (p.run_start < 0) { return p; }
+    var e: i32 = p.run_end;
+    if (e > p.asm.len()) { e = p.asm.len(); }
+    strbuf_append(slice_unchecked(p.asm, p.run_start, e));
+    return Peep { ...p, run_start: 0 - 1, run_end: 0 - 1 };
+}
+
+function peep_flush(own p: Peep, k: i32): Peep {
+    var i: i32 = 0;
+    while (i < k) {
+        var l: PLine = p.w[i];
+        p = peep_emit(p, l);
+        i = i + 1;
+    }
+    var j: i32 = k;
+    var n: i32 = p.n;
+    while (j < n) {
+        var m: PLine = p.w[j];
+        p = peep_set(p, j - k, m);
+        j = j + 1;
+    }
+    return Peep { ...p, n: n - k };
+}
+
+function peep_add(own p: Peep, l: PLine): Peep {
+    if (p.n == PW_CAP) { p = peep_flush(p, PW_DRAIN); }
+    var n: i32 = p.n;
+    p = peep_set(p, n, l);
+    return Peep { ...p, n: n + 1 };
+}
+
+function peep_add_text(own p: Peep, text: string): Peep {
+    return peep_add(p, pl_classify(text, 0 - 1, 4, text.len() - 1));
+}
+
+function peep_readd(own p: Peep, tail: PLine[]): Peep {
+    var i: i32 = 0;
+    while (i < tail.len()) {
+        p = peep_add(p, tail[i]);
+        i = i + 1;
+    }
+    return p;
+}
+
+function peep_tail_from(p: Peep, k: i32): PLine[] {
+    var tail: PLine[] = [];
+    var i: i32 = k;
+    while (i < p.n) {
+        tail = tail.append(p.w[i]);
+        i = i + 1;
+    }
+    return tail;
+}
+
+// peep_settle re-runs the rules until none rewrites the tail: one rule's
+// output is another's input — P1 collapses a constant's push/pop pair into
+// the copy that P4 then folds into the immediate. It terminates because
+// every rule removes at least one line from the window.
+function peep_settle(own p: Peep): Peep {
+    p = Peep { ...p, fired: true };
+    while (p.fired) {
+        p = Peep { ...p, fired: false };
+        p = peep_rules(p);
+    }
+    return p;
+}
+
+function peep_rules(own p: Peep): Peep {
+    p = peep_p1(p);
+    if (p.fired) { return p; }
+    p = peep_p3(p);
+    if (p.fired) { return p; }
+    p = peep_p4(p);
+    if (p.fired) { return p; }
+    var e: i32 = p.n - 2;
+    return peep_p5(p, e);
+}
+
+// ---- the rules ----
+
+function peep_p1(own p: Peep): Peep {
+    var n: i32 = p.n;
+    if (n < 2 || p.w[n - 2].kind != PK_PUSH || p.w[n - 1].kind != PK_POP) { return p; }
+    var a: PLine = p.w[n - 2];
+    var b: PLine = p.w[n - 1];
+    if ((b.flags & PF_MARKER) != 0) { return p; }
+    p = Peep { ...p, n: n - 2, fired: true };
+    if (pl_operand(a) == pl_operand(b)) { return p; }
+    return peep_add_text(p, "    mov " + pl_operand(b) + ", " + pl_operand(a) + "\n");
+}
+
+function peep_p3(own p: Peep): Peep {
+    var n: i32 = p.n;
+    if (n < 2 || p.w[n - 2].kind != PK_PUSH || p.w[n - 1].kind != PK_DROP) { return p; }
+    if ((p.w[n - 2].flags & PF_MARKER) != 0) { return p; }
+    return Peep { ...p, n: n - 2, fired: true };
+}
+
+// peep_chain_start returns the index of the first line of the
+// materialisation chain ending at w[e-1] (w[e] is the copy), or -1 when
+// w[e-1] is not a chain end or the chain is not headed by a push.
+function peep_chain_start(p: Peep, e: i32): i32 {
+    if (e < 2 || p.w[e - 1].kind != PK_MAT || (p.w[e - 1].flags & PF_DEST0) == 0) { return 0 - 1; }
+    var k: i32 = e - 1;
+    while (k > 0 && k > e - 3 && p.w[k - 1].kind == PK_MAT) { k = k - 1; }
+    if (k < 1 || p.w[k - 1].kind != PK_PUSH) { return 0 - 1; }
+    return k;
+}
+
+// peep_restore adds the `mov x0, SRC` a folded push/pop pair still owes
+// when the push was not of x0 itself.
+function peep_restore(own p: Peep, push: PLine): Peep {
+    if ((push.flags & PF_X0) != 0) { return p; }
+    return peep_add_text(p, "    mov x0, " + pl_operand(push) + "\n");
+}
+
+// peep_head_ok reports whether w[k-1..e] is the shape P4 and P5 share: a
+// push, a chain, the copy to x1 and a pop into x0.
+function peep_head_ok(p: Peep, k: i32, e: i32): boolean {
+    if (k < 1 || p.w[k - 1].kind != PK_PUSH || (p.w[k - 1].flags & PF_MARKER) != 0) { return false; }
+    if (p.w[e].kind != PK_COPY || e + 1 >= p.n || p.w[e + 1].kind != PK_POP) { return false; }
+    if ((p.w[e + 1].flags & PF_X0) == 0) { return false; }
+    // A chain whose first line reads x0 reads the pushed value, which is
+    // still in x0 only when the push was of x0.
+    return (p.w[k].flags & PF_READS0) == 0 || (p.w[k - 1].flags & PF_X0) != 0;
+}
+
+// peep_p4_imm renders constant K as an add/sub/cmp immediate, or "" when
+// imm12 cannot hold it: 0..4095, or a multiple of 4096 up to 0xFFF000.
+function peep_p4_imm(v: i64): string {
+    if (v < 0i64 || v > 16773120i64) { return ""; }
+    if (v > 4095i64 && (v & 4095i64) != 0i64) { return ""; }
+    return util.i64_to_string(v);
+}
+
+function peep_p4(own p: Peep): Peep {
+    var n: i32 = p.n;
+    if (n < 5 || p.w[n - 1].kind != PK_ALU) { return p; }
+    var c: PLine = p.w[n - 4];
+    if (c.kind != PK_MAT || (c.flags & PF_CONST) == 0 || !peep_head_ok(p, n - 4, n - 3)) { return p; }
+    var imm: string = peep_p4_imm(c.val);
+    if (imm.len() == 0) { return p; }
+    var u: PLine = p.w[n - 1];
+    var line: string = "    " + pl_text(u, u.bs, u.me) + " x0, x0, #" + imm + "\n";
+    if (pl_mnem_is(u, "cmp")) { line = "    cmp x0, #" + imm + "\n"; }
+    var push: PLine = p.w[n - 5];
+    p = Peep { ...p, n: n - 5, fired: true };
+    p = peep_restore(p, push);
+    return peep_add_text(p, line);
+}
+
+// peep_p5 folds the chain ending in the copy at w[e-1] and the pop at w[e]
+// — called with e = n-2 from the tail, once P4 has had its chance at the
+// line after the pop, and with e = n-1 when a line that cannot join closes
+// the window.
+function peep_p5(own p: Peep, e: i32): Peep {
+    if (e < 3 || e >= p.n || p.w[e - 1].kind != PK_COPY) { return p; }
+    var k: i32 = peep_chain_start(p, e - 1);
+    if (k < 0 || !peep_head_ok(p, k, e - 1)) { return p; }
+    var push: PLine = p.w[k - 1];
+    var chain: PLine[] = [];
+    var i: i32 = k;
+    while (i < e - 1) {
+        chain = chain.append(p.w[i]);
+        i = i + 1;
+    }
+    var tail: PLine[] = peep_tail_from(p, e + 1);
+    p = Peep { ...p, n: k - 1, fired: true };
+    p = peep_restore(p, push);
+    var j: i32 = 0;
+    while (j < chain.len()) {
+        p = peep_add_text(p, pl_rename(chain[j], j == 0));
+        j = j + 1;
+    }
+    return peep_readd(p, tail);
+}
+
+// ---- the pass ----
+
+// peep_line feeds one line of asm to the window. A line no rule can use
+// closes the window: P5 gets its last chance at the lines before it, then
+// everything flushes and the line joins the run.
+function peep_line(own p: Peep, ln: i32, bs: i32, hi: i32): Peep {
+    var l: PLine = pl_none(p.asm, ln, bs, hi);
+    if (bs < hi && p.asm[ln] == 32) { l = pl_classify(p.asm, ln, bs, hi); }
+    if (l.kind != PK_NONE) {
+        p = peep_add(p, l);
+        return peep_settle(p);
+    }
+    p = Peep { ...p, fired: false };
+    var e: i32 = p.n - 1;
+    p = peep_p5(p, e);
+    var n: i32 = p.n;
+    p = peep_flush(p, n);
+    return peep_emit(p, l);
+}
+
 function peephole_push_pop_arm64(asm: string): string {
     strbuf_reset();
+    var p: Peep = Peep { asm: asm, w: [], n: 0, run_start: 0 - 1, run_end: 0 - 1, fired: false };
     var n: i32 = asm.len();
-    // Untouched bytes are copied in RUNS, not per line — see the x86-64 twin,
-    // where line-at-a-time copying cost 28% of total compile time.
-    var run_start: i32 = 0;
-    var push_at: i32 = 0 - 1;
-    var src_lo: i32 = 0;
-    var src_hi: i32 = 0;
     var ln: i32 = 0;
     var i: i32 = 0;
     while (i <= n) {
         if (i == n || asm[i] == 10) {
             var bs: i32 = ln;
             while (bs < i && asm[bs] == 32) { bs = bs + 1; }
-            var folded: boolean = false;
-            if (push_at >= 0 && asmcore.pp_at(asm, bs, i, "ldr ")) {
-                // `ldr DST, [sp], #16` — DST runs from bs+4 to the comma.
-                var dlo: i32 = bs + 4;
-                var dhi: i32 = dlo;
-                while (dhi < i && asm[dhi] != 44) { dhi = dhi + 1; }
-                if (asmcore.pp_at(asm, dhi, i, ", [sp], #16") && dhi + 11 == i && !pp_arm64_marker_reg(asm, dlo, dhi)) {
-                    if (run_start < push_at) { strbuf_append(slice_unchecked(asm, run_start, push_at)); }
-                    if (!asmcore.pp_eq_bytes(asm, src_lo, src_hi, dlo, dhi)) {
-                        strbuf_append("    mov ");
-                        strbuf_append(slice_unchecked(asm, dlo, dhi));
-                        strbuf_append(", ");
-                        strbuf_append(slice_unchecked(asm, src_lo, src_hi));
-                        strbuf_append("\n");
-                    }
-                    run_start = i + 1;
-                    push_at = 0 - 1;
-                    folded = true;
-                }
-            }
-            if (!folded && push_at >= 0 && asmcore.pp_at(asm, bs, i, "add sp, sp, #16")
-                    && bs + 15 == i && !pp_arm64_marker_reg(asm, src_lo, src_hi)) {
-                // The push is dead: this line discards exactly what it wrote.
-                // `add sp, sp, #16` is what a `drop` lowers to, and the length
-                // check keeps it off any other sp adjustment. Both lines go.
-                // A `str` source is always a register, so unlike the x86-64 twin
-                // there is no memory operand to worry about dropping a load for.
-                if (run_start < push_at) { strbuf_append(slice_unchecked(asm, run_start, push_at)); }
-                run_start = i + 1;
-                push_at = 0 - 1;
-                folded = true;
-            }
-            if (!folded) {
-                push_at = 0 - 1;
-                if (asmcore.pp_at(asm, bs, i, "str ")) {
-                    // `str SRC, [sp, #-16]!` — SRC runs from bs+4 to the comma.
-                    var slo: i32 = bs + 4;
-                    var shi: i32 = slo;
-                    while (shi < i && asm[shi] != 44) { shi = shi + 1; }
-                    if (asmcore.pp_at(asm, shi, i, ", [sp, #-16]!") && shi + 13 == i) {
-                        push_at = ln;
-                        src_lo = slo;
-                        src_hi = shi;
-                    }
-                }
-            }
+            p = peep_line(p, ln, bs, i);
             ln = i + 1;
         }
         i = i + 1;
     }
-    if (run_start < n) { strbuf_append(slice_unchecked(asm, run_start, n)); }
+    var e: i32 = p.n - 1;
+    p = peep_p5(p, e);
+    var k: i32 = p.n;
+    p = peep_flush(p, k);
+    p = peep_close_run(p);
     return strbuf_take();
-}
-
-// pp_arm64_marker_reg reports whether the register is one darwinize keys on
-// (x8, its generic-syscall number marker, and x16, the same line after the
-// Mach-O rewrite). Checked on the popped register when folding a round trip, and
-// on the pushed one when dropping a dead push — either way the line darwinize
-// looks for has to survive.
-function pp_arm64_marker_reg(asm: string, lo: i32, hi: i32): boolean {
-    if (hi - lo == 2 && asm[lo] == 120 && asm[lo + 1] == 56) { return true; }
-    if (hi - lo == 3 && asm[lo] == 120 && asm[lo + 1] == 49 && asm[lo + 2] == 54) { return true; }
-    return false;
 }
 
 // emit_module_ir_gated is the arm64 twin of asm_ir.emit_module_ir_gated: the
@@ -7109,6 +7649,8 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
 //     relocation pair; only the assembler syntax differs. Every
 //     emitted `adrp` is paired with an `add ..., :lo12:...` and there
 //     are no `ldr [.., :lo12:..]` forms, so the rewrite is unambiguous.
+//     Like the `.L` prefix rewrite it skips quoted string operands: a
+//     `.ascii` payload is program data, not an addressing mode.
 //   - Sections. `.section .rodata` -> `.section __TEXT,__const`;
 //     `.bss` / `.section .bss` -> `.section __DATA,__bss`;
 //     `.section .text` -> `.text`.
@@ -7158,14 +7700,36 @@ function darwin_lstrip(s: string): string {
     return slice_unchecked(s, i, s.len()) + "";
 }
 
-// darwin_index_of returns the first index of sub in s, or -1.
-function darwin_index_of(s: string, sub: string): i32 {
-    if (sub.len() == 0) { return 0; }
-    if (s.len() < sub.len()) { return 0 - 1; }
+// darwin_skip_quoted takes the index of an opening double quote and returns
+// the index just past its closing quote (or the line's end when unterminated),
+// stepping over backslash escapes.
+function darwin_skip_quoted(s: string, i: i32): i32 {
+    var n: i32 = s.len();
+    var j: i32 = i + 1;
+    while (j < n) {
+        var c: u8 = s[j];
+        if (c == 92 && j + 1 < n) { j = j + 1; }
+        else if (c == 34) { return j + 1; }
+        j = j + 1;
+    }
+    return n;
+}
+
+// darwin_index_of_unquoted returns the first index of sub in s that is not
+// inside a double-quoted string operand, or -1: a `.ascii` payload is program
+// data, not an addressing mode.
+function darwin_index_of_unquoted(s: string, sub: string): i32 {
+    var n: i32 = s.len();
+    var m: i32 = sub.len();
     var i: i32 = 0;
-    while (i <= s.len() - sub.len()) {
-        if (slice_unchecked(s, i, i + sub.len()) == sub) { return i; }
-        i = i + 1;
+    while (i < n) {
+        if (s[i] == 34) {
+            i = darwin_skip_quoted(s, i);
+        } else if (i + m <= n && slice_unchecked(s, i, i + m) == sub) {
+            return i;
+        } else {
+            i = i + 1;
+        }
     }
     return 0 - 1;
 }
@@ -7217,16 +7781,13 @@ function darwin_sysno(n: i32): i32 {
 function darwin_retarget_locals(line: string): string {
     var n: i32 = line.len();
     var i: i32 = 0;
-    var in_str: boolean = false;
     var out: string = "";
     var run: i32 = 0;
     while (i < n) {
         var c: u8 = line[i];
-        if (in_str) {
-            if (c == 92 && i + 1 < n) { i = i + 1; }        // backslash escape
-            else if (c == 34) { in_str = false; }           // closing quote
-        } else if (c == 34) {
-            in_str = true;
+        if (c == 34) {
+            i = darwin_skip_quoted(line, i);
+            continue;
         } else if (c == 46 && i + 1 < n && line[i + 1] == 76
                    && (i == 0 || !darwin_is_sym_byte(line[i - 1]))) {
             // ".L" at a token boundary: copy everything up to the dot and
@@ -7319,8 +7880,8 @@ pub function darwinize(asm: string): string {
                 out_line = "_main:";
             } else if (darwin_starts_with(body, "adrp ")) {
                 out_line = line + "@PAGE";
-            } else if (darwin_index_of(line, ":lo12:") >= 0) {
-                var idx: i32 = darwin_index_of(line, ":lo12:");
+            } else if (darwin_index_of_unquoted(line, ":lo12:") >= 0) {
+                var idx: i32 = darwin_index_of_unquoted(line, ":lo12:");
                 out_line = slice_unchecked(line, 0, idx) + slice_unchecked(line, idx + 6, line.len()) + "@PAGEOFF";
             } else if (body == "ldr x8, [sp], #16") {
                 // The __syscall3 op's number load (#2649) — a generic syscall

@@ -152,6 +152,6 @@ res_strarr__callscrut__match                  clean  clean  #7910 (d): same hois
 optopt_strarr__callscrut__match               clean  clean  same two-level release as the x86 row
 opt_str__callscrut__match                     clean  clean  same registry admission as the x86 row
 opt_strarr__callbound__match                  clean  clean  the bound form of the string[] payload
-rcenum_mixed__callscrut__match                clean  leak   #7910 (d): same refusal as the x86 row — the user rc-enum producer's consuming release is a gap the Option / Result slice did not reach
+rcenum_mixed__callscrut__match                clean  clean  clean on both sides (#7910 (d) closed with the x86 row — same admission, same deep free)
 for_in_struct_elem__loop__read                clean  clean  the struct-array twin of the binder cell; the binder borrows the element the array owns (#8178)
 for_in_struct_elem__loop__return_scalar       clean  clean  a scalar read through the element returned mid-loop is a read of it, the container keeps its credit (#8178)

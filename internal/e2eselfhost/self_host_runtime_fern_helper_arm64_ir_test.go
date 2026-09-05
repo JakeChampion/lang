@@ -387,7 +387,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		// Linux's trap. This assertion is the regression guard for that.
 		{"connect", "98"},
 	} {
-		if !strings.Contains(asm, "mov x0, #"+c.imm+"\n") {
+		if !hasBakedImm(asm, c.imm) {
 			t.Errorf("the Darwin %s constant (%s) was not baked into the helper source", c.what, c.imm)
 		}
 	}
@@ -570,4 +570,16 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	if strings.Contains(asm, "    mov x0, #93\n    str x0, [sp, #-16]!\n    mov x0, #134\n") {
 		t.Error("arr_slice's trap pushes Linux's exit number (93) in Mach-O output")
 	}
+}
+
+// hasBakedImm reports whether imm reaches the emitted text as an immediate:
+// materialised by `mov x0, #N`, or folded by the peephole's P4 into the add,
+// sub or cmp that consumed it. Frame arithmetic on sp never matches.
+func hasBakedImm(asm, imm string) bool {
+	for _, form := range []string{"mov x0, #", "add x0, x0, #", "sub x0, x0, #", "cmp x0, #"} {
+		if strings.Contains(asm, form+imm+"\n") {
+			return true
+		}
+	}
+	return false
 }

@@ -101,15 +101,15 @@ function main(): i32 {
     // the scalar class the arrangement names, since nothing in the encoding
     // says how wide the result is; .2s has no across-lanes form; a vector
     // destination where a scalar is required; a missing operand.
-    if (arm64_gas_bad_vec_token("cnt", "v0.4h, v0.4h").len() == 0) { return 15; }
-    if (arm64_gas_bad_vec_token("cnt", "v0.8b, v1.16b").len() == 0) { return 16; }
-    if (arm64_gas_bad_vec_token("addv", "b0, v0.8h").len() == 0) { return 17; }
-    if (arm64_gas_bad_vec_token("addv", "s0, v0.2s").len() == 0) { return 18; }
-    if (arm64_gas_bad_vec_token("addv", "v0.8b, v0.8b").len() == 0) { return 19; }
-    if (arm64_gas_bad_vec_token("cnt", "v0.8b").len() == 0) { return 20; }
+    if (arm64_gas_bad_vec_token("cnt", arm64_gas_operands("v0.4h, v0.4h")).len() == 0) { return 15; }
+    if (arm64_gas_bad_vec_token("cnt", arm64_gas_operands("v0.8b, v1.16b")).len() == 0) { return 16; }
+    if (arm64_gas_bad_vec_token("addv", arm64_gas_operands("b0, v0.8h")).len() == 0) { return 17; }
+    if (arm64_gas_bad_vec_token("addv", arm64_gas_operands("s0, v0.2s")).len() == 0) { return 18; }
+    if (arm64_gas_bad_vec_token("addv", arm64_gas_operands("v0.8b, v0.8b")).len() == 0) { return 19; }
+    if (arm64_gas_bad_vec_token("cnt", arm64_gas_operands("v0.8b")).len() == 0) { return 20; }
     // ...and a well-formed pair must NOT be refused.
-    if (arm64_gas_bad_vec_token("cnt", "v0.8b, v0.8b").len() != 0) { return 21; }
-    if (arm64_gas_bad_vec_token("addv", "b0, v0.8b").len() != 0) { return 22; }
+    if (arm64_gas_bad_vec_token("cnt", arm64_gas_operands("v0.8b, v0.8b")).len() != 0) { return 21; }
+    if (arm64_gas_bad_vec_token("addv", arm64_gas_operands("b0, v0.8b")).len() != 0) { return 22; }
     return 0;
 }
 `

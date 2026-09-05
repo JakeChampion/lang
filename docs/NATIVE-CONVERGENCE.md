@@ -174,12 +174,27 @@ are the *definitions*; `tools/freeze_gate.sh` derives every mechanically-checkab
 one from the tree and runs in CI on every push. An audit on 2026-08-02 found
 this list, the tracker (#4451) and `SELFHOST-PERCEUS-REUSE.md` all carrying
 stale claims, and all three stale in the same direction — more pessimistic than
-the code. Prose does not re-check itself. Precondition 1's parity question is
-the only one that genuinely needs a human, and the gate prints it as
+the code. Prose does not re-check itself. Precondition 1 is the only one the
+gate cannot cheaply measure — `make distcheck` is its criterion and needs ~14 GB
+and minutes — so the gate reads it off the CI wiring and otherwise prints
 UNVERIFIABLE rather than guessing.
 
 1. Roadmap **goal 2** complete — the Perceus port (inc/dec, borrow inference,
    drop specialisation, reuse analysis) at parity in the self-host compiler.
+   **Criterion: `make distcheck` green.** Every other precondition got a
+   mechanical definition and went green; this one said "at parity" and left the
+   rest to prose, so the gate can only ever print UNVERIFIABLE no matter how
+   much work lands. `distcheck` is the measurement that fits: stage1 compiling
+   `fern.fern` byte-identically is the whole compiler's own source, the one
+   configuration nothing else gates — the per-module fixpoint compiles it eight
+   units per process, and §2's suites oracle behaviour, not reclaim. It fails
+   today on memory alone (`docs/BOOTSTRAP.md`), which is exactly the RECLAIM
+   gap goal 2 is about, and it is already §3a's precondition 1 for retiring the
+   backends, so the two stop being argued separately.
+
+   The generated leak matrix is necessary but not sufficient: it reached
+   150/150 `clean clean` on both ISAs while `distcheck` still OOMs, because it
+   covers the shapes someone enumerated rather than the compiler's own code.
 2. #3451 / #3457 complete (the bootstrap-budget / bundle prerequisites).
    **GREEN as of 2026-08-02.** #3457 is closed: all three legacy AST→asm
    emitters are deleted — `asm.fern` + `asm_arm64.fern` (#5972) and `wasm.fern`

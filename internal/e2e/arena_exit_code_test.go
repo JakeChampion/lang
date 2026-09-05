@@ -84,9 +84,9 @@ func TestArenaExhaustedExitCodeSelfHostLockstep(t *testing.T) {
 		sites int
 	}{
 		// x86: `movq $<code>, %rdi` before `syscall` (exit = rax 60).
-		{"asm_ir.fern", "%rdi", 2},
+		{"asm_ir.fern", "%rdi", 1},
 		// arm64: `mov x0, #<code>` before `svc #0` (exit = x8 93).
-		{"asm_arm64_ir.fern", "x0", 2},
+		{"asm_arm64_ir.fern", "x0", 1},
 	} {
 		path := filepath.Join("..", "..", "examples", "self_host", c.file)
 		src, err := os.ReadFile(path)

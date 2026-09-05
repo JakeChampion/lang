@@ -146,6 +146,17 @@ passes are the largest cost. To re-measure, wrap `run()` in
 `pprof.StartCPUProfile` from a throwaway `cmd/fern` test and read
 `go tool pprof -top -cum`.
 
+Two stages of that pipeline run on every core (#8176): `ir.LowerWith`'s
+per-function body lowering (`FERN_LOWER_JOBS=N` sets the worker count, `1` is
+sequential) and the x86-64 assembler's line parse, which reads the text in
+chunks ahead of the in-order encode. Both are GC-bound rather than core-bound:
+on the same container the lowering loop went 3.4 s to 2.3 s at four workers
+and 3.0 s to 1.3 s with `GOGC=400`, so the allocation rate, not the worker
+count, is what to attack next. `ir.OptimizeCleanup` was tried on the same
+pool and gained nothing measurable at the default GOGC (its passes copy each
+op list per round, so it is allocation all the way down); it stays sequential
+until that copying goes.
+
 ## Suite timings and sharding
 
 The e2e suite is split (#4398 part 3) into `internal/e2eselfhost` (the
@@ -440,3 +451,34 @@ linux/arm64 on purpose: the aarch64 leg then runs natively and only x86-64 pays
 emulation. This makes those legs **runnable for debugging**; it does not make
 them a gate — the section above still applies, and `docs/CI-SIGNOFF.md` records
 which lanes may be signed off locally as a result.
+
+### The stage-1 / stage-2 self-compile on Apple Silicon
+
+Both stages run natively through `-target arm64-darwin`, so the self-compile
+IS reproducible on a Mac. Measured 2026-09-05 on an M-series machine from a
+fresh `go build -o $B/fern ./cmd/fern` (absolute paths throughout: the
+self-host CLI cannot open relative ones):
+
+```
+$B/fern    -target arm64-darwin -o $B/fern-s1 $W/examples/self_host/fern.fern      # stage 1: 8 s, 1.3 GB RSS
+$B/fern-s1 -target arm64-linux -emit asm -o $B/fern.s $W/examples/self_host/fern.fern  # 26 s, 1.0 GB, 63.3 MB of asm (#8212's shape)
+$B/fern-s1 -target arm64-darwin -o $B/fern-s2 $W/examples/self_host/fern.fern      # stage 2: 36 s, 1.4-1.7 GB, an 11 MB Mach-O
+```
+
+The "arena exhaustion, exit 125" that #6872 / #7267 reported for the stage-2
+build was not the arena: it was the string builder, which the self-host
+emitters backed with a fixed 64 MiB `.bss` buffer and trapped with that exit
+code when the emitted text passed it. The buffer grows now and the build
+completes. `asm_load_run.fern` is no longer needed as a stand-in for
+`fern.fern`.
+
+The darwin stage 2 is a fixpoint at the emit level: `fern-s2` and `fern-s1`
+produce byte-identical `-target arm64-darwin -emit asm` listings for all 471
+runnable conformance cases (#8400 was `darwinize` rewriting the `:lo12:`
+inside the compiler's own string literals). What does not yet hold is stage 3:
+`fern-s2` building `fern.fern` exits 125 (arena exhausted) after 20 s at
+3.9-5.1 GB RSS (two runs), where `fern-s1` finishes the same build in 36 s at
+1.4-1.7 GB (#8479). The same chain for `-target arm64-linux` in the linux/arm64
+container is a full fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits
+byte-identical asm to stage 1, and compiles and runs a strbuf program
+correctly.
