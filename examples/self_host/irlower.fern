@@ -4354,12 +4354,9 @@ pub function decl_field_index(structs: StructTab, struct_name: string, field: st
     return 0 - 1;
 }
 
-// decl_is_leaksafe reports whether every field is an i32/boolean OR a string.
-// These are all leak-only types in the IR path — strings are never freed, so a
-// struct holding one keeps a valid reference for the program's life — so such a
-// struct needs NO reference counting (matching the AST path's exit codes; the
-// boxes leak). Array / nested-struct / tuple fields would be RC-tracked (freed),
-// so a struct holding one needs construction retains + drop release — deferred.
+// decl_is_leaksafe reports whether every field is leak-safe in the IR path.
+// Leak-only fields need no reference counting; Reader/Writer are bare fd handles
+// and likewise carry no heap reference.
 // is_scalar_array_type reports whether `t` is a scalar-element array (i32[] /
 // boolean[]) — leak-only-safe as a struct field: indexing yields an i32, and the
 // array (a fresh literal at construction) leaks with the struct (never freed),
@@ -4595,10 +4592,10 @@ function is_leaksafe_payload(p: string): boolean {
 }
 
 // is_leaksafe_opt_field: an Option[T] / Result[T, E] field whose payload type(s)
-// are leak-safe scalars/strings. Options/Results are leak-only on the IR path (the
-// exit sweep never frees them), so such a field needs no RC / aliasing bail — it
-// leaks with the struct, like a string field. Struct / nested-generic payloads are
-// deferred (they would need payload-type recovery through the field).
+// are leak-safe scalars/strings, structs, tuples, arrays, or enums.
+// Options/Results are leak-only on the IR path (the exit sweep never frees them),
+// so such a field needs no RC / aliasing bail — it leaks with the struct, like a
+// string field.
 pub function is_leaksafe_opt_field(t: string): boolean {
     var n: i32 = t.len();
     if (n < 9) { return false; }
@@ -4610,11 +4607,9 @@ pub function is_leaksafe_opt_field(t: string): boolean {
 }
 
 // opt_payload_ok_d: an Option/Result payload type is admissible for a leak-safe
-// struct field when it is a leak-safe scalar/string OR a leak-safe STRUCT (a
-// leak-only pointer in one slot, offset 8 — exactly what the match lowering's
-// ptag_is_struct branch reads). Enum payloads are deliberately excluded, held
-// out by a negative pin whose rationale no longer holds — see the tail of
-// opt_payload_ok_dv.
+// struct field when it is a leak-safe scalar/string, STRUCT (a leak-only pointer
+// in one slot, offset 8 — exactly what the match lowering's ptag_is_struct branch
+// reads), tuple, array, or enum.
 function opt_payload_ok_d(structs: StructTab, p: string): boolean {
     var seen: string[] = [];
     return opt_payload_ok_dv(structs, p, 0, seen);
@@ -5211,7 +5206,7 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
         // `(Node, …)` field re-enters decl_is_leaksafe_d WITH the path — its
         // back-edge check then short-circuits the cycle instead of recursing
         // forever (was a SIGSEGV on any linked list / tree).
-        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || t == "string[][]" || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && slice_unchecked(t, 0, 5) == "Cell[")) {
+        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || t == "Reader" || t == "Writer" || is_leaksafe_array_field(t) || t == "string[][]" || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && slice_unchecked(t, 0, 5) == "Cell[")) {
             fi = fi + 1;
             continue;
         }
