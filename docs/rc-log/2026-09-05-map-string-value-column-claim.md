@@ -77,10 +77,24 @@ for exactly this reason — plus a way to tell the two string ABIs apart in
 `map.fern` for the dec direction. Landing it would also retire the IR-side
 pre-drop widening and `emitMapPredropSoleOwnerGate` for strings.
 
-The **struct** value column (kind 4) is still shared, and is the residual
-#8354 keeps: its deep drop is the IR-generated `__drop_map_struct_T`, so
-claiming it needs the same per-field walk in the inc direction rather than a
-recognition test.
+**Correction, measured after this landed.** This entry first said the struct
+value column (kind 4) was still shared and needed a per-field inc walk. That
+was carried forward from the comment it replaced and is **false**: kind 4 is
+already inside `__map_own_copied_cols`' `retainVals` arm, and one
+`__fern_rc_inc` per entry is the whole claim, because the slot is a single
+pointer to an rc'd box whose generated deep drop frees at its last reference.
+
+Measured over 200 rounds, two entries, both handles read back and dropped —
+a `Map[i32, Box]`, and a `Map[i32, Deep]` whose value carries a string, an
+rc-tracked array and a nested struct with its own string:
+
+| | answer | `FERN_LEAKCHECK` |
+|---|---|---|
+| `Map[i32, Box]`, no overwrite | correct on all three | allocs=2000 frees=2000 **live_bytes=0** |
+| `Map[i32, Deep]`, no overwrite | correct on all three | allocs=3200 frees=3200 **live_bytes=0** |
+
+Balanced on x86-64 and arm64, clean on wasm. #8420 was filed on the false
+reading and closed on these numbers.
 
 ## Gates
 

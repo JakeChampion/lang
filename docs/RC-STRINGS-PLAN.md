@@ -300,10 +300,11 @@ differential fuzz and `__rc_underflow_count` guard.
    pre-drop runs before the set's own `__map_cow_inplace`, so a copy of
    the handle still names the value it releases. The cell the two-word
    ABI boxes that value into is freed alongside the buffer (#2704).
-   What remains is the ALIASED case, where the release belongs to
-   whoever owns the column and a copy claims neither the string nor the
-   struct value column: #8354, a wide-scalar value column being already
-   owned outright (#7114).
+   What remains is the ALIASED case, where the pre-drop is gated off and
+   nothing else picks the replaced value up: #8421. A copy now claims
+   every value column — the string one by reboxing (#8390), the struct
+   one by the retain, the wide-scalar one outright (#7114) — so what is
+   left is the release's PLACEMENT, not a missing claim.
 
    **arm64 is excluded.** arm64 IR-lowering forces `TwoWordOverride=true`
    (see `internal/codegen/arm64/arm64.go`), so strings are stored boxed
