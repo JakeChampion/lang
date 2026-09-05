@@ -7087,6 +7087,98 @@ func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
 // unify the recorded `for` pattern (ArrayIter[T]) against `ct` (ArrayIter[i32])
 // to recover the binding (T=i32) and substitute, yielding the concrete args
 // ([i32]). See docs/TRAITS.md.
+// checkTypeArgBounds reports every trait bound `args` fails to satisfy for
+// genericFn, at pos. `sub` and `tpSet` resolve a generic-trait bound whose
+// arguments name type parameters the call inferred; both may be nil.
+//
+// A still-parametric argument is skipped, because the bound cannot be judged
+// until the type is known — that case is monomorph's, through BoundErrors,
+// once instantiation has made it concrete (#8452).
+// BoundErrors reports the trait bounds `args` fail to satisfy for fn, at pos.
+//
+// The call-site check skips an argument that is still a type parameter — a
+// generic calling a generic — because the bound cannot be judged before the
+// type is known. Nothing then judged it afterwards either: monomorph cleared
+// the clone's TypeParams, so the bound went with them and the body failed on
+// whatever the missing impl was needed for, reported as a compiler bug rather
+// than as the unsatisfied bound it is (#8452). Monomorph calls this once the
+// arguments are concrete, which is the "eventual monomorphic call" the
+// call-site check defers to.
+func BoundErrors(info *Info, fn *ast.FuncDecl, args []ast.Type, pos ast.Position) []error {
+	if info == nil || fn == nil || len(fn.Bounds) == 0 {
+		return nil
+	}
+	// A generic-trait bound names the call's own type parameters —
+	// `count[T, I: Iterator[T]]` — so the comparison against the impl's
+	// arguments needs T bound before `Iterator[T]` means anything. The
+	// call-site check builds that from the inferred arguments; here they are
+	// the instantiation's, paired with the parameters positionally.
+	sub := make(map[string]ast.Type, len(fn.TypeParams))
+	tpSet := make(map[string]bool, len(fn.TypeParams))
+	for i, name := range fn.TypeParams {
+		tpSet[name] = true
+		if i < len(args) {
+			sub[name] = args[i]
+		}
+	}
+	c := &checker{info: info}
+	c.checkTypeArgBounds(fn, args, sub, tpSet, pos)
+	return c.errors
+}
+
+func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, sub map[string]ast.Type, tpSet map[string]bool, pos ast.Position) {
+	// Trait-bound satisfaction: every concrete type
+	// argument must implement the traits its type
+	// parameter is bound by. A still-parametric arg
+	// (generic-into-generic) is left for the eventual
+	// monomorphic call. See docs/TRAITS.md §5.
+	for i, tp := range genericFn.TypeParams {
+		if _, isParam := args[i].(ast.ParamType); isParam {
+			continue
+		}
+		for bi, traitName := range genericFn.Bounds[tp] {
+			tn, ok := methodTypeName(args[i])
+			// Render `__method_Box_to_string` as the user-facing
+			// `Box.to_string` when the generic decl is a hoisted
+			// receiver method.
+			site := demangle(genericFn.Name)
+			if genericFn.MethodRecv != "" {
+				site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
+			}
+			if !ok || !c.info.Impls[traitName][tn] {
+				c.errfCode(pos, "E021",
+					"type argument %s = %s does not implement trait %s required by %s",
+					tp, demangle(args[i].String()), demangle(traitName), site)
+				continue
+			}
+			// Generic-trait bound (`T: From[i32]`): the impl's
+			// trait args must match the bound's, not merely exist.
+			var boundArgs []ast.Type
+			if ba := genericFn.BoundArgs[tp]; bi < len(ba) {
+				boundArgs = ba[bi]
+			}
+			if len(boundArgs) > 0 {
+				// A bound arg may name a type param the call
+				// inferred (`I: Iterator[T]` with T pinned from the
+				// impl) — resolve those before comparing so the
+				// impl's concrete args match. See #2691.
+				resolved := make([]ast.Type, len(boundArgs))
+				for k, baT := range boundArgs {
+					resolved[k] = substBoundArg(baT, tpSet, sub)
+				}
+				boundArgs = resolved
+				implArgs := c.implTraitArgsFor(traitName, tn, args[i])
+				if !typeArgsEqual(implArgs, boundArgs) {
+					c.errfCode(pos, "E021",
+						"type argument %s = %s implements %s%s but the bound requires %s%s (in %s)",
+						tp, demangle(args[i].String()), demangle(traitName), traitArgsStr(implArgs),
+						demangle(traitName), traitArgsStr(boundArgs), site)
+				}
+			}
+		}
+	}
+}
+
 func (c *checker) implTraitArgsFor(traitName, tn string, ct ast.Type) []ast.Type {
 	implArgs := c.info.ImplTraitArgs[traitName][tn]
 	if len(implArgs) == 0 {
@@ -14600,56 +14692,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 			if complete {
-				// Trait-bound satisfaction: every concrete type
-				// argument must implement the traits its type
-				// parameter is bound by. A still-parametric arg
-				// (generic-into-generic) is left for the eventual
-				// monomorphic call. See docs/TRAITS.md §5.
-				for i, tp := range genericFn.TypeParams {
-					if _, isParam := args[i].(ast.ParamType); isParam {
-						continue
-					}
-					for bi, traitName := range genericFn.Bounds[tp] {
-						tn, ok := methodTypeName(args[i])
-						// Render `__method_Box_to_string` as the user-facing
-						// `Box.to_string` when the generic decl is a hoisted
-						// receiver method.
-						site := demangle(genericFn.Name)
-						if genericFn.MethodRecv != "" {
-							site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
-						}
-						if !ok || !c.info.Impls[traitName][tn] {
-							c.errfCode(n.P, "E021",
-								"type argument %s = %s does not implement trait %s required by %s",
-								tp, demangle(args[i].String()), demangle(traitName), site)
-							continue
-						}
-						// Generic-trait bound (`T: From[i32]`): the impl's
-						// trait args must match the bound's, not merely exist.
-						var boundArgs []ast.Type
-						if ba := genericFn.BoundArgs[tp]; bi < len(ba) {
-							boundArgs = ba[bi]
-						}
-						if len(boundArgs) > 0 {
-							// A bound arg may name a type param the call
-							// inferred (`I: Iterator[T]` with T pinned from the
-							// impl) — resolve those before comparing so the
-							// impl's concrete args match. See #2691.
-							resolved := make([]ast.Type, len(boundArgs))
-							for k, baT := range boundArgs {
-								resolved[k] = substBoundArg(baT, tpSet, sub)
-							}
-							boundArgs = resolved
-							implArgs := c.implTraitArgsFor(traitName, tn, args[i])
-							if !typeArgsEqual(implArgs, boundArgs) {
-								c.errfCode(n.P, "E021",
-									"type argument %s = %s implements %s%s but the bound requires %s%s (in %s)",
-									tp, demangle(args[i].String()), demangle(traitName), traitArgsStr(implArgs),
-									demangle(traitName), traitArgsStr(boundArgs), site)
-							}
-						}
-					}
-				}
+				c.checkTypeArgBounds(genericFn, args, sub, tpSet, n.P)
 				n.TypeArgs = args
 				// Resolve any associated-type projection the result picked up
 				// once the type args made its base concrete (`I::Item` →
