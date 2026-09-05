@@ -90,20 +90,325 @@ sessions — owned `i32[]` / `string[]` appends, a returned array, an array in a
 struct, a functionally-threaded struct carrying one, and the five rungs above —
 all reclaim, so the retention still does not reproduce outside the compiler.
 
-Two measurements remain undone, in this order:
+One measurement remains undone: **pointer-tracked attribution**. Same trace,
+but match each free to its allocation by pointer and bucket the *survivors* by
+the allocating pair. That is the measurement the first run was meant to be.
 
-1. **Pointer-tracked attribution.** Same trace, but match each free to its
-   allocation by pointer and bucket the *survivors* by the allocating pair.
-   This is the measurement the first run was meant to be.
-2. **The oracle comparison, which has never been run on the compiler's own
-   code.** Build one real `.fern` program with the native emitter and with the
-   self-host emitter, both under `FERN_LEAKCHECK`, run both on the same input,
-   and diff allocs / frees / live_bytes. Identical allocation counts with
-   divergent free counts would localise goal-2's RECLAIM gap to the freeing
-   side and make it attributable by size histogram — and unlike the whole-
-   compiler self-compile, it fits in memory.
+## The oracle comparison, run
+
+The other one is done, and it is the number goal 2 has been missing.
+
+`examples/self_host/asm_ir_run.fern` — the whole compiler front-end plus both
+x86-64 backends — emitted **twice from one source**, once by native and once by
+the self-host emitter, both under `FERN_LEAKCHECK`, then run on the same input.
+The subjects are real compiler modules that happen to have **no imports**, so
+the loaderless driver takes them whole:
+
+| input | emitter | allocs | frees | freed | live_bytes |
+|---|---|--:|--:|--:|--:|
+| `x86_native.fern` (223 KB) | native | 3,053,976 | 2,530,142 | 82.8% | 28.9 MB |
+| | self-host | 3,696,014 | 1,387,610 | **37.5%** | **265.9 MB** |
+| `arm64_native.fern` (386 KB) | native | 4,188,444 | 3,524,780 | 84.2% | 32.4 MB |
+| | self-host | 4,768,896 | 1,633,872 | **34.3%** | **269.0 MB** |
+
+Both emitters produce byte-identical asm for each input (2,869,663 and
+2,537,980 bytes), so this is one program's memory behaviour under two RC
+implementations, not two programs.
+
+**The gap is on the freeing side, and only there.** The self-host allocates 21%
+and 14% more — a real but modest reuse gap. It frees **45% and 46% as many
+blocks**, and retains **9.2× and 8.3×** the bytes. The roadmap's "reuse is
+substantially complete; the RECLAIM side is where the work remains" now has a
+measurement behind it.
+
+The ratio is not a scale effect: the same driver pair on a 7-line program
+(20,000 appends across 200 rounds) gives allocs 11,996 vs 14,437, frees 10,446
+vs 4,606, live_bytes 85,472 vs 1,438,112 — 16.8×.
+
+Nor is it a counting artifact. The allocation counts nearly agree, so both
+runtimes tick the same events in `__fern_alloc`; it is the `__fern_free` side
+that diverges, and `make distcheck`'s 13.3 GiB peak corroborates that the
+retained bytes are real. 266 MB retained on a 223 KB module is the whole-
+compiler OOM in miniature — and, unlike that OOM, it reproduces in a minute.
+
+### Why this reproduction matters more than the numbers
+
+Every previous attempt to attribute the retention needed either a synthetic
+probe (which does not reproduce it) or the whole-compiler self-compile (which
+does not fit in memory). This fits in both: 16 s to emit the driver, seconds to
+run it, 3.7 M allocations rather than 24 M. It is small enough to trace with
+pointer tracking, and it is real compiler code rather than a shape guessed at.
+
+### Recipe
+
+```
+go run ./cmd/fern -target x86-64-linux -o fern_sh examples/self_host/fern.fern
+FERN_LEAKCHECK=1 go run ./cmd/fern -target x86-64-linux -o drv_native \
+    examples/self_host/asm_ir_run.fern
+cd examples/self_host && FERN_LEAKCHECK=1 ../../fern_sh -target x86-64-linux \
+    -emit asm asm_ir_run.fern ../../internal/stdlib -o drv_sh.s
+gcc -nostdlib -no-pie -o drv_selfhost drv_sh.s
+./drv_native   < examples/self_host/x86_native.fern > /dev/null
+./drv_selfhost < examples/self_host/x86_native.fern > /dev/null
+```
+
+The self-host CLI takes its stdlib root as a **positional** argument after the
+entry file; without it every `std/` import silently resolves to nothing and the
+failure surfaces much later as "call to undefined function ... no module was
+loaded".
 
 Peak is not the missing instrument: peak RSS (1512 MiB) already matches
 exit-live (1548.7 MiB) for this workload, so the compiler accumulates
 monotonically and exit-live *is* the peak. The open question is what that set
 consists of, not when it is reached.
+
+## Pointer-tracked attribution, on that reproduction
+
+Both remaining measurements are now done. The traced driver — the same emit
+with `FERN_RC_TRACE=1 FERN_RC_TRACE_DEEP=1` added — compiling `x86_native.fern`
+gives 3,695,957 allocations and 1,387,550 frees, every free matched to its
+allocation by pointer (**0 unmatched**), leaving 2,308,407 surviving blocks
+holding 274,270,688 bytes. That total agrees with the untraced run's
+`live_bytes` to 3%, so the trace is accounting for the same retention the
+oracle comparison measured.
+
+Bucketing the **survivors** by their allocating `(site, caller, caller2)`:
+
+| retained | share | blocks | site <- caller <- caller2 |
+|--:|--:|--:|---|
+| 29.8 MB | 10.9% | 3,113 | `__fern_arr_push` <- `LowerState.emit` <- `lower_expr_ident` |
+| 24.4 MB | 8.9% | 1,804 | `__fern_arr_push` <- `LowerState.emit` <- `emit_str_concat_reclaim` |
+| 19.6 MB | 7.2% | 175,281 | `pl_none` <- `peep_line` <- `peephole_push_pop` |
+| 19.0 MB | 6.9% | 169,781 | `pl_classify` <- `peep_line` <- `peephole_push_pop` |
+| 11.1 MB | 4.1% | 99,234 | `pl_one` <- `pl_classify` <- `peep_line` |
+| 6.8 MB | 2.5% | 1,673 | `__fern_arr_push` <- `LowerState.emit` <- `lower_expr_dispatch` |
+| 5.9 MB | 2.2% | 618 | `__fern_arr_push` <- `LowerState.emit` <- `LowerState.release` |
+
+Two clusters carry it, and they have opposite shapes.
+
+**The IR op accumulator, ~25%, in a few thousand blocks averaging 10 KB.**
+Large and few is the signature of superseded array generations: one live ops
+array per lowering is expected, thousands of multi-KB buffers are not. So the
+first run's headline was pointing at a real retainer after all — it just could
+not have known, since the quantity it ranked was gross allocation.
+
+**The `asm_ir` peephole pass, ~20%, in 470,000 blocks averaging 110 bytes.**
+Small and many: a per-line record allocated by `peep_line` and never released.
+Self-contained in one pass, which makes it the easier of the two to attack.
+
+### What `LowerState.emit` actually emits
+
+Reading the driver's own asm rather than inferring it, `__fn_irlower__LowerState__emit`:
+
+```
+call __fn___fern_rc_is_unique     ; on the STRUCT BOX s, not on s.ops
+jz   .Lemit_61                    ; unique -> skip
+call __fn___fern_rc_inc           ; not unique: retain s.ops for the older box
+.Lemit_61:
+call __fern_arr_push              ; the LEAK-ON-GROW push, both paths
+...
+call __fn___fern_arr_dec          ; unique path only: release the old array
+```
+
+so the uniqueness test decides whether the superseded buffer is released, and
+the not-unique path retains it deliberately, for a `LowerState` that still
+points at it. The open question is why those retained buffers are never
+released afterwards. Note that `__struct_drop_irlower__LowerState` is not among
+the 187 drop helpers the self-host emits — but native emits only 9 helpers in
+the same binary, so the two use different drop strategies and a missing helper
+name proves nothing by itself. That is the thing to establish next, and it is
+not established here.
+
+### Reproducing
+
+Add `FERN_RC_TRACE=1 FERN_RC_TRACE_DEEP=1` to the driver emit in the recipe
+above, link, and pipe the run's stderr through a pointer-tracking aggregator
+that buckets survivors by allocating triple; `nm` on the linked driver resolves
+the addresses. The run takes about 40 s.
+
+## The peephole cluster reproduces: #8628
+
+The smaller-blocks cluster now has a shape. `peep_line` classifies one assembly
+line into a `PLine` box and hands it to a fixed-size window that
+`peep_flush` / `peep_close_run` periodically REPLACE — and a struct-literal
+spread that overrides an array field never releases the superseded array:
+
+```fern
+struct W { src: string, w: i32[], n: i32 }
+function w_flush(own q: W): W {
+    if (q.w.len() < 8) { return q; }
+    var keep: i32[] = [];
+    return W { ...q, w: keep, n: 0 };
+}
+```
+
+| emitter | allocs | frees | live_bytes |
+|---|--:|--:|--:|
+| native | 7,502 | 7,500 | 48 |
+| self-host | 10,002 | 5,000 | 360,080 |
+
+One leaked buffer per replacement. Neither the element type nor the `own`
+annotation is the trigger — `P[]` elements leak 35,002 blocks, `i32[]` leak
+5,002, dropping `own` still leaks — but removing the *replacement* makes the two
+compilers agree allocation for allocation (2012 / 10 on both). In the emitted
+code every carried field is `rc_inc`'d into the new box, so nothing moves out of
+`q`, and neither `q.w` nor `q`'s own box is ever released.
+
+This is the ninth probe of this investigation and the first to reproduce the
+retention outside the compiler. The eight before it were guesses at a shape;
+this one was read off an attribution.
+
+### Localised
+
+The compiler's own spelling is one level below that probe. `asm_ir.fern`'s
+window writes through
+
+```fern
+function peep_set(own p: Peep, i: i32, l: PLine): Peep {
+    if (i < p.w.len()) { return Peep { ...p, w: p.w.with(i, l) }; }
+    return Peep { ...p, w: p.w.append(l) };
+}
+```
+
+so what leaks is the superseded **element**, not the superseded array — 20,010
+boxes against native's clean run on twelve lines of the same source, one per
+replaced element.
+
+A `.with` written as a struct-literal override reaches
+`emit_self_overwrite_reuse`, whose struct-array branch shallow-frees the old
+buffer and leaves its elements alone. That is right for every element the clone
+carries — shared uncounted, so freeing them would hit live values — and wrong
+for exactly one: the element the `.with` displaced, which is in the old buffer
+and nowhere else.
+
+Reading emitted code beat reasoning about it twice here. `lower_field_with_inplace`
+looked like the site and says in its own comment that it leaves the overwritten
+element alone deliberately; implementing the release there changed the emitted
+`wset` by **zero bytes**, because a `.with` in override position never reaches
+it. That change was reverted rather than left as an unexercised release path in
+the area that has produced two SIGSEGVs on main.
+
+Both soundness preconditions were measured rather than assumed. A struct-array
+field's element walk **is** credited — a `W { w: P[] }` built, filled and
+dropped 2000 times reclaims to `live_bytes 0` on both compilers, with
+`__struct_drop_W` and `__struct_drop_P` emitted — so the container owns the
+element being released. And the stored element **moves** in rather than being
+retained: storing an already-owned `P` through the field append is clean on both
+compilers at equal allocation counts. A release added without a matching retain
+is how #8310 turned a bounded leak into a double free; here no retain is owed.
+
+### The gate that produces it is deliberate
+
+Threading the `.with` index into that branch is NOT the fix, and reading the
+admission rule before proposing one would have saved the detour.
+`__field_reclaim_<T>` already has a struct-array element walk —
+`field_reclaim_field_ops` emits `arrarr_free` with a `pre` element type — gated
+on the need `strfldok:sarr:<T>`, whose rule reads:
+
+> A type is admitted iff every one of its struct/enum-array fields is (a) never
+> read outside a bare `.len()` borrow — any other read binds an element alias
+> the walk would dangle — and (b) only ever stored an array literal of fresh
+> elements, so no surviving buffer shares an element with the one being
+> released.
+
+So the leak is the conservative side of a real trade. Releasing the displaced
+element without clearing (a) frees a box a live binding still points at.
+
+`Peep` is refused by clause (a), and that much is visible in the source:
+`peep_flush` binds `var l: PLine = p.w[i]` and `var m: PLine = p.w[j]`, exactly
+the element reads the clause names. So recovering the ~20% needs liveness on
+element bindings — those values die almost immediately but the scan is
+syntactic — which is the same shape of work as #8644's gap 1, where a
+syntactically-aliased but dead `var prev = s` forces a copy.
+
+WHICH clause refuses the minimal `W` is NOT established, and an attempt to
+settle it failed instructively. Changing the override to an array literal of
+fresh elements — satisfying (b) outright — still leaks (self-host 60,002 /
+20,000 / 2,560,088 against native's 60,002 / 59,998 / 128), but in that build
+`__field_reclaim_W` is never emitted or called at all: the literal-store rebind
+takes a different path with no field reclaim, so the probe tested nothing about
+the admission rule. Treat "a `.with`-shaped admission would fix `W`" as an
+unverified inference, not a finding. Tracked in #8628.
+
+What that path DOES establish, by subtraction: the same literal store over a
+**scalar** element type is clean and matches native almost exactly (self-host
+20,002 / 20,000 / 88, native 20,002 / 20,000 / 64), one allocation and one free
+per iteration. So the buffer is reclaimed correctly on this path too, and what
+leaks under `P[]` is precisely the element boxes — two per iteration, one per
+`mk()` call.
+
+The element-walk gap is therefore not one emitter's oversight. It shows up on at
+least two independent rebind paths — the `__field_reclaim_<T>` one gated by
+`strfldok:sarr:` and this one, which never reaches that helper — wherever a
+struct-array field's buffer is released without walking what it held.
+
+## The accumulator cluster reproduces too, and it is quadratic: #8644
+
+The section above left open why `LowerState.emit`'s retained buffers are never
+released. They are, when the struct box is unique. The trigger is an alias:
+
+```fern
+struct S { ops: i32[], n: i32 }
+function (s: S) emit(op: i32): S { return S { ...s, ops: s.ops.append(op), n: s.n + 1 }; }
+...
+    var prev: S = s;        // the entire difference
+    s = s.emit(i);
+```
+
+| | allocs | frees | live_bytes |
+|---|--:|--:|--:|
+| self-host, without `prev` | 20,900 | 20,900 | 0 |
+| self-host, with `prev` | 40,200 | 20,200 | 23,763,200 |
+| native, either | 900 | 900 | 0 |
+
+One line takes it from clean to 23.7 MB. And it is not a constant factor —
+sweeping the inner bound gives live_bytes 6,012,800 / 23,763,200 / 94,489,600
+for N of 100 / 200 / 400, i.e. **3.95× and 3.98× per doubling: Θ(N²)**.
+Allocation count stays linear, so it is one allocation per iteration of
+linearly growing size. Native over the same sweep is 800 → 900 → 1,000 —
+logarithmic, amortised doubling, `live_bytes` 0 throughout.
+
+The emitted code says why: the uniqueness test is on the STRUCT BOX, not on the
+array, and it decides both halves. Shared box means the array is retained and
+`__fern_arr_push` may not mutate it, so it copies; and the `arr_dec` that would
+release the superseded copy sits on the unique path only.
+
+So the self-host is quadratic in time and memory on an aliased accumulator where
+native is linear-time with constant space overhead. That is a complexity-class
+gap, not an RC constant factor, and `LowerState` is aliased constantly — which
+is what the `is_aliased_name` machinery exists for. It also explains the volume
+behind #7954's thin arena margin: 3.26 GB requested for one module, and
+`LOCAL-DEV-LOOP.md`'s "the self-host-built compiler's live set grows with every
+compiler-source addition" is what a quadratic looks like from outside.
+
+Making the alias LIVE — reading `prev.n` — separates two gaps the first
+measurement conflated:
+
+| alias | emitter | allocs | frees | live_bytes |
+|---|---|--:|--:|--:|
+| dead | native | 900 | 900 | 0 |
+| live | native | 20,900 | 20,900 | 0 |
+| either | self-host | 40,200 | 20,200 | 23,763,200 |
+
+Native's numbers move by 23×; the self-host's do not move at all.
+
+**Gap 1, reuse side:** native drops a never-read alias and the copy never
+happens. The self-host treats `var prev = s` as an alias whether or not it is
+read, so the box is shared at the `emit` and the fast path cannot fire. This is
+what turns linear work into quadratic work, and it needs liveness rather than
+the syntactic `is_aliased_name` test.
+
+**Gap 2, RECLAIM side:** when the alias IS live the copy is semantically
+required — `prev` must keep the old array — and native makes exactly that copy
+and frees it, at `live_bytes` 0. The self-host makes about two allocations per
+iteration where native makes one and retains every copy. This is what turns
+quadratic work into quadratic MEMORY.
+
+Gap 2 is the narrower fix and the one to take first: on the shared path the
+superseded copy has no owner the moment the new copy exists, so it can be
+released there, which lands the self-host on native's live-alias behaviour.
+
+Both of the attribution's clusters now have a ten-line reproduction and an
+issue: #8628 for the peephole's displaced element, #8644 for this. Neither was
+reachable from a guessed shape — eight probes tried that and all eight came back
+clean. Both fell out of reading the attribution and then the emitted assembly.
