@@ -1026,6 +1026,13 @@ pub function struct_drop_types(cache: irlower.LowerResult[], structs: irlower.St
                     out = out.append(felem);
                 }
             }
+            // A DIRECT nested-struct field, for the same reason: the reclaim
+            // body now deep-drops it through $__struct_drop_<F> (#8538), so that
+            // body has to be emitted even when nothing else drops an F.
+            if (irlower.decl_is_struct(structs, fft) && irlower.nested_field_deep_drop_ok(structs, fft)
+                && util.index_of_str(out, fft) < 0) {
+                out = out.append(fft);
+            }
             fk = fk + 1;
         }
         fri = fri + 1;
@@ -9492,6 +9499,17 @@ pub function emit_wasm_field_reclaim_body(t: string, structs: irlower.StructTab,
                     // for another reason (#8198 — the callee reused the field's
                     // box in place and handed it back), so releasing frees a box
                     // the new binding names. The snap guard still stands.
+                    // A nested STRUCT field owns rc children of its own, and
+                    // the dec above frees only its box — so they were stranded
+                    // (#8538). $__struct_drop_<T> releases them, under the rc==1
+                    // gate the exit path's own nested arm uses: a SHARED inner
+                    // keeps its fields for the other owner. Enum fields are not
+                    // covered — a direct enum field has no variant-walk helper
+                    // on any backend, so its rc payload still leaks.
+                    if (frk_nest && irlower.decl_is_struct(structs, ft)
+                        && irlower.nested_field_deep_drop_ok(structs, ft)) {
+                        dec = "(if (call $__fern_rc_is_unique " + oldf + ") (then (drop (call $__struct_drop_" + ft + " " + oldf + ")))) " + dec;
+                    }
                     if (frk_nest) {
                         o = o + "      (if (i32.or (i32.ne " + oldf + " " + newf + ") (i32.eqz (call $__fern_rc_is_unique " + oldf + "))) (then\n";
                         o = o + "        (if (i32.eqz (local.get $snap)) (then " + dec + ")\n";
