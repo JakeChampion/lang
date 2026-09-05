@@ -3036,6 +3036,7 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 		}
 		// Non-keyword item: an expression that is either an ExprStmt
 		// (followed by `;`) or the trailing value (followed by `}`).
+		mark, nRefs, nTodo, nErr := p.i, len(p.typeRefs), len(p.todoSites), len(p.errors)
 		e, err := p.parseExpr()
 		if err != nil {
 			return nil, err
@@ -3044,9 +3045,29 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 			stmts = append(stmts, &ast.ExprStmt{P: e.Pos(), Expr: e})
 			continue
 		}
-		// No `;` — this must be the trailing tail expression, so `}`
-		// has to follow. The expect below surfaces a clear error if a
-		// statement is missing its `;`.
+		if !p.match(lexer.Punct, "}") {
+			// Neither a `;` nor the closing brace follows, so this item is
+			// not a value: it is an `if` / `match` STATEMENT with more
+			// statements after it. Both stay on the expression path above
+			// because either can also stand as the block's trailing value,
+			// and only what follows tells the two apart — a statement `match`
+			// binds arms that need not yield anything, which as an expression
+			// is an error rather than a different reading. Read it again as
+			// the statement it is, dropping what the expression parse
+			// accumulated on the way (foreachN is not restored: it only has to
+			// stay unique, and a re-parse minting a fresh slot name is fine).
+			p.i = mark
+			p.typeRefs, p.todoSites, p.errors = p.typeRefs[:nRefs], p.todoSites[:nTodo], p.errors[:nErr]
+			s, serr := p.parseStmt()
+			if serr != nil {
+				return nil, serr
+			}
+			if s != nil {
+				stmts = append(stmts, s)
+			}
+			continue
+		}
+		// `}` follows, so this is the trailing tail expression.
 		tail = e
 		break
 	}

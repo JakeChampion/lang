@@ -1320,6 +1320,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// trailing value: parse_expr stops in front of the `=`, and the item has
 		// to be re-read as the statement it is.
 		{"value-block-assign-ok", "function main(): i32 {\n    var a: i32 = 1;\n    var b: i32 = if (a > 0) { a = a + 1; a } else { 0 };\n    return b - 2;\n}\n", nil},
+		// #8561: an `if` / `match` STATEMENT among a block body's statements.
+		// Both stay on the block scanner's expression path — either can be the
+		// block's trailing VALUE — so an item followed by neither `;` nor `}`
+		// has to be re-read as the statement it is.
+		{"arrow-block-body-match-stmt-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => {\n        match (x) {\n            0 => { return 100; },\n            _ => {}\n        }\n        return x * 2;\n    };\n    return apply(g, 4) - 8;\n}\n", nil},
+		{"arrow-block-body-if-stmt-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => {\n        if (x > 0) { return x * 2; } else { return 0 - x; }\n    };\n    return apply(g, 4) - 8;\n}\n", nil},
+		// The other direction: a trailing `match` written without a `;` is
+		// still the block's value.
+		{"arrow-block-body-match-tail-ok", "function apply(f: (i32) => i32, v: i32): i32 { return f(v); }\nfunction main(): i32 {\n    var g = (x: i32) => {\n        var y: i32 = x + 1;\n        match (y) { 0 => 100, _ => y * 2 }\n    };\n    return apply(g, 3) - 8;\n}\n", nil},
 		{"cap-assign-local-ok", "function main(): i32 { var f = function(): i32 { var t: string = \"a\"; t = \"b\"; return 0; }; return f(); }\n", nil},
 		// #4410: the closure-capture contract (docs/CLOSURE-CAPTURE.md). The
 		// scalar/reference split must be BYTE-identical to native's
