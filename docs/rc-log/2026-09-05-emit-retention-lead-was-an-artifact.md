@@ -90,18 +90,72 @@ sessions — owned `i32[]` / `string[]` appends, a returned array, an array in a
 struct, a functionally-threaded struct carrying one, and the five rungs above —
 all reclaim, so the retention still does not reproduce outside the compiler.
 
-Two measurements remain undone, in this order:
+One measurement remains undone: **pointer-tracked attribution**. Same trace,
+but match each free to its allocation by pointer and bucket the *survivors* by
+the allocating pair. That is the measurement the first run was meant to be.
 
-1. **Pointer-tracked attribution.** Same trace, but match each free to its
-   allocation by pointer and bucket the *survivors* by the allocating pair.
-   This is the measurement the first run was meant to be.
-2. **The oracle comparison, which has never been run on the compiler's own
-   code.** Build one real `.fern` program with the native emitter and with the
-   self-host emitter, both under `FERN_LEAKCHECK`, run both on the same input,
-   and diff allocs / frees / live_bytes. Identical allocation counts with
-   divergent free counts would localise goal-2's RECLAIM gap to the freeing
-   side and make it attributable by size histogram — and unlike the whole-
-   compiler self-compile, it fits in memory.
+## The oracle comparison, run
+
+The other one is done, and it is the number goal 2 has been missing.
+
+`examples/self_host/asm_ir_run.fern` — the whole compiler front-end plus both
+x86-64 backends — emitted **twice from one source**, once by native and once by
+the self-host emitter, both under `FERN_LEAKCHECK`, then run on the same input.
+The subjects are real compiler modules that happen to have **no imports**, so
+the loaderless driver takes them whole:
+
+| input | emitter | allocs | frees | freed | live_bytes |
+|---|---|--:|--:|--:|--:|
+| `x86_native.fern` (223 KB) | native | 3,053,976 | 2,530,142 | 82.8% | 28.9 MB |
+| | self-host | 3,696,014 | 1,387,610 | **37.5%** | **265.9 MB** |
+| `arm64_native.fern` (386 KB) | native | 4,188,444 | 3,524,780 | 84.2% | 32.4 MB |
+| | self-host | 4,768,896 | 1,633,872 | **34.3%** | **269.0 MB** |
+
+Both emitters produce byte-identical asm for each input (2,869,663 and
+2,537,980 bytes), so this is one program's memory behaviour under two RC
+implementations, not two programs.
+
+**The gap is on the freeing side, and only there.** The self-host allocates 21%
+and 14% more — a real but modest reuse gap. It frees **45% and 46% as many
+blocks**, and retains **9.2× and 8.3×** the bytes. The roadmap's "reuse is
+substantially complete; the RECLAIM side is where the work remains" now has a
+measurement behind it.
+
+The ratio is not a scale effect: the same driver pair on a 7-line program
+(20,000 appends across 200 rounds) gives allocs 11,996 vs 14,437, frees 10,446
+vs 4,606, live_bytes 85,472 vs 1,438,112 — 16.8×.
+
+Nor is it a counting artifact. The allocation counts nearly agree, so both
+runtimes tick the same events in `__fern_alloc`; it is the `__fern_free` side
+that diverges, and `make distcheck`'s 13.3 GiB peak corroborates that the
+retained bytes are real. 266 MB retained on a 223 KB module is the whole-
+compiler OOM in miniature — and, unlike that OOM, it reproduces in a minute.
+
+### Why this reproduction matters more than the numbers
+
+Every previous attempt to attribute the retention needed either a synthetic
+probe (which does not reproduce it) or the whole-compiler self-compile (which
+does not fit in memory). This fits in both: 16 s to emit the driver, seconds to
+run it, 3.7 M allocations rather than 24 M. It is small enough to trace with
+pointer tracking, and it is real compiler code rather than a shape guessed at.
+
+### Recipe
+
+```
+go run ./cmd/fern -target x86-64-linux -o fern_sh examples/self_host/fern.fern
+FERN_LEAKCHECK=1 go run ./cmd/fern -target x86-64-linux -o drv_native \
+    examples/self_host/asm_ir_run.fern
+cd examples/self_host && FERN_LEAKCHECK=1 ../../fern_sh -target x86-64-linux \
+    -emit asm asm_ir_run.fern ../../internal/stdlib -o drv_sh.s
+gcc -nostdlib -no-pie -o drv_selfhost drv_sh.s
+./drv_native   < examples/self_host/x86_native.fern > /dev/null
+./drv_selfhost < examples/self_host/x86_native.fern > /dev/null
+```
+
+The self-host CLI takes its stdlib root as a **positional** argument after the
+entry file; without it every `std/` import silently resolves to nothing and the
+failure surfaces much later as "call to undefined function ... no module was
+loaded".
 
 Peak is not the missing instrument: peak RSS (1512 MiB) already matches
 exit-live (1548.7 MiB) for this workload, so the compiler accumulates
