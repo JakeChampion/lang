@@ -701,11 +701,11 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             // it can skip the pool, and leaves anything it cannot prove exact.
             s = emit_const_i32_push(s, o.str, movz_text_ok(o.str));
         } else if (o.kind_tag == 3) {  // const_i64
-            // 64-bit immediate, also source text, also the pool: a value this
-            // wide needs up to four movk to build in-register. i64
-            // add/sub/mul/cmp/bitwise reuse the 64-bit x-register bin ops
-            // unchanged.
-            s = s.write("    ldr x0, =" + o.str + "\n    str x0, [sp, #-16]!\n");
+            // 64-bit immediate, also source text: one MOVZ when it fits, else
+            // the pool, since a wide value needs up to four movk to build
+            // in-register. i64 add/sub/mul/cmp/bitwise reuse the 64-bit
+            // x-register bin ops unchanged.
+            s = emit_const_i32_push(s, o.str, movz_text_ok(o.str));
         } else if (o.kind_tag == 7 || o.kind_tag == 8) {  // int_extend, int_wrap
             // i32<->i64: signed -> sxtw (sign-extend low word); unsigned -> mov
             // w0,w0 (writing w0 zeroes x0's upper 32).
