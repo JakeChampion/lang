@@ -187,7 +187,14 @@ func TestPrintfParity(t *testing.T) {
 		{name: "tiny values", args: []string{`%e %g %f\n`, "4e-4951", "4e-4951", "4e-4951"}},
 		{name: "tiny value long e", args: []string{`%.30e\n`, "4e-4951"}},
 
-		// %a: hex floats from the x87 significand.
+		// %a: hex floats from the significand of the HOST's long double,
+		// which is x87 80-bit extended on x86-64, IEEE binary128 on arm64
+		// and binary64 on Darwin (#8513). The cases below the plain ones
+		// are the shapes that differ between the three, so whichever host
+		// runs the corpus proves coreutils/lib/ld picked its format:
+		// the leading digit and how many follow it, where the subnormals
+		// start and stop, where overflow begins, and how many decimal
+		// digits reproduce the value exactly.
 		{name: "a of one", args: []string{`%a %A\n`, "1", "1"}},
 		{name: "a values", args: []string{`%a\n`, "0", "0.5", "2", "3", "0.1", "-1", "1e400", "1e-4950", "1e-4940", "1e-4930", "10", "255", "256", "1.5", "0.75", "1e300", "1e-300", "4e-4951", "3e-4951"}},
 		{name: "a precisions", args: []string{`%.0a %.1a %.2a %.20a %#.0a %#a %.3a\n`, "1", "1", "1", "1", "1", "1", "0.1"}},
@@ -205,6 +212,18 @@ func TestPrintfParity(t *testing.T) {
 		{name: "a rounding carries through", args: []string{`%.3a %.3a %.3a\n`, "0xf.ffp0", "0xf.ff8p0", "0xf.fffp0"}},
 		{name: "a carry into the lead", args: []string{`%.0a %.0a\n`, "0xf.8p0", "0xf.8000001p0"}},
 		{name: "a two digit rounding", args: []string{`%.2a %.2a %.2a %.2a\n`, "0x1.008p0", "0x1.018p0", "0x1.028p0", "0x1.038p0"}},
+
+		// One per long double a target can have. The %a signature of a
+		// tenth alone separates all three (0xc.ccccccccccccccdp-7 /
+		// 0x1.999999999999999999999999999ap-4 / 0x1.999999999999ap-4), so
+		// a host that grew a fourth format could not pass these quietly.
+		{name: "a signature of each format", args: []string{`%a %a %a %a\n`, "1", "0.1", "255", "1e-5"}},
+		{name: "a at the format's digit count", args: []string{`%.12a %.13a %.14a %.15a %.16a %.27a %.28a %.29a\n`, "0.1", "0.1", "0.1", "0.1", "0.1", "0.1", "0.1", "0.1"}},
+		{name: "subnormals of a binary64 long double", args: []string{`%a %e\n`, "1e-320", "1e-320", "5e-324", "5e-324", "1e-324", "1e-324"}},
+		{name: "subnormals of a binary128 long double", args: []string{`%a %e\n`, "1e-4965", "1e-4965", "1e-4966", "1e-4966", "6.5e-4966", "6.5e-4966"}},
+		{name: "where each format overflows", args: []string{`%a %e\n`, "1e308", "1e308", "1e309", "1e309", "1e4932", "1e4932", "1e4933", "1e4933"}},
+		{name: "decimal digits the significand reproduces", args: []string{`%.40e\n`, "0.1", "0.2", "3.141592653589793238462643"}},
+		{name: "decimal digits of the exact tail", args: []string{`%.70f %.120f\n`, "0.1", "0.1"}},
 
 		// %c and %s.
 		{name: "c of empty is NUL", args: []string{`%c\n`, "", "abc"}},

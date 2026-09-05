@@ -14,7 +14,7 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-05: 480 fixtures, 407 clean, 73 leaking, 7518
+# Measured 2026-09-05: 485 fixtures, 412 clean, 73 leaking, 7518
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
@@ -89,6 +89,7 @@ array_param_threaded_reassign                        0
 array_reverse                                        0
 array_sort                                           0
 array_with_rc_elem_drop                              0
+arrow_lambda_block_body                              0
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0
@@ -140,6 +141,8 @@ compound_assign_wider                                0
 concat_of_empties                                    0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
+const_shadowed_by_binder                             0
+const_shadowed_by_pattern_binder                     0
 const_struct_negative_fields                         0
 consuming_method                                     0
 consuming_trait_method                               0
@@ -480,6 +483,10 @@ sum_10_args_order_check                              0
 sum_12_args_order_check                              0
 sum_8_args                                           0
 sxtw_preserves_sign                                  0
+target_arch_arm64                                    0
+target_arch_named                                    0
+target_arch_wasm32                                   0
+target_arch_x86_64                                   0
 target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0

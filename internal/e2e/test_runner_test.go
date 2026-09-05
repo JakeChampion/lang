@@ -357,7 +357,7 @@ func TestRunnerI32ExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/i32", "# pass 28", "# fail 0", "1..28"} {
+	for _, w := range []string{"# Suite: std/i32", "# pass 32", "# fail 0", "1..32"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -4233,5 +4233,132 @@ func TestRunnerPegExamplePasses(t *testing.T) {
 	}
 	if !strings.Contains(out, "# pass 18") || !strings.Contains(out, "# fail 0") {
 		t.Errorf("expected 18 passes, 0 fails\noutput:\n%s", out)
+	}
+}
+
+// A TestRunner is a value: `it()` returns a new one, so a caller who
+// forgets to assign it back loses the outcome — AFTER the TAP line has
+// already been printed. That made a suite with two printed `not ok`
+// lines report `1..0`, `# fail 0` and exit 0, which is the one failure
+// mode a test framework must not have (#8466). The same applies to a
+// subsuite that is never merged back.
+//
+// The counters now live in cells shared by every copy of the runner, so
+// finish() reports what actually reached stdout and cannot under-report
+// it. A discarded result is itself a non-zero exit: the run is known to
+// have lost information, so it is not passing.
+func TestRunnerDiscardedResultCannotReportSuccess(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/test";
+
+function failing(): test.TestOutcome { return test.assert_eq(1, 2); }
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("discarded");
+    r.it("dropped result", failing);
+    var sub: test.TestRunner = r.subsuite("child");
+    sub = sub.it("child fails", failing);
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code == 0 {
+		t.Fatalf("exit = 0 for a suite that printed two `not ok` lines\nstdout: %s\nstderr: %s", out.String(), errb.String())
+	}
+	gotOut := out.String()
+	wantPieces := []string{
+		// Numbering comes from the shared counter, so the two printed
+		// cases are 1 and 2 — they were both `not ok 1` before.
+		"not ok 1 - dropped result",
+		"not ok 2 - child / child fails",
+		// The plan and the counts match the stream, not the dropped handle.
+		"1..2",
+		"# tests 2",
+		"# fail 2",
+		// And the cause is named, since the symptom alone is cryptic.
+		"result(s) were discarded",
+	}
+	for _, w := range wantPieces {
+		if !strings.Contains(gotOut, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+		}
+	}
+	if strings.Contains(gotOut, "# fail 0") {
+		t.Errorf("reported `# fail 0` with failures printed\nfull output:\n%s", gotOut)
+	}
+}
+
+// The counters must not over-report either: a correctly written suite —
+// every result assigned back, every subsuite merged — reports exactly
+// what it ran, with no discarded-result warning.
+func TestRunnerCorrectSuiteUnaffectedByDiscardTracking(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	cmd := exec.Command(bin, "-interp", "-")
+	cmd.Stdin = strings.NewReader(`
+import "std/test";
+
+function passing(): test.TestOutcome { return test.assert_eq(1, 1); }
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("clean");
+    r = r.it("first", passing);
+    var sub: test.TestRunner = r.subsuite("child");
+    sub = sub.it("nested", passing);
+    r = r.merge(sub);
+    r = r.it("last", passing);
+    return r.finish();
+}
+`)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+	gotOut := out.String()
+	for _, w := range []string{
+		"ok 1 - first",
+		"ok 2 - child / nested",
+		"ok 3 - last",
+		"1..3",
+		"# pass 3",
+		"# fail 0",
+	} {
+		if !strings.Contains(gotOut, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, gotOut)
+		}
+	}
+	if strings.Contains(gotOut, "discarded") {
+		t.Errorf("a correctly written suite reported discarded results\nfull output:\n%s", gotOut)
+	}
+}
+
+// `examples/tests/coreutils_ld_test.fern` covers coreutils/lib/ld — the
+// model of C's `long double` that printf, and the utilities that follow
+// it, convert and compute in. GNU's is the host's, which is x87 80-bit
+// on x86-64, IEEE binary128 on arm64 and wasm32 and plain binary64 on
+// Darwin, so the suite drives all three explicitly rather than only the
+// one this host has: `%a` digits and leading bit, the subnormal and
+// overflow edges, the exact decimal expansion, strtold, the arithmetic
+// including the division seq and numfmt need, numfmt's --round modes,
+// and LDBL_DIG. Which format a target selects is pinned separately by
+// internal/coreutils/longdouble_test.go. Passing suite -> exit 0.
+func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "examples/tests/coreutils_ld_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/ld", "1..16", "# pass 16", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
 	}
 }

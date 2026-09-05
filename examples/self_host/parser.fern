@@ -1433,13 +1433,14 @@ function (p: Par) arrow_lambda_at(): boolean {
     return p.closer_followed_by(open, "(", ")", "=>", ":");
 }
 
-// parse_arrow_lambda parses `(params) [: R] => expr` into an ExprLambda
-// whose body is the single statement `[return expr]` — exactly the AST the
-// verbose `function (params): R { return expr; }` form produces, so the
-// lambda-lift + IR-lowering machinery handles it with no further changes.
-// The cursor is on the opening `(`. Parameter types are required (as in the
-// verbose form); the return type is optional. Ported from the native
-// parser's parseArrowLambda (#2701).
+// parse_arrow_lambda parses `(params) [: R] => body` into an ExprLambda,
+// producing the same AST the verbose `function (params): R { … }` form does,
+// so the lambda-lift + IR-lowering machinery handles it with no further
+// changes. An expression body becomes the single statement `[return expr]`; a
+// braced body becomes the block's own statements, plus a `return` of its
+// trailing value when it has one. The cursor is on the opening `(`. Parameter
+// types are required (as in the verbose form); the return type is optional.
+// Ported from the native parser's parseArrowLambda (#2701).
 function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
     var lam_line: i32 = p.peek_line();
     var lam_col: i32 = p.peek_col();
@@ -1491,9 +1492,24 @@ function parse_arrow_lambda(p: Par): (ast.Expr, Par) {
         ret_type = rtr_name;
     }
     if (p.peek_punct() == "=>") { p = p.advance(); }
-    var (ber_expr, ber_p) = parse_expr(p);
-    p = ber_p;
-    var body: ast.Stmt[] = [s_return(ber_expr)];
+    var body: ast.Stmt[] = [];
+    if (p.peek_punct() == "{") {
+        // A braced body IS the lambda's body, spliced in statement for
+        // statement — not a value block wrapped in a `return`. That is what
+        // lets a lambda whose body only runs statements be void rather than a
+        // value-less block in value position, and it takes the `{` before
+        // parse_expr can read it as a value block (which `no_struct` would
+        // suppress in a loop / if HEADER anyway). A trailing value, written
+        // without a `;`, is the returned value.
+        var (lb_leading, lb_have_tail, lb_tail, lb_ok, lb_p) = parse_block_items(p);
+        p = lb_p;
+        body = lb_leading;
+        if (lb_have_tail) { body = body.append(s_return(lb_tail)); }
+    } else {
+        var (ber_expr, ber_p) = parse_expr(p);
+        p = ber_p;
+        body = [s_return(ber_expr)];
+    }
     body = prepend_param_destrs(body, apd);
     return parse_postfix(p, e_lambda_at(params, ret_type, body, "", lam_line, lam_col));
 }
@@ -3383,6 +3399,23 @@ function parse_struct_match_arms(p: Par, expr_form: boolean): (ast.StructArm[], 
 // as a value-expression. Everything else parses as an expression
 // (an ExprStmt when a `;` follows, else the trailing tail). Mirrors the
 // Go parser's branchStmtStart.
+// is_compound_assign_op reports whether `op` is one of the compound
+// assignment tokens parse_stmt desugars to `target = target <op> rhs`. The set
+// mirrors the native parser's compoundOps map exactly, so both front-ends
+// desugar the same operators to the same binary op.
+function is_compound_assign_op(op: string): boolean {
+    return op == "+=" || op == "-=" || op == "*=" || op == "/=" || op == "%="
+        || op == "&=" || op == "|=" || op == "^=" || op == "<<=" || op == ">>=";
+}
+
+// is_assign_op reports whether `op` begins an assignment. None of these tokens
+// is in the precedence table, so parse_expr always stops in front of one — which
+// is how a caller tells an item that looked like an expression from the
+// statement it actually is.
+function is_assign_op(op: string): boolean {
+    return op == "=" || is_compound_assign_op(op);
+}
+
 function branch_stmt_start(p: Par): boolean {
     if (p.peek_punct() == "{") { return true; }
     var kw: string = p.peek_keyword();
@@ -3473,17 +3506,19 @@ function branch_dead_tail(stmts: ast.Stmt[]): ast.Expr {
 // be followed by `}`). The `rt` tag is derived from the TAIL expression
 // (the value), not a leading statement, so the desugared IIFE / value-
 // lowering gets the right return type.
-function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
-    var ebody: ast.Stmt[] = [];
-    var rt: string = "i32";
-    if (p.peek_punct() != "{") {
-        ebody = ebody.append(s_unknown(p, "missing { in branch body"));
-        return (ebody, rt, p);
-    }
-    p = p.advance();  // consume `{`
+// parse_block_items scans a `{ … }` body into its leading statements plus
+// an optional trailing value, without deciding what a missing value means —
+// that is the caller's, because a value BRANCH must produce one (E061) and a
+// lambda body need not (it is simply void). The cursor is expected on `{`;
+// `ok` is false when it is not, and the caller reports the shape it wanted.
+function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par) {
     var leading: ast.Stmt[] = [];
     var have_tail: boolean = false;
     var tail: ast.Expr = e_unknown("empty branch");
+    if (p.peek_punct() != "{") {
+        return (leading, have_tail, tail, false, p);
+    }
+    p = p.advance();  // consume `{`
     while (p.peek_punct() != "}" && !p.at_end()) {
         if (branch_stmt_start(p)) {
             var (sr_stmt, sr_p) = parse_stmt(p);
@@ -3496,8 +3531,20 @@ function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
         }
         // Non-keyword item: an expression that is either an ExprStmt
         // (followed by `;`) or the trailing value (followed by `}`).
+        var before: Par = p;
         var (er_expr, er_p) = parse_expr(p);
         p = er_p;
+        if (is_assign_op(p.peek_punct())) {
+            // An lvalue, not a value: `{ a = a + 1; … }`. parse_expr stopped in
+            // front of the assign-op, so re-read the item from the top as the
+            // statement it is rather than mistaking its target for the block's
+            // trailing value.
+            var (asr_stmt, asr_p) = parse_stmt(before);
+            if (asr_p.pos == before.pos) { p = p.advance(); continue; }
+            p = asr_p;
+            leading = leading.append(asr_stmt);
+            continue;
+        }
         if (p.peek_punct() == ";") {
             p = p.advance();
             leading = leading.append(s_expr(er_expr));
@@ -3509,6 +3556,21 @@ function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
         break;
     }
     if (p.peek_punct() == "}") { p = p.advance(); }
+    return (leading, have_tail, tail, true, p);
+}
+
+function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
+    var rt: string = "i32";
+    var (bi_leading, bi_have_tail, bi_tail, bi_ok, bi_p) = parse_block_items(p);
+    if (!bi_ok) {
+        var ebody: ast.Stmt[] = [];
+        ebody = ebody.append(s_unknown(p, "missing { in branch body"));
+        return (ebody, rt, p);
+    }
+    var leading: ast.Stmt[] = bi_leading;
+    var have_tail: boolean = bi_have_tail;
+    var tail: ast.Expr = bi_tail;
+    p = bi_p;
     if (have_tail) { rt = if_expr_rt(tail); }
     // A value-less block (no trailing tail) in value position has no
     // result — yield a StmtUnknown so the branch surfaces an error rather
@@ -6017,11 +6079,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     var acol: i32 = p.peek_col();
     var assign_op: string = p.peek_punct();
     var is_assign: boolean = assign_op == "=";
-    var is_compound: boolean = assign_op == "+=" || assign_op == "-="
-                            || assign_op == "*=" || assign_op == "/="
-                            || assign_op == "%=" || assign_op == "&="
-                            || assign_op == "|=" || assign_op == "^="
-                            || assign_op == "<<=" || assign_op == ">>=";
+    var is_compound: boolean = is_compound_assign_op(assign_op);
     if (is_assign || is_compound) {
         p = p.advance(); // consume the assign-op token
         var (av_expr, av_p) = parse_expr(p);
@@ -13440,8 +13498,8 @@ function hl_append_str(a: string[], b: string[]): string[] {
 // hl_collect_var_names collects the `var` names a statement subtree declares —
 // deliberately ONLY var names, not for-binders or pattern binders, and
 // deliberately not into lambda bodies: it feeds hl_capture_list's shadow list,
-// where an inner lambda's locals would suppress a capture the lift needs.
-// descend_none is that stop spelled once — a lambda body is reachable only
+// where an inner lambda's locals would suppress a capture the lift needs. The
+// statement spine is that stop spelled once — a lambda body is reachable only
 // through expression descent.
 function hl_collect_var_names(stmts: ast.Stmt[]): string[] {
     function vs(st: ast.Stmt, acc: string[]): string[] {
@@ -13451,9 +13509,8 @@ function hl_collect_var_names(stmts: ast.Stmt[]): string[] {
         }
         return acc;
     }
-    function ve(e: ast.Expr, acc: string[]): string[] { return acc; }
     var out: string[] = [];
-    for st in stmts { out = astwalk.fold_stmt_nodes(st, out, vs, ve, astwalk.descend_none); }
+    for st in stmts { out = astwalk.fold_stmt_spine(st, out, vs); }
     return out;
 }
 
@@ -13478,9 +13535,8 @@ function hl_has_rec_local(stmts: ast.Stmt[]): boolean {
         }
         return false;
     }
-    function ve(e: ast.Expr, hit: boolean): boolean { return hit; }
     var hit: boolean = false;
-    for st in stmts { hit = astwalk.fold_stmt_nodes(st, hit, vs, ve, astwalk.descend_none); }
+    for st in stmts { hit = astwalk.fold_stmt_spine(st, hit, vs); }
     return hit;
 }
 
@@ -15569,8 +15625,8 @@ function elb_is_nonneg_int(e: ast.Expr): boolean {
 // elb_assigns_stmts / elb_assigns_stmt report whether any `name = …` assignment
 // appears in the statement subtree. Assignments are always statements (the only
 // expr that carries statements is a lambda, which cannot assign the outer name),
-// so the walk is descend_none: statement lists at every depth, lambda bodies
-// never.
+// so the walk rides the statement spine: statement lists at every depth, lambda
+// bodies never.
 function elb_assigns_stmt(st: ast.Stmt, name: string): boolean {
     function vs(s: ast.Stmt, hit: boolean): boolean {
         if (hit) { return true; }
@@ -15580,8 +15636,7 @@ function elb_assigns_stmt(st: ast.Stmt, name: string): boolean {
         }
         return false;
     }
-    function ve(e: ast.Expr, hit: boolean): boolean { return hit; }
-    return astwalk.fold_stmt_nodes(st, false, vs, ve, astwalk.descend_none);
+    return astwalk.fold_stmt_spine(st, false, vs);
 }
 function elb_assigns_stmts(stmts: ast.Stmt[], name: string): boolean {
     for st in stmts { if (elb_assigns_stmt(st, name)) { return true; } }
@@ -15613,9 +15668,8 @@ function elb_idx_monotonic_stmts(stmts: ast.Stmt[], idx: string): boolean {
         }
         return true;
     }
-    function ve(e: ast.Expr, ok: boolean): boolean { return ok; }
     var ok: boolean = true;
-    for st in stmts { ok = astwalk.fold_stmt_nodes(st, ok, vs, ve, astwalk.descend_none); }
+    for st in stmts { ok = astwalk.fold_stmt_spine(st, ok, vs); }
     return ok;
 }
 function elb_is_monotonic_incr(v: ast.Expr, idx: string): boolean {

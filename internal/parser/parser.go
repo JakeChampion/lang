@@ -2864,9 +2864,26 @@ func (p *parser) parseArrowLambda() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	body := &ast.Block{P: open.Pos, Stmts: []ast.Stmt{&ast.Return{P: open.Pos, Value: bodyExpr}}}
+	body := arrowLambdaBody(open.Pos, bodyExpr)
 	prependParamDestructures(body, paramDestrs)
 	return &ast.Lambda{P: open.Pos, Params: params, ReturnType: ret, ReturnUnannotated: unannotated, Arrow: true, Body: body}, nil
+}
+
+// arrowLambdaBody turns what follows `=>` into the lambda's body block. A
+// braced body is spliced in as the body's own statements, so a lambda whose
+// body only runs statements is void rather than a value-less block in value
+// position (E061); a trailing value, written without a `;`, becomes the
+// returned value. Any other expression is returned directly.
+func arrowLambdaBody(pos ast.Position, e ast.Expr) *ast.Block {
+	be, ok := e.(*ast.BlockExpr)
+	if !ok {
+		return &ast.Block{P: pos, Stmts: []ast.Stmt{&ast.Return{P: pos, Value: e}}}
+	}
+	stmts := append([]ast.Stmt(nil), be.Stmts...)
+	if be.Tail != nil {
+		stmts = append(stmts, &ast.Return{P: be.Tail.Pos(), Value: be.Tail})
+	}
+	return &ast.Block{P: be.P, Stmts: stmts}
 }
 
 func (p *parser) parseLambda() (ast.Expr, error) {
@@ -6052,6 +6069,10 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 	case lexer.Number:
 		p.advance()
 		var n int64
+		// Set when the written magnitude is above i64 max, so `n` holds a
+		// wrapped bit pattern. The checker needs to know, since it cannot
+		// otherwise tell a literal at 2^63 from the negative it wraps to.
+		exceedsI64 := false
 		if len(t.Text) > 2 && t.Text[0] == '0' && (t.Text[1] == 'x' || t.Text[1] == 'X') {
 			// Hex literal: parse the digits after the `0x` prefix.
 			// Width up to 64 bits so `0xFFFFFFFF` round-trips; the
@@ -6064,6 +6085,7 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 				// path keeps `18446744073709551615`.
 				if uv, uerr := strconv.ParseUint(t.Text[2:], 16, 64); uerr == nil {
 					v = int64(uv)
+					exceedsI64 = true
 				} else {
 					p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid hex literal %q: %v", t.Text, err))
 				}
@@ -6084,13 +6106,14 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 				// context.
 				if uv, uerr := strconv.ParseUint(t.Text, 10, 64); uerr == nil {
 					v = int64(uv)
+					exceedsI64 = true
 				} else {
 					p.errors = append(p.errors, p.errorfCode(t.Pos, "P002", "invalid integer literal %q: %v", t.Text, err))
 				}
 			}
 			n = v
 		}
-		lit := &ast.NumberLit{P: t.Pos, Value: n}
+		lit := &ast.NumberLit{P: t.Pos, Value: n, ExceedsI64: exceedsI64}
 		if len(t.Text) > 2 && t.Text[0] == '0' && (t.Text[1] == 'x' || t.Text[1] == 'X') {
 			lit.Raw = t.Text
 		}

@@ -275,9 +275,16 @@ function any_ccall_need(s: asmcore.EmitState): boolean {
 
 // rc_trace_on reports whether FERN_RC_TRACE is set — the self-host port of
 // ast.RcTrace (#6068). Every heap event becomes self-describing: one stderr
-// line per alloc/free, `rctrace <a|f> <ptr> <size> <site>`, three fixed-width
-// 16-hex numbers. Pair the `a` lines against the `f` lines by POINTER and what
-// is left is a leak, attributed to the code that asked for the memory.
+// line per alloc/free, `rctrace <a|f> <ptr> <size> <site> <caller>`, four
+// fixed-width 16-hex numbers — native's format exactly, so one parser reads
+// both compilers' traces. Pair the `a` lines against the `f` lines by POINTER
+// and what is left is a leak, attributed to the code that asked for the memory.
+//
+// `site` is the immediate caller of __fern_alloc, which for an allocation
+// routed through a box shim is the shim; `caller` is one frame above it. That
+// second field is what attributes a leak past a shared runtime helper: every
+// append in the program allocates at one address inside __fern_arr_push, so
+// `site` cannot tell two append sites apart and `caller` can (#7954).
 //
 // The native backend has had this since #6076; the self-host runtime had only
 // the over-release detector (__fern_rc_underflow), so it could see a block
@@ -700,9 +707,46 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    movq $1, %rdx\n");
         s = s.write("    call .Lhev_w\n");
         s = s.write("    addq $16, %rsp\n");
+        // caller: the return address one frame above `site`, native's 5th
+        // field. Native reads `[rbp + 8]` because its hook sits in GENERATED
+        // code at the allocation, where %rbp is the allocating function's own
+        // frame. The self-host hook sits in the shared __fern_alloc wrapper
+        // instead, and %rbp there belongs to the innermost helper that
+        // established a frame — a box shim, whose return address IS the site
+        // the shim claimed. Reading 8(%rbp) therefore reproduces `site`
+        // exactly and attributes nothing, which is worse than no field at all.
+        //
+        // So walk one link further: (%rbp) is the shim's saved frame pointer,
+        // and 8 above THAT is its caller's return address. For an append the
+        // chain is Fern code -> __fern_arr_push -> __fern_arr_box -> here, so
+        // this lands on the Fern code that called append rather than on
+        // __fern_arr_push, which is the whole point (#7954).
+        //
+        // A fixed depth cannot reach user code through every path, and this
+        // one is chosen for the LEAKING one. A sole-owner local reclaims via
+        // __fern_arr_push_owned, one frame deeper, so those allocations report
+        // that wrapper rather than the append's own function; the plain push —
+        // the one that abandons the superseded buffer, and the reason to be
+        // looking — reports user code directly. Attributing an owned append
+        // still needs one manual frame walk.
+        //
+        // %rbx is free here: it carried the kind, which has already been
+        // written, and hev_restore pops it; %rax is scratch for the same
+        // reason. Either link being null reports 0 rather than faulting — a
+        // program can allocate before any frame exists, and a diagnostic may
+        // not be the thing that crashes the run.
+        s = s.write("    movq $0, %rbx\n");
+        s = s.write("    testq %rbp, %rbp\n");
+        s = s.write("    je .Lhev_nocaller\n");
+        s = s.write("    movq (%rbp), %rax\n");
+        s = s.write("    testq %rax, %rax\n");
+        s = s.write("    je .Lhev_nocaller\n");
+        s = s.write("    movq 8(%rax), %rbx\n");
+        s = s.write(".Lhev_nocaller:\n");
         s = hev_field(s, "%r12");
         s = hev_field(s, "%r13");
         s = hev_field(s, "%r14");
+        s = hev_field(s, "%rbx");
         s = s.write("    leaq .Lhev_nl(%rip), %rsi\n");
         s = s.write("    movq $1, %rdx\n");
         s = s.write("    call .Lhev_w\n");
@@ -3645,7 +3689,17 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind_tag == 101) {  // str_index
         // pop index (top), string box; box = [data@0, len@8], so the byte is
         // at [data + i]; zero-extend to an i32.
-        s = s.write("    popq %rcx\n    popq %rax\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n    pushq %rax\n"); return s;
+        //
+        // Bounds-checked against len@8 before the load, the same shape
+        // emit_ir_op_arr_get uses against its length prefix: one UNSIGNED
+        // compare catches both i >= len and a negative i (huge as unsigned),
+        // branching to the shared abort. docs/ARRAY-BOUNDS.md lists string
+        // index among the abort sites and the native tier enforces it, so
+        // without this the two compilers disagree on a memory-safety
+        // property. __fern_oob_abort lives in the heap-gated block, so a
+        // site branching to it marks that need.
+        s = s.need("heap");
+        s = s.write("    popq %rcx\n    popq %rax\n    cmpq 8(%rax), %rcx\n    jae __fern_oob_abort\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n    pushq %rax\n"); return s;
     }
     if (o.kind_tag == 225) {  // memchr
         // operand stack [box, byte, from] (from on top) -> i32 index or -1.

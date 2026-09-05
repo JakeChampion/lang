@@ -1499,6 +1499,23 @@ func TestFormatKeepsControlBytesEscaped(t *testing.T) {
 	}
 }
 
+// An f-string's literal segments take the same rule. They are a second copy of
+// the escape switch, so the control-byte arm has to be added to both — the
+// self-host formatter's parity gate is what caught this one missing.
+func TestFormatKeepsControlBytesEscapedInFString(t *testing.T) {
+	got := formatSrc(t, "function f(s: string): string { return f\"a\\x00b\\x1f{s}\\x7fc\"; }")
+	want := `return f"a\x00b\x1f{s}\x7fc";`
+	if !strings.Contains(got, want) {
+		t.Fatalf("want %q in:\n%s", want, got)
+	}
+	if strings.ContainsRune(got, 0) {
+		t.Fatalf("a raw NUL survived the format:\n%q", got)
+	}
+	if again := formatSrc(t, got); again != got {
+		t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+	}
+}
+
 func TestFormatKeepsAssertSugar(t *testing.T) {
 	src := "function f(x: i32): void {\n  assert(x > 0);\n  assert(x < 10, \"x is \" + x.to_string());\n}\n"
 	got := formatSrc(t, src)

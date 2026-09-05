@@ -1867,6 +1867,13 @@ type NumberLit struct {
 	// to its integer type and won't be promoted here.
 	IsFloat    bool
 	FloatWidth int
+	// ExceedsI64 records that the written magnitude is above i64 max, so
+	// Value holds its two's-complement bit pattern rather than the number
+	// the source spelled. A u64 literal legitimately gets here; a signed
+	// one has to be rejected, and without this flag the checker cannot
+	// tell `9223372036854775808` from the `-9223372036854775808` it wraps
+	// to. Read the magnitude back with uint64(Value).
+	ExceedsI64 bool
 }
 
 // CastExpr is `expr as Type`. The checker requires Target to be a
@@ -2103,6 +2110,12 @@ type SliceExpr struct {
 	// `low * stride` byte offset on slice creation. Unused for
 	// IsString slices.
 	ElemType Type
+	// Lent marks the full-range slice the checker synthesises when an
+	// owned `T[]` argument is coerced to a `[T]` parameter. The header it
+	// materialises is not written by the author and cannot be named, so
+	// nothing but the call it was built for can reach it — which is what
+	// lets the IR release it once the call returns (#8502).
+	Lent bool
 }
 type Call struct {
 	P      Position

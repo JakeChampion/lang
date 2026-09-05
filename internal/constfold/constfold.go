@@ -101,7 +101,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 			errs = append(errs, fmt.Errorf("%s: const %q redeclared", cd.P, cd.Name))
 			continue
 		}
-		val, err := evalConst(cd.Value, values, types, in.Assets)
+		val, err := evalConst(cd.Value, declaredWidth(cd.Type), values, types, in.Assets)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: const %s: %w", cd.P, cd.Name, err))
 			continue
@@ -129,7 +129,12 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 	// of the pipeline runs against a const-free program.
 	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS, targetArch: in.TargetArch}
 	for _, fn := range prog.Funcs {
+		sub.pushScope()
+		for _, p := range fn.Params {
+			sub.bind(p.Name)
+		}
 		sub.walkBlock(fn.Body)
+		sub.popScope()
 	}
 	prog.Consts = nil
 	if len(sub.errs) > 0 {
@@ -141,7 +146,7 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 // evalConst tries to reduce e to a literal AST node using only
 // constant-expression rules. Returned values are always one of
 // *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit.
-func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
+func evalConst(e ast.Expr, w intWidth, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
 	switch n := e.(type) {
 	case *ast.NumberLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit, *ast.CharLit:
 		return n, nil
@@ -165,21 +170,21 @@ func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type
 		}
 		return v, nil
 	case *ast.Unary:
-		operand, err := evalConst(n.Operand, values, types, assets)
+		operand, err := evalConst(n.Operand, w, values, types, assets)
 		if err != nil {
 			return nil, err
 		}
-		return foldUnary(n, operand)
+		return foldUnary(n, w, operand)
 	case *ast.Binary:
-		left, err := evalConst(n.Left, values, types, assets)
+		left, err := evalConst(n.Left, w, values, types, assets)
 		if err != nil {
 			return nil, err
 		}
-		right, err := evalConst(n.Right, values, types, assets)
+		right, err := evalConst(n.Right, w, values, types, assets)
 		if err != nil {
 			return nil, err
 		}
-		return foldBinary(n, left, right)
+		return foldBinary(n, w, left, right)
 	default:
 		return nil, fmt.Errorf("expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)")
 	}
@@ -188,12 +193,12 @@ func evalConst(e ast.Expr, values map[string]ast.Expr, types map[string]ast.Type
 // foldUnary reduces -x or !x where x is a literal. Position is
 // preserved from the source unary so diagnostics still point at the
 // right column if a later layer reports on the resulting node.
-func foldUnary(n *ast.Unary, operand ast.Expr) (ast.Expr, error) {
+func foldUnary(n *ast.Unary, w intWidth, operand ast.Expr) (ast.Expr, error) {
 	switch n.Op {
 	case "-":
 		switch v := operand.(type) {
 		case *ast.NumberLit:
-			return &ast.NumberLit{P: n.P, Value: -v.Value}, nil
+			return &ast.NumberLit{P: n.P, Value: w.trunc(-v.Value)}, nil
 		case *ast.FloatLit:
 			return &ast.FloatLit{P: n.P, Value: -v.Value}, nil
 		}
@@ -213,7 +218,7 @@ func foldUnary(n *ast.Unary, operand ast.Expr) (ast.Expr, error) {
 // match in scalar shape — number+number, float+float, bool&&bool,
 // string+string, etc. Mixed types (e.g. number + float) need an
 // explicit conversion in the source, just like at runtime.
-func foldBinary(n *ast.Binary, left, right ast.Expr) (ast.Expr, error) {
+func foldBinary(n *ast.Binary, w intWidth, left, right ast.Expr) (ast.Expr, error) {
 	// String concatenation: "a" + "b". Comparison on strings is
 	// allowed too (== / !=).
 	if ls, lok := left.(*ast.StringLit); lok {
@@ -266,7 +271,64 @@ func foldBinary(n *ast.Binary, left, right ast.Expr) (ast.Expr, error) {
 	if !lok || !rok {
 		return nil, fmt.Errorf("binary `%s` operands aren't both numbers", n.Op)
 	}
-	return foldNumberBinary(n, ln.Value, rn.Value)
+	return foldNumberBinary(n, w, ln.Value, rn.Value)
+}
+
+// intWidth is the integer width a constant expression folds at, taken from
+// the const's DECLARED type. `docs/INTEGER-SEMANTICS.md` defines `+`, `-`,
+// `*` and `<<` as wrapping at the operand's width and masks shift counts to
+// it, so folding anywhere else gives a const a different value from the
+// identical expression written as code (#8444).
+//
+// bits is 0 when no width is known — an undeclared const, or a `usize`,
+// whose width is the target's. Those still fold in int64: an undeclared
+// const's literal stays polymorphic and settles at its USE site, so there is
+// no width to fold at until the checker has run, and this pass runs before
+// the checker by design (everything downstream sees a const-free program).
+type intWidth struct {
+	bits   int
+	signed bool
+}
+
+// declaredWidth reads the fold width off a const's declared type.
+func declaredWidth(t ast.Type) intWidth {
+	n, ok := t.(ast.NumberType)
+	if !ok || n.IsPointerWidth() || n.Polymorphic {
+		return intWidth{}
+	}
+	return intWidth{bits: n.NormalWidth(), signed: n.IsSigned()}
+}
+
+// known reports whether a width is available to fold at.
+func (w intWidth) known() bool { return w.bits != 0 }
+
+// unsigned reports whether the operators whose meaning depends on signedness
+// (`/`, `%`, `>>`, and the ordering comparisons) take their unsigned reading.
+func (w intWidth) unsigned() bool { return w.known() && !w.signed }
+
+// trunc reduces v to what the target would hold in this width, sign-extending
+// a signed result so the int64 the literal carries reads back as that value.
+func (w intWidth) trunc(v int64) int64 {
+	if !w.known() || w.bits >= 64 {
+		return v
+	}
+	shift := uint(64 - w.bits)
+	if w.signed {
+		return v << shift >> shift
+	}
+	return int64(uint64(v) << shift >> shift)
+}
+
+// shiftMask is the mask a shift count takes: `count & 31` for a 32-bit or
+// sub-i32 operand, `count & 63` for a 64-bit one. With no declared width the
+// i64 rule applies — Go would instead yield 0 for any count at or above the
+// width and for every negative count, so `const A: i32 = 1 << 64` folded to 0
+// where the same expression evaluates to 1 at runtime.
+func (w intWidth) shiftMask() uint64 {
+	if !w.known() || w.bits > 32 {
+		return 63
+	}
+	return 31
 }
 
 // foldNumberBinary handles every operator the language defines on
@@ -274,52 +336,73 @@ func foldBinary(n *ast.Binary, left, right ast.Expr) (ast.Expr, error) {
 // the operator. Division and modulo by zero are caught here so the
 // program never compiles with a poison value baked in.
 //
-// A shift masks its count to the operand width, and the pass runs before the
-// checker so no width is known yet — it folds in int64 throughout (which is
-// why `1 << 32` folds to 4294967296 and is then rejected for an i32 const
-// rather than wrapping). The shifts therefore mask to 63, the i64 rule. Go
-// would instead yield 0 for any count at or above the width and for every
-// negative count, so `const A: i32 = 1 << 64` folded to 0 where the same
-// expression evaluates to 1 at runtime.
-func foldNumberBinary(n *ast.Binary, l, r int64) (ast.Expr, error) {
+// Every arithmetic result is truncated to w, so an INTERMEDIATE overflow
+// wraps exactly as it would at runtime rather than being carried in 64 bits
+// and silently landing back in range.
+func foldNumberBinary(n *ast.Binary, w intWidth, l, r int64) (ast.Expr, error) {
+	num := func(v int64) (ast.Expr, error) {
+		return &ast.NumberLit{P: n.P, Value: w.trunc(v)}, nil
+	}
+	count := uint64(r) & w.shiftMask()
 	switch n.Op {
 	case "+":
-		return &ast.NumberLit{P: n.P, Value: l + r}, nil
+		return num(l + r)
 	case "-":
-		return &ast.NumberLit{P: n.P, Value: l - r}, nil
+		return num(l - r)
 	case "*":
-		return &ast.NumberLit{P: n.P, Value: l * r}, nil
+		return num(l * r)
 	case "/":
 		if r == 0 {
 			return nil, fmt.Errorf("division by zero in constant expression")
 		}
-		return &ast.NumberLit{P: n.P, Value: l / r}, nil
+		if w.unsigned() {
+			return num(int64(uint64(l) / uint64(r)))
+		}
+		return num(l / r)
 	case "%":
 		if r == 0 {
 			return nil, fmt.Errorf("modulo by zero in constant expression")
 		}
-		return &ast.NumberLit{P: n.P, Value: l % r}, nil
+		if w.unsigned() {
+			return num(int64(uint64(l) % uint64(r)))
+		}
+		return num(l % r)
 	case "&":
-		return &ast.NumberLit{P: n.P, Value: l & r}, nil
+		return num(l & r)
 	case "|":
-		return &ast.NumberLit{P: n.P, Value: l | r}, nil
+		return num(l | r)
 	case "^":
-		return &ast.NumberLit{P: n.P, Value: l ^ r}, nil
+		return num(l ^ r)
 	case "<<":
-		return &ast.NumberLit{P: n.P, Value: l << (uint64(r) & 63)}, nil
+		return num(l << count)
 	case ">>":
-		return &ast.NumberLit{P: n.P, Value: l >> (uint64(r) & 63)}, nil
+		if w.unsigned() {
+			return num(int64(uint64(l) >> count))
+		}
+		return num(l >> count)
 	case "==":
 		return &ast.BoolLit{P: n.P, Value: l == r}, nil
 	case "!=":
 		return &ast.BoolLit{P: n.P, Value: l != r}, nil
 	case "<":
+		if w.unsigned() {
+			return &ast.BoolLit{P: n.P, Value: uint64(l) < uint64(r)}, nil
+		}
 		return &ast.BoolLit{P: n.P, Value: l < r}, nil
 	case "<=":
+		if w.unsigned() {
+			return &ast.BoolLit{P: n.P, Value: uint64(l) <= uint64(r)}, nil
+		}
 		return &ast.BoolLit{P: n.P, Value: l <= r}, nil
 	case ">":
+		if w.unsigned() {
+			return &ast.BoolLit{P: n.P, Value: uint64(l) > uint64(r)}, nil
+		}
 		return &ast.BoolLit{P: n.P, Value: l > r}, nil
 	case ">=":
+		if w.unsigned() {
+			return &ast.BoolLit{P: n.P, Value: uint64(l) >= uint64(r)}, nil
+		}
 		return &ast.BoolLit{P: n.P, Value: l >= r}, nil
 	}
 	return nil, fmt.Errorf("operator `%s` not allowed in integer constant expressions", n.Op)
@@ -464,6 +547,36 @@ type substituter struct {
 	targetOS   string
 	targetArch string
 	errs       []error
+	// bound is the scope stack of names a BINDER has introduced — params,
+	// var / destructure declarations, match and for-each bindings, lambda
+	// params. A const is a module-level name, so any of these shadows it,
+	// and substituting through the shadow rewrites a local's reads with the
+	// const's value (#8443). The pass runs before the checker, which is what
+	// makes the substituter responsible for scope itself: Fold clears
+	// prog.Consts, so the checker never sees the const and cannot diagnose
+	// the collision either.
+	bound []map[string]bool
+}
+
+func (s *substituter) pushScope() { s.bound = append(s.bound, map[string]bool{}) }
+
+func (s *substituter) popScope() { s.bound = s.bound[:len(s.bound)-1] }
+
+func (s *substituter) bind(name string) {
+	if name == "" || len(s.bound) == 0 {
+		return
+	}
+	s.bound[len(s.bound)-1][name] = true
+}
+
+// isBound reports whether name is currently shadowed by a binder.
+func (s *substituter) isBound(name string) bool {
+	for i := len(s.bound) - 1; i >= 0; i-- {
+		if s.bound[i][name] {
+			return true
+		}
+	}
+	return false
 }
 
 // isTargetCall reports whether c is a zero-argument call of the named
@@ -559,9 +672,11 @@ func (s *substituter) walkBlock(b *ast.Block) {
 	if b == nil {
 		return
 	}
+	s.pushScope()
 	for _, st := range b.Stmts {
 		s.walkStmt(st)
 	}
+	s.popScope()
 }
 
 func (s *substituter) walkStmt(st ast.Stmt) {
@@ -580,6 +695,9 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 	case *ast.Loop:
 		s.walkStmt(x.Body)
 	case *ast.For:
+		// The init's binding is in scope for the cond, the step and the
+		// body, so the frame wraps all four rather than the body alone.
+		s.pushScope()
 		if x.Init != nil {
 			s.walkStmt(x.Init)
 		}
@@ -588,21 +706,55 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 			s.walkStmt(x.Step)
 		}
 		s.walkStmt(x.Body)
+		s.popScope()
 	case *ast.ForEach:
 		s.walkExpr(&x.Iter)
+		s.walkExpr(&x.RangeHigh)
+		s.pushScope()
+		// A destructuring header carries its real binders on Pattern —
+		// `for (a, b) in xs` — with Var only the synthetic element holder.
+		// The checker lowers these loops away, so this pass is the only one
+		// positioned to see the pattern's names at all.
+		s.bind(x.Var)
+		if x.Pattern != nil {
+			s.walkStmt(x.Pattern)
+		}
 		s.walkStmt(x.Body)
+		s.popScope()
 	case *ast.Return:
 		if x.Value != nil {
 			s.walkExpr(&x.Value)
 		}
 	case *ast.Var:
+		// The init is walked BEFORE the name binds: `var N = N;` reads the
+		// const on its right-hand side and shadows it only afterwards.
 		s.walkExpr(&x.Init)
+		s.bind(x.Name)
 	case *ast.Destructure:
 		s.walkExpr(&x.Init)
+		s.bind(x.AtName)
+		s.bind(x.TempName)
+		for _, n := range x.Names {
+			s.bind(n)
+		}
+		// A nested level's binders live on Nested[i].Names, and its Init
+		// reads Names[i] — so recurse after this level binds, exactly as
+		// the Destructure doc comment requires of any pass that cares about
+		// declared names.
+		for _, nd := range x.Nested {
+			if nd != nil {
+				s.walkStmt(nd)
+			}
+		}
 	case *ast.ExprStmt:
 		s.walkExpr(&x.Expr)
 	case *ast.FuncDecl:
+		s.pushScope()
+		for _, p := range x.Params {
+			s.bind(p.Name)
+		}
 		s.walkBlock(x.Body)
+		s.popScope()
 	// Same hole the expression switch below already had patched (#5477): a
 	// const referenced from one of these was never substituted and reached
 	// the checker as a bare Ident, so `parser.ORIGIN_ASSERT` inside a match
@@ -611,16 +763,24 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 	case *ast.Match:
 		s.walkExpr(&x.Tag)
 		for _, arm := range x.Arms {
+			// A literal or range pattern is a VALUE position, so a const
+			// still substitutes there; the payload bindings shadow only the
+			// guard and the body.
 			if arm.Literal != nil {
 				s.walkExpr(&arm.Literal)
 			}
 			if arm.RangeHi != nil {
 				s.walkExpr(&arm.RangeHi)
 			}
+			s.pushScope()
+			for _, b := range arm.Bindings {
+				s.bind(b)
+			}
 			if arm.Guard != nil {
 				s.walkExpr(&arm.Guard)
 			}
 			s.walkBlock(arm.Body)
+			s.popScope()
 		}
 	case *ast.Defer:
 		s.walkExpr(&x.Expr)
@@ -633,7 +793,7 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 	}
 	switch x := (*slot).(type) {
 	case *ast.Ident:
-		if v, ok := s.values[x.Name]; ok {
+		if v, ok := s.values[x.Name]; ok && !s.isBound(x.Name) {
 			*slot = cloneLit(v, x.P)
 		}
 	case *ast.Call:
@@ -680,6 +840,19 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 			s.walkExpr(&x.Elems[i])
 		}
 	case *ast.Assign:
+		// An assignment target is an lvalue, so a const named there is not a
+		// value to substitute — it is a program assigning to a const, and the
+		// substituter is the only pass that can still say so: Fold clears
+		// prog.Consts, so by the time the checker runs the name is gone.
+		// Rewriting it instead produced `assignment target *ast.NumberLit is
+		// not an lvalue the parser can produce (compiler bug)` (#8443).
+		if id, ok := x.Target.(*ast.Ident); ok {
+			if _, isConst := s.values[id.Name]; isConst && !s.isBound(id.Name) {
+				s.errs = append(s.errs, fmt.Errorf("%s: cannot assign to const %s", id.P, id.Name))
+				s.walkExpr(&x.Value)
+				return
+			}
+		}
 		s.walkExpr(&x.Target)
 		s.walkExpr(&x.Value)
 	case *ast.IfExpr:
@@ -691,18 +864,25 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 	case *ast.MatchExpr:
 		s.walkExpr(&x.Tag)
 		for _, arm := range x.Arms {
+			s.pushScope()
+			for _, b := range arm.Bindings {
+				s.bind(b)
+			}
 			if arm.Guard != nil {
 				s.walkExpr(&arm.Guard)
 			}
 			s.walkExpr(&arm.Body)
+			s.popScope()
 		}
 	case *ast.BlockExpr:
+		s.pushScope()
 		for _, st := range x.Stmts {
 			s.walkStmt(st)
 		}
 		if x.Tail != nil {
 			s.walkExpr(&x.Tail)
 		}
+		s.popScope()
 	case *ast.StructLit:
 		for i := range x.Fields {
 			s.walkExpr(&x.Fields[i].Value)
@@ -749,7 +929,12 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 			s.walkExpr(&x.Desugared)
 		}
 	case *ast.Lambda:
+		s.pushScope()
+		for _, p := range x.Params {
+			s.bind(p.Name)
+		}
 		s.walkBlock(x.Body)
+		s.popScope()
 	}
 }
 

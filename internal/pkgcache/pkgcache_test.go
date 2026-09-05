@@ -131,6 +131,49 @@ func TestDirBadHashScheme(t *testing.T) {
 	}
 }
 
+// The hex half of a hash is joined onto the store root to name a
+// directory, so an unvalidated value is a PATH, not just a label. A
+// lockfile carrying `sha256:../../../elsewhere` made the loader compile
+// and run code from an arbitrary directory — and because Fetch treats
+// "the directory is present" as "the content is verified", nothing was
+// downloaded or checked on the way (#8464).
+//
+// TestFetchRejectsEscapingEntries above covers the archive's own paths;
+// this is the same escape one level up, through the name of the store
+// entry itself.
+func TestDirRejectsTraversalAndMalformedHex(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("FERN_CACHE_DIR", root)
+	bad := []struct{ name, hash string }{
+		{"parent-traversal", "sha256:../../../../etc"},
+		{"absolute-path", "sha256:/etc/passwd"},
+		{"single-dotdot", "sha256:.."},
+		{"too-short", "sha256:abc123"},
+		{"too-long", "sha256:" + strings.Repeat("a", 65)},
+		{"uppercase-hex", "sha256:" + strings.Repeat("A", 64)},
+		{"non-hex", "sha256:" + strings.Repeat("z", 64)},
+		{"embedded-separator", "sha256:" + strings.Repeat("a", 31) + "/" + strings.Repeat("b", 32)},
+		{"empty", "sha256:"},
+	}
+	for _, c := range bad {
+		t.Run(c.name, func(t *testing.T) {
+			dir, _, err := Dir(c.hash)
+			if err == nil {
+				t.Fatalf("accepted %q, resolving to %q", c.hash, dir)
+			}
+		})
+	}
+	// A well-formed hash still resolves, inside the root.
+	good := "sha256:" + strings.Repeat("a", 64)
+	dir, _, err := Dir(good)
+	if err != nil {
+		t.Fatalf("rejected a well-formed hash: %v", err)
+	}
+	if filepath.Dir(dir) != filepath.Join(root, "pkgs") {
+		t.Errorf("resolved to %q, want a direct child of the store root", dir)
+	}
+}
+
 // FetchUnverified downloads, computes the hash, and stores under it —
 // the `fern -add --url` flow. The returned hash matches HashBytes of the
 // served archive, and a later verified Fetch against that hash hits the

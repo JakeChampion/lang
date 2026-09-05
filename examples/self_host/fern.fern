@@ -2329,7 +2329,8 @@ function run(): i32 {
     // branch on target_os() or target_arch() is pruned by
     // ir.fold_const_binaries. -check and -interp returned above with the
     // calls intact.
-    merged = constfold.fold_target_name(merged, platforms.for_target(target).environment, platforms.for_target(target).isa);
+    var desc: platforms.Descriptor = platforms.for_target(target);
+    merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
     merged = constfold.fold_module(merged);
 
     // typed-IR (#5531): stamp each call expression with its checker-inferred

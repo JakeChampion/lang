@@ -49,50 +49,84 @@ func appendIndexedElemSrc(decl, body, count, readback string) string {
 		"if (__rc_underflow() != 0) { return 99; } return t + junk.len() / 64 - 4; }"
 }
 
-func appendIndexedElemCases() []struct{ name, src string } {
+// balanced marks the rows whose destination array earns its element walk, so
+// the run ends with nothing live. The rest still leak their three element boxes
+// — see the comment on TestSelfHostAppendIndexedElemX86_64 for which reclaim
+// gap each one is waiting on.
+func appendIndexedElemCases() []struct {
+	name, src string
+	balanced  bool
+} {
 	const opsOut = "var out: Op[] = [];"
 	const opDigit = "t = t * 10 + out[k].a;"
-	return []struct{ name, src string }{
+	return []struct {
+		name, src string
+		balanced  bool
+	}{
 		// The statement form, the shape the pass's prologue splice takes.
 		{"stmt_local", appendIndexedElemSrc(opsOut,
 			"var pre: Op[] = three(); var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
-			"out.len()", opDigit)},
+			"out.len()", opDigit), false},
+		// The same shape with the SOURCE built in this frame rather than
+		// returned by a callee — what the LICM pass actually does, and the one
+		// row of this corpus that balances. `pre` is an append-built struct
+		// array here, so it earns its own element walk; `out` earns one too
+		// (structarr_elem_store_ok admits the index read as a COUNTED store),
+		// and the two rc-guarded decs take each box to zero exactly once.
+		// Every other struct row sources from `three()`, whose returned array
+		// the caller cannot credit — one dec, never two, so the box survives.
+		{"stmt_local_sameframe", appendIndexedElemSrc(opsOut,
+			"var pre: Op[] = []; var i: i32 = 0; while (i < 3) { pre = pre.append(mkop(i)); i = i + 1; } "+
+				"var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
+			"out.len()", opDigit), true},
 		// Expression position: a var-init per push.
 		{"expr_local", appendIndexedElemSrc(opsOut,
 			"var pre: Op[] = three(); var o1: Op[] = out.append(pre[0]); var o2: Op[] = o1.append(pre[1]); out = o2.append(pre[2]);",
-			"out.len()", opDigit)},
+			"out.len()", opDigit), false},
 		// The clone form: a struct-field receiver.
 		{"clone_local", appendIndexedElemSrc("var st: St = St { ops: [] };",
 			"var pre: Op[] = three(); var p: i32 = 0; while (p < 3) { st = St { ops: st.ops.append(pre[p]) }; p = p + 1; }",
-			"st.ops.len()", "t = t * 10 + st.ops[k].a;")},
+			"st.ops.len()", "t = t * 10 + st.ops[k].a;"), false},
 		// The source is a borrowed parameter: the caller's release drops it.
 		{"stmt_param", appendIndexedElemSrc(opsOut,
 			"var pre: Op[] = three(); out = from_param(pre);",
-			"out.len()", opDigit)},
+			"out.len()", opDigit), false},
 		// The second affected kind: an array element of an array of arrays.
 		{"nested_arr", appendIndexedElemSrc("var out: i32[][] = [];",
 			"var pre: i32[][] = []; var i: i32 = 0; while (i < 3) { pre = pre.append([i, 7]); i = i + 1; } var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
-			"out.len()", "t = t * 10 + out[k][0];")},
+			"out.len()", "t = t * 10 + out[k][0];"), false},
 		// Controls: an enum and a string element were already balanced by
 		// their own rules, so the leak counters catch a retain added on top.
 		{"enum_local", appendIndexedElemSrc("var out: E[] = [];",
 			"var pre: E[] = []; var i: i32 = 0; while (i < 3) { pre = pre.append(A(i)); i = i + 1; } var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
-			"out.len()", "match (out[k]) { A(v) => { t = t * 10 + v; }, B => { t = t * 10 + 9; } }")},
+			"out.len()", "match (out[k]) { A(v) => { t = t * 10 + v; }, B => { t = t * 10 + 9; } }"), false},
 		{"str_local", appendIndexedElemSrc("var out: string[] = [];",
 			"var pre: string[] = []; var i: i32 = 0; while (i < 3) { pre = pre.append(\"v\" + \"w\"); i = i + 1; } var p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
-			"out.len()", "t = t * 10 + out[k].len() - 2 + k;")},
+			"out.len()", "t = t * 10 + out[k].len() - 2 + k;"), false},
 	}
 }
 
 // TestSelfHostAppendIndexedElemX86_64 — the elements read back after the
 // source array died, and no release ran twice.
 //
-// The leak counters are read but not balanced: the destination's element walk
-// is credited only to a fresh array with no element alias (arrstruct_credit_rows),
-// and an index read IS an element alias, so `out` never releases what it holds
-// — three boxes stay live in every row, the two controls included, which is
-// the reclaim gap docs/rc-log records. A retain removed from the store shows up
-// in the digits, never in the counters.
+// TWO OWNERS, AND BOTH HAVE TO WALK. The append retains an index-read struct or
+// array element, so the box arrives at rc 2; freeing it takes an rc-guarded dec
+// from each array. `structarr_elem_store_ok` admits the index read as a COUNTED
+// store, which is the destination's dec — but the SOURCE needs its own element
+// walk for the second, and a callee-returned array does not earn one here.
+//
+// So `stmt_local_sameframe`, whose source is append-built in this frame, is the
+// row that balances (144 -> 0 when the destination was admitted); every other
+// struct row sources from `three()` and still ends with its three boxes live at
+// rc 1, one dec short. `nested_arr` waits on the same admission for the ARRARR
+// class (arrarr_row_store_ok), whose string-kind rows need a freshness answer an
+// index read cannot give. `enum_local` is not waiting on anything: its store is
+// UNCOUNTED by design, so crediting the destination there would double-free.
+// `str_local` already balances by its own rules.
+//
+// Measured paired against the same commit, so the leaking rows below are a
+// recorded gap and not a regression this test would miss. A retain removed from
+// the store shows up in the digits, never in the counters.
 func TestSelfHostAppendIndexedElemX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -121,6 +155,13 @@ func TestSelfHostAppendIndexedElemX86_64(t *testing.T) {
 			}
 			if frees > allocs {
 				t.Errorf("%s: %s — more releases than allocations", tc.name, summary)
+			}
+			// The balanced rows are the contract: losing the destination's
+			// element walk puts three boxes back on the floor, and no digit
+			// moves when it happens.
+			if tc.balanced && live != 0 {
+				t.Errorf("%s: %s — want nothing live; the destination array stopped "+
+					"releasing the elements it shares with its source", tc.name, summary)
 			}
 		})
 	}
