@@ -21,8 +21,9 @@
 # Three trackers drifting the same direction is a systems problem, not three
 # oversights: a human has to notice that a condition changed, and nobody is
 # assigned to notice. So anything derivable is derived here instead. The
-# irreducibly-human ones (is the Perceus port at parity?) are printed as
-# UNVERIFIABLE with a pointer, rather than silently assumed either way.
+# ones this cannot cheaply measure (is the Perceus port at parity? — `make
+# distcheck` answers it, at ~14 GB and minutes) are printed as UNVERIFIABLE
+# with a pointer, rather than silently assumed either way.
 #
 # EXIT STATUS. 0 unless a derivable precondition has REGRESSED — an AST emitter
 # comes back, a backend loses its IR-or-error routing, the checker-codes filter
@@ -54,7 +55,17 @@ if grep -q 'struct_fields_reusable_cross' examples/self_host/irlower.fern 2>/dev
 else
   bad "struct_fields_reusable_cross is gone — reuse admission was removed?"
 fi
-huh "parity itself — see docs/SELFHOST-PERCEUS-REUSE.md §3 for the live delta list"
+# Parity's criterion is `make distcheck` green (NATIVE-CONVERGENCE.md
+# precondition 1). The gate cannot RUN it — it needs ~14 GB and several
+# minutes — but it does not have to: .github/workflows/bootstrap.yml says
+# distcheck joins the `verify` job the day it passes, so the wiring IS the
+# signal, and it cannot be switched on while the target is red.
+if grep -q 'make distcheck' .github/workflows/bootstrap.yml 2>/dev/null \
+   && ! grep -q 'is NOT' .github/workflows/bootstrap.yml 2>/dev/null; then
+  ok "make distcheck runs in CI — the self-host compiler reproduces itself"
+else
+  huh "parity itself — criterion is \`make distcheck\` green (red today: docs/BOOTSTRAP.md); live delta list in docs/SELFHOST-PERCEUS-REUSE.md §3"
+fi
 echo
 
 # --- 2. #3451 / #3457 — per-module epic -----------------------------------
@@ -127,7 +138,7 @@ else
 fi
 echo
 
-printf 'summary: %d derived green, %d needing human judgement' "$green" "$unverifiable"
+printf 'summary: %d derived green, %d pending measurement' "$green" "$unverifiable"
 if [ "$regressed" -gt 0 ]; then
   printf ', \033[31m%d REGRESSED\033[0m\n' "$regressed"
   echo
@@ -137,6 +148,6 @@ if [ "$regressed" -gt 0 ]; then
   exit 1
 fi
 printf '\n\n'
-echo "Update #4451 from this output rather than from memory. What this cannot"
-echo "settle — precondition 1's parity question — is the only part that should"
-echo "still be argued in prose."
+echo "Update #4451 from this output rather than from memory. Precondition 1 is"
+echo "no longer a prose argument either: its criterion is \`make distcheck\`"
+echo "green, which this gate reads off the CI wiring rather than running."
