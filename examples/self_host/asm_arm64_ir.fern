@@ -143,6 +143,42 @@ function ir_bin_asm(tag: i32, width: i32): string {
     return ircore.unsupported_op_refuse(tag, "arm64");
 }
 
+// ir_cmp_cond names the condition code an integer comparison feeds when its
+// result goes straight to a branch: the code that holds when the comparison
+// does (when_true) or its inverse. `cmp x0, x1` has already set the flags, so
+// the signed/unsigned split is the same one ir_bin_asm's cset family makes.
+function ir_cmp_cond(tag: i32, when_true: boolean): string {
+    var direct: string = "";
+    var neg: string = "";
+    if (tag == 35) { direct = "eq"; neg = "ne"; }
+    else if (tag == 36) { direct = "ne"; neg = "eq"; }
+    else if (tag == 37) { direct = "lt"; neg = "ge"; }
+    else if (tag == 38) { direct = "le"; neg = "gt"; }
+    else if (tag == 39) { direct = "gt"; neg = "le"; }
+    else if (tag == 40) { direct = "ge"; neg = "lt"; }
+    else if (tag == 41) { direct = "lo"; neg = "hs"; }
+    else if (tag == 42) { direct = "ls"; neg = "hi"; }
+    else if (tag == 43) { direct = "hi"; neg = "ls"; }
+    else { direct = "hs"; neg = "lo"; }  // ge_u
+    if (when_true) { return direct; }
+    return neg;
+}
+
+// emit_ir_cond_jump emits the jump for the `if` / `br_if` at op index `i`.
+// A comparison run resolved by ircore.flag_branch left its answer in the flags,
+// so the jump reads them (`b.cond`, the same +/-1 MB reach as the cbz it
+// replaces); anything else still arrives as a 0/1 on the operand stack and
+// takes the compare-and-branch-zero form.
+function emit_ir_cond_jump(r: irlower.LowerResult, i: i32, tgt: string, s: asmcore.EmitState): asmcore.EmitState {
+    var fb: ircore.FlagBranch = ircore.flag_branch(r.ops, i);
+    if (fb.producer >= 0 && ircore.is_int_cmp_kind(r.ops[fb.producer].kind_tag)) {
+        return s.write("    b." + ir_cmp_cond(r.ops[fb.producer].kind_tag, fb.when_true) + " " + tgt + "\n");
+    }
+    var br: string = "cbz";
+    if (fb.when_true) { br = "cbnz"; }
+    return s.write("    ldr x0, [sp], #16\n    " + br + " x0, " + tgt + "\n");
+}
+
 // ir_shift_imm_asm renders a shift whose COUNT is the constant `prev` pushed
 // immediately before it, and "" when that doesn't apply. In a stack machine
 // the op right before a binary pushes its rhs, so a readable const there is
@@ -806,7 +842,11 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             s = s.write("    ldr x0, [sp]\n");
             s = fr_str(s, "x0", 0 - 8 * (o.i32_imm + 1));
         } else if (o.kind_tag == 34) {  // not
-            s = s.write("    ldr x0, [sp], #16\n    cmp x0, #0\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
+            // A `not` whose result reaches a branch emits nothing: the branch
+            // inverts its own condition instead (ircore.flag_branch).
+            if (ircore.flag_branch_consumer(r.ops, i) < 0) {
+                s = s.write("    ldr x0, [sp], #16\n    cmp x0, #0\n    cset x0, eq\n    str x0, [sp, #-16]!\n");
+            }
         } else if (o.kind_tag == 160) {  // return
             // The inline epilogue pops the frame record, so the CFA is sp+0
             // at the `ret`; the rule is remembered and restored for the code
@@ -817,7 +857,7 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             var tgt: string = "";
             if (elseidx >= 0) { tgt = lp + util.i32_to_string(elseidx); }
             else { tgt = lp + util.i32_to_string(ir.find_matching_end(r.ops, i + 1)); }
-            s = s.write("    ldr x0, [sp], #16\n    cbz x0, " + tgt + "\n");
+            s = emit_ir_cond_jump(r, i, tgt, s);
         } else if (o.kind_tag == 155) {  // else
             s = s.write("    b " + lp + util.i32_to_string(ir.find_matching_end(r.ops, i + 1)) + "\n");
             s = s.write(lp + util.i32_to_string(i) + ":\n");
@@ -828,7 +868,7 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
         } else if (o.kind_tag == 157) {  // br
             s = s.write("    b " + ircore.br_target(r.ops, lp, i, o.i32_imm) + "\n");
         } else if (o.kind_tag == 158) {  // brif
-            s = s.write("    ldr x0, [sp], #16\n    cbnz x0, " + ircore.br_target(r.ops, lp, i, o.i32_imm) + "\n");
+            s = emit_ir_cond_jump(r, i, ircore.br_target(r.ops, lp, i, o.i32_imm), s);
         } else if (o.kind_tag == 87) {  // arr_make
             // n element values on the operand stack (element n-1 on top).
             // __fern_arr_box(cap=n) → data ptr in x0; element i at [data+(i+1)*8].
@@ -1636,6 +1676,10 @@ pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDec
             s = s.write("    str x0, [sp, #-16]!\n");
         } else if (o.kind_tag == 156) {  // end
             s = s.write(lp + util.i32_to_string(i) + ":\n");
+        } else if (ircore.is_int_cmp_kind(o.kind_tag) && ircore.flag_branch_consumer(r.ops, i) >= 0) {
+            // A comparison whose result reaches a branch stops at the flags: the
+            // branch reads them instead of testing a materialised 0/1.
+            s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    cmp x0, x1\n");
         } else {
             // binary op: pop rhs (x1), lhs (x0), combine, push.
             s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
