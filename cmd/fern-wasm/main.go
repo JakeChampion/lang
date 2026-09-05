@@ -250,11 +250,11 @@ func compile(src, target string) map[string]any {
 		result["error"] = diag.Format("<playground>", src, err)
 		return result
 	}
-	targetOS := ""
+	targetOS, targetArch := "", ""
 	if d := platforms.ForTarget(target); d != nil {
-		targetOS = d.Environment
+		targetOS, targetArch = d.Environment, d.ISA
 	}
-	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: targetOS}); err != nil {
+	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: targetOS, TargetArch: targetArch}); err != nil {
 		result["error"] = diag.Format("<playground>", src, err)
 		return result
 	}

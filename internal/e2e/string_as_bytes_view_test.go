@@ -135,3 +135,68 @@ func TestBytesWriterViewArm64(t *testing.T) {
 		t.Fatalf("arm64 got %d, want 0", got)
 	}
 }
+
+// asBytesInlineViewLifetimeProgram pins the lifetime rule for a view cut
+// from an INLINE-packed string, where `as_bytes` first promotes the bytes
+// into a heap copy the header points at (#8406). A slice header is an rc1
+// block the IR releases — at scope exit, on reassignment, after a sub-slice
+// is cut from a temp — and a child view must survive every one of those
+// parent releases, because it views the promoted bytes and never the
+// header. Each shape here frees a parent header while a child view is
+// still read; a header that owned the copy would make each read a
+// use-after-free.
+//
+// The rc corpus runs the heap-string twin under the leak gate
+// (slice_sub_view_outlives_parent_header); this program stays out of that
+// gate because the promoted copy itself has no owner and is only ever
+// released by process exit.
+const asBytesInlineViewLifetimeProgram = `
+function tail(s: string): [u8] {
+    var a: [u8] = s.as_bytes();
+    var b: [u8] = a[1:3];
+    return b;
+}
+function main(): i32 {
+    var s: string = "hello";
+    var t: string = "abc";
+    var bad: i32 = 0;
+    var i: i32 = 0;
+    while (i < 200) {
+        var a: [u8] = s.as_bytes();
+        var b: [u8] = a[1:3];
+        a = t.as_bytes();
+        if (b.len() != 2 || (b[0] as i32) != 101 || (b[1] as i32) != 108) { bad = bad + 1; }
+        if ((a[0] as i32) != 97) { bad = bad + 2; }
+        var r: [u8] = tail(s);
+        if (r.len() != 2 || (r[1] as i32) != 108) { bad = bad + 4; }
+        var q: [u8] = s.as_bytes()[1:4];
+        if (q.len() != 3 || (q[0] as i32) != 101) { bad = bad + 8; }
+        i = i + 1;
+    }
+    return bad + __rc_underflow_count();
+}
+`
+
+func TestAsBytesInlineViewLifetimeInterp(t *testing.T) {
+	if got := runInterpExit(t, asBytesInlineViewLifetimeProgram); got != 0 {
+		t.Fatalf("interp got %d, want 0", got)
+	}
+}
+
+func TestAsBytesInlineViewLifetimeX86_64(t *testing.T) {
+	if _, got := compileAndRunX86_64(t, asBytesInlineViewLifetimeProgram); got != 0 {
+		t.Fatalf("x86-64 got %d, want 0", got)
+	}
+}
+
+func TestAsBytesInlineViewLifetimeWasm(t *testing.T) {
+	if got := compileAndRunWasmbinMain(t, asBytesInlineViewLifetimeProgram); got != 0 {
+		t.Fatalf("wasm got %d, want 0", got)
+	}
+}
+
+func TestAsBytesInlineViewLifetimeArm64(t *testing.T) {
+	if _, got := compileAndRunArm64(t, asBytesInlineViewLifetimeProgram); got != 0 {
+		t.Fatalf("arm64 got %d, want 0", got)
+	}
+}

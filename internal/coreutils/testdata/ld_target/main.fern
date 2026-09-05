@@ -1,0 +1,24 @@
+// The long double coreutils/lib/ld picks for whatever target it is
+// compiled for, as three numbers a Go test can read back:
+// internal/coreutils/longdouble_test.go folds target_arch() and
+// target_os() for each of Fern's targets in turn and interprets this.
+import "../../../../coreutils/lib/ld" as ld;
+
+function mant(): i32 {
+    return ld.format().mant;
+}
+
+function emax(): i32 {
+    return ld.format().emax;
+}
+
+function explicit_bit(): i32 {
+    if (ld.format().explicit_bit) {
+        return 1;
+    }
+    return 0;
+}
+
+function main(): i32 {
+    return mant() + emax() + explicit_bit();
+}

@@ -127,7 +127,6 @@ producers, not the resource methods. Both new conformance cases print
 
 - #8405 — the I/O helpers' Option / Result boxes stay immortal: 24–48 B per
   call. Design: rc1 boxes consumed by the match, shallow-freed per arm.
-- #8406 — `as_bytes()` bumps a raw 16-byte slice header per call.
 - #8408's inline spill; the wasm read_line / read_file scratch blocks the
   same way; `__fern_reader_read_chunk`'s own arm64 dead single-word branch
   went, but `env` / `read_line` / `read_file` on arm64 still carry theirs.

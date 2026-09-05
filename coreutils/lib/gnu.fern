@@ -326,14 +326,26 @@ pub function out_with(cap: i32): io_buffered.BufWriter {
 // `put(o, s)` — buffer `s`; dies on the first failed flush. Rebind:
 // `o = gnu.put(o, s);`.
 pub function put(o: io_buffered.BufWriter, s: string): io_buffered.BufWriter {
+  return put_with(o, s, 1);
+}
+
+// `put_with(o, s, status)` — `put` for a utility whose write-failure
+// exit is not 1: gnulib's `exit_failure`, which expr(1) sets to 3.
+pub function put_with(o: io_buffered.BufWriter, s: string, status: i32): io_buffered.BufWriter {
   var w: io_buffered.BufWriter = o.write_string(s);
-  die_on_write_error(w);
+  die_on_write_error(w, status);
   return w;
 }
 
 // `finish(o)` — the end of the program: gnulib's close_stdout.
 pub function finish(o: io_buffered.BufWriter): void {
   close_stdout(o, false);
+}
+
+// `finish_with(o, status)` — `finish` with gnulib's `exit_failure` set
+// to something other than 1.
+pub function finish_with(o: io_buffered.BufWriter, status: i32): void {
+  close_stdout_with(o, false, status);
 }
 
 // `close_stdout(o, prev_fail)` — gnulib's close_stream on stdout, reported
@@ -344,6 +356,12 @@ pub function finish(o: io_buffered.BufWriter): void {
 // already on the stream is reported without strerror text unless fclose
 // itself failed too.
 pub function close_stdout(o: io_buffered.BufWriter, prev_fail: boolean): void {
+  close_stdout_with(o, prev_fail, 1);
+}
+
+// `close_stdout_with(o, prev_fail, status)` — the same, exiting with
+// gnulib's `exit_failure` rather than 1.
+pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, status: i32): void {
   var some_pending: boolean = o.buffered() > 0;
   var prev: boolean = prev_fail;
   match (o.error()) {
@@ -357,22 +375,22 @@ pub function close_stdout(o: io_buffered.BufWriter, prev_fail: boolean): void {
       var text: string = io_error_text(e);
       if (prev || some_pending || text != "Bad file descriptor") {
         error("write error: " + text);
-        exit(1);
+        exit(status);
       }
     },
     None => {}
   }
   if (prev) {
     error("write error");
-    exit(1);
+    exit(status);
   }
 }
 
-function die_on_write_error(w: io_buffered.BufWriter): void {
+function die_on_write_error(w: io_buffered.BufWriter, status: i32): void {
   match (w.error()) {
     Some(e) => {
       error("write error: " + io_error_text(e));
-      exit(1);
+      exit(status);
     },
     None => {}
   }
@@ -533,6 +551,27 @@ pub function (g: Getopt) next(): (Option[OptMatch], Getopt) {
 // returned None.
 pub function (g: Getopt) operands(): string[] {
   return g.operands;
+}
+
+// `(g).at_negative_number()` — whether the next token is `-N` or
+// `-.N`. seq(1) ends its option scan there, so a negative first
+// operand needs no `--`; the check is made between tokens, as GNU's
+// is, so `-w5` is still the option `-w` followed by an invalid `5`.
+pub function (g: Getopt) at_negative_number(): boolean {
+  if (g.cluster.len() > 0 || g.i >= g.argv.len()) {
+    return false;
+  }
+  var a: string = g.argv[g.i];
+  if (a.len() < 2 || a[0] as i32 != 45) {
+    return false;
+  }
+  var b: i32 = a[1] as i32;
+  return b == 46 || b >= 48 && b <= 57;
+}
+
+// `(g).stop()` — end the scan: every remaining token is an operand.
+pub function (g: Getopt) stop(): Getopt {
+  return take_rest(g);
 }
 
 // Everything from the cursor on is an operand.

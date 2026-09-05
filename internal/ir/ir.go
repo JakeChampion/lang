@@ -2899,6 +2899,9 @@ type lowerOpts struct {
 	// reaches the lowering unfolded. Empty selects the pointer width's
 	// default environment (wasi for 4, linux for 8).
 	targetOS string
+	// targetArch is the ISA `target_arch()` answers with on the same
+	// terms. Empty selects the pointer width's default ISA.
+	targetArch string
 }
 
 // WithTargetOS names the environment the lowering compiles for, so an
@@ -2906,6 +2909,9 @@ type lowerOpts struct {
 // before the checker (constfold.Inputs.TargetOS) and never needs this; a
 // harness that lowers a checked program directly does.
 func WithTargetOS(os string) LowerOption { return func(o *lowerOpts) { o.targetOS = os } }
+
+// WithTargetArch is WithTargetOS for the ISA half.
+func WithTargetArch(arch string) LowerOption { return func(o *lowerOpts) { o.targetArch = arch } }
 
 // DynSupported marks the calling backend as able to lower `dyn Trait`
 // DISPATCH (boxed one-word on natives, §4.2.2). Both x86-64 and arm64
@@ -2931,18 +2937,29 @@ func EmitLineMarkers() LowerOption { return func(o *lowerOpts) { o.emitLineMarke
 // Program.CoverSites (#5548, `fern -cover`). Off by default.
 func CoverPoints() LowerOption { return func(o *lowerOpts) { o.coverPoints = true } }
 
-// targetOSFor is the environment an unfolded `target_os()` lowers to:
-// the one the caller named, else the pointer width's only default —
-// wasm32 is wasi, and a native lowering that did not say otherwise is
-// linux.
-func targetOSFor(named string, ptrW int) string {
-	if named != "" {
-		return named
+// targetName is the two halves of the compile target's name that source
+// can ask for: `target_os()` and `target_arch()`.
+type targetName struct{ os, arch string }
+
+// targetNameFor is what an unfolded `target_os()` / `target_arch()` lower
+// to: the halves the caller named, else the pointer width's only default
+// — wasm32 is wasm32-wasi, and a native lowering that did not say
+// otherwise is arm64-linux, the project's default target.
+func targetNameFor(os, arch string, ptrW int) targetName {
+	t := targetName{os: os, arch: arch}
+	if t.os == "" {
+		t.os = "linux"
+		if ptrW == 4 {
+			t.os = "wasi"
+		}
 	}
-	if ptrW == 4 {
-		return "wasi"
+	if t.arch == "" {
+		t.arch = "arm64"
+		if ptrW == 4 {
+			t.arch = "wasm32"
+		}
 	}
-	return "linux"
+	return t
 }
 
 // LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
@@ -3157,13 +3174,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		jobs = 1
 	}
 	lowered := make([]*Func, len(prog.Funcs))
-	targetOS := targetOSFor(lo.targetOS, ptrW)
+	target := targetNameFor(lo.targetOS, lo.targetArch, ptrW)
 	err := forEach(len(prog.Funcs), jobs, func(i int) error {
 		fn := prog.Funcs[i]
 		if fn.ImportIface != "" {
 			return nil
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, targetOS, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, target, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
 		if err != nil {
 			return err
 		}
@@ -3333,6 +3350,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				}
 				if (strings.HasPrefix(op.Str, "__drop_struct_") ||
 					op.Str == "__drop_arr_closure" ||
+					op.Str == "__drop_arr_slice" ||
 					op.Str == "__drop_closure_value" ||
 					op.Str == "__drop_strarr" ||
 					strings.HasPrefix(op.Str, "__drop_arr_struct_") ||
@@ -3408,6 +3426,10 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 				// env (generically, through the embedded drop-fn pointer) +
 				// the pair block, then free the outer buffer.
 				fn = genArrClosureDropFn(ptrW)
+			} else if name == "__drop_arr_slice" {
+				// Array-of-slice outer drop: per element free the view header
+				// (__fern_closure_drop at rc==1), then free the outer buffer.
+				fn = genArrSliceDropFn(ptrW)
 			} else if name == "__drop_closure_value" {
 				// One closure value reached through a container (struct field
 				// / enum payload / tuple element), where nothing names which
@@ -5426,8 +5448,8 @@ type builder struct {
 	// statements sharing a line.
 	emitLineMarkers bool
 	lastLineMark    int
-	// targetOS is what an unfolded `target_os()` lowers to.
-	targetOS string
+	// target is what an unfolded `target_os()` / `target_arch()` lower to.
+	target targetName
 	// cover is the program-wide coverage counter table under
 	// `fern -cover`, nil otherwise; lastCoverLine dedups statements that
 	// share a line WITHIN one basic block. emit() clears it at every
@@ -5826,7 +5848,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, targetOS string, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, target targetName, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5845,7 +5867,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		ptrW:                    ptrW,
 		dynRcSupported:          dynRcSupported,
 		emitLineMarkers:         emitLineMarkers,
-		targetOS:                targetOS,
+		target:                  target,
 		cover:                   cover,
 		coverFile:               fn.SourceFile,
 		pairForm:                pairForm,
@@ -6029,7 +6051,6 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 	// the no-free path.
 	b.rc.preciseDrops = b.computePreciseDrops()
 	b.rc.nestedDrops = b.computeNestedDrops()
-	b.rc.viewLocalDrops = b.computeViewLocalDrops()
 	if handled, err := b.tryEmitTrmc(); err != nil {
 		return nil, err
 	} else if handled {
@@ -6043,12 +6064,6 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 			}
 			for _, name := range b.rc.preciseDrops[i] {
 				b.emitPreciseDrop(name)
-			}
-			// A drop keyed to a `return` is emitted by that Return's own
-			// lowering, once its value is on the stack; emitting it here
-			// would be unreachable.
-			if _, isRet := st.(*ast.Return); !isRet {
-				b.emitViewLocalDrops(st)
 			}
 		}
 	}
@@ -8509,9 +8524,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 			for _, name := range b.rc.nestedDrops[ss] {
 				b.emitPreciseDrop(name)
 			}
-			if _, isRet := ss.(*ast.Return); !isRet {
-				b.emitViewLocalDrops(ss)
-			}
 		}
 	case *ast.If:
 		taken := b.coverBranch(n.Pos())
@@ -8762,7 +8774,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitDeferCleanup(); err != nil {
 				return err
 			}
-			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnVoid})
 			return nil
@@ -8780,7 +8791,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 			if err := b.emitPairFormPushValue(n.Value); err != nil {
 				return err
 			}
-			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExit()
 			b.emit(Op{Kind: OpReturnPair})
 			return nil
@@ -8846,7 +8856,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// index loads) still take the inc; fresh values aren't locals.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
 			needsRcIncOnAlias(n.Value, b) && b.isOwnedRcLocal(id.Name) {
-			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExitExcept(id.Name)
 			b.emit(Op{Kind: OpReturn})
 			return nil
@@ -8865,7 +8874,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// dedicated branch rather than widening those predicates.
 		if id, ok := n.Value.(*ast.Ident); ok && len(b.defers) == 0 &&
 			b.dynReclaim() && b.localIsDynTrait(id.Name) {
-			b.emitViewLocalDrops(n)
 			b.emitRcDecLocalsAtExitExcept(id.Name)
 			b.emit(Op{Kind: OpReturn})
 			return nil
@@ -8884,7 +8892,6 @@ func (b *builder) stmt(s ast.Stmt) error {
 		// sweep must not also release it. Per-site, so the OTHER returns keep
 		// sweeping p — which is what lets the transfer be claimed at all on a
 		// branchy function (computeReturnOwnMoves, #6125).
-		b.emitViewLocalDrops(n)
 		b.emitRcDecLocalsAtExitExcept(b.rc.returnOwnMove[n])
 		b.emit(Op{Kind: OpReturn})
 	case *ast.Defer:
@@ -9876,6 +9883,22 @@ func (b *builder) expr(e ast.Expr) error {
 					// pointer-width field (8 bytes native /
 					// 4 wasm32), so load at WidthPtr; a plain
 					// i32 load would truncate a high pointer.
+					//
+					// A FRESH header (`s.as_bytes() as usize`, the
+					// std/string.bytes hot path) is dead once its
+					// data pointer is out: the bytes belong to the
+					// source, not the header, so releasing it here
+					// leaves the pointer valid. Stash, load, drop.
+					if tt, ok := b.freshOwnedRcTempType(n.Inner); ok {
+						hdr := b.allocSlot()
+						b.locals[fmt.Sprintf("__slice_cast_hdr_%d", hdr)] = hdr
+						b.scratchType[hdr] = tt
+						b.emit(Op{Kind: OpStoreLocal, I32: hdr})
+						b.emit(Op{Kind: OpLoadLocal, I32: hdr})
+						b.emit(Op{Kind: OpLoad, Width: WidthPtr})
+						b.emitSliceSlotDrop(hdr)
+						return nil
+					}
 					b.emit(Op{Kind: OpLoad, Width: WidthPtr})
 					return nil
 				case ast.StringType:
@@ -10629,12 +10652,29 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emit(Op{Kind: OpLoadLocal, I32: idxContainerSlot})
 			}
 		}
+		// A FRESH slice header (`s.as_bytes()[i]`) is dead once the element
+		// is loaded: the element lives in the viewed storage, which the
+		// header does not own, so releasing the header after the load
+		// neither frees the element nor needs a retain on it.
+		sliceHdrSlot := int32(-1)
+		if n.IsSlice {
+			if st, ok := b.freshOwnedRcTempType(n.Array); ok {
+				sliceHdrSlot = b.allocSlot()
+				b.locals[fmt.Sprintf("__idxhdr_%d", sliceHdrSlot)] = sliceHdrSlot
+				b.scratchType[sliceHdrSlot] = st
+				if err := b.expr(n.Array); err != nil {
+					return err
+				}
+				b.emit(Op{Kind: OpStoreLocal, I32: sliceHdrSlot})
+				b.emit(Op{Kind: OpLoadLocal, I32: sliceHdrSlot})
+			}
+		}
 		if n.IsString {
 			var err error
 			if strIdxSlot, err = b.stashOwnedStringOperand(n.Array); err != nil {
 				return err
 			}
-		} else if idxContainerSlot < 0 {
+		} else if idxContainerSlot < 0 && sliceHdrSlot < 0 {
 			if err := b.expr(n.Array); err != nil {
 				return err
 			}
@@ -10743,6 +10783,9 @@ func (b *builder) expr(e ast.Expr) error {
 				b.emitRetainValueOnStack(n.ElemType)
 			}
 			b.emitOwnedSlotDrop(idxContainerSlot, b.scratchType[idxContainerSlot])
+		}
+		if sliceHdrSlot >= 0 {
+			b.emitSliceSlotDrop(sliceHdrSlot)
 		}
 		b.decStashedStringTemps(strIdxSlot)
 	case *ast.SliceExpr:
@@ -10931,6 +10974,19 @@ func (b *builder) expr(e ast.Expr) error {
 		srcSlot := b.allocSlot()
 		b.locals[fmt.Sprintf("__sl_slice_src_%d", srcSlot)] = srcSlot
 		b.emit(Op{Kind: OpStoreLocal, I32: srcSlot})
+		// A sub-slice of a FRESH slice header (`s.as_bytes()[1:3]`) copies
+		// the parent's data pointer into its own header, so the parent is
+		// dead once the child is built; release it below. The child views
+		// the source's bytes, never the parent header, so freeing the
+		// parent leaves it valid. An owned ARRAY source is left alone: the
+		// child views its buffer.
+		releaseSrcHeader := false
+		if n.SourceIsSlice {
+			if st, ok := b.freshOwnedRcTempType(n.Source); ok {
+				b.scratchType[srcSlot] = st
+				releaseSrcHeader = true
+			}
+		}
 
 		// Source length: a slice carries its len at header + ptrW
 		// (after the pointer-width data field); an owned array at
@@ -11005,6 +11061,9 @@ func (b *builder) expr(e ast.Expr) error {
 		}
 		b.emit(Op{Kind: OpLoadLocal, I32: lenSlot})
 		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__slice_make", Width: ResAddr, I32: 2})
+		if releaseSrcHeader {
+			b.emitSliceSlotDrop(srcSlot)
+		}
 	case *ast.ArrayLit:
 		// Allocate `headerBytes + len*stride` bytes (header + payload),
 		// store the length at base+headerBytes-4, then each element
@@ -14110,12 +14169,12 @@ func (b *builder) sliceFreeType(t ast.Type, seen map[string]bool) bool {
 // stashLentViewTemp evaluates a LENT view argument — the full-range slice the
 // checker synthesises for a `T[]` argument at a `[T]` parameter — into a
 // scratch slot, leaving it on the operand stack for the call. Reports the slot
-// so the caller can free the header once the call has returned.
+// so the caller can release the header once the call has returned.
 //
-// The header is 2 pointer-widths of raw `__fern_alloc` memory with no rc
-// header, so nothing in the rc machinery owns it and it leaked once per call on
-// every backend. Three things together make the caller-side free sound, and the
-// first two are the language's rather than this analysis's:
+// The header is an rc1 block (#8406), so the release is the ordinary
+// refcounted one and this analysis only decides WHERE the caller's reference
+// dies. Three things together make that sound, and the first two are the
+// language's rather than this analysis's:
 //
 //   - the coercion fires only at ARGUMENT positions, so a header cannot be born
 //     anywhere else (E043 rejects the same coercion in a struct literal);
@@ -14123,6 +14182,9 @@ func (b *builder) sliceFreeType(t ast.Type, seen map[string]bool) bool {
 //     write the view into storage the caller still reads;
 //   - which leaves the callee's RETURN as the only way out, and resultType is
 //     admitted only when it provably cannot carry a slice.
+//
+// A header the callee retained anyway is still safe: the release is
+// is_unique-gated, so a shared header is decremented rather than freed.
 func (b *builder) stashLentViewTempIf(admitted bool, a ast.Expr, resultType ast.Type) (int32, bool, error) {
 	if !admitted {
 		return 0, false, nil
@@ -14148,13 +14210,14 @@ func (b *builder) stashLentViewTemp(a ast.Expr, resultType ast.Type) (int32, boo
 // header — as opposed to naming one someone else owns. A bare ident holding a
 // view is the shape this must exclude: its owner keeps it past the call.
 //
-// Both producers allocate the same two-word `__fern_alloc` block with no rc
-// header: the slice lowering's `__slice_make` (whether the author wrote
-// `xs[a:b]` or the checker synthesised the full-range lend), and
-// `as_bytes`, which rcresults.go already classifies as raw for the same
-// reason. A string slice is not one of them — `IsString` lowers to
-// `__str_slice`, a copy into a fresh owned string, which the rc machinery
-// already reclaims.
+// Both producers allocate the same rc1 header block: the slice lowering's
+// `__slice_make` (whether the author wrote `xs[a:b]` or the checker
+// synthesised the full-range lend), and `as_bytes`, which tail-calls it.
+// rcresults.go classifies both `owned` for that reason, and
+// freshOwnedRcTempType admits exactly this pair — the two must agree, since
+// whichever path claims the temp is the one that releases it. A string slice
+// is not one of them — `IsString` lowers to `__str_slice`, a copy into a
+// fresh owned string, which the rc machinery already reclaims.
 func makesFreshViewHeader(e ast.Expr) bool {
 	switch x := e.(type) {
 	case *ast.SliceExpr:
@@ -14166,31 +14229,20 @@ func makesFreshViewHeader(e ast.Expr) bool {
 	return false
 }
 
-// emitViewLocalDrops frees the view headers whose last use is `st`
-// (computeViewLocalDrops). Stack-neutral: `__free` is (base, size) and returns
-// nothing.
-func (b *builder) emitViewLocalDrops(st ast.Stmt) {
-	for _, name := range b.rc.viewLocalDrops[st] {
-		slot, ok := b.locals[name]
-		if !ok {
-			continue
-		}
-		b.emit(Op{Kind: OpLoadLocal, I32: slot})
-		b.emit(Op{Kind: OpConstI32, I32: int32(2 * b.ptrW)})
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__free", Width: ResNarrow, I32: 2})
-		b.emit(Op{Kind: OpConstI32, I32: 0})
-		b.emit(Op{Kind: OpStoreLocal, I32: slot})
-	}
-}
-
-// emitLentViewDrops frees the headers stashLentViewTemp stashed. Net-zero on
-// the operand stack, so the call's result sitting underneath is untouched.
+// emitLentViewDrops releases the headers stashLentViewTemp stashed, through
+// the one release every slice header takes (emitSliceHeaderDropOnStack).
+// Net-zero on the operand stack, so the call's result sitting underneath is
+// untouched.
+//
+// A raw `__free(header, 2*ptrW)` here would be wrong on all three of its
+// arguments once the header carries an rc1 header (#8406): __free takes the
+// block BASE and the header's data pointer is base+8, the block is 8 bytes
+// longer than the payload, and an aliased header must be decremented rather
+// than freed. Freeing base+8 at the payload size does not merely leak the
+// block — it pushes an overlapping block onto that size class's freelist.
 func (b *builder) emitLentViewDrops(slots []int32) {
 	for _, slot := range slots {
-		b.emit(Op{Kind: OpLoadLocal, I32: slot})
-		b.emit(Op{Kind: OpConstI32, I32: int32(2 * b.ptrW)})
-		// __free is (base, size) and returns nothing, so nothing follows it.
-		b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__free", Width: ResNarrow, I32: 2})
+		b.emitSliceSlotDrop(slot)
 	}
 }
 
@@ -14492,13 +14544,17 @@ func (b *builder) callBody(n *ast.Call) error {
 			return b.emitCellNew(n)
 		}
 	}
-	// target_os() is a compile-time constant. The driver folds it before
-	// the check (constfold.Inputs.TargetOS); a call that still reaches the
-	// lowering becomes the literal here, so the const-if prune that
-	// follows sees the same thing either way.
-	if id.Name == "target_os" && len(n.Args) == 0 {
+	// target_os() / target_arch() are compile-time constants. The driver
+	// folds them before the check (constfold.Inputs); a call that still
+	// reaches the lowering becomes the literal here, so the const-if prune
+	// that follows sees the same thing either way.
+	if (id.Name == "target_os" || id.Name == "target_arch") && len(n.Args) == 0 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			b.emit(Op{Kind: OpConstStr, Str: b.targetOS})
+			lit := b.target.os
+			if id.Name == "target_arch" {
+				lit = b.target.arch
+			}
+			b.emit(Op{Kind: OpConstStr, Str: lit})
 			return nil
 		}
 	}
@@ -16795,6 +16851,10 @@ func (b *builder) emitOwnedSlotDrop(idx int32, t ast.Type) {
 		// between OpMakeClosure and OpStoreLocal breaks the defunctionalise /
 		// closure-pair-elide pattern match, and a flat closure dec leaks
 		// captures anyway — it keeps its prior safe-leak behaviour.
+	case ast.SliceType:
+		// An owned slice frees its rc1 header on reinit / overwrite / temp
+		// release; the viewed bytes are the source's and are never touched.
+		b.emitSliceSlotDrop(idx)
 	case ast.DynTraitType:
 		// `dyn Trait` reclamation on loop-body re-declaration
 		// (docs/DYN-TRAITS.md §4.4) — mirrors the exit sweep's DynTraitType
@@ -16903,6 +16963,12 @@ func (b *builder) decValueOnStack(t ast.Type, mayFree bool) {
 			// cells.
 		}
 	}
+	// A slice header owned by the value being released frees at rc==1; a
+	// flat-dec site (mayFree false: the owner is not itself freed) only decs.
+	if isSliceType(t) && mayFree {
+		b.emitSliceHeaderDropOnStack()
+		return
+	}
 	// __fern_rc_dec is a void-returning runtime helper but OpCallDirect's
 	// codegen always pushes the call's return-value register onto the operand
 	// stack; drop the bogus push to keep the stack balanced.
@@ -16974,6 +17040,12 @@ func (b *builder) dropStructField(t ast.Type) {
 	// see appendChildDrop's dyn arm + docs/DYN-TRAITS.md §7.8.
 	if dt, isDyn := t.(ast.DynTraitType); isDyn && b.dynRcSupported {
 		b.emit(Op{Kind: OpCallDirect, Str: dynDropFnName(dt.Traits), I32: 1})
+		return
+	}
+	// Slice child: the owner is unique here, so its header frees at rc==1
+	// (a shared header only decs); the viewed bytes are the source's.
+	if isSliceType(t) {
+		b.emitSliceHeaderDropOnStack()
 		return
 	}
 	if name, ok := dropFnNameFor(t, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
@@ -17709,8 +17781,8 @@ func (b *builder) freshOwnedIndexContainer(array ast.Expr) bool {
 // inc-and-pass-through, so the value survives for whatever consumes it next.
 //
 // The set is rcTrackedSlotType, not ast.IsPointerType: a `dyn Trait` value
-// carries no rc header and a slice is a borrowed view, so neither may take
-// __fern_rc_inc even though both are pointer-shaped.
+// carries no rc header, so it may not take __fern_rc_inc even though it is
+// pointer-shaped.
 func (b *builder) emitRetainValueOnStack(t ast.Type) {
 	if !rcTrackedSlotType(t) {
 		return
@@ -18431,6 +18503,13 @@ func (b *builder) assign(n *ast.Assign) error {
 			// zero on the operand stack, so the new RHS value underneath is
 			// left in place for the store below.
 			b.emitTupleSlotDrop(idx, tt)
+		} else if lt, isLocal := b.localDeclType(t.Name); isLocal && isSliceType(lt) && ast.RcFreeEnabled && b.rc.freeEligible[t.Name] {
+			// Slice reassignment-overwrite — `v = s.as_bytes()` ends the old
+			// binding's ownership of its header exactly like a scope exit;
+			// the same eligible-gated header release applies. A sub-slice
+			// cut from the old value views the SOURCE's bytes, so it is
+			// unaffected.
+			b.emitSliceSlotDrop(idx)
 		} else if b.dynReclaim() && b.localIsDynTrait(t.Name) {
 			// `d = <dyn>` reassignment-overwrite. A `dyn` local sits outside
 			// every arm above (its cell carries no rc header, so it is neither

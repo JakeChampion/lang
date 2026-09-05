@@ -139,6 +139,15 @@ var rcResultOwned = map[string]bool{
 	// Byte buffers in the __alloc_u8 box shape.
 	"__fern_random_bytes": true,
 	"__fern_tcp_recv":     true,
+
+	// Slice view headers: an rc1 block `{data_ptr, len}` from
+	// __fern_alloc_rc1, released as a header alone — the bytes it views
+	// belong to the array or string it was cut from. `as_bytes` on an
+	// inline-packed string first copies the bytes into a bare __fern_alloc
+	// block the header points at; that copy has no owner (see the
+	// backends' as_bytes helpers), the header is still the caller's unit.
+	"__slice_make":             true,
+	"__method_string_as_bytes": true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
@@ -213,11 +222,9 @@ func ownedPayloadType(t ast.Type) bool {
 // answer: a TCP helper returns either a struct pointer or a negative
 // errno, and neither carries a unit.
 var rcResultRaw = map[string]bool{
-	"__fern_alloc":             true, // the bare bump cursor
-	"__alloc":                  true, // a one-instruction forwarder to it
-	"cabi_realloc":             true,
-	"__slice_make":             true, // an 8-byte (data, len) header
-	"__method_string_as_bytes": true, // a slice header, plus a payload copy for inline strings
+	"__fern_alloc": true, // the bare bump cursor
+	"__alloc":      true, // a one-instruction forwarder to it
+	"cabi_realloc": true,
 
 	// A dirent buffer with a hand-written used-count at buf-4. NOT the
 	// __alloc_u8 layout despite the same offset — see this file's

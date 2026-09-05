@@ -13,11 +13,11 @@ import (
 // lifetime instead, and nothing released it — 16 bytes per binding on the
 // natives, 8 on wasm.
 //
-// A view header carries no refcount, so unlike an rc local this cannot lean on
-// an is_unique gate to make a second release harmless: `var t = s` copies the
-// pointer and both names hold one block. The release therefore belongs to the
-// binding that MATERIALISED the header, which is what the aliased control
-// below pins.
+// The header is an rc1 block since #8406, so the binding's own release is the
+// exit sweep's and `var t = s` retains: both names are counted and the block
+// goes at the second release, not the first. The aliased control below pins
+// that — it was written when a bespoke last-use free had to REFUSE an aliased
+// header, and it holds for the stronger reason now.
 
 const viewLocalSrc = `function mk(n: i32): i32[] {
     var a: i32[] = [];

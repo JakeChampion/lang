@@ -607,6 +607,7 @@ func New() *Interp {
 	i.Builtins["poll"] = &Builtin{Fn: builtinPoll}
 	i.Builtins["isatty"] = &Builtin{Fn: builtinIsatty}
 	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
+	i.Builtins["target_arch"] = &Builtin{Fn: builtinTargetArch}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
 	// string-builder primitive (see checker FuncSigs); the compiled
 	// backends back it with a growable heap buffer.
@@ -2936,6 +2937,24 @@ func builtinTargetOS(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("target_os: expected 0 args, got %d", len(args))
 	}
 	return String(runtime.GOOS), nil
+}
+
+// builtinTargetArch is builtinTargetOS's twin for the ISA half, and
+// answers with the interpreter's host for the same reason. Go's names
+// differ from Fern's target names, so the two that can reach here are
+// translated; anything else is passed through as Go spells it, which is
+// what a new host would want reported.
+func builtinTargetArch(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("target_arch: expected 0 args, got %d", len(args))
+	}
+	switch runtime.GOARCH {
+	case "arm64":
+		return String("arm64"), nil
+	case "amd64":
+		return String("x86-64"), nil
+	}
+	return String(runtime.GOARCH), nil
 }
 
 // builtinStrbufReset zeroes the global string-builder buffer.

@@ -74,8 +74,21 @@ on:
 # back-to-back rebase-merges holds an uncancellable run each and buries every
 # open PR's checks behind it (#8124). One group coalesces the burst to its
 # newest commit, at the cost of a red main naming a span of merges.
+#
+# A publish gets its OWN group rather than sharing the ref's. GitHub keeps one
+# PENDING run per group, so a publish waiting for a runner is displaced by the
+# next verify run the ref takes — and `cancel-in-progress: false` does not save
+# it, since that only protects a run already executing. The publish path is
+# where that hurts most: it is 40 minutes across three hosts and ends in a
+# release, and it is dispatched exactly when the ref is busy, because a pin
+# refresh is needed when the sources moved.
+#
+# Separating the GROUP is what fixes that, so cancellation stays plain `true`
+# on both: a ref's verify runs reap their own superseded siblings, as every
+# main lane must, and a later publish supersedes an earlier one — which is
+# what a second dispatch means anyway, since both would tag the same release.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' && 'publish') || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -99,6 +112,30 @@ jobs:
       - uses: actions/checkout@v7
       - name: make bootstrap (pinned stage0 -> stage1, smoke-tested, installed)
         run: make bootstrap
+
+  # The freshly built arm64 candidate compiling the whole compiler. `verify`
+  # above runs the PINNED stage0, and stage2-fixpoint-arm64 drives
+  # asm_load_run.fern rather than fern.fern, so without this the publish job is
+  # the first thing to run this shape — which is how #8430 sat undetected.
+  candidate-arm64:
+    if: github.event_name == 'pull_request' || !inputs.publish
+    name: candidate-arm64-linux
+    runs-on: ubuntu-24.04-arm
+    # 24 s to build the candidate, 47 s for it to compile the compiler, on this
+    # runner (measured 2026-09-05 from the publish job's own steps).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+
+      - name: native toolchain builds the candidate (make selfhost-cli)
+        run: |
+          make selfhost-cli SELFHOST_TARGET=arm64-linux
+          mkdir -p build
+          cp bin/fern-selfhost build/candidate
+
+      - name: the candidate compiles the current compiler, and that compiler works
+        run: STAGE0=build/candidate make bootstrap
 
   publish:
     if: github.event_name == 'workflow_dispatch' && inputs.publish

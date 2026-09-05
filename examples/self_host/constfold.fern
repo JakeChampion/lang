@@ -260,28 +260,30 @@ pub function fold_module(mod: parser.Module): parser.Module {
     return parser.Module { ...mod, funcs: funcs, top_stmts: fold_block(mod.top_stmts) };
 }
 
-// =================== TARGET OS ====================
+// =================== TARGET NAME ====================
 
-// TARGET_OS_BUILTIN is `target_os()`: the compile target's environment as a
-// string literal — "linux", "darwin", "android" or "wasi", the environment
-// half of the -target name and never this compiler's host. Native folds it
-// in internal/constfold ahead of the check; here it folds on the compile
-// path, where the driver knows the target, and asmcore's builtin table types
-// the call for a bare -check.
+// The two halves of the compile target's name as string literals:
+// `target_os()` is the environment — "linux", "darwin", "android" or "wasi"
+// — and `target_arch()` is the ISA — "arm64", "x86-64" or "wasm32". Neither
+// is ever this compiler's host. Native folds both in internal/constfold
+// ahead of the check; here they fold on the compile path, where the driver
+// knows the target, and asmcore's builtin table types the calls for a bare
+// -check.
 const TARGET_OS_BUILTIN: string = "target_os";
+const TARGET_ARCH_BUILTIN: string = "target_arch";
 
-// TargetAcc carries the environment through astwalk's accumulator spine. The
+// TargetAcc carries the two halves through astwalk's accumulator spine. The
 // accumulator is pointer-shaped, which is what an erased slot can carry.
-struct TargetAcc { env: string }
+struct TargetAcc { env: string, arch: string }
 
-// fold_target_os replaces every zero-argument `target_os()` call in `mod`
-// with the string literal `env`. A call with arguments is left alone: the
-// checker's arity error names the declared signature.
-pub function fold_target_os(mod: parser.Module, env: string): parser.Module {
+// fold_target_name replaces every zero-argument `target_os()` call in `mod`
+// with `env` and every `target_arch()` with `arch`. A call with arguments is
+// left alone: the checker's arity error names the declared signature.
+pub function fold_target_name(mod: parser.Module, env: string, arch: string): parser.Module {
     // No environment (a target the descriptor table does not know) leaves the
     // calls alone, as native does; the driver's own -target check reports it.
     if (env.len() == 0) { return mod; }
-    var acc: TargetAcc = TargetAcc { env: env };
+    var acc: TargetAcc = TargetAcc { env: env, arch: arch };
     var funcs: parser.FuncDecl[] = [];
     for fd in mod.funcs {
         var (body, a2) = astwalk.map_stmts_acc(fd.body, acc, to_keep_stmt, to_expr);
@@ -298,7 +300,8 @@ function to_keep_stmt(s: ast.Stmt, a: TargetAcc): (ast.Stmt, TargetAcc, boolean)
     return (s, a, false);
 }
 
-// to_expr claims a `target_os()` call, so the spine never walks it again.
+// to_expr claims a `target_os()` / `target_arch()` call, so the spine never
+// walks it again.
 function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
     match (e) {
         ast.ExprCall(c) => {
@@ -307,6 +310,9 @@ function to_expr(e: ast.Expr, a: TargetAcc): (ast.Expr, TargetAcc, boolean) {
                 ast.ExprIdent(id) => {
                     if (id.name == TARGET_OS_BUILTIN) {
                         return (ast.ExprString { value: a.env, line: c.line, col: c.col }, a, true);
+                    }
+                    if (id.name == TARGET_ARCH_BUILTIN) {
+                        return (ast.ExprString { value: a.arch, line: c.line, col: c.col }, a, true);
                     }
                 },
                 _ => {}

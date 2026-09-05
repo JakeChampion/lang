@@ -112,8 +112,13 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 		{
 			// str_eq backs == on strings (and the map / arr_str helpers). AST
 			// path; IR covered by the IR lock-in test.
+			//
+			// One operand comes from args() so the comparison cannot be folded
+			// away. It used to be `"ab" == "ab"`, and once the literal-vs-literal
+			// fold landed that emitted no comparison at all — the helper was
+			// still migrated, but this case had stopped asking.
 			"str_eq",
-			`function main(): i32 { if ("ab" == "ab") { return 1; } return 0; }`,
+			`function main(): i32 { var xs: string[] = args(); if (xs[0] == "ab") { return 1; } return 0; }`,
 			"__fn___fern_str_eq",
 			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
 		},
