@@ -230,13 +230,11 @@ gate for closing them.
   `to_array`), so the whole chain stays refused. A greatest fixpoint would
   credit it; that is a design change to the summary, not a gap in a rule.
 
-- **A closure LOCAL handed to a callee leaks its pair and env** — the
-  `visit` in `test_for_each` of every module's test (2 blocks each). Its
-  slot cannot elide, so the exit sweep's thunk is downgraded to the pair-only
-  release; dispatching through the pair's drop-fn pointer instead frees a
-  closure the self-host checker's `Scope` still holds
-  (`docs/rc-log/2026-09-02-persistent-collections-residual-leaks.md`). Pinned
-  by the `closure_local_passed_to_callee_released` corpus case.
+Closed on 2026-09-05 (#8545): **a closure LOCAL handed to a callee** — the
+`visit` in `test_for_each` of every module's test, 2 blocks each. Its slot
+cannot elide, so the exit sweep's thunk is now dispatched through the drop-fn
+pointer the pair carries rather than downgraded to the pair-only release.
+`closure_local_passed_to_callee_released` reads 0 on all three backends.
 
 Closed on 2026-09-02 (#8057), each pinned by an rc-corpus case both native
 leak gates hold at zero: a lambda in argument position (pair + env per

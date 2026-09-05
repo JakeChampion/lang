@@ -7007,14 +7007,13 @@ function main(): i32 {
 	},
 	{
 		// A closure LOCAL handed to a callee keeps its pair: the slot has a
-		// reader ElideClosurePair cannot elide, and the exit sweep's
-		// per-closure thunk — which reads a bare env — is downgraded to
-		// the generic pair release, which frees neither env nor captures.
-		// Both the named nested function and the lambda bound to a local
-		// leak pair + env per call; the leak gates pin it (#8057). Routing
-		// that release through the pair's drop-fn pointer freed a closure a
-		// Scope field still held in the self-host checker, so the pin
-		// stands until the second owner is found.
+		// reader ElideClosurePair cannot elide, so the exit sweep's
+		// per-closure thunk — which reads a bare env — cannot run on the
+		// slot directly. It is dispatched through the drop-fn pointer the
+		// pair carries instead (#8545), which reaches the same thunk with
+		// the env. Both the named nested function and the lambda bound to
+		// a local reclaim their pair, env and captures; the leak gates
+		// hold this at zero on all three backends.
 		name: "closure_local_passed_to_callee_released",
 		src: `
 @noinline
