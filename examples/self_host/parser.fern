@@ -3408,14 +3408,6 @@ function is_compound_assign_op(op: string): boolean {
         || op == "&=" || op == "|=" || op == "^=" || op == "<<=" || op == ">>=";
 }
 
-// is_assign_op reports whether `op` begins an assignment. None of these tokens
-// is in the precedence table, so parse_expr always stops in front of one — which
-// is how a caller tells an item that looked like an expression from the
-// statement it actually is.
-function is_assign_op(op: string): boolean {
-    return op == "=" || is_compound_assign_op(op);
-}
-
 function branch_stmt_start(p: Par): boolean {
     if (p.peek_punct() == "{") { return true; }
     var kw: string = p.peek_keyword();
@@ -3534,23 +3526,27 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
         var before: Par = p;
         var (er_expr, er_p) = parse_expr(p);
         p = er_p;
-        if (is_assign_op(p.peek_punct())) {
-            // An lvalue, not a value: `{ a = a + 1; … }`. parse_expr stopped in
-            // front of the assign-op, so re-read the item from the top as the
-            // statement it is rather than mistaking its target for the block's
-            // trailing value.
+        if (p.peek_punct() == ";") {
+            p = p.advance();
+            leading = leading.append(s_expr(er_expr));
+            continue;
+        }
+        if (p.peek_punct() != "}") {
+            // Neither a `;` nor the closing brace follows, so this item is not
+            // a value. Two shapes reach here: an ASSIGNMENT, whose target
+            // parse_expr read as an expression before stopping in front of the
+            // `=` (none of the assign operators is in the precedence table),
+            // and an `if` / `match` STATEMENT with more statements after it —
+            // both stay on the expression path because either can also be the
+            // block's trailing value, and only what follows tells them apart.
+            // Read the item again from the top as the statement it is.
             var (asr_stmt, asr_p) = parse_stmt(before);
             if (asr_p.pos == before.pos) { p = p.advance(); continue; }
             p = asr_p;
             leading = leading.append(asr_stmt);
             continue;
         }
-        if (p.peek_punct() == ";") {
-            p = p.advance();
-            leading = leading.append(s_expr(er_expr));
-            continue;
-        }
-        // No `;` — this is the trailing tail expression; `}` must follow.
+        // `}` follows, so this is the trailing tail expression.
         tail = er_expr;
         have_tail = true;
         break;
