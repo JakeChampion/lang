@@ -7790,7 +7790,7 @@ func (c *checker) lendArrayAsView(arg *ast.Expr, want, got ast.Type, own bool) {
 	if own || arg == nil || *arg == nil || !isArrayViewLend(want, got) {
 		return
 	}
-	*arg = &ast.SliceExpr{P: (*arg).Pos(), Source: *arg, ElemType: got.(ast.ArrayType).Elem}
+	*arg = &ast.SliceExpr{P: (*arg).Pos(), Source: *arg, ElemType: got.(ast.ArrayType).Elem, Lent: true}
 }
 
 // unifyArrayArg is unifyType at an argument position, with the same `T[]` →
@@ -7809,7 +7809,7 @@ func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[strin
 	if !isView || !isArray || arr.Elem == nil || !c.unifyType(sl.Elem, arr.Elem, sub) {
 		return false
 	}
-	*arg = &ast.SliceExpr{P: (*arg).Pos(), Source: *arg, ElemType: arr.Elem}
+	*arg = &ast.SliceExpr{P: (*arg).Pos(), Source: *arg, ElemType: arr.Elem, Lent: true}
 	return true
 }
 
