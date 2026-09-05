@@ -244,6 +244,60 @@ function test_completion_quotes_help(): test.TestOutcome {
   }
 }
 
+// ---- man page (roff) ----
+// The .TH header carries the name and section, and NAME/SYNOPSIS/
+// DESCRIPTION/OPTIONS sections render from the same spec. Each flag is
+// a .TP entry whose tag is the bold dash spelling; a valued option adds
+// an italic <value>, a boolean flag does not.
+function test_manpage_sections(): test.TestOutcome {
+  var m: string = spec().manpage("1");
+  return test.assert_true(m.contains(".TH \"greet\" \"1\"")
+    && m.contains(".SH NAME\ngreet \\- print a greeting")
+    && m.contains(".SH SYNOPSIS\n\\fBgreet\\fR [options] [args]")
+    && m.contains(".SH DESCRIPTION\nprint a greeting")
+    && m.contains(".SH OPTIONS\n"));
+}
+
+function test_manpage_flags(): test.TestOutcome {
+  var m: string = spec().manpage("1");
+  // Valued option: dash spelling in bold, then an italic <value>.
+  return test.assert_true(m.contains(".TP\n\\fB\\-n\\fR, \\fB\\-\\-name\\fR \\fI<value>\\fR\nwho to greet")
+    // Boolean flag: no <value>.
+    && m.contains(".TP\n\\fB\\-s\\fR, \\fB\\-\\-shout\\fR\nupper-case the greeting")
+    && !m.contains("\\-\\-shout\\fR \\fI<value>"));
+}
+
+// A spec with commands gets an admin section and a COMMANDS section.
+function test_manpage_commands(): test.TestOutcome {
+  var m: string = spec_cmds().manpage("8");
+  return test.assert_true(m.contains(".TH \"tool\" \"8\"")
+    && m.contains("\\fBtool\\fR [options] <command> [args]")
+    && m.contains(".SH COMMANDS\n.TP\n\\fBdeploy\\fR\npush the build"));
+}
+
+// A backslash in help text is doubled, so it cannot introduce a roff
+// escape sequence in the rendered page. This is the __cli_roff identity
+// shape (`return s.replace(...)`) that returns its argument unchanged
+// when there is no backslash — the #8409 fast path.
+function test_manpage_roff_escapes_backslash(): test.TestOutcome {
+  var s: cli.CliSpec = cli.cli_new("bs", "escaping");
+  s = s.flag("win", "", "a \\ separator");
+  var m: string = s.manpage("1");
+  return test.assert_true(m.contains("a \\\\ separator") && !m.contains("a \\ separator"));
+}
+
+// Help or about text that begins with `.` (or `'`) would start a roff
+// CONTROL line at column 0 and be swallowed as a request; __cli_roff
+// prefixes the zero-width `\&` so it renders as literal text instead.
+function test_manpage_roff_escapes_leading_dot(): test.TestOutcome {
+  var s: cli.CliSpec = cli.cli_new("dot", ".config tool");
+  s = s.flag("run", "", "./build first");
+  var m: string = s.manpage("1");
+  return test.assert_true(m.contains(".SH DESCRIPTION\n\\&.config tool")
+    && m.contains("\\&./build first")
+    && !m.contains("\n./build first"));
+}
+
 function main(): i32 {
   var r: test.TestRunner = test.test_new("std/cli");
   r = r.it("option --long V", test_option_long);
@@ -275,5 +329,10 @@ function main(): i32 {
   r = r.it("completion fish", test_completion_fish);
   r = r.it("completion unknown shell", test_completion_unknown_shell);
   r = r.it("completion quotes help", test_completion_quotes_help);
+  r = r.it("manpage sections", test_manpage_sections);
+  r = r.it("manpage flags", test_manpage_flags);
+  r = r.it("manpage commands", test_manpage_commands);
+  r = r.it("manpage escapes backslash", test_manpage_roff_escapes_backslash);
+  r = r.it("manpage escapes leading dot", test_manpage_roff_escapes_leading_dot);
   return r.finish();
 }

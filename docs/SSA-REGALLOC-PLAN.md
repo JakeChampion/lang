@@ -1081,9 +1081,10 @@ contain zero calls to `__fern_rc_is_unique`. Each is a guard chain of about six
 instructions, so this is the same trade the raw pokes just took, one size up:
 the caller-saves around the call cost more than the work.
 
-`__fern_box_free` is the sharper one. On this backend it is a bare `ret` — the
-heap does not reclaim — so those 165-202 sites were a `bl` and a full caller-save
-around a function that does nothing.
+`__fern_box_free` was the sharper one at the time: a bare `ret` while the heap
+did not reclaim, so those 165-202 sites were a `bl` and a full caller-save
+around a function that did nothing. It has had a real body since #8069
+(`docs/SSA-RC-RUNTIME.md`, Allocator).
 
 ### A call saves what its callee can disturb, not what is live
 
@@ -1149,8 +1150,12 @@ call bothers to save.
 
 ### A call into a bare `ret`
 
-`__fern_box_free` and `__free` are do-nothing helpers on this backend — the
-heap does not reclaim, so both bodies are a single `ret`. Compiled code called
+Superseded by #8069: `__fern_box_free` and `__free` have bodies now and the
+elision below (`noOpHelpers`) is deleted, exactly as the last paragraph of this
+section predicted. The numbers stay as the record of what it bought.
+
+`__fern_box_free` and `__free` were do-nothing helpers on this backend — the
+heap did not reclaim, so both bodies were a single `ret`. Compiled code called
 them anyway: 165 sites in `ordmap_insert`, 196 in `pmap_insert`, each with its
 argument setup, on the path every drop takes.
 
@@ -1180,7 +1185,8 @@ great many of them. Programs that never drop a box are byte-identical.
 
 ### Reclamation is a memory fix, not a speed fix
 
-The SSA heap never frees (`docs/SSA-RC-RUNTIME.md`), and the obvious reading is
+The SSA heap did not free before #8069 (`docs/SSA-RC-RUNTIME.md`), and the
+obvious reading was
 that the slow benchmarks are slow because their live set grows without bound and
 locality collapses. That reading is wrong, and the control experiment is cheap:
 build the flat backend with its freelist POP disabled — same IR, same frees,

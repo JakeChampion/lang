@@ -4,10 +4,11 @@ import "strings"
 
 // Family is one group of mnemonics both assemblers route through a single
 // encoder arm: internal/native/arm64 dispatches on the family name, and
-// cmd/arm64tblgen writes an `arm64_gas_is_<Name>` predicate into
-// examples/self_host/arm64_native.fern that its dispatch tests instead of
-// spelling the mnemonics again. A mnemonic is therefore reachable on both
-// sides or on neither.
+// cmd/arm64tblgen writes the family lookup (arm64_gas_family, with an
+// `arm64_fam_<Name>` index and an `arm64_gas_is_<Name>` predicate per
+// family) into examples/self_host/arm64_native.fern, which its dispatch
+// compares against instead of spelling the mnemonics again. A mnemonic is
+// therefore reachable on both sides or on neither.
 //
 // The encoder logic stays hand-written on each side; what the table holds is
 // the vocabulary, the operand shape a representative instruction takes, and —

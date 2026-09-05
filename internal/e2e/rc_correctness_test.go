@@ -1545,6 +1545,50 @@ function main(): i32 {
 }`,
 	},
 	{
+		// #8277: a Map READ with an ALIASED key stranded the map's key
+		// buffer on the native single-word ABI — the escape analysis
+		// treated every string argument of a `__method_` call as possibly
+		// retained by the callee, which suppressed the caller's own
+		// scope-exit release of the key.
+		//
+		// THREE conditions have to coincide, and the case above misses two
+		// of them, which is why the corpus ran green through the whole bug:
+		//
+		//   1. the key needs a HEAP buffer — `"key"` is 3 bytes, so it is
+		//      SSO-inline and there is no buffer to strand;
+		//   2. it must be a RUNTIME concat — `"k" + "ey"` constant-folds to
+		//      a literal, whose data-8 sentinel makes __fern_str_dec a
+		//      no-op, so nothing is allocated in the first place;
+		//   3. it must be an ALIAS at the read — a fresh concat passed
+		//      straight to `m.get(...)` is reclaimed by the argument path.
+		//
+		// So: a stem the compiler cannot fold, a key well past seven bytes,
+		// and the same `key` local read by all three verbs. Per iter:
+		// get_or 1 + has 2 + get 4 = 7; 200x → 1400. Over-release trips the
+		// underflow detector; the leak is what the leak gate weighs, where
+		// this case is absent from every baseline and so must read 0.
+		name: "map_aliased_key_read_free",
+		src: `
+import "core/map";
+function mk(seed: i32): i32 {
+    var stem: string = "a";
+    var m: Map[string, string] = map_new(8);
+    var key: string = stem + "-key-well-past-seven-bytes";
+    m = m.insert(key, stem + "-value-well-past-seven-bytes");
+    var n: i32 = 0;
+    if (m.get_or(key, "") == "a-value-well-past-seven-bytes") { n = n + 1; }
+    if (m.has(key)) { n = n + 2; }
+    match (m.get(key)) { Some(v) => { if (v == "a-value-well-past-seven-bytes") { n = n + 4; } }, None => {} }
+    return n;
+}
+function main(): i32 {
+    var total: i32 = 0;
+    var k: i32 = 0;
+    while (k < 200) { total = total + mk(k); k = k + 1; }
+    return (total - 1400) + __rc_underflow_count();
+}`,
+	},
+	{
 		// Transient lookup-key reclamation (wasm). A string K on wasm32 is
 		// boxed into a 16-byte cell for EVERY read-method call (get / has /
 		// get_or) — the helper reads it for the strcmp but never retains

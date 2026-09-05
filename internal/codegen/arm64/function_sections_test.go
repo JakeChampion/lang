@@ -69,12 +69,12 @@ func TestArm64StrBufRuntimeDarwinDialect(t *testing.T) {
 	if !strings.Contains(asm, "__fern_strbuf_reset") {
 		t.Fatal("strbuf runtime not emitted; test can't guard its dialect")
 	}
-	for _, bad := range []string{":lo12:__fern_strbuf_len", ":lo12:__fern_strbuf_data", ".section .bss"} {
+	for _, bad := range []string{":lo12:__fern_strbuf_len", ":lo12:__fern_strbuf_ptr", ".section .bss"} {
 		if strings.Contains(asm, bad) {
 			t.Errorf("arm64-darwin strbuf runtime must not emit ELF-only %q (clang's Mach-O assembler rejects it)", bad)
 		}
 	}
-	for _, want := range []string{"__fern_strbuf_len@PAGE", "__fern_strbuf_data@PAGE", ".section __DATA,__bss"} {
+	for _, want := range []string{"__fern_strbuf_len@PAGE", "__fern_strbuf_ptr@PAGE", ".section __DATA,__bss"} {
 		if !strings.Contains(asm, want) {
 			t.Errorf("arm64-darwin strbuf runtime must emit Mach-O form %q", want)
 		}

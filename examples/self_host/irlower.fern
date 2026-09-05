@@ -602,6 +602,20 @@ pub struct FnSigs {
     // struct plan gate refuses a credited name passed at such a position
     // (native retains at the return instead — paramCountedRetain's channel).
     handback_params: string[],
+    // str_handback_ret: "<callee>|<idx>" for a STRING parameter whose OWN box a
+    // return may hand back as the result THROUGH A CALL — a string identity
+    // method (str_recv_handback_of, whose no-op fast path returns its receiver:
+    // `replace` when the needle is absent), recursively through the receiver, or
+    // transitively through a callee that hands its argument back. A bare `return
+    // s` is deliberately excluded: it makes the param non-borrowable, so its
+    // fresh argument is never stashed and there is no guarded release to
+    // complete (see expr_may_be_str_param's allow_bare).
+    // A fresh string temp passed at such a position aliases the call's result on
+    // the identity path, so free_stashed_str_args must guard its post-call
+    // release on the result differing rather than free unconditionally (#8409).
+    // Keyed like the borrow registry: "<Type>.<method>" for a method, the bare
+    // name for a function.
+    str_handback_ret: string[],
     // grow_recv_fns: "<Type>.<method>|<field>,…" — the RECEIVER fields whose
     // array buffers the method may grow in place (#8224). The receiver has no
     // fn_param_sigs position, so its may-grow entry lives here; a method call
@@ -754,9 +768,10 @@ pub struct LowerFrame {
     // semantics. See that function for the two sound shapes.
     append_inplace: string[],
     // field_append_inplace: the site keys ("<line>:<col>|<root>|<field>") of the
-    // struct-FIELD-receiver appends this function may grow in place instead of
-    // cloning (#8224). Computed ONCE per function by
-    // field_append_inplace_sites_of; a site absent from it takes the clone form.
+    // struct-FIELD-receiver `.append` / `.with` calls this function may apply to
+    // the field's own buffer instead of a clone (#8224, #8419). Computed ONCE per
+    // function by field_append_inplace_sites_of; a site absent from it takes
+    // the clone form.
     field_append_inplace: string[],
     // grow_sole: the #6043 sole-occurrence deaths, computed ONCE per function
     // (grow_sole_exempt_names_of) because the per-statement hook cannot see the
@@ -11016,6 +11031,20 @@ function lower_call_named(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIdent, s: L
         if (!rd.ok) { return rd; }
         return rd.emit(ir.op_free());
     }
+    // __fern_str_dec(s): core/map's string-value release, which
+    // __map_dec_value runs on the value an overwrite displaces (#8421).
+    // A NO-OP here, for the same reason as the two above: the self-host
+    // backends have no rc-guarded string dec — __fern_str_free frees a
+    // fresh, non-escaping string outright, which is not what a shared
+    // column slot wants — so the map runtime stays in safe-leak mode until
+    // goal #2 ports the native RC. Its argument is a pure load off the
+    // value slot, so it is left unlowered rather than popped: the arg is a
+    // `string`, whose slot COUNT differs between the two string ABIs, and
+    // there is no pop-n op to match it with. Pushes the dummy 0 the
+    // statement position discards.
+    if (cid.name == "__fern_str_dec" && c.args.len() == 1) {
+        return s.emit(ir.op_const_i32(0));
+    }
     // __memcpy(dst, src, n): raw byte copy. Lower the three
     // usize/i32 operands (dst, src, n) then emit op_memcpy, which
     // the IR backends select rep movsb / a byte loop / memory.copy
@@ -12034,6 +12063,7 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
     var sc: LowerState = s;
     var ai: i32 = 0;
     var lat_slots: i32[] = [];
+    var lat_guard: i32[] = [];
     var laa_slots: i32[] = [];
     var lca_slots: i32[] = [];
     var lsl_slots: i32[] = [];
@@ -12135,7 +12165,10 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
             // #2649 concat-operand anonymous-temp reclaim.
             var lst: ArgStash = stash_fresh_str_arg(sc, c.args[ai], cid.name, ai);
             sc = lst.state;
-            if (lst.slot >= 0) { lat_slots = lat_slots.append(lst.slot); }
+            if (lst.slot >= 0) {
+                if (lst.guarded) { lat_guard = lat_guard.append(lst.slot); }
+                else { lat_slots = lat_slots.append(lst.slot); }
+            }
             // #4365 stage (b): a fresh SCALAR-element array-literal
             // arg (`f([i, i+1])`, discardable_scalar_arr_lit — a
             // rc=1 sole-owned single-level buffer, never bound or
@@ -12321,6 +12354,9 @@ function lower_call_named_generic(e: ast.Expr, c: ast.ExprCall, cid: ast.ExprIde
         scr = scr.release(lat_slots[lfi], "__fern_str_free", "stashed-str-arg");
         lfi = lfi + 1;
     }
+    // Handback-eligible string arg temps: freed only when the call's result is
+    // not the temp's own box (#8409).
+    scr = free_stashed_str_args_guarded(scr, lat_guard);
     // The array-literal arg temps: same net-zero stack shape, the
     // rc-guarded array release instead of the string free.
     var lfa: i32 = 0;
@@ -12391,6 +12427,7 @@ function lower_call_prim_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, pty: s
     else { pm = lower_expr(fa.obj, s); }
     if (!pm.ok) { return pm; }
     var pm_lat: i32[] = [];
+    var pm_latg: i32[] = [];
     var pm_lsl: i32[] = [];
     // A fresh anonymous RECEIVER at a SOURCE-DECLARED method, the twin of the
     // builtin-method release. The warrant is the callee-side proof
@@ -12444,7 +12481,10 @@ function lower_call_prim_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, pty: s
             pm = lower_expr(c.args[pai], pm);
             var pmst: ArgStash = stash_fresh_str_arg(pm, c.args[pai], pty + "." + fa.field, pai);
             pm = pmst.state;
-            if (pmst.slot >= 0) { pm_lat = pm_lat.append(pmst.slot); }
+            if (pmst.slot >= 0) {
+                if (pmst.guarded) { pm_latg = pm_latg.append(pmst.slot); }
+                else { pm_lat = pm_lat.append(pmst.slot); }
+            }
             var pmss: StructArgStash = stash_fresh_struct_arg(pm, c.args[pai], pty + "." + fa.field, pai);
             pm = pmss.state;
             if (pmss.slot >= 0) { pm_lsl = pm_lsl.append(pmss.slot); }
@@ -12454,6 +12494,7 @@ function lower_call_prim_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, pty: s
     }
     pm = pm.emit(ir.op_call_direct(pty + "." + fa.field, 1 + c.args.len()));
     pm = free_stashed_str_args(pm, pm_lat);
+    pm = free_stashed_str_args_guarded(pm, pm_latg);
     pm = free_stashed_struct_args(pm, pm_lsl);
     if (prslot >= 0) {
         pm = pm.emit(ir.op_load_local(prslot));
@@ -12509,6 +12550,7 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
     // on the O(1) in-place grow.
     var sm_gbf: i32[] = grow_recv_bracket_rows(sm, disp_ty + "." + fa.field, fa.obj, rty);
     var sm_lat: i32[] = [];
+    var sm_latg: i32[] = [];
     var sm_lsl: i32[] = [];
     var ai: i32 = 0;
     while (ai < c.args.len()) {
@@ -12530,7 +12572,10 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
             sm_gbf = grow_field_bracket_rows(sm, disp_ty + "." + fa.field, ai, c.args[ai], sm_gbf);
             var smst: ArgStash = stash_fresh_str_arg(sm, c.args[ai], disp_ty + "." + fa.field, ai);
             sm = smst.state;
-            if (smst.slot >= 0) { sm_lat = sm_lat.append(smst.slot); }
+            if (smst.slot >= 0) {
+                if (smst.guarded) { sm_latg = sm_latg.append(smst.slot); }
+                else { sm_lat = sm_lat.append(smst.slot); }
+            }
             var smss: StructArgStash = stash_fresh_struct_arg(sm, c.args[ai], disp_ty + "." + fa.field, ai);
             sm = smss.state;
             if (smss.slot >= 0) { sm_lsl = sm_lsl.append(smss.slot); }
@@ -12543,6 +12588,7 @@ function lower_call_struct_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, rty:
     sm = sm.emit(ir.op_call_direct(disp_ty + "." + fa.field, 1 + c.args.len()));
     sm = emit_grow_field_bracket_dec(sm, smb.slots);
     sm = free_stashed_str_args(sm, sm_lat);
+    sm = free_stashed_str_args_guarded(sm, sm_latg);
     return free_stashed_struct_args(sm, sm_lsl);
 }
 
@@ -13771,6 +13817,15 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
     // (#7208). Every one of those clones the buffer SHALLOW, which is what
     // keeps the pointer-element kinds sound: their elements are owned by the
     // source struct and freed by neither copy.
+    // A SCALAR-element field the per-function analysis admitted (#8419) stores
+    // into the field's own buffer instead; pointer-element fields keep the
+    // clone, whose overwritten element the container still owns.
+    if (fa.field == "with" && c.args.len() == 2 && scalar_arr_field_type(fa.obj, s) != "") {
+        var fwik: string = field_append_inplace_key(c, fa.obj, s);
+        if (fwik.len() > 0) {
+            return lower_field_with_inplace(fa.obj, c.args[0], c.args[1], fwik, s);
+        }
+    }
     if (fa.field == "with" && c.args.len() == 2
         && (expr_is_arr_src(fa.obj, s) || expr_is_strarr(fa.obj, s)
             || expr_is_f64arr(fa.obj, s) || expr_is_i64arr(fa.obj, s)
@@ -14163,6 +14218,7 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
         var em: LowerState = lower_expr(fa.obj, s);
         if (!em.ok) { return em; }
         var em_lat: i32[] = [];
+        var em_latg: i32[] = [];
         var eai: i32 = 0;
         while (eai < c.args.len()) {
             // fn-value arg (const_func) before general lowering —
@@ -14174,13 +14230,17 @@ function lower_call_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: LowerSta
                 em = lower_expr(c.args[eai], em);
                 var emst: ArgStash = stash_fresh_str_arg(em, c.args[eai], ety + "." + fa.field, eai);
                 em = emst.state;
-                if (emst.slot >= 0) { em_lat = em_lat.append(emst.slot); }
+                if (emst.slot >= 0) {
+                    if (emst.guarded) { em_latg = em_latg.append(emst.slot); }
+                    else { em_lat = em_lat.append(emst.slot); }
+                }
             }
             if (!em.ok) { return em; }
             eai = eai + 1;
         }
         em = em.emit(ir.op_call_direct(ety + "." + fa.field, 1 + c.args.len()));
-        return free_stashed_str_args(em, em_lat);
+        em = free_stashed_str_args(em, em_lat);
+        return free_stashed_str_args_guarded(em, em_latg);
     }
     // Array-receiver method `arr.<field>(args)` — the std/array
     // auto-discovered helper `__method_Array_<field>(arr, args)`.
@@ -19493,6 +19553,16 @@ function lower_stmt_inner(st: ast.Stmt, s: LowerState): LowerState {
                                 // has no reader to outlive: the statement is the value's
                                 // whole lifetime.
                                 se = se.release_tos("__fern_str_free", "discard-str-ret");
+                            } else if (handback_fresh_arg_at(dcid.name, dce.args, s.frame.sigs.str_handback_ret)) {
+                                // #8409: a discarded call that hands a FRESH string
+                                // arg back through an identity method. The result is
+                                // that arg's own box on the identity path — the
+                                // guarded arg-temp release left it unfreed precisely
+                                // so its consumer owns it, and here the consumer is
+                                // this discard — or a fresh box on the allocating
+                                // path. Owned either way, with no reader to outlive:
+                                // free it now with the rc-aware __fern_str_free.
+                                se = se.release_tos("__fern_str_free", "discard-str-handback-ret");
                             } else {
                                 // A discarded call to a TUPLE-fresh-ret free function
                                 // ("TUPRET:<name>|<flags>", #4365 discarded rc-field
@@ -19764,19 +19834,19 @@ function lower_view_borrowed(e: ast.Expr, s: LowerState): LowerState {
 // unconditionally.
 function lower_view_borrowed_parked(e: ast.Expr, s: LowerState): ArgStash {
     var p: LowerState = lower_view_borrowed(e, s);
-    if (!p.ok || !s.for_wasm()) { return ArgStash { state: p, slot: 0 - 1 }; }
+    if (!p.ok || !s.for_wasm()) { return ArgStash { state: p, slot: 0 - 1, guarded: false }; }
     var is_str_slice: boolean = false;
     match (e) {
         ast.ExprCall(vc) => { if (slice_unchecked_call(e)) { is_str_slice = expr_is_str(vc.args[0], s); } },
         _ => {}
     }
-    if (!is_str_slice) { return ArgStash { state: p, slot: 0 - 1 }; }
+    if (!is_str_slice) { return ArgStash { state: p, slot: 0 - 1, guarded: false }; }
     var vn: string = "$vwb" + util.i32_to_string(p.locals.len());
     p = p.add_local(vn);
     var vslot: i32 = p.slot_of(vn);
     p = p.emit(ir.op_store_local(vslot));
     p = p.emit(ir.op_load_local(vslot));
-    return ArgStash { state: p, slot: vslot };
+    return ArgStash { state: p, slot: vslot, guarded: false };
 }
 
 // free_parked_views drains what lower_view_borrowed_parked parked. Slots are
@@ -24874,7 +24944,7 @@ function lower_map_clone_insert(target: string, recv: ast.Expr, key: ast.Expr, v
 }
 
 // field_append_inplace_key returns the site key of THIS `<root>.<field>.append(v)`
-// call when the per-function analysis admitted it (field_append_inplace_sites_of)
+// / `.with(i, v)` call when the per-function analysis admitted it (field_append_inplace_sites_of)
 // and the root's box type resolves here, which the move-out store needs; else "",
 // and the site takes the clone form. The second gate is defence in depth: the
 // admitted receivers are depth-1 ident-rooted chains, whose root type resolves.
@@ -24975,6 +25045,75 @@ function fai_bracket_shared_root(s: LowerState, uniqslot: i32, srcslot: i32, fn:
     st = st.emit(ir.op_call_direct(fn, 1));
     st = st.emit(ir.op_drop());
     return st.emit(ir.op_end());
+}
+
+// lower_field_with_inplace is lower_arr_with_value without the clone: the
+// `.with` twin of lower_field_append_inplace, under the same admission and the
+// same share bracket. arr_push carries its own rc == 1 gate; arr_set has none,
+// so the gate is spelled here — a buffer anything else still holds takes the
+// clone (a fresh rc 1 copy, exactly the value form's result), and the identity
+// arm moves the field out of the root as the append does. Scalar element kinds
+// only: overwriting a pointer element would owe the container a release.
+pub function lower_field_with_inplace(obj: ast.Expr, idx: ast.Expr, val: ast.Expr, key: string, s: LowerState): LowerState {
+    var kind: string = arr_elem_kind(obj, s);
+    var sw: i32 = 32;
+    if (kind != "i32") { sw = 64; }
+    var root: i32 = s.slot_of(fai_key_part(key, 1));
+    var sty: string = s.struct_type_of_slot(root);
+    var fidx: i32 = s.field_index_in(sty, fai_key_part(key, 2));
+    var srcname: string = "$fiwb" + util.i32_to_string(s.locals.len());
+    var st: LowerState = s.add_local(srcname);
+    var srcslot: i32 = st.slot_of(srcname);
+    var uniqname: string = "$fiwu" + util.i32_to_string(st.locals.len());
+    st = st.add_local(uniqname);
+    var uniqslot: i32 = st.slot_of(uniqname);
+    var resname: string = "$fiwr" + util.i32_to_string(st.locals.len());
+    st = st.add_local(resname);
+    var resslot: i32 = st.slot_of(resname);
+    st = lower_expr(obj, st);
+    if (!st.ok) { return st; }
+    st = st.emit(ir.op_store_local(srcslot));
+    st = st.emit(ir.op_load_local(root));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_store_local(uniqslot));
+    st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_inc");
+    // res = src, or a full copy when the buffer has a second holder.
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_store_local(resslot));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_call_direct("__fern_rc_is_unique", 1));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_arr_len());
+    st = st.emit(ir.op_arr_slice(sw));
+    st = st.emit(ir.op_store_local(resslot));
+    st = st.emit(ir.op_end());
+    st = st.emit(ir.op_load_local(resslot));
+    st = lower_expr(idx, st);
+    if (!st.ok) { return st; }
+    if (kind == "i64") {
+        st = lower_i64(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_set_i64());
+    } else {
+        st = lower_expr(val, st);
+        if (!st.ok) { return st; }
+        st = st.emit(ir.op_arr_set(sw));
+    }
+    st = fai_bracket_shared_root(st, uniqslot, srcslot, "__fern_arr_share_dec");
+    st = st.emit(ir.op_load_local(resslot));
+    st = st.emit(ir.op_load_local(srcslot));
+    st = st.emit(ir.op_bin("eq", 0, false));
+    st = st.emit(ir.op_if(0));
+    st = st.emit(ir.op_load_local(root));
+    st = st.emit(ir.op_const_i32(0));
+    st = st.emit(ir.op_struct_set(fidx, struct_field_width(st.frame.structs, sty, fidx)));
+    st = st.emit(ir.op_end());
+    return st.emit(ir.op_load_local(resslot));
 }
 
 // lower_arr_append_value lowers `obj.append(val)` as a VALUE-PRODUCING
@@ -25227,8 +25366,12 @@ function append_inplace_recvs(stmts: ast.Stmt[], esc: string[], acc: string[]): 
 //
 // field_append_inplace_sites_of is native's fieldPlaceAppendCopies
 // (internal/ir/rc_analysis.go), inverted: it names the sites that may take the
-// consuming in-place grow. A site qualifies when every read of the receiver's
-// ROOT that could reach the grown buffer is out of the grow's reach:
+// consuming in-place grow. A `<root>.<field>.with(i, v)` site is admitted under
+// the same rules (#8419) — the store, like the grow, hands the field's own
+// buffer to the value and moves it out of the root — which native does not do;
+// it clones every field-receiver `.with`. A site qualifies when every read of
+// the receiver's ROOT that could reach the mutated buffer is out of the
+// mutation's reach:
 //
 //   - a read of a DIFFERENT field (`s.ctrl` against `s.ops`) never names it;
 //   - a struct-update SPREAD base whose literal OVERRIDES the appended field
@@ -25285,8 +25428,8 @@ function fai_key_part(k: string, idx: i32): string {
     return "";
 }
 
-// fai_recv_key returns the site key for `<root>.<field>.append(…)` when `recv`
-// is exactly that depth-1 ident-rooted chain, else "". Deeper chains are
+// fai_recv_key returns the site key for `<root>.<field>.append(…)` / `.with(…)`
+// when `recv` is exactly that depth-1 ident-rooted chain, else "". Deeper chains are
 // refused: the caller-side bracket walks a struct's array fields, and a depth-1
 // receiver is what keeps the two halves describing the same buffer.
 pub function fai_recv_key(recv: ast.Expr, line: i32, col: i32): string {
@@ -25302,18 +25445,25 @@ pub function fai_recv_key(recv: ast.Expr, line: i32, col: i32): string {
     return "";
 }
 
-// fai_cands_expr collects the candidate append sites in `e`. A lambda body is
-// NOT descended: its appends run when the closure is called, not here.
+// fai_call_site_key returns the site key of a field-place mutation call —
+// `<root>.<field>.append(v)` or `<root>.<field>.with(i, v)` — else "".
+function fai_call_site_key(c: ast.ExprCall, cfa: ast.ExprFieldAccess): string {
+    if ((cfa.field == "append" && c.args.len() == 1) || (cfa.field == "with" && c.args.len() == 2)) {
+        return fai_recv_key(cfa.obj, c.line, c.col);
+    }
+    return "";
+}
+
+// fai_cands_expr collects the candidate sites in `e`. A lambda body is NOT
+// descended: its calls run when the closure is called, not here.
 function fai_cands_expr(e: ast.Expr, roots: string[], acc: string[]): string[] {
     var a: string[] = acc;
     match (e) {
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprFieldAccess(cfa) => {
-                    if (cfa.field == "append" && c.args.len() == 1) {
-                        var rk: string = fai_recv_key(cfa.obj, c.line, c.col);
-                        if (rk.len() > 0 && util.index_of_str(roots, fai_key_part(rk, 1)) >= 0) { a = push_str_unique(a, rk); }
-                    }
+                    var rk: string = fai_call_site_key(c, cfa);
+                    if (rk.len() > 0 && util.index_of_str(roots, fai_key_part(rk, 1)) >= 0) { a = push_str_unique(a, rk); }
                     a = fai_cands_expr(cfa.obj, roots, a);
                 },
                 _ => { a = fai_cands_expr(c.callee, roots, a); }
@@ -25399,8 +25549,7 @@ function fai_excused_expr(e: ast.Expr, root: string, field: string, site: string
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprFieldAccess(cfa) => {
-                    var rk: string = "";
-                    if (cfa.field == "append" && c.args.len() == 1) { rk = fai_recv_key(cfa.obj, c.line, c.col); }
+                    var rk: string = fai_call_site_key(c, cfa);
                     if (rk.len() > 0 && rk == site) { n = n + 1; }
                     else { n = fai_excused_place(cfa.obj, root, field, site, n); }
                 },
@@ -33593,19 +33742,27 @@ function call_arg_borrowable(s: LowerState, callee: string, ai: i32): boolean {
 
 // ArgStash is stash_fresh_str_arg's result: the state with the park emitted,
 // and the scratch slot holding the box (-1 when the arg earned no stash).
-struct ArgStash { state: LowerState, slot: i32 }
+// `guarded` is set when the callee may hand this argument back as its result
+// (str_handback_ret): the post-call release must then test the result differs
+// (free_stashed_str_args_guarded) rather than free unconditionally (#8409).
+struct ArgStash { state: LowerState, slot: i32, guarded: boolean }
 
 // stash_fresh_str_arg parks a fresh string ARGUMENT — a literal, or one of the
 // anonymous temps is_fresh_str_temp admits (a concat, a producer, a copying
 // method) — in a scratch and reloads it, so the caller can free the box after
 // the call. The store+reload leaves the arg in place on the operand stack.
 //
-// Gated on call_arg_borrowable: at a borrowable position the callee can neither
-// retain nor return the argument, so the box is dead the moment the call
-// returns. `relabel(t)` moving `t` into a struct field is NOT borrowable and is
+// Gated on call_arg_borrowable: at a borrowable position the callee cannot
+// RETAIN the argument, so the box is dead the moment the call returns — EXCEPT
+// that a borrowable string param can still be RETURNED through an identity
+// method (`return s.replace(needle, …)` hands `s`'s own box back on the no-op
+// fast path). str_handback_ret flags exactly those positions, and the caller
+// then guards the release on the result differing (`guarded`) instead of
+// freeing unconditionally, which would be the #8409 use-after-free.
+// `relabel(t)` moving `t` into a struct field is NOT borrowable and is
 // correctly refused here.
 function stash_fresh_str_arg(s: LowerState, arg: ast.Expr, callee: string, ai: i32): ArgStash {
-    if (!s.ok) { return ArgStash { state: s, slot: 0 - 1 }; }
+    if (!s.ok) { return ArgStash { state: s, slot: 0 - 1, guarded: false }; }
     var fresh: boolean = false;
     match (arg) { ast.ExprString(_) => { fresh = true; }, _ => {} }
     if (!fresh) { fresh = is_fresh_str_temp(arg, s); }
@@ -33616,15 +33773,16 @@ function stash_fresh_str_arg(s: LowerState, arg: ast.Expr, callee: string, ai: i
     // escaping path and rc 1 otherwise and this one post-call free nets it to a
     // single owner either way (#6544). Without it the caller's argument box was
     // released by nothing at all.
-    if (!fresh) { return ArgStash { state: s, slot: 0 - 1 }; }
+    if (!fresh) { return ArgStash { state: s, slot: 0 - 1, guarded: false }; }
     if (!call_arg_borrowable(s, callee, ai)
-        && !str_param_counted_at(s.frame.sigs.param_counted, callee, ai)) { return ArgStash { state: s, slot: 0 - 1 }; }
+        && !str_param_counted_at(s.frame.sigs.param_counted, callee, ai)) { return ArgStash { state: s, slot: 0 - 1, guarded: false }; }
+    var g: boolean = util.index_of_str(s.frame.sigs.str_handback_ret, callee + "|" + util.i32_to_string(ai)) >= 0;
     var latn: string = "$lat" + util.i32_to_string(s.locals.len());
     var st: LowerState = s.add_local(latn);
     var lats: i32 = st.slot_of(latn);
     st = st.emit(ir.op_store_local(lats));
     st = st.emit(ir.op_load_local(lats));
-    return ArgStash { state: st, slot: lats };
+    return ArgStash { state: st, slot: lats, guarded: g };
 }
 
 // free_stashed_str_args drains stash_fresh_str_arg's slots after the call.
@@ -33660,6 +33818,34 @@ function free_stashed_str_args(s: LowerState, slots: i32[]): LowerState {
         i = i + 1;
     }
     return st;
+}
+
+// free_stashed_str_args_guarded drains fresh string arg temps whose callee may
+// hand the argument back as its result (str_handback_ret). Each free is behind
+// a pointer-changed test against the call's result: on the identity fast path
+// the callee returned the temp's own box and the result's new owner frees it,
+// so an unconditional free here would be the #8409 use-after-free; on the
+// allocating path the temp differs and is freed, closing the leak the
+// escape-analysis alternative would have opened. The result is captured into a
+// scratch and restored, so it stays live on the operand stack — the same shape
+// release_consumed_arg_temps uses for the array-consumed case.
+function free_stashed_str_args_guarded(se: LowerState, slots: i32[]): LowerState {
+    if (slots.len() == 0) { return se; }
+    var rname: string = "$sgr" + util.i32_to_string(se.locals.len());
+    var st: LowerState = se.add_local(rname);
+    var rs: i32 = st.slot_of(rname);
+    st = st.emit(ir.op_store_local(rs));
+    var i: i32 = 0;
+    while (i < slots.len()) {
+        st = st.emit(ir.op_load_local(rs));
+        st = st.emit(ir.op_load_local(slots[i]));
+        st = st.emit(ir.op_bin("ne", 0, false));
+        st = st.emit(ir.op_if(0));
+        st = st.release(slots[i], "__fern_str_free", "stashed-str-arg-guarded");
+        st = st.emit(ir.op_end());
+        i = i + 1;
+    }
+    return st.emit(ir.op_load_local(rs));
 }
 
 // StructArgStash is stash_fresh_struct_arg's result: the state with the park
@@ -34616,6 +34802,70 @@ function collect_str_fresh_ret_call_names(stmts: ast.Stmt[], str_fresh_ret: stri
             ast.StmtWhile(w) => { a = collect_str_fresh_ret_call_names(w.body, str_fresh_ret, reassigned, a); },
             ast.StmtFor(fo) => { a = collect_str_fresh_ret_call_names(fo.body, str_fresh_ret, reassigned, a); },
             ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_str_fresh_ret_call_names(m.arms[ai].body, str_fresh_ret, reassigned, a); ai = ai + 1; } },
+            _ => {}
+        }
+    }
+    return a;
+}
+
+// str_arg_is_fresh_syntactic: `e` is a string that allocates a fresh, sole-owned
+// box per evaluation — a literal, a concat, or a known fresh producer — so its
+// ownership can transfer into a handback call's result. Purely syntactic and
+// SOUND for the credit below: a bare ident / field (an alias of a live value) is
+// excluded, so a box the caller still owns is never mistaken for one it gave
+// away. Includes literals, which str_local_binding_is_fresh deliberately omits
+// (its accumulator callers), because this is a disjoint credit path.
+function str_arg_is_fresh_syntactic(e: ast.Expr): boolean {
+    match (e) { ast.ExprString(_) => { return true; }, _ => {} }
+    return str_local_binding_is_fresh(e);
+}
+
+// handback_call_on_fresh_arg: `init` is `f(…, <fresh temp>, …)` for a free
+// function `f` that hands that argument back as its result through an identity
+// method (str_handback_ret). The result box is then whatever the fresh temp's
+// was on the identity path, or a new one on the allocating path — sole-owned by
+// the binding either way (the call site's guarded release skips the identity-
+// path box precisely so this holds). #8409.
+function handback_fresh_arg_at(cid_name: string, args: ast.Expr[], str_handback_ret: string[]): boolean {
+    var p: i32 = 0;
+    while (p < args.len()) {
+        if (util.index_of_str(str_handback_ret, cid_name + "|" + util.i32_to_string(p)) >= 0
+            && str_arg_is_fresh_syntactic(args[p])) { return true; }
+        p = p + 1;
+    }
+    return false;
+}
+
+function handback_call_on_fresh_arg(init: ast.Expr, str_handback_ret: string[]): boolean {
+    match (init) {
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprIdent(cid) => { return handback_fresh_arg_at(cid.name, c.args, str_handback_ret); },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// collect_str_handback_call_names credits a string LOCAL bound from a
+// handback_call_on_fresh_arg — the string sibling of
+// collect_fresh_str_ret_call_names, for the #8409 identity-return shape. The
+// non-escape gate is applied by reclaimable_str_handback_call.
+function collect_str_handback_call_names(stmts: ast.Stmt[], str_handback_ret: string[], reassigned: string[], acc: string[]): string[] {
+    var a: string[] = acc;
+    for stmt in stmts {
+        match (stmt) {
+            ast.StmtVar(v) => {
+                if (util.index_of_str(reassigned, v.name) < 0 && handback_call_on_fresh_arg(v.init, str_handback_ret)) {
+                    a = push_str_unique(a, reclaim_site_key_of(v.name, v.line, v.col));
+                }
+            },
+            ast.StmtIf(f) => { a = collect_str_handback_call_names(f.then_body, str_handback_ret, reassigned, a); a = collect_str_handback_call_names(f.else_body, str_handback_ret, reassigned, a); },
+            ast.StmtWhile(w) => { a = collect_str_handback_call_names(w.body, str_handback_ret, reassigned, a); },
+            ast.StmtFor(fo) => { a = collect_str_handback_call_names(fo.body, str_handback_ret, reassigned, a); },
+            ast.StmtMatch(m) => { var ai: i32 = 0; while (ai < m.arms.len()) { a = collect_str_handback_call_names(m.arms[ai].body, str_handback_ret, reassigned, a); ai = ai + 1; } },
             _ => {}
         }
     }
@@ -36534,11 +36784,18 @@ function fn_field_value_is_fresh(e: ast.Expr): boolean {
 // builds a sole-owned buffer of sole-owned element boxes, so the reuse-arm
 // __fern_str_arr_free of the OLD value can never free a live alias.
 function strarr_lit_all_elems_fresh(e: ast.Expr): boolean {
+    return strarr_lit_all_elems_fresh_reg(e, []);
+}
+
+// strarr_lit_all_elems_fresh_reg: the same proof against a fresh-string registry,
+// so an element may be a call to a str_fresh_ret_fns_of producer and not only a
+// syntactic literal or concat.
+function strarr_lit_all_elems_fresh_reg(e: ast.Expr, str_fresh: string[]): boolean {
     match (e) {
         ast.ExprArray(al) => {
             var i: i32 = 0;
             while (i < al.elements.len()) {
-                if (!strarr_elem_store_ok(al.elements[i])) { return false; }
+                if (!strarr_value_is_fresh(al.elements[i], str_fresh)) { return false; }
                 i = i + 1;
             }
             return true;
@@ -38726,7 +38983,7 @@ function arrstruct_credit_rows(body: ast.Stmt[], structs: StructTab, borrowable:
     return out;
 }
 
-function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[]): string[] {
+function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: string[], fresh_ret: string[], str_fresh_ret: string[], opt_fresh_ret: SigReg, tup_fresh_ret: string[], msites: string[], recv_borrow: string[], struct_ret_fns: SigReg, params: ast.ParamDecl[], plan_on: boolean, plan_fe: string[], handback: string[], sfok: string[], str_handback_ret: string[]): string[] {
     var fresh: string[] = collect_fresh_struct_names(body, structs, []);
     // Widen with the DISCARDED fresh-ret-call locals (#3457 follow-up): a
     // `var r = f(..)` whose result is read-then-dead, rebound or not. The shared
@@ -38960,6 +39217,14 @@ function reclaimable_names_of(body: ast.Stmt[], structs: StructTab, borrowable: 
     // exit / per loop-rebind, closing the caller-side leak the returned builder left.
     var frets: string[] = collect_fresh_str_ret_call_names(body, str_fresh_ret, reassigned, []);
     out = reclaimable_str_ret_call(body, borrowable, frets, recv_borrow, out);
+    // #8409: `var got = f(<fresh temp>)` where f hands the fresh arg back through
+    // an identity method. got solely owns the box — the fresh arg's on the
+    // identity path, a new one on the allocating path — so, gated non-escape, it
+    // is freed at scope exit. The call site's guarded arg-temp release skips the
+    // identity-path box precisely so got is its sole owner and this credit is not
+    // an over-release.
+    var hbs: string[] = collect_str_handback_call_names(body, str_handback_ret, reassigned, []);
+    out = reclaimable_str_handback_call(body, borrowable, hbs, recv_borrow, out);
     // Owned-container READ destinations (#6491 pointer half): `var s: string =
     // mk()[i]` / `= mk().f`. The read releases the container and hands over its
     // single reference to the extracted box, so s owns it exactly as a
@@ -41763,8 +42028,9 @@ function consumed_scalar_enum_frees(body: ast.Stmt[], structs: StructTab, opt_fr
 // string boxes are rc-HEADERED since #4294, released by the rc-aware
 // __fern_str_free — box + separate data buffer on asm, one inline block on wasm;
 // the freshness gate in variant_struct_payloads_fresh keeps the payload the box's
-// sole owner). NOT a scalar (no rc — released with the box), NOT string[] / enum /
-// map / opt / tuple, and NOT a non-leaf (cycle-risk) struct.
+// sole owner), OR a string[] (deep-freed by __fern_str_arr_free, under the same
+// freshness gate). NOT a scalar (no rc — released with the box), NOT enum / map /
+// opt / tuple, and NOT a non-leaf (cycle-risk) struct.
 function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
     // An ENUM-array payload (`Seq(N[])`, including the self-referential shape a
     // tree enum is built from): `__fern_arrarr_free` rc-guards the buffer, decs
@@ -41775,7 +42041,11 @@ function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
     // Admitting it is what unblocks the whole enum: enum_all_variants_rc_droppable
     // bails on the first non-droppable variant, so `Seq(N[])` was taking the
     // scalar `Leaf(i32)` variant down with it and neither was reclaimed.
-    return is_enum_array_field_type(structs, t) || is_leaksafe_array_field(t) || t == "string"
+    // A string[] payload: __fern_str_arr_free decs each element string and then
+    // frees the buffer — the deep free the struct-field k_str_arr arm already
+    // uses. Fresh-gated at admission (variant_struct_payloads_fresh requires an
+    // array literal of fresh elements), so the enum is the sole owner.
+    return is_enum_array_field_type(structs, t) || is_leaksafe_array_field(t) || t == "string" || t == "string[]"
         || (decl_is_struct(structs, t) && nested_field_deep_drop_ok(structs, t))
         // #4355 slice 8: a SCALAR-ONLY struct payload (`S { m: i32, n: i32 }`)
         // is one flat rc-headered box with no inner rc fields — released by a
@@ -41953,6 +42223,11 @@ function variant_struct_payloads_fresh(args: ast.Expr[], variant_name: string, s
             }
             if (!sfresh) { return false; }
         }
+        // A string[] payload must be an array literal of fresh elements, for the
+        // reason the string arm states: the match-site __fern_str_arr_free frees
+        // each element, so a bare ident / field read would alias boxes a live
+        // local still owns.
+        if (ft == "string[]" && !strarr_lit_all_elems_fresh_reg(args[i], str_fresh)) { return false; }
         i = i + 1;
     }
     return true;
@@ -42444,6 +42719,15 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.frame.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1));
+                    st = st.emit(ir.op_drop());
+                } else if (eft == "string[]") {
+                    // string[] payload: the elements are rc-headered string boxes, so
+                    // a single dec of the buffer would strand every one. The sibling
+                    // of the enum-array arm above, and the same deep free the
+                    // struct-field k_str_arr arm uses.
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.frame.structs, vname, fk)));
+                    st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
                     st = st.emit(ir.op_drop());
                 } else if (is_leaksafe_array_field(eft)) {
                     // scalar-element array payload: one dec frees the buffer (scalar
@@ -55972,7 +56256,7 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     var plan_on: boolean = !rc_plan_disabled();
     var plan_fe: string[] = [];
     if (plan_on) { plan_fe = free_eligible_sites_of(fn, structs, sg.ret_type_fns, sg.noesc_ret_fns); }
-    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types);
+    var reclaim: string[] = reclaimable_names_of(fn.body, structs, sg.borrowable_params, sg.return_fresh_struct_ret_fns, sg.str_fresh_ret_fns, sg.opt_fresh_ret_fns, sg.tuple_fresh_ret_fns, move_sites_of(fn, structs), sg.recv_borrow_fns, sg.struct_ret_fns, fn.params, plan_on, plan_fe, sg.handback_params, sg.strfld_ok_types, sg.str_handback_ret);
     // Hoisted-closure capture extracts are BORROWS (#4354): make_clo_func
     // synthesizes `var <cap> = __env[1+i]` reads at the top of a `$clo`/`$wrap`
     // body, but the env box owns those references — the exit sweep's shallow
@@ -57685,7 +57969,7 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, 
         else if (fn.receiver_type.len() == 0 && rc_enum_has_variants(structs, rt)
                 && enum_all_variants_rc_droppable(structs, rt)
                 && body_has_return(fn.body)
-                && !body_has_nonqualifying_rcenum_return(fn.body, structs, rt)) {
+                && !body_has_nonqualifying_rcenum_return(fn.body, structs, rt, str_fresh)) {
             out = out.append("RCE:" + fn.name + "|" + rt);
         }
         // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>"
@@ -58124,20 +58408,22 @@ function rcenum_ctor_payload_strings_fresh(e: ast.Expr, structs: StructTab): boo
 // Statement coverage mirrors body_has_nonctor_opt_return — a return hiding in
 // any covered nested block disqualifies; uncovered statement kinds cannot
 // contain returns that reach this function's exit.
-function body_has_nonqualifying_rcenum_return(stmts: ast.Stmt[], structs: StructTab, owner: string): boolean {
+//
+// `str_fresh` is str_fresh_ret_fns_of's registry, so a variant's string payload
+// may be a call to a proven fresh-string producer, not only a syntactic literal
+// or concat. It is built from FuncDecls alone and passed into
+// opt_fresh_ret_fns_of, so it is complete before this proof runs.
+function body_has_nonqualifying_rcenum_return(stmts: ast.Stmt[], structs: StructTab, owner: string, str_fresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
-                // Strict set only ([]): this proof registers "RCE:" rows while
-                // str_fresh_ret_fns is built independently; keeping it syntactic
-                // avoids ordering the two registries against each other.
-                if (fresh_rcpayload_enum_init(r.value, structs, [], [], false) != owner) { return true; }
+                if (fresh_rcpayload_enum_init(r.value, structs, str_fresh, [], false) != owner) { return true; }
                 if (!rcenum_ctor_payload_strings_fresh(r.value, structs)) { return true; }
             },
-            ast.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, structs, owner)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, structs, owner)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, structs, owner)) { return true; } a = a + 1; } },
+            ast.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner, str_fresh) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner, str_fresh)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, structs, owner, str_fresh)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, structs, owner, str_fresh)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, structs, owner, str_fresh)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
@@ -63711,7 +63997,7 @@ pub function fn_sigs_empty(): FnSigs {
         fresh_struct_ret_fns: e, consume_safe_params: e, return_fresh_struct_ret_fns: e,
         recv_borrow_fns: e, str_fresh_ret_fns: e, opt_fresh_ret_fns: r, strfld_ok_types: e,
         tuple_fresh_ret_fns: e, own_positions: e, consumed_arr_positions: e, param_counted: e, trmc_consume_fns: e, handback_params: e,
-        grow_recv_fns: e, grow_field_positions: e };
+        str_handback_ret: e, grow_recv_fns: e, grow_field_positions: e };
 }
 
 // ret_type_fns_of: "name|ret_type" rows for every non-generic function, in
@@ -64163,6 +64449,7 @@ pub function fn_sigs_for_borrow(funcs: parser.FuncDecl[], structs: StructTab, ar
         param_counted: pcnt,
         trmc_consume_fns: trmc_consume_fns_of(funcs, structs),
         handback_params: handback_params_of(funcs),
+        str_handback_ret: str_handback_ret_of(funcs),
         grow_recv_fns: grow_recv_fns_of(growflags),
         grow_field_positions: grow_field_positions_of(funcs, growflags),
     };
@@ -64187,6 +64474,131 @@ pub function handback_params_of(funcs: parser.FuncDecl[]): string[] {
             }
             if (hit) { out = out.append(fn.name + "|" + util.i32_to_string(pi)); }
             pi = pi + 1;
+        }
+    }
+    return out;
+}
+
+// str_recv_may_be: `e`, in a string method whose receiver is `rname`, may yield
+// the RECEIVER's own box — it is the bare receiver, or a string identity-method
+// call whose own receiver may be `rname` (`recvhb`, the receiver-handback set
+// this walks against). `remove_all`'s `return s.replace(needle, "")` is caught
+// once `string.replace` is in the set, though `remove_all` never returns `s`
+// bare, so raw RECVRET (bare-return only) would miss it. The method arm keys on
+// the string method name alone: a same-named struct method cannot match because
+// its receiver would not trace back to a string receiver.
+//
+// Coverage boundary (shared with expr_may_be_str_param): detection is by the
+// BARE name. An aliasing rebind — `var t = s; return t;` / `return
+// t.replace(needle, "")` — is not traced, so a callee written that way stays
+// out of the registry and its caller keeps the pre-existing unconditional
+// post-call free (the #8409 over-release survives for exactly that shape).
+// This NARROWS the UAF class rather than regressing it: the guard is only ever
+// stricter than freeing unconditionally, and a false positive is harmless — a
+// live temp cannot be recycled, so `result == temp` is reachable only on a
+// true hand-back. The struct side tracks the identical rebind-then-return hole.
+function str_recv_may_be(e: ast.Expr, rname: string, recvhb: string[]): boolean {
+    match (e) {
+        ast.ExprIdent(id) => { return id.name == rname; },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprFieldAccess(fa) => {
+                    return util.index_of_str(recvhb, "string." + fa.field) >= 0
+                        && str_recv_may_be(fa.obj, rname, recvhb);
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// str_recv_handback_of: "string.<method>" for every string method whose result
+// may be the RECEIVER's own box — returned bare (`replace`'s no-op fast path),
+// or through another such method (`remove_all` -> `replace`). A fixpoint,
+// because the chain grows one link at a time.
+pub function str_recv_handback_of(funcs: parser.FuncDecl[]): string[] {
+    var out: string[] = [];
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        for fn in funcs {
+            if (fn.receiver_name.len() == 0 || util.base_type_name(fn.receiver_type) != "string") { continue; }
+            var key: string = "string." + fn.name;
+            if (util.index_of_str(out, key) >= 0) { continue; }
+            var rets: ast.Expr[] = noesc_collect_rets(fn.body, []);
+            var hit: boolean = false;
+            for r in rets { if (str_recv_may_be(r, fn.receiver_name, out)) { hit = true; } }
+            if (hit) { out = out.append(key); changed = true; }
+        }
+    }
+    return out;
+}
+
+// expr_may_be_str_param: `e`, evaluated where `pname` is a string parameter,
+// may yield the parameter's OWN box — the bare param, a receiver-handback string
+// method called on such an expression (`recvhb`), or a call to a function that
+// hands its argument back at a position holding such an expression (`hb`,
+// str_handback_ret_of's own accumulator).
+//
+// `allow_bare` is false only at the TOP level (str_handback_ret_of's return), so
+// a bare `return s` does NOT register the param as a call-handback: a bare
+// return makes the param non-borrowable, so its fresh argument is never stashed
+// and there is no guarded release to complete — that shape keeps its
+// pre-existing unconditional free / sound leak, unchanged. Recursion re-enables
+// bare matching, which is the base case a method receiver (`s.replace(...)`) or
+// a transitive argument (`wrap(s)`) traces back to.
+function expr_may_be_str_param(e: ast.Expr, pname: string, recvhb: string[], hb: string[], allow_bare: boolean): boolean {
+    match (e) {
+        ast.ExprIdent(id) => { return allow_bare && id.name == pname; },
+        ast.ExprCall(c) => {
+            match (c.callee) {
+                ast.ExprFieldAccess(fa) => {
+                    return util.index_of_str(recvhb, "string." + fa.field) >= 0
+                        && expr_may_be_str_param(fa.obj, pname, recvhb, hb, true);
+                },
+                ast.ExprIdent(cid) => {
+                    var j: i32 = 0;
+                    while (j < c.args.len()) {
+                        if (util.index_of_str(hb, cid.name + "|" + util.i32_to_string(j)) >= 0
+                            && expr_may_be_str_param(c.args[j], pname, recvhb, hb, true)) { return true; }
+                        j = j + 1;
+                    }
+                    return false;
+                },
+                _ => { return false; }
+            }
+        },
+        _ => { return false; }
+    }
+    return false;
+}
+
+// str_handback_ret_of: the FnSigs.str_handback_ret registry — see the field
+// comment. A fixpoint because a hand-back can chain through another callee's
+// hand-back (`return wrap(s)` where `wrap` hands back its own param).
+pub function str_handback_ret_of(funcs: parser.FuncDecl[]): string[] {
+    var recvhb: string[] = str_recv_handback_of(funcs);
+    var out: string[] = [];
+    var changed: boolean = true;
+    while (changed) {
+        changed = false;
+        for fn in funcs {
+            var key: string = borrowable_key(fn);
+            var rets: ast.Expr[] = noesc_collect_rets(fn.body, []);
+            var pi: i32 = 0;
+            while (pi < fn.params.len()) {
+                var ent: string = key + "|" + util.i32_to_string(pi);
+                if (fn.params[pi].type_name == "string" && util.index_of_str(out, ent) < 0) {
+                    var hit: boolean = false;
+                    for r in rets {
+                        if (expr_may_be_str_param(r, fn.params[pi].name, recvhb, out, false)) { hit = true; }
+                    }
+                    if (hit) { out = out.append(ent); changed = true; }
+                }
+                pi = pi + 1;
+            }
         }
     }
     return out;
@@ -74203,7 +74615,7 @@ pub function consumed_arr_positions_of(funcs: parser.FuncDecl[]): string[] {
 //   "1"           an ARRAY parameter whose own buffer a direct
 //                 `<param>.append(v)` / `.set` grows
 //   "F:xs,ys"     a struct receiver or parameter whose NAMED array fields an
-//                 admitted in-place field append grows
+//                 admitted in-place field append or `.with` mutates
 //                 (field_append_inplace_sites_of)
 //
 // Naming the fields rather than carrying one may-grow BIT is what keeps the
@@ -76112,6 +76524,24 @@ while (fri < frets.len()) {
         out = credit_alias_sites(out, "STR:", fral);
     }
     fri = fri + 1;
+}
+
+    return out;
+}
+
+// reclaimable_str_handback_call: the #8409 credit — identical gate to
+// reclaimable_str_ret_call (the bound name must not escape), for the
+// handback-call-on-fresh-arg locals collect_str_handback_call_names found.
+function reclaimable_str_handback_call(body: ast.Stmt[], borrowable: string[], hbs: string[], recv_borrow: string[], out: string[]): string[] {
+var hbi: i32 = 0;
+while (hbi < hbs.len()) {
+    var hbnm: string = reclaim_site_name(hbs[hbi]);
+    var hbal: string[] = alias_bind_sites_of(body, hbnm, borrowable, recv_borrow, body, []);
+    if (!body_unsafe_for_alias(body, hbnm, borrowable, recv_borrow, hbal)) {
+        out = out.append("STR:" + hbs[hbi]);
+        out = credit_alias_sites(out, "STR:", hbal);
+    }
+    hbi = hbi + 1;
 }
 
     return out;

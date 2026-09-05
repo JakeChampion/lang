@@ -93,9 +93,9 @@ type Assembler struct {
 	// bss accumulates .bss (zero-initialised) contributions SEPARATELY from
 	// rodata, and is concatenated after it once layout is final. Folding the
 	// two in emission order is what made the ELF writer's trailing-zero trim
-	// useless: `.section .bss` blocks are emitted mid-stream, so the 64 MiB
-	// __fern_strbuf_data reservation had initialised .rodata after it and the
-	// whole run was written to the file (#6928). Kept at the tail, it is
+	// useless: `.section .bss` blocks are emitted mid-stream, so a large
+	// reservation had initialised .rodata after it and the whole run was
+	// written to the file (#6928). Kept at the tail, it is
 	// trailing zeros and the loader supplies it via p_memsz.
 	bss          []byte
 	textLabels   map[string]int
@@ -352,44 +352,6 @@ func AssembleProgramShared(src string, addrs SegmentAddrs, exportNames []string)
 		exportVAddr[n] = v
 	}
 	return text, rodata, relocs, exportVAddr, nil
-}
-
-// ParseProgram decodes the Intel-syntax program text into an assembler
-// holding instructions, labels and unresolved fixups — everything that does
-// not depend on where the image will be loaded. The BytesProgram* methods
-// then lay it out at a given address.
-//
-// The split matters because some outputs can only be computed AFTER the
-// layout: .eh_frame declares pcrel FDE pointers, so rendering it needs its own
-// load address, which follows from len(text). Mirrors arm64.ParseProgram.
-func ParseProgram(src string) (*Assembler, error) {
-	a := NewProgram()
-	for lineno, raw := range strings.Split(src, "\n") {
-		line := stripComment(raw)
-		// Peel any leading labels ("foo:" / ".Lx:").
-		for {
-			label, rest, ok := splitLabel(line)
-			if !ok {
-				break
-			}
-			a.Label(label)
-			line = strings.TrimSpace(rest)
-		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		var err error
-		if strings.HasPrefix(line, ".") {
-			err = a.Directive(line)
-		} else {
-			err = a.insn(line)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("line %d: %q: %w", lineno+1, strings.TrimSpace(raw), err)
-		}
-	}
-	return a, nil
 }
 
 // NewProgram is an empty program positioned in .text, to be built with
@@ -704,15 +666,6 @@ func (a *Assembler) prefixed(prefix byte, in Inst) error {
 		a.text[at], a.text[at+1] = 0x66, prefix
 	}
 	return nil
-}
-
-// insn parses and encodes one .text instruction line.
-func (a *Assembler) insn(line string) error {
-	in, err := ParseInst(line)
-	if err != nil {
-		return err
-	}
-	return a.Inst(in)
 }
 
 // Inst encodes one instruction into .text, the structured twin of the
