@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/jakechampion/lang/internal/ast"
 	"github.com/jakechampion/lang/internal/checker"
@@ -2103,6 +2104,19 @@ func appendUserDrop(ops []Op, info *checker.Info, typeName string) []Op {
 		Op{Kind: OpCallDirect, Str: fn, I32: 1})
 }
 
+// dropRegMu guards the two drop registries (LowerWith's genEnumDrops and
+// genTupleDrops) while the per-function lowering that fills them runs on
+// several goroutines. Every entry is a function of its key alone, so two
+// workers recording the same shape agree, and the post-pass worklist that
+// reads the registries runs after the workers have joined.
+var dropRegMu sync.Mutex
+
+func recordDrop[V any](reg map[string]V, mangled string, v V) {
+	dropRegMu.Lock()
+	reg[mangled] = v
+	dropRegMu.Unlock()
+}
+
 func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl, tupleReg map[string]ast.TupleType, ptrW int, dynRcSupported bool) (string, bool) {
 	switch v := t.(type) {
 	case ast.StructType:
@@ -2148,9 +2162,8 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 			if reg == nil {
 				return "", false
 			}
-			sub := substituteEnumDecl(ed, v.Args)
 			mangled := mangleEnumInst(v)
-			reg[mangled] = sub
+			recordDrop(reg, mangled, substituteEnumDecl(ed, v.Args))
 			return "__drop_enum_" + mangled, true
 		}
 		// A `Drop` impl needs glue even when nothing inside the enum does:
@@ -2165,7 +2178,7 @@ func dropFnNameFor(t ast.Type, info *checker.Info, reg map[string]*ast.EnumDecl,
 			return "", false
 		}
 		mangled := mangleTupleInst(v)
-		tupleReg[mangled] = v
+		recordDrop(tupleReg, mangled, v)
 		return "__drop_tuple_" + mangled, true
 	case ast.DynTraitType:
 		// A `dyn Trait` value owns its concrete `data` object (the erased
@@ -2409,7 +2422,7 @@ func arrElemStructDropName(elem ast.Type, info *checker.Info, reg map[string]*as
 	// unit calls) we bail to the safe flat path.
 	if tt, ok := elem.(ast.TupleType); ok && tupleReg != nil {
 		mangled := mangleTupleInst(tt)
-		tupleReg[mangled] = tt
+		recordDrop(tupleReg, mangled, tt)
 		return "__drop_arr_tuple_" + mangled, true
 	}
 	// Enum-element array (`E[]`): each element is a pointer to an enum box
