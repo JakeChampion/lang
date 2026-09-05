@@ -465,6 +465,13 @@ pub struct Arm64Asm {
     code: i32[],
     lab_names: string[],
     lab_offs: i32[],
+    // Label lookup by name hashes into arm64_label_buckets() chains:
+    // lab_head[b] is the first label in bucket b, lab_next[i] the label after
+    // i in its chain, lab_tail[b] the chain's last so a new label joins it
+    // without a walk. The twin of X86Asm's table (#6911).
+    lab_head: i32[],
+    lab_next: i32[],
+    lab_tail: i32[],
     fix_offs: i32[],
     fix_names: string[],
     fix_kinds: i32[],
@@ -477,25 +484,77 @@ pub struct Arm64Asm {
 
 // arm64_asm_new returns an empty assembler state.
 function arm64_asm_new(): Arm64Asm {
-    return Arm64Asm { code: [], lab_names: [], lab_offs: [], fix_offs: [], fix_names: [], fix_kinds: [], unres: [], oor: [] };
+    return Arm64Asm { code: [], lab_names: [], lab_offs: [], lab_head: arm64_empty_buckets(), lab_next: [], lab_tail: arm64_empty_buckets(),
+        fix_offs: [], fix_names: [], fix_kinds: [], unres: [], oor: [] };
 }
 
-// arm64_asm_label records `name` at the current code offset.
+function arm64_label_buckets(): i32 { return 4093; }
+
+// arm64_name_bucket hashes a label name to a bucket: the accumulator is
+// masked to 23 bits each step so `h * 131` stays in i32, and reduced once at
+// the end.
+function arm64_name_bucket(name: string): i32 {
+    var h: i32 = 0;
+    var i: i32 = 0;
+    var n: i32 = name.len();
+    while (i < n) {
+        h = ((h * 131) + (name[i] as i32)) & 8388607;
+        i = i + 1;
+    }
+    return h % arm64_label_buckets();
+}
+
+function arm64_empty_buckets(): i32[] {
+    var b: i32[] = [];
+    var i: i32 = 0;
+    var n: i32 = arm64_label_buckets();
+    while (i < n) {
+        b = b.append(0 - 1);
+        i = i + 1;
+    }
+    return b;
+}
+
+// arm64_asm_label records `name` at the current code offset and links it
+// to the end of its bucket's chain, so a name defined twice resolves to its
+// first definition exactly as the table scan it replaces did. Each chain
+// array is lifted out of the struct before its `.with`, so the write lands
+// in place instead of cloning the table — the same discipline as the code
+// buffer's patches.
 function arm64_asm_label(own a: Arm64Asm, name: string): Arm64Asm {
+    var at: i32 = a.lab_names.len();
+    var b: i32 = arm64_name_bucket(name);
+    var prev: i32 = a.lab_tail[b];
     a = Arm64Asm { ...a, lab_names: a.lab_names.append(name) };
     a = Arm64Asm { ...a, lab_offs: a.lab_offs.append(a.code.len()) };
-    return a;
+    a = Arm64Asm { ...a, lab_next: a.lab_next.append(0 - 1) };
+    if (prev < 0) {
+        var head: i32[] = a.lab_head;
+        a = Arm64Asm { ...a, lab_head: [] };
+        head = head.with(b, at);
+        a = Arm64Asm { ...a, lab_head: head };
+    } else {
+        var next: i32[] = a.lab_next;
+        a = Arm64Asm { ...a, lab_next: [] };
+        next = next.with(prev, at);
+        a = Arm64Asm { ...a, lab_next: next };
+    }
+    var tail: i32[] = a.lab_tail;
+    a = Arm64Asm { ...a, lab_tail: [] };
+    tail = tail.with(b, at);
+    return Arm64Asm { ...a, lab_tail: tail };
 }
 
 // arm64_asm_label_off returns the byte offset of label `name`, or -1 if it
-// has not been placed yet.
+// has not been placed yet. Walks the name's bucket chain: the whole-table
+// scan it replaces ran once per branch and again per resolve.
 pub function arm64_asm_label_off(a: Arm64Asm, name: string): i32 {
-    var i: i32 = 0;
-    while (i < a.lab_names.len()) {
+    var i: i32 = a.lab_head[arm64_name_bucket(name)];
+    while (i >= 0) {
         if (a.lab_names[i] == name) {
             return a.lab_offs[i];
         }
-        i = i + 1;
+        i = a.lab_next[i];
     }
     return 0 - 1;
 }
