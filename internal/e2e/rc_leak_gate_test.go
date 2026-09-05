@@ -71,15 +71,12 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
 	// so the totals are not comparable with the one body that shared a map
 	// across all of them. What IS comparable is shape against shape, which is
-	// the point — the two bound forms and the miss reclaim completely under the
-	// #8276 seam retain + projection credit — which they now do, so only the
-	// two that resist are still pinned here. The i32-key and delete-miss cases
-	// are gone from these tables entirely (absent means zero); the bound
-	// reassign holds 16 B per delete HIT on the two boxing ABIs, which is the
-	// deleted entry's key cell that __map_delete_keyed_impl never releases,
-	// not this bug — the miss row proves it, at a flat 0.
+	// the point: four of the five now reclaim completely and are absent from
+	// these tables entirely (absent means zero). Only the projected SELF-assign
+	// resists — `sm = sm.without(k).0` taints `sm` out of freeEligible, so the
+	// slot takes a flat dec and a flat drop instead of a map slot drop, and the
+	// whole table goes with it (#8434).
 	"map_delete_projected_self_assign_churn_free": 128000,
-	"map_delete_destructure_churn_free":           112000,
 	"map_iter_escape_churn_free":                  32000,
 	"map_iter_string_kv_retain_churn_free":        19200,
 	"matchexpr_alias_array_no_free":               1600,
@@ -114,15 +111,12 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
 	// so the totals are not comparable with the one body that shared a map
 	// across all of them. What IS comparable is shape against shape, which is
-	// the point — the two bound forms and the miss reclaim completely under the
-	// #8276 seam retain + projection credit — which they now do, so only the
-	// two that resist are still pinned here. The i32-key and delete-miss cases
-	// are gone from these tables entirely (absent means zero); the bound
-	// reassign holds 16 B per delete HIT on the two boxing ABIs, which is the
-	// deleted entry's key cell that __map_delete_keyed_impl never releases,
-	// not this bug — the miss row proves it, at a flat 0.
+	// the point: four of the five now reclaim completely and are absent from
+	// these tables entirely (absent means zero). Only the projected SELF-assign
+	// resists — `sm = sm.without(k).0` taints `sm` out of freeEligible, so the
+	// slot takes a flat dec and a flat drop instead of a map slot drop, and the
+	// whole table goes with it (#8434).
 	"map_delete_projected_self_assign_churn_free": 144000,
-	"map_delete_destructure_churn_free":           128000,
 	"map_iter_escape_churn_free":                  32000,
 	"map_iter_string_kv_retain_churn_free":        19200,
 	"matchexpr_alias_array_no_free":               1600,
@@ -170,15 +164,12 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
 	// so the totals are not comparable with the one body that shared a map
 	// across all of them. What IS comparable is shape against shape, which is
-	// the point — the two bound forms and the miss reclaim completely under the
-	// #8276 seam retain + projection credit — which they now do, so only the
-	// two that resist are still pinned here. The i32-key and delete-miss cases
-	// are gone from these tables entirely (absent means zero); the bound
-	// reassign holds 16 B per delete HIT on the two boxing ABIs, which is the
-	// deleted entry's key cell that __map_delete_keyed_impl never releases,
-	// not this bug — the miss row proves it, at a flat 0.
+	// the point: four of the five now reclaim completely and are absent from
+	// these tables entirely (absent means zero). Only the projected SELF-assign
+	// resists — `sm = sm.without(k).0` taints `sm` out of freeEligible, so the
+	// slot takes a flat dec and a flat drop instead of a map slot drop, and the
+	// whole table goes with it (#8434).
 	"map_delete_projected_self_assign_churn_free":    104000,
-	"map_delete_destructure_churn_free":              96000,
 	"map_iter_escape_churn_free":                     32000,
 	"map_iter_string_kv_retain_churn_free":           19200,
 	"map_keys_values_header_churn_free":              16000,
