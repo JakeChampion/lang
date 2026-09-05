@@ -178,10 +178,10 @@ function main(): i32 {
 		// wrong borrow degrades to a leak). @noinline keeps the call
 		// boundary real — inlined, the return becomes an assignment that
 		// takes its own transfer inc and the case goes vacuous.
-		// Verified non-vacuous: with returned[y] and bindingConfinedToArm
-		// knocked out of walk 3 this fails under free-on on x86-64, arm64
-		// AND wasm (recycled churn read), and passes with the guards
-		// restored.
+		// Verified non-vacuous: with forinElemReturnsConfined and
+		// bindingConfinedToArm knocked out of walk 3 this fails under
+		// free-on on x86-64, arm64 AND wasm (recycled churn read), and
+		// passes with the guards restored.
 		name: "forin_elem_escape_return_owned_container",
 		src: `
 struct S { name: string, fields: string[] }
@@ -239,6 +239,92 @@ function use_returned(): i32 {
 function main(): i32 {
     var c: i32 = use_returned();
     return (c - 1) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A projection of the element RETURNED mid-loop (#8178): `return
+		// sd.name` keeps the element borrowed — the string leaves with the
+		// Return's own transfer inc — and this is the runtime shape where
+		// that inc is load-bearing: the iterand is an owned CALL RESULT, so
+		// the sweep at the in-loop return deep-frees the container inside
+		// the callee, elements and all, while the caller reads the field it
+		// was handed. @noinline keeps the call boundary real. Content compare
+		// after same-size churn recycles the freelist; the underflow counter
+		// catches the field being released under the caller.
+		name: "forin_elem_borrow_return_string_field",
+		src: `
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+                              S{ name: mkstr("b"), fields: [] }]; }
+@noinline function pick_name(): string {
+    for sd in mks() {
+        if (sd.fields.len() == 1) { return sd.name; }
+    }
+    return mkstr("z");
+}
+function use_name(): i32 {
+    var hit: string = pick_name();
+    var churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("g")] },
+                      S{ name: mkstr("y"), fields: [] }];
+    var ok: i32 = 0;
+    if (hit == "aaaaaaaaaa!") { ok = 1; }
+    return ok + churn.len() - 2;
+}
+function main(): i32 {
+    return (use_name() - 1) + __rc_underflow_count();
+}`,
+	},
+	{
+		// The ARRAY-FIELD twin: `return sd.fields` hands back a buffer the
+		// freed container's element also owned. The transfer inc is what
+		// keeps it at rc 1 for the caller once the element's deep drop
+		// releases its own unit; the element read and length after churn
+		// prove the buffer and its string survived.
+		name: "forin_elem_borrow_return_array_field",
+		src: `
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("ffffffffff")] },
+                              S{ name: mkstr("b"), fields: [] }]; }
+@noinline function pick_fields(): string[] {
+    for sd in mks() {
+        if (sd.fields.len() == 1) { return sd.fields; }
+    }
+    return [];
+}
+function use_fields(): i32 {
+    var hit: string[] = pick_fields();
+    var churn: S[] = [S{ name: mkstr("zzzzzzzzzz"), fields: [mkstr("gggggggggg")] },
+                      S{ name: mkstr("y"), fields: [] }];
+    var ok: i32 = 0;
+    if (hit.len() == 1 && hit[0] == "ffffffffff!") { ok = 1; }
+    return ok + churn.len() - 2;
+}
+function main(): i32 {
+    return (use_fields() - 1) + __rc_underflow_count();
+}`,
+	},
+	{
+		// A SCALAR read through the element returned mid-loop: nothing
+		// pointer-shaped leaves, so the borrow holds with no retain at all,
+		// and the sweep at that return releases the owned container under
+		// the borrowed element after the read. 1 + 1 (a `-1` miss) = 1.
+		name: "forin_elem_borrow_return_scalar",
+		src: `
+struct S { name: string, fields: string[] }
+function mkstr(p: string): string { return p + "!"; }
+function mks(): S[] { return [S{ name: mkstr("aaaaaaaaaa"), fields: [mkstr("f")] },
+                              S{ name: mkstr("b"), fields: [] }]; }
+@noinline function count_fields(k: i32): i32 {
+    for sd in mks() {
+        if (sd.name.len() == k) { return sd.fields.len(); }
+    }
+    return 0 - 1;
+}
+function main(): i32 {
+    var c: i32 = count_fields(11) + count_fields(2) + count_fields(99);
+    return (c - 0) + __rc_underflow_count();
 }`,
 	},
 	{

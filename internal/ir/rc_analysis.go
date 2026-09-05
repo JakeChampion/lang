@@ -6239,8 +6239,9 @@ func (b *builder) computeBorrowedAliases() {
 	// binding `var y = __foreach_iter_N[__foreach_idx_N]`
 	// (ast.DesugarForEachArray) reads an element the iterand array owns.
 	// When every use of y is a read THROUGH the value (bindingConfinedToArm
-	// over the whole body — a bind, return, store, capture, or unproven call
-	// all refuse), y needs no reference of its own: the element stays alive
+	// over the whole body — a bind, store, capture, or unproven call all
+	// refuse; a return is admitted only in the shapes forinElemReturnsConfined
+	// names), y needs no reference of its own: the element stays alive
 	// because the container's buffer does.
 	//
 	// The container here is the synthetic iter local, which user code cannot
@@ -6289,7 +6290,7 @@ func (b *builder) computeBorrowedAliases() {
 		if !b.isOwnedRcLocal(x) || !b.isOwnedRcLocal(y) {
 			return true
 		}
-		if reassigned[x] || reassigned[y] || returned[y] || scrutinee[x] || scrutinee[y] {
+		if reassigned[x] || reassigned[y] || scrutinee[x] || scrutinee[y] {
 			return true
 		}
 		if b.rc.movedLocals[x] || b.rc.movedLocals[y] {
@@ -6304,7 +6305,7 @@ func (b *builder) computeBorrowedAliases() {
 		if !needsRcIncOnAlias(v.Init, b) || b.isOwnedContainerRead(v.Init) {
 			return true
 		}
-		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) {
+		if !b.bindingConfinedToArm(b.fn.Body, y, v.Type) || !b.forinElemReturnsConfined(y) {
 			return true
 		}
 		b.rc.borrowedAlias[y] = true
@@ -6312,6 +6313,95 @@ func (b *builder) computeBorrowedAliases() {
 		b.rc.borrowSources[x] = true
 		return true
 	})
+}
+
+// forinElemReturnsConfined reports whether every `return` that mentions the
+// for-in element y hands out nothing that outlives the iterand (#8178).
+// bindingConfinedToArm reads a field or element projection of y as a borrow
+// wherever it stands; a return needs this second look because its value
+// leaves the frame, and the exit sweep on that path releases the iterand.
+//
+// y may appear only projected (the target of a field access or the base of
+// an index), and the returned value must then take one of two shapes:
+//
+//   - a plain projection chain rooted at y (`sd.f`, `sd.f.g`, `sd.xs[i]`) of
+//     an rc-tracked type, which the Return lowering retains on its own
+//     (needsRcIncOnAlias) — the credit returnedCountedProjection gives a
+//     borrowed parameter, under the same returnedAliasIsRetained refusals
+//     (pair-form and TRMC rewrite the return before that inc is reached);
+//   - a value of a non-pointer type (`sd.fields.len()`, `sd.a == k`): nothing
+//     pointer-shaped leaves, and each sub-expression is the transient read it
+//     would be in statement position.
+//
+// Everything else stays refused: y itself (move-on-return would hand the
+// caller an uncounted element) and any other pointer-typed value built around
+// a projection of y — a fresh aggregate, a variant construction, a call
+// result, a slice view — whose counting this rule has not shown.
+func (b *builder) forinElemReturnsConfined(y string) bool {
+	retained := returnedAliasIsRetained(b.fn, b.pairForm, b.trmcFuncs)
+	ok := true
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		r, isRet := n.(*ast.Return)
+		if !isRet || r.Value == nil || !ok || !exprMentionsIdent(r.Value, y) {
+			return ok
+		}
+		switch {
+		case !identOnlyProjected(r.Value, y):
+			ok = false
+		case needsRcIncOnAlias(r.Value, b):
+			ok = retained && projectionRoot(r.Value) == y
+		default:
+			t := b.exprType(r.Value)
+			ok = t != nil && !ast.IsPointerType(t)
+		}
+		return ok
+	})
+	return ok
+}
+
+// identOnlyProjected reports whether every mention of `name` in e is the
+// target of a field access or the base of an index — read through, never
+// handed on whole.
+func identOnlyProjected(e ast.Expr, name string) bool {
+	projected := map[*ast.Ident]bool{}
+	ast.Walk(e, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FieldAccess:
+			if id, ok := x.Target.(*ast.Ident); ok && id.Name == name {
+				projected[id] = true
+			}
+		case *ast.Index:
+			if id, ok := x.Array.(*ast.Ident); ok && id.Name == name {
+				projected[id] = true
+			}
+		}
+		return true
+	})
+	ok := true
+	ast.Walk(e, func(n ast.Node) bool {
+		if id, isID := n.(*ast.Ident); isID && id.Name == name && !projected[id] {
+			ok = false
+		}
+		return ok
+	})
+	return ok
+}
+
+// projectionRoot returns the ident a chain of field accesses and index reads
+// is rooted at, or "" when e is anything else.
+func projectionRoot(e ast.Expr) string {
+	for {
+		switch x := e.(type) {
+		case *ast.FieldAccess:
+			e = x.Target
+		case *ast.Index:
+			e = x.Array
+		case *ast.Ident:
+			return x.Name
+		default:
+			return ""
+		}
+	}
 }
 
 // -------- #4873: cross-function in-place array growth containment ---------
