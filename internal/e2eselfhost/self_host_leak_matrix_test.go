@@ -323,6 +323,31 @@ function round(i: i32): i32 {
 }
 function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
+		// The struct-array twin of the binder cell, and its returning sibling
+		// (#8178): a body that returns a scalar read through the element is a
+		// read of it, so the container keeps its deep credit either way.
+		leakCell{name: "for_in_struct_elem__loop__read", src: `struct S { name: string, fields: string[] }
+function mkstr(a: string): string { return a + "!"; }
+function round(i: i32): i32 {
+    var xs: S[] = [S{ name: mkstr("a"), fields: [mkstr("f")] }, S{ name: mkstr("bb"), fields: [] }];
+    var t: i32 = 0;
+    for sd in xs { t = (t + sd.name.len() + sd.fields.len()) % 101; }
+    return t;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
+		leakCell{name: "for_in_struct_elem__loop__return_scalar", src: `struct S { name: string, fields: string[] }
+function mkstr(a: string): string { return a + "!"; }
+function count(xs: S[], k: i32): i32 {
+    for sd in xs { if (sd.name.len() == k) { return sd.fields.len(); } }
+    return 0 - 1;
+}
+function round(i: i32): i32 {
+    var xs: S[] = [S{ name: mkstr("a"), fields: [mkstr("f")] }, S{ name: mkstr("bb"), fields: [] }];
+    return (count(xs, 2) + count(xs, 3) + 2) % 101;
+}
+function main(): i32 { var acc: i32 = 0; var i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
+`},
 		// A FIELD READ as the origin — the #7343 "stolen" shape: a second
 		// reference to a buffer the owner's deep drop also releases.
 		leakCell{name: "field_read_arr__fnscope__read", src: `struct P { xs: i32[], k: i32 }

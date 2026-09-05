@@ -65,14 +65,15 @@
 # new shape is ~349 s. Entry is that with the audit's own 1.5x pessimism band —
 # and note the old 460 was already UNDER the 805.7 s it was carrying.
 TestSelfHostModloadPerModuleWholeCompilerX86_64 525
-# The whole compiler's 21 modules emitted twice, one process each (with and
-# without -assume-eligible), and compared byte-for-byte. It carried NO entry —
-# so LPT ranked ~10 minutes of work as 1 s — and the shard holding it ran 13 min
-# on run 31758666459 (482 s) and blew the 18-minute timeout on run 31759653118
-# (738 s), where the partition happened to pair it with a heavier complement.
-# Weighted at the slower of the two: it varies by ~50% run to run, so give it
-# the pessimistic bucket.
-TestSelfHostAssumeEligibleByteIdenticalX86_64 738
+# The whole compiler's 56 planned units emitted by the checked per-process
+# route (four at a time) and compared byte-for-byte with one -assume-eligible
+# emit-all of the same windows, then linked and smoke-run. It once carried NO
+# entry — so LPT ranked ~10 minutes of work as 1 s — and the shard holding it
+# blew the 18-minute timeout on run 31759653118 (738 s). Measured locally
+# 2026-09-04 at 377 s (255 s per-process on 4 workers + 69 s emit-all) on a
+# shared 4-core box, against 475 s for the shape it replaced; entry is that
+# with the audit's 1.5x band. It varies ~50% run to run, so keep it pessimistic.
+TestSelfHostAssumeEligibleByteIdenticalX86_64 570
 # Two warm drivers (asm_ir_run + wasm_ir_run), 14 subtests that are ~0.01s each —
 # the cost is almost entirely the driver restore.
 TestSelfHostFnArrayFieldGateX86_64 12
@@ -152,8 +153,16 @@ TestSelfHostSSALiftCoverageScan 6
 TestSelfHostExportAttributeCompiles 6
 TestSelfHostStructArrElemDropIRX86_64 6
 TestSelfHostParserX86_64 5
-TestSelfHostIRPipelineProbe 4
 TestSelfHostStructFreshRetFieldIRX86_64 4
+# The two `-ir-probe` gates over a stdlib closure (std/tcp with every std/ and
+# core/ module vendored; the whole stdlib under -no-treeshake). The probe
+# itself is ~2-4 s since #8204 built the eligibility registries once per
+# report (it was 83 s and 139 s on run 33735246535); what is left is the
+# driver build, which these entries carry against a cold cache: measured
+# locally 2026-09-04 at 31.7 s and 29.6 s test-total, weighted with the
+# audit's 1.5x band.
+TestSelfHostIRPipelineProbe 48
+TestSelfHostPlatformBuiltinLowers 45
 # Saturating arithmetic (#5542): ~30 subtests each, one warm driver apiece —
 # the x86 leg gcc-links every subtest, the wasm leg wasmtime-runs every subtest.
 TestSelfHostSaturatingX86IR 25
@@ -228,10 +237,13 @@ TestSelfHostFrontEndNumericLiteralCodes 60
 TestSelfHostFmtCorpusParityX86_64 60
 
 # The two host-independent fmt legs: they drive fern.fern through the native
-# `-interp` rather than linking a driver, so no gcc and no x86-64 host. The 28 s
-# this entry was set from was measured LOCALLY; on the runner it is 192 s, and
-# the interp is why — each of the 32 parity cases re-parses and re-checks the
-# whole self-host source before formatting a small file. 290 is that with the
-# audit's 1.5x pessimism band, the number `ci-test-weights check` prints.
-TestSelfHostFmtWrittenFormViaInterp 290
-TestSelfHostFmtWriteAndDiffViaInterp 15
+# `-interp` rather than linking a driver, so no gcc and no x86-64 host. Every
+# interp spawn re-parses and re-checks the whole self-host source (~6 s here)
+# before it formats anything, so the cost is the SPAWN COUNT: the written-form
+# leg formats all 54 cases in two spawns (`-fmt -w FILE...`, once per
+# idempotence pass) — 23 s measured locally 2026-09-04 against 432 s for one
+# spawn per case per pass — and the write/diff leg is nine spawns (29.5 s
+# locally, same day). Both entries are the local number with the audit's 1.5x
+# band; the runner ran the old shape at ~0.4x this machine.
+TestSelfHostFmtWrittenFormViaInterp 35
+TestSelfHostFmtWriteAndDiffViaInterp 45

@@ -155,10 +155,10 @@ function main(): i32 { return scan_nested(mks()); }`)
 // programs still exit 0 on all three backends (escape sites take their own
 // transfer inc, and the one uncounted route, move-on-return, is absorbed as
 // a LEAK by the caller's may-alias-result flat dec). Per-case coverage,
-// also measured by knockout: returned falls to the returned[y]+confinement
-// pair, bound_alias to walk 2's role marking, stored_into_array to
-// movedLocals, match_scrutinee to scrutinee[y], reassigned_elem to
-// reassigned[y].
+// also measured by knockout: returned falls to forinElemReturnsConfined (a
+// bare y in a return value) with confinement behind it, bound_alias to walk
+// 2's role marking, stored_into_array to movedLocals, match_scrutinee to
+// scrutinee[y], reassigned_elem to reassigned[y].
 func TestForinElemBorrowRefusesEscapes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -209,6 +209,153 @@ function main(): i32 { return scan_ok(mks()); }`)
 			ei, _, _ := rcTraffic(ip, "esc")
 			if ei <= oi {
 				t.Errorf("escaping element should keep its retain: esc inc=%d, confined scan inc=%d", ei, oi)
+			}
+		})
+	}
+}
+
+// A return that reads a PROJECTION of the element (#8178): the field the
+// scanners over the self-host's struct table hand back — `return
+// sd.enum_owner`, `return sd.fields.len()` — is a read of the element, not an
+// escape of it. An rc-typed projection takes the Return lowering's own
+// transfer inc; a scalar carries nothing out. Either way the element keeps
+// the borrow, so each for-in spelling must cost exactly its index-spelling
+// sibling plus the iterand's retain and its release at each of the two
+// exits (the in-loop return and the fallback), with no drop calls at all.
+func TestForinElemBorrowReturnsProjection(t *testing.T) {
+	cases := []struct {
+		name, ret, typ, fallback string
+	}{
+		{"string_field", "sd.name", "string", `""`},
+		{"array_field", "sd.fields", "string[]", "[]"},
+		{"element_of_field", "sd.fields[0]", "string", `""`},
+		{"scalar_via_method", "sd.fields.len()", "i32", "0"},
+		{"scalar_compare", "sd.name == k", "boolean", "false"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ip := lowerForTest(t, forinScanPrelude+`
+function pick_forin(xs: S[], k: string): `+tc.typ+` {
+    for sd in xs { if (sd.fields.len() == 1) { return `+tc.ret+`; } }
+    return `+tc.fallback+`;
+}
+function pick_index(xs: S[], k: string): `+tc.typ+` {
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i].fields.len() == 1) { return `+strings.ReplaceAll(tc.ret, "sd", "xs[i]")+`; }
+        i = i + 1;
+    }
+    return `+tc.fallback+`;
+}
+function main(): i32 {
+    var a: `+tc.typ+` = pick_forin(mks(), "a");
+    var b: `+tc.typ+` = pick_index(mks(), "a");
+    return 0;
+}`)
+			fi, fd, fdr := rcTraffic(ip, "pick_forin")
+			ii, id, idr := rcTraffic(ip, "pick_index")
+			if fi != ii+1 || fd != id+2 || fdr != idr {
+				t.Errorf("for-in return of a projection should cost the index spelling plus the iterand's retain and two exit releases: forin inc=%d dec=%d drops=%d, index inc=%d dec=%d drops=%d", fi, fd, fdr, ii, id, idr)
+			}
+			if fdr != 0 {
+				t.Errorf("returning a projection should leave no drop calls, got %d", fdr)
+			}
+		})
+	}
+}
+
+// The same return over the other two iterand classes: a LOCAL container and
+// a CALL-RESULT container, both moved into the iterand. The only retain left
+// in either is the Return's transfer inc on the field it hands back — the
+// element itself takes none — and the drop calls are the container's own
+// exit releases, exactly the ones the index spelling of the local pays.
+func TestForinElemBorrowReturnsFieldLocalAndCallIterands(t *testing.T) {
+	ip := lowerForTest(t, forinScanPrelude+`
+function pick_local(k: string): string {
+    var xs: S[] = mks();
+    for sd in xs { if (sd.name == k) { return sd.name; } }
+    return "";
+}
+function pick_call(k: string): string {
+    for sd in mks() { if (sd.name == k) { return sd.name; } }
+    return "";
+}
+function pick_index(k: string): string {
+    var xs: S[] = mks();
+    var i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i].name == k) { return xs[i].name; }
+        i = i + 1;
+    }
+    return "";
+}
+function main(): i32 { return pick_local("a").len() + pick_call("bb").len() + pick_index("a").len(); }`)
+	_, _, idr := rcTraffic(ip, "pick_index")
+	for _, fn := range []string{"pick_local", "pick_call"} {
+		incs, _, drops := rcTraffic(ip, fn)
+		if incs != 1 || drops != idr {
+			t.Errorf("%s: only the returned field's transfer inc and the container's exit drops should remain: inc=%d drops=%d (index spelling drops=%d)", fn, incs, drops, idr)
+		}
+	}
+}
+
+// Each return shape that hands out more than a retained projection must
+// refuse the borrow: a bare element passed on (even to a callee that would
+// borrow it in statement position — the return-position argument-death
+// rule is what the refusal keeps clear of), and any pointer-typed value
+// BUILT AROUND a projection, whose counting the rule does not claim. Same
+// oracle as TestForinElemBorrowRefusesEscapes: strictly more rc_inc than the
+// confined sibling.
+func TestForinElemBorrowRefusesReturnEscapes(t *testing.T) {
+	cases := []struct {
+		name string
+		fn   string
+	}{
+		{"bare_element_as_call_arg", `
+@noinline function note(s: S): i32 { return s.fields.len(); }
+function esc(xs: S[]): i32 {
+    for sd in xs { if (sd.fields.len() == 1) { return note(sd); } }
+    return 0;
+}`},
+		{"fresh_struct_around_field", `
+function esc(xs: S[]): S {
+    for sd in xs { if (sd.fields.len() == 1) { return S{ name: sd.name, fields: [] }; } }
+    return mk("z");
+}`},
+		{"variant_around_field", `
+function esc(xs: S[]): Option[string] {
+    for sd in xs { if (sd.fields.len() == 1) { return Some(sd.name); } }
+    return None;
+}`},
+		{"concat_of_field", `
+function esc(xs: S[]): string {
+    for sd in xs { if (sd.fields.len() == 1) { return sd.name + "!"; } }
+    return "";
+}`},
+		{"tuple_of_field", `
+function esc(xs: S[]): (string, i32) {
+    for sd in xs { if (sd.fields.len() == 1) { return (sd.name, 1); } }
+    return ("", 0);
+}`},
+		{"view_of_field", `
+function esc(xs: S[]): [string] {
+    for sd in xs { if (sd.fields.len() == 1) { return sd.fields[0:1]; } }
+    return xs[0].fields[0:0];
+}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ip := lowerForTest(t, forinScanPrelude+tc.fn+`
+function scan_ok(xs: S[]): i32 {
+    var n: i32 = 0;
+    for sd in xs { n = n + sd.fields.len() + sd.name.len(); }
+    return n;
+}
+function main(): i32 { return scan_ok(mks()); }`)
+			oi, _, _ := rcTraffic(ip, "scan_ok")
+			ei, _, _ := rcTraffic(ip, "esc")
+			if ei <= oi {
+				t.Errorf("element handed out through the return should keep its retain: esc inc=%d, confined scan inc=%d", ei, oi)
 			}
 		})
 	}

@@ -3748,7 +3748,7 @@ func exprRefsTainted(e ast.Expr, tainted map[string]bool) bool {
 // `slot` can place a TAINTED (parameter-derived) heap value into that slot — the
 // inverse of exprNoParamEscape, specialized to a concrete taint set and aware of
 // per-callee escape facts.
-func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info *checker.Info, variantPayloads map[string][]ast.Type, escapes map[string][]bool) bool {
+func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info *checker.Info, variantPayloads map[string][]ast.Type, escapes *summaryTable[[]bool]) bool {
 	if isDefinitelyScalar(slot) {
 		return false // a scalar slot cannot carry a heap pointer
 	}
@@ -3827,7 +3827,7 @@ func taintedReachesSlot(e ast.Expr, slot ast.Type, tainted map[string]bool, info
 		// User function / method: a tainted argument reaches the result only if
 		// the callee itself escapes that argument position. Unknown callees
 		// (absent from `escapes`) are conservative: a tainted arg reaches out.
-		ce, known := escapes[id.Name]
+		ce, known := escapes.get(id.Name)
 		for i, a := range x.Args {
 			if !exprRefsTainted(a, tainted) {
 				continue
@@ -3883,7 +3883,7 @@ func returnedCountedProjection(e ast.Expr, tainted map[string]bool, retained boo
 // returns, and tainted whole-value arguments passed to a retain sink or an
 // escaping `own` position. `retained` is returnedAliasIsRetained for `fn`, which
 // excuses a returned projection (returnedCountedProjection).
-func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, variantPayloads map[string][]ast.Type, escapes map[string][]bool, retained bool) bool {
+func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, variantPayloads map[string][]ast.Type, escapes *summaryTable[[]bool], retained bool) bool {
 	tainted := map[string]bool{pname: true}
 	// Declared types of the slots an assignment can write, for the same
 	// slot-typed reachability test a `var` initialiser gets: `x = f(p)`
@@ -3957,7 +3957,7 @@ func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, varian
 			}
 			retains := calleeRetainsAnyArg(id.Name)
 			ownFlags := info.OwnFuncs[id.Name]
-			ce, known := escapes[id.Name]
+			ce, known := escapes.get(id.Name)
 			for i, a := range x.Args {
 				aid, isIdent := a.(*ast.Ident)
 				if !isIdent || !tainted[aid.Name] {
@@ -3993,7 +3993,7 @@ func paramEscapesInFn(fn *ast.FuncDecl, pname string, info *checker.Info, varian
 // disqualifies the local. What remains is born fresh and only ever read on the
 // way out — its value can never come to alias a parameter. Fields being
 // immutable after construction (E048) means no `r.f = param` backdoor either.
-func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads map[string][]ast.Type, q map[string]bool) map[string]bool {
+func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads map[string][]ast.Type, q *summaryTable[bool]) map[string]bool {
 	if fn.Body == nil {
 		return nil
 	}
@@ -4233,7 +4233,7 @@ func isDefinitelyScalar(t ast.Type) bool {
 // `slot` can never place a parameter's heap value into that slot. `q` is the
 // in-progress greatest-fixpoint set from findReturnsNoParamEscape. Any shape it
 // can't prove safe returns false (conservative — preserves the prior safe-leak).
-func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPayloads map[string][]ast.Type, q map[string]bool, freshLocals map[string]bool) bool {
+func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPayloads map[string][]ast.Type, q *summaryTable[bool], freshLocals map[string]bool) bool {
 	// A definitely-scalar destination cannot hold a heap pointer at all, so
 	// whatever fills it carries no param heap. (Generic / unknown slot types are
 	// NOT assumed scalar — they fall through and must be proven structurally.)
@@ -4415,7 +4415,7 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		// User function / method call: its result can't contain OUR args iff the
 		// callee itself never lets a param escape. Builtins / locals / unknowns
 		// (absent from q) are rejected.
-		return q[id.Name]
+		return q.at(id.Name)
 	}
 	return false
 }

@@ -91,27 +91,25 @@ function main(): i32 {
     // addv b3, v5.16b -> 0x4E31B8A3 -> A3 B8 31 4E
     var l0: Arm64Asm = arm64_gas_assemble("addv b3, v5.16b");
     if (l0.code[0] != 163 || l0.code[1] != 184 || l0.code[2] != 49 || l0.code[3] != 78) { return 13; }
-    // An arrangement the byte-lane encoders cannot express must be REFUSED,
-    // not folded into the byte-lane encoding — that would be a different
-    // instruction on the same bytes. Same for a mismatched pair and for a
-    // destination of the wrong shape.
-    if (arm64_gas_bad_vec_token("cnt", "v0.4h, v0.4h").len() == 0) { return 14; }
-    if (arm64_gas_bad_vec_token("cnt", "v0.8b, v1.16b").len() == 0) { return 15; }
-    // addv h0, v0.8h is a real instruction, and the across-lanes class encodes
-    // it (llvm-mc: 00 b8 71 4e). What must still be refused is a destination
-    // whose element class the arrangement does not name: nothing in the
-    // encoding says how wide the result is, so addv b0, v0.8h would name a
-    // register the instruction does not write. A .2s source has no
-    // across-lanes form at all.
-    var l1: Arm64Asm = arm64_gas_assemble("addv h0, v0.8h");
-    if (l1.code[0] != 0 || l1.code[1] != 184 || l1.code[2] != 113 || l1.code[3] != 78) { return 21; }
-    if (arm64_gas_bad_vec_token("addv", "b0, v0.8h").len() == 0) { return 22; }
-    if (arm64_gas_bad_vec_token("addv", "s0, v0.2s").len() == 0) { return 23; }
-    if (arm64_gas_bad_vec_token("addv", "v0.8b, v0.8b").len() == 0) { return 17; }
-    if (arm64_gas_bad_vec_token("cnt", "v0.8b").len() == 0) { return 18; }
-    // …and a well-formed pair must NOT be refused.
-    if (arm64_gas_bad_vec_token("cnt", "v0.8b, v0.8b").len() != 0) { return 19; }
-    if (arm64_gas_bad_vec_token("addv", "b0, v0.8b").len() != 0) { return 20; }
+    // addv h0, v0.8h -> 0x4E71B800 -> 00 B8 71 4E. The across-lanes class: the
+    // destination is the scalar class the source arrangement names.
+    var m0: Arm64Asm = arm64_gas_assemble("addv h0, v0.8h");
+    if (m0.code[0] != 0 || m0.code[1] != 184 || m0.code[2] != 113 || m0.code[3] != 78) { return 14; }
+    // A shape the encoding has no form for must be REFUSED, not assembled as
+    // a different instruction on the same bytes. In order: cnt is byte-lane
+    // only; a pair must share one arrangement; an across-lanes destination is
+    // the scalar class the arrangement names, since nothing in the encoding
+    // says how wide the result is; .2s has no across-lanes form; a vector
+    // destination where a scalar is required; a missing operand.
+    if (arm64_gas_bad_vec_token("cnt", "v0.4h, v0.4h").len() == 0) { return 15; }
+    if (arm64_gas_bad_vec_token("cnt", "v0.8b, v1.16b").len() == 0) { return 16; }
+    if (arm64_gas_bad_vec_token("addv", "b0, v0.8h").len() == 0) { return 17; }
+    if (arm64_gas_bad_vec_token("addv", "s0, v0.2s").len() == 0) { return 18; }
+    if (arm64_gas_bad_vec_token("addv", "v0.8b, v0.8b").len() == 0) { return 19; }
+    if (arm64_gas_bad_vec_token("cnt", "v0.8b").len() == 0) { return 20; }
+    // ...and a well-formed pair must NOT be refused.
+    if (arm64_gas_bad_vec_token("cnt", "v0.8b, v0.8b").len() != 0) { return 21; }
+    if (arm64_gas_bad_vec_token("addv", "b0, v0.8b").len() != 0) { return 22; }
     return 0;
 }
 `
