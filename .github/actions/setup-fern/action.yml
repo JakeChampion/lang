@@ -33,15 +33,34 @@ runs:
     # The mise release itself is mise.toml's min_version, and
     # internal/sourcelint fails when the two disagree.
     #
-    # Lanes that never run wasm install only the Go-side tools. The wasm e2e
-    # tests t.Skip() without wasmtime, so a shard that was measured without it
-    # (.github/selfhost-test-weights.txt) keeps the weight it was given.
-    - name: Install the pinned toolchain (mise.toml)
+    # Two profiles, one per install set, because they must NOT share a cache: a
+    # lane that never runs wasm installs only the Go-side tools (the wasm e2e
+    # tests t.Skip() without wasmtime, so a shard measured without it —
+    # .github/selfhost-test-weights.txt — keeps its weight), while a wasm lane
+    # installs everything mise.toml lists. Distinct `cache_key_prefix` values
+    # keep the base profile's wasm-less cache from being restored on a wasm lane.
+    #
+    # They are separate `if`-guarded steps rather than one step with a computed
+    # `install_args`, because a GitHub Actions `A && '' || B` ternary cannot
+    # yield the empty string ('' is falsy, so it falls through to B) — the wasm
+    # branch would silently install the base set and every wasm tool would go
+    # missing. Omitting `install_args` entirely is how mise-action is told to
+    # install all of mise.toml.
+    - name: Install the pinned toolchain (mise.toml, wasm)
+      if: inputs.wasmtime == 'true'
       uses: jdx/mise-action@v4
       with:
         version: 2026.9.1
         github_token: ${{ github.token }}
-        install_args: ${{ inputs.wasmtime == 'true' && '' || 'go gotestsum actionlint' }}
+        cache_key_prefix: mise-wasm
+    - name: Install the pinned toolchain (mise.toml, base)
+      if: inputs.wasmtime != 'true'
+      uses: jdx/mise-action@v4
+      with:
+        version: 2026.9.1
+        github_token: ${{ github.token }}
+        cache_key_prefix: mise-base
+        install_args: go gotestsum actionlint
 
     # RESTORE the Go build cache (`~/.cache/go-build` on Linux). Each
     # `go test` / `go build` invocation compiles the package plus its
