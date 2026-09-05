@@ -65,6 +65,59 @@ function main(): i32 { return f(); }`,
 function main(): i32 { return f(1); }`,
 			wantName: "a",
 		},
+		// The check hunted for free IDENTIFIERS and descended into Ident /
+		// Unary / Binary / Call only, so a name reached the call site intact
+		// whenever it was wrapped in any other node. All four of these were
+		// accepted, and each read the caller's value at run time: the
+		// field-access one returned 42 from the caller's `config` (#8445,
+		// found in review of #8503). The check is a whitelist now, so the
+		// shape is named rather than the name inside it.
+		{
+			name: "field-access",
+			src: `struct Config { timeout: i32 }
+function f(a: i32, b: i32 = config.timeout): i32 { return a + b; }
+function main(): i32 { var config: Config = Config { timeout: 41 }; return f(1); }`,
+			wantName: "a field access",
+		},
+		{
+			name: "index",
+			src: `function f(a: i32, b: i32 = xs[0]): i32 { return a + b; }
+function main(): i32 { var xs: i32[] = [41, 9]; return f(1); }`,
+			wantName: "an index",
+		},
+		{
+			name: "cast",
+			src: `function f(a: i32, b: i32 = n as i32): i32 { return a + b; }
+function main(): i32 { var n: i64 = 41; return f(1); }`,
+			wantName: "a cast",
+		},
+		{
+			name: "lambda",
+			src: `function f(a: i32, g: (i32) => i32 = (x: i32) => x + n): i32 { return g(a); }
+function main(): i32 { var n: i32 = 41; return f(1); }`,
+			wantName: "a lambda",
+		},
+		{
+			name: "struct-literal",
+			src: `struct P { v: i32 }
+function f(a: i32, p: P = P { v: n }): i32 { return a + p.v; }
+function main(): i32 { var n: i32 = 41; return f(1); }`,
+			wantName: "a struct literal",
+		},
+		{
+			name: "array-literal",
+			src: `function f(a: i32, xs: i32[] = [n]): i32 { return a + xs[0]; }
+function main(): i32 { var n: i32 = 41; return f(1); }`,
+			wantName: "an array literal",
+		},
+		// Nesting one inside arithmetic must not smuggle it past either.
+		{
+			name: "field-access-under-arithmetic",
+			src: `struct Config { timeout: i32 }
+function f(a: i32, b: i32 = 1 + config.timeout): i32 { return a + b; }
+function main(): i32 { var config: Config = Config { timeout: 41 }; return f(1); }`,
+			wantName: "a field access",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

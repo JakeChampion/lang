@@ -80,3 +80,38 @@ func TestUndeclaredConstStillFoldsInInt64(t *testing.T) {
 		t.Errorf("undeclared const folded to %d, want 3000000001", lit.Value)
 	}
 }
+
+// A parameter DEFAULT was never walked by the substituter — Fold visited each
+// function's body and nothing else — so a const named in one was never folded.
+// It then reached defaultargs still spelled as a name and was refused by E076
+// as reading one, which is the diagnostic telling an author that a const is not
+// a constant expression. `defaultargs`' own doc comment asserted the opposite
+// ("top-level consts are folded to literals before this pass runs"), so the two
+// passes disagreed about a shape neither tested.
+func TestConstInAParameterDefaultIsFolded(t *testing.T) {
+	prog, err := parser.Parse(`const LIMIT: i32 = 128;
+function listen(port: i32, backlog: i32 = LIMIT): i32 { return port + backlog; }
+function main(): i32 { return listen(80); }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := Fold(prog, nil); err != nil {
+		t.Fatalf("Fold: %v", err)
+	}
+	var def ast.Expr
+	for _, fn := range prog.Funcs {
+		if fn.Name == "listen" {
+			def = fn.Params[1].Default
+		}
+	}
+	if def == nil {
+		t.Fatal("listen has no default on its second parameter")
+	}
+	lit, ok := def.(*ast.NumberLit)
+	if !ok {
+		t.Fatalf("default folded to %T, want *ast.NumberLit — an unfolded const is refused by E076 as a free name", def)
+	}
+	if lit.Value != 128 {
+		t.Errorf("default folded to %d, want 128", lit.Value)
+	}
+}
