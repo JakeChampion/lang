@@ -14,19 +14,24 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-05: 487 fixtures, 413 clean, 74 leaking, 7521
+# Measured 2026-09-05: 487 fixtures, 414 clean, 73 leaking, 7518
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
 #
-# arrow_lambda_block_body went 0 -> 3 (#8550). Its verdict predates its
-# content: #2673 extended the fixture with capturing void lambdas, and the
-# three allocations are the closure ENV boxes that capture leaks — the same
-# boxes the rc corpus already pins non-zero for closure_churn_free and its
-# neighbours, and that #8545 / #8546 own. The anonymous `function` spelling
-# of the same lambda leaks identically, so nothing about the new parse is
-# implicated. generic_array_methods (1 -> 0) and open_slice_evaluates_base_once
-# (6 -> 4) went DOWN with #8527 / #8535.
+# arrow_lambda_block_body is back to 0, and #8550's diagnosis was right:
+# #2673 extended the fixture with capturing void lambdas, and the three
+# allocations were the closure env boxes. #8545 removed the leak — a
+# closure LOCAL handed to a callee releases its env and captures through
+# the drop-fn pointer its pair already carries. The 3 was banked while the
+# leak stood, and #8495 carried that banked pin past the fix, so merging it
+# put a stale verdict back on a row the tree had already fixed.
+#
+# generic_array_methods (1 -> 0) and open_slice_evaluates_base_once (6 -> 4)
+# hold those numbers WITHOUT #8535's last-use free, which is the measurement
+# that retired it in #8495: making SliceType rc-tracked (#8406) already gives
+# a `[T]` local's header an owner, so the second mechanism was releasing what
+# the first had already nulled. #8527 keeps its share.
 #
 # Ten rows went DOWN and two arrived at once with #8396 / #8399 / #8403: a
 # match over read_chunk / read_line / env / read_file now owns the payload
@@ -98,7 +103,7 @@ array_param_threaded_reassign                        0
 array_reverse                                        0
 array_sort                                           0
 array_with_rc_elem_drop                              0
-arrow_lambda_block_body                              3
+arrow_lambda_block_body                              0
 arrpush                                              0
 associated_functions                                 0
 audit_core_builtins                                  0
