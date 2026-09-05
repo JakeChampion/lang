@@ -68,6 +68,8 @@ they are not on PATH. Wall time, so compare within one run only.
 | `true` `false` | done |
 | `yes` | done — one write per 4 KiB block |
 | `echo` | done — `-n` `-e` `-E`, the full escape table, POSIXLY_CORRECT |
-| `lib/gnu.fern` | the GNU conventions every utility shares |
+| `basename` | done — `-a` `-s` `-z`, the two-operand form, the slash rules |
+| `dirname` | done — `-z`, a permuting scan where basename's stops |
+| `lib/gnu.fern` | the GNU conventions every utility shares, getopt_long included |
 
 The tracking epic (#8278) lists every other utility and its status.

@@ -16,6 +16,9 @@
 //     The full help text is NEVER printed on the error path.
 //   - The two long options every utility answers are matched by
 //     UNIQUE PREFIX, so `--vers` is `--version` and `--h` is `--help`.
+//   - `getopt` below is glibc's getopt_long: option clusters, values
+//     glued or separate, permutation, POSIXLY_CORRECT, and the exact
+//     wording of every refusal.
 //
 // Error TEXT is glibc's, not ours: the strings in `io_error_text`
 // below are what `strerror` returns, because that is what GNU prints.
@@ -63,22 +66,6 @@ pub function try_help(status: i32): void {
 pub function die_usage(msg: string, status: i32): void {
   error(msg);
   try_help(status);
-}
-
-// `die_bad_option(token, status)` — reject an option token the way
-// glibc's getopt does, which is two different messages:
-//
-//   -x        -> `invalid option -- 'x'`        (the offending byte)
-//   --foo=1   -> `unrecognized option '--foo=1'` (the whole token)
-//
-// A short cluster names only its first byte, because getopt reports
-// per character and the caller exits on the first refusal.
-pub function die_bad_option(token: string, status: i32): void {
-  if (token.starts_with("--")) {
-    die_usage("unrecognized option '" + token + "'", status);
-    return;
-  }
-  die_usage("invalid option -- '" + slice_unchecked(token, 1, 2) + "'", status);
 }
 
 // `is_option(a)` — whether getopt would treat `a` as an option token.
@@ -136,23 +123,55 @@ pub function write_out(s: string): void {
   }
 }
 
-// Whether `typed` is a prefix of `full` — the rule getopt_long matches
-// long options by. The empty string is a prefix of everything, which
-// is why `--=x` is reported as AMBIGUOUS between every declared option
-// rather than as unrecognized.
-function is_prefix_of(typed: string, full: string): boolean {
-  return full.starts_with(typed);
+// `append_span(out, s, start, end)` — the bytes `s[start:end]` onto
+// `out`. Output is accumulated and written once: a utility that
+// writes per operand or per line pays a syscall for each, which was
+// the entire difference between yes(1) at 2.8 MB/s and at 385.
+//
+// A span rather than a whole string because the utilities that trim
+// a name — basename, dirname — have the answer as a range of the
+// operand they were given, and copying it out first buys nothing.
+pub function append_span(out: u8[], s: string, start: i32, end: i32): u8[] {
+  var bs: u8[] = out;
+  var i: i32 = start;
+  while (i < end) {
+    bs = bs.append(s[i]);
+    i = i + 1;
+  }
+  return bs;
 }
 
-// The long-option name in `a` (`--name` or `--name=value`), plus
-// whether a value was glued on.
-function long_parts(a: string): (string, boolean) {
-  var body: str = slice_unchecked(a, 2, a.len());
-  var eq: i32 = body.index_of("=");
-  if (eq >= 0) {
-    return (slice_unchecked(body, 0, eq) + "", true);
+// `is_slash(b)` — the path separator, as a byte. Only `/` is one on
+// the targets these binaries build for.
+pub function is_slash(b: i32): boolean {
+  return b == 47;
+}
+
+// `last_component(s)` — the index where the last path component of
+// `s` begins, which is gnulib's last_component: leading slashes are
+// never part of a component, and a run of slashes inside the path
+// belongs to the component before it. Returns `s.len()` when `s` is
+// empty or all slashes, because then there is no component at all.
+//
+//   "a/b/c"   -> 4        "//a//b"  -> 5
+//   "a/b/"    -> 2        "///"     -> 3 (== len)
+pub function last_component(s: string): i32 {
+  var i: i32 = 0;
+  while (i < s.len() && is_slash(s[i] as i32)) {
+    i = i + 1;
   }
-  return (body + "", false);
+  var base: i32 = i;
+  var saw_slash: boolean = false;
+  while (i < s.len()) {
+    if (is_slash(s[i] as i32)) {
+      saw_slash = true;
+    } else if (saw_slash) {
+      base = i;
+      saw_slash = false;
+    }
+    i = i + 1;
+  }
+  return base;
 }
 
 // `print_help_version(name, help_text, status)` — the two outputs
@@ -168,22 +187,148 @@ function print_version(name: string, status: i32): void {
   exit(status);
 }
 
-// `parse_standard_options_only(argv, name, help_text, status)` —
-// gnulib's parse_gnu_standard_options_only, for a utility whose ONLY
-// options are `--help` and `--version`: a permuting getopt over the
-// whole argv, so an option is found wherever it stands until `--`.
+// A declared option. `short` is one byte or "", `long` is the long
+// name or "", `takes_value` distinguishes `-s SUFFIX` from `-z`.
+pub struct Opt { short: string, long: string, takes_value: boolean }
+
+// `flag_opt(short, long)` — declare an option that takes no value.
+pub function flag_opt(short: string, long: string): Opt {
+  return Opt { short: short, long: long, takes_value: false };
+}
+
+// `value_opt(short, long)` — declare an option that takes one, given
+// as `-sV`, `-s V`, `--long=V` or `--long V`.
+pub function value_opt(short: string, long: string): Opt {
+  return Opt { short: short, long: long, takes_value: true };
+}
+
+// One option as getopt returned it: `name` is the long name if the
+// option has one and the short letter otherwise, `value` is its
+// argument or "". Occurrences are kept in order and repeats are kept
+// too, so a utility reads "last one wins" by scanning to the end.
+pub struct OptSeen { name: string, value: string }
+
+// A parsed command line: the options in the order they were found,
+// and the operands in their original order.
+pub struct Cmdline { seen: OptSeen[], operands: string[] }
+
+// `die_invalid_short(a, j, status)` — glibc's refusal of the option
+// byte at `a[j]`, which names that byte and not the whole cluster:
+// `-ax` with a declared `-a` reports `invalid option -- 'x'`.
+function die_invalid_short(a: string, j: i32, status: i32): void {
+  die_usage("invalid option -- '" + slice_unchecked(a, j, j + 1) + "'", status);
+}
+
+// `die_unrecognized_long(token, status)` — glibc names the WHOLE
+// token here, `=value` and all: `unrecognized option '--foo=bar'`.
+function die_unrecognized_long(token: string, status: i32): void {
+  die_usage("unrecognized option '" + token + "'", status);
+}
+
+// The long-option name in `a` (`--name` or `--name=value`), its
+// value, and whether a value was glued on at all.
+function long_parts(a: string): (string, string, boolean) {
+  var body: str = slice_unchecked(a, 2, a.len());
+  var eq: i32 = body.index_of("=");
+  if (eq >= 0) {
+    return (slice_unchecked(body, 0, eq) + "", slice_unchecked(body, eq + 1, body.len()) + "", true);
+  }
+  return (body + "", "", false);
+}
+
+// The declared options `typed` could be, in declaration order. An
+// EXACT name is the only match even when it is also a prefix of
+// others, which is why `--help` is not ambiguous against a declared
+// `--help-all`. The empty name is a prefix of everything, so `--=x`
+// matches all of them and is reported as ambiguous rather than as
+// unrecognized.
+function long_matches(all: Opt[], typed: string): i32[] {
+  var hits: i32[] = [];
+  var i: i32 = 0;
+  while (i < all.len()) {
+    var o: Opt = all[i];
+    if (o.long.len() > 0) {
+      if (o.long == typed) {
+        var exact: i32[] = [];
+        return exact.append(i);
+      }
+      if (o.long.starts_with(typed)) {
+        hits = hits.append(i);
+      }
+    }
+    i = i + 1;
+  }
+  return hits;
+}
+
+// The index of the declared option with short letter `b`, or -1.
+function short_match(all: Opt[], b: i32): i32 {
+  var i: i32 = 0;
+  while (i < all.len()) {
+    if (all[i].short.len() == 1 && all[i].short[0] as i32 == b) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// How an option is named in the parse result.
+function key_of(o: Opt): string {
+  if (o.long.len() > 0) {
+    return o.long;
+  }
+  return o.short;
+}
+
+// `--help` and `--version` go LAST in the declaration order, because
+// that is where GNU's GETOPT_HELP_OPTION_DECL sits in every utility's
+// long_options table, and the ambiguity list prints in that order:
+// `basename --=x` says `'--multiple' '--suffix' '--zero' '--help'
+// '--version'`.
+function with_standard(opts: Opt[]): Opt[] {
+  return opts.append(flag_opt("", "help")).append(flag_opt("", "version"));
+}
+
+function posixly_correct(): boolean {
+  match (env("POSIXLY_CORRECT")) {
+    Some(_) => {
+      return true;
+    },
+    None => {}
+  }
+  return false;
+}
+
+// `getopt(argv, opts, posix_first, name, help_text, status)` —
+// glibc's getopt_long over `argv`, answering `--help` and `--version`
+// itself and exiting on any refusal with `status`.
 //
-//   --help / --version   (unique prefix) answered, exit 0
-//   --help=x             `option '--help' doesn't allow an argument`
-//   --=x                 `option '--=x' is ambiguous; possibilities: …`
-//   --anything-else      `unrecognized option '--anything-else'`
-//   -x                   `invalid option -- 'x'`
+// `posix_first` is the leading `+` in an optstring: option scanning
+// STOPS at the first operand, so `basename x -a y` has three operands
+// rather than an option and two. Without it the scan permutes and an
+// option is found wherever it stands — `dirname x -z` is `-z` with
+// one operand. POSIXLY_CORRECT in the environment forces the first
+// behaviour on either, exactly as glibc's ordering rule does.
 //
-// Tokens are taken left to right, so the first fault wins over a later
-// `--help`, and a `--help` before the fault wins instead. Returns the
-// operands: every non-option token in its original order, then all of
-// what follows `--`. `status` is the utility's usage-error exit code.
-pub function parse_standard_options_only(argv: string[], name: string, help_text: string, status: i32): string[] {
+// The refusals, all with the `Try …` line after them:
+//
+//   -x                  `invalid option -- 'x'`        (the byte)
+//   --foo=bar           `unrecognized option '--foo=bar'` (the token)
+//   --zero=1            `option '--zero' doesn't allow an argument`
+//   --suffix            `option '--suffix' requires an argument`
+//   -s                  `option requires an argument -- 's'`
+//   --=x                `option '--=x' is ambiguous; possibilities: …`
+//
+// A long option is reported by its CANONICAL name however it was
+// abbreviated (`--z=1` says `'--zero'`); the ambiguous and the
+// unrecognized cases name the token as typed instead.
+pub function getopt(argv: string[], opts: Opt[], posix_first: boolean, name: string, help_text: string, status: i32): Cmdline {
+  var all: Opt[] = with_standard(opts);
+  var help_at: i32 = all.len() - 2;
+  var version_at: i32 = all.len() - 1;
+  var stop_at_operand: boolean = posix_first || posixly_correct();
+  var seen: OptSeen[] = [];
   var operands: string[] = [];
   var i: i32 = 1;
   while (i < argv.len()) {
@@ -194,37 +339,95 @@ pub function parse_standard_options_only(argv: string[], name: string, help_text
     }
     if (!is_option(a)) {
       operands = operands.append(a);
+      if (stop_at_operand) {
+        break;
+      }
       continue;
     }
-    if (!a.starts_with("--")) {
-      die_bad_option(a, status);
-    }
-    var parts: (string, boolean) = long_parts(a);
-    var opt: string = parts.0;
-    var glued: boolean = parts.1;
-    if (is_prefix_of(opt, "help") && is_prefix_of(opt, "version")) {
-      // glibc names the whole token here, `=value` included.
-      die_usage("option '" + a + "' is ambiguous; possibilities: '--help' '--version'", status);
-    }
-    if (is_prefix_of(opt, "help")) {
-      if (glued) {
-        die_usage("option '--help' doesn't allow an argument", status);
+    if (a.starts_with("--")) {
+      var parts: (string, string, boolean) = long_parts(a);
+      var typed: string = parts.0;
+      var value: string = parts.1;
+      var glued: boolean = parts.2;
+      var hits: i32[] = long_matches(all, typed);
+      if (hits.len() == 0) {
+        die_unrecognized_long(a, status);
       }
-      print_help(help_text, 0);
-    }
-    if (is_prefix_of(opt, "version")) {
-      if (glued) {
-        die_usage("option '--version' doesn't allow an argument", status);
+      if (hits.len() > 1) {
+        var list: string = "";
+        var h: i32 = 0;
+        while (h < hits.len()) {
+          list = list + " '--" + all[hits[h]].long + "'";
+          h = h + 1;
+        }
+        die_usage("option '" + a + "' is ambiguous; possibilities:" + list, status);
       }
-      print_version(name, 0);
+      var at: i32 = hits[0];
+      var o: Opt = all[at];
+      if (o.takes_value) {
+        if (!glued) {
+          if (i >= argv.len()) {
+            die_usage("option '--" + o.long + "' requires an argument", status);
+          }
+          value = argv[i];
+          i = i + 1;
+        }
+      } else if (glued) {
+        die_usage("option '--" + o.long + "' doesn't allow an argument", status);
+      }
+      // After the argument check, so `--help=x` is refused rather
+      // than answered.
+      if (at == help_at) {
+        print_help(help_text, 0);
+      }
+      if (at == version_at) {
+        print_version(name, 0);
+      }
+      seen = seen.append(OptSeen { name: key_of(o), value: value });
+      continue;
     }
-    die_bad_option(a, status);
+    var j: i32 = 1;
+    while (j < a.len()) {
+      var at2: i32 = short_match(all, a[j] as i32);
+      if (at2 < 0) {
+        die_invalid_short(a, j, status);
+      }
+      var o2: Opt = all[at2];
+      j = j + 1;
+      var value2: string = "";
+      if (o2.takes_value) {
+        if (j < a.len()) {
+          // The rest of the cluster is the value: `-s.c`.
+          value2 = slice_unchecked(a, j, a.len()) + "";
+          j = a.len();
+        } else if (i < argv.len()) {
+          // The next token is, whatever it looks like: `-s --`.
+          value2 = argv[i];
+          i = i + 1;
+        } else {
+          die_usage("option requires an argument -- '" + o2.short + "'", status);
+        }
+      }
+      seen = seen.append(OptSeen { name: key_of(o2), value: value2 });
+    }
   }
   while (i < argv.len()) {
     operands = operands.append(argv[i]);
     i = i + 1;
   }
-  return operands;
+  return Cmdline { seen: seen, operands: operands };
+}
+
+// `parse_standard_options_only(argv, name, help_text, status)` —
+// gnulib's parse_gnu_standard_options_only, for a utility whose ONLY
+// options are `--help` and `--version`. A permuting scan, so an
+// option is found wherever it stands until `--`; POSIXLY_CORRECT
+// makes it stop at the first operand like every other getopt, which
+// is why `POSIXLY_CORRECT=1 yes x --help` prints `x --help` forever.
+// Returns the operands in their original order.
+pub function parse_standard_options_only(argv: string[], name: string, help_text: string, status: i32): string[] {
+  var no_opts: Opt[] = [];
+  return getopt(argv, no_opts, false, name, help_text, status).operands;
 }
 
 // `sole_help_version(argv, name, help_text, status)` — the narrower

@@ -137,16 +137,6 @@ function expand_into(out: u8[], s: string): (u8[], boolean) {
   return (bs, false);
 }
 
-function append_raw(out: u8[], s: string): u8[] {
-  var bs: u8[] = out;
-  var i: i32 = 0;
-  while (i < s.len()) {
-    bs = bs.append(s[i]);
-    i = i + 1;
-  }
-  return bs;
-}
-
 // Whether the token is a run of `e` / `E` / `n` after a leading `-`,
 // which is what makes it an option rather than an operand.
 function is_flag_token(a: string): boolean {
@@ -209,7 +199,7 @@ function main(): i32 {
       out = r.0;
       stopped = r.1;
     } else {
-      out = append_raw(out, argv[i]);
+      out = gnu.append_span(out, argv[i], 0, argv[i].len());
     }
     if (!stopped && i + 1 < argv.len()) {
       out = out.append(32 as u8);

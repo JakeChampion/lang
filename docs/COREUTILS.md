@@ -110,6 +110,13 @@ and diffs. A case costs one line, and a case cannot record a wrong
 expectation, which is what makes the corpus cheap to grow and hard to get
 wrong. See the package doc in `harness_test.go`.
 
+It corrects finished utilities too, not just new ones: `POSIXLY_CORRECT` is
+glibc's ordering switch, so it stops the option scan at the first operand and
+`POSIXLY_CORRECT=1 yes x --help` prints `x --help` for ever. `yes` answered
+the help until the getopt emulation `basename` brought made every utility
+honour it. Give every utility that goes through getopt a POSIXLY_CORRECT
+case, whether or not it reads the variable itself.
+
 The reference is whatever GNU coreutils the harness finds:
 `$FERN_GNU_COREUTILS`, then the `yes` on PATH if its `--version` says GNU,
 then the fixed system paths, then a nix store glob. **Not finding one is a
@@ -146,11 +153,12 @@ scripts/coreutils-bench
 ```
 
 A utility is one file. Shared behaviour goes in `lib/gnu.fern` only once a
-second utility needs it — the standard-options-only parse arrived with `yes`,
-the sole-argument `--help` rule with `true`/`false`/`echo`, and the full
-getopt_long emulation (valued options, permutation, `-n5` / `-n 5`, the
-ambiguity list) arrives with the first utility that declares an option of its
-own, as its own sub-issue. Do not build it ahead of a consumer.
+second utility needs it — the sole-argument `--help` rule arrived with
+`true`/`false`/`echo`, and the getopt_long emulation (clusters, values glued
+or separate, permutation, POSIXLY_CORRECT, the ambiguity list) with
+`basename`, the first utility declaring options of its own. The
+standard-options-only parse `yes` arrived with is now a call into it with no
+options declared. Do not build shared code ahead of a consumer.
 
 ## Adding a utility
 
@@ -184,8 +192,7 @@ with the same command shape for all three and any pipeline partner taken from
 the GNU directory so it is a constant. Wall time, mean ± σ, ≥20 runs; only
 comparable within one run on one machine.
 
-Baseline, first four utilities, 2026-09-05, each bench run alone on its
-machine. Ratios above 1 mean Fern is faster.
+Baseline, 2026-09-05, each bench run alone on its machine. Ratios above 1 mean Fern is faster.
 
 Linux arm64 (Debian container on Apple M-series; GNU coreutils 9.1; no
 uutils in the image):
@@ -212,6 +219,16 @@ macOS arm64 (Apple M-series; GNU coreutils 9.10; uutils 0.6.0):
 | `yes` | yes | head -c 1G | 674.49 ± 38.15 | 507.69 ± 42.98 | 687.22 ± 106.51 | 0.75× | 1.02× |
 | `yes` | yes 70000-byte line | head -c 1G | 590.85 ± 40.52 | 641.59 ± 121.13 | 658.07 ± 114.40 | 1.09× | 1.11× |
 
+Linux x86-64 (container, 4 cores; GNU coreutils 9.4; uutils 0.6.0):
+
+| utility | workload | fern (ms) | gnu (ms) | uutils (ms) | gnu / fern | uutils / fern |
+|---|---|---|---|---|---|---|
+| `basename` | basename /usr/bin/sort | 0.32 ± 0.07 | 1.13 ± 0.14 | 1.57 ± 0.15 | 3.48× | 4.85× |
+| `basename` | basename with a suffix | 0.31 ± 0.07 | 1.10 ± 0.12 | 1.64 ± 0.18 | 3.53× | 5.26× |
+| `basename` | basename -a 200 paths | 0.47 ± 0.08 | 1.13 ± 0.12 | 2.04 ± 0.45 | 2.39× | 4.29× |
+| `dirname` | dirname /usr/bin/sort | 0.32 ± 0.06 | 1.11 ± 0.13 | 1.69 ± 0.21 | 3.44× | 5.24× |
+| `dirname` | dirname 200 paths | 0.49 ± 0.08 | 1.16 ± 0.14 | 1.95 ± 0.28 | 2.36× | 3.98× |
+
 Reading it: `true`, `false` and `echo` are startup-bound, and a Fern binary
 is a static executable with no dynamic loader and no libc initialisation —
 that is the whole margin, and it is larger on macOS where the loader costs
@@ -223,7 +240,10 @@ costing 570–680 ms on macOS because a write that overfills the 64 KiB pipe
 puts writer and reader into lockstep. `yes.fern` ships the Linux optimum, so
 it is 1.06× GNU on Linux and 0.75× on macOS until the block can be selected
 per target — #8338, the second open Fern gap below. The sweeps are recorded
-in that issue and in `yes.fern`.
+in that issue and in `yes.fern`. `basename` and `dirname` are startup-bound
+too, and their 200-operand rows say the same thing from the other side: the
+margin narrows as the work grows, because the work itself is not where either
+implementation spends its time.
 
 ## Open gaps
 
@@ -248,9 +268,10 @@ issue and a fix, never a workaround:
 Utilities are grouped by what they need from the Fern runtime, and the
 groups are the order of work. Each sub-issue names its group.
 
-- **A. argv and stdout only** — `true` `false` `yes` `echo` (done), `printf`
-  `basename` `dirname` `seq` `expr` `factor` `numfmt` `test` `[` `tsort`
-  `sleep`. No new runtime surface; the full getopt emulation lands here.
+- **A. argv and stdout only** — `true` `false` `yes` `echo` `basename`
+  `dirname` (done), `printf` `seq` `expr` `factor` `numfmt` `test` `[`
+  `tsort` `sleep`. No new runtime surface; the getopt emulation landed here,
+  with `basename`.
 - **B. streaming text** — `cat` `tac` `head` `tail` `wc` `nl` `cut` `paste`
   `join` `comm` `uniq` `sort` `tr` `fold` `fmt` `pr` `ptx` `expand`
   `unexpand` `split` `csplit` `shuf` `od` `base32` `base64` `basenc` `cksum`

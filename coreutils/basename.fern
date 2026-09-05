@@ -1,0 +1,134 @@
+// basename.fern — GNU-compatible `basename`.
+//
+//   basename NAME [SUFFIX]        the last component, SUFFIX removed
+//   basename OPTION... NAME...    with -a or -s, every operand
+//
+//   -a, --multiple       every operand is a NAME
+//   -s, --suffix=SUFFIX  remove a trailing SUFFIX; implies -a
+//   -z, --zero           terminate each name with NUL, not newline
+//
+// The option scan STOPS at the first operand — GNU's optstring is
+// `+as:z` — so `basename x -a y` is three operands and therefore
+// `extra operand 'y'`, where dirname(1), which permutes, would take
+// the `-z` in the same position as an option.
+//
+// The name itself is gnulib's base_name + strip_trailing_slashes:
+// leading slashes are not part of a component, trailing ones are
+// dropped, and a name that is all slashes is `/` however many there
+// were. So `basename //` is `/` and `basename a/b/` is `b`.
+//
+// A suffix is removed only when the name is strictly longer than it —
+// `basename a.txt a.txt` is `a.txt`, not empty — and never from a
+// name that begins with a slash, which is what leaves `basename -s / /`
+// as `/`. The suffix is matched as bytes, so it needs no encoding.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " NAME [SUFFIX]\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION... NAME...\n";
+  out = out + "Print NAME with any leading directory components removed,\n";
+  out = out + "and with a trailing SUFFIX removed when one is given.\n";
+  out = out + "\n";
+  out = out + "  -a, --multiple       treat every operand as a NAME\n";
+  out = out + "  -s, --suffix=SUFFIX  remove a trailing SUFFIX; implies -a\n";
+  out = out + "  -z, --zero           end each name with NUL, not newline\n";
+  out = out + "      --help     display this help and exit\n";
+  out = out + "      --version  output version information and exit\n";
+  return out;
+}
+
+// Where `name` ends once a trailing SUFFIX is taken off it, which is
+// `end` when there is nothing to take: the suffix has to match and to
+// leave at least one byte behind, so a name equal to its suffix keeps
+// it and a suffix longer than the name never matches.
+function suffix_end(name: string, start: i32, end: i32, suffix: string): i32 {
+  var np: i32 = end;
+  var sp: i32 = suffix.len();
+  while (np > start && sp > 0) {
+    np = np - 1;
+    sp = sp - 1;
+    if (name[np] as i32 != suffix[sp] as i32) {
+      return end;
+    }
+  }
+  if (np > start) {
+    return np;
+  }
+  return end;
+}
+
+// One name's answer, appended to `out`.
+function append_base(out: u8[], name: string, suffix: string): u8[] {
+  var start: i32 = gnu.last_component(name);
+  if (start >= name.len()) {
+    // Empty, or nothing but slashes: the whole name is the component,
+    // and the trailing-slash strip below turns `///` into `/`.
+    start = 0;
+  }
+  var end: i32 = name.len();
+  while (end > start + 1 && gnu.is_slash(name[end - 1] as i32)) {
+    end = end - 1;
+  }
+  if (end > start && !gnu.is_slash(name[start] as i32)) {
+    end = suffix_end(name, start, end, suffix);
+  }
+  return gnu.append_span(out, name, start, end);
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [gnu.flag_opt("a", "multiple"), gnu.value_opt("s", "suffix"), gnu.flag_opt("z", "zero")];
+  var cmd: gnu.Cmdline = gnu.getopt(args(), opts, true, "basename", help_text(), 1);
+
+  var multiple: boolean = false;
+  var zero: boolean = false;
+  var suffix: string = "";
+  var i: i32 = 0;
+  while (i < cmd.seen.len()) {
+    var o: gnu.OptSeen = cmd.seen[i];
+    if (o.name == "multiple") {
+      multiple = true;
+    } else if (o.name == "zero") {
+      zero = true;
+    } else {
+      // Repeats keep the last, as getopt leaves them: `-s .c -s .h`
+      // strips `.h`.
+      suffix = o.value;
+      multiple = true;
+    }
+    i = i + 1;
+  }
+
+  var names: string[] = cmd.operands;
+  if (names.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  var count: i32 = names.len();
+  if (!multiple) {
+    // The two-operand form: the second operand IS the suffix, and a
+    // third is one too many.
+    if (count > 2) {
+      gnu.die_usage("extra operand '" + names[2] + "'", 1);
+    }
+    if (count == 2) {
+      suffix = names[1];
+    }
+    count = 1;
+  }
+
+  var term: u8 = 10 as u8;
+  if (zero) {
+    term = 0 as u8;
+  }
+  var out: u8[] = [];
+  var k: i32 = 0;
+  while (k < count) {
+    out = append_base(out, names[k], suffix);
+    out = out.append(term);
+    k = k + 1;
+  }
+  gnu.write_out(string_from_bytes_unchecked(out));
+  return 0;
+}

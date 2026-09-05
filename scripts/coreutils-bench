@@ -127,6 +127,15 @@ workloads() {
       printf 'echo -e with escapes\tn\t{} -e a\\tb\\nc\\x41\\0101\n'
       printf 'echo 200 operands\tn\t{} %s\n' "$(seq 200 | tr '\n' ' ')"
       ;;
+    basename)
+      printf 'basename /usr/bin/sort\tn\t{} /usr/bin/sort\n'
+      printf 'basename with a suffix\tn\t{} /usr/include/stdio.h .h\n'
+      printf 'basename -a 200 paths\tn\t{} -a %s\n' "$(seq 200 | sed 's|^|/usr/lib/x86_64/libz.so.|' | tr '\n' ' ')"
+      ;;
+    dirname)
+      printf 'dirname /usr/bin/sort\tn\t{} /usr/bin/sort\n'
+      printf 'dirname 200 paths\tn\t{} %s\n' "$(seq 200 | sed 's|^|/usr/lib/x86_64/libz.so.|' | tr '\n' ' ')"
+      ;;
     true|false)
       printf '%s\tn\t{}\n' "$1"
       ;;

@@ -1,0 +1,80 @@
+// dirname.fern — GNU-compatible `dirname`.
+//
+//   -z, --zero    terminate each name with NUL, not newline
+//
+// Each operand loses its last non-slash component and the slashes
+// before it; a name with no slash at all becomes `.`. That is
+// gnulib's dir_len, and the two edges it is careful about are the
+// leading slash, which is never stripped (`dirname /a` is `/`, and
+// `dirname //a` is `/` too), and the interior run of slashes, which
+// stays (`dirname //a//b` is `//a`).
+//
+// The option scan PERMUTES — GNU's optstring is plain `z`, with no
+// leading `+` — so `dirname x -z` is one operand under `-z`, unlike
+// basename(1) next door, which stops at the first operand. Setting
+// POSIXLY_CORRECT makes this one stop as well; gnu.getopt handles it.
+import "std/string";
+import "std/array";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION] NAME...\n";
+  out = out + "Print each NAME with its last non-slash component and any\n";
+  out = out + "trailing slashes removed; print '.' for a NAME holding no\n";
+  out = out + "slash at all.\n";
+  out = out + "\n";
+  out = out + "  -z, --zero     end each name with NUL, not newline\n";
+  out = out + "      --help     display this help and exit\n";
+  out = out + "      --version  output version information and exit\n";
+  return out;
+}
+
+// One name's answer, appended to `out`.
+function append_dir(out: u8[], name: string): u8[] {
+  // A leading slash is a root, not a separator, so the strip below
+  // stops before it rather than eating it.
+  var root: i32 = 0;
+  if (name.len() > 0 && gnu.is_slash(name[0] as i32)) {
+    root = 1;
+  }
+  var end: i32 = gnu.last_component(name);
+  while (root < end && gnu.is_slash(name[end - 1] as i32)) {
+    end = end - 1;
+  }
+  if (end == 0) {
+    return gnu.append_span(out, ".", 0, 1);
+  }
+  return gnu.append_span(out, name, 0, end);
+}
+
+function main(): i32 {
+  var opts: gnu.Opt[] = [gnu.flag_opt("z", "zero")];
+  var cmd: gnu.Cmdline = gnu.getopt(args(), opts, false, "dirname", help_text(), 1);
+
+  var zero: boolean = false;
+  var i: i32 = 0;
+  while (i < cmd.seen.len()) {
+    if (cmd.seen[i].name == "zero") {
+      zero = true;
+    }
+    i = i + 1;
+  }
+
+  if (cmd.operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  var term: u8 = 10 as u8;
+  if (zero) {
+    term = 0 as u8;
+  }
+  var out: u8[] = [];
+  var k: i32 = 0;
+  while (k < cmd.operands.len()) {
+    out = append_dir(out, cmd.operands[k]);
+    out = out.append(term);
+    k = k + 1;
+  }
+  gnu.write_out(string_from_bytes_unchecked(out));
+  return 0;
+}

@@ -27,6 +27,15 @@ func TestYesParity(t *testing.T) {
 		{name: "operand then a bad option", args: []string{"x", "-z"}},
 		{name: "operand then dashdash then an option", args: []string{"x", "--", "-z"}, limit: 64},
 		{name: "operands either side of dashdash", args: []string{"a", "--", "b"}, limit: 64},
+		// POSIXLY_CORRECT is glibc's ordering switch, and gnulib's
+		// standard-options scan is subject to it like any other: the
+		// scan stops at the first operand, so an option standing after
+		// one is an ordinary operand and this prints `x --help` for
+		// ever rather than the help.
+		{name: "posix operand then help", args: []string{"x", "--help"}, env: []string{"POSIXLY_CORRECT=1"}, limit: 64},
+		{name: "posix operand then a bad option", args: []string{"x", "-z"}, env: []string{"POSIXLY_CORRECT="}, limit: 64},
+		{name: "posix option before the operand is still an option", args: []string{"-z", "x"}, env: []string{"POSIXLY_CORRECT=1"}},
+
 		// One operand longer than the write block, so the block holds a
 		// single copy of the line rather than many.
 		{name: "operand longer than the write block", args: []string{strings.Repeat("z", 70000)}, limit: 4096},
