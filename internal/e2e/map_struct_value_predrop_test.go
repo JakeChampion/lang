@@ -76,6 +76,12 @@ func TestWASMMapAliasedStructOverwrite(t *testing.T) {
 // aliased-overwrite probes above this shape can assert one — there is no
 // overwrite, so #8421's leak is not in the way.
 //
+// The insert AFTER the alias is what makes the probe able to fail. Aliasing
+// alone does not copy anything: `__map_own_copied_cols` runs from
+// `__map_cow_inplace`, which only fires when a handle at rc>1 is MUTATED. A
+// NEW key is the mutation that reaches it while displacing no value, so the
+// claim is exercised and the census stays assertable.
+//
 // `Deep` carries the shapes a per-field walk would have been needed for: a
 // string, an rc-tracked array, and a nested struct with its own string.
 const mapAliasedStructNoOverwriteSrc = `import "core/map";
@@ -86,16 +92,19 @@ function mk(): i32 {
     m = m.insert(1, Box2 { name: stem + "-value-long-one" });
     m = m.insert(2, Box2 { name: stem + "-value-long-two" });
     var snap: Map[i32, Box2] = m;
+    m = m.insert(3, Box2 { name: stem + "-value-long-three" });
     var ok: i32 = 0;
     match (snap.get(1)) { Some(b) => { if (b.name == "a-value-long-one") { ok = ok + 1; } }, None => {} }
     match (m.get(2)) { Some(b) => { if (b.name == "a-value-long-two") { ok = ok + 2; } }, None => {} }
+    match (m.get(3)) { Some(b) => { if (b.name == "a-value-long-three") { ok = ok + 4; } }, None => {} }
+    if (snap.len() == 2 && m.len() == 3) { ok = ok + 8; }
     return ok;
 }
 function main(): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { t = t + mk(); i = i + 1; }
-    if (t != 200 * 3) { return 97; }
+    if (t != 200 * 15) { return 97; }
     return __rc_underflow_count();
 }`
 
@@ -108,16 +117,19 @@ function mk(): i32 {
     m = m.insert(1, Deep { name: stem + "-value-long-one", xs: [1, 2, 3], inner: Inner { tag: stem + "-tag-long-one" } });
     m = m.insert(2, Deep { name: stem + "-value-long-two", xs: [4, 5, 6], inner: Inner { tag: stem + "-tag-long-two" } });
     var snap: Map[i32, Deep] = m;
+    m = m.insert(3, Deep { name: stem + "-value-long-three", xs: [7, 8, 9], inner: Inner { tag: stem + "-tag-long-three" } });
     var ok: i32 = 0;
     match (snap.get(1)) { Some(d) => { if (d.name == "a-value-long-one" && d.xs.len() == 3 && d.inner.tag == "a-tag-long-one") { ok = ok + 1; } }, None => {} }
     match (m.get(2)) { Some(d) => { if (d.name == "a-value-long-two" && d.xs.len() == 3 && d.inner.tag == "a-tag-long-two") { ok = ok + 2; } }, None => {} }
+    match (m.get(3)) { Some(d) => { if (d.name == "a-value-long-three" && d.xs.len() == 3 && d.inner.tag == "a-tag-long-three") { ok = ok + 4; } }, None => {} }
+    if (snap.len() == 2 && m.len() == 3) { ok = ok + 8; }
     return ok;
 }
 function main(): i32 {
     var t: i32 = 0;
     var i: i32 = 0;
     while (i < 200) { t = t + mk(); i = i + 1; }
-    if (t != 200 * 3) { return 97; }
+    if (t != 200 * 15) { return 97; }
     return __rc_underflow_count();
 }`
 
