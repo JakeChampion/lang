@@ -193,6 +193,7 @@ function main(): i32 {
 		{"heap_far_past_end", prog(heap, "9999")},
 		{"heap_negative", prog(heap, "0 - 1")},
 		{"view_past_end", prog(view, "24")},
+		{"view_far_past_end", prog(view, "9999")},
 		{"view_negative", prog(view, "0 - 1")},
 	}
 	for _, c := range oob {

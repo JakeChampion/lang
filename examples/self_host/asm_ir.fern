@@ -3676,7 +3676,17 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     if (o.kind_tag == 101) {  // str_index
         // pop index (top), string box; box = [data@0, len@8], so the byte is
         // at [data + i]; zero-extend to an i32.
-        s = s.write("    popq %rcx\n    popq %rax\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n    pushq %rax\n"); return s;
+        //
+        // Bounds-checked against len@8 before the load, the same shape
+        // emit_ir_op_arr_get uses against its length prefix: one UNSIGNED
+        // compare catches both i >= len and a negative i (huge as unsigned),
+        // branching to the shared abort. docs/ARRAY-BOUNDS.md lists string
+        // index among the abort sites and the native tier enforces it, so
+        // without this the two compilers disagree on a memory-safety
+        // property. __fern_oob_abort lives in the heap-gated block, so a
+        // site branching to it marks that need.
+        s = s.need("heap");
+        s = s.write("    popq %rcx\n    popq %rax\n    cmpq 8(%rax), %rcx\n    jae __fern_oob_abort\n    movq (%rax), %rax\n    movzbl (%rax,%rcx), %eax\n    pushq %rax\n"); return s;
     }
     if (o.kind_tag == 225) {  // memchr
         // operand stack [box, byte, from] (from on top) -> i32 index or -1.
