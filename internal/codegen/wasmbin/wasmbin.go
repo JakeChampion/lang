@@ -2722,6 +2722,7 @@ var CallDirectAliases = mergeCodegenAliases(map[string]string{
 	"now_ns":       "__fern_now_ns",
 	"now_unix_ms":  "__fern_now_unix_ms",
 	"monotonic_ns": "__fern_monotonic_ns",
+	"sleep_ms":     "__fern_sleep_ms",
 
 	// wasm reactor primitives (Preview-2 pollables): a timer
 	// pollable from monotonic-clock.subscribe-duration, a blocking

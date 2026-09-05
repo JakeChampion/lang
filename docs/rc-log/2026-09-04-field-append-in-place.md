@@ -152,17 +152,10 @@ slower and larger, not faster and smaller:
 
 An earlier note here read "peak RSS 11.2 GB -> 5.4 GB" on this workload. That
 was not a like-for-like pair: the 5.4 GB leg SEGFAULTED about 50 s in and never
-finished, so it is the peak of a partial run. Against a completed run the memory
-goes UP. The mechanism is the identity-arm retain: it leaves the field's buffer
-at rc >= 2, so the next append through it takes `__fern_arr_push`'s un-share
-copy, which allocates a fresh buffer and abandons the old one (`arr_push` never
-frees). The clone form's intermediate was reclaimed by `arr_push_owned`; this
-one is not. The batched `-per-module-emit-all` shape the fixpoint gate uses is
-unaffected (gen1 peaks 5.73 GB against a 16 GiB ceiling), and a single module is
-smaller either way, so what this costs is the one-process whole-compiler emit.
-Reclaiming it means retiring the identity retain, which needs the release paths
-that are not identity-guarded audited first — the reuse-analysis slice of goal 2
-again, not this change.
+finished, so it is the peak of a partial run. The 155.3 s / 12.98 GB leg was
+measured with the identity-arm retain in place, and that retain is the whole of
+the regression — see the section below. It is gone; the numbers in this table
+describe a lowering that no longer exists.
 
 ## Two containment holes a self-host-EMITTED compiler found
 
@@ -280,9 +273,130 @@ buffer.
   would take reading the binding names out of `ast.Pattern`; the shape needed to
   bite is `x = f(x)` on an arm binding whose struct fields a callee grows, which
   nothing in this tree does.
-- The identity-arm retain leaves the field's buffer at rc >= 2, so the append
-  after an in-place grow takes the un-share copy and abandons a buffer nothing
-  reclaims. That is what the one-process whole-compiler emit's +2 GB is. Retiring
-  the retain needs the release paths that are NOT identity-guarded audited first
-  — `__field_reclaim_<T>` skips a field whose value is unchanged, but it is not
-  the only route a superseded box takes.
+
+## The identity-arm retain was the leak, and it is retired
+
+The first cut had `lower_field_append_inplace` retain its result when the push
+did not reallocate, on the reading that the literal the value feeds becomes a
+second owner of the source container's buffer and owes the counted retain a
+container field owes.
+
+Nothing releases that retain. `__field_reclaim_<T>` frees a replaced array field
+only when it differs from BOTH the replacement's and the caller's snapshot — and
+the identity arm is exactly the case where it does not differ, so the superseded
+box hands the buffer over and decs nothing. The retain and the cow guard are two
+compensations for one hazard, and together they overcount by one per in-place
+grow:
+
+- The abandoned buffer is a straight leak, linear in the number of in-place
+  grows. `TestSelfHostAppendParamElemX86_64` measured `(n-1)/2` unfreed blocks
+  over an n-iteration threading loop, and `TestSelfHostFieldReclaimIRX86_64`
+  exhausted the 16 GiB arena (exit 125) on the 200M-iteration builder churn.
+- Leaving the field at rc >= 2 also sends the NEXT append down
+  `__fern_arr_push`'s un-share copy, which allocates a fresh buffer and abandons
+  the old one — the one-process whole-compiler emit's +2 GB above.
+
+No detector outside `FERN_LEAKCHECK` sees either: every free involved is at rc 1
+and every answer is correct, which is how it reached main.
+
+`TestSelfHostFieldAppendInPlaceReclaimsX86_64` is the gate that was missing: the
+feature's own cases are differential, and an answer cannot see a leak.
+
+## The identity arm is a MOVE: the field is nulled
+
+Retiring the retain on the reading "source and replacement never both name the
+buffer past the store" broke two tests on main's own run
+(`TestSelfHostRecvMoveNoDeepIRX86_64/receiver-move-inplace-append-survives-sweep`
+exit 91; the `own_self_reassign_move` fixture hanging on both natives). The
+reading was wrong: after an in-place grow the buffer has TWO uncounted names at
+rc 1 — the root's field and the value — and the cow-guarded rebind is only one of
+the paths that can release either. Four others were found, each a use-after-free
+or a double free with nothing at rc 0 to trip a detector:
+
+| route | shape | who frees the buffer the other still holds |
+|---|---|---|
+| return sweep of a bare-credit local | `var ms = S {…}; …; return ms.emit(4)` | the caller's `__struct_drop_S(ms)` — `emit` is in the receiver-borrow registry's `nomove` list, so `ms` is not NODEEP and the return-position death deep-drops it |
+| an `own` param's exit release | `function push(own b: S, v) { var ys = b.ops.append(v); … }` | the callee's OWNREL row: `__struct_drop_S(b)` at exit, on its own root |
+| the same, one call down | `function g(own s: S, v): S { return h(s, v); }` with `h` growing `s.ops` | `g`'s OWNREL exit release, after `h` handed the buffer to its result |
+| the VALUE's holder | `var ys = s.ops.append(v); var n = ys.len(); return S { ops: [], n }` | `ys` is swept at exit; the caller's `__field_reclaim_S` then frees `s.ops` again |
+
+The fix is at the site, not at the releases: on the identity arm
+`lower_field_append_inplace` STORES NULL into the source field. The grow was a
+move out of the box — a field's counterpart of the zeroed slot a moved local
+gets — and every rc helper (`__field_reclaim_<T>`'s array arm,
+`__struct_drop_<T>`, `__fern_arr_dec`, `__struct_arr_elems_drop_<T>`) already
+skips a null field, so each release above finds nothing to free. The
+reallocating arm is untouched: the pre-grow buffer stays the source's, differs
+from the value, and the source's release frees it. `field_append_inplace_at`
+also asks that the root's box type resolves, since the store needs the field
+slot.
+
+Two consequences for the admission. A body-scope host (`var`, an expression
+statement, a condition) INSIDE A LOOP is refused: the next iteration would read
+the moved-out field. A return exits and a rebind of the root replaces it, so
+those keep their sites in loops. And the E051 caller side had a hole the `own`
+probes exposed: `a = f(a, i)` into an `own` position ran the struct rebind's
+`__field_reclaim_<T>` on the box the callee had already released. The fixture
+only passed because `push_box` frees `b`'s box and then allocates a same-sized
+result box, so the freelist handed the same block back and the `old != new`
+cow guard skipped everything; a callee that allocates its result before
+releasing (`g` above) reads a freed block. The struct rebind now bare-stores
+when `call_owns_arg` says the callee took the box (`lower_stmt_assign`).
+
+The four rows and the loop refusal are in `selfHostFieldAppendCases`, so all
+three backends run them against the interpreter. The loop case hands the callee
+a fresh call result at an `own` position: a LOCAL receiver is bracketed by its
+caller (rc 2, copy), which is what made the first cut of that case pass with
+the refusal stubbed out.
+
+## A second name for the root's box: the move is gated on the box's count
+
+The move made a fifth route visible that the shared-buffer form only bent: the
+self-compiled compiler segfaulted in `checker.Scope.lookup`, on x86-64 as much
+as on arm64 (the arm64 stage-2 fixpoint was the lane that caught it, but the
+self-built x86-64 compiler dies the same way on `lexer.fern`).
+
+`slc_walk` is the shape:
+
+```fern
+var cur: Scope = s;            // a second name for the caller's box
+for st in stmts {
+    …slc_walk(body, cur, …)…   // recurses with cur; the callee does the same
+    cur = bind_stmt(st, cur);  // Scope.bind grows cur.names in place
+}
+```
+
+The self-reassign is a dying binding, so the bracket is exempt; the alias scan
+(`grow_alias_names_of`) treats a bare ident as an alias only when its source
+already is one, and a parameter is not. So `Scope.bind`'s admitted grow moved
+`names` out of a box that `s`, the outer frame's `cur`, and every enclosing
+walk still read. With the retained or the uncounted share this was a silent
+length leak between scopes; with the move it is a null field.
+
+Two halves close it, because neither sees the whole shape.
+
+The static half: `grow_alias_bind` now treats a bare ident of a PARAMETER or
+the receiver as an alias, so `cur` loses the dying exemption and the call is
+bracketed — the caller owns that box, which is what `grow_alias_names_of`'s
+own definition ("a container this frame does not own") already said. It has
+to be static, because the bind takes no count: `s` is never read again after
+`var cur = s`, so the dead-alias cancellation (#4402) makes it a plain store,
+and at runtime the box looks uniquely held.
+
+The runtime half: the site loads the root box, asks `__fern_rc_is_unique`, and
+on a shared box brackets the push with the #4873 `__fern_arr_share_inc` /
+`__fern_arr_share_dec` pair, so `arr_push` takes its copy path and the field
+stays in place; the move is reserved for a box this frame holds alone. That is
+the test #8186's superseded-field move uses, for the same reason: the
+exemptions reason about a BINDING dying, and a holder the analysis cannot
+name — a container element, another struct's field, a counted alias — is a
+runtime fact. `aliased-root-box-copies` in `selfHostFieldAppendCases` pins the
+shape, and the arm64 stage-2 fixpoint is the gate that found it.
+
+**#8259's `grow_return_local_filter` is the first row's bracket-side fix**:
+withdrawing the return-position death forces the callee's copy, so the identity
+arm is never reached. With the move it is no longer needed for this hazard —
+the deep drop finds a null field — and it costs a whole-buffer copy per
+return-position death of a local (measured there at +5 s / +0.33 GB on the
+one-process whole-compiler emit). The two compose: with both in, the bracketed
+sites copy and the rest move.

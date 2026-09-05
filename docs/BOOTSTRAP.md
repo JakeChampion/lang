@@ -59,10 +59,15 @@ rebuilds the exact binary — the bytes are deterministic per commit
 pinned sha256 against a build of their own.
 
 WASM as the snapshot format (`BOOTSTRAP-RESEARCH.md §7`) is ruled out twice over
-today. Native cannot compile `fern.fern` to wasm while `sleep_ms` has no wasm
-lowering (#7947). And compiling the compiler peaks at 4.0 GB of resident memory
-under a 16 GiB `MAP_NORESERVE` arena — at wasm32's 4 GiB address ceiling with
-no room for growth. Revisit if both move.
+today. Native cannot compile `fern.fern` to wasm: `write_file_exec` needs
+`fsmode`, and E066 refuses it because the component-model filesystem has no
+permission bits (#6133) — a target property, not a gap. And compiling the
+compiler peaks at 4.0 GB of resident memory under a 16 GiB `MAP_NORESERVE`
+arena — at wasm32's 4 GiB address ceiling with no room for growth.
+
+The first reason used to be `sleep_ms`, which had no wasm lowering; #7947
+landed it and `providedMissingLowering` is now empty. Both remaining reasons
+are structural, so "revisit if both move" is a weaker prospect than it was.
 
 ## Refreshing the pin
 

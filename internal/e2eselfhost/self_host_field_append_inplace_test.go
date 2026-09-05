@@ -242,6 +242,198 @@ function main(): i32 {
     for v in w.xs { t = t + v; }
     return (t as i32) + w.xs.len() + w.n;
 }`},
+	// The grow MOVES the field out of the root's box. Each shape below releases
+	// that box, or the value, by a path that finds the field: the pre-move
+	// lowering left both naming one rc 1 buffer, and the first release freed it
+	// under the other (#8224). Struct elements, so a freed buffer's element boxes
+	// are recycled by `churn` and the read that follows sees 7 where it wrote
+	// 1..4 — or __rc_underflow() reports the double free.
+	//
+	// A return-position receiver whose literal-init local keeps its DEEP sweep:
+	// the receiver-borrow registry clears `emit` as a pure borrow, so `ms` is not
+	// NODEEP, and `return ms.emit(4)` deep-drops it after the call.
+	{"return-position-deep-swept-receiver", `
+struct P { x: i32 }
+struct S { ops: P[], n: i32 }
+function (self: S) emit(v: i32): S { return S { ops: self.ops.append(P { x: v }), n: self.n + 1 }; }
+function build(): S {
+    var ms: S = S { ops: [], n: 0 };
+    ms = ms.emit(1);
+    ms = ms.emit(2);
+    ms = ms.emit(3);
+    return ms.emit(4);
+}
+function churn(k: i32): i32 {
+    var a: P[] = [];
+    var i: i32 = 0;
+    while (i < k) { a = a.append(P { x: 7 }); i = i + 1; }
+    return a.len();
+}
+function main(): i32 {
+    var r: S = build();
+    var c: i32 = churn(64);
+    if (r.ops.len() != 4 || c != 64 || r.n != 4) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return r.ops[0].x * 27 + r.ops[1].x * 9 + r.ops[2].x * 3 + r.ops[3].x;
+}`},
+	// An OWN parameter is released by the callee's own exit sweep, deep
+	// (own_struct_param_release_rows_of). The conformance case
+	// own_self_reassign_move hung on this shape.
+	{"own-param-exit-release", `
+struct P { x: i32 }
+struct S { ops: P[], n: i32 }
+function push(own b: S, v: i32): S {
+    var ys: P[] = b.ops.append(P { x: v });
+    return S { ops: ys, n: b.n + 1 };
+}
+function churn(k: i32): i32 {
+    var a: P[] = [];
+    var i: i32 = 0;
+    while (i < k) { a = a.append(P { x: 7 }); i = i + 1; }
+    return a.len();
+}
+function main(): i32 {
+    var a: S = S { ops: [], n: 0 };
+    var i: i32 = 1;
+    while (i < 5) { a = push(a, i); i = i + 1; }
+    var c: i32 = churn(64);
+    if (a.ops.len() != 4 || c != 64 || a.n != 4) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.ops[0].x * 27 + a.ops[1].x * 9 + a.ops[2].x * 3 + a.ops[3].x;
+}`},
+	// The same exit release, reached through a callee that grows the own
+	// param's field on the caller's behalf: `s` occurs once in g, so no bracket
+	// forces the copy there, and g's sweep still deep-drops s.
+	{"own-param-passed-once-to-grower", `
+struct P { x: i32 }
+struct S { ops: P[], n: i32 }
+function h(s: S, v: i32): S { return S { ops: s.ops.append(P { x: v }), n: s.n + 1 }; }
+function g(own s: S, v: i32): S { return h(s, v); }
+function churn(k: i32): i32 {
+    var a: P[] = [];
+    var i: i32 = 0;
+    while (i < k) { a = a.append(P { x: 7 }); i = i + 1; }
+    return a.len();
+}
+function main(): i32 {
+    var a: S = S { ops: [], n: 0 };
+    var i: i32 = 1;
+    while (i < 5) { a = g(a, i); i = i + 1; }
+    var c: i32 = churn(64);
+    if (a.ops.len() != 4 || c != 64 || a.n != 4) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.ops[0].x * 27 + a.ops[1].x * 9 + a.ops[2].x * 3 + a.ops[3].x;
+}`},
+	// The receiver spelling of the previous case.
+	{"own-param-receiver-of-grower", `
+struct P { x: i32 }
+struct S { ops: P[], n: i32 }
+function (self: S) emit(v: i32): S { return S { ops: self.ops.append(P { x: v }), n: self.n + 1 }; }
+function g(own s: S, v: i32): S { return s.emit(v); }
+function churn(k: i32): i32 {
+    var a: P[] = [];
+    var i: i32 = 0;
+    while (i < k) { a = a.append(P { x: 7 }); i = i + 1; }
+    return a.len();
+}
+function main(): i32 {
+    var a: S = S { ops: [], n: 0 };
+    var i: i32 = 1;
+    while (i < 5) { a = g(a, i); i = i + 1; }
+    var c: i32 = churn(64);
+    if (a.ops.len() != 4 || c != 64 || a.n != 4) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.ops[0].x * 27 + a.ops[1].x * 9 + a.ops[2].x * 3 + a.ops[3].x;
+}`},
+	// The VALUE's holder releases: `ys` is swept at f's exit, and the caller's
+	// rebind then reclaims the same buffer out of the superseded box's field.
+	{"value-local-swept-before-caller-reclaim", `
+struct P { x: i32 }
+struct S { ops: P[], n: i32 }
+function f(s: S, v: i32): S {
+    var ys: P[] = s.ops.append(P { x: v });
+    var n: i32 = ys.len();
+    return S { ops: [], n: n };
+}
+function grow(s: S, v: i32): S { return S { ops: s.ops.append(P { x: v }), n: s.n + 1 }; }
+function churn(k: i32): i32 {
+    var a: P[] = [];
+    var i: i32 = 0;
+    while (i < k) { a = a.append(P { x: 7 }); i = i + 1; }
+    return a.len();
+}
+function main(): i32 {
+    var ms: S = S { ops: [], n: 0 };
+    ms = grow(ms, 1);
+    ms = grow(ms, 2);
+    ms = grow(ms, 3);
+    ms = f(ms, 4);
+    var c: i32 = churn(64);
+    if (c != 64 || ms.ops.len() != 0) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return ms.n;
+}`},
+	// A second NAME for the root's box: `var cur = s` inside a walk that
+	// recurses with `cur` and rebinds it per statement, the checker's slc_walk
+	// shape. The self-reassign exempts the bracket and the alias scan does not
+	// see a bare ident of a parameter, so the callee's move would null `names`
+	// in a box the outer frames still read (segfault in the self-compiled
+	// checker's Scope.lookup). The box's count is what tells the site to copy.
+	{"aliased-root-box-copies", `
+struct Sc { names: i32[], n: i32 }
+function (s: Sc) bind(v: i32): Sc {
+    var ns: i32[] = s.names.append(v);
+    return Sc { names: ns, n: s.n + 1 };
+}
+function step(v: i32, s: Sc): Sc { return s.bind(v); }
+function walk(s: Sc, depth: i32): i32 {
+    var cur: Sc = s;
+    var acc: i32 = 0;
+    var i: i32 = 0;
+    while (i < 4) {
+        if (depth > 0) { acc = acc + walk(cur, depth - 1); }
+        cur = step(i, cur);
+        i = i + 1;
+    }
+    return acc + cur.names.len() * 3 + cur.n;
+}
+function main(): i32 {
+    var s0: Sc = Sc { names: [], n: 0 };
+    s0 = step(1, s0);
+    s0 = step(2, s0);
+    s0 = step(3, s0);
+    var r: i32 = walk(s0, 2);
+    if (s0.names.len() != 3) { return 90; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return (r + s0.names[2]) % 200;
+}`},
+	// A body-scope host INSIDE A LOOP runs again with the same root, and the
+	// grow has moved the field out of it — so the site keeps the clone form.
+	// The root arrives as a fresh call result at an `own` position: no caller
+	// bracket can reach it, so its buffer is at rc 1 and the first push would
+	// take the identity arm. Without the refusal the second iteration pushes
+	// onto the moved-out field (segfault on the stubbed rule).
+	{"body-host-in-loop-clones", `
+struct S { ops: i32[], n: i32 }
+function mk(): S {
+    var s: S = S { ops: [], n: 0 };
+    var i: i32 = 0;
+    while (i < 3) { s = S { ...s, ops: s.ops.append(i) }; i = i + 1; }
+    return s;
+}
+function tally(own s: S, k: i32): i32 {
+    var t: i32 = 0;
+    var i: i32 = 0;
+    while (i < k) {
+        var ys: i32[] = s.ops.append(i);
+        t = t + ys.len() + ys[ys.len() - 1];
+        i = i + 1;
+    }
+    return t;
+}
+function main(): i32 {
+    return tally(mk(), 4);
+}`},
 }
 
 // TestSelfHostFieldAppendInPlaceX86_64 — the production x86-64 IR path against
@@ -463,4 +655,67 @@ function main(): i32 {
 		return
 	}
 	t.Fatalf("no bracket release in __fn_outer; body:\n%s", body)
+}
+
+// TestSelfHostFieldAppendInPlaceReclaimsX86_64 — the threaded container gives
+// every buffer back.
+//
+// The differential cases above weigh ANSWERS, and an answer cannot see a leak:
+// the in-place grow shipped taking a counted retain on the identity arm, which
+// nothing released — __field_reclaim_<T> skips exactly the field whose value the
+// replacement still holds — so each in-place grow abandoned one buffer AND left
+// the field at rc >= 2, which sent the next append down arr_push's un-share copy
+// to abandon another. Every answer stayed correct throughout.
+//
+// The loop threads through both call shapes and re-seeds a fresh container each
+// round, so the run covers an in-place grow, a reallocating grow, and the
+// superseded box's own reclaim.
+func TestSelfHostFieldAppendInPlaceReclaimsX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	interpBin := buildLangBinForInterp(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+
+	const src = `
+struct St { ops: i32[], ctrl: i32 }
+function (s: St) emit(op: i32): St { return St { ...s, ops: s.ops.append(op), ctrl: s.ctrl }; }
+function bump(s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl }; }
+function round(n: i32): i32 {
+    var s: St = St { ops: [], ctrl: 0 };
+    var i: i32 = 0;
+    while (i < n) { s = s.emit(i); s = bump(s, i); i = i + 1; }
+    var sum: i32 = 0;
+    for v in s.ops { sum = sum + v; }
+    return s.ops.len() + sum;
+}
+function main(): i32 {
+    var t: i32 = 0;
+    var k: i32 = 0;
+    while (k < 9) { t = t + round(k); k = k + 1; }
+    return t % 97;
+}`
+
+	want := interpExit(t, interpBin, src)
+	asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
+	progBin := buildBin(t, gcc, dir, "fai_reclaims", asm)
+	stderr, exit := hevRun(t, runner, progBin)
+	if exit != want {
+		t.Fatalf("exited %d, want %d (interp oracle)", exit, want)
+	}
+	summary := leakSummaryLine(stderr)
+	if summary == "" {
+		t.Fatalf("no leakcheck summary; stderr:\n%s", stderr)
+	}
+	var allocs, frees, live int64
+	if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+		t.Fatalf("parse %q: %v", summary, err)
+	}
+	if allocs == 0 {
+		t.Fatalf("allocated nothing — the probe is not exercising the path: %s", summary)
+	}
+	if live != 0 || allocs != frees {
+		t.Errorf("%s — an in-place grow hands the field's buffer to the literal; "+
+			"nothing may claim a second counted reference to it", summary)
+	}
 }
