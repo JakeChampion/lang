@@ -1,0 +1,721 @@
+// coreutils/lib/ld.fern — the x87 extended-precision arithmetic GNU
+// numfmt does its work in.
+//
+// numfmt(1) holds every value as a `long double` and reaches its output
+// through a fixed sequence of operations on it: accumulate the digits,
+// divide the fraction by a power of ten, multiply or divide by the unit
+// and by the scale, scale by a power of ten, round, and print. Byte
+// parity means doing each of those to the same 64-bit significand with
+// the same rounding, because the answers differ in the last digit
+// otherwise: `numfmt --from=si 1.555` is 1.556, not 1.555, and the whole
+// difference is that 555/1000 lands a hair ABOVE 0.555 in this format.
+//
+// A value is sign, 64-bit significand and the exponent of its lowest
+// bit. Every operation computes its exact 128-bit intermediate in plain
+// u64 pairs and rounds it once to 64 significant bits, half to even —
+// which is what an x87 in its default mode does. There are no
+// infinities or NaNs here: numfmt rejects an input long before one could
+// arise (its own limit is 33 digits), and a zero divisor never reaches
+// this module.
+//
+// `core/bigint` is left for the two cold paths that genuinely want
+// arbitrary precision: the exact decimal expansion behind `%Lg`, and a
+// fixed-point conversion too wide for 128 bits.
+import "std/string";
+import "core/bigint";
+
+// `Ld` — (-1)^neg * m * 2^e, with `m` carrying its top bit set unless
+// the value is zero.
+pub struct Ld { neg: boolean, m: u64, e: i32 }
+
+pub function ld_zero(): Ld {
+  return Ld { neg: false, m: 0 as u64, e: 0 };
+}
+
+pub function (a: Ld) is_zero(): boolean {
+  return a.m == 0 as u64;
+}
+
+pub function (a: Ld) is_negative(): boolean {
+  return a.neg && a.m != 0 as u64;
+}
+
+pub function (a: Ld) negate(): Ld {
+  if (a.is_zero()) {
+    return a;
+  }
+  return Ld { ...a, neg: !a.neg };
+}
+
+pub function (a: Ld) abs(): Ld {
+  return Ld { ...a, neg: false };
+}
+
+pub function ld_from_u64(v: u64): Ld {
+  if (v == 0 as u64) {
+    return ld_zero();
+  }
+  return normalize(U128 { hi: 0 as u64, lo: v }, 0, false, false);
+}
+
+pub function ld_from_i32(v: i32): Ld {
+  if (v < 0) {
+    return ld_from_u64((0 - v) as u64).negate();
+  }
+  return ld_from_u64(v as u64);
+}
+
+// A 128-bit intermediate: every operation below computes one of these
+// exactly and then rounds it once to 64 significant bits.
+struct U128 { hi: u64, lo: u64 }
+
+function mask32(): u64 {
+  return 4294967295 as u64;
+}
+
+function top_bit(): u64 {
+  return 9223372036854775808 as u64;
+}
+
+// The full 64x64 product, from four 32-bit ones.
+function mul64(a: u64, b: u64): U128 {
+  var al: u64 = a & mask32();
+  var ah: u64 = a >> 32 as u64;
+  var bl: u64 = b & mask32();
+  var bh: u64 = b >> 32 as u64;
+  var ll: u64 = al * bl;
+  var lh: u64 = al * bh;
+  var hl: u64 = ah * bl;
+  var hh: u64 = ah * bh;
+  var mid: u64 = (ll >> 32 as u64) + (lh & mask32()) + (hl & mask32());
+  var lo: u64 = ll & mask32() | (mid & mask32()) << 32 as u64;
+  var hi: u64 = hh + (lh >> 32 as u64) + (hl >> 32 as u64) + (mid >> 32 as u64);
+  return U128 { hi: hi, lo: lo };
+}
+
+// `divlu(n, d)` — the 128-by-64 division, quotient and remainder, for a
+// dividend whose high half is below the divisor. Knuth's algorithm D on
+// 32-bit half-limbs, with the divisor already normalised (its top bit
+// set), which every value here has.
+function divlu(n: U128, d: u64): (u64, u64) {
+  var dh: u64 = d >> 32 as u64;
+  var dl: u64 = d & mask32();
+  var un1: u64 = n.lo >> 32 as u64;
+  var un0: u64 = n.lo & mask32();
+  var q1: u64 = n.hi / dh;
+  var rhat: u64 = n.hi - q1 * dh;
+  while (q1 > mask32() || q1 * dl > (rhat << 32 as u64) + un1) {
+    q1 = q1 - 1 as u64;
+    rhat = rhat + dh;
+    if (rhat > mask32()) {
+      break;
+    }
+  }
+  var u21: u64 = (n.hi << 32 as u64) + un1 - q1 * d;
+  var q0: u64 = u21 / dh;
+  rhat = u21 - q0 * dh;
+  while (q0 > mask32() || q0 * dl > (rhat << 32 as u64) + un0) {
+    q0 = q0 - 1 as u64;
+    rhat = rhat + dh;
+    if (rhat > mask32()) {
+      break;
+    }
+  }
+  var rem: u64 = (u21 << 32 as u64) + un0 - q0 * d;
+  return ((q1 << 32 as u64) + q0, rem);
+}
+
+function bit_len64(v: u64): i32 {
+  return 64 - __clz64(v);
+}
+
+function bit_len128(v: U128): i32 {
+  if (v.hi != 0 as u64) {
+    return 64 + bit_len64(v.hi);
+  }
+  return bit_len64(v.lo);
+}
+
+// `normalize(v, e, sticky, neg)` — v * 2^e (a little more when
+// `sticky`) rounded to 64 significant bits, half to even.
+function normalize(v: U128, e: i32, sticky: boolean, neg: boolean): Ld {
+  if (v.hi == 0 as u64 && v.lo == 0 as u64) {
+    return ld_zero();
+  }
+  var bits: i32 = bit_len128(v);
+  if (bits <= 64) {
+    var up: i32 = 64 - bits;
+    return Ld { neg: neg, m: v.lo << up as u64, e: e - up };
+  }
+  var drop: i32 = bits - 64;
+  var kept: u64 = shr128_low(v, drop);
+  var rest_high: boolean = bit_set(v, drop - 1);
+  var rest_more: boolean = sticky || low_bits_set(v, drop - 1);
+  var out_e: i32 = e + drop;
+  if (rest_high && (rest_more || (kept & 1 as u64) == 1 as u64)) {
+    kept = kept + 1 as u64;
+    if (kept == 0 as u64) {
+      kept = top_bit();
+      out_e = out_e + 1;
+    }
+  }
+  return Ld { neg: neg, m: kept, e: out_e };
+}
+
+// The low 64 bits of v >> k, for k below 128.
+function shr128_low(v: U128, k: i32): u64 {
+  if (k >= 64) {
+    return v.hi >> (k - 64) as u64;
+  }
+  if (k == 0) {
+    return v.lo;
+  }
+  return v.lo >> k as u64 | v.hi << (64 - k) as u64;
+}
+
+function bit_set(v: U128, k: i32): boolean {
+  if (k >= 64) {
+    return (v.hi >> (k - 64) as u64 & 1 as u64) == 1 as u64;
+  }
+  return (v.lo >> k as u64 & 1 as u64) == 1 as u64;
+}
+
+// Whether any bit below `k` is set.
+function low_bits_set(v: U128, k: i32): boolean {
+  if (k <= 0) {
+    return false;
+  }
+  if (k < 64) {
+    return (v.lo & (1 as u64 << k as u64) - 1 as u64) != 0 as u64;
+  }
+  if (v.lo != 0 as u64) {
+    return true;
+  }
+  if (k >= 128) {
+    return v.hi != 0 as u64;
+  }
+  return (v.hi & (1 as u64 << (k - 64) as u64) - 1 as u64) != 0 as u64;
+}
+
+function shl128(m: u64, k: i32): U128 {
+  if (k == 0) {
+    return U128 { hi: 0 as u64, lo: m };
+  }
+  if (k >= 64) {
+    return U128 { hi: m << (k - 64) as u64, lo: 0 as u64 };
+  }
+  return U128 { hi: m >> (64 - k) as u64, lo: m << k as u64 };
+}
+
+function add128(a: U128, b: U128): U128 {
+  var lo: u64 = a.lo + b.lo;
+  var carry: u64 = 0 as u64;
+  if (lo < a.lo) {
+    carry = 1 as u64;
+  }
+  return U128 { hi: a.hi + b.hi + carry, lo: lo };
+}
+
+function sub128(a: U128, b: U128): U128 {
+  var lo: u64 = a.lo - b.lo;
+  var borrow: u64 = 0 as u64;
+  if (a.lo < b.lo) {
+    borrow = 1 as u64;
+  }
+  return U128 { hi: a.hi - b.hi - borrow, lo: lo };
+}
+
+function cmp128(a: U128, b: U128): i32 {
+  if (a.hi != b.hi) {
+    if (a.hi < b.hi) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  if (a.lo == b.lo) {
+    return 0;
+  }
+  if (a.lo < b.lo) {
+    return 0 - 1;
+  }
+  return 1;
+}
+
+// `(a).cmp(b)` — -1, 0 or 1, comparing the values rather than the
+// representations, so -0 and 0 compare equal.
+pub function (a: Ld) cmp(b: Ld): i32 {
+  if (a.is_zero() && b.is_zero()) {
+    return 0;
+  }
+  if (a.is_negative() != b.is_negative()) {
+    if (a.is_negative()) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  var c: i32 = cmp_mag(a, b);
+  if (a.is_negative()) {
+    return 0 - c;
+  }
+  return c;
+}
+
+// `(a).cmp_abs(b)` — |a| against |b|, without building either.
+pub function (a: Ld) cmp_abs(b: Ld): i32 {
+  return cmp_mag(a, b);
+}
+
+function cmp_mag(a: Ld, b: Ld): i32 {
+  if (a.is_zero()) {
+    if (b.is_zero()) {
+      return 0;
+    }
+    return 0 - 1;
+  }
+  if (b.is_zero()) {
+    return 1;
+  }
+  var ta: i32 = a.e + 64;
+  var tb: i32 = b.e + 64;
+  if (ta != tb) {
+    if (ta < tb) {
+      return 0 - 1;
+    }
+    return 1;
+  }
+  if (a.m == b.m) {
+    return 0;
+  }
+  if (a.m < b.m) {
+    return 0 - 1;
+  }
+  return 1;
+}
+
+pub function (a: Ld) mul(b: Ld): Ld {
+  if (a.is_zero() || b.is_zero()) {
+    return ld_zero();
+  }
+  return normalize(mul64(a.m, b.m), a.e + b.e, false, a.neg != b.neg);
+}
+
+// Division to a 64-bit quotient with the remainder as the tie-breaker:
+// the dividend is shifted so the quotient lands with its top bit set,
+// and twice the remainder against the divisor decides the last bit.
+pub function (a: Ld) div(b: Ld): Ld {
+  if (a.is_zero() || b.is_zero()) {
+    return ld_zero();
+  }
+  var shift: i32 = 64;
+  if (a.m >= b.m) {
+    shift = 63;
+  }
+  var qr: (u64, u64) = divlu(shl128(a.m, shift), b.m);
+  var q: u64 = qr.0;
+  var r: u64 = qr.1;
+  var e: i32 = a.e - b.e - shift;
+  if (r != 0 as u64) {
+    var carried: boolean = r >= top_bit();
+    var twice: u64 = r * (2 as u64);
+    if (carried || twice > b.m || twice == b.m && (q & 1 as u64) == 1 as u64) {
+      q = q + 1 as u64;
+      if (q == 0 as u64) {
+        q = top_bit();
+        e = e + 1;
+      }
+    }
+  }
+  return Ld { neg: a.neg != b.neg, m: q, e: e };
+}
+
+pub function (a: Ld) add(b: Ld): Ld {
+  if (a.is_zero()) {
+    return b;
+  }
+  if (b.is_zero()) {
+    return a;
+  }
+  var big: Ld = a;
+  var small: Ld = b;
+  if (b.e > a.e) {
+    big = b;
+    small = a;
+  }
+  var gap: i32 = big.e - small.e;
+  // Past 64 bits apart the smaller term cannot reach a kept bit of the
+  // sum — and would not fit beside it in 128 bits either; it only
+  // decides a tie, which the sticky flag carries.
+  if (gap > 64) {
+    if (big.neg == small.neg) {
+      return normalize(shl128(big.m, 1), big.e - 1, true, big.neg);
+    }
+    return normalize(sub128(shl128(big.m, 1), U128 { hi: 0 as u64, lo: 1 as u64 }), big.e - 1, true, big.neg);
+  }
+  var bm: U128 = shl128(big.m, gap);
+  var sm: U128 = U128 { hi: 0 as u64, lo: small.m };
+  if (big.neg == small.neg) {
+    return normalize(add128(bm, sm), small.e, false, big.neg);
+  }
+  var c: i32 = cmp128(bm, sm);
+  if (c == 0) {
+    return ld_zero();
+  }
+  if (c > 0) {
+    return normalize(sub128(bm, sm), small.e, false, big.neg);
+  }
+  return normalize(sub128(sm, bm), small.e, false, small.neg);
+}
+
+pub function (a: Ld) sub(b: Ld): Ld {
+  return a.add(b.negate());
+}
+
+// The rounding modes numfmt's --round selects between, applied to a
+// whole number.
+pub function round_up(): i32 {
+  return 0;
+}
+
+pub function round_down(): i32 {
+  return 1;
+}
+
+pub function round_from_zero(): i32 {
+  return 2;
+}
+
+pub function round_toward_zero(): i32 {
+  return 3;
+}
+
+pub function round_nearest(): i32 {
+  return 4;
+}
+
+// `(a).round(mode)` — a whole number by the mode numfmt asked for.
+//
+// `nearest` is `floor(|x| + 1/2)` with the sign put back, not a
+// correctly-rounded round-half-away: the addition rounds first, so a
+// value one unit below a half — `numfmt --format=%.3f --round=nearest
+// 0.0005` reaches 0.49999999999999999997 — carries up to the half and
+// rounds away with it. GNU's answer there is 0.001.
+pub function (a: Ld) round(mode: i32): Ld {
+  if (a.is_zero() || a.e >= 0) {
+    return a;
+  }
+  if (mode == round_nearest()) {
+    return signed(trunc_mag(a.abs().add(half())), a.neg);
+  }
+  if (!has_fraction(a)) {
+    return a;
+  }
+  var whole: Ld = trunc_mag(a.abs());
+  if (away_from_zero(mode, a.neg)) {
+    whole = whole.add(ld_from_i32(1));
+  }
+  return signed(whole, a.neg);
+}
+
+function signed(v: Ld, neg: boolean): Ld {
+  if (neg) {
+    return v.negate();
+  }
+  return v;
+}
+
+// Whether a value with a fraction moves one step away from zero. The
+// caller has already established that there is a fraction.
+function away_from_zero(mode: i32, neg: boolean): boolean {
+  if (mode == round_toward_zero()) {
+    return false;
+  }
+  if (mode == round_from_zero()) {
+    return true;
+  }
+  if (mode == round_up()) {
+    return !neg;
+  }
+  return neg;
+}
+
+// Whether anything is lost by dropping the fraction.
+function has_fraction(a: Ld): boolean {
+  if (a.e >= 0 || a.is_zero()) {
+    return false;
+  }
+  var drop: i32 = 0 - a.e;
+  if (drop >= 64) {
+    return true;
+  }
+  return (a.m & (1 as u64 << drop as u64) - 1 as u64) != 0 as u64;
+}
+
+// The whole part of a non-negative value.
+function trunc_mag(a: Ld): Ld {
+  if (a.e >= 0) {
+    return a;
+  }
+  var drop: i32 = 0 - a.e;
+  if (drop >= 64) {
+    return ld_zero();
+  }
+  return ld_from_u64(a.m >> drop as u64);
+}
+
+function half(): Ld {
+  return Ld { neg: false, m: 9223372036854775808 as u64, e: 0 - 64 };
+}
+
+pub function ld_pow10(k: i32): Ld {
+  if (k <= 0) {
+    return ld_from_i32(1);
+  }
+  // Up to 10^19 the power is a whole u64 and exact; past that it is
+  // built by repeated multiplication, which is how a long double gets
+  // one too.
+  if (k <= 19) {
+    return ld_from_u64(pow10_u64(k));
+  }
+  var v: Ld = ld_from_u64(pow10_u64(19));
+  var i: i32 = 19;
+  while (i < k) {
+    v = v.mul(ld_from_i32(10));
+    i = i + 1;
+  }
+  return v;
+}
+
+// ---- rendering -------------------------------------------------------------
+// `(a).to_fixed(prec)` — the value as `printf("%.*Lf")` writes it: the
+// exact binary value rounded to `prec` decimals, half to even.
+pub function (a: Ld) to_fixed(prec: i32): string {
+  var digits: string = scaled_digits(a, prec);
+  var sign: string = "";
+  if (a.neg) {
+    sign = "-";
+  }
+  if (prec <= 0) {
+    return sign + digits;
+  }
+  var d: string = digits;
+  while (d.len() < prec + 1) {
+    d = "0" + d;
+  }
+  return sign + slice_unchecked(d, 0, d.len() - prec) + "." + slice_unchecked(d, d.len() - prec, d.len());
+}
+
+// |a| * 10^prec rounded to a whole number, half to even, as digits.
+//
+// The 128-bit path covers everything a printed number reaches — the
+// product of a 64-bit significand and a power of ten below 10^19 — and
+// only a value too big for that (a whole number past 2^64, which numfmt
+// only prints when it is scaling to a unit) falls back to `core/bigint`.
+function scaled_digits(a: Ld, prec: i32): string {
+  if (a.is_zero()) {
+    return "0";
+  }
+  if (prec >= 0 && prec < 20 && a.e > 0 - 128 && a.e < 64) {
+    var fast: (string, boolean) = scaled_digits_fast(a, prec);
+    if (fast.1) {
+      return fast.0;
+    }
+  }
+  var num: bigint.BigInt = bigint.from_u64(a.m);
+  if (prec > 0) {
+    num = num.mul_pow10(prec);
+  }
+  if (a.e >= 0) {
+    return num.shl(a.e).to_string();
+  }
+  var den: bigint.BigInt = bigint.from_i64(1 as i64).shl(0 - a.e);
+  var qr: (bigint.BigInt, bigint.BigInt) = num.divmod(den);
+  var q: bigint.BigInt = qr.0;
+  var twice: bigint.BigInt = qr.1.mul(bigint.from_i64(2 as i64));
+  var c: i32 = twice.cmp(den);
+  if (c > 0 || c == 0 && q.bit(0)) {
+    q = q.add(bigint.from_i64(1 as i64));
+  }
+  return q.to_string();
+}
+
+// The same in 128 bits, with a flag saying whether it fit.
+function scaled_digits_fast(a: Ld, prec: i32): (string, boolean) {
+  var num: U128 = mul64(a.m, pow10_u64(prec));
+  if (a.e >= 0) {
+    if (bit_len128(num) + a.e > 64) {
+      return ("", false);
+    }
+    return (u64_digits(num.lo << a.e as u64), true);
+  }
+  var drop: i32 = 0 - a.e;
+  if (bit_len128(num) - drop > 64) {
+    return ("", false);
+  }
+  var q: u64 = shr128_low(num, drop);
+  if (bit_set(num, drop - 1) && (low_bits_set(num, drop - 1) || (q & 1 as u64) == 1 as u64)) {
+    q = q + 1 as u64;
+  }
+  return (u64_digits(q), true);
+}
+
+function pow10_u64(k: i32): u64 {
+  var v: u64 = 1 as u64;
+  var i: i32 = 0;
+  while (i < k) {
+    v = v * (10 as u64);
+    i = i + 1;
+  }
+  return v;
+}
+
+function u64_digits(v: u64): string {
+  if (v == 0 as u64) {
+    return "0";
+  }
+  var n: i32 = 0;
+  var x: u64 = v;
+  while (x != 0 as u64) {
+    n = n + 1;
+    x = x / (10 as u64);
+  }
+  var buf: u8[] = __alloc_u8(n);
+  var i: i32 = n;
+  x = v;
+  while (x != 0 as u64) {
+    i = i - 1;
+    buf = buf.with(i, (48 as u64 + x % (10 as u64)) as u8);
+    x = x / (10 as u64);
+  }
+  return string_from_bytes_unchecked(buf);
+}
+
+// `(a).to_g()` — `printf("%Lg")`: six significant digits, the exponent
+// form when the exponent is below -4 or at least 6, trailing zeros
+// dropped. numfmt's diagnostics quote the offending value this way.
+pub function (a: Ld) to_g(): string {
+  if (a.is_zero()) {
+    return "0";
+  }
+  var exp: i32 = decimal_exponent(a);
+  var digits: string = significant_digits(a, 6);
+  if (digits.len() > 6) {
+    exp = exp + 1;
+    digits = slice_unchecked(digits, 0, 6) + "";
+  }
+  var sign: string = "";
+  if (a.neg) {
+    sign = "-";
+  }
+  if (exp < 0 - 4 || exp >= 6) {
+    var mant: string = slice_unchecked(digits, 0, 1) + "";
+    var frac: string = strip_zeros(slice_unchecked(digits, 1, digits.len()) + "");
+    if (frac.len() > 0) {
+      mant = mant + "." + frac;
+    }
+    return sign + mant + exp_suffix(exp);
+  }
+  if (exp >= 0) {
+    var ip: string = slice_unchecked(digits, 0, exp + 1) + "";
+    var fp: string = strip_zeros(slice_unchecked(digits, exp + 1, digits.len()) + "");
+    if (fp.len() == 0) {
+      return sign + ip;
+    }
+    return sign + ip + "." + fp;
+  }
+  var lead: string = "0.";
+  var z: i32 = 0;
+  while (z < 0 - exp - 1) {
+    lead = lead + "0";
+    z = z + 1;
+  }
+  return sign + lead + strip_zeros(digits);
+}
+
+function exp_suffix(exp: i32): string {
+  var s: string = "e+";
+  var x: i32 = exp;
+  if (x < 0) {
+    s = "e-";
+    x = 0 - x;
+  }
+  var d: string = (x as i64).to_string();
+  if (d.len() < 2) {
+    d = "0" + d;
+  }
+  return s + d;
+}
+
+function strip_zeros(s: string): string {
+  var n: i32 = s.len();
+  while (n > 0 && s[n - 1] as i32 == 48) {
+    n = n - 1;
+  }
+  return slice_unchecked(s, 0, n) + "";
+}
+
+// The exponent of the leading decimal digit.
+pub function decimal_exponent(a: Ld): i32 {
+  if (a.is_zero()) {
+    return 0;
+  }
+  return exact_digits(a).len() - 1 + a.e_dec();
+}
+
+// The exact decimal expansion of the magnitude as digits, with the
+// decimal point `e_dec()` places from the right.
+function exact_digits(a: Ld): string {
+  var m: bigint.BigInt = bigint.from_u64(a.m);
+  if (a.e >= 0) {
+    return m.shl(a.e).to_string();
+  }
+  return m.mul(bigint.from_i64(5 as i64).pow(0 - a.e)).to_string();
+}
+
+function (a: Ld) e_dec(): i32 {
+  if (a.e >= 0) {
+    return 0;
+  }
+  return a.e;
+}
+
+// The first `n` significant decimal digits, rounded half to even; one
+// digit longer when the rounding carried out of the top.
+function significant_digits(a: Ld, n: i32): string {
+  var d: string = exact_digits(a);
+  if (d.len() <= n) {
+    return d + "0".repeat(n - d.len());
+  }
+  var kept: u8[] = __alloc_u8(n);
+  var i: i32 = 0;
+  while (i < n) {
+    kept = kept.with(i, d[i]);
+    i = i + 1;
+  }
+  var c: i32 = d[n] as i32;
+  var up: boolean = c > 53 || c == 53 && (has_nonzero(d, n + 1) || (d[n - 1] as i32 - 48) % 2 == 1);
+  if (!up) {
+    return string_from_bytes_unchecked(kept);
+  }
+  i = n - 1;
+  while (i >= 0) {
+    if (kept[i] as i32 == 57) {
+      kept = kept.with(i, 48 as u8);
+      i = i - 1;
+    } else {
+      kept = kept.with(i, (kept[i] as i32 + 1) as u8);
+      return string_from_bytes_unchecked(kept);
+    }
+  }
+  return "1" + string_from_bytes_unchecked(kept);
+}
+
+function has_nonzero(d: string, from: i32): boolean {
+  var i: i32 = from;
+  while (i < d.len()) {
+    if (d[i] as i32 != 48) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
