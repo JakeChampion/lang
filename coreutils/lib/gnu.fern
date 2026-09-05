@@ -129,7 +129,6 @@ pub function write_out(s: string): void {
 // with C escapes (`extra operand 'c\nd'`), `quotef` renders a file name
 // the way a shell would need it typed (`'no such': No such file or
 // directory`, bare when nothing in it is special).
-
 // `quote(s)` — `s` in single quotes; backslash and the quote itself
 // backslashed, the seven named control characters as C escapes, and
 // every other control or non-ASCII byte as three octal digits.
@@ -162,7 +161,7 @@ function append_c_escape(out: u8[], b: i32): u8[] {
     return bs.append(named as u8);
   }
   bs = bs.append((48 + b / 64) as u8);
-  bs = bs.append((48 + (b / 8) % 8) as u8);
+  bs = bs.append((48 + b / 8 % 8) as u8);
   return bs.append((48 + b % 8) as u8);
 }
 
