@@ -1,0 +1,1 @@
+default value for parameter "b" is a field access: a default must be a constant expression, because it is evaluated at each call site rather than inside f

@@ -11,6 +11,11 @@
 // Top-level consts are folded to literals before defaults are resolved, so
 // `= SOME_CONST` still works; only a name that survives to this pass is an
 // error.
+//
+// The rule is a WHITELIST of literal / unary / binary, not a hunt for free
+// names: the hunt descended into Ident, Unary, Binary and Call and nothing
+// else, so `= config.timeout`, `= xs[0]` and `= n as i32` each smuggled a
+// caller-scope name past it. diag_e076_field_access pins that class.
 function f(a: i32, b: i32 = a * 2): i32 {
     return a + b;
 }
