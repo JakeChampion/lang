@@ -42033,8 +42033,9 @@ function consumed_scalar_enum_frees(body: ast.Stmt[], structs: StructTab, opt_fr
 // string boxes are rc-HEADERED since #4294, released by the rc-aware
 // __fern_str_free — box + separate data buffer on asm, one inline block on wasm;
 // the freshness gate in variant_struct_payloads_fresh keeps the payload the box's
-// sole owner). NOT a scalar (no rc — released with the box), NOT string[] / enum /
-// map / opt / tuple, and NOT a non-leaf (cycle-risk) struct.
+// sole owner), OR a string[] (deep-freed by __fern_str_arr_free, under the same
+// freshness gate). NOT a scalar (no rc — released with the box), NOT enum / map /
+// opt / tuple, and NOT a non-leaf (cycle-risk) struct.
 function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
     // An ENUM-array payload (`Seq(N[])`, including the self-referential shape a
     // tree enum is built from): `__fern_arrarr_free` rc-guards the buffer, decs
