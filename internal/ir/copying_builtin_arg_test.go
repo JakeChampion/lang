@@ -169,3 +169,27 @@ func TestAccumulatorWrittenToWriterStaysInPlace(t *testing.T) {
 		t.Errorf("main calls __fern_str_append %d times, want 1 — the self-append fell back to the copying concat; ops:\n%s", n, p)
 	}
 }
+
+// The argument-temp half for the method form (#8413): a fresh string handed
+// straight to `Writer.write` is stashed and released after the call. The
+// call-level admission needs a scalar result and the position-wise one a
+// user callee, so the temp of `w.write(build(chunk))` was owned by nobody —
+// one whole output chunk leaked per iteration of a cat-shaped loop.
+func TestFreshStringPassedToWriterIsReleased(t *testing.T) {
+	src := `function build(n: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) { out = out + "abcdefgh"; i = i + 1; }
+    return out;
+}
+function main(): i32 {
+    var w: Writer = stdout();
+    match (w.write(build(4))) { Some(_) => { return 1; }, None => {} }
+    return 0;
+}`
+	p := lowerSourceWith(t, src, 8)
+	fn := findFunc(p, "main")
+	if n := countCallDirect(fn.Ops, "__fern_str_dec"); n != 1 {
+		t.Errorf("main calls __fern_str_dec %d times, want 1 — the build() temp passed to Writer.write is not released; ops:\n%s", n, p)
+	}
+}
