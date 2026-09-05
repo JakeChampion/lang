@@ -67,13 +67,11 @@ function main(): i32 {
     }
     var mwb: parser.Module = parser.module_with_builtins(mod);
     if (decide) {
-        // The same two-halves decision emit_module_mode makes, in its default
+        // The same decision emit_module_mode_or_error makes, in its default
         // (non-component) mode — reused from wasm_ir rather than restated, so
         // the probe cannot drift from the emitter it describes.
         var plm: parser.Module = wasm_ir.route_normalized(mwb);
-        var pok: boolean = wasm_ir.ir_route_precheck(plm);
-        if (pok) { pok = wasm_ir.ir_route_final(wasm_ir.lower_all_for(plm), false, false); }
-        if (pok) { print("ir\n"); } else { print("ast\n"); }
+        if (wasm_ir.ir_route_ok(plm, false, false)) { print("ir\n"); } else { print("ast\n"); }
         return 0;
     }
     var emitted: string = wasm_ir.emit_module_mode_or_error(mwb, false, false);
