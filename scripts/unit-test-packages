@@ -3,14 +3,19 @@
 # scripts/unit-test-packages — print the Go packages the unit-test lane runs,
 # one import path per line.
 #
-# "Unit tests" here means every Go package in the repo EXCEPT the four that
+# "Unit tests" here means every Go package in the repo EXCEPT the three that
 # have workflows of their own because they are slow:
 #
 #   internal/e2e          split into test-e2e-{arm64,x86_64,wasm,other}
 #   internal/e2eselfhost  test-e2e-selfhost (sharded; >90 min unsharded)
-#   internal/e2eharness   the shared harness — no tests of its own worth
-#                         a lane, and it is compiled by the two above
 #   internal/fernsmith    test-fernsmith (fuzz corpus + generator, ~60s)
+#
+# internal/e2eharness is NOT excluded, though it once was, on the grounds
+# that it had "no tests of its own worth a lane". It has 22, including the
+# in-process linker parity gates every self-host driver build goes through
+# and TestX86StructuredMatchesText, which docs/TEST-GATES.md names as a
+# gate — and no lane ran any of them (#8470). They take under two seconds
+# in total, so the exclusion was never buying anything.
 #
 # DERIVED, NOT ENUMERATED — that is the whole point of this file.
 # .github/workflows/test-units.yml used to carry a hand-written list of
@@ -32,4 +37,4 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
 go list ./internal/... ./cmd/... |
-  grep -vE '/internal/(e2e|e2eselfhost|e2eharness|fernsmith)(/|$)'
+  grep -vE '/internal/(e2e|e2eselfhost|fernsmith)(/|$)'

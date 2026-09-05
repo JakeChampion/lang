@@ -1038,14 +1038,24 @@ jobs:
           done
           export FERN_SELFHOST_BUILD_CACHE="$CACHE"
           echo "FERN_SELFHOST_BUILD_CACHE=$FERN_SELFHOST_BUILD_CACHE"
-          # Sorted UNION of every TestSelfHost* function across BOTH packages
+          # Sorted UNION of the tests across BOTH packages
           # (internal/e2eselfhost + the ~30 residuals still in internal/e2e —
           # see RESIDUAL TESTS above), partitioned by the weighted LPT script
           # (see SHARDED above) so heavy tests spread instead of stacking.
           # Read from the prebuilt binaries (no recompile). The isolated
           # fern.fern driver tests (ISOLATED_DRIVER_TESTS) are filtered out
           # here — they run inside the `cli` job, not the shards.
-          mapfile -t SH_ALL < <("$SH_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS}|${OWN_JOB_TESTS})\$" | sort)
+          #
+          # EVERY test in the e2eselfhost package, not just `TestSelfHost*`:
+          # the whole package is self-host tests, so a name outside the
+          # prefix was simply never selected by anything. Seven were —
+          # TestCheckerDriverFault among them, which pins the distinction
+          # docs/TEST-GATES.md draws between a checker driver that DIED and
+          # one that found nothing (#8471). `^Test` makes the selection
+          # total by construction, so the next differently-named test cannot
+          # go missing. RES_ALL below keeps the prefix: it is filtering
+          # self-host tests OUT of internal/e2e, which has its own lanes.
+          mapfile -t SH_ALL < <("$SH_BIN" -test.list '^Test' | grep '^Test' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS}|${OWN_JOB_TESTS})\$" | sort)
           mapfile -t RES_ALL < <("$E2E_BIN" -test.list '^TestSelfHost' | grep '^TestSelfHost' | grep -vE "^(${ISOLATED_DRIVER_TESTS}|${QUARANTINED_TESTS}|${OWN_JOB_TESTS})\$" | sort)
           mapfile -t MINE < <(printf '%s\n' "${SH_ALL[@]}" "${RES_ALL[@]}" | sort | scripts/selfhost-shard-tests "$SHARD" "$NSHARD" .github/selfhost-test-weights.txt)
           SEL_SH=()
@@ -1056,7 +1066,7 @@ jobs:
             if printf '%s\n' "${RES_ALL[@]}" | grep -qx "$t"; then SEL_RES+=("$t"); else SEL_SH+=("$t"); fi
           done
           if [ ${#SEL_SH[@]} -eq 0 ] && [ ${#SEL_RES[@]} -eq 0 ]; then
-            echo "no TestSelfHost tests for shard $SHARD/$NSHARD"; exit 0
+            echo "no tests for shard $SHARD/$NSHARD"; exit 0
           fi
           echo "shard $SHARD/$NSHARD: ${#SEL_SH[@]} selfhost-pkg + ${#SEL_RES[@]} residual tests"
           # Run from each package dir so the tests' ../../ relative paths
