@@ -1968,19 +1968,9 @@ func emitWriterHandleAlloc(w func(string, ...any), dst, fdReg string) {
 	w("\tadd %s, x4, #8", dst)      // value pointer = base + 8
 }
 
-// emitOptionBox writes an Option[IoError] heap box and leaves its value pointer
-// in x0. Layout {rc@base, tag@base+8, payload@base+16}, value pointer = base+8.
-// `tag` is 1 for None (rc + tag only), 0 for Some (rc + tag + payload), where
-// `payloadReg` (a 64-bit reg) holds the IoError pointer stored at box+8. Clobbers
-// x3-x6.
 // emitResultUnitBox builds a Result[void, IoError] box: Ok(()) puts the
-// unit in the payload slot, Err puts the IoError there. BOTH arms are 24
-// bytes (rc + tag + payload) — unlike Option, whose None arm is 16 with
-// no payload at all.
-//
-// Deliberately separate from emitOptionBox: most of that function's
-// callers (close, writer_write, the reader helpers) still return
-// Option[IoError], and shifting their layout here would corrupt them.
+// unit in the payload slot, Err puts the IoError there. Same 24-byte block and
+// value pointer as emitOptionBox; the tags mean different things.
 func emitResultUnitBox(w func(string, ...any), ok bool, payloadReg string) {
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
@@ -2003,17 +1993,20 @@ func emitResultUnitBox(w func(string, ...any), ok bool, payloadReg string) {
 	}
 }
 
+// emitOptionBox writes an Option[IoError] heap box and leaves its value pointer
+// in x0. Layout {rc@base, tag@base+8, payload@base+16}, value pointer = base+8.
+// `tag` is 1 for None, 0 for Some, where `payloadReg` (a 64-bit reg) holds the
+// IoError pointer stored at box+8. Both arms take the full 24 bytes: the IR
+// frees a None it owns at the enum's uniform box size (16 + the rc header), and
+// a shorter block would be pushed onto a class its extent does not cover.
+// Clobbers x3-x6.
 func emitOptionBox(w func(string, ...any), tag int, payloadReg string) {
 	w("\tadrp x3, %s", heapPtrSym)
 	w("\tadd x3, x3, #:lo12:%s", heapPtrSym)
 	w("\tldr x4, [x3]")
 	w("\tadd x4, x4, #15")
 	w("\tand x4, x4, #-16")
-	if tag == 1 {
-		w("\tadd x5, x4, #16") // None: rc + tag only
-	} else {
-		w("\tadd x5, x4, #24") // Some: rc + tag + payload
-	}
+	w("\tadd x5, x4, #24")
 	w("\tstr x5, [x3]")
 	emitHeapGuardCall(w)
 	w("\tmov w6, #1")
@@ -5353,7 +5346,7 @@ func emitArrIdxHelperNChecked(name string, shift int, checked bool) func(w func(
 // relative to the new data pointer, past a headerBytes = max(16, stride) prefix),
 // copies the old elements, and returns the new data pointer. Unlike the native
 // helper (which calls __fern_alloc) this allocates through __ssa_alloc_pres,
-// and the copy goes through __ssa_bcopy — mirroring __str_concat.
+// and the copy goes through __ssa_bcopy, mirroring __str_concat.
 // x0=arr, w1=oldLen, w2=stride. The old buffer is the caller's to release
 // (the IR decs it after the move), so nothing is freed here.
 func emitArrPushGrowHelper(w func(string, ...any)) {
@@ -5402,10 +5395,8 @@ func emitArrPushGrowHelper(w func(string, ...any)) {
 // emitArrPushGrowElemHelper writes the element-retaining siblings of
 // __fern_arr_push_grow for arrays of rc-tracked pointers (single-word strings
 // included, which is why the _str spellings share it): the same grow, then on
-// the copy path a __fern_rc_inc over the oldLen copied elements so the fresh
-// buffer owns its own references. A raw copy would leave both buffers holding
-// the same pointers under one count, and the old buffer's walk-drop would
-// release elements the copy still uses.
+// the copy path a __fern_rc_inc over the oldLen copied elements, so the fresh
+// buffer owns a reference to every element it shares with the old one.
 //
 // moveForm is the self-append `a = a.append(v)` contract: the old buffer is
 // about to be released without an element walk, so at rc == 1 the copy
@@ -6814,8 +6805,7 @@ func inlineArrIdxLines(in x86.Inst, fr frameLayout, numAlloc int, seed string) (
 // nothing else, so a value the allocator homed in x2..x11 and kept live across
 // an inc, a dec or an is_unique no longer costs a store and a reload at each
 // one — and there are 70 to 86 sites of each in a program built on a persistent
-// collection. `__fern_box_free`, a bare `ret` while this heap does not reclaim,
-// stops costing anything at all.
+// collection.
 var helperClobbers = sync.OnceValue(computeHelperClobbers)
 
 // renderHelper returns a helper body's assembly text.

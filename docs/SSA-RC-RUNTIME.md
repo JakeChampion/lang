@@ -82,7 +82,12 @@ and uses `base+8` as the data pointer, so the flat backend, the evaluator and
 this emitter agree on where a block starts. The emitter-built cells - closure
 environments and closure cells (`closureLines`), `dyn` boxes (`boxDynLines`) -
 lay the same header down themselves, with the payload size at `base+4` for
-`__fern_closure_drop`.
+`__fern_closure_drop`. The Option[IoError] and Result[void, IoError] boxes the
+I/O helpers return (`emitOptionBox`, `emitResultUnitBox`) are ordinary rc = 1
+boxes of 24 bytes in every arm, None included: that is the IR's uniform enum
+box size plus the rc header, so the IR frees them like any other box. The flat
+backend marks its helper-built boxes immortal instead. Reader and Writer
+handles carry the immortal sentinel here too and are never freed.
 
 Every block, whether from a compiled `OpAlloc`, a hand-written helper or
 `__alloc` itself, comes out of one allocator, `__alloc(n)`: the size is rounded
@@ -93,8 +98,13 @@ code and the helpers that allocate mid-computation reach it through
 `__ssa_alloc_pres`, a trampoline that preserves every register and the flags
 (size in x16, base back in x16), so an allocation can be spliced anywhere
 without knowing what is live around it. The sites that still bump inline (the
-string producers) advance the cursor by the same 16-rounded amount, so a
-block's physical extent always covers the class a later free would put it on.
+string producers, the helper-built boxes, two dirent scratch buffers) advance
+the cursor by their unrounded size, and every allocation, `__alloc`'s bump path
+included, 16-aligns its base: a block's physical extent is therefore at least
+`roundup16(size)`, which is its class for every size at or below 2048 B and
+for an exact power of two above it, so a later free never pushes a block onto
+a class its extent does not cover. An inline site that bumps a non-power-of-two
+size above 2048 B would break that and has to go through `__alloc`.
 
 **What is reclaimed.** `__free(base, n)` pushes the block onto its class's
 intrusive list, and everything the IR releases reaches it: struct and enum

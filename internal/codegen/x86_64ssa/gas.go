@@ -2080,7 +2080,7 @@ func emitStrLenHelper(w func(string, ...any)) {
 // inserts at scope exit. The array element pointer carries a 16-byte header with
 // its reference count at [data-8] (ArrayLit builds it: cap@-12, rc@-8, len@-4).
 // Guarded (null / low-address / static sentinel); if the array is uniquely held
-// (rc == 1) the buffer would be freed — a no-op while this emitter's heap has
+// (rc == 1) the buffer would be freed, a no-op while this emitter's heap has
 // no freelist (the arm64 SSA emitter's does), so we just return; otherwise it
 // drops a shared reference. The stride arg is unused until real reclamation
 // lands. Leaf.
@@ -2347,9 +2347,12 @@ func emitStringFromBytesHelper(w func(string, ...any)) {
 }
 
 // emitAliasHelper writes `<name>:` as a jump to another helper. The bump heap
-// never reclaims, so the _ptr / _str / _move_ptr / _move_str variants — which
-// natively differ only by an element-retain or element-release walk — have
-// nothing to do that the plain helper does not. arm64ssa aliases the same set.
+// never reclaims, so the _ptr / _str / _move_ptr / _move_str variants, which
+// natively differ only by an element-retain or element-release walk, have
+// nothing to do that the plain helper does not. That holds only while nothing
+// is freed: a raw copy leaves the grown buffer sharing its element references
+// with the old one under a single count, so arm64ssa, whose heap reclaims,
+// gives each spelling its own body.
 func emitAliasHelper(name, target string) func(w func(string, ...any)) {
 	return func(w func(string, ...any)) {
 		w("")
