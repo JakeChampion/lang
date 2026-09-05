@@ -13339,9 +13339,9 @@ func mapKeyTypeName(t ast.Type) string {
 //	0 = scalar — i32-sized (stored raw), or a wide scalar
 //	    (i64 / u64 / f64) stored as a pointer to a cell the
 //	    column owns, which mapValTag's size byte marks
-//	1 = non-array pointer (string / struct / enum / slice /
-//	    tuple) — pointer-shaped but not yet reclaimed by
-//	    map_drop
+//	1 = non-array pointer (generic enum / slice / tuple /
+//	    runtime handle) — pointer-shaped but not yet
+//	    reclaimed by map_drop
 //	2 = array value with non-rc elements (plain arr_dec free)
 //	3 = array value with rc-tracked elements (drop_arr_ptr)
 //	4 = pointer value with a generated deep drop (concrete
@@ -13364,9 +13364,9 @@ func mapValKindTag(t ast.Type, info *checker.Info, genEnumDrops map[string]*ast.
 	// __drop_map_via_<drop> loop at the map's last reference, and retained
 	// on set / get / values / iter through the same `kind >= 2` machinery
 	// as arrays. The kind-4 set is exactly mapValHasDrop's domain, so
-	// retain (here) and drop (routing) never disagree. Other pointers
-	// (string / generic-enum / tuple / slice / runtime handles) fall
-	// through to the non-reclaimed pointer kind (1).
+	// retain (here) and drop (routing) never disagree. A string takes its
+	// own kind below; the remaining pointers (generic-enum / tuple / slice
+	// / runtime handles) fall through to the non-reclaimed kind (1).
 	if _, ok := mapValHasDrop(t, info, genEnumDrops, genTupleDrops, ptrW); ok {
 		return 4
 	}

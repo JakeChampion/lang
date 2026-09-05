@@ -588,11 +588,13 @@ pub function __map_has_impl(m: usize, k: usize): boolean {
 
 // __map_val_kind / __map_val_stride unpack the value tag stored
 // at buf+12 by map_new: the low byte is the valKind (0 = scalar,
-// 1 = non-array pointer, 2 = plain-elem array, 3 = rc-elem
-// array); for kinds 2/3 the high bytes carry the value element
-// stride in bytes (the IR's mapValTag), which is what
+// 1 = non-array pointer map_drop does not reclaim, 2 = plain-elem
+// array, 3 = rc-elem array, 4 = pointer with a generated deep
+// drop, 5 = string); for kinds 2/3 the high bytes carry the value
+// element stride in bytes (the IR's mapValTag), which is what
 // __map_val_stride reads — a kind-0 column packs its cell size
-// there instead (__map_val_cell_bytes).
+// there instead (__map_val_cell_bytes). Kinds 4 and 5 carry no
+// size byte.
 function __map_val_kind(buf: usize): i32 {
     return __load_i32(buf + 12) & 255;
 }

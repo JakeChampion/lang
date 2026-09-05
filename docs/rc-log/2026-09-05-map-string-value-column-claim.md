@@ -78,7 +78,7 @@ for exactly this reason — plus a way to tell the two string ABIs apart in
 pre-drop widening and `emitMapPredropSoleOwnerGate` for strings.
 
 The **struct** value column (kind 4) is still shared, and is the residual
-#8354 keeps: its deep drop is the IR-generated `__drop_map_struct_<T>`, so
+#8354 keeps: its deep drop is the IR-generated `__drop_map_struct_T`, so
 claiming it needs the same per-field walk in the inc direction rather than a
 recognition test.
 
