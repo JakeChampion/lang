@@ -13320,8 +13320,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// the narrowing rule above keeps `300 as u8` an E047: `1 as f64`
 			// is a float literal, and a wide one (`4611686018427387904 as f64`)
 			// needs the target to escape the i32 default.
-			// i32, spelled with Signed — `NumberType{Width: 32}` is u32,
-			// which turns `(3 - 4) as f64` into 4294967295.
+			// The hint is i32, and it has to be spelled with Signed: the
+			// bare `NumberType{Width: 32}` the branches above use is
+			// UNSIGNED, which turns `(3 - 4) as f64` into 4294967295.
 			intHint := ast.NumberType{Width: 32, Signed: true}
 			if !innerNum.Polymorphic {
 				intHint = innerNum

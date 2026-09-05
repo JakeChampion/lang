@@ -72,7 +72,7 @@ on:
 # one ~1-minute job can afford a slot per merge; this lane cannot.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 jobs:
   compile:
@@ -90,6 +90,7 @@ jobs:
             ./bin/fern -target arm64-linux "$f" > "build/$name.s"
             gcc -static -nostdlib "build/$name.s" -o "build/$name"
             echo "::group::run $name"
-            "./build/$name" || echo "(exited $?)"
+            rc=0; scripts/ci-run-example "$name" "./build/$name" || rc=$?
             echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then echo "::error::example $name failed (exit $rc)"; exit 1; fi
           done

@@ -41,12 +41,20 @@ permissions:
   contents: write
   pull-requests: write
 
-# Two merges in quick succession: the older target is superseded, and a run
-# cancelled mid-loop leaves each branch either rebased or untouched — the next
-# run picks up whatever it did not reach.
+# `cancel-in-progress: false` is load-bearing, and getting it wrong makes this
+# lane do NOTHING. It shares a runner pool with ~85 jobs per open PR, so it can
+# sit queued for fifteen minutes before a runner picks it up — longer than the
+# gap between merges here. Cancelling on the next push therefore kills it every
+# time, before it has ever run a step; runs 2-11 of the first day were cancelled
+# without one of them being allocated a runner.
+#
+# Waiting instead costs nothing, because GitHub keeps only ONE pending run per
+# group: a newer push cancels the older PENDING run and leaves the active one
+# alone. So merges during a run collapse into a single follow-up, which finds
+# most branches already current and no-ops.
 concurrency:
   group: auto-rebase-prs
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   rebase:
@@ -62,11 +70,13 @@ jobs:
       - name: List the open pull requests
         id: list
         uses: actions/github-script@v9
+        env:
+          BASE_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
         with:
           script: |
             const fs = require("fs");
             const { owner, repo } = context.repo;
-            const base = context.payload.repository?.default_branch || "main";
+            const base = process.env.BASE_BRANCH || "main";
 
             const prs = await github.paginate(github.rest.pulls.list, {
               owner, repo, state: "open", per_page: 100,
@@ -93,12 +103,22 @@ jobs:
             core.setOutput("skipped", skipped.join("\n"));
 
       - name: Replay each branch onto the new base
+        id: replay
         env:
           # Empty unless the repo has the secret; see the header.
           PUSH_ENABLED: ${{ secrets.AUTO_REBASE_TOKEN != '' && 'true' || '' }}
-          BASE_SHA: ${{ github.sha }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
         run: |
           set -euo pipefail
+
+          # The head of the base branch NOW, not the commit that triggered the
+          # run. A queued run starts minutes after its push, by which time main
+          # has moved: rebasing onto the trigger's commit would leave every
+          # branch behind again the moment it landed.
+          git fetch --quiet origin "$BASE_BRANCH"
+          BASE_SHA="$(git rev-parse FETCH_HEAD)"
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "replaying onto $BASE_BRANCH at $BASE_SHA"
 
           # Rebasing writes commits, and a runner has no identity configured.
           git config user.name "github-actions[bot]"
@@ -173,11 +193,16 @@ jobs:
         env:
           SKIPPED: ${{ steps.list.outputs.skipped }}
           PUSH_ENABLED: ${{ secrets.AUTO_REBASE_TOKEN != '' && 'true' || '' }}
+          BASE_SHA: ${{ steps.replay.outputs.base_sha }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
         with:
           script: |
             const fs = require("fs");
             const { owner, repo } = context.repo;
-            const shortBase = context.sha.slice(0, 8);
+            const base = process.env.BASE_BRANCH || "main";
+            // The replay's own base, not the commit that triggered the run —
+            // they differ whenever the run waited in the queue.
+            const shortBase = (process.env.BASE_SHA || context.sha).slice(0, 8);
 
             let rows = [];
             try {
@@ -203,8 +228,8 @@ jobs:
 
             const resolve = (conflicted) => [
               "```",
-              `git fetch origin main`,
-              `git rebase origin/main`,
+              `git fetch origin ${base}`,
+              `git rebase origin/${base}`,
               ...(conflicted ? [`# resolve, git add, git rebase --continue`] : []),
               `git push --force-with-lease`,
               "```",
@@ -226,9 +251,9 @@ jobs:
                 const paths = row.detail ? row.detail.split(",").filter(Boolean) : [];
                 kind = "conflict";
                 lines = [
-                  `**A rebase is required, and this branch conflicts with \`main\`.**`,
+                  `**A rebase is required, and this branch conflicts with \`${base}\`.**`,
                   ``,
-                  `\`main\` is now at \`${shortBase}\`, and replaying this branch onto it stops` +
+                  `\`${base}\` is now at \`${shortBase}\`, and replaying this branch onto it stops` +
                     (paths.length ? ` in:` : ` with a conflict.`),
                   ...(paths.length ? [``, ...paths.map((p) => `- \`${p}\``)] : []),
                   ``,
@@ -239,9 +264,9 @@ jobs:
               } else if (why[row.status]) {
                 kind = "behind";
                 lines = [
-                  `**A rebase is required: this branch is behind \`main\`.**`,
+                  `**A rebase is required: this branch is behind \`${base}\`.**`,
                   ``,
-                  `\`main\` is now at \`${shortBase}\`. This branch replays onto it cleanly, ` +
+                  `\`${base}\` is now at \`${shortBase}\`. This branch replays onto it cleanly, ` +
                     `but ${why[row.status]} — the rebase is yours to run:`,
                   ``,
                   ...resolve(false),

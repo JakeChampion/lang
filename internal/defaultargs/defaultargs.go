@@ -32,35 +32,76 @@ type Error struct {
 	Msg  string
 }
 
-// freeIdents reports the identifiers a default-value expression reads from
-// its surroundings. A default is pasted into the CALL SITE, so any name it
-// carries is resolved in the caller's scope rather than the callee's: a
-// default of `a * 2` read the CALLER's `a`, and one naming a module
-// function silently picked up a caller local of the same name instead
-// (#8445). Requiring defaults to be self-contained removes the question —
-// there is nothing left to resolve in the wrong place.
+// nonConstReason describes the first sub-expression that stops a default from
+// being a constant expression, and reports whether one was found.
+//
+// A default is pasted into the CALL SITE, so anything it reads resolves in the
+// caller's scope rather than the callee's: a default of `a * 2` read the
+// CALLER's `a`, and one naming a module function silently picked up a caller
+// local of the same name instead (#8445).
+//
+// This is a WHITELIST — a literal, or a unary / binary combination of them —
+// rather than a hunt for free identifiers, because the hunt was open by
+// construction. It descended into Ident / Unary / Binary / Call and nothing
+// else, so a default spelled `config.timeout`, `xs[0]` or `n as i32` carried a
+// caller-scope name past the check untouched, which is the exact class the
+// check exists to stop. Whitelisting closes it for every shape at once,
+// including the ones the AST does not have yet: a node nobody taught this
+// function about is refused, not waved through.
 //
 // Top-level consts are folded to literals before this pass runs, so
 // `= SOME_CONST` is unaffected.
-func freeIdents(e ast.Expr) []*ast.Ident {
-	var out []*ast.Ident
+func nonConstReason(e ast.Expr) (string, bool) {
 	switch x := e.(type) {
 	case nil:
-		return nil
+		return "", false
+	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.CharLit, *ast.BoolLit, *ast.UnitLit:
+		return "", false
 	case *ast.Ident:
-		out = append(out, x)
+		return fmt.Sprintf("reads %q", x.Name), true
 	case *ast.Unary:
-		out = append(out, freeIdents(x.Operand)...)
+		return nonConstReason(x.Operand)
 	case *ast.Binary:
-		out = append(out, freeIdents(x.Left)...)
-		out = append(out, freeIdents(x.Right)...)
-	case *ast.Call:
-		out = append(out, freeIdents(x.Callee)...)
-		for _, a := range x.Args {
-			out = append(out, freeIdents(a)...)
+		if why, bad := nonConstReason(x.Left); bad {
+			return why, true
 		}
+		return nonConstReason(x.Right)
+	case *ast.Call:
+		// Name the callee when there is one to name: "calls \"size\"" points
+		// at the thing to remove, where "is a call" only says it was refused.
+		if id, ok := x.Callee.(*ast.Ident); ok {
+			return fmt.Sprintf("calls %q", id.Name), true
+		}
+		return "is a call", true
+	default:
+		return "is " + describeExpr(e), true
 	}
-	return out
+}
+
+// describeExpr names an expression form for the E076 message, so the
+// diagnostic says what was written rather than only that it was refused.
+func describeExpr(e ast.Expr) string {
+	switch e.(type) {
+	case *ast.FieldAccess:
+		return "a field access"
+	case *ast.Index:
+		return "an index"
+	case *ast.CastExpr:
+		return "a cast"
+	case *ast.Lambda:
+		return "a lambda"
+	case *ast.StructLit:
+		return "a struct literal"
+	case *ast.ArrayLit:
+		return "an array literal"
+	case *ast.TupleLit:
+		return "a tuple literal"
+	case *ast.IfExpr:
+		return "an `if` expression"
+	case *ast.MatchExpr:
+		return "a `match` expression"
+	}
+	return "not a constant expression"
 }
 
 // checkDefaults rejects a default expression that is not self-contained.
@@ -74,10 +115,10 @@ func checkDefaults(p *ast.Program) []Error {
 			if pa.Default == nil {
 				continue
 			}
-			for _, id := range freeIdents(pa.Default) {
-				errs = append(errs, Error{id.P, "E076", fmt.Sprintf(
-					"default value for parameter %q reads %q: a default must be a constant expression, because it is evaluated at each call site rather than inside %s",
-					pa.Name, id.Name, f.Name)})
+			if why, bad := nonConstReason(pa.Default); bad {
+				errs = append(errs, Error{pa.Default.Pos(), "E076", fmt.Sprintf(
+					"default value for parameter %q %s: a default must be a constant expression, because it is evaluated at each call site rather than inside %s",
+					pa.Name, why, f.Name)})
 			}
 		}
 	}
