@@ -10,7 +10,7 @@
 //
 // Reuse: the backend-INDEPENDENT analysis (eligibility, array-return tracking,
 // the helper-name map, the control-flow label resolver) is ircore's
-// (ircore.all_eligible / array_ret_fns / is_fern_helper /
+// (ircore.lower_gated / array_ret_fns / is_fern_helper /
 // ir_helper_symbol / br_target), and the GAS text this backend emits
 // identically to x86 — the literal / shape labels, their `.data` blocks, the
 // runtime `.globl` list, the peephole byte scanners — is asmcore's. Nothing
@@ -621,12 +621,18 @@ function emit_const_i32_push(s: asmcore.EmitState, text: string, movz_ok: boolea
 // (str x0,[sp,#-16]! / ldr x0,[sp],#16), params copied from the caller rt-stack
 // at [x29, #16+i*16]. Structured control flow → per-function indexed labels
 // (.Lira_<fn>_<opidx>), the same OP-STREAM-INDEX scheme asm_ir uses.
+pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irlower.FnSigs, vsigs: irverify.NameIndex): asmcore.EmitState {
+    var r: irlower.LowerResult = irlower.lower_func(fd, s.struct_decls, sg, false);
+    return emit_function_via_ir_pre(r, fd, s, vsigs);
+}
+
+// emit_function_via_ir_pre is the emit half of emit_function_via_ir, split at
+// the lower_func boundary (the x86 twin is asm_ir.emit_function_via_ir_pre) so
+// the fused gate+emit path emits from the LowerResult it already judged.
 // fern-lint: allow cyclomatic-complexity
 // The arm64 half of the same op table as asm_ir.fern: 181 guards, one per
 // op, with the bodies that could move already moved.
-pub function emit_function_via_ir(fd: parser.FuncDecl, s: asmcore.EmitState, sg: irlower.FnSigs, vsigs: irverify.NameIndex): asmcore.EmitState {
-    var r: irlower.LowerResult = irlower.lower_func(fd, s.struct_decls, sg, false);
-
+pub function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vsigs: irverify.NameIndex): asmcore.EmitState {
     // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
     var label_name: string = fd.name;
     if (fd.receiver_type.len() > 0) { label_name = util.base_type_name(fd.receiver_type) + "." + fd.name; }
@@ -2311,11 +2317,12 @@ function emit_arm64_op_fsqrt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState 
 // (asm_arm64.emit_module, or the differential driver) appends asm_arm64's own
 // emit_runtime and materialises the output. Keeping the runtime on the caller
 // side is what lets asm_arm64 import this module (for the use_ir dispatch)
-// without a cycle: asm_arm64_ir never imports asm_arm64. Caller must ensure
-// ircore.all_eligible(mod) and have seeded `s` (struct_decls / funcs).
+// without a cycle: asm_arm64_ir never imports asm_arm64. Caller must have
+// judged the module eligible (ircore.lower_gated) and seeded `s`
+// (struct_decls / funcs).
 // emit_ir_start writes the program entry: capture argc / argv / envp, push a
 // frame, call __fn_main, exit with its result. Both IR emitters use it — the
-// whole-program emit_body and the per-module emit_module_ir_unit_arm64, which
+// whole-program emit_body and the per-module emit_module_ir_unit_arm64_flat, which
 // carried a verbatim copy.
 //
 // The capture convention is the one thing that differs by platform, and it is
@@ -2478,29 +2485,25 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
     return s;
 }
 
-pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-    // Infer return types for unannotated functions so the IR path's
-    // ret-type-keyed call tagging matches what module_with_builtins supplies
-    // (parity with the x86 IR path in asm_ir.emit_module_ir).
-    mod = parser.infer_ret_types_module(mod);
+// emit_body emits the whole-program function bodies and `_start`. `mod` must
+// already carry inferred return types (the caller derived `base` over it).
+// `base` is the whole-program registry the caller derived once (wp_fn_sigs);
+// only this module's trait_reqs are folded in here. `cache`, when non-empty, is
+// the caller's per-function lowering — indexed by mod.funcs position — emitted
+// from directly instead of lowering each function a second time.
+pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean, cache: irlower.LowerResult[], base: irlower.FnSigs): asmcore.EmitState {
     s = asmcore.EmitState { ...s, funcs: mod.funcs };
     s = s.write("    .globl _start\n");
     s = s.write("    .text\n");
-    // Derived ONCE per module: each registry scans all of mod.funcs, so deriving
-    // them per function is O(n^2) and OOMs the bump heap on a large module.
-    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
-    var sg: irlower.FnSigs = irlower.FnSigs {
-        ...irlower.fn_sigs_with_dyn(irlower.fn_sigs_for_borrow(mod.funcs, stab, ircore.array_ret_fns(mod), bparams), mod.trait_reqs),
-        consume_safe_params: irlower.consume_safe_params_interproc(mod.funcs, bparams),
-        // Struct returns resolve against the EmitState's struct view, which on
-        // this path is wider than the module's own decls.
-        struct_ret_fns: irlower.sig_reg_of(irlower.struct_ret_fns_of(mod.funcs, s.struct_decls)),
-    };
+    var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, mod.trait_reqs);
     var vsigs: irverify.NameIndex = irlower.fn_sig_index(mod.funcs);
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
-        s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
+        if (cache.len() == 0) {
+            s = emit_function_via_ir(mod.funcs[fi], s, sg, vsigs);
+        } else {
+            s = emit_function_via_ir_pre(cache[fi], mod.funcs[fi], s, vsigs);
+        }
         fi = fi + 1;
     }
     // Ahead of _start, which gates its envp save on the heap need. close_needs
@@ -2513,7 +2516,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 
 // ---- moved verbatim from asm_arm64.fern (#3457 slice 4 untangle) ----
 // The per-type __field_reclaim_<T> / __struct_drop_<T> helper bodies are
-// IR-path-only (emitted by emit_module_ir_unit_arm64 + emit_module_ir) and
+// IR-path-only (emitted by emit_module_ir_unit_arm64_flat + emit_module_ir_gated) and
 // depend only on asmcore / irlower / util / asm_ir — so they live here in the
 // IR selector, mirroring the x86 asm_ir.emit_ir_struct_drop_one layout, not in
 // the AST emitter asm_arm64.fern that #3457 deletes.
@@ -2522,7 +2525,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
 // the IR selector (emit_function_via_ir) rather than the AST emit_function that
 // asm_arm64.emit_runtime_fern_fn uses. This is what lets the arm64 IR path emit
 // its Fern runtime helpers WITHOUT the AST emitter (#3457 slice 4a) — the
-// remaining transitive coupling of emit_module_ir_unit_arm64 to asm_arm64.fern.
+// remaining transitive coupling of emit_module_ir_unit_arm64_flat to asm_arm64.fern.
 // The helper bodies are self-contained (fully annotated, call no other helper),
 // so the per-helper side-tables computed over the helper's own funcs suffice.
 // Byte-equivalence with the AST path is NOT expected (emit_function and
@@ -6752,19 +6755,11 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 }
 
 // ===================== IR MODULE FRAMERS =====================
-// emit_module_ir and emit_module_ir_unit_arm64 are the arm64 IR module
+// emit_module_ir_gated and emit_module_ir_unit_arm64_flat are the arm64 IR module
 // orchestrators (moved from asm_arm64.fern, #3457 slice-5 prep): with the IR
 // runtime already here (emit_ir_runtime), the whole arm64 IR emit path now
 // lives in asm_arm64_ir.fern, so asm_arm64.fern holds only the AST emitter.
 
-// emit_module_ir is the FORCED-IR whole-program emit — the use_ir branch of
-// emit_module without the eligibility fallback or the pre-codegen check, the
-// arm64 sibling of asm_ir.emit_module_ir. The asm_ir_run `-target arm64-linux -ir`
-// differential driver calls this (with an already lambda-lifted module) so the
-// IR orchestration lives in ONE place: the driver's old hand-copy of this
-// sequence drifted when emit_arm64_reclaim_drop_bodies was added to
-// emit_module's dispatch (#3457) but not to the driver, so a reclaimable
-// struct-with-array-field program link-failed on `__struct_drop_<T>` there.
 // emit_module_or_error is the arm64 mirror of asm_ir.emit_module_or_error
 // (#3457 slice 5): the same parse-error / type-check / lambda-lift prologue as
 // asm_arm64.emit_module, then the eligibility gate — but a module the gate
@@ -6775,9 +6770,9 @@ pub function emit_ir_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.Emi
 // which is what makes that emitter deletable. Declines stay diagnosable:
 // FERN_STRICT_IR=1 makes the shared gate exit(3) naming the bail site, so a
 // regression says WHICH construct left the subset rather than merely that one
-// did. The gate itself is `ircore.all_eligible` — the SAME eligibility the x86
-// path uses — so a program's routing does not differ between the backends; only
-// the instruction selection does.
+// did. The gate is the fused emit_module_ir_gated (ircore.lower_gated) — the
+// SAME verdict the x86 path's gate gives — so a program's routing does not
+// differ between the backends; only the instruction selection does.
 //
 // The prologue is ordered check-then-emit for the reason #4327 records: a gate
 // that returns ahead of the type check lets an ill-typed module miscompile
@@ -6797,14 +6792,8 @@ pub function emit_module_or_error(mod: parser.Module, darwin: boolean): string {
         exit(1);
         return "";
     }
-    // script_normalized desugars a SCRIPT-shaped module (top-level statements,
-    // no `main`) into `function main(): i32 { … }`. The x86 twin gets this
-    // inside emit_module_ir_gated; here it has to be explicit, because until
-    // slice 5 a script on arm64 simply failed all_eligible (no main) and fell
-    // through to the AST emitter — which is exactly the fall-through this
-    // function removes, so without the normalise every script became an error.
-    var lm: parser.Module = ircore.script_normalized(ircore.lift_lambdas(mod));
-    if (ircore.all_eligible(lm)) { return emit_module_ir(lm, darwin); }
+    var g: string = emit_module_ir_gated(ircore.lift_lambdas(mod), darwin);
+    if (g != "") { return g; }
     ircore.eprint_ir_ineligible();
     exit(1);
     return "";
@@ -6915,23 +6904,42 @@ function pp_arm64_marker_reg(asm: string, lo: i32, hi: i32): boolean {
     return false;
 }
 
-pub function emit_module_ir(mod: parser.Module, darwin: boolean): string {
-    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+// emit_module_ir_gated is the arm64 twin of asm_ir.emit_module_ir_gated: the
+// FUSED eligibility gate + whole-program emit (#4394 lever 3 / #8199). Every
+// function is lowered once, judged on that lowering, and emitted from it; the
+// whole-program registry set (both interprocedural fixpoints plus
+// fn_sigs_for_borrow) is derived once and threaded through the emit. "" is the
+// ineligible sentinel — an eligible module always emits at least
+// `.globl _start\n    .text`.
+pub function emit_module_ir_gated(mod: parser.Module, darwin: boolean): string {
+    // script_normalized desugars a SCRIPT-shaped module (top-level statements,
+    // no `main`) into `function main(): i32 { … }`. Return types are inferred
+    // BEFORE the registries are derived so they see the inferred ones.
+    var im: parser.Module = parser.infer_ret_types_module(ircore.script_normalized(mod));
+    var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
+    var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
+    var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), [], false);
+    if (!g.ok) { return ""; }
+    return emit_module_ir_flat(im, imtab, darwin, g.cache, base);
+}
+
+function emit_module_ir_flat(mod: parser.Module, stab: irlower.StructTab, darwin: boolean, cache: irlower.LowerResult[], base: irlower.FnSigs): string {
     strbuf_reset();
     var s: asmcore.EmitState = asmcore.new_state();
-    s = asmcore.EmitState { ...s, struct_decls: irlower.struct_tab(mod.structs), funcs: mod.funcs };
+    s = asmcore.EmitState { ...s, struct_decls: stab, funcs: mod.funcs };
     // emit_body takes the runtime-dependency closure itself, ahead of the _start
     // it ends with. The seeds below are marker needs with no declared deps, so
     // they need no second pass.
-    s = emit_body(mod, s, darwin);
-    // #4355: replaced-STRING-field admission — this driver route is
-    // single-module whole-program, so mod.funcs IS the full read scope.
-    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
+    s = emit_body(mod, s, darwin, cache, base);
+    // #4355: replaced-STRING-field admission — this route is single-module
+    // whole-program, so mod.funcs IS the full read scope. base.strfld_ok_types
+    // is that verdict, and the one the LOWERING routed on (see the x86 twin,
+    // asm_ir.emit_module_ir_unit_flat).
+    var sfok: string[] = base.strfld_ok_types;
     var sfoi: i32 = 0;
     while (sfoi < sfok.len()) { s = s.need("strfldok:" + sfok[sfoi]); sfoi = sfoi + 1; }
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
-    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
+    var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, stab, base.borrowable_params);
     var nfoi: i32 = 0;
     while (nfoi < nfok.len()) { s = s.need("structfldok:" + nfok[nfoi]); nfoi = nfoi + 1; }
     // #5235: plain-fn-pointer-array field registry (see the emit_module_funcs twin).

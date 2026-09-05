@@ -6358,40 +6358,10 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
     // per-module tails onto it itself (#8199).
     var imtab: irlower.StructTab = irlower.struct_tab(im.structs);
     var base: irlower.FnSigs = ircore.wp_fn_sigs(im.funcs, imtab);
-    var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, im.trait_reqs);
-    // Lower every function once into `cache`, checking eligibility on each result.
-    // Bail on the first function whose body doesn't lower or whose
-    // direct calls / function values reference an unknown symbol.
-    var cache: irlower.LowerResult[] = [];
-    var freg: irlower.SigReg = ircore.module_func_reg(im);
-    var i: i32 = 0;
-    while (i < im.funcs.len()) {
-        var r: irlower.LowerResult = irlower.lower_func(im.funcs[i], imtab, sg, false);
-        if (!r.ok) {
-            if (ircore.strict_ir_on()) { ircore.strict_ir_refuse(im.funcs[i].name + " (did not lower: " + r.why + ")"); }
-            return "";
-        }
-        var j: i32 = 0;
-        while (j < r.ops.len()) {
-            var o: ir.Op = r.ops[j];
-            if (o.kind_tag == 149) {  // call_direct
-                if (!ircore.is_fern_helper(o.str) && !ircore.is_c_call(o.str) && !ircore.module_has_func(freg, o.str) && !ircore.known_includes(known, o.str)) {
-                    if (ircore.strict_ir_on()) { ircore.strict_ir_refuse(im.funcs[i].name + " (call to unknown symbol " + o.str + ")"); }
-                    return "";
-                }
-            } else if (o.kind_tag == 6) {  // const_func
-                if (!ircore.module_has_func(freg, o.str) && !ircore.known_includes(known, o.str)) {
-                    if (ircore.strict_ir_on()) { ircore.strict_ir_refuse(im.funcs[i].name + " (function value " + o.str + " not defined)"); }
-                    return "";
-                }
-            }
-            j = j + 1;
-        }
-        cache = cache.append(r);
-        i = i + 1;
-    }
+    var g: ircore.Lowered = ircore.lower_gated(im, imtab, irlower.fn_sigs_with_dyn(base, im.trait_reqs), known, false);
+    if (!g.ok) { return ""; }
     // Every function eligible — emit from the cache (no second lowering).
-    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, cache, base);
+    return emit_module_ir_unit_flat(im, true, false, "", [], im.funcs, imtab, 0, 0 - 1, g.cache, base);
 }
 
 // ---- The x86-64 peephole ---------------------------------------------------
