@@ -1,0 +1,18 @@
+// target_arch() is the -target's ISA, never the compiler's host: it is a
+// string literal before the check, so the arm64 arm below is pruned from the
+// binary and only the x86-64 arm runs. The other legs' answers are
+// target_arch_arm64 and target_arch_wasm32.
+import "core/int";
+
+function main(): i32 {
+    if (target_arch() == "arm64") {
+        print("arm64 build");
+    } else {
+        print("not an arm64 build");
+    }
+    if (target_arch() != "x86-64") {
+        print("not x86-64");
+    }
+    print(target_arch());
+    return 0;
+}

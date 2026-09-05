@@ -26,6 +26,7 @@ import (
 	"github.com/jakechampion/lang/internal/diag"
 	"github.com/jakechampion/lang/internal/modload"
 	"github.com/jakechampion/lang/internal/monomorph"
+	"github.com/jakechampion/lang/internal/platforms"
 	"github.com/jakechampion/lang/internal/wasm/component"
 )
 
@@ -36,13 +37,13 @@ import (
 func CompileComponent(src, world string) ([]byte, error) {
 	switch world {
 	case "wasm32-wasi":
-		prog, info, err := frontEnd(src, "wasi")
+		prog, info, err := frontEnd(src, "wasm32-wasi")
 		if err != nil {
 			return nil, err
 		}
 		return cliRunComponent(prog, info)
 	case "wasm32-wasi-http":
-		prog, info, err := frontEnd(src, "wasi-http")
+		prog, info, err := frontEnd(src, "wasm32-wasi-http")
 		if err != nil {
 			return nil, err
 		}
@@ -73,7 +74,7 @@ func CompileComponent(src, world string) ([]byte, error) {
 // so `main` returning 20 reports 20 rather than the 0 a dropped
 // result leaves behind.
 func CompileCoreWasm(src string) ([]byte, error) {
-	prog, info, err := frontEnd(src, "wasi")
+	prog, info, err := frontEnd(src, "wasm32-wasi")
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +101,7 @@ func CompileCoreWasm(src string) ([]byte, error) {
 // user-supplied request, call `__http_entry`, read back the
 // response the guest committed via response-outparam.set.
 func CompileHttpHandlerCore(src string) ([]byte, error) {
-	prog, info, err := frontEnd(src, "wasi-http")
+	prog, info, err := frontEnd(src, "wasm32-wasi-http")
 	if err != nil {
 		return nil, err
 	}
@@ -113,9 +114,10 @@ func CompileHttpHandlerCore(src string) ([]byte, error) {
 
 // frontEnd runs the shared parse → constfold → check → monomorph
 // pipeline. Errors are formatted with diag so the playground shows
-// the same caret diagnostics it does for Run / View assembly. targetOS
-// is the world's environment, what `target_os()` folds to.
-func frontEnd(src, targetOS string) (*ast.Program, *checker.Info, error) {
+// the same caret diagnostics it does for Run / View assembly. target is
+// the world's target name, whose two halves `target_os()` and
+// `target_arch()` fold to; empty leaves both calls for the checker.
+func frontEnd(src, target string) (*ast.Program, *checker.Info, error) {
 	// modload (not bare parser.Parse) so the program's `std/…` /
 	// `core/…` imports resolve — the auto-prelude is gone, so stdlib
 	// is in scope only when imported.
@@ -123,7 +125,11 @@ func frontEnd(src, targetOS string) (*ast.Program, *checker.Info, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s", diag.Format("<playground>", src, err))
 	}
-	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: targetOS}); err != nil {
+	targetOS, targetArch := "", ""
+	if d := platforms.ForTarget(target); d != nil {
+		targetOS, targetArch = d.Environment, d.ISA
+	}
+	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: targetOS, TargetArch: targetArch}); err != nil {
 		return nil, nil, fmt.Errorf("%s", diag.Format("<playground>", src, err))
 	}
 	info, err := checker.Check(prog)

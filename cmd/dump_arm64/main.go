@@ -18,7 +18,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "parse:", err)
 		os.Exit(1)
 	}
-	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: "linux"}); err != nil {
+	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: "linux", TargetArch: "arm64"}); err != nil {
 		fmt.Fprintln(os.Stderr, "constfold:", err)
 		os.Exit(1)
 	}
