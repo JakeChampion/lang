@@ -63071,11 +63071,11 @@ function borrowable_key(fn: parser.FuncDecl): string {
 // is materially heavier than the empty-registry conservative pass — recomputing it
 // once per lowered function OOMs the arm64 self-compile (measured). It is therefore
 // used ONLY on the emit path, computed ONCE per module before the per-function emit
-// loop and threaded through `emit_function_via_ir` / `emit_function_ir`. The ~15
-// inspection passes (module_uses_*, str_values, …) keep using the cheap
-// conservative `borrowable_params_of`: they only check op-kind presence, and the
-// only op a precise drop adds (__fern_arr_dec) is already emitted by the
-// function-exit dec-sweep, so no inspection result can flip.
+// loop and threaded through `emit_function_via_ir` / `emit_function_ir`. The
+// remaining callers of the cheap conservative `borrowable_params_of` (`fn_sigs_of`
+// and the `reuse_sources_of` / `reuse_consumed_of` / `rc_plan_dump` views) only
+// inspect op shapes, and the only op a precise drop adds (__fern_arr_dec) is
+// already emitted by the function-exit dec-sweep, so no inspection result can flip.
 // param_local_decl_site: the `var` binding-site key for local `name` in `stmts`,
 // or "". Needed because an ASSIGNMENT carries only the target's name, while the
 // alias_ok forgiveness is keyed on binding sites.

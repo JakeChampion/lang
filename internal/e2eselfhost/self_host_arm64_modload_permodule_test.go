@@ -12,7 +12,7 @@ import (
 // TestSelfHostModloadPerModuleWholeCompilerX86_64 (per-module epic #3451 /
 // #3457 step 0a): the WHOLE self-host compiler compiled per-module on arm64 —
 // each module its own translation unit — then linked into one arm64 binary and
-// run, under qemu, AS a compiler.
+// run, natively or under qemu-aarch64, AS a compiler.
 //
 // It is the regression guard for the `close_needs` use-after-free that the
 // arm64 per-module self-build first surfaced: `EmitState.close_needs` snapshot
@@ -29,7 +29,7 @@ import (
 //
 // The driver itself is built as an x86 host binary (only its OUTPUT is arm64
 // asm); the emitted units are assembled+linked with the aarch64 cross gcc and
-// the resulting compiler is run under qemu-aarch64.
+// the resulting compiler is run natively or under qemu-aarch64.
 func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -55,7 +55,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 		t.Fatalf("link per-module whole-compiler arm64 units failed: %v\n%s", err, lout)
 	}
 
-	// 3. Run the arm64 compiler under qemu on a ZERO-NEED program (`return 7;`) —
+	// 3. Run the arm64 compiler on a ZERO-NEED program (`return 7;`) —
 	// the exact shape that triggered the close_needs UAF (emit_runtime walking an
 	// empty needs set). Must emit non-empty asm and exit 0.
 	progDir := t.TempDir()

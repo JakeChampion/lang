@@ -339,13 +339,14 @@ whole-program registry set (`borrowable_params_interproc`, 8 rounds;
 `param_counted_of`, 5) costs 7.9-8.6 s per derivation, and the x86 driver
 derived it twice, the arm64 driver three times (the eligibility pass, then
 emit twice) while also lowering every function twice. Each driver now derives
-it once and lowers once: x86 040f865f5 (-9 to -11% self-compile wall), the
-per-module emit-all drivers e370545e6 (an 8-unit arm64 batch 62-92 s to
-11-21 s), arm64 whole-program 49b803f5a (about -33%), wasm whole-program
-9a97bde6f. The rest of the list this section used to carry does not matter:
-the `module_uses_*` inspection passes no longer exist on the register
-backends, and the lift / closure / noesc / str_fresh / fresh_fwd fixpoints are
-each under 150 ms, ~0.35 s together.
+it once and lowers once: x86 040f865f5 (self-compile wall 68.8 s to 59.6 s
+and 74.2 s to 60.8 s, two interleaved pairs), the per-module emit-all drivers
+e370545e6 (an 8-unit arm64 batch 62-92 s to 11-21 s), arm64 whole-program
+49b803f5a (about -33%), wasm whole-program 9a97bde6f. Nothing else here
+repeats a whole-program walk worth counting: the `module_uses_*` inspection
+passes no longer exist on the register backends, and the lift / closure /
+noesc / str_fresh / fresh_fwd fixpoints are each under 150 ms, ~0.35 s
+together.
 
 ## 6. What is *not* wrong
 
@@ -610,7 +611,7 @@ self-compile reports 1,056 crossings / 4,792 bytes; the appends grow in place.
 
 Huge pages are not it either — §4d above.
 
-**It is not the whole-body pre-walks either — §5's hypothesis is ruled out.**
+**It is not the whole-body pre-walks either.**
 `lower_func` opens with fourteen of them (`reclaimable_names_of`,
 `snapshot_param_names_of`, `aliased_array_names_of`, `precise_drop_names`,
 `consumed_scalar_enum_frees`, `trmc_eligible`, …), each handed the whole body,
