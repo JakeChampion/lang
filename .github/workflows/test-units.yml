@@ -3,16 +3,24 @@ name: Test units
 # Fast unit tests — everything under internal/ except the two
 # big-iron packages that get their own workflows:
 #
-#   internal/e2e + internal/e2eselfhost (+ their shared
-#                        internal/e2eharness) — split into test-e2e-*
+#   internal/e2e + internal/e2eselfhost — split into test-e2e-*
 #                        (arm64 / x86_64 / wasm / selfhost / other) so
-#                        the 5-minute sequential block fans out.
+#                        the 5-minute sequential block fans out. Their
+#                        shared harness, internal/e2eharness, runs HERE:
+#                        its own 20 tests are sub-second (#8470).
 #   internal/fernsmith — its own workflow (fuzz corpus + generator
 #                        machinery; ~60s).
 #
 # Matrix per host arch so backend-tagged unit tests (e.g.
 # internal/codegen/wasmbin, internal/ir invariants) get exercised
-# under both ABIs. Sub-60s on warm cache.
+# under both ABIs.
+#
+# THE RUNTIMES ARE INSTALLED HERE, not assumed absent. Every wasm test in
+# these packages opens with an `exec.LookPath("wasmtime")` and every arm64
+# execution test with a `qemu-aarch64` one, and both t.Skip when the lookup
+# fails — so a lane without the runtimes reports `ok` for a family it never
+# ran, which is the state this lane was in (#8472). The preflight below turns
+# a half-installed runtime back into a job failure.
 
 on:
   pull_request:
@@ -87,7 +95,7 @@ jobs:
       # other workflow restores this cache and never writes one (see the
       # restore step in .github/actions/setup-fern). This lane is the
       # producer because it is the broadest compile in the repo — `go list
-      # ./internal/... ./cmd/...` minus the four slow packages — and it
+      # ./internal/... ./cmd/...` minus the three slow packages — and it
       # already runs on push to main, on both arches, which is exactly the
       # (arch, tree) product the cache key is cut on.
       - name: Cache day stamp
@@ -115,6 +123,50 @@ jobs:
         with:
           build-cache-key: ${{ steps.day.outputs.stamp }}
           wasmtime: true
+      # qemu-aarch64 for the arm64 EXECUTION tests in the unit packages —
+      # internal/codegen/arm64ssa's TestArmRun* family and internal/native/elf's
+      # *RunsUnderQemu cases — plus the aarch64 binutils/gcc that
+      # internal/native/arm64's gas oracle and internal/e2eharness's
+      # native-linker parity gate assemble against. Same lookup-and-skip shape
+      # as wasm: without these the tests report `ok` having executed nothing.
+      #
+      # `qemu-user` rather than the action's `qemu-user-static` default,
+      # because these tests LookPath("qemu-aarch64"), which is the name that
+      # package provides.
+      #
+      # The CROSS compiler only on the x86 leg. The aarch64 leg already has a
+      # native gcc/as (Arm64Tooling takes that path), and the two tests that
+      # name `aarch64-linux-gnu-as` outright — internal/native/arm64's gas
+      # oracle and CFI profile — are covered by the x86 leg; asking an arm64
+      # runner for a cross package it may not carry would trade a real skip for
+      # an infrastructure red.
+      - name: aarch64 runtime + assembler (arm64 execution tests)
+        uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
+          cross-gcc: ${{ matrix.host == 'x86_64' }}
+      # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. setup-fern asserts the wasm
+      # half of this for `wasmtime: true`; this is the arm64 half. Without it a
+      # dropped apt cache or a renamed package silently returns the lane to
+      # green-by-skip, which is exactly how it spent its life.
+      - name: Assert the aarch64 runtime is actually usable
+        env:
+          WANT_CROSS: ${{ matrix.host == 'x86_64' }}
+        run: |
+          set -euo pipefail
+          tools=(qemu-aarch64)
+          if [ "$WANT_CROSS" = "true" ]; then
+            tools+=(aarch64-linux-gnu-gcc aarch64-linux-gnu-as)
+          fi
+          fail=0
+          for tool in "${tools[@]}"; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::$tool is not on PATH — the arm64 execution tests in the unit packages would t.Skip() and this lane would report a false green"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          qemu-aarch64 --version | head -1
       # llvm-mc second oracle for the assembler differential lanes
       # (internal/native/{x86_64,arm64} TestEncodingsAgainstLLVMMC, #7895):
       # the tests skip when llvm-mc is absent, so this install is what makes
@@ -141,6 +193,11 @@ jobs:
             llvm-mc --version | head -2
           fi
       - name: go test (units)
+        # internal/e2eharness's arm64 native-link parity gate runs ONLY here, so
+        # a t.Skip would cover nothing: Arm64Tooling turns it into a failure.
+        # Both legs satisfy it — the aarch64 runner through its native gcc.
+        env:
+          FERN_REQUIRE_ARM64_TOOLING: "1"
         # The package set is DERIVED, not enumerated — see
         # scripts/unit-test-packages, which is also what the Netlify smoke
         # lane's `units` stage runs, so the two cannot cover different sets.
