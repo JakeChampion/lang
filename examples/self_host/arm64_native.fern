@@ -5713,10 +5713,9 @@ pub function arm64_gas_program(src: string): Arm64GasProg {
         if (badreg.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badreg) };
         }
-        // Same discipline for cnt/addv's SIMD operands: the byte-lane encoders
-        // cannot express a wider arrangement, and folding a -1 into the
-        // register field would emit a plausible instruction on the wrong
-        // register.
+        // Same discipline for the SIMD operands: a shape the encoders have no
+        // form for is recorded, never folded into the register field, where a
+        // -1 would emit a plausible instruction on the wrong register.
         var badvec: string = arm64_gas_bad_vec_token(mnem, rest);
         if (badvec.len() > 0) {
             p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badvec) };
