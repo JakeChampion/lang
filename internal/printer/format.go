@@ -179,6 +179,11 @@ type formatter struct {
 	comments []ast.Comment
 	ci       int          // index of the next un-emitted comment in comments
 	blanks   map[int]bool // 1-based source lines that were blank
+	// depth is the nesting level of the statement being formatted. formatExpr
+	// takes no depth of its own — an expression is normally one line — but a
+	// braced arrow-lambda body is a block inside an expression, and it has to
+	// indent against the statement it sits in.
+	depth int
 }
 
 // blankBefore reports whether the source had a blank line immediately
@@ -1005,6 +1010,9 @@ func (f *formatter) formatForEach(fe *ast.ForEach, depth int) {
 }
 
 func (f *formatter) formatStmt(s ast.Stmt, depth int) {
+	prev := f.depth
+	f.depth = depth
+	defer func() { f.depth = prev }()
 	switch x := s.(type) {
 	case *ast.Block:
 		// A Block the parser built to scope a `for … in …` desugar reprints
@@ -1902,48 +1910,49 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		// stay on one line; anything longer uses the normal
 		// multi-line block.
 		//
-		// An arrow lambda parses to this same node with its expression
-		// wrapped in a one-statement `return`, so the arrow form is
-		// reconstructed whenever that shape is intact. The `function`
-		// rendering has to invent a return type for it, and `void` is a
-		// lie for every arrow whose expression has a value.
-		if ret, prelude, ok := arrowReturn(x); ok {
-			{
-				_ = prelude
-				// The body runs as far right as it can, so any context
-				// that continues with a tighter operator needs parens.
-				// An assignment's RHS is terminal, hence `>` not `>=`.
-				needsParens := parentPrec > precAssign
-				if needsParens {
-					f.b.WriteByte('(')
-				}
+		// An arrow lambda parses to this same node, and reprints as an
+		// arrow whatever its body shape: the `function` rendering has to
+		// invent a return type, and `void` is a lie for every body that
+		// yields a value. An expression body is recovered from the
+		// one-statement `return` it desugars to; anything else stays braced.
+		if x.Arrow {
+			// The body runs as far right as it can, so any context
+			// that continues with a tighter operator needs parens.
+			// An assignment's RHS is terminal, hence `>` not `>=`.
+			needsParens := parentPrec > precAssign
+			if needsParens {
 				f.b.WriteByte('(')
-				for i, p := range x.Params {
-					if i > 0 {
-						f.b.WriteString(", ")
-					}
-					// A destructuring parameter prints the pattern it was
-					// written with, not the holder the desugar minted.
-					if p.Pattern != nil {
-						f.formatParamPattern(p)
-					} else {
-						f.b.WriteString(writtenName(p.Name))
-					}
-					f.b.WriteString(": ")
-					f.b.WriteString(formatType(p.Type))
-				}
-				f.b.WriteByte(')')
-				if !x.ReturnUnannotated && x.ReturnType != nil {
-					f.b.WriteString(": ")
-					f.b.WriteString(formatType(x.ReturnType))
-				}
-				f.b.WriteString(" => ")
-				f.formatExpr(ret.Value, precLowest)
-				if needsParens {
-					f.b.WriteByte(')')
-				}
-				break
 			}
+			f.b.WriteByte('(')
+			for i, p := range x.Params {
+				if i > 0 {
+					f.b.WriteString(", ")
+				}
+				// A destructuring parameter prints the pattern it was
+				// written with, not the holder the desugar minted.
+				if p.Pattern != nil {
+					f.formatParamPattern(p)
+				} else {
+					f.b.WriteString(writtenName(p.Name))
+				}
+				f.b.WriteString(": ")
+				f.b.WriteString(formatType(p.Type))
+			}
+			f.b.WriteByte(')')
+			if !x.ReturnUnannotated && x.ReturnType != nil {
+				f.b.WriteString(": ")
+				f.b.WriteString(formatType(x.ReturnType))
+			}
+			f.b.WriteString(" => ")
+			if ret, _, ok := arrowReturn(x); ok {
+				f.formatExpr(ret.Value, precLowest)
+			} else {
+				f.formatArrowBody(x)
+			}
+			if needsParens {
+				f.b.WriteByte(')')
+			}
+			break
 		}
 		f.b.WriteString("function(")
 		lamPrelude, lamPreludeOK := desugarPreludeLen(x.Params, x.Body)
@@ -2079,6 +2088,27 @@ func arrowReturn(x *ast.Lambda) (ret *ast.Return, prelude int, ok bool) {
 		return nil, 0, false
 	}
 	return r, n, true
+}
+
+// formatArrowBody prints an arrow lambda's BRACED body — the shape whose
+// statements are the lambda's own, rather than the single `return expr` an
+// expression body desugars to. It must stay braced and stay an arrow: the
+// `function(…)` rendering has to state a return type nobody wrote, and `void`
+// is a lie for every body that yields a value (#7338).
+func (f *formatter) formatArrowBody(x *ast.Lambda) {
+	stmts := x.Body
+	if n, ok := desugarPreludeLen(x.Params, x.Body); ok && n > 0 && x.Body != nil {
+		// The parameter list carries the patterns now, so the prelude `let`s
+		// would bind the same names a second time.
+		stmts = &ast.Block{Stmts: x.Body.Stmts[n:]}
+	}
+	if stmts != nil && len(stmts.Stmts) == 1 && isSingleLineStmt(stmts.Stmts[0]) {
+		f.b.WriteString("{ ")
+		f.formatStmt(stmts.Stmts[0], f.depth)
+		f.b.WriteString(" }")
+		return
+	}
+	f.formatBlock(stmts, f.depth)
 }
 
 // formatParamPattern renders a destructuring PARAMETER's written pattern —
