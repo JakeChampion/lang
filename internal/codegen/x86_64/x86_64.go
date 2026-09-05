@@ -58,6 +58,7 @@ import (
 	"github.com/jakechampion/lang/internal/fernrt"
 	"github.com/jakechampion/lang/internal/ir"
 	"github.com/jakechampion/lang/internal/platforms"
+	"github.com/jakechampion/lang/internal/strerror"
 	"github.com/jakechampion/lang/internal/symname"
 	"github.com/jakechampion/lang/internal/treeshake"
 )
@@ -510,6 +511,8 @@ func emitCollecting(prog *ast.Program, info *checker.Info, opts Options) (string
 		g.usesIoError = true
 		g.usesMemcpy = true
 		g.usesAlloc = true
+		g.usesBoxFree = true // read_chunk gives back a short-read / EOF buffer
+		g.usesFree = true    // box_free → __fern_free
 	}
 	// Fatal-abort diagnostics (#5538): __fern_report writes an abort's
 	// cause to stderr before exit_group, so a bounds / arena / slice abort
@@ -5415,6 +5418,24 @@ func (g *generator) emitArrBoundsCheck() {
 	g.label(ok)
 }
 
+// emitStrBoundsCheckAgainst is emitArrBoundsCheck for a string, with
+// the length already in lenReg and the byte index in rcx. An
+// out-of-range index aborts with exit code 134; a single unsigned
+// compare catches a negative index (huge as unsigned) too.
+//
+// The caller supplies the length because the only place it is cheap to
+// know is inside the __str_idx tag dispatch, which has already decided
+// whether this is a heap or an inline string. Calling emitStrLen here
+// instead would repeat that tag test and emit a second SSO decode per
+// index — a redundant branch, and one the LICM parity gate counts.
+func (g *generator) emitStrBoundsCheckAgainst(lenReg string) {
+	ok := g.freshLabel(".Lstr_ok")
+	g.emit(fmt.Sprintf("cmp ecx, %s", lenReg))
+	g.emit(fmt.Sprintf("jb %s", ok)) // unsigned idx < len → in bounds
+	g.emitAbort("__fern_msg_str_slice")
+	g.label(ok)
+}
+
 // emitSliceBoundsCheck is emitArrBoundsCheck for a slice: the len
 // is in the slice header at [rax+8] (8-byte data_ptr at [rax+0]),
 // read before the helper overwrites rax with the data pointer. rdx
@@ -5432,11 +5453,10 @@ func (g *generator) emitSliceBoundsCheck() {
 // `__slice_idx_*` bounds-check call as a plain address
 // compute (`base + index * stride`). The IR walker emits
 // these as OpCallDirect with the stride encoded in the
-// helper name; the actual runtime helper would do a bounds
-// check first, but in-range accesses produce the same
-// address either way and the IR's static type checker
-// rejects statically-OOB indexes. Subsequent OpLoad /
-// OpStore consumes the address in rax.
+// helper name, and each variant keeps the runtime helper's
+// bounds check ahead of the address compute (elided only by
+// the `_nc` suffix). Subsequent OpLoad / OpStore consumes
+// the address in rax.
 //
 // x86-64 has a `lea base + idx*scale` addressing form
 // directly for scale 1/2/4/8 — strictly faster than
@@ -5480,14 +5500,28 @@ func (g *generator) emitInlineIdxHelper(name string) error {
 		// but the immediate OpLoadByte that follows in the IR
 		// consumes the address before the next call, so there
 		// is no observable race even in `a[i] + b[j]` shapes.
+		//
+		// The bounds check rides each arm of this dispatch: the heap
+		// length is the 4-byte prefix, the inline length is in the tag
+		// byte, and the tag test that tells them apart is already here.
 		g.usesStrIdx = true
 		id := g.labelCounter
 		g.labelCounter++
 		g.emit("test rax, 1")
 		g.emit(fmt.Sprintf("jnz .Lstridx_inline_%d", id))
+		if checked {
+			g.emit("mov edx, [rax - 4]")
+			g.emitStrBoundsCheckAgainst("edx")
+		}
 		g.emit("lea rax, [rax + rcx]")
 		g.emit(fmt.Sprintf("jmp .Lstridx_done_%d", id))
 		g.label(fmt.Sprintf(".Lstridx_inline_%d", id))
+		if checked {
+			g.emit("mov edx, eax")
+			g.emit("shr edx, 1")
+			g.emit("and edx, 7")
+			g.emitStrBoundsCheckAgainst("edx")
+		}
 		g.emit("mov [rip + __fern_str_idx_scratch], rax")
 		g.emit("lea rax, [rip + __fern_str_idx_scratch]")
 		g.emit("add rax, rcx")
@@ -6411,55 +6445,28 @@ func (g *generator) emitAllocRuntime() {
 		// small structs / strings / boxes — unchanged from the original
 		// Phase-3 design.
 		//
-		// Large tier (>2048 B): power-of-two classes. The request is
-		// rounded UP to the next power of two — the bytes actually bumped —
-		// and binned by that power's bit position + 128. Because every
-		// block in a class is bumped at the class's power-of-two capacity, a
-		// popped block always fits any later same-class request, so reuse
-		// tolerates the size *variance* that exact-fit cannot: a 12 KiB and
-		// a 13 KiB array both land in the 16 KiB class and recycle each
-		// other. This is what lets a whole-compiler self-compile reclaim its
-		// per-function array churn (instruction / block / value lists grow
-		// past 2 KiB and vary per function) instead of leaking it. Cost is
-		// ≤2x internal waste on large blocks — bounded, demand-paged, and
-		// vastly cheaper than the exact-fit alternative, which reclaims none
-		// of it. Blocks >1 GiB skip the freelist (bump-only) so the class
-		// index can never run off the heads array.
+		// Large tier (>2048 B): three-significant-bit classes. The request
+		// is rounded UP to the class capacity — the bytes actually bumped —
+		// and binned by it (emitSizeClassCap / emitSizeClassIndex, which
+		// __fern_free and __fern_str_append share). Because every block in
+		// a class is bumped at the class's capacity, a popped block always
+		// fits any later same-class request, so reuse tolerates the size
+		// *variance* that exact-fit cannot: a 12 KiB and a 13 KiB array
+		// both land in one class and recycle each other. This is what lets
+		// a whole-compiler self-compile reclaim its per-function array
+		// churn (instruction / block / value lists grow past 2 KiB and vary
+		// per function) instead of leaking it, and what gives a string
+		// accumulator its slack to grow into. Cost is ≤25% internal waste
+		// on large blocks — bounded, demand-paged, and vastly cheaper than
+		// the exact-fit alternative, which reclaims none of it. Blocks
+		// >1 GiB skip the freelist (bump-only) so the class index can never
+		// run off the heads array.
 		g.emit("cmp rdi, 16")
 		g.emit("jb .Lalloc_bump")
-		g.emit("cmp rdi, 2048")
-		g.emit("ja .Lalloc_large")
-		g.emit("mov rax, rdi")
-		g.emit("shr rax, 4")
-		g.emit("sub rax, 1") // small class index 0..127
-		g.emit("jmp .Lalloc_fltry")
-		g.label(".Lalloc_large")
 		g.emit("cmp rdi, 0x40000000") // >1 GiB: bump-only, never freelisted
 		g.emit("ja .Lalloc_bump")
-		// Round the request UP to 3 significant bits (1 leading + 2 mantissa)
-		// instead of the next power of two — ≤25% internal waste vs ≤2x. The
-		// grid spacing at magnitude 2^e is 2^(e-2): round rdi up to a multiple
-		// of that, giving the bytes to bump (rdi), then derive the class from
-		// the rounded capacity so alloc and free agree.
-		g.emit("bsr rcx, rdi")      // rcx = e = floor(log2(size)) >= 11
-		g.emit("lea r8, [rcx - 2]") // r8 = e-2 = grid-spacing exponent
-		g.emit("mov r9, 1")
-		g.emit("mov rcx, r8")
-		g.emit("shl r9, cl") // r9 = gran = 1<<(e-2)
-		g.emit("lea rax, [rdi + r9 - 1]")
-		g.emit("neg r9")
-		g.emit("and rax, r9")  // rax = cap = roundup(size, gran)
-		g.emit("mov rdi, rax") // rdi = cap = bytes to bump
-		// class = (e2-11)*4 + (mant-4) + 128, where e2 = bsr(cap) (recomputed
-		// so a round-up that carried into a new power of two is binned right)
-		// and mant = cap>>(e2-2) ∈ {4,5,6,7}. Folds to 4*(e2-2) + mant + 88.
-		g.emit("bsr rcx, rax")      // rcx = e2 = floor(log2(cap))
-		g.emit("lea r8, [rcx - 2]") // r8 = e2-2
-		g.emit("mov rdx, rax")
-		g.emit("mov rcx, r8")
-		g.emit("shr rdx, cl")                // rdx = mant = cap>>(e2-2)
-		g.emit("lea rax, [rdx + r8*4 + 88]") // large class index
-		g.label(".Lalloc_fltry")
+		g.emitSizeClassCap("rdi", "r9", "r8") // rdi = cap = bytes to bump
+		g.emitSizeClassIndex("rdi")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
 		g.emit("mov rdx, [rcx + rax*8]") // head
 		g.emit("test rdx, rdx")
@@ -6620,34 +6627,10 @@ func (g *generator) emitFreeRuntime() {
 		g.emit("and rsi, -16") // round size to the class granularity
 		g.emit("cmp rsi, 16")
 		g.emit("jb .Lfree_ret")
-		g.emit("cmp rsi, 2048")
-		g.emit("ja .Lfree_large")
-		g.emit("mov rax, rsi")
-		g.emit("shr rax, 4")
-		g.emit("sub rax, 1") // small class index 0..127
-		g.emit("jmp .Lfree_push")
-		g.label(".Lfree_large")
-		// Mirror __fern_alloc's large tier exactly: round the logical size up
-		// to 3 significant bits and bin by the rounded capacity, so a block
-		// returns to the class whose capacity it was bumped at. >1 GiB is
-		// dropped (alloc never freelisted it).
-		g.emit("cmp rsi, 0x40000000")
+		g.emit("cmp rsi, 0x40000000") // >1 GiB was never freelisted
 		g.emit("ja .Lfree_ret")
-		g.emit("bsr rcx, rsi")
-		g.emit("lea r8, [rcx - 2]")
-		g.emit("mov r9, 1")
-		g.emit("mov rcx, r8")
-		g.emit("shl r9, cl") // r9 = gran
-		g.emit("lea rax, [rsi + r9 - 1]")
-		g.emit("neg r9")
-		g.emit("and rax, r9") // rax = cap
-		g.emit("bsr rcx, rax")
-		g.emit("lea r8, [rcx - 2]")
-		g.emit("mov rdx, rax")
-		g.emit("mov rcx, r8")
-		g.emit("shr rdx, cl")                // rdx = mant
-		g.emit("lea rax, [rdx + r8*4 + 88]") // class
-		g.label(".Lfree_push")
+		g.emitSizeClassCap("rsi", "r9", "r8")
+		g.emitSizeClassIndex("rsi")
 		g.emit("lea rcx, [rip + __fern_freelist_heads]")
 		g.emit("mov rdx, [rcx + rax*8]") // old head
 		g.emit("mov [rdi], rdx")         // base.next = old head
@@ -6656,6 +6639,52 @@ func (g *generator) emitFreeRuntime() {
 	}
 	g.emit("ret")
 	g.line(".size __fern_free, .-__fern_free")
+}
+
+// emitSizeClassCap rounds the 16-aligned request in reg — 16 B up to 1 GiB
+// — up to the capacity the allocator reserves for its class: the request
+// itself in the small tier (16..2048 B, exact fit), three significant bits
+// above it, so the waste is at most 25%. It is the one definition of a
+// block's size: __fern_alloc bumps at it, __fern_free bins by it, and
+// __fern_str_append grows in place while it is unchanged. Clobbers rcx
+// (the shift count) and the two scratch registers.
+func (g *generator) emitSizeClassCap(reg, t1, t2 string) {
+	done := g.freshLabel("cap_done")
+	g.emit(fmt.Sprintf("cmp %s, 2048", reg))
+	g.emit(fmt.Sprintf("jbe %s", done))
+	g.emit(fmt.Sprintf("bsr rcx, %s", reg)) // e = floor(log2(size)) >= 11
+	g.emit("sub rcx, 2")                    // grid spacing at magnitude 2^e is 2^(e-2)
+	g.emit(fmt.Sprintf("mov %s, 1", t1))
+	g.emit(fmt.Sprintf("shl %s, cl", t1)) // gran
+	g.emit(fmt.Sprintf("lea %s, [%s + %s - 1]", t2, reg, t1))
+	g.emit(fmt.Sprintf("neg %s", t1))
+	g.emit(fmt.Sprintf("and %s, %s", t2, t1)) // roundup(size, gran)
+	g.emit(fmt.Sprintf("mov %s, %s", reg, t2))
+	g.label(done)
+}
+
+// emitSizeClassIndex leaves the freelist head slot of the capacity in capReg
+// in rax: (cap >> 4) - 1 in the small tier; 4*(e-2) + mant + 88 above it,
+// where e = floor(log2(cap)) is re-derived from the CAPACITY (a round-up
+// that carried into the next power of two must bin there) and mant =
+// cap >> (e-2) is the 3-bit mantissa in 4..7. Clobbers rcx, rdx, r8.
+func (g *generator) emitSizeClassIndex(capReg string) {
+	large := g.freshLabel("cls_large")
+	done := g.freshLabel("cls_done")
+	g.emit(fmt.Sprintf("cmp %s, 2048", capReg))
+	g.emit(fmt.Sprintf("ja %s", large))
+	g.emit(fmt.Sprintf("mov rax, %s", capReg))
+	g.emit("shr rax, 4")
+	g.emit("sub rax, 1") // small class index 0..127
+	g.emit(fmt.Sprintf("jmp %s", done))
+	g.label(large)
+	g.emit(fmt.Sprintf("bsr rcx, %s", capReg))
+	g.emit("lea r8, [rcx - 2]")
+	g.emit(fmt.Sprintf("mov rdx, %s", capReg))
+	g.emit("mov rcx, r8")
+	g.emit("shr rdx, cl")                // mant
+	g.emit("lea rax, [rdx + r8*4 + 88]") // large class index
+	g.label(done)
 }
 
 // emitAllocReuseRuntime emits
@@ -8409,19 +8438,18 @@ func (g *generator) emitStrcatRuntime() {
 //
 // Same-class is the exact capacity test rather than a heuristic: every heap
 // string is __fern_alloc_rc1(len + 1) (data + NUL) and __fern_str_dec frees
-// it at the CURRENT len, so a growth that keeps `(len + 9 + 15) & -16`
+// it at the CURRENT len, so a growth that keeps emitSizeClassCap(len + 9)
 // unchanged both fits the block and still frees back to the class it was
-// bumped at. This is the same rounded-size class match __fern_alloc_reuse
-// uses, so alloc / free / reuse / append all agree by construction. (The IR
-// only emits calls here under ast.RcFreeEnabled, which is also what makes
-// the trailing __fern_str_dec a real reclaim rather than a bare decrement.)
+// bumped at — alloc / free / append agree by construction. (The IR only
+// emits calls here under ast.RcFreeEnabled, which is also what makes the
+// trailing __fern_str_dec a real reclaim rather than a bare decrement.)
 //
-// The slack is the allocator's 16-byte granularity, so an accumulator
-// absorbs ~8-16 short appends per allocation instead of one allocation and
-// a full re-copy each. It is NOT amortised growth — there is no capacity
-// slot in the 8-byte [rc][len] header to hold one — so a long accumulator
-// still re-copies once per class step; the geometric fix is the string
-// builder of #5637 option 2.
+// The capacity is the growth schedule: 16-byte exact fit below 2048 B, so
+// a short accumulator absorbs ~8-16 short appends per allocation, and
+// three significant bits above it, so a long one grows in place until it
+// has used 12-25% more than it had and then copies once into a block that
+// much larger — amortised O(1) per byte with no capacity word in the
+// [rc][len] header.
 //
 // System V: rdi = a, rsi = b. Returns the data pointer in rax.
 func (g *generator) emitStrAppendRuntime() {
@@ -8453,17 +8481,34 @@ func (g *generator) emitStrAppendRuntime() {
 	g.emitStrLen("rdx", "rsi")  // lb (b may still be inline)
 	g.emit("mov r8d, ecx")
 	g.emit("add r8d, edx") // total = la + lb
-	// Same size class? class(len) = (len + 1 + 8 + 15) & -16.
-	g.emit("lea r9d, [rcx + 24]")
-	g.emit("and r9d, -16")
-	g.emit("lea r10d, [r8 + 24]")
-	g.emit("and r10d, -16")
-	g.emit("cmp r9d, r10d")
+	g.emit("mov r11, rcx") // la, kept across the class arithmetic
+	// Same capacity? request(len) = (len + 1 + 8 + 15) & -16, then the tier's
+	// round-up. A bump-only block (>1 GiB) is never grown in place.
+	g.emit("lea r9, [rcx + 24]")
+	g.emit("and r9, -16")
+	g.emit("lea r10, [r8 + 24]")
+	g.emit("and r10, -16")
+	g.emit("cmp r10, 0x40000000")
+	g.emit("ja .Lstrapp_copy")
+	if ast.LeakCheckEnabled {
+		// The block was charged at its 16-rounded request and __fern_free
+		// will charge the grown one; the difference keeps the pair exact.
+		g.emit("mov rsi, r10")
+		g.emit("sub rsi, r9")
+	}
+	g.emitSizeClassCap("r9", "rax", "rdx")
+	g.emitSizeClassCap("r10", "rax", "rdx")
+	g.emit("cmp r9, r10")
 	g.emit("jne .Lstrapp_copy")
 	// --- in place: memcpy(a + la, b_data, lb) ---
+	if ast.LeakCheckEnabled {
+		g.emit("add qword ptr [rip + __fern_lc_alloc_bytes], rsi")
+	}
 	g.emit("mov [rbp - 32], r8") // total survives the call
 	g.emitStrDataPtr("rsi", "r12", "[rbp - 24]")
-	g.emit("lea rdi, [rbx + rcx]") // dst = a + la; rdx already holds lb
+	g.emit("lea rdi, [rbx + r11]") // dst = a + la
+	g.emit("mov rdx, r8")
+	g.emit("sub rdx, r11") // lb
 	g.emit("call __fern_memcpy")
 	g.emit("mov r8, [rbp - 32]")
 	g.emitStrLenStore("r8d", "rbx") // [a - 4] = total
@@ -11492,7 +11537,11 @@ func (g *generator) emitMemsetRuntime() {
 //
 //	ENOENT (2)  → NotFound          EACCES (13) → PermissionDenied
 //	EEXIST (17) → AlreadyExists     EINTR  (4)  → Interrupted
-//	default     → Other(path, "")
+//	default     → Other(path, strerror(errno))
+//
+// The message is the strerror.Table text for the errno — a compare
+// ladder over .rodata literals — or a fresh "Unknown error N" heap
+// string for an errno outside the table (#8265).
 //
 // System V: rdi=errno, rsi=path; result in rax.
 func (g *generator) emitIoErrorRuntime() {
@@ -11504,7 +11553,7 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("mov rbp, rsp")
 	g.emit("push rbx")     // callee-save
 	g.emit("push r12")     // callee-save
-	g.emit("sub rsp, 8")   // 16-byte align
+	g.emit("sub rsp, 40")  // 16-byte align; [rsp + 8, rsp + 40) is itoa scratch
 	g.emit("mov ebx, edi") // ebx = errno
 	g.emit("mov r12, rsi") // r12 = path
 
@@ -11521,13 +11570,70 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("cmp ebx, 84")
 	g.emit("je .Lioe_ilseq")
 
-	// Other(path, ""). 24-byte box: tag, pad, path, "".
+	// Other(path, msg). The ladder leaves the message pointer in rbx
+	// (callee-save, so it survives __fern_alloc_box).
+	texts := strerror.Dense(strerror.Linux)
+	for n, text := range texts {
+		if text == "" {
+			continue
+		}
+		g.emit(fmt.Sprintf("cmp ebx, %d", n))
+		g.emit(fmt.Sprintf("jne .Lioe_not_%d", n))
+		g.emit(fmt.Sprintf("lea rbx, [rip + .Lioe_str_%d]", n))
+		g.emit("jmp .Lioe_other")
+		g.label(fmt.Sprintf(".Lioe_not_%d", n))
+	}
+	// "Unknown error N": the decimal digits go into the scratch buffer
+	// from its end, the prefix in front of them, and the whole message
+	// is copied into a fresh rc1 heap string.
+	g.emit("lea rdi, [rsp + 40]")
+	g.emit("mov eax, ebx")
+	g.emit("mov ecx, 10")
+	g.label(".Lioe_itoa")
+	g.emit("xor edx, edx")
+	g.emit("idiv ecx")
+	g.emit("add edx, 48")
+	g.emit("dec rdi")
+	g.emit("mov byte ptr [rdi], dl")
+	g.emit("test eax, eax")
+	g.emit("jnz .Lioe_itoa")
+	g.emit("lea rsi, [rip + .Lioe_unknown_prefix]")
+	g.emit(fmt.Sprintf("add rsi, %d", len(strerror.UnknownPrefix)))
+	g.emit(fmt.Sprintf("mov ecx, %d", len(strerror.UnknownPrefix)))
+	g.label(".Lioe_prefix")
+	g.emit("dec rsi")
+	g.emit("dec rdi")
+	g.emit("movzx eax, byte ptr [rsi]")
+	g.emit("mov byte ptr [rdi], al")
+	g.emit("dec ecx")
+	g.emit("jnz .Lioe_prefix")
+	g.emit("mov [rsp], rdi") // message start, kept across the alloc
+	g.emit("lea rax, [rsp + 40]")
+	g.emit("sub rax, rdi")       // byte length
+	g.emit("lea rdi, [rax + 1]") // + NUL
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov rbx, rax") // msg data ptr
+	g.emit("mov rsi, [rsp]")
+	g.emit("lea rcx, [rsp + 40]")
+	g.emit("sub rcx, rsi") // byte length again
+	g.emitStrLenStore("ecx", "rbx")
+	g.emit("mov rdi, rbx")
+	g.label(".Lioe_copy")
+	g.emit("movzx eax, byte ptr [rsi]")
+	g.emit("mov byte ptr [rdi], al")
+	g.emit("inc rsi")
+	g.emit("inc rdi")
+	g.emit("dec ecx")
+	g.emit("jnz .Lioe_copy")
+	g.emit("mov byte ptr [rdi], 0")
+
+	g.label(".Lioe_other")
+	// 24-byte box: tag, pad, path, msg.
 	g.emit("mov edi, 24")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 6")
 	g.emit("mov [rax + 8], r12")
-	g.emit("lea rcx, [rip + .LStr_ioerr_empty]")
-	g.emit("mov [rax + 16], rcx")
+	g.emit("mov [rax + 16], rbx")
 	g.emit("jmp .Lioe_done")
 
 	g.label(".Lioe_notfound")
@@ -11555,21 +11661,35 @@ func (g *generator) emitIoErrorRuntime() {
 	g.emit("mov [rax + 8], r12") // path
 
 	g.label(".Lioe_done")
-	g.emit("add rsp, 8")
+	g.emit("add rsp, 40")
 	g.emit("pop r12")
 	g.emit("pop rbx")
 	g.emit("pop rbp")
 	g.emit("ret")
 	g.line(".size __fern_io_error, .-__fern_io_error")
 
-	// Compile-time empty-string literal for the Other variant.
-	// Length=0 prefix + NUL — same layout as user-facing string
-	// literals so len("") works and the data is well-formed.
+	// The strerror literals, the empty path a write error carries
+	// (writes have no path), and the "Unknown error " prefix. Each
+	// string has the same immortal rc header as a user literal so the
+	// rc helpers short-circuit on it.
 	g.line(".section .rodata")
-	g.line(".align 4")
+	g.line(".align 8")
+	g.line("\t.4byte 0x80000000")
 	g.line("\t.4byte 0")
 	g.label(".LStr_ioerr_empty")
-	g.line("\t.byte 0")
+	g.line(`	.asciz ""`)
+	for n, text := range texts {
+		if text == "" {
+			continue
+		}
+		g.line(".align 8")
+		g.line("\t.4byte 0x80000000")
+		g.line(fmt.Sprintf("\t.4byte %d", len(text)))
+		g.label(fmt.Sprintf(".Lioe_str_%d", n))
+		g.line("\t.asciz " + escapeForGAS(text))
+	}
+	g.label(".Lioe_unknown_prefix")
+	g.line("\t.asciz " + escapeForGAS(strerror.UnknownPrefix))
 	g.line(".text")
 }
 
@@ -12987,10 +13107,10 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.label("__fern_reader_read_chunk")
 	g.emit("push rbp")
 	g.emit("mov rbp, rsp")
-	g.emit("push rbx") // fd
-	g.emit("push r12") // n
-	g.emit("push r13") // base ptr
-	g.emit("sub rsp, 8")
+	g.emit("push rbx")       // fd, then bytes_read
+	g.emit("push r12")       // n
+	g.emit("push r13")       // data ptr
+	g.emit("push r14")       // exact-size data ptr on a short read
 	g.emit("mov ebx, [rdi]") // fd
 	g.emit("mov r12, rsi")   // n
 	// L2 rc-header layout (see __fern_strcat): payload = n data + NUL slack so
@@ -13006,21 +13126,43 @@ func (g *generator) emitReaderWriterRuntime() {
 	g.emitSyscallPreloaded(sysRead)
 	g.emit("test rax, rax")
 	g.emit("jle .Lrrc_none")
-	g.emit("mov [r13 - 4], eax")          // length prefix at data-4
-	g.emit("mov r12, rax")                // r12 = bytes_read
-	g.emit("mov rbx, r13")                // data ptr
-	g.emit("mov byte ptr [rbx + r12], 0") // trailing NUL within alloc
+	g.emit("cmp rax, r12")
+	g.emit("je .Lrrc_some")
+	// Short read (a pipe hands back at most 64 KiB): __fern_str_dec frees
+	// at length+1, so the bytes move to a block of that class and the
+	// oversized one goes back — else it strands below its class and every
+	// following read_chunk(n) bumps fresh.
+	g.emit("mov rbx, rax") // rbx = bytes_read
+	g.emit("lea edi, [rbx + 1]")
+	g.emit("call __fern_alloc_rc1")
+	g.emit("mov r14, rax")
+	g.emit("mov rdi, r14")
+	g.emit("mov rsi, r13")
+	g.emit("mov rdx, rbx")
+	g.emit("call __fern_memcpy")
+	g.emit("mov rdi, r13")
+	g.emit("lea esi, [r12 + 1]")
+	g.emit("call __fern_box_free")
+	g.emit("mov r13, r14")
+	g.emit("mov r12, rbx")
+	g.label(".Lrrc_some")
+	g.emit("mov [r13 - 4], r12d")         // length prefix at data-4
+	g.emit("mov byte ptr [r13 + r12], 0") // trailing NUL within alloc
 	g.emit("mov edi, 16")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 0")
-	g.emit("mov [rax + 8], rbx")
+	g.emit("mov [rax + 8], r13")
 	g.emit("jmp .Lrrc_ret")
 	g.label(".Lrrc_none")
+	// EOF / error: nothing owns the buffer, so give it back.
+	g.emit("mov rdi, r13")
+	g.emit("lea esi, [r12 + 1]")
+	g.emit("call __fern_box_free")
 	g.emit("mov edi, 4")
 	g.emit("call __fern_alloc_box")
 	g.emit("mov dword ptr [rax], 1")
 	g.label(".Lrrc_ret")
-	g.emit("add rsp, 8")
+	g.emit("pop r14")
 	g.emit("pop r13")
 	g.emit("pop r12")
 	g.emit("pop rbx")

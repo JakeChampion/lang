@@ -72,8 +72,8 @@ function main(): i32 {
 		{"notfound", "nope.txt", "notfound:nope.txt"},
 		// Every unmapped errno lands on Other(path, msg): two fields, so it
 		// pins the stride and not just the first field's offset. The message
-		// is the empty string on wasm — the boxer builds Other(path, "").
-		{"other", "reg.txt/nested", "other:reg.txt/nested/msg=:end"},
+		// is strerror's text for the errno (#8265).
+		{"other", "reg.txt/nested", "other:reg.txt/nested/msg=Not a directory:end"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wat := runCapture(t, gcc, runner, wasmRun, []byte(prog(tc.path)))

@@ -14,8 +14,10 @@
 //     `Try '<argv[0]> --help' for more information.` line, and exits
 //     with the utility's usage status (1 for most, 2 for sort/expr/…).
 //     The full help text is NEVER printed on the error path.
-//   - The two long options every utility answers are matched by
-//     UNIQUE PREFIX, so `--vers` is `--version` and `--h` is `--help`.
+//   - Options are glibc's getopt_long: long options match by unique
+//     prefix (`--vers` is `--version`), operands are permuted out
+//     unless POSIXLY_CORRECT is set, and every fault is worded as
+//     glibc words it. `getopt_new` below is that emulation.
 //
 // Error TEXT is glibc's, not ours: the strings in `io_error_text`
 // below are what `strerror` returns, because that is what GNU prints.
@@ -24,6 +26,7 @@
 // measured from the reference binaries and reimplemented.
 import "std/string";
 import "std/array";
+import "std/io_buffered";
 
 // `prog()` — the program name diagnostics are prefixed with: argv[0]
 // verbatim (see the header). Empty when argv is empty, which only
@@ -65,22 +68,6 @@ pub function die_usage(msg: string, status: i32): void {
   try_help(status);
 }
 
-// `die_bad_option(token, status)` — reject an option token the way
-// glibc's getopt does, which is two different messages:
-//
-//   -x        -> `invalid option -- 'x'`        (the offending byte)
-//   --foo=1   -> `unrecognized option '--foo=1'` (the whole token)
-//
-// A short cluster names only its first byte, because getopt reports
-// per character and the caller exits on the first refusal.
-pub function die_bad_option(token: string, status: i32): void {
-  if (token.starts_with("--")) {
-    die_usage("unrecognized option '" + token + "'", status);
-    return;
-  }
-  die_usage("invalid option -- '" + slice_unchecked(token, 1, 2) + "'", status);
-}
-
 // `is_option(a)` — whether getopt would treat `a` as an option token.
 // A lone `-` is an operand (it names stdin); `--` is the terminator
 // and is handled by the caller before this is asked.
@@ -91,10 +78,9 @@ pub function is_option(a: string): boolean {
 // `io_error_text(e)` — the strerror text GNU prints for an IoError.
 //
 // The kinds the runtime names carry no message of their own, so the
-// mapping is by errno text; `Other` carries the runtime's own string.
-// That string is EMPTY today for every errno outside the named set
-// (#8265), which is the one gap between these utilities and GNU
-// on the write-failure paths — docs/COREUTILS.md records it.
+// mapping is by errno text; `Other` carries the runtime's own string,
+// which is glibc's strerror text for the errno on every backend
+// (internal/strerror).
 pub function io_error_text(e: IoError): string {
   match (e) {
     NotFound(_) => {
@@ -136,12 +122,260 @@ pub function write_out(s: string): void {
   }
 }
 
-// Whether `typed` is a prefix of `full` — the rule getopt_long matches
-// long options by. The empty string is a prefix of everything, which
-// is why `--=x` is reported as AMBIGUOUS between every declared option
-// rather than as unrecognized.
-function is_prefix_of(typed: string, full: string): boolean {
-  return full.starts_with(typed);
+// ---- quoting ---------------------------------------------------------------
+//
+// GNU quotes the strings it embeds in diagnostics, and two styles are
+// visible in the C locale: `quote` wraps an operand in single quotes
+// with C escapes (`extra operand 'c\nd'`), `quotef` renders a file name
+// the way a shell would need it typed (`'no such': No such file or
+// directory`, bare when nothing in it is special).
+// `quote(s)` — `s` in single quotes; backslash and the quote itself
+// backslashed, the seven named control characters as C escapes, and
+// every other control or non-ASCII byte as three octal digits.
+pub function quote(s: string): string {
+  var bs: u8[] = [];
+  bs = bs.append(39 as u8);
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b == 92 || b == 39) {
+      bs = bs.append(92 as u8);
+      bs = bs.append(b as u8);
+    } else if (b >= 32 && b < 127) {
+      bs = bs.append(b as u8);
+    } else {
+      bs = append_c_escape(bs, b);
+    }
+    i = i + 1;
+  }
+  bs = bs.append(39 as u8);
+  return string_from_bytes_unchecked(bs);
+}
+
+// One control or non-ASCII byte as a C escape: `\a \b \f \n \r \t \v`
+// by name, anything else as `\NNN`.
+function append_c_escape(out: u8[], b: i32): u8[] {
+  var bs: u8[] = out.append(92 as u8);
+  var named: i32 = c_escape_letter(b);
+  if (named > 0) {
+    return bs.append(named as u8);
+  }
+  bs = bs.append((48 + b / 64) as u8);
+  bs = bs.append((48 + b / 8 % 8) as u8);
+  return bs.append((48 + b % 8) as u8);
+}
+
+function c_escape_letter(b: i32): i32 {
+  if (b == 7) {
+    return 97;
+  }
+  if (b == 8) {
+    return 98;
+  }
+  if (b == 12) {
+    return 102;
+  }
+  if (b == 10) {
+    return 110;
+  }
+  if (b == 13) {
+    return 114;
+  }
+  if (b == 9) {
+    return 116;
+  }
+  if (b == 11) {
+    return 118;
+  }
+  return 0;
+}
+
+function is_control_or_high(b: i32): boolean {
+  return b < 32 || b >= 127;
+}
+
+// Whether byte `b` makes a file name need quoting at all. `~` and `#`
+// count only at the start of the name.
+function shell_special(b: i32, leading: boolean): boolean {
+  if (is_control_or_high(b)) {
+    return true;
+  }
+  if (b == 126 || b == 35) {
+    return leading;
+  }
+  return b == 32 || b == 39 || b == 34 || b == 92 || b == 36 || b == 42 || b == 59 || b == 61 || b == 58 || b == 33 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 96 || b == 94;
+}
+
+// Whether byte `b` rules out the double-quoted form. Not the same set
+// as above: `:` and a space are fine inside double quotes, `{` and `}`
+// are not, and `~` / `#` are the other way round from `shell_special`.
+function double_quote_unsafe(b: i32, leading: boolean): boolean {
+  if (is_control_or_high(b)) {
+    return true;
+  }
+  if (b == 126 || b == 35) {
+    return !leading;
+  }
+  return b == 34 || b == 92 || b == 36 || b == 96 || b == 33 || b == 42 || b == 63 || b == 91 || b == 40 || b == 41 || b == 38 || b == 124 || b == 60 || b == 62 || b == 59 || b == 61 || b == 94 || b == 123 || b == 125;
+}
+
+// `quotef(name)` — the file name as a shell would need it typed: bare
+// when nothing in it is special, else single-quoted with a quote
+// inside written `'\''` and every control or non-ASCII byte spliced
+// in as an ANSI-C `$'...'` run. A name whose only trouble is the
+// apostrophe goes in double quotes. Empty is `''`.
+pub function quotef(s: string): string {
+  if (s.len() == 0) {
+    return "''";
+  }
+  var needs: boolean = false;
+  var double_ok: boolean = true;
+  var has_quote: boolean = false;
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (shell_special(b, i == 0)) {
+      needs = true;
+    }
+    if (double_quote_unsafe(b, i == 0)) {
+      double_ok = false;
+    }
+    if (b == 39) {
+      has_quote = true;
+    }
+    i = i + 1;
+  }
+  if (!needs) {
+    return s;
+  }
+  if (has_quote && double_ok) {
+    return "\"" + s + "\"";
+  }
+  var bs: u8[] = [];
+  bs = bs.append(39 as u8);
+  var open: boolean = true;
+  var run: boolean = false;
+  i = 0;
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (is_control_or_high(b)) {
+      if (open) {
+        bs = bs.append(39 as u8);
+        open = false;
+      }
+      if (!run) {
+        bs = bs.append(36 as u8);
+        bs = bs.append(39 as u8);
+        run = true;
+      }
+      bs = append_c_escape(bs, b);
+      i = i + 1;
+      continue;
+    }
+    if (run) {
+      bs = bs.append(39 as u8);
+      run = false;
+    }
+    if (b == 39) {
+      if (open) {
+        bs = bs.append(39 as u8);
+      }
+      bs = bs.append(92 as u8);
+      bs = bs.append(39 as u8);
+      bs = bs.append(39 as u8);
+      open = true;
+    } else {
+      if (!open) {
+        bs = bs.append(39 as u8);
+        open = true;
+      }
+      bs = bs.append(b as u8);
+    }
+    i = i + 1;
+  }
+  if (run) {
+    bs = bs.append(39 as u8);
+  }
+  if (open) {
+    bs = bs.append(39 as u8);
+  }
+  return string_from_bytes_unchecked(bs);
+}
+
+// ---- buffered stdout -------------------------------------------------------
+//
+// Output goes through a io_buffered.BufWriter, one write(2) per block, and a
+// failure is reported the way gnulib's close_stdout reports it:
+// `prog: write error: <strerror>`, exit 1. A utility that words it
+// differently (yes: `standard output:`) holds its own Writer.
+// The block size, measured rather than chosen (yes.fern has the
+// sweep): the pipe optimum on Linux.
+pub function block_bytes(): i32 {
+  return 4096;
+}
+
+// `out_new()` — a buffered stdout; `out_with(cap)` picks the block.
+pub function out_new(): io_buffered.BufWriter {
+  return io_buffered.buf_writer_new(stdout(), block_bytes());
+}
+
+pub function out_with(cap: i32): io_buffered.BufWriter {
+  return io_buffered.buf_writer_new(stdout(), cap);
+}
+
+// `put(o, s)` — buffer `s`; dies on the first failed flush. Rebind:
+// `o = gnu.put(o, s);`.
+pub function put(o: io_buffered.BufWriter, s: string): io_buffered.BufWriter {
+  var w: io_buffered.BufWriter = o.write_string(s);
+  die_on_write_error(w);
+  return w;
+}
+
+// `finish(o)` — the end of the program: gnulib's close_stdout.
+pub function finish(o: io_buffered.BufWriter): void {
+  close_stdout(o, false);
+}
+
+// `close_stdout(o, prev_fail)` — gnulib's close_stream on stdout, reported
+// the way close_stdout reports it. `prev_fail` is the stream's error flag
+// set by something other than a write here (glibc refusing a conversion).
+// fclose failing with EBADF and nothing pending is not an error, so a
+// utility that printed nothing to a closed stdout exits 0; a failure
+// already on the stream is reported without strerror text unless fclose
+// itself failed too.
+pub function close_stdout(o: io_buffered.BufWriter, prev_fail: boolean): void {
+  var some_pending: boolean = o.buffered() > 0;
+  var prev: boolean = prev_fail;
+  match (o.error()) {
+    Some(_) => {
+      prev = true;
+    },
+    None => {}
+  }
+  match (o.close()) {
+    Some(e) => {
+      var text: string = io_error_text(e);
+      if (prev || some_pending || text != "Bad file descriptor") {
+        error("write error: " + text);
+        exit(1);
+      }
+    },
+    None => {}
+  }
+  if (prev) {
+    error("write error");
+    exit(1);
+  }
+}
+
+function die_on_write_error(w: io_buffered.BufWriter): void {
+  match (w.error()) {
+    Some(e) => {
+      error("write error: " + io_error_text(e));
+      exit(1);
+    },
+    None => {}
+  }
 }
 
 // The long-option name in `a` (`--name` or `--name=value`), plus
@@ -168,63 +402,267 @@ function print_version(name: string, status: i32): void {
   exit(status);
 }
 
-// `parse_standard_options_only(argv, name, help_text, status)` —
-// gnulib's parse_gnu_standard_options_only, for a utility whose ONLY
-// options are `--help` and `--version`: a permuting getopt over the
-// whole argv, so an option is found wherever it stands until `--`.
+// ---- getopt_long ---------------------------------------------------------
 //
-//   --help / --version   (unique prefix) answered, exit 0
-//   --help=x             `option '--help' doesn't allow an argument`
-//   --=x                 `option '--=x' is ambiguous; possibilities: …`
-//   --anything-else      `unrecognized option '--anything-else'`
-//   -x                   `invalid option -- 'x'`
+// glibc's getopt_long, as the utilities observe it. One option is an
+// `Opt`; a utility declares its own in the order GNU declares them,
+// because that order is visible: the ambiguity list prints candidates
+// in declaration order, and `--help` / `--version` come LAST (so
+// `sort --v` lists '--version-sort' before '--version'). The two
+// standard options are appended by `getopt_new`, never declared.
 //
-// Tokens are taken left to right, so the first fault wins over a later
-// `--help`, and a `--help` before the fault wins instead. Returns the
-// operands: every non-option token in its original order, then all of
-// what follows `--`. `status` is the utility's usage-error exit code.
-pub function parse_standard_options_only(argv: string[], name: string, help_text: string, status: i32): string[] {
-  var operands: string[] = [];
-  var i: i32 = 1;
-  while (i < argv.len()) {
-    var a: string = argv[i];
-    i = i + 1;
+// The scan is a cursor (docs/CURSOR-IDIOM.md): `next()` hands back one
+// option at a time, so a utility validates each value in argv order
+// exactly as the C loop does, and `head -n5x --foo` complains about
+// the count before it ever sees `--foo`. Operands are permuted out
+// unless POSIXLY_CORRECT is set (or `in_order()` was asked for), in
+// which case the first operand ends the options. Every fault exits
+// through `die_usage` with the utility's usage status.
+//
+// Short options: a cluster `-abc` is consumed byte by byte; an
+// unknown byte is `invalid option -- 'x'`. A required value is the
+// rest of the cluster if any (`-n5`), else the NEXT argv token
+// whatever it looks like (`-n -5`, `-n --`), else `option requires
+// an argument -- 'n'`. An optional value is only ever the rest of the
+// cluster. Long options match by unique prefix with an exact match
+// winning; a glued `=value` is the value, or a fault for an option
+// that takes none.
+// `Opt` — one declared option. `short` is the option byte (0 for a
+// long-only option), `long` the name without dashes ("" for a
+// short-only one), `arg` 0 / 1 / 2 for none / required / optional,
+// `id` the tag `next()` reports it as.
+pub struct Opt { short: i32, long: string, arg: i32, id: i32 }
+
+// `flag(short, long, id)` — an option taking no value; `valued` takes
+// a required one; `optional` takes one only when glued (`-cX`,
+// `--color=X`). `short` is "" or a single byte.
+pub function flag(short: string, long: string, id: i32): Opt {
+  return Opt { short: short_byte(short), long: long, arg: 0, id: id };
+}
+
+pub function valued(short: string, long: string, id: i32): Opt {
+  return Opt { short: short_byte(short), long: long, arg: 1, id: id };
+}
+
+pub function optional(short: string, long: string, id: i32): Opt {
+  return Opt { short: short_byte(short), long: long, arg: 2, id: id };
+}
+
+function short_byte(short: string): i32 {
+  if (short.len() == 0) {
+    return 0;
+  }
+  return short[0] as i32;
+}
+
+// `OptMatch` — one option occurrence: its `id`, and the value when
+// the option took one. `has_value` separates "no value" from an
+// empty one for the `optional` shape.
+pub struct OptMatch { id: i32, value: string, has_value: boolean }
+
+// `Getopt` — the scan state. `cluster` is what is left of a short
+// cluster still being consumed (without its dash); `operands` are
+// the tokens permuted out so far.
+pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, in_order: boolean, i: i32, cluster: string, operands: string[] }
+
+// The ids `next()` reserves for the two standard options; they never
+// reach the caller because `next()` answers them itself.
+function help_id(): i32 {
+  return 0 - 1;
+}
+
+function version_id(): i32 {
+  return 0 - 2;
+}
+
+// `getopt_new(argv, opts, name, help_text, status)` — start a scan.
+// `status` is the utility's usage-error exit code.
+pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: string, status: i32): Getopt {
+  var all: Opt[] = opts;
+  all = all.append(Opt { short: 0, long: "help", arg: 0, id: help_id() });
+  all = all.append(Opt { short: 0, long: "version", arg: 0, id: version_id() });
+  var in_order: boolean = false;
+  match (env("POSIXLY_CORRECT")) {
+    Some(_) => {
+      in_order = true;
+    },
+    None => {}
+  }
+  var empty: string[] = [];
+  return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, in_order: in_order, i: 1, cluster: "", operands: empty };
+}
+
+// `(g).in_order()` — stop at the first operand regardless of
+// POSIXLY_CORRECT: the `+` optstring prefix of env(1), nice(1),
+// timeout(1) and the other command runners.
+pub function (g: Getopt) in_order(): Getopt {
+  return Getopt { ...g, in_order: true };
+}
+
+// `(g).next()` — the next option, or None once the options are
+// exhausted; rebind the cursor: `var (m, g) = g.next();`.
+pub function (g: Getopt) next(): (Option[OptMatch], Getopt) {
+  if (g.cluster.len() > 0) {
+    return short_option(g);
+  }
+  var s: Getopt = g;
+  while (s.i < s.argv.len()) {
+    var a: string = s.argv[s.i];
     if (a == "--") {
-      break;
+      s = Getopt { ...s, i: s.i + 1 };
+      return (None, take_rest(s));
     }
     if (!is_option(a)) {
-      operands = operands.append(a);
+      if (s.in_order) {
+        return (None, take_rest(s));
+      }
+      s = Getopt { ...s, i: s.i + 1, operands: s.operands.append(a) };
       continue;
     }
-    if (!a.starts_with("--")) {
-      die_bad_option(a, status);
+    s = Getopt { ...s, i: s.i + 1 };
+    if (a.starts_with("--")) {
+      return long_option(s, a);
     }
-    var parts: (string, boolean) = long_parts(a);
-    var opt: string = parts.0;
-    var glued: boolean = parts.1;
-    if (is_prefix_of(opt, "help") && is_prefix_of(opt, "version")) {
-      // glibc names the whole token here, `=value` included.
-      die_usage("option '" + a + "' is ambiguous; possibilities: '--help' '--version'", status);
-    }
-    if (is_prefix_of(opt, "help")) {
-      if (glued) {
-        die_usage("option '--help' doesn't allow an argument", status);
-      }
-      print_help(help_text, 0);
-    }
-    if (is_prefix_of(opt, "version")) {
-      if (glued) {
-        die_usage("option '--version' doesn't allow an argument", status);
-      }
-      print_version(name, 0);
-    }
-    die_bad_option(a, status);
+    s = Getopt { ...s, cluster: slice_unchecked(a, 1, a.len()) + "" };
+    return short_option(s);
   }
-  while (i < argv.len()) {
-    operands = operands.append(argv[i]);
+  return (None, s);
+}
+
+// `(g).operands()` — every operand, in argv order, once `next()` has
+// returned None.
+pub function (g: Getopt) operands(): string[] {
+  return g.operands;
+}
+
+// Everything from the cursor on is an operand.
+function take_rest(g: Getopt): Getopt {
+  var ops: string[] = g.operands;
+  var i: i32 = g.i;
+  while (i < g.argv.len()) {
+    ops = ops.append(g.argv[i]);
     i = i + 1;
   }
-  return operands;
+  return Getopt { ...g, i: i, operands: ops };
+}
+
+function short_option(g: Getopt): (Option[OptMatch], Getopt) {
+  var b: i32 = g.cluster[0] as i32;
+  var rest: string = slice_unchecked(g.cluster, 1, g.cluster.len()) + "";
+  var k: i32 = 0;
+  while (k < g.opts.len()) {
+    if (g.opts[k].short == b) {
+      break;
+    }
+    k = k + 1;
+  }
+  if (k == g.opts.len()) {
+    die_usage("invalid option -- '" + slice_unchecked(g.cluster, 0, 1) + "'", g.status);
+  }
+  var o: Opt = g.opts[k];
+  if (o.arg == 0) {
+    return (Some(OptMatch { id: o.id, value: "", has_value: false }), Getopt { ...g, cluster: rest });
+  }
+  if (o.arg == 2) {
+    return (Some(OptMatch { id: o.id, value: rest, has_value: rest.len() > 0 }), Getopt { ...g, cluster: "" });
+  }
+  if (rest.len() > 0) {
+    return (Some(OptMatch { id: o.id, value: rest, has_value: true }), Getopt { ...g, cluster: "" });
+  }
+  if (g.i < g.argv.len()) {
+    var v: string = g.argv[g.i];
+    return (Some(OptMatch { id: o.id, value: v, has_value: true }), Getopt { ...g, cluster: "", i: g.i + 1 });
+  }
+  die_usage("option requires an argument -- '" + slice_unchecked(g.cluster, 0, 1) + "'", g.status);
+  return (None, g);
+}
+
+function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
+  var parts: (string, boolean) = long_parts(a);
+  var name: string = parts.0;
+  var glued: boolean = parts.1;
+  var value: string = "";
+  if (glued) {
+    var eq: i32 = a.index_of("=");
+    value = slice_unchecked(a, eq + 1, a.len()) + "";
+  }
+  var found: i32 = 0 - 1;
+  var k: i32 = 0;
+  while (k < g.opts.len()) {
+    if (g.opts[k].long == name) {
+      found = k;
+      break;
+    }
+    k = k + 1;
+  }
+  if (found < 0) {
+    var list: string = "";
+    var ambiguous: boolean = false;
+    k = 0;
+    while (k < g.opts.len()) {
+      var o: Opt = g.opts[k];
+      if (o.long.len() > 0 && o.long.starts_with(name)) {
+        if (found < 0) {
+          found = k;
+        } else if (o.arg != g.opts[found].arg || o.id != g.opts[found].id) {
+          // glibc also compares the option's flag pointer; nothing here has one.
+          ambiguous = true;
+        }
+        list = list + " '--" + o.long + "'";
+      }
+      k = k + 1;
+    }
+    if (found < 0) {
+      die_usage("unrecognized option '" + a + "'", g.status);
+    }
+    if (ambiguous) {
+      die_usage("option '" + a + "' is ambiguous; possibilities:" + list, g.status);
+    }
+  }
+  var o: Opt = g.opts[found];
+  if (o.arg == 0 && glued) {
+    die_usage("option '--" + o.long + "' doesn't allow an argument", g.status);
+  }
+  var s: Getopt = g;
+  var has: boolean = glued;
+  if (o.arg == 1 && !glued) {
+    if (s.i < s.argv.len()) {
+      value = s.argv[s.i];
+      has = true;
+      s = Getopt { ...s, i: s.i + 1 };
+    } else {
+      die_usage("option '--" + o.long + "' requires an argument", g.status);
+    }
+  }
+  if (o.id == help_id()) {
+    print_help(g.help, 0);
+  }
+  if (o.id == version_id()) {
+    print_version(g.name, 0);
+  }
+  return (Some(OptMatch { id: o.id, value: value, has_value: has }), s);
+}
+
+// `parse_standard_options_only(argv, name, help_text, status)` —
+// gnulib's parse_gnu_standard_options_only, for a utility whose ONLY
+// options are `--help` and `--version`: the scan above with nothing
+// declared, so an option is found wherever it stands until `--`
+// (`yes x --help` prints the help) and every other token is an
+// operand. Returns the operands in argv order.
+pub function parse_standard_options_only(argv: string[], name: string, help_text: string, status: i32): string[] {
+  var none: Opt[] = [];
+  var g: Getopt = getopt_new(argv, none, name, help_text, status);
+  while (true) {
+    var r: (Option[OptMatch], Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(_) => {},
+      None => {
+        break;
+      }
+    }
+  }
+  return g.operands();
 }
 
 // `sole_help_version(argv, name, help_text, status)` — the narrower

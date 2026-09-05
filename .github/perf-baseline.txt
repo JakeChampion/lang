@@ -67,8 +67,10 @@ x86_64/pvec_with.text	7273
 x86_64/pvec_with.ir	259348734
 x86_64/sort_inplace.text	752
 x86_64/sort_inplace.ir	116858981
-x86_64/sort_ints.text	2286
-x86_64/sort_ints.ir	86743177
+x86_64/sort_ints.text	2253
+x86_64/sort_ints.ir	83484817
+x86_64/sort_strings.text	3517
+x86_64/sort_strings.ir	166244147
 x86_64/string_build.text	1142
 x86_64/string_build.ir	127235524
 x86_64/string_count_byte.text	600
@@ -92,15 +94,14 @@ x86_64/utf8_ingest_validated.ir	22390953	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
-# the dev container — paste its block in verbatim. The `.text` half is a line
-# count over `fern -target arm64-linux` output, so a cross-compile here
-# reproduces the runner's figure on most rows and that is how they are kept
-# current — but NOT on ordmap_insert, pmap_insert and pvec_with, where
-# cross-emitting overstates the count (measured 4862/8368/9009 against the
-# runner's 4696/8264/8901). Those three come from the runner, like the `.ir`
-# half. The three seeded rows — map_string.ir and both utf8_ingest_*.ir —
-# carry the same tolerances their x86_64 twins do, for the same per-process
-# hash seed, which is drawn per process rather than per ISA.
+# the dev container — paste its block in verbatim. The `.text` half needs no
+# such thing: it is a line count over `fern -target arm64-linux` output, which
+# is host-independent, so a cross-compile from the dev container reproduces the
+# runner's figure on EVERY row in this corpus and that is how the `.text` half
+# is kept current. perf-aarch64 runs natively on ubuntu-24.04-arm, so the two
+# are directly comparable. The three seeded rows — map_string.ir and both
+# utf8_ingest_*.ir — carry the same tolerances their x86_64 twins do, for the
+# same per-process hash seed, which is drawn per process rather than per ISA.
 #
 # Re-pinned 2026-09-04 (#7397) on the x86_64 `.text` half only, after the #4873
 # containment bracket gained three field- and path-granular deaths: the three
@@ -150,8 +151,9 @@ aarch64/pvec_with.text	8901
 aarch64/pvec_with.ir	253752396
 aarch64/sort_inplace.text	783
 aarch64/sort_inplace.ir	112891129
-aarch64/sort_ints.text	2768
+aarch64/sort_ints.text	2728
 aarch64/sort_ints.ir	105084009
+aarch64/sort_strings.text	4310
 aarch64/string_build.text	1146
 aarch64/string_build.ir	171325490
 aarch64/string_count_byte.text	563

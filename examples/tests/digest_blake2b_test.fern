@@ -1,0 +1,97 @@
+import "std/test";
+import "std/crypto" as crypto;
+import "std/string";
+// examples/tests/digest_blake2b_test.fern — std/crypto's streaming BLAKE2b (RFC 7693)
+// against the standard known-answer vectors (empty, "abc", the 112-byte
+// multi-block message, one million 'a'), fed through the pending-block logic in
+// every way that matters: whole strings, 1000 updates of 1000 bytes, and 7-byte
+// updates that straddle each block boundary, cross-checked against the one-shot form.
+
+// __pseudo builds the 10,003-byte fixed pattern byte i = (i * 7 + 3) & 255:
+// long enough that 7-byte updates straddle every block boundary offset, and
+// not valid UTF-8, so the hasher is fed raw bytes.
+function __pseudo(): u8[] {
+    var b: u8[] = __alloc_u8(10003);
+    var i: i32 = 0;
+    while (i < 10003) { b = b.with(i, ((i * 7 + 3) & 255) as u8); i = i + 1; }
+    return b;
+}
+
+// __thousand_a is 1000 'a's, the unit of the million-'a' vector.
+function __thousand_a(): string {
+    var b: u8[] = __alloc_u8(1000);
+    var i: i32 = 0;
+    while (i < 1000) { b = b.with(i, 97 as u8); i = i + 1; }
+    return string_from_bytes_unchecked(b);
+}
+
+function test_empty(): test.TestOutcome {
+    return test.assert_eq(crypto.blake2b_new(64).final_hex(), "786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce");
+}
+
+function test_abc(): test.TestOutcome {
+    return test.assert_eq(crypto.blake2b_new(64).update("abc").final_hex(), "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923");
+}
+
+function test_multiblock(): test.TestOutcome {
+    return test.assert_eq(crypto.blake2b_new(64).update("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu").final_hex(),
+        "ce741ac5930fe346811175c5227bb7bfcd47f42612fae46c0809514f9e0e3a11ee1773287147cdeaeedff50709aa716341fe65240f4ad6777d6bfaf9726e5e52");
+}
+
+function test_bytes_len(): test.TestOutcome {
+    return test.assert_eq(crypto.blake2b_new(64).update("abc").final_bytes().len(), 64);
+}
+
+// One million 'a' as 1000 updates of 1000 bytes: 1000 is not a multiple of the
+// block size, so every update leaves a partial block pending.
+function test_million_a_chunked(): test.TestOutcome {
+    var h: crypto.Blake2b = crypto.blake2b_new(64);
+    var chunk: string = __thousand_a();
+    var i: i32 = 0;
+    while (i < 1000) { h = h.update(chunk); i = i + 1; }
+    return test.assert_eq(h.final_hex(), "98fb3efb7206fd19ebf69b6f312cf7b64e3b94dbe1a17107913975a793f177e1d077609d7fba363cbba00d05f7aa4e4fa8715d6428104c0a75643b0ff3fd3eaf");
+}
+
+// 7-byte view slices over the fixed pattern, against the whole message fed as a
+// string and the reference value.
+function test_seven_byte_updates(): test.TestOutcome {
+    var msg: u8[] = __pseudo();
+    var h: crypto.Blake2b = crypto.blake2b_new(64);
+    var i: i32 = 0;
+    while (i + 7 <= 10003) { h = h.update_bytes(msg[i:i + 7]); i = i + 7; }
+    h = h.update_bytes(msg[i:10003]);
+    var chunked: string = h.final_hex();
+    var whole: string = crypto.blake2b_new(64).update(string_from_bytes_unchecked(msg)).final_hex();
+    if (chunked != "6088e8a2fde1d069eb0051accb83d114530aeb1a3ccd94ed6765a6d05d793de246a85a5b86a9725270b6403edf2f0db75189b920a4ad4ce54efb03a99df700c0") { return test.fail("chunked: " + chunked); }
+    return test.assert_eq(chunked, whole);
+}
+
+// update_bytes takes the same bytes as u8[]; the one-shot helpers agree.
+function test_update_bytes_and_oneshot(): test.TestOutcome {
+    var via_bytes: string = crypto.blake2b_new(64).update_bytes("abc".bytes()).final_hex();
+    if (via_bytes != crypto.blake2b_hex("abc", 64)) { return test.fail("one-shot differs: " + via_bytes); }
+    return test.assert_eq(via_bytes, "ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923");
+}
+
+// Selectable digest length: b2sum -l 160 / -l 256 (bytes 20 / 32), and the
+// 1-byte edge, all from the same message.
+function test_digest_lengths(): test.TestOutcome {
+    if (crypto.blake2b_hex("abc", 20) != "384264f676f39536840523f284921cdc68b6846b") { return test.fail("len 20"); }
+    if (crypto.blake2b_hex("abc", 32) != "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319") { return test.fail("len 32"); }
+    if (crypto.blake2b_hex("abc", 1) != "6b") { return test.fail("len 1"); }
+    if (crypto.blake2b_new(32).update("abc").final_bytes().len() != 32) { return test.fail("final_bytes len"); }
+    return test.pass();
+}
+
+function main(): i32 {
+    var r: test.TestRunner = test.test_new("std/crypto BLAKE2b");
+    r = r.it("empty", test_empty);
+    r = r.it("abc", test_abc);
+    r = r.it("multi-block", test_multiblock);
+    r = r.it("final_bytes len", test_bytes_len);
+    r = r.it("million a, 1000x1000", test_million_a_chunked);
+    r = r.it("7-byte updates", test_seven_byte_updates);
+    r = r.it("update_bytes + one-shot", test_update_bytes_and_oneshot);
+    r = r.it("digest lengths", test_digest_lengths);
+    return r.finish();
+}

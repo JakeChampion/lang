@@ -443,28 +443,30 @@ pub function is_sorted[T: Ord](arr: T[]): boolean {
 // divide-and-round per call.
 function __cmp_min_run(): i32 { return 32; }
 
-function __cmp_insertion[T: Ord](a: T[], lo: i32, hi: i32, desc: boolean): T[] {
-    var out: T[] = a;
+// The array is `own` so the writes land in the caller's buffer, which the
+// caller moves in as `a = __cmp_insertion(a, ...)`; a borrowed array would
+// be copied whole on the first `.with`, once per call.
+function __cmp_insertion[T: Ord](own a: T[], lo: i32, hi: i32, desc: boolean): T[] {
     var i: i32 = lo + 1;
     while (i < hi) {
-        var v: T = out[i];
+        var v: T = a[i];
         var j: i32 = i - 1;
         var moving: boolean = j >= lo;
         while (moving) {
-            var o: i32 = out[j].cmp(v);
+            var o: i32 = a[j].cmp(v);
             if (desc) { o = 0 - o; }
             if (o > 0) {
-                out = out.with(j + 1, out[j]);
+                a = a.with(j + 1, a[j]);
                 j = j - 1;
                 moving = j >= lo;
             } else {
                 moving = false;
             }
         }
-        out = out.with(j + 1, v);
+        a = a.with(j + 1, v);
         i = i + 1;
     }
-    return out;
+    return a;
 }
 
 // __cmp_sort_adaptive is the shared body behind `sort` and `sort_desc`: a
@@ -524,7 +526,10 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
     var c: i32 = 0;
     while (c < n) { a = a.append(arr[c]); c = c + 1; }
 
-    if (n <= 32) { return __cmp_insertion(a, 0, n, desc); }
+    if (n <= 32) {
+        a = __cmp_insertion(a, 0, n, desc);
+        return a;
+    }
 
     // Pass 1 — natural runs. `bounds` holds each run's start, terminated by n.
     var bounds: i32[] = [];

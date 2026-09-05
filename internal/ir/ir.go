@@ -2895,7 +2895,17 @@ type lowerOpts struct {
 	// LowerWith publish the resulting table as Program.CoverSites. Off by
 	// default: an ordinary build emits no coverage op at all.
 	coverPoints bool
+	// targetOS is the environment `target_os()` answers with when a call
+	// reaches the lowering unfolded. Empty selects the pointer width's
+	// default environment (wasi for 4, linux for 8).
+	targetOS string
 }
+
+// WithTargetOS names the environment the lowering compiles for, so an
+// unfolded `target_os()` lowers to that literal. The driver folds the call
+// before the checker (constfold.Inputs.TargetOS) and never needs this; a
+// harness that lowers a checked program directly does.
+func WithTargetOS(os string) LowerOption { return func(o *lowerOpts) { o.targetOS = os } }
 
 // DynSupported marks the calling backend as able to lower `dyn Trait`
 // DISPATCH (boxed one-word on natives, §4.2.2). Both x86-64 and arm64
@@ -2920,6 +2930,20 @@ func EmitLineMarkers() LowerOption { return func(o *lowerOpts) { o.emitLineMarke
 // with an OpCoverPoint and publish the counter table as
 // Program.CoverSites (#5548, `fern -cover`). Off by default.
 func CoverPoints() LowerOption { return func(o *lowerOpts) { o.coverPoints = true } }
+
+// targetOSFor is the environment an unfolded `target_os()` lowers to:
+// the one the caller named, else the pointer width's only default —
+// wasm32 is wasi, and a native lowering that did not say otherwise is
+// linux.
+func targetOSFor(named string, ptrW int) string {
+	if named != "" {
+		return named
+	}
+	if ptrW == 4 {
+		return "wasi"
+	}
+	return "linux"
+}
 
 // LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
 // wasm32 and 8 on arm64; it sizes pointer-typed enum payloads,
@@ -3133,12 +3157,13 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		jobs = 1
 	}
 	lowered := make([]*Func, len(prog.Funcs))
+	targetOS := targetOSFor(lo.targetOS, ptrW)
 	err := forEach(len(prog.Funcs), jobs, func(i int) error {
 		fn := prog.Funcs[i]
 		if fn.ImportIface != "" {
 			return nil
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, targetOS, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
 		if err != nil {
 			return err
 		}
@@ -4213,9 +4238,31 @@ func computeFreshLocals(fn *ast.FuncDecl, info *checker.Info, variantPayloads ma
 		}
 		return true
 	})
+	// A `__memcpy(out as usize, …)` fills a SCALAR-element buffer with bytes
+	// during the call: no pointer can be embedded by it, so the write does
+	// not end `out`'s freshness — the `bytes()` shape (#8403). A
+	// pointer-element buffer is excluded because a byte copy into it could
+	// plant uncounted aliases of a parameter's elements.
+	syncCopyUse := map[*ast.Ident]bool{}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.Call)
+		if !ok || !syncByteCopyCall(call) {
+			return true
+		}
+		for _, id := range syncByteCopyRoots(call) {
+			decl, isDecl := decls[id.Name]
+			if !isDecl {
+				continue
+			}
+			if at, isArr := decl.Type.(ast.ArrayType); isArr && !ast.IsPointerType(at.Elem) {
+				syncCopyUse[id] = true
+			}
+		}
+		return true
+	})
 	tainted := map[string]bool{}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && !inReturn[id] && !cowUse[id] {
+		if id, ok := n.(*ast.Ident); ok && !inReturn[id] && !cowUse[id] && !syncCopyUse[id] {
 			tainted[id.Name] = true
 		}
 		return true
@@ -4390,6 +4437,15 @@ func exprNoParamEscape(e ast.Expr, slot ast.Type, info *checker.Info, variantPay
 		// without it the builtin (absent from q) rejected the init and the
 		// local never entered freshLocals.
 		if id.Name == "map_new" {
+			return true
+		}
+		// `__alloc_u8(n)` and its siblings hand back a fresh rc=1 byte
+		// buffer from scalar arguments alone, so no parameter heap can flow
+		// through the result — the same verdict rhsTainted's arm gives them.
+		// Without it `bytes()` (`var out = __alloc_u8(n); …; return out;`)
+		// could not prove its return fresh, and every caller's binding of a
+		// byte copy stayed permanently taint-ineligible (#8403).
+		if id.Name == "__alloc_u8" || id.Name == "random_bytes" || id.Name == "tcp_recv" {
 			return true
 		}
 		// `string_from_bytes_unchecked(buf)` always COPIES — into an
@@ -5347,6 +5403,8 @@ type builder struct {
 	// statements sharing a line.
 	emitLineMarkers bool
 	lastLineMark    int
+	// targetOS is what an unfolded `target_os()` lowers to.
+	targetOS string
 	// cover is the program-wide coverage counter table under
 	// `fern -cover`, nil otherwise; lastCoverLine dedups statements that
 	// share a line WITHIN one basic block. emit() clears it at every
@@ -5738,7 +5796,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, targetOS string, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5757,6 +5815,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		ptrW:                    ptrW,
 		dynRcSupported:          dynRcSupported,
 		emitLineMarkers:         emitLineMarkers,
+		targetOS:                targetOS,
 		cover:                   cover,
 		coverFile:               fn.SourceFile,
 		pairForm:                pairForm,
@@ -5898,7 +5957,12 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		for _, nm := range names {
 			slot := b.allocSlot()
 			b.locals[nm] = slot
-			b.scratchType[slot] = b.rc.consumingBindings[nm]
+			bt := b.rc.consumingBindings[nm]
+			b.scratchType[slot] = bt
+			// A two-word string slot stores (data, len): two zeros.
+			if _, isStr := bt.(ast.StringType); isStr && ast.UseTwoWordStrings(b.ptrW) {
+				b.emit(Op{Kind: OpConstI32, I32: 0})
+			}
 			b.emit(Op{Kind: OpConstI32, I32: 0})
 			b.emit(Op{Kind: OpStoreLocal, I32: slot})
 		}
@@ -9342,6 +9406,12 @@ func (b *builder) stmt(s ast.Stmt) error {
 			// arm body instead — see reclaimablePairFormPayload.
 			payReleaseSlot := int32(-1)
 			var payReleaseType ast.Type
+			// An owned-payload match (rcOwnedPayloadBuiltins) hands the
+			// arm a payload nobody else releases: an admitted binding owns
+			// it (consumingBindings — swept at exit, so the bind site must
+			// first drop what the slot held from the previous iteration),
+			// and a `_` drops it on the spot.
+			ownedPayloadArm := b.rc.ownedPayloadMatches[n] && arm.Guard == nil && !armHasSubPatterns(arm)
 			for i, name := range arm.Bindings {
 				// A slot carrying a sub-pattern binds nothing itself — its
 				// pattern did, in armPayloadBind above — and its Bindings
@@ -9354,8 +9424,22 @@ func (b *builder) stmt(s ast.Stmt) error {
 				if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil {
 					bt = arm.BindingTypes[i]
 				}
+				if ownedPayloadArm && name == "_" && ownedPayloadType(bt) {
+					scratch := b.allocSlot()
+					b.scratchType[scratch] = bt
+					b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
+					b.emit(Op{Kind: OpConstI32, I32: offsets[i]})
+					b.emit(Op{Kind: OpAdd})
+					b.emit(payloadLoadOpFor(bt, b.ptrW))
+					b.emit(Op{Kind: OpStoreLocal, I32: scratch})
+					b.emitOwnedSlotDrop(scratch, bt)
+					continue
+				}
 				slot, restore := b.bindingSlotScoped(name, bt)
 				armRestores = append(armRestores, restore)
+				if _, owned := b.rc.consumingBindings[name]; ownedPayloadArm && owned && b.rc.freeEligible[name] {
+					b.emitOwnedSlotDrop(slot, bt)
+				}
 				if pairFormScrutinee && arm.Guard == nil && arm.AtBinding == "" &&
 					b.reclaimablePairFormPayload(n.Tag, bt, arm.Body, name) {
 					payReleaseSlot, payReleaseType = slot, bt
@@ -14187,6 +14271,16 @@ func (b *builder) callBody(n *ast.Call) error {
 			return b.emitCellNew(n)
 		}
 	}
+	// target_os() is a compile-time constant. The driver folds it before
+	// the check (constfold.Inputs.TargetOS); a call that still reaches the
+	// lowering becomes the literal here, so the const-if prune that
+	// follows sees the same thing either way.
+	if id.Name == "target_os" && len(n.Args) == 0 {
+		if _, isLocal := b.locals[id.Name]; !isLocal {
+			b.emit(Op{Kind: OpConstStr, Str: b.targetOS})
+			return nil
+		}
+	}
 	if id.Name == "__method_Cell_get" && len(n.Args) == 1 {
 		return b.emitCellGet(n)
 	}
@@ -15034,13 +15128,22 @@ func (b *builder) callBody(n *ast.Call) error {
 	// inc'd it. The temp is therefore at rc 2 on the escaping path and rc 1
 	// on the non-escaping one, and the immediate post-call dec nets it to
 	// exactly one owner either way. The map is keyed by user declaration, so
-	// builtins — whose allocation contracts are per-helper — are absent and
-	// keep their prior safe-leak; the local / pair-form / map_new /
+	// a builtin is absent from it; a builtin position is admitted only by
+	// copyingBuiltinArg — the bytes are copied out and the result, a scalar
+	// or a fresh box, cannot alias the argument — and every other builtin
+	// keeps its prior safe-leak. The local / pair-form / map_new /
 	// retain-sink exclusions carry over from the call-level gate unchanged.
 	countedArgTemp := func(ai int) bool {
 		if !ast.RcFreeEnabled || !calleeIsFunc || calleeIsLocal ||
 			b.pairForm[id.Name] || id.Name == "map_new" || calleeRetainsAnyArg(id.Name) {
 			return false
+		}
+		// A builtin that copies the argument out with a result that cannot
+		// alias it is the same fact stated for a helper with no Fern body:
+		// `w.write(string_from_bytes_unchecked(bs))` returns an Option box
+		// that names nothing, and the temp is dead once written (#8403).
+		if copyingBuiltinArg(id.Name, ai) {
+			return true
 		}
 		counted := b.paramCountedRetain[id.Name]
 		return ai < len(counted) && counted[ai]
@@ -20024,6 +20127,12 @@ func (b *builder) emitArraySet(n *ast.Call) error {
 	// skips this and keeps the rc==1 in-place fast path.
 	if b.rc.arraySetInc[n] {
 		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
+	}
+	// A field receiver of the superseded-field shape (computeFieldOwnMoves)
+	// moves out of its box when the box is unique, so the helper sees the
+	// field's own count and mutates in place; a shared box retains instead.
+	if fa, isField := n.Args[0].(*ast.FieldAccess); isField && b.rc.fieldOwnMoves[fa] {
+		b.emitFieldOwnMove(fa)
 	}
 	// A consumed receiver (arraySetConsumedSites): the helper takes the
 	// reference now on the stack over, so the slot no longer holds one —

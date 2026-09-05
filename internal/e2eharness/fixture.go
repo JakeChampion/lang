@@ -35,7 +35,18 @@ func RunFixtureInterp(t *testing.T, mainPath, stdin string) (string, int) {
 // constfold → check → monomorph) against a fixture's entry file. It
 // loads from the real fixture directory so relative `./sibling`
 // imports resolve against the on-disk layout.
+//
+// It names no target, so a program calling `target_os()` must go through
+// LoadCheckMonoFor instead: the lowering refuses an unresolved call.
 func LoadCheckMono(t *testing.T, mainPath string) (*checker.Info, *ast.Program) {
+	t.Helper()
+	return LoadCheckMonoFor(t, mainPath, "")
+}
+
+// LoadCheckMonoFor is LoadCheckMono for a program compiled for a target
+// whose environment is targetOS ("linux", "wasi", …), which is what
+// `target_os()` folds to.
+func LoadCheckMonoFor(t *testing.T, mainPath, targetOS string) (*checker.Info, *ast.Program) {
 	t.Helper()
 	// Ensure core/int is in the import closure so the wasm runner's
 	// BuildOptions.PrintMainResult wrapper can stringify main()'s i32
@@ -58,7 +69,7 @@ func LoadCheckMono(t *testing.T, mainPath string) (*checker.Info, *ast.Program) 
 	if err != nil {
 		t.Fatalf("modload: %v", err)
 	}
-	if err := constfold.Fold(prog, nil); err != nil {
+	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: targetOS}); err != nil {
 		t.Fatalf("constfold: %v", err)
 	}
 	info, err := checker.Check(prog)

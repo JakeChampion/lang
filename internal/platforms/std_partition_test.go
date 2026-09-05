@@ -59,6 +59,7 @@ var stdModuleReach = map[string]string{
 	"std/format":        "",
 	"std/fuzz":          "env,fs,log,now,random",
 	"std/glob":          "",
+	"std/hash":          "",
 	"std/headers":       "",
 	"std/hex":           "",
 	"std/http":          "",
