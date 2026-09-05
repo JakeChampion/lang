@@ -18,6 +18,7 @@ import "./rundriver";
 import "./util";
 import "./asmcore";
 import "./irlower";
+import "./ircore";
 import "./wasm_ir";
 
 // main wraps `run` in the shared rc-over-release guard — see
@@ -129,13 +130,14 @@ function run(): i32 {
         // emit_ir_module, which queries module_emits_op / module_uses_* /
         // str_values ~50× — re-lowering per query is the O(functions²) ×
         // O(passes) blowup that OOMed large modules (#4652).
-        var ir_cache: irlower.LowerResult[] = wasm_ir.lower_all_for(mod);
+        var fstab: irlower.StructTab = irlower.struct_tab(mod.structs);
+        var fbase: irlower.FnSigs = ircore.wp_fn_sigs(mod.funcs, fstab);
         // The module emission itself lives in wasm_ir.emit_ir_module — the SINGLE
         // source of truth shared with the routed entry point. This driver used to
         // inline its own near-identical copy; the two drifted and the routed copy
         // lost the whole WASI env/args/clock/fs surface, emitting calls to helpers
         // it never defined (#4801).
-        emitted = wasm_ir.emit_ir_module(mod, ir_cache);
+        emitted = wasm_ir.emit_ir_module(mod, wasm_ir.lower_all_for_base(mod, fstab, fbase), fbase);
     } else {
         emitted = wasm_ir.emit_module_mode_or_error(parser.module_with_builtins(mod), false, false);
     }

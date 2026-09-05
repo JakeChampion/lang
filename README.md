@@ -94,6 +94,7 @@ wasmtime run factorial.wasm
 ./fern -fmt -w examples/factorial.fern     # overwrite the file in place
 ./fern -fmt -d examples/factorial.fern     # print a unified diff against
                                            # the file; exits 1 when they differ
+./fern -fmt -w examples/*.fern             # any mode takes a file list, gofmt-style
 
 # Linter (see docs/LINT.md). Parse-only, so a file with a type error still
 # lints. `fern -lint-rules` lists the rules with their options.

@@ -1,0 +1,166 @@
+// examples/self_host/ir_licm_run.fern — driver for the stack IR's loop-invariant
+// code motion (ir.fern's hoist_loop_invariants, the op-list twin of native's
+// internal/ir/licm.go, #8245) and for the slot growth it rides on (#8247).
+//
+// Each case builds the op list irlower emits for a small `while` and prints the
+// pass's output — the ops AND the frame count — so the companion Go test
+// (internal/e2eselfhost/self_host_ir_licm_test.go) pins what every backend
+// receives. The refusals carry the weight: an operand the body stores to, a
+// length read from the body rather than the header, and a length behind a
+// short-circuit `&&` must each stay in the loop, because hoisting any of them
+// would perform a read the original program did not.
+//
+// The exit code is 0 only when a second optimize_ops round over the hoisted
+// result changes nothing — the fixpoint check the strength driver makes too.
+
+import "./ir";
+import "./irverify";
+import "./irverifystack";
+import "./util";
+
+// render joins an op list into one line, so a case's whole shape is a single
+// comparable string.
+function render(ops: ir.Op[]): string {
+    var s: string = "";
+    var i: i32 = 0;
+    while (i < ops.len()) {
+        if (i > 0) { s = s + " ; "; }
+        s = s + ir.render_op(ops[i]);
+        i = i + 1;
+    }
+    return s;
+}
+
+// show renders a pass result as `<ops> | n_locals=<count>`: the count is half
+// of what the pass returns, and the half #8247 exists for.
+function show(r: ir.OptimizedOps): string {
+    return render(r.ops) + " | n_locals=" + util.i32_to_string(r.n_locals);
+}
+
+function cat(a: ir.Op[], b: ir.Op[]): ir.Op[] {
+    var out: ir.Op[] = a;
+    var i: i32 = 0;
+    while (i < b.len()) { out = out.append(b[i]); i = i + 1; }
+    return out;
+}
+
+function load(slot: i32): ir.Op { return ir.op_load_local(slot); }
+function store(slot: i32): ir.Op { return ir.op_store_local(slot); }
+function slen(): ir.Op { return ir.op_str_len(); }
+function lt(): ir.Op { return ir.op_bin("lt_s", 0, false); }
+function add(): ir.Op { return ir.op_bin("add", 0, false); }
+
+// while_loop is the canonical `while` shape irlower emits around a condition
+// and a body:
+//   block ; loop ; <cond> ; not ; brif 1 ; <body> ; br 0 ; end ; end
+function while_loop(cond: ir.Op[], body: ir.Op[]): ir.Op[] {
+    var head: ir.Op[] = [ir.op_block(0), ir.op_loop(0)];
+    var test: ir.Op[] = [ir.op_bin("not", 0, false), ir.op_brif(1)];
+    var tail: ir.Op[] = [ir.op_br(0), ir.op_end(), ir.op_end()];
+    return cat(cat(cat(cat(head, cond), test), body), tail);
+}
+
+// inc is `slot = slot + 1`.
+function inc(slot: i32): ir.Op[] {
+    return [load(slot), ir.op_const_i32(1), add(), store(slot)];
+}
+
+function same(a: ir.OptimizedOps, b: ir.OptimizedOps): boolean {
+    return render(a.ops) == render(b.ops) && a.n_locals == b.n_locals;
+}
+
+// stack_neutral reports whether the operand-stack verifier models the ops and
+// finds nothing: the spliced prologue being stack-net-zero is what the whole
+// transform rests on.
+function stack_neutral(ops: ir.Op[]): i32 {
+    var r: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops);
+    if (r.bail.len() > 0 || r.problems.len() > 0) { return 0; }
+    return 1;
+}
+
+// problems counts what the structural verifier reports against a frame of
+// n_locals slots — the out-of-range check that would refuse a hoist whose
+// slot the frame did not grow for.
+function problems(ops: ir.Op[], n_params: i32, n_locals: i32): i32 {
+    return irverify.verify_fn("f", ops, n_params, n_locals, irverify.sig_index([])).len();
+}
+
+function main(): i32 {
+    var out: string = "";
+
+    // 1. `while (i < s.len())`: slots 0 = s (the param), 1 = i, 2 = n. The
+    //    length is read once, before the loop, into the fresh slot 3, and the
+    //    header reads the cache. Frame 3 -> 4.
+    var scan: ir.Op[] = cat(while_loop([load(1), load(0), slen(), lt()], inc(1)), [load(1), ir.op_return()]);
+    var once: ir.OptimizedOps = ir.hoist_loop_invariants(scan, 3);
+    out = out + "licm_while_cond: " + show(once) + "\n";
+
+    // 2. The operand is stored to inside the body (`s = ...`), so its length
+    //    is NOT invariant: hoisting would read the old string's length on
+    //    every iteration.
+    var grow: ir.Op[] = while_loop([load(1), load(0), slen(), lt()], cat([load(2), store(0)], inc(1)));
+    out = out + "licm_mutated_refused: " + show(ir.hoist_loop_invariants(grow, 3)) + "\n";
+
+    // 3. A length read from the BODY rather than the header stays there: a
+    //    loop whose body never runs would otherwise gain a read the original
+    //    program never performed. Slots 0 = s, 1 = i, 2 = k, 3 = n.
+    var total: ir.Op[] = while_loop([load(1), load(2), lt()], cat([load(3), load(0), slen(), add(), store(3)], inc(1)));
+    out = out + "licm_body_refused: " + show(ir.hoist_loop_invariants(total, 4)) + "\n";
+
+    // 4. Running the pass twice must not hoist the hoist.
+    var twice: ir.OptimizedOps = ir.hoist_loop_invariants(once.ops, once.n_locals);
+    out = out + "licm_idempotent=" + util.i32_to_string(bool_i32(same(once, twice))) + "\n";
+
+    // 5. Two distinct operands in one header take a slot each, in read order.
+    //    Slots 0 = s, 1 = t, 2 = i; frame 3 -> 5.
+    var two: ir.Op[] = while_loop([load(2), load(0), slen(), load(1), slen(), add(), lt()], inc(2));
+    var two_h: ir.OptimizedOps = ir.hoist_loop_invariants(two, 3);
+    out = out + "licm_two_slots: " + show(two_h) + "\n";
+    out = out + "licm_two_slots_stack_neutral=" + util.i32_to_string(stack_neutral(two_h.ops)) + "\n";
+
+    // 6. The same operand read twice in one header shares one slot.
+    var dup: ir.Op[] = while_loop([load(1), load(0), slen(), load(0), slen(), add(), lt()], inc(1));
+    out = out + "licm_same_operand_once: " + show(ir.hoist_loop_invariants(dup, 3)) + "\n";
+
+    // 7. `&&` lowers to control flow — a temp local and a block — so the block
+    //    ends the header and the right-hand length stays in the loop: it is
+    //    guarded, and hoisting it would evaluate it on a path the original
+    //    never did. Slots 0 = a, 1 = b, 2 = i, 3 = the short-circuit temp.
+    var sc_cond: ir.Op[] = [load(2), load(0), slen(), lt(), store(3), ir.op_block(0), load(3), ir.op_bin("not", 0, false), ir.op_brif(0), load(2), load(1), slen(), lt(), store(3), ir.op_end(), load(3)];
+    var sc: ir.Op[] = while_loop(sc_cond, inc(2));
+    var sc_h: ir.OptimizedOps = ir.hoist_loop_invariants(sc, 4);
+    out = out + "licm_short_circuit: " + show(sc_h) + "\n";
+    out = out + "licm_short_circuit_stack_neutral=" + util.i32_to_string(stack_neutral(sc_h.ops)) + "\n";
+
+    // 8. Nested loops: each header hoists to just before ITS loop, and the
+    //    later (inner) loop is rewritten first, so it takes the first fresh
+    //    slot. Slots 0 = s, 1 = t, 2 = i, 3 = j; frame 4 -> 6.
+    var inner: ir.Op[] = while_loop([load(3), load(1), slen(), lt()], inc(3));
+    var outer: ir.Op[] = while_loop([load(2), load(0), slen(), lt()], cat(inner, inc(2)));
+    out = out + "licm_nested: " + show(ir.hoist_loop_invariants(outer, 4)) + "\n";
+
+    // 9. A loop nothing closes is left alone rather than half-rewritten.
+    var open: ir.Op[] = [ir.op_block(0), ir.op_loop(0), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(1)];
+    out = out + "licm_unclosed_refused: " + show(ir.hoist_loop_invariants(open, 3)) + "\n";
+
+    // 10. The verifier sees the grown frame (#8247): against the count the pass
+    //     returned the hoisted ops verify clean, and against the lowering's
+    //     own count the cache slot is out of range — which is the refusal a
+    //     frame one slot short would have earned.
+    out = out + "licm_frame_grown: new=" + util.i32_to_string(problems(once.ops, 1, once.n_locals))
+        + " old=" + util.i32_to_string(problems(once.ops, 1, 3)) + "\n";
+
+    // 11. Through the whole battery, where the pass runs last.
+    var opt: ir.OptimizedOps = ir.optimize_ops(scan, 1, 3);
+    out = out + "licm_in_optimize: " + show(opt) + "\n";
+
+    write(out);
+    var again: ir.OptimizedOps = ir.optimize_ops(opt.ops, 1, opt.n_locals);
+    if (!same(opt, again)) { return 1; }
+    return 0;
+}
+
+function bool_i32(b: boolean): i32 {
+    if (b) { return 1; }
+    return 0;
+}

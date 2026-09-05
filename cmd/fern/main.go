@@ -9,12 +9,14 @@
 //	fern --run FILE.fern [-- ARGS...]    # link to a temporary binary and
 //	                                     # execute it under qemu-aarch64
 //	                                     # (forwarding stdio)
-//	fern -fmt FILE.fern                  # write idiomatic, indented source
-//	                                     # to stdout (use -w to overwrite
-//	                                     # the input file in place; use -d
-//	                                     # to print a unified diff against
+//	fern -fmt FILE...                    # write idiomatic, indented source
+//	                                     # to stdout, each file in order
+//	                                     # (use -w to overwrite the files
+//	                                     # in place; use -d to print a
+//	                                     # unified diff per file against
 //	                                     # the on-disk version and exit
-//	                                     # non-zero when they differ). A
+//	                                     # non-zero when any differs; -o
+//	                                     # OUT takes a single file). A
 //	                                     # FILE.fern.md formats the code
 //	                                     # inside each chunk in place,
 //	                                     # leaving prose / fences / headers
@@ -634,9 +636,9 @@ func main() {
 	flag.Var(&asyncProviders, "async-provider", "with -emit core-module and an `@import async` (WASI Preview-3) program: bundle a pre-built provider *component* (.wasm) that exports the matching async function, so the result is a single self-contained runnable component (no separate host needed). Repeatable: `WITNAME=PATH` maps a provider to the async import whose WIT name is WITNAME; a single bare `PATH` is shorthand when the program has exactly one async import. Each provider must export its WITNAME. Scalar params + scalar result only (e.g. `@import(\"iface\",\"name\") async function add(a: i32, b: i32): i32;`). See docs/WASI-PREVIEW3-ASYNC-PLAN.md.")
 	embedDir := flag.String("embed", "", "embed a directory of assets into the binary at compile time. `__fern_asset(\"NAME\")` in the source is replaced with a string literal holding that file's bytes, where NAME is the file's slash-separated path relative to DIR. Assets are ordinary string literals: immortal (no refcount traffic), zero-copy to hand to user code, and NUL-safe, so binary assets (images, fonts, wasm) work unchanged.")
 	emitDebug := flag.Bool("g", false, "emit a static symbol table (.symtab) into the native binary so debuggers, nm, backtraces, and profilers can map code addresses to function names")
-	doFmt := flag.Bool("fmt", false, "format the source file and write to stdout (use -w to write back in place, -d to print a diff)")
-	writeBack := flag.Bool("w", false, "with -fmt, overwrite the input file with the formatted output")
-	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between the file and its formatted form; exits 1 when they differ")
+	doFmt := flag.Bool("fmt", false, "format the source files and write them to stdout in order (use -w to write back in place, -d to print a diff, -o OUT with a single file)")
+	writeBack := flag.Bool("w", false, "with -fmt, overwrite each input file with its formatted output")
+	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between each file and its formatted form; exits 1 when any differs")
 	doResolve := flag.Bool("resolve", false, "run Minimum Version Selection over a fern.toml's versioned ([package] index) dependencies and write the chosen versions to fern.lock (pass the manifest, its directory, or any file inside the package; default `.`). url-sourced versions are fetched and verified into the content-addressed store. The build reads fern.lock; the compiler never reads the index.")
 	doVendor := flag.Bool("vendor", false, "flatten the transitive dependency graph of a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into <root>/vendor/<name>/, one directory per package. After vendoring, builds are fully offline — the loader resolves declared dependencies out of vendor/ and never touches the network or the deps' original path/url locations. url dependencies must be fetched (`fern -fetch`) first; vendoring copies from the store.")
 	doAdd := flag.Bool("add", false, "add a dependency to the nearest fern.toml: `fern -add NAME SPEC [DIR]` where SPEC is `path:../dir`, `url:https://…/pkg.tar.gz` (the archive is fetched and its sha256 recorded automatically — no hand-computed hash), or `workspace` (a `{ workspace = true }` member dep). DIR (default `.`) selects the package whose fern.toml to edit. The manifest is edited textually so comments and formatting survive.")
@@ -669,7 +671,7 @@ func main() {
 	backtrace := flag.Bool("backtrace", ast.BacktraceEnabled, "emit the frame-pointer backtrace a fatal abort (bounds / arena / sanitizer) prints under its cause line, on the native x86-64 and arm64 backends. `-backtrace=false` drops the walk, the hex printer, and the \"backtrace:\" string from the binary — the size-critical opt-out; the cause line and every exit code (134 / 125 / 124) are unchanged. Same as FERN_BACKTRACE=0, which this flag defaults to.")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "usage: fern [-target <isa>-<environment>] [-backend ssa] [-emit core-module] [-o OUTPUT] [--run] [-cc CC] [-qemu QEMU] FILE.fern [-- ARGS...]\n       (targets: arm64-linux, arm64-darwin, arm64-android, x86-64-linux, wasm32-wasi, wasm32-wasi-http; `fern -targets` for all)")
-		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d] FILE.fern")
+		fmt.Fprintln(os.Stderr, "       fern -fmt [-w | -d | -o OUT] FILE...")
 		fmt.Fprintln(os.Stderr, "       fern -check FILE.fern | fern -check -      (type-check only; stdin form)")
 		fmt.Fprintln(os.Stderr, "       fern -repl")
 		fmt.Fprintln(os.Stderr, "       fern -interp FILE.fern | fern -interp -    (read from stdin)")
@@ -977,12 +979,7 @@ func main() {
 	progArgs := flag.Args()[1:] // anything after the source path is forwarded to the program
 
 	if *doFmt {
-		code, err := formatFile(srcPath, *writeBack, *diffMode)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		os.Exit(code)
+		os.Exit(formatFiles(flag.Args(), *writeBack, *diffMode, *out))
 	}
 
 	if *componentWrap && *componentWrapCli {
@@ -1042,12 +1039,35 @@ func unwrapFormattedBody(formatted string) string {
 // when unwrapping a wrapped chunk body.
 const formatIndentUnit = "  "
 
+// formatFiles is `-fmt` over a file list, gofmt-style: every file is
+// processed in order even when an earlier one fails, and the exit code is
+// the worst one seen (1 for any error or, under -d, any non-empty diff).
+// -o names one output file, so it is refused with more than one input.
+func formatFiles(paths []string, writeBack, diffMode bool, outPath string) int {
+	if outPath != "" && len(paths) > 1 {
+		fmt.Fprintf(os.Stderr, "fern: -fmt -o takes a single input file (%d given)\n", len(paths))
+		return 2
+	}
+	code := 0
+	for _, p := range paths {
+		c, err := formatFile(p, writeBack, diffMode, outPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			c = 1
+		}
+		if c > code {
+			code = c
+		}
+	}
+	return code
+}
+
 // formatFile parses the file at srcPath, formats it, and either
-// writes the result to stdout / back to the file / prints a unified
-// diff against the on-disk version. Returns the exit code the CLI
+// writes the result to stdout / back to the file / to outPath / prints a
+// unified diff against the on-disk version. Returns the exit code the CLI
 // should use: 0 for "no work needed" or successful write, 1 when
 // `-d` saw a difference, with errors returned separately.
-func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
+func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, error) {
 	srcBytes, err := os.ReadFile(srcPath)
 	if err != nil {
 		return 1, err
@@ -1089,6 +1109,9 @@ func formatFile(srcPath string, writeBack, diffMode bool) (int, error) {
 			return 1, err
 		}
 		return 0, os.WriteFile(srcPath, []byte(formatted), info.Mode())
+	}
+	if outPath != "" {
+		return 0, os.WriteFile(outPath, []byte(formatted), 0o644)
 	}
 	_, err = os.Stdout.WriteString(formatted)
 	return 0, err

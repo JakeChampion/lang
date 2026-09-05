@@ -345,13 +345,10 @@ pub function cli_color_enabled(): boolean {
 }
 
 // Wrap `s` in the SGR `code` and a reset, or return it unchanged
-// when colour is disabled. The ESC byte (0x1B) is built from bytes
-// since Fern string literals don't decode a `\x1b` escape.
+// when colour is disabled.
 function __cli_sgr(code: string, s: string): string {
     if (!cli_color_enabled()) { return s; }
-    var escb: u8[] = [27 as u8];
-    var esc: string = string_from_bytes_unchecked(escb);
-    return esc + "[" + code + "m" + s + esc + "[0m";
+    return "\x1b[" + code + "m" + s + "\x1b[0m";
 }
 
 // Foreground colours.

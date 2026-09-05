@@ -9,12 +9,14 @@
 // the int tag is wired. It also pins the KIND_INVALID contract
 // (unknown tag -> 0, out-of-range / 0 id -> "invalid") and the int-keyed
 // classifier predicates (is_const_kind / is_terminator_kind /
-// is_foldable_binary_kind / is_commutative_kind).
+// is_foldable_binary_kind / is_commutative_kind), and ends with every
+// registered tag's id so the golden pins the numbering itself.
 //
-// The companion Go test (internal/e2e/self_host_ir_kind_test.go) asserts the
-// exact stdout and an exit code of 0 (zero bijection failures), pinning the
-// registry end-to-end through the self-host -> native pipeline (proving the
-// registry compiles + round-trips, not just type-checks).
+// The companion Go test (internal/e2eselfhost/self_host_ir_kind_test.go)
+// asserts the exact stdout (the id table against testdata/ir-kind-ids.txt)
+// and an exit code of 0 (zero bijection failures), pinning the registry
+// end-to-end through the self-host -> native pipeline (proving the registry
+// compiles + round-trips, not just type-checks).
 
 import "./ir";
 import "./util";
@@ -157,6 +159,18 @@ function main(): i32 {
     }
     out = out + "tag_consistency ok=" + util.i32_to_string(tag_ok)
         + " bad=" + util.i32_to_string(tag_bad) + "\n";
+
+    // 6. Every registered tag's id, in id order (the golden pins the whole
+    //    table, not a spot-check: the backends dispatch on literal ids, so a
+    //    renumbering that still bijects is a miscompile).
+    var tid: i32 = 1;
+    while (tid <= ext_max) {
+        var tname: string = ir.kind_name(tid);
+        if (tname != "invalid") {
+            out = out + tname + "=" + util.i32_to_string(ir.kind_id(tname)) + "\n";
+        }
+        tid = tid + 1;
+    }
 
     // Every line above already carries its own trailing "\n", so emit the
     // accumulated buffer with `write` (no extra newline) rather than `print`.

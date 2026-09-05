@@ -1,8 +1,12 @@
 package e2eselfhost
 
 import (
+	"fmt"
 	"os/exec"
+	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/ir"
 )
 
 // TestSelfHostIRStrengthPeephole pins the self-hosted stack IR's
@@ -25,7 +29,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 	copySelfHostDriver(t, dir, "ir_strength_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "ir_strength_run.fern", "ir_strength_run")
 
-	const want = "mul_1: load_local 0\n" +
+	want := "mul_1: load_local 0\n" +
 		"mul_0: load_local 0 ; drop ; const_i32 0\n" +
 		"mul_8: load_local 0 ; const_i32 3 ; shl\n" +
 		"mul_2: load_local 0 ; const_i32 1 ; shl\n" +
@@ -227,7 +231,8 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		// The payoff: the pass removes nothing itself, it hands the fold a decided
 		// `if` and the whole drop body goes with it.
 		"zg_in_optimize: return\n" +
-		"zg_idempotent=1\n"
+		"zg_idempotent=1\n" +
+		magicParityLines()
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
@@ -242,4 +247,22 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("ir_strength_run exit code = %d, want 0 (fixpoint held)", code)
 	}
+}
+
+// magicParityLines renders native's reciprocal derivation in the driver's
+// format, so ir.fern's derive_magic_s32 / derive_magic_u32 are pinned to
+// internal/ir/magic.go itself rather than to a copied table. The divisors
+// cover every arm: plain, add, sub, a zero shift, a large shift, a tiny
+// magic, a 33-bit unsigned magic, and divisors past 2^31.
+func magicParityLines() string {
+	var b strings.Builder
+	for _, d := range []int32{3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5} {
+		mg := ir.DeriveMagicS32(d)
+		fmt.Fprintf(&b, "magic_s %d: m=%d s=%d add=%v sub=%v\n", d, mg.M, mg.S, mg.Add, mg.Sub)
+	}
+	for _, d := range []uint32{3, 7, 97, 641, 1000000, 2147483649, 2863311531, 4294967291, 4294967295, 10, 100, 5, 4093} {
+		mg := ir.DeriveMagicU32(d)
+		fmt.Fprintf(&b, "magic_u %d: m=%d s=%d add=%v\n", d, mg.M, mg.S, mg.Add)
+	}
+	return b.String()
 }

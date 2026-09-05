@@ -101,18 +101,19 @@ function emit_per_module_concat(entry_mod: parser.Module, loaded: flatten.Loaded
     // all_structs is complete once the import walk above finishes, so the index
     // is built once here rather than per module inside the loop (#8178).
     var all_stab: irlower.StructTab = irlower.struct_tab(all_structs);
+    // The whole-program registry base, derived once and shared by every unit's
+    // gate and emit (#8199).
+    var wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, all_stab);
     var out: string = "";
     var idx: i32 = 0;
     while (idx < parts.len()) {
         // Per-module eligibility against the whole-program view, exactly as the
         // per-module emit lowers. Any ineligible REACHABLE module aborts the whole
         // concat so the caller falls through to the merged emit.
-        var elig: boolean = ircore.all_eligible_lib_known_view(infmods[idx], known, all_funcs, all_stab);
-        if (parts[idx].is_entry) { elig = ircore.all_eligible_known_view(infmods[idx], known, all_funcs, all_stab); }
-        if (!elig) { return ""; }
+        if (!ircore.all_eligible_view_base(infmods[idx], known, all_stab, wpb)) { return ""; }
         var extra: string[] = [];
         if (parts[idx].is_entry) { extra = needs; }
-        out = out + asm_ir.emit_module_ir_unit(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, []);
+        out = out + asm_ir.emit_module_ir_unit_flat(infmods[idx], parts[idx].is_entry, true, parts[idx].ns, extra, all_funcs, all_stab, 0, 0 - 1, [], wpb);
         idx = idx + 1;
     }
     return out;
@@ -316,17 +317,15 @@ function main(): i32 {
             eprint("per-module: emit index out of range\n");
             return 1;
         }
-        // Entry requires a main (it emits `_start` → `call __fn_main`); a
-        // library unit has none by design (all_eligible_lib_known_view). Both
-        // gate against the WHOLE-PROGRAM all_funcs / all_structs view, so a
-        // function touching a sibling module's struct layout lowers in the gate
-        // exactly as it does in emit_module_ir_unit (which already lowers against
-        // all_structs) — without the view, every module importing another's
-        // struct bails (#3451).
+        // The unit gates against the WHOLE-PROGRAM all_funcs / all_structs view,
+        // so a function touching a sibling module's struct layout lowers in the
+        // gate exactly as it does in emit_module_ir_unit_flat (which lowers
+        // against all_structs) — without the view, every module importing
+        // another's struct bails (#3451). One registry base serves the gate and
+        // the emit (#8199).
         var pm_stab: irlower.StructTab = irlower.struct_tab(all_structs);
-        var elig: boolean = ircore.all_eligible_lib_known_view(infmods[pm_index], known, all_funcs, pm_stab);
-        if (parts[pm_index].is_entry) { elig = ircore.all_eligible_known_view(infmods[pm_index], known, all_funcs, pm_stab); }
-        if (!elig) {
+        var pm_wpb: irlower.FnSigs = ircore.wp_fn_sigs(all_funcs, pm_stab);
+        if (!ircore.all_eligible_view_base(infmods[pm_index], known, pm_stab, pm_wpb)) {
             eprint("per-module: module not IR-eligible: ");
             eprint(parts[pm_index].ns);
             eprint("\n");
@@ -336,7 +335,7 @@ function main(): i32 {
         // from the -per-module-needs invocation) into its single shared runtime.
         var extra: string[] = [];
         if (parts[pm_index].is_entry) { extra = pm_extra; }
-        write(asm_ir.emit_module_ir_unit(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, pm_stab, 0, 0 - 1, []));
+        write(asm_ir.emit_module_ir_unit_flat(infmods[pm_index], parts[pm_index].is_entry, true, parts[pm_index].ns, extra, all_funcs, pm_stab, 0, 0 - 1, [], pm_wpb));
         return 0;
     }
 

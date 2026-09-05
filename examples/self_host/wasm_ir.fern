@@ -95,16 +95,24 @@ pub function large_fl_cells(): i32 { return 2049; }
 // CALLEE's shape, and a unit calls into its siblings), while the loop lowers
 // only this unit's functions.
 pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irlower.StructTab): irlower.LowerResult[] {
-    // The emit path (emit_functions_view) lowers each function with the
-    // INTERPROCEDURAL borrowability + consume-safe fixpoint. RC drop/reclaim
-    // insertion is gated on those, so the metadata this cache feeds
-    // (field_reclaim_types / struct_drop_types / …) only matches the emitted text
-    // when this lowering uses the SAME analysis. Per-function borrowability plus
-    // an empty consume-safe set (as an earlier version used) makes the collectors
-    // UNDER-report the drops emit actually generates, so a per-module link
-    // references a `$__field_reclaim_<T>` / `$__struct_drop_<T>` body the RC-body
-    // emission never produced (#5508).
-    var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(ircore.wp_fn_sigs(all_funcs, all_structs), mod.trait_reqs);
+    return lower_all_for_base(mod, all_structs, ircore.wp_fn_sigs(all_funcs, all_structs));
+}
+
+// lower_all_for_base is lower_all_for_view with the whole-program registry base
+// (ircore.wp_fn_sigs) supplied, so a caller that also seeds the RC bodies from
+// it derives it once.
+//
+// The emit path (emit_functions_view) lowers each function with the
+// INTERPROCEDURAL borrowability + consume-safe fixpoint. RC drop/reclaim
+// insertion is gated on those, so the metadata this cache feeds
+// (field_reclaim_types / struct_drop_types / …) only matches the emitted text
+// when this lowering uses the SAME analysis. Per-function borrowability plus
+// an empty consume-safe set (as an earlier version used) makes the collectors
+// UNDER-report the drops emit actually generates, so a per-module link
+// references a `$__field_reclaim_<T>` / `$__struct_drop_<T>` body the RC-body
+// emission never produced (#5508).
+pub function lower_all_for_base(mod: parser.Module, all_structs: irlower.StructTab, base: irlower.FnSigs): irlower.LowerResult[] {
+    var sg: irlower.FnSigs = irlower.fn_sigs_with_dyn(base, mod.trait_reqs);
     var out: irlower.LowerResult[] = [];
     var fi: i32 = 0;
     while (fi < mod.funcs.len()) {
@@ -114,10 +122,13 @@ pub function lower_all_for_view(mod: parser.Module, all_funcs: parser.FuncDecl[]
     return out;
 }
 
-// lower_all_for is the single-unit case: the unit IS the whole program.
-pub function lower_all_for(mod: parser.Module): irlower.LowerResult[] {
-    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-    return lower_all_for_view(mod, mod.funcs, stab);
+// lower_all_gated is the whole-program case, judged: the unit IS the program,
+// every function is lowered once with the same registries lower_all_for_base
+// uses, and the module's IR-eligibility verdict comes from that lowering
+// (ircore.lower_gated) rather than from a separate gate pass that lowered
+// everything a first time and discarded it.
+pub function lower_all_gated(mod: parser.Module, stab: irlower.StructTab, base: irlower.FnSigs): ircore.Lowered {
+    return ircore.lower_gated(mod, stab, irlower.fn_sigs_with_dyn(base, mod.trait_reqs), [], true);
 }
 
 // str_values collects the module's distinct string literals (first-seen order,
@@ -1467,11 +1478,11 @@ pub function module_uses_i64_divrem(cache: irlower.LowerResult[]): boolean {
 // wasm_eligible: the whole module is in the IR's i32 + arrays subset (the same
 // backend-independent gate the asm backends use — rejects non-lowerable
 // functions and builtin calls). wasm covers everything that gate admits.
-// wasm_eligible is the WASM eligibility gate — eligible_core, the same gate the
-// register backends now use (all_eligible). Plain function values (const_func /
-// call_indirect) are admitted on every backend; wasm lowers them through a
-// funcref table (fn_support_section), the register backends through the
-// function's code address.
+// wasm_eligible is the WASM eligibility gate — the same fused gate the register
+// backends use (ircore.lower_gated), plus the deferral scan over the lowering it
+// produces. Plain function values (const_func / call_indirect) are admitted on
+// every backend; wasm lowers them through a funcref table (fn_support_section),
+// the register backends through the function's code address.
 pub function wasm_eligible(mod: parser.Module): boolean {
     // read_line / read_int / args / read_file / write_file all lower on the wasm
     // IR path now: wasm_ir emits `call $__fern_<op>` and wasm_ir_run pulls in the
@@ -1510,8 +1521,9 @@ pub function wasm_eligible(mod: parser.Module): boolean {
     // when a module calls one — see the fexp/flog/fsin/fcos/fpow arms below
     // (kind_tag 62+), which emit `call $__fern_<op>_f64`. They are NOT in the
     // deferral list.
-    if (!ircore.eligible_core(mod)) { return false; }
-    return wasm_ir_deferrals_ok(lower_all_for(mod));
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    var g: ircore.Lowered = lower_all_gated(mod, stab, ircore.wp_fn_sigs(mod.funcs, stab));
+    return g.ok && wasm_ir_deferrals_ok(g.cache);
 }
 
 // wasm_ir_deferrals_ok is the non-eligible_core half of wasm_eligible evaluated
@@ -2364,69 +2376,51 @@ pub function component_io_shims(needs: string[]): string {
     return o;
 }
 
-// should_use_ir_core is the CHEAP gate the emit dispatch (wasm.emit_module)
-// consults to route a module through the IR: the use_ir default is on AND the
-// module passes the AST-walk eligible_core gate, WITHOUT the module_emits_op
-// deferral checks (those need the lowered cache). The dispatch calls this first;
-// only if it passes does it build the LowerResult cache (lower_all_for) ONCE and
-// finish the gate with wasm_ir_deferrals_ok(cache) — so an IR-eligible module is
-// lowered a single time for gate+emit instead of the old ~10× (deferral scan) +
-// ~20× (emit collect passes). eligible_core is a pure AST walk, so bailing here
-// keeps the ineligible-module bootstrap path from ever lowering (#4652). Uses
-// eligible_core (not all_eligible) so function-value modules lower on wasm.
-pub function should_use_ir_core(mod: parser.Module): boolean {
-    return asmcore.new_state().use_ir && ircore.eligible_core(mod);
-}
-
-// emit_ir_module / emit_ir_module_mode MOVED HERE from wasm.fern (#3457, wasm
-// slice 1b). They only ever called into this module, so living in wasm.fern made
-// the IR path formally depend on the legacy AST emitter it is meant to replace —
-// the last structural reason wasm.fern looked unretirable. Nothing else changes:
-// the bodies are verbatim, so the byte-identity invariant for #5331 step 4b
-// holds.
-// emit_ir_module is whole-program emit: a single unnamespaced unit. Kept as the
-// entry point every existing caller uses, and the byte-identity invariant for
-// #5331 step 4b — its output must not change at all.
-pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[]): string {
-    return emit_ir_module_mode(mod, ir_cache, 0);
+// emit_ir_module is whole-program emit: a single unnamespaced unit, from the
+// cache `lower_all_for_base` produced over `base`. Mode 0 (see
+// emit_ir_module_mode) emits the historical bytes unchanged, the byte-identity
+// invariant for #5331 step 4b.
+pub function emit_ir_module(mod: parser.Module, ir_cache: irlower.LowerResult[], base: irlower.FnSigs): string {
+    return emit_ir_module_mode(mod, ir_cache, 0, base);
 }
 
 // emit_ir_module_mode is emit_ir_module for a chosen wasm emit mode (0 preview1
 // command, 1 component run, 2 component run + stdout — see
-// emit_ir_module_units). Mode 0 emits the historical bytes unchanged, so the
-// byte-identity invariant for #5331 step 4b is untouched.
-pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResult[], mode: i32): string {
+// emit_ir_module_units). `base` is the whole-program registry the cache was
+// lowered with; the RC bodies are seeded from it rather than from a second
+// run of the same fixpoints.
+pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irlower.LowerResult[], mode: i32, base: irlower.FnSigs): string {
     var sv: string[] = str_values(ir_cache);
     var cv: string[] = const_agg_values(ir_cache);
     var ft: string[] = fn_value_table(ir_cache);
     var unit: string = emit_functions_ns("", mod, ir_cache);
     return emit_ir_module_units([WasmUnit { ns: "", text: unit, strs: sv, caggs: cv, fns: ft }], mod,
-        needs_of(ir_cache), indirect_fn_sigs(ir_cache), emit_ir_rc_bodies(mod, ir_cache), mode);
+        needs_of(ir_cache), indirect_fn_sigs(ir_cache), emit_ir_rc_bodies(mod, ir_cache, base), mode);
 }
 
 
-// ir_route_precheck / ir_route_final are the TWO HALVES of the wasm routing
-// decision, split at the point where a lowering becomes necessary.
+// ir_route_ok is the wasm routing decision as a PROBE: the use_ir default is
+// on, the module lowers (the fused gate, lower_all_gated), and ir_route_final
+// admits the lowering. emit_module_mode_or_error makes the same decision
+// inline because it goes on to emit from that lowering; a driver's `-decide`
+// asks here so the probe cannot drift from the emitter it describes.
 //
 // wasm.emit_module_mode used to spell this decision inline, so nothing else
 // could ask "how would this program route?" — the wasm drivers expose only
 // `-ir`, which FORCES the IR path and therefore bypasses these very gates. That
 // made the wasm side the one backend with no routing probe (the asm side has
 // `-ir-probe` and asm_pathprobe_run), and an emitter-retirement reroute is
-// exactly the change whose risk lives in what the gates DECLINE. Naming the
-// halves here lets a probe reuse the decision instead of restating it, which is
-// what keeps the probe honest as the gates move.
-//
-// The split is load-bearing, not cosmetic: the precheck is AST-only, so an
-// ineligible module is never lowered, and the caller pays the single lowering
-// exactly once before asking ir_route_final.
-// The precheck takes no `component` argument any more: component_ir_core_ok — the
-// gate that refused an extern/export module in component mode — is deleted now the
-// bridge is on the IR path, so nothing in the precheck depends on the framing.
-pub function ir_route_precheck(lm: parser.Module): boolean {
-    return should_use_ir_core(lm);
+// exactly the change whose risk lives in what the gates DECLINE.
+pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean): boolean {
+    if (!asmcore.new_state().use_ir) { return false; }
+    var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
+    var g: ircore.Lowered = lower_all_gated(lm, stab, ircore.wp_fn_sigs(lm.funcs, stab));
+    return g.ok && ir_route_final(g.cache, component, io);
 }
 
+// ir_route_final is the half of the decision that needs the lowering: the
+// deferral scan (ops the bare core-wasm+preview1 backend does not wire) and, in
+// component mode, the framing's need set.
 pub function ir_route_final(cache: irlower.LowerResult[], component: boolean, io: boolean): boolean {
     return wasm_ir_deferrals_ok(cache) && (!component || component_needs_ok(needs_of(cache), io));
 }
@@ -2467,10 +2461,14 @@ pub function emit_module_mode_or_error(mod: parser.Module, component: boolean, i
         mode = 1;
         if (io) { mode = 2; }
     }
-    if (ir_route_precheck(lm)) {
-        var ir_cache: irlower.LowerResult[] = lower_all_for(lm);
-        if (ir_route_final(ir_cache, component, io)) {
-            return emit_ir_module_mode(lm, ir_cache, mode);
+    // The fused gate (ir_route_ok's decision, inline so the lowering it judged
+    // and the registry base it was derived over feed the emit directly).
+    if (asmcore.new_state().use_ir) {
+        var stab: irlower.StructTab = irlower.struct_tab(lm.structs);
+        var base: irlower.FnSigs = ircore.wp_fn_sigs(lm.funcs, stab);
+        var g: ircore.Lowered = lower_all_gated(lm, stab, base);
+        if (g.ok && ir_route_final(g.cache, component, io)) {
+            return emit_ir_module_mode(lm, g.cache, mode, base);
         }
     }
     ircore.eprint_ir_ineligible();
@@ -4739,12 +4737,18 @@ pub function log_func(): string {
 // out-of-range y, where the round-trip just rejects the saturated value.
 pub function pow_func(): string {
     var o: string = "";    o = o + "  (func $__fern_pow_f64 (param $x f64) (param $y f64) (result f64)\n";
-    o = o + "    (local $n i64) (local $an i64) (local $acc f64) (local $base f64) (local $sign f64)\n";
+    o = o + "    (local $n i64) (local $an i64) (local $acc f64) (local $base f64) (local $sign f64) (local $tmp f64)\n";
     o = o + "    (local.set $n (i64.trunc_sat_f64_s (local.get $y)))\n";
     o = o + "    (if (f64.eq (f64.convert_i64_s (local.get $n)) (local.get $y)) (then\n";
     o = o + "      (local.set $an (local.get $n))\n";
     o = o + "      (if (i64.lt_s (local.get $an) (i64.const 0)) (then (local.set $an (i64.sub (i64.const 0) (local.get $an)))))\n";
     o = o + "      (if (i64.le_s (local.get $an) (i64.const 1074)) (then\n";
+    // The overflow path below re-enters this loop once, with a reciprocated
+    // base and a negated n; $an is recomputed here because the squaring loop
+    // consumes it.
+    o = o + "        (loop $retry\n";
+    o = o + "        (local.set $an (local.get $n))\n";
+    o = o + "        (if (i64.lt_s (local.get $an) (i64.const 0)) (then (local.set $an (i64.sub (i64.const 0) (local.get $an)))))\n";
     o = o + "        (local.set $acc (f64.const 1.0))\n";
     o = o + "        (local.set $base (local.get $x))\n";
     o = o + "        (block $done (loop $lp\n";
@@ -4753,8 +4757,18 @@ pub function pow_func(): string {
     o = o + "          (local.set $an (i64.shr_u (local.get $an) (i64.const 1)))\n";
     o = o + "          (br_if $done (i64.eqz (local.get $an)))\n";
     o = o + "          (br $lp)))\n";
-    o = o + "        (if (i64.lt_s (local.get $n) (i64.const 0)) (then (local.set $acc (f64.div (f64.const 1.0) (local.get $acc)))))\n";
-    o = o + "        (return (local.get $acc))))))\n";
+    // 1/acc is zero only when acc reached an infinity, so the magnitude
+    // overflowed on the way to a result that may itself be representable.
+    // Redo on 1/x; negating n makes the next pass return the accumulator
+    // directly, so the retry runs at most once and needs no flag.
+    o = o + "        (if (i64.lt_s (local.get $n) (i64.const 0)) (then\n";
+    o = o + "          (local.set $tmp (f64.div (f64.const 1.0) (local.get $acc)))\n";
+    o = o + "          (if (f64.eq (local.get $tmp) (f64.const 0.0)) (then\n";
+    o = o + "            (local.set $x (f64.div (f64.const 1.0) (local.get $x)))\n";
+    o = o + "            (local.set $n (i64.sub (i64.const 0) (local.get $n)))\n";
+    o = o + "            (br $retry)))\n";
+    o = o + "          (local.set $acc (local.get $tmp))))\n";
+    o = o + "        (return (local.get $acc)))))))\n";
     // General case: sign * exp(y*ln|x|). ln is defined only for x > 0, so a
     // negative base is split into a sign and |x| first: for an integral y the sign
     // is (-1)^y, and a non-integral y makes the result NaN. Every |y| >= 2^53 is an
@@ -9129,13 +9143,25 @@ pub function array_field_elem_is_ptr(ft: string, structs: irlower.StructTab, mr_
 // against is shared, so a type appearing in two units yields one body.
 pub function emit_ir_rc_bodies_from(mod: parser.Module, frt: string[], sdt: string[], aet: string[], heap_base: i32): string {
     var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
+    // #4355: replaced-STRING-field admission over the merged module — the full
+    // read scope at link (see irlower.strfld_reclaim_ok_types_of). The link step
+    // holds no lowering, so the verdicts are derived here, once per link.
+    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
+    return emit_ir_rc_bodies_seeded(mod, frt, sdt, aet, heap_base,
+        irlower.strfld_reclaim_ok_types_of(mod.funcs, stab, bparams), bparams);
+}
+
+// emit_ir_rc_bodies_seeded is emit_ir_rc_bodies_from with the two whole-program
+// field-reclaim verdicts supplied: `sfok` (strfld_reclaim_ok_types_of) and the
+// borrowability registry `bparams` the nested-field scan reads. The
+// whole-program emit passes the base its lowering routed on
+// (FnSigs.strfld_ok_types / .borrowable_params), so the admission the bodies
+// free on is the one the construction-side retain was gated on, and the
+// fixpoint does not run a second time per compile.
+function emit_ir_rc_bodies_seeded(mod: parser.Module, frt: string[], sdt: string[], aet: string[], heap_base: i32, sfok: string[], bparams: string[]): string {
+    var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
     var parts: string[] = [];
     var mr_types: string[] = collect_method_types(mod);
-    // #4355: replaced-STRING-field admission — the wasm IR driver is
-    // single-module whole-program, so mod.funcs is the full read scope
-    // (see irlower.strfld_reclaim_ok_types_of).
-    var bparams: string[] = irlower.borrowable_params_interproc(mod.funcs);
-    var sfok: string[] = irlower.strfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
     // #6127: the DIRECT nested-struct / nested-enum field arm (see the x86 twin).
     var nfok: string[] = irlower.structfld_reclaim_ok_types_of(mod.funcs, stab, bparams);
     var frti: i32 = 0;
@@ -9241,13 +9267,14 @@ pub function emit_wasm_enum_arr_elems_drop_body(e: string, structs: irlower.Stru
 
 // emit_ir_rc_bodies is the single-unit case: derive the three type lists from
 // the module's own cache.
-pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[]): string {
+pub function emit_ir_rc_bodies(mod: parser.Module, cache: irlower.LowerResult[], base: irlower.FnSigs): string {
     var stab: irlower.StructTab = irlower.struct_tab(mod.structs);
-    return emit_ir_rc_bodies_from(mod,
+    return emit_ir_rc_bodies_seeded(mod,
         field_reclaim_types(cache),
         struct_drop_types(cache, stab),
         struct_arr_elems_drop_types(cache, stab),
-        heap_base_for(cache));
+        heap_base_for(cache),
+        base.strfld_ok_types, base.borrowable_params);
 }
 
 // emit_wasm_struct_arr_elems_drop_body returns the WAT for

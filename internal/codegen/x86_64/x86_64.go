@@ -1952,6 +1952,12 @@ func (g *generator) emitFunc(fn *ast.FuncDecl, irFn *ir.Func) error {
 			i += adv
 			continue
 		}
+		// And for the inline rc uniqueness guard, whose result nearly
+		// always feeds the branch that follows it. See tryFuseIsUniqueBranch.
+		if adv, ok := g.tryFuseIsUniqueBranch(irFn.Ops, i, &scope); ok {
+			i += adv
+			continue
+		}
 		// Division by a literal (#7991 follow-up): the divisor is known, so
 		// the zero and INT_MIN/-1 guards are dead code and a power of two is
 		// a shift. See emitConstDivRem.
@@ -3581,6 +3587,42 @@ func (g *generator) tryFuseNotBranch(ops []ir.Op, i int, scope *[]irScope) (int,
 	return 0, false
 }
 
+// tryFuseIsUniqueBranch fuses `OpRcIsUnique; OpIf` into the guard's own
+// compares, each jumping to the else-label.
+//
+// The inline is_unique (the OpRcIsUnique case in emitOp) materialises its
+// 0/1 result through `xor / sete / mov` only for the `if` to `test` it
+// again. The guard is two conditions — the pointer is at or above the low
+// bound, and the count is exactly 1 — and the not-unique arm is exactly
+// where a failed compare jumps, so the branch reads the compares directly.
+// The sentinel test the bool form carries (`test edx, edx / js`) is not
+// needed: a negative count is never equal to 1, so `cmp [rax - 8], 1`
+// already puts every static/immortal value on the not-unique side. Null and
+// every other below-bound value takes that side at the first compare,
+// before the load, exactly as the bool form does.
+//
+// Only the `OpIf` consumer is handled: is_unique is machine-made, and the
+// lowering emits it either straight into an `if` or into a store (the reuse
+// token, read again later), never through OpNot or into a br_if. Sound for
+// the same reason as the other two fusions — the IR is single-use, so the
+// `if` is the sole consumer — and it defers to the bool form whenever emitOp
+// would not inline the guard.
+func (g *generator) tryFuseIsUniqueBranch(ops []ir.Op, i int, scope *[]irScope) (int, bool) {
+	if ops[i].Kind != ir.OpRcIsUnique || ast.RcFreeDebug || !g.rcInlineOK ||
+		i+1 >= len(ops) || ops[i+1].Kind != ir.OpIf {
+		return 0, false
+	}
+	elseL := g.freshLabel("ifElse")
+	endL := g.freshLabel("ifEnd")
+	g.pop()
+	g.emit("cmp rax, 0x10000")
+	g.emit("jb " + elseL)
+	g.emit("cmp dword ptr [rax - 8], 1")
+	g.emit("jne " + elseL)
+	*scope = append(*scope, irScope{kind: ir.OpIf, brTarget: endL, endLabel: endL, elseLabel: elseL, entryBytes: g.opBytes})
+	return 1, true
+}
+
 func (g *generator) binPop() {
 	g.popReg("rcx") // rhs (top of stack)
 	g.popReg("rax") // lhs (next)
@@ -3799,7 +3841,7 @@ func (g *generator) emitConstDivRem(op ir.Op, isRem bool, k int64) {
 		sh := pow2Shift(mag)
 		if op.Unsigned {
 			if isRem {
-				g.emit(fmt.Sprintf("and %s, %d", a, immAtWidth(int64(mag-1), bits)))
+				g.maskLowBits(a, sh, bits, true)
 			} else {
 				g.emit(fmt.Sprintf("shr %s, %d", a, sh))
 			}
@@ -3813,7 +3855,7 @@ func (g *generator) emitConstDivRem(op ir.Op, isRem bool, k int64) {
 		g.emit(fmt.Sprintf("add %s, %s", c, a))       // biased dividend
 		if isRem {
 			// r = x - (x/2^sh)*2^sh, and the multiply is a mask.
-			g.emit(fmt.Sprintf("and %s, %d", c, -(int64(1) << sh)))
+			g.maskLowBits(c, sh, bits, false)
 			g.emit(fmt.Sprintf("sub %s, %s", a, c))
 			break
 		}
@@ -3929,14 +3971,21 @@ func maxDivShift(bits int, unsigned bool) int {
 	return bits - 2
 }
 
-// immAtWidth renders a mask as the assembler wants it for the operand width:
-// a 32-bit operation takes imm32, so a mask with the top bit set has to be
-// written as its signed form rather than as a value beyond int32.
-func immAtWidth(v int64, bits int) int64 {
-	if bits == 32 {
-		return int64(int32(uint32(v)))
+// maskLowBits keeps (keep) or clears the low sh bits of reg. `and r64` has no
+// imm64 form, so a mask that reaches past bit 31 is a shift pair instead.
+func (g *generator) maskLowBits(reg string, sh, bits int, keep bool) {
+	switch {
+	case keep && sh <= 31:
+		g.emit(fmt.Sprintf("and %s, %d", reg, (int64(1)<<sh)-1))
+	case keep:
+		g.emit(fmt.Sprintf("shl %s, %d", reg, bits-sh))
+		g.emit(fmt.Sprintf("shr %s, %d", reg, bits-sh))
+	case sh <= 31:
+		g.emit(fmt.Sprintf("and %s, %d", reg, -(int64(1) << sh)))
+	default:
+		g.emit(fmt.Sprintf("shr %s, %d", reg, sh))
+		g.emit(fmt.Sprintf("shl %s, %d", reg, sh))
 	}
-	return v
 }
 
 // emitFloatToIntSat lowers a saturating float→int truncation (the
@@ -8889,6 +8938,7 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	fn("__fern_pow_f64")
 	powGen, powLoop, powSkip, powDone := g.freshLabel("powGeneral"), g.freshLabel("powLoop"), g.freshLabel("powSkip"), g.freshLabel("powDone")
 	powMag, powParity, powSign, powNaN := g.freshLabel("powMag"), g.freshLabel("powParity"), g.freshLabel("powSign"), g.freshLabel("powNaN")
+	powRetry, powRecip := g.freshLabel("powRetry"), g.freshLabel("powRecip")
 	// Integer-exponent fast path. exp(y*ln x) CANNOT return exactly 9 for
 	// pow(3,2): a 1-ulp error in ln 3 is amplified by the exponential to
 	// ~4e-15 on a result of 9, so it lands just under and truncates to 8.
@@ -8902,7 +8952,9 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("cvtsi2sd xmm2, rax")
 	g.emit("ucomisd xmm2, xmm1")
 	g.emit("jne " + powGen)
-	// |n|, branch-free: (n ^ (n>>63)) - (n>>63).
+	// |n|, branch-free: (n ^ (n>>63)) - (n>>63). Re-entered once with a
+	// reciprocated base and a negated n; see the overflow retry below.
+	g.label(powRetry)
 	g.emit("mov rcx, rax")
 	g.emit("mov rdx, rax")
 	g.emit("sar rdx, 63")
@@ -8924,6 +8976,23 @@ func (g *generator) emitFloatTranscendentalsRuntime() {
 	g.emit("jns " + powDone)
 	ldc("xmm5", ".Lfc_one") // negative exponent: reciprocal
 	g.emit("divsd xmm5, xmm3")
+	// 1/acc is zero only when acc reached an infinity, so the magnitude
+	// overflowed on the way to a result that may itself be representable:
+	// 2^-1074 accumulated 2^1074 and reciprocated it to 0. Redo the loop on
+	// 1/x, which cannot overflow. Negating n is what makes the second pass
+	// return the accumulator directly instead of reciprocating twice, so the
+	// retry needs no flag and cannot be entered again. Unreachable while acc
+	// is finite, which is what keeps pow(3,-2) a single exact division.
+	g.emit("xorpd xmm6, xmm6")
+	g.emit("ucomisd xmm5, xmm6")
+	g.emit("jne " + powRecip)
+	g.emit("jp " + powRecip)
+	ldc("xmm5", ".Lfc_one")
+	g.emit("divsd xmm5, xmm0")
+	g.emit("movsd xmm0, xmm5")
+	g.emit("neg rax")
+	g.emit("jmp " + powRetry)
+	g.label(powRecip)
 	g.emit("movsd xmm3, xmm5")
 	g.label(powDone)
 	g.emit("movsd xmm0, xmm3")

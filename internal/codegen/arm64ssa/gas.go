@@ -1228,6 +1228,9 @@ func emitPowF64Helper(w func(string, ...any)) {
 	w("\tscvtf d2, x10")
 	w("\tfcmp d2, d1")
 	w("\tb.ne .Lssa_pow_gen")
+	// Re-entered once with a reciprocated base and a negated n; see the
+	// x86-64 emitter for the overflow retry.
+	w(".Lssa_pow_retry:")
 	w("\tmov x11, x10")
 	w("\tcmp x11, #0")
 	w("\tb.ge .Lssa_pow_abs")
@@ -1248,7 +1251,16 @@ func emitPowF64Helper(w func(string, ...any)) {
 	w("\tcmp x10, #0")
 	w("\tb.ge .Lssa_pow_done")
 	ldc("d5", ".Lfc_one")
-	w("\tfdiv d3, d5, d3")
+	w("\tfdiv d5, d5, d3")
+	// 1/acc is zero only when acc reached an infinity.
+	w("\tfcmp d5, #0.0")
+	w("\tb.ne .Lssa_pow_recip")
+	ldc("d5", ".Lfc_one")
+	w("\tfdiv d0, d5, d0")
+	w("\tneg x10, x10")
+	w("\tb .Lssa_pow_retry")
+	w(".Lssa_pow_recip:")
+	w("\tfmov d3, d5")
 	w(".Lssa_pow_done:")
 	w("\tfmov x0, d3")
 	w("\tret")

@@ -893,7 +893,8 @@ jobs:
       # the longest bucket is 12.3 min at 16, 8, 7 and 6 buckets, then breaks
       # upward: 13.4 at 5 and 16.8 at 4. Down to 6 that number is just the
       # single heaviest test, TestSelfHostAssumeEligibleByteIdenticalX86_64 at
-      # 738 s, which no split can divide.
+      # 738 s (570 since it compares against emit-all), which no split can
+      # divide.
       #
       # THE REMAINDER IS MEASURED, AND IT IS 18.75 MIN. Two green runs at this
       # mass (33858555395, 33866568910) put the shards' own test step at 85.62
