@@ -10,8 +10,9 @@ import (
 	"testing"
 )
 
-// The emitter-shape gate for asm_ir.fern's P4 peephole — the self-host
-// mirror of native's const_alu_fold_test.go (internal/codegen/x86_64).
+// The emitter-shape gates for asm_ir.fern's P4 and P5 peepholes — the
+// self-host mirror of native's const_alu_fold_test.go and
+// stacked_materialise_test.go (internal/codegen/x86_64).
 //
 // Each case asserts two things that have to travel together: the folded form
 // is present in the function that produces it and the round trip it replaces
@@ -190,6 +191,41 @@ function main(): i32 { return ((wide(1i64) + narrow_big(1i64)) % 100i64) as i32;
 			lacks: map[string][]string{
 				"wide":       {"addq $4294967296"},
 				"narrow_big": {"addq $2147483648"},
+			},
+		},
+	})
+}
+
+// TestSelfHostTwoArgumentCallNeedsNoOperandStackX86_64 pins P5: a helper
+// call whose second argument is a literal loads the first straight into its
+// register and materialises the second into its own, with no push/pop pair
+// around either — the operand stack was only protecting a value nothing
+// disturbed. The string helpers' shape, which pushes both argument registers
+// again before the call, folds the same way.
+func TestSelfHostTwoArgumentCallNeedsNoOperandStackX86_64(t *testing.T) {
+	runPeepholeFoldCases(t, []peepholeFoldCase{
+		{
+			name: "append-literal",
+			src: `function grow(xs: i32[]): i32[] { return xs.append(7); }
+function main(): i32 { var xs: i32[] = []; xs = grow(xs); xs = grow(xs); return xs[0] + xs[1] + xs.len(); }`,
+			want: 16,
+			has: map[string][]string{
+				"grow": {"movq -8(%rbp), %rdi\n    movq $7, %rsi\n    call __fern_arr_push"},
+			},
+			lacks: map[string][]string{
+				"grow": {"movq %rax, %rsi", "popq %rdi"},
+			},
+		},
+		{
+			name: "string-literal-arg",
+			src: `function is_ab(s: string): boolean { return s == "ab"; }
+function main(): i32 { var n: i32 = 0; if (is_ab("ab")) { n = n + 1; } if (!is_ab("x")) { n = n + 2; } return n; }`,
+			want: 3,
+			has: map[string][]string{
+				"is_ab": {"movq -8(%rbp), %rdi\n    leaq .SB0(%rip), %rsi\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_str_eq"},
+			},
+			lacks: map[string][]string{
+				"is_ab": {"movq %rax, %rsi", "popq %rdi"},
 			},
 		},
 	})

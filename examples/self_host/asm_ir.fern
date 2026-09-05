@@ -6418,9 +6418,33 @@ pub function emit_module_ir_gated(mod: parser.Module, known: string[]): string {
 // is, so `shlq %cl` folds to `shlq $(K & 63)`; a shift whose count was
 // already selected as an immediate just loses the dead materialisation.
 //
-// The head of P4 is `pushq SRC` for ANY source without %rsp, not just `pushq
-// %rax`, because this backend pushes a local's frame slot directly; the
-// restore it folds to is the `movq SRC, %rax` P1 makes of an adjacent pair,
+// P5 — the value the operand stack was protecting is never disturbed. The
+// materialisation between the push and its pop is a pure register write —
+// mov, lea, movzbl, movslq, or the self-xor that makes a zero — so renaming
+// its destination computes the same thing without the round trip:
+//
+//     pushq SRC / MAT -> %rax / movq %rax, REG / popq %rax
+//       ->  [movq SRC, %rax] / MAT -> REG
+//
+// When SRC is not %rax the restore becomes a plain load placed FIRST, so the
+// materialisation must not read the accumulator. The same shape appears in a
+// helper call's argument setup, where the saved value is restored into the
+// OTHER argument register:
+//
+//     pushq SRC / MAT -> %rax / movq %rax, %rsi / popq %rdi / call f
+//       ->  movq SRC, %rdi / MAT -> %rsi / call f
+//
+// That one leaves %rax holding the saved value where the original left it
+// holding the materialised one, so it is only equivalent where %rax is dead —
+// and a call is exactly where this backend knows it is, %rax being
+// caller-saved and never an argument register. The string helpers sit their
+// two `pushq`s of the argument registers between the pop and the call; those,
+// like the other arguments' own materialisations, provably neither read nor
+// write %rax, so the call still proves it dead across them.
+//
+// The head of P4 and P5 is `pushq SRC` for ANY source without %rsp, not just
+// `pushq %rax`, because this backend pushes a local's frame slot directly; the
+// restore each folds to is the `movq SRC, %rax` P1 makes of an adjacent pair,
 // and the argument is P1's.
 //
 // Untouched bytes are copied in RUNS, not per line: this pass rewrites one
@@ -6468,7 +6492,8 @@ struct PLine {
 }
 
 // The window holds at most PW_CAP lines; when it fills, the oldest PW_DRAIN
-// are flushed. The deepest shape, P4's, is five lines.
+// are flushed. The deepest shape — P5's call form behind the string helpers'
+// two pushes — is nine lines.
 const PW_CAP: i32 = 24;
 const PW_DRAIN: i32 = 12;
 
@@ -6746,12 +6771,36 @@ function pl_classify(s: string, ln: i32, bs: i32, hi: i32): PLine {
     return pl_two(p, me + 1, cm, cm + 2, hi);
 }
 
+// pl_is_argsetup reports whether a window line may sit between the pop of
+// P5's second form and the call, provably neither reading nor writing %rax:
+// another argument's materialisation, the stack adjustment around the call,
+// or a push of some other register.
+function pl_is_argsetup(l: PLine): boolean {
+    if (l.kind == PK_ARG || l.kind == PK_RSP8) { return true; }
+    return l.kind == PK_PUSH && (l.flags & PF_REG) != 0 && (l.flags & (PF_ACC | PF_RSP)) == 0;
+}
+
 function pl_text(l: PLine, lo: i32, hi: i32): string {
     return slice_unchecked(l.s, lo, hi) + "";
 }
 
 function pl_operand(l: PLine): string {
     return slice_unchecked(l.s, l.a, l.b) + "";
+}
+
+// pl_rename renders materialisation `m` writing the register `cp` names
+// instead of the accumulator, or "" when it cannot. A write to %eax renames
+// to the 32-bit name, never the 64-bit one: `movl $K, %eax` zero-extends
+// where `movq $K, %rsi` would sign-extend K.
+function pl_rename(m: PLine, cp: PLine): string {
+    if ((m.flags & (PF_MOVABS | PF_RSP)) != 0) { return ""; }
+    var dst: string = pl_operand(cp);
+    if ((m.flags & PF_NARROW) != 0) { dst = pp_reg32(cp.s, cp.a, cp.b); }
+    if (dst.len() == 0) { return ""; }
+    if ((m.flags & PF_XORZ) != 0) { return "    xorl " + dst + ", " + dst + "\n"; }
+    var src: string = "";
+    if ((m.flags & PF_CONST) != 0) { src = "$"; }
+    return "    " + pl_text(m, m.bs, m.me) + " " + src + pl_operand(m) + ", " + dst + "\n";
 }
 
 // ---- the window ----
@@ -6817,6 +6866,25 @@ function peep_add_text(own p: Peep, text: string): Peep {
     return peep_add(p, pl_classify(text, 0 - 1, 4, text.len() - 1));
 }
 
+function peep_readd(own p: Peep, tail: PLine[]): Peep {
+    var i: i32 = 0;
+    while (i < tail.len()) {
+        p = peep_add(p, tail[i]);
+        i = i + 1;
+    }
+    return p;
+}
+
+function peep_tail_from(p: Peep, k: i32): PLine[] {
+    var tail: PLine[] = [];
+    var i: i32 = k;
+    while (i < p.n) {
+        tail = tail.append(p.w[i]);
+        i = i + 1;
+    }
+    return tail;
+}
+
 // peep_settle re-runs the rules until none rewrites the tail: one rule's
 // output is another's input — P1 collapses a constant's push/pop pair into
 // the copy that P4 then folds into the ALU op. It terminates because every
@@ -6835,7 +6903,12 @@ function peep_rules(own p: Peep): Peep {
     if (p.fired) { return p; }
     p = peep_p3(p);
     if (p.fired) { return p; }
-    return peep_p4(p);
+    p = peep_p4(p);
+    if (p.fired) { return p; }
+    var e: i32 = p.n - 1;
+    if (e >= 4) { p = peep_p5_acc(p, e); }
+    if (p.fired) { return p; }
+    return peep_call_tail(p);
 }
 
 // ---- the rules ----
@@ -6858,9 +6931,9 @@ function peep_p3(own p: Peep): Peep {
     return Peep { ...p, n: n - 2, fired: true };
 }
 
-// peep_head_ok reports whether w[k..k+4) is P4's head — `pushq SRC` with no
-// %rsp, a materialisation, the copy to a register, and a pop into a register
-// — leaving the rule to check what it folds.
+// peep_head_ok reports whether w[k..k+4) is the shape P4 and P5 share —
+// `pushq SRC` with no %rsp, a materialisation, the copy to a register, and a
+// pop into a register — leaving the rules to check what each folds.
 function peep_head_ok(p: Peep, k: i32): boolean {
     if (k < 0 || p.w[k].kind != PK_PUSH || (p.w[k].flags & PF_RSP) != 0) { return false; }
     return p.w[k + 1].kind == PK_MAT && p.w[k + 2].kind == PK_COPY && p.w[k + 3].kind == PK_POP;
@@ -6909,10 +6982,68 @@ function peep_p4_line(c: PLine, u: PLine): string {
     return "    " + mnem + " $" + imm + ", %rax\n";
 }
 
+// peep_p5_acc is P5's first form over w[e-4..e): the pop restores %rax, and
+// whatever follows is unaffected. Called with e = n-1 from the tail, once P4
+// has had its chance at the same five lines, and with e = n when a line that
+// cannot join the window closes it.
+function peep_p5_acc(own p: Peep, e: i32): Peep {
+    if (e < 4 || !peep_head_ok(p, e - 4)) { return p; }
+    var push: PLine = p.w[e - 4];
+    var m: PLine = p.w[e - 3];
+    if ((p.w[e - 1].flags & PF_RAX) == 0) { return p; }
+    if ((push.flags & PF_RAX) == 0 && (m.flags & PF_ACC) != 0) { return p; }
+    var line: string = pl_rename(m, p.w[e - 2]);
+    if (line.len() == 0) { return p; }
+    var tail: PLine[] = peep_tail_from(p, e);
+    p = Peep { ...p, n: e - 4, fired: true };
+    p = peep_restore(p, push);
+    p = peep_add_text(p, line);
+    return peep_readd(p, tail);
+}
+
+// peep_call_tail handles P5's second form, which a `call` completes: walking
+// back over the argument setup finds the pop, and the lines walked over are
+// re-added behind the rewrite.
+function peep_call_tail(own p: Peep): Peep {
+    var n: i32 = p.n;
+    if (n < 3 || p.w[n - 1].kind != PK_CALL) { return p; }
+    var k: i32 = n - 2;
+    while (k >= 1 && pl_is_argsetup(p.w[k])) { k = k - 1; }
+    if (p.w[k].kind == PK_POP) { return peep_p5_call(p, k); }
+    return p;
+}
+
+// peep_p5_call is P5's second form: w[k] is the pop into the other argument
+// register, w[k-3..k) the push, the materialisation and the copy. The
+// restore moves in front of the materialisation, which therefore must not
+// read the register it writes; and the two destinations must differ or the
+// rewrite would order the writes the other way round.
+function peep_p5_call(own p: Peep, k: i32): Peep {
+    if (k < 3 || !peep_head_ok(p, k - 3)) { return p; }
+    var push: PLine = p.w[k - 3];
+    var m: PLine = p.w[k - 2];
+    var cp: PLine = p.w[k - 1];
+    var pop: PLine = p.w[k];
+    if ((pop.flags & PF_RAX) != 0 || pp_same(cp.s, cp.a, cp.b, pop.s, pop.a, pop.b)) { return p; }
+    var r32: string = pp_reg32(pop.s, pop.a, pop.b);
+    if (r32.len() == 0 || pp_contains(m.s, m.a, m.b, r32)) { return p; }
+    if (pp_contains(m.s, m.a, m.b, pl_operand(pop))) { return p; }
+    var line: string = pl_rename(m, cp);
+    if (line.len() == 0) { return p; }
+    var tail: PLine[] = peep_tail_from(p, k + 1);
+    p = Peep { ...p, n: k - 3, fired: true };
+    if (!pp_same(push.s, push.a, push.b, pop.s, pop.a, pop.b)) {
+        p = peep_add_text(p, "    movq " + pl_operand(push) + ", " + pl_operand(pop) + "\n");
+    }
+    p = peep_add_text(p, line);
+    return peep_readd(p, tail);
+}
+
 // ---- the pass ----
 
 // peep_line feeds one line of asm to the window. A line no rule can use
-// closes the window: everything flushes and the line joins the run.
+// closes the window: P5's first form gets its last chance at the four lines
+// before it, then everything flushes and the line joins the run.
 function peep_line(own p: Peep, ln: i32, bs: i32, hi: i32): Peep {
     var l: PLine = pl_none(p.asm, ln, bs, hi);
     if (bs < hi && p.asm[ln] == 32) { l = pl_classify(p.asm, ln, bs, hi); }
@@ -6920,7 +7051,10 @@ function peep_line(own p: Peep, ln: i32, bs: i32, hi: i32): Peep {
         p = peep_add(p, l);
         return peep_settle(p);
     }
+    p = Peep { ...p, fired: false };
     var n: i32 = p.n;
+    if (n >= 4) { p = peep_p5_acc(p, n); }
+    n = p.n;
     p = peep_flush(p, n);
     return peep_emit(p, l);
 }
