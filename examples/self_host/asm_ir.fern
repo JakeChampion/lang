@@ -5761,6 +5761,8 @@ function emit_ir_field_reclaims(s: asmcore.EmitState): asmcore.EmitState {
 // the old box itself via __fn___fern_snapshot_dec(new, old, snap) and returns
 // `new` in %rax. r9/r10/r11 hold snap/old/new across the field loop —
 // __fn___fern_arr_dec clobbers only rax/rcx/rdx/rsi/rdi/r8, so they survive.
+// The uniq arm's __fn___fern_rc_is_unique touches only rax/rcx/rdx, so it keeps
+// %rsi (the field value) too.
 function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.EmitState {
     var san: string = asmcore.sanitize_label(sty);
     s = s.write(".weak __fn___field_reclaim_" + san + "\n");
@@ -5785,6 +5787,20 @@ function emit_ir_field_reclaim_one(s: asmcore.EmitState, sty: string): asmcore.E
         if (op.cow) {
             s = s.write("    cmpq " + off + "(%r11), %rsi\n");  // == new.field_k? (cow)
             s = s.write("    je .Lfr_" + san + "_skip" + ks + "\n");
+        } else if (op.uniq) {
+            // Carried nested struct / enum: released, because the base copy's
+            // inc left it at rc>=2 and the old box's claim dies here. Unless it
+            // is UNIQUE — then no inc was taken and the pointers coincide for
+            // another reason (#8198: the callee reused the field's box in place
+            // and handed it back), so this dec would free the new binding's box.
+            s = s.write("    cmpq " + off + "(%r11), %rsi\n");  // == new.field_k?
+            s = s.write("    jne .Lfr_" + san + "_ne" + ks + "\n");
+            s = s.write("    pushq %rsi\n");
+            s = s.write("    call __fn___fern_rc_is_unique\n");
+            s = s.write("    addq $8, %rsp\n");
+            s = s.write("    testq %rax, %rax\n");
+            s = s.write("    jnz .Lfr_" + san + "_skip" + ks + "\n");
+            s = s.write(".Lfr_" + san + "_ne" + ks + ":\n");
         }
         s = s.write("    testq %r9, %r9\n");                    // snap == 0 (local)?
         s = s.write("    jz .Lfr_" + san + "_dec" + ks + "\n");
