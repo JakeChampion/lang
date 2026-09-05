@@ -14757,10 +14757,12 @@ func (b *builder) callBody(n *ast.Call) error {
 	// A BOXED key is admitted, and boxes here like every other read does.
 	// The arm is about the FALLBACK, and the key's shape has nothing to say
 	// about it — but excluding needBoxK switched the fallback's release off
-	// for every string-keyed map on a two-word ABI, which is one stranded
-	// fallback per call (#8432). The cell is transient: the helper probes
-	// with it and retains nothing, so freeLookupBoxCell ends it after the
-	// call on exactly the terms the get / has / delete paths use.
+	// for every map whose key boxes, which is one stranded fallback per call
+	// (#8432). That is BOTH key kinds needBoxK covers: a two-word string key,
+	// and a wide scalar wasm32 boxes because it does not fit a 4-byte slot.
+	// The cell is transient: the helper probes with it and retains nothing,
+	// so freeLookupBoxCell ends it after the call on exactly the terms the
+	// get / has / delete paths use.
 	if id.Name == "__method_Map_get_or" && len(n.TypeArgs) >= 2 && !keyKind3 && !needBoxV {
 		if _, isStr := n.TypeArgs[1].(ast.StringType); !isStr && b.mapGetHandsCountedValue(n.TypeArgs[1]) {
 			var tmpSlots []int32

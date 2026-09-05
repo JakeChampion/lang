@@ -1,8 +1,10 @@
 # 2026-09-05 — a boxed key switched off the fallback's release
 
 `m.get_or(k, <a freshly allocated fallback>)` stranded the fallback, one block
-per call, when the map's KEY was boxed — a string key on a two-word ABI.
-x86-64 was clean, because it stores string keys unboxed.
+per call, whenever the map's KEY was BOXED. That is two key kinds, not one: a
+string key on a two-word ABI, and a wide scalar on wasm32, which boxes an i64
+because it does not fit a 4-byte slot. The narrowing below used string keys,
+so the first draft of this log framed the bug as string-only; it is not.
 
 ## Narrowed
 
@@ -41,7 +43,7 @@ It was gated:
 `needBoxK` is a fact about the call's ARGUMENT SHAPE — a boxed key has to be
 written into a cell for the call. It says nothing about the fallback. But
 switching the arm off for a boxed key switched off the fallback's release with
-it, and every string-keyed map on a two-word target lost it.
+it, and every map whose key boxes lost it — both kinds `needBoxK` covers.
 
 So the fix is to stop conflating the two: the arm now runs with a boxed key and
 boxes it the way every other read does — `boxIntoCellSlot` before the call,
@@ -74,6 +76,30 @@ literal (`"?"`), a scalar, or a hoisted `var` costs nothing to strand or is
 owned elsewhere. `str_chain` uses a literal fallback and `scalar_chain` has no
 read at all, which is why the residual looked like it tracked the value type
 when it tracked the fallback.
+
+## The wide-key half, measured after the fact
+
+pullfrog read the landed diff and pointed out that the gate is `needBoxK`,
+not "is the key a string", so the fix reaches further than this log claimed.
+Confirmed by measuring rather than by reading it back —
+`Map[i64, i32[]].get_or(k, [0])`, wasm32, 100 rounds:
+
+| | live_bytes |
+|---|---|
+| insert only, no read at all | 1600 |
+| with the read, gate restored | 4800 |
+| with the read, fixed | **1600** |
+
+The fallback array was the whole difference, so the wide-key half is fixed by
+the same change. arm64 and x86-64 hold an i64 in a pointer slot and never box
+it, so they read 0 throughout.
+
+The 1600 that survives is NOT this bug: it is there with no read in the
+program, and it is the boxed wide-KEY cell `insert` stores, which the key
+column walk does not reclaim on wasm32 (the #8276 neighbourhood). That is why
+`TestMapWideKeyGetOrFallbackIsReclaimed` pins the read as a DIFFERENTIAL
+against an insert-only baseline instead of an absolute census — it measures
+this fix and stays honest while that separate gap is open.
 
 ## Not done
 
