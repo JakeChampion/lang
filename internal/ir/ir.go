@@ -17407,54 +17407,33 @@ func (b *builder) emitFieldDropOnStack(t ast.Type) {
 	b.emit(Op{Kind: OpDrop})
 }
 
-// emitMapSlotDrop reclaims the Map value in local slot `slot` — the
-// shared body for the exit sweep and the loop-body re-declaration drop
-// (emitVarReinitDropOld). It frees the value column (struct/enum values
-// via the generated __drop_map_via_<perValueDrop>; array values via the
-// generic __map_drop_values; string values via __drop_map_str_values),
-// then any string-key column (__drop_map_str_keys), then the buf +
-// handle (__fern_map_drop). Every helper self-guards on the map's own
-// rc==1, so a shared map only dec's. Net-zero on the operand stack, so a
-// value sitting underneath (a reinit RHS) is left untouched. Callers gate
-// on RcFreeEnabled + freeEligible.
+// emitMapSlotDrop reclaims the Map value in local slot `slot` — the shared
+// body for the exit sweep, the loop-body re-declaration drop
+// (emitVarReinitDropOld), and the OLD handle of a `a = <a COW copy of a>`
+// reassignment. It frees the value column (struct/enum values via the
+// generated __drop_map_via_<perValueDrop>; array values via the generic
+// __map_drop_values; string values via __drop_map_str_values), then any
+// string-key column (__drop_map_str_keys), then the buf + handle
+// (__fern_map_drop). Every helper self-guards on the map's own rc==1, so a
+// shared map only dec's. Net-zero on the operand stack, so a value sitting
+// underneath (a reinit RHS) is left untouched. Callers gate on
+// RcFreeEnabled + freeEligible.
+//
+// The reassignment site had its own narrower copy until #8431. It walked the
+// value column through the generic __map_drop_values whatever the kind, so a
+// struct or string column was never reclaimed there — the chain shape's whole
+// leak, and quadratic on a boxing ABI, where each copy allocates a cell per
+// entry that the round's own release then never freed. That copy could only
+// cover the columns the copy CLAIMS (#6227) and none of these were claimed
+// when it was written; all of them are now (#7114, #8390, #8420), so the two
+// bodies became the same body and only appendMapDropChain decides coverage —
+// which is what its own header says, and what stopped being true the moment a
+// second implementation existed.
 func (b *builder) emitMapSlotDrop(slot int32, st ast.StructType) {
 	b.emit(Op{Kind: OpLoadLocal, I32: slot})
 	for _, op := range appendMapDropChain(nil, st, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW) {
 		b.emit(op)
 	}
-	b.emit(Op{Kind: OpDrop})
-}
-
-// emitMapOverwriteDrop releases the OLD handle of a Map reassignment whose
-// reference genuinely changed hands (`a = <a COW copy of a>`), where the new
-// handle may still share columns with the old buffer.
-//
-// It walks the string-KEY column and the array-value and boxed-cell value
-// columns via the kind-guarded __map_drop_values, then the buf and handle,
-// which are exclusively the old handle's.
-//
-// It does NOT walk the string (kind 5) or struct (kind 4) value columns. Both
-// ARE claimed on a copy, so walking them is no longer unsafe the way it was
-// when this site was written — whether it SHOULD is an open measurement, not a
-// refusal: the chain shape leaks here, but the same program also leaks through
-// the aliased overwrite (#8421), and the two have not been told apart.
-//
-// Every helper self-guards on the map's own rc==1, so a still-shared handle
-// only dec's. Net-zero on the operand stack, so a reinit RHS sitting
-// underneath is left untouched.
-func (b *builder) emitMapOverwriteDrop(slot int32, st ast.StructType) {
-	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Str: "__map_drop_values", I32: 1})
-	b.emit(Op{Kind: OpDrop})
-	if len(st.Args) >= 1 {
-		if _, isStr := st.Args[0].(ast.StringType); isStr {
-			b.emit(Op{Kind: OpLoadLocal, I32: slot})
-			b.emit(Op{Kind: OpCallDirect, Str: "__drop_map_str_keys", I32: 1})
-			b.emit(Op{Kind: OpDrop})
-		}
-	}
-	b.emit(Op{Kind: OpLoadLocal, I32: slot})
-	b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_map_drop", Width: ResAddr, I32: 1})
 	b.emit(Op{Kind: OpDrop})
 }
 
@@ -17736,7 +17715,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					// and is set because the frame owns what came back.
 					b.emit(Op{Kind: OpLoadLocal, I32: flagSlot})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-					b.emitMapOverwriteDrop(idx, mst.(ast.StructType))
+					b.emitMapSlotDrop(idx, mst.(ast.StructType))
 					b.emit(Op{Kind: OpEnd})
 					b.emit(Op{Kind: OpConstI32, I32: 1})
 					b.emit(Op{Kind: OpStoreLocal, I32: flagSlot})
@@ -17883,7 +17862,7 @@ func (b *builder) assign(n *ast.Assign) error {
 				// the reference genuinely changed hands:
 				//
 				//   - new != old — the old handle lost this binding's claim,
-				//     so it is released by emitMapOverwriteDrop: the columns
+				//     so it is released by emitMapSlotDrop: the columns
 				//     a COW copy claims for itself, then the buf and handle.
 				//     A flat dec frees nothing here, and every COW-copied
 				//     table leaked behind it — 1328 B an iteration in the
@@ -17907,7 +17886,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpLoadLocal, I32: newTmp})
 					b.emit(Op{Kind: OpNe, Width: WidthPtr})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
-					b.emitMapOverwriteDrop(idx, mst)
+					b.emitMapSlotDrop(idx, mst)
 					if aliasInced {
 						b.emit(Op{Kind: OpElse})
 						b.emit(Op{Kind: OpLoadLocal, I32: idx})
