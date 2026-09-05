@@ -63688,48 +63688,53 @@ function call_name_of(e: ast.Expr, acc: string[]): string[] {
     return acc;
 }
 
-// reg_indices_of appends the value of every "<key>|<index>" record for exactly
-// `key` to `acc`.
-function reg_indices_of(reg: string[], key: string, acc: i32[]): i32[] {
-    var a: i32[] = acc;
-    var e: string = reg[util.hash_bucket(key, reg.len())];
-    var nl: i32 = key.len();
-    var n: i32 = e.len();
-    var p: i32 = 0;
-    while (p < n) {
-        var bar: i32 = p;
-        while (bar < n && e[bar] != b'|') { bar = bar + 1; }
-        var end: i32 = bar;
-        while (end < n && e[end] != b'\n') { end = end + 1; }
-        if (bar < n && bar - p == nl && bytes_at(e, p, key)) {
-            a = a.append(util.digits_to_i32(slice_unchecked(e, bar + 1, end) + ""));
-        }
-        p = end + 1;
-    }
-    return a;
-}
-
 // call_deps_of builds the dependency table. `with_methods` adds, for each
 // method call, every function whose key ends in "." + the method name — the
 // records method_param_borrowable_all matches; `with_self` adds the function
 // itself, for a fixpoint that reads its own entry.
+//
+// The callee-name lookup is an integer chained hash table, private to this
+// function, NOT one of the record-text registries: a registry put rewrites its
+// whole bucket array per entry, which costs more than the body walks it feeds.
+// `ekeys[e]` is function `e`'s key for e < n and function `e - n`'s ".<method>"
+// key above it, "" where there is none. `head[b]` starts the chain of plain keys
+// in bucket b and `mhead[b]` the chain of method keys — separate heads so a
+// method call can only ever find a method key, as two registries gave — with
+// `next[e]` continuing both, in ascending function order (entries are inserted
+// in reverse) and -1 for the end.
 function call_deps_of(funcs: parser.FuncDecl[], with_methods: boolean, with_self: boolean): CallDeps {
     var n: i32 = funcs.len();
     var nb: i32 = sig_bucket_count(n);
-    var keys: string[] = [];
-    var methods: string[] = [];
-    var b: i32 = 0;
-    while (b < nb) { keys = keys.append(""); methods = methods.append(""); b = b + 1; }
+    var ekeys: string[] = [];
     var fi: i32 = 0;
-    while (fi < n) {
-        var key: string = borrowable_key(funcs[fi]);
-        keys = borrow_reg_put(keys, key, util.i32_to_string(fi));
-        if (with_methods) {
+    while (fi < n) { ekeys = ekeys.append(borrowable_key(funcs[fi])); fi = fi + 1; }
+    if (with_methods) {
+        fi = 0;
+        while (fi < n) {
+            var key: string = ekeys[fi];
             var dot: i32 = key.len();
             while (dot > 0 && key[dot - 1] != b'.') { dot = dot - 1; }
-            if (dot > 0) { methods = borrow_reg_put(methods, "." + slice_unchecked(key, dot, key.len()), util.i32_to_string(fi)); }
+            if (dot > 0) { ekeys = ekeys.append("." + slice_unchecked(key, dot, key.len())); }
+            else { ekeys = ekeys.append(""); }
+            fi = fi + 1;
         }
-        fi = fi + 1;
+    }
+    var head: i32[] = i32_filled(nb, -1);
+    var mhead: i32[] = i32_filled(nb, -1);
+    var next: i32[] = i32_filled(ekeys.len(), -1);
+    var e: i32 = ekeys.len() - 1;
+    while (e >= 0) {
+        if (ekeys[e].len() > 0) {
+            var eb: i32 = util.hash_bucket(ekeys[e], nb);
+            if (e < n) {
+                next = next.with(e, head[eb]);
+                head = head.with(eb, e);
+            } else {
+                next = next.with(e, mhead[eb]);
+                mhead = mhead.with(eb, e);
+            }
+        }
+        e = e - 1;
     }
     var starts: i32[] = [];
     var deps: i32[] = [];
@@ -63738,24 +63743,26 @@ function call_deps_of(funcs: parser.FuncDecl[], with_methods: boolean, with_self
     fi = 0;
     while (fi < n) {
         starts = starts.append(deps.len());
-        var found: i32[] = [];
-        if (with_self) { found = found.append(fi); }
+        if (with_self) { stamp = stamp.with(fi, fi + 1); deps = deps.append(fi); }
         var names: string[] = call_names_of_body(funcs[fi].body);
         var ni: i32 = 0;
         while (ni < names.len()) {
             var nm: string = names[ni];
+            var c: i32 = -1;
             if (nm.len() > 0 && nm[0] == b'.') {
-                if (with_methods) { found = reg_indices_of(methods, nm, found); }
+                if (with_methods) { c = mhead[util.hash_bucket(nm, nb)]; }
             } else {
-                found = reg_indices_of(keys, nm, found);
+                c = head[util.hash_bucket(nm, nb)];
+            }
+            while (c >= 0) {
+                if (ekeys[c] == nm) {
+                    var d: i32 = c;
+                    if (d >= n) { d = d - n; }
+                    if (stamp[d] != fi + 1) { stamp = stamp.with(d, fi + 1); deps = deps.append(d); }
+                }
+                c = next[c];
             }
             ni = ni + 1;
-        }
-        var k: i32 = 0;
-        while (k < found.len()) {
-            var d: i32 = found[k];
-            if (stamp[d] != fi + 1) { stamp = stamp.with(d, fi + 1); deps = deps.append(d); }
-            k = k + 1;
         }
         fi = fi + 1;
     }
