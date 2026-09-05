@@ -1,0 +1,90 @@
+// A const is a module-level name, so any BINDER introducing the same name
+// shadows it: inside that binder's scope, `N` is the binding, not the const.
+//
+// Constant substitution had no notion of scope and rewrote every matching
+// identifier (#8443), so each shape below silently read the const's value 5
+// in place of its own binding — a wrong answer, not a diagnostic. The
+// assignment shape was worse: rewriting an lvalue into a literal made
+// lowering reject a legal program as a compiler bug.
+//
+// Substitution runs ahead of both the interpreter and codegen, so every
+// backend agreed on the wrong answer and no differential comparison could
+// see it. That is what makes this a corpus case rather than a backend test.
+//
+// Each shape contributes one bit, so a failure names which shapes broke
+// rather than collapsing to a single wrong number. All seven pass = 127,
+// plus `unshadowed()` reading the const itself = 132.
+
+const N: i32 = 5;
+
+enum E { A(i32), B }
+
+struct P { x: i32, y: i32 }
+
+// A parameter binds N for the whole body.
+function shadow_param(N: i32): i32 {
+    return N;
+}
+
+// A local declaration binds N from its own statement onward.
+function shadow_local(): i32 {
+    var N: i32 = 7;
+    return N;
+}
+
+// The assignment TARGET is a binder's reference, not a value position.
+function shadow_assign(): i32 {
+    var N: i32 = 7;
+    N = 9;
+    return N;
+}
+
+// A match arm's pattern binds N for that arm's guard and body.
+function shadow_match(): i32 {
+    var e: E = E.A(7);
+    match (e) {
+        A(N) => { return N; },
+        B => { return 0; },
+    }
+}
+
+// A for-each variable binds N for the loop body.
+function shadow_for_each(): i32 {
+    var t: i32 = 0;
+    for N in [3, 4] {
+        t = t + N;
+    }
+    return t;
+}
+
+// A lambda parameter binds N inside the lambda only.
+function shadow_lambda(): i32 {
+    var f: (i32) => i32 = (N: i32) => N;
+    return f(7);
+}
+
+// A destructuring declaration binds every name it introduces.
+function shadow_destructure(): i32 {
+    var p: P = P { x: 7, y: 1 };
+    var P { x: N, y: b } = p;
+    return N + b;
+}
+
+// The other half of the rule: a reference nothing shadows must still see the
+// const. Without this the whole case would pass under "never substitute",
+// which drops the feature instead of scoping it.
+function unshadowed(): i32 {
+    return N;
+}
+
+function main(): i32 {
+    var r: i32 = 0;
+    if (shadow_param(7) == 7) { r = r + 1; }
+    if (shadow_local() == 7) { r = r + 2; }
+    if (shadow_assign() == 9) { r = r + 4; }
+    if (shadow_match() == 7) { r = r + 8; }
+    if (shadow_for_each() == 7) { r = r + 16; }
+    if (shadow_lambda() == 7) { r = r + 32; }
+    if (shadow_destructure() == 8) { r = r + 64; }
+    return r + unshadowed();
+}
