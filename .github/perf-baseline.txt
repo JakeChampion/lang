@@ -44,7 +44,7 @@ x86_64/array_append.ir	57049522
 x86_64/array_index.text	487
 x86_64/array_index.ir	55387935
 x86_64/array_with.ir	72359017
-x86_64/array_with.text	605
+x86_64/array_with.text	606
 x86_64/ascii_scan.text	1043
 x86_64/ascii_scan.ir	73428732
 x86_64/call_overhead.text	142
@@ -61,40 +61,40 @@ x86_64/map_probe_chain.text	3503
 x86_64/map_probe_chain.ir	557154836
 x86_64/map_string.text	4503
 x86_64/map_string.ir	134726073	2
-x86_64/ordmap_insert.text	3164
+x86_64/ordmap_insert.text	3165
 x86_64/ordmap_insert.ir	489912081
-x86_64/pmap_insert.text	6132
+x86_64/pmap_insert.text	6133
 x86_64/pmap_insert.ir	209819484
-x86_64/pvec_with.text	6563
+x86_64/pvec_with.text	6564
 x86_64/pvec_with.ir	223059269
 x86_64/record_update.ir	195239519
-x86_64/record_update.text	860
-x86_64/sort_inplace.text	780
+x86_64/record_update.text	861
+x86_64/sort_inplace.text	781
 x86_64/sort_inplace.ir	107826515
-x86_64/sort_ints.text	2329
+x86_64/sort_ints.text	2330
 x86_64/sort_ints.ir	81023185
-x86_64/sort_strings.text	3459
-x86_64/sort_strings.ir	164308289
-x86_64/string_build.text	1291
-x86_64/string_build.ir	130088524
+x86_64/sort_strings.text	3472
+x86_64/sort_strings.ir	164436289
+x86_64/string_build.text	1304
+x86_64/string_build.ir	130824724
 x86_64/string_count_byte.text	600
 x86_64/string_count_byte.ir	270804749
-x86_64/string_find_byte.text	1873
+x86_64/string_find_byte.text	1880
 x86_64/string_find_byte.ir	135897146
-x86_64/string_rfind_byte.text	2377
+x86_64/string_rfind_byte.text	2390
 x86_64/string_rfind_byte.ir	111417142
-x86_64/string_scan.text	1549
+x86_64/string_scan.text	1562
 x86_64/string_scan.ir	103576713
 x86_64/string_slice.text	484
 x86_64/string_slice.ir	156960076
-x86_64/struct_drop.text	2144
-x86_64/struct_drop.ir	531920148
+x86_64/struct_drop.text	2157
+x86_64/struct_drop.ir	534800148
 x86_64/tokenize.text	919
 x86_64/tokenize.ir	113740068
-x86_64/utf8_ingest_unchecked.text	26164
-x86_64/utf8_ingest_unchecked.ir	13318684	3
-x86_64/utf8_ingest_validated.text	26783
-x86_64/utf8_ingest_validated.ir	19567684	3
+x86_64/utf8_ingest_unchecked.text	26205
+x86_64/utf8_ingest_unchecked.ir	13342176	3
+x86_64/utf8_ingest_validated.text	26824
+x86_64/utf8_ingest_validated.ir	19570776	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -133,9 +133,11 @@ x86_64/utf8_ingest_validated.ir	19567684	3
 # for one run and its block goes in verbatim.
 #
 # Rows this file is still stale on, all reading identically at origin/main and
-# so left for whoever moved them: `ascii_scan`, `enum_match`, `map_int`,
-# `map_probe_chain`, `map_string`, `string_count_byte`, `string_slice` and
-# `tokenize`.
+# so left for whoever moved them: `ascii_scan`, `enum_match`, `int_loop`,
+# `map_int`, `map_probe_chain`, `map_string`, `string_count_byte`,
+# `string_slice` and `tokenize`. `map_string.text` is the one mixed row — the
+# change adds 48 of the ~460 it is out by, which is inside its tolerance and
+# so not enough to re-pin the rest of somebody else's drift with it.
 #
 # Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
 # constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
@@ -147,7 +149,7 @@ aarch64/array_append.text	543
 aarch64/array_append.ir	61045407
 aarch64/array_index.text	520
 aarch64/array_index.ir	51467989
-aarch64/array_with.text	628
+aarch64/array_with.text	629
 aarch64/ascii_scan.text	1064
 aarch64/ascii_scan.ir	74108819
 aarch64/call_overhead.text	149
@@ -162,37 +164,37 @@ aarch64/map_int.text	3850
 aarch64/map_int.ir	61361301
 aarch64/map_probe_chain.text	3876
 aarch64/map_probe_chain.ir	613549422
-aarch64/map_string.text	5459
+aarch64/map_string.text	5478
 aarch64/map_string.ir	161643245	2
-aarch64/ordmap_insert.text	3544
+aarch64/ordmap_insert.text	3545
 aarch64/ordmap_insert.ir	507152976
-aarch64/pmap_insert.text	7656
+aarch64/pmap_insert.text	7657
 aarch64/pmap_insert.ir	232489686
-aarch64/pvec_with.text	7880
+aarch64/pvec_with.text	7881
 aarch64/pvec_with.ir	253752396
-aarch64/record_update.text	915
-aarch64/sort_inplace.text	821
+aarch64/record_update.text	916
+aarch64/sort_inplace.text	822
 aarch64/sort_inplace.ir	112891129
-aarch64/sort_ints.text	2785
+aarch64/sort_ints.text	2786
 aarch64/sort_ints.ir	105084009
-aarch64/sort_strings.text	4171
-aarch64/string_build.text	1326
+aarch64/sort_strings.text	4184
+aarch64/string_build.text	1339
 aarch64/string_build.ir	171325490
 aarch64/string_count_byte.text	563
 aarch64/string_count_byte.ir	295440050
-aarch64/string_find_byte.text	2062
+aarch64/string_find_byte.text	2069
 aarch64/string_find_byte.ir	123872451
-aarch64/string_rfind_byte.text	2661
+aarch64/string_rfind_byte.text	2674
 aarch64/string_rfind_byte.ir	111734449
-aarch64/string_scan.text	1637
+aarch64/string_scan.text	1650
 aarch64/string_scan.ir	130819453
 aarch64/string_slice.text	525
 aarch64/string_slice.ir	150480104
-aarch64/struct_drop.text	2589
+aarch64/struct_drop.text	2602
 aarch64/struct_drop.ir	606740287
 aarch64/tokenize.text	972
 aarch64/tokenize.ir	130770104
-aarch64/utf8_ingest_unchecked.text	36414
+aarch64/utf8_ingest_unchecked.text	36445
 aarch64/utf8_ingest_unchecked.ir	18250835	3
-aarch64/utf8_ingest_validated.text	37057
+aarch64/utf8_ingest_validated.text	37090
 aarch64/utf8_ingest_validated.ir	24108639	3
