@@ -327,9 +327,20 @@ fresh elements — satisfying (b) outright — still leaks (self-host 60,002 /
 20,000 / 2,560,088 against native's 60,002 / 59,998 / 128), but in that build
 `__field_reclaim_W` is never emitted or called at all: the literal-store rebind
 takes a different path with no field reclaim, so the probe tested nothing about
-the admission rule and surfaced a third leaking shape instead. Treat "a
-`.with`-shaped admission would fix `W`" as an unverified inference, not a
-finding. Tracked in #8628.
+the admission rule. Treat "a `.with`-shaped admission would fix `W`" as an
+unverified inference, not a finding. Tracked in #8628.
+
+What that path DOES establish, by subtraction: the same literal store over a
+**scalar** element type is clean and matches native almost exactly (self-host
+20,002 / 20,000 / 88, native 20,002 / 20,000 / 64), one allocation and one free
+per iteration. So the buffer is reclaimed correctly on this path too, and what
+leaks under `P[]` is precisely the element boxes — two per iteration, one per
+`mk()` call.
+
+The element-walk gap is therefore not one emitter's oversight. It shows up on at
+least two independent rebind paths — the `__field_reclaim_<T>` one gated by
+`strfldok:sarr:` and this one, which never reaches that helper — wherever a
+struct-array field's buffer is released without walking what it held.
 
 ## The accumulator cluster reproduces too, and it is quadratic: #8644
 
