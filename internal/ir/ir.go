@@ -3121,7 +3121,34 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 	// in place — drives the caller-side containment bracket in callBody.
 	paramFieldObs := computeParamFieldObs(prog, vtableDispatched)
 	growParams := computeGrowParams(prog, info, paramFieldObs)
-	for _, fn := range prog.Funcs {
+	// Every whole-program fact the builder consults is final from here on,
+	// so the bodies lower independently on a worker pool, each into its own
+	// position; the walk below then assembles out.Funcs in declaration
+	// order, which keeps labels and the string pool where a sequential run
+	// puts them. Two consumers still want the sequential walk: the -cover
+	// table numbers a site on first sight, and RcPlanHook receives plans in
+	// lowering order.
+	jobs := lowerJobs()
+	if cover != nil || RcPlanHook != nil {
+		jobs = 1
+	}
+	lowered := make([]*Func, len(prog.Funcs))
+	err := forEach(len(prog.Funcs), jobs, func(i int) error {
+		fn := prog.Funcs[i]
+		if fn.ImportIface != "" {
+			return nil
+		}
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
+		if err != nil {
+			return err
+		}
+		lowered[i] = f
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for i, fn := range prog.Funcs {
 		// Body-less `@import` functions are extern WASM-component imports, not
 		// defined functions: record their signature in out.Externs and skip
 		// lowering (there is no body). The wasm backend turns each into a core
@@ -3175,11 +3202,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
-		if err != nil {
-			return nil, err
-		}
-		out.Funcs = append(out.Funcs, f)
+		out.Funcs = append(out.Funcs, lowered[i])
 		if fn.ExportIface != "" {
 			// `@export` function: lowered normally (it has a body), with the
 			// world-export binding recorded for the wasm backend / composer (P6).

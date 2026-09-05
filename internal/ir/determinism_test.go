@@ -149,6 +149,24 @@ func TestLowerDeterministic(t *testing.T) {
 	}
 }
 
+// TestLowerParallelMatchesSequential lowers each matrix program once
+// sequentially and once on four workers: the per-function pool must
+// assemble the same program in the same order.
+func TestLowerParallelMatchesSequential(t *testing.T) {
+	for _, ptrW := range []int{4, 8} {
+		for name, src := range determinismMatrix {
+			t.Setenv("FERN_LOWER_JOBS", "1")
+			want := lowerSourceWith(t, src, ptrW).String()
+			t.Setenv("FERN_LOWER_JOBS", "4")
+			got := lowerSourceWith(t, src, ptrW).String()
+			if got != want {
+				t.Fatalf("%s (ptrW=%d): parallel lowering differs from sequential:\nsequential:\n%s\nparallel:\n%s",
+					name, ptrW, want, got)
+			}
+		}
+	}
+}
+
 func ptrWName(ptrW int) string {
 	if ptrW == 8 {
 		return "ptrW8_native"
