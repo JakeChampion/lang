@@ -1,0 +1,18 @@
+// target_arch() is the -target's ISA, never the compiler's host: it is a
+// string literal before the check, so the native arm below is pruned from
+// the module and only the wasm32 arm runs. The other legs' answers are
+// target_arch_x86_64 and target_arch_arm64.
+import "core/int";
+
+function main(): i32 {
+    if (target_arch() == "arm64" || target_arch() == "x86-64") {
+        print("native build");
+    } else {
+        print("not a native build");
+    }
+    if (target_arch() != "wasm32") {
+        print("not wasm32");
+    }
+    print(target_arch());
+    return 0;
+}

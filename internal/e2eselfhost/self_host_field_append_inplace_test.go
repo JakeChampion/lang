@@ -222,9 +222,11 @@ function main(): i32 {
     for s in c.names { t = t + s.len(); }
     return t + b.names.len() + c.names.len();
 }`},
-	// A local — not a parameter — as the container: its box is this frame's, so
-	// the analysis must refuse and the clone must stay.
-	{"local-container-refused", `
+	// A LOCAL root (#8556) with a SECOND NAME: `var keep = a` is a dead-alias
+	// bind that takes no count, so `__fern_rc_is_unique` would read 1 with two
+	// live names and the move-out would null a field `keep` still reads.
+	// fai_captured_roots is what refuses it, and the clone must stay.
+	{"local-root-second-name-refused", `
 struct St { ops: i32[], n: i32 }
 function main(): i32 {
     var a: St = St { ops: [], n: 0 };
@@ -233,6 +235,65 @@ function main(): i32 {
     var keep: St = a;
     var b: St = St { ops: a.ops.append(9), n: a.n };
     return keep.ops.len() * 10 + b.ops.len() + a.ops.len();
+}`},
+	// The #8556 shape itself: a top-level `var` rebuilt from its own spread in a
+	// loop. Linear through an `own` parameter and quadratic here until the local
+	// became a root, and the answer must not move either way.
+	{"local-root-threading", `
+struct St { ops: i32[], ctrl: i32 }
+function main(): i32 {
+    var a: St = St { ops: [], ctrl: 0 };
+    var i: i32 = 0;
+    while (i < 30) { a = St { ...a, ops: a.ops.append(i), ctrl: a.ctrl + 1 }; i = i + 1; }
+    var sum: i32 = 0;
+    for v in a.ops { sum = sum + v; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.ops.len() + a.ctrl + (sum % 7);
+}`},
+	// The `.with` twin on a local root: the store lands in the field's own
+	// buffer and the identity arm moves the field out, exactly as through a
+	// parameter (#8419).
+	{"local-root-with-threading", `
+struct Tab { tab: i32[], n: i32 }
+function main(): i32 {
+    var t: Tab = Tab { tab: [0, 0, 0, 0], n: 0 };
+    var i: i32 = 0;
+    while (i < 12) { t = Tab { ...t, tab: t.tab.with(i % 4, i), n: t.n + 1 }; i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return t.tab[0] + t.tab[1] * 2 + t.tab[2] + t.tab[3] + t.n;
+}`},
+	// The runtime half for a local root. No static rule sees the box stored in
+	// `hold`, so the box's own count is what has to force the copy: with the
+	// move-out taken, `hold[0].ops` would be null.
+	{"local-root-boxed-elsewhere-copies", `
+struct St { ops: i32[], n: i32 }
+function main(): i32 {
+    var a: St = St { ops: [], n: 0 };
+    var i: i32 = 0;
+    while (i < 4) { a = St { ...a, ops: a.ops.append(i), n: a.n + 1 }; i = i + 1; }
+    var hold: St[] = [];
+    hold = hold.append(a);
+    a = St { ...a, ops: a.ops.append(9), n: a.n + 1 };
+    if (__rc_underflow_count() != 0) { return 99; }
+    return hold[0].ops.len() * 10 + a.ops.len() + hold[0].ops[3];
+}`},
+	// A local bound FROM A PARAMETER is the hazard the struct-literal rule
+	// exists for: the bind takes no count, so both names reach one box at rc 1
+	// and an admitted move-out would null a field the caller still reads.
+	{"local-root-alias-from-param-refused", `
+struct St { ops: i32[], n: i32 }
+function take(p: St): i32 {
+    var a: St = p;
+    var i: i32 = 0;
+    while (i < 3) { a = St { ...a, ops: a.ops.append(i), n: a.n + 1 }; i = i + 1; }
+    return p.ops.len() * 10 + a.ops.len() + p.ops[2];
+}
+function main(): i32 {
+    var s: St = St { ops: [], n: 0 };
+    var k: i32 = 0;
+    while (k < 4) { s = St { ...s, ops: s.ops.append(k), n: s.n + 1 }; k = k + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return take(s);
 }`},
 	// The RETURN-position death (#8254). `return f(a, v)` kills a's BINDING, so
 	// the caller-side grow bracket is withdrawn — but not this frame's claim on
@@ -927,13 +988,139 @@ function main(): i32 { var s: St = St { ops: [], n: 0 }; s = s.emit(1); return s
 			label:     "__fn_St__emit",
 			wantClone: true,
 		},
+		// #8556: a top-level `var` this function builds itself is a root too.
+		// Its box is this frame's, so nothing outside can read the field the
+		// move-out nulls, and the rows after the two positives pin each way a
+		// local can fail to be that.
 		{
-			name: "local-container-clones",
+			name: "local-root-return-grows-in-place",
 			src: `
 struct St { ops: i32[], n: i32 }
 function grow(v: i32): St { var a: St = St { ops: [], n: 0 }; return St { ...a, ops: a.ops.append(v) }; }
 function main(): i32 { return grow(3).ops.len(); }`,
 			label:     "__fn_grow",
+			wantClone: false,
+		},
+		{
+			name: "local-root-loop-rebind-grows-in-place",
+			src: `
+struct St { ops: i32[], n: i32 }
+function build(k: i32): i32 {
+    var a: St = St { ops: [], n: 0 };
+    var i: i32 = 0;
+    while (i < k) { a = St { ...a, ops: a.ops.append(i) }; i = i + 1; }
+    return a.ops.len();
+}
+function main(): i32 { return build(3); }`,
+			label:     "__fn_build",
+			wantClone: false,
+		},
+		// Bound from a PARAMETER: a dead-alias bind takes no count, so the box
+		// reads unique with the caller still naming it (grow_alias_bind, #4402).
+		{
+			name: "local-root-alias-from-param-clones",
+			src: `
+struct St { ops: i32[], n: i32 }
+function take(p: St): i32 {
+    var a: St = p;
+    var i: i32 = 0;
+    while (i < 3) { a = St { ...a, ops: a.ops.append(i) }; i = i + 1; }
+    return p.ops.len() * 100 + a.ops.len();
+}
+function main(): i32 { var s: St = St { ops: [1, 2], n: 0 }; return take(s) % 250; }`,
+			label:     "__fn_take",
+			wantClone: true,
+		},
+		// ASSIGNED a parameter part-way through: the declaration alone proves
+		// nothing, so every binding of the name has to be a struct literal.
+		{
+			name: "local-root-assigned-from-name-clones",
+			src: `
+struct St { ops: i32[], n: i32 }
+function f(p: St, k: i32): i32 {
+    var a: St = St { ops: [], n: 0 };
+    if (k > 0) { a = p; }
+    var i: i32 = 0;
+    while (i < 3) { a = St { ...a, ops: a.ops.append(i) }; i = i + 1; }
+    return p.ops.len() * 100 + a.ops.len();
+}
+function main(): i32 { var s: St = St { ops: [1, 2], n: 0 }; return f(s, 1) % 250; }`,
+			label:     "__fn_f",
+			wantClone: true,
+		},
+		// A CALL RESULT is not proof of a fresh box either: the callee may hand
+		// back one of its own parameters.
+		{
+			name: "local-root-call-init-clones",
+			src: `
+struct St { ops: i32[], n: i32 }
+function mk(p: St): St { return p; }
+function g(p: St): i32 {
+    var a: St = mk(p);
+    var i: i32 = 0;
+    while (i < 3) { a = St { ...a, ops: a.ops.append(i) }; i = i + 1; }
+    return p.ops.len() * 100 + a.ops.len();
+}
+function main(): i32 { var s: St = St { ops: [1, 2], n: 0 }; return g(s) % 250; }`,
+			label:     "__fn_g",
+			wantClone: true,
+		},
+		// Declared inside a LOOP, so the name covers a fresh binding per
+		// iteration and the body-wide counting arms do not model it.
+		{
+			name: "local-root-declared-in-loop-clones",
+			src: `
+struct St { ops: i32[], n: i32 }
+function h(k: i32): i32 {
+    var t: i32 = 0;
+    var j: i32 = 0;
+    while (j < k) {
+        var a: St = St { ops: [], n: 0 };
+        var i: i32 = 0;
+        while (i < 3) { a = St { ...a, ops: a.ops.append(i) }; i = i + 1; }
+        t = t + a.ops.len();
+        j = j + 1;
+    }
+    return t;
+}
+function main(): i32 { return h(2); }`,
+			label:     "__fn_h",
+			wantClone: true,
+		},
+		// SHADOWED in a nested block: the fai_* walks match a root by name over
+		// the whole body, so a second binding conflates two variables.
+		{
+			name: "local-root-shadowed-name-clones",
+			src: `
+struct St { ops: i32[], n: i32 }
+function w(k: i32, p: St): i32 {
+    var a: St = St { ops: [], n: 0 };
+    var i: i32 = 0;
+    while (i < 3) { a = St { ...a, ops: a.ops.append(i) }; i = i + 1; }
+    var t: i32 = 0;
+    if (k > 0) { var a: St = p; t = a.ops.len(); }
+    return t * 100 + a.ops.len();
+}
+function main(): i32 { var s: St = St { ops: [1, 2], n: 0 }; return w(1, s) % 250; }`,
+			label:     "__fn_w",
+			wantClone: true,
+		},
+		// A SECOND NAME for the local's box keeps the pre-move container
+		// reachable under a name the site does not resolve through.
+		{
+			name: "local-root-second-name-clones",
+			src: `
+struct St { ops: i32[], n: i32 }
+function build(k: i32): i32 {
+    var a: St = St { ops: [], n: 0 };
+    var i: i32 = 0;
+    while (i < k) { a = St { ...a, ops: a.ops.append(i) }; i = i + 1; }
+    var keep: St = a;
+    a = St { ...a, ops: a.ops.append(9) };
+    return keep.ops.len() * 10 + a.ops.len();
+}
+function main(): i32 { return build(4); }`,
+			label:     "__fn_build",
 			wantClone: true,
 		},
 		{

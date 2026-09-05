@@ -1,4 +1,4 @@
-name: Fuzz differential execution
+name: Fuzz
 
 # Pairs the fernsmith generator with the diff oracle. Each emitted
 # program is run through the interp + every backend available on
@@ -9,6 +9,30 @@ name: Fuzz differential execution
 # Needs wasmtime because the diff oracle considers the wasm
 # backend as one of the comparison targets. 60-second budget per
 # arch.
+
+# BOTH FUZZ TARGETS, ONE LANE. This was two workflows; the parse round-trip had
+# its own, for 60 seconds of fuzzing behind a checkout, a toolchain install and a
+# wait for a runner. lint.yml measured that shape at 165 job-minutes of queue for
+# ~5 minutes of work (run 31819147972), and the rule it drew — fewer, fuller jobs
+# beat more, emptier ones whenever the pool is the constraint — applies here
+# unchanged.
+#
+# The two targets keep their arch split, which is the reason they were separate
+# and is now expressed as a step condition rather than a workflow:
+#
+#   FuzzGenerate_ExecutionAgrees runs the compiled binaries NATIVELY, so the host
+#   is part of what is under test — both legs, as before.
+#
+#   FuzzGenerate_ParseRoundTrips generates a program and runs it through modload
+#   + parser + checker (fernsmith's GenBytes then checkGenerated). No backend, no
+#   codegen, nothing that reads the host. A second leg would re-run an
+#   arch-independent property for a second runner slot, so it stays x86 only.
+#
+# Depth for both comes from nightly-fuzz.yml, which runs these same targets on a
+# much longer budget against a persisted corpus. This lane is a smoke test: the
+# 60-second budget is short enough to fit per-PR latency and long enough to get
+# past the first few thousand inputs. The parse target caught bugs in #588 and
+# #614 that the seed-based sweeps in `go test` did not surface.
 
 on:
   pull_request:
@@ -80,4 +104,10 @@ jobs:
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
-      - run: gotestsum --format testname -- -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -run=^$ ./internal/e2e
+      - name: fuzz differential execution (both arches)
+        if: ${{ !cancelled() }}
+        run: gotestsum --format testname -- -fuzz=FuzzGenerate_ExecutionAgrees -fuzztime=60s -run=^$ ./internal/e2e
+
+      - name: fuzz parse round-trip (arch-independent, x86 only)
+        if: ${{ !cancelled() && matrix.host == 'x86_64' }}
+        run: gotestsum --format testname -- -fuzz=FuzzGenerate_ParseRoundTrips -fuzztime=60s -run=^$ ./internal/fernsmith

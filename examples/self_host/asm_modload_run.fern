@@ -944,6 +944,21 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     return 0;
 }
 
+// fold_target_calls resolves `target_os()` / `target_arch()` in the entry and
+// every loaded module, as fern.fern does before its own check. irlower answers
+// an unfolded call from the pointer width's default target, which names the
+// environment correctly on every native target and the ISA only on arm64 — so
+// a driver that knows its -target folds rather than taking that default.
+function fold_target_calls(entry: parser.Module, loaded: flatten.LoadedModule[], target: string): (parser.Module, flatten.LoadedModule[]) {
+    var d: platforms.Descriptor = platforms.for_target(target);
+    var e2: parser.Module = constfold.fold_target_name(entry, d.environment, d.isa);
+    var out: flatten.LoadedModule[] = [];
+    for lm in loaded {
+        out = out.append(flatten.LoadedModule { name: lm.name, mod: constfold.fold_target_name(lm.mod, d.environment, d.isa) });
+    }
+    return (e2, out);
+}
+
 function main(): i32 {
     var a: string[] = args();
     // `-ir-probe`: after real import resolution + bundling, report the IR-
@@ -1071,16 +1086,22 @@ function main(): i32 {
         Ok(src) => {
             var entry: parser.Module = parser.parse_module(lexer.tokenize(src));
             var loaded: flatten.LoadedModule[] = modloader.load_imports(modloader.no_overlay(), dir, entry);
+            var (fentry, floaded) = fold_target_calls(entry, loaded, target);
+            entry = fentry;
+            loaded = floaded;
             if (pm_mode.len() > 0) {
                 return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_extra, cache_dir, pm_lo, pm_hi, target, out_dir, func_budget, unit_lo, unit_hi, assume_eligible);
             }
             var merged: parser.Module = flatten.bundle(entry, loaded);
             merged = modloader.merge_builtins(dir, merged);
-            // target_os() is the -target's environment as a string literal, not
-            // a call: the compile driver folds it here (fern.fern) and no
-            // backend emits a body for it, so a pipeline that skips the fold
-            // hands every later pass a call to a symbol nothing defines.
-            merged = constfold.fold_target_os(merged, platforms.for_target(target).environment);
+            // target_os() / target_arch() are the -target's environment and ISA
+            // as string literals, not calls: the compile driver folds them here
+            // (fern.fern) and no backend emits a body for either, so a pipeline
+            // that skips the fold hands every later pass a call to a symbol
+            // nothing defines. merge_builtins runs after fold_target_calls, so
+            // the modules it brings in are folded here rather than there.
+            var md: platforms.Descriptor = platforms.for_target(target);
+            merged = constfold.fold_target_name(merged, md.environment, md.isa);
             if (vprovided) { return verify_provided_module(merged); }
             if (probe) {
                 // Probe the module codegen actually routes on: run the same

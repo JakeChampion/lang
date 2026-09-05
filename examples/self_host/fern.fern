@@ -2325,10 +2325,12 @@ function run(): i32 {
     // the runtime error intact — so it changes only the shape of the emitted
     // code, which is why it needs no flag.
     //
-    // target_os() first: the -target's environment as a string literal, so a
-    // branch on it is pruned by ir.fold_const_binaries. -check and -interp
-    // returned above with the call intact.
-    merged = constfold.fold_target_os(merged, platforms.for_target(target).environment);
+    // The target name first: its environment and ISA as string literals, so a
+    // branch on target_os() or target_arch() is pruned by
+    // ir.fold_const_binaries. -check and -interp returned above with the
+    // calls intact.
+    var desc: platforms.Descriptor = platforms.for_target(target);
+    merged = constfold.fold_target_name(merged, desc.environment, desc.isa);
     merged = constfold.fold_module(merged);
 
     // typed-IR (#5531): stamp each call expression with its checker-inferred

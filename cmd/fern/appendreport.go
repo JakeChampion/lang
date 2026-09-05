@@ -21,9 +21,9 @@ func runAppendReport(srcPath string, w io.Writer) error {
 	}
 	prog := e.prog
 	// The report lowers as the default -target (arm64-linux) would, so
-	// target_os() folds to its environment and a program branching on it
-	// still lowers.
-	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: "linux"}); err != nil {
+	// target_os() / target_arch() fold to its two halves and a program
+	// branching on either still lowers.
+	if err := constfold.FoldWith(prog, constfold.Inputs{TargetOS: "linux", TargetArch: "arm64"}); err != nil {
 		return e.format(err)
 	}
 	info, err := checker.Check(prog)

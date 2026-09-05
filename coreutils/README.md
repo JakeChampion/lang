@@ -71,7 +71,14 @@ they are not on PATH. Wall time, so compare within one run only.
 | `basename` | done — `-a` `-s` `-z`, in-order option scan, proper-suffix rule |
 | `dirname` | done — `-z`, the leading-slash rules |
 | `tsort` | done — GNU's exact order, the loop report, NUL-cut tokens |
-| `printf` | done — every C conversion plus `%b` `%q`, argument cycling, x87 long-double floats printed from the exact binary value, glibc's oversized-conversion refusal and close_stdout reporting |
+| `printf` | done — every C conversion plus `%b` `%q`, argument cycling, long-double floats printed from the exact binary value at the target's format, glibc's oversized-conversion refusal and close_stdout reporting |
+| `expr` | done — the full grammar, arbitrary-precision integers, `:` / `match` over POSIX basic regexps with glibc's diagnostics, exit 0/1/2/3 |
+| `numfmt` | done — every option, the long-double arithmetic GNU scales and rounds in, the field and padding rules |
+| `seq` | done — `-f` `-s` `-w`, the exact-digit engine for whole numbers, and the long-double one with the rule that prints a term past LAST when its own output reads back inside the range |
+| `factor` | done — Montgomery arithmetic to 2^64, `core/bigint` beyond it, `-h`, numbers from stdin, and GNU's unbuffered line for a number at or above 2^127 |
+| `sleep` | done — `s` `m` `h` `d`, floats and hex floats, `inf`, the sum of the operands, every operand validated before it pauses (intervals are rounded up to the millisecond until #8528) |
 | `lib/gnu.fern` | the GNU conventions every utility shares |
+| `lib/bre.fern` | POSIX basic regular expressions as glibc compiles them |
+| `lib/ld.fern` | C's `long double` at the TARGET's format — strtold, arithmetic, rounding and the `%f` `%e` `%g` `%a` conversions — shared by `printf`, `numfmt` and `seq` |
 
 The tracking epic (#8278) lists every other utility and its status.

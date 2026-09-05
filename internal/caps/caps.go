@@ -106,6 +106,7 @@ var Ungated = map[string]bool{
 	"stderr":                      true,
 	"isatty":                      true,
 	"target_os":                   true,
+	"target_arch":                 true,
 	"args":                        true,
 	"exit":                        true,
 	"strbuf_reset":                true,

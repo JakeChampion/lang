@@ -322,6 +322,12 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		out = outBuf.Bytes()
 	}
 
+	// A case the kernel refuses to start at all — an argv holding a NUL,
+	// say — leaves no ProcessState. Report the case rather than dying on
+	// a nil dereference three frames down.
+	if cmd.ProcessState == nil {
+		t.Fatalf("%s %s never ran: the invocation is not one exec can deliver", bin, quoteArgs(inv.args))
+	}
 	res := outcome{stdout: out, stderr: errBuf.Bytes(), exit: cmd.ProcessState.ExitCode()}
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 		res.signal = ws.Signal().String()

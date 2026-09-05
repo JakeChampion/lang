@@ -248,10 +248,6 @@ type rcPlan struct {
 	// after lowering that top-level statement (Perceus garbage-free precise
 	// drops — computePreciseDrops).
 	preciseDrops map[int][]string
-	// viewLocalDrops[stmt] names the `[T]` view locals whose header is freed
-	// after that statement — the binding-lifetime half of #8502, keyed by
-	// statement so one table serves the top level and every nested block.
-	viewLocalDrops map[ast.Stmt][]string
 	// nestedDrops[stmt] is the same precise-drop list for a local declared
 	// inside a NESTED block, keyed by the block statement to drop after
 	// rather than by a top-level index (computeNestedDrops).
@@ -1286,6 +1282,16 @@ func inferParamCountedRetain(prog *ast.Program, info *checker.Info) map[string][
 				// arm of paramProjectionsSafe. This is what lets a caller
 				// release the lambda it passes to `m.update(k, f)`.
 				flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
+			case ast.SliceType:
+				// A slice header is retained by the same counted slots (a
+				// tuple's argument), and read without retaining by `.len()`
+				// (pureReadReceiverBuiltin) and by a scalar element read,
+				// which copies a byte out of storage the header does not own.
+				// That is the whole of a digest's `absorb(h, chunk)`, and
+				// without the arm the parameter is refused — which then
+				// de-credits the function's OTHER parameters through
+				// ptrAllCounted below and strands the caller's header.
+				flags[i] = paramProjectionsSafe(fn, p.Name, info, out, ctorCounted)
 			}
 		}
 		ptrAllCounted := true
@@ -2059,8 +2065,10 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 		}
 	}
 	// scalarElemRead reports the tracked root of an index read whose element
-	// is a plain scalar — `p.tail[i]`, or `xs[i]` on a tracked array binding
-	// — which copies a value out and retains nothing.
+	// is a plain scalar — `p.tail[i]`, `xs[i]` on a tracked array binding, or
+	// `b[i]` through a tracked `[T]` view — which copies a value out and
+	// retains nothing. A slice reads through its header into storage the
+	// header does not own, so the copy aliases neither.
 	scalarElemRead := func(x *ast.Index) (*ast.Ident, bool) {
 		var root *ast.Ident
 		var at ast.Type
@@ -2077,11 +2085,19 @@ func paramProjectionsSafe(fn *ast.FuncDecl, pn string, info *checker.Info, summa
 		default:
 			return nil, false
 		}
-		arrT, ok := at.(ast.ArrayType)
-		if !ok || !tracked[root.Name] {
+		var elem ast.Type
+		switch c := at.(type) {
+		case ast.ArrayType:
+			elem = c.Elem
+		case ast.SliceType:
+			elem = c.Elem
+		default:
 			return nil, false
 		}
-		switch arrT.Elem.(type) {
+		if !tracked[root.Name] {
+			return nil, false
+		}
+		switch elem.(type) {
 		case ast.NumberType, ast.BoolType, ast.FloatType:
 			return root, true
 		}
@@ -2985,6 +3001,11 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// borrow-aware taint as the others; box reclamation only
 			// (elements keep their own rc, freed where they're owned).
 			elig[v.Name] = true
+		case ast.SliceType:
+			// An owned slice frees its header at the last reference
+			// (emitDec → __fern_closure_drop); the viewed bytes belong to
+			// the source and are never touched.
+			elig[v.Name] = true
 		case ast.StringType:
 			// Fresh owned heap string (concat / slice — rhsTainted whitelists
 			// exactly those) frees at its last reference via __fern_str_dec on
@@ -3037,7 +3058,7 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			continue
 		}
 		switch t := p.Type.(type) {
-		case ast.ArrayType, ast.EnumType, *ast.FuncType, ast.TupleType:
+		case ast.ArrayType, ast.EnumType, *ast.FuncType, ast.TupleType, ast.SliceType:
 			elig[p.Name] = true
 		case ast.StructType:
 			if t.Name == "Map" {
@@ -3262,15 +3283,16 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 	case *ast.SliceExpr:
 		// A STRING slice copies its bytes into a fresh owned heap buffer
 		// (the wasm runtime always allocates) and boxes it in a fresh
-		// `Option`, so both are reclaimable — not views. Array / other
-		// slices share the source buffer → tainted. Keyed on IsString,
-		// NOT on exprType: exprType now reports the Option box, so a type
-		// test would taint the fresh box and downgrade the consumer's
-		// reclaim to the non-freeing __fern_rc_dec.
-		if x.IsString {
-			return false
-		}
-		return true
+		// `Option`, so both are reclaimable — not views. Keyed on
+		// IsString, NOT on exprType: exprType now reports the Option box,
+		// so a type test would taint the fresh box and downgrade the
+		// consumer's reclaim to the non-freeing __fern_rc_dec.
+		//
+		// An ARRAY slice is a fresh rc=1 header over the source's buffer.
+		// The header is what the local owns and what its drop releases;
+		// the shared buffer is never touched by that release, so the
+		// source's taint says nothing about it.
+		return false
 	case *ast.Binary:
 		// String concat (`a + b`) copies both operands into a fresh owned
 		// heap buffer regardless of operand provenance, so the result is
@@ -3296,6 +3318,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		}
 		return b.rhsTainted(x.Operand, tainted)
 	case *ast.Call:
+		// A slice-typed result always hands the caller exactly one unit on
+		// the HEADER: a fresh __slice_make, a moved local, or a returned
+		// param / field / element alias carrying the return-transfer inc (a
+		// param is never an owned local, so move-on-return cannot cancel
+		// it). Whether the viewed bytes alias an argument is immaterial —
+		// the binding's release frees the header alone.
+		if isSliceType(b.exprType(x)) {
+			return false
+		}
 		// Slice 1b: under EnumRcPayloads a variant constructor is a FRESH
 		// rc=1 box that inc's its pointer payloads (like StructLit), so the
 		// constructed value is reclaimable regardless of payload taint — return
@@ -3411,6 +3442,11 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				// SliceExpr arm above, spelled as a builtin, so the
 				// source's taint says nothing about the result.
 				return false
+			case "__method_string_as_bytes":
+				// A fresh rc=1 slice header viewing the receiver's bytes —
+				// the array SliceExpr arm above, spelled as a method. Only
+				// the header is owned and released.
+				return false
 			}
 		}
 		// #4357: a call to a user function whose RETURN provably aliases no
@@ -3523,9 +3559,9 @@ func (b *builder) computeMovedLocals() map[string]bool {
 		return moved
 	}
 	order := b.curIdentOrder()
-	sawReturn := false
+	sawExit := false
 	for _, st := range b.fn.Body.Stmts {
-		if !sawReturn {
+		if !sawExit {
 			// The lowering checks b.rc.moveSites on the Var node or the
 			// inner Assign node (assignments are ExprStmt-wrapped), so
 			// key the site on whichever the lowering will see.
@@ -3569,8 +3605,8 @@ func (b *builder) computeMovedLocals() map[string]bool {
 				b.markConstructionMoves(val, order, moved, nil)
 			}
 		}
-		if stmtContainsReturn(st) {
-			sawReturn = true
+		if stmtCanLeaveFunction(st) {
+			sawExit = true
 		}
 	}
 
@@ -3682,7 +3718,7 @@ func walkDominatingExprs(body *ast.Block, f func(ast.Node) bool) {
 				walkAlwaysEvaluated(s.Tag, f)
 			}
 		}
-		if stmtContainsReturn(st) {
+		if stmtCanLeaveFunction(st) {
 			return
 		}
 	}
@@ -5116,141 +5152,6 @@ func (b *builder) flowsIntoUncountedAlias(st ast.Node, name string) bool {
 	return bad
 }
 
-// computeViewLocalDrops places the release of a `[T]` view header bound to a
-// LOCAL. #8522 gave the header an owner where it is materialised as a call
-// ARGUMENT — dead once the call returns — but a header bound to a local has
-// the binding's lifetime and nothing released it (#8535): 16 bytes per binding
-// on the natives, 8 on wasm.
-//
-// The placement is the precise-drop one: after the statement carrying the
-// local's last use, so a loop body reclaims per iteration rather than at the
-// function's exit sweep. Keyed by statement rather than by index so the one
-// map serves the function's top level and every nested block.
-//
-// A view header carries no refcount, so unlike an rc local this cannot lean on
-// an is_unique gate to make a double release harmless: `var t = s` copies the
-// pointer and both names then hold one block. viewHeaderEscapes is what keeps
-// the release attached to the binding that MATERIALISED the header.
-func (b *builder) computeViewLocalDrops() map[ast.Stmt][]string {
-	if !ast.RcFreeEnabled || b.fn.Body == nil {
-		return nil
-	}
-	blocks := []*ast.Block{b.fn.Body}
-	for _, st := range b.fn.Body.Stmts {
-		collectNestedBlocks(st, &blocks)
-	}
-	reassigned := b.reassignedAnywhere()
-	bodyRefs := identCounts(b.fn.Body)
-	out := map[ast.Stmt][]string{}
-	for _, blk := range blocks {
-		declIdx := blockDeclIndices(blk.Stmts, reassigned)
-		if len(declIdx) == 0 {
-			continue
-		}
-		blkRefs := identCounts(blk)
-		for _, name := range sortedByDeclIdx(declIdx) {
-			v, ok := blk.Stmts[declIdx[name]].(*ast.Var)
-			if !ok || !isViewHeaderLocal(v) || reassigned[name] {
-				continue
-			}
-			// Every reference must be inside this block: the last-use scan
-			// below only reads blk.Stmts, so a reference outside it would be
-			// past the release.
-			if bodyRefs[name] != blkRefs[name] {
-				continue
-			}
-			last, ok := b.viewDropTarget(blk.Stmts, declIdx[name], name)
-			if !ok {
-				continue
-			}
-			out[blk.Stmts[last]] = append(out[blk.Stmts[last]], name)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// isViewHeaderLocal reports whether `v` declares a `[T]` local whose
-// initialiser MATERIALISES a header rather than naming one someone else owns.
-func isViewHeaderLocal(v *ast.Var) bool {
-	if _, isView := v.Type.(ast.SliceType); !isView {
-		return false
-	}
-	return makesFreshViewHeader(v.Init)
-}
-
-// viewDropTarget returns the index of the statement after which `name`'s
-// header is freed, or ok=false when any use could outlive that point.
-func (b *builder) viewDropTarget(stmts []ast.Stmt, di int, name string) (int, bool) {
-	last := -1
-	for i := di + 1; i < len(stmts); i++ {
-		if !stmtReferencesName(stmts[i], name) {
-			continue
-		}
-		if b.viewHeaderEscapes(stmts[i], name) {
-			return 0, false
-		}
-		last = i
-	}
-	if last < 0 {
-		last = di
-	}
-	return last, true
-}
-
-// viewHeaderEscapes reports whether a use of `name` in `st` can leave the
-// header reachable past the drop point.
-//
-// flowsIntoUncountedAlias is deliberately NOT composed in, though it guards
-// the same drop placement for rc locals. It asks whether an expression's
-// result may ALIAS the local, so it rejects any pointer-returning call
-// containing the name — `s.len().to_string()` among them. The question here is
-// narrower and answerable: whether the result can BE the two-word header, and
-// typeCannotCarrySlice decides that from the type alone. A `s[0:2]` reads
-// through the header and materialises its own, so it is not an escape either. Reading THROUGH the view is safe —
-// `s.len()`, `s[i]`, `for x in s`, and a call whose result cannot carry a
-// slice all consume the window without keeping the two-word block. What is not
-// safe is anything that gives the block a second name or a longer life.
-//
-// The `*ast.Var` arm keys on a BARE ident deliberately: `var t = s` aliases the
-// header, but `var s2 = s[0:2]` reads through it and materialises its own, so
-// only the first has to disqualify `s`.
-func (b *builder) viewHeaderEscapes(st ast.Node, name string) bool {
-	isName := func(e ast.Expr) bool {
-		id, ok := e.(*ast.Ident)
-		return ok && id.Name == name
-	}
-	hasName := func(n ast.Node) bool { return n != nil && stmtReferencesName(n, name) }
-	bad := false
-	ast.Walk(st, func(n ast.Node) bool {
-		if bad {
-			return false
-		}
-		switch e := n.(type) {
-		case *ast.Var:
-			bad = e.Init != nil && isName(e.Init)
-		case *ast.Destructure:
-			bad = e.Init != nil && isName(e.Init)
-		case *ast.Assign:
-			bad = e.Value != nil && isName(e.Value)
-		case *ast.Return:
-			bad = e.Value != nil && isName(e.Value)
-		case *ast.ArrayLit, *ast.StructLit, *ast.TupleLit:
-			bad = hasName(n)
-		case *ast.Call:
-			bad = hasName(e) && !b.typeCannotCarrySlice(b.exprType(e))
-		case *ast.IfExpr:
-			bad = hasName(e) && !b.typeCannotCarrySlice(b.exprType(e))
-		case *ast.MatchExpr:
-			bad = hasName(e) && !b.typeCannotCarrySlice(b.exprType(e))
-		}
-		return !bad
-	})
-	return bad
-}
-
 // mayAliasResult reports whether expression `e`'s result may be a heap pointer
 // that aliases one of its operands — conservatively treating an UNRESOLVED
 // generic result (a `ParamType`, e.g. `id[T]`'s `T`) or an unknown type as
@@ -5398,7 +5299,7 @@ func (b *builder) isOwnedRcLocal(name string) bool {
 			continue
 		}
 		switch v.Type.(type) {
-		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType:
+		case ast.ArrayType, ast.StructType, ast.EnumType, *ast.FuncType, ast.TupleType, ast.SliceType:
 			return true
 		case ast.StringType:
 			// Two-word string ABIs (wasm + arm64-TwoWordOverride) and
@@ -5494,6 +5395,13 @@ func needsRcIncOnAlias(e ast.Expr, b *builder) bool {
 	// outlives the source local (no inc would let the source's box_free
 	// strand the container's reference).
 	if _, isTuple := t.(ast.TupleType); isTuple {
+		return true
+	}
+	// A slice header (rc=1 from __slice_make) is retained like a tuple box:
+	// the inc balances the header release the exit sweep emits for slice
+	// locals and keeps a header stored into a container alive past the
+	// source local. The viewed bytes are not counted either way.
+	if isSliceType(t) {
 		return true
 	}
 	// wasm two-word strings: aliasing inc's the heap buffer's rc via
@@ -7495,6 +7403,9 @@ func blockDiverges(b *ast.Block) bool {
 	return false
 }
 
+// stmtDiverges is the MUST twin of stmtCanLeaveFunction: it asks whether
+// reaching this statement ALWAYS leaves the function. `?` is deliberately
+// absent — it leaves only on Err.
 func stmtDiverges(st ast.Stmt) bool {
 	switch x := st.(type) {
 	case *ast.Return:

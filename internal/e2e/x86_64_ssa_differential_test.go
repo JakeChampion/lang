@@ -48,13 +48,17 @@ const (
 	// regression that widened the SSA bail set would otherwise turn the lane
 	// green by comparing almost nothing.
 	//
-	// 30 as measured 2026-09-02, after the stack-argument path (#8087) let this
-	// backend build the functions with more than six parameters it used to
-	// refuse outright. It is far below the arm64 leg's floor because this
-	// backend is still missing most of its helper table
-	// (docs/SSA-CUTOVER-PLAN.md: 84 symbols, of which this covers a corner).
-	// RAISE IT with each helper slice — that is the point of the number.
-	x86SSADiffMinCompared = 30
+	// 39 as measured 2026-09-05, after `print`, `eprint`, `__alloc_reuse` and
+	// `__fern_drop_arr_str` joined the helper table (#8570). It is far below
+	// the arm64 leg's floor because this backend is still missing most of its
+	// helper table (docs/SSA-CUTOVER-PLAN.md). RAISE IT with each helper slice
+	// — that is the point of the number.
+	//
+	// The next cliff is one symbol wide: 155 corpus programs are refused for
+	// `remove_dir_all` ALONE, which they reference through `std/test`'s import
+	// graph without calling it. Implementing that helper takes this leg from 39
+	// comparable programs to 194.
+	x86SSADiffMinCompared = 39
 )
 
 func TestX86_64SSABackendDifferential(t *testing.T) {

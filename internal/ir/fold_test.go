@@ -792,6 +792,70 @@ func TestUnfoldedTargetOSLowersToTheTargetsLiteral(t *testing.T) {
 	}
 }
 
+// TestUnfoldedTargetArchLowersToTheTargetsLiteral is the ISA twin of the
+// test above. The two natives share a pointer width, so the default here
+// is the project's default target rather than something the width can
+// decide: a harness that wants the other one names it.
+func TestUnfoldedTargetArchLowersToTheTargetsLiteral(t *testing.T) {
+	src := `function f(): i32 {
+    if (target_arch() == "x86-64") { return 1; }
+    return 2;
+}`
+	for _, tc := range []struct {
+		ptrW int
+		opts []LowerOption
+		want string
+	}{
+		{8, nil, "arm64"},
+		{4, nil, "wasm32"},
+		{8, []LowerOption{WithTargetArch("x86-64")}, "x86-64"},
+	} {
+		p := loweredAndFoldedWith(t, src, tc.ptrW, tc.opts...)
+		fn := findFunc(p, "f")
+		if fn == nil {
+			t.Fatal("f not found")
+		}
+		found := false
+		for _, op := range fn.Ops {
+			if op.Kind == OpConstStr && op.Str == tc.want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("ptrW %d %v: no const.str %q in:\n%s", tc.ptrW, tc.opts != nil, tc.want, p)
+		}
+	}
+}
+
+// The two halves are independent: naming one must not move the other.
+func TestTargetHalvesAreIndependent(t *testing.T) {
+	src := `function f(): string {
+    return target_os() + "/" + target_arch();
+}`
+	p := loweredAndFoldedWith(t, src, 8, WithTargetOS("darwin"), WithTargetArch("arm64"))
+	fn := findFunc(p, "f")
+	if fn == nil {
+		t.Fatal("f not found")
+	}
+	var strs []string
+	for _, op := range fn.Ops {
+		if op.Kind == OpConstStr {
+			strs = append(strs, op.Str)
+		}
+	}
+	want := map[string]bool{"darwin": false, "arm64": false}
+	for _, s := range strs {
+		if _, ok := want[s]; ok {
+			want[s] = true
+		}
+	}
+	for k, seen := range want {
+		if !seen {
+			t.Fatalf("no const.str %q among %q in:\n%s", k, strs, p)
+		}
+	}
+}
+
 // `rc_inc(null)` / `rc_dec(null)` are no-ops by the same contract the
 // is_unique rule leans on: both ops are declared pass-through and every
 // backend's helper opens with the low-address guard, past which the
