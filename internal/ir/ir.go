@@ -17526,13 +17526,15 @@ func (b *builder) emitMapSlotDrop(slot int32, st ast.StructType) {
 // reference genuinely changed hands (`a = <a COW copy of a>`), where the new
 // handle may still share columns with the old buffer.
 //
-// It walks exactly the columns __map_own_copied_cols gives the copy a claim of
-// its own on: the string-KEY column, and the array-value and boxed-cell value
-// columns via the kind-guarded __map_drop_values. A string or struct VALUE
-// column is still SHARED with the copy (#8354 claims neither), so walking it
-// would free what the new handle reads — those values leak here instead, until
-// the claim widens. Then the buf and handle, which are exclusively the old
-// handle's.
+// It walks the string-KEY column and the array-value and boxed-cell value
+// columns via the kind-guarded __map_drop_values, then the buf and handle,
+// which are exclusively the old handle's.
+//
+// It does NOT walk the string (kind 5) or struct (kind 4) value columns. Both
+// ARE claimed on a copy, so walking them is no longer unsafe the way it was
+// when this site was written — whether it SHOULD is an open measurement, not a
+// refusal: the chain shape leaks here, but the same program also leaks through
+// the aliased overwrite (#8421), and the two have not been told apart.
 //
 // Every helper self-guards on the map's own rc==1, so a still-shared handle
 // only dec's. Net-zero on the operand stack, so a reinit RHS sitting
@@ -21171,9 +21173,10 @@ func (b *builder) emitWideMapSet(n *ast.Call, kType, vType ast.Type) error {
 // overwrite pre-drop, which the caller closes with an OpEnd.
 //
 // A pre-drop RELEASES the value the set is about to replace, and it runs
-// BEFORE the set's own __map_cow_inplace. A second handle over the same buffer
-// still names that value — __map_own_copied_cols claims neither a string nor a
-// struct value column on a copy (#8354) — so releasing it without owning the
+// BEFORE the set's own __map_cow_inplace. The ORDER is what makes the gate
+// necessary: at that point no copy has been made, so no claim exists yet
+// whatever __map_own_copied_cols would go on to do, and a second handle over
+// the same buffer still names the value. Releasing it without owning the
 // handle frees storage the other handle reads. `m` is re-evaluated here, which
 // the pre-drop gates already require of it.
 func (b *builder) emitMapPredropSoleOwnerGate(m ast.Expr) error {

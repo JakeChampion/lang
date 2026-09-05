@@ -30,7 +30,7 @@ runs:
   using: composite
   steps:
     # Every version comes from mise.toml + mise.lock; nothing is pinned here.
-    # The mise release itself is mise.toml's min_version, and
+    # The mise release itself is mise.toml's [env] FERN_MISE_VERSION, and
     # internal/sourcelint fails when the two disagree.
     #
     # Two profiles, one per install set, because they must NOT share a cache: a

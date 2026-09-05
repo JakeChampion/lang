@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// mise.toml's min_version is the one mise release the repo runs: the shell
+// mise.toml's FERN_MISE_VERSION is the one mise release the repo runs: the shell
 // bootstrap (scripts/toolchain-env) installs exactly it, and every
 // jdx/mise-action step in .github/ has to pass the same value as `version:`.
 // The action input cannot read the file, so this test is what keeps the two
@@ -21,9 +21,14 @@ func TestMiseActionPinsTheMiseRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read mise.toml: %v", err)
 	}
-	m := regexp.MustCompile(`(?m)^min_version = "([^"]+)"`).FindSubmatch(toml)
+	m := regexp.MustCompile(`(?m)^FERN_MISE_VERSION = "([^"]+)"`).FindSubmatch(toml)
 	if m == nil {
-		t.Fatal("mise.toml has no top-level min_version; the mise release is pinned there")
+		t.Fatal("mise.toml has no FERN_MISE_VERSION under [env]; the mise release is pinned there")
+	}
+	// A top-level min_version is a floor every mise reading this file enforces,
+	// including one in a build sandbox nobody controls (#8423).
+	if regexp.MustCompile(`(?m)^min_version = `).Match(toml) {
+		t.Error("mise.toml declares min_version again; the release pin belongs in [env] FERN_MISE_VERSION, see #8423")
 	}
 	want := string(m[1])
 
@@ -58,7 +63,7 @@ func TestMiseActionPinsTheMiseRelease(t *testing.T) {
 				}
 			}
 			if got != want {
-				t.Errorf("%s:%d: jdx/mise-action step passes version %q, mise.toml min_version is %q", path, i+1, got, want)
+				t.Errorf("%s:%d: jdx/mise-action step passes version %q, mise.toml FERN_MISE_VERSION is %q", path, i+1, got, want)
 			}
 		}
 		return nil
