@@ -593,7 +593,8 @@ pub function __map_has_impl(m: usize, k: usize): boolean {
 // drop, 5 = string); for kinds 2/3 the high bytes carry the value
 // element stride in bytes (the IR's mapValTag), which is what
 // __map_val_stride reads — a kind-0 column packs its cell size
-// there instead (__map_val_cell_bytes). Kinds 4 and 5 carry no
+// there instead (__map_val_cell_bytes), and so does a kind-5 one
+// on a boxing ABI (__map_str_val_cell_bytes). Kind 4 carries no
 // size byte.
 function __map_val_kind(buf: usize): i32 {
     return __load_i32(buf + 12) & 255;

@@ -3035,18 +3035,25 @@ func lastRcIsUniqueBefore(p *Program, fnName string, at int) int {
 	return -1
 }
 
-// TestLowerMapOverwritePreDropsAreSoleOwnerGated pins the invariant across
-// EVERY overwrite pre-drop, not one shape of it: each releases the value the
-// set is about to replace and runs BEFORE the set's own __map_cow_inplace, so
-// a second handle over the same buffer still names that value. #8354 leaves
-// both the string and the struct value column shared on a COW copy, so an
-// ungated pre-drop frees what the other handle reads.
+// TestLowerMapOverwritePreDropsAreSoleOwnerGated pins the invariant over
+// whatever overwrite pre-drops exist, rather than one shape of one: a pre-drop
+// releases the value the set is about to replace and runs BEFORE the set's own
+// __map_cow_inplace, so at that moment no copy has been made and a second
+// handle over the same buffer still names that value. Releasing it without
+// owning the handle frees storage the other handle reads.
 //
-// The struct (kind-4) leg is the one that shipped ungated. Its damage is
-// invisible to every counter: `var snap = m; m = m.insert(k, s)` over 200
-// rounds returns the WRONG value on all three backends while FERN_LEAKCHECK
-// reports allocs=2400 frees=2400 live_bytes=0 — the box is recycled under the
-// reader, so the heap balances exactly.
+// The kind-4 (struct / enum) pre-drop is the only one left — #8421 moved the
+// string release into __map_dec_value, past the COW, where the gate is
+// unnecessary because the buffer is already the setting handle's alone. The
+// string side is pinned from that direction instead, by
+// TestLowerMapStringValueOverwriteHasNoPreDrop: a pre-drop coming back beside
+// the runtime release would free the value twice.
+//
+// The kind-4 leg is the one that shipped ungated, and its damage is invisible
+// to every counter: `var snap = m; m = m.insert(k, s)` over 200 rounds returns
+// the WRONG value on all three backends while FERN_LEAKCHECK reports
+// allocs=2400 frees=2400 live_bytes=0 — the box is recycled under the reader,
+// so the heap balances exactly.
 func TestLowerMapOverwritePreDropsAreSoleOwnerGated(t *testing.T) {
 	cases := []struct {
 		name string
@@ -3059,30 +3066,22 @@ function build(): i32 {
     m = m.insert(1, Box { name: "th" + "ere" });
     return 0;
 }`},
-		{"string value, i32 key", `function build(): i32 {
-    var m: Map[i32, string] = map_new(8);
-    m = m.insert(1, "hello" + "world");
-    m = m.insert(1, "hello" + "there");
-    return 0;
-}`},
-		{"string value, string key", `function build(): i32 {
-    var k: string = "he" + "llo";
-    var m: Map[string, string] = map_new(8);
-    m = m.insert(k, "wor" + "ld");
-    m = m.insert(k, "the" + "re");
-    return 0;
-}`},
 	}
 	for _, tc := range cases {
 		for _, ptrW := range []int{4, 8} {
 			p := lowerSourceWith(t, tc.src, ptrW)
 			lookup := callOrderIn(p, "build", "__map_lookup_val", 0)
+			// Presence is asserted, not assumed. Every case here must emit a
+			// pre-drop on every ABI: a `continue` on absence is how this test
+			// would keep passing while covering nothing, which is what the
+			// deleted string cases had become once their pre-drop was erased.
 			if lookup < 0 {
-				continue // this shape emits no pre-drop on this ABI
+				t.Errorf("%s, ptrW=%d: no overwrite pre-drop emitted at all — either it moved (pin the absence, as the string one is) or this case has stopped covering anything:\n%s", tc.name, ptrW, p)
+				continue
 			}
 			for lookup >= 0 {
 				if lastRcIsUniqueBefore(p, "build", lookup) < 0 {
-					t.Errorf("%s, ptrW=%d: the overwrite pre-drop at op %d is not opened by __fern_rc_is_unique — it frees a value a COW copy still names (#8354):\n%s", tc.name, ptrW, lookup, p)
+					t.Errorf("%s, ptrW=%d: the overwrite pre-drop at op %d is not opened by __fern_rc_is_unique — it frees a value a COW copy still names:\n%s", tc.name, ptrW, lookup, p)
 					break
 				}
 				lookup = callOrderIn(p, "build", "__map_lookup_val", lookup+1)

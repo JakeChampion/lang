@@ -14603,12 +14603,14 @@ func (b *builder) callBody(n *ast.Call) error {
 	// hash/eq (see emitMapCall). The key is a raw pointer (never
 	// boxed — needBoxK is false), so the boxing helpers handle it as
 	// a plain pointer; the only difference is the runtime call routes
-	// to the `_keyed` variant. The key-by-key value reclamation
-	// predrop gates below probe the map by KEY, which the type-erased
-	// i32 lookup would do with the wrong hash for a struct key — so
-	// those gates are disabled here (an overwrite leaks the replaced
-	// value; struct keys themselves are not yet rc-reclaimed either —
-	// a bounded leak, no corruption — tracked as a follow-up). See #2671.
+	// to the `_keyed` variant. The kind-4 value-reclamation pre-drop
+	// below probes the map by KEY, which the type-erased i32 lookup
+	// would do with the wrong hash for a struct key — so that gate is
+	// disabled here (a struct-valued overwrite leaks the replaced value;
+	// struct keys themselves are not yet rc-reclaimed either — a bounded
+	// leak, no corruption — tracked as a follow-up). See #2671. A string
+	// value is unaffected: its release is in __map_dec_value, which the
+	// set reaches whatever the key kind is (#8421).
 	keyKind3 := len(n.TypeArgs) >= 1 && mapKeyKindTag(n.TypeArgs[0], b.ptrW) == 3
 	if id.Name == "__method_Map_set" && len(n.Args) == 3 && len(n.TypeArgs) >= 1 {
 		var vType ast.Type
@@ -20300,8 +20302,10 @@ func (b *builder) emitCellGet(n *ast.Call) error {
 // (the method returns void). For a `string` element this is an OVERWRITE:
 // the slot already holds a co-owned buffer, so pre-drop it (balancing the
 // retain at its set/construction) before storing the new value, and retain
-// an alias-shaped new value. Mirrors the Map[K,string] overwrite pre-drop
-// + set retain.
+// an alias-shaped new value. A Cell has no CoW seam for the release to sit
+// behind, which is what the Map[K, string] overwrite gained in #8421 — here
+// the pre-drop IS the mechanism, and it is sound because the slot is the
+// cell's alone.
 func (b *builder) emitCellSet(n *ast.Call) error {
 	elemType := b.cellElemType(n)
 	if _, isStr := elemType.(ast.StringType); !isStr {
