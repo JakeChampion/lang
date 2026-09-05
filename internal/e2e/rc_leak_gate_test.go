@@ -24,7 +24,7 @@ import (
 //
 // # Why a pinned baseline rather than a flat zero
 //
-// 24 of 272 cases leak on x86-64 today and 23 on arm64: the map and
+// 19 of 287 cases leak on x86-64 today, 17 on arm64 and 18 on wasm: the map and
 // closure drop paths do not fully reclaim, which is the same list the
 // corpus header names. A flat zero assertion could not land without
 // fixing all of that first, and deleting the leg until then is how the
@@ -33,7 +33,7 @@ import (
 // So each leaking case is pinned at its exact byte count and everything
 // else must be zero. What that buys, which nothing had before:
 //
-//   - the 248 (x86-64) / 249 (arm64) clean cases are now GATED. A change
+//   - the 268 (x86-64) / 270 (arm64) / 268 (wasm) clean cases are now GATED. A change
 //     that starts leaking in any of them fails here.
 //   - a new corpus case that leaks fails, because absent from the table
 //     means zero. Joining the leaking set is a deliberate act.
@@ -64,8 +64,6 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"closure_captures_arr_of_struct_churn_free":      14256,
 	"closure_captures_struct_churn_free":             6336,
 	"closure_churn_free":                             1584,
-	"closure_escapes_return":                         16,
-	"closure_capture_passed_to_owned_param":          64,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
@@ -85,7 +83,6 @@ var rcCorpusLeakBaselineX86_64 = map[string]int64{
 	"pair_form_payload_borrowing_call":            144,
 	"stdlib_json_cursor_idiom":                    1456,
 	"stdlib_json_roundtrip":                       640,
-	"string_closure_capture_churn_free":           3200,
 	"tuple_return_scalar_cursor_recursion":        320,
 	// The hand-back half of the guarded arg-temp release: the callee
 	// returned the temp unchanged, so the guard declined the drop and the
@@ -104,8 +101,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"closure_captures_arr_of_struct_churn_free":      14256,
 	"closure_captures_struct_churn_free":             6336,
 	"closure_churn_free":                             1584,
-	"closure_escapes_return":                         16,
-	"closure_capture_passed_to_owned_param":          80,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
 	// entry gone wrong: each now runs its own 500-round loop over its own map,
@@ -125,7 +120,6 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 	"pair_form_payload_borrowing_call":            144,
 	"stdlib_json_cursor_idiom":                    1664,
 	"stdlib_json_roundtrip":                       720,
-	"string_closure_capture_churn_free":           6400,
 	"tuple_return_scalar_cursor_recursion":        320,
 	// See the x86-64 twin — the same guarded hand-back, byte for byte.
 	"consumed_array_arg_temp_released_and_guarded": 128,
@@ -153,11 +147,9 @@ var rcCorpusLeakBaselineArm64 = map[string]int64{
 var rcCorpusLeakBaselineWasm = map[string]int64{
 	"closure_array_capture_churn":                   4752,
 	"closure_call_arg_handed_back_is_not_reclaimed": 1920,
-	"closure_capture_passed_to_owned_param":         64,
 	"closure_captures_arr_of_struct_churn_free":     14256,
 	"closure_captures_struct_churn_free":            6336,
 	"closure_churn_free":                            1584,
-	"closure_escapes_return":                        16,
 	"consumed_array_arg_temp_released_and_guarded":  128,
 	// The `m.without(k)` shapes, split out of one case so a fix to one
 	// can bank its own zero (#8276). They are NOT four times the old single
@@ -179,7 +171,6 @@ var rcCorpusLeakBaselineWasm = map[string]int64{
 	"pair_form_payload_borrowing_call":               144,
 	"stdlib_json_cursor_idiom":                       1232,
 	"stdlib_json_roundtrip":                          560,
-	"string_closure_capture_churn_free":              3200,
 	"string_pushed_then_returned_bare_stays_refused": 320,
 	"tuple_return_scalar_cursor_recursion":           320,
 }

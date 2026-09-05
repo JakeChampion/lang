@@ -14,10 +14,16 @@
 # it being visible; a row going DOWN is progress and also fails, so the
 # improvement gets recorded rather than absorbed.
 #
-# Measured 2026-09-05: 487 fixtures, 414 clean, 73 leaking, 7518
+# Measured 2026-09-05: 487 fixtures, 416 clean, 71 leaking, 7515
 # unpaired allocations. The distribution is heavily skewed — the median
 # leaking fixture is 2, and regex_captures_assert alone is 5987 of the
 # total.
+#
+# closure_adder (1 -> 0) and generic_fn_arg_capturing_lambda (2 -> 0) fell
+# with #8546: a closure whose captures are all scalar, passed as a
+# function-typed argument, keeps its pair and now releases its env through
+# __drop_closure_value like the rc-capture case #8545 fixed, instead of
+# the generic drop freeing the pair block alone.
 #
 # arrow_lambda_block_body is back to 0, and #8550's diagnosis was right:
 # #2673 extended the fixture with capturing void lambdas, and the three
@@ -144,7 +150,7 @@ chained_array_methods                                50
 chained_methods                                      0
 char_byte_literals                                   0
 char_cast_receiver                                   0
-closure_adder                                        1
+closure_adder                                        0
 closure_capture_shared_cell                          0
 closure_captures_defining_scope                      0
 closure_field_match                                  600
@@ -233,7 +239,7 @@ generic_associated_fn                                0
 generic_box                                          0
 generic_call_in_struct_field                         0
 generic_float_literal_arg                            0
-generic_fn_arg_capturing_lambda                      2
+generic_fn_arg_capturing_lambda                      0
 generic_fnarg_typevar                                0
 generic_fold_accumulator_reclaim                     0
 generic_id                                           0

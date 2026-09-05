@@ -1396,17 +1396,19 @@ func (b *builder) emitRcDecLocalsAtExitExcept(exclude string) {
 			}
 			return
 		}
-		// Closure reclamation: an OWNED FuncType local frees its env /
-		// pair rc1 block at the last reference (rc==1). When the local
-		// has a single known closure source with rc-tracked captures
+		// Closure reclamation: an OWNED FuncType local frees its env
+		// rc1 block at the last reference (rc==1). When the local has a
+		// single known closure source with rc-tracked captures
 		// (closureTarget), dispatch to that closure's
 		// __closure_drop_<name> thunk, which ALSO frees the captured
 		// pointer targets before freeing the env (Stage 3). Otherwise
-		// the generic __fern_closure_drop frees just the env (Stage 2;
-		// captures leak). Either way a single load+call keeps
-		// ElideClosurePair's reader recognising the drop as benign.
-		// Ineligible (borrowed / escaping) closures and flag-off
-		// builds fall through to the plain dec.
+		// the generic __fern_closure_drop frees just the env (Stage 2).
+		// Both read the slot as a BARE env; a single load+call keeps
+		// ElideClosurePair's reader recognising the drop as benign, and
+		// a slot that does not elide has its drop rerouted there to the
+		// pair-aware __drop_closure_value. Ineligible (borrowed /
+		// escaping) closures and flag-off builds fall through to the
+		// plain dec.
 		if _, isFunc := t.(*ast.FuncType); isFunc && ast.RcFreeEnabled && eligible {
 			dropFn, dropWidth := "__fern_closure_drop", ResAddr
 			tgt := b.closureTarget[name]

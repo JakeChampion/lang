@@ -3372,26 +3372,23 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 		for _, fn := range out.Funcs {
 			enqueueCalls(fn.Ops)
 		}
-		// A closure local whose slot does not elide keeps its {fn, env}
-		// pair, and ElideClosurePair rewrites that slot's
-		// __closure_drop_<name> to __drop_closure_value — but it runs
-		// AFTER this worklist, so the rewrite would name a function
-		// nothing generated. Seed it from the rewrite's two
-		// preconditions: a pair exists, and some slot's drop is a
-		// per-closure thunk. The per-backend dead-function cull removes
-		// it again when every such slot turned out to elide.
-		var sawPair, sawThunkDrop bool
+		// A closure local whose slot does not elide keeps its pair, and
+		// ElideClosurePair reroutes that slot's drop to
+		// __drop_closure_value. That pass runs after this worklist and
+		// cannot append the function itself: the emitters pair IR to the
+		// AST decls by name, and only this worklist adds the stub decl.
+		// So seed it from the one precondition visible here — some slot
+		// carries a closure-local drop — and let the per-backend
+		// dead-function cull remove it when every such slot elided.
+		sawClosureDrop := false
 		for _, fn := range out.Funcs {
-			for _, op := range fn.Ops {
-				if op.Kind == OpMakeClosure {
-					sawPair = true
-				}
-				if op.Kind == OpCallDirect && strings.HasPrefix(op.Str, "__closure_drop_") {
-					sawThunkDrop = true
+			for i := range fn.Ops {
+				if closureLocalDropAt(fn, i) {
+					sawClosureDrop = true
 				}
 			}
 		}
-		if sawPair && sawThunkDrop && !queued["__drop_closure_value"] {
+		if sawClosureDrop && !queued["__drop_closure_value"] {
 			queued["__drop_closure_value"] = true
 			work = append(work, "__drop_closure_value")
 		}

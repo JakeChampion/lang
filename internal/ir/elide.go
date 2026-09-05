@@ -46,7 +46,11 @@
 
 package ir
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/jakechampion/lang/internal/ast"
+)
 
 // ElideClosurePair drops dead closure-pair allocations in each
 // function. Programs without OpMakeClosure are unchanged in O(N)
@@ -63,6 +67,26 @@ func ElideClosurePair(prog *Program, pairEnvOffset int32) {
 	for _, fn := range prog.Funcs {
 		elideClosurePairFunc(fn, pairEnvOffset)
 	}
+}
+
+// isClosureLocalDrop reports whether name is a drop emitDec places on an
+// owned closure local at its last reference: the generic
+// __fern_closure_drop, or the per-closure __closure_drop_<name> thunk.
+func isClosureLocalDrop(name string) bool {
+	return name == "__fern_closure_drop" || strings.HasPrefix(name, "__closure_drop_")
+}
+
+// closureLocalDropAt reports whether fn.Ops[i] starts such a drop: the
+// load of a closure-typed slot followed by the call. The slot type is
+// what separates it from a `[T]` slice header's release, which goes
+// through the same generic helper.
+func closureLocalDropAt(fn *Func, i int) bool {
+	if i+1 >= len(fn.Ops) || fn.Ops[i].Kind != OpLoadLocal ||
+		fn.Ops[i+1].Kind != OpCallDirect || !isClosureLocalDrop(fn.Ops[i+1].Str) {
+		return false
+	}
+	_, isFunc := slotTypeAt(fn, fn.Ops[i].I32).(*ast.FuncType)
+	return isFunc
 }
 
 func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
@@ -213,9 +237,7 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 			// a BARE ENV (no pair), which is exactly what the thunk
 			// assumes when it reads captures at [env+offset].
 			if !r.canonicalOk && !r.aliasOk && i+1 < len(fn.Ops) &&
-				fn.Ops[i+1].Kind == OpCallDirect &&
-				(fn.Ops[i+1].Str == "__fern_closure_drop" ||
-					strings.HasPrefix(fn.Ops[i+1].Str, "__closure_drop_")) {
+				fn.Ops[i+1].Kind == OpCallDirect && isClosureLocalDrop(fn.Ops[i+1].Str) {
 				continue
 			}
 			if !r.canonicalOk && !r.aliasOk {
@@ -327,23 +349,24 @@ func elideClosurePairFunc(fn *Func, pairEnvOffset int32) {
 		}
 	}
 
-	// A per-closure __closure_drop_<name> thunk reads captures at
-	// [env+offset], so it's only correct when the closure is a BARE
-	// ENV — i.e. the slot was elided above. For a closure that did
-	// NOT elide — one passed to a function, the ordinary callback —
-	// the slot still holds a {fn, env} PAIR, so route its drop through
+	// The drop emitDec placed on a closure local reads the slot as a BARE
+	// env: the per-closure __closure_drop_<name> thunk reads captures at
+	// [env+offset], the generic __fern_closure_drop frees the one block it
+	// is handed. That holds only for a slot elided above. A slot that did
+	// NOT elide — the closure was passed to a function — still holds the
+	// {fn, env, drop_fn, env} pair, so its drop goes through
 	// __drop_closure_value, which is_unique-gates the pair, dispatches
-	// through the drop-fn pointer the pair carries at 2*ptrW (that
-	// pointer IS the thunk, reached with the env rather than the pair)
-	// and then frees the pair block.
-	for i := 0; i+1 < len(fn.Ops); i++ {
-		if fn.Ops[i].Kind != OpLoadLocal || elidedSlot[fn.Ops[i].I32] {
-			continue
-		}
-		n := fn.Ops[i+1]
-		if n.Kind == OpCallDirect && strings.HasPrefix(n.Str, "__closure_drop_") {
+	// through the drop-fn pointer at 2*ptrW (the thunk, reached with the
+	// env) and then frees the pair block. Generated drop glue is skipped:
+	// its own __fern_closure_drop releases the pair it was handed.
+	if !isGeneratedDrop(fn.Name) {
+		for i := 0; i+1 < len(fn.Ops); i++ {
+			if elidedSlot[fn.Ops[i].I32] || !closureLocalDropAt(fn, i) {
+				continue
+			}
 			fn.Ops[i+1].Str = "__drop_closure_value"
 			fn.Ops[i+1].Width = 0
+			fn.Ops[i+1].Runtime = false
 		}
 	}
 

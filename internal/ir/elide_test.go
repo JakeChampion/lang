@@ -145,3 +145,85 @@ func TestElideKeepsEscapingClosure(t *testing.T) {
 		t.Errorf("expected OpMakeClosure to survive escape, got 0:\n%s", p)
 	}
 }
+
+// A closure local that does NOT elide holds a {fn, env, drop_fn, env} pair,
+// and the drop emitDec placed on it reads a bare env: the generic
+// __fern_closure_drop when every capture is scalar (#8546), the per-closure
+// thunk otherwise (#8545). Both must be rerouted to the pair-aware
+// __drop_closure_value — and only in the user function: the helper's own
+// __fern_closure_drop releases the pair it was handed and must stay.
+func TestElideRoutesNonElidedScalarCaptureDropThroughPair(t *testing.T) {
+	p := loweredAndDefuncdAndElided(t, `@noinline
+	function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
+	function main(): i32 {
+		var sink: i32 = 0;
+		var add = (x: i32) => sink + x;
+		return apply(add, 4) - 4;
+	}`)
+	main := findFunc(p, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	if got := countOps(main, OpMakeClosure); got != 1 {
+		t.Fatalf("expected the pair to survive being passed to apply, got %d OpMakeClosure:\n%s", got, p)
+	}
+	var pairDrops, bareDrops int
+	for _, op := range main.Ops {
+		if op.Kind != OpCallDirect {
+			continue
+		}
+		switch {
+		case op.Str == "__drop_closure_value":
+			pairDrops++
+		case isClosureLocalDrop(op.Str):
+			bareDrops++
+		}
+	}
+	if pairDrops != 1 || bareDrops != 0 {
+		t.Errorf("main: want one __drop_closure_value and no bare closure drop on the pair slot, got %d / %d:\n%s", pairDrops, bareDrops, p)
+	}
+	helper := findFunc(p, "__drop_closure_value")
+	if helper == nil {
+		t.Fatalf("__drop_closure_value not generated for a program whose closure drop is the generic one:\n%s", p)
+	}
+	for _, op := range helper.Ops {
+		if op.Kind == OpCallDirect && op.Str == "__drop_closure_value" {
+			t.Fatalf("__drop_closure_value's own pair release was rewritten into a call to itself:\n%s", p)
+		}
+	}
+}
+
+// The slot need not come from OpMakeClosure: a named function bound to a
+// local is a static function-value cell, and its exit-sweep drop is the
+// same generic one. The rewrite fires on it and the helper it names must
+// exist even though the program allocates no pair at all — the shape that
+// failed to link every slice-view program when the helper was generated
+// from an OpMakeClosure sighting (#8546).
+func TestElideReroutesStaticFunctionValueDrop(t *testing.T) {
+	p := loweredAndDefuncdAndElided(t, `@noinline
+	function apply(f: (i32) => i32, v: i32): i32 { return f(v); }
+	function succ(x: i32): i32 { return x + 1; }
+	function main(): i32 {
+		var g = succ;
+		return apply(g, 4) - 5;
+	}`)
+	main := findFunc(p, "main")
+	if main == nil {
+		t.Fatal("main not found")
+	}
+	if got := countOps(main, OpMakeClosure); got != 0 {
+		t.Fatalf("expected no pair for a named function value, got %d OpMakeClosure:\n%s", got, p)
+	}
+	var pairDrops int
+	for _, op := range main.Ops {
+		if op.Kind == OpCallDirect && op.Str == "__drop_closure_value" {
+			pairDrops++
+		}
+	}
+	if pairDrops != 1 {
+		t.Errorf("main: want one __drop_closure_value on the function-value slot, got %d:\n%s", pairDrops, p)
+	}
+	if findFunc(p, "__drop_closure_value") == nil {
+		t.Fatalf("__drop_closure_value named but not generated:\n%s", p)
+	}
+}
