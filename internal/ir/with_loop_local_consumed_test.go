@@ -60,9 +60,14 @@ function consumedScalar(n: i32): i32 {
 function main(): i32 { return 0; }`
 
 // cowReceiverNulled reports whether every __fern_arr_cow_inplace* call in fn
-// is preceded by a null store into the slot the receiver was just loaded
-// from: `local.load S; const.i32 0; local.store S; const.i32 stride; call`.
-// A function with no cow call reports false.
+// takes a receiver whose slot was nulled where it was handed over — the
+// hand-off shape `local.load S; const.i32 0; local.store S`, S being the
+// receiver's own slot. A function with no cow call reports false.
+//
+// The receiver reaches the call through the buffer slot the CoW decision
+// writes, so the hand-off is followed by `local.store B` and B is what the
+// call reads (emitCowInplace); a receiver the analysis says is still live is
+// inc'd instead and calls with no such slot in between.
 func cowReceiverNulled(fn *Func) bool {
 	found := false
 	for i, op := range fn.Ops {
@@ -70,13 +75,29 @@ func cowReceiverNulled(fn *Func) bool {
 			continue
 		}
 		found = true
-		if i < 4 || fn.Ops[i-1].Kind != OpConstI32 ||
-			fn.Ops[i-2].Kind != OpStoreLocal || fn.Ops[i-3].Kind != OpConstI32 || fn.Ops[i-3].I32 != 0 ||
-			fn.Ops[i-4].Kind != OpLoadLocal || fn.Ops[i-4].I32 != fn.Ops[i-2].I32 {
+		if i+1 >= len(fn.Ops) || fn.Ops[i+1].Kind != OpStoreLocal {
+			return false
+		}
+		if !cowHandOffNulled(fn.Ops, i, fn.Ops[i+1].I32) {
 			return false
 		}
 	}
 	return found
+}
+
+// cowHandOffNulled walks back from the call at `call` to the store that bound
+// the buffer slot `buf`, and reports whether the receiver's own slot was
+// nulled immediately before it.
+func cowHandOffNulled(ops []Op, call int, buf int32) bool {
+	for j := call - 1; j >= 3; j-- {
+		if ops[j].Kind != OpStoreLocal || ops[j].I32 != buf {
+			continue
+		}
+		return ops[j-1].Kind == OpStoreLocal &&
+			ops[j-2].Kind == OpConstI32 && ops[j-2].I32 == 0 &&
+			ops[j-3].Kind == OpLoadLocal && ops[j-3].I32 == ops[j-1].I32
+	}
+	return false
 }
 
 // `it` is transferred into the `.with`: its slot is nulled at the call, and
