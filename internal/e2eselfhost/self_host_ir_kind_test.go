@@ -84,9 +84,11 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	if got := string(out); got != want+string(table) {
 		t.Errorf("kind registry report mismatch:\n--- got ---\n%s\n--- want ---\n%s%s", got, want, table)
 	}
-	// Exit code is the bijection-failure count — 0 proves the whole 196-entry
-	// table round-tripped, an independent check of the report's bijection_ok.
+	// Exit code totals the failures of all four sweeps — bijection over the
+	// dense ids, over the ext ids, the negative sweep, and the tag census. 0
+	// proves every one of the 233 tags round-tripped AND that no near miss
+	// resolved, an independent check of the report's own _ok flags.
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("ir_kind_run exit code = %d, want 0 (bijection failures)", code)
+		t.Errorf("ir_kind_run exit code = %d, want 0 (total failures across the four sweeps)", code)
 	}
 }
