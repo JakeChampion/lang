@@ -240,6 +240,9 @@ int_min_arithmetic                                   0
 int_saturating_ops                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
+io_error_other_closed_stdout                         5
+io_error_other_is_a_directory                        3
+io_error_other_not_a_directory                       2
 iter_build_consume                                   0
 json_array_field                                     0
 json_error_location                                  55
@@ -453,6 +456,9 @@ sum_10_args_order_check                              0
 sum_12_args_order_check                              0
 sum_8_args                                           0
 sxtw_preserves_sign                                  0
+target_os_linux                                      0
+target_os_named                                      0
+target_os_wasi                                       0
 tco_sum                                              0
 three_arms_bind_p                                    0
 time_leap                                            0

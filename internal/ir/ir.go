@@ -2895,7 +2895,17 @@ type lowerOpts struct {
 	// LowerWith publish the resulting table as Program.CoverSites. Off by
 	// default: an ordinary build emits no coverage op at all.
 	coverPoints bool
+	// targetOS is the environment `target_os()` answers with when a call
+	// reaches the lowering unfolded. Empty selects the pointer width's
+	// default environment (wasi for 4, linux for 8).
+	targetOS string
 }
+
+// WithTargetOS names the environment the lowering compiles for, so an
+// unfolded `target_os()` lowers to that literal. The driver folds the call
+// before the checker (constfold.Inputs.TargetOS) and never needs this; a
+// harness that lowers a checked program directly does.
+func WithTargetOS(os string) LowerOption { return func(o *lowerOpts) { o.targetOS = os } }
 
 // DynSupported marks the calling backend as able to lower `dyn Trait`
 // DISPATCH (boxed one-word on natives, §4.2.2). Both x86-64 and arm64
@@ -2920,6 +2930,20 @@ func EmitLineMarkers() LowerOption { return func(o *lowerOpts) { o.emitLineMarke
 // with an OpCoverPoint and publish the counter table as
 // Program.CoverSites (#5548, `fern -cover`). Off by default.
 func CoverPoints() LowerOption { return func(o *lowerOpts) { o.coverPoints = true } }
+
+// targetOSFor is the environment an unfolded `target_os()` lowers to:
+// the one the caller named, else the pointer width's only default —
+// wasm32 is wasi, and a native lowering that did not say otherwise is
+// linux.
+func targetOSFor(named string, ptrW int) string {
+	if named != "" {
+		return named
+	}
+	if ptrW == 4 {
+		return "wasi"
+	}
+	return "linux"
+}
 
 // LowerWith is the pointer-width-aware variant. `ptrW` is 4 on
 // wasm32 and 8 on arm64; it sizes pointer-typed enum payloads,
@@ -3175,7 +3199,7 @@ func LowerWith(prog *ast.Program, info *checker.Info, ptrW int, opts ...LowerOpt
 			out.Externs = append(out.Externs, ef)
 			continue
 		}
-		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
+		f, err := lowerFunc(fn, info, ptrW, lo.dynRcSupported, lo.emitLineMarkers, targetOSFor(lo.targetOS, ptrW), cover, pairForm, closureCaps, genEnumDrops, genTupleDrops, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox, trmcFuncs, trmcConsumeSafe, paramEscapes, returnsParamProjection, paramCountedRetain, consumedArrayArgPos, readOnlyComparators, vtableDispatched, addressTaken, growParams, paramFieldObs)
 		if err != nil {
 			return nil, err
 		}
@@ -5324,6 +5348,8 @@ type builder struct {
 	// statements sharing a line.
 	emitLineMarkers bool
 	lastLineMark    int
+	// targetOS is what an unfolded `target_os()` lowers to.
+	targetOS string
 	// cover is the program-wide coverage counter table under
 	// `fern -cover`, nil otherwise; lastCoverLine dedups statements that
 	// share a line WITHIN one basic block. emit() clears it at every
@@ -5715,7 +5741,7 @@ type variantDrop struct {
 	size  int32
 }
 
-func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
+func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bool, emitLineMarkers bool, targetOS string, cover *coverTable, pairForm map[string]bool, closureCaps map[string][]ast.Param, genEnumDrops map[string]*ast.EnumDecl, genTupleDrops map[string]ast.TupleType, returnsNoParamEscape, returnsFreshPairPayload, returnsFreshBox map[string]bool, trmcFuncs, trmcConsumeSafe map[string]bool, paramEscapes map[string][]bool, returnsParamProjection map[string]bool, paramCountedRetain map[string][]bool, consumedArrayArgPos map[string][]bool, readOnlyComparators map[string]bool, vtableDispatched map[string]bool, addressTaken map[string]bool, growParams map[string][]growParam, paramFieldObs map[string][]fieldObs) (*Func, error) {
 	out := &Func{
 		Name:       fn.Name,
 		Params:     fn.Params,
@@ -5734,6 +5760,7 @@ func lowerFunc(fn *ast.FuncDecl, info *checker.Info, ptrW int, dynRcSupported bo
 		ptrW:                    ptrW,
 		dynRcSupported:          dynRcSupported,
 		emitLineMarkers:         emitLineMarkers,
+		targetOS:                targetOS,
 		cover:                   cover,
 		coverFile:               fn.SourceFile,
 		pairForm:                pairForm,
@@ -14151,13 +14178,14 @@ func (b *builder) callBody(n *ast.Call) error {
 			return b.emitCellNew(n)
 		}
 	}
-	// target_os() is a compile-time constant: constfold.FoldWith replaces
-	// the call with the target's environment before the check, so one
-	// reaching the lowering means a driver compiled without saying what
-	// it was compiling for. No backend has a runtime answer to offer.
+	// target_os() is a compile-time constant. The driver folds it before
+	// the check (constfold.Inputs.TargetOS); a call that still reaches the
+	// lowering becomes the literal here, so the const-if prune that
+	// follows sees the same thing either way.
 	if id.Name == "target_os" && len(n.Args) == 0 {
 		if _, isLocal := b.locals[id.Name]; !isLocal {
-			return fmt.Errorf("%s: target_os() was not resolved for a target — the driver must fold it (constfold.Inputs.TargetOS) before lowering", n.P)
+			b.emit(Op{Kind: OpConstStr, Str: b.targetOS})
+			return nil
 		}
 	}
 	if id.Name == "__method_Cell_get" && len(n.Args) == 1 {
