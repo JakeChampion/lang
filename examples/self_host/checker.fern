@@ -2701,48 +2701,14 @@ function type_assignable(from: Type, to: Type, unions: UnionSig[]): boolean {
   return false;
 }
 
-// type_from_name resolves a parser-side bare type-name string to
-// a Type. Unrecognised names surface as TypeUnknown so the checker
-// can flag bogus signatures without hard-failing the whole check.
-// Every type-name resolver below maps i32 / i64 / u32 / u64 to a width-tagged
-// TypeI32 (see the struct comment). Before this, the wider widths resolved to
-// t_unknown, so a receiver method on one (`function (x: i64) …`) tripped the
-// E021 receiver-type gate, and a call site
-// couldn't recover the width to dispatch.
+// type_from_name resolves a parser-side bare type-name string with NO name
+// context — the cast-target resolver, where the target is a primitive.
+// Unrecognised names surface as TypeUnknown so the checker can flag bogus
+// signatures without hard-failing the whole check. i32 / i64 / u32 / u64 all map
+// to a width-tagged TypeI32 (see the struct comment), which is what lets a
+// receiver method on one pass the E021 gate and a call site recover the width.
 function type_from_name(name: string): Type {
-  if (name == "i32") {
-    return t_i32();
-  }
-  // `char` erases to an i32 SLOT, but it is not i32: it carries its own
-  // method surface, so it resolves to t_char() and dispatches under "char".
-  if (name == "char") {
-    return t_char();
-  }
-  if (name == "i64") {
-    return t_i64();
-  }
-  if (name == "u8") {
-    return t_u8();
-  }
-  if (name == "u32") {
-    return t_u32();
-  }
-  if (name == "u64") {
-    return t_u64();
-  }
-  if (name == "boolean") {
-    return t_bool();
-  }
-  if (name == "string") {
-    return t_string();
-  }
-  if (name == "f64" || name == "f32" || name == "float") {
-    return t_float();
-  }
-  if (name == "void") {
-    return t_void();
-  }
-  return t_unknown("unrecognised type name: " + name);
+  return type_from_spelling(name, [], []);
 }
 
 // =================== CHECKER ====================
@@ -4281,122 +4247,50 @@ function collect_struct_sigs(structs: parser.StructDecl[], union_names: string[]
   return out;
 }
 
-// type_from_name_with_structs / type_from_name_with_struct_names
-// extend type_from_name with struct-name resolution. The
-// `_with_struct_names` variant takes just the name set
-// (cheaper to build up-front); the `_with_structs` variant
-// takes the full StructSig[] for callers that already have it.
+// The five type-name resolvers. All map a type SPELLING to a Type and differ
+// only in the name context they carry — full StructSig[]/UnionSig[] tables, bare
+// name lists, or nothing — so all five funnel through one ladder
+// (type_from_spelling -> type_from_ref_names). Sharing it is what stops them
+// disagreeing about a SHAPE: a resolver modelling fewer of them answers
+// `unknown`, and an unknown type widens silently into every consumer (#8459).
 pub function type_from_name_with_structs(name: string, structs: StructSig[]): Type {
-  // Array suffix `Elem[]` → TypeArray of the recursively-resolved element, one
-  // `[]` per level. Detected via the structured TypeRef (SH-021 — parse_type_ref
-  // peels the trailing `[]`s into array_depth) instead of the magic-byte
-  // `[`(91)/`]`(93) scan; byte-identical (both detect a literal trailing `[]`,
-  // and a depth-0 name — incl. a generic/tuple that ends in `]`/`)` — resolves
-  // by its full spelling exactly as before).
-  var r: parser.TypeRef = parser.parse_type_ref(name);
-  if (r.array_depth > 0) {
-    var elem: parser.TypeRef = parser.elem_type_ref(r);
-    return t_array(type_from_name_with_structs(parser.render_type_ref(elem), structs));
-  }
-  if (name == "i32") {
-    return t_i32();
-  }
-  // Every resolver must know `char`. It was in type_from_name alone, so the
-  // other four fell through to t_unknown and the checker silently skipped
-  // every check on a char value — a bogus char method went unreported while
-  // the Go checker raised E043 (#5922).
-  if (name == "char") {
-    return t_char();
-  }
-  if (name == "i64") {
-    return t_i64();
-  }
-  if (name == "u8") {
-    return t_u8();
-  }
-  if (name == "u32") {
-    return t_u32();
-  }
-  if (name == "u64") {
-    return t_u64();
-  }
-  if (name == "boolean") {
-    return t_bool();
-  }
-  if (name == "string") {
-    return t_string();
-  }
-  if (name == "f64" || name == "f32" || name == "float") {
-    return t_float();
-  }
-  if (name == "void") {
-    return t_void();
-  }
-  for sd in structs {
-    if (sd.name == name) {
-      return t_struct(name);
-    }
-  }
-  return t_unknown("unrecognised type name: " + name);
+  return type_from_spelling(name, struct_sig_names(structs), []);
 }
 
 pub function type_from_name_with_struct_names(name: string, struct_names: string[]): Type {
-  // Array suffix `Elem[]` → TypeArray of the recursively-resolved element (incl.
-  // cross-module `mod__T[]`), via the structured TypeRef's array_depth (SH-021)
-  // rather than the magic-byte `[`/`]` scan. Byte-identical.
-  var r: parser.TypeRef = parser.parse_type_ref(name);
-  if (r.array_depth > 0) {
-    var elem: parser.TypeRef = parser.elem_type_ref(r);
-    return t_array(type_from_name_with_struct_names(parser.render_type_ref(elem), struct_names));
-  }
-  if (name == "i32") {
-    return t_i32();
-  }
-  // Every resolver must know `char`. It was in type_from_name alone, so the
-  // other four fell through to t_unknown and the checker silently skipped
-  // every check on a char value — a bogus char method went unreported while
-  // the Go checker raised E043 (#5922).
-  if (name == "char") {
-    return t_char();
-  }
-  if (name == "i64") {
-    return t_i64();
-  }
-  if (name == "u8") {
-    return t_u8();
-  }
-  if (name == "u32") {
-    return t_u32();
-  }
-  if (name == "u64") {
-    return t_u64();
-  }
-  if (name == "boolean") {
-    return t_bool();
-  }
-  if (name == "string") {
-    return t_string();
-  }
-  if (name == "f64" || name == "f32" || name == "float") {
-    return t_float();
-  }
-  if (name == "void") {
-    return t_void();
-  }
-  for struct_name in struct_names {
-    if (struct_name == name) {
-      return t_struct(name);
-    }
-  }
-  return t_unknown("unrecognised type name: " + name);
+  return type_from_spelling(name, struct_names, []);
 }
 
-// type_from_name_with_structs_unions / _with_names_and_unions
-// extend the resolver to recognise union aliases. Order of
-// resolution: primitives → structs → unions → unknown. A
-// struct name and an alias name can't collide because
-// collect_union_sigs rejects the overlap at module build time.
+// The two `_unions` resolvers are the context that can also name a union alias.
+// A struct name and an alias name can't collide — collect_union_sigs rejects the
+// overlap at module build time.
 pub function type_from_name_with_structs_unions(name: string, structs: StructSig[], unions: UnionSig[]): Type {
+  return type_from_spelling(name, struct_sig_names(structs), union_sig_names(unions));
+}
+
+pub function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): Type {
+  return type_from_spelling(name, struct_names, union_names);
+}
+
+function struct_sig_names(structs: StructSig[]): string[] {
+  var out: string[] = [];
+  for sd in structs {
+    out = out.append(sd.name);
+  }
+  return out;
+}
+
+function union_sig_names(unions: UnionSig[]): string[] {
+  var out: string[] = [];
+  for u in unions {
+    out = out.append(u.name);
+  }
+  return out;
+}
+
+// type_from_spelling is the entry every resolver funnels through: the `dyn `
+// prefix (which is not a TypeRef spelling), then the structured decode.
+function type_from_spelling(name: string, struct_names: string[], union_names: string[]): Type {
   // A `dyn Trait` annotation ("dyn Greet", "dyn A + B", or an array
   // `dyn Greet[]`) resolves to a TypeDyn carrying the trait-set text after
   // the `dyn ` prefix — parse_type_ref doesn't model the `dyn ` keyword, and
@@ -4417,26 +4311,29 @@ pub function type_from_name_with_structs_unions(name: string, structs: StructSig
     }
     return dt;
   }
-  return type_from_ref_su(parser.parse_type_ref(name), structs, unions);
+  return type_from_ref_names(parser.parse_type_ref(name), struct_names, union_names);
 }
 
-// type_from_ref_su is type_from_name_with_structs_unions over the structured
-// TypeRef (SH-021): parse the spelling once, then pattern-match on the tree
-// instead of the former array-suffix / tuple / `Map[` first-comma byte scans. It
-// is byte-identical to that scan — the resolution order (primitives → array →
-// tuple → Map → struct → union → unknown) and every fallthrough are preserved,
-// and the `unrecognised type name: <spelling>` reasons render the same spelling
-// the scan sliced. `render_type_ref(r)` recovers a node's canonical spelling for
-// the scalar / struct / union name compares and the unknown reason; for canonical
-// inputs (what the parser feeds every caller) this equals the original substring.
+// type_from_ref_su resolves a TypeRef against the full signature tables — the
+// shape type_from_ref_subst and the generic-inference helpers already hold.
 function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: UnionSig[]): Type {
+  return type_from_ref_names(r, struct_sig_names(structs), union_sig_names(unions));
+}
+
+// type_from_ref_names is the one resolution ladder: parse the spelling once
+// (parse_type_ref), then pattern-match on the tree. Resolution order is
+// primitives → array → fn → tuple → Map → builtin generic enum → generic
+// instantiation → struct → union → unknown. `render_type_ref(r)` recovers a
+// node's canonical spelling for the scalar / struct / union name compares and
+// the unknown reason; for canonical inputs (what the parser feeds every caller)
+// this equals the original substring.
+function type_from_ref_names(r: parser.TypeRef, struct_names: string[], union_names: string[]): Type {
   // Array suffix `Elem[]` → TypeArray of the element, one `[]` peeled per level
-  // (so `X[][]` nests), exactly as the old array branch (checked FIRST, so a
-  // `Map[…][]` / `(A, B)[]` array wraps its element rather than being read as a
-  // generic / tuple).
+  // (so `X[][]` nests). Checked FIRST, so a `Map[…][]` / `(A, B)[]` array wraps
+  // its element rather than being read as a generic / tuple.
   if (r.array_depth > 0) {
     var elem: parser.TypeRef = parser.elem_type_ref(r);
-    return t_array(type_from_ref_su(elem, structs, unions));
+    return t_array(type_from_ref_names(elem, struct_names, union_names));
   }
   // array_depth == 0 below. `name` is this node's canonical spelling — the
   // primitive / struct / union key and the unknown-reason text.
@@ -4444,10 +4341,10 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
   if (name == "i32") {
     return t_i32();
   }
-  // Every resolver must know `char`. It was in type_from_name alone, so the
-  // other four fell through to t_unknown and the checker silently skipped
-  // every check on a char value — a bogus char method went unreported while
-  // the Go checker raised E043 (#5922).
+  // `char` erases to an i32 SLOT, but it is not i32: it carries its own method
+  // surface, so it resolves to t_char() and dispatches under "char". A resolver
+  // that did not know it silently skipped every check on a char value — a bogus
+  // char method went unreported while the Go checker raised E043 (#5922).
   if (name == "char") {
     return t_char();
   }
@@ -4488,19 +4385,19 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
   // it `var t: ((() => i32), i32) = (a1, 4)` read as `(unknown, i32)`, drew E003
   // against an init typed correctly, and `t.0()` had no type to check.
   if (parser.ref_is_fn_value(r)) {
-    return t_func_opaque(type_from_ref_su(parser.ref_fn_result(r), structs, unions));
+    return t_func_opaque(type_from_ref_names(parser.ref_fn_result(r), struct_names, union_names));
   }
   if (name == "fn") {
     return t_func_opaque(t_unknown("fn result (the coarse tag records none)"));
   }
   // Tuple `(A, B, …)` → TypeTuple of its elements. Needs ≥2 elements (a single
-  // `(T)` / `()` is not a tuple — it falls through to the name lookups → unknown,
-  // matching the old `parts.len() >= 2` gate).
+  // `(T)` / `()` is not a tuple — it falls through to the name lookups →
+  // unknown).
   if (r.is_tuple) {
     if (r.args.len() >= 2) {
       var elems: Type[] = [];
       for arg in r.args {
-        elems = elems.append(type_from_ref_su(arg, structs, unions));
+        elems = elems.append(type_from_ref_names(arg, struct_names, union_names));
       }
       return t_tuple(elems);
     }
@@ -4509,18 +4406,18 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
     // straight into t_map's return-position wrap — an intermediate
     // `var: Type = <recursive call>` doesn't reliably trigger the struct→union
     // wrap here; see the t_i32 note.)
-    return t_map(type_from_ref_su(r.args[0], structs, unions), type_from_ref_su(r.args[1], structs, unions));
+    return t_map(type_from_ref_names(r.args[0], struct_names, union_names), type_from_ref_names(r.args[1], struct_names, union_names));
   } else if (r.base == "Map" && r.args.len() > 2) {
-    // A (never-emitted) 3+ arg `Map[K, A, B]`: the old first-comma split made
-    // the value "everything after the first comma" — the trailing args
-    // re-joined and resolved as one name (→ unknown) — reproduced here.
+    // A (never-emitted) 3+ arg `Map[K, A, B]`: the value is "everything after
+    // the first comma" — the trailing args re-joined and resolved as one name
+    // (→ unknown).
     var v_name: string = parser.render_type_ref(r.args[1]);
     var vk: i32 = 2;
     while (vk < r.args.len()) {
       v_name = v_name + ", " + parser.render_type_ref(r.args[vk]);
       vk = vk + 1;
     }
-    return t_map(type_from_ref_su(r.args[0], structs, unions), type_from_name_with_structs_unions(v_name, structs, unions));
+    return t_map(type_from_ref_names(r.args[0], struct_names, union_names), type_from_spelling(v_name, struct_names, union_names));
   }
   // Builtin generic enums (#4346 piece 2): `Option[T]` / `Result[T, E]` (and
   // the bare `JsonValue` / `IoError`) resolve to a NAME-ONLY union — the
@@ -4535,7 +4432,7 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
     // tag. Checker-behaviour-neutral: type_eq/assignability ignore union args.
     var uargs: Type[] = [];
     for arg in r.args {
-      uargs = uargs.append(type_from_ref_su(arg, structs, unions));
+      uargs = uargs.append(type_from_ref_names(arg, struct_names, union_names));
     }
     return t_union_g(r.base, uargs);
   }
@@ -4548,20 +4445,20 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
   // Only fires for an actual instantiation (args present); a bare `Box`
   // resolves through the full-spelling loop as before.
   if (r.args.len() > 0) {
-    for sd in structs {
-      if (sd.name == r.base) {
+    for sname in struct_names {
+      if (sname == r.base) {
         // Carry the resolved instantiation args so field access can
         // substitute a type-parameter field (`Box[i32].v` → i32);
         // assignability still ignores them (#4346 piece 2).
         var gargs: Type[] = [];
         for arg in r.args {
-          gargs = gargs.append(type_from_ref_su(arg, structs, unions));
+          gargs = gargs.append(type_from_ref_names(arg, struct_names, union_names));
         }
         return t_struct_g(r.base, gargs);
       }
     }
-    for union in unions {
-      if (union.name == r.base) {
+    for uname in union_names {
+      if (uname == r.base) {
         return t_union(r.base);
       }
     }
@@ -4569,13 +4466,13 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
   // Any other shape (a bare name, a single-element tuple, a Map with <2 args, a
   // non-Map generic whose base names no declared type) resolves by its full
   // spelling: struct → union → unknown.
-  for sd in structs {
-    if (sd.name == name) {
+  for sname in struct_names {
+    if (sname == name) {
       return t_struct(name);
     }
   }
-  for union in unions {
-    if (union.name == name) {
+  for uname in union_names {
+    if (uname == name) {
       return t_union(name);
     }
   }
@@ -4591,13 +4488,13 @@ function type_from_ref_su(r: parser.TypeRef, structs: StructSig[], unions: Union
   // type — no E023 — so they must not take this branch).
   if (!r.is_tuple && r.args.len() > 0 && r.base != "Map" && r.base != "Cell") {
     var bk: boolean = false;
-    for sd in structs {
-      if (sd.name == r.base) {
+    for sname in struct_names {
+      if (sname == r.base) {
         bk = true;
       }
     }
-    for union in unions {
-      if (union.name == r.base) {
+    for uname in union_names {
+      if (uname == r.base) {
         bk = true;
       }
     }
@@ -4734,92 +4631,6 @@ function gc_bind_param(r: parser.TypeRef, at: Type, tparams: string[], structs: 
     ts = ts.append(at);
   }
   return (ns, ts);
-}
-
-pub function type_from_name_with_names_and_unions(name: string, struct_names: string[], union_names: string[]): Type {
-  // Array suffix `Elem[]` → TypeArray via the structured TypeRef's array_depth
-  // (SH-021), replacing the magic-byte `[`/`]` scan. Byte-identical.
-  var r: parser.TypeRef = parser.parse_type_ref(name);
-  if (r.array_depth > 0) {
-    var elem: parser.TypeRef = parser.elem_type_ref(r);
-    return t_array(type_from_name_with_names_and_unions(parser.render_type_ref(elem), struct_names, union_names));
-  }
-  // Tuple `(A, B, …)` → TypeTuple of its elements, needing ≥2 exactly as
-  // type_from_ref_su's arm does. This resolver had no tuple branch at all,
-  // and it is the one the STRUCT TABLE uses — so a `ts: (i32, f64)[]` field
-  // resolved to `unknown[]`, and every consumer of that type then read the
-  // elements at a default 4-byte width: `p.ts[0].1` came back as the f64 bit
-  // pattern (#8459). The parser was never at fault; `-fmt` reconstructs the
-  // spelling correctly, and four of the five sibling resolvers already had
-  // this arm.
-  //
-  // Same class as the `char` note below, one type constructor over: an
-  // `unknown` here is silent, and widens into everything downstream.
-  if (r.is_tuple && r.args.len() >= 2) {
-    var telems: Type[] = [];
-    for targ in r.args {
-      telems = telems.append(type_from_name_with_names_and_unions(parser.render_type_ref(targ), struct_names, union_names));
-    }
-    return t_tuple(telems);
-  }
-  if (name == "i32") {
-    return t_i32();
-  }
-  // Every resolver must know `char`. It was in type_from_name alone, so the
-  // other four fell through to t_unknown and the checker silently skipped
-  // every check on a char value — a bogus char method went unreported while
-  // the Go checker raised E043 (#5922).
-  if (name == "char") {
-    return t_char();
-  }
-  if (name == "i64") {
-    return t_i64();
-  }
-  if (name == "u8") {
-    return t_u8();
-  }
-  if (name == "u32") {
-    return t_u32();
-  }
-  if (name == "u64") {
-    return t_u64();
-  }
-  if (name == "boolean") {
-    return t_bool();
-  }
-  if (name == "string") {
-    return t_string();
-  }
-  if (name == "f64" || name == "f32" || name == "float") {
-    return t_float();
-  }
-  if (name == "void") {
-    return t_void();
-  }
-  for struct_name in struct_names {
-    if (struct_name == name) {
-      return t_struct(name);
-    }
-  }
-  for union_name in union_names {
-    if (union_name == name) {
-      return t_union(name);
-    }
-  }
-  // Builtin generic enum instantiation `Option[T]` / `Result[T, E]` (#5986):
-  // resolve to the union with captured args, mirroring type_from_ref_su, so a
-  // struct FIELD declared with one (collect_struct_sigs resolves here) types
-  // as the union the typed-IR annotation spells its tag from, instead of
-  // unknown. Gated on args present so a bare name keeps today's resolution
-  // (e064_unknown_bare reads this resolver for plain identifiers only).
-  if (r.args.len() > 0 && is_reserved_enum_name(r.base)) {
-    var uargs: Type[] = [];
-    for arg in r.args {
-      uargs = uargs.append(type_from_name_with_names_and_unions(parser.render_type_ref(arg), struct_names, union_names));
-    }
-    return t_union_g(r.base, uargs);
-  }
-  return t_unknown("unrecognised type name: " + name);
 }
 
 // collect_union_sigs builds the union-alias table from the
@@ -5024,6 +4835,25 @@ function check_func_body(fd: parser.FuncDecl, s: Scope): boolean {
   return ok;
 }
 
+// name_with_args_label renders a nominal with its generic instantiation args —
+// `Option[i32]`, `Box[string, i32]` — or the bare name when it has none. The two
+// nominal arms of type_label share it because native renders both the same way.
+function name_with_args_label(name: string, args: Type[]): string {
+  if (args.len() == 0) {
+    return name;
+  }
+  var out: string = name + "[";
+  var i: i32 = 0;
+  while (i < args.len()) {
+    if (i > 0) {
+      out = out + ", ";
+    }
+    out = out + type_label(args[i]);
+    i = i + 1;
+  }
+  return out + "]";
+}
+
 // type_label renders a Type as a friendly name for a diagnostic message.
 // Most message text is still outside the differential, but the hints that
 // name a spelling to write are not: TestSelfHostCheckerHintTextDifferential
@@ -5052,19 +4882,30 @@ function type_label(t: Type): string {
       return type_label(a.elem) + "[]";
     },
     TypeStruct(sd) => {
-      return sd.name;
+      return name_with_args_label(sd.name, sd.args);
     },
-    TypeTuple(_) => {
-      return "tuple";
+    TypeTuple(tp) => {
+      var tout: string = "(";
+      var ti: i32 = 0;
+      while (ti < tp.elements.len()) {
+        if (ti > 0) {
+          tout = tout + ", ";
+        }
+        tout = tout + type_label(tp.elements[ti]);
+        ti = ti + 1;
+      }
+      return tout + ")";
     },
     TypeFunc(_) => {
+      // The opaque callable records no parameter list, so an arrow rendering
+      // would state an arity nothing ever supplied.
       return "fn";
     },
-    TypeMap(_) => {
-      return "map";
+    TypeMap(m) => {
+      return "Map[" + type_label(m.key) + ", " + type_label(m.value) + "]";
     },
     TypeUnion(u) => {
-      return u.name;
+      return name_with_args_label(u.name, u.args);
     },
     TypeDyn(d) => {
       return "dyn " + d.traits;
