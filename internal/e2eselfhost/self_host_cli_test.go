@@ -2090,7 +2090,7 @@ function main(): i32 {
 		if err := os.Chmod(progBin, 0o755); err != nil {
 			t.Fatalf("chmod: %v", err)
 		}
-		cmd := exec.Command(qemu, progBin)
+		cmd := runArm64Bin(qemu, progBin)
 		_ = cmd.Run()
 		if c := cmd.ProcessState.ExitCode(); c != 42 {
 			t.Errorf("arm64-emitted program exited %d, want 42", c)
@@ -2126,7 +2126,7 @@ function main(): i32 {
 		if err := os.Chmod(progBin, 0o755); err != nil {
 			t.Fatalf("chmod: %v", err)
 		}
-		cmd := exec.Command(qemu, progBin)
+		cmd := runArm64Bin(qemu, progBin)
 		out, _ := cmd.CombinedOutput()
 		if c := cmd.ProcessState.ExitCode(); c != 42 {
 			t.Errorf("arm64-android program exited %d, want 42 (out=%q)", c, out)
