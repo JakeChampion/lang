@@ -6657,6 +6657,9 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    scvtf d2, x10\n");
     s = s.write("    fcmp d2, d1\n");
     s = s.write("    b.ne .Lpow_general\n");
+    // Re-entered once with a reciprocated base and a negated n; see
+    // asm_ir.fern's pow for the overflow retry.
+    s = s.write(".Lpow_retry:\n");
     s = s.write("    mov x11, x10\n");
     s = s.write("    cmp x11, #0\n");
     s = s.write("    b.ge .Lpow_abs\n");
@@ -6677,7 +6680,15 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
     s = s.write("    cmp x10, #0\n");
     s = s.write("    b.ge .Lpow_done\n");
     s = emit_ldc(s, "d5", ".Lfc_one");
-    s = s.write("    fdiv d3, d5, d3\n");
+    s = s.write("    fdiv d5, d5, d3\n");
+    s = s.write("    fcmp d5, #0.0\n");
+    s = s.write("    b.ne .Lpow_recip\n");
+    s = emit_ldc(s, "d5", ".Lfc_one");
+    s = s.write("    fdiv d0, d5, d0\n");
+    s = s.write("    neg x10, x10\n");
+    s = s.write("    b .Lpow_retry\n");
+    s = s.write(".Lpow_recip:\n");
+    s = s.write("    fmov d3, d5\n");
     s = s.write(".Lpow_done:\n");
     s = s.write("    fmov d0, d3\n");
     s = s.write("    ret\n");

@@ -239,6 +239,20 @@ func f64UlpCases() []f64Case {
 		{-2, 3}, {-2, 4}, {-3, 3}, {-2, -2}, {-2, -3}, {-0.5, 3}, {-1, 2},
 		{2, 65}, {2, 280}, {2, 1023}, {10, 67}, {0.5, 1023}, {7, 300},
 		{-3, 100}, {-2, 65}, {-0.5, 67}, {2, -100}, {0.5, -200},
+		// Negative exponents whose result is SUBNORMAL. The rows above all
+		// land on normal results, so they pass while the magnitude is
+		// accumulated and reciprocated at the end: pow(2,-1030) computed
+		// 2^1030, which is +Inf, and 1/Inf flushed a representable answer
+		// to 0 (#8239). Both signs of base, since the fix reciprocates the
+		// base and has to carry the sign through it.
+		//
+		// The GATING rows are the ones off the bottom of the range. A
+		// result of 2^-1074 is the smallest subnormal, which is one ulp
+		// from zero, so flushing it to zero passes a 2-ulp bound: the
+		// -1074 and -1073 rows pin the value but cannot fail. Measured on
+		// the unfixed emitter, 3 of these 5 report, at 17592186044416 and
+		// 2024 ulp.
+		{2, -1074}, {2, -1030}, {10, -320}, {-2, -1073}, {-10, -320},
 	} {
 		cs = append(cs, f64Case{
 			fmt.Sprintf("__pow_f64(%s, %s)", lit(p.x), lit(p.y)),
