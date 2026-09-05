@@ -1,0 +1,556 @@
+// expr.fern — GNU-compatible `expr`.
+//
+//   EXPRESSION   one token per argument, in the precedence groups below
+//
+//   | & ; < <= = == != >= > ; + - ; * / % ; : ; the functions
+//
+// The value is written to stdout and the STATUS reports it: 0 when the
+// value is neither null nor zero, 1 when it is, 2 for a syntax error or
+// a bad operand, 3 for a write failure. "Null or zero" is a string test,
+// not a numeric one — `00`, `-0` and `-000` are all zero, and a lone `-`
+// is not.
+//
+// Integers are arbitrary-precision (GNU uses GMP; `core/bigint` is the
+// same arithmetic), so `expr 99999999999999999999999 '*' 2` answers
+// exactly. Division truncates toward zero and the remainder takes the
+// dividend's sign.
+//
+// `:` and `match` are POSIX basic regular expressions anchored at the
+// start of the string, matched by `lib/bre.fern` — glibc's dialect, down
+// to the diagnostics, because expr prints glibc's regerror text.
+//
+// Two shapes here are GNU's rather than anything a fresh design would
+// pick, and both are load-bearing:
+//
+//   - `--help` and `--version` are honoured only as the SOLE argument,
+//     by unique prefix (`expr --hel` prints the help, `expr --help x`
+//     is a two-token expression and a syntax error).
+//   - `|` and `&` short-circuit, and the unevaluated side is PARSED but
+//     not run: `expr 1 '|' 1 / 0` is 1, while `expr 1 '|' 1 +` is still
+//     a syntax error.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "core/bigint";
+import "./lib/gnu";
+import "./lib/bre";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " EXPRESSION\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION\n";
+  out = out + "\n";
+  out = out + "      --help        display this help and exit\n";
+  out = out + "      --version     output version information and exit\n";
+  out = out + "\n";
+  out = out + "Print the value of EXPRESSION to standard output.  A blank line below\n";
+  out = out + "separates increasing precedence groups.  EXPRESSION may be:\n";
+  out = out + "\n";
+  out = out + "  ARG1 | ARG2       ARG1 if it is neither null nor 0, otherwise ARG2\n";
+  out = out + "\n";
+  out = out + "  ARG1 & ARG2       ARG1 if neither argument is null or 0, otherwise 0\n";
+  out = out + "\n";
+  out = out + "  ARG1 < ARG2       ARG1 is less than ARG2\n";
+  out = out + "  ARG1 <= ARG2      ARG1 is less than or equal to ARG2\n";
+  out = out + "  ARG1 = ARG2       ARG1 is equal to ARG2\n";
+  out = out + "  ARG1 != ARG2      ARG1 is unequal to ARG2\n";
+  out = out + "  ARG1 >= ARG2      ARG1 is greater than or equal to ARG2\n";
+  out = out + "  ARG1 > ARG2       ARG1 is greater than ARG2\n";
+  out = out + "\n";
+  out = out + "  ARG1 + ARG2       arithmetic sum of ARG1 and ARG2\n";
+  out = out + "  ARG1 - ARG2       arithmetic difference of ARG1 and ARG2\n";
+  out = out + "\n";
+  out = out + "  ARG1 * ARG2       arithmetic product of ARG1 and ARG2\n";
+  out = out + "  ARG1 / ARG2       arithmetic quotient of ARG1 divided by ARG2\n";
+  out = out + "  ARG1 % ARG2       arithmetic remainder of ARG1 divided by ARG2\n";
+  out = out + "\n";
+  out = out + "  STRING : REGEXP   anchored pattern match of REGEXP in STRING\n";
+  out = out + "\n";
+  out = out + "  match STRING REGEXP        same as STRING : REGEXP\n";
+  out = out + "  substr STRING POS LENGTH   substring of STRING, POS counted from 1\n";
+  out = out + "  index STRING CHARS         index in STRING where any CHARS is found, or 0\n";
+  out = out + "  length STRING              length of STRING\n";
+  out = out + "  + TOKEN                    interpret TOKEN as a string, even if it is a\n";
+  out = out + "                               keyword like 'match' or an operator like '/'\n";
+  out = out + "\n";
+  out = out + "  ( EXPRESSION )             value of EXPRESSION\n";
+  out = out + "\n";
+  out = out + "Exit status is 0 if EXPRESSION is neither null nor 0, 1 if EXPRESSION is null\n";
+  out = out + "or 0, 2 if EXPRESSION is syntactically invalid, and 3 if an error occurred.\n";
+  return out;
+}
+
+// The usage status: expr(1) exits 2 on a syntax error, 3 on any other
+// failure (a write, and nothing else here).
+function invalid(): i32 {
+  return 2;
+}
+
+function failure(): i32 {
+  return 3;
+}
+
+function die(msg: string): void {
+  gnu.error(msg);
+  exit(invalid());
+}
+
+// ---- values ----------------------------------------------------------------
+//
+// A value is its string form throughout: arithmetic renders its result
+// canonically, so the "does it look like an integer" test that decides
+// between numeric and string comparison stays true of computed values
+// too, and there is one representation to print.
+// glibc's `looks_like_integer`: an optional `-`, then digits, then the
+// end. No `+`, no space, no `.`.
+function is_integer(s: string): boolean {
+  var i: i32 = 0;
+  if (s.len() > 0 && s[0] as i32 == 45) {
+    i = 1;
+  }
+  if (i >= s.len()) {
+    return false;
+  }
+  while (i < s.len()) {
+    var b: i32 = s[i] as i32;
+    if (b < 48 || b > 57) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// GNU's `null`: empty, or nothing but zeros after an optional `-`. A
+// lone `-` is NOT null, which is why `expr -` exits 0.
+function is_null(s: string): boolean {
+  if (s.len() == 0) {
+    return true;
+  }
+  var i: i32 = 0;
+  if (s[0] as i32 == 45) {
+    i = 1;
+  }
+  if (i >= s.len()) {
+    return false;
+  }
+  while (i < s.len()) {
+    if (s[i] as i32 != 48) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function to_int(s: string): bigint.BigInt {
+  match (bigint.parse(s)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return bigint.zero();
+    }
+  }
+}
+
+function bool_value(b: boolean): string {
+  if (b) {
+    return "1";
+  }
+  return "0";
+}
+
+// Byte comparison, unsigned, the way strcmp orders in the C locale.
+function str_cmp(a: string, b: string): i32 {
+  var n: i32 = a.len();
+  if (b.len() < n) {
+    n = b.len();
+  }
+  var i: i32 = 0;
+  while (i < n) {
+    var x: i32 = a[i] as i32;
+    var y: i32 = b[i] as i32;
+    if (x != y) {
+      if (x < y) {
+        return 0 - 1;
+      }
+      return 1;
+    }
+    i = i + 1;
+  }
+  if (a.len() < b.len()) {
+    return 0 - 1;
+  }
+  if (a.len() > b.len()) {
+    return 1;
+  }
+  return 0;
+}
+
+// GNU compares numerically when BOTH sides look like integers, and
+// byte-wise otherwise: `expr 010 = 10` is 1, `expr 1.5 '<' 10` is 1.
+function compare(l: string, r: string): i32 {
+  if (is_integer(l) && is_integer(r)) {
+    return to_int(l).cmp(to_int(r));
+  }
+  return str_cmp(l, r);
+}
+
+// ---- the argument cursor ---------------------------------------------------
+//
+// One token per argument, consumed left to right. `prev` is what the
+// "missing argument after …" diagnostics name, so every path that runs
+// out of arguments reports the token it ran out after.
+struct S { ops: string[], i: i32 }
+
+function has(s: S): boolean {
+  return s.i < s.ops.len();
+}
+
+function peek(s: S): string {
+  return s.ops[s.i];
+}
+
+function is_tok(s: S, t: string): boolean {
+  return has(s) && peek(s) == t;
+}
+
+function advance(s: S): S {
+  return S { ...s, i: s.i + 1 };
+}
+
+function prev(s: S): string {
+  return s.ops[s.i - 1];
+}
+
+function require_arg(s: S): void {
+  if (!has(s)) {
+    die("syntax error: missing argument after " + gnu.quote(prev(s)));
+  }
+}
+
+// ---- the functions ---------------------------------------------------------
+function do_length(s: string): string {
+  return (s.len() as i64).to_string();
+}
+
+// The 1-based position in `s` of the first byte that appears anywhere in
+// `chars`, or 0.
+function do_index(s: string, chars: string): string {
+  var i: i32 = 0;
+  while (i < s.len()) {
+    var k: i32 = 0;
+    while (k < chars.len()) {
+      if (s[i] as i32 == chars[k] as i32) {
+        return (i as i64 + 1 as i64).to_string();
+      }
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+  return "0";
+}
+
+// `substr STRING POS LENGTH`, counting from 1. A position or length that
+// is not an integer, a position outside the string, or a length at or
+// below zero all give the empty string rather than an error.
+function do_substr(s: string, pos: string, len: string): string {
+  if (!is_integer(pos) || !is_integer(len)) {
+    return "";
+  }
+  var p: bigint.BigInt = to_int(pos);
+  var n: bigint.BigInt = to_int(len);
+  var one: bigint.BigInt = bigint.from_i64(1 as i64);
+  var size: bigint.BigInt = bigint.from_i64(s.len() as i64);
+  if (p.cmp(one) < 0 || p.cmp(size) > 0 || n.cmp(one) < 0) {
+    return "";
+  }
+  var start: i32 = p.low_u64() as i32 - 1;
+  var end: i32 = s.len();
+  var avail: bigint.BigInt = size.sub(p).add(one);
+  if (n.cmp(avail) < 0) {
+    end = start + n.low_u64() as i32;
+  }
+  return slice_unchecked(s, start, end) + "";
+}
+
+// `STRING : REGEXP` — the regexp is anchored at the start of the string.
+// With a `\( … \)` group the value is what the FIRST group matched (the
+// empty string when the match did not reach it); without one it is the
+// number of bytes matched.
+function do_colon(l: string, r: string, ev: boolean): string {
+  if (!ev) {
+    return "0";
+  }
+  var re: bre.Bre = bre.bre_compile(r);
+  if (re.err.len() > 0) {
+    gnu.error(re.err);
+    exit(invalid());
+  }
+  var m: bre.BreMatch = re.exec(l);
+  if (re.ngroups > 0) {
+    if (!m.matched || m.starts[1] < 0) {
+      return "";
+    }
+    return slice_unchecked(l, m.starts[1], m.ends[1]) + "";
+  }
+  if (!m.matched) {
+    return "0";
+  }
+  return (m.end as i64).to_string();
+}
+
+// ---- arithmetic ------------------------------------------------------------
+function arith(op: string, l: string, r: string, ev: boolean): string {
+  if (!ev) {
+    return "0";
+  }
+  if (!is_integer(l) || !is_integer(r)) {
+    gnu.error("non-integer argument");
+    exit(invalid());
+  }
+  var a: bigint.BigInt = to_int(l);
+  var b: bigint.BigInt = to_int(r);
+  if (op == "+") {
+    return a.add(b).to_string();
+  }
+  if (op == "-") {
+    return a.sub(b).to_string();
+  }
+  if (op == "*") {
+    return a.mul(b).to_string();
+  }
+  if (b.is_zero()) {
+    gnu.error("division by zero");
+    exit(invalid());
+  }
+  var qr: (bigint.BigInt, bigint.BigInt) = a.divmod(b);
+  if (op == "/") {
+    return qr.0.to_string();
+  }
+  return qr.1.to_string();
+}
+
+// ---- the grammar -----------------------------------------------------------
+//
+// Recursive descent, one level per precedence group, each returning the
+// value and the cursor. `ev` is GNU's `evaluate` flag: a side of `|` or
+// `&` whose result cannot matter is parsed with it clear, so its syntax
+// is still checked while its division by zero and its invalid regexp are
+// not reached.
+// The innermost level: a parenthesised expression or one token.
+function eval7(s0: S, ev: boolean): (string, S) {
+  var s: S = s0;
+  if (is_tok(s, "(")) {
+    s = advance(s);
+    var r: (string, S) = eval_or(s, ev);
+    s = r.1;
+    if (!has(s)) {
+      die("syntax error: expecting ')' after " + gnu.quote(prev(s)));
+    }
+    if (peek(s) != ")") {
+      die("syntax error: expecting ')' instead of " + gnu.quote(peek(s)));
+    }
+    return (r.0, advance(s));
+  }
+  if (is_tok(s, ")")) {
+    die("syntax error: unexpected ')'");
+  }
+  require_arg(s);
+  return (peek(s), advance(s));
+}
+
+// The keyword functions, and `+ TOKEN` — which quotes the next argument
+// whatever it is, so `expr + match` is the string "match".
+function eval6(s0: S, ev: boolean): (string, S) {
+  var s: S = s0;
+  if (is_tok(s, "length")) {
+    var a: (string, S) = eval6(advance(s), ev);
+    return (do_length(a.0), a.1);
+  }
+  if (is_tok(s, "match")) {
+    var m1: (string, S) = eval6(advance(s), ev);
+    var m2: (string, S) = eval6(m1.1, ev);
+    return (do_colon(m1.0, m2.0, ev), m2.1);
+  }
+  if (is_tok(s, "index")) {
+    var i1: (string, S) = eval6(advance(s), ev);
+    var i2: (string, S) = eval6(i1.1, ev);
+    return (do_index(i1.0, i2.0), i2.1);
+  }
+  if (is_tok(s, "substr")) {
+    var t1: (string, S) = eval6(advance(s), ev);
+    var t2: (string, S) = eval6(t1.1, ev);
+    var t3: (string, S) = eval6(t2.1, ev);
+    return (do_substr(t1.0, t2.0, t3.0), t3.1);
+  }
+  if (is_tok(s, "+")) {
+    s = advance(s);
+    require_arg(s);
+    return (peek(s), advance(s));
+  }
+  return eval7(s, ev);
+}
+
+function eval5(s0: S, ev: boolean): (string, S) {
+  var r: (string, S) = eval6(s0, ev);
+  var l: string = r.0;
+  var s: S = r.1;
+  while (is_tok(s, ":")) {
+    var r2: (string, S) = eval6(advance(s), ev);
+    l = do_colon(l, r2.0, ev);
+    s = r2.1;
+  }
+  return (l, s);
+}
+
+function eval4(s0: S, ev: boolean): (string, S) {
+  var r: (string, S) = eval5(s0, ev);
+  var l: string = r.0;
+  var s: S = r.1;
+  while (is_tok(s, "*") || is_tok(s, "/") || is_tok(s, "%")) {
+    var op: string = peek(s);
+    var r2: (string, S) = eval5(advance(s), ev);
+    l = arith(op, l, r2.0, ev);
+    s = r2.1;
+  }
+  return (l, s);
+}
+
+function eval3(s0: S, ev: boolean): (string, S) {
+  var r: (string, S) = eval4(s0, ev);
+  var l: string = r.0;
+  var s: S = r.1;
+  while (is_tok(s, "+") || is_tok(s, "-")) {
+    var op: string = peek(s);
+    var r2: (string, S) = eval4(advance(s), ev);
+    l = arith(op, l, r2.0, ev);
+    s = r2.1;
+  }
+  return (l, s);
+}
+
+function is_relop(t: string): boolean {
+  return t == "<" || t == "<=" || t == "=" || t == "==" || t == "!=" || t == ">=" || t == ">";
+}
+
+function relate(op: string, c: i32): boolean {
+  if (op == "<") {
+    return c < 0;
+  }
+  if (op == "<=") {
+    return c <= 0;
+  }
+  if (op == "=" || op == "==") {
+    return c == 0;
+  }
+  if (op == "!=") {
+    return c != 0;
+  }
+  if (op == ">=") {
+    return c >= 0;
+  }
+  return c > 0;
+}
+
+function eval2(s0: S, ev: boolean): (string, S) {
+  var r: (string, S) = eval3(s0, ev);
+  var l: string = r.0;
+  var s: S = r.1;
+  while (has(s) && is_relop(peek(s))) {
+    var op: string = peek(s);
+    var r2: (string, S) = eval3(advance(s), ev);
+    l = bool_value(relate(op, compare(l, r2.0)));
+    s = r2.1;
+  }
+  return (l, s);
+}
+
+// `&`: the left value when neither side is null or zero, else 0. The
+// right side is not evaluated when the left already settles it.
+function eval_and(s0: S, ev: boolean): (string, S) {
+  var r: (string, S) = eval2(s0, ev);
+  var l: string = r.0;
+  var s: S = r.1;
+  while (is_tok(s, "&")) {
+    var r2: (string, S) = eval2(advance(s), ev && !is_null(l));
+    s = r2.1;
+    if (is_null(l) || is_null(r2.0)) {
+      l = "0";
+    }
+  }
+  return (l, s);
+}
+
+// `|`: the left value unless it is null or zero, else the right, and 0
+// when both are.
+function eval_or(s0: S, ev: boolean): (string, S) {
+  var r: (string, S) = eval_and(s0, ev);
+  var l: string = r.0;
+  var s: S = r.1;
+  while (is_tok(s, "|")) {
+    var r2: (string, S) = eval_and(advance(s), ev && is_null(l));
+    s = r2.1;
+    if (is_null(l)) {
+      l = r2.0;
+      if (is_null(l)) {
+        l = "0";
+      }
+    }
+  }
+  return (l, s);
+}
+
+// ---- the program -----------------------------------------------------------
+// `--help` and `--version` are honoured only as the sole argument and
+// only spelled as a unique prefix — never with an `=value`, which is why
+// `expr --help=x` prints `--help=x`.
+function sole_option(argv: string[]): void {
+  if (argv.len() != 2) {
+    return;
+  }
+  var a: string = argv[1];
+  if (a.len() < 3 || !a.starts_with("--")) {
+    return;
+  }
+  var name: string = slice_unchecked(a, 2, a.len()) + "";
+  if ("help".starts_with(name)) {
+    gnu.write_out(help_text());
+    exit(0);
+  }
+  if ("version".starts_with(name)) {
+    gnu.write_out("expr (Fern coreutils) " + gnu.version() + "\n");
+    exit(0);
+  }
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  sole_option(argv);
+  var start: i32 = 1;
+  if (argv.len() > 1 && argv[1] == "--") {
+    start = 2;
+  }
+  var ops: string[] = [];
+  var k: i32 = start;
+  while (k < argv.len()) {
+    ops = ops.append(argv[k]);
+    k = k + 1;
+  }
+  if (ops.len() == 0) {
+    gnu.die_usage("missing operand", invalid());
+  }
+  var r: (string, S) = eval_or(S { ops: ops, i: 0 }, true);
+  var s: S = r.1;
+  if (has(s)) {
+    die("syntax error: unexpected argument " + gnu.quote(peek(s)));
+  }
+  var o: io_buffered.BufWriter = gnu.out_with(r.0.len() + 1);
+  o = gnu.put_with(o, r.0 + "\n", failure());
+  gnu.finish_with(o, failure());
+  if (is_null(r.0)) {
+    return 1;
+  }
+  return 0;
+}
