@@ -588,13 +588,13 @@ Free sort / compare helpers. The non-consuming sorts are stable
 bottom-up merge sorts, O(n log n) — safe on large inputs, not just
 the small-list convenience cases.
 
-- `sort_i32_asc(arr)`, `sort_i32_desc(arr)`
-- `sort_i64_asc(arr)`, `sort_i64_desc(arr)`
-- `sort_u32_asc(arr)`, `sort_u64_asc(arr)`
-- `sort_f64_asc(arr)`, `sort_f64_desc(arr)` (NaN ordering
-  unspecified — filter NaNs first if it matters)
-- `sort_strings_asc(arr)`, `sort_strings_desc(arr)`,
-  `sort_strings_asc_ci(arr)`
+The per-width `sort_i32_asc` / `sort_f64_asc` / `sort_strings_asc` zoo
+(and the `_desc` mirrors) is gone (#5397): call `core/cmp`'s generic
+`cmp.sort(arr)` / `cmp.sort_desc(arr)` over any `Ord` element type.
+Floats sort by IEEE 754 totalOrder (`-NaN < -inf < … < -0.0 < +0.0 <
+… < +inf < +NaN`), so a NaN-containing array sorts deterministically.
+
+- `sort_strings_asc_ci(arr)` — case-insensitive string sort
 - `string_cmp(a, b)`, `string_cmp_ci(a, b)`
 - `sort_by_i32_key(arr, key)` — sort by an `i32` projection
   (Schwartzian: each `key(x)` computed once)

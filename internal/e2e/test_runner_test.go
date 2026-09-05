@@ -222,7 +222,7 @@ func TestRunnerCmpHelpersExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: core/cmp helpers", "# pass 19", "# fail 0", "1..19"} {
+	for _, w := range []string{"# Suite: core/cmp helpers", "# pass 27", "# fail 0", "1..27"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1380,10 +1380,10 @@ func TestRunnerSelfTestPasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("self-test exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	// 44 meta-tests; if this number changes intentionally,
+	// 60 meta-tests; if this number changes intentionally,
 	// update both the file and this expected count together.
-	if !strings.Contains(out, "# pass 44") || !strings.Contains(out, "# fail 0") {
-		t.Errorf("expected 44 passes, 0 fails\noutput:\n%s", out)
+	if !strings.Contains(out, "# pass 60") || !strings.Contains(out, "# fail 0") {
+		t.Errorf("expected 60 passes, 0 fails\noutput:\n%s", out)
 	}
 }
 

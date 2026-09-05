@@ -267,6 +267,9 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"float_hyperbolic", langSrcAbs(t, "examples/tests/float_hyperbolic_test.fern"), ""},
 		{"array_stats", langSrcAbs(t, "examples/tests/array_stats_test.fern"), ""},
 		{"sort_f64", langSrcAbs(t, "examples/tests/sort_f64_test.fern"), ""},
+		// core/cmp's float `Ord` / `Eq` (IEEE 754 totalOrder / bit equality,
+		// #8588) lower through `f64_bits` / `f32_bits` and an i32 -> i64 widen.
+		{"cmp_helpers", langSrcAbs(t, "examples/tests/cmp_helpers_test.fern"), ""},
 		{"array_median_range", langSrcAbs(t, "examples/tests/array_median_range_test.fern"), ""},
 		{"array_vector", langSrcAbs(t, "examples/tests/array_vector_test.fern"), ""},
 		{"array_distance_normalize", langSrcAbs(t, "examples/tests/array_distance_normalize_test.fern"), ""},

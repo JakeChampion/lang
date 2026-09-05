@@ -120,17 +120,18 @@ impl Eq for string {
 impl Eq for boolean {
     function eq(self: Self, other: Self): boolean { return self == other; }
 }
+// Float `Eq` is bit equality, so it agrees with the float `Ord` below:
+// `a.eq(b)` iff `a.cmp(b) == 0`. A NaN equals itself and `-0.0` is not
+// `+0.0`; IEEE `==` stays the operator for arithmetic.
 impl Eq for f64 {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+    function eq(self: Self, other: Self): boolean { return f64_bits(self) == f64_bits(other); }
 }
 impl Eq for f32 {
-    function eq(self: Self, other: Self): boolean { return self == other; }
+    function eq(self: Self, other: Self): boolean { return f32_bits(self) == f32_bits(other); }
 }
 
 // ---- Ord -------------------------------------------------------
-// Relational comparison for the integer types. (string / boolean
-// ordering isn't needed by the assertion helpers, so it's left for a
-// follow-up.)
+// Relational comparison for the primitive types.
 
 impl Ord for i32 {
     function cmp(self: Self, other: Self): i32 {
@@ -167,21 +168,37 @@ impl Ord for u8 {
         return 0;
     }
 }
-// Float ordering is IEEE `< / >`. NaN compares false on both, so it falls
-// through to `return 0` (treated equal) — fine for the assertion helpers and
-// sorting a NaN-free array; a NaN-aware total order is a follow-up.
+// Floats order by IEEE 754 totalOrder (Rust's `f64::total_cmp`), so every
+// value has one place and a NaN-containing array sorts deterministically:
+//
+//   -NaN < -inf < … < -0.0 < +0.0 < … < +inf < +NaN
+//
+// NaNs of one sign order by payload. The sign of a NaN that arithmetic
+// produces (`0.0 / 0.0`) is target-dependent, so pin a NaN with
+// `f64_from_bits` when its place matters.
+//
+// On the bit pattern as a signed integer, the non-negative floats are already
+// in order and the negative ones are in reverse; the sign-bit compare makes
+// -0.0 (0x8000…) precede +0.0 (0).
+function __float_total_cmp(a: i64, b: i64): i32 {
+    if (a == b) { return 0; }
+    if (a < 0 as i64) {
+        if (b >= 0 as i64) { return 0 - 1; }
+        if (a > b) { return 0 - 1; }
+        return 1;
+    }
+    if (b < 0 as i64) { return 1; }
+    if (a < b) { return 0 - 1; }
+    return 1;
+}
 impl Ord for f64 {
     function cmp(self: Self, other: Self): i32 {
-        if (self < other) { return 0 - 1; }
-        if (self > other) { return 1; }
-        return 0;
+        return __float_total_cmp(f64_bits(self), f64_bits(other));
     }
 }
 impl Ord for f32 {
     function cmp(self: Self, other: Self): i32 {
-        if (self < other) { return 0 - 1; }
-        if (self > other) { return 1; }
-        return 0;
+        return __float_total_cmp(f32_bits(self) as i64, f32_bits(other) as i64);
     }
 }
 

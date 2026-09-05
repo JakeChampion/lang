@@ -59,6 +59,76 @@ function test_string_debug_multibyte(): test.TestOutcome {
     return test.assert_eq(s.to_debug(), "\"a\\\"é\\nb\"");
 }
 
+// Floats: `Ord` is IEEE 754 totalOrder and `Eq` is bit equality, so every NaN
+// and both signed zeros have one place. The NaNs come from `from_bits` because
+// an arithmetic NaN's sign is target-dependent.
+function pos_nan(): f64 { return f64_from_bits(9221120237041090560 as i64); }                    // 0x7FF8000000000000
+function neg_nan(): f64 { return f64_from_bits(0 - 2251799813685248 as i64); }                   // 0xFFF8000000000000
+function neg_zero(): f64 { return f64_from_bits((0 - 9223372036854775807 as i64) - 1 as i64); } // 0x8000000000000000
+function pos_inf(): f64 { return 1.0 / 0.0; }
+function total_order(): f64[] {
+    return [neg_nan(), 0.0 - pos_inf(), neg_zero(), 0.0, 1.0, 3.0, pos_inf(), pos_nan()];
+}
+function shuffled(): f64[] {
+    return [3.0, pos_nan(), 0.0, 0.0 - pos_inf(), 1.0, pos_inf(), neg_nan(), neg_zero()];
+}
+
+function test_f64_sort_total_order(): test.TestOutcome {
+    return test.assert_true(cmp.eq_arrays(cmp.sort(shuffled()), total_order()));
+}
+function test_f64_sort_desc_total_order(): test.TestOutcome {
+    var want: f64[] = [pos_nan(), pos_inf(), 3.0, 1.0, 0.0, neg_zero(), 0.0 - pos_inf(), neg_nan()];
+    return test.assert_true(cmp.eq_arrays(cmp.sort_desc(shuffled()), want));
+}
+function test_f64_is_sorted_nan(): test.TestOutcome {
+    if (!cmp.is_sorted(total_order())) { return test.fail("the total order is sorted"); }
+    return test.assert_false(cmp.is_sorted([3.0, pos_nan(), 1.0]));
+}
+function test_f64_nan_extremes(): test.TestOutcome {
+    var hi: f64 = cmp.max(pos_inf(), pos_nan());
+    var lo: f64 = cmp.min(0.0 - pos_inf(), neg_nan());
+    if (!hi.eq(pos_nan())) { return test.fail("+NaN is above +inf"); }
+    if (!lo.eq(neg_nan())) { return test.fail("-NaN is below -inf"); }
+    return test.assert_eq(pos_nan().cmp(neg_nan()), 1);
+}
+function test_f64_signed_zero(): test.TestOutcome {
+    var z: f64 = 0.0;
+    var nz: f64 = neg_zero();
+    if (nz.cmp(z) != 0 - 1) { return test.fail("-0.0 is below +0.0"); }
+    if (nz.eq(z)) { return test.fail("-0.0 is not +0.0 under Eq"); }
+    return test.assert_true(f64_bits(cmp.min(z, nz)) != 0 as i64);
+}
+function test_f64_nan_eq(): test.TestOutcome {
+    if (!cmp.contains([1.0, pos_nan()], pos_nan())) { return test.fail("contains finds NaN"); }
+    if (cmp.distinct([pos_nan(), pos_nan(), neg_nan()]).len() != 2) { return test.fail("distinct keeps one NaN per sign"); }
+    // NaNs of one sign order by payload and differ under Eq.
+    var payload: f64 = f64_from_bits(9221120237041090561 as i64);
+    if (payload.eq(pos_nan())) { return test.fail("payload NaN is not the quiet NaN"); }
+    return test.assert_eq(pos_nan().cmp(payload), 0 - 1);
+}
+
+function pos_nan32(): f32 { return f32_from_bits(2143289344); }             // 0x7FC00000
+function neg_nan32(): f32 { return f32_from_bits(0 - 4194304); }            // 0xFFC00000
+function neg_zero32(): f32 { return f32_from_bits((0 - 2147483647) - 1); }  // 0x80000000
+
+function test_f32_sort_total_order(): test.TestOutcome {
+    var one: f32 = 1.0 as f32;
+    var zero: f32 = 0.0 as f32;
+    var neg_one: f32 = (0.0 - 1.0) as f32;
+    var xs: f32[] = [one, pos_nan32(), zero, neg_nan32(), neg_zero32(), neg_one];
+    var want: f32[] = [neg_nan32(), neg_one, neg_zero32(), zero, one, pos_nan32()];
+    if (!cmp.eq_arrays(cmp.sort(xs), want)) { return test.fail("f32 total order"); }
+    var inverted: f32[] = [pos_nan32(), one];
+    return test.assert_false(cmp.is_sorted(inverted));
+}
+function test_f32_nan_eq(): test.TestOutcome {
+    var nans: f32[] = [pos_nan32(), pos_nan32()];
+    if (cmp.distinct(nans).len() != 1) { return test.fail("distinct folds equal f32 NaNs"); }
+    var zero: f32[] = [0.0 as f32];
+    var nzero: f32[] = [neg_zero32()];
+    return test.assert_false(cmp.eq_arrays(zero, nzero));
+}
+
 function main(): i32 {
     var r: test.TestRunner = test.test_new("core/cmp helpers");
     r = r.it("min",                 test_min);
@@ -80,5 +150,13 @@ function main(): i32 {
     r = r.it("eq_arrays false",     test_eq_arrays_false);
     r = r.it("string sort",         test_string_sort);
     r = r.it("string debug multibyte", test_string_debug_multibyte);
+    r = r.it("f64 sort total order",      test_f64_sort_total_order);
+    r = r.it("f64 sort_desc total order", test_f64_sort_desc_total_order);
+    r = r.it("f64 is_sorted with NaN",    test_f64_is_sorted_nan);
+    r = r.it("f64 NaN extremes",          test_f64_nan_extremes);
+    r = r.it("f64 signed zero",           test_f64_signed_zero);
+    r = r.it("f64 NaN eq",                test_f64_nan_eq);
+    r = r.it("f32 sort total order",      test_f32_sort_total_order);
+    r = r.it("f32 NaN eq",                test_f32_nan_eq);
     return r.finish();
 }

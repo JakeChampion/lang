@@ -990,10 +990,10 @@ headroom fix (linker veneers / far-call code model / `.text` splitting).
 (test asserts, `log` key=value) or `[T: Ord]` (sorting / relational asserts)
 generic over a float — was a hard `E021` ("f64 does not implement cmp.Eq").
 
-Added `impl Eq/Display/Debug/Ord for f64` and `f32`. `Eq` is bit-for-bit `==`;
-`Ord` is IEEE `< / >` (NaN compares false on both → `cmp` returns 0, fine for
-the assertion helpers and NaN-free sorting; a NaN-total-order is a follow-up);
-`Debug` adopts `to_string`. The `Display`/`Debug` impls are *empty* — they adopt
+Added `impl Eq/Display/Debug/Ord for f64` and `f32`. `Eq` and `Ord` were IEEE
+`==` and `< / >` at the time, which made every NaN compare equal and let
+`assert_le(nan, 1.0)` pass vacuously; since #8588 `Ord` is IEEE 754 totalOrder
+and `Eq` is bit equality (see `core/cmp`). `Debug` adopts `to_string`. The `Display`/`Debug` impls are *empty* — they adopt
 the type's existing `to_string`, which for floats lives in `std/float`, so
 **core/cmp now `import`s std/float** (no cycle: std/float's deps — std/i32,
 std/i64 — are already core/cmp deps) to make `f64.to_string` visible where the

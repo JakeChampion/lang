@@ -300,6 +300,71 @@ function test_fail_returns_fail(): test.TestOutcome {
     return expect_fail_containing(test.fail("custom message"), "custom message");
 }
 
+// Floats order by IEEE 754 totalOrder (-NaN below -inf, +NaN above +inf) and
+// compare equal by bit pattern, so a NaN has one place: exactly one of
+// `assert_le` / `assert_ge` holds against any other value, an out-of-place
+// NaN is an inversion, and a repeated NaN is a duplicate — none of the four
+// passes vacuously. The NaNs come from `from_bits` because an arithmetic
+// NaN's sign is target-dependent.
+function pos_nan(): f64 { return f64_from_bits(9221120237041090560 as i64); }   // 0x7FF8000000000000
+function neg_nan(): f64 { return f64_from_bits(0 - 2251799813685248 as i64); }  // 0xFFF8000000000000
+
+function test_le_pos_nan_pass(): test.TestOutcome {
+    return expect_pass(test.assert_le(1.0, pos_nan()));
+}
+function test_le_pos_nan_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_le(pos_nan(), 1.0), "assert_le: expected \"NaN\" <= \"1\"");
+}
+function test_le_neg_nan_pass(): test.TestOutcome {
+    return expect_pass(test.assert_le(neg_nan(), 1.0));
+}
+function test_le_neg_nan_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_le(1.0, neg_nan()), "assert_le: expected \"1\" <= \"NaN\"");
+}
+
+function test_ge_pos_nan_pass(): test.TestOutcome {
+    return expect_pass(test.assert_ge(pos_nan(), 1.0));
+}
+function test_ge_pos_nan_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_ge(1.0, pos_nan()), "assert_ge: expected \"1\" >= \"NaN\"");
+}
+function test_ge_neg_nan_pass(): test.TestOutcome {
+    return expect_pass(test.assert_ge(1.0, neg_nan()));
+}
+function test_ge_neg_nan_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_ge(neg_nan(), 1.0), "assert_ge: expected \"NaN\" >= \"1\"");
+}
+
+function test_sorted_asc_pos_nan_pass(): test.TestOutcome {
+    return expect_pass(test.assert_sorted_asc([1.0, 3.0, pos_nan()]));
+}
+function test_sorted_asc_pos_nan_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_sorted_asc([3.0, pos_nan(), 1.0]),
+                                  "assert_sorted_asc: inversion at index 2: NaN > 1");
+}
+function test_sorted_asc_neg_nan_pass(): test.TestOutcome {
+    return expect_pass(test.assert_sorted_asc([neg_nan(), 1.0, 3.0]));
+}
+function test_sorted_asc_neg_nan_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_sorted_asc([1.0, neg_nan(), 3.0]),
+                                  "assert_sorted_asc: inversion at index 1: 1 > NaN");
+}
+
+function test_unique_nan_first_pass(): test.TestOutcome {
+    return expect_pass(test.assert_unique([pos_nan(), 1.0]));
+}
+function test_unique_nan_first_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_unique([pos_nan(), 1.0, pos_nan()]),
+                                  "assert_unique: duplicate value NaN");
+}
+function test_unique_nan_last_pass(): test.TestOutcome {
+    return expect_pass(test.assert_unique([1.0, neg_nan(), pos_nan()]));
+}
+function test_unique_nan_last_fail(): test.TestOutcome {
+    return expect_fail_containing(test.assert_unique([1.0, neg_nan(), neg_nan()]),
+                                  "assert_unique: duplicate value NaN");
+}
+
 // A TestRunner is a value: `it()` returns a new one, and a caller that
 // forgets to assign it back loses the counts on its own handle after
 // the TAP line was already printed. The runner therefore also counts
@@ -408,6 +473,23 @@ function main(): i32 {
     r = r.it("assert_eq_array fail localises index", test_eq_i32_array_fail_index);
     r = r.it("pass() returns Pass", test_pass_returns_pass);
     r = r.it("fail(msg) returns Fail(msg)", test_fail_returns_fail);
+    r = r.it("assert_le +NaN on the right passes", test_le_pos_nan_pass);
+    r = r.it("assert_le +NaN on the left fails", test_le_pos_nan_fail);
+    r = r.it("assert_le -NaN on the left passes", test_le_neg_nan_pass);
+    r = r.it("assert_le -NaN on the right fails", test_le_neg_nan_fail);
+    r = r.it("assert_ge +NaN on the left passes", test_ge_pos_nan_pass);
+    r = r.it("assert_ge +NaN on the right fails", test_ge_pos_nan_fail);
+    r = r.it("assert_ge -NaN on the right passes", test_ge_neg_nan_pass);
+    r = r.it("assert_ge -NaN on the left fails", test_ge_neg_nan_fail);
+    r = r.it("assert_sorted_asc +NaN last passes", test_sorted_asc_pos_nan_pass);
+    r = r.it("assert_sorted_asc +NaN in the middle fails", test_sorted_asc_pos_nan_fail);
+    r = r.it("assert_sorted_asc -NaN first passes", test_sorted_asc_neg_nan_pass);
+    r = r.it("assert_sorted_asc -NaN in the middle fails", test_sorted_asc_neg_nan_fail);
+    r = r.it("assert_unique one NaN first passes", test_unique_nan_first_pass);
+    r = r.it("assert_unique repeated NaN fails", test_unique_nan_first_fail);
+    r = r.it("assert_unique NaNs of both signs pass", test_unique_nan_last_pass);
+    r = r.it("assert_unique repeated -NaN fails", test_unique_nan_last_fail);
+
     r = r.it("dropped it() result still counts", test_dropped_it_result_still_counts);
     r = r.it("unused subsuite handle still counts", test_unused_subsuite_handle_still_counts);
     r = r.it("finish() exits 1 for a dropped result",
