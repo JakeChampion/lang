@@ -21,6 +21,8 @@ func TestCopyingBuiltinArgIsCounted(t *testing.T) {
 		{"count_byte", `return __count_byte(p, 97);`},
 		{"memchr", `return __memchr(p, 97, 0);`},
 		{"print", `print(p); return 0;`},
+		{"writer-write", `var w: Writer = stdout(); var e: Option[IoError] = w.write(p); return 0;`},
+		{"Writer.write", `match (stdout().write(p)) { Some(_) => { return 1; }, None => { return 0; } } return 0;`},
 	}
 	for _, c := range cases {
 		src := "function eat(p: string): i32 { " + c.body + " }\nfunction main(): i32 { return 0; }"
@@ -164,5 +166,66 @@ function main(): i32 { return 0; }`
 	fn := findFunc(p, "shout")
 	if n := countCallDirect(fn.Ops, "__fern_str_dec"); n != 0 {
 		t.Errorf("shout emitted %d frees with reclamation off; ops:\n%s", n, p)
+	}
+}
+
+// The caller-side half for the method form: a string accumulator declared
+// inside a match arm and handed to `Writer.write` stays OWNED, so its
+// self-append takes the in-place `__fern_str_append` path and its scope-exit
+// release frees. `__method_Writer_write` writes the bytes to the fd and
+// retains nothing; without its table entry the accumulator was
+// borrow-tainted, every `out = out + piece` copied the whole prefix afresh,
+// and the superseded copy was decremented without being freed (#8394).
+func TestAccumulatorWrittenToWriterStaysInPlace(t *testing.T) {
+	src := `function main(): i32 {
+    var w: Writer = stdout();
+    match (Some("abcdefgh\n")) {
+        Some(chunk) => {
+            var out: string = "";
+            var i: i32 = 0;
+            while (i < 4) {
+                out = out + slice_unchecked(chunk, 0, chunk.len());
+                i = i + 1;
+            }
+            match (w.write(out)) { Some(_) => { return 1; }, None => {} }
+        },
+        None => { return 2; }
+    }
+    return 0;
+}`
+	dumps := map[string]string{}
+	RcPlanHook = func(fn, dump string) { dumps[fn] = dump }
+	defer func() { RcPlanHook = nil }()
+	p := lowerSourceWith(t, src, 8)
+	if !hasPlanName(dumps["main"], "freeEligible", "out") {
+		t.Errorf("out is not freeEligible — the Writer.write argument taints it; plan:\n%s", dumps["main"])
+	}
+	fn := findFunc(p, "main")
+	if n := countCallDirect(fn.Ops, "__fern_str_append"); n != 1 {
+		t.Errorf("main calls __fern_str_append %d times, want 1 — the self-append fell back to the copying concat; ops:\n%s", n, p)
+	}
+}
+
+// The argument-temp half for the method form (#8413): a fresh string handed
+// straight to `Writer.write` is stashed and released after the call. The
+// call-level admission needs a scalar result and the position-wise one a
+// user callee, so the temp of `w.write(build(chunk))` was owned by nobody —
+// one whole output chunk leaked per iteration of a cat-shaped loop.
+func TestFreshStringPassedToWriterIsReleased(t *testing.T) {
+	src := `function build(n: i32): string {
+    var out: string = "";
+    var i: i32 = 0;
+    while (i < n) { out = out + "abcdefgh"; i = i + 1; }
+    return out;
+}
+function main(): i32 {
+    var w: Writer = stdout();
+    match (w.write(build(4))) { Some(_) => { return 1; }, None => {} }
+    return 0;
+}`
+	p := lowerSourceWith(t, src, 8)
+	fn := findFunc(p, "main")
+	if n := countCallDirect(fn.Ops, "__fern_str_dec"); n != 1 {
+		t.Errorf("main calls __fern_str_dec %d times, want 1 — the build() temp passed to Writer.write is not released; ops:\n%s", n, p)
 	}
 }

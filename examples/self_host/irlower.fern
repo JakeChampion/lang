@@ -888,6 +888,30 @@ pub struct LowerState {
     fld_moves: string[],
 }
 
+// append_report_on reports whether FERN_APPEND_REPORT is set: print one line
+// per `a = a.append(v)` self-reassign naming the arr_push-vs-arr_push_owned
+// verdict and the rule that decided.
+//
+// The self-host counterpart of native's `fern -append-report`, and it answers a
+// different question than that flag does. Native reports copy-vs-in-place, the
+// O(n^2) hazard; this reports whether the grow RECLAIMS the superseded buffer,
+// because the plain push leaks it and that is where the self-built compiler's
+// retention comes from (#7954: two runtime primitives are 92% of the leaked
+// bytes, and this is one of them). A site's address in an rctrace line is
+// inside __fern_arr_push, so every append in the program aggregates to one
+// address; only the lowering knows which source site chose which push.
+//
+// Env-gated and print-only, like util.arr_push_cliff_report: a run without the
+// variable is byte-identical in behaviour and output. The verdict is computed
+// ONCE and shared with the emit below, so the report cannot drift from what
+// was actually emitted.
+function append_report_on(): boolean {
+    match (env("FERN_APPEND_REPORT")) {
+        Some(_) => { return true; },
+        None => { return false; }
+    }
+}
+
 // moves_local_at: does the construction at THIS ident node take over `name`'s
 // reference? The construction then owns it, so the retain is redundant with the
 // sweep dec that cancels it (#6726).
@@ -4354,12 +4378,9 @@ pub function decl_field_index(structs: StructTab, struct_name: string, field: st
     return 0 - 1;
 }
 
-// decl_is_leaksafe reports whether every field is an i32/boolean OR a string.
-// These are all leak-only types in the IR path — strings are never freed, so a
-// struct holding one keeps a valid reference for the program's life — so such a
-// struct needs NO reference counting (matching the AST path's exit codes; the
-// boxes leak). Array / nested-struct / tuple fields would be RC-tracked (freed),
-// so a struct holding one needs construction retains + drop release — deferred.
+// decl_is_leaksafe reports whether every field is leak-safe in the IR path.
+// Leak-only fields need no reference counting; Reader/Writer are bare fd handles
+// and likewise carry no heap reference.
 // is_scalar_array_type reports whether `t` is a scalar-element array (i32[] /
 // boolean[]) — leak-only-safe as a struct field: indexing yields an i32, and the
 // array (a fresh literal at construction) leaks with the struct (never freed),
@@ -4383,7 +4404,7 @@ pub function is_scalar_array_type(t: string): boolean {
 // the u64 tuple element slice — a separate increment). NOT used for enum
 // payloads (those need the element-width mark, not a plain mark_arr).
 pub function is_leaksafe_array_field(t: string): boolean {
-    return is_scalar_array_type(t) || is_float_array_type_name(t) || t == "i64[]" || t == "u32[]"
+    return is_scalar_array_type(t) || is_float_array_type_name(t) || t == "i64[]" || t == "u64[]" || t == "u32[]"
         || is_subword_array_type(t);
 }
 
@@ -4595,10 +4616,10 @@ function is_leaksafe_payload(p: string): boolean {
 }
 
 // is_leaksafe_opt_field: an Option[T] / Result[T, E] field whose payload type(s)
-// are leak-safe scalars/strings. Options/Results are leak-only on the IR path (the
-// exit sweep never frees them), so such a field needs no RC / aliasing bail — it
-// leaks with the struct, like a string field. Struct / nested-generic payloads are
-// deferred (they would need payload-type recovery through the field).
+// are leak-safe scalars/strings, structs, tuples, arrays, or enums.
+// Options/Results are leak-only on the IR path (the exit sweep never frees them),
+// so such a field needs no RC / aliasing bail — it leaks with the struct, like a
+// string field.
 pub function is_leaksafe_opt_field(t: string): boolean {
     var n: i32 = t.len();
     if (n < 9) { return false; }
@@ -4610,11 +4631,9 @@ pub function is_leaksafe_opt_field(t: string): boolean {
 }
 
 // opt_payload_ok_d: an Option/Result payload type is admissible for a leak-safe
-// struct field when it is a leak-safe scalar/string OR a leak-safe STRUCT (a
-// leak-only pointer in one slot, offset 8 — exactly what the match lowering's
-// ptag_is_struct branch reads). Enum payloads are deliberately excluded, held
-// out by a negative pin whose rationale no longer holds — see the tail of
-// opt_payload_ok_dv.
+// struct field when it is a leak-safe scalar/string, STRUCT (a leak-only pointer
+// in one slot, offset 8 — exactly what the match lowering's ptag_is_struct branch
+// reads), tuple, array, or enum.
 function opt_payload_ok_d(structs: StructTab, p: string): boolean {
     var seen: string[] = [];
     return opt_payload_ok_dv(structs, p, 0, seen);
@@ -4648,19 +4667,9 @@ function opt_payload_ok_dv(structs: StructTab, p: string, depth: i32, visiting: 
     // was CONSTRUCTED — `H { o: None }` was enough (#7745).
     if (is_leaksafe_array_field(p) || p == "string[]") { return true; }
     if (p.len() >= 8 && (slice_unchecked(p, 0, 7) == "Option[" || slice_unchecked(p, 0, 7) == "Result[") && is_leaksafe_opt_field_dv(structs, p, depth, visiting)) { return true; }
-    // An `Option[<enum>]` payload is NOT admitted here, deliberately. The shape
-    // looks exactly like the struct payload above — one enum-variant pointer in
-    // the box, leak-only, and decl_is_leaksafe_d admits a bare `c: Color` FIELD on
-    // that reasoning — but `opt-enum-field-stays-ast` in
-    // self_host_opt_struct_payload_field_ir_test.go is a deliberate NEGATIVE pin
-    // requiring the module to come out IR-INELIGIBLE. Admitting it (tried,
-    // reverted) turns that test red. The pin's stated rationale was that the
-    // legacy AST backend miscompiled an Option[enum] field — an argument FOR the
-    // IR path, and moot now that no AST backend exists — so whoever revisits this
-    // has to re-derive what actually mishandles the shape before moving the pin.
-    // On the wasm IR path all four probe shapes (Some / None / payload matched /
-    // read into a local) already agree with the interpreter; the x86 IR runtime
-    // answer is the unverified part.
+    // An `Option[<enum>]` payload is one enum-variant pointer in the box,
+    // leak-only — the same reasoning that admits a bare `c: Color` field.
+    if (is_enum_like_name(p, structs)) { return true; }
     return false;
 }
 
@@ -5221,7 +5230,7 @@ function decl_is_leaksafe_at_d(structs: StructTab, decl_index: i32, depth: i32, 
         // `(Node, …)` field re-enters decl_is_leaksafe_d WITH the path — its
         // back-edge check then short-circuits the cycle instead of recursing
         // forever (was a SIGSEGV on any linked list / tree).
-        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || is_leaksafe_array_field(t) || t == "string[][]" || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && slice_unchecked(t, 0, 5) == "Cell[")) {
+        if (t == "i32" || t == "boolean" || t == "string" || t == "string[]" || t == "f64" || t == "i64" || t == "u32" || t == "u8" || t == "f32" || t == "float" || t == "u64" || t == "Reader" || t == "Writer" || is_leaksafe_array_field(t) || t == "string[][]" || is_leaksafe_opt_field_dv(structs, t, depth, nv) || is_leaksafe_tuple_field_dv(structs, t, depth, nv) || is_map_type_name(t) || (t.len() > 5 && slice_unchecked(t, 0, 5) == "Cell[")) {
             fi = fi + 1;
             continue;
         }
@@ -23014,7 +23023,19 @@ function lower_stmt_assign(a: ast.StmtAssign, s: LowerState): LowerState {
                             // the plain push; the store below frees the superseded
                             // buffer once the param's ownership flag says this
                             // frame owns it (emit_consumed_param_store).
-                            if (s.is_aliased_name(a.target) || slot < s.frame.n_params) {
+                            var tgt_aliased: boolean = s.is_aliased_name(a.target);
+                            var tgt_param: boolean = slot < s.frame.n_params;
+                            if (append_report_on()) {
+                                var why: string = "sole owner: the grow reclaims the superseded buffer";
+                                if (tgt_aliased) { why = "aliased target: a surviving reference forbids the reclaim"; }
+                                else if (tgt_param) { why = "parameter target: the buffer is the caller's (#3457)"; }
+                                var verdict: string = "owned";
+                                if (tgt_aliased || tgt_param) { verdict = "LEAKS"; }
+                                eprint("append-report: " + s.frame.cur_fn + ":"
+                                    + util.i32_to_string(a.line) + ":" + util.i32_to_string(a.col)
+                                    + "  " + verdict + "  " + a.target + "  " + why + "\n");
+                            }
+                            if (tgt_aliased || tgt_param) {
                                 aps = aps.emit(ir.op_arr_push());
                             } else {
                                 aps = aps.emit(ir.op_arr_push_owned());
@@ -27911,7 +27932,12 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
                 },
                 ast.ExprFieldAccess(fa) => {
                     match (fa.obj) {
-                        ast.ExprIdent(_) => { callee_unsafe = false; },   // name.method(): receiver is a borrow
+                        ast.ExprIdent(_) => {
+                            callee_unsafe = false;   // name.method(): receiver is a borrow
+                            // `w.write(s)`: the registry carries "Writer.write" only
+                            // while the name can mean nothing else (copying_builtin_keys).
+                            if (fa.field == "write") { callee_name = "Writer.write"; }
+                        },
                         // `name[a:b].len()`: a view receiver at a method that
                         // cannot retain it borrows the source, exactly as the
                         // bare-ident receiver above does.
@@ -27920,8 +27946,8 @@ function expr_unsafe_for_vb(e: ast.Expr, name: string, borrowable: string[], rec
                             else { callee_unsafe = expr_unsafe_for_vb(fa.obj, name, borrowable, recv_borrow, vb_borrow); }
                         }
                     }
-                    // method args stay escapes: method-param borrowability isn't in
-                    // the (free-function-keyed) registry (callee_name left "").
+                    // every other method's args stay escapes: method-param
+                    // borrowability isn't in the registry (callee_name left "").
                 },
                 _ => { callee_unsafe = expr_unsafe_for_vb(c.callee, name, borrowable, recv_borrow, vb_borrow); }
             }
@@ -36790,11 +36816,18 @@ function fn_field_value_is_fresh(e: ast.Expr): boolean {
 // builds a sole-owned buffer of sole-owned element boxes, so the reuse-arm
 // __fern_str_arr_free of the OLD value can never free a live alias.
 function strarr_lit_all_elems_fresh(e: ast.Expr): boolean {
+    return strarr_lit_all_elems_fresh_reg(e, []);
+}
+
+// strarr_lit_all_elems_fresh_reg: the same proof against a fresh-string registry,
+// so an element may be a call to a str_fresh_ret_fns_of producer and not only a
+// syntactic literal or concat.
+function strarr_lit_all_elems_fresh_reg(e: ast.Expr, str_fresh: string[]): boolean {
     match (e) {
         ast.ExprArray(al) => {
             var i: i32 = 0;
             while (i < al.elements.len()) {
-                if (!strarr_elem_store_ok(al.elements[i])) { return false; }
+                if (!strarr_value_is_fresh(al.elements[i], str_fresh)) { return false; }
                 i = i + 1;
             }
             return true;
@@ -42026,8 +42059,9 @@ function consumed_scalar_enum_frees(body: ast.Stmt[], reassigned: string[], stru
 // string boxes are rc-HEADERED since #4294, released by the rc-aware
 // __fern_str_free — box + separate data buffer on asm, one inline block on wasm;
 // the freshness gate in variant_struct_payloads_fresh keeps the payload the box's
-// sole owner). NOT a scalar (no rc — released with the box), NOT string[] / enum /
-// map / opt / tuple, and NOT a non-leaf (cycle-risk) struct.
+// sole owner), OR a string[] (deep-freed by __fern_str_arr_free, under the same
+// freshness gate). NOT a scalar (no rc — released with the box), NOT enum / map /
+// opt / tuple, and NOT a non-leaf (cycle-risk) struct.
 function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
     // An ENUM-array payload (`Seq(N[])`, including the self-referential shape a
     // tree enum is built from): `__fern_arrarr_free` rc-guards the buffer, decs
@@ -42038,7 +42072,11 @@ function enum_field_rc_droppable(structs: StructTab, t: string): boolean {
     // Admitting it is what unblocks the whole enum: enum_all_variants_rc_droppable
     // bails on the first non-droppable variant, so `Seq(N[])` was taking the
     // scalar `Leaf(i32)` variant down with it and neither was reclaimed.
-    return is_enum_array_field_type(structs, t) || is_leaksafe_array_field(t) || t == "string"
+    // A string[] payload: __fern_str_arr_free decs each element string and then
+    // frees the buffer — the deep free the struct-field k_str_arr arm already
+    // uses. Fresh-gated at admission (variant_struct_payloads_fresh requires an
+    // array literal of fresh elements), so the enum is the sole owner.
+    return is_enum_array_field_type(structs, t) || is_leaksafe_array_field(t) || t == "string" || t == "string[]"
         || (decl_is_struct(structs, t) && nested_field_deep_drop_ok(structs, t))
         // #4355 slice 8: a SCALAR-ONLY struct payload (`S { m: i32, n: i32 }`)
         // is one flat rc-headered box with no inner rc fields — released by a
@@ -42216,6 +42254,11 @@ function variant_struct_payloads_fresh(args: ast.Expr[], variant_name: string, s
             }
             if (!sfresh) { return false; }
         }
+        // A string[] payload must be an array literal of fresh elements, for the
+        // reason the string arm states: the match-site __fern_str_arr_free frees
+        // each element, so a bare ident / field read would alias boxes a live
+        // local still owns.
+        if (ft == "string[]" && !strarr_lit_all_elems_fresh_reg(args[i], str_fresh)) { return false; }
         i = i + 1;
     }
     return true;
@@ -42706,6 +42749,15 @@ function emit_enum_variant_payload_drops(s: LowerState, slot: i32, enum_name: st
                     st = st.emit(ir.op_load_local(slot));
                     st = st.emit(ir.op_struct_get(fk, struct_field_width(st.frame.structs, vname, fk)));
                     st = st.emit(ir.op_call_direct("__fern_arrarr_free", 1));
+                    st = st.emit(ir.op_drop());
+                } else if (eft == "string[]") {
+                    // string[] payload: the elements are rc-headered string boxes, so
+                    // a single dec of the buffer would strand every one. The sibling
+                    // of the enum-array arm above, and the same deep free the
+                    // struct-field k_str_arr arm uses.
+                    st = st.emit(ir.op_load_local(slot));
+                    st = st.emit(ir.op_struct_get(fk, struct_field_width(st.frame.structs, vname, fk)));
+                    st = st.emit(ir.op_call_direct("__fern_str_arr_free", 1));
                     st = st.emit(ir.op_drop());
                 } else if (is_leaksafe_array_field(eft)) {
                     // scalar-element array payload: one dec frees the buffer (scalar
@@ -45627,9 +45679,22 @@ function structarr_lit_is_fresh(e: ast.Expr): boolean {
 // fresh_struct_ret_fns is NOT enough — it admits alias-inc'd field buffers. A
 // METHOD call declines: the receiver type is not known here, so `<Base>.<m>`
 // keys cannot be looked up (conservative, no admission).
+//
+// An INDEX read is admitted on counted-store grounds rather than freshness, the
+// same argument arrarr_row_escapes_iter makes for a row bind: the append retains
+// a struct element read by index (indexed_box_elem_escapes), so the box arrives
+// at rc 2 and the walk's rc-guarded dec lands on 2, not 1 — it frees nothing the
+// source still names, and reclaims once that source dies. A bare IDENT element
+// stays refused: nothing retains it, so it really would dangle. The kind is not
+// re-derived here because this arm does not decide it: the append-built
+// collection above is type-agnostic, and slot_is_reclaimable_structarr resolves
+// the slot's struct type later, so only a struct-typed array reaches the walk.
+// An enum array admitted here is refused there — measured unchanged, where
+// crediting it would be a double free rather than a leak fix.
 function structarr_elem_store_ok(e: ast.Expr, fresh_ret: string[]): boolean {
     match (e) {
         ast.ExprStructLit(sl) => { return !sl.has_base; },
+        ast.ExprIndex(_) => { return true; },
         ast.ExprCall(c) => {
             match (c.callee) {
                 ast.ExprIdent(cid) => { return util.index_of_str(fresh_ret, cid.name) >= 0; },
@@ -52424,6 +52489,7 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                     st = st.emit(ir.op_const_i32(0));
                 } else if (struct_field_is_i64(st.frame.structs, slit.type_name, fidx)) {
                     st = lower_i64(slit.field_values[fj], st);
+                    st = st.mark_i64(tslot, true);
                 } else {
                     st = lower_expr(slit.field_values[fj], st);
                 }
@@ -52526,7 +52592,7 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
-                } else if (is_enum_like_name(rfty, st.frame.structs)) {
+                } else if (!is_scalar_field_type(rfty) && is_enum_like_name(rfty, st.frame.structs)) {
                     // ENUM override (#4356 divergence 1, self-overwrite family):
                     // flat rc-gated box dec of the OLD value — sentinel guard-
                     // skipped, sole-owned box frees (payloads leak, the exit
@@ -52610,11 +52676,18 @@ function emit_self_overwrite_reuse(c_name: string, c_site: string, init: ast.Exp
                     var cfty: string = decl_field_type_at(st.frame.structs, slit.type_name, di);
                     st = st.emit(ir.op_load_local(bslot));
                     st = st.emit(ir.op_load_local(dslot));
-                    st = st.emit(ir.op_struct_get(di, struct_field_width(st.frame.structs, slit.type_name, di)));
-                    if (is_leaksafe_array_field(cfty) || decl_is_struct(st.frame.structs, cfty) || is_enum_like_name(cfty, st.frame.structs) || cfty == "string" || cfty == "string[]" || is_struct_array_field_type(st.frame.structs, cfty) || is_enum_array_field_type(st.frame.structs, cfty)) {
-                        st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                    if (struct_field_is_i64(st.frame.structs, slit.type_name, di)) {
+                        // An 8-byte INTEGER field copies through the i64 ops (wasm
+                        // reads a width-64 struct_get as f64) and holds no reference.
+                        st = st.emit(ir.op_struct_get_i64(di));
+                        st = st.emit(ir.op_struct_set_i64(di));
+                    } else {
+                        st = st.emit(ir.op_struct_get(di, struct_field_width(st.frame.structs, slit.type_name, di)));
+                        if (!is_scalar_field_type(cfty) && (is_leaksafe_array_field(cfty) || decl_is_struct(st.frame.structs, cfty) || is_enum_like_name(cfty, st.frame.structs) || cfty == "string" || cfty == "string[]" || is_struct_array_field_type(st.frame.structs, cfty) || is_enum_array_field_type(st.frame.structs, cfty))) {
+                            st = st.emit(ir.op_call_direct("__fern_rc_inc", 1));
+                        }
+                        st = st.emit(ir.op_struct_set(di, struct_field_width(st.frame.structs, slit.type_name, di)));
                     }
-                    st = st.emit(ir.op_struct_set(di, struct_field_width(st.frame.structs, slit.type_name, di)));
                 }
                 di = di + 1;
             }
@@ -53126,7 +53199,7 @@ function emit_cross_struct_reuse(c_name: string, c_site: string, init: ast.Expr,
                     }
                     st = st.emit(ir.op_call_direct("__fern_rc_dec", 1));
                     st = st.emit(ir.op_drop());
-                } else if (is_enum_like_name(rty, st.frame.structs)) {
+                } else if (!is_scalar_field_type(rty) && is_enum_like_name(rty, st.frame.structs)) {
                     // ENUM field (#4356 divergence 1): flat rc-gated box dec of
                     // the OLD value — a payloadless sentinel is guard-skipped, a
                     // sole-owned box frees (payloads leak, the exit sweep's
@@ -55943,7 +56016,8 @@ pub function lower_func(fn: parser.FuncDecl, structs: StructTab, sg: FnSigs, for
     if (fn.receiver_name.len() > 0) {
         var rbase: string = util.base_type_name(fn.receiver_type);
         var r_is_struct: boolean = decl_is_struct(structs, rbase);
-        var r_is_prim: boolean = rbase == "i32" || rbase == "boolean" || rbase == "string" || rbase == "i64" || is_f64_scalar_type_name(rbase);
+        var r_is_prim: boolean = rbase == "i32" || rbase == "boolean" || rbase == "string" || rbase == "i64"
+            || rbase == "u8" || rbase == "u32" || rbase == "u64" || rbase == "usize" || rbase == "char" || is_f64_scalar_type_name(rbase);
         // A Map[K, V] receiver (`function (m: Map[K, V]) contains_value(...)`).
         // base_type_name strips the generics to "Map", which is_enum_like_name
         // would otherwise mis-accept as a bare nominal enum — so test r_is_map
@@ -57936,7 +58010,7 @@ pub function opt_fresh_ret_fns_of(funcs: parser.FuncDecl[], structs: StructTab, 
         else if (fn.receiver_type.len() == 0 && rc_enum_has_variants(structs, rt)
                 && enum_all_variants_rc_droppable(structs, rt)
                 && body_has_return(fn.body)
-                && !body_has_nonqualifying_rcenum_return(fn.body, structs, rt)) {
+                && !body_has_nonqualifying_rcenum_return(fn.body, structs, rt, str_fresh)) {
             out = out.append("RCE:" + fn.name + "|" + rt);
         }
         // #4355 slice 10: fresh arr-of-arr RETURN fns, tagged "AAC:<name>|<flag>"
@@ -58375,20 +58449,22 @@ function rcenum_ctor_payload_strings_fresh(e: ast.Expr, structs: StructTab): boo
 // Statement coverage mirrors body_has_nonctor_opt_return — a return hiding in
 // any covered nested block disqualifies; uncovered statement kinds cannot
 // contain returns that reach this function's exit.
-function body_has_nonqualifying_rcenum_return(stmts: ast.Stmt[], structs: StructTab, owner: string): boolean {
+//
+// `str_fresh` is str_fresh_ret_fns_of's registry, so a variant's string payload
+// may be a call to a proven fresh-string producer, not only a syntactic literal
+// or concat. It is built from FuncDecls alone and passed into
+// opt_fresh_ret_fns_of, so it is complete before this proof runs.
+function body_has_nonqualifying_rcenum_return(stmts: ast.Stmt[], structs: StructTab, owner: string, str_fresh: string[]): boolean {
     for stmt in stmts {
         match (stmt) {
             ast.StmtReturn(r) => {
-                // Strict set only ([]): this proof registers "RCE:" rows while
-                // str_fresh_ret_fns is built independently; keeping it syntactic
-                // avoids ordering the two registries against each other.
-                if (fresh_rcpayload_enum_init(r.value, structs, [], [], false) != owner) { return true; }
+                if (fresh_rcpayload_enum_init(r.value, structs, str_fresh, [], false) != owner) { return true; }
                 if (!rcenum_ctor_payload_strings_fresh(r.value, structs)) { return true; }
             },
-            ast.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner)) { return true; } },
-            ast.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, structs, owner)) { return true; } },
-            ast.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, structs, owner)) { return true; } },
-            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, structs, owner)) { return true; } a = a + 1; } },
+            ast.StmtIf(f) => { if (body_has_nonqualifying_rcenum_return(f.then_body, structs, owner, str_fresh) || body_has_nonqualifying_rcenum_return(f.else_body, structs, owner, str_fresh)) { return true; } },
+            ast.StmtWhile(w) => { if (body_has_nonqualifying_rcenum_return(w.body, structs, owner, str_fresh)) { return true; } },
+            ast.StmtFor(fo) => { if (body_has_nonqualifying_rcenum_return(fo.body, structs, owner, str_fresh)) { return true; } },
+            ast.StmtMatch(m) => { var a: i32 = 0; while (a < m.arms.len()) { if (body_has_nonqualifying_rcenum_return(m.arms[a].body, structs, owner, str_fresh)) { return true; } a = a + 1; } },
             _ => {}
         }
     }
@@ -62610,6 +62686,21 @@ function borrow_reg_record(key: string, flags: string): string {
     return key + "|" + flags + "\n";
 }
 
+// copying_builtin_keys: the registry keys whose position 0 is a string the
+// callee COPIES rather than retains — native's copyingBuiltinArgs
+// (rc_analysis.go), read off the same runtime bodies: strbuf_append memcpys the
+// bytes, print / write / eprint / Writer.write write(2) them, the byte scanners
+// return a scalar. A string local passed there keeps its reclaim; without the
+// rows every `print(out)` cost `out` its release. The checker rejects a user
+// function redeclaring a builtin name, so the free keys can never name one.
+// The method key is seeded only while no user receiver method is named `write`:
+// the escape walks see no receiver type, so the name alone must settle it.
+function copying_builtin_keys(funcs: parser.FuncDecl[]): string[] {
+    var keys: string[] = ["print", "write", "eprint", "strbuf_append", "__memchr", "__rmemchr", "__ascii_run", "__count_byte"];
+    for fn in funcs { if (fn.receiver_type.len() > 0 && fn.name == "write") { return keys; } }
+    return keys.append("Writer.write");
+}
+
 // borrow_reg_bare_index re-buckets a registry's rows by the bare name after
 // the key's last '.' (the whole key when it has none), keeping each row
 // intact, so a lookup by method name reaches every "<Type>.<method>" row
@@ -63172,6 +63263,7 @@ pub function borrowable_params_of(funcs: parser.FuncDecl[]): string[] {
             if (elb.len() > 0) { out = borrow_reg_put(out, "ELB:" + borrowable_key(fn), elb); }
         }
     }
+    for ck in copying_builtin_keys(funcs) { out = borrow_reg_put(out, ck, "1"); }
     return out;
 }
 // tuple_payload_borrow_flags: the "TUPB:" tier for one function — per-param
@@ -63676,6 +63768,12 @@ pub function borrowable_params_interproc(funcs: parser.FuncDecl[]): string[] {
         row_bucket = row_bucket.append(util.hash_bucket("TUPB:" + key, nb));
         row_bucket = row_bucket.append(util.hash_bucket("ELB:" + key, nb));
         fi = fi + 1;
+    }
+    // The copying builtins ride the same rows so a rebuild keeps them; nothing
+    // below rewrites an index past the function triples.
+    for ck in copying_builtin_keys(funcs) {
+        rows = rows.append(borrow_reg_record(ck, "1"));
+        row_bucket = row_bucket.append(util.hash_bucket(ck, nb));
     }
     var reg: string[] = borrow_reg_rebuild(borrow_reg_new(), i32_filled(nb, 1), rows, row_bucket);
     var deps: CallDeps = call_deps_of(funcs, false, false);

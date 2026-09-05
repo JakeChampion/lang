@@ -1,0 +1,58 @@
+// spec: AL-01
+//
+// The byte round trip: `s.bytes()` copies a string into a fresh u8[] and
+// `string_from_bytes_unchecked` copies it back into a fresh string. Both
+// copies are dead by the end of `round`, whether the string is bound to a
+// local or handed straight to `.len()` as an argument temp, so they must be
+// recycled (#8403).
+//
+// The observable is that fresh memory does NOT scale with the string size:
+// the same number of rounds over a 1024-byte string must cost no more fresh
+// bytes than over a 16-byte one, up to a factor that tolerates the per-call
+// slice header `bytes()` builds (a constant, independent of the length).
+// With the copies leaking, the wide run costs ~30x the narrow one. One
+// warm-up round at each size precedes its measured rounds, so the first
+// allocation of each buffer class — fresh however well it recycles — is not
+// in the comparison.
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+function round(s: string): i32 {
+    var bs: u8[] = s.bytes();
+    var t: string = string_from_bytes_unchecked(bs);
+    return t.len();
+}
+
+function round_temp(s: string): i32 {
+    return string_from_bytes_unchecked(s.bytes()).len();
+}
+
+function rounds(s: string, n: i32): i32 {
+    var acc: i32 = 0;
+    for i in 0..n {
+        acc = acc + round(s) + round_temp(s);
+    }
+    return acc;
+}
+
+function main(): i32 {
+    // Built by concatenation so both are heap strings on every backend.
+    var narrow: string = "abcdefgh" + "ijklmnop";
+    var wide: string = narrow.repeat(64);
+    var warm: i32 = rounds(narrow, 1);
+    var b0: i64 = __heap_bump_bytes();
+    var x: i32 = rounds(narrow, 50);
+    var b1: i64 = __heap_bump_bytes();
+    warm = warm + rounds(wide, 1);
+    var b2: i64 = __heap_bump_bytes();
+    var y: i32 = rounds(wide, 50);
+    var b3: i64 = __heap_bump_bytes();
+
+    print(warm.to_string());
+    print(x.to_string());
+    print(y.to_string());
+    // Sixty-four times the bytes must not cost more than twice the fresh memory.
+    if ((b3 - b2) > 2 * (b1 - b0)) { print("scales"); } else { print("constant"); }
+    return 0;
+}

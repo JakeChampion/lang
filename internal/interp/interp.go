@@ -12,6 +12,7 @@ package interp
 import (
 	"bytes"
 	cryptorand "crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -19,12 +20,15 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/strerror"
 	"github.com/jakechampion/lang/internal/tty"
 )
 
@@ -597,6 +601,7 @@ func New() *Interp {
 	i.Builtins["putchar"] = &Builtin{Fn: builtinPutchar}
 	i.Builtins["poll"] = &Builtin{Fn: builtinPoll}
 	i.Builtins["isatty"] = &Builtin{Fn: builtinIsatty}
+	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
 	// string-builder primitive (see checker FuncSigs); the compiled
 	// backends back it with a growable heap buffer.
@@ -965,7 +970,7 @@ func New() *Interp {
 	i.Builtins["__trunc_f64"] = mkUnaryF64Builtin("__trunc_f64", math.Trunc)
 	i.Builtins["__abs_f64"] = mkUnaryF64Builtin("__abs_f64", math.Abs)
 	i.Builtins["__log_f64"] = mkUnaryF64Builtin("__log_f64", math.Log)
-	i.Builtins["__exp_f64"] = mkUnaryF64Builtin("__exp_f64", math.Exp)
+	i.Builtins["__exp_f64"] = mkUnaryF64Builtin("__exp_f64", fernExp)
 	// sin/cos carry their own fdlibm reduction (trig.go) rather than Go's:
 	// math.Sin's argument reduction is unboundedly wrong in ulp terms near
 	// the function's zeros, and the compiled backends all implement the
@@ -2279,7 +2284,7 @@ func builtinTempDir(_ *Interp, args []Value) (Value, error) {
 	// rather than laundering Go's own pattern error through
 	// classifyIoError, so the answer is identical on all of them.
 	if strings.ContainsRune(string(prefix), '/') {
-		return resultErr(ioErrorOther(string(prefix), "")), nil
+		return resultErr(ioErrorOther(string(prefix), syscall.EINVAL)), nil
 	}
 	dir, err := os.MkdirTemp("", string(prefix)+"-*")
 	if err != nil {
@@ -2501,15 +2506,27 @@ func classifyIoError(path string, err error) *Enum {
 		return &Enum{EnumName: "IoError", VariantName: "AlreadyExists", Index: 2,
 			Payloads: []Value{String(path)}}
 	}
-	return ioErrorOther(path, err.Error())
+	var errno syscall.Errno
+	switch {
+	case errors.As(err, &errno):
+		return ioErrorOther(path, errno)
+	case errors.Is(err, os.ErrClosed):
+		// Go refuses a write on a closed *os.File before the kernel
+		// sees it; the kernel's answer would be EBADF.
+		return ioErrorOther(path, syscall.EBADF)
+	}
+	// Not a syscall failure at all, so there is no errno to name: Go's
+	// own text is the only description there is.
+	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
+		Payloads: []Value{String(path), String(err.Error())}}
 }
 
-// ioErrorOther builds `IoError::Other(path, msg)` — where every
-// errno without a variant of its own lands, on this backend and
-// on the natives alike.
-func ioErrorOther(path, msg string) *Enum {
+// ioErrorOther builds `IoError::Other(path, strerror(errno))` — where
+// every errno without a variant of its own lands, with the same glibc
+// text the natives report (#8265).
+func ioErrorOther(path string, errno syscall.Errno) *Enum {
 	return &Enum{EnumName: "IoError", VariantName: "Other", Index: 6,
-		Payloads: []Value{String(path), String(msg)}}
+		Payloads: []Value{String(path), String(strerror.Text(runtime.GOOS, int(errno)))}}
 }
 
 // resultOk / resultErr wrap a value into the canonical
@@ -2887,6 +2904,18 @@ func builtinIsatty(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("isatty: expected number arg, got %T", args[0])
 	}
 	return Bool(tty.IsTerminal(int(fd))), nil
+}
+
+// builtinTargetOS answers `target_os()` with the interpreter's host: under
+// `fern -interp` the program runs where the compiler runs, so the host IS
+// the target. A compile never reaches here — constfold folds the call to
+// the `-target` environment first — so this is the one implementation
+// whose answer is the host's, spelled as Go names it.
+func builtinTargetOS(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("target_os: expected 0 args, got %d", len(args))
+	}
+	return String(runtime.GOOS), nil
 }
 
 // builtinStrbufReset zeroes the global string-builder buffer.

@@ -4,6 +4,9 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/checker"
+	"github.com/jakechampion/lang/internal/parser"
 )
 
 // loweredAndFolded parses, type-checks, lowers, and runs Fold on src.
@@ -702,5 +705,86 @@ func TestFoldIsUniqueOnNullKeepsTheStackBalanced(t *testing.T) {
 
 	if len(fn.Ops) != 2 || fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 0 {
 		t.Fatalf("want `const 0; return`, got:\n%s", p)
+	}
+}
+
+// `"linux" == "darwin"` over two literals folds to a constant, and the branch
+// on it is then pruned — the shape a `target_os()` branch takes once constfold
+// has resolved the call. `!=` is the same op followed by OpNot, so it folds
+// through the unary rule; the true case splices the arm in.
+func TestFoldStringLiteralEqualityPrunesBranch(t *testing.T) {
+	p := loweredAndFolded(t, `function f(): i32 {
+    if ("linux" == "darwin") { return 1; }
+    if ("wasi" != "wasi") { return 2; }
+    if ("android" == "android") { return 3; }
+    return 4;
+}`)
+	fn := findFunc(p, "f")
+	if fn == nil {
+		t.Fatal("f not found")
+	}
+	for _, op := range fn.Ops {
+		switch op.Kind {
+		case OpStrEq, OpConstStr, OpIf, OpNot:
+			t.Fatalf("%s survived the fold:\n%s", op.Kind, p)
+		}
+	}
+	if len(fn.Ops) < 2 || fn.Ops[0].Kind != OpConstI32 || fn.Ops[0].I32 != 3 || fn.Ops[1].Kind != OpReturn {
+		t.Fatalf("expected the spliced `return 3` first, got:\n%s", p)
+	}
+}
+
+// loweredAndFoldedWith lowers with an explicit pointer width and options.
+func loweredAndFoldedWith(t *testing.T, src string, ptrW int, opts ...LowerOption) *Program {
+	t.Helper()
+	prog, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	p, err := LowerWith(prog, info, ptrW, opts...)
+	if err != nil {
+		t.Fatalf("lower: %v", err)
+	}
+	Fold(p)
+	return p
+}
+
+// An unfolded `target_os()` lowers to the environment the lowering was
+// given, else the pointer width's default — so a harness that lowers a
+// checked program without the driver's fold gets the target's answer
+// rather than a refusal. (The driver's pre-check fold is what prunes the
+// branch; here the call result is still an owned temp around the compare.)
+func TestUnfoldedTargetOSLowersToTheTargetsLiteral(t *testing.T) {
+	src := `function f(): i32 {
+    if (target_os() == "darwin") { return 1; }
+    return 2;
+}`
+	for _, tc := range []struct {
+		ptrW int
+		opts []LowerOption
+		want string
+	}{
+		{8, nil, "linux"},
+		{4, nil, "wasi"},
+		{8, []LowerOption{WithTargetOS("darwin")}, "darwin"},
+	} {
+		p := loweredAndFoldedWith(t, src, tc.ptrW, tc.opts...)
+		fn := findFunc(p, "f")
+		if fn == nil {
+			t.Fatal("f not found")
+		}
+		found := false
+		for _, op := range fn.Ops {
+			if op.Kind == OpConstStr && op.Str == tc.want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("ptrW %d %v: no const.str %q in:\n%s", tc.ptrW, tc.opts != nil, tc.want, p)
+		}
 	}
 }

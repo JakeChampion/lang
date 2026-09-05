@@ -55,6 +55,44 @@ function main(): i32 { return 0; }`)
 	}
 }
 
+// A fresh byte buffer filled through `__memcpy(out as usize, …)` is still
+// fresh: the copy writes bytes, which can embed no pointer, and the raw
+// address dies with the call — the std/string.bytes shape (#8403). A
+// pointer-element buffer is excluded (a byte copy into it could plant
+// uncounted aliases), and a raw address that outlives the call still
+// taints.
+func TestReturnsNoParamEscapeByteCopy(t *testing.T) {
+	prog, err := parser.Parse(`function (s: string) bytes2(): u8[] {
+    var n: i32 = s.len();
+    var out: u8[] = __alloc_u8(n);
+    if (n > 0) { __memcpy(out as usize, s.as_bytes() as usize, n); }
+    return out;
+}
+function zeroed(n: i32): u8[] { var out: u8[] = __alloc_u8(n); __memset(out as usize, 0, n); return out; }
+function ptrs(xs: string[]): string[] { var out: string[] = []; __memcpy(out as usize, xs as usize, 8); return out; }
+function rawout(n: i32): u8[] { var out: u8[] = __alloc_u8(n); var a: usize = out as usize; return out; }
+function main(): i32 { return 0; }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := findReturnsNoParamEscape(prog, info)
+	want := map[string]bool{
+		"__method_string_bytes2": true,
+		"zeroed":                 true,
+		"ptrs":                   false,
+		"rawout":                 false,
+	}
+	for name, exp := range want {
+		if q[name] != exp {
+			t.Errorf("returnsNoParamEscape[%s] = %v, want %v", name, q[name], exp)
+		}
+	}
+}
+
 // Fresh-local returns: `return r` where r was built locally qualifies, while a
 // local that aliases a parameter or is exposed to mutation does not. A false
 // positive here is a use-after-free, so pin both directions.

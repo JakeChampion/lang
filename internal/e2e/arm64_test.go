@@ -7232,8 +7232,10 @@ function main(): i32 {
     if (p1.0 != 3 || p1.1 != 1) { return 1; }
     var p2: (i32, i32) = (12).divmod(4);
     if (p2.0 != 3 || p2.1 != 0) { return 2; }
+    // A zero divisor is the language's total contract, not a
+    // special case: 5 / 0 is 0 and 5 % 0 is 5.
     var p3: (i32, i32) = (5).divmod(0);
-    if (p3.0 != 0 || p3.1 != 0) { return 3; }
+    if (p3.0 != 0 || p3.1 != 5) { return 3; }
 
     // escape_shell
     if ("hello".escape_shell() != "'hello'") { return 4; }

@@ -49,6 +49,27 @@ func callCount(fn *ir.Func, name string) int {
 	return n
 }
 
+// cowSeamRetainCount counts COW-seam retains specifically, by their emitted
+// SHAPE: emitMapCowRetainTest compares the result handle against the pre-COW
+// receiver at pointer width and retains only under that branch.
+//
+// A plain rcIncCount cannot do this job. The function under test emits other
+// retains — the projection's own binding-site inc among them — so counting
+// __fern_rc_inc passes whether or not the seam retained anything, which is a
+// test that holds for the wrong reason.
+func cowSeamRetainCount(fn *ir.Func) int {
+	n := 0
+	for i := 0; i+3 < len(fn.Ops); i++ {
+		if fn.Ops[i].Kind == ir.OpEq && fn.Ops[i].Width == ir.WidthPtr &&
+			fn.Ops[i+1].Kind == ir.OpIf &&
+			fn.Ops[i+2].Kind == ir.OpLoadLocal &&
+			fn.Ops[i+3].Kind == ir.OpRcInc {
+			n++
+		}
+	}
+	return n
+}
+
 func TestTupleElementBindingIsReclaimed(t *testing.T) {
 	fn := funcByName(lowerForTest(t, tupleThreadSrc), "churn")
 	// One deep struct drop is the TUPLE's own — __drop_tuple_<…> reclaims its
@@ -63,19 +84,28 @@ func TestTupleElementBindingIsReclaimed(t *testing.T) {
 	}
 }
 
-// A MAP element must NOT be credited. The counted-alias argument rests on the
-// destination's drop being is_unique-gated and shallow — true for a struct,
-// array or enum element, false for a map, whose drop deep-frees the value
-// column. Crediting one segfaulted `map_delete_tuple_churn_free` on both
-// natives: `var m = t.0` on a `(Map, boolean)` freed a map the tuple still
-// referenced.
+// A MAP element IS credited — but only in company. The counted-alias argument
+// rests on the destination's drop being matched by a reference the container
+// genuinely holds, and for the delete tuple that reference did not exist: the
+// tuple stored the receiver's handle uncounted, so crediting the projection
+// alone made `var m = t.0` on a `(Map, boolean)` deep-free a map the tuple
+// still referenced, and segfaulted `map_delete_tuple_churn_free` on both
+// natives. The COW-seam retain supplies the count; the two are a pair (#8276).
 //
-// The e2e rc corpus covers the crash. This covers the DECISION, in a tenth of
-// a second rather than eighty: crediting the element makes the loop body emit
-// map drops (four `__fern_map_drop` calls, plus the tuple's own deep drop),
-// where declining to credit it emits none at all.
-func TestTupleMapElementIsNotReclaimed(t *testing.T) {
-	fn := funcByName(lowerForTest(t, `
+// So this pins BOTH halves, and it is the pairing that has to stay true rather
+// than either number on its own:
+//
+//   - the loop reclaims the map (drops are emitted at all), which crediting
+//     the projection is what buys;
+//   - the seam retains it (mapCowBindSites reaches a whole-tuple `var`), which
+//     is what makes those drops safe.
+//
+// Drop either and the shape is a use-after-free again, so a future change that
+// removes one must fail here rather than quietly restore the 2026-09 segfault.
+// The e2e corpus covers the crash and the bytes; this covers the DECISION, in
+// a hundredth of the time.
+func TestTupleMapElementIsCreditedWithTheSeamRetain(t *testing.T) {
+	const src = `
 import "core/int";
 import "core/map";
 
@@ -94,8 +124,21 @@ function churn(n: i32): i32 {
 }
 
 function main(): i32 { return churn(4); }
-`), "churn")
-	if n := callCount(fn, "__fern_map_drop"); n != 0 {
-		t.Errorf("churn emits %d map drops; the tuple element is credited as owned, so the loop frees a map the tuple still references — map_delete_tuple_churn_free segfaults on both natives when it does", n)
+`
+	fn := funcByName(lowerForTest(t, src), "churn")
+
+	// Half one: the map is released. Before #8276 this was zero — the
+	// projection was refused ownership, so nothing in the loop ever dropped
+	// the map and the whole table leaked once an iteration.
+	if n := callCount(fn, "__fern_map_drop"); n == 0 {
+		t.Error("churn emits no map drops: the tuple element is not credited, so the loop leaks its map every iteration (#8434)")
+	}
+
+	// Half two: the seam retained it, which is the only thing making half one
+	// safe. Matched by SHAPE rather than by counting retains — see
+	// cowSeamRetainCount for why a bare __fern_rc_inc count passes either way. `__map_cow_inplace` hands the receiver's own handle back on the
+	// in-place branch, so without this the drops above free a live map.
+	if n := cowSeamRetainCount(fn); n == 0 {
+		t.Error("churn emits no retain: the delete tuple holds the receiver's handle uncounted, so the map drops above are a use-after-free — the COW-seam retain (mapCowBindSites) is what pairs with the credit (#8276)")
 	}
 }

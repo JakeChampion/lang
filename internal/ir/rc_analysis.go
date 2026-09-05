@@ -120,6 +120,8 @@ type rcPlan struct {
 	// reassign-to-self), so emitArraySet must rc-inc the receiver buffer
 	// before __fern_arr_cow_inplace to force the copy path — otherwise the
 	// rc==1 in-place reuse aliases/mutates the still-live receiver (#2832).
+	// A field receiver computeFieldOwnMoves claims is cleared back to false:
+	// the move out of the box replaces the inc.
 	arraySetInc map[*ast.Call]bool
 	// arraySetConsumed holds the names of bare-ident `.with` receivers whose
 	// reference __fern_arr_cow_inplace CONSUMES, and arraySetConsumedSites
@@ -202,6 +204,18 @@ type rcPlan struct {
 	// the plan instead (see the fixpoint in computeConsumingOwnedMatches).
 	// Filled by computeConsumingOwnedMatches.
 	consumingBindings map[string]ast.Type
+	// ownedPayloadMatches marks a `match` whose scrutinee is a direct call to
+	// an rcOwnedPayloadBuiltins builtin: the box is immortal and needs no
+	// release, but its success payload is a fresh rc=1 value the caller owns
+	// and nothing else ever releases. Its qualifying arms' owned-payload
+	// bindings are counted owners in consumingBindings; the bind site drops
+	// the slot's previous value first so a loop releases every iteration's
+	// payload, and a `_` at an owned position drops the payload at once.
+	// Unlike a consuming owned-param match this may sit in a loop (each
+	// iteration produces a fresh box) and no arm poisons its siblings (an
+	// unadmitted binding is today's leak, not a stranded transfer). Filled
+	// by computeConsumingOwnedMatches.
+	ownedPayloadMatches map[*ast.Match]bool
 	// borrowedBindings names the arm bindings (and `@` bindings) of every
 	// NON-consuming match: the arm loads the payload straight out of the
 	// scrutinee's box with no retain, so a binding holds the box's own
@@ -221,13 +235,14 @@ type rcPlan struct {
 	// argument's slot once the value is on the operand stack. Filled by
 	// computeOwnedArgMoves, which also records each in moveSites.
 	ownedArgMoves map[*ast.Ident]bool
-	// fieldOwnMoves marks the `x.f` argument nodes this frame hands to an
-	// explicit `own` parameter as a MOVE out of x's box: the enclosing
-	// statement is `x = S { ...x, f: g(.., x.f, ..) }` or the return of that
-	// literal (checker.SupersededFieldOwnMoveArgs), so the store supersedes
-	// the field the callee consumes. The call site empties the slot when the
-	// box is unique at runtime and retains the value otherwise — see
-	// emitFieldOwnMove. Filled by computeFieldOwnMoves.
+	// fieldOwnMoves marks the `x.f` nodes this frame hands to an explicit
+	// `own` parameter or to `.with` as a MOVE out of x's box: the enclosing
+	// statement is `x = S { ...x, f: g(.., x.f, ..) }` / `x = S { ...x, f:
+	// x.f.with(i, v) }` or the return of that literal
+	// (checker.SupersededFieldMoves), so the store supersedes the field the
+	// consumer takes. The site empties the slot when the box is unique at
+	// runtime and retains the value otherwise — see emitFieldOwnMove. Filled
+	// by computeFieldOwnMoves.
 	fieldOwnMoves map[*ast.FieldAccess]bool
 	// preciseDrops[stmtIdx] lists the owned locals to deep-drop + zero right
 	// after lowering that top-level statement (Perceus garbage-free precise
@@ -281,10 +296,11 @@ type rcPlan struct {
 	// owns an independent buffer. Filled by computeBorrowedMapFieldResults.
 	borrowedMapFieldResults map[string]bool
 	// mapCowBindSites holds the Map COW-mutator CALL nodes whose result is
-	// bound straight to a new local — `var m2 = m.insert(k, v)` and
-	// `var (m2, ok) = m.without(k)`. Those are the sites that owe the COW-seam
-	// retain (#6227): the binding co-exists with the receiver's binding, so on
-	// the in-place branch two names share one refcount and both release it.
+	// bound straight to a new local — `var m2 = m.insert(k, v)`,
+	// `var (m2, ok) = m.without(k)`, and `var t = m.without(k)` binding the
+	// tuple WHOLE. Those are the sites that owe the COW-seam retain (#6227):
+	// the binding co-exists with the receiver's binding, so on the in-place
+	// branch two names share one refcount and both release it.
 	// Every OTHER position a mutator result can appear in is deliberately
 	// excluded, because there the result is a temporary nobody binds and a
 	// retain would leak it instead: a chained receiver
@@ -310,7 +326,7 @@ func (b *builder) computeRcAnalyses() {
 	// Koka-style consuming matches on owned-by-default enum params (#4400).
 	// Computed before freeEligible, which consults consumingBindings (a
 	// qualifying binding becomes a counted owner instead of a tainted borrow).
-	b.rc.consumingOwnedMatches, b.rc.consumingBindings = b.computeConsumingOwnedMatches()
+	b.rc.consumingOwnedMatches, b.rc.ownedPayloadMatches, b.rc.consumingBindings = b.computeConsumingOwnedMatches()
 	b.rc.borrowedBindings = b.computeBorrowedBindings()
 	// Borrow-aware free analysis: which array locals are OWNED and
 	// thus safe to return to the freelist at rc==0. Borrowed /
@@ -1347,6 +1363,13 @@ func pureReadReceiverBuiltin(name string) bool {
 //   - strbuf_append memcpys the string's bytes past the buffer tail
 //     and returns void (its runtime doc, all three implementations);
 //   - print / write / eprint write the bytes to an fd, void result;
+//   - `w.write(s)` (__fern_writer_write) writes the bytes to the
+//     Writer's fd and returns an immortal Option[IoError] box built
+//     by __build_io_error / the None sentinel, which cannot name the
+//     string;
+//   - string_from_bytes_unchecked memcpys the u8[] into a fresh string
+//     (inline-packed, the empty sentinel, or an rc1 heap copy — never
+//     the input buffer);
 //   - __memchr / __rmemchr / __ascii_run / __count_byte scan the
 //     bytes and return a scalar;
 //   - a Map READ's KEY (position 1) is hashed and compared and nothing
@@ -1362,18 +1385,20 @@ func pureReadReceiverBuiltin(name string) bool {
 // The checker rejects a user function redeclaring a builtin name, so
 // the table can never answer for a defined function.
 var copyingBuiltinArgs = map[string][]int{
-	"strbuf_append":       {0},
-	"print":               {0},
-	"write":               {0},
-	"eprint":              {0},
-	"__memchr":            {0},
-	"__rmemchr":           {0},
-	"__ascii_run":         {0},
-	"__count_byte":        {0},
-	"__method_Map_get":    {1},
-	"__method_Map_get_or": {1},
-	"__method_Map_has":    {1},
-	"__method_Map_delete": {1},
+	"strbuf_append":               {0},
+	"print":                       {0},
+	"write":                       {0},
+	"eprint":                      {0},
+	"__method_Writer_write":       {1},
+	"string_from_bytes_unchecked": {0},
+	"__memchr":                    {0},
+	"__rmemchr":                   {0},
+	"__ascii_run":                 {0},
+	"__count_byte":                {0},
+	"__method_Map_get":            {1},
+	"__method_Map_get_or":         {1},
+	"__method_Map_has":            {1},
+	"__method_Map_delete":         {1},
 }
 
 func copyingBuiltinArg(name string, i int) bool {
@@ -1534,6 +1559,40 @@ func countedSeedOccurrences(fn *ast.FuncDecl) map[*ast.Ident]bool {
 	return out
 }
 
+// syncByteCopyCall reports whether `call` is `__memcpy` / `__memset`: a byte
+// copy through raw addresses that completes inside the call. The buffers
+// its arguments address are read or written and nothing about them
+// survives it — no reference is retained and no pointer is embedded — so an
+// occurrence there is a non-retaining use, unlike the `buf as usize` the
+// CastExpr escape taint exists for, whose raw address lives on.
+func syncByteCopyCall(call *ast.Call) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	return ok && (id.Name == "__memcpy" || id.Name == "__memset")
+}
+
+// syncByteCopyRoots names the idents whose bytes a __memcpy / __memset
+// argument addresses: `buf as usize` and `s.as_bytes() as usize` both
+// resolve to the buffer's own ident.
+func syncByteCopyRoots(call *ast.Call) []*ast.Ident {
+	var out []*ast.Ident
+	for _, a := range call.Args {
+		c, ok := a.(*ast.CastExpr)
+		if !ok {
+			continue
+		}
+		e := c.Inner
+		if view, ok := e.(*ast.Call); ok {
+			if vid, ok := view.Callee.(*ast.Ident); ok && vid.Name == "__method_string_as_bytes" && len(view.Args) == 1 {
+				e = view.Args[0]
+			}
+		}
+		if id, ok := e.(*ast.Ident); ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]bool], ctorCounted func(*ast.Call) bool) bool {
 	safe := map[*ast.Ident]bool{}
 	seedOK := countedSeedOccurrences(fn)
@@ -1612,6 +1671,13 @@ func stringParamCounted(fn *ast.FuncDecl, pn string, summary *summaryTable[[]boo
 			// scalar, retaining nothing, so the receiver occurrence is safe.
 			if id, ok := x.Callee.(*ast.Ident); ok && pureReadReceiverBuiltin(id.Name) && len(x.Args) > 0 {
 				mark(x.Args[0])
+			}
+			// `__memcpy(dst as usize, p.as_bytes() as usize, n)` reads p's
+			// bytes during the call and keeps nothing — the `bytes()` shape.
+			if syncByteCopyCall(x) {
+				for _, id := range syncByteCopyRoots(x) {
+					mark(id)
+				}
 			}
 			// A copying builtin — strbuf_append, print, the byte
 			// scanners — memcpys or writes the bytes out and retains
@@ -2432,6 +2498,21 @@ func (b *builder) computeFreeEligible() map[string]bool {
 	// a scalar element (`i32[]`) can't alias, so its source stays
 	// reclaimable. A string slice copies into a fresh owned buffer
 	// (not a view), so it isn't unwrapped.
+	//
+	// syncCast: the `buf as usize` arguments of a __memcpy / __memset.
+	// The raw address dies with the call, so these are exempt from the
+	// CastExpr escape taint below (#8403).
+	syncCast := map[*ast.CastExpr]bool{}
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.Call); ok && syncByteCopyCall(call) {
+			for _, a := range call.Args {
+				if c, ok := a.(*ast.CastExpr); ok {
+					syncCast[c] = true
+				}
+			}
+		}
+		return true
+	})
 	var escape func(e ast.Expr)
 	escape = func(e ast.Expr) {
 		switch x := e.(type) {
@@ -2803,6 +2884,9 @@ func (b *builder) computeFreeEligible() map[string]bool {
 			// would make an `__alloc_u8(...) as usize` buffer eligible and
 			// over-release it. Pointer→pointer casts keep rc tracking and are
 			// left alone.
+			if syncCast[s] {
+				break
+			}
 			it := s.InnerType
 			if it == nil {
 				it = b.exprType(s.Inner)
@@ -3077,14 +3161,15 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		// tuple's. `(value, state)` threading is where this shows up, and
 		// reading the field straight through — `p.1.a` — was flat all along.
 		//
-		// A MAP element is excluded, and it is not a hypothetical: crediting
-		// one segfaulted map_delete_tuple_churn_free on both natives. The
-		// counted-alias argument above rests on the destination's drop being
-		// is_unique-gated and shallow, which holds for a struct / array /
-		// enum element and NOT for a map — emitMapSlotDrop deep-frees the
-		// value column, so `var m = t.0` on a `(Map, boolean)` freed a map
-		// the tuple still referenced. ownedCallResultType singles maps out
-		// for the same reason; this is that caution, one site over.
+		// A MAP element is credited too, but only because the tuple now holds
+		// a reference of its own. It did not: the delete tuple stored the
+		// receiver's handle uncounted, so crediting the projection gave the
+		// destination a deep drop of a map the tuple still referenced, and
+		// segfaulted map_delete_tuple_churn_free on both natives. The
+		// COW-seam retain above is what supplies that count (#8276), and the
+		// two are a pair — crediting here without it is the segfault, and
+		// retaining there without this is a count nobody returns. The rest of
+		// the counted-alias argument carries over unchanged.
 		if id, ok := b.projectionChainRoot(x.Target).(*ast.Ident); ok {
 			_, isLocal := b.locals[id.Name]
 			// A MATCH-ARM BINDING is the same case and was invisible to
@@ -3114,9 +3199,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 				case ast.StructType:
 					return false
 				case ast.TupleType:
-					if !isMapType(b.exprType(x)) {
-						return false
-					}
+					return false
 				}
 			}
 		}
@@ -4004,11 +4087,18 @@ func (b *builder) computeBorrowedBindings() map[string]bool {
 		if _, ownScrut := b.ownParamEnumScrutinee(m.Tag); ownScrut {
 			return true
 		}
+		// An owned-payload match's admitted bindings own their reference;
+		// its other bindings are borrows like any non-consuming arm's.
+		ownedPayload := b.rc.ownedPayloadMatches[m]
 		for _, arm := range m.Arms {
 			for _, name := range arm.Bindings {
-				if name != "" && name != "_" {
-					out[name] = true
+				if name == "" || name == "_" {
+					continue
 				}
+				if _, owned := b.rc.consumingBindings[name]; owned && ownedPayload {
+					continue
+				}
+				out[name] = true
 			}
 			if arm.AtBinding != "" {
 				out[arm.AtBinding] = true
@@ -5381,11 +5471,22 @@ func (b *builder) computeConsumingMatchReuse() map[*ast.Call]bool {
 // transferred count — a per-call leak of the whole sub-tree where today's exit
 // sweep reclaims it), and a name qualifies only against the surviving match
 // set. Resolved by a small monotone fixpoint below.
-func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[string]ast.Type) {
+//
+// The same binding role serves a second scrutinee shape, returned as the
+// second map: a direct call to an rcOwnedPayloadBuiltins builtin
+// (ownedPayloadMatches). There the box is immortal and released by nobody,
+// so the only question is who owns the fresh payload; its qualifying arms'
+// string / array bindings become counted owners under the same name gates,
+// with no loop restriction (each iteration reads a fresh box — the bind site
+// drops the previous value) and no sibling poisoning (an unadmitted binding
+// is a leak, not a stranded transfer). A `_` there is released at the bind
+// site rather than disqualifying the match.
+func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[*ast.Match]bool, map[string]ast.Type) {
 	matches := map[*ast.Match]string{}
+	payload := map[*ast.Match]bool{}
 	bindings := map[string]ast.Type{}
 	if !ast.RcFreeEnabled || b.fn.Body == nil {
-		return matches, bindings
+		return matches, payload, bindings
 	}
 	declared := map[string]bool{}
 	for _, p := range b.fn.Params {
@@ -5447,12 +5548,19 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 		return true
 	})
 	if hasDefer {
-		return matches, bindings
+		return matches, payload, bindings
 	}
 	order := b.curIdentOrder()
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		m, ok := n.(*ast.Match)
-		if !ok || inLoop[m] {
+		if !ok {
+			return true
+		}
+		if b.ownedPayloadScrutinee(m.Tag) {
+			payload[m] = true
+			return true
+		}
+		if inLoop[m] {
 			return true
 		}
 		id, ok := m.Tag.(*ast.Ident)
@@ -5511,8 +5619,8 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 		matches[m] = id.Name
 		return true
 	})
-	if len(matches) == 0 {
-		return matches, bindings
+	if len(matches) == 0 && len(payload) == 0 {
+		return matches, payload, bindings
 	}
 	// Binding pass, to a fixpoint: a NAME is admissible only when every
 	// binding occurrence in the function is in a qualifying arm (unguarded,
@@ -5553,7 +5661,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 				}
 			}
 		}
-		admit := func(arm *ast.MatchArm) {
+		admit := func(arm *ast.MatchArm, sweepable func(ast.Type) bool) {
 			for i, nm := range arm.Bindings {
 				if nm == "" || nm == "_" {
 					continue
@@ -5584,6 +5692,16 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 			switch x := n.(type) {
 			case *ast.Match:
 				_, consuming := matches[x]
+				if payload[x] {
+					for _, arm := range x.Arms {
+						if !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil && !armHasSubPatterns(arm) {
+							admit(arm, ownedPayloadType)
+						} else {
+							disqualify(arm.Bindings)
+						}
+					}
+					break
+				}
 				// A non-qualifying arm that BINDS anything poisons the whole
 				// match, not just its own names. The canonical shape is a
 				// guarded arm followed by an unguarded one over the same
@@ -5616,7 +5734,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 				}
 				for _, arm := range x.Arms {
 					if !poisoned && consuming && !arm.IsWildcard && arm.Guard == nil && arm.Literal == nil {
-						admit(arm)
+						admit(arm, sweepable)
 					} else {
 						disqualify(arm.Bindings)
 					}
@@ -5670,7 +5788,7 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 			// whose every occurrence sat in dropped matches has no arm to
 			// transfer it ownership, so sweeping it would over-release.
 			used := map[string]bool{}
-			for m := range matches {
+			markUsed := func(m *ast.Match) {
 				for _, arm := range m.Arms {
 					if arm.IsWildcard || arm.Guard != nil || arm.Literal != nil {
 						continue
@@ -5680,14 +5798,48 @@ func (b *builder) computeConsumingOwnedMatches() (map[*ast.Match]string, map[str
 					}
 				}
 			}
+			for m := range matches {
+				markUsed(m)
+			}
+			for m := range payload {
+				markUsed(m)
+			}
 			for nm, bt := range cand {
 				if used[nm] {
 					bindings[nm] = bt
 				}
 			}
-			return matches, bindings
+			return matches, payload, bindings
 		}
 	}
+}
+
+// ownedPayloadScrutinee reports whether `tag` is a direct call to an
+// rcOwnedPayloadBuiltins builtin, so a match over it owns the string / array
+// payload it binds. A user-declared function of the same name (the oracle
+// maps key every decl in prog.Funcs) is not the builtin.
+func (b *builder) ownedPayloadScrutinee(tag ast.Expr) bool {
+	call, ok := tag.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || !rcOwnedPayloadBuiltins[id.Name] {
+		return false
+	}
+	_, isUserFn := b.returnsNoParamEscape[id.Name]
+	return !isUserFn
+}
+
+// armHasSubPatterns reports whether any payload position of `arm` carries a
+// sub-pattern (`Some((a, b))`, `Ok("x")`) rather than a plain binding.
+func armHasSubPatterns(arm *ast.MatchArm) bool {
+	for _, p := range arm.Payloads {
+		if p != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // stmtReferencesName reports whether any *ast.Ident named `name` appears
@@ -6217,15 +6369,20 @@ func (b *builder) computeBorrowedMapFieldResults() map[string]bool {
 // computeMapCowBindSites finds the Map COW-mutator calls bound directly to a
 // new local — see the mapCowBindSites field doc (#6227). `insert` / `cleared`
 // return the map and bind through `var`; `without` returns a (Map, boolean)
-// tuple and can ONLY be consumed by destructuring, which is why it was the
-// spelling that surfaced the bug. Purely syntactic: the walk runs on the
-// already-mangled AST, the same form isMapMutatorCall matches at the call site.
+// tuple, which destructuring and a plain `var t = m.without(k)` both bind, and
+// BOTH owe the retain. Reading the tuple whole and projecting `t.0` / `t.1` is
+// the spelling the rc corpus itself uses, and excluding it left the tuple's
+// map element aliasing the receiver's handle at rc 1: two names, one count,
+// both releasing — an rc underflow everywhere and a SIGSEGV on arm64 / a trap
+// on wasm32 once the freed key cell was recycled (#8276).
+// Purely syntactic: the walk runs on the already-mangled AST, the same form
+// isMapMutatorCall matches at the call site.
 func (b *builder) computeMapCowBindSites() map[ast.Node]bool {
 	out := map[ast.Node]bool{}
 	ast.Walk(b.fn.Body, func(n ast.Node) bool {
 		switch s := n.(type) {
 		case *ast.Var:
-			if c, ok := s.Init.(*ast.Call); ok && isMapMutatorCall(c) && !isMapDeleteCall(c) {
+			if c, ok := s.Init.(*ast.Call); ok && isMapMutatorCall(c) {
 				out[c] = true
 			}
 		case *ast.Destructure:
@@ -7888,21 +8045,29 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 	return out
 }
 
-// computeFieldOwnMoves claims the `x.f` arguments of the superseded-field
-// shape — `x = S { ...x, f: g(.., x.f, ..) }` and `return S { ...x, f: g(..,
-// x.f, ..) }` — as moves out of x's box into g's `own` parameter (#8186).
-// The recognition is the checker's (SupersededFieldOwnMoveArgs): E051 admits
-// exactly these nodes, so an admitted argument the analysis does NOT claim
-// still reaches the call and must be retained there instead (the call site's
-// fallback); the two verdicts are each sound on their own.
+// computeFieldOwnMoves claims the `x.f` reads of the superseded-field shape —
+// `x = S { ...x, f: g(.., x.f, ..) }` and `return S { ...x, f: g(.., x.f,
+// ..) }` — as moves out of x's box into a position that consumes them
+// (#8186). Two consumers qualify: g's `own` parameter, and the receiver of
+// `.with` (`x = S { ...x, f: x.f.with(i, v) }`), whose helper takes the
+// reference over on both of its branches (see rc.arraySetConsumed). For the
+// `own` half the recognition is the checker's (SupersededFieldOwnMoveArgs):
+// E051 admits exactly these nodes, so an admitted argument the analysis does
+// NOT claim still reaches the call and must be retained there instead (the
+// call site's fallback); the two verdicts are each sound on their own. The
+// `.with` half needs no admission — the receiver is a projection the
+// computeArraySetIncs rule would otherwise inc into the copy path, and a
+// claim here clears that inc so __fern_arr_cow_inplace sees the box's own
+// count. Without it every `.with` on a field of a struct being rebuilt copied
+// the whole buffer: a streaming hasher's pending block, a writer's buffer.
 //
 // A claim needs the frame to hold x's reference (frameOwnsIdent — a borrowed
 // param's box belongs to the caller, who reads the field back), a field the
 // flat helpers can null and retain (arrElemIsRcTracked: one word, not the
-// two-word string), a callee that is a direct function, and no defer or
-// lambda that could read x after the slot is emptied. The return form also
-// needs a function without defers: a defer runs after the return value is
-// built, while x is still in its slot.
+// two-word string), for the `own` half a callee that is a direct function,
+// and no defer or lambda that could read x after the slot is emptied. The
+// return form also needs a function without defers: a defer runs after the
+// return value is built, while x is still in its slot.
 //
 // Uniqueness is decided at RUNTIME, not here. The box may be shared — `var
 // b = x` earlier, a capture, a global — and every such route would read the
@@ -7911,13 +8076,14 @@ func (b *builder) computeOwnedArgMoves() map[*ast.Ident]bool {
 // free of an alias analysis the way tryStructReuseOverwrite's reuse is.
 func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 	out := map[*ast.FieldAccess]bool{}
-	if b.fn.Body == nil || !ast.RcFreeEnabled || len(b.info.OwnFuncs) == 0 {
+	if b.fn.Body == nil || !ast.RcFreeEnabled {
 		return out
 	}
 	var defers []*ast.Defer
 	collectDefers(b.fn.Body, &defers)
 	hasDefer := len(defers) > 0
 	esc := deferOrLambdaNames(b.fn.Body)
+	ownArg := map[*ast.FieldAccess]bool{}
 	claim := func(sl *ast.StructLit, base *ast.Ident, isReturn bool) {
 		if esc[base.Name] || (isReturn && hasDefer) || !b.frameOwnsIdent(base.Name) {
 			return
@@ -7931,6 +8097,13 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 			return
 		}
 		for _, fa := range checker.SupersededFieldOwnMoveArgs(sl, base.Name, b.info.OwnFuncs) {
+			if !arrElemIsRcTracked(fieldType(sd.Fields, fa.Field)) {
+				continue
+			}
+			out[fa] = true
+			ownArg[fa] = true
+		}
+		for _, fa := range supersededFieldSetReceivers(sl, base.Name) {
 			if !arrElemIsRcTracked(fieldType(sd.Fields, fa.Field)) {
 				continue
 			}
@@ -7958,10 +8131,10 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 		}
 		return true
 	})
-	// The recognizer needs the callee to be a direct function; a local of
-	// the same name shadows it, and the checker's own-flag table is keyed by
-	// bare name.
-	for fa := range out {
+	// The `own` recognizer needs the callee to be a direct function; a local
+	// of the same name shadows it, and the checker's own-flag table is keyed
+	// by bare name.
+	for fa := range ownArg {
 		ast.Walk(b.fn.Body, func(n ast.Node) bool {
 			c, ok := n.(*ast.Call)
 			if !ok {
@@ -7981,7 +8154,41 @@ func (b *builder) computeFieldOwnMoves() map[*ast.FieldAccess]bool {
 			return true
 		})
 	}
+	// A claimed `.with` receiver is handed to __fern_arr_cow_inplace at the
+	// box's own count, so the projection inc computeArraySetIncs recorded for
+	// it (a field read is a borrow of its container) must not fire.
+	ast.Walk(b.fn.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || !isArraySetCall(c) {
+			return true
+		}
+		if fa, isField := c.Args[0].(*ast.FieldAccess); isField && out[fa] {
+			b.rc.arraySetInc[c] = false
+		}
+		return true
+	})
 	return out
+}
+
+// supersededFieldSetReceivers is the `.with` half of the superseded-field
+// recognition: every `target.f` that is the innermost receiver of the `.with`
+// chain initialising field f of a `S { ...target, f: target.f.with(i, v) }`
+// literal. The chain's outer calls take the inner result, a fresh owned
+// buffer, so only the innermost receiver reads the box.
+func supersededFieldSetReceivers(sl *ast.StructLit, target string) []*ast.FieldAccess {
+	return checker.SupersededFieldMoves(sl, target, func(field string, value ast.Expr) *ast.FieldAccess {
+		recv := value
+		for {
+			c, ok := recv.(*ast.Call)
+			if !ok || !isArraySetCall(c) {
+				return nil
+			}
+			recv = c.Args[0]
+			if fa, isField := recv.(*ast.FieldAccess); isField {
+				return fa
+			}
+		}
+	})
 }
 
 // frameOwnsIdent reports whether `name` holds a reference this frame may hand

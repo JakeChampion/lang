@@ -22,6 +22,11 @@
 // rather than a pass of their own for two reasons: an asset IS a
 // compile-time constant, and a `const PAGE: string = __fern_asset(...)`
 // has to resolve during const evaluation, not after it.
+//
+// It also resolves `target_os()` to the compile target's environment
+// (Inputs.TargetOS) when the caller has one — a compile does, a bare
+// `-check` does not. The call becomes a plain string literal, so a branch
+// on it is a branch on a constant by the time the IR folds.
 package constfold
 
 import (
@@ -44,6 +49,24 @@ const assetBuiltin = "__fern_asset"
 // unaware of it too.
 const assetsBuiltin = "__fern_assets"
 
+// targetOSBuiltin is the compile target's environment as a constant:
+// `target_os()` reads "linux", "darwin", "android", "wasi", "wasi-http" or
+// "freestanding" — the environment half of the `-target` name, never the
+// compiler's host. The checker declares it (so `-check` types it with no
+// target in hand) and the interpreter answers it with the host it runs
+// on; every compiled path resolves it here.
+const targetOSBuiltin = "target_os"
+
+// Inputs are the compile-time facts the fold substitutes into the program.
+type Inputs struct {
+	// Assets is the `-embed` bundle; nil when nothing was embedded, in which
+	// case any use of __fern_asset is itself the error.
+	Assets *embed.Set
+	// TargetOS is the compile target's environment, what `target_os()`
+	// folds to. Empty leaves the calls alone for the checker to type.
+	TargetOS string
+}
+
 // Fold evaluates every top-level const declaration in prog, then
 // substitutes references with the resolved literal and clears
 // prog.Consts. Errors aggregate; the first diagnostic surfaced
@@ -53,6 +76,11 @@ const assetsBuiltin = "__fern_assets"
 // assets carries the `-embed` bundle and may be nil, in which case any use
 // of __fern_asset is itself the error.
 func Fold(prog *ast.Program, assets *embed.Set) error {
+	return FoldWith(prog, Inputs{Assets: assets})
+}
+
+// FoldWith is Fold with every compile-time input, not only the asset bundle.
+func FoldWith(prog *ast.Program, in Inputs) error {
 	values := map[string]ast.Expr{}
 	types := map[string]ast.Type{}
 	var errs []error
@@ -62,7 +90,7 @@ func Fold(prog *ast.Program, assets *embed.Set) error {
 			errs = append(errs, fmt.Errorf("%s: const %q redeclared", cd.P, cd.Name))
 			continue
 		}
-		val, err := evalConst(cd.Value, values, types, assets)
+		val, err := evalConst(cd.Value, values, types, in.Assets)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: const %s: %w", cd.P, cd.Name, err))
 			continue
@@ -88,9 +116,14 @@ func Fold(prog *ast.Program, assets *embed.Set) error {
 	// Substitute every Ident reference matching a const name with
 	// the resolved literal. Const decls are then dropped — the rest
 	// of the pipeline runs against a const-free program.
-	sub := substituter{values: values, assets: assets}
+	sub := substituter{values: values, assets: in.Assets, targetOS: in.TargetOS}
 	for _, fn := range prog.Funcs {
+		sub.pushScope()
+		for _, p := range fn.Params {
+			sub.bind(p.Name)
+		}
 		sub.walkBlock(fn.Body)
+		sub.popScope()
 	}
 	prog.Consts = nil
 	if len(sub.errs) > 0 {
@@ -420,9 +453,48 @@ func litType(e ast.Expr) ast.Type {
 // Unary nodes with downstream metadata; cloning the literal keeps
 // each substitution position independent.
 type substituter struct {
-	values map[string]ast.Expr
-	assets *embed.Set
-	errs   []error
+	values   map[string]ast.Expr
+	assets   *embed.Set
+	targetOS string
+	errs     []error
+	// bound is the scope stack of names a BINDER has introduced — params,
+	// var / destructure declarations, match and for-each bindings, lambda
+	// params. A const is a module-level name, so any of these shadows it,
+	// and substituting through the shadow rewrites a local's reads with the
+	// const's value (#8443). The pass runs before the checker, which is what
+	// makes the substituter responsible for scope itself: Fold clears
+	// prog.Consts, so the checker never sees the const and cannot diagnose
+	// the collision either.
+	bound []map[string]bool
+}
+
+func (s *substituter) pushScope() { s.bound = append(s.bound, map[string]bool{}) }
+
+func (s *substituter) popScope() { s.bound = s.bound[:len(s.bound)-1] }
+
+func (s *substituter) bind(name string) {
+	if name == "" || len(s.bound) == 0 {
+		return
+	}
+	s.bound[len(s.bound)-1][name] = true
+}
+
+// isBound reports whether name is currently shadowed by a binder.
+func (s *substituter) isBound(name string) bool {
+	for i := len(s.bound) - 1; i >= 0; i-- {
+		if s.bound[i][name] {
+			return true
+		}
+	}
+	return false
+}
+
+// isTargetOSCall reports whether c is the zero-argument `target_os()`. A
+// call with arguments is left for the checker, whose arity error names
+// the declared signature.
+func isTargetOSCall(c *ast.Call) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	return ok && id.Name == targetOSBuiltin && len(c.Args) == 0
 }
 
 // isAssetCall reports whether c is a call of the __fern_asset builtin. It
@@ -510,9 +582,11 @@ func (s *substituter) walkBlock(b *ast.Block) {
 	if b == nil {
 		return
 	}
+	s.pushScope()
 	for _, st := range b.Stmts {
 		s.walkStmt(st)
 	}
+	s.popScope()
 }
 
 func (s *substituter) walkStmt(st ast.Stmt) {
@@ -531,6 +605,9 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 	case *ast.Loop:
 		s.walkStmt(x.Body)
 	case *ast.For:
+		// The init's binding is in scope for the cond, the step and the
+		// body, so the frame wraps all four rather than the body alone.
+		s.pushScope()
 		if x.Init != nil {
 			s.walkStmt(x.Init)
 		}
@@ -539,21 +616,55 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 			s.walkStmt(x.Step)
 		}
 		s.walkStmt(x.Body)
+		s.popScope()
 	case *ast.ForEach:
 		s.walkExpr(&x.Iter)
+		s.walkExpr(&x.RangeHigh)
+		s.pushScope()
+		// A destructuring header carries its real binders on Pattern —
+		// `for (a, b) in xs` — with Var only the synthetic element holder.
+		// The checker lowers these loops away, so this pass is the only one
+		// positioned to see the pattern's names at all.
+		s.bind(x.Var)
+		if x.Pattern != nil {
+			s.walkStmt(x.Pattern)
+		}
 		s.walkStmt(x.Body)
+		s.popScope()
 	case *ast.Return:
 		if x.Value != nil {
 			s.walkExpr(&x.Value)
 		}
 	case *ast.Var:
+		// The init is walked BEFORE the name binds: `var N = N;` reads the
+		// const on its right-hand side and shadows it only afterwards.
 		s.walkExpr(&x.Init)
+		s.bind(x.Name)
 	case *ast.Destructure:
 		s.walkExpr(&x.Init)
+		s.bind(x.AtName)
+		s.bind(x.TempName)
+		for _, n := range x.Names {
+			s.bind(n)
+		}
+		// A nested level's binders live on Nested[i].Names, and its Init
+		// reads Names[i] — so recurse after this level binds, exactly as
+		// the Destructure doc comment requires of any pass that cares about
+		// declared names.
+		for _, nd := range x.Nested {
+			if nd != nil {
+				s.walkStmt(nd)
+			}
+		}
 	case *ast.ExprStmt:
 		s.walkExpr(&x.Expr)
 	case *ast.FuncDecl:
+		s.pushScope()
+		for _, p := range x.Params {
+			s.bind(p.Name)
+		}
 		s.walkBlock(x.Body)
+		s.popScope()
 	// Same hole the expression switch below already had patched (#5477): a
 	// const referenced from one of these was never substituted and reached
 	// the checker as a bare Ident, so `parser.ORIGIN_ASSERT` inside a match
@@ -562,16 +673,24 @@ func (s *substituter) walkStmt(st ast.Stmt) {
 	case *ast.Match:
 		s.walkExpr(&x.Tag)
 		for _, arm := range x.Arms {
+			// A literal or range pattern is a VALUE position, so a const
+			// still substitutes there; the payload bindings shadow only the
+			// guard and the body.
 			if arm.Literal != nil {
 				s.walkExpr(&arm.Literal)
 			}
 			if arm.RangeHi != nil {
 				s.walkExpr(&arm.RangeHi)
 			}
+			s.pushScope()
+			for _, b := range arm.Bindings {
+				s.bind(b)
+			}
 			if arm.Guard != nil {
 				s.walkExpr(&arm.Guard)
 			}
 			s.walkBlock(arm.Body)
+			s.popScope()
 		}
 	case *ast.Defer:
 		s.walkExpr(&x.Expr)
@@ -584,10 +703,14 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 	}
 	switch x := (*slot).(type) {
 	case *ast.Ident:
-		if v, ok := s.values[x.Name]; ok {
+		if v, ok := s.values[x.Name]; ok && !s.isBound(x.Name) {
 			*slot = cloneLit(v, x.P)
 		}
 	case *ast.Call:
+		if s.targetOS != "" && isTargetOSCall(x) {
+			*slot = &ast.StringLit{P: x.P, Value: s.targetOS}
+			return
+		}
 		if isAssetCall(x) {
 			lit, err := resolveAsset(x, s.assets)
 			if err != nil {
@@ -623,6 +746,19 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 			s.walkExpr(&x.Elems[i])
 		}
 	case *ast.Assign:
+		// An assignment target is an lvalue, so a const named there is not a
+		// value to substitute — it is a program assigning to a const, and the
+		// substituter is the only pass that can still say so: Fold clears
+		// prog.Consts, so by the time the checker runs the name is gone.
+		// Rewriting it instead produced `assignment target *ast.NumberLit is
+		// not an lvalue the parser can produce (compiler bug)` (#8443).
+		if id, ok := x.Target.(*ast.Ident); ok {
+			if _, isConst := s.values[id.Name]; isConst && !s.isBound(id.Name) {
+				s.errs = append(s.errs, fmt.Errorf("%s: cannot assign to const %s", id.P, id.Name))
+				s.walkExpr(&x.Value)
+				return
+			}
+		}
 		s.walkExpr(&x.Target)
 		s.walkExpr(&x.Value)
 	case *ast.IfExpr:
@@ -634,18 +770,25 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 	case *ast.MatchExpr:
 		s.walkExpr(&x.Tag)
 		for _, arm := range x.Arms {
+			s.pushScope()
+			for _, b := range arm.Bindings {
+				s.bind(b)
+			}
 			if arm.Guard != nil {
 				s.walkExpr(&arm.Guard)
 			}
 			s.walkExpr(&arm.Body)
+			s.popScope()
 		}
 	case *ast.BlockExpr:
+		s.pushScope()
 		for _, st := range x.Stmts {
 			s.walkStmt(st)
 		}
 		if x.Tail != nil {
 			s.walkExpr(&x.Tail)
 		}
+		s.popScope()
 	case *ast.StructLit:
 		for i := range x.Fields {
 			s.walkExpr(&x.Fields[i].Value)
@@ -692,7 +835,12 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 			s.walkExpr(&x.Desugared)
 		}
 	case *ast.Lambda:
+		s.pushScope()
+		for _, p := range x.Params {
+			s.bind(p.Name)
+		}
 		s.walkBlock(x.Body)
+		s.popScope()
 	}
 }
 

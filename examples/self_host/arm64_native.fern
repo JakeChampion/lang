@@ -7946,8 +7946,12 @@ function cfi_fde_payload(s: CfiState, p: CfiProfile, k: i32, at: i32, text_vaddr
 // cfi_eh_frame renders the recorded CFI as the .eh_frame of a final image
 // whose .text is at text_vaddr and whose .eh_frame is at eh_vaddr: one CIE,
 // one FDE per span, a zero-length terminator. Empty when nothing was
-// recorded. Every entry's payload is padded to 4 and the last one further
-// so the section is a multiple of 8, which is gas's rule for both targets.
+// recorded.
+//
+// Each FDE ends on the profile's fde_align — 4 under ELF, 8 under Mach-O.
+// The last one is padded further so the SECTION is a multiple of 8, which
+// only ever fires under the 4-aligned profile: an 8-aligned one has already
+// ended every entry there.
 pub function cfi_eh_frame(s: CfiState, p: CfiProfile, text_vaddr: i64, eh_vaddr: i64): i32[] {
     if (cfi_empty(s) || s.open) { return []; }
     var out: i32[] = cfi_cie(p);

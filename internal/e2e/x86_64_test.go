@@ -2848,6 +2848,35 @@ func TestX86_64ArrayIndexSetInPlaceFastPath(t *testing.T) {
 	}
 }
 
+// A `.with` on a field of the struct being rebuilt (`h = H { ...h, buf:
+// h.buf.with(i, v) }`, the streaming-hasher pending-block shape) keeps the
+// buffer when the box is unique: the field moves out of the box and
+// __fern_arr_cow_inplace takes its rc==1 branch. Before computeFieldOwnMoves
+// claimed the receiver it was inc'd as a projection and every call copied
+// the whole buffer.
+func TestX86_64StructFieldWithInPlaceFastPath(t *testing.T) {
+	src := `struct H { buf: u8[], n: i32 }
+function (own h: H) push(b: u8): H {
+    return H { ...h, buf: h.buf.with(h.n, b), n: h.n + 1 };
+}
+function main(): i32 {
+    var h: H = H { buf: __alloc_u8(8), n: 0 };
+    var before: usize = h.buf as usize;
+    h = h.push(7 as u8);
+    h = H { ...h, buf: h.buf.with(h.n, 9 as u8), n: h.n + 1 };
+    if ((h.buf as usize) != before) { return 1; }
+    if (h.buf[0] != (7 as u8) || h.buf[1] != (9 as u8) || h.n != 2) { return 2; }
+    var keep: H = h;
+    h = H { ...h, buf: h.buf.with(0, 1 as u8) };
+    if ((h.buf as usize) == before) { return 3; }
+    if (keep.buf[0] != (7 as u8) || h.buf[0] != (1 as u8)) { return 4; }
+    return 0;
+}`
+	if _, code := compileAndRunX86_64(t, src); code != 0 {
+		t.Errorf("got exit %d, want 0 (field .with in place when the box is unique, copy when shared)", code)
+	}
+}
+
 // Mirror of TestArm64ArrayIndexSetAliasedCopies.
 func TestX86_64ArrayIndexSetAliasedCopies(t *testing.T) {
 	src := `function main(): i32 {
