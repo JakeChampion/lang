@@ -122,7 +122,7 @@ func TestInlineThenFoldSimplifiesSubstitutedBody(t *testing.T) {
 	p := lowerSource(t, `function bumped(x: i32): i32 { return x + (1 + 2); }
 		function main(n: i32): i32 { return bumped(n); }`)
 	Inline(p)
-	Fold(p)
+	foldProgram(p)
 	main := findFunc(p, "main")
 	// `1 + 2` inside the inlined body collapses to 3 — the constant
 	// arithmetic inside the substituted body is reachable for Fold.

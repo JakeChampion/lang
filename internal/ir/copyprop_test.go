@@ -95,7 +95,7 @@ func TestPropagateCopiesEnablesFoldToCollapseInlinedCall(t *testing.T) {
 	Inline(p)
 	FuseTee(p)
 	PropagateCopies(p)
-	Fold(p)
+	foldProgram(p)
 	main := findFunc(p, "main")
 	found14 := false
 	for _, op := range main.Ops {

@@ -54,7 +54,7 @@ func TestPruneZeroSlotGuardsFolds(t *testing.T) {
 		t.Errorf("guard survived:\n%s", p)
 	}
 	// Fold then deletes the block the constant conditions.
-	Fold(p)
+	foldProgram(p)
 	for _, o := range fn.Ops {
 		if o.Kind == OpIf {
 			t.Errorf("pruneConstIf did not take the block:\n%s", p)
