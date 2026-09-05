@@ -84,7 +84,8 @@ selfhost/arm64-linux/map_int.emit	1312
 selfhost/arm64-linux/map_probe_chain.emit	1359
 selfhost/arm64-linux/map_string.emit	11122
 selfhost/arm64-linux/sort_inplace.emit	2049
-selfhost/arm64-linux/sort_ints.emit	3430
+selfhost/arm64-linux/sort_ints.emit	5231
+selfhost/arm64-linux/sort_strings.emit	13651
 selfhost/arm64-linux/string_build.emit	10822
 selfhost/arm64-linux/string_count_byte.emit	1906
 selfhost/arm64-linux/string_find_byte.emit	3743
@@ -106,7 +107,8 @@ selfhost/wasm32-wasi/map_int.emit	582
 selfhost/wasm32-wasi/map_probe_chain.emit	595
 selfhost/wasm32-wasi/map_string.emit	5772
 selfhost/wasm32-wasi/sort_inplace.emit	1014
-selfhost/wasm32-wasi/sort_ints.emit	2087
+selfhost/wasm32-wasi/sort_ints.emit	2869
+selfhost/wasm32-wasi/sort_strings.emit	6796
 selfhost/wasm32-wasi/string_build.emit	5481
 selfhost/wasm32-wasi/string_count_byte.emit	780
 selfhost/wasm32-wasi/string_find_byte.emit	1634
@@ -128,7 +130,8 @@ selfhost/x86-64-linux/map_int.emit	1175
 selfhost/x86-64-linux/map_probe_chain.emit	1223
 selfhost/x86-64-linux/map_string.emit	10023
 selfhost/x86-64-linux/sort_inplace.emit	1738
-selfhost/x86-64-linux/sort_ints.emit	2965
+selfhost/x86-64-linux/sort_ints.emit	4332
+selfhost/x86-64-linux/sort_strings.emit	11111
 selfhost/x86-64-linux/string_build.emit	9673
 selfhost/x86-64-linux/string_count_byte.emit	1566
 selfhost/x86-64-linux/string_find_byte.emit	3222

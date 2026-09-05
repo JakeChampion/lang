@@ -1,0 +1,88 @@
+// dirname.fern — GNU-compatible `dirname`.
+//
+//   NAME...      print each NAME with its last component removed
+//   -z, --zero   end each line with NUL rather than newline
+//
+// The scan permutes, so `dirname a -z` honours the option. A name with
+// no slash left once its last component and the trailing slashes are
+// gone is `.`; one that is nothing but slashes is `/`. Leading slashes
+// are kept as they are (`//a//b//` is `//a`) except when nothing else
+// remains, so `//a` is `/`.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " [OPTION] NAME...\n";
+  out = out + "Output each NAME with its last non-slash component and trailing slashes\n";
+  out = out + "removed; if NAME contains no /'s, output '.' (meaning the current directory).\n";
+  out = out + "\n";
+  out = out + "  -z, --zero     end each output line with NUL, not newline\n";
+  out = out + "      --help     display this help and exit\n";
+  out = out + "      --version  output version information and exit\n";
+  return out;
+}
+
+function dir_name(s: string): string {
+  var end: i32 = s.len();
+  while (end > 0 && s[end - 1] as i32 == 47) {
+    end = end - 1;
+  }
+  if (end == 0) {
+    if (s.len() > 0) {
+      return "/";
+    }
+    return ".";
+  }
+  var i: i32 = end;
+  while (i > 0 && s[i - 1] as i32 != 47) {
+    i = i - 1;
+  }
+  if (i == 0) {
+    return ".";
+  }
+  while (i > 0 && s[i - 1] as i32 == 47) {
+    i = i - 1;
+  }
+  if (i == 0) {
+    return "/";
+  }
+  return slice_unchecked(s, 0, i) + "";
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [gnu.flag("z", "zero", 1)];
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "dirname", help_text(), 1);
+  var zero: boolean = false;
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(_) => {
+        zero = true;
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  var operands: string[] = g.operands();
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  var term: string = "\n";
+  if (zero) {
+    term = "\0";
+  }
+  var o: io_buffered.BufWriter = gnu.out_new();
+  var i: i32 = 0;
+  while (i < operands.len()) {
+    o = gnu.put(o, dir_name(operands[i]) + term);
+    i = i + 1;
+  }
+  gnu.finish(o);
+  return 0;
+}

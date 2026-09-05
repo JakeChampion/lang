@@ -1,0 +1,116 @@
+// basename.fern — GNU-compatible `basename`.
+//
+//   NAME [SUFFIX]        one name, and a suffix to strip from it
+//   -a, --multiple       every operand is a NAME
+//   -s, --suffix=SUFFIX  strip SUFFIX from each NAME; implies -a
+//   -z, --zero           end each name with NUL rather than newline
+//
+// basename(1) scans its options IN ORDER (the `+` optstring), so an
+// option after the first operand is an operand: `basename a -a`
+// prints `a`, and `basename a b -z` is `extra operand '-z'`. Without
+// -a there are exactly one or two operands, the second being the
+// suffix; a third is the extra one.
+//
+// A name is its last component once trailing slashes are dropped; a
+// name that is nothing but slashes is `/`, and the empty name stays
+// empty. The suffix comes off only when it is a PROPER suffix, so a
+// name equal to its suffix is printed whole: `basename -s b b` is `b`.
+import "std/string";
+import "std/array";
+import "std/io_buffered";
+import "./lib/gnu";
+
+function help_text(): string {
+  var out: string = "";
+  out = out + "Usage: " + gnu.prog() + " NAME [SUFFIX]\n";
+  out = out + "  or:  " + gnu.prog() + " OPTION... NAME...\n";
+  out = out + "Print NAME with any leading directory components removed.\n";
+  out = out + "If specified, also remove a trailing SUFFIX.\n";
+  out = out + "\n";
+  out = out + "  -a, --multiple       support multiple arguments and treat each as a NAME\n";
+  out = out + "  -s, --suffix=SUFFIX  remove a trailing SUFFIX; implies -a\n";
+  out = out + "  -z, --zero           end each output line with NUL, not newline\n";
+  out = out + "      --help           display this help and exit\n";
+  out = out + "      --version        output version information and exit\n";
+  return out;
+}
+
+// The last component of `s` with trailing slashes dropped.
+function base_name(s: string): string {
+  var end: i32 = s.len();
+  while (end > 0 && s[end - 1] as i32 == 47) {
+    end = end - 1;
+  }
+  if (end == 0) {
+    if (s.len() > 0) {
+      return "/";
+    }
+    return "";
+  }
+  var start: i32 = end;
+  while (start > 0 && s[start - 1] as i32 != 47) {
+    start = start - 1;
+  }
+  return slice_unchecked(s, start, end) + "";
+}
+
+function strip_suffix(name: string, suffix: string): string {
+  if (suffix.len() > 0 && name.len() > suffix.len() && name.ends_with(suffix)) {
+    return slice_unchecked(name, 0, name.len() - suffix.len()) + "";
+  }
+  return name;
+}
+
+function main(): i32 {
+  var argv: string[] = args();
+  var opts: gnu.Opt[] = [gnu.flag("a", "multiple", 1), gnu.valued("s", "suffix", 2), gnu.flag("z", "zero", 3)];
+  var g: gnu.Getopt = gnu.getopt_new(argv, opts, "basename", help_text(), 1).in_order();
+  var multiple: boolean = false;
+  var suffix: string = "";
+  var zero: boolean = false;
+  while (true) {
+    var r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    match (r.0) {
+      Some(m) => {
+        if (m.id == 1) {
+          multiple = true;
+        } else if (m.id == 2) {
+          multiple = true;
+          suffix = m.value;
+        } else {
+          zero = true;
+        }
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  var operands: string[] = g.operands();
+  if (operands.len() == 0) {
+    gnu.die_usage("missing operand", 1);
+  }
+  var names: string[] = operands;
+  if (!multiple) {
+    if (operands.len() > 2) {
+      gnu.die_usage("extra operand " + gnu.quote(operands[2]), 1);
+    }
+    names = [operands[0]];
+    if (operands.len() == 2) {
+      suffix = operands[1];
+    }
+  }
+  var term: string = "\n";
+  if (zero) {
+    term = "\0";
+  }
+  var o: io_buffered.BufWriter = gnu.out_new();
+  var i: i32 = 0;
+  while (i < names.len()) {
+    o = gnu.put(o, strip_suffix(base_name(names[i]), suffix) + term);
+    i = i + 1;
+  }
+  gnu.finish(o);
+  return 0;
+}
