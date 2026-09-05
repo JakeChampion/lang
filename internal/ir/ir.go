@@ -18281,16 +18281,24 @@ func (b *builder) assign(n *ast.Assign) error {
 				//     table leaked behind it — 1328 B an iteration in the
 				//     temporary-bound insert loop of #6227.
 				//   - new == old — the same reference carried across the
-				//     rebind. A release is owed only if a second count was
-				//     created for it: the alias inc of `m = m2`, or the return
-				//     transfer inc of a callee that handed the local's own
-				//     handle back (`m = f(m)`, the query_parse threading). A
-				//     self-mutation created none, and dec'ing there is the
+				//     rebind. A release is owed only if the RHS brought a
+				//     second count with it: the alias of `m = m2`, or the
+				//     return transfer inc of a callee that handed the local's
+				//     own handle back (`m = f(m)`, the query_parse threading).
+				//     A self-mutation brought none, and dec'ing there is the
 				//     over-release isSelfMapMutation's COW-aware branch exists
 				//     to avoid.
+				//
+				//     A MOVED alias brings one too. `var (m2, ok) = m.without(k);
+				//     m = m2` skips the transfer inc and skips m2's exit sweep,
+				//     so no inc is emitted — but the count m2 held is still
+				//     handed to the slot, on top of the one the slot already
+				//     had. Testing `!moveSites` here asked whether an inc was
+				//     emitted, which is the wrong question, and stranded the
+				//     whole table once per rebind (#8434).
 				if mst, isMap := sety.(ast.StructType); isMap && mst.Name == "Map" {
 					_, isCall := n.Value.(*ast.Call)
-					aliasInced := (needsRcIncOnAlias(n.Value, b) && !b.rc.moveSites[n]) ||
+					rhsCarriesACount := needsRcIncOnAlias(n.Value, b) ||
 						(isCall && exprMentionsIdent(n.Value, t.Name))
 					newTmp := b.allocSlot()
 					b.locals[fmt.Sprintf("__mapow_new_%d", newTmp)] = newTmp
@@ -18300,7 +18308,7 @@ func (b *builder) assign(n *ast.Assign) error {
 					b.emit(Op{Kind: OpNe, Width: WidthPtr})
 					b.emit(Op{Kind: OpIf, I32: BlockTypeVoid})
 					b.emitMapSlotDrop(idx, mst)
-					if aliasInced {
+					if rhsCarriesACount {
 						b.emit(Op{Kind: OpElse})
 						b.emit(Op{Kind: OpLoadLocal, I32: idx})
 						b.emit(Op{Kind: OpRcDec, Str: "__fern_rc_dec", I32: 1})
