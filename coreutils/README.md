@@ -72,6 +72,10 @@ they are not on PATH. Wall time, so compare within one run only.
 | `dirname` | done — `-z`, the leading-slash rules |
 | `tsort` | done — GNU's exact order, the loop report, NUL-cut tokens |
 | `printf` | done — every C conversion plus `%b` `%q`, argument cycling, x87 long-double floats printed from the exact binary value, glibc's oversized-conversion refusal and close_stdout reporting |
+| `seq` | done — `-f` `-s` `-w`, the exact-digit engine for whole numbers, and the long-double one with the rule that prints a term past LAST when its own output reads back inside the range |
+| `factor` | done — Montgomery arithmetic to 2^64, `core/bigint` beyond it, `-h`, numbers from stdin, and GNU's unbuffered line for a number at or above 2^127 |
+| `sleep` | done — `s` `m` `h` `d`, floats and hex floats, `inf`, the sum of the operands, every operand validated before it pauses (intervals are rounded up to the millisecond until #8528) |
 | `lib/gnu.fern` | the GNU conventions every utility shares |
+| `lib/ldbl.fern` | C's `long double` — strtold, arithmetic, and the `%f` `%e` `%g` `%a` conversions — shared by `printf` and `seq` |
 
 The tracking epic (#8278) lists every other utility and its status.

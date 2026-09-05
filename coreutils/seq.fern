@@ -467,45 +467,79 @@ function read_number(s: string, i: i32): (i64, i32) {
 
 // ---- buffered output -------------------------------------------------------
 //
-// Numbers go into a byte block and reach the writer one block at a time,
-// so the integer engine never allocates per number.
-struct Block { bs: u8[], o: io_buffered.BufWriter }
+// One fixed byte array, filled in place and handed to the writer a block
+// at a time. Growing an array per digit is what an earlier draft did and
+// it cost more than the arithmetic: `seq 1 1000000` spent its time in
+// the buffer rather than in the numbers.
+//
+// `n` is how much of `buf` is used. A term is reserved before it is
+// written, so it lands whole and the block is drained afterwards rather
+// than split; a term longer than the whole buffer — `seq 1e-4951 1`
+// prints one with 4951 decimals — grows it.
+struct Block { buf: u8[], n: i32 }
 
-function block_new(): Block {
-  var bs: u8[] = [];
-  return Block { bs: bs, o: gnu.out_with(block_bytes()) };
+// Room past the block threshold for the term that crosses it.
+function slack_bytes(): i32 {
+  return 4096;
 }
 
-function push_byte(b: Block, byte: i32): Block {
-  return Block { ...b, bs: b.bs.append(byte as u8) };
-}
-
-function push_str(b: Block, s: string): Block {
-  var out: Block = b;
+// `reserve(b, k)` — room for a term of `k` bytes. The block is drained
+// between terms, so the only case left here is a term longer than the
+// buffer itself — `seq 1e-4951 1` prints one with 4951 decimals — which
+// widens it.
+function reserve(b: Block, k: i32): Block {
+  if (b.n + k <= b.buf.len()) {
+    return b;
+  }
+  var wider: u8[] = __alloc_u8(b.n + k + slack_bytes());
   var i: i32 = 0;
-  while (i < s.len()) {
-    out = Block { ...out, bs: out.bs.append(s[i]) };
+  var out: Block = Block { buf: wider, n: b.n };
+  while (i < b.n) {
+    out = Block { ...out, buf: out.buf.with(i, b.buf[i]) };
     i = i + 1;
   }
   return out;
 }
 
-// Hand a full block to the writer. Called between numbers, never inside
-// one, so a number is never split across a failed write.
-function drain(b: Block): Block {
-  if (b.bs.len() < block_bytes()) {
-    return b;
-  }
-  return flush_block(b);
+function block_new(): Block {
+  return Block { buf: __alloc_u8(block_bytes() + slack_bytes()), n: 0 };
 }
 
-function flush_block(b: Block): Block {
-  if (b.bs.len() == 0) {
-    return b;
+function push_byte(b: Block, byte: i32): Block {
+  var out: Block = reserve(b, 1);
+  return Block { ...out, buf: out.buf.with(out.n, byte as u8), n: out.n + 1 };
+}
+
+function push_str(b: Block, s: string): Block {
+  var out: Block = reserve(b, s.len());
+  var i: i32 = 0;
+  while (i < s.len()) {
+    out = Block { ...out, buf: out.buf.with(out.n, s[i]), n: out.n + 1 };
+    i = i + 1;
   }
-  var o: io_buffered.BufWriter = gnu.put(b.o, string_from_bytes_unchecked(b.bs));
-  var empty: u8[] = [];
-  return Block { bs: empty, o: o };
+  return out;
+}
+
+// Hand a full block to the writer. Called between terms, never inside
+// one, so a term is never split across a failed write.
+//
+// The writer is a separate value rather than a field: a BufWriter holds
+// a string, so keeping one inside the block would put a refcounted field
+// in every `Block { ...b, … }` the digit loops build, and those run per
+// byte.
+function drain(o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter, Block) {
+  if (b.n < block_bytes()) {
+    return (o, b);
+  }
+  return flush_block(o, b);
+}
+
+function flush_block(o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter, Block) {
+  if (b.n == 0) {
+    return (o, b);
+  }
+  var w: io_buffered.BufWriter = gnu.put(o, slice_unchecked(string_from_bytes_unchecked(b.buf), 0, b.n) + "");
+  return (w, Block { ...b, n: 0 });
 }
 
 // A sequence that printed anything ends with a newline, whatever the
@@ -518,38 +552,27 @@ function terminate(b: Block, written: boolean): Block {
   return push_byte(b, 10);
 }
 
-function block_finish(b: Block): void {
-  gnu.finish(flush_block(b).o);
+function block_finish(o: io_buffered.BufWriter, b: Block): void {
+  gnu.finish(flush_block(o, b).0);
 }
 
-// `push_u64(b, v)` — `v`'s digits, written least significant first and
-// then reversed in place, so no temporary is allocated.
+// `push_u64(b, v)` — `v`'s digits, counted first and then filled in from
+// the least significant end, so nothing is written twice.
 function push_u64(b: Block, v: u64): Block {
-  if (v == 0 as u64) {
-    return push_byte(b, 48);
-  }
-  var out: Block = b;
-  var start: i32 = out.bs.len();
+  var digits: i32 = u64_digits(v);
+  var out: Block = reserve(b, digits);
+  var base: i32 = out.n;
+  var i: i32 = base + digits;
   var x: u64 = v;
-  while (x > 0 as u64) {
-    out = push_byte(out, 48 + (x % (10 as u64)) as i32);
+  // The buffer is only ever touched as `out.buf.with(...)` inside a
+  // struct literal: reading it into a local would share it with the
+  // field and copy the whole block on every byte.
+  while (i > base) {
+    i = i - 1;
+    out = Block { ...out, buf: out.buf.with(i, (48 + (x % (10 as u64)) as i32) as u8) };
     x = x / (10 as u64);
   }
-  return reverse_from(out, start);
-}
-
-function reverse_from(b: Block, start: i32): Block {
-  var bs: u8[] = b.bs;
-  var i: i32 = start;
-  var j: i32 = bs.len() - 1;
-  while (i < j) {
-    var t: u8 = bs[i];
-    bs = bs.with(i, bs[j]);
-    bs = bs.with(j, t);
-    i = i + 1;
-    j = j - 1;
-  }
-  return Block { ...b, bs: bs };
+  return Block { ...out, n: base + digits };
 }
 
 function u64_digits(v: u64): i32 {
@@ -569,32 +592,33 @@ function u64_digits(v: u64): i32 {
 // themselves are the accumulator.
 // `bound` empty means no upper bound at all, which is what an infinite
 // LAST asks for.
-function seq_fast(b: Block, first: u8[], step: u64, bound: Option[u8[]], sep: string): Block {
+function seq_fast(o: io_buffered.BufWriter, b: Block, first: u8[], step: u64, bound: Option[u8[]], sep: string): (io_buffered.BufWriter, Block) {
   match (bound) {
     Some(hi) => {
       if (cmp_digits(first, hi) > 0) {
-        return b;
+        return (o, b);
       }
       match (digits_to_u64(hi)) {
         Some(hi64) => {
           match (digits_to_u64(first)) {
             Some(lo64) => {
-              return fast_u64(b, lo64, step, hi64, sep);
+              return fast_u64(o, b, lo64, step, hi64, sep);
             },
             None => {}
           }
         },
         None => {}
       }
-      return fast_digits(b, first, step, Some(hi), sep);
+      return fast_digits(o, b, first, step, Some(hi), sep);
     },
     None => {
-      return fast_digits(b, first, step, None, sep);
+      return fast_digits(o, b, first, step, None, sep);
     }
   }
 }
 
-function fast_digits(b: Block, first: u8[], step: u64, bound: Option[u8[]], sep: string): Block {
+function fast_digits(o: io_buffered.BufWriter, b: Block, first: u8[], step: u64, bound: Option[u8[]], sep: string): (io_buffered.BufWriter, Block) {
+  var w: io_buffered.BufWriter = o;
   var out: Block = b;
   var cur: u8[] = first;
   var written: boolean = false;
@@ -603,11 +627,13 @@ function fast_digits(b: Block, first: u8[], step: u64, bound: Option[u8[]], sep:
       out = push_str(out, sep);
     }
     out = push_digits(out, cur);
-    out = drain(out);
+    var d: (io_buffered.BufWriter, Block) = drain(w, out);
+    w = d.0;
+    out = d.1;
     written = true;
     cur = add_u64(cur, step);
   }
-  return terminate(out, written);
+  return (w, terminate(out, written));
 }
 
 function in_bound(cur: u8[], bound: Option[u8[]]): boolean {
@@ -621,7 +647,8 @@ function in_bound(cur: u8[], bound: Option[u8[]]): boolean {
   }
 }
 
-function fast_u64(b: Block, first: u64, step: u64, last: u64, sep: string): Block {
+function fast_u64(o: io_buffered.BufWriter, b: Block, first: u64, step: u64, last: u64, sep: string): (io_buffered.BufWriter, Block) {
+  var w: io_buffered.BufWriter = o;
   var out: Block = b;
   var x: u64 = first;
   var written: boolean = false;
@@ -630,14 +657,18 @@ function fast_u64(b: Block, first: u64, step: u64, last: u64, sep: string): Bloc
       out = push_str(out, sep);
     }
     out = push_u64(out, x);
-    out = drain(out);
+    if (out.n >= block_bytes()) {
+      var d: (io_buffered.BufWriter, Block) = flush_block(w, out);
+      w = d.0;
+      out = d.1;
+    }
     written = true;
     if (last - x < step) {
       break;
     }
     x = x + step;
   }
-  return terminate(out, written);
+  return (w, terminate(out, written));
 }
 
 // A digit string with its leading zeros dropped, as a byte array of
@@ -721,10 +752,10 @@ function prepend_digit(d: u8[], v: i32): u8[] {
 }
 
 function push_digits(b: Block, d: u8[]): Block {
-  var out: Block = b;
+  var out: Block = reserve(b, d.len());
   var i: i32 = 0;
   while (i < d.len()) {
-    out = push_byte(out, 48 + d[i] as i32);
+    out = Block { ...out, buf: out.buf.with(out.n, (48 + d[i] as i32) as u8), n: out.n + 1 };
     i = i + 1;
   }
   return out;
@@ -734,11 +765,12 @@ function push_digits(b: Block, d: u8[]): Block {
 //
 // `first + i*step` per term, exactly as GNU computes it, so the last term
 // is GNU's last term. `i` counts in long double there and here.
-function print_numbers(b: Block, f: Fmt, first: ldbl.LD, step: ldbl.LD, last: ldbl.LD, sep: string): Block {
+function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ldbl.LD, step: ldbl.LD, last: ldbl.LD, sep: string): (io_buffered.BufWriter, Block) {
   if (out_of_range(first, step, last)) {
-    return b;
+    return (o, b);
   }
-  var out: Block = emit_term(b, f, first);
+  var w: io_buffered.BufWriter = o;
+  var out: Block = emit_term(w, b, f, first);
   var i: i64 = 1 as i64;
   while (true) {
     var x: ldbl.LD = ldbl.add(first, ldbl.mul(ldbl.from_i64(i), step));
@@ -746,16 +778,18 @@ function print_numbers(b: Block, f: Fmt, first: ldbl.LD, step: ldbl.LD, last: ld
       var prev: ldbl.LD = ldbl.add(first, ldbl.mul(ldbl.from_i64(i - 1 as i64), step));
       if (prints_as_in_range(f, x, prev, step, last)) {
         out = push_str(out, sep);
-        out = emit_term(out, f, x);
+        out = emit_term(w, out, f, x);
       }
-      return terminate(out, true);
+      return (w, terminate(out, true));
     }
     out = push_str(out, sep);
-    out = emit_term(out, f, x);
-    out = drain(out);
+    out = emit_term(w, out, f, x);
+    var d: (io_buffered.BufWriter, Block) = drain(w, out);
+    w = d.0;
+    out = d.1;
     i = i + 1 as i64;
   }
-  return out;
+  return (w, out);
 }
 
 // The last term of `seq 0 0.3 0.9` is 0.9 even though 3 x 0.3 lands one
@@ -797,14 +831,14 @@ function out_of_range(x: ldbl.LD, step: ldbl.LD, last: ldbl.LD): boolean {
   return ldbl.cmp(last, x) < 0;
 }
 
-function emit_term(b: Block, f: Fmt, v: ldbl.LD): Block {
+function emit_term(o: io_buffered.BufWriter, b: Block, f: Fmt, v: ldbl.LD): Block {
   var out: Block = push_str(b, f.pre);
   match (ldbl.format(f.spec, v)) {
     Some(s) => {
       out = push_str(out, s);
     },
     None => {
-      write_overflow(out);
+      write_overflow(o, out);
     }
   }
   return push_str(out, f.post);
@@ -812,8 +846,8 @@ function emit_term(b: Block, f: Fmt, v: ldbl.LD): Block {
 
 // glibc's EOVERFLOW: a conversion whose field cannot be counted in an
 // int. Reported once, with the strerror text GNU prints.
-function write_overflow(b: Block): void {
-  gnu.finish(flush_block(b).o);
+function write_overflow(o: io_buffered.BufWriter, b: Block): void {
+  gnu.finish(flush_block(o, b).0);
   gnu.error("write error: Value too large for defined data type");
   exit(1);
 }
@@ -898,11 +932,12 @@ function is_derived_fixed(f: Fmt, has_format: boolean): boolean {
 
 // `neg_zero` is the sign the first term carries when it is a negative
 // zero, which scaling cannot hold: `seq -w -0 1` opens with `-0`.
-function dec_seq(b: Block, first: i64, step: i64, last: i64, prec: i32, width: i32, sep: string, neg_zero: boolean): Block {
+function dec_seq(o: io_buffered.BufWriter, b: Block, first: i64, step: i64, last: i64, prec: i32, width: i32, sep: string, neg_zero: boolean): (io_buffered.BufWriter, Block) {
   if (step > 0 as i64 && first > last || step < 0 as i64 && first < last) {
-    return b;
+    return (o, b);
   }
   var count: i64 = (last - first) / step + 1 as i64;
+  var w: io_buffered.BufWriter = o;
   var out: Block = b;
   var x: i64 = first;
   var i: i64 = 0 as i64;
@@ -911,63 +946,81 @@ function dec_seq(b: Block, first: i64, step: i64, last: i64, prec: i32, width: i
       out = push_str(out, sep);
     }
     out = push_fixed(out, x, prec, width, neg_zero && i == 0 as i64);
-    out = drain(out);
+    if (out.n >= block_bytes()) {
+      var d: (io_buffered.BufWriter, Block) = flush_block(w, out);
+      w = d.0;
+      out = d.1;
+    }
     x = x + step;
     i = i + 1 as i64;
   }
-  return terminate(out, count > 0 as i64);
+  return (w, terminate(out, count > 0 as i64));
 }
 
 // One scaled value as `[-]ddd[.ddd]`, zero-padded to `width` after the
 // sign — the bytes `%0<width>.<prec>Lf` would produce.
-//
-// Written back to front (fraction, point, integer, padding, sign) and
-// then reversed, so a value with more fraction digits than a u64 can
-// hold a power of ten for still costs one pass and no temporary.
 function push_fixed(b: Block, v: i64, prec: i32, width: i32, neg_zero: boolean): Block {
   var neg: boolean = v < 0 as i64 || neg_zero;
   var mag: u64 = v as u64;
   if (v < 0 as i64) {
     mag = 0 as u64 - mag;
   }
-  var out: Block = b;
-  var start: i32 = out.bs.len();
-  var rest: u64 = mag;
-  var written: i32 = 0;
-  while (written < prec) {
-    out = push_byte(out, 48 + (rest % (10 as u64)) as i32);
-    rest = rest / (10 as u64);
-    written = written + 1;
-  }
-  if (prec > 0) {
-    out = push_byte(out, 46);
-  }
-  var int_digits: i32 = 0;
-  while (rest > 0 as u64) {
-    out = push_byte(out, 48 + (rest % (10 as u64)) as i32);
-    rest = rest / (10 as u64);
-    int_digits = int_digits + 1;
-  }
-  if (int_digits == 0) {
-    out = push_byte(out, 48);
+  var digits: i32 = u64_digits(mag);
+  var int_digits: i32 = digits - prec;
+  if (int_digits < 1) {
     int_digits = 1;
   }
-  var total: i32 = int_digits + prec;
+  var total: i32 = int_digits;
   if (prec > 0) {
-    total = total + 1;
+    total = total + 1 + prec;
   }
   if (neg) {
     total = total + 1;
+  }
+  var room: i32 = total;
+  if (width > room) {
+    room = width;
+  }
+  var out: Block = reserve(b, room);
+  if (neg) {
+    out = push_byte(out, 45);
   }
   var pad: i32 = width - total;
   while (pad > 0) {
     out = push_byte(out, 48);
     pad = pad - 1;
   }
-  if (neg) {
-    out = push_byte(out, 45);
+  // The integer part, then the point, then the fraction: each run is
+  // filled from its low end, so the width is needed up front and no
+  // byte is written twice.
+  var base: i32 = out.n;
+  var span: i32 = int_digits + prec;
+  var point: i32 = base + int_digits;
+  var i: i32 = base + span;
+  if (prec > 0) {
+    i = i + 1;
   }
-  return reverse_from(out, start);
+  var x: u64 = mag;
+  var k: i32 = 0;
+  while (k < prec) {
+    i = i - 1;
+    out = Block { ...out, buf: out.buf.with(i, (48 + (x % (10 as u64)) as i32) as u8) };
+    x = x / (10 as u64);
+    k = k + 1;
+  }
+  if (prec > 0) {
+    i = i - 1;
+    out = Block { ...out, buf: out.buf.with(i, 46 as u8) };
+  }
+  while (i > base) {
+    i = i - 1;
+    out = Block { ...out, buf: out.buf.with(i, (48 + (x % (10 as u64)) as i32) as u8) };
+    x = x / (10 as u64);
+  }
+  if (prec > 0) {
+    span = span + 1;
+  }
+  return Block { ...out, n: base + span };
 }
 
 // ---- main ------------------------------------------------------------------
@@ -1165,16 +1218,17 @@ function main(): i32 {
     }
   }
   var last: Operand = scan_arg(last_str);
+  var o: io_buffered.BufWriter = gnu.out_with(block_bytes());
   var b: Block = block_new();
   if (!a.has_format) {
     f = default_format(first, step, last, a.equal_width);
   } else if (fmt_overflows(f)) {
-    write_overflow(b);
+    write_overflow(o, b);
   }
   match (use_fast(a, f, first, step, last, first_str, step_str, last_str)) {
     Some(fast) => {
-      b = seq_fast(b, fast.first, fast.step, fast.bound, a.sep);
-      block_finish(b);
+      var r: (io_buffered.BufWriter, Block) = seq_fast(o, b, fast.first, fast.step, fast.bound, a.sep);
+      block_finish(r.0, r.1);
       return 0;
     },
     None => {}
@@ -1188,8 +1242,8 @@ function main(): i32 {
             match (scaled(last_str, p)) {
               Some(li) => {
                 var nz: boolean = first.v.is_zero() && first.v.neg;
-                b = dec_seq(b, fi, si, li, p, f.spec.width as i32, a.sep, nz);
-                block_finish(b);
+                var r: (io_buffered.BufWriter, Block) = dec_seq(o, b, fi, si, li, p, f.spec.width as i32, a.sep, nz);
+                block_finish(r.0, r.1);
                 return 0;
               },
               None => {}
@@ -1201,7 +1255,7 @@ function main(): i32 {
       None => {}
     }
   }
-  b = print_numbers(b, f, first.v, step.v, last.v, a.sep);
-  block_finish(b);
+  var r: (io_buffered.BufWriter, Block) = print_numbers(o, b, f, first.v, step.v, last.v, a.sep);
+  block_finish(r.0, r.1);
   return 0;
 }
