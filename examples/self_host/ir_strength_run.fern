@@ -28,6 +28,13 @@ function render(ops: ir.Op[]): string {
     return s;
 }
 
+// bool_word spells a flag the way Go's %v does, so the magic lines compare
+// directly against native's.
+function bool_word(b: boolean): string {
+    if (b) { return "true"; }
+    return "false";
+}
+
 // base is the `<expr>` every case's `const K ; binop` pair sits after.
 function base(): ir.Op {
     return ir.op_load_local(0);
@@ -591,6 +598,26 @@ function main(): i32 {
     var zg_stable: i32 = 0;
     if (render(ir.prune_zero_slot_guards(zg_once, 0)) == render(zg_once)) { zg_stable = 1; }
     out = out + "zg_idempotent=" + util.i32_to_string(zg_stable) + "\n";
+
+    // 19. Magic-number reciprocals (ir.derive_magic_s32 / derive_magic_u32,
+    //     native internal/ir/magic.go). The Go test renders the same divisors
+    //     through native's derivation, so this is a parity check, not a golden.
+    var mds: i32[] = [3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5];
+    var mi: i32 = 0;
+    while (mi < mds.len()) {
+        var ms: ir.MagicS32 = ir.derive_magic_s32(mds[mi]);
+        out = out + "magic_s " + util.i32_to_string(mds[mi]) + ": m=" + util.i32_to_string(ms.m)
+            + " s=" + util.i32_to_string(ms.s) + " add=" + bool_word(ms.add) + " sub=" + bool_word(ms.sub) + "\n";
+        mi = mi + 1;
+    }
+    var mus: u32[] = [3u32, 7u32, 97u32, 641u32, 1000000u32, 2147483649u32, 2863311531u32, 4294967291u32, 4294967295u32, 10u32, 100u32, 5u32, 4093u32];
+    mi = 0;
+    while (mi < mus.len()) {
+        var mu: ir.MagicU32 = ir.derive_magic_u32(mus[mi]);
+        out = out + "magic_u " + util.i64_to_string(mus[mi] as i64) + ": m=" + util.i64_to_string(mu.m as i64)
+            + " s=" + util.i32_to_string(mu.s) + " add=" + bool_word(mu.add) + "\n";
+        mi = mi + 1;
+    }
 
     write(out);
 

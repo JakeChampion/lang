@@ -3232,55 +3232,261 @@ function ir_shift_imm_asm(tag: i32, width: i32, prev: ir.Op): string {
     return "    shrq" + imm;
 }
 
-// ir_div_guarded renders a non-trapping i32/i64 signed/unsigned div or rem
-// (dividend in %rax, divisor in %rcx, result in %rax). x86 idivq/divq raise
-// #DE (SIGFPE) on a zero divisor and on INT_MIN/-1 overflow, but the language
-// contract (docs/INTEGER-SEMANTICS.md) is total: x/0 = 0, x%0 = x,
+// DivRegs names the accumulator, scratch and high registers, and the size
+// suffix, at a divide's width. i32 uses the l-forms on the low halves — dirty
+// upper bits cannot reach a 32-bit divide, so nothing has to be widened first.
+struct DivRegs {
+    a: string,
+    c: string,
+    d: string,
+    sfx: string,
+    bits: i32,
+}
+
+function div_regs(w64: boolean): DivRegs {
+    if (w64) { return DivRegs { a: "%rax", c: "%rcx", d: "%rdx", sfx: "q", bits: 64 }; }
+    return DivRegs { a: "%eax", c: "%ecx", d: "%edx", sfx: "l", bits: 32 };
+}
+
+// ir_div_guarded renders a non-trapping div or rem by a divisor only known at
+// run time (dividend in %rax, divisor in %rcx, result in %rax). x86 idiv/div
+// raise #DE (SIGFPE) on a zero divisor and on INT_MIN/-1 overflow, but the
+// language contract (docs/INTEGER-SEMANTICS.md) is total: x/0 = 0, x%0 = x,
 // INT_MIN/-1 = INT_MIN, INT_MIN%-1 = 0. Guard both faults inline, mirroring
-// native codegen (internal/codegen/x86_64 emitFloatToIntSat's div sibling).
-// `lb` is a per-op-unique label base (loop prefix + op index). (#4329)
+// native emitIntDivRem. `lb` is a per-op-unique label base (loop prefix + op
+// index). (#4329)
 function ir_div_guarded(tag: i32, width: i32, lb: string): string {
-    var sext: boolean = (width != 64);
+    var r: DivRegs = div_regs(width == 64);
+    var s: string = "    test" + r.sfx + " " + r.c + ", " + r.c + "\n";
     if (tag == 25 || tag == 27) {
         // Unsigned (u32/u64, #2904): only the divide-by-zero fault to guard —
         // unsigned division has no overflow case.
-        var u: string = "    testq %rcx, %rcx\n";
+        var divide: string = "    xorl %edx, %edx\n    div" + r.sfx + " " + r.c + "\n";
         if (tag == 25) {
-            u = u + "    jz " + lb + "_dz\n";
-            u = u + "    xorl %edx, %edx\n    divq %rcx\n";
-            u = u + "    jmp " + lb + "_dn\n";
-            u = u + lb + "_dz:\n    xorl %eax, %eax\n";
-            u = u + lb + "_dn:\n";
+            s = s + "    jz " + lb + "_dz\n" + divide;
+            s = s + "    jmp " + lb + "_dn\n";
+            s = s + lb + "_dz:\n    xorl %eax, %eax\n";
         } else {
-            u = u + "    jz " + lb + "_dn\n";      // divisor 0 -> rem = dividend (rax)
-            u = u + "    xorl %edx, %edx\n    divq %rcx\n    movq %rdx, %rax\n";
-            u = u + lb + "_dn:\n";
+            s = s + "    jz " + lb + "_dn\n" + divide;      // divisor 0 -> rem = dividend (rax)
+            s = s + "    mov" + r.sfx + " " + r.d + ", " + r.a + "\n";
         }
-        return u;
+        return s + lb + "_dn:\n";
     }
-    // Signed. Sign-extend i32 operands so dirty upper bits don't skew idivq.
-    var s: string = "";
-    if (sext) { s = s + "    movslq %eax, %rax\n    movslq %ecx, %rcx\n"; }
-    s = s + "    testq %rcx, %rcx\n";
+    var idivide: string = "    cqto\n    idivq %rcx\n";
+    if (width != 64) { idivide = "    cltd\n    idivl %ecx\n"; }
+    var cmp_neg1: string = "    cmp" + r.sfx + " $-1, " + r.c + "\n";
     if (tag == 24) {
-        s = s + "    jz " + lb + "_dz\n";                          // /0 -> 0
-        s = s + "    cmpq $-1, %rcx\n    je " + lb + "_ng\n";      // /-1 -> -dividend (wraps at INT_MIN)
-        s = s + "    cqto\n    idivq %rcx\n";
+        s = s + "    jz " + lb + "_dz\n";                                    // /0 -> 0
+        s = s + cmp_neg1 + "    je " + lb + "_ng\n" + idivide;               // /-1 -> -dividend (wraps at INT_MIN)
         s = s + "    jmp " + lb + "_dn\n";
-        s = s + lb + "_ng:\n    negq %rax\n    jmp " + lb + "_dn\n";
+        s = s + lb + "_ng:\n    neg" + r.sfx + " " + r.a + "\n    jmp " + lb + "_dn\n";
         s = s + lb + "_dz:\n    xorl %eax, %eax\n";
-        s = s + lb + "_dn:\n";
     } else {
-        s = s + "    jz " + lb + "_dn\n";                          // %0 -> dividend (rax)
-        s = s + "    cmpq $-1, %rcx\n    je " + lb + "_z0\n";      // %-1 -> 0
-        s = s + "    cqto\n    idivq %rcx\n    movq %rdx, %rax\n";
-        s = s + "    jmp " + lb + "_dn\n";
+        s = s + "    jz " + lb + "_dn\n";                                    // %0 -> dividend (rax)
+        s = s + cmp_neg1 + "    je " + lb + "_z0\n" + idivide;               // %-1 -> 0
+        s = s + "    mov" + r.sfx + " " + r.d + ", " + r.a + "\n    jmp " + lb + "_dn\n";
         s = s + lb + "_z0:\n    xorl %eax, %eax\n";
-        s = s + lb + "_dn:\n";
     }
-    // Renormalise an i32 result to its width (sign-extend low 32) so
-    // INT32_MIN/-1 reads as INT32_MIN, not +2^31, across a slot boundary.
-    if (sext) { s = s + "    movslq %eax, %rax\n"; }
+    s = s + lb + "_dn:\n";
+    // An i32 result rides sign-extended in its 64-bit slot.
+    if (width != 64) { s = s + "    cltq\n"; }
+    return s;
+}
+
+// ---- division by a literal divisor (native emitConstDivRem) --------------
+//
+// In a stack machine the op right before a binary pushes its rhs, so a
+// readable constant there is the divisor — the same adjacency ir_shift_imm_asm
+// and ir.reduce_strength key off. Knowing it collapses most of what
+// ir_div_guarded spends its instructions on: both guards branch on a value that
+// is now a compile-time constant, a power of two needs no divide at all, and an
+// i32 divisor that is neither takes the multiply-high reciprocal.
+
+// ConstDivisor is a `const ; div/rem` site's literal, read at the divide's
+// width: the i64 text for a 64-bit divide and the readable i32 otherwise.
+struct ConstDivisor {
+    ok: boolean,
+    k: i64,
+}
+
+function no_const_divisor(): ConstDivisor { return ConstDivisor { ok: false, k: 0 }; }
+
+// ir_const_divisor reads `c` as the divisor of a divide at `width`, refusing
+// any constant it cannot read exactly — a hex or suffixed literal keeps the
+// guarded sequence, which is merely slower.
+function ir_const_divisor(c: ir.Op, width: i32): ConstDivisor {
+    if (width == 64) {
+        if (c.kind_tag != 3 || c.str.len() == 0) { return no_const_divisor(); }
+        var v: i64 = util.digits_to_i64(c.str);
+        if (util.i64_to_string(v) != c.str) { return no_const_divisor(); }
+        return ConstDivisor { ok: true, k: v };
+    }
+    if (!ir.const_i32_readable(c)) { return no_const_divisor(); }
+    return ConstDivisor { ok: true, k: ir.const_i32_value(c) as i64 };
+}
+
+// ir_const_div_site reports whether ops[i] is a constant the divide at
+// ops[i+1] reads as an immediate, so the constant's own push is skipped.
+function ir_const_div_site(ops: ir.Op[], i: i32): boolean {
+    if (i < 0 || i + 1 >= ops.len()) { return false; }
+    var d: ir.Op = ops[i + 1];
+    if (d.kind_tag != 24 && d.kind_tag != 25 && d.kind_tag != 26 && d.kind_tag != 27) { return false; }
+    return ir_const_divisor(ops[i], d.width).ok;
+}
+
+// pow2_shift_i64 gives sh when `mag`, read as an unsigned 64-bit bit pattern,
+// is 2^sh, and -1 otherwise.
+function pow2_shift_i64(mag: i64): i32 {
+    if (mag == 0i64 || (mag & (mag - 1i64)) != 0i64) { return 0 - 1; }
+    var sh: i32 = 0;
+    while ((1i64 << sh) != mag) { sh = sh + 1; }
+    return sh;
+}
+
+// ir_div_const renders `dividend / k` or `dividend % k` for the literal k
+// (dividend in %rax, result in %rax); tag is div_s / div_u / rem_s / rem_u.
+function ir_div_const(tag: i32, width: i32, k: i64): string {
+    var w64: boolean = (width == 64);
+    var uns: boolean = (tag == 25 || tag == 27);
+    var body: string = ir_div_const_body(w64, uns, tag == 26 || tag == 27, k);
+    // An i32 result rides sign-extended in its 64-bit slot; the l-forms
+    // zero-extend, which is already the u32 convention.
+    if (!w64 && !uns) { body = body + "    cltq\n"; }
+    return body;
+}
+
+function ir_div_const_body(w64: boolean, uns: boolean, is_rem: boolean, k: i64): string {
+    var r: DivRegs = div_regs(w64);
+    // Normalise the divisor's magnitude. Unsigned reads the literal's bit
+    // pattern at the operand width; signed keeps the sign for the negation a
+    // negative divisor's quotient needs at the end.
+    var mag: i64 = k;
+    var neg: boolean = false;
+    if (uns) {
+        if (!w64) { mag = ((k as i32) as i64) & 4294967295i64; }
+    } else {
+        var v: i64 = k;
+        if (!w64) { v = (k as i32) as i64; }
+        var min: i64 = -2147483648i64;
+        if (w64) { min = -9223372036854775808i64; }
+        // The most negative divisor has no positive magnitude, so it takes the
+        // divide rather than a negation that wraps.
+        if (v == min) { return ir_div_const_generic(r, uns, is_rem, k); }
+        if (v < 0i64) { neg = true; mag = 0i64 - v; } else { mag = v; }
+    }
+    if (mag == 0i64) {
+        // x / 0 = 0, x % 0 = x: the guarded sequence's zero arm, with no branch to reach it.
+        if (is_rem) { return ""; }
+        return "    xorl %eax, %eax\n";
+    }
+    if (mag == 1i64) {
+        // x % ±1 = 0. x / 1 = x. x / -1 = -x, and INT_MIN / -1 keeps the
+        // contract's answer because `neg` wraps to INT_MIN itself.
+        if (is_rem) { return "    xorl %eax, %eax\n"; }
+        if (neg) { return "    neg" + r.sfx + " " + r.a + "\n"; }
+        return "";
+    }
+    var sh: i32 = pow2_shift_i64(mag);
+    // Signed stops one short of the sign bit: the bias needs 2^sh to be a
+    // positive value at the operand width.
+    var max_sh: i32 = r.bits - 2;
+    if (uns) { max_sh = r.bits - 1; }
+    if (sh >= 0 && sh <= max_sh) { return ir_div_const_pow2(r, uns, is_rem, neg, sh); }
+    if (!w64) { return ir_div_const_magic(uns, is_rem, k as i32); }
+    return ir_div_const_generic(r, uns, is_rem, k);
+}
+
+// ir_div_const_pow2 is division or remainder by 2^sh. Signed division by a
+// power of two is NOT an arithmetic shift: `sar` rounds toward negative
+// infinity and the language rounds toward zero, so -1/2 would be -1 rather
+// than 0. Biasing the dividend by 2^sh-1 when it is negative — what the
+// sar/shr pair computes branchlessly — makes the shift round the right way.
+function ir_div_const_pow2(r: DivRegs, uns: boolean, is_rem: boolean, neg: boolean, sh: i32): string {
+    var shs: string = util.i32_to_string(sh);
+    if (uns) {
+        if (is_rem) { return mask_low_bits(r, r.a, sh, true); }
+        return "    shr" + r.sfx + " $" + shs + ", " + r.a + "\n";
+    }
+    var s: string = "    mov" + r.sfx + " " + r.a + ", " + r.c + "\n";
+    s = s + "    sar" + r.sfx + " $" + util.i32_to_string(r.bits - 1) + ", " + r.c + "\n";   // all ones iff negative
+    s = s + "    shr" + r.sfx + " $" + util.i32_to_string(r.bits - sh) + ", " + r.c + "\n";  // 2^sh-1 iff negative
+    s = s + "    add" + r.sfx + " " + r.a + ", " + r.c + "\n";                              // biased dividend
+    if (is_rem) {
+        // r = x - (x/2^sh)*2^sh, and the multiply is a mask.
+        s = s + mask_low_bits(r, r.c, sh, false);
+        return s + "    sub" + r.sfx + " " + r.c + ", " + r.a + "\n";
+    }
+    s = s + "    mov" + r.sfx + " " + r.c + ", " + r.a + "\n";
+    s = s + "    sar" + r.sfx + " $" + shs + ", " + r.a + "\n";
+    if (neg) { s = s + "    neg" + r.sfx + " " + r.a + "\n"; }
+    return s;
+}
+
+// mask_low_bits keeps (keep) or clears the low sh bits of reg. `and` takes an
+// imm32, so a mask past bit 31 is a shift pair instead.
+function mask_low_bits(r: DivRegs, reg: string, sh: i32, keep: boolean): string {
+    if (keep && sh <= 31) {
+        return "    and" + r.sfx + " $" + util.i64_to_string((1i64 << sh) - 1i64) + ", " + reg + "\n";
+    }
+    if (keep) {
+        var back: string = util.i32_to_string(r.bits - sh);
+        return "    shl" + r.sfx + " $" + back + ", " + reg + "\n    shr" + r.sfx + " $" + back + ", " + reg + "\n";
+    }
+    if (sh <= 31) {
+        return "    and" + r.sfx + " $" + util.i64_to_string(0i64 - (1i64 << sh)) + ", " + reg + "\n";
+    }
+    var shs: string = util.i32_to_string(sh);
+    return "    shr" + r.sfx + " $" + shs + ", " + reg + "\n    shl" + r.sfx + " $" + shs + ", " + reg + "\n";
+}
+
+// ir_div_const_magic is i32 division or remainder by a divisor that is
+// neither 0, ±1 nor a power of two: the reciprocal from ir.derive_magic_*32.
+// A divide is 20-40 cycles here where the multiply and shift are about five.
+//
+// The one-operand imul / mul multiply %eax by their operand and leave the high
+// half in %edx, so the DIVIDEND goes in %ecx and the MAGIC in %eax — the
+// product is the same either way, and that ordering leaves the dividend
+// intact in %ecx for the fixup and for a remainder's multiply-back.
+function ir_div_const_magic(uns: boolean, is_rem: boolean, d: i32): string {
+    var s: string = "    movl %eax, %ecx\n";
+    if (uns) {
+        var mu: ir.MagicU32 = ir.derive_magic_u32(d as u32);
+        s = s + "    movl $" + util.i32_to_string(mu.m as i32) + ", %eax\n    mull %ecx\n";
+        if (!mu.add) {
+            s = s + "    shrl $" + util.i32_to_string(mu.s) + ", %edx\n    movl %edx, %eax\n";
+        } else {
+            // A 33-bit magic. Averaging the dividend and the high half by
+            // shifting keeps the carry a plain add would drop off the top.
+            s = s + "    movl %ecx, %eax\n    subl %edx, %eax\n    shrl $1, %eax\n    addl %edx, %eax\n";
+            s = s + "    shrl $" + util.i32_to_string(mu.s - 1) + ", %eax\n";
+        }
+    } else {
+        var ms: ir.MagicS32 = ir.derive_magic_s32(d);
+        s = s + "    movl $" + util.i32_to_string(ms.m) + ", %eax\n    imull %ecx\n";
+        if (ms.add) { s = s + "    addl %ecx, %edx\n"; }
+        if (ms.sub) { s = s + "    subl %ecx, %edx\n"; }
+        if (ms.s != 0) { s = s + "    sarl $" + util.i32_to_string(ms.s) + ", %edx\n"; }
+        // The shift floors, so a negative quotient is one too low.
+        s = s + "    movl %edx, %eax\n    shrl $31, %edx\n    addl %edx, %eax\n";
+    }
+    if (is_rem) {
+        // r = x - (x / d) * d, with the dividend still in %ecx.
+        s = s + "    imull $" + util.i32_to_string(d) + ", %eax, %eax\n    subl %eax, %ecx\n    movl %ecx, %eax\n";
+    }
+    return s;
+}
+
+// ir_div_const_generic is the divide itself, for a literal that is neither 0,
+// ±1 nor a power of two and has no reciprocal (64-bit, or the most negative
+// divisor): the guarded sequence with both guards and all four labels gone,
+// since the divisor cannot be zero and cannot be -1.
+function ir_div_const_generic(r: DivRegs, uns: boolean, is_rem: boolean, k: i64): string {
+    var s: string = "    movl $" + util.i64_to_string(k) + ", %ecx\n";
+    if (r.bits == 64) { s = "    movabsq $" + util.i64_to_string(k) + ", %rcx\n"; }
+    if (uns) { s = s + "    xorl %edx, %edx\n    div" + r.sfx + " " + r.c + "\n"; }
+    else if (r.bits == 64) { s = s + "    cqto\n    idivq %rcx\n"; }
+    else { s = s + "    cltd\n    idivl %ecx\n"; }
+    if (is_rem) { s = s + "    mov" + r.sfx + " " + r.d + ", " + r.a + "\n"; }
     return s;
 }
 
@@ -3910,7 +4116,9 @@ function emit_function_via_ir_pre(r: irlower.LowerResult, fd: parser.FuncDecl, s
     var i: i32 = 0;
     while (i < r.ops.len()) {
         var o: ir.Op = r.ops[i];
-        if (o.kind_tag == 1) {  // const_i32
+        if (ir_const_div_site(r.ops, i)) {
+            // A divisor the divide after it reads as an immediate: nothing to push.
+        } else if (o.kind_tag == 1) {  // const_i32
             s = emit_ir_op_const_i32(o, s);
         } else if (o.kind_tag == 2) {  // const_i32_text
             // Integer literal source text spliced into a 32-bit immediate (hex /
@@ -5433,18 +5641,26 @@ function emit_ir_op_i32_to_f64(o: ir.Op, i: i32, lp: string, s: asmcore.EmitStat
 }
 
 function emit_ir_op_binary(o: ir.Op, i: i32, lp: string, r: irlower.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+    if (o.kind_tag == 24 || o.kind_tag == 26 || o.kind_tag == 25 || o.kind_tag == 27) {  // div_s, rem_s, div_u, rem_u
+        if (ir_const_div_site(r.ops, i - 1)) {
+            // The divisor's push was skipped at its own site: only the
+            // dividend is on the stack.
+            s = s.write("    popq %rax\n");
+            s = s.write(ir_div_const(o.kind_tag, o.width, ir_const_divisor(r.ops[i - 1], o.width).k));
+        } else {
+            // Non-trapping guarded div/rem (#4329); needs a per-op-unique
+            // label base — reuse the loop prefix + this op's index.
+            s = s.write("    popq %rcx\n    popq %rax\n");
+            s = s.write(ir_div_guarded(o.kind_tag, o.width, lp + util.i32_to_string(i)));
+        }
+        return s.write("    pushq %rax\n");
+    }
     // binary op: pop rhs (rcx), lhs (rax), combine, push.
     s = s.write("    popq %rcx\n    popq %rax\n");
-    if (o.kind_tag == 24 || o.kind_tag == 26 || o.kind_tag == 25 || o.kind_tag == 27) {  // div_s, rem_s, div_u, rem_u
-        // Non-trapping guarded div/rem (#4329); needs a per-op-unique
-        // label base — reuse the loop prefix + this op's index.
-        s = s.write(ir_div_guarded(o.kind_tag, o.width, lp + util.i32_to_string(i)));
-    } else {
-        var shimm: string = "";
-        if (i > 0) { shimm = ir_shift_imm_asm(o.kind_tag, o.width, r.ops[i - 1]); }
-        if (shimm.len() > 0) { s = s.write(shimm); }
-        else { s = s.write(ir_bin_asm(o.kind_tag, o.width)); }
-    }
+    var shimm: string = "";
+    if (i > 0) { shimm = ir_shift_imm_asm(o.kind_tag, o.width, r.ops[i - 1]); }
+    if (shimm.len() > 0) { s = s.write(shimm); }
+    else { s = s.write(ir_bin_asm(o.kind_tag, o.width)); }
     s = s.write("    pushq %rax\n");
 
     return s;
